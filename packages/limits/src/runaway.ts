@@ -187,6 +187,8 @@ export function runawayCap(options: RunawayCapOptions): RunawayCap {
     const read = readSpent(runId, workflowId)
       .then(
         (state) => {
+          // A runPost while the read was pending ended the run: do not bring its state back.
+          if (loading.get(runId) !== read) return null
           runs.set(runId, state)
           return state
         },
@@ -199,16 +201,19 @@ export function runawayCap(options: RunawayCapOptions): RunawayCap {
           return null
         },
       )
-      .finally(() => loading.delete(runId))
+      .finally(() => {
+        if (loading.get(runId) === read) loading.delete(runId)
+      })
     loading.set(runId, read)
     return read
   }
 
   async function readSpent(runId: string, workflowId: string): Promise<RunState> {
     const { rows } = await query<{ active_ms: number | null; cost: number; tokens: number; steps: number }>(
-      // Wall time already run: start to the last journal activity, so the downtime before a resume is not counted.
-      `select extract(epoch from (greatest(r.started_at, max(s.attempt_started_at), max(s.finished_at)) - r.started_at))
-           * 1000 as active_ms,
+      // Wall time already run, approximated from the journal (it records no liveness): start to the last step start
+      // or finish. Downtime after the last activity is not counted; an in-flight step's time past its start is lost.
+      `select (extract(epoch from (greatest(r.started_at, max(s.attempt_started_at), max(s.finished_at)) - r.started_at))
+           * 1000)::float8 as active_ms,
          coalesce(sum(s.cost), 0)::float8 as cost,
          coalesce(sum(s.tokens_input + s.tokens_output + s.tokens_cache_read + s.tokens_reasoning), 0)::float8 as tokens,
          count(s.step_id)::int as steps
@@ -244,7 +249,6 @@ export function runawayCap(options: RunawayCapOptions): RunawayCap {
     state: RunState,
     caps: Caps,
     metrics: readonly Metric[],
-    emitAllowed = true,
   ): CapDecision {
     const observed: Metrics = {
       cost: state.cost,
@@ -253,7 +257,7 @@ export function runawayCap(options: RunawayCapOptions): RunawayCap {
       steps: state.steps,
     }
     const exceeded = metrics.find((m) => observed[m] > caps.values[m]) ?? null
-    const decision: CapDecision = {
+    return {
       rule: 'runaway-cap',
       hook,
       runId: args.runId,
@@ -265,8 +269,6 @@ export function runawayCap(options: RunawayCapOptions): RunawayCap {
       basis: caps.basis,
       exceeded,
     }
-    if (exceeded || emitAllowed) emit(decision)
-    return decision
   }
 
   function refuse(decision: CapDecision): RunawayCapExceeded {
@@ -295,18 +297,23 @@ export function runawayCap(options: RunawayCapOptions): RunawayCap {
       // A replayed step already has its journal row, counted by the resume load.
       if (!args.replay) state.steps++
       const decision = decide('stepPre', args, state, await capsFor(state.workflowId), METRICS)
+      emit(decision)
       if (decision.exceeded) throw refuse(decision)
     },
 
     async toolPre(event: ToolEvent) {
       const state = runs.get(event.runId)
-      // Once per run: the runtime logs a toolPre throw and lets the step go on, so a repeat is only noise.
+      // Once per run: the runtime only logs a toolPre throw and lets the step go on, so a repeated throw would add
+      // an error log per tool call and stop nothing; the next stepPre stops the run.
       if (!state || flagged.has(event.runId)) return
       state.seenAt = Date.now()
+      const caps = await capsFor(state.workflowId)
+      if (flagged.has(event.runId)) return
+      const decision = decide('toolPre', event, state, caps, ['wallMs'])
       // Only an exceeded cap is a decision worth recording; an agent step makes many tool calls.
-      const decision = decide('toolPre', event, state, await capsFor(state.workflowId), ['wallMs'], false)
       if (!decision.exceeded) return
       flagged.add(event.runId)
+      emit(decision)
       throw refuse(decision)
     },
 
@@ -321,6 +328,7 @@ export function runawayCap(options: RunawayCapOptions): RunawayCap {
 
     runPost(args) {
       runs.delete(args.runId)
+      loading.delete(args.runId)
       flagged.delete(args.runId)
     },
 
