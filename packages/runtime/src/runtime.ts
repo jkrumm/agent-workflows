@@ -1,0 +1,573 @@
+import { Pool } from 'pg'
+import { z } from 'zod'
+import { AdmissionRefused, Cancelled, errorMessage, InfraError, Shutdown, WorkflowError } from './errors.ts'
+import { Journal, type RunEnd, type RunRow } from './journal.ts'
+import { type Json, jsonViolation } from './json.ts'
+import { type Lease, LeasePool, lockKey } from './lease.ts'
+import { assertSchemaName, migrate } from './migrate.ts'
+import { RunScope, raceAbort, type ScopeHost, toRunError } from './scope.ts'
+import type {
+  AgentHost,
+  AnyWorkflow,
+  Logger,
+  Middleware,
+  RunInfo,
+  RunPostArgs,
+  RunPreArgs,
+  RunResult,
+  StartOptions,
+  StepPostArgs,
+  StepPreArgs,
+  ToolEvent,
+  Workflow,
+} from './types.ts'
+
+export type RuntimeOptions = {
+  connectionString: string
+  /** Postgres schema of the journal. Default `agw`. */
+  schema?: string
+  /** Every workflow this process may drive; recovery only claims runs of these. */
+  workflows: AnyWorkflow[]
+  host?: AgentHost
+  /** Ordered; called around every run, step and tool call. */
+  middleware?: Middleware[]
+  /** Top-level runs this process drives at once; also the size of the lease connection budget. Default 16. */
+  maxConcurrentRuns?: number
+  /** Journal connection pool, separate from the leases. Default 10. */
+  journalPoolSize?: number
+  /** Recovery tick: claims pending and orphaned runs whose lease is free. Default 2000 ms. */
+  recoveryIntervalMs?: number
+  /** Cancel and steer delivery tick for runs driven here. Default 500 ms. */
+  watchIntervalMs?: number
+  /** First backoff after an infra failure of a run, doubled per failure up to 60 s. Default 1000 ms. */
+  infraBackoffMs?: number
+  /** Consecutive infra failures after which a run is marked failed (`infra`). Default 20. */
+  maxInfraFailures?: number
+  logger?: Logger
+}
+
+const consoleLogger: Logger = {
+  warn: (message, meta) => console.warn(`[agw-runtime] ${message}`, meta ?? ''),
+  error: (message, meta) => console.error(`[agw-runtime] ${message}`, meta ?? ''),
+}
+
+const TERMINAL = new Set(['done', 'failed', 'cancelled'])
+const MAX_RECOVERY_BACKOFF_MS = 30_000
+const MAX_INFRA_BACKOFF_MS = 60_000
+
+type Backoff = { failures: number; nextAt: number }
+
+export class Runtime {
+  readonly schema: string
+  private readonly journal: Journal
+  private readonly pool: Pool
+  private readonly leases: LeasePool
+  private readonly registry = new Map<string, AnyWorkflow>()
+  private readonly middleware: Middleware[]
+  private readonly logger: Logger
+  private readonly host: AgentHost | null
+  /** Top-level runs this process is claiming or driving. */
+  private readonly claiming = new Set<string>()
+  /** Every run (top-level and child) with a live scope here, for cancel and steer delivery. */
+  private readonly scopes = new Map<string, RunScope>()
+  /** Agent steps waiting on the host, by step key, for steer delivery. */
+  private readonly agents = new Map<string, Json>()
+  private readonly backoff = new Map<string, Backoff>()
+  private readonly drives = new Set<Promise<void>>()
+  private recoveryTimer: ReturnType<typeof setTimeout> | undefined
+  private watchTimer: ReturnType<typeof setTimeout> | undefined
+  private recoveryDelay: number
+  private readonly scopeHost: ScopeHost
+  private opened = false
+  private closing = false
+
+  constructor(private readonly options: RuntimeOptions) {
+    this.schema = options.schema ?? 'agw'
+    assertSchemaName(this.schema)
+    for (const wf of options.workflows) this.register(wf)
+    this.middleware = options.middleware ?? []
+    this.logger = options.logger ?? consoleLogger
+    this.host = options.host ?? null
+    this.recoveryDelay = options.recoveryIntervalMs ?? 2000
+    this.pool = new Pool({
+      connectionString: options.connectionString,
+      max: options.journalPoolSize ?? 10,
+      application_name: `agw-journal:${this.schema}`,
+      connectionTimeoutMillis: 30_000,
+      keepAlive: true,
+    })
+    this.pool.on('error', (err) => this.logger.warn('journal pool: idle connection error', { error: err.message }))
+    this.journal = new Journal(this.pool, this.schema)
+    this.leases = new LeasePool(
+      options.connectionString,
+      options.maxConcurrentRuns ?? 16,
+      `agw-lease:${this.schema}`,
+      this.logger,
+    )
+    this.scopeHost = {
+      journal: this.journal,
+      host: this.host,
+      stepPre: (args) => this.stepPre(args),
+      stepPost: (args) => this.stepPost(args),
+      tool: (phase, event) => this.tool(phase, event),
+      runChild: (parent, childId, workflow, input) => this.runChild(parent, childId, workflow, input),
+      trackAgent: (key, handle) => {
+        if (handle === null) this.agents.delete(key)
+        else this.agents.set(key, handle)
+      },
+      logError: (message, meta) => this.logger.error(message, meta),
+    }
+  }
+
+  /** Migrates the journal and starts the recovery and watch ticks. */
+  async open(): Promise<void> {
+    await migrate(this.pool, this.schema)
+    this.opened = true
+    this.scheduleRecovery(0)
+    this.scheduleWatch()
+  }
+
+  /**
+   * Validates the input and records a pending run; this process starts driving it at once when it has a free
+   * lease, else the next recovery tick (here or in another process) picks it up.
+   */
+  async start<I extends z.ZodType, O extends z.ZodType>(
+    workflow: Workflow<I, O>,
+    input: z.input<I>,
+    options: StartOptions,
+  ): Promise<{ runId: string }> {
+    if (!options.purpose) throw new Error('start: purpose is required')
+    this.register(workflow)
+    const parsed = workflow.input.safeParse(input)
+    if (!parsed.success) {
+      throw new WorkflowError('invalid_input', `${workflow.id}: ${z.prettifyError(parsed.error)}`)
+    }
+    const value = parsed.data as Json
+    const violation = jsonViolation(value)
+    if (violation) throw new WorkflowError('invalid_input', `${workflow.id}: input ${violation}`)
+    const id = Bun.randomUUIDv7()
+    const runId = await this.journal.insertRun({
+      id,
+      workflow: workflow.id,
+      parentId: null,
+      rootId: id,
+      purpose: options.purpose,
+      input: value,
+      inputHash: hashJson(value),
+      idempotencyKey: options.idempotencyKey ?? null,
+      traceparent: options.traceparent ?? null,
+      traceId: traceIdOf(options.traceparent),
+      version: workflow.version,
+    })
+    if (this.opened && !this.closing) this.kick(runId)
+    return { runId }
+  }
+
+  /** Polls until the run is done, failed or cancelled. */
+  async wait(runId: string, options: { pollMs?: number; signal?: AbortSignal } = {}): Promise<RunResult> {
+    for (;;) {
+      const run = await this.journal.getRun(runId)
+      if (!run) throw new Error(`run ${runId} not found`)
+      if (TERMINAL.has(run.status)) {
+        return {
+          runId,
+          status: run.status as RunResult['status'],
+          output: run.output,
+          error: run.error_kind ? { kind: run.error_kind, message: run.error ?? '' } : null,
+        }
+      }
+      options.signal?.throwIfAborted()
+      await Bun.sleep(options.pollMs ?? 100)
+    }
+  }
+
+  /** Marks the run and its children cancelled; the driving process aborts the running step and the agent session. */
+  async cancel(runId: string): Promise<boolean> {
+    const changed = await this.journal.cancel(runId)
+    for (const id of changed) this.scopes.get(id)?.controller.abort(new Cancelled(id))
+    return changed.length > 0
+  }
+
+  /** Journals a steer for a running agent step; the process driving it forwards it to the host. */
+  async steer(runId: string, stepId: string, text: string): Promise<void> {
+    const ok = await this.journal.addSteer(runId, stepId, text)
+    if (!ok) throw new Error(`steer: step "${stepId}" of run ${runId} is not a running agent step`)
+    if (this.scopes.has(runId)) await this.deliverSteers([runId])
+  }
+
+  /** One recovery pass: claim pending and orphaned top-level runs while leases are free. */
+  async recover(): Promise<void> {
+    if (this.closing) return
+    const free = this.leases.free()
+    if (free <= 0) return
+    const ids = await this.journal.claimable([...this.registry.keys()], 200 + this.claiming.size)
+    for (const id of ids) {
+      if (this.closing) return
+      const result = await this.tryClaim(id)
+      if (result === 'full') return
+    }
+  }
+
+  /**
+   * Stops ticking, aborts every run driven here with `Shutdown` (rows stay `running`, agent sessions keep
+   * going) and releases the leases, so the next process re-attaches.
+   */
+  async close(): Promise<void> {
+    this.closing = true
+    clearTimeout(this.recoveryTimer)
+    clearTimeout(this.watchTimer)
+    for (const scope of this.scopes.values()) scope.controller.abort(new Shutdown('runtime closing'))
+    await Promise.allSettled([...this.drives])
+    await this.leases.close()
+    await this.pool.end()
+  }
+
+  private register(workflow: AnyWorkflow) {
+    const known = this.registry.get(workflow.id)
+    if (known && known !== workflow) throw new Error(`workflow ${workflow.id} is registered twice`)
+    this.registry.set(workflow.id, workflow)
+  }
+
+  private kick(runId: string) {
+    this.tryClaim(runId).catch((err: unknown) => this.logger.error('claim failed', { runId, error: errorMessage(err) }))
+  }
+
+  private async tryClaim(runId: string): Promise<'started' | 'busy' | 'full' | 'skip'> {
+    if (this.closing || this.claiming.has(runId)) return 'skip'
+    const backoff = this.backoff.get(runId)
+    if (backoff && backoff.nextAt > Date.now()) return 'skip'
+    this.claiming.add(runId)
+    let lease: Lease | 'full' | 'busy'
+    try {
+      lease = await this.leases.tryLock(lockKey(`${this.schema}:${runId}`))
+    } catch (err) {
+      this.claiming.delete(runId)
+      this.noteInfra(runId, err)
+      return 'skip'
+    }
+    if (typeof lease === 'string') {
+      this.claiming.delete(runId)
+      return lease
+    }
+    const drive = this.driveLeased(runId, lease)
+    this.drives.add(drive)
+    drive
+      .catch((err: unknown) => this.logger.error('drive failed', { runId, error: errorMessage(err) }))
+      .finally(() => this.drives.delete(drive))
+    return 'started'
+  }
+
+  /** Holds the lease for the whole drive; the claim and the lease are released in `finally`, whatever failed. */
+  private async driveLeased(runId: string, lease: Lease): Promise<void> {
+    try {
+      await this.driveRoot(runId, lease)
+      this.backoff.delete(runId)
+    } catch (err) {
+      this.noteInfra(runId, err)
+    } finally {
+      await lease.release()
+      this.claiming.delete(runId)
+    }
+  }
+
+  private async driveRoot(runId: string, lease: Lease) {
+    const run = await this.journal.getRun(runId)
+    if (!run || run.parent_id !== null || TERMINAL.has(run.status)) return
+    const workflow = this.registry.get(run.workflow)
+    if (!workflow) return
+    const token = crypto.randomUUID()
+    await this.journal.takeLease(runId, token)
+    const scope = new RunScope(this.scopeHost, run, workflow, { rootId: runId, token }, null)
+    lease.onLost(() => scope.controller.abort(new InfraError(`lease connection of run ${runId} lost`)))
+    if ((this.backoff.get(runId)?.failures ?? 0) >= (this.options.maxInfraFailures ?? 20)) {
+      const error = { kind: 'infra' as const, message: 'too many consecutive infra failures' }
+      await this.finish(scope, { status: 'failed', output: null, error, version: workflow.version })
+      return
+    }
+    await this.drive(scope)
+  }
+
+  /** Admission, then the workflow body, then the terminal write and the post hooks. Shared by roots and children. */
+  private async drive(scope: RunScope): Promise<Json | null> {
+    const { run } = scope
+    this.scopes.set(run.id, scope)
+    try {
+      const admitted = await this.admit(scope)
+      if (!admitted) return null
+      const end = await this.execute(scope)
+      return await this.finish(scope, end)
+    } finally {
+      this.scopes.delete(run.id)
+    }
+  }
+
+  /** False: the run stays pending (concurrency) or ended (refused). */
+  private async admit(scope: RunScope): Promise<boolean> {
+    const { run, workflow } = scope
+    const resume = run.status === 'running'
+    const info = this.runInfo(run, workflow)
+    if (resume) {
+      await this.runPre({ ...info, resume: true })
+      return true
+    }
+    const limit =
+      run.parent_id === null && workflow.concurrency ? { workflow: workflow.id, max: workflow.concurrency } : null
+    if (limit && (await scope.j(() => this.journal.runningCount(workflow.id))) >= limit.max) return false
+    const refusal = await this.runPre({ ...info, resume: false })
+    if (refusal) {
+      const kind = refusal instanceof AdmissionRefused ? 'admission_refused' : 'middleware'
+      await this.finish(scope, {
+        status: 'failed',
+        output: null,
+        error: { kind, message: errorMessage(refusal) },
+        version: workflow.version,
+      })
+      return false
+    }
+    return scope.j(() => this.journal.markRunning(run.id, scope.fence, limit))
+  }
+
+  private async execute(scope: RunScope): Promise<RunEnd> {
+    const { run, workflow } = scope
+    const version = workflow.version
+    try {
+      const raw: unknown = await raceAbort(
+        Promise.resolve().then(() => workflow.run(scope.ctx(), run.input)),
+        scope.signal,
+      )
+      if (scope.infra) throw scope.infra
+      const parsed = workflow.output.safeParse(raw)
+      if (!parsed.success) {
+        const message = `${workflow.id}: ${z.prettifyError(parsed.error)}`
+        return { status: 'failed', output: null, error: { kind: 'invalid_output', message }, version }
+      }
+      const violation = jsonViolation(parsed.data)
+      if (violation) {
+        return { status: 'failed', output: null, error: { kind: 'invalid_output', message: violation }, version }
+      }
+      return { status: 'done', output: parsed.data as Json, error: null, version }
+    } catch (err) {
+      if (scope.infra) throw scope.infra
+      if (err instanceof InfraError) throw err
+      const reason: unknown = scope.signal.aborted ? scope.signal.reason : null
+      if (reason instanceof InfraError) throw reason
+      if (err instanceof Cancelled || reason instanceof Cancelled) {
+        return { status: 'cancelled', output: null, error: { kind: 'cancelled', message: 'cancelled' }, version }
+      }
+      return { status: 'failed', output: null, error: toRunError(err), version }
+    }
+  }
+
+  /** The commit, then `runPost` outside any try: a throwing hook never downgrades the recorded outcome. */
+  private async finish(scope: RunScope, end: RunEnd): Promise<Json | null> {
+    const written = await scope.j(() => this.journal.finishRun(scope.run.id, scope.fence, end))
+    if (!written) return null
+    await this.runPost({
+      ...this.runInfo(scope.run, scope.workflow),
+      status: end.status,
+      output: end.output,
+      error: end.error,
+      startedAt: scope.run.started_at,
+      finishedAt: new Date(),
+    })
+    return end.status === 'done' ? end.output : null
+  }
+
+  /** A child run, driven inside its parent's fan-out step under the root's lease; never by recovery. */
+  private async runChild(
+    parent: RunScope,
+    childId: string,
+    workflow: AnyWorkflow,
+    input: unknown,
+  ): Promise<Json | null> {
+    const root = parent.run
+    const parsed = workflow.input.safeParse(input)
+    const value = (parsed.success ? parsed.data : input) as Json
+    const invalid = parsed.success ? jsonViolation(value) : z.prettifyError(parsed.error)
+    await parent.j(() =>
+      this.journal.insertRun({
+        id: childId,
+        workflow: workflow.id,
+        parentId: root.id,
+        rootId: root.root_id,
+        purpose: root.purpose,
+        input: invalid ? null : value,
+        inputHash: hashJson(invalid ? null : value),
+        idempotencyKey: null,
+        traceparent: root.traceparent,
+        traceId: traceIdOf(root.traceparent ?? undefined),
+        version: workflow.version,
+        ...(invalid ? { status: 'failed' as const, error: { kind: 'invalid_input' as const, message: invalid } } : {}),
+      }),
+    )
+    const run = await parent.j(() => this.journal.getRun(childId))
+    if (!run) throw new InfraError(`child run ${childId} vanished`)
+    if (TERMINAL.has(run.status)) return run.status === 'done' ? run.output : null
+    const scope = new RunScope(this.scopeHost, run, workflow, parent.fence, parent.signal)
+    try {
+      return await this.drive(scope)
+    } catch (err) {
+      if (scope.infra) parent.infra ??= scope.infra
+      throw err
+    }
+  }
+
+  private runInfo(run: RunRow, workflow: AnyWorkflow): RunInfo {
+    return {
+      runId: run.id,
+      workflowId: workflow.id,
+      version: workflow.version,
+      purpose: run.purpose,
+      parentId: run.parent_id,
+      rootId: run.root_id,
+      input: run.input,
+      traceparent: run.traceparent,
+    }
+  }
+
+  /** Resolves to the refusal for a new run; on resume every throw is logged and ignored. */
+  private async runPre(args: RunPreArgs): Promise<unknown> {
+    for (const m of this.middleware) {
+      if (!m.runPre) continue
+      try {
+        await m.runPre(args)
+      } catch (err) {
+        if (!args.resume) return err
+        this.logger.warn('runPre threw on resume; ignored', {
+          middleware: m.name,
+          runId: args.runId,
+          error: errorMessage(err),
+        })
+      }
+    }
+    return null
+  }
+
+  private async runPost(args: RunPostArgs) {
+    for (const m of this.middleware) {
+      if (!m.runPost) continue
+      try {
+        await m.runPost(args)
+      } catch (err) {
+        this.logger.error('runPost threw; outcome kept', {
+          middleware: m.name,
+          runId: args.runId,
+          error: errorMessage(err),
+        })
+      }
+    }
+  }
+
+  private async stepPre(args: StepPreArgs): Promise<unknown> {
+    for (const m of this.middleware) {
+      if (!m.stepPre) continue
+      try {
+        await m.stepPre(args)
+      } catch (err) {
+        return err
+      }
+    }
+    return null
+  }
+
+  private async stepPost(args: StepPostArgs) {
+    for (const m of this.middleware) {
+      if (!m.stepPost) continue
+      try {
+        await m.stepPost(args)
+      } catch (err) {
+        this.logger.error('stepPost threw; outcome kept', {
+          middleware: m.name,
+          runId: args.runId,
+          stepId: args.stepId,
+          error: errorMessage(err),
+        })
+      }
+    }
+  }
+
+  private async tool(phase: 'pre' | 'post', event: ToolEvent) {
+    for (const m of this.middleware) {
+      const hook = phase === 'pre' ? m.toolPre : m.toolPost
+      if (!hook) continue
+      try {
+        await hook(event)
+      } catch (err) {
+        this.logger.error(`tool${phase === 'pre' ? 'Pre' : 'Post'} threw`, {
+          middleware: m.name,
+          error: errorMessage(err),
+        })
+      }
+    }
+  }
+
+  private noteInfra(runId: string, err: unknown) {
+    if (err instanceof Shutdown) return
+    const failures = (this.backoff.get(runId)?.failures ?? 0) + 1
+    const delay = Math.min(MAX_INFRA_BACKOFF_MS, (this.options.infraBackoffMs ?? 1000) * 2 ** (failures - 1))
+    this.backoff.set(runId, { failures, nextAt: Date.now() + delay })
+    this.logger.warn('run left running after an infra error; retrying with backoff', {
+      runId,
+      failures,
+      retryInMs: delay,
+      error: errorMessage(err),
+    })
+  }
+
+  private scheduleRecovery(delay: number) {
+    if (this.closing) return
+    this.recoveryTimer = setTimeout(() => {
+      this.recover()
+        .then(() => {
+          this.recoveryDelay = this.options.recoveryIntervalMs ?? 2000
+        })
+        .catch((err: unknown) => {
+          this.recoveryDelay = Math.min(MAX_RECOVERY_BACKOFF_MS, this.recoveryDelay * 2)
+          this.logger.warn('recovery tick failed; backing off', {
+            retryInMs: this.recoveryDelay,
+            error: errorMessage(err),
+          })
+        })
+        .finally(() => this.scheduleRecovery(this.recoveryDelay))
+    }, delay)
+  }
+
+  private scheduleWatch() {
+    if (this.closing) return
+    this.watchTimer = setTimeout(() => {
+      this.watch()
+        .catch((err: unknown) => this.logger.warn('watch tick failed', { error: errorMessage(err) }))
+        .finally(() => this.scheduleWatch())
+    }, this.options.watchIntervalMs ?? 500)
+  }
+
+  /** Cancels requested from any process reach the runs driven here; steers reach their agent sessions. */
+  private async watch() {
+    const ids = [...this.scopes.keys()]
+    if (ids.length === 0) return
+    for (const id of await this.journal.cancelledAmong(ids)) {
+      this.scopes.get(id)?.controller.abort(new Cancelled(id))
+    }
+    await this.deliverSteers(ids)
+  }
+
+  private async deliverSteers(runIds: string[]) {
+    if (!this.host) return
+    for (const steer of await this.journal.pendingSteers(runIds)) {
+      const handle = this.agents.get(`${steer.run_id}:${steer.step_id}`)
+      if (handle === undefined) continue // not waiting on the host yet; the next tick retries
+      await this.host.steer(handle, steer.text)
+      await this.journal.steerDelivered(steer.id)
+    }
+  }
+}
+
+function hashJson(value: Json): string {
+  return new Bun.CryptoHasher('sha256').update(JSON.stringify(value)).digest('hex')
+}
+
+/** `00-<trace-id>-<parent-id>-<flags>` → trace id. */
+function traceIdOf(traceparent: string | undefined): string | null {
+  const match = traceparent ? /^[\da-f]{2}-([\da-f]{32})-[\da-f]{16}-[\da-f]{2}$/.exec(traceparent) : null
+  return match?.[1] ?? null
+}
