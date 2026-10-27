@@ -242,7 +242,7 @@ describe('runaway cap', () => {
     expect((await sql.step(runId, 'c'))?.error).toContain('runaway cap: cost')
   })
 
-  test('wall time is watched in toolPre inside a long agent step', async () => {
+  test('wall time is watched in toolPre: RunawayCapExceeded fails the agent step and aborts its session', async () => {
     const host = new FakeAgentHost(async (session) => {
       await session.sleep(400, 50)
       await session.tool('read', { path: 'x' }, { ok: true })
@@ -268,10 +268,15 @@ describe('runaway cap', () => {
     const fromTool = decisions.find((d): d is CapDecision => d.rule === 'runaway-cap' && d.hook === 'toolPre')
     expect(fromTool).toMatchObject({ allowed: false, exceeded: 'wallMs', stepId: 'think' })
     expect(logger.lines.filter((l) => l.message === 'runaway cap exceeded').length).toBeGreaterThanOrEqual(1)
-    // The runtime logs a toolPre throw and lets the step go on; the next step stops the run.
-    expect(rtLogger.lines.some((l) => l.message === 'toolPre threw')).toBe(true)
-    expect(result.status).toBe('failed')
-    expect((await sql.step(result.runId, 'after'))?.error).toContain('runaway cap: wallMs')
+    // A throwing toolPre fails the step it runs in (runtime ToolRefused): the agent step itself stops, with the
+    // cap's kind, without a retry, and its session is aborted; the step after it never runs.
+    expect(rtLogger.lines.some((l) => l.message === 'toolPre threw')).toBe(false)
+    expect(result).toMatchObject({ status: 'failed', error: { kind: 'step_failed' } })
+    const think = await sql.step(result.runId, 'think')
+    expect(think).toMatchObject({ status: 'failed', error_kind: 'middleware', attempts: 1 })
+    expect(String(think?.error)).toContain('runaway cap: wallMs')
+    expect(host.count('abort')).toBe(1)
+    expect(await sql.step(result.runId, 'after')).toBeUndefined()
   })
 
   test('a history read failure falls back to the static ceiling without failing the run', async () => {
