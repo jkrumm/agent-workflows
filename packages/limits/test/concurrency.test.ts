@@ -66,7 +66,7 @@ test(`${RUNS} concurrent runs through both rules: one history query, none per st
     expect(results.map((r) => r.status)).toEqual(Array(RUNS).fill('done'))
 
     expect(cap.queries).toBe(1)
-    expect((await cap.caps('conc.ocr')).basis).toMatchObject({ kind: 'learned', sample: 30 })
+    expect((await cap.caps('conc.ocr')).basis.tree).toMatchObject({ kind: 'learned', sample: 30 })
     const wallet = decisions.filter((d) => d.rule === 'wallet-gate')
     const steps = decisions.filter((d) => d.rule === 'runaway-cap')
     expect(wallet).toHaveLength(RUNS)

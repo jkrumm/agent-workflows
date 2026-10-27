@@ -6,24 +6,35 @@ export type Metric = (typeof METRICS)[number]
 /** One value per metric: cost in USD, tokens (input + output + cache read + reasoning), wall time in ms, steps. */
 export type Metrics = Record<Metric, number>
 
-/** Where a run's caps came from: the workflow's own history, or the static ceiling below the sample minimum. */
+/** Where a group of caps came from: the workflow's own history, or the static ceiling. */
 export type CapBasis =
-  | { kind: 'learned'; sample: number; factor: number; p95: Metrics }
-  | { kind: 'static'; sample: number; reason: 'below_sample_minimum' | 'history_unavailable' }
+  | { kind: 'learned'; sample: number; factor: number }
+  | { kind: 'static'; sample: number; reason: 'below_sample_minimum' | 'history_unavailable' | 'history_pending' }
 
-export type Caps = { values: Metrics; basis: CapBasis }
+/**
+ * A workflow's caps. Cost, tokens and wall time (`tree`) are learned from its top-level runs, summed over each run's
+ * whole tree (fan-out children included); steps from all its runs, each counted on its own.
+ */
+export type Caps = { values: Metrics; p95: Partial<Metrics>; basis: { tree: CapBasis; steps: CapBasis } }
 
 export type CapDecision = {
   rule: 'runaway-cap'
   hook: 'stepPre' | 'toolPre'
   runId: string
+  rootId: string
   workflowId: string
   stepId: string
   allowed: boolean
-  /** The run's accumulated usage, including what it spent before a resume. */
+  /**
+   * Cost, tokens and wall time of the whole root run tree, steps of this run; what was spent before a resume
+   * included.
+   */
   observed: Metrics
+  /** Cost, tokens and wall time from the root workflow's caps, steps from this run's workflow. */
   caps: Metrics
-  basis: CapBasis
+  basis: { tree: CapBasis; steps: CapBasis }
+  /** Usage reports without a price in the tree: cost is a lower bound and the token cap is the binding check. */
+  unpricedCalls: number
   exceeded: Metric | null
 }
 
@@ -48,4 +59,23 @@ export type DecisionSink = (decision: LimitDecision) => void
 export const consoleLogger: Logger = {
   warn: (message, meta) => console.warn(`[agw-limits] ${message}`, meta ?? ''),
   error: (message, meta) => console.error(`[agw-limits] ${message}`, meta ?? ''),
+}
+
+/** Wraps `onDecision` so a throwing (or rejecting) sink is logged and never refuses or fails anything. */
+export function isolatedSink(sink: DecisionSink | undefined, logger: Logger): DecisionSink {
+  if (!sink) return () => {}
+  const report = (decision: LimitDecision, err: unknown) =>
+    logger.error('onDecision threw; ignored', {
+      rule: decision.rule,
+      runId: decision.runId,
+      error: err instanceof Error ? err.message : String(err),
+    })
+  return (decision) => {
+    try {
+      const result: unknown = sink(decision)
+      if (result instanceof Promise) result.catch((err: unknown) => report(decision, err))
+    } catch (err) {
+      report(decision, err)
+    }
+  }
 }
