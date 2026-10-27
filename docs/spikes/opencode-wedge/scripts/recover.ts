@@ -41,9 +41,10 @@ async function newSession(port: number, dir: string) {
   const r = (await (await api(port, "/api/session", { method: "POST", body: JSON.stringify({ location: { directory: join(dir, "home") }, model: { providerID: "iu-chat", id: MODEL } }) })).json()) as { data: { id: string } };
   return r.data.id;
 }
-const prompt = (port: number, sid: string, text: string, to = 90_000) => api(port, `/api/session/${sid}/prompt`, { method: "POST", body: JSON.stringify({ text }) }, to);
-const wait = (port: number, sid: string, to = 90_000) => api(port, `/api/experimental/session/${sid}/wait`, { method: "POST" }, to);
-const count = async (port: number, sid: string) => ((await (await api(port, `/api/session/${sid}/message`)).json()) as { data?: unknown[] }).data?.length ?? -1;
+// Timeouts are results here (a stalled boot is the thing under test), not crashes: they come back as a status string.
+const prompt = (port: number, sid: string, text: string, to = 90_000) => api(port, `/api/session/${sid}/prompt`, { method: "POST", body: JSON.stringify({ text }) }, to).catch((e) => ({ status: (e as Error).name === "TimeoutError" ? "timeout" : `error ${(e as Error).name}` }));
+const wait = (port: number, sid: string, to = 90_000) => api(port, `/api/experimental/session/${sid}/wait`, { method: "POST" }, to).catch((e) => ({ status: (e as Error).name === "TimeoutError" ? "timeout" : `error ${(e as Error).name}` }));
+const count = async (port: number, sid: string) => (await api(port, `/api/session/${sid}/message`).then((r) => r.json() as Promise<{ data?: unknown[] }>).catch(() => ({ data: undefined }))).data?.length ?? -1;
 
 try {
   // 1 + 4: SIGTERM latency on a healthy-after-boot watcher-on server; detection latency during the boot
@@ -52,15 +53,16 @@ try {
     console.log("boot reachable:", await up(port));
     const sid = await newSession(port, dir);
     const t0 = Date.now();
-    const pending = prompt(port, sid, "Reply with the single word OK.").then((r) => r.status, () => "timeout");
+    const pending = prompt(port, sid, "Reply with the single word OK.").then((r) => r.status);
     const probes: string[] = [];
     for (let i = 0; i < 6; i++) { const t = Date.now(); const st = await api(port, "/api/info", {}, 2000).then((r) => String(r.status), () => "timeout(2s)"); probes.push(`${Math.round((t - t0) / 1000)}s:${st}`); await Bun.sleep(2000); }
     console.log("DETECT  GET /api/info during the first-prompt stall (watchers on):", probes.join(" "));
-    console.log("prompt status:", await pending, "after", ms(t0));
-    console.log("wait status:", (await wait(port, sid)).status);
+    const ps = await pending;
+    console.log("prompt status:", ps, "after", ms(t0));
+    if (ps === 200) console.log("wait status:", (await wait(port, sid)).status);
     const tt = Date.now(); p.kill("SIGTERM");
     const ended = await Promise.race([p.exited.then(() => true), Bun.sleep(120_000).then(() => false)]);
-    console.log("SIGTERM after a finished turn, watchers on: exited =", ended, ended ? `after ${ms(tt)}` : "(still alive after 120 s)");
+    console.log("SIGTERM after the turn (or after the 90 s ceiling if the stall outlasted it), watchers on: exited =", ended, ended ? `after ${ms(tt)}` : "(still alive after 120 s)");
     if (!ended) { const k = Date.now(); p.kill("SIGKILL"); await p.exited; console.log("SIGKILL then exited after", ms(k)); }
   }
   // 2: SIGKILL during the boot stall, restart, re-attach

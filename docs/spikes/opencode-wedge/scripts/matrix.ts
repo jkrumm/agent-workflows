@@ -68,6 +68,16 @@ const groups: Record<string, () => Cell[]> = {
     { name: "+ OPENCODE_DISABLE_PROJECT_CONFIG=1", o: { extra: "OPENCODE_DISABLE_PROJECT_CONFIG=1" } },
     { name: "+ OPENCODE_FAST_BOOT=1", o: { extra: "OPENCODE_FAST_BOOT=1" } },
   ],
+  recheck: () => [ // after the review: classification fix + async curl; both baselines
+    { name: "S2 spawn as ran (watchers on)", o: {} },
+    { name: "client=curl (watchers on)", o: { client: "curl" } },
+    { name: "S2 spawn + OPENCODE_DISABLE_FILEWATCHER=1", o: { extra: "OPENCODE_DISABLE_FILEWATCHER=1" } },
+    { name: "client=curl + OPENCODE_DISABLE_FILEWATCHER=1", o: { client: "curl", extra: "OPENCODE_DISABLE_FILEWATCHER=1" } },
+  ],
+  stdio: () => ["file", "pipe-unread", "pipe-read"].flatMap((m) => [
+    { name: `stdio=${m} (watchers on)`, o: { stdio: m as Opts["stdio"] } },
+    { name: `stdio=${m} + OPENCODE_DISABLE_FILEWATCHER=1`, o: { stdio: m as Opts["stdio"], extra: "OPENCODE_DISABLE_FILEWATCHER=1" } },
+  ]),
   repro: () => [
     { name: "S2 spawn as ran (watchers on)", o: {} },
     { name: "same + OPENCODE_DISABLE_FILEWATCHER=1", o: { extra: "OPENCODE_DISABLE_FILEWATCHER=1" } },
@@ -81,6 +91,7 @@ if (!(await routeReachable(creds))) { console.error("IU route unreachable; not s
 const sink = startSink();
 const scratch = join(TMP, `ocw-matrix-${Date.now().toString(36)}`);
 mkdirSync(scratch, { recursive: true });
+process.on("exit", () => { rmSync(scratch, { recursive: true, force: true }); rmSync(CLEAN_BASE, { recursive: true, force: true }); });
 mkdirSync(CLEAN_BASE, { recursive: true });
 mkdirSync(join(import.meta.dir, "..", "evidence"), { recursive: true });
 
@@ -102,7 +113,7 @@ async function worker() {
     delete (row as any).root; delete (row as any).base;
     rows.push(row as any);
     appendFileSync(OUT, JSON.stringify(row) + "\n");
-    console.error(`${j.group} | ${j.cell.name} #${j.rep}: ${r.outcome} (${r.where}) prompt=${r.promptMs}ms boot=${r.locBootMs}ms cpu=${r.cpuMean}% term=${r.term}`);
+    console.error(`${j.group} | ${j.cell.name} #${j.rep}: ${r.outcome} (${r.where}) prompt=${r.promptMs}ms boot=${r.locBootMs}ms cpu=${r.cpuMean}% term=${r.term} log=${r.logBytes}B${r.error ? ` ERR ${r.error}` : ""}`);
   }
 }
 await Promise.all(Array.from({ length: CONC }, worker));
@@ -115,18 +126,20 @@ for (const g of wanted.filter((x) => SERIAL.has(x))) {
       delete row.root; delete row.base;
       rows.push(row);
       appendFileSync(OUT, JSON.stringify(row) + "\n");
-      console.error(`${g} | ${cell.name} #${rep}: ${r.outcome} (${r.where}) prompt=${r.promptMs}ms boot=${r.locBootMs}ms cpu=${r.cpuMean}%`);
+      console.error(`${g} | ${cell.name} #${rep}: ${r.outcome} (${r.where}) prompt=${r.promptMs}ms boot=${r.locBootMs}ms cpu=${r.cpuMean}%${r.error ? ` ERR ${r.error}` : ""}`);
     }
     cell.teardown?.();
   }
 }
 sink.stop();
 
-console.log("\n|group|cell|prompted / n|wedged|median prompt ms|median location-boot ms|mean CPU %|prompt >45 s (S2 guard)|SIGTERM not honoured in 6 s|SIGKILL ok|");
-console.log("|-|-|-|-|-|-|-|-|-|-|");
+console.log("\n|group|cell|prompted / n|timed out|errors|median prompt ms|median location-boot ms|mean CPU % (median)|prompt >45 s (S2 guard)|SIGTERM not honoured in 6 s|SIGKILL ok|log bytes (median)|");
+console.log("|-|-|-|-|-|-|-|-|-|-|-|-|");
 const med = (a: number[]) => (a.length ? [...a].sort((x, y) => x - y)[Math.floor(a.length / 2)] : NaN);
 for (const g of wanted) for (const cell of groups[g]!()) {
   const rs = rows.filter((r) => r.group === g && r.cell === cell.name);
-  const ok = rs.filter((r) => r.outcome === "prompt").length;
-  console.log(`|${g}|${cell.name}|${ok}/${rs.length}|${rs.length - ok}|${med(rs.map((r) => r.promptMs))}|${med(rs.filter((r) => r.locBootMs >= 0).map((r) => r.locBootMs))}|${med(rs.filter((r) => r.cpuMean >= 0).map((r) => r.cpuMean))}|${rs.filter((r) => r.promptMs > 45000 || r.outcome !== "prompt").length}/${rs.length}|${rs.filter((r) => r.term.startsWith("ignored")).length}/${rs.length}|${rs.filter((r) => r.kill.startsWith("SIGKILL ok")).length}/${rs.filter((r) => r.term.startsWith("ignored")).length}|`);
+  const n = (f: (r: Result) => boolean) => rs.filter(f).length;
+  const ign = n((r) => r.term.startsWith("ignored"));
+  console.log(`|${g}|${cell.name}|${n((r) => r.outcome === "prompt")}/${rs.length}|${n((r) => r.outcome === "timeout")}|${n((r) => r.outcome === "error")}|${med(rs.map((r) => r.promptMs))}|${med(rs.filter((r) => r.locBootMs >= 0).map((r) => r.locBootMs))}|${med(rs.filter((r) => r.cpuMean >= 0).map((r) => r.cpuMean))}|${n((r) => r.promptMs > 45000 || r.outcome !== "prompt")}/${rs.length}|${ign}/${rs.length}|${n((r) => r.kill.startsWith("SIGKILL ok"))}/${ign}|${med(rs.filter((r) => r.logBytes >= 0).map((r) => r.logBytes))}|`);
+  for (const r of rs.filter((x) => x.error)) console.log(`|||error: ${r.error}|`);
 }

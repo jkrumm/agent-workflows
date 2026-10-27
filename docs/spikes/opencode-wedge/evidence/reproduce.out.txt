@@ -1,32 +1,32 @@
-opencode opencode v2.0.32, bun 1.4.3, load: 6.02 6.54 7.43
+opencode opencode v2.0.32, bun 1.4.3, load: 5.43 7.02 8.44
 pre-existing servers: 7457 12815 20035 
 
 == 1. dotfiles spike script, unmodified (verbatim) vs one-line patched (OPENCODE_DISABLE_FILEWATCHER=1)
-verbatim #1: session: created prompt: 200 wait: 204 messages: 200 (28s)
-verbatim #2: session: created prompt: 200 wait: 204 messages: 200 (15s)
+verbatim #1: session: created prompt: 000 (31s)
+verbatim #2: session: created prompt: 000 (33s)
 nowatch #1: session: created prompt: 200 wait: 204 messages: 200 (12s)
 nowatch #2: session: created prompt: 200 wait: 204 messages: 200 (12s)
 
 == 2. S2's spawn as it ran, watchers on vs off (3 reps each, 90 s ceiling)
-repro | S2 spawn as ran (watchers on) #1: prompt (ok) prompt=2644ms boot=2467ms cpu=7% term=ignored SIGTERM 6s
-repro | same + OPENCODE_DISABLE_FILEWATCHER=1 #1: prompt (ok) prompt=211ms boot=29ms cpu=72% term=term 43ms
-repro | S2 spawn as ran (watchers on) #2: prompt (ok) prompt=6625ms boot=6162ms cpu=17% term=ignored SIGTERM 6s
-repro | same + OPENCODE_DISABLE_FILEWATCHER=1 #2: prompt (ok) prompt=214ms boot=27ms cpu=73% term=term 34ms
-repro | S2 spawn as ran (watchers on) #3: prompt (ok) prompt=23313ms boot=20126ms cpu=6% term=term 3543ms
-repro | same + OPENCODE_DISABLE_FILEWATCHER=1 #3: prompt (ok) prompt=205ms boot=29ms cpu=72% term=term 35ms
+repro | S2 spawn as ran (watchers on) #1: timeout (prompt) prompt=90015ms boot=-1ms cpu=0% term=ignored SIGTERM 6s log=1210B
+repro | same + OPENCODE_DISABLE_FILEWATCHER=1 #1: prompt (ok) prompt=432ms boot=32ms cpu=78% term=term 55ms log=2153B
+repro | S2 spawn as ran (watchers on) #2: timeout (prompt) prompt=90006ms boot=-1ms cpu=0% term=ignored SIGTERM 6s log=1514B
+repro | same + OPENCODE_DISABLE_FILEWATCHER=1 #2: prompt (ok) prompt=619ms boot=59ms cpu=55% term=term 51ms log=2153B
+repro | S2 spawn as ran (watchers on) #3: timeout (prompt) prompt=90003ms boot=-1ms cpu=0% term=ignored SIGTERM 6s log=1210B
+repro | same + OPENCODE_DISABLE_FILEWATCHER=1 #3: prompt (ok) prompt=199ms boot=29ms cpu=131% term=term 37ms log=2839B
 
-|group|cell|prompted / n|wedged|median prompt ms|median location-boot ms|mean CPU %|prompt >45 s (S2 guard)|SIGTERM not honoured in 6 s|SIGKILL ok|
-|-|-|-|-|-|-|-|-|-|-|
-|repro|S2 spawn as ran (watchers on)|3/3|0|6625|6162|7|0/3|2/3|2/2|
-|repro|same + OPENCODE_DISABLE_FILEWATCHER=1|3/3|0|211|29|72|0/3|0/3|0/0|
+|group|cell|prompted / n|timed out|errors|median prompt ms|median location-boot ms|mean CPU % (median)|prompt >45 s (S2 guard)|SIGTERM not honoured in 6 s|SIGKILL ok|log bytes (median)|
+|-|-|-|-|-|-|-|-|-|-|-|-|
+|repro|S2 spawn as ran (watchers on)|0/3|3|0|90006|NaN|0|3/3|3/3|3/3|1210|
+|repro|same + OPENCODE_DISABLE_FILEWATCHER=1|3/3|0|0|432|32|78|0/3|0/3|0/0|2153|
 matrix exit: 0
 
 == 3. detection and recovery
 boot reachable: true
-DETECT  GET /api/info during the first-prompt stall (watchers on): 0s:200 2s:timeout(2s) 6s:timeout(2s) 10s:200 13s:200 15s:200
-prompt status: 200 after 17038 ms
-wait status: 204
-SIGTERM after a finished turn, watchers on: exited = true after 8221 ms
+DETECT  GET /api/info during the first-prompt stall (watchers on): 0s:200 2s:timeout(2s) 6s:timeout(2s) 10s:timeout(2s) 14s:timeout(2s) 18s:timeout(2s)
+prompt status: timeout after 90018 ms
+SIGTERM after the turn (or after the 90 s ceiling if the stall outlasted it), watchers on: exited = false (still alive after 120 s)
+SIGKILL then exited after 9 ms
 SIGKILL mid-boot-stall: server gone; restarting on the same data dir, watchers off
 restart reachable: true
 session survives restart (mid-stall kill): true | messages on it: 0
@@ -34,4 +34,5 @@ new prompt on the old session: 200 | wait: 204 | messages now: 3
 session after a finished turn + SIGKILL + restart: messages 3 -> 3; second prompt 200, wait 204, messages now 6
 
 servers after: 7457 12815 20035  (must equal the pre-existing list)
+failed steps: 0
 exit 0
