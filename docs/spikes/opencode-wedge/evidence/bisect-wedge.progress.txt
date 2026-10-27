@@ -1,0 +1,54 @@
+bisect-wedge | env=parent #1: prompt (ok) prompt=79389ms boot=73198ms cpu=2% term=ignored SIGTERM 6s
+bisect-wedge | baseline #1: prompt (ok) prompt=83459ms boot=77544ms cpu=2% term=ignored SIGTERM 6s
+bisect-wedge | cwd=repo(AGENTS.md ancestor) #1: prompt (ok) prompt=91822ms boot=76485ms cpu=1% term=ignored SIGTERM 6s
+bisect-wedge | cwd=clean /tmp dir #1: prompt (ok) prompt=60783ms boot=52302ms cpu=2% term=ignored SIGTERM 6s
+bisect-wedge | cwd=empty dir #1: prompt (ok) prompt=97588ms boot=93846ms cpu=1% term=ignored SIGTERM 6s
+bisect-wedge | home=warm #1: prompt (ok) prompt=87347ms boot=84563ms cpu=1% term=ignored SIGTERM 6s
+bisect-wedge | otel=unset #1: prompt (ok) prompt=47867ms boot=36711ms cpu=1% term=ignored SIGTERM 6s
+bisect-wedge | otel=down #1: prompt (ok) prompt=56931ms boot=49293ms cpu=2% term=ignored SIGTERM 6s
+bisect-wedge | otel=up +flag #1: prompt (ok) prompt=56713ms boot=53616ms cpu=1% term=term 70717ms
+bisect-wedge | otel=up svcname (dotfiles) #1: prompt (ok) prompt=109919ms boot=42571ms cpu=1% term=ignored SIGTERM 6s
+bisect-wedge | client=curl #1: prompt (ok) prompt=68567ms boot=64599ms cpu=32% term=ignored SIGTERM 6s
+bisect-wedge | host=127.0.0.1 #1: prompt (ok) prompt=64378ms boot=61302ms cpu=3% term=ignored SIGTERM 6s
+bisect-wedge | host=::1 #1: prompt (ok) prompt=59085ms boot=56806ms cpu=1% term=ignored SIGTERM 6s
+bisect-wedge | port=fixed 17900 #1: prompt (ok) prompt=59228ms boot=55664ms cpu=1% term=ignored SIGTERM 6s
+bisect-wedge | stdio=pipe-unread #1: prompt (ok) prompt=33681ms boot=-1ms cpu=3% term=ignored SIGTERM 6s
+bisect-wedge | stdio=pipe-read #1: prompt (ok) prompt=34488ms boot=-1ms cpu=3% term=ignored SIGTERM 6s
+bisect-wedge | stdio=null #1: prompt (ok) prompt=37253ms boot=-1ms cpu=4% term=ignored SIGTERM 6s
+bisect-wedge | stdio=inherit #1: prompt (ok) prompt=87351ms boot=-1ms cpu=2% term=ignored SIGTERM 6s
+bisect-wedge | baseline #2: prompt (ok) prompt=90526ms boot=84559ms cpu=2% term=ignored SIGTERM 6s
+bisect-wedge | env=parent #2: prompt (ok) prompt=89923ms boot=83520ms cpu=2% term=ignored SIGTERM 6s
+bisect-wedge | cwd=clean /tmp dir #2: prompt (ok) prompt=73858ms boot=73163ms cpu=2% term=ignored SIGTERM 6s
+bisect-wedge | cwd=empty dir #2: prompt (ok) prompt=86629ms boot=80128ms cpu=2% term=ignored SIGTERM 6s
+bisect-wedge | cwd=repo(AGENTS.md ancestor) #2: prompt (ok) prompt=94649ms boot=83009ms cpu=1% term=ignored SIGTERM 6s
+bisect-wedge | home=warm #2: prompt (ok) prompt=104314ms boot=95647ms cpu=2% term=ignored SIGTERM 6s
+bisect-wedge | otel=unset #2: prompt (ok) prompt=116083ms boot=108643ms cpu=2% term=ignored SIGTERM 6s
+bisect-wedge | otel=down #2: prompt (ok) prompt=114126ms boot=106614ms cpu=1% term=ignored SIGTERM 6s
+bisect-wedge | otel=up +flag #2: prompt (ok) prompt=118989ms boot=64152ms cpu=1% term=ignored SIGTERM 6s
+bisect-wedge | otel=up svcname (dotfiles) #2: prompt (ok) prompt=97438ms boot=96568ms cpu=31% term=ignored SIGTERM 6s
+bisect-wedge | client=curl #2: prompt (ok) prompt=96722ms boot=95932ms cpu=63% term=ignored SIGTERM 6s
+bisect-wedge | host=127.0.0.1 #2: prompt (ok) prompt=38297ms boot=30637ms cpu=3% term=ignored SIGTERM 6s
+bisect-wedge | host=::1 #2: prompt (ok) prompt=40433ms boot=32058ms cpu=7% term=ignored SIGTERM 6s
+bisect-wedge | port=fixed 17900 #2: prompt (ok) prompt=43968ms boot=36181ms cpu=3% term=ignored SIGTERM 6s
+bisect-wedge | stdio=pipe-unread #2: prompt (ok) prompt=73363ms boot=-1ms cpu=2% term=ignored SIGTERM 6s
+bisect-wedge | stdio=pipe-read #2: prompt (ok) prompt=72982ms boot=-1ms cpu=2% term=ignored SIGTERM 6s
+bisect-wedge | stdio=null #2: prompt (ok) prompt=73070ms boot=-1ms cpu=2% term=ignored SIGTERM 6s
+bisect-wedge | stdio=inherit #2: prompt (ok) prompt=60388ms boot=-1ms cpu=3% term=ignored SIGTERM 6s
+bisect-wedge | env=parent #3: prompt (ok) prompt=57318ms boot=52979ms cpu=2% term=ignored SIGTERM 6s
+bisect-wedge | baseline #3: prompt (ok) prompt=60972ms boot=54793ms cpu=1% term=ignored SIGTERM 6s
+bisect-wedge | cwd=clean /tmp dir #3: prompt (ok) prompt=34958ms boot=33767ms cpu=2% term=ignored SIGTERM 6s
+bisect-wedge | cwd=empty dir #3: prompt (ok) prompt=64354ms boot=62207ms cpu=3% term=ignored SIGTERM 6s
+bisect-wedge | cwd=repo(AGENTS.md ancestor) #3: prompt (ok) prompt=75568ms boot=44149ms cpu=2% term=ignored SIGTERM 6s
+bisect-wedge | home=warm #3: prompt (ok) prompt=97405ms boot=80549ms cpu=1% term=ignored SIGTERM 6s
+bisect-wedge | otel=unset #3: prompt (ok) prompt=84814ms boot=75950ms cpu=1% term=ignored SIGTERM 6s
+bisect-wedge | otel=down #3: prompt (ok) prompt=76189ms boot=72713ms cpu=1% term=ignored SIGTERM 6s
+bisect-wedge | otel=up +flag #3: prompt (ok) prompt=125621ms boot=102224ms cpu=2% term=ignored SIGTERM 6s
+bisect-wedge | otel=up svcname (dotfiles) #3: prompt (ok) prompt=108814ms boot=102206ms cpu=4% term=ignored SIGTERM 6s
+bisect-wedge | client=curl #3: prompt (ok) prompt=107210ms boot=100794ms cpu=22% term=ignored SIGTERM 6s
+bisect-wedge | host=::1 #3: prompt (ok) prompt=47432ms boot=39002ms cpu=4% term=ignored SIGTERM 6s
+bisect-wedge | host=127.0.0.1 #3: prompt (ok) prompt=47962ms boot=40866ms cpu=1% term=ignored SIGTERM 6s
+bisect-wedge | port=fixed 17900 #3: prompt (ok) prompt=51630ms boot=41979ms cpu=3% term=ignored SIGTERM 6s
+bisect-wedge | stdio=pipe-unread #3: prompt (ok) prompt=46479ms boot=-1ms cpu=4% term=ignored SIGTERM 6s
+bisect-wedge | stdio=pipe-read #3: prompt (ok) prompt=48902ms boot=-1ms cpu=1% term=ignored SIGTERM 6s
+bisect-wedge | stdio=null #3: prompt (ok) prompt=51109ms boot=-1ms cpu=1% term=ignored SIGTERM 6s
+bisect-wedge | stdio=inherit #3: prompt (ok) prompt=13662ms boot=-1ms cpu=7% term=term 3961ms
