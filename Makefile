@@ -8,6 +8,7 @@ help:
 	@echo "make verify  skeleton, nothing deployable yet"
 
 # docs/spikes/** is excluded from every tool (see biome.json, .oxlintrc.json, tsconfig.json, bunfig.toml).
+# Tests need Postgres via AGW_TEST_PG_URL; unset on the mini, it is built from .env.test.tpl through secrets-run.
 check:
 	@echo "==> format (biome format)"
 	@bunx --no-install biome format .
@@ -18,7 +19,12 @@ check:
 	@echo "==> typecheck (tsc --noEmit)"
 	@bunx --no-install tsc --noEmit
 	@echo "==> test (bun test --isolate)"
-	@bun test --isolate
+	@if [ -n "$$AGW_TEST_PG_URL" ] || ! command -v secrets-run >/dev/null 2>&1; then \
+		bun test --isolate; \
+	else \
+		secrets-run run --env-file=.env.test.tpl -- sh -c \
+			'AGW_TEST_PG_URL="postgres://agent_workflows:$$(bun -e "process.stdout.write(encodeURIComponent(process.env.AGW_TEST_PG_PASSWORD))")@127.0.0.1:5432/agent_workflows" exec bun test --isolate'; \
+	fi
 	@echo "==> check passed"
 
 fmt:

@@ -90,6 +90,8 @@ excluded from every tool.
 CI (`.github/workflows/ci.yml`) runs `bun install --frozen-lockfile` and `make check` on pushes to `master` and
 on pull requests, on GitHub-hosted runners.
 
+Tests need Postgres via `AGW_TEST_PG_URL` and fail when it is unset; `make check` builds it on the mini from `.env.test.tpl` (`secrets-run`), CI from a `postgres:18` service; each test file works in its own throwaway schema.
+
 ## Gotchas
 
 - `docs/concept.md` changes only with a version note at the top and a retro-log entry.
