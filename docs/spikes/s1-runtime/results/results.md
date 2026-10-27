@@ -2,70 +2,82 @@
 
 | metric | own | dbos | vercel |
 |-|-|-|-|
-| scenarios ok | 12/12 | 10/14 | 7/12 |
-| completed steps re-executed (all kills) | 0 | 0 | 0 |
-| in-doubt re-runs (kill between step end and journal) | 1 | 1 | 1 |
-| duplicate effects (rows > 1) | 0 | 0 | 0 |
-| effect retries absorbed by key | 1 | 1 | 1 |
-| agent step wall after kill at 30s (s) | 60.2 | 60.2 | - |
-| agent sessions created in m-agent | 1 | 1 | 1 |
-| median recovery after restart (s) | 0.1 | 1.3 | 1.2 |
-| deploy, compatible change | finished on v2 | stuck: no outcome after 180s; 0 effect rows | finished on v2 |
-| deploy, step inserted ahead of the run's position | finished on v2-break | stuck: no outcome after 180s; 0 effect rows | finished on v2-break |
-| deploy, step inserted before recorded steps | finished on v2-break | stuck: no outcome after 180s; 0 effect rows | FAIL: no outcome (failed) |
-| deploy, pinned version (DBOS only) | - | finished on v2 | - |
-| deploy, pinned, step inserted before recorded (DBOS only) | - | FAIL: no outcome (failed) | - |
-| status at end of measurement: deploy / deploy-break-late | done / done | SUCCESS / PENDING | completed / failed CORRUPTED_EVENT_LOG |
+| scenarios ok (first run) | 13/13 | 11/15 | 9/13 |
+| isolated reruns of non-ok rows that were ok | 0/0 | 0/4 | 0/4 |
+| kill scenarios ok, first run (9) | 9/9 | 9/9 | 6/9 |
+| completed steps re-executed (all runs) | 0 | 0 | 0 |
+| in-doubt re-runs (kill between step end and journal) | 2 | 2 | 2 |
+| runs where the effect was not inserted exactly once | 0 | 0 | 0 |
+| effect retries absorbed by the key | 1 | 1 | 1 |
+| m-agent (SIGKILL at 30 s): agent wall, sessions, prompts | 60.2 s; 1 session(s), 0 orphan; prompts 1 sent, 1 no-op | 60.1 s; 1 session(s), 0 orphan; prompts 1 sent, 1 no-op | - s; 1 session(s), 0 orphan; prompts 1 sent, 1 no-op |
+| m-agent-open (SIGKILL after session create, before handle write) | 60.2 s; 2 session(s), 1 orphan; prompts 1 sent, 0 no-op | 60.0 s; 2 session(s), 1 orphan; prompts 1 sent, 0 no-op | 60.1 s; 2 session(s), 1 orphan; prompts 1 sent, 0 no-op |
+| runs that sent more than one prompt | 0 | 0 | 0 |
+| median restart to first step activity, incl. process start and SDK launch (s) | 0.2 | 1.4 | 2 |
+| deploy, compatible change | ok, finished on v2 | stuck: no outcome 120s after restart; isolated rerun: stuck: no outcome 120s after restart | ok, finished on v2 |
+| deploy, step inserted ahead of the run's position | ok, finished on v2-break | stuck: no outcome 120s after restart; isolated rerun: stuck: no outcome 120s after restart | ok, finished on v2-break |
+| deploy, step inserted before recorded steps | ok, finished on v2-break | stuck: no outcome 120s after restart; isolated rerun: stuck: no outcome 120s after restart | FAIL: no outcome (failed); isolated rerun: FAIL: no outcome (failed) |
+| deploy, pinned version (DBOS only) | - | ok, finished on v2 | - |
+| deploy, pinned, step inserted before recorded (DBOS only) | - | FAIL: no outcome (failed); isolated rerun: FAIL: no outcome (failed) | - |
+| stuck rows and their follow-up | - | deploy #1: v1 process finished it in 4 s; deploy #2: v1 process finished it in 5 s; deploy-break #1: v1 process finished it in 5 s; deploy-break #2: v1 process finished it in 4 s; deploy-break-late #1: v1 process finished it in 4 s; deploy-break-late #2: v1 process finished it in 3 s | b-finish #1: 2 locks back-dated; v1 process finished it in 57 s; b-finish #2: 3 locks back-dated; v1 process finished it in 20 s; m-agent #1: 1 locks back-dated; v1 process finished it in 47 s; m-agent #2: 1 locks back-dated; v1 process finished it in 53 s; m-child #1: 3 locks back-dated; v1 process finished it in 13 s; m-child #2: 3 locks back-dated; v1 process finished it in 12 s |
 | middleware run/pre,step/pre,step/post,run/post (happy) | 4/8/8/4 | 1/8/7/1 | 1/8/7/1 |
 | LOC runtime / workflow+wiring | 163 / 39 | 0 / 50 | 40 / 83 |
 | deps direct / transitive | 1 / 14 | 1 / 22 | 2 / 358 |
 | install size (MB) | 0.5 | 10.3 | 190.3 |
 | Postgres tables / indexes | 2 / 2 | 13 / 38 | 15 / 32 |
-| Postgres kB per run (engine tables / runs measured) | 12 | 63 | 121 |
-| happy path wall (s) | 64.4 | 65.2 | 65.8 |
+| engine schemas after one happy run on fresh schemas (kB, incl. empty-table overhead) | 64 | 632 | 712 |
+| happy path wall (s) | 64.5 | 65.7 | 66.4 |
 | Postgres restarts hit (reruns) | 0 | 0 | 0 |
 
 ## Per scenario
 
-| candidate | scenario | outcome | completed re-runs | in-doubt re-runs | effect rows | key-absorbed retries | sessions | agent wall s | recovery s | finished on | engine status | status at end | after lock probe | mw pre/sPre/sPost/post | total s |
-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|
-| own | happy | ok | 0 | 0 | 1 | 0 | 1 | 60 | - | v1 | done | done | - | 4/8/8/4 | 64.4 |
-| own | b-agent | ok | 0 | 0 | 1 | 0 | 1 | 60.2 | 0.1 | v1 | done | done | - | 5/9/8/4 | 67.1 |
-| own | b-effect | ok | 0 | 0 | 1 | 0 | 1 | 60.1 | 0.1 | v1 | done | done | - | 5/9/8/4 | 66.9 |
-| own | b-fanout | ok | 0 | 0 | 1 | 0 | 1 | 60.1 | 0.2 | v1 | done | done | - | 6/10/8/4 | 66.8 |
-| own | b-finish | ok | 0 | 0 | 1 | 0 | 1 | 60.2 | 0.1 | v1 | done | done | - | 5/9/8/4 | 67.4 |
-| own | m-prepare | ok | 0 | 1 | 1 | 0 | 1 | 60.2 | 0.1 | v1 | done | done | - | 5/9/8/4 | 66.8 |
-| own | m-agent | ok | 0 | 0 | 1 | 0 | 1 | 60.2 | 0.1 | v1 | done | done | - | 5/9/8/4 | 64.7 |
-| own | m-effect | ok | 0 | 0 | 1 | 1 | 1 | 60 | 0.3 | v1 | done | done | - | 5/9/8/4 | 67 |
-| own | m-child | ok | 0 | 0 | 1 | 0 | 1 | 60.1 | 0.1 | v1 | done | done | - | 8/12/8/4 | 67.3 |
-| own | deploy | ok | 0 | 0 | 1 | 0 | 1 | 60.1 | 0.1 | v2 | done | done | - | 5/9/8/4 | 64.5 |
-| own | deploy-break | ok | 0 | 0 | 1 | 0 | 1 | 60.1 | 0.1 | v2-break | done | done | - | 5/10/9/4 | 64.6 |
-| own | deploy-break-late | ok | 0 | 0 | 1 | 0 | 1 | 60.2 | 0.1 | v2-break | done | done | - | 6/11/9/4 | 67.2 |
-| dbos | happy | ok | 0 | 0 | 1 | 0 | 1 | 60.1 | - | v1 | SUCCESS | SUCCESS | - | 1/8/7/1 | 65.2 |
-| dbos | b-agent | ok | 0 | 0 | 1 | 0 | 1 | 60.1 | 1.3 | v1 | SUCCESS | SUCCESS | - | 2/9/7/1 | 68.3 |
-| dbos | b-effect | ok | 0 | 0 | 1 | 0 | 1 | 60.2 | 1.2 | v1 | SUCCESS | SUCCESS | - | 2/9/7/1 | 68.3 |
-| dbos | b-fanout | ok | 0 | 0 | 1 | 0 | 1 | 60 | 1.4 | v1 | SUCCESS | SUCCESS | - | 2/9/7/1 | 68.2 |
-| dbos | b-finish | ok | 0 | 0 | 1 | 0 | 1 | 60.1 | 1.2 | v1 | SUCCESS | SUCCESS | - | 2/9/7/1 | 68 |
-| dbos | m-prepare | ok | 0 | 1 | 1 | 0 | 1 | 60.1 | 1.3 | v1 | SUCCESS | SUCCESS | - | 2/9/7/1 | 67.9 |
-| dbos | m-agent | ok | 0 | 0 | 1 | 0 | 1 | 60.2 | 1.3 | v1 | SUCCESS | SUCCESS | - | 2/9/7/1 | 64.9 |
-| dbos | m-effect | ok | 0 | 0 | 1 | 1 | 1 | 60.2 | 1.2 | v1 | SUCCESS | SUCCESS | - | 2/9/7/1 | 68.1 |
-| dbos | m-child | ok | 0 | 0 | 1 | 0 | 1 | 60 | 1.3 | v1 | SUCCESS | SUCCESS | - | 2/11/7/1 | 69.7 |
-| dbos | deploy | stuck (no outcome after 180s; 0 effect rows) | 0 | 0 | 0 | 0 | 1 | - | - | - | PENDING | SUCCESS | - | 1/3/2/0 | 214 |
-| dbos | deploy-break | stuck (no outcome after 180s; 0 effect rows) | 0 | 0 | 0 | 0 | 1 | - | - | - | PENDING | PENDING | - | 1/3/2/0 | 214.2 |
-| dbos | deploy-break-late | stuck (no outcome after 180s; 0 effect rows) | 0 | 0 | 0 | 0 | 1 | - | - | - | PENDING | PENDING | - | 1/3/2/0 | 186.8 |
-| dbos | deploy-pinned | ok | 0 | 0 | 1 | 0 | 1 | 60.1 | 1.3 | v2 | SUCCESS | SUCCESS | - | 2/9/7/1 | 64.6 |
-| dbos | deploy-break-late-pinned | FAIL (no outcome (failed)) | 0 | 0 | 1 | 0 | 1 | 60.1 | 1.3 | - | ERROR | ERROR | - | 2/9/6/0 | 67.5 |
-| vercel | happy | ok | 0 | 0 | 1 | 0 | 1 | 60.1 | - | v1 | completed | completed | completed | 1/8/7/1 | 65.8 |
-| vercel | b-agent | ok | 0 | 0 | 1 | 0 | 1 | 60.2 | 0.7 | v1 | completed | completed | completed | 1/9/7/1 | 69.3 |
-| vercel | b-effect | ok | 0 | 0 | 1 | 0 | 1 | 60.1 | 1.3 | v1 | completed | completed | completed | 1/9/7/1 | 69.5 |
-| vercel | b-fanout | stuck (no outcome after 180s) | 0 | 0 | 1 | 0 | 1 | 60.2 | 1 | - | running | completed | completed | 1/9/5/0 | 247 |
-| vercel | b-finish | stuck (no outcome after 180s) | 0 | 0 | 1 | 0 | 1 | 60 | - | - | running | completed | completed | 1/8/6/0 | 248.2 |
-| vercel | m-prepare | ok | 0 | 1 | 1 | 0 | 1 | 60 | 0.8 | v1 | completed | completed | completed | 1/9/7/1 | 69.9 |
-| vercel | m-agent | stuck (no outcome after 180s; 0 effect rows) | 0 | 0 | 0 | 0 | 1 | - | - | - | running | running | completed | 1/3/2/0 | 215 |
-| vercel | m-effect | ok | 0 | 0 | 1 | 1 | 1 | 60.2 | 1.2 | v1 | completed | completed | completed | 1/9/7/1 | 70.2 |
-| vercel | m-child | stuck (no outcome after 180s) | 0 | 0 | 1 | 0 | 1 | 60.1 | 9 | - | running | failed CORRUPTED_EVENT_LOG | failed CORRUPTED_EVENT_LOG | 1/7/4/1 | 247.6 |
-| vercel | deploy | ok | 0 | 0 | 1 | 0 | 1 | 60 | 1.1 | v2 | completed | completed | completed | 1/9/7/1 | 66.7 |
-| vercel | deploy-break | ok | 0 | 0 | 1 | 0 | 1 | 60.2 | 1.2 | v2-break | completed | completed | completed | 1/10/8/3 | 66 |
-| vercel | deploy-break-late | FAIL (no outcome (failed)) | 0 | 0 | 1 | 0 | 1 | 60.1 | 1.8 | - | failed CORRUPTED_EVENT_LOG | failed CORRUPTED_EVENT_LOG | failed CORRUPTED_EVENT_LOG | 1/7/6/1 | 70.5 |
-
-Vercel follow-up: 13 graphile-worker job locks back-dated past the 4 h expiry, then one v1 worker ran for 120 s (column "after lock probe").
+| candidate | scenario | run | outcome | completed re-runs | in-doubt re-runs | effect inserted | key-absorbed retries | sessions (orphans) | prompts sent / no-op | agent wall s | restart to first step activity s | finished on | engine status | follow-up | mw pre/sPre/sPost/post | total s |
+|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|
+| own | happy | 1 | ok | 0 | 0 | 1 | 0 | 1 (0) | 1 / 0 | 60 | - | v1 | done | - | 4/8/8/4 | 64.5 |
+| own | b-agent | 1 | ok | 0 | 0 | 1 | 0 | 1 (0) | 1 / 0 | 60 | 0.2 | v1 | done | - | 5/9/8/4 | 66.9 |
+| own | b-effect | 1 | ok | 0 | 0 | 1 | 0 | 1 (0) | 1 / 0 | 60.1 | 0.4 | v1 | done | - | 5/9/8/4 | 67.4 |
+| own | b-fanout | 1 | ok | 0 | 0 | 1 | 0 | 1 (0) | 1 / 0 | 60 | 0.3 | v1 | done | - | 6/10/8/4 | 67.6 |
+| own | b-finish | 1 | ok | 0 | 0 | 1 | 0 | 1 (0) | 1 / 0 | 60.2 | 0.2 | v1 | done | - | 5/9/8/4 | 67 |
+| own | m-prepare | 1 | ok | 0 | 1 | 1 | 0 | 1 (0) | 1 / 0 | 60.1 | 0.1 | v1 | done | - | 5/9/8/4 | 67.2 |
+| own | m-agent-open | 1 | ok | 0 | 1 | 1 | 0 | 2 (1) | 1 / 0 | 60.2 | 0.1 | v1 | done | - | 5/9/8/4 | 67.3 |
+| own | m-agent | 1 | ok | 0 | 0 | 1 | 0 | 1 (0) | 1 / 1 | 60.2 | 0.1 | v1 | done | - | 5/9/8/4 | 65.6 |
+| own | m-effect | 1 | ok | 0 | 0 | 1 | 1 | 1 (0) | 1 / 0 | 60 | 0.3 | v1 | done | - | 5/9/8/4 | 67.3 |
+| own | m-child | 1 | ok | 0 | 0 | 1 | 0 | 1 (0) | 1 / 0 | 60.2 | 0.1 | v1 | done | - | 8/12/8/4 | 67.5 |
+| own | deploy | 1 | ok | 0 | 0 | 1 | 0 | 1 (0) | 1 / 1 | 60.1 | 0.1 | v2 | done | - | 5/9/8/4 | 64.7 |
+| own | deploy-break | 1 | ok | 0 | 0 | 1 | 0 | 1 (0) | 1 / 1 | 60.2 | 0.1 | v2-break | done | - | 5/10/9/4 | 64.7 |
+| own | deploy-break-late | 1 | ok | 0 | 0 | 1 | 0 | 1 (0) | 1 / 0 | 60.2 | 0.2 | v2-break | done | - | 6/11/9/4 | 67 |
+| dbos | happy | 1 | ok | 0 | 0 | 1 | 0 | 1 (0) | 1 / 0 | 60.2 | - | v1 | SUCCESS | - | 1/8/7/1 | 65.7 |
+| dbos | b-agent | 1 | ok | 0 | 0 | 1 | 0 | 1 (0) | 1 / 0 | 60.1 | 1.4 | v1 | SUCCESS | - | 2/9/7/1 | 70.9 |
+| dbos | b-effect | 1 | ok | 0 | 0 | 1 | 0 | 1 (0) | 1 / 0 | 60.1 | 1.2 | v1 | SUCCESS | - | 2/9/7/1 | 69.1 |
+| dbos | b-fanout | 1 | ok | 0 | 0 | 1 | 0 | 1 (0) | 1 / 0 | 60.1 | 1.3 | v1 | SUCCESS | - | 2/9/7/1 | 70.3 |
+| dbos | b-finish | 1 | ok | 0 | 0 | 1 | 0 | 1 (0) | 1 / 0 | 60.1 | 1.4 | v1 | SUCCESS | - | 2/9/7/1 | 69.1 |
+| dbos | m-prepare | 1 | ok | 0 | 1 | 1 | 0 | 1 (0) | 1 / 0 | 60.2 | 1.8 | v1 | SUCCESS | - | 2/9/7/1 | 70.1 |
+| dbos | m-agent-open | 1 | ok | 0 | 1 | 1 | 0 | 2 (1) | 1 / 0 | 60 | 1.3 | v1 | SUCCESS | - | 2/9/7/1 | 69.1 |
+| dbos | m-agent | 1 | ok | 0 | 0 | 1 | 0 | 1 (0) | 1 / 1 | 60.1 | 1.6 | v1 | SUCCESS | - | 2/9/7/1 | 65.6 |
+| dbos | m-effect | 1 | ok | 0 | 0 | 1 | 1 | 1 (0) | 1 / 0 | 60.1 | 2.1 | v1 | SUCCESS | - | 2/9/7/1 | 70.6 |
+| dbos | m-child | 1 | ok | 0 | 0 | 1 | 0 | 1 (0) | 1 / 0 | 60.1 | 1.4 | v1 | SUCCESS | - | 2/11/7/1 | 69.7 |
+| dbos | deploy | 1 | stuck (no outcome 120s after restart) | 0 | 0 | 1 | 0 | 1 (0) | 1 / 1 | - | - | v1 | PENDING | v1 process finished it in 4 s | 2/9/7/1 | 154.9 |
+| dbos | deploy | 2 | stuck (no outcome 120s after restart) | 0 | 0 | 1 | 0 | 1 (0) | 1 / 1 | - | - | v1 | PENDING | v1 process finished it in 5 s | 2/9/7/1 | 156.3 |
+| dbos | deploy-break | 1 | stuck (no outcome 120s after restart) | 0 | 0 | 1 | 0 | 1 (0) | 1 / 1 | - | - | v1 | PENDING | v1 process finished it in 5 s | 2/9/7/1 | 155.1 |
+| dbos | deploy-break | 2 | stuck (no outcome 120s after restart) | 0 | 0 | 1 | 0 | 1 (0) | 1 / 1 | - | - | v1 | PENDING | v1 process finished it in 4 s | 2/9/7/1 | 155.2 |
+| dbos | deploy-break-late | 1 | stuck (no outcome 120s after restart) | 0 | 0 | 1 | 0 | 1 (0) | 1 / 0 | 60.2 | - | v1 | PENDING | v1 process finished it in 4 s | 2/10/7/1 | 186.7 |
+| dbos | deploy-break-late | 2 | stuck (no outcome 120s after restart) | 0 | 0 | 1 | 0 | 1 (0) | 1 / 0 | 60.1 | - | v1 | PENDING | v1 process finished it in 3 s | 2/10/7/1 | 187.9 |
+| dbos | deploy-pinned | 1 | ok | 0 | 0 | 1 | 0 | 1 (0) | 1 / 1 | 60.2 | 1.6 | v2 | SUCCESS | - | 2/9/7/1 | 65.6 |
+| dbos | deploy-break-late-pinned | 1 | FAIL (no outcome (failed)) | 0 | 0 | 1 | 0 | 1 (0) | 1 / 0 | 60.2 | 1.6 | - | ERROR | - | 2/8/6/0 | 68.4 |
+| dbos | deploy-break-late-pinned | 2 | FAIL (no outcome (failed)) | 0 | 0 | 1 | 0 | 1 (0) | 1 / 0 | 60 | 1.4 | - | ERROR | - | 2/9/6/0 | 67.7 |
+| vercel | happy | 1 | ok | 0 | 0 | 1 | 0 | 1 (0) | 1 / 0 | 60.3 | - | v1 | completed | - | 1/8/7/1 | 66.4 |
+| vercel | b-agent | 1 | ok | 0 | 0 | 1 | 0 | 1 (0) | 1 / 0 | 60 | 1.2 | v1 | completed | - | 1/9/7/1 | 70.3 |
+| vercel | b-effect | 1 | ok | 0 | 0 | 1 | 0 | 1 (0) | 1 / 0 | 60.2 | 2 | v1 | completed | - | 1/9/7/1 | 71.6 |
+| vercel | b-fanout | 1 | ok | 0 | 0 | 1 | 0 | 1 (0) | 1 / 0 | 60.3 | 2.4 | v1 | completed | - | 1/9/7/1 | 71.5 |
+| vercel | b-finish | 1 | stuck (no outcome 120s after restart) | 0 | 0 | 1 | 0 | 1 (0) | 1 / 0 | 60.2 | - | v1 | running | 2 locks back-dated; v1 process finished it in 57 s | 1/9/7/1 | 190 |
+| vercel | b-finish | 2 | stuck (no outcome 120s after restart) | 0 | 0 | 1 | 0 | 1 (0) | 1 / 0 | 60.2 | - | v1 | running | 3 locks back-dated; v1 process finished it in 20 s | 1/9/7/1 | 190.9 |
+| vercel | m-prepare | 1 | ok | 0 | 1 | 1 | 0 | 1 (0) | 1 / 0 | 60.2 | 1.8 | v1 | completed | - | 1/9/7/1 | 70.5 |
+| vercel | m-agent-open | 1 | ok | 0 | 1 | 1 | 0 | 2 (1) | 1 / 0 | 60.1 | 1.2 | v1 | completed | - | 1/9/7/1 | 70.6 |
+| vercel | m-agent | 1 | stuck (no outcome 120s after restart) | 0 | 0 | 1 | 0 | 1 (0) | 1 / 1 | - | - | v1 | running | 1 locks back-dated; v1 process finished it in 47 s | 1/9/7/1 | 155.7 |
+| vercel | m-agent | 2 | stuck (no outcome 120s after restart) | 0 | 0 | 1 | 0 | 1 (0) | 1 / 1 | - | - | v1 | running | 1 locks back-dated; v1 process finished it in 53 s | 1/9/7/1 | 156.2 |
+| vercel | m-effect | 1 | ok | 0 | 0 | 1 | 1 | 1 (0) | 1 / 0 | 60.2 | 4.1 | v1 | completed | - | 1/9/7/1 | 73.1 |
+| vercel | m-child | 1 | stuck (no outcome 120s after restart) | 0 | 0 | 1 | 0 | 1 (0) | 1 / 0 | 60.2 | - | v1 | running | 3 locks back-dated; v1 process finished it in 13 s | 1/11/7/1 | 188.2 |
+| vercel | m-child | 2 | stuck (no outcome 120s after restart) | 0 | 0 | 1 | 0 | 1 (0) | 1 / 0 | 60.2 | - | v1 | running | 3 locks back-dated; v1 process finished it in 12 s | 1/11/7/1 | 188 |
+| vercel | deploy | 1 | ok | 0 | 0 | 1 | 0 | 1 (0) | 1 / 1 | 60.1 | 1.5 | v2 | completed | - | 1/9/7/1 | 66.2 |
+| vercel | deploy-break | 1 | ok | 0 | 0 | 1 | 0 | 1 (0) | 1 / 1 | 60.1 | 2.5 | v2-break | completed | - | 1/10/8/1 | 66.4 |
+| vercel | deploy-break-late | 1 | FAIL (no outcome (failed)) | 0 | 0 | 1 | 0 | 1 (0) | 1 / 0 | 60 | 2.7 | - | failed CORRUPTED_EVENT_LOG | - | 1/7/6/1 | 71 |
+| vercel | deploy-break-late | 2 | FAIL (no outcome (failed)) | 0 | 0 | 1 | 0 | 1 (0) | 1 / 0 | 60.1 | 1.6 | - | failed CORRUPTED_EVENT_LOG | - | 1/7/6/1 | 70.1 |

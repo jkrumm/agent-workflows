@@ -1,6 +1,9 @@
 # Spike S1: workflow runtime
 
-**Verdict: build our own journal on Postgres.** It passed every kill and deploy scenario, recovered in 0.1–0.2 s and re-attached the agent step. Both libraries fail the same requirement: on a redeploy, in-flight runs must keep going without an operator. On a crash, Vercel Workflow's Postgres world also leaves a run stuck until a 4 h lock expires.
+**Verdict: build our own journal on Postgres.** It passed all 13 kill and deploy scenarios: no completed step re-ran, every effect was inserted exactly once, and every re-attached run sent exactly one prompt to one session. Both libraries fail the same requirement: on a redeploy, an in-flight run must keep going without an operator.
+
+- **DBOS** parks the run until a process of the old code version drains it.
+- **Vercel Workflow's Postgres world** fails a run with `CORRUPTED_EVENT_LOG` when a step is inserted before recorded ones. After a crash mid-step, it also leaves the run stuck behind a job lock that graphile-worker's source expires only after 4 h.
 
 Date: 2026-10-27. Input to concept §12.4 and Wave 2. Code, harness and the raw table are in this directory. One command reproduces the table (§Reproduce).
 
@@ -22,7 +25,7 @@ Library facts come from research-gateway job `b57e893a-e0dd-4faa-b609-2b8ae41694
 
 1. `prepare`: a code step.
 2. `agent.open`: creates a fake OpenCode session and journals its id.
-3. `agent`: prompts the session and waits 60 s. The fake server is a row in Postgres that keeps running while the worker is dead, so a resume re-attaches by session id.
+3. `agent`: prompts the session and waits 60 s. The fake server is a row in Postgres that keeps running while the worker is dead, so a resume re-attaches by session id. Every prompt call is recorded in `harness.prompts` as `sent` (it started the session) or `no-op` (the session was already prompted).
 4. `effect`: inserts into `harness.effects` with a unique key from the engine's (run, step) identity, then holds the in-doubt window open for 1.5 s.
 5. Fan-out of 3 child workflows; child 1 fails and becomes `null` in the parent (failure split, §3).
 6. `finish`: writes the outcome and the code version that ran it.
@@ -34,6 +37,7 @@ Each candidate uses its own idiom: `ctx.step`/`ctx.agent`/`ctx.effect`/`ctx.chil
 - **Boundary kills** (`b-*`): SIGKILL at the start of `agent.open`, `effect`, the first child and `finish`.
 - **Mid-step kills** (`m-*`):
   - between `prepare`'s end and its journal write (the in-doubt window);
+  - after `agent.open` created the session and before the engine journaled its id (`m-agent-open`);
   - `agent` at 30 s;
   - `effect` after its insert;
   - a child at 0.5 s.
@@ -43,42 +47,64 @@ Each candidate uses its own idiom: `ctx.step`/`ctx.agent`/`ctx.effect`/`ctx.chil
   - `deploy-break-late`: the same insertion, SIGTERM at fan-out, after `effect` is already recorded.
 - **DBOS only:** both deploys again with `DBOS__APPVERSION` pinned.
 
-One run per scenario and candidate. "Stuck" means no outcome 180 s after the last restart.
+- The kill trigger is scoped to the scenario's run id.
+- **Isolation.** Each scenario starts on freshly dropped engine schemas, so no run from an earlier scenario can be recovered, replayed or corrupted by a later process.
+- **Pass criteria** for a row:
+  - an outcome with the failure split;
+  - exactly one `inserted` effect attempt for the run's key;
+  - no completed step re-executed;
+  - exactly one prompt `sent`;
+  - exactly one prompted session.
+- **Stuck** means no outcome 120 s after the last restart (60 s agent step plus 60 s grace). A resumed run needs at most the remaining 30 s of the agent step plus about 5 s.
+- **Follow-up.** A stuck row then gets one more process running the code the run started on (v1), for up to 120 s. For Vercel, the job locks are first back-dated by 5 h.
+- **Isolated rerun.** Every stuck or failed row runs once more, again on fresh schemas. Both rows are reported.
+
+One run per scenario and candidate, plus that rerun.
 
 ## Results
 
-Full output: `results/results.md`, `results/results.json`. Summary from the final run (60 s agent step, 14 scenarios, 1631 s wall):
+Full output: `results/results.md`, `results/results.json`. Summary from the final run (60 s agent step, 15 scenarios, 2066 s wall):
 
 | metric | own | DBOS | Vercel |
 |-|-|-|-|
-| scenarios ok | **12/12** | 10/14 | 7/12 |
-| completed steps re-executed after a kill | 0 | 0 | 0 |
-| in-doubt re-runs (kill between step end and journal write) | 1 | 1 | 1 |
-| duplicate effects | 0 | 0 | 0 |
+| scenarios ok, first run | **13/13** | 11/15 | 9/13 |
+| kill scenarios ok, first run | **9/9** | **9/9** | 6/9 |
+| isolated reruns of non-ok rows that were ok | - | 0/4 | 0/4 |
+| completed steps re-executed, all runs | 0 | 0 | 0 |
+| in-doubt re-runs (kill between step end and journal write) | 2 | 2 | 2 |
+| runs where the effect was not inserted exactly once | 0 | 0 | 0 |
 | effect retries absorbed by the key | 1 | 1 | 1 |
-| agent step wall after SIGKILL at 30 s | **60.2 s** (re-attached) | **60.2 s** (re-attached) | stuck, see below |
-| agent sessions created in that scenario | 1 | 1 | 1 |
-| median recovery, restart to first step activity | **0.1 s** | 1.3 s | 1.2 s |
-| deploy, compatible change | finished on v2 | **stranded** (PENDING) | finished on v2 |
-| deploy, step inserted ahead of the run's position | finished on v2-break | stranded | finished on v2-break |
-| deploy, step inserted before recorded steps | finished on v2-break | stranded | **`CORRUPTED_EVENT_LOG`** |
-| DBOS pinned version: compatible / inserted before recorded | - | finished on v2 / **`ERROR`** | - |
+| `m-agent` (SIGKILL at 30 s): agent wall, sessions, prompts | **60.2 s**, 1 session, 1 sent + 1 no-op | **60.1 s**, 1 session, 1 sent + 1 no-op | stuck; after follow-up: 1 session, 1 sent + 1 no-op |
+| `m-agent-open` (SIGKILL after session create, before handle write) | 2 sessions (1 orphan), 1 sent | same | same |
+| median restart to first step activity, incl. process start and SDK launch | 0.2 s | 1.4 s | 2.0 s |
+| deploy, compatible change | finished on v2 | **parked** until a v1 process drains it | finished on v2 |
+| deploy, step inserted ahead of the run's position | finished on v2-break | parked | finished on v2-break |
+| deploy, step inserted before recorded steps | finished on v2-break | parked | **`CORRUPTED_EVENT_LOG`** (2/2) |
+| DBOS pinned version: compatible / inserted before recorded | - | finished on v2 / **`ERROR`** (2/2) | - |
 | middleware run/pre, step/pre, step/post, run/post | native, all 4; run/pre re-fires on every recovery | wrapper; run/pre re-fires on every recovery | step wrapper; run/pre is an extra step; run/post fire-and-forget |
 | LOC: runtime / workflow + wiring | 163 / 39 | 0 / 50 | 40 / 83 |
 | dependencies direct / transitive | 1 / 14 | 1 / 22 | 2 / **358** |
 | install size | 0.5 MB | 10.3 MB | **190 MB** |
 | Postgres tables / indexes | 2 / 2 | 13 / 38 | 15 / 32 (9 world, 1 drizzle ledger, 5 graphile) |
-| Postgres kB per run (engine tables / runs) | 12 | 63 | 121 |
-| happy path wall | 64.4 s | 65.2 s | 65.8 s |
+| engine schemas after one happy run on fresh schemas, incl. empty-table overhead | 64 kB | 632 kB | 712 kB |
+| happy path wall | 64.5 s | 65.7 s | 66.4 s |
 
-Postgres restarts by the parallel P0b work: none hit the final run. One restart hit the first Vercel smoke run, and graphile-worker reconnected without losing it. The harness re-runs any scenario whose log shows a server restart (`pgBlip`).
+**Reading the table.**
+
+- **Restart to first step activity** runs from spawning the new process to its first probe. It includes process start, module load and SDK launch, so it is not the engine's recovery latency alone.
+- **Stuck rows.** For a stuck row, "finished on", "effect inserted" and the prompt counts include what its follow-up process did. "Agent wall" and "restart to first step activity" count only what happened before the follow-up.
+- **Postgres restarts.** No restart from the parallel P0b work hit this run. One restart hit the first Vercel smoke run during development, and graphile-worker reconnected. The harness re-runs any scenario whose log shows a server restart.
 
 ### (a) Own journal
 
-All 12 scenarios passed, with zero completed steps re-run. The one in-doubt re-run is the expected one: `prepare` was killed after its body and before its journal write.
+All 13 scenarios passed on the first run, so no rerun was needed. No completed step re-ran.
 
-- **Effects.** `m-effect` shows the key at work: the effect committed, the step re-ran, and the unique key absorbed the retry. One row.
-- **Lease.** It is `pg_try_advisory_lock` on a held connection. Postgres drops the lock when the dead process's socket closes, so recovery takes 0.1–0.2 s with no heartbeat and no expiry.
+- **In-doubt re-runs.** Both are expected:
+  - `m-prepare`: killed after `prepare`'s body and before its journal write.
+  - `m-agent-open`: killed after the session was created and before its id was journaled. The resumed step created a second session and prompted only that one, leaving one orphan session that was never prompted. This is the expected cost of journaling the handle after the create, and it is harmless.
+- **Effects.** In `m-effect` the effect committed and the step re-ran, but the key turned the retry into a no-op: exactly one `inserted` attempt plus one absorbed duplicate.
+- **Re-attach.** In `m-agent` the resumed step found the journaled handle and re-attached. The prompt was a recorded no-op, there was 1 session, and the agent wall was 60.2 s.
+- **Lease.** It is `pg_try_advisory_lock` on a held connection. Postgres drops the lock when the dead process's socket closes, so the restarted process claimed the run on its first recovery pass (0.1–0.4 s from spawn to first step activity).
 - **Deploy.** The journal is keyed by step id, not by position, so a new process continues the run on the new code:
   - A compatible change finishes on v2.
   - An inserted step runs when the run reaches it.
@@ -87,17 +113,20 @@ All 12 scenarios passed, with zero completed steps re-run. The one in-doubt re-r
 
 ### (b) Vercel Workflow on Bun
 
-- **Bun works with integration work.** There is no Bun guide beyond the framework-author page, which uses Bun as its example. We wrote a 22-line `Bun.plugin` that runs `@swc/core` with `@workflow/swc-plugin` (preloaded via `bunfig.toml`), ran `workflow build` (6 s, a 9.4 MB `flow.mjs`), and served the flow route from `Bun.serve`. The happy path passed the first time. We saw no Bun-specific failure; the one recorded Bun bug (#4555, `Agent.compose is not a function`) is fixed.
-- **A SIGKILL during a step leaves the run stuck for 4 hours.** This happened in `m-agent`, `b-fanout`, `b-finish` and `m-child`.
-  - The step's graphile-worker job stays locked by the dead worker. graphile-worker hard-codes a 4 h job expiry (`graphile-worker/sql/000004.sql`, `interval '4 hours'`).
-  - On start, the world calls `reenqueueActiveRuns`, which replays the run. The replay then waits on the step, which is `running` and locked.
-  - Proof by `harness/vercel-lock-probe.ts`, which `measure` runs last: back-dating the locks by 5 h and starting one worker for 120 s finished the stuck `m-agent` run (column "after lock probe"). It re-attached to the same session (checked on an earlier run: 1 session, 2 `agent` starts).
-  - `b-fanout` and `b-finish` finished later, while a later scenario's process ran (column "status at end"). The mechanism was not isolated.
-  - So re-attach itself works; crash recovery does not, within any useful time. Kills at the very start of a step sometimes recovered (`b-agent` and `b-effect` in both full runs, `b-fanout` in one of two), presumably when the step job had not been claimed yet.
-  - A graceful SIGTERM lets graphile release its jobs, so the SIGTERM deploys recovered in 1.1–1.5 s.
-- **There is no deployment pinning on the Postgres world.** The docs promise that runs stay pinned to their deployment, but that is a Vercel-world feature (`VERCEL_DEPLOYMENT_ID`); the Postgres world has no versioning section, and research flagged the same gap. Measured:
-  - A new process replays in-flight runs on the new code. A step inserted before recorded ones fails the run with `CORRUPTED_EVENT_LOG`.
-  - `reenqueueActiveRuns` re-enqueues every active run, not only its own. A deploy therefore replays, and can corrupt, any other run in flight. Here a v2-break process corrupted the stuck `m-child` run from an earlier scenario (column "status at end").
+- **Bun works with integration work.**
+  - There is no Bun guide beyond the framework-author page, which uses Bun as its example.
+  - We wrote a 22-line `Bun.plugin` that runs `@swc/core` with `@workflow/swc-plugin` (preloaded via `bunfig.toml`), ran `workflow build` (6 s, a 9.4 MB `flow.mjs`), and served the flow route from `Bun.serve`.
+  - The happy path passed the first time. We saw no Bun-specific failure; the one recorded Bun bug (#4555) is fixed.
+- **A SIGKILL mid-step stuck the run** in `m-agent`, `b-finish` and `m-child`, on both the first run and the isolated rerun. The restarted process ran for 120 s without finishing it.
+  - **Source-confirmed:** graphile-worker hard-codes a 4 h job expiry (`graphile-worker/sql/000004.sql`, `interval '4 hours'`). The world's start hook `reenqueueActiveRuns` re-enqueues every pending or running run.
+  - **Measured:** the stuck step's job was still locked. The follow-up back-dated the locks by 5 h and started a fresh v1 process, which finished all six stuck rows in 12–57 s. In `m-agent` it re-attached: 1 session, 1 prompt sent, 1 no-op.
+  - **Not isolated:** whether a fresh process without back-dating would also have finished them. So "stuck for 4 h" is the source-confirmed expiry, not a wait we observed.
+  - **Earlier, non-isolated development run:** stuck `b-fanout` and `b-finish` runs finished later while another scenario's process ran, presumably through that process's re-enqueue. The mechanism was not isolated, and this table cannot show it, because schemas are now reset per scenario.
+  - Kills at the very start of a step recovered in `b-agent`, `b-effect` and `b-fanout` here.
+  - A graceful SIGTERM lets graphile release its jobs, so the SIGTERM deploys restarted in 1.5–2.7 s.
+- **There is no deployment pinning on the Postgres world.** Runs pinned to their deployment is a Vercel-world feature (`VERCEL_DEPLOYMENT_ID`); the Postgres world documents no versioning, and research flagged the same gap.
+  - **Measured:** a new process continues in-flight runs on the new code. A step inserted before recorded steps failed the run with `CORRUPTED_EVENT_LOG` in 2/2 runs.
+  - **Source-confirmed, not in this table:** `reenqueueActiveRuns` re-enqueues every active run, not only the deployer's, so a deploy also replays other in-flight runs on the new code. An earlier non-isolated run observed a v2-break process corrupting another scenario's stuck run. The per-scenario reset now prevents that from appearing in the table.
 - **Middleware.**
   - `step/pre` and `step/post` need a wrapper inside every `"use step"` body.
   - `run/pre` must be a step, because the workflow body is a sandboxed VM without I/O; that costs an event.
@@ -107,15 +136,16 @@ All 12 scenarios passed, with zero completed steps re-run. The one in-doubt re-r
 
 ### (c) DBOS on Bun
 
-- **Resume and re-attach are correct.** All 9 kill scenarios passed; the agent step re-attached (60.2 s, one session).
+- **Resume and re-attach are correct.** All 9 kill scenarios plus the happy path passed. In `m-agent` the agent step re-attached: 60.1 s, 1 session, 1 sent + 1 no-op.
 - **Bun works.** Bun is unofficial: Node ≥ 20 only, and CI runs no Bun job. The only noise was a `pg` deprecation warning from DBOS's own code ("Calling client.query() when the client is already executing a query"), which becomes an error in pg@9.
-- **A deploy strands the run under the default version.**
-  - In 5.3.0 the default application version is an md5 of the registered workflow sources (`computeAppVersion`, recorded as `af1403aa…` for v1). Research read the launch path as `''`; the installed code and the recorded rows say hash.
-  - Any edit to a workflow body therefore changes the version. The new process recovers only its own version, so the in-flight run sits `PENDING`.
-  - The stranded `deploy` run finished later, on the **old** code, when the next scenario booted a v1 process (status at end: `SUCCESS`). That is the documented blue-green model: old-version processes drain old runs. On one mini with one `host` process it means a drain, which is exactly what concept §3 removes ("replaces today's 30-minute drain").
+- **On a deploy the run is parked, not hung.** This is DBOS's default application-version drain with no old-version process running.
+  - In 5.3.0 the default application version is an md5 of the registered workflow sources (`computeAppVersion`; recorded as `af1403aa…` for v1 in a development run). Research read the launch path as `''`; the installed code and the recorded rows say hash.
+  - Any edit to a workflow body therefore changes the version. The new process recovers only runs of its own version, so the in-flight run sat `PENDING` for 120 s, in all three deploy shapes and both runs of each.
+  - The follow-up started a v1 process, and it finished every parked run in 3–5 s, on the **old** code. That is the documented blue-green model: old-version processes drain old runs.
+  - On one mini with one `host` process, a deploy therefore means running the old version until its runs drain. Concept §3 removes exactly that ("replaces today's 30-minute drain").
 - **Pinning makes compatible edits survive, but an inserted step fails.**
   - With `DBOS__APPVERSION` pinned, a compatible edit finishes on v2.
-  - A step inserted before recorded ones ends `ERROR` (replay is positional: `function_id` order). `DBOS.patch()` exists for this, but every such edit then needs a manual patch branch.
+  - A step inserted before recorded ones ends `ERROR` in 2/2 runs (replay is positional, in `function_id` order). `DBOS.patch()` exists for this, but every such edit then needs a manual patch branch.
 - **Middleware.** `registerLifecycleCallback` covers launch and shutdown only. A `step()` wrapper around `DBOS.runStep` gives `step/pre` and `step/post` without a fork. `run/pre` and `run/post` in the workflow body re-run on every recovery (2 instead of 1 in the kill scenarios) unless each becomes a checkpointed step.
 - **Footprint.** 13 tables and 38 indexes it owns and migrates. The prior-art spike adds `max_recovery_attempts` dead-lettering after 100 crash-loop recoveries (not re-measured here).
 
@@ -143,7 +173,7 @@ steps (run_id text, step_id text, kind text,                   -- code|agent|eff
        primary key (run_id, step_id))
 ```
 
-**Effect keys.** The key is `${runId}:${stepId}`, handed to the effect function, which passes it to the outside API. The spike proves the key is what prevents the duplicate: the step does re-run after an in-doubt kill. An effect without a key has no recovery.
+**Effect keys.** The key is `${runId}:${stepId}`, handed to the effect function, which passes it to the outside API. The step does re-run after an in-doubt kill (`m-effect`), and the key turns that retry into a no-op. Nothing else in the runtime prevents the duplicate.
 
 **Re-attach.**
 
@@ -155,14 +185,13 @@ On resume:
 
 - A handle with a prompt already sent: wait on the session.
 - A handle without a prompt: send the prompt.
-- No handle: create a new session. The old one is an orphan that was never prompted, which is harmless.
+- No handle: create a new session. The old one is an orphan that was never prompted, which is harmless. `m-agent-open` measured exactly this: 2 sessions, 1 orphan, 1 prompt sent.
 
-The prompt send must be idempotent: check the session's messages before sending. The fake server's `prompted_at is null` guard stood in for that check here.
+The prompt send must be idempotent: check the session's messages before sending. The fake server's `prompted_at is null` guard stood in for that check here, and the prompt ledger shows it held: no run sent a second prompt.
 
-**Lease.** One `pg_try_advisory_lock` per top-level run, on a held pool connection. This is the fastest recovery measured (0.1 s) and needs no heartbeat.
+**Lease.** One `pg_try_advisory_lock` per top-level run, on a held connection. Postgres releases it when the holder's socket closes, so a restarted process can claim the run at once, with no heartbeat.
 
 - Hold leases on a separate connection budget, not on the journal pool (see Risks: pool deadlock).
-- Use a 64-bit key instead of `hashtext` (32-bit, collisions possible).
 - Child runs are driven by their parent's step, not by recovery, so a child never runs twice in parallel.
 
 **Versioning and the bounded-run rule.**
@@ -171,6 +200,18 @@ The prompt send must be idempotent: check the session's messages before sending.
 - The rule that keeps this safe: **a change to a step's meaning or output shape takes a new step id**. Removed steps are ignored and new steps run when reached.
 - Bounded runs (seconds to tens of minutes, §3) keep this window small. Nothing waits for drained versions, and no long-lived run accumulates divergence.
 - A deploy needs no drain: SIGTERM, restart, re-attach.
+
+**Wave 2 must** (from the review of the spike runtime; not fixed in the spike):
+
+- **Active-set leak.** `drive()` adds the run to `active` before `pool.connect()`; when connect rejects, the run stays marked active and is never retried by this process. Add it after the lock is held, or clear it in a `finally` that covers connect.
+- **Lease fencing.** If the lock connection drops while the run continues on other connections, a second process can claim the run and both write. Losing the lock connection must abort the run, or every journal write carries a lease token checked in its `where` clause.
+- **Infra errors vs workflow errors.** Today any throw, including a failed journal query, marks the step and run `failed`. Infra errors must rethrow and leave the row `running` for a bounded retry; only errors from the step body mark `failed`.
+- **Success hooks outside the try.** `stepPost` and `runPost` run inside the `try`, so a throwing hook after a committed `done` downgrades it to `failed`. Run them after the commit, outside the `try`.
+- **`.catch` on every fire-and-forget** `drive()` and `recover()` call (`void runtime.recover()` in the interval), so an unhandled rejection cannot kill the process.
+- **Step outputs typed as JSON.** The journal stores `JSON.stringify(output)`. A replay returns `null` for `undefined`, strings for `Date`, and throws on `bigint`. The step API must type its output as JSON-serializable, so a replayed value matches the original.
+- **`Promise.allSettled` for children.** With `Promise.all`, an infra error in one child rejects the fan-out step while the siblings keep running unobserved.
+- **64-bit lock keys** instead of `hashtext` (32-bit, collisions possible).
+- **A concurrency test with 20+ runs** in the kill harness. It would have caught the pool deadlock (Risks).
 
 **Still to build, not in the spike:**
 
@@ -189,7 +230,7 @@ The prompt send must be idempotent: check the session's messages before sending.
 
 ## What was not measured
 
-- **Repetition and statistics:** one run per scenario per candidate, so there are no distributions.
+- **Repetition and statistics:** one run per scenario per candidate, plus one isolated rerun of each non-ok row, so there are no distributions.
 - **Load:** concurrency, throughput, many simultaneous runs, memory and CPU.
 - **Failure modes:**
   - Postgres restarts mid-run (only incidental, once, in the Vercel smoke run);
@@ -200,6 +241,7 @@ The prompt send must be idempotent: check the session's messages before sending.
   - on Node, which would separate Bun issues from world issues; the 4 h lock is graphile's design and does not depend on the runtime;
   - with `@workflow/world-local`;
   - with a lower graphile job expiry, which the Postgres world does not expose;
+  - whether a fresh process recovers a stuck run without back-dated locks;
   - closures as steps.
 - **DBOS:** queues, `DBOS.patch()`, `forkWorkflow`.
 - **Tool-level interception** (`tool/pre`, `tool/post`): it belongs to the agent step and OpenCode, not to the runtime choice.
@@ -207,7 +249,7 @@ The prompt send must be idempotent: check the session's messages before sending.
 ## Reproduce
 
 ```sh
-cd docs/spikes/s1-runtime && bun install && bun run measure     # ~27 min, prints the tables
+cd docs/spikes/s1-runtime && bun install && bun run measure     # ~35 min, prints the tables
 bun run measure --agent-ms 6000 --only own --scenario happy,m-agent   # quick subset
 ```
 
@@ -221,7 +263,7 @@ Layout:
 |-|-|
 | `common/` | the fake world: probes, agent server, effects |
 | `candidates/{own,dbos,vercel}/` | the three implementations |
-| `harness/` | measure, footprint, reset, the lock probe |
+| `harness/` | measure, footprint, reset, the lock back-dating helper |
 | `results/` | the last full run |
 
 Spike code is thrown away, not promoted (PLAN.md).

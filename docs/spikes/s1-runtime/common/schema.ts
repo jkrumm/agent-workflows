@@ -7,6 +7,9 @@ create table if not exists harness.probe (
 create table if not exists harness.sessions (
   id text primary key, cand text not null, run_id text not null, step text not null,
   created_at timestamptz not null default clock_timestamp(), prompted_at timestamptz, duration_ms int not null);
+create table if not exists harness.prompts (
+  id bigserial primary key, cand text not null, run_id text not null, session_id text not null,
+  outcome text not null, ts timestamptz not null default clock_timestamp());
 create table if not exists harness.effects (
   key text primary key, cand text not null, run_id text not null, ts timestamptz not null default clock_timestamp());
 create table if not exists harness.effect_attempts (

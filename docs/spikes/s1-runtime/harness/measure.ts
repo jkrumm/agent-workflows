@@ -1,14 +1,15 @@
 // `bun run measure`: builds every candidate version, runs every scenario against every candidate
-// (candidates in parallel, scenarios in sequence), prints the results tables and writes results/.
-// Options: --agent-ms <n> (default 60000), --only <cand,...>, --scenario <name,...>
+// (candidates in parallel, scenarios in sequence, each on freshly dropped engine schemas), prints the
+// results tables and writes results/. Options: --agent-ms <n> (default 60000), --only <cand,...>,
+// --scenario <name,...>
 import { spawn, spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync, openSync } from "node:fs";
+import { cpSync, mkdirSync, openSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Client } from "pg";
 import { ensureCredentials, pgUrl } from "./env.ts";
-import { footprint, type Footprint } from "./footprint.ts";
-import { lockProbe } from "./vercel-lock-probe.ts";
-import { reset } from "./reset.ts";
+import { engineKb, footprint, type Footprint } from "./footprint.ts";
+import { reset, resetEngine } from "./reset.ts";
+import { backdateLocks } from "./vercel-lock-probe.ts";
 
 ensureCredentials(import.meta.path);
 
@@ -24,7 +25,8 @@ const AGENT_MS = Number(arg("agent-ms") ?? 60_000);
 const HALF = Math.round(AGENT_MS / 2);
 const CANDIDATES = (arg("only") ?? "own,dbos,vercel").split(",");
 const OUTAGE_MS = 2_000;
-const STUCK_MS = AGENT_MS + 120_000;
+const STUCK_MS = AGENT_MS + 60_000; // a resumed run needs at most the rest of the agent step plus ~5 s
+const FOLLOW_UP_MS = 120_000;
 
 type Scenario = { name: string; kill?: string; deployTo?: string; pinned?: boolean; only?: string };
 const SCENARIOS: Scenario[] = [
@@ -34,6 +36,7 @@ const SCENARIOS: Scenario[] = [
   { name: "b-fanout", kill: "child-0:start" },
   { name: "b-finish", kill: "finish:start" },
   { name: "m-prepare", kill: "prepare:end" },
+  { name: "m-agent-open", kill: "agent.open:end" }, // session exists, handle not yet journaled
   { name: "m-agent", kill: `agent:start:${HALF}` },
   { name: "m-effect", kill: "effect:committed" },
   { name: "m-child", kill: "child-0:start:500" },
@@ -43,6 +46,7 @@ const SCENARIOS: Scenario[] = [
   { name: "deploy-pinned", kill: `agent:start:${HALF}:SIGTERM`, deployTo: "v2", pinned: true, only: "dbos" },
   { name: "deploy-break-late-pinned", kill: "child-0:start:0:SIGTERM", deployTo: "v2-break", pinned: true, only: "dbos" },
 ].filter((s) => !arg("scenario") || arg("scenario")!.split(",").includes(s.name));
+const KILL_SCENARIOS = SCENARIOS.filter((s) => s.kill && !s.deployTo).map((s) => s.name);
 
 // ---------- build: one copy of each candidate per code version, with a real source change ----------
 
@@ -70,15 +74,6 @@ function build(cand: string, version: string) {
   }
   return target;
 }
-
-// ---------- one scenario ----------
-
-type Row = {
-  cand: string; scenario: string; outcome: "ok" | "FAIL" | "stuck"; why: string;
-  completedReruns: number; inDoubtReruns: number; effectRows: number; effectDupAttempts: number;
-  sessions: number; agentWallS: number | null; recoveryS: number | null; finishedOn: string | null;
-  engineRunId?: string; engineStatus: string; finalStatus?: string; afterLockProbe?: string; mw: string; totalS: number; pgBlip: boolean; attempts: number;
-};
 
 const LOG_BLIP = /the database system is shutting down|the database system is starting up|terminating connection due to administrator|ECONNREFUSED/;
 
@@ -153,9 +148,29 @@ async function stop(p: ReturnType<typeof spawn>) {
   if (p.exitCode === null && p.signalCode === null) p.kill("SIGKILL");
 }
 
-async function runScenario(cand: string, sc: Scenario, attempt: number): Promise<Row> {
-  const runId = `${cand}-${sc.name}-${Date.now()}`;
-  const logFile = join(RAW, `${cand}-${sc.name}.log`);
+// ---------- one scenario ----------
+
+type Row = {
+  cand: string; scenario: string; run: 1 | 2; outcome: "ok" | "FAIL" | "stuck"; why: string;
+  completedReruns: number; inDoubtReruns: number; effectInserted: number; effectDupAttempts: number;
+  sessions: number; orphanSessions: number; promptsSent: number; promptNoops: number;
+  agentWallS: number | null; firstActivityS: number | null; finishedOn: string | null;
+  engineStatus: string; followUp: string | null; mw: string; totalS: number; pgBlip: boolean; attempts: number;
+};
+
+function bootstrapVercel() {
+  const boot = spawnSync(join(ROOT, "node_modules/.bin/bootstrap"), [], {
+    env: { ...process.env, WORKFLOW_POSTGRES_URL: URL_ },
+    encoding: "utf8",
+  });
+  if (boot.status !== 0) throw new Error(`vercel world bootstrap failed: ${boot.stderr}`);
+}
+
+async function runScenario(cand: string, sc: Scenario, run: 1 | 2, attempt: number): Promise<Row> {
+  await resetEngine(URL_, cand); // no earlier scenario's run can be recovered or replayed here
+  if (cand === "vercel") bootstrapVercel();
+  const runId = `${cand}-${sc.name}-${run}-${Date.now()}`;
+  const logFile = join(RAW, `${cand}-${sc.name}-${run}.log`);
   writeFileSync(logFile, "");
   const since = new Date(Date.now() - 1000);
   const t0 = Date.now();
@@ -181,6 +196,25 @@ async function runScenario(cand: string, sc: Scenario, attempt: number): Promise
   await stop(p);
   const totalS = (Date.now() - t0) / 1000;
 
+  // Follow-up for a stuck run: Vercel gets its job locks back-dated past graphile's 4 h expiry;
+  // every candidate then gets one v1 process (the code the run started on) for up to 120 s.
+  let followUp: string | null = null;
+  const followStart = Date.now(); // timings below only count what happened before the follow-up
+  if (state === "timeout") {
+    const backdated = cand === "vercel" ? await backdateLocks(URL_) : 0;
+    const f0 = Date.now();
+    const fp = launch(cand, "v1", runId, logFile, { START: "0", ...pinned });
+    let fExited = false;
+    fp.once("exit", () => (fExited = true));
+    const fState = await waitFor(cand, runId, engineId, f0 + FOLLOW_UP_MS, () => fExited);
+    await stop(fp);
+    const prefix = cand === "vercel" ? `${backdated} locks back-dated; ` : "";
+    followUp =
+      fState === "done"
+        ? `${prefix}v1 process finished it in ${((Date.now() - f0) / 1000).toFixed(0)} s`
+        : `${prefix}v1 process: ${fState}, ${await engineStatus(cand, await engineId())}`;
+  }
+
   const probes = await q<{ step: string; ev: string; pid: number; ts: Date }>(
     "select step, ev, pid, ts from harness.probe where cand = $1 and run_id = $2 order by id",
     [cand, runId],
@@ -198,15 +232,23 @@ async function runScenario(cand: string, sc: Scenario, attempt: number): Promise
     if (s === trigStep && trigEv === "end") inDoubtReruns += rerun;
     else completedReruns += rerun;
   }
-  const effects = await q("select count(*)::int as n from harness.effects where cand = $1 and run_id = $2", [cand, runId]);
-  const dup = await q(
-    "select count(*)::int as n from harness.effect_attempts where cand = $1 and run_id = $2 and outcome = 'duplicate'",
-    [cand, runId],
+  const count = async (sql: string) => (await q(sql, [cand, runId]))[0].n as number;
+  const effectInserted = await count(
+    "select count(*)::int as n from harness.effect_attempts where cand = $1 and run_id = $2 and outcome = 'inserted'",
   );
-  const sessions = await q("select count(*)::int as n from harness.sessions where cand = $1 and run_id = $2", [cand, runId]);
-  const agentStart = probes.find((r) => r.step === "agent" && r.ev === "start");
-  const agentEnd = probes.findLast((r) => r.step === "agent" && r.ev === "end");
-  const recovered = respawnAt ? probes.find((r) => +r.ts > respawnAt! && r.step !== "-") : undefined;
+  const effectDupAttempts = await count(
+    "select count(*)::int as n from harness.effect_attempts where cand = $1 and run_id = $2 and outcome = 'duplicate'",
+  );
+  const sessions = await count("select count(*)::int as n from harness.sessions where cand = $1 and run_id = $2");
+  const orphanSessions = await count(
+    "select count(*)::int as n from harness.sessions where cand = $1 and run_id = $2 and prompted_at is null",
+  );
+  const promptsSent = await count("select count(*)::int as n from harness.prompts where cand = $1 and run_id = $2 and outcome = 'sent'");
+  const promptNoops = await count("select count(*)::int as n from harness.prompts where cand = $1 and run_id = $2 and outcome = 'noop'");
+  const before = probes.filter((r) => +r.ts < followStart);
+  const agentStart = before.find((r) => r.step === "agent" && r.ev === "start");
+  const agentEnd = before.findLast((r) => r.step === "agent" && r.ev === "end");
+  const firstActivity = respawnAt ? before.find((r) => +r.ts > respawnAt! && r.step !== "-") : undefined;
   const outcome = (await q("select version, result from harness.outcomes where cand = $1 and run_id = $2", [cand, runId]))[0];
   const mwCount = (ev: string) => probes.filter((r) => r.step === "mw" && r.ev === ev).length;
   const children = outcome?.result?.children;
@@ -214,26 +256,33 @@ async function runScenario(cand: string, sc: Scenario, attempt: number): Promise
     Array.isArray(children) && children.length === 3 && children[1] === null && children[0] && children[2];
 
   const why: string[] = [];
-  if (!outcome) why.push(state === "timeout" ? `no outcome after ${STUCK_MS / 1000}s` : `no outcome (${state})`);
+  if (state === "timeout") why.push(`no outcome ${STUCK_MS / 1000}s after restart`);
+  else if (!outcome) why.push(`no outcome (${state})`);
   if (outcome && !failSplitOk) why.push("failure split wrong");
-  if (effects[0].n !== 1) why.push(`${effects[0].n} effect rows`);
+  if (effectInserted !== 1) why.push(`effect inserted ${effectInserted}x`);
   if (completedReruns) why.push(`${completedReruns} completed step(s) re-ran`);
+  if (promptsSent !== 1) why.push(`${promptsSent} prompts sent`);
+  if (sessions - orphanSessions !== 1) why.push(`${sessions - orphanSessions} prompted sessions`);
   const log = readFileSync(logFile, "utf8");
   return {
     cand,
     scenario: sc.name,
+    run,
     outcome: why.length === 0 ? "ok" : state === "timeout" ? "stuck" : "FAIL",
     why: why.join("; "),
     completedReruns,
     inDoubtReruns,
-    effectRows: effects[0].n,
-    effectDupAttempts: dup[0].n,
-    sessions: sessions[0].n,
+    effectInserted,
+    effectDupAttempts,
+    sessions,
+    orphanSessions,
+    promptsSent,
+    promptNoops,
     agentWallS: agentStart && agentEnd ? (+agentEnd.ts - +agentStart.ts) / 1000 : null,
-    recoveryS: recovered && respawnAt ? (+recovered.ts - respawnAt) / 1000 : null,
+    firstActivityS: firstActivity && respawnAt ? (+firstActivity.ts - respawnAt) / 1000 : null,
     finishedOn: outcome?.version ?? null,
-    engineRunId,
     engineStatus: status,
+    followUp,
     mw: ["run/pre", "step/pre", "step/post", "run/post"].map(mwCount).join("/"),
     totalS,
     pgBlip: LOG_BLIP.test(log),
@@ -241,15 +290,25 @@ async function runScenario(cand: string, sc: Scenario, attempt: number): Promise
   };
 }
 
+async function measured(cand: string, sc: Scenario, run: 1 | 2): Promise<Row> {
+  let row = await runScenario(cand, sc, run, 1);
+  // A Postgres restart by the parallel P0b work invalidates the measurement: rerun it.
+  for (let a = 2; row.pgBlip && a <= 3; a++) row = await runScenario(cand, sc, run, a);
+  console.error(`[${cand}] ${sc.name} #${run}: ${row.outcome} ${row.why} (${row.totalS.toFixed(0)}s)`);
+  return row;
+}
+
+const kbAfterHappy: Record<string, number> = {};
+
 async function lane(cand: string): Promise<Row[]> {
   const rows: Row[] = [];
   for (const sc of SCENARIOS) {
     if (sc.only && sc.only !== cand) continue;
-    let row = await runScenario(cand, sc, 1);
-    // A Postgres restart by the parallel P0b work invalidates the measurement: rerun it.
-    for (let a = 2; row.pgBlip && a <= 3; a++) row = await runScenario(cand, sc, a);
-    console.error(`[${cand}] ${sc.name}: ${row.outcome} ${row.why} (${row.totalS.toFixed(0)}s)`);
+    const row = await measured(cand, sc, 1);
     rows.push(row);
+    if (sc.name === "happy") kbAfterHappy[cand] = await engineKb(URL_, cand);
+    // Every stuck or failed row runs once more, again on fresh schemas; both are reported.
+    if (row.outcome !== "ok") rows.push(await measured(cand, sc, 2));
   }
   return rows;
 }
@@ -261,76 +320,72 @@ function table(head: string[], rows: unknown[][]) {
   return [`| ${head.join(" | ")} |`, `|${head.map(() => "-").join("|")}|`, ...rows.map((r) => `| ${r.map(fmt).join(" | ")} |`)].join("\n");
 }
 
+function median(xs: (number | null)[]) {
+  const v = xs.filter((x): x is number => x !== null).sort((a, b) => a - b);
+  return v.length ? v[Math.floor(v.length / 2)]! : null;
+}
+
 function summary(rows: Row[], fp: Record<string, Footprint>) {
-  const by = (c: string) => rows.filter((r) => r.cand === c);
-  const pick = (c: string, s: string) => by(c).find((r) => r.scenario === s);
-  const deployCell = (r?: Row) => (r ? (r.outcome === "ok" ? `finished on ${r.finishedOn}` : `${r.outcome}: ${r.why || r.engineStatus}`) : "-");
+  const by = (c: string, run?: number) => rows.filter((r) => r.cand === c && (!run || r.run === run));
+  const pick = (c: string, s: string, run = 1) => rows.find((r) => r.cand === c && r.scenario === s && r.run === run);
+  const cell1 = (r?: Row) => (r ? (r.outcome === "ok" ? `ok, finished on ${r.finishedOn}` : `${r.outcome}: ${r.why || r.engineStatus}`) : "-");
+  const cell = (c: string, s: string) => {
+    const a = pick(c, s, 1);
+    const b = pick(c, s, 2);
+    return b ? `${cell1(a)}; isolated rerun: ${cell1(b)}` : cell1(a);
+  };
+  const agentCell = (r?: Row) =>
+    r ? `${r.agentWallS === null ? "-" : r.agentWallS.toFixed(1)} s; ${r.sessions} session(s), ${r.orphanSessions} orphan; prompts ${r.promptsSent} sent, ${r.promptNoops} no-op` : "-";
   return table(
     ["metric", ...CANDIDATES],
     [
-      ["scenarios ok", ...CANDIDATES.map((c) => `${by(c).filter((r) => r.outcome === "ok").length}/${by(c).length}`)],
-      ["completed steps re-executed (all kills)", ...CANDIDATES.map((c) => by(c).reduce((a, r) => a + r.completedReruns, 0))],
+      ["scenarios ok (first run)", ...CANDIDATES.map((c) => `${by(c, 1).filter((r) => r.outcome === "ok").length}/${by(c, 1).length}`)],
+      ["isolated reruns of non-ok rows that were ok", ...CANDIDATES.map((c) => `${by(c, 2).filter((r) => r.outcome === "ok").length}/${by(c, 2).length}`)],
+      [`kill scenarios ok, first run (${KILL_SCENARIOS.length})`, ...CANDIDATES.map((c) => `${by(c, 1).filter((r) => KILL_SCENARIOS.includes(r.scenario) && r.outcome === "ok").length}/${KILL_SCENARIOS.length}`)],
+      ["completed steps re-executed (all runs)", ...CANDIDATES.map((c) => by(c).reduce((a, r) => a + r.completedReruns, 0))],
       ["in-doubt re-runs (kill between step end and journal)", ...CANDIDATES.map((c) => by(c).reduce((a, r) => a + r.inDoubtReruns, 0))],
-      ["duplicate effects (rows > 1)", ...CANDIDATES.map((c) => by(c).filter((r) => r.effectRows > 1).length)],
-      ["effect retries absorbed by key", ...CANDIDATES.map((c) => by(c).reduce((a, r) => a + r.effectDupAttempts, 0))],
-      [`agent step wall after kill at ${HALF / 1000}s (s)`, ...CANDIDATES.map((c) => pick(c, "m-agent")?.agentWallS)],
-      ["agent sessions created in m-agent", ...CANDIDATES.map((c) => pick(c, "m-agent")?.sessions)],
-      ["median recovery after restart (s)", ...CANDIDATES.map((c) => median(by(c).map((r) => r.recoveryS)))],
-      ["deploy, compatible change", ...CANDIDATES.map((c) => deployCell(pick(c, "deploy")))],
-      ["deploy, step inserted ahead of the run's position", ...CANDIDATES.map((c) => deployCell(pick(c, "deploy-break")))],
-      ["deploy, step inserted before recorded steps", ...CANDIDATES.map((c) => deployCell(pick(c, "deploy-break-late")))],
-      ["deploy, pinned version (DBOS only)", ...CANDIDATES.map((c) => deployCell(pick(c, "deploy-pinned")))],
-      ["deploy, pinned, step inserted before recorded (DBOS only)", ...CANDIDATES.map((c) => deployCell(pick(c, "deploy-break-late-pinned")))],
-      ["status at end of measurement: deploy / deploy-break-late", ...CANDIDATES.map((c) => `${pick(c, "deploy")?.finalStatus} / ${pick(c, "deploy-break-late")?.finalStatus}`)],
+      ["runs where the effect was not inserted exactly once", ...CANDIDATES.map((c) => by(c).filter((r) => r.effectInserted !== 1).length)],
+      ["effect retries absorbed by the key", ...CANDIDATES.map((c) => by(c).reduce((a, r) => a + r.effectDupAttempts, 0))],
+      [`m-agent (SIGKILL at ${HALF / 1000} s): agent wall, sessions, prompts`, ...CANDIDATES.map((c) => agentCell(pick(c, "m-agent")))],
+      ["m-agent-open (SIGKILL after session create, before handle write)", ...CANDIDATES.map((c) => agentCell(pick(c, "m-agent-open")))],
+      ["runs that sent more than one prompt", ...CANDIDATES.map((c) => by(c).filter((r) => r.promptsSent > 1).length)],
+      ["median restart to first step activity, incl. process start and SDK launch (s)", ...CANDIDATES.map((c) => median(by(c).map((r) => r.firstActivityS)))],
+      ["deploy, compatible change", ...CANDIDATES.map((c) => cell(c, "deploy"))],
+      ["deploy, step inserted ahead of the run's position", ...CANDIDATES.map((c) => cell(c, "deploy-break"))],
+      ["deploy, step inserted before recorded steps", ...CANDIDATES.map((c) => cell(c, "deploy-break-late"))],
+      ["deploy, pinned version (DBOS only)", ...CANDIDATES.map((c) => cell(c, "deploy-pinned"))],
+      ["deploy, pinned, step inserted before recorded (DBOS only)", ...CANDIDATES.map((c) => cell(c, "deploy-break-late-pinned"))],
+      ["stuck rows and their follow-up", ...CANDIDATES.map((c) => by(c).filter((r) => r.followUp).map((r) => `${r.scenario} #${r.run}: ${r.followUp}`).join("; ") || "-")],
       ["middleware run/pre,step/pre,step/post,run/post (happy)", ...CANDIDATES.map((c) => pick(c, "happy")?.mw)],
       ["LOC runtime / workflow+wiring", ...CANDIDATES.map((c) => `${fp[c]!.locRuntime} / ${fp[c]!.locWorkflow}`)],
       ["deps direct / transitive", ...CANDIDATES.map((c) => `${fp[c]!.depsDirect} / ${fp[c]!.depsTotal}`)],
       ["install size (MB)", ...CANDIDATES.map((c) => fp[c]!.installMB)],
       ["Postgres tables / indexes", ...CANDIDATES.map((c) => `${fp[c]!.tables} / ${fp[c]!.indexes}`)],
-      ["Postgres kB per run (engine tables / runs measured)", ...CANDIDATES.map((c) => fp[c]!.kbPerRun)],
+      ["engine schemas after one happy run on fresh schemas (kB, incl. empty-table overhead)", ...CANDIDATES.map((c) => fp[c]!.kbAfterHappy)],
       ["happy path wall (s)", ...CANDIDATES.map((c) => pick(c, "happy")?.totalS)],
       ["Postgres restarts hit (reruns)", ...CANDIDATES.map((c) => by(c).reduce((a, r) => a + r.attempts - 1, 0))],
     ],
   );
 }
 
-function median(xs: (number | null)[]) {
-  const v = xs.filter((x): x is number => x !== null).sort((a, b) => a - b);
-  return v.length ? v[Math.floor(v.length / 2)]! : null;
-}
-
 // ---------- main ----------
 
 mkdirSync(RAW, { recursive: true });
 await reset(URL_);
-const boot = spawnSync(join(ROOT, "node_modules/.bin/bootstrap"), [], {
-  env: { ...process.env, WORKFLOW_POSTGRES_URL: URL_ },
-  encoding: "utf8",
-});
-if (boot.status !== 0) throw new Error(`vercel world bootstrap failed: ${boot.stderr}`);
 for (const c of CANDIDATES) for (const v of ["v1", "v2", "v2-break"]) build(c, v);
 console.error(`agent step ${AGENT_MS / 1000}s, ${SCENARIOS.length} scenarios, candidates ${CANDIDATES.join(", ")}`);
 
 const t0 = Date.now();
 const rows = (await Promise.all(CANDIDATES.map(lane))).flat();
 const fp: Record<string, Footprint> = {};
-for (const c of CANDIDATES) fp[c] = await footprint(c, URL_, ROOT);
-// A run can still move after its scenario: a later process of the same version may recover it,
-// a later deploy may replay it. The status at the end of the whole measurement shows that.
-for (const r of rows) r.finalStatus = await engineStatus(r.cand, r.engineRunId);
-const probe = CANDIDATES.includes("vercel") ? await lockProbe(URL_, ROOT) : null;
-if (probe) for (const r of rows.filter((r) => r.cand === "vercel")) r.afterLockProbe = await engineStatus(r.cand, r.engineRunId);
+for (const c of CANDIDATES) fp[c] = await footprint(c, URL_, ROOT, kbAfterHappy[c] ?? 0);
 
 const detail = table(
-  ["candidate", "scenario", "outcome", "completed re-runs", "in-doubt re-runs", "effect rows", "key-absorbed retries", "sessions", "agent wall s", "recovery s", "finished on", "engine status", "status at end", "after lock probe", "mw pre/sPre/sPost/post", "total s"],
-  rows.map((r) => [r.cand, r.scenario, r.outcome + (r.why ? ` (${r.why})` : ""), r.completedReruns, r.inDoubtReruns, r.effectRows, r.effectDupAttempts, r.sessions, r.agentWallS, r.recoveryS, r.finishedOn, r.engineStatus, r.finalStatus, r.afterLockProbe, r.mw, r.totalS]),
+  ["candidate", "scenario", "run", "outcome", "completed re-runs", "in-doubt re-runs", "effect inserted", "key-absorbed retries", "sessions (orphans)", "prompts sent / no-op", "agent wall s", "restart to first step activity s", "finished on", "engine status", "follow-up", "mw pre/sPre/sPost/post", "total s"],
+  rows.map((r) => [r.cand, r.scenario, r.run, r.outcome + (r.why ? ` (${r.why})` : ""), r.completedReruns, r.inDoubtReruns, r.effectInserted, r.effectDupAttempts, `${r.sessions} (${r.orphanSessions})`, `${r.promptsSent} / ${r.promptNoops}`, r.agentWallS, r.firstActivityS, r.finishedOn, r.engineStatus, r.followUp, r.mw, r.totalS]),
 );
-const probeText = probe
-  ? `\nVercel follow-up: ${probe.locksBackdated} graphile-worker job locks back-dated past the 4 h expiry, then one v1 worker ran for 120 s ` +
-    `(column "after lock probe").\n`
-  : "";
-const out = `## Summary\n\n${summary(rows, fp)}\n\n## Per scenario\n\n${detail}\n${probeText}`;
-writeFileSync(join(ROOT, "results", "results.json"), JSON.stringify({ agentMs: AGENT_MS, rows, footprint: fp, vercelLockProbe: probe, wallS: (Date.now() - t0) / 1000 }, null, 2));
+const out = `## Summary\n\n${summary(rows, fp)}\n\n## Per scenario\n\n${detail}\n`;
+writeFileSync(join(ROOT, "results", "results.json"), JSON.stringify({ agentMs: AGENT_MS, rows, footprint: fp, wallS: (Date.now() - t0) / 1000 }, null, 2));
 writeFileSync(join(ROOT, "results", "results.md"), out);
 console.log(out);
 process.exit(0);

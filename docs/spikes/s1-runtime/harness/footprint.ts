@@ -7,7 +7,7 @@ import { ENGINE_SCHEMAS } from "./reset.ts";
 
 export type Footprint = {
   locRuntime: number; locWorkflow: number; depsDirect: number; depsTotal: number; installMB: number;
-  tables: number; indexes: number; kbPerRun: number;
+  tables: number; indexes: number; kbAfterHappy: number;
 };
 
 // What we would own in Wave 2 for each candidate. `common/` is identical for all and not counted.
@@ -78,7 +78,20 @@ function dirSize(path: string): number {
   return total;
 }
 
-export async function footprint(cand: string, url: string, root: string): Promise<Footprint> {
+/** Total size of the engine's schemas. Measured right after the happy scenario on fresh schemas. */
+export async function engineKb(url: string, cand: string): Promise<number> {
+  const c = new Client({ connectionString: url });
+  await c.connect();
+  const size = await c.query(
+    `select coalesce(sum(pg_total_relation_size(format('%I.%I', schemaname, tablename))), 0)::bigint as b
+     from pg_tables where schemaname = any($1)`,
+    [ENGINE_SCHEMAS[cand]!],
+  );
+  await c.end();
+  return Math.round(Number(size.rows[0].b) / 1024);
+}
+
+export async function footprint(cand: string, url: string, root: string, kbAfterHappy: number): Promise<Footprint> {
   const keys = closure(root, DIRECT[cand]!);
   let bytes = 0;
   for (const k of keys) {
@@ -97,13 +110,6 @@ export async function footprint(cand: string, url: string, root: string): Promis
     [schemas],
   );
   const i = await c.query("select count(*)::int as n from pg_indexes where schemaname = any($1)", [schemas]);
-  // Bytes in the engine's tables divided by the number of top-level runs the measurement made.
-  const size = await c.query(
-    `select coalesce(sum(pg_total_relation_size(format('%I.%I', schemaname, tablename))), 0)::bigint as b
-     from pg_tables where schemaname = any($1)`,
-    [schemas],
-  );
-  const runs = await c.query("select count(distinct run_id)::int as n from harness.probe where cand = $1", [cand]);
   await c.end();
   return {
     locRuntime: loc(root, FILES[cand]!.runtime),
@@ -113,6 +119,6 @@ export async function footprint(cand: string, url: string, root: string): Promis
     installMB: +(bytes / 1e6).toFixed(1),
     tables: t.rows[0].n,
     indexes: i.rows[0].n,
-    kbPerRun: +(Number(size.rows[0].b) / 1024 / Math.max(1, runs.rows[0].n)).toFixed(0),
+    kbAfterHappy,
   };
 }

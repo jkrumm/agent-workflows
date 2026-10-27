@@ -11,12 +11,13 @@ export const AGENT_MS = Number(process.env.AGENT_MS ?? 60_000);
 
 export const pool = new Pool({ connectionString: PG_URL, max: 4 });
 
-// Self-kill trigger: KILL_AT="<step>:<ev>[:<delayMs>[:<signal>]]". Only the first incarnation gets it.
+// Self-kill trigger: KILL_AT="<step>:<ev>[:<delayMs>[:<signal>]]", scoped to this scenario's RUN_ID.
+// Only the first incarnation gets it.
 const killAt = (process.env.KILL_AT ?? "").split(":");
 let killArmed = killAt.length >= 2;
 
 async function maybeKill(step: string, ev: string, runId: string) {
-  if (!killArmed || killAt[0] !== step || killAt[1] !== ev) return;
+  if (!killArmed || runId !== process.env.RUN_ID || killAt[0] !== step || killAt[1] !== ev) return;
   killArmed = false;
   const delay = Number(killAt[2] ?? 0);
   const signal = (killAt[3] ?? "SIGKILL") as NodeJS.Signals;
@@ -50,8 +51,16 @@ export const agentServer = {
     );
     return id;
   },
+  /** Every call is recorded: 'sent' starts the session, 'noop' is a re-attach to a prompted one. */
   async prompt(id: string) {
-    await pool.query("update harness.sessions set prompted_at = clock_timestamp() where id = $1 and prompted_at is null", [id]);
+    const { rows, rowCount } = await pool.query(
+      "update harness.sessions set prompted_at = clock_timestamp() where id = $1 and prompted_at is null returning run_id",
+      [id],
+    );
+    const runId = rows[0]?.run_id ?? (await pool.query("select run_id from harness.sessions where id = $1", [id])).rows[0]?.run_id;
+    await pool.query("insert into harness.prompts (cand, run_id, session_id, outcome) values ($1,$2,$3,$4)", [
+      CANDIDATE, runId, id, rowCount === 1 ? "sent" : "noop",
+    ]);
   },
   async wait(id: string): Promise<string> {
     for (;;) {
