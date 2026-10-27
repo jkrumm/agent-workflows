@@ -1,0 +1,123 @@
+{
+  "runId": "run_fdf53a2d9f63",
+  "workflowId": "research.report",
+  "inputHash": "3f2594ee12a4d2138d23c84bbaeac911bc95c54f23e18ad92a76bf09e4db2585",
+  "output": {
+    "title": "Fake report",
+    "sections": 3
+  },
+  "outcome": "ok",
+  "startedAt": "2026-10-27T17:09:03.998Z",
+  "wallMs": 113,
+  "steps": [
+    {
+      "stepId": "prepare",
+      "kind": "code",
+      "spanId": "b2ffbd5ca44525f9",
+      "outcome": "ok",
+      "wallMs": 18,
+      "model": null,
+      "tokens": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "reasoning": 0
+      },
+      "costUsd": null,
+      "costSource": "none",
+      "toolCalls": 0,
+      "sessionId": null
+    },
+    {
+      "stepId": "research",
+      "kind": "agent",
+      "spanId": "0226d7b159a7c966",
+      "outcome": "ok",
+      "wallMs": 74,
+      "model": "claude-haiku-5-5",
+      "tokens": {
+        "input": 1200,
+        "output": 340,
+        "cacheRead": 18000,
+        "cacheWrite": 800,
+        "reasoning": 80
+      },
+      "costUsd": 0.0123,
+      "costSource": "reported",
+      "toolCalls": 2,
+      "sessionId": "ses_fake38a828"
+    },
+    {
+      "stepId": "notify",
+      "kind": "code",
+      "spanId": "bf08ef02b02383a7",
+      "outcome": "ok",
+      "wallMs": 9,
+      "model": null,
+      "tokens": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "reasoning": 0
+      },
+      "costUsd": null,
+      "costSource": "none",
+      "toolCalls": 0,
+      "sessionId": null
+    },
+    {
+      "stepId": "title",
+      "kind": "workflow",
+      "spanId": "697ec0f7cced0d31",
+      "outcome": "ok",
+      "wallMs": 11,
+      "model": null,
+      "tokens": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "reasoning": 0
+      },
+      "costUsd": null,
+      "costSource": "none",
+      "toolCalls": 0,
+      "sessionId": null
+    }
+  ],
+  "tokens": {
+    "input": 1200,
+    "output": 340,
+    "cacheRead": 18000,
+    "cacheWrite": 800,
+    "reasoning": 80
+  },
+  "costUsd": 0.0123,
+  "toolCalls": 2,
+  "friction": {
+    "repeatToolNudges": 0,
+    "reasks": 0,
+    "retries": 0,
+    "timeouts": 0
+  },
+  "scores": {
+    "gate": 0.9
+  },
+  "traceId": "1b042c5d8b89749419586a3cf4ae4c89",
+  "parentTraceparent": "00-1b042c5d8b89749419586a3cf4ae4c89-bdacc50403259795-01",
+  "fingerprint": {
+    "workflowVersion": "0.0.1",
+    "agents": {
+      "research": "7505c79056a6"
+    },
+    "route": "claude-haiku-5-5/medium",
+    "opencodeVersion": "2.0.32",
+    "hash": "1bd3fe40fdbaec63"
+  },
+  "caller": {
+    "project": "agent-workflows",
+    "machine": "dev-host"
+  }
+}

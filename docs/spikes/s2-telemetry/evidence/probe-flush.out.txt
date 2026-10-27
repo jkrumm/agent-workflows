@@ -1,0 +1,12 @@
+$ bun run src/probe-flush.ts
+┌───┬────────────────────┬───────────┬──────────────────────────┐
+│   │ case               │ delivered │ process                  │
+├───┼────────────────────┼───────────┼──────────────────────────┤
+│ 0 │ nohandler-exit     │ NO        │ exit=0 sig=- 39ms        │
+│ 1 │ nohandler-natural  │ NO        │ exit=0 sig=- 35ms        │
+│ 2 │ handler-natural    │ yes       │ exit=0 sig=- 66ms        │
+│ 3 │ shutdown-then-exit │ yes       │ exit=0 sig=- 54ms        │
+│ 4 │ nohandler-sigterm  │ NO        │ exit=143 sig=SIGTERM 2ms │
+│ 5 │ handler-sigterm    │ yes       │ exit=0 sig=- 22ms        │
+│ 6 │ handler-sigint     │ yes       │ exit=0 sig=- 21ms        │
+└───┴────────────────────┴───────────┴──────────────────────────┘

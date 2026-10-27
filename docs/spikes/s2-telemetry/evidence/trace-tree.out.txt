@@ -1,0 +1,23 @@
+$ bun run src/query-trace.ts
+trace 1b042c5d8b89749419586a3cf4ae4c89: 21 spans, 1 root(s), 0 orphan(s)
+caller.invoke  [caller] 278ms 
+  caller.cli  [caller] 171.7ms 
+    agw.run research.report  [agw-cli] 112.7ms workflow.id=research.report run.id=run_fdf53a2d9f63 tokens.input=1200 tokens.output=340 cost.usd=0.0123
+      agw.step prepare  [agw-cli] 17.6ms workflow.id=research.report run.id=run_fdf53a2d9f63 step.id=prepare step.kind=code tokens.input=0 tokens.output=0 cost.usd=0
+      agw.step research  [agw-cli] 73.9ms workflow.id=research.report run.id=run_fdf53a2d9f63 step.id=research step.kind=agent tokens.input=1200 tokens.output=340 cost.usd=0.0123
+        leaf.work  [leaf-process] 12.3ms 
+      agw.step notify  [agw-cli] 8.8ms workflow.id=research.report run.id=run_fdf53a2d9f63 step.id=notify step.kind=code tokens.input=0 tokens.output=0 cost.usd=0
+        http.server POST /v1/ping  [stub-gateway] 6.5ms 
+      agw.step title  [agw-cli] 11.6ms workflow.id=research.report run.id=run_fdf53a2d9f63 step.id=title step.kind=workflow tokens.input=0 tokens.output=0 cost.usd=0
+        agw.run title.generate  [agw-cli] 11.4ms workflow.id=title.generate run.id=run_fdf53a2d9f63.1
+          agw.step name  [agw-cli] 11.4ms step.id=name step.kind=agent
+  caller.http  [caller] 105.8ms 
+    agw.run research.report  [agw-host] 103.6ms workflow.id=research.report run.id=run_7928a9881a0c tokens.input=1200 tokens.output=340 cost.usd=0.0123
+      agw.step prepare  [agw-host] 17.5ms workflow.id=research.report run.id=run_7928a9881a0c step.id=prepare step.kind=code tokens.input=0 tokens.output=0 cost.usd=0
+      agw.step research  [agw-host] 66.2ms workflow.id=research.report run.id=run_7928a9881a0c step.id=research step.kind=agent tokens.input=1200 tokens.output=340 cost.usd=0.0123
+        leaf.work  [leaf-process] 12.4ms 
+      agw.step notify  [agw-host] 7ms workflow.id=research.report run.id=run_7928a9881a0c step.id=notify step.kind=code tokens.input=0 tokens.output=0 cost.usd=0
+        http.server POST /v1/ping  [stub-gateway] 6.3ms 
+      agw.step title  [agw-host] 12.2ms workflow.id=research.report run.id=run_7928a9881a0c step.id=title step.kind=workflow tokens.input=0 tokens.output=0 cost.usd=0
+        agw.run title.generate  [agw-host] 12.1ms workflow.id=title.generate run.id=run_7928a9881a0c.1
+          agw.step name  [agw-host] 12ms step.id=name step.kind=agent
