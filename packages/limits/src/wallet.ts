@@ -81,16 +81,21 @@ export function walletGate(options: WalletGateOptions): Middleware {
 export type WalletEnv = { thresholdUsd: number; pausedUntil: Date | null; snapshotPath: string }
 
 /**
- * `AGW_WALLET_THRESHOLD_USD` (a number ≥ 0; anything else → 400), `AGW_WALLET_PAUSED_UNTIL` (ISO date; empty =
+ * `AGW_WALLET_THRESHOLD_USD` (a number ≥ 0; anything else → a warning and 400), `AGW_WALLET_PAUSED_UNTIL` (ISO date; empty =
  * no pause; invalid → warning, no pause), `AGW_WALLET_SNAPSHOT` (path).
  */
 export function walletEnv(env: Record<string, string | undefined>, logger: Logger = consoleLogger): WalletEnv {
-  const rawThreshold = env.AGW_WALLET_THRESHOLD_USD
+  const rawThreshold = env.AGW_WALLET_THRESHOLD_USD?.trim()
   const threshold = Number(rawThreshold)
-  const thresholdUsd =
-    rawThreshold !== undefined && rawThreshold !== '' && Number.isFinite(threshold) && threshold >= 0
-      ? threshold
-      : WALLET_THRESHOLD_USD_DEFAULT
+  const valid = Number.isFinite(threshold) && threshold >= 0
+  const set = rawThreshold !== undefined && rawThreshold !== ''
+  if (set && !valid) {
+    logger.warn('AGW_WALLET_THRESHOLD_USD is not a number >= 0; the default applies', {
+      thresholdUsd: rawThreshold,
+      default: WALLET_THRESHOLD_USD_DEFAULT,
+    })
+  }
+  const thresholdUsd = set && valid ? threshold : WALLET_THRESHOLD_USD_DEFAULT
 
   const rawPause = env.AGW_WALLET_PAUSED_UNTIL ?? WALLET_PAUSED_UNTIL_DEFAULT
   let pausedUntil: Date | null = null

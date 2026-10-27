@@ -21,10 +21,13 @@ export async function seedRuns(
     [JSON.stringify(rows), workflow, status],
   )
   await pool.query(
-    `insert into "${schema}".steps (run_id, step_id, kind, status, attempts, cost, tokens_input, finished_at)
+    `insert into "${schema}".steps
+       (run_id, step_id, kind, status, attempts, cost, tokens_input, started_at, attempt_started_at, finished_at)
      select r.id, 's' || n, 'code', 'done', 1,
-       case when n = 0 then r.cost else 0 end, case when n = 0 then r.tokens else 0 end, now()
-     from jsonb_to_recordset($1::jsonb) as r(id text, cost numeric, tokens bigint, steps int),
+       case when n = 0 then r.cost else 0 end, case when n = 0 then r.tokens else 0 end,
+       run.started_at, run.started_at, run.finished_at
+     from jsonb_to_recordset($1::jsonb) as r(id text, cost numeric, tokens bigint, steps int)
+     join "${schema}".runs run on run.id = r.id,
        generate_series(0, r.steps - 1) as n`,
     [JSON.stringify(rows)],
   )

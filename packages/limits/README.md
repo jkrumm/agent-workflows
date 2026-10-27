@@ -27,16 +27,20 @@ await cap.close()
   it never fails a run.
 - **Cached** per workflow for `ttlMs`; concurrent runs share one read. Steps never query: the run's usage is
   accumulated in memory from `stepPost`. A **resumed run** (`runPre` with `resume: true`, or a `stepPre` for a run
-  this process has not seen) loads what it already spent from the journal once (sum of its steps, the run's
-  original `started_at`), so a crash or a deploy does not reset the meter.
+  this process has not seen) loads what it already spent from the journal once (sum of its steps; wall time from
+  `started_at` to the last journal activity, so the downtime before the resume is not counted), so a crash or a
+  deploy does not reset the meter. A failed load is logged and not cached: that step passes unchecked and the next step reads
+  the journal again, so the meter is never reset. Concurrent steps of one run share one read.
 - **Enforced in `stepPre`**: the first metric above its cap throws `RunawayCapExceeded` (`metric`, `observed`,
   `cap`, `basis`); the step fails as `middleware` and the run as `step_failed`. Usage is known per finished step, so
   a run is stopped at the step *after* the one that crossed the cap.
-- **`toolPre`** checks wall time inside a long agent step and throws the same error. The runtime currently logs a
-  `toolPre` throw (`toolPre threw`) and lets the step continue, so inside an agent step this is a report; the run
+- **`toolPre`** checks wall time inside a long agent step and throws the same error, once per run, and emits a
+  decision only when the cap is exceeded. The runtime currently logs a `toolPre` throw (`toolPre threw`) and lets
+  the step continue, so inside an agent step this is a report; the run
   stops at its next step. Failing the step from `toolPre` needs a runtime change.
 - **Wedged agents are not this rule's job**: the runtime's idle timeout is the one liveness rule. There is no turn
   or wall-clock cap below runaway level (rules/agent-limits.md).
+- Unpriced usage (`cost` null) adds nothing to the cost metric; its tokens still count toward the token cap.
 - Child runs (`ctx.workflow`) are capped by their own workflow's caps; a parent's `workflow` step carries no usage.
 
 | Option | Default |
@@ -83,13 +87,13 @@ OCR in review first, Wave 4); every other workflow passes untouched.
   reason }`). The production source, `snapshotSpendSource`, is ported from agent-gateway's
   `ocrBudgetBlockReason`: it reads usage-tracker's IU snapshot (`{ schema: 1, fetched_at, rolling30_usd }`) per
   admission and **fails closed**: a missing, unreadable, malformed (bad JSON, schema ≠ 1, no valid `fetched_at` or
-  `rolling30_usd`) or stale (older than 48 h) snapshot refuses, as does a throwing source.
+  `rolling30_usd`, `fetched_at` more than 5 min in the future) or stale (older than 48 h) snapshot refuses, as does a throwing source.
 - `thresholdUsd: 0` disables the spend check (the pause still applies).
 
 | Env | Default | Notes |
 |-|-|-|
-| `AGW_WALLET_THRESHOLD_USD` | `400` | a number ≥ 0; anything else falls back to 400; `0` disables the spend check |
-| `AGW_WALLET_PAUSED_UNTIL` | `2026-11-02T00:00:00Z` | ISO date; empty = no pause; invalid = a warning and no pause |
+| `AGW_WALLET_THRESHOLD_USD` | `400` | a number ≥ 0; anything else = a warning and 400; `0` disables the spend check |
+| `AGW_WALLET_PAUSED_UNTIL` | `2026-11-02T00:00:00Z` | ISO date; empty = no pause; invalid = a warning and no pause (as in agent-gateway) |
 | `AGW_WALLET_SNAPSHOT` | `~/.local/share/iu-portal/latest.json` | usage-tracker's IU snapshot |
 
 Options (`thresholdUsd`, `pausedUntil`, `spend`) win over the env.
