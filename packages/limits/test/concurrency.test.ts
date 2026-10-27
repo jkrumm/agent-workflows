@@ -27,10 +27,22 @@ const wf = defineWorkflow({
   output: z.object({ i: z.number() }),
   async run(ctx, { i }) {
     const usage = costUsage(0.01, 500)
-    await ctx.step('s1', (s) => (s.addUsage(usage), 1))
-    await ctx.step('s2', (s) => (s.addUsage(usage), 2))
-    await ctx.step('s3', (s) => (s.addUsage(usage), 3))
-    await ctx.step('s4', (s) => (s.addUsage(usage), 4))
+    await ctx.step('s1', (s) => {
+      s.addUsage(usage)
+      return 1
+    })
+    await ctx.step('s2', (s) => {
+      s.addUsage(usage)
+      return 2
+    })
+    await ctx.step('s3', (s) => {
+      s.addUsage(usage)
+      return 3
+    })
+    await ctx.step('s4', (s) => {
+      s.addUsage(usage)
+      return 4
+    })
     return { i }
   },
 })

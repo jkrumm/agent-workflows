@@ -100,7 +100,8 @@ OCR in review first, Wave 4); every other workflow passes untouched.
 - **Only in `runPre` with `resume: false`**: refuses with `AdmissionRefused` (the run fails as
   `admission_refused` before its body runs) while `now < pausedUntil`, or when the IU rolling-30-day spend is at
   or above `thresholdUsd`. A child run of an optional workflow is refused the same way; the parent gets `null`.
-- **A resumed run is always admitted**, even if the spend crossed the threshold meanwhile.
+- **A resumed run is always admitted**, even if the spend crossed the threshold meanwhile and also during a pause:
+  concept §4 puts the gate "at admission, never mid-run", and a resumed run was admitted already.
 - **The spend comes through a `SpendSource` port** (`read(now) → { ok, rolling30Usd, fetchedAt } | { ok: false,
   reason }`). The production source, `snapshotSpendSource`, is ported from agent-gateway's
   `ocrBudgetBlockReason`: it reads usage-tracker's IU snapshot (`{ schema: 1, fetched_at, rolling30_usd }`) per
@@ -117,6 +118,19 @@ OCR in review first, Wave 4); every other workflow passes untouched.
 Options (`thresholdUsd`, `pausedUntil`, `spend`) win over the env. An invalid `thresholdUsd` (NaN, negative,
 infinite) falls back to the env or default value with a warning; an invalid `pausedUntil` date falls back to the env
 or default pause (fail closed).
+
+## Known gaps
+
+- **Admission burst overshoot (wallet gate).** Admission is check-then-act against a snapshot. Every run admitted
+  while the snapshot is under the threshold passes, even when together they push the spend over it. The overshoot is
+  bounded by what is admitted within one snapshot refresh interval (usage-tracker's writer); the next refresh
+  closes the gate.
+- **A SIGKILLed in-flight attempt's usage is not counted (runaway cap).** Only finished step rows carry usage
+  (`finishStep` writes it). An attempt killed mid-step loses what it spent, both from the resume load and from the
+  learned history. Its wall time up to its start is still counted.
+- **Wall time across a resume** is approximated (see Runaway cap above).
+- **`toolPre` reports but does not stop** an agent step until the runtime follow-up makes a `toolPre` throw fail
+  the step.
 
 ## Decisions
 
