@@ -60,6 +60,40 @@ describe('concurrency', () => {
     }
   })
 
+  test('admission fires once per run while processes race for the last slot', async () => {
+    const admissions = new Map<string, number>()
+    const mw = {
+      name: 'count',
+      runPre: (a: { runId: string; resume: boolean }) => {
+        if (!a.resume) admissions.set(a.runId, (admissions.get(a.runId) ?? 0) + 1)
+      },
+    }
+    const wf = defineWorkflow({
+      id: 'conc.admit-once',
+      version: 'v1',
+      input: empty,
+      output: empty,
+      concurrency: 1,
+      async run(ctx) {
+        await ctx.step('work', () => Bun.sleep(30).then(() => null))
+        return {}
+      },
+    })
+    const starter = testRuntime({ schema: db.schema, workflows: [wf] })
+    const ids = await Promise.all(Array.from({ length: 6 }, () => starter.start(wf, {}, { purpose: 'build' })))
+    const procs = Array.from({ length: 3 }, () =>
+      testRuntime({ schema: db.schema, workflows: [wf], middleware: [mw], recoveryIntervalMs: 20 }),
+    )
+    await Promise.all(procs.map((p) => p.open()))
+    try {
+      const results = await Promise.all(ids.map(({ runId }) => starter.wait(runId, { pollMs: 25 })))
+      expect(results.every((r) => r.status === 'done')).toBe(true)
+      expect([...admissions.values()]).toEqual([1, 1, 1, 1, 1, 1])
+    } finally {
+      await Promise.all([...procs.map((p) => p.close()), starter.close()])
+    }
+  })
+
   test('the lease budget caps runs per process; the rest are picked up by the recovery tick', async () => {
     const g = gauge()
     const wf = defineWorkflow({

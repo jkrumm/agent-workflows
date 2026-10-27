@@ -98,6 +98,9 @@ export class Runtime {
       max: options.journalPoolSize ?? 10,
       application_name: `agw-journal:${this.schema}`,
       connectionTimeoutMillis: 30_000,
+      // A hung journal call must fail (infra, retried) instead of stalling a tick forever.
+      query_timeout: 120_000,
+      statement_timeout: 120_000,
       keepAlive: true,
     })
     this.pool.on('error', (err) => this.logger.warn('journal pool: idle connection error', { error: err.message }))
@@ -115,9 +118,9 @@ export class Runtime {
       stepPost: (args) => this.stepPost(args),
       tool: (phase, event) => this.tool(phase, event),
       runChild: (parent, childId, workflow, input) => this.runChild(parent, childId, workflow, input),
-      trackAgent: (key, handle) => {
-        if (handle === null) this.agents.delete(key)
-        else this.agents.set(key, handle)
+      trackAgent: (key, handle) => this.agents.set(key, handle),
+      untrackAgent: (key, handle) => {
+        if (this.agents.get(key) === handle) this.agents.delete(key)
       },
       logError: (message, meta) => this.logger.error(message, meta),
     }
@@ -220,6 +223,7 @@ export class Runtime {
       const result = await this.tryClaim(id)
       if (result === 'full') return
     }
+    await this.redeliverPostHooks()
   }
 
   /**
@@ -332,18 +336,24 @@ export class Runtime {
     }
   }
 
-  /** False: the run stays pending (concurrency) or ended (refused). */
+  /**
+   * The concurrency slot first (atomic, under a per-workflow lock), then admission once: `runPre` sees
+   * `resume: false` until it has accepted the run (`admitted_at`), so a lost slot race or a crash before the
+   * accept never fires a second admission for an admitted run. False: stays pending, or ended (refused).
+   */
   private async admit(scope: RunScope): Promise<boolean> {
     const { run, workflow } = scope
-    const resume = run.status === 'running'
+    if (run.status === 'pending') {
+      const limit =
+        run.parent_id === null && workflow.concurrency ? { workflow: workflow.id, max: workflow.concurrency } : null
+      const taken = await scope.j(() => this.journal.markRunning(run.id, scope.fence, limit))
+      if (!taken) return false
+    }
     const info = this.runInfo(run, workflow)
-    if (resume) {
+    if (run.admitted_at !== null) {
       await this.runPre({ ...info, resume: true })
       return true
     }
-    const limit =
-      run.parent_id === null && workflow.concurrency ? { workflow: workflow.id, max: workflow.concurrency } : null
-    if (limit && (await scope.j(() => this.journal.runningCount(workflow.id))) >= limit.max) return false
     const refusal = await this.runPre({ ...info, resume: false })
     if (refusal) {
       const kind = refusal instanceof AdmissionRefused ? 'admission_refused' : 'middleware'
@@ -355,7 +365,8 @@ export class Runtime {
       })
       return false
     }
-    return scope.j(() => this.journal.markRunning(run.id, scope.fence, limit))
+    await scope.j(() => this.journal.markAdmitted(run.id, scope.fence))
+    return true
   }
 
   private async execute(scope: RunScope): Promise<RunEnd> {
@@ -402,6 +413,7 @@ export class Runtime {
       startedAt: scope.run.started_at,
       finishedAt: new Date(),
     })
+    await this.markPostHooks(scope.run.id)
     return end.status === 'done' ? end.output : null
   }
 
@@ -433,6 +445,44 @@ export class Runtime {
         startedAt: child.started_at,
         finishedAt: new Date(),
       })
+      await this.markPostHooks(child.id)
+    }
+  }
+
+  private async markPostHooks(runId: string) {
+    await this.journal.postHooksDone(runId).catch((err: unknown) => {
+      this.logger.warn('runPost done but not recorded; recovery delivers it again', { runId, error: errorMessage(err) })
+    })
+  }
+
+  /**
+   * At-least-once `runPost`: ended runs whose hooks were never confirmed (a kill between the terminal write and
+   * the hooks, or runs a cancel ended while pending). The root's lease proves no live driver is still running
+   * the hooks.
+   */
+  private async redeliverPostHooks() {
+    const rows = await this.journal.postHooksPending([...this.registry.keys()], 50)
+    for (const row of rows) {
+      if (this.closing) return
+      if (this.claiming.has(row.root_id)) continue
+      const lease = await this.leases.tryLock(lockKey(`${this.schema}:${row.root_id}`))
+      if (lease === 'full') return
+      if (lease === 'busy') continue
+      try {
+        const fresh = await this.journal.getRun(row.id)
+        if (!fresh || !TERMINAL.has(fresh.status) || fresh.post_hooks_at !== null) continue
+        await this.runPost({
+          ...this.runInfo(fresh, { id: fresh.workflow, version: fresh.version_finished ?? fresh.version_started }),
+          status: fresh.status as RunPostArgs['status'],
+          output: fresh.status === 'done' ? fresh.output : null,
+          error: fresh.error_kind ? { kind: fresh.error_kind, message: fresh.error ?? '' } : null,
+          startedAt: fresh.started_at,
+          finishedAt: fresh.finished_at ?? new Date(),
+        })
+        await this.markPostHooks(fresh.id)
+      } finally {
+        await lease.release()
+      }
     }
   }
 

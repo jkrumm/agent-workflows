@@ -201,6 +201,45 @@ describe('agent edge cases', () => {
     }
   })
 
+  test('a timeout during the prompt send never lets the superseded attempt overwrite the new handle', async () => {
+    let prompts = 0
+    class SlowPromptHost extends FakeAgentHost {
+      override async prompt(handle: Json): Promise<void> {
+        prompts++
+        if (prompts === 1) await Bun.sleep(250) // outlives the idle timeout, resolves during the retry
+        return super.prompt(handle)
+      }
+    }
+    const host = new SlowPromptHost(async (s) => {
+      await s.sleep(300, 20)
+      return { output: { answer: s.id } }
+    })
+    const wf = defineWorkflow({
+      id: 'agent.stale-attempt',
+      version: 'v1',
+      input: empty,
+      output: answer,
+      run: (ctx) =>
+        ctx.agent('ask', {
+          agent: 'helper',
+          prompt: 'q',
+          output: answer,
+          idleTimeoutMs: 100,
+          retry: { attempts: 2, backoffMs: 10 },
+        }),
+    })
+    const rt = testRuntime({ schema: db.schema, workflows: [wf], host })
+    await rt.open()
+    try {
+      const { runId } = await rt.start(wf, {}, { purpose: 'build' })
+      expect((await rt.wait(runId)).output).toEqual({ answer: 'ses_2' })
+      await Bun.sleep(100)
+      expect(await sql.step(runId, 'ask')).toMatchObject({ handle: { handle: { sessionId: 'ses_2' }, prompted: true } })
+    } finally {
+      await rt.close()
+    }
+  })
+
   test('a retry after invalid output opens a fresh session instead of re-reading the old one', async () => {
     let n = 0
     const host = new FakeAgentHost(async () => {

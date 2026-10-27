@@ -21,8 +21,15 @@ export type RunRow = {
   traceparent: string | null
   version_started: string
   started_at: Date | null
+  finished_at: Date | null
+  version_finished: string | null
   cancel_requested_at: Date | null
+  admitted_at: Date | null
+  post_hooks_at: Date | null
 }
+
+const RUN_COLUMNS = `id, workflow, parent_id, root_id, status, purpose, input, output, error, error_kind, traceparent,
+  version_started, version_finished, started_at, finished_at, cancel_requested_at, admitted_at, post_hooks_at`
 
 export type CancelledStep = { run_id: string; step_id: string; kind: StepKind; handle: AgentHandleState | null }
 
@@ -131,12 +138,7 @@ export class Journal {
   }
 
   async getRun(id: string): Promise<RunRow | null> {
-    const { rows } = await this.query<RunRow>(
-      `select id, workflow, parent_id, root_id, status, purpose, input, output, error, error_kind, traceparent,
-         version_started, started_at, cancel_requested_at
-       from ${this.runs} where id = $1`,
-      [id],
-    )
+    const { rows } = await this.query<RunRow>(`select ${RUN_COLUMNS} from ${this.runs} where id = $1`, [id])
     return rows[0] ?? null
   }
 
@@ -194,6 +196,32 @@ export class Journal {
     return false
   }
 
+  /** runPre accepted the run: from now on a resume skips admission. */
+  async markAdmitted(id: string, fence: Fence) {
+    await this.fenced(
+      fence,
+      `update ${this.runs} set admitted_at = now(), updated_at = now()
+       where id = $1 and status = 'running' and ${this.fence(2, 3)}`,
+      [id, fence.rootId, fence.token],
+    )
+  }
+
+  async postHooksDone(id: string) {
+    await this.query(`update ${this.runs} set post_hooks_at = now() where id = $1`, [id])
+  }
+
+  /** Ended runs (of trees rooted in `workflows`) whose runPost was never confirmed. */
+  async postHooksPending(workflows: string[], limit: number): Promise<RunRow[]> {
+    const { rows } = await this.query<RunRow>(
+      `select ${RUN_COLUMNS} from ${this.runs} where id in (
+         select c.id from ${this.runs} c join ${this.runs} r on r.id = c.root_id
+         where c.post_hooks_at is null and c.status in ('done', 'failed', 'cancelled') and r.workflow = any($1)
+         order by c.finished_at limit $2)`,
+      [workflows, limit],
+    )
+    return rows
+  }
+
   /** Terminal write (a refused run ends straight from pending). False when another writer ended it first. */
   async finishRun(id: string, fence: Fence, end: RunEnd): Promise<boolean> {
     return this.fenced(
@@ -236,22 +264,23 @@ export class Journal {
     )
   }
 
-  async stepHandle(runId: string, stepId: string, fence: Fence, state: AgentHandleState) {
+  async stepHandle(runId: string, stepId: string, fence: Fence, state: AgentHandleState | null) {
     await this.fenced(
       fence,
       `update ${this.steps} set handle = $5 where run_id = $1 and step_id = $2 and ${this.fence(3, 4)}`,
-      [runId, stepId, fence.rootId, fence.token, JSON.stringify(state)],
+      [runId, stepId, fence.rootId, fence.token, state === null ? null : JSON.stringify(state)],
     )
   }
 
-  async finishStep(runId: string, stepId: string, fence: Fence, end: StepEnd) {
+  /** First terminal writer wins: false when a cancel cleanup ended the step first. */
+  async finishStep(runId: string, stepId: string, fence: Fence, end: StepEnd): Promise<boolean> {
     const { usage } = end
-    await this.fenced(
+    return this.fenced(
       fence,
       `update ${this.steps} set status = $5, output = $6, error = $7, error_kind = $8, model = $9,
          tokens_input = $10, tokens_output = $11, tokens_cache_read = $12, tokens_reasoning = $13,
          cost = $14, tool_calls = $15, usage_by_model = $16, finished_at = now()
-       where run_id = $1 and step_id = $2 and ${this.fence(3, 4)}`,
+       where run_id = $1 and step_id = $2 and status = 'running' and ${this.fence(3, 4)}`,
       [
         runId,
         stepId,
@@ -349,8 +378,7 @@ export class Journal {
       `update ${this.runs} set status = 'cancelled', error = 'cancelled', error_kind = 'cancelled',
          finished_at = now(), updated_at = now()
        where left(id, length($1) + 1) = $1 || '/' and status in ('pending', 'running') and ${this.fence(2, 3)}
-       returning id, workflow, parent_id, root_id, status, purpose, input, output, error, error_kind, traceparent,
-         version_started, started_at, cancel_requested_at`,
+       returning ${RUN_COLUMNS}`,
       [id, fence.rootId, fence.token],
     )
     return rows
