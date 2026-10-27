@@ -4,6 +4,7 @@ import { call, eventIterator, ORPCError, os } from '@orpc/server'
 import { ZodToJsonSchemaConverter } from '@orpc/zod/zod4'
 import type { z } from 'zod'
 import {
+  assertRun,
   getRun,
   ProgressEvent,
   progress,
@@ -52,12 +53,14 @@ export const runEvents = base
   .route({ method: 'GET', path: '/runs/{runId}/events', operationId: 'runEvents', summary: 'Progress events (SSE)' })
   .input(RunIdParam)
   .output(eventIterator(ProgressEvent))
-  .handler(async function* ({ input }) {
+  .handler(({ input }) => {
+    // a generator handler starts streaming (200 + error frame) before it can throw; check first so the 404 is a real status
     try {
-      yield* progress(input.runId)
+      assertRun(input.runId)
     } catch (e) {
-      notFound(e)
+      return notFound(e)
     }
+    return progress(input.runId)
   })
 
 export const router = { run, runStatus, runEvents }

@@ -69,7 +69,7 @@ const fidelity = (n: string) => {
   const sse = s.paths['/runs/{runId}/events'].get.responses?.['200']?.content ?? {}
   return {
     version: s.openapi,
-    enum: JSON.stringify(body.properties.depth.enum ?? body.properties.depth.anyOf) !== undefined && body.properties.depth.enum?.length === 3,
+    enum: body.properties.depth.enum?.length === 3,
     default: body.properties.depth.default === 'standard',
     description: body.properties.question.description === 'The research question',
     inputUnion: union(body.properties.source)?.length === 2 && JSON.stringify(body.properties.source).includes('brain'),
@@ -134,6 +134,7 @@ for (const n of names) {
     (e) => ({ threw: String(e?.code ?? e) }),
   )
   const body = good?.body ?? good
+  const unknownEvents = await fw.fetch(new Request('http://localhost/runs/nope/events'))
   const idRes = (await (await post(fw, { question: 'abc def', depth: 'deep' })).json()) as { runId: string }
   const ev = await fw.fetch(new Request(`http://localhost/runs/${idRes.runId}/events`))
   const text = await ev.text()
@@ -150,6 +151,7 @@ for (const n of names) {
     invalidRejected: JSON.stringify(bad).match(/BAD_REQUEST|422|400|threw/) !== null,
     sseContentType: ev.headers.get('content-type') ?? '',
     sseEvents: events,
+    sseUnknownRun: `${unknownEvents.status} ${(unknownEvents.headers.get('content-type') ?? '').split(';')[0]}`,
     rps: Math.round((reqs / (performance.now() - t0)) * 1000),
     coldMs: coldMs(n),
     specMs: Math.round(timing[n]!.specMs),
@@ -168,6 +170,7 @@ const rowsI: [string, string][] = [
   ['invalid input rejected in-process', 'invalidRejected'],
   ['SSE content-type', 'sseContentType'],
   ['SSE events received (want 4)', 'sseEvents'],
+  ['SSE on unknown run: status + content-type (want 404 json)', 'sseUnknownRun'],
   ['GET /runs/{id} via fetch handler, req/s', 'rps'],
   ['cold start: bun + import + build + emit spec (ms, median of 5)', 'coldMs'],
   ['emit OpenAPI (ms)', 'specMs'],
@@ -215,7 +218,7 @@ for (const n of cliNames) {
   const defaulted = await cli(n, ['research', 'run', 'abc def', '--commit'], { AGW_WAIT_BUDGET_S: '0.1' }) // depth omitted -> server default (standard, 120ms)
   const pending = await cli(n, ['research', 'run', 'abc def', '--depth', 'deep', '--commit'], { AGW_WAIT_BUDGET_S: '0.1' })
   const hint = errOf(pending).hint as string | undefined
-  const resumed = hint ? await cli(n, hint.replace(/^agw-poc /, '').split(' ')) : { code: -1, out: '', err: '' }
+  const resumed = pending.code === EXIT.pending && hint ? await cli(n, hint.replace(/^agw-poc /, '').split(' ')) : { code: -1, out: '', err: '' }
   const unionFlag = await cli(n, ['research', 'run', 'abc def', '--depth', 'quick', '--source', '{"kind":"web"}', '--commit'])
   const notFound = await cli(n, ['research', 'status', 'nope'])
   const badEnum = await cli(n, ['research', 'run', 'abc def', '--depth', 'huge', '--commit'])
@@ -249,7 +252,8 @@ const closure = (roots: string[]) => {
     if (seen.has(name) || !existsSync(join(pkgDir(name), 'package.json'))) return
     seen.add(name)
     const p = JSON.parse(readFileSync(join(pkgDir(name), 'package.json'), 'utf8'))
-    for (const d of Object.keys(p.dependencies ?? {})) walk(d)
+    const requiredPeers = Object.keys(p.peerDependencies ?? {}).filter((d) => !p.peerDependenciesMeta?.[d]?.optional)
+    for (const d of [...Object.keys(p.dependencies ?? {}), ...requiredPeers]) walk(d)
   }
   roots.forEach(walk)
   return seen
@@ -268,10 +272,12 @@ const loc = (f: string) =>
 const foot: Record<string, Record<string, string | number>> = {}
 for (const n of names) {
   const c = closure(stacks[n]!)
+  // zod and typescript are shared by every candidate (typescript is a non-optional peer of @elysia/openapi, a build tool here)
   c.delete('zod')
+  c.delete('typescript')
   foot[n] = {
     'wiring LOC (src/<fw>.ts)': loc(`${n}.ts`),
-    'prod packages in closure (excl. zod)': c.size,
+    'prod packages in closure (deps + required peers, excl. zod, typescript)': c.size,
     'unpacked size, MB': (Array.from(c).reduce((a, p) => a + dirSize(pkgDir(p)), 0) / 1e6).toFixed(1),
   }
 }

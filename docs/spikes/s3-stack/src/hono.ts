@@ -1,7 +1,20 @@
 import { createRoute, OpenAPIHono } from '@hono/zod-openapi'
 import { streamSSE } from 'hono/streaming'
 import { z } from 'zod'
-import { ErrorBody, getRun, progress, RunIdParam, RunInput, RunNotFoundError, RunResponse, RunStatus, startRun, XCliRun, XCliStatus } from './shared.ts'
+import {
+  assertRun,
+  ErrorBody,
+  getRun,
+  progress,
+  RunIdParam,
+  RunInput,
+  RunNotFoundError,
+  RunResponse,
+  RunStatus,
+  startRun,
+  XCliRun,
+  XCliStatus,
+} from './shared.ts'
 
 const json = <T extends z.ZodType>(schema: T, description: string) => ({ description, content: { 'application/json': { schema } } })
 
@@ -29,7 +42,10 @@ const eventsRoute = createRoute({
   operationId: 'runEvents',
   summary: 'Progress events (SSE)',
   request: { params: RunIdParam },
-  responses: { 200: { description: 'text/event-stream of progress events', content: { 'text/event-stream': { schema: z.string() } } } },
+  responses: {
+    200: { description: 'text/event-stream of progress events', content: { 'text/event-stream': { schema: z.string() } } },
+    404: json(ErrorBody, 'Run not found'),
+  },
 })
 
 export const app = new OpenAPIHono()
@@ -44,6 +60,13 @@ export const app = new OpenAPIHono()
   })
   .openapi(eventsRoute, (c) => {
     const { runId } = c.req.valid('param')
+    // decide the status before the first byte: streamSSE has already committed 200 once it starts
+    try {
+      assertRun(runId)
+    } catch (e) {
+      if (e instanceof RunNotFoundError) return c.json({ error: { kind: 'not_found' as const, message: e.message, runId: e.runId } }, 404) as never
+      throw e
+    }
     return streamSSE(c, async (stream) => {
       for await (const e of progress(runId)) await stream.writeSSE({ data: JSON.stringify(e) })
     }) as never
