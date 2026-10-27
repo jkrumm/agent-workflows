@@ -431,8 +431,7 @@ export function runawayCap(options: RunawayCapOptions): RunawayCap {
     },
 
     toolPre(event: ToolEvent) {
-      // Once per run: the runtime only logs a toolPre throw and lets the step go on, so a repeated throw would add
-      // an error log per tool call and stop nothing; the next stepPre stops the run.
+      // Once per run: the runtime fails the step on a toolPre throw (ToolRefused), so one throw stops the run.
       if (flagged.has(event.runId)) return
       const state = stateOf(event.runId)
       if (!state) return

@@ -50,9 +50,8 @@ await cap.close()
   `cap`, `basis`); the step fails as `middleware` and the run as `step_failed`. Usage is known per finished step, so
   a run is stopped at the step *after* the one that crossed the cap.
 - **`toolPre`** checks wall time inside a long agent step. It throws the same error once per run and emits a
-  decision only when the cap is exceeded. The runtime currently logs a `toolPre` throw (`toolPre threw`) and lets
-  the step continue, so inside an agent step this is a report and the run stops at its next step. The runtime
-  follow-up makes a `toolPre` throw fail the step.
+  decision only when the cap is exceeded. The runtime fails the step on a `toolPre` throw (`ToolRefused`, the agent
+  session is aborted, no retry), so the run stops inside the agent step that crossed the cap.
 - **Unpriced usage** (`cost` null) adds nothing to the cost metric, and the decision carries `unpricedCalls`. **When
   a run tree has unpriced calls, its cost is a lower bound and the token cap is the binding check.**
 - **Wedged agents are not this rule's job**: the runtime's idle timeout is the one liveness rule. There is no turn
@@ -129,8 +128,6 @@ or default pause (fail closed).
   (`finishStep` writes it). An attempt killed mid-step loses what it spent, both from the resume load and from the
   learned history. Its wall time up to its start is still counted.
 - **Wall time across a resume** is approximated (see Runaway cap above).
-- **`toolPre` reports but does not stop** an agent step until the runtime follow-up makes a `toolPre` throw fail
-  the step.
 
 ## Decisions
 

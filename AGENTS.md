@@ -8,7 +8,7 @@ evaluated); every workflow runs inside the same middleware; Claude Code and Herm
 through one generated `agw` CLI. It replaces agent-gateway, research-gateway and audio-gateway by a
 hard rewrite. **`docs/concept.md` is the design and wins on any difference with this file.**
 
-**Status:** Wave 2: the runtime (`packages/runtime`), routes and capabilities landed; the middleware is next.
+**Status:** Wave 2 landed the core: `runtime`, `middleware`, `limits`, `routes`, `capabilities` (`packages/*`). The CLI, the OpenCode host and the first deploy are Wave 3.
 
 ## Principles (concept §0)
 
