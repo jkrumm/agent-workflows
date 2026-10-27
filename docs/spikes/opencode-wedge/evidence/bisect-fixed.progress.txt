@@ -1,0 +1,54 @@
+bisect-fixed | baseline #1: prompt (ok) prompt=582ms boot=33ms cpu=59% term=term 37ms
+bisect-fixed | env=parent #1: prompt (ok) prompt=555ms boot=33ms cpu=52% term=term 32ms
+bisect-fixed | cwd=repo(AGENTS.md ancestor) #1: prompt (ok) prompt=614ms boot=153ms cpu=31% term=term 37ms
+bisect-fixed | cwd=clean /tmp dir #1: prompt (ok) prompt=203ms boot=31ms cpu=75% term=term 39ms
+bisect-fixed | cwd=empty dir #1: prompt (ok) prompt=186ms boot=26ms cpu=79% term=term 32ms
+bisect-fixed | otel=unset #1: prompt (ok) prompt=454ms boot=25ms cpu=116% term=term 36ms
+bisect-fixed | home=warm #1: prompt (ok) prompt=294ms boot=91ms cpu=147% term=term 38ms
+bisect-fixed | otel=up +flag #1: prompt (ok) prompt=198ms boot=29ms cpu=76% term=term 35ms
+bisect-fixed | otel=up svcname (dotfiles) #1: prompt (ok) prompt=198ms boot=34ms cpu=95% term=term 56ms
+bisect-fixed | otel=down #1: prompt (ok) prompt=475ms boot=43ms cpu=82% term=term 3079ms
+bisect-fixed | client=curl #1: prompt (ok) prompt=515ms boot=35ms cpu=68% term=term 45ms
+bisect-fixed | host=127.0.0.1 #1: prompt (ok) prompt=224ms boot=38ms cpu=47% term=term 55ms
+bisect-fixed | host=::1 #1: prompt (ok) prompt=195ms boot=31ms cpu=67% term=term 33ms
+bisect-fixed | port=fixed 17900 #1: prompt (ok) prompt=213ms boot=42ms cpu=72% term=term 38ms
+bisect-fixed | stdio=pipe-unread #1: prompt (ok) prompt=201ms boot=-1ms cpu=142% term=term 43ms
+bisect-fixed | stdio=pipe-read #1: prompt (ok) prompt=413ms boot=-1ms cpu=82% term=term 47ms
+bisect-fixed | stdio=null #1: prompt (ok) prompt=413ms boot=-1ms cpu=84% term=term 46ms
+bisect-fixed | stdio=inherit #1: prompt (ok) prompt=445ms boot=-1ms cpu=86% term=term 31ms
+bisect-fixed | baseline #2: prompt (ok) prompt=464ms boot=31ms cpu=84% term=term 38ms
+bisect-fixed | env=parent #2: prompt (ok) prompt=190ms boot=32ms cpu=136% term=term 40ms
+bisect-fixed | cwd=repo(AGENTS.md ancestor) #2: prompt (ok) prompt=569ms boot=87ms cpu=74% term=term 46ms
+bisect-fixed | cwd=empty dir #2: prompt (ok) prompt=678ms boot=39ms cpu=53% term=term 54ms
+bisect-fixed | cwd=clean /tmp dir #2: prompt (ok) prompt=636ms boot=119ms cpu=60% term=term 83ms
+bisect-fixed | home=warm #2: prompt (ok) prompt=459ms boot=121ms cpu=72% term=term 34ms
+bisect-fixed | otel=unset #2: prompt (ok) prompt=578ms boot=35ms cpu=54% term=term 101ms
+bisect-fixed | otel=up +flag #2: prompt (ok) prompt=843ms boot=30ms cpu=45% term=term 78ms
+bisect-fixed | otel=down #2: prompt (ok) prompt=601ms boot=77ms cpu=67% term=term 3297ms
+bisect-fixed | otel=up svcname (dotfiles) #2: prompt (ok) prompt=1145ms boot=184ms cpu=55% term=term 49ms
+bisect-fixed | client=curl #2: prompt (ok) prompt=1276ms boot=109ms cpu=37% term=term 341ms
+bisect-fixed | host=::1 #2: prompt (ok) prompt=314ms boot=52ms cpu=75% term=term 82ms
+bisect-fixed | host=127.0.0.1 #2: prompt (ok) prompt=213ms boot=30ms cpu=75% term=term 78ms
+bisect-fixed | port=fixed 17900 #2: prompt (ok) prompt=192ms boot=27ms cpu=61% term=term 45ms
+bisect-fixed | stdio=pipe-read #2: prompt (ok) prompt=597ms boot=-1ms cpu=66% term=term 46ms
+bisect-fixed | stdio=pipe-unread #2: prompt (ok) prompt=613ms boot=-1ms cpu=61% term=term 58ms
+bisect-fixed | stdio=null #2: prompt (ok) prompt=309ms boot=-1ms cpu=68% term=term 33ms
+bisect-fixed | baseline #3: prompt (ok) prompt=440ms boot=156ms cpu=84% term=term 42ms
+bisect-fixed | stdio=inherit #2: prompt (ok) prompt=712ms boot=-1ms cpu=58% term=term 51ms
+bisect-fixed | env=parent #3: prompt (ok) prompt=205ms boot=28ms cpu=135% term=term 63ms
+bisect-fixed | cwd=empty dir #3: prompt (ok) prompt=628ms boot=87ms cpu=69% term=term 60ms
+bisect-fixed | cwd=repo(AGENTS.md ancestor) #3: prompt (ok) prompt=1056ms boot=144ms cpu=55% term=term 35ms
+bisect-fixed | cwd=clean /tmp dir #3: prompt (ok) prompt=687ms boot=43ms cpu=65% term=term 37ms
+bisect-fixed | home=warm #3: prompt (ok) prompt=263ms boot=61ms cpu=84% term=term 42ms
+bisect-fixed | otel=unset #3: prompt (ok) prompt=182ms boot=21ms cpu=143% term=term 32ms
+bisect-fixed | otel=up +flag #3: prompt (ok) prompt=396ms boot=38ms cpu=155% term=term 41ms
+bisect-fixed | otel=up svcname (dotfiles) #3: prompt (ok) prompt=508ms boot=69ms cpu=64% term=term 66ms
+bisect-fixed | client=curl #3: prompt (ok) prompt=503ms boot=36ms cpu=137% term=term 53ms
+bisect-fixed | otel=down #3: prompt (ok) prompt=445ms boot=29ms cpu=141% term=term 3052ms
+bisect-fixed | host=127.0.0.1 #3: prompt (ok) prompt=591ms boot=35ms cpu=61% term=term 34ms
+bisect-fixed | host=::1 #3: prompt (ok) prompt=518ms boot=51ms cpu=136% term=term 35ms
+bisect-fixed | port=fixed 17900 #3: prompt (ok) prompt=450ms boot=53ms cpu=64% term=term 54ms
+bisect-fixed | stdio=pipe-unread #3: prompt (ok) prompt=186ms boot=-1ms cpu=136% term=term 48ms
+bisect-fixed | stdio=pipe-read #3: prompt (ok) prompt=644ms boot=-1ms cpu=62% term=term 38ms
+bisect-fixed | stdio=null #3: prompt (ok) prompt=617ms boot=-1ms cpu=67% term=term 41ms
+bisect-fixed | stdio=inherit #3: prompt (ok) prompt=453ms boot=-1ms cpu=84% term=term 41ms

@@ -1,0 +1,6 @@
+verbatim #1: session: created prompt: 200 wait: 204 messages: 200 (38s)
+verbatim #2: session: created prompt: 000 (31s)
+verbatim #3: session: created prompt: 000 (31s)
+nowatch #1: session: created prompt: 200 wait: 204 messages: 200 (12s)
+nowatch #2: session: created prompt: 200 wait: 204 messages: 200 (13s)
+nowatch #3: session: created prompt: 200 wait: 204 messages: 200 (13s)

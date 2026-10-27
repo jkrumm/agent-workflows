@@ -1,0 +1,26 @@
+l=INFO message="cli starting" version=2.0.32 channel=latest local=false args="[\"serve\",\"--hostname\",\"localhost\",\"--port\",\"27359\"]" role=cli
+20:12:01.821Z level=INFO message="database schema bootstrap completed" migrations=50 durationMs=13
+20:12:02.171Z level=INFO message="watcher subscribe" path=<TMPDIR>/<scratch>/config/opencode type=directory ignores=3
+20:12:02.174Z level=INFO message="watcher subscribe" path="/Library/Application Support" type=entries ignores=0
+20:12:02.174Z level=INFO message="watcher started" path="/Library/Application Support" type=entries backend=node ignores=0
+20:12:02.174Z level=INFO message="watcher subscribe" path=/ type=entries ignores=0
+20:12:02.432Z level=INFO message="watcher started" path=/ type=entries backend=node ignores=0
+20:12:02.432Z level=INFO message="watcher subscribe" path=/var type=entries ignores=0
+20:12:03.769Z level=INFO message="watcher started" path=/var type=entries backend=node ignores=0
+20:12:03.769Z level=INFO message="watcher subscribe" path=/var/folders type=entries ignores=0
+20:12:05.409Z level=INFO message="watcher started" path=/var/folders type=entries backend=node ignores=0
+20:12:05.410Z level=INFO message="watcher subscribe" path=/var/folders/_y type=entries ignores=0
+20:12:06.318Z level=INFO message="watcher started" path=/var/folders/_y type=entries backend=node ignores=0
+20:12:06.319Z level=INFO message="watcher subscribe" path=/var/folders/<x>/<hash> type=entries ignores=0
+20:12:07.711Z level=INFO message="watcher started" path=/var/folders/<x>/<hash> type=entries backend=node ignores=0
+20:12:07.712Z level=INFO message="watcher subscribe" path=<TMPDIR> type=entries ignores=0
+20:12:08.862Z level=INFO message="watcher started" path=<TMPDIR> type=entries backend=node ignores=0
+20:12:08.863Z level=INFO message="watcher subscribe" path=<TMPDIR>/ocw-trial-mvr4g5po type=entries ignores=0
+20:12:09.619Z level=INFO message="watcher started" path=<TMPDIR>/ocw-trial-mvr4g5po type=entries backend=node ignores=0
+20:12:09.619Z level=INFO message="watcher subscribe" path=<TMPDIR>/<scratch> type=entries ignores=0
+20:12:10.666Z level=INFO message="watcher started" path=<TMPDIR>/<scratch> type=entries backend=node ignores=0
+20:12:10.667Z level=INFO message="watcher subscribe" path=<TMPDIR>/<scratch>/home type=entries ignores=0
+20:12:11.224Z level=INFO message="watcher started" path=<TMPDIR>/<scratch>/home type=entries backend=node ignores=0
+20:12:11.259Z level=INFO message="watcher started" path=<TMPDIR>/<scratch>/config/opencode type=directory backend=fs-events ignores=3
+20:12:11.275Z level=INFO message="location services booted" directory=<TMPDIR>/<scratch>/home workspaceID=undefined durationMs=9116
+20:12:11.427Z level=INFO message="watcher subscribe" path=<TMPDIR>/<scratch>/config/opencode/AGENTS.md type=file ignores=0
