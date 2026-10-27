@@ -1,9 +1,10 @@
 // Validates a real run record (written by `bun run spike`) against the run-record schema, projects it to Argo rows
 // and validates those against Argo's own input schema. Nothing is posted anywhere. Writes the committed samples.
-import { readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { ArgoBody, RunRecord, toArgoRows } from "./run-record.ts";
 
 const dir = `${import.meta.dir}/..`;
+mkdirSync(`${dir}/sample`, { recursive: true });
 const run = RunRecord.parse(JSON.parse(readFileSync(`${dir}/out/run-record.cli.json`, "utf8")));
 const rows = toArgoRows(run);
 const body = ArgoBody.parse({ records: rows });
@@ -19,6 +20,13 @@ if (again.join() !== rows.map((r) => `${r.source}|${r.source_id}|${r.machine}`).
 // negative control: the schema really rejects bad rows (a float token count, a missing billing)
 const bad = ArgoBody.safeParse({ records: [{ ...rows[0], input_tokens: 1.5, billing: undefined }] });
 if (bad.success) throw new Error("schema accepted a bad row");
+
+// outcome mapping: invalid_output -> error on the Argo row, the original kept in raw.runOutcome
+const invalid = toArgoRows({ ...run, outcome: "invalid_output" });
+if (invalid[0]!.outcome !== "error" || (invalid[0]!.raw as { runOutcome: string }).runOutcome !== "invalid_output") throw new Error("invalid_output mapping broken");
+if (rows[0]!.outcome !== "ok") throw new Error("ok run must map to ok");
+// ts is the step start, not the run start
+if (rows[0]!.ts !== new Date(agent[0]!.startedAt).toISOString()) throw new Error("ts is not the step startedAt");
 
 writeFileSync(`${dir}/sample/run-record.sample.json`, JSON.stringify(run, null, 2) + "\n");
 writeFileSync(`${dir}/sample/argo-usage-rows.sample.json`, JSON.stringify(body, null, 2) + "\n");

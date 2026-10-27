@@ -3,9 +3,9 @@ run record ok (4 steps); 1 Argo row(s) valid against UsageRecordInputSchema
 negative control rejected: records.0.billing, records.0.input_tokens
 {
   "source": "agent-workflows",
-  "source_id": "run_fdf53a2d9f63:research",
+  "source_id": "run_69f745b6e335:research",
   "grain": "step",
-  "ts": "2026-10-27T17:09:03.998Z",
+  "ts": "2026-10-27T17:24:25.718Z",
   "model": "claude-haiku-5-5",
   "model_norm": "claude-haiku-5-5",
   "project": "agent-workflows",
@@ -20,19 +20,19 @@ negative control rejected: records.0.billing, records.0.input_tokens
   "cache_read_tokens": 18000,
   "cache_write_tokens": 800,
   "reasoning_tokens": 80,
-  "duration_ms": 74,
+  "duration_ms": 84,
   "cost_usd": 0.0123,
   "cost_source": "reported",
   "raw": {
-    "runId": "run_fdf53a2d9f63",
+    "runId": "run_69f745b6e335",
     "stepId": "research",
-    "traceId": "1b042c5d8b89749419586a3cf4ae4c89",
-    "spanId": "0226d7b159a7c966",
+    "traceId": "09512ef24636939ab5093c137b8d745e",
+    "spanId": "b103fd9da4f780f8",
     "fingerprint": "1bd3fe40fdbaec63",
-    "sessionId": "ses_fake38a828",
+    "sessionId": "ses_fake25a3dc",
     "toolCalls": 2,
     "runOutcome": "ok",
-    "runWallMs": 113,
+    "runWallMs": 123,
     "scores": {
       "gate": 0.9
     },
@@ -43,5 +43,5 @@ negative control rejected: records.0.billing, records.0.input_tokens
       "timeouts": 0
     }
   },
-  "ingested_at": "2026-10-27T17:09:08.480Z"
+  "ingested_at": "2026-10-27T17:25:30.913Z"
 }

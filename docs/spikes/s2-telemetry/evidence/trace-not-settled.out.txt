@@ -1,0 +1,2 @@
+trace not settled after 30 polls (last span counts: 0, 0, 0); output below is partial
+trace 00000000000000000000000000000000 (NOT SETTLED): 0 spans, 0 root(s), 0 orphan(s)

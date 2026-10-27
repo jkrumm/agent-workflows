@@ -16,7 +16,7 @@ const sum = (a: Tokens, b: Tokens): Tokens => ({
 });
 const ZERO: Tokens = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0 };
 
-type StepResult = Partial<Omit<StepRecord, "stepId" | "kind" | "spanId" | "outcome" | "wallMs">>;
+type StepResult = Partial<Omit<StepRecord, "stepId" | "kind" | "spanId" | "outcome" | "wallMs" | "startedAt">>;
 type StepEnv = { traceparentEnv: Record<string, string>; headers: Record<string, string> };
 
 export async function runWorkflow(
@@ -40,12 +40,14 @@ export async function runWorkflow(
           { ...attrs, "agw.step.id": stepId, "agw.step.kind": kind },
           async (span) => {
             const t0 = Date.now();
+            const startedAt = new Date(t0).toISOString();
             const env = tel.childEnv();
             const headers = tel.inject({} as Record<string, string>);
             const r = await fn({ traceparentEnv: env, headers });
             const tokens = r.tokens ?? ZERO;
             const rec: StepRecord = {
               stepId,
+              startedAt,
               kind,
               spanId: span.spanContext().spanId,
               outcome: "ok",

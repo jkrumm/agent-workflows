@@ -129,7 +129,8 @@ Field mapping:
 |—|`source` = `agent-workflows`, `grain` = `step`|new values; both free text in Argo|
 |input hash|`raw` only (not shipped in the sample)|Postgres keeps it|
 |output|none|never leaves the platform|
-|outcome `ok`/`error`/`invalid_output`|`outcome` `ok`/`error`|`invalid_output` → `error`, original in `raw.runOutcome`|
+|outcome `ok`/`error`/`invalid_output`|`outcome` `ok`/`error`|implemented in `toArgoRows`: a failed step is `error`; `invalid_output` marks the run's agent rows `error`; original in `raw.runOutcome` (`bun run argo` asserts it)|
+|step start time|`ts`|`StepRecord.startedAt`; the Argo row is dated by when the step began, not the run|
 |wall time|`duration_ms` (step); `raw.runWallMs` (run)||
 |tokens input/output/cache read/cache write/reasoning|`input_tokens`/`output_tokens`/`cache_read_tokens`/`cache_write_tokens`/`reasoning_tokens`|additive contract, see gap 1|
 |model|`model`, `model_norm`|route table holds canonical ids|
@@ -179,6 +180,15 @@ Research (job bd391040) and probes, kept apart:
 
 **Volume:** OpenCode adds ~17 spans per boot and one `http.server` span per request; the dotfiles spike counted 601 spans for a boot plus one prompt. If volume matters, drop `Effect` internals at the collector and keep `http.server` and the LLM client span.
 
+## For P1
+
+The spike module is a proof, not the middleware. P1 must add:
+
+- **Export failures and dropped spans are logged.** `BatchSpanProcessor` drops silently when its queue is full or an export fails; wire an `ExportResult` check (wrap the exporter) and an OTel diagnostics logger, count drops, and surface them in the run record's friction counters. The spike swallows `shutdown()` rejections on purpose and says nothing.
+- **Crash handlers flush.** `uncaughtException` and `unhandledRejection` handlers call `forceFlush()` (bounded), log, then exit non-zero. The spike installs `beforeExit`, `SIGTERM` and `SIGINT` only.
+- **Re-raise the signal after flush instead of `exit(0)`.** The spike exits 0 after a SIGTERM, which tells a supervisor the process ended normally; remove the handler, flush, then `process.kill(process.pid, signal)` so the exit status is 128+n. Same for SIGINT.
+- **Timeouts on agent runs follow `agent-limits`.** The 45 s prompt ceiling in `probe-opencode.ts` is a probe hang guard only (AGENTS.md: never probe an LLM endpoint unbounded); the runner uses the idle watchdog, not a wall clock.
+
 ## Risks
 
 |risk|severity|handle|
@@ -201,6 +211,7 @@ src/run-record.ts     run record schema, Argo schema copy, toArgoRows
 src/spike.ts          caller; agw-run.ts (CLI and --serve), stub.ts, leaf.ts are the processes
 src/query-trace.ts    prints a trace tree from ClickHouse
 src/probe-*.ts        packages, flush, opencode; query-opencode.ts reads the opencode run back
+src/util.ts           out/ creation (fresh clone), bounded SIGTERM-then-SIGKILL child stop
 sample/               run record and Argo rows (validated)
 evidence/             outputs of the runs above
 ```
