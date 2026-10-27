@@ -1,0 +1,92 @@
+# @agent-workflows/runtime
+
+The workflow runtime: `defineWorkflow`, a step journal on Postgres, and resume after a crash or a deploy
+(concept §3, §4 Durability and Control). The design and its measurements are in
+`docs/spikes/s1-runtime/REPORT.md`; this package is the Wave 2 build of it.
+
+## Shape
+
+```ts
+const review = defineWorkflow({
+  id: 'review.pr',
+  version: '2026-10-27.1',
+  input: z.object({ pr: z.number() }),
+  output: z.object({ verdict: z.string() }),
+  concurrency: 2,
+  async run(ctx, { pr }) {
+    const diff = await ctx.step('diff', () => fetchDiff(pr), { retry: { attempts: 3 } })
+    const verdict = await ctx.agent('review', { agent: 'reviewer', prompt: brief(diff), output: z.string() })
+    await ctx.effect('comment', (key) => postComment(pr, verdict, { idempotencyKey: key }))
+    return { verdict }
+  },
+})
+
+const runtime = new Runtime({ connectionString, workflows: [review], host, middleware })
+await runtime.open()
+const { runId } = await runtime.start(review, { pr: 42 }, { purpose: 'prod' })
+const result = await runtime.wait(runId)
+```
+
+| Call | Kind | Notes |
+|-|-|-|
+| `ctx.step(id, fn, opts?)` | code | `fn({ key, attempt, signal, addUsage, progress })` |
+| `ctx.effect(id, fn(key, scope), opts?)` | effect | `key = ${runId}:${stepId}`; pass it to the outside API, the only thing that makes a re-run after an in-doubt kill a no-op |
+| `ctx.agent(id, spec)` | agent | through the `AgentHost` port; output validated against `spec.output` |
+| `ctx.workflow(id, wf, inputs)` | workflow | fan-out; returns `(O \| null)[]`, a failing child yields `null`; children run as `${runId}/${id}/${i}` under the parent's lease, never by recovery |
+
+- **Step ids are string literals** and unique per run (a duplicate fails the run). `test/step-id-literal.test.ts`
+  lints `packages/**/src` for computed ids. A change to a step's meaning or output shape takes a new id.
+- **Step outputs are `Json`** (no `undefined`, `Date`, `bigint`, class instances): a replayed value equals the
+  original. A non-JSON value fails the step as `non_json_output`.
+- **Retry** per step: `{ attempts, backoffMs, factor, maxBackoffMs }`, default one attempt (agent steps too).
+- **Idle timeout** per step: no `progress()` (or host progress event) for `idleTimeoutMs` fails the attempt as
+  `timeout`. Agent steps default to 5 minutes; code steps have none. It is never a wall-clock cap
+  (rules/agent-limits.md): a step that keeps reporting progress runs as long as the work takes.
+- **Cancel** (`runtime.cancel(runId)`, any process): the run and its children become `cancelled`; the driving
+  process aborts the step's signal and calls `host.abort`. **Steer** (`runtime.steer(runId, stepId, text)`) is
+  journaled in `signals` and delivered to the running agent step via `host.steer`.
+
+## Durability
+
+- Journal in its own schema (`schema`, default `agw`): `runs`, `steps`, `signals`, migrated from
+  `src/migrations/NNNN_*.sql` in one transaction under an advisory lock, recorded in `schema_migrations`. The
+  run-record columns (fingerprint, tokens, cost, friction, `argo_synced_at`) exist for the middleware to fill.
+- **Lease:** one `pg_try_advisory_lock` per top-level run (64-bit key from sha256), held on a dedicated
+  connection budget sized `maxConcurrentRuns`, never the journal pool. Beyond the budget runs stay pending.
+- **Fencing:** claiming a run writes a fresh `lease_token`; every journal write of the run tree carries it in its
+  `where` (`for share` on the root row), and a lost lease connection aborts the run at once.
+- **Infra vs workflow errors:** a journal or lease failure leaves the run `running` and retries it with backoff
+  (failed after `maxInfraFailures`); only step-body errors mark `failed`.
+- **Re-attach order:** open the session, journal the handle, prompt, journal `prompted`. On resume a prompted
+  handle waits, an unprompted one prompts (the host's send is idempotent), none opens a new session.
+- **Deploys need no drain:** SIGTERM → `runtime.close()` (rows stay `running`, agent sessions keep going) →
+  the next process re-attaches and continues on the new code. `version_started` / `version_finished` show runs
+  that crossed a deploy.
+- Recovery ticks every `recoveryIntervalMs`, backing off on failure, and claims pending and orphaned runs whose
+  lease is free. Per-workflow `concurrency` keeps excess top-level runs pending.
+
+## Middleware
+
+An ordered list of `{ name, runPre, stepPre, toolPre, toolPost, stepPost, runPost }` given to the `Runtime`, so
+no workflow can skip it. `runPre` gets `resume`; throwing (`AdmissionRefused` for a clean refusal) fails a new
+run before its body runs and is ignored on resume. `stepPre` gets `replay`; throwing fails the step as
+`middleware`. Post hooks run after the commit: a throw is logged and never changes the recorded outcome.
+
+## Bounded runs
+
+A run lasts seconds to tens of minutes. There is no API to wait for days: anything that lives longer (a factory
+Issue, a human approval) is an entity state machine that *starts* workflows. This keeps the mixed-version
+window of a deploy small and keeps every run's journal short.
+
+**Token effect / cache effect.** The runtime adds no model-visible text and no tokens of its own. Re-attach
+waits on the existing session instead of re-prompting, so a crash or deploy costs no repeated prompt and keeps
+the provider's prompt cache warm; only a kill between session create and handle journal leaves one orphan
+session that was never prompted (no tokens). A retried agent step after an idle timeout opens a fresh session:
+a full prompt again and a cold cache, which is why agent steps default to no retry.
+
+## Tests
+
+Real Postgres, never mocks: `AGW_TEST_PG_URL` must be set (`make check` builds it on the mini via
+`secrets-run` from `.env.test.tpl`; CI runs a `postgres:18` service). Every test file uses its own throwaway
+schema. `test/kill/` is the S1 kill harness as a regression test: worker subprocesses kill themselves at every
+step boundary and mid-step, deploy onto changed code, and drive 25 concurrent runs through a kill.
