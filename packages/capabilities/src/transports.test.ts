@@ -234,7 +234,9 @@ describe('billing on failure paths', () => {
     iu.on('messages', () => Response.json({ content: 'not an array', usage: { input_tokens: 9, output_tokens: 2 } }))
     const reported: unknown[] = []
     await failure(iuAnthropic({ env: env(), backoffMs: 0 }).complete(chatRequest, never(), (u) => reported.push(u)))
-    expect(reported).toEqual([{ model: 'm', tokens: { input: 9, output: 2, cacheRead: 0, reasoning: 0 }, cost: null }])
+    expect(reported).toEqual([
+      { model: 'm', tokens: { input: 9, output: 2, cacheRead: 0, cacheWrite: 0, reasoning: 0 }, cost: null },
+    ])
     expect(iu.requests).toHaveLength(1)
   })
 

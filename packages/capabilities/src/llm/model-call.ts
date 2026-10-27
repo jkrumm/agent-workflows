@@ -49,7 +49,7 @@ export function toUsage(route: ResolvedRoute, model: string, attempt: AttemptUsa
           prompt_tokens: tokens.input,
           completion_tokens: tokens.output,
           cache_read_input_tokens: tokens.cacheRead,
-          cache_creation_input_tokens: attempt.cacheWrite ?? 0,
+          cache_creation_input_tokens: tokens.cacheWrite ?? 0,
         }
       : null,
     route.rate,

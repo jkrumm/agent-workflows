@@ -66,7 +66,7 @@ describe('llm.summarize (iu-anthropic)', () => {
     expect(usages).toEqual([
       {
         model: 'fake',
-        tokens: { input: 150, output: 20, cacheRead: 40, reasoning: 0 },
+        tokens: { input: 150, output: 20, cacheRead: 40, cacheWrite: 10, reasoning: 0 },
         // Haiku 5.5 EU table rate: 100 uncached in at 0.10, 40 read at 0.01, 10 written at 0.125, 20 out at 0.50 (USD/M).
         cost: (100 * 0.1 + 40 * 0.01 + 10 * 0.125 + 20 * 0.5) / 1_000_000,
         costSource: 'rate',
