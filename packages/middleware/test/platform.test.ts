@@ -140,7 +140,10 @@ describe('platform middleware through a real runtime', () => {
             tokens_output: String(20 + 3 + 2),
             tokens_cache_read: String(40 + 21376),
             tokens_reasoning: '5',
-            friction: { unpricedCalls: 1, toolCalls: 0 },
+            tokens_cache_write: '0',
+            unpriced_calls: 1,
+            tool_calls: 0,
+            friction: null,
           })
           expect(Number(row.cost)).toBeCloseTo(0.01 + 0.02 + 0.000103878, 12)
         }
@@ -148,7 +151,7 @@ describe('platform middleware through a real runtime', () => {
           expect(row).toMatchObject({
             cost: null,
             tokens_input: '14',
-            friction: { unpricedCalls: 2 },
+            unpriced_calls: 2,
             trace_id: traceIdForRun({ rootId: String(row.id), traceparent: null }),
           })
         }
@@ -247,7 +250,8 @@ describe('platform middleware through a real runtime', () => {
       await runPost?.(args)
       await telemetryPost?.(args)
       const again = await sql.run(runId)
-      for (const key of ['wall_ms', 'tokens_input', 'tokens_output', 'cost', 'friction', 'trace_id', 'fingerprint']) {
+      const keys = ['wall_ms', 'tokens_input', 'tokens_output', 'cost', 'unpriced_calls', 'trace_id', 'fingerprint']
+      for (const key of keys) {
         expect(again?.[key]).toEqual(first[key])
       }
       await platform.telemetry.flush()
@@ -256,6 +260,65 @@ describe('platform middleware through a real runtime', () => {
       expect(spans[1]?.attributes).toMatchObject({ 'agw.run.outcome_only': true, 'agw.run.status': 'done' })
       expect(spans[1]?.spanContext().traceId).toBe(spans[0]?.spanContext().traceId)
       expect(spans[1]?.links[0]?.context.spanId).toBe(admissionSpanId(runId))
+    } finally {
+      await rt.close()
+      await platform.close()
+    }
+  })
+
+  test('a run cancelled while pending: wall_ms null, never 0', async () => {
+    let release = false
+    const slot = defineWorkflow({
+      id: 'p.slot',
+      version: 'v1',
+      input: n,
+      output: n,
+      concurrency: 1,
+      async run(ctx, { n }) {
+        await ctx.step('hold', async () => {
+          while (!release) await Bun.sleep(10)
+          return 1
+        })
+        return { n }
+      },
+    })
+    const platform = testPlatform(db.schema)
+    const rt = testRuntime({ schema: db.schema, workflows: [slot], middleware: platform.middleware })
+    await rt.open()
+    try {
+      const holder = await rt.start(slot, { n: 1 }, { purpose: 'build' })
+      await until(async () => (await sql.run(holder.runId))?.status === 'running', 'holder running')
+      const waiting = await rt.start(slot, { n: 2 }, { purpose: 'build' })
+      expect(await rt.cancel(waiting.runId)).toBe(true)
+      const row = await settled(waiting.runId)
+      expect(row).toMatchObject({ status: 'cancelled', started_at: null, wall_ms: null })
+      release = true
+      expect(Number((await settled(holder.runId)).wall_ms)).toBeGreaterThan(0)
+    } finally {
+      release = true
+      await rt.close()
+      await platform.close()
+    }
+  })
+
+  test('a fingerprint source blip is retried, not a refused admission', async () => {
+    const blip = fakeFingerprint()
+    let calls = 0
+    const source = {
+      inputs: async (w: { id: string; version: string }) => {
+        calls++
+        if (calls === 1) throw new Error('ECONNRESET reading the agents dir')
+        return blip.inputs(w)
+      },
+    }
+    const platform = testPlatform(db.schema, { fingerprint: source })
+    const rt = testRuntime({ schema: db.schema, workflows: [unpriced], middleware: platform.middleware })
+    await rt.open()
+    try {
+      const { runId } = await rt.start(unpriced, { n: 1 }, { purpose: 'build' })
+      expect((await rt.wait(runId)).status).toBe('done')
+      expect((await settled(runId)).fingerprint).toBe(computeFingerprint('v1', defaultInputs()))
+      expect(calls).toBe(2)
     } finally {
       await rt.close()
       await platform.close()

@@ -98,8 +98,7 @@ describe('argo outbox', () => {
       const runIds = await Promise.all(
         Array.from({ length: 24 }, async (_, i) => (await rt.start(busy, { n: i }, { purpose: 'build' })).runId),
       )
-      // Flushers tick while runs finish and Argo is down: every post fails, no step with usage may be marked
-      // (steps without usage are marked without a post).
+      // Flushers tick while runs finish and Argo is down: every post fails, no step may be marked.
       let ticking = true
       const tick = async (outbox: ArgoOutbox) => {
         while (ticking) {
@@ -129,10 +128,11 @@ describe('argo outbox', () => {
       await until(() => argo.stored.size >= expected.length, 'every row in argo', 15_000)
       await until(async () => {
         const { rows } = await sql.pool.query(
-          `select count(*)::int as n from "${db.schema}".steps where argo_synced_at is null`,
+          `select count(*)::int as n from "${db.schema}".steps
+           where argo_synced_at is null and (tokens_input > 0 or cost is not null)`,
         )
         return rows[0]?.n === 0
-      }, 'every step marked')
+      }, 'every step with usage marked')
       ticking = false
       await Promise.all(tickers)
 
@@ -198,6 +198,144 @@ describe('argo outbox', () => {
     } finally {
       await rt.close()
       await platform.close()
+      await journal.close()
+    }
+  })
+
+  test('a run whose runPost is not delivered yet is not posted: its record must reach Argo', async () => {
+    const argo = new FakeArgo()
+    const logger = captureLogger()
+    const journal = new JournalDb({ connectionString: PG_URL, schema: db.schema }, logger)
+    const outbox = new ArgoOutbox({ db: journal, transport: argo, logger, machine: 'm' })
+    const platform = testPlatform(db.schema)
+    const rt = testRuntime({ schema: db.schema, workflows: [child], middleware: platform.middleware })
+    await rt.open()
+    try {
+      const { runId } = await rt.start(child, { n: 3 }, { purpose: 'build' })
+      await rt.wait(runId)
+      await until(async () => (await sql.run(runId))?.post_hooks_at, 'runPost')
+      await sql.pool.query(`update "${db.schema}".runs set post_hooks_at = null where id = $1`, [runId])
+      await outbox.flush()
+      expect(argo.accepted.has(`${runId}:work:m1`)).toBe(false)
+      await sql.pool.query(`update "${db.schema}".runs set post_hooks_at = now() where id = $1`, [runId])
+      await outbox.flush()
+      const row = [...argo.stored.values()].find((r) => r.source_id === `${runId}:work:m1`)
+      expect((row?.raw as { runWallMs?: unknown } | undefined)?.runWallMs).toEqual(expect.any(Number))
+    } finally {
+      await rt.close()
+      await platform.close()
+      await journal.close()
+    }
+  })
+
+  test('poison rows are quarantined, the rest keep flowing', async () => {
+    const argo = new FakeArgo()
+    const logger = captureLogger()
+    const journal = new JournalDb({ connectionString: PG_URL, schema: db.schema }, logger)
+    const outbox = new ArgoOutbox({ db: journal, transport: argo, logger, machine: 'm', batchSize: 50 })
+    const platform = testPlatform(db.schema)
+    const rt = testRuntime({ schema: db.schema, workflows: [child], middleware: platform.middleware })
+    await rt.open()
+    try {
+      const ids = await Promise.all(
+        Array.from({ length: 8 }, async (_, i) => (await rt.start(child, { n: i }, { purpose: 'build' })).runId),
+      )
+      await Promise.all(ids.map((id) => rt.wait(id)))
+      await until(
+        async () => (await Promise.all(ids.map((id) => sql.run(id)))).every((r) => r?.post_hooks_at),
+        'runPost',
+      )
+      const [unbuildable, refused, ...good] = ids as [string, string, ...string[]]
+      // A row that cannot be built (a run without a purpose) and one Argo refuses with a 4xx.
+      await sql.pool.query(`update "${db.schema}".runs set purpose = ' ' where id = $1`, [unbuildable])
+      argo.refuse = (r) => r.source_id.startsWith(`${refused}:`)
+      const result = await outbox.flush()
+      expect(result).toMatchObject({ quarantined: 2, error: null, skipped: null })
+      for (const id of good) expect(argo.accepted.get(`${id}:work:m1`)).toBe(1)
+      const bad = await Promise.all([unbuildable, refused].map((id) => sql.step(id, 'work')))
+      expect(bad.map((s) => [s?.argo_synced_at, s?.argo_claim])).toEqual([
+        [null, null],
+        [null, null],
+      ])
+      expect(String(bad[0]?.argo_error)).toContain('purpose')
+      expect(String(bad[1]?.argo_error)).toContain('422')
+      expect(logger.lines.filter((l) => l.message.startsWith('argo outbox: step quarantined'))).toHaveLength(2)
+      // Quarantined steps are not claimed again.
+      expect(await outbox.flush()).toMatchObject({ posted: 0, quarantined: 0 })
+    } finally {
+      await rt.close()
+      await platform.close()
+      await journal.close()
+    }
+  })
+
+  test('a hanging Argo holds no connection and never blocks a run record (24 concurrent runs)', async () => {
+    const argo = new FakeArgo()
+    argo.hang = true
+    const platform = testPlatform(db.schema, {
+      argo: { transport: argo, machine: 'm', postTimeoutMs: 100, claimTtlMs: 1000, backoff: { baseMs: 1, maxMs: 5 } },
+    })
+    const outbox = platform.outbox
+    if (!outbox) throw new Error('no outbox')
+    const rt = testRuntime({ schema: db.schema, workflows: [busy, child], host, middleware: platform.middleware })
+    await rt.open()
+    let ticking = true
+    const ticker = (async () => {
+      while (ticking) {
+        await outbox.flush()
+        await Bun.sleep(5)
+      }
+    })()
+    try {
+      const ids = await Promise.all(
+        Array.from({ length: 24 }, async (_, i) => (await rt.start(busy, { n: i }, { purpose: 'build' })).runId),
+      )
+      await Promise.all(ids.map((id) => rt.wait(id)))
+      const rows = await until(
+        async () => {
+          const all = await Promise.all(ids.map((id) => sql.run(id)))
+          return all.every((r) => r?.post_hooks_at) ? all : null
+        },
+        'every record written while Argo hangs',
+        15_000,
+      )
+      expect(rows.every((r) => r?.wall_ms !== null && r?.unpriced_calls === 1)).toBe(true)
+      await until(() => argo.inflight > 2, 'posts hanging')
+      // Posts hang outside any transaction: no outbox connection is checked out while they wait.
+      const { rows: open } = await sql.pool.query(
+        `select count(*)::int as n from pg_stat_activity
+         where application_name = $1 and state like 'idle in transaction%'`,
+        [`agw-middleware:${db.schema}`],
+      )
+      expect(open[0]?.n).toBe(0)
+      argo.hang = false
+      const expected = expectedSourceIds(ids)
+      await until(() => expected.every((id) => argo.accepted.has(id)), 'every row once Argo answers', 15_000)
+      expect(expected.every((id) => argo.accepted.get(id) === 1)).toBe(true)
+    } finally {
+      ticking = false
+      await ticker
+      await rt.close()
+      await platform.close()
+    }
+  })
+
+  test('machine id: AGW_MACHINE, else the host name with a warning', async () => {
+    const logger = captureLogger()
+    const journal = new JournalDb({ connectionString: PG_URL, schema: db.schema }, logger)
+    const before = process.env.AGW_MACHINE
+    try {
+      delete process.env.AGW_MACHINE
+      new ArgoOutbox({ db: journal, transport: new FakeArgo(), logger })
+      expect(logger.lines.map((l) => l.message)).toEqual([
+        'argo outbox: AGW_MACHINE unset; using the host name as the Argo machine id',
+      ])
+      process.env.AGW_MACHINE = 'mini'
+      new ArgoOutbox({ db: journal, transport: new FakeArgo(), logger })
+      expect(logger.lines).toHaveLength(1)
+    } finally {
+      if (before === undefined) delete process.env.AGW_MACHINE
+      else process.env.AGW_MACHINE = before
       await journal.close()
     }
   })

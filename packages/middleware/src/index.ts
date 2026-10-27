@@ -1,6 +1,7 @@
 export {
   ARGO_MAX_BATCH,
   ArgoOutbox,
+  ArgoPostError,
   type ArgoRowOptions,
   type ArgoTransport,
   type ArgoUsageRecord,
@@ -29,4 +30,4 @@ export { type OpenCodeMessage, usageFromOpenCodeMessages } from './opencode-usag
 export { type Platform, type PlatformOptions, platformMiddleware } from './platform.ts'
 export { hasPurpose, purposeMiddleware } from './purpose.ts'
 export { type RunRecord, recordMiddleware } from './record.ts'
-export { Telemetry, type TelemetryOptions } from './telemetry.ts'
+export { redactForSpan, Telemetry, type TelemetryOptions } from './telemetry.ts'

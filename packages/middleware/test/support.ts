@@ -1,6 +1,7 @@
 import { InMemorySpanExporter, type ReadableSpan } from '@opentelemetry/sdk-trace'
 import { z } from 'zod'
 import {
+  ArgoPostError,
   type ArgoTransport,
   type ArgoUsageRecord,
   ArgoUsageRecordInput,
@@ -22,18 +23,28 @@ export class FakeArgo implements ArgoTransport {
   /** Accepted posts per source_id: a duplicate post shows here even though the upsert would hide it. */
   readonly accepted = new Map<string, number>()
   down = false
+  /** Posts never answer (a wedged Argo); `inflight` counts the hanging ones. */
+  hang = false
+  inflight = 0
+  /** Records Argo refuses with a 422: the whole batch is refused, as Argo does. */
+  refuse: (record: ArgoUsageRecord) => boolean = () => false
   failedPosts = 0
   posts = 0
 
   async post(records: ArgoUsageRecord[]): Promise<void> {
     this.posts++
+    if (this.hang) {
+      this.inflight++
+      await new Promise(() => {})
+    }
     await Bun.sleep(5)
     if (this.down) {
       this.failedPosts++
-      throw new Error('argo usage ingest: HTTP 503 down')
+      throw new ArgoPostError('argo usage ingest: HTTP 503 down', false)
     }
     const parsed = ArgoBody.safeParse({ records })
-    if (!parsed.success) throw new Error(`argo usage ingest: HTTP 422 ${parsed.error.message}`)
+    if (!parsed.success) throw new ArgoPostError(`argo usage ingest: HTTP 422 ${parsed.error.message}`, true)
+    if (records.some(this.refuse)) throw new ArgoPostError('argo usage ingest: HTTP 422 refused record', true)
     for (const r of records) {
       this.stored.set(`${r.source}|${r.source_id}|${r.machine}`, r)
       this.accepted.set(r.source_id, (this.accepted.get(r.source_id) ?? 0) + 1)

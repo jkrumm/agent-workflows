@@ -1,5 +1,5 @@
 import { hostname } from 'node:os'
-import type { Logger, ModelUsage, Tokens } from '@agent-workflows/runtime'
+import type { Logger, ModelUsage, TokenCounts } from '@agent-workflows/runtime'
 import { z } from 'zod'
 import { errorMessage, type JournalDb } from './db.ts'
 import { traceIdForRun } from './ids.ts'
@@ -37,11 +37,34 @@ export type ArgoUsageRecord = z.input<typeof ArgoUsageRecordInput>
 /** Argo accepts 1–1000 records per call. */
 export const ARGO_MAX_BATCH = 1000
 
+/**
+ * A post Argo answered. `permanent`: the batch itself is wrong (4xx other than 408/429), so retrying it as is can
+ * never succeed. Anything else a transport throws (5xx, network, timeout) is transient.
+ */
+export class ArgoPostError extends Error {
+  override name = 'ArgoPostError'
+  constructor(
+    message: string,
+    readonly permanent: boolean,
+  ) {
+    super(message)
+  }
+}
+
 /** The usage ingest. Throws when Argo did not accept the batch; Argo upserts on `(source, source_id, machine)`. */
 export type ArgoTransport = { post(records: ArgoUsageRecord[]): Promise<void> }
 
-/** `POST <url>/usage/records` with the bearer `API_SECRET`, as email-gateway and usage-tracker do. */
+const LOOPBACK = new Set(['localhost', '127.0.0.1', '[::1]', '::1'])
+
+/**
+ * `POST <url>/usage/records` with the bearer `API_SECRET`, as email-gateway and usage-tracker do. Refuses a
+ * non-https URL unless it is loopback: the bearer must never cross a network in clear text.
+ */
 export function httpArgoTransport(options: { url: string; token: string; timeoutMs?: number }): ArgoTransport {
+  const base = new URL(options.url)
+  if (base.protocol !== 'https:' && !(base.protocol === 'http:' && LOOPBACK.has(base.hostname))) {
+    throw new Error(`ARGO_URL must be https (or http on loopback), got ${base.protocol}//${base.hostname}`)
+  }
   const endpoint = `${options.url.replace(/\/+$/, '')}/usage/records`
   return {
     async post(records) {
@@ -51,7 +74,9 @@ export function httpArgoTransport(options: { url: string; token: string; timeout
         body: JSON.stringify({ records }),
         signal: AbortSignal.timeout(options.timeoutMs ?? 15_000),
       })
-      if (!res.ok) throw new Error(`argo usage ingest: HTTP ${res.status} ${(await res.text()).slice(0, 300)}`)
+      if (res.ok) return
+      const permanent = res.status >= 400 && res.status < 500 && res.status !== 408 && res.status !== 429
+      throw new ArgoPostError(`argo usage ingest: HTTP ${res.status} ${(await res.text()).slice(0, 300)}`, permanent)
     },
   }
 }
@@ -69,7 +94,7 @@ export type OutboxStep = {
   stepId: string
   status: string
   model: string | null
-  tokens: Tokens
+  tokens: TokenCounts
   cost: number | null
   toolCalls: number
   unpricedCalls: number
@@ -94,48 +119,59 @@ export type OutboxStep = {
 export type ArgoRowOptions = { machine: string; billing?: string; workspace?: string; now?: Date }
 
 /**
- * Raw provider counts → Argo's additive contract: `input` fresh uncached input only, `output` without reasoning
- * (Argo adds `reasoning` on top). Provider usage is not additive; skipping this double-counts reasoning and cache.
+ * Raw provider counts → Argo's additive contract: `input` fresh uncached input only (minus cache reads and cache
+ * writes), `output` without reasoning (Argo adds `reasoning` on top). Provider usage is not additive; skipping
+ * this double-counts reasoning and cache.
  */
-export function additiveTokens(tokens: Tokens) {
+export function additiveTokens(tokens: TokenCounts) {
   return {
-    input_tokens: Math.max(0, tokens.input - tokens.cacheRead),
+    input_tokens: Math.max(0, tokens.input - tokens.cacheRead - tokens.cacheWrite),
     output_tokens: Math.max(0, tokens.output - tokens.reasoning),
     cache_read_tokens: tokens.cacheRead,
-    cache_write_tokens: 0,
+    cache_write_tokens: tokens.cacheWrite,
     reasoning_tokens: tokens.reasoning,
   }
 }
 
-const zero = (): Tokens => ({ input: 0, output: 0, cacheRead: 0, reasoning: 0 })
-const spent = (t: Tokens) => t.input + t.output + t.cacheRead + t.reasoning > 0
+const BUCKETS = ['input', 'output', 'cacheRead', 'cacheWrite', 'reasoning'] as const
+const spent = (t: TokenCounts) => BUCKETS.some((key) => t[key] > 0)
+/** A sum stored before the cacheWrite bucket existed reads as 0 there. */
+const counts = (t: Partial<TokenCounts>): TokenCounts => ({
+  input: t.input ?? 0,
+  output: t.output ?? 0,
+  cacheRead: t.cacheRead ?? 0,
+  cacheWrite: t.cacheWrite ?? 0,
+  reasoning: t.reasoning ?? 0,
+})
 
-type ModelRow = { model: string; tokens: Tokens; cost: number | null; toolCalls: number }
+type ModelRow = { model: string; tokens: TokenCounts; cost: number | null; toolCalls: number }
 
 /**
- * One entry per model; usage reported without a model is the step total minus the per-model split, posted as
- * `unknown` (or as the step's model when nothing was split).
+ * One entry per model; usage reported without a model is the step total minus the per-model split (each bucket
+ * clamped at 0), posted as `unknown` (or as the step's model when nothing was split) only when it has tokens.
  */
 function perModel(step: OutboxStep): ModelRow[] {
   const rows: ModelRow[] = Object.entries(step.byModel ?? {}).map(([model, u]) => ({
     model,
-    tokens: u.tokens,
+    tokens: counts(u.tokens),
     cost: u.cost,
     toolCalls: u.toolCalls,
   }))
-  const tokens = zero()
-  for (const key of ['input', 'output', 'cacheRead', 'reasoning'] as const) {
-    tokens[key] = step.tokens[key] - rows.reduce((sum, r) => sum + r.tokens[key], 0)
+  const tokens = counts({})
+  for (const key of BUCKETS) {
+    tokens[key] = Math.max(0, step.tokens[key] - rows.reduce((sum, r) => sum + r.tokens[key], 0))
   }
   const splitCost = rows.reduce((sum, r) => sum + (r.cost ?? 0), 0)
-  const restCost = step.cost === null || Math.abs(step.cost - splitCost) < 1e-12 ? null : step.cost - splitCost
+  const restCost =
+    step.cost === null || Math.abs(step.cost - splitCost) <= 1e-9 * Math.abs(step.cost) ? null : step.cost - splitCost
   const rest: ModelRow = {
     model: rows.length === 0 ? (step.model ?? 'unknown') : 'unknown',
     tokens,
-    cost: rows.length === 0 ? step.cost : restCost,
-    toolCalls: step.toolCalls - rows.reduce((sum, r) => sum + r.toolCalls, 0),
+    cost: rows.length === 0 ? step.cost : restCost !== null && restCost > 0 ? restCost : null,
+    toolCalls: Math.max(0, step.toolCalls - rows.reduce((sum, r) => sum + r.toolCalls, 0)),
   }
-  return [...rows, rest].filter((r) => spent(r.tokens) || (r.cost ?? 0) > 0)
+  const split = rows.filter((r) => spent(r.tokens) || (r.cost ?? 0) > 0)
+  return spent(rest.tokens) ? [...split, rest] : split
 }
 
 /** One Argo `usage_record` per step and model (concept §5); none for a step that spent nothing. */
@@ -190,6 +226,7 @@ type OutboxRow = {
   tokens_input: string
   tokens_output: string
   tokens_cache_read: string
+  tokens_cache_write: string
   tokens_reasoning: string
   cost: string | null
   tool_calls: number
@@ -220,6 +257,7 @@ function toOutboxStep(row: OutboxRow): OutboxStep {
       input: Number(row.tokens_input),
       output: Number(row.tokens_output),
       cacheRead: Number(row.tokens_cache_read),
+      cacheWrite: Number(row.tokens_cache_write),
       reasoning: Number(row.tokens_reasoning),
     },
     cost: row.cost === null ? null : Number(row.cost),
@@ -245,36 +283,59 @@ function toOutboxStep(row: OutboxRow): OutboxStep {
 }
 
 export type OutboxOptions = {
+  /** Its own pool (not the record's), so a slow Argo can never starve run-path writes. */
   db: JournalDb
   transport: ArgoTransport
   logger: Logger
-  /** Argo's `machine` (part of its upsert key). Default `AGW_MACHINE`, else the host name. */
+  /**
+   * Argo's `machine`, part of its upsert key `(source, source_id, machine)`: it must be stable across restarts or
+   * a re-post lands as a second row. Default `AGW_MACHINE`; unset, the host name with a logged warning.
+   */
   machine?: string
   /** Default `iu` (every platform route is IU API, S2 gap 11). */
   billing?: string
-  /** Steps per batch (rows can be more: one per model). Default 200. */
+  /** Steps per claim. Default 200. */
   batchSize?: number
-  /** Backoff after a failed post: first delay, doubled per failure up to `maxMs`. Default 5 s / 5 min. */
+  /** Backoff after a transient failure: first delay, doubled per failure up to `maxMs`. Default 5 s / 5 min. */
   backoff?: { baseMs: number; maxMs: number }
+  /** A post that has not answered by then is a transient failure. Default 30 s. */
+  postTimeoutMs?: number
+  /** How long a claim holds; an expired claim (a crashed flusher) is claimable again. Default 2 min. */
+  claimTtlMs?: number
   now?: () => number
 }
 
 export type FlushResult = {
   /** Argo rows accepted. */
   posted: number
-  /** Steps marked synced (with rows or with nothing to post). */
+  /** Steps marked synced. */
   marked: number
-  /** Why nothing was tried: still backing off after a failure. */
+  /** Steps set aside with `argo_error`: a row that cannot be built or that Argo refuses (4xx). */
+  quarantined: number
+  /** Why nothing was tried: still backing off after a transient failure. */
   skipped: 'backoff' | null
+  /** The transient failure that stopped this flush. */
   error: string | null
 }
 
+type Claimed = { step: OutboxStep; records: ArgoUsageRecord[] }
+type StepKey = { runId: string; stepId: string }
+
+class Transient extends Error {}
+
+const STEP_COLUMNS = `run_id, step_id, status, model, tokens_input, tokens_output, tokens_cache_read,
+  tokens_cache_write, tokens_reasoning, cost, tool_calls, unpriced_calls, usage_by_model, started_at, finished_at`
+
 /**
- * Posts finished steps of finished runs to Argo and marks them `argo_synced_at` only after Argo accepted the batch.
- * Each batch is selected `for update skip locked` and marked in the same transaction, so concurrent flushers (this
- * process or another) never post a step twice; a failed post rolls back, backs off, and the next `flush()` after
- * the delay retries the same rows. A crash after the post and before the commit re-posts them, which Argo's upsert
- * on `(source, source_id, machine)` absorbs. Steps without usage are marked without a row.
+ * Posts the usage of finished steps to Argo once their run's record is written (`runPost` delivered). No
+ * transaction spans a post:
+ * 1. claim a batch in one statement (`for update skip locked`, a random `argo_claim` token and an expiry), commit;
+ * 2. build and validate the rows, post them outside any transaction;
+ * 3. mark the batch synced where the token still matches, in a second short statement.
+ * Concurrent flushers never post the same claimed step; a crashed flusher's claim expires; a crash after the post
+ * re-posts, which Argo's upsert absorbs. A transient failure releases the claim and backs off. A permanent one (a
+ * row that cannot be built, fails Argo's schema or gets a 4xx) quarantines only that step (`argo_error`, logged,
+ * counted); the rest keep flowing.
  */
 export class ArgoOutbox {
   private failures = 0
@@ -282,11 +343,23 @@ export class ArgoOutbox {
   private inflight: Promise<FlushResult> | null = null
   private readonly machine: string
   private readonly batchSize: number
+  private readonly postTimeoutMs: number
+  private readonly claimTtlMs: number
   private readonly now: () => number
 
   constructor(private readonly options: OutboxOptions) {
-    this.machine = options.machine ?? process.env.AGW_MACHINE ?? hostname()
+    const machine = options.machine ?? process.env.AGW_MACHINE?.trim()
+    if (!machine) {
+      options.logger.warn('argo outbox: AGW_MACHINE unset; using the host name as the Argo machine id', {
+        machine: hostname(),
+      })
+    }
+    this.machine = machine || hostname()
     this.batchSize = options.batchSize ?? 200
+    this.postTimeoutMs = options.postTimeoutMs ?? 30_000
+    this.claimTtlMs = options.claimTtlMs ?? 120_000
+    if (this.claimTtlMs <= this.postTimeoutMs * 2)
+      throw new Error('argo outbox: claimTtlMs must exceed 2× postTimeoutMs')
     this.now = options.now ?? Date.now
   }
 
@@ -298,17 +371,23 @@ export class ArgoOutbox {
   }
 
   private async drain(): Promise<FlushResult> {
-    const result: FlushResult = { posted: 0, marked: 0, skipped: null, error: null }
+    const result: FlushResult = { posted: 0, marked: 0, quarantined: 0, skipped: null, error: null }
     if (this.now() < this.nextAt) return { ...result, skipped: 'backoff' }
     for (;;) {
+      const token = crypto.randomUUID()
       try {
-        const batch = await this.batch()
-        result.posted += batch.posted
-        result.marked += batch.marked
-        this.failures = 0
-        this.nextAt = 0
-        if (batch.selected < this.batchSize) return result
+        const steps = await this.claim(token)
+        if (steps.length === 0) break
+        const ready: Claimed[] = []
+        for (const step of steps) {
+          const built = this.build(step)
+          if (typeof built === 'string') result.quarantined += await this.quarantine(token, [step], built)
+          else ready.push({ step, records: built })
+        }
+        if (ready.length > 0) await this.send(token, ready, result)
+        if (steps.length < this.batchSize) break
       } catch (err) {
+        await this.release(token)
         this.failures++
         const { baseMs, maxMs } = this.options.backoff ?? { baseMs: 5000, maxMs: 300_000 }
         const delay = Math.min(maxMs, baseMs * 2 ** (this.failures - 1))
@@ -322,49 +401,129 @@ export class ArgoOutbox {
         return result
       }
     }
+    this.failures = 0
+    this.nextAt = 0
+    return result
   }
 
-  private async batch(): Promise<{ selected: number; posted: number; marked: number }> {
+  private async claim(token: string): Promise<OutboxStep[]> {
     const { db } = this.options
-    const client = await db.pool.connect()
-    try {
-      await client.query('begin')
-      const { rows } = await client.query<OutboxRow>(
-        `select s.run_id, s.step_id, s.status, s.model, s.tokens_input, s.tokens_output, s.tokens_cache_read,
-           s.tokens_reasoning, s.cost, s.tool_calls, s.unpriced_calls, s.usage_by_model, s.started_at,
-           s.finished_at, s.handle->'handle'->>'sessionId' as session_id,
-           r.workflow, r.root_id, r.purpose, r.traceparent, r.trace_id, r.fingerprint, r.friction,
-           r.status as run_status, r.error_kind as run_error_kind, r.wall_ms
-         from ${db.steps} s join ${db.runs} r on r.id = s.run_id
-         where s.argo_synced_at is null and s.status in ('done', 'failed', 'cancelled')
-           and r.status in ('done', 'failed', 'cancelled')
+    const { rows } = await db.pool.query<OutboxRow>(
+      `with picked as (
+         select s.run_id, s.step_id from ${db.steps} s join ${db.runs} r on r.id = s.run_id
+         where s.argo_synced_at is null and s.argo_error is null and s.status in ('done', 'failed', 'cancelled')
+           and (s.tokens_input > 0 or s.tokens_output > 0 or s.tokens_cache_read > 0 or s.tokens_cache_write > 0
+             or s.tokens_reasoning > 0 or s.cost is not null)
+           and (s.argo_claimed_until is null or s.argo_claimed_until < now())
+           and r.status in ('done', 'failed', 'cancelled') and r.post_hooks_at is not null
          order by s.finished_at, s.run_id, s.step_id
          limit $1
-         for update of s skip locked`,
-        [this.batchSize],
-      )
-      const now = new Date(this.now())
-      const records = rows.flatMap((row) =>
-        argoRowsForStep(toOutboxStep(row), { machine: this.machine, billing: this.options.billing, now }),
-      )
-      for (let i = 0; i < records.length; i += ARGO_MAX_BATCH) {
-        await this.options.transport.post(records.slice(i, i + ARGO_MAX_BATCH))
+         for update of s skip locked
+       ), claimed as (
+         update ${db.steps} s set argo_claim = $2, argo_claimed_until = now() + $3 * interval '1 millisecond'
+         from picked p where s.run_id = p.run_id and s.step_id = p.step_id
+         returning s.*
+       )
+       select ${STEP_COLUMNS.replaceAll(/(\w+)/g, 'c.$1')}, c.handle->'handle'->>'sessionId' as session_id,
+         r.workflow, r.root_id, r.purpose, r.traceparent, r.trace_id, r.fingerprint, r.friction,
+         r.status as run_status, r.error_kind as run_error_kind, r.wall_ms
+       from claimed c join ${db.runs} r on r.id = c.run_id
+       order by c.finished_at, c.run_id, c.step_id`,
+      [this.batchSize, token, this.claimTtlMs],
+    )
+    return rows.map(toOutboxStep)
+  }
+
+  /** The step's rows, validated against Argo's schema; a message when they cannot be built (permanent). */
+  private build(step: OutboxStep): ArgoUsageRecord[] | string {
+    try {
+      const records = argoRowsForStep(step, {
+        machine: this.machine,
+        billing: this.options.billing,
+        now: new Date(this.now()),
+      })
+      for (const record of records) {
+        const parsed = ArgoUsageRecordInput.safeParse(record)
+        if (!parsed.success) return `${record.source_id}: ${parsed.error.message.slice(0, 300)}`
       }
-      if (rows.length > 0) {
-        await client.query(
-          `update ${db.steps} s set argo_synced_at = now()
-           from unnest($1::text[], $2::text[]) as k(run_id, step_id)
-           where s.run_id = k.run_id and s.step_id = k.step_id`,
-          [rows.map((r) => r.run_id), rows.map((r) => r.step_id)],
-        )
-      }
-      await client.query('commit')
-      return { selected: rows.length, posted: records.length, marked: rows.length }
+      return records
     } catch (err) {
-      await client.query('rollback').catch(() => {})
-      throw err
-    } finally {
-      client.release()
+      return errorMessage(err)
     }
+  }
+
+  /** Posts the batch; on a permanent refusal, step by step so only the bad ones are quarantined. */
+  private async send(token: string, live: Claimed[], result: FlushResult) {
+    try {
+      await this.post(live.flatMap((c) => c.records))
+      await this.mark(token, live, result)
+    } catch (err) {
+      if (!(err instanceof ArgoPostError && err.permanent)) throw err
+      for (const one of live) {
+        try {
+          await this.post(one.records)
+          await this.mark(token, [one], result)
+        } catch (stepErr) {
+          if (!(stepErr instanceof ArgoPostError && stepErr.permanent)) throw stepErr
+          result.quarantined += await this.quarantine(token, [one.step], errorMessage(stepErr))
+        }
+      }
+    }
+  }
+
+  private async post(records: ArgoUsageRecord[]) {
+    for (let i = 0; i < records.length; i += ARGO_MAX_BATCH) {
+      let timer: ReturnType<typeof setTimeout> | undefined
+      try {
+        await Promise.race([
+          this.options.transport.post(records.slice(i, i + ARGO_MAX_BATCH)),
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(
+              () => reject(new Transient(`argo post timed out after ${this.postTimeoutMs} ms`)),
+              this.postTimeoutMs,
+            )
+          }),
+        ])
+      } finally {
+        clearTimeout(timer)
+      }
+    }
+  }
+
+  private async mark(token: string, done: Claimed[], result: FlushResult) {
+    const keys = done.map((c) => c.step)
+    const { rowCount } = await this.options.db.pool.query(
+      `update ${this.options.db.steps} s set argo_synced_at = now(), argo_claim = null, argo_claimed_until = null
+       from unnest($1::text[], $2::text[]) as k(run_id, step_id)
+       where s.run_id = k.run_id and s.step_id = k.step_id and s.argo_claim = $3`,
+      [keys.map((k) => k.runId), keys.map((k) => k.stepId), token],
+    )
+    result.posted += done.reduce((sum, c) => sum + c.records.length, 0)
+    result.marked += rowCount ?? 0
+  }
+
+  private async quarantine(token: string, steps: StepKey[], error: string): Promise<number> {
+    const { rowCount } = await this.options.db.pool.query(
+      `update ${this.options.db.steps} s set argo_error = $3, argo_claim = null, argo_claimed_until = null
+       from unnest($1::text[], $2::text[]) as k(run_id, step_id)
+       where s.run_id = k.run_id and s.step_id = k.step_id and s.argo_claim = $4`,
+      [steps.map((k) => k.runId), steps.map((k) => k.stepId), error.slice(0, 1000), token],
+    )
+    this.options.logger.error('argo outbox: step quarantined (permanent failure); the rest keep flowing', {
+      steps: steps.map((k) => `${k.runId}:${k.stepId}`),
+      error,
+    })
+    return rowCount ?? 0
+  }
+
+  /** Gives a failed batch back at once instead of waiting for the claim to expire. */
+  private async release(token: string) {
+    await this.options.db.pool
+      .query(`update ${this.options.db.steps} set argo_claim = null, argo_claimed_until = null where argo_claim = $1`, [
+        token,
+      ])
+      .catch((err: unknown) =>
+        this.options.logger.warn('argo outbox: claim release failed; it expires', { error: errorMessage(err) }),
+      )
   }
 }
