@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { defineWorkflow, type Runtime } from '@agent-workflows/runtime'
 import { z } from 'zod'
 import {
+  type DecisionSink,
   type LimitDecision,
   snapshotSpendSource,
   type WalletDecision,
@@ -122,6 +123,7 @@ describe('wallet gate', () => {
     ['malformed', () => snapshot('malformed', '{"schema":1,', true), 'IU spend snapshot is not valid JSON'],
     ['wrong schema', () => snapshot('schema2', { ...fresh(10), schema: 2 }), 'unsupported schema'],
     ['no spend', () => snapshot('nospend', { ...fresh(10), rolling30_usd: 'x' }), 'no valid rolling30_usd'],
+    ['negative spend', () => snapshot('negative', fresh(-5)), 'no valid rolling30_usd'],
     ['future', () => snapshot('future', fresh(10, -1)), 'fetched_at in the future'],
     ['no fetched_at', () => snapshot('nofetch', { schema: 1, rolling30_usd: 1 }), 'no valid fetched_at'],
   ])('fails closed on a %s snapshot', async (_name, path, reason) => {
@@ -192,13 +194,53 @@ describe('wallet gate', () => {
     ).toEqual({ thresholdUsd: 250, pausedUntil: null, snapshotPath: '/tmp/s.json' })
     expect(walletEnv({ AGW_WALLET_THRESHOLD_USD: ' ' }, logger).thresholdUsd).toBe(400)
     expect(walletEnv({ AGW_WALLET_THRESHOLD_USD: '0' }, logger).thresholdUsd).toBe(0)
+    // Fail closed: an invalid pause date keeps the default pause, never no pause.
     expect(walletEnv({ AGW_WALLET_THRESHOLD_USD: '-1', AGW_WALLET_PAUSED_UNTIL: 'soon' }, logger)).toMatchObject({
       thresholdUsd: 400,
-      pausedUntil: null,
+      pausedUntil: new Date('2026-11-02T00:00:00Z'),
     })
     expect(logger.lines.map((l) => l.message)).toEqual([
       'AGW_WALLET_THRESHOLD_USD is not a number >= 0; the default applies',
-      'AGW_WALLET_PAUSED_UNTIL is not a valid date; no pause',
+      'AGW_WALLET_PAUSED_UNTIL is not a valid date; the default pause applies',
     ])
+  })
+})
+
+describe('wallet gate, options and sinks', () => {
+  test.each([Number.NaN, -1, Number.POSITIVE_INFINITY])(
+    'thresholdUsd %p falls back to the default with a warning',
+    async (bad) => {
+      const g = gate(await snapshot('opt-over', fresh(450)), { thresholdUsd: bad })
+      const result = await runOnce(g)
+      expect(result.error?.message).toContain('>= $400 wallet gate')
+      expect(g.logger.lines[0]?.message).toBe('wallet gate: thresholdUsd is not a number >= 0; the default applies')
+    },
+  )
+
+  test('an invalid pausedUntil option falls back to the default pause (fail closed)', async () => {
+    const g = gate(await snapshot('opt-under', fresh(10)), {
+      pausedUntil: new Date('nope'),
+      now: () => new Date('2026-10-30T00:00:00Z'),
+    })
+    const result = await runOnce(g)
+    expect(result.error?.message).toContain('paused until 2026-11-02T00:00:00.000Z')
+    expect(g.logger.lines[0]?.message).toBe('wallet gate: pausedUntil is an invalid date; the default pause applies')
+  })
+
+  test('a throwing or rejecting onDecision sink never refuses nor admits on its own', async () => {
+    const throwing: DecisionSink = () => {
+      throw new Error('sink down')
+    }
+    // A misused async sink: the type says void, the runtime value is a rejected promise.
+    const rejecting = (() => Promise.reject(new Error('sink down'))) as unknown as DecisionSink
+    for (const sink of [throwing, rejecting]) {
+      const under = gate(await snapshot('sink-under', fresh(10)), { onDecision: sink })
+      expect((await runOnce(under)).status).toBe('done')
+      const over = gate(await snapshot('sink-over', fresh(450)), { onDecision: sink })
+      const refused = await runOnce(over)
+      expect(refused.error).toMatchObject({ kind: 'admission_refused', message: expect.stringContaining('$450') })
+      await until(() => over.logger.lines.some((l) => l.message === 'onDecision threw; ignored'), 'sink logged')
+      expect(under.logger.lines.some((l) => l.message === 'onDecision threw; ignored')).toBe(true)
+    }
   })
 })

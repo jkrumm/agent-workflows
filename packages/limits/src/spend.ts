@@ -53,7 +53,7 @@ export function snapshotSpendSource(options: { path?: string; maxAgeMs?: number 
       if (now.getTime() - fetchedAt > maxAgeMs) {
         return { ok: false, reason: `IU spend snapshot is stale (fetched_at older than ${maxAgeMs / 3_600_000} h)` }
       }
-      if (typeof rolling30_usd !== 'number' || !Number.isFinite(rolling30_usd)) {
+      if (typeof rolling30_usd !== 'number' || !Number.isFinite(rolling30_usd) || rolling30_usd < 0) {
         return { ok: false, reason: 'IU spend snapshot has no valid rolling30_usd' }
       }
       return { ok: true, rolling30Usd: rolling30_usd, fetchedAt: new Date(fetchedAt) }
