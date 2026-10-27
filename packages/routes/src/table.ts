@@ -3,7 +3,7 @@ import { ROUTE_ID, type RouteEntry, routeSchema } from './schema.ts'
 // The only place model ids live in this repo (concept §4, §5; enforced by guard.test.ts).
 // Each entry's model and effort are what agent-gateway's server/lib/routing.ts resolves today
 // (`GET /api/routing`, 2026-10-27). The README lists the source seat of every route.
-const TABLE: Record<string, RouteEntry> = {
+const TABLE = {
   // Cheap single-shot seats. Gateway: SINGLE_SHOT (triage) over the iu-openai transport.
   // single-shot.ts sends max_completion_tokens >= 16000, because reasoning tokens count against it.
   'cheap.classify': { wire: 'iu-openai', model: 'deepseek-v4.1-flash', maxOutputTokens: 16_000 },
@@ -25,16 +25,22 @@ const TABLE: Record<string, RouteEntry> = {
 
   // Check seat. Gateway: `check`, CLASSIFY tier.
   check: { wire: 'opencode', model: 'claude-haiku-5-5-eu' },
-}
+} satisfies Record<string, RouteEntry>
 
-function validate(table: Record<string, RouteEntry>): Record<string, RouteEntry> {
-  for (const [id, entry] of Object.entries(table)) {
+export type RouteId = keyof typeof TABLE
+
+function build(): Readonly<Record<RouteId, Readonly<RouteEntry>>> {
+  const out: Record<string, Readonly<RouteEntry>> = {}
+  for (const [id, entry] of Object.entries(TABLE)) {
     if (!ROUTE_ID.test(id)) throw new Error(`route table: invalid route id "${id}"`)
     const parsed = routeSchema.safeParse(entry)
     if (!parsed.success) throw new Error(`route table: "${id}" is invalid: ${parsed.error.message}`)
+    // The parsed copy is ours alone; freezing it (and its rate) makes the table immutable for the process.
+    if (parsed.data.rate) Object.freeze(parsed.data.rate)
+    out[id] = Object.freeze(parsed.data)
   }
-  return table
+  return Object.freeze(out)
 }
 
-/** The validated, unmodified table. Overrides never touch it. */
-export const DEFAULT_ROUTES: Readonly<Record<string, Readonly<RouteEntry>>> = Object.freeze(validate(TABLE))
+/** The validated table, deeply frozen. Overrides never touch it. */
+export const DEFAULT_ROUTES = build()

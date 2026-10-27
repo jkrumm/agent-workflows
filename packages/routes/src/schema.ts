@@ -8,7 +8,11 @@ export type Wire = (typeof WIRES)[number]
 export const EFFORTS = ['none', 'low', 'medium', 'high', 'xhigh', 'max'] as const
 export type Effort = (typeof EFFORTS)[number]
 
-/** USD per million tokens, for wires whose provider reports no cost. */
+/** Sanity ceiling; the largest output limit in agent-gateway's model registry is 128k. */
+export const MAX_OUTPUT_TOKENS = 200_000
+const maxOutputTokens = z.int().positive().max(MAX_OUTPUT_TOKENS)
+
+/** USD per million tokens, for wires whose provider reports no cost. Zod 4 numbers are finite. */
 export const rateSchema = z.strictObject({
   inputPerM: z.number().nonnegative(),
   outputPerM: z.number().nonnegative(),
@@ -22,7 +26,7 @@ export const routeSchema = z
     wire: z.enum(WIRES),
     model: z.string().min(1),
     effort: z.enum(EFFORTS).optional(),
-    maxOutputTokens: z.int().positive().optional(),
+    maxOutputTokens: maxOutputTokens.optional(),
     rate: rateSchema.optional(),
   })
   .refine((r) => r.wire !== 'iu-decision' || (r.effort === undefined && r.maxOutputTokens === undefined), {
@@ -33,12 +37,15 @@ export type RouteEntry = z.infer<typeof routeSchema>
 /** A table entry plus the id it was resolved by. */
 export type ResolvedRoute = RouteEntry & { id: string }
 
-/** A partial entry from the override variable; merged over the table entry, then validated whole. */
+/**
+ * A partial entry from the override variable; merged over the table entry, then validated whole.
+ * There is no `wire`: a route's transport is code, overrides are for model, effort, limit and rate experiments.
+ */
 export const routePatchSchema = z.strictObject({
-  wire: z.enum(WIRES).optional(),
+  wire: z.never({ error: 'wire cannot be overridden (a route transport is code, not configuration)' }).optional(),
   model: z.string().min(1).optional(),
   effort: z.enum(EFFORTS).nullable().optional(),
-  maxOutputTokens: z.int().positive().nullable().optional(),
+  maxOutputTokens: maxOutputTokens.nullable().optional(),
   rate: rateSchema.nullable().optional(),
 })
 export type RoutePatch = z.infer<typeof routePatchSchema>

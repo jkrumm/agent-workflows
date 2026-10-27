@@ -3,6 +3,7 @@ import {
   costFromUsage,
   DEFAULT_ROUTES,
   OVERRIDES_ENV,
+  type RouteId,
   RouteOverrideError,
   resolveRoute,
   routeFingerprint,
@@ -12,7 +13,7 @@ import {
 } from './index.ts'
 import { ROUTE_ID } from './schema.ts'
 
-function entry(id: string) {
+function entry(id: RouteId) {
   const e = DEFAULT_ROUTES[id]
   if (!e) throw new Error(`test setup: no route ${id}`)
   return e
@@ -29,9 +30,8 @@ describe('table', () => {
   })
 
   test('covers the seats Waves 2-4 need', () => {
-    for (const id of ['cheap.summarize', 'cheap.title', 'cheap.classify', 'decide', 'review.angle', 'check']) {
-      expect(routeIds()).toContain(id)
-    }
+    const needed: RouteId[] = ['cheap.summarize', 'cheap.title', 'cheap.classify', 'decide', 'review.angle', 'check']
+    for (const id of needed) expect(routeIds()).toContain(id)
   })
 
   test('every wire is represented', () => {
@@ -46,8 +46,8 @@ describe('resolveRoute', () => {
   })
 
   test('unknown id is a typed error', () => {
-    expect(() => resolveRoute('nope', {})).toThrow(UnknownRouteError)
-    expect(() => resolveRoute('constructor', {})).toThrow(UnknownRouteError)
+    expect(() => resolveRoute('nope' as RouteId, {})).toThrow(UnknownRouteError)
+    expect(() => resolveRoute('constructor' as RouteId, {})).toThrow(UnknownRouteError)
   })
 
   test('override changes model and effort, leaves the table alone', () => {
@@ -73,11 +73,48 @@ describe('resolveRoute', () => {
       { 'review.angle': { effort: 'turbo' } },
       { 'review.angle': { model: '' } },
       { 'review.angle': { maxOutputTokens: -1 } },
+      { 'review.angle': { maxOutputTokens: 200_001 } },
+      { 'review.angle': { wire: 'iu-openai' } },
+      { decide: { rate: { inputPerM: -1, outputPerM: 0 } } },
       { 'review.angle': { colour: 'red' } },
       { decide: { effort: 'high' } },
       { nope: { model: 'x' } },
     ]) {
       expect(() => resolveRoute('check', env(bad))).toThrow(RouteOverrideError)
+    }
+  })
+
+  test('overriding wire says why', () => {
+    expect(() => resolveRoute('check', env({ check: { wire: 'iu-openai' } }))).toThrow(/wire cannot be overridden/)
+  })
+
+  test('a non-finite rate in the variable is rejected', () => {
+    const raw = '{"decide":{"rate":{"inputPerM":1e999,"outputPerM":1}}}'
+    expect(() => resolveRoute('decide', { [OVERRIDES_ENV]: raw })).toThrow(RouteOverrideError)
+  })
+
+  test('the variable is parsed per call, not cached', () => {
+    expect(resolveRoute('check', env({ check: { model: 'a' } })).model).toBe('a')
+    expect(resolveRoute('check', env({ check: { model: 'b' } })).model).toBe('b')
+    expect(resolveRoute('check', {}).model).toBe(entry('check').model)
+  })
+
+  test('mutating a resolved route changes neither the table nor the fingerprint', () => {
+    const before = routeFingerprint('decide', {})
+    const resolved = resolveRoute('decide', {})
+    resolved.model = 'tampered'
+    if (resolved.rate) resolved.rate.inputPerM = 0
+    expect(resolveRoute('decide', {})).toEqual({ id: 'decide', ...entry('decide') })
+    expect(entry('decide').rate?.inputPerM).toBe(0.04)
+    expect(routeFingerprint('decide', {})).toBe(before)
+  })
+
+  test('the table is deeply frozen', () => {
+    expect(Object.isFrozen(DEFAULT_ROUTES)).toBe(true)
+    for (const id of routeIds()) {
+      expect(Object.isFrozen(entry(id))).toBe(true)
+      const { rate } = entry(id)
+      if (rate) expect(Object.isFrozen(rate)).toBe(true)
     }
   })
 
