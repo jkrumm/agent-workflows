@@ -17,9 +17,6 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
   Rotation policy: a fresh lead per wave unless the last one closed under ~30% context.
 - The mother is agent `agent-workflows-mother` (pane w40:p1).
 
-- 2026-10-28: Max room is tight (iu and me at ~98% weekly; me resets 10-29 06:00, iu 10-28 16:00);
-  `rd` pauses rather than spilling. A pause is not a stop.
-
 ## Open decisions
 - none
 
@@ -29,6 +26,8 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
 - 2026-10-27: `rd wave` numbers tabs from labelled "wave N" tabs only, not agent names; the mother was
   named `-w1` and blocked the first spawn. Fixed by renaming the mother. dotfiles fix (count taken
   agent names too) waits until the P0 wave frees dotfiles.
+- 2026-10-28: Max room is tight (iu and me at ~98% weekly; me resets 10-29 06:00, iu 10-28 16:00);
+  `rd` pauses rather than spilling. A pause is not a stop.
 
 ## Next action
 - Watch the lead (`wave-watch.sh --agents agent-workflows-w1 --heartbeat 9`, bounded 10 min), read
