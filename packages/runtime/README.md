@@ -40,7 +40,9 @@ const result = await runtime.wait(runId)
   replayed value deep-equals the original (jsonb does not keep key order). Anything else fails the step as
   `non_json_output`.
 - **Usage** from `addUsage` (a capability's usage passes as is) is summed per step and model; reports without a
-  price count as `unpricedCalls`, so a partially priced step is visible instead of a silent undercount.
+  price count as `unpricedCalls`, so a partially priced step is visible instead of a silent undercount. Tokens
+  are raw provider counts: `input` includes cache reads and writes, `output` includes reasoning; `cacheWrite` is
+  optional on a report (absent means 0) and always present on the sums (`tokens_cache_write`).
 - **Retry** per step: `{ attempts, backoffMs, factor, maxBackoffMs }`, default one attempt (agent steps too).
 - **Idle timeout** per step: no `progress()` (or host progress event) for `idleTimeoutMs` fails the attempt as
   `timeout`. Agent steps default to 5 minutes; code steps have none. It is never a wall-clock cap
@@ -55,7 +57,9 @@ const result = await runtime.wait(runId)
 
 - Journal in its own schema (`schema`, default `agw`): `runs`, `steps`, `signals`, migrated from
   `src/migrations/NNNN_*.sql` in one transaction under an advisory lock, recorded in `schema_migrations`. The
-  run-record columns (fingerprint, tokens, cost, friction, `argo_synced_at`) exist for the middleware to fill.
+  run-record columns (fingerprint, tokens, cost, `unpriced_calls`, `tool_calls`, friction) and the Argo outbox
+  columns on steps (`argo_synced_at`, `argo_claim`, `argo_claimed_until`, `argo_error`, migration 0002) exist for
+  the middleware to fill. A merged migration is never edited; changes take the next number.
 - **Lease:** one `pg_try_advisory_lock` per top-level run (64-bit key from sha256), held on a dedicated
   connection budget sized `maxConcurrentRuns` (plus one reserved for `runPost` re-delivery), never the journal
   pool. Beyond the budget runs stay pending. Recovery skips runs whose lock is visibly held (`pg_locks` against
@@ -95,10 +99,17 @@ no workflow can skip it.
   (`admitted_at`), so admission fires once per run. Throwing (`AdmissionRefused` for a clean refusal) fails a new
   run before its body runs; on resume it is logged and ignored.
 - `stepPre` gets `replay`; throwing fails the step as `middleware`.
+- `toolPre` throwing fails the step it runs in (`ToolRefused`): the step's signal aborts (the agent session is
+  aborted), the step ends with the thrown `WorkflowError`'s kind (else `middleware`) and is not retried. A throwing
+  `toolPost` is logged.
+- `stepPost` carries `handle`: the agent handle the execution last used (also after a failed attempt cleared it
+  from the journal), null for other kinds.
 - Post hooks run after the commit: a throw is logged and never changes the recorded outcome.
 - `runPost` is at least once: `post_hooks_at` records delivery, and recovery re-delivers it for ended runs
-  without it (a kill between the terminal write and the hooks, a run cancelled while pending), under the root's
-  lease so no live driver races it.
+  without it (a kill between the terminal write and the hooks, a run cancelled while pending, a hook that threw),
+  under the root's lease so no live driver races it. Every hook runs on each delivery, so hooks are idempotent. A
+  run whose hooks keep throwing is marked delivered after `maxPostHookAttempts` (default 5,
+  `runs.post_hooks_attempts`) and logged, so it cannot loop.
 
 ## Bounded runs
 

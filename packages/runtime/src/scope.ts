@@ -7,6 +7,7 @@ import {
   InfraError,
   StepFailed,
   StepTimeout,
+  ToolRefused,
   WorkflowError,
 } from './errors.ts'
 import type { AgentHandleState, Fence, Journal, RunRow, StepRow } from './journal.ts'
@@ -41,7 +42,8 @@ export type ScopeHost = {
   /** How long a resumed effect waits, measured from its last start, before running its body again. */
   bodyGraceMs: number
   stepPost(args: StepPostArgs): Promise<void>
-  tool(phase: 'pre' | 'post', event: ToolEvent): Promise<void>
+  /** `{ refused }` when a `toolPre` hook threw (the step then fails), else null. */
+  tool(phase: 'pre' | 'post', event: ToolEvent): Promise<Refusal | null>
   runChild(parent: RunScope, childId: string, workflow: AnyWorkflow, input: unknown): Promise<Json | null>
   trackAgent(key: string, handle: Json): void
   /** Only removes the entry when it is still this attempt's handle. */
@@ -61,6 +63,10 @@ export class RunScope {
    */
   readonly inflight: Set<Promise<unknown>>
   private readonly seen = new Set<string>()
+  /** Fails the running attempt of a step from outside its body (a refusing `toolPre`). */
+  private readonly refusers = new Map<string, (reason: WorkflowError) => void>()
+  /** The agent handle each running step last used, for `stepPost`. */
+  private readonly handles = new Map<string, Json>()
 
   constructor(
     readonly rt: ScopeHost,
@@ -156,7 +162,9 @@ export class RunScope {
         if (outcome.ok) break
         if (this.infra) throw this.infra
         if (outcome.error instanceof InfraError) throw outcome.error
-        if (outcome.error instanceof Cancelled || tries >= policy.attempts) break
+        if (outcome.error instanceof Cancelled || outcome.error instanceof ToolRefused || tries >= policy.attempts) {
+          break
+        }
         try {
           await this.sleep(backoffMs(policy, tries))
         } catch (err) {
@@ -184,7 +192,18 @@ export class RunScope {
     )
     // Not recorded: a cancel cleanup ended the step first; its outcome stands.
     if (!recorded) throw new Cancelled(runId)
-    await this.rt.stepPost({ ...info, attempt, status, finishedAt: new Date(), usage: usage.snapshot(), output, error })
+    const handle = this.handles.get(stepId) ?? null
+    this.handles.delete(stepId)
+    await this.rt.stepPost({
+      ...info,
+      attempt,
+      status,
+      finishedAt: new Date(),
+      usage: usage.snapshot(),
+      handle,
+      output,
+      error,
+    })
     if (outcome.ok) return outcome.value
     if (cancelled) throw outcome.error
     throw new StepFailed(stepId, error?.kind ?? 'error', error?.message ?? '')
@@ -199,7 +218,9 @@ export class RunScope {
     body: (scope: StepScope) => T | Promise<T>,
   ): Promise<{ ok: true; value: T } | { ok: false; error: unknown }> {
     const idle = new AbortController()
-    const signal = AbortSignal.any([this.signal, idle.signal])
+    const refuse = new AbortController()
+    const signal = AbortSignal.any([this.signal, idle.signal, refuse.signal])
+    this.refusers.set(stepId, (reason) => refuse.abort(reason))
     let timer: ReturnType<typeof setTimeout> | undefined
     let finished = false
     const progress = () => {
@@ -231,6 +252,7 @@ export class RunScope {
     } finally {
       finished = true
       clearTimeout(timer)
+      this.refusers.delete(stepId)
     }
   }
 
@@ -307,6 +329,7 @@ export class RunScope {
           await this.j(() => journal.stepHandle(runId, stepId, this.fence, opened))
         }
         const current: AgentHandleState = state
+        this.handles.set(stepId, current.handle)
         this.rt.trackAgent(scope.key, current.handle)
         if (!current.prompted) {
           await this.j(() => journal.assertLease(this.fence)) // never spend a prompt for a run another process took
@@ -322,7 +345,13 @@ export class RunScope {
         const result = await host.wait(current.handle, {
           signal: scope.signal,
           onProgress: scope.progress,
-          onTool: ({ phase, ...event }) => this.rt.tool(phase, { ...event, runId, stepId }),
+          onTool: async ({ phase, ...event }) => {
+            const refusal = await this.rt.tool(phase, { ...event, runId, stepId })
+            if (!refusal) return
+            const reason = new ToolRefused(refusal.refused)
+            this.refusers.get(stepId)?.(reason)
+            throw reason
+          },
         })
         if (result.usage) scope.addUsage(result.usage)
         if (!spec.output) return result.output

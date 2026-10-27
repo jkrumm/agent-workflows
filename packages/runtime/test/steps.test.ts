@@ -177,7 +177,7 @@ describe('usage', () => {
       output: empty,
       async run(ctx) {
         await ctx.step('spend', ({ addUsage }) => {
-          addUsage({ model: 'm-a', tokens, cost: 0.25, toolCalls: 2 })
+          addUsage({ model: 'm-a', tokens: { ...tokens, cacheWrite: 30 }, cost: 0.25, toolCalls: 2 })
           addUsage({ model: 'm-a', tokens, cost: 0.5, toolCalls: 1 })
           addUsage({ model: 'm-b', tokens, toolCalls: 4 })
           return null
@@ -196,6 +196,7 @@ describe('usage', () => {
         tokens_output: '60',
         tokens_cache_read: '150',
         tokens_reasoning: '15',
+        tokens_cache_write: '30',
         cost: '0.75',
         tool_calls: 7,
         unpriced_calls: 1,
@@ -203,12 +204,13 @@ describe('usage', () => {
       })
       expect(row?.usage_by_model).toEqual({
         'm-a': {
-          tokens: { input: 200, output: 40, cacheRead: 100, reasoning: 10 },
+          tokens: { input: 200, output: 40, cacheRead: 100, cacheWrite: 30, reasoning: 10 },
           cost: 0.75,
           toolCalls: 3,
           unpricedCalls: 0,
         },
-        'm-b': { tokens, cost: null, toolCalls: 4, unpricedCalls: 1 },
+        // A report without cacheWrite (an OpenAI-shaped wire) stays assignable; the sum carries the bucket.
+        'm-b': { tokens: { ...tokens, cacheWrite: 0 }, cost: null, toolCalls: 4, unpricedCalls: 1 },
       })
     } finally {
       await rt.close()

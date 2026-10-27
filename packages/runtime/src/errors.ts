@@ -52,6 +52,21 @@ export class Cancelled extends WorkflowError {
   }
 }
 
+/**
+ * A `toolPre` hook threw: the step fails with the hook error's kind (a `WorkflowError`'s, else `middleware`) and is
+ * not retried. The original error is the `cause`.
+ */
+export class ToolRefused extends WorkflowError {
+  override name = 'ToolRefused'
+  constructor(refused: unknown) {
+    super(
+      refused instanceof WorkflowError ? refused.kind : 'middleware',
+      `toolPre refused: ${refused === undefined ? 'no reason' : errorMessage(refused)}`,
+      { cause: refused },
+    )
+  }
+}
+
 /** Thrown by a `runPre` middleware to refuse a new run. Ignored (logged) when the run resumes. */
 export class AdmissionRefused extends Error {
   override name = 'AdmissionRefused'

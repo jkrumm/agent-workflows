@@ -7,6 +7,7 @@ export {
   Shutdown,
   StepFailed,
   StepTimeout,
+  ToolRefused,
   WorkflowError,
 } from './errors.ts'
 export type { Json } from './json.ts'

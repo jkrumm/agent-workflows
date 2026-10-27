@@ -46,6 +46,8 @@ export type RuntimeOptions = {
    * `crash_loop`. Persisted on the run, so the cap survives restarts. Default 20.
    */
   maxDrives?: number
+  /** Failed `runPost` deliveries (a hook threw) before the run is marked delivered anyway, logged. Default 5. */
+  maxPostHookAttempts?: number
   /**
    * How long the lease is held after an abort for a still-running step body to settle, and how long a resumed
    * effect waits (from its last start) before running again. Default 30 s.
@@ -424,8 +426,7 @@ export class Runtime {
     if (end.status === 'cancelled') await this.cleanUpCancelled(scope)
     const written = await scope.j(() => this.journal.finishRun(scope.run.id, scope.fence, end))
     if (!written) return null
-    await this.runPost(runPostArgs(scope.run, scope.workflow.version, end, new Date()))
-    await this.markPostHooks(scope.run.id)
+    await this.deliverPostHooks(runPostArgs(scope.run, scope.workflow.version, end, new Date()))
     return end.status === 'done' ? end.output : null
   }
 
@@ -449,15 +450,35 @@ export class Runtime {
     }
     const children = await scope.j(() => this.journal.cancelDescendants(run.id, fence))
     for (const child of children) {
-      await this.runPost(runPostArgs(child, child.version_started, endOf(child), child.finished_at ?? new Date()))
-      await this.markPostHooks(child.id)
+      await this.deliverPostHooks(
+        runPostArgs(child, child.version_started, endOf(child), child.finished_at ?? new Date()),
+      )
     }
   }
 
-  private async markPostHooks(runId: string) {
-    await this.journal.postHooksDone(runId).catch((err: unknown) => {
-      this.logger.warn('runPost done but not recorded; recovery delivers it again', { runId, error: errorMessage(err) })
-    })
+  /**
+   * `runPost`, then its delivery marker. A hook that threw leaves the run undelivered, so recovery delivers it again
+   * (every hook: they are idempotent), up to `maxPostHookAttempts`; then it is marked delivered and logged.
+   */
+  private async deliverPostHooks(args: RunPostArgs) {
+    const runId = args.runId
+    const delivered = await this.runPost(args)
+    if (delivered) {
+      await this.journal.postHooksDone(runId).catch((err: unknown) => {
+        this.logger.warn('runPost done but not recorded; recovery delivers it again', {
+          runId,
+          error: errorMessage(err),
+        })
+      })
+      return
+    }
+    const max = this.options.maxPostHookAttempts ?? 5
+    try {
+      const { attempts, gaveUp } = await this.journal.postHooksFailed(runId, max)
+      if (gaveUp) this.logger.error('runPost failed every attempt; marked delivered', { runId, attempts })
+    } catch (err) {
+      this.logger.warn('runPost failure not recorded; recovery delivers it again', { runId, error: errorMessage(err) })
+    }
   }
 
   /**
@@ -477,8 +498,7 @@ export class Runtime {
         const fresh = await this.journal.getRun(row.id)
         if (!fresh || !TERMINAL.has(fresh.status) || fresh.post_hooks_at !== null) continue
         const version = fresh.version_finished ?? fresh.version_started
-        await this.runPost(runPostArgs(fresh, version, endOf(fresh), fresh.finished_at ?? new Date()))
-        await this.markPostHooks(fresh.id)
+        await this.deliverPostHooks(runPostArgs(fresh, version, endOf(fresh), fresh.finished_at ?? new Date()))
       } finally {
         await lease.release()
       }
@@ -547,19 +567,23 @@ export class Runtime {
     return null
   }
 
-  private async runPost(args: RunPostArgs) {
+  /** Every hook runs even after one threw; false when any threw (the delivery is retried). */
+  private async runPost(args: RunPostArgs): Promise<boolean> {
+    let delivered = true
     for (const m of this.middleware) {
       if (!m.runPost) continue
       try {
         await m.runPost(args)
       } catch (err) {
-        this.logger.error('runPost threw; outcome kept', {
+        delivered = false
+        this.logger.error('runPost threw; outcome kept, delivery retried', {
           middleware: m.name,
           runId: args.runId,
           error: errorMessage(err),
         })
       }
     }
+    return delivered
   }
 
   private async stepPre(args: StepPreArgs): Promise<Refusal | null> {
@@ -590,19 +614,19 @@ export class Runtime {
     }
   }
 
-  private async tool(phase: 'pre' | 'post', event: ToolEvent) {
+  /** A throwing `toolPre` refuses (the step fails, like `stepPre`); a throwing `toolPost` is logged. */
+  private async tool(phase: 'pre' | 'post', event: ToolEvent): Promise<Refusal | null> {
     for (const m of this.middleware) {
       const hook = phase === 'pre' ? m.toolPre : m.toolPost
       if (!hook) continue
       try {
         await hook(event)
       } catch (err) {
-        this.logger.error(`tool${phase === 'pre' ? 'Pre' : 'Post'} threw`, {
-          middleware: m.name,
-          error: errorMessage(err),
-        })
+        if (phase === 'pre') return { refused: err }
+        this.logger.error('toolPost threw', { middleware: m.name, runId: event.runId, error: errorMessage(err) })
       }
     }
+    return null
   }
 
   private noteInfra(runId: string, err: unknown) {

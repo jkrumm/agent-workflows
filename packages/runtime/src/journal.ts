@@ -240,6 +240,18 @@ export class Journal {
     await this.query(`update ${this.runs} set post_hooks_at = now() where id = $1`, [id])
   }
 
+  /** Counts a failed runPost delivery; at `max` it marks the run delivered anyway. Returns the attempt count. */
+  async postHooksFailed(id: string, max: number): Promise<{ attempts: number; gaveUp: boolean }> {
+    const { rows } = await this.query<{ attempts: number; gave_up: boolean }>(
+      `update ${this.runs} set post_hooks_attempts = post_hooks_attempts + 1,
+         post_hooks_at = case when post_hooks_attempts + 1 >= $2 then now() end
+       where id = $1 and post_hooks_at is null
+       returning post_hooks_attempts as attempts, post_hooks_at is not null as gave_up`,
+      [id, max],
+    )
+    return { attempts: rows[0]?.attempts ?? 0, gaveUp: rows[0]?.gave_up ?? false }
+  }
+
   /** Ended runs (of trees rooted in `workflows`) whose runPost was never confirmed and whose root nobody holds. */
   async postHooksPending(workflows: string[], limit: number): Promise<RunRow[]> {
     const { rows } = await this.query<RunRow>(
@@ -312,7 +324,8 @@ export class Journal {
       fence,
       `update ${this.steps} set status = $5, output = $6, error = $7, error_kind = $8, model = $9,
          tokens_input = $10, tokens_output = $11, tokens_cache_read = $12, tokens_reasoning = $13,
-         cost = $14, tool_calls = $15, usage_by_model = $16, unpriced_calls = $17, finished_at = now()
+         cost = $14, tool_calls = $15, usage_by_model = $16, unpriced_calls = $17, tokens_cache_write = $18,
+         finished_at = now()
        where run_id = $1 and step_id = $2 and status = 'running' and ${this.fence(3, 4)}`,
       [
         runId,
@@ -332,6 +345,7 @@ export class Journal {
         usage.toolCalls,
         Object.keys(usage.byModel).length ? JSON.stringify(usage.byModel) : null,
         usage.unpricedCalls,
+        usage.tokens.cacheWrite,
       ],
     )
   }

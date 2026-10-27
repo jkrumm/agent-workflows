@@ -6,7 +6,14 @@ export type StepKind = 'code' | 'effect' | 'agent' | 'workflow'
 export type RunStatus = 'pending' | 'running' | 'done' | 'failed' | 'cancelled'
 export type StepStatus = 'running' | 'done' | 'failed' | 'cancelled'
 
-export type Tokens = { input: number; output: number; cacheRead: number; reasoning: number }
+/**
+ * Raw provider counts: `input` includes cache reads and cache writes, `output` includes reasoning. `cacheWrite` is
+ * optional so a report without it (most OpenAI-shaped wires) stays assignable; sums always carry it.
+ */
+export type Tokens = { input: number; output: number; cacheRead: number; reasoning: number; cacheWrite?: number }
+
+/** Summed tokens: every bucket present. */
+export type TokenCounts = Required<Tokens>
 
 /**
  * What a step body or agent host reports; summed per step and persisted on the step row. A capability's usage
@@ -22,7 +29,7 @@ export type Usage = {
 }
 
 /** `cost` sums the priced reports only; `unpricedCalls > 0` marks it as a lower bound. */
-export type ModelUsage = { tokens: Tokens; cost: number | null; toolCalls: number; unpricedCalls: number }
+export type ModelUsage = { tokens: TokenCounts; cost: number | null; toolCalls: number; unpricedCalls: number }
 
 /** The per-step sum of every `addUsage`, with a per-model split for the Argo projection. */
 export type StepUsage = ModelUsage & { byModel: Record<string, ModelUsage> }
@@ -183,6 +190,8 @@ export type StepPostArgs = StepInfo & {
   status: 'done' | 'failed' | 'cancelled'
   finishedAt: Date
   usage: StepUsage
+  /** Agent steps: the host handle this execution last used (also after a failed attempt cleared it); else null. */
+  handle: Json | null
   output: Json | null
   error: RunError | null
 }
@@ -192,8 +201,10 @@ type Hook<A> = (args: A) => void | Promise<void>
 /**
  * Called by the runtime around every run, step and tool call, in list order; no workflow can skip it.
  * - `runPre` may throw `AdmissionRefused` (or anything) to refuse a new run; ignored when `resume` is true.
- * - `stepPre` throwing fails the step (caps).
- * - Post hooks run after the commit; a throw is logged and never changes a recorded outcome.
+ * - `stepPre` throwing fails the step (caps); so does `toolPre`: the step's signal aborts (the agent session is
+ *   aborted), the step fails with the thrown `WorkflowError`'s kind (else `middleware`) and is not retried.
+ * - Post hooks run after the commit; a throw is logged and never changes a recorded outcome. A throwing `runPost`
+ *   is re-delivered (every hook again) up to the runtime's `maxPostHookAttempts`, then marked delivered and logged.
  */
 export type Middleware = {
   name: string
