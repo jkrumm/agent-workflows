@@ -23,7 +23,7 @@ function count(...values: (number | undefined)[]): number | null {
  * USD for one call. The provider's `usage.cost` wins on every wire; otherwise the route's rate is
  * applied to input and output tokens (reasoning tokens are already inside the output count on the
  * wires we use, cached input bills at the input rate); with neither, the cost is `unknown`, never 0.
- * `wire` is accepted so a wire that is known to drop cost can be told apart in the record later.
+ * `wire` is reserved for wire-specific cost rules; no wire needs one yet, so it is not read.
  */
 export function costFromUsage(_wire: Wire, usage: ProviderUsage | null | undefined, rate?: Rate): Cost {
   if (typeof usage?.cost === 'number' && Number.isFinite(usage.cost) && usage.cost >= 0) {

@@ -1,6 +1,6 @@
 import { overridesSchema, type RouteEntry, type RoutePatch, routeSchema } from './schema.ts'
 
-/** One JSON object: `{"<route id>": {"model"?, "effort"?, "wire"?, "maxOutputTokens"?, "rate"?}}`. */
+/** One JSON object: `{"<route id>": {"model"?, "effort"?, "maxOutputTokens"?, "rate"?}}`. */
 export const OVERRIDES_ENV = 'AGW_ROUTES'
 
 export class RouteOverrideError extends Error {
@@ -11,13 +11,10 @@ export class RouteOverrideError extends Error {
   }
 }
 
-let cache: { raw: string; patches: Record<string, RoutePatch> } | undefined
-
 /** Parse and shape-check the override variable. Unset or blank means no overrides. */
 export function readOverrides(env: Record<string, string | undefined>): Record<string, RoutePatch> {
   const raw = env[OVERRIDES_ENV]?.trim()
   if (!raw) return {}
-  if (cache?.raw === raw) return cache.patches
   let json: unknown
   try {
     json = JSON.parse(raw)
@@ -26,7 +23,6 @@ export function readOverrides(env: Record<string, string | undefined>): Record<s
   }
   const parsed = overridesSchema.safeParse(json)
   if (!parsed.success) throw new RouteOverrideError(parsed.error.message)
-  cache = { raw, patches: parsed.data }
   return parsed.data
 }
 

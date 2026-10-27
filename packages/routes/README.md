@@ -13,7 +13,7 @@ routeFingerprint('cheap.classify') // sha256 hex of the resolved entry, override
 costFromUsage(route.wire, usage, route.rate) // { usd, source: 'provider' | 'rate' | 'unknown' }
 ```
 
-An unknown id throws `UnknownRouteError`; a bad override throws `RouteOverrideError`.
+`resolveRoute` and `routeFingerprint` take a `RouteId` (the table's keys); `resolveRoute` returns a copy, so mutating it changes nothing shared. An unknown id from an untyped caller throws `UnknownRouteError`; a bad override throws `RouteOverrideError`.
 
 ## Entry
 
@@ -35,10 +35,11 @@ One variable, `AGW_ROUTES`, holds a JSON object of per-route patches:
 AGW_ROUTES='{"review.angle":{"model":"<model-id>","effort":"high"},"cheap.classify":{"maxOutputTokens":null}}'
 ```
 
-- A patch is merged over the table entry and the result is validated like a table entry. `null` clears an optional field.
+- A patch may set `model`, `effort`, `maxOutputTokens` (at most 200000) and `rate`; `null` clears an optional field. It is merged over the table entry and the result is validated like a table entry.
+- **`wire` cannot be overridden** (`RouteOverrideError`): a route's transport is code, overrides are for model, effort, limit and rate experiments.
 - Every patch is checked on every `resolveRoute`, not only the requested route. A route id that is not in the table, malformed JSON or an invalid result is a `RouteOverrideError`.
 - Changing `model` without supplying a new `rate` drops the old rate, so cost reads `unknown` instead of a stale number.
-- The variable is read at call time; `resolveRoute(id, env)` takes an explicit env for tests.
+- The variable is parsed on every call; `resolveRoute(id, env)` takes an explicit env for tests.
 - Overrides never touch the table and are part of the fingerprint.
 
 ## Cost

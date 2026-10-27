@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { applyPatch, RouteOverrideError, readOverrides } from './overrides.ts'
 import type { ResolvedRoute, RouteEntry } from './schema.ts'
-import { DEFAULT_ROUTES } from './table.ts'
+import { DEFAULT_ROUTES, type RouteId } from './table.ts'
 
 export { type Cost, costFromUsage, type ProviderUsage } from './cost.ts'
 export { OVERRIDES_ENV, RouteOverrideError } from './overrides.ts'
@@ -15,7 +15,7 @@ export {
   WIRES,
   type Wire,
 } from './schema.ts'
-export { DEFAULT_ROUTES }
+export { DEFAULT_ROUTES, type RouteId }
 
 type Env = Record<string, string | undefined>
 
@@ -27,26 +27,31 @@ export class UnknownRouteError extends Error {
   }
 }
 
-export function routeIds(): string[] {
-  return Object.keys(DEFAULT_ROUTES)
+export function routeIds(): RouteId[] {
+  return Object.keys(DEFAULT_ROUTES) as RouteId[]
 }
 
 /**
- * The entry for a route id, with `AGW_ROUTES` applied. Throws `UnknownRouteError` for an id that is
- * not in the table (also when only the override names it) and `RouteOverrideError` for a malformed
- * or invalid override, whichever route is being resolved (every patch is checked, not only the requested one).
+ * A copy of the entry for a route id, with `AGW_ROUTES` applied; mutating it changes nothing shared.
+ * Throws `UnknownRouteError` for an id that is not in the table (only reachable from untyped callers)
+ * and `RouteOverrideError` for a malformed or invalid override, including one that names an unknown
+ * route. Every patch is checked, not only the requested one.
  */
-export function resolveRoute(id: string, env: Env = process.env): ResolvedRoute {
+export function resolveRoute(id: RouteId, env: Env = process.env): ResolvedRoute {
   const patches = readOverrides(env)
   const resolved = new Map<string, RouteEntry>()
   for (const [patchId, patch] of Object.entries(patches)) {
-    const base = Object.hasOwn(DEFAULT_ROUTES, patchId) ? DEFAULT_ROUTES[patchId] : undefined
+    const base = isRouteId(patchId) ? DEFAULT_ROUTES[patchId] : undefined
     if (!base) throw new RouteOverrideError(`unknown route "${patchId}" (known: ${routeIds().join(', ')})`)
     resolved.set(patchId, applyPatch(patchId, base, patch))
   }
-  const entry = resolved.get(id) ?? (Object.hasOwn(DEFAULT_ROUTES, id) ? DEFAULT_ROUTES[id] : undefined)
+  const entry = resolved.get(id) ?? (isRouteId(id) ? DEFAULT_ROUTES[id] : undefined)
   if (!entry) throw new UnknownRouteError(id)
-  return { id, ...entry }
+  return { id, ...structuredClone(entry) }
+}
+
+function isRouteId(id: string): id is RouteId {
+  return Object.hasOwn(DEFAULT_ROUTES, id)
 }
 
 function canonical(value: unknown): string {
@@ -61,7 +66,7 @@ function canonical(value: unknown): string {
 }
 
 /** Stable sha256 (hex) of the resolved entry, overrides included; one input of the run fingerprint (§5). */
-export function routeFingerprint(id: string, env: Env = process.env): string {
+export function routeFingerprint(id: RouteId, env: Env = process.env): string {
   return createHash('sha256')
     .update(canonical(resolveRoute(id, env)))
     .digest('hex')
