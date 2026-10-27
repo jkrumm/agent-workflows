@@ -8,3 +8,6 @@ dist/
 sc-note.md
 CLAUDE.local.md
 .factory/
+*.tsbuildinfo
+coverage/
+out/
