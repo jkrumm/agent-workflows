@@ -3,7 +3,7 @@ import type { ModelUsage, StepUsage, Tokens, Usage } from './types.ts'
 const zeroTokens = (): Tokens => ({ input: 0, output: 0, cacheRead: 0, reasoning: 0 })
 
 function emptyModelUsage(): ModelUsage {
-  return { tokens: zeroTokens(), cost: null, toolCalls: 0 }
+  return { tokens: zeroTokens(), cost: null, toolCalls: 0, unpricedCalls: 0 }
 }
 
 function addInto(target: ModelUsage, usage: Usage) {
@@ -11,7 +11,8 @@ function addInto(target: ModelUsage, usage: Usage) {
   target.tokens.output += usage.tokens.output
   target.tokens.cacheRead += usage.tokens.cacheRead
   target.tokens.reasoning += usage.tokens.reasoning
-  if (usage.cost !== undefined) target.cost = (target.cost ?? 0) + usage.cost
+  if (usage.cost === undefined || usage.cost === null) target.unpricedCalls++
+  else target.cost = (target.cost ?? 0) + usage.cost
   target.toolCalls += usage.toolCalls ?? 0
 }
 

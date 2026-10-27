@@ -29,12 +29,17 @@ import type {
 
 export const DEFAULT_AGENT_IDLE_MS = 5 * 60_000
 
+/** A hook refused: wrapped, so a hook that throws `undefined` still refuses. */
+export type Refusal = { refused: unknown }
+
 /** What a run scope needs from the runtime; keeps the step machinery free of lifecycle state. */
 export type ScopeHost = {
   journal: Journal
   host: AgentHost | null
-  /** Resolves to the error a hook threw (the step then fails as `middleware`), or null. */
-  stepPre(args: StepPreArgs): Promise<unknown>
+  /** `{ refused }` with whatever a hook threw (the step then fails as `middleware`), or null. */
+  stepPre(args: StepPreArgs): Promise<Refusal | null>
+  /** How long a resumed effect waits, measured from its last start, before running its body again. */
+  bodyGraceMs: number
   stepPost(args: StepPostArgs): Promise<void>
   tool(phase: 'pre' | 'post', event: ToolEvent): Promise<void>
   runChild(parent: RunScope, childId: string, workflow: AnyWorkflow, input: unknown): Promise<Json | null>
@@ -50,16 +55,24 @@ export class RunScope {
   readonly signal: AbortSignal
   /** Set by the first journal failure; from then on every ctx call rethrows it and nothing is marked failed. */
   infra: InfraError | null = null
+  /**
+   * Step bodies still running in this run tree, including ones the race abandoned after an abort. The lease is
+   * held until they settle (bounded by the body grace), so no other process re-runs them concurrently.
+   */
+  readonly inflight: Set<Promise<unknown>>
   private readonly seen = new Set<string>()
 
   constructor(
     readonly rt: ScopeHost,
-    readonly run: RunRow,
+    /** Refreshed when the run starts (`started_at`), so post hooks see the real start. */
+    public run: RunRow,
     readonly workflow: AnyWorkflow,
     readonly fence: Fence,
-    parentSignal: AbortSignal | null,
+    parent: RunScope | null,
+    inflight: Set<Promise<unknown>> = new Set(),
   ) {
-    this.signal = parentSignal ? AbortSignal.any([parentSignal, this.controller.signal]) : this.controller.signal
+    this.signal = parent ? AbortSignal.any([parent.signal, this.controller.signal]) : this.controller.signal
+    this.inflight = parent ? parent.inflight : inflight
   }
 
   ctx(): Ctx {
@@ -68,7 +81,13 @@ export class RunScope {
       workflowId: this.workflow.id,
       signal: this.signal,
       step: (id, fn, options) => this.journaled(id, 'code', options ?? {}, (scope) => fn(scope)),
-      effect: (id, fn, options) => this.journaled(id, 'effect', options ?? {}, (scope) => fn(scope.key, scope)),
+      effect: (id, fn, options) =>
+        this.journaled(id, 'effect', options ?? {}, async (scope) => {
+          // An outside effect only starts while this process still holds the run.
+          await this.j(() => this.rt.journal.assertLease(this.fence))
+          scope.signal.throwIfAborted()
+          return fn(scope.key, scope)
+        }),
       agent: (id, spec) => this.agent(id, spec),
       workflow: (id, workflow, inputs) => this.fanOut(id, workflow, inputs),
     }
@@ -106,6 +125,10 @@ export class RunScope {
     if (row?.status === 'done') return row.output as T
     if (row?.status === 'failed') throw new StepFailed(stepId, row.error_kind ?? 'error', row.error ?? '')
     if (row?.status === 'cancelled') throw new Cancelled(runId)
+    if (kind === 'effect' && row?.status === 'running' && row.attempt_age_ms < this.rt.bodyGraceMs) {
+      // Another process may still be inside this effect (its lease was lost mid-body): wait out the grace.
+      await this.sleep(this.rt.bodyGraceMs - row.attempt_age_ms)
+    }
     this.guard()
 
     let attempt = (row?.attempts ?? 0) + 1
@@ -125,7 +148,8 @@ export class RunScope {
     const policy = retryPolicy(options.retry)
     let outcome: { ok: true; value: T } | { ok: false; error: unknown }
     if (refusal) {
-      outcome = { ok: false, error: new WorkflowError('middleware', errorMessage(refusal), { cause: refusal }) }
+      const message = refusal.refused === undefined ? 'stepPre refused' : errorMessage(refusal.refused)
+      outcome = { ok: false, error: new WorkflowError('middleware', message, { cause: refusal.refused }) }
     } else {
       for (let tries = 1; ; tries++) {
         outcome = await this.attempt(stepId, attempt, options.idleTimeoutMs ?? null, usage, (scope) => body(scope, row))
@@ -177,8 +201,9 @@ export class RunScope {
     const idle = new AbortController()
     const signal = AbortSignal.any([this.signal, idle.signal])
     let timer: ReturnType<typeof setTimeout> | undefined
+    let finished = false
     const progress = () => {
-      if (idleMs === null || signal.aborted) return
+      if (idleMs === null || signal.aborted || finished) return
       clearTimeout(timer)
       timer = setTimeout(() => idle.abort(new StepTimeout(stepId, idleMs)), idleMs)
     }
@@ -191,16 +216,20 @@ export class RunScope {
       progress,
     }
     try {
-      const value = await raceAbort(
-        Promise.resolve().then(() => body(scope)),
-        signal,
-      )
+      // The awaits before this point (stepPre, the journal) may have outlived a cancel: never start a body then.
+      signal.throwIfAborted()
+      const running = Promise.resolve().then(() => body(scope))
+      this.inflight.add(running)
+      const settle = () => this.inflight.delete(running)
+      running.then(settle, settle)
+      const value = await raceAbort(running, signal)
       const violation = jsonViolation(value)
       if (violation) return { ok: false, error: new WorkflowError('non_json_output', `step "${stepId}": ${violation}`) }
       return { ok: true, value }
     } catch (error) {
       return { ok: false, error }
     } finally {
+      finished = true
       clearTimeout(timer)
     }
   }
@@ -212,6 +241,8 @@ export class RunScope {
     let state: AgentHandleState | null = null
     /** The journal still holds a handle this step no longer uses (a failed attempt's session). */
     let staleHandle = false
+    /** The journal write that clears a forgotten handle; the next attempt waits for it. */
+    let clearing: Promise<void> = Promise.resolve()
     let loaded = false
     const idleMs = spec.idleTimeoutMs === undefined ? DEFAULT_AGENT_IDLE_MS : spec.idleTimeoutMs
     return this.journaled(stepId, 'agent', { retry: spec.retry, idleTimeoutMs: idleMs }, async (scope, row) => {
@@ -220,6 +251,7 @@ export class RunScope {
         state = row?.handle ?? null
         loaded = true
       }
+      await clearing
       if (!state && staleHandle) {
         // A crash before the new handle is journaled must not re-attach to the failed session.
         await this.j(() => journal.stepHandle(runId, stepId, this.fence, null))
@@ -234,6 +266,14 @@ export class RunScope {
         if (handle === null || state?.handle !== handle) return
         state = null
         staleHandle = true
+        // Cleared now, not at the next attempt: a crash during the retry backoff must not re-attach to it.
+        clearing = journal.stepHandle(runId, stepId, this.fence, null).then(
+          () => {
+            if (state === null) staleHandle = false
+          },
+          (err: unknown) =>
+            this.rt.logError('clearing a failed agent handle', { runId, stepId, error: errorMessage(err) }),
+        )
       }
       const abortSession = () => {
         const reason: unknown = scope.signal.reason
@@ -269,6 +309,7 @@ export class RunScope {
         const current: AgentHandleState = state
         this.rt.trackAgent(scope.key, current.handle)
         if (!current.prompted) {
+          await this.j(() => journal.assertLease(this.fence)) // never spend a prompt for a run another process took
           checkpoint()
           await host.prompt(current.handle, spec.prompt)
           checkpoint()

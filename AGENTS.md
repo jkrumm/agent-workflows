@@ -8,7 +8,7 @@ evaluated); every workflow runs inside the same middleware; Claude Code and Herm
 through one generated `agw` CLI. It replaces agent-gateway, research-gateway and audio-gateway by a
 hard rewrite. **`docs/concept.md` is the design and wins on any difference with this file.**
 
-**Status:** Wave 1 scaffold landed; runtime arrives in Wave 2.
+**Status:** Wave 2: the runtime (`packages/runtime`), routes and capabilities landed; the middleware is next.
 
 ## Principles (concept §0)
 
@@ -90,7 +90,7 @@ excluded from every tool.
 CI (`.github/workflows/ci.yml`) runs `bun install --frozen-lockfile` and `make check` on pushes to `master` and
 on pull requests, on GitHub-hosted runners.
 
-Tests need Postgres via `AGW_TEST_PG_URL` and fail when it is unset; `make check` builds it on the mini from `.env.test.tpl` (`secrets-run`), CI from a `postgres:18` service; each test file works in its own throwaway schema.
+`make check` needs Postgres: tests read `AGW_TEST_PG_URL` and fail when it is unset. On the mini `make check` builds it from `.env.test.tpl` through `secrets-run`; elsewhere set `AGW_TEST_PG_URL` (CI uses a `postgres:18` service). Each test file works in its own throwaway schema.
 
 ## Gotchas
 

@@ -36,12 +36,14 @@ export class LeasePool {
     private readonly logger: Logger,
   ) {}
 
+  /** Free run leases; one more connection is reserved for maintenance (runPost re-delivery). */
   free(): number {
-    return this.closed ? 0 : this.max - this.held
+    return this.closed ? 0 : Math.max(0, this.max - this.held)
   }
 
-  async tryLock(key: string): Promise<Lease | 'full' | 'busy'> {
-    if (this.free() <= 0) return 'full'
+  async tryLock(key: string, use: 'run' | 'maintenance'): Promise<Lease | 'full' | 'busy'> {
+    const cap = use === 'run' ? this.max : this.max + 1
+    if (this.closed || this.held >= cap) return 'full'
     this.held++
     let lc: LeaseClient | null = null
     try {

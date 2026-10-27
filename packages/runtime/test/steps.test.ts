@@ -198,11 +198,17 @@ describe('usage', () => {
         tokens_reasoning: '15',
         cost: '0.75',
         tool_calls: 7,
+        unpriced_calls: 1,
         model: null,
       })
       expect(row?.usage_by_model).toEqual({
-        'm-a': { tokens: { input: 200, output: 40, cacheRead: 100, reasoning: 10 }, cost: 0.75, toolCalls: 3 },
-        'm-b': { tokens, cost: null, toolCalls: 4 },
+        'm-a': {
+          tokens: { input: 200, output: 40, cacheRead: 100, reasoning: 10 },
+          cost: 0.75,
+          toolCalls: 3,
+          unpricedCalls: 0,
+        },
+        'm-b': { tokens, cost: null, toolCalls: 4, unpricedCalls: 1 },
       })
     } finally {
       await rt.close()

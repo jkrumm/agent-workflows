@@ -4,12 +4,15 @@
  */
 export type Json = string | number | boolean | null | Json[] | { [key: string]: Json }
 
-/** Returns a description of the first non-JSON value (undefined, Date, bigint, NaN, class instance), or null. */
+/**
+ * Returns a description of the first value that would not replay equal (undefined, Date, bigint, NaN, a class
+ * instance, a string jsonb rejects), or null.
+ */
 export function jsonViolation(value: unknown, path = '$'): string | null {
   if (value === null) return null
   switch (typeof value) {
     case 'string':
-      return value.includes('\u0000') ? `${path} contains a NUL character (jsonb rejects it)` : null
+      return stringViolation(value, path)
     case 'boolean':
       return null
     case 'number':
@@ -19,6 +22,13 @@ export function jsonViolation(value: unknown, path = '$'): string | null {
     default:
       return `${path} is ${typeof value}`
   }
+}
+
+/** jsonb rejects NUL and lone UTF-16 surrogates; catch them here instead of as a journal (infra) error. */
+function stringViolation(value: string, path: string): string | null {
+  if (value.includes('\u0000')) return `${path} contains a NUL character (jsonb rejects it)`
+  if (!value.isWellFormed()) return `${path} contains a lone UTF-16 surrogate (jsonb rejects it)`
+  return null
 }
 
 function arrayViolation(value: unknown[], path: string): string | null {
@@ -36,7 +46,8 @@ function objectViolation(value: object, path: string): string | null {
     return `${path} is a ${name}`
   }
   for (const [key, entry] of Object.entries(value)) {
-    if (key.includes('\u0000')) return `${path} has a key with a NUL character (jsonb rejects it)`
+    const badKey = stringViolation(key, `${path} key`)
+    if (badKey) return badKey
     const found = jsonViolation(entry, `${path}.${key}`)
     if (found) return found
   }

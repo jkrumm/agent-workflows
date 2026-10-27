@@ -72,7 +72,13 @@ describe('fencing', () => {
         output: 1,
         error: null,
         model: null,
-        usage: { tokens: { input: 0, output: 0, cacheRead: 0, reasoning: 0 }, cost: null, toolCalls: 0, byModel: {} },
+        usage: {
+          tokens: { input: 0, output: 0, cacheRead: 0, reasoning: 0 },
+          cost: null,
+          toolCalls: 0,
+          unpricedCalls: 0,
+          byModel: {},
+        },
       })
       .catch((err: unknown) => err)
     expect(staleWrite).toBeInstanceOf(LeaseLost)

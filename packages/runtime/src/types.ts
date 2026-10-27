@@ -8,10 +8,21 @@ export type StepStatus = 'running' | 'done' | 'failed' | 'cancelled'
 
 export type Tokens = { input: number; output: number; cacheRead: number; reasoning: number }
 
-/** What a step body or agent host reports; summed per step and persisted on the step row. */
-export type Usage = { model?: string; tokens: Tokens; cost?: number; toolCalls?: number }
+/**
+ * What a step body or agent host reports; summed per step and persisted on the step row. A capability's usage
+ * (`@agent-workflows/capabilities`) is assignable as is. `cost` null or absent means unpriced: counted in
+ * `unpricedCalls`, never summed as 0.
+ */
+export type Usage = {
+  model?: string
+  tokens: Tokens
+  cost?: number | null
+  costSource?: 'provider' | 'rate' | 'unknown'
+  toolCalls?: number
+}
 
-export type ModelUsage = { tokens: Tokens; cost: number | null; toolCalls: number }
+/** `cost` sums the priced reports only; `unpricedCalls > 0` marks it as a lower bound. */
+export type ModelUsage = { tokens: Tokens; cost: number | null; toolCalls: number; unpricedCalls: number }
 
 /** The per-step sum of every `addUsage`, with a per-model split for the Argo projection. */
 export type StepUsage = ModelUsage & { byModel: Record<string, ModelUsage> }

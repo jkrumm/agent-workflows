@@ -11,6 +11,7 @@ export type ErrorKind =
   | 'admission_refused'
   | 'middleware'
   | 'infra'
+  | 'crash_loop'
 
 /** A failure that belongs to the workflow: it ends the step or run as `failed` (or `cancelled`). */
 export class WorkflowError extends Error {
