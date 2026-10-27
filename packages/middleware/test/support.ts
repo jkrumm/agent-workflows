@@ -28,11 +28,20 @@ export class FakeArgo implements ArgoTransport {
   inflight = 0
   /** Records Argo refuses with a 422: the whole batch is refused, as Argo does. */
   refuse: (record: ArgoUsageRecord) => boolean = () => false
+  /** Thrown for every post while set (e.g. a 401 from a wrong secret). */
+  failWith: Error | null = null
+  /** Runs before a post is accepted (a test can inspect or change the journal mid-flush). */
+  onPost: (records: ArgoUsageRecord[]) => Promise<void> = async () => {}
   failedPosts = 0
   posts = 0
 
   async post(records: ArgoUsageRecord[]): Promise<void> {
     this.posts++
+    await this.onPost(records)
+    if (this.failWith) {
+      this.failedPosts++
+      throw this.failWith
+    }
     if (this.hang) {
       this.inflight++
       await new Promise(() => {})

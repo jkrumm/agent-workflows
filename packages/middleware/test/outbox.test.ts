@@ -2,7 +2,7 @@ import { afterAll, describe, expect, test } from 'bun:test'
 import { defineWorkflow } from '@agent-workflows/runtime'
 import { FakeAgentHost } from '@agent-workflows/runtime/testing'
 import { z } from 'zod'
-import { ArgoOutbox, JournalDb, usageFromOpenCodeMessages } from '../src/index.ts'
+import { ArgoOutbox, ArgoPostError, JournalDb, usageFromOpenCodeMessages } from '../src/index.ts'
 import { toolTurns } from './fixtures/opencode-messages.ts'
 import { captureLogger, FakeArgo, freshSchema, inspector, PG_URL, testPlatform, testRuntime, until } from './support.ts'
 
@@ -65,6 +65,21 @@ function expectedSourceIds(runIds: string[]): string[] {
       `${id}/kids/1:work:m1`,
     ])
     .sort()
+}
+
+async function finishedChildren(platform: ReturnType<typeof testPlatform>, count: number): Promise<string[]> {
+  const rt = testRuntime({ schema: db.schema, workflows: [child], middleware: platform.middleware })
+  await rt.open()
+  try {
+    const ids = await Promise.all(
+      Array.from({ length: count }, async (_, i) => (await rt.start(child, { n: i }, { purpose: 'build' })).runId),
+    )
+    await Promise.all(ids.map((id) => rt.wait(id)))
+    await until(async () => (await Promise.all(ids.map((id) => sql.run(id)))).every((r) => r?.post_hooks_at), 'runPost')
+    return ids
+  } finally {
+    await rt.close()
+  }
 }
 
 describe('argo outbox', () => {
@@ -208,12 +223,9 @@ describe('argo outbox', () => {
     const journal = new JournalDb({ connectionString: PG_URL, schema: db.schema }, logger)
     const outbox = new ArgoOutbox({ db: journal, transport: argo, logger, machine: 'm' })
     const platform = testPlatform(db.schema)
-    const rt = testRuntime({ schema: db.schema, workflows: [child], middleware: platform.middleware })
-    await rt.open()
     try {
-      const { runId } = await rt.start(child, { n: 3 }, { purpose: 'build' })
-      await rt.wait(runId)
-      await until(async () => (await sql.run(runId))?.post_hooks_at, 'runPost')
+      // The runtime is closed first: a live one would re-deliver the runPost the test takes back.
+      const [runId = ''] = await finishedChildren(platform, 1)
       await sql.pool.query(`update "${db.schema}".runs set post_hooks_at = null where id = $1`, [runId])
       await outbox.flush()
       expect(argo.accepted.has(`${runId}:work:m1`)).toBe(false)
@@ -222,7 +234,6 @@ describe('argo outbox', () => {
       const row = [...argo.stored.values()].find((r) => r.source_id === `${runId}:work:m1`)
       expect((row?.raw as { runWallMs?: unknown } | undefined)?.runWallMs).toEqual(expect.any(Number))
     } finally {
-      await rt.close()
       await platform.close()
       await journal.close()
     }
@@ -260,8 +271,14 @@ describe('argo outbox', () => {
       expect(String(bad[0]?.argo_error)).toContain('purpose')
       expect(String(bad[1]?.argo_error)).toContain('422')
       expect(logger.lines.filter((l) => l.message.startsWith('argo outbox: step quarantined'))).toHaveLength(2)
-      // Quarantined steps are not claimed again.
+      // Quarantined steps are not claimed again, until requeued once the cause is fixed.
       expect(await outbox.flush()).toMatchObject({ posted: 0, quarantined: 0 })
+      argo.refuse = () => false
+      expect(await outbox.requeue({ runId: refused })).toBe(1)
+      expect(await outbox.flush()).toMatchObject({ posted: 1, quarantined: 0 })
+      expect(argo.accepted.get(`${refused}:work:m1`)).toBe(1)
+      expect((await sql.step(refused, 'work'))?.argo_error).toBeNull()
+      expect((await sql.step(unbuildable, 'work'))?.argo_error).not.toBeNull()
     } finally {
       await rt.close()
       await platform.close()
@@ -338,5 +355,99 @@ describe('argo outbox', () => {
       else process.env.AGW_MACHINE = before
       await journal.close()
     }
+  })
+
+  test('a 401 is transient: nothing quarantined, claim released, logged as an error, posted once fixed', async () => {
+    const argo = new FakeArgo()
+    const logger = captureLogger()
+    const journal = new JournalDb({ connectionString: PG_URL, schema: db.schema }, logger)
+    const outbox = new ArgoOutbox({
+      db: journal,
+      transport: argo,
+      logger,
+      machine: 'm',
+      backoff: { baseMs: 1, maxMs: 1 },
+    })
+    const platform = testPlatform(db.schema)
+    try {
+      const ids = await finishedChildren(platform, 3)
+      argo.failWith = new ArgoPostError('argo usage ingest: HTTP 401 unauthorized', false, 401)
+      expect(await outbox.flush()).toMatchObject({ quarantined: 0, error: expect.stringContaining('401') })
+      const steps = await Promise.all(ids.map((id) => sql.step(id, 'work')))
+      expect(steps.every((s) => s?.argo_error === null && s?.argo_claim === null && s?.argo_synced_at === null)).toBe(
+        true,
+      )
+      expect(logger.lines.find((l) => l.message.startsWith('argo outbox: flush failed'))?.level).toBe('error')
+      argo.failWith = null
+      await Bun.sleep(5)
+      await outbox.flush()
+      for (const id of ids) expect(argo.accepted.get(`${id}:work:m1`)).toBe(1)
+    } finally {
+      await platform.close()
+      await journal.close()
+    }
+  })
+
+  test('the claim is renewed before every chunk; a lost claim is warned at mark', async () => {
+    const argo = new FakeArgo()
+    const logger = captureLogger()
+    const journal = new JournalDb({ connectionString: PG_URL, schema: db.schema }, logger)
+    const outbox = new ArgoOutbox({
+      db: journal,
+      transport: argo,
+      logger,
+      machine: 'm',
+      chunkSize: 2,
+      claimTtlMs: 60_000,
+      postTimeoutMs: 1000,
+    })
+    const platform = testPlatform(db.schema)
+    try {
+      const ids = await finishedChildren(platform, 5)
+      const until_: number[] = []
+      argo.onPost = async () => {
+        const { rows } = await sql.pool.query(
+          `select max(argo_claimed_until) as t from "${db.schema}".steps where argo_claim is not null`,
+        )
+        until_.push(new Date(rows[0]?.t).getTime())
+        await Bun.sleep(20)
+        if (until_.length === 2) {
+          // Another flusher took one step after an expiry: its claim token is gone.
+          await sql.pool.query(`update "${db.schema}".steps set argo_claim = 'other' where run_id = $1`, [ids[0]])
+        }
+      }
+      const result = await outbox.flush()
+      expect(until_).toHaveLength(3) // 5 rows in chunks of 2
+      expect(until_[1]).toBeGreaterThan(until_[0] ?? 0)
+      expect(until_[2]).toBeGreaterThan(until_[1] ?? 0)
+      expect(result).toMatchObject({ posted: 5, marked: 4 })
+      expect(logger.lines.some((l) => l.message.startsWith('argo outbox: claim lost before mark'))).toBe(true)
+    } finally {
+      await platform.close()
+      await journal.close()
+    }
+  })
+
+  test('close() waits for the flush in flight before the pool closes', async () => {
+    const argo = new FakeArgo()
+    const platform = testPlatform(db.schema, { argo: { transport: argo, machine: 'm' } })
+    const outbox = platform.outbox
+    if (!outbox) throw new Error('no outbox')
+    const ids = await finishedChildren(platform, 2)
+    let release: () => void = () => {}
+    argo.onPost = () => new Promise<void>((resolve) => (release = resolve))
+    const flushing = outbox.flush()
+    await until(() => argo.posts > 0, 'post in flight')
+    let closed = false
+    const closing = platform.close().then(() => {
+      closed = true
+    })
+    await Bun.sleep(50)
+    expect(closed).toBe(false)
+    release()
+    expect(await flushing).toMatchObject({ posted: 2, marked: 2, error: null })
+    await closing
+    expect(await outbox.flush()).toMatchObject({ error: 'closed' })
+    for (const id of ids) expect((await sql.step(id, 'work'))?.argo_synced_at).not.toBeNull()
   })
 })

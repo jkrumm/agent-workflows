@@ -11,6 +11,7 @@ export {
   argoTransportFromEnv,
   type FlushResult,
   httpArgoTransport,
+  isRowRefusal,
   type OutboxOptions,
   type OutboxStep,
 } from './argo.ts'

@@ -99,6 +99,12 @@ describe('telemetry', () => {
       'https://x.example.com/?api_key=[redacted]&token=[redacted]&q=1',
     )
     expect(redactForSpan('plain failure')).toBe('plain failure')
+    expect(redactForSpan('env: IU_API_KEY=abc123 ARGO_API_SECRET=s3cr3t GITHUB_TOKEN=ghp_xyz OK=1')).toBe(
+      'env: IU_API_KEY=[redacted] ARGO_API_SECRET=[redacted] GITHUB_TOKEN=[redacted] OK=1',
+    )
+    expect(redactForSpan('{"token": "abc", "api_key":"k\\"q", "authorization": "Bearer x", "model": "m"}')).toBe(
+      '{"token": "[redacted]", "api_key":"[redacted]", "authorization": "[redacted]", "model": "m"}',
+    )
   })
 
   test('OTel diagnostics go to the live instance, never a stale first one', async () => {
