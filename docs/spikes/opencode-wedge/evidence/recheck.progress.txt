@@ -1,0 +1,13 @@
+recheck | S2 spawn as ran (watchers on) #1: timeout (prompt) prompt=45004ms boot=-1ms cpu=1% term=ignored SIGTERM 6s log=1517B
+recheck | client=curl (watchers on) #1: timeout (prompt) prompt=45170ms boot=-1ms cpu=1% term=ignored SIGTERM 6s log=1213B
+recheck | S2 spawn + OPENCODE_DISABLE_FILEWATCHER=1 #1: prompt (ok) prompt=1897ms boot=719ms cpu=41% term=term 205ms log=2169B
+recheck | client=curl + OPENCODE_DISABLE_FILEWATCHER=1 #1: prompt (ok) prompt=690ms boot=156ms cpu=76% term=term 65ms log=2165B
+recheck | S2 spawn as ran (watchers on) #2: timeout (prompt) prompt=45004ms boot=-1ms cpu=0% term=ignored SIGTERM 6s log=1213B
+recheck | client=curl (watchers on) #2: timeout (prompt) prompt=45170ms boot=-1ms cpu=0% term=ignored SIGTERM 6s log=1213B
+recheck | S2 spawn + OPENCODE_DISABLE_FILEWATCHER=1 #2: prompt (ok) prompt=840ms boot=155ms cpu=68% term=term 60ms log=2165B
+recheck | client=curl + OPENCODE_DISABLE_FILEWATCHER=1 #2: prompt (ok) prompt=593ms boot=50ms cpu=73% term=term 66ms log=2163B
+recheck | S2 spawn as ran (watchers on) #3: timeout (prompt) prompt=45003ms boot=-1ms cpu=0% term=ignored SIGTERM 6s log=1213B
+recheck | client=curl (watchers on) #3: timeout (prompt) prompt=45147ms boot=-1ms cpu=0% term=ignored SIGTERM 6s log=1213B
+recheck | S2 spawn + OPENCODE_DISABLE_FILEWATCHER=1 #3: prompt (ok) prompt=770ms boot=122ms cpu=49% term=term 51ms log=2328B
+recheck | client=curl + OPENCODE_DISABLE_FILEWATCHER=1 #3: prompt (ok) prompt=387ms boot=31ms cpu=79% term=term 48ms log=2162B
+fin

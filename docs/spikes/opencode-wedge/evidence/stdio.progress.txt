@@ -1,0 +1,19 @@
+stdio | stdio=file + OPENCODE_DISABLE_FILEWATCHER=1 #1: prompt (ok) prompt=378ms boot=98ms cpu=175% term=term 36ms log=2840B
+stdio | stdio=pipe-unread + OPENCODE_DISABLE_FILEWATCHER=1 #1: prompt (ok) prompt=234ms boot=-1ms cpu=75% term=term 35ms log=2878B
+stdio | stdio=file (watchers on) #1: timeout (prompt) prompt=150020ms boot=-1ms cpu=0% term=ignored SIGTERM 6s log=1214B
+stdio | stdio=pipe-unread (watchers on) #1: timeout (prompt) prompt=150020ms boot=-1ms cpu=0% term=ignored SIGTERM 6s log=1253B
+stdio | stdio=pipe-read + OPENCODE_DISABLE_FILEWATCHER=1 #1: prompt (ok) prompt=489ms boot=-1ms cpu=56% term=term 62ms log=2192B
+stdio | stdio=pipe-read (watchers on) #1: timeout (prompt) prompt=150003ms boot=-1ms cpu=0% term=ignored SIGTERM 6s log=1249B
+stdio | stdio=file + OPENCODE_DISABLE_FILEWATCHER=1 #2: prompt (ok) prompt=382ms boot=29ms cpu=156% term=term 44ms log=2152B
+stdio | stdio=pipe-unread + OPENCODE_DISABLE_FILEWATCHER=1 #2: prompt (ok) prompt=391ms boot=-1ms cpu=151% term=term 44ms log=2191B
+stdio | stdio=file (watchers on) #2: timeout (prompt) prompt=150007ms boot=-1ms cpu=0% term=ignored SIGTERM 6s log=1517B
+stdio | stdio=pipe-read + OPENCODE_DISABLE_FILEWATCHER=1 #2: prompt (ok) prompt=540ms boot=-1ms cpu=35% term=term 50ms log=2192B
+stdio | stdio=pipe-unread (watchers on) #2: timeout (prompt) prompt=150003ms boot=-1ms cpu=0% term=ignored SIGTERM 6s log=1872B
+stdio | stdio=file + OPENCODE_DISABLE_FILEWATCHER=1 #3: prompt (ok) prompt=231ms boot=49ms cpu=128% term=term 50ms log=2840B
+stdio | stdio=pipe-read (watchers on) #2: timeout (prompt) prompt=150001ms boot=-1ms cpu=0% term=ignored SIGTERM 6s log=2198B
+stdio | stdio=pipe-unread + OPENCODE_DISABLE_FILEWATCHER=1 #3: prompt (ok) prompt=435ms boot=-1ms cpu=73% term=term 53ms log=2192B
+stdio | stdio=file (watchers on) #3: timeout (prompt) prompt=150027ms boot=-1ms cpu=0% term=ignored SIGTERM 6s log=1514B
+stdio | stdio=pipe-read + OPENCODE_DISABLE_FILEWATCHER=1 #3: prompt (ok) prompt=503ms boot=-1ms cpu=66% term=term 97ms log=2191B
+stdio | stdio=pipe-unread (watchers on) #3: timeout (prompt) prompt=150003ms boot=-1ms cpu=0% term=ignored SIGTERM 6s log=1249B
+stdio | stdio=pipe-read (watchers on) #3: timeout (prompt) prompt=150003ms boot=-1ms cpu=0% term=ignored SIGTERM 6s log=1870B
+fin

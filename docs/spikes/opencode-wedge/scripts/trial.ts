@@ -1,7 +1,7 @@
 // One OpenCode 2.0.32 server, one prompt, one verdict. Every variable the bisect flips is an option.
 // Library: matrix.ts imports runTrial(); `bun scripts/trial.ts key=value ...` runs a single trial and prints JSON.
 // IU credentials come from the macOS Keychain into the child env only; nothing is printed or written.
-import { mkdirSync, rmSync, writeFileSync, existsSync, cpSync, readFileSync } from "node:fs";
+import { mkdirSync, rmSync, existsSync, cpSync, readFileSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -21,6 +21,7 @@ export type Opts = {
   cwdBase?: string; // cwd=clean only: parent of the cwd dir (default CLEAN_BASE)
   depth?: number; // cwd=clean only: extra nested directory levels below CLEAN_BASE
   base?: string; // parent dir of the trial root (default: the scratch dir the caller passes); the cwd and HOME live under it
+  keepRoot?: boolean; // keep the scratch root after the trial (warm seeding copies it); default: removed in finally
   tag?: string;
 };
 export const DEFAULTS: Opts = {
@@ -28,18 +29,18 @@ export const DEFAULTS: Opts = {
   client: "fetch", host: "localhost", port: "random", stdio: "file", extra: "", ceilingMs: 25_000,
 };
 export type Result = Opts & {
-  outcome: "prompt" | "wedge";
-  where: string; // which call hung, or "ok"
+  outcome: "prompt" | "timeout" | "error"; // timeout = a call hit its ceiling (TimeoutError/AbortError only); error = anything else (refused, reset, non-200, bad JSON)
+  error: string; // "" unless outcome=error
+  where: string; // which call ended the trial, or "ok"
   promptStatus: string; waitStatus: string; promptMs: number;
   replied: boolean; // the message list holds an assistant reply
   infoAfter: string; // GET /api/info on the same server after the prompt
   term: string; // how the child ended: "term <ms>" or "ignored SIGTERM" (then SIGKILL)
   kill: string;
-  otlpPosts: number; // POSTs the sink saw while this server lived (only when otel=up)
   cpuMean: number; // mean %CPU of the server, sampled each second until the prompt call returned
-  locBootSpans: number; // http.span counter on that line: work done by the boot (Effect spans), load-independent
+  logBytes: number; // bytes the server wrote to stdout+stderr (file size, drained bytes, or bytes buffered in an unread pipe; -1 = not observable)
   locBootMs: number; // server log "location services booted durationMs" (-1 = never logged)
-  root: string; // scratch root of this trial (server.log.scrubbed lives there)
+  root: string; // scratch root of this trial (removed unless keepRoot)
 };
 
 /** A scratch parent whose ancestors are small directories (the OS TMPDIR holds ~30k entries on the mini). */
@@ -62,19 +63,20 @@ export function iuCreds() {
 
 /** opencode retries a dead endpoint forever (what opencode-safe guards against): same 5 s probe before any LLM-bound server starts. */
 export async function routeReachable(c: { key: string; openai: string }) {
-  // GET /models on the IU route times out at 5 s on roughly a third of calls (measured, unrelated to opencode): up to 4 tries before giving up.
+  // Same probe as opencode-safe: GET the OpenAI base, any status below 500 counts, 5 s ceiling. (GET /models times out on ~a third of calls
+  // and is not used.) Up to 4 tries.
   for (let i = 0; i < 4; i++) {
-    const ok = await fetch(`${c.openai}/models`, { headers: { authorization: `Bearer ${c.key}` }, signal: AbortSignal.timeout(5000) }).then((r) => r.status < 500, () => false);
+    const ok = await fetch(c.openai, { headers: { authorization: `Bearer ${c.key}` }, signal: AbortSignal.timeout(5000) }).then((r) => r.status < 500, () => false);
     if (ok) return true;
   }
   return false;
 }
 
-/** A local OTLP/HTTP sink that answers 200 and counts requests. */
+/** A local OTLP/HTTP sink that answers 200 (shared by concurrent trials, so it keeps no per-trial counts). */
+const isTimeout = (e: unknown) => ["TimeoutError", "AbortError"].includes((e as Error)?.name);
 export function startSink() {
-  let posts = 0;
-  const srv = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: (r) => { if (r.method === "POST") posts++; return new Response("{}", { status: 200, headers: { "content-type": "application/json" } }); } });
-  return { url: `http://127.0.0.1:${srv.port}`, posts: () => posts, stop: () => srv.stop(true) };
+  const srv = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("{}", { status: 200, headers: { "content-type": "application/json" } }) });
+  return { url: `http://127.0.0.1:${srv.port}`, stop: () => srv.stop(true) };
 }
 function deadPort() { const s = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("") }); const p = s.port; s.stop(true); return p; }
 
@@ -92,9 +94,10 @@ export async function runTrial(o: Opts, creds: ReturnType<typeof iuCreds>, sink:
     if (!pending) {
       pending = (async () => {
         const seed = join(scratch, "warm-seed");
-        const r = await runTrial({ ...DEFAULTS, otel: "unset", resattr: false, extra: "OPENCODE_DISABLE_FILEWATCHER=1", tag: "seed", ceilingMs: 60_000 }, creds, sink, scratch);
+        const r = await runTrial({ ...DEFAULTS, otel: "unset", resattr: false, extra: "OPENCODE_DISABLE_FILEWATCHER=1", tag: "seed", ceilingMs: 60_000, keepRoot: true }, creds, sink, scratch);
         if (r.outcome !== "prompt") throw new Error(`warm seed itself failed (${r.where})`);
         cpSync(r.root, seed, { recursive: true });
+        rmSync(r.root, { recursive: true, force: true });
         return seed;
       })();
       warmRoots.set(scratch, pending);
@@ -113,7 +116,8 @@ export async function runTrial(o: Opts, creds: ReturnType<typeof iuCreds>, sink:
   };
   const endpoint = o.otel === "up" ? sink.url : o.otel === "down" ? `http://127.0.0.1:${deadPort()}` : "";
   const homeDir = join(root, "home");
-  const cwd = o.cwd === "home" ? homeDir : o.cwd === "repo" ? REPO_FOR_CWD : o.cwd === "clean" ? (() => { const d = join(o.cwdBase ?? CLEAN_BASE, `cwd-${id}`, ...Array.from({ length: o.depth ?? 0 }, (_, i) => `d${i}`)); mkdirSync(d, { recursive: true }); return d; })() : (() => { const d = join(root, "empty"); mkdirSync(d); return d; })();
+  const cwdTop = join(o.cwdBase ?? CLEAN_BASE, `cwd-${id}`); // removed in finally (cwd=clean only)
+  const cwd = o.cwd === "home" ? homeDir : o.cwd === "repo" ? REPO_FOR_CWD : o.cwd === "clean" ? (() => { const d = join(cwdTop, ...Array.from({ length: o.depth ?? 0 }, (_, i) => `d${i}`)); mkdirSync(d, { recursive: true }); return d; })() : (() => { const d = join(root, "empty"); mkdirSync(d); return d; })();
   const childEnv: Record<string, string> = {
     ...(o.env === "parent" ? (process.env as Record<string, string>) : {}),
     PATH: process.env.PATH!, HOME: homeDir, TMPDIR: tmpdir(), LANG: "en_US.UTF-8",
@@ -127,9 +131,10 @@ export async function runTrial(o: Opts, creds: ReturnType<typeof iuCreds>, sink:
   if (o.env === "parent") for (const k of Object.keys(childEnv)) if (k.startsWith("OTEL_") && !endpoint) delete childEnv[k];
   const logPath = join(root, "server.log");
   const stdio = o.stdio === "file" ? Bun.file(logPath) : o.stdio === "null" ? "ignore" : o.stdio === "inherit" ? "inherit" : "pipe";
-  const postsBefore = sink.posts();
   const server = Bun.spawn([bin, "serve", "--hostname", o.host, "--port", String(port)], { cwd, env: childEnv, stdout: stdio as any, stderr: stdio as any });
-  if (o.stdio === "pipe-read") { for (const s of [server.stdout, server.stderr]) (async () => { for await (const _ of s as ReadableStream) {} })(); }
+  let piped = 0; // bytes seen on a drained pipe
+  const drain = (s: ReadableStream<Uint8Array>) => (async () => { for await (const c of s) piped += c.length; })().catch(() => {});
+  if (o.stdio === "pipe-read") for (const s of [server.stdout, server.stderr]) drain(s as ReadableStream<Uint8Array>);
 
   const cpu: number[] = [];
   const cpuTimer = setInterval(() => { const v = Number(Bun.spawnSync(["ps", "-o", "%cpu=", "-p", String(server.pid)]).stdout.toString().trim()); if (!Number.isNaN(v)) cpu.push(v); }, 1000);
@@ -137,11 +142,11 @@ export async function runTrial(o: Opts, creds: ReturnType<typeof iuCreds>, sink:
   const base = `http://${hostUrl}:${port}`;
   const auth = { authorization: `Basic ${btoa(`opencode:${pw}`)}` };
   const h = { ...auth, "content-type": "application/json" };
-  const r: Result = { ...o, outcome: "wedge", where: "boot", promptStatus: "-", waitStatus: "-", promptMs: 0, replied: false, infoAfter: "-", term: "-", kill: "-", otlpPosts: 0, locBootMs: -1, locBootSpans: -1, cpuMean: -1, root };
+  const r: Result = { ...o, outcome: "error", error: "", where: "boot", promptStatus: "-", waitStatus: "-", promptMs: 0, replied: false, infoAfter: "-", term: "-", kill: "-", locBootMs: -1, logBytes: -1, cpuMean: -1, root };
   try {
     let up = false;
     for (let i = 0; i < 80 && !up; i++) { up = await fetch(`${base}/api/info`, { headers: auth, signal: AbortSignal.timeout(2000) }).then((x) => x.ok).catch(() => false); if (!up) await Bun.sleep(500); }
-    if (!up) return r;
+    if (!up) { r.error = "server never answered /api/info within 40 s"; return r; }
     r.where = "session-create";
     const created = await fetch(`${base}/api/session`, { method: "POST", headers: h, signal: AbortSignal.timeout(15_000),
       body: JSON.stringify({ location: { directory: cwd }, model: { providerID: "iu-chat", id: MODEL } }) }).then((x) => x.json() as Promise<{ data: { id: string } }>);
@@ -152,8 +157,12 @@ export async function runTrial(o: Opts, creds: ReturnType<typeof iuCreds>, sink:
     const deadline = t0 + o.ceilingMs;
     try {
       if (o.client === "curl") {
-        const out = Bun.spawnSync(["curl", "-sS", "-m", String(Math.ceil(o.ceilingMs / 1000)), "-o", "/dev/null", "-w", "%{http_code}", "-X", "POST", "-u", `opencode:${pw}`, "-H", "content-type: application/json", `${base}/api/session/${sid}/prompt`, "-d", body]);
-        r.promptStatus = out.stdout.toString() === "000" ? "timeout" : out.stdout.toString();
+        // async spawn: a blocking spawnSync would freeze every other trial in this process while curl waits
+        const c = Bun.spawn(["curl", "-sS", "-m", String(Math.ceil(o.ceilingMs / 1000)), "-o", "/dev/null", "-w", "%{http_code}", "-X", "POST", "-u", `opencode:${pw}`, "-H", "content-type: application/json", `${base}/api/session/${sid}/prompt`, "-d", body], { stdout: "pipe", stderr: "pipe" });
+        const [code, err, exit] = await Promise.all([new Response(c.stdout).text(), new Response(c.stderr).text(), c.exited]);
+        if (exit === 28) throw Object.assign(new Error("curl --max-time"), { name: "TimeoutError" });
+        if (exit !== 0) throw new Error(`curl exit ${exit}: ${err.trim().slice(0, 80)}`);
+        r.promptStatus = code;
       } else {
         r.promptStatus = String((await fetch(`${base}/api/session/${sid}/prompt`, { method: "POST", headers: h, signal: AbortSignal.timeout(o.ceilingMs), body })).status);
       }
@@ -165,11 +174,15 @@ export async function runTrial(o: Opts, creds: ReturnType<typeof iuCreds>, sink:
       r.where = "messages";
       const msgs = await fetch(`${base}/api/session/${sid}/message`, { headers: h, signal: AbortSignal.timeout(8000) }).then((x) => x.text());
       r.replied = /"role"\s*:\s*"assistant"/.test(msgs) || /assistant/.test(msgs);
-      r.outcome = r.waitStatus === "204" || r.waitStatus === "200" ? "prompt" : "wedge";
-      r.where = r.outcome === "prompt" ? "ok" : "wait";
+      if (r.waitStatus === "204" || r.waitStatus === "200") { r.outcome = "prompt"; r.where = "ok"; }
+      else { r.outcome = "error"; r.error = `wait returned ${r.waitStatus}`; }
     } catch (e) {
-      if (r.promptStatus === "-") r.promptStatus = "timeout";
-      else if (r.where === "wait") r.waitStatus = "timeout";
+      const timedOut = isTimeout(e);
+      const mark = timedOut ? "timeout" : `err:${(e as Error).name}`;
+      if (r.promptStatus === "-") r.promptStatus = mark;
+      else if (r.where === "wait") r.waitStatus = mark;
+      r.outcome = timedOut ? "timeout" : "error";
+      r.error = timedOut ? "" : `${(e as Error).name}: ${(e as Error).message}`.slice(0, 160);
     }
     r.promptMs ||= Date.now() - t0;
     clearInterval(cpuTimer);
@@ -177,7 +190,8 @@ export async function runTrial(o: Opts, creds: ReturnType<typeof iuCreds>, sink:
     r.infoAfter = await fetch(`${base}/api/info`, { headers: auth, signal: AbortSignal.timeout(3000) }).then((x) => String(x.status)).catch(() => "timeout");
     return r;
   } catch (e) {
-    r.where += `:${(e as Error).name}`;
+    r.outcome = isTimeout(e) ? "timeout" : "error";
+    r.error = r.outcome === "error" ? `${(e as Error).name}: ${(e as Error).message}`.slice(0, 160) : "";
     return r;
   } finally {
     clearInterval(cpuTimer);
@@ -191,13 +205,18 @@ export async function runTrial(o: Opts, creds: ReturnType<typeof iuCreds>, sink:
       server.kill("SIGKILL");
       r.kill = (await Promise.race([server.exited.then(() => true), Bun.sleep(3000).then(() => false)])) ? `SIGKILL ok ${Date.now() - k}ms` : "SIGKILL FAILED";
     }
-    r.otlpPosts = sink.posts() - postsBefore;
     if (existsSync(logPath)) {
       const log = readFileSync(logPath, "utf8");
       r.locBootMs = Number(/location services booted[^\n]*?durationMs=(\d+)/.exec(log)?.[1] ?? -1);
-      r.locBootSpans = Number(/location services booted[^\n]*?http\.span=(\d+)/.exec(log)?.[1] ?? -1);
-      writeFileSync(join(root, "server.log.scrubbed"), log.replaceAll(creds.key, "<key>").replaceAll(creds.openai, "<base>").replaceAll(pw, "<pw>"));
+      r.logBytes = statSync(logPath).size;
+    } else if (o.stdio === "pipe-read") r.logBytes = piped;
+    else if (o.stdio === "pipe-unread") { // the server is dead: whatever it wrote is either buffered in the pipe (<= its capacity) or was never written because the pipe was full
+      await Promise.race([Promise.all([drain(server.stdout as ReadableStream<Uint8Array>), drain(server.stderr as ReadableStream<Uint8Array>)]), Bun.sleep(1500)]);
+      r.logBytes = piped;
     }
+    // The raw log holds the IU base URL and the password: it never leaves the scratch root, and the root goes now.
+    if (!o.keepRoot) rmSync(root, { recursive: true, force: true });
+    if (o.cwd === "clean") rmSync(cwdTop, { recursive: true, force: true });
   }
 }
 
@@ -209,6 +228,7 @@ if (import.meta.main) {
   const sink = startSink();
   const scratch = join(tmpdir(), `ocw-trial-${Date.now().toString(36)}`);
   mkdirSync(scratch, { recursive: true });
+  process.on("exit", () => rmSync(scratch, { recursive: true, force: true }));
   console.log(JSON.stringify(await runTrial(o, creds, sink, scratch)));
   sink.stop();
 }
