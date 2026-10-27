@@ -28,9 +28,13 @@ await cap.close()
 - **Cached** per workflow for `ttlMs`; concurrent runs share one read. Steps never query: the run's usage is
   accumulated in memory from `stepPost`. A **resumed run** (`runPre` with `resume: true`, or a `stepPre` for a run
   this process has not seen) loads what it already spent from the journal once (sum of its steps; wall time from
-  `started_at` to the last journal activity, so the downtime before the resume is not counted), so a crash or a
-  deploy does not reset the meter. A failed load is logged and not cached: that step passes unchecked and the next step reads
-  the journal again, so the meter is never reset. Concurrent steps of one run share one read.
+  `started_at` to the last journal activity), so a crash or a deploy does not reset the meter. Wall time across a
+  resume is an approximation, because the journal records no liveness: downtime after the last step start or finish
+  is not counted, the time an in-flight step ran before the crash is lost, and on a second resume the downtime
+  before the first one counts. The bias is toward under-counting (a cap never kills a healthy run because of a
+  restart); repeated crashes end in the runtime's `crash_loop`. Exact active time needs a runtime liveness column.
+  A failed load is logged and not cached: that step passes unchecked and the next step reads the journal again, so
+  the meter is never reset. Concurrent steps of one run share one read.
 - **Enforced in `stepPre`**: the first metric above its cap throws `RunawayCapExceeded` (`metric`, `observed`,
   `cap`, `basis`); the step fails as `middleware` and the run as `step_failed`. Usage is known per finished step, so
   a run is stopped at the step *after* the one that crossed the cap.
