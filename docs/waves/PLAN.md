@@ -13,39 +13,57 @@ the work needs, tagged `purpose=build`, report the figure in each retro. OCR sta
 Outside this repo: **P0 (warden off)** runs as dotfiles Wave 1, orchestrated from the owner's main
 session. Nothing here edits dotfiles until `dotfiles/docs/waves/PLAN.md` shows it `done`.
 
-## Wave 1 — Foundations            <!-- status: active -->
+## Wave 1 — Foundations            <!-- status: done -->
 Workers: Opus/medium for S1, Sonnet/high for the rest. Spikes live in `docs/spikes/<id>/` with a
 `REPORT.md` verdict; spike code is thrown away, not promoted.
 
-- [ ] **S1 workflow runtime:** our own journal on Postgres vs Vercel Workflow (`workflow` package) on
+- [x] **S1 workflow runtime:** our own journal on Postgres vs Vercel Workflow (`workflow` package) on
   Bun vs DBOS TypeScript. Fake agent step (no IU). Kill the process after every step and on deploy;
   measure resume correctness, effect-key behaviour, re-attach to a long step, lines of code, deps.
   Library facts via `/research` first.
-- [ ] **S2 telemetry:** run span + step span from a Bun process into ClickStack (local collector),
+- [x] **S2 telemetry:** run span + step span from a Bun process into ClickStack (local collector),
   `traceparent` in and out, one run record shaped for Argo's usage ingest; does OpenCode 2 emit its
   own OTel, and does it survive the current version.
-- [ ] **S3 stack:** HTTP framework with OpenAPI emission from zod (oRPC vs Elysia vs Hono +
+- [x] **S3 stack:** HTTP framework with OpenAPI emission from zod (oRPC vs Elysia vs Hono +
   zod-openapi), test runner, lint/format — `/research` with current versions; pick what makes the
   spike-7 CLI generator and typed workflows simplest.
-- [ ] **P0b Postgres** (vps repo): the mini's local Postgres becomes a maintained instance — roles and
+- [x] **P0b Postgres** (vps repo): the mini's local Postgres becomes a maintained instance — roles and
   schemas via `setup-postgres.sh` as on the VPS, nightly backup to the HomeLab, restore drill,
   upgrade target, heartbeat component, database `agent_workflows` with its own role; whole-DB
   `sync-from-prod` retired for `pg-sync-schema`; the stray brew `postgresql@18` default instance resolved.
-- [ ] **Scaffold:** Bun workspaces, `make check|deploy|verify` skeletons, CI on GitHub-hosted runners,
+- [x] **Scaffold:** Bun workspaces, `make check|deploy|verify` skeletons, CI on GitHub-hosted runners,
   AGENTS.md Validate/Deploy/Verify filled.
-- [ ] **Concept v3.1:** spike verdicts folded into `docs/concept.md` with a retro entry.
-**Left behind:**
+- [x] **Concept v3.1:** spike verdicts folded into `docs/concept.md` with a retro entry.
+**Left behind:** all six landed and reviewed; full evidence in `docs/waves/handoff/lead.md`
+(Wave 1 section, kept in git history). Verdicts: own journal on Postgres; telemetry shape holds; oRPC
+1.16.1 + zod 4, bun test, Biome + oxlint, TS 7; P0b live (`agent_workflows` DB and role, nightly
+backup with restore drill, `com.jkrumm.vps-pg-backup` mapped); scaffold with `make check` and CI.
+The brew `postgresql@18` on :5433 is weatherorb's, not stray: kept. Concept v3.1. Not ours and left
+red: dotfiles architecture-check rows for `com.iu.athena-postgres`, `com.iu.teamchat-*`, collie pin,
+tailscale drift. Housekeeping noted, not done: Docker leftovers `p0b-postgres_*` (no Makefile target),
+an unrestorable test backup `20261027T165644Z` (retention ages it out), unowned role `modelpick`.
 
-## Wave 2 — Core runtime (P1a)            <!-- status: pending -->
+## Wave 2 — Core runtime (P1a)            <!-- status: active -->
 Workers: Opus/medium for runtime and middleware, Sonnet/high for routes and capabilities.
 
 - [ ] `defineWorkflow`, the three step kinds, journal and resume, effect keys, bounded-run rule;
-  a replay test that crashes after every step
-- [ ] Middleware pipeline with the interception points `run/pre … run/post`; run record and fingerprint
+  a replay test that crashes after every step. Closes S1's "Wave 2 must" list
+  (`docs/spikes/s1-runtime/REPORT.md`): lease off the shared pool, 64-bit lock keys, retry policy,
+  idle-rule step timeout, cancel/steer, concurrency limits, recovery tick, a lint for the step-id
+  authoring rule; the kill harness stays as a regression test with concurrent runs
+- [ ] Middleware pipeline with the interception points `run/pre … run/post` (`runPre` carries a
+  `resume` flag); run record and fingerprint, every run tagged with its `purpose`. S2's inputs: the
+  middleware owns flush (crash handlers, signal re-raise), tokens from the OpenCode message API, Argo
+  rows from an outbox
 - [ ] Route table (model + effort per route) — becomes the home of model ids; cost from `usage.cost`
 - [ ] `defineCapability` + registry (import, HTTP, CLI from one zod definition); first capabilities
   `llm.summarize|title|classify`, `decide`
 - [ ] Runaway caps and the wallet gate as middleware rules, both tested
+- [ ] Fleet tooling (dotfiles, Sonnet/high): the merge train installs before `make check` (or `make
+  check` installs itself) and handles draft PRs; `rd wave` treats taken agent names as taken numbers
+- [ ] Investigation (Sonnet/high, parallel, report only): isolate the OpenCode 2.0.32 prompt wedge (S2,
+  6/6) — replay the dotfiles spike script verbatim, bisect env/cwd/HOME; Wave 3's host design takes
+  the cause as input
 **Left behind:**
 
 ## Wave 3 — CLI, agent host, deploy (P1b)            <!-- status: pending -->

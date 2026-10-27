@@ -264,3 +264,19 @@ Defaults I set (open to a flip, revisited at each phase retro):
 ## Retro log
 
 One entry per phase: what we learned, what changed on this page, and why.
+
+### Wave 1 — Foundations (S1, S2, S3, P0b, scaffold), 2026-10-27
+
+- **Learned.** The starting bias held on evidence: our own journal (163 lines, 1 dep) is the only
+  runtime that survives a redeploy without a drain. DBOS parks in-flight runs on any code edit, and
+  Vercel corrupts its event log when a step is inserted. Replay by step id makes "a changed step
+  meaning takes a new id" a load-bearing authoring rule. The one-definition capability contract picked
+  oRPC by itself. OpenCode telemetry is a join aid; tokens come from its message API. A single-run
+  spike harness hides concurrency bugs (the lead's read found a journal pool deadlock at 20 runs).
+- **Changed.** v3.1: §3, §4, §5, §8 and §12.4 detailed; no decision reversed. Agent-step liveness is
+  the idle watchdog, not a ceiling.
+- **Risks carried.** OpenCode 2.0.32 wedged on every prompt in S2 (6/6): isolate before the OpenCode
+  host is built (Wave 3, first step).
+- **Spend.** IU ≤ $1.35 (research $0.64, review $0.68), reconstructed from a time window: the legacy
+  gateways cannot tag `purpose=build`. The new platform tags it natively from Wave 2.
+- **Does the page hold?** Yes.
