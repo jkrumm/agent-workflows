@@ -6,9 +6,9 @@ import { ROUTE_ID, type RouteEntry, routeSchema } from './schema.ts'
 // Haiku 5.5 EU rate, USD/M: in 0.10, out 0.50, cache read 0.01, cache write 0.125 (1.25x in). Copied from
 // agent-gateway server/lib/models.ts (`claude-haiku-5-5-eu`; source "hermes-agent docs/model-context-reasoning.md
 // (vendor list, >100K prompt 5x); cache write 1.25x in", dated 2026-10-14). The >100K-prompt tier (5x) has no
-// counterpart in `Rate`, so a call over 100K prompt tokens is priced at the base rate, i.e. under-priced.
-// Used by every Haiku route whose wire reports no `usage.cost` (IU's Messages response, OpenCode's message cost
-// on the day it is missing).
+// counterpart in `Rate`, so `costFromUsage` returns `unknown` for a call over 100K prompt tokens.
+// Used by the Haiku routes on the iu-anthropic wire, whose Messages response carries no `usage.cost`. The
+// opencode routes carry no rate: OpenCode's message cost is the only cost source for an agent step.
 const HAIKU_55_EU_RATE = { inputPerM: 0.1, outputPerM: 0.5, cacheReadPerM: 0.01, cacheWritePerM: 0.125 }
 
 const TABLE = {
@@ -28,11 +28,11 @@ const TABLE = {
   'review.adversary': { wire: 'iu-openai', model: 'deepseek-v4.1-flash', maxOutputTokens: 16_000 },
   // Gateway: ANGLE_OC (review_angle_senior_dev|typescript|frontend|qa all resolve to the same entry)
   // and `review` (synthesis, CLASSIFY tier), both Haiku 5.5 EU on the OpenCode harness.
-  'review.angle': { wire: 'opencode', model: 'claude-haiku-5-5-eu', rate: HAIKU_55_EU_RATE },
-  'review.synthesis': { wire: 'opencode', model: 'claude-haiku-5-5-eu', rate: HAIKU_55_EU_RATE },
+  'review.angle': { wire: 'opencode', model: 'claude-haiku-5-5-eu' },
+  'review.synthesis': { wire: 'opencode', model: 'claude-haiku-5-5-eu' },
 
   // Check seat. Gateway: `check`, CLASSIFY tier.
-  check: { wire: 'opencode', model: 'claude-haiku-5-5-eu', rate: HAIKU_55_EU_RATE },
+  check: { wire: 'opencode', model: 'claude-haiku-5-5-eu' },
 } satisfies Record<string, RouteEntry>
 
 export type RouteId = keyof typeof TABLE

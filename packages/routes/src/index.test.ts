@@ -109,6 +109,10 @@ describe('resolveRoute', () => {
     expect(routeFingerprint('decide', {})).toBe(before)
   })
 
+  test('opencode routes carry no rate: an agent step is priced by OpenCode alone', () => {
+    for (const id of routeIds()) if (entry(id).wire === 'opencode') expect(entry(id).rate).toBeUndefined()
+  })
+
   test('the table is deeply frozen', () => {
     expect(Object.isFrozen(DEFAULT_ROUTES)).toBe(true)
     for (const id of routeIds()) {
@@ -243,9 +247,31 @@ describe('costFromUsage', () => {
       expect(costFromUsage('iu-anthropic', usage, { inputPerM: 1, outputPerM: 5 })).toEqual(usd(10 * 1 + 1 * 5))
     })
 
+    test('cache counts above the cache-inclusive prompt total are unknown, not clamped to zero input', () => {
+      const usage = { prompt_tokens: 100, completion_tokens: 5, prompt_tokens_details: { cached_tokens: 101 } }
+      expect(costFromUsage('iu-openai', usage, cached)).toEqual({ usd: null, source: 'unknown' })
+    })
+
+    test('a prompt above 100K tokens including cache is unknown; exactly 100K is priced', () => {
+      const long = { input_tokens: 1000, output_tokens: 5, cache_read_input_tokens: 99_000 }
+      expect(costFromUsage('iu-anthropic', long, cached)).toEqual(usd(1000 * 1 + 99_000 * 0.1 + 5 * 5))
+      expect(costFromUsage('iu-anthropic', { ...long, input_tokens: 1001 }, cached)).toEqual({
+        usd: null,
+        source: 'unknown',
+      })
+      expect(costFromUsage('iu-openai', { prompt_tokens: 100_001, completion_tokens: 5 }, cached)).toEqual({
+        usd: null,
+        source: 'unknown',
+      })
+    })
+
     test('the provider cost still wins over cache pricing', () => {
       const usage = { cost: 0.5, input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 5 }
       expect(costFromUsage('iu-anthropic', usage, cached)).toEqual({ usd: 0.5, source: 'provider' })
+      expect(costFromUsage('iu-anthropic', { ...usage, input_tokens: 200_000 }, cached)).toEqual({
+        usd: 0.5,
+        source: 'provider',
+      })
     })
   })
 })
