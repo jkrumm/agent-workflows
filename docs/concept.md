@@ -4,12 +4,14 @@
 
 **Where to look:** workflow shape §3, middleware §4, porting a skill or a Hermes path §10, phase order §11.
 
+> **v3.1, 2026-10-27:** Wave 1 verdicts folded in: S1 own journal (§3, §12.4), S2 telemetry and the Argo projection (§4, §5), S3 stack and P0b store (§8), the OpenCode wedge risk (§8). No decision reversed.
+>
 > **Status: concept v3, 2026-10-27. Canonical here** (moved from dotfiles `docs/agent-workflows/`). Supersedes dotfiles `docs/factory/design/gateways.md` (concept v2) for
 > the platform. The factory (TDD v2.4) is **deferred** and gets re-planned around this setup.
 > **Inputs:** owner voice note dotfiles `docs/factory/feedback/2026-10-27-owner-voice-note-platform-first.md`
 > and the chat that followed; `docs/research/2026-10-27-{deepseek-harness,setup-inventory}.md`; the
 > 2026-10-26 research and spike 7 cited in concept v2.
-> **Next:** P0. §12 is resolved (owner 2026-10-27: name, Postgres, budget; the rest are my defaults).
+> **Next:** P1 (Wave 2, core runtime). §12 is resolved (owner 2026-10-27: name, Postgres, budget; the rest are my defaults).
 
 ## 0. Principles
 
@@ -83,6 +85,9 @@ export default defineWorkflow({
 - **Effects need keys.** A step with an outside effect (send, publish, write) carries an idempotency key derived from `(runId, stepId)`. No recovery can prove an interrupted effect didn't happen.
 - **Bounded runs only.** A workflow run lasts seconds to tens of minutes. Anything that lives for days, such as a factory Issue, is an entity state machine that *starts* workflows, never one long run. This is the lesson behind rejecting DBOS for the factory. It does not argue against durable steps here.
 - **Failure split** (from DeepSeek Harness): a failing step is fatal. A failing child workflow in a fan-out returns `null`, and the parent decides.
+- **Our own journal, decided by S1** (`docs/spikes/s1-runtime/REPORT.md`): two Postgres tables, `runs` and `steps` keyed `(run_id, step_id)`, a lease per top-level run held as a Postgres advisory lock (released the moment the holder's connection dies, no heartbeat; the lease needs its own connection budget and fencing, `docs/spikes/s1-runtime/REPORT.md` §Wave 2 must), children driven by their parent's step. It passed every kill and deploy scenario. DBOS strands in-flight runs on a code change unless the old version drains them; Vercel Workflow's Postgres world fails a run with `CORRUPTED_EVENT_LOG` when a step is inserted before recorded ones, and after a mid-step crash leaves it behind a job lock graphile-worker expires only after 4 h.
+- **Replay is by step id, so a deploy needs no drain:** SIGTERM, restart, continue on the new code. The rule that keeps this safe: **a change to a step's meaning or output shape takes a new step id.** `runs.version_started` and `version_finished` show which runs crossed a deploy. Step ids are literals; fan-out adds an index.
+- **Re-attach order:** create the session, journal its handle, then prompt; on resume, a handle with a prompt sent waits, a handle without one prompts (the send checks the session's messages first), no handle opens a new session.
 
 ## 4. Middleware
 
@@ -100,6 +105,13 @@ The workflow author writes `run`. Everything below belongs to the platform and i
 
 Interception points follow DeepSeek Harness's taxonomy, before and after each run, step and tool call: `run/pre`, `step/pre`, `tool/pre`, `tool/post`, `step/post`, `run/post`. The OCR spend gate that is hand-built in review today becomes one middleware rule that protects every workflow.
 
+**Telemetry, as proven by S2** (`docs/spikes/s2-telemetry/REPORT.md`):
+
+- Packages: `@opentelemetry/sdk-trace` 3.x with `exporter-trace-otlp-proto` and `context-async-hooks`, http/protobuf. `sdk-trace-base` is the dead 2.x line. Context nests across `await` on Bun without explicit parents.
+- The middleware owns flush: exit, SIGTERM, SIGINT and the crash handlers. Without a handler spans are lost. Export failures and dropped spans are logged, never silent; after a signal flush the signal is re-raised.
+- Receiver is deployment config, not code: the unauthed loopback `:4319` locally, the authed tier (`OTEL_EXPORTER_OTLP_HEADERS` from `secrets-run`) for anything leaving the host.
+- OpenCode 2.0.32 exports its own spans when `OTEL_EXPORTER_OTLP_ENDPOINT` is set and parents its `http.server` spans to an inbound `traceparent`. Model and tool-call spans were not observed. **Tokens, cost and tool calls come from the OpenCode message API**, not from spans; spans are for latency and joining, linked by `opencode.session.id` on the step span.
+
 ## 5. Run record and fingerprint
 
 Every run writes one record: workflow id, input hash, output, outcome, wall time, steps, tokens (input, output, cache read, reasoning), cost, tool calls, friction counters, scores, trace id.
@@ -112,6 +124,11 @@ The **fingerprint** is a hash over everything that can change behaviour:
 - OpenCode version
 
 "Did the change help?" becomes a query: score, cost, latency, tokens and tool calls grouped by fingerprint.
+
+**Argo projection (S2).** One Argo `usage_record` row per agent step and model: `source` `agent-workflows`, `source_id` `<runId>:<stepId>:<model>`, `sub_tool` the workflow id, step start as `ts`; run-level facts (fingerprint, scores, friction, trace id) ride in `raw`. Two rules the projection must hold:
+
+- **Tokens are normalised to Argo's additive contract** before the row (input minus cache read, output minus reasoning); provider usage is not additive, and getting it wrong double-counts reasoning.
+- **Rows leave through an outbox** (`argo_synced_at` on the step row, retried by the host), because the platform is the system of record and Argo may be down. No usage-tracker collector reads the platform's OpenCode store (P4 order).
 
 ## 6. Evals
 
@@ -145,7 +162,8 @@ Learned facts ("this shop blocks at TLS") go into a per-agent learnings store an
 - **Everything on the mini.** email-gateway may stay on the VPS and consume the shared packages.
 - **Agent steps run on one OpenCode server**, one location directory per agent, compiled outside any repo. Otherwise an ancestor `AGENTS.md` leaks in.
 - **Processes by deploy unit, not per workflow:** one `host` process (light workflows, capabilities, HTTP API), plus own processes for heavy pipelines (research, audio). A review deploy never waits on a research run, and a research memory spike can't take review down.
-- **Store:** Postgres, the matured mini instance (N9, P0b, §12.2).
+- **Store:** Postgres, the matured mini instance (N9, §12.2). Since P0b: database `agent_workflows` with its own least-privilege role, nightly backup to the HomeLab that ends in a restore drill on exact snapshot counts, a minor-upgrade target, a heartbeat probe; the whole-DB `sync-from-prod` is gone. Runbook: vps `docs/mini-postgres.md`.
+- **Stack (S3,** `docs/spikes/s3-stack/REPORT.md`**):** oRPC 1.x with zod 4 for every route and capability, because only oRPC calls one definition in-process (`call`) through the same validation and middleware as HTTP, which is what "import, HTTP and CLI from one definition" (§2) needs. `x-cli` rides on each procedure's `spec` callback behind one helper; the CLI generator maps oRPC's typed `code` to exit codes and dereferences `$ref`. Handlers stay plain functions of `(input, ctx)` so the framework coupling stays in the procedure layer. Toolchain: `bun test`, Biome (format, lint), oxlint `--type-aware` for typed rules, TypeScript 7 `tsc`, all pinned exactly.
 
 ### OpenCode stays the agent runtime
 
@@ -165,6 +183,8 @@ Taken from it:
 - the failure split
 - a "token effect / cache effect" note in every package README
 - the DeepSeek wire rules for our cheap routes: pass reasoning back verbatim, never edit history, append system and tool changes instead of rewriting the head, record cache-read tokens
+
+**Known risk for the OpenCode host (S2):** on 2.0.32 a prompt wedged a fresh server six times out of six and the server ignored SIGTERM; an earlier spike prompted the same build fine. Cause not isolated. The OpenCode host (P1) isolates it first. Liveness stays the idle watchdog (no new session message for N minutes means wedged; never a turn or wall-clock cap): a wedged server is SIGKILLed and the step re-attaches by session id.
 
 ## 9. The `agw` CLI
 
@@ -234,7 +254,7 @@ Owner-decided:
 
 Defaults I set (open to a flip, revisited at each phase retro):
 
-4. **Workflow runtime:** spike S1 decides between our own journal, Vercel Workflow (`workflow` package, no Bun guide) and DBOS TypeScript, using a fake agent step. Starting bias: our own journal.
+4. **Workflow runtime:** our own journal on Postgres (S1, 2026-10-27; §3). Vercel Workflow and DBOS TypeScript measured and rejected on deploy and crash behaviour.
 5. **Processes:** `host` plus research and audio; split more only on evidence.
 6. **`dispatch`:** stays on `agw-legacy` until the factory replaces it; not ported.
 7. **Factory in the same monorepo:** decided at the factory re-plan; bias yes.

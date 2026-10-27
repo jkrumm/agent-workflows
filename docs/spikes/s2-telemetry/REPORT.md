@@ -193,7 +193,7 @@ The spike module is a proof, not the middleware. P1 must add:
 
 |risk|severity|handle|
 |-|-|-|
-|OpenCode server wedges on a prompt and ignores SIGTERM (6/6 here, 0/1 in the earlier spike)|**high for P1**|find the cause first: replay the dotfiles script verbatim against 2.0.32, then bisect env/cwd/HOME. The agent-step runner needs a hard ceiling, SIGKILL and re-attach regardless|
+|OpenCode server wedges on a prompt and ignores SIGTERM (6/6 here, 0/1 in the earlier spike)|**high for P1**|find the cause first: replay the dotfiles script verbatim against 2.0.32, then bisect env/cwd/HOME. The agent-step runner needs the idle watchdog (no new session message for N minutes; no turn or wall-clock cap, rules/agent-limits), SIGKILL of a wedged server, and re-attach|
 |no proof of OpenCode model/tool spans|medium|tokens from the message API; treat spans as optional enrichment|
 |Argo token double-count if usage is not normalised|medium|unit-test the normaliser against the IU shape; gap 1|
 |usage-tracker double-counts the platform's OpenCode store|medium|gap 3, rule in P4|
