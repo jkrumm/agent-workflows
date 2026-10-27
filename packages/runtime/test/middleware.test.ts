@@ -1,6 +1,16 @@
 import { afterAll, describe, expect, test } from 'bun:test'
 import { z } from 'zod'
-import { AdmissionRefused, defineWorkflow, type Middleware, type RunPreArgs, type StepPreArgs } from '../src/index.ts'
+import {
+  AdmissionRefused,
+  defineWorkflow,
+  type Json,
+  type Middleware,
+  type RunPreArgs,
+  type StepPostArgs,
+  type StepPreArgs,
+  WorkflowError,
+} from '../src/index.ts'
+import { FakeAgentHost } from '../src/testing.ts'
 import { captureLogger, freshSchema, inspector, testRuntime, until } from './support/pg.ts'
 
 const db = freshSchema('mw')
@@ -223,7 +233,7 @@ describe('middleware', () => {
       const { runId } = await rt.start(wf, {}, { purpose: 'build' })
       expect(await rt.wait(runId)).toMatchObject({ status: 'done', output: { n: 1 } })
       expect(await sql.step(runId, 'n')).toMatchObject({ status: 'done' })
-      await until(() => logger.lines.filter((l) => l.level === 'error').length === 2, 'both hook errors logged')
+      await until(() => logger.lines.filter((l) => l.level === 'error').length >= 2, 'both hook errors logged')
       await Bun.sleep(100)
       expect((await sql.run(runId))?.status).toBe('done')
     } finally {
@@ -259,6 +269,144 @@ describe('middleware', () => {
       expect((await rt.wait(runId)).status).toBe('failed')
       expect(ran).toBe(false)
       expect(await sql.step(runId, 'expensive')).toMatchObject({ status: 'failed', error_kind: 'middleware' })
+    } finally {
+      await rt.close()
+    }
+  })
+
+  test('a throwing runPost is re-delivered until it succeeds; a run whose hooks always throw stops at the cap', async () => {
+    const calls = new Map<string, number>()
+    const flaky: Middleware = {
+      name: 'flaky-record',
+      runPost: (a) => {
+        const n = (calls.get(a.runId) ?? 0) + 1
+        calls.set(a.runId, n)
+        if (a.input && (a.input as { always?: boolean }).always) throw new Error('sink down for good')
+        if (n < 3) throw new Error(`sink down (${n})`)
+      },
+    }
+    const wf = defineWorkflow({
+      id: 'mw.post-retry',
+      version: 'v1',
+      input: z.object({ always: z.boolean() }),
+      output: empty,
+      run: async () => ({}),
+    })
+    const logger = captureLogger()
+    const rt = testRuntime({
+      schema: db.schema,
+      workflows: [wf],
+      middleware: [flaky],
+      logger,
+      maxPostHookAttempts: 4,
+    })
+    await rt.open()
+    try {
+      const ids = await Promise.all(
+        [false, false, true].map(async (always) => (await rt.start(wf, { always }, { purpose: 'build' })).runId),
+      )
+      const [a, b, never] = ids as [string, string, string]
+      await until(
+        async () => {
+          const rows = await Promise.all(ids.map((id) => sql.run(id)))
+          return rows.every((r) => r?.post_hooks_at)
+        },
+        'every runPost delivered or given up',
+        10_000,
+      )
+      expect(calls.get(a)).toBe(3)
+      expect(calls.get(b)).toBe(3)
+      expect((await sql.run(a))?.post_hooks_attempts).toBe(2)
+      expect(calls.get(never)).toBe(4)
+      expect((await sql.run(never))?.post_hooks_attempts).toBe(4)
+      expect(logger.lines.filter((l) => l.message.startsWith('runPost failed every attempt'))).toHaveLength(1)
+      await Bun.sleep(300)
+      expect(calls.get(never)).toBe(4)
+    } finally {
+      await rt.close()
+    }
+  })
+
+  test('a throwing toolPre fails the agent step with the hook error kind, aborts the session, no retry', async () => {
+    class RunawayCap extends WorkflowError {
+      constructor() {
+        super('timeout', 'tool calls far above normal')
+      }
+    }
+    let tools = 0
+    const cap: Middleware = {
+      name: 'cap',
+      toolPre: () => {
+        tools++
+        if (tools >= 3) throw new RunawayCap()
+      },
+    }
+    const posts: StepPostArgs[] = []
+    const seen: Middleware = { name: 'seen', stepPost: (a) => void posts.push(a) }
+    const host = new FakeAgentHost(async (s) => {
+      await s.sleep(30) // the session starts at the prompt; let the step attach its waiter first
+      for (let i = 0; i < 10; i++) await s.tool('grep', { i }, 'hit')
+      return { output: { done: true } }
+    })
+    const wf = defineWorkflow({
+      id: 'mw.tool-cap',
+      version: 'v1',
+      input: empty,
+      output: empty,
+      async run(ctx) {
+        await ctx.agent('loop', { agent: 'a', prompt: 'go', retry: { attempts: 3, backoffMs: 1 } })
+        return {}
+      },
+    })
+    const rt = testRuntime({ schema: db.schema, workflows: [wf], host, middleware: [cap, seen] })
+    await rt.open()
+    try {
+      const { runId } = await rt.start(wf, {}, { purpose: 'build' })
+      expect(await rt.wait(runId)).toMatchObject({ status: 'failed', error: { kind: 'step_failed' } })
+      expect(await sql.step(runId, 'loop')).toMatchObject({ status: 'failed', error_kind: 'timeout', attempts: 1 })
+      expect(String((await sql.step(runId, 'loop'))?.error)).toContain('tool calls far above normal')
+      expect(tools).toBe(3)
+      expect(host.count('open')).toBe(1)
+      expect(host.count('abort')).toBe(1)
+      // stepPost carries the handle of the session the failed attempt used.
+      expect(posts[0]).toMatchObject({ stepId: 'loop', status: 'failed', handle: { sessionId: 'ses_1' } as Json })
+    } finally {
+      await rt.close()
+    }
+  })
+
+  test('a throwing toolPre with a plain error fails as middleware; stepPost of a code step has no handle', async () => {
+    const cap: Middleware = {
+      name: 'cap',
+      toolPre: () => {
+        throw new Error('no')
+      },
+    }
+    const posts: StepPostArgs[] = []
+    const seen: Middleware = { name: 'seen', stepPost: (a) => void posts.push(a) }
+    const host = new FakeAgentHost(async (s) => {
+      await s.sleep(30)
+      await s.tool('read', {}, 'x')
+      return { output: {} }
+    })
+    const wf = defineWorkflow({
+      id: 'mw.tool-plain',
+      version: 'v1',
+      input: empty,
+      output: empty,
+      async run(ctx) {
+        await ctx.step('code', () => 1)
+        await ctx.agent('ask', { agent: 'a', prompt: 'go' })
+        return {}
+      },
+    })
+    const rt = testRuntime({ schema: db.schema, workflows: [wf], host, middleware: [cap, seen] })
+    await rt.open()
+    try {
+      const { runId } = await rt.start(wf, {}, { purpose: 'build' })
+      await rt.wait(runId)
+      expect(await sql.step(runId, 'ask')).toMatchObject({ status: 'failed', error_kind: 'middleware' })
+      expect(posts.find((p) => p.stepId === 'code')?.handle).toBeNull()
     } finally {
       await rt.close()
     }

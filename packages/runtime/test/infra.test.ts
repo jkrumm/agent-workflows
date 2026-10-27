@@ -27,9 +27,10 @@ describe('migrations', () => {
     const pools = Array.from({ length: 4 }, () => new Pool({ connectionString: PG_URL, max: 1 }))
     try {
       const applied = await Promise.all(pools.map((p) => migrate(p, fresh.schema)))
-      expect(applied.flat()).toEqual(['0001_journal.sql'])
-      const { rows } = await sql.pool.query(`select version from "${fresh.schema}".schema_migrations`)
-      expect(rows.map((r) => r.version)).toEqual(['0001_journal.sql'])
+      const files = ['0001_journal.sql', '0002_usage_outbox.sql']
+      expect(applied.flat()).toEqual(files)
+      const { rows } = await sql.pool.query(`select version from "${fresh.schema}".schema_migrations order by version`)
+      expect(rows.map((r) => r.version)).toEqual(files)
     } finally {
       await Promise.all(pools.map((p) => p.end()))
       await fresh.drop()
@@ -73,7 +74,7 @@ describe('fencing', () => {
         error: null,
         model: null,
         usage: {
-          tokens: { input: 0, output: 0, cacheRead: 0, reasoning: 0 },
+          tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0 },
           cost: null,
           toolCalls: 0,
           unpricedCalls: 0,
