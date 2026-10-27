@@ -9,16 +9,16 @@ export async function seedRuns(
   schema: string,
   workflow: string,
   runs: Metrics[],
-  status: 'done' | 'failed' = 'done',
+  { status = 'done', ageDays = 1 }: { status?: 'done' | 'failed'; ageDays?: number } = {},
 ) {
   const rows = runs.map((m) => ({ id: `seed-${crypto.randomUUID()}`, ...m }))
   await pool.query(
     `insert into "${schema}".runs
        (id, workflow, root_id, status, purpose, input, input_hash, lock_key, version_started, started_at, finished_at)
      select r.id, $2, r.id, $3, 'test', '{}', 'seed', 0, 'v1',
-       now() - interval '1 day', now() - interval '1 day' + r."wallMs" * interval '1 millisecond'
+       now() - $4 * interval '1 day', now() - $4 * interval '1 day' + r."wallMs" * interval '1 millisecond'
      from jsonb_to_recordset($1::jsonb) as r(id text, "wallMs" float8)`,
-    [JSON.stringify(rows), workflow, status],
+    [JSON.stringify(rows), workflow, status, ageDays],
   )
   await pool.query(
     `insert into "${schema}".steps

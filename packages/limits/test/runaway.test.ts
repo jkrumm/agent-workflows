@@ -106,7 +106,7 @@ describe('runaway cap', () => {
     await seedRuns(sql.pool, db.schema, 'cap.learned', history)
     // Ignored: failed runs and other workflows.
     const huge = { cost: 1000, tokens: 1e9, wallMs: 1e8, steps: 400 }
-    await seedRuns(sql.pool, db.schema, 'cap.learned', [huge, huge], 'failed')
+    await seedRuns(sql.pool, db.schema, 'cap.learned', [huge, huge], { status: 'failed' })
     await seedRuns(
       sql.pool,
       db.schema,
@@ -116,7 +116,9 @@ describe('runaway cap', () => {
 
     const { cap } = capWithSpy()
     const caps = await cap.caps('cap.learned')
-    expect(caps.basis).toMatchObject({ kind: 'learned', sample: 30, factor: 10 })
+    expect(caps.basis.tree).toEqual({ kind: 'learned', sample: 30, factor: 10 })
+    expect(caps.basis.steps).toEqual({ kind: 'learned', sample: 30, factor: 10 })
+    expect(caps.p95.cost).toBeCloseTo(p95(history.map((h) => h.cost)), 6)
     expect(caps.values.cost).toBeCloseTo(10 * p95(history.map((h) => h.cost)), 6)
     expect(caps.values.tokens).toBeCloseTo(10 * p95(history.map((h) => h.tokens)), 3)
     expect(caps.values.wallMs).toBeCloseTo(10 * p95(history.map((h) => h.wallMs)), 0)
@@ -180,7 +182,8 @@ describe('runaway cap', () => {
     )
     const { cap, spied, thrown } = capWithSpy({ ceilings: { 'cap.static': { steps: 3 } } })
     const caps = await cap.caps('cap.static')
-    expect(caps.basis).toEqual({ kind: 'static', sample: 5, reason: 'below_sample_minimum' })
+    const below = { kind: 'static', sample: 5, reason: 'below_sample_minimum' } as const
+    expect(caps.basis).toEqual({ tree: below, steps: below })
     expect(caps.values).toEqual({ ...DEFAULT_CEILING, steps: 3 })
     expect((await cap.caps('cap.unknown')).values).toEqual(DEFAULT_CEILING)
 
@@ -276,16 +279,28 @@ describe('runaway cap', () => {
     const cap = runawayCap({ connectionString: PG_URL, schema: 'agw_t_lim_missing_schema', logger })
     open.push(cap)
     const caps = await cap.caps('cap.anything')
-    expect(caps.basis).toEqual({ kind: 'static', sample: 0, reason: 'history_unavailable' })
+    const unavailable = { kind: 'static', sample: 0, reason: 'history_unavailable' } as const
+    expect(caps.basis).toEqual({ tree: unavailable, steps: unavailable })
     expect(caps.values).toEqual(DEFAULT_CEILING)
     expect(logger.lines[0]?.message).toContain('history read failed')
   })
 })
 
-describe('runaway cap, resume loads', () => {
-  const stepArgs = (runId: string, stepId: string) => ({
+describe('runaway cap, history, hot path and trees', () => {
+  const runArgs = (runId: string, workflowId: string, resume: boolean) => ({
     runId,
-    workflowId: 'cap.load',
+    workflowId,
+    version: 'v1',
+    purpose: 'test',
+    parentId: null,
+    rootId: runId,
+    input: {},
+    traceparent: null,
+    resume,
+  })
+  const stepArgs = (runId: string, stepId: string, workflowId: string) => ({
+    runId,
+    workflowId,
     version: 'v1',
     stepId,
     kind: 'code' as const,
@@ -294,32 +309,160 @@ describe('runaway cap, resume loads', () => {
     status: 'running' as const,
     replay: false,
   })
-
-  test('a failed load is never cached: the step passes and the next one reads again', async () => {
+  const quiet = (options: Partial<RunawayCapOptions> = {}) => {
+    const decisions: CapDecision[] = []
     const logger = captureLogger()
-    const cap = runawayCap({ connectionString: PG_URL, schema: 'agw_t_lim_missing_schema', logger })
+    const cap = runawayCap({
+      connectionString: PG_URL,
+      schema: db.schema,
+      logger,
+      onDecision: (d) => void (d.rule === 'runaway-cap' && decisions.push(d)),
+      ...options,
+    })
     open.push(cap)
-    await cap.stepPre?.(stepArgs('r-missing', 'a'))
-    const after = cap.queries
-    await cap.stepPre?.(stepArgs('r-missing', 'b'))
-    expect(cap.queries).toBe(after + 1)
-    expect(logger.lines.filter((l) => l.message.includes('could not load')).length).toBe(2)
+    return { cap, decisions, logger }
+  }
+
+  test('the p95 is taken over the latest window of done runs only', async () => {
+    const old = { cost: 9, tokens: 9e6, wallMs: 9e6, steps: 9 }
+    const recent = { cost: 0.1, tokens: 1000, wallMs: 1000, steps: 2 }
+    await seedRuns(sql.pool, db.schema, 'cap.window', Array(30).fill(old), { ageDays: 10 })
+    await seedRuns(sql.pool, db.schema, 'cap.window', Array(25).fill(recent), { ageDays: 1 })
+    const { cap } = quiet({ window: 25 })
+    const caps = await cap.caps('cap.window')
+    expect(caps.basis.tree).toEqual({ kind: 'learned', sample: 25, factor: 10 })
+    expect(caps.p95).toEqual({ cost: 0.1, tokens: 1000, wallMs: 1000, steps: 2 })
   })
 
-  test('concurrent steps of an unknown run share one load and one state', async () => {
+  test('a slow or unreachable journal never stalls the step hooks', async () => {
+    const { cap, decisions } = quiet({
+      connectionString: 'postgres://nobody:nothing@10.255.255.1:5432/none',
+      queryTimeoutMs: 300,
+    })
+    await cap.runPre?.(runArgs('slow-1', 'cap.slow', false))
+    const started = performance.now()
+    await cap.stepPre?.(stepArgs('slow-1', 'a', 'cap.slow'))
+    await cap.toolPre?.({ runId: 'slow-1', stepId: 'a', callId: 'c1', tool: 'read' })
+    expect(performance.now() - started).toBeLessThan(50)
+    expect(decisions[0]?.basis.tree).toEqual({ kind: 'static', sample: 0, reason: 'history_pending' })
+    expect(decisions[0]?.caps).toEqual(DEFAULT_CEILING)
+    expect((await cap.caps('cap.slow')).basis.tree).toMatchObject({ reason: 'history_unavailable' })
+  })
+
+  test('stale caps are served at once while a refresh runs in the background', async () => {
+    const base = { cost: 0.1, tokens: 1000, wallMs: 1000, steps: 2 }
+    await seedRuns(sql.pool, db.schema, 'cap.swr', Array(20).fill(base), { ageDays: 2 })
+    const { cap, decisions } = quiet({ ttlMs: 1 })
+    expect((await cap.caps('cap.swr')).values.cost).toBeCloseTo(1, 6)
+    await seedRuns(sql.pool, db.schema, 'cap.swr', Array(20).fill({ ...base, cost: 1 }), { ageDays: 1 })
+    await Bun.sleep(5)
+    const before = cap.queries
+    await cap.runPre?.(runArgs('swr-1', 'cap.swr', false))
+    await cap.stepPre?.(stepArgs('swr-1', 'a', 'cap.swr'))
+    expect(decisions[0]?.caps.cost).toBeCloseTo(1, 6)
+    expect(cap.queries).toBe(before + 1)
+    expect((await cap.caps('cap.swr')).values.cost).toBeCloseTo(10, 6)
+  })
+
+  test('a failed load is never cached; concurrent loads of a run share one read', async () => {
+    const broken = quiet({ schema: 'agw_t_lim_missing_schema' })
+    await broken.cap.runPre?.(runArgs('gone-1', 'cap.load', true))
+    const after = broken.cap.queries
+    await broken.cap.stepPre?.(stepArgs('gone-1', 'a', 'cap.load'))
+    expect(broken.cap.queries).toBe(after + 1)
+    expect(broken.decisions).toEqual([])
+
     await seedRuns(sql.pool, db.schema, 'cap.load', [{ cost: 0.3, tokens: 10, wallMs: 100, steps: 2 }])
     const { rows } = await sql.pool.query<{ id: string }>(
       `select id from "${db.schema}".runs where workflow = 'cap.load'`,
     )
     const runId = rows[0]?.id ?? ''
-    const { cap, decisions } = capWithSpy()
+    const { cap, decisions } = quiet()
     await cap.caps('cap.load')
     const before = cap.queries
-    await Promise.all([cap.stepPre?.(stepArgs(runId, 'x')), cap.stepPre?.(stepArgs(runId, 'y'))])
+    await Promise.all([cap.runPre?.(runArgs(runId, 'cap.load', true)), cap.runPre?.(runArgs(runId, 'cap.load', true))])
     expect(cap.queries).toBe(before + 1)
+    await cap.stepPre?.(stepArgs(runId, 'x', 'cap.load'))
+    expect(decisions[0]?.observed).toMatchObject({ cost: 0.3, steps: 3 })
+  })
+
+  test('fan-out: cost, tokens and wall time are capped per root tree, steps per run', async () => {
+    const child = defineWorkflow({
+      id: 'cap.child',
+      version: 'v1',
+      input: z.object({ i: z.number() }),
+      output: empty,
+      async run(ctx) {
+        await ctx.step('spend', (s) => (s.addUsage(costUsage(0.3, 100)), 1))
+        await ctx.step('tail', () => 2)
+        return {}
+      },
+    })
+    const parent = defineWorkflow({
+      id: 'cap.parent',
+      version: 'v1',
+      input: empty,
+      output: empty,
+      async run(ctx) {
+        await ctx.workflow('fan', child, [{ i: 0 }, { i: 1 }, { i: 2 }])
+        await ctx.step('spend', (s) => (s.addUsage(costUsage(0.3, 100)), 1))
+        await ctx.step('after', () => 2)
+        return {}
+      },
+    })
+    const { spied, decisions, thrown } = capWithSpy({ ceilings: { 'cap.parent': { cost: 1, steps: 3 } } })
+    const rt = await started(testRuntime({ schema: db.schema, workflows: [parent, child], middleware: [spied] }))
+    const result = await rt.wait((await rt.start(parent, {}, { purpose: 'test' })).runId)
+    expect(result.status).toBe('failed')
+    expect((await sql.step(result.runId, 'after'))?.error).toContain('runaway cap: cost')
+    expect(thrown).toHaveLength(1)
+    expect(thrown[0]).toMatchObject({ metric: 'cost', cap: 1 })
+    expect((thrown[0] as RunawayCapExceeded).observed).toBeCloseTo(1.2, 6)
+
     const seen = decisions.filter((d): d is CapDecision => d.rule === 'runaway-cap')
-    // One shared state: both steps counted on top of the two journal rows (separate states would see 3 each).
-    expect(seen.map((d) => d.observed.steps)).toEqual([4, 4])
-    expect(seen[0]?.observed.cost).toBeCloseTo(0.3, 6)
+    const childDecisions = seen.filter((d) => d.workflowId === 'cap.child')
+    expect(childDecisions).toHaveLength(6)
+    expect(childDecisions.every((d) => d.rootId === result.runId && d.observed.steps <= 2)).toBe(true)
+    // Children are capped by the root's tree caps; their own step counts by their own workflow.
+    expect(childDecisions.every((d) => d.caps.cost === 1 && d.caps.steps === DEFAULT_CEILING.steps)).toBe(true)
+    const after = seen.find((d) => d.stepId === 'after')
+    expect(after?.observed.steps).toBe(3)
+    expect(after?.observed.tokens).toBe(400)
+  })
+
+  test('unpriced usage is surfaced in the decision', async () => {
+    const unpriced = defineWorkflow({
+      id: 'cap.unpriced',
+      version: 'v1',
+      input: empty,
+      output: empty,
+      async run(ctx) {
+        await ctx.step('a', (s) => (s.addUsage({ tokens: { input: 500, output: 0, cacheRead: 0, reasoning: 0 } }), 1))
+        await ctx.step('b', () => 2)
+        return {}
+      },
+    })
+    const { spied, decisions } = capWithSpy()
+    const rt = await started(testRuntime({ schema: db.schema, workflows: [unpriced], middleware: [spied] }))
+    expect((await rt.wait((await rt.start(unpriced, {}, { purpose: 'test' })).runId)).status).toBe('done')
+    const b = decisions.find((d): d is CapDecision => d.rule === 'runaway-cap' && d.stepId === 'b')
+    expect(b).toMatchObject({ unpricedCalls: 1, observed: { cost: 0, tokens: 500 } })
+  })
+
+  test('a throwing onDecision sink never fails a run', async () => {
+    const wf = threeSteps('cap.sink')
+    const logger = captureLogger()
+    const cap = runawayCap({
+      connectionString: PG_URL,
+      schema: db.schema,
+      logger,
+      onDecision: () => {
+        throw new Error('sink down')
+      },
+    })
+    open.push(cap)
+    const rt = await started(testRuntime({ schema: db.schema, workflows: [wf], middleware: [cap] }))
+    expect((await rt.wait((await rt.start(wf, { cost: 0.01 }, { purpose: 'test' })).runId)).status).toBe('done')
+    expect(logger.lines.filter((l) => l.message === 'onDecision threw; ignored')).toHaveLength(3)
   })
 })
