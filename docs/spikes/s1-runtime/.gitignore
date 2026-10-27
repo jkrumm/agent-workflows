@@ -1,0 +1,4 @@
+node_modules/
+results/raw/
+.build/
+candidates/vercel/.well-known/
