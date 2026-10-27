@@ -46,7 +46,7 @@ type Usage = {
 }
 ```
 
-Tokens are the raw provider counts: `input` includes cache reads, `output` includes reasoning. The Argo projection normalises later. `cost` is the provider's `usage.cost`, else the route's rate, else `null` with `costSource: 'unknown'`, never 0 (`costFromUsage` in routes). A re-ask after a rejected answer reports each attempt, and a call whose content turned out unusable is reported before the error is thrown. Adapters report every attempt that came back with usage, including one that then failed (a stream cut before its finish chunk, a 200 whose body does not fit), through an `onUsage` hook on the port. The transport's own retries of requests that returned no usage (429, 5xx, a reset) report nothing. A call that returned no usage at all is reported with zero tokens and `unknown` cost. A stream that ends without a finish chunk counts as a dropped connection and is retried; a body that cannot be read or parsed is retried, and parsed JSON that does not fit the schema is not.
+Tokens are the raw provider counts: `input` includes cache reads, `output` includes reasoning. The Argo projection normalises later. `cost` is the provider's `usage.cost`, else the route's rate (input excluding cache, cache reads, cache writes and output each at their own rate; cache tokens without the matching cache rate are `unknown`), else `null` with `costSource: 'unknown'`, never 0 (`costFromUsage` in routes). A re-ask after a rejected answer reports each attempt, and a call whose content turned out unusable is reported before the error is thrown. Adapters report every attempt that came back with usage, including one that then failed (a stream cut before its finish chunk, a 200 whose body does not fit), through an `onUsage` hook on the port. The transport's own retries of requests that returned no usage (429, 5xx, a reset) report nothing. A call that returned no usage at all is reported with zero tokens and `unknown` cost. A stream that ends without a finish chunk counts as a dropped connection and is retried; a body that cannot be read or parsed is retried, and parsed JSON that does not fit the schema is not.
 
 The runtime package defines its own step `addUsage`. This one is structurally identical (`Ctx.addUsage: (usage: Usage) => void`); the lead reconciles the type at merge.
 
@@ -90,13 +90,13 @@ All four are `POST` with a JSON body. The model comes from the route; override w
 
 `agw llm summarize [text] [--max-words 100] [--format paragraph|bullets]`, text from stdin when omitted. Input `{ text, maxWords = 100, format = 'paragraph' }`, output `{ summary }`.
 
-**Token effect / cache effect.** Cost grows with the text: the whole input is sent once, output is capped by `maxWords` in the prompt (the ceiling is `maxOutputTokens`, default 8192, or 32000 when the route has an effort). The system prompt is fixed and first, so repeated calls share a cacheable prefix; the text follows it. IU's Messages wire reports no cost, so `costSource` is `unknown` unless the route carries a `rate`. A route flip to a model with an effort turns adaptive thinking on: reasoning tokens bill as output and count against the ceiling.
+**Token effect / cache effect.** Cost grows with the text: the whole input is sent once, output is capped by `maxWords` in the prompt (the ceiling is `maxOutputTokens`, default 8192, or 32000 when the route has an effort). The system prompt is fixed and first, so repeated calls share a cacheable prefix; the text follows it. IU's Messages wire reports no cost, so the cost comes from the route's Haiku 5.5 EU `rate` (`costSource: 'rate'`), cache reads and writes at their own rates. Prompts over 100K tokens bill at 5x on the vendor list; `Rate` has no tier for that, so such a call is under-priced. A route flip to a model with an effort turns adaptive thinking on: reasoning tokens bill as output and count against the ceiling.
 
 ### `llm.title` — route `cheap.title` (`iu-anthropic`)
 
 `agw llm title [text] [--max-words 8]`. Input `{ text, maxWords = 8 }`, output `{ title }`. The first non-empty line is kept, with a leading `#`, a `Title:` label, quotes and a final period removed; nothing left is `INVALID_OUTPUT`.
 
-**Token effect / cache effect.** Output is a handful of tokens, so cost is almost all input. Same fixed-prefix layout and unknown cost as `llm.summarize`. Titling a text you already summarized with `llm.summarize` is cheaper on the summary than on the original.
+**Token effect / cache effect.** Output is a handful of tokens, so cost is almost all input. Same fixed-prefix layout and rate-based cost as `llm.summarize`. Titling a text you already summarized with `llm.summarize` is cheaper on the summary than on the original.
 
 ### `llm.classify` — route `cheap.classify` (`iu-openai`)
 
@@ -115,7 +115,7 @@ All four are `POST` with a JSON body. The model comes from the route; override w
 `bun test packages/capabilities` (Bun's `--isolate` runs it under `make check`):
 
 - `registry.test.ts`: in-process and HTTP (`Bun.serve`, port 0) agree on results and on typed errors; the OpenAPI document; definition rules.
-- `capabilities.test.ts`: each capability against a fake IU server through the production adapters: request wire, usage and cost via `ctx.addUsage`, `unknown` when the provider omits cost, schema-failure re-ask.
+- `capabilities.test.ts`: each capability against a fake IU server through the production adapters: request wire, usage and cost via `ctx.addUsage`, `rate` when the provider omits cost (cache tokens priced per bucket), `unknown` when a cache rate is missing, schema-failure re-ask.
 - `transports.test.ts`: retries, fail-fast statuses, cancel, idle watchdog.
 - `live.test.ts`: one real call per capability, **skipped unless `AGW_LIVE=1`** (the skipped names say so). It costs well under $0.001:
 

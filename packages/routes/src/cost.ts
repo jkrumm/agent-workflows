@@ -1,6 +1,11 @@
 import type { Rate, Wire } from './schema.ts'
 
-/** Provider usage as it arrives: OpenAI (`prompt_tokens`), Anthropic and the AI SDK (`input_tokens`). */
+/**
+ * Provider usage as it arrives. The input keys differ in what they count: `input_tokens` is
+ * Anthropic's and EXCLUDES cache reads and writes; `prompt_tokens` (OpenAI) and `inputTokens` INCLUDE
+ * them. Cache counts: Anthropic `cache_read_input_tokens` / `cache_creation_input_tokens`, OpenAI
+ * `prompt_tokens_details.cached_tokens` (OpenAI reports no cache writes).
+ */
 export interface ProviderUsage {
   /** USD, reported by the provider (IU puts it in `usage.cost`). */
   cost?: number | null
@@ -10,6 +15,9 @@ export interface ProviderUsage {
   output_tokens?: number
   inputTokens?: number
   outputTokens?: number
+  cache_read_input_tokens?: number | null
+  cache_creation_input_tokens?: number | null
+  prompt_tokens_details?: { cached_tokens?: number | null } | null
 }
 
 export type Cost = { usd: number; source: 'provider' | 'rate' } | { usd: null; source: 'unknown' }
@@ -21,8 +29,9 @@ function count(...values: (number | undefined)[]): number | null {
 
 /**
  * USD for one call. The provider's `usage.cost` wins on every wire; otherwise the route's rate is
- * applied to input and output tokens (reasoning tokens are already inside the output count on the
- * wires we use, cached input bills at the input rate); with neither, the cost is `unknown`, never 0.
+ * applied: input excluding cache tokens at `inputPerM`, cache reads at `cacheReadPerM`, cache writes
+ * at `cacheWritePerM`, output (reasoning tokens are already inside it) at `outputPerM`. Cache tokens
+ * without the matching cache rate, or neither cost nor rate, make the cost `unknown`, never free and never 0.
  * `wire` is reserved for wire-specific cost rules; no wire needs one yet, so it is not read.
  */
 export function costFromUsage(_wire: Wire, usage: ProviderUsage | null | undefined, rate?: Rate): Cost {
@@ -30,8 +39,20 @@ export function costFromUsage(_wire: Wire, usage: ProviderUsage | null | undefin
     return { usd: usage.cost, source: 'provider' }
   }
   if (!usage || !rate) return { usd: null, source: 'unknown' }
-  const input = count(usage.prompt_tokens, usage.input_tokens, usage.inputTokens)
   const output = count(usage.completion_tokens, usage.output_tokens, usage.outputTokens)
+  const cacheRead =
+    count(usage.cache_read_input_tokens ?? undefined, usage.prompt_tokens_details?.cached_tokens ?? undefined) ?? 0
+  const cacheWrite = count(usage.cache_creation_input_tokens ?? undefined) ?? 0
+  const cacheIncluded = count(usage.prompt_tokens, usage.inputTokens)
+  const input = cacheIncluded !== null ? Math.max(0, cacheIncluded - cacheRead - cacheWrite) : count(usage.input_tokens)
   if (input === null || output === null) return { usd: null, source: 'unknown' }
-  return { usd: (input * rate.inputPerM + output * rate.outputPerM) / 1_000_000, source: 'rate' }
+  if ((cacheRead > 0 && rate.cacheReadPerM === undefined) || (cacheWrite > 0 && rate.cacheWritePerM === undefined)) {
+    return { usd: null, source: 'unknown' }
+  }
+  const usd =
+    input * rate.inputPerM +
+    cacheRead * (rate.cacheReadPerM ?? 0) +
+    cacheWrite * (rate.cacheWritePerM ?? 0) +
+    output * rate.outputPerM
+  return { usd: usd / 1_000_000, source: 'rate' }
 }

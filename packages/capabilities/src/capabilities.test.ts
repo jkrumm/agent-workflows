@@ -67,10 +67,39 @@ describe('llm.summarize (iu-anthropic)', () => {
       {
         model: 'fake',
         tokens: { input: 150, output: 20, cacheRead: 40, reasoning: 0 },
-        cost: null,
-        costSource: 'unknown',
+        // Haiku 5.5 EU table rate: 100 uncached in at 0.10, 40 read at 0.01, 10 written at 0.125, 20 out at 0.50 (USD/M).
+        cost: (100 * 0.1 + 40 * 0.01 + 10 * 0.125 + 20 * 0.5) / 1_000_000,
+        costSource: 'rate',
       },
     ])
+  })
+
+  test('a Messages response without cost but with cache tokens is priced from the route rate', async () => {
+    iu.on('messages', () =>
+      messageResponse('x', {
+        input_tokens: 1000,
+        output_tokens: 200,
+        cache_read_input_tokens: 4000,
+        cache_creation_input_tokens: 500,
+      }),
+    )
+    const env = {
+      AGW_ROUTES:
+        '{"cheap.summarize":{"rate":{"inputPerM":1,"outputPerM":5,"cacheReadPerM":0.1,"cacheWritePerM":1.25}}}',
+    }
+    await call('llm.summarize', { text: 'x' }, env)
+    const expected = (1000 * 1 + 4000 * 0.1 + 500 * 1.25 + 200 * 5) / 1_000_000
+    expect(usages[0]?.costSource).toBe('rate')
+    expect(usages[0]?.cost).toBeCloseTo(expected, 12)
+  })
+
+  test('cache tokens against a rate without cache rates are unknown, never free', async () => {
+    iu.on('messages', () =>
+      messageResponse('x', { input_tokens: 1000, output_tokens: 200, cache_read_input_tokens: 4000 }),
+    )
+    const env = { AGW_ROUTES: '{"cheap.summarize":{"rate":{"inputPerM":1,"outputPerM":5}}}' }
+    await call('llm.summarize', { text: 'x' }, env)
+    expect(usages[0]).toMatchObject({ cost: null, costSource: 'unknown' })
   })
 
   test('a cost the provider reports wins', async () => {
