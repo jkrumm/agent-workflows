@@ -63,7 +63,7 @@ Full output: `results/results.md`, `results/results.json`. Summary from the fina
 | deploy, step inserted ahead of the run's position | finished on v2-break | stranded | finished on v2-break |
 | deploy, step inserted before recorded steps | finished on v2-break | stranded | **`CORRUPTED_EVENT_LOG`** |
 | DBOS pinned version: compatible / inserted before recorded | - | finished on v2 / **`ERROR`** | - |
-| middleware run/pre, step/pre, step/post, run/post | native, all 4 | wrapper; run/pre re-runs on every recovery | step wrapper; run/pre is an extra step; run/post fire-and-forget |
+| middleware run/pre, step/pre, step/post, run/post | native, all 4; run/pre re-fires on every recovery | wrapper; run/pre re-fires on every recovery | step wrapper; run/pre is an extra step; run/post fire-and-forget |
 | LOC: runtime / workflow + wiring | 163 / 39 | 0 / 50 | 40 / 83 |
 | dependencies direct / transitive | 1 / 14 | 1 / 22 | 2 / **358** |
 | install size | 0.5 MB | 10.3 MB | **190 MB** |
@@ -83,7 +83,7 @@ All 12 scenarios passed, with zero completed steps re-run. The one in-doubt re-r
   - A compatible change finishes on v2.
   - An inserted step runs when the run reaches it.
   - In `deploy-break-late`, `audit` ran after the already-recorded `effect`, and the run finished on v2-break.
-- **Middleware.** All four interception points sit in the runtime with no library to fork. `run/pre` and `run/post` fire per run, including each child run (4 per happy path: parent plus 3 children). `step/pre` carries a `replay` flag.
+- **Middleware.** All four interception points sit in the runtime with no library to fork. `run/pre` and `run/post` fire per run, including each child run (4 per happy path: parent plus 3 children). `step/pre` carries a `replay` flag; `run/pre` has none yet. `execute()` calls `runPre` on every drive, so `run/pre` re-fires on each recovery exactly like DBOS (5 instead of 4 in the kill scenarios).
 
 ### (b) Vercel Workflow on Bun
 
@@ -127,7 +127,7 @@ All 12 scenarios passed, with zero completed steps re-run. The one in-doubt re-r
 - `ctx.workflow(id, wf, inputs[])` for fan-out: it returns `(O | null)[]`, so a failing child yields `null`.
 - `ctx.score` and `ctx.continue` are steps of kind `code` and `agent`.
 
-Middleware is an ordered list of `{runPre, stepPre, stepPost, runPost, toolPre, toolPost}` objects. The runtime calls it, so no workflow can skip it.
+Middleware is an ordered list of `{runPre, stepPre, stepPost, runPost, toolPre, toolPost}` objects. The runtime calls it, so no workflow can skip it. `runPre` gets a `resume` flag (true when the run row was already `running`), matching `stepPre`'s `replay`. Admission rules (auth, wallet gate, concurrency) act only on `resume: false`; telemetry reopens its span on either.
 
 **Journal schema sketch** (the spike's two tables plus the run-record columns of §5):
 
@@ -161,7 +161,7 @@ The prompt send must be idempotent: check the session's messages before sending.
 
 **Lease.** One `pg_try_advisory_lock` per top-level run, on a held pool connection. This is the fastest recovery measured (0.1 s) and needs no heartbeat.
 
-- Size the pool for concurrent runs plus queries.
+- Hold leases on a separate connection budget, not on the journal pool (see Risks: pool deadlock).
 - Use a 64-bit key instead of `hashtext` (32-bit, collisions possible).
 - Child runs are driven by their parent's step, not by recovery, so a child never runs twice in parallel.
 
@@ -184,7 +184,7 @@ The prompt send must be idempotent: check the session's messages before sending.
 
 - **We own correctness.** Lease, journal writes and child driving are ours to get right. Mitigation: Wave 2 keeps this kill harness as a regression test against the real runtime, extended with concurrent runs.
 - **Mixed-version runs.** A run that crosses a deploy runs half on old code and half on new. The step-id rule and the version columns make this visible, but nothing enforces the rule. A lint can check: a changed step body with an unchanged id plus a changed output schema means warn.
-- **One connection per active run.** This is fine at the mini's scale (tens of concurrent runs). At hundreds, the lease moves to a `lease_until` column with a heartbeat.
+- **Pool deadlock.** The spike takes each run's lock connection from the same `Pool` (max 20) as every journal query. The 20th concurrent run therefore holds the last connection, and every journal query waits forever: `pg` queues pool checkouts without a timeout. The spike never ran more than one top-level run at a time, so it did not hit this. Wave 2 holds leases on a separate connection budget: a dedicated lease pool sized to the per-process concurrency limit, with admission refused beyond it. The alternative is a `lease_until` column with a heartbeat, which needs no held connection at all.
 - **Non-determinism is the author's job.** There is no replay check like DBOS's: a step id computed from data that changes between attempts silently creates a new step. The API should take literal ids, with an index suffix only through `ctx.workflow` fan-out.
 
 ## What was not measured
