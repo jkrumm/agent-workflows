@@ -29,8 +29,8 @@ function modelOf(message: OpenCodeMessage): string | null {
 /**
  * One agent step's usage from its session's messages: the source of truth for tokens, cost and tool calls
  * (S2: OpenCode emits no model or token spans). Converts OpenCode's additive counts to the runtime's raw provider
- * counts (`input` includes cache reads and writes, `output` includes reasoning); the Argo projection subtracts
- * them again. Cache writes have no runtime field and stay inside `input`.
+ * counts (`input` includes cache reads and writes, `output` includes reasoning, each also in its own bucket); the
+ * Argo projection subtracts them again.
  *
  * `cost` is the sum of the messages' reported cost, or null when any assistant message with tokens carries none:
  * the runtime then counts the step as unpriced instead of a silent undercount. `model` is the route's model when
@@ -40,7 +40,7 @@ export function usageFromOpenCodeMessages(
   messages: readonly OpenCodeMessage[],
   options: { model?: string } = {},
 ): Usage {
-  const tokens = { input: 0, output: 0, cacheRead: 0, reasoning: 0 }
+  const tokens = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0 }
   let cost = 0
   let priced = true
   let toolCalls = 0
@@ -52,10 +52,12 @@ export function usageFromOpenCodeMessages(
     const t = message.tokens
     if (!t) continue
     const cacheRead = n(t.cache?.read)
+    const cacheWrite = n(t.cache?.write)
     const reasoning = n(t.reasoning)
-    tokens.input += n(t.input) + cacheRead + n(t.cache?.write)
+    tokens.input += n(t.input) + cacheRead + cacheWrite
     tokens.output += n(t.output) + reasoning
     tokens.cacheRead += cacheRead
+    tokens.cacheWrite += cacheWrite
     tokens.reasoning += reasoning
     if (typeof message.cost === 'number' && Number.isFinite(message.cost)) cost += message.cost
     else priced = false

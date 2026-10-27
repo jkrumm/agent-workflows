@@ -44,8 +44,6 @@ export type TelemetryOptions = {
   maxQueueSize?: number
   /** Upper bound on every flush (signal, crash, exit). Default 5000 ms. */
   flushTimeoutMs?: number
-  /** The OpenCode session id of an agent step, read from its journaled handle. */
-  sessionIdOf?: (runId: string, stepId: string) => Promise<string | null>
 }
 
 type OpenRun = { span: Span; traceId: string }
@@ -117,7 +115,38 @@ class LoggingExporter implements SpanExporter {
   }
 }
 
+/**
+ * OTel's diagnostics logger is process-global (`diag.setLogger`). It is installed once per process and forwards to
+ * this sink; each `Telemetry` points the sink at its own logger when constructed and unhooks it at shutdown, so the
+ * live instance (one per process is the intended shape) receives the diagnostics, never a stale first one.
+ */
+let diagSink: Logger | null = null
 let diagInstalled = false
+
+function routeDiag(logger: Logger) {
+  diagSink = logger
+  if (diagInstalled) return
+  diagInstalled = true
+  const log = (level: 'warn' | 'error') => (message: string) => diagSink?.[level](`telemetry: ${message}`)
+  diag.setLogger(
+    { error: log('error'), warn: log('warn'), info: () => {}, debug: () => {}, verbose: () => {} },
+    { logLevel: DiagLogLevel.WARN, suppressOverrideMessage: true },
+  )
+}
+
+const MAX_ERROR_ATTRIBUTE = 500
+const SECRETS: [RegExp, string][] = [
+  [/\bBearer\s+[\w.~+/=-]+/gi, 'Bearer [redacted]'],
+  [/\bsk-[\w-]{6,}/g, 'sk-[redacted]'],
+  [/\b(api[_-]?key|key|token|secret|password)=[^\s&"',;]+/gi, '$1=[redacted]'],
+]
+
+/** Span text leaves the host: secrets-shaped substrings redacted, length capped. The journal keeps the original. */
+export function redactForSpan(text: string): string {
+  let out = text
+  for (const [pattern, replacement] of SECRETS) out = out.replace(pattern, replacement)
+  return out.length > MAX_ERROR_ATTRIBUTE ? `${out.slice(0, MAX_ERROR_ATTRIBUTE)}…` : out
+}
 
 function remoteParent(traceId: string, spanId: string): Context {
   return trace.setSpanContext(ROOT_CONTEXT, { traceId, spanId, traceFlags: TraceFlags.SAMPLED, isRemote: true })
@@ -149,17 +178,10 @@ export class Telemetry {
   private reportedLoss = 0
   private closed: Promise<void> | null = null
 
-  constructor(private readonly options: TelemetryOptions) {
+  constructor(options: TelemetryOptions) {
     this.logger = options.logger
     this.flushTimeoutMs = options.flushTimeoutMs ?? 5000
-    if (!diagInstalled) {
-      diagInstalled = true
-      const log = (level: 'warn' | 'error') => (message: string) => this.logger[level](`telemetry: ${message}`)
-      diag.setLogger(
-        { error: log('error'), warn: log('warn'), info: () => {}, debug: () => {}, verbose: () => {} },
-        { logLevel: DiagLogLevel.WARN, suppressOverrideMessage: true },
-      )
-    }
+    routeDiag(this.logger)
     this.exporter = new LoggingExporter(options.exporter ?? new OTLPTraceExporter(), this.logger)
     this.provider = new TracerProvider({
       resource: resourceFromAttributes({ 'service.name': options.serviceName ?? 'agw' }),
@@ -202,6 +224,7 @@ export class Telemetry {
       'agw.tokens.input': record.tokens.input,
       'agw.tokens.output': record.tokens.output,
       'agw.tokens.cache_read': record.tokens.cacheRead,
+      'agw.tokens.cache_write': record.tokens.cacheWrite,
       'agw.tokens.reasoning': record.tokens.reasoning,
       'agw.cost.usd': record.cost ?? undefined,
       'agw.cost.unpriced_calls': record.unpricedCalls,
@@ -272,6 +295,7 @@ export class Telemetry {
         }),
       ])
       clearTimeout(timer)
+      if (diagSink === this.logger) diagSink = null
     })()
     return this.closed
   }
@@ -405,15 +429,34 @@ export class Telemetry {
       this.ids.nextTraceId = null
       open = { span, traceId }
     }
+    this.endLeftoverSteps(args)
     const { span } = open
     span.setAttributes({ ...this.pending.get(args.runId), 'agw.run.status': args.status })
     if (args.error) {
-      span.setAttributes({ 'agw.error.kind': args.error.kind, 'agw.error.message': args.error.message })
+      span.setAttributes({ 'agw.error.kind': args.error.kind, 'agw.error.message': redactForSpan(args.error.message) })
       if (args.status === 'failed') span.setStatus({ code: SpanStatusCode.ERROR, message: args.error.kind })
     }
     span.end(args.finishedAt)
     this.pending.delete(args.runId)
     this.runs.delete(args.runId)
+  }
+
+  /**
+   * Steps the runtime ended without `stepPost` (a cancel cleanup ended them first, or an infra error left the run):
+   * ended with the run, as `cancelled` or as an error, never as `agw.suspended` (the run did not move on).
+   */
+  private endLeftoverSteps(args: RunPostArgs) {
+    const prefix = `${args.runId}:`
+    for (const [key, span] of this.steps) {
+      if (!key.startsWith(prefix)) continue
+      this.steps.delete(key)
+      if (args.status === 'cancelled') span.setAttribute('agw.step.status', 'cancelled')
+      else {
+        span.setAttribute('agw.step.status', 'error')
+        span.setStatus({ code: SpanStatusCode.ERROR, message: 'step ended without stepPost' })
+      }
+      span.end(args.finishedAt)
+    }
   }
 
   private callerOrRoot(args: RunPostArgs, traceId: string): Context {
@@ -455,11 +498,11 @@ export class Telemetry {
     this.steps.get(`${event.runId}:${event.stepId}`)?.addEvent(`tool.${phase}`, {
       'agw.tool.name': event.tool,
       'agw.tool.call_id': event.callId,
-      'agw.tool.error': event.error,
+      'agw.tool.error': event.error === undefined ? undefined : redactForSpan(event.error),
     })
   }
 
-  private async closeStep(args: StepPostArgs) {
+  private closeStep(args: StepPostArgs) {
     const key = `${args.runId}:${args.stepId}`
     const span = this.steps.get(key)
     if (!span) return
@@ -472,21 +515,17 @@ export class Telemetry {
       'agw.tokens.input': usage.tokens.input,
       'agw.tokens.output': usage.tokens.output,
       'agw.tokens.cache_read': usage.tokens.cacheRead,
+      'agw.tokens.cache_write': usage.tokens.cacheWrite,
       'agw.tokens.reasoning': usage.tokens.reasoning,
       'agw.cost.usd': usage.cost ?? undefined,
       'agw.cost.unpriced_calls': usage.unpricedCalls,
       'agw.tool_calls': usage.toolCalls,
       'gen_ai.request.model': models.length === 1 ? models[0] : undefined,
     })
-    if (args.kind === 'agent' && this.options.sessionIdOf) {
-      const sessionId = await this.options.sessionIdOf(args.runId, args.stepId).catch((err: unknown) => {
-        this.logger.warn('telemetry: session id lookup failed', { runId: args.runId, error: errorMessage(err) })
-        return null
-      })
-      if (sessionId) span.setAttribute('opencode.session.id', sessionId)
-    }
+    const sessionId = (args.handle as { sessionId?: unknown } | null)?.sessionId
+    if (typeof sessionId === 'string') span.setAttribute('opencode.session.id', sessionId)
     if (args.error) {
-      span.setAttributes({ 'agw.error.kind': args.error.kind, 'agw.error.message': args.error.message })
+      span.setAttributes({ 'agw.error.kind': args.error.kind, 'agw.error.message': redactForSpan(args.error.message) })
       if (args.status === 'failed') span.setStatus({ code: SpanStatusCode.ERROR, message: args.error.kind })
     }
     span.end(args.finishedAt)

@@ -1,6 +1,13 @@
 import { describe, expect, test } from 'bun:test'
 import { z } from 'zod'
-import { ArgoUsageRecordInput, argoRowsForStep, type OutboxStep, traceIdForRun } from '../src/index.ts'
+import {
+  ArgoUsageRecordInput,
+  additiveTokens,
+  argoRowsForStep,
+  httpArgoTransport,
+  type OutboxStep,
+  traceIdForRun,
+} from '../src/index.ts'
 
 const startedAt = new Date('2026-10-27T10:00:00.000Z')
 
@@ -10,13 +17,13 @@ function step(overrides: Partial<OutboxStep> = {}, run: Partial<OutboxStep['run'
     stepId: 'ask',
     status: 'done',
     model: 'deepseek-v4.1-flash',
-    tokens: { input: 2000, output: 340, cacheRead: 800, reasoning: 300 },
+    tokens: { input: 2000, output: 340, cacheRead: 800, cacheWrite: 0, reasoning: 300 },
     cost: 0.0021,
     toolCalls: 2,
     unpricedCalls: 0,
     byModel: {
       'deepseek-v4.1-flash': {
-        tokens: { input: 2000, output: 340, cacheRead: 800, reasoning: 300 },
+        tokens: { input: 2000, output: 340, cacheRead: 800, cacheWrite: 0, reasoning: 300 },
         cost: 0.0021,
         toolCalls: 2,
         unpricedCalls: 0,
@@ -90,18 +97,18 @@ describe('argo rows', () => {
     const rows = argoRowsForStep(
       step({
         model: null,
-        tokens: { input: 300, output: 60, cacheRead: 0, reasoning: 10 },
+        tokens: { input: 300, output: 60, cacheRead: 0, cacheWrite: 0, reasoning: 10 },
         cost: 0.03,
         toolCalls: 1,
         byModel: {
           a: {
-            tokens: { input: 100, output: 20, cacheRead: 0, reasoning: 0 },
+            tokens: { input: 100, output: 20, cacheRead: 0, cacheWrite: 0, reasoning: 0 },
             cost: 0.01,
             toolCalls: 0,
             unpricedCalls: 0,
           },
           b: {
-            tokens: { input: 150, output: 30, cacheRead: 0, reasoning: 10 },
+            tokens: { input: 150, output: 30, cacheRead: 0, cacheWrite: 0, reasoning: 10 },
             cost: 0.02,
             toolCalls: 1,
             unpricedCalls: 0,
@@ -124,13 +131,13 @@ describe('argo rows', () => {
         unpricedCalls: 1,
         byModel: {
           m: {
-            tokens: { input: 5, output: 1, cacheRead: 0, reasoning: 0 },
+            tokens: { input: 5, output: 1, cacheRead: 0, cacheWrite: 0, reasoning: 0 },
             cost: null,
             toolCalls: 0,
             unpricedCalls: 1,
           },
         },
-        tokens: { input: 5, output: 1, cacheRead: 0, reasoning: 0 },
+        tokens: { input: 5, output: 1, cacheRead: 0, cacheWrite: 0, reasoning: 0 },
       }),
       opts,
     )
@@ -142,7 +149,7 @@ describe('argo rows', () => {
     expect(argoRowsForStep(step({}, { status: 'failed', errorKind: 'invalid_output' }), opts)[0]?.outcome).toBe('error')
     expect(
       argoRowsForStep(
-        step({ tokens: { input: 0, output: 0, cacheRead: 0, reasoning: 0 }, cost: null, byModel: null }),
+        step({ tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0 }, cost: null, byModel: null }),
         opts,
       ),
     ).toEqual([])
@@ -154,5 +161,66 @@ describe('argo rows', () => {
       traceId: '0af7651916cd43dd8448eb211c80319c',
     })
     expect(() => argoRowsForStep(step({}, { purpose: '' }), opts)).toThrow(/purpose/)
+  })
+
+  test('cache writes have their own bucket: out of input, into cache_write_tokens, counted once', () => {
+    const tokens = { input: 1000, output: 50, cacheRead: 600, cacheWrite: 300, reasoning: 20 }
+    expect(additiveTokens(tokens)).toEqual({
+      input_tokens: 100,
+      output_tokens: 30,
+      cache_read_tokens: 600,
+      cache_write_tokens: 300,
+      reasoning_tokens: 20,
+    })
+  })
+
+  test('remainder: clamped per bucket, dropped without positive tokens, cost tolerance relative', () => {
+    const big = 123456.789
+    const rows = argoRowsForStep(
+      step({
+        model: null,
+        // The split over-reports output (a stored sum that disagrees): the remainder clamps at 0, never negative.
+        tokens: { input: 100, output: 10, cacheRead: 0, cacheWrite: 0, reasoning: 0 },
+        cost: big,
+        byModel: {
+          a: {
+            tokens: { input: 100, output: 12, cacheRead: 0, cacheWrite: 0, reasoning: 0 },
+            cost: big - 1e-7, // float noise relative to the total, not a real remainder
+            toolCalls: 0,
+            unpricedCalls: 0,
+          },
+        },
+      }),
+      opts,
+    )
+    expect(rows.map((r) => r.source_id)).toEqual(['run_1:ask:a'])
+    const withRest = argoRowsForStep(
+      step({
+        model: null,
+        tokens: { input: 150, output: 10, cacheRead: 0, cacheWrite: 0, reasoning: 0 },
+        cost: 0.03,
+        byModel: {
+          a: {
+            tokens: { input: 100, output: 12, cacheRead: 0, cacheWrite: 0, reasoning: 0 },
+            cost: 0.01,
+            toolCalls: 0,
+            unpricedCalls: 0,
+          },
+        },
+      }),
+      opts,
+    )
+    expect(withRest.map((r) => [r.source_id, r.input_tokens, r.output_tokens])).toEqual([
+      ['run_1:ask:a', 100, 12],
+      ['run_1:ask:unknown', 50, 0],
+    ])
+    expect(withRest[1]?.cost_usd).toBeCloseTo(0.02, 12)
+  })
+
+  test('the http transport refuses a non-https Argo URL unless it is loopback', () => {
+    expect(() => httpArgoTransport({ url: 'http://argo.example.com/api', token: 't' })).toThrow(/https/)
+    expect(() => httpArgoTransport({ url: 'https://argo.example.com/api', token: 't' })).not.toThrow()
+    expect(() => httpArgoTransport({ url: 'http://127.0.0.1:9999/api', token: 't' })).not.toThrow()
+    expect(() => httpArgoTransport({ url: 'http://localhost:9999/api', token: 't' })).not.toThrow()
   })
 })

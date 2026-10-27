@@ -16,7 +16,7 @@ export type PlatformOptions = {
   /** Default: `argoTransportFromEnv()`. Null: no outbox; steps stay unsynced in Postgres until one runs. */
   argo?: { transport?: ArgoTransport | null } & Pick<
     OutboxOptions,
-    'machine' | 'billing' | 'batchSize' | 'backoff' | 'now'
+    'machine' | 'billing' | 'batchSize' | 'backoff' | 'now' | 'postTimeoutMs' | 'claimTtlMs'
   >
 }
 
@@ -41,21 +41,15 @@ const consoleLogger: Logger = {
  */
 export function platformMiddleware(options: PlatformOptions): Platform {
   const logger = options.logger ?? consoleLogger
-  const db = new JournalDb({ connectionString: options.connectionString, schema: options.schema, poolSize: 3 }, logger)
-  const telemetry = new Telemetry({
-    ...options.telemetry,
-    logger,
-    sessionIdOf: async (runId, stepId) => {
-      const { rows } = await db.pool.query<{ session_id: string | null }>(
-        `select handle->'handle'->>'sessionId' as session_id from ${db.steps} where run_id = $1 and step_id = $2`,
-        [runId, stepId],
-      )
-      return rows[0]?.session_id ?? null
-    },
-  })
+  const db = new JournalDb({ connectionString: options.connectionString, schema: options.schema, poolSize: 2 }, logger)
+  const telemetry = new Telemetry({ ...options.telemetry, logger })
   const transport = options.argo?.transport === undefined ? argoTransportFromEnv() : options.argo.transport
   if (!transport) logger.warn('argo outbox off: ARGO_URL or ARGO_API_SECRET unset; usage stays unsynced in Postgres')
-  const outbox = transport ? new ArgoOutbox({ ...options.argo, db, transport, logger }) : null
+  // Its own pool: a slow or hanging Argo can never starve the record's writes.
+  const outboxDb = transport
+    ? new JournalDb({ connectionString: options.connectionString, schema: options.schema, poolSize: 2 }, logger)
+    : null
+  const outbox = transport && outboxDb ? new ArgoOutbox({ ...options.argo, db: outboxDb, transport, logger }) : null
   return {
     middleware: [
       purposeMiddleware(),
@@ -72,6 +66,7 @@ export function platformMiddleware(options: PlatformOptions): Platform {
     async close() {
       await telemetry.shutdown()
       await db.close()
+      await outboxDb?.close()
     },
   }
 }

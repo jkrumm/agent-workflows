@@ -98,4 +98,39 @@ describe('fsFingerprintSource', () => {
     writeFileSync(join(agents, 'ghost', 'AGENTS.md'), '# ghost')
     expect((await s.inputs({ id: 'w', version: 'v1' })).agents[0]?.files['AGENTS.md']).toBe('# ghost')
   })
+
+  test('one long-lived source sees an AGENTS.md or skill edit without a restart; unchanged files are not re-read', async () => {
+    const s = source()
+    const fp = async () => computeFingerprint('v1', await s.inputs({ id: 'research.report', version: 'v1' }))
+    const first = await fp()
+    expect(await fp()).toBe(first)
+    writeFileSync(join(agents, 'brain', 'AGENTS.md'), '# brain, edited while running')
+    const edited = await fp()
+    expect(edited).not.toBe(first)
+    writeFileSync(join(agents, 'brain', 'skills', 'nested', 'search.md'), 'search better, now')
+    expect(await fp()).not.toBe(edited)
+  })
+
+  test('a failed opencode --version is retried; concurrent admissions share one run', async () => {
+    const flaky = join(dir, 'opencode-flaky')
+    const flakyCalls = join(dir, 'flaky-calls')
+    writeFileSync(flaky, `#!/bin/sh\necho x >> "${flakyCalls}"\nexit 1\n`)
+    chmodSync(flaky, 0o755)
+    const s = fsFingerprintSource({
+      agentsDir: agents,
+      workflows: { w: [{ agent: 'brain', route: 'cheap.classify' }] },
+      opencodeBin: flaky,
+    })
+    const failed = await Promise.allSettled([
+      s.inputs({ id: 'w', version: 'v1' }),
+      s.inputs({ id: 'w', version: 'v1' }),
+    ])
+    expect(failed.every((r) => r.status === 'rejected')).toBe(true)
+    writeFileSync(flaky, `#!/bin/sh\necho x >> "${flakyCalls}"\necho "2.0.40"\n`)
+    const ok = await Promise.all([s.inputs({ id: 'w', version: 'v1' }), s.inputs({ id: 'w', version: 'v1' })])
+    expect(ok.map((i) => i.opencodeVersion)).toEqual(['2.0.40', '2.0.40'])
+    await s.inputs({ id: 'w', version: 'v1' })
+    // One run for the two concurrent failures, one for the two concurrent successes, none after.
+    expect(readFileSync(flakyCalls, 'utf8').trim().split('\n')).toHaveLength(2)
+  })
 })

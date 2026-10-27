@@ -23,7 +23,7 @@ telemetry.installFlush({
 
 const mw = telemetry.middleware()
 const usage: StepUsage = {
-  tokens: { input: 1, output: 1, cacheRead: 0, reasoning: 0 },
+  tokens: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, reasoning: 0 },
   cost: null,
   toolCalls: 0,
   unpricedCalls: 0,
@@ -52,7 +52,7 @@ for (let i = 0; i < runs; i++) {
     startedAt: new Date(),
   }
   await mw.stepPre?.({ ...step, status: 'running', replay: false })
-  await mw.stepPost?.({ ...step, status: 'done', finishedAt: new Date(), usage, output: 1, error: null })
+  await mw.stepPost?.({ ...step, status: 'done', finishedAt: new Date(), usage, handle: null, output: 1, error: null })
   await mw.runPost?.({ ...run, status: 'done', output: {}, error: null, startedAt: new Date(), finishedAt: new Date() })
 }
 

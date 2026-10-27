@@ -27,18 +27,20 @@ telemetry so its totals land on the run span before telemetry ends it. `platform
 | Middleware | Hook | Writes |
 |-|-|-|
 | `purpose` | `runPre` | Refuses (`AdmissionRefused`) a run with a blank purpose. The runtime already makes it non-null |
-| `fingerprint` | `runPre` | `runs.fingerprint` on admission (`resume: false`), written once (`coalesce`). A resumed run keeps it. A source failure refuses the run |
-| `record` | `runPost` | `runs.wall_ms`, `tokens_*`, `cost`, `trace_id`, plus `friction.unpricedCalls` and `friction.toolCalls` |
+| `fingerprint` | `runPre` | `runs.fingerprint` on admission (`resume: false`), written once (`coalesce`). A resumed run keeps it. Source read and writes are retried; a lasting failure refuses the run |
+| `record` | `runPost` | `runs.wall_ms`, `tokens_*` (incl. `tokens_cache_write`), `cost`, `unpriced_calls`, `tool_calls`, `trace_id` |
 | `telemetry` | all six | One span per run drive, one child span per step, tool calls as span events |
 
 - **Run record.** Sums the run's own step rows. A fan-out's children carry their own record; sum by `root_id`
-  for a tree. `cost` stays null when nothing was priced. `friction.unpricedCalls > 0` marks it as a lower bound.
-  The runs table has no column for this count, so it rides in `friction`. Wall time comes from the row's
-  `started_at`/`finished_at`, so a re-delivered `runPost` writes the identical record.
+  for a tree. `cost` stays null when nothing was priced; `unpriced_calls > 0` marks it as a lower bound. Wall time
+  comes from the row's `started_at`/`finished_at`, so a re-delivered `runPost` writes the identical record; it is
+  null for a run that never started (cancelled while pending), never 0.
 - **Fingerprint.** sha256 over the workflow version, each referenced agent's `AGENTS.md` and `skills/**`, each
   agent's `routeFingerprint` (`@agent-workflows/routes`, overrides included) and `opencode --version`. Inputs come
-  through the `FingerprintSource` port. `fsFingerprintSource` reads the agent dirs and OpenCode once per process,
-  caches them, and never asks OpenCode for a workflow without agents. Tests pass a fake.
+  through the `FingerprintSource` port. `fsFingerprintSource` re-reads an agent's files only when a size or mtime
+  changed (a directory walk and a `stat` per file per admission), so an edited `AGENTS.md` changes the fingerprint
+  without a restart. It runs `opencode --version` once per process (a failed run is retried) and never for a
+  workflow without agents. Tests pass a fake.
 - **Purpose.** On the run span (`agw.purpose`) and in every Argo row's `raw.purpose`. The projection refuses a run
   without one.
 - **Tokens.** `usageFromOpenCodeMessages(messages, { model })` turns an agent session's
@@ -50,12 +52,14 @@ telemetry so its totals land on the run span before telemetry ends it. `platform
 | Span | Parent | Attributes |
 |-|-|-|
 | `agw.run <workflow>` | the caller's `traceparent`; else a root in a trace derived from the root run id; a child run hangs under its parent's fan-out step span | `agw.workflow.id`, `.version`, `agw.run.id`, `.root_id`, `.parent_id`, `.resumed`, `.status`, `agw.purpose`, `agw.fingerprint`, record totals (`agw.tokens.*`, `agw.cost.usd`, `.unpriced_calls`, `agw.tool_calls`, `agw.run.wall_ms`), `agw.error.*` |
-| `agw.step <id>` | its run span | `agw.step.id`, `.kind`, `.attempt`, `.replay`, `.status`, `agw.tokens.*`, `agw.cost.*`, `agw.tool_calls`, `gen_ai.request.model` (one model), `opencode.session.id` (agent steps, from the journaled handle's `sessionId`) |
+| `agw.step <id>` | its run span | `agw.step.id`, `.kind`, `.attempt`, `.replay`, `.status`, `agw.tokens.*`, `agw.cost.*`, `agw.tool_calls`, `gen_ai.request.model` (one model), `opencode.session.id` (agent steps, from `StepPostArgs.handle.sessionId`) |
 | event `tool.pre` / `tool.post` | its step span | `agw.tool.name`, `.call_id`, `.error` |
 
 - **Admission span id** is derived from the run id (`admissionSpanId`). A resumed run opens a new span in the same
   trace, linked to it (`agw.link: admission`). The process that was stopped ends its open spans with
   `agw.suspended`.
+- **Steps without `stepPost`** (a cancel cleanup ended them, or an infra error left the run) end with their run:
+  `agw.step.status` `cancelled`, or `error` with an error status; never `agw.suspended`.
 - **No open span** at `runPost` means one of three things: a re-delivery in another process, a run cancelled while
   pending, or a run refused before telemetry's `runPre`. A short span carries the outcome (`agw.run.outcome_only`),
   linked to the admission span.
@@ -75,6 +79,10 @@ Without a handler, spans are lost on `process.exit`, on a natural exit and on SI
 | `exit` | can't await; logs how many spans an explicit `process.exit` loses |
 
 - **Bounded.** Every flush and shutdown is capped at `flushTimeoutMs` (default 5 s). A timeout is logged.
+- **Span text is redacted.** Error messages and tool errors on spans have bearer tokens, `sk-` keys and
+  `key=`/`token=`/`secret=` values replaced and are capped at 500 characters; the journal keeps the full message.
+- **Diagnostics.** OTel's `diag` logger is process-global: installed once, it forwards to the most recently
+  constructed `Telemetry`'s logger and is unhooked at its shutdown. One `Telemetry` per process is the shape.
 - **Never silent.** A failed export is logged with its span count by the exporter wrapper. Spans the batch queue
   dropped are counted (ended minus exported minus failed) and logged at the next flush. OTel's own diagnostics go
   to the same logger at `warn`.
@@ -98,12 +106,22 @@ explicitly.
 rows and posts them through the `ArgoTransport` port. Production: `POST <ARGO_URL>/usage/records`, bearer
 `ARGO_API_SECRET`, Argo's `UsageRecordInputSchema` (copied verbatim as `ArgoUsageRecordInput`).
 
-- **Exactly once.** Each batch is selected `for update skip locked` and marked in the same transaction, so racing
-  flushers never post a step twice. A step is marked only after Argo accepted its rows.
-- **Retried.** A failed post rolls back and backs off (5 s doubling to 5 min). The next `flush()` after the delay
-  retries the same rows.
+- **After the record.** Only steps of runs whose `runPost` was delivered (`post_hooks_at`), so `raw` carries the
+  run's wall time, trace id and friction.
+- **No transaction spans a post.** A batch is claimed in one statement (`for update skip locked`, a random
+  `argo_claim` token, `argo_claimed_until`), posted outside any transaction, then marked synced where the token
+  still matches. Racing flushers never post the same claimed step; a crashed flusher's claim expires (2 min).
+- **Own pool.** The outbox has its own connection pool, so a slow or hanging Argo cannot starve the record's writes.
+  A post that does not answer in `postTimeoutMs` (30 s) counts as transient.
+- **Transient vs permanent.** A 5xx, 408, 429, network error or timeout releases the claim and backs off (5 s
+  doubling to 5 min); the next `flush()` after the delay retries. A row that cannot be built, fails Argo's schema
+  or gets a 4xx is permanent: the batch is re-posted step by step and only the bad step is quarantined
+  (`argo_error`, logged, counted in `FlushResult.quarantined`). The rest keep flowing.
 - **Crash after the post.** The rows are posted again; Argo's upsert on `(source, source_id, machine)` absorbs it.
-- **No usage, no row.** Steps without usage are marked without a post.
+- **No usage, no row.** Only steps with tokens or a cost are outbox candidates (the `steps_argo_outbox` index).
+- **`https` only.** `httpArgoTransport` refuses a non-https `ARGO_URL` unless it is loopback.
+- **Machine id.** `AGW_MACHINE`; unset, the host name with a logged warning. It is part of Argo's upsert key, so it
+  must stay stable across restarts and renames, or a re-post lands as a second row.
 - **Off without config.** No `ARGO_URL`/`ARGO_API_SECRET` means no outbox, and the steps wait in Postgres.
 
 | Run record / step | Argo `usage_record` | Note |
@@ -114,14 +132,15 @@ rows and posts them through the `ArgoTransport` port. Production: `POST <ARGO_UR
 | step start (`steps.started_at`) | `ts` | |
 | step finish − start | `duration_ms` | |
 | model | `model`, `model_norm` | route table holds canonical ids |
-| tokens input / output / cache read / reasoning | `input_tokens` = input − cache read, `output_tokens` = output − reasoning, `cache_read_tokens`, `reasoning_tokens` | **additive contract**; `cache_write_tokens` = 0 (the runtime has no cache-write field; writes stay in input) |
+| tokens input / output / cache read / cache write / reasoning | `input_tokens` = input − cache read − cache write, `output_tokens` = output − reasoning, `cache_read_tokens`, `cache_write_tokens`, `reasoning_tokens` | **additive contract** |
 | cost | `cost_usd`, `cost_source` = `reported` (or `none` when unpriced) | |
 | step failed/cancelled, or run `invalid_output` | `outcome` = `error` (else `ok`) | |
 | — | `billing` = `iu`, `account` = null, `workspace` = `private`, `project` = null | `project` needs the caller's cwd (CLI, Wave 3) |
-| — | `machine` = `AGW_MACHINE` or the host name | part of Argo's upsert key |
+| — | `machine` = `AGW_MACHINE` (else the host name, warned) | part of Argo's upsert key; must be stable |
 | run id, step id, root id, purpose, fingerprint, trace id, session id, tool calls, unpriced calls, run outcome, run wall ms, scores, friction | `raw` | Argo has no columns for them; `raw.scores` is null until scorers exist |
 
-**Why normalise.** Provider usage is not additive. `output` includes reasoning, `input` includes cache reads. Argo
+**Why normalise.** Provider usage is not additive. `output` includes reasoning, `input` includes cache reads and
+writes. Argo
 adds `reasoning_tokens` on top of `output_tokens`, so an unnormalised row counts reasoning twice
 (`test/argo-rows.test.ts`).
 
@@ -131,8 +150,8 @@ adds `reasoning_tokens` on top of `output_tokens`, so an unnormalised row counts
   session.
 - **Cache reads are recorded.** They stay visible (`tokens_cache_read`, `cache_read_tokens`), so a prompt-cache
   regression shows up as a fingerprint's falling cache share.
-- **Cache writes are invisible.** OpenCode reports them, but the runtime's `Usage` has no field. They fold into
-  input, which overstates Argo's fresh input by the write count.
+- **Cache writes are recorded.** They have their own bucket end to end (`Tokens.cacheWrite`, `tokens_cache_write`,
+  `cache_write_tokens`), so a prompt that keeps rewriting the cache shows as write volume, not as fresh input.
 - **A fingerprint change is expected to cost a cold cache once.** It means a changed `AGENTS.md`, skill, route or
   OpenCode version, and a changed prompt head misses the provider cache. Compare cache share by fingerprint before
   calling a prompt change cheaper.
@@ -144,8 +163,9 @@ runs through every test, never a single run:
 
 | File | Covers |
 |-|-|
-| `platform.test.ts` | 18 concurrent top-level runs with a fan-out: run record, fingerprint, purpose, span tree; `runPost` re-delivery; resume of 5 runs in a second "process" keeps the admission fingerprint and links a new run span in the same trace |
-| `outbox.test.ts` | 24 concurrent runs (72 runs incl. children), two racing flushers, an Argo outage then recovery: every row exactly once, none lost; backoff timing |
+| `platform.test.ts` | 18 concurrent top-level runs with a fan-out: run record, fingerprint, purpose, span tree; `runPost` re-delivery; `wall_ms` null for a never-started run; a fingerprint source blip retried; resume of 5 runs in a second "process" keeps the admission fingerprint and links a new run span in the same trace |
+| `outbox.test.ts` | 24 concurrent runs (72 runs incl. children), two racing flushers, an Argo outage then recovery: every row exactly once, none lost; a hanging Argo with 24 concurrent runs: every record written, no connection held; poison rows quarantined; `runPost` gating; backoff; machine id |
+| `telemetry.test.ts` | steps ended without `stepPost`, session id from the handle, redaction, the diag sink |
 | `flush.test.ts` | subprocess with a fake OTLP receiver: SIGTERM and SIGINT re-raised after flush, crash exit 1, export failure and dropped spans logged |
 | `fingerprint.test.ts`, `opencode-usage.test.ts`, `argo-rows.test.ts` | pure: stability, each input changes the hash, the OpenCode conversion, the additive projection |
 
