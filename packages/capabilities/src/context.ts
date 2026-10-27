@@ -2,11 +2,12 @@ import { z } from 'zod'
 
 export const usageSchema = z.object({
   model: z.string(),
-  /** Raw provider counts: `input` includes cache reads, `output` includes reasoning. */
+  /** Raw provider counts: `input` includes cache reads and writes, `output` includes reasoning. `cacheWrite` is set by wires that report it. */
   tokens: z.object({
     input: z.number().int().nonnegative(),
     output: z.number().int().nonnegative(),
     cacheRead: z.number().int().nonnegative(),
+    cacheWrite: z.number().int().nonnegative().optional(),
     reasoning: z.number().int().nonnegative(),
   }),
   /** USD; `null` when neither the provider nor the route's rate gives a price, never 0. */

@@ -84,9 +84,9 @@ function toUsage(usage: z.output<typeof usageSchema>, model: string): AttemptUsa
       input: (usage.input_tokens ?? 0) + cacheRead + cacheWrite,
       output: usage.output_tokens ?? 0,
       cacheRead,
+      cacheWrite,
       reasoning: 0,
     },
-    ...(cacheWrite > 0 ? { cacheWrite } : {}),
     cost: typeof usage.cost === 'number' && usage.cost >= 0 ? usage.cost : null,
   }
 }

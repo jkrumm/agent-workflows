@@ -40,13 +40,13 @@ await title.call({ text: 'x' }) // also callable on its own
 ```ts
 type Usage = {
   model: string
-  tokens: { input: number; output: number; cacheRead: number; reasoning: number }
+  tokens: { input: number; output: number; cacheRead: number; cacheWrite?: number; reasoning: number }
   cost: number | null
   costSource: 'provider' | 'rate' | 'unknown'
 }
 ```
 
-Tokens are the raw provider counts: `input` includes cache reads, `output` includes reasoning. The Argo projection normalises later. `cost` is the provider's `usage.cost`, else the route's rate (input excluding cache, cache reads, cache writes and output each at their own rate; cache tokens without the matching cache rate are `unknown`), else `null` with `costSource: 'unknown'`, never 0 (`costFromUsage` in routes). A re-ask after a rejected answer reports each attempt, and a call whose content turned out unusable is reported before the error is thrown. Adapters report every attempt that came back with usage, including one that then failed (a stream cut before its finish chunk, a 200 whose body does not fit), through an `onUsage` hook on the port. The transport's own retries of requests that returned no usage (429, 5xx, a reset) report nothing. A call that returned no usage at all is reported with zero tokens and `unknown` cost. A stream that ends without a finish chunk counts as a dropped connection and is retried; a body that cannot be read or parsed is retried, and parsed JSON that does not fit the schema is not.
+Tokens are the raw provider counts: `input` includes cache reads and writes (`cacheWrite` is set by the Messages wire, which reports it), `output` includes reasoning. The Argo projection normalises later. `cost` is the provider's `usage.cost`, else the route's rate (input excluding cache, cache reads, cache writes and output each at their own rate; cache tokens without the matching cache rate are `unknown`), else `null` with `costSource: 'unknown'`, never 0 (`costFromUsage` in routes). A re-ask after a rejected answer reports each attempt, and a call whose content turned out unusable is reported before the error is thrown. Adapters report every attempt that came back with usage, including one that then failed (a stream cut before its finish chunk, a 200 whose body does not fit), through an `onUsage` hook on the port. The transport's own retries of requests that returned no usage (429, 5xx, a reset) report nothing. A call that returned no usage at all is reported with zero tokens and `unknown` cost. A stream that ends without a finish chunk counts as a dropped connection and is retried; a body that cannot be read or parsed is retried, and parsed JSON that does not fit the schema is not.
 
 The runtime package defines its own step `addUsage`. This one is structurally identical (`Ctx.addUsage: (usage: Usage) => void`); the lead reconciles the type at merge.
 

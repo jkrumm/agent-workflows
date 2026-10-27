@@ -1,10 +1,12 @@
 import type { Effort } from '@agent-workflows/routes'
 
-/** Raw provider counts: `input` includes cache reads, `output` includes reasoning tokens. */
+/** Raw provider counts: `input` includes cache reads and writes, `output` includes reasoning tokens. */
 export interface Tokens {
   input: number
   output: number
   cacheRead: number
+  /** Tokens written to the prompt cache; absent on wires that report none. */
+  cacheWrite?: number
   reasoning: number
 }
 
@@ -35,8 +37,6 @@ export interface ChatResult {
 export interface AttemptUsage {
   model: string
   tokens: Tokens
-  /** Tokens written to the prompt cache (Anthropic's `cache_creation_input_tokens`), already inside `tokens.input`. Needed to price the call; absent when the wire reports none. */
-  cacheWrite?: number
   /** USD as the provider reports it (`usage.cost`); `null` when it does not. */
   cost: number | null
 }
