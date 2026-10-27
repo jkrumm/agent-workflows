@@ -135,10 +135,15 @@ function routeDiag(logger: Logger) {
 }
 
 const MAX_ERROR_ATTRIBUTE = 500
+/** Re-deliveries follow within the recovery backoff, long before this many later runs end. */
+const MAX_CLOSED_RUNS = 10_000
 const SECRETS: [RegExp, string][] = [
   [/\bBearer\s+[\w.~+/=-]+/gi, 'Bearer [redacted]'],
   [/\bsk-[\w-]{6,}/g, 'sk-[redacted]'],
-  [/\b(api[_-]?key|key|token|secret|password)=[^\s&"',;]+/gi, '$1=[redacted]'],
+  // `api_key=`, `token=` in a URL and env-style `IU_API_KEY=`, `ARGO_API_SECRET=`, `GITHUB_TOKEN=`.
+  [/\b([\w-]*(?:key|token|secret|password)[\w-]*)=[^\s&"',;]+/gi, '$1=[redacted]'],
+  // JSON: `"token": "…"`, `"api_key":"…"`, `"authorization": "…"`.
+  [/("[\w-]*(?:key|token|secret|password|authorization)[\w-]*"\s*:\s*)"(?:[^"\\]|\\.)*"/gi, '$1"[redacted]"'],
 ]
 
 /** Span text leaves the host: secrets-shaped substrings redacted, length capped. The journal keeps the original. */
@@ -175,6 +180,8 @@ export class Telemetry {
   private readonly runs = new Map<string, OpenRun>()
   private readonly steps = new Map<string, Span>()
   private readonly pending = new Map<string, Attributes>()
+  /** Runs whose span this process already ended: a re-delivered `runPost` must not open a second one. Bounded. */
+  private readonly closedRuns = new Set<string>()
   private reportedLoss = 0
   private closed: Promise<void> | null = null
 
@@ -212,6 +219,7 @@ export class Telemetry {
 
   /** Attributes for a run's span; held until the span opens when it is not open yet. */
   annotateRun(runId: string, attributes: Attributes) {
+    if (this.closedRuns.has(runId)) return
     const open = this.runs.get(runId)
     if (open) open.span.setAttributes(attributes)
     else this.pending.set(runId, { ...this.pending.get(runId), ...attributes })
@@ -403,6 +411,7 @@ export class Telemetry {
   }
 
   private closeRun(args: RunPostArgs) {
+    if (this.closedRuns.has(args.runId)) return
     let open = this.runs.get(args.runId)
     if (!open) {
       // No span open here: runPost re-delivered by another process, a run cancelled while pending, or one refused
@@ -439,6 +448,11 @@ export class Telemetry {
     span.end(args.finishedAt)
     this.pending.delete(args.runId)
     this.runs.delete(args.runId)
+    this.closedRuns.add(args.runId)
+    if (this.closedRuns.size > MAX_CLOSED_RUNS) {
+      const oldest = this.closedRuns.values().next().value
+      if (oldest !== undefined) this.closedRuns.delete(oldest)
+    }
   }
 
   /**

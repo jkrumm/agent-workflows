@@ -16,7 +16,7 @@ export type PlatformOptions = {
   /** Default: `argoTransportFromEnv()`. Null: no outbox; steps stay unsynced in Postgres until one runs. */
   argo?: { transport?: ArgoTransport | null } & Pick<
     OutboxOptions,
-    'machine' | 'billing' | 'batchSize' | 'backoff' | 'now' | 'postTimeoutMs' | 'claimTtlMs'
+    'machine' | 'billing' | 'batchSize' | 'backoff' | 'now' | 'postTimeoutMs' | 'claimTtlMs' | 'chunkSize'
   >
 }
 
@@ -65,6 +65,7 @@ export function platformMiddleware(options: PlatformOptions): Platform {
     outbox,
     async close() {
       await telemetry.shutdown()
+      await outbox?.close()
       await db.close()
       await outboxDb?.close()
     },

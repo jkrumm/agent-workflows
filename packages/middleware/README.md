@@ -60,6 +60,8 @@ telemetry so its totals land on the run span before telemetry ends it. `platform
   `agw.suspended`.
 - **Steps without `stepPost`** (a cancel cleanup ended them, or an infra error left the run) end with their run:
   `agw.step.status` `cancelled`, or `error` with an error status; never `agw.suspended`.
+- **One run span per process.** A `runPost` re-delivered in the process that already ended the run's span (a hook
+  threw on the first delivery) is a no-op for telemetry; the last 10,000 ended runs are remembered.
 - **No open span** at `runPost` means one of three things: a re-delivery in another process, a run cancelled while
   pending, or a run refused before telemetry's `runPre`. A short span carries the outcome (`agw.run.outcome_only`),
   linked to the admission span.
@@ -79,8 +81,10 @@ Without a handler, spans are lost on `process.exit`, on a natural exit and on SI
 | `exit` | can't await; logs how many spans an explicit `process.exit` loses |
 
 - **Bounded.** Every flush and shutdown is capped at `flushTimeoutMs` (default 5 s). A timeout is logged.
-- **Span text is redacted.** Error messages and tool errors on spans have bearer tokens, `sk-` keys and
-  `key=`/`token=`/`secret=` values replaced and are capped at 500 characters; the journal keeps the full message.
+- **Span text is redacted.** Error messages and tool errors on spans have bearer tokens, `sk-` keys, `name=value`
+  pairs whose name contains key, token, secret or password (`api_key=`, `IU_API_KEY=`, `GITHUB_TOKEN=`) and the
+  same names as JSON strings (`"token": "…"`, plus `"authorization"`) replaced, and are capped at 500 characters;
+  the journal keeps the full message.
 - **Diagnostics.** OTel's `diag` logger is process-global: installed once, it forwards to the most recently
   constructed `Telemetry`'s logger and is unhooked at its shutdown. One `Telemetry` per process is the shape.
 - **Never silent.** A failed export is logged with its span count by the exporter wrapper. Spans the batch queue
@@ -109,17 +113,23 @@ rows and posts them through the `ArgoTransport` port. Production: `POST <ARGO_UR
 - **After the record.** Only steps of runs whose `runPost` was delivered (`post_hooks_at`), so `raw` carries the
   run's wall time, trace id and friction.
 - **No transaction spans a post.** A batch is claimed in one statement (`for update skip locked`, a random
-  `argo_claim` token, `argo_claimed_until`), posted outside any transaction, then marked synced where the token
-  still matches. Racing flushers never post the same claimed step; a crashed flusher's claim expires (2 min).
+  `argo_claim` token, `argo_claimed_until`), posted outside any transaction in chunks of up to 1000 (the claim is
+  renewed before each chunk), then marked synced where the token still matches. Racing flushers never post the same
+  claimed step; a crashed flusher's claim expires (2 min); a mark that matches fewer steps than claimed is warned.
 - **Own pool.** The outbox has its own connection pool, so a slow or hanging Argo cannot starve the record's writes.
   A post that does not answer in `postTimeoutMs` (30 s) counts as transient.
-- **Transient vs permanent.** A 5xx, 408, 429, network error or timeout releases the claim and backs off (5 s
-  doubling to 5 min); the next `flush()` after the delay retries. A row that cannot be built, fails Argo's schema
-  or gets a 4xx is permanent: the batch is re-posted step by step and only the bad step is quarantined
-  (`argo_error`, logged, counted in `FlushResult.quarantined`). The rest keep flowing.
+- **Transient vs permanent.** Only a row refusal is permanent: a row that cannot be built, fails Argo's schema, or
+  gets a 400/422. The batch is then re-posted step by step and only the bad step is quarantined (`argo_error`,
+  logged, counted in `FlushResult.quarantined`); the rest keep flowing. Everything else is transient and releases
+  the claim and backs off (5 s doubling to 5 min): 5xx, 408, 429, network errors, timeouts, redirects, and
+  401/403/404, which mean a wrong secret or URL (logged as an error, since it needs a human, never quarantined).
+- **Requeue.** `outbox.requeue({ runId? })` clears `argo_error` once the cause is fixed; the next flush posts them.
+- **Close.** `outbox.close()` refuses new flushes and waits for the one in flight; `platform.close()` calls it
+  before closing the outbox pool.
 - **Crash after the post.** The rows are posted again; Argo's upsert on `(source, source_id, machine)` absorbs it.
 - **No usage, no row.** Only steps with tokens or a cost are outbox candidates (the `steps_argo_outbox` index).
-- **`https` only.** `httpArgoTransport` refuses a non-https `ARGO_URL` unless it is loopback.
+- **`https` only.** `httpArgoTransport` refuses a non-https `ARGO_URL` unless it is loopback, and posts with
+  `redirect: 'error'` so the bearer never follows a redirect.
 - **Machine id.** `AGW_MACHINE`; unset, the host name with a logged warning. It is part of Argo's upsert key, so it
   must stay stable across restarts and renames, or a re-post lands as a second row.
 - **Off without config.** No `ARGO_URL`/`ARGO_API_SECRET` means no outbox, and the steps wait in Postgres.

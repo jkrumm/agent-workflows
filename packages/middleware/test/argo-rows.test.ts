@@ -4,6 +4,7 @@ import {
   ArgoUsageRecordInput,
   additiveTokens,
   argoRowsForStep,
+  ArgoPostError,
   httpArgoTransport,
   type OutboxStep,
   traceIdForRun,
@@ -222,5 +223,55 @@ describe('argo rows', () => {
     expect(() => httpArgoTransport({ url: 'https://argo.example.com/api', token: 't' })).not.toThrow()
     expect(() => httpArgoTransport({ url: 'http://127.0.0.1:9999/api', token: 't' })).not.toThrow()
     expect(() => httpArgoTransport({ url: 'http://localhost:9999/api', token: 't' })).not.toThrow()
+  })
+
+  test('a cost-only step (zero tokens, a price) keeps its row', () => {
+    const rows = argoRowsForStep(
+      step({
+        model: 'sonar',
+        tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0 },
+        cost: 0.005,
+        byModel: null,
+      }),
+      opts,
+    )
+    expect(rows.map((r) => [r.source_id, r.input_tokens, r.cost_usd, r.cost_source])).toEqual([
+      ['run_1:ask:sonar', 0, 0.005, 'reported'],
+    ])
+  })
+
+  test('the http transport: only 400/422 are row refusals; auth, routing, limits, 5xx and redirects are transient', async () => {
+    let status = 200
+    const server = Bun.serve({
+      port: 0,
+      hostname: '127.0.0.1',
+      fetch: (req) =>
+        new URL(req.url).pathname.startsWith('/moved')
+          ? Response.redirect('http://127.0.0.1:1/elsewhere', 307)
+          : new Response('nope', { status }),
+    })
+    try {
+      const transport = httpArgoTransport({ url: `http://127.0.0.1:${server.port}/api`, token: 't' })
+      const outcome = async (s: number) => {
+        status = s
+        const err = await transport.post([]).then(
+          () => null,
+          (e: unknown) => e,
+        )
+        return err instanceof ArgoPostError ? [err.status, err.permanent] : err
+      }
+      expect(await outcome(200)).toBeNull()
+      for (const s of [400, 422]) expect(await outcome(s)).toEqual([s, true])
+      for (const s of [401, 403, 404, 408, 429, 500, 503]) expect(await outcome(s)).toEqual([s, false])
+      const moved = httpArgoTransport({ url: `http://127.0.0.1:${server.port}/moved`, token: 't' })
+      const redirected = await moved.post([]).then(
+        () => null,
+        (e: unknown) => e,
+      )
+      expect(redirected).toBeInstanceOf(Error)
+      expect(redirected).not.toBeInstanceOf(ArgoPostError) // not a row refusal: transient
+    } finally {
+      await server.stop(true)
+    }
   })
 })

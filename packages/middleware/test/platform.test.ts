@@ -222,7 +222,7 @@ describe('platform middleware through a real runtime', () => {
     }
   })
 
-  test('runPost re-delivered: the record is the same, a run span for the outcome', async () => {
+  test('runPost re-delivered: the record is the same, one outcome-only span from another process', async () => {
     const platform = testPlatform(db.schema)
     const rt = testRuntime({ schema: db.schema, workflows: [unpriced], middleware: platform.middleware })
     await rt.open()
@@ -230,8 +230,10 @@ describe('platform middleware through a real runtime', () => {
       const { runId } = await rt.start(unpriced, { n: 1 }, { purpose: 'build' })
       await rt.wait(runId)
       const first = await settled(runId)
-      const runPost = platform.middleware.find((m) => m.name === 'record')?.runPost
-      const telemetryPost = platform.middleware.find((m) => m.name === 'telemetry')?.runPost
+      // Re-delivered by another process: its own platform, no span open for the run.
+      const other = testPlatform(db.schema)
+      const runPost = other.middleware.find((m) => m.name === 'record')?.runPost
+      const telemetryPost = other.middleware.find((m) => m.name === 'telemetry')?.runPost
       const args = {
         runId,
         workflowId: 'p.unpriced',
@@ -255,11 +257,20 @@ describe('platform middleware through a real runtime', () => {
         expect(again?.[key]).toEqual(first[key])
       }
       await platform.telemetry.flush()
-      const spans = byName(platform.spans.getFinishedSpans(), 'agw.run p.unpriced')
+      await other.telemetry.flush()
+      // In this process a second delivery is a no-op; the other process emits one outcome-only span.
+      await platform.middleware.find((m) => m.name === 'telemetry')?.runPost?.(args)
+      await platform.telemetry.flush()
+      expect(byName(platform.spans.getFinishedSpans(), 'agw.run p.unpriced')).toHaveLength(1)
+      const spans = [
+        ...byName(platform.spans.getFinishedSpans(), 'agw.run p.unpriced'),
+        ...byName(other.spans.getFinishedSpans(), 'agw.run p.unpriced'),
+      ]
       expect(spans).toHaveLength(2)
       expect(spans[1]?.attributes).toMatchObject({ 'agw.run.outcome_only': true, 'agw.run.status': 'done' })
       expect(spans[1]?.spanContext().traceId).toBe(spans[0]?.spanContext().traceId)
       expect(spans[1]?.links[0]?.context.spanId).toBe(admissionSpanId(runId))
+      await other.close()
     } finally {
       await rt.close()
       await platform.close()
@@ -319,6 +330,39 @@ describe('platform middleware through a real runtime', () => {
       expect((await rt.wait(runId)).status).toBe('done')
       expect((await settled(runId)).fingerprint).toBe(computeFingerprint('v1', defaultInputs()))
       expect(calls).toBe(2)
+    } finally {
+      await rt.close()
+      await platform.close()
+    }
+  })
+
+  test('a runPost re-delivered after the record threw: exactly one run span', async () => {
+    const platform = testPlatform(db.schema)
+    let throws = 1
+    const middleware = platform.middleware.map((m) =>
+      m.name !== 'record'
+        ? m
+        : {
+            ...m,
+            runPost: async (args: Parameters<NonNullable<typeof m.runPost>>[0]) => {
+              if (throws-- > 0) throw new Error('record sink blip')
+              await m.runPost?.(args)
+            },
+          },
+    )
+    const rt = testRuntime({ schema: db.schema, workflows: [unpriced], middleware })
+    await rt.open()
+    try {
+      const { runId } = await rt.start(unpriced, { n: 7 }, { purpose: 'build' })
+      await rt.wait(runId)
+      const row = await settled(runId)
+      expect(row).toMatchObject({ post_hooks_attempts: 1, unpriced_calls: 2 })
+      await platform.telemetry.flush()
+      const spans = platform.spans
+        .getFinishedSpans()
+        .filter((s) => s.name === 'agw.run p.unpriced' && attr(s, 'agw.run.id') === runId)
+      expect(spans).toHaveLength(1)
+      expect(spans[0]?.attributes['agw.run.outcome_only']).toBeUndefined()
     } finally {
       await rt.close()
       await platform.close()
