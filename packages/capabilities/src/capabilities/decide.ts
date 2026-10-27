@@ -1,7 +1,6 @@
-import { costFromUsage } from '@agent-workflows/routes'
 import { z } from 'zod'
 import { CapabilityError, fail } from '../errors.ts'
-import { type LlmDeps, resolve } from '../llm/model-call.ts'
+import { type LlmDeps, resolve, toUsage } from '../llm/model-call.ts'
 import { defineCapability } from '../procedure.ts'
 
 /** The decision API takes at most this many options per choice question. */
@@ -61,6 +60,8 @@ function cutPoint(text: string, max: number): number {
   return high >= 0xd800 && high <= 0xdbff ? max - 1 : max
 }
 
+const inRange = (p: number) => Number.isFinite(p) && p >= 0 && p <= 1
+
 const invalid = (reason: string) => fail('INVALID_OUTPUT', `decide: ${reason}`, { attempts: 1, reason })
 
 export const createDecide = (deps: LlmDeps) =>
@@ -77,6 +78,8 @@ export const createDecide = (deps: LlmDeps) =>
       }
       const kept = cutPoint(state, MAX_STATE_CHARS)
       const truncatedChars = state.length - kept
+      // The adapter reports every attempt that came back with usage; a call with none is reported unknown.
+      let reported = 0
       const result = await deps.transports.decision.decide(
         {
           model: route.model,
@@ -84,25 +87,19 @@ export const createDecide = (deps: LlmDeps) =>
           questions,
         },
         ctx.signal,
+        (attempt) => {
+          reported++
+          ctx.addUsage(toUsage(route, route.model, attempt))
+        },
       )
-      // The call is billed whatever the mapping below decides: report it first.
-      const cost = costFromUsage(
-        route.wire,
-        result.tokens ? { input_tokens: result.tokens.input, output_tokens: result.tokens.output } : null,
-        route.rate,
-      )
-      ctx.addUsage({
-        model: result.model,
-        tokens: { input: result.tokens?.input ?? 0, output: result.tokens?.output ?? 0, cacheRead: 0, reasoning: 0 },
-        cost: cost.usd,
-        costSource: cost.source,
-      })
+      if (reported === 0) ctx.addUsage(toUsage(route, result.model, undefined))
 
       const answers: z.output<typeof decideOutput>['answers'] = {}
       for (const [id, asked] of Object.entries(questions)) {
         const given = result.answers[id]
         if (!given) throw invalid(`no answer for question "${id}"`)
         if (given.type === 'boolean') {
+          if (!inRange(given.probability)) throw invalid(`"${id}": probability ${given.probability} is outside 0..1`)
           if (asked.type !== 'boolean') throw invalid(`question "${id}" is a choice but came back boolean`)
           answers[id] = {
             type: 'boolean',
@@ -117,6 +114,9 @@ export const createDecide = (deps: LlmDeps) =>
           throw invalid(`"${id}": "${given.choice}" is not one of the options`)
         const confidence = given.confidence ?? given.probabilities[given.choice]
         if (confidence === undefined) throw invalid(`no confidence for "${id}"`)
+        if (!inRange(confidence) || !Object.values(given.probabilities).every(inRange)) {
+          throw invalid(`"${id}": a probability or the confidence is outside 0..1`)
+        }
         answers[id] = { type: 'choice', choice: given.choice, confidence, probabilities: given.probabilities }
       }
       return { answers, model: result.model, truncatedChars }

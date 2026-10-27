@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { CapabilityError } from './errors.ts'
-import { chatStream, type FakeIuServer, messageResponse, startFakeIu } from './testing/index.ts'
+import { chatStream, type FakeIuServer, messageResponse, sse, startFakeIu } from './testing/index.ts'
 import { iuAnthropic, iuDecision, iuOpenai } from './transports/index.ts'
 
 let iu: FakeIuServer
@@ -159,10 +159,28 @@ describe('openai wire details', () => {
     expect(iu.requests[1]?.body.response_format).toBeUndefined()
   })
 
-  test('no usage chunk means undefined tokens, not zeros', async () => {
+  test('no usage chunk reports nothing; a usage chunk reports raw counts once', async () => {
+    const reported: unknown[] = []
     iu.on('chat', () => chatStream('ok', null))
-    const result = await iuOpenai({ env: env() }).complete(chatRequest, never())
-    expect(result).toMatchObject({ text: 'ok', stop: 'complete', tokens: undefined, cost: null })
+    const port = iuOpenai({ env: env() })
+    const result = await port.complete(chatRequest, never(), (u) => reported.push(u))
+    expect(result).toMatchObject({ text: 'ok', stop: 'complete' })
+    expect(reported).toEqual([])
+
+    iu.on('chat', () => chatStream('ok', { prompt_tokens: 7, completion_tokens: 3, cost: 0.5 }))
+    await port.complete(chatRequest, never(), (u) => reported.push(u))
+    expect(reported).toEqual([
+      { model: 'fake', tokens: { input: 7, output: 3, cacheRead: 0, reasoning: 0 }, cost: 0.5 },
+    ])
+  })
+
+  test('effort none is not sent as reasoning_effort, like the Messages wire', async () => {
+    iu.on('chat', () => chatStream('ok', null))
+    iu.on('messages', () => messageResponse('ok', null))
+    await iuOpenai({ env: env() }).complete({ ...chatRequest, effort: 'none' }, never())
+    await iuAnthropic({ env: env() }).complete({ ...chatRequest, effort: 'none' }, never())
+    expect(iu.requests[0]?.body.reasoning_effort).toBeUndefined()
+    expect(iu.requests[1]?.body.thinking).toBeUndefined()
   })
 
   test('a stream cut before its finish chunk is retried, not returned as a complete answer', async () => {
@@ -177,5 +195,99 @@ describe('openai wire details', () => {
     const error = await failure(iuOpenai({ env: env(), backoffMs: 0 }).complete(chatRequest, never()))
     expect(error.message).toContain('malformed')
     expect(iu.requests).toHaveLength(3)
+  })
+})
+
+describe('ports reject, they never throw synchronously', () => {
+  const request = { model: 'm', state: 's', questions: { q: { type: 'boolean', instructions: 'i' } } } as const
+  const calls = {
+    'iu-openai': (e: Record<string, string>) => iuOpenai({ env: e }).complete(chatRequest, never()),
+    'iu-anthropic': (e: Record<string, string>) => iuAnthropic({ env: e }).complete(chatRequest, never()),
+    'iu-decision': (e: Record<string, string>) => iuDecision({ env: e }).decide(request, never()),
+  }
+  for (const [name, call] of Object.entries(calls)) {
+    test(`${name}: missing credentials are a rejected promise`, async () => {
+      let promise: Promise<unknown> | undefined
+      expect(() => {
+        promise = call({})
+      }).not.toThrow()
+      expect(await failure(promise as Promise<unknown>)).toMatchObject({ code: 'NOT_CONFIGURED' })
+    })
+  }
+})
+
+describe('billing on failure paths', () => {
+  const usageChunk = { prompt_tokens: 20, completion_tokens: 4 }
+
+  test('a stream cut before its finish chunk still reports its usage, once per attempt', async () => {
+    iu.on('chat', () => sse([{ choices: [{ delta: { content: 'half' } }] }, { choices: [], usage: usageChunk }]))
+    const reported: unknown[] = []
+    const error = await failure(
+      iuOpenai({ env: env(), backoffMs: 0 }).complete(chatRequest, never(), (u) => reported.push(u)),
+    )
+    expect(error.message).toContain('without a finish reason')
+    expect(reported).toHaveLength(3)
+    expect(reported[0]).toMatchObject({ tokens: { input: 20, output: 4 } })
+  })
+
+  test('a 200 Messages body that does not fit still reports the usage it carries, and is not retried', async () => {
+    iu.on('messages', () => Response.json({ content: 'not an array', usage: { input_tokens: 9, output_tokens: 2 } }))
+    const reported: unknown[] = []
+    await failure(iuAnthropic({ env: env(), backoffMs: 0 }).complete(chatRequest, never(), (u) => reported.push(u)))
+    expect(reported).toEqual([{ model: 'm', tokens: { input: 9, output: 2, cacheRead: 0, reasoning: 0 }, cost: null }])
+    expect(iu.requests).toHaveLength(1)
+  })
+
+  test('a 200 decision body that does not fit still reports its usage', async () => {
+    iu.on('decide', () => Response.json({ answers: 'nope', usage: { input_tokens: 5, output_tokens: 1 } }))
+    const reported: unknown[] = []
+    const request = { model: 'm', state: 's', questions: { q: { type: 'boolean', instructions: 'i' } } } as const
+    await failure(iuDecision({ env: env(), backoffMs: 0 }).decide(request, never(), (u) => reported.push(u)))
+    expect(reported).toHaveLength(1)
+    expect(iu.requests).toHaveLength(1)
+  })
+})
+
+describe('body-read failures', () => {
+  const resetBody = () =>
+    new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('{"content":[{"type":"te'))
+          controller.error(new Error('ECONNRESET mid-body'))
+        },
+      }),
+    )
+  const request = { model: 'm', state: 's', questions: { q: { type: 'boolean', instructions: 'i' } } } as const
+
+  test('a reset mid-body is retryable on the Messages and decision wires', async () => {
+    let calls = 0
+    const fetcher = async () => {
+      calls++
+      return resetBody()
+    }
+    const anthropic = await failure(
+      iuAnthropic({ env: env(), backoffMs: 0, fetch: fetcher }).complete(chatRequest, never()),
+    )
+    expect(anthropic.message).toContain('could not be read')
+    expect(calls).toBe(3)
+    const decision = await failure(iuDecision({ env: env(), backoffMs: 0, fetch: fetcher }).decide(request, never()))
+    expect(decision.message).toContain('could not be read')
+    expect(calls).toBe(6)
+  })
+
+  test('a cut JSON body is retried, then succeeds when the next attempt is whole', async () => {
+    iu.on('messages', (_, attempt) =>
+      attempt === 0 ? new Response('{"content":[{"type":"te') : messageResponse('ok', null),
+    )
+    const result = await iuAnthropic({ env: env(), backoffMs: 0 }).complete(chatRequest, never())
+    expect(result.text).toBe('ok')
+    expect(iu.requests).toHaveLength(2)
+  })
+
+  test('parsed JSON that does not fit the schema is not retried', async () => {
+    iu.on('decide', () => Response.json({ unexpected: true }))
+    await failure(iuDecision({ env: env(), backoffMs: 0 }).decide(request, never()))
+    expect(iu.requests).toHaveLength(1)
   })
 })

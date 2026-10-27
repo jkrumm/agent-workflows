@@ -40,6 +40,24 @@ export async function failedResponse(res: Response, wire: string): Promise<Attem
   return new Attempt(`${prefix}: ${detail}`, retryable, res.status)
 }
 
+/**
+ * The JSON body of a 200. A body that cannot be read or parsed (a reset mid-body, a cut) is retryable;
+ * the caller decides what a parsed-but-invalid body means.
+ */
+export async function readJson(res: Response, wire: string): Promise<unknown> {
+  let text: string
+  try {
+    text = await res.text()
+  } catch (error) {
+    throw new Attempt(`${wire} body could not be read: ${describe(error)}`, true)
+  }
+  try {
+    return JSON.parse(text)
+  } catch {
+    throw new Attempt(`${wire} body is not JSON (cut or garbled)`, true)
+  }
+}
+
 /** Run `attempt` until it succeeds, fails fast, or the attempts are used up; 0.5 s, 1.5 s, 4.5 s apart. */
 export async function withRetries<T>(options: HttpOptions, signal: AbortSignal, attempt: () => Promise<T>): Promise<T> {
   const attempts = options.attempts ?? DEFAULTS.attempts

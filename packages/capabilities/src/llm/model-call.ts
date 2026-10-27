@@ -10,7 +10,7 @@ import type { z } from 'zod'
 import type { Ctx, Usage } from '../context.ts'
 import { CapabilityError, fail } from '../errors.ts'
 import type { Env } from '../transports/config.ts'
-import type { ChatResult, IuTransports } from '../transports/port.ts'
+import type { AttemptUsage, ChatResult, IuTransports } from '../transports/port.ts'
 
 /** What the model-backed capabilities are built from. Handlers close over it; `ctx` stays `{ signal, addUsage }`. */
 export interface LlmDeps {
@@ -37,17 +37,15 @@ export function resolve(deps: LlmDeps, routeId: RouteId): ResolvedRoute {
   }
 }
 
-function usageOf(route: ResolvedRoute, result: ChatResult): Usage {
-  const tokens = result.tokens ?? { input: 0, output: 0, cacheRead: 0, reasoning: 0 }
+/** A reported attempt as a `Usage`; `undefined` stands for a call the provider returned no usage for. */
+export function toUsage(route: ResolvedRoute, model: string, attempt: AttemptUsage | undefined): Usage {
+  const tokens = attempt?.tokens ?? { input: 0, output: 0, cacheRead: 0, reasoning: 0 }
   const cost = costFromUsage(
     route.wire,
-    {
-      cost: result.cost,
-      ...(result.tokens ? { input_tokens: tokens.input, output_tokens: tokens.output } : {}),
-    },
+    attempt ? { cost: attempt.cost, input_tokens: tokens.input, output_tokens: tokens.output } : null,
     route.rate,
   )
-  return { model: result.model, tokens, cost: cost.usd, costSource: cost.source }
+  return { model: attempt?.model ?? model, tokens, cost: cost.usd, costSource: cost.source }
 }
 
 /** The error for an unusable answer, or null when `result.text` can be used. */
@@ -97,6 +95,9 @@ export async function complete(deps: LlmDeps, args: CompleteArgs): Promise<{ tex
   if (!port) {
     throw fail('NOT_CONFIGURED', `${route.id}: wire "${route.wire}" is not a single-call text wire`)
   }
+  // The adapter reports every attempt that came back with usage, failed ones included. A call that
+  // returned none is still a call: report it with unknown tokens and cost.
+  let reported = 0
   const result = await port.complete(
     {
       model: route.model,
@@ -109,8 +110,12 @@ export async function complete(deps: LlmDeps, args: CompleteArgs): Promise<{ tex
         (route.effort && route.effort !== 'none' ? DEFAULT_MAX_OUTPUT_WITH_EFFORT : DEFAULT_MAX_OUTPUT),
     },
     args.ctx.signal,
+    (attempt) => {
+      reported++
+      args.ctx.addUsage(toUsage(route, route.model, attempt))
+    },
   )
-  args.ctx.addUsage(usageOf(route, result))
+  if (reported === 0) args.ctx.addUsage(toUsage(route, result.model, undefined))
   const failure = contentFailure(route, result)
   if (failure) throw failure
   return { text: result.text, route }
