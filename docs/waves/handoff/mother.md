@@ -4,7 +4,7 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
 `docs/waves/PLAN.md` and this file, then continues from **Next action**.
 
 ## State
-- Wave 1 done 2026-10-27 (retro in concept.md). Active wave: 2 (Core runtime, P1a).
+- Waves 1–2 done (retros in concept.md). Active wave: 3 (CLI, agent host, deploy, P1b) — the first deploy.
 - Lead's close-out channel: `docs/waves/handoff/lead.md` (the mother owns PLAN.md and the retro log;
   the lead writes per-step verdicts, Left behind, gate evidence and retro notes there, then idles).
 - dotfiles is free: P0 done (owner, 2026-10-27).
@@ -13,10 +13,12 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
   `com.jkrumm.vps-pg-backup` is ours: P0b maps it in dotfiles `docs/architecture.md`. Relayed to the lead.
 
 ## Lead
-- Wave 1 lead closed at 43% context; rotated at the wave boundary (Wave 2 is the heaviest).
-- `agent-workflows-w1` (pane w40:p8, tab "wave 1"), Opus/high, fresh, spawned 2026-10-27 for Wave 2.
+- `agent-workflows-w1` (pane w40:pG), Opus/high, fresh, spawned 2026-10-28 ~01:00 for Wave 3.
   Rotation policy: a fresh lead per wave unless the last one closed under ~30% context.
 - The mother is agent `agent-workflows-mother` (pane w40:p1).
+
+- 2026-10-28: Max room is tight (iu and me at ~98% weekly; me resets 10-29 06:00, iu 10-28 16:00);
+  `rd` pauses rather than spilling. A pause is not a stop.
 
 ## Open decisions
 - none
@@ -30,4 +32,4 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
 
 ## Next action
 - Watch the lead (`wave-watch.sh --agents agent-workflows-w1 --heartbeat 9`, bounded 10 min), read
-  `handoff/lead.md` on idle, write Wave 2's Left behind and retro, flip Wave 3 active, rotate the lead.
+  `handoff/lead.md` on idle, write Wave 3's Left behind and retro, flip Wave 4 active, rotate the lead.
