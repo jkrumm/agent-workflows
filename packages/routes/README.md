@@ -44,7 +44,9 @@ AGW_ROUTES='{"review.angle":{"model":"<model-id>","effort":"high"},"cheap.classi
 
 ## Cost
 
-`costFromUsage` returns the provider's `usage.cost` when present and valid (`source: 'provider'`, a reported `0` stays `0`). Otherwise it prices `input`/`output` tokens with the route's rate (`source: 'rate'`; cached input bills at the input rate, reasoning tokens are already in the output count). With neither it returns `{ usd: null, source: 'unknown' }`, never 0. The decision API drops IU's cost, so `decide` carries a rate.
+`costFromUsage` returns the provider's `usage.cost` when present and valid (`source: 'provider'`, a reported `0` stays `0`). Otherwise it prices the route's `rate` (`source: 'rate'`): input excluding cache tokens at `inputPerM`, cache reads at `cacheReadPerM`, cache writes at `cacheWritePerM`, output at `outputPerM` (reasoning tokens are already in the output count). Cache tokens against a rate without the matching cache rate, or neither cost nor rate, return `{ usd: null, source: 'unknown' }`: never free, never 0. `input_tokens` (Anthropic) excludes cache tokens; `prompt_tokens` and `inputTokens` include them.
+
+Rates are carried by every route whose wire reports no cost: `decide` (the decision API drops IU's cost; UE price list in agent-gateway's `decision.ts`) and the Haiku 5.5 EU routes (`cheap.summarize`, `cheap.title`, `review.angle`, `review.synthesis`, `check`): $0.10 in, $0.50 out, $0.01 cache read, $0.125 cache write per million. Source: agent-gateway `server/lib/models.ts`, `claude-haiku-5-5-eu` (hermes-agent `docs/model-context-reasoning.md`, vendor list; cache write 1.25x input), dated 2026-10-14. The vendor's 5x tier above 100K prompt tokens has no counterpart in `Rate`, so such a call is under-priced. The `iu-openai` routes (deepseek) carry no rate: IU reports `usage.cost` on that wire.
 
 ## Source seats (agent-gateway `GET /api/routing`, 2026-10-27)
 

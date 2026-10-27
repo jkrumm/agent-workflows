@@ -193,4 +193,59 @@ describe('costFromUsage', () => {
     )
     expect(costFromUsage('iu-openai', { cost: -1 }).source).toBe('unknown')
   })
+
+  describe('cache tokens', () => {
+    const cached = { inputPerM: 1, outputPerM: 5, cacheReadPerM: 0.1, cacheWritePerM: 1.25 }
+    const usd = (v: number) => ({ usd: expect.closeTo(v / 1e6, 12), source: 'rate' as const })
+
+    test('Anthropic: input_tokens excludes the cache counts, each bucket has its own rate', () => {
+      const usage = {
+        input_tokens: 1000,
+        output_tokens: 200,
+        cache_read_input_tokens: 4000,
+        cache_creation_input_tokens: 500,
+      }
+      expect(costFromUsage('iu-anthropic', usage, cached)).toEqual(usd(1000 * 1 + 4000 * 0.1 + 500 * 1.25 + 200 * 5))
+    })
+
+    test('OpenAI: prompt_tokens includes cached_tokens, which are priced at the read rate instead', () => {
+      const usage = { prompt_tokens: 5000, completion_tokens: 200, prompt_tokens_details: { cached_tokens: 4000 } }
+      expect(costFromUsage('iu-openai', usage, cached)).toEqual(usd(1000 * 1 + 4000 * 0.1 + 200 * 5))
+    })
+
+    test('a missing cache rate with cache tokens present is unknown, never free', () => {
+      const noCache = { inputPerM: 1, outputPerM: 5 }
+      expect(
+        costFromUsage('iu-anthropic', { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 5 }, noCache),
+      ).toEqual({
+        usd: null,
+        source: 'unknown',
+      })
+      expect(
+        costFromUsage(
+          'iu-anthropic',
+          { input_tokens: 1, output_tokens: 1, cache_creation_input_tokens: 5 },
+          {
+            ...noCache,
+            cacheReadPerM: 0.1,
+          },
+        ),
+      ).toEqual({ usd: null, source: 'unknown' })
+    })
+
+    test('zero cache tokens need no cache rate', () => {
+      const usage = {
+        input_tokens: 10,
+        output_tokens: 1,
+        cache_read_input_tokens: 0,
+        cache_creation_input_tokens: null,
+      }
+      expect(costFromUsage('iu-anthropic', usage, { inputPerM: 1, outputPerM: 5 })).toEqual(usd(10 * 1 + 1 * 5))
+    })
+
+    test('the provider cost still wins over cache pricing', () => {
+      const usage = { cost: 0.5, input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 5 }
+      expect(costFromUsage('iu-anthropic', usage, cached)).toEqual({ usd: 0.5, source: 'provider' })
+    })
+  })
 })

@@ -12,10 +12,18 @@ export type Effort = (typeof EFFORTS)[number]
 export const MAX_OUTPUT_TOKENS = 200_000
 const maxOutputTokens = z.int().positive().max(MAX_OUTPUT_TOKENS)
 
-/** USD per million tokens, for wires whose provider reports no cost. Zod 4 numbers are finite. */
+/**
+ * USD per million tokens, for wires whose provider reports no cost. Zod 4 numbers are finite.
+ * The cache rates are optional: a model that never reports cache tokens needs neither, and a call
+ * that does report them against a rate without the matching cache rate is priced `unknown`.
+ */
 export const rateSchema = z.strictObject({
   inputPerM: z.number().nonnegative(),
   outputPerM: z.number().nonnegative(),
+  /** Reads of a prompt-cache entry. */
+  cacheReadPerM: z.number().nonnegative().optional(),
+  /** Writes of a prompt-cache entry. */
+  cacheWritePerM: z.number().nonnegative().optional(),
 })
 export type Rate = z.infer<typeof rateSchema>
 

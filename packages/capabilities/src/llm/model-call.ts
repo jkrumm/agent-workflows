@@ -42,7 +42,16 @@ export function toUsage(route: ResolvedRoute, model: string, attempt: AttemptUsa
   const tokens = attempt?.tokens ?? { input: 0, output: 0, cacheRead: 0, reasoning: 0 }
   const cost = costFromUsage(
     route.wire,
-    attempt ? { cost: attempt.cost, input_tokens: tokens.input, output_tokens: tokens.output } : null,
+    attempt
+      ? {
+          cost: attempt.cost,
+          // `tokens.input` counts cache reads and writes, as `prompt_tokens` does.
+          prompt_tokens: tokens.input,
+          completion_tokens: tokens.output,
+          cache_read_input_tokens: tokens.cacheRead,
+          cache_creation_input_tokens: attempt.cacheWrite ?? 0,
+        }
+      : null,
     route.rate,
   )
   return { model: attempt?.model ?? model, tokens, cost: cost.usd, costSource: cost.source }

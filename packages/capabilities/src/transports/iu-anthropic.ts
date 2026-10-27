@@ -76,15 +76,17 @@ function body(request: ChatRequest) {
 
 function toUsage(usage: z.output<typeof usageSchema>, model: string): AttemptUsage {
   const cacheRead = usage.cache_read_input_tokens ?? 0
+  const cacheWrite = usage.cache_creation_input_tokens ?? 0
   return {
     model,
     // Thinking tokens are inside `output_tokens` on this wire and not reported separately.
     tokens: {
-      input: (usage.input_tokens ?? 0) + cacheRead + (usage.cache_creation_input_tokens ?? 0),
+      input: (usage.input_tokens ?? 0) + cacheRead + cacheWrite,
       output: usage.output_tokens ?? 0,
       cacheRead,
       reasoning: 0,
     },
+    ...(cacheWrite > 0 ? { cacheWrite } : {}),
     cost: typeof usage.cost === 'number' && usage.cost >= 0 ? usage.cost : null,
   }
 }
