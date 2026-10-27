@@ -21,7 +21,10 @@ export type RunRow = {
   traceparent: string | null
   version_started: string
   started_at: Date | null
+  cancel_requested_at: Date | null
 }
+
+export type CancelledStep = { run_id: string; step_id: string; kind: StepKind; handle: AgentHandleState | null }
 
 export type AgentHandleState = { handle: Json; prompted: boolean }
 
@@ -130,7 +133,7 @@ export class Journal {
   async getRun(id: string): Promise<RunRow | null> {
     const { rows } = await this.query<RunRow>(
       `select id, workflow, parent_id, root_id, status, purpose, input, output, error, error_kind, traceparent,
-         version_started, started_at
+         version_started, started_at, cancel_requested_at
        from ${this.runs} where id = $1`,
       [id],
     )
@@ -180,25 +183,24 @@ export class Journal {
       )
       await client.query('commit')
       if (res.rowCount) return true
-      await this.assertLease(fence)
-      return false
     } catch (err) {
       await client.query('rollback').catch(() => {})
-      if (err instanceof InfraError) throw err
       throw new InfraError(`journal: ${errorMessage(err)}`, { cause: err })
     } finally {
       client.release()
     }
+    // After the release: a second checkout while holding one could exhaust the pool.
+    await this.assertLease(fence)
+    return false
   }
 
-  /** Terminal write (a refused run ends straight from pending). A cancel that landed first keeps it `cancelled`. */
+  /** Terminal write (a refused run ends straight from pending). False when another writer ended it first. */
   async finishRun(id: string, fence: Fence, end: RunEnd): Promise<boolean> {
-    const from = end.status === 'cancelled' ? `('pending', 'running', 'cancelled')` : `('pending', 'running')`
     return this.fenced(
       fence,
       `update ${this.runs} set status = $4, output = $5, error = $6, error_kind = $7, version_finished = $8,
          finished_at = now(), updated_at = now()
-       where id = $1 and status in ${from} and ${this.fence(2, 3)}`,
+       where id = $1 and status in ('pending', 'running') and ${this.fence(2, 3)}`,
       [
         id,
         fence.rootId,
@@ -271,22 +273,49 @@ export class Journal {
     )
   }
 
-  /** Top-level runs this process can drive, oldest first. */
-  async claimable(workflows: string[], limit: number): Promise<string[]> {
+  /**
+   * Top-level runs this process may drive, oldest first: pending runs of workflows below their concurrency limit,
+   * then running ones (orphans to resume, or held elsewhere and answered `busy` by the lock). Two lists, so a
+   * backlog of one kind never hides the other.
+   */
+  async claimable(workflows: string[], saturated: string[], limit: number): Promise<string[]> {
     const { rows } = await this.query<{ id: string }>(
-      `select id from ${this.runs}
-       where parent_id is null and status in ('pending', 'running') and workflow = any($1)
-       order by created_at limit $2`,
-      [workflows, limit],
+      `(select id from ${this.runs}
+        where parent_id is null and status = 'pending' and workflow = any($1) and not (workflow = any($2))
+        order by created_at limit $3)
+       union all
+       (select id from ${this.runs}
+        where parent_id is null and status = 'running' and workflow = any($1)
+        order by created_at limit $3)`,
+      [workflows, saturated, limit],
     )
     return rows.map((r) => r.id)
   }
 
-  /** Cancels the run and every run below it that has not ended. Returns the ids that changed. */
+  /** Top-level runs in `running` per workflow, across all processes. */
+  async runningByWorkflow(workflows: string[]): Promise<Map<string, number>> {
+    const { rows } = await this.query<{ workflow: string; n: number }>(
+      `select workflow, count(*)::int as n from ${this.runs}
+       where parent_id is null and status = 'running' and workflow = any($1) group by workflow`,
+      [workflows],
+    )
+    return new Map(rows.map((r) => [r.workflow, r.n]))
+  }
+
+  /**
+   * Cancels the run and every run below it that has not ended: a pending run ends `cancelled` at once; a running
+   * one gets `cancel_requested_at`, and the process driving it (or the next one to claim it) aborts the running
+   * step, aborts agent sessions and finalizes it. Returns the ids that changed.
+   */
   async cancel(id: string): Promise<string[]> {
     const { rows } = await this.query<{ id: string }>(
-      `update ${this.runs} set status = 'cancelled', error = 'cancelled', error_kind = 'cancelled',
-         updated_at = now(), finished_at = coalesce(finished_at, now())
+      `update ${this.runs} set
+         status = case when status = 'pending' then 'cancelled' else status end,
+         error = case when status = 'pending' then 'cancelled' else error end,
+         error_kind = case when status = 'pending' then 'cancelled' else error_kind end,
+         finished_at = case when status = 'pending' then now() else finished_at end,
+         cancel_requested_at = coalesce(cancel_requested_at, now()),
+         updated_at = now()
        where (id = $1 or left(id, length($1) + 1) = $1 || '/') and status in ('pending', 'running')
        returning id`,
       [id],
@@ -294,12 +323,37 @@ export class Journal {
     return rows.map((r) => r.id)
   }
 
-  async cancelledAmong(ids: string[]): Promise<string[]> {
+  async cancelRequestedAmong(ids: string[]): Promise<string[]> {
     const { rows } = await this.query<{ id: string }>(
-      `select id from ${this.runs} where id = any($1) and status = 'cancelled'`,
+      `select id from ${this.runs}
+       where id = any($1) and (status = 'cancelled' or cancel_requested_at is not null)`,
       [ids],
     )
     return rows.map((r) => r.id)
+  }
+
+  /** Marks every still-running step of the run and its descendants cancelled; returns them (agent handles to abort). */
+  async cancelRunningSteps(id: string, fence: Fence): Promise<CancelledStep[]> {
+    const { rows } = await this.query<CancelledStep>(
+      `update ${this.steps} set status = 'cancelled', error = 'cancelled', error_kind = 'cancelled', finished_at = now()
+       where (run_id = $1 or left(run_id, length($1) + 1) = $1 || '/') and status = 'running' and ${this.fence(2, 3)}
+       returning run_id, step_id, kind, handle`,
+      [id, fence.rootId, fence.token],
+    )
+    return rows
+  }
+
+  /** Ends every unfinished descendant of a cancelled run; returns them for their `runPost`. */
+  async cancelDescendants(id: string, fence: Fence): Promise<RunRow[]> {
+    const { rows } = await this.query<RunRow>(
+      `update ${this.runs} set status = 'cancelled', error = 'cancelled', error_kind = 'cancelled',
+         finished_at = now(), updated_at = now()
+       where left(id, length($1) + 1) = $1 || '/' and status in ('pending', 'running') and ${this.fence(2, 3)}
+       returning id, workflow, parent_id, root_id, status, purpose, input, output, error, error_kind, traceparent,
+         version_started, started_at, cancel_requested_at`,
+      [id, fence.rootId, fence.token],
+    )
+    return rows
   }
 
   /** Journals a steer for a running agent step; false when the step is not a running agent step. */

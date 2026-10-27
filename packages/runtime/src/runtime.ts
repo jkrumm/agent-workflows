@@ -52,6 +52,7 @@ const consoleLogger: Logger = {
 }
 
 const TERMINAL = new Set(['done', 'failed', 'cancelled'])
+const CANCELLED = { kind: 'cancelled' as const, message: 'cancelled' }
 const MAX_RECOVERY_BACKOFF_MS = 30_000
 const MAX_INFRA_BACKOFF_MS = 60_000
 
@@ -77,6 +78,9 @@ export class Runtime {
   private recoveryTimer: ReturnType<typeof setTimeout> | undefined
   private watchTimer: ReturnType<typeof setTimeout> | undefined
   private recoveryDelay: number
+  private steerQueue: Promise<void> = Promise.resolve()
+  /** The tick currently running, awaited by `close()` before the pools end. */
+  private ticks = new Set<Promise<void>>()
   private readonly scopeHost: ScopeHost
   private opened = false
   private closing = false
@@ -181,7 +185,11 @@ export class Runtime {
     }
   }
 
-  /** Marks the run and its children cancelled; the driving process aborts the running step and the agent session. */
+  /**
+   * Cancels the run and its children from any process. Pending runs end at once; for running ones the process
+   * holding the lease (or, for an orphan, the next one to claim it) aborts the running step, aborts the agent
+   * sessions, ends the run `cancelled` and calls `runPost`.
+   */
   async cancel(runId: string): Promise<boolean> {
     const changed = await this.journal.cancel(runId)
     for (const id of changed) this.scopes.get(id)?.controller.abort(new Cancelled(id))
@@ -200,7 +208,13 @@ export class Runtime {
     if (this.closing) return
     const free = this.leases.free()
     if (free <= 0) return
-    const ids = await this.journal.claimable([...this.registry.keys()], 200 + this.claiming.size)
+    const workflows = [...this.registry.keys()]
+    const running = await this.journal.runningByWorkflow(workflows)
+    const saturated = workflows.filter((id) => {
+      const max = this.registry.get(id)?.concurrency
+      return max !== undefined && (running.get(id) ?? 0) >= max
+    })
+    const ids = await this.journal.claimable(workflows, saturated, 200)
     for (const id of ids) {
       if (this.closing) return
       const result = await this.tryClaim(id)
@@ -216,8 +230,14 @@ export class Runtime {
     this.closing = true
     clearTimeout(this.recoveryTimer)
     clearTimeout(this.watchTimer)
-    for (const scope of this.scopes.values()) scope.controller.abort(new Shutdown('runtime closing'))
-    await Promise.allSettled([...this.drives])
+    await Promise.allSettled([...this.ticks])
+    // Claims in flight see `closing` once their lock resolves; loop until none is left.
+    while (this.claiming.size > 0 || this.drives.size > 0) {
+      for (const scope of this.scopes.values()) scope.controller.abort(new Shutdown('runtime closing'))
+      await Promise.allSettled([...this.drives])
+      await Bun.sleep(5)
+    }
+    await Promise.allSettled([...this.ticks, this.steerQueue])
     await this.leases.close()
     await this.pool.end()
   }
@@ -248,6 +268,11 @@ export class Runtime {
     if (typeof lease === 'string') {
       this.claiming.delete(runId)
       return lease
+    }
+    if (this.closing) {
+      await lease.release()
+      this.claiming.delete(runId)
+      return 'skip'
     }
     const drive = this.driveLeased(runId, lease)
     this.drives.add(drive)
@@ -291,7 +316,13 @@ export class Runtime {
   private async drive(scope: RunScope): Promise<Json | null> {
     const { run } = scope
     this.scopes.set(run.id, scope)
+    if (this.closing) scope.controller.abort(new Shutdown('runtime closing'))
     try {
+      if (run.cancel_requested_at) {
+        // Cancelled while nobody drove it (orphan): clean up instead of resuming.
+        const version = scope.workflow.version
+        return await this.finish(scope, { status: 'cancelled', output: null, error: CANCELLED, version })
+      }
       const admitted = await this.admit(scope)
       if (!admitted) return null
       const end = await this.execute(scope)
@@ -352,7 +383,7 @@ export class Runtime {
       const reason: unknown = scope.signal.aborted ? scope.signal.reason : null
       if (reason instanceof InfraError) throw reason
       if (err instanceof Cancelled || reason instanceof Cancelled) {
-        return { status: 'cancelled', output: null, error: { kind: 'cancelled', message: 'cancelled' }, version }
+        return { status: 'cancelled', output: null, error: CANCELLED, version }
       }
       return { status: 'failed', output: null, error: toRunError(err), version }
     }
@@ -360,6 +391,7 @@ export class Runtime {
 
   /** The commit, then `runPost` outside any try: a throwing hook never downgrades the recorded outcome. */
   private async finish(scope: RunScope, end: RunEnd): Promise<Json | null> {
+    if (end.status === 'cancelled') await this.cleanUpCancelled(scope)
     const written = await scope.j(() => this.journal.finishRun(scope.run.id, scope.fence, end))
     if (!written) return null
     await this.runPost({
@@ -371,6 +403,37 @@ export class Runtime {
       finishedAt: new Date(),
     })
     return end.status === 'done' ? end.output : null
+  }
+
+  /**
+   * Before a cancelled run ends: running steps of the run and its descendants become `cancelled`, their agent
+   * sessions are aborted (`host.abort` must be idempotent: a step aborted in-process may be aborted twice) and
+   * unfinished descendants end with their `runPost`. An infra error here leaves the run running for a retry.
+   */
+  private async cleanUpCancelled(scope: RunScope) {
+    const { run, fence } = scope
+    const steps = await scope.j(() => this.journal.cancelRunningSteps(run.id, fence))
+    for (const step of steps) {
+      if (step.kind !== 'agent' || !step.handle || !this.host) continue
+      await this.host.abort(step.handle.handle).catch((err: unknown) => {
+        this.logger.error('agent host abort failed', {
+          runId: step.run_id,
+          stepId: step.step_id,
+          error: errorMessage(err),
+        })
+      })
+    }
+    const children = await scope.j(() => this.journal.cancelDescendants(run.id, fence))
+    for (const child of children) {
+      await this.runPost({
+        ...this.runInfo(child, { id: child.workflow, version: child.version_started }),
+        status: 'cancelled',
+        output: null,
+        error: CANCELLED,
+        startedAt: child.started_at,
+        finishedAt: new Date(),
+      })
+    }
   }
 
   /** A child run, driven inside its parent's fan-out step under the root's lease; never by recovery. */
@@ -412,7 +475,7 @@ export class Runtime {
     }
   }
 
-  private runInfo(run: RunRow, workflow: AnyWorkflow): RunInfo {
+  private runInfo(run: RunRow, workflow: { id: string; version: string }): RunInfo {
     return {
       runId: run.id,
       workflowId: workflow.id,
@@ -514,10 +577,15 @@ export class Runtime {
     })
   }
 
+  private track(tick: Promise<void>): Promise<void> {
+    this.ticks.add(tick)
+    return tick.finally(() => this.ticks.delete(tick))
+  }
+
   private scheduleRecovery(delay: number) {
     if (this.closing) return
     this.recoveryTimer = setTimeout(() => {
-      this.recover()
+      this.track(this.recover())
         .then(() => {
           this.recoveryDelay = this.options.recoveryIntervalMs ?? 2000
         })
@@ -535,7 +603,7 @@ export class Runtime {
   private scheduleWatch() {
     if (this.closing) return
     this.watchTimer = setTimeout(() => {
-      this.watch()
+      this.track(this.watch())
         .catch((err: unknown) => this.logger.warn('watch tick failed', { error: errorMessage(err) }))
         .finally(() => this.scheduleWatch())
     }, this.options.watchIntervalMs ?? 500)
@@ -545,18 +613,31 @@ export class Runtime {
   private async watch() {
     const ids = [...this.scopes.keys()]
     if (ids.length === 0) return
-    for (const id of await this.journal.cancelledAmong(ids)) {
+    for (const id of await this.journal.cancelRequestedAmong(ids)) {
       this.scopes.get(id)?.controller.abort(new Cancelled(id))
     }
     await this.deliverSteers(ids)
   }
 
-  private async deliverSteers(runIds: string[]) {
-    if (!this.host) return
+  /** Serialized, so the watch tick and a direct `steer()` never send the same row twice. */
+  private deliverSteers(runIds: string[]): Promise<void> {
+    const next = this.steerQueue.then(() => this.sendSteers(runIds))
+    this.steerQueue = next.catch(() => {})
+    return next
+  }
+
+  private async sendSteers(runIds: string[]) {
+    const host = this.host
+    if (!host) return
     for (const steer of await this.journal.pendingSteers(runIds)) {
       const handle = this.agents.get(`${steer.run_id}:${steer.step_id}`)
       if (handle === undefined) continue // not waiting on the host yet; the next tick retries
-      await this.host.steer(handle, steer.text)
+      try {
+        await host.steer(handle, steer.text)
+      } catch (err) {
+        this.logger.warn('steer delivery failed; retried next tick', { runId: steer.run_id, error: errorMessage(err) })
+        continue
+      }
       await this.journal.steerDelivered(steer.id)
     }
   }

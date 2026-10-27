@@ -215,37 +215,49 @@ export class RunScope {
         loaded = true
       }
       // Re-attach order (concept §3): open, journal the handle, then prompt; a journaled prompt only waits.
-      if (!state) {
-        const handle = await host.open({
-          runId,
-          stepId,
-          key: scope.key,
-          agent: spec.agent,
-          prompt: spec.prompt,
-          options: spec.options,
-        })
-        state = { handle, prompted: false }
-        const opened = state
-        await this.j(() => journal.stepHandle(runId, stepId, this.fence, opened))
-      }
-      const current: AgentHandleState = state
-      const onAbort = () => {
+      let handle: Json | null = state?.handle ?? null
+      let sessionAborted = false
+      const abortSession = () => {
         const reason: unknown = scope.signal.reason
-        if (reason instanceof InfraError) return // shutdown or lease loss: the session keeps running for re-attach
+        if (handle === null || sessionAborted || reason instanceof InfraError) return // shutdown or lease loss: keep the session for re-attach
+        sessionAborted = true
         if (reason instanceof StepTimeout) state = null // a retry opens a fresh session
-        host.abort(current.handle).catch((err: unknown) => {
+        host.abort(handle).catch((err: unknown) => {
           this.rt.logError('agent host abort failed', { runId, stepId, error: errorMessage(err) })
         })
       }
-      scope.signal.addEventListener('abort', onAbort, { once: true })
-      this.rt.trackAgent(scope.key, current.handle)
+      /** A cancel or timeout can land while open/prompt is in flight: abort the session and stop before spending. */
+      const checkpoint = () => {
+        if (!scope.signal.aborted) return
+        abortSession()
+        throw scope.signal.reason
+      }
+      scope.signal.addEventListener('abort', abortSession, { once: true })
       try {
+        if (!state) {
+          handle = await host.open({
+            runId,
+            stepId,
+            key: scope.key,
+            agent: spec.agent,
+            prompt: spec.prompt,
+            options: spec.options,
+          })
+          checkpoint()
+          const opened: AgentHandleState = { handle, prompted: false }
+          state = opened
+          await this.j(() => journal.stepHandle(runId, stepId, this.fence, opened))
+        }
+        const current: AgentHandleState = state
+        this.rt.trackAgent(scope.key, current.handle)
         if (!current.prompted) {
+          checkpoint()
           await host.prompt(current.handle, spec.prompt)
           const prompted = { ...current, prompted: true }
           state = prompted
           await this.j(() => journal.stepHandle(runId, stepId, this.fence, prompted))
         }
+        checkpoint()
         scope.progress()
         const result = await host.wait(current.handle, {
           signal: scope.signal,
@@ -259,8 +271,12 @@ export class RunScope {
           throw new WorkflowError('invalid_output', `agent step "${stepId}": ${parsed.error.message}`)
         }
         return parsed.data as Json
+      } catch (err) {
+        // Any workflow-level failure: a retry must not wait on the same finished or wedged session again.
+        if (!(err instanceof InfraError) && !(err instanceof Cancelled)) state = null
+        throw err
       } finally {
-        scope.signal.removeEventListener('abort', onAbort)
+        scope.signal.removeEventListener('abort', abortSession)
         this.rt.trackAgent(scope.key, null)
       }
     }) as Promise<z.output<S>>
