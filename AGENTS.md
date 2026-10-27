@@ -8,7 +8,7 @@ evaluated); every workflow runs inside the same middleware; Claude Code and Herm
 through one generated `agw` CLI. It replaces agent-gateway, research-gateway and audio-gateway by a
 hard rewrite. **`docs/concept.md` is the design and wins on any difference with this file.**
 
-**Status:** pre-code. The build runs as a fleet (below) against `docs/waves/PLAN.md`.
+**Status:** Wave 1 scaffold landed; runtime arrives in Wave 2.
 
 ## Principles (concept §0)
 
@@ -77,8 +77,18 @@ PR-required repos (`~/.claude/pr-required-repos.json`) go through a PR, self-rev
 
 ## Validate / Deploy / Verify
 
-Wave 1 creates them: `make check` (format, lint, tsc, test), `make deploy` (LaunchAgents on the
-mini), `make verify` (health, a smoke run, its trace). Until then: no code, nothing to run.
+Bun workspaces (`packages/*`), pinned toolchain per `docs/spikes/s3-stack/REPORT.md`. `docs/spikes/**` is
+excluded from every tool.
+
+| Command | Runs |
+|-|-|
+| `make check` | `biome format`, `biome lint`, `oxlint --type-aware`, `tsc --noEmit`, `bun test --isolate`; non-zero on any failure. **The merge train's gate**, and what CI runs |
+| `make fmt` | `biome format --write` |
+| `make deploy` | Skeleton: nothing is deployable yet (Wave 3: LaunchAgents on the mini) |
+| `make verify` | Skeleton: nothing is deployable yet (Wave 3: health, a smoke run, its trace) |
+
+CI (`.github/workflows/ci.yml`) runs `bun install --frozen-lockfile` and `make check` on pushes to `master` and
+on pull requests, on GitHub-hosted runners.
 
 ## Gotchas
 

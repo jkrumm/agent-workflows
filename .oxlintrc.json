@@ -1,0 +1,15 @@
+{
+  "plugins": ["typescript"],
+  "categories": { "correctness": "off" },
+  "rules": {
+    "typescript/no-floating-promises": "error",
+    "typescript/no-misused-promises": "error",
+    "typescript/await-thenable": "error",
+    "typescript/no-for-in-array": "error",
+    "typescript/no-implied-eval": "error",
+    "typescript/no-unnecessary-type-assertion": "error",
+    "typescript/restrict-template-expressions": "error",
+    "typescript/unbound-method": "error"
+  },
+  "ignorePatterns": ["docs/spikes/**", "node_modules/**"]
+}
