@@ -16,6 +16,10 @@ create table {{schema}}.runs (
   traceparent text,
   trace_id text,
   lease_token text,
+  -- The run's advisory lock key (64-bit), so recovery can skip runs whose lease is visibly held (pg_locks).
+  lock_key bigint not null,
+  -- Times the run was driven (claimed while running, or started); the persisted poison-run cap.
+  drives integer not null default 0,
   -- Set by cancel on a running run; the process holding (or next claiming) the lease aborts and finalizes it.
   cancel_requested_at timestamptz,
   -- runPre accepted the run (set once); resume is true from here on.
@@ -64,8 +68,12 @@ create table {{schema}}.steps (
   tokens_reasoning bigint not null default 0,
   cost numeric,
   tool_calls integer not null default 0,
+  -- Usage reports without a price: a partially priced step is visible, never a silent undercount.
+  unpriced_calls integer not null default 0,
   usage_by_model jsonb,
   started_at timestamptz not null default now(),
+  -- Start of the latest execution; a resumed effect waits out the body grace measured from here.
+  attempt_started_at timestamptz not null default now(),
   finished_at timestamptz,
   argo_synced_at timestamptz,
   primary key (run_id, step_id)

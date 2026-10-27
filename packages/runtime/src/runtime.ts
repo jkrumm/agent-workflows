@@ -3,9 +3,9 @@ import { z } from 'zod'
 import { AdmissionRefused, Cancelled, errorMessage, InfraError, Shutdown, WorkflowError } from './errors.ts'
 import { Journal, type RunEnd, type RunRow } from './journal.ts'
 import { type Json, jsonViolation } from './json.ts'
-import { type Lease, LeasePool, lockKey } from './lease.ts'
+import { type Lease, LeasePool } from './lease.ts'
 import { assertSchemaName, migrate } from './migrate.ts'
-import { RunScope, raceAbort, type ScopeHost, toRunError } from './scope.ts'
+import { type Refusal, RunScope, raceAbort, type ScopeHost, toRunError } from './scope.ts'
 import type {
   AgentHost,
   AnyWorkflow,
@@ -41,8 +41,16 @@ export type RuntimeOptions = {
   watchIntervalMs?: number
   /** First backoff after an infra failure of a run, doubled per failure up to 60 s. Default 1000 ms. */
   infraBackoffMs?: number
-  /** Consecutive infra failures after which a run is marked failed (`infra`). Default 20. */
-  maxInfraFailures?: number
+  /**
+   * Drives (starts plus every claim of a running run: crashes, deploys, infra retries) after which a run fails as
+   * `crash_loop`. Persisted on the run, so the cap survives restarts. Default 20.
+   */
+  maxDrives?: number
+  /**
+   * How long the lease is held after an abort for a still-running step body to settle, and how long a resumed
+   * effect waits (from its last start) before running again. Default 30 s.
+   */
+  bodyGraceMs?: number
   logger?: Logger
 }
 
@@ -115,6 +123,7 @@ export class Runtime {
       journal: this.journal,
       host: this.host,
       stepPre: (args) => this.stepPre(args),
+      bodyGraceMs: options.bodyGraceMs ?? 30_000,
       stepPost: (args) => this.stepPost(args),
       tool: (phase, event) => this.tool(phase, event),
       runChild: (parent, childId, workflow, input) => this.runChild(parent, childId, workflow, input),
@@ -175,14 +184,7 @@ export class Runtime {
     for (;;) {
       const run = await this.journal.getRun(runId)
       if (!run) throw new Error(`run ${runId} not found`)
-      if (TERMINAL.has(run.status)) {
-        return {
-          runId,
-          status: run.status as RunResult['status'],
-          output: run.output,
-          error: run.error_kind ? { kind: run.error_kind, message: run.error ?? '' } : null,
-        }
-      }
+      if (TERMINAL.has(run.status)) return runResult(run)
       options.signal?.throwIfAborted()
       await Bun.sleep(options.pollMs ?? 100)
     }
@@ -206,9 +208,17 @@ export class Runtime {
     if (this.scopes.has(runId)) await this.deliverSteers([runId])
   }
 
-  /** One recovery pass: claim pending and orphaned top-level runs while leases are free. */
+  /**
+   * One recovery pass: claim pending and orphaned top-level runs while leases are free, then re-deliver
+   * unconfirmed `runPost` hooks (on a reserved maintenance lease, so a full budget never starves it).
+   */
   async recover(): Promise<void> {
     if (this.closing) return
+    await this.claimFree()
+    await this.redeliverPostHooks()
+  }
+
+  private async claimFree() {
     const free = this.leases.free()
     if (free <= 0) return
     const workflows = [...this.registry.keys()]
@@ -217,13 +227,14 @@ export class Runtime {
       const max = this.registry.get(id)?.concurrency
       return max !== undefined && (running.get(id) ?? 0) >= max
     })
-    const ids = await this.journal.claimable(workflows, saturated, 200)
+    const now = Date.now()
+    const waiting = [...this.backoff].filter(([, b]) => b.nextAt > now).map(([id]) => id)
+    const ids = await this.journal.claimable(workflows, saturated, [...this.claiming, ...waiting], free * 2)
     for (const id of ids) {
       if (this.closing) return
       const result = await this.tryClaim(id)
       if (result === 'full') return
     }
-    await this.redeliverPostHooks()
   }
 
   /**
@@ -263,7 +274,7 @@ export class Runtime {
     this.claiming.add(runId)
     let lease: Lease | 'full' | 'busy'
     try {
-      lease = await this.leases.tryLock(lockKey(`${this.schema}:${runId}`))
+      lease = await this.leases.tryLock(this.journal.lockKey(runId), 'run')
     } catch (err) {
       this.claiming.delete(runId)
       this.noteInfra(runId, err)
@@ -286,30 +297,40 @@ export class Runtime {
     return 'started'
   }
 
-  /** Holds the lease for the whole drive; the claim and the lease are released in `finally`, whatever failed. */
+  /**
+   * Holds the lease for the whole drive and then until every abandoned step body of the tree settled (bounded by
+   * the body grace), so no other process starts the same body while this one still runs it. The claim and the
+   * lease are released in `finally`, whatever failed.
+   */
   private async driveLeased(runId: string, lease: Lease): Promise<void> {
+    const inflight = new Set<Promise<unknown>>()
     try {
-      await this.driveRoot(runId, lease)
+      await this.driveRoot(runId, lease, inflight)
       this.backoff.delete(runId)
     } catch (err) {
       this.noteInfra(runId, err)
     } finally {
+      if (inflight.size > 0) {
+        await Promise.race([Promise.allSettled([...inflight]), Bun.sleep(this.scopeHost.bodyGraceMs)])
+      }
       await lease.release()
       this.claiming.delete(runId)
     }
   }
 
-  private async driveRoot(runId: string, lease: Lease) {
+  private async driveRoot(runId: string, lease: Lease, inflight: Set<Promise<unknown>>) {
     const run = await this.journal.getRun(runId)
     if (!run || run.parent_id !== null || TERMINAL.has(run.status)) return
     const workflow = this.registry.get(run.workflow)
     if (!workflow) return
     const token = crypto.randomUUID()
-    await this.journal.takeLease(runId, token)
-    const scope = new RunScope(this.scopeHost, run, workflow, { rootId: runId, token }, null)
+    const drives = await this.journal.takeLease(runId, token)
+    const scope = new RunScope(this.scopeHost, run, workflow, { rootId: runId, token }, null, inflight)
     lease.onLost(() => scope.controller.abort(new InfraError(`lease connection of run ${runId} lost`)))
-    if ((this.backoff.get(runId)?.failures ?? 0) >= (this.options.maxInfraFailures ?? 20)) {
-      const error = { kind: 'infra' as const, message: 'too many consecutive infra failures' }
+    const maxDrives = this.options.maxDrives ?? 20
+    if (drives > maxDrives) {
+      // A run that takes its process down on every boot (or never gets through) ends instead of looping.
+      const error = { kind: 'crash_loop' as const, message: `driven ${drives - 1} times without finishing` }
       await this.finish(scope, { status: 'failed', output: null, error, version: workflow.version })
       return
     }
@@ -346,23 +367,21 @@ export class Runtime {
     if (run.status === 'pending') {
       const limit =
         run.parent_id === null && workflow.concurrency ? { workflow: workflow.id, max: workflow.concurrency } : null
-      const taken = await scope.j(() => this.journal.markRunning(run.id, scope.fence, limit))
-      if (!taken) return false
+      const startedAt = await scope.j(() => this.journal.markRunning(run.id, scope.fence, limit))
+      if (!startedAt) return false
+      scope.run = { ...run, status: 'running', started_at: startedAt }
     }
-    const info = this.runInfo(run, workflow)
+    const info = runInfo(scope.run, workflow)
     if (run.admitted_at !== null) {
       await this.runPre({ ...info, resume: true })
       return true
     }
     const refusal = await this.runPre({ ...info, resume: false })
     if (refusal) {
-      const kind = refusal instanceof AdmissionRefused ? 'admission_refused' : 'middleware'
-      await this.finish(scope, {
-        status: 'failed',
-        output: null,
-        error: { kind, message: errorMessage(refusal) },
-        version: workflow.version,
-      })
+      const { refused } = refusal
+      const kind = refused instanceof AdmissionRefused ? 'admission_refused' : 'middleware'
+      const message = refused === undefined ? 'runPre refused' : errorMessage(refused)
+      await this.finish(scope, { status: 'failed', output: null, error: { kind, message }, version: workflow.version })
       return false
     }
     await scope.j(() => this.journal.markAdmitted(run.id, scope.fence))
@@ -405,14 +424,7 @@ export class Runtime {
     if (end.status === 'cancelled') await this.cleanUpCancelled(scope)
     const written = await scope.j(() => this.journal.finishRun(scope.run.id, scope.fence, end))
     if (!written) return null
-    await this.runPost({
-      ...this.runInfo(scope.run, scope.workflow),
-      status: end.status,
-      output: end.output,
-      error: end.error,
-      startedAt: scope.run.started_at,
-      finishedAt: new Date(),
-    })
+    await this.runPost(runPostArgs(scope.run, scope.workflow.version, end, new Date()))
     await this.markPostHooks(scope.run.id)
     return end.status === 'done' ? end.output : null
   }
@@ -437,14 +449,7 @@ export class Runtime {
     }
     const children = await scope.j(() => this.journal.cancelDescendants(run.id, fence))
     for (const child of children) {
-      await this.runPost({
-        ...this.runInfo(child, { id: child.workflow, version: child.version_started }),
-        status: 'cancelled',
-        output: null,
-        error: CANCELLED,
-        startedAt: child.started_at,
-        finishedAt: new Date(),
-      })
+      await this.runPost(runPostArgs(child, child.version_started, endOf(child), child.finished_at ?? new Date()))
       await this.markPostHooks(child.id)
     }
   }
@@ -465,20 +470,14 @@ export class Runtime {
     for (const row of rows) {
       if (this.closing) return
       if (this.claiming.has(row.root_id)) continue
-      const lease = await this.leases.tryLock(lockKey(`${this.schema}:${row.root_id}`))
+      const lease = await this.leases.tryLock(this.journal.lockKey(row.root_id), 'maintenance')
       if (lease === 'full') return
       if (lease === 'busy') continue
       try {
         const fresh = await this.journal.getRun(row.id)
         if (!fresh || !TERMINAL.has(fresh.status) || fresh.post_hooks_at !== null) continue
-        await this.runPost({
-          ...this.runInfo(fresh, { id: fresh.workflow, version: fresh.version_finished ?? fresh.version_started }),
-          status: fresh.status as RunPostArgs['status'],
-          output: fresh.status === 'done' ? fresh.output : null,
-          error: fresh.error_kind ? { kind: fresh.error_kind, message: fresh.error ?? '' } : null,
-          startedAt: fresh.started_at,
-          finishedAt: fresh.finished_at ?? new Date(),
-        })
+        const version = fresh.version_finished ?? fresh.version_started
+        await this.runPost(runPostArgs(fresh, version, endOf(fresh), fresh.finished_at ?? new Date()))
         await this.markPostHooks(fresh.id)
       } finally {
         await lease.release()
@@ -498,25 +497,30 @@ export class Runtime {
     const value = (parsed.success ? parsed.data : input) as Json
     const invalid = parsed.success ? jsonViolation(value) : z.prettifyError(parsed.error)
     await parent.j(() =>
-      this.journal.insertRun({
-        id: childId,
-        workflow: workflow.id,
-        parentId: root.id,
-        rootId: root.root_id,
-        purpose: root.purpose,
-        input: invalid ? null : value,
-        inputHash: hashJson(invalid ? null : value),
-        idempotencyKey: null,
-        traceparent: root.traceparent,
-        traceId: traceIdOf(root.traceparent ?? undefined),
-        version: workflow.version,
-        ...(invalid ? { status: 'failed' as const, error: { kind: 'invalid_input' as const, message: invalid } } : {}),
-      }),
+      this.journal.insertRun(
+        {
+          id: childId,
+          workflow: workflow.id,
+          parentId: root.id,
+          rootId: root.root_id,
+          purpose: root.purpose,
+          input: invalid ? null : value,
+          inputHash: hashJson(invalid ? null : value),
+          idempotencyKey: null,
+          traceparent: root.traceparent,
+          traceId: traceIdOf(root.traceparent ?? undefined),
+          version: workflow.version,
+          ...(invalid
+            ? { status: 'failed' as const, error: { kind: 'invalid_input' as const, message: invalid } }
+            : {}),
+        },
+        parent.fence,
+      ),
     )
     const run = await parent.j(() => this.journal.getRun(childId))
     if (!run) throw new InfraError(`child run ${childId} vanished`)
     if (TERMINAL.has(run.status)) return run.status === 'done' ? run.output : null
-    const scope = new RunScope(this.scopeHost, run, workflow, parent.fence, parent.signal)
+    const scope = new RunScope(this.scopeHost, run, workflow, parent.fence, parent)
     try {
       return await this.drive(scope)
     } catch (err) {
@@ -525,27 +529,14 @@ export class Runtime {
     }
   }
 
-  private runInfo(run: RunRow, workflow: { id: string; version: string }): RunInfo {
-    return {
-      runId: run.id,
-      workflowId: workflow.id,
-      version: workflow.version,
-      purpose: run.purpose,
-      parentId: run.parent_id,
-      rootId: run.root_id,
-      input: run.input,
-      traceparent: run.traceparent,
-    }
-  }
-
   /** Resolves to the refusal for a new run; on resume every throw is logged and ignored. */
-  private async runPre(args: RunPreArgs): Promise<unknown> {
+  private async runPre(args: RunPreArgs): Promise<Refusal | null> {
     for (const m of this.middleware) {
       if (!m.runPre) continue
       try {
         await m.runPre(args)
       } catch (err) {
-        if (!args.resume) return err
+        if (!args.resume) return { refused: err }
         this.logger.warn('runPre threw on resume; ignored', {
           middleware: m.name,
           runId: args.runId,
@@ -571,13 +562,13 @@ export class Runtime {
     }
   }
 
-  private async stepPre(args: StepPreArgs): Promise<unknown> {
+  private async stepPre(args: StepPreArgs): Promise<Refusal | null> {
     for (const m of this.middleware) {
       if (!m.stepPre) continue
       try {
         await m.stepPre(args)
       } catch (err) {
-        return err
+        return { refused: err }
       }
     }
     return null
@@ -691,6 +682,49 @@ export class Runtime {
       await this.journal.steerDelivered(steer.id)
     }
   }
+}
+
+function runInfo(run: RunRow, workflow: { id: string; version: string }): RunInfo {
+  return {
+    runId: run.id,
+    workflowId: workflow.id,
+    version: workflow.version,
+    purpose: run.purpose,
+    parentId: run.parent_id,
+    rootId: run.root_id,
+    input: run.input,
+    traceparent: run.traceparent,
+  }
+}
+
+/** The terminal fields of an ended row. */
+function endOf(run: RunRow): Pick<RunEnd, 'status' | 'output' | 'error'> {
+  return {
+    status: run.status as RunEnd['status'],
+    output: run.status === 'done' ? run.output : null,
+    error: run.error_kind ? { kind: run.error_kind, message: run.error ?? '' } : null,
+  }
+}
+
+/** RunRow (with `started_at` as written by `markRunning`) plus its end → the `runPost` arguments. */
+function runPostArgs(
+  run: RunRow,
+  version: string,
+  end: Pick<RunEnd, 'status' | 'output' | 'error'>,
+  finishedAt: Date,
+): RunPostArgs {
+  return {
+    ...runInfo(run, { id: run.workflow, version }),
+    status: end.status,
+    output: end.output,
+    error: end.error,
+    startedAt: run.started_at,
+    finishedAt,
+  }
+}
+
+function runResult(run: RunRow): RunResult {
+  return { runId: run.id, ...endOf(run) }
 }
 
 function hashJson(value: Json): string {

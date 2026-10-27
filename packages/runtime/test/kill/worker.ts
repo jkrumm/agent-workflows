@@ -29,6 +29,8 @@ const runtime = new Runtime({
   recoveryIntervalMs: 100,
   watchIntervalMs: 100,
   infraBackoffMs: 100,
+  // A killed effect is resumed only after this grace (from its last start); short for the harness.
+  bodyGraceMs: 500,
 })
 
 process.on('SIGTERM', () => {

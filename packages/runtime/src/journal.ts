@@ -44,6 +44,8 @@ export type StepRow = {
   error: string | null
   error_kind: ErrorKind | null
   attempts: number
+  /** Milliseconds since the latest execution started, by the database clock. */
+  attempt_age_ms: number
 }
 
 export type NewRun = {
@@ -77,9 +79,21 @@ export type StepEnd = {
   model: string | null
 }
 
+/** Top-level runs holding a concurrency slot. One definition for the count and the per-workflow split. */
+const RUNNING_TOP = `parent_id is null and status = 'running'`
+
+/** Advisory keys currently held in this database, as the 64-bit key `pg_try_advisory_lock(bigint)` took. */
+const HELD_KEYS = `select (l.classid::int8 << 32) | l.objid::int8 as k from pg_locks l
+  where l.locktype = 'advisory' and l.objsubid = 1 and l.granted
+    and l.database = (select oid from pg_database where datname = current_database())`
+
 /**
  * All SQL of the runtime. Every query error becomes an `InfraError`, so the caller can tell a broken journal
  * from a failing step body.
+ *
+ * Not fenced, on purpose: `postHooksDone` and `steerDelivered` (idempotent delivery markers; a stale writer can
+ * only cause one more at-least-once delivery), `cancel` and `addSteer` (requests from any process, applied by the
+ * lease holder) and `takeLease` (called with the advisory lock held; it is what moves the fence).
  */
 export class Journal {
   private readonly runs: string
@@ -95,6 +109,11 @@ export class Journal {
     this.signals = `"${schema}".signals`
   }
 
+  /** The advisory lock key of a top-level run (children share their root's). */
+  lockKey(rootId: string): string {
+    return lockKey(`${this.schema}:${rootId}`)
+  }
+
   async query<R extends QueryResultRow>(sql: string, params: unknown[] = []): Promise<QueryResult<R>> {
     try {
       return await this.pool.query<R>(sql, params)
@@ -103,12 +122,17 @@ export class Journal {
     }
   }
 
-  /** Inserts the run unless its id or (workflow, idempotency key) exists; returns the id that holds. */
-  async insertRun(run: NewRun): Promise<string> {
+  /**
+   * Inserts the run unless its id or (workflow, idempotency key) exists; returns the id that holds. A child is
+   * inserted under its root's fence.
+   */
+  async insertRun(run: NewRun, fence: Fence | null = null): Promise<string> {
+    const guard = fence ? `where ${this.fence(16, 17)}` : ''
     const { rows } = await this.query<{ id: string }>(
       `insert into ${this.runs} (id, workflow, parent_id, root_id, purpose, input, input_hash, idempotency_key,
-         traceparent, trace_id, version_started, status, error, error_kind, finished_at)
-       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, case when $12 = 'failed' then now() end)
+         traceparent, trace_id, version_started, status, error, error_kind, finished_at, lock_key)
+       select $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
+         case when $12 = 'failed' then now() end, $15::bigint ${guard}
        on conflict do nothing returning id`,
       [
         run.id,
@@ -125,9 +149,12 @@ export class Journal {
         run.status ?? 'pending',
         run.error?.message ?? null,
         run.error?.kind ?? null,
+        this.lockKey(run.rootId),
+        ...(fence ? [fence.rootId, fence.token] : []),
       ],
     )
     if (rows[0]) return rows[0].id
+    if (fence) await this.assertLease(fence)
     const existing = await this.query<{ id: string }>(
       `select id from ${this.runs} where id = $1 or (workflow = $2 and idempotency_key = $3)`,
       [run.id, run.workflow, run.idempotencyKey],
@@ -142,26 +169,27 @@ export class Journal {
     return rows[0] ?? null
   }
 
-  /** Called with the advisory lock held: from here on, only writes carrying this token land. */
-  async takeLease(id: string, token: string) {
-    await this.query(`update ${this.runs} set lease_token = $2, updated_at = now() where id = $1`, [id, token])
-  }
-
-  async runningCount(workflow: string): Promise<number> {
-    const { rows } = await this.query<{ n: number }>(
-      `select count(*)::int as n from ${this.runs}
-       where workflow = $1 and parent_id is null and status = 'running'`,
-      [workflow],
+  /**
+   * Called with the advisory lock held: from here on, only writes carrying this token land. Claiming a running
+   * run counts one drive (the persisted poison-run cap); returns the count.
+   */
+  async takeLease(id: string, token: string): Promise<number> {
+    const { rows } = await this.query<{ drives: number }>(
+      `update ${this.runs} set lease_token = $2, drives = drives + (status = 'running')::int, updated_at = now()
+       where id = $1 returning drives`,
+      [id, token],
     )
-    return rows[0]?.n ?? 0
+    return rows[0]?.drives ?? 0
   }
 
   /**
-   * pending → running. For a top-level run with a concurrency limit, the count and the update happen under a
-   * per-workflow transaction lock, so two processes cannot both take the last slot. False: stay pending.
+   * pending → running, counting one drive. For a top-level run with a concurrency limit, the count and the update
+   * happen under a per-workflow transaction lock, so two processes cannot both take the last slot. Returns the
+   * run's `started_at`, or null: stay pending.
    */
-  async markRunning(id: string, fence: Fence, limit: { workflow: string; max: number } | null): Promise<boolean> {
+  async markRunning(id: string, fence: Fence, limit: { workflow: string; max: number } | null): Promise<Date | null> {
     const client = await this.connect()
+    let startedAt: Date | null = null
     try {
       await client.query('begin')
       if (limit) {
@@ -169,31 +197,33 @@ export class Journal {
           lockKey(`agw-concurrency:${this.schema}:${limit.workflow}`),
         ])
         const { rows } = await client.query<{ n: number }>(
-          `select count(*)::int as n from ${this.runs}
-           where workflow = $1 and parent_id is null and status = 'running'`,
+          `select count(*)::int as n from ${this.runs} where ${RUNNING_TOP} and workflow = $1`,
           [limit.workflow],
         )
         if ((rows[0]?.n ?? 0) >= limit.max) {
           await client.query('rollback')
-          return false
+          return null
         }
       }
-      const res = await client.query(
-        `update ${this.runs} set status = 'running', started_at = coalesce(started_at, now()), updated_at = now()
-         where id = $1 and status = 'pending' and ${this.fence(2, 3)}`,
+      const res = await client.query<{ started_at: Date }>(
+        `update ${this.runs} set status = 'running', started_at = coalesce(started_at, now()), drives = drives + 1,
+           updated_at = now()
+         where id = $1 and status = 'pending' and ${this.fence(2, 3)}
+         returning started_at`,
         [id, fence.rootId, fence.token],
       )
       await client.query('commit')
-      if (res.rowCount) return true
+      startedAt = res.rows[0]?.started_at ?? null
     } catch (err) {
       await client.query('rollback').catch(() => {})
       throw new InfraError(`journal: ${errorMessage(err)}`, { cause: err })
     } finally {
       client.release()
     }
+    if (startedAt) return startedAt
     // After the release: a second checkout while holding one could exhaust the pool.
     await this.assertLease(fence)
-    return false
+    return null
   }
 
   /** runPre accepted the run: from now on a resume skips admission. */
@@ -210,12 +240,14 @@ export class Journal {
     await this.query(`update ${this.runs} set post_hooks_at = now() where id = $1`, [id])
   }
 
-  /** Ended runs (of trees rooted in `workflows`) whose runPost was never confirmed. */
+  /** Ended runs (of trees rooted in `workflows`) whose runPost was never confirmed and whose root nobody holds. */
   async postHooksPending(workflows: string[], limit: number): Promise<RunRow[]> {
     const { rows } = await this.query<RunRow>(
-      `select ${RUN_COLUMNS} from ${this.runs} where id in (
+      `with held as (${HELD_KEYS})
+       select ${RUN_COLUMNS} from ${this.runs} where id in (
          select c.id from ${this.runs} c join ${this.runs} r on r.id = c.root_id
          where c.post_hooks_at is null and c.status in ('done', 'failed', 'cancelled') and r.workflow = any($1)
+           and not exists (select 1 from held where held.k = r.lock_key)
          order by c.finished_at limit $2)`,
       [workflows, limit],
     )
@@ -244,7 +276,8 @@ export class Journal {
 
   async getStep(runId: string, stepId: string): Promise<StepRow | null> {
     const { rows } = await this.query<StepRow>(
-      `select step_id, kind, status, handle, output, error, error_kind, attempts
+      `select step_id, kind, status, handle, output, error, error_kind, attempts,
+         (extract(epoch from now() - attempt_started_at) * 1000)::float8 as attempt_age_ms
        from ${this.steps} where run_id = $1 and step_id = $2`,
       [runId, stepId],
     )
@@ -259,7 +292,7 @@ export class Journal {
        select $1, $2, $5, 'running', 1 where ${this.fence(3, 4)}
        on conflict (run_id, step_id) do update
          set status = 'running', attempts = ${this.steps}.attempts + 1, error = null, error_kind = null,
-           finished_at = null`,
+           finished_at = null, attempt_started_at = now()`,
       [runId, stepId, fence.rootId, fence.token, kind],
     )
   }
@@ -279,7 +312,7 @@ export class Journal {
       fence,
       `update ${this.steps} set status = $5, output = $6, error = $7, error_kind = $8, model = $9,
          tokens_input = $10, tokens_output = $11, tokens_cache_read = $12, tokens_reasoning = $13,
-         cost = $14, tool_calls = $15, usage_by_model = $16, finished_at = now()
+         cost = $14, tool_calls = $15, usage_by_model = $16, unpriced_calls = $17, finished_at = now()
        where run_id = $1 and step_id = $2 and status = 'running' and ${this.fence(3, 4)}`,
       [
         runId,
@@ -298,25 +331,29 @@ export class Journal {
         usage.cost,
         usage.toolCalls,
         Object.keys(usage.byModel).length ? JSON.stringify(usage.byModel) : null,
+        usage.unpricedCalls,
       ],
     )
   }
 
   /**
    * Top-level runs this process may drive, oldest first: pending runs of workflows below their concurrency limit,
-   * then running ones (orphans to resume, or held elsewhere and answered `busy` by the lock). Two lists, so a
-   * backlog of one kind never hides the other.
+   * then running ones. Runs whose lease is visibly held (pg_locks) and the caller's `exclude` list are filtered in
+   * SQL, so every page holds only claimable runs and orphans beyond the first page are reached.
    */
-  async claimable(workflows: string[], saturated: string[], limit: number): Promise<string[]> {
+  async claimable(workflows: string[], saturated: string[], exclude: string[], limit: number): Promise<string[]> {
     const { rows } = await this.query<{ id: string }>(
-      `(select id from ${this.runs}
+      `with held as (${HELD_KEYS})
+       (select id from ${this.runs} r
         where parent_id is null and status = 'pending' and workflow = any($1) and not (workflow = any($2))
-        order by created_at limit $3)
+          and not (id = any($3)) and not exists (select 1 from held where held.k = r.lock_key)
+        order by created_at limit $4)
        union all
-       (select id from ${this.runs}
-        where parent_id is null and status = 'running' and workflow = any($1)
-        order by created_at limit $3)`,
-      [workflows, saturated, limit],
+       (select id from ${this.runs} r
+        where ${RUNNING_TOP} and workflow = any($1)
+          and not (id = any($3)) and not exists (select 1 from held where held.k = r.lock_key)
+        order by created_at limit $4)`,
+      [workflows, saturated, exclude, limit],
     )
     return rows.map((r) => r.id)
   }
@@ -325,7 +362,7 @@ export class Journal {
   async runningByWorkflow(workflows: string[]): Promise<Map<string, number>> {
     const { rows } = await this.query<{ workflow: string; n: number }>(
       `select workflow, count(*)::int as n from ${this.runs}
-       where parent_id is null and status = 'running' and workflow = any($1) group by workflow`,
+       where ${RUNNING_TOP} and workflow = any($1) group by workflow`,
       [workflows],
     )
     return new Map(rows.map((r) => [r.workflow, r.n]))
@@ -345,7 +382,7 @@ export class Journal {
          finished_at = case when status = 'pending' then now() else finished_at end,
          cancel_requested_at = coalesce(cancel_requested_at, now()),
          updated_at = now()
-       where (id = $1 or left(id, length($1) + 1) = $1 || '/') and status in ('pending', 'running')
+       where ${this.subtree(1)} and status in ('pending', 'running')
        returning id`,
       [id],
     )
@@ -365,7 +402,8 @@ export class Journal {
   async cancelRunningSteps(id: string, fence: Fence): Promise<CancelledStep[]> {
     const { rows } = await this.query<CancelledStep>(
       `update ${this.steps} set status = 'cancelled', error = 'cancelled', error_kind = 'cancelled', finished_at = now()
-       where (run_id = $1 or left(run_id, length($1) + 1) = $1 || '/') and status = 'running' and ${this.fence(2, 3)}
+       where run_id in (select id from ${this.runs} where ${this.subtree(1)})
+         and status = 'running' and ${this.fence(2, 3)}
        returning run_id, step_id, kind, handle`,
       [id, fence.rootId, fence.token],
     )
@@ -377,7 +415,7 @@ export class Journal {
     const { rows } = await this.query<RunRow>(
       `update ${this.runs} set status = 'cancelled', error = 'cancelled', error_kind = 'cancelled',
          finished_at = now(), updated_at = now()
-       where left(id, length($1) + 1) = $1 || '/' and status in ('pending', 'running') and ${this.fence(2, 3)}
+       where ${this.subtree(1)} and id <> $1 and status in ('pending', 'running') and ${this.fence(2, 3)}
        returning ${RUN_COLUMNS}`,
       [id, fence.rootId, fence.token],
     )
@@ -408,6 +446,22 @@ export class Journal {
     await this.query(`update ${this.signals} set delivered_at = now() where id = $1::bigint`, [id])
   }
 
+  /** Throws `LeaseLost` when another process took the run tree over. */
+  async assertLease(fence: Fence) {
+    const { rows } = await this.query<{ lease_token: string | null }>(
+      `select lease_token from ${this.runs} where id = $1`,
+      [fence.rootId],
+    )
+    if (rows[0]?.lease_token !== fence.token) throw new LeaseLost(`lease on run ${fence.rootId} was taken over`)
+  }
+
+  /** The run `$n` and every run below it; index-usable through `root_id` (children are `${parent}/${step}/${i}`). */
+  private subtree(idParam: number): string {
+    const p = `$${idParam}`
+    return `root_id = (select s.root_id from ${this.runs} s where s.id = ${p})
+      and (id = ${p} or starts_with(id, ${p} || '/'))`
+  }
+
   /**
    * `for share` makes a lease takeover (`takeLease` updates the root row) wait for in-flight fenced writes,
    * and a write that starts after the takeover re-checks the new token and matches nothing.
@@ -421,14 +475,6 @@ export class Journal {
     if (res.rowCount) return true
     await this.assertLease(fence)
     return false
-  }
-
-  private async assertLease(fence: Fence) {
-    const { rows } = await this.query<{ lease_token: string | null }>(
-      `select lease_token from ${this.runs} where id = $1`,
-      [fence.rootId],
-    )
-    if (rows[0]?.lease_token !== fence.token) throw new LeaseLost(`lease on run ${fence.rootId} was taken over`)
   }
 
   private async connect() {

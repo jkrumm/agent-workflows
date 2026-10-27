@@ -36,8 +36,11 @@ const result = await runtime.wait(runId)
 
 - **Step ids are string literals** and unique per run (a duplicate fails the run). `test/step-id-literal.test.ts`
   lints `packages/**/src` for computed ids. A change to a step's meaning or output shape takes a new id.
-- **Step outputs are `Json`** (no `undefined`, `Date`, `bigint`, class instances): a replayed value equals the
-  original. A non-JSON value fails the step as `non_json_output`.
+- **Step outputs are `Json`** (no `undefined`, `Date`, `bigint`, class instances, NUL or lone surrogates): a
+  replayed value deep-equals the original (jsonb does not keep key order). Anything else fails the step as
+  `non_json_output`.
+- **Usage** from `addUsage` (a capability's usage passes as is) is summed per step and model; reports without a
+  price count as `unpricedCalls`, so a partially priced step is visible instead of a silent undercount.
 - **Retry** per step: `{ attempts, backoffMs, factor, maxBackoffMs }`, default one attempt (agent steps too).
 - **Idle timeout** per step: no `progress()` (or host progress event) for `idleTimeoutMs` fails the attempt as
   `timeout`. Agent steps default to 5 minutes; code steps have none. It is never a wall-clock cap
@@ -54,13 +57,27 @@ const result = await runtime.wait(runId)
   `src/migrations/NNNN_*.sql` in one transaction under an advisory lock, recorded in `schema_migrations`. The
   run-record columns (fingerprint, tokens, cost, friction, `argo_synced_at`) exist for the middleware to fill.
 - **Lease:** one `pg_try_advisory_lock` per top-level run (64-bit key from sha256), held on a dedicated
-  connection budget sized `maxConcurrentRuns`, never the journal pool. Beyond the budget runs stay pending.
+  connection budget sized `maxConcurrentRuns` (plus one reserved for `runPost` re-delivery), never the journal
+  pool. Beyond the budget runs stay pending. Recovery skips runs whose lock is visibly held (`pg_locks` against
+  `runs.lock_key`), so every page it reads is claimable.
+- **Body grace:** an aborted step body may still be running (an outside call cannot be recalled). The lease is
+  held until the tree's abandoned bodies settle, up to `bodyGraceMs`; when the lease connection itself is lost, the
+  next process waits out the same grace (from the step's last start) before running a resumed effect again. The
+  lease is re-checked right before an effect body starts and before an agent prompt is sent.
 - **Fencing:** claiming a run writes a fresh `lease_token`; every journal write of the run tree carries it in its
-  `where` (`for share` on the root row), and a lost lease connection aborts the run at once.
-- **Infra vs workflow errors:** a journal or lease failure leaves the run `running` and retries it with backoff
-  (failed after `maxInfraFailures`); only step-body errors mark `failed`.
+  `where` (`for share` on the root row), and a lost lease connection aborts the run at once. Exempt, on purpose:
+  the delivery markers `post_hooks_at` and `signals.delivered_at` (idempotent; a stale write only causes one more
+  at-least-once delivery) and the cancel and steer requests, which any process may make.
+- **Infra vs workflow errors:** a journal or lease failure leaves the run `running` and retries it with backoff;
+  only step-body errors mark `failed`.
+- **Poison runs:** `runs.drives` counts every start and every claim of a running run (crashes, deploys, infra
+  retries) in the claim statement itself, so the cap survives restarts: past `maxDrives` the run fails as
+  `crash_loop` instead of taking every new process down with it.
 - **Re-attach order:** open the session, journal the handle, prompt, journal `prompted`. On resume a prompted
-  handle waits, an unprompted one prompts (the host's send is idempotent), none opens a new session.
+  handle waits, an unprompted one prompts, none opens a new session. The prompt is sent before `prompted` is
+  journaled, so a crash between the two re-sends it on resume: exactly-once delivery relies on
+  `AgentHost.prompt` being idempotent (it checks the session's messages first, concept §3). A failed attempt's
+  handle is cleared from the journal at once, so a crash during the retry backoff opens a fresh session.
 - **Deploys need no drain:** SIGTERM → `runtime.close()` (rows stay `running`, agent sessions keep going) →
   the next process re-attaches and continues on the new code. `version_started` / `version_finished` show runs
   that crossed a deploy.

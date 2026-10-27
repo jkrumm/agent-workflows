@@ -49,6 +49,7 @@ export function testRuntime(options: Omit<RuntimeOptions, 'connectionString'> & 
     recoveryIntervalMs: 100,
     watchIntervalMs: 50,
     infraBackoffMs: 100,
+    bodyGraceMs: 200,
     journalPoolSize: 4,
     maxConcurrentRuns: 8,
     ...options,
