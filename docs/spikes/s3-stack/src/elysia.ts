@@ -1,6 +1,19 @@
 import { openapi } from '@elysia/openapi'
 import { Elysia, sse, status } from 'elysia'
-import { ErrorBody, getRun, progress, RunIdParam, RunInput, RunNotFoundError, RunResponse, RunStatus, startRun, XCliRun, XCliStatus } from './shared.ts'
+import {
+  assertRun,
+  ErrorBody,
+  getRun,
+  progress,
+  RunIdParam,
+  RunInput,
+  RunNotFoundError,
+  RunResponse,
+  RunStatus,
+  startRun,
+  XCliRun,
+  XCliStatus,
+} from './shared.ts'
 
 const notFound = (e: unknown) => {
   if (e instanceof RunNotFoundError) return status(404, { error: { kind: 'not_found' as const, message: e.message, runId: e.runId } })
@@ -32,14 +45,18 @@ export const build = (openapiOptions: Partial<Parameters<typeof openapi>[0]> = {
     )
     .get(
       '/runs/:runId/events',
-      async function* ({ params }) {
+      ({ params }) => {
+        // the status must be decided before the first byte: a generator cannot change it once streaming starts
         try {
-          for await (const e of progress(params.runId)) yield sse({ data: e })
+          assertRun(params.runId)
         } catch (e) {
-          notFound(e)
+          return notFound(e)
         }
+        return (async function* () {
+          for await (const e of progress(params.runId)) yield sse({ data: e })
+        })()
       },
-      { params: RunIdParam, detail: { operationId: 'runEvents', summary: 'Progress events (SSE)' } },
+      { params: RunIdParam, response: { 404: ErrorBody }, detail: { operationId: 'runEvents', summary: 'Progress events (SSE)' } },
     )
 
 export const app = build()

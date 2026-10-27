@@ -98,8 +98,12 @@ export function getRun(runId: string): z.infer<typeof RunStatus> {
   return Date.now() >= r.endsAt ? { status: 'done', runId, result: report(r.input) } : { status: 'running', runId }
 }
 
-export async function* progress(runId: string): AsyncGenerator<z.infer<typeof ProgressEvent>> {
+export const assertRun = (runId: string) => {
   if (!runs.has(runId)) throw new RunNotFoundError(runId)
+}
+
+export async function* progress(runId: string): AsyncGenerator<z.infer<typeof ProgressEvent>> {
+  assertRun(runId)
   for (const phase of ['plan', 'agent', 'score', 'finish'] as const) {
     yield { phase, at: Date.now() }
     await new Promise((r) => setTimeout(r, 5))

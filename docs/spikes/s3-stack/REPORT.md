@@ -28,8 +28,8 @@ Only oRPC does that with one definition:
 - The typed error is part of the procedure contract (`.errors({ RUN_NOT_FOUND: { status: 404, data } })`) and lands in the OpenAPI 404 body.
 - The SSE operation is documented as `text/event-stream` with a typed event schema. Elysia documents nothing for it.
 
-Costs, accepted: 25 production packages vs 6; the HTTP dispatch is 3-6x slower than Hono and ~8x slower than Elysia in-process
-(40-85k req/s on a loaded host, workflows last seconds to minutes); the emitted OpenAPI version is fixed at `3.1.1`; a docs trap (below).
+Costs, accepted: 25 production packages vs 18 (Elysia, counting required peers) and 6 (Hono); the HTTP dispatch is 2-3x slower than Hono and ~5x slower than Elysia in-process
+(40-165k req/s on a loaded host, workflows last seconds to minutes); the emitted OpenAPI version is fixed at `3.1.1`; a docs trap (below).
 
 No current alternative beats all three. `ts-rest` is dead (3.52.1, 2025-06-02, zod 3 peer). Fastify 5 +
 `fastify-type-provider-zod@7.0.0` + `@fastify/swagger@9.9.2` is the maintained Node-flavoured path (needs zod >= 4.2, no in-process call). `hono-openapi@1.5.0`
@@ -50,12 +50,13 @@ All numbers from `bun run compare`, run on a loaded host (load average ~18 durin
 | `x-cli` attach | `.route({ spec: (s) => ({ ...s, 'x-cli': X }) })` | `detail: { 'x-cli': X }` | key on `createRoute({ 'x-cli': X })` |
 | in-process call without HTTP | `call(proc, input)`, typed, validated | `app.handle(Request)` only (no typed in-process client evaluated) | `app.request(...)` only |
 | SSE | `eventIterator(schema)`, 4/4 events, documented | `yield sse({ data })`, 4/4 events, **not documented** | `streamSSE`, 4/4 events, documented as `string` |
-| noise in the doc | none | 6 embedded `$schema`, 3 request media types per POST | none |
-| document size, bytes | 5490 | 5670 | 3740 |
-| wiring LOC (one file, 3 operations) | 62 | 50 | 53 |
-| prod packages (excl. zod) / unpacked MB | 25 / 2.6 | 6 / 2.4 | 6 / 2.6 |
-| GET req/s through the fetch handler | ~40-85k | ~330-650k | ~170-400k |
-| cold start incl. Bun, ms | ~40-70 | ~85-150 | ~55-110 |
+| SSE, unknown run (error before the first byte) | real `404` JSON, but only from a non-generator handler (see below) | real `404` JSON, but only from a non-generator handler | real `404` JSON, but only if checked before `streamSSE` |
+| noise in the doc | none | 7 embedded `$schema`, 3 request media types per POST | none |
+| document size, bytes | 5490 | 6121 | 4053 |
+| wiring LOC (one file, 3 operations) | 64 | 66 | 75 |
+| prod packages (deps + required peers, excl. zod, typescript) / unpacked MB | 25 / 2.6 | 18 / 4.8 | 6 / 2.6 |
+| GET req/s through the fetch handler | ~40-165k | ~330-850k | ~170-435k |
+| cold start incl. Bun, ms | ~30-70 | ~55-150 | ~30-110 |
 | `tsc` clean | yes | yes | yes (one `as never` on the SSE return) |
 | Bun | runs; Node-neutral fetch adapter | native, built for it; no `engines`, optional peer `@types/bun >=1.2` | runs; documented |
 | stable line | `1.16.1`; `2.0.0-beta.47` is a breaking preview | `1.4.30`; 2.x is a rewrite at `rc` | `4.13.x`; `5.0.0-rc.1` on `next` |
@@ -126,16 +127,31 @@ Omitting `mapJsonSchema` makes the plugin use zod's Standard JSON Schema, with i
 Not tested: registered/`$ref`'d schemas. The runner does not resolve `$ref` in `requestBody`, and Hono's `.openapi('Name')` and oRPC common schemas would emit them.
 The generator must dereference before reading `properties`.
 
+### Error before the first SSE byte
+
+A streamed response commits its status line with the first byte, so the unknown-run check has to run before streaming starts.
+Observed on `GET /runs/nope/events`:
+
+| | handler is a generator / streams immediately | check first, then stream (final code) |
+|-|-|-|
+| oRPC | `200 text/event-stream` carrying one `event: error` frame with the typed `RUN_NOT_FOUND` body (observed) | `404` JSON, typed `RUN_NOT_FOUND` body: a non-generator `.handler` calls `assertRun`, then returns the iterator |
+| Elysia | empty `200 text/event-stream` (observed: the `status(404)` returned inside the generator is never sent) | `404` JSON `ErrorBody`: a non-generator handler returns `status(404, ...)` or the generator |
+| Hono | empty `200` stream (reported in review; not reproduced separately here) | `404` JSON: `assertRun` before `streamSSE`, `c.json(..., 404)` |
+
+All three are fixed in the committed code and asserted by the `SSE on unknown run` row of `bun run compare` (`404 application/json` x3).
+oRPC is the only one where the failure is still typed on the wire in the naive form (an in-band error frame), which is a useful fallback for mid-stream errors;
+for pre-stream errors none of them gives a status from inside a generator. Each events operation now declares the 404 in its OpenAPI document.
+
 ## Toolchain
 
 Same 6 tests (3 frameworks x run + 404) under both runners; seeded defects in `lint-fixtures/bad.ts`.
 
 | Tool | Result |
 |-|-|
-| `bun test` | 150-200 ms wall for 6 tests, 0 deps |
-| `vitest run` 5.0.5 | 0.9-1.2 s wall, works under Bun via `bun run test` only (plain `bun test` runs Bun's own runner) |
-| `biome check` 2.6.3 (lint + format) | 0.25-0.5 s on 8 files |
-| `oxlint` 1.89.0 | 80-140 ms; `--type-aware` 0.65-1.2 s with `oxlint-tsgolint` 7.0.2005 |
+| `bun test` | 95-200 ms wall for 6 tests, 0 deps |
+| `vitest run` 5.0.5 | 0.45-1.2 s wall, works under Bun via `bun run test` only (plain `bun test` runs Bun's own runner) |
+| `biome check` 2.6.3 (lint + format) | 0.2-0.5 s on 8 files |
+| `oxlint` 1.89.0 | 65-140 ms; `--type-aware` 0.45-1.2 s with `oxlint-tsgolint` 7.0.2005 |
 | `oxfmt` 0.74.0 | 80 ms; 0.x beta, not adopted |
 | `tsc` 7.0.2 vs `tsc6` 6.0.2 | 1.5-3 s vs 1.2-2.8 s, indistinguishable on this project: both load the same 999 files and ~270 MB, and the host was loaded. Rerun on the real repo. |
 
@@ -154,11 +170,11 @@ Same 6 tests (3 frameworks x run + 404) under both runners; seeded defects in `l
 1. **oRPC docs trap.** `orpc.dev` documents v2 (beta); stable `1.16.1` is documented at `v1.orpc.dev`. v2 `2.0.0-beta.47` is a breaking line: `eventIterator` becomes `asyncIteratorObject`, the `@orpc/zod/zod4` entry is dropped, zod `>=4.5.0` is required, the default doc version is 3.2.0. Pin `1.16.1`; moving to v2 is its own PR.
 2. **oRPC `x-*` is an escape hatch, not a feature.** The `spec` callback replaces/extends the operation object; no doc names `x-` extensions. A thin `cli(x)` helper in the capability layer keeps it from being scattered.
 3. **oRPC cannot choose the OpenAPI version** (`3.1.1`, hard-wired in v1). Fine for the runner; a consumer that pins 3.1.0 would object.
-4. **Package count.** 25 vs 6 production packages; the supply-chain surface is larger. Bun's 3-day cool-down is on; `hono` `4.13.14`, `oxlint` `1.90.0` and `oxfmt` `0.75.0` were younger than 3 days, so the spike pins the previous patch. Scaffold will hit the same wall: pin what resolves, do not lower the setting.
+4. **Package count.** 25 vs 18 (Elysia) vs 6 (Hono) production packages, counting required peers (Elysia pulls `@sinclair/typebox`, `file-type`, `exact-mirror`, `openapi-types` and their trees; `@elysia/openapi` also declares `typescript` as a non-optional peer, excluded here as a shared build tool). oRPC's surface is the largest but not the 4x it looked like when only `dependencies` were walked. Bun's 3-day cool-down is on; `hono` `4.13.14`, `oxlint` `1.90.0` and `oxfmt` `0.75.0` were younger than 3 days, so the spike pins the previous patch. Scaffold will hit the same wall: pin what resolves, do not lower the setting.
 5. **Elysia 2.** `elysia@1.4.30` is stable, but the maintained line is moving to a complete rewrite (`2.0.0-rc.0`, TypeBox 1.x, route-argument swap). The plugin moved scope (`@elysia/openapi` vs `@elysiajs/openapi`, same version `1.4.16`). This is why Elysia is the runner-up, not the pick.
 6. **Zod 4 floor.** oRPC v1 admits `zod >=3.25`; Elysia's Standard JSON Schema path needs a zod that exposes `~standard.jsonSchema` (verified on 4.6.7). Pin zod `4.6.7` in the repo and do not resolve it from peers.
 7. **Typed in-process call is oRPC-only**, so the capability layer would be coupled to oRPC (`call`, `ORPCError`). That is deliberate (one door), but it means a framework swap later is a rewrite of the procedure layer, not the handlers. Keep handlers as plain functions of `(input, ctx)`.
-8. **Throughput.** Measured 40-85k req/s in-process for oRPC on a loaded host. Orders of magnitude above any workflow call rate here; do not let it count against oRPC, but note the 8x gap to Elysia if a hot path ever appears.
+8. **Throughput.** Measured 40-165k req/s in-process for oRPC on a loaded host. Orders of magnitude above any workflow call rate here; do not let it count against oRPC, but note the ~5x gap to Elysia if a hot path ever appears.
 9. **Not covered**: `$ref`/registered schemas through the runner (above), oRPC middleware ordering with step-level journaling (belongs to the runtime spike), `bun test` on the real repo layout, TS 7 speed at repo scale.
 
 ## Reproduce
