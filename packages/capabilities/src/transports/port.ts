@@ -25,15 +25,25 @@ export interface ChatResult {
   stop: 'complete' | 'length' | 'other'
   stopDetail?: string
   model: string
-  /** `undefined` when the provider reported no usage. */
-  tokens?: Tokens
+}
+
+/**
+ * What one attempt cost, as the provider reported it. An adapter reports every attempt that came
+ * back with usage, including one that then failed (a stream cut before its finish chunk, a 200 whose
+ * body is unusable), because the provider billed it. Retries of requests that returned no usage report nothing.
+ */
+export interface AttemptUsage {
+  model: string
+  tokens: Tokens
   /** USD as the provider reports it (`usage.cost`); `null` when it does not. */
   cost: number | null
 }
 
-/** One text completion. `iu-openai` and `iu-anthropic` both implement it. */
+export type OnUsage = (usage: AttemptUsage) => void
+
+/** One text completion. `iu-openai` and `iu-anthropic` both implement it. Rejects, never throws synchronously. */
 export interface ChatPort {
-  complete: (request: ChatRequest, signal: AbortSignal) => Promise<ChatResult>
+  complete: (request: ChatRequest, signal: AbortSignal, onUsage?: OnUsage) => Promise<ChatResult>
 }
 
 export type DecisionQuestion =
@@ -53,12 +63,11 @@ export interface DecisionRequest {
 export interface DecisionResult {
   model: string
   answers: Record<string, DecisionAnswer>
-  tokens?: { input: number; output: number }
 }
 
 /** IU's decision API: typed answers with probabilities, no text. */
 export interface DecisionPort {
-  decide: (request: DecisionRequest, signal: AbortSignal) => Promise<DecisionResult>
+  decide: (request: DecisionRequest, signal: AbortSignal, onUsage?: OnUsage) => Promise<DecisionResult>
 }
 
 export interface IuTransports {

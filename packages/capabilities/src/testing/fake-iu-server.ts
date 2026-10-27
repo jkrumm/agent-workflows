@@ -68,7 +68,11 @@ export function startFakeIu(handlers: Partial<Record<'chat' | 'messages' | 'deci
         body: (await req.json()) as Record<string, unknown>,
       }
       requests.push(recorded)
-      return handler(recorded, attempts[route]++)
+      // Never keep-alive: a later fake server can be given this port, and a pooled socket to the stopped one would fail its first request.
+      const response = await handler(recorded, attempts[route]++)
+      const headers = new Headers(response.headers)
+      headers.set('connection', 'close')
+      return new Response(response.body, { status: response.status, headers })
     },
   })
   return {

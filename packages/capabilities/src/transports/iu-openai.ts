@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { type Env, iuConfig } from './config.ts'
 import { Attempt, DEFAULTS, describe, failedResponse, type HttpOptions, isAbort, withRetries } from './http.ts'
-import type { ChatPort, ChatRequest, ChatResult, Tokens } from './port.ts'
+import type { AttemptUsage, ChatPort, ChatRequest, ChatResult, OnUsage, Tokens } from './port.ts'
 
 const chunkSchema = z.object({
   model: z.string().nullish(),
@@ -35,13 +35,13 @@ function readUsage(raw: unknown): { tokens: Tokens; cost: number | null } | unde
 /**
  * IU's OpenAI-compatible chat completions, streamed with `include_usage`. Idle watchdog only: the call
  * is aborted after `idleTimeoutMs` without a chunk, never for taking long. `reasoning_effort` is sent
- * only when the route has an effort; no `temperature` is ever sent (reasoning models reject it and IU
- * relays that as a retryable 503).
+ * only when the route has an effort other than `none`; no `temperature` is ever sent (reasoning models
+ * reject it and IU relays that as a retryable 503).
  */
 export function iuOpenai(options: HttpOptions & { env?: Env } = {}): ChatPort {
   const doFetch = options.fetch ?? fetch
   return {
-    complete: (request, signal) => {
+    complete: async (request, signal, onUsage) => {
       const { apiKey, openaiBase } = iuConfig(options.env ?? process.env)
       return withRetries(options, signal, async () => {
         const idle = new AbortController()
@@ -59,7 +59,7 @@ export function iuOpenai(options: HttpOptions & { env?: Env } = {}): ChatPort {
             signal: AbortSignal.any([signal, idle.signal]),
           })
           if (!res.ok) throw await failedResponse(res, 'iu-openai')
-          return await readStream(res, request.model, arm)
+          return await readStream(res, request.model, arm, onUsage)
         } catch (error) {
           if (idle.signal.aborted && !signal.aborted) {
             throw new Attempt(
@@ -86,14 +86,19 @@ function body(request: ChatRequest) {
     ],
     // Reasoning tokens count against this ceiling.
     max_completion_tokens: request.maxOutputTokens,
-    ...(request.effort ? { reasoning_effort: request.effort } : {}),
+    ...(request.effort && request.effort !== 'none' ? { reasoning_effort: request.effort } : {}),
     ...(request.json ? { response_format: { type: 'json_object' } } : {}),
     stream: true,
     stream_options: { include_usage: true },
   }
 }
 
-async function readStream(res: Response, requested: string, onChunk: () => void): Promise<ChatResult> {
+async function readStream(
+  res: Response,
+  requested: string,
+  onChunk: () => void,
+  onUsage: OnUsage | undefined,
+): Promise<ChatResult> {
   if (!res.body) throw new Attempt('iu-openai response had no body', true)
   let text = ''
   let finish: string | null | undefined
@@ -121,25 +126,23 @@ async function readStream(res: Response, requested: string, onChunk: () => void)
     if (choice?.finish_reason) finish = choice.finish_reason
     if (chunk.data.usage) usage = readUsage(chunk.data.usage)
   }
-  for (;;) {
-    const { done, value } = await reader.read()
-    if (done) break
-    onChunk()
-    buffer += decoder.decode(value, { stream: true })
-    const lines = buffer.split('\n')
-    buffer = lines.pop() ?? ''
-    for (const l of lines) line(l)
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      onChunk()
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() ?? ''
+      for (const l of lines) line(l)
+    }
+    line(buffer + decoder.decode())
+    // Every complete stream ends with a finish chunk; without one the connection was cut mid-answer.
+    if (!finish) throw new Attempt('iu-openai stream ended without a finish reason', true)
+  } finally {
+    // Billed whether the stream finished or not.
+    if (usage) onUsage?.({ model, ...usage } satisfies AttemptUsage)
   }
-  line(buffer + decoder.decode())
-  // Every complete stream ends with a finish chunk; without one the connection was cut mid-answer.
-  if (!finish) throw new Attempt('iu-openai stream ended without a finish reason', true)
-  const stop = finish === 'length' ? 'length' : finish && finish !== 'stop' ? 'other' : 'complete'
-  return {
-    text: text.trim(),
-    stop,
-    ...(stop === 'other' ? { stopDetail: String(finish) } : {}),
-    model,
-    tokens: usage?.tokens,
-    cost: usage?.cost ?? null,
-  }
+  const stop = finish === 'length' ? 'length' : finish === 'stop' ? 'complete' : 'other'
+  return { text: text.trim(), stop, ...(stop === 'other' ? { stopDetail: String(finish) } : {}), model }
 }

@@ -5,7 +5,7 @@ import type { Usage } from './context.ts'
 import { CapabilityCallError } from './errors.ts'
 import { complete } from './llm/model-call.ts'
 import { createRegistry } from './registry.ts'
-import { chatStream, type FakeIuServer, messageResponse, startFakeIu } from './testing/index.ts'
+import { chatStream, type FakeIuServer, messageResponse, sse, startFakeIu } from './testing/index.ts'
 import { type Env, iuTransports } from './transports/index.ts'
 
 let iu: FakeIuServer
@@ -209,6 +209,15 @@ describe('llm.classify (iu-openai)', () => {
     expect(iu.requests).toHaveLength(1)
   })
 
+  test('a cut stream bills each attempt through addUsage and fails as UPSTREAM_ERROR', async () => {
+    iu.on('chat', () =>
+      sse([{ choices: [{ delta: { content: '{"label":' } }] }, { choices: [], usage: classifyUsage }]),
+    )
+    expect(await caught(call('llm.classify', { text: 'x', labels }))).toMatchObject({ code: 'UPSTREAM_ERROR' })
+    expect(usages).toHaveLength(3)
+    expect(usages[0]).toMatchObject({ tokens: { input: 200, output: 30, cacheRead: 50, reasoning: 10 } })
+  })
+
   test('prose around the object is tolerated', async () => {
     iu.on('chat', () => chatStream('Sure! {"label":"bug","reason":"r"} Hope that helps.', classifyUsage))
     expect(await call('llm.classify', { text: 'x', labels })).toMatchObject({ label: 'bug' })
@@ -330,6 +339,22 @@ describe('decide (iu-decision)', () => {
     )
     expect(await caught(call('decide', { state: 's', questions }))).toMatchObject({ code: 'INVALID_OUTPUT' })
     iu.on('decide', () => Response.json({ ...WIRE, answers: { dup: WIRE.answers.dup } }))
+    expect(await caught(call('decide', { state: 's', questions }))).toMatchObject({ code: 'INVALID_OUTPUT' })
+    expect(usages).toHaveLength(2)
+  })
+
+  test('a probability outside 0..1 is INVALID_OUTPUT, and the call still bills', async () => {
+    iu.on('decide', () => Response.json({ ...WIRE, answers: { ...WIRE.answers, dup: { type: 'noul', noul: 1.3 } } }))
+    expect(await caught(call('decide', { state: 's', questions }))).toMatchObject({ code: 'INVALID_OUTPUT' })
+    iu.on('decide', () =>
+      Response.json({
+        ...WIRE,
+        answers: {
+          ...WIRE.answers,
+          action: { type: 'choice', choice: 'attach', probabilities: { attach: 0.8, new: -0.2 } },
+        },
+      }),
+    )
     expect(await caught(call('decide', { state: 's', questions }))).toMatchObject({ code: 'INVALID_OUTPUT' })
     expect(usages).toHaveLength(2)
   })

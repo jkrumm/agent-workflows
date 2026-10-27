@@ -1,24 +1,32 @@
 import { z } from 'zod'
 import { type Env, iuConfig } from './config.ts'
-import { Attempt, DEFAULTS, describe, failedResponse, type HttpOptions, isAbort, withRetries } from './http.ts'
-import type { ChatPort, ChatRequest, ChatResult } from './port.ts'
+import {
+  Attempt,
+  DEFAULTS,
+  describe,
+  failedResponse,
+  type HttpOptions,
+  isAbort,
+  readJson,
+  withRetries,
+} from './http.ts'
+import type { AttemptUsage, ChatPort, ChatRequest, ChatResult, OnUsage } from './port.ts'
 
 const ANTHROPIC_VERSION = '2023-06-01'
 
 const count = z.number().nullish()
+const usageSchema = z.object({
+  input_tokens: count,
+  output_tokens: count,
+  cache_read_input_tokens: count,
+  cache_creation_input_tokens: count,
+  cost: count,
+})
 const messageSchema = z.object({
   model: z.string().nullish(),
   stop_reason: z.string().nullish(),
   content: z.array(z.object({ type: z.string(), text: z.string().nullish() })),
-  usage: z
-    .object({
-      input_tokens: count,
-      output_tokens: count,
-      cache_read_input_tokens: count,
-      cache_creation_input_tokens: count,
-      cost: count,
-    })
-    .nullish(),
+  usage: usageSchema.nullish(),
 })
 
 /**
@@ -29,7 +37,7 @@ const messageSchema = z.object({
 export function iuAnthropic(options: HttpOptions & { env?: Env } = {}): ChatPort {
   const doFetch = options.fetch ?? fetch
   return {
-    complete: (request, signal) => {
+    complete: async (request, signal, onUsage) => {
       const { apiKey, anthropicBase } = iuConfig(options.env ?? process.env)
       return withRetries(options, signal, async () => {
         let res: Response
@@ -49,7 +57,7 @@ export function iuAnthropic(options: HttpOptions & { env?: Env } = {}): ChatPort
           throw new Attempt(describe(error), !isAbort(error))
         }
         if (!res.ok) throw await failedResponse(res, 'iu-anthropic')
-        return readMessage(await res.json().catch(() => null), request.model)
+        return readMessage(await readJson(res, 'iu-anthropic'), request.model, onUsage)
       })
     },
   }
@@ -66,12 +74,32 @@ function body(request: ChatRequest) {
   }
 }
 
-function readMessage(json: unknown, requested: string): ChatResult {
+function toUsage(usage: z.output<typeof usageSchema>, model: string): AttemptUsage {
+  const cacheRead = usage.cache_read_input_tokens ?? 0
+  return {
+    model,
+    // Thinking tokens are inside `output_tokens` on this wire and not reported separately.
+    tokens: {
+      input: (usage.input_tokens ?? 0) + cacheRead + (usage.cache_creation_input_tokens ?? 0),
+      output: usage.output_tokens ?? 0,
+      cacheRead,
+      reasoning: 0,
+    },
+    cost: typeof usage.cost === 'number' && usage.cost >= 0 ? usage.cost : null,
+  }
+}
+
+function readMessage(json: unknown, requested: string, onUsage: OnUsage | undefined): ChatResult {
   const parsed = messageSchema.safeParse(json)
-  if (!parsed.success) throw new Attempt('iu-anthropic returned an unreadable Messages body', false)
+  if (!parsed.success) {
+    // A 200 whose body does not fit still billed whatever its `usage` says.
+    const usage = usageSchema.safeParse((json as { usage?: unknown } | null)?.usage)
+    if (usage.success) onUsage?.(toUsage(usage.data, requested))
+    throw new Attempt('iu-anthropic returned an unreadable Messages body', false)
+  }
   const { content, usage, stop_reason: stopReason } = parsed.data
-  const cacheRead = usage?.cache_read_input_tokens ?? 0
-  const input = (usage?.input_tokens ?? 0) + cacheRead + (usage?.cache_creation_input_tokens ?? 0)
+  const model = parsed.data.model ?? requested
+  if (usage) onUsage?.(toUsage(usage, model))
   const stop =
     stopReason === 'max_tokens'
       ? 'length'
@@ -86,9 +114,6 @@ function readMessage(json: unknown, requested: string): ChatResult {
       .trim(),
     stop,
     ...(stop === 'other' ? { stopDetail: stopReason ?? 'none' } : {}),
-    model: parsed.data.model ?? requested,
-    // Thinking tokens are inside `output_tokens` on this wire and not reported separately.
-    tokens: usage ? { input, output: usage.output_tokens ?? 0, cacheRead, reasoning: 0 } : undefined,
-    cost: typeof usage?.cost === 'number' && usage.cost >= 0 ? usage.cost : null,
+    model,
   }
 }
