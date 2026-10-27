@@ -55,7 +55,7 @@ export async function withRetries<T>(options: HttpOptions, signal: AbortSignal, 
       if (!failure.retryable || i >= attempts - 1) {
         throw fail('UPSTREAM_ERROR', failure.message, failure.status === undefined ? {} : { status: failure.status })
       }
-      await Bun.sleep(backoffMs * 3 ** i)
+      await sleep(backoffMs * 3 ** i, signal)
     }
   }
 }
@@ -65,3 +65,16 @@ export const isAbort = (error: unknown) =>
   error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError')
 
 export const describe = (error: unknown) => (error instanceof Error ? error.message : String(error))
+
+/** Resolves after `ms`, or early when the signal aborts (the loop then reports CANCELLED). */
+function sleep(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(done, ms)
+    signal.addEventListener('abort', done, { once: true })
+    function done() {
+      clearTimeout(timer)
+      signal.removeEventListener('abort', done)
+      resolve()
+    }
+  })
+}

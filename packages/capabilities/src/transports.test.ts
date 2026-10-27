@@ -89,6 +89,18 @@ describe('cancel and idle', () => {
     expect(iu.requests).toHaveLength(1)
   })
 
+  test('a cancel during the backoff is reported at once', async () => {
+    const controller = new AbortController()
+    iu.on('messages', () => {
+      setTimeout(() => controller.abort(), 20)
+      return new Response('busy', { status: 503 })
+    })
+    const started = performance.now()
+    const error = await failure(iuAnthropic({ env: env(), backoffMs: 5_000 }).complete(chatRequest, controller.signal))
+    expect(error.code).toBe('CANCELLED')
+    expect(performance.now() - started).toBeLessThan(1_000)
+  })
+
   test('a stream that goes silent is aborted by the idle watchdog, and not retried', async () => {
     iu.on('chat', () => {
       const stream = new ReadableStream({
@@ -116,6 +128,7 @@ describe('cancel and idle', () => {
             controller.enqueue(encoder.encode(`data: {"choices":[{"delta":{"content":"${part}"}}]}\n\n`))
             await Bun.sleep(80)
           }
+          controller.enqueue(encoder.encode('data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n'))
           controller.enqueue(encoder.encode('data: [DONE]\n\n'))
           controller.close()
         },
@@ -150,6 +163,13 @@ describe('openai wire details', () => {
     iu.on('chat', () => chatStream('ok', null))
     const result = await iuOpenai({ env: env() }).complete(chatRequest, never())
     expect(result).toMatchObject({ text: 'ok', stop: 'complete', tokens: undefined, cost: null })
+  })
+
+  test('a stream cut before its finish chunk is retried, not returned as a complete answer', async () => {
+    iu.on('chat', () => new Response('data: {"choices":[{"delta":{"content":"half an"}}]}\n\n'))
+    const error = await failure(iuOpenai({ env: env(), backoffMs: 0 }).complete(chatRequest, never()))
+    expect(error.message).toContain('without a finish reason')
+    expect(iu.requests).toHaveLength(3)
   })
 
   test('a malformed chunk is retried, then reported', async () => {

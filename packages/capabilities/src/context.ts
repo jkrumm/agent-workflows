@@ -18,6 +18,7 @@ export type Usage = z.infer<typeof usageSchema>
 /** What a handler sees. Structurally the same `addUsage` the runtime's step context carries. */
 export interface Ctx {
   signal: AbortSignal
-  /** Report one billed model call. A call that is retried reports each attempt. */
+  /** Report one billed model call. A re-ask after a rejected answer reports each attempt; the transport's own
+   * retries of failed requests (429, 5xx, dropped connections) report nothing, because no usage came back. */
   addUsage: (usage: Usage) => void
 }

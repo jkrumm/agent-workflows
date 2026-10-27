@@ -131,6 +131,8 @@ async function readStream(res: Response, requested: string, onChunk: () => void)
     for (const l of lines) line(l)
   }
   line(buffer + decoder.decode())
+  // Every complete stream ends with a finish chunk; without one the connection was cut mid-answer.
+  if (!finish) throw new Attempt('iu-openai stream ended without a finish reason', true)
   const stop = finish === 'length' ? 'length' : finish && finish !== 'stop' ? 'other' : 'complete'
   return {
     text: text.trim(),

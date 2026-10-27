@@ -46,7 +46,7 @@ type Usage = {
 }
 ```
 
-Tokens are the raw provider counts: `input` includes cache reads, `output` includes reasoning. The Argo projection normalises later. `cost` is the provider's `usage.cost`, else the route's rate, else `null` with `costSource: 'unknown'`, never 0 (`costFromUsage` in routes). Each billed attempt is reported, so a re-asked classification reports twice, and a call whose content turned out unusable is reported before the error is thrown.
+Tokens are the raw provider counts: `input` includes cache reads, `output` includes reasoning. The Argo projection normalises later. `cost` is the provider's `usage.cost`, else the route's rate, else `null` with `costSource: 'unknown'`, never 0 (`costFromUsage` in routes). A re-ask after a rejected answer reports each attempt, and a call whose content turned out unusable is reported before the error is thrown. The transport's own retries of failed requests (429, 5xx, dropped connections) report nothing: no usage came back. A stream that ends without a finish chunk counts as a dropped connection.
 
 The runtime package defines its own step `addUsage`. This one is structurally identical (`Ctx.addUsage: (usage: Usage) => void`); the lead reconciles the type at merge.
 

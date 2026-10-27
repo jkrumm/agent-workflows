@@ -3,8 +3,6 @@ import { type Env, iuConfig } from './config.ts'
 import { Attempt, DEFAULTS, describe, failedResponse, type HttpOptions, isAbort, withRetries } from './http.ts'
 import type { DecisionAnswer, DecisionPort, DecisionRequest, DecisionResult } from './port.ts'
 
-const MAX_CHOICE_OPTIONS = 255
-
 // The wire is `POST <origin>/decisions/v1/systemone`, as the official TypeSafe SDK sends it (checked
 // against `@ai-sdk/typesafe-ai` 3.0.17). A boolean question is `noul` on the wire. One POST and a
 // small response, so this calls the API directly instead of taking `ai` and the provider package.
@@ -58,9 +56,6 @@ function body(request: DecisionRequest) {
     questions: Object.fromEntries(
       Object.entries(request.questions).map(([id, q]) => {
         if (q.type === 'boolean') return [id, { type: 'noul', instructions: q.instructions }]
-        if (Object.keys(q.options).length > MAX_CHOICE_OPTIONS) {
-          throw new Attempt(`question "${id}" has more than ${MAX_CHOICE_OPTIONS} options`, false)
-        }
         return [id, { type: 'choice', instructions: q.instructions, criteria: q.options }]
       }),
     ),

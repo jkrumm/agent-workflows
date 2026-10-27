@@ -54,6 +54,13 @@ export const decideOutput = z.object({
   truncatedChars: z.int().nonnegative().describe('State characters cut to fit the cap; 0 when nothing was cut'),
 })
 
+/** Where to cut `text` to at most `max` UTF-16 units without splitting a surrogate pair. */
+function cutPoint(text: string, max: number): number {
+  if (text.length <= max) return text.length
+  const high = text.charCodeAt(max - 1)
+  return high >= 0xd800 && high <= 0xdbff ? max - 1 : max
+}
+
 const invalid = (reason: string) => fail('INVALID_OUTPUT', `decide: ${reason}`, { attempts: 1, reason })
 
 export const createDecide = (deps: LlmDeps) =>
@@ -68,11 +75,12 @@ export const createDecide = (deps: LlmDeps) =>
       if (route.wire !== 'iu-decision') {
         throw new CapabilityError('NOT_CONFIGURED', `decide: wire "${route.wire}" is not the decision wire`)
       }
-      const truncatedChars = Math.max(0, state.length - MAX_STATE_CHARS)
+      const kept = cutPoint(state, MAX_STATE_CHARS)
+      const truncatedChars = state.length - kept
       const result = await deps.transports.decision.decide(
         {
           model: route.model,
-          state: truncatedChars > 0 ? state.slice(0, MAX_STATE_CHARS) : state,
+          state: truncatedChars > 0 ? state.slice(0, kept) : state,
           questions,
         },
         ctx.signal,

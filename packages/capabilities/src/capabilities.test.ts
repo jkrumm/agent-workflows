@@ -122,6 +122,13 @@ describe('llm.title (iu-anthropic)', () => {
     expect(await call('llm.title', { text: 'x' })).toEqual({ title: 'Shipping the Registry' })
   })
 
+  test('a title keeps its own apostrophes and only loses wrapping quotes', async () => {
+    iu.on('messages', () => messageResponse("Users' Guide to the Dogs'", null))
+    expect(await call('llm.title', { text: 'x' })).toEqual({ title: "Users' Guide to the Dogs'" })
+    iu.on('messages', () => messageResponse('"Quoted."', null))
+    expect(await call('llm.title', { text: 'x' })).toEqual({ title: 'Quoted' })
+  })
+
   test('an answer that is nothing after cleanup is INVALID_OUTPUT', async () => {
     iu.on('messages', () => messageResponse('""', null))
     expect(await caught(call('llm.title', { text: 'x' }))).toMatchObject({ code: 'INVALID_OUTPUT' })
@@ -194,6 +201,12 @@ describe('llm.classify (iu-openai)', () => {
     expect(retry).toContain('the JSON did not match the schema')
     expect(retry).toContain('question')
     expect(usages).toHaveLength(2)
+  })
+
+  test('a long reason is not a reason to throw the label away', async () => {
+    iu.on('chat', () => chatStream(JSON.stringify({ label: 'bug', reason: 'r'.repeat(900) }), classifyUsage))
+    expect(await call('llm.classify', { text: 'x', labels })).toMatchObject({ label: 'bug' })
+    expect(iu.requests).toHaveLength(1)
   })
 
   test('prose around the object is tolerated', async () => {
@@ -298,6 +311,14 @@ describe('decide (iu-decision)', () => {
     const out = await call('decide', { state: 'x'.repeat(60_050), questions })
     expect(out.truncatedChars).toBe(50)
     expect(iu.requests[0]?.body.state).toHaveLength(60_000)
+  })
+
+  test('the state is never cut inside a surrogate pair', async () => {
+    iu.on('decide', () => Response.json(WIRE))
+    const state = `${'x'.repeat(59_999)}😀tail`
+    const out = await call('decide', { state, questions })
+    expect(out.truncatedChars).toBe(state.length - 59_999)
+    expect(iu.requests[0]?.body.state).toBe('x'.repeat(59_999))
   })
 
   test('an answer outside the options, or a missing one, is INVALID_OUTPUT, and the call still bills', async () => {

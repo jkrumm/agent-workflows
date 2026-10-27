@@ -13,16 +13,25 @@ export const titleOutput = z.object({ title: z.string().min(1) })
 const SYSTEM =
   'You write short, specific titles. Reply with the title only: one line, no quotes, no markdown, no trailing period.'
 
-/** Models still add quotes, a `#`, a label or a final period now and then. */
+const QUOTE_PAIRS = [
+  ['"', '"'],
+  ["'", "'"],
+  ['“', '”'],
+  ['‘', '’'],
+  ['`', '`'],
+] as const
+
+/** Models still add a `#`, a label, wrapping quotes or a final period now and then. A lone apostrophe stays. */
 export function cleanTitle(raw: string): string {
-  const first = raw.split('\n').find((line) => line.trim()) ?? ''
-  return first
+  let title = (raw.split('\n').find((line) => line.trim()) ?? '')
     .trim()
     .replace(/^#+\s*/, '')
     .replace(/^title:\s*/i, '')
-    .replace(/^["'“”‘’`]+|["'“”‘’`]+$/g, '')
     .replace(/\.$/, '')
-    .trim()
+  for (const [open, close] of QUOTE_PAIRS) {
+    if (title.length > 1 && title.startsWith(open) && title.endsWith(close)) title = title.slice(1, -1).trim()
+  }
+  return title.replace(/\.$/, '').trim()
 }
 
 export const createTitle = (deps: LlmDeps) =>
