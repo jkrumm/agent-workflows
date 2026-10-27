@@ -1,4 +1,6 @@
-  runId: "run_7928a9881a0c",
-  traceId: "1b042c5d8b89749419586a3cf4ae4c89",
+$ bun run src/spike.ts
+http run: {
+  runId: "run_69f576d296bf",
+  traceId: "09512ef24636939ab5093c137b8d745e",
 }
-TRACE_ID 1b042c5d8b89749419586a3cf4ae4c89
+TRACE_ID 09512ef24636939ab5093c137b8d745e

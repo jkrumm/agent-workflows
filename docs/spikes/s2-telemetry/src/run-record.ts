@@ -14,6 +14,7 @@ export type Tokens = z.infer<typeof Tokens>;
 
 export const StepRecord = z.object({
   stepId: z.string(),
+  startedAt: z.string(), // ISO, when the step began; becomes the Argo row `ts`
   kind: z.enum(["code", "agent", "workflow"]),
   spanId: z.string(),
   outcome: z.enum(["ok", "error"]),
@@ -87,6 +88,12 @@ export const ArgoUsageRecordInput = z.object({
 });
 export const ArgoBody = z.object({ records: z.array(ArgoUsageRecordInput).min(1).max(1000) });
 
+/** Argo knows `ok` and `error` only. `invalid_output` means the agent step produced output that failed validation: error. */
+function argoOutcome(run: RunRecord, s: StepRecord): "ok" | "error" {
+  if (s.outcome === "error") return "error";
+  return run.outcome === "invalid_output" ? "error" : "ok";
+}
+
 /**
  * One Argo row per agent step that spent tokens. Run-level facts (fingerprint, scores, friction, trace id)
  * ride in `raw` because Argo has no column for them; the full run record stays in the platform's Postgres.
@@ -100,7 +107,7 @@ export function toArgoRows(run: RunRecord, now = new Date()) {
       source: "agent-workflows",
       source_id: `${run.runId}:${s.stepId}`,
       grain: "step",
-      ts: ts(run.startedAt),
+      ts: ts(s.startedAt),
       ingested_at: now.toISOString(),
       model: s.model,
       model_norm: s.model, // Argo/usage-tracker normalise via models.ts; the route table already holds canonical ids
@@ -110,7 +117,7 @@ export function toArgoRows(run: RunRecord, now = new Date()) {
       machine: run.caller.machine,
       billing: "iu",
       account: null,
-      outcome: s.outcome,
+      outcome: argoOutcome(run, s),
       input_tokens: s.tokens.input,
       output_tokens: s.tokens.output,
       cache_read_tokens: s.tokens.cacheRead,

@@ -1,9 +1,11 @@
 // The "agw" process under test. CLI mode: parent from env TRACEPARENT. --serve: parent from the HTTP traceparent header.
 import { writeFileSync } from "node:fs";
 import { initTelemetry } from "./telemetry.ts";
+import { ensureOut, OUT } from "./util.ts";
 import { runWorkflow } from "./workflow.ts";
 
 const here = import.meta.dir;
+ensureOut();
 const serve = process.argv.includes("--serve");
 const proto = (process.env.SPIKE_PROTOCOL as "proto" | "json" | undefined) ?? "proto";
 const tel = initTelemetry({ serviceName: serve ? "agw-host" : "agw-cli", protocol: proto });
@@ -20,11 +22,12 @@ if (!serve) {
     leafCmd,
   });
   run.parentTraceparent = process.env.TRACEPARENT ?? null;
-  writeFileSync(`${here}/../out/run-record.cli.json`, JSON.stringify(run, null, 2));
+  writeFileSync(`${OUT}/run-record.cli.json`, JSON.stringify(run, null, 2));
   await tel.shutdown();
 } else {
   // HTTP path: long-lived server, stopped with SIGTERM (flush-on-signal is exercised by the orchestrator).
   const server = Bun.serve({
+    hostname: "127.0.0.1",
     port: 0,
     async fetch(req) {
       const parent = tel.extract(Object.fromEntries(req.headers));
@@ -36,7 +39,7 @@ if (!serve) {
         leafCmd,
       });
       run.parentTraceparent = req.headers.get("traceparent");
-      writeFileSync(`${here}/../out/run-record.http.json`, JSON.stringify(run, null, 2));
+      writeFileSync(`${OUT}/run-record.http.json`, JSON.stringify(run, null, 2));
       return Response.json({ runId: run.runId, traceId: run.traceId });
     },
   });

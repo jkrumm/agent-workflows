@@ -1,5 +1,5 @@
 {
-  "runId": "run_fdf53a2d9f63",
+  "runId": "run_69f745b6e335",
   "workflowId": "research.report",
   "inputHash": "3f2594ee12a4d2138d23c84bbaeac911bc95c54f23e18ad92a76bf09e4db2585",
   "output": {
@@ -7,15 +7,16 @@
     "sections": 3
   },
   "outcome": "ok",
-  "startedAt": "2026-10-27T17:09:03.998Z",
-  "wallMs": 113,
+  "startedAt": "2026-10-27T17:24:25.700Z",
+  "wallMs": 123,
   "steps": [
     {
       "stepId": "prepare",
+      "startedAt": "2026-10-27T17:24:25.701Z",
       "kind": "code",
-      "spanId": "b2ffbd5ca44525f9",
+      "spanId": "8bcc5469718fb636",
       "outcome": "ok",
-      "wallMs": 18,
+      "wallMs": 17,
       "model": null,
       "tokens": {
         "input": 0,
@@ -31,10 +32,11 @@
     },
     {
       "stepId": "research",
+      "startedAt": "2026-10-27T17:24:25.718Z",
       "kind": "agent",
-      "spanId": "0226d7b159a7c966",
+      "spanId": "b103fd9da4f780f8",
       "outcome": "ok",
-      "wallMs": 74,
+      "wallMs": 84,
       "model": "claude-haiku-5-5",
       "tokens": {
         "input": 1200,
@@ -46,14 +48,15 @@
       "costUsd": 0.0123,
       "costSource": "reported",
       "toolCalls": 2,
-      "sessionId": "ses_fake38a828"
+      "sessionId": "ses_fake25a3dc"
     },
     {
       "stepId": "notify",
+      "startedAt": "2026-10-27T17:24:25.802Z",
       "kind": "code",
-      "spanId": "bf08ef02b02383a7",
+      "spanId": "242d4a9e0d926542",
       "outcome": "ok",
-      "wallMs": 9,
+      "wallMs": 10,
       "model": null,
       "tokens": {
         "input": 0,
@@ -69,8 +72,9 @@
     },
     {
       "stepId": "title",
+      "startedAt": "2026-10-27T17:24:25.812Z",
       "kind": "workflow",
-      "spanId": "697ec0f7cced0d31",
+      "spanId": "93aff1bae4c0c92c",
       "outcome": "ok",
       "wallMs": 11,
       "model": null,
@@ -105,8 +109,8 @@
   "scores": {
     "gate": 0.9
   },
-  "traceId": "1b042c5d8b89749419586a3cf4ae4c89",
-  "parentTraceparent": "00-1b042c5d8b89749419586a3cf4ae4c89-bdacc50403259795-01",
+  "traceId": "09512ef24636939ab5093c137b8d745e",
+  "parentTraceparent": "00-09512ef24636939ab5093c137b8d745e-8d60211fce2855f1-01",
   "fingerprint": {
     "workflowVersion": "0.0.1",
     "agents": {
