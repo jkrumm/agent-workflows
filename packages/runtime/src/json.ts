@@ -1,4 +1,7 @@
-/** A value that survives `JSON.stringify` → jsonb → `JSON.parse` unchanged, so a replayed step equals the original. */
+/**
+ * A value that survives `JSON.stringify` → jsonb → `JSON.parse`, so a replayed step deep-equals the original.
+ * jsonb does not keep object key order: never depend on the iteration order of a step output.
+ */
 export type Json = string | number | boolean | null | Json[] | { [key: string]: Json }
 
 /** Returns a description of the first non-JSON value (undefined, Date, bigint, NaN, class instance), or null. */
@@ -6,6 +9,7 @@ export function jsonViolation(value: unknown, path = '$'): string | null {
   if (value === null) return null
   switch (typeof value) {
     case 'string':
+      return value.includes('\u0000') ? `${path} contains a NUL character (jsonb rejects it)` : null
     case 'boolean':
       return null
     case 'number':
@@ -32,6 +36,7 @@ function objectViolation(value: object, path: string): string | null {
     return `${path} is a ${name}`
   }
   for (const [key, entry] of Object.entries(value)) {
+    if (key.includes('\u0000')) return `${path} has a key with a NUL character (jsonb rejects it)`
     const found = jsonViolation(entry, `${path}.${key}`)
     if (found) return found
   }

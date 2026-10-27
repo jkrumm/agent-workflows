@@ -42,8 +42,10 @@ const result = await runtime.wait(runId)
 - **Idle timeout** per step: no `progress()` (or host progress event) for `idleTimeoutMs` fails the attempt as
   `timeout`. Agent steps default to 5 minutes; code steps have none. It is never a wall-clock cap
   (rules/agent-limits.md): a step that keeps reporting progress runs as long as the work takes.
-- **Cancel** (`runtime.cancel(runId)`, any process): the run and its children become `cancelled`; the driving
-  process aborts the step's signal and calls `host.abort`. **Steer** (`runtime.steer(runId, stepId, text)`) is
+- **Cancel** (`runtime.cancel(runId)`, any process): pending runs end `cancelled` at once; a running run gets
+  `cancel_requested_at`, and the process holding its lease (or the next one to claim an orphan) aborts the step's
+  signal, calls `host.abort` on every running agent session of the tree (`host.abort` must be idempotent), ends
+  the run and its children `cancelled` and calls `runPost`. **Steer** (`runtime.steer(runId, stepId, text)`) is
   journaled in `signals` and delivered to the running agent step via `host.steer`.
 
 ## Durability

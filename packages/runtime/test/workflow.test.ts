@@ -222,3 +222,15 @@ describe('replay', () => {
     }
   })
 })
+
+describe('Json', () => {
+  test('jsonViolation rejects what would not replay equal', async () => {
+    const { jsonViolation } = await import('../src/json.ts')
+    expect(jsonViolation({ a: [1, 'x', null, { b: true }] })).toBeNull()
+    expect(jsonViolation({ a: undefined })).toBe('$.a is undefined')
+    expect(jsonViolation([1n])).toBe('$[0] is bigint')
+    expect(jsonViolation({ d: new Date() })).toBe('$.d is a Date')
+    expect(jsonViolation({ n: Number.NaN })).toBe('$.n is a non-finite number')
+    expect(jsonViolation({ s: 'a\u0000b' })).toContain('NUL')
+  })
+})

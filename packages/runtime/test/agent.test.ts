@@ -170,6 +170,65 @@ describe('agent steps', () => {
   })
 })
 
+describe('agent edge cases', () => {
+  test('a cancel that lands while the session opens aborts it and never prompts', async () => {
+    let releaseOpen: () => void = () => {}
+    const opened = new Promise<void>((resolve) => {
+      releaseOpen = resolve
+    })
+    let opening = false
+    class SlowOpenHost extends FakeAgentHost {
+      override async open(spec: Parameters<FakeAgentHost['open']>[0]): Promise<Json> {
+        opening = true
+        await opened
+        return super.open(spec)
+      }
+    }
+    const host = new SlowOpenHost()
+    const wf = agentWorkflow('agent.cancel-open')
+    const rt = testRuntime({ schema: db.schema, workflows: [wf], host })
+    await rt.open()
+    try {
+      const { runId } = await rt.start(wf, {}, { purpose: 'build' })
+      await until(() => opening, 'open in flight')
+      await rt.cancel(runId)
+      releaseOpen()
+      expect((await rt.wait(runId)).status).toBe('cancelled')
+      await until(() => host.count('abort') === 1, 'host.abort')
+      expect(host.count('prompt')).toBe(0)
+    } finally {
+      await rt.close()
+    }
+  })
+
+  test('a retry after invalid output opens a fresh session instead of re-reading the old one', async () => {
+    let n = 0
+    const host = new FakeAgentHost(async () => {
+      n++
+      const output: Json = n === 1 ? { wrong: true } : { answer: `try ${n}` }
+      return { output }
+    })
+    const wf = defineWorkflow({
+      id: 'agent.retry-fresh',
+      version: 'v1',
+      input: empty,
+      output: answer,
+      run: (ctx) =>
+        ctx.agent('ask', { agent: 'helper', prompt: 'q', output: answer, retry: { attempts: 2, backoffMs: 10 } }),
+    })
+    const rt = testRuntime({ schema: db.schema, workflows: [wf], host })
+    await rt.open()
+    try {
+      const { runId } = await rt.start(wf, {}, { purpose: 'build' })
+      expect((await rt.wait(runId)).output).toEqual({ answer: 'try 2' })
+      expect(host.count('open')).toBe(2)
+      expect(host.count('prompt', 'sent')).toBe(2)
+    } finally {
+      await rt.close()
+    }
+  })
+})
+
 describe('fan-out', () => {
   test('ctx.workflow runs children under the parent; a failing child yields null', async () => {
     const child = defineWorkflow({

@@ -16,6 +16,8 @@ create table {{schema}}.runs (
   traceparent text,
   trace_id text,
   lease_token text,
+  -- Set by cancel on a running run; the process holding (or next claiming) the lease aborts and finalizes it.
+  cancel_requested_at timestamptz,
   fingerprint text,
   version_started text not null,
   version_finished text,

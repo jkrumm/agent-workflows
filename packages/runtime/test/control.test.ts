@@ -92,7 +92,8 @@ describe('cancel', () => {
       await until(() => host.count('prompt', 'sent') === 1, 'prompt')
       await other.cancel(runId)
       expect((await driver.wait(runId)).status).toBe('cancelled')
-      await until(() => host.count('abort') === 1, 'host.abort')
+      // In-process abort plus the cleanup pass: host.abort is idempotent by contract.
+      await until(() => host.count('abort') >= 1, 'host.abort')
       expect([...host.sessions.values()][0]?.aborted).toBe(true)
     } finally {
       await other.close()
@@ -122,6 +123,49 @@ describe('cancel', () => {
     await later.recover()
     await later.close()
     expect(ran).toBe(false)
+  })
+})
+
+describe('cancel of an orphan', () => {
+  test('a run cancelled while nobody drives it is cleaned up by the next claimer', async () => {
+    const host = new FakeAgentHost(async (s) => {
+      await s.sleep(10_000, 50)
+      return { output: 'never' }
+    })
+    const wf = defineWorkflow({
+      id: 'ctl.cancel-orphan',
+      version: 'v1',
+      input: empty,
+      output: empty,
+      async run(ctx) {
+        await ctx.agent('think', { agent: 'helper', prompt: 'long task' })
+        return {}
+      },
+    })
+    const first = testRuntime({ schema: db.schema, workflows: [wf], host })
+    await first.open()
+    const { runId } = await first.start(wf, {}, { purpose: 'build' })
+    await until(async () => (await sql.step(runId, 'think'))?.handle, 'handle journaled')
+    await until(() => host.count('prompt', 'sent') === 1, 'prompt')
+    await first.close() // the process is gone; the session keeps running
+    expect(host.count('abort')).toBe(0)
+
+    const remote = testRuntime({ schema: db.schema, workflows: [] })
+    await remote.cancel(runId)
+    await remote.close()
+    expect((await sql.run(runId))?.status).toBe('running')
+
+    const rec = recorder()
+    const next = testRuntime({ schema: db.schema, workflows: [wf], host, middleware: [rec.mw] })
+    await next.open()
+    try {
+      expect((await next.wait(runId)).status).toBe('cancelled')
+      expect(host.count('abort')).toBe(1)
+      expect(await sql.step(runId, 'think')).toMatchObject({ status: 'cancelled' })
+      expect(rec.runs.map((r) => r.status)).toEqual(['cancelled'])
+    } finally {
+      await next.close()
+    }
   })
 })
 
