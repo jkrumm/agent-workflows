@@ -280,3 +280,19 @@ One entry per phase: what we learned, what changed on this page, and why.
 - **Spend.** IU ≤ $1.35 (research $0.64, review $0.68), reconstructed from a time window: the legacy
   gateways cannot tag `purpose=build`. The new platform tags it natively from Wave 2.
 - **Does the page hold?** Yes.
+
+### Wave 2 — Core runtime (P1a), 2026-10-28
+
+- **Learned.** Lead reviews on Max caught what single-run tests cannot: a lease released while a
+  detached step body still ran, and an outbox posting before its run record existed. Live verification
+  caught what 257 green tests did not (a route with neither provider cost nor rate); "cost unknown,
+  never 0" made it visible. The OpenCode "wedge" was a 45 s ceiling against a 30–109 s file-watcher
+  boot: a ceiling shorter than a slow-but-healthy phase reports a hang (D5 holds). One owner per
+  package per round kept cross-package changes conflict-free.
+- **Changed.** Nothing on this page; lease fencing (lock plus `lease_token`) and `toolPre` refusal are
+  implementation detail in the package READMEs. §8's wedge risk is resolved; Wave 3 rewrites it.
+- **Friction.** Max accounts out of room for 45 min (`rd fan` paused, never spilled); a UI modal
+  silently swallowed four `rd say` messages.
+- **Spend.** IU ≤ $2.67 (reviews), reconstructed from a time window; the new runtime already
+  persists `purpose` on every run.
+- **Does the page hold?** Yes.

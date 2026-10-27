@@ -43,40 +43,56 @@ red: dotfiles architecture-check rows for `com.iu.athena-postgres`, `com.iu.team
 tailscale drift. Housekeeping noted, not done: Docker leftovers `p0b-postgres_*` (no Makefile target),
 an unrestorable test backup `20261027T165644Z` (retention ages it out), unowned role `modelpick`.
 
-## Wave 2 — Core runtime (P1a)            <!-- status: active -->
+## Wave 2 — Core runtime (P1a)            <!-- status: done -->
 Workers: Opus/medium for runtime and middleware, Sonnet/high for routes and capabilities.
 
-- [ ] `defineWorkflow`, the three step kinds, journal and resume, effect keys, bounded-run rule;
+- [x] `defineWorkflow`, the three step kinds, journal and resume, effect keys, bounded-run rule;
   a replay test that crashes after every step. Closes S1's "Wave 2 must" list
   (`docs/spikes/s1-runtime/REPORT.md`): lease off the shared pool, 64-bit lock keys, retry policy,
   idle-rule step timeout, cancel/steer, concurrency limits, recovery tick, a lint for the step-id
   authoring rule; the kill harness stays as a regression test with concurrent runs
-- [ ] Middleware pipeline with the interception points `run/pre … run/post` (`runPre` carries a
+- [x] Middleware pipeline with the interception points `run/pre … run/post` (`runPre` carries a
   `resume` flag); run record and fingerprint, every run tagged with its `purpose`. S2's inputs: the
   middleware owns flush (crash handlers, signal re-raise), tokens from the OpenCode message API, Argo
   rows from an outbox
-- [ ] Route table (model + effort per route) — becomes the home of model ids; cost from `usage.cost`
-- [ ] `defineCapability` + registry (import, HTTP, CLI from one zod definition); first capabilities
+- [x] Route table (model + effort per route) — becomes the home of model ids; cost from `usage.cost`
+- [x] `defineCapability` + registry (import, HTTP, CLI from one zod definition); first capabilities
   `llm.summarize|title|classify`, `decide`
-- [ ] Runaway caps and the wallet gate as middleware rules, both tested
-- [ ] Fleet tooling (dotfiles, Sonnet/high): the merge train installs before `make check` (or `make
+- [x] Runaway caps and the wallet gate as middleware rules, both tested
+- [x] Fleet tooling (dotfiles, Sonnet/high): the merge train installs before `make check` (or `make
   check` installs itself) and handles draft PRs; `rd wave` treats taken agent names as taken numbers
-- [ ] Investigation (Sonnet/high, parallel, report only): isolate the OpenCode 2.0.32 prompt wedge (S2,
+- [x] Investigation (Sonnet/high, parallel, report only): isolate the OpenCode 2.0.32 prompt wedge (S2,
   6/6) — replay the dotfiles spike script verbatim, bisect env/cwd/HOME; Wave 3's host design takes
   the cause as input
-**Left behind:**
+**Left behind:** all seven landed, reviewed (`--deep` + lead `/code-review high` on runtime, middleware,
+limits), `make check` 257 tests green, CI green. `@verifier` on the mini against `agent_workflows`:
+record, resume-without-re-run, spans (in-script receiver: local ClickStack was down), Argo rows (dry),
+limits wired; the one FAIL (unpriced IU route) fixed by PR #11. The OpenCode "wedge" was the file-watcher
+boot: `OPENCODE_DISABLE_FILEWATCHER=1`. Full evidence: `docs/waves/handoff/lead.md` at `5721ad7`.
+Not ours, noted: agent-gateway restarted twice mid-review; IU `/models` times out ~1/3 of calls.
+Known gaps carried in the package READMEs: >100K-token price tier unmodelled (`unknown` cost), limits'
+admission burst overshoot and uncounted SIGKILLed usage.
 
-## Wave 3 — CLI, agent host, deploy (P1b)            <!-- status: pending -->
+## Wave 3 — CLI, agent host, deploy (P1b)            <!-- status: active -->
 Workers: Opus/medium for the CLI generator and OpenCode re-attach, Sonnet/high for the rest.
 
 - [ ] `agw` generated from OpenAPI + `x-cli` (spike-7 runner as reference): exit codes, typed errors,
   `pending` → resume, `schema`, `contract_mismatch`, a conformance suite
 - [ ] OpenCode host: locations compiled outside any repo, warm/evict, sessions re-attached after a
-  restart, DeepSeek wire rules on cheap routes (concept §8)
-- [ ] agent-gateway's CLI renamed `agw-legacy` (its repo, one commit); the new `agw` on PATH
-- [ ] LaunchAgents (`host` process), `make deploy|verify`, Kuma heartbeat, dotfiles architecture map
-  and herdr groups entry
-- [ ] One trivial workflow end to end, proven live: run record, spans, usage
+  restart, DeepSeek wire rules on cheap routes (concept §8). Inputs from the wedge report:
+  `OPENCODE_DISABLE_FILEWATCHER=1`, liveness via `GET /api/info` plus the idle watchdog, SIGTERM then
+  SIGKILL, re-attach by session id; concept §8's wedge risk rewritten as resolved (version note)
+- [ ] agent-gateway's CLI renamed `agw-legacy` (its repo, one commit), every caller of today's `agw`
+  swept to it; the new `agw` on PATH
+- [ ] LaunchAgents (`host` process: registry HTTP with bearer auth, fail closed; `AGW_MACHINE` set),
+  `make deploy|verify`, Kuma heartbeat, dotfiles architecture map and herdr groups entry; `make check`
+  installs its own deps
+- [ ] Telemetry and usage live: a reachable OTLP receiver with read-back (local ClickStack via its
+  Makefile target, or the VPS tier); `ARGO_URL` field created, then its ref in `headless.refs`, then
+  `.env.tpl`; the Argo outbox on
+- [ ] One trivial workflow end to end, proven live: run record, spans in ClickStack, usage in Argo
+- [ ] Fleet tooling (dotfiles, Sonnet/high): `rd say` verifies the agent left `idle/done` and dismisses
+  known modals (the "compact earlier" modal swallowed messages in Wave 2)
 **Left behind:**
 
 ## Wave 4 — Review and check cut over (P1c)            <!-- status: pending -->
