@@ -13,12 +13,21 @@
         "zod": "4.6.7",
       },
     },
+    "packages/routes": {
+      "name": "@agent-workflows/routes",
+      "version": "0.0.0",
+      "dependencies": {
+        "zod": "4.6.7",
+      },
+    },
     "packages/runtime": {
       "name": "@agent-workflows/runtime",
       "version": "0.0.0",
     },
   },
   "packages": {
+    "@agent-workflows/routes": ["@agent-workflows/routes@workspace:packages/routes"],
+
     "@agent-workflows/runtime": ["@agent-workflows/runtime@workspace:packages/runtime"],
 
     "@biomejs/biome": ["@biomejs/biome@2.6.3", "", { "optionalDependencies": { "@biomejs/cli-android-arm64": "2.6.3", "@biomejs/cli-android-x64": "2.6.3", "@biomejs/cli-darwin-arm64": "2.6.3", "@biomejs/cli-darwin-x64": "2.6.3", "@biomejs/cli-linux-arm64": "2.6.3", "@biomejs/cli-linux-arm64-musl": "2.6.3", "@biomejs/cli-linux-x64": "2.6.3", "@biomejs/cli-linux-x64-musl": "2.6.3", "@biomejs/cli-win32-arm64": "2.6.3", "@biomejs/cli-win32-x64": "2.6.3" }, "bin": { "biome": "bin/biome" } }, "sha512-va/0xPku7wnfzv+D8Zpdm5uKiGJWiV8neqoEPnRjvNQQwhl4tVXS4fETs4H0CCB2rGeqJ4cu9y4iOZOnOYKAUA=="],
