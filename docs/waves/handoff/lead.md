@@ -28,7 +28,7 @@ The `/review` door (agent-gateway) was up for the whole wave; the mother-start t
 
 ## make check
 
-`make check` green on master after the scaffold merge (biome format, biome lint, oxlint type-aware, tsc, 1 test); CI green on PR #3. Spike merges ran `--no-check` before the scaffold existed (docs-only, each spike's own command rerun by the lead). S1 merged with `--check 'bun install --frozen-lockfile && make check'`: a fresh worktree has no `node_modules`, so the train's bare `make check` fails on the missing `tsgolint` binary. vps: `make check` → `OK: local validation passed` in the train.
+`make check` green on master after the scaffold merge (biome format, biome lint, oxlint type-aware, tsc, 1 test); CI green on PR #3. Spike merges ran `--no-check` before the scaffold existed (docs-only, each spike's own command rerun by the lead). S1 merged with `--check 'bun install --frozen-lockfile && make check'`: a fresh worktree has no `node_modules`, so the train's bare `make check` fails on the missing `tsgolint` binary. vps: `make check` → `OK: local validation passed` in the train. Final master (`5950d1b`): `make check` → `==> check passed` from the main checkout, CI green (run 40573188043). That run needed `acf01fd`: Biome walked `.claude/worktrees/`, hit the worktrees' nested `biome.json` and refused to run, so `make check` failed from the main checkout whenever workers existed.
 
 ## Live verification
 
