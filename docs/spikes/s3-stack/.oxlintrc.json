@@ -1,0 +1,6 @@
+{
+  "plugins": ["typescript"],
+  "categories": { "correctness": "error" },
+  "rules": { "typescript/no-floating-promises": "error", "typescript/no-misused-promises": "error" },
+  "ignorePatterns": ["cli/**", "node_modules/**", "out/**"]
+}
