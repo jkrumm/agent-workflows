@@ -1,5 +1,5 @@
 import { AdmissionRefused, type Logger, type Middleware, type RunPreArgs } from '@agent-workflows/runtime'
-import { consoleLogger, type DecisionSink, type WalletDecision } from './decision.ts'
+import { consoleLogger, type DecisionSink, isolatedSink, type WalletDecision } from './decision.ts'
 import { defaultSnapshotPath, type SpendSource, snapshotSpendSource } from './spend.ts'
 
 export const WALLET_THRESHOLD_USD_DEFAULT = 400
@@ -30,10 +30,10 @@ export function walletGate(options: WalletGateOptions): Middleware {
   const logger = options.logger ?? consoleLogger
   const env = walletEnv(process.env, logger)
   const spend = options.spend ?? snapshotSpendSource({ path: env.snapshotPath })
-  const thresholdUsd = options.thresholdUsd ?? env.thresholdUsd
-  const pausedUntil = options.pausedUntil === undefined ? env.pausedUntil : options.pausedUntil
+  const thresholdUsd = validThreshold(options.thresholdUsd, env.thresholdUsd, logger)
+  const pausedUntil = validPause(options.pausedUntil, env.pausedUntil, logger)
   const now = options.now ?? (() => new Date())
-  const emit = options.onDecision ?? (() => {})
+  const emit = isolatedSink(options.onDecision, logger)
 
   return {
     name: 'wallet-gate',
@@ -80,9 +80,28 @@ export function walletGate(options: WalletGateOptions): Middleware {
 
 export type WalletEnv = { thresholdUsd: number; pausedUntil: Date | null; snapshotPath: string }
 
+function validThreshold(option: number | undefined, fallback: number, logger: Logger): number {
+  if (option === undefined) return fallback
+  if (Number.isFinite(option) && option >= 0) return option
+  logger.warn('wallet gate: thresholdUsd is not a number >= 0; the default applies', {
+    thresholdUsd: option,
+    default: fallback,
+  })
+  return fallback
+}
+
+function validPause(option: Date | null | undefined, fallback: Date | null, logger: Logger): Date | null {
+  if (option === undefined) return fallback
+  if (option === null || !Number.isNaN(option.getTime())) return option
+  logger.warn('wallet gate: pausedUntil is an invalid date; the default pause applies', {
+    default: fallback?.toISOString() ?? null,
+  })
+  return fallback
+}
+
 /**
- * `AGW_WALLET_THRESHOLD_USD` (a number ≥ 0; anything else → a warning and 400), `AGW_WALLET_PAUSED_UNTIL` (ISO date; empty =
- * no pause; invalid → warning, no pause), `AGW_WALLET_SNAPSHOT` (path).
+ * `AGW_WALLET_THRESHOLD_USD` (a number ≥ 0; anything else → a warning and 400), `AGW_WALLET_PAUSED_UNTIL` (ISO
+ * date; empty = no pause; invalid → a warning and the default pause date, fail closed), `AGW_WALLET_SNAPSHOT` (path).
  */
 export function walletEnv(env: Record<string, string | undefined>, logger: Logger = consoleLogger): WalletEnv {
   const rawThreshold = env.AGW_WALLET_THRESHOLD_USD?.trim()
@@ -99,11 +118,15 @@ export function walletEnv(env: Record<string, string | undefined>, logger: Logge
 
   const rawPause = env.AGW_WALLET_PAUSED_UNTIL ?? WALLET_PAUSED_UNTIL_DEFAULT
   let pausedUntil: Date | null = null
-  if (rawPause !== '') {
-    const until = new Date(rawPause)
-    if (Number.isNaN(until.getTime())) {
-      logger.warn('AGW_WALLET_PAUSED_UNTIL is not a valid date; no pause', { pausedUntil: rawPause })
-    } else pausedUntil = until
+  if (rawPause.trim() !== '') {
+    pausedUntil = new Date(rawPause)
+    if (Number.isNaN(pausedUntil.getTime())) {
+      logger.warn('AGW_WALLET_PAUSED_UNTIL is not a valid date; the default pause applies', {
+        pausedUntil: rawPause,
+        default: WALLET_PAUSED_UNTIL_DEFAULT,
+      })
+      pausedUntil = new Date(WALLET_PAUSED_UNTIL_DEFAULT)
+    }
   }
 
   return { thresholdUsd, pausedUntil, snapshotPath: env.AGW_WALLET_SNAPSHOT || defaultSnapshotPath() }
