@@ -1,0 +1,11 @@
+route reachable
+server up
+session: ses_e81a93a8bffeAvHn710G0x9YNb
+GET /api/info 200
+GET /api/session 200
+GET /api/session/active 200
+prompt: skipped
+server log tail:
+server listening on http://[::1]:17989
+
+flag=false ourTrace=4b6088a4522dce69d4ec01b41df91d20 run=mvqxxl98

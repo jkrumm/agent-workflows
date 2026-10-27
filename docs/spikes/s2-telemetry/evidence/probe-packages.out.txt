@@ -1,0 +1,13 @@
+$ bun run src/probe-packages.ts
+probe.run=mvqxwyx1
+┌───┬──────────────────────────────────────────┬─────────────────────────────────────────────────────────────────────────────────┬────┐
+│   │ case                                     │ outcome                                                                         │ ms │
+├───┼──────────────────────────────────────────┼─────────────────────────────────────────────────────────────────────────────────┼────┤
+│ 0 │ http-proto-4319                          │ ok                                                                              │ 29 │
+│ 1 │ http-json-4319                           │ ok                                                                              │ 23 │
+│ 2 │ http-proto-4318-nokey                    │ FAILED Unauthorized                                                             │ 42 │
+│ 3 │ http-proto-4318-key                      │ ok                                                                              │ 5  │
+│ 4 │ grpc-4317-key                            │ ok                                                                              │ 71 │
+│ 5 │ grpc-4317-nokey                          │ FAILED 16 UNAUTHENTICATED: missing or empty authorization header: Authorization │ 4  │
+│ 6 │ sdk-node (import, start, span, shutdown) │ ok                                                                              │ 35 │
+└───┴──────────────────────────────────────────┴─────────────────────────────────────────────────────────────────────────────────┴────┘
