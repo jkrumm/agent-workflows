@@ -122,6 +122,7 @@ describe('wallet gate', () => {
     ['malformed', () => snapshot('malformed', '{"schema":1,', true), 'IU spend snapshot is not valid JSON'],
     ['wrong schema', () => snapshot('schema2', { ...fresh(10), schema: 2 }), 'unsupported schema'],
     ['no spend', () => snapshot('nospend', { ...fresh(10), rolling30_usd: 'x' }), 'no valid rolling30_usd'],
+    ['future', () => snapshot('future', fresh(10, -1)), 'fetched_at in the future'],
     ['no fetched_at', () => snapshot('nofetch', { schema: 1, rolling30_usd: 1 }), 'no valid fetched_at'],
   ])('fails closed on a %s snapshot', async (_name, path, reason) => {
     const result = await runOnce(gate(await path()))
@@ -189,10 +190,15 @@ describe('wallet gate', () => {
         logger,
       ),
     ).toEqual({ thresholdUsd: 250, pausedUntil: null, snapshotPath: '/tmp/s.json' })
+    expect(walletEnv({ AGW_WALLET_THRESHOLD_USD: ' ' }, logger).thresholdUsd).toBe(400)
+    expect(walletEnv({ AGW_WALLET_THRESHOLD_USD: '0' }, logger).thresholdUsd).toBe(0)
     expect(walletEnv({ AGW_WALLET_THRESHOLD_USD: '-1', AGW_WALLET_PAUSED_UNTIL: 'soon' }, logger)).toMatchObject({
       thresholdUsd: 400,
       pausedUntil: null,
     })
-    expect(logger.lines.map((l) => l.message)).toEqual(['AGW_WALLET_PAUSED_UNTIL is not a valid date; no pause'])
+    expect(logger.lines.map((l) => l.message)).toEqual([
+      'AGW_WALLET_THRESHOLD_USD is not a number >= 0; the default applies',
+      'AGW_WALLET_PAUSED_UNTIL is not a valid date; no pause',
+    ])
   })
 })

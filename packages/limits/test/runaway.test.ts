@@ -219,6 +219,8 @@ describe('runaway cap', () => {
     const { runId } = await rt1.start(resumable, {}, { purpose: 'test' })
     await until(async () => (await sql.step(runId, 'b'))?.status === 'running', 'step b running')
     await rt1.close()
+    // Downtime before the resume is not wall time of the run.
+    await Bun.sleep(300)
 
     block = false
     const second = capWithSpy({ ceilings })
@@ -231,6 +233,7 @@ describe('runaway cap', () => {
     // The re-run of b already sees a's 0.6 and both journal rows.
     expect(seen[0]?.observed).toMatchObject({ cost: 0.6, steps: 2 })
     expect(seen[0]?.allowed).toBe(true)
+    expect(seen[0]?.observed.wallMs).toBeLessThan(300)
     expect(second.thrown[0]).toMatchObject({ metric: 'cost', cap: 1 })
     expect((second.thrown[0] as RunawayCapExceeded).observed).toBeCloseTo(1.2, 6)
     expect((await sql.step(runId, 'c'))?.error).toContain('runaway cap: cost')
@@ -276,5 +279,47 @@ describe('runaway cap', () => {
     expect(caps.basis).toEqual({ kind: 'static', sample: 0, reason: 'history_unavailable' })
     expect(caps.values).toEqual(DEFAULT_CEILING)
     expect(logger.lines[0]?.message).toContain('history read failed')
+  })
+})
+
+describe('runaway cap, resume loads', () => {
+  const stepArgs = (runId: string, stepId: string) => ({
+    runId,
+    workflowId: 'cap.load',
+    version: 'v1',
+    stepId,
+    kind: 'code' as const,
+    attempt: 1,
+    startedAt: new Date(),
+    status: 'running' as const,
+    replay: false,
+  })
+
+  test('a failed load is never cached: the step passes and the next one reads again', async () => {
+    const logger = captureLogger()
+    const cap = runawayCap({ connectionString: PG_URL, schema: 'agw_t_lim_missing_schema', logger })
+    open.push(cap)
+    await cap.stepPre?.(stepArgs('r-missing', 'a'))
+    const after = cap.queries
+    await cap.stepPre?.(stepArgs('r-missing', 'b'))
+    expect(cap.queries).toBe(after + 1)
+    expect(logger.lines.filter((l) => l.message.includes('could not load')).length).toBe(2)
+  })
+
+  test('concurrent steps of an unknown run share one load and one state', async () => {
+    await seedRuns(sql.pool, db.schema, 'cap.load', [{ cost: 0.3, tokens: 10, wallMs: 100, steps: 2 }])
+    const { rows } = await sql.pool.query<{ id: string }>(
+      `select id from "${db.schema}".runs where workflow = 'cap.load'`,
+    )
+    const runId = rows[0]?.id ?? ''
+    const { cap, decisions } = capWithSpy()
+    await cap.caps('cap.load')
+    const before = cap.queries
+    await Promise.all([cap.stepPre?.(stepArgs(runId, 'x')), cap.stepPre?.(stepArgs(runId, 'y'))])
+    expect(cap.queries).toBe(before + 1)
+    const seen = decisions.filter((d): d is CapDecision => d.rule === 'runaway-cap')
+    // One shared state: both steps counted on top of the two journal rows (separate states would see 3 each).
+    expect(seen.map((d) => d.observed.steps)).toEqual([4, 4])
+    expect(seen[0]?.observed.cost).toBeCloseTo(0.3, 6)
   })
 })

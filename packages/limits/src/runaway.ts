@@ -113,6 +113,7 @@ export function runawayCap(options: RunawayCapOptions): RunawayCap {
   }
 
   const runs = new Map<string, RunState>()
+  const loading = new Map<string, Promise<RunState | null>>()
   const cache = new Map<string, CacheEntry>()
   const flagged = new Set<string>()
 
@@ -175,25 +176,39 @@ export function runawayCap(options: RunawayCapOptions): RunawayCap {
     return { values: ceiling(workflowId), basis: { kind: 'static', sample: 0, reason: 'history_unavailable' } }
   }
 
-  /** What the run spent so far according to the journal: a resumed run counts its earlier steps. */
-  async function load(runId: string, workflowId: string): Promise<RunState> {
-    const state = await readSpent(runId, workflowId).catch((err: unknown) => {
-      // Fail open: a journal hiccup must not fail the step. The run is counted from here on.
-      logger.warn('runaway cap: could not load what the run spent; counting from now', {
-        runId,
-        workflowId,
-        error: err instanceof Error ? err.message : String(err),
-      })
-      const now = Date.now()
-      return { workflowId, startedAt: now, cost: 0, tokens: 0, steps: 0, seenAt: now }
-    })
-    runs.set(runId, state)
-    return state
+  /**
+   * What the run spent so far according to the journal: a resumed run counts its earlier steps. Concurrent callers
+   * share one read. Null when the read failed: nothing is cached, so the meter is never reset and the next step
+   * reads again; the step at hand passes unchecked (a journal hiccup must not fail it).
+   */
+  function load(runId: string, workflowId: string): Promise<RunState | null> {
+    const pending = loading.get(runId)
+    if (pending) return pending
+    const read = readSpent(runId, workflowId)
+      .then(
+        (state) => {
+          runs.set(runId, state)
+          return state
+        },
+        (err: unknown) => {
+          logger.warn('runaway cap: could not load what the run spent; this step passes unchecked', {
+            runId,
+            workflowId,
+            error: err instanceof Error ? err.message : String(err),
+          })
+          return null
+        },
+      )
+      .finally(() => loading.delete(runId))
+    loading.set(runId, read)
+    return read
   }
 
   async function readSpent(runId: string, workflowId: string): Promise<RunState> {
-    const { rows } = await query<{ started_at: Date | null; cost: number; tokens: number; steps: number }>(
-      `select r.started_at,
+    const { rows } = await query<{ active_ms: number | null; cost: number; tokens: number; steps: number }>(
+      // Wall time already run: start to the last journal activity, so the downtime before a resume is not counted.
+      `select extract(epoch from (greatest(r.started_at, max(s.attempt_started_at), max(s.finished_at)) - r.started_at))
+           * 1000 as active_ms,
          coalesce(sum(s.cost), 0)::float8 as cost,
          coalesce(sum(s.tokens_input + s.tokens_output + s.tokens_cache_read + s.tokens_reasoning), 0)::float8 as tokens,
          count(s.step_id)::int as steps
@@ -206,7 +221,7 @@ export function runawayCap(options: RunawayCapOptions): RunawayCap {
     const row = rows[0]
     return {
       workflowId,
-      startedAt: row?.started_at?.getTime() ?? Date.now(),
+      startedAt: Date.now() - (row?.active_ms ?? 0),
       cost: row?.cost ?? 0,
       tokens: row?.tokens ?? 0,
       steps: row?.steps ?? 0,
@@ -229,6 +244,7 @@ export function runawayCap(options: RunawayCapOptions): RunawayCap {
     state: RunState,
     caps: Caps,
     metrics: readonly Metric[],
+    emitAllowed = true,
   ): CapDecision {
     const observed: Metrics = {
       cost: state.cost,
@@ -249,7 +265,7 @@ export function runawayCap(options: RunawayCapOptions): RunawayCap {
       basis: caps.basis,
       exceeded,
     }
-    emit(decision)
+    if (exceeded || emitAllowed) emit(decision)
     return decision
   }
 
@@ -274,6 +290,7 @@ export function runawayCap(options: RunawayCapOptions): RunawayCap {
 
     async stepPre(args: StepPreArgs) {
       const state = runs.get(args.runId) ?? (await load(args.runId, args.workflowId))
+      if (!state) return
       state.seenAt = Date.now()
       // A replayed step already has its journal row, counted by the resume load.
       if (!args.replay) state.steps++
@@ -283,16 +300,14 @@ export function runawayCap(options: RunawayCapOptions): RunawayCap {
 
     async toolPre(event: ToolEvent) {
       const state = runs.get(event.runId)
-      if (!state) return
+      // Once per run: the runtime logs a toolPre throw and lets the step go on, so a repeat is only noise.
+      if (!state || flagged.has(event.runId)) return
       state.seenAt = Date.now()
-      const decision = decide('toolPre', event, state, await capsFor(state.workflowId), ['wallMs'])
+      // Only an exceeded cap is a decision worth recording; an agent step makes many tool calls.
+      const decision = decide('toolPre', event, state, await capsFor(state.workflowId), ['wallMs'], false)
       if (!decision.exceeded) return
-      const err = new RunawayCapExceeded('wallMs', decision.observed.wallMs, decision.caps.wallMs, decision.basis)
-      if (!flagged.has(event.runId)) {
-        flagged.add(event.runId)
-        logger.warn('runaway cap exceeded', { ...decision, message: err.message })
-      }
-      throw err
+      flagged.add(event.runId)
+      throw refuse(decision)
     },
 
     stepPost(args: StepPostArgs) {
