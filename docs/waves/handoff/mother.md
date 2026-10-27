@@ -10,7 +10,8 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
 - dotfiles is held by the P0 wave (`dotfiles-w1`) until `dotfiles/docs/waves/PLAN.md` shows it done.
 
 ## Lead
-- (filled after spawn)
+- `agent-workflows-w1` (pane w40:p3, tab "wave 1"), Opus/high, spawned 2026-10-27 for Wave 1.
+- The mother is agent `agent-workflows-mother` (pane w40:p1).
 
 ## Open decisions
 - none
@@ -18,6 +19,9 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
 ## Obstacles noted
 - 2026-10-27: agent-gateway MCP timed out at the mother's session start; the lead checks the `/review`
   door and falls back to `/code-review high` on Max if it stays down, noting it in Left behind.
+- 2026-10-27: `rd wave` numbers tabs from labelled "wave N" tabs only, not agent names; the mother was
+  named `-w1` and blocked the first spawn. Fixed by renaming the mother. dotfiles fix (count taken
+  agent names too) waits until the P0 wave frees dotfiles.
 
 ## Next action
 - Watch the lead (`wave-watch.sh --agents <lead> --heartbeat 20`), read `handoff/lead.md` on idle,
