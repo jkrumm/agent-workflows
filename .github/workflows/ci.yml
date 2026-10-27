@@ -15,6 +15,23 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: agent_workflows
+          POSTGRES_PASSWORD: agent_workflows
+          POSTGRES_DB: agent_workflows
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U agent_workflows"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+    env:
+      # Throwaway CI-only database in the service container above.
+      AGW_TEST_PG_URL: postgres://agent_workflows:agent_workflows@localhost:5432/agent_workflows
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
