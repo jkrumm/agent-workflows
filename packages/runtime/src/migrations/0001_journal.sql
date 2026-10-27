@@ -18,6 +18,10 @@ create table {{schema}}.runs (
   lease_token text,
   -- Set by cancel on a running run; the process holding (or next claiming) the lease aborts and finalizes it.
   cancel_requested_at timestamptz,
+  -- runPre accepted the run (set once); resume is true from here on.
+  admitted_at timestamptz,
+  -- runPost delivered; recovery re-delivers it for ended runs where this is null (at least once).
+  post_hooks_at timestamptz,
   fingerprint text,
   version_started text not null,
   version_finished text,
@@ -40,6 +44,8 @@ create index runs_claimable on {{schema}}.runs (created_at)
 create index runs_workflow_running on {{schema}}.runs (workflow)
   where parent_id is null and status = 'running';
 create index runs_root on {{schema}}.runs (root_id);
+create index runs_post_hooks_pending on {{schema}}.runs (finished_at)
+  where post_hooks_at is null and status in ('done', 'failed', 'cancelled');
 
 create table {{schema}}.steps (
   run_id text not null references {{schema}}.runs (id) on delete cascade,

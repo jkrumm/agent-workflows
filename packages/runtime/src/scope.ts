@@ -38,7 +38,9 @@ export type ScopeHost = {
   stepPost(args: StepPostArgs): Promise<void>
   tool(phase: 'pre' | 'post', event: ToolEvent): Promise<void>
   runChild(parent: RunScope, childId: string, workflow: AnyWorkflow, input: unknown): Promise<Json | null>
-  trackAgent(key: string, handle: Json | null): void
+  trackAgent(key: string, handle: Json): void
+  /** Only removes the entry when it is still this attempt's handle. */
+  untrackAgent(key: string, handle: Json): void
   logError(message: string, meta: Record<string, unknown>): void
 }
 
@@ -147,7 +149,7 @@ export class RunScope {
     const error = outcome.ok ? null : { kind: errorKind(outcome.error), message: errorMessage(outcome.error) }
     const status = outcome.ok ? 'done' : cancelled ? 'cancelled' : 'failed'
     const output = outcome.ok ? outcome.value : null
-    await this.j(() =>
+    const recorded = await this.j(() =>
       journal.finishStep(runId, stepId, this.fence, {
         status,
         output,
@@ -156,6 +158,8 @@ export class RunScope {
         model: usage.model(),
       }),
     )
+    // Not recorded: a cancel cleanup ended the step first; its outcome stands.
+    if (!recorded) throw new Cancelled(runId)
     await this.rt.stepPost({ ...info, attempt, status, finishedAt: new Date(), usage: usage.snapshot(), output, error })
     if (outcome.ok) return outcome.value
     if (cancelled) throw outcome.error
@@ -206,6 +210,8 @@ export class RunScope {
     const { journal } = this.rt
     const runId = this.run.id
     let state: AgentHandleState | null = null
+    /** The journal still holds a handle this step no longer uses (a failed attempt's session). */
+    let staleHandle = false
     let loaded = false
     const idleMs = spec.idleTimeoutMs === undefined ? DEFAULT_AGENT_IDLE_MS : spec.idleTimeoutMs
     return this.journaled(stepId, 'agent', { retry: spec.retry, idleTimeoutMs: idleMs }, async (scope, row) => {
@@ -214,14 +220,26 @@ export class RunScope {
         state = row?.handle ?? null
         loaded = true
       }
+      if (!state && staleHandle) {
+        // A crash before the new handle is journaled must not re-attach to the failed session.
+        await this.j(() => journal.stepHandle(runId, stepId, this.fence, null))
+        staleHandle = false
+      }
       // Re-attach order (concept §3): open, journal the handle, then prompt; a journaled prompt only waits.
+      // Every await is followed by a checkpoint: a superseded attempt (timeout, cancel) must not write state.
       let handle: Json | null = state?.handle ?? null
       let sessionAborted = false
+      /** Drops this attempt's session from the shared state, unless a newer attempt already replaced it. */
+      const forget = () => {
+        if (handle === null || state?.handle !== handle) return
+        state = null
+        staleHandle = true
+      }
       const abortSession = () => {
         const reason: unknown = scope.signal.reason
         if (handle === null || sessionAborted || reason instanceof InfraError) return // shutdown or lease loss: keep the session for re-attach
         sessionAborted = true
-        if (reason instanceof StepTimeout) state = null // a retry opens a fresh session
+        if (reason instanceof StepTimeout) forget() // a retry opens a fresh session
         host.abort(handle).catch((err: unknown) => {
           this.rt.logError('agent host abort failed', { runId, stepId, error: errorMessage(err) })
         })
@@ -253,6 +271,7 @@ export class RunScope {
         if (!current.prompted) {
           checkpoint()
           await host.prompt(current.handle, spec.prompt)
+          checkpoint()
           const prompted = { ...current, prompted: true }
           state = prompted
           await this.j(() => journal.stepHandle(runId, stepId, this.fence, prompted))
@@ -273,11 +292,11 @@ export class RunScope {
         return parsed.data as Json
       } catch (err) {
         // Any workflow-level failure: a retry must not wait on the same finished or wedged session again.
-        if (!(err instanceof InfraError) && !(err instanceof Cancelled)) state = null
+        if (!(err instanceof InfraError) && !(err instanceof Cancelled)) forget()
         throw err
       } finally {
         scope.signal.removeEventListener('abort', abortSession)
-        this.rt.trackAgent(scope.key, null)
+        if (handle !== null) this.rt.untrackAgent(scope.key, handle)
       }
     }) as Promise<z.output<S>>
   }

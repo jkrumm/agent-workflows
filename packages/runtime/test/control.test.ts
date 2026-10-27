@@ -169,6 +169,33 @@ describe('cancel of an orphan', () => {
   })
 })
 
+describe('runPost delivery', () => {
+  test('a run cancelled while pending gets its runPost from the next recovery, exactly once', async () => {
+    const wf = defineWorkflow({
+      id: 'ctl.post-pending',
+      version: 'v1',
+      input: empty,
+      output: empty,
+      run: async () => ({}),
+    })
+    const starter = testRuntime({ schema: db.schema, workflows: [wf] })
+    const { runId } = await starter.start(wf, {}, { purpose: 'build' })
+    await starter.cancel(runId)
+    await starter.close()
+    const rec = recorder()
+    const a = testRuntime({ schema: db.schema, workflows: [wf], middleware: [rec.mw] })
+    const b = testRuntime({ schema: db.schema, workflows: [wf], middleware: [rec.mw] })
+    await Promise.all([a.open(), b.open()])
+    try {
+      await until(async () => (await sql.run(runId))?.post_hooks_at, 'post hooks recorded')
+      await Bun.sleep(300)
+      expect(rec.runs.filter((r) => r.runId === runId).map((r) => r.status)).toEqual(['cancelled'])
+    } finally {
+      await Promise.all([a.close(), b.close()])
+    }
+  })
+})
+
 describe('steer', () => {
   test('a steer is journaled and delivered to the running agent session', async () => {
     const host = new FakeAgentHost(async (s) => {

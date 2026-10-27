@@ -95,6 +95,9 @@ export class LeasePool {
       connectionString: this.connectionString,
       application_name: this.applicationName,
       keepAlive: true,
+      connectionTimeoutMillis: 30_000,
+      query_timeout: 60_000,
+      statement_timeout: 60_000,
     })
     const lc: LeaseClient = { client, dead: false, onLost: null }
     const lost = () => {

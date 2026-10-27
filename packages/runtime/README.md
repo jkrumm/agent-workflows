@@ -66,13 +66,22 @@ const result = await runtime.wait(runId)
   that crossed a deploy.
 - Recovery ticks every `recoveryIntervalMs`, backing off on failure, and claims pending and orphaned runs whose
   lease is free. Per-workflow `concurrency` keeps excess top-level runs pending.
+- Journal and lease connections carry connect, query and statement timeouts, so a hung database call fails as an
+  infra error instead of stalling a tick.
 
 ## Middleware
 
 An ordered list of `{ name, runPre, stepPre, toolPre, toolPost, stepPost, runPost }` given to the `Runtime`, so
-no workflow can skip it. `runPre` gets `resume`; throwing (`AdmissionRefused` for a clean refusal) fails a new
-run before its body runs and is ignored on resume. `stepPre` gets `replay`; throwing fails the step as
-`middleware`. Post hooks run after the commit: a throw is logged and never changes the recorded outcome.
+no workflow can skip it.
+
+- `runPre` runs after the run took its concurrency slot. `resume` is false until a `runPre` pass accepted the run
+  (`admitted_at`), so admission fires once per run. Throwing (`AdmissionRefused` for a clean refusal) fails a new
+  run before its body runs; on resume it is logged and ignored.
+- `stepPre` gets `replay`; throwing fails the step as `middleware`.
+- Post hooks run after the commit: a throw is logged and never changes the recorded outcome.
+- `runPost` is at least once: `post_hooks_at` records delivery, and recovery re-delivers it for ended runs
+  without it (a kill between the terminal write and the hooks, a run cancelled while pending), under the root's
+  lease so no live driver races it.
 
 ## Bounded runs
 
