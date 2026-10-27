@@ -1,0 +1,154 @@
+# @agent-workflows/middleware
+
+The platform layer every workflow runs inside (concept §4 rows Record and Telemetry, §5): purpose, fingerprint,
+run record and telemetry as runtime `Middleware`, plus the Argo outbox the host flushes. Built on the S2 verdicts
+(`docs/spikes/s2-telemetry/REPORT.md`).
+
+## Shape
+
+```ts
+const platform = platformMiddleware({
+  connectionString, // the runtime's
+  schema: 'agw', // the runtime's
+  fingerprint: fsFingerprintSource({ agentsDir, workflows: { 'research.report': [{ agent: 'brain', route: 'cheap.classify' }] } }),
+})
+const runtime = new Runtime({ connectionString, workflows, host, middleware: platform.middleware })
+platform.telemetry.installFlush({ onSignal: () => runtime.close() })
+await runtime.open()
+setInterval(() => void platform.outbox?.flush(), 30_000) // the host's tick (Wave 3)
+```
+
+`platform.middleware` is the ordered list `purpose → fingerprint → record → telemetry`. The record runs before
+telemetry so its totals land on the run span before telemetry ends it. `platform.close()` comes after
+`runtime.close()`: it ends open spans, flushes and closes the pool.
+
+## What each middleware records
+
+| Middleware | Hook | Writes |
+|-|-|-|
+| `purpose` | `runPre` | Refuses (`AdmissionRefused`) a run with a blank purpose. The runtime already makes it non-null |
+| `fingerprint` | `runPre` | `runs.fingerprint` on admission (`resume: false`), written once (`coalesce`). A resumed run keeps it. A source failure refuses the run |
+| `record` | `runPost` | `runs.wall_ms`, `tokens_*`, `cost`, `trace_id`, plus `friction.unpricedCalls` and `friction.toolCalls` |
+| `telemetry` | all six | One span per run drive, one child span per step, tool calls as span events |
+
+- **Run record.** Sums the run's own step rows. A fan-out's children carry their own record; sum by `root_id`
+  for a tree. `cost` stays null when nothing was priced. `friction.unpricedCalls > 0` marks it as a lower bound.
+  The runs table has no column for this count, so it rides in `friction`. Wall time comes from the row's
+  `started_at`/`finished_at`, so a re-delivered `runPost` writes the identical record.
+- **Fingerprint.** sha256 over the workflow version, each referenced agent's `AGENTS.md` and `skills/**`, each
+  agent's `routeFingerprint` (`@agent-workflows/routes`, overrides included) and `opencode --version`. Inputs come
+  through the `FingerprintSource` port. `fsFingerprintSource` reads the agent dirs and OpenCode once per process,
+  caches them, and never asks OpenCode for a workflow without agents. Tests pass a fake.
+- **Purpose.** On the run span (`agw.purpose`) and in every Argo row's `raw.purpose`. The projection refuses a run
+  without one.
+- **Tokens.** `usageFromOpenCodeMessages(messages, { model })` turns an agent session's
+  `GET /api/session/:id/message` page into the runtime's `Usage`. The Wave 3 OpenCode host returns it as
+  `AgentResult.usage`. Spans are never the token source: OpenCode 2.0.32 emits no model or token spans (S2).
+
+### Spans
+
+| Span | Parent | Attributes |
+|-|-|-|
+| `agw.run <workflow>` | the caller's `traceparent`; else a root in a trace derived from the root run id; a child run hangs under its parent's fan-out step span | `agw.workflow.id`, `.version`, `agw.run.id`, `.root_id`, `.parent_id`, `.resumed`, `.status`, `agw.purpose`, `agw.fingerprint`, record totals (`agw.tokens.*`, `agw.cost.usd`, `.unpriced_calls`, `agw.tool_calls`, `agw.run.wall_ms`), `agw.error.*` |
+| `agw.step <id>` | its run span | `agw.step.id`, `.kind`, `.attempt`, `.replay`, `.status`, `agw.tokens.*`, `agw.cost.*`, `agw.tool_calls`, `gen_ai.request.model` (one model), `opencode.session.id` (agent steps, from the journaled handle's `sessionId`) |
+| event `tool.pre` / `tool.post` | its step span | `agw.tool.name`, `.call_id`, `.error` |
+
+- **Admission span id** is derived from the run id (`admissionSpanId`). A resumed run opens a new span in the same
+  trace, linked to it (`agw.link: admission`). The process that was stopped ends its open spans with
+  `agw.suspended`.
+- **No open span** at `runPost` means one of three things: a re-delivery in another process, a run cancelled while
+  pending, or a run refused before telemetry's `runPre`. A short span carries the outcome (`agw.run.outcome_only`),
+  linked to the admission span.
+- **`telemetry.traceparent(runId, stepId)`** gives the step span's W3C header. The OpenCode host sends it on every
+  request, so OpenCode's `http.server` spans join the step (S2 §5).
+
+## Flush contract
+
+Without a handler, spans are lost on `process.exit`, on a natural exit and on SIGTERM (S2 flush matrix).
+`telemetry.installFlush({ onSignal })` installs, once per process:
+
+| Event | Behaviour |
+|-|-|
+| `SIGTERM`, `SIGINT` | `onSignal(signal)` (the host's own shutdown, e.g. `runtime.close()`), then `shutdown()`: open spans end as suspended, flush, provider shutdown. Then the handlers are removed and the signal is re-raised, so the process ends by the signal (128+n), not `exit(0)` |
+| `uncaughtException`, `unhandledRejection` | logged, `shutdown()`, `exit(1)` |
+| `beforeExit` | flush when spans are waiting |
+| `exit` | can't await; logs how many spans an explicit `process.exit` loses |
+
+- **Bounded.** Every flush and shutdown is capped at `flushTimeoutMs` (default 5 s). A timeout is logged.
+- **Never silent.** A failed export is logged with its span count by the exporter wrapper. Spans the batch queue
+  dropped are counted (ended minus exported minus failed) and logged at the next flush. OTel's own diagnostics go
+  to the same logger at `warn`.
+- **One owner.** Other `SIGTERM` listeners would keep the re-raised signal from ending the process. The host shuts
+  down through `onSignal` instead.
+- **Receiver is env.** The default exporter is OTLP http/protobuf, configured only by the standard env.
+  - Local: `OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4319` (unauthed loopback).
+  - Leaving the host: the authed tier plus `OTEL_EXPORTER_OTLP_HEADERS` from `secrets-run`.
+- **S2's open question, answered.** On Bun 1.4.3, `exporter-trace-otlp-proto` 0.300.0 reads
+  `OTEL_EXPORTER_OTLP_ENDPOINT` and `OTEL_EXPORTER_OTLP_HEADERS` itself. `test/flush.test.ts` passes both only
+  through the child's env and asserts the headers at the receiver.
+
+Packages, pinned exactly: `@opentelemetry/sdk-trace` 3.0.0, `exporter-trace-otlp-proto` 0.300.0,
+`context-async-hooks` 3.0.0, `core` 3.0.0, `resources` 3.0.0, `api` 1.10.0. `context-async-hooks` is a dependency
+for hosts that want an active context. The hooks don't wrap step bodies, so this package parents every span
+explicitly.
+
+## Argo outbox
+
+`ArgoOutbox.flush()` projects finished steps of finished runs (`argo_synced_at is null`) into Argo `usage_record`
+rows and posts them through the `ArgoTransport` port. Production: `POST <ARGO_URL>/usage/records`, bearer
+`ARGO_API_SECRET`, Argo's `UsageRecordInputSchema` (copied verbatim as `ArgoUsageRecordInput`).
+
+- **Exactly once.** Each batch is selected `for update skip locked` and marked in the same transaction, so racing
+  flushers never post a step twice. A step is marked only after Argo accepted its rows.
+- **Retried.** A failed post rolls back and backs off (5 s doubling to 5 min). The next `flush()` after the delay
+  retries the same rows.
+- **Crash after the post.** The rows are posted again; Argo's upsert on `(source, source_id, machine)` absorbs it.
+- **No usage, no row.** Steps without usage are marked without a post.
+- **Off without config.** No `ARGO_URL`/`ARGO_API_SECRET` means no outbox, and the steps wait in Postgres.
+
+| Run record / step | Argo `usage_record` | Note |
+|-|-|-|
+| — | `source` = `agent-workflows`, `grain` = `step` | |
+| run id, step id, model | `source_id` = `<runId>:<stepId>:<model>` | one row per step and model (`usage_by_model`); usage reported without a model is the remainder, as `unknown` |
+| workflow id | `sub_tool` | |
+| step start (`steps.started_at`) | `ts` | |
+| step finish − start | `duration_ms` | |
+| model | `model`, `model_norm` | route table holds canonical ids |
+| tokens input / output / cache read / reasoning | `input_tokens` = input − cache read, `output_tokens` = output − reasoning, `cache_read_tokens`, `reasoning_tokens` | **additive contract**; `cache_write_tokens` = 0 (the runtime has no cache-write field; writes stay in input) |
+| cost | `cost_usd`, `cost_source` = `reported` (or `none` when unpriced) | |
+| step failed/cancelled, or run `invalid_output` | `outcome` = `error` (else `ok`) | |
+| — | `billing` = `iu`, `account` = null, `workspace` = `private`, `project` = null | `project` needs the caller's cwd (CLI, Wave 3) |
+| — | `machine` = `AGW_MACHINE` or the host name | part of Argo's upsert key |
+| run id, step id, root id, purpose, fingerprint, trace id, session id, tool calls, unpriced calls, run outcome, run wall ms, scores, friction | `raw` | Argo has no columns for them; `raw.scores` is null until scorers exist |
+
+**Why normalise.** Provider usage is not additive. `output` includes reasoning, `input` includes cache reads. Argo
+adds `reasoning_tokens` on top of `output_tokens`, so an unnormalised row counts reasoning twice
+(`test/argo-rows.test.ts`).
+
+## Token effect / cache effect
+
+- **None at runtime.** The middleware adds no model-visible text and no tokens. Every hook runs outside the agent
+  session.
+- **Cache reads are recorded.** They stay visible (`tokens_cache_read`, `cache_read_tokens`), so a prompt-cache
+  regression shows up as a fingerprint's falling cache share.
+- **Cache writes are invisible.** OpenCode reports them, but the runtime's `Usage` has no field. They fold into
+  input, which overstates Argo's fresh input by the write count.
+- **A fingerprint change is expected to cost a cold cache once.** It means a changed `AGENTS.md`, skill, route or
+  OpenCode version, and a changed prompt head misses the provider cache. Compare cache share by fingerprint before
+  calling a prompt change cheaper.
+
+## Tests
+
+Real Postgres through the runtime's test support (`AGW_TEST_PG_URL`, a throwaway schema per file). Concurrency
+runs through every test, never a single run:
+
+| File | Covers |
+|-|-|
+| `platform.test.ts` | 18 concurrent top-level runs with a fan-out: run record, fingerprint, purpose, span tree; `runPost` re-delivery; resume of 5 runs in a second "process" keeps the admission fingerprint and links a new run span in the same trace |
+| `outbox.test.ts` | 24 concurrent runs (72 runs incl. children), two racing flushers, an Argo outage then recovery: every row exactly once, none lost; backoff timing |
+| `flush.test.ts` | subprocess with a fake OTLP receiver: SIGTERM and SIGINT re-raised after flush, crash exit 1, export failure and dropped spans logged |
+| `fingerprint.test.ts`, `opencode-usage.test.ts`, `argo-rows.test.ts` | pure: stability, each input changes the hash, the OpenCode conversion, the additive projection |
+
+The OpenCode message fixtures are shaped from the measured sources S2 points at, not from S2 itself. Every S2
+prompt wedged, so it captured no session. The sources are usage-tracker's live-schema message and agent-gateway's
+v2 probe (`test/fixtures/opencode-messages.ts`).
