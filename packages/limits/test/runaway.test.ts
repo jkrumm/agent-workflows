@@ -393,7 +393,10 @@ describe('runaway cap, history, hot path and trees', () => {
       input: z.object({ i: z.number() }),
       output: empty,
       async run(ctx) {
-        await ctx.step('spend', (s) => (s.addUsage(costUsage(0.3, 100)), 1))
+        await ctx.step('spend', (s) => {
+          s.addUsage(costUsage(0.3, 100))
+          return 1
+        })
         await ctx.step('tail', () => 2)
         return {}
       },
@@ -405,7 +408,10 @@ describe('runaway cap, history, hot path and trees', () => {
       output: empty,
       async run(ctx) {
         await ctx.workflow('fan', child, [{ i: 0 }, { i: 1 }, { i: 2 }])
-        await ctx.step('spend', (s) => (s.addUsage(costUsage(0.3, 100)), 1))
+        await ctx.step('spend', (s) => {
+          s.addUsage(costUsage(0.3, 100))
+          return 1
+        })
         await ctx.step('after', () => 2)
         return {}
       },
@@ -437,7 +443,10 @@ describe('runaway cap, history, hot path and trees', () => {
       input: empty,
       output: empty,
       async run(ctx) {
-        await ctx.step('a', (s) => (s.addUsage({ tokens: { input: 500, output: 0, cacheRead: 0, reasoning: 0 } }), 1))
+        await ctx.step('a', (s) => {
+          s.addUsage({ tokens: { input: 500, output: 0, cacheRead: 0, reasoning: 0 } })
+          return 1
+        })
         await ctx.step('b', () => 2)
         return {}
       },
@@ -464,5 +473,60 @@ describe('runaway cap, history, hot path and trees', () => {
     const rt = await started(testRuntime({ schema: db.schema, workflows: [wf], middleware: [cap] }))
     expect((await rt.wait((await rt.start(wf, { cost: 0.01 }, { purpose: 'test' })).runId)).status).toBe('done')
     expect(logger.lines.filter((l) => l.message === 'onDecision threw; ignored')).toHaveLength(3)
+  })
+})
+
+describe('runaway cap, runPost interleaving', () => {
+  test('after runPost a step or tool hook neither throws nor re-flags the ended run', async () => {
+    const decisions: LimitDecision[] = []
+    const cap = runawayCap({
+      connectionString: PG_URL,
+      schema: db.schema,
+      logger: captureLogger(),
+      ceilings: { 'cap.ended': { wallMs: 0, steps: 0 } },
+      onDecision: (d) => decisions.push(d),
+    })
+    open.push(cap)
+    const info = {
+      runId: 'ended-1',
+      workflowId: 'cap.ended',
+      version: 'v1',
+      purpose: 'test',
+      parentId: null,
+      rootId: 'ended-1',
+      input: {},
+      traceparent: null,
+    }
+    await cap.runPre?.({ ...info, resume: false })
+    await Bun.sleep(5)
+    const tool = { runId: 'ended-1', stepId: 'a', callId: 'c1', tool: 'read' }
+    // Over the cap while live: the first toolPre throws and flags the run.
+    expect(() => cap.toolPre?.(tool)).toThrow(RunawayCapExceeded)
+    await cap.runPost?.({
+      ...info,
+      status: 'failed',
+      output: null,
+      error: null,
+      startedAt: null,
+      finishedAt: new Date(),
+    })
+    const count = decisions.length
+    expect(cap.toolPre?.(tool)).toBeUndefined()
+    const step = {
+      runId: 'ended-1',
+      workflowId: 'cap.ended',
+      version: 'v1',
+      stepId: 'b',
+      kind: 'code' as const,
+      attempt: 1,
+      startedAt: new Date(),
+      status: 'running' as const,
+      replay: false,
+    }
+    // Unknown after runPost: passes (a background load finds the run row gone and caches nothing).
+    expect(cap.stepPre?.(step)).toBeUndefined()
+    await Bun.sleep(50)
+    expect(cap.toolPre?.(tool)).toBeUndefined()
+    expect(decisions).toHaveLength(count)
   })
 })

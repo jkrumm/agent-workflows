@@ -57,10 +57,13 @@ export function walletGate(options: WalletGateOptions): Middleware {
       if (pausedUntil && at < pausedUntil) {
         reason = `paused until ${pausedUntil.toISOString()} (IU cap cooldown)`
       } else if (thresholdUsd > 0) {
-        const reading = await spend.read(at).catch((err: unknown) => ({
-          ok: false as const,
-          reason: `IU spend source failed: ${err instanceof Error ? err.message : String(err)}`,
-        }))
+        // Through a promise, so a read() that throws synchronously refuses too (fail closed).
+        const reading = await Promise.resolve()
+          .then(() => spend.read(at))
+          .catch((err: unknown) => ({
+            ok: false as const,
+            reason: `IU spend source failed: ${err instanceof Error ? err.message : String(err)}`,
+          }))
         if (!reading.ok) reason = reading.reason
         else {
           rolling30Usd = reading.rolling30Usd

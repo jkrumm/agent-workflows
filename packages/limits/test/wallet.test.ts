@@ -2,7 +2,7 @@ import { afterAll, describe, expect, test } from 'bun:test'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { defineWorkflow, type Runtime } from '@agent-workflows/runtime'
+import { defineWorkflow } from '@agent-workflows/runtime'
 import { z } from 'zod'
 import {
   type DecisionSink,
@@ -18,10 +18,8 @@ import { captureLogger, freshSchema, inspector, testRuntime, until } from './sup
 const db = freshSchema('lim_wallet')
 const sql = inspector(db.schema)
 const dir = await mkdtemp(join(tmpdir(), 'agw-wallet-'))
-const open: Runtime[] = []
 
 afterAll(async () => {
-  for (const rt of open) await rt.close()
   await sql.close()
   await db.drop()
   await rm(dir, { recursive: true, force: true })
@@ -132,9 +130,23 @@ describe('wallet gate', () => {
     expect(result.error?.message).toContain(reason)
   })
 
-  test('a throwing spend source refuses too', async () => {
-    const g = gate('', { spend: { read: () => Promise.reject(new Error('boom')) } })
-    expect((await runOnce(g)).error?.message).toBe('wallet gate: IU spend source failed: boom')
+  test('a throwing spend source refuses too, also when read() throws synchronously', async () => {
+    const rejecting = gate('', { spend: { read: () => Promise.reject(new Error('boom')) } })
+    expect((await runOnce(rejecting)).error).toEqual({
+      kind: 'admission_refused',
+      message: 'wallet gate: IU spend source failed: boom',
+    })
+    const throwing = gate('', {
+      spend: {
+        read: () => {
+          throw new Error('sync boom')
+        },
+      },
+    })
+    expect((await runOnce(throwing)).error).toEqual({
+      kind: 'admission_refused',
+      message: 'wallet gate: IU spend source failed: sync boom',
+    })
   })
 
   test('allowed under the threshold, and threshold 0 skips the spend check', async () => {
@@ -173,8 +185,12 @@ describe('wallet gate', () => {
     const g = gate(path)
     const rt2 = testRuntime({ schema: db.schema, workflows: [longOcr], middleware: [g.middleware] })
     await rt2.open()
-    open.push(rt2)
-    const result = await rt2.wait(runId)
+    let result: Awaited<ReturnType<typeof rt2.wait>>
+    try {
+      result = await rt2.wait(runId)
+    } finally {
+      await rt2.close()
+    }
     expect(result.status).toBe('done')
     const decision = g.decisions[0] as WalletDecision
     expect(decision).toMatchObject({ allowed: true, resume: true, reason: 'resume' })

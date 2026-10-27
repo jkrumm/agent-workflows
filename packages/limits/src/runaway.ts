@@ -415,6 +415,7 @@ export function runawayCap(options: RunawayCapOptions): RunawayCap {
       }
     },
 
+    // stepPre and toolPre never await: a runPost cannot interleave, so an ended run is never re-flagged or thrown for.
     stepPre(args: StepPreArgs) {
       const state = stateOf(args.runId)
       if (!state) {
