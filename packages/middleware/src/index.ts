@@ -1,3 +1,18 @@
+export {
+  ARGO_MAX_BATCH,
+  ArgoOutbox,
+  type ArgoRowOptions,
+  type ArgoTransport,
+  type ArgoUsageRecord,
+  ArgoUsageRecordInput,
+  additiveTokens,
+  argoRowsForStep,
+  argoTransportFromEnv,
+  type FlushResult,
+  httpArgoTransport,
+  type OutboxOptions,
+  type OutboxStep,
+} from './argo.ts'
 export { type DbOptions, JournalDb } from './db.ts'
 export {
   type AgentInputs,
@@ -11,6 +26,7 @@ export {
 } from './fingerprint.ts'
 export { admissionSpanId, traceIdForRun } from './ids.ts'
 export { type OpenCodeMessage, usageFromOpenCodeMessages } from './opencode-usage.ts'
+export { type Platform, type PlatformOptions, platformMiddleware } from './platform.ts'
 export { hasPurpose, purposeMiddleware } from './purpose.ts'
 export { type RunRecord, recordMiddleware } from './record.ts'
 export { Telemetry, type TelemetryOptions } from './telemetry.ts'
