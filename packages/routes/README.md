@@ -46,7 +46,9 @@ AGW_ROUTES='{"review.angle":{"model":"<model-id>","effort":"high"},"cheap.classi
 
 `costFromUsage` returns the provider's `usage.cost` when present and valid (`source: 'provider'`, a reported `0` stays `0`). Otherwise it prices the route's `rate` (`source: 'rate'`): input excluding cache tokens at `inputPerM`, cache reads at `cacheReadPerM`, cache writes at `cacheWritePerM`, output at `outputPerM` (reasoning tokens are already in the output count). Cache tokens against a rate without the matching cache rate, or neither cost nor rate, return `{ usd: null, source: 'unknown' }`: never free, never 0. `input_tokens` (Anthropic) excludes cache tokens; `prompt_tokens` and `inputTokens` include them.
 
-Rates are carried by every route whose wire reports no cost: `decide` (the decision API drops IU's cost; UE price list in agent-gateway's `decision.ts`) and the Haiku 5.5 EU routes (`cheap.summarize`, `cheap.title`, `review.angle`, `review.synthesis`, `check`): $0.10 in, $0.50 out, $0.01 cache read, $0.125 cache write per million. Source: agent-gateway `server/lib/models.ts`, `claude-haiku-5-5-eu` (hermes-agent `docs/model-context-reasoning.md`, vendor list; cache write 1.25x input), dated 2026-10-14. The vendor's 5x tier above 100K prompt tokens has no counterpart in `Rate`, so such a call is under-priced. The `iu-openai` routes (deepseek) carry no rate: IU reports `usage.cost` on that wire.
+Cache counts above the cache-inclusive prompt total, and prompts above 100K tokens (input including cache), also return `unknown`: the vendor bills a higher tier that `Rate` does not model, so the call is never under-priced.
+
+Rates are carried by every single-call route whose wire reports no cost: `decide` (the decision API drops IU's cost; UE price list in agent-gateway's `decision.ts`) and the Haiku 5.5 EU routes on `iu-anthropic` (`cheap.summarize`, `cheap.title`): $0.10 in, $0.50 out, $0.01 cache read, $0.125 cache write per million. Source: agent-gateway `server/lib/models.ts`, `claude-haiku-5-5-eu` (hermes-agent `docs/model-context-reasoning.md`, vendor list; cache write 1.25x input), dated 2026-10-14. The `opencode` routes (`review.angle`, `review.synthesis`, `check`) carry no rate: an agent step's cost is OpenCode's message cost, with no fallback. The `iu-openai` routes (deepseek) carry no rate: IU reports `usage.cost` on that wire.
 
 ## Source seats (agent-gateway `GET /api/routing`, 2026-10-27)
 
@@ -79,5 +81,5 @@ A route flip changes what the next run costs and how well it caches:
 - **Model change in general:** the provider prompt cache is per model, so the first run after a flip pays full input price. Haiku 5.5 EU reports cache reads; DeepSeek on `iu-openai` reports `cached_tokens`; cost from `usage.cost` already reflects both.
 - **Effort up** (`high`, `max`): more reasoning tokens, billed as output, counted against `maxOutputTokens`. Raise the ceiling with it or the answer starves.
 - **Wire change** (for example `iu-openai` → `iu-anthropic`): different usage keys and cache semantics. `costFromUsage` accepts both shapes, but the cache hit rate starts from zero.
-- **Haiku 5.5 EU** bills 5x above 100K prompt tokens per request; a long agent episode costs more than the list rate suggests.
+- **Haiku 5.5 EU** bills 5x above 100K prompt tokens per request; a long agent episode costs more than the list rate suggests, and `costFromUsage` returns `unknown` for a single call over that size.
 - The fingerprint changes on any of these, so runs before and after a flip never share a group.
