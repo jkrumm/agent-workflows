@@ -30,7 +30,7 @@ export const createClassify = (deps: LlmDeps) =>
       const names = Object.keys(labels) as [string, ...string[]]
       const schema = z.object({
         label: z.enum(names),
-        reason: z.string().min(1).max(400),
+        reason: z.string().min(1),
       })
       const described = Object.entries(labels)
         .map(([name, description]) => `- ${name}: ${description}`)

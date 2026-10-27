@@ -5,6 +5,7 @@ import { ZodToJsonSchemaConverter } from '@orpc/zod/zod4'
 import type { z } from 'zod'
 import type { Usage } from './context.ts'
 import type { CallOptions, Capability } from './define.ts'
+import { CapabilityCallError } from './errors.ts'
 import { procedureOf, type RequestContext, toCallError } from './procedure.ts'
 
 type AnyCapability = Capability<string, z.ZodObject, z.ZodType>
@@ -102,7 +103,12 @@ export function createRegistry<const C extends readonly AnyCapability[]>(
           Response.json({ defined: false, code: 'NOT_FOUND', status: 404, message: 'Not found' }, { status: 404 })
         )
       } catch (error) {
-        throw toCallError(error)
+        const failure = toCallError(error)
+        if (failure instanceof CapabilityCallError) return Response.json(failure.toJSON(), { status: failure.status })
+        return Response.json(
+          { defined: false, code: 'INTERNAL_SERVER_ERROR', status: 500, message: 'Internal server error' },
+          { status: 500 },
+        )
       }
     },
     async openapi() {

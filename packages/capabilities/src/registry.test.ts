@@ -124,6 +124,12 @@ describe('one definition, two doors', () => {
     }
   })
 
+  test('fetch answers with the typed error body for a request the router cannot serve', async () => {
+    const res = await a.registry.fetch(new Request(`${base}/nowhere`))
+    expect(res.status).toBe(404)
+    expect(await res.json()).toMatchObject({ code: 'NOT_FOUND' })
+  })
+
   test('a capability can be called on its own, through the same pipeline', async () => {
     const title = createTitle({ transports: fakeTransports({ anthropic: [{ text: '"A Title."' }] }), env: {} })
     expect(await title.call({ text: 'x' })).toEqual({ title: 'A Title' })
