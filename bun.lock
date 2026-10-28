@@ -34,6 +34,25 @@
         "@agent-workflows/capabilities": "workspace:*",
       },
     },
+    "packages/host": {
+      "name": "@agent-workflows/host",
+      "version": "0.0.0",
+      "dependencies": {
+        "@agent-workflows/capabilities": "workspace:*",
+        "@agent-workflows/limits": "workspace:*",
+        "@agent-workflows/middleware": "workspace:*",
+        "@agent-workflows/routes": "workspace:*",
+        "@agent-workflows/runtime": "workspace:*",
+        "@orpc/openapi": "1.16.1",
+        "@orpc/server": "1.16.1",
+        "@orpc/zod": "1.16.1",
+        "pg": "8.23.1",
+        "zod": "4.6.7",
+      },
+      "devDependencies": {
+        "@types/pg": "8.23.1",
+      },
+    },
     "packages/limits": {
       "name": "@agent-workflows/limits",
       "version": "0.0.0",
@@ -89,6 +108,8 @@
     "@agent-workflows/capabilities": ["@agent-workflows/capabilities@workspace:packages/capabilities"],
 
     "@agent-workflows/cli": ["@agent-workflows/cli@workspace:packages/cli"],
+
+    "@agent-workflows/host": ["@agent-workflows/host@workspace:packages/host"],
 
     "@agent-workflows/limits": ["@agent-workflows/limits@workspace:packages/limits"],
 
