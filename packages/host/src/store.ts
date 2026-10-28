@@ -29,7 +29,8 @@ export function runtimeRunStore(runtime: Pick<Runtime, 'getRun' | 'ping'>): RunS
         runId: run.runId,
         workflowId: run.workflowId,
         status: run.status,
-        ...(run.output !== null ? { output: run.output } : {}),
+        // a done run's output is whatever the workflow returned, `null` included
+        ...(run.status === 'done' ? { output: run.output } : {}),
         ...(run.error ? { error: run.error } : {}),
       }
     },

@@ -56,6 +56,40 @@ describe('workflow start', () => {
     expect((await response.json()).output).toEqual({ text: 'hello' })
   })
 
+  test('an unknown input key is 400 and starts nothing, on a workflow with defaults too', async () => {
+    const before = (await t.pool.query(`select count(*)::int as n from "${t.schema}".runs`)).rows[0].n
+    for (const [path, body] of [
+      ['/workflows/smoke/ping', { text: 'x', txet: 'typo' }],
+      ['/workflows/echo/say', { text: 'x', extra: 1 }],
+    ] as const) {
+      const { status, body: error } = await t.json(await t.call(path, { body }))
+      expect(status).toBe(400)
+      expect(error).toMatchObject({ code: 'BAD_REQUEST', status: 400 })
+    }
+    expect((await t.pool.query(`select count(*)::int as n from "${t.schema}".runs`)).rows[0].n).toBe(before)
+    const doc = (await t.host.openapi()) as Record<string, any>
+    expect(
+      doc.paths['/workflows/smoke/ping'].post.requestBody.content['application/json'].schema.additionalProperties,
+    ).toBe(false)
+  })
+
+  test('a done run whose output is null keeps `output: null` in every body', async () => {
+    const started = await t.json(await t.call('/workflows/nothing/null', { body: {}, headers: { prefer: 'wait=10' } }))
+    expect(started.status).toBe(200)
+    expect(started.body).toMatchObject({ status: 'done', output: null })
+    expect('output' in started.body).toBe(true)
+    for (const body of [
+      (await t.json(await t.call(`/runs/${started.body.runId}`))).body,
+      (await t.json(await t.call(`/runs/${started.body.runId}/wait`, { method: 'POST' }))).body,
+    ]) {
+      expect(body).toEqual(started.body)
+    }
+    // ... while a run that has not produced output has no `output` key
+    const held = await t.json(await t.call('/workflows/hold/open', { body: {} }))
+    expect('output' in held.body).toBe(false)
+    await t.call(`/runs/${held.body.runId}/cancel`, { method: 'POST' })
+  })
+
   test('an invalid input is 400 BAD_REQUEST and starts nothing', async () => {
     const before = (await t.pool.query(`select count(*)::int as n from "${t.schema}".runs`)).rows[0].n
     const { status, body } = await t.json(await t.call('/workflows/echo/say', { body: { text: 7 } }))
@@ -153,6 +187,92 @@ test('a failed journal read after the start still reports the run id', async () 
   } finally {
     await flaky.close()
   }
+})
+
+describe('a held wait survives transient read failures', () => {
+  function flakyHost(prefix: string) {
+    const control = { fail: 0, reads: 0 }
+    const logger = captureLogger()
+    const host = startTestHost({
+      prefix,
+      logger,
+      wrapStore: (store) => ({
+        ping: () => store.ping(),
+        get: (id) => {
+          control.reads++
+          if (control.fail > 0) {
+            control.fail--
+            return Promise.reject(new Error('connection reset'))
+          }
+          return store.get(id)
+        },
+      }),
+    })
+    return { control, logger, host }
+  }
+
+  test('failed reads are logged and retried inside the wait; the run state still comes back', async () => {
+    const { control, logger, host } = flakyHost('retry')
+    const h = await host
+    try {
+      const done = await h.json(
+        await h.call('/workflows/echo/say', { body: { text: 'ok' }, headers: { prefer: 'wait=10' } }),
+      )
+      control.fail = 3
+      const waited = await h.json(
+        await h.call(`/runs/${done.body.runId}/wait`, { method: 'POST', headers: { prefer: 'wait=10' } }),
+      )
+      expect(waited.status).toBe(200)
+      expect(waited.body).toEqual(done.body)
+      const warns = logger.lines.filter((l) => l.level === 'warn' && l.message === 'run state read failed')
+      expect(warns.map((w) => w.meta?.attempt)).toEqual([1, 2, 3])
+    } finally {
+      await h.close()
+    }
+  })
+
+  test('reads that keep failing end the wait with the error after 5 in a row, long before the deadline', async () => {
+    const { control, host } = flakyHost('dead')
+    const h = await host
+    try {
+      const done = await h.json(await h.call('/workflows/echo/say', { body: {}, headers: { prefer: 'wait=10' } }))
+      control.fail = Number.POSITIVE_INFINITY
+      control.reads = 0
+      const started = Date.now()
+      const { status, body } = await h.json(
+        await h.call(`/runs/${done.body.runId}/wait`, { method: 'POST', headers: { prefer: 'wait=60' } }),
+      )
+      expect(status).toBe(500)
+      expect(body).toMatchObject({ code: 'INTERNAL_SERVER_ERROR', defined: false })
+      expect(control.reads).toBe(5)
+      expect(Date.now() - started).toBeLessThan(3000)
+    } finally {
+      await h.close()
+    }
+  })
+
+  test('the deadline bounds the retries too', async () => {
+    const { control, host } = flakyHost('deadline')
+    const h = await host
+    try {
+      const done = await h.json(await h.call('/workflows/echo/say', { body: {}, headers: { prefer: 'wait=10' } }))
+      control.fail = Number.POSITIVE_INFINITY
+      control.reads = 0
+      const started = Date.now()
+      // wait=0: a single read, no retry
+      const none = await h.call(`/runs/${done.body.runId}/wait`, { method: 'POST' })
+      expect(none.status).toBe(500)
+      expect(control.reads).toBe(1)
+      control.reads = 0
+      const short = await h.call(`/runs/${done.body.runId}/wait`, { method: 'POST', headers: { prefer: 'wait=0.1' } })
+      expect(short.status).toBe(500)
+      expect(control.reads).toBeGreaterThan(1)
+      expect(control.reads).toBeLessThan(5)
+      expect(Date.now() - started).toBeLessThan(3000)
+    } finally {
+      await h.close()
+    }
+  })
 })
 
 describe('run ops', () => {
