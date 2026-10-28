@@ -1,19 +1,20 @@
-# Lead handoff — Wave 5 (evals and self-improvement; P2), rotation
+# Lead handoff — Wave 5 (evals and self-improvement; P2), close-out
 
-Lead `agent-workflows-w1` (same pane as Wave 4) 2026-10-28 ~15:00 → ~18:45, rotated at the context limit. The Wave 4
-close-out is in git at `8581501`. Briefs: `~/.local/state/agent-workflows/briefs/w5/` on the mini (not in git: they
-name local paths). Master `c22cf6f` (#23, #24 merged), deployed, `make verify` PASS, host on the personal key.
+Leads: `agent-workflows-w1` 2026-10-28 ~15:00 → ~18:45 (rotated), then the second lead in the same pane (w40:p14)
+~18:45 → ~21:55. Master `85b326f` deployed on the personal key, `make verify` PASS, `@verifier` PASS (6/6). Briefs:
+`~/.local/state/agent-workflows/briefs/w5/` on the mini (not in git: they name local paths).
 
-## State (next actions, in order)
+## Per-step verdict
 
-|Step|State|Next|
+|Step|Verdict|Evidence|
 |-|-|-|
-|First experiment on review (owner's ask: angle shell)|**done, answered with numbers** (below)|Remove the arms in a cleanup PR (see "Cleanup PR")|
-|Reproducibility check for eval sets|**merged, #23** (`self-agreement` mode, `reproducibility.jsonl`, recall only on reproducible cases when every case has a row)|Live run: `bun packages/eval/src/harness/cli.ts self-agreement review --side legacy --runs 2` (legacy reruns: personal key, about $6 for 20 cases)|
-|Wave 4 leftovers|**merged, #23**: `agw schema review` typed (live: `output` has properties), `--resume` takes an absolute path or a path under `<evalDir>/reports`, the 11 unpriced calls explained (prompts 104K–146K tokens, the vendor's long-prompt tier the `Rate` cannot model; documented in the eval README); `roles/worker.md` gained the background-shell rule (dotfiles `d5a91ab`)|none|
-|Retrospective workflow + learnings store|**merged, #24**, deployed. The weekly schedule is on (`AGW_RETRO_WEEKLY`), so the first `retrospective` runs for `review` and `check` start within an hour of the `c22cf6f` deploy; `fileIssues` off|Read those two runs (`agw run status`), judge the proposals, then decide on `AGW_RETRO_FILE_ISSUES=1` (issues carry only structured fields: kind, a tracked target path, confidence, sampled run ids; free text stays in the journal)|
-|Friction counters|**PR #25, fix round 1 in progress** (worker `agent-workflows-friction`): lead `/code-review high` found 10; the blocker is the nudge. Per the repo's fake, a synthetic input sent mid-turn is queued as a separate turn whose prose could replace the step's JSON. The worker measures that live on 2.0.32 and either keeps an in-turn nudge or records `nudgesDue` only|Lead read of the fix round (each fix round needs its own review), `rd merge`. `AGW_FRICTION_REPO` must be set in the host env or no issue is ever filed|
-|Scorer API + `agw eval run\|compare`|**PR #26, fix round 1 in progress** (worker `agent-workflows-scorers-eval`, Opus): lead `/code-review high` found 10, all sent back (cancel orphans, resume re-materializes, infra scorer errors stored as verdicts, unbounded reads, drift candidate scan, small-n verdicts, unpriced cost drop, spec overwrite, duplicate ids)|Lead read, `rd merge` (expect a small rebase on `packages/runtime/test/infra.test.ts`: 0004 vs 0005). Then live: `agw eval run review --ids <5 ids> --yes`, `agw eval compare`|
+|Scorer API (inline gate, regression, sampled drift); `agw eval run\|compare`|**done, #26**|Live: `eval.run` `01a183d5-d95a…` (fingerprint `4ac59d96`, 5 cases scored, 0 errors, pass 0.2) and `01a18441-6ee5…` (`c244dcb6`, after #27, pass 0); `agw eval compare` on the pair (below). Drift live: prod review `01a1825b-91d5` scored `source=drift` right after the deploy; the next prod review fell outside the 10 % sample (`drift_sample` 707M > 429M), as designed|
+|Friction counters, repeat-tool nudge (3, 5, 8), threshold → GitHub issue|**done, #25** (+ `AGW_FRICTION_REPO` in `.env.tpl`, #27)|`/health` `friction: {enabled: true, state: on}`; every run after the deploy carries `runs.friction` v1 (a review case run: 6 sessions, 24 tool calls, all counters 0 but `repeatToolCalls` 1); `agw.friction_issues` exists, empty (no breach yet). Nudge in-turn measured live on 2.0.32 (`opencode-host/test/live-nudge.test.ts`)|
+|Retrospective workflow (weekly) + learnings store|**done, #24**; first runs judged|First weekly runs (`review`, `check`, 17:25 UTC): 0 proposals, 5 proposed learnings. None activated; #4 ("adversary finds nothing on docs diffs") and #5 (one 450-line file) **retired**: as active facts they would bias the angles. `AGW_RETRO_FILE_ISSUES` stays **off**: nothing to file|
+|First experiment on review (angle shell, owner's ask)|**done, answered: no gain** (numbers below); arms removed in #27|Reports `reports/2026-10-28T16-34-3{2-480Z,3-749Z,4-806Z}`|
+|Reproducibility check for eval sets|**done, #23** (mode `self-agreement`)|Not run live on the 20-case set this wave (legacy reruns ≈ $6 on the personal key under the IU constraint): Left behind|
+|Wave 4 leftovers|**done, #23**|typed `agw schema review`, `--resume` paths, the 11 unpriced calls explained (long-prompt tier); `roles/worker.md` background-shell rule (dotfiles `d5a91ab`)|
+|Cleanup + security (not a PLAN step; from the experiment)|**done, #27**|Deny by default, measured live on 2.0.32 (below)|
 
 ## Experiment: does review find more with a caller instruction or a read-only git shell?
 
@@ -48,46 +49,96 @@ ran; `cat`, chaining, pipes, `-O`/`-nOcat`, quotes, `blame --contents`, `diff` o
 directory were refused; a refused call does not end the turn. Open hole: OpenCode's glob cannot match a backslash, so
 `--o\utput` passes the text rules. The variant was opt-in, refused with `pr`/`branch`, and used only on eval trees.
 
-## Cleanup PR (after #25 lands: both touch `packages/opencode-host/src/host.ts`)
+**Regression check of the cleanup (#27) with the new `agw eval compare`** (same 5 cases, team key, before = `4ac59d96`
+on `8999b0c`, after = `c244dcb6` on `85b326f`): every quality metric a tie (pass 0.2 → 0, decided 1 → 0.8, located
+0.79 → 0.93; all CIs include 0; recall/precision withheld below 5 pairs); `costUsd` flagged worse, +$0.017 per case
+(CI 0.007–0.027), tool calls 10.4 → 16.2 (CI includes 0). The same-code reruns in the experiment differed by about
+$0.02 per case, so this is a watch item, not a verdict: n = 5.
 
-- Remove `angleVariant` (schema, plan field, prompts, tests, README paragraph) and revert the 12 angle `AGENTS.md`
-  sentences to "you have no shell". Remove `repoShell` from opencode-host (no consumer left; the live probe and its
-  measurements stay in this handoff and git history). Keep the harness `--agw-args` (general).
-- **Security, found during the experiment:** agw's sessions start from OpenCode's allow-all base policy, so angles and
-  synthesis keep `webfetch`, `websearch` and `subagent` (the eval runs show a completed `webfetch` of a public
-  GitHub raw URL from an angle). Legacy denied all three (agent-gateway `opencode-server.ts:250-262`, catch-all deny
-  with named allows). `execute` (code mode) is not a bypass: it proxies through the same gates (agent-gateway
-  measurement on 2.0.25). Bring agw to legacy's posture: deny `webfetch`, `websearch`, `subagent` unless an agent
-  opts in, measured on 2.0.32 with the live probe (the tool list a session sees).
+## Security: deny-by-default OpenCode sessions (#27)
 
-## Live state and spend
+Before: sessions started from OpenCode's allow-all base; only `shell` was denied, so angles, synthesis and check kept
+`webfetch`, `websearch`, `subagent` (an eval angle completed a `webfetch`), and `review-adversary`/`review-router` had
+no `edit` deny at all. Now (legacy's posture): catch-all `*` deny first, allows for exactly the measured session tools
+`read`, `glob`, `grep`, `skill` (2.0.32 has no `list`/`todowrite`; `edit` covers `write`), `shell` only on
+`permissions.shell` (check), every other tool only as an `allow` in the agent's `rules`; the same rules as a server-level
+backstop (session rules still win, measured: an opted-in `webfetch` completes); patched onto a re-attached,
+follow-up or fallback session when they differ (`PATCH /api/session/{id}`, measured between turns); strict `open()`
+options; the base policy and every `agent.json` are now in the run fingerprint (a route change moves eval arms). A
+denied tool is absent from the model's tool list; a call to it ends "No tool named …" and the turn continues; Code
+Mode's catalog holds no built-in tool. Live: all 11 sessions opened after the deploy store the policy; tool calls in
+them were only `glob`, `grep`, `read`. Check's shell is still its boundary (README says so).
 
-- Deploys this lead: `3490b50` (experiment, team key), `c22cf6f` (#23, #24, personal key). `make verify` PASS on both.
-- The wallet gate refuses `review.ocr` until 2026-11-02 (IU cap cooldown, threshold $400): OCR was skipped in every arm,
-  equally. Expected behaviour of the gate, not a fault.
-- IU spend: athena-team $3.82 for the three arms (60 review runs) plus the judge calls, and one `agw review` a worker
-  ran during the window. The personal key covered everything outside the window. athena-mother's pane was gone
-  (`rd say` found no agent of that name), so the window was not announced there; nothing about the key went elsewhere.
-- Worktrees: `w5-scorers-eval` and `w5-friction` are live with their workers; `w5-eval-leftovers` and
-  `w5-retro-learnings` can go with `rd fan --clean` once the batch lands.
+## Left behind
 
-## Reviews this lead
+- **CI on master has been red since `fd03b01` (Wave 4 close), every run**: two tests fail only on the GitHub-hosted
+  Linux runner, `credentials of the host never reach make check or the make -p -q probe` and `run-step.sh > a silent
+  command is killed alone after the idle window` (once also `bunExec > … killed after the idle window`). `make check` on
+  the mini is green (1014 pass). The first may be a real env leak on Linux, not a test assumption: fix first next wave.
+- Model question for review (the experiment's recommendation): Sonnet angles on the same 20 cases. Needs an IU Sonnet
+  id and rate in `packages/routes/src/table.ts` (from `agw-legacy routing`), `AGW_ROUTES` plumbed through
+  `scripts/launch.sh`; ≈ $4–6. Now measurable with `agw eval run --args` / `compare` (route is in the fingerprint).
+- Reproducibility live run (`self-agreement review --side legacy --runs 2`, ≈ $6 personal key) not run.
+- The recorded review corpus is weak as a baseline: pass 0–0.2 and recall 0 on 5 cases, same as the experiment's 5/30.
+- Known, documented gaps: a schema miss on a retried attempt is invisible to hooks (the journal keeps the last
+  attempt); the follow-up query has no index; a run whose scoring keeps failing on infra backs off until effectively
+  never; a policy PATCH mid-turn is unmeasured; one open GitHub issue per workflow is our own record (`friction_issues`).
+- Tests flake under host load (other fleets put the load average at 40–200): 5 s timeouts in git-heavy review, eval and
+  process-spawn tests, and once `llm.title … nothing after cleanup is INVALID_OUTPUT` (passes 3/3 alone). Every merge
+  went green on a rerun; a load-aware timeout or a serialized merge train would stop the reruns.
+- `docs/waves/PLAN.md:149` still lists the cleanup as open (mother's file).
+- biome reports `useRegexLiterals` in `retrospective/scrub.ts` (a note, not a failure).
 
-|PR|Review|
+## Validation, reviews, live proof
+
+- `make check` at merge: #26 930 pass / 0 fail, #25 1011 / 0, #27 1014 / 0 (each after reruns for load timeouts).
+- `make deploy` `8999b0c` (team key, eval window) and `85b326f`; in-flight runs drained (none) before the policy deploy;
+  host back on the personal key (`launchctl kickstart`), `make verify` PASS (runs `01a18451-1c50…`, `01a18451-21bb…`,
+  `iu_key personal`).
+- `@verifier` PASS: migrations 0001–0006 and the score/friction columns; eval case runs scored (regression, scorer
+  `2026-10-28.1`); drift scored a prod review; `/health` friction `on`; friction v1 on every new run; all new OpenCode
+  sessions on the deny-by-default policy; smoke trace `fa286821…` in ClickStack (2 spans), usage in Argo
+  (`argo_synced_at` set, no error); learnings 1–3 proposed, 4–5 retired.
+
+|PR|Reviews|
 |-|-|
-|experiment (direct to master, `f377b87..3490b50`)|lead read found three shell escapes (`diff` as no-index, `blame --contents`, `-nOcat`/abbreviations/quotes) before any eval; `/code-review high` r1 (8: 5 fixed, 3 skipped with reason: baseline prompt change is fair inside one deploy, `ls-files --exclude-from` prints no contents, the diff cap is equal across arms)|
-|#23 eval leftovers|`/code-review high` r1 (10: 9 fixed, quadratic judge pairs documented), lead read r2, merged|
-|#24 retrospective + learnings|`/code-review high` r1 (10): the public-issue deny-list leaked (invented `packages/<name>` paths, unlisted TLDs, tokens), redesigned to structured fields only; learnings ordering, retired facts, fence, weekly retry, scrub fixed; lead read r2 of the issue builder and evidence validation, merged after a rebase|
-|#25 friction|`/code-review high` r1 (10), fix round in progress|
-|#26 scorers + eval|`/code-review high` r1 (10), fix round in progress|
+|#23 eval leftovers|`/code-review high` r1 (10: 9 fixed), lead read r2, merged (first lead)|
+|#24 retro + learnings|`/code-review high` r1 (10, public-issue redesign), lead read r2, merged (first lead)|
+|#25 friction|`/code-review high` r1 (10), r2 (10, all fixed: own issue record instead of a 500-issue scan, prod-only rates, true recompute), r3 (9: 7 fixed, 2 dismissed with evidence: 0006 never applied anywhere; the finishedTurn preamble case is likelier), lead read r4; merged|
+|#26 scorers + eval|`/code-review high` r1 (10), r2 (10: 9 fixed, in-place 0004 accepted: never applied live), r3 (8: 7 fixed, 0004 dismissed: `agw.schema_migrations` had 0001–0003, 0005), r4 (4 fixed), lead read r4; merged after a worker rebase over #24|
+|#27 cleanup + permissions|`/code-review high` at security depth r1 (8, all fixed, plus the run fingerprint), r2 (5: 4 fixed, 1 dismissed: releases are immutable), lead read r3; merged|
+|experiment `f377b87..3490b50`|lead read (3 shell escapes), `/code-review high` r1 (first lead)|
+
+No gateway `/review` in this wave (owner direction under the IU constraint); `/code-review high` on Max was the review.
+
+## IU spend, by key
+
+|Window|athena-team|personal|
+|-|-|-|
+|First lead (experiment, 60 review runs + judge, one worker `agw review`)|$3.82|everything outside the window|
+|Second lead (2 × 5 eval cases $0.75; 3 prod runs that were not the fleet's $0.07; verify ≈ $0)|$0.82|$0.16 (2 prod runs, not the fleet's)|
+|**Wave 5 total on the team key**|**≈ $4.64**||
+
+Live probes by the workers (opencode-host permissions and nudge) ran on the cheapest route, under $0.01 each. OCR
+stayed refused by the wallet gate until 2026-11-02. **For the owner (athena-mother's pane is gone, so this is the only
+notice):** the Athena team key carried ≈ $4.64 of agent-workflows evals on 2026-10-28, in two windows (16:30–17:10 and
+18:45–21:50 UTC), labelled `iu_key=athena-team` on every run and Argo row; the override file is removed again.
 
 ## Retro notes
 
-- An experiment that changes nothing is still an answer: the tool-call counts showed why (the built-in grep already
-  covers `git grep`), which saved building a typed git-history capability.
-- Reading the allowlist before the eval found three ways out of a "read-only" shell; text-matched shell rules are
-  a cost-raising boundary at best (backslash, abbreviations, flag clusters). A typed capability running argv is the
-  only shape worth shipping.
-- `/code-review high` with a PR target and an explicit "never check out a branch in the main checkout" worked on all
-  four PRs.
-- Load average 30–40 from parallel `make check` runs made 5 s test timeouts flake in two workers; reruns passed.
+- First lead: an experiment that changes nothing is still an answer (the tool-call counts showed why); reading an
+  allowlist before an eval found three escapes from a "read-only" shell, so text-matched shell rules are not a
+  boundary; `/code-review high` with a PR target and "never check out a branch in the main checkout" worked on every PR;
+  load 30–40 made 5 s timeouts flake.
+- Fix rounds converge but slowly: #25 and #26 needed four rounds each, each `/code-review high` finding a new class
+  (round 2 found the round-1 fixes' own gaps). Asking for a design change (own issue record, no throw-on-incomplete)
+  instead of patching findings one by one is what closed them. Workers ended at 80–90 % context.
+- Dismiss with evidence, not with an opinion: three findings were closed by one query each (`schema_migrations`,
+  `information_schema`), which is cheaper than a fix round.
+- The eval tooling earned its keep on day one: the cleanup's regression check was one `agw eval run` and one `compare`,
+  and it surfaced that the run fingerprint ignored `agent.json`, which the next experiment (a route change) depends on.
+- CI went unnoticed for a whole wave because the merge train gates on the mini's `make check`, not on CI. The gate
+  should read CI too (the mother's call for PLAN).
+- Mistake: a stray `pkill -f "bun test --isolate"` while stopping my own test run was host-wide and may have killed
+  another fleet's test run around 21:25; scope kills to a PID.
+- Load from parallel fleets (40–200) cost every merge one or two reruns.
