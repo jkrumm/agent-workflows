@@ -133,11 +133,11 @@ shell (Wave 5's experiment tests it); the adversary dominates review wall time (
 review` output untyped; harness `--resume` takes a bare path; 11 unpriced calls; Argo must accept
 `iu_key` (usage-tracker's side). Full evidence: `docs/waves/handoff/lead.md` at `8581501`.
 
-## Wave 5 — Evals and self-improvement (P2)            <!-- status: active -->
+## Wave 5 — Evals and self-improvement (P2)            <!-- status: done -->
 Workers: Opus/medium for scorers and compare statistics, Sonnet/high for the rest.
 
-- [ ] Scorer API used three ways (inline gate, regression, sampled drift); `agw eval run|compare`
-- [ ] Friction counters incl. the repeat-tool nudge (3, 5, 8); threshold → a GitHub issue with evidence
+- [x] Scorer API used three ways (inline gate, regression, sampled drift); `agw eval run|compare`
+- [x] Friction counters incl. the repeat-tool nudge (3, 5, 8); threshold → a GitHub issue with evidence
 - [x] Retrospective workflow (weekly per workflow) and the per-agent learnings store
 - [x] First experiment on review: one model or effort question answered with numbers (started by the
   owner's direct ask: angle variants baseline / callers / read-only shell on the 20 paired cases).
@@ -146,13 +146,24 @@ Workers: Opus/medium for scorers and compare statistics, Sonnet/high for the res
 - [x] Wave 4 leftovers (Sonnet/high): `agw schema review` output typed; harness `--resume` resolves a
   timestamp under the reports dir; the 11 unpriced calls explained or priced; `roles/worker.md` gains
   "never end a turn on a background shell"
-- [ ] Cleanup: the experiment's `angleVariant`/`repoShell` removed; OpenCode agents deny webfetch,
+- [x] Cleanup: the experiment's `angleVariant`/`repoShell` removed; OpenCode agents deny webfetch,
   websearch and subagent by default (a security gap the eval runs exposed)
-**Left behind:**
+**Left behind:** all merged (#23–#27); master `85b326f` deployed, `make verify` PASS, `@verifier` 6/6.
+Scorers with `agw eval run|compare`, friction counters and threshold issues, weekly retrospective and
+learnings store, reproducibility check, deny-by-default OpenCode sessions (webfetch/websearch/subagent),
+`agent.json` and the base policy in the run fingerprint. The experiment changed no findings (callers,
+read-only shell): a prompt/tool answer, not yet the model/effort answer P2's gate asks for — Sonnet
+angles carried into Wave 6. **CI on master red since `fd03b01`** on two Linux-only tests (one may be a
+real credential leak on Linux): the merge train gated on the mini's `make check` only. Team key ≈ $4.64.
+Evidence: `docs/waves/handoff/lead.md` at `f562b05`.
 
-## Wave 6 — Research (P3a)            <!-- status: pending -->
+## Wave 6 — Research (P3a)            <!-- status: active -->
 Workers: Opus/medium for the comparison design, Sonnet/high for the port.
 
+- [ ] **First:** CI green on master — the Linux-only failures fixed at their cause (`credentials of the
+  host never reach make check` may be a real leak: treat as security), `run-step` idle kill; the merge
+  train gates on CI as well as on the mini's `make check` (dotfiles); load-aware test timeouts
+- [ ] P2's gate: Sonnet angles vs today's on the 20 paired review cases (`agw eval run|compare`, ≈ $5)
 - [ ] Three-way comparison on research-gateway's 28 golden questions: code-led pipeline vs pure
   agent vs agent on the pipeline, yolo vs focused — correctness, cost, wall time
 - [ ] `research` ported in the winning shape, follow-up on a finished report included

@@ -339,3 +339,18 @@ One entry per phase: what we learned, what changed on this page, and why.
   timing under load.
 - **Spend.** IU ≈ $11 on gateway deep reviews before the owner stopped them, plus eval runs on the team key.
 - **Does the page hold?** Yes. P1's gate (review and check not worse) is met.
+
+### Wave 5 — Evals and self-improvement (P2), 2026-10-28
+
+- **Learned.** An experiment that changes nothing is still an answer: neither a caller instruction nor
+  a read-only git shell moved review findings (3 arms × 20 cases, inside noise; the grep tool already
+  covers it). Text-matched shell allowlists are no boundary (three escapes found by reading one), so
+  OpenCode sessions now deny webfetch, websearch and subagent by default. The eval tooling paid off at
+  once: one `run` + `compare` was the cleanup's regression check and exposed that the fingerprint
+  ignored `agent.json`. Fix rounds converge when the lead asks for a design change instead of patching
+  findings one by one. A gate that reads only the mini hid a red CI for a whole wave.
+- **Changed.** Deny-by-default agent sessions; `agent.json` and the base policy in the fingerprint.
+- **Friction.** Host load from parallel fleets (40–200) forced reruns of every merge; a host-wide
+  `pkill` by a lead may have hit another fleet's test run (kills are scoped to a PID from now on).
+- **Spend.** Team key ≈ $4.64; personal key for deploy verification only.
+- **Does the page hold?** Yes. P2's model/effort question moves into Wave 6 (Sonnet angles).
