@@ -1,0 +1,12 @@
+{
+  "route": "review.synthesis",
+  "permissions": {
+    "rules": [
+      {
+        "action": "edit",
+        "resource": "*",
+        "effect": "deny"
+      }
+    ]
+  }
+}
