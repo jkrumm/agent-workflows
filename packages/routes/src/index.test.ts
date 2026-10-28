@@ -129,6 +129,19 @@ describe('resolveRoute', () => {
     expect(() => resolveRoute('check', { [OVERRIDES_ENV]: '[]' })).toThrow(RouteOverrideError)
   })
 
+  test('a malformed variable never puts input text in the error, from resolveRoute either', () => {
+    for (const raw of ['{nope', '{"check": leakysecret}', 'leakysecret', '{"check":{"model":"leakysecret"']) {
+      let message = ''
+      try {
+        resolveRoute('check', { [OVERRIDES_ENV]: raw })
+      } catch (error) {
+        expect(error).toBeInstanceOf(RouteOverrideError)
+        message = (error as Error).message
+      }
+      expect(message).toBe('AGW_ROUTES: not valid JSON')
+    }
+  })
+
   test('blank variable means no overrides', () => {
     expect(resolveRoute('check', { [OVERRIDES_ENV]: '  ' }).id).toBe('check')
   })

@@ -18,8 +18,9 @@ export function readOverrides(env: Record<string, string | undefined>): Record<s
   let json: unknown
   try {
     json = JSON.parse(raw)
-  } catch (err) {
-    throw new RouteOverrideError(`not valid JSON (${err instanceof Error ? err.message : String(err)})`)
+  } catch {
+    // The parser's own message quotes the text it choked on, which may be a value: say only that it is not JSON.
+    throw new RouteOverrideError('not valid JSON')
   }
   const parsed = overridesSchema.safeParse(json)
   if (!parsed.success) throw new RouteOverrideError(parsed.error.message)
