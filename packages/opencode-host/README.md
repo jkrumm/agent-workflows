@@ -46,6 +46,25 @@ the path as the agent gives it, so hand the agent the same string you allowed (a
 `/private/var/…` for `/var/…` is a different path and is refused); `<dir>` alone matches nothing.
 
 
+**`repoShell: boolean`** (step option, needs a non-empty `allowDirectories`; anything else fails the step before a
+session exists) gives the agent a read-only git shell bound to those directories. After every other rule, per allowed
+`<dir>`, it appends `shell` allows for `git -C <dir> grep -n -e *`, `show *`, `log *`, `blame *` and `ls-files *` (a
+pattern ending in ` *` also matches the bare command), then, after all allows, `shell` denies: per directory `git -C <dir>
+grep -n -e * *?` (git grep takes one token after `-e`, options after the pattern are still parsed; the `?` keeps the bare
+one-token form allowed, because a trailing ` *` would match it too) and `blame *-S*`; globally the chaining, redirect,
+`$`, backtick, newline, tab, quote and `{` forms, and the flag stems `--ou`, `--op`, `-O`, `--no-i`, `--ext`, `--textc`,
+`--con`, `--ignore-revs`. The stems are abbreviations on purpose: git accepts any unambiguous prefix of a long option
+(`--op`, `--outp`) and `-O` takes an attached argument inside a short-flag cluster (`-nOcat`); quotes are denied so a
+flag cannot be split (`-"-op"en…`) past the text globs. There is **no `diff` verb**: given paths outside the work tree
+it acts as `--no-index` and prints any file. `blame --contents` and `-S`/`--ignore-revs-file` read arbitrary files,
+hence `--con`, `--ignore-revs` and `-S`. The leading `shell * deny` stays first, so every other command is refused. A step whose directory text would trip a deny (`/x/My-Org/app` holds `-O`; also `-S`, a quote, whitespace …) fails before a session exists, because a shell that silently refuses everything would pass for a result. The
+handle keeps the flag (`repoShell`, next to `allow`), so a provider-balance fallback session gets the same rules.
+**Open hole:** a backslash that splits a flag (`--o\utput=…`) is not denied. OpenCode's glob treats `\` as an escape
+(measured on 2.0.32: `*\*` matches every command, `*?\*` too, and a trailing `\` can crash the server), so no
+backslash rule can be written. Measured live (`test/live.test.ts`, "repoShell"): the three allowed forms run; `cat`, a
+`;` chain, `-O`, `-nOcat`, a quoted pattern, `blame --contents`, `diff`, `log --outp=` (no file written) and `git -C /tmp`
+all complete as `Permission denied: shell` errors and the turn goes on to the next call.
+
 **Symlinks inside an allowed directory are an escape** (measured on 2.0.32, `test/live.test.ts`, "symlink inside an
 allowed directory"): the grant is matched against the path the agent names, not where a link leads, so `repo/link -> ~`
 is read, globbed and grepped like any file below `repo`, and its content reaches the session. The host cannot close this.
@@ -105,6 +124,10 @@ the key in the server's env through `ps`, the user's files by absolute path). Mi
 unless an agent opts in, the server's `HOME` is its own (no `~/.claude`, `~/.agents` or dotfiles at `~`), the env is
 an allow-list, the server listens on loopback with a password. This is carried from agent-gateway, decided by the
 lead on that evidence, not an isolation boundary.
+
+The `repoShell` option (a read-only git shell) matches command TEXT, so it is a cost-raising boundary, not a sandbox, as in
+agent-gateway. `git -C <repo>` pins git to the repository; no reader that takes an arbitrary path (`cat`, `rg`, `ls`) is
+allowed: file reads go through the read tool, which `external_directory` bounds.
 
 The allow-list forwards `OTEL_EXPORTER_OTLP_*`, and on the mini the deploy sets `OTEL_EXPORTER_OTLP_HEADERS`
 (`authorization=<ClickStack ingest key>`). That key therefore sits in the server's env and in the env of its tool
