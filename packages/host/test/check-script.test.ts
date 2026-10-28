@@ -2,35 +2,11 @@ import { describe, expect, test } from 'bun:test'
 import { mkdtempSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { expectDead } from './support/process.ts'
 
 // The agent path's idle watchdog: `agents/check/skills/run-step/run-step.sh`, a port of agent-gateway's run_step.
 const script = join(import.meta.dir, '../../../agents/check/skills/run-step/run-step.sh')
 const dir = realpathSync(mkdtempSync(join(tmpdir(), 'agw-runstep-')))
-
-/** `alive` until it is gone or a zombie: `kill(pid, 0)` succeeds on a zombie, which is dead but not yet reaped by whoever adopted it. */
-function lifeOf(pid: number): 'alive' | 'zombie' | 'gone' {
-  try {
-    process.kill(pid, 0)
-  } catch {
-    return 'gone'
-  }
-  const stat = Bun.spawnSync(['ps', '-o', 'stat=', '-p', String(pid)])
-    .stdout.toString()
-    .trim()
-  if (stat === '') return 'gone'
-  return stat.startsWith('Z') ? 'zombie' : 'alive'
-}
-
-/** Polls for the process to be dead (gone or a zombie), never a fixed sleep. */
-async function expectDead(pid: number, withinMs = 3_000) {
-  const until = Date.now() + withinMs
-  let life = lifeOf(pid)
-  while (life === 'alive' && Date.now() < until) {
-    await Bun.sleep(20)
-    life = lifeOf(pid)
-  }
-  expect(life).not.toBe('alive')
-}
 
 async function runStep(idle: number, command: string) {
   const proc = Bun.spawn(['sh', script, dir, String(idle), command], { stdout: 'pipe', stderr: 'pipe' })

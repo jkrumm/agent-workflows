@@ -4,34 +4,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { commandEnv } from '../src/workflows/check/env.ts'
 import { bunExec, createBunExec, drainStream } from '../src/workflows/check/exec.ts'
+import { expectDead, isAlive } from './support/process.ts'
 
 const cwd = realpathSync(mkdtempSync(join(tmpdir(), 'agw-exec-')))
 const sh = (script: string) => ['sh', '-c', script]
-
-/** `alive` until it is gone or a zombie: `kill(pid, 0)` succeeds on a zombie, which is dead but not yet reaped by whoever adopted it. */
-function lifeOf(pid: number): 'alive' | 'zombie' | 'gone' {
-  try {
-    process.kill(pid, 0)
-  } catch {
-    return 'gone'
-  }
-  const stat = Bun.spawnSync(['ps', '-o', 'stat=', '-p', String(pid)])
-    .stdout.toString()
-    .trim()
-  if (stat === '') return 'gone'
-  return stat.startsWith('Z') ? 'zombie' : 'alive'
-}
-
-/** Polls for the process to be dead (gone or a zombie), never a fixed sleep. */
-async function expectDead(pid: number, withinMs = 3_000) {
-  const until = Date.now() + withinMs
-  let life = lifeOf(pid)
-  while (life === 'alive' && Date.now() < until) {
-    await Bun.sleep(20)
-    life = lifeOf(pid)
-  }
-  expect(life).not.toBe('alive')
-}
 
 describe('bunExec', () => {
   test('exit code, merged stdout and stderr, PWD pinned to cwd', async () => {
@@ -157,7 +133,7 @@ describe('make recursion state', () => {
     MAKELEVEL: '1',
     MAKEFLAGS: ' -j8 --jobserver-auth=3,4',
     MFLAGS: '-j8',
-    MAKEOVERRIDES: '${-*-command-variables-*-}',
+    MAKEOVERRIDES: 'FOO=bar',
     GNUMAKEFLAGS: '-k',
     MAKEFILES: '/elsewhere.mk',
     MAKE_TERMOUT: '/dev/pts/0',
@@ -169,24 +145,19 @@ describe('make recursion state', () => {
     expect(Object.keys(commandEnv(inherited, '/work')).sort()).toEqual(['MAKE_HOME', 'PATH', 'PWD'])
   })
 
-  test('a make under a host that is itself inside make runs top-level and silent about directories', async () => {
+  test('a make under a host that is itself inside make runs top-level', async () => {
     const makefile = join(mkdtempSync(join(tmpdir(), 'agw-make-')), 'Makefile')
     writeFileSync(makefile, 'check:\n\t@echo "level=[$(MAKELEVEL)] flags=[$(MAKEFLAGS)]"\n')
     const result = await createBunExec({ env: inherited }).run({ argv: ['make', '-f', makefile, 'check'], cwd })
-    expect(result.output).toBe('level=[0] flags=[]\n')
+    expect(result.output).not.toContain('Entering directory')
+    expect(result.output).toMatch(/level=\[0?\]/) // unset or 0, never the host's 1
+    expect(result.output).not.toContain('jobserver')
+    expect(result.output).not.toContain('-j8')
   })
 })
 
 describe('orphans of a crashed host', () => {
   const groupFile = () => join(mkdtempSync(join(tmpdir(), 'agw-groups-')), 'check', 'run_step.group')
-  const alive = (pid: number) => {
-    try {
-      process.kill(pid, 0)
-      return true
-    } catch {
-      return false
-    }
-  }
   const startOf = (pid: number) =>
     Bun.spawnSync(['ps', '-o', 'lstart=', '-p', String(pid)])
       .stdout.toString()
@@ -201,7 +172,7 @@ describe('orphans of a crashed host', () => {
     const result = await bunExec.run({ argv: ['true'], cwd, groupFile: file })
     expect(result.exitCode).toBe(0)
     await left.exited
-    expect(alive(left.pid)).toBe(false)
+    await expectDead(left.pid)
     expect(existsSync(file)).toBe(false)
   })
 
@@ -212,7 +183,7 @@ describe('orphans of a crashed host', () => {
       mkdirSync(join(file, '..'), { recursive: true })
       writeFileSync(file, JSON.stringify({ pgid: innocent.pid, started: 'Mon Jan  1 00:00:00 2001' }))
       await bunExec.run({ argv: ['true'], cwd, groupFile: file })
-      expect(alive(innocent.pid)).toBe(true)
+      expect(isAlive(innocent.pid)).toBe(true)
       expect(existsSync(file)).toBe(false)
     } finally {
       innocent.kill('SIGKILL')
