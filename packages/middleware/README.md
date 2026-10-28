@@ -37,7 +37,9 @@ span before telemetry ends it. `platform.close()` comes after
   for a tree. `cost` stays null when nothing was priced; `unpriced_calls > 0` marks it as a lower bound. Wall time
   comes from the row's `started_at`/`finished_at`, so a re-delivered `runPost` writes the identical record; it is
   null for a run that never started (cancelled while pending), never 0.
-- **Fingerprint.** sha256 over the workflow version, each referenced agent's `AGENTS.md` and `skills/**`, each
+- **Fingerprint.** sha256 over the workflow version, each referenced agent's `AGENTS.md`, `agent.json` (its route and
+  permissions; absent is fine) and `skills/**` (no other file in the directory), the host's session policy (`hostPolicy`,
+  a digest the host supplies; only for a workflow with agents; unset it is left out) and each
   agent's `routeFingerprint` (`@agent-workflows/routes`, overrides included) and `opencode --version`. Inputs come
   through the `FingerprintSource` port. `fsFingerprintSource` re-reads an agent's files only when a size or mtime
   changed (a directory walk and a `stat` per file per admission), so an edited `AGENTS.md` changes the fingerprint

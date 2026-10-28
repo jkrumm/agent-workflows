@@ -19,6 +19,7 @@ export {
 export {
   type AgentDefinition,
   assertNoAncestorLeak,
+  basePolicyDigest,
   type CompiledLocation,
   compileLocation,
   DEFAULT_STATE_DIR,
