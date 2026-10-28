@@ -4,7 +4,7 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
 `docs/waves/PLAN.md` and this file, then continues from **Next action**.
 
 ## State
-- Waves 1–4 done (retros in concept.md). Active wave: 5 (Evals and self-improvement, P2).
+- Waves 1–5 done (retros in concept.md). Active wave: 6 (Research, P3a), CI-green first.
 - Lead's close-out channel: `docs/waves/handoff/lead.md` (the mother owns PLAN.md and the retro log;
   the lead writes per-step verdicts, Left behind, gate evidence and retro notes there, then idles).
 - dotfiles is free: P0 done (owner, 2026-10-27).
@@ -13,8 +13,7 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
   `com.jkrumm.vps-pg-backup` is ours: P0b maps it in dotfiles `docs/architecture.md`. Relayed to the lead.
 
 ## Lead
-- `agent-workflows-w1` (pane w40:p14), Opus/high, spawned 2026-10-28 ~18:35: the second Wave 5 lead
-  (first rotated at its context limit; state in `handoff/lead.md` at `cdf18cf`).
+- `agent-workflows-w1` (pane w40:p16), Opus/high, fresh, spawned 2026-10-28 ~22:10 for Wave 6.
   Rotation policy: a fresh lead per wave unless the last one closed under ~30% context.
 - The mother is agent `agent-workflows-mother` (pane w40:p1).
 
@@ -61,7 +60,10 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
 - 2026-10-28: athena-mother's pane is gone; the team-key usage window (~$3.8) was not announced to
   it. Report to the owner. usage-tracker-9f's socket is gone; the `iu_key` deploy notice was not
   delivered (Argo must accept `iu_key` on its side).
+- For the owner: team-key spend Wave 5 ≈ $4.64 (notice in `handoff/lead.md` at `f562b05`); a lead's
+  host-wide `pkill -f "bun test --isolate"` ~21:25 may have killed another fleet's test run.
+- Gate lesson: the merge train read only the mini's `make check`; CI was red for a wave. Wave 6 fixes it.
 
 ## Next action
 - Watch the lead (`wave-watch.sh --agents agent-workflows-w1 --heartbeat 9`, bounded 10 min), read
-  `handoff/lead.md` on idle, write Wave 5's Left behind and retro, flip Wave 6 active, rotate the lead.
+  `handoff/lead.md` on idle, write Wave 6's Left behind and retro, flip Wave 7 active, rotate the lead.
