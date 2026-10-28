@@ -192,7 +192,17 @@ function aggregate(overrides: Partial<ReviewAggregate> = {}): ReviewAggregate {
   return {
     cases: counts(25),
     outcome: { agreement: 0.8, confusion: {} },
-    blocking: { legacy: 20, new: 20, matched: 15, judged: 0, unsure: 0, recall: 0.75, basis: null, newOnly: 5 },
+    blocking: {
+      legacy: 20,
+      new: 20,
+      matched: 15,
+      judged: 0,
+      unsure: 0,
+      recall: 0.75,
+      basis: null,
+      coverage: null,
+      newOnly: 5,
+    },
     improvementsPerCase: { legacy: 3, new: 3 },
     needsHumanRate: { legacy: 0, new: 0 },
     failedAngleRate: { legacy: 0, new: 0 },
@@ -211,7 +221,7 @@ function checkAggregate(overrides: Partial<CheckAggregate> = {}): CheckAggregate
       agreement: 1,
       confusion: { legacyPass: { pass: 4, fail: 0, failed: 0 }, legacyFail: { pass: 0, fail: 1, failed: 0 } },
     },
-    failureRecall: { legacyFailed: 1, caught: 1, recall: 1, basis: null },
+    failureRecall: { legacyFailed: 1, caught: 1, recall: 1, basis: null, coverage: null },
     steps: { compared: 5, agreement: 1 },
     cost: { ...ratio, baseline: 'recorded', newUsd: 0, legacyUsd: 0, inexact: { new: 0, legacy: 0 } },
     wall: { ...ratio, baseline: 'recorded' },
@@ -279,7 +289,7 @@ describe('verdict', () => {
           agreement: 0.9,
           confusion: { legacyPass: { pass: 9, fail: 0, failed: 0 }, legacyFail: { pass: 1, fail: 0, failed: 0 } },
         },
-        failureRecall: { legacyFailed: 1, caught: 0, recall: 0, basis: null },
+        failureRecall: { legacyFailed: 1, caught: 0, recall: 0, basis: null, coverage: null },
       }),
     )
     expect(v.verdict).toBe('worse')

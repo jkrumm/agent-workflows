@@ -225,15 +225,37 @@ const withAccepted = <T extends { parameters?: readonly object[]; responses?: Re
  * The run state's `output` is `z.unknown()` on the wire (a stored run of an older version must still be readable), so
  * the generated document would leave the workflow's output untyped. The workflow's own output schema is written into
  * the document here instead, which is where `agw schema <workflow>` reads it.
+ *
+ * The document is built at boot, so a problem throws there rather than shipping an untyped or dangling schema: the 200
+ * response must be an inline object schema with properties (a `$ref` to a component would be overwritten wrongly), and
+ * the output schema must inline completely (`reused: 'inline'`, `cycles: 'throw'`): a `$defs` or `$ref` of its own
+ * would point into the output property, not the document.
  */
-function withOutputType<T extends { responses?: Record<string, unknown> }>(operation: T, output: z.ZodType): T {
+export function withOutputType<T extends { responses?: Record<string, unknown> }>(
+  operation: T,
+  workflow: { id: string; output: z.ZodType },
+): T {
   const response = operation.responses?.['200'] as
     | { content?: Record<string, { schema?: { properties?: Record<string, unknown> } }> }
     | undefined
   const json = response?.content?.['application/json']
-  if (!response || !json?.schema?.properties) return operation
-  const { $schema: _, ...schema } = z.toJSONSchema(output, { io: 'output', unrepresentable: 'any' })
-  const typed = { ...schema, description: "The workflow's output, once done" }
+  if (!response || !json?.schema?.properties) {
+    throw new Error(
+      `workflow ${workflow.id}: the generated 200 response is not an inline object schema, so its output type cannot be written into it`,
+    )
+  }
+  const { $schema: _, ...schema } = z.toJSONSchema(workflow.output, {
+    io: 'output',
+    unrepresentable: 'any',
+    reused: 'inline',
+    cycles: 'throw',
+  })
+  if (/"\$(ref|defs)"/.test(JSON.stringify(schema))) {
+    throw new Error(
+      `workflow ${workflow.id}: its output schema produced $ref or $defs, which would dangle in the document`,
+    )
+  }
+  const typed = { ...schema, description: schema.description ?? "The workflow's output, once done" }
   return {
     ...operation,
     responses: {
@@ -284,7 +306,7 @@ function buildWorkflow(
       operationId: operationIdOf(workflow.id),
       summary: entry.summary ?? `Run ${workflow.id}`,
       tags: ['workflows'],
-      spec: (operation) => withCli(cli)(withAccepted(withOutputType(operation, workflow.output), headers)),
+      spec: (operation) => withCli(cli)(withAccepted(withOutputType(operation, workflow), headers)),
     })
     .input(input.strict()) // an unknown key is a 400, never silently dropped
     .output(RunStateSchema)
