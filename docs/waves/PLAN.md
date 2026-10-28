@@ -115,6 +115,10 @@ Workers: Haiku to extract past runs, Sonnet/high to port, Opus/medium for the co
   a usage record into the journal and Argo — so N6 holds before review and check call them
 - [ ] Route fallback on provider-balance failures (GPT-6.1 Terra, medium effort), concept version note;
   the team key on the mini for interim tests and evals (untracked env, never in git)
+- [ ] IU key label (usage-tracker contract, 2026-10-28): top-level `iu_key: 'personal' | 'athena-team'`
+  on every Argo row with `billing='iu'` (null otherwise), never in `raw`, never `account` (that is the
+  Max account id); from a non-secret env `IU_KEY_ID` next to `IU_API_KEY`, default and fallback
+  `personal`; OpenCode servers stamp it from their own start env (`serverEnv` forwards it)
 - [ ] Eval sets for review and check from recorded agent-gateway runs (findings, cost, wall time)
 - [ ] `review` and `check` ported as workflows, depth gating included, OCR behind the wallet gate
 - [ ] Side-by-side against agent-gateway on the eval sets: not worse on findings, cost, wall time
