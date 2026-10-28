@@ -88,7 +88,7 @@ export type HostOperation = {
 
 const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error))
 
-export const badRequest = (message: string) => new ORPCError('BAD_REQUEST', { message })
+const badRequest = (message: string) => new ORPCError('BAD_REQUEST', { message })
 
 /** `Prefer: wait=<seconds>`, capped at {@link MAX_WAIT_S}; `fallback` (default 0) when the header names no wait. */
 export function preferWait(headers: Headers, fallback = 0): number {
@@ -102,7 +102,7 @@ export function preferWait(headers: Headers, fallback = 0): number {
   return Math.min(Number(match[2]), MAX_WAIT_S)
 }
 
-export function purposeOf(headers: Headers): string {
+function purposeOf(headers: Headers): string {
   const purpose = headers.get('x-agw-purpose')?.trim()
   if (purpose === undefined || purpose === '') return DEFAULT_PURPOSE
   if (purpose.length > 64 || !/^[\w.-]+$/.test(purpose))
@@ -110,11 +110,37 @@ export function purposeOf(headers: Headers): string {
   return purpose
 }
 
-export function idempotencyKeyOf(headers: Headers): string | undefined {
+function idempotencyKeyOf(headers: Headers): string | undefined {
   const key = headers.get('idempotency-key')?.trim()
   if (!key) return undefined
   if (key.length > 255) throw badRequest('Idempotency-Key is longer than 255 characters')
   return key
+}
+
+/**
+ * Starts a run from a request: purpose, `Idempotency-Key` and `traceparent` from its headers; an invalid input is a
+ * 400, a key reused for another input a 409 naming the run that stands. The workflow route and direct capability
+ * calls both start through here.
+ */
+export async function startRun(
+  deps: Pick<OperationDeps, 'runtime'>,
+  workflow: AnyWorkflow,
+  input: unknown,
+  headers: Headers,
+): Promise<{ runId: string; idempotencyKey: string | undefined }> {
+  const purpose = purposeOf(headers)
+  const idempotencyKey = idempotencyKeyOf(headers)
+  const traceparent = headers.get('traceparent') ?? undefined
+  try {
+    const { runId } = await deps.runtime.start(workflow, input, { purpose, idempotencyKey, traceparent })
+    return { runId, idempotencyKey }
+  } catch (error) {
+    if (error instanceof WorkflowError && error.kind === 'invalid_input') throw badRequest(error.message)
+    if (error instanceof IdempotencyConflict) {
+      throw new ORPCError('CONFLICT', { status: 409, message: error.message, data: { runId: error.runId } })
+    }
+    throw error
+  }
 }
 
 const POLL_MIN_MS = 25
@@ -228,19 +254,7 @@ function buildWorkflow(
     .output(RunStateSchema)
     .handler(async ({ input, context, signal }) => {
       const wait = preferWait(context.headers)
-      const purpose = purposeOf(context.headers)
-      const idempotencyKey = idempotencyKeyOf(context.headers)
-      const traceparent = context.headers.get('traceparent') ?? undefined
-      let runId: string
-      try {
-        ;({ runId } = await deps.runtime.start(workflow, input, { purpose, idempotencyKey, traceparent }))
-      } catch (error) {
-        if (error instanceof WorkflowError && error.kind === 'invalid_input') throw badRequest(error.message)
-        if (error instanceof IdempotencyConflict) {
-          throw new ORPCError('CONFLICT', { message: error.message, data: { runId: error.runId } })
-        }
-        throw error
-      }
+      const { runId } = await startRun(deps, workflow, input, context.headers)
       // The run exists from here on: a failed read must still report its id, or a retry starts a second run.
       const state = await waitFor(deps.store, runId, wait, deps.logger, signal).catch((error: unknown) => {
         deps.logger.error('run state read failed after start; answering 202', { runId, error: errorText(error) })

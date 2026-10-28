@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test'
 import { CapabilityCallError } from '@agent-workflows/capabilities'
+import { StepFailed } from '@agent-workflows/runtime'
 import { messageResponse } from '@agent-workflows/capabilities/testing'
 import { failureOf, journaled, journaledError, RUN_ID_HEADER } from '../src/capability-runs.ts'
 import { type Body, SECRET, startTestHost, type TestHost, until } from './support.ts'
@@ -239,6 +240,18 @@ describe('the journaled error wire format', () => {
     expect(answer).toMatchObject({ code: 'INVALID_OUTPUT', status: 502, message: 'bad answer {"a": 1}' })
     expect(answer?.data).toEqual(error.data)
     expect(failureOf(asRun(error), silent).toJSON()).toMatchObject({ code: 'INVALID_OUTPUT', data: error.data })
+  })
+
+  test("the runtime's own wording of a failed step parses: a wording change fails here, not as a silent 500", async () => {
+    const error = new CapabilityCallError('UPSTREAM_ERROR', 502, 'down', true, { status: 500 })
+    const failed = new StepFailed('call', 'error', journaled(error))
+    expect(journaledError(failed.message)?.toJSON()).toMatchObject({ code: 'UPSTREAM_ERROR', data: { status: 500 } })
+
+    // ... and the run row a real upstream failure leaves in the journal
+    t.iu.on('messages', () => new Response('upstream down', { status: 500 }))
+    const response = await t.call('/llm/title', { body: { text: 'Journaled' } })
+    const run = await runRow(response.headers.get(RUN_ID_HEADER) as string)
+    expect(journaledError(run.error)?.toJSON()).toMatchObject({ code: 'UPSTREAM_ERROR', status: 502 })
   })
 
   test('a message that only looks journaled is not taken for one', () => {
