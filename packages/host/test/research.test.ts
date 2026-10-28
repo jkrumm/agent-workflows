@@ -34,6 +34,7 @@ function fakeEngine() {
   const auth: (string | null)[] = []
   const server = Bun.serve({
     port: 0,
+    hostname: '127.0.0.1',
     async fetch(req) {
       auth.push(req.headers.get('authorization'))
       const url = new URL(req.url)

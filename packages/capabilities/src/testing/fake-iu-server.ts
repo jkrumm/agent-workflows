@@ -57,6 +57,9 @@ export function startFakeIu(handlers: Partial<Record<'chat' | 'messages' | 'deci
   const requests: RecordedRequest[] = []
   const server = Bun.serve({
     port: 0,
+    // Loopback only: on macOS a wildcard bind can share its port number with another process's 127.0.0.1 bind, which
+    // then takes this server's loopback traffic (a stray 405 under parallel test files).
+    hostname: '127.0.0.1',
     async fetch(req) {
       const path = new URL(req.url).pathname
       const route = ROUTES[path as keyof typeof ROUTES]

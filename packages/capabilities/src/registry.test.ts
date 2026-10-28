@@ -35,7 +35,7 @@ const errorJson = (e: unknown) => {
 
 describe('one definition, two doors', () => {
   const a = build({ anthropic: [{ text: 'A short summary.', tokens: usage }] })
-  const server = Bun.serve({ port: 0, fetch: a.registry.fetch })
+  const server = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: a.registry.fetch })
   const base = `http://127.0.0.1:${server.port}`
   afterAll(() => void server.stop(true))
 
@@ -71,7 +71,7 @@ describe('one definition, two doors', () => {
 
   test('a typed handler error fails identically, defined, with its data', async () => {
     const b = build({ anthropic: [fail('UPSTREAM_ERROR', 'iu-anthropic request failed (503): down', { status: 503 })] })
-    const s = Bun.serve({ port: 0, fetch: b.registry.fetch })
+    const s = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: b.registry.fetch })
     try {
       const viaImport = await b.registry.call('llm.title', { text: 'x' }).catch(errorJson)
       const viaHttp = await post(`http://127.0.0.1:${s.port}`, '/llm/title', { text: 'x' })
@@ -91,7 +91,7 @@ describe('one definition, two doors', () => {
 
   test('an untyped throw is an opaque INTERNAL_SERVER_ERROR on both doors', async () => {
     const b = build({ anthropic: [new Error('secret detail')] })
-    const s = Bun.serve({ port: 0, fetch: b.registry.fetch })
+    const s = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: b.registry.fetch })
     try {
       const viaImport = await b.registry.call('llm.title', { text: 'x' }).catch(errorJson)
       const viaHttp = await post(`http://127.0.0.1:${s.port}`, '/llm/title', { text: 'x' })
@@ -105,7 +105,7 @@ describe('one definition, two doors', () => {
 
   test('the same model failure after the re-ask is INVALID_OUTPUT on both doors', async () => {
     const b = build({ openai: [{ text: 'not json' }] })
-    const s = Bun.serve({ port: 0, fetch: b.registry.fetch })
+    const s = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: b.registry.fetch })
     const input = { text: 'x', labels: { a: 'first', b: 'second' } }
     try {
       const viaImport = await b.registry.call('llm.classify', input).catch(errorJson)
@@ -120,7 +120,7 @@ describe('one definition, two doors', () => {
 
   test('usage reaches the registry sink from both doors, tagged with the capability', async () => {
     const b = build({ anthropic: [{ text: 'T', tokens: usage }] })
-    const s = Bun.serve({ port: 0, fetch: b.registry.fetch })
+    const s = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: b.registry.fetch })
     try {
       const own: Usage[] = []
       await b.registry.call('llm.title', { text: 'x' }, { addUsage: (u) => own.push(u) })
