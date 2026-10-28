@@ -8,6 +8,11 @@ change; deployed on the mini and proven live by `@verifier`; a retro entry in `d
 **Fleet:** mother (Opus/high) → lead (Opus/high) → workers by model class (`AGENTS.md` §The fleet).
 **Budget:** Max for every Claude session. IU for agent steps, `/review` and `/research`: spend what
 the work needs, tagged `purpose=build`, report the figure in each retro. OCR stays off.
+**IU constrained (owner, 2026-10-28):** the DeepSeek provider behind the IU endpoint is out of
+balance. Until lifted: no gateway `/review` in the fleet (the lead's `/code-review high` on Max is the
+review step); interim tests and evals use the Athena teamchat team key, kept out of this repo; routes
+fall back to GPT-6.1 Terra at medium effort on a provider-balance failure; the ported `review`
+degrades to "review in-session" on a balance failure.
 **Stops:** only the four in `roles/mother.md`.
 
 Outside this repo: **P0 (warden off)** runs as dotfiles Wave 1, orchestrated from the owner's main
@@ -108,6 +113,8 @@ Workers: Haiku to extract past runs, Sonnet/high to port, Opus/medium for the co
   steps; every step below that needs no live host proceeds meanwhile
 - [ ] Direct capability calls (`agw llm title` outside a run) recorded like runs — a one-step run or
   a usage record into the journal and Argo — so N6 holds before review and check call them
+- [ ] Route fallback on provider-balance failures (GPT-6.1 Terra, medium effort), concept version note;
+  the team key on the mini for interim tests and evals (untracked env, never in git)
 - [ ] Eval sets for review and check from recorded agent-gateway runs (findings, cost, wall time)
 - [ ] `review` and `check` ported as workflows, depth gating included, OCR behind the wallet gate
 - [ ] Side-by-side against agent-gateway on the eval sets: not worse on findings, cost, wall time
