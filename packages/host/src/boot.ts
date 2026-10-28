@@ -3,11 +3,17 @@ import { runawayCap, walletGate } from '@agent-workflows/limits'
 import { fsFingerprintSource, platformMiddleware } from '@agent-workflows/middleware'
 import { OpenCodeHost, OpenCodeServer } from '@agent-workflows/opencode-host'
 import { type AgentHost, type Json, Runtime } from '@agent-workflows/runtime'
+import { Pool } from 'pg'
 import { loadAgentDefinitions } from './agents.ts'
 import { createHost } from './app.ts'
 import { createCapabilityWorkflows } from './capability-runs.ts'
 import type { HostConfig } from './config.ts'
+import { pgLearningsStore, withLearnedFacts, withLearningsFingerprint } from './learnings/index.ts'
 import { IDLE_TIMEOUT_S } from './operations.ts'
+import { ghCli } from './workflows/retrospective/gh.ts'
+import { RETRO_WORKFLOW_ID } from './workflows/retrospective/index.ts'
+import { pgJournalReader } from './workflows/retrospective/sample.ts'
+import { startRetroSchedule } from './workflows/retrospective/schedule.ts'
 import { createWorkflows, fingerprintWorkflows } from './workflows/index.ts'
 
 const FLUSH_INTERVAL_MS = 30_000
@@ -130,7 +136,20 @@ export async function boot(config: HostConfig, options: BootOptions = {}): Promi
 
   try {
     const registry = createRegistry(createCapabilities())
-    const workflows = createWorkflows({ registry })
+    // The learnings store and the retrospective's journal reads share one small pool of the host's own.
+    const readPool = new Pool({
+      connectionString: config.pgUrl,
+      max: 2,
+      application_name: `agw-host:${config.schema}`,
+      query_timeout: 30_000,
+      statement_timeout: 30_000,
+    })
+    readPool.on('error', (err) => console.warn('[agw-host] read pool: idle connection error', err.message))
+    closers.push(() => readPool.end())
+    const learnings = pgLearningsStore(readPool, config.schema)
+    const journal = pgJournalReader(readPool, config.schema)
+    const gh = config.retroFileIssues && config.retroIssueRepo ? ghCli({ repo: config.retroIssueRepo }) : undefined
+    const workflows = createWorkflows({ registry, retro: { journal, learnings, gh } })
     // Direct capability calls over HTTP run as `cap.<id>` workflows (concept N6): registered, but not operations.
     const capabilityWorkflows = createCapabilityWorkflows(registry)
     const agentsDir = config.agentsDir ?? 'agents'
@@ -139,11 +158,15 @@ export async function boot(config: HostConfig, options: BootOptions = {}): Promi
     const platform = platformMiddleware({
       connectionString: config.pgUrl,
       schema: config.schema,
-      fingerprint: fsFingerprintSource({
-        agentsDir,
-        workflows: fingerprintWorkflows(workflows),
-        opencodeBin: config.opencodeBin,
-      }),
+      // The active learnings of each agent enter the fingerprint beside its AGENTS.md and skills (concept §5).
+      fingerprint: withLearningsFingerprint(
+        fsFingerprintSource({
+          agentsDir,
+          workflows: fingerprintWorkflows(workflows),
+          opencodeBin: config.opencodeBin,
+        }),
+        learnings,
+      ),
       iuKey: config.iuKey,
       telemetry: { exporter: exporterFor(env) },
       argo: { machine: config.machine },
@@ -167,6 +190,8 @@ export async function boot(config: HostConfig, options: BootOptions = {}): Promi
       schema: config.schema,
       workflows: [...workflows.map((entry) => entry.workflow), ...capabilityWorkflows.values()],
       host: agentHost,
+      // Active learned facts follow the task message, never AGENTS.md, whose prefix stays cacheable.
+      agentPrompt: async ({ agent, prompt }) => withLearnedFacts(prompt, await learnings.activeFor(agent)),
       middleware: [...platform.middleware, wallet, cap],
     })
     closers.push(() => runtime.close())
@@ -206,6 +231,24 @@ export async function boot(config: HostConfig, options: BootOptions = {}): Promi
     closers.push(async () => {
       open = false
     })
+
+    const retrospective = workflows.find((entry) => entry.workflow.id === RETRO_WORKFLOW_ID)
+    if (config.retroWeekly && retrospective) {
+      const schedule = startRetroSchedule({
+        runtime,
+        retrospective,
+        journal,
+        workflows: workflows
+          .filter((entry) => entry.agents?.length && entry !== retrospective)
+          .map((entry) => entry.workflow.id),
+        fileIssues: config.retroFileIssues,
+        logger: {
+          warn: (message, meta) => console.warn(`[agw-host] ${message}`, meta ?? ''),
+          error: (message, meta) => console.error(`[agw-host] ${message}`, meta ?? ''),
+        },
+      })
+      closers.push(() => schedule.stop())
+    }
 
     let flushing = false
     const flushTimer = setInterval(() => {

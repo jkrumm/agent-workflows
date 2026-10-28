@@ -120,7 +120,14 @@ A run lasts seconds to tens of minutes. There is no API to wait for days: anythi
 Issue, a human approval) is an entity state machine that *starts* workflows. This keeps the mixed-version
 window of a deploy small and keeps every run's journal short.
 
-**Token effect / cache effect.** The runtime adds no model-visible text and no tokens of its own. Re-attach
+**`agentPrompt`** (`RuntimeOptions`, optional): called once per attempt with `{ agent, prompt }` right before a session is
+opened or prompted, and not at all when the step re-attaches to a prompted session. Its result is what the host session
+receives; the journaled step spec is unchanged. The platform host uses it to append an agent's active learned facts after
+the task message. A throw is logged and the original prompt is sent. Migration `0005_learnings.sql` adds the per-agent
+learnings table the host reads (`packages/host` README, §Retrospective and learnings); the runtime itself never reads it.
+
+**Token effect / cache effect.** The runtime adds no model-visible text and no tokens of its own (an `agentPrompt` hook, when
+the host sets one, adds its own text after the task, so an agent's cached `AGENTS.md` prefix is untouched). Re-attach
 waits on the existing session instead of re-prompting, so a crash or deploy costs no repeated prompt and keeps
 the provider's prompt cache warm; only a kill between session create and handle journal leaves one orphan
 session that was never prompted (no tokens). A retried agent step after an idle timeout opens a fresh session:

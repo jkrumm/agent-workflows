@@ -1,0 +1,12 @@
+{
+  "route": "retro.analyze",
+  "permissions": {
+    "rules": [
+      {
+        "action": "edit",
+        "resource": "*",
+        "effect": "deny"
+      }
+    ]
+  }
+}
