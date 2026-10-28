@@ -598,6 +598,14 @@ describe('review fixes', () => {
       expect(await rt.scoreRun(runId, { source: 'drift', onlyUnscored: true })).toBeNull() // same version: left alone
       version = 'v-fixed'
       expect(await drift()).toEqual([runId])
+      // A failed re-score attempt backs off like any other: not reselected every tick.
+      await sql.pool.query(
+        `update "${db.schema}".runs set score_attempts = 1, last_score_attempt_at = now() where id = $1`,
+        [runId],
+      )
+      expect(await drift()).toEqual([])
+      await setLastAttempt(runId, SCORE_BACKOFF_MS / 1000 + 60)
+      expect(await drift()).toEqual([runId])
       expect(await rt.scoreRun(runId, { source: 'drift', onlyUnscored: true })).toMatchObject({
         pass: true,
         scorer: 'v-fixed',

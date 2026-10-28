@@ -3,15 +3,15 @@ import type { HostWorkflow } from '../../operations.ts'
 import { createEvalCompare } from './compare.ts'
 import { DriftJob, driftOptionsFromEnv } from './drift.ts'
 import { createEvalRun, type EvalRunOptions, sweepCaseTrees } from './run.ts'
-
-/** A case tree older than this whose run ended (or never existed) is leftover. */
-const SWEEP_AFTER_MS = 3 * 3_600_000
-const SWEEP_INTERVAL_MS = 3_600_000
 import { type EvalRuntime, EvalSlot } from './slot.ts'
 
 export { DEFAULT_DRIFT, DriftJob, type DriftOptions, type DriftTick, driftOptionsFromEnv } from './drift.ts'
 export { EVAL_COMPARE_ID } from './compare.ts'
 export { caseTreeDir, EVAL_RUN_ID, sweepCaseTrees } from './run.ts'
+
+/** A case tree older than this whose run ended (or never existed) is leftover. */
+const SWEEP_AFTER_MS = 3 * 3_600_000
+const SWEEP_INTERVAL_MS = 3_600_000
 
 /** Which slot an eval workflow reads: set by `createEvalWorkflows`, found again by `wireEval`. */
 const slots = new WeakMap<AnyWorkflow, EvalSlot>()
@@ -29,6 +29,8 @@ export interface EvalWiring {
   start(): void
   /** Stops the drift job and waits for its tick; call before `runtime.close()`. */
   close(): Promise<void>
+  /** Sweeps leftover case trees now; while a sweep runs, returns that one instead of starting another. */
+  sweep(): Promise<void>
 }
 
 /**
@@ -55,26 +57,39 @@ export function wireEval(options: {
       if (other.workflow.scorer) slot.targets.set(other.workflow.id, other.workflow)
   }
   const drift = new DriftJob(options.runtime, driftOptionsFromEnv(options.env ?? process.env), logger)
-  // Case trees a cancel past its settle or a killed process left behind: swept at start and every hour.
-  let sweeping: Promise<unknown> = Promise.resolve()
+  // Case trees a cancel past its settle or a killed process left behind: swept at start and every hour, one sweep at
+  // a time (a tick while one runs is skipped).
+  let sweeping: Promise<void> | null = null
   let timer: ReturnType<typeof setInterval> | undefined
-  const sweep = () => {
-    sweeping = Promise.all(
+  const sweep = (): Promise<void> => {
+    sweeping ??= Promise.all(
       [...roots].map((tmpRoot) =>
-        sweepCaseTrees({ runtime: options.runtime, tmpRoot, olderThanMs: SWEEP_AFTER_MS }).then((removed) => {
+        sweepCaseTrees({
+          runtime: options.runtime,
+          tmpRoot,
+          olderThanMs: SWEEP_AFTER_MS,
+          onUnmarked: (dir) => logger.warn('eval: case tree without a marker kept', { dir }),
+        }).then((removed) => {
           if (removed.length) logger.warn('eval: swept leftover case trees', { count: removed.length })
         }),
       ),
-    ).catch((error: unknown) => logger.warn('eval: case tree sweep failed', { error: String(error) }))
+    )
+      .then(() => undefined)
+      .catch((error: unknown) => logger.warn('eval: case tree sweep failed', { error: String(error) }))
+      .finally(() => {
+        sweeping = null
+      })
+    return sweeping
   }
   return {
     start: () => {
       drift.start()
       if (roots.size === 0) return
-      sweep()
-      timer = setInterval(sweep, SWEEP_INTERVAL_MS)
+      void sweep()
+      timer = setInterval(() => void sweep(), SWEEP_INTERVAL_MS)
       timer.unref?.()
     },
+    sweep,
     close: async () => {
       clearInterval(timer)
       await sweeping

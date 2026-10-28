@@ -604,7 +604,10 @@ export class Journal {
           join unnest($6::text[], $7::text[]) as v(workflow, version) on v.workflow = r.workflow
           where r.score_error is not null and r.score_source = 'drift' and r.finished_at >= $3
             and ((r.score_error_kind = 'scorer' and r.scores->'final'->>'scorer' is distinct from v.version)
-              or (r.score_error_kind = 'infra' and r.last_score_attempt_at < now() - interval '1 day')))
+              or (r.score_error_kind = 'infra' and r.last_score_attempt_at < now() - interval '1 day'))
+            -- The same attempt backoff as unscored runs: a failing re-score is never reselected every tick.
+            and (r.score_attempts = 0 or r.last_score_attempt_at is null
+              or r.last_score_attempt_at < now() - make_interval(secs => $8::float8 / 1000 * 2 ^ (r.score_attempts - 1))))
        ) c
        order by score_attempts, finished_at limit $5`,
       [
