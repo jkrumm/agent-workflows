@@ -7,7 +7,7 @@ import { agwCheckRunner, agwJudge, agwReviewRunner, psqlJournal } from './adapte
 import { legacyCheckRunner, legacyReviewRunner, usageTrackerCost } from './adapters/legacy.ts'
 import { aggregateCheck, aggregateReview } from './aggregate.ts'
 import { type Exec, exec as realExec } from './exec.ts'
-import { cleanup, materialize, setupSteps } from './materialize.ts'
+import { cleanup, commandLine, materialize, setupSteps } from './materialize.ts'
 import { type Report, renderAggregate, writeReport } from './report.ts'
 import { type HarnessOptions, requestedDepth, runCheck, runReview } from './run.ts'
 import { checkVerdict, reviewVerdict } from './verdict.ts'
@@ -110,7 +110,7 @@ async function dryRun(
     const what = review
       ? `depth ${requestedDepth(review, flags.depthMode) ?? 'router'}`
       : `commands ${(c as CheckCase).input.commands?.join(',') ?? 'default'}`
-    const setup = tree.ok && workflow === 'check' ? setupSteps(tree.dir) : []
+    const setup = tree.ok && workflow === 'check' ? setupSteps(tree.dir).map(commandLine) : []
     const state = tree.ok ? `ready${setup.length ? ` (setup: ${setup.join('; ')})` : ''}` : `skipped: ${tree.reason}`
     if (tree.ok) ready++
     deps.out(`  ${c.id}  ${c.repo}  base ${c.baseSha.slice(0, 12)}  ${what}  ${state}`)
@@ -144,6 +144,13 @@ export async function main(argv: string[], deps: CliDeps): Promise<number> {
     return 2
   }
   const all = workflow === 'review' ? readCases(path, ReviewCase) : readCases(path, CheckCase)
+  // An unknown id is a typo or a stale set: never a silent partial run.
+  const known = new Set(all.map((c) => c.id))
+  const unknown = flags.ids?.filter((id) => !known.has(id)) ?? []
+  if (unknown.length) {
+    deps.err(`unknown case ids in ${path}: ${unknown.join(', ')}`)
+    return 2
+  }
   const cases = select<ReviewCase | CheckCase>(all, flags)
   if (!cases.length) {
     deps.err('no cases selected')

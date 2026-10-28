@@ -19,7 +19,7 @@ bun packages/eval/src/harness/cli.ts review --resume "$AGW_EVAL_DIR/reports/<ts>
 
 | Flag | Effect |
 |-|-|
-| `--ids a,b`, `--limit N` | case selection (ids first, then the first N) |
+| `--ids a,b`, `--limit N` | case selection (ids first, then the first N); an unknown id exits 2 and names it |
 | `--concurrency N` | cases in parallel, default 2 (IU budget, host load) |
 | `--rerun-legacy` | also runs `agw-legacy` on the same tree: legacy's self-agreement becomes the floor |
 | `--judge` | the `decide` capability (`agw decide`) rules on finding pairs the deterministic matcher is unsure of |
@@ -72,6 +72,13 @@ a seeded bootstrap 95% CI of the median. The legacy side of a ratio is the rerun
 run (the report says which: `rerun`, `recorded` or `mixed`), and how many costs per side are unknown or approximate.
 Check: `passed` agreement and its table, legacy failure recall (legacy red → new red), per-step agreement over steps
 both sides ran, cost and wall ratios.
+
+**Blocking recall where legacy found nothing.** Recall is pooled: matched legacy blocking findings over all legacy
+blocking findings in the scored cases. A case where legacy reported no blocking finding adds nothing to either side
+of that fraction; whatever the new side flags there counts only as new-only blocking, and a clean-vs-actionable
+split shows up in outcome agreement. A set where legacy found no blocking finding at all has no recall: the
+criterion reads "no data" and the verdict is `inconclusive`, never a vacuous pass. New-only findings are reported,
+not judged: the gate is agreement with legacy, not precision.
 
 A case whose new side failed (`new_failed`) is scored as a miss: its legacy blocking findings count against recall,
 its outcome or `passed` as a disagreement (column `failed`/`errored`). Harness failures are not scored. Both count

@@ -1,3 +1,4 @@
+import { z } from 'zod'
 import { brief, type Exec, lastJson } from '../exec.ts'
 import {
   CheckOutput,
@@ -109,6 +110,22 @@ export function agwCheckRunner(options: AgwOptions): CheckRunner {
   }
 }
 
+/**
+ * `agw decide --format json` prints the capability's output as is (a capability is not a run): `decideOutput` in
+ * `packages/capabilities/src/capabilities/decide.ts`. Mirrored, not imported: eval does not depend on capabilities.
+ */
+const DecideOutput = z.object({
+  answers: z.record(
+    z.string(),
+    z.discriminatedUnion('type', [
+      z.object({ type: z.literal('boolean'), value: z.boolean(), confidence: z.number(), probability: z.number() }),
+      z.object({ type: z.literal('choice'), choice: z.string(), confidence: z.number() }),
+    ]),
+  ),
+  model: z.string(),
+  truncatedChars: z.number().int().nonnegative(),
+})
+
 /** The diff the judge reads is cut to this; `decide` caps its state at 60k characters. */
 const JUDGE_DIFF_CHARS = 40_000
 
@@ -142,12 +159,11 @@ export function agwJudge(options: { exec: Exec; bin?: string }): Judge {
         stdin: state,
       })
       if (ran.code !== 0) throw new Error(`${bin} decide exit ${ran.code}: ${brief(ran.stderr)}`)
-      const body = lastJson(ran.stdout) as
-        | { answers?: Record<string, { value?: boolean }>; output?: { answers?: Record<string, { value?: boolean }> } }
-        | undefined
-      const answer = (body?.answers ?? body?.output?.answers)?.same?.value
-      if (typeof answer !== 'boolean') throw new Error(`${bin} decide: no boolean answer: ${brief(ran.stdout)}`)
-      return answer
+      const parsed = DecideOutput.safeParse(lastJson(ran.stdout))
+      if (!parsed.success) throw new Error(`${bin} decide: unexpected output: ${brief(ran.stdout)}`)
+      const answer = parsed.data.answers.same
+      if (answer?.type !== 'boolean') throw new Error(`${bin} decide: no boolean answer "same": ${brief(ran.stdout)}`)
+      return answer.value
     },
   }
 }
