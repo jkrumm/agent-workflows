@@ -79,7 +79,8 @@ const runResponses = {
   '200': { content: { 'application/json': { schema: runState } } },
   '202': { content: { 'application/json': { schema: runState } } },
 }
-const runParam = [{ name: 'runId', in: 'path', required: true, schema: { type: 'string' } }]
+// Parameters and request bodies by `$ref`, as OpenAPI allows: the CLI must dereference them.
+const runParam = [{ $ref: '#/components/parameters/RunId' }]
 const runX = (command: string[], mutating = false) => ({
   command,
   positional: ['runId'],
@@ -176,7 +177,9 @@ function workflowOperation(w: Workflow) {
   return {
     operationId: w.id.replace(/\.(\w)/g, (_, c: string) => c.toUpperCase()),
     summary: w.summary,
-    requestBody: { required: true, content: { 'application/json': { schema: w.input } } },
+    requestBody: w.mutating
+      ? { $ref: `#/components/requestBodies/${w.id.replace('.', '_')}` }
+      : { required: true, content: { 'application/json': { schema: w.input } } },
     responses: runResponses,
     'x-cli': {
       command: w.id.split('.'),
@@ -270,6 +273,15 @@ export async function startFakeHost(): Promise<FakeHost> {
       paths,
       components: {
         schemas: { RunState: runStateSchema, Tags: { type: 'object', additionalProperties: { type: 'string' } } },
+        parameters: { RunId: { name: 'runId', in: 'path', required: true, schema: { type: 'string' } } },
+        requestBodies: Object.fromEntries(
+          [...workflows.values()]
+            .filter((w) => w.mutating)
+            .map((w) => [
+              w.id.replace('.', '_'),
+              { required: true, content: { 'application/json': { schema: w.input } } },
+            ]),
+        ),
       },
     }
     ;(doc.info as Json)['x-contract-sha'] = hostSha(doc)

@@ -82,6 +82,22 @@ export function credentials(env: Env): Credentials {
   return { url, secret: env.AGW_API_SECRET || file.AGW_API_SECRET || undefined }
 }
 
+const LOOPBACK = new Set(['127.0.0.1', '[::1]', 'localhost'])
+
+/** The bearer never leaves in cleartext: plain http only to loopback. */
+export function assertSafeUrl(url: string): void {
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    throw new AgwError('auth', `AGW_URL is not a URL: ${url}`)
+  }
+  if (parsed.protocol === 'https:' || (parsed.protocol === 'http:' && LOOPBACK.has(parsed.hostname))) return
+  throw new AgwError('auth', `refused to send the secret to ${url}: plain http is allowed only to loopback`, {
+    hint: 'use https://, or http://127.0.0.1, http://[::1] or http://localhost',
+  })
+}
+
 export function requireSecret(env: Env, creds: Credentials): string {
   if (creds.secret) return creds.secret
   throw new AgwError('auth', 'no AGW_API_SECRET found', {

@@ -3,9 +3,6 @@ import type { Command, Field, Schema } from './spec.ts'
 
 export const BIN = 'agw'
 
-/** Always the CLI's own: an input property with one of these names is not reachable as a flag. */
-export const RESERVED_FLAGS = ['format', 'commit', 'idempotency-key', 'help']
-
 export interface Globals {
   format?: 'json' | 'plain'
   commit: boolean
@@ -110,8 +107,7 @@ function globalFlags(command: Command): string[] {
   ]
 }
 
-const flagFields = (command: Command) =>
-  command.fields.filter((f) => !command.x.positional.includes(f.name) && !RESERVED_FLAGS.includes(f.flag))
+const flagFields = (command: Command) => command.fields.filter((f) => !command.x.positional.includes(f.name))
 
 export function validFlags(command: Command): string[] {
   return [
@@ -232,21 +228,24 @@ export function parseArgs(command: Command, tokens: string[]): Parsed {
   return parsed
 }
 
-/** `.` and `..` in a path segment would address another route; any encoding of them counts. */
-function isDotSegment(value: string): boolean {
+const MAX_DECODES = 8
+
+/**
+ * `.` and `..` in a path segment would address another route, in any encoding: decode until stable,
+ * checking after every step. Encoding nested deeper than the bound is refused outright.
+ */
+function unsafeSegment(value: string): boolean {
   let current = value
-  for (let i = 0; i < 4; i++) {
+  for (let i = 0; i < MAX_DECODES; i++) {
     if (current === '.' || current === '..') return true
-    let decoded: string
+    if (!current.includes('%')) return false
     try {
-      decoded = decodeURIComponent(current)
+      current = decodeURIComponent(current)
     } catch {
       return false
     }
-    if (decoded === current) return false
-    current = decoded
   }
-  return false
+  return current === '.' || current === '..' || current.includes('%')
 }
 
 /** Run after stdin is read, so a property that came from stdin counts as given. */
@@ -262,9 +261,9 @@ export function assertValues(command: Command, values: Record<string, unknown>):
     if (
       f.in === 'path' &&
       value !== undefined &&
-      isDotSegment(typeof value === 'string' ? value : JSON.stringify(value))
+      unsafeSegment(typeof value === 'string' ? value : JSON.stringify(value))
     ) {
-      throw usage(`${label(f)} must not be '.' or '..', got: ${String(value)}`)
+      throw usage(`${label(f)} must not be '.', '..' or percent-encoded more than 8 deep, got: ${String(value)}`)
     }
   }
 }
