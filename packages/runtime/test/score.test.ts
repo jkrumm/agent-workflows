@@ -2,7 +2,7 @@ import { afterAll, describe, expect, test } from 'bun:test'
 import { readdir } from 'node:fs/promises'
 import { Pool } from 'pg'
 import { z } from 'zod'
-import { defineWorkflow, type Json, MAX_SCORE_ATTEMPTS, type Scorer } from '../src/index.ts'
+import { defineWorkflow, type Json, MAX_SCORE_ATTEMPTS, SCORE_BACKOFF_MS, type Scorer } from '../src/index.ts'
 import { migrate } from '../src/migrate.ts'
 import { FakeAgentHost } from '../src/testing.ts'
 import { freshSchema, inspector, PG_URL, testRuntime, until } from './support/pg.ts'
@@ -446,7 +446,7 @@ describe('review fixes', () => {
       run: async (_ctx, { n }) => ({ n }),
     })
 
-  test('a judge failure is rethrown and nothing is written: drift tries again next tick', async () => {
+  test('a judge failure is rethrown and only the attempt is written: drift tries again after the backoff', async () => {
     let down = true
     const wf = judged('fix.judge')
     const rt = testRuntime({
@@ -468,7 +468,7 @@ describe('review fixes', () => {
       )
       expect(refused).toContain('judge endpoint 503')
       expect(await sql.run(runId)).toMatchObject({ scores: null, score_source: null, scored_at: null })
-      expect(await rt.driftCandidates({ rate: 1, since, limit: 10, workflows: [wf.id] })).toContain(runId)
+      expect(await rt.driftCandidates({ rate: 1, since, limit: 10, workflows: [wf.id] })).not.toContain(runId) // backoff
       down = false
       expect(await rt.scoreRun(runId, { source: 'drift', onlyUnscored: true })).toMatchObject({
         scores: { judged: 1 },
@@ -479,7 +479,7 @@ describe('review fixes', () => {
     }
   })
 
-  test('a persistent judge failure gives up after MAX_SCORE_ATTEMPTS as an explicit scorer error; it sorts last meanwhile', async () => {
+  test('a judge outage: attempts spaced by a doubling backoff, sorted last, an infra error after MAX_SCORE_ATTEMPTS, retried a day later', async () => {
     const wf = judged('fix.attempts')
     const rt = testRuntime({
       schema: db.schema,
@@ -504,14 +504,59 @@ describe('review fixes', () => {
         )
         expect(refused).toContain('judge endpoint 503')
         expect(await sql.run(older)).toMatchObject({ score_attempts: attempt, scored_at: null })
+        expect(await drift()).toEqual([newer]) // inside its backoff: not picked
+        // Just inside, then just past the backoff (SCORE_BACKOFF_MS × 2^(attempt-1)).
+        const backoffS = (SCORE_BACKOFF_MS / 1000) * 2 ** (attempt - 1)
+        await setLastAttempt(older, backoffS - 60)
+        expect(await drift()).toEqual([newer])
+        await setLastAttempt(older, backoffS + 60)
+        expect(await drift()).toEqual([newer, older]) // failed attempts sort last: no starvation
       }
-      expect(await drift()).toEqual([newer, older]) // failed attempts sort last: no starvation
       const gaveUp = await rt.scoreRun(older, { source: 'drift', onlyUnscored: true })
-      expect(gaveUp).toMatchObject({ pass: null, scores: {} })
+      expect(gaveUp).toMatchObject({ pass: null, scores: {}, errorKind: 'infra' })
       expect(gaveUp?.error).toContain(`gave up after ${MAX_SCORE_ATTEMPTS} failed attempts: `)
-      expect(await sql.run(older)).toMatchObject({ score_attempts: 0, score_source: 'drift' })
+      expect(await sql.run(older)).toMatchObject({
+        score_attempts: MAX_SCORE_ATTEMPTS,
+        score_source: 'drift',
+        score_error_kind: 'infra',
+      })
       expect((await sql.run(older))?.score_error).toContain('judge endpoint 503')
-      expect(await drift()).toEqual([newer]) // no more judge calls on it with this scorer version
+      expect(await drift()).toEqual([newer]) // gave up: no more judge calls for now
+      await setLastAttempt(older, 2 * 86_400)
+      expect(await drift()).toEqual([newer, older]) // an outage is not permanent: tried again a day later
+      // One more failure gives up again at once: one judge call a day, never a fresh round of five.
+      expect(await rt.scoreRun(older, { source: 'drift', onlyUnscored: true })).toMatchObject({ errorKind: 'infra' })
+    } finally {
+      await rt.close()
+    }
+  })
+
+  const setLastAttempt = (runId: string, secondsAgo: number) =>
+    sql.pool.query(
+      `update "${db.schema}".runs set last_score_attempt_at = now() - make_interval(secs => $2) where id = $1`,
+      [runId, secondsAgo],
+    )
+
+  test('the errored re-score branch skips workflows without a scorer', async () => {
+    const plain = defineWorkflow({
+      id: 'fix.noscorer',
+      version: 'v1',
+      input: z.object({}),
+      output: z.object({}),
+      run: async () => ({}),
+    })
+    const rt = testRuntime({ schema: db.schema, workflows: [plain] })
+    await rt.open()
+    try {
+      const { runId } = await rt.start(plain, {}, { purpose: 'prod' })
+      await rt.wait(runId)
+      await sql.pool.query(
+        `update "${db.schema}".runs set scored_at = now(), score_source = 'drift', score_error = 'x',
+           score_error_kind = 'scorer', scores = '{"final":{"scorer":"old"}}' where id = $1`,
+        [runId],
+      )
+      const since = new Date(Date.now() - 60_000)
+      expect(await rt.driftCandidates({ rate: 1, since, limit: 10, workflows: [plain.id] })).toEqual([])
     } finally {
       await rt.close()
     }
@@ -546,6 +591,7 @@ describe('review fixes', () => {
       expect(await rt.scoreRun(runId, { source: 'drift', onlyUnscored: true })).toMatchObject({
         pass: null,
         error: 'scorer bug',
+        errorKind: 'scorer',
         scorer: 'v-broken',
       })
       expect(await drift()).toEqual([])

@@ -98,6 +98,7 @@ export type ScoreTarget = {
   output: Json | null
   scored_at: Date | null
   score_error: string | null
+  score_error_kind: 'scorer' | 'infra' | null
   /** The scorer version of `scores.final`, when there is one. */
   scorer: string | null
 }
@@ -515,7 +516,8 @@ export class Journal {
 
   async scoreTarget(id: string): Promise<ScoreTarget | null> {
     const { rows } = await this.query<ScoreTarget>(
-      `select id, workflow, status, input, output, scored_at, score_error, scores->'final'->>'scorer' as scorer
+      `select id, workflow, status, input, output, scored_at, score_error, score_error_kind,
+         scores->'final'->>'scorer' as scorer
        from ${this.runs} where id = $1`,
       [id],
     )
@@ -528,11 +530,15 @@ export class Journal {
    * it first-writer-wins, except over a scorer error of another scorer version (re-scored); false when nothing changed.
    */
   async writeFinalScore(id: string, final: FinalScore, onlyUnscored: boolean): Promise<boolean> {
-    const unscored = `and (scored_at is null or (score_error is not null and scores->'final'->>'scorer' is distinct from $5))`
+    const unscored = `and (scored_at is null or score_error_kind = 'infra'
+      or (score_error_kind = 'scorer' and scores->'final'->>'scorer' is distinct from $6))`
     const res = await this.query(
       `with scored as (
          update ${this.runs} set scores = coalesce(scores, '{}') || jsonb_build_object('final', $2::jsonb),
-           score_source = $3, score_error = $4, score_attempts = 0, scored_at = now(), updated_at = now()
+           score_source = $3, score_error = $4, score_error_kind = $5,
+           -- An infra give-up keeps its count: it sorts last, and a retry a day later gives up after one failure.
+           score_attempts = case when $5 = 'infra' then score_attempts else 0 end, scored_at = now(),
+           updated_at = now()
          where id = $1 and status in ('done', 'failed') ${onlyUnscored ? unscored : ''}
          returning id
        ), resync as (
@@ -543,7 +549,14 @@ export class Journal {
            and (s.argo_synced_at is not null or s.argo_claim is not null)
        )
        select count(*)::int as n from scored`,
-      [id, JSON.stringify(final), final.source, final.error ?? null, ...(onlyUnscored ? [final.scorer] : [])],
+      [
+        id,
+        JSON.stringify(final),
+        final.source,
+        final.error ?? null,
+        final.error === undefined ? null : (final.errorKind ?? 'scorer'),
+        ...(onlyUnscored ? [final.scorer] : []),
+      ],
     )
     return (res.rows[0] as { n: number } | undefined)?.n === 1
   }
@@ -551,7 +564,8 @@ export class Journal {
   /** One more failed scoring attempt (judge, journal): the count `scoreRun` gives up at. */
   async scoreFailed(id: string): Promise<number> {
     const { rows } = await this.query<{ n: number }>(
-      `update ${this.runs} set score_attempts = score_attempts + 1 where id = $1 returning score_attempts as n`,
+      `update ${this.runs} set score_attempts = score_attempts + 1, last_score_attempt_at = now()
+       where id = $1 returning score_attempts as n`,
       [id],
     )
     return rows[0]?.n ?? 0
@@ -566,7 +580,11 @@ export class Journal {
    */
   async driftCandidates(options: {
     workflows: string[]
+    /** The workflows among `workflows` that have a scorer, and its version (same index). */
+    scored: string[]
     versions: string[]
+    /** First retry delay after a failed attempt, doubled per attempt. */
+    backoffMs: number
     purposes: string[]
     rate: number
     since: Date
@@ -576,15 +594,29 @@ export class Journal {
       `select id from (
          (select id, score_attempts, finished_at from ${this.runs}
           where workflow = any($1) and status = 'done' and parent_id is null and scored_at is null
-            and drift_sample < floor($4::float8 * 4294967296) and finished_at >= $3 and purpose = any($2))
+            and drift_sample < floor($4::float8 * 4294967296) and finished_at >= $3 and purpose = any($2)
+            and (score_attempts = 0
+              or last_score_attempt_at < now() - make_interval(secs => $8::float8 / 1000 * 2 ^ (score_attempts - 1))))
          union all
+         -- "distinct from" the current version: two hosts on different scorer versions would re-score each other's
+         -- errors back and forth; accepted, the platform runs one host per deploy.
          (select r.id, r.score_attempts, r.finished_at from ${this.runs} r
-          join unnest($1::text[], $6::text[]) as v(workflow, version) on v.workflow = r.workflow
+          join unnest($6::text[], $7::text[]) as v(workflow, version) on v.workflow = r.workflow
           where r.score_error is not null and r.score_source = 'drift' and r.finished_at >= $3
-            and r.scores->'final'->>'scorer' is distinct from v.version)
+            and ((r.score_error_kind = 'scorer' and r.scores->'final'->>'scorer' is distinct from v.version)
+              or (r.score_error_kind = 'infra' and r.last_score_attempt_at < now() - interval '1 day')))
        ) c
        order by score_attempts, finished_at limit $5`,
-      [options.workflows, options.purposes, options.since, options.rate, options.limit, options.versions],
+      [
+        options.workflows,
+        options.purposes,
+        options.since,
+        options.rate,
+        options.limit,
+        options.scored,
+        options.versions,
+        options.backoffMs,
+      ],
     )
     return rows.map((r) => r.id)
   }

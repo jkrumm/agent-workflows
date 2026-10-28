@@ -104,12 +104,15 @@ defineWorkflow({ id: 'research.report', scorer: draftScorer, async run(ctx, inpu
 - **After the fact.** `runtime.scoreRun(runId, { source: 'regression' | 'drift', reference?, caseId?, evalRunId?,
   args?, onlyUnscored? })` scores a `done` or `failed` run with its workflow's scorer and writes `runs.scores.final`,
   `score_source`, `scored_at` (migration 0004). A judge call that fails (even one the scorer caught) or a journal
-  error is rethrown and nothing is written except one more `runs.score_attempts`; drift tries the run again, and runs
-  with failed attempts sort last, so they never starve newer ones. The `MAX_SCORE_ATTEMPTS`th (3) failure in a row, or
-  a scorer that fails on its own (a bug, a reference it refuses, a malformed verdict), is recorded as an explicit
-  scorer error: `{ scores: {}, pass: null, error }` and `runs.score_error`. That is no verdict: eval summaries and
-  compare leave it out, and drift re-scores it once the workflow's scorer version changes (only then). A shutdown is
-  rethrown uncounted. `onlyUnscored` makes the write first-writer-wins. The write also clears `argo_synced_at` (and a
+  error is rethrown and nothing is written except one more `runs.score_attempts` and `last_score_attempt_at`; drift
+  retries the run only after a backoff of `SCORE_BACKOFF_MS` (1 h) doubling per attempt, and runs with failed attempts
+  sort last, so they never starve newer ones. The `MAX_SCORE_ATTEMPTS`th (5, ~15 h of outage) records an `infra`
+  scorer error; a scorer that fails on its own (a bug, a reference it refuses, a malformed verdict) records a `scorer`
+  one: `{ scores: {}, pass: null, error, errorKind }`, `runs.score_error`, `runs.score_error_kind`. Neither is a
+  verdict: eval summaries and compare leave them out. Drift re-scores an `infra` error a day after its last attempt
+  (keeping its count, so one judge call a day) and a `scorer` error once the workflow's scorer version changes; two
+  hosts on different scorer versions would re-score each other's errors back and forth (accepted: one host per
+  deploy). Workflows without a scorer are never in that branch. A shutdown is rethrown uncounted. `onlyUnscored` makes the write first-writer-wins. The write also clears `argo_synced_at` (and a
   claim in flight) on the run's steps, so the Argo rows are re-posted with the scores in `raw`.
 - **Drift's sample.** `runtime.driftCandidates({ rate, since, limit, purposes? = ['prod'], workflows? })`: done,
   unscored top-level runs whose persisted sample position `runs.drift_sample` (a generated column: the first 32 bits
