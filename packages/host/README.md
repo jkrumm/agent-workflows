@@ -143,7 +143,7 @@ Define it with `defineWorkflow` (input must be a `z.object`; list its agents in 
 |-|-|
 | `agw eval run <review\|check> [--ids a,b] [--limit N] [--concurrency N] [--args '{…}'] [--yes]` | Without `--yes`: the plan (selected case ids) and an estimate (mean cost of the workflow's latest 50 done runs × cases), nothing runs. With `--yes`: each case materialized like the harness does (`materialize` from `@agent-workflows/eval`), run as its own top-level run with purpose `eval`, scored against the case's reference, the verdict and the arm's `args` recorded on that run (`scores.final`); the output lists per-case scores, the fingerprints and the means |
 | `agw eval compare <review\|check> --a <fp> --b <fp> [--a-args '{…}'] [--b-args '{…}'] [--seed N]` | Two arms paired by case id: per metric the means, the mean and median delta (B − A) with seeded bootstrap 95% CIs (harness `stats.ts`), and which arm the CI favours. Scores are higher-is-better; `costUsd`, `wallMs`, `tokens`, `toolCalls` lower-is-better. Reads only |
-| drift (no command) | every `AGW_DRIFT_INTERVAL_S`, up to 20 sampled, unscored production runs of a workflow with a scorer are scored (`source: drift`); the sample is a hash of the run id, the write first-writer-wins, so several hosts never score a run twice |
+| drift (no command) | every `AGW_DRIFT_INTERVAL_S`, up to 20 sampled, unscored production runs of a workflow with a scorer are scored (`source: drift`); the sample is a hash of the run id, the write first-writer-wins, so several hosts never score a run twice. A tick counts verdicts and recorded scorer errors apart (and warns on errors) |
 
 - **Spend gate: `--yes`, not `--commit`.** The CLI's `--commit` gate (mutating operations) applies only off a TTY and
   shows nothing first; an eval spends IU money (concept N8) whoever types it, so `eval.run` is not `mutating`: the
@@ -161,7 +161,10 @@ Define it with `defineWorkflow` (input must be a `z.object`; list its agents in 
   is removed, so the process that adopts a case after a shutdown removes the tree the first process kept. Cases go
   through a pool that takes no new case after the first failure. Cancelling `eval.run` cancels its case runs (a case
   run that starts after the cancel fired is cancelled too, and no case starts after it), waits up to 30 s for each to
-  end, and only then removes its clone; a run still live after that keeps its tree. A shutdown or a lost lease leaves
+  end, and only then removes its clone. A tree is removed only when its run is known ended (a terminal status read
+  just then) or known never started; a failed lookup or wait, or a live run, keeps it, and a sweep (at start and
+  hourly) removes `agw_eval_case_*` directories older than 3 h whose run has ended or does not exist (a marker file
+  in each names its run). On resume, a case whose recorded score is a scorer error is scored again. A shutdown or a lost lease leaves
   the case runs going and keeps their clones for the next process. A scorer error is a case `error` (reason
   `scorer: …`), out of the pass rate and the means. Repeated `--ids` are deduplicated.
 - **What compare will not call.** A metric with fewer than 5 pairs gets `better: unknown`, whatever its CI, and a

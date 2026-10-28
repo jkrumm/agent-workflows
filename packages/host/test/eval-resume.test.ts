@@ -6,7 +6,7 @@ import { CheckCase, casesPath, type Exec, exec, writeCases } from '@agent-workfl
 import type { Runtime } from '@agent-workflows/runtime'
 import { FakeAgentHost } from '@agent-workflows/runtime/testing'
 import { createCheckWorkflows } from '../src/workflows/check/index.ts'
-import { createEvalWorkflows, wireEval } from '../src/workflows/eval/index.ts'
+import { createEvalWorkflows, sweepCaseTrees, wireEval } from '../src/workflows/eval/index.ts'
 import { freshSchema, inspector, testRuntime, until } from '../../runtime/test/support/pg.ts'
 
 /** A resumed or cancelled `eval.run`: what it adopts, what it starts, what it leaves behind. */
@@ -79,7 +79,7 @@ function heldHost() {
   return { host, release: () => release() }
 }
 
-type Overrides = Partial<Pick<Runtime, 'runByKey' | 'scoreRun' | 'cancel'>>
+type Overrides = Partial<Pick<Runtime, 'runByKey' | 'scoreRun' | 'cancel' | 'wait'>>
 
 /** A runtime with the eval workflows wired to it, through `overrides` where a test breaks or slows a call. */
 function boot(
@@ -93,6 +93,7 @@ function boot(
     start: rt.start.bind(rt),
     wait: rt.wait.bind(rt),
     cancel: rt.cancel.bind(rt),
+    getRun: rt.getRun.bind(rt),
     scoreRun: rt.scoreRun.bind(rt),
     scoredRuns: rt.scoredRuns.bind(rt),
     recentCost: rt.recentCost.bind(rt),
@@ -148,6 +149,12 @@ describe('eval.run resume and cancel', () => {
       const after = await caseRuns(runId)
       expect(after.find((r) => r.scored_at?.getTime() === scoredBefore?.getTime())).toBeDefined()
       expect(readdirSync(tmpRoot)).toEqual([]) // the adopting process removed the kept tree
+      // ...after the adopted run ended, unharmed: both case runs done, their checks passed.
+      expect(after.map((r) => r.status)).toEqual(['done', 'done'])
+      expect(out.cases).toMatchObject([
+        { status: 'scored', pass: true },
+        { status: 'scored', pass: true },
+      ])
     } finally {
       await second.rt.close()
       for (const dir of readdirSync(tmpRoot)) rmSync(join(tmpRoot, dir), { recursive: true, force: true })
@@ -218,6 +225,94 @@ describe('eval.run resume and cancel', () => {
       expect(readdirSync(tmpRoot)).toEqual([])
     } finally {
       await rt.close()
+    }
+  })
+
+  test('a failed wait keeps the tree, and the case run goes on unharmed', async () => {
+    const host = new FakeAgentHost(async (s) => {
+      await s.sleep(300)
+      return { output: { passed: true, steps: [{ name: 'test', passed: true }], summary: 'ok' } }
+    })
+    let caseRun: string | null = null
+    const { rt, evalRun } = boot(host, (real) => ({
+      wait: async (id, options) => {
+        if (options?.pollMs === 500 && caseRun === null) {
+          caseRun = id
+          throw new Error('wait blip')
+        }
+        return real.wait(id, options)
+      },
+    }))
+    await rt.open()
+    try {
+      const end = await rt.wait(
+        (await rt.start(evalRun, { workflow: 'check', ids: 'r3', yes: true }, { purpose: 'prod' })).runId,
+      )
+      expect((end.output as { cases: { reason?: string }[] }).cases[0]?.reason).toBe('wait blip')
+      expect(readdirSync(tmpRoot)).toHaveLength(1) // its run was live: the tree stays
+      expect((await rt.wait(caseRun as unknown as string)).status).toBe('done')
+      // The sweep removes it once its run ended (old enough), keeps a live one, a marker-less leftover goes.
+      writeFileSync(join(tmpRoot, 'not-ours'), '')
+      mkdirSync(join(tmpRoot, 'agw_eval_case_nomarker'))
+      mkdirSync(join(tmpRoot, 'agw_eval_case_live'))
+      writeFileSync(
+        join(tmpRoot, 'agw_eval_case_live', '.agw-case.json'),
+        JSON.stringify({ workflow: 'check', key: 'live' }),
+      )
+      const runtime = {
+        runByKey: async (workflow: string, key: string) =>
+          key === 'live'
+            ? { runId: 'x', status: 'running' as const, error: null, final: null, fingerprint: null }
+            : rt.runByKey(workflow, key),
+      }
+      expect(await sweepCaseTrees({ runtime, tmpRoot, olderThanMs: 3_600_000 })).toEqual([]) // all fresh
+      const removed = await sweepCaseTrees({ runtime, tmpRoot, olderThanMs: 0 })
+      expect(removed.map((d) => d.split('/').at(-1)).sort()).toHaveLength(2)
+      expect(readdirSync(tmpRoot).sort()).toEqual(['agw_eval_case_live', 'not-ours'])
+    } finally {
+      await rt.close()
+      for (const dir of readdirSync(tmpRoot)) rmSync(join(tmpRoot, dir), { recursive: true, force: true })
+    }
+  })
+
+  test('on resume, a case whose recorded score is a scorer error is scored again', async () => {
+    const held = heldHost()
+    const first = boot(held.host)
+    await first.rt.open()
+    const { runId } = await first.rt.start(
+      first.evalRun,
+      { workflow: 'check', ids: 'r1,r2', yes: true, concurrency: 2 },
+      { purpose: 'prod' },
+    )
+    await until(
+      async () => {
+        const runs = await caseRuns(runId)
+        return runs.length === 2 && runs.some((r) => r.scored_at) && runs.some((r) => r.status === 'running')
+      },
+      'one case scored, one running',
+      15_000,
+    )
+    const scored = (await caseRuns(runId)).find((r) => r.scored_at)?.key as string
+    await sql.pool.query(
+      `update "${db.schema}".runs set score_error = 'scorer bug', score_error_kind = 'scorer',
+         scores = jsonb_set(scores, '{final}', (scores->'final') - 'pass' || '{"pass":null,"error":"scorer bug","scores":{}}')
+       where idempotency_key = $1`,
+      [scored],
+    )
+    await first.rt.close()
+    const second = boot(held.host)
+    await second.rt.open()
+    try {
+      held.release()
+      const out = (await second.rt.wait(runId)).output as { cases: { status: string }[] }
+      expect(out.cases.map((c) => c.status)).toEqual(['scored', 'scored'])
+      const { rows } = await sql.pool.query(`select score_error from "${db.schema}".runs where idempotency_key = $1`, [
+        scored,
+      ])
+      expect(rows).toEqual([{ score_error: null }])
+    } finally {
+      await second.rt.close()
+      for (const dir of readdirSync(tmpRoot)) rmSync(join(tmpRoot, dir), { recursive: true, force: true })
     }
   })
 })
