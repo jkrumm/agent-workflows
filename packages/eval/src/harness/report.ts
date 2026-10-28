@@ -1,6 +1,6 @@
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import type { CheckAggregate, ReviewAggregate } from './aggregate.ts'
+import type { CheckAggregate, RecallBasis, ReviewAggregate } from './aggregate.ts'
 import type { CheckCaseResult, ReviewCaseResult } from './results.ts'
 import type { RatioSummary } from './stats.ts'
 import type { Verdict } from './verdict.ts'
@@ -77,6 +77,14 @@ export function renderAggregate(report: Report): string {
   ].join('\n')
 }
 
+/** How many cases the recall counted, or that there was no reproducibility data and every case did. */
+function basisLine(basis: RecallBasis | null, what: string): string {
+  if (!basis) {
+    return `Reproducibility: no reproducibility data (run \`self-agreement\` first), so ${what} counts every case, reproducible or not.`
+  }
+  return `Reproducibility: ${what} counted on ${basis.counted} of ${basis.withRecorded} cases with a recorded ${what === 'failure recall' ? 'red run' : 'blocking finding'} (${basis.matched}/${basis.reference}); ${basis.notReproducible} not reproducible, ${basis.noData} without data.`
+}
+
 function reviewAggregateLines(a: ReviewAggregate): string[] {
   const outcomes = Object.keys(a.outcome.confusion)
   return [
@@ -89,6 +97,7 @@ function reviewAggregateLines(a: ReviewAggregate): string[] {
     `| cost total | ${usd(a.cost.legacyUsd)} | ${usd(a.cost.newUsd)} |`,
     '',
     `Blocking recall vs legacy: ${pct(a.blocking.recall)} (${a.blocking.matched}/${a.blocking.legacy}, ${a.blocking.judged} by the judge, ${a.blocking.unsure} unsure left unmatched); new-only blocking: ${a.blocking.newOnly}.`,
+    basisLine(a.blocking.basis, 'blocking recall'),
     `Outcome agreement: ${pct(a.outcome.agreement)}.`,
     `Cost ratio new/legacy (${a.cost.baseline}): median ${ratio(a.cost)}; inexact or unknown cost: legacy ${a.cost.inexact.legacy}, new ${a.cost.inexact.new} cases.`,
     `Wall ratio new/legacy (${a.wall.baseline}): median ${ratio(a.wall)}.`,
@@ -109,6 +118,7 @@ function checkAggregateLines(a: CheckAggregate): string[] {
   return [
     `Passed agreement: ${pct(a.passed.agreement)}; step agreement ${pct(a.steps.agreement)} over ${a.steps.compared} steps both ran.`,
     `Legacy failure recall: ${pct(a.failureRecall.recall)} (${a.failureRecall.caught}/${a.failureRecall.legacyFailed} legacy-red cases red on the new side).`,
+    basisLine(a.failureRecall.basis, 'failure recall'),
     `Cost ratio new/legacy (${a.cost.baseline}): median ${ratio(a.cost)}; totals legacy ${usd(a.cost.legacyUsd)}, new ${usd(a.cost.newUsd)}; inexact or unknown cost: legacy ${a.cost.inexact.legacy}, new ${a.cost.inexact.new} cases.`,
     `Wall ratio new/legacy (${a.wall.baseline}): median ${ratio(a.wall)}.`,
     a.selfAgreement

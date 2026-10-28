@@ -19,6 +19,8 @@ interface Workflow {
   id: string
   summary: string
   input: Json
+  /** The workflow's own output schema, written into the run state of its response as the real host does. */
+  output?: Json
   mutating?: boolean
   plainField?: string
   stdin?: string
@@ -93,6 +95,15 @@ export const FIXTURE_WORKFLOWS: Workflow[] = [
   {
     id: 'fixture.echo',
     summary: 'Echo the message after durationS seconds',
+    output: {
+      type: 'object',
+      properties: {
+        echo: { type: 'string' },
+        mode: { enum: ['plain', 'fancy'] },
+        tags: { $ref: '#/components/schemas/Tags' },
+      },
+      required: ['echo', 'mode'],
+    },
     input: {
       type: 'object',
       properties: {
@@ -181,6 +192,16 @@ export const FIXTURE_WORKFLOWS: Workflow[] = [
   },
 ]
 
+/** The run state with this workflow's output in place of the open `output`. */
+function typedResponses(output: Json | undefined) {
+  if (!output) return runResponses
+  const schema = { ...runStateSchema, properties: { ...runStateSchema.properties, output } }
+  return {
+    '200': { content: { 'application/json': { schema } } },
+    '202': { content: { 'application/json': { schema } } },
+  }
+}
+
 function workflowOperation(w: Workflow) {
   return {
     operationId: w.id.replace(/\.(\w)/g, (_, c: string) => c.toUpperCase()),
@@ -188,7 +209,7 @@ function workflowOperation(w: Workflow) {
     requestBody: w.mutating
       ? { $ref: `#/components/requestBodies/${w.id.replace('.', '_')}` }
       : { required: true, content: { 'application/json': { schema: w.input } } },
-    responses: runResponses,
+    responses: typedResponses(w.output),
     'x-cli': {
       command: w.id.split('.'),
       positional: w.positional ?? [],
