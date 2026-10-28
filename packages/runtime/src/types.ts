@@ -325,14 +325,23 @@ export type RunResult = {
 }
 
 /** What a scored run carries in `runs.scores.final`: the verdict of a regression or drift scoring of its output. */
-export type FinalScore = Verdict & {
+export type FinalScore = {
   source: 'regression' | 'drift'
+  /** The scorer version that scored (or failed to score) the run. */
   scorer: string
   /** Regression: the case and the eval run that replayed it, and the extra input the arm ran with. */
   caseId?: string
   evalRunId?: string
   args?: Json
-  /** The scorer threw: no verdict (`pass` false, no scores); recorded so drift does not retry it forever. */
+  scores: Record<string, number>
+  /** The verdict; `null` exactly when `error` is set: no verdict, never a fail. */
+  pass: boolean | null
+  feedback?: string
+  /**
+   * The scorer could not score the run: its own failure, or a judge or journal failure `MAX_SCORE_ATTEMPTS` times in
+   * a row. Not a verdict: eval summaries and compare leave it out, and drift re-scores it once the workflow's scorer
+   * version changes. Mirrored in `runs.score_error`.
+   */
   error?: string
 }
 

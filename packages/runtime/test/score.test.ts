@@ -2,7 +2,7 @@ import { afterAll, describe, expect, test } from 'bun:test'
 import { readdir } from 'node:fs/promises'
 import { Pool } from 'pg'
 import { z } from 'zod'
-import { defineWorkflow, type Json, type Scorer } from '../src/index.ts'
+import { defineWorkflow, type Json, MAX_SCORE_ATTEMPTS, type Scorer } from '../src/index.ts'
 import { migrate } from '../src/migrate.ts'
 import { FakeAgentHost } from '../src/testing.ts'
 import { freshSchema, inspector, PG_URL, testRuntime, until } from './support/pg.ts'
@@ -361,11 +361,12 @@ describe('after-the-fact scoring', () => {
       })
       expect(await rt.scoreRun(thrower, { ...meta, reference: { expected: 13 } })).toMatchObject({
         scores: {},
-        pass: false,
+        pass: null,
         error: 'unlucky',
       })
       const bad = await rt.scoreRun(done, { ...meta, reference: { wrong: true } })
       expect(bad?.error).toContain('expected')
+      expect(await sql.run(thrower)).toMatchObject({ score_error: 'unlucky', score_source: 'regression' })
       const row = await sql.run(failed)
       expect(row).toMatchObject({ score_source: 'regression', scores: { final: { caseId: 'c1', pass: false } } })
       expect(row?.scored_at).toBeInstanceOf(Date)
@@ -475,6 +476,110 @@ describe('review fixes', () => {
       })
     } finally {
       await rt.close()
+    }
+  })
+
+  test('a persistent judge failure gives up after MAX_SCORE_ATTEMPTS as an explicit scorer error; it sorts last meanwhile', async () => {
+    const wf = judged('fix.attempts')
+    const rt = testRuntime({
+      schema: db.schema,
+      workflows: [wf],
+      judge: async () => {
+        throw new Error('judge endpoint 503')
+      },
+    })
+    await rt.open()
+    try {
+      const older = (await rt.start(wf, { n: 1 }, { purpose: 'prod' })).runId
+      await rt.wait(older)
+      const newer = (await rt.start(wf, { n: 2 }, { purpose: 'prod' })).runId
+      await rt.wait(newer)
+      const since = new Date(Date.now() - 60_000)
+      const drift = () => rt.driftCandidates({ rate: 1, since, limit: 10, workflows: [wf.id] })
+      expect(await drift()).toEqual([older, newer])
+      for (let attempt = 1; attempt < MAX_SCORE_ATTEMPTS; attempt++) {
+        const refused = await rt.scoreRun(older, { source: 'drift', onlyUnscored: true }).then(
+          () => null,
+          (e: Error) => e.message,
+        )
+        expect(refused).toContain('judge endpoint 503')
+        expect(await sql.run(older)).toMatchObject({ score_attempts: attempt, scored_at: null })
+      }
+      expect(await drift()).toEqual([newer, older]) // failed attempts sort last: no starvation
+      const gaveUp = await rt.scoreRun(older, { source: 'drift', onlyUnscored: true })
+      expect(gaveUp).toMatchObject({ pass: null, scores: {} })
+      expect(gaveUp?.error).toContain(`gave up after ${MAX_SCORE_ATTEMPTS} failed attempts: `)
+      expect(await sql.run(older)).toMatchObject({ score_attempts: 0, score_source: 'drift' })
+      expect((await sql.run(older))?.score_error).toContain('judge endpoint 503')
+      expect(await drift()).toEqual([newer]) // no more judge calls on it with this scorer version
+    } finally {
+      await rt.close()
+    }
+  })
+
+  test('a scorer error is no verdict, and a new scorer version re-scores it', async () => {
+    let version = 'v-broken'
+    const scorer = {
+      get version() {
+        return version
+      },
+      score(): { scores: Record<string, number>; pass: boolean } {
+        if (version === 'v-broken') throw new Error('scorer bug')
+        return { scores: { ok: 1 }, pass: true }
+      },
+    }
+    const wf = defineWorkflow({
+      id: 'fix.version',
+      version: 'v1',
+      input: z.object({}),
+      output: z.object({}),
+      scorer,
+      run: async () => ({}),
+    })
+    const rt = testRuntime({ schema: db.schema, workflows: [wf] })
+    await rt.open()
+    try {
+      const { runId } = await rt.start(wf, {}, { purpose: 'prod' })
+      await rt.wait(runId)
+      const since = new Date(Date.now() - 60_000)
+      const drift = () => rt.driftCandidates({ rate: 1, since, limit: 10, workflows: [wf.id] })
+      expect(await rt.scoreRun(runId, { source: 'drift', onlyUnscored: true })).toMatchObject({
+        pass: null,
+        error: 'scorer bug',
+        scorer: 'v-broken',
+      })
+      expect(await drift()).toEqual([])
+      expect(await rt.scoreRun(runId, { source: 'drift', onlyUnscored: true })).toBeNull() // same version: left alone
+      version = 'v-fixed'
+      expect(await drift()).toEqual([runId])
+      expect(await rt.scoreRun(runId, { source: 'drift', onlyUnscored: true })).toMatchObject({
+        pass: true,
+        scorer: 'v-fixed',
+      })
+      expect(await sql.run(runId)).toMatchObject({ score_error: null })
+      expect(await drift()).toEqual([])
+      expect(await rt.scoreRun(runId, { source: 'drift', onlyUnscored: true })).toBeNull() // a verdict stands
+    } finally {
+      await rt.close()
+    }
+  })
+
+  test('the fingerprint prefix of scoredRuns is an index range on runs_scored', async () => {
+    const client = await sql.pool.connect()
+    try {
+      await client.query('begin')
+      await client.query('set local enable_seqscan = off')
+      const { rows } = await client.query<{ 'QUERY PLAN': string }>(
+        `explain select id from "${db.schema}".runs
+         where workflow = 'w' and score_source = 'regression' and scored_at is not null
+           and fingerprint collate "C" >= 'abc' and fingerprint collate "C" < ('abc' || chr(1114111))`,
+      )
+      const plan = rows.map((r) => r['QUERY PLAN']).join('\n')
+      expect(plan).toContain('runs_scored')
+      expect(plan).toMatch(/Index Cond: .*fingerprint/)
+      await client.query('rollback')
+    } finally {
+      client.release()
     }
   })
 

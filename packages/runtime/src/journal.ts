@@ -97,6 +97,9 @@ export type ScoreTarget = {
   input: Json
   output: Json | null
   scored_at: Date | null
+  score_error: string | null
+  /** The scorer version of `scores.final`, when there is one. */
+  scorer: string | null
 }
 
 type ScoredRow = {
@@ -512,22 +515,25 @@ export class Journal {
 
   async scoreTarget(id: string): Promise<ScoreTarget | null> {
     const { rows } = await this.query<ScoreTarget>(
-      `select id, workflow, status, input, output, scored_at from ${this.runs} where id = $1`,
+      `select id, workflow, status, input, output, scored_at, score_error, scores->'final'->>'scorer' as scorer
+       from ${this.runs} where id = $1`,
       [id],
     )
     return rows[0] ?? null
   }
 
   /**
-   * The after-the-fact score of an ended run (`scores.final`, `score_source`, `scored_at`). Not fenced: the run has
-   * ended and nobody else writes these. `onlyUnscored` (drift) makes it first-writer-wins; false when nothing changed.
+   * The after-the-fact score of an ended run (`scores.final`, `score_source`, `scored_at`, `score_error`), resetting
+   * the failed-attempt count. Not fenced: the run has ended and nobody else writes these. `onlyUnscored` (drift) makes
+   * it first-writer-wins, except over a scorer error of another scorer version (re-scored); false when nothing changed.
    */
   async writeFinalScore(id: string, final: FinalScore, onlyUnscored: boolean): Promise<boolean> {
+    const unscored = `and (scored_at is null or (score_error is not null and scores->'final'->>'scorer' is distinct from $5))`
     const res = await this.query(
       `with scored as (
          update ${this.runs} set scores = coalesce(scores, '{}') || jsonb_build_object('final', $2::jsonb),
-           score_source = $3, scored_at = now(), updated_at = now()
-         where id = $1 and status in ('done', 'failed') ${onlyUnscored ? 'and scored_at is null' : ''}
+           score_source = $3, score_error = $4, score_attempts = 0, scored_at = now(), updated_at = now()
+         where id = $1 and status in ('done', 'failed') ${onlyUnscored ? unscored : ''}
          returning id
        ), resync as (
          -- The Argo rows carry the scores in raw: steps already posted (or being posted) go back into the outbox,
@@ -537,30 +543,48 @@ export class Journal {
            and (s.argo_synced_at is not null or s.argo_claim is not null)
        )
        select count(*)::int as n from scored`,
-      [id, JSON.stringify(final), final.source],
+      [id, JSON.stringify(final), final.source, final.error ?? null, ...(onlyUnscored ? [final.scorer] : [])],
     )
     return (res.rows[0] as { n: number } | undefined)?.n === 1
   }
 
+  /** One more failed scoring attempt (judge, journal): the count `scoreRun` gives up at. */
+  async scoreFailed(id: string): Promise<number> {
+    const { rows } = await this.query<{ n: number }>(
+      `update ${this.runs} set score_attempts = score_attempts + 1 where id = $1 returning score_attempts as n`,
+      [id],
+    )
+    return rows[0]?.n ?? 0
+  }
+
   /**
    * Done top-level runs of `workflows` with one of `purposes`, finished since `since`, not scored yet, whose
-   * persisted sample position (`drift_sample`, the first 32 bits of md5(id)) is below `rate` × 2^32. Deterministic per
-   * run, so the sample never drifts between ticks or processes; the `runs_drift` index reads only the sampled range,
-   * never the unsampled runs.
+   * persisted sample position (`drift_sample`, the first 32 bits of md5(id)) is below `rate` × 2^32 (the `runs_drift`
+   * index reads only that range), plus drift-scored runs whose scorer error came from another scorer version than the
+   * workflow's current one (`versions`, by index). Runs with failed attempts come last, so a persistent failure never
+   * starves newer runs.
    */
   async driftCandidates(options: {
     workflows: string[]
+    versions: string[]
     purposes: string[]
     rate: number
     since: Date
     limit: number
   }): Promise<string[]> {
     const { rows } = await this.query<{ id: string }>(
-      `select id from ${this.runs}
-       where workflow = any($1) and status = 'done' and parent_id is null and scored_at is null
-         and drift_sample < floor($4::float8 * 4294967296) and finished_at >= $3 and purpose = any($2)
-       order by finished_at limit $5`,
-      [options.workflows, options.purposes, options.since, options.rate, options.limit],
+      `select id from (
+         (select id, score_attempts, finished_at from ${this.runs}
+          where workflow = any($1) and status = 'done' and parent_id is null and scored_at is null
+            and drift_sample < floor($4::float8 * 4294967296) and finished_at >= $3 and purpose = any($2))
+         union all
+         (select r.id, r.score_attempts, r.finished_at from ${this.runs} r
+          join unnest($1::text[], $6::text[]) as v(workflow, version) on v.workflow = r.workflow
+          where r.score_error is not null and r.score_source = 'drift' and r.finished_at >= $3
+            and r.scores->'final'->>'scorer' is distinct from v.version)
+       ) c
+       order by score_attempts, finished_at limit $5`,
+      [options.workflows, options.purposes, options.since, options.rate, options.limit, options.versions],
     )
     return rows.map((r) => r.id)
   }
@@ -576,7 +600,7 @@ export class Journal {
        from ${this.runs}
        where workflow = $1 and score_source = $2 and scored_at is not null
          and ($3::text[] is null or id = any($3))
-         and ($4::text is null or starts_with(fingerprint, $4))
+         and ($4::text is null or (fingerprint collate "C" >= $4 and fingerprint collate "C" < ($4 || chr(1114111))))
          and ($5::jsonb is null or coalesce(scores->'final'->'args', '{}') = $5::jsonb)
        order by finished_at, id`,
       [
