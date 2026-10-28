@@ -1,4 +1,4 @@
-import { type ArmRun, type Comparison, compareArms } from '@agent-workflows/eval'
+import { type ArmRun, type Comparison, compareArms, MIN_PAIRS } from '@agent-workflows/eval'
 import { defineWorkflow, type Json, type ScoredRun, WorkflowError } from '@agent-workflows/runtime'
 import { z } from 'zod'
 import type { HostWorkflow } from '../../operations.ts'
@@ -25,6 +25,7 @@ const Arm = z.object({
   fingerprint: z.string(),
   args: JsonRecord,
   runs: z.number().int(),
+  scorerErrors: z.number().int().describe('Runs whose scorer could not score them: left out of the comparison'),
   scorers: z.array(z.string()).describe('Scorer versions of its runs'),
 })
 
@@ -40,7 +41,10 @@ export const EvalCompareOutput = z.object({
     onlyB: z.array(z.string()),
     unpricedCost: z
       .object({ a: z.number().int(), b: z.number().int() })
-      .describe('Paired cases left out of costUsd on that side: their runs had unpriced calls'),
+      .describe('Paired cases out of costUsd on that side: a rerun had unpriced calls'),
+    noCost: z
+      .object({ a: z.number().int(), b: z.number().int() })
+      .describe('Paired cases out of costUsd on that side: no run recorded a cost'),
   }),
   metrics: z.array(
     z.object({
@@ -71,10 +75,13 @@ export function canonical(value: unknown): string {
   return JSON.stringify(value)
 }
 
-/** A scored run as compare reads it; spend that is a lower bound (unpriced calls) is left out, never compared. */
+/**
+ * A scored run as compare reads it; spend that is a lower bound (unpriced calls) is left out, never compared. A scorer
+ * error is no verdict: the run is left out of the arm (and counted by `arm`).
+ */
 function armRun(run: ScoredRun): ArmRun | null {
   const caseId = run.final.caseId
-  if (!caseId) return null
+  if (!caseId || run.final.error !== undefined || run.final.pass === null) return null
   return {
     caseId,
     scores: run.final.scores,
@@ -109,6 +116,7 @@ async function arm(slot: EvalSlot, workflow: string, side: string, prefix: strin
       fingerprint: fingerprints[0] as string,
       args,
       runs: matching.length,
+      scorerErrors: matching.filter((r) => r.final.error !== undefined).length,
       scorers: [...new Set(matching.map((r) => r.final.scorer))].sort(),
     },
     runs: matching.flatMap((r) => armRun(r) ?? []),
@@ -151,12 +159,21 @@ export function createEvalCompare(slot: EvalSlot): HostWorkflow {
         if (canonical(a.info.scorers) !== canonical(b.info.scorers)) {
           warnings.push(`scorer versions differ (A ${a.info.scorers.join(', ')}; B ${b.info.scorers.join(', ')})`)
         }
-        const { paired, unpricedCost } = comparison.cases
-        if (paired < 10) warnings.push(`only ${paired} paired cases`)
+        if (a.info.scorerErrors || b.info.scorerErrors) {
+          warnings.push(`${a.info.scorerErrors} scorer errors in A / ${b.info.scorerErrors} in B, left out`)
+        }
+        const { paired, unpricedCost, noCost } = comparison.cases
+        if (paired < MIN_PAIRS) {
+          warnings.push(`only ${paired} paired cases (fewer than ${MIN_PAIRS}): every verdict is withheld`)
+        } else {
+          for (const m of comparison.metrics.filter((metric) => metric.n < MIN_PAIRS)) {
+            warnings.push(`${m.metric}: ${m.n} pairs (fewer than ${MIN_PAIRS}), verdict withheld`)
+          }
+        }
         const cost = comparison.metrics.find((m) => m.metric === 'costUsd')
         if (paired > 0 && (cost?.n ?? 0) < paired) {
           warnings.push(
-            `cost compared on ${cost?.n ?? 0} of ${paired} paired cases (unpriced calls: ${unpricedCost.a} in A, ${unpricedCost.b} in B)`,
+            `cost compared on ${cost?.n ?? 0} of ${paired} paired cases (unpriced calls: ${unpricedCost.a} in A, ${unpricedCost.b} in B; no cost recorded: ${noCost.a} in A, ${noCost.b} in B)`,
           )
         }
         return { workflow: input.workflow, a: a.info, b: b.info, ...comparison, warnings } as unknown as Json

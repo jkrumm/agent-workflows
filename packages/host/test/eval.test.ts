@@ -172,7 +172,7 @@ describe('agw eval run', () => {
     expect(out.cases).toMatchObject({ paired: 2 })
     expect(out.a).toMatchObject({ fingerprint: fp, args: {} })
     expect(out.b).toMatchObject({ fingerprint: fp, args: { stepTimeoutSeconds: 30 } })
-    expect(out.warnings).toContain('only 2 paired cases')
+    expect(out.warnings).toContain('only 2 paired cases (fewer than 5): every verdict is withheld')
     const same = await rt.wait(
       (await rt.start(evalCompare, { workflow: 'check', a: fp, b: fp }, { purpose: 'prod' })).runId,
     )
@@ -186,8 +186,8 @@ describe('agw eval compare on synthetic runs', () => {
     fp: string,
     caseId: string,
     recall: number,
-    cost: number,
-    extra: { unpriced?: number; scorer?: string } = {},
+    cost: number | null,
+    extra: { unpriced?: number; scorer?: string; error?: string } = {},
   ) =>
     sql.pool.query(
       `insert into "${db.schema}".runs (id, workflow, root_id, purpose, input, input_hash, lock_key, version_started,
@@ -199,7 +199,9 @@ describe('agw eval compare on synthetic runs', () => {
         fp,
         cost,
         JSON.stringify({
-          final: { source: 'regression', scorer: extra.scorer ?? 'r1', caseId, scores: { recall }, pass: recall > 0.6 },
+          final: extra.error
+            ? { source: 'regression', scorer: extra.scorer ?? 'r1', caseId, scores: {}, pass: null, error: extra.error }
+            : { source: 'regression', scorer: extra.scorer ?? 'r1', caseId, scores: { recall }, pass: recall > 0.6 },
         }),
         extra.unpriced ?? 0,
       ],
@@ -229,25 +231,34 @@ describe('agw eval compare on synthetic runs', () => {
     expect(ambiguous.error?.message).toContain('arm B: no regression runs')
   })
 
-  test('unpriced cases leave cost and are counted; an arm mixing scorer versions is warned; few pairs decide nothing', async () => {
+  test('cost gaps split by cause, scorer errors left out, mixed scorers warned, few pairs decide nothing', async () => {
     for (let i = 0; i < 6; i++) {
       await insert(`mix-a-${i}`, 'fpcccccccc-3', `m${i}`, 0.5, 1, i === 0 ? { scorer: 'r0' } : {})
-      await insert(`mix-b-${i}`, 'fpdddddddd-4', `m${i}`, 0.7, 0.5, i < 2 ? { unpriced: 1 } : {})
+      await insert(`mix-b-${i}`, 'fpdddddddd-4', `m${i}`, 0.7, i === 2 ? null : 0.5, i < 2 ? { unpriced: 1 } : {})
     }
+    // A scorer error is no verdict: were it read as a fail, A's pass rate on m1 would drop.
+    await insert('mix-a-err', 'fpcccccccc-3', 'm1', 0, 1, { error: 'scorer bug' })
     await insert('few-a-0', 'fpeeeeeeee-5', 'f0', 0.5, 1)
     await insert('few-b-0', 'fpffffffff-6', 'f0', 0.9, 0.5)
     const compare = async (a: string, b: string) =>
       (await rt.wait((await rt.start(evalCompare, { workflow: 'review', a, b }, { purpose: 'prod' })).runId))
         .output as Out
     const out = await compare('fpcccccccc', 'fpdddddddd')
-    expect(out.cases.unpricedCost).toEqual({ a: 0, b: 2 })
-    expect(out.metrics.find((m: Out) => m.metric === 'costUsd')).toMatchObject({ n: 4, better: 'unknown' })
+    expect(out.cases).toMatchObject({ paired: 6, unpricedCost: { a: 0, b: 2 }, noCost: { a: 0, b: 1 } })
+    expect(out.a).toMatchObject({ runs: 7, scorerErrors: 1 })
+    expect(out.metrics.find((m: Out) => m.metric === 'pass')).toMatchObject({ n: 6, meanA: 0 })
+    expect(out.metrics.find((m: Out) => m.metric === 'costUsd')).toMatchObject({ n: 3, better: 'unknown' })
     expect(out.warnings).toContain('arm A mixes scorer versions (r0, r1)')
-    expect(out.warnings).toContain('cost compared on 4 of 6 paired cases (unpriced calls: 0 in A, 2 in B)')
+    expect(out.warnings).toContain('1 scorer errors in A / 0 in B, left out')
+    expect(out.warnings).toContain('costUsd: 3 pairs (fewer than 5), verdict withheld')
+    expect(out.warnings).toContain(
+      'cost compared on 3 of 6 paired cases (unpriced calls: 0 in A, 2 in B; no cost recorded: 0 in A, 1 in B)',
+    )
     expect(out.bBetter).toEqual(['pass', 'recall'])
     const few = await compare('fpeeeeeeee', 'fpffffffff')
     expect(few.bBetter).toEqual([])
     expect(few.metrics.every((m: Out) => m.better === 'unknown')).toBe(true)
+    expect(few.warnings).toContain('only 1 paired cases (fewer than 5): every verdict is withheld')
   })
 })
 
