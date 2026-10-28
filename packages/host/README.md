@@ -1,0 +1,76 @@
+# @agent-workflows/host
+
+The `host` process (concept §8): light workflows, capabilities and the HTTP API in one process, bound to `127.0.0.1`. The `agw` CLI is generated from the OpenAPI document it serves (concept §9).
+
+```ts
+const host = createHost({ runtime, registry, workflows, store, secret, version })
+Bun.serve({ hostname: '127.0.0.1', port: 7791, idleTimeout: 255, fetch: host.fetch })
+await host.openapi() // OpenAPI 3.1 for the whole process, info['x-contract-sha'] included
+```
+
+`src/main.ts` is the entry (`bun packages/host/src/main.ts`); `src/boot.ts` builds everything from the environment and is what the process tests drive. `createHost` takes its collaborators by injection, so tests run it without a socket.
+
+## Environment
+
+Names only; values come from 1Password through `secrets-run`, never from the repo.
+
+| Variable | Required | Notes |
+|-|-|-|
+| `AGW_API_SECRET` | yes | bearer secret, at least 32 characters; the process exits non-zero before listening otherwise |
+| `AGW_MACHINE` | yes | Argo's `machine`, part of its upsert key `(source, source_id, machine)`; must stay stable. The deploy sets it |
+| `AGW_PG_URL` | yes | the journal database (`agent_workflows`) |
+| `AGW_PG_SCHEMA` | no | journal schema, default `agw` |
+| `AGW_PORT` | no | default `7791` |
+| `AGW_VERSION` | no | reported by `/health` and `info.version`; default `dev`. A change changes the contract sha |
+| `AGW_AGENTS_DIR`, `AGW_OPENCODE_BIN` | no | fingerprint source: compiled agent definitions and the `opencode` binary. Read only for workflows that reference agents |
+| `IU_API_KEY`, `IU_BASE_URL` | for capabilities | read per call by the capabilities |
+| `ARGO_URL`, `ARGO_API_SECRET` | no | the usage outbox is on when both are set |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` (or `…_TRACES_ENDPOINT`), `OTEL_EXPORTER_OTLP_HEADERS` | no | span export is off without an endpoint |
+| `AGW_ROUTES`, `AGW_WALLET_*` | no | route overrides (routes README), wallet gate (limits README) |
+
+## Routes
+
+| Route | Auth | Notes |
+|-|-|-|
+| `GET /health` | none | `200 { status: 'ok', version }` when the runtime is open and Postgres answers within 2 s, else `503 { status: 'degraded', reason }` |
+| `GET /openapi.json` | bearer | the document; every operation has `x-cli` with `kind` |
+| `POST /<capability path>` | bearer | the registry's capabilities, e.g. `POST /llm/title` |
+| `POST /workflows/a/b` | bearer | workflow `a.b`; body = input |
+| `GET /runs/{runId}` | bearer | `run status` |
+| `POST /runs/{runId}/wait` | bearer | `run wait` |
+| `POST /runs/{runId}/cancel` | bearer | `run cancel`, mutating |
+
+- **Auth.** `Authorization: Bearer <AGW_API_SECRET>` on everything but `/health`; missing or wrong is `401 UNAUTHORIZED`. Both sides are sha256-hashed and compared with `crypto.timingSafeEqual`. It runs before the contract check and before any handler, so an unauthenticated request starts nothing.
+- **Errors.** One body everywhere: `{ defined, code, status, message, data? }`. Codes: `BAD_REQUEST` 400, `UNAUTHORIZED` 401, `NOT_FOUND` 404, `CONFLICT` 409, `CONTRACT_MISMATCH` 412, the capability codes, `INTERNAL_SERVER_ERROR` 500. Input validation failures are `BAD_REQUEST`.
+- **Contract.** `info['x-contract-sha']` is the sha256 hex of the canonical JSON (keys sorted recursively, no whitespace) of the document without that field. A request header `x-agw-contract: <sha>` that differs is `412 CONTRACT_MISMATCH` with `data: { server, client }`; no header, no check. `/openapi.json` is never checked, so a stale client can always fetch the new document.
+- **Workflows.** Headers: `Prefer: wait=<seconds>` (absent is 0, at most 240; Bun's `idleTimeout` ceiling is 255 s, verified against Bun's docs and `Bun.serve`, which rejects more), `Idempotency-Key` (a repeat returns the same run, scoped to the workflow), `x-agw-purpose` (default `prod`), `traceparent` (joins the caller's trace). A body-less `POST` starts a workflow whose input is all defaults.
+- **Run state.** `{ runId, workflowId, status, output?, error?: { kind, message } }`: `200` when `done|failed|cancelled`, `202` while `pending|running` (the OpenAPI document lists both). A failed run is a `200` with `status: 'failed'`; the failure is the run's state, not the request's. Unknown run: `404 NOT_FOUND`. Cancel of an ended run is `200` with its state; cancel of a running run waits (`Prefer: wait`, else up to 10 s) for the run to end, `202` if it has not by then.
+- **`x-cli`.** Capabilities carry `kind: 'capability'`; workflows `{ command: id.split('.'), kind: 'workflow', mutating: false, defaultFormat: 'json', resume: { command: ['run','wait'], positional: ['runId'] } }`; run ops `kind: 'run'`, positional `['runId']`. A workflow declares `positional`, `stdin`, `mutating` in its `HostWorkflow.cli`.
+- **Collisions.** Two operations on the same command, or one command extending another (`agw run` next to `agw run wait`), the same operation id or `METHOD path` throw at `createHost`.
+
+## Adding a workflow
+
+Define it with `defineWorkflow` (input must be a `z.object`), add it to `src/workflows/index.ts` as a `HostWorkflow`, and it appears as `POST /workflows/…` and `agw <id words>` with no other code. `smoke.ping` (`src/workflows/smoke.ts`) is the reference: one code step calling `llm.title` through `registry.call`, its usage passed to the step's `addUsage` so the run has priced usage that reaches Argo.
+
+## Process
+
+`main.ts` builds the runtime with `platformMiddleware` (purpose, fingerprint, record, telemetry) followed by the wallet gate and the runaway cap, opens it (migrates the journal, starts the recovery tick), starts the outbox flush tick (30 s, when Argo is configured) and serves. SIGTERM/SIGINT: stop accepting (held waits get 5 s to answer), `runtime.close()`, the cap's pool, `platform.close()` (flushes telemetry), exit 0. Runs stay `running` and the next process resumes them (concept §3: deploys need no drain); `test/main.test.ts` kills a process mid-run and watches a second one finish it.
+
+The OpenCode `AgentHost` is injected: until it is wired in `main.ts`, agent steps fail with `agent host not wired`.
+
+`make deploy` (a later step) will run it as a LaunchAgent: `secrets-run` resolves the `.env.tpl` references and the deploy sets `AGW_MACHINE`, `AGW_PORT` and `AGW_API_SECRET`, and writes `${XDG_CONFIG_HOME:-~/.config}/agw/env` (mode 0600, `AGW_URL` and `AGW_API_SECRET`) for the CLI.
+
+## Token effect / cache effect
+
+None of its own. The host adds no model-visible text and no tokens: workflow input goes to the runtime unchanged and capability calls go to the route table as the capabilities README describes. Held requests poll the journal, not a model. Two things to know: a deploy that changes an `AGENTS.md`, skill, route or the OpenCode version changes the run fingerprint and costs one cold prompt cache (middleware README), and a capability called straight over HTTP (`agw llm title`, outside a workflow) is billed but not recorded: only steps of runs reach the journal and Argo.
+
+## Tests
+
+`bun test packages/host` against a real Postgres (`AGW_TEST_PG_URL`, a throwaway schema per file) and the capabilities' fake IU server:
+
+| File | Covers |
+|-|-|
+| `http.test.ts` | auth (missing, wrong, right, constant-time path, secret refusal), `/health` ok and degraded, the document and its sha, contract mismatch, collisions, `Prefer` parsing |
+| `workflows.test.ts` | start 200 and 202, `run wait`, idempotency replay, purpose, failed runs, 404s, cancel of running and ended runs, a wait that stops with its client |
+| `smoke.test.ts` | `smoke.ping` end to end behind the platform middleware: usage on the step, the row in Argo |
+| `main.test.ts` | the process entry: refusals, SIGTERM leaves a run `running` with exit 0, a second process resumes it |
