@@ -15,7 +15,7 @@ const data = process.env.XDG_DATA_HOME as string
 writeFileSync(join(data, 'fake-env.json'), JSON.stringify(Object.keys(process.env).sort()))
 writeFileSync(
   join(data, 'fake-env-values.json'),
-  JSON.stringify({ OPENCODE_DISABLE_FILEWATCHER: process.env.OPENCODE_DISABLE_FILEWATCHER }),
+  JSON.stringify({ OPENCODE_DISABLE_FILEWATCHER: process.env.OPENCODE_DISABLE_FILEWATCHER, HOME: process.env.HOME }),
 )
 const fake = startFake({
   password: process.env.OPENCODE_SERVER_PASSWORD as string,

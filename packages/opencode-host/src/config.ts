@@ -35,18 +35,9 @@ function providerFor(model: string, env: Env): string {
   return model.startsWith('claude-') ? PROVIDER_ANTHROPIC : PROVIDER_CHAT
 }
 
-/**
- * The rate OpenCode prices a route's messages with: the route's own, else the rate another route in the table
- * carries for the same model (a model's price does not depend on the wire). Null when the table has none: the host
- * then reports the step unpriced instead of OpenCode's cost 0.
- */
-export function rateFor(route: ResolvedRoute, env: Env = process.env): Rate | null {
-  if (route.rate) return route.rate
-  for (const id of routeIds()) {
-    const other = resolveRoute(id, env)
-    if (other.model === route.model && other.rate) return other.rate
-  }
-  return null
+/** The rate OpenCode prices a route's messages with (its config cost rows): the route's own, nothing borrowed. */
+export function rateFor(route: ResolvedRoute): Rate | null {
+  return route.rate ?? null
 }
 
 /** The session's model for a route: provider, model and effort (as a variant) all from the route table. */
@@ -58,8 +49,8 @@ export function modelRef(routeId: RouteId, env: Env = process.env): { route: Res
   return { route, model }
 }
 
-function modelRow(route: ResolvedRoute, provider: string, env: Env) {
-  const rate = rateFor(route, env)
+function modelRow(route: ResolvedRoute, provider: string) {
+  const rate = rateFor(route)
   return {
     name: route.model,
     // IU's gateway answers the `thinking-binding-controls` beta with a 503 for EU Haiku ids (agent-gateway,
@@ -96,7 +87,7 @@ export function buildServerConfig(env: Env = process.env): Record<string, unknow
   for (const route of opencodeRoutes(env)) {
     const provider = providerFor(route.model, env)
     const rows = models[provider] as Record<string, unknown>
-    const row = modelRow(route, provider, env)
+    const row = modelRow(route, provider)
     const existing = rows[route.model] as { variants?: unknown[] } | undefined
     if (existing && row.variants) existing.variants = [...(existing.variants ?? []), ...row.variants]
     else if (!existing) rows[route.model] = row
