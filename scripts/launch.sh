@@ -1,0 +1,54 @@
+#!/bin/zsh
+# agent-workflows host launcher: the ProgramArguments of com.jkrumm.agent-workflows-host. Never point launchd at a
+# Homebrew binary directly (macOS BTM silently disallows it); this wrapper is the indirection, and it fails closed
+# (exit 78) unless every ref in .env.tpl resolves. Runs from the deploy clone (~/.agent-workflows/app), never the
+# dev checkout. No secret is ever printed: the export is only counted, refs are named, values never.
+
+set -u
+
+DIR="${0:A:h:h}"  # scripts/launch.sh -> repo root
+cd "$DIR" || { print -u2 "agent-workflows-host: cannot cd to $DIR"; exit 78; }
+
+export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+
+# `timeout` is a Homebrew coreutils binary (macOS ships none); a missing one must not read as an unrelated error.
+TIMEOUT_BIN=""
+if command -v timeout >/dev/null 2>&1; then
+  TIMEOUT_BIN="timeout"
+elif command -v gtimeout >/dev/null 2>&1; then
+  TIMEOUT_BIN="gtimeout"
+else
+  print -u2 "agent-workflows-host: neither 'timeout' nor 'gtimeout' on PATH (brew install coreutils)"
+  exit 78
+fi
+
+SECRETS_RUN="$HOME/.local/bin/secrets-run"
+TPL="$DIR/.env.tpl"
+
+[[ -x "$SECRETS_RUN" ]] || { print -u2 "agent-workflows-host: $SECRETS_RUN missing"; exit 78; }
+[[ -f "$TPL" ]]         || { print -u2 "agent-workflows-host: $TPL missing"; exit 78; }
+command -v bun >/dev/null 2>&1 || { print -u2 "agent-workflows-host: bun not on PATH"; exit 78; }
+
+# Every ref must resolve BEFORE the hand-off: an unresolved ref would otherwise reach the process as nothing at all.
+RENDERED=$("$TIMEOUT_BIN" 20 "$SECRETS_RUN" export --env-file="$TPL" 2>/dev/null | /usr/bin/grep -c '^export ')
+WANT=$(/usr/bin/grep -hoE '^[A-Za-z_][A-Za-z0-9_]*=' "$TPL" | /usr/bin/sort -u | /usr/bin/wc -l | /usr/bin/tr -d ' ')
+if [[ -z "$RENDERED" || "$RENDERED" -lt "$WANT" ]]; then
+  print -u2 "agent-workflows-host: only ${RENDERED:-0}/$WANT refs of .env.tpl resolved; refusing to start."
+  # Name the refs that do not resolve (the ref, never a value). Failure path only: one read per ref.
+  /usr/bin/grep -hoE '^[A-Za-z_][A-Za-z0-9_]*=op://[^[:space:]]+' "$TPL" | while IFS='=' read -r key ref; do
+    "$TIMEOUT_BIN" 20 "$SECRETS_RUN" read "$ref" >/dev/null 2>&1 || print -u2 "  unresolved: $key ($ref)"
+  done
+  print -u2 "  Seed the missing refs (add to dotfiles-private/headless.refs, then \`make secrets-seed\` on the MacBook) and retry."
+  exit 78
+fi
+
+# secrets-run resolves whole-value refs only, so the composite values are built after it, inside its child. The
+# password is URL-encoded the way `make check` does it; the raw pieces are dropped before the host starts (the
+# OpenCode server forwards every OTEL_EXPORTER_OTLP_* variable it sees).
+exec "$SECRETS_RUN" run --env-file="$TPL" -- /bin/sh -c '
+  AGW_PG_URL="postgres://agent_workflows:$(bun -e "process.stdout.write(encodeURIComponent(process.env.AGW_PG_PASSWORD))")@127.0.0.1:5432/agent_workflows"
+  OTEL_EXPORTER_OTLP_HEADERS="authorization=$OTEL_EXPORTER_OTLP_AUTHORIZATION"
+  export AGW_PG_URL OTEL_EXPORTER_OTLP_HEADERS
+  unset AGW_PG_PASSWORD OTEL_EXPORTER_OTLP_AUTHORIZATION
+  exec bun packages/host/src/main.ts
+'

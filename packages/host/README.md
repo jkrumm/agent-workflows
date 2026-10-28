@@ -67,9 +67,21 @@ Define it with `defineWorkflow` (input must be a `z.object`; list its agents in 
 
 `main.ts` binds the port first and only then opens the runtime, so a taken port (a deploy overlap) fails before any run is claimed; every resource registers its closer as it is created, and a failure anywhere in the start runs the same teardown as a signal. It builds the runtime with `platformMiddleware` (purpose, fingerprint, record, telemetry) followed by the wallet gate and the runaway cap, opens it (migrates the journal, starts the recovery tick), starts the outbox flush tick (30 s, when Argo is configured) and serves. SIGTERM/SIGINT: stop accepting (held waits get 5 s to answer), `runtime.close()`, the cap's pool, `platform.close()` (flushes telemetry), exit 0. A second signal exits at once, and an unref'd timer (45 s, past the runtime's body grace) exits regardless if a close hangs. An uncaught exception shuts down the same way (exit 1); an unhandled rejection is logged and the process keeps serving. Until the runtime is open, `/health` is degraded and every other route is `503`. Runs stay `running` and the next process resumes them (concept §3: deploys need no drain); `test/main.test.ts` kills a process mid-run and watches a second one finish it.
 
-The OpenCode `AgentHost` is injected: until it is wired in `main.ts`, agent steps fail with `agent host not wired`.
+The OpenCode `AgentHost` is wired in `boot.ts` (`lazyOpenCodeHost`): an `OpenCodeServer` and an `OpenCodeHost` with an empty agent list (no agent definitions exist yet). Both are built on the first agent step, not at boot, so a host without agent workflows never spawns or probes `opencode`; a failed start is not cached and the next step retries. Shutdown closes the host and stops supervising the server, which keeps running for the next process (opencode-host README). `BootOptions.agentHost` replaces it in tests; `unwiredAgentHost` fails every agent step with `agent host not wired`.
 
-`make deploy` (a later step) will run it as a LaunchAgent: `secrets-run` resolves the `.env.tpl` references and the deploy sets `AGW_MACHINE`, `AGW_PORT` and `AGW_API_SECRET`, and writes `${XDG_CONFIG_HOME:-~/.config}/agw/env` (mode 0600, `AGW_URL` and `AGW_API_SECRET`) for the CLI.
+## Deploy
+
+`make deploy` (`scripts/deploy.sh`) deploys `origin/master` on the mini; `make deploy DRY_RUN=1` prints the rendered plist and every action and changes nothing. The steps, in order:
+
+1. The deploy clone `~/.agent-workflows/app` (created on the first run) is fetched and checked out at `origin/master`, detached and clean. The dev checkout is never what runs. The clone's copy of `deploy.sh` takes over once after the checkout.
+2. `bun install --frozen-lockfile` in the clone; a failure leaves the running host untouched.
+3. `deploy/com.jkrumm.agent-workflows-host.plist.template` is rendered into `~/Library/LaunchAgents/` (`__HOME__`, `__APP_DIR__`, `__SHA__`) and the LaunchAgent `com.jkrumm.agent-workflows-host` is booted out and bootstrapped. `KeepAlive`, `ExitTimeOut` 120 s (the host's own backstop is 45 s), logs in `~/Library/Logs/agent-workflows-host.{out,err}.log`, env `AGW_MACHINE=mini`, `AGW_PORT=7791`, `AGW_VERSION=<sha>`.
+4. `/health` must answer `ok` with `version` equal to the deployed sha, within `HEALTH_WAIT_SECS` (120). Otherwise the deploy exits 1 and prints the log tails; `deployed-sha` is not written.
+5. `~/.agent-workflows/data/deployed-sha` is written; `~/.local/bin/agw` is linked to the clone's `packages/cli/bin/agw.ts` (refused up front if it is a regular file); `${XDG_CONFIG_HOME:-~/.config}/agw/env` is written at mode 0600 (created under `umask 077`) with `AGW_URL` and `AGW_API_SECRET` read through `secrets-run`.
+
+The LaunchAgent runs `/bin/zsh scripts/launch.sh` (never a Homebrew binary: macOS BTM). `launch.sh` exits 78 unless every ref in `.env.tpl` resolves through `secrets-run`, naming the refs that do not (refs, never values). Then `secrets-run run --env-file=.env.tpl` starts the host, with `AGW_PG_URL` built from `AGW_PG_PASSWORD` and `OTEL_EXPORTER_OTLP_HEADERS` from `OTEL_EXPORTER_OTLP_AUTHORIZATION` (secrets-run resolves whole-value refs only); the raw pieces are unset before the host starts.
+
+`make verify` (`scripts/verify.sh`) exits 0 only if `/health` is ok, the deployed sha equals `origin/master` and is what the host reports, `AGW_PURPOSE=verify agw smoke ping` exits 0 with a `title`, and that run's row in `agw.runs` is `done` with a trace id and priced usage. It prints the run id.
 
 ## Token effect / cache effect
 
@@ -84,5 +96,5 @@ None of its own. The host adds no model-visible text and no tokens: workflow inp
 | `http.test.ts` | auth (missing, wrong, right, constant-time path, secret refusal), `/health` ok and degraded, the document and its sha, contract mismatch, collisions, `Prefer` parsing |
 | `workflows.test.ts` | start 200 and 202, `run wait`, idempotency replay, purpose, failed runs, 404s, cancel of running and ended runs, a wait that stops with its client |
 | `smoke.test.ts` | `smoke.ping` end to end behind the platform middleware: usage on the step, the row in Argo |
-| `main.test.ts` | config, `boot` (a taken port fails before the runtime opens), the process entry: refusals, SIGTERM leaves a run `running` with exit 0, a second process resumes it |
+| `main.test.ts` | config, `lazyOpenCodeHost` (nothing built before the first agent step, a failed start retried), `boot` (a taken port fails before the runtime opens), the process entry: refusals, SIGTERM leaves a run `running` with exit 0, a second process resumes it |
 | `lifecycle.test.ts` | signals, the hard-exit backstop, second signal, uncaught exception vs unhandled rejection |

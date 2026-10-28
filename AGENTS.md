@@ -8,7 +8,7 @@ evaluated); every workflow runs inside the same middleware; Claude Code and Herm
 through one generated `agw` CLI. It replaces agent-gateway, research-gateway and audio-gateway by a
 hard rewrite. **`docs/concept.md` is the design and wins on any difference with this file.**
 
-**Status:** Wave 2 landed the core: `runtime`, `middleware`, `limits`, `routes`, `capabilities` (`packages/*`). The CLI, the OpenCode host and the first deploy are Wave 3.
+**Status:** Wave 2 landed the core: `runtime`, `middleware`, `limits`, `routes`, `capabilities` (`packages/*`). Wave 3 landed the CLI (`agw`), the host process, the OpenCode host and the deploy (LaunchAgent on the mini, `make deploy|verify`).
 
 ## Principles (concept §0)
 
@@ -82,10 +82,10 @@ excluded from every tool.
 
 | Command | Runs |
 |-|-|
-| `make check` | `biome format`, `biome lint`, `oxlint --type-aware`, `tsc --noEmit`, `bun test --isolate`; non-zero on any failure. **The merge train's gate**, and what CI runs |
+| `make check` | `bun install --frozen-lockfile` first (stale `node_modules` never passes), then `biome format`, `biome lint`, `oxlint --type-aware`, `tsc --noEmit`, `bun test --isolate`; non-zero on any failure. **The merge train's gate**, and what CI runs |
 | `make fmt` | `biome format --write` |
-| `make deploy` | Skeleton: nothing is deployable yet (Wave 3: LaunchAgents on the mini) |
-| `make verify` | Skeleton: nothing is deployable yet (Wave 3: health, a smoke run, its trace) |
+| `make deploy` | On the mini: fetch `origin/master` into the deploy clone `~/.agent-workflows/app` (detached, clean), `bun install --frozen-lockfile`, render and bootstrap the LaunchAgent `com.jkrumm.agent-workflows-host`, wait for `/health` (version = the sha), write `~/.agent-workflows/data/deployed-sha`, link `~/.local/bin/agw`, write `~/.config/agw/env`. `DRY_RUN=1` prints the plan and the plist and changes nothing. Details: `packages/host/README.md` §Deploy |
+| `make verify` | Exit 0 only if `/health` is ok, the deployed sha is `origin/master`, `AGW_PURPOSE=verify agw smoke ping` returns a `title`, and its `agw.runs` row is `done` with a trace id and priced usage. Prints the run id |
 
 CI (`.github/workflows/ci.yml`) runs `bun install --frozen-lockfile` and `make check` on pushes to `master` and
 on pull requests, on GitHub-hosted runners.
@@ -93,6 +93,9 @@ on pull requests, on GitHub-hosted runners.
 `make check` needs Postgres: tests read `AGW_TEST_PG_URL` and fail when it is unset. On the mini `make check` builds it from `.env.test.tpl` through `secrets-run`; elsewhere set `AGW_TEST_PG_URL` (CI uses a `postgres:18` service). Each test file works in its own throwaway schema.
 
 ## Gotchas
+
+- **The deploy clone is what runs.** `~/.agent-workflows/app` is a clone that `make deploy` resets to `origin/master`; the dev checkout (and its dirty tree) never goes live, and a change is live only after it is merged and deployed. Never edit the clone.
+- **The host fails closed on the secrets cache.** `scripts/launch.sh` exits 78 unless every ref in `.env.tpl` resolves through `secrets-run` (the offline cache), and names the missing refs. A new `op://` ref in `.env.tpl` must be seeded (`dotfiles-private/headless.refs`, `make secrets-seed` on the MacBook) before the deploy that needs it; until then the LaunchAgent restarts every 30 s and logs the refs to `~/Library/Logs/agent-workflows-host.err.log`. Never `op read` on the mini.
 
 - `docs/concept.md` changes only with a version note at the top and a retro-log entry.
 - Never point an LLM probe at an endpoint with bare `opencode run`; use `opencode-safe` and `timeout`.
