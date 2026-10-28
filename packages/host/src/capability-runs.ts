@@ -3,26 +3,21 @@
 // (`registry.call` from a workflow step) stay plain calls; their usage belongs to the calling step.
 import { createHash } from 'node:crypto'
 import { type Capability, CapabilityCallError, ERRORS } from '@agent-workflows/capabilities'
-import {
-  type AnyWorkflow,
-  defineWorkflow,
-  IdempotencyConflict,
-  type Json,
-  type Logger,
-  type Runtime,
-  WorkflowError,
-} from '@agent-workflows/runtime'
+import { type AnyWorkflow, defineWorkflow, type Json, type Logger, type Runtime } from '@agent-workflows/runtime'
 import { ORPCError } from '@orpc/server'
 import { z } from 'zod'
 import { canonicalJson } from './canonical.ts'
-import { badRequest, type HostContext, idempotencyKeyOf, purposeOf, waitFor } from './operations.ts'
+import { type HostContext, startRun, waitFor } from './operations.ts'
 import { isTerminal, type RunState, type RunStore } from './store.ts'
 
 /** The response header that names the run behind a direct capability call. */
 export const RUN_ID_HEADER = 'agw-run-id'
 
-/** One build per capability list: the runtime and the host must hold the very same workflow objects. */
-const builds = new WeakMap<readonly Capability[], Map<string, AnyWorkflow>>()
+/**
+ * The `cap.<id>` workflow of every capability, by capability id. Built once in `boot` and handed to both the runtime
+ * (a resumed run must find its workflow) and the host: they must hold the very same objects.
+ */
+export type CapabilityWorkflows = ReadonlyMap<string, AnyWorkflow>
 
 const workflowIdOf = (capability: string) => `cap.${capability}`
 
@@ -82,11 +77,9 @@ export function journaledError(text: string): ORPCError<string, unknown> | null 
   })
 }
 
-function build(capabilities: readonly Capability[]): Map<string, AnyWorkflow> {
-  const known = builds.get(capabilities)
-  if (known) return known
+export function createCapabilityWorkflows(registry: { capabilities: readonly Capability[] }): CapabilityWorkflows {
   const workflows = new Map<string, AnyWorkflow>()
-  for (const capability of capabilities) {
+  for (const capability of registry.capabilities) {
     const workflow = defineWorkflow({
       id: workflowIdOf(capability.id),
       version: versionOf(capability),
@@ -105,13 +98,7 @@ function build(capabilities: readonly Capability[]): Map<string, AnyWorkflow> {
     })
     workflows.set(capability.id, workflow)
   }
-  builds.set(capabilities, workflows)
   return workflows
-}
-
-/** The `cap.<id>` workflows of a registry, for the runtime's `workflows` (a resumed run must find its workflow). */
-export function capabilityWorkflows(registry: { capabilities: readonly Capability[] }): AnyWorkflow[] {
-  return [...build(registry.capabilities).values()]
 }
 
 export interface CapabilityRunDeps {
@@ -163,25 +150,11 @@ export function failureOf(state: RunState, logger: Logger): ORPCError<string, un
  * for it without a deadline, and answers with its output or the capability's error. A caller that goes away cancels
  * the run. The run id goes back in {@link RUN_ID_HEADER}.
  */
-export function capabilityRuns(registry: { capabilities: readonly Capability[] }, deps: CapabilityRunDeps) {
-  const workflows = build(registry.capabilities)
+export function capabilityRuns(workflows: CapabilityWorkflows, deps: CapabilityRunDeps) {
   return async ({ capability, input, signal, context }: CapabilityCall): Promise<unknown> => {
     const workflow = workflows.get(capability)
     if (!workflow) throw new Error(`capability ${capability} has no run workflow`)
-    const { headers } = context
-    const purpose = purposeOf(headers)
-    const idempotencyKey = idempotencyKeyOf(headers)
-    const traceparent = headers.get('traceparent') ?? undefined
-    let runId: string
-    try {
-      ;({ runId } = await deps.runtime.start(workflow, input, { purpose, idempotencyKey, traceparent }))
-    } catch (error) {
-      if (error instanceof WorkflowError && error.kind === 'invalid_input') throw badRequest(error.message)
-      if (error instanceof IdempotencyConflict) {
-        throw new ORPCError('CONFLICT', { status: 409, message: error.message, data: { runId: error.runId } })
-      }
-      throw error
-    }
+    const { runId, idempotencyKey } = await startRun(deps, workflow, input, context.headers)
     context.response.headers = { ...context.response.headers, [RUN_ID_HEADER]: runId }
 
     // No deadline: the wait ends when the run does, or early only when the caller goes away.

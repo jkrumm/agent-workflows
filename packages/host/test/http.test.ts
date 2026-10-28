@@ -283,6 +283,7 @@ describe('command collisions throw at creation', () => {
           runtime: t.runtime,
           registry,
           workflows: [],
+          capabilityWorkflows: new Map(),
           secret: SECRET,
           version: 'x',
         })
@@ -358,6 +359,7 @@ describe('document build failure', () => {
         } as never,
       },
       workflows: [],
+      capabilityWorkflows: new Map(),
       secret: SECRET,
       version: 'x',
       logger: { warn: () => {}, error: () => {} },
@@ -470,9 +472,16 @@ describe('secret hygiene and reserved flags', () => {
       handler: () => ({}),
     })
     const registry = createRegistry([capability])
-    expect(() => createHost({ runtime: t.runtime, registry, workflows: [], secret: SECRET, version: 'x' })).toThrow(
-      'capability x.y: input property "commit"',
-    )
+    expect(() =>
+      createHost({
+        runtime: t.runtime,
+        registry,
+        workflows: [],
+        capabilityWorkflows: new Map(),
+        secret: SECRET,
+        version: 'x',
+      }),
+    ).toThrow('capability x.y: input property "commit"')
   })
 
   test('llm.summarize takes `style`, not `format`', async () => {

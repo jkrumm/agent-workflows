@@ -13,7 +13,7 @@ import { onError } from '@orpc/server'
 import { ZodToJsonSchemaConverter } from '@orpc/zod/zod4'
 import { assertSecret, bearerMatches } from './auth.ts'
 import { CONTRACT_FIELD, contractSha } from './canonical.ts'
-import { capabilityRuns } from './capability-runs.ts'
+import { type CapabilityWorkflows, capabilityRuns } from './capability-runs.ts'
 import {
   assertNoReservedFlags,
   type HostContext,
@@ -35,6 +35,8 @@ export interface HostOptions {
   runtime: Runtime
   registry: RegistryLike
   workflows: HostWorkflow[]
+  /** The `cap.<id>` workflows direct capability calls run as; the runtime must have been given the same map. */
+  capabilityWorkflows: CapabilityWorkflows
   /** Run state bodies and the `/health` probe. Default: the runtime's own read API. */
   store?: RunStore
   /** `AGW_API_SECRET`: at least 32 characters, else creation throws. */
@@ -72,11 +74,11 @@ const unauthorized = () => {
 
 /** A handler's success status (only on a success) and extra headers (on every answer, errors included). */
 function applyResponse(response: Response, { status, headers }: HostContext['response']): Response {
-  const restatus = status !== undefined && status !== response.status && response.ok
-  if (!restatus && !headers) return response
+  const overrideStatus = status !== undefined && status !== response.status && response.ok
+  if (!overrideStatus && !headers) return response
   const merged = new Headers(response.headers)
   for (const [name, value] of Object.entries(headers ?? {})) merged.set(name, value)
-  return new Response(response.body, { status: restatus ? status : response.status, headers: merged })
+  return new Response(response.body, { status: overrideStatus ? status : response.status, headers: merged })
 }
 
 /** Every command (capabilities, workflows, run ops) is unique, and none is the prefix of another. */
@@ -104,9 +106,12 @@ export function createHost(options: HostOptions): Host {
   const workflows = options.workflows.map((entry) => ({ entry, op: workflowOperation(entry, deps) }))
   const runs = runOperations(deps)
   // A direct capability call over HTTP is a one-step run; `boot` registers the same workflows with the runtime.
-  const invoke = capabilityRuns(registry, { ...deps, isOpen })
+  const invoke = capabilityRuns(options.capabilityWorkflows, { ...deps, isOpen })
 
   for (const c of registry.capabilities) assertNoReservedFlags(`capability ${c.id}`, c.input)
+  for (const c of registry.capabilities) {
+    if (!options.capabilityWorkflows.has(c.id)) throw new Error(`capability ${c.id} has no cap.${c.id} workflow`)
+  }
 
   const operations: { owner: string; op: Pick<HostOperation, 'operationId' | 'method' | 'path' | 'cli'> }[] = [
     ...registry.capabilities.map((c) => ({

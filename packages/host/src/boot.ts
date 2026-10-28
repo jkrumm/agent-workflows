@@ -5,7 +5,7 @@ import { OpenCodeHost, OpenCodeServer } from '@agent-workflows/opencode-host'
 import { type AgentHost, type Json, Runtime } from '@agent-workflows/runtime'
 import { loadAgentDefinitions } from './agents.ts'
 import { createHost } from './app.ts'
-import { capabilityWorkflows } from './capability-runs.ts'
+import { createCapabilityWorkflows } from './capability-runs.ts'
 import type { HostConfig } from './config.ts'
 import { IDLE_TIMEOUT_S } from './operations.ts'
 import { createWorkflows, fingerprintWorkflows } from './workflows/index.ts'
@@ -131,6 +131,8 @@ export async function boot(config: HostConfig, options: BootOptions = {}): Promi
   try {
     const registry = createRegistry(createCapabilities())
     const workflows = createWorkflows({ registry })
+    // Direct capability calls over HTTP run as `cap.<id>` workflows (concept N6): registered, but not operations.
+    const capabilityWorkflows = createCapabilityWorkflows(registry)
     const agentsDir = config.agentsDir ?? 'agents'
     const agents = loadAgentDefinitions(agentsDir)
 
@@ -162,8 +164,7 @@ export async function boot(config: HostConfig, options: BootOptions = {}): Promi
     const runtime = new Runtime({
       connectionString: config.pgUrl,
       schema: config.schema,
-      // Direct capability calls over HTTP run as `cap.<id>` workflows (concept N6): registered, but not operations.
-      workflows: [...workflows.map((entry) => entry.workflow), ...capabilityWorkflows(registry)],
+      workflows: [...workflows.map((entry) => entry.workflow), ...capabilityWorkflows.values()],
       host: agentHost,
       middleware: [...platform.middleware, wallet, cap],
     })
@@ -176,6 +177,7 @@ export async function boot(config: HostConfig, options: BootOptions = {}): Promi
       runtime,
       registry,
       workflows,
+      capabilityWorkflows,
       secret: config.secret,
       version: config.version,
       isOpen: () => open,
