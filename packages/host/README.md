@@ -71,13 +71,20 @@ The OpenCode `AgentHost` is wired in `boot.ts` (`lazyOpenCodeHost`): an `OpenCod
 
 ## Deploy
 
-`make deploy` (`scripts/deploy.sh`) deploys `origin/master` on the mini; `make deploy DRY_RUN=1` prints the rendered plist and every action and changes nothing. The steps, in order:
+`make deploy` (`scripts/deploy.sh`) deploys `origin/master` on the mini as a **release**; `make deploy DRY_RUN=1` prints the plan and the rendered plist and changes nothing.
 
-1. The deploy clone `~/.agent-workflows/app` (created on the first run) is fetched and checked out at `origin/master`, detached and clean. The dev checkout is never what runs. The clone's copy of `deploy.sh` takes over once after the checkout.
-2. `bun install --frozen-lockfile` in the clone; a failure leaves the running host untouched.
-3. `deploy/com.jkrumm.agent-workflows-host.plist.template` is rendered into `~/Library/LaunchAgents/` (`__HOME__`, `__APP_DIR__`, `__SHA__`) and the LaunchAgent `com.jkrumm.agent-workflows-host` is booted out and bootstrapped. `KeepAlive`, `ExitTimeOut` 120 s (the host's own backstop is 45 s), logs in `~/Library/Logs/agent-workflows-host.{out,err}.log`, env `AGW_MACHINE=mini`, `AGW_PORT=7791`, `AGW_VERSION=<sha>`.
-4. `/health` must answer `ok` with `version` equal to the deployed sha, within `HEALTH_WAIT_SECS` (120). Otherwise the deploy exits 1 and prints the log tails; `deployed-sha` is not written.
-5. `~/.agent-workflows/data/deployed-sha` is written; `~/.local/bin/agw` is linked to the clone's `packages/cli/bin/agw.ts` (refused up front if it is a regular file); `${XDG_CONFIG_HOME:-~/.config}/agw/env` is written at mode 0600 (created under `umask 077`) with `AGW_URL` and `AGW_API_SECRET` read through `secrets-run`.
+| Path (under `~/.agent-workflows`) | Is |
+|-|-|
+| `repo` | the clone; fetch only, nothing runs from it |
+| `releases/<sha>` | one immutable export of a commit (`git archive`) with its own `node_modules`; a `.complete` marker is written last, and the live release is never written to |
+| `current` | symlink to the live release; the CLI link goes through it |
+| `data/deployed-sha`, `data/previous-sha` | the live and the rollback release |
+
+1. Preflight, before anything is built, stopped or written: the tools exist, `~/.local/bin/agw` is not a regular file, and the API secret reads through `secrets-run`.
+2. `repo` is fetched; `origin/master` is exported to `releases/<sha>` and `bun install --frozen-lockfile` runs there. A failure removes the half-built release and leaves the running host untouched. The release's own `deploy.sh` takes over once, pinned to the same sha.
+3. `deploy/com.jkrumm.agent-workflows-host.plist.template` is rendered into `~/Library/LaunchAgents/` (`__HOME__`, `__RELEASE_DIR__`, `__SHA__`) and the LaunchAgent `com.jkrumm.agent-workflows-host` is booted out and bootstrapped. The plist points at the release path, not at `current`: it is the single statement of what runs, and moving the symlink can never change a running host's code. `KeepAlive`, `ExitTimeOut` 120 s (the host's own backstop is 45 s; the deploy waits `ExitTimeOut` + 10 s for the unload and refuses to bootstrap over a host that is still loaded), logs in `~/Library/Logs/agent-workflows-host.{out,err}.log`, env `AGW_MACHINE=mini`, `AGW_PORT=7791`, `AGW_VERSION=<sha>`.
+4. `/health` must answer `ok` with `version` equal to the new sha within `HEALTH_WAIT_SECS` (120). If it never does, the deploy prints the new build's log tails and **rolls back**: the previous release is re-rendered, bootstrapped and awaited (version = previous sha); both outcomes are printed and the deploy exits 1, `deployed-sha` unchanged. With no previous release (the first deploy) the LaunchAgent is booted out, so `KeepAlive` does not loop a failing launch every 30 s.
+5. Healthy: `current` moves to the release, `previous-sha` is written, `${XDG_CONFIG_HOME:-~/.config}/agw/env` is written at mode 0600 (created under `umask 077`; `AGW_URL` and `AGW_API_SECRET`), `~/.local/bin/agw` is linked, and only then `deployed-sha`, so "deployed" means the CLI works too. The newest 3 releases stay, plus the live and the previous one; older ones are removed (only directories named like a full sha).
 
 The LaunchAgent runs `/bin/zsh scripts/launch.sh` (never a Homebrew binary: macOS BTM). `launch.sh` exits 78 unless every ref in `.env.tpl` resolves through `secrets-run`, naming the refs that do not (refs, never values). Then `secrets-run run --env-file=.env.tpl` starts the host, with `AGW_PG_URL` built from `AGW_PG_PASSWORD` and `OTEL_EXPORTER_OTLP_HEADERS` from `OTEL_EXPORTER_OTLP_AUTHORIZATION` (secrets-run resolves whole-value refs only); the raw pieces are unset before the host starts.
 
