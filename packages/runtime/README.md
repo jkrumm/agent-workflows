@@ -103,13 +103,19 @@ defineWorkflow({ id: 'research.report', scorer: draftScorer, async run(ctx, inpu
   that suffix to count schema re-asks and nudges, so any other name is invisible to them.
 - **After the fact.** `runtime.scoreRun(runId, { source: 'regression' | 'drift', reference?, caseId?, evalRunId?,
   args?, onlyUnscored? })` scores a `done` or `failed` run with its workflow's scorer and writes `runs.scores.final`,
-  `score_source`, `scored_at` (migration 0004). A scorer that throws is recorded as `{ pass: false, error }`, so drift
-  never loops on it; `onlyUnscored` makes the write first-writer-wins. The write also clears `argo_synced_at` (and a
+  `score_source`, `scored_at` (migration 0004). A judge call that fails (even one the scorer caught), a journal error
+  or a shutdown is rethrown and nothing is written, so the run stays unscored and drift tries it again; a scorer that
+  fails on its own (a bug, a reference it refuses, a malformed verdict: deterministic) is recorded as
+  `{ pass: false, error }`, so drift never loops on it. `onlyUnscored` makes the write first-writer-wins. The write also clears `argo_synced_at` (and a
   claim in flight) on the run's steps, so the Argo rows are re-posted with the scores in `raw`.
 - **Drift's sample.** `runtime.driftCandidates({ rate, since, limit, purposes? = ['prod'], workflows? })`: done,
-  unscored runs whose id hashes below `rate` (first 32 bits of md5(id) against rate × 2^32). Deterministic per run:
-  the same in every tick and process, and a smaller rate is a subset of a larger one.
-- **Reads for eval:** `runtime.scoredRuns({ workflow, source, fingerprint? })` (compare) and
+  unscored top-level runs whose persisted sample position `runs.drift_sample` (a generated column: the first 32 bits
+  of md5(id)) is below rate × 2^32. Deterministic per run: the same in every tick and process, and a smaller rate is a
+  subset of a larger one. The partial index `runs_drift` holds only unscored done top-level runs, by sample position,
+  so a tick reads the sampled range and never rescans the unsampled 90 %.
+- **Reads for eval**, narrowed in SQL: `runtime.scoredRuns({ workflow, source, runIds?, fingerprintPrefix?, args? })`
+  (`args` by jsonb equality, `{}` for runs that recorded none; only the record columns compare uses),
+  `runtime.runByKey(workflow, idempotencyKey)` (a resumed eval adopts a case run with its status and score) and
   `runtime.recentCost(workflow)` (the eval estimate).
 
 ## Durability

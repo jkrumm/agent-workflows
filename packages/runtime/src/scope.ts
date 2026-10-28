@@ -372,7 +372,8 @@ export class RunScope {
   }
 
   private agentStep<S extends z.ZodType>(stepId: string, spec: AgentSpec<S>, opener: Opener): Promise<z.output<S>> {
-    this.agentSpecs.set(stepId, spec)
+    // A duplicate id is refused by `journaled`; its spec must not replace the accepted step's.
+    if (!this.seen.has(stepId)) this.agentSpecs.set(stepId, spec)
     return this.agentJournaled(stepId, spec, opener).then((value) => {
       if (value !== null && typeof value === 'object') this.agentOutputs.set(value, stepId)
       return value

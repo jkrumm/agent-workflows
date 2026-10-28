@@ -20,6 +20,7 @@ import type {
   AnyWorkflow,
   FinalScore,
   JudgeCaller,
+  KeyedRun,
   Logger,
   Middleware,
   RunInfo,
@@ -28,6 +29,7 @@ import type {
   RunResult,
   RunSnapshot,
   ScoredRun,
+  ScoredRunFilter,
   StartOptions,
   Usage,
   StepPostArgs,
@@ -306,8 +308,9 @@ export class Runtime {
   /**
    * Scores an ended run after the fact (concept §6: regression, drift) with its workflow's scorer, and records the
    * verdict on the run (`scores.final`). A failed run is scored with output `null` (a miss); a cancelled or unfinished
-   * one is not scored (null). A scorer that throws is recorded as `error` with `pass: false`, so drift never loops on
-   * it. Any process may call it: the run has ended, nothing races the write.
+   * one is not scored (null). A judge, journal or shutdown failure is rethrown and nothing is written (the run stays
+   * unscored, so drift retries it); a scorer that fails on its own (deterministic) is recorded as `error` with
+   * `pass: false`, so drift never loops on it. Any process may call it: the run has ended, nothing races the write.
    */
   async scoreRun(runId: string, options: ScoreRunOptions): Promise<FinalScore | null> {
     const run = await this.journal.scoreTarget(runId)
@@ -325,6 +328,8 @@ export class Runtime {
       ...(options.args === undefined ? {} : { args: options.args }),
     }
     let final: FinalScore
+    /** Set when a judge call failed: whatever the scorer made of it, nothing is recorded and the caller retries. */
+    let judgeFailure: unknown = null
     try {
       const reference =
         options.reference === undefined || !scorer.reference
@@ -332,17 +337,30 @@ export class Runtime {
           : scorer.reference.parse(options.reference)
       const judge = this.options.judge
       const signal = this.lifetime.signal
+      const judged = judge
+        ? async (capability: string, input: Json) => {
+            try {
+              return await judge(capability, input, { signal, addUsage: noUsage })
+            } catch (err) {
+              judgeFailure = err
+              throw new InfraError(`score judge ${capability}: ${errorMessage(err)}`, { cause: err })
+            }
+          }
+        : undefined
       const raw = await scorer.score(run.input, run.status === 'done' ? run.output : null, {
         source: options.source,
         signal,
         ...(reference === undefined ? {} : { reference }),
-        ...(judge
-          ? { judge: (capability: string, input: Json) => judge(capability, input, { signal, addUsage: noUsage }) }
-          : {}),
+        ...(judged ? { judge: judged } : {}),
       })
+      if (judgeFailure !== null) throw judgeFailure
       final = { ...checkVerdict(raw, `scoring run ${runId}`), ...meta }
     } catch (err) {
-      if (this.lifetime.signal.aborted) throw err
+      // Not the scorer's verdict: a judge call, the journal, a shutdown. Rethrown unrecorded, so the run stays
+      // unscored and drift (or the eval run) tries again.
+      if (judgeFailure !== null || err instanceof InfraError || this.lifetime.signal.aborted) throw err
+      // The scorer's own deterministic failure (a bug, a reference it refuses, a malformed verdict): recorded, so drift
+      // does not loop on a run that can never score.
       final = { scores: {}, pass: false, error: errorMessage(err), ...meta }
     }
     const written = await this.journal.writeFinalScore(runId, final, options.onlyUnscored ?? false)
@@ -366,12 +384,13 @@ export class Runtime {
   }
 
   /** Scored runs of a workflow (oldest first), for `agw eval compare`. */
-  scoredRuns(options: {
-    workflow: string
-    source: 'regression' | 'drift'
-    fingerprint?: string
-  }): Promise<ScoredRun[]> {
+  scoredRuns(options: ScoredRunFilter): Promise<ScoredRun[]> {
     return this.journal.scoredRuns(options)
+  }
+
+  /** The run started under `idempotencyKey` for `workflow` (status, error, final score, fingerprint), or null. */
+  runByKey(workflow: string, idempotencyKey: string): Promise<KeyedRun | null> {
+    return this.journal.runByKey(workflow, idempotencyKey)
   }
 
   /** The mean cost of the latest `limit` done runs of a workflow: the base of an eval estimate. */
