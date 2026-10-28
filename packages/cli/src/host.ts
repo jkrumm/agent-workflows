@@ -1,0 +1,186 @@
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { dirname } from 'node:path'
+import { BIN } from './args.ts'
+import { type Credentials, cachePath, credentials, type Env, envFilePath, requireSecret } from './config.ts'
+import { AgwError, kindForStatus } from './exit.ts'
+import { buildCommands, type Command, type Document, servedSha } from './spec.ts'
+
+/** The host waits at most this long per request (Bun's `idleTimeout` ceiling is 255 s). */
+export const MAX_WAIT_S = 240
+const SLACK_MS = 30_000
+
+export interface Reply {
+  status: number
+  body: unknown
+}
+
+export interface CallOptions {
+  waitS?: number
+  idempotencyKey?: string
+}
+
+interface ErrorBody {
+  code?: unknown
+  message?: unknown
+  data?: unknown
+}
+
+const asRecord = (v: unknown): Record<string, unknown> =>
+  v !== null && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {}
+
+function hintFor(kind: AgwError['kind'], env: Env, command: Command | undefined, retryAfter: string | null): string {
+  if (kind === 'auth') return `check AGW_API_SECRET (environment or ${envFilePath(env)})`
+  if (kind === 'contract_mismatch') return `${BIN} schema --refresh`
+  if (kind === 'rate_limited') return retryAfter ? `retry after ${retryAfter}s` : 'retry later'
+  if (kind === 'usage' && command) return `${BIN} ${command.words.join(' ')} --help`
+  return ''
+}
+
+/**
+ * The host as the CLI sees it: credentials, the cached OpenAPI document and its contract sha, and
+ * one request per command with the contract header on every call.
+ */
+export class Host {
+  #creds: Credentials | undefined
+  #doc: Document | undefined
+  #commands: Command[] = []
+  #sha = ''
+
+  constructor(readonly env: Env) {}
+
+  get commands(): Command[] {
+    return this.#commands
+  }
+
+  get sha(): string {
+    return this.#sha
+  }
+
+  get document(): Document | undefined {
+    return this.#doc
+  }
+
+  get url(): string {
+    return this.creds().url
+  }
+
+  private creds(): Credentials {
+    this.#creds ??= credentials(this.env)
+    return this.#creds
+  }
+
+  private use(doc: Document): void {
+    this.#commands = buildCommands(doc)
+    this.#doc = doc
+    this.#sha = servedSha(doc)
+  }
+
+  /** The cached document only; never touches the network. */
+  loadCache(): boolean {
+    try {
+      const doc = JSON.parse(readFileSync(cachePath(this.env), 'utf8')) as Document
+      if (!doc || typeof doc !== 'object' || typeof doc.paths !== 'object') return false
+      this.use(doc)
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  async load(): Promise<void> {
+    if (!this.loadCache()) await this.refresh()
+  }
+
+  async refresh(): Promise<void> {
+    const { body } = await this.send('GET', '/openapi.json', { contract: false })
+    const doc = body as Document
+    if (!doc || typeof doc !== 'object' || typeof doc.paths !== 'object') {
+      throw new AgwError('general', `${this.url}/openapi.json is not an OpenAPI document`)
+    }
+    const path = cachePath(this.env)
+    mkdirSync(dirname(path), { recursive: true })
+    const tmp = `${path}.${process.pid}.tmp`
+    writeFileSync(tmp, JSON.stringify(doc))
+    renameSync(tmp, path)
+    this.use(doc)
+  }
+
+  call(command: Command, values: Record<string, unknown>, options: CallOptions = {}): Promise<Reply> {
+    let path = command.path
+    const query = new URLSearchParams()
+    const body: Record<string, unknown> = {}
+    for (const field of command.fields) {
+      const value = values[field.name]
+      if (value === undefined) continue
+      const text = typeof value === 'string' ? value : JSON.stringify(value)
+      if (field.in === 'path') path = path.replace(`{${field.name}}`, encodeURIComponent(text))
+      else if (field.in === 'query') query.set(field.name, text)
+      else body[field.name] = value
+    }
+    const qs = query.toString()
+    return this.send(command.method, qs ? `${path}?${qs}` : path, {
+      command,
+      body: command.hasBody ? body : undefined,
+      ...options,
+    })
+  }
+
+  private async send(
+    method: string,
+    path: string,
+    options: CallOptions & { body?: unknown; command?: Command; contract?: boolean },
+  ): Promise<Reply> {
+    const creds = this.creds()
+    const headers: Record<string, string> = {
+      accept: 'application/json',
+      authorization: `Bearer ${requireSecret(this.env, creds)}`,
+    }
+    if (options.contract !== false && this.#sha) headers['x-agw-contract'] = this.#sha
+    if (options.body !== undefined) headers['content-type'] = 'application/json'
+    if (options.waitS !== undefined) headers.prefer = `wait=${Math.max(0, Math.min(MAX_WAIT_S, options.waitS))}`
+    if (options.idempotencyKey) headers['idempotency-key'] = options.idempotencyKey
+    if (this.env.AGW_PURPOSE) headers['x-agw-purpose'] = this.env.AGW_PURPOSE
+
+    let response: Response
+    let text: string
+    try {
+      response = await fetch(`${creds.url}${path}`, {
+        method,
+        headers,
+        ...(options.body !== undefined ? { body: JSON.stringify(options.body) } : {}),
+        signal: AbortSignal.timeout((options.waitS ?? 0) * 1000 + SLACK_MS),
+      })
+      text = await response.text()
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error)
+      throw new AgwError('network', `host unreachable at ${creds.url}: ${reason}`, {
+        hint: `is the host up? ${BIN} schema works offline from the cache`,
+      })
+    }
+    let body: unknown = text
+    try {
+      body = text ? JSON.parse(text) : null
+    } catch {
+      // A non-JSON body passes through as text.
+    }
+    if (response.ok) return { status: response.status, body }
+
+    const error = asRecord(body) as ErrorBody
+    const code = typeof error.code === 'string' ? error.code : null
+    const kind = kindForStatus(response.status, code)
+    const message =
+      typeof error.message === 'string'
+        ? error.message
+        : `HTTP ${response.status}${text ? `: ${text.slice(0, 200)}` : ''}`
+    const retryAfter = response.headers.get('retry-after')
+    throw new AgwError(kind, message, {
+      code,
+      hint: hintFor(kind, this.env, options.command, retryAfter),
+      details: {
+        status: response.status,
+        ...asRecord(error.data),
+        ...(retryAfter && Number.isFinite(Number(retryAfter)) ? { retryAfterS: Number(retryAfter) } : {}),
+      },
+    })
+  }
+}

@@ -24,6 +24,16 @@
         "zod": "4.6.7",
       },
     },
+    "packages/cli": {
+      "name": "@agent-workflows/cli",
+      "version": "0.0.0",
+      "bin": {
+        "agw": "./bin/agw.ts",
+      },
+      "devDependencies": {
+        "@agent-workflows/capabilities": "workspace:*",
+      },
+    },
     "packages/limits": {
       "name": "@agent-workflows/limits",
       "version": "0.0.0",
@@ -77,6 +87,8 @@
   },
   "packages": {
     "@agent-workflows/capabilities": ["@agent-workflows/capabilities@workspace:packages/capabilities"],
+
+    "@agent-workflows/cli": ["@agent-workflows/cli@workspace:packages/cli"],
 
     "@agent-workflows/limits": ["@agent-workflows/limits@workspace:packages/limits"],
 
