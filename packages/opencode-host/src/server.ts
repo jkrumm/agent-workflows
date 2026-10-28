@@ -314,8 +314,18 @@ export class OpenCodeServer {
     const info = await this.client()
       .info({ timeoutMs: this.opts.livenessTimeoutMs })
       .catch(() => null)
-    if (!info) return false
     const recorded = this.persisted?.pid
+    if (!info) {
+      // Nothing answers. A child we spawned that never finished booting may still hold the port: recognised by the
+      // recorded pid AND its own command line (pid reuse), it is terminated before a new spawn.
+      if (recorded !== undefined && isOurServer(recorded, this.persisted?.port as number)) {
+        this.logger.warn('opencode server from server.json is alive but not answering; terminating it', {
+          pid: recorded,
+        })
+        await this.terminate(adoptedProc(recorded))
+      }
+      return false
+    }
     // The pid comes from server.json, written when this supervisor spawned the child; an HTTP answer alone is never
     // a reason to signal a process.
     if (recorded === undefined || info.pid !== recorded) {
@@ -372,6 +382,9 @@ export class OpenCodeServer {
       waitExit: (ms) => Promise.race([exited.then(() => true), Bun.sleep(ms).then(() => false)]),
     }
     this.proc = proc
+    // Recorded at once, so a child that never boots is still known as ours to the next start.
+    persisted.pid = proc.pid
+    this.writeState(persisted)
     let booted = false
     void exited.then(() => {
       if (!booted || this.closed || this.proc !== proc || this.restarting) return
@@ -383,8 +396,6 @@ export class OpenCodeServer {
       // Only an answer from the child we spawned counts: another process on the port is not our server.
       if ((await this.probe(proc.pid)) && proc.alive()) {
         booted = true
-        persisted.pid = proc.pid
-        this.writeState(persisted)
         return
       }
       await Bun.sleep(100)
@@ -444,6 +455,14 @@ function signal(pid: number, sig: NodeJS.Signals): void {
   } catch {
     // already gone
   }
+}
+
+/** The process is alive and is an `opencode serve` on our port (its command line, via `ps`). */
+function isOurServer(pid: number, port: number): boolean {
+  const ps = Bun.spawnSync(['ps', '-o', 'command=', '-p', String(pid)])
+  if (ps.exitCode !== 0) return false
+  const command = ps.stdout.toString()
+  return command.includes(' serve ') && command.includes(`--port ${port}`)
 }
 
 function adoptedProc(pid: number): Proc {

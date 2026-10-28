@@ -24,7 +24,7 @@ A step picks the route with `options.route` (else the agent's `route`) and asks 
 
 | Call | Does |
 |-|-|
-| `open(spec)` | Compiles the agent's location (idempotent), warms it, creates the session with the route's model (effort as a variant), the agent's permissions, title `agw <runId>:<stepId>` and `metadata.agw` (key, agent, route, location hash). The session id is derived from `spec.key` (`ses_agw<sha256(key, generation)>`): a re-open after a crash between create and journal finds the same unprompted session; a retry whose earlier session still runs (or holds input) re-attaches to it, because its wait failed while the turn went on and a sibling session would run the same task on the same files; only a retry after a turn that ended gets the next generation |
+| `open(spec)` | Compiles the agent's location (idempotent), warms it, creates the session with the route's model (effort as a variant), the agent's permissions, title `agw <runId>:<stepId>` and `metadata.agw` (key, agent, route, location hash). The session id is derived from `spec.key` (`ses_agw<sha256(key, generation)>`): a re-open after a crash between create and journal finds the same unprompted session; a retry whose earlier session still runs (or holds input) re-attaches to it, because its wait failed while the turn went on and a sibling session would run the same task on the same files; only a retry after a turn that ended gets the next generation. The directory the session lives in (an older hash directory on a re-attach) is pinned from `open` until its `wait` takes the use over (a pin nobody claims lapses after 30 min), and its marker is renewed |
 | `prompt(handle, text)` | Reads the session's messages and inbox; sends only when the prompt is not there. The prompt carries a deterministic id (`msg_agwp_…`) and `metadata.agw.kind = 'prompt'`, so the check is exact, and the server dedupes a second post of the same id as well |
 | `wait(handle, opts)` | Polls the session (`pollIntervalMs`, 1 s): `onProgress` on every new or grown message or part, and while a running shell tool prints; `onTool` `pre` when a tool part first appears, `post` when it completes or fails (recorded per `wait` call: a second wait reports again, at least once). Returns at the session's `idle` with the final assistant text (or its JSON) and `usage` |
 | `steer(handle, text, { signalId })` | Appends a user message with `delivery: steer`, id keyed by the runtime's signal row: a re-delivered row is a no-op, two identical steers stay two. Without a `signalId`, a nonce per call (never the text alone). History is never rewritten |
@@ -56,7 +56,8 @@ denied, so an unattended session never blocks on an `ask`.
   (`OPENCODE_VERSION`, `2.0.32`; another version is refused) **and** the same launch fingerprint (sha256 of command
   and env, config included). A drifted server (new routes, rates, key or binary) is restarted, logged.
 - **Pid trust.** The only pid the supervisor signals or adopts is the child it spawned, recorded in `server.json`
-  after boot. A boot counts only when `/api/info` answers with that child's pid while the child is alive; liveness
+  right after the spawn. A recorded child that is alive (its `ps` command line is `serve … --port <port>`) but does
+  not answer is terminated before a new spawn. A boot counts only when `/api/info` answers with that child's pid while the child is alive; liveness
   checks the same. A server on the port whose pid is not the recorded one is neither adopted nor signalled: `start()`
   fails naming the file. An HTTP answer alone is never a reason to signal a process.
 - **`server.json`** that does not parse fails `start()` with its path ("remove it to start a fresh server"),
@@ -98,7 +99,8 @@ one, not known to the warm cache, not the location of a session the server runs 
 unused for `retentionMs` (24 h; the marker's mtime is touched on every open). The retention covers what the host
 cannot see: a session that will be re-attached after a crash, and a second host process on the same state dir
 during a deploy. The same pass sweeps leftovers of crashed writes older than 10 minutes: `locations/<name>/.tmp-*`
-builds and `opencode/server.json.tmp-*`.
+builds and `opencode/server.json.tmp-*`. Only directories are walked (a `.DS_Store` is ignored). When a running
+session's lookup fails, pruning is skipped for that tick: its directory is unknown.
 
 **Warm and evict** (`WarmCache`):
 

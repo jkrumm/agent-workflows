@@ -138,9 +138,9 @@ export function pruneLocations(options: {
   const now = options.now ?? Date.now()
   const removed: string[] = []
   if (!existsSync(root)) return removed
-  for (const name of readdirSync(root)) {
+  for (const name of subdirectories(root)) {
     const parent = join(root, name)
-    for (const entry of readdirSync(parent)) {
+    for (const entry of subdirectories(parent)) {
       const directory = join(parent, entry)
       if (!HASH_DIR.test(entry) || options.keep.has(directory)) continue
       let used: number
@@ -167,9 +167,9 @@ export function sweepStaleTemps(options: { stateDir?: string; maxAgeMs?: number;
   const candidates: string[] = []
   const locations = join(stateDir, 'locations')
   if (existsSync(locations)) {
-    for (const name of readdirSync(locations)) {
+    for (const name of subdirectories(locations)) {
       const parent = join(locations, name)
-      for (const entry of readdirSync(parent)) if (entry.startsWith('.tmp-')) candidates.push(join(parent, entry))
+      for (const entry of subdirectories(parent)) if (entry.startsWith('.tmp-')) candidates.push(join(parent, entry))
     }
   }
   const server = join(stateDir, 'opencode')
@@ -190,6 +190,13 @@ export function sweepStaleTemps(options: { stateDir?: string; maxAgeMs?: number;
     removed.push(path)
   }
   return removed
+}
+
+/** Directory entries only: a `.DS_Store` or any stray file is never walked into or removed. */
+function subdirectories(dir: string): string[] {
+  return readdirSync(dir, { withFileTypes: true })
+    .filter((e) => e.isDirectory())
+    .map((e) => e.name)
 }
 
 export type WarmCacheOptions = {
