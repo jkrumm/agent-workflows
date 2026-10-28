@@ -217,7 +217,7 @@ export function createReviewWorkflows(deps: WorkflowDeps, options: ReviewOptions
           )
         : null
 
-    const task = angleTask({ repo, label: p.label, files: p.files, context, diff })
+    const task = angleTask({ repo, label: p.label, files: p.files, context, diff, invokedIn: p.invokedIn })
     const runAngle = async (angle: Angle): Promise<AngleResult> => {
       const spec: AngleSpec = {
         agent: `review-${angle}`,
@@ -256,6 +256,7 @@ export function createReviewWorkflows(deps: WorkflowDeps, options: ReviewOptions
       fallow: renderFallowBlock(p.fallow),
       reactDoctor: renderReactDoctorBlock(await reactDoctor),
       ocr: ocrBlock,
+      invokedIn: p.invokedIn,
     })
 
     // The synthesis answers as text and is parsed here, so a refusal to return JSON keeps the raw text for the salvage.
@@ -277,7 +278,7 @@ export function createReviewWorkflows(deps: WorkflowDeps, options: ReviewOptions
     if (!synthesis.parsed?.success) {
       // The raw text of the last attempt that produced any; a session that died says why only when none did.
       const raw = [synthesis.text, first.text].find((t) => t?.trim()) ?? synthesis.reason ?? first.reason ?? ''
-      return salvagedVerdict(raw, total)
+      return salvagedVerdict(raw, failed, total)
     }
 
     // The outcome is derived from the lists here, never trusted from the model.

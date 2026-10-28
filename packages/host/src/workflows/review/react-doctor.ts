@@ -3,6 +3,7 @@ import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { tail } from './exec.ts'
 import type { Base, ReviewPorts } from './git.ts'
+import { escapeName } from './util.ts'
 
 // react-doctor: a pinned install run by absolute path, advisory, diff-scoped, fed to the synthesis only. Everything
 // below is what agent-gateway measured on 0.9.18 (2026-10-16, server/lib/react-doctor.ts):
@@ -217,7 +218,10 @@ export function renderReactDoctorBlock(result: ReactDoctorRaw): string {
     : ''
   if (outcome.findings.length === 0) return `react-doctor: no findings in the changed code.${note}`
   const shown = outcome.findings.slice(0, MAX_LINES)
-  const lines = shown.map((f) => `${f.severity} ${f.rule} ${f.file}${f.line ? `:${f.line}` : ''} — ${f.title}`)
+  const lines = shown.map(
+    (f) =>
+      `${f.severity} ${escapeName(f.rule)} ${escapeName(f.file)}${f.line ? `:${f.line}` : ''} — ${escapeName(f.title)}`,
+  )
   const more = outcome.findings.length - shown.length
   if (more > 0) lines.push(`+${more} more`)
   return `react-doctor: ${outcome.findings.length} finding(s), ${outcome.errorCount} error(s)${note}\n\`\`\`\n${lines.join('\n')}\n\`\`\``
