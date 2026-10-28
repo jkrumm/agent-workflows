@@ -259,6 +259,7 @@ export async function runOcr(
         stdin: 'ignore',
         stdout: 'pipe',
         stderr: 'pipe',
+        detached: true, // its own process group, so `killTree` reaches the helpers `ocr` starts
       })
     } catch (error) {
       return {

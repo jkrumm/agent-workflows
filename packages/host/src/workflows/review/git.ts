@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync } from 'node:fs'
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import type { Exec } from './exec.ts'
 import { networkEnv, tail } from './exec.ts'
 import { mapLimit } from './util.ts'
@@ -222,6 +222,27 @@ async function changesFor(
   return { diff: text, files: [...new Set(changed)] }
 }
 
+/**
+ * The pathspec git gets for a path scope: relative to the root it runs in, `.` for the root itself (an empty string is
+ * not a pathspec). A relative scope is relative to where the caller stood; an absolute one is checked against the root
+ * (both realpath'd). Null when it is outside the repository. A scope that starts with `:` is git's pathspec magic and
+ * passes through untouched.
+ */
+export function pathspecFor(scope: string, invoked: string, root: string): string | null {
+  if (scope.startsWith(':')) return scope
+  const absolute = isAbsolute(scope) ? scope : resolve(invoked, scope)
+  let real: string
+  try {
+    // The directory is resolved, the last component is not: a tracked symlink is itself the path under review.
+    real = join(realpathSync(dirname(absolute)), basename(absolute))
+  } catch {
+    real = absolute
+  }
+  const rel = relative(root, real)
+  if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) return null
+  return rel === '' ? '.' : rel
+}
+
 const GLOB_OR_CONTROL = /[*?[\]{}\p{Cc}\u2028\u2029]/u
 
 /** The clone root, realpath'd (the agents' grant matches the path as given, so one spelling must be used everywhere). */
@@ -373,7 +394,10 @@ async function cloneForRef(
   expected?: { headOid: string; baseOid: string },
 ): Promise<{ dir: string; headOid: string; baseOid: string } | { error: string }> {
   try {
-    return await cloneForRefUnsafe(ports, cwd, key, ref, expected)
+    const made = await cloneForRefUnsafe(ports, cwd, key, ref, expected)
+    // Every way to fail (a fetch, a ref that moved on, no default branch, a checkout) leaves a half-built clone behind.
+    if ('error' in made) discardClone(ports, key)
+    return made
   } catch (error) {
     discardClone(ports, key)
     return { error: `cloning failed: ${error instanceof Error ? error.message : String(error)}` }
@@ -383,7 +407,7 @@ async function cloneForRef(
 /** Best effort: the clone of this step key, if any exists. */
 function discardClone(ports: ReviewPorts, key: string): void {
   try {
-    rmSync(cloneDirFor(ports, key).dir, { recursive: true, force: true })
+    removeClone(ports, cloneDirFor(ports, key).dir) // through the root guard, never a raw rm
   } catch {
     // the next prepare's sweep takes what is left
   }
@@ -507,10 +531,9 @@ async function prepareChecked(
         : (await git(ports, invoked, ['rev-parse', '--verify', '--quiet', `${scope}^{commit}`])).ok
     kind = kindOf(scope, resolves)
     if (kind === 'path') {
-      // Relative to where the caller stood, passed to git as relative to the root it runs in.
-      pathspec = isAbsolute(scope) ? scope : relative(cwd, resolve(invoked, scope))
-      if (pathspec === '..' || pathspec.startsWith(`..${sep}`))
-        return invalid(`scope "${scope}" is outside the repository`)
+      const spec = pathspecFor(scope, invoked, cwd)
+      if (spec === null) return invalid(`scope "${scope}" is outside the repository`)
+      pathspec = spec
       const matched = await git(ports, cwd, [
         'ls-files',
         '-z',

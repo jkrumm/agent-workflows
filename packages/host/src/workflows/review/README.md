@@ -75,8 +75,10 @@ their own command names for the same reason (`agw review-route`, `agw review-adv
 
 - **Helper environment.** git, fallow and react-doctor run on an allowlist built from `ports.env`: `PATH`, `HOME`,
   `TMPDIR`, `LANG`, `LC_*`, `TERM` and exactly `GIT_CONFIG_GLOBAL`, `GIT_CONFIG_SYSTEM`, `GIT_CONFIG_NOSYSTEM`; nothing
-  else (`GIT_DIR`, askpass, ssh commands, per-command config never pass). `SSH_AUTH_SOCK` and `XDG_CONFIG_HOME` are added
-  to the `fetch` and `ls-remote` calls only, never to a tool that reads the checkout. The API secret and the IU key never
+  else (`GIT_DIR`, askpass, ssh commands, per-command config never pass). `SSH_AUTH_SOCK`, `XDG_CONFIG_HOME`, the proxy
+  variables (`HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY`, both cases), `GIT_SSL_CAINFO` and `SSL_CERT_FILE` are added to the
+  `fetch` and `ls-remote` calls only, never to a tool that reads the checkout. Helpers and `ocr` are spawned `detached`
+  and a timeout or abort signals the whole process group (the check workflow's `killProcessGroup`). The API secret and the IU key never
   reach any helper (`test/review-git.test.ts`). `ocr` gets its own minimal env plus the IU credentials it needs, and is
   killed as a process tree.
 - **One path.** `prepare` resolves `git rev-parse --show-toplevel` and realpaths it; everything after uses that spelling
@@ -87,7 +89,7 @@ their own command names for the same reason (`agw review-route`, `agw review-adv
   (OpenCode follows a link out of an allowed directory, see the opencode-host README). The live `cwd` is not edited: a
   symlink there is an accepted risk.
 - **Scopes.** A scope git resolves as a commit is a ref (`v2.0`); only what it does not resolve is a path, and a path that
-  matches no file is `invalid_input`, never an empty-diff `clean`. A path scope is `git diff HEAD -- <path>` plus the
+  matches no file is `invalid_input`, never an empty-diff `clean`. A path scope (`.` is the whole tree; an absolute one must lie inside the root) is `git diff HEAD -- <path>` plus the
   untracked files under it, like `uncommitted`: a staged or new file is a review.
 - **Prompt data.** Changed file names sit inside a nonce data fence with control characters escaped; the diff likewise.
 - **Siblings.** Every step started beside the pipeline (react-doctor, adversary, OCR, the angle fan-out) is tracked: a

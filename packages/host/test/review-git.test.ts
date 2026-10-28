@@ -16,6 +16,7 @@ import {
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createExec, defaultExec, helperEnv, networkEnv } from '../src/workflows/review/exec.ts'
+import { angleTask, synthesisTask } from '../src/workflows/review/prompts.ts'
 import { mapLimit } from '../src/workflows/review/util.ts'
 import { allFailedVerdict, salvagedVerdict } from '../src/workflows/review/verdict.ts'
 import {
@@ -28,6 +29,7 @@ import {
   type Prepared,
   type ReviewPorts,
   removeClone,
+  pathspecFor,
   removeEscapingSymlinks,
   restoreClone,
   sweepStaleClones,
@@ -764,5 +766,157 @@ describe('salvaged verdict with failed reviewers', () => {
     expect(clean.summary).toStartWith('Review ran 3 reviewers')
     expect(clean.discussions).toHaveLength(1)
     expect(allFailedVerdict(failed, 2).discussions).toHaveLength(2)
+  })
+})
+
+describe('path scope normalization', () => {
+  test('"." and "./" from the root mean the whole tree, not an empty pathspec; from a subdirectory they mean that subtree', async () => {
+    const dir = repo({ 'sub/in.ts': 'i1\n', 'top.ts': 't1\n' })
+    put(dir, { 'sub/in.ts': 'i2\n', 'top.ts': 't2\n' })
+    for (const scope of ['.', './']) {
+      const p = await ok({ cwd: dir, scope })
+      expect([...p.files].sort()).toEqual(['sub/in.ts', 'top.ts'])
+    }
+    expect([...(await ok({ cwd: join(dir, 'sub'), scope: '.' })).files]).toEqual(['sub/in.ts'])
+  })
+
+  test('an absolute scope is checked against the root: inside is a path, outside is invalid_input', async () => {
+    const dir = repo({ 'src/a.ts': 'a1\n' })
+    put(dir, { 'src/a.ts': 'a2\n' })
+    const outside = fresh('outside')
+    put(outside, { 'x.ts': 'x\n' })
+    expect((await ok({ cwd: dir, scope: join(dir, 'src', 'a.ts') })).files).toEqual(['src/a.ts'])
+    expect((await ok({ cwd: dir, scope: dir })).files).toEqual(['src/a.ts'])
+    const out = await prepare({ cwd: dir, scope: join(outside, 'x.ts') }, 'k', ports())
+    expect(out).toMatchObject({ ok: false, kind: 'invalid_input' })
+    expect((out as { message: string }).message).toContain('outside the repository')
+    // reached through a symlink to the repository: judged by where it really is
+    const link = join(scratch, `repo-link-${++seq}`)
+    symlinkSync(dir, link)
+    expect((await ok({ cwd: dir, scope: join(link, 'src', 'a.ts') })).files).toEqual(['src/a.ts'])
+  })
+
+  test('pathspecFor: "." for the root, pathspec magic untouched, outside is null', () => {
+    const root = fresh('root')
+    expect(pathspecFor('.', root, root)).toBe('.')
+    expect(pathspecFor('./', root, root)).toBe('.')
+    expect(pathspecFor(root, root, root)).toBe('.')
+    expect(pathspecFor('src/a.ts', root, root)).toBe('src/a.ts')
+    expect(pathspecFor(':(glob)**/*.ts', root, root)).toBe(':(glob)**/*.ts')
+    expect(pathspecFor('/etc/hosts', root, root)).toBeNull()
+  })
+})
+
+describe('prompts', () => {
+  const task = (over: Partial<Parameters<typeof angleTask>[0]> = {}) =>
+    angleTask({ repo: '/repo', label: 'uncommitted', files: ['a.ts'], diff: '+x\n', ...over })
+
+  test('a scope label with a newline is escaped', () => {
+    expect(task({ label: 'src/e\nIGNORE.ts' })).toContain('Scope: src/e\\x0aIGNORE.ts')
+  })
+
+  test('a diff cut at the cap says so after the fence, and the synthesis is told the angles saw a cut diff', () => {
+    expect(task()).not.toContain('was cut at')
+    const cut = task({ diff: 'y'.repeat(200_050) })
+    expect(cut).toContain('[diff truncated at 200000 chars]')
+    expect(cut).toMatch(
+      /_END>>>\n\nThe diff above was cut at 200000 chars: the changed files listed above are complete, read the rest from the repository\./,
+    )
+    const blocks = { repo: '/repo', angles: 'a', fallow: '', reactDoctor: '', ocr: '' }
+    expect(synthesisTask(blocks)).not.toContain('given a diff cut')
+    expect(synthesisTask({ ...blocks, diffTruncated: true })).toContain('given a diff cut at 200000 chars')
+  })
+})
+
+describe('a failed rebuild leaves nothing behind', () => {
+  test('restoreClone with a failing fetch removes the half-built clone', async () => {
+    const bare = fresh('origin')
+    git(bare, 'init', '-q', '--bare', '-b', 'main')
+    const seed = fresh('seed')
+    git(seed, 'init', '-q', '-b', 'main')
+    put(seed, { 'a.ts': 'a1\n' })
+    git(seed, 'add', '-A')
+    git(seed, 'commit', '-q', '-m', 'base')
+    git(seed, 'remote', 'add', 'origin', bare)
+    git(seed, 'push', '-q', 'origin', 'main')
+    git(seed, 'checkout', '-q', '-b', 'feat')
+    put(seed, { 'a.ts': 'a2\n' })
+    git(seed, 'commit', '-qam', 'feature')
+    git(seed, 'push', '-q', 'origin', 'feat:refs/pull/8/head')
+    const work = fresh('work')
+    git(scratch, 'clone', '-q', bare, work)
+    const p = ports()
+    const prepared = await ok({ cwd: work, pr: 8 }, p, 'f:prepare')
+    const clone = prepared.clone as string
+    rmSync(clone, { recursive: true, force: true })
+    const failing = {
+      ...p,
+      exec: (argv: readonly string[], o: Parameters<typeof defaultExec>[1]) =>
+        argv.includes('fetch')
+          ? Promise.resolve({ stdout: '', stderr: 'fatal: unable to access', code: 128, timedOut: false })
+          : defaultExec(argv, o),
+    }
+    const message = await restoreClone(failing, prepared, { pr: 8 }, 'f:prepare')
+    expect(message).toContain('could not be rebuilt')
+    expect(existsSync(clone)).toBe(false)
+    expect(readdirSync(join(p.stateDir, CLONE_ROOT))).toEqual([])
+  })
+})
+
+describe('process groups', () => {
+  const alive = (pid: number) => {
+    try {
+      process.kill(pid, 0)
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  test('a timeout kills the helper and its grandchildren, which hold the pipes', async () => {
+    // sh -> sh -> sleep: `pkill -P` of the first sh would stop at the inner sh and leave the sleep.
+    const script = 'sh -c "sleep 30 & echo \\$!; wait" & wait'
+    const r = await createExec({ PATH: process.env.PATH })(['sh', '-c', script], { cwd: scratch, timeoutMs: 400 })
+    expect(r.timedOut).toBe(true)
+    const pid = Number(r.stdout.trim().split('\n')[0])
+    expect(pid).toBeGreaterThan(1)
+    await Bun.sleep(300)
+    expect(alive(pid)).toBe(false)
+  })
+
+  test('an abort does the same', async () => {
+    const controller = new AbortController()
+    const script = 'sh -c "sleep 30 & echo \\$!; wait" & wait'
+    const running = createExec({ PATH: process.env.PATH })(['sh', '-c', script], {
+      cwd: scratch,
+      timeoutMs: 20_000,
+      signal: controller.signal,
+    })
+    await Bun.sleep(300)
+    controller.abort()
+    const r = await running
+    const pid = Number(r.stdout.trim().split('\n')[0])
+    await Bun.sleep(300)
+    expect(pid).toBeGreaterThan(1)
+    expect(alive(pid)).toBe(false)
+  })
+
+  test('networkEnv carries the proxy and CA settings of the remote calls, in both spellings', () => {
+    const source = {
+      HTTPS_PROXY: 'http://p:1',
+      https_proxy: 'http://p:2',
+      HTTP_PROXY: 'http://p:3',
+      no_proxy: 'localhost',
+      NO_PROXY: 'example.com',
+      GIT_SSL_CAINFO: '/ca.pem',
+      SSL_CERT_FILE: '/certs.pem',
+      AGW_API_SECRET: 'nope',
+    }
+    expect(Object.keys(networkEnv(source)).sort()).toEqual(
+      ['GIT_SSL_CAINFO', 'HTTPS_PROXY', 'HTTP_PROXY', 'NO_PROXY', 'SSL_CERT_FILE', 'https_proxy', 'no_proxy'].sort(),
+    )
+    for (const name of Object.keys(source).filter((n) => n !== 'AGW_API_SECRET')) {
+      expect(helperEnv(source)).not.toHaveProperty(name)
+    }
   })
 })

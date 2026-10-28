@@ -1,4 +1,4 @@
-import { parseJsonLoose } from '@agent-workflows/capabilities'
+import { capDiff, parseJsonLoose } from '@agent-workflows/capabilities'
 import { DEFAULT_STATE_DIR } from '@agent-workflows/opencode-host'
 import { type AgentSpec, type Ctx, defineWorkflow, StepFailed, WorkflowError } from '@agent-workflows/runtime'
 import type { HostWorkflow } from '../../operations.ts'
@@ -257,6 +257,7 @@ export function createReviewWorkflows(deps: WorkflowDeps, options: ReviewOptions
       reactDoctor: renderReactDoctorBlock(await reactDoctor),
       ocr: ocrBlock,
       invokedIn: p.invokedIn,
+      diffTruncated: capDiff(diff).truncatedChars > 0,
     })
 
     // The synthesis answers as text and is parsed here, so a refusal to return JSON keeps the raw text for the salvage.

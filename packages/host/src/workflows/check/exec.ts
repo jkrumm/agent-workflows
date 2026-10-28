@@ -125,6 +125,18 @@ function reapRecordedGroup(file: string): void {
  * (`commandEnv`). The group is killed on idle, wall time or abort, so a recipe's backgrounded child cannot outlive
  * the step; a clean exit is not followed by a kill. A group a crashed host left behind is killed at the next start.
  */
+/**
+ * Signals a whole process group (`-pgid`): a process spawned `detached` leads its own group, so its helpers and theirs
+ * go with it. A group that is already gone is not an error. The review's helpers use the same kill.
+ */
+export function killProcessGroup(pgid: number, code: 'SIGTERM' | 'SIGKILL'): void {
+  try {
+    process.kill(-pgid, code)
+  } catch {
+    // the group is already gone
+  }
+}
+
 export function createBunExec(options: { env?: Record<string, string | undefined> } = {}): Exec {
   return {
     which: (command) => Bun.which(command),
@@ -161,13 +173,7 @@ async function runCommand(request: ExecRequest, env: Record<string, string | und
     }
   }
 
-  const killGroup = (code: 'SIGTERM' | 'SIGKILL') => {
-    try {
-      process.kill(-proc.pid, code)
-    } catch {
-      // the group is already gone
-    }
-  }
+  const killGroup = (code: 'SIGTERM' | 'SIGKILL') => killProcessGroup(proc.pid, code)
   const state = { idleKilled: false, timedOut: false, aborted: false }
   const stopped = () => state.idleKilled || state.timedOut || state.aborted
   let escalation: ReturnType<typeof setTimeout> | undefined

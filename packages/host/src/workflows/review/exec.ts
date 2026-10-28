@@ -1,3 +1,5 @@
+import { killProcessGroup } from '../check/exec.ts'
+
 /** One finished helper process. `code` is null when it never started, was killed, or timed out. */
 export type ExecResult = { stdout: string; stderr: string; code: number | null; timedOut: boolean }
 
@@ -35,12 +37,21 @@ export function helperEnv(source: Env): Record<string, string> {
 
 /**
  * Added to the calls that talk to the remote (`fetch`, `ls-remote`) and to no other: the agent socket and the config
- * directory that carry the host's git credentials. Deliberate: a helper that only reads a checkout never needs them, and
+ * directory that carry the host's git credentials, and the proxy and CA settings that reach it. Deliberate: a helper that only reads a checkout never needs them, and
  * a clone's tools (fallow, react-doctor) must not hold them.
  */
+const NETWORK_VARS = [
+  'SSH_AUTH_SOCK',
+  'XDG_CONFIG_HOME',
+  // How the remote is reached and trusted: a proxy, a CA bundle.
+  ...['HTTPS_PROXY', 'HTTP_PROXY', 'NO_PROXY'].flatMap((name) => [name, name.toLowerCase()]),
+  'GIT_SSL_CAINFO',
+  'SSL_CERT_FILE',
+]
+
 export function networkEnv(source: Env): Record<string, string> {
   const out: Record<string, string> = {}
-  for (const name of ['SSH_AUTH_SOCK', 'XDG_CONFIG_HOME']) {
+  for (const name of NETWORK_VARS) {
     const value = source[name]
     if (value) out[name] = value
   }
@@ -50,13 +61,12 @@ export function networkEnv(source: Env): Record<string, string> {
 const TERM_GRACE_MS = 5_000
 const DEADLINE_GRACE_MS = 10_000
 
-/** Signals go to the helper's children too: killing only the parent leaves a hung grandchild holding the pipes. */
+/**
+ * Signals the helper's whole process group. Helpers are spawned `detached`, so each leads a group of its own and a
+ * grandchild holding the pipes goes with it (`pkill -P` reaches direct children only). The same kill the check workflow uses.
+ */
 export function killTree(proc: Bun.Subprocess, signal: 'TERM' | 'KILL') {
-  try {
-    Bun.spawnSync(['pkill', `-${signal}`, '-P', String(proc.pid)])
-  } catch {
-    // pkill missing: the parent kill below still ends the common case
-  }
+  killProcessGroup(proc.pid, signal === 'TERM' ? 'SIGTERM' : 'SIGKILL')
   if (proc.exitCode === null) proc.kill(signal === 'TERM' ? 'SIGTERM' : 'SIGKILL')
 }
 
@@ -73,6 +83,7 @@ export const createExec =
         stdin: 'ignore',
         stdout: 'pipe',
         stderr: 'pipe',
+        detached: true, // its own process group: a timeout or abort signals the group, grandchildren included
       })
     } catch (error) {
       return failed(error instanceof Error ? error.message : String(error))
@@ -107,6 +118,8 @@ export const createExec =
     } finally {
       for (const timer of timers) clearTimeout(timer)
       options.signal?.removeEventListener('abort', onAbort)
+      // Only when something cut the run short: after a clean exit the group id may already belong to someone else.
+      if (timedOut || options.signal?.aborted) killTree(proc, 'KILL')
     }
   }
 
