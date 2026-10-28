@@ -43,11 +43,16 @@ removed option such as `repoShell`) fails the step before a session exists, so a
 silently absent. Server-wide the same `basePolicy` (catch-all deny, then the four read-only allows) is the backstop,
 followed by `question` and `external_directory` denied, so an unattended session never blocks on an `ask` and a session
 made without rules, or by anything but the host, is not allow-all. **A session from before a deploy.** A session keeps the rules it was created with, and `createSession` with an existing id
-returns that session unchanged (measured). So `open` patches the current policy onto a session it found already there
-(a retry re-attaching to a running attempt, a crash between create and prompt) and a fallback session always, with
-`PATCH /api/session/{id}`; a fresh session is never patched. A deploy restarts the server, so the backstop above applies to
-those sessions at once anyway; the patch makes their own rules current too. Remaining window: none for a session the
-host opens or re-attaches; a session that is never opened again keeps its stored rules under the server backstop.
+returns that session unchanged (measured). So the host reads the stored rules and, only when they differ from the
+current policy, patches the current ones on with `PATCH /api/session/{id}`: in `open` for a session it found already
+there (a retry re-attaching to an attempt, a crash between create and prompt), for a fallback session it opens, and in
+`followUp` (`ctx.continue`) for the session, or the fallback session, it continues. A session created with the current
+policy, or one re-attached within one release, is read once and never written. A failed patch fails the call (the
+warm-location pin is released) rather than proceeding on the old rules. The patch is measured **between turns** only:
+one onto a session mid-turn (a re-attach to a running attempt of an older release) is unmeasured. What covers those
+sessions is the server backstop above: a deploy restarts the server with `basePolicy` in its config, so every session
+that predates the deploy runs under the catch-all deny at once, whether or not it was patched. A `wait` on a follow-up
+handle persisted before a deploy does not patch; it relies on the same backstop.
 
 A subagent runs under its own permissions (OpenCode's built-in `general` allows shell and edit),
 which is why `subagent` is off unless an agent opts in; so is `execute` (Code Mode).

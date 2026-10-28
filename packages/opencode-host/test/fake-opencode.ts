@@ -81,6 +81,7 @@ export function startFake(options: FakeOptions) {
   const urls: string[] = []
   let hung = false
   let failSessionGet = false
+  let failPatch = false
   const failInterrupt = new Set<string>()
   const turnMs = options.defaultTurnMs ?? 50
 
@@ -308,6 +309,7 @@ export function startFake(options: FakeOptions) {
         })
       }
       if (tail === '' && req.method === 'PATCH') {
+        if (failPatch) return json({ message: 'boom' }, 500)
         if (body.permissions !== undefined) s.permissions = body.permissions as unknown[]
         s.permissionUpdates = (s.permissionUpdates ?? 0) + 1
         save()
@@ -427,6 +429,10 @@ export function startFake(options: FakeOptions) {
     /** `GET /api/session/:id` answers 500 while set. */
     failSessionLookups(on: boolean) {
       failSessionGet = on
+    },
+    /** `PATCH /api/session/:id` answers 500 while set. */
+    failSessionPatches(on: boolean) {
+      failPatch = on
     },
     /** `POST /api/session/:id/interrupt` answers 500 for this session. */
     failInterruptFor(sessionId: string) {
