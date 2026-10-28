@@ -426,7 +426,9 @@ async function replayCase(deps: ReplayDeps, job: Job, c: EvalCase, started: Set<
     rmSync(dir, { recursive: true, force: true }) // a tree left by a drive that died before its run started
     mkdirSync(dir, { recursive: true })
     writeFileSync(join(dir, CASE_MARKER), JSON.stringify({ workflow: target.id, key }))
-    const tree = await materialize(c.tree, { exec: deps.exec, home: deps.home, tmpRoot: dir, setup: c.setup })
+    const tree = c.tree
+      ? await materialize(c.tree, { exec: deps.exec, home: deps.home, tmpRoot: dir, setup: c.setup })
+      : ({ ok: true, dir } as const)
     if (!tree.ok) return { caseId: c.id, status: 'skipped', reason: `${tree.reason}: ${tree.detail}` }
     // A cancel during the clone: start nothing.
     job.signal.throwIfAborted()

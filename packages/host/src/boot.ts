@@ -10,7 +10,7 @@ import {
 } from '@agent-workflows/middleware'
 import { basePolicyDigest, OpenCodeHost, OpenCodeServer } from '@agent-workflows/opencode-host'
 import { validateOverrides } from '@agent-workflows/routes'
-import { type AgentHost, type Json, Runtime } from '@agent-workflows/runtime'
+import { type AgentHost, type JudgeCaller, type Json, Runtime } from '@agent-workflows/runtime'
 import { resolve } from 'node:path'
 import { Pool } from 'pg'
 import { loadAgentDefinitions } from './agents.ts'
@@ -36,6 +36,14 @@ import { createWorkflows, fingerprintWorkflows } from './workflows/index.ts'
 
 const FLUSH_INTERVAL_MS = 30_000
 const SHUTDOWN_GRACE_MS = 5000
+
+/** A scorer's judge (`RuntimeOptions.judge`): any capability of the registry by id, its usage on the scoring step. */
+export function registryJudge(registry: {
+  call(id: never, input: never, options: never): Promise<unknown>
+}): JudgeCaller {
+  const call = registry.call.bind(registry) as unknown as (id: string, input: Json, options: object) => Promise<Json>
+  return (capability, input, scope) => call(capability, input, { addUsage: scope.addUsage, signal: scope.signal })
+}
 
 export interface RunningHost {
   port: number
@@ -261,6 +269,9 @@ export async function boot(config: HostConfig, options: BootOptions = {}): Promi
       // Active learned facts follow the task message, never AGENTS.md, whose prefix stays cacheable.
       agentPrompt: async ({ agent, prompt }) => withLearnedFacts(prompt, await learnings.activeFor(agent)),
       middleware: [...platform.middleware, wallet, cap],
+      // A scorer's judged sub-scores (research: `web.fetch` + `decide`, `web.package`) call the host's capabilities;
+      // regression and drift only, their spend on the scoring step. Review and check never judge.
+      judge: registryJudge(registry),
     })
     closers.push(() => runtime.close())
     // Eval runs reach the runtime before it opens (recovery may resume one); drift scores sampled production runs.

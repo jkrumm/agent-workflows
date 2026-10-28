@@ -1,16 +1,19 @@
-import { CheckCase, casesPath, type MaterializeInput, ReviewCase, readCases } from '@agent-workflows/eval'
+import { CheckCase, casesPath, type MaterializeInput, PlainCase, ReviewCase, readCases } from '@agent-workflows/eval'
 import type { Json } from '@agent-workflows/runtime'
 import { checkReference } from '../check/scorer.ts'
 import { reviewReference } from '../review/scorer.ts'
 
 /** The workflows `agw eval run|compare` know: a recorded case set (`$AGW_EVAL_DIR/<workflow>/cases.jsonl`) and a scorer. */
-export const SUITE_IDS = ['review', 'check'] as const
+export const SUITE_IDS = ['review', 'check', 'research'] as const
+/** Suites whose cases need no tree: `PlainCase` lines, run as recorded. */
+const PLAIN_SUITES: readonly SuiteId[] = ['research']
 export type SuiteId = (typeof SUITE_IDS)[number]
 
 /** One recorded case, ready to replay: the tree to materialize, the workflow input on it, the expected result. */
 export interface EvalCase {
   id: string
-  tree: MaterializeInput
+  /** Null: the case runs on no tree (a `PlainCase`); its `input` gets no directory. */
+  tree: MaterializeInput | null
   /** The repo's own setup (`bun install`) before the run: check needs it, review reads the diff only. */
   setup: boolean
   /** The workflow input on the materialized tree; `args` (the arm's extra input) win over the recorded input. */
@@ -27,6 +30,15 @@ const defined = <T extends Record<string, unknown>>(value: T) =>
  */
 export function readSuite(workflow: SuiteId, env: Record<string, string | undefined>): EvalCase[] {
   const path = casesPath(workflow, env)
+  if (PLAIN_SUITES.includes(workflow)) {
+    return readCases(path, PlainCase).map((c) => ({
+      id: c.id,
+      tree: null,
+      setup: false,
+      input: (_dir, args) => ({ ...(c.input as Record<string, Json>), ...args }),
+      reference: c.reference,
+    }))
+  }
   if (workflow === 'review') {
     return readCases(path, ReviewCase).map((c) => ({
       id: c.id,
