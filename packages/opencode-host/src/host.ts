@@ -73,6 +73,8 @@ export type OpenCodeHostOptions = {
   /** Route resolution (`AGW_ROUTES`). Default `process.env`. */
   env?: Env
   requestTimeoutMs?: number
+  /** A pin taken at `open` and never claimed by a `wait` lapses after this long. Default 30 min. */
+  pinTtlMs?: number
   logger?: Logger
 }
 
@@ -98,6 +100,8 @@ const LONG_PROMPT_TOKENS = 100_000
 const MAX_GENERATIONS = 100
 /** A pin taken at `open` and never claimed by a `wait` (the step aborted in between) lapses after this long. */
 const PIN_TTL_MS = 30 * 60_000
+
+type Pin = { release: () => void; lapse: ReturnType<typeof setTimeout> }
 
 const RESUME_TEXT =
   'The previous turn was cut off when the agent server restarted before it finished. Continue the task from ' +
@@ -163,7 +167,7 @@ export class OpenCodeHost implements AgentHost {
   /** Hash directory per agent compiled by this process: always kept by pruning. */
   private readonly current = new Map<string, string>()
   /** The location use `open` took for a session, handed to its `wait`: no eviction gap between the two. */
-  private readonly pins = new Map<string, () => void>()
+  private readonly pins = new Map<string, Pin>()
 
   constructor(private readonly options: OpenCodeHostOptions) {
     this.client = createClient(() => options.server.endpoint(), { requestTimeoutMs: options.requestTimeoutMs })
@@ -218,7 +222,7 @@ export class OpenCodeHost implements AgentHost {
 
   close(): void {
     clearInterval(this.timer)
-    for (const release of [...this.pins.values()]) release()
+    for (const pin of [...this.pins.values()]) pin.release()
   }
 
   async open(spec: AgentOpenSpec): Promise<Json> {
@@ -438,26 +442,29 @@ export class OpenCodeHost implements AgentHost {
   }
 
   private pin(sessionId: string, release: () => void): void {
-    this.pins.get(sessionId)?.()
+    this.pins.get(sessionId)?.release()
     let done = false
-    const once = () => {
-      if (done) return
-      done = true
-      clearTimeout(lapse)
-      if (this.pins.get(sessionId) === once) this.pins.delete(sessionId)
-      release()
+    const pin: Pin = {
+      release: () => {
+        if (done) return
+        done = true
+        clearTimeout(pin.lapse)
+        if (this.pins.get(sessionId) === pin) this.pins.delete(sessionId)
+        release()
+      },
+      lapse: setTimeout(() => pin.release(), this.options.pinTtlMs ?? PIN_TTL_MS),
     }
-    const lapse = setTimeout(once, PIN_TTL_MS)
-    lapse.unref?.()
-    this.pins.set(sessionId, once)
+    pin.lapse.unref?.()
+    this.pins.set(sessionId, pin)
   }
 
-  /** Takes over the pin `open` left for this session; the caller releases it. */
+  /** Takes over the pin `open` left for this session, cancelling its lapse: the caller alone releases it now. */
   private claimPin(sessionId: string): (() => void) | null {
-    const pinned = this.pins.get(sessionId)
-    if (!pinned) return null
+    const pin = this.pins.get(sessionId)
+    if (!pin) return null
     this.pins.delete(sessionId)
-    return pinned
+    clearTimeout(pin.lapse)
+    return pin.release
   }
 
   /** One synthetic note per cut-off point (its id is keyed by the last message), appended, never a rewrite. */

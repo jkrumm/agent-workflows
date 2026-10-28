@@ -34,8 +34,9 @@ function setup(options: { env?: Record<string, string>; turnMs?: number; agents?
     ready: async () => {},
   }
   const warnings: string[] = []
-  const makeHost = (agents = options.agents ?? [AGENT], locations: Record<string, number> = {}) =>
+  const makeHost = (agents = options.agents ?? [AGENT], locations: Record<string, number> = {}, pinTtlMs?: number) =>
     new OpenCodeHost({
+      ...(pinTtlMs === undefined ? {} : { pinTtlMs }),
       logger: { warn: (m) => warnings.push(m), error: (m) => warnings.push(m) },
       server,
       agents,
@@ -446,6 +447,24 @@ describe('locations', () => {
     expect((await edited.wait(retry, waitOptions())).output).toBe('echo: [tool:read] the task')
     await edited.maintain()
     expect(deletesOf(first.directory)).toBe(1) // released by the wait, then evicted like any idle location
+  })
+
+  test('a claimed pin outlives its lapse: the location stays in use until the wait releases it', async () => {
+    const t = setup({ turnMs: 400 })
+    const host = t.makeHost(undefined, {}, 50) // the lapse fires 50 ms after open
+    cleanups.push(() => host.close())
+    const handle = (await host.open(spec('x'))) as OpenCodeHandle
+    await host.prompt(handle, 'x')
+    const deletes = () => t.fake.count('DELETE /api/debug/location')
+    const before = deletes()
+    const waiting = host.wait(handle, waitOptions()) // claims the pin
+    await Bun.sleep(150) // past the lapse, turn still running
+    await host.maintain() // evictAfterMs is 0: only the wait's use keeps it
+    expect(deletes()).toBe(before)
+    expect(host.warmLocations()).toEqual([handle.directory])
+    await waiting
+    await host.maintain()
+    expect(deletes()).toBe(before + 1)
   })
 
   test('a failed session lookup skips the prune for that tick', async () => {
