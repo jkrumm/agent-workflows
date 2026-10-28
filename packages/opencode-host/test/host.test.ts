@@ -224,6 +224,50 @@ describe('open / prompt / wait', () => {
   })
 })
 
+describe('allowDirectories', () => {
+  const perms = (t: ReturnType<typeof setup>, handle: Json) =>
+    (t.fake.state.sessions[sid(handle)] as { permissions?: unknown }).permissions
+
+  test('a step opens its directories for reads: external_directory allow rules after the host and agent rules', async () => {
+    const t = setup({
+      agents: [
+        {
+          name: 'tester',
+          agentsMd: '# t\n',
+          route: 'check',
+          permissions: { rules: [{ action: 'edit', resource: '*', effect: 'deny' }] },
+        },
+      ],
+    })
+    const handle = await t.host.open(spec('x', { allowDirectories: ['/work/repo', '/work/clone/'] }))
+    expect(perms(t, handle)).toEqual([
+      { action: 'shell', resource: '*', effect: 'deny' },
+      { action: 'edit', resource: '*', effect: 'deny' },
+      { action: 'external_directory', resource: '/work/repo/*', effect: 'allow' },
+      { action: 'external_directory', resource: '/work/clone/*', effect: 'allow' },
+    ])
+  })
+
+  test('without the option the session gets no external_directory rule', async () => {
+    const t = setup()
+    const handle = await t.host.open(spec('x', { route: 'check' }))
+    expect(perms(t, handle)).toEqual([{ action: 'shell', resource: '*', effect: 'deny' }])
+  })
+
+  test.each([
+    ['a relative path', ['repo']],
+    ['the root', ['/']],
+    ['a wildcard', ['/work/*']],
+    ['a parent hop', ['/work/../etc']],
+    ['a non-string', [1]],
+    ['a non-array', '/work'],
+  ])('%s is refused before any session is created', async (_name, bad) => {
+    const t = setup()
+    expect(await failure(t.host.open(spec('x', { allowDirectories: bad as Json })))).toContain('allowDirectories')
+    expect(Object.keys(t.fake.state.sessions)).toEqual([])
+  })
+})
+
 describe('wait reads', () => {
   test('a prompt still in the inbox is running, not unprompted', async () => {
     const t = setup()
