@@ -55,9 +55,10 @@ function fixtureHome() {
   git(repo, ['init', '-q', '-b', 'master'])
   const first = commit(repo, 'a.ts', 'export const a = 1\n', SEC - 7200, 'first')
   const second = commit(repo, 'a.ts', 'export const a = 2\n', SEC - 1800, 'second')
-  git(repo, ['checkout', '-q', '-b', 'feature'])
+  // Checkouts are dated like the commits around them, so HEAD's reflog tells the same story as the commit dates.
+  git(repo, ['checkout', '-q', '-b', 'feature'], `${SEC - 900} +0000`)
   const feature = commit(repo, 'b.ts', 'export const b = 1\n', SEC - 600, 'feature')
-  git(repo, ['checkout', '-q', 'master'])
+  git(repo, ['checkout', '-q', 'master'], `${SEC - 500} +0000`)
   git(repo, ['update-ref', 'refs/pull/7/head', feature])
   return { home, repo, first, second, feature }
 }
@@ -122,7 +123,8 @@ const NEEDS_HUMAN = {
 }
 
 function fixtureSources() {
-  const { home, feature } = fixtureHome()
+  const fixture = fixtureHome()
+  const { home } = fixture
   const share = mkdtempSync(join(tmpdir(), 'agw-extract-share-'))
   const jobsDb = join(share, 'jobs.db')
   const corpus = join(share, 'corpus.jsonl')
@@ -131,27 +133,39 @@ function fixtureSources() {
   const worktree = join(home, 'SourceRoot', 'fixture', '.claude', 'worktrees', 'w1')
   const other = join(home, 'Elsewhere', 'thing')
   const sources: Sources = { home, jobsDb, corpus, usageDir }
-  return { home, feature, worktree, other, sources }
+  return { ...fixture, worktree, other, sources }
 }
 
 describe('repoOf', () => {
   const home = '/home/u'
 
   test('relativises SourceRoot and IuRoot repos', () => {
-    expect(repoOf('/home/u/SourceRoot/dotfiles', home)).toEqual({ value: 'SourceRoot/dotfiles' })
-    expect(repoOf('/home/u/IuRoot/prometheus-epx/', home)).toEqual({ value: 'IuRoot/prometheus-epx' })
+    expect(repoOf('/home/u/SourceRoot/dotfiles', home)).toEqual({
+      value: { repo: 'SourceRoot/dotfiles', nested: false },
+    })
+    expect(repoOf('/home/u/IuRoot/prometheus-epx/', home)).toEqual({
+      value: { repo: 'IuRoot/prometheus-epx', nested: false },
+    })
   })
 
   test('maps a worktree path to its repo', () => {
     expect(repoOf('/home/u/SourceRoot/agent-workflows/.claude/worktrees/w4-eval', home)).toEqual({
-      value: 'SourceRoot/agent-workflows',
+      value: { repo: 'SourceRoot/agent-workflows', nested: false },
     })
   })
 
-  test('skips paths outside home, outside the two roots, and subdirectories', () => {
+  test('marks a subdirectory of a repo (or of its worktree) as nested, for git to verify', () => {
+    expect(repoOf('/home/u/SourceRoot/dotfiles/packages/x', home)).toEqual({
+      value: { repo: 'SourceRoot/dotfiles', nested: true },
+    })
+    expect(repoOf('/home/u/SourceRoot/dotfiles/.claude/worktrees/w1/packages', home)).toEqual({
+      value: { repo: 'SourceRoot/dotfiles', nested: true },
+    })
+  })
+
+  test('skips paths outside home and outside the two roots', () => {
     expect(repoOf('/opt/x', home)).toEqual({ skip: 'repo-outside-home' })
     expect(repoOf('/home/u/Elsewhere/x', home)).toEqual({ skip: 'repo-unmapped' })
-    expect(repoOf('/home/u/SourceRoot/dotfiles/packages/x', home)).toEqual({ skip: 'repo-unmapped' })
   })
 })
 
@@ -261,12 +275,12 @@ describe('cost and wall time', () => {
 
 describe('extractAll', () => {
   test('maps, skips with reasons, dedupes against the corpus, and reads the sibling cost rows', () => {
-    const { home, feature, worktree, other, sources } = fixtureSources()
-    const repo = join(home, 'SourceRoot', 'fixture')
-    const headOf = (ref: string) => git(repo, ['rev-parse', ref])
-    const head = headOf('HEAD')
-    const parent = headOf('HEAD~1')
-    const master = headOf('master')
+    const { home, repo, first, second, feature, worktree, other, sources } = fixtureSources()
+    // A commit after the job time: every ref must still resolve to what it was when the job ran.
+    commit(repo, 'a.ts', 'export const a = 3\n', SEC + 3600, 'after the job')
+    mkdirSync(join(repo, 'sub'))
+    // A folder under a root that is not a checkout: nothing to verify the cwd against.
+    mkdirSync(join(home, 'IuRoot', 'plain', 'x'), { recursive: true })
 
     writeJobsDb(sources.jobsDb, [
       // PR job: worktree cwd maps to the repo; diff rebuilt from refs/pull/7/head; cost gets an IU row.
@@ -296,9 +310,23 @@ describe('extractAll', () => {
         startedMs: T + 3_600_000,
         finishedMs: T + 3_660_000,
       },
+      {
+        id: 'subdir-job',
+        tool: 'review',
+        params: { cwd: join(repo, 'sub'), scope: 'HEAD~1' },
+        result: CLEAN,
+        startedMs: T + 7_200_000,
+        finishedMs: T + 7_260_000,
+      },
       { id: 'uncommitted-job', tool: 'review', params: { cwd: repo }, result: CLEAN },
       { id: 'branch-job', tool: 'review', params: { cwd: repo, branch: 'feature' }, result: CLEAN },
       { id: 'elsewhere-job', tool: 'review', params: { cwd: other, scope: 'HEAD~1' }, result: CLEAN },
+      {
+        id: 'plain-job',
+        tool: 'review',
+        params: { cwd: join(home, 'IuRoot', 'plain', 'x'), scope: 'HEAD~1' },
+        result: CLEAN,
+      },
       { id: 'no-result-job', tool: 'review', params: { cwd: repo, scope: 'HEAD~1' }, result: null },
       { id: 'no-ref-job', tool: 'review', params: { cwd: repo, pr: 99 }, result: CLEAN },
       { id: 'corpus-1', tool: 'review', params: { cwd: repo, scope: 'HEAD~1' }, result: CLEAN },
@@ -372,21 +400,22 @@ describe('extractAll', () => {
       return found
     }
 
-    expect([...byId.keys()].sort()).toEqual(['corpus-1', 'corpus-2', 'pr-job', 'scope-job'])
+    expect([...byId.keys()].sort()).toEqual(['corpus-1', 'corpus-2', 'pr-job', 'scope-job', 'subdir-job'])
     expect(out.tally.review.deduped).toBe(1)
     expect(out.tally.review.skipped).toEqual({
       uncommitted: 1,
       'branch-scope': 1,
       'repo-unmapped': 1,
+      'repo-unverified': 1,
       'no-result': 1,
       'pr-ref-missing': 1,
     })
-    expect(out.tally.review.written).toBe(4)
+    expect(out.tally.review.written).toBe(5)
 
     // pr-job: worktree cwd -> repo; diff is merge-base(master, PR head)..PR head, so only b.ts is added.
     const pr = need('pr-job')
     expect(pr.repo).toBe('SourceRoot/fixture')
-    expect(pr.baseSha).toBe(master)
+    expect(pr.baseSha).toBe(second)
     expect(pr.headSha).toBe(feature)
     expect(pr.baseInferred).toBe(true)
     expect(pr.diff).toContain('b.ts')
@@ -398,8 +427,9 @@ describe('extractAll', () => {
 
     // scope-job: a HEAD~1 scope diffs HEAD~1..HEAD; no IU row in its window -> exact.
     const scope = need('scope-job')
-    expect(scope.baseSha).toBe(parent)
-    expect(scope.headSha).toBe(head)
+    expect(scope.baseSha).toBe(first)
+    expect(scope.headSha).toBe(second)
+    expect(scope.diff).not.toContain('a = 3')
     expect(scope.legacy).toMatchObject({ costUsd: 0.2, costExact: true, wallMs: 60_000 })
 
     // corpus wins the duplicate; a worktree path maps to the repo; pipeline discussion -> failedAngles.
@@ -410,12 +440,14 @@ describe('extractAll', () => {
     expect(need('corpus-2').repo).toBe('SourceRoot/fixture')
     expect(need('corpus-2').headSha).toBe(feature)
     expect(need('corpus-2').input).toEqual({ scope: 'x..y' })
+    // A cwd inside the repo maps to the enclosing repo, verified with git.
+    expect(need('subdir-job').repo).toBe('SourceRoot/fixture')
 
     expect(out.tally.check.written).toBe(1)
     expect(out.tally.check.skipped).toEqual({ 'repo-unmapped': 1, 'step-unknown': 1 })
     const check = out.check[0]
     if (!check) throw new Error('no check case')
-    expect(check.baseSha).toBe(master)
+    expect(check.baseSha).toBe(second)
     expect(check.baseInferred).toBe(true)
     expect(check.patch).toBeUndefined()
     expect(check.legacy).toMatchObject({ passed: false, costUsd: 0.1, costExact: true })

@@ -10,7 +10,7 @@
 // AGW_GATEWAY_CORPUS, AGW_USAGE_DIR; the output dir by AGW_EVAL_DIR (see cases.ts).
 
 import { Database } from 'bun:sqlite'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, realpathSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -27,6 +27,7 @@ import {
 export type SkipReason =
   | 'repo-outside-home'
   | 'repo-unmapped'
+  | 'repo-unverified'
   | 'repo-missing'
   | 'params-unparseable'
   | 'no-result'
@@ -90,17 +91,21 @@ function parseJson(text: string | null | undefined): unknown {
   }
 }
 
-/** The job's repo as `SourceRoot/<name>` or `IuRoot/<name>`, from a cwd under `home`. A worktree
- *  (`<repo>/.claude/worktrees/<name>`) maps to its repo. Anything else is skipped. */
-export function repoOf(cwd: string, home: string): Mapped<string> {
+const WORKTREE = '/.claude/worktrees/'
+
+/** The repo a cwd belongs to, as `SourceRoot/<name>` or `IuRoot/<name>`. A worktree (`<repo>/.claude/worktrees/<name>`)
+ *  maps to its repo. `nested` marks a cwd below the repo root; `repoFor` verifies that with git. Anything outside
+ *  the two roots is skipped. */
+export function repoOf(cwd: string, home: string): Mapped<{ repo: string; nested: boolean }> {
   const prefix = home.endsWith('/') ? home : `${home}/`
   if (!cwd.startsWith(prefix)) return skip('repo-outside-home')
-  let rel = cwd.slice(prefix.length).replace(/\/+$/, '')
-  const worktree = rel.indexOf('/.claude/worktrees/')
-  if (worktree !== -1) rel = rel.slice(0, worktree)
-  const [root, name, ...rest] = rel.split('/')
-  if (rest.length > 0 || !name || (root !== 'SourceRoot' && root !== 'IuRoot')) return skip('repo-unmapped')
-  return { value: `${root}/${name}` }
+  const rel = cwd.slice(prefix.length).replace(/\/+$/, '')
+  const worktree = rel.indexOf(WORKTREE)
+  const base = worktree === -1 ? rel : rel.slice(0, worktree)
+  const inWorktree = worktree === -1 ? '' : rel.slice(worktree + WORKTREE.length)
+  const [root, name, ...rest] = base.split('/')
+  if (!name || (root !== 'SourceRoot' && root !== 'IuRoot')) return skip('repo-unmapped')
+  return { value: { repo: `${root}/${name}`, nested: rest.length > 0 || inWorktree.includes('/') } }
 }
 
 /** The legacy call's input: its params minus `cwd` and `caller`. */
@@ -247,7 +252,7 @@ export function wallOf(span: Span | null): number | null {
 }
 
 const isoOf = (ms: number): string => new Date(ms).toISOString()
-const HEX_SHA = /^[0-9a-f]{7,40}$/
+const HEX_REF = /^[0-9a-f]{7,40}$/i
 
 export interface Sources {
   home: string
@@ -325,9 +330,33 @@ function commitOf(dir: string, ref: string): string | null {
   return git(dir, ['rev-parse', '--verify', '-q', `${ref}^{commit}`])?.trim() || null
 }
 
-function mergeBaseOf(dir: string, head: string): string | null {
+function committedAt(dir: string, sha: string): number {
+  return Number(git(dir, ['show', '-s', '--format=%ct', sha])?.trim() ?? Number.NaN)
+}
+
+/** A branch or HEAD as it was at `atSec`. HEAD takes its reflog entry when that commit was committed by then:
+ *  a reflog that starts after the job answers with its oldest entry, which is newer and so is refused. Any other
+ *  name takes its last first-parent commit committed before the time. */
+function namedAt(dir: string, name: string, atSec: number): string | null {
+  if (name === 'HEAD') {
+    const fromReflog = commitOf(dir, `HEAD@{${atSec}}`)
+    if (fromReflog && committedAt(dir, fromReflog) <= atSec) return fromReflog
+  }
+  return git(dir, ['rev-list', '-1', '--first-parent', `--before=@${atSec}`, name])?.trim() || null
+}
+
+/** The commit a ref named at `atMs`. A hex sha stays as it is; a `~N` / `^N` suffix applies after the lookup. */
+function commitAt(dir: string, ref: string, atMs: number): string | null {
+  const [, name = '', suffix = ''] = /^(.*?)((?:[~^]\d*)*)$/.exec(ref) ?? []
+  const base = HEX_REF.test(name) ? commitOf(dir, name) : namedAt(dir, name, Math.floor(atMs / 1000))
+  if (!base) return null
+  return suffix ? commitOf(dir, `${base}${suffix}`) : base
+}
+
+function mergeBaseAt(dir: string, head: string, atMs: number): string | null {
   for (const trunk of ['master', 'main']) {
-    const base = git(dir, ['merge-base', trunk, head])?.trim()
+    const tip = commitAt(dir, trunk, atMs)
+    const base = tip ? git(dir, ['merge-base', tip, head])?.trim() : undefined
     if (base) return base
   }
   return null
@@ -347,41 +376,53 @@ function diffBetween(dir: string, base: string, head: string, baseInferred: bool
   return { value: { diff, baseSha: base, headSha: head, baseInferred } }
 }
 
-/** The diff a legacy review saw, rebuilt from git the way scripts/replay-depth.ts does it. Uncommitted
- *  scopes are skipped (the working tree is gone); a PR diffs its merge-base with the local PR ref. */
-function rebuildReviewDiff(params: Record<string, unknown>, dir: string): Mapped<RebuiltDiff> {
+/** The diff a legacy review saw, rebuilt from git as it stood at the job's creation (the refs move on after it).
+ *  Uncommitted scopes are skipped: the working tree is gone. A hex sha is taken as recorded. */
+function rebuildReviewDiff(params: Record<string, unknown>, dir: string, atMs: number): Mapped<RebuiltDiff> {
   if (typeof params.pr === 'number') {
-    const head = commitOf(dir, `refs/pull/${params.pr}/head`)
+    const head = commitAt(dir, `refs/pull/${params.pr}/head`, atMs)
     if (!head) return skip('pr-ref-missing')
-    const base = mergeBaseOf(dir, head)
+    const base = mergeBaseAt(dir, head, atMs)
     if (!base) return skip('no-merge-base')
     return diffBetween(dir, base, head, true)
   }
   if (typeof params.branch === 'string') return skip('branch-scope')
   const scope = typeof params.scope === 'string' ? params.scope : 'uncommitted'
   if (scope === 'uncommitted') return skip('uncommitted')
+  const head = commitAt(dir, 'HEAD', atMs)
+  if (!head) return skip('scope-unresolvable')
   if (scope === 'head') {
     // Legacy ran `git show HEAD`: the same change as HEAD^..HEAD, without the commit header.
-    const base = commitOf(dir, 'HEAD^')
-    const head = commitOf(dir, 'HEAD')
-    return base && head ? diffBetween(dir, base, head, true) : skip('scope-unresolvable')
+    const base = commitOf(dir, `${head}^`)
+    return base ? diffBetween(dir, base, head, true) : skip('scope-unresolvable')
   }
   if (scope.includes('..')) {
     const [left = '', right = ''] = scope.split('..')
-    const base = commitOf(dir, left)
-    const head = commitOf(dir, right)
-    if (!base || !head) return skip('scope-unresolvable')
-    return diffBetween(dir, base, head, !HEX_SHA.test(left))
+    const base = commitAt(dir, left, atMs)
+    const rangeHead = commitAt(dir, right, atMs)
+    if (!base || !rangeHead) return skip('scope-unresolvable')
+    return diffBetween(dir, base, rangeHead, !HEX_REF.test(left))
   }
-  // A bare ref means the range up to HEAD (scopeDiffArgs).
-  const base = commitOf(dir, scope)
-  const head = commitOf(dir, 'HEAD')
-  return base && head ? diffBetween(dir, base, head, true) : skip('scope-unresolvable')
+  // A bare ref means the range up to HEAD (scopeDiffArgs), both sides as of the job.
+  const base = commitAt(dir, scope, atMs)
+  return base ? diffBetween(dir, base, head, !HEX_REF.test(scope)) : skip('scope-unresolvable')
 }
 
-/** The last commit on HEAD before the job was created. `@<unix seconds>` is git's epoch form for --before. */
-function inferBase(dir: string, createdAtMs: number): string | null {
-  return git(dir, ['rev-list', '-1', `--before=@${Math.floor(createdAtMs / 1000)}`, 'HEAD'])?.trim() || null
+/** The job's repo. A cwd nested under a repo root maps to that root when `git rev-parse --show-toplevel` agrees:
+ *  from the cwd while it exists, else from the root itself (the path is the only evidence then). */
+function repoFor(cwd: string, home: string): Mapped<string> {
+  const mapped = repoOf(cwd, home)
+  if ('skip' in mapped) return mapped
+  const { repo, nested } = mapped.value
+  if (!nested) return { value: repo }
+  const root = join(home, repo)
+  // The root must be a checkout itself: a folder without .git is no evidence of which repo the cwd was in.
+  const top = existsSync(root) ? git(existsSync(cwd) ? cwd : root, ['rev-parse', '--show-toplevel'])?.trim() : undefined
+  if (!top) return skip('repo-unverified')
+  const realRoot = realpathSync(root)
+  const realTop = realpathSync(top)
+  const inside = realTop === realRoot || realTop.startsWith(`${realRoot}${WORKTREE}`)
+  return inside ? { value: repo } : skip('repo-unmapped')
 }
 
 function repoDirOf(home: string, repo: string): string {
@@ -389,7 +430,7 @@ function repoDirOf(home: string, repo: string): string {
 }
 
 function reviewFromCorpus(line: CorpusLine, ctx: Ctx): Mapped<ReviewCase> {
-  const repo = repoOf(typeof line.repo === 'string' ? line.repo : cwdOf(line.params), ctx.home)
+  const repo = repoFor(typeof line.repo === 'string' ? line.repo : cwdOf(line.params), ctx.home)
   if ('skip' in repo) return repo
   const legacy = legacyReview(line.result, line.params)
   if ('skip' in legacy) return legacy
@@ -418,13 +459,13 @@ function reviewFromCorpus(line: CorpusLine, ctx: Ctx): Mapped<ReviewCase> {
 function reviewFromJob(row: JobRow, ctx: Ctx): Mapped<ReviewCase> {
   const params = parseJson(row.params)
   if (!isRecord(params)) return skip('params-unparseable')
-  const repo = repoOf(cwdOf(params), ctx.home)
+  const repo = repoFor(cwdOf(params), ctx.home)
   if ('skip' in repo) return repo
   const dir = repoDirOf(ctx.home, repo.value)
   if (!existsSync(dir)) return skip('repo-missing')
   const legacy = legacyReview(row.result === null ? null : parseJson(row.result), params)
   if ('skip' in legacy) return legacy
-  const rebuilt = rebuildReviewDiff(params, dir)
+  const rebuilt = rebuildReviewDiff(params, dir, row.created_at)
   if ('skip' in rebuilt) return rebuilt
   const span = ctx.windows.get(row.id) ?? null
   const spend = costOf({ id: row.id, span, usage: ctx.usage, reviewSpans: ctx.reviewSpans, iuApplies: true })
@@ -448,13 +489,13 @@ function reviewFromJob(row: JobRow, ctx: Ctx): Mapped<ReviewCase> {
 function checkFromJob(row: JobRow, ctx: Ctx): Mapped<CheckCase> {
   const params = parseJson(row.params)
   if (!isRecord(params)) return skip('params-unparseable')
-  const repo = repoOf(cwdOf(params), ctx.home)
+  const repo = repoFor(cwdOf(params), ctx.home)
   if ('skip' in repo) return repo
   const dir = repoDirOf(ctx.home, repo.value)
   if (!existsSync(dir)) return skip('repo-missing')
   const legacy = legacyCheck(row.result === null ? null : parseJson(row.result))
   if ('skip' in legacy) return legacy
-  const baseSha = inferBase(dir, row.created_at)
+  const baseSha = commitAt(dir, 'HEAD', row.created_at)
   if (!baseSha) return skip('no-base-commit')
   const span = ctx.windows.get(row.id) ?? null
   const spend = costOf({ id: row.id, span, usage: ctx.usage, reviewSpans: ctx.reviewSpans, iuApplies: false })
