@@ -55,7 +55,7 @@ act() {
   "$@"
 }
 
-read_sha() { tr -d '[:space:]' < "$1" 2>/dev/null; }
+read_sha() { [[ -f "$1" ]] && tr -d '[:space:]' < "$1"; }
 
 # Atomic: a reader must never see a partial file.
 write_atomic() {  # $1 path, $2 content
