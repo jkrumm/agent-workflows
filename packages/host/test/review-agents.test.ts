@@ -15,16 +15,26 @@ describe('agents/review-*', () => {
     )
   })
 
-  test('angles and the synthesis read the repo and never change it: edit denied, shell denied', () => {
+  test('angles and the synthesis read the repo and never change it: the read-only tools and nothing else', () => {
     for (const name of [...ALL_ANGLES.map((a) => `review-${a}`), 'review-synthesis']) {
       const def = named(name)
       expect(def?.route).toBe(name === 'review-synthesis' ? 'review.synthesis' : 'review.angle')
       const rules = sessionPermissions(def as NonNullable<typeof def>, ['/repo'])
       expect(rules).toEqual([
-        { action: 'shell', resource: '*', effect: 'deny' },
-        { action: 'edit', resource: '*', effect: 'deny' },
+        { action: '*', resource: '*', effect: 'deny' },
+        ...['read', 'glob', 'grep', 'skill'].map((action) => ({ action, resource: '*', effect: 'allow' as const })),
         { action: 'external_directory', resource: '/repo/*', effect: 'allow' },
       ])
+    }
+  })
+
+  test('the router and the adversary have the same read-only policy: they are single calls, no opt-in anywhere', () => {
+    for (const name of ['review-router', 'review-adversary']) {
+      const def = named(name)
+      expect(def?.permissions).toBeUndefined()
+      expect(
+        sessionPermissions(def as NonNullable<typeof def>).some((r) => r.effect === 'allow' && r.action === 'edit'),
+      ).toBe(false)
     }
   })
 

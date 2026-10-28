@@ -98,8 +98,6 @@ export type OpenCodeHandle = {
   stepId: string
   /** The step's `allowDirectories`, kept so a provider-balance fallback session gets the same permissions. */
   allow?: string[]
-  /** The step's `repoShell`, kept with `allow` for the same reason. */
-  repoShell?: true
   /** Set on the session the host opened on the route's fallback; it never falls back again. */
   fallback?: true
   /** A follow-up turn (`followUp`): its input is keyed by this, and `wait` reads only what came after it. */
@@ -144,7 +142,6 @@ function asHandle(handle: Json): OpenCodeHandle {
     strings.some((k) => typeof h[k] !== 'string') ||
     (h.output !== 'json' && h.output !== 'text') ||
     (h.allow !== undefined && (!Array.isArray(h.allow) || h.allow.some((d) => typeof d !== 'string'))) ||
-    (h.repoShell !== undefined && h.repoShell !== true) ||
     (h.fallback !== undefined && h.fallback !== true) ||
     (h.turn !== undefined && typeof h.turn !== 'string')
   ) {
@@ -173,98 +170,33 @@ function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
 }
 
 /**
- * The host's rules first (shell denied unless the agent opts in), the agent's own after them, the step's
- * `allowDirectories` last: last match wins. The server config denies `external_directory` everywhere; a directory a
- * step names is opened for reads again by an `allow` on `<dir>/*` (measured on 2.0.32: `<dir>/*` and `<dir>/**` match
- * the path as given, a deeper file included; `<dir>` alone and the symlink-resolved path do not).
+ * What a session may use without the agent asking for it: the read-only tools the agents are measured to call (OpenCode
+ * 2.0.32, `test/live-permissions.test.ts`; names in the README). Everything else is refused, unknown future actions too.
  */
-export function sessionPermissions(
-  def: AgentDefinition,
-  allowDirectories: readonly string[] = [],
-  repoShell = false,
-): PermissionRule[] {
+export const READ_ONLY_ACTIONS = ['read', 'glob', 'grep', 'skill'] as const
+
+/**
+ * Deny by default, as agent-gateway's `OPENCODE_READONLY_PERMISSIONS`: the catch-all deny first, the read-only allows
+ * next, the shell only when the agent opts in (`permissions.shell`), then the agent's own `rules` (an opt-in such as
+ * `webfetch`, `websearch`, `subagent` or `edit` is an `allow` there and wins), the step's `allowDirectories` last: last
+ * match wins. The server config denies `external_directory` everywhere; a directory a step names is opened for reads
+ * again by an `allow` on `<dir>/*` (measured on 2.0.32: `<dir>/*` and `<dir>/**` match the path as given, a deeper file
+ * included; `<dir>` alone and the symlink-resolved path do not).
+ */
+export function sessionPermissions(def: AgentDefinition, allowDirectories: readonly string[] = []): PermissionRule[] {
+  const rule = (action: string, effect: PermissionRule['effect']): PermissionRule => ({ action, resource: '*', effect })
   return [
-    { action: 'shell', resource: '*', effect: def.permissions?.shell ? 'allow' : 'deny' },
+    rule('*', 'deny'),
+    ...READ_ONLY_ACTIONS.map((action) => rule(action, 'allow')),
+    ...(def.permissions?.shell ? [rule('shell', 'allow')] : []),
     ...(def.permissions?.rules ?? []),
     ...allowDirectories.map(
       (dir): PermissionRule => ({ action: 'external_directory', resource: `${dir}/*`, effect: 'allow' }),
     ),
-    ...(repoShell ? repoShellRules(allowDirectories) : []),
-  ]
-}
-
-/** The allowed verbs per directory. No `diff`: given paths outside the work tree it acts as `--no-index` and prints any file. */
-const REPO_SHELL_ALLOWS = ['grep -n -e *', 'show *', 'log *', 'blame *', 'ls-files *']
-
-/**
- * Denies that hold for every directory; the quote denies let the text globs below see the real tokens. A backslash
- * cannot be denied: OpenCode's glob treats `\` as an escape (`*\*` matches every command, measured), so a backslash
- * that splits a flag (`--o\utput`) is an open hole in the text match.
- */
-const REPO_SHELL_DENIES = [
-  // Chaining, redirects, substitution, and quotes that would split a flag so a text glob misses it.
-  '*;*',
-  '*&*',
-  '*|*',
-  '*>*',
-  '*<*',
-  '*$*',
-  '*`*',
-  '*\n*',
-  '*\t*',
-  "*'*",
-  '*"*',
-  '*{*',
-  // git accepts unambiguous long-option abbreviations (`--op`), and `-O` takes an attached argument in a cluster
-  // (`-nOcat`): these cover output files, pagers, no-index, external diff and textconv, `-c`/`--contents`, ignore-revs.
-  '*--ou*',
-  '*--op*',
-  '*-O*',
-  '*--no-i*',
-  '*--ext*',
-  '*--textc*',
-  '*--con*',
-  '*--ignore-revs*',
-]
-
-/**
- * The read-only git shell of a step with `repoShell`: `git -C <dir> <read command>` per allowed directory, then the
- * re-denies AFTER every allow (last match wins). A pattern ending in ` *` also matches the bare command. This matches
- * command TEXT, a cost-raising boundary, not a sandbox.
- */
-function repoShellRules(allowDirectories: readonly string[]): PermissionRule[] {
-  const rule = (resource: string, effect: PermissionRule['effect']): PermissionRule => ({
-    action: 'shell',
-    resource,
-    effect,
-  })
-  return [
-    ...allowDirectories.flatMap((dir) => REPO_SHELL_ALLOWS.map((verb) => rule(`git -C ${dir} ${verb}`, 'allow'))),
-    // `git grep` takes exactly one token after `-e`; anything after the pattern is still parsed as options (so a second
-    // token is denied; the `?` keeps the bare `-e <token>` out: a trailing ` *` would also match the bare command,
-    // measured). `blame -S` reads revisions from an arbitrary file.
-    ...allowDirectories.flatMap((dir) => [
-      rule(`git -C ${dir} grep -n -e * *?`, 'deny'),
-      rule(`git -C ${dir} blame *-S*`, 'deny'),
-    ]),
-    ...REPO_SHELL_DENIES.map((resource) => rule(resource, 'deny')),
   ]
 }
 
 const GLOB_CHARS = /[*?[\]{}]/
-
-/**
- * Why a directory cannot carry a repo shell: its own text would trip one of the deny globs (`/x/My-Org/app` holds
- * `-O`), a per-directory deny (`-S` for blame) or needs quoting. The shell would then refuse every command, silently;
- * refusing the step is loud.
- */
-export function repoShellDirProblem(dir: string): string | null {
-  const needles = [...REPO_SHELL_DENIES.map((glob) => glob.replace(/^\*|\*$/g, '')), '-S']
-  const hit = needles.find((needle) => dir.includes(needle))
-  if (hit !== undefined) return `contains ${JSON.stringify(hit)}, which a repoShell deny rule matches`
-  if (/\s/.test(dir)) return 'contains whitespace, which would need quoting'
-  return null
-}
 
 /**
  * `spec.options.allowDirectories`: absolute directories without glob characters, never the filesystem root. A
@@ -286,20 +218,6 @@ function allowedDirectories(agent: string, raw: unknown): string[] {
     }
     return trimmed
   })
-}
-
-/** `spec.options.repoShell`: a boolean, and only with `allowDirectories` (the shell is bound to those directories). */
-function repoShellOption(agent: string, raw: unknown, allowDirectories: readonly string[]): boolean {
-  if (raw === undefined) return false
-  if (typeof raw !== 'boolean') throw new WorkflowError('error', `agent "${agent}": repoShell must be a boolean`)
-  if (raw && allowDirectories.length === 0) {
-    throw new WorkflowError('error', `agent "${agent}": repoShell requires a non-empty allowDirectories`)
-  }
-  for (const dir of raw ? allowDirectories : []) {
-    const problem = repoShellDirProblem(dir)
-    if (problem) throw new WorkflowError('error', `agent "${agent}": repoShell directory "${dir}" ${problem}`)
-  }
-  return raw
 }
 
 /**
@@ -390,10 +308,8 @@ export class OpenCodeHost implements AgentHost {
       route?: RouteId
       output?: string
       allowDirectories?: unknown
-      repoShell?: unknown
     }
     const allowDirectories = allowedDirectories(def.name, options.allowDirectories)
-    const repoShell = repoShellOption(def.name, options.repoShell, allowDirectories)
     const routeId = options.route ?? def.route
     if (!routeId) throw new WorkflowError('error', `agent "${spec.agent}" has no route and the step names none`)
     const { route, model } = modelRef(routeId, this.env)
@@ -427,7 +343,7 @@ export class OpenCodeHost implements AgentHost {
         title: `agw ${spec.runId}:${spec.stepId}`,
         location: { directory },
         model,
-        permissions: sessionPermissions(def, allowDirectories, repoShell),
+        permissions: sessionPermissions(def, allowDirectories),
         metadata: { agw: { key: spec.key, agent: def.name, route: routeId, locationHash: location.hash } },
       },
       headers,
@@ -443,7 +359,6 @@ export class OpenCodeHost implements AgentHost {
       runId: spec.runId,
       stepId: spec.stepId,
       ...(allowDirectories.length > 0 ? { allow: allowDirectories } : {}),
-      ...(repoShell ? { repoShell: true as const } : {}),
     }
     return handle
   }
@@ -730,7 +645,7 @@ export class OpenCodeHost implements AgentHost {
         title: `agw ${h.runId}:${h.stepId} (fallback)`,
         location: { directory: h.directory },
         model: fallback.model,
-        permissions: sessionPermissions(def, h.allow ?? [], h.repoShell === true),
+        permissions: sessionPermissions(def, h.allow ?? []),
         metadata: { agw: { agent: def.name, route: h.route, fallbackOf: h.sessionId } },
       },
       headers,

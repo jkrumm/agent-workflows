@@ -127,7 +127,7 @@ async function arm(slot: EvalSlot, workflow: string, side: string, prefix: strin
  * `agw eval compare <workflow> --a <fp> --b <fp>` (concept §6): better, cheaper, faster, fewer tokens, fewer tool
  * calls, with numbers. Two arms of regression runs, paired by case id, per metric: means, the mean and median delta
  * (B − A) with seeded bootstrap 95% CIs, and which arm the CI favours. An arm is a fingerprint plus the exact `--args`
- * its eval runs used: an input such as `angleVariant` changes behaviour without changing the fingerprint, so equal
+ * its eval runs used: an input that is not part of the fingerprint changes behaviour without changing it, so equal
  * fingerprints compare when the args differ. Reads only; spends nothing.
  */
 export function createEvalCompare(slot: EvalSlot): HostWorkflow {

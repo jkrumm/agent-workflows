@@ -17,7 +17,8 @@ export type AgentDefinition = {
   /** The default route of the agent's sessions; `options.route` on the step overrides it. */
   route?: RouteId
   /**
-   * Tool permissions of the agent's sessions. The shell tool is denied unless `shell: true`; `rules` are appended
+   * Tool permissions of the agent's sessions. Everything is denied except the read-only tools; the shell is allowed
+   * with `shell: true`, any other tool (`edit`, `webfetch`, `websearch`, `subagent`) with an `allow` rule. `rules` come
    * after the host's own (the last matching rule wins). Never use `ask`: an unattended session would block on it.
    */
   permissions?: { shell?: boolean; rules?: PermissionRule[] }

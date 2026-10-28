@@ -210,8 +210,6 @@ test.skipIf(!live)(
           name: 'repo-reader',
           route: 'check',
           agentsMd: '# Rules\n\nFollow the instructions exactly.\n',
-          // What every review agent's `agent.json` carries: no editing, whatever the step opens.
-          permissions: { rules: [{ action: 'edit', resource: '*', effect: 'deny' }] },
         },
       ],
     })
@@ -314,7 +312,6 @@ test.skipIf(!live)(
           name: 'link-reader',
           route: 'check',
           agentsMd: '# Rules\n\nFollow the instructions exactly.\n',
-          permissions: { rules: [{ action: 'edit', resource: '*', effect: 'deny' }] },
         },
       ],
     })
@@ -380,122 +377,6 @@ test.skipIf(!live)(
       await server.close({ stop: true })
       rmSync(stateDir, { recursive: true, force: true })
       rmSync(root, { recursive: true, force: true })
-    }
-  },
-  600_000,
-)
-
-const repoShell =
-  'live: repoShell allows three git -C <repo> read forms and refuses every other command, without ending the turn'
-
-test.skipIf(!live)(
-  live ? repoShell : `${repoShell} (skipped: runs only with AGW_LIVE=1)`,
-  async () => {
-    const stateDir = mkdtempSync(join(tmpdir(), 'och-live-'))
-    const server = new OpenCodeServer({ stateDir, livenessIntervalMs: 1_000 })
-    const host = new OpenCodeHost({
-      server,
-      stateDir,
-      agents: [
-        {
-          name: 'shell-reader',
-          route: 'check',
-          agentsMd: '# Rules\n\nFollow the instructions exactly.\n',
-          permissions: { rules: [{ action: 'edit', resource: '*', effect: 'deny' }] },
-        },
-      ],
-    })
-    const root = mkdtempSync(join(tmpdir(), 'agw-shell-x'))
-    const repo = join(root, 'repo')
-    mkdirSync(repo)
-    writeFileSync(join(repo, 'marked.txt'), 'MARKER_7731\n')
-    const git = (...args: string[]) => {
-      const r = Bun.spawnSync(['git', '-C', repo, '-c', 'user.name=t', '-c', 'user.email=t@example.com', ...args])
-      if (r.exitCode !== 0) throw new Error(`git ${args.join(' ')}: ${r.stderr.toString()}`)
-    }
-    git('init', '-q')
-    git('add', 'marked.txt')
-    git('commit', '-q', '-m', 'add marker')
-    const out = '/tmp/agw-probe-out'
-    rmSync(out, { force: true })
-    const commands = [
-      `git -C ${repo} grep -n -e MARKER_7731`,
-      `git -C ${repo} log --oneline -1`,
-      `git -C ${repo} show HEAD:marked.txt`,
-      'cat /etc/hosts',
-      `git -C ${repo} grep -n -e MARKER_7731; cat /etc/hosts`,
-      `git -C ${repo} grep -n -e MARKER_7731 -O cat`,
-      `git -C ${repo} grep -nOcat MARKER_7731`,
-      `git -C ${repo} grep -n -e "MARKER_7731"`,
-      `git -C ${repo} blame --contents /etc/hosts marked.txt`,
-      `git -C ${repo} diff /etc/hosts /dev/null`,
-      `git -C ${repo} log --outp=${out} -1`,
-      'git -C /tmp log --oneline -1',
-    ]
-    try {
-      await server.start()
-      const client = createClient(() => server.endpoint())
-      const handle = (await host.open({
-        runId: 'live',
-        stepId: 'repo-shell',
-        key: 'live:repo-shell',
-        agent: 'shell-reader',
-        prompt: '',
-        options: { allowDirectories: [repo], repoShell: true },
-      })) as OpenCodeHandle
-      await host.prompt(
-        handle,
-        [
-          'Run each of these commands with the shell tool, exactly as written, one tool call each, in this order.',
-          'Do not stop when a call fails or is refused; make the next call.',
-          ...commands.map((c, i) => `${i + 1}. ${c}`),
-          'Then answer with one line per command: its number and OK or REFUSED. Nothing else.',
-        ].join('\n'),
-      )
-      const result = await host.wait(handle, {
-        signal: AbortSignal.timeout(300_000), // test bound only
-        onProgress: () => {},
-        onTool: async () => {},
-      })
-      const calls: { tool: string; command: string; status: string; first: string }[] = []
-      for (const m of await client.messages(handle.sessionId)) {
-        for (const p of m.content ?? []) {
-          if (p.type !== 'tool') continue
-          const input = p.state?.input ?? {}
-          const error = p.state?.error
-          const text = (p.state?.content ?? []).map((c) => c.text ?? '').join('\n')
-          const first = (text || (typeof error === 'string' ? error : (error?.message ?? ''))).split('\n')[0] ?? ''
-          calls.push({
-            tool: p.name ?? '?',
-            command: String(input.command ?? input.cmd ?? ''),
-            status: p.state?.status ?? '?',
-            first: first.slice(0, 160),
-          })
-        }
-      }
-      const perCommand = commands.map((command, i) => ({
-        n: i + 1,
-        command,
-        calls: calls.filter((c) => c.command.trim() === command).map((c) => ({ status: c.status, first: c.first })),
-      }))
-      console.log(
-        `live opencode-host repoShell ${JSON.stringify({ perCommand, calls, answer: result.output }, null, 2)}`,
-      )
-
-      const completed = (n: number) =>
-        calls.filter((c) => c.command.trim() === commands[n - 1] && c.status === 'completed')
-      expect(completed(1).some((c) => c.first.includes('MARKER_7731'))).toBe(true)
-      expect(completed(2).some((c) => c.first.includes('add marker'))).toBe(true)
-      expect(completed(3).some((c) => c.first.includes('MARKER_7731'))).toBe(true)
-      for (const n of [4, 5, 6, 7, 8, 9, 10, 11, 12]) expect(completed(n)).toEqual([])
-      expect(existsSync(out)).toBe(false) // the abbreviated --output never wrote
-      expect(result.output).toBeTruthy() // the turn finished after the refused calls
-    } finally {
-      host.close()
-      await server.close({ stop: true })
-      rmSync(stateDir, { recursive: true, force: true })
-      rmSync(root, { recursive: true, force: true })
-      rmSync(out, { force: true })
     }
   },
   600_000,

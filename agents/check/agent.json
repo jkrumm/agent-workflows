@@ -1,7 +1,6 @@
 {
   "route": "check",
   "permissions": {
-    "shell": true,
-    "rules": [{ "action": "edit", "resource": "*", "effect": "deny" }]
+    "shell": true
   }
 }
