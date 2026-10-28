@@ -41,7 +41,8 @@ export const createReviewRoute = (deps: LlmDeps) =>
     summary: 'Pick the content-driven review angles and the review depth for a diff (route review.router)',
     input: reviewRouteInput,
     output: reviewRouteOutput,
-    cli: { stdin: 'diff', defaultFormat: 'json' },
+    // Not `agw review route`: the host refuses a command that is a prefix of another, and `agw review` is the workflow.
+    cli: { command: ['review-route'], stdin: 'diff', defaultFormat: 'json' },
     async handler({ diff }, ctx) {
       const { text, truncatedChars } = capDiff(diff)
       // The diff is repo content, so it is DATA; the answer is reduced to the fixed angle keys below, so an injected

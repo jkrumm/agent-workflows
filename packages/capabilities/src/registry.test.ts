@@ -176,7 +176,14 @@ describe('OpenAPI', () => {
       ([path, item]) => Object.entries(item).map(([method, op]) => ({ path, method, op })),
     )
     expect(operations.map((o) => `${o.method} ${o.path}`).sort()).toEqual(
-      ['post /decide', 'post /llm/classify', 'post /llm/summarize', 'post /llm/title'].sort(),
+      [
+        'post /decide',
+        'post /llm/classify',
+        'post /llm/summarize',
+        'post /llm/title',
+        'post /review/adversary',
+        'post /review/route',
+      ].sort(),
     )
     for (const { op } of operations) {
       const cli = op['x-cli'] as { command: string[]; positional: string[]; mutating: boolean; defaultFormat: string }
@@ -203,7 +210,7 @@ describe('OpenAPI', () => {
     const ids = Object.values(doc.paths as Record<string, Record<string, { operationId: string }>>).flatMap((item) =>
       Object.values(item).map((op) => op.operationId),
     )
-    expect(ids.sort()).toEqual(['decide', 'llmClassify', 'llmSummarize', 'llmTitle'])
+    expect(ids.sort()).toEqual(['decide', 'llmClassify', 'llmSummarize', 'llmTitle', 'reviewAdversary', 'reviewRoute'])
     const json = JSON.stringify(doc)
     for (const code of ['NOT_CONFIGURED', 'UPSTREAM_ERROR', 'INVALID_OUTPUT', 'OUTPUT_TRUNCATED', 'CANCELLED']) {
       expect(json).toContain(code)
