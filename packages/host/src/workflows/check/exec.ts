@@ -121,11 +121,6 @@ function reapRecordedGroup(file: string): void {
 }
 
 /**
- * The default port. Runs `argv` in `cwd` in its own process group with the host's environment minus credentials
- * (`commandEnv`). The group is killed on idle, wall time or abort, so a recipe's backgrounded child cannot outlive
- * the step; a clean exit is not followed by a kill. A group a crashed host left behind is killed at the next start.
- */
-/**
  * Signals a whole process group (`-pgid`): a process spawned `detached` leads its own group, so its helpers and theirs
  * go with it. A group that is already gone is not an error. The review's helpers use the same kill.
  */
@@ -137,6 +132,11 @@ export function killProcessGroup(pgid: number, code: 'SIGTERM' | 'SIGKILL'): voi
   }
 }
 
+/**
+ * The default port. Runs `argv` in `cwd` in its own process group with the host's environment minus credentials
+ * (`commandEnv`). The group is killed on idle, wall time or abort, so a recipe's backgrounded child cannot outlive
+ * the step; a clean exit is not followed by a kill. A group a crashed host left behind is killed at the next start.
+ */
 export function createBunExec(options: { env?: Record<string, string | undefined> } = {}): Exec {
   return {
     which: (command) => Bun.which(command),
