@@ -43,7 +43,7 @@ if [[ -z "$RENDERED" || "$RENDERED" -lt "$WANT" ]]; then
 fi
 
 # A ref can resolve to an empty value; that is as unusable as a missing one. Checked inside the child, where the
-# values exist: the key is named, the value never printed. The IU override (below) is applied first, so it is checked too. Keys come from the template, so `eval` sees only names.
+# values exist: the key is named, the value never printed. Keys come from the template, so `eval` sees only names.
 KEYS=( ${(f)"$(/usr/bin/grep -hoE '^[A-Za-z_][A-Za-z0-9_]*=' "$TPL" | /usr/bin/tr -d =)"} )
 
 # secrets-run resolves whole-value refs only, so the composite values are built after it, inside its child. The
@@ -56,7 +56,8 @@ exec "$SECRETS_RUN" run --env-file="$TPL" -- /bin/sh -c '
   # >>> iu-override
   # An untracked IU key override (a team key for interim evals): $HOME/.config/agw/iu.env, mode 0600, may set
   # IU_API_KEY and IU_KEY_ID, which replace the .env.tpl values; the label goes with the key, so both are required.
-  # Any other line is ignored with a warning that names the variable, never a value. Absent file = no override.
+  # Both are validated here (a non-empty key, an exact label), before the empty-value check below. Any other line is
+  # ignored with a warning that names the variable, never a value. Absent file = no override.
   IU_OVERRIDE="$HOME/.config/agw/iu.env"
   if [ -e "$IU_OVERRIDE" ] || [ -L "$IU_OVERRIDE" ]; then
     if [ "$(/bin/ls -ld "$IU_OVERRIDE" | /usr/bin/cut -c1-10)" != "-rw-------" ]; then
@@ -64,14 +65,20 @@ exec "$SECRETS_RUN" run --env-file="$TPL" -- /bin/sh -c '
       exit 78
     fi
     iu_seen=""
+    iu_cr=$(printf "\\r")
+    iu_sq=$(printf "\\047")
     while IFS= read -r iu_line || [ -n "$iu_line" ]; do
+      iu_line="${iu_line%"$iu_cr"}"
       iu_line="${iu_line#"${iu_line%%[![:space:]]*}"}"
       case "$iu_line" in ""|"#"*) continue ;; esac
       iu_line="${iu_line#export }"
       case "$iu_line" in *=*) ;; *) echo "agent-workflows-host: $IU_OVERRIDE: a line without = was ignored" >&2; continue ;; esac
       iu_name="${iu_line%%=*}"
       iu_value="${iu_line#*=}"
-      case "$iu_value" in \"*\") iu_value="${iu_value#\"}"; iu_value="${iu_value%\"}" ;; esac
+      case "$iu_value" in
+        \"*\") iu_value="${iu_value#\"}"; iu_value="${iu_value%\"}" ;;
+        "$iu_sq"*"$iu_sq") iu_value="${iu_value#"$iu_sq"}"; iu_value="${iu_value%"$iu_sq"}" ;;
+      esac
       case "$iu_name" in
         IU_API_KEY) IU_API_KEY="$iu_value"; iu_seen="$iu_seen key" ;;
         IU_KEY_ID) IU_KEY_ID="$iu_value"; iu_seen="$iu_seen id" ;;
@@ -85,6 +92,11 @@ exec "$SECRETS_RUN" run --env-file="$TPL" -- /bin/sh -c '
         echo "agent-workflows-host: $IU_OVERRIDE must set both IU_API_KEY and IU_KEY_ID (the label goes with the key); refusing to start." >&2
         exit 78
         ;;
+    esac
+    [ -n "$IU_API_KEY" ] || { echo "agent-workflows-host: $IU_OVERRIDE: IU_API_KEY is empty; refusing to start." >&2; exit 78; }
+    case "$IU_KEY_ID" in
+      personal | athena-team) ;;
+      *) echo "agent-workflows-host: $IU_OVERRIDE: IU_KEY_ID must be exactly personal or athena-team; refusing to start." >&2; exit 78 ;;
     esac
     export IU_API_KEY IU_KEY_ID
   fi

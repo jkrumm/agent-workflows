@@ -13,8 +13,8 @@ export type PlatformOptions = {
   schema?: string
   logger?: Logger
   fingerprint: FingerprintSource
-  /** The label of the IU key this process holds (`parseIuKeyId(IU_KEY_ID)`), stamped on every run it admits. Default `personal`. */
-  iuKey?: IuKeyId
+  /** The label of the IU key this process holds (`parseIuKeyId(IU_KEY_ID)`), stamped on every run it admits. Required: no silent default. */
+  iuKey: IuKeyId
   telemetry?: Omit<TelemetryOptions, 'logger' | 'sessionIdOf'>
   /** Default: `argoTransportFromEnv()`. Null: no outbox; steps stay unsynced in Postgres until one runs. */
   argo?: { transport?: ArgoTransport | null } & Pick<
@@ -56,7 +56,7 @@ export function platformMiddleware(options: PlatformOptions): Platform {
   return {
     middleware: [
       purposeMiddleware(),
-      iuKeyMiddleware({ db, iuKey: options.iuKey ?? 'personal' }),
+      iuKeyMiddleware({ db, logger, iuKey: options.iuKey }),
       fingerprintMiddleware({
         db,
         source: options.fingerprint,

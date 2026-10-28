@@ -1,11 +1,12 @@
-import type { Middleware } from '@agent-workflows/runtime'
+import type { Logger, Middleware } from '@agent-workflows/runtime'
 import { type JournalDb, withRetry } from './db.ts'
 
 /** The label of an IU key (usage-tracker contract, "IU keys"): which key paid, never the key itself. */
 export const IU_KEY_IDS = ['personal', 'athena-team'] as const
 export type IuKeyId = (typeof IU_KEY_IDS)[number]
 
-const isIuKeyId = (value: string): value is IuKeyId => (IU_KEY_IDS as readonly string[]).includes(value)
+export const isIuKeyId = (value: unknown): value is IuKeyId =>
+  typeof value === 'string' && (IU_KEY_IDS as readonly string[]).includes(value)
 
 /**
  * `IU_KEY_ID` → a label. Unset or empty is `personal`; anything unknown is `personal` plus one warning (an unknown
@@ -24,15 +25,16 @@ export function parseIuKeyId(raw: string | undefined, warn?: (message: string) =
  * that executes the run), the way the fingerprint is stamped. Stored on the run, not read at flush time: the outbox
  * may flush after a restart with a different key. A resumed run keeps the label it was admitted with.
  */
-export function iuKeyMiddleware(options: { db: JournalDb; iuKey: IuKeyId }): Middleware {
+export function iuKeyMiddleware(options: { db: JournalDb; logger: Logger; iuKey: IuKeyId }): Middleware {
   const { db, iuKey } = options
   return {
     name: 'iu-key',
     async runPre({ runId, resume }) {
       if (resume) return
-      await withRetry(() =>
+      const { rowCount } = await withRetry(() =>
         db.pool.query(`update ${db.runs} set iu_key = $2, updated_at = now() where id = $1`, [runId, iuKey]),
       )
+      if (rowCount === 0) options.logger.warn('iu key: run row not found; label not stamped', { runId })
     },
   }
 }

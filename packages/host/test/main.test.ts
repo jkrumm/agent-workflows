@@ -29,6 +29,14 @@ describe('loadConfig', () => {
   test('defaults', () => {
     expect(loadConfig(base)).toMatchObject({ port: 7791, schema: 'agw', machine: 'm', version: 'dev' })
   })
+  test('IU_KEY_ID: unset or empty is personal, a known id is kept, an unknown one refuses without echoing it', () => {
+    expect(loadConfig(base).iuKey).toBe('personal')
+    expect(loadConfig({ ...base, IU_KEY_ID: '' }).iuKey).toBe('personal')
+    expect(loadConfig({ ...base, IU_KEY_ID: 'athena-team' }).iuKey).toBe('athena-team')
+    const attempt = () => loadConfig({ ...base, IU_KEY_ID: 'sk-not-an-id' })
+    expect(attempt).toThrow('IU_KEY_ID')
+    expect(attempt).not.toThrow('sk-not-an-id')
+  })
   test('a secret with whitespace is named, not echoed', () => {
     const attempt = () => loadConfig({ ...base, AGW_API_SECRET: `${SECRET}\n` })
     expect(attempt).toThrow('whitespace')

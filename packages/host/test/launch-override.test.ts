@@ -47,6 +47,21 @@ describe('launch.sh IU override', () => {
     expect(r).toMatchObject({ code: 0, out: 'team-key|athena-team', err: '' })
   })
 
+  test('single quotes, double quotes and CRLF line endings are accepted', () => {
+    const r = run({ content: 'IU_API_KEY=\'team-key\'\r\nIU_KEY_ID="athena-team"\r\n' })
+    expect(r).toMatchObject({ code: 0, out: 'team-key|athena-team', err: '' })
+  })
+
+  test('an unknown label or an empty key refuses with 78, naming the variable and not the value', () => {
+    const label = run({ content: 'IU_API_KEY=k\nIU_KEY_ID=sk-not-a-label\n' })
+    expect(label.code).toBe(78)
+    expect(label.err).toContain('IU_KEY_ID')
+    expect(label.err).not.toContain('sk-not-a-label')
+    const key = run({ content: 'IU_API_KEY=\nIU_KEY_ID=athena-team\n' })
+    expect(key.code).toBe(78)
+    expect(key.err).toContain('IU_API_KEY')
+  })
+
   test('any other line is ignored with a warning that names the variable, never a value', () => {
     const r = run(
       { content: 'IU_API_KEY=team-key\nIU_KEY_ID=athena-team\nGITHUB_TOKEN=secret-value\n=oops-value\nnoequals\n' },
