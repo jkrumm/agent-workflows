@@ -37,6 +37,8 @@ export type Refusal = { refused: unknown }
 export type ScopeHost = {
   journal: Journal
   host: AgentHost | null
+  /** The task message an agent step sends: `RuntimeOptions.agentPrompt`, never throwing. */
+  agentPrompt(args: { agent: string; prompt: string }): Promise<string>
   /** `{ refused }` with whatever a hook threw (the step then fails as `middleware`), or null. */
   stepPre(args: StepPreArgs): Promise<Refusal | null>
   /** How long a resumed effect waits, measured from its last start, before running its body again. */
@@ -314,13 +316,18 @@ export class RunScope {
       }
       scope.signal.addEventListener('abort', abortSession, { once: true })
       try {
+        // Read once per attempt, and only when a prompt is still to be sent (a re-attach to a prompted session waits).
+        const prompt = !state?.prompted
+          ? await this.rt.agentPrompt({ agent: spec.agent, prompt: spec.prompt })
+          : spec.prompt
+        checkpoint()
         if (!state) {
           handle = await host.open({
             runId,
             stepId,
             key: scope.key,
             agent: spec.agent,
-            prompt: spec.prompt,
+            prompt,
             options: spec.options,
           })
           checkpoint()
@@ -334,7 +341,7 @@ export class RunScope {
         if (!current.prompted) {
           await this.j(() => journal.assertLease(this.fence)) // never spend a prompt for a run another process took
           checkpoint()
-          await host.prompt(current.handle, spec.prompt)
+          await host.prompt(current.handle, prompt)
           checkpoint()
           const prompted = { ...current, prompted: true }
           state = prompted

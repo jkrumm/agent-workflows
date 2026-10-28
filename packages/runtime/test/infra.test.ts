@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
+import { readdirSync } from 'node:fs'
 import { Pool } from 'pg'
 import { z } from 'zod'
 import { defineWorkflow, InfraError, LeaseLost } from '../src/index.ts'
@@ -27,7 +28,10 @@ describe('migrations', () => {
     const pools = Array.from({ length: 4 }, () => new Pool({ connectionString: PG_URL, max: 1 }))
     try {
       const applied = await Promise.all(pools.map((p) => migrate(p, fresh.schema)))
-      const files = ['0001_journal.sql', '0002_usage_outbox.sql', '0003_iu_key.sql']
+      // Every numbered file on disk, so a new migration never needs this test edited.
+      const files = readdirSync(new URL('../src/migrations/', import.meta.url))
+        .filter((f) => /^\d{4}_.+\.sql$/.test(f))
+        .sort()
       expect(applied.flat()).toEqual(files)
       const { rows } = await sql.pool.query(`select version from "${fresh.schema}".schema_migrations order by version`)
       expect(rows.map((r) => r.version)).toEqual(files)

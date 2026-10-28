@@ -14,7 +14,16 @@ export interface HostConfig {
   opencodeBin: string | undefined
   /** The label of the IU key this host holds (`IU_KEY_ID`, unset is `personal`); the key itself is never read here. */
   iuKey: IuKeyId
+  /** The weekly retrospective schedule (`AGW_RETRO_WEEKLY`, on unless `0`, `off` or `false`). */
+  retroWeekly: boolean
+  /** Scheduled retrospectives file their proposals as GitHub issues (`AGW_RETRO_FILE_ISSUES=1`); off by default. */
+  retroFileIssues: boolean
+  /** `owner/name` the issues go to (`AGW_RETRO_ISSUE_REPO`); required with `retroFileIssues`. `gh` auth is the host env. */
+  retroIssueRepo: string | undefined
 }
+
+const OFF = new Set(['0', 'off', 'false', 'no'])
+const ON = new Set(['1', 'on', 'true', 'yes'])
 
 /** Every problem at once, so one failed start names all missing variables. Values are never echoed. */
 export function loadConfig(env: Env): HostConfig {
@@ -37,6 +46,11 @@ export function loadConfig(env: Env): HostConfig {
   // Set but unknown is a config problem (an unknown id never becomes a key); unset or empty is `personal`.
   const rawKeyId = env.IU_KEY_ID?.trim()
   if (rawKeyId && !isIuKeyId(rawKeyId)) problems.push(`IU_KEY_ID must be one of ${IU_KEY_IDS.join(', ')}`)
+  const retroFileIssues = ON.has(env.AGW_RETRO_FILE_ISSUES?.trim().toLowerCase() ?? '')
+  const retroIssueRepo = env.AGW_RETRO_ISSUE_REPO?.trim() || undefined
+  if (retroIssueRepo && !/^[\w.-]+\/[\w.-]+$/.test(retroIssueRepo))
+    problems.push('AGW_RETRO_ISSUE_REPO must look like owner/name')
+  if (retroFileIssues && !retroIssueRepo) problems.push('AGW_RETRO_FILE_ISSUES needs AGW_RETRO_ISSUE_REPO')
   if (problems.length > 0) throw new Error(`invalid configuration:\n- ${problems.join('\n- ')}`)
   return {
     secret,
@@ -48,5 +62,8 @@ export function loadConfig(env: Env): HostConfig {
     agentsDir: env.AGW_AGENTS_DIR?.trim() || undefined,
     opencodeBin: env.AGW_OPENCODE_BIN?.trim() || undefined,
     iuKey: parseIuKeyId(rawKeyId),
+    retroWeekly: !OFF.has(env.AGW_RETRO_WEEKLY?.trim().toLowerCase() ?? ''),
+    retroFileIssues,
+    retroIssueRepo,
   }
 }

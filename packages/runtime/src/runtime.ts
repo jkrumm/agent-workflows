@@ -38,6 +38,13 @@ export type RuntimeOptions = {
   /** Every workflow this process may drive; recovery only claims runs of these. */
   workflows: AnyWorkflow[]
   host?: AgentHost
+  /**
+   * Final say on the task message of an agent step, called once per attempt right before the session is opened or
+   * prompted (never when the prompt was already sent: a resumed step only waits). The host uses it to append learned
+   * facts after the task, which keeps the agent's `AGENTS.md` prefix cacheable. A throw is logged and the original
+   * prompt is sent: a missing aid must not fail the step.
+   */
+  agentPrompt?: (args: { agent: string; prompt: string }) => string | Promise<string>
   /** Ordered; called around every run, step and tool call. */
   middleware?: Middleware[]
   /** Top-level runs this process drives at once; also the size of the lease connection budget. Default 16. */
@@ -133,6 +140,18 @@ export class Runtime {
     this.scopeHost = {
       journal: this.journal,
       host: this.host,
+      agentPrompt: async (args) => {
+        if (!options.agentPrompt) return args.prompt
+        try {
+          return await options.agentPrompt(args)
+        } catch (err) {
+          this.logger.error('agentPrompt hook failed; sending the prompt as is', {
+            agent: args.agent,
+            error: err instanceof Error ? err.message : String(err),
+          })
+          return args.prompt
+        }
+      },
       stepPre: (args) => this.stepPre(args),
       bodyGraceMs: options.bodyGraceMs ?? 30_000,
       stepPost: (args) => this.stepPost(args),
