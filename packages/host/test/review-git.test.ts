@@ -15,7 +15,9 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createExec, defaultExec, helperEnv } from '../src/workflows/review/exec.ts'
+import { createExec, defaultExec, helperEnv, networkEnv } from '../src/workflows/review/exec.ts'
+import { mapLimit } from '../src/workflows/review/util.ts'
+import { allFailedVerdict, salvagedVerdict } from '../src/workflows/review/verdict.ts'
 import {
   baseFor,
   CLONE_ROOT,
@@ -342,12 +344,17 @@ describe('helper environment', () => {
     GIT_AUTHOR_NAME: 'Reviewer',
   }
 
-  test('an allowlist: no host secret, no git variable that names a program or a credential', () => {
-    const env = helperEnv(source)
+  test('an allowlist: only the named GIT_* paths, no host secret, nothing that names a program or redirects git', () => {
+    const env = helperEnv({
+      ...source,
+      GIT_DIR: '/elsewhere/.git',
+      GIT_WORK_TREE: '/elsewhere',
+      GIT_CONFIG_SYSTEM: '/etc/sys',
+    })
     expect(Object.keys(env).sort()).toEqual(
       [
-        'GIT_AUTHOR_NAME',
         'GIT_CONFIG_GLOBAL',
+        'GIT_CONFIG_SYSTEM',
         'GIT_OPTIONAL_LOCKS',
         'GIT_TERMINAL_PROMPT',
         'HOME',
@@ -356,7 +363,32 @@ describe('helper environment', () => {
         'TERM',
       ].sort(),
     )
-    expect(JSON.stringify(env)).not.toMatch(/secret-value|iu-key-value|argo-value|pg-value|git-token|evil|askpass/)
+    expect(JSON.stringify(env)).not.toMatch(
+      /secret-value|iu-key-value|argo-value|pg-value|git-token|evil|askpass|elsewhere/,
+    )
+  })
+
+  test('GIT_DIR in the host env does not leak: git still works in the directory it is given', async () => {
+    const dir = repo({ 'a.ts': 'a\n' })
+    const run = createExec({
+      ...source,
+      GIT_DIR: join(scratch, 'nowhere', '.git'),
+      GIT_WORK_TREE: join(scratch, 'nowhere'),
+    })
+    const env = await run(['env'], { cwd: dir, timeoutMs: 10_000 })
+    expect(env.stdout).not.toContain('GIT_DIR=')
+    expect(env.stdout).not.toContain('GIT_WORK_TREE=')
+    const top = await run(['git', 'rev-parse', '--show-toplevel'], { cwd: dir, timeoutMs: 10_000 })
+    expect(top.code).toBe(0)
+    expect(realpathSync(top.stdout.trim())).toBe(dir)
+  })
+
+  test('SSH_AUTH_SOCK and XDG_CONFIG_HOME are for the remote calls only: networkEnv, never helperEnv', () => {
+    const withSocket = { ...source, SSH_AUTH_SOCK: '/tmp/agent.sock', XDG_CONFIG_HOME: '/home/x/.config' }
+    expect(networkEnv(withSocket)).toEqual({ SSH_AUTH_SOCK: '/tmp/agent.sock', XDG_CONFIG_HOME: '/home/x/.config' })
+    expect(networkEnv(source)).toEqual({})
+    expect(helperEnv(withSocket)).not.toHaveProperty('SSH_AUTH_SOCK')
+    expect(helperEnv(withSocket)).not.toHaveProperty('XDG_CONFIG_HOME')
   })
 
   test('a helper process really does not see them (ports.env is what it is built from)', async () => {
@@ -514,5 +546,223 @@ describe('scope kinds', () => {
     const dirScope = await ok({ cwd: dir, scope: 'src' })
     expect(dirScope.base).toEqual({ kind: 'auto' })
     expect(dirScope.diff).toBe('')
+  })
+})
+
+describe('path scopes and untracked files', () => {
+  test('a staged file, an unstaged one and a new untracked one under the path are all in the diff, never an empty clean', async () => {
+    const dir = repo({ 'src/staged.ts': 's1\n', 'src/unstaged.ts': 'u1\n', 'other/o.ts': 'o1\n' })
+    put(dir, {
+      'src/staged.ts': 's2\n',
+      'src/unstaged.ts': 'u2\n',
+      'src/brand-new.ts': 'fresh\n',
+      'other/o.ts': 'o2\n',
+    })
+    git(dir, 'add', 'src/staged.ts')
+    const before = snapshot(dir)
+    const p = await ok({ cwd: dir, scope: 'src' })
+    expect(snapshot(dir)).toEqual(before)
+    expect([...p.files].sort()).toEqual(['src/brand-new.ts', 'src/staged.ts', 'src/unstaged.ts'])
+    expect(p.diff).toContain('+s2')
+    expect(p.diff).toContain('+u2')
+    expect(p.diff).toContain('+fresh')
+    expect(p.diff).not.toContain('o2')
+  })
+
+  test('a path that is only staged, or only new, is not empty', async () => {
+    const dir = repo({ 'a.ts': 'a\n' })
+    put(dir, { 'staged-new.ts': 'sn\n' })
+    git(dir, 'add', 'staged-new.ts')
+    put(dir, { 'untracked-only.ts': 'uo\n' })
+    expect((await ok({ cwd: dir, scope: 'staged-new.ts' })).diff).toContain('+sn')
+    expect((await ok({ cwd: dir, scope: 'untracked-only.ts' })).diff).toContain('+uo')
+  })
+})
+
+describe('a subdirectory cwd', () => {
+  test('reviews the repository root and says where it was started; a relative path scope is relative to the subdirectory', async () => {
+    const dir = repo({ 'sub/in.ts': 'i1\n', 'top.ts': 't1\n' })
+    put(dir, { 'sub/in.ts': 'i2\n', 'top.ts': 't2\n' })
+    const sub = join(dir, 'sub')
+    const p = await ok({ cwd: sub })
+    expect(p.cwd).toBe(dir)
+    expect(p.repo).toBe(dir)
+    expect(p.invokedIn).toBe(sub)
+    expect([...p.files].sort()).toEqual(['sub/in.ts', 'top.ts'])
+    const atRoot = await ok({ cwd: dir })
+    expect(atRoot.invokedIn).toBeNull()
+    const path = await ok({ cwd: sub, scope: 'in.ts' })
+    expect(path.files).toEqual(['sub/in.ts'])
+    expect(await prepare({ cwd: sub, scope: '../../outside.ts' }, 'k', ports())).toMatchObject({
+      ok: false,
+      kind: 'invalid_input',
+    })
+  })
+
+  test('a pr review from a subdirectory clones the repository root', async () => {
+    const bare = fresh('origin')
+    git(bare, 'init', '-q', '--bare', '-b', 'main')
+    const seed = fresh('seed')
+    git(seed, 'init', '-q', '-b', 'main')
+    put(seed, { 'sub/a.ts': 'a1\n' })
+    git(seed, 'add', '-A')
+    git(seed, 'commit', '-q', '-m', 'base')
+    git(seed, 'remote', 'add', 'origin', bare)
+    git(seed, 'push', '-q', 'origin', 'main')
+    git(seed, 'checkout', '-q', '-b', 'feat')
+    put(seed, { 'sub/a.ts': 'a2\n', 'root.ts': 'r\n' })
+    git(seed, 'add', '-A')
+    git(seed, 'commit', '-q', '-m', 'feature')
+    git(seed, 'push', '-q', 'origin', 'feat:refs/pull/4/head')
+    const work = fresh('work')
+    git(scratch, 'clone', '-q', bare, work)
+    const p = await ok({ cwd: join(work, 'sub'), pr: 4 })
+    expect(p.cwd).toBe(work)
+    expect([...p.files].sort()).toEqual(['root.ts', 'sub/a.ts'])
+    expect(existsSync(join(p.repo, 'root.ts'))).toBe(true)
+  })
+})
+
+describe('network env on the remote calls only', () => {
+  test('fetch and ls-remote get SSH_AUTH_SOCK and XDG_CONFIG_HOME; clone, checkout, diff and the tools do not', async () => {
+    const bare = fresh('origin')
+    git(bare, 'init', '-q', '--bare', '-b', 'main')
+    const seed = fresh('seed')
+    git(seed, 'init', '-q', '-b', 'main')
+    put(seed, { 'a.ts': 'a1\n' })
+    git(seed, 'add', '-A')
+    git(seed, 'commit', '-q', '-m', 'base')
+    git(seed, 'remote', 'add', 'origin', bare)
+    git(seed, 'push', '-q', 'origin', 'main')
+    git(seed, 'checkout', '-q', '-b', 'feat')
+    put(seed, { 'a.ts': 'a2\n' })
+    git(seed, 'commit', '-qam', 'feature')
+    git(seed, 'push', '-q', 'origin', 'feat:refs/pull/2/head')
+    const work = fresh('work')
+    git(scratch, 'clone', '-q', bare, work)
+    const seen: { sub: string; net: boolean }[] = []
+    const env = { PATH: process.env.PATH, SSH_AUTH_SOCK: '/tmp/agent.sock', XDG_CONFIG_HOME: '/home/x/.config' }
+    const p = ports({
+      env,
+      exec: (argv, o) => {
+        const sub = argv.find((a, i) => i > 0 && !a.startsWith('-') && !a.startsWith('core.')) ?? argv[0] ?? ''
+        seen.push({ sub, net: Boolean(o.env?.SSH_AUTH_SOCK) })
+        return createExec(env)(argv, { ...o, env: { ...o.env, SSH_AUTH_SOCK: o.env?.SSH_AUTH_SOCK ?? '' } })
+      },
+    })
+    await ok({ cwd: work, pr: 2 }, p)
+    const withNet = new Set(seen.filter((s) => s.net).map((s) => s.sub))
+    expect([...withNet].sort()).toEqual(['fetch', 'ls-remote'])
+    expect(seen.some((s) => s.sub === 'clone' && !s.net)).toBe(true)
+    expect(seen.some((s) => s.sub === 'checkout' && !s.net)).toBe(true)
+    expect(seen.some((s) => s.sub === 'diff' && !s.net)).toBe(true)
+  })
+})
+
+describe('failures after the clone exists', () => {
+  async function failing(throwOn: string, extra: Partial<ReviewPorts> = {}) {
+    const bare = fresh('origin')
+    git(bare, 'init', '-q', '--bare', '-b', 'main')
+    const seed = fresh('seed')
+    git(seed, 'init', '-q', '-b', 'main')
+    put(seed, { 'a.ts': 'a1\n' })
+    git(seed, 'add', '-A')
+    git(seed, 'commit', '-q', '-m', 'base')
+    git(seed, 'remote', 'add', 'origin', bare)
+    git(seed, 'push', '-q', 'origin', 'main')
+    git(seed, 'checkout', '-q', '-b', 'feat')
+    put(seed, { 'a.ts': 'a2\n' })
+    git(seed, 'commit', '-qam', 'feature')
+    git(seed, 'push', '-q', 'origin', 'feat:refs/pull/6/head')
+    const work = fresh('work')
+    git(scratch, 'clone', '-q', bare, work)
+    const p = ports({
+      exec: (argv, o) => {
+        if (argv.includes(throwOn)) throw new Error(`boom in ${throwOn}`)
+        return defaultExec(argv, o)
+      },
+      ...extra,
+    })
+    const result = await prepare({ cwd: work, pr: 6 }, 'k:prepare', p)
+    return { result, p }
+  }
+
+  test('a throw while cloning (after the directory exists) removes it and comes back as the error', async () => {
+    const { result, p } = await failing('checkout')
+    expect(result).toMatchObject({ ok: false, kind: 'error' })
+    expect((result as { message: string }).message).toContain('boom in checkout')
+    expect(readdirSync(join(p.stateDir, CLONE_ROOT))).toEqual([])
+  })
+
+  test('a throw after the clone is ready (a static tool) does too', async () => {
+    const { result, p } = await failing('fallow', { which: (b) => (b === 'fallow' ? '/usr/bin/fallow' : null) })
+    expect(result).toMatchObject({ ok: false, kind: 'error' })
+    expect((result as { message: string }).message).toContain('boom in fallow')
+    expect(readdirSync(join(p.stateDir, CLONE_ROOT))).toEqual([])
+  })
+})
+
+describe('mapLimit', () => {
+  test('stops dispatching after the first rejection and rethrows it; the ones in flight finish', async () => {
+    const started: number[] = []
+    const finished: number[] = []
+    const run = mapLimit([0, 1, 2, 3, 4, 5, 6, 7], 2, async (i) => {
+      started.push(i)
+      if (i === 1) {
+        await Bun.sleep(5)
+        throw new Error('item 1 failed')
+      }
+      await Bun.sleep(40)
+      finished.push(i)
+      return i
+    })
+    expect(
+      await run.then(
+        () => null,
+        (e: Error) => e.message,
+      ),
+    ).toBe('item 1 failed')
+    await Bun.sleep(100)
+    expect(started).toEqual([0, 1])
+    expect(finished).toEqual([0])
+  })
+
+  test('keeps input order and respects the limit', async () => {
+    let live = 0
+    let peak = 0
+    const out = await mapLimit([5, 1, 4, 2, 3], 2, async (n) => {
+      peak = Math.max(peak, ++live)
+      await Bun.sleep(n)
+      live--
+      return n * 10
+    })
+    expect(out).toEqual([50, 10, 40, 20, 30])
+    expect(peak).toBe(2)
+  })
+})
+
+describe('salvaged verdict with failed reviewers', () => {
+  test('keeps the pipeline discussions and the Partial review lead over the true count', () => {
+    const failed = [
+      { angle: 'typescript', failureReason: 'session crashed' },
+      { angle: 'adversary', failureReason: '503' },
+    ]
+    const v = salvagedVerdict('raw text', failed, 5)
+    expect(v.outcome).toBe('needs-human')
+    expect(v.escalationCategory).toBe('blocker')
+    expect(v.summary).toStartWith(
+      'Partial review: 2/5 reviewers failed (typescript, adversary). Review ran 5 reviewers',
+    )
+    expect(v.discussions.map((d) => [d.file, d.angle])).toEqual([
+      ['(review pipeline)', 'typescript'],
+      ['(review pipeline)', 'adversary'],
+      ['(review pipeline)', 'synthesis'],
+    ])
+    expect(v.discussions[0]?.message).toContain('typescript session failed: session crashed')
+    expect(v.discussions[2]?.message).toContain('raw text')
+    const clean = salvagedVerdict('raw', [], 3)
+    expect(clean.summary).toStartWith('Review ran 3 reviewers')
+    expect(clean.discussions).toHaveLength(1)
+    expect(allFailedVerdict(failed, 2).discussions).toHaveLength(2)
   })
 })

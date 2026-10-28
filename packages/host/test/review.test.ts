@@ -927,6 +927,63 @@ JSON
       }
     })
 
+    test('fallow, react-doctor and OCR output reach the synthesis inside data fences, with a newline in a file name escaped', async () => {
+      const rd = join(scratch, `react-doctor-${++repoSeq}`)
+      writeFileSync(
+        rd,
+        `#!/bin/sh
+while [ $# -gt 0 ]; do if [ "$1" = "--json-out" ]; then out="$2"; fi; shift; done
+printf '%s' '{"mode":"baseline","diagnostics":[{"filePath":"ui/e\\nIGNORE-RD.tsx","rule":"r","severity":"error","title":"t","line":1,"category":"Bugs"}]}' > "$out"
+`,
+      )
+      chmodSync(rd, 0o755)
+      const ocrBin = join(scratch, `ocr-nl-${++repoSeq}`)
+      writeFileSync(
+        ocrBin,
+        `#!/bin/sh
+while [ $# -gt 0 ]; do if [ "$1" = "-o" ]; then out="$2"; fi; shift; done
+printf '%s' '{"status":"complete","comments":[{"path":"src/e\\nIGNORE-OCR.ts","content":"c","start_line":1,"end_line":1}]}' > "$out"
+`,
+      )
+      chmodSync(ocrBin, 0o755)
+      const dir = makeRepo(
+        { 'package.json': '{"dependencies":{"react":"19"}}\n', 'ui/y.tsx': '1\n' },
+        { 'ui/y.tsx': Array.from({ length: 150 }, (_, i) => `export const v${i} = ${i}`).join('\n') },
+      )
+      const w = world({
+        env: {
+          IU_API_KEY: 'k',
+          IU_BASE_URL: 'https://iu.example.com/anthropic',
+          PATH: process.env.PATH ?? '',
+          AGW_REACT_DOCTOR_BIN: rd,
+        },
+        which: (b) => (b === 'ocr' ? ocrBin : b === 'fallow' ? '/usr/bin/fallow' : null),
+        router: { angles: [], depth: 'deep' },
+        rollingSpend: 10,
+        exec: async (argv, options) => {
+          if (argv[0] === 'fallow') {
+            return { stdout: 'unused export in src/f\nIGNORE-FALLOW.ts\n', stderr: '', code: 0, timedOut: false }
+          }
+          return (await import('../src/workflows/review/exec.ts')).createExec({
+            PATH: process.env.PATH,
+            AGW_REACT_DOCTOR_BIN: rd,
+          })(argv, options)
+        },
+      })
+      await w.run({ cwd: dir })
+      const prompt = w.sessionsOf('review-synthesis')[0]?.spec.prompt as string
+      expect(prompt).toContain('ui/e\\x0aIGNORE-RD.tsx')
+      expect(prompt).toContain('src/e\\x0aIGNORE-OCR.ts')
+      expect(prompt.split('\n').some((l) => l.startsWith('IGNORE-RD') || l.startsWith('IGNORE-OCR'))).toBe(false)
+      // each block sits between its own markers; the fallow text, which is not escaped, only ever inside them
+      for (const label of ['ANGLES', 'FALLOW', 'REACT_DOCTOR', 'OCR']) {
+        expect(prompt).toMatch(new RegExp(`<<<${label}_[0-9a-f]{12}_BEGIN>>>[\\s\\S]*<<<${label}_[0-9a-f]{12}_END>>>`))
+      }
+      const fenced = /<<<FALLOW_([0-9a-f]{12})_BEGIN>>>([\s\S]*?)<<<FALLOW_\1_END>>>/.exec(prompt)
+      expect(fenced?.[2]).toContain('IGNORE-FALLOW.ts')
+      expect(prompt.replace(fenced?.[0] ?? '', '')).not.toContain('IGNORE-FALLOW')
+    })
+
     test('an ocr that cannot be started is a failed block and the review goes on', async () => {
       const bin = join(scratch, `ocr-noexec-${++repoSeq}`)
       writeFileSync(bin, '#!/bin/sh\n', { mode: 0o644 }) // not executable: spawn throws
@@ -940,6 +997,46 @@ JSON
       const out = await w.run({ cwd: makeRepo(BASE, big) })
       expect(out.status).toBe('done')
       expect(w.sessionsOf('review-synthesis')[0]?.spec.prompt).toContain('OpenCodeReview: failed (could not start ocr')
+    })
+  })
+
+  describe('scopes and locations', () => {
+    test('a subdirectory cwd reviews the repository root and says so in the angle and synthesis prompts', async () => {
+      const dir = makeRepo({ ...BASE, 'sub/x.ts': '1\n' }, { ...CHANGE, 'sub/x.ts': '2\n' })
+      const sub = join(dir, 'sub')
+      const w = world()
+      const out = await w.run({ cwd: sub })
+      expect(out.status).toBe('done')
+      const angle = w.sessionsOf('review-architect')[0]
+      expect(angle?.spec.prompt).toContain(`Repository root: ${dir}`)
+      expect(angle?.spec.prompt).toContain(`started in the subdirectory ${sub}`)
+      expect(angle?.spec.prompt).toContain('- src/a.ts') // outside the subdirectory, still reviewed
+      expect(angle?.spec.options).toEqual({ output: 'json', allowDirectories: [dir] })
+      expect(w.sessionsOf('review-synthesis')[0]?.spec.prompt).toContain(`started in the subdirectory ${sub}`)
+    })
+
+    test('a path scope with a staged new file is a review, not an empty-diff clean', async () => {
+      const dir = makeRepo(BASE, {})
+      writeFileSync(join(dir, 'new.ts'), 'export const n = 1\n')
+      git(dir, 'add', 'new.ts')
+      const w = world()
+      const out = await w.run({ cwd: dir, scope: 'new.ts' })
+      expect(out.status).toBe('done')
+      expect(w.sessionsOf('review-architect')).toHaveLength(1)
+      expect(w.sessionsOf('review-architect')[0]?.spec.prompt).toContain('+export const n = 1')
+    })
+
+    test('a failed reviewer survives an unparseable synthesis: pipeline discussion and the Partial review lead', async () => {
+      const w = world({
+        adversary: new Error('down'),
+        script: (s) =>
+          s.spec.agent === 'review-synthesis' ? Promise.resolve({ output: 'not json at all' }) : undefined,
+      })
+      const out = await w.run({ cwd: simpleRepo() })
+      const v = out.output as { summary: string; discussions: { angle: string; file: string }[] }
+      expect(v.summary).toStartWith('Partial review: 1/4 reviewers failed (adversary).')
+      expect(v.discussions.map((d) => d.angle)).toEqual(['adversary', 'synthesis'])
+      expect(v.discussions.every((d) => d.file === '(review pipeline)')).toBe(true)
     })
   })
 

@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync } from 'node:fs'
-import { dirname, join, relative, resolve, sep } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import type { Exec } from './exec.ts'
-import { tail } from './exec.ts'
+import { networkEnv, tail } from './exec.ts'
 import { mapLimit } from './util.ts'
 import { branchProblem, isPathScope, splitRange } from './schema.ts'
 
@@ -27,8 +27,10 @@ export type OcrMode = { mode: 'uncommitted' | 'head' | 'range'; from: string | n
 
 export type Prepared = {
   ok: true
-  /** The caller's checkout, realpath'd: one spelling for the prompts, the grant and the clone source. */
+  /** The repository root (`git rev-parse --show-toplevel`, realpath'd): one spelling for the prompts, the grant and the clone source. */
   cwd: string
+  /** The subdirectory the review was started in when that is not the root: the review covers the whole repository. */
+  invokedIn: string | null
   /** The directory the agents and tools read: `cwd`, or the throwaway clone of a `pr`/`branch` review. */
   repo: string
   /** The clone to remove when the run ends; null when `repo` is the caller's own checkout. */
@@ -133,8 +135,18 @@ function git(
 const names = (stdout: string) => stdout.split('\0').filter(Boolean)
 
 /** Untracked, non-ignored files as added-file hunks, without touching the caller's index (`git add -N` would). */
-async function untrackedDiff(ports: ReviewPorts, repo: string): Promise<{ diff: string; files: string[] }> {
-  const listed = await git(ports, repo, ['ls-files', '--others', '--exclude-standard', '-z'])
+async function untrackedDiff(
+  ports: ReviewPorts,
+  repo: string,
+  pathspec?: string,
+): Promise<{ diff: string; files: string[] }> {
+  const listed = await git(ports, repo, [
+    'ls-files',
+    '--others',
+    '--exclude-standard',
+    '-z',
+    ...(pathspec ? ['--', pathspec] : []),
+  ])
   const files = names(listed.stdout)
   const hunks = await mapLimit(files, UNTRACKED_PARALLEL, async (file) => {
     // `--no-index` exits 1 when it finds a difference: only the output matters.
@@ -160,6 +172,7 @@ async function changesFor(
   scope: string,
   baseOid: string | null,
   kind: ScopeKind,
+  pathspec: string,
 ): Promise<Changes> {
   const fail = (what: string, r: GitRun): Changes => {
     const text = (r.stderr || r.stdout).trim()
@@ -175,20 +188,19 @@ async function changesFor(
   if (baseOid) {
     diffArgs = ['diff', ...plain, '--no-renames', `${baseOid}...HEAD`]
     nameArgs = ['diff', '--no-renames', '--name-only', '-z', `${baseOid}...HEAD`]
-  } else if (scope === 'uncommitted') {
+  } else if (scope === 'uncommitted' || kind === 'path') {
+    // Staged and unstaged together; a path scope is the same, narrowed to the path (a staged or new file is never "no change").
     const hasHead = (await git(ports, repo, ['rev-parse', '--verify', '--quiet', 'HEAD'])).ok
     const against = hasHead ? ['HEAD'] : ['--cached']
-    diffArgs = ['diff', ...plain, ...against]
-    nameArgs = ['diff', '--name-only', '-z', ...against]
+    const narrow = kind === 'path' ? ['--', pathspec] : []
+    diffArgs = ['diff', ...plain, ...against, ...narrow]
+    nameArgs = ['diff', '--name-only', '-z', ...against, ...narrow]
   } else if (scope === 'head') {
     diffArgs = ['show', ...plain, 'HEAD']
     nameArgs = ['show', 'HEAD', '--name-only', '-z', '--format=']
   } else if (kind === 'range') {
     diffArgs = ['diff', ...plain, scope]
     nameArgs = ['diff', '--name-only', '-z', scope]
-  } else if (kind === 'path') {
-    diffArgs = ['diff', ...plain, '--', scope]
-    nameArgs = ['diff', '--name-only', '-z', '--', scope]
   } else {
     diffArgs = ['diff', ...plain, scope, 'HEAD']
     nameArgs = ['diff', '--name-only', '-z', scope, 'HEAD']
@@ -202,8 +214,8 @@ async function changesFor(
   if (!files.ok) return fail('diff --name-only', files)
   let text = diff.stdout
   let changed = names(files.stdout)
-  if (!baseOid && scope === 'uncommitted') {
-    const untracked = await untrackedDiff(ports, repo)
+  if (!baseOid && (scope === 'uncommitted' || kind === 'path')) {
+    const untracked = await untrackedDiff(ports, repo, kind === 'path' ? pathspec : undefined)
     text = [text, untracked.diff].filter((part) => part.trim()).join('\n')
     changed = [...changed, ...untracked.files]
   }
@@ -291,7 +303,7 @@ const DEFAULT_BRANCH = /^ref: refs\/heads\/(\S+)\s+HEAD$/m
  * the diff base. `cwd` is only read: nothing is fetched into it, no ref, worktree, HEAD or index of it changes. With
  * `expected` (a resume whose clone was swept) the same two commits are fetched again, by id when a ref has moved on.
  */
-async function cloneForRef(
+async function cloneForRefUnsafe(
   ports: ReviewPorts,
   cwd: string,
   key: string,
@@ -312,13 +324,14 @@ async function cloneForRef(
     FETCH_TIMEOUT_MS,
   )
   if (!cloned.ok) return { error: `could not clone ${cwd}: ${tail(cloned.stderr)}` }
-  const inClone = (args: string[], timeoutMs = GIT_TIMEOUT_MS) =>
-    git(ports, dir, args, timeoutMs, { GIT_LFS_SKIP_SMUDGE: '1' })
+  // Only `fetch` and `ls-remote` get the credential-carrying variables; the rest of the clone's git work does not.
+  const inClone = (args: string[], timeoutMs = GIT_TIMEOUT_MS, net = false) =>
+    git(ports, dir, args, timeoutMs, { GIT_LFS_SKIP_SMUDGE: '1', ...(net ? networkEnv(ports.env) : {}) })
   // The clone's own origin is `cwd`; the review fetches from the real one.
   await inClone(['remote', 'set-url', 'origin', origin.stdout.trim()])
   const tip = async (refspec: string, want?: string): Promise<{ oid: string } | { error: string }> => {
     const fetchOne = async (spec: string) => {
-      const fetched = await inClone(['fetch', '--quiet', 'origin', spec], FETCH_TIMEOUT_MS)
+      const fetched = await inClone(['fetch', '--quiet', 'origin', spec], FETCH_TIMEOUT_MS, true)
       if (!fetched.ok) return { error: `could not fetch ${spec} from origin: ${tail(fetched.stderr) || 'no output'}` }
       const resolved = await inClone(['rev-parse', '--verify', 'FETCH_HEAD^{commit}'])
       if (!resolved.ok || !resolved.stdout.trim()) return { error: `fetched ${spec} but could not resolve it` }
@@ -334,7 +347,7 @@ async function cloneForRef(
   }
   const head = await tip(ref.pr !== undefined ? `pull/${ref.pr}/head` : `refs/heads/${ref.branch}`, expected?.headOid)
   if ('error' in head) return head
-  const symref = await inClone(['ls-remote', '--symref', 'origin', 'HEAD'])
+  const symref = await inClone(['ls-remote', '--symref', 'origin', 'HEAD'], GIT_TIMEOUT_MS, true)
   const defaultBranch = DEFAULT_BRANCH.exec(symref.stdout)?.[1]
   if (!defaultBranch)
     return { error: `could not read origin's default branch: ${tail(symref.stderr) || symref.stdout.trim()}` }
@@ -351,6 +364,31 @@ async function cloneForRef(
   return { dir, headOid: head.oid, baseOid: base.oid }
 }
 
+/** `cloneForRefUnsafe`; whatever it throws after the clone exists removes the clone and comes back as the error. */
+async function cloneForRef(
+  ports: ReviewPorts,
+  cwd: string,
+  key: string,
+  ref: { pr?: number; branch?: string },
+  expected?: { headOid: string; baseOid: string },
+): Promise<{ dir: string; headOid: string; baseOid: string } | { error: string }> {
+  try {
+    return await cloneForRefUnsafe(ports, cwd, key, ref, expected)
+  } catch (error) {
+    discardClone(ports, key)
+    return { error: `cloning failed: ${error instanceof Error ? error.message : String(error)}` }
+  }
+}
+
+/** Best effort: the clone of this step key, if any exists. */
+function discardClone(ports: ReviewPorts, key: string): void {
+  try {
+    rmSync(cloneDirFor(ports, key).dir, { recursive: true, force: true })
+  } catch {
+    // the next prepare's sweep takes what is left
+  }
+}
+
 /**
  * On a replay the journaled `prepare` result says where the clone is; if a sweep (or anything else) removed it since, it
  * is rebuilt at the same path from the same two commits before any step reads it. Returns an error message, or null.
@@ -365,10 +403,7 @@ export async function restoreClone(
   if (!p.headOid || !p.baseOid)
     return `the review clone ${p.clone} is gone and no commit ids were journaled to rebuild it`
   const made = await cloneForRef(ports, p.cwd, key, ref, { headOid: p.headOid, baseOid: p.baseOid })
-  if ('error' in made) {
-    removeClone(ports, cloneDirFor(ports, key).dir)
-    return `the review clone ${p.clone} is gone and could not be rebuilt: ${made.error}`
-  }
+  if ('error' in made) return `the review clone ${p.clone} is gone and could not be rebuilt: ${made.error}`
   return made.dir === p.clone ? null : `the rebuilt clone is at ${made.dir}, not ${p.clone}`
 }
 
@@ -424,32 +459,58 @@ export async function prepare(
   key: string,
   ports: ReviewPorts,
 ): Promise<PrepareResult> {
+  try {
+    return await prepareChecked(input, key, ports)
+  } catch (error) {
+    // Anything thrown after the clone exists: the clone goes, and the run gets an error, not a leaked directory.
+    discardClone(ports, key)
+    return failure(`review prepare failed: ${error instanceof Error ? error.message : String(error)}`)
+  }
+}
+
+async function prepareChecked(
+  input: { cwd: string; scope?: string; pr?: number; branch?: string },
+  key: string,
+  ports: ReviewPorts,
+): Promise<PrepareResult> {
   const { pr, branch } = input
-  // One spelling of the checkout for everything that follows: the prompts, the agents' grant and the clone source.
-  let cwd: string
+  let invoked: string
   try {
     if (!statSync(input.cwd).isDirectory()) return invalid(`cwd is not a directory: ${input.cwd}`)
-    cwd = realpathSync(input.cwd)
+    invoked = realpathSync(input.cwd)
   } catch {
     return invalid(`cwd does not exist: ${input.cwd}`)
   }
+  const inside = await git(ports, invoked, ['rev-parse', '--is-inside-work-tree'])
+  if (!inside.ok || inside.stdout.trim() !== 'true') return invalid(`cwd is not a git work tree: ${invoked}`)
+  // One spelling of the repository root for everything that follows: the prompts, the agents' grant and the clone
+  // source. A subdirectory reviews the whole repository (a diff is repo-wide), and the prompts say so.
+  const top = await git(ports, invoked, ['rev-parse', '--show-toplevel'])
+  if (!top.ok || !top.stdout.trim()) return invalid(`cwd is not a git work tree: ${invoked}`)
+  const cwd = realpathSync(top.stdout.trim())
+  const invokedIn = cwd === invoked ? null : invoked
   // The agents' grant is a glob on this path: a wildcard in it would widen the grant, a control character would forge a prompt line.
-  if (GLOB_OR_CONTROL.test(cwd)) return invalid(`cwd contains glob or control characters: ${JSON.stringify(cwd)}`)
-  const inside = await git(ports, cwd, ['rev-parse', '--is-inside-work-tree'])
-  if (!inside.ok || inside.stdout.trim() !== 'true') return invalid(`cwd is not a git work tree: ${cwd}`)
+  for (const path of [cwd, invoked]) {
+    if (GLOB_OR_CONTROL.test(path)) return invalid(`cwd contains glob or control characters: ${JSON.stringify(path)}`)
+  }
 
   const refMode = pr !== undefined || branch !== undefined
   const label = refMode ? (pr !== undefined ? `pr:${pr}` : `branch:${branch}`) : (input.scope ?? 'uncommitted')
   const scope = label
   // A scope git resolves as a commit is a ref (`v2.0`); what it does not resolve is a path, and a path must exist.
   let kind: ScopeKind = 'range'
+  let pathspec = scope
   if (!refMode) {
     const resolves =
       scope === 'uncommitted' || scope === 'head' || splitRange(scope)
         ? false
-        : (await git(ports, cwd, ['rev-parse', '--verify', '--quiet', `${scope}^{commit}`])).ok
+        : (await git(ports, invoked, ['rev-parse', '--verify', '--quiet', `${scope}^{commit}`])).ok
     kind = kindOf(scope, resolves)
     if (kind === 'path') {
+      // Relative to where the caller stood, passed to git as relative to the root it runs in.
+      pathspec = isAbsolute(scope) ? scope : relative(cwd, resolve(invoked, scope))
+      if (pathspec === '..' || pathspec.startsWith(`..${sep}`))
+        return invalid(`scope "${scope}" is outside the repository`)
       const matched = await git(ports, cwd, [
         'ls-files',
         '-z',
@@ -457,7 +518,7 @@ export async function prepare(
         '--others',
         '--exclude-standard',
         '--',
-        scope,
+        pathspec,
       ])
       if (!matched.ok || names(matched.stdout).length === 0) {
         return invalid(`scope "${scope}" is neither a git ref nor a file in the work tree`)
@@ -473,7 +534,7 @@ export async function prepare(
   if (refMode) {
     const made = await cloneForRef(ports, cwd, key, { pr, branch })
     if ('error' in made) {
-      removeClone(ports, cloneDirFor(ports, key).dir)
+      discardClone(ports, key)
       return failure(made.error)
     }
     repo = made.dir
@@ -482,11 +543,12 @@ export async function prepare(
     baseOid = made.baseOid
   }
 
-  const found = await changesFor(ports, repo, scope, baseOid, kind)
+  const found = await changesFor(ports, repo, scope, baseOid, kind, pathspec)
   const config = switches(ports.env)
   const base: Base = baseOid ? { kind: 'base', ref: baseOid } : baseFor(scope, kind)
   const common = {
     cwd,
+    invokedIn: refMode ? null : invokedIn, // a clone is of the whole repository: there is no subdirectory to name
     repo,
     clone,
     headOid,
@@ -498,7 +560,7 @@ export async function prepare(
     ocrBlocker: ocrBlocker(ports),
   }
   if ('error' in found) {
-    if (clone) removeClone(ports, clone)
+    discardClone(ports, key)
     return found.kind === 'invalid_input' ? invalid(found.error) : failure(found.error)
   }
   if (!found.diff.trim()) {

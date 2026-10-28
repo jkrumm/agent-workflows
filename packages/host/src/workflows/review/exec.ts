@@ -14,10 +14,8 @@ export type Exec = (argv: readonly string[], options: ExecOptions) => Promise<Ex
 
 type Env = Record<string, string | undefined>
 
-/** git variables that name a program or a config a repo could point at; the host's own `GIT_CONFIG_GLOBAL` and friends are paths and stay. */
-const GIT_DENIED =
-  /TOKEN|PASS|SECRET|CREDENTIAL|KEY|AUTH(?!OR)|ASKPASS|SSH|EXEC_PATH|EXTERNAL_DIFF|PAGER|EDITOR|PROXY|CONFIG_(?:COUNT|PARAMETERS|KEY_|VALUE_)/i
-const GIT_PATH_CONFIG = new Set(['GIT_CONFIG_GLOBAL', 'GIT_CONFIG_SYSTEM', 'GIT_CONFIG_NOSYSTEM'])
+/** The only `GIT_*` variables a helper gets: paths of the host's own git config. Everything else (`GIT_DIR`, `GIT_ASKPASS`, `GIT_SSH_COMMAND`, `GIT_CONFIG_COUNT`, …) can redirect or run something. */
+const GIT_PASSED = new Set(['GIT_CONFIG_GLOBAL', 'GIT_CONFIG_SYSTEM', 'GIT_CONFIG_NOSYSTEM'])
 
 /**
  * What a helper (git, fallow, react-doctor) may see of the host's environment: an allowlist, never a copy. A `pr`/`branch`
@@ -29,17 +27,31 @@ export function helperEnv(source: Env): Record<string, string> {
   for (const [name, value] of Object.entries(source)) {
     if (value === undefined) continue
     if (['PATH', 'HOME', 'TMPDIR', 'LANG', 'TERM'].includes(name) || name.startsWith('LC_')) out[name] = value
-    else if (name.startsWith('GIT_') && (GIT_PATH_CONFIG.has(name) || !GIT_DENIED.test(name))) out[name] = value
+    else if (GIT_PASSED.has(name)) out[name] = value
   }
   out.PATH ??= process.env.PATH ?? ''
   return { ...out, GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0' }
+}
+
+/**
+ * Added to the calls that talk to the remote (`fetch`, `ls-remote`) and to no other: the agent socket and the config
+ * directory that carry the host's git credentials. Deliberate: a helper that only reads a checkout never needs them, and
+ * a clone's tools (fallow, react-doctor) must not hold them.
+ */
+export function networkEnv(source: Env): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const name of ['SSH_AUTH_SOCK', 'XDG_CONFIG_HOME']) {
+    const value = source[name]
+    if (value) out[name] = value
+  }
+  return out
 }
 
 const TERM_GRACE_MS = 5_000
 const DEADLINE_GRACE_MS = 10_000
 
 /** Signals go to the helper's children too: killing only the parent leaves a hung grandchild holding the pipes. */
-function killTree(proc: Bun.Subprocess, signal: 'TERM' | 'KILL') {
+export function killTree(proc: Bun.Subprocess, signal: 'TERM' | 'KILL') {
   try {
     Bun.spawnSync(['pkill', `-${signal}`, '-P', String(proc.pid)])
   } catch {

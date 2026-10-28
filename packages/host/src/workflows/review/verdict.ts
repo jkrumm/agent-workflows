@@ -110,15 +110,25 @@ export function allFailedVerdict(failed: readonly FailedReviewer[], totalReviewe
 
 /**
  * The synthesis did not return valid JSON twice. The multi-angle run happened, so the raw synthesizer text is kept in a
- * discussion for manual triage instead of ending as a bare parse error.
+ * discussion for manual triage instead of ending as a bare parse error. A reviewer that failed is still reported: its
+ * pipeline discussion and the "Partial review" lead, over the true reviewer count.
  */
-export function salvagedVerdict(raw: string, totalReviewers: number): ReviewResult {
+export function salvagedVerdict(raw: string, failed: readonly FailedReviewer[], totalReviewers: number): ReviewResult {
+  const partial =
+    failed.length > 0
+      ? `Partial review: ${failed.length}/${totalReviewers} reviewers failed (${failed.map((r) => r.angle).join(', ')}). `
+      : ''
   return {
     schemaVersion: REVIEW_SCHEMA_VERSION,
     outcome: 'needs-human',
     blocking: [],
     improvements: [],
     discussions: [
+      ...failed.map((r) => ({
+        file: PIPELINE,
+        message: `${r.angle} session failed: ${r.failureReason} — this angle did not actually review the diff.`,
+        angle: r.angle,
+      })),
       {
         file: PIPELINE,
         message:
@@ -130,6 +140,6 @@ export function salvagedVerdict(raw: string, totalReviewers: number): ReviewResu
     ],
     testGaps: [],
     escalationCategory: 'blocker',
-    summary: `Review ran ${totalReviewers} reviewers but synthesis failed to serialize a structured verdict (after one retry). Findings were NOT lost — see the discussions entry for the raw synthesizer text. Treat as needs-human.`,
+    summary: `${partial}Review ran ${totalReviewers} reviewers but synthesis failed to serialize a structured verdict (after one retry). Findings were NOT lost — see the discussions entries for the raw synthesizer text. Treat as needs-human.`,
   }
 }

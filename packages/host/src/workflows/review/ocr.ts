@@ -6,7 +6,9 @@ import { resolveRoute } from '@agent-workflows/routes'
 import { defineWorkflow, type StepScope, type Usage } from '@agent-workflows/runtime'
 import { z } from 'zod'
 import type { HostWorkflow } from '../../operations.ts'
+import { killTree } from './exec.ts'
 import type { ReviewPorts } from './git.ts'
+import { escapeName } from './util.ts'
 
 // OpenCodeReview (`ocr`, alibaba/open-code-review): one more review input, never a gate. Cross-file consistency,
 // config drift and line-anchored findings, on diffs the router judges deep. It is expensive (1.5-3M tokens a run,
@@ -134,7 +136,7 @@ export function renderOcrBlock(result: OcrResult): string {
   const lines = comments.map((c) => {
     const where = c.start_line === c.end_line ? `${c.start_line}` : `${c.start_line}-${c.end_line}`
     const suggestion = c.suggestion_code ? `\n  suggestion: ${truncate(c.suggestion_code, SUGGESTION_CHARS)}` : ''
-    return `- ${c.path}:${where} — ${truncate(c.content, COMMENT_CHARS)}${suggestion}`
+    return `- ${escapeName(c.path)}:${where} — ${truncate(c.content, COMMENT_CHARS)}${suggestion}`
   })
   return `${header}\n\n${lines.join('\n')}${warningsBlock}`
 }
@@ -222,11 +224,12 @@ export async function runOcr(
   let dir: string | undefined
   let proc: Bun.Subprocess<'ignore', 'pipe', 'pipe'> | undefined
   let killTimer: ReturnType<typeof setTimeout> | undefined
+  // One timer: the abort listener and the `finally` both call this, and a second timer would be lost to `clearTimeout`.
   const terminate = () => {
-    if (!proc || proc.exitCode !== null) return
-    proc.kill('SIGTERM')
+    if (!proc || proc.exitCode !== null || killTimer) return
+    killTree(proc, 'TERM') // the tree: `ocr` runs helpers of its own that would keep the pipes open
     killTimer = setTimeout(() => {
-      if (proc && proc.exitCode === null) proc.kill('SIGKILL')
+      if (proc && proc.exitCode === null) killTree(proc, 'KILL')
     }, SIGKILL_GRACE_MS)
   }
   scope.signal.addEventListener('abort', terminate, { once: true })

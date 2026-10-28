@@ -73,18 +73,22 @@ their own command names for the same reason (`agw review-route`, `agw review-adv
 
 ## Hardening
 
-- **Helper environment.** git, fallow and react-doctor run on an allowlist built from `ports.env` (`PATH`, `HOME`, `TMPDIR`,
-  `LANG`, `LC_*`, `TERM`, and `GIT_*` minus credentials, askpass/ssh/external-diff/pager and per-command config; the
-  host's `GIT_CONFIG_GLOBAL` stays). The API secret and the IU key never reach them (`test/review-git.test.ts`). `ocr`
-  gets its own minimal env plus the IU credentials it needs.
-- **One path.** `prepare` realpaths `cwd` and everything after uses that spelling (prompts, the agents' grant, the clone
-  source); a `cwd` with glob or control characters, or that is no work tree, is `invalid_input` before any paid step.
+- **Helper environment.** git, fallow and react-doctor run on an allowlist built from `ports.env`: `PATH`, `HOME`,
+  `TMPDIR`, `LANG`, `LC_*`, `TERM` and exactly `GIT_CONFIG_GLOBAL`, `GIT_CONFIG_SYSTEM`, `GIT_CONFIG_NOSYSTEM`; nothing
+  else (`GIT_DIR`, askpass, ssh commands, per-command config never pass). `SSH_AUTH_SOCK` and `XDG_CONFIG_HOME` are added
+  to the `fetch` and `ls-remote` calls only, never to a tool that reads the checkout. The API secret and the IU key never
+  reach any helper (`test/review-git.test.ts`). `ocr` gets its own minimal env plus the IU credentials it needs, and is
+  killed as a process tree.
+- **One path.** `prepare` resolves `git rev-parse --show-toplevel` and realpaths it; everything after uses that spelling
+  (prompts, the agents' grant, the clone source). A subdirectory `cwd` reviews the whole repository and the prompts say
+  where it was started; a `cwd` with glob or control characters, or that is no work tree, is `invalid_input` before any paid step.
   The grant is a glob on the path, which OpenCode matches as named, not as resolved.
 - **Symlinks.** In a `pr`/`branch` clone every symlink whose realpath leaves the clone is deleted right after checkout
   (OpenCode follows a link out of an allowed directory, see the opencode-host README). The live `cwd` is not edited: a
   symlink there is an accepted risk.
 - **Scopes.** A scope git resolves as a commit is a ref (`v2.0`); only what it does not resolve is a path, and a path that
-  matches no file is `invalid_input`, never an empty-diff `clean`.
+  matches no file is `invalid_input`, never an empty-diff `clean`. A path scope is `git diff HEAD -- <path>` plus the
+  untracked files under it, like `uncommitted`: a staged or new file is a review.
 - **Prompt data.** Changed file names sit inside a nonce data fence with control characters escaped; the diff likewise.
 - **Siblings.** Every step started beside the pipeline (react-doctor, adversary, OCR, the angle fan-out) is tracked: a
   rejection is handled at once, and the cleanup awaits them all before it removes the clone. The runtime cannot cancel a
