@@ -1,14 +1,19 @@
 // Black-box conformance for the generated `agw` (ADR-004, contract v1): spawn `bin/agw.ts`, assert
 // stdout, the one stderr error line and the exit code. Against the in-test fake host always; against
 // a live host too when AGW_CONFORMANCE_URL is set (read-only and pending cases only).
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from 'bun:test'
+import { createHash } from 'node:crypto'
+import { chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { EXIT } from '../src/exit.ts'
-import { type FakeHost, startFakeHost } from './fake-host.ts'
+import { contractSha, servedSha } from '../src/spec.ts'
+import { type FakeHost, hostSha, startFakeHost } from './fake-host.ts'
 
 const BIN = join(import.meta.dir, '..', 'bin', 'agw.ts')
+
+// Each case spawns several `bun` processes; under the full `make check` load 5 s is too tight.
+setDefaultTimeout(20_000)
 
 interface Result {
   code: number
@@ -22,7 +27,6 @@ interface Result {
 interface Sandbox {
   dir: string
   env: Record<string, string>
-  cacheFile: string
   envFile: string
 }
 
@@ -37,17 +41,22 @@ function sandbox(extra: Record<string, string> = {}): Sandbox {
     XDG_CONFIG_HOME: join(dir, 'config'),
     ...extra,
   }
-  return { dir, env, cacheFile: join(dir, 'cache', 'agw', 'openapi.json'), envFile: join(dir, 'config', 'agw', 'env') }
+  return { dir, env, envFile: join(dir, 'config', 'agw', 'env') }
 }
+
+/** The documented layout: one cache per host URL. */
+const cacheFile = (box: Sandbox, url: string) =>
+  join(box.dir, 'cache', 'agw', createHash('sha256').update(url).digest('hex').slice(0, 12), 'openapi.json')
 
 async function agw(
   box: Sandbox,
   args: string[],
-  options: { stdin?: string; env?: Record<string, string> } = {},
+  options: { stdin?: string; openStdin?: boolean; env?: Record<string, string> } = {},
 ): Promise<Result> {
   const proc = Bun.spawn(['bun', BIN, ...args], {
     env: { ...box.env, ...options.env },
-    stdin: options.stdin === undefined ? 'ignore' : new Blob([options.stdin]),
+    // `openStdin`: an inherited pipe nobody writes to or closes, as under some agent harnesses.
+    stdin: options.openStdin ? 'pipe' : options.stdin === undefined ? 'ignore' : new Blob([options.stdin]),
     stdout: 'pipe',
     stderr: 'pipe',
   })
@@ -94,7 +103,7 @@ describe('agw against the fake host', () => {
     const r = await agw(b, ['llm', 'title', 'Release notes for the new CLI'])
     expect(r.code).toBe(EXIT.ok)
     expect(r.json().title).toContain('new CLI')
-    const cached = JSON.parse(readFileSync(b.cacheFile, 'utf8')) as { info: Record<string, string> }
+    const cached = JSON.parse(readFileSync(cacheFile(b, host.url), 'utf8')) as { info: Record<string, string> }
     expect(cached.info['x-contract-sha']).toBe(host.sha())
     const call = host.requests.findLast((q) => q.path === '/llm/title')
     expect(call?.headers['x-agw-contract']).toBe(host.sha())
@@ -139,7 +148,17 @@ describe('agw against the fake host', () => {
     expect(r.json().output).toEqual({ echo: 'ABAB', mode: 'fancy', tags: { a: 'b' } })
     const body = host.requests.findLast((q) => q.path === '/workflows/fixture/echo')?.body
     expect(body).toEqual({ message: 'ab', times: 2, loud: true, mode: 'fancy', tags: { a: 'b' } })
-    for (const bad of [['--times', '1.5'], ['--mode', 'loud'], ['--tags', '{nope'], ['--loud=maybe']]) {
+    const unions = await agw(b, ['fixture', 'echo', 'x', '--level', 'high', '--size', '12', '--no-loud'])
+    expect(unions.code).toBe(0)
+    const sent = host.requests.findLast((q) => q.path === '/workflows/fixture/echo')?.body
+    expect(sent).toEqual({ message: 'x', level: 'high', size: '12', loud: false })
+    for (const bad of [
+      ['--times', '1.5'],
+      ['--mode', 'loud'],
+      ['--tags', '{nope'],
+      ['--loud=maybe'],
+      ['--level', 'mid'],
+    ]) {
       const e = await agw(b, ['fixture', 'echo', 'x', ...bad])
       expect(e.code).toBe(EXIT.usage)
       expect(e.error?.kind).toBe('usage')
@@ -207,6 +226,9 @@ describe('agw against the fake host', () => {
     expect(r.stdout).toContain('usage: agw fixture echo [message]')
     expect(r.stdout).toContain('--times')
     expect(r.stdout).toContain('read from stdin when omitted')
+    expect(r.stdout).toContain('[--loud|--no-loud]')
+    expect(r.stdout).toContain('[--level <low|high>]')
+    expect(r.stdout).not.toContain('<boolean>')
   })
 
   test('3 auth: no secret names the env file; a wrong secret is a 401', async () => {
@@ -233,6 +255,15 @@ describe('agw against the fake host', () => {
     const ok = await agw(b, ['llm', 'title', 'From the env file', '--format', 'plain'])
     expect(ok.code).toBe(0)
     expect(ok.stdout.trim()).toBe('From the env file')
+  })
+
+  test('env file: an unreadable one is exit 3 naming the path, not "no file"', async () => {
+    const b = sandbox({ AGW_URL: host.url })
+    mkdirSync(b.envFile, { recursive: true })
+    chmodSync(b.envFile, 0o600)
+    const r = await agw(b, ['llm', 'title', 'x'])
+    expect(r.code).toBe(EXIT.auth)
+    expect(r.error?.message).toStartWith(`${b.envFile} cannot be read:`)
   })
 
   test('4 not_found: an unknown run', async () => {
@@ -331,14 +362,18 @@ describe('agw against the fake host', () => {
   })
 
   test('schema works offline with the host down', async () => {
-    const b = box()
+    const own = await startFakeHost()
+    const b = sandbox({ AGW_URL: own.url, AGW_API_SECRET: own.secret })
     expect((await agw(b, ['schema', '--refresh'])).code).toBe(0)
-    const down = { AGW_URL: 'http://127.0.0.1:1' }
+    const sha = own.sha()
+    await own.stop()
+    const down = {}
+    expect((await agw(b, ['run', 'status', 'x'])).code).toBe(EXIT.network)
     const list = await agw(b, ['schema'], { env: down })
     expect(list.code).toBe(0)
     const commands = (list.json().commands as { command: string }[]).map((c) => c.command)
     expect(commands).toEqual(expect.arrayContaining(['llm title', 'decide', 'fixture echo', 'run wait', 'run cancel']))
-    expect(list.json().contractSha).toBe(host.sha())
+    expect(list.json().contractSha).toBe(sha)
     const one = await agw(b, ['schema', 'fixture', 'echo'], { env: down })
     expect(one.code).toBe(0)
     const described = one.json() as {
@@ -349,6 +384,178 @@ describe('agw against the fake host', () => {
     expect(described['x-cli']).toMatchObject({ kind: 'workflow', resume: { command: ['run', 'wait'] } })
     const unknown = await agw(b, ['schema', 'nope'], { env: down })
     expect(unknown.code).toBe(EXIT.usage)
+  })
+
+  test('--commit takes only true or false inline; --commit=false keeps the gate shut', async () => {
+    const b = box()
+    await agw(b, ['schema', '--refresh'])
+    const before = host.requests.length
+    const off = await agw(b, ['fixture', 'deploy', '--target', 'mini', '--commit=false'])
+    expect(off.code).toBe(EXIT.confirmation_required)
+    const bad = await agw(b, ['fixture', 'deploy', '--target', 'mini', '--commit=yes'])
+    expect(bad.code).toBe(EXIT.usage)
+    expect(host.requests.length).toBe(before)
+    const on = await agw(b, ['fixture', 'deploy', '--target', 'mini', '--commit=true'])
+    expect(on.code).toBe(0)
+  })
+
+  test('a stale cache refreshes once on an unknown flag or a missing field, then parses again', async () => {
+    const b = box()
+    host.addWorkflow({ id: 'fixture.grow', summary: 'Gains a flag', input: { type: 'object', properties: {} } })
+    try {
+      await agw(b, ['schema', '--refresh'])
+      host.addWorkflow({
+        id: 'fixture.grow',
+        summary: 'Gained a flag',
+        input: { type: 'object', properties: { extra: { type: 'string' } }, required: ['extra'] },
+        outcome: (input) => ({ output: { extra: input.extra } }),
+      })
+      const fetches = () => host.requests.filter((q) => q.path === '/openapi.json').length
+      const before = fetches()
+      const r = await agw(b, ['fixture', 'grow', '--extra', 'new'])
+      expect(r.code).toBe(0)
+      expect(r.json()).toMatchObject({ output: { extra: 'new' } })
+      expect(fetches()).toBe(before + 1)
+      const still = await agw(b, ['fixture', 'grow', '--extra', 'x', '--nope'])
+      expect(still.code).toBe(EXIT.usage)
+      expect(fetches()).toBe(before + 2)
+    } finally {
+      host.removeWorkflow('fixture.grow')
+    }
+  })
+
+  test('an operation with an unknown x-cli.kind is skipped; a bad document keeps the old cache', async () => {
+    const b = box()
+    host.addWorkflow({
+      id: 'fixture.odd',
+      summary: 'Unknown kind',
+      kind: 'mystery',
+      input: { type: 'object', properties: {} },
+    })
+    try {
+      expect((await agw(b, ['schema', '--refresh'])).code).toBe(0)
+      const listed = (await agw(b, ['schema'])).json().commands as { command: string }[]
+      expect(listed.map((c) => c.command)).not.toContain('fixture odd')
+      expect((await agw(b, ['fixture', 'odd'])).code).toBe(EXIT.usage)
+      expect((await agw(b, ['fixture', 'echo', 'still works'])).code).toBe(0)
+    } finally {
+      host.removeWorkflow('fixture.odd')
+    }
+    await agw(b, ['schema', '--refresh'])
+    const good = readFileSync(cacheFile(b, host.url), 'utf8')
+    host.serveDocument({
+      openapi: '3.1.1',
+      paths: { '/x': { post: { 'x-cli': { command: ['x'], kind: 'mystery' } } } },
+    })
+    try {
+      const r = await agw(b, ['schema', '--refresh'])
+      expect(r.code).toBe(EXIT.general)
+      expect(r.error?.message).toContain('the cached contract is kept')
+      expect(readFileSync(cacheFile(b, host.url), 'utf8')).toBe(good)
+    } finally {
+      host.serveDocument(undefined)
+    }
+  })
+
+  test('a 202 without a run id, or a workflow without x-cli.resume, exits 1 without a bogus hint', async () => {
+    const b = box()
+    const r = await agw(b, ['fixture', 'norunid'])
+    expect(r.code).toBe(EXIT.general)
+    expect(r.error?.message).toBe('host returned no run id')
+    expect(r.stderr).not.toContain('undefined')
+    expect(r.error?.hint).toBe('')
+    const n = await agw(b, ['fixture', 'noresume'], { env: { AGW_WAIT_BUDGET_S: '0' } })
+    expect(n.code).toBe(EXIT.general)
+    expect(n.error?.message).toContain('no resume command')
+  })
+
+  test('an optional stdin field is not read implicitly: an open pipe does not hang the call', async () => {
+    const r = await agw(box(), ['fixture', 'note'], { openStdin: true })
+    expect(r.code).toBe(0)
+    expect(r.json()).toMatchObject({ status: 'done', output: { text: null } })
+  })
+
+  test('one cache per host URL', async () => {
+    const other = await startFakeHost()
+    try {
+      for (let i = 0; i < 50; i++) other.bumpVersion()
+      const b = sandbox({ AGW_API_SECRET: host.secret })
+      expect((await agw(b, ['schema', '--refresh'], { env: { AGW_URL: host.url } })).code).toBe(0)
+      expect((await agw(b, ['schema', '--refresh'], { env: { AGW_URL: other.url } })).code).toBe(0)
+      expect(cacheFile(b, host.url)).not.toBe(cacheFile(b, other.url))
+      const down = (await agw(b, ['schema'], { env: { AGW_URL: host.url } })).json()
+      const otherDown = (await agw(b, ['schema'], { env: { AGW_URL: other.url } })).json()
+      expect(down.contractSha).toBe(host.sha())
+      expect(otherDown.contractSha).toBe(other.sha())
+      expect(down.contractSha).not.toBe(otherDown.contractSha)
+    } finally {
+      await other.stop()
+    }
+  })
+
+  test('a network failure on a workflow start hints the idempotency key to retry with', async () => {
+    const b = box()
+    await agw(b, ['schema', '--refresh'])
+    const dead = 'http://127.0.0.1:1'
+    mkdirSync(join(cacheFile(b, dead), '..'), { recursive: true })
+    cpSync(cacheFile(b, host.url), cacheFile(b, dead))
+    const r = await agw(b, ['fixture', 'echo', 'x'], { env: { AGW_URL: dead } })
+    expect(r.code).toBe(EXIT.network)
+    expect(r.error?.hint).toMatch(/^the run may have started; retry with --idempotency-key [0-9a-f-]{36}$/)
+    const given = await agw(b, ['fixture', 'echo', 'x', '--idempotency-key', 'k-1'], { env: { AGW_URL: dead } })
+    expect(given.error?.hint).toBe('the run may have started; retry with --idempotency-key k-1')
+  })
+
+  test('a request without a wait hits AGW_TIMEOUT_S as its own message', async () => {
+    const b = box()
+    const started = await agw(b, ['fixture', 'echo', 'x'])
+    host.slowStatus(2500)
+    try {
+      const r = await agw(b, ['run', 'status', String(started.json().runId)], { env: { AGW_TIMEOUT_S: '1' } })
+      expect(r.code).toBe(EXIT.network)
+      expect(r.error?.message).toBe(`no answer from ${host.url} within 1s`)
+    } finally {
+      host.slowStatus(0)
+    }
+  })
+
+  test('path parameters . and .. (in any encoding) are refused before any request', async () => {
+    const b = box()
+    await agw(b, ['schema', '--refresh'])
+    const before = host.requests.length
+    for (const id of ['.', '..', '%2e%2e', '%2E', '%252e%252e']) {
+      const r = await agw(b, ['run', 'status', id])
+      expect(r.code).toBe(EXIT.usage)
+    }
+    expect(host.requests.length).toBe(before)
+  })
+
+  test('contract sha: the CLI and the host agree on a known-answer vector', () => {
+    const doc = {
+      openapi: '3.1.1',
+      info: { title: 'agw vector', version: '1.0.0' },
+      paths: {
+        '/runs/{runId}': {
+          get: {
+            operationId: 'runStatus',
+            'x-cli': {
+              command: ['run', 'status'],
+              positional: ['runId'],
+              mutating: false,
+              defaultFormat: 'json' as const,
+              kind: 'run' as const,
+            },
+          },
+        },
+      },
+      components: { schemas: { Z: { type: 'string' }, A: { enum: [3, 1, 2] } } },
+    }
+    // Computed independently: python3 json.dumps(doc, sort_keys=True, separators=(',', ':')) | sha256.
+    const expected = '52f36fc70a59fc53c8c217785f3fc197143482d84b6b7a87f0cde81bce62d190'
+    expect(contractSha(doc)).toBe(expected)
+    expect(servedSha(doc)).toBe(expected)
+    expect(hostSha(doc)).toBe(expected)
+    expect(contractSha({ ...doc, info: { ...doc.info, 'x-contract-sha': 'ignored' } })).toBe(expected)
   })
 
   test('schema --exit-codes needs neither a cache nor a host', async () => {
@@ -386,15 +593,19 @@ liveDescribe(
       expect((await agw(b, ['run', 'cancel', crypto.randomUUID()])).code).toBe(EXIT.confirmation_required)
       const wrong = await agw(b, ['run', 'status', crypto.randomUUID()], { env: { AGW_API_SECRET: 'x'.repeat(40) } })
       expect(wrong.code).toBe(EXIT.auth)
-      expect((await agw(b, ['schema'], { env: { AGW_URL: 'http://127.0.0.1:1' } })).code).toBe(0)
+      // Offline: the cache alone answers, with nothing listening at the URL it is keyed by.
+      const dead = 'http://127.0.0.1:1'
+      mkdirSync(join(cacheFile(b, dead), '..'), { recursive: true })
+      cpSync(cacheFile(b, LIVE ?? ''), cacheFile(b, dead))
+      expect((await agw(b, ['schema'], { env: { AGW_URL: dead } })).code).toBe(0)
     })
 
     test('read-only: a stale cached sha is refreshed and the call retried', async () => {
       const b = liveBox()
       await agw(b, ['schema', '--refresh'])
-      const cached = JSON.parse(readFileSync(b.cacheFile, 'utf8')) as { info: Record<string, string> }
+      const cached = JSON.parse(readFileSync(cacheFile(b, LIVE ?? ''), 'utf8')) as { info: Record<string, string> }
       cached.info['x-contract-sha'] = '0'.repeat(64)
-      writeFileSync(b.cacheFile, JSON.stringify(cached))
+      writeFileSync(cacheFile(b, LIVE ?? ''), JSON.stringify(cached))
       const r = await agw(b, ['run', 'status', crypto.randomUUID()])
       expect(r.code).toBe(EXIT.not_found)
     })

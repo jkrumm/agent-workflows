@@ -122,63 +122,89 @@ export function deref(doc: Document, value: unknown, seen: ReadonlySet<string> =
   return Object.fromEntries(Object.entries(node).map(([k, v]) => [k, deref(doc, v, seen)]))
 }
 
-function readXCli(raw: Partial<XCli>, path: string, method: string): XCli | undefined {
-  if (!Array.isArray(raw.command) || raw.command.length === 0) return undefined
-  const strings = (v: unknown) => (Array.isArray(v) ? v.filter((s): s is string => typeof s === 'string') : [])
-  const resume = raw.resume && Array.isArray(raw.resume.command) ? raw.resume : undefined
-  const kinds = ['capability', 'workflow', 'run'] as const
+const KINDS: readonly string[] = ['capability', 'workflow', 'run']
+const WORD = /^[A-Za-z0-9][\w.-]*$/
+
+const words = (v: unknown): string[] | undefined =>
+  Array.isArray(v) && v.every((w) => typeof w === 'string' && WORD.test(w)) ? (v as string[]) : undefined
+
+const names = (v: unknown): string[] => (Array.isArray(v) ? v.filter((s): s is string => typeof s === 'string') : [])
+
+/** An `x-cli` block the CLI cannot honour (no valid words, an unknown kind) makes the operation invisible. */
+function readXCli(raw: Partial<XCli>): XCli | undefined {
+  const command = words(raw.command)
   const kind = raw.kind ?? 'capability'
-  if (!kinds.includes(kind)) throw new Error(`${method.toUpperCase()} ${path}: unknown x-cli.kind "${String(kind)}"`)
+  if (!command?.length || !KINDS.includes(kind)) return undefined
+  const resumeWords = raw.resume ? words(raw.resume.command) : undefined
   return {
-    command: strings(raw.command),
-    positional: strings(raw.positional),
+    command,
+    positional: names(raw.positional),
     mutating: raw.mutating === true,
     defaultFormat: raw.defaultFormat === 'json' ? 'json' : 'plain',
     ...(typeof raw.stdin === 'string' ? { stdin: raw.stdin } : {}),
     ...(typeof raw.plainField === 'string' ? { plainField: raw.plainField } : {}),
     kind,
-    ...(resume ? { resume: { command: strings(resume.command), positional: strings(resume.positional) } } : {}),
+    ...(resumeWords?.length ? { resume: { command: resumeWords, positional: names(raw.resume?.positional) } } : {}),
   }
 }
 
-/** Every operation carrying `x-cli` becomes one command; nothing per command is written by hand. */
+function buildCommand(doc: Document, path: string, method: string, op: Operation, x: XCli): Command {
+  const fields: Field[] = []
+  for (const p of Array.isArray(op.parameters) ? op.parameters : []) {
+    if ((p?.in !== 'path' && p?.in !== 'query') || typeof p.name !== 'string') continue
+    const schema = deref(doc, { ...(p.schema ?? {}), ...(p.description ? { description: p.description } : {}) })
+    fields.push({
+      name: p.name,
+      flag: kebab(p.name),
+      in: p.in,
+      schema: schema as Schema,
+      required: p.in === 'path' || p.required === true,
+    })
+  }
+  const body = deref(doc, op.requestBody?.content?.['application/json']?.schema) as Schema | undefined
+  for (const [name, schema] of Object.entries(body?.properties ?? {})) {
+    fields.push({
+      name,
+      flag: kebab(name),
+      in: 'body',
+      schema: schema ?? {},
+      required: (body?.required ?? []).includes(name),
+    })
+  }
+  const ok = op.responses?.['200'] ?? op.responses?.['202']
+  return {
+    words: x.command,
+    method: method.toUpperCase(),
+    path,
+    summary: typeof op.summary === 'string' ? op.summary : '',
+    description: typeof op.description === 'string' ? op.description : '',
+    x,
+    fields,
+    hasBody: op.requestBody !== undefined,
+    output: deref(doc, ok?.content?.['application/json']?.schema) as Schema | undefined,
+  }
+}
+
+/**
+ * Every operation carrying a usable `x-cli` becomes one command; nothing per command is written by
+ * hand. An operation the CLI cannot read is skipped and never takes the others down with it.
+ */
 export function buildCommands(doc: Document): Command[] {
   const commands: Command[] = []
   const taken = new Set<string>()
-  for (const [path, item] of Object.entries(doc.paths ?? {})) {
-    for (const [method, op] of Object.entries(item ?? {})) {
-      if (!METHODS.includes(method) || !op?.['x-cli']) continue
-      const x = readXCli(op['x-cli'], path, method)
+  const paths = doc.paths !== null && typeof doc.paths === 'object' ? doc.paths : {}
+  for (const [path, item] of Object.entries(paths)) {
+    if (item === null || typeof item !== 'object') continue
+    for (const [method, op] of Object.entries(item)) {
+      if (!METHODS.includes(method) || op === null || typeof op !== 'object' || !op['x-cli']) continue
+      const x = readXCli(op['x-cli'])
       if (!x || taken.has(x.command.join(' '))) continue
-      taken.add(x.command.join(' '))
-      const fields: Field[] = []
-      for (const p of op.parameters ?? []) {
-        if (p.in !== 'path' && p.in !== 'query') continue
-        const schema = deref(doc, { ...(p.schema ?? {}), ...(p.description ? { description: p.description } : {}) })
-        fields.push({
-          name: p.name,
-          flag: kebab(p.name),
-          in: p.in,
-          schema: schema as Schema,
-          required: p.in === 'path' || p.required === true,
-        })
+      try {
+        commands.push(buildCommand(doc, path, method, op, x))
+        taken.add(x.command.join(' '))
+      } catch {
+        // A malformed operation stays invisible.
       }
-      const body = deref(doc, op.requestBody?.content?.['application/json']?.schema) as Schema | undefined
-      for (const [name, schema] of Object.entries(body?.properties ?? {})) {
-        fields.push({ name, flag: kebab(name), in: 'body', schema, required: (body?.required ?? []).includes(name) })
-      }
-      const ok = op.responses?.['200'] ?? op.responses?.['202']
-      commands.push({
-        words: x.command,
-        method: method.toUpperCase(),
-        path,
-        summary: op.summary ?? '',
-        description: op.description ?? '',
-        x,
-        fields,
-        hasBody: op.requestBody !== undefined,
-        output: deref(doc, ok?.content?.['application/json']?.schema) as Schema | undefined,
-      })
     }
   }
   return commands

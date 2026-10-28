@@ -1,13 +1,14 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { BIN } from './args.ts'
-import { type Credentials, cachePath, credentials, type Env, envFilePath, requireSecret } from './config.ts'
+import { type Credentials, cachePath, credentials, type Env, envFilePath, requireSecret, timeoutS } from './config.ts'
 import { AgwError, kindForStatus } from './exit.ts'
 import { buildCommands, type Command, type Document, servedSha } from './spec.ts'
 
 /** The host waits at most this long per request (Bun's `idleTimeout` ceiling is 255 s). */
 export const MAX_WAIT_S = 240
-const SLACK_MS = 30_000
+/** Added to a wait request's `Prefer: wait`, so the host answers before the client gives up. */
+const SLACK_S = 30
 
 export interface Reply {
   status: number
@@ -45,6 +46,7 @@ export class Host {
   #doc: Document | undefined
   #commands: Command[] = []
   #sha = ''
+  #refreshed = false
 
   constructor(readonly env: Env) {}
 
@@ -60,6 +62,11 @@ export class Host {
     return this.#doc
   }
 
+  /** Whether this invocation already fetched the document: every trigger refreshes at most once. */
+  get refreshed(): boolean {
+    return this.#refreshed
+  }
+
   get url(): string {
     return this.creds().url
   }
@@ -69,8 +76,8 @@ export class Host {
     return this.#creds
   }
 
-  private use(doc: Document): void {
-    this.#commands = buildCommands(doc)
+  private use(doc: Document, commands: Command[]): void {
+    this.#commands = commands
     this.#doc = doc
     this.#sha = servedSha(doc)
   }
@@ -78,9 +85,10 @@ export class Host {
   /** The cached document only; never touches the network. */
   loadCache(): boolean {
     try {
-      const doc = JSON.parse(readFileSync(cachePath(this.env), 'utf8')) as Document
-      if (!doc || typeof doc !== 'object' || typeof doc.paths !== 'object') return false
-      this.use(doc)
+      const doc = JSON.parse(readFileSync(cachePath(this.env, this.url), 'utf8')) as Document
+      const commands = doc && typeof doc === 'object' ? buildCommands(doc) : []
+      if (!commands.length) return false
+      this.use(doc, commands)
       return true
     } catch {
       return false
@@ -91,18 +99,24 @@ export class Host {
     if (!this.loadCache()) await this.refresh()
   }
 
+  /** Commands are built and checked before the cache is written: a bad document never replaces a good one. */
   async refresh(): Promise<void> {
+    this.#refreshed = true
     const { body } = await this.send('GET', '/openapi.json', { contract: false })
     const doc = body as Document
-    if (!doc || typeof doc !== 'object' || typeof doc.paths !== 'object') {
-      throw new AgwError('general', `${this.url}/openapi.json is not an OpenAPI document`)
+    const commands = doc && typeof doc === 'object' && !Array.isArray(doc) ? buildCommands(doc) : []
+    if (!commands.length) {
+      throw new AgwError(
+        'general',
+        `${this.url}/openapi.json has no usable x-cli operations; the cached contract is kept`,
+      )
     }
-    const path = cachePath(this.env)
+    const path = cachePath(this.env, this.url)
     mkdirSync(dirname(path), { recursive: true })
     const tmp = `${path}.${process.pid}.tmp`
     writeFileSync(tmp, JSON.stringify(doc))
     renameSync(tmp, path)
-    this.use(doc)
+    this.use(doc, commands)
   }
 
   call(command: Command, values: Record<string, unknown>, options: CallOptions = {}): Promise<Reply> {
@@ -137,10 +151,13 @@ export class Host {
     }
     if (options.contract !== false && this.#sha) headers['x-agw-contract'] = this.#sha
     if (options.body !== undefined) headers['content-type'] = 'application/json'
-    if (options.waitS !== undefined) headers.prefer = `wait=${Math.max(0, Math.min(MAX_WAIT_S, options.waitS))}`
+    const waitS = options.waitS === undefined ? undefined : Math.max(0, Math.min(MAX_WAIT_S, options.waitS))
+    if (waitS !== undefined) headers.prefer = `wait=${waitS}`
     if (options.idempotencyKey) headers['idempotency-key'] = options.idempotencyKey
     if (this.env.AGW_PURPOSE) headers['x-agw-purpose'] = this.env.AGW_PURPOSE
 
+    const deadlineS = waitS === undefined ? timeoutS(this.env) : waitS + SLACK_S
+    const signal = AbortSignal.timeout(deadlineS * 1000)
     let response: Response
     let text: string
     try {
@@ -148,12 +165,15 @@ export class Host {
         method,
         headers,
         ...(options.body !== undefined ? { body: JSON.stringify(options.body) } : {}),
-        signal: AbortSignal.timeout((options.waitS ?? 0) * 1000 + SLACK_MS),
+        signal,
       })
       text = await response.text()
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error)
-      throw new AgwError('network', `host unreachable at ${creds.url}: ${reason}`, {
+      const message = signal.aborted
+        ? `no answer from ${creds.url} within ${deadlineS}s`
+        : `host unreachable at ${creds.url}: ${reason}`
+      throw new AgwError('network', message, {
         hint: `is the host up? ${BIN} schema works offline from the cache`,
       })
     }

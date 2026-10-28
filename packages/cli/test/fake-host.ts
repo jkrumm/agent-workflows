@@ -23,8 +23,12 @@ interface Workflow {
   plainField?: string
   stdin?: string
   positional?: string[]
-  /** Runs inline when absent; `{ durationS, fail }` drive the fixture's run. */
-  outcome?: (input: Json) => { durationS?: number; fail?: string; output?: unknown; reject?: Response }
+  /** Overrides `x-cli.kind`, to serve one the CLI does not know. */
+  kind?: string
+  /** Leaves `x-cli.resume` out. */
+  noResume?: boolean
+  /** Runs inline when absent; `{ durationS, fail }` drive the fixture's run, `respond` replaces the answer. */
+  outcome?: (input: Json) => { durationS?: number; fail?: string; output?: unknown; respond?: Response }
 }
 
 interface Run {
@@ -97,6 +101,8 @@ export const FIXTURE_WORKFLOWS: Workflow[] = [
         loud: { type: 'boolean', default: false },
         mode: { enum: ['plain', 'fancy'], default: 'plain' },
         tags: { $ref: '#/components/schemas/Tags' },
+        level: { anyOf: [{ const: 'low' }, { const: 'high' }, { type: 'null' }] },
+        size: { anyOf: [{ type: 'string' }, { type: 'number' }] },
       },
       required: ['message'],
     },
@@ -110,6 +116,26 @@ export const FIXTURE_WORKFLOWS: Workflow[] = [
         output: { echo: input.loud ? text.toUpperCase() : text, mode: input.mode ?? 'plain', tags: input.tags ?? null },
       }
     },
+  },
+  {
+    id: 'fixture.note',
+    summary: 'An optional field read from stdin',
+    input: { type: 'object', properties: { text: { type: 'string' } } },
+    stdin: 'text',
+    outcome: (input) => ({ output: { text: input.text ?? null } }),
+  },
+  {
+    id: 'fixture.norunid',
+    summary: 'Answers 202 without a run id',
+    input: { type: 'object', properties: {} },
+    outcome: () => ({ respond: Response.json({ status: 'running' }, { status: 202 }) }),
+  },
+  {
+    id: 'fixture.noresume',
+    summary: 'A workflow without x-cli.resume',
+    input: { type: 'object', properties: {} },
+    noResume: true,
+    outcome: () => ({ durationS: 5 }),
   },
   {
     id: 'fixture.fail',
@@ -129,7 +155,7 @@ export const FIXTURE_WORKFLOWS: Workflow[] = [
     summary: 'Always rate limited',
     input: { type: 'object', properties: {} },
     outcome: () => ({
-      reject: new Response(
+      respond: new Response(
         JSON.stringify({ defined: false, code: 'RATE_LIMITED', status: 429, message: 'slow down' }),
         {
           status: 429,
@@ -142,7 +168,7 @@ export const FIXTURE_WORKFLOWS: Workflow[] = [
     id: 'fixture.boom',
     summary: 'Always a 500',
     input: { type: 'object', properties: {} },
-    outcome: () => ({ reject: errorBody('INTERNAL_SERVER_ERROR', 500, 'Internal server error') }),
+    outcome: () => ({ respond: errorBody('INTERNAL_SERVER_ERROR', 500, 'Internal server error') }),
   },
 ]
 
@@ -159,8 +185,8 @@ function workflowOperation(w: Workflow) {
       defaultFormat: 'json',
       ...(w.stdin ? { stdin: w.stdin } : {}),
       ...(w.plainField ? { plainField: w.plainField } : {}),
-      kind: 'workflow',
-      resume: { command: ['run', 'wait'], positional: ['runId'] },
+      kind: w.kind ?? 'workflow',
+      ...(w.noResume ? {} : { resume: { command: ['run', 'wait'], positional: ['runId'] } }),
     },
   }
 }
@@ -175,6 +201,10 @@ export interface FakeHost {
   removeWorkflow: (id: string) => void
   /** Changes the served sha without changing any command. */
   bumpVersion: () => void
+  /** Serves `body` as /openapi.json instead of the document (undefined restores it). */
+  serveDocument: (body: unknown) => void
+  /** Delays every `GET /runs/{runId}` by this many ms. */
+  slowStatus: (ms: number) => void
   stop: () => Promise<void>
 }
 
@@ -192,6 +222,8 @@ export async function startFakeHost(): Promise<FakeHost> {
   const runs = new Map<string, Run>()
   const requests: Recorded[] = []
   let version = 1
+  let override: unknown
+  let statusDelayMs = 0
 
   const build = (): Json => {
     const paths: Json = {}
@@ -288,7 +320,7 @@ export async function startFakeHost(): Promise<FakeHost> {
       const client = request.headers.get('x-agw-contract')
       if (client !== null && client !== served())
         return errorBody('CONTRACT_MISMATCH', 412, 'Contract mismatch', { server: served(), client })
-      if (url.pathname === '/openapi.json') return Response.json(doc)
+      if (url.pathname === '/openapi.json') return Response.json(override ?? doc)
 
       const runPath = /^\/runs\/([^/]+)(\/wait|\/cancel)?$/.exec(url.pathname)
       if (runPath) {
@@ -299,7 +331,10 @@ export async function startFakeHost(): Promise<FakeHost> {
           if (status(run) === 'running') run.cancelled = true
           return reply(run)
         }
-        if (!runPath[2] && request.method === 'GET') return reply(run)
+        if (!runPath[2] && request.method === 'GET') {
+          await Bun.sleep(statusDelayMs)
+          return reply(run)
+        }
       }
 
       const wf = url.pathname.startsWith('/workflows/') && workflows.get(url.pathname.slice(11).split('/').join('.'))
@@ -315,7 +350,7 @@ export async function startFakeHost(): Promise<FakeHost> {
           return errorBody('CONFLICT', 409, 'Idempotency-Key reused with another input')
         if (existing) return waitFor(existing, request)
         const outcome = wf.outcome?.(input) ?? {}
-        if (outcome.reject) return outcome.reject
+        if (outcome.respond) return outcome.respond
         const run: Run = {
           runId: crypto.randomUUID(),
           workflowId: wf.id,
@@ -353,6 +388,12 @@ export async function startFakeHost(): Promise<FakeHost> {
     bumpVersion: () => {
       version++
       rebuild()
+    },
+    serveDocument: (body) => {
+      override = body
+    },
+    slowStatus: (ms) => {
+      statusDelayMs = ms
     },
     stop: () => server.stop(true),
   }

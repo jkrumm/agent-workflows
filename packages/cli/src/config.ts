@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { readFileSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -7,17 +8,30 @@ export type Env = Record<string, string | undefined>
 
 export const DEFAULT_URL = 'http://127.0.0.1:7791'
 const DEFAULT_BUDGET_S = 110
+// A hang guard, not a budget: a single model request gets at least 30 min (rules/agent-limits.md).
+const DEFAULT_TIMEOUT_S = 1800
 
 const home = (env: Env) => env.HOME || homedir()
 
 export const envFilePath = (env: Env) => join(env.XDG_CONFIG_HOME || join(home(env), '.config'), 'agw', 'env')
-export const cachePath = (env: Env) => join(env.XDG_CACHE_HOME || join(home(env), '.cache'), 'agw', 'openapi.json')
+/** One cache per host URL, so two hosts never share a contract. */
+export const cachePath = (env: Env, url: string) =>
+  join(
+    env.XDG_CACHE_HOME || join(home(env), '.cache'),
+    'agw',
+    createHash('sha256').update(url).digest('hex').slice(0, 12),
+    'openapi.json',
+  )
 
-export function waitBudgetS(env: Env): number {
-  const raw = env.AGW_WAIT_BUDGET_S
+function seconds(raw: string | undefined, fallback: number, min: number): number {
   const n = raw === undefined || raw.trim() === '' ? Number.NaN : Number(raw)
-  return Number.isFinite(n) && n >= 0 ? n : DEFAULT_BUDGET_S
+  return Number.isFinite(n) && n >= min ? n : fallback
 }
+
+export const waitBudgetS = (env: Env) => seconds(env.AGW_WAIT_BUDGET_S, DEFAULT_BUDGET_S, 0)
+
+/** The deadline of one request that does not wait on a run: a capability call can run a model for minutes. */
+export const timeoutS = (env: Env) => seconds(env.AGW_TIMEOUT_S, DEFAULT_TIMEOUT_S, Number.MIN_VALUE)
 
 function parseEnvFile(text: string): Env {
   const out: Env = {}
@@ -35,18 +49,25 @@ function parseEnvFile(text: string): Env {
 /** `KEY=value` lines, refused unless mode 0600: the file holds the host's bearer secret. */
 function readEnvFile(env: Env): Env {
   const path = envFilePath(env)
+  const unreadable = (error: unknown) =>
+    new AgwError('auth', `${path} cannot be read: ${error instanceof Error ? error.message : String(error)}`)
   let mode: number
   try {
     mode = statSync(path).mode & 0o777
-  } catch {
-    return {}
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return {}
+    throw unreadable(error)
   }
   if (mode !== 0o600) {
     throw new AgwError('auth', `${path} has mode ${mode.toString(8).padStart(4, '0')}, refused`, {
       hint: `chmod 600 ${path}`,
     })
   }
-  return parseEnvFile(readFileSync(path, 'utf8'))
+  try {
+    return parseEnvFile(readFileSync(path, 'utf8'))
+  } catch (error) {
+    throw unreadable(error)
+  }
 }
 
 export interface Credentials {

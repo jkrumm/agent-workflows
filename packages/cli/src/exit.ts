@@ -37,6 +37,8 @@ export interface ErrorFields {
   code?: string | null
   hint?: string
   details?: Record<string, unknown>
+  /** A usage error a stale cached contract would explain: the runner refreshes once and parses again. */
+  stale?: boolean
 }
 
 /** Every failure leaves through this: one JSON line on stderr and the kind's exit code. */
@@ -44,6 +46,7 @@ export class AgwError extends Error {
   readonly code: string | null
   readonly hint: string
   readonly details: Record<string, unknown>
+  readonly stale: boolean
 
   constructor(
     readonly kind: ErrorKind,
@@ -55,6 +58,7 @@ export class AgwError extends Error {
     this.code = fields.code ?? null
     this.hint = fields.hint ?? ''
     this.details = fields.details ?? {}
+    this.stale = fields.stale ?? false
   }
 
   get exitCode(): number {
@@ -68,7 +72,7 @@ export class AgwError extends Error {
   }
 }
 
-export const usage = (message: string, hint = '') => new AgwError('usage', message, { hint })
+export const usage = (message: string, hint = '', stale = false) => new AgwError('usage', message, { hint, stale })
 
 /** HTTP status → error kind (spike 7's table; the server's `code` decides 412 as well). */
 export function kindForStatus(status: number, code: string | null): ErrorKind {

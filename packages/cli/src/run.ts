@@ -1,4 +1,5 @@
-import { assertRequired, BIN, coerceStdin, helpText, type Parsed, parseArgs, usageLine } from './args.ts'
+import { randomUUID } from 'node:crypto'
+import { assertValues, BIN, coerceStdin, helpText, type Parsed, parseArgs, usageLine } from './args.ts'
 import { type Env, waitBudgetS } from './config.ts'
 import { AgwError, EXIT, EXIT_MEANING, type ExitKind, usage } from './exit.ts'
 import { Host, MAX_WAIT_S, type Reply } from './host.ts'
@@ -21,6 +22,12 @@ interface RunState {
 }
 
 const TERMINAL = new Set(['done', 'failed', 'cancelled'])
+
+interface Call {
+  command: Command
+  parsed: Parsed
+  values: Record<string, unknown>
+}
 
 /** A 412 on the first request of a command: nothing ran, so refresh and retry once is safe. */
 class StaleContract extends Error {
@@ -49,6 +56,7 @@ function render(body: unknown, format: 'json' | 'plain', command: Command): stri
 class Runner {
   readonly host: Host
   #stdin: Promise<string> | undefined
+  #key: string | undefined
 
   constructor(readonly io: Io) {
     this.host = new Host(io.env)
@@ -65,58 +73,78 @@ class Runner {
     if (first === undefined || first === '--help' || first === '-h') return this.topHelp()
 
     await this.host.load()
-    let hit = resolveCommand(this.host.commands, argv)
-    let refreshFailure: string | undefined
-    if (!hit) {
-      // A workflow deployed since the cache was written appears without a manual refresh.
-      try {
-        await this.host.refresh()
-      } catch (error) {
-        refreshFailure = error instanceof Error ? error.message : String(error)
-      }
-      hit = resolveCommand(this.host.commands, argv)
-    }
-    if (!hit) throw this.unknownCommand(argv, refreshFailure)
-
-    const parsed = parseArgs(hit.command, hit.rest)
-    if (parsed.globals.help) {
-      this.io.out(helpText(hit.command))
+    const call = await this.prepareFresh(argv)
+    if (call.parsed.globals.help) {
+      this.io.out(helpText(call.command))
       return EXIT.ok
     }
     try {
-      return await this.execute(hit.command, parsed)
+      return await this.execute(call)
     } catch (error) {
       if (!(error instanceof StaleContract)) throw error
       return this.retryAfterMismatch(argv, error.mismatch)
     }
   }
 
+  /** argv → command and input values. Every check here runs before anything is sent. */
+  private async prepare(argv: string[]): Promise<Call> {
+    const hit = resolveCommand(this.host.commands, argv)
+    if (!hit) throw this.unknownCommand(argv)
+    const { command } = hit
+    const parsed = parseArgs(command, hit.rest)
+    const values = { ...parsed.values }
+    if (parsed.globals.help) return { command, parsed, values }
+    // Only a required field is read implicitly: an inherited open pipe must not hang an optional one.
+    const stdinField = command.fields.find((f) => f.name === command.x.stdin)
+    if (stdinField?.required && values[stdinField.name] === undefined && !this.io.stdinIsTTY) {
+      const text = await this.stdin()
+      if (text !== '') values[stdinField.name] = coerceStdin(command, text)
+    }
+    assertValues(command, values)
+    return { command, parsed, values }
+  }
+
+  /**
+   * A stale cache explains any usage error (a new command, a new flag, a newly required field), so
+   * the first one refreshes the document once and parses again.
+   */
+  private async prepareFresh(argv: string[]): Promise<Call> {
+    try {
+      return await this.prepare(argv)
+    } catch (error) {
+      if (!(error instanceof AgwError) || !error.stale || this.host.refreshed) throw error
+      try {
+        await this.host.refresh()
+      } catch (refreshError) {
+        const refresh = refreshError instanceof Error ? refreshError.message : String(refreshError)
+        throw new AgwError('usage', error.message, { hint: error.hint, details: { ...error.details, refresh } })
+      }
+      return this.prepare(argv)
+    }
+  }
+
   private async retryAfterMismatch(argv: string[], mismatch: AgwError): Promise<number> {
     await this.host.refresh()
-    const hit = resolveCommand(this.host.commands, argv)
-    const refused = (why: string) =>
-      new AgwError('contract_mismatch', `${mismatch.message}; ${why}`, {
+    let call: Call
+    try {
+      call = await this.prepare(argv)
+    } catch (error) {
+      const why = error instanceof Error ? error.message : String(error)
+      throw new AgwError('contract_mismatch', `${mismatch.message}; on the host's contract: ${why}`, {
         code: mismatch.code,
         hint: `${BIN} schema lists the host's commands`,
         details: mismatch.details,
       })
-    if (!hit)
-      throw refused(`'${argv.filter((w) => !w.startsWith('-')).join(' ')}' is not a command on the host's contract`)
-    let parsed: Parsed
-    try {
-      parsed = parseArgs(hit.command, hit.rest)
-    } catch (error) {
-      throw refused(`the command no longer parses: ${error instanceof Error ? error.message : String(error)}`)
     }
     try {
-      return await this.execute(hit.command, parsed)
+      return await this.execute(call)
     } catch (error) {
       if (error instanceof StaleContract) throw error.mismatch
       throw error
     }
   }
 
-  private unknownCommand(argv: string[], refreshFailure: string | undefined): AgwError {
+  private unknownCommand(argv: string[]): AgwError {
     const { prefix, options } = nextWords(this.host.commands, argv)
     const words = argv.filter((w) => !w.startsWith('-'))
     const message =
@@ -126,23 +154,19 @@ class Runner {
     const hint = options.length
       ? `${[BIN, ...prefix].join(' ')} ${options.join('|')}`
       : `${BIN} schema lists the commands`
-    return new AgwError('usage', message, { hint, details: refreshFailure ? { refresh: refreshFailure } : {} })
+    return new AgwError('usage', message, { hint, stale: true })
   }
 
-  private async execute(command: Command, parsed: Parsed): Promise<number> {
+  private async execute({ command, parsed, values }: Call): Promise<number> {
     const { io } = this
-    const values = { ...parsed.values }
-    const stdinName = command.x.stdin
-    if (stdinName && values[stdinName] === undefined && !io.stdinIsTTY) {
-      const text = await this.stdin()
-      if (text !== '') values[stdinName] = coerceStdin(command, text)
-    }
-    assertRequired(command, values)
     if (command.x.mutating && !parsed.globals.commit && !io.stdinIsTTY) {
       throw new AgwError('confirmation_required', `${command.words.join(' ')} changes state; nothing was sent`, {
         hint: `re-run with --commit: ${usageLine(command)}`,
       })
     }
+    // A start or a mutation may land even when its answer is lost: it always carries a key, so a retry is safe.
+    const startsWork = command.x.kind === 'workflow' || command.x.mutating
+    if (startsWork) this.#key ??= parsed.globals.idempotencyKey ?? randomUUID()
     const format = parsed.globals.format ?? (io.stdoutIsTTY ? command.x.defaultFormat : 'json')
     const emit = (body: unknown) => io.out(`${render(body, format, command)}\n`)
     const plan = waitPlan(this.host.commands, command)
@@ -152,11 +176,18 @@ class Runner {
     let reply: Reply
     try {
       reply = await this.host.call(command, values, {
-        idempotencyKey: parsed.globals.idempotencyKey,
+        ...(startsWork ? { idempotencyKey: this.#key } : {}),
         ...(plan ? { waitS: Math.floor(budgetS) } : {}),
       })
     } catch (error) {
-      if (error instanceof AgwError && error.kind === 'contract_mismatch') throw new StaleContract(error)
+      if (!(error instanceof AgwError)) throw error
+      if (error.kind === 'contract_mismatch') throw new StaleContract(error)
+      if (error.kind === 'network' && startsWork) {
+        throw new AgwError('network', error.message, {
+          hint: `the run may have started; retry with --idempotency-key ${this.#key}`,
+          details: { idempotencyKey: this.#key },
+        })
+      }
       throw error
     }
     if (!plan) {
@@ -168,9 +199,25 @@ class Runner {
     const resume = plan.resume
     const resumeCommand = resume && this.host.commands.find((c) => c.words.join(' ') === resume.command.join(' '))
     const resumeValues = Object.fromEntries((resume?.positional ?? []).map((name) => [name, state[name]]))
-    const resumeLine = resume
-      ? [BIN, ...resume.command, ...Object.values(resumeValues).map((v) => shellWord(String(v)))].join(' ')
-      : ''
+    const usable = (v: unknown) => (typeof v === 'string' && v !== '') || typeof v === 'number'
+    if (
+      reply.status === 202 &&
+      (!resumeCommand || !resume?.positional.length || !Object.values(resumeValues).every(usable))
+    ) {
+      emit(state)
+      throw new AgwError(
+        'general',
+        resumeCommand ? 'host returned no run id' : `host declared no resume command for ${command.words.join(' ')}`,
+        {
+          details: { status: reply.status },
+        },
+      )
+    }
+    const resumeLine = [
+      BIN,
+      ...(resume?.command ?? []),
+      ...Object.values(resumeValues).map((v) => shellWord(String(v))),
+    ].join(' ')
 
     while (reply.status === 202 && resumeCommand) {
       const leftS = Math.floor((deadline - Date.now()) / 1000)
