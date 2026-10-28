@@ -121,7 +121,7 @@ Prior, before the smoke (the smoke's measured cost replaces it):
 | E | ≈ $0.05 average (its last eval) | ≈ $4 |
 | A (each profile) | ≈ $0.02 / $0.08 / $0.30 (DeepSeek at $0.30/M in, ~80 % cache reads, 3-15 searches) | ≈ $4.5 |
 | P (each profile) | ≈ $0.04 / $0.15 / $0.50 (1 / 3 / 6 engine quick jobs + the pilot session) | ≈ $8 |
-| judge | `decide` ≈ $0.0001, page fetches ≈ free | < $0.5 |
+| judge | `decide` ≈ $0.0002, page fetches ≈ free; its own `cap.*` runs (purpose `eval`), never in an arm's cost | < $0.5 |
 
 Full run ≈ $30 (± 2×), on the Athena team key. Smoke: every arm once on 3 questions (`rfc9110-413` quick,
 `npm-hono-latest` quick/live, `bun-serve-idle-timeout` standard) ≈ $1.

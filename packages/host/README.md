@@ -179,9 +179,14 @@ Define it with `defineWorkflow` (input must be a `z.object`; list its agents in 
   is warned too. Each arm is read with its fingerprint prefix and args in SQL, never the workflow's whole
   history.
 - **Wiring.** `wireEval` (in `boot`) binds the eval workflows to the runtime before it opens (recovery may resume an
-  eval run at once) and owns the drift job's timer. The runtime's `judge` is the host's capability registry
-  (`registryJudge`): a scorer's judged sub-scores call capabilities by id (research: `web.fetch`, `decide`,
-  `web.package`), for regression and drift only, their usage on the scoring step. Review's and check's scorers never judge.
+  eval run at once) and owns the drift job's timer. The runtime's `judge` (`src/judge.ts`) lets a scorer call only
+  `web.fetch`, `web.package`, `decide` and `llm.*` (never a workflow or an effect). For regression and drift each call
+  is a `cap.<id>` run of its own, recorded and priced like a direct capability call, with purpose `eval` (regression)
+  or `drift`; an inline gate (none judges today) calls in process on its step. A capability's typed failure (a cited
+  page that is gone) is an answer (`{error: {code, message}}`), anything else an infra failure the scoring retries.
+  Review's and check's scorers never judge. **Drift on research** spends per sampled run up to three `web.fetch` (direct
+  or Tavily Extract, ≈ $0) and three `decide` calls on ≤ 20k characters each (≈ 5k tokens at $0.04/M, ≈ $0.0002 each):
+  ≈ $0.001 per scored run, as up to six `cap.*` runs with purpose `drift`; drift has no reference, so no `web.package`.
 
 ## Research (Wave 6 comparison, concept P3)
 

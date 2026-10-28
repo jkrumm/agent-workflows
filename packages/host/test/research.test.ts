@@ -271,7 +271,7 @@ describe('research scorer', () => {
     const i = input as Record<string, string>
     if (capability === 'web.package') return { name: i.name as string, latest: 'v4.6.5', url: 'https://x' }
     if (capability === 'web.fetch') {
-      if (i.url?.includes('dead')) throw new Error('404')
+      if (i.url?.includes('dead')) return { error: { code: 'UPSTREAM_ERROR', message: 'gone' } }
       return {
         url: i.url as string,
         finalUrl: i.url as string,

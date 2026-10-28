@@ -1,6 +1,6 @@
 import { parseJsonLoose } from '@agent-workflows/capabilities'
 import { DEFAULT_STATE_DIR } from '@agent-workflows/opencode-host'
-import { type Ctx, defineWorkflow, type Json, type Usage, WorkflowError } from '@agent-workflows/runtime'
+import { type Ctx, defineWorkflow, type Usage, WorkflowError } from '@agent-workflows/runtime'
 import { z } from 'zod'
 import type { HostWorkflow } from '../../operations.ts'
 import type { WorkflowDeps } from '../index.ts'
@@ -15,15 +15,7 @@ import {
   toolCounts,
 } from './gate.ts'
 import { JSON_ONLY_REASK, researchTask } from './prompts.ts'
-import {
-  type Depth,
-  type Design,
-  Draft,
-  type Profile,
-  ResearchInput,
-  ResearchOutput,
-  type ResearchResult,
-} from './schema.ts'
+import { type Design, Draft, type Profile, ResearchInput, ResearchOutput, type ResearchResult } from './schema.ts'
 import { researchScorer } from './scorer.ts'
 
 export const RESEARCH_VERSION = '2026-10-28.1'
