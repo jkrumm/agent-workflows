@@ -806,7 +806,7 @@ describe('provider-balance fallback', () => {
 })
 
 describe('followUp (ctx.continue)', () => {
-  const turn = (key = 'run-1:revise', attempt = 1) => ({ runId: 'run-1', stepId: 'revise', key, attempt })
+  const turn = (key = 'run-1:agent:reask', attempt = 1) => ({ runId: 'run-1', stepId: 'agent:reask', key, attempt })
 
   test('a follow-up turn runs in the same session; wait answers with that turn only', async () => {
     const t = setup()
@@ -815,7 +815,7 @@ describe('followUp (ctx.continue)', () => {
     expect((await t.host.wait(first, waitOptions())).output).toBe('echo: draft it')
 
     const next = await t.host.followUp(first, turn())
-    expect(next).toMatchObject({ sessionId: sid(first), stepId: 'revise', turn: 'run-1:revise#1' })
+    expect(next).toMatchObject({ sessionId: sid(first), stepId: 'agent:reask', turn: 'run-1:agent:reask#1' })
     expect(JSON.parse(JSON.stringify(next))).toEqual(next)
     await t.host.prompt(next, 'fix the title')
     await t.host.prompt(next, 'fix the title') // idempotent: read first, deduped by id
@@ -834,10 +834,10 @@ describe('followUp (ctx.continue)', () => {
     const first = await t.host.open(spec('draft'))
     await t.host.prompt(first, 'draft it')
     await t.host.wait(first, waitOptions())
-    const one = await t.host.followUp(first, turn('run-1:revise', 1))
+    const one = await t.host.followUp(first, turn('run-1:agent:reask', 1))
     await t.host.prompt(one, '[fail] try')
     expect(await failure(t.host.wait(one, waitOptions()))).toContain('provider said no')
-    const two = await t.host.followUp(first, turn('run-1:revise', 2))
+    const two = await t.host.followUp(first, turn('run-1:agent:reask', 2))
     await t.host.prompt(two, 'try again')
     expect((await t.host.wait(two, waitOptions())).output).toBe('echo: try again')
     expect(await userMessages(t, first)).toHaveLength(3)

@@ -74,7 +74,7 @@ const draftScorer: Scorer<Input, Reference> = {
 defineWorkflow({ id: 'research.report', scorer: draftScorer, async run(ctx, input) {
   let draft = await ctx.agent('research', { agent: 'researcher', prompt, output: Draft })
   const verdict = await ctx.score('gate', draft)
-  if (!verdict.pass) draft = await ctx.continue('revise', draft, verdict.feedback ?? 'Try again.')
+  if (!verdict.pass) draft = await ctx.continue('research:reask', draft, verdict.feedback ?? 'Try again.')
   return draft
 } })
 ```
@@ -97,7 +97,10 @@ defineWorkflow({ id: 'research.report', scorer: draftScorer, async run(ctx, inpu
   earlier `ctx.agent`/`ctx.continue` of this drive returned (by identity; a resume re-runs them before) or that step's
   id (a text answer is a string, so it needs the id). A retry after a failed attempt asks for a new turn (`attempt`
   keys it), never re-reads the failed one. A host without `followUp` fails the step. Step ids stay literals: the §3
-  example's `ctx.continue(draft, feedback)` reads `ctx.continue('revise', draft, feedback)` here.
+  example's `ctx.continue(draft, feedback)` reads `ctx.continue('research:reask', draft, feedback)` here.
+- **Naming: `<stepId>:reask`.** A continue step is named after the agent step it re-asks: `'<stepId>:reask'`, and
+  `'<stepId>:reask:<n>'` for the n-th re-ask of the same step (n from 2). The friction counters (`w5/friction`) key on
+  that suffix to count schema re-asks and nudges, so any other name is invisible to them.
 - **After the fact.** `runtime.scoreRun(runId, { source: 'regression' | 'drift', reference?, caseId?, evalRunId?,
   args?, onlyUnscored? })` scores a `done` or `failed` run with its workflow's scorer and writes `runs.scores.final`,
   `score_source`, `scored_at` (migration 0004). A scorer that throws is recorded as `{ pass: false, error }`, so drift
