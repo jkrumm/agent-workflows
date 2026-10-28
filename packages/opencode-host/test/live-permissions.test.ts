@@ -164,7 +164,7 @@ test.skipIf(!live)(
       console.log(`live permissions files ${JSON.stringify(files)}`)
       // Measured 2026-10-28 on 2.0.32 (check route, well under $0.01 for the whole file): a denied tool is not in the
       // model's tool list at all, and a call to it anyway ends in "No tool named … is currently available" without
-      // ending the turn. Code Mode's catalog holds MCP and browser tools, never the built-in ones (not even `read` with
+      // ending the turn. Code Mode's catalog holds MCP, browser and OpenCode session tools, never the built-in ones (not even `read` with
       // everything allowed: the control run), and under this policy it is empty: `execute` reaches no denied tool.
       const names = (calls: ToolCall[]) => [...new Set(calls.map((t) => t.tool))].sort()
       expect(names(restricted.tools)).toEqual(['glob', 'grep', 'read', 'skill'])
