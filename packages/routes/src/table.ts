@@ -7,8 +7,9 @@ import { ROUTE_ID, type RouteEntry, routeSchema } from './schema.ts'
 // agent-gateway server/lib/models.ts (`claude-haiku-5-5-eu`; source "hermes-agent docs/model-context-reasoning.md
 // (vendor list, >100K prompt 5x); cache write 1.25x in", dated 2026-10-14). The >100K-prompt tier (5x) has no
 // counterpart in `Rate`, so `costFromUsage` returns `unknown` for a call over 100K prompt tokens.
-// Used by the Haiku routes on the iu-anthropic wire, whose Messages response carries no `usage.cost`. The
-// opencode routes carry no rate: OpenCode's message cost is the only cost source for an agent step.
+// Used by the Haiku routes on the iu-anthropic wire, whose Messages response carries no `usage.cost`, and by the
+// Haiku routes on the opencode wire: the OpenCode host writes the rate into the server config's cost rows (OpenCode
+// prices each message with them) and prices a message OpenCode reports at cost 0 with it.
 const HAIKU_55_EU_RATE = { inputPerM: 0.1, outputPerM: 0.5, cacheReadPerM: 0.01, cacheWritePerM: 0.125 }
 
 const TABLE = {
@@ -28,11 +29,11 @@ const TABLE = {
   'review.adversary': { wire: 'iu-openai', model: 'deepseek-v4.1-flash', maxOutputTokens: 16_000 },
   // Gateway: ANGLE_OC (review_angle_senior_dev|typescript|frontend|qa all resolve to the same entry)
   // and `review` (synthesis, CLASSIFY tier), both Haiku 5.5 EU on the OpenCode harness.
-  'review.angle': { wire: 'opencode', model: 'claude-haiku-5-5-eu' },
-  'review.synthesis': { wire: 'opencode', model: 'claude-haiku-5-5-eu' },
+  'review.angle': { wire: 'opencode', model: 'claude-haiku-5-5-eu', rate: HAIKU_55_EU_RATE },
+  'review.synthesis': { wire: 'opencode', model: 'claude-haiku-5-5-eu', rate: HAIKU_55_EU_RATE },
 
   // Check seat. Gateway: `check`, CLASSIFY tier.
-  check: { wire: 'opencode', model: 'claude-haiku-5-5-eu' },
+  check: { wire: 'opencode', model: 'claude-haiku-5-5-eu', rate: HAIKU_55_EU_RATE },
 } satisfies Record<string, RouteEntry>
 
 export type RouteId = keyof typeof TABLE
