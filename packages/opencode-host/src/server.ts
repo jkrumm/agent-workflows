@@ -311,14 +311,16 @@ export class OpenCodeServer {
 
   /** A server from an earlier host process on our port, with our password and the pinned version. */
   private async adopt(): Promise<boolean> {
+    const persisted = this.persisted
+    if (!persisted) throw new Error('opencode server state not loaded')
     const info = await this.client()
       .info({ timeoutMs: this.opts.livenessTimeoutMs })
       .catch(() => null)
-    const recorded = this.persisted?.pid
+    const recorded = persisted.pid
     if (!info) {
       // Nothing answers. A child we spawned that never finished booting may still hold the port: recognised by the
       // recorded pid AND its own command line (pid reuse), it is terminated before a new spawn.
-      if (recorded !== undefined && isOurServer(recorded, this.persisted?.port as number)) {
+      if (recorded !== undefined && isOurServer(recorded, persisted.port)) {
         this.logger.warn('opencode server from server.json is alive but not answering; terminating it', {
           pid: recorded,
         })
@@ -330,18 +332,18 @@ export class OpenCodeServer {
     // a reason to signal a process.
     if (recorded === undefined || info.pid !== recorded) {
       throw new ForeignServer(
-        `a server answers on port ${this.persisted?.port} with pid ${info.pid}, but ${this.statePath()} records ` +
+        `a server answers on port ${persisted.port} with pid ${info.pid}, but ${this.statePath()} records ` +
           `${recorded ?? 'no pid'}; it is not ours to adopt or signal: stop it, or remove the file`,
       )
     }
     if (info.version !== this.expectedVersion) {
       throw new VersionMismatch(
-        `opencode server on port ${this.persisted?.port} is ${info.version}, need ${this.expectedVersion}`,
+        `opencode server on port ${persisted.port} is ${info.version}, need ${this.expectedVersion}`,
       )
     }
     const proc = adoptedProc(recorded)
     const { fingerprint } = this.launch()
-    if (this.persisted?.fingerprint !== fingerprint) {
+    if (persisted.fingerprint !== fingerprint) {
       // A deploy changed the server's env or config (routes, rates, key, binary): the running server is stale.
       this.logger.warn('opencode server env or config changed since it started; restarting it', { pid: recorded })
       await this.terminate(proc)
@@ -461,8 +463,18 @@ function signal(pid: number, sig: NodeJS.Signals): void {
 function isOurServer(pid: number, port: number): boolean {
   const ps = Bun.spawnSync(['ps', '-o', 'command=', '-p', String(pid)])
   if (ps.exitCode !== 0) return false
-  const command = ps.stdout.toString()
-  return command.includes(' serve ') && command.includes(`--port ${port}`)
+  return isServeOnPort(ps.stdout.toString(), port)
+}
+
+/**
+ * A command line is `… serve … --port <port>` (or `--port=<port>`), compared token by token: port 4096 never
+ * matches `--port 40960`, and `serve` must be its own argument.
+ */
+export function isServeOnPort(command: string, port: number): boolean {
+  const argv = command.trim().split(/\s+/)
+  if (!argv.includes('serve')) return false
+  const want = String(port)
+  return argv.some((arg, i) => (arg === '--port' && argv[i + 1] === want) || arg === `--port=${want}`)
 }
 
 function adoptedProc(pid: number): Proc {

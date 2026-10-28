@@ -481,11 +481,28 @@ describe('locations', () => {
     await t.host.wait(first, waitOptions())
   })
 
-  test('a handle with a missing field is refused', async () => {
+  test('a handle with a missing or mistyped field is refused', async () => {
     const t = setup()
     const handle = (await t.host.open(spec('x'))) as OpenCodeHandle
     const { directory: _, ...broken } = handle
-    expect(await failure(t.host.wait(broken, waitOptions()))).toContain('not an OpenCode host handle')
+    for (const bad of [broken, { ...handle, model: 7 }, { ...handle, output: 'yaml' }]) {
+      expect(await failure(t.host.wait(bad as Json, waitOptions()))).toContain('not an OpenCode host handle')
+    }
+  })
+
+  test('a lookup that rejects with a non-Error still skips the prune', async () => {
+    const t = setup({ turnMs: 600 })
+    const first = (await t.host.open(spec('x'))) as OpenCodeHandle
+    await t.host.prompt(first, 'x')
+    const edited = t.makeHost([{ ...AGENT, agentsMd: '# tester v2\n' }])
+    cleanups.push(() => edited.close())
+    // The client normally throws Errors; force the odd case through the private client.
+    const client = (edited as unknown as { client: { getSession: () => Promise<never> } }).client
+    client.getSession = () => Promise.reject('not an error')
+    expect(await edited.maintain()).toEqual([])
+    expect(existsSync(first.directory)).toBe(true)
+    expect(t.warnings).toContain('opencode session lookup failed; pruning skipped this tick')
+    await t.host.wait(first, waitOptions())
   })
 
   test('a changed agent runs in a new hash directory; the old one is pruned only when nothing uses it', async () => {
