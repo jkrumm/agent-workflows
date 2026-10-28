@@ -1,6 +1,6 @@
 import { parseJsonLoose } from '@agent-workflows/capabilities'
 import { DEFAULT_STATE_DIR } from '@agent-workflows/opencode-host'
-import { type Ctx, defineWorkflow, WorkflowError } from '@agent-workflows/runtime'
+import { type Ctx, defineWorkflow, type Json, WorkflowError } from '@agent-workflows/runtime'
 import { z } from 'zod'
 import type { HostWorkflow } from '../../operations.ts'
 import type { WorkflowDeps } from '../index.ts'
@@ -55,7 +55,7 @@ export type ResearchOptions = {
 /** One retry of the agent step: a flaky attempt (a died session, an idle kill) must not decide the run. */
 const AGENT_ATTEMPTS = 2
 
-/** What the `evidence` step journals: the step's recorded tool calls, summed. */
+/** What the `tools` step journals: the evidence of the step's recorded tool calls, summed. */
 export const Evidence = z.object({
   retrieved: z.array(z.string()),
   seen: z.array(z.string()),
@@ -197,7 +197,54 @@ export function createResearchWorkflows(deps: WorkflowDeps, options: ResearchOpt
     design: Exclude<Design, 'engine'>,
   ): Promise<ResearchResult> {
     const { profile } = input
-    const close = gate.open({ runId: ctx.runId, stepId: 'research', tools: ARM_TOOLS[design][profile] })
+    const runId = ctx.runId
+    const close = gate.open({ runId, stepId: 'research', tools: ARM_TOOLS[design][profile] })
+    let agentEnded!: () => void
+    const ended = new Promise<void>((resolve) => {
+      agentEnded = resolve
+    })
+    let toolsBound!: () => void
+    const bound = new Promise<void>((resolve) => {
+      toolsBound = resolve
+    })
+    // The tools step lives as long as the agent's turns: every gate call books its usage here as it is reported, so
+    // a cancelled or failed run keeps its spend (the step records its usage whatever its end). Its output is the
+    // evidence from the ledger, read once the agent has ended and every call in flight is served.
+    const tools = ctx.step('tools', async ({ addUsage, signal }) => {
+      const unbind = gate.bindUsage(runId, 'research', addUsage)
+      toolsBound()
+      let engineCostUsd: number | null = null
+      try {
+        await Promise.race([
+          ended,
+          new Promise<never>((_resolve, reject) => {
+            if (signal.aborted) reject(signal.reason)
+            signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+          }),
+        ])
+        await gate.settle(runId, 'research')
+        engineCostUsd = gate.engineCost(runId, 'research')
+      } finally {
+        // The grant ends before the step does: a late call is refused, and every booked usage is on this step.
+        await close()
+        unbind()
+      }
+      const entries = await ledger.read(runId, 'research')
+      const ev = evidence(entries)
+      return {
+        retrieved: [...ev.retrieved],
+        seen: [...ev.seen],
+        failed: ev.failed,
+        counts: ev.counts,
+        engineJobs: ev.engineJobs,
+        engineCostUsd: ev.engineJobs.length ? engineCostUsd : null,
+        calls: entries.length,
+      } satisfies Evidence
+    })
+    tools.catch(() => {}) // awaited below; a rejection before that is not unhandled
+    // A replayed tools step never runs its body: the step itself resolves.
+    await Promise.race([bound, tools.then(() => {})])
+
     let draft: Draft | null = null
     let failure: unknown = null
     try {
@@ -221,25 +268,14 @@ export function createResearchWorkflows(deps: WorkflowDeps, options: ResearchOpt
     } catch (error) {
       failure = error
     } finally {
-      close()
+      agentEnded()
     }
-    // A cancel or shutdown unwinds at once; a failed agent step still records what its tools cost.
-    if (failure && ctx.signal.aborted) throw failure
-    // What the tools did and cost, read from the ledger (never consumed: a retry or a resume reads the same calls).
-    const recorded = await ctx.step('evidence', async ({ addUsage }) => {
-      const entries = await ledger.read(ctx.runId, 'research')
-      for (const entry of entries) for (const usage of entry.usage) addUsage(usage)
-      const ev = evidence(entries)
-      return {
-        retrieved: [...ev.retrieved],
-        seen: [...ev.seen],
-        failed: ev.failed,
-        counts: ev.counts,
-        engineJobs: ev.engineJobs,
-        engineCostUsd: ev.engineCostUsd,
-        calls: entries.length,
-      } satisfies Evidence
-    })
+    let recorded: Json
+    try {
+      recorded = await tools
+    } finally {
+      await close()
+    }
     if (failure) throw failure
     if (!draft) throw new WorkflowError('invalid_output', 'the research agent did not answer with the report JSON')
     return assemble(draft, Evidence.parse(recorded), { design, profile })

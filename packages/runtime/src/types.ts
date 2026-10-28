@@ -183,12 +183,13 @@ export type ScoreJudge = (capability: string, input: Json) => Promise<Json>
 /**
  * The runtime's side of `ScoreJudge`: the host passes its capability registry (`RuntimeOptions.judge`). `source` says
  * who scores: an inline gate's `addUsage` is its step's; regression and drift score outside any step, so the host
- * records those calls as runs of their own. `runId` is the scored run: a retried scoring can find its finished calls.
+ * records those calls as runs of their own. `runId` is the scored run and `scorer` the scorer's version: a retried
+ * scoring can find its finished calls, a scorer of another version cannot.
  */
 export type JudgeCaller = (
   capability: string,
   input: Json,
-  scope: { signal: AbortSignal; addUsage: (usage: Usage) => void; source: ScoreSource; runId: string },
+  scope: { signal: AbortSignal; addUsage: (usage: Usage) => void; source: ScoreSource; runId: string; scorer: string },
 ) => Promise<Json>
 
 export type ScorerContext<R> = {

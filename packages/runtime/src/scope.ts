@@ -315,6 +315,7 @@ export class RunScope {
                   addUsage: scope.addUsage,
                   source: 'inline',
                   runId: this.run.id,
+                  scorer: scorer.version,
                 }),
             }
           : {}),

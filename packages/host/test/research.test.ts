@@ -2,12 +2,12 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { Json, ScoreJudge } from '@agent-workflows/runtime'
+import { InfraError, type Json, type ScoreJudge } from '@agent-workflows/runtime'
 import { FakeAgentHost, type FakeSession } from '@agent-workflows/runtime/testing'
 import type { HostRegistry } from '../src/workflows/index.ts'
-import { createEngineClient } from '../src/workflows/research/engine.ts'
+import { createEngineClient, EngineJobFailed, runEngineJob } from '../src/workflows/research/engine.ts'
 import { MAX_BODY_BYTES, ToolGate } from '../src/workflows/research/gate.ts'
-import { pgToolLedger } from '../src/workflows/research/ledger.ts'
+import { memoryToolLedger, pgToolLedger } from '../src/workflows/research/ledger.ts'
 import { matchExpect } from '../src/workflows/research/golden.ts'
 import { createResearchWorkflows } from '../src/workflows/research/index.ts'
 import { ResearchOutput, type ResearchResult } from '../src/workflows/research/schema.ts'
@@ -23,10 +23,14 @@ const NEVER_READ = 'https://example.com/never-read'
 
 /**
  * research-gateway's REST surface, in memory: a job finishes on its second poll; a query with FAIL ends `error`
- * (no report, no cost), one with SLOW finishes 11 s after it was submitted.
+ * (no report, no cost), one with FLAKY ends `error` on its first job only, one with SLOW finishes 11 s after it was
+ * submitted. A submit with a known key answers that job with its status, as the engine does.
  */
 function fakeEngine() {
-  const jobs = new Map<string, { body: Record<string, unknown>; polls: number; at: number }>()
+  const jobs = new Map<
+    string,
+    { body: Record<string, unknown>; polls: number; at: number; status: 'running' | 'done' | 'error' }
+  >()
   const auth: (string | null)[] = []
   const server = Bun.serve({
     port: 0,
@@ -36,18 +40,23 @@ function fakeEngine() {
       if (req.method === 'POST' && url.pathname === '/research') {
         const body = (await req.json()) as Record<string, unknown>
         const known = [...jobs].find(([, j]) => j.body.idempotencyKey === body.idempotencyKey)
-        if (known) return Response.json({ jobId: known[0], status: 'running' })
+        if (known) return Response.json({ jobId: known[0], status: known[1].status })
         const jobId = `job-${jobs.size + 1}`
-        jobs.set(jobId, { body, polls: 0, at: Date.now() })
+        jobs.set(jobId, { body, polls: 0, at: Date.now(), status: 'running' })
         return Response.json({ jobId, status: 'queued' })
       }
       const job = jobs.get(url.pathname.split('/').pop() ?? '')
       if (!job) return Response.json({ error: 'not found' }, { status: 404 })
       job.polls++
       const query = String(job.body.query)
-      if (query.includes('FAIL')) return Response.json({ status: 'error', depth: 'quick', error: 'worker crashed' })
+      const firstOfItsQuery = [...jobs.values()].find((j) => j.body.query === job.body.query) === job
+      if (query.includes('FAIL') || (query.includes('FLAKY') && firstOfItsQuery)) {
+        job.status = 'error'
+        return Response.json({ status: 'error', depth: 'quick', error: 'worker crashed' })
+      }
       const slow = query.includes('SLOW') && Date.now() - job.at < 11_000
       if (job.polls < 2 || slow) return Response.json({ status: 'running', depth: 'quick' })
+      job.status = 'done'
       return Response.json({
         status: 'done',
         depth: 'quick',
@@ -153,7 +162,7 @@ beforeAll(async () => {
   await rt.close()
 })
 afterAll(async () => {
-  gate.close()
+  await gate.close()
   void engine.server.stop(true)
   await sql.close()
   await db.drop()
@@ -209,7 +218,7 @@ describe('research workflow, every arm on a fake host', () => {
     expect(out.grounding).toEqual({ source: 'tools', citations: 2, grounded: 1, pagesRetrieved: 1, pagesFailed: 0 })
     expect(out.tools).toEqual({ web_search: 1, web_fetch: 1 })
     expect(out.sources).toEqual([PG_DOCS])
-    const evidence = await sql.step(runId, 'evidence')
+    const evidence = await sql.step(runId, 'tools')
     expect(Number(evidence?.cost)).toBeCloseTo(0.002)
   })
 
@@ -230,7 +239,7 @@ describe('research workflow, every arm on a fake host', () => {
     expect(out.grounding.grounded).toBe(1)
     expect(out.engine?.jobs).toHaveLength(1)
     expect(out.engine?.costUsd).toBe(0.04)
-    expect(Number((await sql.step(runId, 'evidence'))?.cost)).toBeCloseTo(0.04)
+    expect(Number((await sql.step(runId, 'tools'))?.cost)).toBeCloseTo(0.04)
     const job = [...engine.jobs.values()].find((j) =>
       String(j.body.idempotencyKey).startsWith(`${runId}:research:engine:`),
     )
@@ -286,10 +295,28 @@ describe('the tool gate ledger: evidence the decision rests on', () => {
     const out = ResearchOutput.parse(result.output)
     expect(out.tools).toEqual({ web_fetch: 1, web_search: 1 })
     expect(out.grounding.pagesRetrieved).toBe(1)
-    expect(Number((await sql.step(runId, 'evidence'))?.cost)).toBeCloseTo(0.002)
+    expect(Number((await sql.step(runId, 'tools'))?.cost)).toBeCloseTo(0.002)
     const first = await ledger.read(runId, 'research')
     expect(first.map((e) => e.tool)).toEqual(['web_fetch', 'web_search'])
     expect(await ledger.read(runId, 'research')).toEqual(first)
+  })
+
+  test("a run's ledger rows go with the run (foreign key, on delete cascade); args digests are canonical", async () => {
+    const host = new FakeAgentHost(async (s) => {
+      await callTool(s, 'web_search', { query: 'postgres port', maxResults: 3 })
+      return { output: draft([]) }
+    })
+    const { runId } = await run({ query: 'Postgres port?', depth: 'quick', design: 'agent', profile: 'focused' }, host)
+    const [row] = await ledger.read(runId, 'research')
+    const { createHash } = await import('node:crypto')
+    const { canonicalJson } = await import('../src/canonical.ts')
+    expect(row?.argsDigest).toBe(
+      createHash('sha256')
+        .update(canonicalJson({ maxResults: 3, query: 'postgres port' }))
+        .digest('hex'),
+    )
+    await sql.pool.query(`delete from "${db.schema}".runs where id = $1`, [runId])
+    expect(await ledger.read(runId, 'research')).toEqual([])
   })
 
   test('a failed engine job is booked at what the engine reported: unknown, never 0', async () => {
@@ -315,7 +342,7 @@ describe('the tool gate ledger: evidence the decision rests on', () => {
     )
     const out = ResearchOutput.parse(result.output)
     expect(out.engine).toEqual({ jobs: [expect.any(String)], costUsd: 0.04 })
-    expect(Number((await sql.step(runId, 'evidence'))?.cost)).toBeCloseTo(0.04)
+    expect(Number((await sql.step(runId, 'tools'))?.cost)).toBeCloseTo(0.04)
 
     const failing = new FakeAgentHost(async (s) => {
       const answer = await callTool(s, 'engine_research', { question: 'FAIL: what breaks?' })
@@ -324,7 +351,7 @@ describe('the tool gate ledger: evidence the decision rests on', () => {
     })
     const second = await run({ query: 'What breaks?', depth: 'quick', design: 'pilot', profile: 'focused' }, failing)
     expect(ResearchOutput.parse(second.result.output).engine).toEqual({ jobs: [expect.any(String)], costUsd: null })
-    const evidence = await sql.step(second.runId, 'evidence')
+    const evidence = await sql.step(second.runId, 'tools')
     expect(evidence?.cost).toBeNull()
     expect(Number(evidence?.unpriced_calls)).toBe(1)
   })
@@ -357,13 +384,125 @@ describe('the tool gate ledger: evidence the decision rests on', () => {
     expect(streamed.status).toBe(413)
   })
 
+  test('a cancelled run keeps the spend its tools booked (on the tools step)', async () => {
+    let called!: () => void
+    const toolCalled = new Promise<void>((resolve) => {
+      called = resolve
+    })
+    const host = new FakeAgentHost(async (s) => {
+      await callTool(s, 'web_search', { query: 'postgres port' })
+      called()
+      await s.sleep(60_000)
+      return { output: draft([]) }
+    })
+    const rt = testRuntime({ schema: db.schema, workflows: [research], host })
+    await rt.open()
+    try {
+      const { runId } = await rt.start(
+        research,
+        { query: 'Postgres port?', depth: 'quick', design: 'agent', profile: 'focused' },
+        { purpose: 'build' },
+      )
+      await toolCalled
+      await rt.cancel(runId)
+      expect((await rt.wait(runId)).status).toBe('cancelled')
+      const tools = await sql.step(runId, 'tools')
+      expect(tools?.status).toBe('cancelled')
+      expect(Number(tools?.cost)).toBeCloseTo(0.001)
+    } finally {
+      await rt.close()
+    }
+  })
+
+  test('a ledger write that keeps failing is logged and never fails the call', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agw-gate-ledger-'))
+    const errors: string[] = []
+    const own = new ToolGate({
+      stateDir: dir,
+      ledger: {
+        append: () => Promise.reject(new Error('database down')),
+        read: () => Promise.resolve([]),
+      },
+      engine: () => null,
+      call: fakeCapability,
+      belongsTo: (sessionId, stepKey) => sessionId === stepKey,
+      logger: { warn: () => {}, error: (m) => errors.push(m) },
+    })
+    const close = own.open({ runId: 'r-ledger', stepId: 'research', tools: ['web_search'] })
+    try {
+      const { url, key } = (await Bun.file(join(dir, 'research', 'gate.json')).json()) as { url: string; key: string }
+      const response = await fetch(`${url}/tool/web_search`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${key}` },
+        body: JSON.stringify({ sessionID: 'r-ledger:research', args: { query: 'q' } }),
+      })
+      expect(((await response.json()) as { ok: boolean }).ok).toBe(true)
+      expect(errors).toEqual(['research tool gate: the ledger write failed; the call stands without its evidence row'])
+    } finally {
+      await close()
+      await own.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test('closing a grant waits for the calls in flight, so their rows are written before evidence is read', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agw-gate-drain-'))
+    const memory = memoryToolLedger() // no run row for this grant: the Postgres ledger's foreign key would refuse it
+    const own = new ToolGate({
+      stateDir: dir,
+      ledger: memory,
+      engine: () => null,
+      call: async (id, input, scope) => {
+        await Bun.sleep(300)
+        return fakeCapability(id, input, scope)
+      },
+      belongsTo: (sessionId, stepKey) => sessionId === stepKey,
+    })
+    const close = own.open({ runId: 'r-drain', stepId: 'research', tools: ['web_search'] })
+    try {
+      const { url, key } = (await Bun.file(join(dir, 'research', 'gate.json')).json()) as { url: string; key: string }
+      const pending = fetch(`${url}/tool/web_search`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${key}` },
+        body: JSON.stringify({ sessionID: 'r-drain:research', args: { query: 'q' } }),
+      })
+      await Bun.sleep(50)
+      await close()
+      expect((await memory.read('r-drain', 'research')).map((e) => e.tool)).toEqual(['web_search'])
+      await pending
+    } finally {
+      await own.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test('engine keys: a done job is adopted, a key whose job errored is stepped past and the question runs again', async () => {
+    const client = createEngineClient({ url: engine.url, token: 'engine-token' })
+    const job = (key: string) =>
+      runEngineJob(
+        client,
+        { query: 'FLAKY: postgres port?', depth: 'quick', idempotencyKey: key },
+        {
+          signal: new AbortController().signal,
+          pollMs: 5,
+        },
+      )
+    const failure = await job('k-flaky').catch((e: unknown) => e)
+    expect(failure).toBeInstanceOf(EngineJobFailed)
+    const second = await job('k-flaky')
+    expect(second.adopted).toBe(false)
+    expect(second.jobId).not.toBe((failure as EngineJobFailed).jobId)
+    const third = await job('k-flaky')
+    expect(third).toMatchObject({ jobId: second.jobId, adopted: true })
+  })
+
   test('close stops the gate and removes gate.json', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'agw-gate-close-'))
     const own = new ToolGate({ stateDir: dir, ledger, engine: () => null, call: fakeCapability })
     own.ensureServing()
     const file = join(dir, 'research', 'gate.json')
     expect(await Bun.file(file).exists()).toBe(true)
-    own.close()
+    await own.close()
     expect(await Bun.file(file).exists()).toBe(false)
     rmSync(dir, { recursive: true, force: true })
   })
@@ -449,7 +588,7 @@ describe('research scorer', () => {
     const v = await researchScorer.score({} as never, report(), { ...ctx, judge })
     expect(v.scores.grounded).toBe(0.75)
     expect(v.scores.supported).toBe(1) // two distinct URLs: the RFC supports, the dead page is unscored
-    expect(v.scores.unscored).toBe(1)
+    expect(v.scores.judgedShare).toBe(0.5)
     expect(judgeCalls.filter((c) => c === 'web.fetch')).toHaveLength(2)
     const none = await researchScorer.score(
       {} as never,
@@ -468,14 +607,26 @@ describe('research scorer', () => {
       capability === 'decide' ? { error: { code: 'UPSTREAM_ERROR', message: 'down' } } : judge(capability, input)
     const v = await researchScorer.score({} as never, report(), { ...ctx, judge: failingDecide })
     expect(v.scores.supported).toBeUndefined()
-    expect(v.scores.unscored).toBe(2)
+    expect(v.scores.judgedShare).toBe(0)
+  })
+
+  test('a live value the registry does not give is an infra error (retried), and an unscored golden never passes', async () => {
     const noLive: ScoreJudge = async () => ({ error: { code: 'UPSTREAM_ERROR', message: 'registry down' } })
-    const live = await researchScorer.score({} as never, report(), {
-      ...ctx,
-      judge: noLive,
+    const failure = await Promise.resolve(
+      researchScorer.score({} as never, report(), {
+        ...ctx,
+        judge: noLive,
+        reference: { expect: { live: 'npm:hono' } },
+      }),
+    ).catch((e: unknown) => e)
+    expect(failure).toBeInstanceOf(InfraError)
+    const inline = await researchScorer.score({} as never, report(), {
+      source: 'inline',
+      signal: new AbortController().signal,
       reference: { expect: { live: 'npm:hono' } },
     })
-    expect(live.scores.golden).toBeUndefined()
+    expect(inline.scores.golden).toBeUndefined()
+    expect(inline.pass).toBe(false)
   })
 
   test('an invalid or failed output scores 0', async () => {
