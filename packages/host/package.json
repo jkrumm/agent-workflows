@@ -14,6 +14,7 @@
     "@agent-workflows/capabilities": "workspace:*",
     "@agent-workflows/limits": "workspace:*",
     "@agent-workflows/middleware": "workspace:*",
+    "@agent-workflows/opencode-host": "workspace:*",
     "@agent-workflows/runtime": "workspace:*",
     "@orpc/openapi": "1.16.1",
     "@orpc/server": "1.16.1",
