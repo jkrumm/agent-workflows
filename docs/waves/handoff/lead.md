@@ -1,73 +1,74 @@
-# Lead close-out — Wave 3 (CLI, agent host, deploy; P1b)
+# Lead rotation handoff — Wave 4 (review and check cut over; P1c), in flight
 
-Leads: `agent-workflows-w1` 2026-10-28 00:45 → ~02:10 (rotated), then the rotation lead 02:14 → ~05:05. Everything
-of the wave is merged and reviewed; **the deploy is blocked only on the owner's 1Password item** (MacBook unreachable
-all night, `ssh iumac` rc=255 on every retry 00:55–05:00). So telemetry/usage live and the end-to-end proof are not
-done. `make deploy` fails closed in preflight, as designed, and nothing on the mini changed.
-
-Master: `2ffe773` (agw #12–#15 merged by `rd merge`, `make check` after every rebase).
+Lead `agent-workflows-w1` 2026-10-28 ~05:10 → ~09:25 (rotated at the context limit; a Max usage-limit pause ~05:55–08:50).
+Briefs (one per worker, `roles/worker.md` template + shared rules): `~/.local/state/agent-workflows/briefs/w4/` on the
+mini (not in git: they name local paths). Master: `origin/master` after #18 (`rd merge`, `make check` 577 pass, 0 fail).
 
 ## Per step
 
-|Step|Verdict|Evidence|
+|Step|State|Evidence|
 |-|-|-|
-|`agw` CLI generator (Opus/medium)|**done**|PR #12 merged (train: 290 pass, 0 fail). Rounds: gateway deep r1, lead `/code-review high` r1, gateway standard r2 → r3 **clean**; r4 took two hardening items from r3 (host-supplied run ids get the path check before any poll; `agw schema --help`). Contract: reserved globals skip the colliding operation, listed under `skipped` in `agw schema`; cleartext bearer only to loopback; `$ref` path items and operations dereferenced; percent-decode bounded at 8|
-|Host process (Sonnet/high)|**done**|PR #13 merged (train: 382 tests, 0 fail; rebased on #12, `bun.lock` regenerated). R2 deep: 3 blocking fixed (bounded `Runtime.ping` with `query_timeout`, host envelopes 401/412/503 `defined: false`, `Idempotency-Key` replay with a different input → 409 `CONFLICT`); capability inputs `.strict()`; one `secretProblem()`. R3 deep **clean**; r4 took workflow inputs `.strict()`, held waits retry failed reads (≤ 5 in a row, inside the deadline), a done run keeps `output: null`. Lead read of boot/lifecycle/auth: teardown in reverse on any boot failure, port bound before the runtime opens, constant-time bearer|
-|OpenCode host (Opus/medium)|**done**|PR #14 merged (train: 446 tests, 0 fail). Four review rounds on the concurrency paths (deep r2: WarmCache evicting an in-use entry, a retry opening a sibling session; deep r3: a re-attached older directory unpinned and unrenewed; standard r4: `isOurServer` port substring 4096 ⊂ 40960). Lead read caught one the gateway missed: a claimed pin kept its 30-min lapse timer (a long turn lost eviction protection). Live tests (opencode-safe, cheap route): re-attach after a kill, one prompt, one resume note; a non-shell agent's read/glob/grep/edit outside its location refused (`Permission denied: external_directory`, 5/5), README threat model updated|
-|agent-gateway CLI → `agw-legacy` + sweep|**done**|(previous lead) agent-gateway `64e7b44`; dotfiles #36, hermes-agent #9, modelpick #1, jkrumm.com #1, brain #1|
-|LaunchAgents, `make deploy|verify`, map|**merged; deploy blocked**|PR #15 merged (train: 450 tests, 0 fail). Release layout after lead `/code-review high`: `~/.agent-workflows/repo` (fetch only), `releases/<sha>` (export + `bun install`, `.complete`), `current` symlink, `deployed-sha`/`previous-sha`; rollback to the previous release on a failed health wait, first deploy booted out (no KeepAlive loop); unload wait = ExitTimeOut + 10 s; API secret read in preflight; env file + `agw` link before `deployed-sha`; `launch.sh` exit 78 on an unresolved or empty ref. `make verify` = health, sha == origin/master, `agw smoke ping` with the real bearer, its journal row done with trace id and priced usage. **Live:** `make deploy` → `cannot read op://mini/agent-workflows/API_SECRET through secrets-run …; nothing was changed`, exit 1, no `~/.agent-workflows`, label not loaded, no `~/.local/bin/agw`. dotfiles PR #34 (map, heartbeat, herdr group) stays open until the deploy|
-|Telemetry and usage live|**blocked on the owner**|Request `20261028T005518-15306` still queued in `~/.local/state/human-queue/`|
-|One trivial workflow end to end|**built, not proven**|`smoke.ping` is on master; `make verify` is the proof once deployed|
-|Fleet tooling: `rd say` verifies delivery|**done**|dotfiles PR #35 merged (`af2f9e8`, `gh pr merge --rebase` with the reason: dotfiles' train is red on the not-ours architecture rows). Gateway standard r1–r3 (blocking fixed each round), light r4 **clean**. One delivery primitive `prompt_attempt` for say/wave/fan; unreadable state never re-sends; rc 3/4 reported as "unconfirmed", never "unprompted"; nameless agents by pane id (verified live: `herdr agent get <pane-id>` works). **Live:** `rd say dotfiles-rd-say-verify …` → `delivered`, rc 0, the worker answered `ack`; `rd say` to a working agent → `queued: agent busy …`|
+|Owner-gated deploy chain|**done**|Request `20261028T005518-15306` failed on the MacBook (`op` read the piped stdin as a JSON template: "invalid JSON in piped input"); re-asked with every `op` on `</dev/null` → `20261028T085931-14819` done, item created with `API_SECRET, ARGO_URL, OTEL_EXPORTER_OTLP_ENDPOINT`. Refs added to `dotfiles-private/headless.refs` (`314e526`). Reseal: first dialog denied (1 s, reflex), retry `20261028T090124-10594` done. `make deploy` → release `d718900` healthy; `make verify` PASS (smoke run `01a18188-1313-7674-be46-6a83f9578ead`, trace `4fb88df6…`, cost $0.0000224). `@verifier` PASS: run + step rows, `argo_synced_at` 22 s after the run; ClickStack prod trace with `agw.run smoke.ping` + child `agw.step title`, attributes = journal; Argo `/usage/summary` + `/usage/flow` show the row (source `agent-workflows`, sub_tool `smoke.ping`, haiku, $0.0000224; no per-row read endpoint for `source_id`); CLI `--help`, `schema`, `run status|wait`, `agw check` on a temp repo → passed (no LLM); host err log empty. dotfiles #34 merged (rebase, not-ours-rows comment); `make doctor`: `com.jkrumm.agent-workflows-host` ✓ (rc 2 only on the not-ours rows). **Redeploy needed**: the live release predates #18/#19; `make deploy && make verify` (verify now also checks the direct `agw llm title` → `cap.llm.title` run)|
+|Direct capability calls recorded (N6)|**merged #18**|One-step `cap.<id>` runs behind the unchanged HTTP/CLI contract, `agw-run-id` header, keyed calls survive a disconnect, unkeyed ones cancel, typed errors journaled as `CODE: message` + one JSON line, refusals 503, opaque 500 otherwise, one `startRun` for workflow and capability routes, cap workflows built once in boot. Reviews: lead `/code-review high` r1 (9 findings → fixed), gateway deep r1 (no blockers; adversary failed on balance), r3 improvements taken. Train: 577 pass|
+|Eval sets (Haiku)|**merged #16**|`packages/eval/src/extract/agent-gateway.ts`; cases in `~/.local/share/agent-workflows/eval/{review,check}/cases.jsonl` (0600, never in git): **138 review** (corpus 103 + jobs-db 35; outcomes clean 4 / actionable 110 / needs-human 24; cost exact 1, approx 33, null 104 — the sessions log starts 2026-10-19 14:58Z, after the corpus window; legacy total $11.24), **7 check** (base inferred, no patch). Skipped: pr-ref-missing 48 (refs not local; not fetched), uncommitted 19, repo-unverified 7, branch-scope 6, empty-diff 3, repo-unmapped 3. Lead read caught refs resolved against today instead of the job's time (fixed: time-travel per ref, tested). Gateway standard: one blocker (malformed corpus line crashes) fixed by the lead (worker pane wedged behind the "compact earlier" modal; `herdr pane send-keys` esc/enter did not clear it)|
+|review + check ported (Sonnet/high)|**check merged #17; review #20 in round 3**|Check: make check path without LLM, idle watchdog, process-group kill + orphan reap across crashes, env credential scrub (legacy parity), read-only DISCOVER, `run-step` watchdog on the agent path, step name `z.string()` (legacy). Reviews: lead r1 (10), gateway r1 (2 blockers) → fixed. Review #20: router/adversary capabilities, depth gating, angles with `allowDirectories` (OpenCode `external_directory` allow `<dir>/*`; live: inside readable, outside refused, **a symlink inside the dir is followed out** — pinned as a live test, documented accepted risk for the live cwd; symlinks escaping a pr/branch clone are deleted), OCR child behind the wallet gate, synthesis salvage, verdict in code. Reviews: lead r1 (10 → fixed), gateway deep r1 (no blockers), lead r2 (10 more → sent as round 3 at ~09:20: path-scope false clean, synthesis-prompt injection, GIT_*/ssh env, subdirectory cwd, mapLimit stop, ocr kill tree, clone cleanup on throw, salvage failed list, capDiff). Worker `agent-workflows-review-workflow` at ~81 % context (autocompact at 600k carries it)|
+|Comparison harness (Opus/medium)|**merged #19**|`bun packages/eval/src/harness/cli.ts review|check [--ids] [--limit] [--rerun-legacy] [--judge] [--dry-run] [--resume]`; reports in `<evalDir>/reports/<ts>/` with an aggregate-only `report.md` section safe for this repo. Verdict: not-worse / worse / inconclusive (errors count as misses, ≥10 paired ratios, check failure recall, legacy reruns serial). Reviews: lead r1 (10 → fixed), gateway r1 + light r2 (blockers fixed)|
+|Side-by-side|**not run**|Needs #20 merged and redeployed. IU is usable again: DeepSeek answered a real completion at 09:10 (balance back); Athena key available (below)|
+|Skill switch + MCP tools removed|**not started**|After the side-by-side says not-worse|
 
-## Left behind
+## Owner direction 2026-10-28 ~09:00 (from the mother) and what was done
 
-1. **The deploy chain, in order, once the owner answers** (`~/SourceRoot/dotfiles/scripts/ask-human.sh push 20261028T005518-15306`, or the owner runs `make human-queue` on the MacBook): it creates `op://mini/agent-workflows/{API_SECRET,ARGO_URL,OTEL_EXPORTER_OTLP_ENDPOINT}`. Then add the three refs to `dotfiles-private/headless.refs`, commit, push; `ask-human.sh ask 'reseal the secrets cache' --cmd 'cd ~/SourceRoot/dotfiles-private && git pull --ff-only && cd ~/SourceRoot/dotfiles && make secrets-seed' --wait`; `make deploy` in agent-workflows; `make verify`; `@verifier` for spans in ClickStack (VPS tier) and the usage row in Argo; `gh pr merge 34 --rebase` in dotfiles with the not-ours-rows comment; `make doctor` green on the new rows.
-2. **IU "Insufficient Balance" (503 PaymentRequired)** on the gateway's adversary angle (DeepSeek on IU) since ~04:05: the r4 review on #14 and both reviews on #15 ran without their cross-family critic (lead `/code-review high` on Max stood in on #15). The OpenCode live tests on Haiku/IU still passed at 04:20, so it looks like the DeepSeek upstream balance, not IU as a whole. Spend question for the owner; check before `make verify` (`smoke.ping` → `llm.title`).
-3. Accepted risk, documented (`launch.sh`, `serverEnv`, opencode-host README): the OTLP ingest key reaches the OpenCode server env and its tool shells, like the IU key (concept §8).
-4. Improvements reviewed and not taken (all non-blocking): CLI stdin read without a timeout, `execute()` split; host readiness of agent-host/IU wiring, one run-shape definition, test-support relative imports; OpenCode pins moved into `WarmCache`, `host.ts` split, cross-process `compileLocation` race (README Known gaps); deploy dry-run step dedup, lock held across the re-exec, shared constants; dotfiles #35: `polls=0` on a zero-wait override, `say_modal` read failure vs no modal, wall-clock bound over ssh, document the "queued after dismissing" output.
-5. Flaky under load: `packages/runtime/test/middleware.test.ts` "a throwing toolPre with a plain error…" hit the 5 s timeout once (6.3 s) at load ~200; a host test once too. A Biome `noExplicitAny` warning in `packages/host/test/workflows.test.ts:70` (not failing).
-6. dotfiles worktrees left: `w3-rd-say-verify` (merged; `rd fan --clean` calls it unmerged because the rebase merge changed the shas) and `w3-agent-workflows-host-map` (#34 open), panes `w59:p1`/`w59:p2`.
-7. Carried from the previous lead: direct capability calls not recorded (now Wave 4's first item); agent-gateway `dispatch-worktree.test.ts` credential-helper failure on the mini (not ours, report to the owner); modelpick's main checkout `ahead 1, behind 2` with `scripts/verify-deployments.ts` still calling `agw`; confirm `~/.hermes/skills` picked up hermes-agent's dispatch skill; agent-gateway install-cli's narrow unlink match; `wave-watch.sh --agents` lag.
+1. Gateway `/review` stopped for this fleet; the lead's `/code-review high` on Max **is** the review step. Done from ~09:05.
+2. Athena teamchat team key for interim tests/evals: staged by owner dialog `20261028T091315-27365` into the untracked
+   `~/.config/agw/athena-iu.env` (`IU_API_KEY=…`, 0600) on the mini; probed: Haiku 200, Terra 200. Never reference it in
+   tracked files. Anything about that key goes only to `athena-mother` (pane `wJ:p3G`) via `rd say`; this lead sent nothing there or elsewhere.
+3. Per-route fallback to GPT-6.1 Terra (medium) + review degrade on balance: **brief written, not fanned**:
+   `~/.local/state/agent-workflows/briefs/w4/route-fallback.md` (Opus/medium; facts baked in: `gpt-6.1-terra` listed in
+   IU `/models`, chat.completions + `reasoning_effort=medium` → 200; `/research` of developers.openai.com: $1.00 / $0.05
+   cached / $5.00 per 1M, >272K input 2x/1.5x, 1.05M context, 128K output, effort default medium, tools need the
+   Responses API). It also carries item 6: `HostWorkflow.internal` so review's OCR child stops being the public `agw ocr`
+   (renamed `review.ocr`). Fan it **after #20 merges** (it owns review files): `RD_WAVE_MODEL=opus RD_WAVE_EFFORT=medium rd fan agent-workflows <brief>`.
+4. dotfiles `/review` skill degrades to in-session `/code-review` on a 402/503-balance failure: dotfiles **#37 merged**
+   (lead read is its review; rebase merge with the not-ours-rows comment).
+
+## Next lead, in order
+
+1. Wait for `agent-workflows-review-workflow` (round 3), read the fix diff, `/code-review high` r3 (fork, on its
+   worktree, never a checkout in the main checkout), `rd merge agent-workflows w4/review-workflow`.
+2. Fan `route-fallback.md`; review and merge it.
+3. `make deploy && make verify`; `@verifier` for the `cap.llm.title` run and an `agw review` on a small diff.
+4. Side-by-side: `--dry-run` first (cost estimate), then review on the 138 cases (concurrency 2, `--rerun-legacy` on a
+   subset for the noise floor) and check on the 7; aggregate numbers into the close-out. Write it as blocked, not faked,
+   if a provider fails.
+5. Skill switch and agw MCP `check`/`review` removal only on a not-worse verdict.
+
+## Left behind / notes
+
+- Merge train flakes at load ~250: 10 timing failures on #18's first train run, all green on re-run (load 12). The
+  retry test `a 503 that wraps an upstream invalid_request_error` passed 3/3 alone.
+- `rd say` does not clear the "We recommend compacting earlier" modal; `herdr pane send-keys <pane> esc|enter` did not
+  either on the Haiku pane (`w40:pW`). Report to dotfiles (`rd say` modal list).
+- Worktrees to reclaim after #20: `rd fan --clean agent-workflows` and `rd fan --clean dotfiles`.
+- Not ours (unchanged): dotfiles architecture-check rows; agent-gateway `dispatch-worktree.test.ts` credential helper.
 
 ## make check
 
-Master `2ffe773` via the train: 450 tests across 39 files, 0 fail, `==> check passed` (`make check` now runs `bun install --frozen-lockfile` first).
+Master after #18 via the train: 577 pass, 0 fail (`==> check passed`). Lead prep commit `996e508`: 446 pass.
 
-## Review verdicts
+## IU spend (this lead)
 
-|PR|Reviews|Outcome|
-|-|-|-|
-|agw #12 CLI|gateway deep r1, lead `/code-review high` r1, gateway standard r2, r3|r1, r2 actionable → fixed; r3 clean; merged|
-|agw #13 host|gateway deep r1, lead `/code-review high` r1, gateway deep r2, r3|r1, r2 actionable → fixed; r3 clean; merged|
-|agw #14 OpenCode host|gateway deep r1 (needs-human → lead decision), lead `/code-review high` r1, gateway deep r2, r3, standard r4 (one attempt timed out, re-run)|actionable each round → fixed (+ lead-found pin lapse); r4's needs-human was only the failed adversary, its one blocker fixed; merged|
-|agw #15 deploy|gateway deep r1, lead `/code-review high` r1, gateway deep r2|r1 no confirmed blockers, lead review 9 findings (release layout, rollback, unload wait, test state dir) → fixed; r2 one blocker (verify path) → fixed; adversary failed both times (IU balance); merged|
-|dotfiles #35|gateway standard r1–r3, light r4|r1–r3 blocking fixed; r4 clean; merged|
-|dotfiles #34|gateway standard, light (previous lead)|clean; open until the deploy|
-
-## Live verification
-
-- `rd say`: delivery proven to an idle worker (`delivered`, rc 0, answer `ack`).
-- `make deploy`: fail-closed preflight proven, nothing changed.
-- OpenCode host: live re-attach and the external-directory guard (worker runs, opencode-safe).
-- Host, CLI end to end, spans, usage: **not proven**, blocked on item 1.
-
-## IU spend
-
-usage-tracker, `billing='iu'` since 2026-10-27 23:40Z: agent-gateway reviews ≈ $2.31 (opencode angles $1.02, adversary $1.01, router $0.15, synthesis $0.14), an upper bound because iris and prometheus jobs share the gateway (prometheus-epx alone $0.12). OpenCode live tests ≈ $0.007 over all rounds. `purpose=build` is not tagged on legacy gateway jobs.
+Gateway reviews of this wave's PRs: $11.04 in angle/synthesis sessions over 6 jobs (deep runs ~500 turns each), router
+rows not summed (adversary failed every time on balance). `/research` $0.025. Live probes < $0.01 (OpenCode permission
+test ~$0.002, Terra/Haiku/DeepSeek one-liners). Eval runs: none yet.
 
 ## Retro notes
 
-Previous lead:
-- Fixing the cross-package HTTP contract in the briefs let CLI and host build in parallel without drift; the one mismatch (reserved flag names) was a contract gap, found by review and fixed on both sides.
-- Lead `/code-review high` again found what the workers' own gateway reviews did not: a 30 s client abort on synchronous LLM calls, leases held through a late start failure, WarmCache races.
-- A caller sweep across many repos needs an explicit "no work remotes" rule: the worker pushed to an IU GitLab repo with an active fleet.
-- The secrets path is the critical path for a deploy: the 1Password item should be created at the start of the wave while the owner is awake.
-
-This lead:
-- The secrets lesson came true: everything merged by ~05:00, the deploy waits on one owner click requested at 00:55. Next wave: ask for every 1Password item in the plan's first hour, and plan for `ssh iumac` being down at night.
-- Concurrency code converges slowly under review: #14 needed four rounds, and each round's fix produced the next round's finding (pins, re-attach directories, lapse timers). Read every fix diff yourself: the pin-lapse bug passed the worker's tests and the gateway.
-- `/code-review` on a PR target checked out `origin/w3/deploy` in the shared main checkout (detached HEAD), where the mother also commits. Run it from a worktree, or check `git status -sb` right after it.
-- A lost cross-family critic (IU balance) silently weakens the gateway verdicts to `needs-human`. Read `discussions` for failed angles and substitute a Max review on security-adjacent work.
-- The Max 5-hour limit stopped every worker for an hour (02:49–03:50). Under that limit plus load ~200, wall time per round roughly doubled.
-- Small hardening rounds after a clean review (CLI r4, host r4) were cheap (2–3 min each) and ran while the other PRs were reviewing, so they cost the train nothing.
+- A contract commit by the lead before the fan (agent loader, per-workflow module slots, eval case schema) let five
+  workers build in parallel with no file overlap; the only cross-worker contract (`allowDirectories`) lived in two briefs and held.
+- Lead reads on Max again found what tests and gateway reviews did not: eval diffs resolved against today's refs, a
+  credential-carrying env in check and review helpers, a false-clean path scope, symlink escape. Every port needs a
+  "what did legacy scrub/guard" pass in the brief.
+- The owner-gated item cost a night, then a wrong command: `op` reads a piped stdin as a template. Every `op` in an
+  ask-human command gets `</dev/null`.
+- Deep gateway reviews cost ~$2 each and ran 15–20 min under load; with the cross-family critic dead they added little
+  beyond the Max review. The owner's switch to Max-only review matches the evidence.
