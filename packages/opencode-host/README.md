@@ -45,6 +45,15 @@ earlier and is not widened by it. Measured on 2.0.32 (`test/live.test.ts`, "allo
 the path as the agent gives it, so hand the agent the same string you allowed (a symlink-resolved spelling such as
 `/private/var/…` for `/var/…` is a different path and is refused); `<dir>` alone matches nothing.
 
+
+**Symlinks inside an allowed directory are an escape** (measured on 2.0.32, `test/live.test.ts`, "symlink inside an
+allowed directory"): the grant is matched against the path the agent names, not where a link leads, so `repo/link -> ~`
+is read, globbed and grepped like any file below `repo`, and its content reaches the session. The host cannot close this.
+Callers must: a throwaway clone (the review's `pr`/`branch` mode) has every symlink whose realpath leaves the clone deleted
+right after checkout; the caller's own live checkout (review of `uncommitted`, `check`) is never edited, so **a symlink in
+a work tree the caller hands an agent is an accepted risk**, the same trust as the rest of this section (one server, one
+key, a shell-capable agent reads what the user can): the repo is the owner's, and a read-only reader cannot write the link.
+
 ## Server supervisor
 
 `OpenCodeServer` runs `<opencode> serve --hostname 127.0.0.1 --port <port>` with cwd and every state root under

@@ -71,6 +71,29 @@ Its id is `ocr`, not `review.ocr`: the host refuses a command that is a prefix o
 `agw ocr`; run directly it is wallet-gated the same way. The route keeps the name `review.ocr`. The capabilities carry
 their own command names for the same reason (`agw review-route`, `agw review-adversary`).
 
+## Hardening
+
+- **Helper environment.** git, fallow and react-doctor run on an allowlist built from `ports.env` (`PATH`, `HOME`, `TMPDIR`,
+  `LANG`, `LC_*`, `TERM`, and `GIT_*` minus credentials, askpass/ssh/external-diff/pager and per-command config; the
+  host's `GIT_CONFIG_GLOBAL` stays). The API secret and the IU key never reach them (`test/review-git.test.ts`). `ocr`
+  gets its own minimal env plus the IU credentials it needs.
+- **One path.** `prepare` realpaths `cwd` and everything after uses that spelling (prompts, the agents' grant, the clone
+  source); a `cwd` with glob or control characters, or that is no work tree, is `invalid_input` before any paid step.
+  The grant is a glob on the path, which OpenCode matches as named, not as resolved.
+- **Symlinks.** In a `pr`/`branch` clone every symlink whose realpath leaves the clone is deleted right after checkout
+  (OpenCode follows a link out of an allowed directory, see the opencode-host README). The live `cwd` is not edited: a
+  symlink there is an accepted risk.
+- **Scopes.** A scope git resolves as a commit is a ref (`v2.0`); only what it does not resolve is a path, and a path that
+  matches no file is `invalid_input`, never an empty-diff `clean`.
+- **Prompt data.** Changed file names sit inside a nonce data fence with control characters escaped; the diff likewise.
+- **Siblings.** Every step started beside the pipeline (react-doctor, adversary, OCR, the angle fan-out) is tracked: a
+  rejection is handled at once, and the cleanup awaits them all before it removes the clone. The runtime cannot cancel a
+  sibling step, so an all-failed verdict is computed without waiting but the run ends only after they settle.
+- **Resume.** The clone's path is deterministic (a hash of the `prepare` step key). If a sweep removed it before a
+  resume, `run` rebuilds it at the same path from the journaled head and base commits (by id if the ref moved) before
+  any step reads it; if that fails the run fails with a clear error.
+- **Salvage.** The raw text kept is the last non-empty synthesis answer of the two attempts.
+
 ## Agents
 
 `agents/review-<angle>/{AGENTS.md,agent.json}` for the twelve angles and `review-synthesis` are the legacy prompts, adapted

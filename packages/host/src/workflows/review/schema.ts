@@ -1,3 +1,4 @@
+import { ROUTER_ANGLES } from '@agent-workflows/capabilities'
 import { z } from 'zod'
 
 export const REVIEW_DEPTHS = ['light', 'standard', 'deep'] as const
@@ -5,14 +6,7 @@ export type ReviewDepth = (typeof REVIEW_DEPTHS)[number]
 
 /** Every angle the caller may ask for. Each is an agent `review-<angle>` under `agents/`. */
 export const FLOOR_ANGLES = ['architect', 'senior-dev', 'frontend', 'backend', 'typescript', 'qa'] as const
-export const ROUTER_ANGLES = [
-  'security',
-  'performance',
-  'concurrency',
-  'data-migration',
-  'api-contract',
-  'resilience',
-] as const
+export { ROUTER_ANGLES }
 export const ALL_ANGLES = [...FLOOR_ANGLES, ...ROUTER_ANGLES] as const
 export type Angle = (typeof ALL_ANGLES)[number]
 

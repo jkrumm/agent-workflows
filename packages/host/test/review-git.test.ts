@@ -4,15 +4,18 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readlinkSync,
+  symlinkSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   utimesSync,
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { defaultExec } from '../src/workflows/review/exec.ts'
+import { createExec, defaultExec, helperEnv } from '../src/workflows/review/exec.ts'
 import {
   baseFor,
   CLONE_ROOT,
@@ -23,10 +26,13 @@ import {
   type Prepared,
   type ReviewPorts,
   removeClone,
+  removeEscapingSymlinks,
+  restoreClone,
   sweepStaleClones,
 } from '../src/workflows/review/git.ts'
 
-const scratch = mkdtempSync(join(tmpdir(), 'agw-review-git-'))
+// realpath'd: the review works on one spelling of every path (macOS tmpdir is a symlink)
+const scratch = realpathSync(mkdtempSync(join(tmpdir(), 'agw-review-git-')))
 afterAll(() => rmSync(scratch, { recursive: true, force: true }))
 
 function git(cwd: string, ...args: string[]): string {
@@ -311,5 +317,202 @@ describe('clone housekeeping', () => {
     expect(() => removeClone(p, outside)).toThrow('refusing to remove')
     expect(() => removeClone(p, join(p.stateDir, CLONE_ROOT))).toThrow('refusing to remove')
     expect(existsSync(outside)).toBe(true)
+  })
+})
+
+describe('helper environment', () => {
+  const source = {
+    PATH: process.env.PATH,
+    HOME: '/home/x',
+    LC_ALL: 'C',
+    TERM: 'xterm',
+    AGW_API_SECRET: 'api-secret-value',
+    IU_API_KEY: 'iu-key-value',
+    IU_BASE_URL: 'https://iu.example.com/anthropic',
+    ARGO_API_SECRET: 'argo-value',
+    AGW_PG_PASSWORD: 'pg-value',
+    GIT_CONFIG_GLOBAL: '/etc/headless-gitconfig',
+    GIT_TOKEN: 'git-token-value',
+    GIT_ASKPASS: '/bin/askpass',
+    GIT_SSH_COMMAND: 'ssh -i key',
+    GIT_CONFIG_COUNT: '1',
+    GIT_CONFIG_KEY_0: 'core.sshCommand',
+    GIT_CONFIG_VALUE_0: 'sh -c evil',
+    GIT_EXTERNAL_DIFF: '/bin/evil',
+    GIT_AUTHOR_NAME: 'Reviewer',
+  }
+
+  test('an allowlist: no host secret, no git variable that names a program or a credential', () => {
+    const env = helperEnv(source)
+    expect(Object.keys(env).sort()).toEqual(
+      [
+        'GIT_AUTHOR_NAME',
+        'GIT_CONFIG_GLOBAL',
+        'GIT_OPTIONAL_LOCKS',
+        'GIT_TERMINAL_PROMPT',
+        'HOME',
+        'LC_ALL',
+        'PATH',
+        'TERM',
+      ].sort(),
+    )
+    expect(JSON.stringify(env)).not.toMatch(/secret-value|iu-key-value|argo-value|pg-value|git-token|evil|askpass/)
+  })
+
+  test('a helper process really does not see them (ports.env is what it is built from)', async () => {
+    const run = createExec(source)
+    const r = await run(['env'], { cwd: scratch, timeoutMs: 10_000 })
+    expect(r.code).toBe(0)
+    expect(r.stdout).toContain('HOME=/home/x')
+    for (const name of [
+      'AGW_API_SECRET',
+      'IU_API_KEY',
+      'IU_BASE_URL',
+      'ARGO_API_SECRET',
+      'AGW_PG_PASSWORD',
+      'GIT_TOKEN',
+      'GIT_CONFIG_COUNT',
+      'GIT_EXTERNAL_DIFF',
+    ]) {
+      expect(r.stdout).not.toContain(`${name}=`)
+    }
+    // a test env without a PATH still finds git
+    const bare = await createExec({})(['git', '--version'], { cwd: scratch, timeoutMs: 10_000 })
+    expect(bare.code).toBe(0)
+  })
+
+  test('the process env is not read once an env is given', async () => {
+    process.env.AGW_LEAK_PROBE = 'leaked'
+    try {
+      const r = await createExec({ PATH: process.env.PATH })(['env'], { cwd: scratch, timeoutMs: 10_000 })
+      expect(r.stdout).not.toContain('AGW_LEAK_PROBE')
+    } finally {
+      delete process.env.AGW_LEAK_PROBE
+    }
+  })
+})
+
+describe('symlinks in a clone', () => {
+  test('every symlink whose target leaves the clone is deleted; links inside stay', () => {
+    const root = fresh('clone')
+    const outside = fresh('outside')
+    put(root, { 'a.ts': 'a\n', 'sub/b.ts': 'b\n', '.git/config': 'keep\n' })
+    symlinkSync('/etc', join(root, 'abs-out')) // absolute, outside
+    symlinkSync(outside, join(root, 'sub', 'abs-out2'))
+    symlinkSync('../../../..', join(root, 'sub', 'up')) // relative, climbs out
+    symlinkSync('missing-target-outside/../../../x', join(root, 'dangling-out')) // dangling, lexically outside
+    symlinkSync('a.ts', join(root, 'inside')) // stays
+    symlinkSync('sub', join(root, 'dir-inside')) // stays
+    symlinkSync('/nowhere/at/all', join(root, 'dangling-abs')) // dangling, absolute, outside
+    const removed = removeEscapingSymlinks(root)
+    expect(removed.sort()).toEqual(['dangling-abs', 'dangling-out', 'sub/abs-out2', 'sub/up', 'abs-out'].sort())
+    expect(readlinkSync(join(root, 'inside'))).toBe('a.ts')
+    expect(readlinkSync(join(root, 'dir-inside'))).toBe('sub')
+    expect(existsSync(join(root, 'abs-out'))).toBe(false)
+    expect(readFileSync(join(root, '.git', 'config'), 'utf8')).toBe('keep\n')
+  })
+
+  test('a link to a directory is not followed while walking, and a chain that ends outside is removed', () => {
+    const root = fresh('clone')
+    const outside = fresh('outside')
+    put(outside, { 'secret.txt': 's' })
+    symlinkSync(outside, join(root, 'hop'))
+    symlinkSync('hop', join(root, 'chain'))
+    // `chain` is removed too when it is met first; when `hop` goes first it is left dangling inside the clone. Either way
+    // nothing reaches the outside any more.
+    expect(removeEscapingSymlinks(root)).toContain('hop')
+    expect(existsSync(join(root, 'chain', 'secret.txt'))).toBe(false)
+    expect(existsSync(join(root, 'hop', 'secret.txt'))).toBe(false)
+    expect(readFileSync(join(outside, 'secret.txt'), 'utf8')).toBe('s') // the target is never touched
+  })
+
+  test('a PR that carries escaping symlinks is checked out without them', async () => {
+    const bare = fresh('origin')
+    git(bare, 'init', '-q', '--bare', '-b', 'main')
+    const seed = fresh('seed')
+    git(seed, 'init', '-q', '-b', 'main')
+    put(seed, { 'a.ts': 'a1\n' })
+    git(seed, 'add', '-A')
+    git(seed, 'commit', '-q', '-m', 'base')
+    git(seed, 'remote', 'add', 'origin', bare)
+    git(seed, 'push', '-q', 'origin', 'main')
+    git(seed, 'checkout', '-q', '-b', 'feat')
+    symlinkSync('/etc', join(seed, 'etc-link'))
+    symlinkSync('../../..', join(seed, 'up-link'))
+    symlinkSync('a.ts', join(seed, 'ok-link'))
+    git(seed, 'add', '-A')
+    git(seed, 'commit', '-q', '-m', 'links')
+    git(seed, 'push', '-q', 'origin', 'feat:refs/pull/5/head')
+    const cwd = fresh('work')
+    git(scratch, 'clone', '-q', bare, cwd)
+    const p = await ok({ cwd, pr: 5 })
+    expect(existsSync(join(p.repo, 'etc-link'))).toBe(false)
+    expect(existsSync(join(p.repo, 'up-link'))).toBe(false)
+    expect(readlinkSync(join(p.repo, 'ok-link'))).toBe('a.ts')
+    // the review's diff is the commits, so the dropped links are still named as changed files
+    expect([...p.files].sort()).toEqual(['etc-link', 'ok-link', 'up-link'])
+  })
+})
+
+describe('restoreClone', () => {
+  test('rebuilds a swept clone at the same path from the journaled commits; a present one is left alone', async () => {
+    const bare = fresh('origin')
+    git(bare, 'init', '-q', '--bare', '-b', 'main')
+    const seed = fresh('seed')
+    git(seed, 'init', '-q', '-b', 'main')
+    put(seed, { 'a.ts': 'a1\n' })
+    git(seed, 'add', '-A')
+    git(seed, 'commit', '-q', '-m', 'base')
+    git(seed, 'remote', 'add', 'origin', bare)
+    git(seed, 'push', '-q', 'origin', 'main')
+    git(seed, 'checkout', '-q', '-b', 'feat')
+    put(seed, { 'a.ts': 'a2\n' })
+    git(seed, 'commit', '-qam', 'feature')
+    git(seed, 'push', '-q', 'origin', 'feat:refs/pull/9/head')
+    const cwd = fresh('work')
+    git(scratch, 'clone', '-q', bare, cwd)
+    const p = ports()
+    const prepared = await ok({ cwd, pr: 9 }, p, 'r:prepare')
+    const clone = prepared.clone as string
+    expect(await restoreClone(p, prepared, { pr: 9 }, 'r:prepare')).toBeNull() // present: nothing to do
+    rmSync(clone, { recursive: true, force: true })
+    expect(await restoreClone(p, prepared, { pr: 9 }, 'r:prepare')).toBeNull()
+    expect(readFileSync(join(clone, 'a.ts'), 'utf8')).toBe('a2\n')
+    expect(git(clone, 'rev-parse', 'HEAD').trim()).toBe(prepared.headOid as string)
+
+    // the PR moved on while the clone was gone: the journaled commit is fetched by id, not the new tip
+    put(seed, { 'a.ts': 'a3\n' })
+    git(seed, 'commit', '-qam', 'force-pushed later')
+    git(seed, 'push', '-q', '-f', 'origin', 'feat:refs/pull/9/head')
+    rmSync(clone, { recursive: true, force: true })
+    const moved = await restoreClone(p, prepared, { pr: 9 }, 'r:prepare')
+    if (moved === null) expect(git(clone, 'rev-parse', 'HEAD').trim()).toBe(prepared.headOid as string)
+    else expect(moved).toContain('cannot be fetched again') // a server that refuses a fetch by id: a clear error, never a silent other commit
+  })
+
+  test('no journaled commit ids: an explicit error', async () => {
+    const dir = repo({ 'a.ts': 'a\n' })
+    put(dir, { 'a.ts': 'b\n' })
+    const p = ports()
+    const prepared = await ok({ cwd: dir }, p)
+    const fake = { ...prepared, clone: join(p.stateDir, CLONE_ROOT, 'gone'), headOid: null }
+    expect(await restoreClone(p, fake, { pr: 1 }, 'k')).toContain('no commit ids were journaled')
+  })
+})
+
+describe('scope kinds', () => {
+  test('a dotted tag is a ref; an unresolved name is a path that must exist', async () => {
+    const dir = repo({ 'a.ts': 'a1\n', 'src/b.ts': 'b1\n' })
+    put(dir, { 'a.ts': 'a2\n' })
+    git(dir, 'commit', '-qam', 'second')
+    git(dir, 'tag', 'v2.0', 'HEAD~1')
+    const tagged = await ok({ cwd: dir, scope: 'v2.0' })
+    expect(tagged.base).toEqual({ kind: 'base', ref: 'v2.0' })
+    expect(tagged.diff).toContain('+a2')
+    const noFile = await prepare({ cwd: dir, scope: 'nope.ts' }, 'k', ports())
+    expect(noFile).toMatchObject({ ok: false, kind: 'invalid_input' })
+    const dirScope = await ok({ cwd: dir, scope: 'src' })
+    expect(dirScope.base).toEqual({ kind: 'auto' })
+    expect(dirScope.diff).toBe('')
   })
 })

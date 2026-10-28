@@ -1,8 +1,9 @@
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs'
-import { join, sep } from 'node:path'
+import { existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync } from 'node:fs'
+import { dirname, join, relative, resolve, sep } from 'node:path'
 import type { Exec } from './exec.ts'
 import { tail } from './exec.ts'
+import { mapLimit } from './util.ts'
 import { branchProblem, isPathScope, splitRange } from './schema.ts'
 
 export type Env = Record<string, string | undefined>
@@ -26,10 +27,15 @@ export type OcrMode = { mode: 'uncommitted' | 'head' | 'range'; from: string | n
 
 export type Prepared = {
   ok: true
+  /** The caller's checkout, realpath'd: one spelling for the prompts, the grant and the clone source. */
+  cwd: string
   /** The directory the agents and tools read: `cwd`, or the throwaway clone of a `pr`/`branch` review. */
   repo: string
   /** The clone to remove when the run ends; null when `repo` is the caller's own checkout. */
   clone: string | null
+  /** The commits a `pr`/`branch` review compares, journaled so a clone swept before a resume is rebuilt at the same state. */
+  headOid: string | null
+  baseOid: string | null
   label: string
   diff: string
   files: string[]
@@ -70,8 +76,19 @@ export function countChangedLines(diff: string): number {
   return n
 }
 
+export type ScopeKind = 'uncommitted' | 'head' | 'range' | 'ref' | 'path'
+
+/** A scope that git resolves as a commit is a ref (`v2.0`); only what it does not resolve is a path. */
+export function kindOf(scope: string, resolvesAsCommit: boolean): ScopeKind {
+  if (scope === 'uncommitted' || scope === 'head') return scope
+  if (splitRange(scope)) return 'range'
+  return resolvesAsCommit ? 'ref' : 'path'
+}
+
+const lexicalKind = (scope: string): ScopeKind => kindOf(scope, !isPathScope(scope))
+
 /** `fallow review --base <ref>` always reviews `<ref>...HEAD`: a range ending elsewhere has no equivalent, so it skips. */
-export function baseFor(scope: string): Base {
+export function baseFor(scope: string, kind: ScopeKind = lexicalKind(scope)): Base {
   if (scope === 'uncommitted') return { kind: 'base', ref: 'HEAD' }
   if (scope === 'head') return { kind: 'base', ref: 'HEAD~1' }
   const range = splitRange(scope)
@@ -80,18 +97,22 @@ export function baseFor(scope: string): Base {
     if (range.to && range.to !== 'HEAD') return { kind: 'skip' }
     return { kind: 'base', ref: range.from }
   }
-  if (isPathScope(scope)) return { kind: 'auto' }
+  if (kind === 'path') return { kind: 'auto' }
   return { kind: 'base', ref: scope }
 }
 
 /** `ocr review`'s mode for a scope; null when it has none (a file path, an open-ended range). */
-export function ocrModeFor(scope: string, baseOid: string | null): OcrMode | null {
+export function ocrModeFor(
+  scope: string,
+  baseOid: string | null,
+  kind: ScopeKind = lexicalKind(scope),
+): OcrMode | null {
   if (baseOid) return { mode: 'range', from: baseOid, to: 'HEAD' }
   if (scope === 'uncommitted') return { mode: 'uncommitted', from: null, to: null }
   if (scope === 'head') return { mode: 'head', from: null, to: null }
   const range = splitRange(scope)
   if (range) return range.from ? { mode: 'range', from: range.from, to: range.to || 'HEAD' } : null
-  if (isPathScope(scope)) return null
+  if (kind === 'path') return null
   return { mode: 'range', from: scope, to: 'HEAD' }
 }
 
@@ -110,22 +131,6 @@ function git(
 }
 
 const names = (stdout: string) => stdout.split('\0').filter(Boolean)
-
-/** Run `fn` over `items`, at most `limit` at a time, keeping order. */
-async function mapLimit<T, R>(items: readonly T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
-  const out: R[] = new Array(items.length)
-  let next = 0
-  await Promise.all(
-    Array.from({ length: Math.min(limit, items.length) }, async () => {
-      for (;;) {
-        const i = next++
-        if (i >= items.length) return
-        out[i] = await fn(items[i] as T)
-      }
-    }),
-  )
-  return out
-}
 
 /** Untracked, non-ignored files as added-file hunks, without touching the caller's index (`git add -N` would). */
 async function untrackedDiff(ports: ReviewPorts, repo: string): Promise<{ diff: string; files: string[] }> {
@@ -149,7 +154,13 @@ type Changes = { diff: string; files: string[] } | { error: string; kind: 'inval
  * `head` is the last commit; a bare ref is `<ref>..HEAD`; an explicit range or a file path pass through. A `pr`/`branch`
  * review compares the fetched head to the default branch's tip (`<base>...HEAD`, no rename collapsing).
  */
-async function changesFor(ports: ReviewPorts, repo: string, scope: string, baseOid: string | null): Promise<Changes> {
+async function changesFor(
+  ports: ReviewPorts,
+  repo: string,
+  scope: string,
+  baseOid: string | null,
+  kind: ScopeKind,
+): Promise<Changes> {
   const fail = (what: string, r: GitRun): Changes => {
     const text = (r.stderr || r.stdout).trim()
     const bad = /unknown revision|bad revision|ambiguous argument|not a valid|bad object/i.test(text)
@@ -172,10 +183,10 @@ async function changesFor(ports: ReviewPorts, repo: string, scope: string, baseO
   } else if (scope === 'head') {
     diffArgs = ['show', ...plain, 'HEAD']
     nameArgs = ['show', 'HEAD', '--name-only', '-z', '--format=']
-  } else if (splitRange(scope)) {
+  } else if (kind === 'range') {
     diffArgs = ['diff', ...plain, scope]
     nameArgs = ['diff', '--name-only', '-z', scope]
-  } else if (isPathScope(scope)) {
+  } else if (kind === 'path') {
     diffArgs = ['diff', ...plain, '--', scope]
     nameArgs = ['diff', '--name-only', '-z', '--', scope]
   } else {
@@ -199,22 +210,31 @@ async function changesFor(ports: ReviewPorts, repo: string, scope: string, baseO
   return { diff: text, files: [...new Set(changed)] }
 }
 
-/** A review's clones, one directory per `prepare` step key; removes this one first so a retry starts clean. */
-export function cloneDirFor(ports: ReviewPorts, key: string): { root: string; dir: string } {
+const GLOB_OR_CONTROL = /[*?[\]{}\p{Cc}\u2028\u2029]/u
+
+/** The clone root, realpath'd (the agents' grant matches the path as given, so one spelling must be used everywhere). */
+function cloneRoot(ports: ReviewPorts, create: boolean): string {
   const root = join(ports.stateDir, CLONE_ROOT)
+  if (create) mkdirSync(root, { recursive: true })
+  return existsSync(root) ? realpathSync(root) : root
+}
+
+/** A review's clones, one directory per `prepare` step key: deterministic, so a resumed run finds (or rebuilds) the same path. */
+export function cloneDirFor(ports: ReviewPorts, key: string): { root: string; dir: string } {
+  const root = cloneRoot(ports, false)
   return { root, dir: join(root, createHash('sha256').update(key).digest('hex').slice(0, 16)) }
 }
 
 /** Removes `dir` only when it is a child of the clone root: a wrong argument must never reach `rm -rf` elsewhere. */
 export function removeClone(ports: ReviewPorts, dir: string): void {
-  const root = join(ports.stateDir, CLONE_ROOT)
+  const root = cloneRoot(ports, false)
   if (!dir.startsWith(`${root}${sep}`)) throw new Error(`refusing to remove ${dir}: not under ${root}`)
   rmSync(dir, { recursive: true, force: true })
 }
 
 /** Clones left by a run that never reached its cleanup (a crash, a cancel). Best effort. */
 export function sweepStaleClones(ports: ReviewPorts, keep?: string): string[] {
-  const root = join(ports.stateDir, CLONE_ROOT)
+  const root = cloneRoot(ports, false)
   if (!existsSync(root)) return []
   const removed: string[] = []
   for (const entry of readdirSync(root, { withFileTypes: true })) {
@@ -231,20 +251,56 @@ export function sweepStaleClones(ports: ReviewPorts, keep?: string): string[] {
   return removed
 }
 
+/**
+ * Deletes every symlink whose target leaves `root` (a dangling one is judged by where it points lexically). The agents'
+ * `external_directory` grant matches the path they name, not where a link leads, so a `link -> ~` in an untrusted PR would
+ * be a read of the whole home directory. Only for a throwaway clone: the caller's own checkout is never edited.
+ */
+export function removeEscapingSymlinks(root: string): string[] {
+  const realRoot = realpathSync(root)
+  const removed: string[] = []
+  const inside = (path: string) => path === realRoot || path.startsWith(`${realRoot}${sep}`)
+  const walk = (dir: string) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (dir === root && entry.name === '.git') continue
+      const path = join(dir, entry.name)
+      if (entry.isSymbolicLink()) {
+        let stays: boolean
+        try {
+          stays = inside(realpathSync(path))
+        } catch {
+          stays = inside(resolve(realRoot, relative(root, dirname(path)), readlinkSync(path)))
+        }
+        if (!stays) {
+          rmSync(path, { force: true })
+          removed.push(relative(root, path))
+        }
+      } else if (entry.isDirectory()) {
+        walk(path)
+      }
+    }
+  }
+  walk(root)
+  return removed
+}
+
 const DEFAULT_BRANCH = /^ref: refs\/heads\/(\S+)\s+HEAD$/m
 
 /**
  * A throwaway shared clone of `cwd`, with the PR or branch fetched from `cwd`'s origin and the default branch's tip as
- * the diff base. `cwd` is only read: nothing is fetched into it, no ref, worktree, HEAD or index of it changes.
+ * the diff base. `cwd` is only read: nothing is fetched into it, no ref, worktree, HEAD or index of it changes. With
+ * `expected` (a resume whose clone was swept) the same two commits are fetched again, by id when a ref has moved on.
  */
 async function cloneForRef(
   ports: ReviewPorts,
   cwd: string,
   key: string,
   ref: { pr?: number; branch?: string },
-): Promise<{ dir: string; baseOid: string } | { error: string }> {
-  const { root, dir } = cloneDirFor(ports, key)
-  mkdirSync(root, { recursive: true })
+  expected?: { headOid: string; baseOid: string },
+): Promise<{ dir: string; headOid: string; baseOid: string } | { error: string }> {
+  const root = cloneRoot(ports, true)
+  const { dir } = cloneDirFor(ports, key)
+  if (GLOB_OR_CONTROL.test(dir)) return { error: `the clone path contains glob or control characters: ${dir}` }
   rmSync(dir, { recursive: true, force: true })
   const what = ref.pr !== undefined ? `PR #${ref.pr}` : `branch ${ref.branch}`
   const origin = await git(ports, cwd, ['remote', 'get-url', 'origin'])
@@ -260,14 +316,23 @@ async function cloneForRef(
     git(ports, dir, args, timeoutMs, { GIT_LFS_SKIP_SMUDGE: '1' })
   // The clone's own origin is `cwd`; the review fetches from the real one.
   await inClone(['remote', 'set-url', 'origin', origin.stdout.trim()])
-  const tip = async (refspec: string): Promise<{ oid: string } | { error: string }> => {
-    const fetched = await inClone(['fetch', '--quiet', 'origin', refspec], FETCH_TIMEOUT_MS)
-    if (!fetched.ok) return { error: `could not fetch ${refspec} from origin: ${tail(fetched.stderr) || 'no output'}` }
-    const resolved = await inClone(['rev-parse', '--verify', 'FETCH_HEAD^{commit}'])
-    if (!resolved.ok || !resolved.stdout.trim()) return { error: `fetched ${refspec} but could not resolve it` }
-    return { oid: resolved.stdout.trim() }
+  const tip = async (refspec: string, want?: string): Promise<{ oid: string } | { error: string }> => {
+    const fetchOne = async (spec: string) => {
+      const fetched = await inClone(['fetch', '--quiet', 'origin', spec], FETCH_TIMEOUT_MS)
+      if (!fetched.ok) return { error: `could not fetch ${spec} from origin: ${tail(fetched.stderr) || 'no output'}` }
+      const resolved = await inClone(['rev-parse', '--verify', 'FETCH_HEAD^{commit}'])
+      if (!resolved.ok || !resolved.stdout.trim()) return { error: `fetched ${spec} but could not resolve it` }
+      return { oid: resolved.stdout.trim() }
+    }
+    const got = await fetchOne(refspec)
+    if (!want || ('oid' in got && got.oid === want)) return got
+    // The ref moved since the review began: the journaled diff belongs to the commit it was made on.
+    const exact = await fetchOne(want)
+    return 'oid' in exact && exact.oid === want
+      ? exact
+      : { error: `${refspec} moved on and ${want} cannot be fetched again` }
   }
-  const head = await tip(ref.pr !== undefined ? `pull/${ref.pr}/head` : `refs/heads/${ref.branch}`)
+  const head = await tip(ref.pr !== undefined ? `pull/${ref.pr}/head` : `refs/heads/${ref.branch}`, expected?.headOid)
   if ('error' in head) return head
   const symref = await inClone(['ls-remote', '--symref', 'origin', 'HEAD'])
   const defaultBranch = DEFAULT_BRANCH.exec(symref.stdout)?.[1]
@@ -275,14 +340,36 @@ async function cloneForRef(
     return { error: `could not read origin's default branch: ${tail(symref.stderr) || symref.stdout.trim()}` }
   const unsafe = branchProblem(defaultBranch)
   if (unsafe) return { error: `refusing origin's default branch "${defaultBranch}": ${unsafe}` }
-  const base = await tip(`refs/heads/${defaultBranch}`)
+  const base = await tip(`refs/heads/${defaultBranch}`, expected?.baseOid)
   if ('error' in base) return base
   const checkout = await inClone(
     ['-c', 'core.hooksPath=/dev/null', 'checkout', '--quiet', '--detach', head.oid],
     FETCH_TIMEOUT_MS,
   )
   if (!checkout.ok) return { error: `could not check out ${what}: ${tail(checkout.stderr)}` }
-  return { dir, baseOid: base.oid }
+  removeEscapingSymlinks(dir)
+  return { dir, headOid: head.oid, baseOid: base.oid }
+}
+
+/**
+ * On a replay the journaled `prepare` result says where the clone is; if a sweep (or anything else) removed it since, it
+ * is rebuilt at the same path from the same two commits before any step reads it. Returns an error message, or null.
+ */
+export async function restoreClone(
+  ports: ReviewPorts,
+  p: Prepared,
+  ref: { pr?: number; branch?: string },
+  key: string,
+): Promise<string | null> {
+  if (!p.clone || existsSync(p.clone)) return null
+  if (!p.headOid || !p.baseOid)
+    return `the review clone ${p.clone} is gone and no commit ids were journaled to rebuild it`
+  const made = await cloneForRef(ports, p.cwd, key, ref, { headOid: p.headOid, baseOid: p.baseOid })
+  if ('error' in made) {
+    removeClone(ports, cloneDirFor(ports, key).dir)
+    return `the review clone ${p.clone} is gone and could not be rebuilt: ${made.error}`
+  }
+  return made.dir === p.clone ? null : `the rebuilt clone is at ${made.dir}, not ${p.clone}`
 }
 
 export async function runFallow(ports: ReviewPorts, repo: string, base: Base): Promise<string> {
@@ -337,21 +424,51 @@ export async function prepare(
   key: string,
   ports: ReviewPorts,
 ): Promise<PrepareResult> {
-  const { cwd, pr, branch } = input
+  const { pr, branch } = input
+  // One spelling of the checkout for everything that follows: the prompts, the agents' grant and the clone source.
+  let cwd: string
   try {
-    if (!statSync(cwd).isDirectory()) return invalid(`cwd is not a directory: ${cwd}`)
+    if (!statSync(input.cwd).isDirectory()) return invalid(`cwd is not a directory: ${input.cwd}`)
+    cwd = realpathSync(input.cwd)
   } catch {
-    return invalid(`cwd does not exist: ${cwd}`)
+    return invalid(`cwd does not exist: ${input.cwd}`)
   }
+  // The agents' grant is a glob on this path: a wildcard in it would widen the grant, a control character would forge a prompt line.
+  if (GLOB_OR_CONTROL.test(cwd)) return invalid(`cwd contains glob or control characters: ${JSON.stringify(cwd)}`)
   const inside = await git(ports, cwd, ['rev-parse', '--is-inside-work-tree'])
   if (!inside.ok || inside.stdout.trim() !== 'true') return invalid(`cwd is not a git work tree: ${cwd}`)
 
   const refMode = pr !== undefined || branch !== undefined
   const label = refMode ? (pr !== undefined ? `pr:${pr}` : `branch:${branch}`) : (input.scope ?? 'uncommitted')
+  const scope = label
+  // A scope git resolves as a commit is a ref (`v2.0`); what it does not resolve is a path, and a path must exist.
+  let kind: ScopeKind = 'range'
+  if (!refMode) {
+    const resolves =
+      scope === 'uncommitted' || scope === 'head' || splitRange(scope)
+        ? false
+        : (await git(ports, cwd, ['rev-parse', '--verify', '--quiet', `${scope}^{commit}`])).ok
+    kind = kindOf(scope, resolves)
+    if (kind === 'path') {
+      const matched = await git(ports, cwd, [
+        'ls-files',
+        '-z',
+        '--cached',
+        '--others',
+        '--exclude-standard',
+        '--',
+        scope,
+      ])
+      if (!matched.ok || names(matched.stdout).length === 0) {
+        return invalid(`scope "${scope}" is neither a git ref nor a file in the work tree`)
+      }
+    }
+  }
   sweepStaleClones(ports, cloneDirFor(ports, key).dir)
 
   let repo = cwd
   let clone: string | null = null
+  let headOid: string | null = null
   let baseOid: string | null = null
   if (refMode) {
     const made = await cloneForRef(ports, cwd, key, { pr, branch })
@@ -361,19 +478,22 @@ export async function prepare(
     }
     repo = made.dir
     clone = made.dir
+    headOid = made.headOid
     baseOid = made.baseOid
   }
 
-  const scope = refMode ? label : (input.scope ?? 'uncommitted')
-  const found = await changesFor(ports, repo, scope, baseOid)
+  const found = await changesFor(ports, repo, scope, baseOid, kind)
   const config = switches(ports.env)
-  const base: Base = baseOid ? { kind: 'base', ref: baseOid } : baseFor(scope)
+  const base: Base = baseOid ? { kind: 'base', ref: baseOid } : baseFor(scope, kind)
   const common = {
+    cwd,
     repo,
     clone,
+    headOid,
+    baseOid,
     label,
     base,
-    ocr: ocrModeFor(scope, baseOid),
+    ocr: ocrModeFor(scope, baseOid, kind),
     ...config,
     ocrBlocker: ocrBlocker(ports),
   }

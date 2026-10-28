@@ -1,5 +1,14 @@
 import { expect, test } from 'bun:test'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Usage } from '@agent-workflows/runtime'
@@ -280,6 +289,92 @@ test.skipIf(!live)(
       const all = JSON.stringify(await client.messages(handle.sessionId))
       expect(all.includes('TOKEN-NEAR-6639')).toBe(false)
       expect(all.includes('TOKEN-FAR-7740')).toBe(false)
+    } finally {
+      host.close()
+      await server.close({ stop: true })
+      rmSync(stateDir, { recursive: true, force: true })
+      rmSync(root, { recursive: true, force: true })
+    }
+  },
+  600_000,
+)
+
+const link = 'live: a symlink inside an allowed directory (measurement: the grant follows the path, not the link)'
+
+test.skipIf(!live)(
+  live ? link : `${link} (skipped: runs only with AGW_LIVE=1)`,
+  async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'och-live-'))
+    const server = new OpenCodeServer({ stateDir, livenessIntervalMs: 1_000 })
+    const host = new OpenCodeHost({
+      server,
+      stateDir,
+      agents: [
+        {
+          name: 'link-reader',
+          route: 'check',
+          agentsMd: '# Rules\n\nFollow the instructions exactly.\n',
+          permissions: { rules: [{ action: 'edit', resource: '*', effect: 'deny' }] },
+        },
+      ],
+    })
+    const root = mkdtempSync(join(tmpdir(), 'agw-link-'))
+    const repo = join(root, 'repo')
+    const outside = join(root, 'other')
+    mkdirSync(repo)
+    mkdirSync(outside)
+    writeFileSync(join(repo, 'inside.txt'), 'TOKEN-INSIDE-1111\n')
+    writeFileSync(join(outside, 'secret.txt'), 'TOKEN-OUTSIDE-2222\n')
+    symlinkSync(outside, join(repo, 'dirlink')) // repo/dirlink -> a directory outside the grant
+    symlinkSync(join(outside, 'secret.txt'), join(repo, 'filelink.txt')) // repo/filelink.txt -> a file outside it
+    try {
+      await server.start()
+      const client = createClient(() => server.endpoint())
+      const handle = (await host.open({
+        runId: 'live',
+        stepId: 'link',
+        key: 'live:link',
+        agent: 'link-reader',
+        prompt: '',
+        options: { allowDirectories: [repo] },
+      })) as OpenCodeHandle
+      await host.prompt(
+        handle,
+        [
+          'Make exactly these tool calls, one after the other, even if one fails:',
+          `1. read the file ${join(repo, 'inside.txt')}`,
+          `2. read the file ${join(repo, 'filelink.txt')}`,
+          `3. read the file ${join(repo, 'dirlink', 'secret.txt')}`,
+          `4. glob the pattern "*" in the directory ${join(repo, 'dirlink')}`,
+          `5. grep for "TOKEN" in the directory ${join(repo, 'dirlink')}`,
+          'Then answer with one line per call: its number and OK or REFUSED. Nothing else.',
+        ].join('\n'),
+      )
+      const result = await host.wait(handle, {
+        signal: AbortSignal.timeout(300_000), // test bound only
+        onProgress: () => {},
+        onTool: async () => {},
+      })
+      const tools: { tool: string; status: string; target: string; reason: string }[] = []
+      for (const m of await client.messages(handle.sessionId)) {
+        for (const p of m.content ?? []) {
+          if (p.type !== 'tool') continue
+          const input = p.state?.input ?? {}
+          const target = String(input.filePath ?? input.path ?? input.directory ?? input.pattern ?? '')
+          const error = p.state?.error
+          const reason = (typeof error === 'string' ? error : (error?.message ?? '')).slice(0, 160)
+          tools.push({ tool: p.name ?? '?', status: p.state?.status ?? '?', target, reason })
+        }
+      }
+      const all = JSON.stringify(await client.messages(handle.sessionId))
+      const report = { tools, answer: result.output, outsideTokenInSession: all.includes('TOKEN-OUTSIDE-2222') }
+      console.log(`live opencode-host symlink ${JSON.stringify(report, null, 2)}`)
+      // Measured on 2.0.32: the grant is matched against the path the agent names, so a link inside the allowed directory
+      // is followed out of it (read, glob and grep). If a newer OpenCode resolves links, this fails: drop the clone
+      // symlink removal's "why" and the README's accepted risk, then.
+      expect(tools).toHaveLength(5)
+      expect(tools.every((t) => t.status === 'completed')).toBe(true)
+      expect(all.includes('TOKEN-OUTSIDE-2222')).toBe(true)
     } finally {
       host.close()
       await server.close({ stop: true })
