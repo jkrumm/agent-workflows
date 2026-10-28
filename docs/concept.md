@@ -298,3 +298,20 @@ One entry per phase: what we learned, what changed on this page, and why.
 - **Spend.** IU ≤ $2.67 (reviews), reconstructed from a time window; the new runtime already
   persists `purpose` on every run.
 - **Does the page hold?** Yes.
+
+### Wave 3 — CLI, agent host, deploy tooling (P1b), 2026-10-28
+
+- **Learned.** Fixing the host↔CLI HTTP contract in the briefs let both build in parallel; the only
+  drift was a contract gap (reserved flag names) caught in review. Lead reads on Max again found what
+  gateway reviews missed: a 30 s client abort on synchronous calls, a pin timer dropping eviction
+  protection on long turns, a deploy that overwrote the live tree with no rollback (now release
+  directories with rollback). The secrets path is a deploy's critical path: request 1Password items at
+  the start of a wave, while the owner is awake. Sweeps across repos need an explicit "never push to a
+  work remote" rule. A lead ending its turn on a background shell stalls the fleet.
+- **Changed.** §8: the OpenCode wedge is resolved (file-watcher boot), and the shared OpenCode server
+  credential is an accepted, documented risk (v3.2 note).
+- **Not done.** The deploy: blocked only on the owner's 1Password item; carried into Wave 4.
+- **Friction.** All three Max accounts near their limits; the lead paused an hour at a 5-hour reset.
+  IU/DeepSeek balance ran out mid-wave.
+- **Spend.** IU ≈ $2.31 + earlier rounds on reviews (upper bound, shared gateway).
+- **Does the page hold?** Yes.

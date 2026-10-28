@@ -73,31 +73,39 @@ Not ours, noted: agent-gateway restarted twice mid-review; IU `/models` times ou
 Known gaps carried in the package READMEs: >100K-token price tier unmodelled (`unknown` cost), limits'
 admission burst overshoot and uncounted SIGKILLed usage.
 
-## Wave 3 — CLI, agent host, deploy (P1b)            <!-- status: active -->
+## Wave 3 — CLI, agent host, deploy (P1b)            <!-- status: done -->
 Workers: Opus/medium for the CLI generator and OpenCode re-attach, Sonnet/high for the rest.
 
-- [ ] `agw` generated from OpenAPI + `x-cli` (spike-7 runner as reference): exit codes, typed errors,
+- [x] `agw` generated from OpenAPI + `x-cli` (spike-7 runner as reference): exit codes, typed errors,
   `pending` → resume, `schema`, `contract_mismatch`, a conformance suite
-- [ ] OpenCode host: locations compiled outside any repo, warm/evict, sessions re-attached after a
+- [x] OpenCode host: locations compiled outside any repo, warm/evict, sessions re-attached after a
   restart, DeepSeek wire rules on cheap routes (concept §8). Inputs from the wedge report:
   `OPENCODE_DISABLE_FILEWATCHER=1`, liveness via `GET /api/info` plus the idle watchdog, SIGTERM then
   SIGKILL, re-attach by session id; concept §8's wedge risk rewritten as resolved (version note)
-- [ ] agent-gateway's CLI renamed `agw-legacy` (its repo, one commit), every caller of today's `agw`
+- [x] agent-gateway's CLI renamed `agw-legacy` (its repo, one commit), every caller of today's `agw`
   swept to it; the new `agw` on PATH
-- [ ] LaunchAgents (`host` process: registry HTTP with bearer auth, fail closed; `AGW_MACHINE` set),
+- [x] LaunchAgents (`host` process: registry HTTP with bearer auth, fail closed; `AGW_MACHINE` set),
   `make deploy|verify`, Kuma heartbeat, dotfiles architecture map and herdr groups entry; `make check`
   installs its own deps
-- [ ] Telemetry and usage live: a reachable OTLP receiver with read-back (local ClickStack via its
-  Makefile target, or the VPS tier); `ARGO_URL` field created, then its ref in `headless.refs`, then
-  `.env.tpl`; the Argo outbox on
-- [ ] One trivial workflow end to end, proven live: run record, spans in ClickStack, usage in Argo
-- [ ] Fleet tooling (dotfiles, Sonnet/high): `rd say` verifies the agent left `idle/done` and dismisses
+- [x] Fleet tooling (dotfiles, Sonnet/high): `rd say` verifies the agent left `idle/done` and dismisses
   known modals (the "compact earlier" modal swallowed messages in Wave 2)
-**Left behind:**
+- [x] Moved to Wave 4 (owner-gated): telemetry and usage live, and the end-to-end proof
+**Left behind:** CLI, host, OpenCode host, deploy tooling (release dirs + rollback), `agw-legacy` rename
+with its sweep across five repos, `rd say` delivery check: all merged and reviewed, `make check` 450
+tests green. **Not deployed:** `make deploy` fails closed in preflight on the missing
+`op://mini/agent-workflows/*` item; owner request `20261028T005518-15306` is queued (MacBook
+unreachable all night). Nothing on the mini changed; today no `agw` is on PATH (`agw-legacy` is).
+The deploy chain is Wave 4's first item, in the order in `docs/waves/handoff/lead.md` at `5fea43e`.
+IU/DeepSeek "Insufficient Balance" since ~04:05 removed the review's cross-family critic; lead
+`/code-review high` on Max stood in (owner top-up already queued by another fleet).
 
-## Wave 4 — Review and check cut over (P1c)            <!-- status: pending -->
+## Wave 4 — Review and check cut over (P1c)            <!-- status: active -->
 Workers: Haiku to extract past runs, Sonnet/high to port, Opus/medium for the comparison harness.
 
+- [ ] **Owner-gated, carried from Wave 3:** once request `20261028T005518-15306` is answered — refs in
+  `headless.refs`, reseal, `make deploy`, `make verify`, `@verifier` (run record, spans in ClickStack on
+  the VPS tier, usage row in Argo, CLI end to end), dotfiles PR #34 merged. Retry the push between
+  steps; every step below that needs no live host proceeds meanwhile
 - [ ] Direct capability calls (`agw llm title` outside a run) recorded like runs — a one-step run or
   a usage record into the journal and Argo — so N6 holds before review and check call them
 - [ ] Eval sets for review and check from recorded agent-gateway runs (findings, cost, wall time)
