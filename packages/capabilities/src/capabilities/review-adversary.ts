@@ -38,7 +38,8 @@ export const createReviewAdversary = (deps: LlmDeps) =>
       'The cross-family critic: one non-agentic call that argues against merging a diff (route review.adversary)',
     input: reviewAdversaryInput,
     output: reviewAdversaryOutput,
-    cli: { stdin: 'diff', defaultFormat: 'json' },
+    // Not `agw review route`: the host refuses a command that is a prefix of another, and `agw review` is the workflow.
+    cli: { command: ['review-adversary'], stdin: 'diff', defaultFormat: 'json' },
     async handler({ diff, context }, ctx) {
       const route = resolve(deps, 'review.adversary')
       if (route.wire !== 'iu-openai') {
