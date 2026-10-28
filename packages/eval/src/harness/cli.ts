@@ -175,7 +175,6 @@ export async function main(argv: string[], deps: CliDeps): Promise<number> {
   const agw = { exec: deps.exec, journal, bin: deps.env.AGW_BIN }
   const legacy = { exec: deps.exec, cost: legacyCost, bin: deps.env.AGW_LEGACY_BIN }
   const meta = {
-    workflow,
     startedAt,
     depthMode: flags.depthMode,
     rerunLegacy: flags.rerunLegacy,
@@ -197,6 +196,7 @@ export async function main(argv: string[], deps: CliDeps): Promise<number> {
     )
     const aggregate = aggregateReview(results, flags.seed)
     report = {
+      workflow,
       meta: { ...meta, finishedAt: now().toISOString() },
       aggregate,
       verdict: reviewVerdict(aggregate),
@@ -210,6 +210,7 @@ export async function main(argv: string[], deps: CliDeps): Promise<number> {
     )
     const aggregate = aggregateCheck(results, flags.seed)
     report = {
+      workflow,
       meta: { ...meta, finishedAt: now().toISOString() },
       aggregate,
       verdict: checkVerdict(aggregate),

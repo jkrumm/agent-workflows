@@ -89,8 +89,35 @@ export interface ReviewAggregate {
 const baselineOf = (rerunCount: number, cases: number): Baseline =>
   rerunCount === 0 ? 'recorded' : rerunCount === cases ? 'rerun' : 'mixed'
 
-const inexact = (sides: { costUsd: number | null; costExact: boolean }[]) =>
-  sides.filter((s) => s.costUsd === null || !s.costExact).length
+interface SpendSide {
+  costUsd: number | null
+  costExact: boolean
+  wallMs: number | null
+}
+
+const inexact = (sides: SpendSide[]) => sides.filter((s) => s.costUsd === null || !s.costExact).length
+
+/** Paired cost and wall ratios new/legacy, cost totals and the inexact counts, for either workflow. */
+function costWallSummary(pairs: { next: SpendSide; legacy: SpendSide }[], baseline: Baseline, seed: number) {
+  const cost: CostSummary = {
+    ...ratioSummary(
+      pairs.map((p) => ({ a: p.next.costUsd, b: p.legacy.costUsd })),
+      seed,
+    ),
+    baseline,
+    newUsd: total(pairs.map((p) => p.next.costUsd)),
+    legacyUsd: total(pairs.map((p) => p.legacy.costUsd)),
+    inexact: { new: inexact(pairs.map((p) => p.next)), legacy: inexact(pairs.map((p) => p.legacy)) },
+  }
+  const wall = {
+    ...ratioSummary(
+      pairs.map((p) => ({ a: p.next.wallMs, b: p.legacy.wallMs })),
+      seed + 1,
+    ),
+    baseline,
+  }
+  return { cost, wall }
+}
 
 export function aggregateReview(results: ReviewCaseResult[], seed = 1): ReviewAggregate {
   const ok = results.filter((r): r is ReviewCaseResult & Required<Pick<ReviewCaseResult, 'new' | 'match'>> =>
@@ -140,23 +167,11 @@ export function aggregateReview(results: ReviewCaseResult[], seed = 1): ReviewAg
       legacy: rate(ok.filter((r) => r.legacy.failedAngles > 0).length, ok.length),
       new: rate(ok.filter((r) => r.new.failedAngles > 0).length, ok.length),
     },
-    cost: {
-      ...ratioSummary(
-        ok.map((r) => ({ a: r.new.costUsd, b: legacyOf(r).costUsd })),
-        seed,
-      ),
+    ...costWallSummary(
+      ok.map((r) => ({ next: r.new, legacy: legacyOf(r) })),
       baseline,
-      newUsd: total(ok.map((r) => r.new.costUsd)),
-      legacyUsd: total(ok.map((r) => legacyOf(r).costUsd)),
-      inexact: { new: inexact(ok.map((r) => r.new)), legacy: inexact(ok.map(legacyOf)) },
-    },
-    wall: {
-      ...ratioSummary(
-        ok.map((r) => ({ a: r.new.wallMs, b: legacyOf(r).wallMs })),
-        seed + 1,
-      ),
-      baseline,
-    },
+      seed,
+    ),
     selfAgreement: reruns.length
       ? {
           cases: reruns.length,
@@ -228,23 +243,11 @@ export function aggregateCheck(results: CheckCaseResult[], seed = 1): CheckAggre
     },
     failureRecall: { legacyFailed, caught, recall: rate(caught, legacyFailed) },
     steps: stepAgreement(ok.map((r) => ({ a: r.new.steps, b: r.legacy.steps }))),
-    cost: {
-      ...ratioSummary(
-        ok.map((r) => ({ a: r.new.costUsd, b: legacyOf(r).costUsd })),
-        seed,
-      ),
+    ...costWallSummary(
+      ok.map((r) => ({ next: r.new, legacy: legacyOf(r) })),
       baseline,
-      newUsd: total(ok.map((r) => r.new.costUsd)),
-      legacyUsd: total(ok.map((r) => legacyOf(r).costUsd)),
-      inexact: { new: inexact(ok.map((r) => r.new)), legacy: inexact(ok.map(legacyOf)) },
-    },
-    wall: {
-      ...ratioSummary(
-        ok.map((r) => ({ a: r.new.wallMs, b: legacyOf(r).wallMs })),
-        seed + 1,
-      ),
-      baseline,
-    },
+      seed,
+    ),
     selfAgreement: reruns.length
       ? {
           cases: reruns.length,
