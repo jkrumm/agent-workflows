@@ -122,7 +122,16 @@ export type AgentHost = {
    */
   steer(handle: Json, text: string, options?: { signalId?: string }): Promise<void>
   abort(handle: Json): Promise<void>
+  /**
+   * A follow-up turn in the session of `handle` (a done agent step, or an earlier follow-up): returns the handle of
+   * the new turn, which `prompt`, `wait`, `steer` and `abort` take like any other. Opens nothing that costs tokens;
+   * `prompt` sends the turn's text and must dedupe it like a first prompt. Optional: `ctx.continue` fails without it.
+   */
+  followUp?(handle: Json, spec: AgentFollowUpSpec): Promise<Json>
 }
+
+/** `attempt` keys the turn: a retried continue step sends a new turn instead of re-reading the failed one. */
+export type AgentFollowUpSpec = { runId: string; stepId: string; key: string; attempt: number }
 
 export type Ctx = {
   readonly runId: string
@@ -136,12 +145,70 @@ export type Ctx = {
     options?: StepOptions,
   ): Promise<T>
   agent<S extends z.ZodType = z.ZodType<Json>>(id: string, spec: AgentSpec<S>): Promise<z.output<S>>
+  /**
+   * Runs the workflow's `scorer` on `value` as a journaled code step (`source: 'inline'`): a resumed run returns the
+   * recorded verdict and never scores again. The verdict is also kept on the run (`runs.scores.gates[id]`).
+   */
+  score(id: string, value: Json): Promise<Verdict>
+  /**
+   * Re-prompts the SAME agent session with `prompt`, as a new agent step `id`. `from` is the value an earlier
+   * `ctx.agent` / `ctx.continue` returned (objects and arrays, by identity) or that step's id (any output, a text
+   * answer included). The output is validated against `options.output`, else the earlier step's schema.
+   */
+  continue<S extends z.ZodType = z.ZodType<Json>>(
+    id: string,
+    from: Json,
+    prompt: string,
+    options?: ContinueOptions<S>,
+  ): Promise<z.output<S>>
   /** Fan-out: one child run per input, driven by this step. A failing child yields `null`. */
   workflow<I extends z.ZodType, O extends z.ZodType>(
     id: string,
     workflow: Workflow<I, O>,
     inputs: z.input<I>[],
   ): Promise<(z.output<O> | null)[]>
+}
+
+export type ContinueOptions<S extends z.ZodType> = Pick<AgentSpec<S>, 'output' | 'retry' | 'idleTimeoutMs'>
+
+/** Where a score comes from (concept §6): the inline gate, a regression replay, or a sampled production run. */
+export type ScoreSource = 'inline' | 'regression' | 'drift'
+
+/** A scorer's answer. `scores` are numbers, higher is better, ideally in [0, 1]; `feedback` is for `ctx.continue`. */
+export type Verdict = { scores: Record<string, number>; pass: boolean; feedback?: string }
+
+/** A capability call a scorer may make for an LLM-judged sub-score; its usage lands on the scoring step. */
+export type ScoreJudge = (capability: string, input: Json) => Promise<Json>
+
+/** The runtime's side of `ScoreJudge`: the host passes its capability registry (`RuntimeOptions.judge`). */
+export type JudgeCaller = (
+  capability: string,
+  input: Json,
+  scope: { signal: AbortSignal; addUsage: (usage: Usage) => void },
+) => Promise<Json>
+
+export type ScorerContext<R> = {
+  source: ScoreSource
+  /** The case's expected result: regression only. */
+  reference?: R
+  /** Present for regression and drift; inline only when the scorer sets `judgeInline` (never by default). */
+  judge?: ScoreJudge
+  signal: AbortSignal
+}
+
+/**
+ * One scorer per workflow (concept §6), deterministic first. `score` gets the run's input and a value: the final
+ * output (regression, drift; `null` for a failed run, which scores as a miss) or the draft an inline gate checks.
+ * It validates the value itself: "is it even valid" is a score.
+ */
+export type Scorer<I = Json, R = Json> = {
+  /** Recorded with every verdict: scores of different scorer versions are not compared. */
+  version: string
+  /** Validates a regression case's reference before `score` sees it. */
+  reference?: z.ZodType<R>
+  /** Hands `judge` to the inline gate too. Off by default: the gate stays free and fast. */
+  judgeInline?: boolean
+  score(input: I, output: Json, ctx: ScorerContext<R>): Verdict | Promise<Verdict>
 }
 
 export type WorkflowDefinition<I extends z.ZodType, O extends z.ZodType> = {
@@ -152,6 +219,9 @@ export type WorkflowDefinition<I extends z.ZodType, O extends z.ZodType> = {
   output: O
   /** Max top-level runs of this workflow in `running` across all processes; the rest stay pending. */
   concurrency?: number
+  /** Scores the workflow's results: the inline gate (`ctx.score`), regression and drift (concept §6). */
+  // biome-ignore lint/suspicious/noExplicitAny: a scorer's reference type is its own business
+  scorer?: Scorer<z.output<I>, any>
   run(ctx: Ctx, input: z.output<I>): Promise<z.input<O>>
 }
 
@@ -252,4 +322,35 @@ export type RunResult = {
   status: 'done' | 'failed' | 'cancelled'
   output: Json | null
   error: RunError | null
+}
+
+/** What a scored run carries in `runs.scores.final`: the verdict of a regression or drift scoring of its output. */
+export type FinalScore = Verdict & {
+  source: 'regression' | 'drift'
+  scorer: string
+  /** Regression: the case and the eval run that replayed it, and the extra input the arm ran with. */
+  caseId?: string
+  evalRunId?: string
+  args?: Json
+  /** The scorer threw: no verdict (`pass` false, no scores); recorded so drift does not retry it forever. */
+  error?: string
+}
+
+/** `runs.scores`: the inline gate verdicts by step id, and the after-the-fact score of the output. */
+export type RunScores = { gates?: Record<string, Verdict>; final?: FinalScore }
+
+/** A run as `Runtime.scoredRuns` returns it, for `agw eval compare`. */
+export type ScoredRun = {
+  runId: string
+  workflowId: string
+  fingerprint: string | null
+  input: Json
+  final: FinalScore
+  cost: number | null
+  unpricedCalls: number
+  wallMs: number | null
+  /** Raw provider counts summed: input (cache included) plus output (reasoning included). */
+  tokens: number | null
+  toolCalls: number | null
+  finishedAt: Date | null
 }

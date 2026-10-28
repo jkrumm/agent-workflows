@@ -2,7 +2,7 @@ import type { Pool, QueryResult, QueryResultRow } from 'pg'
 import { type ErrorKind, errorMessage, InfraError, LeaseLost } from './errors.ts'
 import type { Json } from './json.ts'
 import { lockKey } from './lease.ts'
-import type { RunStatus, StepKind, StepStatus, StepUsage } from './types.ts'
+import type { FinalScore, RunStatus, ScoredRun, StepKind, StepStatus, StepUsage, Verdict } from './types.ts'
 
 /** Every journal write of a run tree carries its root's lease token; a stale holder's write matches nothing. */
 export type Fence = { rootId: string; token: string }
@@ -77,6 +77,30 @@ export type StepEnd = {
   error: { kind: ErrorKind; message: string } | null
   usage: StepUsage
   model: string | null
+}
+
+/** What scoring a finished run reads. */
+export type ScoreTarget = {
+  id: string
+  workflow: string
+  status: RunStatus
+  input: Json
+  output: Json | null
+  scored_at: Date | null
+}
+
+type ScoredRow = {
+  id: string
+  workflow: string
+  fingerprint: string | null
+  input: Json
+  final: FinalScore
+  cost: string | null
+  unpriced_calls: number | null
+  wall_ms: number | null
+  tokens: string | null
+  tool_calls: number | null
+  finished_at: Date | null
 }
 
 /** Top-level runs holding a concurrency slot. One definition for the count and the per-workflow split. */
@@ -463,6 +487,115 @@ export class Journal {
 
   async steerDelivered(id: string) {
     await this.query(`update ${this.signals} set delivered_at = now() where id = $1::bigint`, [id])
+  }
+
+  /** An inline gate's verdict onto the run under `scores.gates[stepId]`; a re-run of the step writes the same key. */
+  async recordGate(runId: string, stepId: string, verdict: Verdict, fence: Fence) {
+    await this.fenced(
+      fence,
+      `update ${this.runs} set scores = jsonb_set(coalesce(scores, '{}'), '{gates}',
+           coalesce(scores->'gates', '{}') || jsonb_build_object($4::text, $5::jsonb)),
+         updated_at = now()
+       where id = $1 and ${this.fence(2, 3)}`,
+      [runId, fence.rootId, fence.token, stepId, JSON.stringify(verdict)],
+    )
+  }
+
+  async scoreTarget(id: string): Promise<ScoreTarget | null> {
+    const { rows } = await this.query<ScoreTarget>(
+      `select id, workflow, status, input, output, scored_at from ${this.runs} where id = $1`,
+      [id],
+    )
+    return rows[0] ?? null
+  }
+
+  /**
+   * The after-the-fact score of an ended run (`scores.final`, `score_source`, `scored_at`). Not fenced: the run has
+   * ended and nobody else writes these. `onlyUnscored` (drift) makes it first-writer-wins; false when nothing changed.
+   */
+  async writeFinalScore(id: string, final: FinalScore, onlyUnscored: boolean): Promise<boolean> {
+    const res = await this.query(
+      `with scored as (
+         update ${this.runs} set scores = coalesce(scores, '{}') || jsonb_build_object('final', $2::jsonb),
+           score_source = $3, scored_at = now(), updated_at = now()
+         where id = $1 and status in ('done', 'failed') ${onlyUnscored ? 'and scored_at is null' : ''}
+         returning id
+       ), resync as (
+         -- The Argo rows carry the scores in raw: steps already posted (or being posted) go back into the outbox,
+         -- and a claim in flight is dropped so its mark misses and the next flush posts the scored rows.
+         update ${this.steps} s set argo_synced_at = null, argo_claim = null, argo_claimed_until = null
+         from scored where s.run_id = scored.id and s.argo_error is null
+           and (s.argo_synced_at is not null or s.argo_claim is not null)
+       )
+       select count(*)::int as n from scored`,
+      [id, JSON.stringify(final), final.source],
+    )
+    return (res.rows[0] as { n: number } | undefined)?.n === 1
+  }
+
+  /**
+   * Done runs of `workflows` with one of `purposes`, finished since `since`, not scored yet, whose id falls in the
+   * sample: the first 32 bits of md5(id) below `rate` × 2^32. Deterministic per run, so the sample never drifts
+   * between ticks or processes, and a run outside it is never looked at twice.
+   */
+  async driftCandidates(options: {
+    workflows: string[]
+    purposes: string[]
+    rate: number
+    since: Date
+    limit: number
+  }): Promise<string[]> {
+    const { rows } = await this.query<{ id: string }>(
+      `select id from ${this.runs}
+       where workflow = any($1) and status = 'done' and finished_at >= $3 and scored_at is null
+         and purpose = any($2)
+         and ('x' || lpad(substr(md5(id), 1, 8), 16, '0'))::bit(64)::bigint < floor($4::float8 * 4294967296)
+       order by finished_at limit $5`,
+      [options.workflows, options.purposes, options.since, options.rate, options.limit],
+    )
+    return rows.map((r) => r.id)
+  }
+
+  /** Scored runs of a workflow, oldest first, optionally of one fingerprint. */
+  async scoredRuns(options: {
+    workflow: string
+    source: 'regression' | 'drift'
+    fingerprint?: string
+  }): Promise<ScoredRun[]> {
+    const { rows } = await this.query<ScoredRow>(
+      `select id, workflow, fingerprint, input, scores->'final' as final, cost, unpriced_calls, wall_ms,
+         tokens_input + tokens_output as tokens, tool_calls, finished_at
+       from ${this.runs}
+       where workflow = $1 and score_source = $2 and scored_at is not null and ($3::text is null or fingerprint = $3)
+       order by finished_at, id`,
+      [options.workflow, options.source, options.fingerprint ?? null],
+    )
+    return rows.map((r) => ({
+      runId: r.id,
+      workflowId: r.workflow,
+      fingerprint: r.fingerprint,
+      input: r.input,
+      final: r.final,
+      cost: r.cost === null ? null : Number(r.cost),
+      unpricedCalls: r.unpriced_calls ?? 0,
+      wallMs: r.wall_ms,
+      tokens: r.tokens === null ? null : Number(r.tokens),
+      toolCalls: r.tool_calls,
+      finishedAt: r.finished_at,
+    }))
+  }
+
+  /** Mean recorded cost of the latest `limit` done top-level runs of a workflow (the eval estimate). */
+  async recentCost(workflow: string, limit: number): Promise<{ runs: number; meanCost: number | null }> {
+    const { rows } = await this.query<{ n: number; mean: string | null }>(
+      `select count(*)::int as n, avg(cost)::text as mean from (
+         select cost from ${this.runs}
+         where workflow = $1 and status = 'done' and parent_id is null and cost is not null
+         order by finished_at desc limit $2) recent`,
+      [workflow, limit],
+    )
+    const row = rows[0]
+    return { runs: row?.n ?? 0, meanCost: row?.mean ? Number(row.mean) : null }
   }
 
   /** Throws `LeaseLost` when another process took the run tree over. */

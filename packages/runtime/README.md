@@ -32,6 +32,8 @@ const result = await runtime.wait(runId)
 | `ctx.step(id, fn, opts?)` | code | `fn({ key, attempt, signal, addUsage, progress })` |
 | `ctx.effect(id, fn(key, scope), opts?)` | effect | `key = ${runId}:${stepId}`; pass it to the outside API, the only thing that makes a re-run after an in-doubt kill a no-op |
 | `ctx.agent(id, spec)` | agent | through the `AgentHost` port; output validated against `spec.output` |
+| `ctx.score(id, value)` | code | the workflow's `scorer` on `value` (`source: inline`); the verdict is also kept on the run (`runs.scores.gates[id]`). A resume returns the journaled verdict, never scores again |
+| `ctx.continue(id, from, prompt, opts?)` | agent | a follow-up turn in the SAME session as an earlier agent step (`from`: its output object, or its step id); output validated against `opts.output`, else that step's schema |
 | `ctx.workflow(id, wf, inputs)` | workflow | fan-out; returns `(O \| null)[]`, a failing child yields `null`; children run as `${runId}/${id}/${i}` under the parent's lease, never by recovery |
 
 - **Step ids are string literals** and unique per run (a duplicate fails the run). `test/step-id-literal.test.ts`
@@ -56,11 +58,62 @@ const result = await runtime.wait(runId)
   the run and its children `cancelled` and calls `runPost`. **Steer** (`runtime.steer(runId, stepId, text)`) is
   journaled in `signals` and delivered to the running agent step via `host.steer(handle, text, { signalId })`, where `signalId` is the journaled row's id. Delivery is at least once (a crash between the send and the delivery mark sends it again), so a host that can dedupes on `signalId`; the argument is optional, so a host that ignores it still works.
 
+## Scores (concept §6)
+
+One scorer per workflow, used three ways: the inline gate (`ctx.score`), regression (`agw eval run`) and drift
+(sampled production runs). The workflow carries it:
+
+```ts
+const draftScorer: Scorer<Input, Reference> = {
+  version: '2026-10-28.1',              // recorded with every verdict; compare reports mixed versions
+  reference: z.object({ expected: z.string() }), // validates a regression case's reference
+  score(input, output, { source, reference, judge, signal }) {
+    return { scores: { valid: 1, recall: 0.5 }, pass: true, feedback: 'name the file' }
+  },
+}
+defineWorkflow({ id: 'research.report', scorer: draftScorer, async run(ctx, input) {
+  let draft = await ctx.agent('research', { agent: 'researcher', prompt, output: Draft })
+  const verdict = await ctx.score('gate', draft)
+  if (!verdict.pass) draft = await ctx.continue('revise', draft, verdict.feedback ?? 'Try again.')
+  return draft
+} })
+```
+
+- **Shape.** `score(input, output, ctx) → { scores: Record<string, number>, pass, feedback? }`, checked on return
+  (finite numbers, boolean `pass`; else the step fails `invalid_output`). Scores are higher-is-better, ideally in
+  [0, 1], so `agw eval compare` reads every one the same way. `output` is the value a gate checks, or a run's final
+  output (`null` for a failed run: a failed run scores as a miss). The scorer validates it itself: "is it even valid"
+  is a score. An object, not a bare function: `version` and the `reference` schema travel with it.
+- **Deterministic first.** An LLM-judged sub-score goes through `ctx.judge(capability, input)` only: the runtime's
+  `judge` option (a capability caller the host passes). Regression and drift get it when the runtime has one; the
+  inline gate only when the scorer sets `judgeInline`, so the gate stays free by default. The judge's usage lands on
+  the gate step. No default scorer judges.
+- **`ctx.score(id, value)`** is a code step: its verdict is journaled, and a resumed run returns it without calling the
+  scorer. The verdict is written onto `runs.scores.gates[id]` inside the step, so a crash after the body re-writes
+  the same key.
+- **`ctx.continue(id, from, prompt, opts?)`** is an agent step on the session of an earlier agent step, through the
+  host's `followUp(handle, { runId, stepId, key, attempt })`: it returns the handle of a new turn, journaled like any
+  agent handle, then `prompt` and `wait` run on it as on a first turn (re-attach included). `from` is an object an
+  earlier `ctx.agent`/`ctx.continue` of this drive returned (by identity; a resume re-runs them before) or that step's
+  id (a text answer is a string, so it needs the id). A retry after a failed attempt asks for a new turn (`attempt`
+  keys it), never re-reads the failed one. A host without `followUp` fails the step. Step ids stay literals: the §3
+  example's `ctx.continue(draft, feedback)` reads `ctx.continue('revise', draft, feedback)` here.
+- **After the fact.** `runtime.scoreRun(runId, { source: 'regression' | 'drift', reference?, caseId?, evalRunId?,
+  args?, onlyUnscored? })` scores a `done` or `failed` run with its workflow's scorer and writes `runs.scores.final`,
+  `score_source`, `scored_at` (migration 0004). A scorer that throws is recorded as `{ pass: false, error }`, so drift
+  never loops on it; `onlyUnscored` makes the write first-writer-wins. The write also clears `argo_synced_at` (and a
+  claim in flight) on the run's steps, so the Argo rows are re-posted with the scores in `raw`.
+- **Drift's sample.** `runtime.driftCandidates({ rate, since, limit, purposes? = ['prod'], workflows? })`: done,
+  unscored runs whose id hashes below `rate` (first 32 bits of md5(id) against rate × 2^32). Deterministic per run:
+  the same in every tick and process, and a smaller rate is a subset of a larger one.
+- **Reads for eval:** `runtime.scoredRuns({ workflow, source, fingerprint? })` (compare) and
+  `runtime.recentCost(workflow)` (the eval estimate).
+
 ## Durability
 
 - Journal in its own schema (`schema`, default `agw`): `runs`, `steps`, `signals`, migrated from
   `src/migrations/NNNN_*.sql` in one transaction under an advisory lock, recorded in `schema_migrations`. The
-  run-record columns (fingerprint, tokens, cost, `unpriced_calls`, `tool_calls`, friction) and the Argo outbox
+  run-record columns (fingerprint, tokens, cost, `unpriced_calls`, `tool_calls`, friction, `scores`) and the Argo outbox
   columns on steps (`argo_synced_at`, `argo_claim`, `argo_claimed_until`, `argo_error`, migration 0002) exist for
   the middleware to fill. A merged migration is never edited; changes take the next number.
 - **Lease:** one `pg_try_advisory_lock` per top-level run (64-bit key from sha256), held on a dedicated
@@ -131,7 +184,10 @@ the host sets one, adds its own text after the task, so an agent's cached `AGENT
 waits on the existing session instead of re-prompting, so a crash or deploy costs no repeated prompt and keeps
 the provider's prompt cache warm; only a kill between session create and handle journal leaves one orphan
 session that was never prompted (no tokens). A retried agent step after an idle timeout opens a fresh session:
-a full prompt again and a cold cache, which is why agent steps default to no retry.
+a full prompt again and a cold cache, which is why agent steps default to no retry. `ctx.score` adds no tokens with
+the default (deterministic) scorers; a judged sub-score costs its capability call. `ctx.continue` is the cheap nudge:
+the follow-up turn rides the existing session, so the history is a warm prompt-cache prefix and only the feedback is
+new input; a fresh session would pay the whole prompt again.
 
 ## Tests
 
