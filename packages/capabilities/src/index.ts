@@ -13,7 +13,7 @@ export type {
 } from './define.ts'
 export { CapabilityCallError, CapabilityError, ERRORS, type ErrorCode, fail } from './errors.ts'
 export type { LlmDeps } from './llm/model-call.ts'
-export { defineCapability, withCli } from './procedure.ts'
+export { defineCapability, operationIdOf, withCli } from './procedure.ts'
 export {
   createRegistry,
   errorResponse,

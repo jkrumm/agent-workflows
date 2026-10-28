@@ -36,6 +36,9 @@ const base = os
     }
   })
 
+/** `llm.title` → `llmTitle`: the one rule for operation ids, shared with the host's own operations. */
+export const operationIdOf = (id: string): string => id.replace(/\.(\w)/g, (_, c: string) => c.toUpperCase())
+
 const neverAborted = () => new AbortController().signal
 
 /**
@@ -54,7 +57,7 @@ export function buildProcedure<I extends z.ZodObject, O extends z.ZodType>(
     .route({
       method: resolved.route.method,
       path: resolved.route.path,
-      operationId: def.id.replace(/\.(\w)/g, (_, c: string) => c.toUpperCase()),
+      operationId: operationIdOf(def.id),
       summary: def.summary,
       tags: [def.id.split('.')[0] ?? def.id],
       spec: withCli(resolved.cli),

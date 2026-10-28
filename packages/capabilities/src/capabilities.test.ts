@@ -50,7 +50,7 @@ describe('llm.summarize (iu-anthropic)', () => {
         cache_creation_input_tokens: 10,
       }),
     )
-    const out = await call('llm.summarize', { text: 'A long text.', format: 'bullets', maxWords: 30 })
+    const out = await call('llm.summarize', { text: 'A long text.', style: 'bullets', maxWords: 30 })
     expect(out).toEqual({ summary: 'The gist.' })
 
     const route = resolveRoute('cheap.summarize', {})
