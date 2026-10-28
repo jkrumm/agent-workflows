@@ -83,6 +83,15 @@
         "@types/pg": "8.23.1",
       },
     },
+    "packages/opencode-host": {
+      "name": "@agent-workflows/opencode-host",
+      "version": "0.0.0",
+      "dependencies": {
+        "@agent-workflows/middleware": "workspace:*",
+        "@agent-workflows/routes": "workspace:*",
+        "@agent-workflows/runtime": "workspace:*",
+      },
+    },
     "packages/routes": {
       "name": "@agent-workflows/routes",
       "version": "0.0.0",
@@ -113,6 +122,8 @@
     "@agent-workflows/limits": ["@agent-workflows/limits@workspace:packages/limits"],
 
     "@agent-workflows/middleware": ["@agent-workflows/middleware@workspace:packages/middleware"],
+
+    "@agent-workflows/opencode-host": ["@agent-workflows/opencode-host@workspace:packages/opencode-host"],
 
     "@agent-workflows/routes": ["@agent-workflows/routes@workspace:packages/routes"],
 
