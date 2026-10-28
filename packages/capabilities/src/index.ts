@@ -29,3 +29,4 @@ export {
 export type { RequestContext } from './procedure.ts'
 export { iuTransports } from './transports/index.ts'
 export type { IuTransports } from './transports/port.ts'
+export { createWebCapabilities, TAVILY_USD_PER_CREDIT, type WebDeps } from './web/index.ts'

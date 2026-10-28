@@ -113,6 +113,41 @@ All four are `POST` with a JSON body. The model comes from the route; override w
 
 **Token effect / cache effect.** There is no generated text, so output is a few tokens and cost is the input at the route's rate (`costSource: 'rate'`, because the decision API drops IU's own cost). More questions in one call share one state, which is the cheap way to ask: the state is paid for once. No cache effect is reported on this wire. Changing the model through `AGW_ROUTES` drops the rate, so cost reads `unknown` until a new rate is supplied.
 
+## Web capabilities (`src/web/`)
+
+research-gateway's tools as capabilities (Wave 6), behaviour ported and code rewritten (concept N3). No model: every call is an HTTP request with its own timeout, the package's `withRetries` (3 attempts at 0.5 s / 1.5 s on 429/5xx and resets; a timeout is not retried), and a priced `Usage`. Credentials come from the environment on each call: `IU_API_KEY` + `IU_BASE_URL` (Sonar), `TAVILY_API_KEY`, `CONTEXT7_API_KEY`, optional `GITHUB_TOKEN`, `SEARCH_PROVIDER`, `SONAR_MODEL`. `.env.tpl` carries the same `op://` refs research-gateway reads, so no new item exists. `createCapabilities(llmDeps, webDeps)` registers all four; `WebDeps` injects `fetch`, DNS `resolve`, `env`, `retry` and `warn`.
+
+| Capability | CLI | Input | Output |
+|-|-|-|-|
+| `web.search` | `agw web search <query> [--max-results n] [--depth basic\|advanced]` | `{ query, maxResults = 8 (1..20), depth = 'basic' }` | `{ results: [{ url, title, snippet, publishedAt? }], provider: 'sonar'\|'tavily' }` |
+| `web.fetch` | `agw web fetch <url> [--max-chars n]` | `{ url, maxChars = 20000 (1..200000) }` | `{ url, finalUrl, title?, text, truncated, via: 'direct'\|'tavily-extract' }` |
+| `web.docs` | `agw web docs <library> [--topic t] [--tokens n]` | `{ library, topic?, tokens? }` | `{ text, source }` |
+| `web.package` | `agw web package <registry> <name>` | `{ registry: 'npm'\|'pypi'\|'crates'\|'github-release', name }` | `{ name, latest, publishedAt?, url }` |
+
+**`web.search`.** Sonar over IU's OpenAI-compatible endpoint is the default, Tavily the per-call fallback, as measured in research-gateway: the Sonar answer is thrown away (it hallucinates under confidence; only `search_results` are used), `max_tokens` is the API's floor of 16, a 429 gets one retry (two attempts), then any Sonar failure, a 200 with no `search_results` included (IU routing Sonar through a normalizing tier drops them), moves to Tavily. `SEARCH_PROVIDER=tavily` skips Sonar. A cancelled call does not fall back. Both failing answers the primary's error; neither configured is `NOT_CONFIGURED`. `depth` is Tavily's `search_depth`; for Sonar `basic` is `search_context_size: low` and `advanced` is `medium` (longer snippets, not more sources, per research-gateway's measurement). Not ported: the per-run query cache, the search budget and the dual-backend merge, which belong to a caller.
+
+**`web.fetch` chain.** Direct read (manual redirects, 10 s per hop, 5 hops, body cut at 2 MB, HTML reduced to text, `<main>`/`<article>` preferred) → Tavily Extract (basic) when the direct read is blocked or errors (403, 429, 5xx, a reset), is not text (PDF), or is a script-built shell (under 200 characters of text, a `<script>`, text under a tenth of the markup). A 404/410 ends the chain without the paid step. A thin page nobody can improve is returned rather than an error. **Decision: Lightpanda, the site adapters, Wayback, yt-dlp and the human-solve path are not carried.** They are research-gateway's answers to JS-rendered pages, specific sites and anti-bot walls; the golden set (28 items: RFCs, registry versions, docs pages, Wikipedia-style facts) is search plus plain pages, which the direct read and Extract cover, and each adapter drags in a process, a binary or a human. Add one when a golden item or a live run shows a miss it would fix. HTML to text is a small in-house extractor, not Readability (no dependency was added).
+
+**SSRF guard** (`ssrf.ts`), on the first URL and on every redirect hop, before anything is sent: only `http`/`https`; no credentials in the URL; no `localhost`, `*.local`, `*.internal`, `*.localhost`, `*.localdomain`, `*.lan`, `*.home.arpa`, `*.ts.net`; then every address the name resolves to must be public: IPv4 `0/8 10/8 100.64/10 (the tailnet) 127/8 169.254/16 (cloud metadata) 172.16/12 192.0.0/24 192.0.2/24 192.88.99/24 192.168/16 198.18/15 198.51.100/24 203.0.113/24 224/4+`, IPv6 outside `2000::/3`, `2001:db8::/32`, and IPv4 embedded in mapped, compatible, translated, NAT64 and 6to4 forms. Unparseable fails closed. A refusal is `UPSTREAM_ERROR` with a `refused:` message prefix (the error table has no code for it; `refused()` in `deps.ts` is the one place to change). Residual gap, as in research-gateway: DNS rebinding between the lookup and the connect. Page text is returned as data; nothing in it is interpreted.
+
+**`web.docs`.** Context7 REST (`/api/v2/libs/search`, then `/api/v2/context?type=txt`), no SDK. The top-ranked library for the name wins, ranked against `topic` (default: the library name). Without `CONTEXT7_API_KEY` it answers `NOT_CONFIGURED` ("web.docs unavailable: CONTEXT7_API_KEY is not set") and sends nothing. `tokens` cuts the text client-side at 4 characters per token (Context7 has no such parameter); without it the cap is research-gateway's 80 000 characters. `source` is the library's Context7 page. An unknown library or one without docs is `UPSTREAM_ERROR` with `data.status` 404.
+
+**`web.package`.** Latest stable version straight from the registry, the golden set's `live:` resolvers made a capability: `registry.npmjs.org/<name>/latest`, `pypi.org/pypi/<name>/json`, `crates.io/api/v1/crates/<name>` (`max_stable_version`, never a prerelease), `api.github.com/repos/<owner/repo>/releases/latest` (`v` and `bun-v` removed; `GITHUB_TOKEN` is used when set, empty counts as unset). `publishedAt` is the release's own date; npm's cheap endpoints carry none, so it is left out rather than guessed. A name that does not fit its registry's pattern is `BAD_REQUEST`; an unknown package is `UPSTREAM_ERROR` 404. research-gateway's `go` and `docker` lookups are not in the contract.
+
+**Pricing** (N6: a direct `agw web search …` is a `cap.web.search` run `done` with priced usage).
+
+| Call | `Usage` | Cost |
+|-|-|-|
+| Sonar | `model: sonar`, IU's token counts | `usage.cost.total_cost` as reported, `costSource: provider`; absent: `null`, `unknown`, never 0 |
+| Tavily search | `model: tavily-search`, no tokens | credits (the response's `usage.credits`, else 1 basic / 2 advanced per the API-credits page) x `$0.008` |
+| Tavily extract | `model: tavily-extract` | `1/5` credit per successful URL (basic: every 5 URLs cost 1 credit; a failed extraction is not billed; the response's `usage.credits` reads 0 for a single URL, measured by research-gateway) x `$0.008`; reported only when a page came back |
+| Context7, registries | `model: context7` / the registry | `0`, `costSource: rate` (free) |
+| Direct fetch | none | no external service |
+
+`$0.008` is Tavily's pay-as-you-go list price per credit (docs.tavily.com/documentation/api-credits and tavily.com/pricing, read 2026-10-28). The plan price is lower, so the figure never under-prices; research-gateway carried no USD rate for Tavily at all. It is `TAVILY_USD_PER_CREDIT`.
+
+**Testing.** `fakeWeb(script?)` from `@agent-workflows/capabilities/testing` returns the four capabilities with the real ids, schemas and CLI shapes and canned results (`{ capabilities, calls }`); a per-capability reply (value, `Error`, or function of the input) scripts it, and each call reports a priced zero-cost usage unless `usage: null`.
+
 ## Tests
 
 `bun test packages/capabilities` (Bun's `--isolate` runs it under `make check`):
@@ -121,6 +156,7 @@ All four are `POST` with a JSON body. The model comes from the route; override w
 - `capabilities.test.ts`: each capability against a fake IU server through the production adapters: request wire, usage and cost via `ctx.addUsage`, `rate` when the provider omits cost (cache tokens priced per bucket), `unknown` when a cache rate is missing, schema-failure re-ask.
 - `transports.test.ts`: retries, fail-fast statuses, cancel, idle watchdog.
 - `fallback.test.ts`: 402 and the 503 balance body each make one fallback call (priced, its model recorded); a 503 without the text is retried on the primary only; a failing fallback answers the primary's error; a re-ask stays on the fallback; an `iu-anthropic` route falls back over chat; `AGW_ROUTES` patches or removes the fallback; `review.adversary` (402 and 503 balance, the fallback at its own effort, its re-ask too, no fallback on a plain 503) and `review.route`.
+- `web/web.test.ts`: the web capabilities against a fake network: Sonar mapping, cost and the fallback rule, Tavily credit pricing, the SSRF refusals (schemes, loopback, private, tailnet, metadata, IPv6 forms, a name that resolves privately, a redirect to a private IP, a second hop), truncation, the Extract chain, the typed errors, registry and OpenAPI shape, `fakeWeb`.
 - `live.test.ts`: one real call per capability, **skipped unless `AGW_LIVE=1`** (the skipped names say so). It costs well under $0.001:
 
   ```sh

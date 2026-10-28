@@ -1,5 +1,8 @@
 IU_API_KEY=op://common/anthropic/API_KEY
 IU_BASE_URL=op://common/anthropic/BASE_URL
+# web.* capabilities (same items research-gateway reads): Tavily search fallback and Extract, Context7 docs.
+TAVILY_API_KEY=op://common/tavily/API_KEY
+CONTEXT7_API_KEY=op://vps/research-gateway/CONTEXT7_API_KEY
 # Argo usage ingest (middleware outbox): bearer for POST <ARGO_URL>/usage/records. ARGO_URL is deployment config.
 ARGO_API_SECRET=op://common/api/SECRET
 # Host (scripts/launch.sh). The API secret is also what `make deploy` writes into the CLI's env file.
