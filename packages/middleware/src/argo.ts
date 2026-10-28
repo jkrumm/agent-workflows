@@ -125,6 +125,8 @@ export type OutboxStep = {
     traceId: string | null
     fingerprint: string | null
     friction: unknown
+    /** `runs.scores` (inline gates, and the regression or drift score once there is one); absent reads as null. */
+    scores?: unknown
     status: string
     errorKind: string | null
     wallMs: number | null
@@ -230,7 +232,7 @@ export function argoRowsForStep(step: OutboxStep, options: ArgoRowOptions): Argo
       unpricedCalls: step.unpricedCalls,
       runOutcome: run.errorKind ?? run.status,
       runWallMs: run.wallMs,
-      scores: null,
+      scores: run.scores ?? null,
       friction: run.friction ?? null,
     },
     ingested_at: ingestedAt,
@@ -262,6 +264,7 @@ type OutboxRow = {
   trace_id: string | null
   fingerprint: string | null
   friction: unknown
+  scores: unknown
   run_status: string
   run_error_kind: string | null
   wall_ms: number | null
@@ -296,6 +299,7 @@ function toOutboxStep(row: OutboxRow): OutboxStep {
       traceId: row.trace_id,
       fingerprint: row.fingerprint,
       friction: row.friction,
+      scores: row.scores,
       status: row.run_status,
       errorKind: row.run_error_kind,
       wallMs: row.wall_ms,
@@ -356,7 +360,8 @@ const STEP_COLUMNS = `run_id, step_id, status, model, tokens_input, tokens_outpu
  * 2. build and validate the rows, post them outside any transaction;
  * 3. mark the batch synced where the token still matches, in a second short statement.
  * Concurrent flushers never post the same claimed step; a crashed flusher's claim expires; a crash after the post
- * re-posts, which Argo's upsert absorbs. A transient failure releases the claim and backs off. A permanent one (a
+ * re-posts, which Argo's upsert absorbs. A run scored after its steps synced (regression, drift) puts them back into
+ * the outbox (the runtime clears `argo_synced_at` and any claim with the score), so `raw.scores` is re-posted. A transient failure releases the claim and backs off. A permanent one (a
  * row that cannot be built, fails Argo's schema or gets a 400/422) quarantines only that step (`argo_error`, logged,
  * counted); the rest keep flowing.
  */
@@ -474,7 +479,7 @@ export class ArgoOutbox {
          returning s.*
        )
        select ${STEP_COLUMNS.replaceAll(/(\w+)/g, 'c.$1')}, c.handle->'handle'->>'sessionId' as session_id,
-         r.workflow, r.root_id, r.purpose, r.iu_key, r.traceparent, r.trace_id, r.fingerprint, r.friction,
+         r.workflow, r.root_id, r.purpose, r.iu_key, r.traceparent, r.trace_id, r.fingerprint, r.friction, r.scores,
          r.status as run_status, r.error_kind as run_error_kind, r.wall_ms
        from claimed c join ${db.runs} r on r.id = c.run_id
        order by c.finished_at, c.run_id, c.step_id`,
