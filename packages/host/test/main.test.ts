@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { boot, lazyOpenCodeHost } from '../src/boot.ts'
 import { loadConfig } from '../src/config.ts'
+import { routeIds } from '@agent-workflows/routes'
 import { Pool } from 'pg'
 import { freshSchema, PG_URL, rejection, SECRET, until } from './support.ts'
 
@@ -136,6 +137,48 @@ describe('boot', () => {
     } finally {
       await squatter.stop(true)
       await pool.end()
+      await fresh.drop()
+    }
+  })
+
+  test('a bad AGW_ROUTES refuses the start, naming the route id or the problem and never the override content', async () => {
+    const fresh = freshSchema('bootroutes')
+    const pool = new Pool({ connectionString: PG_URL, max: 1 })
+    try {
+      const config = loadConfig(valid(fresh.schema))
+      const unknown = await rejection(
+        boot(config, { env: { AGW_ROUTES: '{"no.such.route":{"model":"leaky-model-name"}}' } }),
+      )
+      expect(unknown).toContain('AGW_ROUTES')
+      expect(unknown).toContain('no.such.route')
+      expect(unknown).not.toContain('leaky-model-name')
+      const [id] = routeIds()
+      const bad = await rejection(
+        boot(config, { env: { AGW_ROUTES: JSON.stringify({ [id as string]: { effort: 'leaky-effort' } }) } }),
+      )
+      expect(bad).toContain('AGW_ROUTES')
+      expect(bad).toContain(`"${id}"`)
+      expect(bad).toContain('effort')
+      expect(bad).not.toContain('leaky-effort')
+      // nothing was opened: the schema was never migrated
+      const { rowCount } = await pool.query('select 1 from information_schema.schemata where schema_name = $1', [
+        fresh.schema,
+      ])
+      expect(rowCount).toBe(0)
+    } finally {
+      await pool.end()
+      await fresh.drop()
+    }
+  })
+
+  test('a valid AGW_ROUTES boots', async () => {
+    const fresh = freshSchema('bootroutes2')
+    try {
+      const [id] = routeIds()
+      const env = { AGW_ROUTES: JSON.stringify({ [id as string]: { effort: 'low' } }) }
+      const running = await boot(loadConfig(valid(fresh.schema)), { env })
+      await running.shutdown()
+    } finally {
       await fresh.drop()
     }
   })
