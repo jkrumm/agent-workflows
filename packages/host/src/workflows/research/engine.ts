@@ -88,18 +88,33 @@ export function createEngineClient(endpoint: EngineEndpoint, fetchImpl: typeof f
   }
 }
 
-const sleep = (ms: number, signal: AbortSignal) =>
-  new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(resolve, ms)
-    signal.addEventListener(
-      'abort',
-      () => {
-        clearTimeout(timer)
-        reject(signal.reason)
-      },
-      { once: true },
-    )
+/** Resolves after `ms`, rejects at once on abort; the listener goes with the timer either way. */
+function sleep(ms: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.reject(signal.reason)
+  return new Promise<void>((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(timer)
+      reject(signal.reason)
+    }
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort)
+      resolve()
+    }, ms)
+    signal.addEventListener('abort', onAbort, { once: true })
   })
+}
+
+/** A job the engine ended as `error` or `cancelled`: its id, and what it reported it cost (null: nothing). */
+export class EngineJobFailed extends Error {
+  override name = 'EngineJobFailed'
+  constructor(
+    readonly jobId: string,
+    readonly costUsd: number | null,
+    message: string,
+  ) {
+    super(message)
+  }
+}
 
 /**
  * Submits one job and polls it to its end. The idempotency key makes a resumed step adopt the job it already started
@@ -129,7 +144,12 @@ export async function runEngineJob(
       return { jobId, report: job.result }
     }
     if (job.status === 'error' || job.status === 'cancelled') {
-      throw new Error(`engine job ${jobId} ${job.status}: ${job.error ?? 'no reason given'}`)
+      const cost = job.result?.cost?.totalUsd
+      throw new EngineJobFailed(
+        jobId,
+        typeof cost === 'number' ? cost : null,
+        `engine job ${jobId} ${job.status}: ${job.error ?? 'no reason given'}`,
+      )
     }
   }
 }

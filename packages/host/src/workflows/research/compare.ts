@@ -63,6 +63,7 @@ export async function load(pool: Pool, schema: string, evalRunIds: string[]) {
         partial: r.output?.status === 'partial',
         errorKind: r.error_kind,
         grounded: scores.grounded ?? null,
+        unscored: scores.unscored ?? 0,
         tokens: Number(r.tokens_input ?? 0) + Number(r.tokens_output ?? 0),
         cacheRead: Number(r.tokens_cache_read ?? 0),
         toolCalls: r.tool_calls ?? 0,
@@ -82,17 +83,19 @@ export function report(loaded: Loaded[]): string {
     lines.push(
       `### ${title}`,
       '',
-      '| arm | runs | failed | partial | golden | supported | grounded | median $ | p50 wall s | tokens (median) | cache read share | tool calls (median) |',
-      '|-|-|-|-|-|-|-|-|-|-|-|-|',
+      '| arm | runs | failed | partial | golden | supported | unscored citations | grounded | median $ | p50 wall s | tokens (median) | cache read share | tool calls (median) |',
+      '|-|-|-|-|-|-|-|-|-|-|-|-|-|',
     )
     for (const arm of ARMS) {
       const mine = loaded.filter((l) => l.row.arm === arm && filter(l))
       if (!mine.length) continue
       const ok = mine.filter((l) => l.row.ok)
-      const score = (key: 'golden' | 'supported') => avg(mine.map((l) => (l.row.ok ? (l.row[key] ?? 0) : 0)))
+      // Failed runs count 0; a done run left unscored is left out (as in the rule).
+      const score = (key: 'golden' | 'supported') =>
+        avg(mine.flatMap((l) => (!l.row.ok ? [0] : l.row[key] === null ? [] : [l.row[key]])))
       const tokens = mine.reduce((a, l) => a + l.tokens, 0)
       lines.push(
-        `| ${arm} | ${mine.length} | ${mine.length - ok.length} | ${ok.filter((l) => l.partial).length} | ${f(score('golden'))} | ${f(score('supported'))} | ${f(avg(ok.flatMap((l) => (l.grounded === null ? [] : [l.grounded]))))} | ${f(median(mine.flatMap((l) => (l.row.cost === null ? [] : [l.row.cost]))), 4)} | ${f((median(mine.flatMap((l) => (l.row.wallMs === null ? [] : [l.row.wallMs]))) ?? NaN) / 1000, 0)} | ${median(mine.map((l) => l.tokens)) ?? 'n/a'} | ${tokens ? f(mine.reduce((a, l) => a + l.cacheRead, 0) / tokens) : 'n/a'} | ${median(mine.map((l) => l.toolCalls)) ?? 'n/a'} |`,
+        `| ${arm} | ${mine.length} | ${mine.length - ok.length} | ${ok.filter((l) => l.partial).length} | ${f(score('golden'))} | ${f(score('supported'))} | ${mine.reduce((a, l) => a + l.unscored, 0)} | ${f(avg(ok.flatMap((l) => (l.grounded === null ? [] : [l.grounded]))))} | ${f(median(mine.flatMap((l) => (l.row.cost === null ? [] : [l.row.cost]))), 4)} | ${f((median(mine.flatMap((l) => (l.row.wallMs === null ? [] : [l.row.wallMs]))) ?? NaN) / 1000, 0)} | ${median(mine.map((l) => l.tokens)) ?? 'n/a'} | ${tokens ? f(mine.reduce((a, l) => a + l.cacheRead, 0) / tokens) : 'n/a'} | ${median(mine.map((l) => l.toolCalls)) ?? 'n/a'} |`,
       )
     }
     lines.push('')

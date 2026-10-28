@@ -182,7 +182,8 @@ Define it with `defineWorkflow` (input must be a `z.object`; list its agents in 
   eval run at once) and owns the drift job's timer. The runtime's `judge` (`src/judge.ts`) lets a scorer call only
   `web.fetch`, `web.package`, `decide` and `llm.*` (never a workflow or an effect). For regression and drift each call
   is a `cap.<id>` run of its own, recorded and priced like a direct capability call, with purpose `eval` (regression)
-  or `drift`; an inline gate (none judges today) calls in process on its step. A capability's typed failure (a cited
+  or `drift`, keyed by the scored run, the capability and its input (a retried scoring reuses finished calls; an
+  aborted scoring cancels the call it started); an inline gate (none judges today) calls in process on its step. A capability's typed failure (a cited
   page that is gone) is an answer (`{error: {code, message}}`), anything else an infra failure the scoring retries.
   Review's and check's scorers never judge. **Drift on research** spends per sampled run up to three `web.fetch` (direct
   or Tavily Extract, ≈ $0) and three `decide` calls on ≤ 20k characters each (≈ 5k tokens at $0.04/M, ≈ $0.0002 each):
@@ -203,10 +204,13 @@ the pre-registered rule, results).
   web tools are a plugin forwarding to the **tool gate** (`gate.ts`): a loopback server in the host process that runs
   `web.*` (and, for the pilot, an engine quick job) only for a session of a running, granted research step and only
   the tools its arm is granted. Its key is per process, in `<stateDir>/research/gate.json` (0600), outside every
-  location; it is not the API secret and opens nothing but these tools. The gate's ledger (URLs read and seen, usage)
-  is journaled by the `evidence` step: its cost lands on the run, and a citation whose URL was never retrieved is
-  dropped to `unverified` (the engine's grounding rule; ≥ 10 % dropped makes the report `partial`). The ledger is in
-  memory until that step: a restart mid-agent-step loses what the tools did before it.
+  location; it is not the API secret and opens nothing but these tools. Every call is written as it
+  happens to `research_tool_calls` (migration 0007; in memory on a host without a database), keyed by run and step, so
+  a step retry or a host restart loses nothing; the `evidence` step reads it (never consumes it), books its usage on
+  the run (an engine job once per run; a failed job at the engine's reported cost or unknown), and a citation whose URL
+  was never retrieved is dropped to `unverified` (the engine's grounding rule; ≥ 10 % dropped makes the report
+  `partial`). The server has no idle timeout (an engine job holds a request 10-60 s), caps a body at 64 KiB before
+  buffering, and is closed with the host (`gate.json` removed).
 - **Scorer** (`scorer.ts`): `valid`, `complete`, `grounded` (code), `golden` (the case's `expect`, research-gateway
   `evals/lib.ts` semantics; `live:` via `web.package`), `supported` (judged: `web.fetch` + `decide` on up to 3 cited
   pages). Cases are plain eval cases in `$AGW_EVAL_DIR/research/cases.jsonl`; `compare.ts` prints the comparison's

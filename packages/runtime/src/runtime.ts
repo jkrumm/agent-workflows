@@ -349,7 +349,7 @@ export class Runtime {
       const judged = judge
         ? async (capability: string, input: Json) => {
             try {
-              return await judge(capability, input, { signal, addUsage: noUsage, source: options.source })
+              return await judge(capability, input, { signal, addUsage: noUsage, source: options.source, runId })
             } catch (err) {
               judgeFailure = err
               throw new InfraError(`score judge ${capability}: ${errorMessage(err)}`, { cause: err })

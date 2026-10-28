@@ -9,6 +9,7 @@ import type { JournalReader } from './retrospective/sample.ts'
 import type { TrackedPaths } from './retrospective/tracked.ts'
 import { createEvalWorkflows } from './eval/index.ts'
 import { createResearchWorkflows } from './research/index.ts'
+import type { ToolLedger } from './research/ledger.ts'
 import { createReviewWorkflows } from './review/index.ts'
 import { createSmokePing } from './smoke.ts'
 
@@ -20,6 +21,10 @@ export interface WorkflowDeps {
   registry: HostRegistry
   /** The journal-backed pieces of the learnings store and the retrospective; a host without a database leaves it out. */
   retro?: { journal: JournalReader; learnings: LearningsStore; gh?: GhPort; tracked?: () => Promise<TrackedPaths> }
+  /** Where research's tool gate records every call (Postgres on the host); absent: in memory. */
+  research?: { ledger: ToolLedger }
+  /** Registers what the host must close on shutdown (research's tool gate). */
+  onClose?: (close: () => void | Promise<void>) => void
 }
 
 /** Every workflow the host process serves. Heavy pipelines run in their own processes (concept §8). */

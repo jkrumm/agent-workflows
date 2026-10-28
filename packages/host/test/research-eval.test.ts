@@ -11,7 +11,7 @@ import { judgeAllowed, scorerJudge } from '../src/judge.ts'
 import type { HostWorkflow } from '../src/operations.ts'
 import { createEvalWorkflows, wireEval } from '../src/workflows/eval/index.ts'
 import { readSuite } from '../src/workflows/eval/suites.ts'
-import { rejection } from './support.ts'
+import { rejection, until } from './support.ts'
 import { testPlatform } from '../../middleware/test/support.ts'
 import { freshSchema, inspector, testRuntime } from '../../runtime/test/support/pg.ts'
 
@@ -124,6 +124,8 @@ describe("the scorers' judge", () => {
         costSource: 'rate',
       })
       if (url.includes('gone')) throw fail('UPSTREAM_ERROR', 'the page is gone', { status: 404 })
+      if (url.includes('slow'))
+        await new Promise((_resolve, reject) => ctx.signal.addEventListener('abort', () => reject(ctx.signal.reason)))
       return { url, text: 'page text' }
     },
   })
@@ -134,11 +136,23 @@ describe("the scorers' judge", () => {
   const jsql = inspector(jdb.schema)
   const registry = { call: (_id: string, input: Json) => Promise.resolve({ inline: input }) }
   const judge = () => scorerJudge({ registry, workflows: capWorkflows, runtime: () => jrt })
-  const scope = (source: 'regression' | 'drift' | 'inline') => ({
+  const scope = (
+    source: 'regression' | 'drift' | 'inline',
+    runId = 'scored-1',
+    signal = new AbortController().signal,
+  ) => ({
     addUsage: () => {},
-    signal: new AbortController().signal,
+    signal,
     source,
+    runId,
   })
+  const capRuns = async (url: string) =>
+    (
+      await jsql.pool.query(
+        `select status from "${jdb.schema}".runs where workflow = 'cap.web.fetch' and input->>'url' = $1 order by started_at`,
+        [url],
+      )
+    ).rows.map((r) => r.status as string)
 
   beforeAll(async () => {
     jplatform = testPlatform(jdb.schema)
@@ -174,6 +188,25 @@ describe("the scorers' judge", () => {
     expect(rejection(judge()('eval.run', {}, scope('regression')))).resolves.toContain('is not a judge capability')
     expect(judgeAllowed('llm.classify')).toBe(true)
     expect(judgeAllowed('review.adversary')).toBe(false)
+  })
+
+  test('a retried scoring reuses the finished call: one key per scored run, capability and input', async () => {
+    const url = 'https://example.com/keyed'
+    await judge()('web.fetch', { url }, scope('regression', 'scored-7'))
+    await judge()('web.fetch', { url }, scope('regression', 'scored-7'))
+    expect(await capRuns(url)).toEqual(['done'])
+    await judge()('web.fetch', { url }, scope('regression', 'scored-8'))
+    expect(await capRuns(url)).toEqual(['done', 'done'])
+  })
+
+  test('an aborted scoring cancels the call it started; the next scoring runs it again', async () => {
+    const url = 'https://example.com/slow'
+    const controller = new AbortController()
+    const pending = judge()('web.fetch', { url }, scope('regression', 'scored-9', controller.signal))
+    await until(async () => (await capRuns(url)).length === 1, 'the call started')
+    controller.abort(new Error('scoring shut down'))
+    expect(await rejection(pending)).toContain('scoring shut down')
+    await until(async () => (await capRuns(url))[0] === 'cancelled', 'the call cancelled')
   })
 
   test('the inline gate calls in process, on its own step', async () => {
