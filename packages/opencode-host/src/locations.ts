@@ -12,6 +12,12 @@ export type AgentDefinition = {
   agentsMd: string
   /** Files under the location's `.opencode/skills/`, keyed by relative path (`review/SKILL.md`). */
   skills?: Record<string, string>
+  /**
+   * Files under the location's `.opencode/plugins/`, keyed by relative path (`agw-tools.ts`): OpenCode 2.0 plugins,
+   * which is how an agent gets a custom tool (2.0.32 discovers them only there; measured, Wave 6). A plugin's tool is
+   * still denied unless the agent's `permissions` allow it by name.
+   */
+  plugins?: Record<string, string>
   /** Written as the location's `opencode.json` (instructions, formatter, …). */
   config?: Json
   /** The default route of the agent's sessions; `options.route` on the step overrides it. */
@@ -81,6 +87,7 @@ export function locationHash(def: AgentDefinition): string {
     policy: basePolicy(),
     agentsMd: def.agentsMd,
     skills: def.skills ?? {},
+    ...(def.plugins ? { plugins: def.plugins } : {}),
     config: def.config ?? null,
     permissions: def.permissions ?? null,
   }
@@ -101,11 +108,11 @@ export function assertNoAncestorLeak(directory: string): void {
   }
 }
 
-function skillPath(root: string, key: string): string {
+function skillPath(root: string, key: string, dir: 'skills' | 'plugins' = 'skills'): string {
   const rel = normalize(key)
   if (isAbsolute(rel) || rel.split(sep).includes('..'))
-    throw new Error(`skill path "${key}" leaves the skills directory`)
-  return join(root, '.opencode', 'skills', rel)
+    throw new Error(`${dir === 'skills' ? 'skill' : 'plugin'} path "${key}" leaves the ${dir} directory`)
+  return join(root, '.opencode', dir, rel)
 }
 
 /**
@@ -129,6 +136,11 @@ export function compileLocation(def: AgentDefinition, options: { stateDir?: stri
     writeFileSync(join(tmp, 'AGENTS.md'), def.agentsMd)
     for (const [key, text] of Object.entries(def.skills ?? {})) {
       const path = skillPath(tmp, key)
+      mkdirSync(dirname(path), { recursive: true })
+      writeFileSync(path, text)
+    }
+    for (const [key, text] of Object.entries(def.plugins ?? {})) {
+      const path = skillPath(tmp, key, 'plugins')
       mkdirSync(dirname(path), { recursive: true })
       writeFileSync(path, text)
     }

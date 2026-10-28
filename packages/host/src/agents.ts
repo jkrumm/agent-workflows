@@ -38,7 +38,7 @@ function filesUnder(dir: string, root = dir): Record<string, string> {
 }
 
 /**
- * Every agent under `dir`: one directory per agent with an `AGENTS.md`, optional `skills/**` and `agent.json`.
+ * Every agent under `dir`: one directory per agent with an `AGENTS.md`, optional `skills/**`, `plugins/**` and `agent.json`.
  * A missing `dir` means no agents. A broken definition throws, so a bad agent fails the start, not its first step.
  */
 export function loadAgentDefinitions(dir: string): AgentDefinition[] {
@@ -58,10 +58,12 @@ export function loadAgentDefinitions(dir: string): AgentDefinition[] {
       throw new Error(`agent "${name}": unknown route "${meta.route}"`)
     }
     const skillsDir = join(base, 'skills')
+    const pluginsDir = join(base, 'plugins')
     definitions.push({
       name,
       agentsMd: readFileSync(agentsMd, 'utf8'),
       ...(existsSync(skillsDir) ? { skills: filesUnder(skillsDir) } : {}),
+      ...(existsSync(pluginsDir) ? { plugins: filesUnder(pluginsDir) } : {}),
       ...(meta.config ? { config: meta.config } : {}),
       ...(meta.route ? { route: meta.route as AgentDefinition['route'] } : {}),
       ...(meta.permissions ? { permissions: meta.permissions } : {}),

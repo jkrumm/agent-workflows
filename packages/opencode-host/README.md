@@ -149,10 +149,13 @@ tool is denied unless an agent opts in, and the key is an ingest key.
 ## Locations
 
 `compileLocation(def)` writes `<stateDir>/locations/<name>/<hash16>/`: `AGENTS.md`, skills under
-`.opencode/skills/<path>`, `def.config` as `opencode.json`, and `.agw-location.json`. A hash directory is written
+`.opencode/skills/<path>`, plugins under `.opencode/plugins/<path>` (an agent's custom tools: 2.0.32 discovers a plugin
+only there, not in 1.x's `.opencode/tool/` nor through an `opencode.json` `plugins` entry; a plugin tool needs
+`options: { codemode: false }` to be offered and stays denied unless the agent's `permissions` allow it by name; measured
+Wave 6), `def.config` as `opencode.json`, and `.agw-location.json`. A hash directory is written
 once (built beside it, renamed into place) and never changed; a changed agent is a new directory, so a running
 session's files are never touched. It throws `LocationLeakError` when any ancestor holds an `AGENTS.md`, a
-`CLAUDE.md` or a `.git`. `locationHash(def)` (content, permissions and the host's `basePolicy`, so changing the default moves every agent's hash) is the location input. The *run* fingerprint (`fsFingerprintSource`, middleware) covers each agent's `AGENTS.md`, `agent.json` (route and permissions) and `skills/**`, plus `basePolicyDigest()` as its `hostPolicy`, so an experiment that changes an agent's route or permissions, or the default policy, moves eval arms.
+`CLAUDE.md` or a `.git`. `locationHash(def)` (content incl. plugins, permissions and the host's `basePolicy`, so changing the default moves every agent's hash) is the location input. The *run* fingerprint (`fsFingerprintSource`, middleware) covers each agent's `AGENTS.md`, `agent.json` (route and permissions), `skills/**` and `plugins/**`, plus `basePolicyDigest()` as its `hostPolicy`, so an experiment that changes an agent's route or permissions, or the default policy, moves eval arms.
 
 **Pruning** (`maintain()`, every `locations.tickMs`, 60 s): a hash directory goes when it is not the agent's current
 one, not known to the warm cache, not the location of a session the server runs (`GET /api/session/active`), and
@@ -258,7 +261,7 @@ models the queued one for that race).
 
 | Rule | Who | Evidence |
 |-|-|-|
-| Reasoning passed back verbatim | OpenCode, on the Anthropic route | assistant messages store `reasoning` parts with the provider `state.signature` (probe, 2.0.32) and replay them from the store. Not verified for DeepSeek's `reasoning_content` on the chat route: no `opencode`-wire route uses DeepSeek today; verify before adding one |
+| Reasoning passed back verbatim | OpenCode, on the Anthropic route | assistant messages store `reasoning` parts with the provider `state.signature` (probe, 2.0.32) and replay them from the store. On the chat route (`research.agent`, DeepSeek) a tool-call turn's `reasoning_content` goes back verbatim on the next request, and `prompt_tokens_details.cached_tokens` arrive as cache reads priced at the route's rate (real 2.0.32, scripted fake model: host `test/research-opencode.test.ts`, Wave 6) |
 | History never edited | the host | the host only appends (prompt, steer, synthetic resume); it never calls revert, fork, compact, `PATCH` or delete. OpenCode's own compaction can still summarise a long session: it is OpenCode's, not triggered by the host |
 | System and tool changes appended, not a rewritten head | the host | the head is the location (`AGENTS.md`, skills, `opencode.json`) and the session's permissions. A hash directory never changes and a location in use is never evicted, so a running session keeps its head; a change applies to the next session. A re-attach appends a synthetic note instead of a system change |
 | Cache-read tokens recorded | both | OpenCode reports `tokens.cache.read` and `.write` per assistant message; `usageFromOpenCodeMessages` carries them into `Usage` (live run: 7 095 of 7 691 input tokens were cache reads) |

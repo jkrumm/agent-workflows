@@ -10,6 +10,7 @@ export {
 } from './client.ts'
 export { buildServerConfig, iuFromEnv, modelRef, opencodeRoutes, rateFor } from './config.ts'
 export {
+  isStepSession,
   type OpenCodeHandle,
   OpenCodeHost,
   type OpenCodeHostOptions,
