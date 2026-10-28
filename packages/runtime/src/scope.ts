@@ -317,8 +317,9 @@ export class RunScope {
       scope.signal.addEventListener('abort', abortSession, { once: true })
       try {
         // Read once per attempt, and only when a prompt is still to be sent (a re-attach to a prompted session waits).
+        // The step's `tail` stays last, after whatever the hook adds.
         const prompt = !state?.prompted
-          ? await this.rt.agentPrompt({ agent: spec.agent, prompt: spec.prompt })
+          ? (await this.rt.agentPrompt({ agent: spec.agent, prompt: spec.prompt })) + (spec.tail ?? '')
           : spec.prompt
         checkpoint()
         if (!state) {

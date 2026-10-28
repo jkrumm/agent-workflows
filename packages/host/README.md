@@ -81,30 +81,46 @@ and `dropped[]`. Before anything is stored or filed the answer is checked in cod
 sample, a learning must name an agent the workflow runs, a target must be an agent, an `agw` command or a path in this repo;
 the rest is dropped with its reason, never repaired. Proposals are never applied.
 
-**Issues and the public repo** (`filter.ts`, tested). The issue body is the proposal text, kind, target, confidence and run
-ids only: the function that builds it sees the proposal, nothing of the sampled runs. The agent's text can still quote the data,
-so it is filtered deterministically: absolute paths (`/Users/…`, `~/…`, `C:\…`) are replaced by `<path>`; a URL, git remote, IP,
-e-mail, hostname, or any `a/b` token that is not a path under `agents/ packages/ docs/ scripts/ deploy/` (a repository name) refuses
-the issue with the reason (`issues[].status = refused`); the proposal still appears in the run output. Titles are
-`retro(<workflow>): <title>`; the dedupe is an exact, case-insensitive title match over open and closed issues, so a proposal
-repeated next week is `duplicate`. Without `AGW_RETRO_FILE_ISSUES` the port is never called.
+**Issues and the public repo** (`issue.ts`, `tracked.ts`, `gh.ts`). Public by construction, not by filtering: an issue is
+built from structured fields only: kind, **target** (must be a path tracked in this repo: a file, a directory holding
+tracked files, or an agent name standing for `agents/<name>`), confidence, evidence run ids and a fixed line pointing at
+`agw run status <retroRunId>`. The model's free text (`change`, `title`, facts) never goes into an issue; it stays in the run
+output (the private journal). A proposal whose target is not tracked is `refused` (it still appears in the output). *What is
+tracked:* a release is a `git archive` of the commit plus `node_modules` (`scripts/deploy.sh`), so the release tree minus
+`node_modules` is the tracked list; a dev checkout asks `git ls-files`. Read once per process, on the first filing. The same
+function builds the title (`retro(<workflow>): <kind> change for <path> [<hash8>]`) and a marker
+`<!-- agw-retro:<sha256(kind + target + normalised change), first 16 hex> -->` (case and whitespace of the change do not
+matter). **Dedupe** searches the marker (`gh issue list --state all --search '"agw-retro:<hash>" in:body'`) and verifies it
+against the issue's own body; two proposals with one hash in a run collapse. **Known window:** GitHub's search index lags a
+new issue by seconds to minutes, so a second run in that window can file a duplicate; the weekly cadence and the retry bound
+keep that rare, and no lock closes it. Without `AGW_RETRO_FILE_ISSUES` the port is never called. The agent's *prompt* data is
+still scrubbed (`scrub.ts`: absolute paths of any shape, `~/…`, Windows drive paths, single-segment paths like `/tmp`, token-shaped
+strings), as hygiene for what the model sees, not as a boundary.
 
 **Weekly schedule** (`schedule.ts`, `boot.ts`). An hourly tick (and one at start) asks the journal which agent workflows had
 finished non-eval runs in the last 7 days and starts one `retrospective` per workflow with the idempotency key
-`retro:<workflow>:<ISO week>` (purpose `retro`). The `(workflow, idempotency_key)` constraint makes it once per workflow and
+`retro:<workflow>:<ISO week>` (purpose `retro`). A week whose runs have **all failed** is retried under
+`<key>:retry-<n>` (at most 3 per week, a lifecycle bound on re-starts and not a cap on the agent; a running, done or
+cancelled run of the week stands, so a retry never doubles one). The `(workflow, idempotency_key)` constraint makes it once per workflow and
 week however often it ticks or the host restarts; the first tick of a new week starts it, so a host down on Monday catches up.
 Flipping `fileIssues` mid-week hits the same key with another input: that week's run stands (no error, no second run).
 
 **`agw learnings list|add|activate|retire`** (`src/learnings/`). Per-agent facts in `<schema>.learnings`
 (migration `0005_learnings.sql`: agent, fact, source = run id or `manual`, evidence, status `proposed | active | retired`,
-`created_at`, `retired_at`; one live copy of a fact per agent, a retired one can be proposed again). Decision: each command is a
+`created_at`, `activated_at`, `retired_at`; one row per fact and agent, **retired rows included**: a retired fact is a rejected
+one and a retrospective never proposes it again (the add returns the retired row). A human brings it back with
+`agw learnings add` (source `manual`), which reuses the row. A fact containing the learned-facts fence tag is refused on add and
+on activate and skipped when rendering). Decision: each command is a
 one-step workflow rather than a new operation kind, so it appears in the generated CLI through the existing workflow path,
 carries the platform contract and leaves a run record of who changed what; the cost is a journal row per command.
 `add` proposes (`--activate` for the human path), `activate` makes a proposed fact live, `retire` ends any fact.
 
 **Read-back.** `RuntimeOptions.agentPrompt` (runtime, additive) lets the host append to an agent step's task message right
 before the session is opened or prompted (not on a re-attach to a prompted session). The host appends the agent's active facts
-(newest 25, oldest first) as a fenced `<learned_facts>` block after the task; with no active facts the message is unchanged. A
+(the 25 most recently *activated*, in activation order, so a late activation of an old fact is not lost) as a fenced
+`<learned_facts>` block after the task and before the step's `tail` (a retry directive such as "answer with JSON only",
+which `AgentSpec.tail` keeps last; the retrospective uses it, `check` and `review` still append theirs to the prompt and could
+adopt it); with no active facts the message is unchanged. A
 lookup failure is logged and the plain task is sent. `withLearningsFingerprint` wraps the fingerprint source: an agent with
 active facts gets a `learnings/active` pseudo-file holding the digest of its set, so activate and retire change the fingerprint
 of every workflow that runs the agent, and an agent without facts keeps the fingerprint it has today. The fingerprint is read at
@@ -162,9 +178,9 @@ None of its own. The host adds no model-visible text and no tokens: workflow inp
 |-|-|
 | `http.test.ts` | auth (missing, wrong, right, constant-time path, secret refusal), `/health` ok and degraded, the document and its sha, contract mismatch, collisions, `Prefer` parsing |
 | `workflows.test.ts` | start 200 and 202, `run wait`, idempotency replay, purpose, failed runs, 404s, cancel of running and ended runs, a wait that stops with its client |
-| `learnings.test.ts` | the store (propose, activate, retire at once, dedupe, a retired fact returns, the newest 25 read back), the read-back into the task message (proposed no, active yes, retired no on the next run), the fingerprint (unchanged without facts, moved by activate and retire), `agw learnings` over HTTP |
-| `retrospective.test.ts` | sampling (window, eval/running/cancelled/child runs excluded, failed first, limit, null friction, no run input, preview cut), the agent step on `FakeAgentHost` with a fixture answer, dropped answers, the JSON retry, no runs → no session, issues off/on/dedupe/refused on a fake `gh` port, ISO weeks, weekly idempotency |
-| `retro-filter.test.ts` | the issue-text filter: absolute paths stripped, repo names, URLs, hosts, IPs, e-mails refused, repo-relative paths and prose pairs kept, target rules, what the issue body holds |
+| `learnings.test.ts` | the store (propose, activate, retire at once, dedupe, a retired fact is never re-proposed and only a manual add revives it, activation order, the fence refused, the newest 25 read back), the read-back into the task message (proposed no, active yes, retired no on the next run), the fingerprint (unchanged without facts, moved by activate and retire), `agw learnings` over HTTP |
+| `retrospective.test.ts` | sampling (window, eval/running/cancelled/child runs excluded, failed first, limit, null friction, no run input, preview cut), the agent step on `FakeAgentHost` with a fixture answer, dropped answers, the JSON retry (facts before the directive), no runs → no session, issues off/on/dedupe by marker/refused on a fake `gh` port, ISO weeks, weekly idempotency, failed-week retries and their bound |
+| `retro-issue.test.ts` | the issue (structured fields only, hostile model text never in it, untracked targets refused, hash stability), `TrackedPaths` on a release tree and a git checkout, target shape, the prompt scrub |
 | `retro-wiring.test.ts` | config (`AGW_RETRO_*`), registration and fingerprint refs, the `gh` argument lists |
 | `smoke.test.ts` | `smoke.ping` end to end behind the platform middleware: usage on the step, the row in Argo |
 | `capability-runs.test.ts` | a direct `llm.title` call as a `cap.llm.title` run: same body and errors as without a run, usage and the Argo row, invalid input starts nothing, no nested run under `smoke.ping`, idempotent replay (success and failure), an unkeyed abort cancels the run, a keyed one does not (alone or as a retry of a running key), the journaled error wire format, opaque and refusal failures |

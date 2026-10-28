@@ -1,11 +1,13 @@
+import { markerFor } from './issue.ts'
+
 export interface IssueRef {
   number: number
   url: string
 }
 
-/** The two things the retrospective asks GitHub: does an issue with this title exist, and make one. */
+/** The two things the retrospective asks GitHub: is there an issue for this proposal hash, and make one. */
 export interface GhPort {
-  findByTitle(title: string): Promise<IssueRef | null>
+  findByHash(hash: string): Promise<IssueRef | null>
   create(issue: { title: string; body: string }): Promise<IssueRef>
 }
 
@@ -23,19 +25,27 @@ const spawnGh: Run = async (argv) => {
   return { exitCode, stdout, stderr }
 }
 
-/** `gh` against one repository (`owner/name` from host config). Authentication is the host's environment (`GH_TOKEN`). */
+type Found = { number: number; url: string; body: string }
+
+/**
+ * `gh` against one repository (`owner/name` from host config). Authentication is the host's environment (`GH_TOKEN`).
+ * The dedupe is a search for the proposal's marker in issue bodies (open and closed); the result is verified against
+ * the issue's own body, so a fuzzy hit never counts. Known window: GitHub's search index lags a new issue by seconds
+ * to minutes, so a second run in that window can file a duplicate. The weekly cadence and the retry bound keep that
+ * rare; it is not closed by a lock.
+ */
 export function ghCli(options: { repo: string; run?: Run }): GhPort {
   if (!/^[\w.-]+\/[\w.-]+$/.test(options.repo)) throw new Error('the issue repository must look like owner/name')
   const run = options.run ?? spawnGh
   const call = async (argv: string[]) => {
     const result = await run(argv)
-    if (result.exitCode !== 0)
+    if (result.exitCode !== 0) {
       throw new Error(`gh ${argv[0]} ${argv[1]} failed (exit ${result.exitCode}): ${result.stderr.trim()}`)
+    }
     return result.stdout
   }
   return {
-    async findByTitle(title) {
-      // The search is fuzzy; an exact (case-insensitive) title match decides. Open and closed both count.
+    async findByHash(hash) {
       const out = await call([
         'issue',
         'list',
@@ -44,14 +54,13 @@ export function ghCli(options: { repo: string; run?: Run }): GhPort {
         '--state',
         'all',
         '--search',
-        `${JSON.stringify(title)} in:title`,
+        `"agw-retro:${hash}" in:body`,
         '--json',
-        'number,title,url',
+        'number,url,body',
         '--limit',
-        '50',
+        '20',
       ])
-      const issues = JSON.parse(out) as { number: number; title: string; url: string }[]
-      const hit = issues.find((i) => i.title.trim().toLowerCase() === title.trim().toLowerCase())
+      const hit = (JSON.parse(out) as Found[]).find((issue) => issue.body.includes(markerFor(hash)))
       return hit ? { number: hit.number, url: hit.url } : null
     },
     async create({ title, body }) {

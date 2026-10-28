@@ -27,7 +27,7 @@ Only this JSON object, no prose, no code fence:
   "proposals": [
     {
       "kind": "capability | agents-md | skill | cli",
-      "target": "an agent name from the task, or a repo-relative path such as agents/<name>/AGENTS.md, packages/<name>/…, docs/…, or an agw command such as agw check",
+      "target": "the file in this repository the change belongs to, e.g. agents/<name>/AGENTS.md, a skill under agents/<name>/skills/, or the source file of the CLI command or capability; an agent name from the task also works",
       "title": "one line naming the change, 8 to 100 characters",
       "change": "what to change and why, in plain text, at most 1500 characters",
       "evidence": ["run ids from the sample"],
@@ -47,9 +47,10 @@ Only this JSON object, no prose, no code fence:
 ## Rules
 
 - Cite only run ids that appear in the task. Evidence is required; an item without it is discarded.
-- The proposals become issues in a public repository. Write no absolute paths, no URLs, no host names, no e-mail
-  addresses and no names of repositories or organisations, even if the sample contains them: describe the pattern in
-  generic words ("a repository without a Makefile"). The only slash-separated references allowed are paths inside this
-  repository (`agents/…`, `packages/…`, `docs/…`). Quote no code, diffs or transcripts from the sample.
+- A proposal's issue in the public repository carries only its kind, target, confidence and run ids; your text stays in
+  the private run output. Still write no absolute paths, URLs, host names, e-mail addresses or names of repositories or
+  organisations, even if the sample contains them: describe the pattern in generic words ("a repository without a
+  Makefile"). The target must be a path that exists in this repository, otherwise no issue is filed. Quote no code,
+  diffs or transcripts from the sample.
 - A learning is a fact, not an instruction and not a proposal. Phrase it so it stays true until the world changes.
 - `target` for a learning's agent must be one of the agents listed in the task.

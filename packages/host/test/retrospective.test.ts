@@ -1,11 +1,19 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import type { Json } from '@agent-workflows/runtime'
 import { FakeAgentHost } from '@agent-workflows/runtime/testing'
-import { pgLearningsStore } from '../src/learnings/index.ts'
+import { pgLearningsStore, withLearnedFacts } from '../src/learnings/index.ts'
+import { JSON_ONLY_RETRY } from '../src/workflows/retrospective/prompt.ts'
 import type { GhPort, IssueRef } from '../src/workflows/retrospective/gh.ts'
+import { TrackedPaths } from '../src/workflows/retrospective/tracked.ts'
 import { createRetrospective, RETRO_WORKFLOW_ID } from '../src/workflows/retrospective/index.ts'
 import { pgJournalReader } from '../src/workflows/retrospective/sample.ts'
-import { isoWeek, retroKey, tickRetrospectives } from '../src/workflows/retrospective/schedule.ts'
+import {
+  isoWeek,
+  MAX_WEEKLY_RETRIES,
+  nextKey,
+  retroKey,
+  tickRetrospectives,
+} from '../src/workflows/retrospective/schedule.ts'
 import { freshSchema, inspector, testRuntime } from '../../runtime/test/support/pg.ts'
 
 const db = freshSchema('retro')
@@ -138,26 +146,31 @@ describe('sampling', () => {
   })
 })
 
-/** A `gh` port that remembers issues; `existing` titles are already filed. */
-function fakeGh(existing: string[] = []) {
-  const issues = new Map<string, IssueRef>(
-    existing.map((t, i) => [t.toLowerCase(), { number: i + 1, url: `https://example.com/issues/${i + 1}` }]),
-  )
+/** A `gh` port that remembers issues by the marker hash in their body. */
+function fakeGh() {
+  const issues = new Map<string, IssueRef>()
   const calls = { find: [] as string[], create: [] as { title: string; body: string }[] }
   const gh: GhPort = {
-    async findByTitle(title) {
-      calls.find.push(title)
-      return issues.get(title.toLowerCase()) ?? null
+    async findByHash(hash) {
+      calls.find.push(hash)
+      return issues.get(hash) ?? null
     },
     async create(issue) {
       calls.create.push(issue)
+      const hash = /agw-retro:([0-9a-f]{16})/.exec(issue.body)?.[1] ?? 'none'
       const ref = { number: issues.size + 1, url: `https://example.com/issues/${issues.size + 1}` }
-      issues.set(issue.title.toLowerCase(), ref)
+      issues.set(hash, ref)
       return ref
     },
   }
   return { gh, calls }
 }
+
+const TRACKED = new TrackedPaths([
+  'agents/agent-one/AGENTS.md',
+  'agents/agent-two/skills/x/SKILL.md',
+  'packages/cli/src/run.ts',
+])
 
 describe('the workflow', () => {
   const agents = ['agent-one', 'agent-two']
@@ -185,6 +198,7 @@ describe('the workflow', () => {
       journal,
       learnings,
       gh: options.gh,
+      tracked: async () => TRACKED,
       now: () => NOW,
       agentsOf: (id) => (id === wf ? agents : undefined),
     })
@@ -269,8 +283,8 @@ describe('the workflow', () => {
           },
           {
             kind: 'cli',
-            target: 'other-repo/src/a.ts',
-            title: 'Target outside this repository',
+            target: '/Users/jane/app/AGENTS.md',
+            title: 'An absolute target path',
             change: 'x',
             evidence: [rid(1)],
             confidence: 'low',
@@ -290,7 +304,7 @@ describe('the workflow', () => {
       expect(out.learnings).toEqual([])
       expect(out.dropped).toHaveLength(4)
       expect(out.dropped.join('\n')).toContain('no evidence from the sample')
-      expect(out.dropped.join('\n')).toContain('outside this repo')
+      expect(out.dropped.join('\n')).toContain('not a repo-relative path')
       expect(out.dropped.join('\n')).toContain('does not run this agent')
     } finally {
       await rt.close()
@@ -368,24 +382,28 @@ describe('the workflow', () => {
       }
     })
 
-    test('on: filed once with the proposal text, target and run ids only; the next week dedupes by title', async () => {
+    test('on: filed once with structured fields only; the same proposal next run is a duplicate by its marker', async () => {
       const { gh, calls } = fakeGh()
       const { entry, rt } = setup({ script: answer(), gh })
       await rt.open()
       try {
         const first = await rt.start(entry.workflow, { workflow: wf, fileIssues: true }, { purpose: 'build' })
-        const out = (await rt.wait(first.runId)).output as { issues: { status: string; title: string; url?: string }[] }
-        expect(out.issues).toEqual([
-          {
-            title: `retro(${wf}): Tell agent-one to confirm the schema first`,
-            status: 'filed',
-            url: 'https://example.com/issues/1',
-          },
-        ])
+        const result = await rt.wait(first.runId)
+        const out = result.output as { issues: { status: string; hash: string; title: string; url?: string }[] }
+        expect(out.issues).toHaveLength(1)
+        expect(out.issues[0]).toMatchObject({ status: 'filed', url: 'https://example.com/issues/1' })
         expect(calls.create).toHaveLength(1)
-        const body = calls.create[0]?.body ?? ''
+        const { title, body } = calls.create[0] ?? { title: '', body: '' }
+        expect(title).toBe(
+          `retro(${wf}): agents-md change for agents/agent-one/AGENTS.md [${out.issues[0]?.hash.slice(0, 8)}]`,
+        )
+        expect(body).toContain(`<!-- agw-retro:${out.issues[0]?.hash} -->`)
         expect(body).toContain('`agents/agent-one/AGENTS.md`')
         expect(body).toContain(`\`${rid(0)}\``)
+        expect(body).toContain(`agw run status ${first.runId}`)
+        // the model's own words (title and change) stay in the private run output
+        expect(body).not.toContain('Two runs re-asked')
+        expect(title).not.toContain('confirm the schema')
         for (const leak of ['PRIVATE-INPUT-MARKER', '/Users', 'acme-corp', 'cwd']) expect(body).not.toContain(leak)
 
         const second = await rt.start(
@@ -401,7 +419,7 @@ describe('the workflow', () => {
       }
     })
 
-    test('a proposal quoting a repository is refused, not filed; the others still are', async () => {
+    test('a target that is not tracked is refused, not filed; the proposal stays in the output; the others are filed', async () => {
       const { gh, calls } = fakeGh()
       const { entry, rt } = setup({
         gh,
@@ -409,19 +427,27 @@ describe('the workflow', () => {
           proposals: [
             {
               kind: 'skill',
-              target: 'agents/agent-two/skills/x/SKILL.md',
-              title: 'Quote the private repository in a skill',
-              change: 'In acme-corp/payments-api the skill fails.',
+              target: 'packages/acme-billing/src/ledger.ts',
+              title: 'Invented path under a real root',
+              change: 'In ghp_abcdefghijklmnopqrstuvwxyz0123456789 the skill fails on build-box.example.de.',
               evidence: [rid(1)],
               confidence: 'low',
             },
             {
               kind: 'cli',
-              target: 'agw check',
+              target: 'packages/cli/src/run.ts',
               title: 'Print the failing step name first',
               change: 'Agents grep the output for the step name.',
               evidence: [rid(1), rid(2)],
               confidence: 'high',
+            },
+            {
+              kind: 'cli',
+              target: 'packages/cli/src/run.ts',
+              title: 'Print the failing step name first, again',
+              change: 'agents  GREP the output for the step name.',
+              evidence: [rid(2)],
+              confidence: 'low',
             },
           ],
           learnings: [],
@@ -434,15 +460,72 @@ describe('the workflow', () => {
           proposals: unknown[]
           issues: { status: string; reason?: string }[]
         }
-        expect(out.proposals).toHaveLength(2) // reported, even when not filed
-        expect(out.issues.map((i) => i.status)).toEqual(['refused', 'filed'])
-        expect(out.issues[0]?.reason).toContain('outside this repo')
-        expect(calls.create.map((c) => c.title)).toEqual([`retro(${wf}): Print the failing step name first`])
-        expect(JSON.stringify(calls)).not.toContain('acme-corp')
+        expect(out.proposals).toHaveLength(3) // reported, even when not filed
+        expect(out.issues.map((i) => i.status)).toEqual(['refused', 'filed', 'duplicate']) // same hash inside one run
+        expect(out.issues[0]?.reason).toContain('not a tracked path')
+        expect(calls.create).toHaveLength(1)
+        expect(JSON.stringify(calls)).not.toMatch(/ghp_|build-box|acme/)
       } finally {
         await rt.close()
       }
     })
+
+    test('fileIssues without a tracked-path source fails before any step', async () => {
+      const { gh } = fakeGh()
+      const host = new FakeAgentHost(answer())
+      const entry = createRetrospective({
+        journal,
+        learnings,
+        gh,
+        now: () => NOW,
+        agentsOf: (id) => (id === wf ? agents : undefined),
+      })
+      const rt = testRuntime({ schema: db.schema, workflows: [entry.workflow], host })
+      await rt.open()
+      try {
+        const { runId } = await rt.start(entry.workflow, { workflow: wf, fileIssues: true }, { purpose: 'build' })
+        expect(await rt.wait(runId)).toMatchObject({ status: 'failed', error: { kind: 'invalid_input' } })
+      } finally {
+        await rt.close()
+      }
+    })
+  })
+
+  test('learned facts come before the JSON-only retry directive, which stays last', async () => {
+    await learnings.add({
+      agent: 'retrospective',
+      fact: 'Reruns of this workflow are cached',
+      source: 'manual',
+      status: 'active',
+    })
+    let calls = 0
+    const host = new FakeAgentHost(async () => ({
+      output: (++calls === 1 ? { nope: 1 } : { proposals: [], learnings: [] }) as Json,
+    }))
+    const entry = createRetrospective({
+      journal,
+      learnings,
+      now: () => NOW,
+      agentsOf: (id) => (id === wf ? agents : undefined),
+    })
+    const rt = testRuntime({
+      schema: db.schema,
+      workflows: [entry.workflow],
+      host,
+      agentPrompt: async ({ agent, prompt }) => withLearnedFacts(prompt, await learnings.activeFor(agent)),
+    })
+    await rt.open()
+    try {
+      const { runId } = await rt.start(entry.workflow, { workflow: wf, window: 5 }, { purpose: 'build' })
+      expect((await rt.wait(runId)).status).toBe('done')
+      const [first, retry] = [...host.sessions.values()].map((s) => s.spec.prompt)
+      expect(first).toContain('<learned_facts>')
+      expect(first).not.toContain(JSON_ONLY_RETRY.trim())
+      expect(retry?.endsWith(JSON_ONLY_RETRY)).toBe(true)
+      expect((retry ?? '').indexOf('</learned_facts>')).toBeLessThan((retry ?? '').indexOf(JSON_ONLY_RETRY.trim()))
+    } finally {
+      await rt.close()
+    }
   })
 })
 
@@ -508,7 +591,7 @@ describe('weekly schedule', () => {
       })
 
       const second = await tick(new Date(NOW.getTime() + 3_600_000)) // an hour later, same week
-      expect(second[0]?.runId).toBe(firstRun?.id as string)
+      expect(second).toEqual([]) // the week's run stands
       expect(await retroRuns()).toHaveLength(1)
 
       // The lead flips fileIssues mid-week: that week's run stands, nothing throws or doubles.
@@ -528,5 +611,107 @@ describe('weekly schedule', () => {
     } finally {
       await rt.close()
     }
+  })
+
+  describe('a failed retrospective of the week is retried, a bounded number of times', () => {
+    test('nextKey: base first; running or done or cancelled stands; failed → retry-n up to the bound', () => {
+      const base = 'retro:w:2026-W44'
+      expect(nextKey(base, [])).toBe(base)
+      for (const status of ['pending', 'running', 'done', 'cancelled'])
+        expect(nextKey(base, [{ key: base, status }])).toBeNull()
+      expect(nextKey(base, [{ key: base, status: 'failed' }])).toBe(`${base}:retry-1`)
+      expect(
+        nextKey(base, [
+          { key: base, status: 'failed' },
+          { key: `${base}:retry-1`, status: 'running' },
+        ]),
+      ).toBeNull()
+      const failed = [base, ...Array.from({ length: MAX_WEEKLY_RETRIES }, (_, i) => `${base}:retry-${i + 1}`)].map(
+        (key) => ({ key, status: 'failed' }),
+      )
+      expect(nextKey(base, failed.slice(0, MAX_WEEKLY_RETRIES))).toBe(`${base}:retry-${MAX_WEEKLY_RETRIES}`)
+      expect(nextKey(base, failed)).toBeNull()
+    })
+
+    function retryRig(workflow: string) {
+      let broken = true
+      const host = new FakeAgentHost(async () => ({
+        output: (broken ? { nope: 1 } : { proposals: [], learnings: [] }) as Json,
+      }))
+      const entry = createRetrospective({
+        journal,
+        learnings,
+        now: () => NOW,
+        agentsOf: (id) => (id === workflow ? ['agent-one'] : undefined),
+      })
+      const rt = testRuntime({ schema: db.schema, workflows: [entry.workflow], host })
+      const tick = () =>
+        tickRetrospectives({
+          runtime: rt,
+          retrospective: entry,
+          journal,
+          workflows: [workflow],
+          fileIssues: false,
+          logger: { warn: () => {}, error: () => {} },
+          now: () => NOW,
+        })
+      const keys = async () =>
+        (
+          await sql.pool.query<{ idempotency_key: string; status: string }>(
+            `select idempotency_key, status from "${db.schema}".runs where workflow = 'retrospective' and idempotency_key like $1 order by created_at`,
+            [`retro:${workflow}:%`],
+          )
+        ).rows.map((r) => `${r.idempotency_key.replace(`retro:${workflow}:2026-W44`, 'base')}=${r.status}`)
+      return {
+        rt,
+        tick,
+        keys,
+        fix: () => {
+          broken = false
+        },
+      }
+    }
+
+    test('three retries at most, then the week is left failed', async () => {
+      const wfName = 'retry.cap'
+      await seed({ workflow: wfName, daysAgo: 1 })
+      const rig = retryRig(wfName)
+      await rig.rt.open()
+      try {
+        for (let n = 0; n < 1 + MAX_WEEKLY_RETRIES; n++) {
+          const started = await rig.tick()
+          expect(started).toHaveLength(1)
+          expect((await rig.rt.wait(started[0]?.runId as string)).status).toBe('failed')
+        }
+        expect(await rig.tick()).toEqual([]) // the bound
+        expect(await rig.keys()).toEqual([
+          'base=failed',
+          'base:retry-1=failed',
+          'base:retry-2=failed',
+          'base:retry-3=failed',
+        ])
+      } finally {
+        await rig.rt.close()
+      }
+    })
+
+    test('a retry that succeeds ends it', async () => {
+      const wfName = 'retry.ok'
+      await seed({ workflow: wfName, daysAgo: 1 })
+      const rig = retryRig(wfName)
+      await rig.rt.open()
+      try {
+        const first = await rig.tick()
+        expect((await rig.rt.wait(first[0]?.runId as string)).status).toBe('failed')
+        rig.fix()
+        const retry = await rig.tick()
+        expect(retry.map((r) => r.key)).toEqual([`retro:${wfName}:2026-W44:retry-1`])
+        expect((await rig.rt.wait(retry[0]?.runId as string)).status).toBe('done')
+        expect(await rig.tick()).toEqual([])
+        expect(await rig.keys()).toEqual(['base=failed', 'base:retry-1=done'])
+      } finally {
+        await rig.rt.close()
+      }
+    })
   })
 })

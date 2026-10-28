@@ -3,6 +3,7 @@ import { runawayCap, walletGate } from '@agent-workflows/limits'
 import { fsFingerprintSource, platformMiddleware } from '@agent-workflows/middleware'
 import { OpenCodeHost, OpenCodeServer } from '@agent-workflows/opencode-host'
 import { type AgentHost, type Json, Runtime } from '@agent-workflows/runtime'
+import { resolve } from 'node:path'
 import { Pool } from 'pg'
 import { loadAgentDefinitions } from './agents.ts'
 import { createHost } from './app.ts'
@@ -14,6 +15,7 @@ import { ghCli } from './workflows/retrospective/gh.ts'
 import { RETRO_WORKFLOW_ID } from './workflows/retrospective/index.ts'
 import { pgJournalReader } from './workflows/retrospective/sample.ts'
 import { startRetroSchedule } from './workflows/retrospective/schedule.ts'
+import { listTrackedFiles, type TrackedPaths } from './workflows/retrospective/tracked.ts'
 import { createWorkflows, fingerprintWorkflows } from './workflows/index.ts'
 
 const FLUSH_INTERVAL_MS = 30_000
@@ -149,7 +151,15 @@ export async function boot(config: HostConfig, options: BootOptions = {}): Promi
     const learnings = pgLearningsStore(readPool, config.schema)
     const journal = pgJournalReader(readPool, config.schema)
     const gh = config.retroFileIssues && config.retroIssueRepo ? ghCli({ repo: config.retroIssueRepo }) : undefined
-    const workflows = createWorkflows({ registry, retro: { journal, learnings, gh } })
+    // Issues may name only paths this repo tracks; a release is a `git archive` of the commit (see tracked.ts).
+    const repoRoot = resolve(import.meta.dir, '../../..')
+    let trackedList: Promise<TrackedPaths> | undefined
+    const tracked = () =>
+      (trackedList ??= listTrackedFiles(repoRoot).catch((error: unknown) => {
+        trackedList = undefined // a failed read is retried, never cached
+        throw error
+      }))
+    const workflows = createWorkflows({ registry, retro: { journal, learnings, gh, tracked } })
     // Direct capability calls over HTTP run as `cap.<id>` workflows (concept N6): registered, but not operations.
     const capabilityWorkflows = createCapabilityWorkflows(registry)
     const agentsDir = config.agentsDir ?? 'agents'

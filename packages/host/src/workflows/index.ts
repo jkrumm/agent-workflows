@@ -6,6 +6,7 @@ import { createCheckWorkflows } from './check/index.ts'
 import { createRetrospective } from './retrospective/index.ts'
 import type { GhPort } from './retrospective/gh.ts'
 import type { JournalReader } from './retrospective/sample.ts'
+import type { TrackedPaths } from './retrospective/tracked.ts'
 import { createReviewWorkflows } from './review/index.ts'
 import { createSmokePing } from './smoke.ts'
 
@@ -16,19 +17,19 @@ export type HostRegistry = Registry<ReturnType<typeof createCapabilities>>
 export interface WorkflowDeps {
   registry: HostRegistry
   /** The journal-backed pieces of the learnings store and the retrospective; a host without a database leaves it out. */
-  retro?: { journal: JournalReader; learnings: LearningsStore; gh?: GhPort }
+  retro?: { journal: JournalReader; learnings: LearningsStore; gh?: GhPort; tracked?: () => Promise<TrackedPaths> }
 }
 
 /** Every workflow the host process serves. Heavy pipelines run in their own processes (concept §8). */
 export function createWorkflows(deps: WorkflowDeps): HostWorkflow[] {
   const base = [createSmokePing(deps.registry), ...createReviewWorkflows(deps), ...createCheckWorkflows(deps)]
   if (!deps.retro) return base
-  const { journal, learnings, gh } = deps.retro
+  const { journal, learnings, gh, tracked } = deps.retro
   const agents = new Map(Object.entries(fingerprintWorkflows(base)).map(([id, refs]) => [id, refs.map((r) => r.agent)]))
   return [
     ...base,
     ...createLearningsWorkflows(learnings),
-    createRetrospective({ journal, learnings, gh, agentsOf: (id) => agents.get(id) }),
+    createRetrospective({ journal, learnings, gh, tracked, agentsOf: (id) => agents.get(id) }),
   ]
 }
 

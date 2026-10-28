@@ -2,7 +2,8 @@ import { type Ctx, defineWorkflow, StepFailed, WorkflowError } from '@agent-work
 import type { LearningsStore } from '../../learnings/index.ts'
 import type { HostWorkflow } from '../../operations.ts'
 import type { GhPort } from './gh.ts'
-import { issueFor } from './filter.ts'
+import type { TrackedPaths } from './tracked.ts'
+import { issueFor } from './issue.ts'
 import { checkAnalysis } from './normalize.ts'
 import { JSON_ONLY_RETRY, retroPrompt } from './prompt.ts'
 import type { JournalReader, SampledRun } from './sample.ts'
@@ -19,6 +20,8 @@ export interface RetrospectiveDeps {
   agentsOf(workflow: string): readonly string[] | undefined
   /** The GitHub port. A run with `fileIssues` fails fast without one. */
   gh?: GhPort
+  /** The paths tracked in this repository (what the deploy ships); an issue may name only these. Read when issues are filed. */
+  tracked?: () => Promise<TrackedPaths>
   now?: () => Date
 }
 
@@ -32,7 +35,8 @@ async function analyze(ctx: Ctx, prompt: string): Promise<RetroAnalysis> {
   } catch (error) {
     if (!isInvalidOutput(error)) throw error
   }
-  return ctx.agent('analyze-retry', { ...spec, prompt: prompt + JSON_ONLY_RETRY })
+  // `tail`: learned facts are inserted before the directive, which stays the last thing the agent reads.
+  return ctx.agent('analyze-retry', { ...spec, prompt, tail: JSON_ONLY_RETRY })
 }
 
 /**
@@ -54,7 +58,7 @@ export function createRetrospective(deps: RetrospectiveDeps): HostWorkflow {
       if (!agents || agents.length === 0) {
         throw new WorkflowError('invalid_input', `${input.workflow} is not a workflow that runs agents`)
       }
-      if (input.fileIssues && !deps.gh) {
+      if (input.fileIssues && !(deps.gh && deps.tracked)) {
         throw new WorkflowError('invalid_input', 'fileIssues is on but this host has no issue repository configured')
       }
       const empty = {
@@ -102,23 +106,38 @@ export function createRetrospective(deps: RetrospectiveDeps): HostWorkflow {
 
       const issues: RetroOutput['issues'] = input.fileIssues
         ? await ctx.effect('file-issues', async () => {
-            const gh = deps.gh
-            if (!gh) throw new WorkflowError('invalid_input', 'no issue repository configured')
+            const { gh, tracked } = deps
+            if (!gh || !tracked) throw new WorkflowError('invalid_input', 'no issue repository configured')
+            const paths = await tracked()
             const filed: RetroOutput['issues'] = []
+            const seen = new Set<string>()
             for (const proposal of checked.proposals) {
-              const draft = issueFor({ workflow: input.workflow, retroRunId: ctx.runId, proposal, agents })
+              const draft = issueFor({
+                workflow: input.workflow,
+                retroRunId: ctx.runId,
+                proposal,
+                agents,
+                tracked: paths,
+              })
               if (!draft.ok) {
-                filed.push({ title: draft.title, status: 'refused', reason: draft.reason })
+                filed.push({ hash: draft.hash, status: 'refused', reason: draft.reason })
                 continue
               }
-              // Dedupe by title: a rerun, a resumed effect and a proposal repeated next week all land here.
-              const existing = await gh.findByTitle(draft.title)
+              // Dedupe by the proposal hash in the issue body: a rerun, a resumed effect and a proposal repeated next
+              // week all land here. The search index lags a new issue (gh.ts), so a repeat in that window can slip through.
+              const existing = seen.has(draft.hash) ? { url: undefined } : await gh.findByHash(draft.hash)
+              seen.add(draft.hash)
               if (existing) {
-                filed.push({ title: draft.title, status: 'duplicate', url: existing.url })
+                filed.push({
+                  hash: draft.hash,
+                  title: draft.title,
+                  status: 'duplicate',
+                  ...(existing.url ? { url: existing.url } : {}),
+                })
                 continue
               }
               const created = await gh.create({ title: draft.title, body: draft.body })
-              filed.push({ title: draft.title, status: 'filed', url: created.url })
+              filed.push({ hash: draft.hash, title: draft.title, status: 'filed', url: created.url })
             }
             return filed
           })

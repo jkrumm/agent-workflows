@@ -65,6 +65,11 @@ export type AgentSpec<S extends z.ZodType = z.ZodType<Json>> = {
   /** Agent definition name, resolved by the host. */
   agent: string
   prompt: string
+  /**
+   * Text that stays the last thing in the task message (a retry directive such as "answer with JSON only"). The
+   * `RuntimeOptions.agentPrompt` hook sees `prompt` without it and its additions land before it.
+   */
+  tail?: string
   /** Validates the host's output; a mismatch fails the step as `invalid_output` (the re-ask comes later). */
   output?: S
   /** Host-specific settings (route, model, profile). */

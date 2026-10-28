@@ -29,7 +29,9 @@ export const RETRO_ANALYSIS = z.object({
         target: z
           .string()
           .min(1)
-          .describe('An agent name, or a repo-relative path inside this repo (agents/…, packages/…, docs/…)'),
+          .describe(
+            'A path in this repository (agents/<name>/AGENTS.md, packages/…, docs/…) or an agent name. An issue is filed only for a path that exists',
+          ),
         title: z.string().min(8).max(100).describe('One line naming the change, no paths or repo names'),
         change: z.string().min(1).max(1500).describe('The change proposed and why, in plain text'),
         evidence: z.array(z.string()).min(1).describe('Run ids from the sample that show it'),
@@ -78,7 +80,9 @@ export const RETRO_OUTPUT = z.object({
   /** One entry per proposal when `fileIssues` was on. */
   issues: z.array(
     z.object({
-      title: z.string(),
+      /** The proposal hash (16 hex) the issue's marker carries. */
+      hash: z.string(),
+      title: z.string().optional(),
       status: z.enum(['filed', 'duplicate', 'refused']),
       url: z.string().optional(),
       reason: z.string().optional(),

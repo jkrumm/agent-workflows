@@ -18,6 +18,20 @@ export function isoWeek(date: Date): string {
 
 export const retroKey = (workflow: string, date: Date) => `retro:${workflow}:${isoWeek(date)}`
 
+/** Failed retrospectives of one week retried under `<key>:retry-<n>`; a lifecycle bound on re-starts, not an agent cap. */
+export const MAX_WEEKLY_RETRIES = 3
+
+/**
+ * The key to start for a week, or null. No run yet: the base key. Any run still going or done: none (a cancelled one
+ * was stopped on purpose). Only failed runs: the next retry key, up to {@link MAX_WEEKLY_RETRIES}.
+ */
+export function nextKey(base: string, existing: readonly { key: string; status: string }[]): string | null {
+  if (existing.length === 0) return base
+  if (existing.some((run) => run.status !== 'failed')) return null
+  const retries = existing.filter((run) => run.key !== base).length
+  return retries >= MAX_WEEKLY_RETRIES ? null : `${base}:retry-${retries + 1}`
+}
+
 export interface RetroScheduleOptions {
   runtime: Pick<Runtime, 'start'>
   retrospective: HostWorkflow
@@ -35,25 +49,26 @@ export interface RetroScheduleOptions {
  * One tick: for each workflow that had finished runs in the last {@link DEFAULT_WINDOW_DAYS} days, start its
  * retrospective under `retro:<workflow>:<ISO week>`. The journal's `(workflow, idempotency_key)` constraint makes it
  * exactly once per workflow and week however often the tick or the host restarts; the first tick of a new week is the
- * one that starts it, so a host that was down on Monday catches up. Returns the run per workflow (an existing run of the week when the key was already used).
+ * one that starts it, so a host that was down on Monday catches up. Returns the runs started by this tick.
  */
 export async function tickRetrospectives(
   options: RetroScheduleOptions,
-): Promise<{ workflow: string; runId: string }[]> {
+): Promise<{ workflow: string; runId: string; key: string }[]> {
   const now = options.now?.() ?? new Date()
   const since = new Date(now.getTime() - DEFAULT_WINDOW_DAYS * DAY_MS)
-  const started: { workflow: string; runId: string }[] = []
+  const started: { workflow: string; runId: string; key: string }[] = []
   for (const workflow of options.workflows) {
     if (options.stopped?.()) break
     try {
       if ((await options.journal.countFinished({ workflow, since })) === 0) continue
-      const key = retroKey(workflow, now)
+      const key = nextKey(retroKey(workflow, now), await options.journal.weekRuns(retroKey(workflow, now)))
+      if (!key) continue
       const input = { workflow, window: DEFAULT_WINDOW_DAYS, sample: DEFAULT_SAMPLE, fileIssues: options.fileIssues }
       const { runId } = await options.runtime.start(options.retrospective.workflow, input, {
         purpose: RETRO_PURPOSE,
         idempotencyKey: key,
       })
-      started.push({ workflow, runId })
+      started.push({ workflow, runId, key })
     } catch (error) {
       // The key was used with other input (fileIssues flipped mid-week): that week's run stands.
       if (error instanceof IdempotencyConflict) continue

@@ -39,10 +39,11 @@ describe('0005_learnings migration', () => {
       expect(
         await failed(pool.query(`insert into ${t} (agent, fact, source, status) values ('a','g','m','bogus')`)),
       ).toBe(true)
-      // one live copy of a fact per agent; a retired one may come back
+      // one copy of a fact per agent, retired rows included: a retired fact is not proposed again
       expect(await failed(pool.query(`insert into ${t} (agent, fact, source) values ('a', 'f', 'manual')`))).toBe(true)
       await pool.query(`update ${t} set status = 'retired', retired_at = now()`)
-      await pool.query(`insert into ${t} (agent, fact, source) values ('a', 'f', 'manual')`)
+      expect(await failed(pool.query(`insert into ${t} (agent, fact, source) values ('a', 'f', 'run-2')`))).toBe(true)
+      await pool.query(`insert into ${t} (agent, fact, source) values ('b', 'f', 'manual')`) // another agent may hold it
     } finally {
       await pool.end()
     }
@@ -111,6 +112,35 @@ describe('agentPrompt hook', () => {
       const { runId } = await rt.start(add, {}, { purpose: 'build' })
       expect((await rt.wait(runId)).output).toEqual({ answer: 'what?\n\nextra' })
       expect(calls).toEqual([{ agent: 'helper', prompt: 'what?' }])
+    } finally {
+      await rt.close()
+    }
+  })
+
+  test('the step tail stays last: the hook sees the prompt without it', async () => {
+    const tailed = defineWorkflow({
+      id: 'hook.tail',
+      version: 'v1',
+      input: z.object({}),
+      output: answer,
+      run: (ctx) => ctx.agent('ask', { agent: 'helper', prompt: 'what?', tail: '\n\nJSON only.', output: answer }),
+    })
+    const host = new FakeAgentHost(async (s) => ({ output: { answer: s.spec.prompt } }))
+    const seen: string[] = []
+    const rt = testRuntime({
+      schema: db.schema,
+      workflows: [tailed],
+      host,
+      agentPrompt: ({ prompt }) => {
+        seen.push(prompt)
+        return `${prompt}\n\nfacts`
+      },
+    })
+    await rt.open()
+    try {
+      const { runId } = await rt.start(tailed, {}, { purpose: 'build' })
+      expect((await rt.wait(runId)).output).toEqual({ answer: 'what?\n\nfacts\n\nJSON only.' })
+      expect(seen).toEqual(['what?'])
     } finally {
       await rt.close()
     }

@@ -40,6 +40,8 @@ export interface JournalReader {
   sample(query: SampleQuery): Promise<SampledRun[]>
   /** How many such runs there are, for the weekly "had runs" check. */
   countFinished(query: Pick<SampleQuery, 'workflow' | 'since'>): Promise<number>
+  /** The retrospective runs of one week and workflow: the base key and its `:retry-<n>` keys. */
+  weekRuns(key: string): Promise<{ key: string; status: string }[]>
 }
 
 /** Run inputs are never read: they hold working directories and diffs, and the repo is public. */
@@ -123,6 +125,14 @@ export function pgJournalReader(pool: Pick<Pool, 'query'>, schema: string): Jour
         error: r.error,
         steps: byRun.get(r.id) ?? [],
       }))
+    },
+    async weekRuns(key) {
+      const { rows } = await pool.query<{ key: string; status: string }>(
+        `select idempotency_key as key, status from ${runs}
+          where workflow = 'retrospective' and (idempotency_key = $1 or idempotency_key like $2)`,
+        [key, `${key.replaceAll(/[\\%_]/g, '\\$&')}:retry-%`],
+      )
+      return rows
     },
     async countFinished({ workflow, since }) {
       const { rows } = await pool.query<{ n: number }>(`select count(*)::int as n from ${runs} where ${FINISHED}`, [
