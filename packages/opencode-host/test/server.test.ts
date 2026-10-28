@@ -6,6 +6,7 @@ import type { AgentWaitOptions } from '@agent-workflows/runtime'
 import {
   buildServerConfig,
   createClient,
+  isServeOnPort,
   OpenCodeHost,
   OpenCodeServer,
   resolveOpencodeBinary,
@@ -242,6 +243,17 @@ describe('OpenCodeServer', () => {
       host.close()
     }
   }, 20_000)
+})
+
+describe('isServeOnPort', () => {
+  test('matches the port token exactly and needs a serve argument', () => {
+    expect(isServeOnPort('/x/opencode serve --hostname 127.0.0.1 --port 4096', 4096)).toBe(true)
+    expect(isServeOnPort('/x/opencode serve --port=4096', 4096)).toBe(true)
+    expect(isServeOnPort('/x/opencode serve --hostname 127.0.0.1 --port 40960', 4096)).toBe(false)
+    expect(isServeOnPort('/x/opencode serve --port=40960', 4096)).toBe(false)
+    expect(isServeOnPort('/x/opencode run --port 4096', 4096)).toBe(false)
+    expect(isServeOnPort('/x/opencode-serve --port 4096', 4096)).toBe(false)
+  })
 })
 
 describe('resolveOpencodeBinary', () => {

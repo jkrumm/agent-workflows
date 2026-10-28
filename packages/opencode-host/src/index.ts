@@ -30,4 +30,11 @@ export {
   WarmCache,
   type WarmCacheOptions,
 } from './locations.ts'
-export { OPENCODE_VERSION, OpenCodeServer, resolveOpencodeBinary, type ServerOptions, serverEnv } from './server.ts'
+export {
+  isServeOnPort,
+  OPENCODE_VERSION,
+  OpenCodeServer,
+  resolveOpencodeBinary,
+  type ServerOptions,
+  serverEnv,
+} from './server.ts'

@@ -114,8 +114,14 @@ const consoleLogger: Logger = {
 
 function asHandle(handle: Json): OpenCodeHandle {
   const h = handle as Partial<OpenCodeHandle> | null
-  const strings = ['sessionId', 'directory', 'agent', 'route', 'runId', 'stepId'] as const
-  if (!h || typeof h !== 'object' || h.v !== 1 || strings.some((k) => typeof h[k] !== 'string')) {
+  const strings = ['sessionId', 'directory', 'agent', 'route', 'model', 'runId', 'stepId'] as const
+  if (
+    !h ||
+    typeof h !== 'object' ||
+    h.v !== 1 ||
+    strings.some((k) => typeof h[k] !== 'string') ||
+    (h.output !== 'json' && h.output !== 'text')
+  ) {
     throw new WorkflowError('error', 'not an OpenCode host handle')
   }
   return h as OpenCodeHandle
@@ -200,16 +206,19 @@ export class OpenCodeHost implements AgentHost {
     const swept = sweepStaleTemps({ stateDir: this.options.stateDir })
     const keep = new Set([...this.cache.known(), ...this.current.values()])
     for (const id of await this.client.active()) {
-      const session = await this.client.getSession(id).catch((err: unknown) => err as Error)
-      if (session === null) continue // ended and gone between the two calls
-      if (session instanceof Error) {
-        // A running session's directory is unknown: pruning now could remove it under the turn. Next tick.
+      let session: Awaited<ReturnType<OpenCodeClient['getSession']>>
+      try {
+        session = await this.client.getSession(id)
+      } catch (err) {
+        // Any failure, Error or not: a running session's directory is unknown, and pruning now could remove it
+        // under the turn. Next tick.
         this.logger.warn('opencode session lookup failed; pruning skipped this tick', {
           sessionId: id,
-          error: session.name,
+          error: err instanceof Error ? err.name : typeof err,
         })
         return swept
       }
+      if (session === null) continue // ended and gone between the two calls
       keep.add(session.location.directory)
     }
     const pruned = pruneLocations({
