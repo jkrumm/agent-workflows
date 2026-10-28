@@ -153,6 +153,15 @@ export type AnyWorkflow = Workflow<any, any>
 
 export type RunError = { kind: ErrorKind; message: string }
 
+/** A run as the outside world sees it (`Runtime.getRun`): output only once `done`, error only once ended badly. */
+export type RunSnapshot = {
+  runId: string
+  workflowId: string
+  status: RunStatus
+  output: Json | null
+  error: RunError | null
+}
+
 export type RunInfo = {
   runId: string
   workflowId: string

@@ -15,6 +15,7 @@ import type {
   RunPostArgs,
   RunPreArgs,
   RunResult,
+  RunSnapshot,
   StartOptions,
   StepPostArgs,
   StepPreArgs,
@@ -190,6 +191,24 @@ export class Runtime {
       options.signal?.throwIfAborted()
       await Bun.sleep(options.pollMs ?? 100)
     }
+  }
+
+  /** The run's current state, from any process; null when no such run exists. */
+  async getRun(runId: string): Promise<RunSnapshot | null> {
+    const run = await this.journal.getRun(runId)
+    if (!run) return null
+    return {
+      runId: run.id,
+      workflowId: run.workflow,
+      status: run.status,
+      output: run.status === 'done' ? run.output : null,
+      error: run.error_kind ? { kind: run.error_kind, message: run.error ?? '' } : null,
+    }
+  }
+
+  /** Resolves when the journal database answers (a health probe through the journal pool). */
+  async ping(): Promise<void> {
+    await this.pool.query('select 1')
   }
 
   /**
