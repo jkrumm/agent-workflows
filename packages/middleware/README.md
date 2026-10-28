@@ -132,6 +132,14 @@ rows and posts them through the `ArgoTransport` port. Production: `POST <ARGO_UR
   `redirect: 'error'` so the bearer never follows a redirect.
 - **Machine id.** `AGW_MACHINE`; unset, the host name with a logged warning. It is part of Argo's upsert key, so it
   must stay stable across restarts and renames, or a re-post lands as a second row.
+- **IU key label.** A `billing=iu` row carries a top-level `iu_key` (`personal` | `athena-team`), `null` for any
+  other billing (usage-tracker contract, "IU keys"). Nothing in a model call says which key paid, so the label is
+  stamped from the non-secret host env `IU_KEY_ID` (`parseIuKeyId`: unset or empty is `personal`; an unknown value is
+  `personal` plus one warning) and never from key material. It belongs to the run: `iuKeyMiddleware` writes it to
+  `runs.iu_key` at admission (`resume: false`), so an outbox that flushes after a restart with another key still
+  posts the label the run started with; a run stored before the column reads `personal`. It is never in `raw` or
+  `account` (the Max account id). Argo's schema gains the field per the contract; until then it strips it, and a
+  missing field means `personal` there.
 - **Off without config.** No `ARGO_URL`/`ARGO_API_SECRET` means no outbox, and the steps wait in Postgres.
 
 | Run record / step | Argo `usage_record` | Note |

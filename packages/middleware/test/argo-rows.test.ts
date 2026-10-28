@@ -38,6 +38,7 @@ function step(overrides: Partial<OutboxStep> = {}, run: Partial<OutboxStep['run'
       workflowId: 'research.report',
       rootId: 'run_1',
       purpose: 'build',
+      iuKey: 'personal',
       traceparent: null,
       traceId: null,
       fingerprint: 'fp1',
@@ -273,5 +274,17 @@ describe('argo rows', () => {
     } finally {
       await server.stop(true)
     }
+  })
+})
+
+describe('argo rows: iu_key', () => {
+  test('top level on billing iu, null otherwise, never inside raw or account', () => {
+    const team = step({}, { iuKey: 'athena-team' })
+    const [iu] = argoRowsForStep(team, opts)
+    expect(iu).toMatchObject({ billing: 'iu', iu_key: 'athena-team', account: null })
+    expect(JSON.stringify(iu?.raw)).not.toMatch(/iu_?key|athena/i)
+    const [max] = argoRowsForStep(team, { ...opts, billing: 'max' })
+    expect(max).toMatchObject({ billing: 'max', iu_key: null })
+    expect(ArgoBody.safeParse({ records: [iu, max] }).success).toBe(true)
   })
 })

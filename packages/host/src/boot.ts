@@ -144,6 +144,7 @@ export async function boot(config: HostConfig, options: BootOptions = {}): Promi
         workflows: fingerprintWorkflows(workflows),
         opencodeBin: config.opencodeBin,
       }),
+      iuKey: config.iuKey,
       telemetry: { exporter: exporterFor(env) },
       argo: { machine: config.machine },
     })

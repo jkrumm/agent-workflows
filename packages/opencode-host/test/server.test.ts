@@ -11,6 +11,7 @@ import {
   OpenCodeServer,
   resolveOpencodeBinary,
   type ServerOptions,
+  serverEnv,
 } from '../src/index.ts'
 
 // The supervisor against a real child process: `fake-opencode-bin.ts` stands in for `opencode serve`.
@@ -103,7 +104,14 @@ describe('OpenCodeServer', () => {
       ...['PATH', 'HOME', 'TMPDIR', 'LANG', 'XDG_DATA_HOME', 'XDG_CONFIG_HOME', 'XDG_STATE_HOME', 'XDG_CACHE_HOME'],
       ...['OPENCODE_DB', 'OPENCODE_DISABLE_FILEWATCHER', 'OPENCODE_DISABLE_CLAUDE_CODE'],
       ...['OPENCODE_DISABLE_MODELS_FETCH', 'OPENCODE_DISABLE_AUTOUPDATE', 'OPENCODE_SERVER_PASSWORD'],
-      ...['OPENCODE_CONFIG_CONTENT', 'IU_KEY', 'IU_ANTHROPIC_BASE', 'IU_OPENAI_BASE', 'OTEL_EXPORTER_OTLP_ENDPOINT'],
+      ...[
+        'OPENCODE_CONFIG_CONTENT',
+        'IU_KEY',
+        'IU_ANTHROPIC_BASE',
+        'IU_OPENAI_BASE',
+        'IU_KEY_ID',
+        'OTEL_EXPORTER_OTLP_ENDPOINT',
+      ],
     ])
     // Bun's own runtime adds a few to the child's view of process.env.
     expect(names.filter((n) => !allowed.has(n) && !n.startsWith('BUN_') && n !== '_')).toEqual([])
@@ -243,6 +251,19 @@ describe('OpenCodeServer', () => {
       host.close()
     }
   }, 20_000)
+})
+
+describe('serverEnv', () => {
+  const iu = { IU_API_KEY: 'k', IU_BASE_URL: 'https://example.com/anthropic' }
+  const envOf = (extra: Record<string, string>) =>
+    serverEnv({ root: '/r', password: 'p', config: {}, env: { PATH: '/bin', ...iu, ...extra } })
+
+  test('IU_KEY_ID is the parsed label, always set; never the key', () => {
+    expect(envOf({ IU_KEY_ID: 'athena-team' }).IU_KEY_ID).toBe('athena-team')
+    expect(envOf({ IU_KEY_ID: 'personal' }).IU_KEY_ID).toBe('personal')
+    expect(envOf({}).IU_KEY_ID).toBe('personal')
+    expect(envOf({ IU_KEY_ID: 'junk' }).IU_KEY_ID).toBe('personal')
+  })
 })
 
 describe('isServeOnPort', () => {
