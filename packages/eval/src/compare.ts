@@ -51,8 +51,10 @@ export interface Comparison {
     paired: number
     onlyA: string[]
     onlyB: string[]
-    /** Paired cases with no priced cost on that side because their runs had unpriced calls: left out of `costUsd`. */
+    /** Paired cases out of `costUsd` on that side because a rerun had unpriced calls (its cost is a lower bound). */
     unpricedCost: { a: number; b: number }
+    /** Paired cases out of `costUsd` on that side because no rerun recorded a cost at all. */
+    noCost: { a: number; b: number }
   }
   metrics: MetricComparison[]
   /** Metrics where B is better / worse than A with the CI clear of 0. */
@@ -95,10 +97,15 @@ function perCase(runs: ArmRun[]): Map<string, CaseValues> {
     const cell = metrics.get(metric) ?? { sum: 0, n: 0 }
     metrics.set(metric, { sum: cell.sum + value, n: cell.n + 1 })
   }
+  // One unpriced rerun makes the whole case's cost a lower bound: it leaves cost, never averaged over the rest.
+  const unpriced = new Set(runs.filter((r) => r.unpriced).map((r) => r.caseId))
   for (const run of runs) {
     add(run.caseId, 'pass', run.pass ? 1 : 0)
     for (const [metric, value] of Object.entries(run.scores)) add(run.caseId, metric, value)
-    for (const metric of SPEND_METRICS) add(run.caseId, metric, run[metric])
+    for (const metric of SPEND_METRICS) {
+      if (metric === 'costUsd' && unpriced.has(run.caseId)) continue
+      add(run.caseId, metric, run[metric])
+    }
   }
   return new Map(
     [...sums].map(([caseId, metrics]) => [caseId, new Map([...metrics].map(([m, c]) => [m, c.sum / c.n]))]),
@@ -113,11 +120,12 @@ function winner(n: number, ci: [number, number] | null, direction: 'higher' | 'l
   return bUp === (direction === 'higher') ? 'b' : 'a'
 }
 
-/** The case has no priced cost in this arm, and some run of it was unpriced. */
-function unpricedOnly(runs: ArmRun[], caseId: string): boolean {
-  const mine = runs.filter((r) => r.caseId === caseId)
-  return mine.some((r) => r.unpriced) && mine.every((r) => r.costUsd === null)
-}
+/** Some rerun of the case had unpriced calls: the case is out of cost in this arm. */
+const unpricedCase = (runs: ArmRun[], caseId: string) => runs.some((r) => r.caseId === caseId && r.unpriced)
+
+/** No rerun of the case recorded a cost at all, unpriced calls aside. */
+const costlessCase = (runs: ArmRun[], caseId: string) =>
+  !unpricedCase(runs, caseId) && runs.filter((r) => r.caseId === caseId).every((r) => r.costUsd === null)
 
 export function compareArms(a: ArmRun[], b: ArmRun[], options: { seed: number }): Comparison {
   const caseA = perCase(a)
@@ -161,8 +169,12 @@ export function compareArms(a: ArmRun[], b: ArmRun[], options: { seed: number })
       onlyA: [...caseA.keys()].filter((id) => !caseB.has(id)).sort(),
       onlyB: [...caseB.keys()].filter((id) => !caseA.has(id)).sort(),
       unpricedCost: {
-        a: paired.filter((id) => unpricedOnly(a, id)).length,
-        b: paired.filter((id) => unpricedOnly(b, id)).length,
+        a: paired.filter((id) => unpricedCase(a, id)).length,
+        b: paired.filter((id) => unpricedCase(b, id)).length,
+      },
+      noCost: {
+        a: paired.filter((id) => costlessCase(a, id)).length,
+        b: paired.filter((id) => costlessCase(b, id)).length,
       },
     },
     metrics,

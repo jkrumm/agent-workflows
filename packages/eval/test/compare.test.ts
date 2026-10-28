@@ -27,6 +27,7 @@ describe('compareArms', () => {
       onlyA: ['only-a'],
       onlyB: ['only-b'],
       unpricedCost: { a: 0, b: 0 },
+      noCost: { a: 0, b: 0 },
     })
     const by = Object.fromEntries(result.metrics.map((m) => [m.metric, m]))
     expect(by.recall?.meanDelta).toBeCloseTo(0.2, 10)
@@ -53,7 +54,27 @@ describe('compareArms', () => {
     expect(cost).toMatchObject({ n: 6, meanA: 2, meanB: 4.5, meanDelta: 2.5, better: 'a' })
     expect(result.cases.paired).toBe(7)
     expect(result.cases.unpricedCost).toEqual({ a: 0, b: 1 })
+    expect(result.cases.noCost).toEqual({ a: 0, b: 0 })
     expect(result.bWorse).toContain('costUsd')
+  })
+
+  test('one unpriced rerun takes the whole case out of cost; a case with no cost at all is counted apart', () => {
+    const ids = ['p', 'q', 'r', 's', 't', 'u']
+    const a = ids.map((id) => run(id, { costUsd: 1 }))
+    const b = [
+      ...ids.map((id) => run(id, { costUsd: 1 })),
+      // p: one priced rerun and one unpriced: never averaged over the priced one alone.
+      run('p', { costUsd: 1000, unpriced: false }),
+      run('p', { costUsd: null, unpriced: true }),
+    ]
+    b[1] = run('q', { costUsd: null }) // q: no cost recorded, no unpriced call
+    const result = compareArms(a, b, { seed: 1 })
+    expect(result.cases.unpricedCost).toEqual({ a: 0, b: 1 })
+    expect(result.cases.noCost).toEqual({ a: 0, b: 1 })
+    const cost = result.metrics.find((m) => m.metric === 'costUsd')
+    expect(cost).toMatchObject({ n: 4, meanB: 1, meanDelta: 0 }) // p (1000 priced + unpriced) is out entirely
+    const none = compareArms(a, [run('p', { costUsd: null }), ...ids.slice(1).map((id) => run(id))], { seed: 1 })
+    expect(none.cases.noCost).toEqual({ a: 0, b: 1 })
   })
 
   test(`below ${MIN_PAIRS} pairs nothing is decided, even with a clear CI; the bootstrap is seeded`, () => {
