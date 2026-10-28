@@ -98,6 +98,8 @@ Workers: Opus/medium for the CLI generator and OpenCode re-attach, Sonnet/high f
 ## Wave 4 — Review and check cut over (P1c)            <!-- status: pending -->
 Workers: Haiku to extract past runs, Sonnet/high to port, Opus/medium for the comparison harness.
 
+- [ ] Direct capability calls (`agw llm title` outside a run) recorded like runs — a one-step run or
+  a usage record into the journal and Argo — so N6 holds before review and check call them
 - [ ] Eval sets for review and check from recorded agent-gateway runs (findings, cost, wall time)
 - [ ] `review` and `check` ported as workflows, depth gating included, OCR behind the wallet gate
 - [ ] Side-by-side against agent-gateway on the eval sets: not worse on findings, cost, wall time
