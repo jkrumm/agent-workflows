@@ -1,4 +1,4 @@
-import { type IuKeyId, parseIuKeyId } from '@agent-workflows/middleware'
+import { IU_KEY_IDS, type IuKeyId, isIuKeyId, parseIuKeyId } from '@agent-workflows/middleware'
 import { secretProblem } from './auth.ts'
 
 export type Env = Record<string, string | undefined>
@@ -12,12 +12,12 @@ export interface HostConfig {
   version: string
   agentsDir: string | undefined
   opencodeBin: string | undefined
-  /** The label of the IU key this host holds (`IU_KEY_ID`); the key itself is never read here. */
+  /** The label of the IU key this host holds (`IU_KEY_ID`, unset is `personal`); the key itself is never read here. */
   iuKey: IuKeyId
 }
 
 /** Every problem at once, so one failed start names all missing variables. Values are never echoed. */
-export function loadConfig(env: Env, warn: (message: string) => void = console.warn): HostConfig {
+export function loadConfig(env: Env): HostConfig {
   const problems: string[] = []
   const required = (name: string) => {
     const value = env[name]?.trim()
@@ -34,6 +34,9 @@ export function loadConfig(env: Env, warn: (message: string) => void = console.w
   if (!Number.isInteger(port) || port < 0 || port > 65535) problems.push('AGW_PORT must be an integer from 0 to 65535')
   const schema = env.AGW_PG_SCHEMA?.trim() || 'agw'
   if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(schema)) problems.push('AGW_PG_SCHEMA is not a valid schema name')
+  // Set but unknown is a config problem (an unknown id never becomes a key); unset or empty is `personal`.
+  const rawKeyId = env.IU_KEY_ID?.trim()
+  if (rawKeyId && !isIuKeyId(rawKeyId)) problems.push(`IU_KEY_ID must be one of ${IU_KEY_IDS.join(', ')}`)
   if (problems.length > 0) throw new Error(`invalid configuration:\n- ${problems.join('\n- ')}`)
   return {
     secret,
@@ -44,6 +47,6 @@ export function loadConfig(env: Env, warn: (message: string) => void = console.w
     version: env.AGW_VERSION?.trim() || 'dev',
     agentsDir: env.AGW_AGENTS_DIR?.trim() || undefined,
     opencodeBin: env.AGW_OPENCODE_BIN?.trim() || undefined,
-    iuKey: parseIuKeyId(env.IU_KEY_ID, (message) => warn(`[agw-host] ${message}`)),
+    iuKey: parseIuKeyId(rawKeyId),
   }
 }

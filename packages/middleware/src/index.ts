@@ -26,7 +26,7 @@ export {
   fingerprintMiddleware,
   fsFingerprintSource,
 } from './fingerprint.ts'
-export { IU_KEY_IDS, type IuKeyId, iuKeyMiddleware, parseIuKeyId } from './iu-key.ts'
+export { IU_KEY_IDS, type IuKeyId, isIuKeyId, iuKeyMiddleware, parseIuKeyId } from './iu-key.ts'
 export { admissionSpanId, traceIdForRun } from './ids.ts'
 export { type OpenCodeMessage, usageFromOpenCodeMessages } from './opencode-usage.ts'
 export { type Platform, type PlatformOptions, platformMiddleware } from './platform.ts'

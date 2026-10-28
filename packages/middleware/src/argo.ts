@@ -3,7 +3,7 @@ import type { Logger, ModelUsage, TokenCounts } from '@agent-workflows/runtime'
 import { z } from 'zod'
 import { errorMessage, type JournalDb } from './db.ts'
 import { traceIdForRun } from './ids.ts'
-import { IU_KEY_IDS, type IuKeyId } from './iu-key.ts'
+import { IU_KEY_IDS, type IuKeyId, isIuKeyId } from './iu-key.ts'
 import { hasPurpose } from './purpose.ts'
 
 /** Argo's `UsageRecordInputSchema` (argo `apps/api/src/routes/usage.ts`), copied verbatim; the contract of the port. */
@@ -291,7 +291,7 @@ function toOutboxStep(row: OutboxRow): OutboxStep {
       workflowId: row.workflow,
       rootId: row.root_id,
       purpose: row.purpose,
-      iuKey: row.iu_key === 'athena-team' ? 'athena-team' : 'personal',
+      iuKey: isIuKeyId(row.iu_key) ? row.iu_key : 'personal',
       traceparent: row.traceparent,
       traceId: row.trace_id,
       fingerprint: row.fingerprint,

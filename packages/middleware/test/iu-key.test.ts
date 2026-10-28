@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, test } from 'bun:test'
 import { defineWorkflow, type RunPreArgs } from '@agent-workflows/runtime'
 import { z } from 'zod'
-import { iuKeyMiddleware, JournalDb, parseIuKeyId } from '../src/index.ts'
+import { isIuKeyId, iuKeyMiddleware, JournalDb, parseIuKeyId } from '../src/index.ts'
 import { captureLogger, FakeArgo, freshSchema, inspector, PG_URL, testPlatform, testRuntime, until } from './support.ts'
 
 const db = freshSchema('mwk')
@@ -60,6 +60,13 @@ async function runUnder(starter: ReturnType<typeof testPlatform>, middleware = s
     await rt.close()
   }
 }
+
+describe('isIuKeyId', () => {
+  test('only the two ids', () => {
+    expect(isIuKeyId('personal') && isIuKeyId('athena-team')).toBe(true)
+    expect([isIuKeyId('x'), isIuKeyId(''), isIuKeyId(null), isIuKeyId(undefined)]).toEqual([false, false, false, false])
+  })
+})
 
 describe('iu_key on Argo rows', () => {
   test('the run keeps the label of the host that started it; a flush under another key does not change it', async () => {
@@ -125,8 +132,22 @@ describe('iu_key on Argo rows', () => {
     const journal = new JournalDb({ connectionString: PG_URL, schema: db.schema }, captureLogger())
     try {
       const args = { runId, resume: true } as RunPreArgs
-      await iuKeyMiddleware({ db: journal, iuKey: 'personal' }).runPre?.(args)
+      await iuKeyMiddleware({ db: journal, logger: captureLogger(), iuKey: 'personal' }).runPre?.(args)
       expect((await sql.run(runId))?.iu_key).toBe('athena-team')
+    } finally {
+      await journal.close()
+    }
+  })
+
+  test('a run row that does not exist is warned about, naming the run id', async () => {
+    const logger = captureLogger()
+    const journal = new JournalDb({ connectionString: PG_URL, schema: db.schema }, logger)
+    try {
+      await iuKeyMiddleware({ db: journal, logger, iuKey: 'athena-team' }).runPre?.({
+        runId: 'run_missing',
+        resume: false,
+      } as RunPreArgs)
+      expect(JSON.stringify(logger.lines)).toContain('run_missing')
     } finally {
       await journal.close()
     }
