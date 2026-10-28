@@ -2,9 +2,10 @@ import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
 import { chmodSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { isStepSession } from '@agent-workflows/opencode-host'
-import type { Json, Usage } from '@agent-workflows/runtime'
+import type { Json, Logger, Usage } from '@agent-workflows/runtime'
 import { z } from 'zod'
-import { EngineJobFailed, type EngineClient, runEngineJob } from './engine.ts'
+import { canonicalJson } from '../../canonical.ts'
+import { type EngineClient, EngineJobFailed, runEngineJob } from './engine.ts'
 import type { LedgerEntry, ToolLedger } from './ledger.ts'
 import { asRecord } from './util.ts'
 
@@ -35,13 +36,22 @@ type Grant = {
   stepKey: string
   tools: ReadonlySet<GateTool>
   controller: AbortController
+  /** Calls still being served: a drop waits for them, so every row is written before `tools` reads. */
+  inflight: Set<Promise<unknown>>
+  /** Where a call's usage is booked: the research run's `tools` step, once it is bound; held here until then. */
+  sink: ((usage: Usage) => void) | null
+  held: Usage[]
+  /** Engine jobs this grant booked, so a repeated question that adopts its job is not booked twice. */
+  bookedJobs: Set<string>
+  engineCostUsd: number | null
+  engineUnpriced: boolean
 }
 
 export type GateOptions = {
   call: CapabilityCall
   /** The engine, for `engine_research`; null when none is configured (the tool then answers an error). */
   engine: () => EngineClient | null
-  /** Every call is appended here as it happens; the research step's `evidence` reads it. */
+  /** Every call is appended here as it happens: the evidence the research step's `tools` reads. */
   ledger: ToolLedger
   /** `<stateDir>/research/gate.json` is where the agents' tool finds the gate. */
   stateDir: string
@@ -49,10 +59,15 @@ export type GateOptions = {
   enginePollMs?: number
   /** Whether a session belongs to a step: the OpenCode host's deterministic session ids; tests swap it. */
   belongsTo?: (sessionId: string, stepKey: string) => boolean
+  logger?: Logger
+  /** How long a drop waits for calls still in flight (after aborting them). Default 10 s. */
+  drainMs?: number
 }
 
 /** Byte cap of a tool call's body: arguments are a query, a URL or a question. Checked before anything is buffered. */
 export const MAX_BODY_BYTES = 64 * 1024
+/** Ledger writes per call: a blip is retried, a lasting failure is logged and the call's answer stands. */
+const APPEND_ATTEMPTS = 3
 
 /** `https://Example.com/a/#x` and `https://example.com/a` are the same page for grounding. */
 export function normalizeUrl(raw: string): string {
@@ -69,6 +84,7 @@ export function normalizeUrl(raw: string): string {
 const ToolCall = z.object({ sessionID: z.string().min(1), args: z.record(z.string(), z.json()).default({}) })
 
 const digest = (text: string) => createHash('sha256').update(text).digest('hex')
+const message = (error: unknown) => (error instanceof Error ? error.message : String(error))
 
 /** The body as text, refused past `max` bytes by its declared length or while it streams; null when too large. */
 async function readCapped(req: Request, max: number): Promise<string | null> {
@@ -85,6 +101,12 @@ async function readCapped(req: Request, max: number): Promise<string | null> {
   return new TextDecoder().decode(Buffer.concat(chunks))
 }
 
+const silent: Logger = { warn: () => {}, error: () => {} }
+
+type Served =
+  | { ok: true; result: Json; entry: Partial<LedgerEntry> }
+  | { ok: false; error: string; entry: Partial<LedgerEntry> }
+
 /**
  * The research agents' only way out to the web: a loopback HTTP server that runs the `web.*` capabilities (and the
  * engine's quick job) for a session the research workflow has granted, and nothing else.
@@ -94,16 +116,20 @@ async function readCapped(req: Request, max: number): Promise<string | null> {
  * gate's key from a 0600 file outside every location (the sessions deny `external_directory`), and the key only opens
  * this server, whose only verbs are the granted tools, only for the sessions of a step that is running now.
  *
- * The gate keeps no evidence itself: every call goes to the ledger (Postgres on the host) as it happens, keyed by run
- * and step, so a step retry, a resume or a host restart reads the same calls. Grants live only while their step runs.
+ * Two outputs per call, kept apart: its usage is booked on the research run as it is reported (the grant's sink, the
+ * run's `tools` step), and its evidence (URLs, ok or error, engine job) is written to the ledger. A ledger write that
+ * fails is retried and logged; it never turns a call that worked into a failed one.
  */
 export class ToolGate {
   private readonly grants = new Map<string, Grant>()
   private readonly bySession = new Map<string, Grant>()
   private server: ReturnType<typeof Bun.serve> | null = null
   private readonly key = randomBytes(32).toString('hex')
+  private readonly logger: Logger
 
-  constructor(private readonly options: GateOptions) {}
+  constructor(private readonly options: GateOptions) {
+    this.logger = options.logger ?? silent
+  }
 
   private get file() {
     return join(this.options.stateDir, 'research', 'gate.json')
@@ -128,36 +154,76 @@ export class ToolGate {
   }
 
   /**
-   * Grants step `stepId` of run `runId` the `tools` until the returned close (call it in a `finally`: a cancelled run
-   * leaves no grant behind). A second grant for the same step (a resumed run) replaces the first.
+   * Grants step `stepId` of run `runId` the `tools` until the returned close, which aborts and awaits (bounded) the
+   * calls still in flight. Call it in a `finally`: a cancelled run leaves no grant behind. A second grant for the same
+   * step (a resumed run) replaces the first.
    */
-  open(input: { runId: string; stepId: string; tools: readonly GateTool[] }): () => void {
+  open(input: { runId: string; stepId: string; tools: readonly GateTool[] }): () => Promise<void> {
     this.ensureServing()
     const stepKey = `${input.runId}:${input.stepId}`
     const previous = this.grants.get(stepKey)
-    if (previous) this.drop(previous)
+    if (previous) void this.drop(previous)
     const grant: Grant = {
       runId: input.runId,
       stepId: input.stepId,
       stepKey,
       tools: new Set(input.tools),
       controller: new AbortController(),
+      inflight: new Set(),
+      sink: null,
+      held: [],
+      bookedJobs: new Set(),
+      engineCostUsd: null,
+      engineUnpriced: false,
     }
     this.grants.set(stepKey, grant)
+    return () => (this.grants.get(stepKey) === grant ? this.drop(grant) : Promise.resolve())
+  }
+
+  /** Books the step's call usage into `addUsage` from now on (and what was held until now); returns the unbind. */
+  bindUsage(runId: string, stepId: string, addUsage: (usage: Usage) => void): () => void {
+    const grant = this.grants.get(`${runId}:${stepId}`)
+    if (!grant) return () => {}
+    grant.sink = addUsage
+    for (const usage of grant.held.splice(0)) addUsage(usage)
     return () => {
-      if (this.grants.get(stepKey) === grant) this.drop(grant)
+      if (grant.sink === addUsage) grant.sink = null
     }
   }
 
-  private drop(grant: Grant) {
-    grant.controller.abort(new Error('the research step ended'))
-    this.grants.delete(grant.stepKey)
-    for (const [id, owner] of this.bySession) if (owner === grant) this.bySession.delete(id)
+  /** The engine spend this grant booked: null when any job's cost was unknown. */
+  engineCost(runId: string, stepId: string): number | null {
+    const grant = this.grants.get(`${runId}:${stepId}`)
+    if (!grant || grant.engineUnpriced) return null
+    return grant.engineCostUsd
   }
 
-  /** Ends every grant, stops the server and removes `gate.json`. The host calls it on shutdown. */
-  close() {
-    for (const grant of [...this.grants.values()]) this.drop(grant)
+  /** Waits (bounded) until the step's calls in flight are served. */
+  async settle(runId: string, stepId: string): Promise<void> {
+    const grant = this.grants.get(`${runId}:${stepId}`)
+    if (grant) await this.drain(grant)
+  }
+
+  private async drain(grant: Grant) {
+    if (grant.inflight.size === 0) return
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const timeout = new Promise((resolve) => {
+      timer = setTimeout(resolve, this.options.drainMs ?? 10_000)
+    })
+    await Promise.race([Promise.allSettled([...grant.inflight]), timeout])
+    clearTimeout(timer)
+  }
+
+  private async drop(grant: Grant) {
+    this.grants.delete(grant.stepKey)
+    for (const [id, owner] of this.bySession) if (owner === grant) this.bySession.delete(id)
+    grant.controller.abort(new Error('the research step ended'))
+    await this.drain(grant)
+  }
+
+  /** Ends every grant (awaiting their calls), stops the server and removes `gate.json`. The host calls it on shutdown. */
+  async close() {
+    await Promise.all([...this.grants.values()].map((grant) => this.drop(grant)))
     void this.server?.stop(true)
     this.server = null
     rmSync(this.file, { force: true })
@@ -179,8 +245,17 @@ export class ToolGate {
     return timingSafeEqual(createHash('sha256').update(given).digest(), createHash('sha256').update(this.key).digest())
   }
 
-  /** The HTTP door: `POST /tool/<name>` with `{sessionID, args}`; answers `{ok, result}` or `{ok: false, error}`. */
+  /** The HTTP door: `POST /tool/<name>` with `{sessionID, args}`. Always a JSON answer, `{ok, result}` or `{ok: false, error}`. */
   async handle(req: Request): Promise<Response> {
+    try {
+      return await this.route(req)
+    } catch (error) {
+      this.logger.error('research tool gate: request failed', { error: message(error) })
+      return Response.json({ ok: false, error: 'the tool gate failed on this call' }, { status: 500 })
+    }
+  }
+
+  private async route(req: Request): Promise<Response> {
     const answer = (status: number, body: Record<string, unknown>) => Response.json(body, { status })
     if (!this.authorized(req.headers.get('authorization'))) return answer(401, { ok: false, error: 'unauthorized' })
     const name = /^\/tool\/([a-z_]+)$/.exec(new URL(req.url).pathname)?.[1]
@@ -198,39 +273,84 @@ export class ToolGate {
     const grant = this.grantOf(call.sessionID)
     if (!grant) return answer(403, { ok: false, error: 'this session holds no research grant' })
     if (!grant.tools.has(tool)) return answer(403, { ok: false, error: `${tool} is not granted to this agent` })
-    const base = {
+    const work = this.serve(grant, tool, call.args)
+    grant.inflight.add(work)
+    try {
+      return answer(200, await work)
+    } finally {
+      grant.inflight.delete(work)
+    }
+  }
+
+  /** One call: run it (its usage booked as reported), then record its evidence apart. Never throws. */
+  private async serve(grant: Grant, tool: GateTool, args: Record<string, Json>): Promise<Record<string, unknown>> {
+    let served: Served
+    try {
+      served = { ok: true, ...(await this.run(grant, tool, args)) }
+    } catch (error) {
+      const entry: Partial<LedgerEntry> = {}
+      if (error instanceof EngineJobFailed) {
+        entry.engineJob = error.jobId
+        this.bookEngine(grant, error.jobId, error.costUsd)
+      }
+      served = { ok: false, error: message(error), entry }
+    }
+    await this.record({
       runId: grant.runId,
       stepId: grant.stepId,
       tool,
-      argsDigest: digest(JSON.stringify(call.args)),
-    }
-    const usage: Usage[] = []
-    try {
-      const { result, entry } = await this.run(grant, tool, call.args, usage)
-      await this.options.ledger.append({ ...base, ok: true, retrieved: [], seen: [], usage, ...entry })
-      return answer(200, { ok: true, result })
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      const failed: LedgerEntry = { ...base, ok: false, retrieved: [], seen: [], usage, error: message.slice(0, 300) }
-      if (error instanceof EngineJobFailed) {
-        failed.engineJob = error.jobId
-        failed.engineCostUsd = error.costUsd
-        failed.usage = [engineUsage(error.costUsd)]
+      argsDigest: digest(canonicalJson(args)),
+      ok: served.ok,
+      retrieved: [],
+      seen: [],
+      ...served.entry,
+      ...(served.ok ? {} : { error: served.error.slice(0, 300) }),
+    })
+    return served.ok ? { ok: true, result: served.result } : { ok: false, error: served.error.slice(0, 1_000) }
+  }
+
+  /** The ledger write, retried a bounded number of times; a lasting failure is logged and loses only evidence. */
+  private async record(entry: LedgerEntry) {
+    for (let attempt = 1; attempt <= APPEND_ATTEMPTS; attempt++) {
+      try {
+        await this.options.ledger.append(entry)
+        return
+      } catch (error) {
+        if (attempt === APPEND_ATTEMPTS) {
+          this.logger.error('research tool gate: the ledger write failed; the call stands without its evidence row', {
+            runId: entry.runId,
+            tool: entry.tool,
+            error: message(error),
+          })
+          return
+        }
+        await Bun.sleep(100 * attempt)
       }
-      await this.options.ledger.append(failed)
-      return answer(200, { ok: false, error: message.slice(0, 1_000) })
     }
+  }
+
+  private book(grant: Grant, usage: Usage) {
+    if (grant.sink) grant.sink(usage)
+    else grant.held.push(usage)
+  }
+
+  /** An engine job's cost, once per job and grant: a repeated question adopts its job and is not booked again. */
+  private bookEngine(grant: Grant, jobId: string, costUsd: number | null) {
+    if (grant.bookedJobs.has(jobId)) return
+    grant.bookedJobs.add(jobId)
+    this.book(grant, engineUsage(costUsd))
+    if (costUsd === null) grant.engineUnpriced = true
+    else grant.engineCostUsd = (grant.engineCostUsd ?? 0) + costUsd
   }
 
   private async run(
     grant: Grant,
     tool: GateTool,
     args: Record<string, Json>,
-    usage: Usage[],
   ): Promise<{ result: Json; entry: Partial<LedgerEntry> }> {
     const signal = grant.controller.signal
     if (tool === 'engine_research') return this.engineResearch(grant, args)
-    const output = await this.options.call(CAPABILITY[tool], args, { addUsage: (u) => usage.push(u), signal })
+    const output = await this.options.call(CAPABILITY[tool], args, { addUsage: (u) => this.book(grant, u), signal })
     const out = asRecord(output)
     const entry: Partial<LedgerEntry> = {}
     if (tool === 'web_search') {
@@ -263,7 +383,7 @@ export class ToolGate {
       { signal: grant.controller.signal, ...(this.options.enginePollMs ? { pollMs: this.options.enginePollMs } : {}) },
     )
     const cost = report.cost?.totalUsd
-    const costUsd = typeof cost === 'number' ? cost : null
+    this.bookEngine(grant, jobId, typeof cost === 'number' ? cost : null)
     return {
       result: {
         report: report.report,
@@ -272,12 +392,7 @@ export class ToolGate {
         unverified: report.unverified,
         status: report.status,
       },
-      entry: {
-        retrieved: [...report.sources, ...report.citations.map((c) => c.url)],
-        usage: [engineUsage(costUsd)],
-        engineJob: jobId,
-        engineCostUsd: costUsd,
-      },
+      entry: { retrieved: [...report.sources, ...report.citations.map((c) => c.url)], engineJob: jobId },
     }
   }
 }
@@ -295,25 +410,19 @@ export function engineUsage(costUsd: number | null | undefined): Usage {
   }
 }
 
-/** What a step's recorded calls add up to: URLs retrieved and seen (normalized), failed fetches, engine jobs and cost. */
+/** What a step's recorded calls add up to: URLs retrieved and seen (normalized), failed fetches, calls per tool, engine jobs. */
 export function evidence(entries: LedgerEntry[]) {
   const retrieved = new Set<string>()
   const seen = new Set<string>()
   const counts: Record<string, number> = {}
+  const engineJobs = new Set<string>()
   let failed = 0
-  const engineJobs: string[] = []
-  let engineCostUsd: number | null = null
-  let engineUnpriced = false
   for (const entry of entries) {
     for (const url of entry.retrieved) retrieved.add(normalizeUrl(url))
     for (const url of entry.seen) seen.add(normalizeUrl(url))
     counts[entry.tool] = (counts[entry.tool] ?? 0) + 1
     if (!entry.ok && entry.tool === 'web_fetch') failed++
-    if (entry.engineJob) {
-      engineJobs.push(entry.engineJob)
-      if (typeof entry.engineCostUsd === 'number') engineCostUsd = (engineCostUsd ?? 0) + entry.engineCostUsd
-      else engineUnpriced = true
-    }
+    if (entry.engineJob) engineJobs.add(entry.engineJob)
   }
-  return { retrieved, seen, failed, counts, engineJobs, engineCostUsd: engineUnpriced ? null : engineCostUsd }
+  return { retrieved, seen, failed, counts, engineJobs: [...engineJobs] }
 }

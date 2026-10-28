@@ -49,12 +49,16 @@ output shape.
      live research session may already make.
    - *Why not `agw web …` from a skill:* that needs a shell, and a shell reaches the API secret on disk (concept v3.2's
      accepted risk); an agent that reads untrusted pages must not hold one.
-   - *Evidence in code, persisted:* every gate call is written as it happens to Postgres (`research_tool_calls`,
-     keyed by run and step: tool, an argument digest, URLs retrieved and seen, usage, the engine job and its reported
-     cost, ok or error), so grounding and the tools' cost never come from the model and survive a step retry and a
-     host restart. The `evidence` step reads it (never consumes it) and books its usage on the run. An engine job is
-     booked once per run (a repeated question adopts its job); a failed job is booked at the cost the engine reported,
-     or unknown, never 0. Grants are in memory and end with their step, a cancelled run included.
+   - *Two outputs per call, kept apart.* **Cost** is booked on the research run as each call reports it: the run's
+     `tools` step lives as long as the agent's turns and the gate books into it, so a cancelled or failed run keeps
+     its spend (an engine job once per grant; a failed job at the cost the engine reported, or unknown, never 0).
+     **Evidence** is written as it happens to Postgres (`research_tool_calls`, keyed by run and step, rows go with
+     their run: tool, a canonical-JSON argument digest, URLs retrieved and seen, ok or error, the engine job id), so
+     grounding never comes from the model and survives a step retry and a host restart; `tools` reads it after the
+     grant has drained (never consumes it). A ledger write is retried and logged and never fails a call that worked.
+     Grants are in memory and end with their step, a cancelled run included.
+   - *One key rule* for the engine's jobs and the judge's calls (`attempt-keys.ts`): a key whose job or run is done is
+     adopted, a key whose job or run failed, errored or was cancelled is stepped past (`key:2`, …) and runs again.
    - *Transport:* the gate's server has no idle timeout (`engine_research` holds a request for a whole job; Bun's
      default cuts at 10 s), refuses a body over 64 KiB by its length or while it streams, and the host closes it on
      shutdown (`gate.json` removed).
@@ -73,7 +77,7 @@ output shape.
    with it). `grounded` is counted before the gate in every arm (engine: `citationsKept / (kept + dropped)`).
 5. **Cost.** Engine: its own `cost.totalUsd` (LLM + search) on the step. Agent arms: the OpenCode session's messages
    priced with the route's rate (`research.agent` carries research-gateway's measured DeepSeek rate, OpenCode never
-   sees IU's `usage.cost`), plus the gate's capability usage and engine job costs, added on the `evidence` step. All on
+   sees IU's `usage.cost`), plus the gate's capability usage and engine job costs, booked on the `tools` step as each call reports it. All on
    the run record, `purpose: eval`.
 6. **DeepSeek wire rules hold on the OpenCode route** (concept §8; `research-opencode.test.ts`, real OpenCode, fake
    model): the reasoning of a tool-call turn is sent back verbatim on the next turn, cache-read tokens are recorded and
@@ -87,9 +91,9 @@ output shape.
 | `complete` | status `ok`, not `partial` | no |
 | `grounded` | share of the run's citations whose URL it retrieved or saw as a search result (left out without citations) | no |
 | `golden` | the case's `expect` on the report text and its `maxChars`, `evals/lib.ts` semantics exactly (`any`/`all` case-insensitive regex, `live:` a literal substring of the registry's latest version, fetched via `web.package` at scoring time, `v`/`bun-v` stripped for GitHub releases) | no (`live` needs the judge) |
-| `supported` | up to 3 citations with distinct URLs, in report order: the judge fetches the page (`web.fetch`, 20k chars) and asks `decide` whether it supports the claim; the share over the citations the judge could score. A typed judge error (page gone or empty, `decide` failed) leaves a citation unscored (`unscored`, a count), never unsupported; none scored leaves `supported` out; no citation at all scores 0 | judged |
+| `supported` | up to 3 citations with distinct URLs, in report order: the judge fetches the page (`web.fetch`, 20k chars) and asks `decide` whether it supports the claim; the share over the citations the judge could score. A typed judge error (page gone or empty, `decide` failed) leaves a citation unscored, never unsupported; `judgedShare` (in [0, 1]) is the share the judge could score; none scored leaves `supported` out; no citation at all scores 0 | judged |
 
-`pass` = valid and golden passed. Cases: the 28 golden questions (19 quick, 8 standard, 1 deep) as plain eval cases in
+`pass` = valid and golden passed (an unscored golden never passes; a `live:` value the registry does not give is an infra scoring error the runtime retries, never a miss). Cases: the 28 golden questions (19 quick, 8 standard, 1 deep) as plain eval cases in
 `$AGW_EVAL_DIR/research/cases.jsonl` (outside git): `{id, input: {query, depth}, reference: {expect, maxChars?}}`.
 
 ## Decision rule (pre-registered by the lead, fixed 2026-10-28 before the first live run)

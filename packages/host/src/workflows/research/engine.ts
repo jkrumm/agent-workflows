@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { z } from 'zod'
+import { type KeyAttempt, withAttemptKeys } from '../../attempt-keys.ts'
 import { Citation, type Depth, Unverified } from './schema.ts'
 
 /**
@@ -9,10 +10,11 @@ import { Citation, type Depth, Unverified } from './schema.ts'
  * called, and the comparison runs it as a separate eval instance, never the live service.
  */
 export interface EngineClient {
+  /** The job under the key (an existing one, any status but cancelled, or a new one) and its status. */
   submit(
     input: { query: string; depth: Depth; context?: string; idempotencyKey: string },
     signal: AbortSignal,
-  ): Promise<string>
+  ): Promise<{ jobId: string; status: EngineJob['status'] }>
   poll(jobId: string, signal: AbortSignal): Promise<EngineJob>
 }
 
@@ -80,7 +82,7 @@ export function createEngineClient(endpoint: EngineEndpoint, fetchImpl: typeof f
   return {
     async submit(input, signal) {
       const body = await call('/research', { method: 'POST', body: JSON.stringify(input) }, signal)
-      return z.object({ jobId: z.string().min(1) }).parse(body).jobId
+      return z.object({ jobId: z.string().min(1), status: EngineJob.shape.status }).parse(body)
     },
     async poll(jobId, signal) {
       return EngineJob.parse(await call(`/research/${encodeURIComponent(jobId)}`, { method: 'GET' }, signal))
@@ -116,40 +118,50 @@ export class EngineJobFailed extends Error {
   }
 }
 
+/** A job of this call: started now, or adopted (already done under its key, so already paid for by whoever ran it). */
+export type EngineRun = { jobId: string; report: EngineReport; adopted: boolean }
+
 /**
- * Submits one job and polls it to its end. The idempotency key makes a resumed step adopt the job it already started
- * instead of paying for a second one. A poll that fails transiently is retried on the next tick; the job has no cap.
+ * Runs one job to its end under the shared key rule (`withAttemptKeys`): a key whose job is done is adopted, a key
+ * whose job ended in error or was cancelled is stepped past, and a queued or running job is polled. The job has no
+ * cap; a poll that fails transiently is retried on the next tick. The engine answers a submit with the job already
+ * under the key and its status, which is what tells the cases apart.
  */
 export async function runEngineJob(
   client: EngineClient,
   input: { query: string; depth: Depth; context?: string; idempotencyKey: string },
   options: { signal: AbortSignal; progress?: () => void; pollMs?: number; maxPollFailures?: number },
-): Promise<{ jobId: string; report: EngineReport }> {
+): Promise<EngineRun> {
   const { signal, pollMs = 2_000, maxPollFailures = 10 } = options
-  const jobId = await client.submit(input, signal)
-  let failures = 0
-  for (;;) {
-    await sleep(pollMs, signal)
-    let job: EngineJob
-    try {
-      job = await client.poll(jobId, signal)
-    } catch (error) {
-      if (signal.aborted || ++failures >= maxPollFailures) throw error
-      continue
+  return withAttemptKeys(input.idempotencyKey, async (key): Promise<KeyAttempt<EngineRun>> => {
+    const submitted = await client.submit({ ...input, idempotencyKey: key }, signal)
+    if (submitted.status === 'error' || submitted.status === 'cancelled') return { failedBefore: true }
+    const adopted = submitted.status === 'done'
+    const { jobId } = submitted
+    let failures = 0
+    for (let first = true; ; first = false) {
+      if (!(first && adopted)) await sleep(pollMs, signal)
+      let job: EngineJob
+      try {
+        job = await client.poll(jobId, signal)
+      } catch (error) {
+        if (signal.aborted || ++failures >= maxPollFailures) throw error
+        continue
+      }
+      failures = 0
+      options.progress?.()
+      if (job.status === 'done') {
+        if (!job.result) throw new Error(`engine job ${jobId} is done without a report`)
+        return { value: { jobId, report: job.result, adopted } }
+      }
+      if (job.status === 'error' || job.status === 'cancelled') {
+        const cost = job.result?.cost?.totalUsd
+        throw new EngineJobFailed(
+          jobId,
+          typeof cost === 'number' ? cost : null,
+          `engine job ${jobId} ${job.status}: ${job.error ?? 'no reason given'}`,
+        )
+      }
     }
-    failures = 0
-    options.progress?.()
-    if (job.status === 'done') {
-      if (!job.result) throw new Error(`engine job ${jobId} is done without a report`)
-      return { jobId, report: job.result }
-    }
-    if (job.status === 'error' || job.status === 'cancelled') {
-      const cost = job.result?.cost?.totalUsd
-      throw new EngineJobFailed(
-        jobId,
-        typeof cost === 'number' ? cost : null,
-        `engine job ${jobId} ${job.status}: ${job.error ?? 'no reason given'}`,
-      )
-    }
-  }
+  })
 }

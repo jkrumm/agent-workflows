@@ -109,8 +109,8 @@ const gate = new ToolGate({
 beforeAll(() => {
   gate.ensureServing()
 })
-afterAll(() => {
-  gate.close()
+afterAll(async () => {
+  await gate.close()
   rmSync(stateDir, { recursive: true, force: true })
 })
 
@@ -146,7 +146,7 @@ async function runAgent(agent: string, script: Step[], grantTools: string[]) {
     })
     return { result, seen: model.seen, entries: await ledger.read(runId, 'research') }
   } finally {
-    close()
+    await close()
     host.close()
     await server.close({ stop: true })
     void model.server.stop(true)
@@ -172,7 +172,6 @@ test.skipIf(!binary)(
         seen: ['https://www.postgresql.org/docs/current/runtime-config-connection.html'],
       },
     ])
-    expect(entries[0]?.usage).toHaveLength(1)
     // The tool result reached the model as its content.
     const toolMessage = seen[1]?.messages.find((m) => m.role === 'tool')
     expect(String(toolMessage?.content)).toContain('runtime-config-connection')

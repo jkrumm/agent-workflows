@@ -145,6 +145,7 @@ describe("the scorers' judge", () => {
     signal,
     source,
     runId,
+    scorer: 's1',
   })
   const capRuns = async (url: string) =>
     (
@@ -190,13 +191,47 @@ describe("the scorers' judge", () => {
     expect(judgeAllowed('review.adversary')).toBe(false)
   })
 
-  test('a retried scoring reuses the finished call: one key per scored run, capability and input', async () => {
+  test('a retried scoring adopts the finished call; another scored run or scorer version runs it fresh', async () => {
     const url = 'https://example.com/keyed'
     await judge()('web.fetch', { url }, scope('regression', 'scored-7'))
     await judge()('web.fetch', { url }, scope('regression', 'scored-7'))
     expect(await capRuns(url)).toEqual(['done'])
     await judge()('web.fetch', { url }, scope('regression', 'scored-8'))
     expect(await capRuns(url)).toEqual(['done', 'done'])
+    await judge()('web.fetch', { url }, { ...scope('drift', 'scored-8'), scorer: 's2' })
+    expect(await capRuns(url)).toEqual(['done', 'done', 'done'])
+  })
+
+  test('a key whose call failed is stepped past: the retried scoring runs the call again', async () => {
+    const url = 'https://example.com/gone-twice'
+    const typed = { error: { code: 'UPSTREAM_ERROR', message: 'the page is gone' } }
+    expect(await judge()('web.fetch', { url }, scope('regression', 'scored-10'))).toEqual(typed)
+    expect(await judge()('web.fetch', { url }, scope('regression', 'scored-10'))).toEqual(typed)
+    expect(await capRuns(url)).toEqual(['failed', 'failed'])
+  })
+
+  test('an abort that came before the start still cancels the call it started', async () => {
+    const url = 'https://example.com/slow-late'
+    const controller = new AbortController()
+    const realStart = jrt.start.bind(jrt)
+    const racing = scorerJudge({
+      registry,
+      workflows: capWorkflows,
+      runtime: () => ({
+        start: async (...args: Parameters<typeof realStart>) => {
+          const started = await realStart(...args)
+          controller.abort(new Error('aborted during start'))
+          return started
+        },
+        wait: jrt.wait.bind(jrt),
+        cancel: jrt.cancel.bind(jrt),
+        runByKey: jrt.runByKey.bind(jrt),
+      }),
+    })
+    expect(
+      await rejection(racing('web.fetch', { url }, scope('regression', 'scored-11', controller.signal))),
+    ).toContain('aborted during start')
+    await until(async () => (await capRuns(url))[0] === 'cancelled', 'the call cancelled')
   })
 
   test('an aborted scoring cancels the call it started; the next scoring runs it again', async () => {

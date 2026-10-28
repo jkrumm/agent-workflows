@@ -1,11 +1,11 @@
-import type { Json, ScoreJudge, Scorer, Verdict } from '@agent-workflows/runtime'
+import { InfraError, type Json, type ScoreJudge, type Scorer, type Verdict } from '@agent-workflows/runtime'
 import { z } from 'zod'
 import { asRecord as record } from './util.ts'
 import { GoldenExpect, liveTarget, liveValue, matchExpect, withinMaxChars } from './golden.ts'
 import { type ResearchInputValue, ResearchOutput, type ResearchResult } from './schema.ts'
 
 /** Bump on any change to what a score means: compare refuses to mix scorer versions silently. */
-export const RESEARCH_SCORER_VERSION = '2026-10-28.2'
+export const RESEARCH_SCORER_VERSION = '2026-10-29.1'
 
 /** A golden case's expected result (research-gateway `evals/golden.jsonl`: `expect`, optional `maxChars`). */
 export const ResearchReference = z.object({ expect: GoldenExpect, maxChars: z.number().int().positive().optional() })
@@ -56,9 +56,11 @@ async function supports(judge: ScoreJudge, claim: string, url: string): Promise<
  *   `live:` value comes from `web.package` through the judge, so without a judge the score is left out;
  * - `supported` (judged, regression and drift only): for up to three citations with distinct URLs, does the page
  *   (`web.fetch`) support the claim (`decide`), over the citations the judge could score; a citation it could not
- *   (page unreachable or empty, a typed `decide` error) is unscored, counted in `unscored` (a count, not a rate), and
- *   when none could be scored `supported` is left out. A report without citations scores 0.
- * `pass`: valid, and with a reference the golden check passed; without one, a complete report.
+ *   (page unreachable or empty, a typed `decide` error) is unscored; `judgedShare` is the share of the sampled
+ *   citations the judge could score, and when none could be `supported` is left out. A report without citations
+ *   scores 0. A `live:` value the registry does not give is an infra error (the runtime retries), never a miss.
+ * `pass`: valid, and with a reference the golden check passed (an unscored golden never passes); without one, a
+ * complete report.
  */
 export const researchScorer: Scorer<ResearchInputValue, ResearchReference> = {
   version: RESEARCH_SCORER_VERSION,
@@ -92,9 +94,11 @@ export const researchScorer: Scorer<ResearchInputValue, ResearchReference> = {
         const latest = answer.error === undefined ? answer.latest : undefined
         live = typeof latest === 'string' && latest ? liveValue(target.registry, latest) : null
       }
-      const liveUnknown = 'live' in expect && ctx.judge !== undefined && live === null
-      if (liveUnknown) problems.push('the registry gave no live value: golden unscored')
-      if ((!('live' in expect) || ctx.judge) && !liveUnknown) {
+      // No live value from the registry is an outage, not a miss: the runtime retries the scoring with a backoff.
+      if ('live' in expect && ctx.judge && live === null) {
+        throw new InfraError(`golden: ${expect.live} gave no live value (the registry did not answer)`)
+      }
+      if (!('live' in expect) || ctx.judge) {
         goldenPass = matchExpect(result.report, expect, live).pass && withinMaxChars(result.report, maxChars)
         scores.golden = goldenPass ? 1 : 0
         if (!goldenPass) problems.push('golden expectation missed')
@@ -107,15 +111,19 @@ export const researchScorer: Scorer<ResearchInputValue, ResearchReference> = {
       const verdicts = await Promise.all(sample.map((c) => supports(judge, c.claim, c.url)))
       const scored = verdicts.filter((v) => v !== null)
       const unscored = verdicts.length - scored.length
-      scores.unscored = unscored
       // A report without a citation supports nothing: 0, the same for every arm.
-      if (!sample.length) scores.supported = 0
-      else if (scored.length) scores.supported = scored.filter((v) => v).length / scored.length
+      if (!sample.length) {
+        scores.supported = 0
+        problems.push('no citations')
+      } else {
+        scores.judgedShare = scored.length / sample.length
+        if (scored.length) scores.supported = scored.filter((v) => v).length / scored.length
+      }
       if (unscored) problems.push(`${unscored} sampled citation(s) unscored: the judge could not say`)
-      if (!sample.length) problems.push('no citations')
     }
 
-    const pass = ctx.reference ? goldenPass !== false : result.status === 'ok'
+    // With a reference only a golden pass passes: an unscored golden (a live value without a judge) never does.
+    const pass = ctx.reference ? goldenPass === true : result.status === 'ok'
     return { scores, pass, ...(problems.length ? { feedback: problems.join('; ') } : {}) }
   },
 }
