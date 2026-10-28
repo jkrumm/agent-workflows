@@ -1,15 +1,18 @@
 -- Scores (concept §6). `scores` holds the inline gate verdicts (`gates`, by step id) and the after-the-fact score of
 -- the output (`final`); `score_source`, `scored_at` and `score_error` mirror `final` so drift and compare filter
--- without jsonb. `score_error` is set when the scorer could not score the run (its own failure, or a judge or journal
--- failure `score_attempts` times in a row): the run is not retried by drift until its workflow's scorer version
--- changes, and compare leaves it out. `drift_sample` is the run's persisted sample position: the first 32 bits of
+-- without jsonb. `score_error` is set when the scorer could not score the run, `score_error_kind` says why: `scorer`
+-- (its own failure; re-scored once the workflow's scorer version changes) or `infra` (judge or journal failures on
+-- `score_attempts` attempts spaced by a doubling backoff from `last_score_attempt_at`; re-scored a day later). Compare
+-- leaves both out. `drift_sample` is the run's persisted sample position: the first 32 bits of
 -- md5(id), so a rate r samples exactly the runs below r × 2^32 and a drift tick reads an index range.
 alter table {{schema}}.runs
   add column scores jsonb,
   add column score_source text check (score_source in ('regression', 'drift')),
   add column scored_at timestamptz,
   add column score_error text,
+  add column score_error_kind text check (score_error_kind in ('scorer', 'infra')),
   add column score_attempts integer not null default 0,
+  add column last_score_attempt_at timestamptz,
   add column drift_sample bigint generated always as (('x' || lpad(substr(md5(id), 1, 8), 16, '0'))::bit(64)::bigint) stored;
 
 -- Compare: an arm's runs by workflow, source and fingerprint prefix (a byte-order range, hence collate "C").

@@ -103,8 +103,12 @@ const consoleLogger: Logger = {
 }
 
 const TERMINAL = new Set(['done', 'failed', 'cancelled'])
-/** Failed scoring attempts (judge, journal) in a row before a run gets an explicit scorer error. */
-export const MAX_SCORE_ATTEMPTS = 3
+/**
+ * Failed scoring attempts (judge, journal) before a run gets an `infra` scorer error. Drift spaces them by
+ * `SCORE_BACKOFF_MS` doubling (1 h, 2 h, 4 h, 8 h): giving up takes ~15 h of outage, and a day later it is tried again.
+ */
+export const MAX_SCORE_ATTEMPTS = 5
+export const SCORE_BACKOFF_MS = 3_600_000
 const CANCELLED = { kind: 'cancelled' as const, message: 'cancelled' }
 const MAX_RECOVERY_BACKOFF_MS = 30_000
 const MAX_INFRA_BACKOFF_MS = 60_000
@@ -323,7 +327,7 @@ export class Runtime {
     if (!workflow?.scorer) throw new Error(`workflow ${run.workflow} has no scorer`)
     const { scorer } = workflow
     // Drift scores a run once; a scorer error is scored again only by another scorer version.
-    const rescorable = run.score_error !== null && run.scorer !== scorer.version
+    const rescorable = run.score_error !== null && (run.score_error_kind === 'infra' || run.scorer !== scorer.version)
     if (options.onlyUnscored && run.scored_at && !rescorable) return null
     const meta = {
       source: options.source,
@@ -373,12 +377,13 @@ export class Runtime {
           scores: {},
           pass: null,
           error: `gave up after ${attempts} failed attempts: ${errorMessage(err)}`,
+          errorKind: 'infra',
           ...meta,
         }
       } else {
         // The scorer's own deterministic failure (a bug, a reference it refuses, a malformed verdict): an explicit
         // scorer error, not a verdict, so drift does not loop on a run that can never score.
-        final = { scores: {}, pass: null, error: errorMessage(err), ...meta }
+        final = { scores: {}, pass: null, error: errorMessage(err), errorKind: 'scorer', ...meta }
       }
     }
     const written = await this.journal.writeFinalScore(runId, final, options.onlyUnscored ?? false)
@@ -399,8 +404,17 @@ export class Runtime {
   }): Promise<string[]> {
     const workflows = options.workflows ?? [...this.registry.values()].filter((w) => w.scorer).map((w) => w.id)
     if (workflows.length === 0 || options.rate <= 0) return Promise.resolve([])
-    const versions = workflows.map((id) => this.registry.get(id)?.scorer?.version ?? '')
-    return this.journal.driftCandidates({ ...options, workflows, versions, purposes: options.purposes ?? ['prod'] })
+    // Only workflows with a scorer have errors to re-score; never a run of one without (no '' version).
+    const scored = workflows.filter((id) => this.registry.get(id)?.scorer)
+    const versions = scored.map((id) => this.registry.get(id)?.scorer?.version as string)
+    return this.journal.driftCandidates({
+      ...options,
+      workflows,
+      scored,
+      versions,
+      backoffMs: SCORE_BACKOFF_MS,
+      purposes: options.purposes ?? ['prod'],
+    })
   }
 
   /** Scored runs of a workflow (oldest first), for `agw eval compare`. */

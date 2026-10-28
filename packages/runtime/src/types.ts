@@ -343,6 +343,8 @@ export type FinalScore = {
    * version changes. Mirrored in `runs.score_error`.
    */
   error?: string
+  /** With `error`: `scorer` (its own failure) or `infra` (judge or journal outage, gave up after the attempts). */
+  errorKind?: 'scorer' | 'infra'
 }
 
 /** `runs.scores`: the inline gate verdicts by step id, and the after-the-fact score of the output. */
