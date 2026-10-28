@@ -13,7 +13,8 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
   `com.jkrumm.vps-pg-backup` is ours: P0b maps it in dotfiles `docs/architecture.md`. Relayed to the lead.
 
 ## Lead
-- `agent-workflows-w1` (pane w40:pQ), Opus/high, spawned 2026-10-28 ~05:15 for Wave 4.
+- `agent-workflows-w1` (pane w40:pX), Opus/high, spawned 2026-10-28 ~09:35: the second Wave 4 lead
+  (first rotated at its context limit; state in `handoff/lead.md` at `772c3f4`).
   Rotation policy: a fresh lead per wave unless the last one closed under ~30% context.
 - The mother is agent `agent-workflows-mother` (pane w40:p1).
 
@@ -47,6 +48,10 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
   (`op://Private/athena-teamchat/key`, careerpartner; not in the mini cache yet, never in this repo);
   route fallback to GPT-6.1 Terra medium on balance failures; ported review and the `/review` skill
   degrade to "review in-session with /code-review". Relayed to the lead; in PLAN (budget line, Wave 4).
+- 2026-10-28 ~09:30: deploy chain done and live-verified (owner answered the re-asked dialog).
+  usage-tracker session (`usage-tracker-9f`) fixed the `iu_key` contract; accepted, in PLAN Wave 4;
+  tell it when deployed. Owner said a message hit the wrong prometheus-scripts chat; the lead says it
+  sent none (owner dialog only) — not from this fleet as far as the record shows.
 
 ## Next action
 - Watch the lead (`wave-watch.sh --agents agent-workflows-w1 --heartbeat 9`, bounded 10 min), read
