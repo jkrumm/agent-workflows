@@ -53,6 +53,36 @@ const KILL_GRACE_MS = 5_000
 /** Once the leader is gone the pipes close; a writer that survived the group kill must not wedge the step. */
 const DRAIN_GRACE_MS = 5_000
 
+/**
+ * Reads `stream` to its end, handing every chunk to `onChunk` and the decoded text (flushed at the end, so a
+ * multi-byte character cut by the last chunk is not lost) to `onText`. A read that fails, for instance when a kill
+ * tears the pipe down, is the end of the stream: this never rejects.
+ */
+export async function drainStream(
+  stream: ReadableStream<Uint8Array>,
+  onChunk: () => void,
+  onText?: (text: string) => void,
+): Promise<void> {
+  const reader = stream.getReader()
+  const decoder = new TextDecoder()
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      onChunk()
+      if (onText) onText(decoder.decode(value, { stream: true }))
+    }
+  } catch {
+    // the end of the stream
+  }
+  try {
+    if (onText) onText(decoder.decode())
+    reader.releaseLock()
+  } catch {
+    // nothing left to read either way
+  }
+}
+
 type GroupRecord = { pgid: number; started: string }
 
 /** `pid pgid lstart` of every process: the start time tells a recorded leader from a reused pid. */
@@ -172,33 +202,26 @@ async function runCommand(request: ExecRequest, env: Record<string, string | und
 
   let tail = ''
   let truncated = false
-  const drain = async (stream: ReadableStream<Uint8Array>, keep: boolean) => {
-    const reader = stream.getReader()
-    const decoder = new TextDecoder()
-    try {
-      for (;;) {
-        const { done, value } = await reader.read()
-        if (done) return
-        arm()
-        onOutput?.()
-        if (!keep) continue
-        tail += decoder.decode(value, { stream: true })
-        if (tail.length > tailChars) {
-          tail = tail.slice(-tailChars)
-          truncated = true
-        }
-      }
-    } catch {
-      // a read that fails (the pipe was torn down by a kill) is the end of the stream, not a failure of the run
-    } finally {
-      reader.releaseLock()
+  const onText = (text: string) => {
+    tail += text
+    if (tail.length > tailChars) {
+      tail = tail.slice(-tailChars)
+      truncated = true
     }
   }
-
+  const onChunk = () => {
+    arm()
+    onOutput?.()
+  }
+  // `drainStream` never rejects, so neither does `drains`: the race below can only end on the pipes or the grace.
   let drained = false
-  const drains = Promise.all([drain(proc.stdout, true), drain(proc.stderr, request.stderr !== 'discard')]).then(() => {
+  const markDrained = () => {
     drained = true
-  })
+  }
+  const drains = Promise.all([
+    drainStream(proc.stdout, onChunk, onText),
+    drainStream(proc.stderr, onChunk, request.stderr === 'discard' ? undefined : onText),
+  ]).then(markDrained, markDrained)
   let graceTimer: ReturnType<typeof setTimeout> | undefined
   try {
     await proc.exited

@@ -10,6 +10,9 @@ export type ProbeLogger = { warn(message: string, meta?: Record<string, unknown>
  */
 const PROBE_WALL_MS = 30_000
 
+const isSectionEnd = (line: string) =>
+  line.startsWith('# files hash-table stats') || line.startsWith('# VPATH Search Paths')
+
 /**
  * Whether a `make -p` database dump registers `check` as a rule. Each entry Make knows is listed under `# Files`
  * as a header line (`check:`, `check::`, `check: lint test`); one Make only knows as a prerequisite or an existing
@@ -23,13 +26,15 @@ export function makeDatabaseHasCheckTarget(db: string): boolean {
   if (files < 0) return false
   for (let i = files + 1; i < lines.length; i++) {
     const line = lines[i] ?? ''
-    if (line.startsWith('# files hash-table stats') || line.startsWith('# VPATH Search Paths')) break
+    if (isSectionEnd(line)) break
     const header = /^check::?(.*)$/.exec(line)
     if (!header || lines[i - 1] === '# Not a target:') continue
     if ((header[1] ?? '').trim() !== '') return true
     // The recipe marker sits in the header's own block: comments and tab-indented lines up to the next entry.
-    for (let j = i + 1; j < lines.length && !/^[^ \t#]/.test(lines[j] ?? ''); j++) {
-      if (/(commands|recipe) to execute \(from/.test(lines[j] ?? '')) return true
+    for (let j = i + 1; j < lines.length; j++) {
+      const next = lines[j] ?? ''
+      if (/^[^ \t#]/.test(next) || isSectionEnd(next)) break
+      if (/(commands|recipe) to execute \(from/.test(next)) return true
     }
   }
   return false

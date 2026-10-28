@@ -32,7 +32,8 @@ type Step = CheckOutput['steps'][number]
 /** A deterministic step's verdict with its one-line summary fragment. */
 type StepResult = { step: Step; summary: string }
 
-export interface CheckDeps extends Partial<WorkflowDeps> {
+/** What the module can be given beyond the host's shared deps (which it does not use). */
+export interface CheckDeps {
   /** Subprocess port; default `Bun.spawn`. */
   exec?: Exec
   /** Where the process groups of running commands are recorded; default the host's state directory. */
@@ -194,7 +195,8 @@ async function agentCheck(ctx: Ctx, input: CheckInput, stepSeconds: number, test
  * `check` (concept §11 P1): the repo's validation as a workflow. `make check` runs without a model when the
  * Makefile has the target and no commands were given; otherwise one agent step discovers or runs the steps.
  */
-export function createCheckWorkflows(deps: CheckDeps = {}): HostWorkflow[] {
+export function createCheckWorkflows(shared: CheckDeps | WorkflowDeps = {}): HostWorkflow[] {
+  const deps = shared as CheckDeps // the host's WorkflowDeps carry none of the module's own injectables
   const context: Context = {
     exec: deps.exec ?? bunExec,
     stateDir: deps.stateDir ?? DEFAULT_STATE_DIR,

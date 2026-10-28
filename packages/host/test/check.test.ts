@@ -241,6 +241,13 @@ describe('parsing the make database', () => {
     expect(makeDatabaseHasCheckTarget('# Implicit Rules\n%:\n')).toBe(false)
     expect(makeDatabaseHasCheckTarget('')).toBe(false)
   })
+
+  test('a recipe marker past the end of the # Files section is not the check rule’s', () => {
+    for (const marker of ['# files hash-table stats:', '# VPATH Search Paths']) {
+      const db = ['# Files', '', 'check:', marker, "#  recipe to execute (from `Makefile', line 3):"].join('\n')
+      expect(makeDatabaseHasCheckTarget(db)).toBe(false)
+    }
+  })
 })
 
 describe('agent path', () => {
@@ -475,6 +482,31 @@ describe('resume', () => {
     } finally {
       await rt2.close()
     }
+  })
+})
+
+describe('DISCOVER stays read-only', () => {
+  const agentsMd = readFileSync(join(import.meta.dir, '../../../agents/check/AGENTS.md'), 'utf8')
+  const discover = agentsMd.slice(agentsMd.indexOf('## Mode DISCOVER'), agentsMd.indexOf('## Output'))
+
+  test('Node: a check-mode script, else the formatter’s check flag, else skip and say so', () => {
+    expect(discover).toContain('`format:check`')
+    expect(discover).toContain('never `bun run format`')
+    expect(discover).toContain('`prettier --check .`')
+    expect(discover).toMatch(/`biome format \.` \(without `--write`\)/)
+    expect(discover).toMatch(/skip the format step and say in the summary/)
+  })
+
+  test('nothing in the prompt tells the agent to run a rewriting command', () => {
+    // a rewriting command is only ever named as forbidden: a "never" or "do not" precedes it
+    for (const match of agentsMd.matchAll(/(bun run|npm run|make) (format|fmt)\b/g)) {
+      const before = agentsMd.slice(Math.max(0, (match.index ?? 0) - 300), match.index)
+      expect(before).toMatch(/never|do not/i)
+    }
+    expect(agentsMd).not.toMatch(/only writes allowed|format script if/i)
+    expect(agentsMd).toContain('strictly read-only')
+    // the Makefile branch only counts check-mode format targets
+    expect(discover).toMatch(/`format` or `fmt` target rewrites files/)
   })
 })
 

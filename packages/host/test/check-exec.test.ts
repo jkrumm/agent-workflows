@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFi
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { commandEnv } from '../src/workflows/check/env.ts'
-import { bunExec, createBunExec } from '../src/workflows/check/exec.ts'
+import { bunExec, createBunExec, drainStream } from '../src/workflows/check/exec.ts'
 
 const cwd = realpathSync(mkdtempSync(join(tmpdir(), 'agw-exec-')))
 const sh = (script: string) => ['sh', '-c', script]
@@ -189,5 +189,62 @@ describe('orphans of a crashed host', () => {
     mkdirSync(join(file, '..'), { recursive: true })
     writeFileSync(file, '{"pgid":')
     expect((await bunExec.run({ argv: ['true'], cwd, groupFile: file })).exitCode).toBe(0)
+  })
+})
+
+describe('drainStream', () => {
+  const bytes = (...chunks: number[][]) =>
+    new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const chunk of chunks) controller.enqueue(new Uint8Array(chunk))
+        controller.close()
+      },
+    })
+  const text = async (stream: ReadableStream<Uint8Array>) => {
+    let out = ''
+    let chunks = 0
+    await drainStream(
+      stream,
+      () => chunks++,
+      (piece) => {
+        out += piece
+      },
+    )
+    return { out, chunks }
+  }
+
+  test('reads to the end, one onChunk per chunk', async () => {
+    const encoder = new TextEncoder()
+    expect(await text(bytes([...encoder.encode('ab')], [...encoder.encode('cd')]))).toEqual({ out: 'abcd', chunks: 2 })
+  })
+
+  test('a read that rejects is the end of the stream: it resolves, keeping what arrived', async () => {
+    let sent = false
+    const broken = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (sent) throw new Error('pipe torn down')
+        sent = true
+        controller.enqueue(new TextEncoder().encode('before'))
+      },
+    })
+    expect(await text(broken)).toEqual({ out: 'before', chunks: 1 })
+    const failing = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.error(new Error('boom'))
+      },
+    })
+    expect(await text(failing)).toEqual({ out: '', chunks: 0 })
+  })
+
+  test('the decoder is flushed at the end: a character cut by the last chunk is not dropped silently', async () => {
+    const { out } = await text(bytes([0x6f, 0x6b, 0xe2, 0x82]))
+    expect(out).toBe('ok\uFFFD')
+    expect((await text(bytes([0xe2, 0x82], [0xac]))).out).toBe('€') // split across chunks, still whole
+  })
+
+  test('without a text sink it still drains, so the child never blocks on a full pipe', async () => {
+    let chunks = 0
+    await drainStream(bytes([1], [2], [3]), () => chunks++)
+    expect(chunks).toBe(3)
   })
 })
