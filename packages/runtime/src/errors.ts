@@ -13,6 +13,21 @@ export type ErrorKind =
   | 'infra'
   | 'crash_loop'
 
+/**
+ * `start` with an idempotency key already used by this workflow for a different input. The first run stands; the
+ * caller must pick a new key or resend the original input.
+ */
+export class IdempotencyConflict extends Error {
+  override name = 'IdempotencyConflict'
+  constructor(
+    readonly workflowId: string,
+    readonly idempotencyKey: string,
+    readonly runId: string,
+  ) {
+    super(`idempotency key "${idempotencyKey}" was already used for a different input of ${workflowId} (run ${runId})`)
+  }
+}
+
 /** A failure that belongs to the workflow: it ends the step or run as `failed` (or `cancelled`). */
 export class WorkflowError extends Error {
   override name = 'WorkflowError'

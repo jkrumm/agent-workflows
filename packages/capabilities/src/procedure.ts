@@ -62,7 +62,7 @@ export function buildProcedure<I extends z.ZodObject, O extends z.ZodType>(
       tags: [def.id.split('.')[0] ?? def.id],
       spec: withCli(resolved.cli),
     })
-    .input(def.input)
+    .input(def.input.strict()) // an unknown key (a renamed flag) is a 400, never silently dropped
     .output(def.output)
     .handler(({ input, context, signal }) => {
       const ctx: Ctx = { signal: signal ?? neverAborted(), addUsage: (usage) => context.onUsage?.(def.id, usage) }

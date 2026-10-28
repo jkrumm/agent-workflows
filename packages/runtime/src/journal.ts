@@ -164,6 +164,11 @@ export class Journal {
     return id
   }
 
+  async inputHashOf(id: string): Promise<string | null> {
+    const { rows } = await this.query<{ input_hash: string }>(`select input_hash from ${this.runs} where id = $1`, [id])
+    return rows[0]?.input_hash ?? null
+  }
+
   async getRun(id: string): Promise<RunRow | null> {
     const { rows } = await this.query<RunRow>(`select ${RUN_COLUMNS} from ${this.runs} where id = $1`, [id])
     return rows[0] ?? null

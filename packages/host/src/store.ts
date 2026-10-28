@@ -16,8 +16,8 @@ export const isTerminal = (status: RunStatus) => status === 'done' || status ===
 /** What the HTTP bodies and `/health` read; production is a thin adapter over the runtime's public read API. */
 export interface RunStore {
   get(runId: string): Promise<RunState | null>
-  /** Resolves when the journal database answers. */
-  ping(): Promise<void>
+  /** Resolves when the journal database answers; rejects after `timeoutMs`, ending the query itself. */
+  ping(timeoutMs?: number): Promise<void>
 }
 
 export function runtimeRunStore(runtime: Pick<Runtime, 'getRun' | 'ping'>): RunStore {
@@ -33,6 +33,6 @@ export function runtimeRunStore(runtime: Pick<Runtime, 'getRun' | 'ping'>): RunS
         ...(run.error ? { error: run.error } : {}),
       }
     },
-    ping: () => runtime.ping(),
+    ping: (timeoutMs) => runtime.ping(timeoutMs),
   }
 }

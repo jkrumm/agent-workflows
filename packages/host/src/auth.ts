@@ -15,10 +15,17 @@ export function bearerMatches(header: string | null, secret: string): boolean {
   return crypto.timingSafeEqual(sha256(match?.[1] ?? ''), sha256(secret))
 }
 
-export function assertSecret(secret: string | undefined): asserts secret is string {
+/** Why a secret cannot be used, or null. One rule for `createHost` and `loadConfig`; never echoes the value. */
+export function secretProblem(secret: string | undefined): string | null {
   if (!secret || secret.length < MIN_SECRET_LENGTH) {
-    throw new Error(`AGW_API_SECRET must be set and at least ${MIN_SECRET_LENGTH} characters`)
+    return `AGW_API_SECRET must be set and at least ${MIN_SECRET_LENGTH} characters`
   }
   // A header value never carries whitespace at its ends or inside, so such a secret could never authenticate.
-  if (/\s/.test(secret)) throw new Error('AGW_API_SECRET must not contain whitespace (a trailing newline?)')
+  if (/\s/.test(secret)) return 'AGW_API_SECRET must not contain whitespace (a trailing newline?)'
+  return null
+}
+
+export function assertSecret(secret: string | undefined): asserts secret is string {
+  const problem = secretProblem(secret)
+  if (problem) throw new Error(problem)
 }

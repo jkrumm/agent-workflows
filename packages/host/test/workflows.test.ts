@@ -88,6 +88,23 @@ describe('workflow start', () => {
     expect(count.rows[0].n).toBe(1)
   })
 
+  test('a replay with a different body is 409 CONFLICT naming the key; the first run stands', async () => {
+    const key = `conflict-${crypto.randomUUID()}`
+    const headers = { 'idempotency-key': key, prefer: 'wait=10' }
+    const first = await t.json(await t.call('/workflows/echo/say', { body: { text: 'one' }, headers }))
+    const second = await t.json(await t.call('/workflows/echo/say', { body: { text: 'two' }, headers }))
+    expect(second.status).toBe(409)
+    expect(second.body).toMatchObject({ defined: true, code: 'CONFLICT', status: 409 })
+    expect(second.body.message).toContain(`"${key}"`)
+    expect(second.body.data).toEqual({ runId: first.body.runId })
+    const rows = await t.pool.query(`select input from "${t.schema}".runs where idempotency_key = $1`, [key])
+    expect(rows.rows).toEqual([{ input: { text: 'one' } }])
+    // the same body still replays; so does a body that differs only in what the defaults fill in
+    expect((await t.json(await t.call('/workflows/echo/say', { body: { text: 'one' }, headers }))).body.runId).toBe(
+      first.body.runId,
+    )
+  })
+
   test('the purpose defaults to prod and follows x-agw-purpose; a bad one is 400', async () => {
     const plain = await t.json(await t.call('/workflows/echo/say', { body: {}, headers: { prefer: 'wait=10' } }))
     const eval_ = await t.json(

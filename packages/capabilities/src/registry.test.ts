@@ -51,6 +51,15 @@ describe('one definition, two doors', () => {
     expect(prompts[0]).toContain('at most 100 words')
   })
 
+  test('an unknown input key is a 400 on both doors, never silently dropped', async () => {
+    const bad = { text: 'x', format: 'bullets' } // `format` was renamed `style`
+    const viaImport = await a.registry.call('llm.summarize', bad as never).catch(errorJson)
+    const viaHttp = await post(base, '/llm/summarize', bad)
+    expect(viaHttp.status).toBe(400)
+    expect(viaHttp.body).toEqual(viaImport)
+    expect(viaImport).toMatchObject({ code: 'BAD_REQUEST', status: 400, defined: false })
+  })
+
   test('invalid input fails identically', async () => {
     const bad = { text: '', maxWords: 3 }
     const viaImport = await a.registry.call('llm.summarize', bad).catch(errorJson)

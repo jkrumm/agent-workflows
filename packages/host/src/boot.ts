@@ -108,7 +108,10 @@ export async function boot(config: HostConfig, options: BootOptions = {}): Promi
     })
     closers.push(async () => {
       // Stop accepting; give held `Prefer: wait` requests a moment to answer, then cut them (the CLI resumes).
-      await Promise.race([server.stop(), Bun.sleep(SHUTDOWN_GRACE_MS)])
+      const draining = server.stop().catch((error: unknown) => {
+        console.error('[agw-host] graceful stop failed:', error instanceof Error ? error.message : error)
+      })
+      await Promise.race([draining, Bun.sleep(SHUTDOWN_GRACE_MS)])
       await server.stop(true)
     })
 

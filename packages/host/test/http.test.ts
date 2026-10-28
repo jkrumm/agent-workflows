@@ -25,7 +25,7 @@ describe('auth', () => {
       expect(response.status).toBe(401)
       expect(response.headers.get('www-authenticate')).toBe('Bearer')
       expect(await response.json()).toEqual({
-        defined: true,
+        defined: false,
         code: 'UNAUTHORIZED',
         status: 401,
         message: 'Missing or wrong bearer token',
@@ -103,6 +103,44 @@ describe('health', () => {
       expect(await response.json()).toEqual({ status: 'degraded', reason: 'runtime is not open' })
     } finally {
       await closed.close()
+    }
+  })
+
+  test('every route but /health is a 503 SERVICE_UNAVAILABLE (defined false) until the runtime is open', async () => {
+    const closed = await startTestHost({ prefix: 'hclosed2', isOpen: () => false })
+    try {
+      const { status, body } = await closed.json(await closed.call('/openapi.json'))
+      expect(status).toBe(503)
+      expect(body).toEqual({
+        defined: false,
+        code: 'SERVICE_UNAVAILABLE',
+        status: 503,
+        message: 'The runtime is not open',
+      })
+      expect((await closed.call('/openapi.json', { auth: 'wrong' })).status).toBe(401) // auth first
+    } finally {
+      await closed.close()
+    }
+  })
+
+  test('the probe is handed the health bound, so the store can end its own query', async () => {
+    const seen: (number | undefined)[] = []
+    const bounded = await startTestHost({
+      prefix: 'hbound',
+      healthTimeoutMs: 1234,
+      wrapStore: (store) => ({
+        get: (id) => store.get(id),
+        ping: (timeoutMs) => {
+          seen.push(timeoutMs)
+          return store.ping(timeoutMs)
+        },
+      }),
+    })
+    try {
+      expect((await bounded.call('/health', { auth: null })).status).toBe(200)
+      expect(seen).toEqual([1234])
+    } finally {
+      await bounded.close()
     }
   })
 
@@ -223,6 +261,7 @@ describe('openapi document and contract sha', () => {
     const mismatch = await t.json(await t.call('/runs/none', { headers: { 'x-agw-contract': 'f'.repeat(64) } }))
     expect(mismatch.status).toBe(412)
     expect(mismatch.body).toMatchObject({
+      defined: false,
       code: 'CONTRACT_MISMATCH',
       status: 412,
       data: { server: sha, client: 'f'.repeat(64) },

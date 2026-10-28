@@ -43,6 +43,9 @@ const result = await runtime.wait(runId)
   price count as `unpricedCalls`, so a partially priced step is visible instead of a silent undercount. Tokens
   are raw provider counts: `input` includes cache reads and writes, `output` includes reasoning; `cacheWrite` is
   optional on a report (absent means 0) and always present on the sums (`tokens_cache_write`).
+- **Idempotency key.** `start({ idempotencyKey })` returns the same run for the same workflow, key and input; the same key with a
+  different input throws `IdempotencyConflict` (the first run stands). `getRun(runId)` reads a run's state; `ping(timeoutMs)`
+  is a bounded health probe: it rejects at the bound and a stalled query's connection is destroyed, not parked on the pool.
 - **Retry** per step: `{ attempts, backoffMs, factor, maxBackoffMs }`, default one attempt (agent steps too).
 - **Idle timeout** per step: no `progress()` (or host progress event) for `idleTimeoutMs` fails the attempt as
   `timeout`. Agent steps default to 5 minutes; code steps have none. It is never a wall-clock cap

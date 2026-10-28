@@ -1,6 +1,14 @@
-import { Pool } from 'pg'
+import { Pool, type QueryConfig } from 'pg'
 import { z } from 'zod'
-import { AdmissionRefused, Cancelled, errorMessage, InfraError, Shutdown, WorkflowError } from './errors.ts'
+import {
+  AdmissionRefused,
+  Cancelled,
+  errorMessage,
+  IdempotencyConflict,
+  InfraError,
+  Shutdown,
+  WorkflowError,
+} from './errors.ts'
 import { Journal, type RunEnd, type RunRow } from './journal.ts'
 import { type Json, jsonViolation } from './json.ts'
 import { type Lease, LeasePool } from './lease.ts'
@@ -165,6 +173,7 @@ export class Runtime {
     const violation = jsonViolation(value)
     if (violation) throw new WorkflowError('invalid_input', `${workflow.id}: input ${violation}`)
     const id = Bun.randomUUIDv7()
+    const inputHash = hashJson(value)
     const runId = await this.journal.insertRun({
       id,
       workflow: workflow.id,
@@ -172,12 +181,16 @@ export class Runtime {
       rootId: id,
       purpose: options.purpose,
       input: value,
-      inputHash: hashJson(value),
+      inputHash,
       idempotencyKey: options.idempotencyKey ?? null,
       traceparent: options.traceparent ?? null,
       traceId: traceIdOf(options.traceparent),
       version: workflow.version,
     })
+    // A replay of a key: the same input is the same run, a different one is a caller bug.
+    if (runId !== id && options.idempotencyKey && (await this.journal.inputHashOf(runId)) !== inputHash) {
+      throw new IdempotencyConflict(workflow.id, options.idempotencyKey, runId)
+    }
     if (this.opened && !this.closing) this.kick(runId)
     return { runId }
   }
@@ -206,9 +219,25 @@ export class Runtime {
     }
   }
 
-  /** Resolves when the journal database answers (a health probe through the journal pool). */
-  async ping(): Promise<void> {
-    await this.pool.query('select 1')
+  /**
+   * Resolves when the journal database answers, and rejects after `timeoutMs` (default 2 s). The bound holds both
+   * while waiting for a pooled connection and while the query runs; a query that stalls past it destroys its
+   * connection (pg releases a failed `pool.query` client with the error), so a slow Postgres cannot park health
+   * probes on the journal pool for the pool's 120 s statement timeout.
+   */
+  async ping(timeoutMs = 2000): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      await Promise.race([
+        // `query_timeout` is a pg query option that @types/pg does not declare.
+        this.pool.query({ text: 'select 1', query_timeout: timeoutMs } as QueryConfig),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error(`journal ping timed out after ${timeoutMs} ms`)), timeoutMs)
+        }),
+      ])
+    } finally {
+      clearTimeout(timer)
+    }
   }
 
   /**
