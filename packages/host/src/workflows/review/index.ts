@@ -30,6 +30,7 @@ import {
   salvagedVerdict,
 } from './verdict.ts'
 import { z } from 'zod'
+import { reviewScorer } from './scorer.ts'
 import { mapLimit } from './util.ts'
 
 export const REVIEW_VERSION = '2026-10-28.1'
@@ -314,6 +315,7 @@ export function createReviewWorkflows(deps: WorkflowDeps, options: ReviewOptions
     version: REVIEW_VERSION,
     input: ReviewInput,
     output: ReviewOutput,
+    scorer: reviewScorer,
     async run(ctx, input) {
       const prepared = await ctx.step('prepare', (scope) => prepare(input, scope.key, ports))
       if (!prepared.ok) throw new WorkflowError(prepared.kind, prepared.message)

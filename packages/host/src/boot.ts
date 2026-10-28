@@ -16,6 +16,7 @@ import { RETRO_WORKFLOW_ID } from './workflows/retrospective/index.ts'
 import { pgJournalReader } from './workflows/retrospective/sample.ts'
 import { startRetroSchedule } from './workflows/retrospective/schedule.ts'
 import { listTrackedFiles, type TrackedPaths } from './workflows/retrospective/tracked.ts'
+import { wireEval } from './workflows/eval/index.ts'
 import { createWorkflows, fingerprintWorkflows } from './workflows/index.ts'
 
 const FLUSH_INTERVAL_MS = 30_000
@@ -106,6 +107,7 @@ export function lazyOpenCodeHost(
     wait: async (handle: Json, options) => (await get()).host.wait(handle, options),
     steer: async (handle: Json, text, options) => (await get()).host.steer(handle, text, options),
     abort: async (handle: Json) => (await get()).host.abort(handle),
+    followUp: async (handle: Json, spec) => (await get()).host.followUp(handle, spec),
     async close() {
       closed = true
       if (!built) return
@@ -205,6 +207,9 @@ export async function boot(config: HostConfig, options: BootOptions = {}): Promi
       middleware: [...platform.middleware, wallet, cap],
     })
     closers.push(() => runtime.close())
+    // Eval runs reach the runtime before it opens (recovery may resume one); drift scores sampled production runs.
+    const evalJobs = wireEval({ runtime, workflows, env })
+    closers.push(() => evalJobs.close())
 
     // The journal reads behind the HTTP bodies go through the runtime's own pool (`runtime.getRun`): a poll is one
     // indexed primary-key read, backed off to 250 ms, so held waits cost the journal far less than the run writes.
@@ -238,6 +243,7 @@ export async function boot(config: HostConfig, options: BootOptions = {}): Promi
 
     await runtime.open()
     open = true
+    evalJobs.start()
     closers.push(async () => {
       open = false
     })
