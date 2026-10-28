@@ -36,7 +36,7 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
   (`dispatch-worktree.test.ts` fails on the mini, system `credential.helper osxkeychain`); a sweep
   worker pushed a branch to the IU GitLab repo prometheus-epx (deleted, no MR; rule added to briefs);
   modelpick main checkout has an unpushed local commit `6d7c624` still calling `agw`.
-- Wave 4 first step to add at Wave 3 close: direct capability calls over HTTP are billed but not
+- Wave 4 first step (added to PLAN): direct capability calls over HTTP are billed but not
   recorded (N6) — route them through a one-step run or record their usage.
 
 ## Next action
