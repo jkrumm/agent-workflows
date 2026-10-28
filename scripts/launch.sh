@@ -104,9 +104,11 @@ exec "$SECRETS_RUN" run --env-file="$TPL" -- /bin/sh -c '
   # >>> routes-override
   # An untracked route override (which model and spend every run gets, e.g. an eval of another model):
   # $HOME/.config/agw/routes.json, one JSON object of route id -> partial route spec, exported as AGW_ROUTES. It must be
-  # a regular file (no symlink) owned by this user and not group- or world-writable, and parse as a JSON object with the
-  # host bun; else the host refuses to start (78), naming the file, never its content. The file wins over an AGW_ROUTES
-  # already in the environment. Only the route ids are logged. Absent file = no override, the environment untouched.
+  # a regular file (no symlink) owned by this user and not group- or world-writable. It is read ONCE into a variable,
+  # that string is validated with the routes package own validator (the same one the host runs at boot), and exactly that
+  # string is exported. A file that fails is refused with 78 and the validator message, which names the route id and the
+  # problem and never any content, so launchd does not crash-loop on a file outside the release. The file wins over an
+  # AGW_ROUTES already in the environment. Only the validated route ids are logged. Absent file = no override.
   ROUTES_OVERRIDE="$HOME/.config/agw/routes.json"
   if [ -e "$ROUTES_OVERRIDE" ] || [ -L "$ROUTES_OVERRIDE" ]; then
     routes_mode=$(/bin/ls -ld "$ROUTES_OVERRIDE" | /usr/bin/cut -c1-10)
@@ -121,16 +123,22 @@ exec "$SECRETS_RUN" run --env-file="$TPL" -- /bin/sh -c '
       echo "agent-workflows-host: $ROUTES_OVERRIDE must not be group- or world-writable (it steers the model and spend of every run); refusing to start." >&2
       exit 78
     fi
-    routes_ids=$(AGW_ROUTES_FILE="$ROUTES_OVERRIDE" bun -e "
+    routes_json=$(/bin/cat "$ROUTES_OVERRIDE")
+    case "$routes_json" in
+      *[![:space:]]*) ;;
+      *) echo "agent-workflows-host: $ROUTES_OVERRIDE is empty; refusing to start." >&2; exit 78 ;;
+    esac
+    # Run from packages/host: with the isolated install, only a package own node_modules links the workspace packages.
+    routes_ids=$(cd packages/host && AGW_ROUTES="$routes_json" bun -e "
+      const { validateOverrides } = await import(\"@agent-workflows/routes\")
       try {
-        const v = JSON.parse(require(\"fs\").readFileSync(process.env.AGW_ROUTES_FILE, \"utf8\"))
-        if (!v || typeof v !== \"object\" || Array.isArray(v)) process.exit(3)
-        process.stdout.write(Object.keys(v).join(\",\"))
-      } catch {
+        process.stdout.write(validateOverrides(process.env).join(\",\"))
+      } catch (error) {
+        process.stderr.write(error instanceof Error ? error.message : \"invalid override\")
         process.exit(3)
       }
-    " 2>/dev/null) || { echo "agent-workflows-host: $ROUTES_OVERRIDE is not a JSON object; refusing to start." >&2; exit 78; }
-    AGW_ROUTES=$(/bin/cat "$ROUTES_OVERRIDE")
+    " 2>&1) || { echo "agent-workflows-host: $ROUTES_OVERRIDE is invalid: $routes_ids; refusing to start." >&2; exit 78; }
+    AGW_ROUTES="$routes_json"
     export AGW_ROUTES
     echo "agent-workflows-host: route override active from $ROUTES_OVERRIDE (routes: ${routes_ids:-none})" >&2
   fi

@@ -11,6 +11,7 @@ import {
   routeIds,
   routeSchema,
   UnknownRouteError,
+  validateOverrides,
 } from './index.ts'
 import { ROUTE_ID } from './schema.ts'
 
@@ -361,5 +362,62 @@ describe('fallback', () => {
       usd: null,
       source: 'unknown',
     })
+  })
+})
+
+describe('validateOverrides', () => {
+  test('unset, blank and {} touch nothing', () => {
+    expect(validateOverrides({})).toEqual([])
+    expect(validateOverrides({ [OVERRIDES_ENV]: '  ' })).toEqual([])
+    expect(validateOverrides(env({}))).toEqual([])
+  })
+
+  test('returns the route ids the override touches, a fallback patch included', () => {
+    expect(validateOverrides(env({ check: { effort: 'low' }, 'cheap.classify': { model: 'm' } }))).toEqual([
+      'check',
+      'cheap.classify',
+    ])
+  })
+
+  test('checks every patch, not only the first: an unknown id and a bad spec each throw, naming the id', () => {
+    const unknown = () => validateOverrides(env({ check: { effort: 'low' }, 'no.such': { model: 'x' } }))
+    expect(unknown).toThrow(RouteOverrideError)
+    expect(unknown).toThrow('"no.such"')
+    const bad = () => validateOverrides(env({ check: { model: 'x' }, decide: { effort: 'high' } }))
+    expect(bad).toThrow(RouteOverrideError)
+    expect(bad).toThrow('"decide"')
+  })
+
+  test('malformed JSON names the problem and never the parser message or any of the input', () => {
+    for (const raw of ['{nope', '{"check": leakysecret}', 'leakysecret', '{"check":{"model":"leakysecret"']) {
+      let message = ''
+      try {
+        validateOverrides({ [OVERRIDES_ENV]: raw })
+      } catch (error) {
+        expect(error).toBeInstanceOf(RouteOverrideError)
+        message = (error as Error).message
+      }
+      expect(message).toBe('AGW_ROUTES: not valid JSON')
+    }
+  })
+
+  test('a shape or value error carries no override value', () => {
+    for (const bad of [
+      { check: { effort: 'leakysecret' } },
+      { check: { colour: 'leakysecret' } },
+      { check: 'leakysecret' },
+      'leakysecret',
+      ['leakysecret'],
+    ]) {
+      let message = ''
+      try {
+        validateOverrides(env(bad))
+      } catch (error) {
+        expect(error).toBeInstanceOf(RouteOverrideError)
+        message = (error as Error).message
+      }
+      expect(message).not.toBe('')
+      expect(message).not.toContain('leakysecret')
+    }
   })
 })

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { applyPatch, RouteOverrideError, readOverrides } from './overrides.ts'
+import { applyPatch, OVERRIDES_ENV, RouteOverrideError, readOverrides } from './overrides.ts'
 import type { ResolvedRoute, RouteEntry } from './schema.ts'
 import { DEFAULT_ROUTES, type RouteId } from './table.ts'
 
@@ -33,6 +33,35 @@ export function routeIds(): RouteId[] {
   return Object.keys(DEFAULT_ROUTES) as RouteId[]
 }
 
+/** Every override applied to its table entry and validated whole; throws `RouteOverrideError` on the first bad one. */
+function patchedEntries(env: Env): Map<string, RouteEntry> {
+  const resolved = new Map<string, RouteEntry>()
+  for (const [patchId, patch] of Object.entries(readOverrides(env))) {
+    const base = isRouteId(patchId) ? DEFAULT_ROUTES[patchId] : undefined
+    if (!base) throw new RouteOverrideError(`unknown route "${patchId}" (known: ${routeIds().join(', ')})`)
+    resolved.set(patchId, applyPatch(patchId, base, patch))
+  }
+  return resolved
+}
+
+/**
+ * Check `AGW_ROUTES` once, whole: it parses as JSON, has the override shape, and every patch (including one for an id
+ * that is not in the table) is valid over its table entry. Returns the ids the override touches (all table ids).
+ * A failure is a `RouteOverrideError` naming the route id and the problem; it never carries the parser's own message
+ * (it quotes the input) or any override value, so it is safe to print. Unset or blank means no overrides.
+ */
+export function validateOverrides(env: Env = process.env): RouteId[] {
+  const raw = env[OVERRIDES_ENV]?.trim()
+  if (raw) {
+    try {
+      JSON.parse(raw)
+    } catch {
+      throw new RouteOverrideError('not valid JSON')
+    }
+  }
+  return [...patchedEntries(env).keys()] as RouteId[]
+}
+
 /**
  * A copy of the entry for a route id, with `AGW_ROUTES` applied; mutating it changes nothing shared.
  * Throws `UnknownRouteError` for an id that is not in the table (only reachable from untyped callers)
@@ -40,14 +69,7 @@ export function routeIds(): RouteId[] {
  * route. Every patch is checked, not only the requested one.
  */
 export function resolveRoute(id: RouteId, env: Env = process.env): ResolvedRoute {
-  const patches = readOverrides(env)
-  const resolved = new Map<string, RouteEntry>()
-  for (const [patchId, patch] of Object.entries(patches)) {
-    const base = isRouteId(patchId) ? DEFAULT_ROUTES[patchId] : undefined
-    if (!base) throw new RouteOverrideError(`unknown route "${patchId}" (known: ${routeIds().join(', ')})`)
-    resolved.set(patchId, applyPatch(patchId, base, patch))
-  }
-  const entry = resolved.get(id) ?? (isRouteId(id) ? DEFAULT_ROUTES[id] : undefined)
+  const entry = patchedEntries(env).get(id) ?? (isRouteId(id) ? DEFAULT_ROUTES[id] : undefined)
   if (!entry) throw new UnknownRouteError(id)
   return { id, ...structuredClone(entry) }
 }
