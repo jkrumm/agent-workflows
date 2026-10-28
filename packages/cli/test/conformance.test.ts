@@ -475,6 +475,17 @@ describe('agw against the fake host', () => {
     expect(n.error?.message).toContain('no resume command')
   })
 
+  test('a run id from the host gets the path check: .. exits 1 before any poll', async () => {
+    const b = box()
+    await agw(b, ['schema', '--refresh'])
+    const r = await agw(b, ['fixture', 'dotrun'])
+    expect(r.code).toBe(EXIT.general)
+    expect(r.error?.message).toBe('host returned an unsafe runId: ..')
+    expect(r.json()).toMatchObject({ runId: '..', status: 'running' })
+    const last = host.requests.at(-1)
+    expect(last?.path).toBe('/workflows/fixture/dotrun')
+  })
+
   test('an optional stdin field is not read implicitly: an open pipe does not hang the call', async () => {
     const r = await agw(box(), ['fixture', 'note'], { openStdin: true })
     expect(r.code).toBe(0)
@@ -628,6 +639,14 @@ describe('agw against the fake host', () => {
     expect(servedSha(doc)).toBe(expected)
     expect(hostSha(doc)).toBe(expected)
     expect(contractSha({ ...doc, info: { ...doc.info, 'x-contract-sha': 'ignored' } })).toBe(expected)
+  })
+
+  test('schema --help prints usage and exits 0', async () => {
+    const r = await agw(sandbox(), ['schema', '--help'])
+    expect(r.code).toBe(0)
+    expect(r.stdout).toStartWith('usage: agw schema')
+    expect(r.stdout).toContain('--exit-codes')
+    expect(r.stderr).toBe('')
   })
 
   test('schema --exit-codes needs neither a cache nor a host', async () => {
