@@ -349,21 +349,27 @@ export class OpenCodeHost implements AgentHost {
     }
     // A second create with the same id returns the first session (measured), so a crash right here is harmless.
     const permissions = sessionPermissions(def, allowDirectories)
-    await this.client.createSession(
-      {
-        id: sessionId,
-        // A title set at create skips OpenCode's background title call (billed to the session otherwise).
-        title: `agw ${spec.runId}:${spec.stepId}`,
-        location: { directory },
-        model,
-        permissions,
-        metadata: { agw: { key: spec.key, agent: def.name, route: routeId, locationHash: location.hash } },
-      },
-      headers,
-    )
-    // The create above returned the session that was already there: it keeps the policy it was made with (a session
-    // from before a deploy that changed the rules). Set the current one; the next turn reads it.
-    if (existed) await this.client.updateSession(sessionId, { permissions }, headers)
+    try {
+      await this.client.createSession(
+        {
+          id: sessionId,
+          // A title set at create skips OpenCode's background title call (billed to the session otherwise).
+          title: `agw ${spec.runId}:${spec.stepId}`,
+          location: { directory },
+          model,
+          permissions,
+          metadata: { agw: { key: spec.key, agent: def.name, route: routeId, locationHash: location.hash } },
+        },
+        headers,
+      )
+      // The create above returned the session that was already there: it keeps the policy it was made with (a session
+      // from before a deploy that changed the rules). Set the current one; the next turn reads it.
+      if (existed) await this.applyPolicy(sessionId, permissions, headers)
+    } catch (err) {
+      // Fail closed, and give back the warm-location pin and its cache use the session took above.
+      this.pins.get(sessionId)?.release()
+      throw err
+    }
     const handle: OpenCodeHandle = {
       v: 1,
       sessionId,
@@ -407,6 +413,11 @@ export class OpenCodeHost implements AgentHost {
     if (!(await this.client.getSession(base.sessionId, headers))) {
       throw new WorkflowError('error', `opencode session ${base.sessionId} is gone; nothing to continue`)
     }
+    // The session may predate the release that serves this turn, or be the fallback session: between turns is where
+    // the policy is measured to take effect, so set the current one now (a no-op when it is already there).
+    const def = this.agents.get(base.agent)
+    if (!def) throw new WorkflowError('error', `unknown agent "${base.agent}"; cannot apply its permissions`)
+    await this.applyPolicy(base.sessionId, sessionPermissions(def, base.allow ?? []), headers)
     const next: OpenCodeHandle = {
       ...base,
       runId: spec.runId,
@@ -414,6 +425,21 @@ export class OpenCodeHost implements AgentHost {
       turn: `${spec.key}#${spec.attempt}`,
     }
     return next
+  }
+
+  /**
+   * Makes the session's stored rules the given ones: one read, and a `PATCH` only when they differ (a session created
+   * with the current policy, a re-attach within one release, costs no write). Measured only between turns; a patch
+   * onto a session mid-turn is unmeasured, which is why an equal policy is never rewritten.
+   */
+  private async applyPolicy(
+    sessionId: string,
+    permissions: PermissionRule[],
+    headers: Record<string, string> | undefined,
+  ): Promise<void> {
+    const stored = (await this.client.getSession(sessionId, headers))?.permissions
+    if (stored !== undefined && JSON.stringify(stored) === JSON.stringify(permissions)) return
+    await this.client.updateSession(sessionId, { permissions }, headers)
   }
 
   /** A follow-up turn's input, sent once: the session (messages or inbox) is read first, and the id dedupes too. */
@@ -667,8 +693,8 @@ export class OpenCodeHost implements AgentHost {
       },
       headers,
     )
-    // A fallback session that survived a redeploy keeps its old rules; set the current ones (idempotent when new).
-    await this.client.updateSession(sessionId, { permissions }, headers)
+    // A fallback session that survived a redeploy keeps its old rules; a fresh one already has the current ones.
+    await this.applyPolicy(sessionId, permissions, headers)
     const next: OpenCodeHandle = { ...h, sessionId, model: fallback.route.model, fallback: true }
     await this.prompt(next, prompt)
     return await this.wait(next, options)

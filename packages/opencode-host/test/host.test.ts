@@ -271,6 +271,62 @@ describe('re-attach applies the current policy', () => {
     expect(stored(t, retry)?.permissions).toEqual(sessionPermissions(AGENT))
     await t.host.wait(retry, waitOptions())
   })
+
+  test('nothing is written when the session already has the current policy', async () => {
+    const t = setup()
+    const first = await t.host.open(spec('x', { allowDirectories: ['/tmp/repo'] }))
+    const again = await t.host.open(spec('x', { allowDirectories: ['/tmp/repo'] }))
+    expect(sid(again)).toBe(sid(first))
+    expect(stored(t, again)?.permissionUpdates).toBeUndefined()
+    // A fresh fallback session is created with the policy: no write either.
+    await t.host.prompt(first, '[balance] review this')
+    await t.host.wait(first, waitOptions())
+    const fallback = Object.values(t.fake.state.sessions).find((s) => s.id !== sid(first))
+    expect(fallback?.permissions).toEqual(sessionPermissions(AGENT, ['/tmp/repo']))
+    expect(fallback?.permissionUpdates).toBeUndefined()
+  })
+
+  test('a failed patch fails the open and gives back the warm-location pin', async () => {
+    const t = setup()
+    const first = await t.host.open(spec('x'))
+    ;(stored(t, first) as { permissions: unknown[] }).permissions = OLD
+    t.fake.failSessionPatches(true)
+    expect(await failure(t.host.open(spec('x')))).toContain('PATCH')
+    expect((t.host as unknown as { pins: Map<string, unknown> }).pins.size).toBe(0)
+    t.fake.failSessionPatches(false)
+    expect(stored(t, first)?.permissions).toEqual(OLD) // fail closed: nothing proceeded on the old rules
+  })
+
+  describe('a follow-up turn', () => {
+    const turn = { runId: 'run-1', stepId: 'agent:reask', key: 'run-1:agent:reask', attempt: 1 }
+
+    test('sets the current policy on the session it continues, once', async () => {
+      const t = setup()
+      const first = await t.host.open(spec('draft'))
+      await t.host.prompt(first, 'draft it')
+      await t.host.wait(first, waitOptions())
+      ;(stored(t, first) as { permissions: unknown[] }).permissions = OLD
+      const next = await t.host.followUp(first, turn)
+      expect(sid(next)).toBe(sid(first))
+      expect(stored(t, first)?.permissions).toEqual(sessionPermissions(AGENT))
+      expect(stored(t, first)?.permissionUpdates).toBe(1)
+      await t.host.followUp(first, { ...turn, attempt: 2, key: 'run-1:agent:reask:2' })
+      expect(stored(t, first)?.permissionUpdates).toBe(1) // equal now: no second write
+    })
+
+    test('when it moves to the fallback session, that session gets it', async () => {
+      const t = setup()
+      const first = await t.host.open(spec('x', { allowDirectories: ['/tmp/repo'] }))
+      await t.host.prompt(first, '[balance] review this')
+      await t.host.wait(first, waitOptions())
+      const fallback = Object.values(t.fake.state.sessions).find((s) => s.id !== sid(first))
+      expect(fallback).toBeDefined()
+      ;(fallback as { permissions: unknown[] }).permissions = OLD
+      const next = (await t.host.followUp(first, turn)) as OpenCodeHandle
+      expect(next.sessionId).toBe(fallback?.id as string)
+      expect(fallback?.permissions).toEqual(sessionPermissions(AGENT, ['/tmp/repo']))
+    })
+  })
 })
 
 describe('step options', () => {
