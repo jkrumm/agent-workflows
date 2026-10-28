@@ -1,8 +1,9 @@
-import { refused, type ResolvedWebDeps } from './deps.ts'
+import { type Pin, refused, type ResolvedWebDeps } from './deps.ts'
 
 // The guard behind web.fetch (behaviour of research-gateway's lib/ssrf.ts, rewritten): scheme, hostname literals,
-// then every address the name resolves to. It runs on the first URL and again on every redirect hop. Residual gap:
-// DNS rebinding between this lookup and the connect; the redirect re-check and the refusal of internal names narrow it.
+// then every address the name resolves to. It runs on the first URL and again on every redirect hop, and returns the
+// vetted addresses: the caller connects to those (`pinned.ts`), so the name is resolved once and a resolver that changes
+// its answer afterwards (DNS rebinding) reaches nothing.
 
 const BLOCKED_HOSTNAMES = new Set(['localhost', 'metadata', 'ip6-localhost', 'instance-data'])
 // `.ts.net` is the tailnet's MagicDNS: it resolves to 100.64.0.0/10, but the name alone is reason enough to refuse.
@@ -89,8 +90,8 @@ export function isPrivateAddress(address: string): boolean {
   return v4 ? isPrivateIpv4(v4) : isPrivateIpv6(unscoped)
 }
 
-/** Throws `refused` unless `raw` is an http(s) URL whose host is a public name or address. Returns the parsed URL. */
-export async function assertPublicUrl(deps: ResolvedWebDeps, capability: string, raw: string): Promise<URL> {
+/** Throws `URL_REFUSED` unless `raw` is an http(s) URL whose host is a public name or address. Returns the vetted addresses to connect to. */
+export async function assertPublicUrl(deps: ResolvedWebDeps, capability: string, raw: string): Promise<Pin> {
   let url: URL
   try {
     url = new URL(raw)
@@ -113,5 +114,5 @@ export async function assertPublicUrl(deps: ResolvedWebDeps, capability: string,
   if (addresses.length === 0) throw refused(capability, `host ${host} did not resolve`)
   const bad = addresses.find(isPrivateAddress)
   if (bad !== undefined) throw refused(capability, `host ${host} resolves to a private or reserved address`)
-  return url
+  return { addresses }
 }

@@ -25,6 +25,8 @@ export const ERRORS = {
     message: 'Model output truncated',
     data: z.object({ reason: z.enum(['starved', 'truncated']) }),
   },
+  /** A URL the capability will not fetch (a scheme other than http(s), credentials, an internal or non-public host). Nothing was sent. */
+  URL_REFUSED: { status: 422, message: 'URL refused' },
   /** The caller's signal aborted the call. */
   CANCELLED: { status: 499, message: 'Cancelled' },
 } as const

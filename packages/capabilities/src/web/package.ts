@@ -2,11 +2,13 @@ import { z } from 'zod'
 import { fail } from '../errors.ts'
 import { defineCapability } from '../procedure.ts'
 import { failedResponse, readJson, withRetries } from '../transports/http.ts'
-import { keyOf, refused, type ResolvedWebDeps, within } from './deps.ts'
+import { keyOf, type ResolvedWebDeps, webUsage, within } from './deps.ts'
 
 const REGISTRIES = ['npm', 'pypi', 'crates', 'github-release'] as const
 
-// What each registry accepts as a name, so a malformed one is refused here instead of shaping a request URL.
+// What each registry accepts as a name, so a malformed one is refused (by the input schema, the one place) instead of
+// shaping a request URL. GitHub's `.` and `..` match the character class and would climb out of `/repos/` in a request
+// that carries GITHUB_TOKEN, so the schema also refuses a dot-only segment.
 const NAME_PATTERN: Record<(typeof REGISTRIES)[number], RegExp> = {
   npm: /^(?:@[a-z0-9~][a-z0-9._~-]*\/)?[a-z0-9~][a-z0-9._~-]*$/i,
   pypi: /^[a-z0-9][a-z0-9._-]*$/i,
@@ -19,7 +21,7 @@ export const packageInput = z
     registry: z.enum(REGISTRIES),
     name: z.string().min(1).describe('npm: "hono" or "@scope/pkg"; github-release: "owner/repo"'),
   })
-  .refine((i) => NAME_PATTERN[i.registry].test(i.name), {
+  .refine((i) => NAME_PATTERN[i.registry].test(i.name) && i.name.split('/').every((part) => !/^\.+$/.test(part)), {
     message: 'name is not valid for that registry',
     path: ['name'],
   })
@@ -66,7 +68,6 @@ export const createPackage = (deps: ResolvedWebDeps) =>
     output: packageOutput,
     cli: { positional: ['registry', 'name'], defaultFormat: 'json' },
     async handler({ registry, name }, ctx) {
-      if (!NAME_PATTERN[registry].test(name)) throw refused('web.package', 'name is not valid for that registry')
       const get = async (url: string, headers: Record<string, string> = {}): Promise<unknown> => {
         try {
           return await withRetries(deps.retry, ctx.signal, async () => {
@@ -86,13 +87,6 @@ export const createPackage = (deps: ResolvedWebDeps) =>
       }
       const unreadable = () =>
         fail('UPSTREAM_ERROR', `web.package: ${registry} answered with a body that does not fit`, {})
-      const billedFree = () =>
-        ctx.addUsage({
-          model: registry,
-          tokens: { input: 0, output: 0, cacheRead: 0, reasoning: 0 },
-          cost: 0,
-          costSource: 'rate',
-        })
 
       const out = await (async (): Promise<Out> => {
         switch (registry) {
@@ -118,11 +112,13 @@ export const createPackage = (deps: ResolvedWebDeps) =>
             const parsed = cratesInfo.safeParse(
               await get(`https://crates.io/api/v1/crates/${encodeURIComponent(name)}`),
             )
-            // The stable release, not `newest_version`, which can be a prerelease ahead of it.
-            const latest = parsed.success
-              ? (parsed.data.crate.max_stable_version ?? parsed.data.crate.newest_version)
-              : undefined
-            if (!parsed.success || !latest) throw unreadable()
+            if (!parsed.success) throw unreadable()
+            // The stable release only: `newest_version` can be a prerelease, and a crate that only has prereleases has
+            // no "latest" to report.
+            const latest = parsed.data.crate.max_stable_version
+            if (!latest) {
+              throw fail('UPSTREAM_ERROR', `web.package: ${name} has no stable version on crates.io`, { status: 404 })
+            }
             const publishedAt = parsed.data.versions?.find((v) => v.num === latest)?.created_at
             return { name, latest, ...(publishedAt ? { publishedAt } : {}), url: `https://crates.io/crates/${name}` }
           }
@@ -146,7 +142,7 @@ export const createPackage = (deps: ResolvedWebDeps) =>
           }
         }
       })()
-      billedFree()
+      ctx.addUsage(webUsage(registry, 0))
       return out
     },
   })
