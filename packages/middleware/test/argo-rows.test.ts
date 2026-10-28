@@ -287,4 +287,21 @@ describe('argo rows: iu_key', () => {
     expect(max).toMatchObject({ billing: 'max', iu_key: null })
     expect(ArgoBody.safeParse({ records: [iu, max] }).success).toBe(true)
   })
+
+  test('raw carries the after-the-fact score explicitly: a scorer error is pass null with its kind, never a fail', () => {
+    const raw = (scores: unknown) => argoRowsForStep(step({}, { scores }), opts)[0]?.raw as Record<string, unknown>
+    expect(raw(null)).toMatchObject({ scores: null, scorePass: null, scoreError: null })
+    const verdict = { final: { source: 'drift', scorer: 's1', scores: { ok: 0 }, pass: false } }
+    expect(raw(verdict)).toMatchObject({ scores: verdict, scorePass: false, scoreError: null })
+    const failed = {
+      final: { source: 'drift', scorer: 's1', scores: {}, pass: null, error: 'gave up', errorKind: 'infra' },
+    }
+    expect(raw(failed)).toMatchObject({ scorePass: null, scoreError: { kind: 'infra', message: 'gave up' } })
+    const own = { final: { source: 'regression', scorer: 's1', scores: {}, pass: null, error: 'bug' } }
+    expect(raw(own)).toMatchObject({ scorePass: null, scoreError: { kind: 'scorer', message: 'bug' } })
+    for (const scores of [null, verdict, failed])
+      expect(ArgoBody.safeParse({ records: [{ ...argoRowsForStep(step({}, { scores }), opts)[0] }] }).success).toBe(
+        true,
+      )
+  })
 })
