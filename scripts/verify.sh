@@ -6,7 +6,7 @@
 set -u
 
 ROOT="${AGW_ROOT:-$HOME/.agent-workflows}"
-APP_DIR="$ROOT/app"
+REPO_DIR="$ROOT/repo"
 SHA_FILE="$ROOT/data/deployed-sha"
 HEALTH_URL="http://127.0.0.1:7791/health"
 PG_PASSWORD_REF="op://mini/vps-dev/AGENT_WORKFLOWS_DB_PASSWORD"
@@ -29,8 +29,8 @@ ok "/health ok (version ${version[1,12]})"
 
 # 2. the deployed build is origin/master, and it is the one serving
 deployed=$(cat "$SHA_FILE" 2>/dev/null) || fail "$SHA_FILE missing: nothing was deployed"
-remote=$(git -C "$APP_DIR" ls-remote origin refs/heads/master | awk '{print $1}')
-[[ -n "$remote" ]] || fail "cannot read origin/master from $APP_DIR"
+remote=$(git -C "$REPO_DIR" ls-remote origin refs/heads/master | awk '{print $1}')
+[[ -n "$remote" ]] || fail "cannot read origin/master from $REPO_DIR (run make deploy first)"
 [[ "$deployed" == "$remote" ]] || fail "deployed ${deployed[1,12]} is not origin/master ${remote[1,12]}"
 [[ "$version" == "$deployed" ]] || fail "the running host reports ${version[1,12]}, deployed is ${deployed[1,12]}"
 ok "deployed sha is origin/master (${deployed[1,12]})"

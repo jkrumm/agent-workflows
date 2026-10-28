@@ -32,7 +32,7 @@ check:
 fmt:
 	@bunx --no-install biome format --write .
 
-# The deploy clone (~/.agent-workflows/app) is what runs, never this checkout; scripts/deploy.sh owns the steps.
+# A release (~/.agent-workflows/releases/<sha>, live via `current`) is what runs, never this checkout; scripts/deploy.sh owns the steps.
 deploy:
 	@DRY_RUN="$(DRY_RUN)" /bin/zsh scripts/deploy.sh
 
