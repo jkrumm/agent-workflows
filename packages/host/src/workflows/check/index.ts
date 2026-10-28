@@ -16,6 +16,7 @@ import { bunExec, type Exec, type ExecResult } from './exec.ts'
 import { hasMakeCheckTarget } from './make.ts'
 import { agentIdleMs, agentPrompt, JSON_ONLY_RETRY } from './prompt.ts'
 import { CHECK_INPUT, CHECK_OUTPUT, type CheckInput, type CheckOutput } from './schema.ts'
+import { checkScorer } from './scorer.ts'
 
 /** Ordinary steps; the test step and `make check` (which bundles the tests) get {@link DEFAULT_TEST_IDLE_SECONDS}. */
 const DEFAULT_STEP_IDLE_SECONDS = 180
@@ -207,6 +208,7 @@ export function createCheckWorkflows(shared: CheckDeps | WorkflowDeps = {}): Hos
     version: '2026-10-28.2',
     input: CHECK_INPUT,
     output: CHECK_OUTPUT,
+    scorer: checkScorer,
     async run(ctx, input) {
       const stepSeconds = input.stepTimeoutSeconds ?? DEFAULT_STEP_IDLE_SECONDS
       const testSeconds = input.stepTimeoutSeconds ?? DEFAULT_TEST_IDLE_SECONDS

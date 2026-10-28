@@ -7,6 +7,7 @@ import { createRetrospective } from './retrospective/index.ts'
 import type { GhPort } from './retrospective/gh.ts'
 import type { JournalReader } from './retrospective/sample.ts'
 import type { TrackedPaths } from './retrospective/tracked.ts'
+import { createEvalWorkflows } from './eval/index.ts'
 import { createReviewWorkflows } from './review/index.ts'
 import { createSmokePing } from './smoke.ts'
 
@@ -22,7 +23,12 @@ export interface WorkflowDeps {
 
 /** Every workflow the host process serves. Heavy pipelines run in their own processes (concept §8). */
 export function createWorkflows(deps: WorkflowDeps): HostWorkflow[] {
-  const base = [createSmokePing(deps.registry), ...createReviewWorkflows(deps), ...createCheckWorkflows(deps)]
+  const base = [
+    createSmokePing(deps.registry),
+    ...createReviewWorkflows(deps),
+    ...createCheckWorkflows(deps),
+    ...createEvalWorkflows(),
+  ]
   if (!deps.retro) return base
   const { journal, learnings, gh, tracked } = deps.retro
   const agents = new Map(Object.entries(fingerprintWorkflows(base)).map(([id, refs]) => [id, refs.map((r) => r.agent)]))
