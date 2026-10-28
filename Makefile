@@ -4,12 +4,14 @@
 help:
 	@echo "make check   format, lint, oxlint type-aware, tsc, bun test (the merge gate)"
 	@echo "make fmt     apply formatting"
-	@echo "make deploy  skeleton, nothing deployable yet"
-	@echo "make verify  skeleton, nothing deployable yet"
+	@echo "make deploy  deploy origin/master on the mini: clone, LaunchAgent, health, agw on PATH (DRY_RUN=1 prints the plan)"
+	@echo "make verify  prove the deployment: health, sha, a real agw smoke ping and its journal row"
 
 # docs/spikes/** is excluded from every tool (see biome.json, .oxlintrc.json, tsconfig.json, bunfig.toml).
 # Tests need Postgres via AGW_TEST_PG_URL; unset on the mini, it is built from .env.test.tpl through secrets-run.
 check:
+	@echo "==> install (bun install --frozen-lockfile)"
+	@bun install --frozen-lockfile
 	@echo "==> format (biome format)"
 	@bunx --no-install biome format .
 	@echo "==> lint (biome lint)"
@@ -30,8 +32,9 @@ check:
 fmt:
 	@bunx --no-install biome format --write .
 
+# The deploy clone (~/.agent-workflows/app) is what runs, never this checkout; scripts/deploy.sh owns the steps.
 deploy:
-	@echo "deploy: nothing is deployable yet; Wave 3 fills this in."
+	@DRY_RUN="$(DRY_RUN)" /bin/zsh scripts/deploy.sh
 
 verify:
-	@echo "verify: nothing is deployable yet; Wave 3 fills this in."
+	@/bin/zsh scripts/verify.sh
