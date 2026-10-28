@@ -54,7 +54,7 @@ export function computeFingerprint(version: string, inputs: FingerprintInputs): 
 export type AgentRef = { agent: string; route: RouteId }
 
 export type FsFingerprintOptions = {
-  /** Compiled agent definitions: `<agentsDir>/<agent>/AGENTS.md` and `<agentsDir>/<agent>/skills/**`. */
+  /** Compiled agent definitions: `<agentsDir>/<agent>/AGENTS.md`, `skills/**` and `plugins/**`. */
   agentsDir: string
   /** The agents each workflow references, with the route each runs on. A workflow absent here has none. */
   workflows: Record<string, AgentRef[]>
@@ -116,7 +116,8 @@ export function fsFingerprintSource(options: FsFingerprintOptions): FingerprintS
 }
 
 /**
- * `AGENTS.md` (required), `agent.json` (optional: the route and the permissions) and every file under `skills/`, as
+ * `AGENTS.md` (required), `agent.json` (optional: the route and the permissions) and every file under `skills/` and
+ * `plugins/` (an agent's custom tools), as
  * `[relative path, size, mtimeMs]`, sorted. Any other file in the directory is not an input.
  */
 async function agentFiles(dir: string): Promise<[string, number, number][]> {
@@ -127,11 +128,14 @@ async function agentFiles(dir: string): Promise<[string, number, number][]> {
     throw err
   })
   if (agentJson?.isFile()) out.push(['agent.json', agentJson.size, agentJson.mtimeMs])
-  const skills = join(dir, 'skills')
-  const entries = await readdir(skills, { recursive: true, withFileTypes: true }).catch((err: unknown) => {
-    if ((err as { code?: string }).code === 'ENOENT') return []
-    throw err
-  })
+  const entries = []
+  for (const sub of ['skills', 'plugins']) {
+    const listed = await readdir(join(dir, sub), { recursive: true, withFileTypes: true }).catch((err: unknown) => {
+      if ((err as { code?: string }).code === 'ENOENT') return []
+      throw err
+    })
+    entries.push(...listed)
+  }
   for (const entry of entries) {
     if (!entry.isFile()) continue
     const path = join(entry.parentPath, entry.name)

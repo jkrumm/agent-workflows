@@ -1064,6 +1064,18 @@ const unpriced = (usage: Usage): Usage => ({ ...usage, cost: null, costSource: '
 /** The id of the session a step moves to when its session fails on provider balance: derived, so re-attach finds it. */
 const fallbackSessionId = (sessionId: string) => sessionIdFor(`${sessionId}\0fallback`, 1)
 
+/**
+ * Whether `sessionId` is one of the sessions the host opens for the step keyed `key` (any generation, primary or
+ * fallback). For a tool server outside OpenCode that must tell which step a tool call comes from.
+ */
+export function isStepSession(sessionId: string, key: string): boolean {
+  for (let generation = 1; generation <= MAX_GENERATIONS; generation++) {
+    const id = sessionIdFor(key, generation)
+    if (sessionId === id || sessionId === fallbackSessionId(id)) return true
+  }
+  return false
+}
+
 /** Whether the turn after the prompt did anything: a tool call, or a reply with output tokens. */
 function turnRan(messages: readonly Message[], promptId: string): boolean {
   const from = promptIndex(messages, promptId)
