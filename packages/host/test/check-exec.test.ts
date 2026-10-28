@@ -8,6 +8,31 @@ import { bunExec, createBunExec, drainStream } from '../src/workflows/check/exec
 const cwd = realpathSync(mkdtempSync(join(tmpdir(), 'agw-exec-')))
 const sh = (script: string) => ['sh', '-c', script]
 
+/** `alive` until it is gone or a zombie: `kill(pid, 0)` succeeds on a zombie, which is dead but not yet reaped by whoever adopted it. */
+function lifeOf(pid: number): 'alive' | 'zombie' | 'gone' {
+  try {
+    process.kill(pid, 0)
+  } catch {
+    return 'gone'
+  }
+  const stat = Bun.spawnSync(['ps', '-o', 'stat=', '-p', String(pid)])
+    .stdout.toString()
+    .trim()
+  if (stat === '') return 'gone'
+  return stat.startsWith('Z') ? 'zombie' : 'alive'
+}
+
+/** Polls for the process to be dead (gone or a zombie), never a fixed sleep. */
+async function expectDead(pid: number, withinMs = 3_000) {
+  const until = Date.now() + withinMs
+  let life = lifeOf(pid)
+  while (life === 'alive' && Date.now() < until) {
+    await Bun.sleep(20)
+    life = lifeOf(pid)
+  }
+  expect(life).not.toBe('alive')
+}
+
 describe('bunExec', () => {
   test('exit code, merged stdout and stderr, PWD pinned to cwd', async () => {
     const result = await bunExec.run({ argv: sh('echo out; echo err >&2; echo "pwd=$PWD"; exit 3'), cwd })
@@ -38,7 +63,7 @@ describe('bunExec', () => {
     expect(result.exitCode).not.toBe(0)
     expect(Date.now() - started).toBeLessThan(5_000)
     const pid = Number(readFileSync(pidFile, 'utf8'))
-    expect(() => process.kill(pid, 0)).toThrow() // the backgrounded child is gone too
+    await expectDead(pid) // the backgrounded child is dead too
   })
 
   test('a slow but chatty command is not killed, however long it runs past the idle window', async () => {
@@ -123,6 +148,32 @@ describe('credentials', () => {
   test('commandEnv drops exactly the credential-shaped names', () => {
     const kept = Object.keys(commandEnv(env, '/work')).sort()
     expect(kept).toEqual(['HOME', 'LANG', 'OTEL_EXPORTER_OTLP_ENDPOINT', 'PATH', 'PWD'])
+  })
+})
+
+describe('make recursion state', () => {
+  const inherited = {
+    PATH: process.env.PATH ?? '/usr/bin',
+    MAKELEVEL: '1',
+    MAKEFLAGS: ' -j8 --jobserver-auth=3,4',
+    MFLAGS: '-j8',
+    MAKEOVERRIDES: '${-*-command-variables-*-}',
+    GNUMAKEFLAGS: '-k',
+    MAKEFILES: '/elsewhere.mk',
+    MAKE_TERMOUT: '/dev/pts/0',
+    MAKE_TERMERR: '/dev/pts/0',
+    MAKE_HOME: 'kept',
+  }
+
+  test("commandEnv drops make's inherited state: a validated make starts top-level", () => {
+    expect(Object.keys(commandEnv(inherited, '/work')).sort()).toEqual(['MAKE_HOME', 'PATH', 'PWD'])
+  })
+
+  test('a make under a host that is itself inside make runs top-level and silent about directories', async () => {
+    const makefile = join(mkdtempSync(join(tmpdir(), 'agw-make-')), 'Makefile')
+    writeFileSync(makefile, 'check:\n\t@echo "level=[$(MAKELEVEL)] flags=[$(MAKEFLAGS)]"\n')
+    const result = await createBunExec({ env: inherited }).run({ argv: ['make', '-f', makefile, 'check'], cwd })
+    expect(result.output).toBe('level=[0] flags=[]\n')
   })
 })
 

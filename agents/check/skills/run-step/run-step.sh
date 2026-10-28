@@ -4,6 +4,9 @@
 # Runs <command> (a shell command line) in <working-directory> under an idle watchdog: it is killed only after
 # <idle-seconds> without a new byte of output, never on elapsed time. Prints the last 200 lines of output, then one
 # marker line, and exits with the command's exit code (124 when the watchdog killed it).
+# The group kill below needs job control (`set -m`) and `kill -- -PGID`; dash (Debian/Ubuntu `sh`) has neither without a
+# tty, so the kill would silently reach nothing. Run under bash wherever this was started from.
+[ -n "$BASH_VERSION" ] || exec bash "$0" "$@"
 dir=$1
 idle=$2
 cmd=$3

@@ -48,7 +48,8 @@ The agent runs every command through `agents/check/skills/run-step/run-step.sh <
 (ported from legacy's `run_step`): the command is killed alone after `idle-seconds` without new output, the wrapper
 prints `run-step: IDLE_TIMEOUT no output for Ns` and exits 124, and the agent records that step as failed with
 "no output for Ns — likely a watch-mode runner or a hung process" and goes on, so the report keeps the other steps.
-The windows are the request's: `stepTimeoutSeconds`, else 180 s (600 s for the test step). The wrapper `cd`s into
+The windows are the request's: `stepTimeoutSeconds`, else 180 s (600 s for the test step). The script re-executes itself under bash (`set -m` and `kill -- -PGID` do not work in dash, Debian/Ubuntu's `sh`, without a tty:
+the group kill reached nothing there). The wrapper `cd`s into
 the checked tree itself and is called from the agent's session directory, so the agent never needs the location's
 absolute path. Not yet exercised against the real OpenCode host (`allowDirectories` is the other open part).
 
@@ -58,6 +59,11 @@ Every spawn (`make check`, `fallow`, the `make -p -q` probe, the git probes) run
 anything credential-shaped: legacy's pattern (`TOKEN|SECRET|PASSWORD|PASSWD|_KEY|APIKEY|API_KEY|CREDENTIAL|BEARER|SESSION_ID`,
 case-insensitive, no exemptions, so `CLAUDE_CODE_OAUTH_TOKEN` goes too) plus `AUTHORIZATION`, `AGW_PG_URL`, `IU_*` and
 `OTEL_EXPORTER_OTLP_*HEADERS`. A `$(shell …)` in an untrusted Makefile runs in the probe as well.
+
+Make's own recursion state (`MAKELEVEL`, `MAKEFLAGS`, `MFLAGS`, `MAKEOVERRIDES`, `GNUMAKEFLAGS`, `MAKEFILES`,
+`MAKE_TERMOUT`, `MAKE_TERMERR`) is dropped too: when the host itself runs under `make` (CI: `make check` → `bun test`),
+the validated repo's `make` would otherwise be a sub-make that obeys the host's `-j`/`-k`/`-n` and jobserver and, on
+GNU make 4, prints `Entering directory`. Every validated `make`, the probe included, starts top-level.
 
 Each command's process group (pgid and start time) is recorded in `<state dir>/check/<run>_<step>.group` while it
 runs. A step that starts first kills a recorded group that is still alive (a host crash between spawn and reap leaves

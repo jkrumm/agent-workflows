@@ -7,6 +7,31 @@ import { join } from 'node:path'
 const script = join(import.meta.dir, '../../../agents/check/skills/run-step/run-step.sh')
 const dir = realpathSync(mkdtempSync(join(tmpdir(), 'agw-runstep-')))
 
+/** `alive` until it is gone or a zombie: `kill(pid, 0)` succeeds on a zombie, which is dead but not yet reaped by whoever adopted it. */
+function lifeOf(pid: number): 'alive' | 'zombie' | 'gone' {
+  try {
+    process.kill(pid, 0)
+  } catch {
+    return 'gone'
+  }
+  const stat = Bun.spawnSync(['ps', '-o', 'stat=', '-p', String(pid)])
+    .stdout.toString()
+    .trim()
+  if (stat === '') return 'gone'
+  return stat.startsWith('Z') ? 'zombie' : 'alive'
+}
+
+/** Polls for the process to be dead (gone or a zombie), never a fixed sleep. */
+async function expectDead(pid: number, withinMs = 3_000) {
+  const until = Date.now() + withinMs
+  let life = lifeOf(pid)
+  while (life === 'alive' && Date.now() < until) {
+    await Bun.sleep(20)
+    life = lifeOf(pid)
+  }
+  expect(life).not.toBe('alive')
+}
+
 async function runStep(idle: number, command: string) {
   const proc = Bun.spawn(['sh', script, dir, String(idle), command], { stdout: 'pipe', stderr: 'pipe' })
   const [out, code] = await Promise.all([new Response(proc.stdout).text(), proc.exited])
@@ -32,8 +57,7 @@ describe('run-step.sh', () => {
     expect(hung.out.trimEnd().split('\n').at(-1)).toBe('run-step: IDLE_TIMEOUT no output for 2s')
     expect(Date.now() - started).toBeLessThan(10_000)
     const pid = Number(await Bun.file(join(dir, 'child.pid')).text())
-    await Bun.sleep(300)
-    expect(() => process.kill(pid, 0)).toThrow()
+    await expectDead(pid)
     // the next step is unaffected
     expect((await runStep(5, 'echo next')).code).toBe(0)
   }, 20_000)
