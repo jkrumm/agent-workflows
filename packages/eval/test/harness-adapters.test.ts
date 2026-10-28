@@ -116,6 +116,8 @@ describe('agw adapter', () => {
       {
         stdout: JSON.stringify({
           answers: { same: { type: 'boolean', value: true, confidence: 0.9, probability: 0.9 } },
+          model: 'decision-model',
+          truncatedChars: 0,
         }),
       },
     ])
@@ -129,6 +131,21 @@ describe('agw adapter', () => {
     expect(state.indexOf('alpha')).toBeLessThan(state.indexOf('zeta'))
     expect(state).not.toMatch(/legacy|new side/i)
     expect(calls[0]?.args[0]).toBe('decide')
+  })
+
+  test("the judge refuses output that is not decide's shape", async () => {
+    const judge = (stdout: string) =>
+      agwJudge({ exec: scripted([{ stdout }]).fake })
+        .sameDefect({ a: { file: 'a', message: 'x' }, b: { file: 'a', message: 'y' }, diff: '' })
+        .then(
+          () => 'resolved',
+          (e: unknown) => String(e),
+        )
+    expect(await judge(JSON.stringify({ answers: { same: { value: true } } }))).toContain('unexpected output')
+    const choice = { type: 'choice', choice: 'yes', confidence: 0.9, probabilities: {} }
+    expect(await judge(JSON.stringify({ answers: { same: choice }, model: 'm', truncatedChars: 0 }))).toContain(
+      'no boolean answer',
+    )
   })
 
   test('the journal is read-only, binds the run id and refuses an odd schema name', async () => {
@@ -260,6 +277,30 @@ describe('cli', () => {
     const out: string[] = []
     expect(await main(['check', '--dry-run'], { env, exec, out: (l) => out.push(l), err: () => {} })).toBe(0)
     expect(out.join('\n')).toContain('ready (setup: bun install --frozen-lockfile)')
+  })
+
+  test('--ids naming an unknown case exits 2 and names it; nothing runs', async () => {
+    const { fx, evalDir, env } = evalEnv()
+    writeCases(join(evalDir, 'review', 'cases.jsonl'), ReviewCase, [
+      reviewCase({ id: 'a', baseSha: fx.baseSha, diff: fx.diff }),
+    ])
+    const err: string[] = []
+    const calls: string[] = []
+    const spy: Exec = async (cmd) => {
+      calls.push(cmd)
+      return { code: 0, stdout: '', stderr: '' }
+    }
+    const code = await main(['review', '--ids', 'a,typo,gone'], {
+      env,
+      exec: spy,
+      out: () => {},
+      err: (l) => err.push(l),
+    })
+    expect(code).toBe(2)
+    expect(err.join()).toContain('unknown case ids')
+    expect(err.join()).toContain('typo, gone')
+    expect(calls).toEqual([])
+    expect(readdirSync(evalDir)).toEqual(['review'])
   })
 
   test('usage errors exit 2', async () => {

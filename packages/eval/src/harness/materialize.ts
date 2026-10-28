@@ -8,9 +8,7 @@ const SETUP_TIMEOUT_MS = 600_000
 
 export type SkipReason = 'repo_missing' | 'checkout_failed' | 'apply_failed' | 'setup_failed'
 
-export type Materialized =
-  | { ok: true; dir: string; setup: string[] }
-  | { ok: false; reason: SkipReason; detail: string; dir?: string }
+export type Materialized = { ok: true; dir: string } | { ok: false; reason: SkipReason; detail: string; dir?: string }
 
 export interface MaterializeInput {
   repo: string
@@ -57,22 +55,29 @@ export async function materialize(input: MaterializeInput, options: MaterializeO
     if (applied.code !== 0) return { ok: false, reason: 'apply_failed', detail: brief(applied.stderr), dir }
   }
 
-  const setup = options.setup ? setupSteps(dir) : []
-  for (const step of setup) {
-    const [cmd, ...args] = step.split(' ') as [string, ...string[]]
-    const ran = await exec(cmd, args, { cwd: dir, timeoutMs: SETUP_TIMEOUT_MS })
-    if (ran.code !== 0) return { ok: false, reason: 'setup_failed', detail: `${step}: ${brief(ran.stderr)}`, dir }
+  for (const step of options.setup ? setupSteps(dir) : []) {
+    const ran = await exec(step.cmd, step.args, { cwd: dir, timeoutMs: SETUP_TIMEOUT_MS })
+    if (ran.code !== 0) {
+      return { ok: false, reason: 'setup_failed', detail: `${commandLine(step)}: ${brief(ran.stderr)}`, dir }
+    }
   }
-  return { ok: true, dir, setup }
+  return { ok: true, dir }
 }
 
+export interface SetupStep {
+  cmd: string
+  args: string[]
+}
+
+export const commandLine = (step: SetupStep) => [step.cmd, ...step.args].join(' ')
+
 /** Setup the check needs before it runs: a bun lockfile and a Makefile `check` that does not install itself. */
-export function setupSteps(dir: string): string[] {
+export function setupSteps(dir: string): SetupStep[] {
   const lockfile = existsSync(join(dir, 'bun.lock')) || existsSync(join(dir, 'bun.lockb'))
   if (!lockfile) return []
   const makefile = join(dir, 'Makefile')
   const recipe = existsSync(makefile) ? checkRecipe(readFileSync(makefile, 'utf8')) : ''
-  return recipe.includes('bun install') ? [] : ['bun install --frozen-lockfile']
+  return recipe.includes('bun install') ? [] : [{ cmd: 'bun', args: ['install', '--frozen-lockfile'] }]
 }
 
 function checkRecipe(makefile: string): string {

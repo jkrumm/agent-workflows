@@ -55,7 +55,7 @@ describe('materialize', () => {
     const dir = mkdtempSync(join(tmpdir(), 'agw-eval-setup-'))
     expect(setupSteps(dir)).toEqual([])
     writeFileSync(join(dir, 'bun.lock'), '{}')
-    expect(setupSteps(dir)).toEqual(['bun install --frozen-lockfile'])
+    expect(setupSteps(dir)).toEqual([{ cmd: 'bun', args: ['install', '--frozen-lockfile'] }])
     writeFileSync(join(dir, 'Makefile'), 'check:\n\t@bun install --frozen-lockfile\n\t@bun test\n')
     expect(setupSteps(dir)).toEqual([])
   })
