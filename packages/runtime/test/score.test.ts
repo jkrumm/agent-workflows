@@ -194,7 +194,7 @@ describe('ctx.continue', () => {
         let body = await ctx.agent('draft', { agent: 'writer', prompt: `write about ${topic}`, output: draft })
         const verdict = await ctx.score('gate', body)
         if (!verdict.pass) {
-          body = (await ctx.continue('revise', body, verdict.feedback ?? 'again')) as z.output<typeof draft>
+          body = (await ctx.continue('draft:reask', body, verdict.feedback ?? 'again')) as z.output<typeof draft>
         }
         return body
       },
@@ -211,8 +211,8 @@ describe('ctx.continue', () => {
       expect(host.events.map((e) => e.op)).toEqual(['open', 'prompt', 'followUp', 'prompt'])
       const turn = [...host.sessions.values()].find((s) => s.turnOf)
       expect(turn?.root.id).toBe('ses_1')
-      expect(turn?.spec).toMatchObject({ runId, stepId: 'revise', key: `${runId}:revise` })
-      expect(await sql.step(runId, 'revise')).toMatchObject({
+      expect(turn?.spec).toMatchObject({ runId, stepId: 'draft:reask', key: `${runId}:draft:reask` })
+      expect(await sql.step(runId, 'draft:reask')).toMatchObject({
         kind: 'agent',
         status: 'done',
         handle: { handle: { sessionId: turn?.id }, prompted: true },
@@ -232,15 +232,15 @@ describe('ctx.continue', () => {
       output: z.object({ text: z.string() }),
       async run(ctx) {
         await ctx.agent('ask', { agent: 'writer', prompt: 'hi' })
-        return { text: String(await ctx.continue('more', 'ask', 'and more')) }
+        return { text: String(await ctx.continue('ask:reask', 'ask', 'and more')) }
       },
     })
     const rt = testRuntime({ schema: db.schema, workflows: [wf, text], host })
     await rt.open()
     try {
       const bad = await rt.wait((await rt.start(wf, { topic: 'x' }, { purpose: 'build' })).runId)
-      expect(bad.error?.message).toContain('agent step "revise"')
-      expect(await sql.step(bad.runId, 'revise')).toMatchObject({ status: 'failed', error_kind: 'invalid_output' })
+      expect(bad.error?.message).toContain('agent step "draft:reask"')
+      expect(await sql.step(bad.runId, 'draft:reask')).toMatchObject({ status: 'failed', error_kind: 'invalid_output' })
       const ok = await rt.wait((await rt.start(text, {}, { purpose: 'build' })).runId)
       expect(ok.output).toEqual({ text: 'plain text' })
     } finally {
@@ -255,7 +255,7 @@ describe('ctx.continue', () => {
       input: z.object({}),
       output: z.object({}),
       async run(ctx) {
-        await ctx.continue('more', { body: 'x' }, 'again')
+        await ctx.continue('ask:reask', { body: 'x' }, 'again')
         return {}
       },
     })
@@ -297,7 +297,7 @@ describe('ctx.continue', () => {
     await first.open()
     const { runId } = await first.start(wf, { topic: 'x' }, { purpose: 'build' })
     await until(
-      async () => ((await sql.step(runId, 'revise'))?.handle as { prompted?: boolean } | null)?.prompted,
+      async () => ((await sql.step(runId, 'draft:reask'))?.handle as { prompted?: boolean } | null)?.prompted,
       'turn prompted',
     )
     await first.close()
