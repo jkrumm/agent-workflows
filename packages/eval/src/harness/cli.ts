@@ -168,7 +168,10 @@ export async function main(argv: string[], deps: CliDeps): Promise<number> {
   }
   deps.err(`run directory: ${runDir}`)
   const journal = psqlJournal({ exec: deps.exec, env: deps.env })
-  const legacyCost = usageTrackerCost(deps.env.AGW_USAGE_TRACKER_DIR ?? join(home, '.local', 'share', 'usage-tracker'))
+  // usage-tracker lives under the real home, not the case-repo root (AGW_EVAL_HOME).
+  const legacyCost = usageTrackerCost(
+    deps.env.AGW_USAGE_TRACKER_DIR ?? join(deps.env.HOME ?? homedir(), '.local', 'share', 'usage-tracker'),
+  )
   const agw = { exec: deps.exec, journal, bin: deps.env.AGW_BIN }
   const legacy = { exec: deps.exec, cost: legacyCost, bin: deps.env.AGW_LEGACY_BIN }
   const meta = {

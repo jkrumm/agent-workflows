@@ -56,6 +56,17 @@ export async function pool<T>(items: T[], limit: number, fn: (item: T, index: nu
   await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, worker))
 }
 
+/** Runs one call at a time: legacy reruns go serially, so the IU time-window cost match never sees two jobs. */
+export function serialLock() {
+  let tail: Promise<unknown> = Promise.resolve()
+  return <T>(fn: () => Promise<T>): Promise<T> => {
+    const run = tail.then(fn, fn)
+    tail = run.catch(() => undefined)
+    return run
+  }
+}
+type Lock = ReturnType<typeof serialLock>
+
 /** Both sides on the same tree, one after the other; the order alternates per case so neither side always goes first. */
 async function bothSides<T>(index: number, next: () => Promise<T>, legacy?: () => Promise<T>) {
   let legacyResult: { ok: true; value: T } | { ok: false; error: string } | undefined
@@ -121,9 +132,17 @@ export function recordedReviewSide(c: ReviewCase): ReviewSide {
 export const requestedDepth = (c: ReviewCase, mode: HarnessOptions['depthMode']) =>
   mode === 'router' ? null : (c.legacy.depth ?? c.input.depth ?? null)
 
-async function reviewCase(c: ReviewCase, index: number, ports: ReviewPorts, options: HarnessOptions) {
-  const depth = requestedDepth(c, options.depthMode)
-  const base = { id: c.id, workflow: 'review' as const, repo: c.repo, depth, legacy: recordedReviewSide(c) }
+const reviewBase = (c: ReviewCase, options: HarnessOptions) => ({
+  id: c.id,
+  workflow: 'review' as const,
+  repo: c.repo,
+  depth: requestedDepth(c, options.depthMode),
+  legacy: recordedReviewSide(c),
+})
+
+async function reviewCase(c: ReviewCase, index: number, ports: ReviewPorts, options: HarnessOptions, lock: Lock) {
+  const base = reviewBase(c, options)
+  const { depth } = base
   return withTree<ReviewCaseResult>(
     options,
     { repo: c.repo, baseSha: c.baseSha, patch: c.diff },
@@ -141,7 +160,7 @@ async function reviewCase(c: ReviewCase, index: number, ports: ReviewPorts, opti
         sides = await bothSides(
           index,
           () => ports.next.review(request),
-          legacy && (() => legacy.review({ cwd: tree.dir })),
+          legacy && (() => lock(() => legacy.review({ cwd: tree.dir }))),
         )
       } catch (error) {
         return { ...base, status: 'error', reason: 'new_failed', detail: errorText(error) }
@@ -202,8 +221,15 @@ export const recordedCheckSide = (c: CheckCase): CheckSide => ({
   wallMs: c.legacy.wallMs,
 })
 
-async function checkCase(c: CheckCase, index: number, ports: CheckPorts, options: HarnessOptions) {
-  const base = { id: c.id, workflow: 'check' as const, repo: c.repo, legacy: recordedCheckSide(c) }
+const checkBase = (c: CheckCase) => ({
+  id: c.id,
+  workflow: 'check' as const,
+  repo: c.repo,
+  legacy: recordedCheckSide(c),
+})
+
+async function checkCase(c: CheckCase, index: number, ports: CheckPorts, options: HarnessOptions, lock: Lock) {
+  const base = checkBase(c)
   return withTree<CheckCaseResult>(
     options,
     { repo: c.repo, baseSha: c.baseSha, patch: c.patch },
@@ -213,7 +239,11 @@ async function checkCase(c: CheckCase, index: number, ports: CheckPorts, options
       const legacy = ports.legacy
       let sides: Awaited<ReturnType<typeof bothSides<CheckRun>>>
       try {
-        sides = await bothSides(index, () => ports.next.check(request), legacy && (() => legacy.check(request)))
+        sides = await bothSides(
+          index,
+          () => ports.next.check(request),
+          legacy && (() => lock(() => legacy.check(request))),
+        )
       } catch (error) {
         return { ...base, status: 'error', reason: 'new_failed', detail: errorText(error) }
       }
@@ -236,11 +266,13 @@ async function runAll<C extends { id: string }, R extends ReviewCaseResult | Che
   cases: C[],
   options: HarnessOptions,
   one: (c: C, index: number) => Promise<R>,
+  failed: (c: C, error: unknown) => R,
 ): Promise<R[]> {
   const todo = pending(cases, options.resultsPath)
   if (todo.length < cases.length) options.log?.(`resume: ${cases.length - todo.length} cases already finished`)
   await pool(todo, options.concurrency, async (c) => {
-    const result = await one(c, cases.indexOf(c))
+    // A throw anywhere in a case (materialize, the judge, the matcher) is that case's error; the pool keeps going.
+    const result = await one(c, cases.indexOf(c)).catch((error: unknown) => failed(c, error))
     appendResult(options.resultsPath, result)
     options.log?.(`${result.status.padEnd(7)} ${c.id}${result.reason ? ` (${result.reason})` : ''}`)
   })
@@ -248,8 +280,28 @@ async function runAll<C extends { id: string }, R extends ReviewCaseResult | Che
   return readResults<R>(options.resultsPath).filter((r) => ids.has(r.id))
 }
 
-export const runReview = (cases: ReviewCase[], ports: ReviewPorts, options: HarnessOptions) =>
-  runAll<ReviewCase, ReviewCaseResult>(cases, options, (c, i) => reviewCase(c, i, ports, options))
+const harnessFailed = (error: unknown) => ({
+  status: 'error' as const,
+  reason: 'harness_failed' as const,
+  detail: errorText(error),
+})
 
-export const runCheck = (cases: CheckCase[], ports: CheckPorts, options: HarnessOptions) =>
-  runAll<CheckCase, CheckCaseResult>(cases, options, (c, i) => checkCase(c, i, ports, options))
+export function runReview(cases: ReviewCase[], ports: ReviewPorts, options: HarnessOptions) {
+  const lock = serialLock()
+  return runAll<ReviewCase, ReviewCaseResult>(
+    cases,
+    options,
+    (c, i) => reviewCase(c, i, ports, options, lock),
+    (c, error) => ({ ...reviewBase(c, options), ...harnessFailed(error) }),
+  )
+}
+
+export function runCheck(cases: CheckCase[], ports: CheckPorts, options: HarnessOptions) {
+  const lock = serialLock()
+  return runAll<CheckCase, CheckCaseResult>(
+    cases,
+    options,
+    (c, i) => checkCase(c, i, ports, options, lock),
+    (c, error) => ({ ...checkBase(c), ...harnessFailed(error) }),
+  )
+}

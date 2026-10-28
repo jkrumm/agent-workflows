@@ -65,9 +65,14 @@ async function spendOf(options: AgwOptions, runId: string | undefined, elapsedMs
   const attempts = options.journalAttempts ?? 20
   const sleep = options.sleep ?? Bun.sleep
   let row: RunCost | null = null
-  for (let i = 0; runId && i < attempts && !row; i++) {
-    row = await options.journal.runCost(runId)
-    if (!row) await sleep(1000)
+  // The run is paid for by now: a journal failure costs the cost figure, never the output.
+  try {
+    for (let i = 0; runId && i < attempts && !row; i++) {
+      row = await options.journal.runCost(runId)
+      if (!row) await sleep(1000)
+    }
+  } catch {
+    row = null
   }
   if (!row) return { costUsd: null, costExact: false, wallMs: elapsedMs }
   return { costUsd: row.costUsd, costExact: row.unpricedCalls === 0, wallMs: row.wallMs ?? elapsedMs }
@@ -174,7 +179,11 @@ export function psqlJournal(options: PsqlJournalOptions): RunJournal {
   const query = `select status, coalesce(cost::text, ''), coalesce(wall_ms::text, ''), coalesce(tokens_input, 0), coalesce(tokens_output, 0), coalesce(tokens_cache_read, 0), coalesce(unpriced_calls, 0) from "${schema}".runs where id = :'id'`
   return {
     async runCost(runId) {
-      password ??= readPassword()
+      // A rejected read is not cached: the next run tries again.
+      password ??= readPassword().catch((error: unknown) => {
+        password = undefined
+        throw error
+      })
       const ran = await options.exec(
         'psql',
         [

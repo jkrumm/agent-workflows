@@ -52,7 +52,8 @@ export async function materialize(input: MaterializeInput, options: MaterializeO
 
   if (input.patch?.trim()) {
     const patch = input.patch.endsWith('\n') ? input.patch : `${input.patch}\n`
-    const applied = await git(['apply', '--whitespace=nowarn', '-'], patch)
+    // Intent-to-add: files the patch creates show in `git diff HEAD`, which a scope of uncommitted changes may read.
+    const applied = await git(['apply', '--intent-to-add', '--whitespace=nowarn', '-'], patch)
     if (applied.code !== 0) return { ok: false, reason: 'apply_failed', detail: brief(applied.stderr), dir }
   }
 

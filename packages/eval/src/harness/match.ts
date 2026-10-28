@@ -9,6 +9,8 @@ export const MATCH = {
   lineWindow: 5,
   /** Overlap coefficient of message tokens that makes a located pair a match. */
   sameText: 0.3,
+  /** Shared tokens a deterministic match also needs: one shared word with a two-word message is not enough. */
+  minShared: 2,
 } as const
 
 export type PairKind = 'match' | 'unsure' | 'none'
@@ -29,14 +31,14 @@ export function tokens(text: string): Set<string> {
 }
 
 /** |A ∩ B| / min(|A|, |B|): a terse finding and a verbose one about the same thing still score high. */
-export function overlap(a: string, b: string): number {
+export function overlap(a: string, b: string): { score: number; shared: number } {
   const ta = tokens(a)
   const tb = tokens(b)
   const smaller = Math.min(ta.size, tb.size)
-  if (smaller === 0) return 0
+  if (smaller === 0) return { score: 0, shared: 0 }
   let shared = 0
   for (const t of ta) if (tb.has(t)) shared++
-  return shared / smaller
+  return { score: shared / smaller, shared }
 }
 
 export const normalizePath = (file: string) =>
@@ -47,14 +49,15 @@ export const normalizePath = (file: string) =>
 
 export function classifyPair(a: Located, b: Located): { kind: PairKind; score: number } {
   if (normalizePath(a.file) !== normalizePath(b.file)) return { kind: 'none', score: 0 }
-  const score = overlap(a.message, b.message)
+  const { score, shared } = overlap(a.message, b.message)
+  const sameText = score >= MATCH.sameText && shared >= MATCH.minShared
   const aLine = a.line ?? null
   const bLine = b.line ?? null
   const near =
     (aLine === null && bLine === null) ||
     (aLine !== null && bLine !== null && Math.abs(aLine - bLine) <= MATCH.lineWindow)
-  if (near) return { kind: score >= MATCH.sameText ? 'match' : 'unsure', score }
-  return { kind: score >= MATCH.sameText ? 'unsure' : 'none', score }
+  if (near) return { kind: sameText ? 'match' : 'unsure', score }
+  return { kind: sameText ? 'unsure' : 'none', score }
 }
 
 export interface MatchResult {

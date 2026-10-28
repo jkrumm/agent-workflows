@@ -39,7 +39,8 @@ Output: `<evalDir>/reports/<ts>/results.jsonl` (one line per case, appended as c
 ## How a case runs
 
 1. **Materialize.** `git clone --shared --no-checkout $HOME/<repo>` into a temp dir, `git checkout --detach
-   <baseSha>`, `git apply` the case's `diff` (review) or `patch` (check) as uncommitted changes. The owner's
+   <baseSha>`, `git apply --intent-to-add` the case's `diff` (review) or `patch` (check) as uncommitted changes (files the patch
+   creates are intent-to-add, so a `git diff HEAD` scope sees them on both sides). The owner's
    checkout is only read. A diff that does not apply, a missing repo or an unknown sha makes the case `skipped`
    with its reason; skipped cases are counted in every report, never dropped. A check case runs
    `bun install --frozen-lockfile` first only when the repo has a bun lockfile and its Makefile `check` target does
@@ -51,12 +52,16 @@ Output: `<evalDir>/reports/<ts>/results.jsonl` (one line per case, appended as c
    the journal row (`"$AGW_PG_SCHEMA".runs`) over a read-only `psql` session. With `--rerun-legacy`:
    `agw-legacy review --repo <clone> --scope uncommitted --no-wait --json --caller eval`, then `wait` and `status`
    for the result and the job window. The two sides run one after the other, the order alternating per case.
+   Legacy reruns run one at a time across the whole run, whatever `--concurrency` says, so the IU time-window cost
+   match never sees two legacy jobs at once. A journal read that fails after a paid run leaves the cost unknown
+   (`costUsd: null`) and keeps the output.
 3. **Match findings.** The recorded legacy blocking findings are the reference. A pair matches deterministically on
    the same file (paths normalized), lines within 5 (or both line-less) and a message-token overlap coefficient of
-   at least 0.3. Close-but-unclear pairs (near with different words, or same words far apart / one line-less) are
+   at least 0.3 with at least 2 shared tokens (one shared word with a two-word message is not enough). Close-but-unclear pairs (near with different words, or same words far apart / one line-less) are
    *unsure*: without `--judge` they stay unmatched and are counted; with it, `decide` answers "same defect?" for
    each. Matching is one-to-one, best score first.
-4. **Record** the case and append it to `results.jsonl`; the clone is removed unless `--keep`.
+4. **Record** the case and append it to `results.jsonl`; the clone is removed unless `--keep`. A throw anywhere in
+   a case (git, the judge, the matcher) becomes that case's `error` result (`harness_failed`); the run goes on.
 
 ## Metrics
 
@@ -64,8 +69,13 @@ Review: outcome agreement and the 3×3 confusion matrix (legacy rows, new column
 (pooled: matched / all legacy blocking), new-only blocking, improvements per case, needs-human rate, failed-angle
 rate (a `(review pipeline)` discussion), and cost and wall time as **paired ratios** new/legacy with the median and
 a seeded bootstrap 95% CI of the median. The legacy side of a ratio is the rerun where one ran, else the recorded
-run (the report says which: `rerun`, `recorded` or `mixed`). Check: `passed` agreement and its 2×2 table, per-step
-agreement over steps both sides ran, cost and wall ratios.
+run (the report says which: `rerun`, `recorded` or `mixed`), and how many costs per side are unknown or approximate.
+Check: `passed` agreement and its table, legacy failure recall (legacy red → new red), per-step agreement over steps
+both sides ran, cost and wall ratios.
+
+A case whose new side failed (`new_failed`) is scored as a miss: its legacy blocking findings count against recall,
+its outcome or `passed` as a disagreement (column `failed`/`errored`). Harness failures are not scored. Both count
+toward the error rate.
 
 ## What the verdict means
 
@@ -73,11 +83,13 @@ agreement over steps both sides ran, cost and wall ratios.
 |-|-|
 | **not-worse** | every criterion holds on at least 20 review / 5 check cases |
 | **worse** | at least one criterion failed; the report names it with its value and threshold |
-| **inconclusive** | fewer cases ran than the minimum, or a criterion had no data (e.g. no priced pairs) |
+| **inconclusive** | fewer cases ran than the minimum, more than 10% of the cases that ran errored, or a criterion had no data (a cost or wall ratio needs at least 10 paired review / 3 check cases) |
 
 Review criteria: blocking recall and outcome agreement each ≥ legacy's own self-agreement on that metric − 0.10
 (measured by `--rerun-legacy`; without a rerun the floor is 0.6), median cost ratio ≤ 1.10, median wall ratio
-≤ 1.25. Check: `passed` agreement ≥ self-agreement − 0.10 (0.9 without a rerun), the same cost and wall ratios. The
+≤ 1.25; the report shows each median's bootstrap CI next to it. Check: `passed` agreement and legacy failure recall
+each ≥ self-agreement − 0.10 (0.9 without a rerun), so an always-green check cannot pass on a mostly green set; the
+same cost and wall ratios. The
 thresholds are `DEFAULT_THRESHOLDS` in `src/harness/verdict.ts` and are written into every report.
 
 The noise floor matters: agent-gateway does not agree with itself on a rerun (models are sampled, angles fail), so
@@ -87,7 +99,8 @@ holding the new review to 100% agreement with one recorded run would fail a perf
 
 - **Legacy cost is approximate.** Session rows in usage-tracker's `agent-gateway-sessions.jsonl` carry the job id;
   IU rows in `agent-gateway-iu.jsonl` (router, adversary, OCR) do not and are matched by tool prefix and the job's
-  time window. With concurrency 2, two legacy jobs claim the IU rows in their overlap. `costExact: false` marks it.
+  time window. Legacy reruns are serial, so no two of them share a window; a job outside the harness running at the
+  same time still can. `costExact: false` marks it.
 - **The legacy rerun is always router-depth.** `agw-legacy review` takes no `--depth`, so depth-matched runs
   compare the new side at the recorded depth against a rerun at the router's depth. Run `--depth router` as a
   second report to compare router against router.

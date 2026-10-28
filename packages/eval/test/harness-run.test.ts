@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { mkdtempSync, readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { aggregateCheck, aggregateReview } from '../src/harness/aggregate.ts'
@@ -37,7 +37,7 @@ describe('runReview', () => {
     expect(good).toMatchObject({ status: 'ok', match: { reference: 1, matched: 1, newOnly: 0 } })
 
     const agg = aggregateReview(results)
-    expect(agg.cases).toEqual({ total: 2, ok: 1, errors: 0, skipped: { apply_failed: 1 } })
+    expect(agg.cases).toMatchObject({ total: 2, ok: 1, errors: 0, skipped: { apply_failed: 1 }, errorRate: 0 })
     expect(agg.blocking.recall).toBe(1)
     expect(agg.outcome.agreement).toBe(1)
   })
@@ -99,6 +99,94 @@ describe('runReview', () => {
     const agg = aggregateReview(results)
     expect(agg.selfAgreement).toMatchObject({ cases: 1, blockingRecall: 0, outcomeAgreement: 1 })
     expect(agg.cost.baseline).toBe('mixed')
+  })
+})
+
+describe('isolation and scoring of failures', () => {
+  test('a new-side failure is a miss: its legacy blocking count against recall, its outcome disagrees', async () => {
+    const fx = fixtureHome()
+    const cases = ['a', 'b'].map((id) => reviewCase({ id, baseSha: fx.baseSha, diff: fx.diff }))
+    let calls = 0
+    const next = {
+      async review() {
+        if (++calls === 2) throw new Error('host 500')
+        return { output: reviewOutput(), spend: { costUsd: 0.04, costExact: true, wallMs: 1 } }
+      },
+    }
+    const results = await runReview(cases, { next }, options(fx.home, { concurrency: 1 }))
+    expect(results.map((r) => r.reason ?? r.status)).toEqual(['ok', 'new_failed'])
+    const agg = aggregateReview(results)
+    expect(agg.blocking).toMatchObject({ legacy: 2, matched: 1, recall: 0.5 })
+    expect(agg.outcome.agreement).toBe(0.5)
+    expect(agg.outcome.confusion.actionable?.failed).toBe(1)
+    expect(agg.cases).toMatchObject({ errors: 1, newFailed: 1, scored: 2, errorRate: 0.5 })
+  })
+
+  test('a judge that throws makes that case a harness error; the other cases still run', async () => {
+    const fx = fixtureHome()
+    const far = reviewOutput({
+      blocking: [
+        {
+          file: 'app.ts',
+          line: 90,
+          message: 'b changed from 2 to 3 breaks the exported constant contract',
+          angle: 'x',
+        },
+      ],
+    })
+    const cases = ['a', 'b', 'c'].map((id) => reviewCase({ id, baseSha: fx.baseSha, diff: fx.diff }))
+    let n = 0
+    const next = {
+      async review() {
+        return { output: ++n === 1 ? far : reviewOutput(), spend: { costUsd: 0.04, costExact: true, wallMs: 1 } }
+      },
+    }
+    const judge = {
+      sameDefect: async (): Promise<boolean> => {
+        throw new Error('decide 503')
+      },
+    }
+    const results = await runReview(cases, { next, judge }, options(fx.home, { concurrency: 1 }))
+    expect(results.map((r) => r.reason ?? r.status)).toEqual(['harness_failed', 'ok', 'ok'])
+    expect(results[0]?.detail).toBe('decide 503')
+    const agg = aggregateReview(results)
+    expect(agg.cases).toMatchObject({ errors: 1, harnessFailed: 1, scored: 2 })
+  })
+
+  test('legacy reruns go one at a time whatever the concurrency; inexact costs are counted per side', async () => {
+    const fx = fixtureHome()
+    const cases = ['a', 'b', 'c', 'd'].map((id) => reviewCase({ id, baseSha: fx.baseSha, diff: fx.diff }))
+    let running = 0
+    let peak = 0
+    const legacy = {
+      async review() {
+        peak = Math.max(peak, ++running)
+        await Bun.sleep(20)
+        running--
+        return { output: reviewOutput(), spend: { costUsd: 0.05, costExact: false, wallMs: 90_000 } }
+      },
+    }
+    const results = await runReview(
+      cases,
+      { next: fakeReview(reviewOutput()).runner, legacy },
+      options(fx.home, { concurrency: 4 }),
+    )
+    expect(peak).toBe(1)
+    expect(aggregateReview(results).cost.inexact).toEqual({ new: 0, legacy: 4 })
+  })
+
+  test('a torn last line in results.jsonl is not glued to the next result', async () => {
+    const fx = fixtureHome()
+    const opts = options(fx.home)
+    writeFileSync(opts.resultsPath, '{"id":"torn","status":"ok"')
+    await runReview(
+      [reviewCase({ baseSha: fx.baseSha, diff: fx.diff })],
+      { next: fakeReview(reviewOutput()).runner },
+      opts,
+    )
+    const lines = readFileSync(opts.resultsPath, 'utf8').split('\n')
+    expect(lines[0]).toBe('{"id":"torn","status":"ok"')
+    expect(JSON.parse(lines[1] as string).id).toBe('case-1')
   })
 })
 
