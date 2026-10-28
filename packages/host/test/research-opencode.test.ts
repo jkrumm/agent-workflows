@@ -11,6 +11,7 @@ import {
 import type { Json } from '@agent-workflows/runtime'
 import { loadAgentDefinitions } from '../src/agents.ts'
 import { ToolGate } from '../src/workflows/research/gate.ts'
+import { memoryToolLedger } from '../src/workflows/research/ledger.ts'
 
 // The research agents on the real `opencode` 2.0.32 against a scripted fake model (no spend): the plugin in their
 // location reaches the tool gate with the session id, the gate refuses an ungranted tool, and the DeepSeek route keeps
@@ -83,8 +84,10 @@ const REPORT = JSON.stringify({
 
 const stateDir = mkdtempSync(join(tmpdir(), 'agw-research-oc-'))
 const calls: { id: string; input: Json }[] = []
+const ledger = memoryToolLedger()
 const gate = new ToolGate({
   stateDir,
+  ledger,
   engine: () => null,
   call: async (id, input, { addUsage }) => {
     calls.push({ id, input })
@@ -124,7 +127,7 @@ async function runAgent(agent: string, script: Step[], grantTools: string[]) {
   const host = new OpenCodeHost({ server, stateDir, env, agents })
   const runId = `r${Math.random().toString(36).slice(2)}`
   const key = `${runId}:research`
-  const close = gate.open({ runId, stepKey: key, depth: 'quick', tools: grantTools as never })
+  const close = gate.open({ runId, stepId: 'research', tools: grantTools as never })
   try {
     await server.start()
     const handle = (await host.open({
@@ -141,7 +144,7 @@ async function runAgent(agent: string, script: Step[], grantTools: string[]) {
       onProgress: () => {},
       onTool: async () => {},
     })
-    return { result, seen: model.seen, record: gate.collected(key) }
+    return { result, seen: model.seen, entries: await ledger.read(runId, 'research') }
   } finally {
     close()
     host.close()
@@ -153,7 +156,7 @@ async function runAgent(agent: string, script: Step[], grantTools: string[]) {
 test.skipIf(!binary)(
   'a research agent calls the platform web tools through the gate; the DeepSeek wire rules hold',
   async () => {
-    const { result, seen, record } = await runAgent(
+    const { result, seen, entries } = await runAgent(
       'research-agent-focused',
       [{ tool: 'web_search', args: { query: 'postgres default port' } }, { text: REPORT }],
       ['web_search', 'web_fetch'],
@@ -161,7 +164,7 @@ test.skipIf(!binary)(
     // The model is offered exactly the agent's tools (deny by default, then its allow rules): no OpenCode web tools.
     expect(seen[0]?.tools).toEqual(['glob', 'grep', 'read', 'skill', 'web_fetch', 'web_search'])
     expect(calls).toEqual([{ id: 'web.search', input: { query: 'postgres default port' } }])
-    expect(record.entries).toEqual([
+    expect(entries).toMatchObject([
       {
         tool: 'web_search',
         ok: true,
@@ -169,7 +172,7 @@ test.skipIf(!binary)(
         seen: ['https://www.postgresql.org/docs/current/runtime-config-connection.html'],
       },
     ])
-    expect(record.usage).toHaveLength(1)
+    expect(entries[0]?.usage).toHaveLength(1)
     // The tool result reached the model as its content.
     const toolMessage = seen[1]?.messages.find((m) => m.role === 'tool')
     expect(String(toolMessage?.content)).toContain('runtime-config-connection')
@@ -190,14 +193,14 @@ test.skipIf(!binary)(
 test.skipIf(!binary)(
   'the gate refuses a tool the grant does not hold, and the model sees the refusal',
   async () => {
-    const { seen, record } = await runAgent(
+    const { seen, entries } = await runAgent(
       'research-agent-yolo',
       [{ tool: 'web_package', args: { registry: 'npm', name: 'hono' } }, { text: REPORT }],
       ['web_search'],
     )
     const toolMessage = seen[1]?.messages.find((m) => m.role === 'tool')
     expect(String(toolMessage?.content)).toContain('ERROR: web_package is not granted')
-    expect(record.entries).toEqual([])
+    expect(entries).toEqual([])
   },
   120_000,
 )

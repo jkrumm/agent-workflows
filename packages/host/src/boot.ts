@@ -32,6 +32,7 @@ import { pgJournalReader } from './workflows/retrospective/sample.ts'
 import { startRetroSchedule } from './workflows/retrospective/schedule.ts'
 import { listTrackedFiles, type TrackedPaths } from './workflows/retrospective/tracked.ts'
 import { scorerJudge } from './judge.ts'
+import { pgToolLedger } from './workflows/research/ledger.ts'
 import { wireEval } from './workflows/eval/index.ts'
 import { createWorkflows, fingerprintWorkflows } from './workflows/index.ts'
 
@@ -207,7 +208,12 @@ export async function boot(config: HostConfig, options: BootOptions = {}): Promi
         trackedList = undefined // a failed read is retried, never cached
         throw error
       }))
-    const workflows = createWorkflows({ registry, retro: { journal, learnings, gh, tracked } })
+    const workflows = createWorkflows({
+      registry,
+      retro: { journal, learnings, gh, tracked },
+      research: { ledger: pgToolLedger(readPool, config.schema) },
+      onClose: (close) => closers.push(async () => close()),
+    })
     // Direct capability calls over HTTP run as `cap.<id>` workflows (concept N6): registered, but not operations.
     const capabilityWorkflows = createCapabilityWorkflows(registry)
     const agentsDir = config.agentsDir ?? 'agents'

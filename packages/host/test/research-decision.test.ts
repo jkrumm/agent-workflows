@@ -87,6 +87,17 @@ describe('the pre-registered decision rule', () => {
     expect(decide(rows).profiles.agent).toBe('agent-focused')
   })
 
+  test('a done run left unscored on supported is left out, never counted as 0', () => {
+    const rows = [
+      ...arm('engine', { cost: 1, wallMs: 1 }),
+      ...arm('agent-yolo', { cost: 1, wallMs: 1 }).map((r, i) => (i % 3 === 0 ? { ...r, supported: null } : r)),
+    ]
+    const ci = pairedCI(rows, 'engine', 'agent-yolo', 'supported')
+    expect(ci?.n).toBe(12)
+    expect(ci?.mean).toBeCloseTo(0, 12) // the unscored runs pulled nothing towards 0 (counted as 0 it would be -0.27)
+    expect(ci?.lo).toBeCloseTo(0, 12)
+  })
+
   test('within 20 % on cost and wall time, the simpler design wins', () => {
     const rows = [
       ...arm('engine', { cost: 0.1, wallMs: 100 }),
@@ -109,13 +120,14 @@ test('the report prints a table per depth and the verdict', async () => {
     partial: false,
     errorKind: row.ok ? null : 'step_failed',
     grounded: 1,
+    unscored: 0,
     tokens: 10,
     cacheRead: 5,
     toolCalls: 3,
   }))
   const text = report(rows)
   expect(text).toContain('### standard')
-  expect(text).toContain('| engine | 36 | 0 | 0 | 1.00 | 0.80 | 1.00 | 0.1000 | 100 | 10 | 0.50 | 3 |')
+  expect(text).toContain('| engine | 36 | 0 | 0 | 1.00 | 0.80 | 0 | 1.00 | 0.1000 | 100 | 10 | 0.50 | 3 |')
   expect(text).toContain('### Failed runs')
   expect(text).toContain('**Winner:')
 })

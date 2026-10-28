@@ -87,8 +87,8 @@ defineWorkflow({ id: 'research.report', scorer: draftScorer, async run(ctx, inpu
 - **Deterministic first.** An LLM-judged sub-score goes through `ctx.judge(capability, input)` only: the runtime's
   `judge` option (a capability caller the host passes). Regression and drift get it when the runtime has one; the
   inline gate only when the scorer sets `judgeInline`, so the gate stays free by default. The judge's usage lands on
-  the gate step; regression and drift score outside any step, so the caller gets the `source` and the host records
-  those calls as runs of their own (host `judge.ts`). No default scorer judges.
+  the gate step; regression and drift score outside any step, so the caller gets the `source` and the scored `runId`, and
+  the host records those calls as runs of their own, keyed per scored run (host `judge.ts`). No default scorer judges.
 - **`ctx.score(id, value)`** is a code step: its verdict is journaled, and a resumed run returns it without calling the
   scorer. The verdict is written onto `runs.scores.gates[id]` inside the step, so a crash after the body re-writes
   the same key.

@@ -8,7 +8,11 @@ import { seededRandom } from '@agent-workflows/eval'
 export type ArmId = 'engine' | 'agent-yolo' | 'agent-focused' | 'pilot-yolo' | 'pilot-focused'
 export const ARMS: ArmId[] = ['engine', 'agent-yolo', 'agent-focused', 'pilot-yolo', 'pilot-focused']
 
-/** One research run of the comparison. A failed run has no scores: it counts as golden 0 and supported 0. */
+/**
+ * One research run of the comparison. A failed run has no scores: it counts as golden 0 and supported 0. A done run
+ * without a score (the judge could score none of its citations, a live value the registry did not give) is left out
+ * of that score: unscored is never a miss.
+ */
 export type Row = {
   arm: ArmId
   caseId: string
@@ -38,16 +42,18 @@ export function median(xs: number[]): number | null {
   return sorted[Math.floor((sorted.length - 1) / 2)] ?? null
 }
 
-/** A run's value of a quality score; a failed run or a missing score is 0. */
-const score = (row: Row, key: 'golden' | 'supported') => (row.ok ? (row[key] ?? 0) : 0)
+/** A run's value of a quality score: 0 for a failed run, null (left out) for a done run the scorer left unscored. */
+const score = (row: Row, key: 'golden' | 'supported') => (row.ok ? row[key] : 0)
 
-/** Per question, the arm's mean of `key` over its runs. */
+/** Per question, the arm's mean of `key` over its scored runs; a question with none is left out. */
 function perQuestion(rows: Row[], arm: ArmId, key: 'golden' | 'supported'): Map<string, number> {
   const groups = new Map<string, number[]>()
   for (const row of rows) {
     if (row.arm !== arm) continue
+    const value = score(row, key)
+    if (value === null) continue
     const list = groups.get(row.caseId) ?? []
-    list.push(score(row, key))
+    list.push(value)
     groups.set(row.caseId, list)
   }
   return new Map([...groups].map(([id, xs]) => [id, mean(xs)]))

@@ -310,7 +310,12 @@ export class RunScope {
         ...(scorer.judgeInline && judge
           ? {
               judge: (capability: string, input: Json) =>
-                judge(capability, input, { signal: scope.signal, addUsage: scope.addUsage, source: 'inline' }),
+                judge(capability, input, {
+                  signal: scope.signal,
+                  addUsage: scope.addUsage,
+                  source: 'inline',
+                  runId: this.run.id,
+                }),
             }
           : {}),
       })
