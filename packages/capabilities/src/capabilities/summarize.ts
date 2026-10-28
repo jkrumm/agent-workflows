@@ -5,7 +5,7 @@ import { defineCapability } from '../procedure.ts'
 export const summarizeInput = z.object({
   text: z.string().min(1).describe('The text to summarize'),
   maxWords: z.int().min(10).max(1000).default(100).describe('Upper bound for the summary length'),
-  format: z.enum(['paragraph', 'bullets']).default('paragraph').describe('Prose paragraph or a bullet list'),
+  style: z.enum(['paragraph', 'bullets']).default('paragraph').describe('Prose paragraph or a bullet list'),
 })
 
 export const summarizeOutput = z.object({ summary: z.string() })
@@ -21,8 +21,8 @@ export const createSummarize = (deps: LlmDeps) =>
     input: summarizeInput,
     output: summarizeOutput,
     cli: { positional: ['text'], stdin: 'text', plainField: 'summary' },
-    async handler({ text, maxWords, format }, ctx) {
-      const shape = format === 'bullets' ? 'a short bullet list' : 'one paragraph'
+    async handler({ text, maxWords, style }, ctx) {
+      const shape = style === 'bullets' ? 'a short bullet list' : 'one paragraph'
       const { text: summary } = await complete(deps, {
         routeId: 'cheap.summarize',
         system: SYSTEM,
