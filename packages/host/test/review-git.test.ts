@@ -34,6 +34,7 @@ import {
   restoreClone,
   sweepStaleClones,
 } from '../src/workflows/review/git.ts'
+import { expectDead } from './support/process.ts'
 
 // realpath'd: the review works on one spelling of every path (macOS tmpdir is a symlink)
 const scratch = realpathSync(mkdtempSync(join(tmpdir(), 'agw-review-git-')))
@@ -864,15 +865,6 @@ describe('a failed rebuild leaves nothing behind', () => {
 })
 
 describe('process groups', () => {
-  const alive = (pid: number) => {
-    try {
-      process.kill(pid, 0)
-      return true
-    } catch {
-      return false
-    }
-  }
-
   test('a timeout kills the helper and its grandchildren, which hold the pipes', async () => {
     // sh -> sh -> sleep: `pkill -P` of the first sh would stop at the inner sh and leave the sleep.
     const script = 'sh -c "sleep 30 & echo \\$!; wait" & wait'
@@ -880,8 +872,7 @@ describe('process groups', () => {
     expect(r.timedOut).toBe(true)
     const pid = Number(r.stdout.trim().split('\n')[0])
     expect(pid).toBeGreaterThan(1)
-    await Bun.sleep(300)
-    expect(alive(pid)).toBe(false)
+    await expectDead(pid)
   })
 
   test('an abort does the same', async () => {
@@ -896,9 +887,8 @@ describe('process groups', () => {
     controller.abort()
     const r = await running
     const pid = Number(r.stdout.trim().split('\n')[0])
-    await Bun.sleep(300)
     expect(pid).toBeGreaterThan(1)
-    expect(alive(pid)).toBe(false)
+    await expectDead(pid)
   })
 
   test('networkEnv carries the proxy and CA settings of the remote calls, in both spellings', () => {

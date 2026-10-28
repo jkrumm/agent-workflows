@@ -48,11 +48,13 @@ The agent runs every command through `agents/check/skills/run-step/run-step.sh <
 (ported from legacy's `run_step`): the command is killed alone after `idle-seconds` without new output, the wrapper
 prints `run-step: IDLE_TIMEOUT no output for Ns` and exits 124, and the agent records that step as failed with
 "no output for Ns — likely a watch-mode runner or a hung process" and goes on, so the report keeps the other steps.
-The windows are the request's: `stepTimeoutSeconds`, else 180 s (600 s for the test step). The script re-executes
-itself under bash: the group kill needs `set -m` and `kill -- -PGID`, which dash (Debian/Ubuntu's `sh`) does not support
-without a tty, so there the kill reached nothing. The wrapper `cd`s into
+The windows are the request's: `stepTimeoutSeconds`, else 180 s (600 s for the test step). The wrapper `cd`s into
 the checked tree itself and is called from the agent's session directory, so the agent never needs the location's
 absolute path. Not yet exercised against the real OpenCode host (`allowDirectories` is the other open part).
+
+The script re-executes itself under bash. The group kill needs job control (`set -m`) and `kill -- -PGID`, which dash
+(Debian/Ubuntu's `sh`) does not support without a tty, so there the kill reached nothing. Bash is required; a host
+without it fails loudly rather than leaving the command running.
 
 ## Credentials and orphans
 

@@ -22,13 +22,13 @@ check:
 	@bunx --no-install oxlint -c .oxlintrc.json --type-aware packages
 	@echo "==> typecheck (tsc --noEmit)"
 	@bunx --no-install tsc --noEmit
-	@TEST_TIMEOUT_MS=$$(bun -e 'const os = require("node:os"); console.log(Math.round(Math.min(30000, Math.max(5000, 5000 * os.loadavg()[0] / os.availableParallelism()))))') && export TEST_TIMEOUT_MS && \
+	@TEST_TIMEOUT_MS=$$(bun -e 'const os = require("node:os"); console.log(Math.round(Math.min(30000, Math.max(5000, 5000 * os.loadavg()[0] / os.availableParallelism()))))') && \
 		echo "==> test (bun test --isolate, timeout $${TEST_TIMEOUT_MS}ms)" && \
 		if [ -n "$$AGW_TEST_PG_URL" ] || ! command -v secrets-run >/dev/null 2>&1; then \
 			bun test --isolate --timeout "$$TEST_TIMEOUT_MS"; \
 		else \
 			secrets-run run --env-file=.env.test.tpl -- sh -c \
-				'AGW_TEST_PG_URL="postgres://agent_workflows:$$(bun -e "process.stdout.write(encodeURIComponent(process.env.AGW_TEST_PG_PASSWORD))")@127.0.0.1:5432/agent_workflows" exec bun test --isolate --timeout "$$TEST_TIMEOUT_MS"'; \
+				'AGW_TEST_PG_URL="postgres://agent_workflows:$$(bun -e "process.stdout.write(encodeURIComponent(process.env.AGW_TEST_PG_PASSWORD))")@127.0.0.1:5432/agent_workflows" exec bun test --isolate --timeout "$$1"' _ "$$TEST_TIMEOUT_MS"; \
 		fi
 	@echo "==> check passed"
 
