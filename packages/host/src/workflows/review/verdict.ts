@@ -90,6 +90,46 @@ export function cleanVerdict(summary: string): ReviewResult {
   }
 }
 
+const BALANCE_HINT = {
+  file: PIPELINE,
+  message: 'provider balance exhausted — review in-session with /code-review on your own Claude',
+  angle: 'pipeline',
+}
+
+/**
+ * The reviewers ran but the synthesis was refused on provider balance (its fallback included): their findings are kept
+ * unstructured, as the salvage keeps a synthesis that did not serialize, and the verdict carries the degrade and the
+ * in-session hint. `needs-human` with `spend`, never approval.
+ */
+export function balanceSalvagedVerdict(
+  reviewerFindings: string,
+  failed: readonly FailedReviewer[],
+  totalReviewers: number,
+): ReviewResult {
+  const salvaged = salvagedVerdict(reviewerFindings, failed, totalReviewers)
+  const partial =
+    failed.length > 0
+      ? `Partial review: ${failed.length}/${totalReviewers} reviewers failed (${failed.map((r) => r.angle).join(', ')}). `
+      : ''
+  return {
+    ...salvaged,
+    discussions: [
+      ...salvaged.discussions.filter((d) => d.angle !== 'synthesis'),
+      {
+        file: PIPELINE,
+        message:
+          'The synthesis was refused: provider balance exhausted, fallback route included. The reviewers DID run; ' +
+          `their findings, unstructured:\n\n${reviewerFindings.trim().slice(0, 6000)}`,
+        angle: 'synthesis',
+      },
+      BALANCE_HINT,
+    ],
+    escalationCategory: 'spend',
+    summary: `${partial}Review ran ${totalReviewers} reviewers but the synthesis was refused (provider balance exhausted). Their findings are in the discussions; review in-session with /code-review. Treat as needs-human.`,
+    degraded: 'provider_balance',
+  }
+}
+
 /**
  * The model-backed steps failed on provider balance, the routes' fallbacks included: no review ran, and the caller
  * reviews in its own session instead. `needs-human` with `spend`, never approval.
@@ -100,13 +140,7 @@ export function balanceDegradedVerdict(failed: readonly FailedReviewer[]): Revie
     outcome: 'needs-human',
     blocking: [],
     improvements: [],
-    discussions: [
-      {
-        file: PIPELINE,
-        message: 'provider balance exhausted — review in-session with /code-review on your own Claude',
-        angle: 'pipeline',
-      },
-    ],
+    discussions: [BALANCE_HINT],
     testGaps: [],
     escalationCategory: 'spend',
     summary: `No review ran: the IU provider balance is exhausted, fallback route included (${failed.map((r) => r.angle).join(', ')}). Review in-session with /code-review. Do NOT treat this as approval.`,

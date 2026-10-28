@@ -204,17 +204,19 @@ describe('provider-balance fallback: the review seats', () => {
     })
   }
 
-  test('review.adversary: the empty-answer retry at low stays on the fallback', async () => {
+  test('review.adversary: the fallback runs at its own effort, its empty-answer re-ask too', async () => {
+    const env = { [OVERRIDES_ENV]: JSON.stringify({ 'review.adversary': { fallback: { effort: 'high' } } }) }
     let answers = 0
     iu.on('chat', (request) => {
       if (request.body.model === adversary.model) return new Response(BALANCE_503, { status: 503 })
       return answer(request, answers++ === 0 ? '' : '{"findings":[]}')
     })
-    await call('review.adversary', { diff: '+x' })
+    await call('review.adversary', { diff: '+x' }, env)
+    // medium and low are the adversary's efforts for its primary; the fallback keeps its route's.
     expect(iu.requests.map((r) => [r.body.model, r.body.reasoning_effort])).toEqual([
       [adversary.model, 'medium'],
-      [adversaryFallback.model, 'medium'],
-      [adversaryFallback.model, 'low'],
+      [adversaryFallback.model, 'high'],
+      [adversaryFallback.model, 'high'],
     ])
   })
 

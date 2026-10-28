@@ -417,15 +417,18 @@ export class OpenCodeHost implements AgentHost {
   /** Interrupts the running turn. Idempotent: an idle session answers `interrupted: false`, a gone one 404. */
   async abort(handle: Json): Promise<void> {
     const h = asHandle(handle)
-    // The step's fallback session too, when it has one: the journal holds only the first handle.
+    // The step's fallback session too, when it has one: the journal holds only the first handle. Every session is
+    // interrupted before an error is raised, so a failing primary interrupt never leaves the fallback running.
+    const errors: unknown[] = []
     for (const sessionId of h.fallback ? [h.sessionId] : [h.sessionId, fallbackSessionId(h.sessionId)]) {
       try {
         await this.client.interrupt(sessionId, this.headers(h.runId, h.stepId))
       } catch (err) {
-        if (err instanceof OpenCodeHttpError && err.status === 404) continue
-        throw err
+        if (!(err instanceof OpenCodeHttpError && err.status === 404)) errors.push(err)
       }
     }
+    if (errors.length === 1) throw errors[0]
+    if (errors.length > 1) throw new AggregateError(errors, `opencode abort failed on ${errors.length} sessions`)
   }
 
   /**
@@ -533,6 +536,19 @@ export class OpenCodeHost implements AgentHost {
       if (!existing) return { id, directory }
       if (active.has(id) || (await this.client.inbox(id, headers)).length > 0) {
         this.logger.warn('opencode session of an earlier attempt still runs; re-attaching', { sessionId: id })
+        return { id, directory: existing.location.directory }
+      }
+      // The attempt moved to its fallback session and that one still runs: this generation is not finished. Its handle
+      // is the primary's (as journaled); `wait` lands on the fallback again and `prompt` sends nothing.
+      const fallback = fallbackSessionId(id)
+      if (
+        active.has(fallback) ||
+        ((await this.client.getSession(fallback, headers)) && (await this.client.inbox(fallback, headers)).length > 0)
+      ) {
+        this.logger.warn('opencode fallback session of an earlier attempt still runs; re-attaching', {
+          sessionId: id,
+          fallbackSessionId: fallback,
+        })
         return { id, directory: existing.location.directory }
       }
       if (existing.location.directory === directory && !(await this.prompted(id, headers))) return { id, directory }

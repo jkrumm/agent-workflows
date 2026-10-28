@@ -21,12 +21,22 @@ describe('isBalanceFailure', () => {
     for (const status of [400, 429, 500, 502, 504]) expect(isBalanceFailure({ status, text: IU_503 })).toBe(false)
   })
 
-  test('without a status the text decides', () => {
+  test('without a status only the marker or IU’s body shape count', () => {
     expect(isBalanceFailure({ text: IU_503 })).toBe(true)
+    expect(isBalanceFailure({ text: `opencode session ses_x failed: ${IU_503}` })).toBe(true)
     expect(isBalanceFailure({ text: `iu-openai ${BALANCE_MARKER} (503): x` })).toBe(true)
-    expect(isBalanceFailure({ text: 'APICallError: HTTP 402 from provider' })).toBe(true)
-    expect(isBalanceFailure({ text: 'iu-openai request failed (402): ' })).toBe(true)
-    expect(isBalanceFailure({ text: 'iu-openai request failed (503): busy' })).toBe(false)
-    expect(isBalanceFailure({ text: 'src/app.ts:402 has a bug' })).toBe(false)
+    for (const text of [
+      'APICallError: HTTP 402 from provider',
+      'iu-openai request failed (402): ',
+      'Payment Required',
+      'Insufficient Balance',
+      '{"code":"PaymentRequired"}',
+      'iu-openai request failed (503): busy',
+      'src/app.ts:402 has a bug',
+      // A diff or an echoed prompt that quotes the words is not a refusal.
+      '+  if (res.status === 402) throw new Error("HTTP 402 Payment Required")',
+    ]) {
+      expect(isBalanceFailure({ text })).toBe(false)
+    }
   })
 })

@@ -4,19 +4,21 @@
  */
 export const BALANCE_MARKER = 'provider balance exhausted'
 
-/** IU's 503 for an empty provider account: `… Insufficient Balance (PaymentRequired) on <provider>`. */
-const BALANCE_TEXT = /insufficient balance|paymentrequired|payment required/i
-/** A 402 named in a message that carries no status of its own (an OpenCode turn error, a step's failure reason). */
-const STATUS_402 = /(?:\(|\bHTTP |\bstatus:? )402\b/i
+/** A 503 body that names the balance: IU's `… Insufficient Balance (PaymentRequired) on <provider>`, or either word. */
+const BALANCE_WORDING = /insufficient balance|paymentrequired/i
+/** Without a status only IU's own body shape counts: both words together, never a lone "payment required". */
+const IU_BODY = /insufficient balance\s*\(paymentrequired\)/i
 
 /**
- * The one provider-balance classifier: HTTP 402, or a 503 whose body says "Insufficient Balance" / "PaymentRequired".
- * Without a status (an error string from OpenCode, a step's failure reason) the text decides: the balance wording,
- * the transports' `BALANCE_MARKER`, or a 402 status written into the message. Any other failure is not balance.
+ * The one provider-balance classifier. With a status: 402, or 503 whose body says "Insufficient Balance" /
+ * "PaymentRequired" (or carries `BALANCE_MARKER`); any other status is not balance. Without one (an OpenCode turn
+ * error, a step's failure reason, a CLI's stderr) only the transports' `BALANCE_MARKER` or IU's body shape
+ * ("Insufficient Balance (PaymentRequired)") count: free text that merely mentions a 402 or "payment required" (a diff,
+ * an echoed prompt) is not balance.
  */
 export function isBalanceFailure(failure: { status?: number; text: string }): boolean {
   if (failure.status === 402) return true
-  if (failure.status === 503) return BALANCE_TEXT.test(failure.text)
+  if (failure.status === 503) return BALANCE_WORDING.test(failure.text) || failure.text.includes(BALANCE_MARKER)
   if (failure.status !== undefined) return false
-  return BALANCE_TEXT.test(failure.text) || failure.text.includes(BALANCE_MARKER) || STATUS_402.test(failure.text)
+  return failure.text.includes(BALANCE_MARKER) || IU_BODY.test(failure.text)
 }

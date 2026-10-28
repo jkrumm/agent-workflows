@@ -78,10 +78,11 @@ agent-gateway probed); a failing fallback reports the primary's failure.
 
 The routes fall back once on a provider-balance failure (`packages/routes` README). When that is not enough, the
 review answers a typed result instead of a failure or a `blocker`: every reviewer (angles and adversary) failed with a
-balance error, or the synthesis was refused on balance with no text to salvage (it is not re-asked then). The verdict
-is `needs-human`, `escalationCategory: spend`, one `(review pipeline)` discussion "provider balance exhausted — review
-in-session with /code-review on your own Claude", and `degraded: "provider_balance"` for callers that branch on it.
-Mixed failures stay the `blocker` verdict.
+balance error: "No review ran", `needs-human`, `escalationCategory: spend`, one `(review pipeline)` discussion
+"provider balance exhausted — review in-session with /code-review on your own Claude", and
+`degraded: "provider_balance"` for callers that branch on it. When the reviewers ran but the synthesis was refused on
+balance (it is not re-asked then), their findings are salvaged unstructured into a `synthesis` discussion, with the
+same hint, category and `degraded`. Mixed failures stay the `blocker` verdict.
 
 ## Hardening
 

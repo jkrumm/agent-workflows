@@ -95,13 +95,16 @@ export interface CompleteArgs {
   prompt: string
   json?: boolean
   ctx: Ctx
-  /** The call's effort, over the route's (and the fallback's). */
+  /** The call's effort, over the primary route's. A fallback always runs at its own route's effort. */
   effort?: Effort
   /** Hand back what came, unusable or not (`stop` says how it ended): the caller judges the answer itself. */
   raw?: boolean
 }
 
 export type Completion = Pick<ChatResult, 'text' | 'model' | 'stop' | 'stopDetail'> & { route: ResolvedRoute }
+
+/** The fallback routes `complete` handed out: a caller's effort is meant for the primary and never reaches these. */
+const fallbacks = new WeakSet<ResolvedRoute>()
 
 /**
  * One completion through the route's wire. Every billed call is reported to `ctx.addUsage`, failures included, under the
@@ -116,6 +119,7 @@ export async function complete(deps: LlmDeps, args: CompleteArgs, start?: Resolv
   } catch (error) {
     const fallback = fallbackRoute(route)
     if (!fallback || !isBalanceError(error)) throw error
+    fallbacks.add(fallback)
     const warn = deps.warn ?? ((message, meta) => console.warn(message, meta))
     warn('provider balance exhausted; falling back', { route: route.id, from: route.model, to: fallback.model })
     try {
@@ -144,7 +148,7 @@ async function completeOn(deps: LlmDeps, route: ResolvedRoute, args: CompleteArg
   // The adapter reports every attempt that came back with usage, failed ones included. A call that
   // returned none is still a call: report it with unknown tokens and cost.
   let reported = 0
-  const effort = args.effort ?? route.effort
+  const effort = fallbacks.has(route) ? route.effort : (args.effort ?? route.effort)
   const result = await port.complete(
     {
       model: route.model,
