@@ -12,7 +12,7 @@ export function evalDir(env: Record<string, string | undefined> = process.env): 
   return env.AGW_EVAL_DIR?.trim() || join(homedir(), '.local', 'share', 'agent-workflows', 'eval')
 }
 
-export function casesPath(workflow: 'review' | 'check', env: Record<string, string | undefined> = process.env) {
+export function casesPath(workflow: string, env: Record<string, string | undefined> = process.env) {
   return join(evalDir(env), workflow, 'cases.jsonl')
 }
 
@@ -135,3 +135,16 @@ export function writeCases<T extends z.ZodType>(path: string, schema: T, cases: 
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
   writeFileSync(path, lines.length ? `${lines.join('\n')}\n` : '', { mode: 0o600 })
 }
+
+/**
+ * A case of a workflow that needs no tree (research questions): the workflow input as it runs, and the reference its
+ * scorer validates (`Scorer.reference`). The eval run starts it as is; `--args` win over `input`.
+ */
+export const PlainCase = z
+  .object({
+    id: z.string().min(1),
+    input: z.record(z.string(), z.json()),
+    reference: z.json(),
+  })
+  .strict()
+export type PlainCase = z.infer<typeof PlainCase>

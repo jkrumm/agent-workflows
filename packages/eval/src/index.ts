@@ -5,6 +5,7 @@ export {
   Depth,
   evalDir,
   Finding,
+  PlainCase,
   ReviewCase,
   ReviewOutcome,
   readCases,
@@ -27,5 +28,5 @@ export { classifyPair, matchFindings } from './harness/match.ts'
 export { cleanup, type Materialized, type MaterializeInput, materialize } from './harness/materialize.ts'
 export type { CheckRunner, Judge, LegacyCostSource, Located, ReviewRunner, RunJournal } from './harness/ports.ts'
 export { pool, runCheck, runReview } from './harness/run.ts'
-export { bootstrapMedianCI, median } from './harness/stats.ts'
+export { bootstrapMedianCI, median, seededRandom } from './harness/stats.ts'
 export { checkVerdict, DEFAULT_THRESHOLDS, reviewVerdict } from './harness/verdict.ts'
