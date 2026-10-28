@@ -1,7 +1,14 @@
 // Workflow and run operations, defined with oRPC + zod like the capabilities: one definition serves `call`,
 // HTTP and the OpenAPI document. Every operation carries the same `x-cli` block as a capability.
-import { type CliSpec, type RequestContext, type ResolvedCliSpec, withCli } from '@agent-workflows/capabilities'
-import type { AnyWorkflow, Runtime } from '@agent-workflows/runtime'
+import {
+  type CliSpec,
+  operationIdOf,
+  type RequestContext,
+  type ResolvedCliSpec,
+  withCli,
+} from '@agent-workflows/capabilities'
+import type { AgentRef } from '@agent-workflows/middleware'
+import type { AnyWorkflow, Logger, Runtime } from '@agent-workflows/runtime'
 import { WorkflowError } from '@agent-workflows/runtime'
 import { ORPCError, os } from '@orpc/server'
 import { z } from 'zod'
@@ -44,6 +51,19 @@ export interface HostWorkflow {
   workflow: AnyWorkflow
   summary?: string
   cli?: Pick<CliSpec, 'positional' | 'stdin' | 'mutating' | 'defaultFormat' | 'plainField'>
+  /** The agents the workflow's steps run, with their routes: they feed the run fingerprint (concept §5). */
+  agents?: AgentRef[]
+}
+
+/** The CLI's own flags always win (`--format`, `--commit`, `--idempotency-key`, `--help`): no input may take them. */
+export const RESERVED_FLAGS = ['format', 'commit', 'idempotencyKey', 'idempotency-key', 'help'] as const
+
+export function assertNoReservedFlags(owner: string, input: z.ZodObject) {
+  for (const name of Object.keys(input.shape)) {
+    if ((RESERVED_FLAGS as readonly string[]).includes(name)) {
+      throw new Error(`${owner}: input property "${name}" is a reserved CLI flag (${RESERVED_FLAGS.join(', ')})`)
+    }
+  }
 }
 
 export const RESUME = { command: ['run', 'wait'], positional: ['runId'] } as const
@@ -51,6 +71,7 @@ export const RESUME = { command: ['run', 'wait'], positional: ['runId'] } as con
 export interface OperationDeps {
   runtime: Runtime
   store: RunStore
+  logger: Logger
 }
 
 export type HostOperation = {
@@ -62,6 +83,8 @@ export type HostOperation = {
   /** An oRPC procedure; the host puts it into its router. */
   procedure: object
 }
+
+const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error))
 
 const badRequest = (message: string) => new ORPCError('BAD_REQUEST', { message })
 
@@ -119,8 +142,6 @@ function respond(context: HostContext, state: RunState): RunState {
   return state
 }
 
-const camel = (id: string) => id.replace(/\.(\w)/g, (_, c: string) => c.toUpperCase())
-
 const waitHeaders = [
   {
     name: 'Prefer',
@@ -169,7 +190,7 @@ function buildWorkflow(entry: HostWorkflow, deps: OperationDeps, cli: ResolvedCl
     .route({
       method: 'POST',
       path: path as `/${string}`,
-      operationId: camel(workflow.id),
+      operationId: operationIdOf(workflow.id),
       summary: entry.summary ?? `Run ${workflow.id}`,
       tags: ['workflows'],
       spec: (operation) => withCli(cli)(withAccepted(operation, headers)),
@@ -189,87 +210,95 @@ function buildWorkflow(entry: HostWorkflow, deps: OperationDeps, cli: ResolvedCl
         throw error
       }
       // The run exists from here on: a failed read must still report its id, or a retry starts a second run.
-      const state = await waitFor(deps.store, runId, wait, signal).catch(() => null)
+      const state = await waitFor(deps.store, runId, wait, signal).catch((error: unknown) => {
+        deps.logger.error('run state read failed after start; answering 202', { runId, error: errorText(error) })
+        return null
+      })
       return respond(context, state ?? { runId, workflowId: workflow.id, status: 'pending' })
     })
 }
 
-function buildRunOps(deps: OperationDeps) {
-  const notFound = (runId: string) => new ORPCError('NOT_FOUND', { message: `Run ${runId} not found` })
-  const cli = (command: string, mutating: boolean): ResolvedCliSpec => ({
-    command: ['run', command],
+type RunOpArgs = { input: { runId: string }; context: HostContext; signal?: AbortSignal }
+
+/** One run operation; its name is stated once (`run.<name>`) and gives the command and the operation id. */
+function runOp(spec: {
+  name: 'status' | 'wait' | 'cancel'
+  method: 'GET' | 'POST'
+  path: `/runs/${string}`
+  summary: string
+  mutating: boolean
+  headers: readonly object[]
+  handler: (args: RunOpArgs) => Promise<RunState>
+}): HostOperation {
+  const id = `run.${spec.name}`
+  const operationId = operationIdOf(id)
+  const cli: ResolvedCliSpec = {
+    command: id.split('.'),
     positional: ['runId'],
-    mutating,
+    mutating: spec.mutating,
     defaultFormat: 'json',
     kind: 'run',
-  })
+  }
+  const procedure = base
+    .route({
+      method: spec.method,
+      path: spec.path,
+      operationId,
+      summary: spec.summary,
+      tags: ['runs'],
+      spec: (operation) => withCli(cli)(withAccepted(operation, spec.headers)),
+    })
+    .input(RunIdInput)
+    .output(RunStateSchema)
+    .handler(({ input, context, signal }) => spec.handler({ input, context, signal }))
+  return { operationId, method: spec.method, path: spec.path, cli, procedure }
+}
+
+export function runOperations(deps: OperationDeps): Record<'status' | 'wait' | 'cancel', HostOperation> {
+  const notFound = (runId: string) => new ORPCError('NOT_FOUND', { message: `Run ${runId} not found` })
   return {
-    status: {
-      method: 'GET' as const,
+    status: runOp({
+      name: 'status',
+      method: 'GET',
       path: '/runs/{runId}',
-      cli: cli('status', false),
-      procedure: base
-        .route({
-          method: 'GET',
-          path: '/runs/{runId}',
-          operationId: 'runStatus',
-          summary: 'Show a run',
-          tags: ['runs'],
-          spec: (operation) => withCli(cli('status', false))(withAccepted(operation, [])),
-        })
-        .input(RunIdInput)
-        .output(RunStateSchema)
-        .handler(async ({ input, context }) => {
-          const state = await deps.store.get(input.runId)
-          if (!state) throw notFound(input.runId)
-          return respond(context, state)
-        }),
-    },
-    wait: {
-      method: 'POST' as const,
+      summary: 'Show a run',
+      mutating: false,
+      headers: [],
+      async handler({ input, context }) {
+        const state = await deps.store.get(input.runId)
+        if (!state) throw notFound(input.runId)
+        return respond(context, state)
+      },
+    }),
+    wait: runOp({
+      name: 'wait',
+      method: 'POST',
       path: '/runs/{runId}/wait',
-      cli: cli('wait', false),
-      procedure: base
-        .route({
-          method: 'POST',
-          path: '/runs/{runId}/wait',
-          operationId: 'runWait',
-          summary: 'Wait for a run to end (Prefer: wait=<seconds>)',
-          tags: ['runs'],
-          spec: (operation) => withCli(cli('wait', false))(withAccepted(operation, waitHeaders)),
-        })
-        .input(RunIdInput)
-        .output(RunStateSchema)
-        .handler(async ({ input, context, signal }) => {
-          const state = await waitFor(deps.store, input.runId, preferWait(context.headers), signal)
-          if (!state) throw notFound(input.runId)
-          return respond(context, state)
-        }),
-    },
-    cancel: {
-      method: 'POST' as const,
+      summary: 'Wait for a run to end (Prefer: wait=<seconds>)',
+      mutating: false,
+      headers: waitHeaders,
+      async handler({ input, context, signal }) {
+        const state = await waitFor(deps.store, input.runId, preferWait(context.headers), signal)
+        if (!state) throw notFound(input.runId)
+        return respond(context, state)
+      },
+    }),
+    cancel: runOp({
+      name: 'cancel',
+      method: 'POST',
       path: '/runs/{runId}/cancel',
-      cli: cli('cancel', true),
-      procedure: base
-        .route({
-          method: 'POST',
-          path: '/runs/{runId}/cancel',
-          operationId: 'runCancel',
-          summary: 'Cancel a run; an ended run answers with its state',
-          tags: ['runs'],
-          spec: (operation) => withCli(cli('cancel', true))(withAccepted(operation, waitHeaders)),
-        })
-        .input(RunIdInput)
-        .output(RunStateSchema)
-        .handler(async ({ input, context, signal }) => {
-          const wait = preferWait(context.headers, CANCEL_GRACE_S) // before the cancel: a 400 must change nothing
-          if (!(await deps.store.get(input.runId))) throw notFound(input.runId)
-          await deps.runtime.cancel(input.runId)
-          const state = await waitFor(deps.store, input.runId, wait, signal)
-          if (!state) throw notFound(input.runId)
-          return respond(context, state)
-        }),
-    },
+      summary: 'Cancel a run; an ended run answers with its state',
+      mutating: true,
+      headers: waitHeaders,
+      async handler({ input, context, signal }) {
+        const wait = preferWait(context.headers, CANCEL_GRACE_S) // before the cancel: a 400 must change nothing
+        if (!(await deps.store.get(input.runId))) throw notFound(input.runId)
+        await deps.runtime.cancel(input.runId)
+        const state = await waitFor(deps.store, input.runId, wait, signal)
+        if (!state) throw notFound(input.runId)
+        return respond(context, state)
+      },
+    }),
   }
 }
 
@@ -281,6 +310,7 @@ export function workflowOperation(entry: HostWorkflow, deps: OperationDeps): Hos
   }
   const input = workflow.input
   if (!(input instanceof z.ZodObject)) throw new Error(`workflow ${workflow.id}: input must be a z.object`)
+  assertNoReservedFlags(`workflow ${workflow.id}`, input)
   const properties = Object.keys(input.shape)
   for (const name of [...(entry.cli?.positional ?? []), ...(entry.cli?.stdin ? [entry.cli.stdin] : [])]) {
     if (!properties.includes(name))
@@ -298,19 +328,10 @@ export function workflowOperation(entry: HostWorkflow, deps: OperationDeps): Hos
   }
   const path = `/workflows/${workflow.id.split('.').join('/')}`
   return {
-    operationId: camel(workflow.id),
+    operationId: operationIdOf(workflow.id),
     method: 'POST',
     path,
     cli,
     procedure: buildWorkflow(entry, deps, cli, path),
-  }
-}
-
-export function runOperations(deps: OperationDeps): Record<'status' | 'wait' | 'cancel', HostOperation> {
-  const ops = buildRunOps(deps)
-  return {
-    status: { operationId: 'runStatus', ...ops.status },
-    wait: { operationId: 'runWait', ...ops.wait },
-    cancel: { operationId: 'runCancel', ...ops.cancel },
   }
 }

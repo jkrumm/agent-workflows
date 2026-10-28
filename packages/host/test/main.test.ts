@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, test } from 'bun:test'
+import { boot } from '../src/boot.ts'
 import { loadConfig } from '../src/config.ts'
 import { Pool } from 'pg'
-import { freshSchema, PG_URL, SECRET, until } from './support.ts'
+import { freshSchema, PG_URL, rejection, SECRET, until } from './support.ts'
 
 const MAIN = new URL('../src/main.ts', import.meta.url).pathname
 
@@ -25,6 +26,11 @@ describe('loadConfig', () => {
   test('defaults', () => {
     expect(loadConfig(base)).toMatchObject({ port: 7791, schema: 'agw', machine: 'm', version: 'dev' })
   })
+  test('a secret with whitespace is named, not echoed', () => {
+    const attempt = () => loadConfig({ ...base, AGW_API_SECRET: `${SECRET}\n` })
+    expect(attempt).toThrow('whitespace')
+    expect(attempt).not.toThrow(SECRET)
+  })
   test('names every problem and never echoes a value', () => {
     const attempt = () => loadConfig({ AGW_API_SECRET: 'short-but-secret-looking', AGW_PORT: 'abc' })
     expect(attempt).toThrow('AGW_API_SECRET')
@@ -32,6 +38,44 @@ describe('loadConfig', () => {
     expect(attempt).toThrow('AGW_PG_URL')
     expect(attempt).toThrow('AGW_PORT')
     expect(attempt).not.toThrow('short-but-secret-looking')
+  })
+})
+
+describe('boot', () => {
+  test('a taken port fails the start before the runtime opens: no schema, no claimed run, nothing left open', async () => {
+    const fresh = freshSchema('boot')
+    const squatter = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => new Response('taken') })
+    const pool = new Pool({ connectionString: PG_URL, max: 1 })
+    try {
+      const config = loadConfig({ ...valid(fresh.schema), AGW_PORT: String(squatter.port) })
+      expect(await rejection(boot(config))).toMatch(/port|EADDRINUSE|in use/i)
+      // runtime.open() migrates the schema; it never ran
+      const { rowCount } = await pool.query('select 1 from information_schema.schemata where schema_name = $1', [
+        fresh.schema,
+      ])
+      expect(rowCount).toBe(0)
+    } finally {
+      await squatter.stop(true)
+      await pool.end()
+      await fresh.drop()
+    }
+  })
+
+  test('a start that works can be shut down twice', async () => {
+    const fresh = freshSchema('boot2')
+    try {
+      const running = await boot(loadConfig(valid(fresh.schema)))
+      expect((await fetch(`http://127.0.0.1:${running.port}/health`)).status).toBe(200)
+      await Promise.all([running.shutdown(), running.shutdown()])
+      expect(
+        await fetch(`http://127.0.0.1:${running.port}/health`).then(
+          () => 'up',
+          () => 'down',
+        ),
+      ).toBe('down')
+    } finally {
+      await fresh.drop()
+    }
   })
 })
 

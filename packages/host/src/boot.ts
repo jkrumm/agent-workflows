@@ -2,13 +2,11 @@ import { createCapabilities, createRegistry } from '@agent-workflows/capabilitie
 import { runawayCap, walletGate } from '@agent-workflows/limits'
 import { fsFingerprintSource, platformMiddleware } from '@agent-workflows/middleware'
 import { type AgentHost, Runtime } from '@agent-workflows/runtime'
-import { Pool } from 'pg'
 import { unwiredAgentHost } from './agent-host.ts'
 import { createHost } from './app.ts'
 import type { HostConfig } from './config.ts'
 import { IDLE_TIMEOUT_S } from './operations.ts'
-import { pgRunStore } from './store.ts'
-import { createWorkflows } from './workflows/index.ts'
+import { createWorkflows, fingerprintWorkflows } from './workflows/index.ts'
 
 /** Workflows declared optional-expensive: the wallet gate refuses them at admission (concept §4). None yet. */
 const OPTIONAL_EXPENSIVE: string[] = []
@@ -44,89 +42,100 @@ function exporterFor(env: Record<string, string | undefined>): Exporter | undefi
 export async function boot(config: HostConfig, options: BootOptions = {}): Promise<RunningHost> {
   const env = options.env ?? process.env
 
-  const registry = createRegistry(createCapabilities())
-  const workflows = createWorkflows(registry)
-
-  const platform = platformMiddleware({
-    connectionString: config.pgUrl,
-    schema: config.schema,
-    fingerprint: fsFingerprintSource({
-      agentsDir: config.agentsDir ?? 'agents',
-      workflows: {},
-      opencodeBin: config.opencodeBin,
-    }),
-    telemetry: { exporter: exporterFor(env) },
-    argo: { machine: config.machine },
-  })
-  const cap = runawayCap({ connectionString: config.pgUrl, schema: config.schema })
-  const wallet = walletGate({ workflows: OPTIONAL_EXPENSIVE })
-  const runtime = new Runtime({
-    connectionString: config.pgUrl,
-    schema: config.schema,
-    workflows: workflows.map((entry) => entry.workflow),
-    host: options.agentHost ?? unwiredAgentHost,
-    middleware: [...platform.middleware, wallet, cap],
-  })
-
-  const pool = new Pool({
-    connectionString: config.pgUrl,
-    max: 4,
-    application_name: `agw-host:${config.schema}`,
-    connectionTimeoutMillis: 5000,
-    query_timeout: 10_000,
-    statement_timeout: 10_000,
-  })
-  pool.on('error', (err) => console.warn('[agw-host] pool: idle connection error', err.message))
-  const store = pgRunStore({ pool, schema: config.schema })
-
-  let open = false
-  const host = createHost({
-    runtime,
-    registry,
-    workflows,
-    store,
-    secret: config.secret,
-    version: config.version,
-    isOpen: () => open,
-  })
-  await host.openapi() // fails the start on a broken contract instead of the first request
-
-  await runtime.open()
-  open = true
-  let flushing = false
-  const flushTimer = setInterval(() => {
-    if (flushing || !platform.outbox) return
-    flushing = true
-    platform.outbox
-      .flush()
-      .catch((err: unknown) =>
-        console.error('[agw-host] outbox flush failed', err instanceof Error ? err.message : err),
-      )
-      .finally(() => {
-        flushing = false
-      })
-  }, FLUSH_INTERVAL_MS)
-
-  const server = Bun.serve({
-    hostname: '127.0.0.1',
-    port: config.port,
-    idleTimeout: IDLE_TIMEOUT_S,
-    fetch: host.fetch,
-  })
-
-  let stopping: Promise<void> | undefined
+  // Every resource registers its closer as it is created; a failure at any point runs the same teardown as a
+  // signal does, in reverse order, so a half-started process never keeps pools, timers or leases.
+  const closers: (() => Promise<void>)[] = []
+  let closing: Promise<void> | undefined
   const shutdown = () =>
-    (stopping ??= (async () => {
-      open = false
-      clearInterval(flushTimer)
+    (closing ??= (async () => {
+      const failures: unknown[] = []
+      for (const close of closers.toReversed()) {
+        await close().catch((error: unknown) => {
+          failures.push(error)
+          console.error('[agw-host] close failed:', error instanceof Error ? error.message : error)
+        })
+      }
+      if (failures.length > 0) throw failures[0]
+    })())
+
+  try {
+    const registry = createRegistry(createCapabilities())
+    const workflows = createWorkflows(registry)
+
+    const platform = platformMiddleware({
+      connectionString: config.pgUrl,
+      schema: config.schema,
+      fingerprint: fsFingerprintSource({
+        agentsDir: config.agentsDir ?? 'agents',
+        workflows: fingerprintWorkflows(workflows),
+        opencodeBin: config.opencodeBin,
+      }),
+      telemetry: { exporter: exporterFor(env) },
+      argo: { machine: config.machine },
+    })
+    closers.push(() => platform.close())
+    const cap = runawayCap({ connectionString: config.pgUrl, schema: config.schema })
+    closers.push(() => cap.close())
+    const wallet = walletGate({ workflows: OPTIONAL_EXPENSIVE })
+    const runtime = new Runtime({
+      connectionString: config.pgUrl,
+      schema: config.schema,
+      workflows: workflows.map((entry) => entry.workflow),
+      host: options.agentHost ?? unwiredAgentHost,
+      middleware: [...platform.middleware, wallet, cap],
+    })
+    closers.push(() => runtime.close())
+
+    // The journal reads behind the HTTP bodies go through the runtime's own pool (`runtime.getRun`): a poll is one
+    // indexed primary-key read, backed off to 250 ms, so held waits cost the journal far less than the run writes.
+    let open = false
+    const host = createHost({
+      runtime,
+      registry,
+      workflows,
+      secret: config.secret,
+      version: config.version,
+      isOpen: () => open,
+    })
+    await host.openapi() // a broken contract fails the start, not the first request
+
+    // Bind before the runtime opens: a taken port (a deploy overlap) must fail before any run is claimed.
+    const server = Bun.serve({
+      hostname: '127.0.0.1',
+      port: config.port,
+      idleTimeout: IDLE_TIMEOUT_S,
+      fetch: host.fetch,
+    })
+    closers.push(async () => {
       // Stop accepting; give held `Prefer: wait` requests a moment to answer, then cut them (the CLI resumes).
       await Promise.race([server.stop(), Bun.sleep(SHUTDOWN_GRACE_MS)])
       await server.stop(true)
-      await runtime.close()
-      await cap.close()
-      await platform.close()
-      await pool.end()
-    })())
+    })
 
-  return { port: server.port ?? config.port, shutdown }
+    await runtime.open()
+    open = true
+    closers.push(async () => {
+      open = false
+    })
+
+    let flushing = false
+    const flushTimer = setInterval(() => {
+      if (flushing || !platform.outbox) return
+      flushing = true
+      platform.outbox
+        .flush()
+        .catch((err: unknown) =>
+          console.error('[agw-host] outbox flush failed', err instanceof Error ? err.message : err),
+        )
+        .finally(() => {
+          flushing = false
+        })
+    }, FLUSH_INTERVAL_MS)
+    closers.push(async () => clearInterval(flushTimer))
+
+    return { port: server.port ?? config.port, shutdown }
+  } catch (error) {
+    await shutdown().catch(() => {}) // already logged by the closer
+    throw error
+  }
 }

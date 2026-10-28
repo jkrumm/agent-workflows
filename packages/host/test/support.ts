@@ -1,12 +1,12 @@
 import { createCapabilities, createRegistry } from '@agent-workflows/capabilities'
 import { startFakeIu, messageResponse, type FakeIuServer } from '@agent-workflows/capabilities/testing'
 import { iuTransports } from '@agent-workflows/capabilities'
-import { defineWorkflow, type Runtime } from '@agent-workflows/runtime'
+import { defineWorkflow, type Logger, type Runtime } from '@agent-workflows/runtime'
 import { Pool } from 'pg'
 import { z } from 'zod'
 import { createHost, type Host } from '../src/app.ts'
 import type { HostWorkflow } from '../src/operations.ts'
-import { pgRunStore, type RunStore } from '../src/store.ts'
+import { type RunStore, runtimeRunStore } from '../src/store.ts'
 import { createSmokePing } from '../src/workflows/smoke.ts'
 import { FakeArgo, testPlatform } from '../../middleware/test/support.ts'
 import { freshSchema, PG_URL, testRuntime } from '../../runtime/test/support/pg.ts'
@@ -101,6 +101,7 @@ export async function startTestHost(
     ping?: () => Promise<void>
     healthTimeoutMs?: number
     wrapStore?: (store: RunStore) => RunStore
+    logger?: Logger
     /** Runs behind the platform middleware with an in-memory Argo, as in production. */
     platform?: boolean
   } = {},
@@ -137,7 +138,7 @@ export async function startTestHost(
   })
   await runtime.open()
   const pool = new Pool({ connectionString: PG_URL, max: 2 })
-  const realStore = pgRunStore({ pool, schema })
+  const realStore = runtimeRunStore(runtime)
   const pinged = options.ping ? { ...realStore, ping: options.ping } : realStore
   const store = options.wrapStore ? options.wrapStore(pinged) : pinged
   let open = true
@@ -156,6 +157,7 @@ export async function startTestHost(
       registry,
       workflows,
       store,
+      logger: options.logger,
       secret: options.secret ?? SECRET,
       version: '1.2.3',
       isOpen: options.isOpen ?? (() => open),
@@ -188,6 +190,7 @@ export async function startTestHost(
 
   return {
     host,
+    registry,
     runtime,
     iu,
     argo,

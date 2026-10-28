@@ -1,12 +1,13 @@
 import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test'
 import crypto from 'node:crypto'
 import { z } from 'zod'
+import { createRegistry, defineCapability } from '@agent-workflows/capabilities'
 import { defineWorkflow } from '@agent-workflows/runtime'
 import { assertSecret, bearerMatches } from '../src/auth.ts'
 import { createHost } from '../src/app.ts'
 import { canonicalJson, contractSha } from '../src/canonical.ts'
 import { preferWait } from '../src/operations.ts'
-import { pgRunStore } from '../src/store.ts'
+import { fingerprintWorkflows } from '../src/workflows/index.ts'
 import { type Body, rejection, SECRET, startTestHost, type TestHost } from './support.ts'
 
 let t: TestHost
@@ -243,7 +244,6 @@ describe('command collisions throw at creation', () => {
           runtime: t.runtime,
           registry,
           workflows: [],
-          store: pgRunStore({ pool: t.pool }),
           secret: SECRET,
           version: 'x',
         })
@@ -297,5 +297,164 @@ describe('Prefer: wait', () => {
     expect(preferWait(header('return=minimal'))).toBe(0)
     expect(() => preferWait(header('wait=soon'))).toThrow('Prefer')
     expect(() => preferWait(header('wait=-1'))).toThrow('Prefer')
+  })
+})
+
+describe('document build failure', () => {
+  test('a failing build answers with the standard error body and is retried, not cached', async () => {
+    const real = (t.registry.router as Record<string, Record<string, object>>).llm?.title as object
+    let failures = 0 // armed after creation: the handler walks the router once while it is built
+    const flaky = createHost({
+      runtime: t.runtime,
+      registry: {
+        capabilities: [],
+        requestContext: {},
+        router: {
+          llm: {
+            get title() {
+              if (failures-- > 0) throw new Error('transient generator failure')
+              return real
+            },
+          },
+        } as never,
+      },
+      workflows: [],
+      secret: SECRET,
+      version: 'x',
+      logger: { warn: () => {}, error: () => {} },
+    })
+    failures = 1
+    const request = () =>
+      flaky.fetch(new Request('http://127.0.0.1:7791/openapi.json', { headers: { authorization: `Bearer ${SECRET}` } }))
+    const first = await request()
+    expect(first.status).toBe(500)
+    expect(await first.json()).toEqual({
+      defined: false,
+      code: 'INTERNAL_SERVER_ERROR',
+      status: 500,
+      message: 'Internal server error',
+    })
+    expect((await request()).status).toBe(200)
+  })
+})
+
+describe('request bodies', () => {
+  const post = (body: string | undefined, headers: Record<string, string> = {}) =>
+    t.host.fetch(
+      new Request('http://127.0.0.1:7791/workflows/echo/say', {
+        method: 'POST',
+        headers: { authorization: `Bearer ${SECRET}`, prefer: 'wait=10', ...headers },
+        body,
+      }),
+    )
+
+  test('a JSON body sent without a content type runs with that body, not the defaults', async () => {
+    const response = await post('{"text":"raw"}')
+    expect(response.status).toBe(200)
+    expect(((await response.json()) as Body).output).toEqual({ text: 'raw' })
+  })
+
+  test('a body that is not valid for the input is a 400 whatever the content type says', async () => {
+    expect((await post('{"text":7}')).status).toBe(400)
+    expect((await post('not json')).status).toBe(400)
+    expect((await post('{"text":7}', { 'content-type': 'application/json' })).status).toBe(400)
+  })
+
+  test('no body, or an empty one, runs the defaults', async () => {
+    for (const response of [
+      await post(undefined),
+      await post('', { 'content-type': 'application/json' }),
+      await post('  '),
+    ]) {
+      expect(response.status).toBe(200)
+      expect(((await response.json()) as Body).output).toEqual({ text: 'hello' })
+    }
+  })
+
+  test('the client abort signal survives the rebuilt request', async () => {
+    const started = await t.json(await t.call('/workflows/hold/open', { body: {}, headers: { prefer: 'wait=0.1' } }))
+    const abort = new AbortController()
+    const waiting = t.host.fetch(
+      new Request('http://127.0.0.1:7791/workflows/hold/open', {
+        method: 'POST',
+        headers: { authorization: `Bearer ${SECRET}`, prefer: 'wait=200', 'idempotency-key': 'abort-key' },
+        body: '{}',
+        signal: abort.signal,
+      }),
+    )
+    await Bun.sleep(150)
+    abort.abort()
+    const outcome = await Promise.race([
+      waiting.then(
+        () => 'returned',
+        () => 'returned',
+      ),
+      Bun.sleep(3000).then(() => 'hung'),
+    ])
+    expect(outcome).toBe('returned')
+    await t.call(`/runs/${started.body.runId}/cancel`, { method: 'POST' })
+    const key = await t.pool.query(`select id from "${t.schema}".runs where idempotency_key = 'abort-key'`)
+    if (key.rows[0]) await t.call(`/runs/${key.rows[0].id}/cancel`, { method: 'POST' })
+  })
+})
+
+describe('secret hygiene and reserved flags', () => {
+  test('a secret with any whitespace is refused', () => {
+    for (const secret of [`${'x'.repeat(40)}\n`, `${'x'.repeat(20)} ${'y'.repeat(20)}`, `\t${'x'.repeat(40)}`]) {
+      expect(() => assertSecret(secret)).toThrow('whitespace')
+    }
+  })
+
+  const input = (name: string) => z.object({ [name]: z.string().optional() })
+  test.each(['format', 'commit', 'idempotencyKey', 'idempotency-key', 'help'])(
+    'a workflow input property named %s is refused at start',
+    async (name) => {
+      const entry = {
+        workflow: defineWorkflow({
+          id: 'flag.test',
+          version: 'v1',
+          input: input(name),
+          output: z.object({}),
+          run: async () => ({}),
+        }),
+      }
+      expect(await rejection(startTestHost({ prefix: 'flag', extra: [entry] }))).toContain(`"${name}"`)
+    },
+  )
+
+  test('a capability input property named like a CLI flag is refused at start', () => {
+    const capability = defineCapability({
+      id: 'x.y',
+      summary: 'x',
+      input: z.object({ commit: z.boolean().optional() }),
+      output: z.object({}),
+      handler: () => ({}),
+    })
+    const registry = createRegistry([capability])
+    expect(() => createHost({ runtime: t.runtime, registry, workflows: [], secret: SECRET, version: 'x' })).toThrow(
+      'capability x.y: input property "commit"',
+    )
+  })
+
+  test('llm.summarize takes `style`, not `format`', async () => {
+    const doc = (await t.host.openapi()) as Body
+    const schema = doc.paths['/llm/summarize'].post.requestBody.content['application/json'].schema
+    expect(Object.keys(schema.properties)).toContain('style')
+    expect(Object.keys(schema.properties)).not.toContain('format')
+  })
+})
+
+describe('fingerprint map', () => {
+  test('only workflows with agents appear, with their routes', () => {
+    const wf = (id: string) =>
+      defineWorkflow({ id, version: 'v1', input: z.object({}), output: z.object({}), run: async () => ({}) })
+    const agents = [{ agent: 'brain', route: 'cheap.classify' as const }]
+    expect(
+      fingerprintWorkflows([
+        { workflow: wf('a.b') },
+        { workflow: wf('c.d'), agents },
+        { workflow: wf('e.f'), agents: [] },
+      ]),
+    ).toEqual({ 'c.d': agents })
   })
 })

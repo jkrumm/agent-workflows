@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { startTestHost, type TestHost, until } from './support.ts'
+import { captureLogger, startTestHost, type TestHost, until } from './support.ts'
 
 let t: TestHost
 beforeAll(async () => {
@@ -112,8 +112,10 @@ describe('workflow start', () => {
 
 test('a failed journal read after the start still reports the run id', async () => {
   let failing = false
+  const logger = captureLogger()
   const flaky = await startTestHost({
     prefix: 'flaky',
+    logger,
     wrapStore: (store) => ({
       ping: () => store.ping(),
       get: (id) => (failing ? Promise.reject(new Error('connection lost')) : store.get(id)),
@@ -130,6 +132,7 @@ test('a failed journal read after the start still reports the run id', async () 
     const row = (await flaky.pool.query(`select status from "${flaky.schema}".runs where id = $1`, [body.runId]))
       .rows[0]
     expect(row).toBeDefined()
+    expect(logger.lines.some((l) => l.level === 'error' && l.message.includes('answering 202'))).toBe(true)
   } finally {
     await flaky.close()
   }
