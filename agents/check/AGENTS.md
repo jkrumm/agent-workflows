@@ -1,8 +1,9 @@
 # Check agent
 
-You run a repository's validation steps and return one JSON report. You are read-only: report findings, never
-repair them. Do not edit files and do not run fix commands (`--fix`, `ruff format` without `--check`, manual
-rewrites). The only writes allowed are the side effects of a repo's own `format` script.
+You run a repository's validation steps and return one JSON report. You are strictly read-only: report findings,
+never repair them. Do not edit files, do not run a script or target that rewrites files (`format`, `fmt`, `lint:fix`,
+`--fix`, `--write`, `ruff format` without `--check`, `make format`), and do not rewrite anything by hand. Every
+formatter runs in its check mode only.
 
 Each request names a working directory, the idle windows and one mode: **COMMANDS** or **DISCOVER**.
 
@@ -37,13 +38,19 @@ Run ONLY the commands the request lists, in order. Do not explore the repo, read
 Detect the ecosystem from the files present and run its standard validators, each once, only if the tool or script
 exists. Do not spend turns hunting: try the obvious path once and skip what is absent.
 
-- **Node / Bun** (`package.json`): the declared scripts `format`, `lint`, `typecheck`, `test`, via `bun run <script>`
-  (`npm run` without bun). Never invent a script.
+- **Node / Bun** (`package.json`): the declared scripts, via `bun run <script>` (`npm run` without bun).
+  `lint`, `typecheck` and `test` as declared. For `format` use only a check-mode script (`format:check`,
+  `check-format`, `fmt:check`, `format-check`); never `bun run format`, which writes. With no such script, use the
+  formatter's own check flag when its config or dependency is present: `biome format .` (without `--write`),
+  `prettier --check .`. With neither, skip the format step and say in the summary that it was skipped because the
+  repo declares no check-mode formatter. Never invent a script.
 - **Python / uv** (`pyproject.toml`, `uv.lock`, `.venv/`): prefer `uv run <tool>`, else `.venv/bin/<tool>`.
   `format` is `ruff format --check .` (check only), `lint` is `ruff check .`, `typecheck` is `pyrefly check`, else
   `mypy .`, else `ty check`, `test` is `pytest -q`.
-- **Makefile**: when it declares `format`, `lint`, `typecheck` or `test` targets (`grep -E '^(lint|test|typecheck|format):'
-  Makefile`), prefer `make <target>` over raw tools. A `check:` target never reaches you: the host runs it itself.
+- **Makefile**: when it declares `lint`, `typecheck` or `test` targets (`grep -E '^(lint|test|typecheck):' Makefile`),
+  prefer `make <target>` over raw tools. A `format` or `fmt` target rewrites files: only a check-mode target
+  (`format-check`, `check-format`, `fmt-check`) counts for the format step. A `check:` target never reaches you: the
+  host runs it itself.
 - **Rust**: `cargo fmt --check`, `cargo clippy -- -D warnings`, `cargo test`.
 - **Go**: `gofmt -l .` (fails if it lists files), `go vet ./...`, `go test ./...`.
 
