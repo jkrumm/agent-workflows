@@ -104,35 +104,47 @@ The deploy chain is Wave 4's first item, in the order in `docs/waves/handoff/lea
 IU/DeepSeek "Insufficient Balance" since ~04:05 removed the review's cross-family critic; lead
 `/code-review high` on Max stood in (owner top-up already queued by another fleet).
 
-## Wave 4 — Review and check cut over (P1c)            <!-- status: active -->
+## Wave 4 — Review and check cut over (P1c)            <!-- status: done -->
 Workers: Haiku to extract past runs, Sonnet/high to port, Opus/medium for the comparison harness.
 
-- [ ] **Owner-gated, carried from Wave 3:** once request `20261028T005518-15306` is answered — refs in
+- [x] **Owner-gated, carried from Wave 3:** once request `20261028T005518-15306` is answered — refs in
   `headless.refs`, reseal, `make deploy`, `make verify`, `@verifier` (run record, spans in ClickStack on
   the VPS tier, usage row in Argo, CLI end to end), dotfiles PR #34 merged. Retry the push between
   steps; every step below that needs no live host proceeds meanwhile
-- [ ] Direct capability calls (`agw llm title` outside a run) recorded like runs — a one-step run or
+- [x] Direct capability calls (`agw llm title` outside a run) recorded like runs — a one-step run or
   a usage record into the journal and Argo — so N6 holds before review and check call them
-- [ ] Route fallback on provider-balance failures (GPT-6.1 Terra, medium effort), concept version note;
+- [x] Route fallback on provider-balance failures (GPT-6.1 Terra, medium effort), concept version note;
   the team key on the mini for interim tests and evals (untracked env, never in git)
-- [ ] IU key label (usage-tracker contract, 2026-10-28): top-level `iu_key: 'personal' | 'athena-team'`
+- [x] IU key label (usage-tracker contract, 2026-10-28): top-level `iu_key: 'personal' | 'athena-team'`
   on every Argo row with `billing='iu'` (null otherwise), never in `raw`, never `account` (that is the
   Max account id); from a non-secret env `IU_KEY_ID` next to `IU_API_KEY`, default and fallback
   `personal`; OpenCode servers stamp it from their own start env (`serverEnv` forwards it)
-- [ ] Eval sets for review and check from recorded agent-gateway runs (findings, cost, wall time)
-- [ ] `review` and `check` ported as workflows, depth gating included, OCR behind the wallet gate
-- [ ] Side-by-side against agent-gateway on the eval sets: not worse on findings, cost, wall time
-- [ ] `/check` and `/review` skills switched; agw MCP `check` and `review` tools removed;
+- [x] Eval sets for review and check from recorded agent-gateway runs (findings, cost, wall time)
+- [x] `review` and `check` ported as workflows, depth gating included, OCR behind the wallet gate
+- [x] Side-by-side against agent-gateway on the eval sets: not worse on findings, cost, wall time
+- [x] `/check` and `/review` skills switched; agw MCP `check` and `review` tools removed;
   from here the fleet reviews with the new `agw review`
-**Left behind:**
+**Left behind:** every step done; master `fd03b01` deployed, `make verify` PASS, 769 tests. Side-by-side
+not-worse: check 7/7 on reproducible trees, review on 20 cases paired against a legacy rerun (recorded
+findings were no baseline: legacy's own rerun recovered 0 % of its recorded blockers). `/check` and
+`/review` run on `agw` (dotfiles #38); agent-gateway's MCP `check`/`review` removed (#37). Route fallback
+and the `iu_key` label live; fallback has not fired yet. Open: review angles lack legacy's read-only
+shell (Wave 5's experiment tests it); the adversary dominates review wall time (200–550 s); `agw schema
+review` output untyped; harness `--resume` takes a bare path; 11 unpriced calls; Argo must accept
+`iu_key` (usage-tracker's side). Full evidence: `docs/waves/handoff/lead.md` at `8581501`.
 
-## Wave 5 — Evals and self-improvement (P2)            <!-- status: pending -->
+## Wave 5 — Evals and self-improvement (P2)            <!-- status: active -->
 Workers: Opus/medium for scorers and compare statistics, Sonnet/high for the rest.
 
 - [ ] Scorer API used three ways (inline gate, regression, sampled drift); `agw eval run|compare`
 - [ ] Friction counters incl. the repeat-tool nudge (3, 5, 8); threshold → a GitHub issue with evidence
 - [ ] Retrospective workflow (weekly per workflow) and the per-agent learnings store
-- [ ] First experiment on review: one model or effort question answered with numbers
+- [ ] First experiment on review: one model or effort question answered with numbers (started by the
+  owner's direct ask: angle variants baseline / callers / read-only shell on the 20 paired cases)
+- [ ] Eval sets get a reproducibility check first (self-agreement of reruns) before they count as a baseline
+- [ ] Wave 4 leftovers (Sonnet/high): `agw schema review` output typed; harness `--resume` resolves a
+  timestamp under the reports dir; the 11 unpriced calls explained or priced; `roles/worker.md` gains
+  "never end a turn on a background shell"
 **Left behind:**
 
 ## Wave 6 — Research (P3a)            <!-- status: pending -->

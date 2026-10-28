@@ -321,3 +321,19 @@ One entry per phase: what we learned, what changed on this page, and why.
 ### v3.3 — provider-balance fallback, 2026-10-28
 
 - **Learned.** An empty provider account is a routing fact, not a run failure: one classifier (402, or 503 "Insufficient Balance") and one fallback per route keep review and check working while DeepSeek is out; the in-session `/code-review` is the last resort, typed so callers branch on it.
+
+### Wave 4 — Review and check cut over (P1c), 2026-10-28
+
+- **Learned.** A recorded corpus is not a baseline: legacy's own rerun recovered none of its recorded
+  blockers, so ten paired cases on the same trees said more than nineteen against records. Eval sets
+  need a reproducibility check before they judge anything (now a Wave 5 step). Each fix round needs its
+  own review: a round-3 fix introduced two regressions. Deep gateway reviews (~$2 each) added little once
+  their cross-family critic was dead; lead reads on Max kept finding what tests and gateways missed.
+- **Changed.** Per-route fallback on provider-balance failures and an in-session degrade for `review`
+  (owner direction, IU constrained); the IU key label on usage rows. Callers moved: `/check`, `/review`;
+  agent-gateway's MCP `check` and `review` deleted.
+- **Friction.** The DeepSeek provider behind IU ran out of balance; interim evals ran on the Athena team
+  key. A worker ended its turn on a background shell (one `rd say` fixed it). The merge train flakes on
+  timing under load.
+- **Spend.** IU ≈ $11 on gateway deep reviews before the owner stopped them, plus eval runs on the team key.
+- **Does the page hold?** Yes. P1's gate (review and check not worse) is met.
