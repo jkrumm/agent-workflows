@@ -29,7 +29,7 @@ bun packages/eval/src/harness/cli.ts self-agreement review --side legacy --runs 
 | `--keep` | keeps the case clones (paths go to stderr) |
 | `--resume <run>` | continues a run; finished and skipped cases are not rerun, failed ones are. `<run>` is an absolute directory, or a path relative to `<evalDir>/reports` (a run's timestamp is its directory name there); it never resolves against the cwd, must stay inside the reports directory and must exist, else a usage error |
 | `--seed N` | bootstrap seed (default 1): the same seed gives the same CI |
-| `--agw-args="<args>"` | review only (a usage error on `check`): whitespace-split extra arguments for every `agw review` call, e.g. `--agw-args="--angle-variant shell"` (the `=` is required: the value starts with a dash). Pinned in the run directory's `run.json`: `--resume` with different arguments is a usage error. Recorded in `report.json` (`meta.agwArgs`) and the `report.md` header |
+| `--agw-args="<args>"` | review only (a usage error on `check`): whitespace-split extra arguments for every `agw review` call, e.g. `--agw-args="--depth deep"` (the `=` is required: the value starts with a dash). Pinned in the run directory's `run.json`: `--resume` with different arguments is a usage error. Recorded in `report.json` (`meta.agwArgs`) and the `report.md` header |
 
 Environment: `AGW_EVAL_DIR` (cases, reports), `AGW_EVAL_HOME` (the root `case.repo` is relative to, default
 `$HOME`), `AGW_BIN` / `AGW_LEGACY_BIN` (the CLIs, default `agw` / `agw-legacy` on `PATH`), `AGW_PG_SCHEMA` (default

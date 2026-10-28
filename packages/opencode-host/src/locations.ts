@@ -48,10 +48,29 @@ function canonical(value: unknown): string {
   return JSON.stringify(value)
 }
 
-/** sha256 over everything that shapes the agent's sessions; an input of the run fingerprint (concept §5). */
+/**
+ * What a session may use without the agent asking for it: the read-only tools the agents are measured to call (OpenCode
+ * 2.0.32, `test/live-permissions.test.ts`; names in the README). Everything else is refused, unknown future actions too.
+ */
+export const READ_ONLY_ACTIONS = ['read', 'glob', 'grep', 'skill'] as const
+
+/** The host's own rules under every agent's: the catch-all deny, then the read-only allows. */
+export function basePolicy(): PermissionRule[] {
+  return [
+    { action: '*', resource: '*', effect: 'deny' },
+    ...READ_ONLY_ACTIONS.map((action): PermissionRule => ({ action, resource: '*', effect: 'allow' })),
+  ]
+}
+
+/**
+ * sha256 over everything that shapes the agent's sessions; an input of the run fingerprint (concept §5). The host's
+ * base policy is part of it, so a later change to the default moves every agent's hash, not only the agents that
+ * name permissions.
+ */
 export function locationHash(def: AgentDefinition): string {
   const content = {
-    v: 2,
+    v: 3,
+    policy: basePolicy(),
     agentsMd: def.agentsMd,
     skills: def.skills ?? {},
     config: def.config ?? null,

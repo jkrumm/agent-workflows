@@ -3,10 +3,12 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, w
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
+  basePolicy,
   compileLocation,
   LocationLeakError,
   locationHash,
   pruneLocations,
+  READ_ONLY_ACTIONS,
   sweepStaleTemps,
   touchLocation,
   WarmCache,
@@ -46,6 +48,25 @@ describe('compileLocation', () => {
     expect(locationHash(base)).not.toBe(locationHash({ ...base, agentsMd: 'y' }))
     expect(locationHash(base)).not.toBe(locationHash({ ...base, config: {} }))
     expect(locationHash(base)).not.toBe(locationHash({ ...base, permissions: { shell: true } }))
+  })
+
+  test('the host’s base policy is part of every agent’s hash: a changed default moves it', () => {
+    const base = { name: 'a', agentsMd: 'x' }
+    expect(basePolicy()[0]).toEqual({ action: '*', resource: '*', effect: 'deny' })
+    expect(
+      basePolicy()
+        .slice(1)
+        .map((r) => r.action),
+    ).toEqual([...READ_ONLY_ACTIONS])
+    const before = locationHash(base)
+    const actions = READ_ONLY_ACTIONS as unknown as string[]
+    actions.push('webfetch')
+    try {
+      expect(locationHash(base)).not.toBe(before)
+    } finally {
+      actions.pop()
+    }
+    expect(locationHash(base)).toBe(before)
   })
 
   test.each(['AGENTS.md', 'CLAUDE.md', '.git'])('an ancestor %s is refused', (leak) => {

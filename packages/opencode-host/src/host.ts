@@ -23,6 +23,7 @@ import {
 import { fallbackModelRef, modelRef, rateFor } from './config.ts'
 import {
   type AgentDefinition,
+  basePolicy,
   compileLocation,
   pruneLocations,
   sweepStaleTemps,
@@ -170,12 +171,6 @@ function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
 }
 
 /**
- * What a session may use without the agent asking for it: the read-only tools the agents are measured to call (OpenCode
- * 2.0.32, `test/live-permissions.test.ts`; names in the README). Everything else is refused, unknown future actions too.
- */
-export const READ_ONLY_ACTIONS = ['read', 'glob', 'grep', 'skill'] as const
-
-/**
  * Deny by default, as agent-gateway's `OPENCODE_READONLY_PERMISSIONS`: the catch-all deny first, the read-only allows
  * next, the shell only when the agent opts in (`permissions.shell`), then the agent's own `rules` (an opt-in such as
  * `webfetch`, `websearch`, `subagent` or `edit` is an `allow` there and wins), the step's `allowDirectories` last: last
@@ -184,11 +179,9 @@ export const READ_ONLY_ACTIONS = ['read', 'glob', 'grep', 'skill'] as const
  * included; `<dir>` alone and the symlink-resolved path do not).
  */
 export function sessionPermissions(def: AgentDefinition, allowDirectories: readonly string[] = []): PermissionRule[] {
-  const rule = (action: string, effect: PermissionRule['effect']): PermissionRule => ({ action, resource: '*', effect })
   return [
-    rule('*', 'deny'),
-    ...READ_ONLY_ACTIONS.map((action) => rule(action, 'allow')),
-    ...(def.permissions?.shell ? [rule('shell', 'allow')] : []),
+    ...basePolicy(),
+    ...(def.permissions?.shell ? [{ action: 'shell', resource: '*', effect: 'allow' } satisfies PermissionRule] : []),
     ...(def.permissions?.rules ?? []),
     ...allowDirectories.map(
       (dir): PermissionRule => ({ action: 'external_directory', resource: `${dir}/*`, effect: 'allow' }),
@@ -197,6 +190,28 @@ export function sessionPermissions(def: AgentDefinition, allowDirectories: reado
 }
 
 const GLOB_CHARS = /[*?[\]{}]/
+
+const STEP_OPTIONS = ['route', 'output', 'allowDirectories'] as const
+
+/**
+ * The step's `spec.options`: an object with only the keys the host knows. An unknown key (a typo, an option removed
+ * with its code such as `repoShell`) fails the step before a session exists, so a rule the caller counts on can never
+ * be silently absent.
+ */
+function stepOptions(agent: string, raw: unknown): { route?: RouteId; output?: string; allowDirectories?: unknown } {
+  if (raw === undefined || raw === null) return {}
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new WorkflowError('error', `agent "${agent}": options must be an object`)
+  }
+  const unknown = Object.keys(raw).filter((key) => !(STEP_OPTIONS as readonly string[]).includes(key))
+  if (unknown.length > 0) {
+    throw new WorkflowError(
+      'error',
+      `agent "${agent}": unknown option ${unknown.map((k) => JSON.stringify(k)).join(', ')} (known: ${STEP_OPTIONS.join(', ')})`,
+    )
+  }
+  return raw
+}
 
 /**
  * `spec.options.allowDirectories`: absolute directories without glob characters, never the filesystem root. A
@@ -304,11 +319,7 @@ export class OpenCodeHost implements AgentHost {
     const def = this.agents.get(spec.agent)
     if (!def)
       throw new WorkflowError('error', `unknown agent "${spec.agent}" (known: ${[...this.agents.keys()].join(', ')})`)
-    const options = (spec.options ?? {}) as {
-      route?: RouteId
-      output?: string
-      allowDirectories?: unknown
-    }
+    const options = stepOptions(def.name, spec.options)
     const allowDirectories = allowedDirectories(def.name, options.allowDirectories)
     const routeId = options.route ?? def.route
     if (!routeId) throw new WorkflowError('error', `agent "${spec.agent}" has no route and the step names none`)
@@ -321,8 +332,9 @@ export class OpenCodeHost implements AgentHost {
     const headers = this.headers(spec.runId, spec.stepId)
     let sessionId: string
     let directory: string
+    let existed: boolean
     try {
-      ;({ id: sessionId, directory } = await this.sessionFor(spec.key, location.directory, headers))
+      ;({ id: sessionId, directory, existed } = await this.sessionFor(spec.key, location.directory, headers))
       if (directory !== location.directory) {
         // Re-attaching in an older hash directory: renew its marker (pruning) and pin it, not the new one.
         touchLocation(directory)
@@ -336,6 +348,7 @@ export class OpenCodeHost implements AgentHost {
       throw err
     }
     // A second create with the same id returns the first session (measured), so a crash right here is harmless.
+    const permissions = sessionPermissions(def, allowDirectories)
     await this.client.createSession(
       {
         id: sessionId,
@@ -343,11 +356,14 @@ export class OpenCodeHost implements AgentHost {
         title: `agw ${spec.runId}:${spec.stepId}`,
         location: { directory },
         model,
-        permissions: sessionPermissions(def, allowDirectories),
+        permissions,
         metadata: { agw: { key: spec.key, agent: def.name, route: routeId, locationHash: location.hash } },
       },
       headers,
     )
+    // The create above returned the session that was already there: it keeps the policy it was made with (a session
+    // from before a deploy that changed the rules). Set the current one; the next turn reads it.
+    if (existed) await this.client.updateSession(sessionId, { permissions }, headers)
     const handle: OpenCodeHandle = {
       v: 1,
       sessionId,
@@ -639,17 +655,20 @@ export class OpenCodeHost implements AgentHost {
       from: h.model,
       to: fallback.route.model,
     })
+    const permissions = sessionPermissions(def, h.allow ?? [])
     await this.client.createSession(
       {
         id: sessionId,
         title: `agw ${h.runId}:${h.stepId} (fallback)`,
         location: { directory: h.directory },
         model: fallback.model,
-        permissions: sessionPermissions(def, h.allow ?? []),
+        permissions,
         metadata: { agw: { agent: def.name, route: h.route, fallbackOf: h.sessionId } },
       },
       headers,
     )
+    // A fallback session that survived a redeploy keeps its old rules; set the current ones (idempotent when new).
+    await this.client.updateSession(sessionId, { permissions }, headers)
     const next: OpenCodeHandle = { ...h, sessionId, model: fallback.route.model, fallback: true }
     await this.prompt(next, prompt)
     return await this.wait(next, options)
@@ -681,15 +700,15 @@ export class OpenCodeHost implements AgentHost {
     key: string,
     directory: string,
     headers?: Record<string, string>,
-  ): Promise<{ id: string; directory: string }> {
+  ): Promise<{ id: string; directory: string; existed: boolean }> {
     const active = await this.client.active(headers)
     for (let generation = 1; generation <= MAX_GENERATIONS; generation++) {
       const id = sessionIdFor(key, generation)
       const existing = await this.client.getSession(id, headers)
-      if (!existing) return { id, directory }
+      if (!existing) return { id, directory, existed: false }
       if (active.has(id) || (await this.client.inbox(id, headers)).length > 0) {
         this.logger.warn('opencode session of an earlier attempt still runs; re-attaching', { sessionId: id })
-        return { id, directory: existing.location.directory }
+        return { id, directory: existing.location.directory, existed: true }
       }
       // The attempt moved to its fallback session and that one still runs: this generation is not finished. Its handle
       // is the primary's (as journaled); `wait` lands on the fallback again and `prompt` sends nothing.
@@ -702,9 +721,10 @@ export class OpenCodeHost implements AgentHost {
           sessionId: id,
           fallbackSessionId: fallback,
         })
-        return { id, directory: existing.location.directory }
+        return { id, directory: existing.location.directory, existed: true }
       }
-      if (existing.location.directory === directory && !(await this.prompted(id, headers))) return { id, directory }
+      if (existing.location.directory === directory && !(await this.prompted(id, headers)))
+        return { id, directory, existed: true }
     }
     throw new WorkflowError('error', `step ${key} used ${MAX_GENERATIONS} sessions; refusing another`)
   }

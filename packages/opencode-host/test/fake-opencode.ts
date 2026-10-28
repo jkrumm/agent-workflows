@@ -53,6 +53,8 @@ type Session = {
   model: { id: string; providerID: string; variant?: string }
   metadata?: Record<string, unknown>
   permissions?: unknown[]
+  /** PATCHes that touched the permissions: a test reads it to see a re-attach apply the policy. */
+  permissionUpdates?: number
   messages: Msg[]
   inbox: Input[]
 }
@@ -304,6 +306,12 @@ export function startFake(options: FakeOptions) {
             permissions: s.permissions,
           },
         })
+      }
+      if (tail === '' && req.method === 'PATCH') {
+        if (body.permissions !== undefined) s.permissions = body.permissions as unknown[]
+        s.permissionUpdates = (s.permissionUpdates ?? 0) + 1
+        save()
+        return new Response(null, { status: 204 })
       }
       if (tail === '/message') {
         const limit = Number(url.searchParams.get('limit') ?? 50)
