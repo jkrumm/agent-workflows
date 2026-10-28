@@ -103,6 +103,8 @@ const consoleLogger: Logger = {
 }
 
 const TERMINAL = new Set(['done', 'failed', 'cancelled'])
+/** Failed scoring attempts (judge, journal) in a row before a run gets an explicit scorer error. */
+export const MAX_SCORE_ATTEMPTS = 3
 const CANCELLED = { kind: 'cancelled' as const, message: 'cancelled' }
 const MAX_RECOVERY_BACKOFF_MS = 30_000
 const MAX_INFRA_BACKOFF_MS = 60_000
@@ -308,18 +310,21 @@ export class Runtime {
   /**
    * Scores an ended run after the fact (concept §6: regression, drift) with its workflow's scorer, and records the
    * verdict on the run (`scores.final`). A failed run is scored with output `null` (a miss); a cancelled or unfinished
-   * one is not scored (null). A judge, journal or shutdown failure is rethrown and nothing is written (the run stays
-   * unscored, so drift retries it); a scorer that fails on its own (deterministic) is recorded as `error` with
-   * `pass: false`, so drift never loops on it. Any process may call it: the run has ended, nothing races the write.
+   * one is not scored (null). A judge or journal failure is rethrown unrecorded (drift retries the run) and counted;
+   * the `MAX_SCORE_ATTEMPTS`th in a row, or a scorer that fails on its own, is recorded as an explicit scorer error
+   * (`error`, `pass: null`, `runs.score_error`): not a verdict, and re-scored only by a new scorer version. A shutdown
+   * is rethrown uncounted. Any process may call it: the run has ended, nothing races the write.
    */
   async scoreRun(runId: string, options: ScoreRunOptions): Promise<FinalScore | null> {
     const run = await this.journal.scoreTarget(runId)
     if (!run) throw new Error(`run ${runId} not found`)
     if (run.status !== 'done' && run.status !== 'failed') return null
-    if (options.onlyUnscored && run.scored_at) return null
     const workflow = this.registry.get(run.workflow)
     if (!workflow?.scorer) throw new Error(`workflow ${run.workflow} has no scorer`)
     const { scorer } = workflow
+    // Drift scores a run once; a scorer error is scored again only by another scorer version.
+    const rescorable = run.score_error !== null && run.scorer !== scorer.version
+    if (options.onlyUnscored && run.scored_at && !rescorable) return null
     const meta = {
       source: options.source,
       scorer: scorer.version,
@@ -358,10 +363,23 @@ export class Runtime {
     } catch (err) {
       // Not the scorer's verdict: a judge call, the journal, a shutdown. Rethrown unrecorded, so the run stays
       // unscored and drift (or the eval run) tries again.
-      if (judgeFailure !== null || err instanceof InfraError || this.lifetime.signal.aborted) throw err
-      // The scorer's own deterministic failure (a bug, a reference it refuses, a malformed verdict): recorded, so drift
-      // does not loop on a run that can never score.
-      final = { scores: {}, pass: false, error: errorMessage(err), ...meta }
+      if (this.lifetime.signal.aborted) throw err
+      if (judgeFailure !== null || err instanceof InfraError) {
+        // Bounded: after MAX_SCORE_ATTEMPTS failures in a row the run gets an explicit scorer error, so a persistent
+        // failure neither starves newer runs nor keeps spending judge calls.
+        const attempts = await this.journal.scoreFailed(runId).catch(() => null)
+        if (attempts === null || attempts < MAX_SCORE_ATTEMPTS) throw err
+        final = {
+          scores: {},
+          pass: null,
+          error: `gave up after ${attempts} failed attempts: ${errorMessage(err)}`,
+          ...meta,
+        }
+      } else {
+        // The scorer's own deterministic failure (a bug, a reference it refuses, a malformed verdict): an explicit
+        // scorer error, not a verdict, so drift does not loop on a run that can never score.
+        final = { scores: {}, pass: null, error: errorMessage(err), ...meta }
+      }
     }
     const written = await this.journal.writeFinalScore(runId, final, options.onlyUnscored ?? false)
     return written ? final : null
@@ -369,7 +387,8 @@ export class Runtime {
 
   /**
    * Drift's sample: done runs (of registered workflows with a scorer, unless `workflows` names others) with a
-   * `purposes` purpose (default `prod`), finished since `since`, unscored, and inside the deterministic `rate` sample.
+   * `purposes` purpose (default `prod`), finished since `since`, unscored, and inside the deterministic `rate` sample;
+   * plus drift runs whose scorer error came from an older scorer version. Failed attempts sort last.
    */
   driftCandidates(options: {
     rate: number
@@ -380,7 +399,8 @@ export class Runtime {
   }): Promise<string[]> {
     const workflows = options.workflows ?? [...this.registry.values()].filter((w) => w.scorer).map((w) => w.id)
     if (workflows.length === 0 || options.rate <= 0) return Promise.resolve([])
-    return this.journal.driftCandidates({ ...options, workflows, purposes: options.purposes ?? ['prod'] })
+    const versions = workflows.map((id) => this.registry.get(id)?.scorer?.version ?? '')
+    return this.journal.driftCandidates({ ...options, workflows, versions, purposes: options.purposes ?? ['prod'] })
   }
 
   /** Scored runs of a workflow (oldest first), for `agw eval compare`. */
