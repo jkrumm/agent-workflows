@@ -266,8 +266,9 @@ describe('eval.run resume and cancel', () => {
             : rt.runByKey(workflow, key),
       }
       expect(await sweepCaseTrees({ runtime, tmpRoot, olderThanMs: 3_600_000 })).toEqual([]) // all fresh
-      const removed = await sweepCaseTrees({ runtime, tmpRoot, olderThanMs: 0 })
-      expect(removed.map((d) => d.split('/').at(-1)).sort()).toHaveLength(2)
+      // `now` a minute on: a directory made this instant can carry an mtime a hair past Date.now().
+      const removed = await sweepCaseTrees({ runtime, tmpRoot, olderThanMs: 0, now: Date.now() + 60_000 })
+      expect(removed).toHaveLength(2)
       expect(readdirSync(tmpRoot).sort()).toEqual(['agw_eval_case_live', 'not-ours'])
     } finally {
       await rt.close()
