@@ -1,0 +1,12 @@
+{
+  "route": "research.agent",
+  "permissions": {
+    "rules": [
+      {
+        "action": "engine_research",
+        "resource": "*",
+        "effect": "allow"
+      }
+    ]
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "route": "research.agent",
+  "permissions": {
+    "rules": [
+      {
+        "action": "web_search",
+        "resource": "*",
+        "effect": "allow"
+      },
+      {
+        "action": "web_fetch",
+        "resource": "*",
+        "effect": "allow"
+      },
+      {
+        "action": "web_docs",
+        "resource": "*",
+        "effect": "allow"
+      },
+      {
+        "action": "web_package",
+        "resource": "*",
+        "effect": "allow"
+      }
+    ]
+  }
+}
