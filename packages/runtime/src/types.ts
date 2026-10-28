@@ -180,11 +180,15 @@ export type Verdict = { scores: Record<string, number>; pass: boolean; feedback?
 /** A capability call a scorer may make for an LLM-judged sub-score; its usage lands on the scoring step. */
 export type ScoreJudge = (capability: string, input: Json) => Promise<Json>
 
-/** The runtime's side of `ScoreJudge`: the host passes its capability registry (`RuntimeOptions.judge`). */
+/**
+ * The runtime's side of `ScoreJudge`: the host passes its capability registry (`RuntimeOptions.judge`). `source` says
+ * who scores: an inline gate's `addUsage` is its step's; regression and drift score outside any step, so the host
+ * records those calls as runs of their own.
+ */
 export type JudgeCaller = (
   capability: string,
   input: Json,
-  scope: { signal: AbortSignal; addUsage: (usage: Usage) => void },
+  scope: { signal: AbortSignal; addUsage: (usage: Usage) => void; source: ScoreSource },
 ) => Promise<Json>
 
 export type ScorerContext<R> = {

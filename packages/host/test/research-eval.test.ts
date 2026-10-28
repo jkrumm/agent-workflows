@@ -1,13 +1,17 @@
-import { afterAll, beforeAll, expect, test } from 'bun:test'
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { defineCapability, fail } from '@agent-workflows/capabilities'
 import { casesPath } from '@agent-workflows/eval'
 import { defineWorkflow, type Json, type Runtime } from '@agent-workflows/runtime'
 import { z } from 'zod'
+import { createCapabilityWorkflows } from '../src/capability-runs.ts'
+import { judgeAllowed, scorerJudge } from '../src/judge.ts'
 import type { HostWorkflow } from '../src/operations.ts'
 import { createEvalWorkflows, wireEval } from '../src/workflows/eval/index.ts'
 import { readSuite } from '../src/workflows/eval/suites.ts'
+import { rejection } from './support.ts'
 import { testPlatform } from '../../middleware/test/support.ts'
 import { freshSchema, inspector, testRuntime } from '../../runtime/test/support/pg.ts'
 
@@ -106,22 +110,73 @@ test('agw eval run on a tree-less suite: every case runs with the arm args and i
   expect(seen).toContainEqual({ query: 'port 5432?', depth: 'quick', design: 'pilot' })
 })
 
-test("the host's judge calls a registry capability by id with the scoring step's usage and signal", async () => {
-  const { registryJudge } = await import('../src/boot.ts')
-  const calls: unknown[] = []
-  const registry = {
-    async call(id: string, input: Json, options: { addUsage: unknown; signal: AbortSignal }) {
-      calls.push([id, input, typeof options.addUsage, options.signal.aborted])
-      return { ok: true }
+describe("the scorers' judge", () => {
+  const pageCap = defineCapability({
+    id: 'web.fetch',
+    summary: 'fake page fetch',
+    input: z.object({ url: z.string() }),
+    output: z.object({ url: z.string(), text: z.string() }),
+    async handler({ url }, ctx) {
+      ctx.addUsage({
+        model: 'tavily',
+        tokens: { input: 0, output: 0, cacheRead: 0, reasoning: 0 },
+        cost: 0.002,
+        costSource: 'rate',
+      })
+      if (url.includes('gone')) throw fail('UPSTREAM_ERROR', 'the page is gone', { status: 404 })
+      return { url, text: 'page text' }
     },
-  }
-  const judge = registryJudge(registry as never)
-  expect(
-    await judge(
-      'web.fetch',
-      { url: 'https://example.com' },
-      { addUsage: () => {}, signal: new AbortController().signal },
-    ),
-  ).toEqual({ ok: true })
-  expect(calls).toEqual([['web.fetch', { url: 'https://example.com' }, 'function', false]])
+  })
+  const capWorkflows = createCapabilityWorkflows({ capabilities: [pageCap] })
+  let jrt: Runtime
+  let jplatform: ReturnType<typeof testPlatform>
+  const jdb = freshSchema('judge')
+  const jsql = inspector(jdb.schema)
+  const registry = { call: (_id: string, input: Json) => Promise.resolve({ inline: input }) }
+  const judge = () => scorerJudge({ registry, workflows: capWorkflows, runtime: () => jrt })
+  const scope = (source: 'regression' | 'drift' | 'inline') => ({
+    addUsage: () => {},
+    signal: new AbortController().signal,
+    source,
+  })
+
+  beforeAll(async () => {
+    jplatform = testPlatform(jdb.schema)
+    jrt = testRuntime({ schema: jdb.schema, workflows: [...capWorkflows.values()], middleware: jplatform.middleware })
+    await jrt.open()
+  })
+  afterAll(async () => {
+    await jrt.close()
+    await jplatform.close()
+    await jsql.close()
+    await jdb.drop()
+  })
+
+  test('regression and drift: each call is a cap run, priced, with purpose eval or drift', async () => {
+    expect(await judge()('web.fetch', { url: 'https://example.com/a' }, scope('regression'))).toEqual({
+      url: 'https://example.com/a',
+      text: 'page text',
+    })
+    await judge()('web.fetch', { url: 'https://example.com/b' }, scope('drift'))
+    const { rows } = await jsql.pool.query(
+      `select purpose, status, cost from "${jdb.schema}".runs where workflow = 'cap.web.fetch' order by started_at`,
+    )
+    expect(rows.map((r) => [r.purpose, r.status, Number(r.cost)])).toEqual([
+      ['eval', 'done', 0.002],
+      ['drift', 'done', 0.002],
+    ])
+  })
+
+  test("a capability's typed failure is an answer; a call outside the allowlist is refused", async () => {
+    expect(await judge()('web.fetch', { url: 'https://example.com/gone' }, scope('regression'))).toEqual({
+      error: { code: 'UPSTREAM_ERROR', message: 'the page is gone' },
+    })
+    expect(rejection(judge()('eval.run', {}, scope('regression')))).resolves.toContain('is not a judge capability')
+    expect(judgeAllowed('llm.classify')).toBe(true)
+    expect(judgeAllowed('review.adversary')).toBe(false)
+  })
+
+  test('the inline gate calls in process, on its own step', async () => {
+    expect(await judge()('decide', { state: 's' }, scope('inline'))).toEqual({ inline: { state: 's' } })
+  })
 })
