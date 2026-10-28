@@ -84,7 +84,7 @@ excluded from every tool.
 |-|-|
 | `make check` | `bun install --frozen-lockfile` first (stale `node_modules` never passes), then `biome format`, `biome lint`, `oxlint --type-aware`, `tsc --noEmit`, `bun test --isolate`; non-zero on any failure. **The merge train's gate**, and what CI runs |
 | `make fmt` | `biome format --write` |
-| `make deploy` | On the mini: fetch `origin/master` into the deploy clone `~/.agent-workflows/app` (detached, clean), `bun install --frozen-lockfile`, render and bootstrap the LaunchAgent `com.jkrumm.agent-workflows-host`, wait for `/health` (version = the sha), write `~/.agent-workflows/data/deployed-sha`, link `~/.local/bin/agw`, write `~/.config/agw/env`. `DRY_RUN=1` prints the plan and the plist and changes nothing. Details: `packages/host/README.md` §Deploy |
+| `make deploy` | On the mini: fetch `origin/master` into `~/.agent-workflows/repo`, export it to `releases/<sha>` and `bun install --frozen-lockfile` there, render and bootstrap the LaunchAgent `com.jkrumm.agent-workflows-host` for that release, wait for `/health` (version = the sha), then `current`, `~/.config/agw/env`, `~/.local/bin/agw`, `data/deployed-sha`. A release that never turns healthy is rolled back to the previous one (exit 1). `DRY_RUN=1` prints the plan and the plist and changes nothing. Details: `packages/host/README.md` §Deploy |
 | `make verify` | Exit 0 only if `/health` is ok, the deployed sha is `origin/master`, `AGW_PURPOSE=verify agw smoke ping` returns a `title`, and its `agw.runs` row is `done` with a trace id and priced usage. Prints the run id |
 
 CI (`.github/workflows/ci.yml`) runs `bun install --frozen-lockfile` and `make check` on pushes to `master` and
@@ -94,7 +94,7 @@ on pull requests, on GitHub-hosted runners.
 
 ## Gotchas
 
-- **The deploy clone is what runs.** `~/.agent-workflows/app` is a clone that `make deploy` resets to `origin/master`; the dev checkout (and its dirty tree) never goes live, and a change is live only after it is merged and deployed. Never edit the clone.
+- **A release is what runs, never a checkout.** `make deploy` exports `origin/master` to `~/.agent-workflows/releases/<sha>` and starts the LaunchAgent from there; the dev checkout (and its dirty tree) never goes live, the live release is never written to, and a failed deploy rolls back to `previous-sha`. Never edit a release; the first deploy that fails leaves the LaunchAgent booted out.
 - **The host fails closed on the secrets cache.** `scripts/launch.sh` exits 78 unless every ref in `.env.tpl` resolves through `secrets-run` (the offline cache), and names the missing refs. A new `op://` ref in `.env.tpl` must be seeded (`dotfiles-private/headless.refs`, `make secrets-seed` on the MacBook) before the deploy that needs it; until then the LaunchAgent restarts every 30 s and logs the refs to `~/Library/Logs/agent-workflows-host.err.log`. Never `op read` on the mini.
 
 - `docs/concept.md` changes only with a version note at the top and a retro-log entry.
