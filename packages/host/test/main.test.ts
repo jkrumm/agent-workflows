@@ -2,9 +2,9 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { resolveRoute } from '@agent-workflows/routes'
 import { boot, lazyOpenCodeHost } from '../src/boot.ts'
 import { loadConfig } from '../src/config.ts'
-import { resolveRoute } from '@agent-workflows/routes'
 import { Pool } from 'pg'
 import { freshSchema, PG_URL, rejection, SECRET, until } from './support.ts'
 
@@ -174,9 +174,10 @@ describe('boot', () => {
   test('a valid AGW_ROUTES boots, and no AGW_ROUTES boots as before', async () => {
     const fresh = freshSchema('bootroutes2')
     try {
-      // A patch that changes the route: the same model, one more output token than the table allows for.
+      // A patch built from the resolved route that really changes it, on a field with no ceiling to trip over.
+      // That boot reads this env at all is shown by the refusals above: the same channel carries the bad ones.
       const route = resolveRoute(ROUTE, {})
-      const patch = { [ROUTE]: { maxOutputTokens: (route.maxOutputTokens ?? 1000) + 1 } }
+      const patch = { [ROUTE]: { effort: route.effort === 'low' ? 'high' : 'low' } }
       for (const env of [{ AGW_ROUTES: JSON.stringify(patch) }, {}]) {
         const running = await boot(loadConfig(valid(fresh.schema)), { env })
         await running.shutdown()

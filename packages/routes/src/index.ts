@@ -48,7 +48,7 @@ function patchedEntries(env: Env): Map<string, RouteEntry> {
  * Check `AGW_ROUTES` once, whole: it parses as JSON, has the override shape, and every patch (including one for an id
  * that is not in the table) is valid over its table entry. Returns the ids the override touches (all table ids).
  * A failure is a `RouteOverrideError` naming the route id and the problem; it never carries the parser's own message
- * (it quotes the input) or any override value, so it is safe to print. Unset or blank means no overrides.
+ * (it quotes the input) or an override value. It can name ids and keys taken from the file, which are not values. Unset or blank means no overrides.
  */
 export function validateOverrides(env: Env = process.env): RouteId[] {
   return [...patchedEntries(env).keys()] as RouteId[]

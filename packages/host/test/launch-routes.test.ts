@@ -16,7 +16,7 @@ afterEach(() => {
 
 type File = { content: string; mode?: number } | { symlinkTo: string } | { directory: true }
 
-function run(file: File | null, env: Record<string, string> = {}, block = BLOCK) {
+function run(file: File | null, env: Record<string, string> = {}, block = BLOCK, cwd = ROOT) {
   const home = mkdtempSync(join(tmpdir(), 'agw-routes-override-'))
   dirs.push(home)
   if (file) {
@@ -33,7 +33,7 @@ function run(file: File | null, env: Record<string, string> = {}, block = BLOCK)
     }
   }
   const script = `${block}\nprintf '%s' "\${AGW_ROUTES-unset}"`
-  const proc = Bun.spawnSync(['/bin/sh', '-c', script], { cwd: ROOT, env: { PATH, HOME: home, ...env } })
+  const proc = Bun.spawnSync(['/bin/sh', '-c', script], { cwd, env: { PATH, HOME: home, ...env } })
   return { code: proc.exitCode, out: proc.stdout.toString(), err: proc.stderr.toString() }
 }
 
@@ -132,6 +132,16 @@ describe('launch.sh route override', () => {
     const r = run({ content: VALID }, {}, BLOCK.replace(owned, '[ -O /etc/hosts ]'))
     expect(r.code).toBe(78)
     expect(r.err).toContain('owned by the user')
+    expect(r.out).toBe('')
+  })
+
+  test('a validator that cannot run refuses with 78 and says so, with none of bun output in the message', () => {
+    const elsewhere = mkdtempSync(join(tmpdir(), 'agw-routes-nocwd-'))
+    dirs.push(elsewhere)
+    const r = run({ content: VALID }, {}, BLOCK, elsewhere)
+    expect(r.code).toBe(78)
+    expect(r.err).toContain('validator did not run')
+    expect(r.err).not.toContain(SECRET_MODEL)
     expect(r.out).toBe('')
   })
 })
