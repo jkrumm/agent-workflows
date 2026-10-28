@@ -11,13 +11,9 @@ import { ARMS, type ArmId, decide, median, type Row } from './decision.ts'
 type DbRow = {
   run_id: string
   status: string
-  input: { depth?: string }
-  final: {
-    caseId?: string
-    args?: { design?: string; profile?: string }
-    scores?: Record<string, number>
-    error?: string
-  } | null
+  idempotency_key: string
+  input: { depth?: string; design?: string; profile?: string }
+  final: { scores?: Record<string, number>; error?: string } | null
   output: { status?: string; tools?: Record<string, number> } | null
   error_kind: string | null
   cost: string | null
@@ -28,30 +24,38 @@ type DbRow = {
   tool_calls: number | null
 }
 
-const armOf = (args: { design?: string; profile?: string } | undefined): ArmId | null => {
-  const design = args?.design ?? 'engine'
-  const id = design === 'engine' ? 'engine' : `${design}-${args?.profile ?? 'yolo'}`
+const armOf = (input: { design?: string; profile?: string }): ArmId | null => {
+  const design = input.design ?? 'engine'
+  const id = design === 'engine' ? 'engine' : `${design}-${input.profile ?? 'yolo'}`
   return (ARMS as string[]).includes(id) ? (id as ArmId) : null
 }
 
+/**
+ * Every research run the eval runs started, found by their case key (`eval:<evalRunId>:<caseId>`), scored or not, so
+ * none drops out silently. A failed run is a miss (golden 0, supported 0). A run without a verdict (not scored yet, a
+ * recorded scorer error, cancelled) is left out of the quality scores and counted as unscored; its cost still counts.
+ */
 export async function load(pool: Pool, schema: string, evalRunIds: string[]) {
   const { rows } = await pool.query<DbRow>(
-    `select id as run_id, status, input, scores->'final' as final, output, error_kind, cost, wall_ms, tokens_input,
-            tokens_output, tokens_cache_read, tool_calls
+    `select id as run_id, status, idempotency_key, input, scores->'final' as final, output, error_kind, cost, wall_ms,
+            tokens_input, tokens_output, tokens_cache_read, tool_calls
        from "${schema}".runs
-      where workflow = 'research' and scores->'final'->>'evalRunId' = any($1)`,
-    [evalRunIds],
+      where workflow = 'research' and idempotency_key like any($1)`,
+    [evalRunIds.map((id) => `eval:${id}:%`)],
   )
   return rows.flatMap((r) => {
-    const arm = armOf(r.final?.args)
+    const arm = armOf(r.input)
     const depth = r.input.depth
-    if (!arm || !r.final?.caseId || (depth !== 'quick' && depth !== 'standard' && depth !== 'deep')) return []
-    const scores = r.final.scores ?? {}
+    const prefix = evalRunIds.map((id) => `eval:${id}:`).find((p) => r.idempotency_key.startsWith(p))
+    if (!arm || !prefix || (depth !== 'quick' && depth !== 'standard' && depth !== 'deep')) return []
+    const failed = r.status === 'failed'
+    const verdict = !failed && r.status === 'done' && r.final !== null && r.final.error === undefined
+    const scores = verdict ? (r.final?.scores ?? {}) : {}
     const row: Row = {
       arm,
-      caseId: r.final.caseId,
+      caseId: r.idempotency_key.slice(prefix.length),
       depth,
-      ok: r.status === 'done' && r.final.error === undefined,
+      ok: !failed,
       golden: scores.golden ?? null,
       supported: scores.supported ?? null,
       cost: r.cost === null ? null : Number(r.cost),
@@ -60,6 +64,7 @@ export async function load(pool: Pool, schema: string, evalRunIds: string[]) {
     return [
       {
         row,
+        unscored: !failed && !verdict,
         partial: r.output?.status === 'partial',
         errorKind: r.error_kind,
         grounded: scores.grounded ?? null,
@@ -75,6 +80,7 @@ export async function load(pool: Pool, schema: string, evalRunIds: string[]) {
 type Loaded = Awaited<ReturnType<typeof load>>[number]
 
 const avg = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null)
+const seconds = (ms: number | null) => (ms === null ? null : ms / 1000)
 const f = (x: number | null, digits = 2) => (x === null ? 'n/a' : x.toFixed(digits))
 
 export function report(loaded: Loaded[]): string {
@@ -83,8 +89,8 @@ export function report(loaded: Loaded[]): string {
     lines.push(
       `### ${title}`,
       '',
-      '| arm | runs | failed | partial | golden | supported | judged share | grounded | median $ | p50 wall s | tokens (median) | cache read share | tool calls (median) |',
-      '|-|-|-|-|-|-|-|-|-|-|-|-|-|',
+      '| arm | runs | failed | unscored | partial | golden | supported | judged share | grounded | median $ | p50 wall s | tokens (median) | cache read share | tool calls (median) |',
+      '|-|-|-|-|-|-|-|-|-|-|-|-|-|-|',
     )
     for (const arm of ARMS) {
       const mine = loaded.filter((l) => l.row.arm === arm && filter(l))
@@ -95,7 +101,7 @@ export function report(loaded: Loaded[]): string {
         avg(mine.flatMap((l) => (!l.row.ok ? [0] : l.row[key] === null ? [] : [l.row[key]])))
       const tokens = mine.reduce((a, l) => a + l.tokens, 0)
       lines.push(
-        `| ${arm} | ${mine.length} | ${mine.length - ok.length} | ${ok.filter((l) => l.partial).length} | ${f(score('golden'))} | ${f(score('supported'))} | ${f(avg(ok.flatMap((l) => (l.judgedShare === null ? [] : [l.judgedShare]))))} | ${f(avg(ok.flatMap((l) => (l.grounded === null ? [] : [l.grounded]))))} | ${f(median(mine.flatMap((l) => (l.row.cost === null ? [] : [l.row.cost]))), 4)} | ${f((median(mine.flatMap((l) => (l.row.wallMs === null ? [] : [l.row.wallMs]))) ?? NaN) / 1000, 0)} | ${median(mine.map((l) => l.tokens)) ?? 'n/a'} | ${tokens ? f(mine.reduce((a, l) => a + l.cacheRead, 0) / tokens) : 'n/a'} | ${median(mine.map((l) => l.toolCalls)) ?? 'n/a'} |`,
+        `| ${arm} | ${mine.length} | ${mine.length - ok.length} | ${mine.filter((l) => l.unscored).length} | ${ok.filter((l) => l.partial).length} | ${f(score('golden'))} | ${f(score('supported'))} | ${f(avg(ok.flatMap((l) => (l.judgedShare === null ? [] : [l.judgedShare]))))} | ${f(avg(ok.flatMap((l) => (l.grounded === null ? [] : [l.grounded]))))} | ${f(median(mine.flatMap((l) => (l.row.cost === null ? [] : [l.row.cost]))), 4)} | ${f(seconds(median(mine.flatMap((l) => (l.row.wallMs === null ? [] : [l.row.wallMs])))), 0)} | ${median(mine.map((l) => l.tokens)) ?? 'n/a'} | ${tokens ? f(mine.reduce((a, l) => a + l.cacheRead, 0) / tokens) : 'n/a'} | ${median(mine.map((l) => l.toolCalls)) ?? 'n/a'} |`,
       )
     }
     lines.push('')

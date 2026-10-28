@@ -51,14 +51,19 @@ output shape.
      accepted risk); an agent that reads untrusted pages must not hold one.
    - *Two outputs per call, kept apart.* **Cost** is booked on the research run as each call reports it: the run's
      `tools` step lives as long as the agent's turns and the gate books into it, so a cancelled or failed run keeps
-     its spend (an engine job once per grant; a failed job at the cost the engine reported, or unknown, never 0).
-     **Evidence** is written as it happens to Postgres (`research_tool_calls`, keyed by run and step, rows go with
-     their run: tool, a canonical-JSON argument digest, URLs retrieved and seen, ok or error, the engine job id), so
+     its spend (a failed engine job at the cost the engine reported, or unknown, never 0). **Evidence** is written as
+     it happens to Postgres (`research_tool_calls`, keyed by run and step, rows go with their run: tool, a
+     canonical-JSON argument digest, URLs retrieved and seen, ok or error, the engine job id and its reported cost), so
      grounding never comes from the model and survives a step retry and a host restart; `tools` reads it after the
      grant has drained (never consumes it). A ledger write is retried and logged and never fails a call that worked.
-     Grants are in memory and end with their step, a cancelled run included.
+     The engine's cost has one source: its job's ledger row. The run's `engine.costUsd` sums the rows (each job once,
+     null when any is unknown), and a job already in the ledger (a repeated question, an adopted job) is not booked
+     again. Grants are in memory and end with their step on every path out, a cancelled run included.
    - *One key rule* for the engine's jobs and the judge's calls (`attempt-keys.ts`): a key whose job or run is done is
-     adopted, a key whose job or run failed, errored or was cancelled is stepped past (`key:2`, …) and runs again.
+     adopted, and so is a typed capability failure (one of the capabilities' defined error codes: a page gone, a
+     package not found, a final answer); an untyped or internal failure, an engine `error` or a cancel is stepped past
+     (`key:2`, …) and runs again. Judge keys carry the score source, the scorer version and the scored run; drift keys
+     also the pass (its UTC day), so each drift pass fetches fresh.
    - *Transport:* the gate's server has no idle timeout (`engine_research` holds a request for a whole job; Bun's
      default cuts at 10 s), refuses a body over 64 KiB by its length or while it streams, and the host closes it on
      shutdown (`gate.json` removed).
@@ -93,7 +98,7 @@ output shape.
 | `golden` | the case's `expect` on the report text and its `maxChars`, `evals/lib.ts` semantics exactly (`any`/`all` case-insensitive regex, `live:` a literal substring of the registry's latest version, fetched via `web.package` at scoring time, `v`/`bun-v` stripped for GitHub releases) | no (`live` needs the judge) |
 | `supported` | up to 3 citations with distinct URLs, in report order: the judge fetches the page (`web.fetch`, 20k chars) and asks `decide` whether it supports the claim; the share over the citations the judge could score. A typed judge error (page gone or empty, `decide` failed) leaves a citation unscored, never unsupported; `judgedShare` (in [0, 1]) is the share the judge could score; none scored leaves `supported` out; no citation at all scores 0 | judged |
 
-`pass` = valid and golden passed (an unscored golden never passes; a `live:` value the registry does not give is an infra scoring error the runtime retries, never a miss). Cases: the 28 golden questions (19 quick, 8 standard, 1 deep) as plain eval cases in
+`pass` = valid and golden passed. A `live:` case whose registry answers a typed error or no usable version leaves `golden` unscored (`pass` false, feedback says why); a registry outage is the judge's error, which the runtime retries. Cases: the 28 golden questions (19 quick, 8 standard, 1 deep) as plain eval cases in
 `$AGW_EVAL_DIR/research/cases.jsonl` (outside git): `{id, input: {query, depth}, reference: {expect, maxChars?}}`.
 
 ## Decision rule (pre-registered by the lead, fixed 2026-10-28 before the first live run)
@@ -121,6 +126,25 @@ Operationalized in `packages/host/src/workflows/research/decision.ts` (tested), 
   under rule 2.
 - Reported beside the verdict, not part of it: everything per depth, `grounded`, tool calls, tokens and cache-read
   share, partial and failed runs, failure modes (`compare.ts`).
+
+## Known limits (experiment-only)
+
+This PR is the comparison's harness: the losing arms are deleted after the live window and the winner is re-ported
+cleanly. These edges are known and left as they are, because none of them bends the numbers on the normal path:
+
+- **A host restart in the middle of an agent step** loses that execution's booked-but-unrecorded tool spend (usage
+  lives in the `tools` step until it records). The evidence survives in the ledger; an engine job adopted after the
+  restart is not booked again (its ledger row exists), so that run's cost reads low while `engine.costUsd`, summed
+  from the ledger, stays right.
+- **Late calls:** a tool call that reaches the gate after its grant closed is refused; a usage report that arrives
+  after the `tools` step ended is not booked.
+- **Two processes on one question at once** (a deploy overlap) both check the ledger before either writes: the job
+  could be booked twice. One process per host makes this a deploy-overlap case only.
+- **`stateDir`:** the gate writes `gate.json` under the host's default state directory, where the OpenCode host
+  compiles locations too (boot passes neither a different one). A host given another `stateDir` must give it to both.
+- **Search results count as grounded,** as in the engine (`citationsKept`: "a page this run actually retrieved or
+  saw as a search snippet"), so the agents' rule matches the engine's.
+- **The plugin is copied into the four research agents** (a test asserts they are identical); the port keeps one.
 
 ## Cost estimate
 

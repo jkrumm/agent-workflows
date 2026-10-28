@@ -108,6 +108,20 @@ test('agw eval run on a tree-less suite: every case runs with the arm args and i
     ['miss', 'scored', false],
   ])
   expect(seen).toContainEqual({ query: 'port 5432?', depth: 'quick', design: 'pilot' })
+
+  // The comparison's report reads every case run by its key: a scorer error is unscored (left out), never a miss.
+  const { load } = await import('../src/workflows/research/compare.ts')
+  const byCase = async () =>
+    Object.fromEntries(
+      (await load(sql.pool, db.schema, [runId])).map((l) => [l.row.caseId, [l.row.arm, l.row.golden, l.unscored]]),
+    )
+  expect(await byCase()).toEqual({ port: ['pilot-yolo', 1, false], miss: ['pilot-yolo', 0, false] })
+  await sql.pool.query(
+    `update "${db.schema}".runs set scores = jsonb_set(scores, '{final}', (scores->'final') || '{"error":"judge outage","scores":{}}')
+      where idempotency_key = $1`,
+    [`eval:${runId}:miss`],
+  )
+  expect((await byCase()).miss).toEqual(['pilot-yolo', null, true])
 })
 
 describe("the scorers' judge", () => {
@@ -124,6 +138,7 @@ describe("the scorers' judge", () => {
         costSource: 'rate',
       })
       if (url.includes('gone')) throw fail('UPSTREAM_ERROR', 'the page is gone', { status: 404 })
+      if (url.includes('crash')) throw new Error('the fetcher crashed')
       if (url.includes('slow'))
         await new Promise((_resolve, reject) => ctx.signal.addEventListener('abort', () => reject(ctx.signal.reason)))
       return { url, text: 'page text' }
@@ -206,8 +221,30 @@ describe("the scorers' judge", () => {
     const url = 'https://example.com/gone-twice'
     const typed = { error: { code: 'UPSTREAM_ERROR', message: 'the page is gone' } }
     expect(await judge()('web.fetch', { url }, scope('regression', 'scored-10'))).toEqual(typed)
+    // A typed failure is a final answer: the retried scoring adopts it.
     expect(await judge()('web.fetch', { url }, scope('regression', 'scored-10'))).toEqual(typed)
+    expect(await capRuns(url)).toEqual(['failed'])
+  })
+
+  test('an untyped failure is stepped past: the retried scoring runs the call again', async () => {
+    const url = 'https://example.com/crash'
+    expect(await rejection(judge()('web.fetch', { url }, scope('regression', 'scored-12')))).toContain(
+      'INTERNAL_SERVER_ERROR',
+    )
+    expect(await rejection(judge()('web.fetch', { url }, scope('regression', 'scored-12')))).toContain(
+      'INTERNAL_SERVER_ERROR',
+    )
     expect(await capRuns(url)).toEqual(['failed', 'failed'])
+  })
+
+  test('each drift pass (UTC day) fetches fresh; a regression retry adopts', async () => {
+    const url = 'https://example.com/drift'
+    const at = (day: string) =>
+      scorerJudge({ registry, workflows: capWorkflows, runtime: () => jrt, now: () => new Date(`${day}T12:00:00Z`) })
+    await at('2026-10-29')('web.fetch', { url }, scope('drift', 'scored-13'))
+    await at('2026-10-29')('web.fetch', { url }, scope('drift', 'scored-13'))
+    await at('2026-10-30')('web.fetch', { url }, scope('drift', 'scored-13'))
+    expect(await capRuns(url)).toEqual(['done', 'done'])
   })
 
   test('an abort that came before the start still cancels the call it started', async () => {

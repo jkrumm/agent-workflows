@@ -208,10 +208,20 @@ export async function boot(config: HostConfig, options: BootOptions = {}): Promi
         trackedList = undefined // a failed read is retried, never cached
         throw error
       }))
+    // The research tool gate's evidence writes: their own pool, so parallel tool calls never queue behind journal reads.
+    const ledgerPool = new Pool({
+      connectionString: config.pgUrl,
+      max: 4,
+      application_name: `agw-host:${config.schema}:research-ledger`,
+      query_timeout: 30_000,
+      statement_timeout: 30_000,
+    })
+    ledgerPool.on('error', (err) => console.warn('[agw-host] research ledger pool: idle connection error', err.message))
+    closers.push(() => ledgerPool.end())
     const workflows = createWorkflows({
       registry,
       retro: { journal, learnings, gh, tracked },
-      research: { ledger: pgToolLedger(readPool, config.schema) },
+      research: { ledger: pgToolLedger(ledgerPool, config.schema) },
       onClose: (close) => closers.push(async () => close()),
     })
     // Direct capability calls over HTTP run as `cap.<id>` workflows (concept N6): registered, but not operations.

@@ -10,12 +10,15 @@ export type LedgerEntry = {
   retrieved: string[]
   seen: string[]
   engineJob?: string
+  /** With `engineJob`: the cost the engine reported for the job (null: unknown). */
+  engineCostUsd?: number | null
   error?: string
 }
 
 /**
- * Where the gate's calls go (migration 0007). Append-only and evidence only: `read` never consumes, so a retried or
- * resumed step reads the same calls; a call's cost is booked on the run itself, never here.
+ * Where the gate's calls go (migration 0007). Append-only: `read` never consumes, so a retried or resumed step reads the
+ * same calls. A call's cost is booked on the run itself; an engine job's row carries the cost the engine reported, the
+ * one source of the run's engine spend and of whether a job was already booked.
  */
 export interface ToolLedger {
   append(entry: LedgerEntry): Promise<void>
@@ -29,6 +32,7 @@ type Row = {
   retrieved: string[]
   seen: string[]
   engine_job: string | null
+  engine_cost: string | null
   error: string | null
 }
 
@@ -37,8 +41,8 @@ export function pgToolLedger(pool: Pick<Pool, 'query'>, schema: string): ToolLed
   return {
     async append(e) {
       await pool.query(
-        `insert into ${table} (run_id, step_id, tool, args_digest, ok, retrieved, seen, engine_job, error)
-         values ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        `insert into ${table} (run_id, step_id, tool, args_digest, ok, retrieved, seen, engine_job, engine_cost, error)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
         [
           e.runId,
           e.stepId,
@@ -48,13 +52,14 @@ export function pgToolLedger(pool: Pick<Pool, 'query'>, schema: string): ToolLed
           JSON.stringify(e.retrieved),
           JSON.stringify(e.seen),
           e.engineJob ?? null,
+          e.engineCostUsd ?? null,
           e.error ?? null,
         ],
       )
     },
     async read(runId, stepId) {
       const { rows } = await pool.query<Row>(
-        `select tool, args_digest, ok, retrieved, seen, engine_job, error
+        `select tool, args_digest, ok, retrieved, seen, engine_job, engine_cost, error
            from ${table} where run_id = $1 and step_id = $2 order by id`,
         [runId, stepId],
       )
@@ -66,7 +71,9 @@ export function pgToolLedger(pool: Pick<Pool, 'query'>, schema: string): ToolLed
         ok: r.ok,
         retrieved: r.retrieved,
         seen: r.seen,
-        ...(r.engine_job === null ? {} : { engineJob: r.engine_job }),
+        ...(r.engine_job === null
+          ? {}
+          : { engineJob: r.engine_job, engineCostUsd: r.engine_cost === null ? null : Number(r.engine_cost) }),
         ...(r.error === null ? {} : { error: r.error }),
       }))
     },
