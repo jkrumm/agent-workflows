@@ -43,7 +43,7 @@ if [[ -z "$RENDERED" || "$RENDERED" -lt "$WANT" ]]; then
 fi
 
 # A ref can resolve to an empty value; that is as unusable as a missing one. Checked inside the child, where the
-# values exist: the key is named, the value never printed. Keys come from the template, so `eval` sees only names.
+# values exist: the key is named, the value never printed. The IU override (below) is applied first, so it is checked too. Keys come from the template, so `eval` sees only names.
 KEYS=( ${(f)"$(/usr/bin/grep -hoE '^[A-Za-z_][A-Za-z0-9_]*=' "$TPL" | /usr/bin/tr -d =)"} )
 
 # secrets-run resolves whole-value refs only, so the composite values are built after it, inside its child. The
@@ -53,6 +53,42 @@ KEYS=( ${(f)"$(/usr/bin/grep -hoE '^[A-Za-z_][A-Za-z0-9_]*=' "$TPL" | /usr/bin/t
 # variable, so the ingest key is also in that server's env and its tool shells, like the IU key (accepted risk:
 # packages/opencode-host/README.md, "Accepted risk").
 exec "$SECRETS_RUN" run --env-file="$TPL" -- /bin/sh -c '
+  # >>> iu-override
+  # An untracked IU key override (a team key for interim evals): $HOME/.config/agw/iu.env, mode 0600, may set
+  # IU_API_KEY and IU_KEY_ID, which replace the .env.tpl values; the label goes with the key, so both are required.
+  # Any other line is ignored with a warning that names the variable, never a value. Absent file = no override.
+  IU_OVERRIDE="$HOME/.config/agw/iu.env"
+  if [ -e "$IU_OVERRIDE" ] || [ -L "$IU_OVERRIDE" ]; then
+    if [ "$(/bin/ls -ld "$IU_OVERRIDE" | /usr/bin/cut -c1-10)" != "-rw-------" ]; then
+      echo "agent-workflows-host: $IU_OVERRIDE must be a regular file with mode 0600 (it holds a key); refusing to start." >&2
+      exit 78
+    fi
+    iu_seen=""
+    while IFS= read -r iu_line || [ -n "$iu_line" ]; do
+      iu_line="${iu_line#"${iu_line%%[![:space:]]*}"}"
+      case "$iu_line" in ""|"#"*) continue ;; esac
+      iu_line="${iu_line#export }"
+      case "$iu_line" in *=*) ;; *) echo "agent-workflows-host: $IU_OVERRIDE: a line without = was ignored" >&2; continue ;; esac
+      iu_name="${iu_line%%=*}"
+      iu_value="${iu_line#*=}"
+      case "$iu_value" in \"*\") iu_value="${iu_value#\"}"; iu_value="${iu_value%\"}" ;; esac
+      case "$iu_name" in
+        IU_API_KEY) IU_API_KEY="$iu_value"; iu_seen="$iu_seen key" ;;
+        IU_KEY_ID) IU_KEY_ID="$iu_value"; iu_seen="$iu_seen id" ;;
+        ""|[0-9]*|*[!A-Za-z0-9_]*) echo "agent-workflows-host: $IU_OVERRIDE: a malformed line was ignored" >&2 ;;
+        *) echo "agent-workflows-host: $IU_OVERRIDE: ignoring $iu_name (only IU_API_KEY and IU_KEY_ID are read)" >&2 ;;
+      esac
+    done < "$IU_OVERRIDE"
+    case "$iu_seen" in
+      *key*id* | *id*key*) ;;
+      *)
+        echo "agent-workflows-host: $IU_OVERRIDE must set both IU_API_KEY and IU_KEY_ID (the label goes with the key); refusing to start." >&2
+        exit 78
+        ;;
+    esac
+    export IU_API_KEY IU_KEY_ID
+  fi
+  # <<< iu-override
   for key in "$@"; do
     eval "value=\${$key-}"
     [ -n "$value" ] || { echo "agent-workflows-host: $key resolved to an empty value; refusing to start." >&2; exit 78; }
