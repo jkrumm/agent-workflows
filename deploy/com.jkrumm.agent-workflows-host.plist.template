@@ -9,11 +9,11 @@
   <key>ProgramArguments</key>
   <array>
     <string>/bin/zsh</string>
-    <string>__APP_DIR__/scripts/launch.sh</string>
+    <string>__RELEASE_DIR__/scripts/launch.sh</string>
   </array>
 
   <key>WorkingDirectory</key>
-  <string>__APP_DIR__</string>
+  <string>__RELEASE_DIR__</string>
 
   <key>EnvironmentVariables</key>
   <dict>

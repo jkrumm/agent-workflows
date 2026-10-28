@@ -49,11 +49,13 @@ ok "agw smoke ping: run $run_id, title \"$title\""
 password=$(secrets-run read "$PG_PASSWORD_REF" 2>/dev/null)
 [[ -n "$password" ]] || fail "cannot read $PG_PASSWORD_REF through secrets-run"
 row=""
+psql_err=$(mktemp -t agw-verify) || fail "cannot create a temp file"
+trap 'rm -f "$psql_err"' EXIT
 for _ in {1..20}; do
-  # The query goes on stdin: psql interpolates :'id' there, not in -c.
-  row=$(PGPASSWORD="$password" psql -h 127.0.0.1 -U agent_workflows -d agent_workflows -AtF '|' -v ON_ERROR_STOP=1 -v "id=$run_id" 2>&1 \
+  # The query goes on stdin: psql interpolates :'id' there, not in -c. stderr stays out of the row.
+  row=$(PGPASSWORD="$password" psql -h 127.0.0.1 -U agent_workflows -d agent_workflows -AtF '|' -v ON_ERROR_STOP=1 -v "id=$run_id" 2>"$psql_err" \
     <<< "select status, coalesce(trace_id, ''), coalesce(cost::text, ''), coalesce(tokens_input, 0) from \"$SCHEMA\".runs where id = :'id'") \
-    || fail "journal query failed: $row"
+    || fail "journal query failed: $(<"$psql_err")"
   IFS='|' read -r run_status trace cost tokens <<< "$row"
   [[ "$run_status" == "done" && -n "${trace:-}" && -n "${cost:-}" ]] && break
   sleep 1

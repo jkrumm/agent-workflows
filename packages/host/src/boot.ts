@@ -44,6 +44,23 @@ const AGENT_DEFINITIONS: ConstructorParameters<typeof OpenCodeHost>[0]['agents']
 
 export type LazyAgentHost = AgentHost & { close(): Promise<void> }
 
+type OpenCodeTraceparent = NonNullable<ConstructorParameters<typeof OpenCodeHost>[0]['traceparent']>
+
+/** What the lazy host needs from a server: `OpenCodeServer`, or a fake in tests. */
+export type LazyServer = ConstructorParameters<typeof OpenCodeHost>[0]['server'] & {
+  start(): Promise<void>
+  close(): Promise<void>
+}
+
+export interface LazyOpenCodeOptions {
+  /** Where locations and the server's state live. Default: the real state dir. Tests pass a temporary one. */
+  stateDir?: string
+  /** Builds the server on the first step. Default: a real `OpenCodeServer` on `stateDir`. */
+  createServer?: () => LazyServer
+  /** `close` waits this long for a start still in flight, then closes what exists. Default 5 s. */
+  closeWaitMs?: number
+}
+
 /**
  * The OpenCode `AgentHost`, built on the first agent step: the server (and the host's maintenance timer) does not
  * exist at boot, so a host without agent workflows never spawns or probes `opencode`. A failed start is not cached,
@@ -52,15 +69,23 @@ export type LazyAgentHost = AgentHost & { close(): Promise<void> }
 export function lazyOpenCodeHost(
   env: Record<string, string | undefined>,
   traceparent: OpenCodeTraceparent,
+  options: LazyOpenCodeOptions = {},
 ): LazyAgentHost {
-  let built: Promise<{ server: OpenCodeServer; host: OpenCodeHost }> | undefined
+  const { stateDir, closeWaitMs = 5000 } = options
+  const createServer = options.createServer ?? (() => new OpenCodeServer({ env, stateDir }))
+  let built: Promise<{ server: LazyServer; host: OpenCodeHost }> | undefined
   let closed = false
   const get = () => {
     if (closed) return Promise.reject(new Error('opencode host is closed'))
     built ??= (async () => {
-      const server = new OpenCodeServer({ env })
+      const server = createServer()
       await server.start()
-      return { server, host: new OpenCodeHost({ server, agents: AGENT_DEFINITIONS, env, traceparent }) }
+      if (closed) {
+        // close() gave up waiting for this start; nothing else will ever stop supervising it.
+        await server.close()
+        throw new Error('opencode host is closed')
+      }
+      return { server, host: new OpenCodeHost({ server, agents: AGENT_DEFINITIONS, env, traceparent, stateDir }) }
     })().catch((error: unknown) => {
       built = undefined
       throw error
@@ -75,14 +100,14 @@ export function lazyOpenCodeHost(
     abort: async (handle: Json) => (await get()).host.abort(handle),
     async close() {
       closed = true
-      const pending = await built?.catch(() => undefined)
-      pending?.host.close()
-      await pending?.server.close()
+      if (!built) return
+      const timeout = Bun.sleep(closeWaitMs).then(() => undefined)
+      const ready = await Promise.race([built.catch(() => undefined), timeout])
+      ready?.host.close()
+      await ready?.server.close()
     },
   }
 }
-
-type OpenCodeTraceparent = NonNullable<ConstructorParameters<typeof OpenCodeHost>[0]['traceparent']>
 
 export async function boot(config: HostConfig, options: BootOptions = {}): Promise<RunningHost> {
   const env = options.env ?? process.env
@@ -119,10 +144,11 @@ export async function boot(config: HostConfig, options: BootOptions = {}): Promi
       argo: { machine: config.machine },
     })
     closers.push(() => platform.close())
-    const opencode = options.agentHost
+    const owned = options.agentHost
       ? undefined
       : lazyOpenCodeHost(env, (runId, stepId) => platform.telemetry.traceparent(runId, stepId) ?? undefined)
-    if (opencode) closers.push(() => opencode.close())
+    const agentHost = options.agentHost ?? owned
+    if (owned) closers.push(() => owned.close())
     const cap = runawayCap({ connectionString: config.pgUrl, schema: config.schema })
     closers.push(() => cap.close())
     const wallet = walletGate({ workflows: OPTIONAL_EXPENSIVE })
@@ -130,7 +156,7 @@ export async function boot(config: HostConfig, options: BootOptions = {}): Promi
       connectionString: config.pgUrl,
       schema: config.schema,
       workflows: workflows.map((entry) => entry.workflow),
-      host: options.agentHost ?? opencode,
+      host: agentHost,
       middleware: [...platform.middleware, wallet, cap],
     })
     closers.push(() => runtime.close())

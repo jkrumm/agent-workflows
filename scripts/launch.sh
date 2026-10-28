@@ -42,13 +42,24 @@ if [[ -z "$RENDERED" || "$RENDERED" -lt "$WANT" ]]; then
   exit 78
 fi
 
+# A ref can resolve to an empty value; that is as unusable as a missing one. Checked inside the child, where the
+# values exist: the key is named, the value never printed. Keys come from the template, so `eval` sees only names.
+KEYS=( ${(f)"$(/usr/bin/grep -hoE '^[A-Za-z_][A-Za-z0-9_]*=' "$TPL" | /usr/bin/tr -d =)"} )
+
 # secrets-run resolves whole-value refs only, so the composite values are built after it, inside its child. The
-# password is URL-encoded the way `make check` does it; the raw pieces are dropped before the host starts (the
-# OpenCode server forwards every OTEL_EXPORTER_OTLP_* variable it sees).
+# password is URL-encoded the way `make check` does it; the raw AGW_PG_PASSWORD and OTEL_EXPORTER_OTLP_AUTHORIZATION
+# are dropped before the host starts. The built OTEL_EXPORTER_OTLP_HEADERS (`authorization=<ClickStack ingest key>`)
+# stays: it is what the exporter reads, and the OpenCode server's env allow-list forwards every OTEL_EXPORTER_OTLP_*
+# variable, so the ingest key is also in that server's env and its tool shells, like the IU key (accepted risk:
+# packages/opencode-host/README.md, "Accepted risk").
 exec "$SECRETS_RUN" run --env-file="$TPL" -- /bin/sh -c '
+  for key in "$@"; do
+    eval "value=\${$key-}"
+    [ -n "$value" ] || { echo "agent-workflows-host: $key resolved to an empty value; refusing to start." >&2; exit 78; }
+  done
   AGW_PG_URL="postgres://agent_workflows:$(bun -e "process.stdout.write(encodeURIComponent(process.env.AGW_PG_PASSWORD))")@127.0.0.1:5432/agent_workflows"
   OTEL_EXPORTER_OTLP_HEADERS="authorization=$OTEL_EXPORTER_OTLP_AUTHORIZATION"
   export AGW_PG_URL OTEL_EXPORTER_OTLP_HEADERS
   unset AGW_PG_PASSWORD OTEL_EXPORTER_OTLP_AUTHORIZATION
   exec bun packages/host/src/main.ts
-'
+' sh "${KEYS[@]}"

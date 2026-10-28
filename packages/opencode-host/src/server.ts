@@ -74,7 +74,9 @@ const consoleLogger: Logger = {
 /**
  * The server's complete environment, an explicit allow-list: the process basics, the server's own state roots,
  * the IU leg the routes need, and `OTEL_EXPORTER_OTLP_*` when set. Nothing else from the host's env (tokens,
- * `CLAUDE_*`, database URLs) reaches the server or a tool shell. `HOME` is the server's own (`<root>/home`), so
+ * `CLAUDE_*`, database URLs) reaches the server or a tool shell. `OTEL_EXPORTER_OTLP_HEADERS` is one of those
+ * variables: on the mini it carries the ClickStack ingest key, so that key is in the server's env and in a
+ * shell-capable agent's reach, like the IU key (README, "Accepted risk"). `HOME` is the server's own (`<root>/home`), so
  * no `~/.claude` or `~/.agents` file reaches an agent and a tool shell starts there; the binary is spawned by
  * absolute path, so no shim needs the user's home.
  */
