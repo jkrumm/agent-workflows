@@ -153,9 +153,18 @@ Define it with `defineWorkflow` (input must be a `z.object`; list its agents in 
   identical arms are refused. A fingerprint may be given as a unique prefix (8+ characters). Reruns of a case in one
   arm are averaged before pairing; a run with unpriced calls leaves its cost out instead of comparing a lower bound;
   mixed scorer versions and fewer than 10 paired cases are reported as `warnings`.
-- **Resume and cancel.** Each case run is keyed `eval:<evalRunId>:<caseId>`: a resumed `eval.run` adopts the runs
-  it started instead of paying again (their clone stays in the temp dir). Cancelling `eval.run` cancels its case
-  runs; a shutdown leaves them running for the next process.
+- **Resume and cancel.** Each case run is keyed `eval:<evalRunId>:<caseId>`. A resumed `eval.run` looks the key up
+  before anything else: a case scored by this eval run is reported as recorded (no clone, no install, no second
+  score); one still running is waited on and scored; only a case with no run is materialized and started. Cases go
+  through a pool that takes no new case after the first failure. Cancelling `eval.run` cancels its case runs (a case
+  run that starts after the cancel fired is cancelled at once, and no case starts after it) and removes their clones;
+  a shutdown or a lost lease leaves the case runs going and keeps their clones for the next process. Repeated
+  `--ids` are deduplicated.
+- **What compare will not call.** A metric with fewer than 5 pairs gets `better: unknown`, whatever its CI.
+  `cases.unpricedCost` counts paired cases left out of `costUsd` on each side because their runs had unpriced calls,
+  and a warning says so when cost was compared on fewer cases than were paired; an arm that itself mixes scorer
+  versions is warned too. Each arm is read with its fingerprint prefix and args in SQL, never the workflow's whole
+  history.
 - **Wiring.** `wireEval` (in `boot`) binds the eval workflows to the runtime before it opens (recovery may resume an
   eval run at once) and owns the drift job's timer; the runtime has no `judge`, so no scorer can call a model.
 
@@ -215,6 +224,7 @@ Otherwise none of its own. The host adds no model-visible text and no tokens (th
 | `scorers.test.ts` | the review and check scorers on fixed fixtures: structure without a reference (failed angles, salvage, balance, invalid output), recall / precision / outcome against a reference |
 | `eval.test.ts` | `eval.run` on a fake agent host with two check cases on a real git repo (plan without `--yes`, purpose `eval`, scores and fingerprint recorded, clones removed, bad ids and args refused), `eval.compare` with equal fingerprints by args and on synthetic runs with known deltas, drift scoring each sampled run once across two jobs |
 | `eval-cli.test.ts` | the document as the CLI reads it: `agw eval run` and `agw eval compare` are commands with their flags, none skipped |
+| `eval-resume.test.ts` | a resumed `eval.run` adopts its case runs (no new clone, a scored case not scored again, the running one's clone kept across the shutdown); a cancelled one cancels its running case, starts no further case and removes the clones |
 | `main.test.ts` | config, `lazyOpenCodeHost` (nothing built before the first agent step, a failed start retried), `boot` (a taken port fails before the runtime opens), the process entry: refusals, SIGTERM leaves a run `running` with exit 0, a second process resumes it |
 | `launch-override.test.ts` | the `launch.sh` IU override block in `/bin/sh` with a fake HOME: absent file, both names override, other lines warned by name only, CR and quote styles, refused with 78: a mode other than 0600, a missing name, an empty key, an unknown label |
 | `lifecycle.test.ts` | signals, the hard-exit backstop, second signal, uncaught exception vs unhandled rejection |

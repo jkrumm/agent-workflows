@@ -38,6 +38,9 @@ export const EvalCompareOutput = z.object({
     paired: z.number().int(),
     onlyA: z.array(z.string()),
     onlyB: z.array(z.string()),
+    unpricedCost: z
+      .object({ a: z.number().int(), b: z.number().int() })
+      .describe('Paired cases left out of costUsd on that side: their runs had unpriced calls'),
   }),
   metrics: z.array(
     z.object({
@@ -80,13 +83,14 @@ function armRun(run: ScoredRun): ArmRun | null {
     wallMs: run.wallMs,
     tokens: run.tokens,
     toolCalls: run.toolCalls,
+    ...(run.unpricedCalls > 0 ? { unpriced: true } : {}),
   }
 }
 
-/** The runs of one arm: a fingerprint prefix that names exactly one fingerprint, and exactly these args. */
-function arm(runs: ScoredRun[], side: string, prefix: string, args: Record<string, Json>) {
+/** The runs of one arm, read narrowed in SQL: a prefix that names exactly one fingerprint, and exactly these args. */
+async function arm(slot: EvalSlot, workflow: string, side: string, prefix: string, args: Record<string, Json>) {
   const key = canonical(args)
-  const matching = runs.filter((r) => r.fingerprint?.startsWith(prefix) && canonical(r.final.args ?? {}) === key)
+  const matching = await slot.get().scoredRuns({ workflow, source: 'regression', fingerprintPrefix: prefix, args })
   const fingerprints = [...new Set(matching.map((r) => r.fingerprint as string))]
   if (fingerprints.length === 0) {
     throw new WorkflowError(
@@ -131,18 +135,30 @@ export function createEvalCompare(slot: EvalSlot): HostWorkflow {
         throw new WorkflowError('invalid_input', 'arms A and B are the same fingerprint and args')
       }
       return ctx.step('compare', async () => {
-        const runs = await slot.get().scoredRuns({ workflow: input.workflow, source: 'regression' })
-        const a = arm(runs, 'A', input.a, aArgs)
-        const b = arm(runs, 'B', input.b, bArgs)
+        const a = await arm(slot, input.workflow, 'A', input.a, aArgs)
+        const b = await arm(slot, input.workflow, 'B', input.b, bArgs)
         if (a.info.fingerprint === b.info.fingerprint && canonical(aArgs) === canonical(bArgs)) {
           throw new WorkflowError('invalid_input', 'arms A and B name the same fingerprint and args')
         }
         const comparison: Comparison = compareArms(a.runs, b.runs, { seed: input.seed ?? 1 })
         const warnings: string[] = []
+        for (const [side, info] of [
+          ['A', a.info],
+          ['B', b.info],
+        ] as const) {
+          if (info.scorers.length > 1) warnings.push(`arm ${side} mixes scorer versions (${info.scorers.join(', ')})`)
+        }
         if (canonical(a.info.scorers) !== canonical(b.info.scorers)) {
           warnings.push(`scorer versions differ (A ${a.info.scorers.join(', ')}; B ${b.info.scorers.join(', ')})`)
         }
-        if (comparison.cases.paired < 10) warnings.push(`only ${comparison.cases.paired} paired cases`)
+        const { paired, unpricedCost } = comparison.cases
+        if (paired < 10) warnings.push(`only ${paired} paired cases`)
+        const cost = comparison.metrics.find((m) => m.metric === 'costUsd')
+        if (paired > 0 && (cost?.n ?? 0) < paired) {
+          warnings.push(
+            `cost compared on ${cost?.n ?? 0} of ${paired} paired cases (unpriced calls: ${unpricedCost.a} in A, ${unpricedCost.b} in B)`,
+          )
+        }
         return { workflow: input.workflow, a: a.info, b: b.info, ...comparison, warnings } as unknown as Json
       }) as Promise<z.input<typeof EvalCompareOutput>>
     },

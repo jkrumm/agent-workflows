@@ -1,7 +1,10 @@
 import type { AnyWorkflow, Runtime } from '@agent-workflows/runtime'
 
 /** What the eval workflows reach at run time: the runtime (set at boot, after it exists) and the workflows they replay. */
-export type EvalRuntime = Pick<Runtime, 'start' | 'wait' | 'cancel' | 'scoreRun' | 'scoredRuns' | 'recentCost'>
+export type EvalRuntime = Pick<
+  Runtime,
+  'start' | 'wait' | 'cancel' | 'scoreRun' | 'scoredRuns' | 'recentCost' | 'runByKey'
+>
 
 export class EvalSlot {
   runtime: EvalRuntime | null = null
