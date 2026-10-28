@@ -1,5 +1,6 @@
 import type { Logger, Middleware, RunScores, TokenCounts } from '@agent-workflows/runtime'
 import { type JournalDb, withRetry } from './db.ts'
+import type { Friction } from './friction.ts'
 import { traceIdForRun } from './ids.ts'
 
 /** The run-level record written onto the run row at `runPost` (concept §5). */
@@ -14,6 +15,8 @@ export type RunRecord = {
   traceId: string
   /** `runs.scores` as the run ended: the inline gate verdicts; a regression or drift score lands later (concept §6). */
   scores: RunScores | null
+  /** The run's friction counters (`frictionMiddleware` runs before this one); null when none were written. */
+  friction: Friction | null
 }
 
 type Sums = {
@@ -27,6 +30,7 @@ type Sums = {
   tool_calls: string
   wall_ms: number | null
   scores: RunScores | null
+  friction: Friction | null
 }
 
 /**
@@ -64,7 +68,7 @@ export function recordMiddleware(options: {
              unpriced_calls = s.unpriced_calls, tool_calls = s.tool_calls,
              updated_at = now()
            from s where r.id = $1
-           returning s.*, r.wall_ms, r.scores`,
+           returning s.*, r.wall_ms, r.scores, r.friction`,
           [args.runId, traceId],
         )
         return rows[0]
@@ -88,6 +92,7 @@ export function recordMiddleware(options: {
         toolCalls: Number(sums.tool_calls),
         traceId,
         scores: sums.scores,
+        friction: sums.friction,
       })
     },
   }

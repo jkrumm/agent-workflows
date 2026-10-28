@@ -26,6 +26,23 @@ export {
   fingerprintMiddleware,
   fsFingerprintSource,
 } from './fingerprint.ts'
+export {
+  FRICTION_COUNTERS,
+  type Friction,
+  type FrictionCounter,
+  type FrictionEvent,
+  type FrictionSource,
+  type FrictionRecounter,
+  frictionMiddleware,
+  frictionRecounter,
+  MAX_RECOUNT_ATTEMPTS,
+  PROBE_CONCURRENCY,
+  RUNAWAY_CAP_PREFIX,
+  type SessionCounters,
+  type StepSessions,
+  totalsOf,
+  WALLET_REFUSAL_PREFIX,
+} from './friction.ts'
 export { IU_KEY_IDS, type IuKeyId, isIuKeyId, iuKeyMiddleware, parseIuKeyId } from './iu-key.ts'
 export { admissionSpanId, traceIdForRun } from './ids.ts'
 export { type OpenCodeMessage, usageFromOpenCodeMessages } from './opencode-usage.ts'

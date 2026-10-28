@@ -1,5 +1,6 @@
 import { IU_KEY_IDS, type IuKeyId, isIuKeyId, parseIuKeyId } from '@agent-workflows/middleware'
 import { secretProblem } from './auth.ts'
+import { type FrictionSettings, frictionSettings } from './friction/settings.ts'
 
 export type Env = Record<string, string | undefined>
 
@@ -20,6 +21,8 @@ export interface HostConfig {
   retroFileIssues: boolean
   /** `owner/name` the issues go to (`AGW_RETRO_ISSUE_REPO`); required with `retroFileIssues`. `gh` auth is the host env. */
   retroIssueRepo: string | undefined
+  /** The daily friction job (concept §7). Absent means off: only `loadConfig` turns it on, so literal test configs never start it. */
+  friction?: FrictionSettings
 }
 
 const OFF = new Set(['0', 'off', 'false', 'no'])
@@ -51,6 +54,9 @@ export function loadConfig(env: Env): HostConfig {
   if (retroIssueRepo && !/^[\w.-]+\/[\w.-]+$/.test(retroIssueRepo))
     problems.push('AGW_RETRO_ISSUE_REPO must look like owner/name')
   if (retroFileIssues && !retroIssueRepo) problems.push('AGW_RETRO_FILE_ISSUES needs AGW_RETRO_ISSUE_REPO')
+  // Advisory: a bad optional setting disables the daily job and says so, it never stops the host from starting.
+  const friction = frictionSettings(env)
+  for (const problem of friction.problems) console.error(`[agw-host] friction job disabled: ${problem}`)
   if (problems.length > 0) throw new Error(`invalid configuration:\n- ${problems.join('\n- ')}`)
   return {
     secret,
@@ -65,5 +71,14 @@ export function loadConfig(env: Env): HostConfig {
     retroWeekly: !OFF.has(env.AGW_RETRO_WEEKLY?.trim().toLowerCase() ?? ''),
     retroFileIssues,
     retroIssueRepo,
+    friction:
+      friction.problems.length > 0
+        ? {
+            ...friction.settings,
+            enabled: false,
+            misconfigured: true as const,
+            disabledReason: friction.problems.join('; '),
+          }
+        : friction.settings,
   }
 }

@@ -26,6 +26,9 @@ health=$(curl -fsS --max-time 5 "$HEALTH_URL") || fail "no answer from $HEALTH_U
 [[ "$(print -r -- "$health" | jq -r '.status')" == "ok" ]] || fail "/health is not ok: $health"
 version=$(print -r -- "$health" | jq -r '.version')
 ok "/health ok (version ${version[1,12]})"
+# The friction job's state is informational: it is printed, never a failure (an older host reports none).
+friction=$(print -r -- "$health" | jq -r '.friction.state // "not reported"')
+print "verify: info: friction job: $friction"
 
 # 2. the deployed build is origin/master, and it is the one serving
 deployed=$(cat "$SHA_FILE" 2>/dev/null) || fail "$SHA_FILE missing: nothing was deployed"

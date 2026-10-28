@@ -18,8 +18,9 @@ await runtime.open()
 setInterval(() => void platform.outbox?.flush(), 30_000) // the host's tick (Wave 3)
 ```
 
-`platform.middleware` is the ordered list `purpose → fingerprint → record → telemetry`. The record runs before
-telemetry so its totals land on the run span before telemetry ends it. `platform.close()` comes after
+`platform.middleware` is the ordered list `purpose → iu-key → fingerprint → friction → record → telemetry`. The friction
+counters are final before the record reads them, and the record runs before telemetry so its totals land on the run
+span before telemetry ends it. `platform.close()` comes after
 `runtime.close()`: it ends open spans, flushes and closes the pool.
 
 ## What each middleware records
@@ -28,6 +29,7 @@ telemetry so its totals land on the run span before telemetry ends it. `platform
 |-|-|-|
 | `purpose` | `runPre` | Refuses (`AdmissionRefused`) a run with a blank purpose. The runtime already makes it non-null |
 | `fingerprint` | `runPre` | `runs.fingerprint` on admission (`resume: false`), written once (`coalesce`). A resumed run keeps it. Source read and writes are retried; a lasting failure refuses the run |
+| `friction` | `stepPost`, `runPost` | `runs.friction`, see Friction below |
 | `record` | `runPost` | `runs.wall_ms`, `tokens_*` (incl. `tokens_cache_write`), `cost`, `unpriced_calls`, `tool_calls`, `trace_id` |
 | `telemetry` | all six | One span per run drive, one child span per step, tool calls as span events |
 
@@ -46,6 +48,61 @@ telemetry so its totals land on the run span before telemetry ends it. `platform
 - **Tokens.** `usageFromOpenCodeMessages(messages, { model })` turns an agent session's
   `GET /api/session/:id/message` page into the runtime's `Usage`. The Wave 3 OpenCode host returns it as
   `AgentResult.usage`. Spans are never the token source: OpenCode 2.0.32 emits no model or token spans (S2).
+
+### Friction
+
+Concept §7 tier 1: counters on every run, no LLM. `runs.friction` is a versioned document (`v: 1`), written for every
+run (zeros included) at `runPost`:
+
+| Counter | Counts | Source |
+|-|-|-|
+| `toolErrors` | tool parts that ended in `error`, summed over every session the run's agent steps opened | the OpenCode sessions, via the `FrictionSource` port |
+| `repeatToolCalls` | the highest number of identical tool calls (same tool, same canonical input) in any one session | same |
+| `nudges` | repeat-tool notes the host sent (at the 3rd, 5th, 8th identical call; opencode-host README) | same |
+| `schemaReasks` | agent steps whose last attempt failed `invalid_output`, once each, whatever re-asks follow | the step rows |
+| `overBudget` | runs the wallet gate refused (`admission_refused`, message `wallet gate: …`) plus steps the runaway cap failed (`middleware`, message `runaway cap: …`) | the step rows and the run's outcome |
+| `followUps` | 1 when the user asked again about this run (host README §Friction job) | the host's daily threshold job, never inline |
+| `nudgesMissed` | nudges that were due and sendable but are not in the session (failed or given up): a threshold counts only when a later tool call followed it, and a note for it or a higher threshold of the same call satisfies it. Informational, not a threshold counter | the OpenCode sessions |
+
+The document also holds what the counters are summed from: `sessions` (`{ [stepId]: { [sessionId]: counters } }`) and
+`events` (`{ "<stepId>#<attempt>" | "run#wallet": "invalid_output" | "budget" }`), and `incomplete: true` while the
+host could not answer in full.
+
+- **`runPost` is the only writer and a true recompute.** It reads the run's step rows and the run row together under
+  the row's lock (one transaction), asks the source for the sessions of every agent step (`stepSessions({ runId,
+  stepId })`: every attempt, every fallback, found from the step key, not from a handle that a failed attempt clears),
+  and **replaces** `sessions` and `events`. Nothing merges, so nothing stale survives (an event for an attempt that is
+  no longer the last, a step that is gone) and nothing counts twice: a re-delivered hook, a resume that re-attaches to
+  the same session, a lost document rebuilt by a second `runPost` all give the same record. The counters come from
+  session messages, not from the tool events the host reports, so a re-attach re-emitting every event cannot double
+  count. There is no `stepPost` hook: the journal row has everything it would say.
+- **A host that cannot answer in full never costs a count and never fails the hooks.** Steps are asked together, at most
+  `PROBE_CONCURRENCY` (4) at a time. A step answered completely is replaced. A step answered partly, or not at all
+  (the agent server restarting), keeps the entries an earlier answer wrote, and per session the fuller entry wins
+  (counters only grow, so a shorter read never lowers a count); the document says `incomplete: true`. `runPost` does
+  not throw for it: a redelivery would turn one restart into five failed deliveries at 2 s apart, re-run the other
+  hooks, delay the Argo projection, and the run span is finalized from the first delivery anyway. Instead the span
+  carries `agw.friction.incomplete`, and **the host's daily friction job recounts the incomplete runs of its window**
+  (fewest attempts first, newest first among equals, at most 20 per tick, through `frictionRecounter`, the same code
+  `runPost` runs) before it computes rates. A complete answer replaces the step and clears the flag. Each recount by the
+  job that still comes out incomplete counts one attempt (`recountAttempts`); after `MAX_RECOUNT_ATTEMPTS` (3) the
+  document says `incomplete: 'gave-up'` and the job leaves the run alone, so a run that keeps failing neither blocks
+  the cap nor is retried forever. Merging keeps the larger of the counters that only grow; `nudgesMissed` can fall (a
+  late note that landed), so it comes from the newest answer.
+- **Known gap: retried attempts are invisible.** The journal keeps only the last attempt of a step, so a schema miss on
+  an attempt that a retry then overcame is not counted (its session's tool counters are). The runtime has no
+  per-attempt hook.
+- **Re-asks.** A re-ask is the same incident as the schema miss that caused it: only the `invalid_output` failure
+  counts, and a `<id>:reask` step adds nothing. When the scorer work's `ctx.continue` re-asks inside one step and the
+  second answer passes, no step fails and nothing is counted; that miss is not visible at this layer.
+- **The two money rules are recognised by message prefix** (`WALLET_REFUSAL_PREFIX`, `RUNAWAY_CAP_PREFIX`), because
+  the middleware package cannot import `limits`. `packages/host/test/friction.test.ts` builds the real error and
+  fails if the prefixes drift.
+- **The source is a port.** `platformMiddleware({ friction })` takes a `FrictionSource`; the host passes the OpenCode
+  host's. Without one only step outcomes are counted. The database work of `runPost` is retried like every other
+  post-hook write.
+- **Order.** `friction` must come before `record` in the list (the record reads the finished document); a test pins it.
+- **Totals on the run span** as `agw.friction.*` attributes. Argo's `raw.friction` carries the whole document.
 
 ### Spans
 
@@ -169,7 +226,7 @@ adds `reasoning_tokens` on top of `output_tokens`, so an unnormalised row counts
 
 ## Token effect / cache effect
 
-- **None at runtime.** The middleware adds no model-visible text and no tokens. Every hook runs outside the agent
+- **None at runtime.** (The friction counters read session messages after a step ends; they never write into a session.) The middleware adds no model-visible text and no tokens. Every hook runs outside the agent
   session.
 - **Cache reads are recorded.** They stay visible (`tokens_cache_read`, `cache_read_tokens`), so a prompt-cache
   regression shows up as a fingerprint's falling cache share.
@@ -190,6 +247,7 @@ runs through every test, never a single run:
 |-|-|
 | `platform.test.ts` | 18 concurrent top-level runs with a fan-out: run record, fingerprint, purpose, span tree; `runPost` re-delivery; `wall_ms` null for a never-started run; a fingerprint source blip retried; resume of 5 runs in a second "process" keeps the admission fingerprint and links a new run span in the same trace |
 | `outbox.test.ts` | 24 concurrent runs (72 runs incl. children), two racing flushers, an Argo outage then recovery: every row exactly once, none lost; a hanging Argo with 24 concurrent runs: every record written, no connection held; poison rows quarantined; `runPost` gating; backoff; machine id |
+| `friction.test.ts` | the document on every run, session sums and the highest repeat, every session of a step, a lost document rebuilt, `runPost` as a true recompute (stale events and steps gone, re-delivery changes nothing), `invalid_output` and re-ask steps, wallet refusal and runaway-cap failure, a failing or partial probe (incomplete, earlier entries kept, redelivered and completed), bounded probe concurrency |
 | `telemetry.test.ts` | steps ended without `stepPost`, session id from the handle, redaction, the diag sink |
 | `flush.test.ts` | subprocess with a fake OTLP receiver: SIGTERM and SIGINT re-raised after flush, crash exit 1, export failure and dropped spans logged |
 | `fingerprint.test.ts`, `opencode-usage.test.ts`, `argo-rows.test.ts` | pure: stability, each input changes the hash, the OpenCode conversion, the additive projection |

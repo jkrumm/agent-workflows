@@ -237,6 +237,14 @@ export class Telemetry {
       'agw.cost.usd': record.cost ?? undefined,
       'agw.cost.unpriced_calls': record.unpricedCalls,
       'agw.tool_calls': record.toolCalls,
+      'agw.friction.tool_errors': record.friction?.toolErrors,
+      'agw.friction.repeat_tool_calls': record.friction?.repeatToolCalls,
+      'agw.friction.nudges': record.friction?.nudges,
+      'agw.friction.nudges_missed': record.friction?.nudgesMissed,
+      // Present (true) only while the counts may be short; the daily job recounts and the record is not reopened.
+      'agw.friction.incomplete': record.friction?.incomplete ? true : undefined,
+      'agw.friction.schema_reasks': record.friction?.schemaReasks,
+      'agw.friction.over_budget': record.friction?.overBudget,
     })
   }
 
