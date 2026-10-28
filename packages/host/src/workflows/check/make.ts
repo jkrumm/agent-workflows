@@ -2,10 +2,13 @@ import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Exec } from './exec.ts'
 
-/** `make -p -q` only dumps the database; a `$(shell …)` or `include` can still block, so the probe is bounded. */
-const PROBE_WALL_MS = 5_000
-/** The database of a big Makefile is a few hundred KB; the `# Files` section is at its end. */
-const PROBE_TAIL_CHARS = 4_000_000
+export type ProbeLogger = { warn(message: string, meta?: Record<string, unknown>): void }
+
+/**
+ * `make -p -q` only dumps the database; a `$(shell …)` or `include` can still block, so the probe is bounded. Loose
+ * on purpose: an overrun silently sends the run to the paid agent path, and a loaded host takes seconds to start make.
+ */
+const PROBE_WALL_MS = 30_000
 
 /**
  * Whether a `make -p` database dump registers `check` as a rule. Each entry Make knows is listed under `# Files`
@@ -33,10 +36,15 @@ export function makeDatabaseHasCheckTarget(db: string): boolean {
 }
 
 /**
- * Whether the Makefile in `cwd` has a real `check:` target. A missing Makefile or `make`, or a probe that overruns,
- * is "no": the agent path runs instead, never a red.
+ * Whether the Makefile in `cwd` has a real `check:` target. A missing Makefile or `make` is "no": the agent path runs
+ * instead, never a red. So is a probe that overruns or comes back cut, but that one is logged: it costs tokens.
+ * Throws when `signal` aborts.
  */
-export async function hasMakeCheckTarget(exec: Exec, cwd: string): Promise<boolean> {
+export async function hasMakeCheckTarget(
+  exec: Exec,
+  cwd: string,
+  options: { signal?: AbortSignal; logger?: ProbeLogger } = {},
+): Promise<boolean> {
   // GNU make's own lookup order
   if (!['GNUmakefile', 'makefile', 'Makefile'].some((name) => existsSync(join(cwd, name)))) return false
   if (!exec.which('make')) return false
@@ -45,8 +53,18 @@ export async function hasMakeCheckTarget(exec: Exec, cwd: string): Promise<boole
     argv: ['make', '-p', '-q'],
     cwd,
     wallMs: PROBE_WALL_MS,
-    tailChars: PROBE_TAIL_CHARS,
+    tailChars: Number.POSITIVE_INFINITY, // the `# Files` section is at the end of the dump; keep all of it
     stderr: 'discard',
+    signal: options.signal,
   })
-  return !probe.timedOut && makeDatabaseHasCheckTarget(probe.output)
+  if (probe.aborted) throw options.signal?.reason ?? new Error('make check probe aborted')
+  if (probe.timedOut || probe.truncated) {
+    options.logger?.warn('make check probe did not complete; falling back to the agent path', {
+      cwd,
+      timedOut: probe.timedOut,
+      truncated: probe.truncated,
+    })
+    return false
+  }
+  return makeDatabaseHasCheckTarget(probe.output)
 }

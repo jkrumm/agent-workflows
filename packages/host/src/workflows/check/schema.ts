@@ -26,15 +26,18 @@ export const CHECK_INPUT = z
   })
   .strict()
 
-export const STEP_NAMES = ['format', 'lint', 'typecheck', 'test', 'fallow', 'check'] as const
-
 /** The output of the legacy `check` tool, unchanged. */
 export const CHECK_OUTPUT = z.object({
   passed: z.boolean().describe('True only if every step passed'),
   steps: z
     .array(
       z.object({
-        name: z.enum(STEP_NAMES),
+        name: z
+          .string()
+          .min(1)
+          .describe(
+            'Step name: format | lint | typecheck | test | fallow, or check for the `make check` contract path',
+          ),
         passed: z.boolean(),
         errors: z.array(z.string()).optional().describe('Error lines; only when the step failed'),
       }),

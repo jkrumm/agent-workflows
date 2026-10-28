@@ -2,7 +2,7 @@
 
 The repo's validation as a workflow: `agw check --cwd <dir> [--commands '["…"]'] [--step-timeout-seconds N]`.
 Output is the legacy `CHECK_OUTPUT`, a drop-in for today's callers: `{ passed, steps: [{ name, passed, errors? }], summary }`,
-`name` one of `format | lint | typecheck | test | fallow | check`.
+`name` a non-empty string, by convention `format | lint | typecheck | test | fallow | check`.
 
 Behaviour is ported from agent-gateway's `check`, the code is written fresh. Legacy references, for the diff of intent:
 
@@ -10,6 +10,8 @@ Behaviour is ported from agent-gateway's `check`, the code is written fresh. Leg
 |-|-|
 | `make.ts` `makeDatabaseHasCheckTarget`, `hasMakeCheckTarget` | `jobs/handlers/check.ts` `makeDatabaseHasCheckTarget`, `hasMakeCheckTarget` (`make -p -q`, 5 s probe) |
 | `exec.ts` idle watchdog, process-group kill, `PWD` pin, drain grace | `check.ts` `runStep` |
+| `env.ts` `commandEnv` | `mcp/worker-shared.ts` `scrubSensitiveEnv`, the `CLAUDE_CODE_OAUTH_TOKEN` delete in `runStep` |
+| `agents/check/skills/run-step/run-step.sh` | `check.ts` `idleWatchdogBlock` (`run_step`) |
 | `index.ts` `contractCheck`, `errorLines`, `stepResult` | `check.ts` `runRepoContractCheck`, `makeCheckErrorLines`, `runStep` verdicts |
 | `index.ts` `agentCheck` (one retry on invalid JSON) | `check.ts` `runCheck` tail, `lib/worker-io.ts` `JSON_ONLY_RETRY` |
 | `prompt.ts` `agentIdleMs`, `agentPrompt` | `check.ts` `checkSessionIdleTimeoutMs`, `explicitCommandsPrompt`, `idleWatchdogBlock` (OpenCode variant) |
@@ -26,11 +28,41 @@ Behaviour is ported from agent-gateway's `check`, the code is written fresh. Leg
    without discovery; none means the discovery guide in `AGENTS.md`. The agent works in its compiled location, so the
    step passes `options.allowDirectories: [cwd]` and the prompt names `cwd`. Invalid JSON (or a step name outside the
    contract) fails the step as `invalid_output`; one more session (`agent-retry`) gets the same prompt plus
-   `JSON_ONLY_RETRY`. A second miss ends the run `done` with `passed: false`, `steps: []` and a summary. Any other
+   `JSON_ONLY_RETRY` (JSON-only, nothing else; it is a new session, so running the steps again is expected). A second miss ends the run `done` with `passed: false`, `steps: []` and a summary. Any other
    step failure fails the run.
 
-`plan` is a journaled step: it refuses a `cwd` that is not an existing git work tree (the run ends `failed` with
-kind `invalid_input`) and decides the path, so a resume takes the same path without re-probing.
+`plan` is a journaled step with a retry policy (3 attempts): it decides the path (and whether fallow applies), so a
+resume takes the same path without re-probing. It refuses a `cwd` that is not an existing git work tree (the run
+ends `failed`, kind `invalid_input`), but only on a definitive answer: no such directory, or `git` exiting 128 with
+"not a git repository", or `false`. Any other probe failure throws and is retried, never journaled as a verdict
+about the caller's input. Every probe gets the step's abort signal. The `make -p -q` probe has 30 s (a short wall
+silently sends the run to the paid agent path on a loaded host) and keeps the whole output; a probe that times out
+or comes back cut is logged and falls back to the agent path.
+
+A command killed by a signal the host did not send (an OOM kill, an operator) is not a red: the step throws
+`InfraError` and runs again.
+
+## Agent path watchdog
+
+The agent runs every command through `agents/check/skills/run-step/run-step.sh <cwd> <idle-seconds> '<command>'`
+(ported from legacy's `run_step`): the command is killed alone after `idle-seconds` without new output, the wrapper
+prints `run-step: IDLE_TIMEOUT no output for Ns` and exits 124, and the agent records that step as failed with
+"no output for Ns — likely a watch-mode runner or a hung process" and goes on, so the report keeps the other steps.
+The windows are the request's: `stepTimeoutSeconds`, else 180 s (600 s for the test step). The wrapper `cd`s into
+the checked tree itself and is called from the agent's session directory, so the agent never needs the location's
+absolute path. Not yet exercised against the real OpenCode host (`allowDirectories` is the other open part).
+
+## Credentials and orphans
+
+Every spawn (`make check`, `fallow`, the `make -p -q` probe, the git probes) runs with the host's environment minus
+anything credential-shaped: legacy's pattern (`TOKEN|SECRET|PASSWORD|PASSWD|_KEY|APIKEY|API_KEY|CREDENTIAL|BEARER|SESSION_ID`,
+case-insensitive, no exemptions, so `CLAUDE_CODE_OAUTH_TOKEN` goes too) plus `AUTHORIZATION`, `AGW_PG_URL`, `IU_*` and
+`OTEL_EXPORTER_OTLP_*HEADERS`. A `$(shell …)` in an untrusted Makefile runs in the probe as well.
+
+Each command's process group (pgid and start time) is recorded in `<state dir>/check/<run>_<step>.group` while it
+runs. A step that starts first kills a recorded group that is still alive (a host crash between spawn and reap leaves
+one); a leader whose start time differs is a reused pid and is left alone. The final group kill runs only after an
+idle kill, an abort, or a drain that did not finish, never after a clean reap.
 
 ## Idle, never a wall clock
 
@@ -44,8 +76,8 @@ and the longest step window + 120 s, because a shell call writes nothing to the 
 ## Exec port
 
 `Exec` (`exec.ts`) is `{ run, which }`; `createCheckWorkflows({ exec })` injects it, `bunExec` (`Bun.spawn`, own
-process group, host environment with `PWD` pinned to `cwd`) is the default. Unlike legacy there is no secret scrub:
-the host's env passes through as is, and the only thing that leaves a step is the truncated tail in `errors`.
+process group, scrubbed host environment with `PWD` pinned to `cwd`) is the default. A drain read error ends the
+stream; it never throws out of `run`. What leaves a step is the truncated tail in `errors`.
 
 ## Token and cache effect
 

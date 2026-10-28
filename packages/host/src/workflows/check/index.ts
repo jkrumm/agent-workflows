@@ -1,8 +1,18 @@
 import { statSync } from 'node:fs'
-import { type Ctx, defineWorkflow, StepFailed, type StepScope, WorkflowError } from '@agent-workflows/runtime'
+import { join } from 'node:path'
+import { DEFAULT_STATE_DIR } from '@agent-workflows/opencode-host'
+import {
+  type Ctx,
+  defineWorkflow,
+  InfraError,
+  type Logger,
+  StepFailed,
+  type StepScope,
+  WorkflowError,
+} from '@agent-workflows/runtime'
 import type { HostWorkflow } from '../../operations.ts'
 import type { WorkflowDeps } from '../index.ts'
-import { type Exec, type ExecResult, bunExec } from './exec.ts'
+import { bunExec, type Exec, type ExecResult } from './exec.ts'
 import { hasMakeCheckTarget } from './make.ts'
 import { agentIdleMs, agentPrompt, JSON_ONLY_RETRY } from './prompt.ts'
 import { CHECK_INPUT, CHECK_OUTPUT, type CheckInput, type CheckOutput } from './schema.ts'
@@ -15,6 +25,8 @@ const BACKSTOP_MARGIN_MS = 60_000
 const GIT_WALL_MS = 30_000
 const MAX_ERROR_LINES = 50
 const LINE_MAX_CHARS = 500
+/** A probe that fails for any reason but a definitive answer is retried, never journaled as a verdict. */
+const PROBE_RETRY = { attempts: 3, backoffMs: 500 }
 
 type Step = CheckOutput['steps'][number]
 /** A deterministic step's verdict with its one-line summary fragment. */
@@ -23,6 +35,9 @@ type StepResult = { step: Step; summary: string }
 export interface CheckDeps extends Partial<WorkflowDeps> {
   /** Subprocess port; default `Bun.spawn`. */
   exec?: Exec
+  /** Where the process groups of running commands are recorded; default the host's state directory. */
+  stateDir?: string
+  logger?: Pick<Logger, 'warn'>
 }
 
 /** The last non-empty output lines, bounded per line: the contract wants error lines, not a second log. */
@@ -35,7 +50,7 @@ export function errorLines(output: string): string[] {
     .map((line) => (line.length > LINE_MAX_CHARS ? `${line.slice(0, LINE_MAX_CHARS)}…` : line))
 }
 
-function stepResult(name: Step['name'], argv: string[], idleSeconds: number, result: ExecResult): StepResult {
+function stepResult(name: string, argv: string[], idleSeconds: number, result: ExecResult): StepResult {
   const label = argv.join(' ')
   if (!result.idleKilled && result.exitCode === 0) return { step: { name, passed: true }, summary: `${label} passed` }
   const lines = errorLines(result.output)
@@ -54,64 +69,89 @@ function stepResult(name: Step['name'], argv: string[], idleSeconds: number, res
   }
 }
 
+interface Context {
+  exec: Exec
+  stateDir: string
+  logger: Pick<Logger, 'warn'>
+}
+
 async function runStep(
-  exec: Exec,
+  context: Context,
   scope: StepScope,
-  options: { name: Step['name']; argv: string[]; cwd: string; idleSeconds: number },
+  options: { name: string; argv: string[]; cwd: string; idleSeconds: number },
 ): Promise<StepResult> {
   const { name, argv, cwd, idleSeconds } = options
-  const result = await exec.run({
+  const result = await context.exec.run({
     argv,
     cwd,
     idleMs: idleSeconds * 1000,
     signal: scope.signal,
     onOutput: scope.progress,
+    groupFile: join(context.stateDir, 'check', `${scope.key.replaceAll(/[^\w.-]/g, '_')}.group`),
   })
   if (result.aborted) throw scope.signal.reason // cancel, shutdown or lease loss: the runtime decides what that means
+  if (result.exitCode === null && !result.idleKilled && !result.timedOut) {
+    // Something else killed the command (an OOM kill, an operator): not a verdict on the repo, the step runs again.
+    throw new InfraError(`${argv.join(' ')} was killed by ${result.signalCode ?? 'a signal'}, not by this host`)
+  }
   return stepResult(name, argv, idleSeconds, result)
 }
 
-/** Whether `cwd` is a directory inside a git work tree; the reason when it is not. */
-async function refuseUnlessWorkTree(exec: Exec, cwd: string): Promise<string | null> {
-  let isDirectory = false
+/**
+ * Why `cwd` is not a git work tree, or null when it is. Only a definitive answer is a refusal; a probe that failed
+ * for any other reason throws, so the step is retried instead of journaling a verdict about the caller's input.
+ */
+async function workTreeRefusal(exec: Exec, cwd: string, signal: AbortSignal): Promise<string | null> {
   try {
-    isDirectory = statSync(cwd).isDirectory()
-  } catch {
-    // reported below
+    if (!statSync(cwd).isDirectory()) return `cwd is not a directory: ${cwd}`
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    if (code === 'ENOENT' || code === 'ENOTDIR') return `cwd does not exist: ${cwd}`
+    throw error
   }
-  if (!isDirectory) return `cwd is not an existing directory: ${cwd}`
   const probe = await exec.run({
     argv: ['git', 'rev-parse', '--is-inside-work-tree'],
     cwd,
     wallMs: GIT_WALL_MS,
-    stderr: 'discard',
+    signal,
   })
-  return probe.exitCode === 0 && probe.output.trim() === 'true' ? null : `cwd is not a git work tree: ${cwd}`
+  if (probe.aborted) throw signal.reason
+  const answer = probe.output.trim()
+  if (probe.exitCode === 0 && answer === 'true') return null
+  if (probe.exitCode === 0 && answer === 'false') return `cwd is not a git work tree: ${cwd}`
+  if (probe.exitCode === 128 && /not a git repository/i.test(answer)) return `cwd is not a git work tree: ${cwd}`
+  throw new Error(`git rev-parse failed (exit ${probe.exitCode}${probe.timedOut ? ', timed out' : ''}): ${answer}`)
 }
 
-async function fallowApplies(exec: Exec, cwd: string): Promise<boolean> {
+async function fallowApplies(exec: Exec, cwd: string, signal: AbortSignal): Promise<boolean> {
   if (!exec.which('fallow')) return false
-  const remotes = await exec.run({ argv: ['git', 'remote'], cwd, wallMs: GIT_WALL_MS, stderr: 'discard' })
-  return remotes.exitCode === 0 && remotes.output.trim() !== ''
+  const remotes = await exec.run({ argv: ['git', 'remote'], cwd, wallMs: GIT_WALL_MS, stderr: 'discard', signal })
+  if (remotes.aborted) throw signal.reason
+  if (remotes.exitCode !== 0) throw new Error(`git remote failed (exit ${remotes.exitCode})`)
+  return remotes.output.trim() !== ''
 }
 
 /** `make check`, then `fallow audit` when it applies. No model: the exit codes are the verdict. */
-async function contractCheck(exec: Exec, ctx: Ctx, cwd: string, idleSeconds: number): Promise<CheckOutput> {
+async function contractCheck(
+  context: Context,
+  ctx: Ctx,
+  options: { cwd: string; idleSeconds: number; fallow: boolean },
+): Promise<CheckOutput> {
+  const { cwd, idleSeconds } = options
   // The runtime's own idle timer must not cut a long but chatty command: every output chunk feeds it.
-  const options = { idleTimeoutMs: idleSeconds * 1000 + BACKSTOP_MARGIN_MS }
+  const stepOptions = { idleTimeoutMs: idleSeconds * 1000 + BACKSTOP_MARGIN_MS }
   const make = await ctx.step(
     'make-check',
-    (scope) => runStep(exec, scope, { name: 'check', argv: ['make', 'check'], cwd, idleSeconds }),
-    options,
+    (scope) => runStep(context, scope, { name: 'check', argv: ['make', 'check'], cwd, idleSeconds }),
+    stepOptions,
   )
-  const fallow = await ctx.step(
-    'fallow',
-    async (scope) =>
-      (await fallowApplies(exec, cwd))
-        ? runStep(exec, scope, { name: 'fallow', argv: ['fallow', 'audit', '--quiet'], cwd, idleSeconds })
-        : null,
-    options,
-  )
+  const fallow = options.fallow
+    ? await ctx.step(
+        'fallow',
+        (scope) => runStep(context, scope, { name: 'fallow', argv: ['fallow', 'audit', '--quiet'], cwd, idleSeconds }),
+        stepOptions,
+      )
+    : null
   const results = fallow ? [make, fallow] : [make]
   return {
     passed: results.every((result) => result.step.passed),
@@ -125,7 +165,7 @@ const isInvalidOutput = (error: unknown) => error instanceof StepFailed && error
 /** One agent step, one retry with a JSON-only directive; two invalid replies are a failed check, not a crash. */
 async function agentCheck(ctx: Ctx, input: CheckInput, stepSeconds: number, testSeconds: number): Promise<CheckOutput> {
   const idleMs = agentIdleMs(stepSeconds, testSeconds)
-  const prompt = agentPrompt({ cwd: input.cwd, commands: input.commands, idleMs })
+  const prompt = agentPrompt({ cwd: input.cwd, commands: input.commands, stepSeconds, testSeconds, idleMs })
   const spec = {
     agent: 'check',
     output: CHECK_OUTPUT,
@@ -155,24 +195,36 @@ async function agentCheck(ctx: Ctx, input: CheckInput, stepSeconds: number, test
  * Makefile has the target and no commands were given; otherwise one agent step discovers or runs the steps.
  */
 export function createCheckWorkflows(deps: CheckDeps = {}): HostWorkflow[] {
-  const exec = deps.exec ?? bunExec
+  const context: Context = {
+    exec: deps.exec ?? bunExec,
+    stateDir: deps.stateDir ?? DEFAULT_STATE_DIR,
+    logger: deps.logger ?? { warn: (message, meta) => console.warn('[agw-check]', message, meta ?? '') },
+  }
   const workflow = defineWorkflow({
     id: 'check',
-    version: '2026-10-28.1',
+    version: '2026-10-28.2',
     input: CHECK_INPUT,
     output: CHECK_OUTPUT,
     async run(ctx, input) {
       const stepSeconds = input.stepTimeoutSeconds ?? DEFAULT_STEP_IDLE_SECONDS
       const testSeconds = input.stepTimeoutSeconds ?? DEFAULT_TEST_IDLE_SECONDS
-      const plan = await ctx.step('plan', async () => {
-        const refusal = await refuseUnlessWorkTree(exec, input.cwd)
-        // The caller's commands win over the repo contract.
-        const makeCheck = refusal === null && !input.commands?.length && (await hasMakeCheckTarget(exec, input.cwd))
-        return { refusal, makeCheck }
-      })
+      const plan = await ctx.step(
+        'plan',
+        async ({ signal }) => {
+          const refusal = await workTreeRefusal(context.exec, input.cwd, signal)
+          // The caller's commands win over the repo contract.
+          const makeCheck =
+            refusal === null &&
+            !input.commands?.length &&
+            (await hasMakeCheckTarget(context.exec, input.cwd, { signal, logger: context.logger }))
+          const fallow = makeCheck && (await fallowApplies(context.exec, input.cwd, signal))
+          return { refusal, makeCheck, fallow }
+        },
+        { retry: PROBE_RETRY },
+      )
       if (plan.refusal) throw new WorkflowError('invalid_input', plan.refusal)
       return plan.makeCheck
-        ? contractCheck(exec, ctx, input.cwd, testSeconds)
+        ? contractCheck(context, ctx, { cwd: input.cwd, idleSeconds: testSeconds, fallow: plan.fallow })
         : agentCheck(ctx, input, stepSeconds, testSeconds)
     },
   })

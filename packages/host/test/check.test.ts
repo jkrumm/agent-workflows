@@ -36,7 +36,15 @@ const dbWith = (header: string, recipe = true) =>
     '# files hash-table stats:',
   ].join('\n')
 
-const OK: ExecResult = { exitCode: 0, output: '', idleKilled: false, timedOut: false, aborted: false }
+const OK: ExecResult = {
+  exitCode: 0,
+  signalCode: null,
+  output: '',
+  truncated: false,
+  idleKilled: false,
+  timedOut: false,
+  aborted: false,
+}
 
 /** A scripted exec port: `handler` answers a command, git and make probes have sensible defaults. */
 function fakeExec(
@@ -66,16 +74,21 @@ function repo(makefile = true) {
   return cwd
 }
 
-function checkWorkflow(exec: Exec) {
-  const entry = createCheckWorkflows({ exec })[0]
+function checkWorkflow(exec: Exec, logger?: { warn: (message: string, meta?: Record<string, unknown>) => void }) {
+  const entry = createCheckWorkflows({ exec, stateDir: tmpdir(), logger })[0]
   if (!entry) throw new Error('no check workflow')
   return entry.workflow
 }
 
 const GREEN = { passed: true, steps: [{ name: 'lint', passed: true }], summary: 'All 1 steps passed' }
 
-async function run(options: { exec: Exec; host?: FakeAgentHost; input: Record<string, unknown> }) {
-  const workflow = checkWorkflow(options.exec)
+async function run(options: {
+  exec: Exec
+  host?: FakeAgentHost
+  input: Record<string, unknown>
+  logger?: { warn: (message: string, meta?: Record<string, unknown>) => void }
+}) {
+  const workflow = checkWorkflow(options.exec, options.logger)
   const rt = testRuntime({ schema: db.schema, workflows: [workflow], host: options.host })
   await rt.open()
   try {
@@ -103,7 +116,6 @@ describe('Makefile path', () => {
     expect((await sql.steps(runId)).map((s) => [s.step_id, s.kind])).toEqual([
       ['plan', 'code'],
       ['make-check', 'code'],
-      ['fallow', 'code'],
     ])
   })
 
@@ -267,6 +279,7 @@ describe('agent path', () => {
     expect(result.output).toEqual(GREEN)
     const [first, second] = [host.sessions.get('ses_1'), host.sessions.get('ses_2')]
     expect(second?.spec.prompt).toBe(first?.spec.prompt + JSON_ONLY_RETRY)
+    expect(JSON_ONLY_RETRY).not.toContain('again') // the retry is a new session: running the steps again is expected
     expect((await sql.steps(runId)).map((s) => [s.step_id, s.status])).toEqual([
       ['plan', 'done'],
       ['agent', 'failed'],
@@ -285,14 +298,28 @@ describe('agent path', () => {
     expect(host.sessions.size).toBe(2)
   })
 
-  test('a step name outside the contract is invalid output', async () => {
+  test('any non-empty step name is accepted, an empty one is invalid output', async () => {
     const cwd = repo(false)
-    const host = new FakeAgentHost(async () => ({
-      output: { passed: true, steps: [{ name: 'ruff', passed: true }], summary: 's' },
-    }))
-    const { result } = await run({ exec: fakeExec(() => undefined).exec, host, input: { cwd } })
-    expect((result.output as { passed: boolean }).passed).toBe(false)
+    const named = { passed: true, steps: [{ name: 'ruff', passed: true }], summary: 's' }
+    const ok = await run({
+      exec: fakeExec(() => undefined).exec,
+      host: new FakeAgentHost(async () => ({ output: named })),
+      input: { cwd },
+    })
+    expect(ok.result.output).toEqual(named)
+    const host = new FakeAgentHost(async () => ({ output: { ...named, steps: [{ name: '', passed: true }] } }))
+    const bad = await run({ exec: fakeExec(() => undefined).exec, host, input: { cwd } })
+    expect((bad.result.output as { passed: boolean }).passed).toBe(false)
     expect(host.sessions.size).toBe(2)
+  })
+
+  test('the prompt carries the idle windows and the run-step wrapper is in the agent', async () => {
+    const cwd = repo(false)
+    const host = new FakeAgentHost(async () => ({ output: GREEN }))
+    await run({ exec: fakeExec(() => undefined).exec, host, input: { cwd, stepTimeoutSeconds: 45 } })
+    expect(host.sessions.get('ses_1')?.spec.prompt).toContain('45s for ordinary steps, 45s for the test step')
+    const agentsMd = readFileSync(join(import.meta.dir, '../../../agents/check/AGENTS.md'), 'utf8')
+    expect(agentsMd).toContain('.opencode/skills/run-step/run-step.sh')
   })
 })
 
@@ -317,29 +344,101 @@ describe('input', () => {
   })
 
   test('a directory that is not a git work tree, and one that does not exist, end the run as invalid_input', async () => {
-    const notGit = fakeExec((r) => (r.argv[0] === 'git' ? { exitCode: 128 } : undefined))
+    const notGit = fakeExec((r) =>
+      r.argv[0] === 'git'
+        ? { exitCode: 128, output: 'fatal: not a git repository (or any of the parent directories): .git\n' }
+        : undefined,
+    )
     const a = await run({ exec: notGit.exec, input: { cwd: repo() } })
     expect(a.result).toMatchObject({ status: 'failed', error: { kind: 'invalid_input' } })
     expect(a.result.error?.message).toContain('not a git work tree')
     expect(notGit.calls.some((c) => c.argv[0] === 'make')).toBe(false)
     const b = await run({ exec: fakeExec(() => undefined).exec, input: { cwd: join(tmpdir(), 'agw-check-nope') } })
     expect(b.result).toMatchObject({ status: 'failed', error: { kind: 'invalid_input' } })
-    expect(b.result.error?.message).toContain('not an existing directory')
+    expect(b.result.error?.message).toContain('does not exist')
+  })
+})
+
+describe('probes and kills', () => {
+  test('a git probe that fails for any other reason is retried and never journaled as a refusal', async () => {
+    const flaky = fakeExec((r) =>
+      r.argv[0] === 'git' && r.argv[1] === 'rev-parse'
+        ? { exitCode: 1, output: 'fatal: unable to access the repository\n' }
+        : undefined,
+    )
+    const { runId, result } = await run({ exec: flaky.exec, input: { cwd: repo() } })
+    expect(result.status).toBe('failed')
+    expect(result.error?.kind).not.toBe('invalid_input')
+    expect(flaky.ran('git', 'rev-parse', '--is-inside-work-tree')).toBe(3)
+    expect((await sql.step(runId, 'plan'))?.status).toBe('failed')
+
+    // ... and a probe that recovers on the retry carries on
+    let calls = 0
+    const recovering = fakeExec((r) =>
+      r.argv[0] === 'git' && r.argv[1] === 'rev-parse' && ++calls === 1 ? { exitCode: 1, output: 'busy' } : undefined,
+    )
+    const second = await run({ exec: recovering.exec, input: { cwd: repo() } })
+    expect(second.result).toMatchObject({ status: 'done', output: { passed: true } })
+  })
+
+  test('every probe gets the step signal; the make probe has 30 s and keeps the whole output', async () => {
+    const { exec, calls } = fakeExec(() => undefined, ['make', 'fallow'])
+    await run({ exec, input: { cwd: repo() } })
+    const probes = calls.filter((c) => c.wallMs !== undefined)
+    expect(probes.map((c) => c.argv.slice(0, 2).join(' '))).toEqual(['git rev-parse', 'make -p', 'git remote'])
+    for (const probe of probes) expect(probe.signal).toBeInstanceOf(AbortSignal)
+    const make = probes.find((c) => c.argv[0] === 'make')
+    expect(make?.wallMs).toBe(30_000)
+    expect(make?.tailChars).toBe(Number.POSITIVE_INFINITY)
+  })
+
+  test('a make probe that times out is logged and falls back to the agent path', async () => {
+    const warnings: { message: string; meta?: Record<string, unknown> }[] = []
+    const host = new FakeAgentHost(async () => ({ output: GREEN }))
+    const { exec } = fakeExec((r) => (r.argv[0] === 'make' && r.argv[1] === '-p' ? { timedOut: true } : undefined))
+    const { result } = await run({
+      exec,
+      host,
+      input: { cwd: repo() },
+      logger: { warn: (message, meta) => warnings.push({ message, meta }) },
+    })
+    expect(result.output).toEqual(GREEN)
+    expect(warnings).toHaveLength(1)
+    expect(warnings[0]?.message).toContain('probe did not complete')
+    expect(warnings[0]?.meta).toMatchObject({ timedOut: true })
+  })
+
+  test('a command killed by a signal this host did not send is never a red: the step runs again', async () => {
+    let makes = 0
+    const { exec } = fakeExec((r) =>
+      r.argv[0] === 'make' && r.argv[1] === 'check' && ++makes === 1
+        ? { exitCode: null, signalCode: 'SIGKILL', output: 'Killed' }
+        : undefined,
+    )
+    const { runId, result } = await run({ exec, input: { cwd: repo() } })
+    expect(result).toMatchObject({ status: 'done', output: { passed: true } })
+    expect(makes).toBe(2)
+    expect((await sql.step(runId, 'make-check'))?.status).toBe('done')
+  })
+
+  test('the command gets a group file keyed by run and step under the state directory', async () => {
+    const { exec, calls } = fakeExec(() => undefined)
+    const { runId } = await run({ exec, input: { cwd: repo() } })
+    const make = calls.find((c) => c.argv[0] === 'make' && c.argv[1] === 'check')
+    expect(make?.groupFile).toBe(join(tmpdir(), 'check', `${runId}_make-check.group`))
   })
 })
 
 describe('resume', () => {
   test('a crash after make check resumes without running make check again', async () => {
     const cwd = repo()
-    const hang = Promise.withResolvers<void>()
-    // first process: make check finishes, then the fallow probe never answers
+    // first process: make check finishes, then fallow never answers
     const first = fakeExec(
       async (r) => {
-        if (r.argv[0] === 'git' && r.argv[1] === 'remote') {
+        if (r.argv[0] === 'fallow') {
           await new Promise<void>((_, reject) =>
             r.signal?.addEventListener('abort', () => reject(r.signal?.reason), { once: true }),
           )
-          await hang.promise
         }
         return undefined
       },
@@ -350,7 +449,7 @@ describe('resume', () => {
     await rt1.open()
     const { runId } = await rt1.start(wf1, { cwd }, { purpose: 'build' })
     await until(async () => (await sql.step(runId, 'make-check'))?.status === 'done', 'make check journaled')
-    await until(() => first.ran('git', 'remote') > 0, 'fallow probe started')
+    await until(() => first.ran('fallow', 'audit', '--quiet') > 0, 'fallow started')
     await rt1.close() // the process goes away mid-run
     expect((await sql.run(runId))?.status).toBe('running')
     expect(first.ran('make', 'check')).toBe(1)

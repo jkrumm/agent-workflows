@@ -1,8 +1,9 @@
 import { describe, expect, test } from 'bun:test'
-import { existsSync, mkdtempSync, readFileSync, realpathSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { bunExec } from '../src/workflows/check/exec.ts'
+import { commandEnv } from '../src/workflows/check/env.ts'
+import { bunExec, createBunExec } from '../src/workflows/check/exec.ts'
 
 const cwd = realpathSync(mkdtempSync(join(tmpdir(), 'agw-exec-')))
 const sh = (script: string) => ['sh', '-c', script]
@@ -78,5 +79,115 @@ describe('bunExec', () => {
     expect(result.exitCode).toBe(127)
     expect(result.output).not.toBe('')
     expect(existsSync(cwd)).toBe(true)
+  })
+})
+
+describe('credentials', () => {
+  const env = {
+    PATH: process.env.PATH,
+    HOME: '/home/someone',
+    LANG: 'C',
+    OTEL_EXPORTER_OTLP_ENDPOINT: 'http://collector.example.com',
+    // the legacy list: anything credential-shaped
+    CLAUDE_CODE_OAUTH_TOKEN: 'x',
+    GH_TOKEN: 'x',
+    MY_SECRET: 'x',
+    DB_PASSWORD: 'x',
+    SOME_API_KEY: 'x',
+    AWS_SESSION_ID: 'x',
+    // the host's own
+    AGW_API_SECRET: 'x',
+    AGW_PG_URL: 'postgres://user:pw@db.example.com/agw',
+    AGW_PG_PASSWORD: 'x',
+    IU_API_KEY: 'x',
+    IU_BASE_URL: 'https://iu.example.com',
+    OTEL_EXPORTER_OTLP_HEADERS: 'authorization=Bearer x',
+    OTEL_EXPORTER_OTLP_TRACES_HEADERS: 'x=y',
+    OTEL_EXPORTER_OTLP_AUTHORIZATION: 'x',
+    ARGO_API_SECRET: 'x',
+  }
+
+  test('a command sees the host environment without credentials, PWD pinned', async () => {
+    const result = await createBunExec({ env }).run({ argv: ['env'], cwd })
+    const seen = result.output
+      .split('\n')
+      .map((line) => line.split('=')[0])
+      .filter(Boolean)
+    for (const name of ['PATH', 'HOME', 'LANG', 'OTEL_EXPORTER_OTLP_ENDPOINT', 'PWD']) expect(seen).toContain(name)
+    const kept = ['PATH', 'HOME', 'LANG', 'OTEL_EXPORTER_OTLP_ENDPOINT']
+    const credentials = Object.keys(env).filter((name) => !kept.includes(name))
+    expect(seen.filter((name) => name !== undefined && credentials.includes(name))).toEqual([])
+    expect(result.output).not.toContain('postgres://')
+  })
+
+  test('commandEnv drops exactly the credential-shaped names', () => {
+    const kept = Object.keys(commandEnv(env, '/work')).sort()
+    expect(kept).toEqual(['HOME', 'LANG', 'OTEL_EXPORTER_OTLP_ENDPOINT', 'PATH', 'PWD'])
+  })
+})
+
+describe('orphans of a crashed host', () => {
+  const groupFile = () => join(mkdtempSync(join(tmpdir(), 'agw-groups-')), 'check', 'run_step.group')
+  const alive = (pid: number) => {
+    try {
+      process.kill(pid, 0)
+      return true
+    } catch {
+      return false
+    }
+  }
+  const startOf = (pid: number) =>
+    Bun.spawnSync(['ps', '-o', 'lstart=', '-p', String(pid)])
+      .stdout.toString()
+      .trim()
+  const orphan = () => Bun.spawn(['sleep', '60'], { detached: true, stdout: 'ignore', stderr: 'ignore' })
+
+  test('a recorded group that is still alive is killed before the next spawn', async () => {
+    const file = groupFile()
+    const left = orphan()
+    mkdirSync(join(file, '..'), { recursive: true })
+    writeFileSync(file, JSON.stringify({ pgid: left.pid, started: startOf(left.pid) }))
+    const result = await bunExec.run({ argv: ['true'], cwd, groupFile: file })
+    expect(result.exitCode).toBe(0)
+    await left.exited
+    expect(alive(left.pid)).toBe(false)
+    expect(existsSync(file)).toBe(false)
+  })
+
+  test('a record whose pid was reused (other start time) kills nothing', async () => {
+    const file = groupFile()
+    const innocent = orphan()
+    try {
+      mkdirSync(join(file, '..'), { recursive: true })
+      writeFileSync(file, JSON.stringify({ pgid: innocent.pid, started: 'Mon Jan  1 00:00:00 2001' }))
+      await bunExec.run({ argv: ['true'], cwd, groupFile: file })
+      expect(alive(innocent.pid)).toBe(true)
+      expect(existsSync(file)).toBe(false)
+    } finally {
+      innocent.kill('SIGKILL')
+    }
+  })
+
+  test('the group is recorded while the command runs and the file is gone after it', async () => {
+    const file = groupFile()
+    const seen: string[] = []
+    const running = bunExec.run({
+      argv: sh('sleep 0.4'),
+      cwd,
+      groupFile: file,
+    })
+    await Bun.sleep(150)
+    if (existsSync(file)) seen.push(readFileSync(file, 'utf8'))
+    await running
+    expect(seen).toHaveLength(1)
+    expect(JSON.parse(seen[0] ?? '{}')).toMatchObject({ pgid: expect.any(Number), started: expect.any(String) })
+    expect(existsSync(file)).toBe(false)
+  })
+
+  test('a garbage record is ignored', async () => {
+    const file = groupFile()
+    mkdirSync(join(file, '..'), { recursive: true })
+    writeFileSync(file, '{"pgid":')
+    expect((await bunExec.run({ argv: ['true'], cwd, groupFile: file })).exitCode).toBe(0)
   })
 })
