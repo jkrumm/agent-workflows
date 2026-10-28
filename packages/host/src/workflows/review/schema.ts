@@ -10,6 +10,10 @@ export { ROUTER_ANGLES }
 export const ALL_ANGLES = [...FLOOR_ANGLES, ...ROUTER_ANGLES] as const
 export type Angle = (typeof ALL_ANGLES)[number]
 
+/** Wave 5 experiment arms for the angle task, removed once decided. */
+export const ANGLE_VARIANTS = ['baseline', 'callers', 'shell'] as const
+export type AngleVariant = (typeof ANGLE_VARIANTS)[number]
+
 export const REVIEW_SCHEMA_VERSION = 2
 
 /** A leading `-` would read as a flag once a ref reaches `git` or `fallow`; the rest is git's ref alphabet. */
@@ -84,6 +88,12 @@ export const ReviewInput = z
       .describe(
         `Force these angles and skip the router (architect and senior-dev always run). Known: ${ALL_ANGLES.join(', ')}`,
       ),
+    angleVariant: z
+      .enum(ANGLE_VARIANTS)
+      .optional()
+      .describe(
+        'Wave 5 experiment, removed once decided: "callers" tells the angles to check callers of changed exports; "shell" adds a read-only git shell on the repository. Default "baseline".',
+      ),
   })
   .strict()
   .superRefine((input, ctx) => {
@@ -91,6 +101,9 @@ export const ReviewInput = z
     if (input.pr !== undefined && input.branch !== undefined) issue('`pr` and `branch` are mutually exclusive')
     if ((input.pr !== undefined || input.branch !== undefined) && input.scope !== undefined) {
       issue('`scope` must be omitted when `pr` or `branch` is set: the diff is always base...head of that ref')
+    }
+    if (input.angleVariant === 'shell' && (input.pr !== undefined || input.branch !== undefined)) {
+      issue('`angleVariant: shell` is for trusted local trees only: a `pr` or `branch` review reads an untrusted clone')
     }
     const problem = input.scope === undefined ? null : scopeProblem(input.scope)
     if (problem) issue(`invalid scope: ${problem}`)

@@ -9,7 +9,7 @@ escalationCategory?, summary, degraded? }`, findings `{ file, line?, message, an
 
 Input (strict): `cwd` (absolute path of a git work tree; anything else fails the run as `invalid_input`), `scope?`
 (`uncommitted` default, `head`, a ref, a range or a file path), `pr?`, `branch?` (mutually exclusive, and exclusive with
-`scope`), `depth?` (`light|standard|deep`), `context?`, `angles?`.
+`scope`), `depth?` (`light|standard|deep`), `context?`, `angles?`, `angleVariant?` (experiment, below).
 
 ## Steps
 
@@ -22,7 +22,7 @@ Step ids are literals (`runtime/test/step-id-literal.test.ts`); the angle fan-ou
 | `adversary` | code | Capability `review.adversary`: one non-agentic call on route `review.adversary` (medium effort, one retry at low on an empty answer, diff capped at 200K chars), the cross-family critic (`:928`). Any failure becomes a `(review pipeline)` discussion; the review completes. `AGW_REVIEW_ADVERSARY=false` turns it off |
 | `route` | code | Capability `review.route` on route `review.router` (prompt `agents/review-router`): extra angles plus a depth. Skipped when the caller passes `angles`. A failure adds no angles and no depth (`:869`) |
 | `plan` | code | Records the decision in the run record: effective depth and where it came from, the angle set, whether the router failed, why OCR runs or not |
-| `angle:<name>` | agent | One per angle, at most 3 in flight, each retried once, agent `review-<angle>` on route `review.angle`, output schema legacy `ANGLE_OUTPUT` (`:362`). The agent reads the repository through `spec.options.allowDirectories: [repo]`; its `agent.json` denies `edit` and the shell stays denied |
+| `angle:<name>` | agent | One per angle, at most 3 in flight, each retried once, agent `review-<angle>` on route `review.angle`, output schema legacy `ANGLE_OUTPUT` (`:362`). The agent reads the repository through `spec.options.allowDirectories: [repo]`; its `agent.json` denies `edit` and the shell stays denied, except under the `shell` arm of `angleVariant` (a read-only git shell, below) |
 | `ocr` | child workflow | the internal `review.ocr` workflow, see below |
 | `synthesis`, `synthesis-retry` | agent | `review-synthesis` on route `review.synthesis`, the legacy placeholders `[ANGLE_RESULTS]`, `[FALLOW_RESULTS]`, `[REACT_DOCTOR_RESULTS]`, `[OCR_RESULTS]` filled in one pass (a `$&` in a finding stays literal). The answer comes back as text and is parsed here: invalid JSON → one retry (`synthesis-retry`) with the JSON-only suffix → the salvaged `needs-human` / `blocker` verdict that keeps the raw text (`:1636-1744`) |
 | `cleanup` | effect | Removes the throwaway clone (`pr`/`branch` only), in a `finally`. A cancelled or crashed run skips it; the next `prepare` sweeps clones older than a day |
@@ -73,6 +73,22 @@ find it, but never an HTTP route, a CLI command or an `agw schema` entry, so `re
 `agw review-adversary`). When `ocr` exits non-zero and its stderr is a provider-balance refusal (`isBalanceFailure`),
 it runs once more on the route's fallback (OpenAI's own models over `OCR_LLM_PROTOCOL=openai-responses`, as
 agent-gateway probed); a failing fallback reports the primary's failure.
+
+### Experiment: angleVariant
+
+Wave 5, removed once decided. `angleVariant` (`baseline` default, `callers`, `shell`) is chosen per run, so all arms run
+side by side on one deployed host. `baseline` is today's task prompt and permissions, byte for byte. `callers` inserts a
+"Callers" section before the diff: find the callers, implementations and tests outside the diff of every exported symbol,
+signature, type, config key, flag or route the diff changes, and report what was confirmed by reading. `shell` adds a
+"Shell" section and gives the angle sessions `repoShell` (`git -C <repo> grep -n -e <token>` and `show|log|blame|ls-files`; no `diff`, which acts as `--no-index` on paths outside the work tree; see
+`packages/opencode-host/README.md`). Synthesis is unchanged in every arm. The angle `AGENTS.md` files say there is no
+shell unless the task message has a "Shell" section. `shell` together with `pr` or `branch` (an untrusted clone) is `invalid_input`. The `plan` step records the arm as `angleVariant`. The eval harness selects an arm with
+`--agw-args="--angle-variant shell"`.
+
+`shell` is for evals on trusted trees only. Its rules match command text, and a backslash that splits a flag
+(`--o\utput`) gets past them (OpenCode's glob cannot match a backslash, measured). No caller passes it in production. If
+the experiment shows the history verbs are worth it, they ship as a typed capability that runs `git` as argv, not as
+this shell.
 
 ## Provider balance degrade
 
