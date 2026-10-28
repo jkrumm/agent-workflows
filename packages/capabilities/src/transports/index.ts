@@ -7,7 +7,7 @@ import type { IuTransports } from './port.ts'
 
 export type { Env, IuConfig } from './config.ts'
 export { iuConfig } from './config.ts'
-export type { HttpOptions } from './http.ts'
+export { type HttpOptions, isBalanceError } from './http.ts'
 export { iuAnthropic } from './iu-anthropic.ts'
 export { iuDecision } from './iu-decision.ts'
 export { iuOpenai } from './iu-openai.ts'

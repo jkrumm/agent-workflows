@@ -73,13 +73,15 @@ Ports and adapters: `ChatPort` (`iu-openai` and `iu-anthropic` both implement it
 
 | Adapter | Wire | Behaviour ported from agent-gateway |
 |-|-|-|
-| `iuOpenai` | `POST <origin>/openai/v1/chat/completions`, SSE with `include_usage` | idle watchdog only (5 min without a chunk, never a wall-clock cap), 3 attempts at 0.5 s / 1.5 s on 429/5xx and network errors, 410 and client errors fail fast, an upstream `invalid_request_error` wrapped in a 503 is not retried, `max_completion_tokens` (reasoning tokens count against it), no `temperature`, `reasoning_effort` only when the route has an effort |
+| `iuOpenai` | `POST <origin>/openai/v1/chat/completions`, SSE with `include_usage` | idle watchdog only (5 min without a chunk, never a wall-clock cap), 3 attempts at 0.5 s / 1.5 s on 429/5xx and network errors, 410, client errors and provider-balance failures fail fast, an upstream `invalid_request_error` wrapped in a 503 is not retried, `max_completion_tokens` (reasoning tokens count against it), no `temperature`, `reasoning_effort` only when the route has an effort |
 | `iuAnthropic` | `POST <IU_BASE_URL>/v1/messages`, one non-streamed request | 30 min hang guard (not retried), same retry rules, `thinking: adaptive` plus `output_config.effort` only when the route has an effort, `max_tokens` as the ceiling |
 | `iuDecision` | `POST <origin>/decisions/v1/systemone` | boolean questions go as `noul`, choice options as `criteria`; same retry rules |
 
 Credentials come from the environment only: `IU_API_KEY` and `IU_BASE_URL` (ending in `/anthropic`; the other two bases derive from it). They are read on each call, so importing the package never fails without them. `.env.tpl` holds the `op://` references; resolve with `secrets-run run --env-file=.env.tpl -- <cmd>`. There is no keychain fallback.
 
 **Decision API: direct HTTP, no `ai` or `@ai-sdk/typesafe-ai`.** The provider package is a 200-line adapter over one `POST /systemone` with a three-variant response (checked against `@ai-sdk/typesafe-ai` 3.0.17 in the frozen gateway). `ai`'s `decide` adds input validation and an answer sanity check; the capability validates both itself (zod on the wire body, every asked question answered, a choice among its options). The dependency would pull in `ai`, the provider and their trees for that. The gateway's own `decide` test fixtures (choice, `noul`, missing confidence falling back to the option's probability) are ported.
+
+**Provider-balance fallback.** A 402, or a 503 whose body says "Insufficient Balance" / "PaymentRequired" (`isBalanceFailure` in `@agent-workflows/routes`, the one classifier), fails fast in the transport (no retry of the primary) with `provider balance exhausted` in the `UPSTREAM_ERROR` message. `complete` then calls the route's `fallback` once (`fallbackRoute`; its own wire, model, effort, ceiling and rate) and logs it (`LlmDeps.warn`, default `console.warn`). Usage is reported under the model that ran, priced by `usage.cost` or the fallback's rate. A re-ask after a rejected answer stays on the route that answered. When the fallback fails too, the primary's error is thrown. `review.adversary` calls the transport itself and has no fallback yet.
 
 Content failures (`stop_reason: max_tokens`, empty text, a refusal or any non-final stop) are judged once in `src/llm/model-call.ts`, after usage is reported. JSON answers are parsed loosely (code fence, prose around the object), validated, re-asked once with the rejection reason, then `INVALID_OUTPUT`; a transport failure is never re-asked, so a retry cannot bill twice.
 
@@ -118,6 +120,7 @@ All four are `POST` with a JSON body. The model comes from the route; override w
 - `registry.test.ts`: in-process and HTTP (`Bun.serve`, port 0) agree on results and on typed errors; the OpenAPI document; definition rules.
 - `capabilities.test.ts`: each capability against a fake IU server through the production adapters: request wire, usage and cost via `ctx.addUsage`, `rate` when the provider omits cost (cache tokens priced per bucket), `unknown` when a cache rate is missing, schema-failure re-ask.
 - `transports.test.ts`: retries, fail-fast statuses, cancel, idle watchdog.
+- `fallback.test.ts`: 402 and the 503 balance body each make one fallback call (priced, its model recorded); a 503 without the text is retried on the primary only; a failing fallback answers the primary's error; a re-ask stays on the fallback; an `iu-anthropic` route falls back over chat; `AGW_ROUTES` patches or removes the fallback.
 - `live.test.ts`: one real call per capability, **skipped unless `AGW_LIVE=1`** (the skipped names say so). It costs well under $0.001:
 
   ```sh

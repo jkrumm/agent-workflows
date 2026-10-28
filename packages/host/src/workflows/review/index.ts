@@ -1,5 +1,6 @@
 import { capDiff, parseJsonLoose } from '@agent-workflows/capabilities'
 import { DEFAULT_STATE_DIR } from '@agent-workflows/opencode-host'
+import { isBalanceFailure } from '@agent-workflows/routes'
 import { type AgentSpec, type Ctx, defineWorkflow, StepFailed, WorkflowError } from '@agent-workflows/runtime'
 import type { HostWorkflow } from '../../operations.ts'
 import type { WorkflowDeps } from '../index.ts'
@@ -22,6 +23,7 @@ import {
 import {
   allFailedVerdict,
   applyVerdictRules,
+  balanceDegradedVerdict,
   cleanVerdict,
   coerceEscalationCategory,
   salvagedVerdict,
@@ -107,6 +109,9 @@ function parseSynthesis(text: string) {
   const parsed = parseJsonLoose(text)
   return parsed === null ? null : SynthesisSchema.safeParse(parsed)
 }
+
+/** A step's failure reason that is a provider-balance refusal (the transports' and the OpenCode host's wording). */
+const onBalance = (reason: string | null) => reason !== null && isBalanceFailure({ text: reason })
 
 /** Why OCR does not run for this review, or null when it should. Every gate decides whether, none truncates a run. */
 export function ocrSkipReason(p: Prepared, depth: string): string | null {
@@ -239,10 +244,15 @@ export function createReviewWorkflows(deps: WorkflowDeps, options: ReviewOptions
     const failed = results.filter((r) => r.failureReason !== null)
     const total = results.length
 
-    // Every reviewer failed: a synthesis of nothing would read as approval.
+    // Every reviewer failed: a synthesis of nothing would read as approval. All of them on provider balance (after
+    // their routes' fallbacks) is the typed degrade: the caller reviews in-session.
     // The verdict does not wait for OCR or react-doctor: the runtime has no way to cancel a sibling step, so the cleanup
     // path awaits them (no clone is removed under a running helper), not this answer.
-    if (failed.length === total) return allFailedVerdict(failed, total)
+    if (failed.length === total) {
+      return failed.every((r) => onBalance(r.failureReason))
+        ? balanceDegradedVerdict(failed)
+        : allFailedVerdict(failed, total)
+    }
 
     const ocrOutcome = ocrRun ? await ocrRun : null
     const ocrBlock = !ocrRun
@@ -273,8 +283,13 @@ export function createReviewWorkflows(deps: WorkflowDeps, options: ReviewOptions
         : { text: null, reason: answer.reason, parsed: null }
     const first = attempt(await settle(ctx.agent('synthesis', synthesisSpec(prompt))))
     let synthesis = first
-    if (!first.parsed?.success) {
+    // A synthesis refused on provider balance (its fallback included) is not re-asked: the retry is for a bad answer.
+    if (!first.parsed?.success && !(first.text === null && onBalance(first.reason))) {
       synthesis = attempt(await settle(ctx.agent('synthesis-retry', synthesisSpec(prompt + SYNTHESIS_JSON_ONLY_RETRY))))
+    }
+    // No synthesis text at all and the last refusal was balance: there is no review to salvage.
+    if (!first.text && !synthesis.text && onBalance(synthesis.reason)) {
+      return balanceDegradedVerdict([{ angle: 'synthesis', failureReason: synthesis.reason }])
     }
     if (!synthesis.parsed?.success) {
       // The raw text of the last attempt that produced any; a session that died says why only when none did.

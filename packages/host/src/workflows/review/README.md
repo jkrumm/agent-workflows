@@ -4,7 +4,8 @@
 verdict. A port of agent-gateway's `review` (`server/jobs/handlers/review.ts` `runReview`, prompts `server/skills/review/*.md`):
 the behaviour is carried over, the code is written against this runtime. The output is the legacy `REVIEW_OUTPUT` v2,
 so today's callers read it unchanged: `{ schemaVersion: 2, outcome, blocking[], improvements[], discussions[], testGaps,
-escalationCategory?, summary }`, findings `{ file, line?, message, angle }`.
+escalationCategory?, summary, degraded? }`, findings `{ file, line?, message, angle }`. `degraded` is additive and
+`schemaVersion` stays 2: it is absent on every review that ran.
 
 Input (strict): `cwd` (absolute path of a git work tree; anything else fails the run as `invalid_input`), `scope?`
 (`uncommitted` default, `head`, a ref, a range or a file path), `pr?`, `branch?` (mutually exclusive, and exclusive with
@@ -22,7 +23,7 @@ Step ids are literals (`runtime/test/step-id-literal.test.ts`); the angle fan-ou
 | `route` | code | Capability `review.route` on route `review.router` (prompt `agents/review-router`): extra angles plus a depth. Skipped when the caller passes `angles`. A failure adds no angles and no depth (`:869`) |
 | `plan` | code | Records the decision in the run record: effective depth and where it came from, the angle set, whether the router failed, why OCR runs or not |
 | `angle:<name>` | agent | One per angle, at most 3 in flight, each retried once, agent `review-<angle>` on route `review.angle`, output schema legacy `ANGLE_OUTPUT` (`:362`). The agent reads the repository through `spec.options.allowDirectories: [repo]`; its `agent.json` denies `edit` and the shell stays denied |
-| `ocr` | child workflow | the `ocr` workflow, see below |
+| `ocr` | child workflow | the internal `review.ocr` workflow, see below |
 | `synthesis`, `synthesis-retry` | agent | `review-synthesis` on route `review.synthesis`, the legacy placeholders `[ANGLE_RESULTS]`, `[FALLOW_RESULTS]`, `[REACT_DOCTOR_RESULTS]`, `[OCR_RESULTS]` filled in one pass (a `$&` in a finding stays literal). The answer comes back as text and is parsed here: invalid JSON → one retry (`synthesis-retry`) with the JSON-only suffix → the salvaged `needs-human` / `blocker` verdict that keeps the raw text (`:1636-1744`) |
 | `cleanup` | effect | Removes the throwaway clone (`pr`/`branch` only), in a `finally`. A cancelled or crashed run skips it; the next `prepare` sweeps clones older than a day |
 
@@ -57,7 +58,7 @@ checked out detached. The diff is `<default tip>...HEAD`. `cwd` is only read: no
 index, refs and worktrees are untouched (`test/review.test.ts`). Agents get the clone as their `allowDirectories`, so
 they read the PR as it is, not whatever `cwd` has checked out.
 
-### OCR: the `ocr` workflow
+### OCR: the `review.ocr` workflow
 
 A child workflow with `optionalExpensive: true`. The wallet gate (`@agent-workflows/limits`) refuses it at admission while
 IU 30-day spend is ≥ $400 or before 2026-11-02; that replaces legacy's date pause and spend gate. The parent keeps the
@@ -66,10 +67,21 @@ on PATH, IU credentials in the environment, a scope `ocr` has a mode for (not a 
 the runtime refuses or fails comes back from `ctx.workflow` as `null` (a refused admission ends the child `failed` /
 `admission_refused`); the parent then writes "OpenCodeReview: skipped (…)" into the synthesis and goes on. Its liveness is
 the step's idle watchdog (five minutes without output), never a wall-clock cap. Usage is recorded with an unknown price.
-Its id is `ocr`, not `review.ocr`: the host refuses a command that is a prefix of another (`agw review` and
-`agw review ocr`), and a workflow's command is its id split on dots. Because it is a workflow it also appears as
-`agw ocr`; run directly it is wallet-gated the same way. The route keeps the name `review.ocr`. The capabilities carry
-their own command names for the same reason (`agw review-route`, `agw review-adversary`).
+It is `internal` (`HostWorkflow.internal`): registered with the runtime, so the parent's `ctx.workflow` and a resume
+find it, but never an HTTP route, a CLI command or an `agw schema` entry, so `review.ocr` does not collide with
+`agw review`. The capabilities carry their own command names because they are public (`agw review-route`,
+`agw review-adversary`). When `ocr` exits non-zero and its stderr is a provider-balance refusal (`isBalanceFailure`),
+it runs once more on the route's fallback (OpenAI's own models over `OCR_LLM_PROTOCOL=openai-responses`, as
+agent-gateway probed); a failing fallback reports the primary's failure.
+
+## Provider balance degrade
+
+The routes fall back once on a provider-balance failure (`packages/routes` README). When that is not enough, the
+review answers a typed result instead of a failure or a `blocker`: every reviewer (angles and adversary) failed with a
+balance error, or the synthesis was refused on balance with no text to salvage (it is not re-asked then). The verdict
+is `needs-human`, `escalationCategory: spend`, one `(review pipeline)` discussion "provider balance exhausted — review
+in-session with /code-review on your own Claude", and `degraded: "provider_balance"` for callers that branch on it.
+Mixed failures stay the `blocker` verdict.
 
 ## Hardening
 
@@ -114,7 +126,7 @@ with their routes.
 - `uncommitted` is `git diff HEAD` (staged and unstaged together) for every reviewer. Legacy showed the router, the
   adversary and the file list the staged changes only when any were staged, and the angles `git diff HEAD`.
 - No `model` input (route overrides go through `AGW_ROUTES`), no Max fallback, no research-gateway block in the angle prompts.
-- OCR speaks the OpenAI chat protocol (route `review.ocr` is on the `iu-openai` wire); the Responses protocol legacy used for GPT ids is not carried.
+- OCR speaks the OpenAI chat protocol for the primary (route `review.ocr` is on the `iu-openai` wire) and Responses for a `gpt-` fallback, as legacy does for GPT ids.
 - react-doctor reads the install agent-gateway keeps (`AGW_REACT_DOCTOR_BIN` overrides it) until the platform owns an install.
 - Helpers run as argv, not `bash -c`: a scope can no longer reach a shell, and a fallow timeout is reported as `fallow failed`.
 - The OCR route is not part of the run fingerprint (it is no agent definition); a model change there does not move it.
@@ -135,7 +147,7 @@ with their routes.
 ## Tests
 
 `packages/host/test/review.test.ts` (Postgres, `FakeAgentHost`, fake IU transports, real git): empty diff, the gating table,
-failed angles, adversary failure, OCR admitted / refused by the wallet gate / skipped by each parent gate, synthesis retry
-and salvage, verdict overrides, resume after a crash, `pr`/`branch`. `review-git.test.ts`: scopes, untracked files, the
+failed angles, adversary failure, OCR admitted / refused by the wallet gate / skipped by each parent gate / falling back
+on balance, the provider-balance degrade, synthesis retry and salvage, verdict overrides, resume after a crash, `pr`/`branch`. `review-git.test.ts`: scopes, untracked files, the
 clone and its housekeeping. `review-agents.test.ts`: the agent definitions. The permission option is proven live in
 `packages/opencode-host/test/live.test.ts`.

@@ -50,5 +50,7 @@ test('the guard catches a planted model id with file:line', () => {
 })
 
 function modelIds(): string[] {
-  return [...new Set(Object.values(DEFAULT_ROUTES).map((r) => r.model))]
+  return [
+    ...new Set(Object.values(DEFAULT_ROUTES).flatMap((r) => [r.model, ...(r.fallback ? [r.fallback.model] : [])])),
+  ]
 }

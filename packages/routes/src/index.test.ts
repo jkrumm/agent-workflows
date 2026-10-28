@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import {
   costFromUsage,
   DEFAULT_ROUTES,
+  fallbackRoute,
   OVERRIDES_ENV,
   type RouteId,
   RouteOverrideError,
@@ -272,6 +273,93 @@ describe('costFromUsage', () => {
         usd: 0.5,
         source: 'provider',
       })
+    })
+  })
+})
+
+describe('fallback', () => {
+  const singleCall: RouteId[] = [
+    'cheap.classify',
+    'cheap.summarize',
+    'cheap.title',
+    'review.router',
+    'review.adversary',
+  ]
+  const agentSteps: RouteId[] = ['review.angle', 'review.synthesis', 'check']
+
+  test('every iu-openai, iu-anthropic and opencode route has one; decide has none', () => {
+    for (const id of routeIds()) {
+      const route = resolveRoute(id, {})
+      expect(route.fallback === undefined).toBe(route.wire === 'iu-decision')
+    }
+  })
+
+  test('single calls fall back to a priced call on the chat wire, agent steps to an opencode step', () => {
+    for (const id of [...singleCall, 'review.ocr' as const]) {
+      expect(resolveRoute(id, {}).fallback).toMatchObject({ wire: 'iu-openai', effort: 'medium' })
+    }
+    for (const id of agentSteps) expect(resolveRoute(id, {}).fallback).toMatchObject({ wire: 'opencode' })
+    for (const id of [...singleCall, ...agentSteps]) {
+      const fallback = resolveRoute(id, {}).fallback
+      expect(fallback?.model).not.toBe(resolveRoute(id, {}).model)
+      expect(fallback?.rate).toMatchObject({
+        inputPerM: 1,
+        outputPerM: 5,
+        cacheReadPerM: 0.05,
+        longPromptTokens: 272_000,
+      })
+    }
+  })
+
+  test('fallbackRoute is the fallback as a route of the same id, without a fallback of its own', () => {
+    const route = resolveRoute('cheap.classify', {})
+    const fallback = fallbackRoute(route)
+    expect(fallback).toEqual({ id: 'cheap.classify', ...(route.fallback as object) } as never)
+    expect(fallback?.fallback).toBeUndefined()
+    expect(fallbackRoute(resolveRoute('decide', {}))).toBeUndefined()
+  })
+
+  test('AGW_ROUTES patches a fallback like a primary, and only the part it names', () => {
+    const e = env({ 'cheap.classify': { fallback: { model: 'other-model', effort: 'high' } } })
+    const route = resolveRoute('cheap.classify', e)
+    expect(route.model).toBe(entry('cheap.classify').model)
+    expect(route.fallback).toMatchObject({ wire: 'iu-openai', model: 'other-model', effort: 'high' })
+    // A new fallback model without a rate drops the old rate, as on the primary.
+    expect(route.fallback?.rate).toBeUndefined()
+    expect(routeFingerprint('cheap.classify', e)).not.toBe(routeFingerprint('cheap.classify', {}))
+  })
+
+  test('a primary patch leaves the fallback alone; null removes the fallback', () => {
+    const patched = resolveRoute('review.angle', env({ 'review.angle': { model: 'some-model' } }))
+    expect(patched.fallback).toEqual(entry('review.angle').fallback as never)
+    expect(resolveRoute('review.angle', env({ 'review.angle': { fallback: null } })).fallback).toBeUndefined()
+  })
+
+  test('a fallback override is validated like the table', () => {
+    for (const bad of [
+      { 'cheap.classify': { fallback: { wire: 'opencode' } } },
+      { 'cheap.classify': { fallback: { effort: 'turbo' } } },
+      { 'cheap.classify': { fallback: { fallback: { model: 'x' } } } },
+      { decide: { fallback: { model: 'x' } } },
+    ]) {
+      expect(() => resolveRoute('cheap.classify', env(bad))).toThrow(RouteOverrideError)
+    }
+  })
+
+  test('the table refuses a fallback of the other step kind', () => {
+    const base = { wire: 'iu-openai', model: 'm' }
+    expect(routeSchema.safeParse({ ...base, fallback: { wire: 'opencode', model: 'f' } }).success).toBe(false)
+    expect(routeSchema.safeParse({ ...base, fallback: { wire: 'iu-anthropic', model: 'f' } }).success).toBe(true)
+  })
+
+  test('the long-prompt tier of a rate moves the unpriced line', () => {
+    const rate = resolveRoute('cheap.classify', {}).fallback?.rate
+    const usage = (prompt: number) => ({ prompt_tokens: prompt, completion_tokens: 1_000 })
+    expect(costFromUsage('iu-openai', usage(200_000), rate)).toEqual({ usd: 0.205, source: 'rate' })
+    expect(costFromUsage('iu-openai', usage(272_001), rate)).toEqual({ usd: null, source: 'unknown' })
+    expect(costFromUsage('iu-openai', usage(200_000), { inputPerM: 1, outputPerM: 5 })).toEqual({
+      usd: null,
+      source: 'unknown',
     })
   })
 })

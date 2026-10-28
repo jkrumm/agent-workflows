@@ -103,7 +103,10 @@ export function createHost(options: HostOptions): Host {
   const isOpen = options.isOpen ?? (() => true)
 
   const deps = { runtime, store, logger }
-  const workflows = options.workflows.map((entry) => ({ entry, op: workflowOperation(entry, deps) }))
+  // Internal workflows are children only: the runtime has them (`boot`), the HTTP surface and the CLI do not.
+  const workflows = options.workflows
+    .filter((entry) => !entry.internal)
+    .map((entry) => ({ entry, op: workflowOperation(entry, deps) }))
   const runs = runOperations(deps)
   // A direct capability call over HTTP is a one-step run; `boot` registers the same workflows with the runtime.
   const invoke = capabilityRuns(options.capabilityWorkflows, { ...deps, isOpen })

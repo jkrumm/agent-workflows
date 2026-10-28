@@ -4,6 +4,8 @@
 
 **Where to look:** workflow shape §3, middleware §4, porting a skill or a Hermes path §10, phase order §11.
 
+> **v3.3, 2026-10-28:** per-route fallback on provider balance (§4 Money). A route may carry a `fallback` (a full route spec, resolved and overridable like the primary; model ids stay in the route table). A call refused for provider balance (HTTP 402, or 503 "Insufficient Balance") runs once on it instead of failing; an OpenCode step whose turn was refused before it did anything reopens once on it; review answers a typed `needs-human` / `spend` result with `degraded: "provider_balance"` when even that fails. Why: DeepSeek's IU balance ran out (Wave 3 retro; 503 "Insufficient Balance" until ~09:10 on 2026-10-28) and every review and check on it failed; the owner chose to pay for a fallback model (GPT-6.1 Terra, medium) over failing. Review's OCR child became an internal workflow (`review.ocr`, no command). No decision reversed.
+>
 > **v3.2, 2026-10-28:** §8 OpenCode wedge risk resolved (file-watcher boot; OPENCODE_DISABLE_FILEWATCHER=1); the OpenCode host (`packages/opencode-host`) enforces it and re-attaches across server restarts. One shared server and IU key for every agent stays an accepted risk carried from agent-gateway (a shell-capable agent can read anything the user can); shell is denied unless an agent opts in. No decision reversed.
 >
 > **v3.1, 2026-10-27:** Wave 1 verdicts folded in: S1 own journal (§3, §12.4), S2 telemetry and the Argo projection (§4, §5), S3 stack and P0b store (§8), the OpenCode wedge risk (§8). No decision reversed.
@@ -315,3 +317,7 @@ One entry per phase: what we learned, what changed on this page, and why.
   IU/DeepSeek balance ran out mid-wave.
 - **Spend.** IU ≈ $2.31 + earlier rounds on reviews (upper bound, shared gateway).
 - **Does the page hold?** Yes.
+
+### v3.3 — provider-balance fallback, 2026-10-28
+
+- **Learned.** An empty provider account is a routing fact, not a run failure: one classifier (402, or 503 "Insufficient Balance") and one fallback per route keep review and check working while DeepSeek is out; the in-session `/code-review` is the last resort, typed so callers branch on it.

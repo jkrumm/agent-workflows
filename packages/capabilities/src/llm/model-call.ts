@@ -1,5 +1,6 @@
 import {
   costFromUsage,
+  fallbackRoute,
   type ResolvedRoute,
   type RouteId,
   RouteOverrideError,
@@ -10,6 +11,7 @@ import type { z } from 'zod'
 import type { Ctx, Usage } from '../context.ts'
 import { CapabilityError, fail } from '../errors.ts'
 import type { Env } from '../transports/config.ts'
+import { isBalanceError } from '../transports/http.ts'
 import type { AttemptUsage, ChatResult, IuTransports } from '../transports/port.ts'
 
 /** What the model-backed capabilities are built from. Handlers close over it; `ctx` stays `{ signal, addUsage }`. */
@@ -17,6 +19,8 @@ export interface LlmDeps {
   transports: IuTransports
   /** Where `AGW_ROUTES` is read from. Default `process.env`. */
   env?: Env
+  /** Where a fallback is reported. Default `console.warn`. */
+  warn?: (message: string, meta: Record<string, unknown>) => void
 }
 
 /** Reasoning tokens count against the ceiling, so a route with effort and no ceiling gets room to think. */
@@ -92,9 +96,43 @@ export interface CompleteArgs {
   ctx: Ctx
 }
 
-/** One completion through the route's wire. Every billed call is reported to `ctx.addUsage`, failures included. */
-export async function complete(deps: LlmDeps, args: CompleteArgs): Promise<{ text: string; route: ResolvedRoute }> {
-  const route = resolve(deps, args.routeId)
+/**
+ * One completion through the route's wire. Every billed call is reported to `ctx.addUsage`, failures included, under the
+ * model that actually ran. A provider-balance failure (`isBalanceError`) moves the call once to the route's fallback;
+ * the primary is never retried for it. When the fallback fails too, the primary's error is what the caller sees.
+ * `start` pins the route to call (a re-ask stays on the route that answered); a fallback route has no fallback.
+ */
+export async function complete(
+  deps: LlmDeps,
+  args: CompleteArgs,
+  start?: ResolvedRoute,
+): Promise<{ text: string; route: ResolvedRoute }> {
+  const route = start ?? resolve(deps, args.routeId)
+  try {
+    return await completeOn(deps, route, args)
+  } catch (error) {
+    const fallback = fallbackRoute(route)
+    if (!fallback || !isBalanceError(error)) throw error
+    const warn = deps.warn ?? ((message, meta) => console.warn(message, meta))
+    warn('provider balance exhausted; falling back', { route: route.id, from: route.model, to: fallback.model })
+    try {
+      return await completeOn(deps, fallback, args)
+    } catch (fallbackError) {
+      warn('fallback failed; the primary error stands', {
+        route: route.id,
+        model: fallback.model,
+        error: fallbackError instanceof Error ? fallbackError.message : String(fallbackError),
+      })
+      throw error
+    }
+  }
+}
+
+async function completeOn(
+  deps: LlmDeps,
+  route: ResolvedRoute,
+  args: CompleteArgs,
+): Promise<{ text: string; route: ResolvedRoute }> {
   const port =
     route.wire === 'iu-openai'
       ? deps.transports.openai
@@ -156,7 +194,8 @@ function retryPrompt(prompt: string, rejected: string, reason: string): string {
 /**
  * A completion that must come back as JSON matching `schema`: a tolerant parse, then one re-ask with
  * the rejection reason, then `INVALID_OUTPUT`. A transport failure is not re-asked (the adapter
- * already retried it, and a second pass would only bill twice).
+ * already retried it, and a second pass would only bill twice). The re-ask goes to the route that answered, so a call
+ * that fell back stays on the fallback.
  */
 export async function completeJson<S extends z.ZodType>(
   deps: LlmDeps,
@@ -164,8 +203,10 @@ export async function completeJson<S extends z.ZodType>(
 ): Promise<{ data: z.output<S>; route: ResolvedRoute; attempts: number }> {
   let prompt = args.prompt
   let reason = ''
+  let answered: ResolvedRoute | undefined
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-    const { text, route } = await complete(deps, { ...args, prompt, json: true })
+    const { text, route } = await complete(deps, { ...args, prompt, json: true }, answered)
+    answered = route
     const parsed = parseJsonLoose(text)
     if (parsed === null) {
       reason = 'the response was not a valid JSON object'

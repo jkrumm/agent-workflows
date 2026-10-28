@@ -1,11 +1,20 @@
-import { type Rate, type ResolvedRoute, type RouteId, resolveRoute, routeIds } from '@agent-workflows/routes'
+import {
+  fallbackRoute,
+  type Rate,
+  type ResolvedRoute,
+  type RouteId,
+  resolveRoute,
+  routeIds,
+} from '@agent-workflows/routes'
 import type { ModelRef } from './client.ts'
 
 type Env = Record<string, string | undefined>
 
-/** OpenCode provider ids the server config defines. Both go through IU; the key never leaves the server env. */
+/** OpenCode provider ids the server config defines. All go through IU; the key never leaves the server env. */
 export const PROVIDER_ANTHROPIC = 'iu-anthropic'
 export const PROVIDER_CHAT = 'iu-chat'
+/** IU's OpenAI endpoint over the Responses API: OpenAI's own models call tools only there (IU, 2026-10-28). */
+export const PROVIDER_RESPONSES = 'iu-responses'
 
 /** IU endpoints from `IU_API_KEY` and `IU_BASE_URL` (the base ends in `/anthropic`, as for the capabilities). */
 export function iuFromEnv(env: Env = process.env): { key: string; anthropicBase: string; openaiBase: string } {
@@ -16,18 +25,24 @@ export function iuFromEnv(env: Env = process.env): { key: string; anthropicBase:
   return { key, anthropicBase: `${base}/v1`, openaiBase: `${base.slice(0, -'/anthropic'.length)}/openai/v1` }
 }
 
-/** The `opencode`-wire routes, resolved with `AGW_ROUTES` applied. */
+/** The `opencode`-wire routes, resolved with `AGW_ROUTES` applied, each followed by its fallback when it has one. */
 export function opencodeRoutes(env: Env = process.env): ResolvedRoute[] {
   return routeIds()
     .map((id) => resolveRoute(id, env))
     .filter((route) => route.wire === 'opencode')
+    .flatMap((route) => {
+      const fallback = fallbackRoute(route)
+      return fallback ? [route, fallback] : [route]
+    })
 }
 
 /**
- * Which IU leg serves a model. Read from the table: a single-call route on the same model names its wire. Without
- * one, a `claude-` model goes the native Anthropic way and anything else the OpenAI-compatible chat way.
+ * Which IU leg serves a model. OpenAI's own models (`gpt-`) go the Responses way: an agent session needs tool calls,
+ * which they make only there. Otherwise it is read from the table: a single-call route on the same model names its
+ * wire. Without one, a `claude-` model goes the native Anthropic way and anything else the OpenAI-compatible chat way.
  */
 function providerFor(model: string, env: Env): string {
+  if (model.startsWith('gpt-')) return PROVIDER_RESPONSES
   const siblings = routeIds().map((id) => resolveRoute(id, env))
   const wire = siblings.find((r) => r.model === model && r.wire !== 'opencode')?.wire
   if (wire === 'iu-anthropic') return PROVIDER_ANTHROPIC
@@ -44,9 +59,22 @@ export function rateFor(route: ResolvedRoute): Rate | null {
 export function modelRef(routeId: RouteId, env: Env = process.env): { route: ResolvedRoute; model: ModelRef } {
   const route = resolveRoute(routeId, env)
   if (route.wire !== 'opencode') throw new Error(`route "${routeId}" is on the ${route.wire} wire, not opencode`)
+  return { route, model: refFor(route, env) }
+}
+
+/** The session's model for a route's provider-balance fallback, or `undefined` when the route has none. */
+export function fallbackModelRef(
+  routeId: RouteId,
+  env: Env = process.env,
+): { route: ResolvedRoute; model: ModelRef } | undefined {
+  const route = fallbackRoute(modelRef(routeId, env).route)
+  return route ? { route, model: refFor(route, env) } : undefined
+}
+
+function refFor(route: ResolvedRoute, env: Env): ModelRef {
   const model: ModelRef = { providerID: providerFor(route.model, env), id: route.model }
   if (route.effort) model.variant = route.effort
-  return { route, model }
+  return model
 }
 
 function modelRow(route: ResolvedRoute, provider: string) {
@@ -78,19 +106,27 @@ function modelRow(route: ResolvedRoute, provider: string) {
 }
 
 /**
- * `OPENCODE_CONFIG_CONTENT`: the two IU providers with every `opencode`-wire route's model, no updates, no share.
+ * `OPENCODE_CONFIG_CONTENT`: the three IU providers with every `opencode`-wire route's model and its fallback's, no
+ * updates, no share.
  * Unattended sessions must never block on a question: `question` is denied and so is `external_directory` (its
  * base policy is `ask`). An agent's own rules go in its location's `opencode.json` (`AgentDefinition.config`).
  */
 export function buildServerConfig(env: Env = process.env): Record<string, unknown> {
-  const models: Record<string, Record<string, unknown>> = { [PROVIDER_ANTHROPIC]: {}, [PROVIDER_CHAT]: {} }
+  const models: Record<string, Record<string, unknown>> = {
+    [PROVIDER_ANTHROPIC]: {},
+    [PROVIDER_CHAT]: {},
+    [PROVIDER_RESPONSES]: {},
+  }
   for (const route of opencodeRoutes(env)) {
     const provider = providerFor(route.model, env)
     const rows = models[provider] as Record<string, unknown>
     const row = modelRow(route, provider)
-    const existing = rows[route.model] as { variants?: unknown[] } | undefined
-    if (existing && row.variants) existing.variants = [...(existing.variants ?? []), ...row.variants]
-    else if (!existing) rows[route.model] = row
+    const existing = rows[route.model] as { variants?: { id: string }[] } | undefined
+    if (existing && row.variants) {
+      // Routes sharing a model and effort (the fallbacks) share one variant.
+      const known = new Set((existing.variants ?? []).map((v) => v.id))
+      existing.variants = [...(existing.variants ?? []), ...row.variants.filter((v) => !known.has(v.id))]
+    } else if (!existing) rows[route.model] = row
   }
   return {
     update: 'disable',
@@ -111,6 +147,12 @@ export function buildServerConfig(env: Env = process.env): Record<string, unknow
         name: 'IU (OpenAI route, chat completions)',
         settings: { baseURL: '{env:IU_OPENAI_BASE}', apiKey: '{env:IU_KEY}' },
         models: models[PROVIDER_CHAT],
+      },
+      [PROVIDER_RESPONSES]: {
+        package: 'aisdk:@ai-sdk/openai',
+        name: 'IU (OpenAI route, Responses)',
+        settings: { baseURL: '{env:IU_OPENAI_BASE}', apiKey: '{env:IU_KEY}' },
+        models: models[PROVIDER_RESPONSES],
       },
     },
   }

@@ -27,7 +27,7 @@ function count(...values: (number | undefined)[]): number | null {
   return null
 }
 
-/** Prompts above this many tokens (input including cache) are not priced: Anthropic-family list prices step up. */
+/** Default for `Rate.longPromptTokens`: prompts above it (input including cache) are not priced, Anthropic-family list prices step up. */
 export const LONG_PROMPT_TOKENS = 100_000
 
 /**
@@ -35,7 +35,8 @@ export const LONG_PROMPT_TOKENS = 100_000
  * applied: input excluding cache tokens at `inputPerM`, cache reads at `cacheReadPerM`, cache writes
  * at `cacheWritePerM`, output (reasoning tokens are already inside it) at `outputPerM`. Cache tokens
  * without the matching cache rate, neither cost nor rate, cache counts above the cache-inclusive prompt
- * total, or a prompt above `LONG_PROMPT_TOKENS` (vendors bill a higher tier we do not model) make the cost
+ * total, or a prompt above the rate's `longPromptTokens` (default `LONG_PROMPT_TOKENS`; vendors bill a higher tier we
+ * do not model) make the cost
  * `unknown`: never free, never 0, never an under-price.
  * `wire` is reserved for wire-specific cost rules; no wire needs one yet, so it is not read.
  */
@@ -52,7 +53,8 @@ export function costFromUsage(_wire: Wire, usage: ProviderUsage | null | undefin
   if (cacheIncluded !== null && cacheRead + cacheWrite > cacheIncluded) return { usd: null, source: 'unknown' }
   const input = cacheIncluded !== null ? cacheIncluded - cacheRead - cacheWrite : count(usage.input_tokens)
   if (input === null || output === null) return { usd: null, source: 'unknown' }
-  if (input + cacheRead + cacheWrite > LONG_PROMPT_TOKENS) return { usd: null, source: 'unknown' }
+  if (input + cacheRead + cacheWrite > (rate.longPromptTokens ?? LONG_PROMPT_TOKENS))
+    return { usd: null, source: 'unknown' }
   if ((cacheRead > 0 && rate.cacheReadPerM === undefined) || (cacheWrite > 0 && rate.cacheWritePerM === undefined)) {
     return { usd: null, source: 'unknown' }
   }

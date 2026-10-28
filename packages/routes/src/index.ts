@@ -3,11 +3,13 @@ import { applyPatch, RouteOverrideError, readOverrides } from './overrides.ts'
 import type { ResolvedRoute, RouteEntry } from './schema.ts'
 import { DEFAULT_ROUTES, type RouteId } from './table.ts'
 
-export { type Cost, costFromUsage, type ProviderUsage } from './cost.ts'
+export { BALANCE_MARKER, isBalanceFailure } from './balance.ts'
+export { type Cost, costFromUsage, LONG_PROMPT_TOKENS, type ProviderUsage } from './cost.ts'
 export { OVERRIDES_ENV, RouteOverrideError } from './overrides.ts'
 export {
   EFFORTS,
   type Effort,
+  type FallbackEntry,
   type Rate,
   type ResolvedRoute,
   type RouteEntry,
@@ -48,6 +50,15 @@ export function resolveRoute(id: RouteId, env: Env = process.env): ResolvedRoute
   const entry = resolved.get(id) ?? (isRouteId(id) ? DEFAULT_ROUTES[id] : undefined)
   if (!entry) throw new UnknownRouteError(id)
   return { id, ...structuredClone(entry) }
+}
+
+/**
+ * The route's provider-balance fallback as a route of its own (same id, no further fallback), or `undefined` when the
+ * route has none. Overrides are already in `route`: pass what `resolveRoute` returned.
+ */
+export function fallbackRoute(route: ResolvedRoute): ResolvedRoute | undefined {
+  if (!route.fallback) return undefined
+  return { id: route.id, ...structuredClone(route.fallback) }
 }
 
 function isRouteId(id: string): id is RouteId {

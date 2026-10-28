@@ -1,3 +1,4 @@
+import { BALANCE_MARKER, isBalanceFailure } from '@agent-workflows/routes'
 import { CapabilityError, fail } from '../errors.ts'
 
 export interface HttpOptions {
@@ -32,12 +33,26 @@ export class Attempt extends Error {
   }
 }
 
-/** A non-2xx response. 410 (dead model) and client errors fail fast; IU relays some upstream 400s as 503. */
+/**
+ * A non-2xx response. 410 (dead model) and client errors fail fast; IU relays some upstream 400s as 503. A provider
+ * balance failure (`isBalanceFailure`: 402, or 503 "Insufficient Balance") fails fast too: retrying an empty account
+ * only bills the wait, and the caller moves to the route's fallback. Its message carries `BALANCE_MARKER`.
+ */
 export async function failedResponse(res: Response, wire: string): Promise<Attempt> {
-  const detail = (await res.text().catch(() => '')).slice(0, 300)
+  const body = await res.text().catch(() => '')
+  const detail = body.slice(0, 300)
+  if (isBalanceFailure({ status: res.status, text: body })) {
+    return new Attempt(`${wire} ${BALANCE_MARKER} (${res.status}): ${detail}`, false, res.status)
+  }
   const retryable = RETRYABLE_STATUS.has(res.status) && !detail.includes('invalid_request_error')
   const prefix = res.status === 410 ? 'model deprecated (410)' : `${wire} request failed (${res.status})`
   return new Attempt(`${prefix}: ${detail}`, retryable, res.status)
+}
+
+/** A transport failure that a route's fallback answers: the classifier over a failed call's status and message. */
+export function isBalanceError(error: unknown): boolean {
+  if (!(error instanceof CapabilityError) || error.code !== 'UPSTREAM_ERROR') return false
+  return error.message.includes(BALANCE_MARKER)
 }
 
 /**

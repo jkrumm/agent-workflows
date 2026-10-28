@@ -1,5 +1,5 @@
 import { usageFromOpenCodeMessages } from '@agent-workflows/middleware'
-import { costFromUsage, type Rate, type RouteId } from '@agent-workflows/routes'
+import { costFromUsage, isBalanceFailure, LONG_PROMPT_TOKENS, type Rate, type RouteId } from '@agent-workflows/routes'
 import {
   type AgentHost,
   type AgentOpenSpec,
@@ -19,7 +19,7 @@ import {
   OpenCodeUnreachable,
   type PermissionRule,
 } from './client.ts'
-import { modelRef, rateFor } from './config.ts'
+import { fallbackModelRef, modelRef, rateFor } from './config.ts'
 import {
   type AgentDefinition,
   compileLocation,
@@ -89,13 +89,15 @@ export type OpenCodeHandle = {
   output: 'json' | 'text'
   runId: string
   stepId: string
+  /** The step's `allowDirectories`, kept so a provider-balance fallback session gets the same permissions. */
+  allow?: string[]
+  /** Set on the session the host opened on the route's fallback; it never falls back again. */
+  fallback?: true
 }
 
 type Snapshot = { messages: Message[]; active: boolean; pending: boolean }
 
 const TOOL_TEXT_LIMIT = 10_000
-/** Above this many prompt tokens in one call the vendor bills a higher tier (routes `LONG_PROMPT_TOKENS`). */
-const LONG_PROMPT_TOKENS = 100_000
 /** Session generations tried for one step key before giving up (one per failed attempt). */
 const MAX_GENERATIONS = 100
 /** A pin taken at `open` and never claimed by a `wait` (the step aborted in between) lapses after this long. */
@@ -120,7 +122,9 @@ function asHandle(handle: Json): OpenCodeHandle {
     typeof h !== 'object' ||
     h.v !== 1 ||
     strings.some((k) => typeof h[k] !== 'string') ||
-    (h.output !== 'json' && h.output !== 'text')
+    (h.output !== 'json' && h.output !== 'text') ||
+    (h.allow !== undefined && (!Array.isArray(h.allow) || h.allow.some((d) => typeof d !== 'string'))) ||
+    (h.fallback !== undefined && h.fallback !== true)
   ) {
     throw new WorkflowError('error', 'not an OpenCode host handle')
   }
@@ -320,6 +324,7 @@ export class OpenCodeHost implements AgentHost {
       output: options.output === 'json' ? 'json' : 'text',
       runId: spec.runId,
       stepId: spec.stepId,
+      ...(allowDirectories.length > 0 ? { allow: allowDirectories } : {}),
     }
     return handle
   }
@@ -374,6 +379,9 @@ export class OpenCodeHost implements AgentHost {
           if (unprompted.check(state.kind === 'unprompted', this.cutoffGraceMs)) {
             throw new WorkflowError('error', `opencode session ${h.sessionId} holds no prompt; wait before prompt`)
           }
+          if (state.kind === 'done' && this.fallsBack(h, snap.messages, promptId, state)) {
+            return await this.waitOnFallback(h, snap.messages, promptId, options)
+          }
           if (state.kind === 'done') return await this.finish(h, reader, promptId, state, signal)
           if (state.kind === 'cutoff' && cutoff.check(true, this.cutoffGraceMs)) {
             await this.resume(h, state.lastId)
@@ -395,22 +403,100 @@ export class OpenCodeHost implements AgentHost {
    */
   async steer(handle: Json, text: string, options: { signalId?: string } = {}): Promise<void> {
     const h = asHandle(handle)
+    const headers = this.headers(h.runId, h.stepId)
+    // The journal holds the step's first handle: once the step moved to its fallback session, that one is steered.
+    const fallback = fallbackSessionId(h.sessionId)
+    const sessionId = !h.fallback && (await this.client.getSession(fallback, headers)) ? fallback : h.sessionId
     await this.client.prompt(
-      h.sessionId,
-      { id: steerId(h.sessionId, options.signalId), text, delivery: 'steer', metadata: { agw: { kind: 'steer' } } },
-      this.headers(h.runId, h.stepId),
+      sessionId,
+      { id: steerId(sessionId, options.signalId), text, delivery: 'steer', metadata: { agw: { kind: 'steer' } } },
+      headers,
     )
   }
 
   /** Interrupts the running turn. Idempotent: an idle session answers `interrupted: false`, a gone one 404. */
   async abort(handle: Json): Promise<void> {
     const h = asHandle(handle)
-    try {
-      await this.client.interrupt(h.sessionId, this.headers(h.runId, h.stepId))
-    } catch (err) {
-      if (err instanceof OpenCodeHttpError && err.status === 404) return
-      throw err
+    // The step's fallback session too, when it has one: the journal holds only the first handle.
+    for (const sessionId of h.fallback ? [h.sessionId] : [h.sessionId, fallbackSessionId(h.sessionId)]) {
+      try {
+        await this.client.interrupt(sessionId, this.headers(h.runId, h.stepId))
+      } catch (err) {
+        if (err instanceof OpenCodeHttpError && err.status === 404) continue
+        throw err
+      }
     }
+  }
+
+  /**
+   * A turn that failed on provider balance before it did anything (no tool call, no output) moves to the route's
+   * fallback: a turn that ran is never prompted a second time, and a fallback session never falls back again.
+   */
+  private fallsBack(
+    h: OpenCodeHandle,
+    messages: readonly Message[],
+    promptId: string,
+    state: { outcome: Outcome; error?: string },
+  ): boolean {
+    if (h.fallback || state.outcome !== 'failed' || !state.error) return false
+    if (!isBalanceFailure({ text: state.error })) return false
+    if (turnRan(messages, promptId)) {
+      this.logger.warn('opencode turn failed on provider balance after it ran; no fallback', { sessionId: h.sessionId })
+      return false
+    }
+    return this.fallbackOf(h) !== undefined
+  }
+
+  private fallbackOf(h: OpenCodeHandle) {
+    try {
+      return fallbackModelRef(h.route, this.env)
+    } catch {
+      return undefined
+    }
+  }
+
+  /**
+   * Opens the step's fallback session (its id derived from the failed session's, so a re-attach after a crash finds it
+   * again), sends it the same prompt (a no-op when it is already there) and waits on it as on any session.
+   */
+  private async waitOnFallback(
+    h: OpenCodeHandle,
+    messages: readonly Message[],
+    promptId: string,
+    options: AgentWaitOptions,
+  ): Promise<AgentResult> {
+    const def = this.agents.get(h.agent)
+    const fallback = this.fallbackOf(h)
+    const prompt = promptText(messages, promptId)
+    if (!def || !fallback || prompt === null) {
+      throw new WorkflowError(
+        'error',
+        `opencode session ${h.sessionId} failed on provider balance; no fallback session`,
+      )
+    }
+    const sessionId = fallbackSessionId(h.sessionId)
+    const headers = this.headers(h.runId, h.stepId)
+    this.logger.warn('opencode turn failed on provider balance; falling back', {
+      sessionId: h.sessionId,
+      fallbackSessionId: sessionId,
+      route: h.route,
+      from: h.model,
+      to: fallback.route.model,
+    })
+    await this.client.createSession(
+      {
+        id: sessionId,
+        title: `agw ${h.runId}:${h.stepId} (fallback)`,
+        location: { directory: h.directory },
+        model: fallback.model,
+        permissions: sessionPermissions(def, h.allow ?? []),
+        metadata: { agw: { agent: def.name, route: h.route, fallbackOf: h.sessionId } },
+      },
+      headers,
+    )
+    const next: OpenCodeHandle = { ...h, sessionId, model: fallback.route.model, fallback: true }
+    await this.prompt(next, prompt)
+    return await this.wait(next, options)
   }
 
   private headers(runId: string, stepId: string): Record<string, string> | undefined {
@@ -627,7 +713,8 @@ export class OpenCodeHost implements AgentHost {
       const cacheWrite = t.cache?.write ?? 0
       const total = (t.input ?? 0) + cacheRead + cacheWrite + (t.output ?? 0) + (t.reasoning ?? 0)
       if (total === 0) continue
-      if ((t.input ?? 0) + cacheRead + cacheWrite > LONG_PROMPT_TOKENS) return unpriced(usage)
+      if ((t.input ?? 0) + cacheRead + cacheWrite > (rate?.longPromptTokens ?? LONG_PROMPT_TOKENS))
+        return unpriced(usage)
       if (typeof m.cost === 'number' && Number.isFinite(m.cost) && m.cost > 0) {
         cost += m.cost
         continue
@@ -651,7 +738,8 @@ export class OpenCodeHost implements AgentHost {
 
   private routeRate(h: OpenCodeHandle): Rate | null {
     try {
-      return rateFor(modelRef(h.route, this.env).route)
+      const route = h.fallback ? this.fallbackOf(h)?.route : modelRef(h.route, this.env).route
+      return route ? rateFor(route) : null
     } catch {
       return null
     }
@@ -659,3 +747,26 @@ export class OpenCodeHost implements AgentHost {
 }
 
 const unpriced = (usage: Usage): Usage => ({ ...usage, cost: null, costSource: 'unknown' })
+
+/** The id of the session a step moves to when its session fails on provider balance: derived, so re-attach finds it. */
+const fallbackSessionId = (sessionId: string) => sessionIdFor(`${sessionId}\0fallback`, 1)
+
+/** Whether the turn after the prompt did anything: a tool call, or a reply with output tokens. */
+function turnRan(messages: readonly Message[], promptId: string): boolean {
+  const from = promptIndex(messages, promptId)
+  return messages
+    .slice(from + 1)
+    .some(
+      (m) =>
+        m.type === 'assistant' &&
+        ((m.content ?? []).some((p) => p.type === 'tool') || (m.tokens?.output ?? 0) + (m.tokens?.reasoning ?? 0) > 0),
+    )
+}
+
+/** The prompt the host sent, as the session holds it; null when it is not there. */
+function promptText(messages: readonly Message[], promptId: string): string | null {
+  const prompt = messages[promptIndex(messages, promptId)]
+  if (!prompt) return null
+  const text = prompt.text ?? (prompt.content ?? []).map((p) => (p.type === 'text' ? (p.text ?? '') : '')).join('')
+  return text || null
+}

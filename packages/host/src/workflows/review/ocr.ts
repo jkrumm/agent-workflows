@@ -2,7 +2,7 @@ import { chmodSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSyn
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { iuFromEnv } from '@agent-workflows/opencode-host'
-import { resolveRoute } from '@agent-workflows/routes'
+import { fallbackRoute, isBalanceFailure, type ResolvedRoute, resolveRoute } from '@agent-workflows/routes'
 import { defineWorkflow, type StepScope, type Usage } from '@agent-workflows/runtime'
 import { z } from 'zod'
 import type { HostWorkflow } from '../../operations.ts'
@@ -16,11 +16,8 @@ import { escapeName } from './util.ts'
 // over its cap or before the pause date (concept §4, N8), and the review continues without it. Liveness is the step's
 // idle watchdog (no output for five minutes), never a wall-clock cap; `--timeout 0` turns off ocr's own deadline.
 
-/**
- * Not `review.ocr`: the host refuses a command that is a prefix of another (`agw review` / `agw review ocr`,
- * `createHost`'s `assertCommands`), and a workflow's command is its id split on dots. The route stays `review.ocr`.
- */
-export const OCR_WORKFLOW_ID = 'ocr'
+/** The review's child, `internal`: never a command, so `review.ocr` does not collide with `agw review`. */
+export const OCR_WORKFLOW_ID = 'review.ocr'
 export const OCR_ROUTE = 'review.ocr'
 export const OCR_VERSION = '2026-10-28.1'
 export const OCR_IDLE_MS = 5 * 60_000
@@ -68,6 +65,19 @@ export function modeArgs(input: OcrInputValue): string[] {
   if (input.mode === 'uncommitted') return []
   if (input.mode === 'head') return ['--commit', 'HEAD']
   return ['--from', input.from as string, '--to', input.to || 'HEAD']
+}
+
+/**
+ * `ocr`'s protocol and base URL for a route, decided together so the pairing cannot drift. OpenAI's own models (`gpt-`)
+ * keep reasoning items across `ocr`'s tool loop only over Responses (agent-gateway, probed 2026-09-24); the
+ * `iu-anthropic` wire speaks Messages; anything else chat completions.
+ */
+export function ocrTransport(
+  route: ResolvedRoute,
+  iu: { anthropicBase: string; openaiBase: string },
+): { protocol: 'anthropic' | 'openai' | 'openai-responses'; url: string } {
+  if (route.wire === 'iu-anthropic') return { protocol: 'anthropic', url: iu.anthropicBase }
+  return { protocol: route.model.startsWith('gpt-') ? 'openai-responses' : 'openai', url: iu.openaiBase }
 }
 
 /** The `ocr review` argv after the binary. */
@@ -217,9 +227,9 @@ export async function runOcr(
       ran: false,
     }
   }
-  const route = resolveRoute(OCR_ROUTE, ports.env)
-  const protocol = route.wire === 'iu-anthropic' ? 'anthropic' : 'openai'
-  const url = protocol === 'anthropic' ? iu.anthropicBase : iu.openaiBase
+  // The route, then its fallback once when `ocr` exits on a provider-balance refusal.
+  const primary = resolveRoute(OCR_ROUTE, ports.env)
+  const fallback = fallbackRoute(primary)
 
   let dir: string | undefined
   let proc: Bun.Subprocess<'ignore', 'pipe', 'pipe'> | undefined
@@ -240,90 +250,106 @@ export async function runOcr(
     const outFile = join(dir, 'result.json')
     const bgFile = input.context ? join(dir, 'background.md') : undefined
     if (bgFile) writeFileSync(bgFile, input.context ?? '', { mode: 0o600 })
-    // Minimal env, not a copy of ours: a spawned CLI has no reason to hold whatever else this process carries.
-    const env: Record<string, string> = {
-      PATH: ports.env.PATH ?? '',
-      HOME: ports.env.HOME ?? '',
-      TMPDIR: ports.env.TMPDIR ?? tmpdir(),
-      OCR_LLM_URL: url,
-      OCR_LLM_TOKEN: iu.key,
-      OCR_LLM_PROTOCOL: protocol,
-      OCR_LLM_MODEL: route.model,
-      OCR_ENABLE_TELEMETRY: '0',
-      ...(ports.env.LANG ? { LANG: ports.env.LANG } : {}),
-    }
-    try {
-      proc = Bun.spawn([bin, ...ocrArgs({ modeArgs: modeArgs(input), repo: input.cwd, outFile, bgFile })], {
-        cwd: input.cwd,
-        env,
-        stdin: 'ignore',
-        stdout: 'pipe',
-        stderr: 'pipe',
-        detached: true, // its own process group, so `killTree` reaches the helpers `ocr` starts
-      })
-    } catch (error) {
-      return {
-        block: failed(`could not start ocr: ${redact(error instanceof Error ? error.message : String(error), iu.key)}`),
-        ran: false,
+    let refused: string | null = null
+    for (const route of fallback ? [primary, fallback] : [primary]) {
+      const attemptStart = Date.now()
+      const { protocol, url } = ocrTransport(route, iu)
+      // Minimal env, not a copy of ours: a spawned CLI has no reason to hold whatever else this process carries.
+      const env: Record<string, string> = {
+        PATH: ports.env.PATH ?? '',
+        HOME: ports.env.HOME ?? '',
+        TMPDIR: ports.env.TMPDIR ?? tmpdir(),
+        OCR_LLM_URL: url,
+        OCR_LLM_TOKEN: iu.key,
+        OCR_LLM_PROTOCOL: protocol,
+        OCR_LLM_MODEL: route.model,
+        OCR_ENABLE_TELEMETRY: '0',
+        ...(ports.env.LANG ? { LANG: ports.env.LANG } : {}),
       }
-    }
-    if (scope.signal.aborted) terminate()
-    const started = proc
+      try {
+        proc = Bun.spawn([bin, ...ocrArgs({ modeArgs: modeArgs(input), repo: input.cwd, outFile, bgFile })], {
+          cwd: input.cwd,
+          env,
+          stdin: 'ignore',
+          stdout: 'pipe',
+          stderr: 'pipe',
+          detached: true, // its own process group, so `killTree` reaches the helpers `ocr` starts
+        })
+      } catch (error) {
+        return {
+          block: failed(
+            `could not start ocr: ${redact(error instanceof Error ? error.message : String(error), iu.key)}`,
+          ),
+          ran: refused !== null,
+        }
+      }
+      if (scope.signal.aborted) terminate()
+      const started = proc
 
-    let stderrTail = ''
-    let lastLine = ''
-    const drain = async (stream: ReadableStream<Uint8Array>, onText?: (text: string) => void) => {
-      const reader = stream.getReader()
-      const decoder = new TextDecoder()
-      for (;;) {
-        const { done, value } = await reader.read()
-        if (done) return
-        scope.progress() // any byte is activity: the idle watchdog is the only stop
-        onText?.(decoder.decode(value, { stream: true }))
+      let stderrTail = ''
+      let lastLine = ''
+      const drain = async (stream: ReadableStream<Uint8Array>, onText?: (text: string) => void) => {
+        const reader = stream.getReader()
+        const decoder = new TextDecoder()
+        for (;;) {
+          const { done, value } = await reader.read()
+          if (done) return
+          scope.progress() // any byte is activity: the idle watchdog is the only stop
+          onText?.(decoder.decode(value, { stream: true }))
+        }
       }
+      let pending = ''
+      await Promise.all([
+        drain(started.stderr, (chunk) => {
+          // Redact before cutting, so a key straddling the cut cannot survive half-masked.
+          stderrTail = redact(stderrTail + chunk, iu.key).slice(-STDERR_TAIL_CHARS)
+          pending += chunk
+          const lines = pending.split('\n')
+          pending = lines.pop() ?? ''
+          for (const line of lines) if (line.trim()) lastLine = redact(line.trim(), iu.key)
+        }),
+        drain(started.stdout),
+      ])
+      const code = await started.exited
+      const model = route.model
+      const lastForPrompt = truncate(lastLine || 'no stderr', PROMPT_LINE_CHARS)
+      if (scope.signal.aborted) {
+        const spent = recoverUsage(input.cwd, attemptStart)
+        scope.addUsage(usageOf(model, spent))
+        return { block: skipped('review exited early'), ran: true }
+      }
+      if (code !== 0) {
+        scope.addUsage(usageOf(model, recoverUsage(input.cwd, attemptStart)))
+        const block = failed(`exit ${code}: ${lastForPrompt}`)
+        // The fallback failing too answers what the primary said.
+        if (refused !== null) return { block: refused, ran: true }
+        if (route === primary && fallback && isBalanceFailure({ text: stderrTail })) {
+          console.warn('ocr refused on provider balance; falling back', { from: primary.model, to: fallback.model })
+          refused = block
+          continue
+        }
+        return { block, ran: true }
+      }
+      let parsed: OcrResult
+      try {
+        parsed = JSON.parse(readFileSync(outFile, 'utf8')) as OcrResult
+      } catch {
+        scope.addUsage(usageOf(model, recoverUsage(input.cwd, attemptStart)))
+        return { block: refused ?? failed('output did not parse as JSON'), ran: true }
+      }
+      const s = parsed.summary
+      scope.addUsage(
+        usageOf(model, {
+          input: num(s?.input_tokens),
+          output: num(s?.output_tokens),
+          cacheRead: num(s?.cache_read_tokens),
+          cacheWrite: num(s?.cache_write_tokens),
+        }),
+      )
+      // Its comments quote repo content and model output: redact there too.
+      return { block: redact(renderOcrBlock(parsed), iu.key), ran: true }
     }
-    let pending = ''
-    await Promise.all([
-      drain(started.stderr, (chunk) => {
-        // Redact before cutting, so a key straddling the cut cannot survive half-masked.
-        stderrTail = redact(stderrTail + chunk, iu.key).slice(-STDERR_TAIL_CHARS)
-        pending += chunk
-        const lines = pending.split('\n')
-        pending = lines.pop() ?? ''
-        for (const line of lines) if (line.trim()) lastLine = redact(line.trim(), iu.key)
-      }),
-      drain(started.stdout),
-    ])
-    const code = await started.exited
-    const model = route.model
-    const lastForPrompt = truncate(lastLine || 'no stderr', PROMPT_LINE_CHARS)
-    if (scope.signal.aborted) {
-      const spent = recoverUsage(input.cwd, startedAt)
-      scope.addUsage(usageOf(model, spent))
-      return { block: skipped('review exited early'), ran: true }
-    }
-    if (code !== 0) {
-      scope.addUsage(usageOf(model, recoverUsage(input.cwd, startedAt)))
-      return { block: failed(`exit ${code}: ${lastForPrompt}`), ran: true }
-    }
-    let parsed: OcrResult
-    try {
-      parsed = JSON.parse(readFileSync(outFile, 'utf8')) as OcrResult
-    } catch {
-      scope.addUsage(usageOf(model, recoverUsage(input.cwd, startedAt)))
-      return { block: failed('output did not parse as JSON'), ran: true }
-    }
-    const s = parsed.summary
-    scope.addUsage(
-      usageOf(model, {
-        input: num(s?.input_tokens),
-        output: num(s?.output_tokens),
-        cacheRead: num(s?.cache_read_tokens),
-        cacheWrite: num(s?.cache_write_tokens),
-      }),
-    )
-    // Its comments quote repo content and model output: redact there too.
-    return { block: redact(renderOcrBlock(parsed), iu.key), ran: true }
+    return { block: refused ?? failed('no route ran'), ran: true }
   } finally {
     scope.signal.removeEventListener('abort', terminate)
     terminate()
@@ -333,7 +359,7 @@ export async function runOcr(
   }
 }
 
-/** `ocr`: optional expensive work, refused at admission by the wallet gate (`optionalExpensive`). */
+/** `review.ocr`: optional expensive work, refused at admission by the wallet gate (`optionalExpensive`); internal. */
 export function createOcrWorkflow(ports: ReviewPorts): HostWorkflow {
   const workflow = defineWorkflow({
     id: OCR_WORKFLOW_ID,
@@ -348,5 +374,6 @@ export function createOcrWorkflow(ports: ReviewPorts): HostWorkflow {
     workflow,
     summary: 'OpenCodeReview over a diff: the optional, expensive reviewer of the review workflow (wallet-gated)',
     optionalExpensive: true,
+    internal: true,
   }
 }

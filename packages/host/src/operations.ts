@@ -55,6 +55,11 @@ export interface HostWorkflow {
   agents?: AgentRef[]
   /** Optional expensive work: the wallet gate refuses it at admission (concept §4). */
   optionalExpensive?: boolean
+  /**
+   * A child of another workflow only: registered with the runtime (the parent's `ctx.workflow` and resume find it), never
+   * an HTTP route, a CLI command or an `agw schema` entry. Its id may then share a prefix with a public command.
+   */
+  internal?: true
 }
 
 /** The CLI's own flags always win (`--format`, `--commit`, `--idempotency-key`, `--help`): no input may take them. */

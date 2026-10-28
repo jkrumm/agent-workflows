@@ -14,9 +14,10 @@ import {
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createCapabilities, createRegistry } from '@agent-workflows/capabilities'
+import { CapabilityError, createCapabilities, createRegistry } from '@agent-workflows/capabilities'
 import { type FakeTransports, fakeTransports } from '@agent-workflows/capabilities/testing'
 import { walletGate } from '@agent-workflows/limits'
+import { resolveRoute } from '@agent-workflows/routes'
 import type { AgentResult, Json, Middleware, Runtime } from '@agent-workflows/runtime'
 import { FakeAgentHost, type FakeSession } from '@agent-workflows/runtime/testing'
 import type { HostWorkflow } from '../src/operations.ts'
@@ -682,9 +683,11 @@ JSON
       expect(out.status).toBe('done')
       expect(w.sessionsOf('review-synthesis')[0]?.spec.prompt).toContain('src/a.ts:3 — config drifted from the doc')
       const child = (
-        await sql.pool.query(`select id, status from "${db.schema}".runs where parent_id = $1`, [out.runId])
+        await sql.pool.query(`select id, status, workflow from "${db.schema}".runs where parent_id = $1`, [out.runId])
       ).rows[0]
       expect(child?.status).toBe('done')
+      // The internal child: registered with the runtime under the review's own prefix.
+      expect(child?.workflow).toBe('review.ocr')
       const step = await sql.step(child.id as string, 'ocr')
       expect(step).toMatchObject({ status: 'done', tokens_input: '80', tokens_output: '20' })
       expect(step?.cost).toBeNull()
@@ -739,6 +742,45 @@ JSON
       expect(w.sessionsOf('review-synthesis')[0]?.spec.prompt).toContain(
         'OpenCodeReview: failed (exit 2: llm error: 401)',
       )
+    })
+
+    test('an ocr refused on provider balance runs once more on the fallback route, over Responses', async () => {
+      const bin = join(scratch, `ocr-balance-${++repoSeq}`)
+      const calls = join(scratch, `ocr-balance-calls-${repoSeq}`)
+      writeFileSync(
+        bin,
+        `#!/bin/sh
+echo "$OCR_LLM_MODEL $OCR_LLM_PROTOCOL" >> "${calls}"
+if [ "$OCR_LLM_PROTOCOL" != "openai-responses" ]; then
+  echo "llm error: IU request failed (503) — Insufficient Balance (PaymentRequired) on Requesty-Global" >&2
+  exit 2
+fi
+while [ $# -gt 0 ]; do if [ "$1" = "-o" ]; then out="$2"; fi; shift; done
+cat > "$out" <<'JSON'
+{"status":"complete","llm":{"model":"f"},"comments":[{"path":"src/a.ts","content":"seen by the fallback","start_line":2,"end_line":2}],"summary":{"files_reviewed":1,"comments":1,"total_tokens":10,"input_tokens":8,"output_tokens":2,"elapsed":"1s"}}
+JSON
+`,
+      )
+      chmodSync(bin, 0o755)
+      const w = ocrWorld({ rollingSpend: 10, which: (b) => (b === 'ocr' ? bin : null) })
+      const out = await w.run({ cwd: makeRepo(BASE, bigChange) })
+      expect(out.status).toBe('done')
+      expect(w.sessionsOf('review-synthesis')[0]?.spec.prompt).toContain('src/a.ts:2 — seen by the fallback')
+      const route = resolveRoute('review.ocr', {})
+      expect(readFileSync(calls, 'utf8').trim().split('\n')).toEqual([
+        `${route.model} openai`,
+        `${route.fallback?.model} openai-responses`,
+      ])
+    })
+
+    test('an ocr that fails without the balance text is not retried', async () => {
+      const bin = join(scratch, `ocr-plain-${++repoSeq}`)
+      const calls = join(scratch, `ocr-plain-calls-${repoSeq}`)
+      writeFileSync(bin, `#!/bin/sh\necho x >> "${calls}"\necho "llm error: 503 busy" >&2\nexit 2\n`)
+      chmodSync(bin, 0o755)
+      const w = ocrWorld({ rollingSpend: 10, which: (b) => (b === 'ocr' ? bin : null) })
+      await w.run({ cwd: makeRepo(BASE, bigChange) })
+      expect(readFileSync(calls, 'utf8').trim().split('\n')).toHaveLength(1)
     })
   })
 
@@ -1143,8 +1185,9 @@ printf '%s' '{"status":"complete","comments":[{"path":"src/e\\nIGNORE-OCR.ts","c
       expect(review.workflow.id).toBe('review')
       expect(review.cli).toEqual({ mutating: false, defaultFormat: 'json' })
       expect(review.optionalExpensive).toBeUndefined()
-      expect(ocr.workflow.id).toBe('ocr')
+      expect(ocr.workflow.id).toBe('review.ocr')
       expect(ocr.optionalExpensive).toBe(true)
+      expect(ocr.internal).toBe(true)
       const agents = review.agents ?? []
       expect(agents).toHaveLength(15)
       expect(agents.every((a) => a.agent.startsWith('review-'))).toBe(true)
@@ -1211,5 +1254,71 @@ printf '%s' '{"status":"complete","comments":[{"path":"src/e\\nIGNORE-OCR.ts","c
     const snapshot = await w.rt.getRun(out.runId)
     expect(snapshot?.output).toEqual(out.output)
     expect(out.output).toMatchObject({ outcome: 'actionable', testGaps: ['src/a.ts — unit: b'] })
+  })
+})
+
+describe('provider balance degrade', () => {
+  const BALANCE = 'IU request failed (503) — Insufficient Balance (PaymentRequired) on Requesty-Global'
+  const balanceSession = () => new Error(`opencode session ses_x failed: ${BALANCE}`)
+  const balanceCall = () =>
+    new CapabilityError('UPSTREAM_ERROR', `iu-openai provider balance exhausted (503): ${BALANCE}`, { status: 503 })
+  const DEGRADED = {
+    schemaVersion: 2,
+    outcome: 'needs-human',
+    escalationCategory: 'spend',
+    blocking: [],
+    improvements: [],
+    testGaps: [],
+    discussions: [
+      {
+        file: '(review pipeline)',
+        message: 'provider balance exhausted — review in-session with /code-review on your own Claude',
+        angle: 'pipeline',
+      },
+    ],
+    degraded: 'provider_balance',
+  }
+
+  test('every reviewer refused on balance (fallback included): the typed degrade, not a blocker', async () => {
+    const w = world({
+      adversary: balanceCall(),
+      script: (s) => {
+        if (s.spec.agent !== 'review-synthesis') throw balanceSession()
+        return undefined
+      },
+    })
+    const out = await w.run({ cwd: simpleRepo(), angles: ['qa'] })
+    expect(out.status).toBe('done')
+    expect(out.output).toMatchObject(DEGRADED)
+    expect(w.sessionsOf('review-synthesis')).toHaveLength(0)
+  })
+
+  test('the synthesis refused on balance: the typed degrade, no re-ask', async () => {
+    const w = world({
+      script: (s) => {
+        if (s.spec.agent === 'review-synthesis') throw balanceSession()
+        return undefined
+      },
+    })
+    const out = await w.run({ cwd: simpleRepo(), angles: ['qa'] })
+    expect(out.status).toBe('done')
+    expect(out.output).toMatchObject(DEGRADED)
+    expect(w.sessionsOf('review-synthesis')).toHaveLength(1)
+  })
+
+  test('mixed failures stay the blocker verdict; a review that ran carries no degraded field', async () => {
+    const mixed = world({
+      adversary: new Error('down'),
+      script: (s) => {
+        if (s.spec.agent !== 'review-synthesis') throw balanceSession()
+        return undefined
+      },
+    })
+    const out = await mixed.run({ cwd: simpleRepo(), angles: ['qa'] })
+    expect(out.output).toMatchObject({ outcome: 'needs-human', escalationCategory: 'blocker' })
+    expect((out.output as Record<string, unknown>).degraded).toBeUndefined()
+
+    const clean = await world().run({ cwd: simpleRepo() })
+    expect((clean.output as Record<string, unknown>).degraded).toBeUndefined()
   })
 })

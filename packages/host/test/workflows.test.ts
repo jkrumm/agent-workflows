@@ -1,4 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
+import { createCapabilities, createRegistry } from '@agent-workflows/capabilities'
+import { fakeTransports } from '@agent-workflows/capabilities/testing'
+import { createReviewWorkflows } from '../src/workflows/review/index.ts'
 import { captureLogger, startTestHost, type TestHost, until } from './support.ts'
 
 let t: TestHost
@@ -367,5 +370,32 @@ describe('run ops', () => {
     ])
     expect(outcome).toBe('returned')
     await t.call(`/runs/${started.body.runId}/cancel`, { method: 'POST' })
+  })
+})
+
+describe('internal workflows', () => {
+  test('review.ocr is registered as the review’s child only: no HTTP route, no command, no schema entry', async () => {
+    const registry = createRegistry(createCapabilities({ transports: fakeTransports({}), env: {} }))
+    const review = createReviewWorkflows({ registry }, { which: () => null, env: {} })
+    expect(review.find((w) => w.workflow.id === 'review.ocr')?.internal).toBe(true)
+    const host = await startTestHost({ prefix: 'wfint', extra: review })
+    try {
+      // `agw schema` lists exactly the operations of this document.
+      const doc = (await host.host.openapi()) as {
+        paths: Record<string, Record<string, { 'x-cli'?: { command: string[] } }>>
+      }
+      const paths = Object.keys(doc.paths)
+      expect(paths).toContain('/workflows/review')
+      expect(paths.filter((p) => p.includes('ocr'))).toEqual([])
+      const commands = Object.values(doc.paths).flatMap((ops) =>
+        Object.values(ops).map((op) => op['x-cli']?.command.join(' ')),
+      )
+      expect(commands).toContain('review')
+      expect(commands.filter((c) => c?.includes('ocr'))).toEqual([])
+      const response = await host.call('/workflows/review/ocr', { body: { cwd: '/tmp', mode: 'head' } })
+      expect(response.status).toBe(404)
+    } finally {
+      await host.close()
+    }
   })
 })
