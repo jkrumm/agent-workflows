@@ -109,8 +109,8 @@ describe('resolveRoute', () => {
     expect(routeFingerprint('decide', {})).toBe(before)
   })
 
-  test('opencode routes carry no rate: an agent step is priced by OpenCode alone', () => {
-    for (const id of routeIds()) if (entry(id).wire === 'opencode') expect(entry(id).rate).toBeUndefined()
+  test('every opencode route carries its own rate: the host prices its sessions with it', () => {
+    for (const id of routeIds()) if (entry(id).wire === 'opencode') expect(entry(id).rate).toBeDefined()
   })
 
   test('the table is deeply frozen', () => {
