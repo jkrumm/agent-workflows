@@ -49,14 +49,21 @@ export type ServerOptions = {
   logger?: Logger
 }
 
-/** `fingerprint` is the hash of the env and command the running server was started with (drift detection). */
-type Persisted = { port: number; password: string; fingerprint?: string }
+/**
+ * `fingerprint` is the hash of the env and command the running server was started with (drift detection); `pid`
+ * is the child this supervisor spawned, the only pid it ever signals or adopts.
+ */
+type Persisted = { port: number; password: string; fingerprint?: string; pid?: number }
 
 /** A child process or an adopted server, addressed by pid. */
 type Proc = { pid: number; alive: () => boolean; waitExit: (ms: number) => Promise<boolean> }
 
 class VersionMismatch extends Error {
   override name = 'VersionMismatch'
+}
+
+class ForeignServer extends Error {
+  override name = 'ForeignServer'
 }
 
 const consoleLogger: Logger = {
@@ -241,11 +248,11 @@ export class OpenCodeServer {
     if (this.failures >= this.opts.failuresBeforeRestart) await this.restart('liveness')
   }
 
-  /** `GET /api/info` within the liveness guard, from the right version. */
-  private async probe(): Promise<boolean> {
+  /** `GET /api/info` within the liveness guard, from the right version and from our own process. */
+  private async probe(pid = this.proc?.pid): Promise<boolean> {
     try {
       const info = await this.client().info({ timeoutMs: this.opts.livenessTimeoutMs })
-      return info.version === this.expectedVersion
+      return info.version === this.expectedVersion && info.pid === pid
     } catch {
       return false
     }
@@ -275,6 +282,7 @@ export class OpenCodeServer {
       port: this.options.port ?? state.port ?? (await freePort()),
       password: state.password ?? randomBytes(24).toString('base64url'),
       ...(state.fingerprint ? { fingerprint: state.fingerprint } : {}),
+      ...(typeof state.pid === 'number' ? { pid: state.pid } : {}),
     }
     if (next.port !== state.port || next.password !== state.password) this.writeState(next)
     return next
@@ -307,16 +315,25 @@ export class OpenCodeServer {
       .info({ timeoutMs: this.opts.livenessTimeoutMs })
       .catch(() => null)
     if (!info) return false
+    const recorded = this.persisted?.pid
+    // The pid comes from server.json, written when this supervisor spawned the child; an HTTP answer alone is never
+    // a reason to signal a process.
+    if (recorded === undefined || info.pid !== recorded) {
+      throw new ForeignServer(
+        `a server answers on port ${this.persisted?.port} with pid ${info.pid}, but ${this.statePath()} records ` +
+          `${recorded ?? 'no pid'}; it is not ours to adopt or signal: stop it, or remove the file`,
+      )
+    }
     if (info.version !== this.expectedVersion) {
       throw new VersionMismatch(
         `opencode server on port ${this.persisted?.port} is ${info.version}, need ${this.expectedVersion}`,
       )
     }
-    const proc = adoptedProc(info.pid)
+    const proc = adoptedProc(recorded)
     const { fingerprint } = this.launch()
     if (this.persisted?.fingerprint !== fingerprint) {
       // A deploy changed the server's env or config (routes, rates, key, binary): the running server is stale.
-      this.logger.warn('opencode server env or config changed since it started; restarting it', { pid: info.pid })
+      this.logger.warn('opencode server env or config changed since it started; restarting it', { pid: recorded })
       await this.terminate(proc)
       return false
     }
@@ -363,8 +380,11 @@ export class OpenCodeServer {
     const deadline = Date.now() + this.opts.bootTimeoutMs
     while (Date.now() < deadline) {
       if (!proc.alive()) throw new Error(`opencode server exited during boot (see ${join(this.root, 'server.log')})`)
-      if (await this.probe()) {
+      // Only an answer from the child we spawned counts: another process on the port is not our server.
+      if ((await this.probe(proc.pid)) && proc.alive()) {
         booted = true
+        persisted.pid = proc.pid
+        this.writeState(persisted)
         return
       }
       await Bun.sleep(100)

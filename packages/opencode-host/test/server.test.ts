@@ -50,6 +50,7 @@ function server(stateDir: string, over: Partial<ServerOptions> = {}) {
     env: ENV,
     config: { test: true },
     livenessIntervalMs: 100,
+    livenessTimeoutMs: 500,
     failuresBeforeRestart: 2,
     termGraceMs: 300,
     bootTimeoutMs: 10_000,
@@ -164,7 +165,23 @@ describe('OpenCodeServer', () => {
     expect(alive(pid)).toBe(false)
     expect(warnings).toContain('opencode server env or config changed since it started; restarting it')
     const state = JSON.parse(readFileSync(join(dir, 'opencode/server.json'), 'utf8'))
-    expect(Object.keys(state).sort()).toEqual(['fingerprint', 'password', 'port'])
+    expect(Object.keys(state).sort()).toEqual(['fingerprint', 'password', 'pid', 'port'])
+    expect(state.pid).toBe(s.pid)
+  })
+
+  test('a server whose pid is not the recorded child is neither adopted nor signalled', async () => {
+    const dir = scratch()
+    const first = server(dir).s
+    await first.start()
+    const pid = first.pid as number
+    await first.close()
+    servers.splice(servers.indexOf(first), 1)
+    const path = join(dir, 'opencode/server.json')
+    writeFileSync(path, JSON.stringify({ ...JSON.parse(readFileSync(path, 'utf8')), pid: 1 }))
+    const { s } = server(dir)
+    expect(await failure(s.start())).toContain('is not ours to adopt or signal')
+    expect(alive(pid)).toBe(true) // untouched
+    process.kill(pid, 'SIGKILL')
   })
 
   test('a corrupt server.json fails start with its path, once', async () => {
@@ -208,7 +225,7 @@ describe('OpenCodeServer', () => {
     } finally {
       host.close()
     }
-  })
+  }, 20_000)
 })
 
 describe('resolveOpencodeBinary', () => {

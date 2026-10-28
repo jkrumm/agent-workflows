@@ -119,10 +119,29 @@ describe('open / prompt / wait', () => {
     expect(sid(again)).toBe(sid(first))
     expect(sid(first)).toMatch(/^ses_agw[0-9a-f]{24}$/)
     await t.host.prompt(first, 'x')
+    await t.host.wait(first, waitOptions()) // the attempt's turn ended (and the step then failed, say)
     const retry = await t.host.open(spec('x')) // the runtime forgot the failed attempt's handle
     expect(sid(retry)).not.toBe(sid(first))
     expect(sid(await t.host.open(spec('x')))).toBe(sid(retry))
     expect(sid(await t.host.open(spec('x', undefined, 'run-2:agent')))).not.toBe(sid(first))
+  })
+
+  test('a retry while the earlier attempt still runs re-attaches to it instead of a sibling session', async () => {
+    const t = setup({ turnMs: 400 })
+    const first = await t.host.open(spec('x'))
+    await t.host.prompt(first, '[tool:read] the task')
+    // The attempt's wait fails while its turn goes on server-side: a throwing onTool, nobody aborted the session.
+    const onTool = async () => {
+      throw new Error('onTool threw')
+    }
+    expect(await failure(t.host.wait(first, waitOptions({ onTool })))).toBe('onTool threw')
+    const retry = await t.host.open(spec('x'))
+    expect(sid(retry)).toBe(sid(first))
+    expect(t.warnings).toContain('opencode session of an earlier attempt still runs; re-attaching')
+    await t.host.prompt(retry, '[tool:read] the task') // a no-op: the prompt is there
+    expect((await t.host.wait(retry, waitOptions())).output).toBe('echo: [tool:read] the task')
+    expect(Object.keys(t.fake.state.sessions)).toEqual([sid(first)])
+    expect(await userMessages(t, retry)).toHaveLength(1)
   })
 
   test('structured output is parsed from a fenced block', async () => {

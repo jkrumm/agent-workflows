@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Usage } from '@agent-workflows/runtime'
@@ -105,6 +105,82 @@ test.skipIf(!live)(
       host.close()
       await server.close({ stop: true })
       rmSync(stateDir, { recursive: true, force: true })
+    }
+  },
+  600_000,
+)
+
+const guard = 'live: a non-shell agent cannot read, search or write outside its location'
+
+test.skipIf(!live)(
+  live ? guard : `${guard} (skipped: runs only with AGW_LIVE=1)`,
+  async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'och-live-'))
+    const server = new OpenCodeServer({ stateDir, livenessIntervalMs: 1_000 })
+    const host = new OpenCodeHost({
+      server,
+      stateDir,
+      agents: [{ name: 'reader', route: 'check', agentsMd: '# Rules\n\nFollow the instructions exactly.\n' }],
+    })
+    const outside = join(tmpdir(), `agw-probe-${process.pid}-${Date.now()}.txt`)
+    try {
+      await server.start()
+      const secretPath = join(stateDir, 'opencode', 'server.json')
+      const { password } = JSON.parse(readFileSync(secretPath, 'utf8')) as { password: string }
+      const client = createClient(() => server.endpoint())
+      const handle = (await host.open({
+        runId: 'live',
+        stepId: 'guard',
+        key: 'live:guard',
+        agent: 'reader',
+        prompt: '',
+      })) as OpenCodeHandle
+      const prompt = [
+        'Make exactly these tool calls, one after the other, even if one fails:',
+        '1. read the file /etc/hosts',
+        `2. read the file ${secretPath}`,
+        '3. glob the pattern "*" in the directory /etc',
+        `4. grep for "password" in the directory ${join(stateDir, 'opencode')}`,
+        `5. write the text "probe" to the new file ${outside}`,
+        'Then answer with one line per call: its number and OK or REFUSED. Nothing else.',
+      ].join('\n')
+      await host.prompt(handle, prompt)
+      const tools: { tool: string; status: string; target: string; reason: string }[] = []
+      const result = await host.wait(handle, {
+        signal: AbortSignal.timeout(300_000), // test bound only
+        onProgress: () => {},
+        onTool: async () => {},
+      })
+      for (const m of await client.messages(handle.sessionId)) {
+        for (const p of m.content ?? []) {
+          if (p.type !== 'tool') continue
+          const input = p.state?.input ?? {}
+          const target = String(input.filePath ?? input.path ?? input.file ?? input.directory ?? input.pattern ?? '')
+          const error = p.state?.error
+          const reason = (typeof error === 'string' ? error : (error?.message ?? '')).slice(0, 160)
+          tools.push({ tool: p.name ?? '?', status: p.state?.status ?? '?', target, reason })
+        }
+      }
+      const redact = (text: string) => text.replaceAll(password, '<password>')
+      const report = {
+        tools,
+        answer: redact(String(result.output)),
+        usage: result.usage,
+        outsideFileExists: existsSync(outside),
+      }
+      console.log(`live opencode-host guard ${redact(JSON.stringify(report, null, 2))}`)
+
+      expect(tools.length).toBeGreaterThanOrEqual(4)
+      expect(tools.filter((t) => t.status === 'completed')).toEqual([])
+      expect(existsSync(outside)).toBe(false)
+      const all = JSON.stringify(await client.messages(handle.sessionId))
+      expect(all.includes(password)).toBe(false)
+      expect(all.includes('localhost')).toBe(false) // /etc/hosts content never reached the session
+    } finally {
+      host.close()
+      await server.close({ stop: true })
+      rmSync(stateDir, { recursive: true, force: true })
+      rmSync(outside, { force: true })
     }
   },
   600_000,

@@ -24,6 +24,7 @@ import {
   type AgentDefinition,
   compileLocation,
   pruneLocations,
+  sweepStaleTemps,
   touchLocation,
   WarmCache,
   type WarmCacheOptions,
@@ -184,7 +185,7 @@ export class OpenCodeHost implements AgentHost {
     return this.cache.warmLocations()
   }
 
-  /** Evicts idle locations and prunes unused hash directories now (the timer does it every `locations.tickMs`). */
+  /** Evicts idle locations, prunes unused hash directories and sweeps stale temp writes now (the timer does it every `locations.tickMs`). */
   async maintain(): Promise<string[]> {
     await this.cache.tick()
     const keep = new Set([...this.cache.known(), ...this.current.values()])
@@ -192,11 +193,13 @@ export class OpenCodeHost implements AgentHost {
       const session = await this.client.getSession(id).catch(() => null)
       if (session) keep.add(session.location.directory)
     }
-    return pruneLocations({
+    const swept = sweepStaleTemps({ stateDir: this.options.stateDir })
+    const pruned = pruneLocations({
       stateDir: this.options.stateDir,
       keep,
       retentionMs: this.options.locations?.retentionMs ?? 24 * 3_600_000,
     })
+    return [...pruned, ...swept]
   }
 
   close(): void {
@@ -218,14 +221,14 @@ export class OpenCodeHost implements AgentHost {
     const release = await this.cache.use(location.directory, { changed: location.changed })
     release()
     const headers = this.headers(spec.runId, spec.stepId)
-    const sessionId = await this.sessionFor(spec.key, location.directory, headers)
+    const { id: sessionId, directory } = await this.sessionFor(spec.key, location.directory, headers)
     // A second create with the same id returns the first session (measured), so a crash right here is harmless.
     await this.client.createSession(
       {
         id: sessionId,
         // A title set at create skips OpenCode's background title call (billed to the session otherwise).
         title: `agw ${spec.runId}:${spec.stepId}`,
-        location: { directory: location.directory },
+        location: { directory },
         model,
         permissions: sessionPermissions(def),
         metadata: { agw: { key: spec.key, agent: def.name, route: routeId, locationHash: location.hash } },
@@ -235,7 +238,7 @@ export class OpenCodeHost implements AgentHost {
     const handle: OpenCodeHandle = {
       v: 1,
       sessionId,
-      directory: location.directory,
+      directory,
       agent: def.name,
       route: routeId,
       model: route.model,
@@ -344,15 +347,28 @@ export class OpenCodeHost implements AgentHost {
   }
 
   /**
-   * The step key's first session generation that is new, or exists unprompted in this location (a crash between
-   * create and journal). A prompted one belongs to an earlier, failed attempt: the retry gets the next generation.
+   * The session an attempt of this step key works in. Walking the generations: a new one is created; an existing
+   * one that is unprompted in this location is reused (a crash between create and journal); a prompted one that the
+   * server still runs (or holds input for) is re-attached, because the earlier attempt's wait failed while its turn
+   * went on (a throwing onTool, a read error). Opening a sibling would run the same task twice on the same files;
+   * re-attaching costs nothing and its `prompt` is a no-op. Only a prompted session whose turn ended belongs to a
+   * finished attempt: the retry moves to the next generation.
    */
-  private async sessionFor(key: string, directory: string, headers?: Record<string, string>): Promise<string> {
+  private async sessionFor(
+    key: string,
+    directory: string,
+    headers?: Record<string, string>,
+  ): Promise<{ id: string; directory: string }> {
+    const active = await this.client.active(headers)
     for (let generation = 1; generation <= MAX_GENERATIONS; generation++) {
       const id = sessionIdFor(key, generation)
       const existing = await this.client.getSession(id, headers)
-      if (!existing) return id
-      if (existing.location.directory === directory && !(await this.prompted(id, headers))) return id
+      if (!existing) return { id, directory }
+      if (active.has(id) || (await this.client.inbox(id, headers)).length > 0) {
+        this.logger.warn('opencode session of an earlier attempt still runs; re-attaching', { sessionId: id })
+        return { id, directory: existing.location.directory }
+      }
+      if (existing.location.directory === directory && !(await this.prompted(id, headers))) return { id, directory }
     }
     throw new WorkflowError('error', `step ${key} used ${MAX_GENERATIONS} sessions; refusing another`)
   }

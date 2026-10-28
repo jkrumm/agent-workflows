@@ -25,6 +25,7 @@ export {
   LocationLeakError,
   locationHash,
   pruneLocations,
+  sweepStaleTemps,
   touchLocation,
   WarmCache,
   type WarmCacheOptions,

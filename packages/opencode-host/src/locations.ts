@@ -157,6 +157,41 @@ export function pruneLocations(options: {
   return removed
 }
 
+/**
+ * Removes leftovers of crashed writes older than `maxAgeMs` (10 min): `locations/<name>/.tmp-*` build directories
+ * and `opencode/server.json.tmp-*`. A write in flight is younger than that by far. Returns what was removed.
+ */
+export function sweepStaleTemps(options: { stateDir?: string; maxAgeMs?: number; now?: number } = {}): string[] {
+  const stateDir = options.stateDir ?? DEFAULT_STATE_DIR
+  const cutoff = (options.now ?? Date.now()) - (options.maxAgeMs ?? 10 * 60_000)
+  const candidates: string[] = []
+  const locations = join(stateDir, 'locations')
+  if (existsSync(locations)) {
+    for (const name of readdirSync(locations)) {
+      const parent = join(locations, name)
+      for (const entry of readdirSync(parent)) if (entry.startsWith('.tmp-')) candidates.push(join(parent, entry))
+    }
+  }
+  const server = join(stateDir, 'opencode')
+  if (existsSync(server)) {
+    for (const entry of readdirSync(server))
+      if (entry.startsWith('server.json.tmp-')) candidates.push(join(server, entry))
+  }
+  const removed: string[] = []
+  for (const path of candidates) {
+    let mtime: number
+    try {
+      mtime = statSync(path).mtimeMs
+    } catch {
+      continue
+    }
+    if (mtime >= cutoff) continue
+    rmSync(path, { recursive: true, force: true })
+    removed.push(path)
+  }
+  return removed
+}
+
 export type WarmCacheOptions = {
   /** Evict a location nobody used for this long. Default 10 minutes. */
   evictAfterMs?: number
@@ -262,12 +297,13 @@ export class WarmCache {
   async tick(): Promise<void> {
     const now = this.now()
     for (const [directory, entry] of [...this.entries]) {
-      if (entry.inUse > 0) continue
+      if (this.entries.get(directory) !== entry || entry.inUse > 0) continue
       if (entry.state === 'cold') {
         this.entries.delete(directory)
         continue
       }
-      if (entry.state === 'warm' && (entry.stale || now - entry.lastUsed >= this.evictAfterMs)) {
+      // Checked right before the evict, with no await between: the snapshot above may be stale.
+      if (this.evictable(directory, entry) && (entry.stale || now - entry.lastUsed >= this.evictAfterMs)) {
         await this.evict(directory, entry)
       }
     }
@@ -303,11 +339,16 @@ export class WarmCache {
     const idle = [...this.entries]
       .filter(([, e]) => e.inUse === 0 && e.state === 'warm')
       .sort(([, a], [, b]) => a.lastUsed - b.lastUsed)
-    let warm = this.warmLocations().length
     for (const [directory, entry] of idle) {
-      if (warm <= this.maxWarm) return
-      if (await this.evict(directory, entry)) warm--
+      if (this.warmLocations().length <= this.maxWarm) return
+      // Re-checked after every await: a use() during an earlier DELETE makes this entry busy again.
+      if (!this.evictable(directory, entry)) continue
+      await this.evict(directory, entry)
     }
+  }
+
+  private evictable(directory: string, entry: Entry): boolean {
+    return this.entries.get(directory) === entry && entry.inUse === 0 && entry.state === 'warm'
   }
 
   /** Never throws: a failed DELETE is logged and the entry stays warm, retried on the next tick. */
