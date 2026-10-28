@@ -203,7 +203,6 @@ export function createReviewWorkflows(deps: WorkflowDeps, options: ReviewOptions
       routerFailed: routed !== null && !routed.ok,
       changedLines: p.changedLines,
       ocr: skip === null ? 'run' : `skipped: ${skip}`,
-      angleVariant: input.angleVariant ?? 'baseline',
     }))
 
     // OCR as a child run: the wallet gate may refuse it at admission, and a refused or failed child is a null here,
@@ -225,17 +224,13 @@ export function createReviewWorkflows(deps: WorkflowDeps, options: ReviewOptions
           )
         : null
 
-    const variant = input.angleVariant
-    const task = angleTask({ repo, label: p.label, files: p.files, context, diff, invokedIn: p.invokedIn, variant })
+    const task = angleTask({ repo, label: p.label, files: p.files, context, diff, invokedIn: p.invokedIn })
     const runAngle = async (angle: Angle): Promise<AngleResult> => {
       const spec: AngleSpec = {
         agent: `review-${angle}`,
         prompt: task,
         output: AngleOutput,
-        options:
-          variant === 'shell'
-            ? { output: 'json', allowDirectories: [repo], repoShell: true }
-            : { output: 'json', allowDirectories: [repo] },
+        options: { output: 'json', allowDirectories: [repo] },
         retry: { attempts: ANGLE_ATTEMPTS, backoffMs: angleBackoffMs },
       }
       const result = await settle(ANGLE_STEP[angle](ctx, spec))

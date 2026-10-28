@@ -99,8 +99,9 @@ defineWorkflow({ id: 'research.report', scorer: draftScorer, async run(ctx, inpu
   keys it), never re-reads the failed one. A host without `followUp` fails the step. Step ids stay literals: the §3
   example's `ctx.continue(draft, feedback)` reads `ctx.continue('research:reask', draft, feedback)` here.
 - **Naming: `<stepId>:reask`.** A continue step is named after the agent step it re-asks: `'<stepId>:reask'`, and
-  `'<stepId>:reask:<n>'` for the n-th re-ask of the same step (n from 2). The friction counters (`w5/friction`) key on
-  that suffix to count schema re-asks and nudges, so any other name is invisible to them.
+  `'<stepId>:reask:<n>'` for the n-th re-ask of the same step (n from 2). The friction counters (`w5/friction`) do not
+  key on the name: a schema miss is counted once, at the agent step's `invalid_output` failure, and a `:reask` step adds
+  nothing unless it fails `invalid_output` itself.
 - **After the fact.** `runtime.scoreRun(runId, { source: 'regression' | 'drift', reference?, caseId?, evalRunId?,
   args?, onlyUnscored? })` scores a `done` or `failed` run with its workflow's scorer and writes `runs.scores.final`,
   `score_source`, `scored_at` (migration 0004). A judge call that fails (even one the scorer caught) or a journal

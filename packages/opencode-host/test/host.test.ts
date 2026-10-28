@@ -4,7 +4,14 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { AgentWaitOptions, Json } from '@agent-workflows/runtime'
 import { WorkflowError } from '@agent-workflows/runtime'
-import { type AgentDefinition, createClient, type OpenCodeHandle, OpenCodeHost, type ServerPort } from '../src/index.ts'
+import {
+  type AgentDefinition,
+  createClient,
+  type OpenCodeHandle,
+  OpenCodeHost,
+  type PermissionRule,
+  type ServerPort,
+} from '../src/index.ts'
 import { sessionPermissions } from '../src/host.ts'
 import { sessionState } from '../src/session.ts'
 import { type FakeServer, startFake } from './fake-opencode.ts'
@@ -200,7 +207,7 @@ describe('open / prompt / wait', () => {
     expect(usage?.costSource).toBe('unknown')
   })
 
-  test('the shell tool is denied unless the agent opts in; agent rules come after', async () => {
+  test('the shell tool is refused unless the agent opts in; agent rules come after', async () => {
     const t = setup({
       agents: [
         AGENT,
@@ -215,10 +222,18 @@ describe('open / prompt / wait', () => {
     const plain = await t.host.open(spec('x'))
     const builder = await t.host.open({ ...spec('x', undefined, 'run-1:b'), agent: 'builder' })
     const perms = (s: { permissions?: unknown }) => s.permissions
+    const readOnly = ['read', 'glob', 'grep', 'skill'].map((action) => ({
+      action,
+      resource: '*',
+      effect: 'allow' as const,
+    }))
     expect(perms(t.fake.state.sessions[sid(plain)] as { permissions?: unknown })).toEqual([
-      { action: 'shell', resource: '*', effect: 'deny' },
+      { action: '*', resource: '*', effect: 'deny' },
+      ...readOnly,
     ])
     expect(perms(t.fake.state.sessions[sid(builder)] as { permissions?: unknown })).toEqual([
+      { action: '*', resource: '*', effect: 'deny' },
+      ...readOnly,
       { action: 'shell', resource: '*', effect: 'allow' },
       { action: 'edit', resource: '*', effect: 'deny' },
     ])
@@ -242,7 +257,7 @@ describe('allowDirectories', () => {
     })
     const handle = await t.host.open(spec('x', { allowDirectories: ['/work/repo', '/work/clone/'] }))
     expect(perms(t, handle)).toEqual([
-      { action: 'shell', resource: '*', effect: 'deny' },
+      ...sessionPermissions({ name: 'x', agentsMd: '' }),
       { action: 'edit', resource: '*', effect: 'deny' },
       { action: 'external_directory', resource: '/work/repo/*', effect: 'allow' },
       { action: 'external_directory', resource: '/work/clone/*', effect: 'allow' },
@@ -252,7 +267,7 @@ describe('allowDirectories', () => {
   test('without the option the session gets no external_directory rule', async () => {
     const t = setup()
     const handle = await t.host.open(spec('x', { route: 'check' }))
-    expect(perms(t, handle)).toEqual([{ action: 'shell', resource: '*', effect: 'deny' }])
+    expect(perms(t, handle)).toEqual(sessionPermissions(AGENT))
   })
 
   test.each([
@@ -269,113 +284,64 @@ describe('allowDirectories', () => {
   })
 })
 
-describe('repoShell', () => {
+describe('sessionPermissions', () => {
+  const deny = (action: string): PermissionRule => ({ action, resource: '*', effect: 'deny' })
+  const allow = (action: string): PermissionRule => ({ action, resource: '*', effect: 'allow' })
+  const READ_ONLY = [allow('read'), allow('glob'), allow('grep'), allow('skill')]
   const perms = (t: ReturnType<typeof setup>, handle: Json) =>
-    (t.fake.state.sessions[sid(handle)] as { permissions?: { action: string; resource: string; effect: string }[] })
-      .permissions ?? []
+    (t.fake.state.sessions[sid(handle)] as { permissions?: unknown }).permissions
 
-  test('allows five git -C <dir> forms per directory, then every deny after the last allow', () => {
-    const rules = sessionPermissions(AGENT, ['/work/repo', '/work/other'], true)
-    const shell = rules.filter((r) => r.action === 'shell')
-    expect(shell[0]).toEqual({ action: 'shell', resource: '*', effect: 'deny' })
-    const allows = shell.filter((r) => r.effect === 'allow').map((r) => r.resource)
-    expect(allows).toEqual(
-      ['/work/repo', '/work/other'].flatMap((dir) =>
-        ['grep -n -e *', 'show *', 'log *', 'blame *', 'ls-files *'].map((verb) => `git -C ${dir} ${verb}`),
-      ),
+  test('the catch-all deny comes first, then exactly the measured read-only allows', () => {
+    expect(sessionPermissions(AGENT)).toEqual([deny('*'), ...READ_ONLY])
+  })
+
+  test('shell is allowed only when the agent opts in, after the read-only allows', () => {
+    const rules = sessionPermissions({ ...AGENT, permissions: { shell: true } })
+    expect(rules).toEqual([deny('*'), ...READ_ONLY, allow('shell')])
+    expect(sessionPermissions({ ...AGENT, permissions: { shell: false } }).some((r) => r.action === 'shell')).toBe(
+      false,
     )
-    expect(allows.some((r) => r.includes(' diff'))).toBe(false)
-    const lastAllow = shell.findLastIndex((r) => r.effect === 'allow')
-    const denies = shell.slice(lastAllow + 1)
-    expect(denies.every((r) => r.effect === 'deny')).toBe(true)
-    expect(denies.map((r) => r.resource)).toEqual([
-      'git -C /work/repo grep -n -e * *?',
-      'git -C /work/repo blame *-S*',
-      'git -C /work/other grep -n -e * *?',
-      'git -C /work/other blame *-S*',
-      '*;*',
-      '*&*',
-      '*|*',
-      '*>*',
-      '*<*',
-      '*$*',
-      '*`*',
-      '*\n*',
-      '*\t*',
-      "*'*",
-      '*"*',
-      '*{*',
-      '*--ou*',
-      '*--op*',
-      '*-O*',
-      '*--no-i*',
-      '*--ext*',
-      '*--textc*',
-      '*--con*',
-      '*--ignore-revs*',
+  })
+
+  test.each(['edit', 'webfetch', 'websearch', 'subagent', 'execute'])(
+    '%s is refused by the catch-all and allowed only by the agent’s own rule, which comes after it',
+    (action) => {
+      const plain = sessionPermissions(AGENT)
+      expect(plain.some((r) => r.action === action)).toBe(false)
+      expect(plain[0]).toEqual(deny('*'))
+      const opted = sessionPermissions({ ...AGENT, permissions: { rules: [allow(action)] } })
+      expect(opted.findLast((r) => r.action === action || r.action === '*')).toEqual(allow(action))
+      expect(opted.findIndex((r) => r.action === action)).toBeGreaterThan(0)
+    },
+  )
+
+  test('the order is catch-all, read-only, shell, agent rules, external_directory', () => {
+    const rules = sessionPermissions(
+      { ...AGENT, permissions: { shell: true, rules: [allow('webfetch'), deny('grep')] } },
+      ['/work/repo'],
+    )
+    expect(rules).toEqual([
+      deny('*'),
+      ...READ_ONLY,
+      allow('shell'),
+      allow('webfetch'),
+      deny('grep'),
+      { action: 'external_directory', resource: '/work/repo/*', effect: 'allow' },
     ])
-    // After the agent's and the external_directory rules.
-    expect(rules.findIndex((r) => r.action === 'shell' && r.effect === 'allow')).toBeGreaterThan(
-      rules.findLastIndex((r) => r.action === 'external_directory'),
+  })
+
+  test('a session carries the rules, and a provider-balance fallback session the same ones', async () => {
+    const t = setup({
+      agents: [{ ...AGENT, permissions: { rules: [allow('webfetch')] } }],
+    })
+    const handle = await t.host.open(spec('x', { allowDirectories: ['/tmp/repo'] }))
+    expect(perms(t, handle)).toEqual(
+      sessionPermissions({ ...AGENT, permissions: { rules: [allow('webfetch')] } }, ['/tmp/repo']),
     )
-  })
-
-  test('without repoShell the permissions are unchanged', () => {
-    expect(sessionPermissions(AGENT, ['/work/repo'])).toEqual(sessionPermissions(AGENT, ['/work/repo'], false))
-    expect(sessionPermissions(AGENT, ['/work/repo']).some((r) => r.resource.startsWith('git '))).toBe(false)
-  })
-
-  test('a session opened with repoShell carries the rules, and a fallback session the same ones', async () => {
-    const t = setup()
-    const handle = await t.host.open(spec('x', { allowDirectories: ['/tmp/repo'], repoShell: true }))
-    expect(perms(t, handle).filter((r) => r.resource.startsWith('git -C /tmp/repo '))).toHaveLength(7)
-    expect((handle as OpenCodeHandle).repoShell).toBe(true)
     await t.host.prompt(handle, '[balance] review this')
     await t.host.wait(handle, waitOptions())
     const [primary, fallback] = Object.values(t.fake.state.sessions)
     expect(fallback?.permissions).toEqual(primary?.permissions)
-  })
-
-  test('a handle persisted before repoShell existed still loads', async () => {
-    const t = setup()
-    const handle = await t.host.open(spec('x', { allowDirectories: ['/tmp/repo'] }))
-    expect('repoShell' in (handle as object)).toBe(false)
-    await t.host.prompt(handle, 'hello')
-    expect((await t.host.wait(handle, waitOptions())).output).toBe('echo: hello')
-  })
-
-  test.each([
-    ['a non-boolean', { allowDirectories: ['/work/repo'], repoShell: 'yes' as Json }, 'repoShell must be a boolean'],
-    ['no allowDirectories', { repoShell: true }, 'repoShell requires a non-empty allowDirectories'],
-    ['empty allowDirectories', { allowDirectories: [], repoShell: true }, 'repoShell requires a non-empty'],
-  ])('%s is refused before any session is created', async (_name, options, message) => {
-    const t = setup()
-    expect(await failure(t.host.open(spec('x', options)))).toContain(message)
-    expect(Object.keys(t.fake.state.sessions)).toEqual([])
-  })
-
-  test.each([
-    ['a -O in the path', '/x/My-Org/app'],
-    ['a --op stem', '/x/a--opt/app'],
-    ['a --con stem', '/x/a--config/app'],
-    ['a $', '/x/$HOME/app'],
-    ['a quote', "/x/it's/app"],
-    ['a -S (blame)', '/x/My-Src/app'],
-    ['whitespace', '/x/my app'],
-  ])('a directory with %s is refused for repoShell before any session is created', async (_name, dir) => {
-    const t = setup()
-    const message = await failure(t.host.open(spec('x', { allowDirectories: [dir], repoShell: true })))
-    expect(message).toContain('repoShell directory')
-    expect(message).toContain(dir)
-    expect(Object.keys(t.fake.state.sessions)).toEqual([])
-    // The same directory is fine without the shell.
-    await t.host.open(spec('y', { allowDirectories: [dir] }))
-  })
-
-  test('repoShell false or absent is accepted without allowDirectories', async () => {
-    const t = setup()
-    await t.host.open(spec('x', { repoShell: false }))
-    await t.host.open(spec('y', {}))
   })
 })
 

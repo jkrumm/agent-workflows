@@ -32,38 +32,33 @@ A step picks the route with `options.route` (else the agent's `route`) and asks 
 
 The handle is plain JSON: `{ v, sessionId, directory, agent, route, model, output, runId, stepId }`.
 
-**Permissions.** Every session gets `[shell * deny]` (or `allow` with `permissions.shell: true`) followed by the
-agent's own `permissions.rules`, then one `external_directory` allow per entry of the step's
-`spec.options.allowDirectories`; the last matching rule wins. Server-wide, `question` and `external_directory` are
-denied, so an unattended session never blocks on an `ask`.
+**Permissions: deny by default** (as agent-gateway's `OPENCODE_READONLY_PERMISSIONS`). Every session gets, in this
+order, the last match winning: `{ *, *, deny }`; `allow` for exactly `read`, `glob`, `grep` and `skill`;
+`{ shell, *, allow }` only when the agent has `permissions.shell: true`; the agent's own `permissions.rules`; one
+`external_directory` allow per entry of the step's `spec.options.allowDirectories`. Anything else is refused, an action
+that ships in a later OpenCode too. An opt-in is an `allow` rule in the agent's `agent.json`, which comes after the
+host's deny and wins: `{ "action": "webfetch" | "websearch" | "subagent" | "edit" | "execute", "resource": "*",
+"effect": "allow" }`. Server-wide, `question` and `external_directory` are denied, so an unattended session never
+blocks on an `ask`. A subagent runs under its own permissions (OpenCode's built-in `general` allows shell and edit),
+which is why `subagent` is off unless an agent opts in; so is `execute` (Code Mode).
+
+**Measured on 2.0.32** (`test/live-permissions.test.ts`, `AGW_LIVE=1`, the cheapest route, under $0.01 for the file):
+
+| Finding | Result |
+|-|-|
+| Tools a session has | `read`, `glob`, `grep`, `skill` (the allowed set). There is no `list` and no `todowrite` tool, so neither is allowed |
+| Action names | the tool name, except `edit` covers both the `edit` and the `write` tool. Denying `read`, or `glob`, `grep` and `skill`, removes exactly that tool, so none of the four is allowed by another's rule |
+| A denied tool | is **not in the model's tool list at all** (the model answers "no webfetch tool is available"); a call to it anyway ends `No tool named "…" is currently available` and the turn goes on. `webfetch`, `websearch`, `subagent`, `edit`, `write`, `shell` and `execute` were each refused this way; no file was written |
+| Opt-in | `edit` adds `edit` and `write`; `websearch`, `subagent`, `execute` and `shell` add the tool of their name. An agent with only `webfetch: allow` completed a `webfetch`, and its `websearch` was still refused |
+| Code Mode (`execute`) | its catalog holds MCP and browser tools only, never the built-in ones: with everything allowed (`* allow`) a `read` from `execute` is not found either. Under this policy, even with `execute` opted in, the catalog is empty ("No Code Mode tools are available") and nothing denied is reachable. Same result as agent-gateway's on 2.0.25. MCP servers: none configured; one would be refused by the catch-all until an agent allows it |
 
 `allowDirectories: string[]` is how a step lets its agent read a repository the agent's own location is not in
 (review angles, check). Each entry must be an absolute directory without wildcards or `..` (never `/`); anything else
 fails the step before a session exists. It appends `{ external_directory, <dir>/*, allow }`. The option opens
-`external_directory` only: an agent that must not edit keeps its own `edit` deny (`agent.json`), which comes
-earlier and is not widened by it. Measured on 2.0.32 (`test/live.test.ts`, "allowDirectories"): the pattern matches
+`external_directory` only: it grants no edit, which the catch-all refuses unless the agent opts in. Measured on 2.0.32 (`test/live.test.ts`, "allowDirectories"): the pattern matches
 the path as the agent gives it, so hand the agent the same string you allowed (a symlink-resolved spelling such as
 `/private/var/…` for `/var/…` is a different path and is refused); `<dir>` alone matches nothing.
 
-
-**`repoShell: boolean`** (step option, needs a non-empty `allowDirectories`; anything else fails the step before a
-session exists) gives the agent a read-only git shell bound to those directories. After every other rule, per allowed
-`<dir>`, it appends `shell` allows for `git -C <dir> grep -n -e *`, `show *`, `log *`, `blame *` and `ls-files *` (a
-pattern ending in ` *` also matches the bare command), then, after all allows, `shell` denies: per directory `git -C <dir>
-grep -n -e * *?` (git grep takes one token after `-e`, options after the pattern are still parsed; the `?` keeps the bare
-one-token form allowed, because a trailing ` *` would match it too) and `blame *-S*`; globally the chaining, redirect,
-`$`, backtick, newline, tab, quote and `{` forms, and the flag stems `--ou`, `--op`, `-O`, `--no-i`, `--ext`, `--textc`,
-`--con`, `--ignore-revs`. The stems are abbreviations on purpose: git accepts any unambiguous prefix of a long option
-(`--op`, `--outp`) and `-O` takes an attached argument inside a short-flag cluster (`-nOcat`); quotes are denied so a
-flag cannot be split (`-"-op"en…`) past the text globs. There is **no `diff` verb**: given paths outside the work tree
-it acts as `--no-index` and prints any file. `blame --contents` and `-S`/`--ignore-revs-file` read arbitrary files,
-hence `--con`, `--ignore-revs` and `-S`. The leading `shell * deny` stays first, so every other command is refused. A step whose directory text would trip a deny (`/x/My-Org/app` holds `-O`; also `-S`, a quote, whitespace …) fails before a session exists, because a shell that silently refuses everything would pass for a result. The
-handle keeps the flag (`repoShell`, next to `allow`), so a provider-balance fallback session gets the same rules.
-**Open hole:** a backslash that splits a flag (`--o\utput=…`) is not denied. OpenCode's glob treats `\` as an escape
-(measured on 2.0.32: `*\*` matches every command, `*?\*` too, and a trailing `\` can crash the server), so no
-backslash rule can be written. Measured live (`test/live.test.ts`, "repoShell"): the three allowed forms run; `cat`, a
-`;` chain, `-O`, `-nOcat`, a quoted pattern, `blame --contents`, `diff`, `log --outp=` (no file written) and `git -C /tmp`
-all complete as `Permission denied: shell` errors and the turn goes on to the next call.
 
 **Symlinks inside an allowed directory are an escape** (measured on 2.0.32, `test/live.test.ts`, "symlink inside an
 allowed directory"): the grant is matched against the path the agent names, not where a link leads, so `repo/link -> ~`
@@ -124,10 +119,6 @@ the key in the server's env through `ps`, the user's files by absolute path). Mi
 unless an agent opts in, the server's `HOME` is its own (no `~/.claude`, `~/.agents` or dotfiles at `~`), the env is
 an allow-list, the server listens on loopback with a password. This is carried from agent-gateway, decided by the
 lead on that evidence, not an isolation boundary.
-
-The `repoShell` option (a read-only git shell) matches command TEXT, so it is a cost-raising boundary, not a sandbox, as in
-agent-gateway. `git -C <repo>` pins git to the repository; no reader that takes an arbitrary path (`cat`, `rg`, `ls`) is
-allowed: file reads go through the read tool, which `external_directory` bounds.
 
 The allow-list forwards `OTEL_EXPORTER_OTLP_*`, and on the mini the deploy sets `OTEL_EXPORTER_OTLP_HEADERS`
 (`authorization=<ClickStack ingest key>`). That key therefore sits in the server's env and in the env of its tool
@@ -317,6 +308,10 @@ A turn that ends `failed` with a provider-balance error (`isBalanceFailure` from
   turn (measured), so it adds one step boundary's worth of input, not a turn; in the finishing race it can cost one
   short extra turn whose reply is ignored. It also changes what the agent does next, on purpose. Reading the counters
   at `runPost` is a full message read per session of each agent step; no tokens.
+- **Deny by default shrinks the head.** A refused tool is not in the model's tool list, so its definition is not sent:
+  a read-only session carries four tool definitions instead of twelve, input tokens down on every turn, and the
+  prefix stays byte-stable per agent (the rules do not change between sessions of an agent). An opt-in adds that
+  tool's definition back, once, to that agent's head.
 - **A changed agent** (`AGENTS.md`, skill, config, permissions) changes the head: its next session starts with a
   cold cache, once. The fingerprint changes with it.
 - **A server restart** without a running turn costs nothing: the session is read, not resumed. A drift restart at
@@ -334,7 +329,7 @@ A turn that ends `failed` with a provider-balance error (`isBalanceFailure` from
 | Evict | `DELETE /api/debug/location?location[directory]=…` → 204, gone from `GET /api/debug/location`; the next use re-reads `AGENTS.md` (an `AGENTS.md` written after the boot was not seen until the eviction) |
 | Skills | loaded at the first prompt from the location's `.opencode/skills/` (live run: the model named the location's skill) |
 | Home isolation | with `HOME=<root>/home` (no `OPENCODE_TEST_HOME`) and `OPENCODE_DISABLE_CLAUDE_CODE=1`, the model's skill list is the location's skill plus OpenCode's builtins (`opencode`, `report`), none of the user's `~/.claude/skills` (live run asserts it). `OPENCODE_TEST_HOME` is not needed |
-| Shell denied | with the session rule `shell * deny` the model's tool list has no shell (live run: `execute, skill, subagent, glob, grep, read, edit, write, webfetch, websearch`) |
+| Deny by default | with the catch-all deny the model's tool list is `read, glob, grep, skill`; with every action allowed it is `edit, glob, grep, question, read, shell, skill, subagent, webfetch, websearch, write, execute` (`test/live-permissions.test.ts`) |
 | Synthetic mid-turn | a `POST /synthetic` while a turn runs is read in that turn at its next step boundary (after a `finish=tool-calls` message; one `idle`), not queued behind it (`test/live-nudge.test.ts`) |
 | Project | a location outside any repo is its own project (`GET /api/location` → `project.directory` = the location) |
 
@@ -349,6 +344,7 @@ the host and as a spawned `opencode` stand-in (`test/fake-opencode-bin.ts`) for 
 | `host.test.ts` | a turn's output and usage; prompt idempotency (twice, and across a restart); open idempotency per key, the retry generation, a retry re-attaching a still-running session; JSON output; a failed turn; an outcome-less idle; cost 0 priced by rate, unpriced without one; permissions; a pending prompt is running, a missing one fails after the grace; incremental reads; a wait surviving a kill and restart with one resume and no second prompt; a finished session read, not resumed; the provider-balance fallback (one reopen, re-attach without a second prompt, no fallback after a turn that ran, none for other failures or with `fallback: null`, abort reaching it); steer dedupe by signal; abort twice; tool events per wait; shell output as progress; warm, evict, hash directories and pruning |
 | `server.test.ts` | the env allow-list, the server's own HOME and the file-watcher flag; a wedged server SIGTERMed, SIGKILLed and restarted on the same port; a crash restarted; adoption by the next process; drift restart; a foreign pid neither adopted nor signalled; corrupt `server.json`; a version mismatch refused; shim resolution; a wait in flight across a liveness kill; the config |
 | `locations.test.ts` | compile, hash directories, the hash, ancestor leaks, path escapes, pruning, the temp sweep; the warm cache under concurrency: single-flight, failed warm, failed evict, shrink re-check, use during evict, reset, changed content |
+| `live-permissions.test.ts` | `AGW_LIVE=1`: the deny-by-default policy: the tool list per opt-in, refused calls, an opted-in `webfetch`, Code Mode's empty catalog |
 | `live.test.ts` | `AGW_LIVE=1`: the real binary, SIGKILL mid-turn, restart, re-attach, one prompt; AGENTS.md and a skill reach the model, the user's skills and the shell tool do not; a non-shell agent's read, glob, grep and write outside its location are refused; tokens and cost |
 
 Live: `AGW_LIVE=1 secrets-run run --env-file=.env.tpl -- timeout 600 bun test packages/opencode-host`

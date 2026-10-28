@@ -44,7 +44,7 @@ export const EvalRunInput = z
       .optional()
       .describe(`Cases in flight at once, default ${DEFAULT_CONCURRENCY} (IU rate limits, host load)`),
     args: JsonRecord.optional().describe(
-      'Extra workflow input for every case, the experiment arm, e.g. {"angleVariant":"shell"}; kept with each score for `agw eval compare --a-args/--b-args`',
+      'Extra workflow input for every case, the experiment arm, e.g. {"depth":"deep"}; kept with each score for `agw eval compare --a-args/--b-args`',
     ),
     yes: z
       .boolean()

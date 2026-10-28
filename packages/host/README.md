@@ -151,8 +151,8 @@ Define it with `defineWorkflow` (input must be a `z.object`; list its agents in 
 - **Spend gate: `--yes`, not `--commit`.** The CLI's `--commit` gate (mutating operations) applies only off a TTY and
   shows nothing first; an eval spends IU money (concept N8) whoever types it, so `eval.run` is not `mutating`: the
   default answer is the plan with the estimate, and only `--yes` spends.
-- **An arm is a fingerprint plus the exact `--args`.** An input such as `angleVariant` changes behaviour without
-  changing the fingerprint, so compare selects by both: equal fingerprints compare when the args differ, and two
+- **An arm is a fingerprint plus the exact `--args`.** A workflow input that is not part of the fingerprint
+  changes behaviour without changing the fingerprint, so compare selects by both: equal fingerprints compare when the args differ, and two
   identical arms are refused. A fingerprint may be given as a unique prefix (8+ characters). Reruns of a case in one
   arm are averaged before pairing; a run with unpriced calls leaves its cost out instead of comparing a lower bound;
   mixed scorer versions and fewer than 10 paired cases are reported as `warnings`.
