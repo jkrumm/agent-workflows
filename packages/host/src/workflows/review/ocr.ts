@@ -19,7 +19,7 @@ import { escapeName } from './util.ts'
 /** The review's child, `internal`: never a command, so `review.ocr` does not collide with `agw review`. */
 export const OCR_WORKFLOW_ID = 'review.ocr'
 export const OCR_ROUTE = 'review.ocr'
-export const OCR_VERSION = '2026-10-28.1'
+export const OCR_VERSION = '2026-10-28.2'
 export const OCR_IDLE_MS = 5 * 60_000
 const SIGKILL_GRACE_MS = 5_000
 const STDERR_TAIL_CHARS = 2_048
@@ -175,14 +175,16 @@ const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0
 /**
  * `ocr` writes its summary only on a clean run. An idle kill, a non-zero exit or unparseable output still spent tokens,
  * and its own session log (`~/.opencodereview/sessions/<repo path, / as ->/<id>.jsonl`, one `llm_response` line per turn)
- * carries them. Best effort: telemetry on a failure path must not become a second failure.
+ * carries them. Best effort: telemetry on a failure path must not become a second failure. `counted` holds the logs an
+ * earlier attempt of this step already read (the primary before its fallback): each log is counted once.
  */
-function recoverUsage(repo: string, startedAtMs: number) {
+function recoverUsage(opts: { repo: string; home: string; startedAtMs: number; counted: Set<string> }) {
+  const { repo, startedAtMs, counted } = opts
   const total = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
   try {
-    const dir = join(homedir(), '.opencodereview', 'sessions', repo.replaceAll('/', '-').replace(/^-/, ''))
+    const dir = join(opts.home, '.opencodereview', 'sessions', repo.replaceAll('/', '-').replace(/^-/, ''))
     for (const entry of readdirSync(dir)) {
-      if (!entry.endsWith('.jsonl')) continue
+      if (!entry.endsWith('.jsonl') || counted.has(entry)) continue
       const lines = readFileSync(join(dir, entry), 'utf8').split('\n')
       const first = lines.find((l) => l.trim())
       if (!first) continue
@@ -190,6 +192,7 @@ function recoverUsage(repo: string, startedAtMs: number) {
       const at = typeof start.timestamp === 'number' ? start.timestamp : Date.parse(String(start.timestamp))
       if (start.type !== 'session_start' || !Number.isFinite(at) || at < startedAtMs - 2_000 || start.cwd !== repo)
         continue
+      counted.add(entry)
       for (const line of lines) {
         try {
           const rec = JSON.parse(line) as { type?: string; usage?: Record<string, unknown> }
@@ -215,7 +218,6 @@ export async function runOcr(
   scope: StepScope,
   ports: ReviewPorts,
 ): Promise<z.output<typeof OcrOutput>> {
-  const startedAt = Date.now()
   const bin = ports.which('ocr')
   if (!bin) return { block: skipped('ocr not found on PATH'), ran: false }
   let iu: ReturnType<typeof iuFromEnv>
@@ -230,6 +232,9 @@ export async function runOcr(
   // The route, then its fallback once when `ocr` exits on a provider-balance refusal.
   const primary = resolveRoute(OCR_ROUTE, ports.env)
   const fallback = fallbackRoute(primary)
+  // `ocr` gets this HOME, so its session logs live under it.
+  const home = ports.env.HOME ?? homedir()
+  const counted = new Set<string>()
 
   let dir: string | undefined
   let proc: Bun.Subprocess<'ignore', 'pipe', 'pipe'> | undefined
@@ -257,7 +262,7 @@ export async function runOcr(
       // Minimal env, not a copy of ours: a spawned CLI has no reason to hold whatever else this process carries.
       const env: Record<string, string> = {
         PATH: ports.env.PATH ?? '',
-        HOME: ports.env.HOME ?? '',
+        HOME: home,
         TMPDIR: ports.env.TMPDIR ?? tmpdir(),
         OCR_LLM_URL: url,
         OCR_LLM_TOKEN: iu.key,
@@ -314,12 +319,12 @@ export async function runOcr(
       const model = route.model
       const lastForPrompt = truncate(lastLine || 'no stderr', PROMPT_LINE_CHARS)
       if (scope.signal.aborted) {
-        const spent = recoverUsage(input.cwd, attemptStart)
+        const spent = recoverUsage({ repo: input.cwd, home, startedAtMs: attemptStart, counted })
         scope.addUsage(usageOf(model, spent))
         return { block: skipped('review exited early'), ran: true }
       }
       if (code !== 0) {
-        scope.addUsage(usageOf(model, recoverUsage(input.cwd, attemptStart)))
+        scope.addUsage(usageOf(model, recoverUsage({ repo: input.cwd, home, startedAtMs: attemptStart, counted })))
         const block = failed(`exit ${code}: ${lastForPrompt}`)
         // The fallback failing too answers what the primary said.
         if (refused !== null) return { block: refused, ran: true }
@@ -334,7 +339,7 @@ export async function runOcr(
       try {
         parsed = JSON.parse(readFileSync(outFile, 'utf8')) as OcrResult
       } catch {
-        scope.addUsage(usageOf(model, recoverUsage(input.cwd, attemptStart)))
+        scope.addUsage(usageOf(model, recoverUsage({ repo: input.cwd, home, startedAtMs: attemptStart, counted })))
         return { block: refused ?? failed('output did not parse as JSON'), ran: true }
       }
       const s = parsed.summary

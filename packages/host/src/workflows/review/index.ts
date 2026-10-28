@@ -24,6 +24,7 @@ import {
   allFailedVerdict,
   applyVerdictRules,
   balanceDegradedVerdict,
+  balanceSalvagedVerdict,
   cleanVerdict,
   coerceEscalationCategory,
   salvagedVerdict,
@@ -287,9 +288,10 @@ export function createReviewWorkflows(deps: WorkflowDeps, options: ReviewOptions
     if (!first.parsed?.success && !(first.text === null && onBalance(first.reason))) {
       synthesis = attempt(await settle(ctx.agent('synthesis-retry', synthesisSpec(prompt + SYNTHESIS_JSON_ONLY_RETRY))))
     }
-    // No synthesis text at all and the last refusal was balance: there is no review to salvage.
+    // No synthesis text at all and the last refusal was balance: the reviewers ran (an all-failed run ended above), so
+    // their findings are salvaged with the degrade.
     if (!first.text && !synthesis.text && onBalance(synthesis.reason)) {
-      return balanceDegradedVerdict([{ angle: 'synthesis', failureReason: synthesis.reason }])
+      return balanceSalvagedVerdict(renderAngleBlock(results), failed, total)
     }
     if (!synthesis.parsed?.success) {
       // The raw text of the last attempt that produced any; a session that died says why only when none did.

@@ -640,6 +640,45 @@ describe('provider-balance fallback', () => {
     expect(sessions(t)).toHaveLength(1)
   })
 
+  test('a retry while the fallback session still runs re-attaches to it: no new session, no second prompt', async () => {
+    const t = setup()
+    const first = await t.host.open(spec('x'))
+    await t.host.prompt(first, '[balance][slow:600] the task')
+    // The attempt's wait fails while the fallback turn goes on server-side (a throwing onTool, say).
+    const controller = new AbortController()
+    const waiting = t.host.wait(first, waitOptions({ signal: controller.signal }))
+    while (sessions(t).length < 2) await Bun.sleep(10)
+    controller.abort(new Error('the wait failed'))
+    await waiting.catch(() => {})
+    const fallbackId = sessions(t)[1]?.id as string
+
+    const retry = await t.host.open(spec('x'))
+    expect(sid(retry)).toBe(sid(first))
+    expect(t.warnings).toContain('opencode fallback session of an earlier attempt still runs; re-attaching')
+    await t.host.prompt(retry, '[balance][slow:600] the task') // a no-op: the primary holds its prompt
+    expect((await t.host.wait(retry, waitOptions())).output).toBe('echo: [balance][slow:600] the task')
+    expect(sessions(t)).toHaveLength(2)
+    expect(t.fake.count(`POST /api/session/${sid(first)}/prompt`)).toBe(1)
+    expect(t.fake.count(`POST /api/session/${fallbackId}/prompt`)).toBe(1)
+  })
+
+  test('abort interrupts the fallback even when the primary’s interrupt fails, then raises', async () => {
+    const t = setup()
+    const handle = await t.host.open(spec('x'))
+    await t.host.prompt(handle, '[balance][slow:1500] long')
+    const controller = new AbortController()
+    const waiting = t.host.wait(handle, waitOptions({ signal: controller.signal }))
+    // The fallback turn is running.
+    while (!sessions(t)[1]?.messages.some((m) => m.type === 'assistant')) await Bun.sleep(10)
+    t.fake.failInterruptFor(sid(handle))
+    expect(await failure(t.host.abort(handle))).toContain('HTTP 500')
+    controller.abort(new Error('cancel'))
+    await waiting.catch(() => {})
+    const fallbackId = sessions(t)[1]?.id as string
+    expect(t.fake.count(`POST /api/session/${fallbackId}/interrupt`)).toBe(1)
+    expect(sessions(t)[1]?.messages.at(-1)).toMatchObject({ type: 'idle', outcome: 'interrupted' })
+  })
+
   test('abort reaches the fallback session through the step’s first handle', async () => {
     const t = setup()
     const handle = await t.host.open(spec('x'))

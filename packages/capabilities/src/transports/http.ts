@@ -52,7 +52,8 @@ export async function failedResponse(res: Response, wire: string): Promise<Attem
 /** A transport failure that a route's fallback answers: the classifier over a failed call's status and message. */
 export function isBalanceError(error: unknown): boolean {
   if (!(error instanceof CapabilityError) || error.code !== 'UPSTREAM_ERROR') return false
-  return error.message.includes(BALANCE_MARKER)
+  const status = (error.data as { status?: unknown } | undefined)?.status
+  return isBalanceFailure({ ...(typeof status === 'number' ? { status } : {}), text: error.message })
 }
 
 /**

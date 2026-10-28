@@ -201,8 +201,12 @@ A turn that ends `failed` with a provider-balance error (`isBalanceFailure` from
   and `prompt` sends nothing when the prompt is there.
 - The fallback session never falls back again; its failure fails the step. `AGW_ROUTES` `{"<route>": {"fallback": null}}`
   turns it off.
-- `abort` interrupts the fallback session too and `steer` goes to it once it exists: the journal keeps only the
-  step's first handle.
+- A retry of the step (`open` again with the same key) while the fallback session still runs re-attaches through the
+  primary's handle, as for a primary that still runs: no new session, no second prompt.
+- `abort` interrupts the fallback session too (every session is tried, errors are raised after) and `steer` goes to
+  it once it exists: the journal keeps only the step's first handle.
+- **Known limit:** a steer sent to the primary before its turn was refused is not carried to the fallback session.
+  Only a turn that did nothing falls back, so the steer had no effect there either.
 
 ## Failure modes
 

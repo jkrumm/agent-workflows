@@ -773,6 +773,44 @@ JSON
       ])
     })
 
+    test('the fallback attempt’s recovered usage never counts the primary’s session log', async () => {
+      const home = join(scratch, `home-${++repoSeq}`)
+      const bin = join(scratch, `ocr-logs-${repoSeq}`)
+      // Each attempt writes its own session log (as ocr does), then fails: the primary on balance (100 input tokens),
+      // the fallback without it (7).
+      writeFileSync(
+        bin,
+        `#!/bin/sh
+repo=$(pwd)
+dir="$HOME/.opencodereview/sessions/$(printf '%s' "$repo" | sed 's|/|-|g; s|^-||')"
+mkdir -p "$dir"
+if [ "$OCR_LLM_PROTOCOL" != "openai-responses" ]; then tokens=100; else tokens=7; fi
+printf '{"type":"session_start","timestamp":%s000,"cwd":"%s"}\n{"type":"llm_response","usage":{"prompt_tokens":%s,"completion_tokens":1}}\n' "$(date +%s)" "$repo" "$tokens" > "$dir/$OCR_LLM_PROTOCOL.jsonl"
+if [ "$tokens" = 100 ]; then
+  echo "llm error: IU request failed (503) — Insufficient Balance (PaymentRequired) on Requesty-Global" >&2
+else
+  echo "llm error: 500" >&2
+fi
+exit 2
+`,
+      )
+      chmodSync(bin, 0o755)
+      const w = ocrWorld({
+        rollingSpend: 10,
+        env: { ...credentials, HOME: home },
+        which: (b) => (b === 'ocr' ? bin : null),
+      })
+      const out = await w.run({ cwd: makeRepo(BASE, bigChange) })
+      expect(out.status).toBe('done')
+      const child = (await sql.pool.query(`select id from "${db.schema}".runs where parent_id = $1`, [out.runId]))
+        .rows[0]
+      const step = await sql.step(child?.id as string, 'ocr')
+      // 100 (primary) + 7 (fallback), not 100 + 107.
+      expect(step).toMatchObject({ tokens_input: '107', tokens_output: '2' })
+      // The fallback failing too reports the primary's failure.
+      expect(w.sessionsOf('review-synthesis')[0]?.spec.prompt).toContain('Insufficient Balance')
+    })
+
     test('an ocr that fails without the balance text is not retried', async () => {
       const bin = join(scratch, `ocr-plain-${++repoSeq}`)
       const calls = join(scratch, `ocr-plain-calls-${repoSeq}`)
@@ -1293,17 +1331,35 @@ describe('provider balance degrade', () => {
     expect(w.sessionsOf('review-synthesis')).toHaveLength(0)
   })
 
-  test('the synthesis refused on balance: the typed degrade, no re-ask', async () => {
+  test('the synthesis refused on balance: the reviewers’ findings are salvaged with the degrade, no re-ask', async () => {
     const w = world({
+      adversary: { findings: [{ severity: 'blocking', file: 'src/a.ts', line: 2, message: 'adversary saw this' }] },
       script: (s) => {
         if (s.spec.agent === 'review-synthesis') throw balanceSession()
+        if (s.spec.agent === 'review-qa') {
+          return Promise.resolve({
+            output: { findings: [{ severity: 'improvement', file: 'src/a.ts', line: 1, message: 'qa saw this' }] },
+          })
+        }
         return undefined
       },
     })
     const out = await w.run({ cwd: simpleRepo(), angles: ['qa'] })
     expect(out.status).toBe('done')
-    expect(out.output).toMatchObject(DEGRADED)
     expect(w.sessionsOf('review-synthesis')).toHaveLength(1)
+    const verdict = out.output as {
+      outcome: string
+      escalationCategory: string
+      degraded: string
+      summary: string
+      discussions: { angle: string; message: string }[]
+    }
+    expect(verdict).toMatchObject({ outcome: 'needs-human', escalationCategory: 'spend', degraded: 'provider_balance' })
+    expect(verdict.summary).not.toContain('No review ran')
+    const synthesisNote = verdict.discussions.find((d) => d.angle === 'synthesis')?.message ?? ''
+    expect(synthesisNote).toContain('qa saw this')
+    expect(synthesisNote).toContain('adversary saw this')
+    expect(verdict.discussions).toContainEqual(DEGRADED.discussions[0] as { angle: string; message: string })
   })
 
   test('mixed failures stay the blocker verdict; a review that ran carries no degraded field', async () => {

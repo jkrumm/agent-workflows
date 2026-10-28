@@ -71,6 +71,7 @@ export function startFake(options: FakeOptions) {
   const urls: string[] = []
   let hung = false
   let failSessionGet = false
+  const failInterrupt = new Set<string>()
   const turnMs = options.defaultTurnMs ?? 50
 
   const save = () => writeFileSync(options.statePath, JSON.stringify(state))
@@ -315,7 +316,10 @@ export function startFake(options: FakeOptions) {
         if (body.resume !== false) execute(s)
         return json({ data: { id: input.id, sessionID: s.id, type: input.type, payload: { text: input.text } } })
       }
-      if (tail === '/interrupt') return json({ interrupted: interrupt(s) })
+      if (tail === '/interrupt') {
+        if (failInterrupt.has(s.id)) return json({ message: 'boom' }, 500)
+        return json({ interrupted: interrupt(s) })
+      }
       return json({ message: 'no route' }, 404)
     },
   })
@@ -341,6 +345,10 @@ export function startFake(options: FakeOptions) {
     /** `GET /api/session/:id` answers 500 while set. */
     failSessionLookups(on: boolean) {
       failSessionGet = on
+    },
+    /** `POST /api/session/:id/interrupt` answers 500 for this session. */
+    failInterruptFor(sessionId: string) {
+      failInterrupt.add(sessionId)
     },
     count: (route: string) => requests.filter((r) => r === route).length,
   }
