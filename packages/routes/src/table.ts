@@ -27,6 +27,9 @@ const TABLE = {
   // Review seats. Gateway: review_router is SINGLE_SHOT; adversary is deepseek-v4.1-flash on iu-openai.
   'review.router': { wire: 'iu-openai', model: 'deepseek-v4.1-flash', maxOutputTokens: 16_000 },
   'review.adversary': { wire: 'iu-openai', model: 'deepseek-v4.1-flash', maxOutputTokens: 16_000 },
+  // Gateway: review_ocr (transport external-iu). `ocr` is an external CLI that talks to IU itself; the platform only
+  // takes the model from here, and the wire says which of the CLI's protocols to speak (openai: chat completions).
+  'review.ocr': { wire: 'iu-openai', model: 'deepseek-v4.1-flash' },
   // Gateway: ANGLE_OC (review_angle_senior_dev|typescript|frontend|qa all resolve to the same entry)
   // and `review` (synthesis, CLASSIFY tier), both Haiku 5.5 EU on the OpenCode harness.
   'review.angle': { wire: 'opencode', model: 'claude-haiku-5-5-eu', rate: HAIKU_55_EU_RATE },
