@@ -261,7 +261,7 @@ describe('process entry', () => {
     const fresh = freshSchema('main')
     const { schema } = fresh
     // An IU that never answers keeps the smoke run's only step open, so the run is mid-flight at SIGTERM.
-    const hang = Bun.serve({ port: 0, fetch: () => new Promise<Response>(() => {}) })
+    const hang = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: () => new Promise<Response>(() => {}) })
     const pool = new Pool({ connectionString: PG_URL, max: 1 })
     try {
       const child = start(valid(schema, { IU_BASE_URL: `http://127.0.0.1:${hang.port}/anthropic` }))
@@ -299,6 +299,7 @@ describe('process entry', () => {
     let phase: 'hang' | 'answer' = 'hang'
     const iu = Bun.serve({
       port: 0,
+      hostname: '127.0.0.1',
       fetch: () =>
         phase === 'hang'
           ? new Promise<Response>(() => {})
