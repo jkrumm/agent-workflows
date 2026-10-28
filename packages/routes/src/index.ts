@@ -51,14 +51,6 @@ function patchedEntries(env: Env): Map<string, RouteEntry> {
  * (it quotes the input) or any override value, so it is safe to print. Unset or blank means no overrides.
  */
 export function validateOverrides(env: Env = process.env): RouteId[] {
-  const raw = env[OVERRIDES_ENV]?.trim()
-  if (raw) {
-    try {
-      JSON.parse(raw)
-    } catch {
-      throw new RouteOverrideError('not valid JSON')
-    }
-  }
   return [...patchedEntries(env).keys()] as RouteId[]
 }
 
