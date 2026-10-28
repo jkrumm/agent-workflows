@@ -1,5 +1,6 @@
 import {
   costFromUsage,
+  type Effort,
   fallbackRoute,
   type ResolvedRoute,
   type RouteId,
@@ -94,7 +95,13 @@ export interface CompleteArgs {
   prompt: string
   json?: boolean
   ctx: Ctx
+  /** The call's effort, over the route's (and the fallback's). */
+  effort?: Effort
+  /** Hand back what came, unusable or not (`stop` says how it ended): the caller judges the answer itself. */
+  raw?: boolean
 }
+
+export type Completion = Pick<ChatResult, 'text' | 'model' | 'stop' | 'stopDetail'> & { route: ResolvedRoute }
 
 /**
  * One completion through the route's wire. Every billed call is reported to `ctx.addUsage`, failures included, under the
@@ -102,11 +109,7 @@ export interface CompleteArgs {
  * the primary is never retried for it. When the fallback fails too, the primary's error is what the caller sees.
  * `start` pins the route to call (a re-ask stays on the route that answered); a fallback route has no fallback.
  */
-export async function complete(
-  deps: LlmDeps,
-  args: CompleteArgs,
-  start?: ResolvedRoute,
-): Promise<{ text: string; route: ResolvedRoute }> {
+export async function complete(deps: LlmDeps, args: CompleteArgs, start?: ResolvedRoute): Promise<Completion> {
   const route = start ?? resolve(deps, args.routeId)
   try {
     return await completeOn(deps, route, args)
@@ -128,11 +131,7 @@ export async function complete(
   }
 }
 
-async function completeOn(
-  deps: LlmDeps,
-  route: ResolvedRoute,
-  args: CompleteArgs,
-): Promise<{ text: string; route: ResolvedRoute }> {
+async function completeOn(deps: LlmDeps, route: ResolvedRoute, args: CompleteArgs): Promise<Completion> {
   const port =
     route.wire === 'iu-openai'
       ? deps.transports.openai
@@ -145,16 +144,16 @@ async function completeOn(
   // The adapter reports every attempt that came back with usage, failed ones included. A call that
   // returned none is still a call: report it with unknown tokens and cost.
   let reported = 0
+  const effort = args.effort ?? route.effort
   const result = await port.complete(
     {
       model: route.model,
       system: args.system,
       prompt: args.prompt,
       json: args.json,
-      effort: route.effort,
+      effort,
       maxOutputTokens:
-        route.maxOutputTokens ??
-        (route.effort && route.effort !== 'none' ? DEFAULT_MAX_OUTPUT_WITH_EFFORT : DEFAULT_MAX_OUTPUT),
+        route.maxOutputTokens ?? (effort && effort !== 'none' ? DEFAULT_MAX_OUTPUT_WITH_EFFORT : DEFAULT_MAX_OUTPUT),
     },
     args.ctx.signal,
     (attempt) => {
@@ -163,9 +162,11 @@ async function completeOn(
     },
   )
   if (reported === 0) args.ctx.addUsage(toUsage(route, result.model, undefined))
+  const completion: Completion = { ...result, route }
+  if (args.raw) return completion
   const failure = contentFailure(route, result)
   if (failure) throw failure
-  return { text: result.text, route }
+  return completion
 }
 
 /** Best-effort JSON from a model answer: strips a code fence, slices first `{` to last `}`. `null` on failure. */

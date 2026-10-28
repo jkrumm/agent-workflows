@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { CapabilityError, fail } from '../errors.ts'
-import { type LlmDeps, parseJsonLoose, resolve, toUsage } from '../llm/model-call.ts'
+import { type Completion, complete, type LlmDeps, parseJsonLoose, resolve } from '../llm/model-call.ts'
 import { defineCapability } from '../procedure.ts'
 import { capDiff, reviewPrompt } from './review-prompts.ts'
 
@@ -55,25 +55,14 @@ export const createReviewAdversary = (deps: LlmDeps) =>
       const prompt = reviewPrompt('adversary')
         .replace('[DIFF]', () => text)
         .replace('[CONTEXT_BLOCK]', () => contextBlock)
-      // The route's own ceiling when it has one, else room to think: reasoning tokens count against it.
-      const maxOutputTokens = route.maxOutputTokens ?? 32_000
-
       // One request per attempt, streamed, with the transport's idle rule: a slow answer on a big diff is not a failure.
-      const ask = async (effort: typeof EFFORT | typeof RETRY_EFFORT) => {
-        let reported = 0
-        const result = await deps.transports.openai.complete(
-          { model: route.model, prompt, effort, maxOutputTokens },
-          ctx.signal,
-          (attempt) => {
-            reported++
-            ctx.addUsage(toUsage(route, route.model, attempt))
-          },
-        )
-        if (reported === 0) ctx.addUsage(toUsage(route, result.model, undefined))
-        return result
-      }
-      let result = await ask(EFFORT)
-      if (!result.text) result = await ask(RETRY_EFFORT)
+      // Through `complete`, so a provider-balance refusal moves to the route's fallback; the ceiling is the route's own,
+      // else room to think (reasoning tokens count against it). The answer is judged here, not by `complete`.
+      const ask = (effort: typeof EFFORT | typeof RETRY_EFFORT, start: typeof route) =>
+        complete(deps, { routeId: 'review.adversary', prompt, effort, raw: true, ctx }, start)
+      let result: Completion = await ask(EFFORT, route)
+      // The re-ask goes to the route that answered: a call that fell back stays on the fallback.
+      if (!result.text) result = await ask(RETRY_EFFORT, result.route)
       if (!result.text) {
         throw fail(
           'UPSTREAM_ERROR',
