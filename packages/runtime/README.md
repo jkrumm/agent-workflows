@@ -112,7 +112,8 @@ defineWorkflow({ id: 'research.report', scorer: draftScorer, async run(ctx, inpu
   verdict: eval summaries and compare leave them out. Drift re-scores an `infra` error a day after its last attempt
   (keeping its count, so one judge call a day) and a `scorer` error once the workflow's scorer version changes; two
   hosts on different scorer versions would re-score each other's errors back and forth (accepted: one host per
-  deploy). Workflows without a scorer are never in that branch. A shutdown is rethrown uncounted. `onlyUnscored` makes the write first-writer-wins. The write also clears `argo_synced_at` (and a
+  deploy). Both re-scores back off like unscored runs (doubling from the last attempt), so a failing one is never
+  reselected every tick. Workflows without a scorer are never in that branch. A shutdown is rethrown uncounted. `onlyUnscored` makes the write first-writer-wins. The write also clears `argo_synced_at` (and a
   claim in flight) on the run's steps, so the Argo rows are re-posted with the scores in `raw`.
 - **Drift's sample.** `runtime.driftCandidates({ rate, since, limit, purposes? = ['prod'], workflows? })`: done,
   unscored top-level runs whose persisted sample position `runs.drift_sample` (a generated column: the first 32 bits

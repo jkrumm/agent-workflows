@@ -344,15 +344,18 @@ async function releaseTree(
 }
 
 /**
- * Removes case tree directories older than `olderThanMs` whose run is ended or absent (or that carry no marker: a kill
- * during the clone), so a cancel past its 30 s settle or a killed process leaks nothing for long. A live run, or one
- * whose lookup fails, keeps its tree. Returns the removed directories.
+ * Removes case tree directories older than `olderThanMs` whose marker names a run that ended or does not exist, so a
+ * cancel past its 30 s settle or a killed process leaks nothing for long. A live run, a failed lookup, or a directory
+ * without a marker (its run is unknown) keeps its tree; the last is reported through `onUnmarked`. Returns the
+ * removed directories.
  */
 export async function sweepCaseTrees(options: {
   runtime: Pick<EvalRuntime, 'runByKey'>
   tmpRoot: string | undefined
   olderThanMs: number
   now?: number
+  /** Called for an old case directory without a marker: never deleted (its run is unknown), only reported. */
+  onUnmarked?: (dir: string) => void
 }): Promise<string[]> {
   const root = options.tmpRoot ?? tmpdir()
   const now = options.now ?? Date.now()
@@ -368,11 +371,13 @@ export async function sweepCaseTrees(options: {
     try {
       if (now - statSync(dir).mtimeMs < options.olderThanMs) continue
       const marker = join(dir, CASE_MARKER)
-      if (existsSync(marker)) {
-        const { workflow, key } = JSON.parse(readFileSync(marker, 'utf8')) as { workflow: string; key: string }
-        const run = await options.runtime.runByKey(workflow, key)
-        if (run && !TERMINAL.has(run.status)) continue
+      if (!existsSync(marker)) {
+        options.onUnmarked?.(dir)
+        continue
       }
+      const { workflow, key } = JSON.parse(readFileSync(marker, 'utf8')) as { workflow: string; key: string }
+      const run = await options.runtime.runByKey(workflow, key)
+      if (run && !TERMINAL.has(run.status)) continue
       rmSync(dir, { recursive: true, force: true })
       removed.push(dir)
     } catch {

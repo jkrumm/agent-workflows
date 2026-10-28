@@ -163,8 +163,8 @@ Define it with `defineWorkflow` (input must be a `z.object`; list its agents in 
   run that starts after the cancel fired is cancelled too, and no case starts after it), waits up to 30 s for each to
   end, and only then removes its clone. A tree is removed only when its run is known ended (a terminal status read
   just then) or known never started; a failed lookup or wait, or a live run, keeps it, and a sweep (at start and
-  hourly) removes `agw_eval_case_*` directories older than 3 h whose run has ended or does not exist (a marker file
-  in each names its run). On resume, a case whose recorded score is a scorer error is scored again. A shutdown or a lost lease leaves
+  hourly) removes `agw_eval_case_*` directories older than 3 h whose marker names a run that ended or does not exist;
+  a directory without its marker is never deleted, only logged. A sweep never overlaps itself, and close waits for it. On resume, a case whose recorded score is a scorer error is scored again. A shutdown or a lost lease leaves
   the case runs going and keeps their clones for the next process. A scorer error is a case `error` (reason
   `scorer: …`), out of the pass rate and the means. Repeated `--ids` are deduplicated.
 - **What compare will not call.** A metric with fewer than 5 pairs gets `better: unknown`, whatever its CI, and a

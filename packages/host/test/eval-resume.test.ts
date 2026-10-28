@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { CheckCase, casesPath, type Exec, exec, writeCases } from '@agent-workflows/eval'
@@ -267,9 +267,17 @@ describe('eval.run resume and cancel', () => {
       }
       expect(await sweepCaseTrees({ runtime, tmpRoot, olderThanMs: 3_600_000 })).toEqual([]) // all fresh
       // `now` a minute on: a directory made this instant can carry an mtime a hair past Date.now().
-      const removed = await sweepCaseTrees({ runtime, tmpRoot, olderThanMs: 0, now: Date.now() + 60_000 })
-      expect(removed).toHaveLength(2)
-      expect(readdirSync(tmpRoot).sort()).toEqual(['agw_eval_case_live', 'not-ours'])
+      const unmarked: string[] = []
+      const removed = await sweepCaseTrees({
+        runtime,
+        tmpRoot,
+        olderThanMs: 0,
+        now: Date.now() + 60_000,
+        onUnmarked: (dir) => unmarked.push(dir),
+      })
+      expect(removed).toHaveLength(1) // only the tree whose marked run ended
+      expect(unmarked).toEqual([join(tmpRoot, 'agw_eval_case_nomarker')]) // reported, never deleted
+      expect(readdirSync(tmpRoot).sort()).toEqual(['agw_eval_case_live', 'agw_eval_case_nomarker', 'not-ours'])
     } finally {
       await rt.close()
       for (const dir of readdirSync(tmpRoot)) rmSync(join(tmpRoot, dir), { recursive: true, force: true })
@@ -314,6 +322,53 @@ describe('eval.run resume and cancel', () => {
     } finally {
       await second.rt.close()
       for (const dir of readdirSync(tmpRoot)) rmSync(join(tmpRoot, dir), { recursive: true, force: true })
+    }
+  })
+
+  test('a sweep never overlaps itself, and close waits for the running one', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'agw-evalsweep-'))
+    const dir = join(root, 'agw_eval_case_old')
+    mkdirSync(dir)
+    writeFileSync(join(dir, '.agw-case.json'), JSON.stringify({ workflow: 'check', key: 'k' }))
+    const old = new Date(Date.now() - 5 * 3_600_000)
+    utimesSync(dir, old, old)
+    let lookups = 0
+    let release = () => {}
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const runtime = {
+      runByKey: async () => {
+        lookups++
+        await gate
+        return null
+      },
+      driftCandidates: async () => [],
+    }
+    const wiring = wireEval({
+      runtime: runtime as never,
+      workflows: createEvalWorkflows({ env, tmpRoot: root }),
+      env: { AGW_DRIFT_RATE: '0' },
+      logger: { warn: () => {}, error: () => {} },
+    })
+    try {
+      wiring.start()
+      await until(() => lookups === 1, 'first sweep looking up')
+      const second = wiring.sweep()
+      await Bun.sleep(50)
+      expect(lookups).toBe(1) // the second call joined the running sweep
+      let closed = false
+      const closing = wiring.close().then(() => {
+        closed = true
+      })
+      await Bun.sleep(50)
+      expect(closed).toBe(false) // close waits for the running sweep
+      release()
+      await Promise.all([second, closing])
+      expect(readdirSync(root)).toEqual([]) // its run does not exist: removed
+    } finally {
+      release()
+      rmSync(root, { recursive: true, force: true })
     }
   })
 })
