@@ -6,6 +6,7 @@ import { dirname, join } from 'node:path'
 // The route override block of scripts/launch.sh, run in /bin/sh the way the secrets-run child runs it (fake HOME).
 const launch = await Bun.file(join(import.meta.dir, '../../../scripts/launch.sh')).text()
 const BLOCK = launch.split('# >>> routes-override\n')[1]?.split('  # <<< routes-override')[0] ?? ''
+const ROOT = join(import.meta.dir, '../../..') // launch.sh runs from the release root: the validator import resolves from there
 const PATH = `${dirname(process.execPath)}:/usr/bin:/bin`
 
 const dirs: string[] = []
@@ -13,15 +14,17 @@ afterEach(() => {
   for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true })
 })
 
-type File = { content: string; mode?: number } | { symlinkTo: string }
+type File = { content: string; mode?: number } | { symlinkTo: string } | { directory: true }
 
-function run(file: File | null, env: Record<string, string> = {}) {
+function run(file: File | null, env: Record<string, string> = {}, block = BLOCK) {
   const home = mkdtempSync(join(tmpdir(), 'agw-routes-override-'))
   dirs.push(home)
   if (file) {
     mkdirSync(join(home, '.config/agw'), { recursive: true })
     const path = join(home, '.config/agw/routes.json')
-    if ('symlinkTo' in file) {
+    if ('directory' in file) {
+      mkdirSync(path)
+    } else if ('symlinkTo' in file) {
       writeFileSync(join(home, 'target.json'), file.symlinkTo)
       symlinkSync(join(home, 'target.json'), path)
     } else {
@@ -29,8 +32,8 @@ function run(file: File | null, env: Record<string, string> = {}) {
       chmodSync(path, file.mode ?? 0o600)
     }
   }
-  const script = `${BLOCK}\nprintf '%s' "\${AGW_ROUTES-unset}"`
-  const proc = Bun.spawnSync(['/bin/sh', '-c', script], { env: { PATH, HOME: home, ...env } })
+  const script = `${block}\nprintf '%s' "\${AGW_ROUTES-unset}"`
+  const proc = Bun.spawnSync(['/bin/sh', '-c', script], { cwd: ROOT, env: { PATH, HOME: home, ...env } })
   return { code: proc.exitCode, out: proc.stdout.toString(), err: proc.stderr.toString() }
 }
 
@@ -64,16 +67,32 @@ describe('launch.sh route override', () => {
     expect(run({ content: '{}' })).toMatchObject({ code: 0, out: '{}' })
   })
 
-  test('malformed JSON refuses with 78, naming the file and never its content', () => {
+  test('malformed JSON refuses with 78: the file is named, the parser message and the content are not printed', () => {
     const r = run({ content: `{"review.angle": {"model": "${SECRET_MODEL}"` })
     expect(r.code).toBe(78)
     expect(r.err).toContain('routes.json')
+    expect(r.err).toContain('not valid JSON')
     expect(r.err).not.toContain(SECRET_MODEL)
+    expect(run({ content: '{"check": leakysecret}' }).err).not.toContain('leakysecret')
     expect(r.out).toBe('')
   })
 
-  test('JSON that is not an object refuses with 78', () => {
-    for (const content of ['[]', '"x"', 'null', '42', '']) {
+  test('an unknown route id and a bad spec refuse with 78, naming the id and not the value', () => {
+    const unknown = run({ content: JSON.stringify({ 'no.such': { model: SECRET_MODEL } }) }, { AGW_ROUTES: '{}' })
+    expect(unknown.code).toBe(78)
+    expect(unknown.err).toContain('"no.such"')
+    expect(unknown.err).not.toContain(SECRET_MODEL)
+    expect(unknown.out).toBe('')
+    const bad = run({ content: JSON.stringify({ 'review.angle': { effort: 'leakysecret' } }) })
+    expect(bad.code).toBe(78)
+    expect(bad.err).toContain('review.angle')
+    expect(bad.err).not.toContain('leakysecret')
+    // one good patch does not excuse a later bad one
+    expect(run({ content: JSON.stringify({ check: { effort: 'low' }, nope: {} }) }).code).toBe(78)
+  })
+
+  test('JSON that is not an object, and an empty file, refuse with 78', () => {
+    for (const content of ['[]', '"x"', 'null', '42', '', '  \n']) {
       expect(run({ content }, { AGW_ROUTES: '{"keep":{}}' })).toMatchObject({ code: 78, out: '' })
     }
   })
@@ -95,6 +114,24 @@ describe('launch.sh route override', () => {
     const r = run({ symlinkTo: VALID })
     expect(r.code).toBe(78)
     expect(r.err).toContain('regular file')
+    expect(r.out).toBe('')
+  })
+
+  test('a directory at the path refuses with 78', () => {
+    const r = run({ directory: true })
+    expect(r.code).toBe(78)
+    expect(r.err).toContain('regular file')
+    expect(r.out).toBe('')
+  })
+
+  // chown needs root, so the ownership check runs for real against a file this user does not own: only the path its
+  // `-O` test names is swapped for a root-owned system file, with a mode that would pass every other check.
+  test.skipIf(process.getuid?.() === 0)('a file owned by another user refuses with 78', () => {
+    const owned = '[ -O "$ROUTES_OVERRIDE" ]'
+    expect(BLOCK).toContain(owned)
+    const r = run({ content: VALID }, {}, BLOCK.replace(owned, '[ -O /etc/hosts ]'))
+    expect(r.code).toBe(78)
+    expect(r.err).toContain('owned by the user')
     expect(r.out).toBe('')
   })
 })

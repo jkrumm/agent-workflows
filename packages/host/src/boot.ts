@@ -9,7 +9,7 @@ import {
   platformMiddleware,
 } from '@agent-workflows/middleware'
 import { basePolicyDigest, OpenCodeHost, OpenCodeServer } from '@agent-workflows/opencode-host'
-import { resolveRoute, routeIds } from '@agent-workflows/routes'
+import { validateOverrides } from '@agent-workflows/routes'
 import { type AgentHost, type Json, Runtime } from '@agent-workflows/runtime'
 import { resolve } from 'node:path'
 import { Pool } from 'pg'
@@ -163,9 +163,9 @@ export function lazyOpenCodeHost(
 export async function boot(config: HostConfig, options: BootOptions = {}): Promise<RunningHost> {
   const env = options.env ?? process.env
   // `AGW_ROUTES` is otherwise read at first use (a run's fingerprint, a model call, the first agent session), so a typo
-  // would surface as a failed run. Resolving every route here refuses the start instead, before anything is opened;
-  // the error names the route id and the problem, never the override JSON.
-  for (const id of routeIds()) resolveRoute(id, env)
+  // would surface as a failed run. Validating it here refuses the start instead, before anything is opened; the error
+  // names the route id and the problem, never the override JSON.
+  validateOverrides(env)
 
   // Every resource registers its closer as it is created; a failure at any point runs the same teardown as a
   // signal does, in reverse order, so a half-started process never keeps pools, timers or leases.

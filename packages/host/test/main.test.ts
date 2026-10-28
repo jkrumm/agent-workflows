@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { boot, lazyOpenCodeHost } from '../src/boot.ts'
 import { loadConfig } from '../src/config.ts'
-import { routeIds } from '@agent-workflows/routes'
+import { resolveRoute } from '@agent-workflows/routes'
 import { Pool } from 'pg'
 import { freshSchema, PG_URL, rejection, SECRET, until } from './support.ts'
 
@@ -122,6 +122,7 @@ describe('lazyOpenCodeHost', () => {
 })
 
 describe('boot', () => {
+  const ROUTE = 'review.angle' // an opencode route: its table entry has a rate and a fallback
   test('a taken port fails the start before the runtime opens: no schema, no claimed run, nothing left open', async () => {
     const fresh = freshSchema('boot')
     const squatter = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => new Response('taken') })
@@ -146,20 +147,19 @@ describe('boot', () => {
     const pool = new Pool({ connectionString: PG_URL, max: 1 })
     try {
       const config = loadConfig(valid(fresh.schema))
-      const unknown = await rejection(
-        boot(config, { env: { AGW_ROUTES: '{"no.such.route":{"model":"leaky-model-name"}}' } }),
-      )
+      const refused = (AGW_ROUTES: string) => rejection(boot(config, { env: { AGW_ROUTES } }))
+      const unknown = await refused(JSON.stringify({ 'no.such.route': { model: 'leaky-model-name' } }))
       expect(unknown).toContain('AGW_ROUTES')
       expect(unknown).toContain('no.such.route')
       expect(unknown).not.toContain('leaky-model-name')
-      const [id] = routeIds()
-      const bad = await rejection(
-        boot(config, { env: { AGW_ROUTES: JSON.stringify({ [id as string]: { effort: 'leaky-effort' } }) } }),
-      )
+      const bad = await refused(JSON.stringify({ [ROUTE]: { effort: 'leaky-effort' } }))
       expect(bad).toContain('AGW_ROUTES')
-      expect(bad).toContain(`"${id}"`)
-      expect(bad).toContain('effort')
+      expect(bad).toContain(`"${ROUTE}"`)
       expect(bad).not.toContain('leaky-effort')
+      // the parser quotes what it chokes on; the error must not
+      const malformed = await refused('{"check": leakysecret}')
+      expect(malformed).toContain('AGW_ROUTES: not valid JSON')
+      expect(malformed).not.toContain('leakysecret')
       // nothing was opened: the schema was never migrated
       const { rowCount } = await pool.query('select 1 from information_schema.schemata where schema_name = $1', [
         fresh.schema,
@@ -171,13 +171,16 @@ describe('boot', () => {
     }
   })
 
-  test('a valid AGW_ROUTES boots', async () => {
+  test('a valid AGW_ROUTES boots, and no AGW_ROUTES boots as before', async () => {
     const fresh = freshSchema('bootroutes2')
     try {
-      const [id] = routeIds()
-      const env = { AGW_ROUTES: JSON.stringify({ [id as string]: { effort: 'low' } }) }
-      const running = await boot(loadConfig(valid(fresh.schema)), { env })
-      await running.shutdown()
+      // A patch that changes the route: the same model, one more output token than the table allows for.
+      const route = resolveRoute(ROUTE, {})
+      const patch = { [ROUTE]: { maxOutputTokens: (route.maxOutputTokens ?? 1000) + 1 } }
+      for (const env of [{ AGW_ROUTES: JSON.stringify(patch) }, {}]) {
+        const running = await boot(loadConfig(valid(fresh.schema)), { env })
+        await running.shutdown()
+      }
     } finally {
       await fresh.drop()
     }
