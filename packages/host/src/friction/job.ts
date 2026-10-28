@@ -85,8 +85,8 @@ type IssueRecord = { id: string; number: number | null; filed_at: Date; closed_a
 /**
  * Recounts runs of the window whose earlier count was incomplete (the agent server did not answer in full), at most
  * `RECOUNT_CAP` per run of the job, before any rate is computed. Runs with the fewest attempts go first (newest first
- * among equals), so a run that keeps failing cannot hold the head of the cap; after `MAX_RECOUNT_ATTEMPTS` the recounter
- * marks it `'gave-up'` and the query no longer returns it.
+ * among equals, the later id on a tie), so a run that keeps failing cannot hold the head of the cap; after
+ * `MAX_RECOUNT_ATTEMPTS` the recounter marks it `'gave-up'` and the query no longer returns it.
  */
 async function recountIncomplete(deps: Deps): Promise<number> {
   const { db, settings, recount, logger } = deps
@@ -97,7 +97,7 @@ async function recountIncomplete(deps: Deps): Promise<number> {
        where purpose = '${USER_PURPOSE}' and parent_id is null and status in ('done', 'failed')
          and post_hooks_at is not null and finished_at > now() - make_interval(days => $1)
          and friction->>'incomplete' = 'true'
-       order by coalesce((friction->>'recountAttempts')::int, 0), finished_at desc limit ${RECOUNT_CAP}`,
+       order by coalesce((friction->>'recountAttempts')::int, 0), finished_at desc, id desc limit ${RECOUNT_CAP}`,
       [settings.windowDays],
     ),
   )
