@@ -24,7 +24,7 @@ A step picks the route with `options.route` (else the agent's `route`) and asks 
 
 | Call | Does |
 |-|-|
-| `open(spec)` | Compiles the agent's location (idempotent), warms it, creates the session with the route's model (effort as a variant), the agent's permissions, title `agw <runId>:<stepId>` and `metadata.agw` (key, agent, route, location hash). The session id is derived from `spec.key` (`ses_agw<sha256(key, generation)>`): a re-open after a crash between create and journal finds the same unprompted session; a retry after a failed attempt (whose session is prompted) gets the next generation |
+| `open(spec)` | Compiles the agent's location (idempotent), warms it, creates the session with the route's model (effort as a variant), the agent's permissions, title `agw <runId>:<stepId>` and `metadata.agw` (key, agent, route, location hash). The session id is derived from `spec.key` (`ses_agw<sha256(key, generation)>`): a re-open after a crash between create and journal finds the same unprompted session; a retry whose earlier session still runs (or holds input) re-attaches to it, because its wait failed while the turn went on and a sibling session would run the same task on the same files; only a retry after a turn that ended gets the next generation |
 | `prompt(handle, text)` | Reads the session's messages and inbox; sends only when the prompt is not there. The prompt carries a deterministic id (`msg_agwp_…`) and `metadata.agw.kind = 'prompt'`, so the check is exact, and the server dedupes a second post of the same id as well |
 | `wait(handle, opts)` | Polls the session (`pollIntervalMs`, 1 s): `onProgress` on every new or grown message or part, and while a running shell tool prints; `onTool` `pre` when a tool part first appears, `post` when it completes or fails (recorded per `wait` call: a second wait reports again, at least once). Returns at the session's `idle` with the final assistant text (or its JSON) and `usage` |
 | `steer(handle, text, { signalId })` | Appends a user message with `delivery: steer`, id keyed by the runtime's signal row: a re-delivered row is a no-op, two identical steers stay two. Without a `signalId`, a nonce per call (never the text alone). History is never rewritten |
@@ -40,7 +40,7 @@ denied, so an unattended session never blocks on an `ask`.
 
 `OpenCodeServer` runs `<opencode> serve --hostname 127.0.0.1 --port <port>` with cwd and every state root under
 `<stateDir>/opencode/` (`data`, `config`, `state`, `cache`, `home`, `opencode.db`, `server.log`, and
-`server.json` with port, password and the launch fingerprint, written atomically at mode 0600).
+`server.json` with port, password, the launch fingerprint and the spawned child's pid, written atomically at mode 0600).
 
 - **The real binary by absolute path** (`resolveOpencodeBinary`): `AGW_OPENCODE_BIN`, else `opencode` on PATH,
   followed through the machine's shim (`bin="$HOME/…"`) to the pinned build. So the server needs no user `HOME`.
@@ -55,6 +55,10 @@ denied, so an unattended session never blocks on an `ask`.
   alone; the next `start()` adopts it after an authenticated `GET /api/info` with the pinned version
   (`OPENCODE_VERSION`, `2.0.32`; another version is refused) **and** the same launch fingerprint (sha256 of command
   and env, config included). A drifted server (new routes, rates, key or binary) is restarted, logged.
+- **Pid trust.** The only pid the supervisor signals or adopts is the child it spawned, recorded in `server.json`
+  after boot. A boot counts only when `/api/info` answers with that child's pid while the child is alive; liveness
+  checks the same. A server on the port whose pid is not the recorded one is neither adopted nor signalled: `start()`
+  fails naming the file. An HTTP answer alone is never a reason to signal a process.
 - **`server.json`** that does not parse fails `start()` with its path ("remove it to start a fresh server"),
   never a boot loop.
 - **Liveness:** `GET /api/info` with a 2 s guard every `livenessIntervalMs` (5 s). `failuresBeforeRestart` (3)
@@ -62,6 +66,15 @@ denied, so an unattended session never blocks on an `ask`.
   data dir. Every restart marks the warm cache cold. `ready()` blocks callers while a restart is in flight.
 - **No cap.** Nothing in the host counts turns or wall time. The runtime's idle timeout, fed by `onProgress`,
   is the only stop for a session (`rules/agent-limits.md`).
+
+### Threat model
+
+**Measured (live, 2.0.32):** a non-shell agent asked to read `/etc/hosts` and `<stateDir>/opencode/server.json`,
+glob `/etc`, grep the server's state directory and write a file under `$TMPDIR`: all five tool calls ended
+`error`, each with `Permission denied: external_directory`; the file was not written and neither the password nor
+the hosts file reached the session (`test/live.test.ts`, "cannot read, search or write outside its location").
+So `external_directory: deny` (server config) confines `read`, `glob`, `grep` and `write`/`edit` to the location;
+no extra path rules are needed.
 
 ### Accepted risk: one server, one key, shell reach
 
@@ -84,7 +97,8 @@ session's files are never touched. It throws `LocationLeakError` when any ancest
 one, not known to the warm cache, not the location of a session the server runs (`GET /api/session/active`), and
 unused for `retentionMs` (24 h; the marker's mtime is touched on every open). The retention covers what the host
 cannot see: a session that will be re-attached after a crash, and a second host process on the same state dir
-during a deploy.
+during a deploy. The same pass sweeps leftovers of crashed writes older than 10 minutes: `locations/<name>/.tmp-*`
+builds and `opencode/server.json.tmp-*`.
 
 **Warm and evict** (`WarmCache`):
 
@@ -95,7 +109,9 @@ during a deploy.
 - Idle locations older than `evictAfterMs` (10 min) are disposed with `DELETE /api/debug/location?location[directory]=…`;
   at most `maxWarm` (16) stay warm, least recently used first. A location in use is never evicted.
 - An entry is marked evicting before the DELETE; a use that arrives meanwhile waits and warms again. A failed DELETE
-  is logged, the entry stays warm and the next tick retries; it never fails a use or leaks its count.
+  is logged, the entry stays warm and the next tick retries; it never fails a use or leaks its count. Every
+  snapshot-then-await loop (shrink, tick) re-checks an entry (`inUse === 0`, `warm`) right before its DELETE, so a
+  use that arrived during an earlier DELETE keeps its location.
 - After a server restart every entry goes cold (counts kept); the next use warms.
 
 OpenCode reads `AGENTS.md` and skills when it boots a location (§Measured), which is why changes go through eviction.
@@ -158,6 +174,13 @@ tier): never free, never under-priced. Every `opencode`-wire route carries its o
 | Corrupt `server.json` | `start()` fails naming the file |
 | OpenCode version changed | adoption and boot refuse it; bump `OPENCODE_VERSION` after re-running the live test |
 
+## Known gaps
+
+- **One host process per machine.** `compileLocation` is atomic per hash directory, but two processes compiling the
+  same agent at the same moment may both build it (the second rename fails or replaces an identical tree). The
+  deploy shape is one host process, so this is not handled.
+- DeepSeek reasoning pass-back on the chat route is unverified (no route uses it).
+
 ## Token effect / cache effect
 
 - **No tokens of its own** in a normal step: the prompt is sent once, the title is set at create (no background
@@ -193,10 +216,10 @@ the host and as a spawned `opencode` stand-in (`test/fake-opencode-bin.ts`) for 
 
 | File | Covers |
 |-|-|
-| `host.test.ts` | a turn's output and usage; prompt idempotency (twice, and across a restart); open idempotency per key and the retry generation; JSON output; a failed turn; an outcome-less idle; cost 0 priced by rate, unpriced without one; permissions; a pending prompt is running, a missing one fails after the grace; incremental reads; a wait surviving a kill and restart with one resume and no second prompt; a finished session read, not resumed; steer dedupe by signal; abort twice; tool events per wait; shell output as progress; warm, evict, hash directories and pruning |
-| `server.test.ts` | the env allow-list, the server's own HOME and the file-watcher flag; a wedged server SIGTERMed, SIGKILLed and restarted on the same port; a crash restarted; adoption by the next process; drift restart; corrupt `server.json`; a version mismatch refused; shim resolution; a wait in flight across a liveness kill; the config |
-| `locations.test.ts` | compile, hash directories, the hash, ancestor leaks, path escapes, pruning; the warm cache under concurrency: single-flight, failed warm, failed evict, use during evict, reset, changed content |
-| `live.test.ts` | `AGW_LIVE=1`: the real binary, SIGKILL mid-turn, restart, re-attach, one prompt; AGENTS.md and a skill reach the model, the user's skills and the shell tool do not; tokens and cost |
+| `host.test.ts` | a turn's output and usage; prompt idempotency (twice, and across a restart); open idempotency per key, the retry generation, a retry re-attaching a still-running session; JSON output; a failed turn; an outcome-less idle; cost 0 priced by rate, unpriced without one; permissions; a pending prompt is running, a missing one fails after the grace; incremental reads; a wait surviving a kill and restart with one resume and no second prompt; a finished session read, not resumed; steer dedupe by signal; abort twice; tool events per wait; shell output as progress; warm, evict, hash directories and pruning |
+| `server.test.ts` | the env allow-list, the server's own HOME and the file-watcher flag; a wedged server SIGTERMed, SIGKILLed and restarted on the same port; a crash restarted; adoption by the next process; drift restart; a foreign pid neither adopted nor signalled; corrupt `server.json`; a version mismatch refused; shim resolution; a wait in flight across a liveness kill; the config |
+| `locations.test.ts` | compile, hash directories, the hash, ancestor leaks, path escapes, pruning, the temp sweep; the warm cache under concurrency: single-flight, failed warm, failed evict, shrink re-check, use during evict, reset, changed content |
+| `live.test.ts` | `AGW_LIVE=1`: the real binary, SIGKILL mid-turn, restart, re-attach, one prompt; AGENTS.md and a skill reach the model, the user's skills and the shell tool do not; a non-shell agent's read, glob, grep and write outside its location are refused; tokens and cost |
 
 Live: `AGW_LIVE=1 secrets-run run --env-file=.env.tpl -- timeout 600 bun test packages/opencode-host`
-(under $0.001).
+(about $0.002).

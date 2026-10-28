@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -7,6 +7,7 @@ import {
   LocationLeakError,
   locationHash,
   pruneLocations,
+  sweepStaleTemps,
   touchLocation,
   WarmCache,
 } from '../src/locations.ts'
@@ -75,6 +76,24 @@ describe('compileLocation', () => {
     expect(pruneLocations({ stateDir, keep: new Set([a]), retentionMs: 5_000, now })).toEqual([b])
     expect([a, b, c].map(existsSync)).toEqual([true, false, true])
   })
+})
+
+test('stale temp builds and server.json temps are swept, fresh ones kept', () => {
+  const stateDir = scratch()
+  compileLocation({ name: 'a', agentsMd: '1' }, { stateDir })
+  const oldBuild = join(stateDir, 'locations/a/.tmp-old')
+  const newBuild = join(stateDir, 'locations/a/.tmp-new')
+  mkdirSync(oldBuild)
+  mkdirSync(newBuild)
+  mkdirSync(join(stateDir, 'opencode'))
+  const oldState = join(stateDir, 'opencode/server.json.tmp-123')
+  writeFileSync(oldState, '{}')
+  const now = Date.now()
+  const old = new Date(now - 11 * 60_000)
+  utimesSync(oldBuild, old, old)
+  utimesSync(oldState, old, old)
+  expect(sweepStaleTemps({ stateDir, now }).sort()).toEqual([oldBuild, oldState].sort())
+  expect([oldBuild, newBuild, oldState].map(existsSync)).toEqual([false, true, false])
 })
 
 /** A port whose warm and evict calls block until released, so tests can interleave them. */
@@ -167,6 +186,28 @@ describe('WarmCache', () => {
     await c.tick()
     expect(c.warmLocations()).toEqual(['/b']) // /b is in use, /a goes
     releaseB()
+  })
+
+  test('(b) shrink re-checks each entry: a use() during an earlier DELETE keeps its location', async () => {
+    const p = gatedPort()
+    const c = new WarmCache(p.port, { maxWarm: 1, evictAfterMs: 60_000 })
+    const hold = async (d: string) => {
+      const u = c.use(d)
+      await p.next()
+      return u
+    }
+    const releases = [await hold('/a'), await hold('/b'), await hold('/c')] // three warm, all in use: nothing to shrink
+    for (const r of releases) r()
+    const d = c.use('/d') // warm 4 > 1: shrink snapshots idle [/a, /b, /c] and evicts /a first
+    await p.next() // warm /d
+    await Bun.sleep(5)
+    expect(p.pending()).toEqual(['evict /a'])
+    const useB = c.use('/b') // /b is in use while /a's DELETE is in flight
+    for (let i = 0; i < 10 && p.pending().length > 0; i++) await p.next()
+    ;(await useB)()
+    ;(await d)()
+    expect(p.log.filter((op) => op === 'evict /b')).toEqual([])
+    expect(p.log).toContain('evict /c')
   })
 
   test('(c) a use during an eviction waits for it and warms again', async () => {
