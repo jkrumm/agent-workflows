@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync, statSync, utimesSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { AgentWaitOptions, Json } from '@agent-workflows/runtime'
@@ -34,7 +34,7 @@ function setup(options: { env?: Record<string, string>; turnMs?: number; agents?
     ready: async () => {},
   }
   const warnings: string[] = []
-  const makeHost = (agents = options.agents ?? [AGENT]) =>
+  const makeHost = (agents = options.agents ?? [AGENT], locations: Record<string, number> = {}) =>
     new OpenCodeHost({
       logger: { warn: (m) => warnings.push(m), error: (m) => warnings.push(m) },
       server,
@@ -43,7 +43,7 @@ function setup(options: { env?: Record<string, string>; turnMs?: number; agents?
       pollIntervalMs: 20,
       cutoffGraceMs: 150,
       env: options.env ?? {},
-      locations: { evictAfterMs: 0, tickMs: 60_000, retentionMs: 0 },
+      locations: { evictAfterMs: 0, tickMs: 60_000, retentionMs: 0, ...locations },
     })
   const host = makeHost()
   const t = {
@@ -289,7 +289,9 @@ describe('re-attach across a server restart', () => {
     expect(messages.filter((m) => m.type === 'user')).toHaveLength(1)
     expect(messages.filter((m) => m.type === 'synthetic')).toHaveLength(1)
     expect(progress).toBeGreaterThan(0)
-    expect(t.warnings).toEqual(['opencode session cut off, resuming'])
+    expect(t.warnings.filter((w) => w !== 'opencode session read failed; retried next poll')).toEqual([
+      'opencode session cut off, resuming',
+    ])
   })
 
   test('a session that finished while nobody waited is read, not resumed', async () => {
@@ -391,6 +393,10 @@ describe('locations', () => {
     await t.host.open(spec('x'))
     expect(t.fake.count('GET /api/location')).toBe(1)
     await t.host.maintain()
+    expect(t.host.warmLocations()).toEqual([handle.directory]) // pinned by open until its wait
+    await t.host.prompt(handle, 'x')
+    await t.host.wait(handle, waitOptions())
+    await t.host.maintain()
     expect(t.host.warmLocations()).toEqual([])
     expect(t.fake.count('DELETE /api/debug/location')).toBe(2) // once before the first warm (new content), once now
     expect([...t.fake.locations]).toEqual([])
@@ -409,6 +415,58 @@ describe('locations', () => {
     await waiting
     await t.host.maintain()
     expect(deletes()).toBe(before + 1)
+  })
+
+  test('a session re-attached in an older hash directory stays pinned, warm and unpruned until its wait ends', async () => {
+    const t = setup({ turnMs: 600 })
+    const first = (await t.host.open(spec('x'))) as OpenCodeHandle
+    await t.host.prompt(first, '[tool:read] the task')
+    const onTool = async () => {
+      throw new Error('onTool threw')
+    }
+    expect(await failure(t.host.wait(first, waitOptions({ onTool })))).toBe('onTool threw') // the turn runs on
+    const marker = join(first.directory, '.agw-location.json')
+    const old = new Date(Date.now() - 3_600_000)
+    utimesSync(marker, old, old)
+    // A new process with a changed agent, at most one warm location, eviction after 0 ms.
+    const edited = t.makeHost([{ ...AGENT, agentsMd: '# tester v2\n' }], { maxWarm: 1 })
+    cleanups.push(() => edited.close())
+    const retry = (await edited.open(spec('x'))) as OpenCodeHandle
+    expect(retry.sessionId).toBe(first.sessionId)
+    expect(retry.directory).toBe(first.directory) // the session's own, older directory
+    expect(statSync(marker).mtimeMs).toBeGreaterThan(old.getTime()) // renewed for pruning
+    const deletesOf = (dir: string) =>
+      t.fake.urls.filter((u) => u.startsWith('DELETE') && u.includes(encodeURIComponent(dir))).length - before
+    const before = 1 // the dispose before the first warm of new content
+    await edited.open(spec('x', undefined, 'run-2:agent')) // warms the new directory: past maxWarm
+    await Bun.sleep(20)
+    await edited.maintain() // past evictAfterMs
+    expect(deletesOf(first.directory)).toBe(0)
+    expect(existsSync(first.directory)).toBe(true)
+    expect((await edited.wait(retry, waitOptions())).output).toBe('echo: [tool:read] the task')
+    await edited.maintain()
+    expect(deletesOf(first.directory)).toBe(1) // released by the wait, then evicted like any idle location
+  })
+
+  test('a failed session lookup skips the prune for that tick', async () => {
+    const t = setup({ turnMs: 600 })
+    const first = (await t.host.open(spec('x'))) as OpenCodeHandle
+    await t.host.prompt(first, 'x')
+    const edited = t.makeHost([{ ...AGENT, agentsMd: '# tester v2\n' }]) // knows nothing of the old directory
+    cleanups.push(() => edited.close())
+    t.fake.failSessionLookups(true)
+    expect(await edited.maintain()).toEqual([])
+    expect(existsSync(first.directory)).toBe(true)
+    expect(t.warnings).toContain('opencode session lookup failed; pruning skipped this tick')
+    t.fake.failSessionLookups(false)
+    await t.host.wait(first, waitOptions())
+  })
+
+  test('a handle with a missing field is refused', async () => {
+    const t = setup()
+    const handle = (await t.host.open(spec('x'))) as OpenCodeHandle
+    const { directory: _, ...broken } = handle
+    expect(await failure(t.host.wait(broken, waitOptions()))).toContain('not an OpenCode host handle')
   })
 
   test('a changed agent runs in a new hash directory; the old one is pruned only when nothing uses it', async () => {

@@ -96,6 +96,8 @@ const TOOL_TEXT_LIMIT = 10_000
 const LONG_PROMPT_TOKENS = 100_000
 /** Session generations tried for one step key before giving up (one per failed attempt). */
 const MAX_GENERATIONS = 100
+/** A pin taken at `open` and never claimed by a `wait` (the step aborted in between) lapses after this long. */
+const PIN_TTL_MS = 30 * 60_000
 
 const RESUME_TEXT =
   'The previous turn was cut off when the agent server restarted before it finished. Continue the task from ' +
@@ -108,7 +110,8 @@ const consoleLogger: Logger = {
 
 function asHandle(handle: Json): OpenCodeHandle {
   const h = handle as Partial<OpenCodeHandle> | null
-  if (!h || typeof h !== 'object' || h.v !== 1 || typeof h.sessionId !== 'string') {
+  const strings = ['sessionId', 'directory', 'agent', 'route', 'runId', 'stepId'] as const
+  if (!h || typeof h !== 'object' || h.v !== 1 || strings.some((k) => typeof h[k] !== 'string')) {
     throw new WorkflowError('error', 'not an OpenCode host handle')
   }
   return h as OpenCodeHandle
@@ -159,6 +162,8 @@ export class OpenCodeHost implements AgentHost {
   private readonly timer: ReturnType<typeof setInterval>
   /** Hash directory per agent compiled by this process: always kept by pruning. */
   private readonly current = new Map<string, string>()
+  /** The location use `open` took for a session, handed to its `wait`: no eviction gap between the two. */
+  private readonly pins = new Map<string, () => void>()
 
   constructor(private readonly options: OpenCodeHostOptions) {
     this.client = createClient(() => options.server.endpoint(), { requestTimeoutMs: options.requestTimeoutMs })
@@ -188,12 +193,21 @@ export class OpenCodeHost implements AgentHost {
   /** Evicts idle locations, prunes unused hash directories and sweeps stale temp writes now (the timer does it every `locations.tickMs`). */
   async maintain(): Promise<string[]> {
     await this.cache.tick()
+    const swept = sweepStaleTemps({ stateDir: this.options.stateDir })
     const keep = new Set([...this.cache.known(), ...this.current.values()])
     for (const id of await this.client.active()) {
-      const session = await this.client.getSession(id).catch(() => null)
-      if (session) keep.add(session.location.directory)
+      const session = await this.client.getSession(id).catch((err: unknown) => err as Error)
+      if (session === null) continue // ended and gone between the two calls
+      if (session instanceof Error) {
+        // A running session's directory is unknown: pruning now could remove it under the turn. Next tick.
+        this.logger.warn('opencode session lookup failed; pruning skipped this tick', {
+          sessionId: id,
+          error: session.name,
+        })
+        return swept
+      }
+      keep.add(session.location.directory)
     }
-    const swept = sweepStaleTemps({ stateDir: this.options.stateDir })
     const pruned = pruneLocations({
       stateDir: this.options.stateDir,
       keep,
@@ -204,6 +218,7 @@ export class OpenCodeHost implements AgentHost {
 
   close(): void {
     clearInterval(this.timer)
+    for (const release of [...this.pins.values()]) release()
   }
 
   async open(spec: AgentOpenSpec): Promise<Json> {
@@ -218,10 +233,24 @@ export class OpenCodeHost implements AgentHost {
     this.current.set(def.name, location.directory)
     touchLocation(location.directory)
     await this.options.server.ready()
-    const release = await this.cache.use(location.directory, { changed: location.changed })
-    release()
+    const warmed = await this.cache.use(location.directory, { changed: location.changed })
     const headers = this.headers(spec.runId, spec.stepId)
-    const { id: sessionId, directory } = await this.sessionFor(spec.key, location.directory, headers)
+    let sessionId: string
+    let directory: string
+    try {
+      ;({ id: sessionId, directory } = await this.sessionFor(spec.key, location.directory, headers))
+      if (directory !== location.directory) {
+        // Re-attaching in an older hash directory: renew its marker (pruning) and pin it, not the new one.
+        touchLocation(directory)
+        this.pin(sessionId, await this.cache.use(directory))
+        warmed()
+      } else {
+        this.pin(sessionId, warmed)
+      }
+    } catch (err) {
+      warmed()
+      throw err
+    }
     // A second create with the same id returns the first session (measured), so a crash right here is harmless.
     await this.client.createSession(
       {
@@ -271,14 +300,20 @@ export class OpenCodeHost implements AgentHost {
     const shells = new Map<string, number>()
     const cutoff = new Persisting()
     const unprompted = new Persisting()
-    let release: (() => void) | null = null
+    // The pin `open` took (same process), else a fresh use; retried on every poll while there is none.
+    let release: (() => void) | null = this.claimPin(h.sessionId)
     let fingerprint: string | null = null
+    touchLocation(h.directory)
     try {
       for (;;) {
         signal.throwIfAborted()
         await this.options.server.ready(signal)
         release ??= await this.cache.use(h.directory).catch((err: unknown) => {
           if (!transient(err)) throw err
+          this.logger.warn('opencode location use failed; retried next poll', {
+            sessionId: h.sessionId,
+            error: (err as Error).name,
+          })
           return null
         })
         const snap = await this.read(h, reader, headers, signal)
@@ -393,9 +428,36 @@ export class OpenCodeHost implements AgentHost {
         throw new WorkflowError('error', `opencode session ${h.sessionId} is gone`, { cause: err })
       }
       if (!transient(err)) throw err
+      this.logger.warn('opencode session read failed; retried next poll', {
+        sessionId: h.sessionId,
+        error: (err as Error).name,
+      })
       reader.invalidate()
       return null
     }
+  }
+
+  private pin(sessionId: string, release: () => void): void {
+    this.pins.get(sessionId)?.()
+    let done = false
+    const once = () => {
+      if (done) return
+      done = true
+      clearTimeout(lapse)
+      if (this.pins.get(sessionId) === once) this.pins.delete(sessionId)
+      release()
+    }
+    const lapse = setTimeout(once, PIN_TTL_MS)
+    lapse.unref?.()
+    this.pins.set(sessionId, once)
+  }
+
+  /** Takes over the pin `open` left for this session; the caller releases it. */
+  private claimPin(sessionId: string): (() => void) | null {
+    const pinned = this.pins.get(sessionId)
+    if (!pinned) return null
+    this.pins.delete(sessionId)
+    return pinned
   }
 
   /** One synthetic note per cut-off point (its id is keyed by the last message), appended, never a rewrite. */

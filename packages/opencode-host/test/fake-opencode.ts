@@ -69,6 +69,7 @@ export function startFake(options: FakeOptions) {
   const requests: string[] = []
   const urls: string[] = []
   let hung = false
+  let failSessionGet = false
   const turnMs = options.defaultTurnMs ?? 50
 
   const save = () => writeFileSync(options.statePath, JSON.stringify(state))
@@ -272,6 +273,7 @@ export function startFake(options: FakeOptions) {
       if (!s) return notFound(m[1] as string)
       const tail = m[2] ?? ''
       if (tail === '' && req.method === 'GET') {
+        if (failSessionGet) return json({ message: 'boom' }, 500)
         return json({
           data: {
             id: s.id,
@@ -328,6 +330,10 @@ export function startFake(options: FakeOptions) {
       for (const run of running.values()) for (const t of run.timers) clearTimeout(t)
       running.clear()
       void server.stop(true)
+    },
+    /** `GET /api/session/:id` answers 500 while set. */
+    failSessionLookups(on: boolean) {
+      failSessionGet = on
     },
     count: (route: string) => requests.filter((r) => r === route).length,
   }

@@ -78,6 +78,20 @@ describe('compileLocation', () => {
   })
 })
 
+test('stray files (.DS_Store) are neither walked into nor removed', () => {
+  const stateDir = scratch()
+  compileLocation({ name: 'a', agentsMd: '1' }, { stateDir })
+  writeFileSync(join(stateDir, 'locations/.DS_Store'), '')
+  writeFileSync(join(stateDir, 'locations/a/.DS_Store'), '')
+  writeFileSync(join(stateDir, 'locations/a/.tmp-file'), '')
+  const old = new Date(Date.now() - 3_600_000)
+  utimesSync(join(stateDir, 'locations/a/.tmp-file'), old, old)
+  expect(pruneLocations({ stateDir, keep: new Set(), retentionMs: 0, now: Date.now() + 1_000 })).toHaveLength(1)
+  expect(sweepStaleTemps({ stateDir })).toEqual([])
+  expect(existsSync(join(stateDir, 'locations/a/.DS_Store'))).toBe(true)
+  expect(existsSync(join(stateDir, 'locations/a/.tmp-file'))).toBe(true)
+})
+
 test('stale temp builds and server.json temps are swept, fresh ones kept', () => {
   const stateDir = scratch()
   compileLocation({ name: 'a', agentsMd: '1' }, { stateDir })

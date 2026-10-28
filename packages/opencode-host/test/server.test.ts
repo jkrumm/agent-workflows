@@ -184,6 +184,22 @@ describe('OpenCodeServer', () => {
     process.kill(pid, 'SIGKILL')
   })
 
+  test('a child of ours that is alive but never answers is terminated on adopt, then replaced', async () => {
+    const dir = scratch()
+    const first = server(dir).s
+    await first.start()
+    const pid = first.pid as number
+    await first.close()
+    servers.splice(servers.indexOf(first), 1)
+    await fetch(`${first.endpoint().baseUrl}/__fake/hang`) // alive, holds the port, answers nothing, ignores SIGTERM
+    const { s, warnings } = server(dir)
+    await s.start()
+    expect(warnings).toContain('opencode server from server.json is alive but not answering; terminating it')
+    expect(alive(pid)).toBe(false)
+    expect(s.pid).not.toBe(pid)
+    expect(JSON.parse(readFileSync(join(dir, 'opencode/server.json'), 'utf8')).pid).toBe(s.pid)
+  })
+
   test('a corrupt server.json fails start with its path, once', async () => {
     const dir = scratch()
     mkdirSync(join(dir, 'opencode'), { recursive: true })
