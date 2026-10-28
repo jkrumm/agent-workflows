@@ -270,9 +270,11 @@ async function runAll<C extends { id: string }, R extends ReviewCaseResult | Che
 ): Promise<R[]> {
   const todo = pending(cases, options.resultsPath)
   if (todo.length < cases.length) options.log?.(`resume: ${cases.length - todo.length} cases already finished`)
+  // The case's position in the full set fixes its side order, so a resumed run alternates as the first did.
+  const position = new Map(cases.map((c, index) => [c.id, index]))
   await pool(todo, options.concurrency, async (c) => {
     // A throw anywhere in a case (materialize, the judge, the matcher) is that case's error; the pool keeps going.
-    const result = await one(c, cases.indexOf(c)).catch((error: unknown) => failed(c, error))
+    const result = await one(c, position.get(c.id) ?? 0).catch((error: unknown) => failed(c, error))
     appendResult(options.resultsPath, result)
     options.log?.(`${result.status.padEnd(7)} ${c.id}${result.reason ? ` (${result.reason})` : ''}`)
   })

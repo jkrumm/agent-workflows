@@ -153,6 +153,38 @@ describe('isolation and scoring of failures', () => {
     expect(agg.cases).toMatchObject({ errors: 1, harnessFailed: 1, scored: 2 })
   })
 
+  test('a judge that throws during the legacy self-match also stays inside its case', async () => {
+    const fx = fixtureHome()
+    const far = reviewOutput({
+      blocking: [
+        {
+          file: 'app.ts',
+          line: 90,
+          message: 'b changed from 2 to 3 breaks the exported constant contract',
+          angle: 'x',
+        },
+      ],
+    })
+    const cases = ['a', 'b'].map((id) => reviewCase({ id, baseSha: fx.baseSha, diff: fx.diff }))
+    let n = 0
+    const legacy = {
+      async review() {
+        return { output: ++n === 1 ? far : reviewOutput(), spend: { costUsd: 0.05, costExact: false, wallMs: 1 } }
+      },
+    }
+    const judge = {
+      sameDefect: async (): Promise<boolean> => {
+        throw new Error('decide 503')
+      },
+    }
+    const results = await runReview(
+      cases,
+      { next: fakeReview(reviewOutput()).runner, legacy, judge },
+      options(fx.home, { concurrency: 1 }),
+    )
+    expect(results.map((r) => r.reason ?? r.status)).toEqual(['harness_failed', 'ok'])
+  })
+
   test('legacy reruns go one at a time whatever the concurrency; inexact costs are counted per side', async () => {
     const fx = fixtureHome()
     const cases = ['a', 'b', 'c', 'd'].map((id) => reviewCase({ id, baseSha: fx.baseSha, diff: fx.diff }))
@@ -242,8 +274,8 @@ describe('report', () => {
     const aggregate = aggregateReview(withRepo)
     const now = '2026-10-28T00:00:00.000Z'
     const md = renderMarkdown({
+      workflow: 'review',
       meta: {
-        workflow: 'review',
         startedAt: now,
         finishedAt: now,
         depthMode: 'matched',

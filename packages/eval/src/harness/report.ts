@@ -6,7 +6,6 @@ import type { RatioSummary } from './stats.ts'
 import type { Verdict } from './verdict.ts'
 
 export interface RunMeta {
-  workflow: 'review' | 'check'
   startedAt: string
   finishedAt: string
   depthMode: 'matched' | 'router'
@@ -17,8 +16,8 @@ export interface RunMeta {
 }
 
 export type Report =
-  | { meta: RunMeta; aggregate: ReviewAggregate; verdict: Verdict; results: ReviewCaseResult[] }
-  | { meta: RunMeta; aggregate: CheckAggregate; verdict: Verdict; results: CheckCaseResult[] }
+  | { workflow: 'review'; meta: RunMeta; aggregate: ReviewAggregate; verdict: Verdict; results: ReviewCaseResult[] }
+  | { workflow: 'check'; meta: RunMeta; aggregate: CheckAggregate; verdict: Verdict; results: CheckCaseResult[] }
 
 export const AGGREGATE_HEADING = '## Aggregate (safe to publish)'
 export const PRIVATE_HEADING = '## Per case (private: messages, paths, repo names)'
@@ -38,7 +37,7 @@ export function writeReport(dir: string, report: Report): void {
 
 export function renderMarkdown(report: Report): string {
   return [
-    `# Eval: ${report.meta.workflow}, new vs agent-gateway`,
+    `# Eval: ${report.workflow}, new vs agent-gateway`,
     '',
     AGGREGATE_HEADING,
     '',
@@ -46,9 +45,7 @@ export function renderMarkdown(report: Report): string {
     '',
     PRIVATE_HEADING,
     '',
-    report.meta.workflow === 'review'
-      ? renderReviewCases(report.results as ReviewCaseResult[])
-      : renderCheckCases(report.results as CheckCaseResult[]),
+    report.workflow === 'review' ? renderReviewCases(report.results) : renderCheckCases(report.results),
     '',
   ].join('\n')
 }
@@ -74,9 +71,7 @@ export function renderAggregate(report: Report): string {
   ]
   return [
     ...lines,
-    ...(report.meta.workflow === 'review'
-      ? reviewAggregateLines(report.aggregate as ReviewAggregate)
-      : checkAggregateLines(report.aggregate as CheckAggregate)),
+    ...(report.workflow === 'review' ? reviewAggregateLines(report.aggregate) : checkAggregateLines(report.aggregate)),
   ].join('\n')
 }
 
