@@ -1,0 +1,12 @@
+{
+  "route": "review.angle",
+  "permissions": {
+    "rules": [
+      {
+        "action": "edit",
+        "resource": "*",
+        "effect": "deny"
+      }
+    ]
+  }
+}
