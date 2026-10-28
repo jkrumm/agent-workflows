@@ -40,7 +40,7 @@ const USAGE = `usage: bun packages/eval/src/harness/cli.ts review|check [flags]
                      recall both reach X (default ${DEFAULT_THRESHOLD}); applied when the rows are read
   --seed N           bootstrap seed (default 1)
   --agw-args="<args>"  review only: extra arguments (whitespace-split) for every \`agw review\` call, e.g.
-                     --agw-args="--angle-variant shell" (the = is required: the value starts with a dash);
+                     --agw-args="--depth deep" (the = is required: the value starts with a dash);
                      recorded in run.json (a resume must repeat it), report.json and the report.md header
 
 self-agreement: reruns one side on every case and writes the raw agreement numbers to

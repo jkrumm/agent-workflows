@@ -38,8 +38,18 @@ order, the last match winning: `{ *, *, deny }`; `allow` for exactly `read`, `gl
 `external_directory` allow per entry of the step's `spec.options.allowDirectories`. Anything else is refused, an action
 that ships in a later OpenCode too. An opt-in is an `allow` rule in the agent's `agent.json`, which comes after the
 host's deny and wins: `{ "action": "webfetch" | "websearch" | "subagent" | "edit" | "execute", "resource": "*",
-"effect": "allow" }`. Server-wide, `question` and `external_directory` are denied, so an unattended session never
-blocks on an `ask`. A subagent runs under its own permissions (OpenCode's built-in `general` allows shell and edit),
+"effect": "allow" }`. `spec.options` is strict: a key other than `route`, `output` and `allowDirectories` (a typo, a
+removed option such as `repoShell`) fails the step before a session exists, so a rule a caller counts on is never
+silently absent. Server-wide the same `basePolicy` (catch-all deny, then the four read-only allows) is the backstop,
+followed by `question` and `external_directory` denied, so an unattended session never blocks on an `ask` and a session
+made without rules, or by anything but the host, is not allow-all. **A session from before a deploy.** A session keeps the rules it was created with, and `createSession` with an existing id
+returns that session unchanged (measured). So `open` patches the current policy onto a session it found already there
+(a retry re-attaching to a running attempt, a crash between create and prompt) and a fallback session always, with
+`PATCH /api/session/{id}`; a fresh session is never patched. A deploy restarts the server, so the backstop above applies to
+those sessions at once anyway; the patch makes their own rules current too. Remaining window: none for a session the
+host opens or re-attaches; a session that is never opened again keeps its stored rules under the server backstop.
+
+A subagent runs under its own permissions (OpenCode's built-in `general` allows shell and edit),
 which is why `subagent` is off unless an agent opts in; so is `execute` (Code Mode).
 
 **Measured on 2.0.32** (`test/live-permissions.test.ts`, `AGW_LIVE=1`, the cheapest route, under $0.01 for the file):
@@ -50,6 +60,8 @@ which is why `subagent` is off unless an agent opts in; so is `execute` (Code Mo
 | Action names | the tool name, except `edit` covers both the `edit` and the `write` tool. Denying `read`, or `glob`, `grep` and `skill`, removes exactly that tool, so none of the four is allowed by another's rule |
 | A denied tool | is **not in the model's tool list at all** (the model answers "no webfetch tool is available"); a call to it anyway ends `No tool named "…" is currently available` and the turn goes on. `webfetch`, `websearch`, `subagent`, `edit`, `write`, `shell` and `execute` were each refused this way; no file was written |
 | Opt-in | `edit` adds `edit` and `write`; `websearch`, `subagent`, `execute` and `shell` add the tool of their name. An agent with only `webfetch: allow` completed a `webfetch`, and its `websearch` was still refused |
+| Server backstop | session rules win over the server's catch-all deny: with `basePolicy` in the server config, an agent with `webfetch: allow` still completed a `webfetch`, and the `edit`, `websearch`, `subagent`, `execute` and `shell` opt-ins still added their tools (`test/live-permissions.test.ts`, run with the backstop in place) |
+| `PATCH /api/session/{id}` | `{ permissions }` **replaces** the session's rules (read back with `GET`: equal to what was sent, nothing appended) and the next turn uses them: widened with `webfetch` + `shell`, the tool list gained both; narrowed again, it lost both |
 | Code Mode (`execute`) | its catalog holds MCP, browser and OpenCode session/worktree tools, never the built-in ones: with everything allowed (`* allow`) a `read` from `execute` is not found either. Under this policy, even with `execute` opted in, the catalog is empty ("No Code Mode tools are available") and nothing denied is reachable. Same result as agent-gateway's on 2.0.25. MCP servers: none configured; one would be refused by the catch-all until an agent allows it |
 
 `allowDirectories: string[]` is how a step lets its agent read a repository the agent's own location is not in
@@ -113,6 +125,10 @@ no extra path rules are needed.
 
 ### Accepted risk: one server, one key, shell reach
 
+**The `check` agent's boundary is its shell.** It runs with `permissions.shell: true`; the `edit` and `write` tools are
+refused, but a shell can still write any file the user can (`echo > file`, `git checkout`, …). Nothing in the policy
+confines it; the boundary is the agent's prompt and the throwaway tree it is pointed at.
+
 One server and one IU key serve every agent; the server's env holds the key and the server password, as
 agent-gateway's shared server does today. A shell-capable agent can read anything the user can (the password file,
 the key in the server's env through `ps`, the user's files by absolute path). Mitigations: the shell tool is denied
@@ -131,7 +147,7 @@ tool is denied unless an agent opts in, and the key is an ingest key.
 `.opencode/skills/<path>`, `def.config` as `opencode.json`, and `.agw-location.json`. A hash directory is written
 once (built beside it, renamed into place) and never changed; a changed agent is a new directory, so a running
 session's files are never touched. It throws `LocationLeakError` when any ancestor holds an `AGENTS.md`, a
-`CLAUDE.md` or a `.git`. `locationHash(def)` (content and permissions) is the fingerprint input.
+`CLAUDE.md` or a `.git`. `locationHash(def)` (content, permissions and the host's `basePolicy`, so changing the default moves every agent's hash) is the location input. The *run* fingerprint (`fsFingerprintSource`, middleware) reads only `AGENTS.md` and `skills/**`: `agent.json` and the base policy are not in it yet, so an eval arm that differs only in permissions needs `--agw-args` or a prompt change to be told apart.
 
 **Pruning** (`maintain()`, every `locations.tickMs`, 60 s): a hash directory goes when it is not the agent's current
 one, not known to the warm cache, not the location of a session the server runs (`GET /api/session/active`), and

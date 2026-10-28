@@ -7,6 +7,7 @@ import {
   routeIds,
 } from '@agent-workflows/routes'
 import type { ModelRef } from './client.ts'
+import { basePolicy } from './locations.ts'
 
 type Env = Record<string, string | undefined>
 
@@ -108,8 +109,11 @@ function modelRow(route: ResolvedRoute, provider: string) {
 /**
  * `OPENCODE_CONFIG_CONTENT`: the three IU providers with every `opencode`-wire route's model and its fallback's, no
  * updates, no share.
- * Unattended sessions must never block on a question: `question` is denied and so is `external_directory` (its
- * base policy is `ask`). An agent's own rules go in its location's `opencode.json` (`AgentDefinition.config`).
+ * The server policy is deny by default as the sessions' are (`basePolicy`: catch-all deny, then the read-only tools), so
+ * a session created without rules, or by something other than the host, is not allow-all. A session's own rules come
+ * after it and win (measured on 2.0.32, `test/live-permissions.test.ts`). Unattended sessions must never block on a
+ * question: `question` is denied and so is `external_directory` (its base policy is `ask`). An agent's own rules go in
+ * its location's `opencode.json` (`AgentDefinition.config`).
  */
 export function buildServerConfig(env: Env = process.env): Record<string, unknown> {
   const models: Record<string, Record<string, unknown>> = {
@@ -132,6 +136,7 @@ export function buildServerConfig(env: Env = process.env): Record<string, unknow
     update: 'disable',
     share: 'disabled',
     permissions: [
+      ...basePolicy(),
       { action: 'question', resource: '*', effect: 'deny' },
       { action: 'external_directory', resource: '*', effect: 'deny' },
     ],

@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { AgentDefinition, PermissionRule } from '../src/index.ts'
-import { createClient, type OpenCodeHandle, OpenCodeHost, OpenCodeServer } from '../src/index.ts'
+import { createClient, type OpenCodeHandle, OpenCodeHost, OpenCodeServer, sessionPermissions } from '../src/index.ts'
 
 // Measures, on the real `opencode` 2.0.32 on the cheapest route, what the deny-by-default session policy
 // (`sessionPermissions`) lets through: read, glob, grep and skill work; webfetch, websearch, subagent, edit, write,
@@ -15,6 +15,30 @@ const name = 'live: deny-by-default permissions refuse every non-read tool, an o
 const AGENTS_MD = '# Rules\n\nFollow the instructions exactly. A refused tool call is expected: report it and go on.\n'
 const SKILL =
   '---\nname: probe-skill\ndescription: A probe skill; load it when asked.\n---\nThe skill word is KUMQUAT.\n'
+
+const KNOWN_TOOLS = [
+  'edit',
+  'execute',
+  'glob',
+  'grep',
+  'question',
+  'read',
+  'shell',
+  'skill',
+  'subagent',
+  'webfetch',
+  'websearch',
+  'write',
+]
+
+/** The tool names on the answer's first line (a model that adds a remark after the list does not change the set). */
+function toolNames(answer: string): string[] {
+  const first = answer.split('\n').find((line) => line.trim() !== '') ?? ''
+  return first
+    .split(/[\s,]+/)
+    .map((word) => word.replace(/[^a-z]/g, ''))
+    .filter((word) => KNOWN_TOOLS.includes(word))
+}
 
 type ToolCall = { tool: string; status: string; input: string; reason: string }
 
@@ -82,6 +106,8 @@ test.skipIf(!live)(
     const repo = join(root, 'repo')
     mkdirSync(repo)
     writeFileSync(join(repo, 'top.txt'), 'TOKEN-TOP-4417\n')
+    // Where Code Mode would write if it could; inside the throwaway root, so a leak never lands in the shared /tmp.
+    const canary = join(root, 'execute-canary.txt')
     try {
       const restricted = await run(
         { name: 'restricted' },
@@ -98,7 +124,7 @@ test.skipIf(!live)(
           `8. edit the file ${join(repo, 'top.txt')}: replace TOKEN with CHANGED`,
           `9. write the text "probe" to the new file ${join(repo, 'new.txt')}`,
           '10. use the shell tool to run: echo hi',
-          '11. use the execute tool (Code Mode) with code that calls the webfetch tool on https://example.com and the write tool to create /tmp/agw-execute-probe.txt, and return what happened',
+          `11. use the execute tool (Code Mode) with code that calls the webfetch tool on https://example.com and the write tool to create ${canary}, and return what happened`,
           'Then answer with one line per call: its number and OK or REFUSED. Nothing else.',
         ].join('\n'),
       )
@@ -110,7 +136,7 @@ test.skipIf(!live)(
         [
           'Make exactly these tool calls, one after the other, even if one is refused:',
           '1. webfetch https://example.com',
-          '2. websearch for "opencode terminal agent"',
+          '2. websearch for "opencode terminal agent". The websearch tool may be missing from your tool list: call it anyway, by that name, and report the exact error you get.',
           'Then answer with one line per call: its number and OK or REFUSED. Nothing else.',
         ].join('\n'),
       )
@@ -121,7 +147,7 @@ test.skipIf(!live)(
           { name: 'lister', permissions: { rules } },
           { allowDirectories: [repo] },
           'Do not call any tool. List the exact names of every tool available to you, comma separated, in alphabetical order, nothing else.',
-        ).then((r) => r.answer.split(/[\s,]+/).filter(Boolean))
+        ).then((r) => toolNames(r.answer))
       const rule = (action: string, effect: PermissionRule['effect']): PermissionRule => ({
         action,
         resource: '*',
@@ -144,7 +170,7 @@ test.skipIf(!live)(
         { name: 'executor', permissions: { rules: [rule('execute', 'allow')] } },
         { allowDirectories: [repo] },
         [
-          `Use the execute tool (Code Mode) once, with code that tries, each in its own try/catch, to: call the read tool on ${join(repo, 'top.txt')}; call the webfetch tool on https://example.com; call the write tool to create /tmp/agw-execute-probe.txt with the text "probe"; call the shell tool with the command "echo hi". Return what each attempt did.`,
+          `Use the execute tool (Code Mode) once, with code that tries, each in its own try/catch, to: call the read tool on ${join(repo, 'top.txt')}; call the webfetch tool on https://example.com; call the write tool to create ${canary} with the text "probe"; call the shell tool with the command "echo hi". Return what each attempt did.`,
           'Then answer with one line per attempt: WORKED or REFUSED, plus the error text. Nothing else.',
         ].join('\n'),
       )
@@ -159,26 +185,58 @@ test.skipIf(!live)(
       const files = {
         top: readFileSync(join(repo, 'top.txt'), 'utf8'),
         newFileExists: existsSync(join(repo, 'new.txt')),
-        executeFile: existsSync('/tmp/agw-execute-probe.txt'),
+        executeFile: existsSync(canary),
       }
       console.log(`live permissions files ${JSON.stringify(files)}`)
       // Measured 2026-10-28 on 2.0.32 (check route, well under $0.01 for the whole file): a denied tool is not in the
       // model's tool list at all, and a call to it anyway ends in "No tool named … is currently available" without
       // ending the turn. Code Mode's catalog holds MCP, browser and OpenCode session tools, never the built-in ones (not even `read` with
       // everything allowed: the control run), and under this policy it is empty: `execute` reaches no denied tool.
+      const ALLOWED = ['glob', 'grep', 'read', 'skill']
       const names = (calls: ToolCall[]) => [...new Set(calls.map((t) => t.tool))].sort()
-      expect(names(restricted.tools)).toEqual(['glob', 'grep', 'read', 'skill'])
-      expect(restricted.tools.every((t) => t.status === 'completed')).toBe(true)
+      // A model may skip a prompted call, so these are per-tool facts: whatever it did call, the allowed tools
+      // completed and every other one failed; and it did use the read tool.
+      expect(restricted.tools.map((t) => t.tool)).toContain('read')
+      expect(restricted.tools.filter((t) => ALLOWED.includes(t.tool)).every((t) => t.status === 'completed')).toBe(true)
+      expect(restricted.tools.filter((t) => !ALLOWED.includes(t.tool)).every((t) => t.status === 'error')).toBe(true)
       expect(optIn.tools.find((t) => t.tool === 'webfetch')?.status).toBe('completed')
-      expect(optIn.tools.find((t) => t.tool === 'websearch')?.status).not.toBe('completed')
-      expect(listings.baseline).toEqual(['glob', 'grep', 'read', 'skill'])
-      expect(listings.withoutGlobGrepSkill).toEqual(['read'])
-      expect(listings.withoutRead).toEqual(['glob', 'grep', 'skill'])
-      expect(listings.optInEdit).toEqual(['edit', 'glob', 'grep', 'read', 'skill', 'write'])
-      expect(listings.optInWebsearch).toEqual(['glob', 'grep', 'read', 'skill', 'websearch'])
-      expect(listings.optInSubagent).toEqual(['glob', 'grep', 'read', 'skill', 'subagent'])
-      expect(listings.optInExecute).toEqual(['execute', 'glob', 'grep', 'read', 'skill'])
-      expect(listings.optInShell).toEqual(['glob', 'grep', 'read', 'shell', 'skill'])
+      const search = optIn.tools.find((t) => t.tool === 'websearch')
+      expect(search).toBeDefined() // attempted, not merely absent from the answer
+      expect(search?.status).toBe('error')
+      expect(search?.reason).toContain('No tool named')
+      const lists = (listing: string[], has: string[], lacks: string[]) => {
+        for (const tool of has) expect(listing).toContain(tool)
+        for (const tool of lacks) expect(listing).not.toContain(tool)
+      }
+      const DENIED = ['edit', 'write', 'shell', 'webfetch', 'websearch', 'subagent', 'execute']
+      lists(listings.baseline, ALLOWED, DENIED)
+      lists(listings.withoutGlobGrepSkill, ['read'], ['glob', 'grep', 'skill', ...DENIED])
+      lists(listings.withoutRead, ['glob', 'grep', 'skill'], ['read', ...DENIED])
+      lists(
+        listings.optInEdit,
+        [...ALLOWED, 'edit', 'write'],
+        ['shell', 'webfetch', 'websearch', 'subagent', 'execute'],
+      )
+      lists(
+        listings.optInWebsearch,
+        [...ALLOWED, 'websearch'],
+        ['edit', 'write', 'shell', 'webfetch', 'subagent', 'execute'],
+      )
+      lists(
+        listings.optInSubagent,
+        [...ALLOWED, 'subagent'],
+        ['edit', 'write', 'shell', 'webfetch', 'websearch', 'execute'],
+      )
+      lists(
+        listings.optInExecute,
+        [...ALLOWED, 'execute'],
+        ['edit', 'write', 'shell', 'webfetch', 'websearch', 'subagent'],
+      )
+      lists(
+        listings.optInShell,
+        [...ALLOWED, 'shell'],
+        ['edit', 'write', 'webfetch', 'websearch', 'subagent', 'execute'],
+      )
       expect(names(executeOnly.tools).filter((t) => ['webfetch', 'write', 'edit', 'shell'].includes(t))).toEqual([])
       expect(files).toEqual({ top: 'TOKEN-TOP-4417\n', newFileExists: false, executeFile: false })
     } finally {
@@ -186,4 +244,70 @@ test.skipIf(!live)(
     }
   },
   900_000,
+)
+
+const patch = 'live: PATCH /api/session/{id} swaps a session’s permissions between turns'
+
+test.skipIf(!live)(
+  live ? patch : `${patch} (skipped: runs only with AGW_LIVE=1)`,
+  async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'och-live-'))
+    const server = new OpenCodeServer({ stateDir, livenessIntervalMs: 1_000 })
+    const host = new OpenCodeHost({
+      server,
+      stateDir,
+      agents: [{ name: 'patched', route: 'check', agentsMd: AGENTS_MD }],
+    })
+    const ask =
+      'Do not call any tool. List the exact names of every tool available to you, comma separated, in alphabetical order, nothing else.'
+    try {
+      await server.start()
+      const client = createClient(() => server.endpoint())
+      const handle = (await host.open({
+        runId: 'live',
+        stepId: 'patched',
+        key: 'live:patched',
+        agent: 'patched',
+        prompt: '',
+      })) as OpenCodeHandle
+      const turn = async (id: string) => {
+        await client.prompt(handle.sessionId, { id, text: ask })
+        for (let calm = 0; calm < 3; ) {
+          const [messages, active] = await Promise.all([client.messages(handle.sessionId), client.active()])
+          calm = !active.has(handle.sessionId) && messages.at(-1)?.type === 'idle' ? calm + 1 : 0
+          await Bun.sleep(300)
+        }
+        const text = (await client.messages(handle.sessionId))
+          .filter((m) => m.type === 'assistant')
+          .flatMap((m) => (m.content ?? []).filter((p) => p.type === 'text').map((p) => p.text ?? ''))
+        return toolNames(text.at(-1) ?? '')
+      }
+      const created = await turn('msg_agwp_patch1')
+      const wider = sessionPermissions({
+        name: 'patched',
+        agentsMd: '',
+        permissions: { shell: true, rules: [{ action: 'webfetch', resource: '*', effect: 'allow' }] },
+      })
+      await client.updateSession(handle.sessionId, { permissions: wider })
+      const widened = await turn('msg_agwp_patch2')
+      const storedWider = (await client.getSession(handle.sessionId))?.permissions
+      const narrow = sessionPermissions({ name: 'patched', agentsMd: '' })
+      await client.updateSession(handle.sessionId, { permissions: narrow })
+      const restored = await turn('msg_agwp_patch3')
+      const storedNarrow = (await client.getSession(handle.sessionId))?.permissions
+      console.log(`live permissions patch ${JSON.stringify({ created, widened, restored, storedNarrow }, null, 2)}`)
+      expect(created).not.toContain('webfetch')
+      expect(widened).toContain('webfetch') // the next turn after the PATCH reads the new rules
+      expect(widened).toContain('shell')
+      expect(restored).not.toContain('webfetch')
+      expect(restored).not.toContain('shell')
+      expect(storedWider).toEqual(wider)
+      expect(storedNarrow).toEqual(narrow) // replaced, not appended
+    } finally {
+      host.close()
+      await server.close({ stop: true })
+      rmSync(stateDir, { recursive: true, force: true })
+    }
+  },
+  600_000,
 )

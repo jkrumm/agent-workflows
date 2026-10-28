@@ -306,6 +306,11 @@ describe('buildServerConfig', () => {
     for (const row of rows) expect(row.cost).toBeDefined()
     for (const p of Object.values(config.providers)) expect(p.settings.apiKey).toBe('{env:IU_KEY}')
     expect(config.permissions.map((r) => `${r.action}:${r.effect}`)).toEqual([
+      '*:deny',
+      'read:allow',
+      'glob:allow',
+      'grep:allow',
+      'skill:allow',
       'question:deny',
       'external_directory:deny',
     ])

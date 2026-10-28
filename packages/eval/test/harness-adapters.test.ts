@@ -66,7 +66,7 @@ describe('agw adapter', () => {
       journal: noJournal,
       journalAttempts: 1,
       sleep: async () => {},
-      args: ['--angle-variant', 'shell'],
+      args: ['--depth', 'deep'],
     }).review({
       cwd: '/x',
       context: 'c',
@@ -79,8 +79,8 @@ describe('agw adapter', () => {
       'uncommitted',
       '--context',
       'c',
-      '--angle-variant',
-      'shell',
+      '--depth',
+      'deep',
       '--format',
       'json',
     ])
@@ -308,13 +308,13 @@ describe('cli', () => {
       reviewCase({ id: 'a', baseSha: fx.baseSha, diff: fx.diff }),
     ])
     const dry: string[] = []
-    await main(['review', '--dry-run', '--agw-args=--angle-variant shell'], {
+    await main(['review', '--dry-run', '--agw-args=--depth deep'], {
       env,
       exec,
       out: (l) => dry.push(l),
       err: () => {},
     })
-    expect(dry.join('\n')).toContain('agw args --angle-variant shell')
+    expect(dry.join('\n')).toContain('agw args --depth deep')
 
     const agwCalls: string[][] = []
     const fake: Exec = async (cmd, args, options) => {
@@ -326,7 +326,7 @@ describe('cli', () => {
       return { code: 1, stdout: '', stderr: 'no journal in this test' }
     }
     const out: string[] = []
-    const code = await main(['review', '--agw-args=  --angle-variant   shell '], {
+    const code = await main(['review', '--agw-args=  --depth   deep '], {
       env: { ...env, AGW_EVAL_PG_PASSWORD: 'x' },
       exec: fake,
       out: (l) => out.push(l),
@@ -335,14 +335,11 @@ describe('cli', () => {
     })
     expect(code).toBe(0)
     expect(agwCalls).toHaveLength(1)
-    expect(agwCalls[0]?.slice(-4)).toEqual(['--angle-variant', 'shell', '--format', 'json'])
+    expect(agwCalls[0]?.slice(-4)).toEqual(['--depth', 'deep', '--format', 'json'])
     const dir = join(evalDir, 'reports', readdirSync(join(evalDir, 'reports'))[0] as string)
-    expect(JSON.parse(readFileSync(join(dir, 'report.json'), 'utf8')).meta.agwArgs).toEqual([
-      '--angle-variant',
-      'shell',
-    ])
-    expect(readFileSync(join(dir, 'report.md'), 'utf8')).toContain('agw args `--angle-variant shell`')
-    expect(out.join('\n')).toContain('agw args `--angle-variant shell`')
+    expect(JSON.parse(readFileSync(join(dir, 'report.json'), 'utf8')).meta.agwArgs).toEqual(['--depth', 'deep'])
+    expect(readFileSync(join(dir, 'report.md'), 'utf8')).toContain('agw args `--depth deep`')
+    expect(out.join('\n')).toContain('agw args `--depth deep`')
   })
 
   test('--agw-args on check is a usage error: nothing runs', async () => {
@@ -385,18 +382,18 @@ describe('cli', () => {
       out: () => {},
       err: (l: string) => err.push(l),
     })
-    expect(await main(['review', '--agw-args=--angle-variant shell'], deps())).toBe(0)
+    expect(await main(['review', '--agw-args=--depth deep'], deps())).toBe(0)
     const dir = join(evalDir, 'reports', readdirSync(join(evalDir, 'reports'))[0] as string)
-    expect(JSON.parse(readFileSync(join(dir, 'run.json'), 'utf8'))).toEqual({ agwArgs: ['--angle-variant', 'shell'] })
+    expect(JSON.parse(readFileSync(join(dir, 'run.json'), 'utf8'))).toEqual({ agwArgs: ['--depth', 'deep'] })
 
     const err: string[] = []
-    expect(await main(['review', '--resume', dir, '--agw-args=--angle-variant callers'], deps(err))).toBe(2)
-    expect(err.join('\n')).toContain('--angle-variant shell')
-    expect(err.join('\n')).toContain('--angle-variant callers')
+    expect(await main(['review', '--resume', dir, '--agw-args=--depth light'], deps(err))).toBe(2)
+    expect(err.join('\n')).toContain('--depth deep')
+    expect(err.join('\n')).toContain('--depth light')
     expect(await main(['review', '--resume', dir], deps(err))).toBe(2) // none given, one stored
     expect(agwRuns).toBe(1)
 
-    expect(await main(['review', '--resume', dir, '--agw-args=--angle-variant shell'], deps())).toBe(0)
+    expect(await main(['review', '--resume', dir, '--agw-args=--depth deep'], deps())).toBe(0)
     expect(agwRuns).toBe(1) // the finished case was skipped
   })
 

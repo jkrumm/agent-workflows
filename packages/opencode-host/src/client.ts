@@ -136,17 +136,31 @@ export function createClient(endpoint: () => Endpoint, options: ClientOptions = 
       return (await json<{ data: { id: string } }>(res, 'POST /api/session')).data
     },
 
+    /** `PATCH /api/session/{id}`: replaces the session's permissions (measured on 2.0.32, `test/live-permissions.test.ts`). */
+    async updateSession(
+      id: string,
+      body: { permissions: PermissionRule[] },
+      headers?: Record<string, string>,
+    ): Promise<void> {
+      await ok(await call('PATCH', session(id), { body, headers }), 'PATCH /api/session/{id}')
+    },
+
     /** The session, or null when the server does not know it (404). */
     async getSession(
       id: string,
       headers?: Record<string, string>,
-    ): Promise<{ id: string; location: { directory: string } } | null> {
+    ): Promise<{ id: string; location: { directory: string }; permissions?: PermissionRule[] } | null> {
       const res = await call('GET', session(id), { headers })
       if (res.status === 404) {
         await res.body?.cancel()
         return null
       }
-      return (await json<{ data: { id: string; location: { directory: string } } }>(res, 'GET /api/session/{id}')).data
+      return (
+        await json<{ data: { id: string; location: { directory: string }; permissions?: PermissionRule[] } }>(
+          res,
+          'GET /api/session/{id}',
+        )
+      ).data
     },
 
     /** The newest `limit` messages, newest first: one request, the incremental read. */

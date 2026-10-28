@@ -240,6 +240,80 @@ describe('open / prompt / wait', () => {
   })
 })
 
+describe('re-attach applies the current policy', () => {
+  const OLD = [{ action: 'shell', resource: '*', effect: 'deny' }]
+  const stored = (t: ReturnType<typeof setup>, handle: Json) => t.fake.state.sessions[sid(handle)]
+
+  test('a fresh session is created with the policy and never patched', async () => {
+    const t = setup()
+    const handle = await t.host.open(spec('x', { allowDirectories: ['/tmp/repo'] }))
+    expect(stored(t, handle)?.permissions).toEqual(sessionPermissions(AGENT, ['/tmp/repo']))
+    expect(stored(t, handle)?.permissionUpdates).toBeUndefined()
+  })
+
+  test('an unprompted session made before the deploy (old, allow-all policy) gets the current one on open', async () => {
+    const t = setup()
+    const first = await t.host.open(spec('x', { allowDirectories: ['/tmp/repo'] }))
+    ;(stored(t, first) as { permissions: unknown[] }).permissions = OLD
+    const again = await t.host.open(spec('x', { allowDirectories: ['/tmp/repo'] }))
+    expect(sid(again)).toBe(sid(first))
+    expect(stored(t, again)?.permissions).toEqual(sessionPermissions(AGENT, ['/tmp/repo']))
+    expect(stored(t, again)?.permissionUpdates).toBe(1)
+  })
+
+  test('a running session of an earlier attempt, re-attached, gets it too', async () => {
+    const t = setup({ turnMs: 400 })
+    const first = await t.host.open(spec('x'))
+    ;(stored(t, first) as { permissions: unknown[] }).permissions = OLD
+    await t.host.prompt(first, '[tool:read] the task')
+    const retry = await t.host.open(spec('x'))
+    expect(sid(retry)).toBe(sid(first))
+    expect(stored(t, retry)?.permissions).toEqual(sessionPermissions(AGENT))
+    await t.host.wait(retry, waitOptions())
+  })
+})
+
+describe('step options', () => {
+  test.each([
+    ['a removed option', { repoShell: true }, '"repoShell"'],
+    ['a typo', { allowDirectorys: ['/work/repo'] }, '"allowDirectorys"'],
+    ['two unknown keys', { a: 1, b: 2 }, '"a", "b"'],
+  ])('%s fails the step before a session exists, naming the key', async (_name, options, named) => {
+    const t = setup()
+    const message = await failure(t.host.open(spec('x', options)))
+    expect(message).toContain('unknown option')
+    expect(message).toContain(named)
+    expect(Object.keys(t.fake.state.sessions)).toEqual([])
+  })
+
+  test.each([
+    ['a string', 'json'],
+    ['an array', ['json']],
+  ])('%s is not an options object', async (_name, options) => {
+    const t = setup()
+    expect(await failure(t.host.open(spec('x', options as Json)))).toContain('options must be an object')
+  })
+
+  test('the known options are accepted', async () => {
+    const t = setup()
+    await t.host.open(spec('x', { route: 'check', output: 'json', allowDirectories: ['/tmp/repo'] }))
+  })
+})
+
+describe('a handle persisted before repoShell was removed', () => {
+  test('still loads, and the fallback session ignores the field', async () => {
+    const t = setup()
+    const fresh = (await t.host.open(spec('x', { allowDirectories: ['/tmp/repo'] }))) as OpenCodeHandle
+    const handle = { ...fresh, repoShell: true } as Json
+    await t.host.prompt(handle, '[balance] review this')
+    expect((await t.host.wait(handle, waitOptions())).output).toBe('echo: [balance] review this')
+    const [primary, fallback] = Object.values(t.fake.state.sessions)
+    expect(fallback?.permissions).toEqual(sessionPermissions(AGENT, ['/tmp/repo']))
+    expect(fallback?.permissions).toEqual(primary?.permissions)
+    expect(JSON.stringify(fallback?.permissions)).not.toContain('git -C')
+  })
+})
+
 describe('allowDirectories', () => {
   const perms = (t: ReturnType<typeof setup>, handle: Json) =>
     (t.fake.state.sessions[sid(handle)] as { permissions?: unknown }).permissions

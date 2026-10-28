@@ -10,3 +10,5 @@ OTEL_EXPORTER_OTLP_ENDPOINT=op://mini/agent-workflows/OTEL_EXPORTER_OTLP_ENDPOIN
 OTEL_EXPORTER_OTLP_AUTHORIZATION=op://vps/argo/HYPERDX_API_KEY_PROD
 # Journal database password; launch.sh builds AGW_PG_URL from it (the way `make check` builds AGW_TEST_PG_URL).
 AGW_PG_PASSWORD=op://mini/vps-dev/AGENT_WORKFLOWS_DB_PASSWORD
+# Where the friction job files issues (plain value, not a secret: passes through secrets-run as is).
+AGW_FRICTION_REPO=jkrumm/agent-workflows
