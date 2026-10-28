@@ -221,6 +221,37 @@ const withAccepted = <T extends { parameters?: readonly object[]; responses?: Re
   },
 })
 
+/**
+ * The run state's `output` is `z.unknown()` on the wire (a stored run of an older version must still be readable), so
+ * the generated document would leave the workflow's output untyped. The workflow's own output schema is written into
+ * the document here instead, which is where `agw schema <workflow>` reads it.
+ */
+function withOutputType<T extends { responses?: Record<string, unknown> }>(operation: T, output: z.ZodType): T {
+  const response = operation.responses?.['200'] as
+    | { content?: Record<string, { schema?: { properties?: Record<string, unknown> } }> }
+    | undefined
+  const json = response?.content?.['application/json']
+  if (!response || !json?.schema?.properties) return operation
+  const { $schema: _, ...schema } = z.toJSONSchema(output, { io: 'output', unrepresentable: 'any' })
+  const typed = { ...schema, description: "The workflow's output, once done" }
+  return {
+    ...operation,
+    responses: {
+      ...operation.responses,
+      '200': {
+        ...response,
+        content: {
+          ...response.content,
+          'application/json': {
+            ...json,
+            schema: { ...json.schema, properties: { ...json.schema.properties, output: typed } },
+          },
+        },
+      },
+    },
+  }
+}
+
 function buildWorkflow(
   entry: HostWorkflow,
   input: z.ZodObject,
@@ -253,7 +284,7 @@ function buildWorkflow(
       operationId: operationIdOf(workflow.id),
       summary: entry.summary ?? `Run ${workflow.id}`,
       tags: ['workflows'],
-      spec: (operation) => withCli(cli)(withAccepted(operation, headers)),
+      spec: (operation) => withCli(cli)(withAccepted(withOutputType(operation, workflow.output), headers)),
     })
     .input(input.strict()) // an unknown key is a 400, never silently dropped
     .output(RunStateSchema)

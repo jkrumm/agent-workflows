@@ -83,7 +83,7 @@ async function bothSides<T>(index: number, next: () => Promise<T>, legacy?: () =
   return { next: nextResult, legacy: legacyResult }
 }
 
-async function withTree<R>(
+export async function withTree<R>(
   options: HarnessOptions,
   input: { repo: string; baseSha: string; patch?: string },
   setup: boolean,

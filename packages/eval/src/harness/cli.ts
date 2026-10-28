@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { isAbsolute, join } from 'node:path'
 import { parseArgs } from 'node:util'
 import { CheckCase, casesPath, evalDir, ReviewCase, readCases } from '../cases.ts'
 import { agwCheckRunner, agwJudge, agwReviewRunner, psqlJournal } from './adapters/agw.ts'
@@ -9,10 +9,21 @@ import { aggregateCheck, aggregateReview } from './aggregate.ts'
 import { type Exec, exec as realExec } from './exec.ts'
 import { cleanup, commandLine, materialize, setupSteps } from './materialize.ts'
 import { type Report, renderAggregate, writeReport } from './report.ts'
+import {
+  DEFAULT_THRESHOLD,
+  readRows,
+  reproducibilityPath,
+  reproducibleCases,
+  type SelfAgreementOptions,
+  type Side,
+  selfAgreementCheck,
+  selfAgreementReview,
+} from './reproducibility.ts'
 import { type HarnessOptions, requestedDepth, runCheck, runReview } from './run.ts'
 import { checkVerdict, reviewVerdict } from './verdict.ts'
 
 const USAGE = `usage: bun packages/eval/src/harness/cli.ts review|check [flags]
+       bun packages/eval/src/harness/cli.ts self-agreement review|check [flags]
 
   --ids a,b          only these case ids
   --limit N          the first N cases (after --ids)
@@ -22,11 +33,20 @@ const USAGE = `usage: bun packages/eval/src/harness/cli.ts review|check [flags]
   --depth router     let the new review's router pick the depth (default: the legacy run's recorded depth)
   --dry-run          materialize every case, print the plan and an IU estimate; calls neither side
   --keep             keep the case clones
-  --resume <dir>     continue a run in <evalDir>/reports/<ts>; finished cases are skipped
+  --resume <run>     continue a run; finished cases are skipped. <run> is an absolute directory or a timestamp
+                     (2026-10-28T09-00-00-000Z) resolved under <evalDir>/reports; anything else is an error
   --seed N           bootstrap seed (default 1)
   --agw-args="<args>"  review only: extra arguments (whitespace-split) for every \`agw review\` call, e.g.
                      --agw-args="--angle-variant shell" (the = is required: the value starts with a dash);
                      recorded in run.json (a resume must repeat it), report.json and the report.md header
+
+self-agreement: reruns one side on every case and writes $AGW_EVAL_DIR/<workflow>/reproducibility.jsonl;
+review|check then score blocking recall (check: failure recall) on the reproducible cases only.
+  --side legacy|new  the side to rerun (default legacy: the recorded findings are legacy's)
+  --runs N           reruns per case (default 2, at least 2); compared with each other and with the recorded run
+  --threshold X      a case is reproducible when outcome agreement and blocking recall are both >= X (default ${DEFAULT_THRESHOLD})
+  also: --ids --limit --concurrency --judge --depth --keep (the new side takes --agw-args for review)
+  Cases already measured for this side with as many reruns are skipped; delete the file to measure again.
 
 Case repos resolve under $AGW_EVAL_HOME (default $HOME).
 Cases: $AGW_EVAL_DIR/<workflow>/cases.jsonl. Reports: $AGW_EVAL_DIR/reports/<ts>/{results.jsonl,report.json,report.md}.`
@@ -55,10 +75,14 @@ function parse(argv: string[]) {
       resume: { type: 'string' },
       seed: { type: 'string', default: '1' },
       'agw-args': { type: 'string' },
+      side: { type: 'string', default: 'legacy' },
+      runs: { type: 'string', default: '2' },
+      threshold: { type: 'string', default: String(DEFAULT_THRESHOLD) },
       help: { type: 'boolean', short: 'h', default: false },
     },
   })
-  const workflow = positionals[0]
+  const selfAgreement = positionals[0] === 'self-agreement'
+  const workflow = selfAgreement ? positionals[1] : positionals[0]
   const int = (name: string, raw: string | undefined, min: number) => {
     if (raw === undefined) return undefined
     const n = Number(raw)
@@ -67,7 +91,17 @@ function parse(argv: string[]) {
   }
   if (values.depth !== 'matched' && values.depth !== 'router') throw new Error('--depth must be matched or router')
   const depthMode: 'matched' | 'router' = values.depth === 'router' ? 'router' : 'matched'
+  if (values.side !== 'legacy' && values.side !== 'new') throw new Error('--side must be legacy or new')
+  const side: Side = values.side === 'new' ? 'new' : 'legacy'
+  const threshold = Number(values.threshold)
+  if (!Number.isFinite(threshold) || threshold < 0 || threshold > 1) {
+    throw new Error(`--threshold must be a number from 0 to 1, got ${values.threshold}`)
+  }
   return {
+    selfAgreement,
+    side,
+    runs: int('runs', values.runs, 2) ?? 2,
+    threshold,
     help: values.help,
     workflow,
     ids: values.ids
@@ -158,6 +192,82 @@ function agwArgsMismatch(runDir: string, agwArgs: string[], resuming: boolean): 
   return null
 }
 
+/** A run directory's name: `startedAt` with `:` and `.` replaced by `-`. */
+const RUN_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z$/
+
+/**
+ * `--resume` names an existing run: an absolute path, or the timestamp of a run under `<evalDir>/reports`. A bare
+ * name never resolves against the cwd (it once started writing into the repo checkout).
+ */
+export function resolveRunDir(value: string, reportsDir: string): string {
+  const dir = isAbsolute(value) ? value : RUN_TIMESTAMP.test(value) ? join(reportsDir, value) : null
+  if (dir === null) {
+    throw new Error(`--resume takes an absolute path or a run timestamp under ${reportsDir}, got "${value}"`)
+  }
+  if (!existsSync(dir)) throw new Error(`--resume: no run directory at ${dir}`)
+  return dir
+}
+
+/** `self-agreement`: reruns one side on every case and records which cases reproduce (see `reproducibility.ts`). */
+async function selfAgreement(
+  workflow: 'review' | 'check',
+  cases: (ReviewCase | CheckCase)[],
+  flags: Flags,
+  deps: CliDeps,
+  home: string,
+): Promise<number> {
+  const path = reproducibilityPath(workflow, deps.env)
+  const options: SelfAgreementOptions = {
+    exec: deps.exec,
+    home,
+    concurrency: flags.concurrency,
+    keep: flags.keep,
+    depthMode: flags.depthMode,
+    resultsPath: path,
+    log: (line) => deps.err(line),
+    side: flags.side,
+    runs: flags.runs,
+    threshold: flags.threshold,
+  }
+  const agw = {
+    exec: deps.exec,
+    journal: psqlJournal({ exec: deps.exec, env: deps.env }),
+    bin: deps.env.AGW_BIN,
+    args: flags.agwArgs,
+  }
+  const legacy = {
+    exec: deps.exec,
+    cost: usageTrackerCost(
+      deps.env.AGW_USAGE_TRACKER_DIR ?? join(deps.env.HOME ?? homedir(), '.local', 'share', 'usage-tracker'),
+    ),
+    bin: deps.env.AGW_LEGACY_BIN,
+  }
+  deps.err(`reproducibility file: ${path} (${flags.side}, ${flags.runs} reruns, threshold ${flags.threshold})`)
+  const outcomes =
+    workflow === 'review'
+      ? await selfAgreementReview(
+          cases as ReviewCase[],
+          {
+            runner: flags.side === 'legacy' ? legacyReviewRunner(legacy) : agwReviewRunner(agw),
+            ...(flags.judge ? { judge: agwJudge({ exec: deps.exec, bin: deps.env.AGW_BIN }) } : {}),
+          },
+          options,
+        )
+      : await selfAgreementCheck(
+          cases as CheckCase[],
+          flags.side === 'legacy' ? legacyCheckRunner(legacy) : agwCheckRunner(agw),
+          options,
+        )
+  const count = (status: string) => outcomes.filter((o) => o.status === status).length
+  const rows = readRows(path).filter((r) => r.side === flags.side && cases.some((c) => c.id === r.id))
+  const reproducible = rows.filter((r) => r.reproducible).length
+  deps.out(
+    `${workflow} self-agreement (${flags.side}, ${flags.runs} reruns, threshold ${flags.threshold}): measured ${count('measured')}, skipped ${count('skipped')}, errored ${count('error')}; ${reproducible} of ${rows.length} measured cases reproducible`,
+  )
+  deps.out(`file: ${path}`)
+  return 0
+}
+
 export async function main(argv: string[], deps: CliDeps): Promise<number> {
   const flags = parse(argv)
   if (flags.help || (flags.workflow !== 'review' && flags.workflow !== 'check')) {
@@ -188,6 +298,19 @@ export async function main(argv: string[], deps: CliDeps): Promise<number> {
     deps.err('no cases selected')
     return 2
   }
+  if (flags.selfAgreement) {
+    const unsupported = [
+      flags.resume !== undefined && '--resume (the reproducibility file is the resume point)',
+      flags.rerunLegacy && '--rerun-legacy',
+      flags.dryRun && '--dry-run',
+      flags.side === 'legacy' && flags.agwArgs.length > 0 && '--agw-args (the new side only)',
+    ].filter(Boolean)
+    if (unsupported.length) {
+      deps.err(`self-agreement does not take ${unsupported.join(', ')}`)
+      return 2
+    }
+    return selfAgreement(workflow, cases, flags, deps, home)
+  }
   if (flags.dryRun) {
     await dryRun(workflow, cases, flags, deps, home)
     return 0
@@ -195,7 +318,15 @@ export async function main(argv: string[], deps: CliDeps): Promise<number> {
 
   const now = deps.now ?? (() => new Date())
   const startedAt = now().toISOString()
-  const runDir = flags.resume ?? join(evalDir(deps.env), 'reports', startedAt.replace(/[:.]/g, '-'))
+  const reports = join(evalDir(deps.env), 'reports')
+  let runDir: string
+  try {
+    runDir =
+      flags.resume === undefined ? join(reports, startedAt.replace(/[:.]/g, '-')) : resolveRunDir(flags.resume, reports)
+  } catch (error) {
+    deps.err(error instanceof Error ? error.message : String(error))
+    return 2
+  }
   const argsMismatch = agwArgsMismatch(runDir, flags.agwArgs, flags.resume !== undefined)
   if (argsMismatch) {
     deps.err(argsMismatch)
@@ -228,6 +359,8 @@ export async function main(argv: string[], deps: CliDeps): Promise<number> {
     agwArgs: flags.agwArgs,
   }
 
+  // Reproducibility data decides which cases the recorded findings can be scored on; none: every case counts.
+  const reproducible = reproducibleCases(readRows(reproducibilityPath(workflow, deps.env)))
   let report: Report
   if (workflow === 'review') {
     const results = await runReview(
@@ -239,7 +372,7 @@ export async function main(argv: string[], deps: CliDeps): Promise<number> {
       },
       options,
     )
-    const aggregate = aggregateReview(results, flags.seed)
+    const aggregate = aggregateReview(results, flags.seed, reproducible)
     report = {
       workflow,
       meta: { ...meta, finishedAt: now().toISOString() },
@@ -253,7 +386,7 @@ export async function main(argv: string[], deps: CliDeps): Promise<number> {
       { next: agwCheckRunner(agw), ...(flags.rerunLegacy ? { legacy: legacyCheckRunner(legacy) } : {}) },
       options,
     )
-    const aggregate = aggregateCheck(results, flags.seed)
+    const aggregate = aggregateCheck(results, flags.seed, reproducible)
     report = {
       workflow,
       meta: { ...meta, finishedAt: now().toISOString() },

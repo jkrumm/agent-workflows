@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { createCapabilities, createRegistry } from '@agent-workflows/capabilities'
 import { fakeTransports } from '@agent-workflows/capabilities/testing'
+import { createCheckWorkflows } from '../src/workflows/check/index.ts'
 import { createReviewWorkflows } from '../src/workflows/review/index.ts'
 import { captureLogger, startTestHost, type TestHost, until } from './support.ts'
 
@@ -394,6 +395,51 @@ describe('internal workflows', () => {
       expect(commands.filter((c) => c?.includes('ocr'))).toEqual([])
       const response = await host.call('/workflows/review/ocr', { body: { cwd: '/tmp', mode: 'head' } })
       expect(response.status).toBe(404)
+    } finally {
+      await host.close()
+    }
+  })
+})
+
+describe('output schema in the document', () => {
+  type Schema = { type?: string; properties?: Record<string, Schema>; required?: string[]; enum?: unknown[] }
+  type Doc = {
+    paths: Record<string, { post: { responses: Record<string, { content: Record<string, { schema: Schema }> }> } }>
+  }
+  const outputOf = (doc: Doc, path: string, status: '200' | '202') =>
+    doc.paths[path]?.post.responses[status]?.content['application/json']?.schema.properties?.output
+
+  test('every workflow answers with its own output schema, review and check included (`agw schema <workflow>` prints it)', async () => {
+    const registry = createRegistry(createCapabilities({ transports: fakeTransports({}), env: {} }))
+    const extra = [
+      ...createReviewWorkflows({ registry }, { which: () => null, env: {} }),
+      ...createCheckWorkflows({ registry }),
+    ]
+    const host = await startTestHost({ prefix: 'wfout', extra })
+    try {
+      const doc = (await host.host.openapi()) as unknown as Doc
+      const review = outputOf(doc, '/workflows/review', '200')
+      expect(review?.type).toBe('object')
+      expect(Object.keys(review?.properties ?? {})).toEqual(
+        expect.arrayContaining([
+          'schemaVersion',
+          'outcome',
+          'blocking',
+          'improvements',
+          'discussions',
+          'testGaps',
+          'summary',
+        ]),
+      )
+      expect(review?.properties?.outcome?.enum).toEqual(['clean', 'actionable', 'needs-human'])
+      const check = outputOf(doc, '/workflows/check', '200')
+      expect(Object.keys(check?.properties ?? {})).toEqual(expect.arrayContaining(['passed', 'steps', 'summary']))
+      expect(outputOf(doc, '/workflows/echo/say', '200')?.properties?.text).toBeDefined()
+      // 202 carries the same body: the run has not ended, but the shape is the same.
+      expect(outputOf(doc, '/workflows/review', '202')).toEqual(review)
+      // The run operations serve any workflow's state, so their output stays open.
+      const status = doc.paths['/runs/{runId}'] as unknown as { get: Doc['paths'][string]['post'] }
+      expect(status.get.responses['200']?.content['application/json']?.schema.properties?.output?.type).toBeUndefined()
     } finally {
       await host.close()
     }

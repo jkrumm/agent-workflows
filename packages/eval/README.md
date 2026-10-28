@@ -14,7 +14,8 @@ bun packages/eval/src/harness/cli.ts review --dry-run --limit 3      # plan + IU
 bun packages/eval/src/harness/cli.ts review                           # all review cases, concurrency 2
 bun packages/eval/src/harness/cli.ts review --rerun-legacy --judge    # measure legacy's noise floor, judge unsure pairs
 bun packages/eval/src/harness/cli.ts check --ids a,b --keep
-bun packages/eval/src/harness/cli.ts review --resume "$AGW_EVAL_DIR/reports/<ts>"
+bun packages/eval/src/harness/cli.ts review --resume 2026-10-28T09-00-00-000Z   # a run under $AGW_EVAL_DIR/reports
+bun packages/eval/src/harness/cli.ts self-agreement review --side legacy --runs 2  # reproducibility first, see below
 ```
 
 | Flag | Effect |
@@ -26,7 +27,7 @@ bun packages/eval/src/harness/cli.ts review --resume "$AGW_EVAL_DIR/reports/<ts>
 | `--depth router` | the new review picks its own depth; default `matched` passes the legacy run's recorded depth |
 | `--dry-run` | materializes every case, prints the plan and an IU estimate (legacy mean cost × ready cases, × 2 with a rerun) |
 | `--keep` | keeps the case clones (paths go to stderr) |
-| `--resume <dir>` | continues a run; finished and skipped cases are not rerun, failed ones are |
+| `--resume <run>` | continues a run; finished and skipped cases are not rerun, failed ones are. `<run>` is an absolute directory or a run timestamp (the directory name under `<evalDir>/reports`); a bare name never resolves against the cwd, anything else (or a run that does not exist) is a usage error |
 | `--seed N` | bootstrap seed (default 1): the same seed gives the same CI |
 | `--agw-args="<args>"` | review only (a usage error on `check`): whitespace-split extra arguments for every `agw review` call, e.g. `--agw-args="--angle-variant shell"` (the `=` is required: the value starts with a dash). Pinned in the run directory's `run.json`: `--resume` with different arguments is a usage error. Recorded in `report.json` (`meta.agwArgs`) and the `report.md` header |
 
@@ -36,6 +37,40 @@ Environment: `AGW_EVAL_DIR` (cases, reports), `AGW_EVAL_HOME` (the root `case.re
 
 Output: `<evalDir>/reports/<ts>/results.jsonl` (one line per case, appended as cases finish: the resume point),
 `report.json` and `report.md`, all mode 0600.
+
+## Reproducibility: is the recorded baseline worth scoring against?
+
+Wave 4 measured that agent-gateway's own rerun recovered none of its recorded blockers (outcome agreement 21 %), so a
+recorded finding is no ground truth until the case shows it comes back. `self-agreement` measures that before a set
+counts as a baseline:
+
+```sh
+bun packages/eval/src/harness/cli.ts self-agreement review|check --side legacy|new --runs 2 [--threshold 0.5] [--ids …] [--judge]
+```
+
+It reruns one side `--runs` times (default 2, at least 2) on every case and compares all runs with each other and
+with the recorded run (the earlier run of a pair is the reference), with the same matcher as the main harness. Per
+case it appends `{ id, side, runs, outcomeAgreement, blockingRecall, reproducible, threshold }` to
+`<evalDir>/<workflow>/reproducibility.jsonl` (mode 0600; numbers only):
+
+| Field | Meaning |
+|-|-|
+| `outcomeAgreement` | pairs of runs with the same outcome (review `outcome`, check `passed`) / all pairs |
+| `blockingRecall` | blocking findings of the earlier run of a pair found again in the later one, pooled; check: red runs still red (failure recall). `null` when no run had any |
+| `reproducible` | `outcomeAgreement >= threshold` and (`blockingRecall` is `null` or `>= threshold`) |
+
+`--threshold` defaults to 0.5: with the recorded run and two reruns (three pairs) it means all three outcomes agree.
+A case a rerun failed on or that cannot materialize gets no row. Cases already measured for this side with as many
+reruns are skipped on the next call (delete the file to measure again); legacy reruns go one at a time, as in the
+main harness. The new side reruns at the recorded depth (`--depth router` lets its router choose, `--agw-args`
+applies); the legacy CLI takes no depth.
+
+`review` and `check` read the **legacy** rows (the recorded findings are legacy's) and score blocking recall (check:
+legacy failure recall) on the reproducible cases only; the verdict's recall criterion reads that number. The report
+says how many cases counted: `counted on N of M cases with a recorded blocking finding (…); K not reproducible, U
+without data`. Without any legacy row it says `no reproducibility data` and every case counts, as before. If no case
+is reproducible the recall is undecided (the verdict goes inconclusive), never a pass. Rows of the `new` side are for
+reading only: they say how much the new workflow disagrees with itself.
 
 ## How a case runs
 
@@ -116,6 +151,33 @@ holding the new review to 100% agreement with one recorded run would fail a perf
   fails (`new_failed`, or `rerunError`) and the report shows it. Not verified live yet: the new host was not
   deployed when the harness landed.
 
+## Unpriced calls (Wave 4 eval runs)
+
+The Wave 4 eval runs (created 2026-10-28, 09:00 to 12:00 UTC, `purpose = 'eval'` or the eval team's IU key: 69 runs)
+carried 11 unpriced calls. Query (read-only, as `psqlJournal` connects):
+
+```sql
+select r.workflow, s.kind, s.model, count(*) steps, sum(s.unpriced_calls) unpriced, count(*) filter (where s.cost is null) cost_null
+from agw.steps s join agw.runs r on r.id = s.run_id
+where r.created_at >= '2026-10-28 09:00+00' and r.created_at < '2026-10-28 12:00+00'
+  and (r.purpose = 'eval' or r.iu_key = '<eval-team-key>') and s.unpriced_calls > 0
+group by 1, 2, 3;
+```
+
+Result: one row, `review` / `agent` / Haiku 5.5 EU, 11 steps, each with `unpriced_calls = 1` and a null cost. All 11 are
+angle steps (architect 1, security 2, data-migration 2, concurrency 1, senior-dev 1, frontend 1, backend 1, typescript 1,
+api-contract 1) of two `deep` review runs; no other workflow, no judge call and no capability call was unpriced.
+
+**By design, not a missing rate.** `OpenCodeHost.usage` prices a step message by message and returns `unpriced` for
+the whole step when any one message has a prompt (input plus cache reads and writes) above 100K tokens
+(`LONG_PROMPT_TOKENS`): vendors bill the long-prompt tier of Haiku at 5x, which `Rate` does not model, so the cost is
+unknown rather than under-priced. Checked against the OpenCode sessions of every agent step in the window (219): the
+11 unpriced steps each contain a message with a 104K to 146K prompt; the 208 priced ones peak at 99K. Deep reviews
+read many files, so their angle steps cross the line; the standard and light runs in the window did not. The unpriced steps are
+a visible undercount of the total (their tokens are recorded, `costExact: false` on the harness side), not a lost
+run. Pricing the tier needs the vendor's exact rule (which rates the 5x applies to), so it stays unpriced until a
+`Rate` can say it; setting `longPromptTokens` higher on the route would silently under-price these calls.
+
 ## Compared with agent-gateway's replay judge
 
 `agent-gateway/scripts/replay-review-corpus.ts` (bench `review-replay-2026-10-19-s30`) pooled every arm's blocking
@@ -135,3 +197,7 @@ characters. Everything else is the cost of the reviews themselves, tagged `AGW_P
 `--caller eval` on the legacy side. Each case is a cold run for both sides (a fresh clone, a fresh session), so
 neither side inherits the other's prompt cache from the same case; the alternating order keeps any cross-case cache
 warmth from always favouring one side.
+
+`self-agreement` adds no prompt text either; it is N more cold runs of the side under test per case (`--runs`, default
+2), tagged the same way, plus the judge on unsure pairs with `--judge`. Measure a set once and read the file; the
+`review` and `check` modes spend nothing extra for it.

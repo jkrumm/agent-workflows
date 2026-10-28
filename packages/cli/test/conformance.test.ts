@@ -387,6 +387,23 @@ describe('agw against the fake host', () => {
     expect(unknown.code).toBe(EXIT.usage)
   })
 
+  test("schema prints a workflow's output type, $refs inlined; a run command keeps the open output", async () => {
+    const b = box()
+    const echo = (await agw(b, ['schema', 'fixture', 'echo'])).json() as {
+      output: { properties: Record<string, Record<string, unknown>>; required: string[] }
+    }
+    expect(echo.output.required).toEqual(['runId', 'workflowId', 'status'])
+    expect(echo.output.properties.output).toMatchObject({
+      type: 'object',
+      required: ['echo', 'mode'],
+      properties: { echo: { type: 'string' }, tags: { type: 'object', additionalProperties: { type: 'string' } } },
+    })
+    const status = (await agw(b, ['schema', 'run', 'status'])).json() as {
+      output: { properties: Record<string, unknown> }
+    }
+    expect(status.output.properties.output).toEqual({})
+  })
+
   test('--commit takes only true or false inline; --commit=false keeps the gate shut', async () => {
     const b = box()
     await agw(b, ['schema', '--refresh'])
