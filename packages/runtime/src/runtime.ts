@@ -13,10 +13,13 @@ import { Journal, type RunEnd, type RunRow } from './journal.ts'
 import { type Json, jsonViolation } from './json.ts'
 import { type Lease, LeasePool } from './lease.ts'
 import { assertSchemaName, migrate } from './migrate.ts'
+import { checkVerdict } from './score.ts'
 import { type Refusal, RunScope, raceAbort, type ScopeHost, toRunError } from './scope.ts'
 import type {
   AgentHost,
   AnyWorkflow,
+  FinalScore,
+  JudgeCaller,
   Logger,
   Middleware,
   RunInfo,
@@ -24,7 +27,9 @@ import type {
   RunPreArgs,
   RunResult,
   RunSnapshot,
+  ScoredRun,
   StartOptions,
+  Usage,
   StepPostArgs,
   StepPreArgs,
   ToolEvent,
@@ -70,6 +75,24 @@ export type RuntimeOptions = {
    */
   bodyGraceMs?: number
   logger?: Logger
+  /**
+   * The capability caller a scorer gets as `judge` for an LLM-judged sub-score: regression and drift always, the
+   * inline gate only with `scorer.judgeInline`. Unset: no scorer can judge (the default scorers never do).
+   */
+  judge?: JudgeCaller
+}
+
+/** `Runtime.scoreRun`: who scores, and for a regression the case it replays. */
+export type ScoreRunOptions = {
+  source: 'regression' | 'drift'
+  /** The case's expected result, validated by `scorer.reference`. */
+  reference?: Json
+  caseId?: string
+  evalRunId?: string
+  /** The extra input the eval arm ran with (`agw eval run --args`), kept for `agw eval compare`. */
+  args?: Json
+  /** First writer wins: an already scored run is left alone and `null` returned. Drift sets it. */
+  onlyUnscored?: boolean
 }
 
 const consoleLogger: Logger = {
@@ -110,6 +133,8 @@ export class Runtime {
   private readonly scopeHost: ScopeHost
   private opened = false
   private closing = false
+  /** Aborted by `close()`: after-the-fact scoring stops with the process. */
+  private readonly lifetime = new AbortController()
 
   constructor(private readonly options: RuntimeOptions) {
     this.schema = options.schema ?? 'agw'
@@ -162,6 +187,7 @@ export class Runtime {
         if (this.agents.get(key) === handle) this.agents.delete(key)
       },
       logError: (message, meta) => this.logger.error(message, meta),
+      judge: options.judge ?? null,
     }
   }
 
@@ -278,6 +304,82 @@ export class Runtime {
   }
 
   /**
+   * Scores an ended run after the fact (concept §6: regression, drift) with its workflow's scorer, and records the
+   * verdict on the run (`scores.final`). A failed run is scored with output `null` (a miss); a cancelled or unfinished
+   * one is not scored (null). A scorer that throws is recorded as `error` with `pass: false`, so drift never loops on
+   * it. Any process may call it: the run has ended, nothing races the write.
+   */
+  async scoreRun(runId: string, options: ScoreRunOptions): Promise<FinalScore | null> {
+    const run = await this.journal.scoreTarget(runId)
+    if (!run) throw new Error(`run ${runId} not found`)
+    if (run.status !== 'done' && run.status !== 'failed') return null
+    if (options.onlyUnscored && run.scored_at) return null
+    const workflow = this.registry.get(run.workflow)
+    if (!workflow?.scorer) throw new Error(`workflow ${run.workflow} has no scorer`)
+    const { scorer } = workflow
+    const meta = {
+      source: options.source,
+      scorer: scorer.version,
+      ...(options.caseId === undefined ? {} : { caseId: options.caseId }),
+      ...(options.evalRunId === undefined ? {} : { evalRunId: options.evalRunId }),
+      ...(options.args === undefined ? {} : { args: options.args }),
+    }
+    let final: FinalScore
+    try {
+      const reference =
+        options.reference === undefined || !scorer.reference
+          ? options.reference
+          : scorer.reference.parse(options.reference)
+      const judge = this.options.judge
+      const signal = this.lifetime.signal
+      const raw = await scorer.score(run.input, run.status === 'done' ? run.output : null, {
+        source: options.source,
+        signal,
+        ...(reference === undefined ? {} : { reference }),
+        ...(judge
+          ? { judge: (capability: string, input: Json) => judge(capability, input, { signal, addUsage: noUsage }) }
+          : {}),
+      })
+      final = { ...checkVerdict(raw, `scoring run ${runId}`), ...meta }
+    } catch (err) {
+      if (this.lifetime.signal.aborted) throw err
+      final = { scores: {}, pass: false, error: errorMessage(err), ...meta }
+    }
+    const written = await this.journal.writeFinalScore(runId, final, options.onlyUnscored ?? false)
+    return written ? final : null
+  }
+
+  /**
+   * Drift's sample: done runs (of registered workflows with a scorer, unless `workflows` names others) with a
+   * `purposes` purpose (default `prod`), finished since `since`, unscored, and inside the deterministic `rate` sample.
+   */
+  driftCandidates(options: {
+    rate: number
+    since: Date
+    limit: number
+    purposes?: string[]
+    workflows?: string[]
+  }): Promise<string[]> {
+    const workflows = options.workflows ?? [...this.registry.values()].filter((w) => w.scorer).map((w) => w.id)
+    if (workflows.length === 0 || options.rate <= 0) return Promise.resolve([])
+    return this.journal.driftCandidates({ ...options, workflows, purposes: options.purposes ?? ['prod'] })
+  }
+
+  /** Scored runs of a workflow (oldest first), for `agw eval compare`. */
+  scoredRuns(options: {
+    workflow: string
+    source: 'regression' | 'drift'
+    fingerprint?: string
+  }): Promise<ScoredRun[]> {
+    return this.journal.scoredRuns(options)
+  }
+
+  /** The mean cost of the latest `limit` done runs of a workflow: the base of an eval estimate. */
+  recentCost(workflow: string, limit = 50): Promise<{ runs: number; meanCost: number | null }> {
+    return this.journal.recentCost(workflow, limit)
+  }
+
+  /**
    * One recovery pass: claim pending and orphaned top-level runs while leases are free, then re-deliver
    * unconfirmed `runPost` hooks (on a reserved maintenance lease, so a full budget never starves it).
    */
@@ -312,6 +414,7 @@ export class Runtime {
    */
   async close(): Promise<void> {
     this.closing = true
+    this.lifetime.abort(new Shutdown('runtime closing'))
     clearTimeout(this.recoveryTimer)
     clearTimeout(this.watchTimer)
     await Promise.allSettled([...this.ticks])
@@ -774,6 +877,9 @@ export class Runtime {
     }
   }
 }
+
+/** Usage of a judge call outside any step: priced by the capability's own run, not attached here. */
+const noUsage = (_usage: Usage) => {}
 
 function runInfo(run: RunRow, workflow: { id: string; version: string }): RunInfo {
   return {

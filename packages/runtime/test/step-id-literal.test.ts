@@ -3,10 +3,10 @@ import { resolve } from 'node:path'
 
 /**
  * Lint: step ids are literals (concept §3). A computed id silently creates a new step on replay, so every
- * `ctx.step|effect|agent|workflow(` under packages/**\/src must start with a string literal.
+ * `ctx.step|effect|agent|workflow|score|continue(` under packages/**\/src must start with a string literal.
  */
 const ROOT = resolve(import.meta.dir, '../../..')
-const CALL = /\bctx\s*\.\s*(step|effect|agent|workflow)\s*\(\s*/g
+const CALL = /\bctx\s*\.\s*(step|effect|agent|workflow|score|continue)\s*\(\s*/g
 
 function findComputedStepIds(source: string, file: string): string[] {
   const found: string[] = []
@@ -38,6 +38,8 @@ test('the lint flags computed ids and accepts literals', () => {
     'await ctx.effect(`plain`, fn)',
     `await ctx.step(\`id-$${'{i}'}\`, fn)`,
     'await ctx.workflow(name, child, inputs)',
+    'await ctx.score(gateId, draft)',
+    "await ctx.continue('revise', draft, feedback)",
     '// ctx.step(id, fn) in a comment',
     'await ctx.step(',
     "  'multi-line',",
@@ -46,5 +48,6 @@ test('the lint flags computed ids and accepts literals', () => {
   expect(findComputedStepIds(source, 'x.ts')).toEqual([
     'x.ts:4: ctx.step() needs a string-literal step id',
     'x.ts:5: ctx.workflow() needs a string-literal step id',
+    'x.ts:6: ctx.score() needs a string-literal step id',
   ])
 })

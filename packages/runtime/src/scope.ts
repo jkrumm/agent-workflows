@@ -12,12 +12,15 @@ import {
 } from './errors.ts'
 import type { AgentHandleState, Fence, Journal, RunRow, StepRow } from './journal.ts'
 import { type Json, jsonViolation } from './json.ts'
+import { checkVerdict } from './score.ts'
 import { UsageTotals } from './usage.ts'
 import type {
   AgentHost,
   AgentSpec,
   AnyWorkflow,
+  ContinueOptions,
   Ctx,
+  JudgeCaller,
   RetryPolicy,
   StepKind,
   StepOptions,
@@ -25,6 +28,7 @@ import type {
   StepPreArgs,
   StepScope,
   ToolEvent,
+  Verdict,
   Workflow,
 } from './types.ts'
 
@@ -51,6 +55,15 @@ export type ScopeHost = {
   /** Only removes the entry when it is still this attempt's handle. */
   untrackAgent(key: string, handle: Json): void
   logError(message: string, meta: Record<string, unknown>): void
+  /** The capability caller a scorer gets as `judge` (only with `judgeInline` on the inline gate); null: none. */
+  judge: JudgeCaller | null
+}
+
+/** How an agent step gets its session: a new one (`ctx.agent`) or a follow-up turn of an earlier one (`ctx.continue`). */
+type Opener = {
+  open(scope: StepScope, prompt: string): Promise<Json>
+  /** A follow-up turn's text goes as is: the session already holds the first prompt and what the hook added to it. */
+  hook: boolean
 }
 
 /** One drive of one run in this process: its abort controller, the infra latch and the step-id set. */
@@ -69,6 +82,9 @@ export class RunScope {
   private readonly refusers = new Map<string, (reason: WorkflowError) => void>()
   /** The agent handle each running step last used, for `stepPost`. */
   private readonly handles = new Map<string, Json>()
+  /** Agent steps called in this drive, for `ctx.continue`: the spec by step id, and the step of each object output. */
+  private readonly agentSpecs = new Map<string, AgentSpec<z.ZodType>>()
+  private readonly agentOutputs = new WeakMap<object, string>()
 
   constructor(
     readonly rt: ScopeHost,
@@ -97,6 +113,8 @@ export class RunScope {
           return fn(scope.key, scope)
         }),
       agent: (id, spec) => this.agent(id, spec),
+      score: (id, value) => this.score(id, value),
+      continue: (id, from, prompt, options) => this.continueAgent(id, from, prompt, options),
       workflow: (id, workflow, inputs) => this.fanOut(id, workflow, inputs),
     }
   }
@@ -259,6 +277,113 @@ export class RunScope {
   }
 
   private agent<S extends z.ZodType>(stepId: string, spec: AgentSpec<S>): Promise<z.output<S>> {
+    return this.agentStep(stepId, spec, {
+      hook: true,
+      open: (scope, prompt) => {
+        const host = this.rt.host
+        if (!host) throw new WorkflowError('error', 'no AgentHost configured for agent steps')
+        return host.open({
+          runId: this.run.id,
+          stepId,
+          key: scope.key,
+          agent: spec.agent,
+          prompt,
+          options: spec.options,
+        })
+      },
+    })
+  }
+
+  /**
+   * The inline gate: the workflow's scorer on `value`, journaled as a code step (a resume returns the recorded
+   * verdict). The verdict also lands on the run (`scores.gates`), written inside the step so a crash re-writes it.
+   */
+  private score(stepId: string, value: Json): Promise<Verdict> {
+    const runId = this.run.id
+    return this.journaled(stepId, 'code', {}, async (scope) => {
+      const scorer = this.workflow.scorer
+      if (!scorer) throw new WorkflowError('error', `ctx.score: workflow ${this.workflow.id} has no scorer`)
+      const judge = this.rt.judge
+      const raw = await scorer.score(this.run.input, value, {
+        source: 'inline',
+        signal: scope.signal,
+        ...(scorer.judgeInline && judge
+          ? {
+              judge: (capability: string, input: Json) =>
+                judge(capability, input, { signal: scope.signal, addUsage: scope.addUsage }),
+            }
+          : {}),
+      })
+      const verdict = checkVerdict(raw, `inline score "${stepId}"`)
+      await this.j(() => this.rt.journal.recordGate(runId, stepId, verdict, this.fence))
+      return verdict
+    })
+  }
+
+  /** A follow-up turn in the session of an earlier agent step (concept §3: score → nudge). */
+  private continueAgent<S extends z.ZodType>(
+    stepId: string,
+    from: Json,
+    prompt: string,
+    options: ContinueOptions<S> = {},
+  ): Promise<z.output<S>> {
+    let parentId: string
+    try {
+      parentId = this.agentStepOf(from)
+    } catch (error) {
+      return Promise.reject(error)
+    }
+    const parent = this.agentSpecs.get(parentId)
+    const fail = (message: string) =>
+      Promise.reject(new WorkflowError('error', `continue step "${stepId}": ${message}`))
+    if (!parent) return fail(`"${parentId}" is not an agent step called earlier in this run`)
+    if (!prompt.trim()) return fail('the prompt is empty')
+    const spec = {
+      agent: parent.agent,
+      prompt,
+      output: (options.output ?? parent.output) as S | undefined,
+      retry: options.retry,
+      idleTimeoutMs: options.idleTimeoutMs,
+    }
+    return this.agentStep(stepId, spec, {
+      hook: false,
+      open: async (scope) => {
+        const host = this.rt.host
+        if (!host) throw new WorkflowError('error', 'no AgentHost configured for agent steps')
+        if (!host.followUp)
+          throw new WorkflowError('error', 'the AgentHost has no followUp: ctx.continue is unsupported')
+        const row = await this.j(() => this.rt.journal.getStep(this.run.id, parentId))
+        if (row?.status !== 'done' || !row.handle) {
+          throw new WorkflowError('error', `continue step "${stepId}": step "${parentId}" holds no finished session`)
+        }
+        return host.followUp(row.handle.handle, { runId: this.run.id, stepId, key: scope.key, attempt: scope.attempt })
+      },
+    })
+  }
+
+  /** `from` of `ctx.continue`: a step id, or an output an agent step of this drive returned. */
+  private agentStepOf(from: Json): string {
+    if (typeof from === 'string') return from
+    const stepId = from !== null && typeof from === 'object' ? this.agentOutputs.get(from) : undefined
+    if (stepId === undefined) {
+      throw new WorkflowError('error', 'ctx.continue: `from` is neither a step id nor an agent step output')
+    }
+    return stepId
+  }
+
+  private agentStep<S extends z.ZodType>(stepId: string, spec: AgentSpec<S>, opener: Opener): Promise<z.output<S>> {
+    this.agentSpecs.set(stepId, spec)
+    return this.agentJournaled(stepId, spec, opener).then((value) => {
+      if (value !== null && typeof value === 'object') this.agentOutputs.set(value, stepId)
+      return value
+    })
+  }
+
+  private agentJournaled<S extends z.ZodType>(
+    stepId: string,
+    spec: AgentSpec<S>,
+    opener: Opener,
+  ): Promise<z.output<S>> {
     const host = this.rt.host
     const { journal } = this.rt
     const runId = this.run.id
@@ -319,18 +444,13 @@ export class RunScope {
         // Read once per attempt, and only when a prompt is still to be sent (a re-attach to a prompted session waits).
         // The step's `tail` stays last, after whatever the hook adds.
         const prompt = !state?.prompted
-          ? (await this.rt.agentPrompt({ agent: spec.agent, prompt: spec.prompt })) + (spec.tail ?? '')
+          ? opener.hook
+            ? (await this.rt.agentPrompt({ agent: spec.agent, prompt: spec.prompt })) + (spec.tail ?? '')
+            : spec.prompt
           : spec.prompt
         checkpoint()
         if (!state) {
-          handle = await host.open({
-            runId,
-            stepId,
-            key: scope.key,
-            agent: spec.agent,
-            prompt,
-            options: spec.options,
-          })
+          handle = await opener.open(scope, prompt)
           checkpoint()
           const opened: AgentHandleState = { handle, prompted: false }
           state = opened
