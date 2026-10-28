@@ -1,7 +1,7 @@
 #!/bin/zsh
 # agent-workflows verify (`make verify`): exit 0 only if the deployed host is healthy, runs origin/master, and a real
 # `agw smoke ping` (the installed CLI, the real bearer) produced a done run with a trace id and priced usage in the
-# journal. Prints the run id.
+# journal, and a direct `agw llm title` call left a done `cap.llm.title` run with priced usage. Prints the run ids.
 
 set -u
 
@@ -35,6 +35,17 @@ remote=$(git -C "$REPO_DIR" ls-remote origin refs/heads/master | awk '{print $1}
 [[ "$version" == "$deployed" ]] || fail "the running host reports ${version[1,12]}, deployed is ${deployed[1,12]}"
 ok "deployed sha is origin/master (${deployed[1,12]})"
 
+password=$(secrets-run read "$PG_PASSWORD_REF" 2>/dev/null)
+[[ -n "$password" ]] || fail "cannot read $PG_PASSWORD_REF through secrets-run"
+psql_err=$(mktemp -t agw-verify) || fail "cannot create a temp file"
+trap 'rm -f "$psql_err"' EXIT
+# One journal query; the SQL goes on stdin (psql interpolates :'var' there, not in -c), extra args are -v bindings.
+journal() {
+  local sql=$1; shift
+  PGPASSWORD="$password" psql -h 127.0.0.1 -U agent_workflows -d agent_workflows -AtF '|' -v ON_ERROR_STOP=1 "$@" \
+    2>"$psql_err" <<< "$sql" || fail "journal query failed: $(<"$psql_err")"
+}
+
 # 3. a real run through the installed CLI
 out=$(AGW_PURPOSE=verify agw smoke ping 2>&1)
 rc=$?
@@ -46,16 +57,9 @@ title=$(print -r -- "$out" | jq -r '.output.title // empty' 2>/dev/null)
 ok "agw smoke ping: run $run_id, title \"$title\""
 
 # 4. its row in the journal (the run record lands in runPost, a moment after the run ends)
-password=$(secrets-run read "$PG_PASSWORD_REF" 2>/dev/null)
-[[ -n "$password" ]] || fail "cannot read $PG_PASSWORD_REF through secrets-run"
 row=""
-psql_err=$(mktemp -t agw-verify) || fail "cannot create a temp file"
-trap 'rm -f "$psql_err"' EXIT
 for _ in {1..20}; do
-  # The query goes on stdin: psql interpolates :'id' there, not in -c. stderr stays out of the row.
-  row=$(PGPASSWORD="$password" psql -h 127.0.0.1 -U agent_workflows -d agent_workflows -AtF '|' -v ON_ERROR_STOP=1 -v "id=$run_id" 2>"$psql_err" \
-    <<< "select status, coalesce(trace_id, ''), coalesce(cost::text, ''), coalesce(tokens_input, 0) from \"$SCHEMA\".runs where id = :'id'") \
-    || fail "journal query failed: $(<"$psql_err")"
+  row=$(journal "select status, coalesce(trace_id, ''), coalesce(cost::text, ''), coalesce(tokens_input, 0) from \"$SCHEMA\".runs where id = :'id'" -v "id=$run_id") || exit 1
   IFS='|' read -r run_status trace cost tokens <<< "$row"
   [[ "$run_status" == "done" && -n "${trace:-}" && -n "${cost:-}" ]] && break
   sleep 1
@@ -66,4 +70,24 @@ done
 (( ${tokens:-0} > 0 )) || fail "run $run_id recorded no input tokens"
 ok "journal: done, trace $trace, cost $cost, $tokens input tokens"
 
-print "verify: PASS run $run_id"
+# 5. a direct capability call is a run of its own (cap.<id>), recorded like any other
+since=$(journal "select now()") || exit 1
+out=$(AGW_PURPOSE=verify agw llm title "make verify checks that a direct capability call is recorded" 2>&1)
+rc=$?
+(( rc == 0 )) || fail "agw llm title exited $rc: $out"
+[[ -n "$out" ]] || fail "agw llm title printed no title"
+ok "agw llm title: \"$out\""
+cap_row=""
+for _ in {1..20}; do
+  cap_row=$(journal "select id, status, coalesce(cost::text, ''), coalesce(tokens_input, 0) from \"$SCHEMA\".runs where workflow = 'cap.llm.title' and purpose = 'verify' and created_at >= :'since'::timestamptz order by id desc limit 1" -v "since=$since") || exit 1
+  IFS='|' read -r cap_id cap_status cap_cost cap_tokens <<< "$cap_row"
+  [[ "${cap_status:-}" == "done" && -n "${cap_cost:-}" ]] && break
+  sleep 1
+done
+[[ -n "${cap_id:-}" ]] || fail "agw llm title left no cap.llm.title run in $SCHEMA.runs"
+[[ "${cap_status:-}" == "done" ]] || fail "cap.llm.title run $cap_id is '${cap_status:-missing}', not done"
+[[ -n "${cap_cost:-}" ]] && (( cap_cost > 0 )) || fail "cap.llm.title run $cap_id has no priced usage (cost '${cap_cost:-null}')"
+(( ${cap_tokens:-0} > 0 )) || fail "cap.llm.title run $cap_id recorded no input tokens"
+ok "journal: cap.llm.title run $cap_id done, cost $cap_cost, $cap_tokens input tokens"
+
+print "verify: PASS run $run_id, cap run $cap_id"

@@ -5,6 +5,7 @@ import { OpenCodeHost, OpenCodeServer } from '@agent-workflows/opencode-host'
 import { type AgentHost, type Json, Runtime } from '@agent-workflows/runtime'
 import { loadAgentDefinitions } from './agents.ts'
 import { createHost } from './app.ts'
+import { capabilityWorkflows } from './capability-runs.ts'
 import type { HostConfig } from './config.ts'
 import { IDLE_TIMEOUT_S } from './operations.ts'
 import { createWorkflows, fingerprintWorkflows } from './workflows/index.ts'
@@ -161,7 +162,8 @@ export async function boot(config: HostConfig, options: BootOptions = {}): Promi
     const runtime = new Runtime({
       connectionString: config.pgUrl,
       schema: config.schema,
-      workflows: workflows.map((entry) => entry.workflow),
+      // Direct capability calls over HTTP run as `cap.<id>` workflows (concept N6): registered, but not operations.
+      workflows: [...workflows.map((entry) => entry.workflow), ...capabilityWorkflows(registry)],
       host: agentHost,
       middleware: [...platform.middleware, wallet, cap],
     })

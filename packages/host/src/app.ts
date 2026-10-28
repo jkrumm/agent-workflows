@@ -13,6 +13,7 @@ import { onError } from '@orpc/server'
 import { ZodToJsonSchemaConverter } from '@orpc/zod/zod4'
 import { assertSecret, bearerMatches } from './auth.ts'
 import { CONTRACT_FIELD, contractSha } from './canonical.ts'
+import { capabilityRuns } from './capability-runs.ts'
 import {
   assertNoReservedFlags,
   type HostContext,
@@ -93,6 +94,8 @@ export function createHost(options: HostOptions): Host {
   const deps = { runtime, store, logger }
   const workflows = options.workflows.map((entry) => ({ entry, op: workflowOperation(entry, deps) }))
   const runs = runOperations(deps)
+  // A direct capability call over HTTP is a one-step run; `boot` registers the same workflows with the runtime.
+  const invoke = capabilityRuns(registry, { ...deps, isOpen })
 
   for (const c of registry.capabilities) assertNoReservedFlags(`capability ${c.id}`, c.input)
 
@@ -214,13 +217,20 @@ export function createHost(options: HostOptions): Host {
       }
 
       const prepared = await withJsonBody(request, pathname)
-      const context: HostContext = { ...registry.requestContext, headers: prepared.headers, response: {} }
+      const context: HostContext = {
+        ...registry.requestContext,
+        headers: prepared.headers,
+        response: {},
+        invoke: (capability, input, signal) => invoke({ capability, input, signal, context }),
+      }
       const { response } = await handler.handle(prepared, { context })
       if (!response) return notFoundResponse()
-      const status = context.response.status
-      return status && status !== response.status && response.ok
-        ? new Response(response.body, { status, headers: response.headers })
-        : response
+      const { status, headers } = context.response
+      const restatus = status && status !== response.status && response.ok
+      if (!restatus && !headers) return response
+      const merged = new Headers(response.headers)
+      for (const [name, value] of Object.entries(headers ?? {})) merged.set(name, value)
+      return new Response(response.body, { status: restatus ? status : response.status, headers: merged })
     } catch (error) {
       logger.error('request failed', { error: error instanceof Error ? error.message : String(error) })
       return errorResponse(error)
