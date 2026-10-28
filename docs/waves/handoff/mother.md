@@ -4,7 +4,7 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
 `docs/waves/PLAN.md` and this file, then continues from **Next action**.
 
 ## State
-- Waves 1–3 done (retros in concept.md; Wave 3's deploy carried into Wave 4, owner-gated). Active wave: 4.
+- Waves 1–4 done (retros in concept.md). Active wave: 5 (Evals and self-improvement, P2).
 - Lead's close-out channel: `docs/waves/handoff/lead.md` (the mother owns PLAN.md and the retro log;
   the lead writes per-step verdicts, Left behind, gate evidence and retro notes there, then idles).
 - dotfiles is free: P0 done (owner, 2026-10-27).
@@ -13,13 +13,19 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
   `com.jkrumm.vps-pg-backup` is ours: P0b maps it in dotfiles `docs/architecture.md`. Relayed to the lead.
 
 ## Lead
-- `agent-workflows-w1` (pane w40:pX), Opus/high, spawned 2026-10-28 ~09:35: the second Wave 4 lead
-  (first rotated at its context limit; state in `handoff/lead.md` at `772c3f4`).
+- `agent-workflows-w1` (pane w40:pX), Opus/high: the second Wave 4 lead, kept on for Wave 5 (20% context
+  after compaction); started Wave 5's experiment on the owner's direct ask.
   Rotation policy: a fresh lead per wave unless the last one closed under ~30% context.
 - The mother is agent `agent-workflows-mother` (pane w40:p1).
 
 ## Open decisions
 - none
+
+## Overnight
+- `dotfiles/scripts/fleet-keepalive.sh agent-workflows-mother <repo> 300` runs detached (pid file and
+  log in `~/.local/state/fleet-keepalive/`). It nudges the mother when idle, waits out usage-limit
+  banners, respawns her if the pane vanishes. A real stop: write `docs/waves/handoff/STOP` (first line =
+  reason) and commit; the keepalive then exits. Restart it after a reboot with the nohup line in its header.
 
 ## Obstacles noted
 - 2026-10-27: agent-gateway MCP timed out at the mother's session start; the lead checks the `/review`
@@ -55,4 +61,4 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
 
 ## Next action
 - Watch the lead (`wave-watch.sh --agents agent-workflows-w1 --heartbeat 9`, bounded 10 min), read
-  `handoff/lead.md` on idle, write Wave 4's Left behind and retro, flip Wave 5 active, rotate the lead.
+  `handoff/lead.md` on idle, write Wave 5's Left behind and retro, flip Wave 6 active, rotate the lead.
