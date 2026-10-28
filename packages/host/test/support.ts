@@ -81,7 +81,15 @@ export function testWorkflows(g = gate()) {
       return {}
     },
   })
+  const nothing = defineWorkflow({
+    id: 'nothing.null',
+    version: 'v1',
+    input: z.object({}),
+    output: z.null(),
+    run: async () => null,
+  })
   const entries: HostWorkflow[] = [
+    { workflow: nothing },
     { workflow: echo, cli: { positional: ['text'] } },
     { workflow: hold },
     { workflow: boom, cli: { mutating: true } },

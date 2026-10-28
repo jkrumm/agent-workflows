@@ -118,17 +118,38 @@ function idempotencyKeyOf(headers: Headers): string | undefined {
 const POLL_MIN_MS = 25
 const POLL_MAX_MS = 250
 
-/** Reads the run until it ends, `seconds` pass or the caller goes away; `null` when the run does not exist. */
+/** A read that keeps failing this many times in a row ends the wait: a dead database must not hold a request. */
+const MAX_READ_FAILURES = 5
+
+/**
+ * Reads the run until it ends, `seconds` pass or the caller goes away; `null` when the run does not exist. A failed
+ * read is logged and retried on the same backoff, inside the deadline; the error surfaces once reads fail
+ * {@link MAX_READ_FAILURES} times in a row or the deadline passes with the last read failing.
+ */
 async function waitFor(
   store: RunStore,
   runId: string,
   seconds: number,
+  logger: Logger,
   signal?: AbortSignal,
 ): Promise<RunState | null> {
   const deadline = Date.now() + seconds * 1000
   let delay = POLL_MIN_MS
+  let failures = 0
   for (;;) {
-    const state = await store.get(runId)
+    let state: RunState | null
+    try {
+      state = await store.get(runId)
+      failures = 0
+    } catch (error) {
+      failures++
+      logger.warn('run state read failed', { runId, attempt: failures, error: errorText(error) })
+      const left = deadline - Date.now()
+      if (failures >= MAX_READ_FAILURES || left <= 0 || signal?.aborted) throw error
+      await Bun.sleep(Math.min(delay, left))
+      delay = Math.min(delay * 2, POLL_MAX_MS)
+      continue
+    }
     if (!state || isTerminal(state.status) || signal?.aborted) return state
     const left = deadline - Date.now()
     if (left <= 0) return state
@@ -167,7 +188,13 @@ const withAccepted = <T extends { parameters?: readonly object[]; responses?: Re
   },
 })
 
-function buildWorkflow(entry: HostWorkflow, deps: OperationDeps, cli: ResolvedCliSpec, path: string) {
+function buildWorkflow(
+  entry: HostWorkflow,
+  input: z.ZodObject,
+  deps: OperationDeps,
+  cli: ResolvedCliSpec,
+  path: string,
+) {
   const { workflow } = entry
   const headers = [
     ...waitHeaders,
@@ -195,7 +222,7 @@ function buildWorkflow(entry: HostWorkflow, deps: OperationDeps, cli: ResolvedCl
       tags: ['workflows'],
       spec: (operation) => withCli(cli)(withAccepted(operation, headers)),
     })
-    .input(workflow.input as z.ZodObject)
+    .input(input.strict()) // an unknown key is a 400, never silently dropped
     .output(RunStateSchema)
     .handler(async ({ input, context, signal }) => {
       const wait = preferWait(context.headers)
@@ -213,7 +240,7 @@ function buildWorkflow(entry: HostWorkflow, deps: OperationDeps, cli: ResolvedCl
         throw error
       }
       // The run exists from here on: a failed read must still report its id, or a retry starts a second run.
-      const state = await waitFor(deps.store, runId, wait, signal).catch((error: unknown) => {
+      const state = await waitFor(deps.store, runId, wait, deps.logger, signal).catch((error: unknown) => {
         deps.logger.error('run state read failed after start; answering 202', { runId, error: errorText(error) })
         return null
       })
@@ -281,7 +308,7 @@ export function runOperations(deps: OperationDeps): Record<'status' | 'wait' | '
       mutating: false,
       headers: waitHeaders,
       async handler({ input, context, signal }) {
-        const state = await waitFor(deps.store, input.runId, preferWait(context.headers), signal)
+        const state = await waitFor(deps.store, input.runId, preferWait(context.headers), deps.logger, signal)
         if (!state) throw notFound(input.runId)
         return respond(context, state)
       },
@@ -297,7 +324,7 @@ export function runOperations(deps: OperationDeps): Record<'status' | 'wait' | '
         const wait = preferWait(context.headers, CANCEL_GRACE_S) // before the cancel: a 400 must change nothing
         if (!(await deps.store.get(input.runId))) throw notFound(input.runId)
         await deps.runtime.cancel(input.runId)
-        const state = await waitFor(deps.store, input.runId, wait, signal)
+        const state = await waitFor(deps.store, input.runId, wait, deps.logger, signal)
         if (!state) throw notFound(input.runId)
         return respond(context, state)
       },
@@ -335,6 +362,6 @@ export function workflowOperation(entry: HostWorkflow, deps: OperationDeps): Hos
     method: 'POST',
     path,
     cli,
-    procedure: buildWorkflow(entry, deps, cli, path),
+    procedure: buildWorkflow(entry, input, deps, cli, path),
   }
 }
