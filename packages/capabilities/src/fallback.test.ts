@@ -22,7 +22,11 @@ beforeEach(() => {
 })
 afterEach(() => iu.stop())
 
-async function call(id: 'llm.classify' | 'llm.summarize', input: unknown, env: Env = {}) {
+async function call(
+  id: 'llm.classify' | 'llm.summarize' | 'review.adversary' | 'review.route',
+  input: unknown,
+  env: Env = {},
+) {
   const transports = iuTransports({
     env: { IU_API_KEY: 'test-key', IU_BASE_URL: iu.baseUrl },
     backoffMs: 0,
@@ -163,5 +167,73 @@ describe('provider-balance fallback', () => {
     iu.on('chat', () => new Response('', { status: 402 }))
     await caught(call('llm.classify', classify, env))
     expect(iu.requests).toHaveLength(1)
+  })
+})
+
+describe('provider-balance fallback: the review seats', () => {
+  const adversary = resolveRoute('review.adversary', {})
+  const adversaryFallback = adversary.fallback as NonNullable<typeof adversary.fallback>
+  const finding = { severity: 'blocking', file: 'a.ts', line: 3, message: 'drops the last row' }
+
+  for (const [name, failure] of [
+    ['402', () => new Response('{"error":"payment required"}', { status: 402 })],
+    ['503 Insufficient Balance', () => new Response(BALANCE_503, { status: 503 })],
+  ] as const) {
+    test(`review.adversary, ${name}: one fallback call at the adversary’s effort, priced, model recorded`, async () => {
+      iu.on('chat', (request) =>
+        request.body.model === adversary.model ? failure() : answer(request, JSON.stringify({ findings: [finding] })),
+      )
+      const out = await call('review.adversary', { diff: '+added line' })
+      expect(out).toMatchObject({ findings: [finding], model: adversaryFallback.model })
+      expect(iu.requests.map((r) => r.body.model)).toEqual([adversary.model, adversaryFallback.model])
+      expect(iu.requests[1]?.body).toMatchObject({
+        reasoning_effort: 'medium',
+        max_completion_tokens: adversaryFallback.maxOutputTokens,
+      })
+      expect(usages).toEqual([
+        {
+          model: adversaryFallback.model,
+          tokens: { input: 1_000, output: 200, cacheRead: 0, reasoning: 50 },
+          cost: (1_000 * 1 + 200 * 5) / 1_000_000,
+          costSource: 'rate',
+        },
+      ])
+      expect(warnings.map((w) => w.meta)).toEqual([
+        { route: 'review.adversary', from: adversary.model, to: adversaryFallback.model },
+      ])
+    })
+  }
+
+  test('review.adversary: the empty-answer retry at low stays on the fallback', async () => {
+    let answers = 0
+    iu.on('chat', (request) => {
+      if (request.body.model === adversary.model) return new Response(BALANCE_503, { status: 503 })
+      return answer(request, answers++ === 0 ? '' : '{"findings":[]}')
+    })
+    await call('review.adversary', { diff: '+x' })
+    expect(iu.requests.map((r) => [r.body.model, r.body.reasoning_effort])).toEqual([
+      [adversary.model, 'medium'],
+      [adversaryFallback.model, 'medium'],
+      [adversaryFallback.model, 'low'],
+    ])
+  })
+
+  test('review.adversary: a 503 without the balance text gets no fallback', async () => {
+    iu.on('chat', () => new Response('Service Unavailable', { status: 503 }))
+    await caught(call('review.adversary', { diff: '+x' }))
+    expect(new Set(iu.requests.map((r) => r.body.model))).toEqual(new Set([adversary.model]))
+  })
+
+  test('review.route (review.router) falls back through completeJson', async () => {
+    const router = resolveRoute('review.router', {})
+    iu.on('chat', (request) =>
+      request.body.model === router.model
+        ? new Response('', { status: 402 })
+        : answer(request, '{"angles":["security"],"depth":"deep"}'),
+    )
+    const out = await call('review.route', { diff: '+x' })
+    expect(out).toMatchObject({ angles: ['security'], depth: 'deep' })
+    expect(iu.requests.map((r) => r.body.model)).toEqual([router.model, router.fallback?.model])
+    expect(usages).toEqual([expect.objectContaining({ model: router.fallback?.model, costSource: 'rate' })])
   })
 })
