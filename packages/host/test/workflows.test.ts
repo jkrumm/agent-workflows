@@ -1,6 +1,8 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
+import { z } from 'zod'
 import { createCapabilities, createRegistry } from '@agent-workflows/capabilities'
 import { fakeTransports } from '@agent-workflows/capabilities/testing'
+import { withOutputType } from '../src/operations.ts'
 import { createCheckWorkflows } from '../src/workflows/check/index.ts'
 import { createReviewWorkflows } from '../src/workflows/review/index.ts'
 import { captureLogger, startTestHost, type TestHost, until } from './support.ts'
@@ -443,5 +445,44 @@ describe('output schema in the document', () => {
     } finally {
       await host.close()
     }
+  })
+})
+
+describe('withOutputType', () => {
+  const state = (properties: unknown = { output: {} }) => ({
+    responses: { '200': { content: { 'application/json': { schema: { type: 'object', properties } } } } },
+  })
+  type Typed = ReturnType<typeof state>
+  const outputOf = (op: Typed) =>
+    (op.responses['200'].content['application/json'].schema.properties as Record<string, Record<string, unknown>>)
+      .output
+
+  test("keeps the output schema's own description and adds one only when it has none", () => {
+    const described = withOutputType(state(), { id: 'a.b', output: z.object({ n: z.number() }).describe('Mine') })
+    expect(outputOf(described)).toMatchObject({ type: 'object', description: 'Mine' })
+    const plain = withOutputType(state(), { id: 'a.b', output: z.object({ n: z.number() }) })
+    expect(outputOf(plain)?.description).toBe("The workflow's output, once done")
+  })
+
+  test('a 200 response that is not an inline object schema is a boot error, not a silent skip', () => {
+    for (const bad of [
+      {},
+      { responses: {} },
+      { responses: { '200': { content: { 'application/json': { schema: { $ref: '#/x' } } } } } },
+    ]) {
+      expect(() => withOutputType(bad, { id: 'a.b', output: z.object({}) })).toThrow(
+        'workflow a.b: the generated 200 response',
+      )
+    }
+  })
+
+  test('an output schema that would produce $defs or a $ref, or that is cyclic, throws', () => {
+    const named = z.object({ n: z.number() }).meta({ id: 'WfOutputNamed' })
+    expect(() => withOutputType(state(), { id: 'a.b', output: z.object({ x: named, y: named }) })).toThrow(
+      /\$ref or \$defs|Cycle/,
+    )
+    type Node = { next?: Node }
+    const node: z.ZodType<Node> = z.object({ next: z.lazy(() => node).optional() })
+    expect(() => withOutputType(state(), { id: 'a.b', output: node })).toThrow()
   })
 })

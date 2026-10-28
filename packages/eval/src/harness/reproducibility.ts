@@ -3,6 +3,7 @@ import { dirname, join } from 'node:path'
 import { z } from 'zod'
 import { type CheckCase, evalDir, type ReviewCase } from '../cases.ts'
 import { matchFindings } from './match.ts'
+import type { ReproducibleCases } from './aggregate.ts'
 import type { CheckRunner, Judge, Located, ReviewRunner } from './ports.ts'
 import { type HarnessOptions, pool, requestedDepth, serialLock, withTree } from './run.ts'
 import { rate } from './stats.ts'
@@ -17,6 +18,12 @@ import { rate } from './stats.ts'
  * the reference), the outcomes agree in at least `threshold` of the pairs and, if any reference run had blocking
  * findings, at least `threshold` of those were found again. The default is 0.5: with the recorded run and two
  * reruns (three pairs) that means all three outcomes agree, since two agreeing pairs imply the third.
+ *
+ * The rows hold the raw agreement numbers; the threshold is applied when they are read (`isReproducible`,
+ * `reproducibleCases`), so a different `--threshold` takes effect without measuring again.
+ *
+ * The comparisons are every pair of the recorded run and the reruns, (runs + 1) choose 2: with the judge on, each
+ * pair can add judge calls for its unsure findings, so keep `--runs` small (the default 2 is three pairs).
  */
 export const DEFAULT_THRESHOLD = 0.5
 
@@ -31,8 +38,6 @@ export const ReproducibilityRow = z.object({
   outcomeAgreement: z.number().min(0).max(1),
   /** Blocking findings (check: red runs) of the earlier run of a pair found again in the later one, pooled; `null`: no run had any. */
   blockingRecall: z.number().min(0).max(1).nullable(),
-  reproducible: z.boolean(),
-  threshold: z.number().min(0).max(1),
 })
 export type ReproducibilityRow = z.infer<typeof ReproducibilityRow>
 
@@ -60,14 +65,19 @@ export function readRows(path: string): ReproducibilityRow[] {
   return [...rows.values()]
 }
 
+/** The threshold applied to a row's raw numbers: both must reach it; a recall of `null` (no run had a blocker) is not held against the case. */
+export const isReproducible = (row: ReproducibilityRow, threshold: number) =>
+  row.outcomeAgreement >= threshold && (row.blockingRecall === null || row.blockingRecall >= threshold)
+
 /**
- * Which cases the recorded findings can be scored on, from the legacy rows: the recorded reference is a legacy
- * artifact, so legacy's reruns are the ones that say whether it comes back. `null`: no legacy rows at all, so
- * nothing is known and every case counts (the report says so).
+ * Which cases the recorded findings can be scored on at `threshold`, from the legacy rows: the recorded reference is a
+ * legacy artifact, so legacy's reruns are the ones that say whether it comes back. `null`: no legacy rows at all, so
+ * nothing is known (the report says so). Rows of the `new` side never feed scoring.
  */
-export function reproducibleCases(rows: ReproducibilityRow[]): Map<string, boolean> | null {
+export function reproducibleCases(rows: ReproducibilityRow[], threshold: number): ReproducibleCases | null {
   const legacy = rows.filter((r) => r.side === 'legacy')
-  return legacy.length ? new Map(legacy.map((r) => [r.id, r.reproducible])) : null
+  if (!legacy.length) return null
+  return { threshold, byId: new Map(legacy.map((r) => [r.id, isReproducible(r, threshold)])) }
 }
 
 /** One run as the comparison sees it: its outcome, and what a later run is asked to find again. */
@@ -81,7 +91,7 @@ interface View {
 
 type Recall = (reference: View, other: View) => Promise<{ reference: number; matched: number }>
 
-async function measure(views: View[], recall: Recall, threshold: number) {
+async function measure(views: View[], recall: Recall) {
   let pairs = 0
   let agreed = 0
   let reference = 0
@@ -95,10 +105,7 @@ async function measure(views: View[], recall: Recall, threshold: number) {
       matched += found.matched
     }
   }
-  const outcomeAgreement = agreed / pairs
-  const blockingRecall = rate(matched, reference)
-  const reproducible = outcomeAgreement >= threshold && (blockingRecall === null || blockingRecall >= threshold)
-  return { outcomeAgreement, blockingRecall, reproducible }
+  return { outcomeAgreement: agreed / pairs, blockingRecall: rate(matched, reference) }
 }
 
 /** `resultsPath` is the workflow's `reproducibility.jsonl`. */
@@ -106,7 +113,6 @@ export interface SelfAgreementOptions extends HarnessOptions {
   side: Side
   /** Reruns per case, at least 2. */
   runs: number
-  threshold: number
 }
 
 const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error))
@@ -161,14 +167,8 @@ async function rerunAll<C extends { id: string }, V>(
       async ({ dir }) => {
         const views = [plan.recorded(c)]
         for (let run = 0; run < options.runs; run++) views.push(plan.view(await plan.rerun(c, dir)))
-        const m = await measure(views, plan.recall(c), options.threshold)
-        appendRow(options.resultsPath, {
-          id: c.id,
-          side: options.side,
-          runs: options.runs,
-          threshold: options.threshold,
-          ...m,
-        })
+        const m = await measure(views, plan.recall(c))
+        appendRow(options.resultsPath, { id: c.id, side: options.side, runs: options.runs, ...m })
         return { id: c.id, status: 'measured' }
       },
       (skipped) => ({ id: c.id, status: 'skipped', detail: skipped.reason }),

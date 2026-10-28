@@ -27,7 +27,7 @@ bun packages/eval/src/harness/cli.ts self-agreement review --side legacy --runs 
 | `--depth router` | the new review picks its own depth; default `matched` passes the legacy run's recorded depth |
 | `--dry-run` | materializes every case, prints the plan and an IU estimate (legacy mean cost × ready cases, × 2 with a rerun) |
 | `--keep` | keeps the case clones (paths go to stderr) |
-| `--resume <run>` | continues a run; finished and skipped cases are not rerun, failed ones are. `<run>` is an absolute directory or a run timestamp (the directory name under `<evalDir>/reports`); a bare name never resolves against the cwd, anything else (or a run that does not exist) is a usage error |
+| `--resume <run>` | continues a run; finished and skipped cases are not rerun, failed ones are. `<run>` is an absolute directory, or a path relative to `<evalDir>/reports` (a run's timestamp is its directory name there); it never resolves against the cwd, must stay inside the reports directory and must exist, else a usage error |
 | `--seed N` | bootstrap seed (default 1): the same seed gives the same CI |
 | `--agw-args="<args>"` | review only (a usage error on `check`): whitespace-split extra arguments for every `agw review` call, e.g. `--agw-args="--angle-variant shell"` (the `=` is required: the value starts with a dash). Pinned in the run directory's `run.json`: `--resume` with different arguments is a usage error. Recorded in `report.json` (`meta.agwArgs`) and the `report.md` header |
 
@@ -49,28 +49,36 @@ bun packages/eval/src/harness/cli.ts self-agreement review|check --side legacy|n
 ```
 
 It reruns one side `--runs` times (default 2, at least 2) on every case and compares all runs with each other and
-with the recorded run (the earlier run of a pair is the reference), with the same matcher as the main harness. Per
-case it appends `{ id, side, runs, outcomeAgreement, blockingRecall, reproducible, threshold }` to
-`<evalDir>/<workflow>/reproducibility.jsonl` (mode 0600; numbers only):
+with the recorded run (the earlier run of a pair is the reference), with the same matcher as the main harness. The
+runs are every pair of the recorded run and the reruns, (runs + 1) choose 2: three pairs at the default, and with
+`--judge` each pair can add judge calls for its unsure findings, so keep `--runs` small. Per case it appends the
+**raw** agreement numbers to `<evalDir>/<workflow>/reproducibility.jsonl` (mode 0600; numbers only):
+`{ id, side, runs, outcomeAgreement, blockingRecall }`.
 
 | Field | Meaning |
 |-|-|
 | `outcomeAgreement` | pairs of runs with the same outcome (review `outcome`, check `passed`) / all pairs |
 | `blockingRecall` | blocking findings of the earlier run of a pair found again in the later one, pooled; check: red runs still red (failure recall). `null` when no run had any |
-| `reproducible` | `outcomeAgreement >= threshold` and (`blockingRecall` is `null` or `>= threshold`) |
 
-`--threshold` defaults to 0.5: with the recorded run and two reruns (three pairs) it means all three outcomes agree.
-A case a rerun failed on or that cannot materialize gets no row. Cases already measured for this side with as many
-reruns are skipped on the next call (delete the file to measure again); legacy reruns go one at a time, as in the
-main harness. The new side reruns at the recorded depth (`--depth router` lets its router choose, `--agw-args`
-applies); the legacy CLI takes no depth.
+A case is **reproducible** at a threshold when `outcomeAgreement >= threshold` and (`blockingRecall` is `null` or
+`>= threshold`). The threshold is applied when the rows are read, not when they are written: `--threshold` (default
+0.5; with the recorded run and two reruns it means all three outcomes agree) takes effect on the same file without
+measuring again, in `self-agreement`'s summary line and in `review|check`. A case a rerun failed on or that cannot
+materialize gets no row. Cases already measured for this side with as many reruns are skipped on the next call
+(delete the file to measure again); legacy reruns go one at a time, as in the main harness. `self-agreement` exits 1
+when it measured nothing (every case errored or was skipped). `--side` and `--runs` belong to `self-agreement`; on
+`review|check` they are a usage error. The new side reruns at the recorded depth (`--depth router` lets its router
+choose, `--agw-args` applies); the legacy CLI takes no depth.
 
-`review` and `check` read the **legacy** rows (the recorded findings are legacy's) and score blocking recall (check:
-legacy failure recall) on the reproducible cases only; the verdict's recall criterion reads that number. The report
-says how many cases counted: `counted on N of M cases with a recorded blocking finding (…); K not reproducible, U
-without data`. Without any legacy row it says `no reproducibility data` and every case counts, as before. If no case
-is reproducible the recall is undecided (the verdict goes inconclusive), never a pass. Rows of the `new` side are for
-reading only: they say how much the new workflow disagrees with itself.
+`review` and `check` read the **legacy** rows only (the recorded findings are legacy's) and score blocking recall
+(check: legacy failure recall) on the reproducible cases, **when every scored case of the run has a legacy row**. The
+headline recall prints the counted cases' own numerator and denominator, and the report says how many cases counted:
+`counted on N of M cases with a recorded blocking finding (…); K not reproducible`. With rows for only some of the
+cases the data is not used (a partial file would shrink the denominator to whichever cases happened to be measured):
+every case counts and the report says `reproducibility data covers K of N cases: not used`. With no legacy row it says
+`no reproducibility data`. If no case is reproducible the recall is undecided (the verdict goes inconclusive), never a
+pass. **Rows of the `new` side never feed scoring**: they say how much the new workflow disagrees with itself, and the
+`--side new` summary line is marked informational.
 
 ## How a case runs
 

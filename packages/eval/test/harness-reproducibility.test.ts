@@ -10,6 +10,7 @@ import type { ReviewOutput, ReviewRequest, ReviewRunner } from '../src/harness/p
 import { renderAggregate, renderMarkdown } from '../src/harness/report.ts'
 import {
   DEFAULT_THRESHOLD,
+  isReproducible,
   readRows,
   reproducibleCases,
   type SelfAgreementOptions,
@@ -33,7 +34,6 @@ function options(home: string, overrides: Partial<SelfAgreementOptions> = {}): S
     resultsPath: join(mkdtempSync(join(tmpdir(), 'agw-eval-repro-')), 'reproducibility.jsonl'),
     side: 'legacy',
     runs: 2,
-    threshold: DEFAULT_THRESHOLD,
     ...overrides,
   }
 }
@@ -66,29 +66,53 @@ describe('self-agreement: review', () => {
       runs: 2,
       outcomeAgreement: 1,
       blockingRecall: 1,
-      reproducible: true,
     })
     // recorded actionable vs two clean reruns: 1 of 3 pairs agree; the recorded blocker is found in neither rerun
     expect(rows.find((r) => r.id === 'flaky')).toMatchObject({
       outcomeAgreement: 1 / 3,
       blockingRecall: 0,
-      reproducible: false,
     })
-    expect(reproducibleCases(rows)).toEqual(
-      new Map([
+    expect(reproducibleCases(rows, DEFAULT_THRESHOLD)).toEqual({
+      threshold: DEFAULT_THRESHOLD,
+      byId: new Map([
         ['stable', true],
         ['flaky', false],
       ]),
-    )
+    })
   })
 
-  test('the threshold is configurable', async () => {
+  test('the rows hold raw numbers: a new threshold applies to the same file without measuring again', async () => {
     const fx = fixtureHome()
-    const cases = [reviewCase({ id: 'flaky', baseSha: fx.baseSha, diff: fx.diff })]
-    const { runner } = scripted([clean, clean])
-    const opts = options(fx.home, { threshold: 0 })
+    const cases = [
+      reviewCase({ id: 'flaky', baseSha: fx.baseSha, diff: fx.diff }),
+      reviewCase({ id: 'stable', baseSha: fx.baseSha, diff: fx.diff }),
+    ]
+    const { runner, calls } = scripted([clean, clean, reviewOutput(), reviewOutput()])
+    const opts = options(fx.home)
     await selfAgreementReview(cases, { runner }, opts)
-    expect(readRows(opts.resultsPath)[0]).toMatchObject({ threshold: 0, reproducible: true })
+    const rows = readRows(opts.resultsPath)
+    expect(rows.every((r) => !('reproducible' in r) && !('threshold' in r))).toBe(true)
+    // flaky: outcome agreement 1/3, recall 0 -> reproducible only at a threshold of 0
+    const at = (threshold: number) => reproducibleCases(rows, threshold)?.byId
+    expect(at(0.5)).toEqual(
+      new Map([
+        ['flaky', false],
+        ['stable', true],
+      ]),
+    )
+    expect(at(0)).toEqual(
+      new Map([
+        ['flaky', true],
+        ['stable', true],
+      ]),
+    )
+    expect(at(1)?.get('stable')).toBe(true)
+    expect(isReproducible({ id: 'x', side: 'legacy', runs: 2, outcomeAgreement: 1, blockingRecall: 0.6 }, 0.7)).toBe(
+      false,
+    )
+    // pending keys on side and runs only: no threshold, so a rerun with another one measures nothing
+    await selfAgreementReview(cases, { runner }, opts)
+    expect(calls).toHaveLength(4)
   })
 
   test('a case without any blocking finding is judged on its outcome alone', async () => {
@@ -106,8 +130,8 @@ describe('self-agreement: review', () => {
     expect(readRows(opts.resultsPath)[0]).toMatchObject({
       outcomeAgreement: 1,
       blockingRecall: null,
-      reproducible: true,
     })
+    expect(isReproducible(readRows(opts.resultsPath)[0] as never, 0.5)).toBe(true)
   })
 
   test('a failed rerun or an unapplicable diff leaves no row; a measured case is not rerun on the next call', async () => {
@@ -152,12 +176,17 @@ describe('self-agreement: review', () => {
     await selfAgreementReview(cases, { runner: scripted([clean, clean]).runner }, opts)
     await selfAgreementReview(cases, { runner: scripted([]).runner }, { ...opts, side: 'new' })
     const rows = readRows(opts.resultsPath)
-    expect(rows.map((r) => [r.side, r.reproducible])).toEqual([
+    expect(rows.map((r) => [r.side, isReproducible(r, 0.5)])).toEqual([
       ['legacy', false],
       ['new', true],
     ])
-    expect(reproducibleCases(rows)).toEqual(new Map([['a', false]]))
-    expect(reproducibleCases(rows.filter((r) => r.side === 'new'))).toBeNull()
+    expect(reproducibleCases(rows, 0.5)?.byId).toEqual(new Map([['a', false]]))
+    expect(
+      reproducibleCases(
+        rows.filter((r) => r.side === 'new'),
+        0.5,
+      ),
+    ).toBeNull()
   })
 })
 
@@ -181,13 +210,14 @@ describe('self-agreement: check', () => {
     expect(rows.find((r) => r.id === 'red')).toMatchObject({
       outcomeAgreement: 1 / 3,
       blockingRecall: 0,
-      reproducible: false,
     })
-    expect(rows.find((r) => r.id === 'green')).toMatchObject({
-      outcomeAgreement: 1,
-      blockingRecall: null,
-      reproducible: true,
-    })
+    expect(rows.find((r) => r.id === 'green')).toMatchObject({ outcomeAgreement: 1, blockingRecall: null })
+    expect(reproducibleCases(rows, 0.5)?.byId).toEqual(
+      new Map([
+        ['red', false],
+        ['green', true],
+      ]),
+    )
   })
 })
 
@@ -200,43 +230,72 @@ describe('recall over reproducible cases', () => {
     return results
   }
 
-  test('only reproducible cases count, and the report says how many', async () => {
+  const repro = (entries: [string, boolean][], threshold = 0.5) => ({ threshold, byId: new Map(entries) })
+  const reviewReport = (
+    results: Awaited<ReturnType<typeof reviewResults>>,
+    aggregate: ReturnType<typeof aggregateReview>,
+  ) => ({
+    workflow: 'review' as const,
+    meta: meta(),
+    aggregate,
+    verdict: reviewVerdict(aggregate),
+    results,
+  })
+
+  test('only reproducible cases count; the headline prints the counted numbers, not the totals', async () => {
     const results = await reviewResults()
     const all = aggregateReview(results)
     expect(all.blocking.recall).toBe(0.5)
-    expect(all.blocking.basis).toBeNull()
+    expect(all.blocking).toMatchObject({ basis: null, coverage: null })
+    expect(renderAggregate(reviewReport(results, all))).toContain('Blocking recall vs legacy: 50.0% (1/2);')
 
     const only = aggregateReview(
       results,
       1,
-      new Map([
+      repro([
         ['a', true],
         ['b', false],
       ]),
     )
     expect(only.blocking.recall).toBe(1)
     expect(only.blocking.basis).toEqual({
+      threshold: 0.5,
       withRecorded: 2,
       counted: 1,
       notReproducible: 1,
-      noData: 0,
       matched: 1,
       reference: 1,
     })
     expect(reviewVerdict(only).criteria[0]).toMatchObject({ metric: 'blocking recall', value: 1 })
 
-    const report = { workflow: 'review' as const, meta: meta(), aggregate: only, verdict: reviewVerdict(only), results }
-    expect(renderAggregate(report)).toContain(
-      'blocking recall counted on 1 of 2 cases with a recorded blocking finding (1/1); 1 not reproducible, 0 without data',
+    const text = renderAggregate(reviewReport(results, only))
+    expect(text).toContain('Blocking recall vs legacy: 100.0% (1/1 on reproducible cases);')
+    expect(text).not.toContain('(1/2')
+    expect(text).toContain(
+      'Reproducibility (threshold 0.5): blocking recall counted on 1 of 2 cases with a recorded blocking finding (1/1); 1 not reproducible.',
     )
-    const noData = { ...report, aggregate: all, verdict: reviewVerdict(all) }
-    expect(renderMarkdown(noData)).toContain('no reproducibility data')
+    expect(renderMarkdown(reviewReport(results, all))).toContain('no reproducibility data')
   })
 
-  test('a case without a row is neither counted nor called not reproducible', async () => {
+  test('partial data is not used: every case counts and the report says how many the data covers', async () => {
     const results = await reviewResults()
-    const partial = aggregateReview(results, 1, new Map([['a', true]]))
-    expect(partial.blocking.basis).toMatchObject({ counted: 1, notReproducible: 0, noData: 1 })
+    const partial = aggregateReview(results, 1, repro([['a', true]]))
+    expect(partial.blocking.recall).toBe(0.5)
+    expect(partial.blocking.basis).toBeNull()
+    expect(partial.blocking.coverage).toEqual({ covered: 1, cases: 2 })
+    expect(renderAggregate(reviewReport(results, partial))).toContain(
+      'reproducibility data covers 1 of 2 cases: not used, blocking recall counts every case.',
+    )
+    // rows for cases outside the run do not count towards the coverage
+    const stranger = aggregateReview(
+      results,
+      1,
+      repro([
+        ['a', true],
+        ['elsewhere', false],
+      ]),
+    )
+    expect(stranger.blocking.coverage).toEqual({ covered: 1, cases: 2 })
   })
 
   test('no reproducible case leaves the recall undecided instead of passing it', async () => {
@@ -244,7 +303,7 @@ describe('recall over reproducible cases', () => {
     const none = aggregateReview(
       results,
       1,
-      new Map([
+      repro([
         ['a', false],
         ['b', false],
       ]),
@@ -253,7 +312,7 @@ describe('recall over reproducible cases', () => {
     expect(reviewVerdict(none).criteria[0]?.pass).toBeNull()
   })
 
-  test('check: the failure recall counts reproducible red cases only', async () => {
+  test('check: the failure recall counts reproducible red cases only, and says so in the headline', async () => {
     const fx = fixtureHome()
     const red = (id: string) =>
       checkCase({
@@ -261,17 +320,43 @@ describe('recall over reproducible cases', () => {
         baseSha: fx.baseSha,
         legacy: { passed: false, steps: [{ name: 'check', passed: false }], costUsd: 0, costExact: true, wallMs: 1 },
       })
-    const caught = {
+    const runner = (passed: boolean) => ({
       async check() {
-        return { output: { passed: false, steps: [{ name: 'check', passed: false }], summary: '' }, spend }
+        return { output: { passed, steps: [{ name: 'check', passed }], summary: '' }, spend }
       },
-    }
-    const results = await runCheck([red('x')], { next: caught }, { ...options(fx.home) })
-    const filtered = aggregateCheck(results, 1, new Map([['x', false]]))
+    })
+    const results = await runCheck([red('x')], { next: runner(false) }, { ...options(fx.home) })
+    const filtered = aggregateCheck(results, 1, repro([['x', false]]))
     expect(filtered.failureRecall.recall).toBeNull()
     expect(filtered.failureRecall.basis).toMatchObject({ withRecorded: 1, counted: 0, notReproducible: 1 })
     expect(aggregateCheck(results).failureRecall.recall).toBe(1)
     expect(checkVerdict(filtered).criteria[1]?.pass).toBeNull()
+
+    // two red cases, the new side catches only the first: the filtered headline shows the counted case's own numbers
+    let n = 0
+    const twice = { check: () => runner(n++ !== 0).check() }
+    const two = await runCheck([red('p'), red('q')], { next: twice }, { ...options(fx.home), concurrency: 1 })
+    const aggregate = aggregateCheck(
+      two,
+      1,
+      repro([
+        ['p', true],
+        ['q', false],
+      ]),
+    )
+    expect(aggregate.failureRecall).toMatchObject({ caught: 1, legacyFailed: 2, recall: 1 })
+    const report = {
+      workflow: 'check' as const,
+      meta: meta(),
+      aggregate,
+      verdict: checkVerdict(aggregate),
+      results: two,
+    }
+    expect(renderAggregate(report)).toContain(
+      'Legacy failure recall: 100.0% (1/1 legacy-red cases red on the new side, reproducible ones)',
+    )
+    const partial = aggregateCheck(two, 1, repro([['p', true]]))
+    expect(partial.failureRecall.coverage).toEqual({ covered: 1, cases: 2 })
   })
 })
 
@@ -286,18 +371,22 @@ const meta = () => ({
 })
 
 describe('--resume', () => {
-  test('an absolute path or a run timestamp under reports resolves; anything else is an error', () => {
+  test('an absolute path or a path under the reports dir resolves; a missing run or an escape is an error', () => {
     const reports = mkdtempSync(join(tmpdir(), 'agw-eval-reports-'))
-    mkdirSync(join(reports, '2026-10-28T09-00-00-000Z'))
-    expect(resolveRunDir('2026-10-28T09-00-00-000Z', reports)).toBe(join(reports, '2026-10-28T09-00-00-000Z'))
-    expect(resolveRunDir(join(reports, '2026-10-28T09-00-00-000Z'), reports)).toBe(
-      join(reports, '2026-10-28T09-00-00-000Z'),
-    )
-    for (const bad of ['reports/2026-10-28T09-00-00-000Z', './run', 'run', '2026-10-28', '../x']) {
-      expect(() => resolveRunDir(bad, reports)).toThrow('absolute path or a run timestamp')
+    const stamp = '2026-10-28T09-00-00-000Z'
+    mkdirSync(join(reports, stamp))
+    mkdirSync(join(reports, 'archive', stamp), { recursive: true })
+    expect(resolveRunDir(stamp, reports)).toBe(join(reports, stamp))
+    expect(resolveRunDir(`./${stamp}`, reports)).toBe(join(reports, stamp))
+    expect(resolveRunDir(`archive/${stamp}`, reports)).toBe(join(reports, 'archive', stamp))
+    expect(resolveRunDir(join(reports, stamp), reports)).toBe(join(reports, stamp))
+    expect(resolveRunDir(mkdtempSync(join(tmpdir(), 'agw-eval-abs-')), reports)).toContain('agw-eval-abs-')
+    for (const missing of ['2026-10-29T09-00-00-000Z', 'run', `reports/${stamp}`, join(reports, 'missing')]) {
+      expect(() => resolveRunDir(missing, reports)).toThrow('no run directory')
     }
-    expect(() => resolveRunDir('2026-10-29T09-00-00-000Z', reports)).toThrow('no run directory')
-    expect(() => resolveRunDir(join(reports, 'missing'), reports)).toThrow('no run directory')
+    for (const outside of ['..', '../x', `archive/../../${stamp}`, '.']) {
+      expect(() => resolveRunDir(outside, reports)).toThrow('leaves')
+    }
   })
 })
 
@@ -307,12 +396,14 @@ describe('cli', () => {
     const evalDir = mkdtempSync(join(tmpdir(), 'agw-eval-dir-'))
     return { fx, evalDir, env: { AGW_EVAL_DIR: evalDir, AGW_EVAL_HOME: fx.home, AGW_EVAL_PG_PASSWORD: 'x' } }
   }
+  /** git runs for real; `agw` answers with a review (or fails with `agwCode`); everything else (psql, secrets) is absent. */
   const fakeAgw =
-    (counter: { agw: number }): Exec =>
+    (counter: { agw: number }, agwCode = 0): Exec =>
     async (cmd, args, options) => {
       if (cmd === 'git') return exec(cmd, args, options)
       if (cmd === 'agw') {
         counter.agw++
+        if (agwCode !== 0) return { code: agwCode, stdout: '', stderr: 'host down' }
         return {
           code: 0,
           stdout: JSON.stringify({ runId: `r${counter.agw}`, status: 'done', output: reviewOutput() }),
@@ -322,7 +413,7 @@ describe('cli', () => {
       return { code: 1, stdout: '', stderr: 'no journal in this test' }
     }
 
-  test('--resume with a bare timestamp resolves under the reports dir; a bare name is a usage error that writes nothing', async () => {
+  test('--resume resolves a timestamp under the reports dir, never against the cwd', async () => {
     const { fx, evalDir, env } = evalEnv()
     writeCases(join(evalDir, 'review', 'cases.jsonl'), ReviewCase, [
       reviewCase({ id: 'a', baseSha: fx.baseSha, diff: fx.diff }),
@@ -343,22 +434,23 @@ describe('cli', () => {
     expect(readdirSync(join(evalDir, 'reports'))).toEqual([stamp])
 
     const cwd = mkdtempSync(join(tmpdir(), 'agw-eval-cwd-'))
+    mkdirSync(join(cwd, 'my-run')) // a directory of that name in the cwd must not be picked up
     const before = process.cwd()
     process.chdir(cwd)
     try {
       const err: string[] = []
       expect(await main(['review', '--resume', 'my-run'], deps(err))).toBe(2)
-      expect(err.join('\n')).toContain('absolute path or a run timestamp')
-      expect(await main(['review', '--resume', '2026-01-01T00-00-00-000Z'], deps(err))).toBe(2)
       expect(err.join('\n')).toContain('no run directory')
+      expect(await main(['review', '--resume', '../escape'], deps(err))).toBe(2)
+      expect(err.join('\n')).toContain('leaves')
     } finally {
       process.chdir(before)
     }
-    expect(readdirSync(cwd)).toEqual([])
+    expect(readdirSync(join(cwd, 'my-run'))).toEqual([])
     expect(readdirSync(join(evalDir, 'reports'))).toEqual([stamp])
   })
 
-  test('self-agreement writes reproducibility.jsonl; review then counts the reproducible cases and says so', async () => {
+  test('self-agreement writes raw rows; review reads the legacy rows at the --threshold given, without measuring again', async () => {
     const { fx, evalDir, env } = evalEnv()
     writeCases(join(evalDir, 'review', 'cases.jsonl'), ReviewCase, [
       reviewCase({ id: 'a', baseSha: fx.baseSha, diff: fx.diff }),
@@ -370,27 +462,84 @@ describe('cli', () => {
     expect(await main(['self-agreement', 'review', '--side', 'new', '--runs', '3'], deps)).toBe(0)
     expect(counter.agw).toBe(3)
     const file = join(evalDir, 'review', 'reproducibility.jsonl')
-    expect(readRows(file)).toMatchObject([{ id: 'a', side: 'new', runs: 3, reproducible: true }])
-    expect(out.join('\n')).toContain('1 of 1 measured cases reproducible')
+    expect(readRows(file)).toMatchObject([{ id: 'a', side: 'new', runs: 3, outcomeAgreement: 1, blockingRecall: 1 }])
+    expect(out.join('\n')).toContain(
+      '1 of 1 measured cases reproducible at threshold 0.5 (informational: scoring reads legacy rows only)',
+    )
 
     // Only the new side was measured: the baseline is legacy's, so the review run still has no data.
     out.length = 0
     expect(await main(['review'], deps)).toBe(0)
     expect(out.join('\n')).toContain('no reproducibility data')
 
-    // A legacy row is what the baseline reads.
-    writeLegacyRow(file, 'a', false)
+    // A legacy row (raw numbers: 1 of 3 outcome pairs agree, no blocker recovered) is what the baseline reads.
+    appendFileSync(
+      file,
+      `${JSON.stringify({ id: 'a', side: 'legacy', runs: 2, outcomeAgreement: 0.33, blockingRecall: 0 })}\n`,
+    )
     out.length = 0
-    expect(await main(['review', '--resume', readdirSync(join(evalDir, 'reports'))[0] as string], deps)).toBe(0)
-    expect(out.join('\n')).toContain('counted on 0 of 1 cases with a recorded blocking finding')
+    expect(await main(['review'], deps)).toBe(0)
+    expect(out.join('\n')).toContain(
+      'Reproducibility (threshold 0.5): blocking recall counted on 0 of 1 cases with a recorded blocking finding',
+    )
+    const agwCalls = counter.agw
+    out.length = 0
+    expect(await main(['review', '--threshold', '0'], deps)).toBe(0)
+    expect(out.join('\n')).toContain(
+      'Reproducibility (threshold 0): blocking recall counted on 1 of 1 cases with a recorded blocking finding (1/1)',
+    )
+    expect(counter.agw).toBe(agwCalls + 1) // one review run since; the file was not measured again
   })
 
-  test('self-agreement rejects what does not apply, and a bad --side, --runs or --threshold', async () => {
+  test('self-agreement exits 1 when no case was measured; 0 when everything was measured before', async () => {
+    const { fx, evalDir, env } = evalEnv()
+    writeCases(join(evalDir, 'review', 'cases.jsonl'), ReviewCase, [
+      reviewCase({ id: 'a', baseSha: fx.baseSha, diff: fx.diff }),
+    ])
+    const err: string[] = []
+    const out: string[] = []
+    const run = (agwCode: number) =>
+      main(['self-agreement', 'review', '--side', 'new'], {
+        env,
+        exec: fakeAgw({ agw: 0 }, agwCode),
+        out: (l) => out.push(l),
+        err: (l) => err.push(l),
+      })
+    expect(await run(1)).toBe(1) // every rerun failed
+    expect(out.join('\n')).toContain('measured 0, skipped 0, errored 1')
+    expect(err.join('\n')).toContain('no case was measured')
+    expect(existsSync(join(evalDir, 'review', 'reproducibility.jsonl'))).toBe(false)
+
+    writeCases(join(evalDir, 'review', 'cases.jsonl'), ReviewCase, [
+      reviewCase({ id: 'bad', baseSha: fx.baseSha, diff: BAD_DIFF }),
+    ])
+    expect(await run(0)).toBe(1) // every case skipped
+    expect(out.join('\n')).toContain('measured 0, skipped 1, errored 0')
+
+    writeCases(join(evalDir, 'review', 'cases.jsonl'), ReviewCase, [
+      reviewCase({ id: 'a', baseSha: fx.baseSha, diff: fx.diff }),
+    ])
+    expect(await run(0)).toBe(0)
+    expect(await run(1)).toBe(0) // already measured: nothing to rerun, nothing failed
+  })
+
+  test('--side and --runs outside self-agreement are a usage error; self-agreement rejects what does not apply', async () => {
     const { fx, evalDir, env } = evalEnv()
     writeCases(join(evalDir, 'check', 'cases.jsonl'), CheckCase, [checkCase({ baseSha: fx.baseSha })])
+    writeCases(join(evalDir, 'review', 'cases.jsonl'), ReviewCase, [
+      reviewCase({ id: 'a', baseSha: fx.baseSha, diff: fx.diff }),
+    ])
     const err: string[] = []
     const counter = { agw: 0 }
     const run = (argv: string[]) => main(argv, { env, exec: fakeAgw(counter), out: () => {}, err: (l) => err.push(l) })
+    for (const argv of [
+      ['review', '--side', 'new'],
+      ['check', '--runs', '3'],
+      ['review', '--side', 'legacy', '--runs', '2'],
+    ]) {
+      expect(await run(argv)).toBe(2)
+    }
+    expect(err.join('\n')).toContain('apply to self-agreement only')
     expect(await run(['self-agreement', 'check', '--rerun-legacy'])).toBe(2)
     expect(await run(['self-agreement', 'check', '--dry-run'])).toBe(2)
     expect(await run(['self-agreement', 'check', '--resume', 'x'])).toBe(2)
@@ -410,8 +559,3 @@ describe('cli', () => {
     expect(existsSync(join(evalDir, 'check', 'reproducibility.jsonl'))).toBe(false)
   })
 })
-
-function writeLegacyRow(file: string, id: string, reproducible: boolean) {
-  const row = { id, side: 'legacy', runs: 2, outcomeAgreement: 0.33, blockingRecall: 0, reproducible, threshold: 0.5 }
-  appendFileSync(file, `${JSON.stringify(row)}\n`)
-}

@@ -51,41 +51,61 @@ const total = (values: (number | null)[]) => {
 
 const OUTCOMES = ['clean', 'actionable', 'needs-human'] as const
 
+/** The legacy reproducibility rows read at one threshold: case id -> reproducible. */
+export interface ReproducibleCases {
+  threshold: number
+  byId: Map<string, boolean>
+}
+
 /**
- * What the recall counted when the set has reproducibility data (`self-agreement`): only cases that had recorded
- * blocking findings (red runs for check) and whose reproducibility row says `reproducible`. `null` in the aggregate
- * when there is no data: every case counts.
+ * What the recall counted when reproducibility data covers every scored case: only cases that had recorded blocking
+ * findings (red runs for check) and are reproducible at `threshold`. Partial data is not used (`coverage`): it would
+ * shrink the denominator to whichever cases happened to be measured.
  */
 export interface RecallBasis {
+  threshold: number
   /** Cases with a recorded blocking finding (check: a recorded red run). */
   withRecorded: number
   counted: number
   notReproducible: number
-  noData: number
   /** The counted cases' recorded findings and how many the new side found again: the recall's numerator and denominator. */
   matched: number
   reference: number
 }
 
-/** Recall over the cases that count; without reproducibility data that is all of them and there is no basis. */
+/** Reproducibility data that exists but covers only some of the scored cases, so it was not used. */
+export interface Coverage {
+  covered: number
+  cases: number
+}
+
+/**
+ * Recall over the cases that count. The basis applies only when every scored case has a reproducibility row; with
+ * none, or with some, every case counts and `coverage` says whether data existed but did not cover the run.
+ */
 function recallOver(
   entries: { id: string; reference: number; matched: number }[],
-  reproducible: Map<string, boolean> | null,
+  reproducible: ReproducibleCases | null,
 ) {
-  if (!reproducible) {
-    return { recall: rate(sum(entries.map((e) => e.matched)), sum(entries.map((e) => e.reference))), basis: null }
+  const all = {
+    recall: rate(sum(entries.map((e) => e.matched)), sum(entries.map((e) => e.reference))),
+    basis: null,
+    coverage: null,
   }
+  if (!reproducible) return all
+  const covered = entries.filter((e) => reproducible.byId.has(e.id)).length
+  if (covered < entries.length) return { ...all, coverage: { covered, cases: entries.length } }
   const withRecorded = entries.filter((e) => e.reference > 0)
-  const counted = withRecorded.filter((e) => reproducible.get(e.id) === true)
+  const counted = withRecorded.filter((e) => reproducible.byId.get(e.id) === true)
   const basis: RecallBasis = {
+    threshold: reproducible.threshold,
     withRecorded: withRecorded.length,
     counted: counted.length,
-    notReproducible: withRecorded.filter((e) => reproducible.get(e.id) === false).length,
-    noData: withRecorded.filter((e) => !reproducible.has(e.id)).length,
+    notReproducible: withRecorded.length - counted.length,
     matched: sum(counted.map((e) => e.matched)),
     reference: sum(counted.map((e) => e.reference)),
   }
-  return { recall: rate(basis.matched, basis.reference), basis }
+  return { recall: rate(basis.matched, basis.reference), basis, coverage: null }
 }
 
 type Baseline = 'rerun' | 'recorded' | 'mixed'
@@ -113,6 +133,8 @@ export interface ReviewAggregate {
     recall: number | null
     /** Set when the set has reproducibility data: the recall counts reproducible cases only. */
     basis: RecallBasis | null
+    /** Set when reproducibility data exists but does not cover every scored case: not used. */
+    coverage: Coverage | null
     newOnly: number
   }
   improvementsPerCase: { legacy: number | null; new: number | null }
@@ -161,7 +183,7 @@ function costWallSummary(pairs: { next: SpendSide; legacy: SpendSide }[], baseli
 export function aggregateReview(
   results: ReviewCaseResult[],
   seed = 1,
-  reproducible: Map<string, boolean> | null = null,
+  reproducible: ReproducibleCases | null = null,
 ): ReviewAggregate {
   const ok = results.filter((r): r is ReviewCaseResult & Required<Pick<ReviewCaseResult, 'new' | 'match'>> =>
     Boolean(r.status === 'ok' && r.new && r.match),
@@ -204,6 +226,7 @@ export function aggregateReview(
       unsure: sum(ok.map((r) => r.match.unsure)),
       recall: recall.recall,
       basis: recall.basis,
+      coverage: recall.coverage,
       newOnly: sum(ok.map((r) => r.match.newOnly)),
     },
     improvementsPerCase: {
@@ -243,7 +266,13 @@ export interface CheckAggregate {
   /** Over scored cases; column `failed` is a new side that errored (a disagreement). */
   passed: { agreement: number | null; confusion: Record<'legacyPass' | 'legacyFail', PassRow> }
   /** Legacy-red cases the new side also called red: an always-green check cannot pass on a mostly green set. */
-  failureRecall: { legacyFailed: number; caught: number; recall: number | null; basis: RecallBasis | null }
+  failureRecall: {
+    legacyFailed: number
+    caught: number
+    recall: number | null
+    basis: RecallBasis | null
+    coverage: Coverage | null
+  }
   /** Steps both sides ran (by name) whose pass/fail agreed. */
   steps: { compared: number; agreement: number | null }
   cost: CostSummary
@@ -274,7 +303,7 @@ function stepAgreement(pairs: { a: { name: string; passed: boolean }[]; b: { nam
 export function aggregateCheck(
   results: CheckCaseResult[],
   seed = 1,
-  reproducible: Map<string, boolean> | null = null,
+  reproducible: ReproducibleCases | null = null,
 ): CheckAggregate {
   const ok = results.filter((r): r is CheckCaseResult & Required<Pick<CheckCaseResult, 'new'>> =>
     Boolean(r.status === 'ok' && r.new),
@@ -307,7 +336,7 @@ export function aggregateCheck(
       agreement: rate(ok.filter((r) => r.new.passed === r.legacy.passed).length, ok.length + failed.length),
       confusion,
     },
-    failureRecall: { legacyFailed, caught, recall: recall.recall, basis: recall.basis },
+    failureRecall: { legacyFailed, caught, recall: recall.recall, basis: recall.basis, coverage: recall.coverage },
     steps: stepAgreement(ok.map((r) => ({ a: r.new.steps, b: r.legacy.steps }))),
     ...costWallSummary(
       ok.map((r) => ({ next: r.new, legacy: legacyOf(r) })),
