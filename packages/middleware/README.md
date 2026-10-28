@@ -129,7 +129,8 @@ rows and posts them through the `ArgoTransport` port. Production: `POST <ARGO_UR
 - **Crash after the post.** The rows are posted again; Argo's upsert on `(source, source_id, machine)` absorbs it.
 - **No usage, no row.** Only steps with tokens or a cost are outbox candidates (the `steps_argo_outbox` index).
 - **Scores ride in `raw.scores`** (`runs.scores`: the inline gate verdicts, and `final` once the run is scored),
-  never as top-level fields. A run scored after its rows were posted (regression, drift) puts its steps back into the
+  never as top-level fields. `raw.scorePass` and `raw.scoreError` make the final score explicit: a scorer error is
+  `scorePass: null` with `scoreError: { kind: 'scorer' | 'infra', message }`, never a fail. A run scored after its rows were posted (regression, drift) puts its steps back into the
   outbox: the runtime's score write clears `argo_synced_at` and drops a claim in flight (that flush's mark then
   misses, and is warned), so the next flush re-posts the rows with the scores and Argo's upsert replaces them.
 - **`https` only.** `httpArgoTransport` refuses a non-https `ARGO_URL` unless it is loopback, and posts with

@@ -1,5 +1,5 @@
 import { hostname } from 'node:os'
-import type { Logger, ModelUsage, TokenCounts } from '@agent-workflows/runtime'
+import type { Logger, ModelUsage, RunScores, TokenCounts } from '@agent-workflows/runtime'
 import { z } from 'zod'
 import { errorMessage, type JournalDb } from './db.ts'
 import { traceIdForRun } from './ids.ts'
@@ -233,10 +233,25 @@ export function argoRowsForStep(step: OutboxStep, options: ArgoRowOptions): Argo
       runOutcome: run.errorKind ?? run.status,
       runWallMs: run.wallMs,
       scores: run.scores ?? null,
+      // The after-the-fact score, explicit: `scorePass` null with a `scoreError` is no verdict (never a fail).
+      ...finalScoreFields(run.scores),
       friction: run.friction ?? null,
     },
     ingested_at: ingestedAt,
   }))
+}
+
+/** `raw.scorePass` and `raw.scoreError` from `runs.scores.final`; both null before the run is scored. */
+function finalScoreFields(scores: unknown): {
+  scorePass: boolean | null
+  scoreError: { kind: 'scorer' | 'infra'; message: string } | null
+} {
+  const final = (scores as RunScores | null | undefined)?.final
+  if (!final) return { scorePass: null, scoreError: null }
+  if (final.error !== undefined) {
+    return { scorePass: null, scoreError: { kind: final.errorKind ?? 'scorer', message: final.error } }
+  }
+  return { scorePass: final.pass, scoreError: null }
 }
 
 type OutboxRow = {
