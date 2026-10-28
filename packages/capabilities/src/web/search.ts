@@ -4,7 +4,7 @@ import { fail } from '../errors.ts'
 import { defineCapability } from '../procedure.ts'
 import { iuConfig } from '../transports/config.ts'
 import { describe, failedResponse, readJson, withRetries } from '../transports/http.ts'
-import { keyOf, type ResolvedWebDeps, within } from './deps.ts'
+import { keyOf, type ResolvedWebDeps, requireKey, webUsage, within } from './deps.ts'
 
 export const searchInput = z.object({
   query: z.string().min(1),
@@ -115,12 +115,12 @@ const sonar: Backend = async (input, deps, signal, addUsage) => {
   const { search_results, usage } = parsed.data
   // The whole response is billed, not the slice we keep.
   const reported = typeof usage?.cost === 'number' ? usage.cost : usage?.cost?.total_cost
-  addUsage({
-    model,
-    tokens: { input: usage?.prompt_tokens ?? 0, output: usage?.completion_tokens ?? 0, cacheRead: 0, reasoning: 0 },
-    cost: typeof reported === 'number' && reported >= 0 ? reported : null,
-    costSource: typeof reported === 'number' && reported >= 0 ? 'provider' : 'unknown',
-  })
+  addUsage(
+    webUsage(model, typeof reported === 'number' && reported >= 0 ? reported : null, {
+      source: 'provider',
+      tokens: { input: usage?.prompt_tokens ?? 0, output: usage?.completion_tokens ?? 0 },
+    }),
+  )
   const hits = dedupe(
     (search_results ?? []).map((r) => {
       const publishedAt = r.date ?? r.last_updated
@@ -136,8 +136,7 @@ const sonar: Backend = async (input, deps, signal, addUsage) => {
 
 /** Tavily Search. Billed in credits, priced at the list rate; the response's `usage.credits` wins over the documented count. */
 const tavily: Backend = async (input, deps, signal, addUsage) => {
-  const key = keyOf(deps.env(), 'TAVILY_API_KEY')
-  if (!key) throw fail('NOT_CONFIGURED', 'web.search unavailable: TAVILY_API_KEY is not set')
+  const key = requireKey(deps.env(), 'TAVILY_API_KEY', 'web.search')
   const json = await withRetries(deps.retry, signal, async () => {
     const res = await deps.fetch('https://api.tavily.com/search', {
       method: 'POST',
@@ -156,12 +155,7 @@ const tavily: Backend = async (input, deps, signal, addUsage) => {
   const parsed = tavilySearchResponse.safeParse(json)
   if (!parsed.success) throw fail('UPSTREAM_ERROR', 'tavily answered with a body that does not fit', {})
   const credits = parsed.data.usage?.credits ?? TAVILY_SEARCH_CREDITS[input.depth]
-  addUsage({
-    model: 'tavily-search',
-    tokens: { input: 0, output: 0, cacheRead: 0, reasoning: 0 },
-    cost: credits * TAVILY_USD_PER_CREDIT,
-    costSource: 'rate',
-  })
+  addUsage(webUsage('tavily-search', credits * TAVILY_USD_PER_CREDIT))
   return dedupe(
     parsed.data.results.map((r) => {
       const content = r.content ?? ''

@@ -6,7 +6,9 @@ import { createRegistry } from '../registry.ts'
 import { fakeTransports, fakeWeb } from '../testing/index.ts'
 import type { WebDeps } from './deps.ts'
 import { createWebCapabilities } from './index.ts'
+import { pinnedFetch } from './pinned.ts'
 import { isPrivateAddress } from './ssrf.ts'
+import { htmlTitle, htmlToText } from './text.ts'
 
 const IU = { IU_API_KEY: 'iu-key', IU_BASE_URL: 'https://iu.example.com/anthropic' }
 const SONAR_URL = 'https://iu.example.com/openai/v1/chat/completions'
@@ -327,7 +329,7 @@ describe('web.fetch', () => {
         const n = net({ '': () => new Response('secret') })
         const { call, usage } = run({ ...n.deps, resolve: async (h) => [h.replace(/^\[|\]$/g, '')] })
         const error = await failure(call('web.fetch', { url }))
-        expect(error.message).toContain('refused')
+        expect(error).toMatchObject({ code: 'URL_REFUSED', status: 422, defined: true })
         expect(error.message).toContain(why)
         expect(n.calls).toHaveLength(0)
         expect(usage).toEqual([])
@@ -358,7 +360,7 @@ describe('web.fetch', () => {
         resolve: async (h) => [h === 'example.com' ? PUBLIC_IP : h],
       })
       const error = await failure(call('web.fetch', { url: 'https://example.com/start' }))
-      expect(error.message).toContain('refused')
+      expect(error.code).toBe('URL_REFUSED')
       expect(n.calls.map((c) => c.url)).toEqual(['https://example.com/start'])
       expect(usage).toEqual([])
     })
@@ -373,8 +375,47 @@ describe('web.fetch', () => {
         { 'inner.example.com': '10.9.9.9' },
       )
       const error = await failure(run(n.deps).call('web.fetch', { url: 'https://example.com/a' }))
+      expect(error.code).toBe('URL_REFUSED')
       expect(error.message).toContain('private or reserved')
       expect(n.calls.map((c) => c.url)).toEqual(['https://example.com/a', 'https://hop.example.com/b'])
+    })
+
+    test('DNS rebinding: the request connects to the vetted address, DNS is asked once per hop and not again', async () => {
+      // A resolver that is public for the guard and private for anything that asks again.
+      let asked = 0
+      const pins: (string[] | undefined)[] = []
+      const n = net({ 'https://rebind.example.com/': html(PAGE) })
+      const deps: WebDeps = {
+        ...n.deps,
+        resolve: async () => [++asked === 1 ? PUBLIC_IP : '169.254.169.254'],
+        fetch: async (url, init, pin) => {
+          pins.push(pin?.addresses)
+          return n.deps.fetch!(url, init, pin)
+        },
+      }
+      await run(deps).call('web.fetch', { url: 'https://rebind.example.com/' })
+      expect(pins).toEqual([[PUBLIC_IP]])
+      expect(asked).toBe(1)
+    })
+
+    test('every redirect hop is vetted and pinned to its own addresses', async () => {
+      const pins: [string, string[]][] = []
+      const n = net(
+        { 'https://a.example.com/': redirect('https://b.example.com/'), 'https://b.example.com/': html(PAGE) },
+        { 'a.example.com': '93.184.216.1', 'b.example.com': '93.184.216.2' },
+      )
+      const deps: WebDeps = {
+        ...n.deps,
+        fetch: async (url, init, pin) => {
+          pins.push([url, pin!.addresses])
+          return n.deps.fetch!(url, init, pin)
+        },
+      }
+      await run(deps).call('web.fetch', { url: 'https://a.example.com/' })
+      expect(pins).toEqual([
+        ['https://a.example.com/', ['93.184.216.1']],
+        ['https://b.example.com/', ['93.184.216.2']],
+      ])
     })
 
     test('a redirect loop ends', async () => {
@@ -502,6 +543,196 @@ describe('web.fetch', () => {
   })
 })
 
+describe('pinnedFetch (the production transport)', () => {
+  test('connects to the pinned address without asking DNS, with the page’s own Host header', async () => {
+    const server = Bun.serve({
+      port: 0,
+      hostname: '127.0.0.1',
+      fetch: (r) => new Response(`host=${r.headers.get('host')}`),
+    })
+    try {
+      // The name does not resolve anywhere: only the pin can reach the server.
+      const res = await pinnedFetch(`http://rebind.invalid:${server.port}/p?q=1`, { headers: { 'user-agent': 't' } }, [
+        '127.0.0.1',
+      ])
+      expect(res.status).toBe(200)
+      expect(await res.text()).toBe(`host=rebind.invalid:${server.port}`)
+    } finally {
+      void server.stop(true)
+    }
+  })
+
+  test('a refused pinned connection fails, and the unresolvable name is never looked up', async () => {
+    // Nothing listens on loopback port 1; the `.invalid` name could not resolve, so the failure is the pin's own.
+    const error = await pinnedFetch('http://never-resolves.invalid:1/', {}, ['127.0.0.1']).then(
+      () => undefined,
+      (e: unknown) => e,
+    )
+    expect(error).toBeInstanceOf(Error)
+  })
+
+  test('does not follow redirects, passes status and headers, decodes gzip', async () => {
+    const server = Bun.serve({
+      port: 0,
+      hostname: '127.0.0.1',
+      fetch: (r) => {
+        const path = new URL(r.url).pathname
+        if (path === '/r')
+          return new Response(null, { status: 302, headers: { location: 'http://elsewhere.invalid/' } })
+        if (path === '/g')
+          return new Response(Bun.gzipSync('zipped text'), {
+            headers: { 'content-encoding': 'gzip', 'content-type': 'text/plain' },
+          })
+        return new Response(null, { status: 204 })
+      },
+    })
+    try {
+      const base = `http://x.invalid:${server.port}`
+      const redirected = await pinnedFetch(`${base}/r`, {}, ['127.0.0.1'])
+      expect(redirected.status).toBe(302)
+      expect(redirected.headers.get('location')).toBe('http://elsewhere.invalid/')
+      const zipped = await pinnedFetch(`${base}/g`, {}, ['127.0.0.1'])
+      expect(await zipped.text()).toBe('zipped text')
+      expect((await pinnedFetch(`${base}/n`, {}, ['127.0.0.1'])).status).toBe(204)
+    } finally {
+      void server.stop(true)
+    }
+  })
+
+  test('the caller’s signal aborts the request', async () => {
+    const server = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: () => new Promise<Response>(() => {}) })
+    try {
+      const controller = new AbortController()
+      const pending = pinnedFetch(`http://x.invalid:${server.port}/`, { signal: controller.signal }, ['127.0.0.1'])
+      setTimeout(() => controller.abort(), 20)
+      const error = await pending.then(
+        () => undefined,
+        (e: unknown) => e,
+      )
+      expect(error).toBeInstanceOf(Error)
+    } finally {
+      void server.stop(true)
+    }
+  })
+})
+
+describe('htmlToText', () => {
+  test('hostile 2 MB bodies are scanned in linear time', () => {
+    // Shapes that make a backtracking pattern quadratic: it would need 2 MB x 250 000 steps on each (hours). The
+    // single pass measures 5-500 ms here; the ceiling is 4 s so a loaded host does not flake it, best of two runs.
+    const size = 2_000_000
+    const shapes: Record<string, string> = {
+      'unclosed <script ': '<script '.repeat(size / 8),
+      'unclosed <article>': '<article>'.repeat(size / 9),
+      'unclosed <title': '<title '.repeat(size / 7),
+      'unclosed attribute quotes': '<a href="'.repeat(size / 9),
+      'opening tags with no end': `<div${' x'.repeat(size / 2)}`,
+      'unclosed comment': `<!--${'x'.repeat(size)}`,
+      ampersands: '&amp'.repeat(size / 4),
+      'less-thans': '<'.repeat(size),
+      'nested forms and navs': '<form><nav><main>text '.repeat(size / 23),
+      'closing tags': '</script></article></main>'.repeat(size / 25),
+    }
+    for (const [name, body] of Object.entries(shapes)) {
+      let best = Number.POSITIVE_INFINITY
+      for (let run = 0; run < 2; run++) {
+        const started = performance.now()
+        htmlToText(body)
+        htmlTitle(body)
+        best = Math.min(best, performance.now() - started)
+      }
+      expect({ name, fast: best < 4_000 }).toEqual({ name, fast: true })
+    }
+  })
+
+  test('forms, navigation and buttons keep their content: an ASP.NET page is one form', () => {
+    const page =
+      '<html><body><form id="aspnetForm"><nav><a href="/">Home</a></nav><div><h1>Article</h1><p>Real content.</p><button>Go</button></div></form></body></html>'
+    const text = htmlToText(page)
+    expect(text).toContain('Real content.')
+    expect(text).toContain('Article')
+    expect(text).toContain('Home')
+  })
+
+  test('script, style, title, noscript and comments are dropped with their content; main wins over the page chrome', () => {
+    const page =
+      '<title>T</title><style>.a{}</style><script>var x="<p>no</p>"</script><noscript>enable js</noscript><!-- c --><p>Menu</p><main><p>Body &amp; soul</p></main>'
+    expect(htmlToText(page)).toBe('Body & soul')
+    expect(htmlToText('<p>One</p><script>x')).toBe('One')
+  })
+
+  test('article is used when there is no main; a text with a stray "<" survives', () => {
+    expect(htmlToText('<p>chrome</p><article><p>a < b</p></article>')).toBe('a < b')
+  })
+})
+
+describe('web.fetch decoding and emptiness', () => {
+  const bytes = (...codes: number[]) => new Uint8Array(codes)
+  const latin1 = (text: string) => Uint8Array.from(text, (c) => c.charCodeAt(0))
+  const body =
+    (data: Uint8Array<ArrayBuffer>, type?: string): Handler =>
+    () =>
+      new Response(new Blob([data]), type === undefined ? undefined : { headers: { 'content-type': type } })
+  const PAD = ' lorem ipsum dolor sit amet'.repeat(10)
+
+  test('the Content-Type charset decides, then <meta charset>, then UTF-8', async () => {
+    const n = net({
+      'https://example.com/header': body(latin1(`<p>Caf\u00e9${PAD}</p>`), 'text/html; charset=ISO-8859-1'),
+      'https://example.com/meta': body(latin1(`<meta charset="windows-1252"><p>Caf\u00e9${PAD}</p>`), 'text/html'),
+      'https://example.com/utf8': body(new TextEncoder().encode(`<p>Café${PAD}</p>`), 'text/html'),
+      'https://example.com/unknown': body(
+        new TextEncoder().encode(`<p>Café${PAD}</p>`),
+        'text/html; charset=nonsense-9',
+      ),
+    })
+    const { call } = run(n.deps)
+    for (const page of ['header', 'meta', 'utf8', 'unknown']) {
+      const out = (await call('web.fetch', { url: `https://example.com/${page}` })) as { text: string }
+      expect({ page, text: out.text.slice(0, 4) }).toEqual({ page, text: 'Café' })
+    }
+  })
+
+  test('an empty successful read falls through to Extract, as does an empty page', async () => {
+    const n = net({
+      'https://example.com/empty': body(bytes(), 'text/html'),
+      'https://example.com/blank': html('<html><body><script>app()</script></body></html>'),
+      'https://api.tavily.com/extract': json({
+        results: [{ url: 'https://example.com/x', raw_content: 'From Extract.' }],
+      }),
+    })
+    const { call, usage } = run({ ...n.deps, env: { TAVILY_API_KEY: 't' } })
+    for (const page of ['empty', 'blank']) {
+      expect(((await call('web.fetch', { url: `https://example.com/${page}` })) as { via: string }).via).toBe(
+        'tavily-extract',
+      )
+    }
+    expect(usage).toHaveLength(2)
+  })
+
+  test('a response without a Content-Type is judged on its bytes: binary is not text, a page is', async () => {
+    const n = net({
+      'https://example.com/pdf': body(latin1('%PDF-1.7\n%binary stuff')),
+      'https://example.com/nul': body(bytes(0x50, 0x00, 0x01, 0x02, 0x03)),
+      'https://example.com/page': body(
+        new TextEncoder().encode(`<!doctype html><title>P</title><p>Plain page.${PAD}</p>`),
+      ),
+      'https://api.tavily.com/extract': json({ results: [{ url: 'x', raw_content: 'Extracted binary.' }] }),
+    })
+    const { call } = run({ ...n.deps, env: { TAVILY_API_KEY: 't' } })
+    expect(((await call('web.fetch', { url: 'https://example.com/pdf' })) as { via: string }).via).toBe(
+      'tavily-extract',
+    )
+    expect(((await call('web.fetch', { url: 'https://example.com/nul' })) as { via: string }).via).toBe(
+      'tavily-extract',
+    )
+    expect(await call('web.fetch', { url: 'https://example.com/page' })).toMatchObject({ via: 'direct', title: 'P' })
+    const keyless = run(n.deps)
+    expect((await failure(keyless.call('web.fetch', { url: 'https://example.com/pdf' }))).message).toContain(
+      'binary, no content type',
+    )
+  })
+})
+
 describe('web.docs', () => {
   const routes = {
     'https://context7.com/api/v2/libs/search': json({
@@ -547,6 +778,48 @@ describe('web.docs', () => {
     })) as { text: string }
     expect(out.text).toHaveLength(400)
     expect(new URL(n.calls[0]!.url).searchParams.get('query')).toBe('hono')
+  })
+
+  test('a body that is cut is retried inside the retry loop; a libs/search 404 is the documented not-found', async () => {
+    let tries = 0
+    const n = net({
+      'https://context7.com/api/v2/libs/search': () => {
+        tries++
+        return tries === 1
+          ? new Response('{"results": [{"id"', { status: 200 })
+          : Response.json({ results: [{ id: '/honojs/hono' }] })
+      },
+      'https://context7.com/api/v2/context': () => new Response('docs', { headers: { 'content-type': 'text/plain' } }),
+    })
+    const out = (await run({ ...n.deps, env: { CONTEXT7_API_KEY: 'c7' } }).call('web.docs', { library: 'hono' })) as {
+      text: string
+    }
+    expect(out.text).toBe('docs')
+    expect(tries).toBe(2)
+
+    const unknown = net({ 'https://context7.com/api/v2/libs/search': status(404, '{"error":"library_not_found"}') })
+    const error = await failure(
+      run({ ...unknown.deps, env: { CONTEXT7_API_KEY: 'c7' } }).call('web.docs', { library: 'ghost' }),
+    )
+    expect(error).toMatchObject({ code: 'UPSTREAM_ERROR', data: { status: 404 } })
+    expect(error.message).toContain('no library found matching "ghost"')
+  })
+
+  test('a body that cannot be read at all ends as UPSTREAM_ERROR, never an opaque 500', async () => {
+    const broken = () =>
+      new Response(
+        new ReadableStream({
+          pull(controller) {
+            controller.error(new Error('reset'))
+          },
+        }),
+      )
+    const n = net({ 'https://context7.com/api/v2/libs/search': broken })
+    const error = await failure(
+      run({ ...n.deps, env: { CONTEXT7_API_KEY: 'c7' } }).call('web.docs', { library: 'hono' }),
+    )
+    expect(error.code).toBe('UPSTREAM_ERROR')
+    expect(n.calls).toHaveLength(3) // retried, then given up
   })
 
   test('an unknown library and a library without docs are 404s, not empty answers', async () => {
@@ -647,6 +920,29 @@ describe('web.package', () => {
     const missing = await failure(call('web.package', { registry: 'npm', name: 'ghost' }))
     expect(missing).toMatchObject({ code: 'UPSTREAM_ERROR', data: { status: 404 } })
     expect((await failure(call('web.package', { registry: 'npm', name: 'odd' }))).message).toContain('does not fit')
+  })
+
+  test('crates: no stable version is a typed not-found, never the prerelease', async () => {
+    const { call } = dep({
+      'https://crates.io/api/v1/crates/pre': json({
+        crate: { max_stable_version: null, newest_version: '0.1.0-alpha.3' },
+        versions: [],
+      }),
+    })
+    const error = await failure(call('web.package', { registry: 'crates', name: 'pre' }))
+    expect(error).toMatchObject({ code: 'UPSTREAM_ERROR', data: { status: 404 } })
+    expect(error.message).toContain('no stable version')
+  })
+
+  test('github-release: dot segments never reach a request that carries the token', async () => {
+    const { n, call } = dep({ '': json({}) })
+    for (const name of ['../x', './x', 'x/..', 'x/.', '../..', 'owner/..', '../repo']) {
+      expect({ name, code: (await failure(call('web.package', { registry: 'github-release', name }))).code }).toEqual({
+        name,
+        code: 'BAD_REQUEST',
+      })
+    }
+    expect(n.calls).toHaveLength(0)
   })
 
   test('names that do not fit the registry are refused before any request', async () => {

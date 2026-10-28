@@ -3,7 +3,7 @@ import type { Ctx } from '../context.ts'
 import { CapabilityError, fail } from '../errors.ts'
 import { defineCapability } from '../procedure.ts'
 import { describe, failedResponse, isAbort, readJson, withRetries } from '../transports/http.ts'
-import { keyOf, type ResolvedWebDeps, within } from './deps.ts'
+import { type ResolvedWebDeps, requireKey, webUsage, within } from './deps.ts'
 import { TAVILY_USD_PER_CREDIT } from './search.ts'
 import { assertPublicUrl } from './ssrf.ts'
 import { cut, htmlTitle, htmlToText } from './text.ts'
@@ -64,49 +64,79 @@ class DirectFailure extends Error {
   }
 }
 
-/** Reads at most `MAX_BODY_BYTES` of a body and decodes it; the rest of the stream is cancelled. */
-async function readBody(res: Response): Promise<string> {
-  if (!res.body) return ''
+/** Reads at most `MAX_BODY_BYTES` of a body; the rest of the stream is cancelled. */
+async function readBody(res: Response): Promise<Uint8Array> {
+  if (!res.body) return new Uint8Array()
   const reader = res.body.getReader()
-  const chunks: Uint8Array[] = []
+  const all = new Uint8Array(MAX_BODY_BYTES)
   let size = 0
   while (size < MAX_BODY_BYTES) {
     const { done, value } = await reader.read()
     if (done) break
-    chunks.push(value)
-    size += value.byteLength
+    const take = Math.min(value.byteLength, MAX_BODY_BYTES - size)
+    all.set(take < value.byteLength ? value.subarray(0, take) : value, size)
+    size += take
   }
   await reader.cancel().catch(() => undefined)
-  const all = new Uint8Array(Math.min(size, MAX_BODY_BYTES))
-  let offset = 0
-  for (const chunk of chunks) {
-    const room = all.length - offset
-    if (room <= 0) break
-    all.set(chunk.byteLength > room ? chunk.subarray(0, room) : chunk, offset)
-    offset += Math.min(chunk.byteLength, room)
+  return all.subarray(0, size)
+}
+
+/** Magic numbers of the binary formats a page URL most often turns out to be. */
+const BINARY_SIGNATURES = ['%PDF-', '\x89PNG', 'GIF8', 'PK\x03\x04', '\xff\xd8\xff', '\x1f\x8b', 'OggS', 'RIFF']
+
+/** Bytes that are not text: a NUL in the first kilobyte, or a known binary signature. */
+function looksBinary(bytes: Uint8Array): boolean {
+  const head = bytes.subarray(0, 1024)
+  if (head.includes(0)) return true
+  const start = String.fromCharCode(...head.subarray(0, 8))
+  return BINARY_SIGNATURES.some((signature) => start.startsWith(signature))
+}
+
+/** Decoder for a label (`utf-8`, `iso-8859-1`, `windows-1252`, ...); undefined when it names none. */
+function decoderFor(label: string | undefined): TextDecoder | undefined {
+  if (!label) return undefined
+  try {
+    return new TextDecoder(label.trim().replace(/^["']|["']$/g, ''))
+  } catch {
+    return undefined
   }
-  return new TextDecoder().decode(all)
+}
+
+/** The charset of a Content-Type header, else the first `<meta charset>` / `http-equiv` in the first 2 KB, else UTF-8. */
+function decodeBody(bytes: Uint8Array, contentType: string): string {
+  const declared = contentType.match(/charset\s*=\s*("[^"]*"|[^\s;]+)/i)?.[1]
+  const sniffed = declared
+    ? undefined
+    : new TextDecoder('latin1')
+        .decode(bytes.subarray(0, 2048))
+        .match(/<meta[^>]{0,200}?charset\s*=\s*["']?\s*([\w-]+)/i)?.[1]
+  return (decoderFor(declared) ?? decoderFor(sniffed) ?? new TextDecoder('utf-8')).decode(bytes)
 }
 
 /**
  * Follows redirects by hand so the SSRF guard sees every hop; a single `redirect: 'follow'` would validate the first
- * address and then go anywhere, the metadata service included. Refusals throw `refused`; any other trouble is a
+ * address and then go anywhere, the metadata service included. Refusals throw `URL_REFUSED`; any other trouble is a
  * `DirectFailure` the chain moves past.
  */
 async function direct(deps: ResolvedWebDeps, startUrl: string, signal: AbortSignal): Promise<Read> {
   let current = startUrl
   for (let hop = 0; ; hop++) {
-    await assertPublicUrl(deps, 'web.fetch', current)
+    // Vetted once per hop; the request connects to these addresses and DNS is not asked again.
+    const pin = await assertPublicUrl(deps, 'web.fetch', current)
     let res: Response
     try {
-      res = await deps.fetch(current, {
-        redirect: 'manual',
-        headers: {
-          'user-agent': USER_AGENT,
-          accept: 'text/html,application/xhtml+xml,text/plain,application/json;q=0.9,*/*;q=0.5',
+      res = await deps.fetch(
+        current,
+        {
+          redirect: 'manual',
+          headers: {
+            'user-agent': USER_AGENT,
+            accept: 'text/html,application/xhtml+xml,text/plain,application/json;q=0.9,*/*;q=0.5',
+          },
+          signal: within(signal, HOP_TIMEOUT_MS),
         },
-        signal: within(signal, HOP_TIMEOUT_MS),
-      })
+        pin,
+      )
     } catch (error) {
       if (signal.aborted) throw fail('CANCELLED', 'cancelled')
       throw new DirectFailure(isAbort(error) ? 'timed out' : describe(error))
@@ -129,28 +159,36 @@ async function direct(deps: ResolvedWebDeps, startUrl: string, signal: AbortSign
       await res.body?.cancel().catch(() => undefined)
       throw new DirectFailure(`HTTP ${res.status}`, res.status === 404 || res.status === 410, res.status)
     }
-    const type = (res.headers.get('content-type') ?? '').split(';')[0]!.trim().toLowerCase()
-    const isHtml = type === '' || type === 'text/html' || type === 'application/xhtml+xml'
+    const contentType = res.headers.get('content-type') ?? ''
+    const type = contentType.split(';')[0]!.trim().toLowerCase()
+    const isHtml = type === 'text/html' || type === 'application/xhtml+xml'
     const isText =
       type.startsWith('text/') ||
       type === 'application/json' ||
       type.endsWith('+json') ||
       type.endsWith('+xml') ||
       type === 'application/xml'
-    if (!isHtml && !isText) {
+    // A declared type that is not text is refused before the body is read; a missing one is judged on the bytes.
+    if (type !== '' && !isHtml && !isText) {
       await res.body?.cancel().catch(() => undefined)
       throw new DirectFailure(`unsupported content type ${type}`)
     }
-    let body: string
+    let bytes: Uint8Array
     try {
-      body = await readBody(res)
+      bytes = await readBody(res)
     } catch (error) {
       if (signal.aborted) throw fail('CANCELLED', 'cancelled')
       throw new DirectFailure(`body could not be read: ${describe(error)}`)
     }
-    if (!isHtml) return { finalUrl: current, text: body.trim() }
+    if (type === '' && looksBinary(bytes)) throw new DirectFailure('unsupported content (binary, no content type)')
+    const body = decodeBody(bytes, contentType)
+    if (!isHtml && !(type === '' && /^\s*(<!doctype html|<html)/i.test(body))) {
+      if (body.trim() === '') throw new DirectFailure('empty body')
+      return { finalUrl: current, text: body.trim() }
+    }
     const title = htmlTitle(body)
     const text = htmlToText(body)
+    if (text === '') throw new DirectFailure('no text on the page')
     return {
       finalUrl: current,
       ...(title ? { title } : {}),
@@ -167,8 +205,13 @@ async function extract(
   signal: AbortSignal,
   addUsage: Ctx['addUsage'],
 ): Promise<Read> {
-  const key = keyOf(deps.env(), 'TAVILY_API_KEY')
-  if (!key) throw new DirectFailure('tavily-extract: TAVILY_API_KEY is not set')
+  let key: string
+  try {
+    key = requireKey(deps.env(), 'TAVILY_API_KEY', 'web.fetch')
+  } catch (error) {
+    // No key is one more reason the chain ends, not a failure of its own: the message joins the others.
+    throw new DirectFailure(`tavily-extract: ${describe(error)}`)
+  }
   let json: unknown
   try {
     json = await withRetries(deps.retry, signal, async () => {
@@ -190,12 +233,7 @@ async function extract(
   if (!parsed.success) throw new DirectFailure('tavily-extract: unreadable answer')
   const hit = parsed.data.results.find((r) => (r.raw_content ?? '').trim() !== '')
   if (!hit) throw new DirectFailure(`tavily-extract: ${parsed.data.failed_results?.[0]?.error ?? 'no content'}`)
-  addUsage({
-    model: 'tavily-extract',
-    tokens: { input: 0, output: 0, cacheRead: 0, reasoning: 0 },
-    cost: TAVILY_EXTRACT_CREDITS_PER_URL * TAVILY_USD_PER_CREDIT,
-    costSource: 'rate',
-  })
+  addUsage(webUsage('tavily-extract', TAVILY_EXTRACT_CREDITS_PER_URL * TAVILY_USD_PER_CREDIT))
   return { finalUrl: hit.url, text: hit.raw_content!.trim() }
 }
 

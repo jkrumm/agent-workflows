@@ -1,5 +1,6 @@
 import type { Usage } from '../context.ts'
 import { defineCapability } from '../procedure.ts'
+import { webUsage } from './deps.ts'
 import { docsInput, docsOutput } from './docs.ts'
 import { fetchInput, fetchOutput } from './fetch.ts'
 import { packageInput, packageOutput } from './package.ts'
@@ -8,12 +9,7 @@ import type { z } from 'zod'
 
 type Reply<I, O> = O | Error | ((input: I) => O | Error)
 
-const FREE: Usage = {
-  model: 'fake-web',
-  tokens: { input: 0, output: 0, cacheRead: 0, reasoning: 0 },
-  cost: 0,
-  costSource: 'rate',
-}
+const FREE: Usage = webUsage('fake-web', 0)
 
 export interface FakeWeb {
   /** The four capabilities, with the real ids, input and output schemas, and CLI shapes. Register them like any others. */
