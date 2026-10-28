@@ -123,8 +123,17 @@ export const SynthesisOutput = z.object({
 export type Synthesis = z.infer<typeof SynthesisOutput>
 export type ReviewFinding = z.infer<typeof Finding>
 
-/** Legacy `REVIEW_OUTPUT` v2, exactly: callers pin `schemaVersion` and refuse a mismatch. */
-export const ReviewOutput = SynthesisOutput.extend({ schemaVersion: z.literal(REVIEW_SCHEMA_VERSION) })
+/**
+ * Legacy `REVIEW_OUTPUT` v2: callers pin `schemaVersion` and refuse a mismatch. `degraded` is additive (absent on
+ * every review that ran), so v2 holds: a caller that does not read it still sees `needs-human` with a discussion.
+ */
+export const ReviewOutput = SynthesisOutput.extend({
+  schemaVersion: z.literal(REVIEW_SCHEMA_VERSION),
+  degraded: z
+    .literal('provider_balance')
+    .optional()
+    .describe('Set when no review ran because the IU provider balance is exhausted, fallback included'),
+})
 export type ReviewResult = z.infer<typeof ReviewOutput>
 
 const AngleFinding = z.object({

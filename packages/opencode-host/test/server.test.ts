@@ -311,3 +311,16 @@ describe('buildServerConfig', () => {
     ])
   })
 })
+
+describe('buildServerConfig: fallbacks', () => {
+  test('each opencode route’s fallback has one row on the Responses provider, one variant per effort', () => {
+    const config = buildServerConfig({}) as {
+      providers: Record<string, { package: string; models: Record<string, { variants?: { id: string }[] }> }>
+    }
+    const responses = config.providers['iu-responses']
+    expect(responses?.package).toBe('aisdk:@ai-sdk/openai')
+    const rows = Object.values(responses?.models ?? {})
+    expect(rows).toHaveLength(1)
+    expect(rows[0]?.variants?.map((v) => v.id)).toEqual(['medium'])
+  })
+})

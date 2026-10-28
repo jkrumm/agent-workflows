@@ -567,3 +567,90 @@ describe('locations', () => {
     expect(existsSync(next.directory)).toBe(true)
   })
 })
+
+describe('provider-balance fallback', () => {
+  const sessions = (t: ReturnType<typeof setup>) => Object.values(t.fake.state.sessions)
+
+  test('a turn refused for balance reopens the step on the fallback route once; usage is the fallback’s', async () => {
+    const t = setup()
+    const handle = await t.host.open(spec('x', { allowDirectories: ['/tmp/repo'] }))
+    await t.host.prompt(handle, '[balance] review this')
+    const result = await t.host.wait(handle, waitOptions())
+    expect(result.output).toBe('echo: [balance] review this')
+
+    const [primary, fallback] = sessions(t)
+    expect(primary?.model.providerID).not.toBe('iu-responses')
+    expect(fallback?.model).toMatchObject({ providerID: 'iu-responses', variant: 'medium' })
+    expect(fallback?.directory).toBe(primary?.directory)
+    // The same permissions, the step's directories included.
+    expect(fallback?.permissions).toEqual(primary?.permissions)
+    expect(fallback?.messages.filter((m) => m.type === 'user')).toHaveLength(1)
+    expect(result.usage?.model).toBe(fallback?.model.id)
+    expect(t.warnings).toContain('opencode turn failed on provider balance; falling back')
+  })
+
+  test('re-attach after a crash finds the fallback session: no second session, no second prompt', async () => {
+    const t = setup({ turnMs: 300 })
+    const handle = await t.host.open(spec('x'))
+    await t.host.prompt(handle, '[balance] once')
+    const controller = new AbortController()
+    const first = t.host.wait(handle, waitOptions({ signal: controller.signal }))
+    // Abort once the fallback session exists, as a crashed process would stop waiting.
+    while (sessions(t).length < 2) await Bun.sleep(10)
+    controller.abort(new Error('crash'))
+    await first.catch(() => {})
+    const again = t.makeHost()
+    cleanups.push(() => again.close())
+    expect((await again.wait(handle, waitOptions())).output).toBe('echo: [balance] once')
+    expect(sessions(t)).toHaveLength(2)
+    const fallbackId = sessions(t)[1]?.id as string
+    expect(t.fake.count(`POST /api/session/${fallbackId}/prompt`)).toBe(1)
+  })
+
+  test('the fallback failing on balance too fails the step with the balance error; no third session', async () => {
+    const t = setup()
+    const handle = await t.host.open(spec('x'))
+    await t.host.prompt(handle, '[balance-all] x')
+    expect(await failure(t.host.wait(handle, waitOptions()))).toContain('Insufficient Balance')
+    expect(sessions(t)).toHaveLength(2)
+  })
+
+  test('a turn that ran before the balance refusal is never prompted again', async () => {
+    const t = setup()
+    const handle = await t.host.open(spec('x'))
+    await t.host.prompt(handle, '[tool:read][balance] x')
+    expect(await failure(t.host.wait(handle, waitOptions()))).toContain('Insufficient Balance')
+    expect(sessions(t)).toHaveLength(1)
+    expect(t.warnings).toContain('opencode turn failed on provider balance after it ran; no fallback')
+  })
+
+  test('any other failure keeps today’s behaviour', async () => {
+    const t = setup()
+    const handle = await t.host.open(spec('x'))
+    await t.host.prompt(handle, '[fail]')
+    expect(await failure(t.host.wait(handle, waitOptions()))).toContain('provider said no')
+    expect(sessions(t)).toHaveLength(1)
+  })
+
+  test('AGW_ROUTES without a fallback for the route: the balance error fails the step', async () => {
+    const t = setup({ env: { AGW_ROUTES: JSON.stringify({ check: { fallback: null } }) } })
+    const handle = await t.host.open(spec('x'))
+    await t.host.prompt(handle, '[balance] x')
+    expect(await failure(t.host.wait(handle, waitOptions()))).toContain('Insufficient Balance')
+    expect(sessions(t)).toHaveLength(1)
+  })
+
+  test('abort reaches the fallback session through the step’s first handle', async () => {
+    const t = setup()
+    const handle = await t.host.open(spec('x'))
+    await t.host.prompt(handle, '[balance][slow:1500] long')
+    const controller = new AbortController()
+    const waiting = t.host.wait(handle, waitOptions({ signal: controller.signal }))
+    while (sessions(t).length < 2) await Bun.sleep(10)
+    await t.host.abort(handle)
+    controller.abort(new Error('cancel'))
+    await waiting.catch(() => {})
+    const fallbackId = sessions(t)[1]?.id as string
+    expect(t.fake.count(`POST /api/session/${fallbackId}/interrupt`)).toBe(1)
+  })
+})

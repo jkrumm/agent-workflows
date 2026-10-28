@@ -6,7 +6,8 @@
 //
 // The model is scripted by the prompt text: `[slow:<ms>]` turn length, `[tool:<name>]` one tool call first,
 // `[shell:<ms>]` a running shell tool that only prints, `[json]` a fenced JSON answer, `[fail]` a failed turn,
-// `[free]` an answer reported at cost 0.
+// `[free]` an answer reported at cost 0, `[balance]` a turn IU refuses for provider balance unless the session runs on
+// the Responses provider (the fallback), `[balance-all]` the same refusal on every provider.
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 
 type Part = {
@@ -174,14 +175,20 @@ export function startFake(options: FakeOptions) {
     schedule(
       s,
       () => {
-        if (/\[fail\]/.test(prompt)) {
+        const balance =
+          /\[balance-all\]/.test(prompt) || (/\[balance\]/.test(prompt) && s.model.providerID !== 'iu-responses')
+        if (/\[fail\]/.test(prompt) || balance) {
           Object.assign(reply, { finish: 'error', time: { ...reply.time, completed: now() } })
           s.messages.push({
             id: id('msg'),
             type: 'idle',
             time: { created: now() },
             outcome: 'failed',
-            error: { message: 'provider said no' },
+            error: {
+              message: balance
+                ? 'IU request failed (503) — Insufficient Balance (PaymentRequired) on Requesty-Global'
+                : 'provider said no',
+            },
           })
           running.delete(s.id)
           save()

@@ -24,38 +24,63 @@ export const rateSchema = z.strictObject({
   cacheReadPerM: z.number().nonnegative().optional(),
   /** Writes of a prompt-cache entry. */
   cacheWritePerM: z.number().nonnegative().optional(),
+  /**
+   * Prompts (input including cache) above this many tokens bill a higher tier that `Rate` does not model, so they are
+   * priced `unknown`. Default `LONG_PROMPT_TOKENS` (100K, the Anthropic-family step).
+   */
+  longPromptTokens: z.int().positive().optional(),
 })
 export type Rate = z.infer<typeof rateSchema>
 
 export const ROUTE_ID = /^[a-z][a-z0-9-]*(\.[a-z][a-z0-9-]*)*$/
 
+const routeFields = {
+  wire: z.enum(WIRES),
+  model: z.string().min(1),
+  effort: z.enum(EFFORTS).optional(),
+  maxOutputTokens: maxOutputTokens.optional(),
+  rate: rateSchema.optional(),
+}
+
+const decisionRule = [
+  (r: { wire: Wire; effort?: Effort; maxOutputTokens?: number }) =>
+    r.wire !== 'iu-decision' || (r.effort === undefined && r.maxOutputTokens === undefined),
+  { message: 'iu-decision routes take neither effort nor maxOutputTokens' },
+] as const
+
+/** The route a call moves to once when the primary fails on provider balance (HTTP 402, or 503 "Insufficient Balance"). */
+export const fallbackSchema = z.strictObject(routeFields).refine(...decisionRule)
+export type FallbackEntry = z.infer<typeof fallbackSchema>
+
 export const routeSchema = z
-  .strictObject({
-    wire: z.enum(WIRES),
-    model: z.string().min(1),
-    effort: z.enum(EFFORTS).optional(),
-    maxOutputTokens: maxOutputTokens.optional(),
-    rate: rateSchema.optional(),
-  })
-  .refine((r) => r.wire !== 'iu-decision' || (r.effort === undefined && r.maxOutputTokens === undefined), {
-    message: 'iu-decision routes take neither effort nor maxOutputTokens',
+  .strictObject({ ...routeFields, fallback: fallbackSchema.optional() })
+  .refine(...decisionRule)
+  .refine((r) => !r.fallback || (r.fallback.wire === 'opencode') === (r.wire === 'opencode'), {
+    message:
+      'a fallback runs the same kind of step: an opencode route falls back to opencode, a single call to a single call',
   })
 export type RouteEntry = z.infer<typeof routeSchema>
 
 /** A table entry plus the id it was resolved by. */
 export type ResolvedRoute = RouteEntry & { id: string }
 
-/**
- * A partial entry from the override variable; merged over the table entry, then validated whole.
- * There is no `wire`: a route's transport is code, overrides are for model, effort, limit and rate experiments.
- */
-export const routePatchSchema = z.strictObject({
+const patchFields = {
   wire: z.never({ error: 'wire cannot be overridden (a route transport is code, not configuration)' }).optional(),
   model: z.string().min(1).optional(),
   effort: z.enum(EFFORTS).nullable().optional(),
   maxOutputTokens: maxOutputTokens.nullable().optional(),
   rate: rateSchema.nullable().optional(),
-})
+}
+
+/** A patch of a route's fallback: the same fields, merged over the table's fallback. `null` removes the fallback. */
+export const fallbackPatchSchema = z.strictObject(patchFields)
+export type FallbackPatch = z.infer<typeof fallbackPatchSchema>
+
+/**
+ * A partial entry from the override variable; merged over the table entry, then validated whole.
+ * There is no `wire`: a route's transport is code, overrides are for model, effort, limit and rate experiments.
+ */
+export const routePatchSchema = z.strictObject({ ...patchFields, fallback: fallbackPatchSchema.nullable().optional() })
 export type RoutePatch = z.infer<typeof routePatchSchema>
 
 export const overridesSchema = z.record(z.string(), routePatchSchema)

@@ -90,6 +90,30 @@ export function cleanVerdict(summary: string): ReviewResult {
   }
 }
 
+/**
+ * The model-backed steps failed on provider balance, the routes' fallbacks included: no review ran, and the caller
+ * reviews in its own session instead. `needs-human` with `spend`, never approval.
+ */
+export function balanceDegradedVerdict(failed: readonly FailedReviewer[]): ReviewResult {
+  return {
+    schemaVersion: REVIEW_SCHEMA_VERSION,
+    outcome: 'needs-human',
+    blocking: [],
+    improvements: [],
+    discussions: [
+      {
+        file: PIPELINE,
+        message: 'provider balance exhausted — review in-session with /code-review on your own Claude',
+        angle: 'pipeline',
+      },
+    ],
+    testGaps: [],
+    escalationCategory: 'spend',
+    summary: `No review ran: the IU provider balance is exhausted, fallback route included (${failed.map((r) => r.angle).join(', ')}). Review in-session with /code-review. Do NOT treat this as approval.`,
+    degraded: 'provider_balance',
+  }
+}
+
 /** Every reviewer failed: no review happened, and this must never read as approval. */
 export function allFailedVerdict(failed: readonly FailedReviewer[], totalReviewers: number): ReviewResult {
   return {

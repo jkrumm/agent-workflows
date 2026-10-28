@@ -67,8 +67,10 @@ key, a shell-capable agent reads what the user can): the repo is the owner's, an
   `OPENCODE_DISABLE_MODELS_FETCH=1`, `OPENCODE_DISABLE_AUTOUPDATE=1`, the server password, the generated config,
   `IU_KEY` / `IU_ANTHROPIC_BASE` / `IU_OPENAI_BASE` (from `IU_API_KEY` and `IU_BASE_URL`), `IU_KEY_ID` (the parsed label of that key, always set, never the key; nothing here reads it, the host stamps rows at admission), and
   `OTEL_EXPORTER_OTLP_*` when set. Nothing else (tokens, `CLAUDE_*`, database URLs).
-- **Config** (`buildServerConfig`): two IU providers (`iu-anthropic`, `iu-chat`) with a model row for every
-  `opencode`-wire route, cost rows from each route's own `rate`. Model ids come only from `@agent-workflows/routes`.
+- **Config** (`buildServerConfig`): three IU providers (`iu-anthropic`, `iu-chat`, `iu-responses`) with a model row
+  for every `opencode`-wire route and its fallback, cost rows from each route's own `rate`. OpenAI's own models
+  (`gpt-`) go on `iu-responses` (`@ai-sdk/openai`): they call tools only over the Responses API. Routes sharing a
+  model and effort share one variant. Model ids come only from `@agent-workflows/routes`.
 - **Detached.** The server is its own process group. A host restart (deploy) leaves it and its running sessions
   alone; the next `start()` adopts it after an authenticated `GET /api/info` with the pinned version
   (`OPENCODE_VERSION`, `2.0.32`; another version is refused) **and** the same launch fingerprint (sha256 of command
@@ -182,8 +184,25 @@ reach back to a known message triggers a full walk again. The final usage read w
 OpenCode's when it is positive (it prices with the config's cost rows, i.e. the route's own `rate`, `costSource:
 provider`); a message reported at cost 0 with tokens is priced with the route's rate through `costFromUsage`
 (`costSource: rate`). The step is unpriced (`cost: null`, `costSource: unknown`) when that has no rate, when cache
-tokens appear without the matching cache rate, or when one call exceeds 100K prompt tokens (the vendor's higher
-tier): never free, never under-priced. Every `opencode`-wire route carries its own rate (`packages/routes`).
+tokens appear without the matching cache rate, or when one call exceeds the rate's `longPromptTokens` (default 100K;
+the vendor's higher tier): never free, never under-priced. A step that moved to its fallback session is priced with
+the fallback's rate and reports the fallback's model. Every `opencode`-wire route carries its own rate (`packages/routes`).
+
+## Provider-balance fallback
+
+A turn that ends `failed` with a provider-balance error (`isBalanceFailure` from `@agent-workflows/routes`: the IU
+503 "Insufficient Balance (PaymentRequired)" wording, or a 402) reopens the step once on the route's `fallback`:
+
+- Only when the turn did nothing: no tool call and no output tokens after the prompt. A turn that ran is never
+  prompted a second time (concept §3); its step fails with the balance error, logged.
+- The fallback session's id is derived from the failed session's (`ses_agw<sha256(sessionId, "fallback")>`), in the
+  same location, with the same permissions (the handle keeps the step's `allowDirectories` as `allow`). A wait after
+  a crash reads the failed primary again and lands on the same fallback session: its create returns the existing one
+  and `prompt` sends nothing when the prompt is there.
+- The fallback session never falls back again; its failure fails the step. `AGW_ROUTES` `{"<route>": {"fallback": null}}`
+  turns it off.
+- `abort` interrupts the fallback session too and `steer` goes to it once it exists: the journal keeps only the
+  step's first handle.
 
 ## Failure modes
 
@@ -241,7 +260,7 @@ the host and as a spawned `opencode` stand-in (`test/fake-opencode-bin.ts`) for 
 
 | File | Covers |
 |-|-|
-| `host.test.ts` | a turn's output and usage; prompt idempotency (twice, and across a restart); open idempotency per key, the retry generation, a retry re-attaching a still-running session; JSON output; a failed turn; an outcome-less idle; cost 0 priced by rate, unpriced without one; permissions; a pending prompt is running, a missing one fails after the grace; incremental reads; a wait surviving a kill and restart with one resume and no second prompt; a finished session read, not resumed; steer dedupe by signal; abort twice; tool events per wait; shell output as progress; warm, evict, hash directories and pruning |
+| `host.test.ts` | a turn's output and usage; prompt idempotency (twice, and across a restart); open idempotency per key, the retry generation, a retry re-attaching a still-running session; JSON output; a failed turn; an outcome-less idle; cost 0 priced by rate, unpriced without one; permissions; a pending prompt is running, a missing one fails after the grace; incremental reads; a wait surviving a kill and restart with one resume and no second prompt; a finished session read, not resumed; the provider-balance fallback (one reopen, re-attach without a second prompt, no fallback after a turn that ran, none for other failures or with `fallback: null`, abort reaching it); steer dedupe by signal; abort twice; tool events per wait; shell output as progress; warm, evict, hash directories and pruning |
 | `server.test.ts` | the env allow-list, the server's own HOME and the file-watcher flag; a wedged server SIGTERMed, SIGKILLed and restarted on the same port; a crash restarted; adoption by the next process; drift restart; a foreign pid neither adopted nor signalled; corrupt `server.json`; a version mismatch refused; shim resolution; a wait in flight across a liveness kill; the config |
 | `locations.test.ts` | compile, hash directories, the hash, ancestor leaks, path escapes, pruning, the temp sweep; the warm cache under concurrency: single-flight, failed warm, failed evict, shrink re-check, use during evict, reset, changed content |
 | `live.test.ts` | `AGW_LIVE=1`: the real binary, SIGKILL mid-turn, restart, re-attach, one prompt; AGENTS.md and a skill reach the model, the user's skills and the shell tool do not; a non-shell agent's read, glob, grep and write outside its location are refused; tokens and cost |
