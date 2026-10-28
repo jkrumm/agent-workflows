@@ -64,7 +64,7 @@ Declared on every operation (they land in the OpenAPI document), keyed by `code`
 
 ### `x-cli`
 
-Every operation carries `x-cli`, with defaults filled in: `{ command, positional, mutating, defaultFormat, stdin?, plainField? }`. Flags come from the input schema's properties that are not positional. `stdin` names the input property that is read from stdin when it is not given as an argument or flag. It is new in this package (the S3 spike's `x-cli` had no equivalent), so the Wave 3 generator must read it. The block is attached through one `spec` callback in `procedure.ts`.
+Every operation carries `x-cli`, with defaults filled in: `{ command, positional, mutating, defaultFormat, kind, stdin?, plainField?, resume? }`. Flags come from the input schema's properties that are not positional. `kind` is `capability` here; the host's workflow and run operations set `workflow` and `run`, and `resume` (`{ command, positional }`, the command that continues a still-running workflow) rides on workflows only. The host attaches the same block to its own operations through the exported `withCli`, and merges a registry into its router through `registry.router` and `registry.requestContext` (see the host README). `stdin` names the input property that is read from stdin when it is not given as an argument or flag. It is new in this package (the S3 spike's `x-cli` had no equivalent), so the Wave 3 generator must read it. The block is attached through one `spec` callback in `procedure.ts`.
 
 ## Transports
 
