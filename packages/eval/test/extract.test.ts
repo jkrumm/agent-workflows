@@ -372,6 +372,16 @@ describe('extractAll', () => {
           diff: 'diff --git a/y b/y\n',
           result: CLEAN,
         }),
+        '{"jobId": "torn-line"',
+        JSON.stringify({
+          jobId: 'bad-time',
+          createdAt: 'yesterday',
+          repo,
+          params: {},
+          baseSha: SHA_A,
+          headSha: SHA_B,
+          diff: 'd',
+        }),
       ].join('\n'),
     )
     writeFileSync(
@@ -409,6 +419,7 @@ describe('extractAll', () => {
       'repo-unverified': 1,
       'no-result': 1,
       'pr-ref-missing': 1,
+      'corpus-unparseable': 2,
     })
     expect(out.tally.review.written).toBe(5)
 

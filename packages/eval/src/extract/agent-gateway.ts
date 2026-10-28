@@ -28,6 +28,7 @@ export type SkipReason =
   | 'repo-outside-home'
   | 'repo-unmapped'
   | 'repo-unverified'
+  | 'corpus-unparseable'
   | 'repo-missing'
   | 'params-unparseable'
   | 'no-result'
@@ -429,6 +430,20 @@ function repoDirOf(home: string, repo: string): string {
   return join(home, repo)
 }
 
+/** A corpus line with the fields the mapping reads; anything else is a tallied skip, never a crash. */
+function isCorpusLine(value: unknown): value is CorpusLine {
+  if (!isRecord(value)) return false
+  return (
+    typeof value.jobId === 'string' &&
+    typeof value.createdAt === 'number' &&
+    Number.isFinite(value.createdAt) &&
+    isRecord(value.params) &&
+    typeof value.baseSha === 'string' &&
+    typeof value.headSha === 'string' &&
+    typeof value.diff === 'string'
+  )
+}
+
 function reviewFromCorpus(line: CorpusLine, ctx: Ctx): Mapped<ReviewCase> {
   const repo = repoFor(typeof line.repo === 'string' ? line.repo : cwdOf(line.params), ctx.home)
   if ('skip' in repo) return repo
@@ -548,7 +563,7 @@ export function extractAll(sources: Sources): Extraction {
   const corpus = readFileSync(sources.corpus, 'utf8')
     .split('\n')
     .filter((line) => line.trim() !== '')
-    .map((line) => JSON.parse(line) as CorpusLine)
+    .map((line) => parseJson(line))
 
   const db = new Database(sources.jobsDb, { readonly: true })
   let jobs: JobRow[]
@@ -588,6 +603,10 @@ export function extractAll(sources: Sources): Extraction {
   const seen = new Set<string>()
 
   for (const line of corpus) {
+    if (!isCorpusLine(line)) {
+      reviewTally.skipped['corpus-unparseable'] = (reviewTally.skipped['corpus-unparseable'] ?? 0) + 1
+      continue
+    }
     seen.add(line.jobId)
     accept(reviewTally, review, reviewFromCorpus(line, ctx), (c) => ReviewCase.safeParse(c).success)
   }
