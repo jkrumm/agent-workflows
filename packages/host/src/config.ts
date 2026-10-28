@@ -1,3 +1,4 @@
+import { type IuKeyId, parseIuKeyId } from '@agent-workflows/middleware'
 import { secretProblem } from './auth.ts'
 
 export type Env = Record<string, string | undefined>
@@ -11,10 +12,12 @@ export interface HostConfig {
   version: string
   agentsDir: string | undefined
   opencodeBin: string | undefined
+  /** The label of the IU key this host holds (`IU_KEY_ID`); the key itself is never read here. */
+  iuKey: IuKeyId
 }
 
 /** Every problem at once, so one failed start names all missing variables. Values are never echoed. */
-export function loadConfig(env: Env): HostConfig {
+export function loadConfig(env: Env, warn: (message: string) => void = console.warn): HostConfig {
   const problems: string[] = []
   const required = (name: string) => {
     const value = env[name]?.trim()
@@ -41,5 +44,6 @@ export function loadConfig(env: Env): HostConfig {
     version: env.AGW_VERSION?.trim() || 'dev',
     agentsDir: env.AGW_AGENTS_DIR?.trim() || undefined,
     opencodeBin: env.AGW_OPENCODE_BIN?.trim() || undefined,
+    iuKey: parseIuKeyId(env.IU_KEY_ID, (message) => warn(`[agw-host] ${message}`)),
   }
 }

@@ -3,6 +3,7 @@ import type { Logger, ModelUsage, TokenCounts } from '@agent-workflows/runtime'
 import { z } from 'zod'
 import { errorMessage, type JournalDb } from './db.ts'
 import { traceIdForRun } from './ids.ts'
+import { IU_KEY_IDS, type IuKeyId } from './iu-key.ts'
 import { hasPurpose } from './purpose.ts'
 
 /** Argo's `UsageRecordInputSchema` (argo `apps/api/src/routes/usage.ts`), copied verbatim; the contract of the port. */
@@ -19,6 +20,9 @@ export const ArgoUsageRecordInput = z.object({
   machine: z.string().nullable(),
   billing: z.string(),
   account: z.string().nullable().optional(),
+  // Not in Argo's schema yet: Argo gains `iu_key` per the usage-tracker contract ("IU keys"). Until then its zod
+  // object strips it, so posting it is harmless; a missing field means `personal` on Argo's side.
+  iu_key: z.enum(IU_KEY_IDS).nullable().optional(),
   outcome: z.string().default('ok'),
   input_tokens: z.number().int().default(0),
   output_tokens: z.number().int().default(0),
@@ -115,6 +119,8 @@ export type OutboxStep = {
     workflowId: string
     rootId: string
     purpose: string
+    /** The label of the IU key the host that admitted the run held; rows stored before it read `personal`. */
+    iuKey: IuKeyId
     traceparent: string | null
     traceId: string | null
     fingerprint: string | null
@@ -191,6 +197,7 @@ export function argoRowsForStep(step: OutboxStep, options: ArgoRowOptions): Argo
   const outcome = step.status !== 'done' || run.errorKind === 'invalid_output' ? 'error' : 'ok'
   const durationMs = step.finishedAt ? Math.max(0, step.finishedAt.getTime() - step.startedAt.getTime()) : null
   const ingestedAt = (options.now ?? new Date()).toISOString()
+  const billing = options.billing ?? 'iu'
   return perModel(step).map(({ model, ...usage }) => ({
     source: 'agent-workflows',
     source_id: `${step.runId}:${step.stepId}:${model}`,
@@ -202,8 +209,10 @@ export function argoRowsForStep(step: OutboxStep, options: ArgoRowOptions): Argo
     workspace: options.workspace ?? 'private',
     sub_tool: run.workflowId,
     machine: options.machine,
-    billing: options.billing ?? 'iu',
+    billing,
     account: null,
+    // Top level only: never in `raw`, never in `account` (the Max account id).
+    iu_key: billing === 'iu' ? run.iuKey : null,
     outcome,
     ...additiveTokens(usage.tokens),
     duration_ms: durationMs,
@@ -248,6 +257,7 @@ type OutboxRow = {
   workflow: string
   root_id: string
   purpose: string
+  iu_key: string
   traceparent: string | null
   trace_id: string | null
   fingerprint: string | null
@@ -281,6 +291,7 @@ function toOutboxStep(row: OutboxRow): OutboxStep {
       workflowId: row.workflow,
       rootId: row.root_id,
       purpose: row.purpose,
+      iuKey: row.iu_key === 'athena-team' ? 'athena-team' : 'personal',
       traceparent: row.traceparent,
       traceId: row.trace_id,
       fingerprint: row.fingerprint,
@@ -463,7 +474,7 @@ export class ArgoOutbox {
          returning s.*
        )
        select ${STEP_COLUMNS.replaceAll(/(\w+)/g, 'c.$1')}, c.handle->'handle'->>'sessionId' as session_id,
-         r.workflow, r.root_id, r.purpose, r.traceparent, r.trace_id, r.fingerprint, r.friction,
+         r.workflow, r.root_id, r.purpose, r.iu_key, r.traceparent, r.trace_id, r.fingerprint, r.friction,
          r.status as run_status, r.error_kind as run_error_kind, r.wall_ms
        from claimed c join ${db.runs} r on r.id = c.run_id
        order by c.finished_at, c.run_id, c.step_id`,

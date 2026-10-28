@@ -27,7 +27,7 @@ describe('migrations', () => {
     const pools = Array.from({ length: 4 }, () => new Pool({ connectionString: PG_URL, max: 1 }))
     try {
       const applied = await Promise.all(pools.map((p) => migrate(p, fresh.schema)))
-      const files = ['0001_journal.sql', '0002_usage_outbox.sql']
+      const files = ['0001_journal.sql', '0002_usage_outbox.sql', '0003_iu_key.sql']
       expect(applied.flat()).toEqual(files)
       const { rows } = await sql.pool.query(`select version from "${fresh.schema}".schema_migrations order by version`)
       expect(rows.map((r) => r.version)).toEqual(files)

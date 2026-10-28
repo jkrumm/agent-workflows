@@ -1,6 +1,7 @@
 import type { Logger, Middleware } from '@agent-workflows/runtime'
 import { type ArgoTransport, ArgoOutbox, argoTransportFromEnv, type OutboxOptions } from './argo.ts'
 import { JournalDb } from './db.ts'
+import { type IuKeyId, iuKeyMiddleware } from './iu-key.ts'
 import { type FingerprintSource, fingerprintMiddleware } from './fingerprint.ts'
 import { purposeMiddleware } from './purpose.ts'
 import { recordMiddleware } from './record.ts'
@@ -12,6 +13,8 @@ export type PlatformOptions = {
   schema?: string
   logger?: Logger
   fingerprint: FingerprintSource
+  /** The label of the IU key this process holds (`parseIuKeyId(IU_KEY_ID)`), stamped on every run it admits. Default `personal`. */
+  iuKey?: IuKeyId
   telemetry?: Omit<TelemetryOptions, 'logger' | 'sessionIdOf'>
   /** Default: `argoTransportFromEnv()`. Null: no outbox; steps stay unsynced in Postgres until one runs. */
   argo?: { transport?: ArgoTransport | null } & Pick<
@@ -36,7 +39,7 @@ const consoleLogger: Logger = {
 }
 
 /**
- * The platform layer every workflow runs inside: purpose, fingerprint, run record, telemetry (list order: the
+ * The platform layer every workflow runs inside: purpose, IU key label, fingerprint, run record, telemetry (list order: the
  * record annotates the run span before telemetry ends it), plus the Argo outbox the host flushes.
  */
 export function platformMiddleware(options: PlatformOptions): Platform {
@@ -53,6 +56,7 @@ export function platformMiddleware(options: PlatformOptions): Platform {
   return {
     middleware: [
       purposeMiddleware(),
+      iuKeyMiddleware({ db, iuKey: options.iuKey ?? 'personal' }),
       fingerprintMiddleware({
         db,
         source: options.fingerprint,

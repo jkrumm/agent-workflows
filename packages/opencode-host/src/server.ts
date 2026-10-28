@@ -14,6 +14,7 @@ import {
 } from 'node:fs'
 import { createServer } from 'node:net'
 import { delimiter, isAbsolute, join } from 'node:path'
+import { parseIuKeyId } from '@agent-workflows/middleware'
 import type { Logger } from '@agent-workflows/runtime'
 import { createClient, type Endpoint } from './client.ts'
 import { buildServerConfig, iuFromEnv } from './config.ts'
@@ -103,6 +104,8 @@ export function serverEnv(input: { root: string; password: string; config: Recor
     IU_KEY: iu.key,
     IU_ANTHROPIC_BASE: iu.anthropicBase,
     IU_OPENAI_BASE: iu.openaiBase,
+    // The label of the key above (never the key): a server stamps the key it was started with.
+    IU_KEY_ID: parseIuKeyId(env.IU_KEY_ID),
   }
   for (const [name, value] of Object.entries(env)) {
     if (name.startsWith('OTEL_EXPORTER_OTLP_') && value) out[name] = value
