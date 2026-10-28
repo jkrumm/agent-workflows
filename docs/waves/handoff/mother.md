@@ -42,6 +42,11 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
   persists — a spend item for the owner (stop reason 2 only if the fleet has nothing else to do).
 - 2026-10-28: a lead's `/code-review` fork checked out a branch in the shared main checkout (detached
   HEAD where the mother commits); restored, lesson in briefs. `git status` before every mother commit.
+- 2026-10-28 ~09:00 owner direction: DeepSeek behind IU is out of balance (other IU models answer).
+  No gateway `/review` in the fleet; interim tests/evals on the Athena team key
+  (`op://Private/athena-teamchat/key`, careerpartner; not in the mini cache yet, never in this repo);
+  route fallback to GPT-6.1 Terra medium on balance failures; ported review and the `/review` skill
+  degrade to "review in-session with /code-review". Relayed to the lead; in PLAN (budget line, Wave 4).
 
 ## Next action
 - Watch the lead (`wave-watch.sh --agents agent-workflows-w1 --heartbeat 9`, bounded 10 min), read
