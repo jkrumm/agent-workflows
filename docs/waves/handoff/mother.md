@@ -4,7 +4,7 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
 `docs/waves/PLAN.md` and this file, then continues from **Next action**.
 
 ## State
-- Waves 1–2 done (retros in concept.md). Active wave: 3 (CLI, agent host, deploy, P1b) — the first deploy.
+- Waves 1–3 done (retros in concept.md; Wave 3's deploy carried into Wave 4, owner-gated). Active wave: 4.
 - Lead's close-out channel: `docs/waves/handoff/lead.md` (the mother owns PLAN.md and the retro log;
   the lead writes per-step verdicts, Left behind, gate evidence and retro notes there, then idles).
 - dotfiles is free: P0 done (owner, 2026-10-27).
@@ -13,8 +13,7 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
   `com.jkrumm.vps-pg-backup` is ours: P0b maps it in dotfiles `docs/architecture.md`. Relayed to the lead.
 
 ## Lead
-- `agent-workflows-w1` (pane w40:pN), Opus/high, spawned 2026-10-28 ~02:15: the second Wave 3 lead
-  (the first rotated at 60% mid-wave; state in `handoff/lead.md` at `2196529`).
+- `agent-workflows-w1` (pane w40:pQ), Opus/high, spawned 2026-10-28 ~05:15 for Wave 4.
   Rotation policy: a fresh lead per wave unless the last one closed under ~30% context.
 - The mother is agent `agent-workflows-mother` (pane w40:p1).
 
@@ -38,7 +37,12 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
   modelpick main checkout has an unpushed local commit `6d7c624` still calling `agw`.
 - Wave 4 first step (added to PLAN): direct capability calls over HTTP are billed but not
   recorded (N6) — route them through a one-step run or record their usage.
+- 2026-10-28 ~04:05: IU/DeepSeek (Requesty) 503 Insufficient Balance; owner request
+  `20261028T040759-9702` queued by the prometheus fleet. Blocks Wave 4's side-by-side numbers if it
+  persists — a spend item for the owner (stop reason 2 only if the fleet has nothing else to do).
+- 2026-10-28: a lead's `/code-review` fork checked out a branch in the shared main checkout (detached
+  HEAD where the mother commits); restored, lesson in briefs. `git status` before every mother commit.
 
 ## Next action
 - Watch the lead (`wave-watch.sh --agents agent-workflows-w1 --heartbeat 9`, bounded 10 min), read
-  `handoff/lead.md` on idle, write Wave 3's Left behind and retro, flip Wave 4 active, rotate the lead.
+  `handoff/lead.md` on idle, write Wave 4's Left behind and retro, flip Wave 5 active, rotate the lead.
