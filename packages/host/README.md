@@ -22,7 +22,7 @@ Names only; values come from 1Password through `secrets-run`, never from the rep
 | `AGW_PG_SCHEMA` | no | journal schema, default `agw` |
 | `AGW_PORT` | no | default `7791` |
 | `AGW_VERSION` | no | reported by `/health` and `info.version`; default `dev`. A change changes the contract sha |
-| `AGW_AGENTS_DIR`, `AGW_OPENCODE_BIN` | no | fingerprint source: compiled agent definitions and the `opencode` binary. Read only for workflows that reference agents |
+| `AGW_AGENTS_DIR`, `AGW_OPENCODE_BIN` | no | fingerprint source: compiled agent definitions and the `opencode` binary. Read only for workflows that reference agents. The fingerprint covers each agent's `AGENTS.md`, `agent.json` (route, permissions) and skills, plus the host's base session policy (`hostFingerprintSource`) |
 | `IU_API_KEY`, `IU_BASE_URL` | for capabilities | read per call by the capabilities |
 | `IU_KEY_ID` | no | non-secret label of the IU key above: `personal` (default; unset or empty) or `athena-team`; any other value refuses to start. Stamped on every run this process admits and posted as `iu_key` on `billing=iu` Argo rows; also forwarded to OpenCode servers, which do not read it |
 | `AGW_RETRO_WEEKLY` | no | the weekly retrospective schedule; on unless `0`, `off` or `false` |

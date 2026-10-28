@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   basePolicy,
+  basePolicyDigest,
   compileLocation,
   LocationLeakError,
   locationHash,
@@ -59,14 +60,17 @@ describe('compileLocation', () => {
         .map((r) => r.action),
     ).toEqual([...READ_ONLY_ACTIONS])
     const before = locationHash(base)
+    const digest = basePolicyDigest()
     const actions = READ_ONLY_ACTIONS as unknown as string[]
     actions.push('webfetch')
     try {
       expect(locationHash(base)).not.toBe(before)
+      expect(basePolicyDigest()).not.toBe(digest) // the run fingerprint's policy input moves with it
     } finally {
       actions.pop()
     }
     expect(locationHash(base)).toBe(before)
+    expect(basePolicyDigest()).toBe(digest)
   })
 
   test.each(['AGENTS.md', 'CLAUDE.md', '.git'])('an ancestor %s is refused', (leak) => {

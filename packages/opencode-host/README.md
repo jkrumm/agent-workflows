@@ -147,7 +147,7 @@ tool is denied unless an agent opts in, and the key is an ingest key.
 `.opencode/skills/<path>`, `def.config` as `opencode.json`, and `.agw-location.json`. A hash directory is written
 once (built beside it, renamed into place) and never changed; a changed agent is a new directory, so a running
 session's files are never touched. It throws `LocationLeakError` when any ancestor holds an `AGENTS.md`, a
-`CLAUDE.md` or a `.git`. `locationHash(def)` (content, permissions and the host's `basePolicy`, so changing the default moves every agent's hash) is the location input. The *run* fingerprint (`fsFingerprintSource`, middleware) reads only `AGENTS.md` and `skills/**`: `agent.json` and the base policy are not in it yet, so an eval arm that differs only in permissions needs `--agw-args` or a prompt change to be told apart.
+`CLAUDE.md` or a `.git`. `locationHash(def)` (content, permissions and the host's `basePolicy`, so changing the default moves every agent's hash) is the location input. The *run* fingerprint (`fsFingerprintSource`, middleware) covers each agent's `AGENTS.md`, `agent.json` (route and permissions) and `skills/**`, plus `basePolicyDigest()` as its `hostPolicy`, so an experiment that changes an agent's route or permissions, or the default policy, moves eval arms.
 
 **Pruning** (`maintain()`, every `locations.tickMs`, 60 s): a hash directory goes when it is not the agent's current
 one, not known to the warm cache, not the location of a session the server runs (`GET /api/session/active`), and

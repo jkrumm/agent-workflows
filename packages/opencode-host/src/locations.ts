@@ -63,6 +63,14 @@ export function basePolicy(): PermissionRule[] {
 }
 
 /**
+ * A digest of the host's base policy, for the run fingerprint (middleware): changing the catch-all or the read-only
+ * set moves it. The same rules are part of {@link locationHash}.
+ */
+export function basePolicyDigest(): string {
+  return createHash('sha256').update(canonical(basePolicy())).digest('hex')
+}
+
+/**
  * sha256 over everything that shapes the agent's sessions; an input of the run fingerprint (concept §5). The host's
  * base policy is part of it, so a later change to the default moves every agent's hash, not only the agents that
  * name permissions.

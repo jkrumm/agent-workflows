@@ -14,7 +14,15 @@ export type AgentInputs = {
   route: string
 }
 
-export type FingerprintInputs = { agents: AgentInputs[]; opencodeVersion: string | null }
+export type FingerprintInputs = {
+  agents: AgentInputs[]
+  opencodeVersion: string | null
+  /**
+   * Behaviour the host applies to every agent outside the agent's own files (OpenCode's session policy): a version or
+   * a digest the host supplies. Left out of the hash when unset, so a source without one keeps its fingerprints.
+   */
+  hostPolicy?: string | null
+}
 
 /** Where the behaviour-changing inputs of a workflow come from. Production reads disk; tests pass a fake. */
 export type FingerprintSource = {
@@ -32,7 +40,15 @@ export function computeFingerprint(version: string, inputs: FingerprintInputs): 
         .map((path) => [path, sha256(a.files[path] ?? '')]),
     }))
     .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
-  return sha256(JSON.stringify({ v: 1, version, agents, opencode: inputs.opencodeVersion }))
+  return sha256(
+    JSON.stringify({
+      v: 1,
+      version,
+      agents,
+      opencode: inputs.opencodeVersion,
+      ...(inputs.hostPolicy ? { hostPolicy: inputs.hostPolicy } : {}),
+    }),
+  )
 }
 
 export type AgentRef = { agent: string; route: RouteId }
@@ -44,6 +60,8 @@ export type FsFingerprintOptions = {
   workflows: Record<string, AgentRef[]>
   /** Default `opencode`. */
   opencodeBin?: string
+  /** The host's session policy (a digest or version): part of every fingerprint of a workflow with agents. */
+  hostPolicy?: string
   /** Route overrides are read from here. Default `process.env`. */
   env?: Record<string, string | undefined>
 }
@@ -91,15 +109,24 @@ export function fsFingerprintSource(options: FsFingerprintOptions): FingerprintS
           route: routeFingerprint(r.route, options.env ?? process.env),
         })),
         opencodeVersion: version ?? null,
+        ...(options.hostPolicy ? { hostPolicy: options.hostPolicy } : {}),
       }
     },
   }
 }
 
-/** `AGENTS.md` (required) and every file under `skills/`, as `[relative path, size, mtimeMs]`, sorted. */
+/**
+ * `AGENTS.md` (required), `agent.json` (optional: the route and the permissions) and every file under `skills/`, as
+ * `[relative path, size, mtimeMs]`, sorted. Any other file in the directory is not an input.
+ */
 async function agentFiles(dir: string): Promise<[string, number, number][]> {
   const agentsMd = await stat(join(dir, 'AGENTS.md'))
   const out: [string, number, number][] = [['AGENTS.md', agentsMd.size, agentsMd.mtimeMs]]
+  const agentJson = await stat(join(dir, 'agent.json')).catch((err: unknown) => {
+    if ((err as { code?: string }).code === 'ENOENT') return null
+    throw err
+  })
+  if (agentJson?.isFile()) out.push(['agent.json', agentJson.size, agentJson.mtimeMs])
   const skills = join(dir, 'skills')
   const entries = await readdir(skills, { recursive: true, withFileTypes: true }).catch((err: unknown) => {
     if ((err as { code?: string }).code === 'ENOENT') return []

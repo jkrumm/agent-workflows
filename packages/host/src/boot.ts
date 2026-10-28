@@ -1,13 +1,14 @@
 import { createCapabilities, createRegistry } from '@agent-workflows/capabilities'
 import { runawayCap, walletGate } from '@agent-workflows/limits'
 import {
+  type FingerprintSource,
   type FrictionSource,
   frictionRecounter,
   fsFingerprintSource,
   JournalDb,
   platformMiddleware,
 } from '@agent-workflows/middleware'
-import { OpenCodeHost, OpenCodeServer } from '@agent-workflows/opencode-host'
+import { basePolicyDigest, OpenCodeHost, OpenCodeServer } from '@agent-workflows/opencode-host'
 import { type AgentHost, type Json, Runtime } from '@agent-workflows/runtime'
 import { resolve } from 'node:path'
 import { Pool } from 'pg'
@@ -52,6 +53,18 @@ export interface BootOptions {
   env?: Record<string, string | undefined>
   /** Replaces the `gh` CLI the friction job opens issues through (tests). */
   gh?: GhPort
+}
+
+/**
+ * The fingerprint source of the host: each agent's `AGENTS.md`, `agent.json` and skills, its route, the OpenCode
+ * version and the host's session policy (`basePolicyDigest`), so a change to any of them moves the fingerprint.
+ */
+export function hostFingerprintSource(options: {
+  agentsDir: string
+  workflows: Parameters<typeof fsFingerprintSource>[0]['workflows']
+  opencodeBin?: string | undefined
+}): FingerprintSource {
+  return fsFingerprintSource({ ...options, hostPolicy: basePolicyDigest() })
 }
 
 type Exporter = NonNullable<NonNullable<Parameters<typeof platformMiddleware>[0]['telemetry']>['exporter']>
@@ -208,7 +221,7 @@ export async function boot(config: HostConfig, options: BootOptions = {}): Promi
       schema: config.schema,
       // The active learnings of each agent enter the fingerprint beside its AGENTS.md and skills (concept §5).
       fingerprint: withLearningsFingerprint(
-        fsFingerprintSource({
+        hostFingerprintSource({
           agentsDir,
           workflows: fingerprintWorkflows(workflows),
           opencodeBin: config.opencodeBin,

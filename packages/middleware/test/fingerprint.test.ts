@@ -37,6 +37,14 @@ describe('computeFingerprint', () => {
     const all = [computeFingerprint('v2', base), ...variants.map((v) => computeFingerprint('v1', v))]
     expect(new Set([fp, ...all]).size).toBe(all.length + 1)
   })
+
+  test('the host policy moves it; an unset policy leaves the hash as it was', () => {
+    const fp = computeFingerprint('v1', base)
+    expect(computeFingerprint('v1', { ...base, hostPolicy: null })).toBe(fp)
+    const a = computeFingerprint('v1', { ...base, hostPolicy: 'p1' })
+    expect(a).not.toBe(fp)
+    expect(computeFingerprint('v1', { ...base, hostPolicy: 'p2' })).not.toBe(a)
+  })
 })
 
 describe('fsFingerprintSource', () => {
@@ -81,6 +89,59 @@ describe('fsFingerprintSource', () => {
     expect(await fp({ AGW_ROUTES: JSON.stringify({ 'cheap.classify': { model: 'other-model' } }) })).not.toBe(before)
     writeFileSync(join(agents, 'brain', 'AGENTS.md'), '# brain v2')
     expect(await fp()).not.toBe(before)
+  })
+
+  describe('what moves the fingerprint of an agent on disk', () => {
+    const fp = async (src: ReturnType<typeof source>) =>
+      computeFingerprint('v1', await src.inputs({ id: 'research.report', version: 'v1' }))
+    const json = join(agents, 'brain', 'agent.json')
+    const policy = (hostPolicy?: string) =>
+      fsFingerprintSource({
+        agentsDir: agents,
+        workflows: { 'research.report': [{ agent: 'brain', route: 'cheap.classify' }] },
+        opencodeBin: bin,
+        env: {},
+        ...(hostPolicy ? { hostPolicy } : {}),
+      })
+
+    test('agent.json: its route and its permissions each move it; adding or removing it too', async () => {
+      rmSync(json, { force: true })
+      const none = await fp(source())
+      writeFileSync(json, JSON.stringify({ route: 'review.angle' }))
+      const withRoute = await fp(source())
+      expect(withRoute).not.toBe(none)
+      writeFileSync(json, JSON.stringify({ route: 'review.router' }))
+      const otherRoute = await fp(source())
+      expect(otherRoute).not.toBe(withRoute)
+      writeFileSync(json, JSON.stringify({ route: 'review.router', permissions: { shell: true } }))
+      const shell = await fp(source())
+      expect(shell).not.toBe(otherRoute)
+      writeFileSync(
+        json,
+        JSON.stringify({
+          route: 'review.router',
+          permissions: { shell: true, rules: [{ action: 'webfetch', resource: '*', effect: 'allow' }] },
+        }),
+      )
+      expect(await fp(source())).not.toBe(shell)
+      rmSync(json, { force: true })
+      expect(await fp(source())).toBe(none)
+    })
+
+    test('the host policy moves it for a workflow with agents, and a file that is not an input does not', async () => {
+      rmSync(json, { force: true })
+      const before = await fp(source())
+      expect(await fp(policy('policy-1'))).not.toBe(before)
+      expect(await fp(policy('policy-2'))).not.toBe(await fp(policy('policy-1')))
+      writeFileSync(join(agents, 'brain', 'NOTES.md'), 'scratch')
+      writeFileSync(join(agents, 'brain', 'agent.json.bak'), '{}')
+      expect(await fp(source())).toBe(before)
+    })
+
+    test('a workflow without agents ignores the policy', async () => {
+      const bare = fsFingerprintSource({ agentsDir: agents, workflows: {}, opencodeBin: bin, hostPolicy: 'p' })
+      expect(await bare.inputs({ id: 'smoke.ping', version: 'v1' })).toEqual({ agents: [], opencodeVersion: null })
+    })
   })
 
   test('a missing agent fails, and is read again next time', async () => {
