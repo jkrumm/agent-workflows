@@ -192,6 +192,17 @@ are incremental: one full walk when a wait starts (and after a transient failure
 per poll merged by id (messages are append-only, and the newest are the ones still changing). A page that does not
 reach back to a known message triggers a full walk again. The final usage read walks the whole session once.
 
+## Follow-up turns (`ctx.continue`)
+
+`followUp(handle, { runId, stepId, key, attempt })` returns a handle for a new turn in the same session (the step's
+fallback session when it moved there): `turn: <key>#<attempt>`, no request sent. `prompt` on it sends a user input
+with a deterministic id (from the session and the turn) and `metadata.agw = { kind: 'followup', turn }`, after
+reading the session first, so a re-send is a no-op. `wait` on it is the first-turn loop counted from the turn's own
+input: done is an idle after the turn's last input, a cut-off turn gets the same synthetic resume note, and the
+answer, tools and usage are those after the turn's input only. A follow-up never falls back on provider balance
+(the session already ran on its route). A retried continue step asks for the next `attempt`, so it never re-reads
+the failed turn.
+
 ## DeepSeek wire rules (concept §8)
 
 | Rule | Who | Evidence |
@@ -259,6 +270,8 @@ A turn that ends `failed` with a provider-balance error (`isBalanceFailure` from
 - **A re-attach after a mid-turn kill** costs one short synthetic note plus a new assistant turn. The provider
   prompt cache stays warm because the head and history are unchanged (live run: 92 % of the resumed turn's input
   was cache reads). What the cut-off turn had generated is lost (an empty message in the store) and is paid again.
+- **A follow-up turn** (`ctx.continue`) sends only its own text: the session's head and history are a warm
+  prompt-cache prefix, so a nudge costs the feedback plus the new answer, not the original prompt again.
 - **A changed agent** (`AGENTS.md`, skill, config, permissions) changes the head: its next session starts with a
   cold cache, once. The fingerprint changes with it.
 - **A server restart** without a running turn costs nothing: the session is read, not resumed. A drift restart at
