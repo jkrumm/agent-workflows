@@ -175,6 +175,7 @@ describe('OpenAPI', () => {
       expect(Array.isArray(cli.positional)).toBe(true)
       expect(typeof cli.mutating).toBe('boolean')
       expect(['plain', 'json']).toContain(cli.defaultFormat)
+      expect((cli as { kind?: string }).kind).toBe('capability')
     }
     const byId = Object.fromEntries(operations.map((o) => [o.op.operationId as string, o.op['x-cli']]))
     expect(byId.llmSummarize).toEqual({
@@ -182,6 +183,7 @@ describe('OpenAPI', () => {
       positional: ['text'],
       mutating: false,
       defaultFormat: 'plain',
+      kind: 'capability',
       stdin: 'text',
       plainField: 'summary',
     })

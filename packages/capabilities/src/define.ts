@@ -18,11 +18,24 @@ export interface CliSpec {
   defaultFormat?: 'plain' | 'json'
   /** Dotted path into the output printed in `plain` format. */
   plainField?: string
+  /** What the operation is. Default: `capability`; the host's workflow and run operations set the others. */
+  kind?: CliKind
+  /** The command that continues a long operation (`agw run wait <runId>`); workflows only. */
+  resume?: CliResume
+}
+
+export type CliKind = 'capability' | 'workflow' | 'run'
+
+export interface CliResume {
+  command: string[]
+  positional: string[]
 }
 
 /** The `x-cli` block as emitted: every default filled in. */
-export type ResolvedCliSpec = Required<Pick<CliSpec, 'command' | 'positional' | 'mutating' | 'defaultFormat'>> &
-  Pick<CliSpec, 'stdin' | 'plainField'>
+export type ResolvedCliSpec = Required<
+  Pick<CliSpec, 'command' | 'positional' | 'mutating' | 'defaultFormat' | 'kind'>
+> &
+  Pick<CliSpec, 'stdin' | 'plainField' | 'resume'>
 
 export interface RouteSpec {
   /** Default: `POST`. */
@@ -79,6 +92,8 @@ export function resolveDefinition<I extends z.ZodObject, O extends z.ZodType>(
       positional: def.cli?.positional ?? [],
       mutating: def.cli?.mutating ?? false,
       defaultFormat: def.cli?.defaultFormat ?? 'plain',
+      kind: def.cli?.kind ?? 'capability',
+      ...(def.cli?.resume ? { resume: def.cli.resume } : {}),
       ...(def.cli?.stdin ? { stdin: def.cli.stdin } : {}),
       ...(def.cli?.plainField ? { plainField: def.cli.plainField } : {}),
     },

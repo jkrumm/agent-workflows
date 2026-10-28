@@ -26,13 +26,17 @@ export interface Registry<C extends readonly AnyCapability[]> {
     input: z.input<ById<C, Id>['input']>,
     options?: CallOptions,
   ) => Promise<z.output<ById<C, Id>['output']>>
+  /** The oRPC router of every capability, nested by id segments; the host merges it into its own. */
+  readonly router: RouterNode
+  /** The per-request context its procedures expect (`onUsage`); pass it with the router into a handler. */
+  readonly requestContext: RequestContext
   /** Fetch-API handler for every capability's route; mount it on `Bun.serve`. */
   fetch: (request: Request) => Promise<Response>
   /** OpenAPI 3.1 document; each operation carries `x-cli`. */
   openapi: () => Promise<Record<string, unknown>>
 }
 
-type RouterNode = { [segment: string]: RouterNode | ReturnType<typeof procedureOf> }
+export type RouterNode = { [segment: string]: RouterNode | ReturnType<typeof procedureOf> }
 
 function nest(capabilities: readonly AnyCapability[]): RouterNode {
   const root: RouterNode = {}
@@ -52,6 +56,20 @@ function nest(capabilities: readonly AnyCapability[]): RouterNode {
     node[leaf] = procedureOf(capability)
   }
   return root
+}
+
+export function notFoundResponse(): Response {
+  return Response.json({ defined: false, code: 'NOT_FOUND', status: 404, message: 'Not found' }, { status: 404 })
+}
+
+/** The error body everywhere: `{ defined, code, status, message, data? }`; anything unknown is an opaque 500. */
+export function errorResponse(error: unknown): Response {
+  const failure = toCallError(error)
+  if (failure instanceof CapabilityCallError) return Response.json(failure.toJSON(), { status: failure.status })
+  return Response.json(
+    { defined: false, code: 'INTERNAL_SERVER_ERROR', status: 500, message: 'Internal server error' },
+    { status: 500 },
+  )
 }
 
 export function createRegistry<const C extends readonly AnyCapability[]>(
@@ -82,6 +100,8 @@ export function createRegistry<const C extends readonly AnyCapability[]>(
 
   return {
     capabilities,
+    router,
+    requestContext: context,
     ids: () => capabilities.map((c) => c.id),
     get: (id) => get(id) as never,
     async call(id, input, callOptions = {}) {
@@ -98,17 +118,9 @@ export function createRegistry<const C extends readonly AnyCapability[]>(
     async fetch(request) {
       try {
         const { response } = await handler.handle(request, { context })
-        return (
-          response ??
-          Response.json({ defined: false, code: 'NOT_FOUND', status: 404, message: 'Not found' }, { status: 404 })
-        )
+        return response ?? notFoundResponse()
       } catch (error) {
-        const failure = toCallError(error)
-        if (failure instanceof CapabilityCallError) return Response.json(failure.toJSON(), { status: failure.status })
-        return Response.json(
-          { defined: false, code: 'INTERNAL_SERVER_ERROR', status: 500, message: 'Internal server error' },
-          { status: 500 },
-        )
+        return errorResponse(error)
       }
     },
     async openapi() {

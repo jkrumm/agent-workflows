@@ -38,8 +38,11 @@ const base = os
 
 const neverAborted = () => new AbortController().signal
 
-/** The `x-cli` extension rides on the operation's `spec` callback; this is the only place it is attached. */
-const withCli =
+/**
+ * The `x-cli` extension rides on the operation's `spec` callback; this is the only place it is attached. The host
+ * uses it for its workflow and run operations, so every operation of the process carries the same block.
+ */
+export const withCli =
   (x: ResolvedCliSpec) =>
   <T extends object>(operation: T): T => ({ ...operation, 'x-cli': x })
 
