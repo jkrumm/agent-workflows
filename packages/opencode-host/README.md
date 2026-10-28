@@ -33,8 +33,17 @@ A step picks the route with `options.route` (else the agent's `route`) and asks 
 The handle is plain JSON: `{ v, sessionId, directory, agent, route, model, output, runId, stepId }`.
 
 **Permissions.** Every session gets `[shell * deny]` (or `allow` with `permissions.shell: true`) followed by the
-agent's own `permissions.rules`; the last matching rule wins. Server-wide, `question` and `external_directory` are
+agent's own `permissions.rules`, then one `external_directory` allow per entry of the step's
+`spec.options.allowDirectories`; the last matching rule wins. Server-wide, `question` and `external_directory` are
 denied, so an unattended session never blocks on an `ask`.
+
+`allowDirectories: string[]` is how a step lets its agent read a repository the agent's own location is not in
+(review angles, check). Each entry must be an absolute directory without wildcards or `..` (never `/`); anything else
+fails the step before a session exists. It appends `{ external_directory, <dir>/*, allow }`. The option opens
+`external_directory` only: an agent that must not edit keeps its own `edit` deny (`agent.json`), which comes
+earlier and is not widened by it. Measured on 2.0.32 (`test/live.test.ts`, "allowDirectories"): the pattern matches
+the path as the agent gives it, so hand the agent the same string you allowed (a symlink-resolved spelling such as
+`/private/var/…` for `/var/…` is a different path and is refused); `<dir>` alone matches nothing.
 
 ## Server supervisor
 

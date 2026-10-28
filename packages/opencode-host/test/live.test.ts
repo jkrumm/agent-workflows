@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Usage } from '@agent-workflows/runtime'
@@ -181,6 +181,110 @@ test.skipIf(!live)(
       await server.close({ stop: true })
       rmSync(stateDir, { recursive: true, force: true })
       rmSync(outside, { force: true })
+    }
+  },
+  600_000,
+)
+
+const allow = 'live: allowDirectories lets an agent read one directory, and only that, without editing it'
+
+test.skipIf(!live)(
+  live ? allow : `${allow} (skipped: runs only with AGW_LIVE=1)`,
+  async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'och-live-'))
+    const server = new OpenCodeServer({ stateDir, livenessIntervalMs: 1_000 })
+    const host = new OpenCodeHost({
+      server,
+      stateDir,
+      agents: [
+        {
+          name: 'repo-reader',
+          route: 'check',
+          agentsMd: '# Rules\n\nFollow the instructions exactly.\n',
+          // What every review agent's `agent.json` carries: no editing, whatever the step opens.
+          permissions: { rules: [{ action: 'edit', resource: '*', effect: 'deny' }] },
+        },
+      ],
+    })
+    const root = mkdtempSync(join(tmpdir(), 'agw-allow-'))
+    const repo = join(root, 'repo')
+    const lookalike = join(root, 'repo-evil') // shares the allowed directory's name as a prefix
+    const outside = join(root, 'other')
+    for (const dir of [join(repo, 'sub'), lookalike, outside]) mkdirSync(dir, { recursive: true })
+    writeFileSync(join(repo, 'top.txt'), 'TOKEN-TOP-4417\n')
+    writeFileSync(join(repo, 'sub', 'deep.txt'), 'TOKEN-DEEP-5528\n')
+    writeFileSync(join(lookalike, 'near.txt'), 'TOKEN-NEAR-6639\n')
+    writeFileSync(join(outside, 'far.txt'), 'TOKEN-FAR-7740\n')
+    try {
+      await server.start()
+      const client = createClient(() => server.endpoint())
+      const handle = (await host.open({
+        runId: 'live',
+        stepId: 'allow',
+        key: 'live:allow',
+        agent: 'repo-reader',
+        prompt: '',
+        options: { allowDirectories: [repo] },
+      })) as OpenCodeHandle
+      const prompt = [
+        'Make exactly these tool calls, one after the other, even if one fails:',
+        `1. read the file ${join(repo, 'top.txt')}`,
+        `2. read the file ${join(repo, 'sub', 'deep.txt')}`,
+        `3. glob the pattern "**/*.txt" in the directory ${repo}`,
+        `4. grep for "TOKEN" in the directory ${repo}`,
+        `5. read the file ${join(lookalike, 'near.txt')}`,
+        `6. read the file ${join(outside, 'far.txt')}`,
+        `7. write the text "changed" to the existing file ${join(repo, 'top.txt')}`,
+        `8. write the text "probe" to the new file ${join(repo, 'new.txt')}`,
+        'Then answer with one line per call: its number and OK or REFUSED. Nothing else.',
+      ].join('\n')
+      await host.prompt(handle, prompt)
+      const result = await host.wait(handle, {
+        signal: AbortSignal.timeout(300_000), // test bound only
+        onProgress: () => {},
+        onTool: async () => {},
+      })
+      const tools: { tool: string; status: string; target: string; reason: string }[] = []
+      for (const m of await client.messages(handle.sessionId)) {
+        for (const p of m.content ?? []) {
+          if (p.type !== 'tool') continue
+          const input = p.state?.input ?? {}
+          const target = String(input.filePath ?? input.path ?? input.file ?? input.directory ?? input.pattern ?? '')
+          const error = p.state?.error
+          const reason = (typeof error === 'string' ? error : (error?.message ?? '')).slice(0, 160)
+          tools.push({ tool: p.name ?? '?', status: p.state?.status ?? '?', target, reason })
+        }
+      }
+      const files = {
+        top: readFileSync(join(repo, 'top.txt'), 'utf8'),
+        newFileExists: existsSync(join(repo, 'new.txt')),
+      }
+      const report = { tools, answer: result.output, usage: result.usage, files }
+      console.log(`live opencode-host allowDirectories ${JSON.stringify(report, null, 2)}`)
+
+      const completed = (needle: string) => tools.some((t) => t.status === 'completed' && t.target.includes(needle))
+      const refused = (needle: string) =>
+        tools.some((t) => t.status === 'error' && t.reason.includes('external_directory') && t.target.includes(needle))
+      expect(completed('top.txt')).toBe(true)
+      expect(completed(join('sub', 'deep.txt'))).toBe(true) // a file below the directory
+      expect(tools.filter((t) => t.tool === 'glob' || t.tool === 'grep').every((t) => t.status === 'completed')).toBe(
+        true,
+      )
+      expect(tools.some((t) => t.tool === 'glob' || t.tool === 'grep')).toBe(true)
+      expect(refused('near.txt')).toBe(true) // a sibling that only shares the name's prefix
+      expect(refused('far.txt')).toBe(true)
+      expect(files.top).toBe('TOKEN-TOP-4417\n') // no edit inside the allowed directory
+      expect(files.newFileExists).toBe(false)
+      expect(readFileSync(join(lookalike, 'near.txt'), 'utf8')).toBe('TOKEN-NEAR-6639\n')
+      expect(existsSync(join(outside, 'new.txt'))).toBe(false)
+      const all = JSON.stringify(await client.messages(handle.sessionId))
+      expect(all.includes('TOKEN-NEAR-6639')).toBe(false)
+      expect(all.includes('TOKEN-FAR-7740')).toBe(false)
+    } finally {
+      host.close()
+      await server.close({ stop: true })
+      rmSync(stateDir, { recursive: true, force: true })
+      rmSync(root, { recursive: true, force: true })
     }
   },
   600_000,

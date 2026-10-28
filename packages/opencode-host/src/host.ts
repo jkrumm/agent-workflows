@@ -146,12 +146,44 @@ function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
   })
 }
 
-/** The host's rules first (shell denied unless the agent opts in), the agent's own after them: last match wins. */
-export function sessionPermissions(def: AgentDefinition): PermissionRule[] {
+/**
+ * The host's rules first (shell denied unless the agent opts in), the agent's own after them, the step's
+ * `allowDirectories` last: last match wins. The server config denies `external_directory` everywhere; a directory a
+ * step names is opened for reads again by an `allow` on `<dir>/*` (measured on 2.0.32: `<dir>/*` and `<dir>/**` match
+ * the path as given, a deeper file included; `<dir>` alone and the symlink-resolved path do not).
+ */
+export function sessionPermissions(def: AgentDefinition, allowDirectories: readonly string[] = []): PermissionRule[] {
   return [
     { action: 'shell', resource: '*', effect: def.permissions?.shell ? 'allow' : 'deny' },
     ...(def.permissions?.rules ?? []),
+    ...allowDirectories.map(
+      (dir): PermissionRule => ({ action: 'external_directory', resource: `${dir}/*`, effect: 'allow' }),
+    ),
   ]
+}
+
+const GLOB_CHARS = /[*?[\]{}]/
+
+/**
+ * `spec.options.allowDirectories`: absolute directories without glob characters, never the filesystem root. A
+ * wildcard would widen the grant past the directory the caller named; a relative path means nothing to a session
+ * that runs in its own location.
+ */
+function allowedDirectories(agent: string, raw: unknown): string[] {
+  if (raw === undefined) return []
+  if (!Array.isArray(raw) || raw.some((d) => typeof d !== 'string')) {
+    throw new WorkflowError('error', `agent "${agent}": allowDirectories must be an array of strings`)
+  }
+  return raw.map((dir: string) => {
+    const trimmed = dir.length > 1 ? dir.replace(/\/+$/, '') : dir
+    if (!trimmed.startsWith('/') || trimmed === '/' || GLOB_CHARS.test(trimmed) || trimmed.split('/').includes('..')) {
+      throw new WorkflowError(
+        'error',
+        `agent "${agent}": allowDirectories entry "${dir}" must be an absolute directory without wildcards or ".." (not "/")`,
+      )
+    }
+    return trimmed
+  })
 }
 
 /**
@@ -238,7 +270,8 @@ export class OpenCodeHost implements AgentHost {
     const def = this.agents.get(spec.agent)
     if (!def)
       throw new WorkflowError('error', `unknown agent "${spec.agent}" (known: ${[...this.agents.keys()].join(', ')})`)
-    const options = (spec.options ?? {}) as { route?: RouteId; output?: string }
+    const options = (spec.options ?? {}) as { route?: RouteId; output?: string; allowDirectories?: unknown }
+    const allowDirectories = allowedDirectories(def.name, options.allowDirectories)
     const routeId = options.route ?? def.route
     if (!routeId) throw new WorkflowError('error', `agent "${spec.agent}" has no route and the step names none`)
     const { route, model } = modelRef(routeId, this.env)
@@ -272,7 +305,7 @@ export class OpenCodeHost implements AgentHost {
         title: `agw ${spec.runId}:${spec.stepId}`,
         location: { directory },
         model,
-        permissions: sessionPermissions(def),
+        permissions: sessionPermissions(def, allowDirectories),
         metadata: { agw: { key: spec.key, agent: def.name, route: routeId, locationHash: location.hash } },
       },
       headers,
