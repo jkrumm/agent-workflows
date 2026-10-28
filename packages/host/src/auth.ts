@@ -19,4 +19,6 @@ export function assertSecret(secret: string | undefined): asserts secret is stri
   if (!secret || secret.length < MIN_SECRET_LENGTH) {
     throw new Error(`AGW_API_SECRET must be set and at least ${MIN_SECRET_LENGTH} characters`)
   }
+  // A header value never carries whitespace at its ends or inside, so such a secret could never authenticate.
+  if (/\s/.test(secret)) throw new Error('AGW_API_SECRET must not contain whitespace (a trailing newline?)')
 }

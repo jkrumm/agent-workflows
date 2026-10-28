@@ -1,4 +1,4 @@
-import type { Pool } from 'pg'
+import type { Runtime } from '@agent-workflows/runtime'
 
 export type RunStatus = 'pending' | 'running' | 'done' | 'failed' | 'cancelled'
 
@@ -13,45 +13,26 @@ export type RunState = {
 
 export const isTerminal = (status: RunStatus) => status === 'done' || status === 'failed' || status === 'cancelled'
 
-/** Read side of the journal. The runtime owns every write; the host only reads state for the HTTP bodies. */
+/** What the HTTP bodies and `/health` read; production is a thin adapter over the runtime's public read API. */
 export interface RunStore {
   get(runId: string): Promise<RunState | null>
-  /** Resolves when Postgres answers. */
+  /** Resolves when the journal database answers. */
   ping(): Promise<void>
 }
 
-const SCHEMA_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/
-
-type Row = {
-  id: string
-  workflow: string
-  status: RunStatus
-  output: unknown
-  error: string | null
-  error_kind: string | null
-}
-
-export function pgRunStore({ pool, schema = 'agw' }: { pool: Pool; schema?: string }): RunStore {
-  if (!SCHEMA_NAME.test(schema)) throw new Error(`invalid journal schema name "${schema}"`)
-  const runs = `"${schema}".runs`
+export function runtimeRunStore(runtime: Pick<Runtime, 'getRun' | 'ping'>): RunStore {
   return {
     async get(runId) {
-      const { rows } = await pool.query<Row>(
-        `select id, workflow, status, output, error, error_kind from ${runs} where id = $1`,
-        [runId],
-      )
-      const row = rows[0]
-      if (!row) return null
+      const run = await runtime.getRun(runId)
+      if (!run) return null
       return {
-        runId: row.id,
-        workflowId: row.workflow,
-        status: row.status,
-        ...(row.status === 'done' && row.output !== null ? { output: row.output } : {}),
-        ...(row.error_kind ? { error: { kind: row.error_kind, message: row.error ?? '' } } : {}),
+        runId: run.runId,
+        workflowId: run.workflowId,
+        status: run.status,
+        ...(run.output !== null ? { output: run.output } : {}),
+        ...(run.error ? { error: run.error } : {}),
       }
     },
-    async ping() {
-      await pool.query('select 1')
-    },
+    ping: () => runtime.ping(),
   }
 }

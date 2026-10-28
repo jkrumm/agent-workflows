@@ -2,6 +2,7 @@ import {
   type Capability,
   errorResponse,
   notFoundResponse,
+  operationIdOf,
   type RequestContext,
   type RouterNode,
 } from '@agent-workflows/capabilities'
@@ -13,13 +14,14 @@ import { ZodToJsonSchemaConverter } from '@orpc/zod/zod4'
 import { assertSecret, bearerMatches } from './auth.ts'
 import { CONTRACT_FIELD, contractSha } from './canonical.ts'
 import {
+  assertNoReservedFlags,
   type HostContext,
   type HostOperation,
   type HostWorkflow,
   runOperations,
   workflowOperation,
 } from './operations.ts'
-import type { RunStore } from './store.ts'
+import { type RunStore, runtimeRunStore } from './store.ts'
 
 /** What the host reads of a capability registry; any `createRegistry(...)` fits. */
 interface RegistryLike {
@@ -32,12 +34,12 @@ export interface HostOptions {
   runtime: Runtime
   registry: RegistryLike
   workflows: HostWorkflow[]
-  /** Read side of the journal (run state bodies and the `/health` probe). */
-  store: RunStore
+  /** Run state bodies and the `/health` probe. Default: the runtime's own read API. */
+  store?: RunStore
   /** `AGW_API_SECRET`: at least 32 characters, else creation throws. */
   secret: string
   version: string
-  /** False while the runtime is not open (before `open()`, after `close()`): `/health` is then degraded. */
+  /** False while the runtime is not open (before `open()`, after `close()`): `/health` is degraded and every other route is a 503. */
   isOpen?: () => boolean
   /** Upper bound of the Postgres probe behind `/health`. Default 2 s. */
   healthTimeoutMs?: number
@@ -82,19 +84,22 @@ function assertCommands(commands: { owner: string; command: string[] }[]) {
 
 export function createHost(options: HostOptions): Host {
   assertSecret(options.secret)
-  const { runtime, registry, store, secret } = options
+  const { runtime, registry, secret } = options
+  const store = options.store ?? runtimeRunStore(runtime)
   const logger = options.logger ?? consoleLogger
   const isOpen = options.isOpen ?? (() => true)
 
-  const deps = { runtime, store }
+  const deps = { runtime, store, logger }
   const workflows = options.workflows.map((entry) => ({ entry, op: workflowOperation(entry, deps) }))
   const runs = runOperations(deps)
+
+  for (const c of registry.capabilities) assertNoReservedFlags(`capability ${c.id}`, c.input)
 
   const operations: { owner: string; op: Pick<HostOperation, 'operationId' | 'method' | 'path' | 'cli'> }[] = [
     ...registry.capabilities.map((c) => ({
       owner: `capability ${c.id}`,
       op: {
-        operationId: c.id.replace(/\.(\w)/g, (_, ch: string) => ch.toUpperCase()),
+        operationId: operationIdOf(c.id),
         method: c.route.method as 'GET' | 'POST',
         path: c.route.path,
         cli: c.cli,
@@ -146,7 +151,10 @@ export function createHost(options: HostOptions): Host {
       const sha = contractSha(body)
       body.info = { ...(body.info as object), [CONTRACT_FIELD]: sha }
       return { body, sha }
-    })())
+    })().catch((error: unknown) => {
+      document = undefined // a failed build is retried, never cached
+      throw error
+    }))
 
   async function health(): Promise<Response> {
     const degraded = (reason: string) => Response.json({ status: 'degraded', reason }, { status: 503 })
@@ -167,41 +175,51 @@ export function createHost(options: HostOptions): Host {
     return Response.json({ status: 'ok', version: options.version })
   }
 
-  /** A workflow whose input is all defaults can be started without a body or content type (`agw smoke ping`): `{}` is implied. */
-  function withJsonBody(request: Request, pathname: string): Request {
+  /**
+   * `{}` is implied for a workflow started with no body (`agw smoke ping`), and a body sent without a content type
+   * is read as JSON; a body that is there is never replaced, so validation runs on what the client sent.
+   */
+  async function withJsonBody(request: Request, pathname: string): Promise<Request> {
     if (request.method !== 'POST' || !pathname.startsWith('/workflows/')) return request
-    if (request.headers.get('content-type')) return request
+    const text = await request.text()
     const headers = new Headers(request.headers)
     headers.set('content-type', 'application/json')
-    return new Request(request, { headers, body: '{}' })
+    return new Request(request.url, {
+      method: request.method,
+      headers,
+      body: text.trim() === '' ? '{}' : text,
+      signal: request.signal,
+    })
   }
 
   async function serve(request: Request): Promise<Response> {
     const { pathname } = new URL(request.url)
     if (request.method === 'GET' && pathname === '/health') return health()
     if (!bearerMatches(request.headers.get('authorization'), secret)) return unauthorized()
+    if (!isOpen()) return json(503, 'SERVICE_UNAVAILABLE', 'The runtime is not open')
 
-    const { body, sha } = await build()
-    if (request.method === 'GET' && pathname === '/openapi.json') return Response.json(body)
-
-    const client = request.headers.get('x-agw-contract')
-    if (client !== null && client !== sha) {
-      return json(412, 'CONTRACT_MISMATCH', 'The client was generated from a different contract', {
-        server: sha,
-        client,
-      })
-    }
-
-    request = withJsonBody(request, pathname)
-    const context: HostContext = { ...registry.requestContext, headers: request.headers, response: {} }
     try {
-      const { response } = await handler.handle(request, { context })
+      const { body, sha } = await build()
+      if (request.method === 'GET' && pathname === '/openapi.json') return Response.json(body)
+
+      const client = request.headers.get('x-agw-contract')
+      if (client !== null && client !== sha) {
+        return json(412, 'CONTRACT_MISMATCH', 'The client was generated from a different contract', {
+          server: sha,
+          client,
+        })
+      }
+
+      const prepared = await withJsonBody(request, pathname)
+      const context: HostContext = { ...registry.requestContext, headers: prepared.headers, response: {} }
+      const { response } = await handler.handle(prepared, { context })
       if (!response) return notFoundResponse()
       const status = context.response.status
       return status && status !== response.status && response.ok
         ? new Response(response.body, { status, headers: response.headers })
         : response
     } catch (error) {
+      logger.error('request failed', { error: error instanceof Error ? error.message : String(error) })
       return errorResponse(error)
     }
   }
