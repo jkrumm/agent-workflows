@@ -1,4 +1,4 @@
-import type { Logger, Middleware, TokenCounts } from '@agent-workflows/runtime'
+import type { Logger, Middleware, RunScores, TokenCounts } from '@agent-workflows/runtime'
 import { type JournalDb, withRetry } from './db.ts'
 import { traceIdForRun } from './ids.ts'
 
@@ -12,6 +12,8 @@ export type RunRecord = {
   unpricedCalls: number
   toolCalls: number
   traceId: string
+  /** `runs.scores` as the run ended: the inline gate verdicts; a regression or drift score lands later (concept §6). */
+  scores: RunScores | null
 }
 
 type Sums = {
@@ -24,6 +26,7 @@ type Sums = {
   unpriced_calls: string
   tool_calls: string
   wall_ms: number | null
+  scores: RunScores | null
 }
 
 /**
@@ -61,7 +64,7 @@ export function recordMiddleware(options: {
              unpriced_calls = s.unpriced_calls, tool_calls = s.tool_calls,
              updated_at = now()
            from s where r.id = $1
-           returning s.*, r.wall_ms`,
+           returning s.*, r.wall_ms, r.scores`,
           [args.runId, traceId],
         )
         return rows[0]
@@ -84,6 +87,7 @@ export function recordMiddleware(options: {
         unpricedCalls: Number(sums.unpriced_calls),
         toolCalls: Number(sums.tool_calls),
         traceId,
+        scores: sums.scores,
       })
     },
   }

@@ -128,6 +128,10 @@ rows and posts them through the `ArgoTransport` port. Production: `POST <ARGO_UR
   before closing the outbox pool.
 - **Crash after the post.** The rows are posted again; Argo's upsert on `(source, source_id, machine)` absorbs it.
 - **No usage, no row.** Only steps with tokens or a cost are outbox candidates (the `steps_argo_outbox` index).
+- **Scores ride in `raw.scores`** (`runs.scores`: the inline gate verdicts, and `final` once the run is scored),
+  never as top-level fields. A run scored after its rows were posted (regression, drift) puts its steps back into the
+  outbox: the runtime's score write clears `argo_synced_at` and drops a claim in flight (that flush's mark then
+  misses, and is warned), so the next flush re-posts the rows with the scores and Argo's upsert replaces them.
 - **`https` only.** `httpArgoTransport` refuses a non-https `ARGO_URL` unless it is loopback, and posts with
   `redirect: 'error'` so the bearer never follows a redirect.
 - **Machine id.** `AGW_MACHINE`; unset, the host name with a logged warning. It is part of Argo's upsert key, so it
@@ -170,6 +174,8 @@ adds `reasoning_tokens` on top of `output_tokens`, so an unnormalised row counts
   regression shows up as a fingerprint's falling cache share.
 - **Cache writes are recorded.** They have their own bucket end to end (`Tokens.cacheWrite`, `tokens_cache_write`,
   `cache_write_tokens`), so a prompt that keeps rewriting the cache shows as write volume, not as fresh input.
+- **Scores cost no tokens here.** They are read from the run row; a re-post after an after-the-fact score is one more
+  Argo upsert per step, no model call.
 - **A fingerprint change is expected to cost a cold cache once.** It means a changed `AGENTS.md`, skill, route or
   OpenCode version, and a changed prompt head misses the provider cache. Compare cache share by fingerprint before
   calling a prompt change cheaper.
