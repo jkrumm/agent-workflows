@@ -14,7 +14,12 @@ export interface ArmRun {
   wallMs: number | null
   tokens: number | null
   toolCalls: number | null
+  /** The run had unpriced calls: its cost is a lower bound, so `costUsd` is null and the case may drop from cost. */
+  unpriced?: boolean
 }
+
+/** Below this many pairs a metric gets no verdict (`unknown`): a bootstrap over fewer cases decides nothing. */
+export const MIN_PAIRS = 5
 
 /** Scorer metrics are higher-is-better (the scorer contract); spend metrics are lower-is-better. */
 export const SPEND_METRICS = ['costUsd', 'wallMs', 'tokens', 'toolCalls'] as const
@@ -35,12 +40,20 @@ export interface MetricComparison {
   meanDeltaCi95: [number, number] | null
   medianDelta: number | null
   medianDeltaCi95: [number, number] | null
-  /** The arm the mean delta's CI favours; `tie` when it spans 0; `unknown` below two pairs. */
+  /** The arm the mean delta's CI favours; `tie` when it spans 0; `unknown` below `MIN_PAIRS` pairs. */
   better: Winner
 }
 
 export interface Comparison {
-  cases: { a: number; b: number; paired: number; onlyA: string[]; onlyB: string[] }
+  cases: {
+    a: number
+    b: number
+    paired: number
+    onlyA: string[]
+    onlyB: string[]
+    /** Paired cases with no priced cost on that side because their runs had unpriced calls: left out of `costUsd`. */
+    unpricedCost: { a: number; b: number }
+  }
   metrics: MetricComparison[]
   /** Metrics where B is better / worse than A with the CI clear of 0. */
   bBetter: string[]
@@ -92,12 +105,18 @@ function perCase(runs: ArmRun[]): Map<string, CaseValues> {
   )
 }
 
-function winner(ci: [number, number] | null, direction: 'higher' | 'lower'): Winner {
-  if (!ci) return 'unknown'
+function winner(n: number, ci: [number, number] | null, direction: 'higher' | 'lower'): Winner {
+  if (n < MIN_PAIRS || !ci) return 'unknown'
   const [lo, hi] = ci
   if (lo <= 0 && hi >= 0) return 'tie'
   const bUp = lo > 0
   return bUp === (direction === 'higher') ? 'b' : 'a'
+}
+
+/** The case has no priced cost in this arm, and some run of it was unpriced. */
+function unpricedOnly(runs: ArmRun[], caseId: string): boolean {
+  const mine = runs.filter((r) => r.caseId === caseId)
+  return mine.some((r) => r.unpriced) && mine.every((r) => r.costUsd === null)
 }
 
 export function compareArms(a: ArmRun[], b: ArmRun[], options: { seed: number }): Comparison {
@@ -131,7 +150,7 @@ export function compareArms(a: ArmRun[], b: ArmRun[], options: { seed: number })
       meanDeltaCi95,
       medianDelta: median(deltas),
       medianDeltaCi95: bootstrapMedianCI(deltas, { seed: options.seed }),
-      better: winner(meanDeltaCi95, direction),
+      better: winner(pairs.length, meanDeltaCi95, direction),
     }
   })
   return {
@@ -141,6 +160,10 @@ export function compareArms(a: ArmRun[], b: ArmRun[], options: { seed: number })
       paired: paired.length,
       onlyA: [...caseA.keys()].filter((id) => !caseB.has(id)).sort(),
       onlyB: [...caseB.keys()].filter((id) => !caseA.has(id)).sort(),
+      unpricedCost: {
+        a: paired.filter((id) => unpricedOnly(a, id)).length,
+        b: paired.filter((id) => unpricedOnly(b, id)).length,
+      },
     },
     metrics,
     bBetter: metrics.filter((m) => m.better === 'b').map((m) => m.metric),

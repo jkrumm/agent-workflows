@@ -17,6 +17,7 @@ export {
   type Comparison,
   compareArms,
   type MetricComparison,
+  MIN_PAIRS,
   SPEND_METRICS,
   type Winner,
 } from './compare.ts'
