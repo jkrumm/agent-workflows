@@ -1362,6 +1362,27 @@ describe('provider balance degrade', () => {
     expect(verdict.discussions).toContainEqual(DEGRADED.discussions[0] as { angle: string; message: string })
   })
 
+  test('salvaged findings past the cap say they were cut', async () => {
+    const long = 'x'.repeat(7_000)
+    const w = world({
+      script: (s) => {
+        if (s.spec.agent === 'review-synthesis') throw balanceSession()
+        if (s.spec.agent === 'review-qa') {
+          return Promise.resolve({
+            output: { findings: [{ severity: 'improvement', file: 'src/a.ts', line: 1, message: long }] },
+          })
+        }
+        return undefined
+      },
+    })
+    const out = await w.run({ cwd: simpleRepo(), angles: ['qa'] })
+    const note =
+      (out.output as { discussions: { angle: string; message: string }[] }).discussions.find(
+        (d) => d.angle === 'synthesis',
+      )?.message ?? ''
+    expect(note).toMatch(/\[truncated: \d+ more chars; findings above are partial\]$/)
+  })
+
   test('mixed failures stay the blocker verdict; a review that ran carries no degraded field', async () => {
     const mixed = world({
       adversary: new Error('down'),

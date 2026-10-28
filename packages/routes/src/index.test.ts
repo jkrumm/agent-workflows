@@ -311,10 +311,10 @@ describe('fallback', () => {
     }
   })
 
-  test('fallbackRoute is the fallback as a route of the same id, without a fallback of its own', () => {
+  test('fallbackRoute is the fallback as a route of the same id, marked, without a fallback of its own', () => {
     const route = resolveRoute('cheap.classify', {})
     const fallback = fallbackRoute(route)
-    expect(fallback).toEqual({ id: 'cheap.classify', ...(route.fallback as object) } as never)
+    expect(fallback).toEqual({ id: 'cheap.classify', ...(route.fallback as object), isFallback: true } as never)
     expect(fallback?.fallback).toBeUndefined()
     expect(fallbackRoute(resolveRoute('decide', {}))).toBeUndefined()
   })

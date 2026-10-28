@@ -9,7 +9,7 @@ package's `src/**` contains a model id from the table. No network calls.
 import { resolveRoute, routeFingerprint, costFromUsage } from '@agent-workflows/routes'
 
 const route = resolveRoute('cheap.classify') // { id, wire, model, effort?, maxOutputTokens?, rate?, fallback? }
-fallbackRoute(route) // the fallback as a route of the same id, or undefined
+fallbackRoute(route) // the fallback as a route of the same id (isFallback: true), or undefined
 isBalanceFailure({ status: 503, text: body }) // the provider-balance classifier
 routeFingerprint('cheap.classify') // sha256 hex of the resolved entry, overrides included
 costFromUsage(route.wire, usage, route.rate) // { usd, source: 'provider' | 'rate' | 'unknown' }
@@ -34,7 +34,7 @@ costFromUsage(route.wire, usage, route.rate) // { usd, source: 'provider' | 'rat
 
 Owner direction 2026-10-28: a route that fails because the provider account is empty falls back instead of failing.
 
-- **Trigger:** `isBalanceFailure` (`src/balance.ts`), the one classifier: HTTP 402, or 503 whose body says "Insufficient Balance" or "PaymentRequired" (IU today: `IU request failed (503) — Insufficient Balance (PaymentRequired) on <provider>`). Without a status (an OpenCode turn error, a step's failure reason, `ocr`'s stderr) only `BALANCE_MARKER` (`provider balance exhausted`, written by the transports) or IU's body shape `Insufficient Balance (PaymentRequired)` count: free text that merely mentions a 402 or "payment required" (a diff, an echoed prompt) is not balance. Any other error keeps its usual handling.
+- **Trigger:** `isBalanceFailure` (`src/balance.ts`), the one classifier: HTTP 402, or 503 whose body says "Insufficient Balance" or "PaymentRequired" (IU today: `IU request failed (503) — Insufficient Balance (PaymentRequired) on <provider>`). Without a status (an OpenCode turn error, a step's failure reason, `ocr`'s stderr) `BALANCE_MARKER` (`provider balance exhausted`, written by the transports), IU's body shape `Insufficient Balance (PaymentRequired)`, or a `402` token together with "payment required" / "insufficient balance" count; a 402 or the wording alone does not. The classifier is never fed diff text: review's failure reasons carry none (zod schema messages hold no values, OpenCode turn errors are the provider's). Any other error keeps its usual handling.
 - **Once:** the capability transports fail fast on it (no retry loop on the primary) and the call runs once on `fallbackRoute(route)`; the OpenCode host reopens a step whose turn was refused before it did anything on the fallback route, once (`packages/opencode-host` README); review's OCR child reruns `ocr` once. A failing fallback answers the primary's error. The usage records the model that actually ran.
 - **Default:** every `iu-openai`, `iu-anthropic` and `opencode` route falls back to GPT-6.1 Terra (`gpt-6.1-terra`), effort `medium`, `maxOutputTokens` 32000: over `iu-openai` for single calls, on `opencode` for agent steps (the host speaks the Responses API to it: tool calls need it). `decide` has none.
 - **Overrides:** `AGW_ROUTES` patches a fallback like a primary: `{"cheap.classify": {"fallback": {"model": "<model-id>", "effort": "high"}}}` (merged over the table's fallback; a new model without a rate drops the rate) and `{"cheap.classify": {"fallback": null}}` removes it. A route without a fallback cannot gain one through the variable, and a fallback's `wire` cannot be overridden.

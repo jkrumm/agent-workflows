@@ -106,28 +106,52 @@ export function balanceSalvagedVerdict(
   failed: readonly FailedReviewer[],
   totalReviewers: number,
 ): ReviewResult {
-  const salvaged = salvagedVerdict(reviewerFindings, failed, totalReviewers)
-  const partial =
-    failed.length > 0
-      ? `Partial review: ${failed.length}/${totalReviewers} reviewers failed (${failed.map((r) => r.angle).join(', ')}). `
-      : ''
   return {
-    ...salvaged,
+    schemaVersion: REVIEW_SCHEMA_VERSION,
+    outcome: 'needs-human',
+    blocking: [],
+    improvements: [],
     discussions: [
-      ...salvaged.discussions.filter((d) => d.angle !== 'synthesis'),
+      ...failedReviewerDiscussions(failed),
       {
         file: PIPELINE,
         message:
           'The synthesis was refused: provider balance exhausted, fallback route included. The reviewers DID run; ' +
-          `their findings, unstructured:\n\n${reviewerFindings.trim().slice(0, 6000)}`,
+          `their findings, unstructured:\n\n${capSalvage(reviewerFindings)}`,
         angle: 'synthesis',
       },
       BALANCE_HINT,
     ],
+    testGaps: [],
     escalationCategory: 'spend',
-    summary: `${partial}Review ran ${totalReviewers} reviewers but the synthesis was refused (provider balance exhausted). Their findings are in the discussions; review in-session with /code-review. Treat as needs-human.`,
+    summary: `${partialLead(failed, totalReviewers)}Review ran ${totalReviewers} reviewers but the synthesis was refused (provider balance exhausted). Their findings are in the discussions; review in-session with /code-review. Treat as needs-human.`,
     degraded: 'provider_balance',
   }
+}
+
+const SALVAGE_CHARS = 6_000
+
+/** The salvaged findings, cut with a marker that says so: a silent cut would read as the whole review. */
+function capSalvage(text: string): string {
+  const trimmed = text.trim()
+  const more = trimmed.length - SALVAGE_CHARS
+  if (more <= 0) return trimmed
+  return `${trimmed.slice(0, SALVAGE_CHARS)}\n\n[truncated: ${more} more chars; findings above are partial]`
+}
+
+/** The "Partial review" lead of a salvaged verdict's summary; empty when every reviewer ran. */
+function partialLead(failed: readonly FailedReviewer[], totalReviewers: number): string {
+  if (failed.length === 0) return ''
+  return `Partial review: ${failed.length}/${totalReviewers} reviewers failed (${failed.map((r) => r.angle).join(', ')}). `
+}
+
+/** One `(review pipeline)` discussion per reviewer that failed: it did not review the diff. */
+function failedReviewerDiscussions(failed: readonly FailedReviewer[]) {
+  return failed.map((r) => ({
+    file: PIPELINE,
+    message: `${r.angle} session failed: ${r.failureReason} — this angle did not actually review the diff.`,
+    angle: r.angle,
+  }))
 }
 
 /**
@@ -172,21 +196,14 @@ export function allFailedVerdict(failed: readonly FailedReviewer[], totalReviewe
  * pipeline discussion and the "Partial review" lead, over the true reviewer count.
  */
 export function salvagedVerdict(raw: string, failed: readonly FailedReviewer[], totalReviewers: number): ReviewResult {
-  const partial =
-    failed.length > 0
-      ? `Partial review: ${failed.length}/${totalReviewers} reviewers failed (${failed.map((r) => r.angle).join(', ')}). `
-      : ''
+  const partial = partialLead(failed, totalReviewers)
   return {
     schemaVersion: REVIEW_SCHEMA_VERSION,
     outcome: 'needs-human',
     blocking: [],
     improvements: [],
     discussions: [
-      ...failed.map((r) => ({
-        file: PIPELINE,
-        message: `${r.angle} session failed: ${r.failureReason} — this angle did not actually review the diff.`,
-        angle: r.angle,
-      })),
+      ...failedReviewerDiscussions(failed),
       {
         file: PIPELINE,
         message:
