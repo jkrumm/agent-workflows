@@ -132,6 +132,14 @@ export const FIXTURE_WORKFLOWS: Workflow[] = [
     outcome: () => ({ respond: Response.json({ status: 'running' }, { status: 202 }) }),
   },
   {
+    id: 'fixture.dotrun',
+    summary: 'Answers 202 with an unsafe run id',
+    input: { type: 'object', properties: {} },
+    outcome: () => ({
+      respond: Response.json({ runId: '..', workflowId: 'fixture.dotrun', status: 'running' }, { status: 202 }),
+    }),
+  },
+  {
     id: 'fixture.noresume',
     summary: 'A workflow without x-cli.resume',
     input: { type: 'object', properties: {} },

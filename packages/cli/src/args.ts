@@ -256,16 +256,22 @@ export function assertValues(command: Command, values: Record<string, unknown>):
     const stdin = missing.some((f) => f.name === command.x.stdin) ? ` (or pipe ${command.x.stdin} on stdin)` : ''
     throw usage(`missing ${missing.map(label).join(', ')}${stdin}`, `usage: ${usageLine(command)}`, true)
   }
-  for (const f of command.fields) {
-    const value = values[f.name]
-    if (
-      f.in === 'path' &&
-      value !== undefined &&
-      unsafeSegment(typeof value === 'string' ? value : JSON.stringify(value))
-    ) {
-      throw usage(`${label(f)} must not be '.', '..' or percent-encoded more than 8 deep, got: ${String(value)}`)
-    }
+  const unsafe = unsafePathField(command, values)
+  if (unsafe) {
+    throw usage(
+      `${label(unsafe)} must not be '.', '..' or percent-encoded more than 8 deep, got: ${String(values[unsafe.name])}`,
+    )
   }
+}
+
+/** The first path parameter whose value would address another route, if any. */
+export function unsafePathField(command: Command, values: Record<string, unknown>): Field | undefined {
+  return command.fields.find((f) => {
+    const value = values[f.name]
+    return (
+      f.in === 'path' && value !== undefined && unsafeSegment(typeof value === 'string' ? value : JSON.stringify(value))
+    )
+  })
 }
 
 export function coerceStdin(command: Command, text: string): unknown {

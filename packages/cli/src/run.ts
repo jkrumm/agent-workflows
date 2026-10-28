@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { assertValues, BIN, coerceStdin, helpText, type Parsed, parseArgs, usageLine } from './args.ts'
+import { assertValues, BIN, coerceStdin, helpText, type Parsed, parseArgs, unsafePathField, usageLine } from './args.ts'
 import { type Env, waitBudgetS } from './config.ts'
 import { AgwError, EXIT, EXIT_MEANING, type ExitKind, usage } from './exit.ts'
 import { Host, MAX_WAIT_S, type Reply } from './host.ts'
@@ -20,6 +20,15 @@ interface RunState {
   error?: { kind?: unknown; message?: unknown }
   [key: string]: unknown
 }
+
+const SCHEMA_HELP = `usage: ${BIN} schema [command…] [--refresh] [--exit-codes] [--format json|plain]
+
+Offline: reads the cached contract; fetches one only when there is none.
+  ${BIN} schema                 every command, the contract sha, and skipped operations with their reason
+  ${BIN} schema <command…>      that operation's input schema, output schema and x-cli
+  --refresh                 fetch the host's contract first
+  --exit-codes              the exit-code table; needs neither a cache nor a host
+`
 
 const TERMINAL = new Set(['done', 'failed', 'cancelled'])
 
@@ -213,6 +222,14 @@ class Runner {
         },
       )
     }
+    // The resume values come from the host's reply: they get the same path check as argv, before any request.
+    const unsafe = reply.status === 202 && resumeCommand ? unsafePathField(resumeCommand, resumeValues) : undefined
+    if (unsafe) {
+      emit(state)
+      throw new AgwError('general', `host returned an unsafe ${unsafe.name}: ${String(resumeValues[unsafe.name])}`, {
+        details: { status: reply.status, [unsafe.name]: resumeValues[unsafe.name] },
+      })
+    }
     const resumeLine = [
       BIN,
       ...(resume?.command ?? []),
@@ -289,14 +306,17 @@ class Runner {
     let format: 'json' | 'plain' = 'json'
     for (let i = 0; i < tokens.length; i++) {
       const token = tokens[i] as string
-      if (token === '--refresh') refresh = true
+      if (token === '--help' || token === '-h') {
+        this.io.out(SCHEMA_HELP)
+        return EXIT.ok
+      } else if (token === '--refresh') refresh = true
       else if (token === '--exit-codes') exitCodes = true
       else if (token === '--format' || token.startsWith('--format=')) {
         const value = token.includes('=') ? token.slice(9) : tokens[++i]
         if (value !== 'json' && value !== 'plain') throw usage(`--format must be json or plain, got: ${value}`)
         format = value
       } else if (token.startsWith('-'))
-        throw usage(`unknown flag ${token}`, 'valid flags: --refresh --exit-codes --format')
+        throw usage(`unknown flag ${token}`, 'valid flags: --refresh --exit-codes --format --help')
       else words.push(token)
     }
     const print = (value: unknown) =>
