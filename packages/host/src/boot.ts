@@ -21,7 +21,7 @@ export interface RunningHost {
 }
 
 export interface BootOptions {
-  /** Replaces the OpenCode host (tests); `unwiredAgentHost` fails every agent step with `agent host not wired`. */
+  /** Replaces the OpenCode host (tests). */
   agentHost?: AgentHost
   env?: Record<string, string | undefined>
 }

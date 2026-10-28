@@ -1,8 +1,8 @@
 #!/bin/zsh
 # agent-workflows host launcher: the ProgramArguments of com.jkrumm.agent-workflows-host. Never point launchd at a
 # Homebrew binary directly (macOS BTM silently disallows it); this wrapper is the indirection, and it fails closed
-# (exit 78) unless every ref in .env.tpl resolves. Runs from the deploy clone (~/.agent-workflows/app), never the
-# dev checkout. No secret is ever printed: the export is only counted, refs are named, values never.
+# (exit 78) unless every ref in .env.tpl resolves. Runs from a release (~/.agent-workflows/releases/<sha>, the one
+# the plist names), never the dev checkout. No secret is ever printed: the export is only counted, refs are named, values never.
 
 set -u
 
