@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@agent-workflows/capabilities": "workspace:*",
+    "@agent-workflows/eval": "workspace:*",
     "@agent-workflows/limits": "workspace:*",
     "@agent-workflows/middleware": "workspace:*",
     "@agent-workflows/opencode-host": "workspace:*",
