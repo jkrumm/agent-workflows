@@ -2,7 +2,17 @@ import type { Pool, QueryResult, QueryResultRow } from 'pg'
 import { type ErrorKind, errorMessage, InfraError, LeaseLost } from './errors.ts'
 import type { Json } from './json.ts'
 import { lockKey } from './lease.ts'
-import type { FinalScore, RunStatus, ScoredRun, StepKind, StepStatus, StepUsage, Verdict } from './types.ts'
+import type {
+  FinalScore,
+  KeyedRun,
+  RunStatus,
+  ScoredRun,
+  ScoredRunFilter,
+  StepKind,
+  StepStatus,
+  StepUsage,
+  Verdict,
+} from './types.ts'
 
 /** Every journal write of a run tree carries its root's lease token; a stale holder's write matches nothing. */
 export type Fence = { rootId: string; token: string }
@@ -93,7 +103,6 @@ type ScoredRow = {
   id: string
   workflow: string
   fingerprint: string | null
-  input: Json
   final: FinalScore
   cost: string | null
   unpriced_calls: number | null
@@ -534,9 +543,10 @@ export class Journal {
   }
 
   /**
-   * Done runs of `workflows` with one of `purposes`, finished since `since`, not scored yet, whose id falls in the
-   * sample: the first 32 bits of md5(id) below `rate` × 2^32. Deterministic per run, so the sample never drifts
-   * between ticks or processes, and a run outside it is never looked at twice.
+   * Done top-level runs of `workflows` with one of `purposes`, finished since `since`, not scored yet, whose
+   * persisted sample position (`drift_sample`, the first 32 bits of md5(id)) is below `rate` × 2^32. Deterministic per
+   * run, so the sample never drifts between ticks or processes; the `runs_drift` index reads only the sampled range,
+   * never the unsampled runs.
    */
   async driftCandidates(options: {
     workflows: string[]
@@ -547,34 +557,40 @@ export class Journal {
   }): Promise<string[]> {
     const { rows } = await this.query<{ id: string }>(
       `select id from ${this.runs}
-       where workflow = any($1) and status = 'done' and finished_at >= $3 and scored_at is null
-         and purpose = any($2)
-         and ('x' || lpad(substr(md5(id), 1, 8), 16, '0'))::bit(64)::bigint < floor($4::float8 * 4294967296)
+       where workflow = any($1) and status = 'done' and parent_id is null and scored_at is null
+         and drift_sample < floor($4::float8 * 4294967296) and finished_at >= $3 and purpose = any($2)
        order by finished_at limit $5`,
       [options.workflows, options.purposes, options.since, options.rate, options.limit],
     )
     return rows.map((r) => r.id)
   }
 
-  /** Scored runs of a workflow, oldest first, optionally of one fingerprint. */
-  async scoredRuns(options: {
-    workflow: string
-    source: 'regression' | 'drift'
-    fingerprint?: string
-  }): Promise<ScoredRun[]> {
+  /**
+   * Scored runs of a workflow, oldest first, narrowed in SQL: by run ids, by a fingerprint prefix, by the exact args
+   * an eval arm ran with (jsonb equality: key order does not matter). Only the record columns compare needs.
+   */
+  async scoredRuns(options: ScoredRunFilter): Promise<ScoredRun[]> {
     const { rows } = await this.query<ScoredRow>(
-      `select id, workflow, fingerprint, input, scores->'final' as final, cost, unpriced_calls, wall_ms,
+      `select id, workflow, fingerprint, scores->'final' as final, cost, unpriced_calls, wall_ms,
          tokens_input + tokens_output as tokens, tool_calls, finished_at
        from ${this.runs}
-       where workflow = $1 and score_source = $2 and scored_at is not null and ($3::text is null or fingerprint = $3)
+       where workflow = $1 and score_source = $2 and scored_at is not null
+         and ($3::text[] is null or id = any($3))
+         and ($4::text is null or starts_with(fingerprint, $4))
+         and ($5::jsonb is null or coalesce(scores->'final'->'args', '{}') = $5::jsonb)
        order by finished_at, id`,
-      [options.workflow, options.source, options.fingerprint ?? null],
+      [
+        options.workflow,
+        options.source,
+        options.runIds ?? null,
+        options.fingerprintPrefix ?? null,
+        options.args === undefined ? null : JSON.stringify(options.args),
+      ],
     )
     return rows.map((r) => ({
       runId: r.id,
       workflowId: r.workflow,
       fingerprint: r.fingerprint,
-      input: r.input,
       final: r.final,
       cost: r.cost === null ? null : Number(r.cost),
       unpricedCalls: r.unpriced_calls ?? 0,
@@ -583,6 +599,31 @@ export class Journal {
       toolCalls: r.tool_calls,
       finishedAt: r.finished_at,
     }))
+  }
+
+  /** The run a workflow + idempotency key names, with what scoring it needs to know; null when there is none. */
+  async runByKey(workflow: string, key: string): Promise<KeyedRun | null> {
+    const { rows } = await this.query<{
+      id: string
+      status: RunStatus
+      error: string | null
+      error_kind: ErrorKind | null
+      final: FinalScore | null
+      fingerprint: string | null
+    }>(
+      `select id, status, error, error_kind, scores->'final' as final, fingerprint from ${this.runs}
+       where workflow = $1 and idempotency_key = $2`,
+      [workflow, key],
+    )
+    const row = rows[0]
+    if (!row) return null
+    return {
+      runId: row.id,
+      status: row.status,
+      error: row.error_kind ? { kind: row.error_kind, message: row.error ?? '' } : null,
+      final: row.final,
+      fingerprint: row.fingerprint,
+    }
   }
 
   /** Mean recorded cost of the latest `limit` done top-level runs of a workflow (the eval estimate). */

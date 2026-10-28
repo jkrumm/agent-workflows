@@ -339,12 +339,30 @@ export type FinalScore = Verdict & {
 /** `runs.scores`: the inline gate verdicts by step id, and the after-the-fact score of the output. */
 export type RunScores = { gates?: Record<string, Verdict>; final?: FinalScore }
 
+/** `Runtime.scoredRuns`: always one workflow and source; every other filter narrows in SQL. */
+export type ScoredRunFilter = {
+  workflow: string
+  source: 'regression' | 'drift'
+  runIds?: string[]
+  fingerprintPrefix?: string
+  /** The exact `--args` an eval arm recorded (`{}` for none); omitted: any. */
+  args?: Json
+}
+
+/** A run found by workflow + idempotency key (`Runtime.runByKey`): a resumed eval adopts it. */
+export type KeyedRun = {
+  runId: string
+  status: RunStatus
+  error: RunError | null
+  final: FinalScore | null
+  fingerprint: string | null
+}
+
 /** A run as `Runtime.scoredRuns` returns it, for `agw eval compare`. */
 export type ScoredRun = {
   runId: string
   workflowId: string
   fingerprint: string | null
-  input: Json
   final: FinalScore
   cost: number | null
   unpricedCalls: number

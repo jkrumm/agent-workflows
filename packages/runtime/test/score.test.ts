@@ -426,6 +426,153 @@ describe('after-the-fact scoring', () => {
   })
 })
 
+describe('review fixes', () => {
+  const judged = (id: string, onJudge: () => void = () => {}) =>
+    defineWorkflow({
+      id,
+      version: 'v1',
+      input: z.object({ n: z.number() }),
+      output: z.object({ n: z.number() }),
+      scorer: {
+        version: 'j1',
+        async score(input, _output, ctx) {
+          onJudge()
+          // A scorer that swallows the judge failure still must not get its verdict recorded.
+          const said = await ctx.judge?.('llm.decide', { n: input.n }).catch(() => null)
+          return { scores: { judged: said === null ? 0 : 1 }, pass: said !== null }
+        },
+      },
+      run: async (_ctx, { n }) => ({ n }),
+    })
+
+  test('a judge failure is rethrown and nothing is written: drift tries again next tick', async () => {
+    let down = true
+    const wf = judged('fix.judge')
+    const rt = testRuntime({
+      schema: db.schema,
+      workflows: [wf],
+      judge: async () => {
+        if (down) throw new Error('judge endpoint 503')
+        return { ok: true }
+      },
+    })
+    await rt.open()
+    try {
+      const { runId } = await rt.start(wf, { n: 1 }, { purpose: 'prod' })
+      await rt.wait(runId)
+      const since = new Date(Date.now() - 60_000)
+      const refused = await rt.scoreRun(runId, { source: 'drift', onlyUnscored: true }).then(
+        () => null,
+        (e: Error) => e.message,
+      )
+      expect(refused).toContain('judge endpoint 503')
+      expect(await sql.run(runId)).toMatchObject({ scores: null, score_source: null, scored_at: null })
+      expect(await rt.driftCandidates({ rate: 1, since, limit: 10, workflows: [wf.id] })).toContain(runId)
+      down = false
+      expect(await rt.scoreRun(runId, { source: 'drift', onlyUnscored: true })).toMatchObject({
+        scores: { judged: 1 },
+        pass: true,
+      })
+    } finally {
+      await rt.close()
+    }
+  })
+
+  test('drift samples top-level runs only; scoredRuns narrows by run ids, fingerprint prefix and exact args', async () => {
+    const leaf = defineWorkflow({
+      id: 'fix.leaf',
+      version: 'v1',
+      input: z.object({ n: z.number() }),
+      output: z.object({ n: z.number() }),
+      scorer: { version: 'l1', score: () => ({ scores: { ok: 1 }, pass: true }) },
+      run: async (_ctx, { n }) => ({ n }),
+    })
+    const parent = defineWorkflow({
+      id: 'fix.parent',
+      version: 'v1',
+      input: z.object({}),
+      output: z.object({}),
+      async run(ctx) {
+        await ctx.workflow('kids', leaf, [{ n: 1 }])
+        return {}
+      },
+    })
+    const rt = testRuntime({ schema: db.schema, workflows: [leaf, parent] })
+    await rt.open()
+    try {
+      const top = (await rt.start(leaf, { n: 2 }, { purpose: 'prod' })).runId
+      const tree = (await rt.start(parent, {}, { purpose: 'prod' })).runId
+      await rt.wait(top)
+      await rt.wait(tree)
+      const since = new Date(Date.now() - 60_000)
+      expect(await rt.driftCandidates({ rate: 1, since, limit: 10, workflows: [leaf.id] })).toEqual([top])
+
+      const ids: string[] = []
+      for (let n = 0; n < 3; n++) ids.push((await rt.start(leaf, { n }, { purpose: 'eval' })).runId)
+      for (const id of ids) await rt.wait(id)
+      await sql.pool.query(`update "${db.schema}".runs set fingerprint = 'fp-' || id where id = any($1)`, [ids])
+      const [x, y, z2] = ids as [string, string, string]
+      await rt.scoreRun(x, { source: 'regression', caseId: 'c', args: { arm: 'b', k: 1 } })
+      await rt.scoreRun(y, { source: 'regression', caseId: 'c', args: {} })
+      await rt.scoreRun(z2, { source: 'regression', caseId: 'c' })
+      const pick = (filter: Partial<Parameters<typeof rt.scoredRuns>[0]>) =>
+        rt.scoredRuns({ workflow: leaf.id, source: 'regression', ...filter }).then((r) => r.map((row) => row.runId))
+      expect(await pick({ runIds: [y, 'nope'] })).toEqual([y])
+      expect(await pick({ fingerprintPrefix: `fp-${x}` })).toEqual([x])
+      expect(await pick({ args: { k: 1, arm: 'b' } })).toEqual([x]) // key order does not matter
+      expect((await pick({ args: {} })).sort()).toEqual([y, z2].sort()) // no args recorded reads as {}
+    } finally {
+      await rt.close()
+    }
+  })
+
+  test('a rejected duplicate agent step id does not replace the accepted step spec', async () => {
+    const host = new FakeAgentHost(async (s) => ({ output: s.turnOf ? 'not a draft' : { body: 'first' } }))
+    const wf = defineWorkflow({
+      id: 'fix.duplicate',
+      version: 'v1',
+      input: z.object({}),
+      output: z.object({ kind: z.string() }),
+      async run(ctx) {
+        const first = await ctx.agent('draft', { agent: 'writer', prompt: 'p', output: draft })
+        await ctx.agent('draft', { agent: 'writer', prompt: 'p', output: z.string() }).catch(() => null)
+        // The turn answers a string: valid for the rejected spec, invalid for the accepted one.
+        const error = await ctx.continue('draft:reask', first, 'again').then(
+          () => 'accepted',
+          (e: Error) => e.message,
+        )
+        return { kind: error }
+      },
+    })
+    const rt = testRuntime({ schema: db.schema, workflows: [wf], host })
+    await rt.open()
+    try {
+      const { runId } = await rt.start(wf, {}, { purpose: 'build' })
+      const end = await rt.wait(runId)
+      expect((end.output as { kind: string }).kind).toContain('agent step "draft:reask"')
+      expect(await sql.step(runId, 'draft:reask')).toMatchObject({ error_kind: 'invalid_output' })
+    } finally {
+      await rt.close()
+    }
+  })
+
+  test('runByKey finds a keyed run with its final score', async () => {
+    const wf = judged('fix.key')
+    const rt = testRuntime({ schema: db.schema, workflows: [wf] })
+    await rt.open()
+    try {
+      expect(await rt.runByKey(wf.id, 'k1')).toBeNull()
+      const { runId } = await rt.start(wf, { n: 1 }, { purpose: 'eval', idempotencyKey: 'k1' })
+      await rt.wait(runId)
+      expect(await rt.runByKey(wf.id, 'k1')).toMatchObject({ runId, status: 'done', final: null, error: null })
+      await rt.scoreRun(runId, { source: 'regression', caseId: 'c1' })
+      expect((await rt.runByKey(wf.id, 'k1'))?.final).toMatchObject({ caseId: 'c1', scores: { judged: 1 } })
+    } finally {
+      await rt.close()
+    }
+  })
+})
+
 describe('migration 0004_scores', () => {
   test('applies on a fresh schema and on one that has 0001–0003', async () => {
     const pool = new Pool({ connectionString: PG_URL, max: 2 })
