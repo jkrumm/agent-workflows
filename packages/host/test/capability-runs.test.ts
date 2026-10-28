@@ -1,11 +1,14 @@
-import { afterAll, afterEach, beforeAll, expect, test } from 'bun:test'
+import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test'
+import { CapabilityCallError } from '@agent-workflows/capabilities'
 import { messageResponse } from '@agent-workflows/capabilities/testing'
-import { RUN_ID_HEADER } from '../src/capability-runs.ts'
+import { failureOf, journaled, journaledError, RUN_ID_HEADER } from '../src/capability-runs.ts'
 import { type Body, SECRET, startTestHost, type TestHost, until } from './support.ts'
 
 const TITLE = 'A Smoke Title'
 const ok = () =>
   messageResponse(TITLE, { input_tokens: 40, output_tokens: 6, cache_read_input_tokens: 10, cost: 0.0007 })
+
+const silent = { warn: () => {}, error: () => {} }
 
 let t: TestHost
 beforeAll(async () => {
@@ -137,7 +140,8 @@ test('a replayed failed run answers with the same code from the journal', async 
   expect(b).toMatchObject({ code: 'UPSTREAM_ERROR', defined: true })
 })
 
-test('a client that goes away cancels its run', async () => {
+/** Holds every fake IU answer until `release()`. */
+function holdIu() {
   let release = () => {}
   const held = new Promise<void>((resolve) => {
     release = resolve
@@ -146,22 +150,141 @@ test('a client that goes away cancels its run', async () => {
     await held
     return ok()
   })
-  const before = new Set((await runs('cap.llm.title')).map((r) => r.id as string))
+  return release
+}
+
+/** A direct `llm.title` request the test can abort. */
+function abortable(text: string, headers: Record<string, string> = {}) {
   const controller = new AbortController()
-  const pending = t.host.fetch(
+  const response = t.host.fetch(
     new Request('http://127.0.0.1:7791/llm/title', {
       method: 'POST',
-      headers: { authorization: `Bearer ${SECRET}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ text: 'Abandoned' }),
+      headers: { authorization: `Bearer ${SECRET}`, 'content-type': 'application/json', ...headers },
+      body: JSON.stringify({ text }),
       signal: controller.signal,
     }),
   )
-  const run = await until(async () => {
+  return { response, abort: () => controller.abort() }
+}
+
+const freshRunning = async (before: Set<string>) =>
+  until(async () => {
     const fresh = (await runs('cap.llm.title')).find((r) => !before.has(r.id))
     return fresh?.status === 'running' ? fresh : null
   }, 'running run')
-  controller.abort()
-  await pending.catch(() => undefined)
+
+const ids = async () => new Set((await runs('cap.llm.title')).map((r) => r.id as string))
+
+test('a client without an Idempotency-Key that goes away cancels its run', async () => {
+  const release = holdIu()
+  const before = await ids()
+  const call = abortable('Abandoned')
+  const run = await freshRunning(before)
+  call.abort()
+  await call.response.catch(() => undefined)
   await until(async () => (await runRow(run.id)).status === 'cancelled', 'cancelled run')
   release()
+})
+
+test('a keyed client that goes away leaves the run to finish; the retry gets its output', async () => {
+  const release = holdIu()
+  const before = await ids()
+  const headers = { 'idempotency-key': 'title-abandoned' }
+  const call = abortable('Keyed and abandoned', headers)
+  const run = await freshRunning(before)
+  call.abort()
+  await call.response.catch(() => undefined)
+  release()
+  await until(async () => (await runRow(run.id)).status === 'done', 'done run')
+  const calls = t.iu.requests.length
+  const retry = await t.call('/llm/title', { body: { text: 'Keyed and abandoned' }, headers })
+  expect(retry.status).toBe(200)
+  expect(await retry.json()).toEqual({ title: TITLE })
+  expect(retry.headers.get(RUN_ID_HEADER)).toBe(run.id)
+  expect(t.iu.requests.length).toBe(calls)
+})
+
+test("a retry with A's key that goes away does not cancel A's run", async () => {
+  const release = holdIu()
+  const before = await ids()
+  const headers = { 'idempotency-key': 'title-shared' }
+  const a = abortable('Shared', headers)
+  const run = await freshRunning(before)
+  const b = abortable('Shared', headers)
+  await Bun.sleep(100) // b is waiting on the same run
+  b.abort()
+  await b.response.catch(() => undefined)
+  release()
+  const response = await a.response
+  expect(response.status).toBe(200)
+  expect(await response.json()).toEqual({ title: TITLE })
+  expect((await runRow(run.id)).status).toBe('done')
+})
+
+describe('the journaled error wire format', () => {
+  const asRun = (error: CapabilityCallError, kind = 'error') =>
+    ({
+      runId: 'r1',
+      workflowId: 'cap.llm.title',
+      status: 'failed',
+      error: { kind: 'step_failed', message: `step "call" failed (${kind}): ${journaled(error)}` },
+    }) as const
+
+  test('round-trips code, status, message and data, whatever they contain', () => {
+    const error = new CapabilityCallError('INVALID_OUTPUT', 502, 'bad answer {"a": 1}', true, {
+      attempts: 2,
+      reason: 'got {"x": {"y": 1}} \n and more {',
+    })
+    const answer = journaledError(asRun(error).error.message)
+    expect(answer).toMatchObject({ code: 'INVALID_OUTPUT', status: 502, message: 'bad answer {"a": 1}' })
+    expect(answer?.data).toEqual(error.data)
+    expect(failureOf(asRun(error), silent).toJSON()).toMatchObject({ code: 'INVALID_OUTPUT', data: error.data })
+  })
+
+  test('a message that only looks journaled is not taken for one', () => {
+    expect(journaledError('step "call" failed (error): boom\n{"code":"X","status":400}')).toBeNull()
+    expect(journaledError('step "call" failed (error): UPSTREAM_ERROR: down {"status":502}')).toBeNull()
+  })
+
+  test("a failure that is not the capability's is an opaque 500; a refusal a 503 with its reason", () => {
+    const errors: unknown[] = []
+    const logger = { warn: () => {}, error: (_: string, meta?: unknown) => void errors.push(meta) }
+    const infra = failureOf(
+      {
+        runId: 'r2',
+        workflowId: 'cap.llm.title',
+        status: 'failed',
+        error: { kind: 'invalid_output', message: 'db secret detail' },
+      },
+      logger,
+    )
+    expect(infra.toJSON()).toMatchObject({ code: 'INTERNAL_SERVER_ERROR', status: 500, message: 'run r2 failed' })
+    expect(JSON.stringify(infra.toJSON())).not.toContain('secret')
+    expect(JSON.stringify(errors)).toContain('db secret detail')
+
+    const wallet = failureOf(
+      {
+        runId: 'r3',
+        workflowId: 'cap.llm.title',
+        status: 'failed',
+        error: { kind: 'admission_refused', message: 'wallet gate: paused' },
+      },
+      logger,
+    )
+    expect(wallet.toJSON()).toMatchObject({ code: 'SERVICE_UNAVAILABLE', status: 503, message: 'wallet gate: paused' })
+    const runaway = failureOf(
+      {
+        runId: 'r4',
+        workflowId: 'cap.llm.title',
+        status: 'failed',
+        error: { kind: 'step_failed', message: 'step "call" failed (middleware): runaway cap: steps 9 > cap 8' },
+      },
+      logger,
+    )
+    expect(runaway.toJSON()).toMatchObject({
+      status: 503,
+      message: 'runaway cap: steps 9 > cap 8',
+      data: { kind: 'middleware' },
+    })
+  })
 })

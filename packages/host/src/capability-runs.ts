@@ -16,7 +16,7 @@ import { ORPCError } from '@orpc/server'
 import { z } from 'zod'
 import { canonicalJson } from './canonical.ts'
 import { badRequest, type HostContext, idempotencyKeyOf, purposeOf, waitFor } from './operations.ts'
-import type { RunState, RunStore } from './store.ts'
+import { isTerminal, type RunState, type RunStore } from './store.ts'
 
 /** The response header that names the run behind a direct capability call. */
 export const RUN_ID_HEADER = 'agw-run-id'
@@ -38,14 +38,49 @@ function versionOf(capability: Capability): string {
   return createHash('sha256').update(canonicalJson(definition)).digest('hex').slice(0, 12)
 }
 
-/**
- * The journal keeps a failure's kind and message only, so the message carries the typed error: `CODE: message
- * {"status":…,"data":…}`. The answer is rebuilt from it, the same in this process, in another one and on a replay.
- */
-const journaled = (error: CapabilityCallError) =>
-  `${error.code}: ${error.message} ${JSON.stringify({ status: error.status, data: error.data })}`
+const MARKER = 'agwCapabilityError'
 
-const JOURNALED = /^step "call" failed \(\w+\): ([A-Z_]+): (.*) (\{.*\})$/s
+/**
+ * The journal keeps a failure's kind and message only, so the message carries the typed error: `CODE: message`, a
+ * newline, then one JSON line `{"agwCapabilityError":1,"code","status","data"}` (JSON.stringify never emits a raw
+ * newline). The answer is rebuilt from that last line, the same in this process, in another one and on a replay.
+ */
+export const journaled = (error: CapabilityCallError) =>
+  `${error.code}: ${error.message}\n${JSON.stringify({ [MARKER]: 1, code: error.code, status: error.status, data: error.data })}`
+
+/** How the runtime words a failed step; the run's message when its one step failed. */
+const STEP_FAILED = /^step "call" failed \((\w+)\): /
+
+type Journaled = { code: string; status: number; data?: unknown }
+
+const isJournaled = (value: unknown): value is Journaled =>
+  typeof value === 'object' &&
+  value !== null &&
+  (value as Record<string, unknown>)[MARKER] === 1 &&
+  typeof (value as Journaled).code === 'string' &&
+  typeof (value as Journaled).status === 'number'
+
+/** The capability's typed error a failed run journaled; null when the failure was not one. */
+export function journaledError(text: string): ORPCError<string, unknown> | null {
+  const prefix = STEP_FAILED.exec(text)
+  const newline = text.lastIndexOf('\n')
+  if (!prefix || newline < prefix[0].length) return null
+  let record: unknown
+  try {
+    record = JSON.parse(text.slice(newline + 1))
+  } catch {
+    return null
+  }
+  if (!isJournaled(record)) return null
+  const head = text.slice(prefix[0].length, newline)
+  const message = head.startsWith(`${record.code}: `) ? head.slice(record.code.length + 2) : head
+  return new ORPCError(record.code, {
+    defined: record.code in ERRORS,
+    status: record.status,
+    message,
+    data: record.data,
+  })
+}
 
 function build(capabilities: readonly Capability[]): Map<string, AnyWorkflow> {
   const known = builds.get(capabilities)
@@ -98,21 +133,29 @@ export interface CapabilityCall {
 const cancelled = () =>
   new ORPCError('CANCELLED', { defined: true, status: ERRORS.CANCELLED.status, message: ERRORS.CANCELLED.message })
 
-/** The error the capability raised, as its own procedure answers it; oRPC re-checks `defined` against the data. */
-function failureOf(state: RunState): ORPCError<string, unknown> {
+/** Admission and runaway refusals: the same kinds a workflow route reports in its failed run state. */
+const REFUSALS = new Set(['admission_refused', 'middleware'])
+
+/**
+ * The answer of a failed or cancelled run: the capability's own typed error when it raised one; a refusal as a 503
+ * with its reason (what a workflow caller reads in the run state); anything else an opaque 500, its detail logged.
+ */
+export function failureOf(state: RunState, logger: Logger): ORPCError<string, unknown> {
   if (state.status === 'cancelled') return cancelled()
-  const [, code, message, extra] = JOURNALED.exec(state.error?.message ?? '') ?? []
-  if (code && message !== undefined && extra) {
-    try {
-      const { status, data } = JSON.parse(extra) as { status: number; data?: unknown }
-      return new ORPCError(code, { defined: code in ERRORS, status, message, data })
-    } catch {
-      // not ours: answered as the opaque failure below
-    }
+  const text = state.error?.message ?? ''
+  const typed = journaledError(text)
+  if (typed) return typed
+  const step = STEP_FAILED.exec(text)
+  const kind = state.error?.kind === 'step_failed' && step ? step[1] : state.error?.kind
+  if (kind && REFUSALS.has(kind)) {
+    return new ORPCError('SERVICE_UNAVAILABLE', {
+      status: 503,
+      message: step ? text.slice(step[0].length) : text,
+      data: { runId: state.runId, kind },
+    })
   }
-  return new ORPCError('INTERNAL_SERVER_ERROR', {
-    message: `run ${state.runId} failed (${state.error?.kind ?? 'error'}): ${state.error?.message ?? ''}`,
-  })
+  logger.error('capability run failed', { runId: state.runId, kind: state.error?.kind, error: text })
+  return new ORPCError('INTERNAL_SERVER_ERROR', { message: `run ${state.runId} failed` })
 }
 
 /**
@@ -141,20 +184,22 @@ export function capabilityRuns(registry: { capabilities: readonly Capability[] }
     }
     context.response.headers = { ...context.response.headers, [RUN_ID_HEADER]: runId }
 
+    // No deadline: the wait ends when the run does, or early only when the caller goes away.
     const state = await waitFor(deps.store, runId, Number.POSITIVE_INFINITY, deps.logger, signal)
-    if (signal.aborted) {
-      if (deps.isOpen()) {
-        await deps.runtime.cancel(runId).catch((error: unknown) => {
-          deps.logger.error('cancelling an abandoned capability run failed', {
-            runId,
-            error: error instanceof Error ? error.message : String(error),
-          })
-        })
-      }
-      throw cancelled()
-    }
     if (!state) throw new Error(`run ${runId} vanished`)
     if (state.status === 'done') return state.output
-    throw failureOf(state)
+    if (isTerminal(state.status)) throw failureOf(state, deps.logger)
+    // The caller went away mid-run. A keyed run is left to finish, so a retry with the key gets its result; an unkeyed
+    // one was created by this request alone (`start` without a key always inserts) and is cancelled, unless the host
+    // is shutting down and recovery owns it.
+    if (!idempotencyKey && deps.isOpen()) {
+      await deps.runtime.cancel(runId).catch((error: unknown) => {
+        deps.logger.error('cancelling an abandoned capability run failed', {
+          runId,
+          error: error instanceof Error ? error.message : String(error),
+        })
+      })
+    }
+    throw cancelled()
   }
 }

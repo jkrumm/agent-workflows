@@ -70,6 +70,15 @@ const unauthorized = () => {
   return response
 }
 
+/** A handler's success status (only on a success) and extra headers (on every answer, errors included). */
+function applyResponse(response: Response, { status, headers }: HostContext['response']): Response {
+  const restatus = status !== undefined && status !== response.status && response.ok
+  if (!restatus && !headers) return response
+  const merged = new Headers(response.headers)
+  for (const [name, value] of Object.entries(headers ?? {})) merged.set(name, value)
+  return new Response(response.body, { status: restatus ? status : response.status, headers: merged })
+}
+
 /** Every command (capabilities, workflows, run ops) is unique, and none is the prefix of another. */
 function assertCommands(commands: { owner: string; command: string[] }[]) {
   for (const [i, a] of commands.entries()) {
@@ -225,12 +234,7 @@ export function createHost(options: HostOptions): Host {
       }
       const { response } = await handler.handle(prepared, { context })
       if (!response) return notFoundResponse()
-      const { status, headers } = context.response
-      const restatus = status && status !== response.status && response.ok
-      if (!restatus && !headers) return response
-      const merged = new Headers(response.headers)
-      for (const [name, value] of Object.entries(headers ?? {})) merged.set(name, value)
-      return new Response(response.body, { status: restatus ? status : response.status, headers: merged })
+      return applyResponse(response, context.response)
     } catch (error) {
       logger.error('request failed', { error: error instanceof Error ? error.message : String(error) })
       return errorResponse(error)

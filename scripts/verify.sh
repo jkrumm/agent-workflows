@@ -77,10 +77,12 @@ rc=$?
 (( rc == 0 )) || fail "agw llm title exited $rc: $out"
 [[ -n "$out" ]] || fail "agw llm title printed no title"
 ok "agw llm title: \"$out\""
-cap_row=""
+cap_rows=()
 for _ in {1..20}; do
-  cap_row=$(journal "select id, status, coalesce(cost::text, ''), coalesce(tokens_input, 0) from \"$SCHEMA\".runs where workflow = 'cap.llm.title' and purpose = 'verify' and created_at >= :'since'::timestamptz order by id desc limit 1" -v "since=$since") || exit 1
-  IFS='|' read -r cap_id cap_status cap_cost cap_tokens <<< "$cap_row"
+  cap_rows=("${(@f)$(journal "select id, status, coalesce(cost::text, ''), coalesce(tokens_input, 0) from \"$SCHEMA\".runs where workflow = 'cap.llm.title' and purpose = 'verify' and created_at >= :'since'::timestamptz order by id" -v "since=$since")}") || exit 1
+  cap_rows=(${cap_rows:#})
+  (( ${#cap_rows} > 1 )) && fail "expected one cap.llm.title verify run since $since, found ${#cap_rows}: ${(j:, :)${(@)cap_rows%%|*}}"
+  IFS='|' read -r cap_id cap_status cap_cost cap_tokens <<< "${cap_rows[1]:-}"
   [[ "${cap_status:-}" == "done" && -n "${cap_cost:-}" ]] && break
   sleep 1
 done
