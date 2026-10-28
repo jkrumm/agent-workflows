@@ -149,7 +149,7 @@ export function createResearchWorkflows(deps: WorkflowDeps, options: ResearchOpt
     const endpoint = engineEndpoint(env, stateDir)
     return endpoint ? createEngineClient(endpoint) : null
   }
-  // The web capabilities are called by id: the registry's typed ids grow as capabilities land (`web.*`, Wave 6).
+  // The gate calls `web.*` by a string id from its tool map (`gate.ts` CAPABILITY), so the typed ids are widened here.
   const registry = deps.registry as unknown as { call: CapabilityCall }
   const ledger = options.ledger ?? deps.research?.ledger ?? memoryToolLedger()
   const gate =

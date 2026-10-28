@@ -15,7 +15,7 @@ import { asRecord } from './util.ts'
 export const GATE_TOOLS = ['web_search', 'web_fetch', 'web_docs', 'web_package', 'engine_research'] as const
 export type GateTool = (typeof GATE_TOOLS)[number]
 
-const CAPABILITY: Record<Exclude<GateTool, 'engine_research'>, string> = {
+export const CAPABILITY: Record<Exclude<GateTool, 'engine_research'>, string> = {
   web_search: 'web.search',
   web_fetch: 'web.fetch',
   web_docs: 'web.docs',

@@ -131,3 +131,17 @@ test('the report prints a table per depth and the verdict', async () => {
   expect(text).toContain('### Failed runs')
   expect(text).toContain('**Winner:')
 })
+
+test("every capability the gate and the judge call is in the host's registry", async () => {
+  const { createCapabilities, createRegistry, iuTransports } = await import('@agent-workflows/capabilities')
+  const { CAPABILITY } = await import('../src/workflows/research/gate.ts')
+  const { JUDGE_CAPABILITIES } = await import('../src/judge.ts')
+  const registry = createRegistry(
+    createCapabilities({
+      transports: iuTransports({ env: { IU_API_KEY: 'k', IU_BASE_URL: 'http://127.0.0.1:9/anthropic' } }),
+      env: {},
+    }),
+  )
+  const ids = new Set<string>(registry.capabilities.map((c) => c.id))
+  for (const id of [...Object.values(CAPABILITY), ...JUDGE_CAPABILITIES]) expect(ids.has(id)).toBe(true)
+})
