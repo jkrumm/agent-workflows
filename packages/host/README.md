@@ -29,6 +29,9 @@ Names only; values come from 1Password through `secrets-run`, never from the rep
 | `AGW_RETRO_FILE_ISSUES`, `AGW_RETRO_ISSUE_REPO` | no | scheduled retrospectives file their proposals as GitHub issues in `owner/name`. Off by default; the repository is required when it is on (the process refuses to start otherwise). `gh` authenticates from the host's environment (`GH_TOKEN`) |
 | `ARGO_URL`, `ARGO_API_SECRET` | no | the usage outbox is on when both are set |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` (or `…_TRACES_ENDPOINT`), `OTEL_EXPORTER_OTLP_HEADERS` | no | span export is off without an endpoint |
+| `AGW_FRICTION_ISSUES` | no | the daily friction job (below): on unless `off`/`0`/`false`/`no` |
+| `AGW_FRICTION_REPO` | for issues | `owner/name` the job opens issues in. Unset: the job still marks follow-ups but opens nothing (it says so in the log) |
+| `AGW_FRICTION_CONFIG` | no | JSON overriding any of `windowDays` (7), `minRuns` (10), `rate` (0.25), `followUpMinutes` (10, fractions allowed), `limits` (`null` switches a counter off). A bad value of this or of `AGW_FRICTION_REPO` disables the job and says why (stderr, `RunningHost.friction`); it never stops the host |
 | `AGW_ROUTES`, `AGW_WALLET_*` | no | route overrides (routes README), wallet gate (limits README) |
 | `AGW_DRIFT_RATE`, `AGW_DRIFT_INTERVAL_S` | no | drift: the share of finished production runs scored after the fact (default `0.1`, `0` turns it off) and the tick (default 300 s); a bad value refuses to start |
 | `AGW_EVAL_DIR`, `AGW_EVAL_HOME` | no | `agw eval run`: where `<workflow>/cases.jsonl` live (default `~/.local/share/agent-workflows/eval`) and the root a case's `repo` is relative to (default `$HOME`) |
@@ -37,7 +40,7 @@ Names only; values come from 1Password through `secrets-run`, never from the rep
 
 | Route | Auth | Notes |
 |-|-|-|
-| `GET /health` | none | `200 { status: 'ok', version }` when the runtime is open and Postgres answers within 2 s, else `503 { status: 'degraded', reason }`; the probe is bounded: the store ends its own query at the bound (`Runtime.ping(timeoutMs)`), so a slow Postgres cannot park probes on the journal pool |
+| `GET /health` | none | `200 { status: 'ok', version, friction: { enabled, state } }` (`state` is `on`, `off`, `misconfigured` or `no-repo`; informational, and never a reason: the endpoint is unauthenticated) when the runtime is open and Postgres answers within 2 s, else `503 { status: 'degraded', reason }`; the probe is bounded: the store ends its own query at the bound (`Runtime.ping(timeoutMs)`), so a slow Postgres cannot park probes on the journal pool |
 | `GET /openapi.json` | bearer | the document; every operation has `x-cli` with `kind` |
 | `POST /<capability path>` | bearer | the registry's capabilities, e.g. `POST /llm/title`; each call is a one-step run, its id in `agw-run-id` |
 | `POST /workflows/a/b` | bearer | workflow `a.b`; body = input |
@@ -181,7 +184,7 @@ Define it with `defineWorkflow` (input must be a `z.object`; list its agents in 
 
 `main.ts` binds the port first and only then opens the runtime, so a taken port (a deploy overlap) fails before any run is claimed; every resource registers its closer as it is created, and a failure anywhere in the start runs the same teardown as a signal. It builds the runtime with `platformMiddleware` (purpose, fingerprint, record, telemetry) followed by the wallet gate and the runaway cap, opens it (migrates the journal, starts the recovery tick), starts the outbox flush tick (30 s, when Argo is configured) and serves. SIGTERM/SIGINT: stop accepting (held waits get 5 s to answer), `runtime.close()`, the cap's pool, `platform.close()` (flushes telemetry), exit 0. A second signal exits at once, and an unref'd timer (45 s, past the runtime's body grace) exits regardless if a close hangs. An uncaught exception shuts down the same way (exit 1); an unhandled rejection is logged and the process keeps serving. Until the runtime is open, `/health` is degraded and every other route is `503`. Runs stay `running` and the next process resumes them (concept §3: deploys need no drain); `test/main.test.ts` kills a process mid-run and watches a second one finish it.
 
-The OpenCode `AgentHost` is wired in `boot.ts` (`lazyOpenCodeHost`): an `OpenCodeServer` and an `OpenCodeHost` with an empty agent list (no agent definitions exist yet). Both are built on the first agent step, not at boot, so a host without agent workflows never spawns or probes `opencode`; a failed start is not cached and the next step retries. Shutdown closes the host and stops supervising the server, which keeps running for the next process (opencode-host README). `BootOptions.agentHost` replaces it in tests.
+The OpenCode `AgentHost` is wired in `boot.ts` (`lazyOpenCodeHost`): an `OpenCodeServer` and an `OpenCodeHost` with an empty agent list (no agent definitions exist yet). Both are built on the first agent step (or on the first friction-counter read for a run that has agent steps, e.g. one resumed after a restart), not at boot, so a host without agent workflows never spawns or probes `opencode`; a failed start is not cached and the next step retries. Shutdown closes the host and stops supervising the server, which keeps running for the next process (opencode-host README). `BootOptions.agentHost` replaces it in tests.
 
 ## Deploy
 
@@ -204,7 +207,66 @@ The LaunchAgent runs `/bin/zsh scripts/launch.sh` (never a Homebrew binary: macO
 
 **An untracked IU key override** (a team key for interim evals; the label goes with it): if `~/.config/agw/iu.env` exists, `launch.sh` reads `IU_API_KEY` and `IU_KEY_ID` from it and they replace the `.env.tpl` values before the host starts. The file must be a regular file at mode 0600, else `launch.sh` exits 78 and says why; it must set both names (a key without its label would be mis-attributed) with a non-empty `IU_API_KEY` and an `IU_KEY_ID` of exactly `personal` or `athena-team`, else 78. Values may be unquoted, double- or single-quoted; a trailing CR is stripped. Any other line is ignored with a warning that names the variable, never a value; values are never printed. Absent file: no override. `launch-override.test.ts` runs the block with a fake HOME.
 
-`make verify` (`scripts/verify.sh`) exits 0 only if `/health` is ok, the deployed sha equals `origin/master` and is what the host reports, `AGW_PURPOSE=verify agw smoke ping` exits 0 with a `title`, and that run's row in `agw.runs` is `done` with a trace id and priced usage, and a direct `AGW_PURPOSE=verify agw llm title …` leaves a `cap.llm.title` row `done` with priced usage. It prints both run ids.
+`make verify` (`scripts/verify.sh`) exits 0 only if `/health` is ok, the deployed sha equals `origin/master` and is what the host reports, `AGW_PURPOSE=verify agw smoke ping` exits 0 with a `title`, and that run's row in `agw.runs` is `done` with a trace id and priced usage, and a direct `AGW_PURPOSE=verify agw llm title …` leaves a `cap.llm.title` row `done` with priced usage. It prints both run ids and, informationally, the friction job's state (never a failure).
+
+## Friction job
+
+`src/friction/`, started by `boot` when `config.friction.enabled` (set by `loadConfig`, so on in production and off for
+the literal configs tests pass). Daily, first run ten minutes after boot:
+
+1. **Follow-ups.** A top-level run that ended `done` with `purpose = 'prod'` (a user call: the HTTP door's default;
+   `build`, `verify` and `eval` are not asks) gets `friction.followUps = 1` when the same workflow was started again
+   as a top-level `prod` run with the same `cwd` and `scope` input, created within `followUpMinutes` (fractions of a
+   minute work) after it finished. The later run must not be cancelled or refused (`admission_refused`,
+   `invalid_input`); a failed run that is run again is a retry, not a follow-up. Workflows whose input has no `cwd`
+   have no follow-up signal. Idempotent.
+2. **Rate.** Per workflow over the last `windowDays` of finished **top-level user (`prod`)** runs with a delivered
+   record: the share with any counter at or above its limit. Build, verify and eval traffic is not counted, so it
+   neither dilutes nor inflates a rate. Default limits: `toolErrors` 5, `repeatToolCalls` 5, `nudges` 2, `schemaReasks`
+   1, `overBudget` 1, `followUps` 1; `null` switches one off (printed `off` in an issue). Each is reachable as the
+   first reason: one nudge alone is not friction (it fires at the 3rd identical call), two nudges without a 5-fold
+   repeat mean two different calls repeated 3 times; tests pin every limit alone.
+3. **Breach** = at least `minRuns` runs and a rate of at least `rate`. The job keeps its own record of what it filed in
+   `friction_issues` (migration `0006_friction_issues.sql`: `repo`, `workflow`, `number`, `url`, `filed_at`,
+   `closed_at`). For a breaching workflow:
+   - the latest record is closed: only runs that **finished after `closed_at`** are looked at (the same runs never file
+     the same breach twice); nothing breaches, nothing happens;
+   - otherwise ask GitHub about that one issue **by number**, closed records included, since an issue can be reopened:
+     open means skip (a reopened one gets its `closed_at` cleared; nothing is filed, commented or edited); closed
+     means store its `closedAt` and look only at runs after it; **deleted** (GitHub's own "Could not resolve to an
+     issue" answer, nothing else) means the evidence starts at `filed_at`. Any other failure (no `gh`, an unreachable
+     repository, HTTP 404 on access) is an error: the workflow is skipped this tick and nothing is concluded;
+   - no record, or evidence that breaches: file it (title `Friction: <workflow> above threshold`). Filing is not atomic
+     with recording, so an **intent row** (no number) is written first and completed after `gh issue create`. A later
+     tick that finds an intent without a number searches for the issue by its exact title (created since the intent)
+     before it files anything: found completes the row, not found drops the intent. An intent younger than 5 minutes
+     belongs to a tick that is still filing and is left alone, and a partial unique index (one unfinished intent per
+     workflow) makes a racing second insert fail, which the job reads as "someone else is filing" and skips. A crash after the POST, or an
+     unreadable URL, therefore never files twice.
+   No scan of the repository's issues: no 500-issue limit, no search-index lag, nothing a human can edit to confuse it.
+   The `gh` CLI is a port (`GhPort`: `issueState`, `findIssuesByTitle`, `createIssue`); tests pass a fake.
+   **Before the rates**, the job recounts runs of the window whose friction document is `incomplete` (fewest attempts
+   first, newest first among equals, at most 20 per tick; a run still incomplete after 3 recounts is marked `'gave-up'`
+   and no longer returned, through the middleware's `frictionRecounter` and the OpenCode host), so an agent-server restart
+   delays a count and does not erase one. The rates read only the counters of the document (`friction - 'sessions' -
+   'events'`), not its per-session detail.
+4. **Shutdown never waits for a job.** `close()` aborts the signal that the database and `gh` calls carry (the `gh`
+   process is killed) and waits at most 10 s; `boot` then ends the pool with its own short cap. An in-flight query ends
+   at its own statement timeout.
+
+**State of the job.** `boot` returns `friction: { enabled, state, reason? }`. `state` is `on`; `off` (the flag, or a literal test
+config); `misconfigured` (a bad `AGW_FRICTION_CONFIG` or `AGW_FRICTION_REPO`: the host stays up with the job off,
+follow-up marking included); `no-repo` (enabled, but `AGW_FRICTION_REPO` is unset: counters, follow-ups and recounts run,
+no issue is ever filed, which is not the same as working). `/health` serves `{ enabled, state }` only: it is
+unauthenticated, so the reason, which can name a setting, stays in the process and its boot log. `make verify` prints the
+state, never fails on it.
+
+The issue holds counts, rates, limits and at most 20 run ids, and nothing else. The job reads only the `friction`
+document, workflow id and run id; this repository is public and runs review private repositories, so no input,
+output, path, repository name, prompt or transcript is ever selected. `friction.test.ts` asserts it with a recognisable
+`cwd`, prompt, output and error in the run rows.
+
+**Deploy note:** `AGW_FRICTION_REPO` must be set in the host's environment for issues to open; unset, nothing is filed. Point it at a repository whose issues may show workflow ids, run ids and friction rates (this repository is public, which is what the brief chose). One host process runs the job; two overlapping processes during a deploy could both file an issue for the same breach (the record is a read, not a lock).
 
 ## Token effect / cache effect
 
@@ -214,7 +276,7 @@ into `AGENTS.md`, so the agent's cached prefix (system prompt, skills) is untouc
 changes the message tail only. Activating or retiring a fact changes the run fingerprint (one new fingerprint group, no
 cold prompt cache: the prefix is unchanged). The retrospective is its own spend: one Haiku-class agent step per workflow and week
 over at most ~30k input tokens of sampled records, no tools, plus at most one JSON retry; nothing runs when a workflow had no runs.
-Otherwise none of its own. The host adds no model-visible text and no tokens (the default scorers and drift are deterministic; `agw eval run --yes` costs what its case runs cost, tagged `purpose: eval`, and says so before it runs): workflow input goes to the runtime unchanged and capability calls go to the route table as the capabilities README describes. Held requests poll the journal, not a model. Two things to know: `agw schema <workflow>` now prints the workflow's output schema too (about a screenful for `review`), which a caller reading it spends context on once; a deploy that changes an `AGENTS.md`, skill, route or the OpenCode version changes the run fingerprint and costs one cold prompt cache (middleware README), and a capability called straight over HTTP (`agw llm title`) is a `cap.<id>` run of its own, recorded and in Argo like any run; one inside a workflow step counts on that step.
+Otherwise none of its own beyond the OpenCode adapter's repeat-tool nudge (opencode-host README). The host adds no model-visible text and no tokens (the default scorers and drift are deterministic; `agw eval run --yes` costs what its case runs cost, tagged `purpose: eval`, and says so before it runs): workflow input goes to the runtime unchanged and capability calls go to the route table as the capabilities README describes. Held requests poll the journal, not a model. Two things to know: `agw schema <workflow>` now prints the workflow's output schema too (about a screenful for `review`), which a caller reading it spends context on once; a deploy that changes an `AGENTS.md`, skill, route or the OpenCode version changes the run fingerprint and costs one cold prompt cache (middleware README), and a capability called straight over HTTP (`agw llm title`) is a `cap.<id>` run of its own, recorded and in Argo like any run; one inside a workflow step counts on that step.
 
 ## Tests
 
@@ -235,5 +297,6 @@ Otherwise none of its own. The host adds no model-visible text and no tokens (th
 | `eval-cli.test.ts` | the document as the CLI reads it: `agw eval run` and `agw eval compare` are commands with their flags, none skipped |
 | `eval-resume.test.ts` | a resumed `eval.run` adopts its case runs (no new clone, a scored case not scored again, the running one's clone kept across the shutdown and removed by the adopting process); a cancelled one cancels its running case, starts no further case and removes a clone only after its run ended (a slowed cancel proves the order); an adopt-path failure and a scorer error are per-case errors outside the pass rate |
 | `main.test.ts` | config, `lazyOpenCodeHost` (nothing built before the first agent step, a failed start retried), `boot` (a taken port fails before the runtime opens), the process entry: refusals, SIGTERM leaves a run `running` with exit 0, a second process resumes it |
+| `friction.test.ts` | the threshold job against Postgres rows: breach, no breach (rate, minimum, build/verify/eval traffic, window, cancelled, unrecorded), top-level only, every default limit alone, `off` limits, the issue record (open: skip by number; closed: only newer runs; reopened; deleted; a `gh` error; intent rows after a crash), a failing `gh`, incomplete runs recounted before the rates (capped), the timer and a bounded `close()`; follow-up detection incl. fractional minutes; config parsing and the running host's `friction` state in `boot` and `/health`; the money-rule prefixes against the real `limits` errors; the lazy host's counters source |
 | `launch-override.test.ts` | the `launch.sh` IU override block in `/bin/sh` with a fake HOME: absent file, both names override, other lines warned by name only, CR and quote styles, refused with 78: a mode other than 0600, a missing name, an empty key, an unknown label |
 | `lifecycle.test.ts` | signals, the hard-exit backstop, second signal, uncaught exception vs unhandled rejection |

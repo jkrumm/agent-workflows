@@ -1,6 +1,7 @@
 import type { Logger, Middleware } from '@agent-workflows/runtime'
 import { type ArgoTransport, ArgoOutbox, argoTransportFromEnv, type OutboxOptions } from './argo.ts'
 import { JournalDb } from './db.ts'
+import { type FrictionSource, frictionMiddleware } from './friction.ts'
 import { type IuKeyId, iuKeyMiddleware } from './iu-key.ts'
 import { type FingerprintSource, fingerprintMiddleware } from './fingerprint.ts'
 import { purposeMiddleware } from './purpose.ts'
@@ -13,6 +14,8 @@ export type PlatformOptions = {
   schema?: string
   logger?: Logger
   fingerprint: FingerprintSource
+  /** Where an agent step's session counters come from (the agent host); without one only step outcomes are counted. */
+  friction?: FrictionSource
   /** The label of the IU key this process holds (`parseIuKeyId(IU_KEY_ID)`), stamped on every run it admits. Required: no silent default. */
   iuKey: IuKeyId
   telemetry?: Omit<TelemetryOptions, 'logger' | 'sessionIdOf'>
@@ -39,8 +42,8 @@ const consoleLogger: Logger = {
 }
 
 /**
- * The platform layer every workflow runs inside: purpose, IU key label, fingerprint, run record, telemetry (list order: the
- * record annotates the run span before telemetry ends it), plus the Argo outbox the host flushes.
+ * The platform layer every workflow runs inside: purpose, IU key label, fingerprint, run record, telemetry (list order: friction
+ * writes the counters the record reads; the record annotates the run span before telemetry ends it), plus the Argo outbox the host flushes.
  */
 export function platformMiddleware(options: PlatformOptions): Platform {
   const logger = options.logger ?? consoleLogger
@@ -62,6 +65,7 @@ export function platformMiddleware(options: PlatformOptions): Platform {
         source: options.fingerprint,
         onFingerprint: (runId, fingerprint) => telemetry.annotateRun(runId, { 'agw.fingerprint': fingerprint }),
       }),
+      frictionMiddleware({ db, logger, source: options.friction }),
       recordMiddleware({ db, logger, onRecord: (record) => telemetry.recordRun(record) }),
       telemetry.middleware(),
     ],

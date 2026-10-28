@@ -203,6 +203,45 @@ answer, tools and usage are those after the turn's input only. A follow-up never
 (the session already ran on its route). A retried continue step asks for the next `attempt`, so it never re-reads
 the failed turn.
 
+## Repeat-tool nudge and friction counters
+
+While a session runs, every poll counts the tool parts after the prompt by **tool name + canonical JSON of the
+input** (keys sorted recursively, so `{a,b}` and `{b,a}` are one call). A part whose input is not known yet
+(`pending`) is not counted. When one key reaches its **3rd, 5th or 8th** call the host appends ONE synthetic note
+(`metadata.agw.kind: nudge`, the same `/synthetic` route as the resume note): "you called this tool with identical
+input N times; change approach or answer." Never an abort, never a turn cap.
+
+**Measured on 2.0.32 (2026-10-28, `test/live-nudge.test.ts`, check route, two runs):** a synthetic input posted while
+a turn runs is read **in that turn**, at its next step boundary: the note lands after the last assistant message that
+finished `tool-calls`, the model answers it in the same turn, and the session has one `idle` in total
+(`read, read, read, read, synthetic, assistant "NUDGED" [finish=stop], idle`). It does not wait for the turn to end.
+The one race is a note posted as the turn is finishing, which may run as a turn of its own; `finalText` therefore
+ignores everything after a nudge that follows an `idle` or a message that finished anything but `tool-calls` (a steer or
+resume in between starts a new turn again). A message with no `finish` (aborted, cut off by a restart, or a text
+preamble still streaming before its tool calls) is not taken as ended: only an `idle` after it proves the turn is over. The text stops at the last non-empty reply before
+such a nudge, so the answer of a step never comes from a nudge turn and a final empty `stop` message does not blank it. The fake server models the measured behaviour (`queueSynthetic(true)`
+models the queued one for that race).
+
+- **Exactly once per threshold.** The note's id is keyed by (session, tool+input digest, threshold); the host checks
+  its own sent set and the session's messages before posting, and the server dedupes the id too. A re-attached wait,
+  a repeated poll, or a restart sends nothing extra. A jump from 2 to 5 calls between two polls sends one note, for 5.
+- **Only while running, and a failure is never fatal.** A session that is done is not nudged; a nudge counts as host
+  input for the done check, like the resume note. A post that fails is logged with the HTTP status, the error message
+  (never a response body), whether it is transient, the attempt and whether it gave up: a transient error is retried
+  on the next polls (3 tries in all), anything else gives that threshold up. A given-up nudge stays
+  visible: `nudgesMissed` in the session's counters is derived from the messages, so it survives a restart. A threshold
+  counts as missed only when a later tool call followed it (the turn went on, so the host had a poll to send the note;
+  a threshold at the very last call may never have been polled) and no note for it or any higher threshold of the same
+  call is there (a jump across thresholds sends one note, for the highest). Neither touches the turn.
+- **Counters are derived, not accumulated.** `sessionCounters(messages, promptId)` (`toolErrors`: parts that ended in
+  `error`; `repeatToolCalls`: the highest identical count; `nudges`: nudge notes in the session) is pure over the
+  messages. `OpenCodeHost.stepFriction({ runId, stepId })` finds every session of the step from its key (each
+  generation a retry opened, each one's provider-balance fallback) and returns the counters per session id. It needs no
+  handle: a failed attempt clears its handle, its session stays. Returns `{ sessions, incomplete }`: a probe that fails
+  is logged and that session skipped, the others still count, and `incomplete` is set (a failed probe on a generation
+  also ends the walk: whether a later one exists is unknown). The middleware marks the run's document and has the
+  runtime deliver the hooks again. The middleware calls it at `runPost` (middleware README §Friction).
+
 ## DeepSeek wire rules (concept §8)
 
 | Rule | Who | Evidence |
@@ -272,6 +311,12 @@ A turn that ends `failed` with a provider-balance error (`isBalanceFailure` from
   was cache reads). What the cut-off turn had generated is lost (an empty message in the store) and is paid again.
 - **A follow-up turn** (`ctx.continue`) sends only its own text: the session's head and history are a warm
   prompt-cache prefix, so a nudge costs the feedback plus the new answer, not the original prompt again.
+
+- **A nudge** is one short model-visible note (about 50 tokens) at the 3rd, 5th and 8th identical call, appended after
+  the cached prefix: the head and history stay byte-identical, so the cache is unaffected. It is read in the running
+  turn (measured), so it adds one step boundary's worth of input, not a turn; in the finishing race it can cost one
+  short extra turn whose reply is ignored. It also changes what the agent does next, on purpose. Reading the counters
+  at `runPost` is a full message read per session of each agent step; no tokens.
 - **A changed agent** (`AGENTS.md`, skill, config, permissions) changes the head: its next session starts with a
   cold cache, once. The fingerprint changes with it.
 - **A server restart** without a running turn costs nothing: the session is read, not resumed. A drift restart at
@@ -290,6 +335,7 @@ A turn that ends `failed` with a provider-balance error (`isBalanceFailure` from
 | Skills | loaded at the first prompt from the location's `.opencode/skills/` (live run: the model named the location's skill) |
 | Home isolation | with `HOME=<root>/home` (no `OPENCODE_TEST_HOME`) and `OPENCODE_DISABLE_CLAUDE_CODE=1`, the model's skill list is the location's skill plus OpenCode's builtins (`opencode`, `report`), none of the user's `~/.claude/skills` (live run asserts it). `OPENCODE_TEST_HOME` is not needed |
 | Shell denied | with the session rule `shell * deny` the model's tool list has no shell (live run: `execute, skill, subagent, glob, grep, read, edit, write, webfetch, websearch`) |
+| Synthetic mid-turn | a `POST /synthetic` while a turn runs is read in that turn at its next step boundary (after a `finish=tool-calls` message; one `idle`), not queued behind it (`test/live-nudge.test.ts`) |
 | Project | a location outside any repo is its own project (`GET /api/location` → `project.directory` = the location) |
 
 ## Tests

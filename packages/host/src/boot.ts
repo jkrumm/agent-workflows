@@ -1,6 +1,12 @@
 import { createCapabilities, createRegistry } from '@agent-workflows/capabilities'
 import { runawayCap, walletGate } from '@agent-workflows/limits'
-import { fsFingerprintSource, platformMiddleware } from '@agent-workflows/middleware'
+import {
+  type FrictionSource,
+  frictionRecounter,
+  fsFingerprintSource,
+  JournalDb,
+  platformMiddleware,
+} from '@agent-workflows/middleware'
 import { OpenCodeHost, OpenCodeServer } from '@agent-workflows/opencode-host'
 import { type AgentHost, type Json, Runtime } from '@agent-workflows/runtime'
 import { resolve } from 'node:path'
@@ -9,6 +15,13 @@ import { loadAgentDefinitions } from './agents.ts'
 import { createHost } from './app.ts'
 import { createCapabilityWorkflows } from './capability-runs.ts'
 import type { HostConfig } from './config.ts'
+import {
+  type FrictionStatus,
+  frictionStatus,
+  type GhPort,
+  ghCli as frictionGhCli,
+  startFrictionJob,
+} from './friction/index.ts'
 import { pgLearningsStore, withLearnedFacts, withLearningsFingerprint } from './learnings/index.ts'
 import { IDLE_TIMEOUT_S } from './operations.ts'
 import { ghCli } from './workflows/retrospective/gh.ts'
@@ -24,6 +37,11 @@ const SHUTDOWN_GRACE_MS = 5000
 
 export interface RunningHost {
   port: number
+  /**
+   * The friction job's state. `/health` serves `enabled` and `state` only; the reason (which can name a setting) stays
+   * in this process and its log.
+   */
+  friction: FrictionStatus & { reason?: string }
   /** Stop accepting, close the runtime (runs stay `running`), flush telemetry, release pools. Idempotent. */
   shutdown(): Promise<void>
 }
@@ -32,6 +50,8 @@ export interface BootOptions {
   /** Replaces the OpenCode host (tests). */
   agentHost?: AgentHost
   env?: Record<string, string | undefined>
+  /** Replaces the `gh` CLI the friction job opens issues through (tests). */
+  gh?: GhPort
 }
 
 type Exporter = NonNullable<NonNullable<Parameters<typeof platformMiddleware>[0]['telemetry']>['exporter']>
@@ -49,7 +69,11 @@ function exporterFor(env: Record<string, string | undefined>): Exporter | undefi
 
 type AgentDefinitions = ConstructorParameters<typeof OpenCodeHost>[0]['agents']
 
-export type LazyAgentHost = AgentHost & { close(): Promise<void> }
+export type LazyAgentHost = AgentHost & {
+  close(): Promise<void>
+  /** The counters of every session a step opened. Builds the host if this process has not yet (a run resumed after a restart). */
+  stepSessions: FrictionSource['stepSessions']
+}
 
 type OpenCodeTraceparent = NonNullable<ConstructorParameters<typeof OpenCodeHost>[0]['traceparent']>
 
@@ -108,6 +132,9 @@ export function lazyOpenCodeHost(
     steer: async (handle: Json, text, options) => (await get()).host.steer(handle, text, options),
     abort: async (handle: Json) => (await get()).host.abort(handle),
     followUp: async (handle: Json, spec) => (await get()).host.followUp(handle, spec),
+    // Builds on demand: a run resumed after a restart has finished agent steps whose sessions this process never touched.
+    // Only asked for runs that have agent steps, so a host without agent workflows still never spawns `opencode`.
+    stepSessions: async (step) => (await get()).host.stepFriction(step),
     async close() {
       closed = true
       if (!built) return
@@ -167,6 +194,15 @@ export async function boot(config: HostConfig, options: BootOptions = {}): Promi
     const agentsDir = config.agentsDir ?? 'agents'
     const agents = loadAgentDefinitions(agentsDir)
 
+    // The platform is built before the agent host (the host needs its traceparent); the counters source binds late.
+    let owned: LazyAgentHost | undefined
+    const frictionSource: FrictionSource = {
+      stepSessions: async (step) => (await owned?.stepSessions(step)) ?? { sessions: [], incomplete: false },
+    }
+    const frictionState = frictionStatus(config.friction)
+    if (config.friction && frictionState.state !== 'on') {
+      console.warn(`[agw-host] friction job ${frictionState.state}: ${frictionState.reason ?? 'no reason given'}`)
+    }
     const platform = platformMiddleware({
       connectionString: config.pgUrl,
       schema: config.schema,
@@ -180,17 +216,19 @@ export async function boot(config: HostConfig, options: BootOptions = {}): Promi
         learnings,
       ),
       iuKey: config.iuKey,
+      friction: frictionSource,
       telemetry: { exporter: exporterFor(env) },
       argo: { machine: config.machine },
     })
     closers.push(() => platform.close())
-    const owned = options.agentHost
+    owned = options.agentHost
       ? undefined
       : lazyOpenCodeHost(env, (runId, stepId) => platform.telemetry.traceparent(runId, stepId) ?? undefined, {
           agents,
         })
     const agentHost = options.agentHost ?? owned
-    if (owned) closers.push(() => owned.close())
+    const lazy = owned
+    if (lazy) closers.push(() => lazy.close())
     const cap = runawayCap({ connectionString: config.pgUrl, schema: config.schema })
     closers.push(() => cap.close())
     // Optional expensive work (OCR) is its own workflow, refused at admission by the wallet gate (concept §4).
@@ -222,6 +260,7 @@ export async function boot(config: HostConfig, options: BootOptions = {}): Promi
       secret: config.secret,
       version: config.version,
       isOpen: () => open,
+      friction: { enabled: frictionState.enabled, state: frictionState.state },
     })
     await host.openapi() // a broken contract fails the start, not the first request
 
@@ -266,6 +305,43 @@ export async function boot(config: HostConfig, options: BootOptions = {}): Promi
       closers.push(() => schedule.stop())
     }
 
+    if (config.friction?.enabled) {
+      const frictionDb = new JournalDb({ connectionString: config.pgUrl, schema: config.schema, poolSize: 1 }, console)
+      const recounter = frictionRecounter({
+        db: frictionDb,
+        logger: {
+          warn: (m, meta) => console.warn(`[agw-host] ${m}`, meta ?? ''),
+          error: (m, meta) => console.error(`[agw-host] ${m}`, meta ?? ''),
+        },
+        source: frictionSource,
+      })
+      const job = startFrictionJob({
+        db: frictionDb,
+        recount: (runId, recountOptions) => recounter.recount(runId, recountOptions),
+        settings: config.friction,
+        gh: options.gh ?? frictionGhCli,
+        logger: {
+          warn: (m, meta) => console.warn(`[agw-host] ${m}`, meta ?? ''),
+          error: (m, meta) => console.error(`[agw-host] ${m}`, meta ?? ''),
+        },
+      })
+      closers.push(async () => {
+        await job.close() // aborts the job's calls, waits a bounded time
+        // An in-flight query ends at its own timeout; the pool close is capped, and its timer cleared when it is not.
+        let cap: ReturnType<typeof setTimeout> | undefined
+        try {
+          await Promise.race([
+            frictionDb.close(),
+            new Promise<void>((resolve) => {
+              cap = setTimeout(resolve, 2000)
+            }),
+          ])
+        } finally {
+          clearTimeout(cap)
+        }
+      })
+    }
+
     let flushing = false
     const flushTimer = setInterval(() => {
       if (flushing || !platform.outbox) return
@@ -281,7 +357,7 @@ export async function boot(config: HostConfig, options: BootOptions = {}): Promi
     }, FLUSH_INTERVAL_MS)
     closers.push(async () => clearInterval(flushTimer))
 
-    return { port: server.port ?? config.port, shutdown }
+    return { port: server.port ?? config.port, friction: frictionState, shutdown }
   } catch (error) {
     await shutdown().catch(() => {}) // already logged by the closer
     throw error

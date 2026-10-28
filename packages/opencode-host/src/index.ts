@@ -30,6 +30,7 @@ export {
   WarmCache,
   type WarmCacheOptions,
 } from './locations.ts'
+export { NUDGE_AT, type SessionCounters, sessionCounters } from './session.ts'
 export {
   isServeOnPort,
   OPENCODE_VERSION,

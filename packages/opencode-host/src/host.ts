@@ -1,4 +1,4 @@
-import { usageFromOpenCodeMessages } from '@agent-workflows/middleware'
+import { type StepSessions, usageFromOpenCodeMessages } from '@agent-workflows/middleware'
 import { costFromUsage, isBalanceFailure, LONG_PROMPT_TOKENS, type Rate, type RouteId } from '@agent-workflows/routes'
 import {
   type AgentFollowUpSpec,
@@ -34,12 +34,17 @@ import {
   activityFingerprint,
   finalText,
   inputId,
+  nudgeId,
+  nudgeThreshold,
   type Outcome,
   Persisting,
   type SessionState,
   parseStructured,
   promptIndex,
+  repeatCounts,
   SessionReader,
+  type SessionCounters,
+  sessionCounters,
   sessionIdFor,
   sessionState,
   steerId,
@@ -114,6 +119,15 @@ type Pin = { release: () => void; lapse: ReturnType<typeof setTimeout> }
 const RESUME_TEXT =
   'The previous turn was cut off when the agent server restarted before it finished. Continue the task from ' +
   'where it stopped and complete it. Do not repeat tool calls whose results are already above.'
+
+/** A nudge post that keeps failing transiently is tried this many times, then given up. */
+const NUDGE_ATTEMPTS = 3
+
+/** The repeat-tool note (concept §7): said once per threshold, never an abort and never a cap. */
+const nudgeText = (tool: string, count: number) =>
+  `You have called the "${tool}" tool with identical input ${count} times in this session. Repeating the same call ` +
+  'will not give a different result. Change your approach (a different tool, a different input, a different line ' +
+  'of attack), or answer with what you already have.'
 
 const consoleLogger: Logger = {
   warn: (message, meta) => console.warn(message, meta ?? ''),
@@ -499,6 +513,9 @@ export class OpenCodeHost implements AgentHost {
     })
     const tools = new Map<string, 'pre' | 'post'>()
     const shells = new Map<string, number>()
+    /** Nudge ids posted by this wait; the session's own messages cover the ones an earlier wait posted. */
+    const nudged = new Set<string>()
+    const nudgeFailures = new Map<string, number>()
     const cutoff = new Persisting()
     const unprompted = new Persisting()
     // The pin `open` took (same process), else a fresh use; retried on every poll while there is none.
@@ -533,6 +550,7 @@ export class OpenCodeHost implements AgentHost {
             return await this.waitOnFallback(h, snap.messages, promptId, options)
           }
           if (state.kind === 'done') return await this.finish(h, reader, promptId, state, signal)
+          if (state.kind === 'running') await this.nudge(h, snap.messages, promptId, nudged, nudgeFailures)
           if (state.kind === 'cutoff' && cutoff.check(true, this.cutoffGraceMs)) {
             await this.resume(h, state.lastId)
             cutoff.reset()
@@ -852,6 +870,104 @@ export class OpenCodeHost implements AgentHost {
         error: (err as Error).name,
       })
     }
+  }
+
+  /**
+   * Appends one synthetic note when a tool+input reaches its 3rd, 5th or 8th call in this session. Counts are
+   * recomputed from the messages on every poll, the note's id is keyed by (tool+input, threshold), and a note already
+   * in the session is never sent again, so a re-attach, a jump across two thresholds or a repeated poll sends
+   * nothing extra. Never aborts the turn.
+   */
+  private async nudge(
+    h: OpenCodeHandle,
+    messages: readonly Message[],
+    promptId: string,
+    sent: Set<string>,
+    failures: Map<string, number>,
+  ) {
+    const present = new Set(messages.map((m) => m.id))
+    for (const [key, count] of repeatCounts(toolParts(messages, promptId))) {
+      const at = nudgeThreshold(count)
+      if (at === null) continue
+      const id = nudgeId(h.sessionId, key, at)
+      if (sent.has(id) || present.has(id)) continue
+      const tool = key.slice(0, key.indexOf('\0'))
+      try {
+        await this.client.synthetic(
+          h.sessionId,
+          {
+            id,
+            text: nudgeText(tool, count),
+            description: 'agw repeat-tool nudge',
+            metadata: { agw: { kind: 'nudge' } },
+          },
+          this.headers(h.runId, h.stepId),
+        )
+        sent.add(id)
+        this.logger.warn('opencode repeat-tool nudge', { sessionId: h.sessionId, tool, count })
+      } catch (err) {
+        // Advisory, so never fatal: a transient failure is retried on the next polls (a few times), anything else gives
+        // this threshold up. A given-up nudge is visible afterwards as `nudgesMissed` in the session's counters.
+        const retryable = transient(err)
+        const failed = (failures.get(id) ?? 0) + 1
+        failures.set(id, failed)
+        const gaveUp = !retryable || failed >= NUDGE_ATTEMPTS
+        if (gaveUp) sent.add(id)
+        this.logger.warn('opencode nudge not sent; the turn goes on', {
+          sessionId: h.sessionId,
+          tool,
+          count,
+          // The status and route of an HTTP failure; never a response body (a message can echo anything).
+          status: err instanceof OpenCodeHttpError ? err.status : undefined,
+          error: err instanceof Error ? err.message : String(err),
+          transient: retryable,
+          attempt: failed,
+          gaveUp,
+        })
+      }
+    }
+  }
+
+  /**
+   * The friction counters of every session a step ever opened: each generation of the step key (a retry opens the
+   * next one) and each generation's provider-balance fallback session. Derived from the session ids, so it needs no
+   * handle and no hook delivery: a retried attempt, a step replayed after a crash and a fallback all count, once, under
+   * their own session id. A session whose probe fails is logged and skipped, the others still count, and the answer is
+   * marked `incomplete` (a failed probe on a generation also ends the walk: whether a later one exists is unknown).
+   */
+  async stepFriction(step: { runId: string; stepId: string }): Promise<StepSessions> {
+    const key = `${step.runId}:${step.stepId}`
+    const headers = this.headers(step.runId, step.stepId)
+    type Probe = { state: 'counted' | 'absent' | 'failed'; entry?: { session: string } & SessionCounters }
+    const probe = async (sessionId: string): Promise<Probe> => {
+      try {
+        if (!(await this.client.getSession(sessionId, headers))) return { state: 'absent' }
+        const messages = await this.client.messages(sessionId, headers)
+        return {
+          state: 'counted',
+          entry: { session: sessionId, ...sessionCounters(messages, inputId(sessionId, 'prompt'), sessionId) },
+        }
+      } catch (err) {
+        this.logger.warn('opencode friction probe failed; this session is not counted', {
+          sessionId,
+          error: err instanceof Error ? err.name : typeof err,
+        })
+        return { state: 'failed' }
+      }
+    }
+    const counted: ({ session: string } & SessionCounters)[] = []
+    let incomplete = false
+    for (let generation = 1; generation <= MAX_GENERATIONS; generation++) {
+      const id = sessionIdFor(key, generation)
+      // A failing fallback probe never drops the primary's counters (each probe has its own try/catch).
+      const [primary, fallback] = await Promise.all([probe(id), probe(fallbackSessionId(id))])
+      for (const probed of [primary, fallback]) {
+        if (probed.entry) counted.push(probed.entry)
+        if (probed.state === 'failed') incomplete = true
+      }
+      if (primary.state !== 'counted') break // absent: no further generation; failed: unknown, stop probing
+    }
+    return { sessions: counted, incomplete }
   }
 
   private async reportTools(

@@ -6,6 +6,7 @@ import {
   type RequestContext,
   type RouterNode,
 } from '@agent-workflows/capabilities'
+import type { FrictionStatus } from './friction/settings.ts'
 import type { Logger, Runtime } from '@agent-workflows/runtime'
 import { OpenAPIGenerator } from '@orpc/openapi'
 import { OpenAPIHandler } from '@orpc/openapi/fetch'
@@ -44,6 +45,11 @@ export interface HostOptions {
   version: string
   /** False while the runtime is not open (before `open()`, after `close()`): `/health` is degraded and every other route is a 503. */
   isOpen?: () => boolean
+  /**
+   * The friction job's state, reported by `/health` (informational: it never makes the probe degraded). `/health` is
+   * unauthenticated, so this is a state and never a reason.
+   */
+  friction?: FrictionStatus
   /** Upper bound of the Postgres probe behind `/health`. Default 2 s. */
   healthTimeoutMs?: number
   logger?: Logger
@@ -195,7 +201,11 @@ export function createHost(options: HostOptions): Host {
     } finally {
       clearTimeout(timer)
     }
-    return Response.json({ status: 'ok', version: options.version })
+    return Response.json({
+      status: 'ok',
+      version: options.version,
+      ...(options.friction ? { friction: options.friction } : {}),
+    })
   }
 
   /**

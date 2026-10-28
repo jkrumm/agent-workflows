@@ -143,7 +143,15 @@ describe('platform middleware through a real runtime', () => {
             tokens_cache_write: '0',
             unpriced_calls: 1,
             tool_calls: 0,
-            friction: null,
+            friction: {
+              v: 1,
+              toolErrors: 0,
+              repeatToolCalls: 0,
+              nudges: 0,
+              schemaReasks: 0,
+              overBudget: 0,
+              followUps: 0,
+            },
           })
           expect(Number(row.cost)).toBeCloseTo(0.01 + 0.02 + 0.000103878, 12)
         }

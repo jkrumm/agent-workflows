@@ -6,6 +6,7 @@
 //
 // The model is scripted by the prompt text: `[slow:<ms>]` turn length, `[tool:<name>]` one tool call first,
 // `[shell:<ms>]` a running shell tool that only prints, `[json]` a fenced JSON answer, `[fail]` a failed turn,
+// `[hold]` the first turn stays open until the test calls `release` (tool parts are added by `addTool`),
 // `[free]` an answer reported at cost 0, `[balance]` a turn IU refuses for provider balance unless the session runs on
 // the Responses provider (the fallback), `[balance-all]` the same refusal on every provider.
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
@@ -20,6 +21,7 @@ type Part = {
     input: Record<string, unknown>
     content?: { type: string; text: string }[]
     metadata?: Record<string, unknown>
+    error?: string | { message: string }
   }
 }
 type Msg = {
@@ -66,6 +68,12 @@ export function startFake(options: FakeOptions) {
     : { sessions: {}, seq: 0 }
   const running = new Map<string, { timers: Set<ReturnType<typeof setTimeout>>; finish: () => void }>()
   const shells = new Map<string, number>()
+  /** The open assistant message of each `[hold]` session. */
+  const held = new Map<string, Msg>()
+  /** Held sessions that read a synthetic note in-turn: their answer comes in a message after it. */
+  const noted = new Set<string>()
+  /** Measured on 2.0.32: a synthetic input posted mid-turn is read in the running turn. `true` queues it as the old model did. */
+  let queueSynthetic = false
   const locations = new Set<string>()
   const requests: string[] = []
   const urls: string[] = []
@@ -141,6 +149,11 @@ export function startFake(options: FakeOptions) {
     s.messages.push(reply)
     save()
     const tokens = { input: 10, output: 5, reasoning: 1, cache: { read: 100, write: 20 } }
+
+    if (/\[hold\]/.test(prompt) && !s.messages.some((m) => m.type === 'assistant' && m !== reply)) {
+      held.set(s.id, reply)
+      return
+    }
 
     if ((tool || shell) && !usedTool) {
       const part: Part = {
@@ -312,6 +325,20 @@ export function startFake(options: FakeOptions) {
           ...(body.metadata ? { metadata: body.metadata as Record<string, unknown> } : {}),
           ...(body.description ? { description: String(body.description) } : {}),
         }
+        if (tail === '/synthetic' && held.has(s.id) && !queueSynthetic && !exists(s, input.id)) {
+          // In-turn: the note lands between the turn's own assistant messages and the turn goes on after it.
+          s.messages.push({
+            id: input.id,
+            type: 'synthetic',
+            time: { created: now() },
+            text: input.text,
+            ...(input.metadata ? { metadata: input.metadata } : {}),
+            ...(input.description ? { description: input.description } : {}),
+          })
+          noted.add(s.id)
+          save()
+          return json({ data: { id: input.id, sessionID: s.id, type: input.type, payload: { text: input.text } } })
+        }
         admit(s, input)
         if (body.resume !== false) execute(s)
         return json({ data: { id: input.id, sessionID: s.id, type: input.type, payload: { text: input.text } } })
@@ -341,6 +368,53 @@ export function startFake(options: FakeOptions) {
       for (const run of running.values()) for (const t of run.timers) clearTimeout(t)
       running.clear()
       void server.stop(true)
+    },
+    /** `true`: a synthetic input posted mid-turn waits in the inbox and runs as a turn of its own (the model before it was measured). */
+    queueSynthetic(on: boolean) {
+      queueSynthetic = on
+    },
+    /** Adds a tool part to a held turn's assistant message. */
+    addTool(
+      sessionId: string,
+      tool: { name: string; input: Record<string, unknown>; status?: string; error?: string },
+    ) {
+      const reply = held.get(sessionId)
+      if (!reply) throw new Error(`session ${sessionId} holds no open turn`)
+      reply.content?.push({
+        type: 'tool',
+        id: id('call'),
+        name: tool.name,
+        state: {
+          status: tool.status ?? 'completed',
+          input: tool.input,
+          ...(tool.error ? { error: tool.error } : {}),
+          content: [{ type: 'text', text: 'out' }],
+        },
+      })
+      reply.finish = 'tool-calls' // mid-loop, as on the real server (measured)
+      save()
+    },
+    /** Ends a held turn with an answer; input that arrived meanwhile (a nudge) runs as the next turn. */
+    release(sessionId: string) {
+      const reply = held.get(sessionId)
+      const s = state.sessions[sessionId]
+      if (!reply || !s) throw new Error(`session ${sessionId} holds no open turn`)
+      held.delete(sessionId)
+      let target = reply
+      if (noted.delete(sessionId)) {
+        // The turn read a note in-turn: it answers in a new assistant message after the note.
+        target = { id: id('msg'), type: 'assistant', time: { created: now() }, model: s.model, content: [] }
+        s.messages.push(target)
+      }
+      target.content?.push({ type: 'text', text: 'held answer' })
+      Object.assign(target, {
+        finish: 'stop',
+        tokens: { input: 10, output: 5, reasoning: 1, cache: { read: 0, write: 0 } },
+        cost: 0.001,
+        time: { ...reply.time, completed: now() },
+      })
+      save()
+      running.get(sessionId)?.finish()
     },
     /** `GET /api/session/:id` answers 500 while set. */
     failSessionLookups(on: boolean) {
