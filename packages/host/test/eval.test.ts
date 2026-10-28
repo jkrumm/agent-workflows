@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { CheckCase, casesPath, writeCases } from '@agent-workflows/eval'
-import type { Runtime } from '@agent-workflows/runtime'
+import type { FinalScore, Runtime } from '@agent-workflows/runtime'
 import { FakeAgentHost } from '@agent-workflows/runtime/testing'
 import { createCheckWorkflows } from '../src/workflows/check/index.ts'
 import { DriftJob, driftOptionsFromEnv, wireEval, createEvalWorkflows } from '../src/workflows/eval/index.ts'
@@ -283,9 +283,24 @@ describe('drift', () => {
     const logger = { warn: () => {}, error: () => {} }
     const one = new DriftJob(rt, options, logger)
     const two = new DriftJob(rt, options, logger)
-    const counts = await Promise.all([one.tick(), two.tick()])
-    expect(counts[0] + counts[1]).toBe(3)
-    expect(await one.tick()).toBe(0)
+    const [x, y] = await Promise.all([one.tick(), two.tick()])
+    expect({ scored: x.scored + y.scored, errors: x.errors + y.errors }).toEqual({ scored: 3, errors: 0 })
+    expect(await one.tick()).toEqual({ scored: 0, errors: 0 })
+    // A recorded scorer error counts as an error, never as scored.
+    const warned: string[] = []
+    const broken = new DriftJob(
+      {
+        driftCandidates: async () => ['r-x', 'r-y'],
+        scoreRun: async (id): Promise<FinalScore> =>
+          id === 'r-x'
+            ? { source: 'drift', scorer: 's', scores: {}, pass: null, error: 'bug', errorKind: 'scorer' }
+            : { source: 'drift', scorer: 's', scores: { ok: 1 }, pass: true },
+      },
+      options,
+      { warn: (message) => warned.push(message), error: () => {} },
+    )
+    expect(await broken.tick()).toEqual({ scored: 1, errors: 1 })
+    expect(warned).toEqual(['drift: scorer errors recorded (no verdict)'])
     for (const id of ids) {
       expect(await sql.run(id)).toMatchObject({
         score_source: 'drift',

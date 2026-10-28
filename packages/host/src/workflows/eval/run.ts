@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { mkdirSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { exec as bunExec, type Exec, materialize } from '@agent-workflows/eval'
@@ -137,6 +137,7 @@ function summarize(cases: CaseResult[]) {
  * estimate and spends nothing.
  */
 export function createEvalRun(slot: EvalSlot, options: EvalRunOptions = {}): HostWorkflow {
+  slot.tmpRoot = options.tmpRoot
   const env = options.env ?? process.env
   const exec = options.exec ?? bunExec
   const home = env.AGW_EVAL_HOME?.trim() || homedir()
@@ -309,23 +310,76 @@ export function caseTreeDir(tmpRoot: string | undefined, key: string): string {
   return join(tmpRoot ?? tmpdir(), `agw_eval_case_${createHash('sha256').update(key).digest('hex').slice(0, 16)}`)
 }
 
+const TERMINAL = new Set(['done', 'failed', 'cancelled'])
+
+/** Written into a case's tree directory first, so the sweep can find the run that tree belongs to. */
+const CASE_MARKER = '.agw-case.json'
+
 /**
- * The case's tree goes once its run cannot read it any more. A shutdown or a lost lease keeps it (the run goes on in
- * the next process, which removes it after adopting the run); a cancel removes it only after the run ended.
+ * A case's tree is removed only when its run is known ended (a terminal status, read now) or known never started (the
+ * lookup said there is none and no start was tried). Anything unknown (a failed read, a live run, a start that threw)
+ * keeps it; the sweep removes it later. A shutdown or a lost lease keeps it for the next process, which adopts the run
+ * and removes it; a cancel first cancels the run and waits (bounded) for it to end.
  */
-async function releaseTree(runtime: EvalRuntime, signal: AbortSignal, dir: string, runId: string | null) {
-  if (signal.aborted) {
-    if (!(signal.reason instanceof Cancelled)) return
-    if (runId) {
-      await runtime.cancel(runId).catch(() => {})
-      const ended = await runtime.wait(runId, { pollMs: 100, signal: AbortSignal.timeout(CANCEL_SETTLE_MS) }).then(
-        () => true,
-        () => false,
-      )
-      if (!ended) return
+async function releaseTree(
+  runtime: EvalRuntime,
+  signal: AbortSignal,
+  dir: string,
+  run: { runId: string | null; neverStarted: boolean },
+) {
+  if (signal.aborted && !(signal.reason instanceof Cancelled)) return
+  if (run.runId) {
+    if (signal.aborted) {
+      await runtime.cancel(run.runId).catch(() => {})
+      await runtime
+        .wait(run.runId, { pollMs: 100, signal: AbortSignal.timeout(CANCEL_SETTLE_MS) })
+        .catch(() => undefined)
     }
+    const state = await runtime.getRun(run.runId).catch(() => null)
+    if (!state || !TERMINAL.has(state.status)) return
+  } else if (!run.neverStarted) {
+    return
   }
   rmSync(dir, { recursive: true, force: true })
+}
+
+/**
+ * Removes case tree directories older than `olderThanMs` whose run is ended or absent (or that carry no marker: a kill
+ * during the clone), so a cancel past its 30 s settle or a killed process leaks nothing for long. A live run, or one
+ * whose lookup fails, keeps its tree. Returns the removed directories.
+ */
+export async function sweepCaseTrees(options: {
+  runtime: Pick<EvalRuntime, 'runByKey'>
+  tmpRoot: string | undefined
+  olderThanMs: number
+  now?: number
+}): Promise<string[]> {
+  const root = options.tmpRoot ?? tmpdir()
+  const now = options.now ?? Date.now()
+  const removed: string[] = []
+  let names: string[]
+  try {
+    names = readdirSync(root).filter((name) => name.startsWith('agw_eval_case_'))
+  } catch {
+    return removed
+  }
+  for (const name of names) {
+    const dir = join(root, name)
+    try {
+      if (now - statSync(dir).mtimeMs < options.olderThanMs) continue
+      const marker = join(dir, CASE_MARKER)
+      if (existsSync(marker)) {
+        const { workflow, key } = JSON.parse(readFileSync(marker, 'utf8')) as { workflow: string; key: string }
+        const run = await options.runtime.runByKey(workflow, key)
+        if (run && !TERMINAL.has(run.status)) continue
+      }
+      rmSync(dir, { recursive: true, force: true })
+      removed.push(dir)
+    } catch {
+      // A failed lookup or read keeps the tree: the next sweep tries again.
+    }
+  }
+  return removed
 }
 
 async function replayCase(deps: ReplayDeps, job: Job, c: EvalCase, started: Set<string>): Promise<CaseResult> {
@@ -342,26 +396,36 @@ async function replayCase(deps: ReplayDeps, job: Job, c: EvalCase, started: Set<
       args: job.args,
     })
   let runId: string | null = null
+  /** The lookup found no run and no start was tried yet: a tree here belongs to nobody. */
+  let neverStarted = false
   try {
     // A resumed eval run: the case started before. Adopt its run: no clone, no install, and no second score.
     const existing = await runtime.runByKey(target.id, key)
     if (existing) {
       runId = existing.runId
       started.add(runId)
-      if (existing.final?.source === 'regression' && existing.final.evalRunId === job.evalRunId) {
+      // A recorded verdict stands; a recorded scorer error is scored again.
+      if (
+        existing.final?.source === 'regression' &&
+        existing.final.evalRunId === job.evalRunId &&
+        existing.final.error === undefined
+      ) {
         return scoredResult(c.id, runId, existing, existing.final)
       }
       const end = await runtime.wait(runId, { pollMs: 500, signal: job.signal })
       return scoredResult(c.id, runId, end, await score(runId))
     }
 
+    neverStarted = true
     job.signal.throwIfAborted()
     rmSync(dir, { recursive: true, force: true }) // a tree left by a drive that died before its run started
     mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, CASE_MARKER), JSON.stringify({ workflow: target.id, key }))
     const tree = await materialize(c.tree, { exec: deps.exec, home: deps.home, tmpRoot: dir, setup: c.setup })
     if (!tree.ok) return { caseId: c.id, status: 'skipped', reason: `${tree.reason}: ${tree.detail}` }
     // A cancel during the clone: start nothing.
     job.signal.throwIfAborted()
+    neverStarted = false // from here a run may exist even if start throws
     try {
       ;({ runId } = await runtime.start(target, c.input(tree.dir, job.args), { purpose: 'eval', idempotencyKey: key }))
     } catch (error) {
@@ -378,6 +442,6 @@ async function replayCase(deps: ReplayDeps, job: Job, c: EvalCase, started: Set<
     if (job.signal.aborted) throw job.signal.reason
     return { caseId: c.id, status: 'error', ...(runId ? { runId } : {}), reason: errorText(error) }
   } finally {
-    await releaseTree(runtime, job.signal, dir, runId)
+    await releaseTree(runtime, job.signal, dir, { runId, neverStarted })
   }
 }

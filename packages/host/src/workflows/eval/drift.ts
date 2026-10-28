@@ -11,6 +11,9 @@ export type DriftOptions = {
   batch: number
 }
 
+/** What one drift tick did: verdicts written, and scorer errors recorded instead (no verdict). */
+export type DriftTick = { scored: number; errors: number }
+
 export const DEFAULT_DRIFT: DriftOptions = { rate: 0.1, intervalMs: 5 * 60_000, lookbackMs: 7 * 86_400_000, batch: 20 }
 
 /** `AGW_DRIFT_RATE` (0..1) and `AGW_DRIFT_INTERVAL_S` override the defaults; anything unparsable is refused at boot. */
@@ -40,7 +43,7 @@ export function driftOptionsFromEnv(env: Record<string, string | undefined>): Dr
  */
 export class DriftJob {
   private timer: ReturnType<typeof setTimeout> | undefined
-  private running: Promise<number> | null = null
+  private running: Promise<DriftTick> | null = null
   private stopped = false
 
   constructor(
@@ -50,19 +53,21 @@ export class DriftJob {
     private readonly now: () => number = Date.now,
   ) {}
 
-  /** One pass: the next batch of sampled, unscored runs. Returns how many it scored. */
-  async tick(): Promise<number> {
-    if (this.options.rate <= 0) return 0
+  /** One pass: the next batch of sampled, unscored runs. Verdicts and recorded scorer errors are counted apart. */
+  async tick(): Promise<DriftTick> {
+    const counts: DriftTick = { scored: 0, errors: 0 }
+    if (this.options.rate <= 0) return counts
     const ids = await this.runtime.driftCandidates({
       rate: this.options.rate,
       since: new Date(this.now() - this.options.lookbackMs),
       limit: this.options.batch,
     })
-    let scored = 0
     for (const runId of ids) {
       if (this.stopped) break
       try {
-        if (await this.runtime.scoreRun(runId, { source: 'drift', onlyUnscored: true })) scored++
+        const final = await this.runtime.scoreRun(runId, { source: 'drift', onlyUnscored: true })
+        if (final?.error !== undefined) counts.errors++
+        else if (final) counts.scored++
       } catch (error) {
         this.logger.warn('drift: scoring a run failed; retried next tick', {
           runId,
@@ -70,7 +75,8 @@ export class DriftJob {
         })
       }
     }
-    return scored
+    if (counts.errors > 0) this.logger.warn('drift: scorer errors recorded (no verdict)', { ...counts })
+    return counts
   }
 
   start(): void {
@@ -80,7 +86,7 @@ export class DriftJob {
       this.timer = setTimeout(() => {
         this.running = this.tick().catch((error: unknown) => {
           this.logger.warn('drift tick failed', { error: error instanceof Error ? error.message : String(error) })
-          return 0
+          return { scored: 0, errors: 0 }
         })
         void this.running.finally(() => {
           this.running = null
