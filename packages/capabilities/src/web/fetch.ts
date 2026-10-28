@@ -70,7 +70,7 @@ class DirectFailure extends Error {
 async function readBody(res: Response): Promise<{ bytes: Uint8Array; capped: boolean }> {
   if (!res.body) return { bytes: new Uint8Array(), capped: false }
   const reader = res.body.getReader()
-  const all = new Uint8Array(MAX_BODY_BYTES)
+  const chunks: Uint8Array[] = []
   let size = 0
   let capped = false
   for (;;) {
@@ -78,16 +78,22 @@ async function readBody(res: Response): Promise<{ bytes: Uint8Array; capped: boo
     if (done) break
     const room = MAX_BODY_BYTES - size
     if (value.byteLength > room) {
-      all.set(value.subarray(0, room), size)
+      chunks.push(value.subarray(0, room))
       size = MAX_BODY_BYTES
-      capped = true // more bytes than the cap, even if the body ended exactly at it the next read says done instead
+      capped = true // more bytes than the cap (a body that ends exactly at it reads done on the next turn instead)
       break
     }
-    all.set(value, size)
+    chunks.push(value)
     size += value.byteLength
   }
   await reader.cancel().catch(() => undefined)
-  return { bytes: all.subarray(0, size), capped }
+  const bytes = new Uint8Array(size) // sized to what arrived, not to the cap
+  let offset = 0
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+  return { bytes, capped }
 }
 
 /** Magic numbers of the binary formats a page URL most often turns out to be. */

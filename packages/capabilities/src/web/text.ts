@@ -18,7 +18,9 @@ function decodeEntities(text: string): string {
     if (body[0] === '#') {
       const code =
         body[1]?.toLowerCase() === 'x' ? Number.parseInt(body.slice(2), 16) : Number.parseInt(body.slice(1), 10)
-      return Number.isInteger(code) && code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : whole
+      if (!Number.isInteger(code) || code <= 0 || code > 0x10ffff) return whole
+      // A lone surrogate is not a character: a browser shows U+FFFD, and the text must stay valid UTF-16 for what reads it.
+      return code >= 0xd800 && code <= 0xdfff ? '\ufffd' : String.fromCodePoint(code)
     }
     return ENTITIES[body.toLowerCase()] ?? whole
   })
@@ -27,43 +29,13 @@ function decodeEntities(text: string): string {
 /** Elements whose content is not page text (code, styles, template and fallback markup): dropped with their content. */
 const RAW = new Set(['script', 'style', 'noscript', 'svg', 'template', 'iframe'])
 /** Elements that break a line. Every other tag is dropped and its content kept. */
-const BLOCKS = new Set([
-  'p',
-  'div',
-  'section',
-  'article',
-  'main',
-  'header',
-  'footer',
-  'nav',
-  'aside',
-  'li',
-  'ul',
-  'ol',
-  'tr',
-  'table',
-  'br',
-  'hr',
-  'h1',
-  'h2',
-  'h3',
-  'h4',
-  'h5',
-  'h6',
-  'pre',
-  'blockquote',
-  'dd',
-  'dt',
-  'dl',
-  'figure',
-  'figcaption',
-  'form',
-  'fieldset',
-  'td',
-  'th',
-  'details',
-  'summary',
-])
+const BLOCKS = new Set(
+  (
+    'p div section article main header footer nav aside li ul ol dl dt dd table thead tbody tfoot tr td th caption ' +
+    'br hr h1 h2 h3 h4 h5 h6 pre blockquote figure figcaption form fieldset legend details summary address ' +
+    'select optgroup option textarea'
+  ).split(' '),
+)
 /** The `<main>` or `<article>` text stands for the page only when it is at least this share of all the page text. */
 const SCOPE_SHARE = 0.5
 const TITLE_CHARS = 300

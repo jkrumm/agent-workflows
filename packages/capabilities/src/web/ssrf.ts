@@ -1,4 +1,5 @@
-import { type Pin, refused, type ResolvedWebDeps } from './deps.ts'
+import { fail } from '../errors.ts'
+import { type Pin, type ResolvedWebDeps, refused } from './deps.ts'
 
 // The guard behind web.fetch (behaviour of research-gateway's lib/ssrf.ts, rewritten): scheme, hostname literals,
 // then every address the name resolves to. It runs on the first URL and again on every redirect hop, and returns the
@@ -18,8 +19,10 @@ const normalizeHostname = (hostname: string) =>
 function parseIpv4(value: string): number[] | undefined {
   const parts = value.split('.')
   if (parts.length !== 4) return undefined
+  // Digits only: `Number` would also take "", " 1", "0x7f" and "1e1".
+  if (parts.some((part) => !/^\d{1,3}$/.test(part))) return undefined
   const octets = parts.map(Number)
-  return octets.some((o) => !Number.isInteger(o) || o < 0 || o > 255) ? undefined : octets
+  return octets.some((o) => o > 255) ? undefined : octets
 }
 
 /** Loopback, private, CGNAT (the tailnet), link-local (cloud metadata), benchmarking, TEST-NETs, multicast, reserved. */
@@ -83,7 +86,18 @@ function isPrivateIpv6(address: string): boolean {
   // Only global unicast 2000::/3 is public; loopback, link-local, ULA, multicast and the rest fail closed.
   if (w[0]! < 0x2000 || w[0]! > 0x3fff) return true
   if (w[0] === 0x2001 && w[1] === 0x0db8) return true // documentation
-  if (w[0] === 0x2001 && w[1] === 0) return true // 2001::/32, Teredo: tunnels to an IPv4 host we cannot read from here
+  // 2001::/23 is the IETF protocol-assignments block, not globally reachable by default (Teredo, benchmarking,
+  // deprecated ORCHID inside it); the registry lists the exceptions that are (iana-ipv6-special-registry, read
+  // 2026-10-28): 2001:1::1-3 (PCP, TURN, SRP anycast), 2001:3::/32 (AMT), 2001:4:112::/48 (AS112-v6), 2001:20::/28
+  // (ORCHIDv2) and 2001:30::/28 (drone remote ID).
+  if (w[0] === 0x2001 && w[1]! < 0x200) {
+    const anycast = w[1] === 1 && w.slice(2, 7).every((x) => x === 0) && w[7]! >= 1 && w[7]! <= 3
+    const global =
+      anycast || w[1] === 3 || (w[1] === 4 && w[2] === 0x112) || (w[1]! & 0xfff0) === 0x20 || (w[1]! & 0xfff0) === 0x30
+    return !global
+  }
+  // The AS112 direct-delegation anycast prefix is globally reachable, but nothing a page fetch should be sent to.
+  if (w[0] === 0x2620 && w[1] === 0x4f && w[2] === 0x8000) return true
   if (w[0] === 0x3fff && (w[1]! & 0xf000) === 0) return true // 3fff::/20, documentation
   if (w[0] === 0x2002) return isPrivateIpv4(v4Of(w[1]!, w[2]!)) // 6to4 carries an IPv4 destination
   return false
@@ -117,8 +131,16 @@ export async function assertPublicUrl(deps: ResolvedWebDeps, capability: string,
   let addresses: string[]
   try {
     addresses = await deps.resolve(host)
-  } catch {
-    throw new HostUnresolved(`host ${host} did not resolve`)
+  } catch (error) {
+    // Only an authoritative "no such host / no address" lets the chain go on. A resolver that is down or timing out
+    // (EAI_AGAIN, ...) says nothing about the URL, which must not be handed to a third party on that basis.
+    const code = (error as { code?: unknown }).code
+    if (code === 'ENOTFOUND' || code === 'ENODATA') throw new HostUnresolved(`host ${host} did not resolve`)
+    throw fail(
+      'UPSTREAM_ERROR',
+      `${capability}: DNS lookup for ${host} failed${typeof code === 'string' ? ` (${code})` : ''}`,
+      {},
+    )
   }
   if (addresses.length === 0) throw new HostUnresolved(`host ${host} did not resolve`)
   const bad = addresses.find(isPrivateAddress)

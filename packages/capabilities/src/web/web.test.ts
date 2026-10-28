@@ -640,6 +640,56 @@ describe('pinnedFetch (the production transport)', () => {
     }
   })
 
+  test('a redirect or an error status with an encoding it cannot decode still redirects or fails with its own status', async () => {
+    const server = Bun.serve({
+      port: 0,
+      hostname: '127.0.0.1',
+      fetch: (r) =>
+        new Response('body', {
+          status: new URL(r.url).pathname === '/r' ? 302 : 404,
+          headers: { 'content-encoding': 'zstd', location: 'http://elsewhere.invalid/' },
+        }),
+    })
+    try {
+      const base = `http://x.invalid:${server.port}`
+      const redirect = await pinnedFetch(`${base}/r`, {}, ['127.0.0.1'])
+      expect(redirect.status).toBe(302)
+      expect(redirect.headers.get('location')).toBe('http://elsewhere.invalid/')
+      expect((await pinnedFetch(`${base}/missing`, {}, ['127.0.0.1'])).status).toBe(404)
+    } finally {
+      void server.stop(true)
+    }
+  })
+
+  test('advertises gzip, br and deflate and decodes what comes back; a compression bomb is bounded by the reader', async () => {
+    const bomb = Bun.gzipSync(new Uint8Array(200_000_000)) // 200 MB of zeros, a few hundred KB on the wire
+    const server = Bun.serve({
+      port: 0,
+      hostname: '127.0.0.1',
+      fetch: (r) =>
+        new URL(r.url).pathname === '/echo'
+          ? new Response(r.headers.get('accept-encoding'))
+          : new Response(bomb, { headers: { 'content-encoding': 'gzip', 'content-type': 'text/plain' } }),
+    })
+    try {
+      const base = `http://x.invalid:${server.port}`
+      expect(await (await pinnedFetch(`${base}/echo`, {}, ['127.0.0.1'])).text()).toBe('gzip, br, deflate')
+      const started = performance.now()
+      const reader = (await pinnedFetch(`${base}/bomb`, {}, ['127.0.0.1'])).body!.getReader()
+      let read = 0
+      while (read < 2_000_000) {
+        const { done, value } = await reader.read()
+        if (done) break
+        read += value.byteLength
+      }
+      await reader.cancel()
+      expect(read).toBeGreaterThanOrEqual(2_000_000)
+      expect(performance.now() - started).toBeLessThan(5_000)
+    } finally {
+      void server.stop(true)
+    }
+  })
+
   test('the caller’s signal aborts the request', async () => {
     const server = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: () => new Promise<Response>(() => {}) })
     try {
@@ -792,29 +842,43 @@ describe('web.fetch decoding and emptiness', () => {
       'binary, no content type',
     )
   })
-  test('a name that does not resolve is not a policy refusal: the chain goes on to Extract, or fails as UPSTREAM_ERROR', async () => {
+  test('only an authoritative "no such host" lets the chain go on to Extract; a resolver that is down does not', async () => {
     const n = net({
       'https://gone.example.com/': () => new Response('never'),
       'https://api.tavily.com/extract': json({
         results: [{ url: 'https://gone.example.com/', raw_content: 'From Extract.' }],
       }),
     })
-    const deps: WebDeps = {
+    const failing = (code: string): WebDeps => ({
       ...n.deps,
       resolve: async () => {
-        throw new Error('ENOTFOUND')
+        throw Object.assign(new Error(`getaddrinfo ${code}`), { code })
       },
+    })
+    for (const code of ['ENOTFOUND', 'ENODATA']) {
+      const out = (await run({ ...failing(code), env: { TAVILY_API_KEY: 't' } }).call('web.fetch', {
+        url: 'https://gone.example.com/',
+      })) as { via: string }
+      expect(out.via).toBe('tavily-extract')
     }
-    const out = (await run({ ...deps, env: { TAVILY_API_KEY: 't' } }).call('web.fetch', {
-      url: 'https://gone.example.com/',
-    })) as {
-      via: string
-    }
-    expect(out.via).toBe('tavily-extract')
     expect(n.to('https://gone.example.com')).toHaveLength(0)
-    const keyless = await failure(run(deps).call('web.fetch', { url: 'https://gone.example.com/' }))
+    const keyless = await failure(run(failing('ENOTFOUND')).call('web.fetch', { url: 'https://gone.example.com/' }))
     expect(keyless.code).toBe('UPSTREAM_ERROR')
     expect(keyless.message).toContain('did not resolve')
+
+    // A resolver outage says nothing about the URL: it must not be forwarded to a third party.
+    const before = n.to('https://api.tavily.com').length
+    for (const code of ['EAI_AGAIN', 'ECONNREFUSED', 'ETIMEOUT']) {
+      const { call, usage } = run({ ...failing(code), env: { TAVILY_API_KEY: 't' } })
+      const error = await failure(call('web.fetch', { url: 'https://gone.example.com/' }))
+      expect({ code, error: error.code, dns: error.message.includes('DNS lookup') }).toEqual({
+        code,
+        error: 'UPSTREAM_ERROR',
+        dns: true,
+      })
+      expect(usage).toEqual([])
+    }
+    expect(n.to('https://api.tavily.com')).toHaveLength(before)
   })
 
   test('a response whose body is cut at the read cap says truncated, even when the text is short', async () => {
@@ -834,6 +898,67 @@ describe('web.fetch decoding and emptiness', () => {
     expect(await truncated('over')).toBe(true)
     expect(await truncated('exact')).toBe(false)
     expect(await truncated('under')).toBe(false)
+  })
+})
+
+describe('web.fetch read cap, streamed', () => {
+  const MAX = 2_000_000
+  const chunked =
+    (total: number, chunk: number): Handler =>
+    () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            const head = new TextEncoder().encode(
+              '<p>A real page with enough words to count as text, said once.</p><!--',
+            )
+            controller.enqueue(head)
+            let left = total - head.length - 3
+            while (left > 0) {
+              const size = Math.min(chunk, left)
+              controller.enqueue(new Uint8Array(size).fill(120))
+              left -= size
+            }
+            controller.enqueue(new TextEncoder().encode('-->'))
+            controller.close()
+          },
+        }),
+        { headers: { 'content-type': 'text/html' } },
+      )
+
+  test('chunks are collected up to the cap: over is truncated, exactly at it is not', async () => {
+    const n = net({
+      'https://example.com/over': chunked(MAX + 70_000, 65_536),
+      'https://example.com/exact': chunked(MAX, 65_536),
+      'https://example.com/small': chunked(10_000, 4_096),
+    })
+    const { call } = run(n.deps)
+    const get = async (name: string) =>
+      (await call('web.fetch', { url: `https://example.com/${name}` })) as { truncated: boolean; text: string }
+    expect(await get('over')).toMatchObject({ truncated: true })
+    expect(await get('exact')).toMatchObject({ truncated: false })
+    expect((await get('small')).text).toStartWith('A real page')
+  })
+})
+
+describe('parseHtml: entities and separators', () => {
+  test('numeric entities in the surrogate range are U+FFFD; valid ones decode', async () => {
+    const { text } = await parseHtml('<p>a&#xD800;b&#55357;c&#xDFFF;d &#x1F600; &#65; &#0; &#x110000;</p>')
+    expect(text).toBe('a\ufffdb\ufffdc\ufffdd 😀 A &#0; &#x110000;')
+    expect(text.isWellFormed()).toBe(true)
+  })
+
+  test('options, table cells and rows, captions, legends and textareas are separate lines', async () => {
+    const lines = async (html: string) => (await parseHtml(html)).text.split('\n').filter((line) => line !== '')
+    expect(await lines('<select><option>One</option><option>Two</option></select>')).toEqual(['One', 'Two'])
+    expect(
+      await lines(
+        '<table><caption>Cap</caption><thead><tr><th>A</th><th>B</th></tr></thead><tbody><tr><td>1</td><td>2</td></tr></tbody></table>',
+      ),
+    ).toEqual(['Cap', 'A', 'B', '1', '2'])
+    expect(
+      await lines('<fieldset><legend>Who</legend><textarea>Note</textarea><address>Street 1</address></fieldset>'),
+    ).toEqual(['Who', 'Note', 'Street 1'])
   })
 })
 

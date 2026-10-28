@@ -16,7 +16,9 @@ export function pinnedFetch(url: string, init: RequestInit, addresses: string[])
   const request = target.protocol === 'https:' ? httpsRequest : httpRequest
   const family = (address: string) => (address.includes(':') ? 6 : 4)
   return new Promise<Response>((resolve, reject) => {
-    const headers: Record<string, string> = { 'accept-encoding': 'identity' }
+    // The decoders are the real path. A compression bomb is bounded by the reader, not here: whoever reads stops at its cap
+    // on the *decoded* bytes and cancels, which destroys the pipeline and the socket.
+    const headers: Record<string, string> = { 'accept-encoding': 'gzip, br, deflate' }
     new Headers(init.headers).forEach((value, key) => {
       headers[key] = value
     })
@@ -67,16 +69,19 @@ function toResponse(res: IncomingMessage): Response {
   for (const [key, value] of Object.entries(res.headers)) {
     for (const v of Array.isArray(value) ? value : value === undefined ? [] : [value]) headers.append(key, v)
   }
+  // Only a body that will be read is decoded, and only there can an encoding be unsupported: a redirect or an error
+  // status with a `zstd` body still redirects or fails with its own status (the caller cancels such a body unread).
+  const ok = status >= 200 && status < 300
   const encoding = (headers.get('content-encoding') ?? 'identity').trim().toLowerCase()
   if (NO_BODY.has(status)) {
     res.destroy() // no body is coming: do not leave the socket open
     return new Response(null, { status, statusText: res.statusMessage ?? '', headers })
   }
-  if (encoding !== 'identity' && encoding !== '' && !Object.hasOwn(DECODERS, encoding)) {
+  if (ok && encoding !== 'identity' && encoding !== '' && !Object.hasOwn(DECODERS, encoding)) {
     throw new Error(`unsupported content-encoding "${encoding.slice(0, 40)}"`)
   }
   let source: Readable = res
-  if (encoding in DECODERS) {
+  if (ok && encoding in DECODERS) {
     headers.delete('content-encoding')
     headers.delete('content-length')
     const decoder = DECODERS[encoding as keyof typeof DECODERS]()
