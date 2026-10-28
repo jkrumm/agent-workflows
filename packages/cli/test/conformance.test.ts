@@ -198,7 +198,8 @@ describe('agw against the fake host', () => {
     const r = await agw(b, ['llm', 'nope'])
     expect(r.code).toBe(EXIT.usage)
     expect(r.error?.message).toBe("unknown command 'llm nope'")
-    expect(r.error?.hint).toBe('agw llm classify|summarize|title')
+    // llm.summarize stays skipped (its `format` input collides with --format) until capabilities rename it.
+    expect(r.error?.hint).toMatch(/^agw llm classify\|(summarize\|)?title$/)
     expect(host.requests.filter((q) => q.path === '/openapi.json').length).toBe(before + 1)
   })
 
@@ -436,6 +437,11 @@ describe('agw against the fake host', () => {
       expect((await agw(b, ['schema', '--refresh'])).code).toBe(0)
       const listed = (await agw(b, ['schema'])).json().commands as { command: string }[]
       expect(listed.map((c) => c.command)).not.toContain('fixture odd')
+      const skipped = (await agw(b, ['schema'])).json().skipped as { operation: string; reason: string }[]
+      expect(skipped).toContainEqual({
+        operation: 'POST /workflows/fixture/odd',
+        reason: 'unknown x-cli.kind "mystery"',
+      })
       expect((await agw(b, ['fixture', 'odd'])).code).toBe(EXIT.usage)
       expect((await agw(b, ['fixture', 'echo', 'still works'])).code).toBe(0)
     } finally {
@@ -523,11 +529,77 @@ describe('agw against the fake host', () => {
     const b = box()
     await agw(b, ['schema', '--refresh'])
     const before = host.requests.length
-    for (const id of ['.', '..', '%2e%2e', '%2E', '%252e%252e']) {
+    // `encodeURIComponent` leaves `.` alone, so nesting starts from an already encoded segment.
+    const deep = (id: string, n: number) => Array.from({ length: n }).reduce<string>((v) => encodeURIComponent(v), id)
+    const ids = [
+      '.',
+      '..',
+      '%2e%2e',
+      '%2E',
+      '%252e%252e',
+      '%2525252e',
+      deep('%2e', 7),
+      deep('%2e', 8),
+      deep('a%20b', 8),
+    ]
+    for (const id of ids) {
       const r = await agw(b, ['run', 'status', id])
       expect(r.code).toBe(EXIT.usage)
     }
     expect(host.requests.length).toBe(before)
+    const plain = await agw(b, ['run', 'status', 'a%20b'])
+    expect(plain.code).toBe(EXIT.not_found)
+  })
+
+  test('an input property named like a reserved flag skips the operation; schema lists why', async () => {
+    const b = box()
+    host.addWorkflow({
+      id: 'fixture.reserved',
+      summary: 'Collides with --format',
+      input: { type: 'object', properties: { format: { type: 'string' } } },
+    })
+    try {
+      await agw(b, ['schema', '--refresh'])
+      const list = (await agw(b, ['schema'])).json() as {
+        commands: { command: string }[]
+        skipped: { operation: string; command?: string; reason: string }[]
+      }
+      expect(list.commands.map((c) => c.command)).not.toContain('fixture reserved')
+      expect(list.skipped).toContainEqual({
+        operation: 'POST /workflows/fixture/reserved',
+        command: 'fixture reserved',
+        reason: 'input property "format" collides with the reserved flag --format',
+      })
+      expect((await agw(b, ['fixture', 'reserved'])).code).toBe(EXIT.usage)
+      expect((await agw(b, ['fixture', 'echo', 'unaffected'])).code).toBe(0)
+    } finally {
+      host.removeWorkflow('fixture.reserved')
+    }
+  })
+
+  test('the bearer never leaves in cleartext: plain http only to loopback', async () => {
+    for (const url of ['http://example.invalid:7791', 'http://10.0.0.1:7791', 'ftp://127.0.0.1']) {
+      const r = await agw(sandbox({ AGW_URL: url, AGW_API_SECRET: host.secret }), ['run', 'status', 'x'])
+      expect(r.code).toBe(EXIT.auth)
+      expect(r.error?.message).toContain('refused to send the secret')
+    }
+    for (const url of ['http://[::1]:1', 'http://localhost:1', 'https://127.0.0.1:1']) {
+      const r = await agw(sandbox({ AGW_URL: url, AGW_API_SECRET: host.secret }), ['run', 'status', 'x'])
+      expect(r.code).toBe(EXIT.network)
+    }
+  })
+
+  test('$ref parameters and request bodies are dereferenced, not dropped', async () => {
+    const b = box()
+    const status = (await agw(b, ['schema', 'run', 'status'])).json() as {
+      input: { properties: Record<string, Record<string, unknown>>; required: string[] }
+    }
+    expect(status.input.properties.runId).toMatchObject({ type: 'string', 'x-positional': 0 })
+    expect(status.input.required).toEqual(['runId'])
+    const deploy = (await agw(b, ['schema', 'fixture', 'deploy'])).json() as {
+      input: { properties: Record<string, unknown> }
+    }
+    expect(Object.keys(deploy.input.properties)).toEqual(['target'])
   })
 
   test('contract sha: the CLI and the host agree on a known-answer vector', () => {

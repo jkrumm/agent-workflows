@@ -20,9 +20,9 @@ Host HTTP contract v1, fixed by the lead. The host serves it, `agw` consumes it.
 
 ### Credentials and the cached contract
 
-- **`AGW_URL`** (default `http://127.0.0.1:7791`) and **`AGW_API_SECRET`** come from the environment, key by key. Whatever is unset is read from `${XDG_CONFIG_HOME:-~/.config}/agw/env` (`KEY=value` lines, written by `make deploy`). That file is refused unless its mode is exactly `0600`. No secret anywhere means exit 3, with a hint that names the file.
+- **`AGW_URL`** (default `http://127.0.0.1:7791`) and **`AGW_API_SECRET`** come from the environment, key by key. Plain `http://` is refused (exit 3) unless the host is `127.0.0.1`, `[::1]` or `localhost`, so the bearer never leaves in cleartext. Whatever is unset is read from `${XDG_CONFIG_HOME:-~/.config}/agw/env` (`KEY=value` lines, written by `make deploy`). That file is refused unless its mode is exactly `0600`. No secret anywhere means exit 3, with a hint that names the file.
 - **The contract** is cached per host at `${XDG_CACHE_HOME:-~/.cache}/agw/<sha256(AGW_URL)[:12]>/openapi.json`, so two hosts never share one. It is fetched (`GET /openapi.json`, bearer) when there is no cache, on `agw schema --refresh`, and at most once per call on an error a stale cache explains: an unknown command, an unknown flag, a missing required field, a 412. New commands and new flags appear without a manual refresh.
-- **A bad document never replaces a good cache.** Commands are built before the cache is written. An operation with an unknown `x-cli.kind` or no valid command words is skipped and listed nowhere. A document with no usable operation is refused (exit 1) and the cached contract is kept.
+- **A bad document never replaces a good cache.** Commands are built before the cache is written. An operation with an unknown `x-cli.kind`, no valid command words, a reserved-flag collision or a command another operation already maps to is skipped; it is no command, and `agw schema` lists it under `skipped` with its reason. `$ref`s are inlined everywhere, including path items, operations, parameters and request bodies. A document with no usable operation is refused (exit 1) and the cached contract is kept.
 - **Every call** sends `x-agw-contract: <sha>`, the cached document's `info['x-contract-sha']`. The sha is the sha256 of the canonical JSON (keys sorted recursively, no whitespace) of the document without that field.
 - **On a 412**, the CLI refreshes the cache. It retries the call once if the same argv still parses against the new contract, else it exits 9. A 412 in the middle of a wait loop refreshes the cache and exits 9 with the resume command as the hint, so the run is never started twice.
 
@@ -40,8 +40,8 @@ Host HTTP contract v1, fixed by the lead. The host serves it, `agw` consumes it.
 | objects, arrays, unions with an object or array | one JSON value: `--labels '{"bug":"…"}'` |
 | `x-cli.stdin` | read from stdin only when that field is required, not given otherwise, and stdin is not a TTY. An optional field is never read implicitly, so an inherited open pipe cannot hang the call |
 
-- **Globals:** `--format json|plain`, `--help`. `--commit` exists only on mutating commands, and `--idempotency-key <k>` only on workflows and mutating commands. They are reserved: they always win over an input property of the same name (the host refuses such properties at start).
-- **Errors before sending:** an unknown flag or command exits 2 and the hint lists the valid ones. A missing required input, a bad value, and a path parameter of `.` or `..` in any encoding also exit 2, client-side.
+- **Globals:** `--format json|plain`, `--help`. `--commit` exists only on mutating commands, and `--idempotency-key <k>` only on workflows and mutating commands. They are reserved: an operation with a non-positional input property of one of those names (`format`, `commit`, `idempotencyKey`, `help`) is skipped like one with an unknown `kind`, and `agw schema` lists it under `skipped` with the reason. The host refuses such operations at start, so this is defence only.
+- **Errors before sending:** an unknown flag or command exits 2 and the hint lists the valid ones. A missing required input, a bad value, and a path parameter that decodes to `.` or `..` (checked after every decode, up to 8) or is still percent-encoded after 8 decodes also exit 2, client-side.
 - **Output:** JSON on stdout when stdout is not a TTY (agents). On a TTY, `x-cli.defaultFormat` decides. `--format plain` prints `x-cli.plainField`, a dotted path into the response.
 - **Mutating commands** (`x-cli.mutating`) need `--commit` (or `--commit=true`) when stdin is not a TTY. Without it, or with `--commit=false`, the CLI exits 6 and sends nothing.
 - **Deadlines:** a request that waits on a run gets `Prefer: wait` plus 30 s. Every other request gets `AGW_TIMEOUT_S` (default 1800 s), a hang guard for a capability that runs a model synchronously, never a budget. A deadline hit exits 7 with `no answer from <url> within <n>s`.
@@ -85,7 +85,7 @@ The table lives in `src/exit.ts`. `agw schema --exit-codes` prints it, and chang
 
 It works offline with the host down, as long as the cache exists. With no cache, it fetches one.
 
-- `agw schema` lists the commands with the contract sha.
+- `agw schema` lists the commands with the contract sha, and `skipped` (operation, command, reason) when the document has operations the CLI could not use.
 - `agw schema <command…>` prints the input schema, with `x-flag` or `x-positional` on each property, plus the output schema and `x-cli`.
 - `agw schema --exit-codes` needs neither a cache nor a host.
 

@@ -75,6 +75,16 @@ export interface Command {
 
 const METHODS = ['get', 'post', 'put', 'patch', 'delete']
 
+/** Always the CLI's own flags; an operation with an input property of one of these names is skipped. */
+export const RESERVED_FLAGS: readonly string[] = ['format', 'commit', 'idempotency-key', 'help']
+
+/** An operation the CLI could not turn into a command, and why; `agw schema` lists it. */
+export interface Skipped {
+  operation: string
+  command?: string
+  reason: string
+}
+
 export const kebab = (name: string) => name.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)
 
 function canonical(value: unknown): unknown {
@@ -130,11 +140,12 @@ const words = (v: unknown): string[] | undefined =>
 
 const names = (v: unknown): string[] => (Array.isArray(v) ? v.filter((s): s is string => typeof s === 'string') : [])
 
-/** An `x-cli` block the CLI cannot honour (no valid words, an unknown kind) makes the operation invisible. */
-function readXCli(raw: Partial<XCli>): XCli | undefined {
+/** An `x-cli` block the CLI cannot honour (no valid words, an unknown kind) skips the operation. */
+function readXCli(raw: Partial<XCli>): XCli | string {
   const command = words(raw.command)
   const kind = raw.kind ?? 'capability'
-  if (!command?.length || !KINDS.includes(kind)) return undefined
+  if (!command?.length) return 'x-cli.command has no valid command words'
+  if (!KINDS.includes(kind)) return `unknown x-cli.kind "${String(kind)}"`
   const resumeWords = raw.resume ? words(raw.resume.command) : undefined
   return {
     command,
@@ -148,7 +159,7 @@ function readXCli(raw: Partial<XCli>): XCli | undefined {
   }
 }
 
-function buildCommand(doc: Document, path: string, method: string, op: Operation, x: XCli): Command {
+function buildCommand(doc: Document, path: string, method: string, op: Operation, x: XCli): Command | string {
   const fields: Field[] = []
   for (const p of Array.isArray(op.parameters) ? op.parameters : []) {
     if ((p?.in !== 'path' && p?.in !== 'query') || typeof p.name !== 'string') continue
@@ -171,6 +182,8 @@ function buildCommand(doc: Document, path: string, method: string, op: Operation
       required: (body?.required ?? []).includes(name),
     })
   }
+  const reserved = fields.find((f) => !x.positional.includes(f.name) && RESERVED_FLAGS.includes(f.flag))
+  if (reserved) return `input property "${reserved.name}" collides with the reserved flag --${reserved.flag}`
   const ok = op.responses?.['200'] ?? op.responses?.['202']
   return {
     words: x.command,
@@ -187,27 +200,45 @@ function buildCommand(doc: Document, path: string, method: string, op: Operation
 
 /**
  * Every operation carrying a usable `x-cli` becomes one command; nothing per command is written by
- * hand. An operation the CLI cannot read is skipped and never takes the others down with it.
+ * hand. An operation the CLI cannot read is skipped with its reason and never takes the others down.
  */
-export function buildCommands(doc: Document): Command[] {
+export function buildCommands(doc: Document): { commands: Command[]; skipped: Skipped[] } {
   const commands: Command[] = []
+  const skipped: Skipped[] = []
   const taken = new Set<string>()
   const paths = doc.paths !== null && typeof doc.paths === 'object' ? doc.paths : {}
-  for (const [path, item] of Object.entries(paths)) {
+  for (const [path, rawItem] of Object.entries(paths)) {
+    const item = deref(doc, rawItem)
     if (item === null || typeof item !== 'object') continue
-    for (const [method, op] of Object.entries(item)) {
-      if (!METHODS.includes(method) || op === null || typeof op !== 'object' || !op['x-cli']) continue
+    for (const [method, rawOp] of Object.entries(item as Record<string, unknown>)) {
+      if (!METHODS.includes(method) || rawOp === null || typeof rawOp !== 'object') continue
+      const op = deref(doc, rawOp) as Operation
+      if (!op['x-cli']) continue
+      const operation = `${method.toUpperCase()} ${path}`
       const x = readXCli(op['x-cli'])
-      if (!x || taken.has(x.command.join(' '))) continue
+      if (typeof x === 'string') {
+        skipped.push({ operation, reason: x })
+        continue
+      }
+      const command = x.command.join(' ')
+      const skip = (reason: string) => skipped.push({ operation, command, reason })
+      if (taken.has(command)) {
+        skip('another operation already maps to this command')
+        continue
+      }
       try {
-        commands.push(buildCommand(doc, path, method, op, x))
-        taken.add(x.command.join(' '))
-      } catch {
-        // A malformed operation stays invisible.
+        const built = buildCommand(doc, path, method, op, x)
+        if (typeof built === 'string') skip(built)
+        else {
+          commands.push(built)
+          taken.add(command)
+        }
+      } catch (error) {
+        skip(`malformed operation: ${error instanceof Error ? error.message : String(error)}`)
       }
     }
   }
-  return commands
+  return { commands, skipped }
 }
 
 /** The longest command whose words prefix argv. */

@@ -1,9 +1,18 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { BIN } from './args.ts'
-import { type Credentials, cachePath, credentials, type Env, envFilePath, requireSecret, timeoutS } from './config.ts'
+import {
+  assertSafeUrl,
+  type Credentials,
+  cachePath,
+  credentials,
+  type Env,
+  envFilePath,
+  requireSecret,
+  timeoutS,
+} from './config.ts'
 import { AgwError, kindForStatus } from './exit.ts'
-import { buildCommands, type Command, type Document, servedSha } from './spec.ts'
+import { buildCommands, type Command, type Document, type Skipped, servedSha } from './spec.ts'
 
 /** The host waits at most this long per request (Bun's `idleTimeout` ceiling is 255 s). */
 export const MAX_WAIT_S = 240
@@ -45,6 +54,7 @@ export class Host {
   #creds: Credentials | undefined
   #doc: Document | undefined
   #commands: Command[] = []
+  #skipped: Skipped[] = []
   #sha = ''
   #refreshed = false
 
@@ -52,6 +62,11 @@ export class Host {
 
   get commands(): Command[] {
     return this.#commands
+  }
+
+  /** Operations in the document the CLI could not turn into a command, with the reason. */
+  get skipped(): Skipped[] {
+    return this.#skipped
   }
 
   get sha(): string {
@@ -76,8 +91,9 @@ export class Host {
     return this.#creds
   }
 
-  private use(doc: Document, commands: Command[]): void {
+  private use(doc: Document, { commands, skipped }: ReturnType<typeof buildCommands>): void {
     this.#commands = commands
+    this.#skipped = skipped
     this.#doc = doc
     this.#sha = servedSha(doc)
   }
@@ -86,9 +102,9 @@ export class Host {
   loadCache(): boolean {
     try {
       const doc = JSON.parse(readFileSync(cachePath(this.env, this.url), 'utf8')) as Document
-      const commands = doc && typeof doc === 'object' ? buildCommands(doc) : []
-      if (!commands.length) return false
-      this.use(doc, commands)
+      const built = doc && typeof doc === 'object' ? buildCommands(doc) : undefined
+      if (!built?.commands.length) return false
+      this.use(doc, built)
       return true
     } catch {
       return false
@@ -104,8 +120,8 @@ export class Host {
     this.#refreshed = true
     const { body } = await this.send('GET', '/openapi.json', { contract: false })
     const doc = body as Document
-    const commands = doc && typeof doc === 'object' && !Array.isArray(doc) ? buildCommands(doc) : []
-    if (!commands.length) {
+    const built = doc && typeof doc === 'object' && !Array.isArray(doc) ? buildCommands(doc) : undefined
+    if (!built?.commands.length) {
       throw new AgwError(
         'general',
         `${this.url}/openapi.json has no usable x-cli operations; the cached contract is kept`,
@@ -116,7 +132,7 @@ export class Host {
     const tmp = `${path}.${process.pid}.tmp`
     writeFileSync(tmp, JSON.stringify(doc))
     renameSync(tmp, path)
-    this.use(doc, commands)
+    this.use(doc, built)
   }
 
   call(command: Command, values: Record<string, unknown>, options: CallOptions = {}): Promise<Reply> {
@@ -145,6 +161,7 @@ export class Host {
     options: CallOptions & { body?: unknown; command?: Command; contract?: boolean },
   ): Promise<Reply> {
     const creds = this.creds()
+    assertSafeUrl(creds.url)
     const headers: Record<string, string> = {
       accept: 'application/json',
       authorization: `Bearer ${requireSecret(this.env, creds)}`,

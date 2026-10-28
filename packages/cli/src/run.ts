@@ -218,20 +218,8 @@ class Runner {
       ...(resume?.command ?? []),
       ...Object.values(resumeValues).map((v) => shellWord(String(v))),
     ].join(' ')
-
-    while (reply.status === 202 && resumeCommand) {
-      const leftS = Math.floor((deadline - Date.now()) / 1000)
-      if (leftS < 1) break
-      const started = Date.now()
-      try {
-        reply = await this.host.call(resumeCommand, resumeValues, { waitS: Math.min(leftS, MAX_WAIT_S) })
-      } catch (error) {
-        throw await this.resumable(error, resumeLine)
-      }
-      state = (reply.body ?? {}) as RunState
-      // A host that answers 202 at once must not be hammered.
-      if (reply.status === 202) await Bun.sleep(Math.max(0, 1000 - (Date.now() - started)))
-    }
+    if (resumeCommand)
+      ({ reply, state } = await this.poll({ reply, state, resumeCommand, resumeValues, resumeLine, deadline }))
 
     emit(state)
     const status = String(state.status)
@@ -246,6 +234,32 @@ class Runner {
     throw new AgwError('general', `run ${String(state.runId)} ${status}${reason}`, {
       details: { runId: state.runId, status, ...(state.error?.kind ? { errorKind: state.error.kind } : {}) },
     })
+  }
+
+  /** Loops the resume command while the host answers 202, until the run ends or the deadline passes. */
+  private async poll(loop: {
+    reply: Reply
+    state: RunState
+    resumeCommand: Command
+    resumeValues: Record<string, unknown>
+    resumeLine: string
+    deadline: number
+  }): Promise<{ reply: Reply; state: RunState }> {
+    let { reply, state } = loop
+    while (reply.status === 202) {
+      const leftS = Math.floor((loop.deadline - Date.now()) / 1000)
+      if (leftS < 1) break
+      const started = Date.now()
+      try {
+        reply = await this.host.call(loop.resumeCommand, loop.resumeValues, { waitS: Math.min(leftS, MAX_WAIT_S) })
+      } catch (error) {
+        throw await this.resumable(error, loop.resumeLine)
+      }
+      state = (reply.body ?? {}) as RunState
+      // A host that answers 202 at once must not be hammered.
+      if (reply.status === 202) await Bun.sleep(Math.max(0, 1000 - (Date.now() - started)))
+    }
+    return { reply, state }
   }
 
   /** A failure mid-wait: the run keeps going server-side, so the hint is the resume command. */
@@ -301,10 +315,11 @@ class Runner {
     if (refresh) await this.host.refresh()
     else await this.host.load()
 
-    const { commands, sha } = this.host
+    const { commands, sha, skipped } = this.host
     if (!words.length) {
       print({
         contractSha: sha,
+        ...(skipped.length ? { skipped } : {}),
         commands: commands.map((c) => ({
           command: c.words.join(' '),
           kind: c.x.kind,
