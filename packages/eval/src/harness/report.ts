@@ -62,13 +62,13 @@ export function renderAggregate(report: Report): string {
     `**Verdict: ${verdict.verdict}**${verdict.reasons.length ? ` (${verdict.reasons.join('; ')})` : ''}`,
     '',
     `Run ${meta.startedAt} to ${meta.finishedAt}; depth ${meta.depthMode}, legacy rerun ${meta.rerunLegacy ? 'on' : 'off'}, judge ${meta.judge ? 'on' : 'off'}, concurrency ${meta.concurrency}, bootstrap seed ${meta.seed}.`,
-    `Cases: ${cases.total} total, ${cases.ok} ran, ${cases.errors} failed, skipped ${skipped.length ? skipped.join(', ') : '0'}.`,
+    `Cases: ${cases.total} total, ${cases.ok} ran, ${cases.errors} errored (new side ${cases.newFailed}, harness ${cases.harnessFailed}; error rate ${pct(cases.errorRate)}), skipped ${skipped.length ? skipped.join(', ') : '0'}. A new-side error is scored as a miss.`,
     '',
-    '| criterion | value | threshold | pass |',
-    '|-|-|-|-|',
+    '| criterion | value | 95% CI | threshold | pass |',
+    '|-|-|-|-|-|',
     ...verdict.criteria.map(
       (c) =>
-        `| ${c.metric} | ${num(c.value, 3)} | ${c.op} ${c.threshold.toFixed(3)} | ${c.pass === null ? 'no data' : c.pass ? 'yes' : 'no'} |`,
+        `| ${c.metric} | ${num(c.value, 3)} | ${c.ci95 ? `${num(c.ci95[0], 3)}–${num(c.ci95[1], 3)}` : '-'} | ${c.op} ${c.threshold.toFixed(3)} | ${c.pass === null ? (c.note ?? 'no data') : c.pass ? 'yes' : 'no'} |`,
     ),
     '',
   ]
@@ -93,7 +93,7 @@ function reviewAggregateLines(a: ReviewAggregate): string[] {
     '',
     `Blocking recall vs legacy: ${pct(a.blocking.recall)} (${a.blocking.matched}/${a.blocking.legacy}, ${a.blocking.judged} by the judge, ${a.blocking.unsure} unsure left unmatched); new-only blocking: ${a.blocking.newOnly}.`,
     `Outcome agreement: ${pct(a.outcome.agreement)}.`,
-    `Cost ratio new/legacy (${a.cost.baseline}): median ${ratio(a.cost)}.`,
+    `Cost ratio new/legacy (${a.cost.baseline}): median ${ratio(a.cost)}; inexact or unknown cost: legacy ${a.cost.inexact.legacy}, new ${a.cost.inexact.new} cases.`,
     `Wall ratio new/legacy (${a.wall.baseline}): median ${ratio(a.wall)}.`,
     a.selfAgreement
       ? `Legacy self-agreement (rerun vs recorded, ${a.selfAgreement.cases} cases): blocking recall ${pct(a.selfAgreement.blockingRecall)}, outcome agreement ${pct(a.selfAgreement.outcomeAgreement)}.`
@@ -111,16 +111,17 @@ function checkAggregateLines(a: CheckAggregate): string[] {
   const c = a.passed.confusion
   return [
     `Passed agreement: ${pct(a.passed.agreement)}; step agreement ${pct(a.steps.agreement)} over ${a.steps.compared} steps both ran.`,
-    `Cost ratio new/legacy (${a.cost.baseline}): median ${ratio(a.cost)}; totals legacy ${usd(a.cost.legacyUsd)}, new ${usd(a.cost.newUsd)}.`,
+    `Legacy failure recall: ${pct(a.failureRecall.recall)} (${a.failureRecall.caught}/${a.failureRecall.legacyFailed} legacy-red cases red on the new side).`,
+    `Cost ratio new/legacy (${a.cost.baseline}): median ${ratio(a.cost)}; totals legacy ${usd(a.cost.legacyUsd)}, new ${usd(a.cost.newUsd)}; inexact or unknown cost: legacy ${a.cost.inexact.legacy}, new ${a.cost.inexact.new} cases.`,
     `Wall ratio new/legacy (${a.wall.baseline}): median ${ratio(a.wall)}.`,
     a.selfAgreement
-      ? `Legacy self-agreement (${a.selfAgreement.cases} cases): passed ${pct(a.selfAgreement.passedAgreement)}, steps ${pct(a.selfAgreement.stepAgreement)}.`
+      ? `Legacy self-agreement (${a.selfAgreement.cases} cases): passed ${pct(a.selfAgreement.passedAgreement)}, failure recall ${pct(a.selfAgreement.failureRecall)}, steps ${pct(a.selfAgreement.stepAgreement)}.`
       : 'Legacy self-agreement: not measured (no --rerun-legacy); fixed floors apply.',
     '',
-    '| legacy \\ new | pass | fail |',
-    '|-|-|-|',
-    `| pass | ${c.legacyPass.pass} | ${c.legacyPass.fail} |`,
-    `| fail | ${c.legacyFail.pass} | ${c.legacyFail.fail} |`,
+    '| legacy \\ new | pass | fail | errored |',
+    '|-|-|-|-|',
+    `| pass | ${c.legacyPass.pass} | ${c.legacyPass.fail} | ${c.legacyPass.failed} |`,
+    `| fail | ${c.legacyFail.pass} | ${c.legacyFail.fail} | ${c.legacyFail.failed} |`,
   ]
 }
 

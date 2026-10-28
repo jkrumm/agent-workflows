@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
+import { appendFileSync, closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync } from 'node:fs'
 import { dirname } from 'node:path'
 import type { z } from 'zod'
 import type { Depth, ReviewOutcome } from '../cases.ts'
@@ -13,7 +13,8 @@ interface CaseBase {
   status: CaseStatus
   /** Private: may name an `IuRoot` repo. Never in the aggregate section. */
   repo: string
-  reason?: SkipReason | 'new_failed'
+  /** `new_failed`: the new side failed (a miss in the verdict); `harness_failed`: the harness itself (judge, git, matcher). */
+  reason?: SkipReason | 'new_failed' | 'harness_failed'
   detail?: string
 }
 
@@ -73,7 +74,23 @@ export type CaseResult = ReviewCaseResult | CheckCaseResult
 /** Appends one case result (the file is the resume point; mode 0600: it holds private findings). */
 export function appendResult(path: string, result: CaseResult): void {
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
-  appendFileSync(path, `${JSON.stringify(result)}\n`, { mode: 0o600 })
+  const lead = endsTorn(path) ? '\n' : ''
+  appendFileSync(path, `${lead}${JSON.stringify(result)}\n`, { mode: 0o600 })
+}
+
+/** A killed run can leave a last line without its newline; the next result must not be glued onto it. */
+function endsTorn(path: string): boolean {
+  if (!existsSync(path)) return false
+  const fd = openSync(path, 'r')
+  try {
+    const size = fstatSync(fd).size
+    if (size === 0) return false
+    const last = Buffer.alloc(1)
+    readSync(fd, last, 0, 1, size - 1)
+    return last[0] !== 0x0a
+  } finally {
+    closeSync(fd)
+  }
 }
 
 /** The results so far; a torn last line (a killed run) is ignored. A later line for the same id wins. */

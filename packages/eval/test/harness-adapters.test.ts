@@ -83,6 +83,34 @@ describe('agw adapter', () => {
     expect(run.spend.costExact).toBe(false)
   })
 
+  test('a journal failure after a paid run keeps the output and leaves the cost unknown', async () => {
+    const done = scripted([{ stdout: JSON.stringify({ runId: 'r4', status: 'done', output: reviewOutput() }) }])
+    const journal = {
+      runCost: async () => {
+        throw new Error('psql: connection refused')
+      },
+    }
+    const run = await agwReviewRunner({ exec: done.fake, journal }).review({ cwd: '/x' })
+    expect(run.output.outcome).toBe('actionable')
+    expect(run.spend).toMatchObject({ costUsd: null, costExact: false })
+  })
+
+  test('a failed password read is not cached', async () => {
+    const { fake, calls } = scripted([
+      { code: 1, stderr: 'not in cache' },
+      { code: 0, stdout: 'pw\n' },
+      { stdout: 'done|0.01|10|1|1|0|0\n' },
+    ])
+    const journal = psqlJournal({ exec: fake, env: {} })
+    const first = await journal.runCost('r').then(
+      () => 'resolved',
+      (e: unknown) => String(e),
+    )
+    expect(first).toContain('secrets-run read')
+    expect(await journal.runCost('r')).toMatchObject({ costUsd: 0.01 })
+    expect(calls.map((c) => c.cmd)).toEqual(['secrets-run', 'secrets-run', 'psql'])
+  })
+
   test('the judge sends a blinded state on stdin and reads the boolean answer', async () => {
     const { fake, calls } = scripted([
       {
