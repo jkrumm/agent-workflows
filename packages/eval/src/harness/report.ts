@@ -13,6 +13,8 @@ export interface RunMeta {
   judge: boolean
   concurrency: number
   seed: number
+  /** Extra `agw` arguments of every review / check call (`--agw-args`); absent in reports from before the flag. */
+  agwArgs?: string[]
 }
 
 export type Report =
@@ -58,7 +60,7 @@ export function renderAggregate(report: Report): string {
   const lines = [
     `**Verdict: ${verdict.verdict}**${verdict.reasons.length ? ` (${verdict.reasons.join('; ')})` : ''}`,
     '',
-    `Run ${meta.startedAt} to ${meta.finishedAt}; depth ${meta.depthMode}, legacy rerun ${meta.rerunLegacy ? 'on' : 'off'}, judge ${meta.judge ? 'on' : 'off'}, concurrency ${meta.concurrency}, bootstrap seed ${meta.seed}.`,
+    `Run ${meta.startedAt} to ${meta.finishedAt}; depth ${meta.depthMode}, legacy rerun ${meta.rerunLegacy ? 'on' : 'off'}, judge ${meta.judge ? 'on' : 'off'}, concurrency ${meta.concurrency}, bootstrap seed ${meta.seed}${meta.agwArgs?.length ? `, agw args \`${meta.agwArgs.join(' ')}\`` : ''}.`,
     `Cases: ${cases.total} total, ${cases.ok} ran, ${cases.errors} errored (new side ${cases.newFailed}, harness ${cases.harnessFailed}; error rate ${pct(cases.errorRate)}), skipped ${skipped.length ? skipped.join(', ') : '0'}. A new-side error is scored as a miss.`,
     '',
     '| criterion | value | 95% CI | threshold | pass |',

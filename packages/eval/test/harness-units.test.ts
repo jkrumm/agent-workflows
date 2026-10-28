@@ -6,6 +6,7 @@ import type { CheckAggregate, ReviewAggregate } from '../src/harness/aggregate.t
 import { classifyPair, matchFindings } from '../src/harness/match.ts'
 import { exec } from '../src/harness/exec.ts'
 import { cleanup, materialize, setupSteps } from '../src/harness/materialize.ts'
+import { repoShellDirProblem } from '../../opencode-host/src/host.ts'
 import { bootstrapMedianCI, median, ratioSummary } from '../src/harness/stats.ts'
 import { checkVerdict, reviewVerdict } from '../src/harness/verdict.ts'
 import { BAD_DIFF, fixtureHome } from './harness-support.ts'
@@ -24,6 +25,19 @@ describe('materialize', () => {
     expect(readFileSync(join(fx.repo, 'app.ts'), 'utf8')).toContain('b = 2')
     cleanup(tree.dir)
     expect(existsSync(tree.dir)).toBe(false)
+  })
+
+  test('the clone path passes the repoShell directory check whatever the random suffix is (no "-O")', async () => {
+    const fx = fixtureHome()
+    for (let i = 0; i < 5; i++) {
+      const tree = await materialize(
+        { repo: 'SourceRoot/fixture', baseSha: fx.baseSha },
+        { exec, home: fx.home, setup: false },
+      )
+      if (!tree.ok) throw new Error(tree.detail)
+      expect(repoShellDirProblem(tree.dir)).toBeNull()
+      cleanup(tree.dir)
+    }
   })
 
   test('a diff that does not apply is apply_failed; a missing repo or sha is named', async () => {

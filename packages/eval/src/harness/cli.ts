@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { parseArgs } from 'node:util'
@@ -24,6 +24,9 @@ const USAGE = `usage: bun packages/eval/src/harness/cli.ts review|check [flags]
   --keep             keep the case clones
   --resume <dir>     continue a run in <evalDir>/reports/<ts>; finished cases are skipped
   --seed N           bootstrap seed (default 1)
+  --agw-args="<args>"  review only: extra arguments (whitespace-split) for every \`agw review\` call, e.g.
+                     --agw-args="--angle-variant shell" (the = is required: the value starts with a dash);
+                     recorded in run.json (a resume must repeat it), report.json and the report.md header
 
 Case repos resolve under $AGW_EVAL_HOME (default $HOME).
 Cases: $AGW_EVAL_DIR/<workflow>/cases.jsonl. Reports: $AGW_EVAL_DIR/reports/<ts>/{results.jsonl,report.json,report.md}.`
@@ -51,6 +54,7 @@ function parse(argv: string[]) {
       keep: { type: 'boolean', default: false },
       resume: { type: 'string' },
       seed: { type: 'string', default: '1' },
+      'agw-args': { type: 'string' },
       help: { type: 'boolean', short: 'h', default: false },
     },
   })
@@ -79,6 +83,7 @@ function parse(argv: string[]) {
     keep: values.keep,
     resume: values.resume,
     seed: int('seed', values.seed, 0) ?? 1,
+    agwArgs: values['agw-args']?.split(/\s+/).filter(Boolean) ?? [],
   }
 }
 
@@ -100,7 +105,7 @@ async function dryRun(
   home: string,
 ) {
   deps.out(
-    `plan: ${workflow}, ${cases.length} cases (concurrency ${flags.concurrency}, depth ${flags.depthMode}, rerun-legacy ${flags.rerunLegacy ? 'on' : 'off'}, judge ${flags.judge ? 'on' : 'off'})`,
+    `plan: ${workflow}, ${cases.length} cases (concurrency ${flags.concurrency}, depth ${flags.depthMode}, rerun-legacy ${flags.rerunLegacy ? 'on' : 'off'}, judge ${flags.judge ? 'on' : 'off'}${flags.agwArgs.length ? `, agw args ${flags.agwArgs.join(' ')}` : ''})`,
   )
   let ready = 0
   for (const c of cases) {
@@ -130,6 +135,29 @@ async function dryRun(
   )
 }
 
+const RUN_FILE = 'run.json'
+
+/**
+ * `run.json` pins the run's `--agw-args` (an experiment arm) in its directory, so a resume cannot mix arms. A run
+ * without the file predates the flag: its arguments were none. Writes the file for a fresh (or older) run.
+ */
+function agwArgsMismatch(runDir: string, agwArgs: string[], resuming: boolean): string | null {
+  const path = join(runDir, RUN_FILE)
+  if (resuming && existsSync(path)) {
+    const stored: unknown = JSON.parse(readFileSync(path, 'utf8')).agwArgs
+    const was = Array.isArray(stored) ? stored.map(String).join(' ') : ''
+    return was === agwArgs.join(' ')
+      ? null
+      : `--resume ${runDir} was started with --agw-args "${was}" but this run has --agw-args "${agwArgs.join(' ')}"`
+  }
+  if (resuming && agwArgs.length) {
+    return `--resume ${runDir} has no ${RUN_FILE} (started without --agw-args) but this run has --agw-args "${agwArgs.join(' ')}"`
+  }
+  mkdirSync(runDir, { recursive: true, mode: 0o700 })
+  writeFileSync(path, `${JSON.stringify({ agwArgs })}\n`, { mode: 0o600 })
+  return null
+}
+
 export async function main(argv: string[], deps: CliDeps): Promise<number> {
   const flags = parse(argv)
   if (flags.help || (flags.workflow !== 'review' && flags.workflow !== 'check')) {
@@ -137,6 +165,10 @@ export async function main(argv: string[], deps: CliDeps): Promise<number> {
     return flags.help ? 0 : 2
   }
   const workflow: 'review' | 'check' = flags.workflow
+  if (workflow === 'check' && flags.agwArgs.length) {
+    deps.err('--agw-args applies to review only: the arms of the review experiment are not check inputs')
+    return 2
+  }
   const home = deps.env.AGW_EVAL_HOME ?? deps.env.HOME ?? homedir()
   const path = casesPath(workflow, deps.env)
   if (!existsSync(path)) {
@@ -164,6 +196,11 @@ export async function main(argv: string[], deps: CliDeps): Promise<number> {
   const now = deps.now ?? (() => new Date())
   const startedAt = now().toISOString()
   const runDir = flags.resume ?? join(evalDir(deps.env), 'reports', startedAt.replace(/[:.]/g, '-'))
+  const argsMismatch = agwArgsMismatch(runDir, flags.agwArgs, flags.resume !== undefined)
+  if (argsMismatch) {
+    deps.err(argsMismatch)
+    return 2
+  }
   const options: HarnessOptions = {
     exec: deps.exec,
     home,
@@ -179,7 +216,7 @@ export async function main(argv: string[], deps: CliDeps): Promise<number> {
   const legacyCost = usageTrackerCost(
     deps.env.AGW_USAGE_TRACKER_DIR ?? join(deps.env.HOME ?? homedir(), '.local', 'share', 'usage-tracker'),
   )
-  const agw = { exec: deps.exec, journal, bin: deps.env.AGW_BIN }
+  const agw = { exec: deps.exec, journal, bin: deps.env.AGW_BIN, args: flags.agwArgs }
   const legacy = { exec: deps.exec, cost: legacyCost, bin: deps.env.AGW_LEGACY_BIN }
   const meta = {
     startedAt,
@@ -188,6 +225,7 @@ export async function main(argv: string[], deps: CliDeps): Promise<number> {
     judge: flags.judge,
     concurrency: flags.concurrency,
     seed: flags.seed,
+    agwArgs: flags.agwArgs,
   }
 
   let report: Report

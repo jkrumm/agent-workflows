@@ -33,6 +33,8 @@ export interface AgwOptions {
   exec: Exec
   journal: RunJournal
   bin?: string
+  /** Extra arguments for every review / check invocation (`--agw-args`), e.g. an experiment arm. */
+  args?: readonly string[]
   /** Waits for the journal row after the run ends (the record lands in runPost, a moment later). */
   journalAttempts?: number
   sleep?: (ms: number) => Promise<void>
@@ -85,6 +87,7 @@ export function agwReviewRunner(options: AgwOptions): ReviewRunner {
       const args = ['review', '--cwd', cwd, '--scope', 'uncommitted']
       if (depth) args.push('--depth', depth)
       if (context) args.push('--context', context)
+      args.push(...(options.args ?? []))
       const { state, elapsedMs } = await runWorkflow(options, args)
       return {
         output: ReviewOutput.parse(state.output),
@@ -100,6 +103,7 @@ export function agwCheckRunner(options: AgwOptions): CheckRunner {
     async check({ cwd, commands }) {
       const args = ['check', '--cwd', cwd]
       if (commands?.length) args.push('--commands', JSON.stringify(commands))
+      args.push(...(options.args ?? []))
       const { state, elapsedMs } = await runWorkflow(options, args)
       return {
         output: CheckOutput.parse(state.output),

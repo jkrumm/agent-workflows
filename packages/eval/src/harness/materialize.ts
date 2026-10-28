@@ -29,7 +29,8 @@ export interface MaterializeOptions {
 
 /**
  * A throwaway clone at `baseSha` with the case's diff as uncommitted changes. `--shared` borrows the owner's
- * object store read-only: nothing is written to the owner's checkout.
+ * object store read-only: nothing is written to the owner's checkout. The `agw_eval_` prefix has no dash: a random
+ * suffix starting with `O` after `agw-eval-` would make `-O`, which the review's repo shell refuses in a path.
  */
 export async function materialize(input: MaterializeInput, options: MaterializeOptions): Promise<Materialized> {
   const { exec } = options
@@ -37,7 +38,7 @@ export async function materialize(input: MaterializeInput, options: MaterializeO
   if (!existsSync(join(source, '.git'))) {
     return { ok: false, reason: 'repo_missing', detail: `${input.repo} is not a git checkout under the home root` }
   }
-  const dir = join(mkdtempSync(join(options.tmpRoot ?? tmpdir(), 'agw-eval-')), 'repo')
+  const dir = join(mkdtempSync(join(options.tmpRoot ?? tmpdir(), 'agw_eval_')), 'repo')
   const git = (args: string[], stdin?: string) =>
     exec('git', args, { cwd: dir, stdin, timeoutMs: GIT_TIMEOUT_MS, env: { GIT_TERMINAL_PROMPT: '0' } })
 

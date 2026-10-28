@@ -1,10 +1,10 @@
 import { describe, expect, test } from 'bun:test'
-import { mkdirSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { writeCases } from '../src/cases.ts'
 import { CheckCase, ReviewCase } from '../src/cases.ts'
-import { agwJudge, agwReviewRunner, psqlJournal } from '../src/harness/adapters/agw.ts'
+import { agwCheckRunner, agwJudge, agwReviewRunner, psqlJournal } from '../src/harness/adapters/agw.ts'
 import { legacyReviewRunner, usageTrackerCost } from '../src/harness/adapters/legacy.ts'
 import { main } from '../src/harness/cli.ts'
 import { type Exec, type ExecOptions, exec } from '../src/harness/exec.ts'
@@ -57,6 +57,44 @@ describe('agw adapter', () => {
     ])
     expect(calls[1]?.args).toEqual(['run', 'wait', 'r1', '--format', 'json'])
     expect(calls.every((c) => c.options?.env?.AGW_PURPOSE === 'eval')).toBe(true)
+  })
+
+  test('extra args are appended to every review and check call, before --format', async () => {
+    const review = scripted([{ stdout: JSON.stringify({ runId: 'r5', status: 'done', output: reviewOutput() }) }])
+    await agwReviewRunner({
+      exec: review.fake,
+      journal: noJournal,
+      journalAttempts: 1,
+      sleep: async () => {},
+      args: ['--angle-variant', 'shell'],
+    }).review({
+      cwd: '/x',
+      context: 'c',
+    })
+    expect(review.calls[0]?.args).toEqual([
+      'review',
+      '--cwd',
+      '/x',
+      '--scope',
+      'uncommitted',
+      '--context',
+      'c',
+      '--angle-variant',
+      'shell',
+      '--format',
+      'json',
+    ])
+    const checkOutput = { passed: true, steps: [{ name: 'check', passed: true }], summary: '' }
+    const check = scripted([{ stdout: JSON.stringify({ runId: 'r6', status: 'done', output: checkOutput }) }])
+    const checked = await agwCheckRunner({
+      exec: check.fake,
+      journal: noJournal,
+      journalAttempts: 1,
+      sleep: async () => {},
+      args: ['--x', 'y'],
+    }).check({ cwd: '/x' })
+    expect(checked.output.passed).toBe(true)
+    expect(check.calls[0]?.args).toEqual(['check', '--cwd', '/x', '--x', 'y', '--format', 'json'])
   })
 
   test('a failed run throws with its id; a missing journal row leaves the cost unknown', async () => {
@@ -262,6 +300,104 @@ describe('cli', () => {
     expect(text).toContain('IU estimate: $0.0400')
     expect(seen.every((cmd) => cmd === 'git')).toBe(true)
     expect(readdirSync(evalDir)).toEqual(['review'])
+  })
+
+  test('--agw-args is split on whitespace, reaches every agw call and is recorded in report.json and report.md', async () => {
+    const { fx, evalDir, env } = evalEnv()
+    writeCases(join(evalDir, 'review', 'cases.jsonl'), ReviewCase, [
+      reviewCase({ id: 'a', baseSha: fx.baseSha, diff: fx.diff }),
+    ])
+    const dry: string[] = []
+    await main(['review', '--dry-run', '--agw-args=--angle-variant shell'], {
+      env,
+      exec,
+      out: (l) => dry.push(l),
+      err: () => {},
+    })
+    expect(dry.join('\n')).toContain('agw args --angle-variant shell')
+
+    const agwCalls: string[][] = []
+    const fake: Exec = async (cmd, args, options) => {
+      if (cmd === 'git') return exec(cmd, args, options)
+      if (cmd === 'agw') {
+        agwCalls.push(args)
+        return { code: 0, stdout: JSON.stringify({ runId: 'r1', status: 'done', output: reviewOutput() }), stderr: '' }
+      }
+      return { code: 1, stdout: '', stderr: 'no journal in this test' }
+    }
+    const out: string[] = []
+    const code = await main(['review', '--agw-args=  --angle-variant   shell '], {
+      env: { ...env, AGW_EVAL_PG_PASSWORD: 'x' },
+      exec: fake,
+      out: (l) => out.push(l),
+      err: () => {},
+      now: () => new Date('2026-10-28T00:00:00.000Z'),
+    })
+    expect(code).toBe(0)
+    expect(agwCalls).toHaveLength(1)
+    expect(agwCalls[0]?.slice(-4)).toEqual(['--angle-variant', 'shell', '--format', 'json'])
+    const dir = join(evalDir, 'reports', readdirSync(join(evalDir, 'reports'))[0] as string)
+    expect(JSON.parse(readFileSync(join(dir, 'report.json'), 'utf8')).meta.agwArgs).toEqual([
+      '--angle-variant',
+      'shell',
+    ])
+    expect(readFileSync(join(dir, 'report.md'), 'utf8')).toContain('agw args `--angle-variant shell`')
+    expect(out.join('\n')).toContain('agw args `--angle-variant shell`')
+  })
+
+  test('--agw-args on check is a usage error: nothing runs', async () => {
+    const { fx, evalDir, env } = evalEnv()
+    mkdirSync(join(evalDir, 'check'), { recursive: true })
+    writeCases(join(evalDir, 'check', 'cases.jsonl'), CheckCase, [checkCase({ baseSha: fx.baseSha })])
+    const err: string[] = []
+    const calls: string[] = []
+    const spy: Exec = async (cmd) => {
+      calls.push(cmd)
+      return { code: 0, stdout: '', stderr: '' }
+    }
+    for (const argv of [
+      ['check', '--agw-args=--x y'],
+      ['check', '--dry-run', '--agw-args=--x y'],
+    ]) {
+      expect(await main(argv, { env, exec: spy, out: () => {}, err: (l) => err.push(l) })).toBe(2)
+    }
+    expect(err.join('\n')).toContain('--agw-args applies to review only')
+    expect(calls).toEqual([])
+  })
+
+  test('--resume pins --agw-args in run.json: a different value is a usage error naming both, the same one resumes', async () => {
+    const { fx, evalDir, env } = evalEnv()
+    writeCases(join(evalDir, 'review', 'cases.jsonl'), ReviewCase, [
+      reviewCase({ id: 'a', baseSha: fx.baseSha, diff: fx.diff }),
+    ])
+    let agwRuns = 0
+    const fake: Exec = async (cmd, args, options) => {
+      if (cmd === 'git') return exec(cmd, args, options)
+      if (cmd === 'agw') {
+        agwRuns++
+        return { code: 0, stdout: JSON.stringify({ runId: 'r1', status: 'done', output: reviewOutput() }), stderr: '' }
+      }
+      return { code: 1, stdout: '', stderr: 'no journal in this test' }
+    }
+    const deps = (err: string[] = []) => ({
+      env: { ...env, AGW_EVAL_PG_PASSWORD: 'x' },
+      exec: fake,
+      out: () => {},
+      err: (l: string) => err.push(l),
+    })
+    expect(await main(['review', '--agw-args=--angle-variant shell'], deps())).toBe(0)
+    const dir = join(evalDir, 'reports', readdirSync(join(evalDir, 'reports'))[0] as string)
+    expect(JSON.parse(readFileSync(join(dir, 'run.json'), 'utf8'))).toEqual({ agwArgs: ['--angle-variant', 'shell'] })
+
+    const err: string[] = []
+    expect(await main(['review', '--resume', dir, '--agw-args=--angle-variant callers'], deps(err))).toBe(2)
+    expect(err.join('\n')).toContain('--angle-variant shell')
+    expect(err.join('\n')).toContain('--angle-variant callers')
+    expect(await main(['review', '--resume', dir], deps(err))).toBe(2) // none given, one stored
+    expect(agwRuns).toBe(1)
+
+    expect(await main(['review', '--resume', dir, '--agw-args=--angle-variant shell'], deps())).toBe(0)
+    expect(agwRuns).toBe(1) // the finished case was skipped
   })
 
   test('a check dry run names the setup step', async () => {

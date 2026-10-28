@@ -28,6 +28,7 @@ bun packages/eval/src/harness/cli.ts review --resume "$AGW_EVAL_DIR/reports/<ts>
 | `--keep` | keeps the case clones (paths go to stderr) |
 | `--resume <dir>` | continues a run; finished and skipped cases are not rerun, failed ones are |
 | `--seed N` | bootstrap seed (default 1): the same seed gives the same CI |
+| `--agw-args="<args>"` | review only (a usage error on `check`): whitespace-split extra arguments for every `agw review` call, e.g. `--agw-args="--angle-variant shell"` (the `=` is required: the value starts with a dash). Pinned in the run directory's `run.json`: `--resume` with different arguments is a usage error. Recorded in `report.json` (`meta.agwArgs`) and the `report.md` header |
 
 Environment: `AGW_EVAL_DIR` (cases, reports), `AGW_EVAL_HOME` (the root `case.repo` is relative to, default
 `$HOME`), `AGW_BIN` / `AGW_LEGACY_BIN` (the CLIs, default `agw` / `agw-legacy` on `PATH`), `AGW_PG_SCHEMA` (default
