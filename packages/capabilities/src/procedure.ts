@@ -15,6 +15,11 @@ import { CapabilityCallError, CapabilityError, ERRORS } from './errors.ts'
 /** Per-request context: where billed calls are reported, tagged with the capability. */
 export interface RequestContext {
   onUsage?: (capability: string, usage: Usage) => void
+  /**
+   * Runs the call in place of the handler, after input validation and before output validation: the host makes a
+   * direct HTTP call a run of its own. Absent (and always on `call`), the handler runs in place.
+   */
+  invoke?: (capability: string, input: unknown, signal: AbortSignal) => Promise<unknown>
 }
 
 const CODES = Object.keys(ERRORS)
@@ -65,6 +70,7 @@ export function buildProcedure<I extends z.ZodObject, O extends z.ZodType>(
     .input(def.input.strict()) // an unknown key (a renamed flag) is a 400, never silently dropped
     .output(def.output)
     .handler(({ input, context, signal }) => {
+      if (context.invoke) return context.invoke(def.id, input, signal ?? neverAborted()) as never
       const ctx: Ctx = { signal: signal ?? neverAborted(), addUsage: (usage) => context.onUsage?.(def.id, usage) }
       return def.handler(input as z.output<I>, ctx) as never
     })

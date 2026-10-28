@@ -5,6 +5,7 @@ import { defineWorkflow, type Logger, type Runtime } from '@agent-workflows/runt
 import { Pool } from 'pg'
 import { z } from 'zod'
 import { createHost, type Host } from '../src/app.ts'
+import { capabilityWorkflows } from '../src/capability-runs.ts'
 import type { HostWorkflow } from '../src/operations.ts'
 import { type RunStore, runtimeRunStore } from '../src/store.ts'
 import { createSmokePing } from '../src/workflows/smoke.ts'
@@ -141,7 +142,7 @@ export async function startTestHost(
     : null
   const runtime: Runtime = testRuntime({
     schema,
-    workflows: workflows.map((w) => w.workflow),
+    workflows: [...workflows.map((w) => w.workflow), ...capabilityWorkflows(registry)],
     middleware: platform?.middleware,
   })
   await runtime.open()

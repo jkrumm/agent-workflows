@@ -25,8 +25,8 @@ export const DEFAULT_PURPOSE = 'prod'
 /** What the host's fetch hands every procedure. */
 export type HostContext = RequestContext & {
   headers: Headers
-  /** A handler sets this to override the success status (200 terminal, 202 not). */
-  response: { status?: number }
+  /** A handler sets these to override the success status (200 terminal, 202 not) and to add response headers. */
+  response: { status?: number; headers?: Record<string, string> }
 }
 
 const base = os.$context<HostContext>().errors({
@@ -88,7 +88,7 @@ export type HostOperation = {
 
 const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error))
 
-const badRequest = (message: string) => new ORPCError('BAD_REQUEST', { message })
+export const badRequest = (message: string) => new ORPCError('BAD_REQUEST', { message })
 
 /** `Prefer: wait=<seconds>`, capped at {@link MAX_WAIT_S}; `fallback` (default 0) when the header names no wait. */
 export function preferWait(headers: Headers, fallback = 0): number {
@@ -102,7 +102,7 @@ export function preferWait(headers: Headers, fallback = 0): number {
   return Math.min(Number(match[2]), MAX_WAIT_S)
 }
 
-function purposeOf(headers: Headers): string {
+export function purposeOf(headers: Headers): string {
   const purpose = headers.get('x-agw-purpose')?.trim()
   if (purpose === undefined || purpose === '') return DEFAULT_PURPOSE
   if (purpose.length > 64 || !/^[\w.-]+$/.test(purpose))
@@ -110,7 +110,7 @@ function purposeOf(headers: Headers): string {
   return purpose
 }
 
-function idempotencyKeyOf(headers: Headers): string | undefined {
+export function idempotencyKeyOf(headers: Headers): string | undefined {
   const key = headers.get('idempotency-key')?.trim()
   if (!key) return undefined
   if (key.length > 255) throw badRequest('Idempotency-Key is longer than 255 characters')
@@ -124,11 +124,11 @@ const POLL_MAX_MS = 250
 const MAX_READ_FAILURES = 5
 
 /**
- * Reads the run until it ends, `seconds` pass or the caller goes away; `null` when the run does not exist. A failed
- * read is logged and retried on the same backoff, inside the deadline; the error surfaces once reads fail
- * {@link MAX_READ_FAILURES} times in a row or the deadline passes with the last read failing.
+ * Reads the run until it ends, `seconds` pass (`Infinity`: no deadline) or the caller goes away; `null` when the run
+ * does not exist. A failed read is logged and retried on the same backoff, inside the deadline; the error surfaces
+ * once reads fail {@link MAX_READ_FAILURES} times in a row or the deadline passes with the last read failing.
  */
-async function waitFor(
+export async function waitFor(
   store: RunStore,
   runId: string,
   seconds: number,

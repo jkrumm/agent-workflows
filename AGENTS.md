@@ -85,7 +85,7 @@ excluded from every tool.
 | `make check` | `bun install --frozen-lockfile` first (stale `node_modules` never passes), then `biome format`, `biome lint`, `oxlint --type-aware`, `tsc --noEmit`, `bun test --isolate`; non-zero on any failure. **The merge train's gate**, and what CI runs |
 | `make fmt` | `biome format --write` |
 | `make deploy` | On the mini: fetch `origin/master` into `~/.agent-workflows/repo`, export it to `releases/<sha>` and `bun install --frozen-lockfile` there, render and bootstrap the LaunchAgent `com.jkrumm.agent-workflows-host` for that release, wait for `/health` (version = the sha), then `current`, `~/.config/agw/env`, `~/.local/bin/agw`, `data/deployed-sha`. A release that never turns healthy is rolled back to the previous one (exit 1). `DRY_RUN=1` prints the plan and the plist and changes nothing. Details: `packages/host/README.md` §Deploy |
-| `make verify` | Exit 0 only if `/health` is ok, the deployed sha is `origin/master`, `AGW_PURPOSE=verify agw smoke ping` returns a `title`, and its `agw.runs` row is `done` with a trace id and priced usage. Prints the run id |
+| `make verify` | Exit 0 only if `/health` is ok, the deployed sha is `origin/master`, `AGW_PURPOSE=verify agw smoke ping` returns a `title`, and its `agw.runs` row is `done` with a trace id and priced usage, and a direct `AGW_PURPOSE=verify agw llm title …` left a `cap.llm.title` run `done` with priced usage. Prints both run ids |
 
 CI (`.github/workflows/ci.yml`) runs `bun install --frozen-lockfile` and `make check` on pushes to `master` and
 on pull requests, on GitHub-hosted runners.
