@@ -118,8 +118,8 @@ export class EngineJobFailed extends Error {
   }
 }
 
-/** A job of this call: started now, or adopted (already done under its key, so already paid for by whoever ran it). */
-export type EngineRun = { jobId: string; report: EngineReport; adopted: boolean }
+/** The job of this call: started now, or one already done under its key (adopted). */
+export type EngineRun = { jobId: string; report: EngineReport }
 
 /**
  * Runs one job to its end under the shared key rule (`withAttemptKeys`): a key whose job is done is adopted, a key
@@ -152,7 +152,7 @@ export async function runEngineJob(
       options.progress?.()
       if (job.status === 'done') {
         if (!job.result) throw new Error(`engine job ${jobId} is done without a report`)
-        return { value: { jobId, report: job.result, adopted } }
+        return { value: { jobId, report: job.result } }
       }
       if (job.status === 'error' || job.status === 'cancelled') {
         const cost = job.result?.cost?.totalUsd

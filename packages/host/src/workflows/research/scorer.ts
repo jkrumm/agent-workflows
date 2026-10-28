@@ -1,11 +1,11 @@
-import { InfraError, type Json, type ScoreJudge, type Scorer, type Verdict } from '@agent-workflows/runtime'
+import type { Json, ScoreJudge, Scorer, Verdict } from '@agent-workflows/runtime'
 import { z } from 'zod'
 import { asRecord as record } from './util.ts'
 import { GoldenExpect, liveTarget, liveValue, matchExpect, withinMaxChars } from './golden.ts'
 import { type ResearchInputValue, ResearchOutput, type ResearchResult } from './schema.ts'
 
 /** Bump on any change to what a score means: compare refuses to mix scorer versions silently. */
-export const RESEARCH_SCORER_VERSION = '2026-10-29.1'
+export const RESEARCH_SCORER_VERSION = '2026-10-29.2'
 
 /** A golden case's expected result (research-gateway `evals/golden.jsonl`: `expect`, optional `maxChars`). */
 export const ResearchReference = z.object({ expect: GoldenExpect, maxChars: z.number().int().positive().optional() })
@@ -58,7 +58,8 @@ async function supports(judge: ScoreJudge, claim: string, url: string): Promise<
  *   (`web.fetch`) support the claim (`decide`), over the citations the judge could score; a citation it could not
  *   (page unreachable or empty, a typed `decide` error) is unscored; `judgedShare` is the share of the sampled
  *   citations the judge could score, and when none could be `supported` is left out. A report without citations
- *   scores 0. A `live:` value the registry does not give is an infra error (the runtime retries), never a miss.
+ *   scores 0. A `live:` value the registry answers without (a typed error, no usable `latest`) leaves `golden`
+ *   unscored; an outage is the judge's error, which the runtime retries.
  * `pass`: valid, and with a reference the golden check passed (an unscored golden never passes); without one, a
  * complete report.
  */
@@ -94,11 +95,11 @@ export const researchScorer: Scorer<ResearchInputValue, ResearchReference> = {
         const latest = answer.error === undefined ? answer.latest : undefined
         live = typeof latest === 'string' && latest ? liveValue(target.registry, latest) : null
       }
-      // No live value from the registry is an outage, not a miss: the runtime retries the scoring with a backoff.
-      if ('live' in expect && ctx.judge && live === null) {
-        throw new InfraError(`golden: ${expect.live} gave no live value (the registry did not answer)`)
-      }
-      if (!('live' in expect) || ctx.judge) {
+      // The registry answered without a usable version (a typed error, no `latest`): golden is unscored, which never
+      // passes. An outage never gets here: the judge throws, and the runtime retries the scoring.
+      const liveUnscored = 'live' in expect && ctx.judge !== undefined && live === null
+      if (liveUnscored) problems.push(`golden unscored: ${expect.live} gave no usable live value`)
+      if ((!('live' in expect) || ctx.judge) && !liveUnscored) {
         goldenPass = matchExpect(result.report, expect, live).pass && withinMaxChars(result.report, maxChars)
         scores.golden = goldenPass ? 1 : 0
         if (!goldenPass) problems.push('golden expectation missed')

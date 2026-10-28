@@ -1,6 +1,6 @@
 import { parseJsonLoose } from '@agent-workflows/capabilities'
 import { DEFAULT_STATE_DIR } from '@agent-workflows/opencode-host'
-import { type Ctx, defineWorkflow, type Json, WorkflowError } from '@agent-workflows/runtime'
+import { type Ctx, defineWorkflow, WorkflowError } from '@agent-workflows/runtime'
 import { z } from 'zod'
 import type { HostWorkflow } from '../../operations.ts'
 import type { WorkflowDeps } from '../index.ts'
@@ -141,6 +141,21 @@ function parseDraft(text: string): Draft | null {
   return parsed.success ? parsed.data : null
 }
 
+/** `done`, or the signal's reason once it aborts; the listener goes with it, and none is added when already aborted. */
+async function untilAborted(done: Promise<void>, signal: AbortSignal): Promise<void> {
+  signal.throwIfAborted()
+  let onAbort!: () => void
+  const aborted = new Promise<never>((_resolve, reject) => {
+    onAbort = () => reject(signal.reason)
+    signal.addEventListener('abort', onAbort, { once: true })
+  })
+  try {
+    await Promise.race([done, aborted])
+  } finally {
+    signal.removeEventListener('abort', onAbort)
+  }
+}
+
 export function createResearchWorkflows(deps: WorkflowDeps, options: ResearchOptions = {}): HostWorkflow[] {
   const env = options.env ?? process.env
   const stateDir = options.stateDir ?? DEFAULT_STATE_DIR
@@ -207,78 +222,71 @@ export function createResearchWorkflows(deps: WorkflowDeps, options: ResearchOpt
     const bound = new Promise<void>((resolve) => {
       toolsBound = resolve
     })
-    // The tools step lives as long as the agent's turns: every gate call books its usage here as it is reported, so
-    // a cancelled or failed run keeps its spend (the step records its usage whatever its end). Its output is the
-    // evidence from the ledger, read once the agent has ended and every call in flight is served.
-    const tools = ctx.step('tools', async ({ addUsage, signal }) => {
-      const unbind = gate.bindUsage(runId, 'research', addUsage)
-      toolsBound()
-      let engineCostUsd: number | null = null
-      try {
-        await Promise.race([
-          ended,
-          new Promise<never>((_resolve, reject) => {
-            if (signal.aborted) reject(signal.reason)
-            signal.addEventListener('abort', () => reject(signal.reason), { once: true })
-          }),
-        ])
-        await gate.settle(runId, 'research')
-        engineCostUsd = gate.engineCost(runId, 'research')
-      } finally {
-        // The grant ends before the step does: a late call is refused, and every booked usage is on this step.
-        await close()
-        unbind()
-      }
-      const entries = await ledger.read(runId, 'research')
-      const ev = evidence(entries)
-      return {
-        retrieved: [...ev.retrieved],
-        seen: [...ev.seen],
-        failed: ev.failed,
-        counts: ev.counts,
-        engineJobs: ev.engineJobs,
-        engineCostUsd: ev.engineJobs.length ? engineCostUsd : null,
-        calls: entries.length,
-      } satisfies Evidence
-    })
-    tools.catch(() => {}) // awaited below; a rejection before that is not unhandled
-    // A replayed tools step never runs its body: the step itself resolves.
-    await Promise.race([bound, tools.then(() => {})])
-
-    let draft: Draft | null = null
-    let failure: unknown = null
+    // The grant is closed on every path out, the early ones included (the tools step failing before it binds).
     try {
-      const prompt = researchTask({
-        query: input.query,
-        depth: input.depth,
-        design,
-        ...(input.context ? { context: input.context } : {}),
+      // The tools step lives as long as the agent's turns: every gate call books its usage here as it is reported, so
+      // a cancelled or failed run keeps its spend (the step records its usage whatever its end). Its output is the
+      // evidence from the ledger, read once the agent has ended and every call in flight is served.
+      const tools = ctx.step('tools', async ({ addUsage, signal }) => {
+        const unbind = gate.bindUsage(runId, 'research', addUsage)
+        toolsBound()
+        try {
+          await untilAborted(ended, signal)
+          await gate.settle(runId, 'research')
+        } finally {
+          // The grant ends before the step does: a late call is refused, and every booked usage is on this step.
+          await close()
+          unbind()
+        }
+        const entries = await ledger.read(runId, 'research')
+        const ev = evidence(entries)
+        return {
+          retrieved: [...ev.retrieved],
+          seen: [...ev.seen],
+          failed: ev.failed,
+          counts: ev.counts,
+          engineJobs: ev.engineJobs,
+          engineCostUsd: ev.engineCostUsd,
+          calls: entries.length,
+        } satisfies Evidence
       })
-      const text = await ctx.agent('research', {
-        agent: `research-${design}-${profile}`,
-        prompt,
-        output: z.string(),
-        options: { output: 'text' },
-        retry: { attempts: AGENT_ATTEMPTS, backoffMs: options.agentBackoffMs ?? 1_000 },
-      })
-      draft = parseDraft(text)
-      // One re-ask in the same session (concept §4: one re-ask, then invalid_output).
-      if (!draft)
-        draft = parseDraft(await ctx.continue('research:reask', 'research', JSON_ONLY_REASK, { output: z.string() }))
-    } catch (error) {
-      failure = error
+      tools.catch(() => {}) // awaited below; a rejection before that is not unhandled
+      // A replayed tools step never runs its body: the step itself resolves.
+      await Promise.race([bound, tools.then(() => {})])
+
+      let draft: Draft | null = null
+      let failure: unknown = null
+      try {
+        const prompt = researchTask({
+          query: input.query,
+          depth: input.depth,
+          design,
+          ...(input.context ? { context: input.context } : {}),
+        })
+        const text = await ctx.agent('research', {
+          agent: `research-${design}-${profile}`,
+          prompt,
+          output: z.string(),
+          options: { output: 'text' },
+          retry: { attempts: AGENT_ATTEMPTS, backoffMs: options.agentBackoffMs ?? 1_000 },
+        })
+        draft = parseDraft(text)
+        // One re-ask in the same session (concept §4: one re-ask, then invalid_output).
+        if (!draft)
+          draft = parseDraft(await ctx.continue('research:reask', 'research', JSON_ONLY_REASK, { output: z.string() }))
+      } catch (error) {
+        failure = error
+      } finally {
+        agentEnded()
+      }
+      const recorded = await tools
+      if (failure) throw failure
+      if (!draft) throw new WorkflowError('invalid_output', 'the research agent did not answer with the report JSON')
+      return assemble(draft, Evidence.parse(recorded), { design, profile })
     } finally {
       agentEnded()
-    }
-    let recorded: Json
-    try {
-      recorded = await tools
-    } finally {
       await close()
     }
-    if (failure) throw failure
-    if (!draft) throw new WorkflowError('invalid_output', 'the research agent did not answer with the report JSON')
-    return assemble(draft, Evidence.parse(recorded), { design, profile })
   }
 
   const research = defineWorkflow({

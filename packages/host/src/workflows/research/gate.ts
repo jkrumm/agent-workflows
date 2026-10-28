@@ -41,10 +41,8 @@ type Grant = {
   /** Where a call's usage is booked: the research run's `tools` step, once it is bound; held here until then. */
   sink: ((usage: Usage) => void) | null
   held: Usage[]
-  /** Engine jobs this grant booked, so a repeated question that adopts its job is not booked twice. */
+  /** Engine jobs booked in this process (two calls in flight on one question); the ledger answers across processes. */
   bookedJobs: Set<string>
-  engineCostUsd: number | null
-  engineUnpriced: boolean
 }
 
 export type GateOptions = {
@@ -124,6 +122,8 @@ export class ToolGate {
   private readonly grants = new Map<string, Grant>()
   private readonly bySession = new Map<string, Grant>()
   private server: ReturnType<typeof Bun.serve> | null = null
+  /** Set once this instance wrote `gate.json`: only then does `close` remove it (another host may own the file). */
+  private wroteFile = false
   private readonly key = randomBytes(32).toString('hex')
   private readonly logger: Logger
 
@@ -145,6 +145,7 @@ export class ToolGate {
       writeFileSync(tmp, `${JSON.stringify({ url: this.url(), key: this.key })}\n`, { mode: 0o600 })
       chmodSync(tmp, 0o600)
       renameSync(tmp, this.file)
+      this.wroteFile = true
     }
     return { url: this.url() }
   }
@@ -173,8 +174,6 @@ export class ToolGate {
       sink: null,
       held: [],
       bookedJobs: new Set(),
-      engineCostUsd: null,
-      engineUnpriced: false,
     }
     this.grants.set(stepKey, grant)
     return () => (this.grants.get(stepKey) === grant ? this.drop(grant) : Promise.resolve())
@@ -189,13 +188,6 @@ export class ToolGate {
     return () => {
       if (grant.sink === addUsage) grant.sink = null
     }
-  }
-
-  /** The engine spend this grant booked: null when any job's cost was unknown. */
-  engineCost(runId: string, stepId: string): number | null {
-    const grant = this.grants.get(`${runId}:${stepId}`)
-    if (!grant || grant.engineUnpriced) return null
-    return grant.engineCostUsd
   }
 
   /** Waits (bounded) until the step's calls in flight are served. */
@@ -221,12 +213,16 @@ export class ToolGate {
     await this.drain(grant)
   }
 
-  /** Ends every grant (awaiting their calls), stops the server and removes `gate.json`. The host calls it on shutdown. */
+  /**
+   * Ends every grant (awaiting their calls), stops the server and removes the `gate.json` this instance wrote, never
+   * one another process wrote. The host calls it on shutdown.
+   */
   async close() {
     await Promise.all([...this.grants.values()].map((grant) => this.drop(grant)))
     void this.server?.stop(true)
     this.server = null
-    rmSync(this.file, { force: true })
+    if (this.wroteFile) rmSync(this.file, { force: true })
+    this.wroteFile = false
   }
 
   private grantOf(sessionId: string): Grant | null {
@@ -291,7 +287,8 @@ export class ToolGate {
       const entry: Partial<LedgerEntry> = {}
       if (error instanceof EngineJobFailed) {
         entry.engineJob = error.jobId
-        this.bookEngine(grant, error.jobId, error.costUsd)
+        entry.engineCostUsd = error.costUsd
+        await this.bookEngine(grant, error.jobId, error.costUsd)
       }
       served = { ok: false, error: message(error), entry }
     }
@@ -334,13 +331,16 @@ export class ToolGate {
     else grant.held.push(usage)
   }
 
-  /** An engine job's cost, once per job and grant: a repeated question adopts its job and is not booked again. */
-  private bookEngine(grant: Grant, jobId: string, costUsd: number | null) {
+  /**
+   * An engine job's cost, booked once: not when this process booked it already (a repeated question in flight), nor
+   * when the ledger already holds the job (an earlier call adopted or ran it). A ledger that cannot be read books it.
+   */
+  private async bookEngine(grant: Grant, jobId: string, costUsd: number | null) {
     if (grant.bookedJobs.has(jobId)) return
     grant.bookedJobs.add(jobId)
+    const known = await this.options.ledger.read(grant.runId, grant.stepId).catch(() => [])
+    if (known.some((entry) => entry.engineJob === jobId)) return
     this.book(grant, engineUsage(costUsd))
-    if (costUsd === null) grant.engineUnpriced = true
-    else grant.engineCostUsd = (grant.engineCostUsd ?? 0) + costUsd
   }
 
   private async run(
@@ -383,7 +383,8 @@ export class ToolGate {
       { signal: grant.controller.signal, ...(this.options.enginePollMs ? { pollMs: this.options.enginePollMs } : {}) },
     )
     const cost = report.cost?.totalUsd
-    this.bookEngine(grant, jobId, typeof cost === 'number' ? cost : null)
+    const costUsd = typeof cost === 'number' ? cost : null
+    await this.bookEngine(grant, jobId, costUsd)
     return {
       result: {
         report: report.report,
@@ -392,7 +393,11 @@ export class ToolGate {
         unverified: report.unverified,
         status: report.status,
       },
-      entry: { retrieved: [...report.sources, ...report.citations.map((c) => c.url)], engineJob: jobId },
+      entry: {
+        retrieved: [...report.sources, ...report.citations.map((c) => c.url)],
+        engineJob: jobId,
+        engineCostUsd: costUsd,
+      },
     }
   }
 }
@@ -410,19 +415,25 @@ export function engineUsage(costUsd: number | null | undefined): Usage {
   }
 }
 
-/** What a step's recorded calls add up to: URLs retrieved and seen (normalized), failed fetches, calls per tool, engine jobs. */
+/**
+ * What a step's recorded calls add up to: URLs retrieved and seen (normalized), failed fetches, calls per tool, the
+ * engine jobs and their cost (each job once; null when none ran or any job's cost is unknown).
+ */
 export function evidence(entries: LedgerEntry[]) {
   const retrieved = new Set<string>()
   const seen = new Set<string>()
   const counts: Record<string, number> = {}
-  const engineJobs = new Set<string>()
+  const jobs = new Map<string, number | null>()
   let failed = 0
   for (const entry of entries) {
     for (const url of entry.retrieved) retrieved.add(normalizeUrl(url))
     for (const url of entry.seen) seen.add(normalizeUrl(url))
     counts[entry.tool] = (counts[entry.tool] ?? 0) + 1
     if (!entry.ok && entry.tool === 'web_fetch') failed++
-    if (entry.engineJob) engineJobs.add(entry.engineJob)
+    if (entry.engineJob && !jobs.has(entry.engineJob)) jobs.set(entry.engineJob, entry.engineCostUsd ?? null)
   }
-  return { retrieved, seen, failed, counts, engineJobs: [...engineJobs] }
+  const costs = [...jobs.values()]
+  const engineCostUsd =
+    costs.length && costs.every((c) => c !== null) ? costs.reduce<number>((a, c) => a + (c ?? 0), 0) : null
+  return { retrieved, seen, failed, counts, engineJobs: [...jobs.keys()], engineCostUsd }
 }

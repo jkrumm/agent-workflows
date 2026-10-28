@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { InfraError, type Json, type ScoreJudge } from '@agent-workflows/runtime'
+import type { Json, ScoreJudge } from '@agent-workflows/runtime'
 import { FakeAgentHost, type FakeSession } from '@agent-workflows/runtime/testing'
 import type { HostRegistry } from '../src/workflows/index.ts'
 import { createEngineClient, EngineJobFailed, runEngineJob } from '../src/workflows/research/engine.ts'
@@ -490,10 +490,58 @@ describe('the tool gate ledger: evidence the decision rests on', () => {
     const failure = await job('k-flaky').catch((e: unknown) => e)
     expect(failure).toBeInstanceOf(EngineJobFailed)
     const second = await job('k-flaky')
-    expect(second.adopted).toBe(false)
     expect(second.jobId).not.toBe((failure as EngineJobFailed).jobId)
     const third = await job('k-flaky')
-    expect(third).toMatchObject({ jobId: second.jobId, adopted: true })
+    expect(third.jobId).toBe(second.jobId)
+  })
+
+  test('an engine job is booked once: a second process on the same ledger adopts the job and books nothing', async () => {
+    const memory = memoryToolLedger()
+    const booked: (number | null | undefined)[] = []
+    const make = (dir: string) =>
+      new ToolGate({
+        stateDir: dir,
+        ledger: memory,
+        engine: () => createEngineClient({ url: engine.url, token: 'engine-token' }),
+        call: fakeCapability,
+        enginePollMs: 5,
+        belongsTo: (sessionId, stepKey) => sessionId === stepKey,
+      })
+    const ask = async (gateOf: ToolGate, dir: string) => {
+      const close = gateOf.open({ runId: 'r-once', stepId: 'research', tools: ['engine_research'] })
+      const unbind = gateOf.bindUsage('r-once', 'research', (u) => booked.push(u.cost))
+      const { url, key } = (await Bun.file(join(dir, 'research', 'gate.json')).json()) as { url: string; key: string }
+      const response = await fetch(`${url}/tool/engine_research`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${key}` },
+        body: JSON.stringify({ sessionID: 'r-once:research', args: { question: 'Booked once: postgres port?' } }),
+      })
+      expect(((await response.json()) as { ok: boolean }).ok).toBe(true)
+      unbind()
+      await close()
+      await gateOf.close()
+    }
+    const first = mkdtempSync(join(tmpdir(), 'agw-gate-a-'))
+    const second = mkdtempSync(join(tmpdir(), 'agw-gate-b-'))
+    await ask(make(first), first)
+    await ask(make(second), second)
+    expect(booked).toEqual([0.04])
+    const { evidence } = await import('../src/workflows/research/gate.ts')
+    const ev = evidence(await memory.read('r-once', 'research'))
+    expect(ev).toMatchObject({ engineJobs: [expect.any(String)], engineCostUsd: 0.04 })
+    for (const dir of [first, second]) rmSync(dir, { recursive: true, force: true })
+  })
+
+  test('close removes only the gate.json this instance wrote', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agw-gate-own-'))
+    const owner = new ToolGate({ stateDir: dir, ledger, engine: () => null, call: fakeCapability })
+    owner.ensureServing()
+    const bystander = new ToolGate({ stateDir: dir, ledger, engine: () => null, call: fakeCapability })
+    await bystander.close()
+    expect(await Bun.file(join(dir, 'research', 'gate.json')).exists()).toBe(true)
+    await owner.close()
+    expect(await Bun.file(join(dir, 'research', 'gate.json')).exists()).toBe(false)
+    rmSync(dir, { recursive: true, force: true })
   })
 
   test('close stops the gate and removes gate.json', async () => {
@@ -610,16 +658,18 @@ describe('research scorer', () => {
     expect(v.scores.judgedShare).toBe(0)
   })
 
-  test('a live value the registry does not give is an infra error (retried), and an unscored golden never passes', async () => {
-    const noLive: ScoreJudge = async () => ({ error: { code: 'UPSTREAM_ERROR', message: 'registry down' } })
-    const failure = await Promise.resolve(
-      researchScorer.score({} as never, report(), {
+  test('a typed web.package error or an unusable latest leaves golden unscored (no pass), never an infra error', async () => {
+    const answers: Json[] = [{ error: { code: 'UPSTREAM_ERROR', message: 'not found' } }, { name: 'hono', latest: '' }]
+    for (const answer of answers) {
+      const v = await researchScorer.score({} as never, report(), {
         ...ctx,
-        judge: noLive,
+        judge: async (capability, input) => (capability === 'web.package' ? answer : judge(capability, input)),
         reference: { expect: { live: 'npm:hono' } },
-      }),
-    ).catch((e: unknown) => e)
-    expect(failure).toBeInstanceOf(InfraError)
+      })
+      expect(v.scores.golden).toBeUndefined()
+      expect(v.pass).toBe(false)
+      expect(v.feedback).toContain('golden unscored')
+    }
     const inline = await researchScorer.score({} as never, report(), {
       source: 'inline',
       signal: new AbortController().signal,

@@ -9,9 +9,10 @@ export type KeyAttempt<T> = { value: T } | { failedBefore: true }
 
 /**
  * The one idempotency rule for keyed calls (the judge's capability runs, the engine's jobs): a repeat adopts what an
- * earlier call finished under the key, never what failed. Attempt `n` runs under `attemptKey(base, n)`; when the key
- * already holds a failed, errored or cancelled run or job, the attempt answers `failedBefore` and the next key
- * re-executes. A run still going under a key is waited on, never started twice.
+ * earlier call finished under the key (a typed capability failure is finished too: a final answer), never an
+ * untyped failure or a cancel. Attempt `n` runs under `attemptKey(base, n)`; when the key holds such a failure, the
+ * attempt answers `failedBefore` and the next key re-executes. A run still going under a key is waited on, never
+ * started twice.
  */
 export async function withAttemptKeys<T>(base: string, attempt: (key: string) => Promise<KeyAttempt<T>>): Promise<T> {
   for (let n = 1; n <= MAX_KEY_ATTEMPTS; n++) {
