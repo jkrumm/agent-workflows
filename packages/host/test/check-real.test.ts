@@ -8,6 +8,7 @@ import { freshSchema, testRuntime } from '../../runtime/test/support/pg.ts'
 
 // No fakes except the agent host: real `git`, real `make`, the default `Bun.spawn` exec port.
 const db = freshSchema('checkreal')
+const stateDir = mkdtempSync(join(tmpdir(), 'agw-check-state-'))
 
 beforeAll(async () => {
   const rt = testRuntime({ schema: db.schema, workflows: [] })
@@ -27,7 +28,7 @@ function repo(makefile: string) {
 }
 
 async function run(input: Record<string, unknown>, host?: FakeAgentHost) {
-  const workflow = createCheckWorkflows()[0]?.workflow
+  const workflow = createCheckWorkflows({ stateDir })[0]?.workflow
   if (!workflow) throw new Error('no check workflow')
   const rt = testRuntime({ schema: db.schema, workflows: [workflow], host })
   await rt.open()
@@ -98,4 +99,29 @@ test('a slow chatty make check outlives its idle window and passes', async () =>
     steps: [{ name: 'check', passed: true }],
     summary: 'make check passed',
   })
+})
+
+test('credentials of the host never reach make check or the make -p -q probe', async () => {
+  const names = ['AGW_API_SECRET', 'AGW_PG_URL', 'IU_API_KEY', 'OTEL_EXPORTER_OTLP_HEADERS', 'GH_TOKEN']
+  const saved = names.map((name) => [name, process.env[name]] as const)
+  for (const name of names) process.env[name] = `leak-${name}`
+  try {
+    const probeFile = join(realpathSync(mkdtempSync(join(tmpdir(), 'agw-probe-'))), 'probe-env')
+    // `:=` runs the $(shell …) while make reads the Makefile, i.e. during `make -p -q`, and again for `make check`
+    const cwd = repo(
+      `PROBED := $(shell env > ${probeFile})\ncheck:\n\t@env | grep -E 'AGW_|IU_|OTEL_|GH_' || true\n\t@echo "path-set=$$(test -n \"$$PATH\" && echo yes)"\n\t@exit 1\n`,
+    )
+    const result = await run({ cwd })
+    const output = result.output as { steps: { errors: string[] }[] }
+    expect(output.steps[0]?.errors[0]).toBe('path-set=yes') // nothing the grep matched came before it
+    const probed = await Bun.file(probeFile).text()
+    expect(probed).toContain('PATH=')
+    for (const name of names) expect(probed).not.toContain(name)
+    expect(JSON.stringify(result)).not.toContain('leak-')
+  } finally {
+    for (const [name, value] of saved) {
+      if (value === undefined) delete process.env[name]
+      else process.env[name] = value
+    }
+  }
 })
