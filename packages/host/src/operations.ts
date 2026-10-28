@@ -53,6 +53,8 @@ export interface HostWorkflow {
   cli?: Pick<CliSpec, 'positional' | 'stdin' | 'mutating' | 'defaultFormat' | 'plainField'>
   /** The agents the workflow's steps run, with their routes: they feed the run fingerprint (concept §5). */
   agents?: AgentRef[]
+  /** Optional expensive work: the wallet gate refuses it at admission (concept §4). */
+  optionalExpensive?: boolean
 }
 
 /** The CLI's own flags always win (`--format`, `--commit`, `--idempotency-key`, `--help`): no input may take them. */

@@ -34,6 +34,13 @@
         "@agent-workflows/capabilities": "workspace:*",
       },
     },
+    "packages/eval": {
+      "name": "@agent-workflows/eval",
+      "version": "0.0.0",
+      "dependencies": {
+        "zod": "4.6.7",
+      },
+    },
     "packages/host": {
       "name": "@agent-workflows/host",
       "version": "0.0.0",
@@ -42,6 +49,7 @@
         "@agent-workflows/limits": "workspace:*",
         "@agent-workflows/middleware": "workspace:*",
         "@agent-workflows/opencode-host": "workspace:*",
+        "@agent-workflows/routes": "workspace:*",
         "@agent-workflows/runtime": "workspace:*",
         "@orpc/openapi": "1.16.1",
         "@orpc/server": "1.16.1",
@@ -117,6 +125,8 @@
     "@agent-workflows/capabilities": ["@agent-workflows/capabilities@workspace:packages/capabilities"],
 
     "@agent-workflows/cli": ["@agent-workflows/cli@workspace:packages/cli"],
+
+    "@agent-workflows/eval": ["@agent-workflows/eval@workspace:packages/eval"],
 
     "@agent-workflows/host": ["@agent-workflows/host@workspace:packages/host"],
 

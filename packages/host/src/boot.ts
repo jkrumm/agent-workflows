@@ -3,13 +3,11 @@ import { runawayCap, walletGate } from '@agent-workflows/limits'
 import { fsFingerprintSource, platformMiddleware } from '@agent-workflows/middleware'
 import { OpenCodeHost, OpenCodeServer } from '@agent-workflows/opencode-host'
 import { type AgentHost, type Json, Runtime } from '@agent-workflows/runtime'
+import { loadAgentDefinitions } from './agents.ts'
 import { createHost } from './app.ts'
 import type { HostConfig } from './config.ts'
 import { IDLE_TIMEOUT_S } from './operations.ts'
 import { createWorkflows, fingerprintWorkflows } from './workflows/index.ts'
-
-/** Workflows declared optional-expensive: the wallet gate refuses them at admission (concept §4). None yet. */
-const OPTIONAL_EXPENSIVE: string[] = []
 
 const FLUSH_INTERVAL_MS = 30_000
 const SHUTDOWN_GRACE_MS = 5000
@@ -39,8 +37,7 @@ function exporterFor(env: Record<string, string | undefined>): Exporter | undefi
   return endpoint ? undefined : silentExporter
 }
 
-/** No agent definitions exist yet; they arrive with the first agent workflow. */
-const AGENT_DEFINITIONS: ConstructorParameters<typeof OpenCodeHost>[0]['agents'] = []
+type AgentDefinitions = ConstructorParameters<typeof OpenCodeHost>[0]['agents']
 
 export type LazyAgentHost = AgentHost & { close(): Promise<void> }
 
@@ -59,6 +56,8 @@ export interface LazyOpenCodeOptions {
   createServer?: () => LazyServer
   /** `close` waits this long for a start still in flight, then closes what exists. Default 5 s. */
   closeWaitMs?: number
+  /** The agents the host serves (`agents/<name>/`). Default: none. */
+  agents?: AgentDefinitions
 }
 
 /**
@@ -71,7 +70,7 @@ export function lazyOpenCodeHost(
   traceparent: OpenCodeTraceparent,
   options: LazyOpenCodeOptions = {},
 ): LazyAgentHost {
-  const { stateDir, closeWaitMs = 5000 } = options
+  const { stateDir, closeWaitMs = 5000, agents = [] } = options
   const createServer = options.createServer ?? (() => new OpenCodeServer({ env, stateDir }))
   let built: Promise<{ server: LazyServer; host: OpenCodeHost }> | undefined
   let closed = false
@@ -85,7 +84,7 @@ export function lazyOpenCodeHost(
         await server.close()
         throw new Error('opencode host is closed')
       }
-      return { server, host: new OpenCodeHost({ server, agents: AGENT_DEFINITIONS, env, traceparent, stateDir }) }
+      return { server, host: new OpenCodeHost({ server, agents, env, traceparent, stateDir }) }
     })().catch((error: unknown) => {
       built = undefined
       throw error
@@ -130,13 +129,15 @@ export async function boot(config: HostConfig, options: BootOptions = {}): Promi
 
   try {
     const registry = createRegistry(createCapabilities())
-    const workflows = createWorkflows(registry)
+    const workflows = createWorkflows({ registry })
+    const agentsDir = config.agentsDir ?? 'agents'
+    const agents = loadAgentDefinitions(agentsDir)
 
     const platform = platformMiddleware({
       connectionString: config.pgUrl,
       schema: config.schema,
       fingerprint: fsFingerprintSource({
-        agentsDir: config.agentsDir ?? 'agents',
+        agentsDir,
         workflows: fingerprintWorkflows(workflows),
         opencodeBin: config.opencodeBin,
       }),
@@ -146,12 +147,17 @@ export async function boot(config: HostConfig, options: BootOptions = {}): Promi
     closers.push(() => platform.close())
     const owned = options.agentHost
       ? undefined
-      : lazyOpenCodeHost(env, (runId, stepId) => platform.telemetry.traceparent(runId, stepId) ?? undefined)
+      : lazyOpenCodeHost(env, (runId, stepId) => platform.telemetry.traceparent(runId, stepId) ?? undefined, {
+          agents,
+        })
     const agentHost = options.agentHost ?? owned
     if (owned) closers.push(() => owned.close())
     const cap = runawayCap({ connectionString: config.pgUrl, schema: config.schema })
     closers.push(() => cap.close())
-    const wallet = walletGate({ workflows: OPTIONAL_EXPENSIVE })
+    // Optional expensive work (OCR) is its own workflow, refused at admission by the wallet gate (concept §4).
+    const wallet = walletGate({
+      workflows: workflows.filter((entry) => entry.optionalExpensive).map((entry) => entry.workflow.id),
+    })
     const runtime = new Runtime({
       connectionString: config.pgUrl,
       schema: config.schema,
