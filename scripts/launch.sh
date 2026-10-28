@@ -101,6 +101,40 @@ exec "$SECRETS_RUN" run --env-file="$TPL" -- /bin/sh -c '
     export IU_API_KEY IU_KEY_ID
   fi
   # <<< iu-override
+  # >>> routes-override
+  # An untracked route override (which model and spend every run gets, e.g. an eval of another model):
+  # $HOME/.config/agw/routes.json, one JSON object of route id -> partial route spec, exported as AGW_ROUTES. It must be
+  # a regular file (no symlink) owned by this user and not group- or world-writable, and parse as a JSON object with the
+  # host bun; else the host refuses to start (78), naming the file, never its content. The file wins over an AGW_ROUTES
+  # already in the environment. Only the route ids are logged. Absent file = no override, the environment untouched.
+  ROUTES_OVERRIDE="$HOME/.config/agw/routes.json"
+  if [ -e "$ROUTES_OVERRIDE" ] || [ -L "$ROUTES_OVERRIDE" ]; then
+    routes_mode=$(/bin/ls -ld "$ROUTES_OVERRIDE" | /usr/bin/cut -c1-10)
+    case "$routes_mode" in
+      -?????????) ;;
+      *) echo "agent-workflows-host: $ROUTES_OVERRIDE must be a regular file, not a symlink or directory; refusing to start." >&2; exit 78 ;;
+    esac
+    [ -O "$ROUTES_OVERRIDE" ] || { echo "agent-workflows-host: $ROUTES_OVERRIDE must be owned by the user running the host; refusing to start." >&2; exit 78; }
+    routes_gw=$(printf "%s" "$routes_mode" | /usr/bin/cut -c6)
+    routes_ow=$(printf "%s" "$routes_mode" | /usr/bin/cut -c9)
+    if [ "$routes_gw" = "w" ] || [ "$routes_ow" = "w" ]; then
+      echo "agent-workflows-host: $ROUTES_OVERRIDE must not be group- or world-writable (it steers the model and spend of every run); refusing to start." >&2
+      exit 78
+    fi
+    routes_ids=$(AGW_ROUTES_FILE="$ROUTES_OVERRIDE" bun -e "
+      try {
+        const v = JSON.parse(require(\"fs\").readFileSync(process.env.AGW_ROUTES_FILE, \"utf8\"))
+        if (!v || typeof v !== \"object\" || Array.isArray(v)) process.exit(3)
+        process.stdout.write(Object.keys(v).join(\",\"))
+      } catch {
+        process.exit(3)
+      }
+    " 2>/dev/null) || { echo "agent-workflows-host: $ROUTES_OVERRIDE is not a JSON object; refusing to start." >&2; exit 78; }
+    AGW_ROUTES=$(/bin/cat "$ROUTES_OVERRIDE")
+    export AGW_ROUTES
+    echo "agent-workflows-host: route override active from $ROUTES_OVERRIDE (routes: ${routes_ids:-none})" >&2
+  fi
+  # <<< routes-override
   for key in "$@"; do
     eval "value=\${$key-}"
     [ -n "$value" ] || { echo "agent-workflows-host: $key resolved to an empty value; refusing to start." >&2; exit 78; }
