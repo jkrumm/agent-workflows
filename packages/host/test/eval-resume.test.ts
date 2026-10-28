@@ -79,11 +79,28 @@ function heldHost() {
   return { host, release: () => release() }
 }
 
-function boot(host: FakeAgentHost): { rt: Runtime; evalRun: ReturnType<typeof createEvalWorkflows>[0]['workflow'] } {
+type Overrides = Partial<Pick<Runtime, 'runByKey' | 'scoreRun' | 'cancel'>>
+
+/** A runtime with the eval workflows wired to it, through `overrides` where a test breaks or slows a call. */
+function boot(
+  host: FakeAgentHost,
+  overrides: (rt: Runtime) => Overrides = () => ({}),
+): { rt: Runtime; evalRun: ReturnType<typeof createEvalWorkflows>[0]['workflow'] } {
   const check = createCheckWorkflows()
   const evals = createEvalWorkflows({ env, tmpRoot, exec: counting })
   const rt = testRuntime({ schema: db.schema, workflows: [...check, ...evals].map((e) => e.workflow), host })
-  wireEval({ runtime: rt, workflows: [...check, ...evals], env })
+  const view = {
+    start: rt.start.bind(rt),
+    wait: rt.wait.bind(rt),
+    cancel: rt.cancel.bind(rt),
+    scoreRun: rt.scoreRun.bind(rt),
+    scoredRuns: rt.scoredRuns.bind(rt),
+    recentCost: rt.recentCost.bind(rt),
+    runByKey: rt.runByKey.bind(rt),
+    driftCandidates: rt.driftCandidates.bind(rt),
+    ...overrides(rt),
+  }
+  wireEval({ runtime: view, workflows: [...check, ...evals], env })
   return { rt, evalRun: (evals[0] as (typeof evals)[0]).workflow }
 }
 
@@ -130,15 +147,22 @@ describe('eval.run resume and cancel', () => {
       expect(out.cases.map((c) => c.status)).toEqual(['scored', 'scored'])
       const after = await caseRuns(runId)
       expect(after.find((r) => r.scored_at?.getTime() === scoredBefore?.getTime())).toBeDefined()
+      expect(readdirSync(tmpRoot)).toEqual([]) // the adopting process removed the kept tree
     } finally {
       await second.rt.close()
       for (const dir of readdirSync(tmpRoot)) rmSync(join(tmpRoot, dir), { recursive: true, force: true })
     }
   })
 
-  test('cancelling an eval run cancels its case runs, starts no more cases and removes the clones', async () => {
+  test('cancelling an eval run cancels its case runs, starts no more cases and removes a clone only after its run ended', async () => {
     const held = heldHost()
-    const { rt, evalRun } = boot(held.host)
+    // A slow cancel: a tree removed before the case run ended would show up as a running r2 below.
+    const { rt, evalRun } = boot(held.host, (real) => ({
+      cancel: async (id: string) => {
+        await Bun.sleep(1500) // longer than a case's wait poll (500 ms)
+        return real.cancel(id)
+      },
+    }))
     await rt.open()
     try {
       // The first session answers: r1 finishes; r2 hangs; r3 must never start.
@@ -150,15 +174,49 @@ describe('eval.run resume and cancel', () => {
       )
       await rt.cancel(runId)
       expect((await rt.wait(runId)).status).toBe('cancelled')
-      await until(async () => (await caseRuns(runId)).every((r) => r.status !== 'running'), 'case runs ended')
+      await until(() => readdirSync(tmpRoot).length === 0, 'clones removed', 10_000)
       const runs = await caseRuns(runId)
       expect(runs.map((r) => [r.key.split(':').at(-1), r.status])).toEqual([
         ['r1', 'done'],
         ['r2', 'cancelled'],
       ])
-      await until(() => readdirSync(tmpRoot).length === 0, 'clones removed')
     } finally {
       held.release()
+      await rt.close()
+    }
+  })
+
+  test('a failing lookup on the adopt path and a scorer error are per-case errors, out of the pass rate', async () => {
+    const host = new FakeAgentHost(async () => ({
+      output: { passed: true, steps: [{ name: 'test', passed: true }], summary: 'ok' },
+    }))
+    const { rt, evalRun } = boot(host, (real) => ({
+      runByKey: async (workflow: string, key: string) => {
+        if (key.endsWith(':r1')) throw new Error('journal blip')
+        return real.runByKey(workflow, key)
+      },
+      scoreRun: async (id, options) => {
+        if (options.caseId !== 'r2') return real.scoreRun(id, options)
+        return { source: 'regression', scorer: 'x', caseId: 'r2', scores: {}, pass: null, error: 'scorer bug' }
+      },
+    }))
+    await rt.open()
+    try {
+      const { runId } = await rt.start(evalRun, { workflow: 'check', yes: true }, { purpose: 'prod' })
+      const end = await rt.wait(runId)
+      expect(end.status).toBe('done')
+      const out = end.output as {
+        cases: { caseId: string; status: string; reason?: string }[]
+        summary: { scored: number; errors: number; passRate: number | null }
+      }
+      expect(out.cases.map((c) => [c.caseId, c.status, c.reason])).toEqual([
+        ['r1', 'error', 'journal blip'],
+        ['r2', 'error', 'scorer: scorer bug'],
+        ['r3', 'scored', undefined],
+      ])
+      expect(out.summary).toMatchObject({ scored: 1, errors: 2, passRate: 1 })
+      expect(readdirSync(tmpRoot)).toEqual([])
+    } finally {
       await rt.close()
     }
   })
