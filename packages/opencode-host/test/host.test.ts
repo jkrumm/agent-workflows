@@ -804,3 +804,73 @@ describe('provider-balance fallback', () => {
     expect(t.fake.count(`POST /api/session/${fallbackId}/interrupt`)).toBe(1)
   })
 })
+
+describe('followUp (ctx.continue)', () => {
+  const turn = (key = 'run-1:revise', attempt = 1) => ({ runId: 'run-1', stepId: 'revise', key, attempt })
+
+  test('a follow-up turn runs in the same session; wait answers with that turn only', async () => {
+    const t = setup()
+    const first = await t.host.open(spec('draft'))
+    await t.host.prompt(first, 'draft it')
+    expect((await t.host.wait(first, waitOptions())).output).toBe('echo: draft it')
+
+    const next = await t.host.followUp(first, turn())
+    expect(next).toMatchObject({ sessionId: sid(first), stepId: 'revise', turn: 'run-1:revise#1' })
+    expect(JSON.parse(JSON.stringify(next))).toEqual(next)
+    await t.host.prompt(next, 'fix the title')
+    await t.host.prompt(next, 'fix the title') // idempotent: read first, deduped by id
+    const result = await t.host.wait(next, waitOptions())
+    expect(result.output).toBe('echo: fix the title')
+    // Only the turn's assistant message is counted, not the first turn's.
+    expect(result.usage?.tokens).toEqual({ input: 130, output: 6, cacheRead: 100, cacheWrite: 20, reasoning: 1 })
+    expect(result.usage?.cost).toBe(0.001)
+    expect(Object.keys(t.fake.state.sessions)).toEqual([sid(first)])
+    const users = await userMessages(t, first)
+    expect(users.map((m) => m.metadata?.agw?.kind)).toEqual(['prompt', 'followup'])
+  })
+
+  test('a retried continue (next attempt) sends a new turn instead of re-reading the old one', async () => {
+    const t = setup()
+    const first = await t.host.open(spec('draft'))
+    await t.host.prompt(first, 'draft it')
+    await t.host.wait(first, waitOptions())
+    const one = await t.host.followUp(first, turn('run-1:revise', 1))
+    await t.host.prompt(one, '[fail] try')
+    expect(await failure(t.host.wait(one, waitOptions()))).toContain('provider said no')
+    const two = await t.host.followUp(first, turn('run-1:revise', 2))
+    await t.host.prompt(two, 'try again')
+    expect((await t.host.wait(two, waitOptions())).output).toBe('echo: try again')
+    expect(await userMessages(t, first)).toHaveLength(3)
+  })
+
+  test('a turn cut off by a server restart is resumed and finishes', async () => {
+    const t = setup({ turnMs: 300 })
+    const first = await t.host.open(spec('draft'))
+    await t.host.prompt(first, 'draft it')
+    await t.host.wait(first, waitOptions())
+    const next = await t.host.followUp(first, turn())
+    await t.host.prompt(next, 'more')
+    await Bun.sleep(100)
+    t.kill()
+    t.boot()
+    expect((await t.host.wait(next, waitOptions())).output).toMatch(/^resumed: echo: /)
+  })
+
+  test('a step that moved to its fallback session continues there', async () => {
+    const t = setup()
+    const first = await t.host.open(spec('x'))
+    await t.host.prompt(first, '[balance] review this')
+    await t.host.wait(first, waitOptions())
+    const next = (await t.host.followUp(first, turn())) as OpenCodeHandle
+    expect(next.fallback).toBe(true)
+    expect(next.sessionId).not.toBe(sid(first))
+    await t.host.prompt(next, 'and the tests')
+    expect((await t.host.wait(next, waitOptions())).output).toBe('echo: and the tests')
+  })
+
+  test('a gone session cannot be continued', async () => {
+    const t = setup()
+    const handle = { ...((await t.host.open(spec('x'))) as OpenCodeHandle), sessionId: 'ses_agw_missing' }
+    expect(await failure(t.host.followUp(handle, turn()))).toContain('is gone')
+  })
+})

@@ -1,6 +1,7 @@
 import { usageFromOpenCodeMessages } from '@agent-workflows/middleware'
 import { costFromUsage, isBalanceFailure, LONG_PROMPT_TOKENS, type Rate, type RouteId } from '@agent-workflows/routes'
 import {
+  type AgentFollowUpSpec,
   type AgentHost,
   type AgentOpenSpec,
   type AgentResult,
@@ -35,6 +36,7 @@ import {
   inputId,
   type Outcome,
   Persisting,
+  type SessionState,
   parseStructured,
   promptIndex,
   SessionReader,
@@ -95,6 +97,8 @@ export type OpenCodeHandle = {
   repoShell?: true
   /** Set on the session the host opened on the route's fallback; it never falls back again. */
   fallback?: true
+  /** A follow-up turn (`followUp`): its input is keyed by this, and `wait` reads only what came after it. */
+  turn?: string
 }
 
 type Snapshot = { messages: Message[]; active: boolean; pending: boolean }
@@ -127,7 +131,8 @@ function asHandle(handle: Json): OpenCodeHandle {
     (h.output !== 'json' && h.output !== 'text') ||
     (h.allow !== undefined && (!Array.isArray(h.allow) || h.allow.some((d) => typeof d !== 'string'))) ||
     (h.repoShell !== undefined && h.repoShell !== true) ||
-    (h.fallback !== undefined && h.fallback !== true)
+    (h.fallback !== undefined && h.fallback !== true) ||
+    (h.turn !== undefined && typeof h.turn !== 'string')
   ) {
     throw new WorkflowError('error', 'not an OpenCode host handle')
   }
@@ -433,13 +438,58 @@ export class OpenCodeHost implements AgentHost {
   async prompt(handle: Json, prompt: string): Promise<void> {
     const h = asHandle(handle)
     const headers = this.headers(h.runId, h.stepId)
+    if (h.turn !== undefined) return this.promptTurn(h, h.turn, prompt, headers)
     if (await this.prompted(h.sessionId, headers)) return
     const id = inputId(h.sessionId, 'prompt')
     await this.client.prompt(h.sessionId, { id, text: prompt, metadata: { agw: { kind: 'prompt' } } }, headers)
   }
 
+  /**
+   * A follow-up turn in the session of an earlier step (`ctx.continue`): same session, same location, its history and
+   * prompt cache. The new handle names the continuing step and the turn (step key and attempt, so a retry sends a new
+   * turn); a step that moved to its fallback session continues there. Sends nothing: `prompt` does.
+   */
+  async followUp(handle: Json, spec: AgentFollowUpSpec): Promise<Json> {
+    const h = asHandle(handle)
+    const headers = this.headers(spec.runId, spec.stepId)
+    let base: OpenCodeHandle = h
+    if (!h.fallback && (await this.client.getSession(fallbackSessionId(h.sessionId), headers))) {
+      const fallback = this.fallbackOf(h)
+      if (!fallback)
+        throw new WorkflowError('error', `opencode session ${h.sessionId}: fallback session without a route`)
+      base = { ...h, sessionId: fallbackSessionId(h.sessionId), model: fallback.route.model, fallback: true }
+    }
+    if (!(await this.client.getSession(base.sessionId, headers))) {
+      throw new WorkflowError('error', `opencode session ${base.sessionId} is gone; nothing to continue`)
+    }
+    const next: OpenCodeHandle = {
+      ...base,
+      runId: spec.runId,
+      stepId: spec.stepId,
+      turn: `${spec.key}#${spec.attempt}`,
+    }
+    return next
+  }
+
+  /** A follow-up turn's input, sent once: the session (messages or inbox) is read first, and the id dedupes too. */
+  private async promptTurn(
+    h: OpenCodeHandle,
+    turn: string,
+    text: string,
+    headers: Record<string, string> | undefined,
+  ): Promise<void> {
+    const id = turnInputId(h.sessionId, turn)
+    const [messages, inbox] = await Promise.all([
+      this.client.messages(h.sessionId, headers),
+      this.client.inbox(h.sessionId, headers),
+    ])
+    if (turnIndex(messages, id, turn) >= 0 || inbox.some((m) => m.id === id)) return
+    await this.client.prompt(h.sessionId, { id, text, metadata: { agw: { kind: 'followup', turn } } }, headers)
+  }
+
   async wait(handle: Json, options: AgentWaitOptions): Promise<AgentResult> {
     const h = asHandle(handle)
+    if (h.turn !== undefined) return this.waitTurn(h, h.turn, options)
     const { signal } = options
     const promptId = inputId(h.sessionId, 'prompt')
     const headers = this.headers(h.runId, h.stepId)
@@ -483,6 +533,76 @@ export class OpenCodeHost implements AgentHost {
             return await this.waitOnFallback(h, snap.messages, promptId, options)
           }
           if (state.kind === 'done') return await this.finish(h, reader, promptId, state, signal)
+          if (state.kind === 'cutoff' && cutoff.check(true, this.cutoffGraceMs)) {
+            await this.resume(h, state.lastId)
+            cutoff.reset()
+          } else if (state.kind !== 'cutoff') {
+            cutoff.reset()
+          }
+        }
+        await abortableSleep(this.pollMs, signal)
+      }
+    } finally {
+      release?.()
+    }
+  }
+
+  /**
+   * `wait` for a follow-up turn: the same loop, reading only the messages after the turn's input. Done is an idle
+   * after the last input of the turn; a cut-off turn is resumed like a first one. No provider-balance fallback: the
+   * session already ran on its route, a refused follow-up fails the step.
+   */
+  private async waitTurn(h: OpenCodeHandle, turn: string, options: AgentWaitOptions): Promise<AgentResult> {
+    const { signal } = options
+    const id = turnInputId(h.sessionId, turn)
+    const headers = this.headers(h.runId, h.stepId)
+    const reader = new SessionReader({
+      all: () => this.client.messages(h.sessionId, headers),
+      recent: (limit) => this.client.recentMessages(h.sessionId, limit, headers),
+    })
+    const tools = new Map<string, 'pre' | 'post'>()
+    const cutoff = new Persisting()
+    const unprompted = new Persisting()
+    let release: (() => void) | null = null
+    let fingerprint: string | null = null
+    touchLocation(h.directory)
+    try {
+      for (;;) {
+        signal.throwIfAborted()
+        await this.options.server.ready(signal)
+        release ??= await this.cache.use(h.directory).catch((err: unknown) => {
+          if (!transient(err)) throw err
+          return null
+        })
+        const snap = await this.read(h, reader, headers, signal)
+        if (snap) {
+          const from = turnIndex(snap.messages, id, turn)
+          const after = from < 0 ? [] : snap.messages.slice(from + 1)
+          const next = activityFingerprint(after)
+          if (fingerprint !== null && next !== fingerprint) options.onProgress()
+          fingerprint = next
+          await this.reportTools(turnTools(after), tools, options)
+          const state = turnState(snap, from)
+          if (unprompted.check(state.kind === 'unprompted', this.cutoffGraceMs)) {
+            throw new WorkflowError(
+              'error',
+              `opencode session ${h.sessionId} holds no turn ${turn}; wait before prompt`,
+            )
+          }
+          if (state.kind === 'done') {
+            if (state.outcome === 'interrupted' && signal.aborted) throw signal.reason
+            if (state.outcome !== 'succeeded') {
+              throw new WorkflowError(
+                'error',
+                `opencode session ${h.sessionId} turn ${state.outcome}: ${state.error ?? 'no detail'}`,
+              )
+            }
+            reader.invalidate()
+            const all = await reader.read()
+            const answer = all.slice(turnIndex(all, id, turn) + 1)
+            const text = finalText([TURN_ANCHOR, ...answer], TURN_ANCHOR.id)
+            return { output: h.output === 'json' ? parseStructured(text) : text, usage: this.usage(h, answer) }
+          }
           if (state.kind === 'cutoff' && cutoff.check(true, this.cutoffGraceMs)) {
             await this.resume(h, state.lastId)
             cutoff.reset()
@@ -886,3 +1006,42 @@ function promptText(messages: readonly Message[], promptId: string): string | nu
   const text = prompt.text ?? (prompt.content ?? []).map((p) => (p.type === 'text' ? (p.text ?? '') : '')).join('')
   return text || null
 }
+
+/** A follow-up turn's input id: deterministic per session and turn, so the server dedupes a re-send. */
+const turnInputId = (sessionId: string, turn: string) => inputId(sessionId, 'prompt', `turn:${turn}`)
+
+/** Where the turn's input sits in the session; -1 before it is projected. */
+function turnIndex(messages: readonly Message[], id: string, turn: string): number {
+  return messages.findIndex(
+    (m) => m.id === id || (m.type === 'user' && (m.metadata?.agw as { turn?: unknown } | undefined)?.turn === turn),
+  )
+}
+
+const INPUT_KINDS = new Set(['prompt', 'steer', 'resume', 'followup'])
+
+/** The turn's state, as `sessionState` judges a first turn, counted from the turn's own input. */
+function turnState(snap: { messages: Message[]; active: boolean; pending: boolean }, from: number): SessionState {
+  if (snap.active || snap.pending) return { kind: 'running' }
+  const last = snap.messages.at(-1)
+  if (from < 0 || last === undefined) return { kind: 'unprompted' }
+  let lastInput = from
+  snap.messages.forEach((m, i) => {
+    if (i > from && INPUT_KINDS.has(m.metadata?.agw?.kind ?? '')) lastInput = i
+  })
+  if (last.type === 'idle' && snap.messages.length - 1 > lastInput) {
+    const outcome: Outcome = last.outcome ?? 'unknown'
+    const error = typeof last.error === 'string' ? last.error : last.error?.message
+    return error ? { kind: 'done', outcome, error } : { kind: 'done', outcome }
+  }
+  return { kind: 'cutoff', lastId: last.id }
+}
+
+/** The tool parts of the turn's assistant messages. */
+function turnTools(after: readonly Message[]): ToolPart[] {
+  return after
+    .filter((m) => m.type === 'assistant')
+    .flatMap((m) => (m.content ?? []).filter((p): p is ToolPart => p.type === 'tool' && !!p.id && !!p.name))
+}
+
+/** `finalText` reads after a prompt; the turn's slice gets a stand-in prompt in front. */
+const TURN_ANCHOR = { id: 'agw-turn-anchor', type: 'user' } as Message
