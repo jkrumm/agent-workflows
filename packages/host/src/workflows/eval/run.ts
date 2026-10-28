@@ -1,6 +1,14 @@
 import { homedir } from 'node:os'
-import { cleanup, exec as bunExec, type Exec, materialize, pool } from '@agent-workflows/eval'
-import { Cancelled, defineWorkflow, IdempotencyConflict, type Json, WorkflowError } from '@agent-workflows/runtime'
+import { cleanup, exec as bunExec, type Exec, materialize } from '@agent-workflows/eval'
+import {
+  Cancelled,
+  defineWorkflow,
+  type FinalScore,
+  IdempotencyConflict,
+  InfraError,
+  type Json,
+  WorkflowError,
+} from '@agent-workflows/runtime'
 import { z } from 'zod'
 import type { HostWorkflow } from '../../operations.ts'
 import type { EvalSlot } from './slot.ts'
@@ -85,10 +93,14 @@ const errorText = (error: unknown) => (error instanceof Error ? error.message : 
 function select(cases: EvalCase[], ids: string | undefined, limit: number | undefined): EvalCase[] {
   let selected = cases
   if (ids) {
-    const wanted = ids
-      .split(',')
-      .map((id) => id.trim())
-      .filter(Boolean)
+    const wanted = [
+      ...new Set(
+        ids
+          .split(',')
+          .map((id) => id.trim())
+          .filter(Boolean),
+      ),
+    ]
     const byId = new Map(cases.map((c) => [c.id, c]))
     const unknown = wanted.filter((id) => !byId.has(id))
     if (unknown.length) throw new WorkflowError('invalid_input', `unknown case ids: ${unknown.join(', ')}`)
@@ -196,17 +208,39 @@ type ReplayDeps = {
   tmpRoot: string | undefined
 }
 
-async function replay(
-  deps: ReplayDeps,
-  job: {
-    evalRunId: string
-    workflow: SuiteId
-    ids: string[]
-    args: Record<string, Json>
-    concurrency: number
-    signal: AbortSignal
-  },
-): Promise<CaseResult[]> {
+type Job = {
+  evalRunId: string
+  workflow: SuiteId
+  ids: string[]
+  args: Record<string, Json>
+  concurrency: number
+  signal: AbortSignal
+}
+
+/**
+ * `items` through `fn`, at most `limit` at a time. Unlike the harness's `pool`, the first rejection stops every worker
+ * from taking another item (siblings in flight finish), and the rejection is rethrown once all have settled.
+ */
+async function boundedPool<T>(items: T[], limit: number, fn: (item: T, index: number) => Promise<void>) {
+  let next = 0
+  let failure: { error: unknown } | null = null
+  const worker = async () => {
+    while (failure === null && next < items.length) {
+      const index = next++
+      try {
+        await fn(items[index] as T, index)
+      } catch (error) {
+        failure ??= { error }
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, worker))
+  if (failure) throw (failure as { error: unknown }).error
+}
+
+const caseKey = (evalRunId: string, caseId: string) => `eval:${evalRunId}:${caseId}`
+
+async function replay(deps: ReplayDeps, job: Job): Promise<CaseResult[]> {
   const runtime = deps.slot.get()
   const target = deps.slot.target(job.workflow)
   const byId = new Map(readSuite(job.workflow, deps.env).map((c) => [c.id, c]))
@@ -219,7 +253,7 @@ async function replay(
   }
   job.signal.addEventListener('abort', onAbort, { once: true })
   try {
-    await pool(job.ids, job.concurrency, async (caseId, index) => {
+    await boundedPool(job.ids, job.concurrency, async (caseId, index) => {
       job.signal.throwIfAborted()
       const c = byId.get(caseId)
       if (!c) {
@@ -231,58 +265,85 @@ async function replay(
   } finally {
     job.signal.removeEventListener('abort', onAbort)
   }
-  const scored = await runtime.scoredRuns({ workflow: target.id, source: 'regression' })
+  // Only this eval run's case runs, by id.
+  const runIds = results.flatMap((r) => (r.runId ? [r.runId] : []))
+  const scored = runIds.length ? await runtime.scoredRuns({ workflow: target.id, source: 'regression', runIds }) : []
   const fingerprints = new Map(scored.map((r) => [r.runId, r.fingerprint]))
   return results.map((r) =>
     r.runId && fingerprints.has(r.runId) ? { ...r, fingerprint: fingerprints.get(r.runId) } : r,
   )
 }
 
-async function replayCase(
-  deps: ReplayDeps,
-  job: { evalRunId: string; workflow: SuiteId; args: Record<string, Json>; signal: AbortSignal },
-  c: EvalCase,
-  started: Set<string>,
-): Promise<CaseResult> {
+/** A case's result from its run and its regression score. */
+function scoredResult(
+  caseId: string,
+  runId: string,
+  end: { status: string; error: { message: string } | null },
+  final: FinalScore | null,
+): CaseResult {
+  if (!final) return { caseId, status: 'error', runId, runStatus: end.status, reason: `run ${end.status}` }
+  return {
+    caseId,
+    status: 'scored',
+    runId,
+    runStatus: end.status,
+    pass: final.pass,
+    scores: final.scores,
+    ...(final.error ? { reason: `scorer: ${final.error}` } : end.error ? { reason: end.error.message } : {}),
+  }
+}
+
+async function replayCase(deps: ReplayDeps, job: Job, c: EvalCase, started: Set<string>): Promise<CaseResult> {
   const runtime = deps.slot.get()
-  const tree = await materialize(c.tree, { exec: deps.exec, home: deps.home, tmpRoot: deps.tmpRoot, setup: c.setup })
-  try {
-    if (!tree.ok) return { caseId: c.id, status: 'skipped', reason: `${tree.reason}: ${tree.detail}` }
-    let runId: string
-    try {
-      ;({ runId } = await runtime.start(deps.slot.target(job.workflow), c.input(tree.dir, job.args), {
-        purpose: 'eval',
-        idempotencyKey: `eval:${job.evalRunId}:${c.id}`,
-      }))
-    } catch (error) {
-      // A resumed eval run: the case started before (on a clone that is gone now); that run stands.
-      if (!(error instanceof IdempotencyConflict)) throw error
-      runId = error.runId
-    }
-    started.add(runId)
-    const end = await runtime.wait(runId, { pollMs: 500, signal: job.signal })
-    const final = await runtime.scoreRun(runId, {
+  const target = deps.slot.target(job.workflow)
+  const key = caseKey(job.evalRunId, c.id)
+  const score = (runId: string) =>
+    runtime.scoreRun(runId, {
       source: 'regression',
       reference: c.reference,
       caseId: c.id,
       evalRunId: job.evalRunId,
       args: job.args,
     })
-    if (!final) return { caseId: c.id, status: 'error', runId, runStatus: end.status, reason: `run ${end.status}` }
-    return {
-      caseId: c.id,
-      status: 'scored',
-      runId,
-      runStatus: end.status,
-      pass: final.pass,
-      scores: final.scores,
-      ...(final.error ? { reason: `scorer: ${final.error}` } : end.error ? { reason: end.error.message } : {}),
+
+  // A resumed eval run: the case started before. Adopt its run: no clone, no install, and no second score.
+  const existing = await runtime.runByKey(target.id, key)
+  if (existing) {
+    started.add(existing.runId)
+    if (existing.final?.source === 'regression' && existing.final.evalRunId === job.evalRunId) {
+      return scoredResult(c.id, existing.runId, existing, existing.final)
     }
+    const end = await runtime.wait(existing.runId, { pollMs: 500, signal: job.signal })
+    return scoredResult(c.id, existing.runId, end, await score(existing.runId))
+  }
+
+  job.signal.throwIfAborted()
+  const tree = await materialize(c.tree, { exec: deps.exec, home: deps.home, tmpRoot: deps.tmpRoot, setup: c.setup })
+  try {
+    if (!tree.ok) return { caseId: c.id, status: 'skipped', reason: `${tree.reason}: ${tree.detail}` }
+    // A cancel during the clone: start nothing.
+    job.signal.throwIfAborted()
+    let runId: string
+    try {
+      ;({ runId } = await runtime.start(target, c.input(tree.dir, job.args), { purpose: 'eval', idempotencyKey: key }))
+    } catch (error) {
+      // Another drive of this eval run started the case in between; that run stands.
+      if (!(error instanceof IdempotencyConflict)) throw error
+      runId = error.runId
+    }
+    started.add(runId)
+    if (job.signal.aborted) {
+      // Started after the abort fired: the abort handler never saw it.
+      if (job.signal.reason instanceof Cancelled) await runtime.cancel(runId).catch(() => {})
+      throw job.signal.reason
+    }
+    const end = await runtime.wait(runId, { pollMs: 500, signal: job.signal })
+    return scoredResult(c.id, runId, end, await score(runId))
   } catch (error) {
     if (job.signal.aborted) throw job.signal.reason
     return { caseId: c.id, status: 'error', reason: errorText(error) }
   } finally {
-    // After an abort the case's run may go on in the next process: its tree stays.
-    if (tree.dir && !job.signal.aborted) cleanup(tree.dir)
+    // A shutdown or a lost lease: the case's run goes on in the next process, so its tree stays. A cancel ends it.
+    if (tree.dir && !(job.signal.aborted && job.signal.reason instanceof InfraError)) cleanup(tree.dir)
   }
 }

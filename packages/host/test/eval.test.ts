@@ -150,6 +150,10 @@ describe('agw eval run', () => {
   test('an unknown case id or args that do not fit the input fail before anything runs', async () => {
     const opened = host.count('open')
     expect((await evalOnce({ workflow: 'check', ids: 'case-red,ghost', yes: true })).error).toContain('ghost')
+    expect((await evalOnce({ workflow: 'check', ids: 'case-red, case-red,case-green' })).output.plan.ids).toEqual([
+      'case-red',
+      'case-green',
+    ])
     expect((await evalOnce({ workflow: 'check', args: { nope: 1 }, yes: true })).error).toContain('args do not fit')
     expect(host.count('open')).toBe(opened)
   })
@@ -177,22 +181,31 @@ describe('agw eval run', () => {
 })
 
 describe('agw eval compare on synthetic runs', () => {
+  const insert = async (
+    id: string,
+    fp: string,
+    caseId: string,
+    recall: number,
+    cost: number,
+    extra: { unpriced?: number; scorer?: string } = {},
+  ) =>
+    sql.pool.query(
+      `insert into "${db.schema}".runs (id, workflow, root_id, purpose, input, input_hash, lock_key, version_started,
+         status, fingerprint, cost, wall_ms, tokens_input, tokens_output, tool_calls, unpriced_calls, scores,
+         score_source, scored_at, finished_at)
+       values ($1, 'review', $1, 'eval', '{}', 'h', 1, 'v', 'done', $2, $3, 1000, 100, 10, 4, $5, $4, 'regression', now(), now())`,
+      [
+        id,
+        fp,
+        cost,
+        JSON.stringify({
+          final: { source: 'regression', scorer: extra.scorer ?? 'r1', caseId, scores: { recall }, pass: recall > 0.6 },
+        }),
+        extra.unpriced ?? 0,
+      ],
+    )
+
   test('known deltas: B recalls more and costs half', async () => {
-    const insert = async (id: string, fp: string, caseId: string, recall: number, cost: number) =>
-      sql.pool.query(
-        `insert into "${db.schema}".runs (id, workflow, root_id, purpose, input, input_hash, lock_key, version_started,
-           status, fingerprint, cost, wall_ms, tokens_input, tokens_output, tool_calls, unpriced_calls, scores,
-           score_source, scored_at, finished_at)
-         values ($1, 'review', $1, 'eval', '{}', 'h', 1, 'v', 'done', $2, $3, 1000, 100, 10, 4, 0, $4, 'regression', now(), now())`,
-        [
-          id,
-          fp,
-          cost,
-          JSON.stringify({
-            final: { source: 'regression', scorer: 'r1', caseId, scores: { recall }, pass: recall > 0.6 },
-          }),
-        ],
-      )
     for (let i = 0; i < 12; i++) {
       await insert(`syn-a-${i}`, 'fpaaaaaaaa-1', `c${i}`, 0.5, 1)
       await insert(`syn-b-${i}`, 'fpbbbbbbbb-2', `c${i}`, 0.7, 0.5)
@@ -214,6 +227,27 @@ describe('agw eval compare on synthetic runs', () => {
         .runId,
     )
     expect(ambiguous.error?.message).toContain('arm B: no regression runs')
+  })
+
+  test('unpriced cases leave cost and are counted; an arm mixing scorer versions is warned; few pairs decide nothing', async () => {
+    for (let i = 0; i < 6; i++) {
+      await insert(`mix-a-${i}`, 'fpcccccccc-3', `m${i}`, 0.5, 1, i === 0 ? { scorer: 'r0' } : {})
+      await insert(`mix-b-${i}`, 'fpdddddddd-4', `m${i}`, 0.7, 0.5, i < 2 ? { unpriced: 1 } : {})
+    }
+    await insert('few-a-0', 'fpeeeeeeee-5', 'f0', 0.5, 1)
+    await insert('few-b-0', 'fpffffffff-6', 'f0', 0.9, 0.5)
+    const compare = async (a: string, b: string) =>
+      (await rt.wait((await rt.start(evalCompare, { workflow: 'review', a, b }, { purpose: 'prod' })).runId))
+        .output as Out
+    const out = await compare('fpcccccccc', 'fpdddddddd')
+    expect(out.cases.unpricedCost).toEqual({ a: 0, b: 2 })
+    expect(out.metrics.find((m: Out) => m.metric === 'costUsd')).toMatchObject({ n: 4, better: 'unknown' })
+    expect(out.warnings).toContain('arm A mixes scorer versions (r0, r1)')
+    expect(out.warnings).toContain('cost compared on 4 of 6 paired cases (unpriced calls: 0 in A, 2 in B)')
+    expect(out.bBetter).toEqual(['pass', 'recall'])
+    const few = await compare('fpeeeeeeee', 'fpffffffff')
+    expect(few.bBetter).toEqual([])
+    expect(few.metrics.every((m: Out) => m.better === 'unknown')).toBe(true)
   })
 })
 
