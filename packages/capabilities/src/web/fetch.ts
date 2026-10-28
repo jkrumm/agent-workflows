@@ -3,10 +3,10 @@ import type { Ctx } from '../context.ts'
 import { CapabilityError, fail } from '../errors.ts'
 import { defineCapability } from '../procedure.ts'
 import { describe, failedResponse, isAbort, readJson, withRetries } from '../transports/http.ts'
-import { type ResolvedWebDeps, requireKey, webUsage, within } from './deps.ts'
+import { type Pin, type ResolvedWebDeps, requireKey, webUsage, within } from './deps.ts'
 import { TAVILY_USD_PER_CREDIT } from './search.ts'
-import { assertPublicUrl } from './ssrf.ts'
-import { cut, htmlTitle, htmlToText } from './text.ts'
+import { assertPublicUrl, HostUnresolved } from './ssrf.ts'
+import { cut, parseHtml } from './text.ts'
 
 const MAX_CHARS_CEILING = 200_000
 
@@ -51,6 +51,8 @@ interface Read {
   text: string
   /** Almost no text in a lot of script-carrying markup: the signature of a client-rendered shell. */
   shell?: boolean
+  /** The body was longer than the read cap, so the text is a prefix of the page. */
+  capped?: boolean
 }
 
 /** A direct read that did not produce text, with what to tell the caller. `missing` ends the chain: the page is gone. */
@@ -64,21 +66,28 @@ class DirectFailure extends Error {
   }
 }
 
-/** Reads at most `MAX_BODY_BYTES` of a body; the rest of the stream is cancelled. */
-async function readBody(res: Response): Promise<Uint8Array> {
-  if (!res.body) return new Uint8Array()
+/** Reads at most `MAX_BODY_BYTES` of a body; `capped` says there was more. The rest of the stream is cancelled. */
+async function readBody(res: Response): Promise<{ bytes: Uint8Array; capped: boolean }> {
+  if (!res.body) return { bytes: new Uint8Array(), capped: false }
   const reader = res.body.getReader()
   const all = new Uint8Array(MAX_BODY_BYTES)
   let size = 0
-  while (size < MAX_BODY_BYTES) {
+  let capped = false
+  for (;;) {
     const { done, value } = await reader.read()
     if (done) break
-    const take = Math.min(value.byteLength, MAX_BODY_BYTES - size)
-    all.set(take < value.byteLength ? value.subarray(0, take) : value, size)
-    size += take
+    const room = MAX_BODY_BYTES - size
+    if (value.byteLength > room) {
+      all.set(value.subarray(0, room), size)
+      size = MAX_BODY_BYTES
+      capped = true // more bytes than the cap, even if the body ended exactly at it the next read says done instead
+      break
+    }
+    all.set(value, size)
+    size += value.byteLength
   }
   await reader.cancel().catch(() => undefined)
-  return all.subarray(0, size)
+  return { bytes: all.subarray(0, size), capped }
 }
 
 /** Magic numbers of the binary formats a page URL most often turns out to be. */
@@ -122,7 +131,14 @@ async function direct(deps: ResolvedWebDeps, startUrl: string, signal: AbortSign
   let current = startUrl
   for (let hop = 0; ; hop++) {
     // Vetted once per hop; the request connects to these addresses and DNS is not asked again.
-    const pin = await assertPublicUrl(deps, 'web.fetch', current)
+    let pin: Pin
+    try {
+      pin = await assertPublicUrl(deps, 'web.fetch', current)
+    } catch (error) {
+      // A name that does not resolve is not a policy refusal: the page may still be reachable some other way.
+      if (error instanceof HostUnresolved) throw new DirectFailure(error.message)
+      throw error
+    }
     let res: Response
     try {
       res = await deps.fetch(
@@ -174,8 +190,9 @@ async function direct(deps: ResolvedWebDeps, startUrl: string, signal: AbortSign
       throw new DirectFailure(`unsupported content type ${type}`)
     }
     let bytes: Uint8Array
+    let capped: boolean
     try {
-      bytes = await readBody(res)
+      ;({ bytes, capped } = await readBody(res))
     } catch (error) {
       if (signal.aborted) throw fail('CANCELLED', 'cancelled')
       throw new DirectFailure(`body could not be read: ${describe(error)}`)
@@ -184,15 +201,21 @@ async function direct(deps: ResolvedWebDeps, startUrl: string, signal: AbortSign
     const body = decodeBody(bytes, contentType)
     if (!isHtml && !(type === '' && /^\s*(<!doctype html|<html)/i.test(body))) {
       if (body.trim() === '') throw new DirectFailure('empty body')
-      return { finalUrl: current, text: body.trim() }
+      return { finalUrl: current, text: body.trim(), ...(capped ? { capped } : {}) }
     }
-    const title = htmlTitle(body)
-    const text = htmlToText(body)
+    let page: Awaited<ReturnType<typeof parseHtml>>
+    try {
+      page = await parseHtml(body)
+    } catch (error) {
+      throw new DirectFailure(`page could not be parsed: ${describe(error)}`)
+    }
+    const { title, text } = page
     if (text === '') throw new DirectFailure('no text on the page')
     return {
       finalUrl: current,
       ...(title ? { title } : {}),
       text,
+      ...(capped ? { capped } : {}),
       ...(text.length < THIN_CHARS && text.length * 10 < body.length && /<script\b/i.test(body) ? { shell: true } : {}),
     }
   }
@@ -277,5 +300,13 @@ export const createFetch = (deps: ResolvedWebDeps) =>
 
 function shape(url: string, read: Read, via: 'direct' | 'tavily-extract', maxChars: number) {
   const { text, truncated } = cut(read.text, maxChars)
-  return { url, finalUrl: read.finalUrl, ...(read.title ? { title: read.title } : {}), text, truncated, via }
+  // Cut at the caller's `maxChars`, or at the read cap before the text was even extracted: either way, not the whole page.
+  return {
+    url,
+    finalUrl: read.finalUrl,
+    ...(read.title ? { title: read.title } : {}),
+    text,
+    truncated: truncated || read.capped === true,
+    via,
+  }
 }

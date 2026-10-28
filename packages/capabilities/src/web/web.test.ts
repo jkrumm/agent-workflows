@@ -8,7 +8,7 @@ import type { WebDeps } from './deps.ts'
 import { createWebCapabilities } from './index.ts'
 import { pinnedFetch } from './pinned.ts'
 import { isPrivateAddress } from './ssrf.ts'
-import { htmlTitle, htmlToText } from './text.ts'
+import { parseHtml } from './text.ts'
 
 const IU = { IU_API_KEY: 'iu-key', IU_BASE_URL: 'https://iu.example.com/anthropic' }
 const SONAR_URL = 'https://iu.example.com/openai/v1/chat/completions'
@@ -599,6 +599,47 @@ describe('pinnedFetch (the production transport)', () => {
     }
   })
 
+  test('a Content-Encoding it cannot decode, or a stack of them, is refused instead of handed on undecoded', async () => {
+    const server = Bun.serve({
+      port: 0,
+      hostname: '127.0.0.1',
+      fetch: (r) => new Response('x', { headers: { 'content-encoding': new URL(r.url).pathname.slice(1) } }),
+    })
+    try {
+      for (const encoding of ['zstd', 'gzip,%20br', 'compress']) {
+        const error = await pinnedFetch(`http://x.invalid:${server.port}/${encoding}`, {}, ['127.0.0.1']).then(
+          () => undefined,
+          (e: unknown) => e,
+        )
+        expect({ encoding, message: (error as Error | undefined)?.message.slice(0, 29) }).toEqual({
+          encoding,
+          message: 'unsupported content-encoding ',
+        })
+      }
+    } finally {
+      void server.stop(true)
+    }
+  })
+
+  test('a body that is not what its gzip header says fails the read; it does not hang or crash', async () => {
+    const server = Bun.serve({
+      port: 0,
+      hostname: '127.0.0.1',
+      fetch: () =>
+        new Response('this is not gzip', { headers: { 'content-encoding': 'gzip', 'content-type': 'text/plain' } }),
+    })
+    try {
+      const res = await pinnedFetch(`http://x.invalid:${server.port}/`, {}, ['127.0.0.1'])
+      const error = await res.text().then(
+        () => undefined,
+        (e: unknown) => e,
+      )
+      expect(error).toBeInstanceOf(Error)
+    } finally {
+      void server.stop(true)
+    }
+  })
+
   test('the caller’s signal aborts the request', async () => {
     const server = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: () => new Promise<Response>(() => {}) })
     try {
@@ -616,10 +657,9 @@ describe('pinnedFetch (the production transport)', () => {
   })
 })
 
-describe('htmlToText', () => {
-  test('hostile 2 MB bodies are scanned in linear time', () => {
-    // Shapes that make a backtracking pattern quadratic: it would need 2 MB x 250 000 steps on each (hours). The
-    // single pass measures 5-500 ms here; the ceiling is 4 s so a loaded host does not flake it, best of two runs.
+describe('parseHtml (HTMLRewriter)', () => {
+  test('hostile 2 MB bodies are scanned in linear time', async () => {
+    // Shapes that make a backtracking pattern quadratic (hours at this size). lol-html streams each in 5-200 ms.
     const size = 2_000_000
     const shapes: Record<string, string> = {
       'unclosed <script ': '<script '.repeat(size / 8),
@@ -634,35 +674,56 @@ describe('htmlToText', () => {
       'closing tags': '</script></article></main>'.repeat(size / 25),
     }
     for (const [name, body] of Object.entries(shapes)) {
-      let best = Number.POSITIVE_INFINITY
-      for (let run = 0; run < 2; run++) {
-        const started = performance.now()
-        htmlToText(body)
-        htmlTitle(body)
-        best = Math.min(best, performance.now() - started)
-      }
-      expect({ name, fast: best < 4_000 }).toEqual({ name, fast: true })
+      const started = performance.now()
+      await parseHtml(body)
+      expect({ name, fast: performance.now() - started < 3_000 }).toEqual({ name, fast: true })
     }
   })
 
-  test('forms, navigation and buttons keep their content: an ASP.NET page is one form', () => {
-    const page =
-      '<html><body><form id="aspnetForm"><nav><a href="/">Home</a></nav><div><h1>Article</h1><p>Real content.</p><button>Go</button></div></form></body></html>'
-    const text = htmlToText(page)
+  test('forms, navigation and buttons keep their content: an ASP.NET page is one form', async () => {
+    const { text } = await parseHtml(
+      '<html><body><form id="aspnetForm"><nav><a href="/">Home</a></nav><div><h1>Article</h1><p>Real content.</p><button>Go</button></div></form></body></html>',
+    )
     expect(text).toContain('Real content.')
     expect(text).toContain('Article')
     expect(text).toContain('Home')
   })
 
-  test('script, style, title, noscript and comments are dropped with their content; main wins over the page chrome', () => {
+  test('script, style, title, noscript, template, svg, iframe and comments are dropped with their content', async () => {
     const page =
-      '<title>T</title><style>.a{}</style><script>var x="<p>no</p>"</script><noscript>enable js</noscript><!-- c --><p>Menu</p><main><p>Body &amp; soul</p></main>'
-    expect(htmlToText(page)).toBe('Body & soul')
-    expect(htmlToText('<p>One</p><script>x')).toBe('One')
+      '<title>T</title><style>.a{}</style><script>var x="<p>no</p>"</script><noscript>enable js</noscript><template><p>tpl</p></template><svg><text>glyph</text></svg><iframe>frame</iframe><!-- c --><p>Body &amp; soul</p>'
+    expect((await parseHtml(page)).text).toBe('Body & soul')
+    expect((await parseHtml('<p>One</p><script>x')).text).toBe('One')
   })
 
-  test('article is used when there is no main; a text with a stray "<" survives', () => {
-    expect(htmlToText('<p>chrome</p><article><p>a < b</p></article>')).toBe('a < b')
+  test('a quote after an attribute name does not swallow the page; <script/> still opens a script', async () => {
+    expect((await parseHtml('<a href=x"y>link</a><p>real</p>')).text).toBe('link\nreal')
+    expect((await parseHtml('<p>a</p><script/>var leak = 1</script><p>b</p>')).text).toBe('a\n\nb')
+    expect((await parseHtml('<div title=">">text</div>')).text).toBe('text')
+  })
+
+  test('the title: the first one, entities decoded, markup in it literal as in a browser, the svg caption ignored', async () => {
+    expect((await parseHtml('<head><title>A &amp; <b>B</b></title></head><p>x</p><title>second</title>')).title).toBe(
+      'A & <b>B</b>',
+    )
+    expect((await parseHtml('<svg><title>caption</title></svg><title>Real</title><p>x</p>')).title).toBe('Real')
+    expect((await parseHtml('<p>no title</p>')).title).toBeUndefined()
+  })
+
+  test('main stands for the page only when it is most of it; a teaser article does not hide a page', async () => {
+    const chrome = 'Chrome '.repeat(30)
+    const big = 'Real content. '.repeat(40)
+    expect((await parseHtml(`<p>${chrome}</p><main><p>${big}</p></main>`)).text).toBe(big.trim())
+    expect((await parseHtml(`<p>${chrome}</p><article>${big}</article>`)).text).toBe(big.trim())
+    const teaser = await parseHtml(`<h1>Guide</h1><p>${big}</p><article>Teaser.</article>`)
+    expect(teaser.text).toContain('Real content.')
+    expect(teaser.text).toContain('Teaser.')
+    const small = await parseHtml(`<p>${big}</p><main>Tiny.</main>`)
+    expect(small.text).toContain('Real content.')
+  })
+
+  test('a "<" in text survives and unclosed elements do not break the rest', async () => {
+    expect((await parseHtml('<p>a < b</p><p>c')).text).toBe('a < b\n\nc')
   })
 })
 
@@ -730,6 +791,49 @@ describe('web.fetch decoding and emptiness', () => {
     expect((await failure(keyless.call('web.fetch', { url: 'https://example.com/pdf' }))).message).toContain(
       'binary, no content type',
     )
+  })
+  test('a name that does not resolve is not a policy refusal: the chain goes on to Extract, or fails as UPSTREAM_ERROR', async () => {
+    const n = net({
+      'https://gone.example.com/': () => new Response('never'),
+      'https://api.tavily.com/extract': json({
+        results: [{ url: 'https://gone.example.com/', raw_content: 'From Extract.' }],
+      }),
+    })
+    const deps: WebDeps = {
+      ...n.deps,
+      resolve: async () => {
+        throw new Error('ENOTFOUND')
+      },
+    }
+    const out = (await run({ ...deps, env: { TAVILY_API_KEY: 't' } }).call('web.fetch', {
+      url: 'https://gone.example.com/',
+    })) as {
+      via: string
+    }
+    expect(out.via).toBe('tavily-extract')
+    expect(n.to('https://gone.example.com')).toHaveLength(0)
+    const keyless = await failure(run(deps).call('web.fetch', { url: 'https://gone.example.com/' }))
+    expect(keyless.code).toBe('UPSTREAM_ERROR')
+    expect(keyless.message).toContain('did not resolve')
+  })
+
+  test('a response whose body is cut at the read cap says truncated, even when the text is short', async () => {
+    const MAX = 2_000_000
+    const make = (bytes: number) => {
+      const head = '<p>A real page with enough words to count as text, said once.</p><!--'
+      return head + 'x'.repeat(bytes - head.length - 3) + '-->'
+    }
+    const n = net({
+      'https://example.com/over': html(make(MAX + 5_000)),
+      'https://example.com/exact': html(make(MAX)),
+      'https://example.com/under': html(make(MAX - 1)),
+    })
+    const { call } = run(n.deps)
+    const truncated = async (name: string) =>
+      ((await call('web.fetch', { url: `https://example.com/${name}` })) as { truncated: boolean }).truncated
+    expect(await truncated('over')).toBe(true)
+    expect(await truncated('exact')).toBe(false)
+    expect(await truncated('under')).toBe(false)
   })
 })
 

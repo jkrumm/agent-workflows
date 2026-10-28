@@ -63,22 +63,28 @@ function parseIpv6Words(address: string): number[] | undefined {
 
 const v4Of = (high: number, low: number) => [high >>> 8, high & 0xff, low >>> 8, low & 0xff]
 
+/** The name did not resolve to any address: not a policy refusal, the caller's chain may go on without a direct read. */
+export class HostUnresolved extends Error {}
+
 function isPrivateIpv6(address: string): boolean {
   const w = parseIpv6Words(address)
   if (!w) return true // unparseable: fail closed
   const zeros = (n: number) => w.slice(0, n).every((x) => x === 0)
   // IPv4 embedded in IPv6: compatible, mapped, translated, NAT64 (both prefixes). The IPv4 table decides.
+  if (w[0] === 0x64 && w[1] === 0xff9b && w[2] === 1) return true // 64:ff9b:1::/48, NAT64 local-use: no public destination
   if (
     zeros(6) ||
     (zeros(5) && w[5] === 0xffff) ||
     (zeros(4) && w[4] === 0xffff && w[5] === 0) ||
-    (w[0] === 0x64 && w[1] === 0xff9b && (w[2] === 1 || w.slice(2, 6).every((x) => x === 0)))
+    (w[0] === 0x64 && w[1] === 0xff9b && w.slice(2, 6).every((x) => x === 0))
   ) {
     return isPrivateIpv4(v4Of(w[6]!, w[7]!))
   }
   // Only global unicast 2000::/3 is public; loopback, link-local, ULA, multicast and the rest fail closed.
   if (w[0]! < 0x2000 || w[0]! > 0x3fff) return true
   if (w[0] === 0x2001 && w[1] === 0x0db8) return true // documentation
+  if (w[0] === 0x2001 && w[1] === 0) return true // 2001::/32, Teredo: tunnels to an IPv4 host we cannot read from here
+  if (w[0] === 0x3fff && (w[1]! & 0xf000) === 0) return true // 3fff::/20, documentation
   if (w[0] === 0x2002) return isPrivateIpv4(v4Of(w[1]!, w[2]!)) // 6to4 carries an IPv4 destination
   return false
 }
@@ -90,7 +96,10 @@ export function isPrivateAddress(address: string): boolean {
   return v4 ? isPrivateIpv4(v4) : isPrivateIpv6(unscoped)
 }
 
-/** Throws `URL_REFUSED` unless `raw` is an http(s) URL whose host is a public name or address. Returns the vetted addresses to connect to. */
+/**
+ * Throws `URL_REFUSED` unless `raw` is an http(s) URL whose host is a public name or address (a policy refusal only);
+ * `HostUnresolved` when the name does not resolve. Returns the vetted addresses to connect to.
+ */
 export async function assertPublicUrl(deps: ResolvedWebDeps, capability: string, raw: string): Promise<Pin> {
   let url: URL
   try {
@@ -109,9 +118,9 @@ export async function assertPublicUrl(deps: ResolvedWebDeps, capability: string,
   try {
     addresses = await deps.resolve(host)
   } catch {
-    throw refused(capability, `host ${host} did not resolve`)
+    throw new HostUnresolved(`host ${host} did not resolve`)
   }
-  if (addresses.length === 0) throw refused(capability, `host ${host} did not resolve`)
+  if (addresses.length === 0) throw new HostUnresolved(`host ${host} did not resolve`)
   const bad = addresses.find(isPrivateAddress)
   if (bad !== undefined) throw refused(capability, `host ${host} resolves to a private or reserved address`)
   return { addresses }
