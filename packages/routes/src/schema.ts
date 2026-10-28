@@ -61,8 +61,8 @@ export const routeSchema = z
   })
 export type RouteEntry = z.infer<typeof routeSchema>
 
-/** A table entry plus the id it was resolved by. */
-export type ResolvedRoute = RouteEntry & { id: string }
+/** A table entry plus the id it was resolved by. `isFallback` marks a route `fallbackRoute` made. */
+export type ResolvedRoute = RouteEntry & { id: string; isFallback?: true }
 
 const patchFields = {
   wire: z.never({ error: 'wire cannot be overridden (a route transport is code, not configuration)' }).optional(),

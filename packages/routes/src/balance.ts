@@ -8,17 +8,21 @@ export const BALANCE_MARKER = 'provider balance exhausted'
 const BALANCE_WORDING = /insufficient balance|paymentrequired/i
 /** Without a status only IU's own body shape counts: both words together, never a lone "payment required". */
 const IU_BODY = /insufficient balance\s*\(paymentrequired\)/i
+/** A text-only 402 (OpenCode's turn error, `ocr`'s stderr): the status token and the wording, together. */
+const STATUS_402 = /\b402\b/
+const PAYMENT_WORDING = /payment required|insufficient balance/i
 
 /**
  * The one provider-balance classifier. With a status: 402, or 503 whose body says "Insufficient Balance" /
  * "PaymentRequired" (or carries `BALANCE_MARKER`); any other status is not balance. Without one (an OpenCode turn
- * error, a step's failure reason, a CLI's stderr) only the transports' `BALANCE_MARKER` or IU's body shape
- * ("Insufficient Balance (PaymentRequired)") count: free text that merely mentions a 402 or "payment required" (a diff,
- * an echoed prompt) is not balance.
+ * error, a step's failure reason, a CLI's stderr) the transports' `BALANCE_MARKER`, IU's body shape
+ * ("Insufficient Balance (PaymentRequired)"), or a 402 token together with "payment required" / "insufficient balance"
+ * count; a 402 or the wording alone does not.
  */
 export function isBalanceFailure(failure: { status?: number; text: string }): boolean {
   if (failure.status === 402) return true
   if (failure.status === 503) return BALANCE_WORDING.test(failure.text) || failure.text.includes(BALANCE_MARKER)
   if (failure.status !== undefined) return false
-  return failure.text.includes(BALANCE_MARKER) || IU_BODY.test(failure.text)
+  const { text } = failure
+  return text.includes(BALANCE_MARKER) || IU_BODY.test(text) || (STATUS_402.test(text) && PAYMENT_WORDING.test(text))
 }

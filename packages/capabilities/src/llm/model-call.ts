@@ -103,9 +103,6 @@ export interface CompleteArgs {
 
 export type Completion = Pick<ChatResult, 'text' | 'model' | 'stop' | 'stopDetail'> & { route: ResolvedRoute }
 
-/** The fallback routes `complete` handed out: a caller's effort is meant for the primary and never reaches these. */
-const fallbacks = new WeakSet<ResolvedRoute>()
-
 /**
  * One completion through the route's wire. Every billed call is reported to `ctx.addUsage`, failures included, under the
  * model that actually ran. A provider-balance failure (`isBalanceError`) moves the call once to the route's fallback;
@@ -119,7 +116,6 @@ export async function complete(deps: LlmDeps, args: CompleteArgs, start?: Resolv
   } catch (error) {
     const fallback = fallbackRoute(route)
     if (!fallback || !isBalanceError(error)) throw error
-    fallbacks.add(fallback)
     const warn = deps.warn ?? ((message, meta) => console.warn(message, meta))
     warn('provider balance exhausted; falling back', { route: route.id, from: route.model, to: fallback.model })
     try {
@@ -148,7 +144,8 @@ async function completeOn(deps: LlmDeps, route: ResolvedRoute, args: CompleteArg
   // The adapter reports every attempt that came back with usage, failed ones included. A call that
   // returned none is still a call: report it with unknown tokens and cost.
   let reported = 0
-  const effort = fallbacks.has(route) ? route.effort : (args.effort ?? route.effort)
+  // A caller's effort is meant for the primary: a fallback runs at its own route's.
+  const effort = route.isFallback ? route.effort : (args.effort ?? route.effort)
   const result = await port.complete(
     {
       model: route.model,
@@ -204,7 +201,7 @@ function retryPrompt(prompt: string, rejected: string, reason: string): string {
  */
 export async function completeJson<S extends z.ZodType>(
   deps: LlmDeps,
-  args: Omit<CompleteArgs, 'json'> & { schema: S },
+  args: Omit<CompleteArgs, 'json' | 'raw'> & { schema: S },
 ): Promise<{ data: z.output<S>; route: ResolvedRoute; attempts: number }> {
   let prompt = args.prompt
   let reason = ''

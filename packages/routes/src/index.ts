@@ -53,12 +53,12 @@ export function resolveRoute(id: RouteId, env: Env = process.env): ResolvedRoute
 }
 
 /**
- * The route's provider-balance fallback as a route of its own (same id, no further fallback), or `undefined` when the
- * route has none. Overrides are already in `route`: pass what `resolveRoute` returned.
+ * The route's provider-balance fallback as a route of its own (same id, `isFallback`, no further fallback), or
+ * `undefined` when the route has none. Overrides are already in `route`: pass what `resolveRoute` returned.
  */
 export function fallbackRoute(route: ResolvedRoute): ResolvedRoute | undefined {
   if (!route.fallback) return undefined
-  return { id: route.id, ...structuredClone(route.fallback) }
+  return { id: route.id, ...structuredClone(route.fallback), isFallback: true }
 }
 
 function isRouteId(id: string): id is RouteId {
