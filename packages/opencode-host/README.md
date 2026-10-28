@@ -1,15 +1,15 @@
 # @agent-workflows/opencode-host
 
 The runtime's `AgentHost` port (`packages/runtime/src/types.ts`) on one OpenCode 2.0.32 server (concept §3, §8).
-Every agent step is one session, in its agent's location directory, driven over the server's HTTP API. Inputs
-for the design: `docs/spikes/opencode-wedge/REPORT.md` (the wedge and its fix), agent-gateway's measured v2 API
-(`docs/opencode-v2.md` there), and the probes in §Measured below.
+Every agent step attempt is one session, in its agent's location directory, driven over the server's HTTP API.
+Inputs for the design: `docs/spikes/opencode-wedge/REPORT.md` (the wedge and its fix), agent-gateway's measured v2
+API (`docs/opencode-v2.md` there), and the probes in §Measured below.
 
 ## Shape
 
 ```ts
-const server = new OpenCodeServer() // stateDir ~/.local/state/agent-workflows, `opencode` on PATH
-await server.start() // adopts a running server, else spawns one
+const server = new OpenCodeServer() // stateDir ~/.local/state/agent-workflows, the real `opencode` build
+await server.start() // adopts a running server with the same env and config, else spawns one
 const host = new OpenCodeHost({
   server,
   agents: [{ name: 'reviewer', agentsMd, skills: { 'diff/SKILL.md': skill }, route: 'review.angle' }],
@@ -24,50 +24,81 @@ A step picks the route with `options.route` (else the agent's `route`) and asks 
 
 | Call | Does |
 |-|-|
-| `open(spec)` | Compiles the agent's location (idempotent), warms it, creates a session there with the route's model (and effort as a variant), title `agw <runId>:<stepId>`, `metadata.agw` = key, agent, route, location hash. Returns the handle |
-| `prompt(handle, text)` | Reads the session's messages and inbox; sends only when the prompt is not there. The prompt carries a deterministic id (`msg_agwp_<sha256(session)>`) and `metadata.agw.kind = 'prompt'`, so the check is exact, and the server dedupes a second post of the same id as well |
-| `wait(handle, opts)` | Polls the session (`pollIntervalMs`, 1 s): `onProgress` on every new or grown message or part, and while a running shell tool prints; `onTool` `pre` when a tool part first appears, `post` when it completes or fails. Returns at the session's `idle` with the final assistant text (or its JSON) and `usage` |
-| `steer(handle, text)` | Appends a user message with `delivery: steer` (id keyed by the text, so a re-delivered steer is a no-op). History is never rewritten |
+| `open(spec)` | Compiles the agent's location (idempotent), warms it, creates the session with the route's model (effort as a variant), the agent's permissions, title `agw <runId>:<stepId>` and `metadata.agw` (key, agent, route, location hash). The session id is derived from `spec.key` (`ses_agw<sha256(key, generation)>`): a re-open after a crash between create and journal finds the same unprompted session; a retry after a failed attempt (whose session is prompted) gets the next generation |
+| `prompt(handle, text)` | Reads the session's messages and inbox; sends only when the prompt is not there. The prompt carries a deterministic id (`msg_agwp_…`) and `metadata.agw.kind = 'prompt'`, so the check is exact, and the server dedupes a second post of the same id as well |
+| `wait(handle, opts)` | Polls the session (`pollIntervalMs`, 1 s): `onProgress` on every new or grown message or part, and while a running shell tool prints; `onTool` `pre` when a tool part first appears, `post` when it completes or fails (recorded per `wait` call: a second wait reports again, at least once). Returns at the session's `idle` with the final assistant text (or its JSON) and `usage` |
+| `steer(handle, text, { signalId })` | Appends a user message with `delivery: steer`, id keyed by the runtime's signal row: a re-delivered row is a no-op, two identical steers stay two. Without a `signalId`, a nonce per call (never the text alone). History is never rewritten |
 | `abort(handle)` | `POST /interrupt`. Idempotent: an idle session answers `interrupted: false`, a gone one 404, both fine |
 
-The handle is plain JSON: `{ v, sessionId, directory, agent, route, model, output, runId, stepId, priced }`.
+The handle is plain JSON: `{ v, sessionId, directory, agent, route, model, output, runId, stepId }`.
+
+**Permissions.** Every session gets `[shell * deny]` (or `allow` with `permissions.shell: true`) followed by the
+agent's own `permissions.rules`; the last matching rule wins. Server-wide, `question` and `external_directory` are
+denied, so an unattended session never blocks on an `ask`.
 
 ## Server supervisor
 
-`OpenCodeServer` runs `opencode serve --hostname 127.0.0.1 --port <port>` with cwd and every state root under
+`OpenCodeServer` runs `<opencode> serve --hostname 127.0.0.1 --port <port>` with cwd and every state root under
 `<stateDir>/opencode/` (`data`, `config`, `state`, `cache`, `home`, `opencode.db`, `server.log`, and
-`server.json` with the port and password, mode 0600).
+`server.json` with port, password and the launch fingerprint, written atomically at mode 0600).
 
-- **Env is an allow-list** (`serverEnv`): `PATH`, `HOME`, `TMPDIR`, `LANG`, the `XDG_*` roots, `OPENCODE_DB`,
-  `OPENCODE_TEST_HOME` (OpenCode's own home, so no `~/.claude` or `~/.agents` file reaches an agent; `HOME` stays
-  the user's because the `opencode` shim resolves the pinned build through it), `OPENCODE_DISABLE_FILEWATCHER=1`,
-  `OPENCODE_DISABLE_CLAUDE_CODE=1`, `OPENCODE_DISABLE_MODELS_FETCH=1`, `OPENCODE_DISABLE_AUTOUPDATE=1`, the server
-  password, the generated config, `IU_KEY` / `IU_ANTHROPIC_BASE` / `IU_OPENAI_BASE` (from `IU_API_KEY` and
-  `IU_BASE_URL`), and `OTEL_EXPORTER_OTLP_*` when set. Nothing else (tokens, `CLAUDE_*`, database URLs).
+- **The real binary by absolute path** (`resolveOpencodeBinary`): `AGW_OPENCODE_BIN`, else `opencode` on PATH,
+  followed through the machine's shim (`bin="$HOME/…"`) to the pinned build. So the server needs no user `HOME`.
+- **Env is an allow-list** (`serverEnv`): `PATH`, `TMPDIR`, `LANG`, `HOME` = `<root>/home` (the server's own), the
+  `XDG_*` roots, `OPENCODE_DB`, `OPENCODE_DISABLE_FILEWATCHER=1`, `OPENCODE_DISABLE_CLAUDE_CODE=1`,
+  `OPENCODE_DISABLE_MODELS_FETCH=1`, `OPENCODE_DISABLE_AUTOUPDATE=1`, the server password, the generated config,
+  `IU_KEY` / `IU_ANTHROPIC_BASE` / `IU_OPENAI_BASE` (from `IU_API_KEY` and `IU_BASE_URL`), and
+  `OTEL_EXPORTER_OTLP_*` when set. Nothing else (tokens, `CLAUDE_*`, database URLs).
 - **Config** (`buildServerConfig`): two IU providers (`iu-anthropic`, `iu-chat`) with a model row for every
-  `opencode`-wire route, priced from the route table; `question` and `external_directory` denied, so an unattended
-  session never blocks on an `ask`. Model ids come only from `@agent-workflows/routes`.
+  `opencode`-wire route, cost rows from each route's own `rate`. Model ids come only from `@agent-workflows/routes`.
 - **Detached.** The server is its own process group. A host restart (deploy) leaves it and its running sessions
-  alone; the next `start()` adopts it from `server.json` after an authenticated `GET /api/info` with the pinned
-  version (`OPENCODE_VERSION`, `2.0.32`; another version is refused).
+  alone; the next `start()` adopts it after an authenticated `GET /api/info` with the pinned version
+  (`OPENCODE_VERSION`, `2.0.32`; another version is refused) **and** the same launch fingerprint (sha256 of command
+  and env, config included). A drifted server (new routes, rates, key or binary) is restarted, logged.
+- **`server.json`** that does not parse fails `start()` with its path ("remove it to start a fresh server"),
+  never a boot loop.
 - **Liveness:** `GET /api/info` with a 2 s guard every `livenessIntervalMs` (5 s). `failuresBeforeRestart` (3)
   misses in a row, or the child's exit: SIGTERM, `termGraceMs` (5 s), SIGKILL, a new server on the same port and
-  data dir. Every restart resets the warm cache. `ready()` blocks callers while a restart is in flight.
+  data dir. Every restart marks the warm cache cold. `ready()` blocks callers while a restart is in flight.
 - **No cap.** Nothing in the host counts turns or wall time. The runtime's idle timeout, fed by `onProgress`,
   is the only stop for a session (`rules/agent-limits.md`).
 
+### Accepted risk: one server, one key, shell reach
+
+One server and one IU key serve every agent; the server's env holds the key and the server password, as
+agent-gateway's shared server does today. A shell-capable agent can read anything the user can (the password file,
+the key in the server's env through `ps`, the user's files by absolute path). Mitigations: the shell tool is denied
+unless an agent opts in, the server's `HOME` is its own (no `~/.claude`, `~/.agents` or dotfiles at `~`), the env is
+an allow-list, the server listens on loopback with a password. This is carried from agent-gateway, decided by the
+lead on that evidence, not an isolation boundary.
+
 ## Locations
 
-`compileLocation(def)` writes `<stateDir>/locations/<name>/`: `AGENTS.md`, skills under `.opencode/skills/<path>`,
-`def.config` as `opencode.json`, and `.agw-location.json` with the content hash. Unchanged hash, no write; a
-change builds the new directory beside the old one and renames it over. It throws `LocationLeakError` when any
-ancestor holds an `AGENTS.md`, a `CLAUDE.md` or a `.git`. `locationHash(def)` is the fingerprint input.
+`compileLocation(def)` writes `<stateDir>/locations/<name>/<hash16>/`: `AGENTS.md`, skills under
+`.opencode/skills/<path>`, `def.config` as `opencode.json`, and `.agw-location.json`. A hash directory is written
+once (built beside it, renamed into place) and never changed; a changed agent is a new directory, so a running
+session's files are never touched. It throws `LocationLeakError` when any ancestor holds an `AGENTS.md`, a
+`CLAUDE.md` or a `.git`. `locationHash(def)` (content and permissions) is the fingerprint input.
 
-**Warm and evict** (`WarmCache`): the first use of a location boots it (`GET /api/location`), later ones reuse it.
-Every `locations.tickMs` (60 s) idle locations older than `evictAfterMs` (10 min) are disposed with
-`DELETE /api/debug/location?location[directory]=…`, and at most `maxWarm` (16) stay warm, least recently used
-first. A location some `wait` uses is never evicted. A changed location is marked stale and disposed once idle,
-because OpenCode reads `AGENTS.md` and skills when it boots a location (§Measured).
+**Pruning** (`maintain()`, every `locations.tickMs`, 60 s): a hash directory goes when it is not the agent's current
+one, not known to the warm cache, not the location of a session the server runs (`GET /api/session/active`), and
+unused for `retentionMs` (24 h; the marker's mtime is touched on every open). The retention covers what the host
+cannot see: a session that will be re-attached after a crash, and a second host process on the same state dir
+during a deploy.
+
+**Warm and evict** (`WarmCache`):
+
+- The first use boots a location (`GET /api/location`). Single-flight: concurrent first uses share one warm and one
+  refcounted entry; a failed warm fails every waiter and leaves no entry.
+- New content (`changed`) with no entry disposes the location before warming it, because an adopted server may hold
+  an older head. On a warm entry it marks it stale: evicted before the next use if idle, else once idle.
+- Idle locations older than `evictAfterMs` (10 min) are disposed with `DELETE /api/debug/location?location[directory]=…`;
+  at most `maxWarm` (16) stay warm, least recently used first. A location in use is never evicted.
+- An entry is marked evicting before the DELETE; a use that arrives meanwhile waits and warms again. A failed DELETE
+  is logged, the entry stays warm and the next tick retries; it never fails a use or leaks its count.
+- After a server restart every entry goes cold (counts kept); the next use warms.
+
+OpenCode reads `AGENTS.md` and skills when it boots a location (§Measured), which is why changes go through eviction.
 
 ## Re-attach
 
@@ -75,13 +106,14 @@ because OpenCode reads `AGENTS.md` and skills when it boots a location (§Measur
 
 | State | Seen as | Does |
 |-|-|-|
-| running | in `GET /api/session/active`, or input in the inbox | poll on |
-| done | the newest message is an `idle` after the host's last input | return (`succeeded`), throw (`failed`, `interrupted`) |
+| running | in `GET /api/session/active`, or input in the inbox (prompt projected or not) | poll on |
+| done | the newest message is an `idle` after the host's last input | return (`succeeded`); throw (`failed`, `interrupted`, or an idle without a known outcome: `unknown`) |
 | cut off | neither, for `cutoffGraceMs` (3 s) | append one synthetic note ("the turn was cut off, continue"), id keyed by the last message, so it is sent once per cut-off point |
-| unprompted | no prompt in messages or inbox | throw: wait before prompt |
+| unprompted | no prompt in messages or inbox, not running, for the same grace | throw: wait before prompt |
 
 A connection refused, a timeout or a 5xx is transient: the wait keeps polling and reports no progress, so a server
-that never comes back ends by the idle timeout. A 404 for the session or another 4xx fails the step.
+that never comes back ends by the idle timeout. Swallowed failures (a resume post, a shell size read) are logged with
+the session id and error class. A 404 for the session or another 4xx fails the step.
 
 **Why a synthetic note, not the prompt again.** After a SIGKILL mid-turn the store holds the user message and an
 empty assistant message, no `idle`, and nothing resumes by itself. Re-posting the prompt id with `resume: true` is
@@ -89,23 +121,28 @@ deduped and schedules a run that idles at once with no reply (measured), so the 
 A synthetic message appends to history, is not a user prompt, and the model finishes the task. The step's prompt is
 sent exactly once.
 
+**Polling cost.** `GET /api/session/:id/message` pages by cursor (`order`, `limit` ≤ 200, `cursor.next`), so reads
+are incremental: one full walk when a wait starts (and after a transient failure), then one newest-first page of 50
+per poll merged by id (messages are append-only, and the newest are the ones still changing). A page that does not
+reach back to a known message triggers a full walk again. The final usage read walks the whole session once.
+
 ## DeepSeek wire rules (concept §8)
 
 | Rule | Who | Evidence |
 |-|-|-|
 | Reasoning passed back verbatim | OpenCode, on the Anthropic route | assistant messages store `reasoning` parts with the provider `state.signature` (probe, 2.0.32) and replay them from the store. Not verified for DeepSeek's `reasoning_content` on the chat route: no `opencode`-wire route uses DeepSeek today; verify before adding one |
 | History never edited | the host | the host only appends (prompt, steer, synthetic resume); it never calls revert, fork, compact, `PATCH` or delete. OpenCode's own compaction can still summarise a long session: it is OpenCode's, not triggered by the host |
-| System and tool changes appended, not a rewritten head | the host | the head is the location (`AGENTS.md`, skills, `opencode.json`). A location in use is never evicted, so a running session keeps its head; a change applies to the next session. A re-attach appends a synthetic note instead of a system change |
-| Cache-read tokens recorded | both | OpenCode reports `tokens.cache.read` and `.write` per assistant message; `usageFromOpenCodeMessages` carries them into `Usage` (live run: 7 593 of 7 967 input tokens were cache reads) |
+| System and tool changes appended, not a rewritten head | the host | the head is the location (`AGENTS.md`, skills, `opencode.json`) and the session's permissions. A hash directory never changes and a location in use is never evicted, so a running session keeps its head; a change applies to the next session. A re-attach appends a synthetic note instead of a system change |
+| Cache-read tokens recorded | both | OpenCode reports `tokens.cache.read` and `.write` per assistant message; `usageFromOpenCodeMessages` carries them into `Usage` (live run: 7 095 of 7 691 input tokens were cache reads) |
 
 ## Usage and cost
 
-`usage` is `usageFromOpenCodeMessages` over the whole session with the route's model. OpenCode prices each message
-with the config's cost rows, which come from the route table: the route's own `rate`, else the rate another route
-carries for the same model (today the `opencode` routes carry none and the Haiku single-call routes do). The step is
-reported unpriced (`cost: null`, `costSource: 'unknown'`) instead of OpenCode's fake 0 when the table has no rate,
-when cache tokens appear without the matching cache rate, or when one call exceeds 100K prompt tokens (the vendor's
-higher tier, as in `costFromUsage`).
+`usage` is `usageFromOpenCodeMessages` over the whole session with the route's model. Cost per assistant message:
+OpenCode's when it is positive (it prices with the config's cost rows, i.e. the route's own `rate`, `costSource:
+provider`); a message reported at cost 0 with tokens is priced with the route's rate through `costFromUsage`
+(`costSource: rate`). The step is unpriced (`cost: null`, `costSource: unknown`) when that has no rate, when cache
+tokens appear without the matching cache rate, or when one call exceeds 100K prompt tokens (the vendor's higher
+tier): never free, never under-priced. Every `opencode`-wire route carries its own rate (`packages/routes`).
 
 ## Failure modes
 
@@ -113,11 +150,12 @@ higher tier, as in `costFromUsage`).
 |-|-|
 | Server wedged (no `/api/info` answer) | killed after 3 missed probes, restarted on the same port; waits re-attach |
 | Server crashed | restarted on its exit event; waits re-attach |
-| Host process restarted (deploy) | the server keeps running; the next host adopts it, the runtime re-attaches by handle |
+| Host process restarted (deploy) | the server keeps running; the next host adopts it (or restarts it if its env or config drifted), the runtime re-attaches by handle |
 | A turn hangs inside OpenCode (model call stuck, no new message) | no progress, the runtime's idle timeout fails the step and calls `abort` |
 | Session lost (store reset) | `wait` fails: `opencode session … is gone` |
 | `ask` permission | prevented: `question` and `external_directory` are denied server-wide; an agent's own rules must not use `ask` |
 | Location under a repo | `LocationLeakError` at open |
+| Corrupt `server.json` | `start()` fails naming the file |
 | OpenCode version changed | adoption and boot refuse it; bump `OPENCODE_VERSION` after re-running the live test |
 
 ## Token effect / cache effect
@@ -125,11 +163,12 @@ higher tier, as in `costFromUsage`).
 - **No tokens of its own** in a normal step: the prompt is sent once, the title is set at create (no background
   title call), the location head is stable for the whole session.
 - **A re-attach after a mid-turn kill** costs one short synthetic note plus a new assistant turn. The provider
-  prompt cache stays warm because the head and history are unchanged (live run: 95 % of the resumed turn's input
+  prompt cache stays warm because the head and history are unchanged (live run: 92 % of the resumed turn's input
   was cache reads). What the cut-off turn had generated is lost (an empty message in the store) and is paid again.
-- **A changed agent** (`AGENTS.md`, skill, config) changes the head: its next session starts with a cold cache, once.
-  The fingerprint changes with it.
-- **A server restart** without a running turn costs nothing: the session is read, not resumed.
+- **A changed agent** (`AGENTS.md`, skill, config, permissions) changes the head: its next session starts with a
+  cold cache, once. The fingerprint changes with it.
+- **A server restart** without a running turn costs nothing: the session is read, not resumed. A drift restart at
+  adoption cuts running turns, which then cost one resume each.
 
 ## Measured (2.0.32, 2026-10-28)
 
@@ -141,22 +180,23 @@ higher tier, as in `costFromUsage`).
 | Inbox | `POST /prompt` with `resume: false` admits into `GET /api/session/:id/inbox` without running; it is not in the messages until it runs |
 | SIGKILL mid-turn | user message and an empty assistant message survive; no `idle`; not in `/active`; nothing resumes by itself. A re-posted prompt id with `resume: true` idles at once with no reply; `POST /synthetic` resumes and the model finishes |
 | Evict | `DELETE /api/debug/location?location[directory]=…` → 204, gone from `GET /api/debug/location`; the next use re-reads `AGENTS.md` (an `AGENTS.md` written after the boot was not seen until the eviction) |
-| Skills | loaded at the first prompt from the location's `.opencode/skills/` with `OPENCODE_DISABLE_CLAUDE_CODE=1` (live run: the model named the location's skill) |
-| `OPENCODE_TEST_HOME` | overrides OpenCode's home (`Global.Path.home`, from the 2.0.32 binary); `HOME` itself is untouched |
+| Skills | loaded at the first prompt from the location's `.opencode/skills/` (live run: the model named the location's skill) |
+| Home isolation | with `HOME=<root>/home` (no `OPENCODE_TEST_HOME`) and `OPENCODE_DISABLE_CLAUDE_CODE=1`, the model's skill list is the location's skill plus OpenCode's builtins (`opencode`, `report`), none of the user's `~/.claude/skills` (live run asserts it). `OPENCODE_TEST_HOME` is not needed |
+| Shell denied | with the session rule `shell * deny` the model's tool list has no shell (live run: `execute, skill, subagent, glob, grep, read, edit, write, webfetch, websearch`) |
 | Project | a location outside any repo is its own project (`GET /api/location` → `project.directory` = the location) |
 
 ## Tests
 
 `bun test packages/opencode-host`: a fake OpenCode server (`test/fake-opencode.ts`) with the measured behaviour
-(persisted store, dedupe by id, no self-resume, an empty idle on a re-posted id), in-process for the host and as a
-spawned `opencode` stand-in (`test/fake-opencode-bin.ts`) for the supervisor.
+(persisted store, dedupe by id, client session ids, no self-resume, an empty idle on a re-posted id), in-process for
+the host and as a spawned `opencode` stand-in (`test/fake-opencode-bin.ts`) for the supervisor.
 
 | File | Covers |
 |-|-|
-| `host.test.ts` | a turn's output and usage; prompt idempotency (twice, and across a restart); JSON output; a failed turn; unpriced routes; a wait surviving a kill and restart with one resume and no second prompt; a finished session read, not resumed; steer and its dedupe; abort twice; tool events; shell output as progress; warm and evict |
-| `server.test.ts` | the env allow-list and the file-watcher flag; a wedged server SIGTERMed, SIGKILLed and restarted on the same port; a crash restarted; adoption by the next process; a version mismatch refused; a wait in flight across a liveness kill; the config |
-| `locations.test.ts` | compile, idempotence, the hash, ancestor leaks, path escapes, the warm cache's eviction rules |
-| `live.test.ts` | `AGW_LIVE=1`: the real binary, SIGKILL mid-turn, restart, re-attach, one prompt; AGENTS.md and a skill reach the model; tokens and cost |
+| `host.test.ts` | a turn's output and usage; prompt idempotency (twice, and across a restart); open idempotency per key and the retry generation; JSON output; a failed turn; an outcome-less idle; cost 0 priced by rate, unpriced without one; permissions; a pending prompt is running, a missing one fails after the grace; incremental reads; a wait surviving a kill and restart with one resume and no second prompt; a finished session read, not resumed; steer dedupe by signal; abort twice; tool events per wait; shell output as progress; warm, evict, hash directories and pruning |
+| `server.test.ts` | the env allow-list, the server's own HOME and the file-watcher flag; a wedged server SIGTERMed, SIGKILLed and restarted on the same port; a crash restarted; adoption by the next process; drift restart; corrupt `server.json`; a version mismatch refused; shim resolution; a wait in flight across a liveness kill; the config |
+| `locations.test.ts` | compile, hash directories, the hash, ancestor leaks, path escapes, pruning; the warm cache under concurrency: single-flight, failed warm, failed evict, use during evict, reset, changed content |
+| `live.test.ts` | `AGW_LIVE=1`: the real binary, SIGKILL mid-turn, restart, re-attach, one prompt; AGENTS.md and a skill reach the model, the user's skills and the shell tool do not; tokens and cost |
 
 Live: `AGW_LIVE=1 secrets-run run --env-file=.env.tpl -- timeout 600 bun test packages/opencode-host`
-(about $0.0005).
+(under $0.001).

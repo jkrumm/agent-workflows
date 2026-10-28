@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
-import { mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Usage } from '@agent-workflows/runtime'
 import { createClient, type OpenCodeHandle, OpenCodeHost, OpenCodeServer } from '../src/index.ts'
@@ -8,7 +8,8 @@ import { createClient, type OpenCodeHandle, OpenCodeHost, OpenCodeServer } from 
 // The real `opencode` 2.0.32 on the cheapest opencode-wire route, one session, well under $0.05. Run with:
 //   AGW_LIVE=1 secrets-run run --env-file=.env.tpl -- timeout 600 bun test packages/opencode-host
 // open → prompt → SIGKILL the server mid-turn → the supervisor restarts it → wait re-attaches and finishes, with the
-// one prompt the step sent. The location's AGENTS.md and skill must reach the model.
+// one prompt the step sent. The location's AGENTS.md and skill must reach the model; the user's own skills
+// (`~/.claude/skills`, `~/.agents/skills`) and the shell tool (denied by default) must not.
 const live = process.env.AGW_LIVE === '1'
 const name = 'live: kill the server mid-turn, re-attach, finish without a second prompt'
 
@@ -45,6 +46,7 @@ test.skipIf(!live)(
       })) as OpenCodeHandle
       const prompt =
         'Do not call any tool. First line: the names of the skills available to you, comma separated. ' +
+        'Second line: the names of the tools available to you, comma separated. ' +
         'Then write the numbers from one to one hundred as English words, one per line.'
       await host.prompt(handle, prompt)
 
@@ -74,7 +76,7 @@ test.skipIf(!live)(
         progressEvents: progress,
         messageTypes: messages.map((m) => `${m.type}${m.metadata?.agw?.kind ? `:${m.metadata.agw.kind}` : ''}`),
         usage,
-        outputHead: String(result.output).split('\n').slice(0, 3),
+        outputHead: String(result.output).split('\n').slice(0, 4),
         outputTail: String(result.output).split('\n').slice(-2),
       }
       console.log(`live opencode-host ${JSON.stringify(report, null, 2)}`)
@@ -83,7 +85,20 @@ test.skipIf(!live)(
       expect(messages.filter((m) => m.type === 'user')).toHaveLength(1)
       expect(messages.filter((m) => m.metadata?.agw?.kind === 'resume')).toHaveLength(1)
       expect(String(result.output)).toContain('PINEAPPLE')
-      expect(String(result.output)).toContain('counting-words')
+      const [skillLine = '', toolLine = ''] = String(result.output).split('\n')
+      const names = (line: string) =>
+        line
+          .toLowerCase()
+          .split(/[\s,]+/)
+          .filter(Boolean)
+      expect(names(skillLine)).toContain('counting-words')
+      const userSkills = ['.claude/skills', '.agents/skills']
+        .map((d) => join(homedir(), d))
+        .filter(existsSync)
+        .flatMap((d) => readdirSync(d))
+      expect(userSkills.length).toBeGreaterThan(0) // the probe means something only if the user has skills
+      expect(names(skillLine).filter((n) => userSkills.includes(n))).toEqual([])
+      expect(names(toolLine).filter((n) => n === 'shell' || n === 'bash')).toEqual([])
       expect(usage.tokens.input).toBeGreaterThan(0)
       expect(usage.cost ?? 1).toBeLessThan(0.05)
     } finally {

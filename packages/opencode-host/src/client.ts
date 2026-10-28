@@ -33,7 +33,13 @@ export type Message = {
 
 export type ModelRef = { providerID: string; id: string; variant?: string }
 
+/** One permission rule; the last matching rule wins (measured on 2.0.25 by agent-gateway). */
+export type PermissionRule = { action: string; resource: string; effect: 'allow' | 'deny' }
+
 export type SessionCreate = {
+  /** Client-chosen id (`ses…`); a second create with the same id returns the first session. */
+  id?: string
+  permissions?: PermissionRule[]
   title: string
   location: { directory: string }
   model: ModelRef
@@ -128,6 +134,25 @@ export function createClient(endpoint: () => Endpoint, options: ClientOptions = 
     async createSession(body: SessionCreate, headers?: Record<string, string>): Promise<{ id: string }> {
       const res = await call('POST', '/api/session', { body, headers })
       return (await json<{ data: { id: string } }>(res, 'POST /api/session')).data
+    },
+
+    /** The session, or null when the server does not know it (404). */
+    async getSession(
+      id: string,
+      headers?: Record<string, string>,
+    ): Promise<{ id: string; location: { directory: string } } | null> {
+      const res = await call('GET', session(id), { headers })
+      if (res.status === 404) {
+        await res.body?.cancel()
+        return null
+      }
+      return (await json<{ data: { id: string; location: { directory: string } } }>(res, 'GET /api/session/{id}')).data
+    },
+
+    /** The newest `limit` messages, newest first: one request, the incremental read. */
+    async recentMessages(id: string, limit: number, headers?: Record<string, string>): Promise<Message[]> {
+      const res = await call('GET', session(id, `/message?order=desc&limit=${limit}`), { headers })
+      return (await json<{ data: Message[] }>(res, 'GET /api/session/{id}/message')).data
     },
 
     /** Every message, oldest first: `order=asc`, then `cursor=<next>` until a page is empty or has no cursor. */

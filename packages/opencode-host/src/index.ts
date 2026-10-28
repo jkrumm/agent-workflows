@@ -6,9 +6,16 @@ export {
   type OpenCodeClient,
   OpenCodeHttpError,
   OpenCodeUnreachable,
+  type PermissionRule,
 } from './client.ts'
 export { buildServerConfig, iuFromEnv, modelRef, opencodeRoutes, rateFor } from './config.ts'
-export { type OpenCodeHandle, OpenCodeHost, type OpenCodeHostOptions, type ServerPort } from './host.ts'
+export {
+  type OpenCodeHandle,
+  OpenCodeHost,
+  type OpenCodeHostOptions,
+  type ServerPort,
+  sessionPermissions,
+} from './host.ts'
 export {
   type AgentDefinition,
   assertNoAncestorLeak,
@@ -17,7 +24,9 @@ export {
   DEFAULT_STATE_DIR,
   LocationLeakError,
   locationHash,
+  pruneLocations,
+  touchLocation,
   WarmCache,
   type WarmCacheOptions,
 } from './locations.ts'
-export { OPENCODE_VERSION, OpenCodeServer, type ServerOptions, serverEnv } from './server.ts'
+export { OPENCODE_VERSION, OpenCodeServer, resolveOpencodeBinary, type ServerOptions, serverEnv } from './server.ts'

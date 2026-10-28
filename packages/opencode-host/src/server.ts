@@ -1,8 +1,19 @@
 import { spawn } from 'node:child_process'
-import { randomBytes } from 'node:crypto'
-import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, writeFileSync } from 'node:fs'
+import { createHash, randomBytes } from 'node:crypto'
+import {
+  accessSync,
+  closeSync,
+  constants,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  writeFileSync,
+} from 'node:fs'
 import { createServer } from 'node:net'
-import { join } from 'node:path'
+import { delimiter, isAbsolute, join } from 'node:path'
 import type { Logger } from '@agent-workflows/runtime'
 import { createClient, type Endpoint } from './client.ts'
 import { buildServerConfig, iuFromEnv } from './config.ts'
@@ -16,7 +27,7 @@ export const OPENCODE_VERSION = '2.0.32'
 export type ServerOptions = {
   /** Default `~/.local/state/agent-workflows`; the server's data lives in `<stateDir>/opencode/`. */
   stateDir?: string
-  /** The binary and any leading args. Default `[AGW_OPENCODE_BIN ?? 'opencode']`. */
+  /** The binary and any leading args. Default: `resolveOpencodeBinary(env)`, the real build by absolute path. */
   command?: string[]
   /** Loopback port. Default: the persisted one, else a free one picked at the first start and kept. */
   port?: number
@@ -38,7 +49,8 @@ export type ServerOptions = {
   logger?: Logger
 }
 
-type Persisted = { port: number; password: string }
+/** `fingerprint` is the hash of the env and command the running server was started with (drift detection). */
+type Persisted = { port: number; password: string; fingerprint?: string }
 
 /** A child process or an adopted server, addressed by pid. */
 type Proc = { pid: number; alive: () => boolean; waitExit: (ms: number) => Promise<boolean> }
@@ -55,23 +67,22 @@ const consoleLogger: Logger = {
 /**
  * The server's complete environment, an explicit allow-list: the process basics, the server's own state roots,
  * the IU leg the routes need, and `OTEL_EXPORTER_OTLP_*` when set. Nothing else from the host's env (tokens,
- * `CLAUDE_*`, database URLs) reaches the server or a tool shell. `HOME` stays the user's (the `opencode` shim on
- * PATH resolves the pinned build through it); OpenCode's own home is `OPENCODE_TEST_HOME`, so no `~/.claude` or
- * `~/.agents` file reaches an agent.
+ * `CLAUDE_*`, database URLs) reaches the server or a tool shell. `HOME` is the server's own (`<root>/home`), so
+ * no `~/.claude` or `~/.agents` file reaches an agent and a tool shell starts there; the binary is spawned by
+ * absolute path, so no shim needs the user's home.
  */
 export function serverEnv(input: { root: string; password: string; config: Record<string, unknown>; env?: Env }) {
   const env = input.env ?? process.env
   const iu = iuFromEnv(env)
   const out: Record<string, string> = {
     PATH: env.PATH ?? '/usr/bin:/bin',
-    HOME: env.HOME ?? '/',
+    HOME: join(input.root, 'home'),
     TMPDIR: env.TMPDIR ?? '/tmp',
     LANG: env.LANG ?? 'en_US.UTF-8',
     XDG_DATA_HOME: join(input.root, 'data'),
     XDG_CONFIG_HOME: join(input.root, 'config'),
     XDG_STATE_HOME: join(input.root, 'state'),
     XDG_CACHE_HOME: join(input.root, 'cache'),
-    OPENCODE_TEST_HOME: join(input.root, 'home'),
     OPENCODE_DB: join(input.root, 'opencode.db'),
     // The wedge fix: no per-ancestor file-watcher boot (docs/spikes/opencode-wedge/REPORT.md).
     OPENCODE_DISABLE_FILEWATCHER: '1',
@@ -100,7 +111,7 @@ export function serverEnv(input: { root: string; password: string; config: Recor
  */
 export class OpenCodeServer {
   readonly root: string
-  private readonly command: string[]
+  private command: string[] | null
   private readonly env: Env
   private readonly logger: Logger
   private readonly opts: Required<
@@ -124,7 +135,7 @@ export class OpenCodeServer {
   constructor(private readonly options: ServerOptions = {}) {
     this.root = join(options.stateDir ?? DEFAULT_STATE_DIR, 'opencode')
     this.env = options.env ?? process.env
-    this.command = options.command ?? [this.env.AGW_OPENCODE_BIN ?? 'opencode']
+    this.command = options.command ?? null
     this.logger = options.logger ?? consoleLogger
     this.config = options.config ?? null
     this.expectedVersion = options.expectedVersion ?? OPENCODE_VERSION
@@ -244,19 +255,50 @@ export class OpenCodeServer {
     return createClient(() => this.endpoint(), { requestTimeoutMs: this.opts.livenessTimeoutMs })
   }
 
+  private statePath(): string {
+    return join(this.root, 'server.json')
+  }
+
+  /** `server.json`; a corrupt file is an operator error with its path, never a boot loop. */
   private async loadOrCreateState(): Promise<Persisted> {
-    const path = join(this.root, 'server.json')
+    const path = this.statePath()
     let state: Partial<Persisted> = {}
-    if (existsSync(path)) state = JSON.parse(readFileSync(path, 'utf8')) as Partial<Persisted>
+    if (existsSync(path)) {
+      try {
+        state = JSON.parse(readFileSync(path, 'utf8')) as Partial<Persisted>
+        if (typeof state !== 'object' || state === null) throw new Error('not an object')
+      } catch (err) {
+        throw new Error(`${path} is corrupt (${(err as Error).message}); remove it to start a fresh server`)
+      }
+    }
     const next: Persisted = {
       port: this.options.port ?? state.port ?? (await freePort()),
       password: state.password ?? randomBytes(24).toString('base64url'),
+      ...(state.fingerprint ? { fingerprint: state.fingerprint } : {}),
     }
-    if (next.port !== state.port || next.password !== state.password) {
-      writeFileSync(path, `${JSON.stringify(next)}\n`, { mode: 0o600 })
-      chmodSync(path, 0o600)
-    }
+    if (next.port !== state.port || next.password !== state.password) this.writeState(next)
     return next
+  }
+
+  /** Atomic and 0600: a temp file beside it, renamed over. */
+  private writeState(state: Persisted): void {
+    const path = this.statePath()
+    const tmp = `${path}.tmp-${process.pid}`
+    writeFileSync(tmp, `${JSON.stringify(state)}\n`, { mode: 0o600 })
+    renameSync(tmp, path)
+  }
+
+  /** The command and env a spawn uses, and their fingerprint. */
+  private launch(): { command: string[]; env: Record<string, string>; fingerprint: string } {
+    const persisted = this.persisted as Persisted
+    this.command ??= [resolveOpencodeBinary(this.env)]
+    this.config ??= buildServerConfig(this.env)
+    const env = serverEnv({ root: this.root, password: persisted.password, config: this.config, env: this.env })
+    const sorted = Object.entries(env).sort(([a], [b]) => (a < b ? -1 : 1))
+    const fingerprint = createHash('sha256')
+      .update(JSON.stringify({ command: this.command, env: sorted }))
+      .digest('hex')
+    return { command: this.command, env, fingerprint }
   }
 
   /** A server from an earlier host process on our port, with our password and the pinned version. */
@@ -270,16 +312,27 @@ export class OpenCodeServer {
         `opencode server on port ${this.persisted?.port} is ${info.version}, need ${this.expectedVersion}`,
       )
     }
-    this.proc = adoptedProc(info.pid)
+    const proc = adoptedProc(info.pid)
+    const { fingerprint } = this.launch()
+    if (this.persisted?.fingerprint !== fingerprint) {
+      // A deploy changed the server's env or config (routes, rates, key, binary): the running server is stale.
+      this.logger.warn('opencode server env or config changed since it started; restarting it', { pid: info.pid })
+      await this.terminate(proc)
+      return false
+    }
+    this.proc = proc
     return true
   }
 
   private async spawnAndBoot(): Promise<void> {
     const persisted = this.persisted as Persisted
-    this.config ??= buildServerConfig(this.env)
-    const env = serverEnv({ root: this.root, password: persisted.password, config: this.config, env: this.env })
+    const { command, env, fingerprint } = this.launch()
+    if (persisted.fingerprint !== fingerprint) {
+      persisted.fingerprint = fingerprint
+      this.writeState(persisted)
+    }
     const log = openSync(join(this.root, 'server.log'), 'a')
-    const [bin, ...lead] = this.command as [string, ...string[]]
+    const [bin, ...lead] = command as [string, ...string[]]
     const child = spawn(bin, [...lead, 'serve', '--hostname', '127.0.0.1', '--port', String(persisted.port)], {
       cwd: this.root,
       env,
@@ -328,6 +381,40 @@ export class OpenCodeServer {
     this.logger.warn('opencode server ignored SIGTERM, sending SIGKILL', { pid: proc.pid })
     signal(proc.pid, 'SIGKILL')
     await proc.waitExit(2_000)
+  }
+}
+
+/**
+ * The real `opencode` build by absolute path: `AGW_OPENCODE_BIN`, else `opencode` on PATH. A shell shim (the
+ * machine's `~/.local/bin/opencode` execs the pinned build through `bin="$HOME/…"`) is followed to its target, so
+ * the server never needs the user's `HOME` to start.
+ */
+export function resolveOpencodeBinary(env: Env = process.env): string {
+  const explicit = env.AGW_OPENCODE_BIN
+  const found =
+    explicit ??
+    (env.PATH ?? '')
+      .split(delimiter)
+      .map((dir) => join(dir, 'opencode'))
+      .find((path) => isExecutable(path))
+  if (!found) throw new Error('opencode not found: set AGW_OPENCODE_BIN or put opencode on PATH')
+  const path = realpathSync(found)
+  const head = readFileSync(path).subarray(0, 2).toString()
+  if (head !== '#!') return path
+  const script = readFileSync(path, 'utf8')
+  const target = /^\s*bin="([^"]+)"/m.exec(script)?.[1]?.replaceAll(/\$\{?HOME\}?/g, env.HOME ?? '')
+  if (!target || !isAbsolute(target) || !isExecutable(target)) {
+    throw new Error(`${path} is a script whose target cannot be resolved; set AGW_OPENCODE_BIN to the real binary`)
+  }
+  return realpathSync(target)
+}
+
+function isExecutable(path: string): boolean {
+  try {
+    accessSync(path, constants.X_OK)
+    return true
+  } catch {
+    return false
   }
 }
 

@@ -1,9 +1,16 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { AgentWaitOptions } from '@agent-workflows/runtime'
-import { buildServerConfig, createClient, OpenCodeHost, OpenCodeServer, type ServerOptions } from '../src/index.ts'
+import {
+  buildServerConfig,
+  createClient,
+  OpenCodeHost,
+  OpenCodeServer,
+  resolveOpencodeBinary,
+  type ServerOptions,
+} from '../src/index.ts'
 
 // The supervisor against a real child process: `fake-opencode-bin.ts` stands in for `opencode serve`.
 const BIN = ['bun', join(import.meta.dir, 'fake-opencode-bin.ts')]
@@ -24,6 +31,16 @@ afterEach(async () => {
   for (const s of servers.splice(0)) await s.close({ stop: true })
   for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true })
 })
+
+/** The rejection's message; fails the test when the promise resolves. */
+async function failure(promise: Promise<unknown>): Promise<string> {
+  const outcome = await promise.then(
+    () => null,
+    (err: unknown) => err,
+  )
+  if (!(outcome instanceof Error)) throw new Error('expected a rejection')
+  return outcome.message
+}
 
 function server(stateDir: string, over: Partial<ServerOptions> = {}) {
   const warnings: string[] = []
@@ -68,13 +85,13 @@ async function until(check: () => boolean | Promise<boolean>, ms = 10_000) {
 }
 
 describe('OpenCodeServer', () => {
-  test('spawns with the env allow-list only, the file-watcher off, state 0600', async () => {
+  test('spawns with the env allow-list only, its own HOME, the file-watcher off, state 0600', async () => {
     const dir = scratch()
     const { s } = server(dir)
     await s.start()
     const names = JSON.parse(readFileSync(join(dir, 'opencode/data/fake-env.json'), 'utf8')) as string[]
     const values = JSON.parse(readFileSync(join(dir, 'opencode/data/fake-env-values.json'), 'utf8'))
-    expect(values).toEqual({ OPENCODE_DISABLE_FILEWATCHER: '1' })
+    expect(values).toEqual({ OPENCODE_DISABLE_FILEWATCHER: '1', HOME: join(dir, 'opencode/home') })
     expect(names).toContain('OTEL_EXPORTER_OTLP_ENDPOINT')
     expect(names).toContain('IU_KEY')
     expect(names).not.toContain('GITHUB_TOKEN')
@@ -82,7 +99,7 @@ describe('OpenCodeServer', () => {
     expect(names).not.toContain('IU_API_KEY')
     const allowed = new Set([
       ...['PATH', 'HOME', 'TMPDIR', 'LANG', 'XDG_DATA_HOME', 'XDG_CONFIG_HOME', 'XDG_STATE_HOME', 'XDG_CACHE_HOME'],
-      ...['OPENCODE_TEST_HOME', 'OPENCODE_DB', 'OPENCODE_DISABLE_FILEWATCHER', 'OPENCODE_DISABLE_CLAUDE_CODE'],
+      ...['OPENCODE_DB', 'OPENCODE_DISABLE_FILEWATCHER', 'OPENCODE_DISABLE_CLAUDE_CODE'],
       ...['OPENCODE_DISABLE_MODELS_FETCH', 'OPENCODE_DISABLE_AUTOUPDATE', 'OPENCODE_SERVER_PASSWORD'],
       ...['OPENCODE_CONFIG_CONTENT', 'IU_KEY', 'IU_ANTHROPIC_BASE', 'IU_OPENAI_BASE', 'OTEL_EXPORTER_OTLP_ENDPOINT'],
     ])
@@ -131,7 +148,32 @@ describe('OpenCodeServer', () => {
 
   test('a server of another version is refused', async () => {
     const { s } = server(scratch(), { expectedVersion: '9.9.9', bootTimeoutMs: 1_000 })
-    expect(s.start()).rejects.toThrow('did not answer')
+    expect(await failure(s.start())).toContain('did not answer')
+  })
+
+  test('an adopted server whose env or config drifted is restarted, logged', async () => {
+    const dir = scratch()
+    const first = server(dir).s
+    await first.start()
+    const pid = first.pid as number
+    await first.close()
+    servers.splice(servers.indexOf(first), 1)
+    const { s, warnings } = server(dir, { config: { test: 'changed by a deploy' } })
+    await s.start()
+    expect(s.pid).not.toBe(pid)
+    expect(alive(pid)).toBe(false)
+    expect(warnings).toContain('opencode server env or config changed since it started; restarting it')
+    const state = JSON.parse(readFileSync(join(dir, 'opencode/server.json'), 'utf8'))
+    expect(Object.keys(state).sort()).toEqual(['fingerprint', 'password', 'port'])
+  })
+
+  test('a corrupt server.json fails start with its path, once', async () => {
+    const dir = scratch()
+    mkdirSync(join(dir, 'opencode'), { recursive: true })
+    writeFileSync(join(dir, 'opencode/server.json'), '{ not json')
+    const { s } = server(dir)
+    expect(await failure(s.start())).toContain(`${join(dir, 'opencode/server.json')} is corrupt`)
+    expect(s.pid).toBeNull()
   })
 
   test('a wait in flight re-attaches across a liveness kill and finishes without a second prompt', async () => {
@@ -166,6 +208,24 @@ describe('OpenCodeServer', () => {
     } finally {
       host.close()
     }
+  })
+})
+
+describe('resolveOpencodeBinary', () => {
+  test('follows a shim on PATH to the real binary; AGW_OPENCODE_BIN wins', () => {
+    const dir = scratch()
+    const home = join(dir, 'home')
+    const real = join(home, 'pinned', 'opencode.exe')
+    mkdirSync(join(home, 'pinned'), { recursive: true })
+    writeFileSync(real, '\x7fELF')
+    chmodSync(real, 0o755)
+    mkdirSync(join(dir, 'bin'))
+    const shim = join(dir, 'bin', 'opencode')
+    writeFileSync(shim, '#!/usr/bin/env bash\nset -e\nbin="$HOME/pinned/opencode.exe"\nexec "$bin" "$@"\n')
+    chmodSync(shim, 0o755)
+    expect(resolveOpencodeBinary({ PATH: join(dir, 'bin'), HOME: home })).toBe(realpathSync(real))
+    expect(resolveOpencodeBinary({ PATH: '', AGW_OPENCODE_BIN: real })).toBe(realpathSync(real))
+    expect(() => resolveOpencodeBinary({ PATH: join(dir, 'nothing') })).toThrow('opencode not found')
   })
 })
 

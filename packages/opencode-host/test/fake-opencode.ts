@@ -5,7 +5,8 @@
 // deduped: it schedules a run that idles at once, with no reply.
 //
 // The model is scripted by the prompt text: `[slow:<ms>]` turn length, `[tool:<name>]` one tool call first,
-// `[shell:<ms>]` a running shell tool that only prints, `[json]` a fenced JSON answer, `[fail]` a failed turn.
+// `[shell:<ms>]` a running shell tool that only prints, `[json]` a fenced JSON answer, `[fail]` a failed turn,
+// `[free]` an answer reported at cost 0.
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 
 type Part = {
@@ -48,6 +49,7 @@ type Session = {
   directory: string
   model: { id: string; providerID: string; variant?: string }
   metadata?: Record<string, unknown>
+  permissions?: unknown[]
   messages: Msg[]
   inbox: Input[]
 }
@@ -65,6 +67,7 @@ export function startFake(options: FakeOptions) {
   const shells = new Map<string, number>()
   const locations = new Set<string>()
   const requests: string[] = []
+  const urls: string[] = []
   let hung = false
   const turnMs = options.defaultTurnMs ?? 50
 
@@ -188,7 +191,8 @@ export function startFake(options: FakeOptions) {
           ? `Here it is:\n\`\`\`json\n${JSON.stringify({ ok: true, inputs: s.messages.filter((m) => m.type === 'user').length })}\n\`\`\``
           : `${resumed}echo: ${last.type === 'user' ? last.text : prompt}`
         reply.content = [{ type: 'text', text }]
-        Object.assign(reply, { finish: 'stop', tokens, cost: 0.001, time: { ...reply.time, completed: now() } })
+        const cost = /\[free\]/.test(prompt) ? 0 : 0.001 // OpenCode reports 0 when its config has no cost row
+        Object.assign(reply, { finish: 'stop', tokens, cost, time: { ...reply.time, completed: now() } })
         save()
         running.get(s.id)?.finish()
       },
@@ -216,6 +220,7 @@ export function startFake(options: FakeOptions) {
       const url = new URL(req.url)
       const path = url.pathname
       requests.push(`${req.method} ${path}`)
+      urls.push(`${req.method} ${path}${url.search}`)
       if (req.headers.get('authorization') !== `Basic ${btoa(`opencode:${options.password}`)}`) {
         return json({ _tag: 'UnauthorizedError', message: 'Authentication required' }, 401)
       }
@@ -242,8 +247,11 @@ export function startFake(options: FakeOptions) {
       if (path === '/api/session' && req.method === 'POST') {
         const loc = (body.location as { directory: string }).directory
         locations.add(loc)
+        const known = typeof body.id === 'string' ? state.sessions[body.id] : undefined
+        if (known) return json({ data: { id: known.id, location: { directory: known.directory }, model: known.model } })
         const s: Session = {
-          id: id('ses'),
+          id: typeof body.id === 'string' ? body.id : id('ses'),
+          permissions: body.permissions as unknown[],
           title: String(body.title ?? ''),
           directory: loc,
           model: body.model as Session['model'],
@@ -263,7 +271,17 @@ export function startFake(options: FakeOptions) {
       const s = state.sessions[m[1] as string]
       if (!s) return notFound(m[1] as string)
       const tail = m[2] ?? ''
-      if (tail === '' && req.method === 'GET') return json({ data: { id: s.id, title: s.title, metadata: s.metadata } })
+      if (tail === '' && req.method === 'GET') {
+        return json({
+          data: {
+            id: s.id,
+            title: s.title,
+            metadata: s.metadata,
+            location: { directory: s.directory },
+            permissions: s.permissions,
+          },
+        })
+      }
       if (tail === '/message') {
         const limit = Number(url.searchParams.get('limit') ?? 50)
         const cursor = url.searchParams.get('cursor')
@@ -297,6 +315,7 @@ export function startFake(options: FakeOptions) {
     url: `http://127.0.0.1:${server.port}`,
     port: server.port as number,
     requests,
+    urls,
     state,
     locations,
     /** Stop answering anything, `/api/info` included, and stop every running turn (a wedged server). */
