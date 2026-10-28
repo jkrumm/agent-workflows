@@ -226,6 +226,13 @@ describe('steer', () => {
       expect(rows).toHaveLength(1)
       expect(rows[0].payload).toEqual({ text: 'focus on tests' })
       expect(rows[0].delivered_at).toBeInstanceOf(Date)
+      // the host gets the journaled row id, so an at-least-once re-delivery can be deduped there
+      const { rows: ids } = await sql.pool.query(`select id::text from "${db.schema}".signals where run_id = $1`, [
+        runId,
+      ])
+      const steers = host.events.filter((e) => e.op === 'steer')
+      expect(steers).toHaveLength(1)
+      expect(steers[0]).toMatchObject({ text: 'focus on tests', signalId: ids[0].id })
       const late = await remote.steer(runId, 'ask', 'too late').catch((err: unknown) => err)
       expect(String(late)).toContain('not a running agent step')
     } finally {
