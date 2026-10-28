@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { boot } from '../src/boot.ts'
+import { boot, lazyOpenCodeHost } from '../src/boot.ts'
 import { loadConfig } from '../src/config.ts'
 import { Pool } from 'pg'
 import { freshSchema, PG_URL, rejection, SECRET, until } from './support.ts'
@@ -38,6 +38,23 @@ describe('loadConfig', () => {
     expect(attempt).toThrow('AGW_PG_URL')
     expect(attempt).toThrow('AGW_PORT')
     expect(attempt).not.toThrow('short-but-secret-looking')
+  })
+})
+
+describe('lazyOpenCodeHost', () => {
+  test('builds nothing until the first agent step: close is a no-op, and a step after close is refused', async () => {
+    // An env without IU credentials: if construction started the server, `start()` would throw on the config.
+    const host = lazyOpenCodeHost({}, () => undefined)
+    await host.close()
+    expect(await rejection(host.abort({}))).toContain('closed')
+  })
+
+  test('a failed start is not cached: the next step tries again', async () => {
+    const host = lazyOpenCodeHost({}, () => undefined) // no opencode binary, no IU key: the server cannot start
+    const first = await rejection(host.abort({}))
+    expect(first).not.toContain('closed')
+    expect(await rejection(host.abort({}))).toBe(first)
+    await host.close()
   })
 })
 

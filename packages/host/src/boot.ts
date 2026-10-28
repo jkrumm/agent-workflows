@@ -1,8 +1,8 @@
 import { createCapabilities, createRegistry } from '@agent-workflows/capabilities'
 import { runawayCap, walletGate } from '@agent-workflows/limits'
 import { fsFingerprintSource, platformMiddleware } from '@agent-workflows/middleware'
-import { type AgentHost, Runtime } from '@agent-workflows/runtime'
-import { unwiredAgentHost } from './agent-host.ts'
+import { OpenCodeHost, OpenCodeServer } from '@agent-workflows/opencode-host'
+import { type AgentHost, type Json, Runtime } from '@agent-workflows/runtime'
 import { createHost } from './app.ts'
 import type { HostConfig } from './config.ts'
 import { IDLE_TIMEOUT_S } from './operations.ts'
@@ -21,7 +21,7 @@ export interface RunningHost {
 }
 
 export interface BootOptions {
-  /** The OpenCode adapter once it is wired; until then agent steps fail with `agent host not wired`. */
+  /** Replaces the OpenCode host (tests); `unwiredAgentHost` fails every agent step with `agent host not wired`. */
   agentHost?: AgentHost
   env?: Record<string, string | undefined>
 }
@@ -38,6 +38,51 @@ function exporterFor(env: Record<string, string | undefined>): Exporter | undefi
   const endpoint = env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT?.trim() || env.OTEL_EXPORTER_OTLP_ENDPOINT?.trim()
   return endpoint ? undefined : silentExporter
 }
+
+/** No agent definitions exist yet; they arrive with the first agent workflow. */
+const AGENT_DEFINITIONS: ConstructorParameters<typeof OpenCodeHost>[0]['agents'] = []
+
+export type LazyAgentHost = AgentHost & { close(): Promise<void> }
+
+/**
+ * The OpenCode `AgentHost`, built on the first agent step: the server (and the host's maintenance timer) does not
+ * exist at boot, so a host without agent workflows never spawns or probes `opencode`. A failed start is not cached,
+ * so the next step retries. `close` stops supervising; the server keeps running for the next process (a deploy).
+ */
+export function lazyOpenCodeHost(
+  env: Record<string, string | undefined>,
+  traceparent: OpenCodeTraceparent,
+): LazyAgentHost {
+  let built: Promise<{ server: OpenCodeServer; host: OpenCodeHost }> | undefined
+  let closed = false
+  const get = () => {
+    if (closed) return Promise.reject(new Error('opencode host is closed'))
+    built ??= (async () => {
+      const server = new OpenCodeServer({ env })
+      await server.start()
+      return { server, host: new OpenCodeHost({ server, agents: AGENT_DEFINITIONS, env, traceparent }) }
+    })().catch((error: unknown) => {
+      built = undefined
+      throw error
+    })
+    return built
+  }
+  return {
+    open: async (spec) => (await get()).host.open(spec),
+    prompt: async (handle: Json, prompt) => (await get()).host.prompt(handle, prompt),
+    wait: async (handle: Json, options) => (await get()).host.wait(handle, options),
+    steer: async (handle: Json, text, options) => (await get()).host.steer(handle, text, options),
+    abort: async (handle: Json) => (await get()).host.abort(handle),
+    async close() {
+      closed = true
+      const pending = await built?.catch(() => undefined)
+      pending?.host.close()
+      await pending?.server.close()
+    },
+  }
+}
+
+type OpenCodeTraceparent = NonNullable<ConstructorParameters<typeof OpenCodeHost>[0]['traceparent']>
 
 export async function boot(config: HostConfig, options: BootOptions = {}): Promise<RunningHost> {
   const env = options.env ?? process.env
@@ -74,6 +119,10 @@ export async function boot(config: HostConfig, options: BootOptions = {}): Promi
       argo: { machine: config.machine },
     })
     closers.push(() => platform.close())
+    const opencode = options.agentHost
+      ? undefined
+      : lazyOpenCodeHost(env, (runId, stepId) => platform.telemetry.traceparent(runId, stepId) ?? undefined)
+    if (opencode) closers.push(() => opencode.close())
     const cap = runawayCap({ connectionString: config.pgUrl, schema: config.schema })
     closers.push(() => cap.close())
     const wallet = walletGate({ workflows: OPTIONAL_EXPENSIVE })
@@ -81,7 +130,7 @@ export async function boot(config: HostConfig, options: BootOptions = {}): Promi
       connectionString: config.pgUrl,
       schema: config.schema,
       workflows: workflows.map((entry) => entry.workflow),
-      host: options.agentHost ?? unwiredAgentHost,
+      host: options.agentHost ?? opencode,
       middleware: [...platform.middleware, wallet, cap],
     })
     closers.push(() => runtime.close())
