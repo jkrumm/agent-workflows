@@ -4,6 +4,8 @@
 
 **Where to look:** workflow shape §3, middleware §4, porting a skill or a Hermes path §10, phase order §11.
 
+> **v3.2, 2026-10-28:** §8 OpenCode wedge risk resolved (file-watcher boot; OPENCODE_DISABLE_FILEWATCHER=1); the OpenCode host (`packages/opencode-host`) enforces it and re-attaches across server restarts. No decision reversed.
+>
 > **v3.1, 2026-10-27:** Wave 1 verdicts folded in: S1 own journal (§3, §12.4), S2 telemetry and the Argo projection (§4, §5), S3 stack and P0b store (§8), the OpenCode wedge risk (§8). No decision reversed.
 >
 > **Status: concept v3, 2026-10-27. Canonical here** (moved from dotfiles `docs/agent-workflows/`). Supersedes dotfiles `docs/factory/design/gateways.md` (concept v2) for
@@ -184,7 +186,7 @@ Taken from it:
 - a "token effect / cache effect" note in every package README
 - the DeepSeek wire rules for our cheap routes: pass reasoning back verbatim, never edit history, append system and tool changes instead of rewriting the head, record cache-read tokens
 
-**Known risk for the OpenCode host (S2):** on 2.0.32 a prompt wedged a fresh server six times out of six and the server ignored SIGTERM; an earlier spike prompted the same build fine. Cause not isolated. The OpenCode host (P1) isolates it first. Liveness stays the idle watchdog (no new session message for N minutes means wedged; never a turn or wall-clock cap): a wedged server is SIGKILLed and the step re-attaches by session id.
+**OpenCode wedge (S2), resolved:** it was not a hang. On the first request for a directory, 2.0.32 boots one file watcher per ancestor directory, one after the other, and answers nothing for that location until the last is up: 2.5 s to over 150 s on a loaded host, against S2's 45 s ceiling; SIGTERM is not acted on until the boot ends (`docs/spikes/opencode-wedge/REPORT.md`). The fix is `OPENCODE_DISABLE_FILEWATCHER=1` in the server env (boot 38 ms median, 54 of 54 trials prompted). The host (`packages/opencode-host`) sets it in its env allow-list on every server it spawns, probes liveness with `GET /api/info` (2 s guard) on a tick, and on three misses SIGTERMs, SIGKILLs after a grace and restarts on the same port and store; a wait in flight re-attaches by session id and resumes a cut-off turn with one appended synthetic note, never a second prompt. Liveness of a session stays the idle watchdog (no new session message for N minutes means wedged; never a turn or wall-clock cap).
 
 ## 9. The `agw` CLI
 

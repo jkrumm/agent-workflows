@@ -1,0 +1,17 @@
+{
+  "name": "@agent-workflows/opencode-host",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "bun test --isolate"
+  },
+  "dependencies": {
+    "@agent-workflows/middleware": "workspace:*",
+    "@agent-workflows/routes": "workspace:*",
+    "@agent-workflows/runtime": "workspace:*"
+  }
+}

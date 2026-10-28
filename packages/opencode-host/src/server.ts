@@ -1,0 +1,392 @@
+import { spawn } from 'node:child_process'
+import { randomBytes } from 'node:crypto'
+import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, writeFileSync } from 'node:fs'
+import { createServer } from 'node:net'
+import { join } from 'node:path'
+import type { Logger } from '@agent-workflows/runtime'
+import { createClient, type Endpoint } from './client.ts'
+import { buildServerConfig, iuFromEnv } from './config.ts'
+import { DEFAULT_STATE_DIR } from './locations.ts'
+
+type Env = Record<string, string | undefined>
+
+/** The build the host is verified against (README §Measured). A server reporting another version is refused. */
+export const OPENCODE_VERSION = '2.0.32'
+
+export type ServerOptions = {
+  /** Default `~/.local/state/agent-workflows`; the server's data lives in `<stateDir>/opencode/`. */
+  stateDir?: string
+  /** The binary and any leading args. Default `[AGW_OPENCODE_BIN ?? 'opencode']`. */
+  command?: string[]
+  /** Loopback port. Default: the persisted one, else a free one picked at the first start and kept. */
+  port?: number
+  /** Where IU credentials, `AGW_ROUTES` and `OTEL_EXPORTER_OTLP_*` are read from. Default `process.env`. */
+  env?: Env
+  /** `OPENCODE_CONFIG_CONTENT`. Default `buildServerConfig(env)`. */
+  config?: Record<string, unknown>
+  /** Liveness tick. Default 5 s. */
+  livenessIntervalMs?: number
+  /** `GET /api/info` hang guard per probe. Default 2 s (wedge report). */
+  livenessTimeoutMs?: number
+  /** Consecutive failed probes before a restart. Default 3. */
+  failuresBeforeRestart?: number
+  /** SIGTERM, then SIGKILL after this long. Default 5 s. */
+  termGraceMs?: number
+  /** A started server must answer `/api/info` within this long, else it is killed and started again. Default 60 s. */
+  bootTimeoutMs?: number
+  expectedVersion?: string
+  logger?: Logger
+}
+
+type Persisted = { port: number; password: string }
+
+/** A child process or an adopted server, addressed by pid. */
+type Proc = { pid: number; alive: () => boolean; waitExit: (ms: number) => Promise<boolean> }
+
+class VersionMismatch extends Error {
+  override name = 'VersionMismatch'
+}
+
+const consoleLogger: Logger = {
+  warn: (message, meta) => console.warn(message, meta ?? ''),
+  error: (message, meta) => console.error(message, meta ?? ''),
+}
+
+/**
+ * The server's complete environment, an explicit allow-list: the process basics, the server's own state roots,
+ * the IU leg the routes need, and `OTEL_EXPORTER_OTLP_*` when set. Nothing else from the host's env (tokens,
+ * `CLAUDE_*`, database URLs) reaches the server or a tool shell. `HOME` stays the user's (the `opencode` shim on
+ * PATH resolves the pinned build through it); OpenCode's own home is `OPENCODE_TEST_HOME`, so no `~/.claude` or
+ * `~/.agents` file reaches an agent.
+ */
+export function serverEnv(input: { root: string; password: string; config: Record<string, unknown>; env?: Env }) {
+  const env = input.env ?? process.env
+  const iu = iuFromEnv(env)
+  const out: Record<string, string> = {
+    PATH: env.PATH ?? '/usr/bin:/bin',
+    HOME: env.HOME ?? '/',
+    TMPDIR: env.TMPDIR ?? '/tmp',
+    LANG: env.LANG ?? 'en_US.UTF-8',
+    XDG_DATA_HOME: join(input.root, 'data'),
+    XDG_CONFIG_HOME: join(input.root, 'config'),
+    XDG_STATE_HOME: join(input.root, 'state'),
+    XDG_CACHE_HOME: join(input.root, 'cache'),
+    OPENCODE_TEST_HOME: join(input.root, 'home'),
+    OPENCODE_DB: join(input.root, 'opencode.db'),
+    // The wedge fix: no per-ancestor file-watcher boot (docs/spikes/opencode-wedge/REPORT.md).
+    OPENCODE_DISABLE_FILEWATCHER: '1',
+    OPENCODE_DISABLE_CLAUDE_CODE: '1',
+    OPENCODE_DISABLE_MODELS_FETCH: '1',
+    OPENCODE_DISABLE_AUTOUPDATE: '1',
+    OPENCODE_SERVER_PASSWORD: input.password,
+    OPENCODE_CONFIG_CONTENT: JSON.stringify(input.config),
+    IU_KEY: iu.key,
+    IU_ANTHROPIC_BASE: iu.anthropicBase,
+    IU_OPENAI_BASE: iu.openaiBase,
+  }
+  for (const [name, value] of Object.entries(env)) {
+    if (name.startsWith('OTEL_EXPORTER_OTLP_') && value) out[name] = value
+  }
+  return out
+}
+
+/**
+ * Supervises one `opencode serve` on loopback. The server is spawned detached, so a host restart (deploy) leaves
+ * it and its running sessions alone; the next host adopts it from `server.json` (port, password) after
+ * `GET /api/info` proves the password and the version. Liveness: `GET /api/info` with a 2 s guard every tick; after
+ * `failuresBeforeRestart` misses, or when the child exits, SIGTERM, grace, SIGKILL, and a fresh server on the same
+ * port and data dir. Sessions survive in the sqlite store; waits re-attach by session id. There is no turn or
+ * wall-clock cap anywhere: the runtime's idle timeout is the only stop for a session.
+ */
+export class OpenCodeServer {
+  readonly root: string
+  private readonly command: string[]
+  private readonly env: Env
+  private readonly logger: Logger
+  private readonly opts: Required<
+    Pick<
+      ServerOptions,
+      'livenessIntervalMs' | 'livenessTimeoutMs' | 'failuresBeforeRestart' | 'termGraceMs' | 'bootTimeoutMs'
+    >
+  >
+  private readonly expectedVersion: string
+  private persisted: Persisted | null = null
+  private proc: Proc | null = null
+  private failures = 0
+  private timer: ReturnType<typeof setInterval> | null = null
+  private restarting: Promise<void> | null = null
+  private healthy = new Gate()
+  private closed = false
+  private config: Record<string, unknown> | null
+  private restarts = 0
+  private readonly restartListeners = new Set<() => void>()
+
+  constructor(private readonly options: ServerOptions = {}) {
+    this.root = join(options.stateDir ?? DEFAULT_STATE_DIR, 'opencode')
+    this.env = options.env ?? process.env
+    this.command = options.command ?? [this.env.AGW_OPENCODE_BIN ?? 'opencode']
+    this.logger = options.logger ?? consoleLogger
+    this.config = options.config ?? null
+    this.expectedVersion = options.expectedVersion ?? OPENCODE_VERSION
+    this.opts = {
+      livenessIntervalMs: options.livenessIntervalMs ?? 5_000,
+      livenessTimeoutMs: options.livenessTimeoutMs ?? 2_000,
+      failuresBeforeRestart: options.failuresBeforeRestart ?? 3,
+      termGraceMs: options.termGraceMs ?? 5_000,
+      bootTimeoutMs: options.bootTimeoutMs ?? 60_000,
+    }
+  }
+
+  /** Base URL and password; valid once `start()` resolved. */
+  endpoint(): Endpoint {
+    if (!this.persisted) throw new Error('opencode server not started')
+    return { baseUrl: `http://127.0.0.1:${this.persisted.port}`, password: this.persisted.password }
+  }
+
+  get pid(): number | null {
+    return this.proc?.pid ?? null
+  }
+
+  /** Called after every restart (liveness kill, crash): the new server holds no warm location. */
+  onRestart(listener: () => void): void {
+    this.restartListeners.add(listener)
+  }
+
+  /** Restarts since `start()` (liveness kills and crashes). */
+  get restartCount(): number {
+    return this.restarts
+  }
+
+  /** Resolves while the server answers; during a restart, once it answers again. Rejects on `signal`. */
+  ready(signal?: AbortSignal): Promise<void> {
+    const open = this.healthy.promise
+    if (!signal) return open
+    if (signal.aborted) return Promise.reject(signal.reason)
+    return new Promise<void>((resolve, reject) => {
+      const onAbort = () => reject(signal.reason)
+      signal.addEventListener('abort', onAbort, { once: true })
+      void open.then(() => {
+        signal.removeEventListener('abort', onAbort)
+        resolve()
+      })
+    })
+  }
+
+  async start(): Promise<void> {
+    for (const dir of ['data', 'config', 'state', 'cache', 'home']) mkdirSync(join(this.root, dir), { recursive: true })
+    this.persisted = await this.loadOrCreateState()
+    if (!(await this.adopt())) await this.spawnAndBoot()
+    this.healthy.open()
+    this.timer = setInterval(() => void this.tick(), this.opts.livenessIntervalMs)
+  }
+
+  /** Stops supervising. `stop: true` also terminates the server (tests, uninstall); a deploy leaves it running. */
+  async close(options: { stop?: boolean } = {}): Promise<void> {
+    this.closed = true
+    if (this.timer) clearInterval(this.timer)
+    this.timer = null
+    await this.restarting?.catch(() => {})
+    if (options.stop && this.proc) await this.terminate(this.proc)
+  }
+
+  /** Forces a restart now (tests, operator). */
+  restart(reason: string): Promise<void> {
+    if (this.restarting) return this.restarting
+    this.healthy.close()
+    const run = (async () => {
+      this.logger.warn('opencode server restart', { reason, pid: this.proc?.pid ?? null })
+      if (this.proc) await this.terminate(this.proc)
+      this.proc = null
+      let backoff = 1_000
+      while (!this.closed) {
+        try {
+          await this.spawnAndBoot()
+          break
+        } catch (err) {
+          this.logger.error('opencode server failed to start', { error: (err as Error).message })
+          await Bun.sleep(backoff)
+          backoff = Math.min(backoff * 2, 30_000)
+        }
+      }
+      this.failures = 0
+      this.restarts++
+      for (const listener of this.restartListeners) listener()
+      this.healthy.open()
+    })().finally(() => {
+      this.restarting = null
+    })
+    this.restarting = run
+    return run
+  }
+
+  private async tick(): Promise<void> {
+    if (this.closed || this.restarting) return
+    if (await this.probe()) {
+      this.failures = 0
+      return
+    }
+    this.failures++
+    this.logger.warn('opencode server liveness probe failed', { failures: this.failures })
+    if (this.failures >= this.opts.failuresBeforeRestart) await this.restart('liveness')
+  }
+
+  /** `GET /api/info` within the liveness guard, from the right version. */
+  private async probe(): Promise<boolean> {
+    try {
+      const info = await this.client().info({ timeoutMs: this.opts.livenessTimeoutMs })
+      return info.version === this.expectedVersion
+    } catch {
+      return false
+    }
+  }
+
+  private client() {
+    return createClient(() => this.endpoint(), { requestTimeoutMs: this.opts.livenessTimeoutMs })
+  }
+
+  private async loadOrCreateState(): Promise<Persisted> {
+    const path = join(this.root, 'server.json')
+    let state: Partial<Persisted> = {}
+    if (existsSync(path)) state = JSON.parse(readFileSync(path, 'utf8')) as Partial<Persisted>
+    const next: Persisted = {
+      port: this.options.port ?? state.port ?? (await freePort()),
+      password: state.password ?? randomBytes(24).toString('base64url'),
+    }
+    if (next.port !== state.port || next.password !== state.password) {
+      writeFileSync(path, `${JSON.stringify(next)}\n`, { mode: 0o600 })
+      chmodSync(path, 0o600)
+    }
+    return next
+  }
+
+  /** A server from an earlier host process on our port, with our password and the pinned version. */
+  private async adopt(): Promise<boolean> {
+    const info = await this.client()
+      .info({ timeoutMs: this.opts.livenessTimeoutMs })
+      .catch(() => null)
+    if (!info) return false
+    if (info.version !== this.expectedVersion) {
+      throw new VersionMismatch(
+        `opencode server on port ${this.persisted?.port} is ${info.version}, need ${this.expectedVersion}`,
+      )
+    }
+    this.proc = adoptedProc(info.pid)
+    return true
+  }
+
+  private async spawnAndBoot(): Promise<void> {
+    const persisted = this.persisted as Persisted
+    this.config ??= buildServerConfig(this.env)
+    const env = serverEnv({ root: this.root, password: persisted.password, config: this.config, env: this.env })
+    const log = openSync(join(this.root, 'server.log'), 'a')
+    const [bin, ...lead] = this.command as [string, ...string[]]
+    const child = spawn(bin, [...lead, 'serve', '--hostname', '127.0.0.1', '--port', String(persisted.port)], {
+      cwd: this.root,
+      env,
+      detached: true,
+      stdio: ['ignore', log, log],
+    })
+    closeSync(log)
+    child.unref()
+    const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()))
+    const spawnError = new Promise<never>((_, reject) => child.once('error', reject))
+    spawnError.catch(() => {})
+    if (child.pid === undefined) await spawnError
+    let alive = true
+    void exited.then(() => {
+      alive = false
+    })
+    const proc: Proc = {
+      pid: child.pid as number,
+      alive: () => alive,
+      waitExit: (ms) => Promise.race([exited.then(() => true), Bun.sleep(ms).then(() => false)]),
+    }
+    this.proc = proc
+    let booted = false
+    void exited.then(() => {
+      if (!booted || this.closed || this.proc !== proc || this.restarting) return
+      void this.restart('server exited')
+    })
+    const deadline = Date.now() + this.opts.bootTimeoutMs
+    while (Date.now() < deadline) {
+      if (!proc.alive()) throw new Error(`opencode server exited during boot (see ${join(this.root, 'server.log')})`)
+      if (await this.probe()) {
+        booted = true
+        return
+      }
+      await Bun.sleep(100)
+    }
+    await this.terminate(proc)
+    throw new Error(`opencode server did not answer within ${this.opts.bootTimeoutMs} ms`)
+  }
+
+  /** SIGTERM, wait up to the grace, SIGKILL. A server in a boot stall ignores SIGTERM (wedge report). */
+  private async terminate(proc: Proc): Promise<void> {
+    if (!proc.alive()) return
+    signal(proc.pid, 'SIGTERM')
+    if (await proc.waitExit(this.opts.termGraceMs)) return
+    this.logger.warn('opencode server ignored SIGTERM, sending SIGKILL', { pid: proc.pid })
+    signal(proc.pid, 'SIGKILL')
+    await proc.waitExit(2_000)
+  }
+}
+
+function signal(pid: number, sig: NodeJS.Signals): void {
+  try {
+    process.kill(pid, sig)
+  } catch {
+    // already gone
+  }
+}
+
+function adoptedProc(pid: number): Proc {
+  const alive = () => {
+    try {
+      process.kill(pid, 0)
+      return true
+    } catch {
+      return false
+    }
+  }
+  const waitExit = async (ms: number) => {
+    const deadline = Date.now() + ms
+    while (alive() && Date.now() < deadline) await Bun.sleep(50)
+    return !alive()
+  }
+  return { pid, alive, waitExit }
+}
+
+/** Open: `promise` is resolved. Closed: a fresh pending promise until the next `open()`. */
+class Gate {
+  promise: Promise<void> = new Promise(() => {})
+  private release: (() => void) | null = null
+  private isOpen = false
+
+  constructor() {
+    this.close()
+  }
+
+  open(): void {
+    this.isOpen = true
+    this.release?.()
+  }
+
+  close(): void {
+    if (!this.isOpen && this.release) return
+    this.isOpen = false
+    this.promise = new Promise((resolve) => {
+      this.release = resolve
+    })
+  }
+}
+
+function freePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const srv = createServer()
+    srv.once('error', reject)
+    srv.listen(0, '127.0.0.1', () => {
+      const address = srv.address()
+      srv.close(() => (typeof address === 'object' && address ? resolve(address.port) : reject(new Error('no port'))))
+    })
+  })
+}
