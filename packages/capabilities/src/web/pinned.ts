@@ -1,6 +1,6 @@
-import { request as httpRequest } from 'node:http'
+import { type IncomingMessage, request as httpRequest } from 'node:http'
 import { request as httpsRequest } from 'node:https'
-import { Readable } from 'node:stream'
+import { pipeline, Readable } from 'node:stream'
 import { createBrotliDecompress, createGunzip, createInflate } from 'node:zlib'
 
 // A request that connects to an address the SSRF guard already vetted. `fetch` resolves the name itself at connect
@@ -8,7 +8,7 @@ import { createBrotliDecompress, createGunzip, createInflate } from 'node:zlib'
 // Here the connect's `lookup` is ours: it hands back the vetted addresses and never asks DNS. The URL keeps its host
 // name, so the Host header and the TLS server name (SNI and certificate check) are the page's own.
 
-const NO_BODY = new Set([101, 204, 205, 304])
+const NO_BODY = new Set([204, 205, 304])
 
 /** `node:http(s)` request to `url`, connected to one of `addresses`, as a web `Response`. Redirects are not followed. */
 export function pinnedFetch(url: string, init: RequestInit, addresses: string[]): Promise<Response> {
@@ -37,33 +37,56 @@ export function pinnedFetch(url: string, init: RequestInit, addresses: string[])
         }) as never,
       },
       (res) => {
-        const responseHeaders = new Headers()
-        for (const [key, value] of Object.entries(res.headers)) {
-          for (const v of Array.isArray(value) ? value : value === undefined ? [] : [value])
-            responseHeaders.append(key, v)
+        // Anything that goes wrong turning this into a Response must reject the promise and free the socket, not
+        // escape as an uncaught exception from an event callback.
+        try {
+          resolve(toResponse(res))
+        } catch (error) {
+          res.destroy()
+          reject(error)
         }
-        const encoding = responseHeaders.get('content-encoding')?.toLowerCase()
-        const decoder =
-          encoding === 'gzip'
-            ? createGunzip()
-            : encoding === 'br'
-              ? createBrotliDecompress()
-              : encoding === 'deflate'
-                ? createInflate()
-                : undefined
-        if (decoder) {
-          responseHeaders.delete('content-encoding')
-          responseHeaders.delete('content-length')
-          res.on('error', (error) => decoder.destroy(error))
-        }
-        const status = res.statusCode ?? 0
-        const body = NO_BODY.has(status)
-          ? null
-          : (Readable.toWeb(decoder ? res.pipe(decoder) : res) as unknown as ReadableStream)
-        resolve(new Response(body, { status, statusText: res.statusMessage ?? '', headers: responseHeaders }))
       },
     )
     req.on('error', reject)
     req.end()
+  })
+}
+
+/** Content-Encodings decoded here; a stack of them, or any other, is refused rather than handed on undecoded. */
+const DECODERS = {
+  gzip: createGunzip,
+  'x-gzip': createGunzip,
+  br: createBrotliDecompress,
+  deflate: createInflate,
+} as const
+
+function toResponse(res: IncomingMessage): Response {
+  const status = res.statusCode ?? 0
+  if (status < 200 || status > 599) throw new Error(`unsupported HTTP status ${status}`)
+  const headers = new Headers()
+  for (const [key, value] of Object.entries(res.headers)) {
+    for (const v of Array.isArray(value) ? value : value === undefined ? [] : [value]) headers.append(key, v)
+  }
+  const encoding = (headers.get('content-encoding') ?? 'identity').trim().toLowerCase()
+  if (NO_BODY.has(status)) {
+    res.destroy() // no body is coming: do not leave the socket open
+    return new Response(null, { status, statusText: res.statusMessage ?? '', headers })
+  }
+  if (encoding !== 'identity' && encoding !== '' && !Object.hasOwn(DECODERS, encoding)) {
+    throw new Error(`unsupported content-encoding "${encoding.slice(0, 40)}"`)
+  }
+  let source: Readable = res
+  if (encoding in DECODERS) {
+    headers.delete('content-encoding')
+    headers.delete('content-length')
+    const decoder = DECODERS[encoding as keyof typeof DECODERS]()
+    // `pipeline` destroys both ends when either fails or is cancelled: no socket outlives a dead decoder.
+    pipeline(res, decoder, () => undefined)
+    source = decoder
+  }
+  return new Response(Readable.toWeb(source) as unknown as ReadableStream, {
+    status,
+    statusText: res.statusMessage ?? '',
+    headers,
   })
 }

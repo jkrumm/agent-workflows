@@ -24,12 +24,8 @@ function decodeEntities(text: string): string {
   })
 }
 
-// The page body is hostile input of up to a couple of megabytes, scanned on the event loop. Nothing here backtracks:
-// one forward pass with `indexOf` and character tests, and every search resumes where the last one ended, so the work
-// is linear in the body however many tags are left open.
-
 /** Elements whose content is not page text (code, styles, template and fallback markup): dropped with their content. */
-const RAW = new Set(['script', 'style', 'noscript', 'svg', 'template', 'iframe', 'title'])
+const RAW = new Set(['script', 'style', 'noscript', 'svg', 'template', 'iframe'])
 /** Elements that break a line. Every other tag is dropped and its content kept. */
 const BLOCKS = new Set([
   'p',
@@ -68,132 +64,87 @@ const BLOCKS = new Set([
   'details',
   'summary',
 ])
-const SCOPES = ['main', 'article'] as const
+/** The `<main>` or `<article>` text stands for the page only when it is at least this share of all the page text. */
+const SCOPE_SHARE = 0.5
+const TITLE_CHARS = 300
 
-const isLetter = (code: number) => (code >= 65 && code <= 90) || (code >= 97 && code <= 122)
-const isNameChar = (code: number) => isLetter(code) || (code >= 48 && code <= 57) || code === 45 || code === 58
-
-/** The index of the `>` that ends the tag whose attributes start at `from`, quotes respected; -1 when it never ends. */
-function tagEnd(html: string, from: number): number {
-  let quote = 0
-  for (let i = from; i < html.length; i++) {
-    const c = html.charCodeAt(i)
-    if (quote) {
-      if (c === quote) quote = 0
-    } else if (c === 34 || c === 39) quote = c
-    else if (c === 62) return i
-  }
-  return -1
-}
-
-/** Where the closing tag of `name` ends (just past its `>`), searching forward from `from`; -1 when there is none. */
-function closeOf(html: string, name: string, from: number): number {
-  const at = indexOfIgnoreCase(html, `</${name}`, from)
-  const end = at < 0 ? -1 : html.indexOf('>', at)
-  return end < 0 ? -1 : end + 1
-}
-
-/** `indexOf` for a lowercase ASCII `needle` that starts with `<`, ignoring case; no copy of the body, no backtracking. */
-function indexOfIgnoreCase(html: string, needle: string, from: number): number {
-  for (let i = html.indexOf('<', from); i >= 0; i = html.indexOf('<', i + 1)) {
-    if (i + needle.length > html.length) return -1
-    let k = 1
-    for (; k < needle.length; k++) {
-      let c = html.charCodeAt(i + k)
-      if (c >= 65 && c <= 90) c += 32
-      if (c !== needle.charCodeAt(k)) break
-    }
-    if (k === needle.length) return i
-  }
-  return -1
-}
-
-/** The page's `<title>`, tags and entities removed; undefined when there is none. */
-export function htmlTitle(html: string): string | undefined {
-  const open = indexOfIgnoreCase(html, '<title', 0)
-  if (open < 0) return undefined
-  const start = tagEnd(html, open + 6)
-  if (start < 0) return undefined
-  const end = indexOfIgnoreCase(html, '</title', start)
-  const raw = html.slice(start + 1, end < 0 ? Math.min(html.length, start + 1 + 500) : end)
-  const title = decodeEntities(raw.replace(/<[^>]*>/g, ''))
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, 300)
-  return title || undefined
-}
-
-/**
- * Readable text from an HTML document, in one pass: script, style, `<title>`, `noscript`, `svg`, `template` and `iframe`
- * dropped with their content, block tags become line breaks, every other tag is dropped and its content kept (forms and
- * navigation included: ASP.NET wraps a whole page in one `<form>`, and a dropped menu costs little against a dropped
- * page). The `<main>` text wins when there is any, then `<article>`, else the whole body. It is a text extractor, not a
- * parser: what it returns is untrusted page content and stays data.
- */
-export function htmlToText(html: string): string {
-  let all = ''
-  const scoped = { main: { depth: 0, text: '' }, article: { depth: 0, text: '' } }
-  const emit = (text: string) => {
-    all += text
-    if (scoped.main.depth > 0) scoped.main.text += text
-    if (scoped.article.depth > 0) scoped.article.text += text
-  }
-
-  let i = 0
-  while (i < html.length) {
-    const lt = html.indexOf('<', i)
-    if (lt < 0) {
-      emit(html.slice(i))
-      break
-    }
-    if (lt > i) emit(html.slice(i, lt))
-    const next = html.charCodeAt(lt + 1)
-    if (html.startsWith('<!--', lt)) {
-      const end = html.indexOf('-->', lt + 4)
-      if (end < 0) break
-      i = end + 3
-      continue
-    }
-    const closing = next === 47 // "/"
-    const nameStart = lt + (closing ? 2 : 1)
-    if (!isLetter(html.charCodeAt(nameStart))) {
-      if (next === 33 || next === 63) {
-        // <!doctype …>, <?xml …?>
-        const end = html.indexOf('>', lt + 2)
-        if (end < 0) break
-        i = end + 1
-        continue
-      }
-      emit('<') // "a < b": not a tag
-      i = lt + 1
-      continue
-    }
-    let nameEnd = nameStart
-    while (nameEnd < html.length && isNameChar(html.charCodeAt(nameEnd))) nameEnd++
-    const name = html.slice(nameStart, nameEnd).toLowerCase()
-    const end = tagEnd(html, nameEnd)
-    if (end < 0) break // a tag that never ends: the rest is not text
-    i = end + 1
-    if (closing) {
-      for (const scope of SCOPES) if (name === scope && scoped[scope].depth > 0) scoped[scope].depth--
-    } else if (RAW.has(name) && html.charCodeAt(end - 1) !== 47) {
-      const after = closeOf(html, name, i)
-      if (after < 0) break // an element that never closes swallows the rest, as in a browser
-      i = after
-      continue
-    } else {
-      for (const scope of SCOPES) if (name === scope) scoped[scope].depth++
-    }
-    if (BLOCKS.has(name)) emit('\n')
-  }
-
-  const chosen = [scoped.main.text, scoped.article.text].find((text) => text.trim() !== '') ?? all
-  return decodeEntities(chosen)
+const tidy = (text: string) =>
+  decodeEntities(text)
     .split('\n')
-    .map((line) => line.replace(/[ \t ]+/g, ' ').trim())
+    .map((line) => line.replace(/[ \t\u00a0]+/g, ' ').trim())
     .filter((line, n, lines) => line !== '' || (n > 0 && lines[n - 1] !== ''))
     .join('\n')
     .trim()
+
+/**
+ * The page's title and readable text. The body is hostile input of up to a couple of megabytes, so it is tokenized by
+ * Bun's `HTMLRewriter` (lol-html: streaming, linear, browser-grade tokenizing of quotes, comments, raw-text elements and
+ * unclosed markup) instead of anything hand-written; this only collects what the handlers see.
+ *
+ * `script`, `style`, `noscript`, `template`, `iframe`, `svg` and `title` are skipped with their content (one that never
+ * closes swallows the rest, as in a browser). Block tags break a line; every other tag is ignored and its content kept,
+ * `form`, `nav` and `button` included (ASP.NET wraps a whole page in one `<form>`). The `<main>` text stands for the
+ * page when it is at least half of it, else `<article>`'s, else the whole page: a teaser `<article>` must not hide a
+ * page. Text is untrusted page content and stays data. Rejects if the rewriter does; the caller treats that as a page
+ * it cannot read.
+ */
+export async function parseHtml(html: string): Promise<{ title?: string; text: string }> {
+  let all = ''
+  let main = ''
+  let article = ''
+  let title = ''
+  let titled = false
+  let skip = 0 // depth inside a skipped element
+  let inMain = 0
+  let inArticle = 0
+  let inTitle = 0
+
+  const emit = (text: string) => {
+    all += text
+    if (inMain > 0) main += text
+    if (inArticle > 0) article += text
+  }
+
+  const rewriter = new HTMLRewriter()
+    .on('*', {
+      element(el) {
+        const name = el.tagName.toLowerCase()
+        const raw = RAW.has(name) || name === 'title'
+        const isTitle = name === 'title' && !titled && skip === 0 // the page's own, not an `<svg>` caption
+        const block = BLOCKS.has(name)
+        if (isTitle) {
+          titled = true
+          inTitle++
+        }
+        if (raw) skip++
+        if (name === 'main') inMain++
+        if (name === 'article') inArticle++
+        if (block && skip === 0) emit('\n')
+        const leave = () => {
+          if (isTitle) inTitle--
+          if (raw) skip--
+          if (name === 'main') inMain--
+          if (name === 'article') inArticle--
+          if (block && skip === 0) emit('\n')
+        }
+        // `canHaveContent` is the parse (`<script/>` still opens a script; lol-html's `selfClosing` is only the spelling).
+        if (el.canHaveContent) el.onEndTag(leave)
+        else leave()
+      },
+    })
+    .onDocument({
+      text(chunk) {
+        if (inTitle > 0) title += chunk.text
+        if (skip === 0) emit(chunk.text)
+      },
+    })
+
+  await rewriter.transform(new Response(html)).text()
+
+  const whole = tidy(all)
+  const scoped = [main, article].map(tidy).find((text) => text !== '' && text.length >= whole.length * SCOPE_SHARE)
+  const cleanTitle = decodeEntities(title).replace(/\s+/g, ' ').trim().slice(0, TITLE_CHARS)
+  return { ...(cleanTitle ? { title: cleanTitle } : {}), text: scoped ?? whole }
 }
 
 /** `text` cut to at most `max` UTF-16 units without splitting a surrogate pair. */
