@@ -8,6 +8,7 @@ import type { GhPort } from './retrospective/gh.ts'
 import type { JournalReader } from './retrospective/sample.ts'
 import type { TrackedPaths } from './retrospective/tracked.ts'
 import { createEvalWorkflows } from './eval/index.ts'
+import { createResearchWorkflows } from './research/index.ts'
 import { createReviewWorkflows } from './review/index.ts'
 import { createSmokePing } from './smoke.ts'
 
@@ -28,6 +29,7 @@ export function createWorkflows(deps: WorkflowDeps): HostWorkflow[] {
     ...createReviewWorkflows(deps),
     ...createCheckWorkflows(deps),
     ...createEvalWorkflows(),
+    ...createResearchWorkflows(deps),
   ]
   if (!deps.retro) return base
   const { journal, learnings, gh, tracked } = deps.retro

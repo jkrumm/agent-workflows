@@ -145,7 +145,7 @@ Define it with `defineWorkflow` (input must be a `z.object`; list its agents in 
 
 | Command | Does |
 |-|-|
-| `agw eval run <review\|check> [--ids a,b] [--limit N] [--concurrency N] [--args '{…}'] [--yes]` | Without `--yes`: the plan (selected case ids) and an estimate (mean cost of the workflow's latest 50 done runs × cases), nothing runs. With `--yes`: each case materialized like the harness does (`materialize` from `@agent-workflows/eval`), run as its own top-level run with purpose `eval`, scored against the case's reference, the verdict and the arm's `args` recorded on that run (`scores.final`); the output lists per-case scores, the fingerprints and the means |
+| `agw eval run <review\|check\|research> [--ids a,b] [--limit N] [--concurrency N] [--args '{…}'] [--yes]` | Without `--yes`: the plan (selected case ids) and an estimate (mean cost of the workflow's latest 50 done runs × cases), nothing runs. With `--yes`: each case materialized like the harness does (`materialize` from `@agent-workflows/eval`; a plain case, research's, needs no tree and runs its recorded input), run as its own top-level run with purpose `eval`, scored against the case's reference, the verdict and the arm's `args` recorded on that run (`scores.final`); the output lists per-case scores, the fingerprints and the means |
 | `agw eval compare <review\|check> --a <fp> --b <fp> [--a-args '{…}'] [--b-args '{…}'] [--seed N]` | Two arms paired by case id: per metric the means, the mean and median delta (B − A) with seeded bootstrap 95% CIs (harness `stats.ts`), and which arm the CI favours. Scores are higher-is-better; `costUsd`, `wallMs`, `tokens`, `toolCalls` lower-is-better. Reads only |
 | drift (no command) | every `AGW_DRIFT_INTERVAL_S`, up to 20 sampled, unscored production runs of a workflow with a scorer are scored (`source: drift`); the sample is a hash of the run id, the write first-writer-wins, so several hosts never score a run twice. A tick counts verdicts and recorded scorer errors apart (and warns on errors) |
 
@@ -179,7 +179,33 @@ Define it with `defineWorkflow` (input must be a `z.object`; list its agents in 
   is warned too. Each arm is read with its fingerprint prefix and args in SQL, never the workflow's whole
   history.
 - **Wiring.** `wireEval` (in `boot`) binds the eval workflows to the runtime before it opens (recovery may resume an
-  eval run at once) and owns the drift job's timer; the runtime has no `judge`, so no scorer can call a model.
+  eval run at once) and owns the drift job's timer. The runtime's `judge` is the host's capability registry
+  (`registryJudge`): a scorer's judged sub-scores call capabilities by id (research: `web.fetch`, `decide`,
+  `web.package`), for regression and drift only, their usage on the scoring step. Review's and check's scorers never judge.
+
+## Research (Wave 6 comparison, concept P3)
+
+`src/workflows/research/`: `agw research <query> [--depth quick|standard|deep] [--context …] [--design engine|agent|pilot] [--profile yolo|focused]`
+answers research-gateway's report shape (`report`, `citations`, `sources`, `unverified`, `status`, `warnings`) plus a
+code-counted `grounding`, the `arm`, the agents' `tools` and the engine's jobs and cost. `design` and `profile` are the
+comparison's arms and go once it has decided (`docs/research/2026-10-28-research-three-way.md`: design, decisions,
+the pre-registered rule, results).
+
+- **engine**: one job of a research-gateway instance over REST (`AGW_RESEARCH_ENGINE_URL` + `_TOKEN`, else the
+  untracked `<stateDir>/research/engine.json`), keyed by the step (a resumed run adopts its job), polled to its end
+  with no cap; its `cost.totalUsd` is the step's usage.
+- **agent / pilot**: an OpenCode agent (`agents/research-{agent,pilot}-{yolo,focused}`, route `research.agent`) whose
+  web tools are a plugin forwarding to the **tool gate** (`gate.ts`): a loopback server in the host process that runs
+  `web.*` (and, for the pilot, an engine quick job) only for a session of a running, granted research step and only
+  the tools its arm is granted. Its key is per process, in `<stateDir>/research/gate.json` (0600), outside every
+  location; it is not the API secret and opens nothing but these tools. The gate's ledger (URLs read and seen, usage)
+  is journaled by the `evidence` step: its cost lands on the run, and a citation whose URL was never retrieved is
+  dropped to `unverified` (the engine's grounding rule; ≥ 10 % dropped makes the report `partial`). The ledger is in
+  memory until that step: a restart mid-agent-step loses what the tools did before it.
+- **Scorer** (`scorer.ts`): `valid`, `complete`, `grounded` (code), `golden` (the case's `expect`, research-gateway
+  `evals/lib.ts` semantics; `live:` via `web.package`), `supported` (judged: `web.fetch` + `decide` on up to 3 cited
+  pages). Cases are plain eval cases in `$AGW_EVAL_DIR/research/cases.jsonl`; `compare.ts` prints the comparison's
+  tables and the rule's verdict (`decision.ts`) from the recorded runs.
 
 ## Process
 
@@ -272,6 +298,12 @@ output, path, repository name, prompt or transcript is ever selected. `friction.
 **Deploy note:** `AGW_FRICTION_REPO` must be set in the host's environment for issues to open; unset, nothing is filed. Point it at a repository whose issues may show workflow ids, run ids and friction rates (this repository is public, which is what the brief chose). One host process runs the job; two overlapping processes during a deploy could both file an issue for the same breach (the record is a read, not a lock).
 
 ## Token effect / cache effect
+
+Research's agent arms: the agent's `AGENTS.md` and its five tool schemas are the cached prefix (identical across runs
+of an arm); the question, depth directive and background are the task message. The tool gate adds no model-visible text
+beyond each tool's JSON answer (page text up to `maxChars`, 20k by default), which is where a research session's
+tokens go; DeepSeek's prefix cache holds because the session's history is never edited (cache reads recorded and priced
+at the route's rate). The engine arm spends what the engine spends; its tokens are not reported (its cost is).
 
 The learnings read-back adds tokens only where a fact is active: the fenced block is appended **after the task message**, never
 into `AGENTS.md`, so the agent's cached prefix (system prompt, skills) is untouched; the block costs its own tokens
