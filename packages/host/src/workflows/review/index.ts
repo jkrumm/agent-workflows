@@ -1,19 +1,13 @@
+import { parseJsonLoose } from '@agent-workflows/capabilities'
 import { DEFAULT_STATE_DIR } from '@agent-workflows/opencode-host'
 import { type AgentSpec, type Ctx, defineWorkflow, StepFailed, WorkflowError } from '@agent-workflows/runtime'
 import type { HostWorkflow } from '../../operations.ts'
 import type { WorkflowDeps } from '../index.ts'
 import { gatedAngles, requestedAngles, resolveDepth, routerPicks, selectFloor } from './angles.ts'
-import { defaultExec } from './exec.ts'
-import { type Prepared, prepare, type ReviewPorts, removeClone } from './git.ts'
+import { createExec } from './exec.ts'
+import { type Prepared, prepare, type ReviewPorts, removeClone, restoreClone } from './git.ts'
 import { createOcrWorkflow, OCR_WORKFLOW_ID } from './ocr.ts'
-import {
-  parseJsonLoose,
-  renderAngleBlock,
-  renderFallowBlock,
-  SYNTHESIS_JSON_ONLY_RETRY,
-  angleTask,
-  synthesisTask,
-} from './prompts.ts'
+import { renderAngleBlock, renderFallowBlock, SYNTHESIS_JSON_ONLY_RETRY, angleTask, synthesisTask } from './prompts.ts'
 import { renderReactDoctorBlock, type ReactDoctorRaw, runReactDoctor } from './react-doctor.ts'
 import {
   ALL_ANGLES,
@@ -33,6 +27,7 @@ import {
   salvagedVerdict,
 } from './verdict.ts'
 import { z } from 'zod'
+import { mapLimit } from './util.ts'
 
 export const REVIEW_VERSION = '2026-10-28.1'
 
@@ -56,22 +51,6 @@ async function settle<T>(step: Promise<T>): Promise<Settled<T>> {
     if (error instanceof StepFailed) return { ok: false, reason: error.reason }
     throw error
   }
-}
-
-/** `fn` over `items`, at most `limit` at a time, results in input order. */
-async function mapLimit<T, R>(items: readonly T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
-  const out: R[] = new Array(items.length)
-  let next = 0
-  await Promise.all(
-    Array.from({ length: Math.min(limit, items.length) }, async () => {
-      for (;;) {
-        const i = next++
-        if (i >= items.length) return
-        out[i] = await fn(items[i] as T)
-      }
-    }),
-  )
-  return out
 }
 
 type AngleSpec = AgentSpec<typeof AngleOutput>
@@ -142,10 +121,11 @@ export function ocrSkipReason(p: Prepared, depth: string): string | null {
 
 export function createReviewWorkflows(deps: WorkflowDeps, options: ReviewOptions = {}): HostWorkflow[] {
   const { angleBackoffMs = 1_000, ...given } = options
+  const env = given.env ?? process.env
   const ports: ReviewPorts = {
-    exec: defaultExec,
+    exec: createExec(env),
     which: (bin) => Bun.which(bin),
-    env: process.env,
+    env,
     stateDir: DEFAULT_STATE_DIR,
     now: Date.now,
     ...given,
@@ -153,26 +133,42 @@ export function createReviewWorkflows(deps: WorkflowDeps, options: ReviewOptions
   const { registry } = deps
   const ocr = createOcrWorkflow(ports)
 
-  async function runPipeline(ctx: Ctx, input: z.output<typeof ReviewInput>, p: Prepared): Promise<ReviewResult> {
+  async function runPipeline(
+    ctx: Ctx,
+    input: z.output<typeof ReviewInput>,
+    p: Prepared,
+    pending: Promise<unknown>[],
+  ): Promise<ReviewResult> {
     if (!p.diff.trim()) return cleanVerdict('No changes to review.')
     const { repo, diff } = p
     const context = input.context
+    // Whatever runs beside the pipeline is awaited by the caller's cleanup before the clone goes, and a rejection nobody
+    // reads yet is still handled, so a failing sibling never becomes an unhandled rejection.
+    const track = <T>(promise: Promise<T>): Promise<T> => {
+      pending.push(promise)
+      promise.catch(() => {})
+      return promise
+    }
 
     // Started now, awaited at synthesis: their wall time hides behind the router and the angles.
-    const reactDoctor = settle(ctx.step('react-doctor', () => runReactDoctor(ports, repo, p.base))).then(
-      (r): ReactDoctorRaw => (r.ok ? r.value : { stdout: `react-doctor failed: ${r.reason}`, ok: true }),
+    const reactDoctor = track(
+      settle(ctx.step('react-doctor', () => runReactDoctor(ports, repo, p.base))).then(
+        (r): ReactDoctorRaw => (r.ok ? r.value : { stdout: `react-doctor failed: ${r.reason}`, ok: true }),
+      ),
     )
     const adversary: Promise<AngleResult> | null = p.adversary
-      ? settle(
-          ctx.step('adversary', async ({ addUsage, signal }): Promise<AngleResult> => {
-            const out = await registry.call(
-              'review.adversary',
-              { diff, ...(context ? { context } : {}) },
-              { addUsage, signal },
-            )
-            return { angle: 'adversary', findings: normalize(out.findings), failureReason: null }
-          }),
-        ).then((r) => (r.ok ? r.value : { angle: 'adversary', findings: [], failureReason: r.reason }))
+      ? track(
+          settle(
+            ctx.step('adversary', async ({ addUsage, signal }): Promise<AngleResult> => {
+              const out = await registry.call(
+                'review.adversary',
+                { diff, ...(context ? { context } : {}) },
+                { addUsage, signal },
+              )
+              return { angle: 'adversary', findings: normalize(out.findings), failureReason: null }
+            }),
+          ).then((r) => (r.ok ? r.value : { angle: 'adversary', findings: [], failureReason: r.reason })),
+        )
       : null
 
     const explicit = (input.angles?.length ?? 0) > 0
@@ -206,16 +202,18 @@ export function createReviewWorkflows(deps: WorkflowDeps, options: ReviewOptions
     // never a failed review.
     const ocrRun =
       skip === null && p.ocr
-        ? settle(
-            ctx.workflow('ocr', ocr.workflow, [
-              {
-                cwd: repo,
-                mode: p.ocr.mode,
-                ...(p.ocr.from ? { from: p.ocr.from } : {}),
-                ...(p.ocr.to ? { to: p.ocr.to } : {}),
-                ...(context ? { context } : {}),
-              },
-            ]),
+        ? track(
+            settle(
+              ctx.workflow('ocr', ocr.workflow, [
+                {
+                  cwd: repo,
+                  mode: p.ocr.mode,
+                  ...(p.ocr.from ? { from: p.ocr.from } : {}),
+                  ...(p.ocr.to ? { to: p.ocr.to } : {}),
+                  ...(context ? { context } : {}),
+                },
+              ]),
+            ),
           )
         : null
 
@@ -234,7 +232,7 @@ export function createReviewWorkflows(deps: WorkflowDeps, options: ReviewOptions
         : { angle, findings: [], failureReason: result.reason }
     }
     const [angleResults, adversaryResult] = await Promise.all([
-      mapLimit(angles, ANGLE_CONCURRENCY, runAngle),
+      track(mapLimit(angles, ANGLE_CONCURRENCY, runAngle)),
       adversary,
     ])
     const results = adversaryResult ? [...angleResults, adversaryResult] : angleResults
@@ -242,10 +240,9 @@ export function createReviewWorkflows(deps: WorkflowDeps, options: ReviewOptions
     const total = results.length
 
     // Every reviewer failed: a synthesis of nothing would read as approval.
-    if (failed.length === total) {
-      await Promise.all([ocrRun, reactDoctor])
-      return allFailedVerdict(failed, total)
-    }
+    // The verdict does not wait for OCR or react-doctor: the runtime has no way to cancel a sibling step, so the cleanup
+    // path awaits them (no clone is removed under a running helper), not this answer.
+    if (failed.length === total) return allFailedVerdict(failed, total)
 
     const ocrOutcome = ocrRun ? await ocrRun : null
     const ocrBlock = !ocrRun
@@ -268,15 +265,20 @@ export function createReviewWorkflows(deps: WorkflowDeps, options: ReviewOptions
       output: z.string(),
       options: { output: 'text', allowDirectories: [repo] },
     })
-    const attempt = (answer: Settled<string>) => {
-      if (!answer.ok) return { raw: answer.reason, parsed: null }
-      return { raw: answer.value, parsed: parseSynthesis(answer.value) }
-    }
-    let synthesis = attempt(await settle(ctx.agent('synthesis', synthesisSpec(prompt))))
-    if (!synthesis.parsed?.success) {
+    const attempt = (answer: Settled<string>) =>
+      answer.ok
+        ? { text: answer.value, reason: null, parsed: parseSynthesis(answer.value) }
+        : { text: null, reason: answer.reason, parsed: null }
+    const first = attempt(await settle(ctx.agent('synthesis', synthesisSpec(prompt))))
+    let synthesis = first
+    if (!first.parsed?.success) {
       synthesis = attempt(await settle(ctx.agent('synthesis-retry', synthesisSpec(prompt + SYNTHESIS_JSON_ONLY_RETRY))))
     }
-    if (!synthesis.parsed?.success) return salvagedVerdict(synthesis.raw, total)
+    if (!synthesis.parsed?.success) {
+      // The raw text of the last attempt that produced any; a session that died says why only when none did.
+      const raw = [synthesis.text, first.text].find((t) => t?.trim()) ?? synthesis.reason ?? first.reason ?? ''
+      return salvagedVerdict(raw, total)
+    }
 
     // The outcome is derived from the lists here, never trusted from the model.
     const { verdict } = applyVerdictRules(synthesis.parsed.data, failed, total)
@@ -291,9 +293,15 @@ export function createReviewWorkflows(deps: WorkflowDeps, options: ReviewOptions
     async run(ctx, input) {
       const prepared = await ctx.step('prepare', (scope) => prepare(input, scope.key, ports))
       if (!prepared.ok) throw new WorkflowError(prepared.kind, prepared.message)
+      // A clone a sweep removed since `prepare` ran is rebuilt at the same path before any step reads it.
+      const gone = await restoreClone(ports, prepared, input, `${ctx.runId}:prepare`)
+      if (gone) throw new WorkflowError('error', gone)
+      const pending: Promise<unknown>[] = []
       try {
-        return await runPipeline(ctx, input, prepared)
+        return await runPipeline(ctx, input, prepared, pending)
       } finally {
+        // No helper may still be running in the clone when it is removed.
+        await Promise.allSettled(pending)
         // The throwaway clone goes with the run. A cancel or a crash skips this; the next prepare sweeps what is left.
         const { clone } = prepared
         if (clone) {

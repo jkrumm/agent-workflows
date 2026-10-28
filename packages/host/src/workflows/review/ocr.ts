@@ -219,58 +219,68 @@ export async function runOcr(
   const protocol = route.wire === 'iu-anthropic' ? 'anthropic' : 'openai'
   const url = protocol === 'anthropic' ? iu.anthropicBase : iu.openaiBase
 
-  // A private directory: the output and the background file may carry repo and diff content.
-  const dir = mkdtempSync(join(tmpdir(), 'agw-ocr-'))
-  chmodSync(dir, 0o700)
-  const outFile = join(dir, 'result.json')
-  const bgFile = input.context ? join(dir, 'background.md') : undefined
-  if (bgFile) writeFileSync(bgFile, input.context ?? '', { mode: 0o600 })
-  // Minimal env, not a copy of ours: a spawned CLI has no reason to hold whatever else this process carries.
-  const env: Record<string, string> = {
-    PATH: ports.env.PATH ?? '',
-    HOME: ports.env.HOME ?? '',
-    TMPDIR: ports.env.TMPDIR ?? tmpdir(),
-    OCR_LLM_URL: url,
-    OCR_LLM_TOKEN: iu.key,
-    OCR_LLM_PROTOCOL: protocol,
-    OCR_LLM_MODEL: route.model,
-    OCR_ENABLE_TELEMETRY: '0',
-    ...(ports.env.LANG ? { LANG: ports.env.LANG } : {}),
-  }
-  const proc = Bun.spawn([bin, ...ocrArgs({ modeArgs: modeArgs(input), repo: input.cwd, outFile, bgFile })], {
-    cwd: input.cwd,
-    env,
-    stdin: 'ignore',
-    stdout: 'pipe',
-    stderr: 'pipe',
-  })
+  let dir: string | undefined
+  let proc: Bun.Subprocess<'ignore', 'pipe', 'pipe'> | undefined
   let killTimer: ReturnType<typeof setTimeout> | undefined
   const terminate = () => {
-    if (proc.exitCode !== null) return
+    if (!proc || proc.exitCode !== null) return
     proc.kill('SIGTERM')
     killTimer = setTimeout(() => {
-      if (proc.exitCode === null) proc.kill('SIGKILL')
+      if (proc && proc.exitCode === null) proc.kill('SIGKILL')
     }, SIGKILL_GRACE_MS)
   }
   scope.signal.addEventListener('abort', terminate, { once: true })
-  if (scope.signal.aborted) terminate()
-
-  let stderrTail = ''
-  let lastLine = ''
-  const drain = async (stream: ReadableStream<Uint8Array>, onText?: (text: string) => void) => {
-    const reader = stream.getReader()
-    const decoder = new TextDecoder()
-    for (;;) {
-      const { done, value } = await reader.read()
-      if (done) return
-      scope.progress() // any byte is activity: the idle watchdog is the only stop
-      onText?.(decoder.decode(value, { stream: true }))
-    }
-  }
-  let pending = ''
   try {
+    // A private directory: the output and the background file may carry repo and diff content.
+    dir = mkdtempSync(join(tmpdir(), 'agw-ocr-'))
+    chmodSync(dir, 0o700)
+    const outFile = join(dir, 'result.json')
+    const bgFile = input.context ? join(dir, 'background.md') : undefined
+    if (bgFile) writeFileSync(bgFile, input.context ?? '', { mode: 0o600 })
+    // Minimal env, not a copy of ours: a spawned CLI has no reason to hold whatever else this process carries.
+    const env: Record<string, string> = {
+      PATH: ports.env.PATH ?? '',
+      HOME: ports.env.HOME ?? '',
+      TMPDIR: ports.env.TMPDIR ?? tmpdir(),
+      OCR_LLM_URL: url,
+      OCR_LLM_TOKEN: iu.key,
+      OCR_LLM_PROTOCOL: protocol,
+      OCR_LLM_MODEL: route.model,
+      OCR_ENABLE_TELEMETRY: '0',
+      ...(ports.env.LANG ? { LANG: ports.env.LANG } : {}),
+    }
+    try {
+      proc = Bun.spawn([bin, ...ocrArgs({ modeArgs: modeArgs(input), repo: input.cwd, outFile, bgFile })], {
+        cwd: input.cwd,
+        env,
+        stdin: 'ignore',
+        stdout: 'pipe',
+        stderr: 'pipe',
+      })
+    } catch (error) {
+      return {
+        block: failed(`could not start ocr: ${redact(error instanceof Error ? error.message : String(error), iu.key)}`),
+        ran: false,
+      }
+    }
+    if (scope.signal.aborted) terminate()
+    const started = proc
+
+    let stderrTail = ''
+    let lastLine = ''
+    const drain = async (stream: ReadableStream<Uint8Array>, onText?: (text: string) => void) => {
+      const reader = stream.getReader()
+      const decoder = new TextDecoder()
+      for (;;) {
+        const { done, value } = await reader.read()
+        if (done) return
+        scope.progress() // any byte is activity: the idle watchdog is the only stop
+        onText?.(decoder.decode(value, { stream: true }))
+      }
+    }
+    let pending = ''
     await Promise.all([
-      drain(proc.stderr, (chunk) => {
+      drain(started.stderr, (chunk) => {
         // Redact before cutting, so a key straddling the cut cannot survive half-masked.
         stderrTail = redact(stderrTail + chunk, iu.key).slice(-STDERR_TAIL_CHARS)
         pending += chunk
@@ -278,9 +288,9 @@ export async function runOcr(
         pending = lines.pop() ?? ''
         for (const line of lines) if (line.trim()) lastLine = redact(line.trim(), iu.key)
       }),
-      drain(proc.stdout),
+      drain(started.stdout),
     ])
-    const code = await proc.exited
+    const code = await started.exited
     const model = route.model
     const lastForPrompt = truncate(lastLine || 'no stderr', PROMPT_LINE_CHARS)
     if (scope.signal.aborted) {
@@ -313,9 +323,9 @@ export async function runOcr(
   } finally {
     scope.signal.removeEventListener('abort', terminate)
     terminate()
-    if (proc.exitCode === null) await proc.exited
+    if (proc && proc.exitCode === null) await proc.exited
     clearTimeout(killTimer)
-    rmSync(dir, { recursive: true, force: true })
+    if (dir) rmSync(dir, { recursive: true, force: true })
   }
 }
 
