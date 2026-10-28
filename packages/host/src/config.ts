@@ -1,4 +1,4 @@
-import { MIN_SECRET_LENGTH } from './auth.ts'
+import { secretProblem } from './auth.ts'
 
 export type Env = Record<string, string | undefined>
 
@@ -22,9 +22,8 @@ export function loadConfig(env: Env): HostConfig {
     return value ?? ''
   }
   const secret = env.AGW_API_SECRET ?? ''
-  if (secret.length < MIN_SECRET_LENGTH)
-    problems.push(`AGW_API_SECRET must be set and at least ${MIN_SECRET_LENGTH} characters`)
-  else if (/\s/.test(secret)) problems.push('AGW_API_SECRET must not contain whitespace (a trailing newline?)')
+  const secretIssue = secretProblem(secret)
+  if (secretIssue) problems.push(secretIssue)
   const machine = required('AGW_MACHINE')
   const pgUrl = required('AGW_PG_URL')
   const rawPort = env.AGW_PORT?.trim() || '7791'

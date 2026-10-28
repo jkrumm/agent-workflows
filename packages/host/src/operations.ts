@@ -9,7 +9,7 @@ import {
 } from '@agent-workflows/capabilities'
 import type { AgentRef } from '@agent-workflows/middleware'
 import type { AnyWorkflow, Logger, Runtime } from '@agent-workflows/runtime'
-import { WorkflowError } from '@agent-workflows/runtime'
+import { IdempotencyConflict, WorkflowError } from '@agent-workflows/runtime'
 import { ORPCError, os } from '@orpc/server'
 import { z } from 'zod'
 import { isTerminal, type RunState, type RunStore } from './store.ts'
@@ -207,6 +207,9 @@ function buildWorkflow(entry: HostWorkflow, deps: OperationDeps, cli: ResolvedCl
         ;({ runId } = await deps.runtime.start(workflow, input, { purpose, idempotencyKey, traceparent }))
       } catch (error) {
         if (error instanceof WorkflowError && error.kind === 'invalid_input') throw badRequest(error.message)
+        if (error instanceof IdempotencyConflict) {
+          throw new ORPCError('CONFLICT', { message: error.message, data: { runId: error.runId } })
+        }
         throw error
       }
       // The run exists from here on: a failed read must still report its id, or a retry starts a second run.

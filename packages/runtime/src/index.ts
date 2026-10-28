@@ -2,6 +2,7 @@ export {
   AdmissionRefused,
   Cancelled,
   type ErrorKind,
+  IdempotencyConflict,
   InfraError,
   LeaseLost,
   Shutdown,

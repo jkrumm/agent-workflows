@@ -32,6 +32,7 @@ await title.call({ text: 'x' }) // also callable on its own
 
 - The handler is a plain function of `(input, ctx)`. oRPC is imported in `src/procedure.ts` and `src/registry.ts` only.
 - `call` runs oRPC's `call` on the same procedure the HTTP handler serves, so defaults, validation and the error-mapping middleware are identical on both doors. `registry.test.ts` asserts identical results and identical error bodies.
+- Inputs are strict: an unknown key is a `BAD_REQUEST` on both doors, so a renamed flag fails loudly instead of being dropped.
 - Errors come out of `call` as `CapabilityCallError` with the same fields as the HTTP body: `{ defined, code, status, message, data }`. Callers never see the HTTP framework's error class.
 - Registering the same id twice, a taken `METHOD path`, or an id nested under another id throws at `createRegistry`.
 

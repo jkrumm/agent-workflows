@@ -59,8 +59,9 @@ const consoleLogger: Logger = {
   error: (message, meta) => console.error(`[agw-host] ${message}`, meta ?? ''),
 }
 
+/** The host's own envelopes (auth, contract, readiness) are never `defined`: only errors a procedure declares are. */
 const json = (status: number, code: string, message: string, data?: unknown) =>
-  Response.json({ defined: true, code, status, message, ...(data === undefined ? {} : { data }) }, { status })
+  Response.json({ defined: false, code, status, message, ...(data === undefined ? {} : { data }) }, { status })
 
 const unauthorized = () => {
   const response = json(401, 'UNAUTHORIZED', 'Missing or wrong bearer token')
@@ -159,12 +160,14 @@ export function createHost(options: HostOptions): Host {
   async function health(): Promise<Response> {
     const degraded = (reason: string) => Response.json({ status: 'degraded', reason }, { status: 503 })
     if (!isOpen()) return degraded('runtime is not open')
+    const timeout = options.healthTimeoutMs ?? 2000
     let timer: ReturnType<typeof setTimeout> | undefined
     try {
+      // The store ends its own query at the bound; the race covers a store that cannot (and a hung fake).
       await Promise.race([
-        store.ping(),
+        store.ping(timeout),
         new Promise<never>((_, reject) => {
-          timer = setTimeout(() => reject(new Error('timeout')), options.healthTimeoutMs ?? 2000)
+          timer = setTimeout(() => reject(new Error('timeout')), timeout)
         }),
       ])
     } catch {
