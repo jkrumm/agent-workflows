@@ -1,4 +1,4 @@
-import { sanitizeIssueText } from './filter.ts'
+import { scrubForPrompt } from './scrub.ts'
 import type { SampledRun } from './sample.ts'
 
 /** The prompt data stays under this many characters (about 30k tokens): older detail is cut before the sample is. */
@@ -8,13 +8,9 @@ const ERROR_CHARS = 400
 
 const cut = (text: string, max: number) => (text.length > max ? `${text.slice(0, max)}…` : text)
 
-/** Absolute paths out of the data before the agent sees it: they carry no signal for a proposal and would be quoted. */
+/** Absolute paths and credential-shaped tokens out of the data before the agent sees it. */
 function scrub(text: string | null, max: number): string | null {
-  if (text === null) return null
-  const cleaned = sanitizeIssueText(text)
-  // A refused text (a URL, a host) is not dropped, only its absolute paths are: the agent may need to see the failure.
-  const source = cleaned.ok ? cleaned.text : text.replaceAll(/(?<![\w.:/-])\/[\w.@+-]+(?:\/[\w.@+-]+)+/g, '<path>')
-  return cut(source, max)
+  return text === null ? null : cut(scrubForPrompt(text), max)
 }
 
 function renderRun(run: SampledRun, previewChars: number): string {

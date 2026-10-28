@@ -1,8 +1,24 @@
-import { MAX_FACT_CHARS } from '../../learnings/index.ts'
-import { targetProblem } from './filter.ts'
+import { containsFence, MAX_FACT_CHARS } from '../../learnings/index.ts'
 import type { RetroAnalysis } from './schema.ts'
 
 const RUN_ID = /^[\w-]{8,64}$/
+
+/** Shape only: whether the target is a tracked path is decided when an issue is built, so a proposal with an invented path still reaches the run output. */
+export function targetProblem(target: string, agents: readonly string[]): string | null {
+  if (agents.includes(target)) return null
+  if (/^agw [a-z][a-z0-9-]*(?: [a-z][a-z0-9-]*){0,3}$/.test(target)) return null
+  const parts = target.split('/')
+  if (
+    target.startsWith('/') ||
+    target.startsWith('~') ||
+    target.includes('\\') ||
+    parts.includes('..') ||
+    parts.includes('')
+  ) {
+    return 'target is not a repo-relative path'
+  }
+  return /^[\w./@+-]+$/.test(target) ? null : 'target is not a repo-relative path'
+}
 
 export interface Checked {
   proposals: RetroAnalysis['proposals']
@@ -48,6 +64,7 @@ export function checkAnalysis(args: {
     if (!agents.includes(l.agent)) dropped.push(`${label}: the workflow does not run this agent`)
     else if (fact === '' || fact.length > MAX_FACT_CHARS)
       dropped.push(`${label}: fact is empty or over ${MAX_FACT_CHARS} characters`)
+    else if (containsFence(fact)) dropped.push(`${label}: fact contains the learned_facts fence`)
     else if (evidence.length === 0) dropped.push(`${label}: no evidence from the sample`)
     else if (facts.has(`${l.agent}\n${fact}`)) dropped.push(`${label}: duplicate fact`)
     else {

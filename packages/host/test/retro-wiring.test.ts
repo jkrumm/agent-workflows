@@ -30,7 +30,7 @@ describe('retrospective config', () => {
 describe('registration', () => {
   const registry = createRegistry(createCapabilities({ transports: fakeTransports({}), env: {} }))
   const stub = {
-    journal: { sample: async () => [], countFinished: async () => 0 },
+    journal: { sample: async () => [], countFinished: async () => 0, weekRuns: async () => [] },
     learnings: {} as never,
   }
 
@@ -62,20 +62,27 @@ describe('ghCli', () => {
     calls.push(argv)
     return { exitCode: 0, stdout: answer, stderr: '' }
   }
+  const HASH = '0123456789abcdef'
 
-  test('finds an exact title among a fuzzy search, open or closed', async () => {
+  test('finds an issue by the marker in its body, verified against the body itself', async () => {
     const gh = ghCli({
       repo: 'owner/name',
       run: run(
         JSON.stringify([
-          { number: 4, title: 'retro(review): Other thing', url: 'u4' },
-          { number: 7, title: 'Retro(review): The thing', url: 'u7' },
+          { number: 4, url: 'u4', body: 'mentions agw-retro:0123456789abcdef but is not the marker' },
+          { number: 7, url: 'u7', body: `<!-- agw-retro:${HASH} -->\nrest` },
         ]),
       ),
     })
-    expect(await gh.findByTitle('retro(review): the thing')).toEqual({ number: 7, url: 'u7' })
-    expect(await gh.findByTitle('retro(review): missing')).toBeNull()
-    expect(calls[0]).toEqual(expect.arrayContaining(['--repo', 'owner/name', '--state', 'all']))
+    expect(await gh.findByHash(HASH)).toEqual({ number: 7, url: 'u7' })
+    expect(await gh.findByHash('ffffffffffffffff')).toBeNull()
+    expect(calls[0]).toEqual(
+      expect.arrayContaining(['--repo', 'owner/name', '--state', 'all', '--search', `"agw-retro:${HASH}" in:body`]),
+    )
+  })
+
+  test('a search with no hit is null', async () => {
+    expect(await ghCli({ repo: 'owner/name', run: run('[]') }).findByHash(HASH)).toBeNull()
   })
 
   test('creates in the configured repository with the title and body as arguments, never through a shell', async () => {

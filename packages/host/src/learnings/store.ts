@@ -1,4 +1,5 @@
 import type { Pool } from 'pg'
+import { containsFence } from './facts.ts'
 
 export const LEARNING_STATUSES = ['proposed', 'active', 'retired'] as const
 export type LearningStatus = (typeof LEARNING_STATUSES)[number]
@@ -32,13 +33,17 @@ export interface NewLearning {
 /** What the learnings operations, the retrospective and the read-back share. Production is Postgres. */
 export interface LearningsStore {
   list(filter?: { agent?: string; status?: LearningStatus; limit?: number }): Promise<Learning[]>
-  /** Stores the fact; a live (proposed or active) identical fact of the same agent is returned, not duplicated. */
+  /**
+   * Stores the fact. An identical fact of the same agent is returned, not duplicated. A retired one is a rejected
+   * one: only a `manual` add brings it back (as the requested status); any other source gets the retired row.
+   * Throws {@link LearningRejected} for a fact carrying the learned-facts fence.
+   */
   add(learning: NewLearning): Promise<{ learning: Learning; created: boolean }>
-  /** `proposed` → `active`. Throws on an unknown id; a retired fact is not revived (add it again). */
+  /** `proposed` → `active`. Throws on an unknown id or a fence; a retired fact is not revived (add it again by hand). */
   activate(id: number): Promise<Learning>
   /** `proposed | active` → `retired`. Immediate: the next run no longer reads it. */
   retire(id: number): Promise<Learning>
-  /** The facts an agent's next run reads back: active, newest {@link MAX_ACTIVE_FACTS}, oldest first. */
+  /** The facts an agent's next run reads back: the {@link MAX_ACTIVE_FACTS} most recently activated, oldest activation first. */
   activeFor(agent: string): Promise<Learning[]>
 }
 
@@ -49,6 +54,12 @@ export class LearningNotFound extends Error {
 }
 
 export class LearningStateError extends Error {}
+
+export class LearningRejected extends Error {}
+
+function assertSafeFact(fact: string) {
+  if (containsFence(fact)) throw new LearningRejected('a learned fact may not contain the learned_facts fence')
+}
 
 type Row = {
   id: number
@@ -87,14 +98,15 @@ export function pgLearningsStore(pool: Pick<Pool, 'query'>, schema: string): Lea
     return row
   }
   const activate: LearningsStore['activate'] = async (id) => {
+    const current = await byId(id)
+    assertSafeFact(current.fact)
     const { rows } = await pool.query<Row>(
       `update ${table} set status = 'active', activated_at = coalesce(activated_at, now())
         where id = $1 and status in ('proposed', 'active') returning ${COLUMNS}`,
       [id],
     )
     if (rows[0]) return toLearning(rows[0])
-    const row = await byId(id)
-    throw new LearningStateError(`learning ${id} is ${row.status}; add the fact again to bring it back`)
+    throw new LearningStateError(`learning ${id} is ${current.status}; add the fact again by hand to bring it back`)
   }
   return {
     activate,
@@ -108,25 +120,38 @@ export function pgLearningsStore(pool: Pick<Pool, 'query'>, schema: string): Lea
       return rows.map(toLearning)
     },
     async add(learning) {
+      assertSafeFact(learning.fact)
       const status = learning.status ?? 'proposed'
       const inserted = await pool.query<Row>(
         `insert into ${table} (agent, fact, source, evidence, status, activated_at)
          values ($1, $2, $3, $4, $5, case when $5 = 'active' then now() end)
-         on conflict (agent, md5(fact)) where status <> 'retired' do nothing
+         on conflict (agent, md5(fact)) do nothing
          returning ${COLUMNS}`,
         [learning.agent, learning.fact, learning.source, learning.evidence ?? [], status],
       )
       if (inserted.rows[0]) return { learning: toLearning(inserted.rows[0]), created: true }
       const { rows } = await pool.query<Row>(
-        `select ${COLUMNS} from ${table} where agent = $1 and md5(fact) = md5($2) and status <> 'retired'`,
+        `select ${COLUMNS} from ${table} where agent = $1 and md5(fact) = md5($2)`,
         [learning.agent, learning.fact],
       )
-      const live = rows[0]
-      if (!live) throw new Error('learnings: a duplicate vanished during add; retry')
+      const existing = rows[0]
+      if (!existing) throw new Error('learnings: a duplicate vanished during add; retry')
+      if (existing.status === 'retired') {
+        if (learning.source !== 'manual') return { learning: toLearning(existing), created: false }
+        // A human brings a rejected fact back: same row, so its history stays one line.
+        const revived = await pool.query<Row>(
+          `update ${table} set status = $2, retired_at = null, source = 'manual',
+                 activated_at = case when $2 = 'active' then now() end
+            where id = $1 and status = 'retired' returning ${COLUMNS}`,
+          [existing.id, status],
+        )
+        if (revived.rows[0]) return { learning: toLearning(revived.rows[0]), created: true }
+        return { learning: toLearning(await byId(existing.id)), created: false } // revived by a concurrent add
+      }
       // An explicit activation of a fact only proposed so far is honoured.
-      if (status === 'active' && live.status === 'proposed')
-        return { learning: await activate(live.id), created: false }
-      return { learning: toLearning(live), created: false }
+      if (status === 'active' && existing.status === 'proposed')
+        return { learning: await activate(existing.id), created: false }
+      return { learning: toLearning(existing), created: false }
     },
     async retire(id) {
       const { rows } = await pool.query<Row>(
@@ -135,13 +160,14 @@ export function pgLearningsStore(pool: Pick<Pool, 'query'>, schema: string): Lea
         [id],
       )
       if (rows[0]) return toLearning(rows[0])
-      const row = await byId(id)
-      return toLearning(row) // already retired: idempotent
+      return toLearning(await byId(id)) // already retired: idempotent
     },
     async activeFor(agent) {
       const { rows } = await pool.query<Row>(
-        `select * from (select ${COLUMNS} from ${table} where agent = $1 and status = 'active' order by id desc limit $2) newest
-          order by id`,
+        `select * from (
+           select ${COLUMNS} from ${table} where agent = $1 and status = 'active'
+            order by activated_at desc, id desc limit $2) newest
+          order by activated_at, id`,
         [agent, MAX_ACTIVE_FACTS],
       )
       return rows.map(toLearning)

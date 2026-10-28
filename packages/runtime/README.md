@@ -120,7 +120,7 @@ A run lasts seconds to tens of minutes. There is no API to wait for days: anythi
 Issue, a human approval) is an entity state machine that *starts* workflows. This keeps the mixed-version
 window of a deploy small and keeps every run's journal short.
 
-**`agentPrompt`** (`RuntimeOptions`, optional): called once per attempt with `{ agent, prompt }` right before a session is
+**`agentPrompt`** (`RuntimeOptions`, optional): called once per attempt with `{ agent, prompt }` (the step's `prompt`, without its optional `tail`, which is appended after the hook's result so a retry directive stays last) right before a session is
 opened or prompted, and not at all when the step re-attaches to a prompted session. Its result is what the host session
 receives; the journaled step spec is unchanged. The platform host uses it to append an agent's active learned facts after
 the task message. A throw is logged and the original prompt is sent. Migration `0005_learnings.sql` adds the per-agent
