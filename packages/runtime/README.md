@@ -51,7 +51,7 @@ const result = await runtime.wait(runId)
   `cancel_requested_at`, and the process holding its lease (or the next one to claim an orphan) aborts the step's
   signal, calls `host.abort` on every running agent session of the tree (`host.abort` must be idempotent), ends
   the run and its children `cancelled` and calls `runPost`. **Steer** (`runtime.steer(runId, stepId, text)`) is
-  journaled in `signals` and delivered to the running agent step via `host.steer`.
+  journaled in `signals` and delivered to the running agent step via `host.steer(handle, text, { signalId })`, where `signalId` is the journaled row's id. Delivery is at least once (a crash between the send and the delivery mark sends it again), so a host that can dedupes on `signalId`; the argument is optional, so a host that ignores it still works.
 
 ## Durability
 

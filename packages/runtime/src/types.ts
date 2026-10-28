@@ -111,7 +111,11 @@ export type AgentHost = {
   /** Must be idempotent: check the session's messages and send only when the prompt is not there yet. */
   prompt(handle: Json, prompt: string): Promise<void>
   wait(handle: Json, options: AgentWaitOptions): Promise<AgentResult>
-  steer(handle: Json, text: string): Promise<void>
+  /**
+   * `options.signalId` is the journaled signal row of the steer. Delivery is at least once (a crash between the send
+   * and the delivery mark sends it again), so a host that can dedupe does it on this id.
+   */
+  steer(handle: Json, text: string, options?: { signalId?: string }): Promise<void>
   abort(handle: Json): Promise<void>
 }
 

@@ -717,7 +717,7 @@ export class Runtime {
       const handle = this.agents.get(`${steer.run_id}:${steer.step_id}`)
       if (handle === undefined) continue // not waiting on the host yet; the next tick retries
       try {
-        await host.steer(handle, steer.text)
+        await host.steer(handle, steer.text, { signalId: steer.id })
       } catch (err) {
         this.logger.warn('steer delivery failed; retried next tick', { runId: steer.run_id, error: errorMessage(err) })
         continue

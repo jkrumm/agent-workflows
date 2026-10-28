@@ -68,7 +68,7 @@ export type FakeScript = (session: FakeSession) => Promise<AgentResult>
 export type FakeHostEvent =
   | { op: 'open'; sessionId: string }
   | { op: 'prompt'; sessionId: string; outcome: 'sent' | 'noop' }
-  | { op: 'steer'; sessionId: string; text: string }
+  | { op: 'steer'; sessionId: string; text: string; signalId?: string }
   | { op: 'abort'; sessionId: string }
 
 /**
@@ -112,9 +112,9 @@ export class FakeAgentHost implements AgentHost {
     }
   }
 
-  async steer(handle: Json, text: string): Promise<void> {
+  async steer(handle: Json, text: string, options?: { signalId?: string }): Promise<void> {
     const session = this.session(handle)
-    this.events.push({ op: 'steer', sessionId: session.id, text })
+    this.events.push({ op: 'steer', sessionId: session.id, text, signalId: options?.signalId })
     session.receiveSteer(text)
   }
 
