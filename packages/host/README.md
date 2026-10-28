@@ -182,7 +182,7 @@ Define it with `defineWorkflow` (input must be a `z.object`; list its agents in 
   eval run at once) and owns the drift job's timer. The runtime's `judge` (`src/judge.ts`) lets a scorer call only
   `web.fetch`, `web.package`, `decide` and `llm.*` (never a workflow or an effect). For regression and drift each call
   is a `cap.<id>` run of its own, recorded and priced like a direct capability call, with purpose `eval` (regression)
-  or `drift`, keyed by the score source, the scorer version, the scored run, the capability and its input under the
+  or `drift`, keyed by the score source (drift also by its pass, the UTC day), the scorer version, the scored run, the capability and its input under the
   shared attempt rule (a retried scoring adopts a finished call and re-runs a failed one; a drift re-score under a new
   scorer fetches fresh; an aborted scoring cancels the call it started); an inline gate (none judges today) calls in process on its step. A capability's typed failure (a cited
   page that is gone) is an answer (`{error: {code, message}}`), anything else an infra failure the scoring retries.
@@ -207,12 +207,12 @@ the pre-registered rule, results).
   the tools its arm is granted. Its key is per process, in `<stateDir>/research/gate.json` (0600), outside every
   location; it is not the API secret and opens nothing but these tools. A call's cost is booked as it is reported
   on the run's `tools` step, which lives as long as the agent's turns (a cancelled or failed run keeps its spend; an
-  engine job once per grant, a failed one at the engine's reported cost or unknown). Its evidence is written apart to
+  engine job once per run: its ledger row, which carries the engine's reported cost, is what keeps it from being booked twice and what `engine.costUsd` sums; a failed one at the engine's reported cost or unknown). Its evidence is written apart to
   `research_tool_calls` (migration 0007, rows go with their run; in memory on a host without a database), so a step
   retry or a host restart loses nothing; `tools` reads it once the grant has drained, and a citation whose URL was
   never retrieved is dropped to `unverified` (the engine's grounding rule; ≥ 10 % dropped makes the report `partial`).
   A ledger write is retried and logged and never fails a call that worked. Engine jobs and the judge's calls share
-  one key rule (`src/attempt-keys.ts`): adopt what is done, step past what failed. The server has no idle timeout (an engine job holds a request 10-60 s), caps a body at 64 KiB before
+  one key rule (`src/attempt-keys.ts`): adopt what is done (a typed capability failure is a final answer), step past an untyped failure or a cancel. The server has no idle timeout (an engine job holds a request 10-60 s), caps a body at 64 KiB before
   buffering, and is closed with the host (`gate.json` removed).
 - **Scorer** (`scorer.ts`): `valid`, `complete`, `grounded` (code), `golden` (the case's `expect`, research-gateway
   `evals/lib.ts` semantics; `live:` via `web.package`), `supported` (judged: `web.fetch` + `decide` on up to 3 cited
