@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { buildCommands, type Document } from '../../cli/src/spec.ts'
+import { buildCommands } from '../../cli/src/spec.ts'
 import { createEvalWorkflows } from '../src/workflows/eval/index.ts'
 import { startTestHost, type TestHost } from './support.ts'
 
@@ -13,7 +13,7 @@ afterAll(async () => {
 
 describe('agw eval in the generated CLI', () => {
   test('eval run and eval compare are commands with their flags; nothing skipped', async () => {
-    const { commands, skipped } = buildCommands((await t.host.openapi()) as unknown as Document)
+    const { commands, skipped } = buildCommands(await t.host.openapi())
     expect(skipped).toEqual([])
     const flags = (words: string) => {
       const command = commands.find((c) => c.words.join(' ') === words)
