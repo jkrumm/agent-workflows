@@ -138,13 +138,16 @@ Workers: Opus/medium for scorers and compare statistics, Sonnet/high for the res
 
 - [ ] Scorer API used three ways (inline gate, regression, sampled drift); `agw eval run|compare`
 - [ ] Friction counters incl. the repeat-tool nudge (3, 5, 8); threshold → a GitHub issue with evidence
-- [ ] Retrospective workflow (weekly per workflow) and the per-agent learnings store
-- [ ] First experiment on review: one model or effort question answered with numbers (started by the
-  owner's direct ask: angle variants baseline / callers / read-only shell on the 20 paired cases)
-- [ ] Eval sets get a reproducibility check first (self-agreement of reruns) before they count as a baseline
-- [ ] Wave 4 leftovers (Sonnet/high): `agw schema review` output typed; harness `--resume` resolves a
+- [x] Retrospective workflow (weekly per workflow) and the per-agent learnings store
+- [x] First experiment on review: one model or effort question answered with numbers (started by the
+  owner's direct ask: angle variants baseline / callers / read-only shell on the 20 paired cases).
+  Answer: neither changes findings (3 arms × 20, inside baseline noise); next question: Sonnet angles
+- [x] Eval sets get a reproducibility check first (self-agreement of reruns) before they count as a baseline
+- [x] Wave 4 leftovers (Sonnet/high): `agw schema review` output typed; harness `--resume` resolves a
   timestamp under the reports dir; the 11 unpriced calls explained or priced; `roles/worker.md` gains
   "never end a turn on a background shell"
+- [ ] Cleanup: the experiment's `angleVariant`/`repoShell` removed; OpenCode agents deny webfetch,
+  websearch and subagent by default (a security gap the eval runs exposed)
 **Left behind:**
 
 ## Wave 6 — Research (P3a)            <!-- status: pending -->

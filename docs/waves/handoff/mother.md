@@ -13,8 +13,8 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
   `com.jkrumm.vps-pg-backup` is ours: P0b maps it in dotfiles `docs/architecture.md`. Relayed to the lead.
 
 ## Lead
-- `agent-workflows-w1` (pane w40:pX), Opus/high: the second Wave 4 lead, kept on for Wave 5 (20% context
-  after compaction); started Wave 5's experiment on the owner's direct ask.
+- `agent-workflows-w1` (pane w40:p14), Opus/high, spawned 2026-10-28 ~18:35: the second Wave 5 lead
+  (first rotated at its context limit; state in `handoff/lead.md` at `cdf18cf`).
   Rotation policy: a fresh lead per wave unless the last one closed under ~30% context.
 - The mother is agent `agent-workflows-mother` (pane w40:p1).
 
@@ -58,6 +58,9 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
   usage-tracker session (`usage-tracker-9f`) fixed the `iu_key` contract; accepted, in PLAN Wave 4;
   tell it when deployed. Owner said a message hit the wrong prometheus-scripts chat; the lead says it
   sent none (owner dialog only) — not from this fleet as far as the record shows.
+- 2026-10-28: athena-mother's pane is gone; the team-key usage window (~$3.8) was not announced to
+  it. Report to the owner. usage-tracker-9f's socket is gone; the `iu_key` deploy notice was not
+  delivered (Argo must accept `iu_key` on its side).
 
 ## Next action
 - Watch the lead (`wave-watch.sh --agents agent-workflows-w1 --heartbeat 9`, bounded 10 min), read
