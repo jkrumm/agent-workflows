@@ -86,6 +86,11 @@ unless an agent opts in, the server's `HOME` is its own (no `~/.claude`, `~/.age
 an allow-list, the server listens on loopback with a password. This is carried from agent-gateway, decided by the
 lead on that evidence, not an isolation boundary.
 
+The allow-list forwards `OTEL_EXPORTER_OTLP_*`, and on the mini the deploy sets `OTEL_EXPORTER_OTLP_HEADERS`
+(`authorization=<ClickStack ingest key>`). That key therefore sits in the server's env and in the env of its tool
+shells, readable by a shell-capable agent exactly like the IU key. Accepted by the lead for the same reason: the shell
+tool is denied unless an agent opts in, and the key is an ingest key.
+
 ## Locations
 
 `compileLocation(def)` writes `<stateDir>/locations/<name>/<hash16>/`: `AGENTS.md`, skills under

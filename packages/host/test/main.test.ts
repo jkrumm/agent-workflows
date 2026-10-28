@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test'
+import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { boot, lazyOpenCodeHost } from '../src/boot.ts'
 import { loadConfig } from '../src/config.ts'
 import { Pool } from 'pg'
@@ -42,19 +45,70 @@ describe('loadConfig', () => {
 })
 
 describe('lazyOpenCodeHost', () => {
+  /** A server stand-in: no process, no state directory. `start` decides what each attempt does. */
+  function fake(starts: (attempt: number) => Promise<void>) {
+    const calls = { created: 0, started: 0, closed: 0 }
+    const createServer = () => {
+      calls.created++
+      return {
+        endpoint: () => ({ baseUrl: 'http://127.0.0.1:1', password: 'x' }),
+        ready: async () => {},
+        start: () => starts(++calls.started),
+        close: async () => {
+          calls.closed++
+        },
+      }
+    }
+    return { calls, createServer }
+  }
+
   test('builds nothing until the first agent step: close is a no-op, and a step after close is refused', async () => {
-    // An env without IU credentials: if construction started the server, `start()` would throw on the config.
-    const host = lazyOpenCodeHost({}, () => undefined)
+    const { calls, createServer } = fake(async () => {})
+    const host = lazyOpenCodeHost({}, () => undefined, { createServer })
     await host.close()
+    expect(calls.created).toBe(0)
     expect(await rejection(host.abort({}))).toContain('closed')
   })
 
   test('a failed start is not cached: the next step tries again', async () => {
-    const host = lazyOpenCodeHost({}, () => undefined) // no opencode binary, no IU key: the server cannot start
-    const first = await rejection(host.abort({}))
-    expect(first).not.toContain('closed')
-    expect(await rejection(host.abort({}))).toBe(first)
+    const { calls, createServer } = fake(async (attempt) => {
+      if (attempt === 1) throw new Error('boom')
+    })
+    const host = lazyOpenCodeHost({}, () => undefined, { createServer })
+    expect(await rejection(host.abort({}))).toBe('boom')
+    // the second attempt starts, so the host itself answers (a handle that is not one of its own)
+    expect(await rejection(host.abort({}))).toContain('not an OpenCode host handle')
+    expect(calls.started).toBe(2)
     await host.close()
+    expect(calls.closed).toBe(1)
+  })
+
+  test('close does not wait for a start in flight past its bound, and that start is closed when it ends', async () => {
+    let finish = () => {}
+    const { calls, createServer } = fake(() => new Promise<void>((resolve) => (finish = resolve)))
+    const host = lazyOpenCodeHost({}, () => undefined, { createServer, closeWaitMs: 20 })
+    const step = rejection(host.abort({}))
+    await until(async () => calls.started, 'start begun', 2000)
+    const began = Date.now()
+    await host.close()
+    expect(Date.now() - began).toBeLessThan(1000)
+    expect(calls.closed).toBe(0)
+    finish()
+    expect(await step).toContain('closed')
+    expect(calls.closed).toBe(1)
+  })
+
+  test('a real server runs on the given state directory, never the real one', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'agw-lazy-'))
+    try {
+      // no opencode binary on this PATH: the start fails after the server has made its directories
+      const host = lazyOpenCodeHost({ PATH: '/nonexistent' }, () => undefined, { stateDir })
+      await rejection(host.abort({}))
+      expect(existsSync(join(stateDir, 'opencode', 'home'))).toBe(true)
+      await host.close()
+    } finally {
+      rmSync(stateDir, { recursive: true, force: true })
+    }
   })
 })
 
