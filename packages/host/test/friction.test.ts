@@ -64,7 +64,8 @@ type RunSpec = {
 /** A finished run with its record delivered, as the platform leaves it. */
 async function insertRun(spec: RunSpec): Promise<string> {
   const id = `run-${String(++seq).padStart(5, '0')}`
-  const finished = spec.finishedAt ?? new Date(Date.now() - (spec.finishedAgoMin ?? 60) * 60_000)
+  // `+ seq` keeps the default finish times distinct and ordered by insertion, whatever the clock resolution.
+  const finished = spec.finishedAt ?? new Date(Date.now() - (spec.finishedAgoMin ?? 60) * 60_000 + seq)
   const created = spec.createdAt ?? new Date(finished.getTime() - 60_000)
   await sql.pool.query(
     `insert into "${db.schema}".runs (id, workflow, root_id, parent_id, status, purpose, input, input_hash, output, error, lock_key,
@@ -701,6 +702,24 @@ describe('incomplete counts are recounted before the rates', () => {
     // Rates were computed after the recount: the recounted runs now show their tool errors.
     const review = result.workflows.find((w) => w.workflow === 'review')
     expect(review?.counters.toolErrors.runs).toBe(RECOUNT_CAP)
+  })
+
+  test('runs finished at the same instant are recounted later id first', async () => {
+    await clear()
+    const finishedAt = new Date(Date.now() - 60 * 60_000)
+    const ids: string[] = []
+    for (let i = 0; i < 5; i++) ids.push(await insertRun({ workflow: 'review', friction: incomplete, finishedAt }))
+    const asked: string[] = []
+    await runFrictionJob({
+      db: journal,
+      settings: settings(),
+      gh: fakeGh().port,
+      logger: captureLogger(),
+      recount: async (runId) => {
+        asked.push(runId)
+      },
+    })
+    expect(asked).toEqual([...ids].reverse())
   })
 
   test('a run that keeps failing cannot hold the head of the cap: fewest attempts first, gave-up runs never', async () => {
