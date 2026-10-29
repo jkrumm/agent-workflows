@@ -13,7 +13,6 @@ REPO_DIR="$ROOT/repo"
 SHA_FILE="$ROOT/data/deployed-sha"
 HEALTH_URL="http://127.0.0.1:7791/health"
 AUDIO_URL="http://127.0.0.1:7792"
-DOOR_URL="http://127.0.0.1:7793"
 API_SECRET_REF="op://mini/agent-workflows/API_SECRET"
 PG_PASSWORD_REF="op://mini/vps-dev/AGENT_WORKFLOWS_DB_PASSWORD"
 SCHEMA="${AGW_PG_SCHEMA:-agw}"
@@ -143,13 +142,5 @@ door_status=$(print -r -- "header = \"authorization: Bearer $secret\"" | curl -s
 [[ "$(jq -r '.error.type // empty' "$door_body" 2>/dev/null)" == "invalid_request_error" ]] \
   || fail "the door's 400 is not the legacy envelope: $(<"$door_body")"
 ok "door: 401 without a caller token, legacy 400 on a bad body"
-
-# 7. the door-only listener (what a forwarded port reaches): the door's path and nothing else, no spend
-door_only_health=$(curl -sS --max-time 5 -o /dev/null -w '%{http_code}' "$DOOR_URL/health") || fail "no answer from the door-only listener"
-[[ "$door_only_health" == "404" ]] || fail "the door-only listener answered /health with $door_only_health, not 404"
-door_only_post=$(curl -sS --max-time 10 -o /dev/null -w '%{http_code}' -X POST -H 'content-type: application/json' \
-  --data '{}' "$DOOR_URL/v1/audio/speech") || fail "no answer from the door-only listener"
-[[ "$door_only_post" == "401" ]] || fail "an unauthenticated POST to the door-only listener got $door_only_post, not 401"
-ok "door-only listener: /health 404, unauthenticated door POST 401"
 
 print "verify: PASS run $run_id, cap run $cap_id, audio run $audio_run"

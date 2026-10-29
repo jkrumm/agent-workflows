@@ -149,14 +149,6 @@ telemetry as `service.name` `agw-audio`, the Argo outbox), the runaway cap and t
 | OpenCode agent host | lazy | lazy: none of its workflows has an agent step, so `opencode` is never spawned |
 | Jobs | retrospective, eval and drift, friction | none |
 
-A second loopback listener, `127.0.0.1:7793` (`AGW_AUDIO_DOOR_PORT`), serves the door and nothing else: the two door
-routes (POST, the same bearer rules as on 7792), and a bodyless 404 for every other path and method, `/health`,
-`/openapi.json` and the whole API included. Callers off the mini (argo, over a `tailscale serve` row) are pointed at it,
-never at 7792, which serves the API with the same `host.fetch` fallback. Hermes, iris and `agw` stay on 7792. The
-listener is a `ProcessDefinition.doorOnly` entry (`packages/host/src/boot.ts`): bound beside the main one before the
-runtime opens, so a taken port refuses the start, and drained with it on stop. Left unset, the door port is 7793 on a
-fixed main port and ephemeral when `AGW_AUDIO_PORT` is 0 (tests never take 7793); it must differ from the main port.
-
 `agw` reaches it through `AGW_PROCESSES=audio=http://127.0.0.1:7792` in `~/.config/agw/env` (written by `make deploy`;
 `packages/cli/README.md` §Platform processes).
 
