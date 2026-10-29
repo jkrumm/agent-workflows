@@ -75,31 +75,6 @@ describe('runReview', () => {
     expect(second.every((r) => r.status === 'ok')).toBe(true)
     expect(readFileSync(opts.resultsPath, 'utf8').trim().split('\n')).toHaveLength(4)
   })
-
-  test('the legacy rerun gives the self-agreement floor, and a failed rerun keeps the case', async () => {
-    const fx = fixtureHome()
-    const cases = [
-      reviewCase({ id: 'a', baseSha: fx.baseSha, diff: fx.diff }),
-      reviewCase({ id: 'b', baseSha: fx.baseSha, diff: fx.diff }),
-    ]
-    let n = 0
-    const legacy = {
-      async review() {
-        if (++n === 2) throw new Error('legacy down')
-        return { output: reviewOutput({ blocking: [] }), spend: { costUsd: 0.05, costExact: false, wallMs: 90_000 } }
-      },
-    }
-    const results = await runReview(
-      cases,
-      { next: fakeReview(reviewOutput()).runner, legacy },
-      options(fx.home, { concurrency: 1 }),
-    )
-    expect(results.find((r) => r.rerun)?.rerun?.self).toMatchObject({ reference: 1, matched: 0 })
-    expect(results.find((r) => r.rerunError)?.rerunError).toBe('legacy down')
-    const agg = aggregateReview(results)
-    expect(agg.selfAgreement).toMatchObject({ cases: 1, blockingRecall: 0, outcomeAgreement: 1 })
-    expect(agg.cost.baseline).toBe('mixed')
-  })
 })
 
 describe('isolation and scoring of failures', () => {
@@ -151,60 +126,6 @@ describe('isolation and scoring of failures', () => {
     expect(results[0]?.detail).toBe('decide 503')
     const agg = aggregateReview(results)
     expect(agg.cases).toMatchObject({ errors: 1, harnessFailed: 1, scored: 2 })
-  })
-
-  test('a judge that throws during the legacy self-match also stays inside its case', async () => {
-    const fx = fixtureHome()
-    const far = reviewOutput({
-      blocking: [
-        {
-          file: 'app.ts',
-          line: 90,
-          message: 'b changed from 2 to 3 breaks the exported constant contract',
-          angle: 'x',
-        },
-      ],
-    })
-    const cases = ['a', 'b'].map((id) => reviewCase({ id, baseSha: fx.baseSha, diff: fx.diff }))
-    let n = 0
-    const legacy = {
-      async review() {
-        return { output: ++n === 1 ? far : reviewOutput(), spend: { costUsd: 0.05, costExact: false, wallMs: 1 } }
-      },
-    }
-    const judge = {
-      sameDefect: async (): Promise<boolean> => {
-        throw new Error('decide 503')
-      },
-    }
-    const results = await runReview(
-      cases,
-      { next: fakeReview(reviewOutput()).runner, legacy, judge },
-      options(fx.home, { concurrency: 1 }),
-    )
-    expect(results.map((r) => r.reason ?? r.status)).toEqual(['harness_failed', 'ok'])
-  })
-
-  test('legacy reruns go one at a time whatever the concurrency; inexact costs are counted per side', async () => {
-    const fx = fixtureHome()
-    const cases = ['a', 'b', 'c', 'd'].map((id) => reviewCase({ id, baseSha: fx.baseSha, diff: fx.diff }))
-    let running = 0
-    let peak = 0
-    const legacy = {
-      async review() {
-        peak = Math.max(peak, ++running)
-        await Bun.sleep(20)
-        running--
-        return { output: reviewOutput(), spend: { costUsd: 0.05, costExact: false, wallMs: 90_000 } }
-      },
-    }
-    const results = await runReview(
-      cases,
-      { next: fakeReview(reviewOutput()).runner, legacy },
-      options(fx.home, { concurrency: 4 }),
-    )
-    expect(peak).toBe(1)
-    expect(aggregateReview(results).cost.inexact).toEqual({ new: 0, legacy: 4 })
   })
 
   test('a torn last line in results.jsonl is not glued to the next result', async () => {
@@ -279,7 +200,6 @@ describe('report', () => {
         startedAt: now,
         finishedAt: now,
         depthMode: 'matched',
-        rerunLegacy: false,
         judge: false,
         concurrency: 2,
         seed: 1,

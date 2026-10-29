@@ -226,7 +226,7 @@ export function renderText(snapshot: Snapshot, opts?: RenderTextOptions): string
   const generatedAtIso = new Date(generatedAt).toISOString()
   const countsText =
     `agents: ${summary.needsYou} needs_you · ${summary.working} working · ${summary.idle} idle · ` +
-    `${summary.stale} stale · ${summary.done} done · ${summary.dispatch} dispatch`
+    `${summary.stale} stale · ${summary.done} done`
   let metaText = `(${generatedAtIso})`
   if (opts && 'overview' in opts) {
     metaText +=

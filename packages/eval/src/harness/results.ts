@@ -44,9 +44,6 @@ export interface ReviewCaseResult extends CaseBase {
   new?: ReviewSide
   /** New blocking vs the recorded legacy blocking (the reference). */
   match?: MatchCounts & { newOnly: number }
-  /** The legacy rerun and its agreement with the recorded run: legacy's own noise floor. */
-  rerun?: ReviewSide & { self: MatchCounts }
-  rerunError?: string
   /** Private: legacy blocking findings the new side missed, and new-only blocking findings. */
   missed?: Located[]
   newOnly?: Located[]
@@ -65,8 +62,6 @@ export interface CheckCaseResult extends CaseBase {
   workflow: 'check'
   legacy: CheckSide
   new?: CheckSide
-  rerun?: CheckSide
-  rerunError?: string
 }
 
 export type CaseResult = ReviewCaseResult | CheckCaseResult

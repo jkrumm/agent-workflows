@@ -30,7 +30,6 @@ function agent(overrides: Partial<Agent> = {}): Agent {
     herdrStatus: 'working',
     claudeStatus: null,
     waitingFor: null,
-    tier: null,
     lastPrompt: 'do the thing',
     lastReply: 'working on it',
     lastActivityAt: NOW - 5 * 60_000,
@@ -94,29 +93,6 @@ describe('buildAgentFacts', () => {
     const line = facts.split('\n').find((l) => l.includes('lastReply:'))
     expect(line).toBeDefined()
     expect((line as string).length).toBeLessThanOrEqual(13 + 800)
-  })
-
-  test('dispatch entries carry tier and job activity, not raw prompt/reply fields', () => {
-    const data = snapshot({
-      projects: [
-        project({
-          agents: [
-            agent({
-              id: 'd1',
-              source: 'dispatch',
-              sessionId: null,
-              tier: 'investigate',
-              state: 'working',
-              lastPrompt: null,
-              lastReply: null,
-            }),
-          ],
-        }),
-      ],
-    })
-    const facts = buildAgentFacts(data)
-    expect(facts).toContain('dispatch tier: investigate')
-    expect(facts).toContain('job activity: working')
   })
 })
 

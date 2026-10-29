@@ -9,7 +9,6 @@ export interface RunMeta {
   startedAt: string
   finishedAt: string
   depthMode: 'matched' | 'router'
-  rerunLegacy: boolean
   judge: boolean
   concurrency: number
   seed: number
@@ -60,7 +59,7 @@ export function renderAggregate(report: Report): string {
   const lines = [
     `**Verdict: ${verdict.verdict}**${verdict.reasons.length ? ` (${verdict.reasons.join('; ')})` : ''}`,
     '',
-    `Run ${meta.startedAt} to ${meta.finishedAt}; depth ${meta.depthMode}, legacy rerun ${meta.rerunLegacy ? 'on' : 'off'}, judge ${meta.judge ? 'on' : 'off'}, concurrency ${meta.concurrency}, bootstrap seed ${meta.seed}${meta.agwArgs?.length ? `, agw args \`${meta.agwArgs.join(' ')}\`` : ''}.`,
+    `Run ${meta.startedAt} to ${meta.finishedAt}; depth ${meta.depthMode}, judge ${meta.judge ? 'on' : 'off'}, concurrency ${meta.concurrency}, bootstrap seed ${meta.seed}${meta.agwArgs?.length ? `, agw args \`${meta.agwArgs.join(' ')}\`` : ''}.`,
     `Cases: ${cases.total} total, ${cases.ok} ran, ${cases.errors} errored (new side ${cases.newFailed}, harness ${cases.harnessFailed}; error rate ${pct(cases.errorRate)}), skipped ${skipped.length ? skipped.join(', ') : '0'}. A new-side error is scored as a miss.`,
     '',
     '| criterion | value | 95% CI | threshold | pass |',
@@ -107,11 +106,8 @@ function reviewAggregateLines(a: ReviewAggregate): string[] {
     `Blocking recall vs legacy: ${pct(a.blocking.recall)} (${recalled.matched}/${recalled.reference}${a.blocking.basis ? ' on reproducible cases' : ''}); over all cases ${a.blocking.judged} matched by the judge, ${a.blocking.unsure} unsure left unmatched; new-only blocking: ${a.blocking.newOnly}.`,
     basisLine(a.blocking.basis, a.blocking.coverage, 'blocking recall', 'blocking finding'),
     `Outcome agreement: ${pct(a.outcome.agreement)}.`,
-    `Cost ratio new/legacy (${a.cost.baseline}): median ${ratio(a.cost)}; inexact or unknown cost: legacy ${a.cost.inexact.legacy}, new ${a.cost.inexact.new} cases.`,
-    `Wall ratio new/legacy (${a.wall.baseline}): median ${ratio(a.wall)}.`,
-    a.selfAgreement
-      ? `Legacy self-agreement (rerun vs recorded, ${a.selfAgreement.cases} cases): blocking recall ${pct(a.selfAgreement.blockingRecall)}, outcome agreement ${pct(a.selfAgreement.outcomeAgreement)}.`
-      : 'Legacy self-agreement: not measured (no --rerun-legacy); fixed floors apply.',
+    `Cost ratio new/legacy: median ${ratio(a.cost)}; inexact or unknown cost: legacy ${a.cost.inexact.legacy}, new ${a.cost.inexact.new} cases.`,
+    `Wall ratio new/legacy: median ${ratio(a.wall)}.`,
     '',
     'Outcome confusion (rows legacy, columns new):',
     '',
@@ -131,11 +127,8 @@ function checkAggregateLines(a: CheckAggregate): string[] {
     `Passed agreement: ${pct(a.passed.agreement)}; step agreement ${pct(a.steps.agreement)} over ${a.steps.compared} steps both ran.`,
     `Legacy failure recall: ${pct(a.failureRecall.recall)} (${recalled.matched}/${recalled.reference} legacy-red cases red on the new side${a.failureRecall.basis ? ', reproducible ones' : ''}).`,
     basisLine(a.failureRecall.basis, a.failureRecall.coverage, 'failure recall', 'red run'),
-    `Cost ratio new/legacy (${a.cost.baseline}): median ${ratio(a.cost)}; totals legacy ${usd(a.cost.legacyUsd)}, new ${usd(a.cost.newUsd)}; inexact or unknown cost: legacy ${a.cost.inexact.legacy}, new ${a.cost.inexact.new} cases.`,
-    `Wall ratio new/legacy (${a.wall.baseline}): median ${ratio(a.wall)}.`,
-    a.selfAgreement
-      ? `Legacy self-agreement (${a.selfAgreement.cases} cases): passed ${pct(a.selfAgreement.passedAgreement)}, failure recall ${pct(a.selfAgreement.failureRecall)}, steps ${pct(a.selfAgreement.stepAgreement)}.`
-      : 'Legacy self-agreement: not measured (no --rerun-legacy); fixed floors apply.',
+    `Cost ratio new/legacy: median ${ratio(a.cost)}; totals legacy ${usd(a.cost.legacyUsd)}, new ${usd(a.cost.newUsd)}; inexact or unknown cost: legacy ${a.cost.inexact.legacy}, new ${a.cost.inexact.new} cases.`,
+    `Wall ratio new/legacy: median ${ratio(a.wall)}.`,
     '',
     '| legacy \\ new | pass | fail | errored |',
     '|-|-|-|-|',
@@ -154,15 +147,13 @@ function renderReviewCases(results: ReviewCaseResult[]): string {
     '|-|-|-|-|-|-|-|-|',
   ]
   for (const r of results) {
-    const legacy = r.rerun ?? r.legacy
     lines.push(
-      `| ${r.id} | ${r.repo} | ${r.status}${r.reason ? ` (${r.reason})` : ''} | ${r.legacy.outcome} → ${r.new?.outcome ?? '-'} | ${r.match ? `${r.match.matched}/${r.match.reference}` : '-'} | ${r.match?.newOnly ?? '-'} | ${usd(legacy.costUsd)} → ${usd(r.new?.costUsd ?? null)} | ${secs(legacy.wallMs)} → ${secs(r.new?.wallMs ?? null)} |`,
+      `| ${r.id} | ${r.repo} | ${r.status}${r.reason ? ` (${r.reason})` : ''} | ${r.legacy.outcome} → ${r.new?.outcome ?? '-'} | ${r.match ? `${r.match.matched}/${r.match.reference}` : '-'} | ${r.match?.newOnly ?? '-'} | ${usd(r.legacy.costUsd)} → ${usd(r.new?.costUsd ?? null)} | ${secs(r.legacy.wallMs)} → ${secs(r.new?.wallMs ?? null)} |`,
     )
   }
   for (const r of results) {
     const details = [
       ...(r.detail ? [`- detail: ${oneLine(r.detail)}`] : []),
-      ...(r.rerunError ? [`- legacy rerun failed: ${oneLine(r.rerunError)}`] : []),
       ...(r.missed ?? []).map((f) => `- missed: \`${where(f)}\` ${oneLine(f.message)}`),
       ...(r.newOnly ?? []).map((f) => `- new only: \`${where(f)}\` ${oneLine(f.message)}`),
     ]
@@ -177,10 +168,9 @@ function renderCheckCases(results: CheckCaseResult[]): string {
     '|-|-|-|-|-|-|-|',
   ]
   for (const r of results) {
-    const legacy = r.rerun ?? r.legacy
     const steps = r.new?.steps.map((s) => `${s.name}:${s.passed ? 'ok' : 'fail'}`).join(' ') ?? '-'
     lines.push(
-      `| ${r.id} | ${r.repo} | ${r.status}${r.reason ? ` (${r.reason})` : ''} | ${r.legacy.passed} → ${r.new?.passed ?? '-'} | ${steps} | ${usd(legacy.costUsd)} → ${usd(r.new?.costUsd ?? null)} | ${secs(legacy.wallMs)} → ${secs(r.new?.wallMs ?? null)} |`,
+      `| ${r.id} | ${r.repo} | ${r.status}${r.reason ? ` (${r.reason})` : ''} | ${r.legacy.passed} → ${r.new?.passed ?? '-'} | ${steps} | ${usd(r.legacy.costUsd)} → ${usd(r.new?.costUsd ?? null)} | ${secs(r.legacy.wallMs)} → ${secs(r.new?.wallMs ?? null)} |`,
     )
   }
   for (const r of results) {

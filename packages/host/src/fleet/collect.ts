@@ -6,7 +6,6 @@ import { helperEnv, networkEnv } from '../workflows/review/exec.ts'
 import {
   type ClaudeAgentRaw,
   cleanLine,
-  type DispatchJobRaw,
   EMPTY_TAIL,
   encodeProjectDir,
   type HerdrAgentRaw,
@@ -18,16 +17,13 @@ import {
 import type { HumanQueueEntry, ProjectGit, Snapshot, Summary } from './schema.ts'
 import { oneLine, stripControlBytes } from './text.ts'
 
-// The impure half of the snapshot: herdr and Claude's registry, transcript tails, the human queue, session accounts,
-// git status and agent-gateway's dispatch jobs. Every one is a port, so tests run the whole builder on fakes.
+// The impure half of the snapshot: herdr and Claude's registry, transcript tails, the human queue, session accounts
+// and git status. Every one is a port, so tests run the whole builder on fakes.
 
 const CLI_TIMEOUT_MS = 5_000
 const TAIL_BYTES = 512 * 1024
 const MAX_TAIL_BYTES = 8 * 1024 * 1024
 const GIT_FETCH_TIMEOUT_MS = 5_000
-const DISPATCH_HTTP_TIMEOUT_MS = 5_000
-/** Dispatch jobs relevant to the overview: running or queued, plus terminal ones from the last 6 h. */
-const DISPATCH_RECENT_MS = 6 * 60 * 60 * 1000
 const DEFAULT_STALE_HOURS = 24
 
 export interface CollectorResult<T> {
@@ -81,10 +77,6 @@ export interface FleetConfig {
   claudeProjectsDir: string
   /** `~/.claude/logs`: day files carrying the `session_env` lines. */
   claudeLogDir: string
-  /** agent-gateway's per-session account pins (written by its workers; read here). */
-  sessionAccountsDir: string
-  /** agent-gateway's HTTP base, for the dispatch jobs it still owns. */
-  agentGatewayUrl: string
   staleAfterHours: number
 }
 
@@ -104,9 +96,6 @@ export function fleetConfig(env: Env, home = homedir()): FleetConfig {
     humanQueueDir: join(env.XDG_STATE_HOME?.trim() || join(home, '.local', 'state'), 'human-queue'),
     claudeProjectsDir: join(home, '.claude', 'projects'),
     claudeLogDir: env.AGW_CLAUDE_LOG_DIR?.trim() || join(home, '.claude', 'logs'),
-    sessionAccountsDir:
-      env.AGW_SESSION_ACCOUNTS_DIR?.trim() || join(home, '.local', 'state', 'agent-gateway', 'session-accounts'),
-    agentGatewayUrl: (env.AGW_AGENT_GATEWAY_URL?.trim() || 'http://localhost:7705').replace(/\/+$/, ''),
     staleAfterHours: Number.isFinite(hours) && hours > 0 ? hours : DEFAULT_STALE_HOURS,
   }
 }
@@ -300,29 +289,6 @@ export function parseSessionAccounts(text: string): Map<string, string> {
 /** A session id is a path segment (a transcript, a pin): letters, digits, `_` and `-` only, never a separator or `..`. */
 export const SESSION_ID_RE = /^[A-Za-z0-9_-]+$/
 
-/** The account agent-gateway pinned for a session at spawn, or null when absent or unusable. */
-export async function readSessionPin(dir: string, sessionId: string): Promise<string | null> {
-  if (!SESSION_ID_RE.test(sessionId)) return null
-  try {
-    const path = join(dir, `${sessionId}.json`)
-    if (!(await lstat(path)).isFile()) return null // never follow a symlink or read a directory
-    const raw = JSON.parse(await Bun.file(path).text())
-    if (typeof raw?.account !== 'string' || raw.account === '') return null
-    if (
-      typeof raw.dir === 'string' &&
-      raw.dir !== '' &&
-      !(await stat(raw.dir).then(
-        () => true,
-        () => false,
-      ))
-    )
-      return null // a pinned dir must still exist
-    return raw.account
-  } catch {
-    return null
-  }
-}
-
 const SESSION_LOG_DAYS = 3
 const MISS_RETRY_MS = 60_000
 const MISS_RETRY_MAX_MS = 10 * 60_000
@@ -337,11 +303,11 @@ function capMap<V>(map: Map<string, V>): void {
 }
 
 /**
- * Session to account, two sources behind one memo: the spawn pin, then the `session_env` line in the newest log days. An
+ * Session to account from the `session_env` line in the newest log days, behind one memo. An
  * account never changes for a session, so a hit is kept for the process. A miss backs off (60 s to 10 min): the line
  * may not exist yet, and a session that never gets one must not cost a log scan per snapshot.
  */
-export function sessionAccountResolver(config: Pick<FleetConfig, 'claudeLogDir' | 'sessionAccountsDir'>) {
+export function sessionAccountResolver(config: Pick<FleetConfig, 'claudeLogDir'>) {
   const cache = new Map<string, string>()
   const misses = new Map<string, { at: number; n: number }>()
   return async (sessionIds: Iterable<string>, now: number): Promise<Map<string, string>> => {
@@ -355,13 +321,7 @@ export function sessionAccountResolver(config: Pick<FleetConfig, 'claudeLogDir' 
       }
       const miss = misses.get(id)
       if (miss && now - miss.at < Math.min(MISS_RETRY_MS * 2 ** (miss.n - 1), MISS_RETRY_MAX_MS)) continue
-      const pinned = await readSessionPin(config.sessionAccountsDir, id)
-      if (pinned) {
-        cache.set(id, pinned)
-        result.set(id, pinned)
-      } else {
-        missing.push(id)
-      }
+      missing.push(id)
     }
 
     if (missing.length > 0) {
@@ -429,71 +389,6 @@ export async function gitProject(run: RunCommand, cwd: string): Promise<ProjectG
   }
 }
 
-interface JobListEntry {
-  id: string
-  tool: string
-  status: DispatchJobRaw['status']
-  createdAt: number
-  finishedAt: number | null
-}
-
-/**
- * agent-gateway's dispatch jobs, read-only over its HTTP: the list names the jobs, and a relevant one is fetched for its
- * params (cwd, tier) and session id, which the list view leaves out. A jobs-less agent-gateway is a warning, not a failure.
- */
-export async function readDispatchJobs(
-  baseUrl: string,
-  now: number,
-  fetcher: typeof fetch = fetch,
-): Promise<CollectorResult<DispatchJobRaw>> {
-  const get = async (path: string) => {
-    const res = await fetcher(`${baseUrl}${path}`, { signal: AbortSignal.timeout(DISPATCH_HTTP_TIMEOUT_MS) })
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
-    return (await res.json()) as Record<string, unknown>
-  }
-  try {
-    const list = ((await get('/api/jobs')).jobs ?? []) as JobListEntry[]
-    const relevant = list.filter((job) => {
-      if (job.tool !== 'dispatch') return false
-      if (job.status === 'running' || job.status === 'pending') return true
-      return now - (job.finishedAt ?? job.createdAt) <= DISPATCH_RECENT_MS
-    })
-    const details = await Promise.allSettled(relevant.map((entry) => get(`/api/jobs/${encodeURIComponent(entry.id)}`)))
-    const items: DispatchJobRaw[] = []
-    let failed = 0
-    for (const detail of details) {
-      if (detail.status === 'rejected') {
-        failed += 1
-        continue
-      }
-      const job = detail.value.job as
-        | (JobListEntry & { params?: Record<string, unknown>; startedAt?: number | null; sessionId?: string | null })
-        | undefined
-      const cwd = typeof job?.params?.cwd === 'string' ? job.params.cwd : ''
-      if (!job || cwd === '') continue
-      items.push({
-        id: job.id,
-        status: job.status,
-        cwd,
-        tier: typeof job.params?.tier === 'string' ? job.params.tier : null,
-        createdAt: job.createdAt,
-        startedAt: job.startedAt ?? null,
-        finishedAt: job.finishedAt,
-        sessionId: job.sessionId ?? null,
-      })
-    }
-    if (failed > 0) {
-      return { items, warning: `agent-gateway dispatch jobs: ${failed} of ${relevant.length} could not be read` }
-    }
-    return { items, warning: null }
-  } catch (error) {
-    return {
-      items: [],
-      warning: `agent-gateway dispatch jobs unavailable: ${error instanceof Error ? error.message : String(error)}`,
-    }
-  }
-}
-
 /** What `buildSnapshot` reads. Production: `defaultCollectors`; tests: fakes. */
 export interface Collectors {
   herdrAgents(): Promise<CollectorResult<HerdrAgentRaw>>
@@ -501,7 +396,6 @@ export interface Collectors {
   claudeAgents(): Promise<CollectorResult<ClaudeAgentRaw>>
   humanQueue(): Promise<CollectorResult<HumanQueueEntry>>
   transcriptTail(cwd: string, sessionId: string): Promise<TranscriptTail>
-  dispatchJobs(now: number): Promise<CollectorResult<DispatchJobRaw>>
   sessionAccounts(sessionIds: Iterable<string>, now: number): Promise<Map<string, string>>
   git(cwd: string): Promise<ProjectGit | null>
 }
@@ -509,7 +403,7 @@ export interface Collectors {
 export function defaultCollectors(
   config: FleetConfig,
   run: RunCommand = runCommand,
-  options: { fetcher?: typeof fetch; warn?: (message: string, meta: Record<string, unknown>) => void } = {},
+  options: { warn?: (message: string, meta: Record<string, unknown>) => void } = {},
 ): Collectors {
   const resolveAccounts = sessionAccountResolver(config)
   return {
@@ -529,7 +423,6 @@ export function defaultCollectors(
         return EMPTY_TAIL
       }
     },
-    dispatchJobs: (now) => readDispatchJobs(config.agentGatewayUrl, now, options.fetcher),
     sessionAccounts: resolveAccounts,
     git: (cwd) => gitProject(run, cwd),
   }
@@ -553,7 +446,6 @@ function summarize(projects: Snapshot['projects']): Summary {
   const summary: Summary = { needsYou: 0, working: 0, idle: 0, stale: 0, done: 0, dispatch: 0 }
   for (const project of projects) {
     for (const agent of project.agents) {
-      if (agent.source === 'dispatch') summary.dispatch += 1
       if (agent.state === 'needs_you') summary.needsYou += 1
       else if (agent.state === 'working') summary.working += 1
       else if (agent.state === 'idle') summary.idle += 1
@@ -569,7 +461,6 @@ export async function buildSnapshot(
   collectors: Collectors,
   options: { now?: number; staleAfterHours: number },
 ): Promise<Snapshot> {
-  const startedAt = options.now ?? Date.now()
   const staleAfterMs = options.staleAfterHours * 60 * 60 * 1000
 
   const [herdrAgents, herdrWorkspaces, claudeAgents] = await Promise.all([
@@ -578,14 +469,9 @@ export async function buildSnapshot(
     collectors.claudeAgents(),
   ])
   const humanQueue = await collectors.humanQueue()
-  const dispatch = await collectors.dispatchJobs(startedAt)
-  const warnings = [
-    herdrAgents.warning,
-    herdrWorkspaces.warning,
-    claudeAgents.warning,
-    humanQueue.warning,
-    dispatch.warning,
-  ].filter((w): w is string => w != null)
+  const warnings = [herdrAgents.warning, herdrWorkspaces.warning, claudeAgents.warning, humanQueue.warning].filter(
+    (w): w is string => w != null,
+  )
 
   // Unique (session, cwd) pairs across both sources: a herdr pane and its registry entry share a session and one tail read.
   const cwdBySession = new Map<string, string>()
@@ -612,21 +498,12 @@ export async function buildSnapshot(
   // verdict is only called stale for activity the model could not have seen. A caller-set clock (the cache) is kept.
   const now = options.now ?? Date.now()
 
-  // One resolve for panes and dispatch workers alike: only rows that have a session id.
-  const accounts = await collectors.sessionAccounts(
-    [...cwdBySession.keys(), ...dispatch.items.flatMap((j) => (j.sessionId ? [j.sessionId] : []))],
-    now,
-  )
-  const dispatchJobs = dispatch.items.map((j) => ({
-    ...j,
-    account: j.sessionId ? (accounts.get(j.sessionId) ?? null) : null,
-  }))
+  const accounts = await collectors.sessionAccounts(cwdBySession.keys(), now)
 
   const merged = mergeAgents({
     herdrAgents: herdrAgents.items,
     herdrWorkspaces: herdrWorkspaces.items,
     claudeAgents: claudeAgents.items,
-    dispatchJobs,
     transcripts,
     accounts,
     now,

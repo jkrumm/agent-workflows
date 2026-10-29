@@ -108,10 +108,7 @@ function recallOver(
   return { recall: rate(basis.matched, basis.reference), basis, coverage: null }
 }
 
-type Baseline = 'rerun' | 'recorded' | 'mixed'
-
 export type CostSummary = RatioSummary & {
-  baseline: Baseline
   newUsd: number | null
   legacyUsd: number | null
   /** Cases whose cost is unknown or approximate (`costExact: false`), per side. */
@@ -140,15 +137,10 @@ export interface ReviewAggregate {
   improvementsPerCase: { legacy: number | null; new: number | null }
   needsHumanRate: { legacy: number | null; new: number | null }
   failedAngleRate: { legacy: number | null; new: number | null }
-  /** new / legacy per case; the legacy side is the rerun where one ran, else the recorded run. */
+  /** new / recorded legacy per case. */
   cost: CostSummary
-  wall: RatioSummary & { baseline: Baseline }
-  /** The legacy rerun vs the recorded run: legacy's own noise floor; `null` without `--rerun-legacy`. */
-  selfAgreement: { cases: number; blockingRecall: number | null; outcomeAgreement: number | null } | null
+  wall: RatioSummary
 }
-
-const baselineOf = (rerunCount: number, cases: number): Baseline =>
-  rerunCount === 0 ? 'recorded' : rerunCount === cases ? 'rerun' : 'mixed'
 
 interface SpendSide {
   costUsd: number | null
@@ -159,24 +151,20 @@ interface SpendSide {
 const inexact = (sides: SpendSide[]) => sides.filter((s) => s.costUsd === null || !s.costExact).length
 
 /** Paired cost and wall ratios new/legacy, cost totals and the inexact counts, for either workflow. */
-function costWallSummary(pairs: { next: SpendSide; legacy: SpendSide }[], baseline: Baseline, seed: number) {
+function costWallSummary(pairs: { next: SpendSide; legacy: SpendSide }[], seed: number) {
   const cost: CostSummary = {
     ...ratioSummary(
       pairs.map((p) => ({ a: p.next.costUsd, b: p.legacy.costUsd })),
       seed,
     ),
-    baseline,
     newUsd: total(pairs.map((p) => p.next.costUsd)),
     legacyUsd: total(pairs.map((p) => p.legacy.costUsd)),
     inexact: { new: inexact(pairs.map((p) => p.next)), legacy: inexact(pairs.map((p) => p.legacy)) },
   }
-  const wall = {
-    ...ratioSummary(
-      pairs.map((p) => ({ a: p.next.wallMs, b: p.legacy.wallMs })),
-      seed + 1,
-    ),
-    baseline,
-  }
+  const wall = ratioSummary(
+    pairs.map((p) => ({ a: p.next.wallMs, b: p.legacy.wallMs })),
+    seed + 1,
+  )
   return { cost, wall }
 }
 
@@ -201,9 +189,6 @@ export function aggregateReview(
 
   const legacyBlocking = sum(ok.map((r) => r.match.reference)) + sum(failed.map((r) => r.legacy.blocking))
   const matched = sum(ok.map((r) => r.match.matched))
-  const reruns = ok.filter((r) => r.rerun)
-  const baseline = baselineOf(reruns.length, ok.length)
-  const legacyOf = (r: ReviewCaseResult) => r.rerun ?? r.legacy
   const recall = recallOver(
     [
       ...ok.map((r) => ({ id: r.id, reference: r.match.reference, matched: r.match.matched })),
@@ -242,20 +227,9 @@ export function aggregateReview(
       new: rate(ok.filter((r) => r.new.failedAngles > 0).length, ok.length),
     },
     ...costWallSummary(
-      ok.map((r) => ({ next: r.new, legacy: legacyOf(r) })),
-      baseline,
+      ok.map((r) => ({ next: r.new, legacy: r.legacy })),
       seed,
     ),
-    selfAgreement: reruns.length
-      ? {
-          cases: reruns.length,
-          blockingRecall: rate(
-            sum(reruns.map((r) => r.rerun?.self.matched ?? 0)),
-            sum(reruns.map((r) => r.rerun?.self.reference ?? 0)),
-          ),
-          outcomeAgreement: rate(reruns.filter((r) => r.rerun?.outcome === r.legacy.outcome).length, reruns.length),
-        }
-      : null,
   }
 }
 
@@ -276,13 +250,7 @@ export interface CheckAggregate {
   /** Steps both sides ran (by name) whose pass/fail agreed. */
   steps: { compared: number; agreement: number | null }
   cost: CostSummary
-  wall: RatioSummary & { baseline: Baseline }
-  selfAgreement: {
-    cases: number
-    passedAgreement: number | null
-    failureRecall: number | null
-    stepAgreement: number | null
-  } | null
+  wall: RatioSummary
 }
 
 function stepAgreement(pairs: { a: { name: string; passed: boolean }[]; b: { name: string; passed: boolean }[] }[]) {
@@ -314,11 +282,6 @@ export function aggregateCheck(
   for (const r of failed) confusion[r.legacy.passed ? 'legacyPass' : 'legacyFail'].failed++
   const legacyFailed = ok.filter((r) => !r.legacy.passed).length + failed.filter((r) => !r.legacy.passed).length
   const caught = ok.filter((r) => !r.legacy.passed && !r.new.passed).length
-  const reruns = ok.filter((r) => r.rerun)
-  const baseline = baselineOf(reruns.length, ok.length)
-  const legacyOf = (r: CheckCaseResult) => r.rerun ?? r.legacy
-  const self = stepAgreement(reruns.map((r) => ({ a: r.rerun?.steps ?? [], b: r.legacy.steps })))
-  const redReruns = reruns.filter((r) => !r.legacy.passed)
   const recall = recallOver(
     [
       ...ok.map((r) => ({
@@ -339,17 +302,8 @@ export function aggregateCheck(
     failureRecall: { legacyFailed, caught, recall: recall.recall, basis: recall.basis, coverage: recall.coverage },
     steps: stepAgreement(ok.map((r) => ({ a: r.new.steps, b: r.legacy.steps }))),
     ...costWallSummary(
-      ok.map((r) => ({ next: r.new, legacy: legacyOf(r) })),
-      baseline,
+      ok.map((r) => ({ next: r.new, legacy: r.legacy })),
       seed,
     ),
-    selfAgreement: reruns.length
-      ? {
-          cases: reruns.length,
-          passedAgreement: rate(reruns.filter((r) => r.rerun?.passed === r.legacy.passed).length, reruns.length),
-          failureRecall: rate(redReruns.filter((r) => r.rerun?.passed === false).length, redReruns.length),
-          stepAgreement: self.agreement,
-        }
-      : null,
   }
 }

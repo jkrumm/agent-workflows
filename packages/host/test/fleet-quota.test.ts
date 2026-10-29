@@ -198,7 +198,7 @@ describe('createQuota (fake CLI, fake clock)', () => {
     expect(quota.posted('iu')).toBeNull()
   })
 
-  test('all 6 lanes come back from one batch; a second call inside the memo window spawns nothing more', async () => {
+  test('all 4 lanes come back from one batch; a second call inside the memo window spawns nothing more', async () => {
     const { state, cli } = fakeCli()
     const quota = createQuota({ cli, now })
     const picks = await quota.picks()

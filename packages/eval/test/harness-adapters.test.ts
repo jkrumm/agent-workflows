@@ -5,7 +5,6 @@ import { join } from 'node:path'
 import { writeCases } from '../src/cases.ts'
 import { CheckCase, ReviewCase } from '../src/cases.ts'
 import { agwCheckRunner, agwJudge, agwReviewRunner, psqlJournal } from '../src/harness/adapters/agw.ts'
-import { legacyReviewRunner, usageTrackerCost } from '../src/harness/adapters/legacy.ts'
 import { main } from '../src/harness/cli.ts'
 import { type Exec, type ExecOptions, exec } from '../src/harness/exec.ts'
 import { BAD_DIFF, checkCase, fixtureHome, reviewCase, reviewOutput } from './harness-support.ts'
@@ -203,65 +202,6 @@ describe('agw adapter', () => {
     expect(() => psqlJournal({ exec: fake, env: { AGW_PG_SCHEMA: 'x; drop' } })).toThrow()
     const running = scripted([{ stdout: 'running|||0|0|0|0\n' }])
     expect(await psqlJournal({ exec: running.fake, env: { AGW_EVAL_PG_PASSWORD: 'pw' } }).runCost('r')).toBeNull()
-  })
-})
-
-describe('legacy adapter', () => {
-  test('usage-tracker cost: session rows by job id are exact, IU rows by window make it approximate', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'agw-eval-usage-'))
-    const sessions = [
-      { jobId: 'j1', tool: 'review:angle', costUsd: 0.1 },
-      { jobId: 'j1', tool: 'review:synthesis', costUsd: 0.01 },
-      { jobId: 'j2', tool: 'review:angle', costUsd: 5 },
-    ]
-    const iu = [
-      { ts: '2026-10-28T01:00:30.000Z', tool: 'review:adversary', cost_usd: 0.02 },
-      { ts: '2026-10-28T02:00:00.000Z', tool: 'review:adversary', cost_usd: 9 },
-      { ts: '2026-10-28T01:00:40.000Z', tool: 'prose:lint', cost_usd: 9 },
-    ]
-    writeFileSync(join(dir, 'agent-gateway-sessions.jsonl'), `${sessions.map((r) => JSON.stringify(r)).join('\n')}\n`)
-    writeFileSync(join(dir, 'agent-gateway-iu.jsonl'), `${iu.map((r) => JSON.stringify(r)).join('\n')}\nnot json\n`)
-    const cost = usageTrackerCost(dir)
-    const window = { startMs: Date.parse('2026-10-28T01:00:00Z'), endMs: Date.parse('2026-10-28T01:01:00Z') }
-    const j1 = await cost.jobCost({ jobId: 'j1', tool: 'review', ...window })
-    expect(j1.costUsd).toBeCloseTo(0.13)
-    expect(j1.exact).toBe(false)
-    const j2 = await cost.jobCost({ jobId: 'j2', tool: 'review', startMs: 0, endMs: 1 })
-    expect(j2).toEqual({ costUsd: 5, exact: true })
-    expect(await cost.jobCost({ jobId: 'none', tool: 'check', startMs: 0, endMs: 1 })).toEqual({
-      costUsd: null,
-      exact: false,
-    })
-  })
-
-  test('review submits with --no-wait, waits, and reads the job window', async () => {
-    const { fake, calls } = scripted([
-      { stdout: JSON.stringify({ jobId: 'j9' }) },
-      { stdout: JSON.stringify(reviewOutput()) },
-      { stdout: JSON.stringify({ id: 'j9', status: 'done', startedAt: 1000, finishedAt: 61_000, elapsedMs: 60_000 }) },
-    ])
-    let asked: unknown
-    const cost = {
-      jobCost: async (job: unknown) => {
-        asked = job
-        return { costUsd: 0.03, exact: true }
-      },
-    }
-    const run = await legacyReviewRunner({ exec: fake, cost }).review({ cwd: '/tmp/clone', depth: 'deep' })
-    expect(run).toMatchObject({ runId: 'j9', spend: { costUsd: 0.03, wallMs: 60_000 } })
-    expect(calls[0]?.args).toEqual([
-      'review',
-      '--repo',
-      '/tmp/clone',
-      '--scope',
-      'uncommitted',
-      '--no-wait',
-      '--json',
-      '--caller',
-      'eval',
-    ])
-    expect(calls[1]?.args).toEqual(['wait', 'j9', '--json', '--quiet'])
-    expect(asked).toEqual({ jobId: 'j9', tool: 'review', startMs: 1000, endMs: 61_000 })
   })
 })
 

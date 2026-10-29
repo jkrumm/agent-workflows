@@ -35,9 +35,10 @@ not Requesty.
 - **No agent, no call.** An empty fleet is a run with an empty `agents` list and no model call.
 - **The push carries the run itself.** The `push` step posts the payload merged with the run that is just ending: its
   output is not in the journal until the run ends, so reading "the newest run" there would push the previous one.
-- **Dispatch jobs stay in agent-gateway.** The collector reads its HTTP read-only (`GET /api/jobs`, then
-  `GET /api/jobs/:id` for the params and session of a job that is running, queued or ended within 6 h: the list view
-  carries neither). An agent-gateway that is down or answers an error is a snapshot warning.
+- **No dispatch lane.** Dispatch retired with agent-gateway (owner, 2026-10-29): the collector reads herdr, Claude's
+  registry, transcripts and the human queue only. `summary.dispatch` stays on the wire as a constant `0` because Argo's
+  ingest still requires the field; it goes when Argo drops it. The `agent-gateway:review` and `agent-gateway:dispatch`
+  quota lanes left the pick list for the same reason (only gateway workers used them).
 - **Git status is read-only except one fetch.** As in legacy each project's checkout is `git fetch --quiet --prune`d (5 s
   cap, no credential prompt) so ahead/behind is current; the status itself needs the branch, `status --porcelain`,
   `rev-list --left-right --count HEAD...@{upstream}` and the newest commit beyond the main branch (else on it).
@@ -88,11 +89,9 @@ not Requesty.
 | `AGW_HERDR_BIN`, `AGW_CLAUDE_BIN` | `~/.local/bin/<name>`, else on `PATH` | |
 | `AGW_CLAUDE_ACCOUNT_BIN` | `~/.local/bin/claude-account` | legacy `AGENT_GATEWAY_CLAUDE_ACCOUNT_BIN` |
 | `AGW_CLAUDE_LOG_DIR` | `~/.claude/logs` | the `session_env` lines (legacy `AGENT_GATEWAY_CLAUDE_LOG_DIR`) |
-| `AGW_SESSION_ACCOUNTS_DIR` | `~/.local/state/agent-gateway/session-accounts` | the spawn pins agent-gateway writes (legacy `AGENT_GATEWAY_SESSION_ACCOUNTS_DIR`) |
-| `AGW_AGENT_GATEWAY_URL` | `http://localhost:7705` | where the dispatch jobs are read |
 | `XDG_STATE_HOME` | `~/.local/state` | `human-queue/` below it |
 
-The legacy `AGENT_GATEWAY_CLAUDE_USAGE_TIMEOUT_MS` is gone: the `claude-account` calls have a fixed 5 s cap.
+The legacy `AGENT_GATEWAY_CLAUDE_USAGE_TIMEOUT_MS`, `AGENT_GATEWAY_SESSION_ACCOUNTS_DIR` (the spawn pins only agent-gateway's workers wrote; an agent's account now comes from the `session_env` log lines alone) and the dispatch HTTP base are gone: the `claude-account` calls have a fixed 5 s cap.
 
 ## Port
 
