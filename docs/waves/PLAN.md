@@ -212,6 +212,8 @@ Workers: Sonnet/high; Opus/medium for the pipeline's durable stages.
 - [ ] Audio pipeline as a workflow in its own process; an OpenAI-compatible TTS/STT door for Hermes
 - [ ] `podcast` (writers' room, TTS, mastering, publish) and `image` ported
 - [ ] `/podcast`, `/img`, Hermes TTS/STT switched; one episode produced end to end on the new path
+- [ ] The TTS/STT door serves every audio caller, not only Hermes: iris (its own fleet switches it)
+  and argo's `/ai` audio proxy; the contract (endpoints, auth, env names) sent to iris-mother
 **Left behind:**
 
 ## Wave 9 — Usage (P4b)            <!-- status: pending -->
@@ -228,6 +230,12 @@ Workers: Sonnet/high; Haiku for the sweeps.
 - [ ] Global CLAUDE.md, skills and the Makefile MCP registration per concept §10; agw MCP server deleted
 - [ ] Hermes scripts and skills call `agw`; narratives and overview ported as workflows
 - [ ] A sweep shows no skill, doc or script naming an MCP gateway tool
+- [ ] Every runtime caller of the old gateways moved (inventory 2026-10-29): iris (`agw` jobs
+  `triage`/`decide`, audio STT/TTS; its fleet does the switch, we port what it lacks), argo audio proxy,
+  hermes-agent scripts (`overview`, `narrative`, `prose`, `/api/usage`) and skills (research, podcast,
+  briefing TTS), dotfiles usage push, `wave-watch.sh` job polling, health checks and Caddy doors,
+  modelpick (`agw routing`, a direct audio-gateway import), homelab Kuma monitors, warden's client
+  (retired: archive or delete), stale `mcp__research-gateway__*` permissions in other repos
 **Left behind:**
 
 ## Wave 11 — Retire and hand over (P6)            <!-- status: pending -->
