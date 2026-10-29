@@ -22,6 +22,9 @@ AGW_FRICTION_REPO=jkrumm/agent-workflows
 # Audio process (packages/audio): the STT language steer the door's transcriptions send when a client sets none (plain
 # value, as audio-gateway sets it). Its IU lanes derive the OpenAI, Gemini and Replicate bases from IU_BASE_URL.
 STT_PROMPT=Die Aufnahme ist auf Deutsch oder Englisch.
+# The podcast's Slack notice goes to this channel via Argo (ARGO_URL, ARGO_API_SECRET above); a constant, as audio-gateway's
+# mini instance set it. Unset = no notice.
+PODCAST_NOTIFY_CHANNEL=media
 # Audiobookshelf, where the podcast's publish stage uploads an episode (audio process).
 ABS_URL=op://vps/audiobookshelf/URL
 ABS_API_KEY=op://vps/audiobookshelf/API_KEY

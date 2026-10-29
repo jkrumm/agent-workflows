@@ -25,7 +25,7 @@ holds their TTS requests to `TTS_CONCURRENCY`, as legacy's `synthConcurrent` did
 | `master` | code | fatal | per-host loudness to −20 LUFS (a multi-speaker unit levels as one `AB` group), gapped concat (380 ms, 160 ms before a ≤ 6-word interjection), one chapter per segment, `loudnorm I=-16:TP=-1.5:LRA=11`, ID3v2.3 with the cover, 44.1 kHz mono MP3 |
 | `publish` | effect | best-effort | Audiobookshelf upload → scan → poll → patch. Never fails the run: `publish {requested, ok, error}`, `abs` null on failure |
 | `notify` | effect | best-effort | the Slack line via Argo, only with `PODCAST_NOTIFY_CHANNEL` set |
-| `brain-note` | effect | best-effort | `Areas/Podcasts/<date> <title>.md` and the regenerated `Podcasts.md`, `git add`/`commit`/`push` in `BRAIN_DIR` under the brain-sync lock |
+| `brain-note` | effect | best-effort | `Areas/Podcasts/<date> <title>.md` and the regenerated `Podcasts.md`, `git add`/`commit`/`push` in `AGW_BRAIN_DIR` under the brain-sync lock |
 | `cost` | code | fatal | this run's spend (its steps and its unit children's) as the journal recorded it |
 
 Output: `{ mp3Path, coverPath, durationSeconds, turns, chapters [{title, startMs}], abs, publish, brainNote,
@@ -95,8 +95,8 @@ One module, `config.ts`, legacy's names and defaults:
 | `PODCAST_MP3_BITRATE`, `PODCAST_GAP_MS`, `PODCAST_SHORT_GAP_MS` | 64, 380, 160 | |
 | `PODCAST_AUTHOR`, `PODCAST_SERIES_DESCRIPTION` | `Hermes`, legacy's text | |
 | `ABS_URL`, `ABS_API_KEY`, `ABS_LIBRARY` | —, —, `Podcasts` | either unset: publish returns `{ok: false, error: "not configured"}` |
-| `BRAIN_DIR` | — | unset: no brain note (logged) |
-| `PODCAST_NOTIFY_CHANNEL`, `ARGO_BASE_URL`, `ARGO_API_SECRET` | — | any unset: no Slack notice |
+| `AGW_BRAIN_DIR` | `~/SourceRoot/brain` | the vault checkout the note is committed in; the same variable and default as the room and the `brain.*` capabilities |
+| `PODCAST_NOTIFY_CHANNEL`, `ARGO_URL`, `ARGO_API_SECRET` | — | any unset: no Slack notice |
 
 Voices and speeds are the room's (`PODCAST_VOICES`, `PODCAST_SPEEDS`, in `ProduceInput.hosts`).
 

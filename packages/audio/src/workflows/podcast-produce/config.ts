@@ -1,5 +1,5 @@
-import { resolve } from 'node:path'
 import { audioRoutes } from '../../routes.ts'
+import { brainDirFromEnv } from '../podcast/config.ts'
 import type { AbsConfig } from './abs.ts'
 import { type NotifyConfig, notifyConfigFromEnv } from './notify.ts'
 
@@ -35,9 +35,9 @@ export interface ProduceConfig {
   seriesDescription: string
   /** Audiobookshelf (`ABS_URL`, `ABS_API_KEY`, `ABS_LIBRARY` "Podcasts"); null when url or key is unset. */
   abs: AbsConfig | null
-  /** The vault checkout the episode note is committed in (`BRAIN_DIR`, absolute); null = no brain note. */
-  brainDir: string | null
-  /** The Slack notice via Argo (`PODCAST_NOTIFY_CHANNEL`, `ARGO_BASE_URL`, `ARGO_API_SECRET`); null = none. */
+  /** The vault checkout the episode note is committed in (`AGW_BRAIN_DIR`, default `~/SourceRoot/brain`, absolute). */
+  brainDir: string
+  /** The Slack notice via Argo (`PODCAST_NOTIFY_CHANNEL`, `ARGO_URL`, `ARGO_API_SECRET`); null = none. */
   notify: NotifyConfig | null
 }
 
@@ -70,7 +70,6 @@ export function ttsRouteFor(value: string, env: Env = process.env): string {
 export function produceConfigFromEnv(env: Env = process.env): ProduceConfig {
   const absUrl = withHttpsScheme((env.ABS_URL ?? '').trim().replace(/\/+$/, ''))
   const absApiKey = (env.ABS_API_KEY ?? '').trim()
-  const brainDir = (env.BRAIN_DIR ?? '').trim().replace(/\/+$/, '')
   return {
     ttsRouteId: ttsRouteFor(env.PODCAST_TTS_MODEL?.trim() || DEFAULT_TTS_ROUTE, env),
     hostStyles: [
@@ -87,7 +86,7 @@ export function produceConfigFromEnv(env: Env = process.env): ProduceConfig {
     author: env.PODCAST_AUTHOR ?? 'Hermes',
     seriesDescription: env.PODCAST_SERIES_DESCRIPTION ?? DEFAULT_SERIES_DESCRIPTION,
     abs: absUrl && absApiKey ? { url: absUrl, apiKey: absApiKey, library: env.ABS_LIBRARY ?? 'Podcasts' } : null,
-    brainDir: brainDir ? resolve(brainDir) : null,
+    brainDir: brainDirFromEnv(env),
     notify: notifyConfigFromEnv(env),
   }
 }

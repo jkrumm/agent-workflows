@@ -1,5 +1,5 @@
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import type { HostValue } from './schema.ts'
 
 // Deployment configuration of the room, from the process env, legacy's variable names where one existed
@@ -40,6 +40,12 @@ function int(env: Env, key: string, fallback: number): number {
   return value
 }
 
+/** The vault checkout every audio workflow reads and writes: `AGW_BRAIN_DIR`, trimmed, default `~/SourceRoot/brain`, absolute. */
+export function brainDirFromEnv(env: Env = process.env): string {
+  const raw = env.AGW_BRAIN_DIR?.trim().replace(/\/+$/, '')
+  return raw ? resolve(raw) : join(homedir(), 'SourceRoot', 'brain')
+}
+
 export function podcastConfigFromEnv(env: Env = process.env): PodcastConfig {
   const names = pair(env, 'PODCAST_HOST_NAMES', 'Jonas,Lena')
   // The Gemini multi-speaker lane's prebuilt voices (owner pick 2026-10-25); the produce stage reads them.
@@ -49,7 +55,7 @@ export function podcastConfigFromEnv(env: Env = process.env): PodcastConfig {
     if (!Number.isFinite(v)) throw new Error(`invalid PODCAST_SPEEDS entry "${raw}"`)
     return Math.min(1.2, Math.max(0.7, v))
   })
-  const brainDir = env.AGW_BRAIN_DIR?.trim() || join(homedir(), 'SourceRoot', 'brain')
+  const brainDir = brainDirFromEnv(env)
   return {
     hosts: [
       { id: 'A', name: names[0], voice: voices[0], speed: speeds[0] },

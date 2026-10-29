@@ -290,10 +290,6 @@ export async function fileBrainNote(params: {
 }): Promise<BrainNoteResult | null> {
   const { input, config, key } = params
   if (!input.request.brainNote) return null
-  if (!config.brainDir) {
-    log.warn('brain note skipped: BRAIN_DIR is not set', { episode: input.episode.id })
-    return null
-  }
   const profile = {
     ...input.profile,
     durationSeconds: params.durationSeconds,

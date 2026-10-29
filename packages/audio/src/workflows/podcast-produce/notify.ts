@@ -19,14 +19,11 @@ export interface NotifyConfig {
 
 /**
  * The notify config from the environment, or null when the announcement is off: `PODCAST_NOTIFY_CHANNEL` unset, or no
- * Argo base (`ARGO_BASE_URL`, else `USAGE_HTTP_URL` minus its `/usage/records` suffix) or `ARGO_API_SECRET`.
+ * Argo base (`ARGO_URL`, the platform's name for it) or `ARGO_API_SECRET`.
  */
 export function notifyConfigFromEnv(env: Record<string, string | undefined>): NotifyConfig | null {
   const channel = (env.PODCAST_NOTIFY_CHANNEL ?? '').trim()
-  const argoBaseUrl = (env.ARGO_BASE_URL ?? (env.USAGE_HTTP_URL ?? '').replace(/\/usage\/records\/?$/, '')).replace(
-    /\/+$/,
-    '',
-  )
+  const argoBaseUrl = (env.ARGO_URL ?? '').trim().replace(/\/+$/, '')
   const argoApiSecret = env.ARGO_API_SECRET ?? ''
   if (!channel || !argoBaseUrl || !argoApiSecret) return null
   return { channel, argoBaseUrl, argoApiSecret }

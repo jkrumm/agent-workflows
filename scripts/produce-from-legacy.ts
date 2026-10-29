@@ -9,7 +9,7 @@
 // script without its metadata fields, the hosts, the metadata, the request's later-stage fields and the profile.
 // Publishing is off unless `--publish`; the brain note (a second note for an episode legacy already filed) is off
 // unless `--brain-note`. `--run` starts the run on an in-process runtime against the journal (`AGW_PG_URL`,
-// `AGW_PG_SCHEMA`), with the audio env of this process (`IU_*`, `PODCAST_*`, `ABS_*`, `BRAIN_DIR`); run it through
+// `AGW_PG_SCHEMA`), with the audio env of this process (`IU_*`, `PODCAST_*`, `ABS_*`, `AGW_BRAIN_DIR`); run it through
 // `secrets-run run --env-file=.env.tpl -- …` on the mini. It spends TTS and image money. Legacy checkout:
 // AGW_LEGACY_AUDIO, default ~/SourceRoot/audio-gateway.
 import { Database } from 'bun:sqlite'
