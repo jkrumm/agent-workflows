@@ -58,6 +58,19 @@ describe('resolveRoute', () => {
     expect(resolveRoute('review.angle', {}).model).toBe(entry('review.angle').model)
   })
 
+  test('the deep angle route is its own seat: Sonnet, priced, overridden independently of review.angle', () => {
+    const deep = resolveRoute('review.angle.deep', {})
+    expect(deep).toMatchObject({ wire: 'opencode', model: 'claude-sonnet-5-5-eu' })
+    expect(deep.rate).toEqual({ inputPerM: 2, outputPerM: 10, cacheReadPerM: 0.2, cacheWritePerM: 2.5 })
+    expect(deep.fallback?.wire).toBe('opencode')
+    const e = env({ 'review.angle.deep': { model: 'some-model' } })
+    expect(resolveRoute('review.angle.deep', e)).toMatchObject({ model: 'some-model' })
+    expect(resolveRoute('review.angle.deep', e).rate).toBeUndefined() // a new model drops the old rate
+    expect(resolveRoute('review.angle', e).model).toBe(entry('review.angle').model)
+    expect(routeFingerprint('review.angle.deep', e)).not.toBe(routeFingerprint('review.angle.deep', {}))
+    expect(routeFingerprint('review.angle', e)).toBe(routeFingerprint('review.angle', {}))
+  })
+
   test('null clears an optional field', () => {
     const e = env({ 'cheap.classify': { maxOutputTokens: null } })
     expect(resolveRoute('cheap.classify', e).maxOutputTokens).toBeUndefined()
