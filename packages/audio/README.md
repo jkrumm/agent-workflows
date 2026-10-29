@@ -129,3 +129,84 @@ from its duration.
 `scripts/eval-legacy/audio.ts` runs the speech and transcriptions suites against both arms and scores them per
 `docs/research/2026-10-29-wave8-ports.md` §speech and §transcriptions. N's cost is read from the run record named by
 the response header `agw-run-id`, so the process must send it on both door routes.
+
+## Process
+
+The audio pipeline runs in a platform process of its own beside the host (concept §8): `src/main.ts`, LaunchAgent
+`com.jkrumm.agent-workflows-audio`, `127.0.0.1:7792` (`AGW_AUDIO_PORT`), started by `scripts/launch.sh audio` from the
+same release as the host (deploy and rollback: `packages/host/README.md` §Deploy).
+
+It boots through the host's `bootProcess` (`packages/host/src/boot.ts`), the code the host itself boots with, from a
+`ProcessDefinition` (`src/process/index.ts`): the same journal and platform middleware (run record, fingerprint,
+telemetry as `service.name` `agw-audio`, the Argo outbox), the runaway cap and the wallet gate, the same bearer
+(`AGW_API_SECRET`) on the API, the same OpenAPI with `x-cli`, `/health` with the version. What differs:
+
+| | host | audio |
+|-|-|-|
+| Workflows | `packages/host/src/workflows/*/module.ts` | `src/workflows/*/module.ts` (`discoverWorkflowModules`) plus the two door workflows |
+| Capabilities over HTTP | yes (`agw llm title …`) | no: the CLI refuses a command two processes declare; workflows still call every capability in-process |
+| State dir (tool gate, OpenCode) | `~/.local/state/agent-workflows` | `~/.local/state/agent-workflows-audio` (`AGW_AUDIO_STATE_DIR`): two tool gates never share one `gate.json` |
+| OpenCode agent host | lazy | lazy: none of its workflows has an agent step, so `opencode` is never spawned |
+| Jobs | retrospective, eval and drift, friction | none |
+
+`agw` reaches it through `AGW_PROCESSES=audio=http://127.0.0.1:7792` in `~/.config/agw/env` (written by `make deploy`;
+`packages/cli/README.md` §Platform processes).
+
+### `agw audio ping`
+
+`src/workflows/ping/`: one code step, no model, no cost. `make verify` runs it to prove the process records a run end to
+end through `agw`.
+
+### Two processes, one journal
+
+Recovery, leases, post-hook redelivery and drift sampling only ever touch runs of the workflows a runtime was given
+(`Journal.claimable`, `postHooksPending`, `driftCandidates` filter by them), so no runtime change was needed.
+`packages/runtime/test/processes.test.ts` proves it with two runtimes on one schema and disjoint workflow sets: with
+one process down, its running run (mid-step), its pending run and its run with an undelivered post hook are left
+exactly as they were by the other one's recovery passes (no claim, no drive, no hook), and the restarted process
+finishes all three. The Argo outbox claims its rows (`for update skip locked`, a claim token), so processes flushing one
+journal post each row once (middleware `outbox.test.ts`, two flushers racing). The friction job and the retrospective
+run in the host only.
+
+## The door on the process
+
+`POST /v1/audio/speech` and `POST /v1/audio/transcriptions`, and every path ending in `/audio/speech` or
+`/audio/transcriptions` (audio-gateway matched by suffix, so OpenAI clients with either base form work). The handlers
+are `createSpeechHandler(deps)` and `createTranscriptionsHandler(deps)` of `src/door/`; the process mounts them
+(`src/process/door.ts`) and gives them the usage port, the request id and the caller. `GET /v1/models` is not served:
+Hermes' stock OpenAI TTS and STT clients never call it.
+
+### Caller auth
+
+The process binds 127.0.0.1, so a caller is a process on this machine. It presents `Authorization: Bearer <token>`
+from the caller-token file `~/.agent-workflows/data/door-tokens` (`AGW_DOOR_TOKENS`): `name=token` lines, a regular
+file of the user at mode 0600, names `[a-z][a-z0-9-]*`, tokens at least 32 characters and distinct. `make deploy`
+creates it with one `hermes` token if it is missing and never touches an existing one. The platform's API secret is
+accepted too, as the caller `agw` (`make verify`, the eval harness): it already grants the whole API. A missing,
+wider-mode or malformed file refuses the start, naming the file and the line, never a token. Every known bearer is
+compared hashed and in constant time. Rotation: edit the file, restart the LaunchAgent.
+
+Decision: a local token file, not a 1Password item. A new ref before its item exists breaks every reseal of the
+headless cache, and a token that only grants a loopback port on this machine gains nothing from a vault.
+
+Without a valid bearer: 401 `{"error":{"message":"unauthorized","type":"invalid_request_error"}}`, audio-gateway's
+answer. While the runtime is not open: 503 `proxy_error`.
+
+### One run per request
+
+Every door request is a run of its own, `door.speech` or `door.transcriptions` (concept N6, the pattern of the host's
+`capability-runs.ts`), purpose from `x-agw-purpose` (default `prod`), `traceparent` honoured, `Idempotency-Key` ignored
+(it would fold two real requests into one record). Its input is the authenticated caller (the token's name), the
+`x-audio-source` label when sent, the path and the request id; its output the status, route, served and requested
+model, cost (only when every call is priced) and the call count. The step's usage is one `addUsage` per billed
+upstream call, failed attempts at 0, so the run record carries the cost like any run. The run id goes back in
+`agw-run-id`.
+
+The run observes, it never gates:
+
+- It is started beside the handler, not in front of it; the response waits for the run id at most 2 s, so a slow
+  journal costs at most the header, never the audio. The first byte is never behind a journal write.
+- The handler's events land in an in-memory sink keyed by the request id; the run's one step waits until the
+  `request` summary arrived, or 2 s after the body ended without one (a cut stream, a 400 before any call).
+- A start that fails (a bad purpose header, the journal down) is logged; the request is answered as if nothing happened.
+- A request cut by a restart: the next process resumes its run, finds no sink and fails it as lost; it never hangs.
