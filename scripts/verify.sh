@@ -1,7 +1,10 @@
 #!/bin/zsh
 # agent-workflows verify (`make verify`): exit 0 only if the deployed host is healthy, runs origin/master, and a real
 # `agw smoke ping` (the installed CLI, the real bearer) produced a done run with a trace id and priced usage in the
-# journal, and a direct `agw llm title` call left a done `cap.llm.title` run with priced usage. Prints the run ids.
+# journal, and a direct `agw llm title` call left a done `cap.llm.title` run with priced usage. The audio process must be
+# healthy at the same sha, `agw audio ping` (routed to it by AGW_PROCESSES) must leave a done run, and its door must
+# refuse an unauthenticated request (401) and answer an authenticated one with a bad body with the legacy 400.
+# Prints the run ids.
 
 set -u
 
@@ -9,6 +12,8 @@ ROOT="${AGW_ROOT:-$HOME/.agent-workflows}"
 REPO_DIR="$ROOT/repo"
 SHA_FILE="$ROOT/data/deployed-sha"
 HEALTH_URL="http://127.0.0.1:7791/health"
+AUDIO_URL="http://127.0.0.1:7792"
+API_SECRET_REF="op://mini/agent-workflows/API_SECRET"
 PG_PASSWORD_REF="op://mini/vps-dev/AGENT_WORKFLOWS_DB_PASSWORD"
 SCHEMA="${AGW_PG_SCHEMA:-agw}"
 
@@ -109,4 +114,33 @@ done
 (( ${cap_tokens:-0} > 0 )) || fail "cap.llm.title run $cap_id recorded no input tokens"
 ok "journal: cap.llm.title run $cap_id done, cost $cap_cost, $cap_tokens input tokens"
 
-print "verify: PASS run $run_id, cap run $cap_id"
+# 6. the audio process: the same release, a run recorded through the CLI's process routing, and the door's auth
+audio_health=$(curl -fsS --max-time 5 "$AUDIO_URL/health") || fail "no answer from $AUDIO_URL/health"
+[[ "$(print -r -- "$audio_health" | jq -r '.status + " " + .version')" == "ok $deployed" ]] \
+  || fail "audio /health is not ok at ${deployed[1,12]}: $audio_health"
+ok "audio /health ok (version ${deployed[1,12]})"
+
+agw_json audio ping
+audio_run=$(print -r -- "$out" | jq -r '.runId // empty' 2>/dev/null)
+[[ -n "$audio_run" && "$(print -r -- "$out" | jq -r '.output.pong // empty')" == "true" ]] || fail "agw audio ping did not answer pong: $out"
+audio_status=$(journal "select status from \"$SCHEMA\".runs where id = :'id' and workflow = 'audio.ping'" -v "id=$audio_run") || exit 1
+[[ "$audio_status" == "done" ]] || fail "audio.ping run $audio_run is '${audio_status:-missing}' in $SCHEMA.runs, not done"
+ok "agw audio ping: run $audio_run done"
+
+door_status=$(curl -sS --max-time 10 -o /dev/null -w '%{http_code}' -X POST -H 'content-type: application/json' \
+  --data '{}' "$AUDIO_URL/v1/audio/speech") || fail "no answer from the door"
+[[ "$door_status" == "401" ]] || fail "an unauthenticated door request got $door_status, not 401"
+secret=$(secrets-run read "$API_SECRET_REF" 2>/dev/null)
+[[ -n "$secret" ]] || fail "cannot read $API_SECRET_REF through secrets-run"
+# The bearer goes through curl's config on stdin, never the command line (ps would show it).
+door_body=$(mktemp -t agw-verify) || fail "cannot create a temp file"
+trap 'rm -f "$psql_err" "$agw_err" "$door_body"' EXIT
+door_status=$(print -r -- "header = \"authorization: Bearer $secret\"" | curl -sS --max-time 30 -K - -o "$door_body" \
+  -w '%{http_code}' -X POST -H 'content-type: application/json' -H 'x-agw-purpose: verify' --data '{}' \
+  "$AUDIO_URL/v1/audio/speech") || fail "no answer from the door"
+[[ "$door_status" == "400" ]] || fail "an authenticated door request with a bad body got $door_status, not 400: $(<"$door_body")"
+[[ "$(jq -r '.error.type // empty' "$door_body" 2>/dev/null)" == "invalid_request_error" ]] \
+  || fail "the door's 400 is not the legacy envelope: $(<"$door_body")"
+ok "door: 401 without a caller token, legacy 400 on a bad body"
+
+print "verify: PASS run $run_id, cap run $cap_id, audio run $audio_run"

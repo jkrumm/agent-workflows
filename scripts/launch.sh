@@ -1,13 +1,25 @@
 #!/bin/zsh
-# agent-workflows host launcher: the ProgramArguments of com.jkrumm.agent-workflows-host. Never point launchd at a
-# Homebrew binary directly (macOS BTM silently disallows it); this wrapper is the indirection, and it fails closed
-# (exit 78) unless every ref in .env.tpl resolves. Runs from a release (~/.agent-workflows/releases/<sha>, the one
-# the plist names), never the dev checkout. No secret is ever printed: the export is only counted, refs are named, values never.
+# agent-workflows process launcher: the ProgramArguments of every platform process's LaunchAgent,
+# `launch.sh [host|audio]` (default host: com.jkrumm.agent-workflows-host; audio: com.jkrumm.agent-workflows-audio).
+# Never point launchd at a Homebrew binary directly (macOS BTM silently disallows it); this wrapper is the indirection,
+# and it fails closed (exit 78) per process unless every ref in .env.tpl resolves. Runs from a release
+# (~/.agent-workflows/releases/<sha>, the one the plist names), never the dev checkout. No secret is ever printed: the
+# export is only counted, refs are named, values never.
 
 set -u
 
 DIR="${0:A:h:h}"  # scripts/launch.sh -> repo root
 cd "$DIR" || { print -u2 "agent-workflows-host: cannot cd to $DIR"; exit 78; }
+
+PROCESS="${1:-host}"
+case "$PROCESS" in
+  host) AGW_LAUNCH_ENTRY="packages/host/src/main.ts" ;;
+  audio) AGW_LAUNCH_ENTRY="packages/audio/src/main.ts" ;;
+  *) print -u2 "agent-workflows-host: unknown process '$PROCESS' (host or audio)"; exit 78 ;;
+esac
+[[ -f "$DIR/$AGW_LAUNCH_ENTRY" ]] || { print -u2 "agent-workflows-$PROCESS: $AGW_LAUNCH_ENTRY missing"; exit 78; }
+# Read by the secrets-run child below: the one value that differs between the processes.
+export AGW_LAUNCH_ENTRY
 
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 
@@ -158,5 +170,5 @@ exec "$SECRETS_RUN" run --env-file="$TPL" -- /bin/sh -c '
   OTEL_EXPORTER_OTLP_HEADERS="authorization=$OTEL_EXPORTER_OTLP_AUTHORIZATION"
   export AGW_PG_URL OTEL_EXPORTER_OTLP_HEADERS
   unset AGW_PG_PASSWORD OTEL_EXPORTER_OTLP_AUTHORIZATION
-  exec bun packages/host/src/main.ts
+  exec bun "$AGW_LAUNCH_ENTRY"
 ' sh "${KEYS[@]}"

@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.jkrumm.agent-workflows-audio</string>
+
+  <!-- The audio process (concept §8), from the same release as the host. Never a Homebrew binary directly (macOS BTM). -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/zsh</string>
+    <string>__RELEASE_DIR__/scripts/launch.sh</string>
+    <string>audio</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>__RELEASE_DIR__</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>__HOME__/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>HOME</key>
+    <string>__HOME__</string>
+    <key>AGW_MACHINE</key>
+    <string>mini</string>
+    <key>AGW_AUDIO_PORT</key>
+    <string>7792</string>
+    <key>AGW_VERSION</key>
+    <string>__SHA__</string>
+    <!-- The door's caller tokens (name=token, mode 0600); make deploy creates the file with a hermes token. -->
+    <key>AGW_DOOR_TOKENS</key>
+    <string>__DATA_DIR__/door-tokens</string>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <!-- A fail-closed launch (exit 78) or a refused start retries at this pace, not in a tight loop. -->
+  <key>ThrottleInterval</key>
+  <integer>30</integer>
+  <!-- SIGTERM shutdown (runtime close, telemetry flush) must finish before SIGKILL; the process's own backstop is 45 s. -->
+  <key>ExitTimeOut</key>
+  <integer>120</integer>
+
+  <key>StandardOutPath</key>
+  <string>__HOME__/Library/Logs/agent-workflows-audio.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>__HOME__/Library/Logs/agent-workflows-audio.err.log</string>
+</dict>
+</plist>
