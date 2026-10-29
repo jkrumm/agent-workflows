@@ -1,117 +1,90 @@
-# Lead handoff — Wave 8 (audio, image, podcast; P4a): CLOSE-OUT
+# Lead handoff — Wave 9 (usage; P4b): CLOSE-OUT
 
-Leads: `agent-workflows-w1`, three occupants (rotation 1 at `2e513fc`, rotation 2 at `f25d98b`, rotation 3 closed the
-wave 2026-10-29 ~15:20 UTC+1). Briefs and review notes: `~/.local/state/agent-workflows/briefs/w8/` on the mini (not in
-git); `_common.md` carries "never `/review` or `agw review`", the parity-only direction and, since ~14:00, **no EU route
-preference** (owner, standing). Rules and results: `docs/research/2026-10-29-wave8-ports.md`.
+Lead: `agent-workflows-w1`, one occupant, closed the wave 2026-10-29 ~16:45 UTC+1. Briefs and review notes:
+`~/.local/state/agent-workflows/briefs/w9/` on the mini (not in git); `_common.md` carries the Wave 8 rules plus "port the
+env by name", "check JSON shapes against a real run" and live criteria for best-effort steps.
 
-**Final state.** agent-workflows release `927dc85` on host + audio (team key in `~/.config/agw/iu.env`; deploys verified
-on the personal key), `make verify` PASS. agent-gateway `fe14b53` deployed. dotfiles `28d9389`, hermes-agent `cd0a849`
-on master. Main checkout clean on master.
+**Final state.** agent-workflows release `f84fa7a` on host + audio (team key in `~/.config/agw/iu.env`), `make verify`
+PASS. usage-tracker `9eb35cc` (checkout = live LaunchAgent), hermes-agent `6538876`, dotfiles-private `2ecbe01` (the
+bridge commits reverted, files byte-identical to `6eb27ee`). argo and vps unchanged on master. Main checkout clean.
 
 ## Per-step verdict
 
 |Step|Verdict|Evidence|
 |-|-|-|
-|Registration by directory; load-scaled test timeout|**done**|#50, #47 (rotation 1)|
-|CONTEXT7_API_KEY move|**done, live**|release `eb34895`; research run `01a186c9-29bb-…` cites context7 via `web_docs`|
-|Audio process + OpenAI-compatible TTS/STT door|**done, live**|#53, #48, #51, #54 (pricing from the route table); speech 6/6, STT 4/4 rules PASS (release `ddbf492`); verifier: door 200 `audio/mpeg` as caller hermes (`01a187fd-b9d9-…`, `door.speech` done), 401 without token|
-|`image` ported, `/img` switched|**done, live**|#49, rule run 2 PASS 4/4; dotfiles `88f5397`; live `imgcli gen` `01a186df-33c8-…`, `--private` `01a186df-4c96-…`. Icon build stays on image-gateway by design|
-|`podcast` ported (room + `podcast.produce`)|**done, live**|#52, #55; rules 1 (lint 20/20) and 2 (segmentation 20/20) in their PRs. Episode 1 `01a1876d-0dc1-…` (release `53496a1`) FAILED rule 3 only: no brain note (the audio process read `BRAIN_DIR`, never set); 4–8 PASS incl. durability (audio process restarted 25 s after `script`, completed steps 1 attempt, 11 in-flight steps re-ran once). Fix #57 (`AGW_BRAIN_DIR` + default; Slack notice on `ARGO_URL`, `PODCAST_NOTIFY_CHANNEL=media`, which episode 1 also skipped). Episode-2 rule pre-registered (`f5843ff`) before the run; episode 2 `01a187ad-eed1-…` PASS 3–7 (−17.2 LUFS, ratio 0.05, lint 2.31/10, $0.107/min, brain note `4db60eb` on vault origin, Slack `sent: true`); `cf9b236`|
-|`/podcast` switched|**done, live**|dotfiles `28d9389` (skill on `agw podcast` / `run wait` / `podcast-publish`; live by its documented command: `01a187c4-35c2-…` published, brain note pushed, $0.642). Hermes `cd0a849` (curl to :7719 → `agw` via terminal; live through Hermes itself: `01a187ca-a832-…` purpose prod, published, 3:38, $0.66, every field Hermes reported matches the run JSON). The lead caught both skills reading fields at the top level; the real shape is `output.*`, and the top-level `cost` is the parent run only|
-|Hermes TTS/STT switched|**done, live**|hermes-agent `accd198` + `73cd54b`; proofs mp3 `01a1873c-2068-…`, pcm `01a1873c-24ec-…`, briefing lane `01a1873b-d510-…`, STT `01a1873c-2a8d-…`|
-|Door serves iris; contract to iris-mother|**done**|iris caller token (door-tokens `iris=`), contract sent ~11:50 (rotation 2). argo moved to Wave 9 (mother)|
-|`triage` ported, `decide` callable by iris|**done, live**|#56. triage on Haiku 5.5 (Bedrock); decide moved `pplx-decider-v1-27b` (Requesty hop, header-probed) → `decision-1-eu` (header "GDPR Sink Sweden Decisions API"). Cancel tested (fake slow provider, HTTP + `agw run cancel`); caller via `x-agw-purpose: iris`; `usage` in legacy names (`costUsd`). Live as iris: triage `01a18796-702f-…` $0.0002, decide `01a18796-7af5-…`. Contract sent to iris-mother (rd say, ~13:20). iris live since: 7 `cap.triage` + 11 `cap.decide` runs with purpose `iris`|
-|Review OCR off by default (owner directive)|**done, live**|#58: `ocrSwitchOn` true only for `AGW_REVIEW_OCR=1`; `runOcr` re-checks the live env (r1: a stale journal or a resumed child could still run it). Live: review `01a187f9-23fd-…` ($0.045) plan `"ocr": "skipped: AGW_REVIEW_OCR=0"` at 105 changed lines, zero `review.ocr` runs after the deploy|
-|agent-gateway review never on Max (a)|**done, live**|`53d7bcd`: review keys `fallback: null`, a `max` override refused (`NEVER_MAX_TOOLS`); the scope-mode `claudeSafeRoute` path (a checkout with its own opencode config → Sonnet on Max) is now refused up front. `/api/routing`: all 7 review keys `iu`, fallback null. agw review confirmed Max-free (every wire IU, `OPENCODE_DISABLE_CLAUDE_CODE=1`, no `claude -p`)|
-|agent-gateway review refuses (b)|**done, live**|`fe14b53`, after iris switched (`e2b9ac3`) and with no agent-gateway review job after 07:29 today. `POST /api/jobs {tool: review}` → 400 "review moved to agent-workflows: run `agw review …`", job count 43 → 43; `agw-legacy review` prints the same|
+|Usage projection into Argo|**done, live (verified, not rebuilt)**|The outbox already existed. Journal vs Argo for `source='agent-workflows'`, before the backfill: tokens identical in every bucket (input 14,932,692 / output 3,477,484 / reasoning 15,585,387 / cache read 167,894,423), cost $47.0479 vs $47.0478, 129 unpriced on both sides, 0 quarantined; `iu_key` split matches (athena-team $45.788, personal $1.260). After the backfill: $60.8723 vs $60.8722, 7 unpriced on both|
+|Wave 8 leftovers: runtime CI flakes, fan tabs|**done**|#59: the lease-grace test compares on Postgres' clock from `attempt_started_at`, with no slack (mutation proof: grace 0 → red). The toolPre tests and `agent.test.ts:43` wait on a new `FakeSession.attached` promise (80/80 under 4× parallel load). Four Wave 8 fan tabs closed by hand after a clean+pushed check; `rd reap` would also have messaged an IuRoot tab that isn't ours. The `w8-audio-price-r1` worktree was removed: its r2 change is on master under another sha|
+|Route table without region pinning (+ Requesty hops)|**done, live**|#62. No `-eu` id left in `packages/routes/src/table` (guard test over every route). Haiku/Sonnet → `claude-haiku-5-5` / `claude-sonnet-5-5` (the `-eu` ids are gone from IU's `/models`); `decide` → `decision-1` (header "Global Sink Sweden Decisions API"). Requesty hops off: `review.router`, `cheap.classify`, `review.ocr` → Haiku 5.5 (fallback Terra); `review.adversary` → GPT-6.1 Terra medium (keeps a cross-family critic; fallback Haiku, 32K output). Provider header = `x-middleware-forwarded-server`; probe table in #62's body. Long-prompt tier as data (`Rate.longPrompt`: Haiku 5× over 100K per the Anthropic pricing page, Terra 2×/1.5× over 272K); a rate without a tier is flat at any size. OpenCode leg chosen by model family only (r1 blocker: a shared id would have moved every OpenCode Haiku agent onto the chat provider). Live after deploy: classify `bedrock/eu.anthropic.claude-haiku-5-5` $0.0000387; decide `microsoft-decision-1` $0.0000013; review `01a18845-84cd-…` (route Haiku, adversary `openai.gpt-6.1-terra`, angle + synthesis Haiku, all priced, $0.0076). `make verify` PASS ×3 (`3dcfc84`, `f84fa7a`)|
+|Usage rows correct|**done, live**|Unpriced rows: the cause was `OpenCodeHost.usage()` voiding a whole step when one message passed 100K, even with an OpenCode-reported cost (115 review steps + 9 research steps). Fixed in #62, then `scripts/backfill-step-cost.ts --all-models --commit` priced 123 steps in 36 runs ($13.56; per call from the live OpenCode sessions) and re-queued 123 Argo rows. 3 steps with no per-call split stay null (estimates are opt-in). Reasoning: counted once on every wire, checked on one real step per wire against its Argo row (opencode 36745/22305 → 14440/22305; iu-openai 8786/4155 → 4631/4155; iu-anthropic 258/0 → 258/0). Caller: #60 (runs `caller`/`project`/`workspace`, migration 0011, expand only, children inherit). Argo `project` = project ?? caller, `raw.caller`. Live rows: `claude-code`/`agent-workflows`/private, `claude-code`/`prometheus-scripts`/work, `iris`/`iris` (iris #42 sends `x-agw-caller`), `host`/`host`. Hermes: podcast skill sets `AGW_CALLER=hermes` (hermes-agent `6538876`; Hermes' terminal has no env marker)|
+|argo `/ai` audio proxy on the door|**dropped (owner direction mid-wave)**|Owner: no bridge, argo gets no audio integration; its `/ai` audio routes and dashboard audio calls are deleted when audio-gateway retires (Wave 11). Unwound with no half state: argo PR #206 closed unmerged (branch and worktree deleted), vps branch deleted, dotfiles-private grant + serve row reverted (`dcd5b1d`, `2ecbe01`; never pushed to the tailnet, never applied), the `argo=` door token removed, owner requests `20261029T153628-6456` (1Password) and `20261029T153856-27524` (ACL push) withdrawn, door-only listener reverted (#63 reverts #61; nothing listens on :7793, `f84fa7a` verified). No Caddy row was ever added|
+|usage-tracker collectors removed; one week reconciled|**partly done**|usage-tracker #14: the `research-gateway` collector removed (Argo already holds all 2,912 of its local rows, plus 3,588 the local DB lacks; source silent since 10-28 15:30Z). Kept, with evidence (`docs/reconciliation/2026-10-29-agent-workflows.md` in usage-tracker): `agent-gateway-opencode` (live: narrative, an excalidraw-diagram caller, dispatch) and `agent-gateway-iu` (live: legacy triage/narrative until Wave 10's callers move), `agent-gateway-sessions` (feeds lane attribution, out of scope). **One week of overlap does not exist yet:** platform rows start 2026-10-27 23:20Z, so the reconciliation covers about two days (review overlap ~21 h). `make health` green after the trim|
 
 ## Reviews
 
-All on Max (`/code-review high`, the lead): no gateway `/review`, no `agw review` by the fleet. Rotation 3: #56 r1 (no
-correctness bugs; destination bound and surrogate-safe cut fixed; flat output, decide move, purpose attribution
-accepted), #58 r1 (live-env check in `runOcr`, fixed in r2). #57, agent-gateway (a) and (b), and the two `/podcast`
-switches: lead diff read only (≤ 40-line config/routing/skill changes, no new interface; field paths checked against a
-real run). Rotations 1–2: 8 rounds (#49 ×2, #52 ×2, #53 ×3, #54 ×2, #55 ×2, #48, #50, #51).
+All on Max (`/code-review high` in detached worktrees, "never check out" in the args; no fork touched the main checkout).
+- argo #206 r1 (security): bearer replayed on redirect, the whole audio process (host API, `/health`) published by the
+  serve row, door 401/connection errors passed through, the cache path blocked by config. Fixed in r1, then dropped by
+  the owner direction.
+- #60 r1: the `AGW_API_CALLERS` allowlist was never wired in boot (dead code; removed, door tokens stay door-only and
+  are tested as such); workspace and project from the common git dir; walk-up stops at `$HOME`; one source for the
+  caller pattern. Accepted as contract (in `packages/host/README.md`): the API-secret holder may self-declare a
+  sub-caller; an idempotent replay keeps the first attribution; project falls back to the caller.
+- #62 r1: the provider blocker; one tier rule; adversary fallback ceiling; backfill hardened (per-run transactions,
+  `argo_error` rows untouched, estimates opt-in, throwaway-schema test).
+- #59, #61, #63, usage-tracker #14, hermes-agent `6538876`: lead diff read only (test-only, a 60-line listener whose
+  security reasoning came from the #206 review, revert, deletion, a 3-line skill prefix).
 
 ## Gate
 
-`make check` green at every merge (train). CI green on every merged head: #56 `7fcaf67` (attempt 3: two untouched-test
-flakes, below), #57 `c657fdd`, #58 `04f88f6`; master head `927dc85` green. Docs-only `ddbf695` red on the same flake.
+`make check` green at every merge (train). CI green on every merged head: #59 `1b908fc`, #61 `435995a`, #60, #62
+`fc69dae`, #63 `9ff400c`. usage-tracker #14: no CI configured, train `make check` 295 pass.
 
-## Live proof (`@verifier`, release `927dc85`): 10/10 PASS
+## Live proof
 
-Health + sha = origin/master; triage `01a187fd-8a33-…` (span pair in ClickStack, Argo synced); decide `01a187fd-9259-…`
-(`microsoft-decision-1`); iris attribution rows; audio door (hermes token 200, no token 401); three podcast runs done,
-published, brain notes on vault origin, Slack sent; OCR skipped; callers switched (both podcast skills, Hermes TTS/STT
-base_url, `imgcli` on `agw image`); agent-gateway review routes IU with no fallback; Argo sync + spans for the triage run.
+No `@verifier` this wave: every step's proof is a live query or call above, run by the lead (journal + Argo `/query`,
+code-path probes after deploy, `make verify` with the door checks).
 
 ## Spend
 
 |Key / account|Purpose|What|USD|
 |-|-|-|-|
-|athena-team (IU)|eval|episodes 1 + 2 (rule)|3.65|
-|athena-team (IU)|build / prod|`/podcast` proofs: dotfiles $0.642, Hermes $0.656|1.30|
-|athena-team (IU)|build / verify|triage worker 2 live calls, my iris probes + 2 decision header probes, review proof $0.045, verifier 3 calls|≈ 0.05|
-|athena-team (IU)|eval / build|rotation 2: image, speech, STT rules, switch proofs|≈ 0.55|
-|personal (IU)|verify|`make verify` ×7 over the wave, CONTEXT7 proof|≈ 0.02|
-|legacy arms|eval|rotation 2: image-gateway, audio-gateway (their own keys)|≈ 0.55|
+|athena-team (IU)|build|classify, decide, one review route proof|0.0077|
+|athena-team (IU)|verify|`make verify` ×2 after the deploys|0.0001|
+|athena-team (IU)|build|workers' direct header probes (curl, not journaled; one call per candidate)|< 0.01 (est.)|
 
-Episodes by model (4 runs, $4.95): GPT-6.1 Sol (writers' room) $3.78, Gemini 3.8 Flash TTS $0.54, Gemini 3.8 Flash
-(Vertex) $0.35, DeepSeek v4.1 Flash $0.23, gpt-image-2.5 (cover) $0.05. ElevenLabs: none (legacy's podcast synth is
-Gemini too; the dotfiles skill's "ElevenLabs v3" was stale). Wave total ≈ $6.1 team key, ≈ $0.02 personal.
+By model (journaled): Haiku 5.5 $0.0057, GPT-6.1 Terra $0.0021, decision-1 ≈ $0. The backfill re-priced $13.56 of past
+spend; that is a correction, not new spend. Max: lead, five workers, four Max reviews.
 
 ## Left behind
 
-- **Review OCR: owner-gated re-enable.** Off unless `AGW_REVIEW_OCR=1` (#58); agent-gateway's `.env` keeps
-  `AGENT_GATEWAY_REVIEW_OCR=0`.
-- **Judge calibration shift:** `decide` moved to `decision-1-eu`; it is also the judge for the research, otel and brain
-  scorers and the eval `agwJudge`, so their verdicts and baselines shift. No re-tuning (parity only).
-- **Requesty hops still live (Wave 9 route sweep, with no EU preference):** `review.router`, `review.adversary`,
-  `review.ocr` and `cheap.classify` on `deepseek-v4.1-flash`; the EU-pinned ids get re-pointed in the same sweep.
-- **Caller identity on the host** is `x-agw-purpose` only (iris = purpose `iris`, outside the prod follow-up/drift
-  samples); a per-caller bearer → caller column is a host change not built.
-- **agent-gateway:** the eval harness's legacy review arm is now refused at submit (never run; P6 deletes it); its
-  refusal message lacks the `<tool> refused:` prefix the other refusals carry.
-- **CI flakes in untouched tests** (both cost a rerun): `runtime/test/review.test.ts` lease grace (947 < 950 ms, a
-  Postgres-vs-`Date.now()` clock comparison with 50 ms slack) and `runtime/test/middleware.test.ts` "a throwing toolPre"
-  (`s.sleep(30)` as synchronisation, red on CI twice).
-- **Hermes podcast behaviour:** it does not reply right after submit and runs its own `agw run wait` loop; result correct.
-- **Host log:** periodic "opencode session lookup failed; pruning skipped this tick" (`OpenCodeUnreachable` /
-  `OpenCodeHttpError`) and telemetry `eventCountLimit` drops; no run failed from them.
-- **Fan tabs `rd close` refuses** (fan, not wave tabs): `dotfiles-podcast-switch`, `hermes-agent-podcast-switch`,
-  `agent-gateway-review-nomax` (fresh), `agent-workflows-audio-price-r1` (pushed as `w8/audio-price`); `rd reap` takes them.
-- From rotation 2: argo audio proxy → Wave 9; Hermes briefing cron jobs paused since 2026-10-26 (not by us); Hermes
-  `quota-nudge` cron skill missing (not ours); #55 follow-ups (failure notice without the child's message,
-  `produce-from-legacy.ts --run` without the host middleware, ffmpeg not bound to the door signal).
-- `podcast/show-bible.md` names `PODCAST_SHOW_BIBLE` / `PODCAST_VOICE_PATH`, which nothing reads.
-- Not ours (carried): dotfiles architecture-check rows; agent-gateway dispatch-worktree / credential-helper test (red on
-  any host with `credential.helper osxkeychain`).
+- **Requesty hops not moved:** `research.agent`, `otel.agent`, `prose.review` and the podcast route still run
+  `deepseek-v4.1-flash` via Requesty-Global (header-proven). Their Terra fallback covers a balance failure; moving them
+  changes the model their pre-registered port rules ran on (beyond parity). The only non-Requesty DeepSeek id
+  (`deepseek-ai/DeepSeek-V3.2`) answers "model does not exist". Owner/mother call.
+- **One week of overlap** for the remaining collectors: re-run the usage-tracker reconciliation after 2026-11-04;
+  `agent-gateway-opencode`/`-iu` go when their last callers move (Wave 10) or in P6.
+- `agw run status` / the HTTP run view do not return caller/project (psql only; iris told the query).
+- Host-internal runs (retrospective, friction, judge) carry a null caller; Argo shows `host`/`eval` by purpose.
+- `cost_source` is `reported` for rate-priced rows too (Argo cannot tell vendor-reported from rate-priced).
+- Haiku on the chat wire has no cache-write bucket (follow-up in #62).
+- 3 backfill steps without a per-call split stay unpriced (`--estimates` would price them from totals, an upper bound).
+- The review's `project` is the CLI's cwd repo, not the reviewed tree.
+- argo still defaults `AUDIO_GATEWAY_URL` to the VPS audio-gateway (unchanged; deleted in Wave 11 per the owner).
+- usage-tracker `src/pricing.ts` names research-gateway in two comments.
+- Not ours (carried): dotfiles architecture-check rows; agent-gateway dispatch-worktree credential test.
 
 ## Retro notes
 
-Rotation 3:
-- **A pre-registered rule caught a config gap no test could:** both env misses (`BRAIN_DIR`, notify) were silent
-  best-effort skips that every unit test passed. Rule 3 named "brain note pushed", so the episode failed loudly, and the
-  second-episode rule was written before the rerun. Best-effort steps need a live criterion.
-- **Port the env by name:** the produce child kept legacy env names (`BRAIN_DIR`, `ARGO_BASE_URL`) the platform never
-  sets. A port brief should require a sweep of the legacy launch env against the new process env.
-- **`/code-review` forked into the main checkout again** (checked out `origin/w8/triage` detached, under the mother). A
-  detached worktree under `.claude/worktrees/` plus an explicit "never check out" in the args worked for both later
-  reviews. Make that worktree the lead role's default for `/code-review`.
-- **A doc or brief that describes a JSON shape must be checked against a real run:** both `/podcast` skills read fields at
-  the top level; one `jq` against a done run fixed it before any live use.
-- **Owner directives mid-wave landed cleanly as one small change each** (OCR off, review off Max, the refusal), each
-  with a live probe as its proof. A header probe settled "is it Requesty?" in one call.
-- **`rd say` to a busy agent queues**; the mother saw updates late. Status for the mother belongs in short,
-  self-contained messages.
-
-Rotation 2 (from `f25d98b`): eval harnesses need the same first-run doubt as eval sets ("both arms fail alike" is a
-harness signature); ask for the cases file's line count; a worker near its context limit hands over instead of starting a
-design round; reviewer claims about legacy need the rules doc first; workers' live state outside the repo is where
-switches bite; `rd fan` refuses an existing branch (new branch, push `HEAD:<old>` with a lease); `rd say` to a blocked
-tab fails.
-
-Rotation 1 (from `2e513fc`): the forked `/code-review` checked out refs in the main checkout (twice); registration by
-directory paid off at once (four parallel ports, no registry conflicts); design change over patch rounds held (#52);
-workers end turns on background shells; CI is the only Linux gate, so audio workers must run their tests there.
+- **Verify before building paid off at once:** the Argo projection held to $0.0001 and needed no work; the unpriced rows
+  were one host bug, found by a read-only Explore before any brief.
+- **A security review changes the design, not just the diff:** the #206 review found the door's port also served the
+  host API; the fix (a door-only listener) was the right shape, and the owner direction then removed the need. A
+  dropped step unwound cleanly because nothing had been applied live before review: one ordering rule (branches, then
+  review, then live apply) kept "no half state" cheap.
+- **A shared id is a hidden coupling:** moving Haiku onto a chat-wire route would have moved every OpenCode Haiku agent
+  through `providerFor`'s sibling lookup; only a review that reads the untouched caller caught it.
+- **`rd say` to a busy worker queues behind its turn:** a brief amendment sent right after the spawn arrived only after
+  the worker's first report. Put known facts into the brief before `rd fan`, not after.
+- **"One week of overlap" was a calendar criterion the data could not meet yet;** state it as such, never round it.
+- Owner/peer messages mid-wave (iris asking for the migration, the owner's no-bridge direction) were each one small
+  action with a live check; `rd say` with multi-line SQL needs a file, not inline quoting.
