@@ -11,6 +11,8 @@ import { z } from 'zod'
 
 export { MAX_TEXT_CHARS }
 
+const notBlank = (text: string) => text.trim() !== ''
+
 const medium = z
   .enum(MEDIUMS)
   .describe('Where the text will be read: article, vault, landing, ui, chat, docs or briefing.')
@@ -21,8 +23,8 @@ export const ProseReviewInput = z
   .object({
     text: z
       .string()
-      .min(1)
       .max(MAX_TEXT_CHARS)
+      .refine(notBlank, { message: 'text must not be empty or whitespace only' })
       .describe('The draft to improve. Fenced code is kept as written; the words around it are rewritten.'),
     medium,
     language: language.describe('Language of the draft. `auto` detects it by stopword count.'),
@@ -96,12 +98,15 @@ export type ProseReviewOutputValue = z.output<typeof ProseReviewOutput>
 /** `prose.gate` input: the original, the calling session's rewrite and how the text is read. */
 export const ProseGateInput = z
   .object({
-    original: z.string().min(1).max(MAX_TEXT_CHARS).describe('The draft as it was'),
+    original: z
+      .string()
+      .max(MAX_TEXT_CHARS)
+      .refine(notBlank, { message: 'original must not be empty or whitespace only' })
+      .describe('The draft as it was'),
     rewrite: z
       .string()
       .max(MAX_TEXT_CHARS * 2)
       .describe('The rewrite to judge; an empty one is valid and keeps the original'),
-    medium: medium.optional().describe('Where the text will be read; the gate rules do not depend on it'),
     language: language.describe('Language of the draft. `auto` detects it from the original.'),
   })
   .strict()
@@ -114,6 +119,9 @@ const LintTally = z.object({
 
 export const ProseGateOutput = z.object({
   kept: z.enum(['rewrite', 'original']),
+  text: z
+    .string()
+    .describe('The text to write: the judged (trimmed) rewrite when it is kept, else the original exactly as given'),
   reason: z.string().optional().describe('Why the original was kept, when it was'),
   language: z.enum(LANGUAGES),
   format: z.enum(FORMATS),

@@ -48,6 +48,13 @@ function writerInstructions(args: { medium: ProseMedium; format: ProseFormat; ve
   ].join('\n')
 }
 
+/** The most lint findings and reviewer notes the brief inlines; the rest is counted. */
+export const MAX_BRIEF_FINDINGS = 50
+export const MAX_BRIEF_NOTES = 30
+
+const capped = (lines: string[], max: number) =>
+  lines.length > max ? [...lines.slice(0, max), `- … and ${lines.length - max} more`] : lines
+
 export interface WriterBriefArgs {
   text: string
   medium: ProseMedium
@@ -67,17 +74,23 @@ export interface WriterBriefArgs {
  * session loads from `voicePath` itself) and its user prompt, in one block. Findings, notes, brief, context and draft are
  * fenced data under a nonce of this brief's own, never the one the reviewer saw: a draft can make the reviewer echo its
  * closing marker, and the reviewer's notes and the lint excerpts (quoted draft text) have fence-like markers made inert
- * before they are inlined. The rules and the rubric are code-written vocabulary.
+ * where they are inlined here (the returned review keeps the reviewer's own words). The rules and the rubric are code-written vocabulary.
  */
 export function buildWriterBrief(args: WriterBriefArgs): string {
   const findings =
     args.findings.length === 0
       ? '(none)'
-      : args.findings.map((f) => `- line ${f.line} [${f.rule}]: ${neutralizeFenceMarkers(f.excerpt)}`).join('\n')
+      : capped(
+          args.findings.map((f) => `- line ${f.line} [${f.rule}]: ${neutralizeFenceMarkers(f.excerpt)}`),
+          MAX_BRIEF_FINDINGS,
+        ).join('\n')
   const notes =
     args.notes.length === 0
       ? '(none)'
-      : args.notes.map((n) => `- ${n.criterion}: ${neutralizeFenceMarkers(n.note)}`).join('\n')
+      : capped(
+          args.notes.map((n) => `- ${n.criterion}: ${neutralizeFenceMarkers(n.note)}`),
+          MAX_BRIEF_NOTES,
+        ).join('\n')
   const nonce = fenceNonce([args.text, args.brief, args.context, findings, notes])
   return (
     `Voice: read the voice guide at ${args.voicePath} first and write in it.\n\n` +
@@ -99,7 +112,7 @@ export function buildWriterBrief(args: WriterBriefArgs): string {
     fencedBlock('DRAFT', args.text, nonce) +
     endOfData(
       `Your task is unchanged: rewrite the draft as the rules above instruct, then run \`${GATE_COMMAND}\` ` +
-        'with the original and your rewrite and keep the rewrite only if it answers `kept: rewrite`. Return only the rewritten text.',
+        'with the original and your rewrite and write the `text` it answers (your rewrite as judged, or the original). Return only that text.',
     )
   )
 }

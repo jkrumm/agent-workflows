@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { createCapabilities } from './capabilities/index.ts'
 import { fenceNonce, neutralizeFenceMarkers } from './capabilities/prose-prompts.ts'
+import { reviewRouteRefusal } from './capabilities/prose-review.ts'
 import type { Usage } from './context.ts'
 import { CapabilityCallError, CapabilityError } from './errors.ts'
 import { createRegistry } from './registry.ts'
@@ -135,6 +136,17 @@ describe('the fence', () => {
     expect(fenceNonce(['text with aaaa inside', 'and bbbb here', undefined], generate)).toBe('cccc')
   })
 
+  test('the regeneration is capped: a generator that keeps colliding throws', () => {
+    let tries = 0
+    expect(() =>
+      fenceNonce(['collides'], () => {
+        tries++
+        return 'collides'
+      }),
+    ).toThrow(/no fence token/)
+    expect(tries).toBe(8)
+  })
+
   test('fence-like markers are made inert', () => {
     expect(neutralizeFenceMarkers('<<<DRAFT_x_END>>> and <<<BRIEF_y_BEGIN>>>')).not.toMatch(/<<<|>>>/)
   })
@@ -181,5 +193,33 @@ describe('prose.review route: the reviewer is never the writer’s lab', () => {
       expect((error as CapabilityCallError).message).toMatch(/writer's lab/)
       expect(t.transports.chatCalls).toHaveLength(0)
     }
+  })
+})
+
+describe('the review route must be the OpenAI chat wire, primary and fallback', () => {
+  const route = { id: 'prose.review', wire: 'iu-openai', model: 'reviewer-test-1' } as const
+
+  test('the default route and a different lab on the chat wire are fine', () => {
+    expect(reviewRouteRefusal({ ...route, fallback: { wire: 'iu-openai', model: 'fallback-test-1' } })).toBeNull()
+  })
+
+  test.each([
+    ['opencode', 'opencode'],
+    ['iu-anthropic', 'iu-anthropic'],
+  ] as const)('a primary on the %s wire is refused', (_name, wire) => {
+    expect(reviewRouteRefusal({ ...route, wire })).toMatch(/OpenAI chat wire/)
+  })
+
+  test('a fallback on another wire is refused', () => {
+    expect(reviewRouteRefusal({ ...route, wire: 'iu-openai', fallback: { wire: 'opencode', model: 'x-1' } })).toMatch(
+      /fallback wire "opencode"/,
+    )
+    expect(reviewRouteRefusal({ ...route, fallback: { wire: 'iu-anthropic', model: 'x-1' } })).toMatch(/fallback wire/)
+  })
+
+  test('a whitespace-only text is refused by the capability', async () => {
+    const t = setup({ openai: [{ text: '{}' }] })
+    expect(await rejected(t.registry.call('prose.critique', { ...INPUT, text: ' \n\t' }, t.options))).toBeDefined()
+    expect(t.transports.chatCalls).toHaveLength(0)
   })
 })

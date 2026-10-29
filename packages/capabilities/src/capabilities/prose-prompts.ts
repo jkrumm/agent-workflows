@@ -55,16 +55,20 @@ const LANGUAGE_NAME: Record<ProseLanguage, string> = {
 /** A fresh 128-bit delimiter suffix. Never derived from the text it fences: nothing written beforehand can know it. */
 export const randomNonce = () => randomBytes(16).toString('hex')
 
+/** Tries before a fence is given up on: a random 128-bit token already inside a body means the generator is broken. */
+const MAX_NONCE_TRIES = 8
+
 /**
  * A nonce no fenced body contains: the generator runs again while a body holds the candidate, so no text can close a
  * fence early by accident either. Resume determinism comes from the journal (the step's result), not from re-deriving
  * the prompt, so the nonce is random per prompt.
  */
 export function fenceNonce(bodies: (string | undefined)[], generate: () => string = randomNonce): string {
-  for (;;) {
+  for (let attempt = 0; attempt < MAX_NONCE_TRIES; attempt++) {
     const nonce = generate()
     if (!bodies.some((body) => body?.includes(nonce))) return nonce
   }
+  throw new Error(`no fence token free of the fenced text after ${MAX_NONCE_TRIES} tries`)
 }
 
 /** Fence-like markers (`<<<…`, `…>>>`) in text that is quoted into a prompt, made inert: no one can close a fence with it. */
