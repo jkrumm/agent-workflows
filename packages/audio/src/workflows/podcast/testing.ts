@@ -233,13 +233,16 @@ export function fakeBrain(notes: Record<string, string>): BrainPort {
   }
 }
 
-export function fakeResearch(answer = 'A report.', usd: number | null = 0.05): ResearchPort & { queries: string[] } {
+export function fakeResearch(answer = 'A report.'): ResearchPort & { queries: string[]; keys: string[] } {
   const queries: string[] = []
+  const keys: string[] = []
   return {
     queries,
-    async run(query, depth) {
+    keys,
+    async run(query, depth, { key }) {
       queries.push(`${depth}:${query}`)
-      return { ok: true, report: answer, sources: ['https://example.com/a'], usd, runId: `research-${queries.length}` }
+      keys.push(key)
+      return { ok: true, report: answer, sources: ['https://example.com/a'], runId: `research-${queries.length}` }
     },
   }
 }

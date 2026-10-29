@@ -1,4 +1,5 @@
-import type { HistoryPort } from './ports.ts'
+import type { CostPort, EpisodeCost, HistoryPort, Spent } from './ports.ts'
+import { researchKeyPrefix } from './ports.ts'
 import type { HostValue } from './schema.ts'
 import type { EpisodeProfile, EpisodeSummary } from './types.ts'
 
@@ -80,6 +81,47 @@ export function postgresHistory(db: Queryable, schema: string): HistoryPort {
       )
       const script = rows[0]?.output
       return script ? renderTranscriptMarkdown(script) : null
+    },
+  }
+}
+
+type SpentRow = { usd: number | string | null; unpriced: number | string | null; runs?: number | string | null }
+
+const spent = (row: SpentRow | undefined): Spent => ({
+  usd: Number(row?.usd ?? 0),
+  unpriced: Number(row?.unpriced ?? 0),
+})
+
+/**
+ * An episode's cost from the journal's step records (`steps.cost`, `steps.unpriced_calls`): the step rows exist the
+ * moment a step ends, so this needs no run record to be delivered first, and a failed attempt or retry is in them.
+ */
+export function postgresCosts(db: Queryable, schema: string): CostPort {
+  if (!/^[a-z_][a-z0-9_]{0,62}$/.test(schema)) throw new Error(`invalid journal schema name "${schema}"`)
+  const s = `"${schema}"`
+  const sums = 'coalesce(sum(st.cost), 0)::float8 as usd, coalesce(sum(st.unpriced_calls), 0)::int as unpriced'
+  return {
+    async episodeCost(runId): Promise<EpisodeCost> {
+      const prefix = researchKeyPrefix(runId)
+      const [own, research, produce] = await Promise.all([
+        db.query<SpentRow>(`select ${sums} from ${s}.steps st where st.run_id = $1`, [runId]),
+        db.query<SpentRow>(
+          `select ${sums}, count(distinct r.id)::int as runs
+             from ${s}.runs r left join ${s}.steps st on st.run_id = r.id
+            where r.workflow = 'research' and left(r.idempotency_key, length($1)) = $1`,
+          [prefix],
+        ),
+        db.query<SpentRow>(
+          `select ${sums} from ${s}.steps st join ${s}.runs r on r.id = st.run_id
+            where r.root_id = $1 and r.id <> $1`,
+          [runId],
+        ),
+      ])
+      return {
+        script: spent(own.rows[0]),
+        research: { ...spent(research.rows[0]), runs: Number(research.rows[0]?.runs ?? 0) },
+        produce: spent(produce.rows[0]),
+      }
     },
   }
 }

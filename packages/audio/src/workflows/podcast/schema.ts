@@ -120,14 +120,23 @@ export const PodcastOutput = z.object({
   /** With start times when the produce stage ran, else the chapter titles alone. */
   chapters: z.array(Chapter),
   profile: Profile,
+  /**
+   * Read from the journal's step records, never summed in memory: retries, failed attempts and resumed steps are in it.
+   * A call without a price counts as unpriced; above 0, the matching USD is a lower bound.
+   */
   cost: z.object({
-    /** Every model call of the room (research loop included), priced against its route. */
+    /** Every model call of the room (the research loop included). */
     scriptUsd: z.number(),
-    /** Model calls with no price: above 0, `scriptUsd` is a lower bound. */
     scriptUnpriced: z.number(),
-    /** The host's `research` runs this episode started, as their run records priced them. */
+    /** The host `research` runs this episode started, found by their idempotency key. */
     researchUsd: z.number(),
     researchUnpriced: z.number(),
+    researchRuns: z.number(),
+    /** The `podcast.produce` child. */
+    produceUsd: z.number(),
+    produceUnpriced: z.number(),
+    totalUsd: z.number(),
+    unpriced: z.number(),
   }),
   /** `podcast.produce`'s output; null when no produce workflow is wired (the writers' room ran alone). */
   produce: ProduceResult.nullable(),

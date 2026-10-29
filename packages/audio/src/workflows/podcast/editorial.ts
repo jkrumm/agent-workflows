@@ -1,5 +1,6 @@
 import { callAndParse, type Llm } from './llm.ts'
 import { log } from './log.ts'
+import { MAX_LOAD_BEARING_FACTS } from './research.ts'
 import { extractJsonObject, type PodcastHost, planSegmentCount } from './script.ts'
 import type { Dossier, EpisodeBrief, EpisodeSummary, HumorLevel, LoadBearingFact } from './types.ts'
 
@@ -151,6 +152,8 @@ const loadBearingFactList = (value: unknown): LoadBearingFact[] =>
           openQuestion: str(v['open_question'] ?? v['openQuestion'], ''),
         }))
         .filter((f) => f.question.length > 0)
+        // The prompt asks for 0 to 3; each one is a standard-depth research run and a step of its own.
+        .slice(0, MAX_LOAD_BEARING_FACTS)
     : []
 
 const clamp = (value: number, min: number, max: number): number => Math.min(max, Math.max(min, value))

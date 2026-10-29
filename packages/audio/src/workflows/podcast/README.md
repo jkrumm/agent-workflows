@@ -14,8 +14,15 @@ when `sourcePaths` name notes), `sourcePaths` (≤ 20 vault paths), `brief`, `ti
 `brainNote`. Legacy coerced a wrong-typed flag to its default; here it is an `invalid_input`.
 
 Output: `title`, `description`, `chapters` (with start times from the produce result), `profile` (legacy
-`EpisodeProfile`, `durationSeconds` from the produce result), `cost` (`scriptUsd` over every model call of the room,
-`researchUsd` over the `research` runs it started, each with its unpriced count) and `produce` (the child's output).
+`EpisodeProfile`, `durationSeconds` from the produce result), `cost` and `produce` (the child's output).
+
+**Decision: cost has one source, the journal.** The `cost` step reads the step records of this run (`steps.cost`,
+`steps.unpriced_calls`), of the host `research` runs it started (found by their idempotency-key prefix
+`podcast:<runId>:`) and of its `podcast.produce` child (`history.ts` `postgresCosts`). Nothing is summed in memory or
+carried through step outputs, so failed attempts, retries and resumed steps count as the runtime recorded them. A
+call that came back without usage is recorded unpriced (`cost: null`), never priced at $0; every `*Unpriced` count
+above 0 makes the matching USD a lower bound. Output: `scriptUsd`, `researchUsd` (+ `researchRuns`), `produceUsd`,
+`totalUsd`, each with its unpriced count.
 
 ## Steps
 
@@ -26,12 +33,12 @@ fallback (so a resume never retries it), unless the step was aborted (cancel, le
 | Step id | Kind | Failure | What |
 |-|-|-|-|
 | `house` | code | required | show bible (`show-bible.md`), the owner's voice guide (`voice.md` at the vault root), the hosts, the start time; fixed for the run |
-| `source` | code | required | `source` plus the `sourcePaths` notes read through the vault capabilities; > 200k chars is `invalid_input` |
+| `source` | code | required | `source` plus the raw `sourcePaths` notes (`source.ts`); > 200k chars is `invalid_input` |
 | `research` | code | best-effort → empty dossier | tool loop: `brain_search`, `brain_read`, `past_episodes`, `past_transcript`, `research` (quick depth only) |
 | `history` | code | required | the last `PODCAST_HISTORY_DEPTH` (8) episodes of the series, for the editor |
 | `editorial` | code | best-effort → default brief | one call: format, roles, tone, humor, length, asks, load-bearing facts |
-| `research:follow-up` | code | best-effort per fact | the editor's load-bearing facts at standard depth; answered open questions dropped |
-| `outline` | code | required | one call; unrequested devices pruned, targets normalised, asks assigned; capped at 9 segments |
+| `research:fact:0..2` | code | best-effort | one step per load-bearing fact the editor named (at most 3), standard depth; answered open questions dropped |
+| `outline` | code | required | one call; unrequested devices pruned, targets normalised, asks assigned; capped at 9 segments before targets and asks |
 | `segment:0`..`segment:8` | code | required | three at a time; the agentic writer, the single-shot call as its fallback |
 | `lint` | code | required | deterministic lint (`lint.ts`), rendered for the reviewers; its unambiguous findings become notes |
 | `review:<role>:<a\|b>` | code | best-effort → no notes | dramaturge, conversation coach, fact editor on each reviewer route, all six in parallel |
@@ -40,18 +47,19 @@ fallback (so a resume never retries it), unless the step was aborted (cancel, le
 | `metadata` | code | best-effort → the outline's drafts | title, description, cover prompt, genres, topics, chapter titles |
 | `script` | code | required | the locked script (legacy `script.json`) and its profile: the transcript of `past_transcript` |
 | `produce` | workflow | required | `podcast.produce` with `ProduceInput`; skipped (output `produce: null`) while no produce workflow is wired |
+| `cost` | code | required | the episode's recorded cost, read from the journal |
 
 A kill or deploy between segments resumes at the first unfinished step: finished segments replay from the journal and
 are never re-run (`podcast.test.ts`). A change to a step's meaning or output shape takes a new step id.
 
 ## Models and wires
 
-Every model id is in the route table (`routes.pending.ts` until the registry PR places it; then `resolvePodcastRoute`
-becomes `resolveRoute` and `AGW_ROUTES` applies): `podcast.research`, `podcast.editorial`, `podcast.outline`,
+Every model id is in the route table (`packages/routes/src/table/podcast.ts`; `AGW_ROUTES` applies, resolved per
+call): `podcast.research`, `podcast.editorial`, `podcast.outline`,
 `podcast.write`, `podcast.review.a`, `podcast.review.b`, `podcast.metadata`. Defaults are legacy's: the cheap seat at
 effort high for research, editorial, outline and metadata; Gemini flash and the cheap seat as reviewers; the GPT-6.1
 Sol writer at effort high. The writer's rollback is one table line to the Opus 5.5 entry on `iu-anthropic` (the
-comment in `routes.pending.ts`). Effort is the route's: a route without one sends none (the Gemini reviewer).
+comment in the table file). Effort is the route's: a route without one sends none (the Gemini reviewer).
 
 **Decision: an own model port (`llm.ts`, `iu.ts`) instead of the platform transports.** The capabilities transports are
 single-call text wires; the room needs function tools on both OpenAI APIs (chat completions, and `/v1/responses`,
@@ -60,7 +68,9 @@ schema. The port keeps the platform's conventions: IU credentials from `IU_API_K
 against its route (`costFromUsage`: IU's `usage.cost` first, else the route's rate) and reported to the step's
 `addUsage`, so the run record carries every call, failed ones included; a provider-balance failure moves the call once
 to the route's fallback (concept v3.3); streaming with an idle watchdog for single answers, a 30-minute hang guard on a
-non-streamed tool round (rules/agent-limits.md). No transport file changed.
+non-streamed tool round (rules/agent-limits.md); a stalled stream or a fired hang guard is terminal, never retried
+(the wait is spent and the abandoned request may still bill). Agent loops journal counters only (rounds, rejections,
+tool calls per tool, fell back), never the tool arguments (whole segment drafts). No transport file changed.
 
 Ported specifics: the tool loop echoes the assistant message exactly as received (provider state such as reasoning
 or Gemini's `thought_signature` must round-trip), appends tool results and never rewrites the head; a round cut at its
@@ -81,19 +91,29 @@ budget or empty retries once at double; no round cap. On the Anthropic wire: ada
 
 ## Tools, memory, research
 
-- **Vault**: `brain_search` / `brain_read` and `sourcePaths` go through the platform's vault capabilities in-process
-  (`brain.ts`): only `wiki/`, `Areas/` and `Projects/`, no dotfiles, real path inside the vault. Legacy read the whole
-  vault minus hidden directories; a `sourcePaths` entry outside those roots is now refused (`invalid_input`).
+- **Vault, agent side**: `brain_search` / `brain_read` go through the platform's vault capabilities in-process
+  (`brain.ts`): only `wiki/`, `Areas/` and `Projects/`, no dotfiles, real path inside the vault.
+- **Vault, source side** (decision): `sourcePaths` keep legacy's contract, read by the podcast's own reader
+  (`source.ts`): any non-hidden `.md` inside the vault (an `Inbox/` draft included), symlink-safe, the path
+  NFC-normalised, raw with frontmatter. The source is the owner's choice of notes, the agent's reads are the model's,
+  so only the agent gets the narrower allowlist. A note above 200k characters fails the run; nothing is cut silently.
 - **Memory** (`history.ts`): finished `podcast` runs of purpose `prod` (title, description, profile from the run's
   output, the transcript from its `script` step) plus the legacy episodes in `podcast_episodes` (runtime migration
   0010), imported once by `scripts/import-podcast-history.ts` (dry run by default; `--commit` writes). Only done legacy
   jobs are imported: 19 of the 20 recorded jobs (one failed before mastering).
 - **Research**: the `research` tool runs the host's `research` workflow over its HTTP API (`research-client.ts`,
   `AGW_URL` and `AGW_API_SECRET` from the process env), quick depth only, identical queries answered once, the optional
-  `PODCAST_RESEARCH_MAX_CALLS` valve as on legacy. Standard depth runs only for the editor's load-bearing facts.
+  `PODCAST_RESEARCH_MAX_CALLS` valve as on legacy. Standard depth runs only for the editor's load-bearing facts, one
+  step each. Every host run starts under an idempotency key `podcast:<runId>:<stepId>:<hash of depth and query>`: a
+  resumed or retried step re-attaches to the run it already paid for instead of starting another; a transient error
+  while starting or waiting retries the same request; an aborted step cancels the host run.
 
 **Privacy.** As on legacy, the notes the room reads (the source, `sourcePaths`, brain reads) go to the research,
 editorial, writer and reviewer models: they are the episode's source. The voice guide is journaled in the `house` step.
+Every tool result that carries outside text (vault notes and search hits, past episodes and transcripts, research
+reports) reaches the model inside an untrusted-data fence with a per-loop random token (`fence.ts`), and the loop's
+system prompt says what the fence means and forbids copying private note content into research queries: a note that
+reads like an instruction cannot steer the agent into reading other notes and sending them out.
 
 ## Configuration
 
@@ -105,6 +125,13 @@ editorial, writer and reviewer models: they are the episode's source. The voice 
 | `PODCAST_AGENTIC_WRITER` | `on` | `off`: the single-shot writer only |
 | `PODCAST_MULTISPEAKER_MAX_CHARS` | 3000 | synth unit size the writer measures against |
 | `AGW_BRAIN_DIR` | `~/SourceRoot/brain` | the vault (`voice.md` at its root) |
+
+## Registration
+
+`module.ts` registers the workflow in the audio process's tree (host `workflows/registry.ts`, discovered by directory).
+Beyond `HostDeps` the process passes `journal: { db, schema }` (its journal pool) for the show's memory and the cost
+step; the module fails at build without it. It is a `last`-phase module so it picks `podcast.produce` up from the
+modules built before it when one is registered; neither imports the other. Research runs carry purpose `prod`.
 
 ## Validation
 

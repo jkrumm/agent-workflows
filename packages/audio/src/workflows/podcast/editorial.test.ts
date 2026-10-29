@@ -211,6 +211,12 @@ describe('parseEpisodeBrief — length floor and asks', () => {
     expect(parseEpisodeBrief(JSON.stringify({ minutes: 20 }), INPUT).loadBearingFacts).toEqual([])
   })
 
+  test('at most three load-bearing facts are kept, in the editor’s order', () => {
+    const facts = ['a', 'b', 'c', 'd', 'e'].map((q) => ({ question: `Frage ${q}?` }))
+    const parsed = parseEpisodeBrief(JSON.stringify({ minutes: 20, load_bearing_facts: facts }), INPUT)
+    expect(parsed.loadBearingFacts.map((f) => f.question)).toEqual(['Frage a?', 'Frage b?', 'Frage c?'])
+  })
+
   test('the editor prompt names load-bearing facts as the only route to standard-depth research', () => {
     const prompt = editorialSystemPrompt(INPUT)
     expect(prompt).toContain('- load_bearing_facts:')

@@ -2,6 +2,7 @@ import { type Llm, runToolLoop, type ToolDef, writerBudget } from './llm.ts'
 import { log } from './log.ts'
 import type { BrainPort } from './ports.ts'
 import { lintSegmentation, lintSegments, TAG_BAND_PER_TEN_TURNS, type LintFinding, type LintOptions } from './lint.ts'
+import { fenceRule, fenceToken } from './fence.ts'
 import { brainReadTool, brainSearchTool } from './research.ts'
 import {
   buildRevisionUserContent,
@@ -78,7 +79,8 @@ export interface AgentRun {
   mode: 'draft' | 'revise'
   index: number
   rounds: number
-  calls: ToolCallRecord[]
+  /** Tool calls per tool name. Counters only: the arguments (whole segment drafts) are never journaled. */
+  toolCalls: Record<string, number>
   submits: number
   rejections: number
   accepted: Array<{ rule: string; reason: string }>
@@ -201,6 +203,12 @@ function measure(params: {
   return { turns, report, blocking: [...blocking, ...lengthFindings], advisory }
 }
 
+function countByTool(calls: ToolCallRecord[]): Record<string, number> {
+  const out: Record<string, number> = {}
+  for (const call of calls) out[call.tool] = (out[call.tool] ?? 0) + 1
+  return out
+}
+
 function glossaryTool(req: PodcastScriptRequest, hasBrain: boolean): ToolDef {
   return {
     name: 'glossary_lookup',
@@ -212,9 +220,11 @@ function glossaryTool(req: PodcastScriptRequest, hasBrain: boolean): ToolDef {
         .toLowerCase()
         .trim()
       if (!term) return 'error: give a term'
-      const glossary = req.dossier.glossary.filter(
-        (g) => g.term.toLowerCase().includes(term) || term.includes(g.term.toLowerCase()),
-      )
+      // A blank term is contained in every lookup: it never matches.
+      const glossary = req.dossier.glossary.filter((g) => {
+        const own = g.term.toLowerCase().trim()
+        return own.length > 0 && (own.includes(term) || term.includes(own))
+      })
       const additions = req.dossier.additions.filter((a) => a.text.toLowerCase().includes(term)).slice(0, 3)
       if (glossary.length === 0 && additions.length === 0)
         return `nothing in the dossier for "${term}" — say only what the SOURCE implies${hasBrain ? ', or search the brain' : ''}`
@@ -243,6 +253,7 @@ async function runAgent(
   const { req, outline, index, mode } = params
   const spec = outline.segments[index]
   if (!spec) throw new Error(`outline segment ${index} out of range`)
+  const token = fenceToken()
   const openingFrame = openingFrameOf(req.episodeBrief, outline)
   const lintOpts: LintOptions = {
     glossaryTerms: req.dossier.glossary.map((g) => g.term),
@@ -275,7 +286,9 @@ async function runAgent(
       },
     },
     glossaryTool(req, Boolean(opts.brain)),
-    ...(opts.brain ? [brainSearchTool(opts.brain, llm.signal), brainReadTool(opts.brain, llm.signal)] : []),
+    ...(opts.brain
+      ? [brainSearchTool(opts.brain, llm.signal, token), brainReadTool(opts.brain, llm.signal, token)]
+      : []),
     {
       name: 'submit_segment',
       description:
@@ -324,7 +337,7 @@ async function runAgent(
 
   const result = await runToolLoop(llm, {
     route: 'podcast.write',
-    systemPrompt: params.systemPrompt + agentAddendum(Boolean(opts.brain)),
+    systemPrompt: params.systemPrompt + agentAddendum(Boolean(opts.brain)) + (opts.brain ? fenceRule(token) : ''),
     userContent: params.userContent,
     tools,
     maxCompletionTokens: writerBudget(spec.targetWords * 6, 1),
@@ -338,7 +351,7 @@ async function runAgent(
     mode,
     index,
     rounds: result.rounds,
-    calls: result.calls,
+    toolCalls: countByTool(result.calls),
     submits,
     rejections,
     accepted: acceptedAdvisory,

@@ -10,7 +10,7 @@ import {
   type RoundReply,
 } from './llm.ts'
 import type { BrainPort } from './ports.ts'
-import { resolvePodcastRoute, type PodcastRouteId } from './routes.pending.ts'
+import { resolvePodcastRoute, type PodcastRouteId } from './routes.ts'
 import type { Outline, PodcastHost, PodcastScriptRequest, ScriptTurn } from './script.ts'
 import { EMPTY_DOSSIER } from './types.ts'
 import type { ResolvedRoute } from '../../../../routes/src/index.ts'

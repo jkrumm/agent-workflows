@@ -15,7 +15,7 @@ import {
 } from './llm.ts'
 import { log } from './log.ts'
 import { planOutline, reviewDraft, reviseSegment, writeSegment, type House, type WriterOptions } from './room.ts'
-import { type PodcastRouteId, resolvePodcastRoute } from './routes.pending.ts'
+import { type PodcastRouteId, resolvePodcastRoute } from './routes.ts'
 import {
   baseSystemPrompt,
   buildEpisodeProfile,
@@ -969,6 +969,7 @@ describe('prompts', () => {
       house: HOUSE,
       segmentCount: 3,
       targetWords: 300,
+      maxSegments: 9,
     })
     for (const index of [0, 1, 2]) {
       const system = segmentPrompt({
@@ -1104,7 +1105,7 @@ describe('asks in the outline and prompts', () => {
 const hasSystem = (call: ChatCall, text: string) => call.system.includes(text)
 
 describe('planOutline', () => {
-  const params = { req: BASE_REQUEST, house: HOUSE, segmentCount: 3, targetWords: 300 }
+  const params = { req: BASE_REQUEST, house: HOUSE, segmentCount: 3, targetWords: 300, maxSegments: 9 }
 
   test('writes the outline in one call on the outline route, with show bible and voice guide in the prompt', async () => {
     const port = new FakePort(sequence(reply(outlineJson())))
@@ -1138,6 +1139,21 @@ describe('planOutline', () => {
     expect(port.chats).toHaveLength(2)
     // writerBudget(8000, attempt): attempt 2 is strictly larger.
     expect(port.chats[1]?.maxTokens).toBeGreaterThan(port.chats[0]?.maxTokens ?? 0)
+  })
+
+  test('more segments than the room writes: cut first, then targets normalised and asks assigned to kept ones', async () => {
+    const ask = 'Darf ich den Van nachts abstellen?'
+    const port = new FakePort(sequence(reply(outlineJson())))
+    const outline = await planOutline(llmFor(port), {
+      ...params,
+      maxSegments: 2,
+      req: reqWith({ episodeBrief: briefWith({ asks: [ask] }) }),
+      targetWords: 600,
+    })
+    expect(outline.segments).toHaveLength(2)
+    // The whole budget on the kept segments, and the ask on one of them.
+    expect(outline.segments.map((s) => s.targetWords)).toEqual([300, 300])
+    expect(outline.segments.flatMap((s) => s.answers ?? [])).toEqual([ask])
   })
 
   test('an unparseable reply is retried once, then the stage fails', async () => {

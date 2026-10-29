@@ -1,88 +1,120 @@
 import { describe, expect, test } from 'bun:test'
+import { researchKey, researchKeyPrefix } from './ports.ts'
 import { researchClient, researchClientFromEnv } from './research-client.ts'
 
 // The `research` tool's client of the host's HTTP API, against a scripted host.
 
 type Call = { url: string; init: RequestInit }
+type Reply = { status?: number; body: unknown } | 'network'
 
-function scriptedHost(replies: { status?: number; body: unknown }[]) {
+function scriptedHost(replies: Reply[]) {
   const calls: Call[] = []
   const fetch = async (url: string, init: RequestInit) => {
     calls.push({ url, init })
     const reply = replies.shift()
     if (!reply) throw new Error('no scripted reply left')
+    if (reply === 'network') throw new Error('connection reset')
     return new Response(JSON.stringify(reply.body), { status: reply.status ?? 200 })
   }
   return { calls, fetch }
 }
 
-const OPTIONS = { url: 'http://127.0.0.1:1', secret: 's'.repeat(32), purpose: 'eval' }
+const OPTIONS = { url: 'http://127.0.0.1:1', secret: 's'.repeat(32), purpose: 'eval', backoffMs: 1 }
+const KEY = researchKey('run-1', 'research', 'quick', 'what is x?')
+const call = (signal = new AbortController().signal, progress: () => void = () => {}) => ({
+  key: KEY,
+  signal,
+  progress,
+})
+const done = { runId: 'r1', workflowId: 'research', status: 'done', output: { report: 'R', sources: ['u'] } }
+
+describe('researchKey', () => {
+  test('this run, the step and the hashed query: stable, distinct per step and query, under the run prefix', () => {
+    expect(KEY.startsWith(`${researchKeyPrefix('run-1')}research:`)).toBe(true)
+    expect(researchKey('run-1', 'research', 'quick', 'what is x?')).toBe(KEY)
+    expect(researchKey('run-1', 'research:fact:0', 'quick', 'what is x?')).not.toBe(KEY)
+    expect(researchKey('run-1', 'research', 'standard', 'what is x?')).not.toBe(KEY)
+    expect(researchKey('run-2', 'research', 'quick', 'what is x?')).not.toBe(KEY)
+    expect(KEY.length).toBeLessThanOrEqual(255)
+  })
+})
 
 describe('researchClient', () => {
-  test('starts the run, waits until it ended and its cost is known, returns report and sources', async () => {
+  test('starts the run under the idempotency key, waits until it ended, returns report and sources', async () => {
     const host = scriptedHost([
       { status: 202, body: { runId: 'r1', workflowId: 'research', status: 'running' } },
-      {
-        body: {
-          runId: 'r1',
-          workflowId: 'research',
-          status: 'done',
-          output: { report: 'R', sources: ['u'] },
-          costPending: true,
-        },
-      },
-      {
-        body: {
-          runId: 'r1',
-          workflowId: 'research',
-          status: 'done',
-          output: { report: 'R', sources: ['u'] },
-          cost: 0.04,
-        },
-      },
+      { body: done },
     ])
     let progress = 0
-    const client = researchClient({ ...OPTIONS, fetch: host.fetch })
-    const answer = await client.run('What is X?', 'quick', new AbortController().signal, () => progress++)
-    expect(answer).toEqual({ ok: true, report: 'R', sources: ['u'], usd: 0.04, runId: 'r1' })
+    const answer = await researchClient({ ...OPTIONS, fetch: host.fetch }).run(
+      'What is X?',
+      'quick',
+      call(undefined, () => progress++),
+    )
+    expect(answer).toEqual({ ok: true, report: 'R', sources: ['u'], runId: 'r1' })
     expect(host.calls.map((c) => c.url)).toEqual([
       'http://127.0.0.1:1/workflows/research',
-      'http://127.0.0.1:1/runs/r1/wait',
       'http://127.0.0.1:1/runs/r1/wait',
     ])
     expect(JSON.parse(String(host.calls[0]?.init.body))).toEqual({ query: 'What is X?', depth: 'quick' })
     const headers = host.calls[0]?.init.headers as Record<string, string>
+    expect(headers['idempotency-key']).toBe(KEY)
     expect(headers.authorization).toBe(`Bearer ${OPTIONS.secret}`)
     expect(headers['x-agw-purpose']).toBe('eval')
     expect(headers.prefer).toBe('wait=240')
-    expect(progress).toBe(3)
+    expect(progress).toBe(2)
+  })
+
+  test('a transient failure retries the same request: the start under its key, the wait on its run id', async () => {
+    const host = scriptedHost([
+      'network',
+      { status: 202, body: { runId: 'r1', status: 'running' } },
+      { status: 503, body: { message: 'busy' } },
+      'network',
+      { body: done },
+    ])
+    const answer = await researchClient({ ...OPTIONS, fetch: host.fetch }).run('q?', 'quick', call())
+    expect(answer.ok).toBe(true)
+    expect(host.calls.map((c) => c.url.replace(OPTIONS.url, ''))).toEqual([
+      '/workflows/research',
+      '/workflows/research',
+      '/runs/r1/wait',
+      '/runs/r1/wait',
+      '/runs/r1/wait',
+    ])
+    const retriedStart = host.calls[1]?.init.headers as Record<string, string> | undefined
+    expect(retriedStart?.['idempotency-key']).toBe(KEY)
+  })
+
+  test('an abort cancels the host run and rethrows', async () => {
+    const abort = new AbortController()
+    const calls: string[] = []
+    const fetch = async (url: string, init: RequestInit) => {
+      calls.push(url.replace(OPTIONS.url, ''))
+      if (url.endsWith('/workflows/research')) return Response.json({ runId: 'r9', status: 'running' }, { status: 202 })
+      if (url.endsWith('/cancel')) return Response.json({ runId: 'r9', status: 'cancelled' })
+      abort.abort(new Error('step cancelled'))
+      throw (init.signal as AbortSignal).reason
+    }
+    const error = await researchClient({ ...OPTIONS, fetch })
+      .run('q?', 'quick', call(abort.signal))
+      .catch((e: unknown) => e)
+    expect((error as Error).message).toBe('step cancelled')
+    expect(calls).toEqual(['/workflows/research', '/runs/r9/wait', '/runs/r9/cancel'])
   })
 
   test('a failed run and a refused start are tool errors, never throws', async () => {
     const failed = scriptedHost([
       { body: { runId: 'r2', status: 'failed', error: { kind: 'step_failed', message: 'no sources' } } },
     ])
-    const signal = new AbortController().signal
-    expect(await researchClient({ ...OPTIONS, fetch: failed.fetch }).run('q?', 'standard', signal, () => {})).toEqual({
+    expect(await researchClient({ ...OPTIONS, fetch: failed.fetch }).run('q?', 'standard', call())).toEqual({
       ok: false,
       error: 'error: research failed: no sources',
     })
     const refused = scriptedHost([{ status: 401, body: { message: 'Unauthorized' } }])
-    const answer = await researchClient({ ...OPTIONS, fetch: refused.fetch }).run('q?', 'quick', signal, () => {})
+    const answer = await researchClient({ ...OPTIONS, fetch: refused.fetch }).run('q?', 'quick', call())
     expect(answer.ok).toBe(false)
-  })
-
-  test('a cost that never arrives is reported unpriced after a few polls', async () => {
-    const pending = { runId: 'r3', status: 'done', output: { report: 'R', sources: [] }, costPending: true }
-    const host = scriptedHost([{ body: pending }, { body: pending }, { body: pending }, { body: pending }])
-    const answer = await researchClient({ ...OPTIONS, fetch: host.fetch }).run(
-      'q?',
-      'quick',
-      new AbortController().signal,
-      () => {},
-    )
-    expect(answer).toEqual({ ok: true, report: 'R', sources: [], usd: null, runId: 'r3' })
-    expect(host.calls).toHaveLength(4)
+    expect(refused.calls).toHaveLength(1)
   })
 
   test('from env: needs both the host URL and the secret', () => {

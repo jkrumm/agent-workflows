@@ -493,7 +493,8 @@ describe('iuModelPort', () => {
     }
     const p = iuModelPort({ env: ENV, fetch: stalled, backoffMs: 1, hangGuardMs: 20 })
     expect(await rejected(p.round(roundCall, SIGNAL, () => {}))).toBeInstanceOf(ModelError)
-    expect(calls).toBe(3)
+    // A hang is terminal: the wait is spent and the abandoned request may still bill, so it is not retried.
+    expect(calls).toBe(1)
   })
 
   test('a missing key or a base URL not ending in /anthropic is a ModelError', async () => {

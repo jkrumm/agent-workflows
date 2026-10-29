@@ -2,7 +2,7 @@ import { type AgentRun, createSegmentAgent } from './agent.ts'
 import { callAndParse, type Llm, writerBudget } from './llm.ts'
 import { log } from './log.ts'
 import type { BrainPort } from './ports.ts'
-import { resolvePodcastRoute } from './routes.pending.ts'
+import { resolvePodcastRoute } from './routes.ts'
 import {
   baseSystemPrompt,
   buildOutlineUserContent,
@@ -48,9 +48,9 @@ export interface WrittenSegment {
 /** The outline: one call, devices the brief did not ask for pruned, word targets normalised, asks assigned. */
 export function planOutline(
   llm: Llm,
-  params: { req: PodcastScriptRequest; house: House; segmentCount: number; targetWords: number },
+  params: { req: PodcastScriptRequest; house: House; segmentCount: number; targetWords: number; maxSegments: number },
 ): Promise<Outline> {
-  const { req, house, segmentCount, targetWords } = params
+  const { req, house, segmentCount, targetWords, maxSegments } = params
   return callAndParse(
     'outline',
     (attempt) =>
@@ -66,10 +66,33 @@ export function planOutline(
       }),
     (raw) =>
       withAssignedAsks(
-        normalizeOutlineTargets(pruneUnrequestedDevices(parseOutline(raw), req.episodeBrief), targetWords),
+        normalizeOutlineTargets(
+          pruneUnrequestedDevices(capSegments(parseOutline(raw), maxSegments), req.episodeBrief),
+          targetWords,
+        ),
         req.episodeBrief.asks ?? [],
       ),
   )
+}
+
+/**
+ * One journaled step exists per segment up to `max`; the brief never asks for more. The cut comes before devices are
+ * pruned, targets normalised and asks assigned, so the kept segments carry the whole length and every ask.
+ */
+function capSegments(outline: Outline, max: number): Outline {
+  if (outline.segments.length <= max) return outline
+  log.warn('podcast outline returned more segments than the room writes; keeping the first ones', {
+    segments: outline.segments.length,
+    kept: max,
+  })
+  // Reveals and digressions on a cut segment land on the last kept one, as the parser clamps an index past the end.
+  const clamp = (i: number) => Math.min(i, max - 1)
+  return {
+    ...outline,
+    segments: outline.segments.slice(0, max),
+    reveals: outline.reveals.map((r) => ({ ...r, segmentIndex: clamp(r.segmentIndex) })),
+    digressions: outline.digressions.map((d) => ({ ...d, segmentIndex: clamp(d.segmentIndex) })),
+  }
 }
 
 export interface WriterOptions {
