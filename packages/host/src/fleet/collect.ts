@@ -286,7 +286,7 @@ export function parseSessionAccounts(text: string): Map<string, string> {
   return out
 }
 
-/** A session id is a path segment (a transcript, a pin): letters, digits, `_` and `-` only, never a separator or `..`. */
+/** A session id is a path segment (a transcript): letters, digits, `_` and `-` only, never a separator or `..`. */
 export const SESSION_ID_RE = /^[A-Za-z0-9_-]+$/
 
 const SESSION_LOG_DAYS = 3

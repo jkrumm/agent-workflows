@@ -45,7 +45,7 @@ Output: `<evalDir>/reports/<ts>/results.jsonl` (one line per case, appended as c
 Wave 4 measured that agent-gateway's own rerun recovered none of its recorded blockers (outcome agreement 21 %), so a
 recorded finding is no ground truth until the case shows it comes back. That measurement is recorded as `legacy` rows in
 `reproducibility.jsonl`; the gateway is retired, so no new legacy row can be written. `self-agreement` now measures the
-new side only:
+new side only, and its rows feed the gate too:
 
 ```sh
 bun packages/eval/src/harness/cli.ts self-agreement review|check --runs 2 [--threshold 0.5] [--ids …] [--judge]
@@ -72,15 +72,15 @@ materialize gets no row. Cases already measured with as many reruns are skipped 
 `self-agreement`; on `review|check` it is a usage error. The new side reruns at the recorded depth (`--depth router`
 lets its router choose, `--agw-args` applies).
 
-`review` and `check` read the recorded **legacy** rows only (the recorded findings are legacy's) and score blocking recall
-(check: legacy failure recall) on the reproducible cases, **when every scored case of the run has a legacy row**. The
+`review` and `check` read the rows of either side (a legacy row wins over a new one for the same case) and score blocking
+recall (check: legacy failure recall) on the reproducible cases, **when every scored case of the run has a row**. The
 headline recall prints the counted cases' own numerator and denominator, and the report says how many cases counted:
 `counted on N of M cases with a recorded blocking finding (…); K not reproducible`. With rows for only some of the
 cases the data is not used (a partial file would shrink the denominator to whichever cases happened to be measured):
-every case counts and the report says `reproducibility data covers K of N cases: not used`. With no legacy row it says
+every case counts and the report says `reproducibility data covers K of N cases: not used`. With no row it says
 `no reproducibility data`. If no case is reproducible the recall is undecided (the verdict goes inconclusive), never a
-pass. **Rows of the `new` side never feed scoring**: they say how much the new workflow disagrees with itself, and the
-`self-agreement` summary line is marked informational.
+pass. **Only legacy rows give the noise floor** (next section): a new-side row says how much the new workflow disagrees with
+itself, which is not legacy's noise.
 
 ## How a case runs
 
@@ -134,14 +134,18 @@ toward the error rate.
 | **worse** | at least one criterion failed; the report names it with its value and threshold |
 | **inconclusive** | fewer cases ran than the minimum, more than 10% of the cases that ran errored, or a criterion had no data (a cost or wall ratio needs at least 10 paired review / 3 check cases) |
 
-Review criteria: blocking recall and outcome agreement each ≥ 0.6, median cost ratio ≤ 1.10, median wall ratio
-≤ 1.25; the report shows each median's bootstrap CI next to it. Check: `passed` agreement and legacy failure recall
-each ≥ 0.9, so an always-green check cannot pass on a mostly green set; the same cost and wall ratios. The
+Review criteria: blocking recall and outcome agreement each ≥ legacy's own recorded self-agreement on that metric − 0.10
+(`margin`), median cost ratio ≤ 1.10, median wall ratio ≤ 1.25; the report shows each median's bootstrap CI next to it.
+Check: `passed` agreement and legacy failure recall each ≥ the recorded self-agreement − 0.10, so an always-green check
+cannot pass on a mostly green set; the same cost and wall ratios. Legacy's self-agreement is the mean of the legacy rows
+in `reproducibility.jsonl` over the run's cases (outcome agreement; blocking recall, check: failure recall, over the
+rows that have one). With no legacy row for the run's cases the fixed floors apply (review 0.6, check 0.9). The
+report's `Floor basis` line says which was used. The
 thresholds are `DEFAULT_THRESHOLDS` in `src/harness/verdict.ts` and are written into every report.
 
-The floors are fixed since the gateway retired: no live legacy rerun measures a noise floor any more. agent-gateway did
-not agree with itself on a rerun (models are sampled, angles fail), so 100% agreement with one recorded run is not the
-bar; the reproducibility rows above are how that noise is accounted for.
+The noise floor matters: agent-gateway did not agree with itself on a rerun (models are sampled, angles fail; it
+reproduced about 21% of its own outcomes), so holding the new review to a fixed bar would fail a faithful port. No live
+rerun measures it any more; the legacy rows recorded while the gateway ran are the floor.
 
 ## Caveats, measured or not
 

@@ -14,6 +14,7 @@ import {
   isReproducible,
   readRows,
   type ReproducibilityRow,
+  recordedSelfAgreement,
   reproducibleCases,
   type SelfAgreementOptions,
   selfAgreementCheck,
@@ -181,13 +182,24 @@ describe('self-agreement: review', () => {
       ['legacy', false],
       ['new', true],
     ])
+    // a legacy row wins over the new row of the same case; either side alone is data
     expect(reproducibleCases(rows, 0.5)?.byId).toEqual(new Map([['a', false]]))
     expect(
       reproducibleCases(
         rows.filter((r) => r.side === 'new'),
         0.5,
+      )?.byId,
+    ).toEqual(new Map([['a', true]]))
+    expect(reproducibleCases([], 0.5)).toBeNull()
+    // the noise floor reads the legacy rows of the run's cases only
+    expect(recordedSelfAgreement(rows, ['a'])).toEqual({ cases: 1, outcomeAgreement: 1 / 3, blockingRecall: 0 })
+    expect(
+      recordedSelfAgreement(
+        rows.filter((r) => r.side === 'new'),
+        ['a'],
       ),
     ).toBeNull()
+    expect(recordedSelfAgreement(rows, ['other'])).toBeNull()
   })
 })
 
@@ -463,16 +475,17 @@ describe('cli', () => {
     expect(counter.agw).toBe(3)
     const file = join(evalDir, 'review', 'reproducibility.jsonl')
     expect(readRows(file)).toMatchObject([{ id: 'a', side: 'new', runs: 3, outcomeAgreement: 1, blockingRecall: 1 }])
-    expect(out.join('\n')).toContain(
-      '1 of 1 measured cases reproducible at threshold 0.5; informational, scoring reads the recorded legacy rows only',
-    )
+    expect(out.join('\n')).toContain('1 of 1 measured cases reproducible at threshold 0.5')
 
-    // Only the new side was measured: the baseline is legacy's, so the review run still has no data.
+    // The new side's row feeds the gate, but it is no noise floor: the fixed floors apply.
     out.length = 0
     expect(await main(['review'], deps)).toBe(0)
-    expect(out.join('\n')).toContain('no reproducibility data')
+    expect(out.join('\n')).toContain(
+      'Reproducibility (threshold 0.5): blocking recall counted on 1 of 1 cases with a recorded blocking finding',
+    )
+    expect(out.join('\n')).toContain('Floor basis: fixed floors')
 
-    // A legacy row (raw numbers: 1 of 3 outcome pairs agree, no blocker recovered) is what the baseline reads.
+    // A legacy row (raw numbers: 1 of 3 outcome pairs agree, no blocker recovered) wins and gives the noise floor.
     appendFileSync(
       file,
       `${JSON.stringify({ id: 'a', side: 'legacy', runs: 2, outcomeAgreement: 0.33, blockingRecall: 0 })}\n`,
@@ -482,6 +495,7 @@ describe('cli', () => {
     expect(out.join('\n')).toContain(
       'Reproducibility (threshold 0.5): blocking recall counted on 0 of 1 cases with a recorded blocking finding',
     )
+    expect(out.join('\n')).toContain("Floor basis: legacy's recorded self-agreement (1 cases")
     const agwCalls = counter.agw
     out.length = 0
     expect(await main(['review', '--threshold', '0'], deps)).toBe(0)

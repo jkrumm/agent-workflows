@@ -194,6 +194,7 @@ function aggregate(overrides: Partial<ReviewAggregate> = {}): ReviewAggregate {
     failedAngleRate: { legacy: 0, new: 0 },
     cost: { ...ratio, newUsd: 1, legacyUsd: 1, inexact: { new: 0, legacy: 0 } },
     wall: ratio,
+    selfAgreement: null,
     ...overrides,
   }
 }
@@ -210,6 +211,7 @@ function checkAggregate(overrides: Partial<CheckAggregate> = {}): CheckAggregate
     steps: { compared: 5, agreement: 1 },
     cost: { ...ratio, newUsd: 0, legacyUsd: 0, inexact: { new: 0, legacy: 0 } },
     wall: ratio,
+    selfAgreement: null,
     ...overrides,
   }
 }
@@ -226,12 +228,39 @@ describe('verdict', () => {
     expect(v.criteria.find((c) => c.metric === 'median cost ratio')?.ci95).toEqual([0.9, 1.1])
   })
 
-  test('blocking recall is held to the fixed floor', () => {
+  test('without recorded self-agreement the floors are fixed', () => {
     const at = (recall: number) => aggregate({ blocking: { ...aggregate().blocking, recall } })
     expect(reviewVerdict(at(0.75)).verdict).toBe('not-worse')
     const v = reviewVerdict(at(0.5))
     expect(v.verdict).toBe('worse')
-    expect(v.criteria[0]?.threshold).toBe(0.6)
+    expect(v.criteria[0]).toMatchObject({ threshold: 0.6, floor: 'fixed' })
+  })
+
+  test('the floor is legacy recorded self-agreement minus the margin when the reproducibility rows give one', () => {
+    const blocking = { ...aggregate().blocking, recall: 0.75 }
+    const strict = aggregate({
+      blocking,
+      selfAgreement: { cases: 25, blockingRecall: 0.9, outcomeAgreement: 0.85 },
+    })
+    const v = reviewVerdict(strict)
+    expect(v.verdict).toBe('worse')
+    expect(v.criteria[0]).toMatchObject({ floor: 'recorded' })
+    expect(v.criteria[0]?.threshold).toBeCloseTo(0.8)
+    // legacy reproduced ~21% of its own outcomes: a faithful port is not held to the fixed 0.6
+    const noisy = aggregate({
+      outcome: { agreement: 0.3, confusion: {} },
+      selfAgreement: { cases: 25, blockingRecall: 0.2, outcomeAgreement: 0.21 },
+    })
+    expect(reviewVerdict(noisy).verdict).toBe('not-worse')
+    expect(reviewVerdict(noisy, { margin: 0 }).criteria[1]?.threshold).toBeCloseTo(0.21)
+  })
+
+  test('check: the floors follow the recorded passed agreement and failure recall', () => {
+    const check = checkAggregate({ selfAgreement: { cases: 5, outcomeAgreement: 0.8, blockingRecall: 0.7 } })
+    const v = checkVerdict(check)
+    expect(v.criteria[0]).toMatchObject({ floor: 'recorded' })
+    expect(v.criteria[0]?.threshold).toBeCloseTo(0.7)
+    expect(v.criteria[1]?.threshold).toBeCloseTo(0.6)
   })
 
   test('inconclusive below the case minimum or without data', () => {

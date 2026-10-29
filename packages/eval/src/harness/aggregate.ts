@@ -51,7 +51,18 @@ const total = (values: (number | null)[]) => {
 
 const OUTCOMES = ['clean', 'actionable', 'needs-human'] as const
 
-/** The legacy reproducibility rows read at one threshold: case id -> reproducible. */
+/**
+ * Legacy's own noise floor, from the reproducibility rows recorded while agent-gateway ran: the mean per-case outcome
+ * agreement (check: `passed` agreement) and blocking recall (check: failure recall) of its reruns against its recorded
+ * run, over the run's cases that have a legacy row. No live rerun measures it any more.
+ */
+export interface RecordedSelfAgreement {
+  cases: number
+  outcomeAgreement: number | null
+  blockingRecall: number | null
+}
+
+/** The reproducibility rows read at one threshold: case id -> reproducible. */
 export interface ReproducibleCases {
   threshold: number
   byId: Map<string, boolean>
@@ -140,6 +151,8 @@ export interface ReviewAggregate {
   /** new / recorded legacy per case. */
   cost: CostSummary
   wall: RatioSummary
+  /** The recorded legacy noise floor the verdict derives its floor from; `null`: no recorded data, fixed floors apply. */
+  selfAgreement: RecordedSelfAgreement | null
 }
 
 interface SpendSide {
@@ -172,6 +185,7 @@ export function aggregateReview(
   results: ReviewCaseResult[],
   seed = 1,
   reproducible: ReproducibleCases | null = null,
+  selfAgreement: RecordedSelfAgreement | null = null,
 ): ReviewAggregate {
   const ok = results.filter((r): r is ReviewCaseResult & Required<Pick<ReviewCaseResult, 'new' | 'match'>> =>
     Boolean(r.status === 'ok' && r.new && r.match),
@@ -230,6 +244,7 @@ export function aggregateReview(
       ok.map((r) => ({ next: r.new, legacy: r.legacy })),
       seed,
     ),
+    selfAgreement,
   }
 }
 
@@ -251,6 +266,8 @@ export interface CheckAggregate {
   steps: { compared: number; agreement: number | null }
   cost: CostSummary
   wall: RatioSummary
+  /** As in the review aggregate: `outcomeAgreement` is `passed` agreement, `blockingRecall` is failure recall. */
+  selfAgreement: RecordedSelfAgreement | null
 }
 
 function stepAgreement(pairs: { a: { name: string; passed: boolean }[]; b: { name: string; passed: boolean }[] }[]) {
@@ -272,6 +289,7 @@ export function aggregateCheck(
   results: CheckCaseResult[],
   seed = 1,
   reproducible: ReproducibleCases | null = null,
+  selfAgreement: RecordedSelfAgreement | null = null,
 ): CheckAggregate {
   const ok = results.filter((r): r is CheckCaseResult & Required<Pick<CheckCaseResult, 'new'>> =>
     Boolean(r.status === 'ok' && r.new),
@@ -305,5 +323,6 @@ export function aggregateCheck(
       ok.map((r) => ({ next: r.new, legacy: r.legacy })),
       seed,
     ),
+    selfAgreement,
   }
 }

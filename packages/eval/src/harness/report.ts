@@ -51,6 +51,17 @@ export function renderMarkdown(report: Report): string {
   ].join('\n')
 }
 
+/** Which basis the agreement floors used: legacy's recorded self-agreement minus the margin, or the fixed floors. */
+function floorLine(report: Report): string {
+  const sa = report.aggregate.selfAgreement
+  if (!sa) return 'Floor basis: fixed floors (no recorded legacy self-agreement for these cases).'
+  const metrics =
+    report.workflow === 'review'
+      ? `outcome agreement ${pct(sa.outcomeAgreement)}, blocking recall ${pct(sa.blockingRecall)}`
+      : `passed agreement ${pct(sa.outcomeAgreement)}, failure recall ${pct(sa.blockingRecall)}`
+  return `Floor basis: legacy's recorded self-agreement (${sa.cases} cases with a legacy reproducibility row): ${metrics}; each floor is that minus ${report.verdict.thresholds.margin}.`
+}
+
 /** Numbers only: no finding text, no file path, no repo name. Safe to paste into this public repo. */
 export function renderAggregate(report: Report): string {
   const { meta, verdict } = report
@@ -68,6 +79,8 @@ export function renderAggregate(report: Report): string {
       (c) =>
         `| ${c.metric} | ${num(c.value, 3)} | ${c.ci95 ? `${num(c.ci95[0], 3)}–${num(c.ci95[1], 3)}` : '-'} | ${c.op} ${c.threshold.toFixed(3)} | ${c.pass === null ? (c.note ?? 'no data') : c.pass ? 'yes' : 'no'} |`,
     ),
+    '',
+    floorLine(report),
     '',
   ]
   return [
