@@ -458,7 +458,7 @@ function switches(env: Env) {
   return {
     gating: env.AGW_REVIEW_DEPTH_GATING !== '0',
     adversary: env.AGW_REVIEW_ADVERSARY !== 'false',
-    ocrEnabled: env.AGW_REVIEW_OCR !== '0',
+    ocrEnabled: env.AGW_REVIEW_OCR?.trim() === '1',
     ocrMinLines: env.AGW_REVIEW_OCR_MIN_LINES?.trim() && Number.isFinite(minLines) && minLines >= 0 ? minLines : 100,
   }
 }

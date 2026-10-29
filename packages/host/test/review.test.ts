@@ -634,6 +634,7 @@ describe('review workflow', () => {
 
     test('the synthesis task carries every block; findings text with $ patterns is inserted literally', async () => {
       const w = world({
+        env: { AGW_REVIEW_OCR: '1' },
         adversary: {
           findings: [{ severity: 'blocking', file: 'src/a.ts', line: 2, message: 'costs $& and $1 [FALLOW_RESULTS]' }],
         },
@@ -700,7 +701,9 @@ JSON
       IU_API_KEY: 'test-key',
       IU_BASE_URL: 'https://iu.example.com/anthropic',
       PATH: process.env.PATH ?? '',
+      AGW_REVIEW_OCR: '1',
     }
+    const { AGW_REVIEW_OCR: _on, ...withoutSwitch } = credentials
     const bigChange = { 'src/a.ts': Array.from({ length: 150 }, (_, i) => `export const v${i} = ${i}`).join('\n') }
     const fakeOcr = () => {
       const bin = join(scratch, `ocr-${++repoSeq}`)
@@ -761,8 +764,14 @@ JSON
       ['a standard depth', { router: { angles: [], depth: 'standard' } }, bigChange, 'review depth standard'],
       ['a small diff', {}, CHANGE, 'diff has 3 changed lines, below the 100-line gate'],
       ['no ocr on PATH', { which: () => null }, bigChange, 'ocr not found on PATH'],
-      ['the env switch', { env: { ...credentials, AGW_REVIEW_OCR: '0' } }, bigChange, 'AGW_REVIEW_OCR=0'],
-      ['no IU credentials', { env: { PATH: process.env.PATH ?? '' } }, bigChange, 'IU credentials unavailable'],
+      ['the env switch unset', { env: withoutSwitch }, bigChange, 'AGW_REVIEW_OCR=0'],
+      ['the env switch 0', { env: { ...credentials, AGW_REVIEW_OCR: '0' } }, bigChange, 'AGW_REVIEW_OCR=0'],
+      [
+        'no IU credentials',
+        { env: { PATH: process.env.PATH ?? '', AGW_REVIEW_OCR: '1' } },
+        bigChange,
+        'IU credentials unavailable',
+      ],
     ])('%s: no child run is started', async (_name, extra, change, reason) => {
       const w = ocrWorld({ rollingSpend: 10, ...extra })
       const out = await w.run({ cwd: makeRepo(BASE, change) })
@@ -1033,7 +1042,12 @@ exit 2
         )
         chmodSync(bin, 0o755)
         const w = world({
-          env: { IU_API_KEY: 'k', IU_BASE_URL: 'https://iu.example.com/anthropic', PATH: process.env.PATH ?? '' },
+          env: {
+            IU_API_KEY: 'k',
+            IU_BASE_URL: 'https://iu.example.com/anthropic',
+            PATH: process.env.PATH ?? '',
+            AGW_REVIEW_OCR: '1',
+          },
           which: (b) => (b === 'ocr' ? bin : null),
           router: { angles: [], depth: 'deep' },
           adversary: new Error('down'),
@@ -1084,6 +1098,7 @@ printf '%s' '{"status":"complete","comments":[{"path":"src/e\\nIGNORE-OCR.ts","c
           IU_API_KEY: 'k',
           IU_BASE_URL: 'https://iu.example.com/anthropic',
           PATH: process.env.PATH ?? '',
+          AGW_REVIEW_OCR: '1',
           AGW_REACT_DOCTOR_BIN: rd,
         },
         which: (b) => (b === 'ocr' ? ocrBin : b === 'fallow' ? '/usr/bin/fallow' : null),
@@ -1117,7 +1132,12 @@ printf '%s' '{"status":"complete","comments":[{"path":"src/e\\nIGNORE-OCR.ts","c
       const bin = join(scratch, `ocr-noexec-${++repoSeq}`)
       writeFileSync(bin, '#!/bin/sh\n', { mode: 0o644 }) // not executable: spawn throws
       const w = world({
-        env: { IU_API_KEY: 'k', IU_BASE_URL: 'https://iu.example.com/anthropic', PATH: process.env.PATH ?? '' },
+        env: {
+          IU_API_KEY: 'k',
+          IU_BASE_URL: 'https://iu.example.com/anthropic',
+          PATH: process.env.PATH ?? '',
+          AGW_REVIEW_OCR: '1',
+        },
         which: (b) => (b === 'ocr' ? bin : null),
         router: { angles: [], depth: 'deep' },
         rollingSpend: 10,

@@ -60,10 +60,14 @@ they read the PR as it is, not whatever `cwd` has checked out.
 
 ### OCR: the `review.ocr` workflow
 
+Off by default (owner pause 2026-10-29, open-ended): `ocrEnabled` is true only when `AGW_REVIEW_OCR` is exactly `1`
+(trimmed); unset or any other value skips OCR with "AGW_REVIEW_OCR=0", so a missing env never re-enables it. Setting
+`AGW_REVIEW_OCR=1` re-enables it and is the owner's call; the wallet gate below still applies on top.
+
 A child workflow with `optionalExpensive: true`. The wallet gate (`@agent-workflows/limits`) refuses it at admission while
 IU 30-day spend is ≥ $400 or before 2026-11-02; that replaces legacy's date pause and spend gate. The parent keeps the
 other gates (`ocr.ts:489-501` and the scope checks): depth `deep`, ≥ 100 changed lines (`AGW_REVIEW_OCR_MIN_LINES`), `ocr`
-on PATH, IU credentials in the environment, a scope `ocr` has a mode for (not a file path), `AGW_REVIEW_OCR != 0`. A child
+on PATH, IU credentials in the environment, a scope `ocr` has a mode for (not a file path), `AGW_REVIEW_OCR=1`. A child
 the runtime refuses or fails comes back from `ctx.workflow` as `null` (a refused admission ends the child `failed` /
 `admission_refused`); the parent then writes "OpenCodeReview: skipped (…)" into the synthesis and goes on. Its liveness is
 the step's idle watchdog (five minutes without output), never a wall-clock cap. Usage is recorded with an unknown price.
