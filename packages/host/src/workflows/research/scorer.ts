@@ -32,8 +32,9 @@ export function sampleCitations(citations: ResearchResult['citations'], n = SUPP
 }
 
 /**
- * One citation against its page: true or false, or `null` (unscored) when the judge could not say: the page is gone
- * or its URL refused (the judge's answer failures), it was empty, or `decide` gave no boolean. Unscored is never
+ * One citation against its page: true or false, or `null` (unscored) when the judge could not say: the page answered
+ * a client error (gone, forbidden, paywalled, rate-limited) or its URL is refused (the judge's answer failures), it
+ * was empty, or `decide` gave no boolean. Unscored is never
  * "unsupported". A fetch or `decide` outage throws, and the runtime retries the scoring.
  */
 async function supports(judge: ScoreJudge, claim: string, url: string): Promise<boolean | null> {
@@ -57,7 +58,7 @@ async function supports(judge: ScoreJudge, claim: string, url: string): Promise<
  *   `live:` value comes from `web.package` through the judge, so without a judge the score is left out;
  * - `supported` (judged, regression and drift only): for up to three citations with distinct URLs, does the page
  *   (`web.fetch`) support the claim (`decide`), over the citations the judge could score; a citation it could not
- *   (page gone or refused, empty, no boolean from `decide`) is unscored; `judgedShare` is the share of the sampled
+ *   (the page answered a client error or the URL is refused, empty, no boolean from `decide`) is unscored; `judgedShare` is the share of the sampled
  *   citations the judge could score, and when none could be `supported` is left out. A report without citations
  *   scores 0. A `live:` package the registry does not have (not found) or answers without a usable `latest` leaves
  *   `golden` unscored; a registry outage throws through the judge, and the runtime retries the scoring.

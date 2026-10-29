@@ -7,7 +7,7 @@ import { z } from 'zod'
 import { canonicalJson } from '../../canonical.ts'
 import { type EngineClient, EngineJobFailed, runEngineJob } from './engine.ts'
 import { bookingClaim, type LedgerEntry, type ToolLedger } from './ledger.ts'
-import { asRecord } from './util.ts'
+import { asRecord, message } from './util.ts'
 
 /**
  * The tools a research agent may call, as the model sees them, and what each runs. The four web tools are the
@@ -80,7 +80,6 @@ export function normalizeUrl(raw: string): string {
 const ToolCall = z.object({ sessionID: z.string().min(1), args: z.record(z.string(), z.json()).default({}) })
 
 const digest = (text: string) => createHash('sha256').update(text).digest('hex')
-const message = (error: unknown) => (error instanceof Error ? error.message : String(error))
 
 /** The body as text, refused past `max` bytes by its declared length or while it streams; null when too large. */
 async function readCapped(req: Request, max: number): Promise<string | null> {
@@ -182,6 +181,16 @@ export class ToolGate {
     return () => {
       if (grant.sink === addUsage) grant.sink = null
     }
+  }
+
+  /**
+   * Waits (bounded) for the step's calls in flight, before its grant is closed: a call the agent made last (an engine
+   * job) finishes, books its cost and writes its row. One still running at the bound is aborted by the close and
+   * recorded as abandoned.
+   */
+  async settle(runId: string, stepId: string): Promise<void> {
+    const grant = this.grants.get(`${runId}:${stepId}`)
+    if (grant) await this.drain(grant)
   }
 
   private async drain(grant: Grant) {

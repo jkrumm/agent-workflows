@@ -516,6 +516,8 @@ describe('web.fetch', () => {
     const error = await failure(keyless.call('web.fetch', { url: 'https://example.com/no' }))
     expect(error.message).toContain('direct: HTTP 403')
     expect(error.message).toContain('TAVILY_API_KEY is not set')
+    // The page's own client error travels in `data`: the judge reads a 403 as an answer, not an outage.
+    expect(error.data).toEqual({ status: 403 })
   })
 
   test('a network error on the direct read also falls through', async () => {

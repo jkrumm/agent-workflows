@@ -218,12 +218,12 @@ export function createResearchWorkflows(deps: WorkflowDeps, options: ResearchOpt
     const ended = new Promise<void>((resolve) => {
       agentEnded = resolve
     })
-    // The one teardown, from wherever the run leaves first: the agent has ended, so the grant closes (its calls in flight
-    // served first, a late call refused). Idempotent: every later caller awaits the same close.
+    // The one teardown, from wherever the run leaves first: the agent has ended, so its calls in flight are served
+    // (bounded; not on a cancel) and the grant closes, a late call refused. Idempotent: later callers await the same.
     let teardown: Promise<void> | undefined
-    const endAgent = () => {
+    const endAgent = (drain = !ctx.signal.aborted) => {
       agentEnded()
-      teardown ??= close()
+      teardown ??= (drain ? gate.settle(runId, 'research') : Promise.resolve()).then(close)
       return teardown
     }
     let toolsBound!: () => void
@@ -242,7 +242,7 @@ export function createResearchWorkflows(deps: WorkflowDeps, options: ResearchOpt
           await untilAborted(ended, signal)
         } finally {
           // The grant ends before the step does: a late call is refused, and every booked usage is on this step.
-          await endAgent()
+          await endAgent(!signal.aborted)
           unbind()
         }
         const entries = await ledger.read(runId, 'research')

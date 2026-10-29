@@ -12,20 +12,20 @@ export const judgeAllowed = (id: string) =>
 
 type Caller = { call(id: never, input: never, options: never): Promise<unknown> }
 
-/** HTTP statuses a capability carries in `data.status` when what it was asked for does not exist. */
-const GONE = new Set([404, 410])
-
 /**
- * A capability failure that is an answer, not an outage: the thing asked for is gone (`web.fetch` 404/410, a
- * `web.package` that does not exist, both `UPSTREAM_ERROR` with that status in `data`) or the URL is refused
- * (`URL_REFUSED`). It comes back as `{ error: { code, message } }`; anything else (5xx, timeouts, network,
- * `NOT_CONFIGURED`, `CANCELLED`, an internal error) is `null`: an outage, which throws and is retried.
+ * A capability failure that is an answer, not an outage: the source said no. A client error in `data.status`
+ * (`UPSTREAM_ERROR` 4xx: a page gone, forbidden, paywalled or rate-limited, a `web.package` that does not exist) or a
+ * refused URL (`URL_REFUSED`). It comes back as `{ error: { code, message } }`, and the scorer leaves that citation
+ * unjudged. Anything else (5xx, timeouts, network, `NOT_CONFIGURED`, `CANCELLED`, an internal error) is `null`: an
+ * outage, which throws and is retried.
  */
 export function answerOf(error: { code: string; message: string; data?: unknown } | null | undefined): Json | null {
   if (!error) return null
   const status = (error.data as { status?: unknown } | undefined)?.status
-  const gone = error.code === 'UPSTREAM_ERROR' && typeof status === 'number' && GONE.has(status)
-  return gone || error.code === 'URL_REFUSED' ? { error: { code: error.code, message: error.message } } : null
+  const refusedBySource = error.code === 'UPSTREAM_ERROR' && typeof status === 'number' && status >= 400 && status < 500
+  return refusedBySource || error.code === 'URL_REFUSED'
+    ? { error: { code: error.code, message: error.message } }
+    : null
 }
 
 /**
@@ -37,7 +37,7 @@ export function answerOf(error: { code: string; message: string; data?: unknown 
  * shared attempt rule (`withAttemptKeys`): a retried scoring adopts a finished call, an answer failure included
  * ({@link answerOf}); an outage or a cancelled call is stepped past and runs again under the next key.
  * Drift keys also carry the pass (its UTC day). An aborted scoring cancels the call it started.
- * Only {@link answerOf}'s failures (gone, refused) come back, as `{ error: { code, message } }`; every other failure
+ * Only {@link answerOf}'s failures (a client error from the source, a refused URL) come back, as `{ error: { code, message } }`; every other failure
  * throws, and the runtime retries the scoring.
  */
 export function scorerJudge(options: {
@@ -57,7 +57,7 @@ export function scorerJudge(options: {
       throw new Error(`judge: ${capability} is not a judge capability (${JUDGE_CAPABILITIES.join(', ')}, llm.*)`)
     }
     if (scope.source === 'inline') {
-      // The same contract as below: only a gone or refused answer comes back; an outage throws.
+      // The same contract as below: only an answer (the source said no) comes back; an outage throws.
       try {
         return await call(capability, input, { addUsage: scope.addUsage, signal: scope.signal })
       } catch (error) {
@@ -83,7 +83,7 @@ export function scorerJudge(options: {
       const existing = await runtime.runByKey(workflow.id, key)
       if (existing?.status === 'cancelled') return { failedBefore: true }
       if (existing?.status === 'failed') {
-        // A gone or refused answer is final and is adopted; an outage is stepped past and runs again.
+        // An answer (the source said no) is final and is adopted; an outage is stepped past and runs again.
         const answer = answerOf(journaledError(existing.error?.message ?? ''))
         return answer ? { value: answer } : { failedBefore: true }
       }
@@ -102,7 +102,7 @@ export function scorerJudge(options: {
       // Aborted while waiting: the cancel above ended the call; the abort is the answer, not the cancelled run.
       scope.signal.throwIfAborted()
       if (end.status === 'done') return { value: end.output }
-      // A gone or refused answer is final; an outage throws, and the retried scoring steps past this key.
+      // An answer is final; an outage throws, and the retried scoring steps past this key.
       const answer = end.status === 'failed' ? answerOf(journaledError(end.error?.message ?? '')) : null
       if (answer) return { value: answer }
       throw new Error(`judge ${capability}: run ${runId} ${end.status}${end.error ? `: ${end.error.message}` : ''}`)

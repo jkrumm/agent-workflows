@@ -185,7 +185,8 @@ Define it with `defineWorkflow` (input must be a `z.object`; list its agents in 
   or `drift`, keyed by the score source (drift also by its pass, the UTC day), the scorer version, the scored run, the capability and its input under the
   shared attempt rule (a retried scoring adopts a finished call and re-runs a failed one; a drift re-score under a new
   scorer fetches fresh; an aborted scoring cancels the call it started); an inline gate (none judges today) calls in process on its step. Only a failure that is an
-  answer comes back (`answerOf`: a page gone, a package not found, a refused URL, as `{error: {code, message}}`);
+  answer comes back (`answerOf`: a 4xx from the source, such as a page gone, forbidden or rate-limited, or a package
+  not found; a refused URL; as `{error: {code, message}}`);
   every other failure, an outage, throws and the scoring retries.
   Review's and check's scorers never judge. **Drift on research** spends per sampled run up to three `web.fetch` (direct
   or Tavily Extract, ≈ $0) and three `decide` calls on ≤ 20k characters each (≈ 5k tokens at $0.04/M, ≈ $0.0002 each):
@@ -212,7 +213,8 @@ the pre-registered rule, results).
   recognises its own claim), and the rows' reported costs are what `engine.costUsd` sums; a failed one at the
   engine's reported cost or unknown). Its evidence is written apart to
   `research_tool_calls` (migrations 0007 and 0008, rows go with their run; in memory on a host without a database), so a step
-  retry or a host restart loses nothing; `tools` reads it once the grant has drained, and a citation whose URL was
+  retry or a host restart loses nothing; `tools` reads it once the grant has drained (at the agent's end, calls in flight are served first, bounded; an
+  engine job cut off at the bound is recorded and booked as abandoned, cost unknown), and a citation whose URL was
   never retrieved is dropped to `unverified` (the engine's grounding rule; ≥ 10 % dropped makes the report `partial`).
   A ledger write is retried and logged and never fails a call that worked. Engine jobs and the judge's calls share
   one key rule (`src/attempt-keys.ts`): adopt what is done (a failure that is an answer is final), step past an outage or a cancel. The server has no idle timeout (an engine job holds a request 10-60 s), caps a body at 64 KiB before
