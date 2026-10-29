@@ -4,7 +4,16 @@ import { audioRoutes } from '../routes.ts'
 
 const ROUTES = audioRoutes()
 import { createAudioScope } from '../scope.ts'
-import { caught, type FakeIu, hasFfmpeg, prepAnswer, startFakeIu, testDeps, toneFile } from '../testing/index.ts'
+import {
+  caught,
+  type FakeIu,
+  hasFfmpeg,
+  realMedia,
+  prepAnswer,
+  startFakeIu,
+  testDeps,
+  toneFile,
+} from '../testing/index.ts'
 import type { CallEvent, RequestEvent, UsageEvent } from '../usage.ts'
 import { ReplicateSynthError, synthReplicateChunk } from './replicate.ts'
 
@@ -29,7 +38,7 @@ function setup(handlers: Parameters<typeof startFakeIu>[0] = {}, config = {}) {
     delivery: () => new Response(mp3),
     ...handlers,
   })
-  const deps = testDeps(iu, { config })
+  const deps = testDeps(iu, { media: realMedia(), config })
   return { deps, speak: createSpeechHandler(deps) }
 }
 

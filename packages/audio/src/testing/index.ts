@@ -1,6 +1,7 @@
 // Test support: a fake IU on a real socket answering like its OpenAI, Gemini and Replicate routes, plus deps with an
 // instant clock and a recording usage port, so the production lanes are exercised over HTTP.
 import { type AudioConfig, audioConfig } from '../config.ts'
+import { ffmpegMedia, type MediaPort } from '../media/audio.ts'
 import type { AudioDeps, AudioLog, Clock, Fetch } from '../scope.ts'
 import type { RequestEvent, UsageEvent, UsagePort } from '../usage.ts'
 
@@ -144,6 +145,25 @@ export function prepAnswer(prep: { lang: string; title?: string; chunks: Array<R
   return chatAnswer(JSON.stringify(prep))
 }
 
+/**
+ * The default media port of `testDeps`: in-process, no ffmpeg. `transcode` hands the input back labelled with the asked
+ * format, `duration` is unknown (0). A test that exercises the real boundary passes `ffmpegMedia(...)` and skips on
+ * `!hasFfmpeg`, so no test depends on the host having ffmpeg by accident.
+ */
+export const fakeMedia: MediaPort = {
+  transcode: async (input, _from, to) => ({
+    bytes: input.slice().buffer,
+    contentType: to === 'mp3' ? 'audio/mpeg' : to === 'opus' ? 'audio/ogg' : `audio/${to}`,
+  }),
+  duration: async () => 0,
+  compressForStt: async () => new ArrayBuffer(0),
+  slice: async () => new ArrayBuffer(0),
+  detectSilence: async () => [],
+}
+
+/** The real boundary, for the tests that exercise it (each skips on `!hasFfmpeg`). */
+export const realMedia = (): MediaPort => ffmpegMedia({ mp3BitrateKbps: 48, opusBitrateKbps: 32 })
+
 export const instantClock: Clock = { now: () => Date.now(), sleep: async () => {} }
 
 export const silentLog: AudioLog = { info: () => {}, warn: () => {}, error: () => {} }
@@ -184,6 +204,7 @@ export function testDeps(
     clock: instantClock,
     log: silentLog,
     fetch: iu.fetch,
+    media: fakeMedia,
     ...rest,
     config: testConfig(iu.baseUrl, config),
     usage: recordingUsage(),
