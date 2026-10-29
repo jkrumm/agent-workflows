@@ -110,6 +110,16 @@ describe('triage', () => {
     expect(buildTriagePrompt({ destination: 'd', transcript: 'x'.repeat(4000) })).not.toContain('[truncated]')
   })
 
+  test('the cut never splits a surrogate pair', () => {
+    const prompt = buildTriagePrompt({ destination: 'd', transcript: `${'x'.repeat(3999)}😀tail`, reply: null })
+    expect(prompt).toContain(`${'x'.repeat(3999)}\n[truncated]`)
+    expect(prompt).not.toContain('\ud83d')
+  })
+
+  test('an empty destination is a BAD_REQUEST', async () => {
+    expect(await caught(call({ ...input, destination: '' }))).toMatchObject({ code: 'BAD_REQUEST' })
+  })
+
   test('a fenced answer is accepted', async () => {
     iu.on('messages', () => messageResponse(`\`\`\`json\n${JSON.stringify(GOOD)}\n\`\`\``, tokens))
     expect((await call()).headline).toBe(GOOD.headline)
