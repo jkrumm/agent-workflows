@@ -90,7 +90,7 @@ excluded from every tool.
 CI (`.github/workflows/ci.yml`) runs `bun install --frozen-lockfile` and `make check` on pushes to `master` and
 on pull requests, on GitHub-hosted runners.
 
-`make check` needs Postgres: tests read `AGW_TEST_PG_URL` and fail when it is unset. On the mini `make check` builds it from `.env.test.tpl` through `secrets-run`; elsewhere set `AGW_TEST_PG_URL` (CI uses a `postgres:18` service). Each test file works in its own throwaway schema. `make check` prints and applies a load-scaled per-test timeout (`bun test --timeout`: 5000 ms × 1-minute load average per core, floor 5000, cap 30000); a test with its own explicit timeout keeps it.
+`make check` needs Postgres: tests read `AGW_TEST_PG_URL` and fail when it is unset. On the mini `make check` builds it from `.env.test.tpl` through `secrets-run`; elsewhere set `AGW_TEST_PG_URL` (CI uses a `postgres:18` service). Each test file works in its own throwaway schema. Each test file sets a load-scaled default timeout as it starts (`packages/testing` preload from `bunfig.toml`: 5000 ms × 1-minute load average per core, floor 5000, cap 30000; Bun binds a timeout at test registration, so per file is the finest grain); a test with its own explicit timeout keeps it.
 
 ## Gotchas
 

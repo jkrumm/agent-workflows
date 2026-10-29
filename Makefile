@@ -9,8 +9,8 @@ help:
 
 # docs/spikes/** is excluded from every tool (see biome.json, .oxlintrc.json, tsconfig.json, bunfig.toml).
 # Tests need Postgres via AGW_TEST_PG_URL; unset on the mini, it is built from .env.test.tpl through secrets-run.
-# The per-test timeout scales with host load (1-minute load average per core, floor bun's 5000 ms, cap 30 s); tests that pass
-# their own timeout keep it.
+# The test timeout scales with host load, sampled as each test file starts (bunfig.toml preload, packages/testing); tests that
+# pass their own timeout keep it.
 check:
 	@echo "==> install (bun install --frozen-lockfile)"
 	@bun install --frozen-lockfile
@@ -22,14 +22,13 @@ check:
 	@bunx --no-install oxlint -c .oxlintrc.json --type-aware packages
 	@echo "==> typecheck (tsc --noEmit)"
 	@bunx --no-install tsc --noEmit
-	@TEST_TIMEOUT_MS=$$(bun -e 'const os = require("node:os"); console.log(Math.round(Math.min(30000, Math.max(5000, 5000 * os.loadavg()[0] / os.availableParallelism()))))') && \
-		echo "==> test (bun test --isolate, timeout $${TEST_TIMEOUT_MS}ms)" && \
-		if [ -n "$$AGW_TEST_PG_URL" ] || ! command -v secrets-run >/dev/null 2>&1; then \
-			bun test --isolate --timeout "$$TEST_TIMEOUT_MS"; \
-		else \
-			secrets-run run --env-file=.env.test.tpl -- sh -c \
-				'AGW_TEST_PG_URL="postgres://agent_workflows:$$(bun -e "process.stdout.write(encodeURIComponent(process.env.AGW_TEST_PG_PASSWORD))")@127.0.0.1:5432/agent_workflows" exec bun test --isolate --timeout "$$1"' _ "$$TEST_TIMEOUT_MS"; \
-		fi
+	@echo "==> test (bun test --isolate, load-scaled timeout per test file)"
+	@if [ -n "$$AGW_TEST_PG_URL" ] || ! command -v secrets-run >/dev/null 2>&1; then \
+		bun test --isolate; \
+	else \
+		secrets-run run --env-file=.env.test.tpl -- sh -c \
+			'AGW_TEST_PG_URL="postgres://agent_workflows:$$(bun -e "process.stdout.write(encodeURIComponent(process.env.AGW_TEST_PG_PASSWORD))")@127.0.0.1:5432/agent_workflows" exec bun test --isolate'; \
+	fi
 	@echo "==> check passed"
 
 fmt:
