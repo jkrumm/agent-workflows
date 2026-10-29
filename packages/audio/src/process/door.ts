@@ -302,7 +302,8 @@ export function createDoor(options: DoorOptions): Door {
       logger.error('door handler threw', { runId, error: message })
       return doorError(500, message, 'proxy_error', { [RUN_ID_HEADER]: runId })
     }
-    const body = response.body ? onEnd(response.body, finish) : null
+    // A cancelled body is the client going away, whether or not Bun has fired the abort by then.
+    const body = response.body ? onEnd(response.body, finish, () => sink.finish('client-gone')) : null
     if (!body) finish()
     const answer = new Response(body, response)
     answer.headers.set(RUN_ID_HEADER, runId)
@@ -322,8 +323,8 @@ export function createDoor(options: DoorOptions): Door {
   }
 }
 
-/** The same bytes, pulled as the client reads them; `end` runs once when the body ended, failed or was cancelled. */
-function onEnd(body: ReadableStream<Uint8Array>, end: () => void): ReadableStream<Uint8Array> {
+/** The same bytes, pulled as the client reads them; `end` runs when the body ended or failed, `cancelled` when the reader went away. */
+function onEnd(body: ReadableStream<Uint8Array>, end: () => void, cancelled: () => void): ReadableStream<Uint8Array> {
   const reader = body.getReader()
   return new ReadableStream<Uint8Array>(
     {
@@ -340,7 +341,7 @@ function onEnd(body: ReadableStream<Uint8Array>, end: () => void): ReadableStrea
         }
       },
       cancel(reason) {
-        end()
+        cancelled()
         return reader.cancel(reason)
       },
     },
