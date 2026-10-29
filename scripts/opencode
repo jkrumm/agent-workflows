@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# opencode — the machine's ONE opencode build: the pinned install under
+# ~/.local/share/agent-workflows/opencode-bin/ (OPENCODE_VERSION in packages/opencode-host/src/server.ts;
+# upgrade steps in packages/opencode-host/README.md §Pinned build). `make install-opencode` links this as
+# ~/.local/bin/opencode; Homebrew's opencode is not used (its bottle lags the npm releases, and a `brew upgrade`
+# once changed behaviour under a running host and broke every run).
+# Interactive `oc`, `rd wave|fan --kind opencode` and herdr agent panes all resolve `opencode` through here, so the
+# shared per-user service and the agw OpenCode server run the same version.
+# `scripts/install-opencode-bin.sh` maintains the `current` link.
+# Keep the `bin="$HOME/…"` line: `resolveOpencodeBinary` (packages/opencode-host) reads it to find the real binary
+# without the user's HOME.
+set -euo pipefail
+bin="$HOME/.local/share/agent-workflows/opencode-bin/current/node_modules/.bin/opencode"
+if [ ! -x "$bin" ]; then
+  echo "opencode: pinned build missing ($bin) — run 'make install-opencode' in the agent-workflows checkout" >&2
+  exit 127
+fi
+exec "$bin" "$@"
