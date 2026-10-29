@@ -32,16 +32,26 @@ function sourceFiles(): string[] {
 /**
  * Every line naming a table model id as a whole token: an id inside a longer word is not one (`whisper` is a model id,
  * `<whispers>` a Gemini TTS tag). Adjacent `-`, `.`, `/` and quotes still delimit, so `'whisper'` and `x/whisper` hit.
+ * Longest ids match first and their spans are blanked: a shorter id inside a longer one's match (`gemini-3.8-flash` in
+ * `gemini-3.8-flash-lite-tts`) is that id, not a second one.
  */
 export function findModelIds(files: Map<string, string>, ids: string[]): string[] {
-  const patterns = ids.map((id) => ({
-    id,
-    re: new RegExp(`(?<![A-Za-z0-9_])${id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![A-Za-z0-9_])`),
-  }))
+  const patterns = [...ids]
+    .sort((a, b) => b.length - a.length)
+    .map((id) => ({
+      id,
+      re: new RegExp(`(?<![A-Za-z0-9_])${id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![A-Za-z0-9_])`, 'g'),
+    }))
   const hits: string[] = []
   for (const [file, text] of files) {
     text.split('\n').forEach((line, i) => {
-      for (const { id, re } of patterns) if (re.test(line)) hits.push(`${file}:${i + 1} contains model id "${id}"`)
+      let rest = line
+      for (const { id, re } of patterns) {
+        re.lastIndex = 0
+        if (!re.test(rest)) continue
+        hits.push(`${file}:${i + 1} contains model id "${id}"`)
+        rest = rest.replace(re, (match) => ' '.repeat(match.length))
+      }
     })
   }
   return hits
@@ -55,6 +65,21 @@ test('no source outside the route table contains a model id from it', () => {
   const files = new Map<string, string>()
   for (const file of sourceFiles()) files.set(relative(resolve(PACKAGES, '..'), file), readFileSync(file, 'utf8'))
   expect(findModelIds(files, modelIds())).toEqual([])
+})
+
+test('a shorter id inside a longer id is not reported; the same id on its own still is', () => {
+  const ids = ['gemini-9-flash', 'gemini-9-flash-lite-tts']
+  const files = new Map([
+    [
+      'packages/x/src/a.ts',
+      `const m = "gemini-9-flash-lite-tts"\nconst both = ['gemini-9-flash-lite-tts', 'gemini-9-flash']\n`,
+    ],
+  ])
+  expect(findModelIds(files, ids)).toEqual([
+    'packages/x/src/a.ts:1 contains model id "gemini-9-flash-lite-tts"',
+    'packages/x/src/a.ts:2 contains model id "gemini-9-flash-lite-tts"',
+    'packages/x/src/a.ts:2 contains model id "gemini-9-flash"',
+  ])
 })
 
 test('the guard catches a planted model id with file:line', () => {
