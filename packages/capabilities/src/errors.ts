@@ -27,6 +27,8 @@ export const ERRORS = {
   },
   /** A URL the capability will not fetch (a scheme other than http(s), credentials, an internal or non-public host). Nothing was sent. */
   URL_REFUSED: { status: 422, message: 'URL refused' },
+  /** An input the capability cannot use and the schema cannot express: a file that is missing, too large or not an image. Nothing was sent. */
+  INVALID_INPUT: { status: 422, message: 'Input rejected' },
   /** The caller's signal aborted the call. */
   CANCELLED: { status: 499, message: 'Cancelled' },
 } as const

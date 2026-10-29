@@ -1,3 +1,4 @@
+import { type Price, type PriceUsage, priceCall } from './price.ts'
 import type { Rate, Wire } from './schema.ts'
 
 /**
@@ -6,7 +7,7 @@ import type { Rate, Wire } from './schema.ts'
  * them. Cache counts: Anthropic `cache_read_input_tokens` / `cache_creation_input_tokens`, OpenAI
  * `prompt_tokens_details.cached_tokens` (OpenAI reports no cache writes).
  */
-export interface ProviderUsage {
+export interface ProviderUsage extends Pick<PriceUsage, 'input_tokens_details' | 'units'> {
   /** USD, reported by the provider (IU puts it in `usage.cost`). */
   cost?: number | null
   prompt_tokens?: number
@@ -38,9 +39,11 @@ export const LONG_PROMPT_TOKENS = 100_000
  * total, or a prompt above the rate's `longPromptTokens` (default `LONG_PROMPT_TOKENS`; vendors bill a higher tier we
  * do not model) make the cost
  * `unknown`: never free, never 0, never an under-price.
+ * A route with a `price` (image, audio, Replicate: `price.ts`) is priced by it alone; `rate` is the text-token path.
  * `wire` is reserved for wire-specific cost rules; no wire needs one yet, so it is not read.
  */
-export function costFromUsage(_wire: Wire, usage: ProviderUsage | null | undefined, rate?: Rate): Cost {
+export function costFromUsage(_wire: Wire, usage: ProviderUsage | null | undefined, rate?: Rate, price?: Price): Cost {
+  if (price) return priceCall(price, usage)
   if (typeof usage?.cost === 'number' && Number.isFinite(usage.cost) && usage.cost >= 0) {
     return { usd: usage.cost, source: 'provider' }
   }

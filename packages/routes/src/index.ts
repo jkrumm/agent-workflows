@@ -4,6 +4,17 @@ import { DEFAULT_ROUTES } from './registry.ts'
 import type { ResolvedRoute, RouteEntry, RouteId } from './schema.ts'
 
 export { BALANCE_MARKER, isBalanceFailure } from './balance.ts'
+export { IMAGE_ROUTES, type ImageRouteId, resolveImageRoute } from './image-routes.ts'
+export {
+  type Price,
+  type PriceUsage,
+  priceCall,
+  priceSchema,
+  type Unit,
+  UNITS,
+  type UnitPrice,
+  type UnitsUsed,
+} from './price.ts'
 export { type Cost, costFromUsage, LONG_PROMPT_TOKENS, type ProviderUsage } from './cost.ts'
 export { OVERRIDES_ENV, RouteOverrideError } from './overrides.ts'
 export { DEFAULT_ROUTES, discoverRoutes } from './registry.ts'

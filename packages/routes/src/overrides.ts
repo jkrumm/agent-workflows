@@ -54,5 +54,6 @@ function merge(base: Record<string, unknown>, patch: FallbackPatch): Record<stri
     else if (value !== undefined) merged[key] = value
   }
   if (patch.model !== undefined && patch.model !== base.model && patch.rate === undefined) delete merged.rate
+  if (patch.model !== undefined && patch.model !== base.model && patch.price === undefined) delete merged.price
   return merged
 }
