@@ -8,9 +8,17 @@
     "./testing": "./src/testing/index.ts"
   },
   "scripts": {
-    "test": "bun test --isolate"
+    "test": "bun test --isolate",
+    "start": "bun src/main.ts"
   },
   "dependencies": {
-    "@agent-workflows/routes": "workspace:*"
+    "@agent-workflows/host": "workspace:*",
+    "@agent-workflows/routes": "workspace:*",
+    "@agent-workflows/runtime": "workspace:*",
+    "pg": "8.23.1",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@types/pg": "8.23.1"
   }
 }
