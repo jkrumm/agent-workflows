@@ -53,6 +53,12 @@ not Requesty.
   prompt. Fields that are one line by nature (ids, account, pane and workspace ids, titles, wait reasons, project, branch
   and commit text, the model's standing and blocker) also lose CR/LF. In the facts the model reads, a multi-line prompt
   or reply is one line, so it cannot forge a `- agent id:` line.
+- **Keys and paths are raw, display is clean.** A session, pane, workspace or job id that cleaning would change is not an
+  identity (a UUID never is): the row is dropped, or the pane or workspace id left null. `git -C` and the transcript
+  path take the raw `cwd`; a `cwd` with a control byte or a line break gets no git, and the project's displayed `cwd`
+  is the cleaned copy. A pane with no session (`{}`, `{ value: null }`) is a valid agent keyed by its pane.
+- **The snapshot is stamped after the transcript tails are read**, so no tail line is newer than `generatedAt` (and so
+  than a run's `snapshotGeneratedAt`).
 - **The collectors validate shapes.** A herdr or registry row of the wrong type, a null or a scalar is dropped with one
   warning counting them, never a throw. A row without a `cwd` gets no transcript read and no `git -C ''`.
 - **Bounded work:** transcript tails and per-project git run at most 8 at a time; the human queue reads the newest 200

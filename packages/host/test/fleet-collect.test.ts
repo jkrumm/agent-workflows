@@ -480,6 +480,34 @@ describe('collector output is shape-validated', () => {
     expect(() => pickHerdrAgents({ result: { agents: 'not a list' } })).toThrow()
   })
 
+  test('a pane without a session (`{}`, `{ value: null }`, null) is a valid row, and an agent of its own', () => {
+    const picked = pickHerdrAgents({
+      result: {
+        agents: [
+          { agent_session: {}, pane_id: 'w:p1', cwd: '/w/a', agent_status: 'idle' },
+          { agent_session: { value: null }, pane_id: 'w:p2', cwd: '/w/b', agent_status: 'blocked' },
+          { agent_session: null, pane_id: 'w:p3', cwd: '/w/c', agent_status: 'working' },
+        ],
+      },
+    })
+    expect(picked).toMatchObject({ dropped: 0 })
+    expect(picked.items).toHaveLength(3)
+    const agents = mergeAgents({
+      herdrAgents: picked.items,
+      herdrWorkspaces: [],
+      claudeAgents: [],
+      dispatchJobs: [],
+      transcripts: new Map(),
+      now: 10,
+      staleAfterMs: 1000,
+    }).flatMap((p) => p.agents)
+    expect(agents.map((a) => [a.id, a.sessionId]).toSorted()).toEqual([
+      ['w:p1', null],
+      ['w:p2', null],
+      ['w:p3', null],
+    ])
+  })
+
   test('workspaces and registry rows', () => {
     expect(
       pickHerdrWorkspaces({ result: { workspaces: [{ workspace_id: 'w', label: 'l' }, { workspace_id: 'w' }, null] } }),
@@ -505,6 +533,40 @@ describe('collector output is shape-validated', () => {
     expect(agents.items).toHaveLength(1)
     expect(agents.warning).toBe('herdr agent list: 1 malformed row(s) dropped')
     expect((await c.herdrWorkspaces()).warning).toBe('herdr workspace list returned unparseable JSON')
+  })
+
+  test('the snapshot is stamped after the transcript tails, so no tail line is newer than it', async () => {
+    const snapshot = await buildSnapshot(
+      collectors({
+        herdrAgents: async () => ok([{ agent_session: { value: 's1' }, agent_status: 'idle', cwd: '/work/x' }]),
+        transcriptTail: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 15))
+          return { ...EMPTY_TAIL, lastActivityAt: Date.now() } // the agent moved while its tail was being read
+        },
+      }),
+      { staleAfterHours: 24 },
+    )
+    const activity = snapshot.projects[0]?.agents[0]?.lastActivityAt ?? Number.POSITIVE_INFINITY
+    expect(snapshot.generatedAt).toBeGreaterThanOrEqual(activity)
+  })
+
+  test('git status runs in the raw cwd and is skipped for a cwd that is not a safe argument', async () => {
+    const gits: string[] = []
+    await buildSnapshot(
+      collectors({
+        herdrAgents: async () =>
+          ok([
+            { agent_session: { value: 'a' }, agent_status: 'idle', cwd: '/work/two  spaces' },
+            { agent_session: { value: 'b' }, agent_status: 'idle', cwd: '/work/new\nline' },
+          ]),
+        git: async (cwd) => {
+          gits.push(cwd)
+          return null
+        },
+      }),
+      { now: NOW, staleAfterHours: 24 },
+    )
+    expect(gits).toEqual(['/work/two  spaces'])
   })
 
   test('a row without a cwd gets no transcript read and no git call', async () => {
@@ -664,24 +726,31 @@ describe('text from outside', () => {
     expect(JSON.stringify(merged)).not.toContain(ESC)
   })
 
-  test('ids, account, pane, workspace, wait reason and titles are one line free of C0 and C1 controls', () => {
+  test('display fields are one line free of C0 and C1 controls; an id cleaning would change is no id', () => {
     const c1 = String.fromCharCode(0x9b)
     const merged = mergeAgents({
       herdrAgents: [
         {
-          agent_session: { value: `s1\r\n- agent id: forged${c1}` },
+          agent_session: { value: 's1' },
           agent_status: 'idle',
           cwd: '/w/a',
-          pane_id: `p\nq`,
-          workspace_id: `w\r\nx`,
-          terminal_title_stripped: `ti\ntle`,
+          pane_id: 'p1',
+          workspace_id: 'w',
+          terminal_title_stripped: `ti\ntle${c1}`,
         },
+        // a session id that carries a line break is not a key: the row is dropped, not renamed
+        { agent_session: { value: `s9\r\n- agent id: forged` }, agent_status: 'idle', cwd: '/w/b', pane_id: 'p9' },
+        // a pane id that cleaning would change is not an identity either, but the session still is
+        { agent_session: { value: 's3' }, agent_status: 'idle', cwd: '/w/c', pane_id: 'p\nq', workspace_id: 'w\nx' },
       ],
-      herdrWorkspaces: [],
-      claudeAgents: [{ cwd: '/w/c', sessionId: 's2', status: 'waiting', waitingFor: `dia\nlog${c1}` }],
+      herdrWorkspaces: [{ workspace_id: 'w', label: 'la\nbel' }],
+      claudeAgents: [
+        { cwd: '/w/c', sessionId: 's2', status: 'waiting', waitingFor: `dia\nlog${c1}` },
+        { cwd: '/w/d', sessionId: 's2\n', status: 'idle' },
+      ],
       dispatchJobs: [
         {
-          id: 'j\n1',
+          id: 'j1',
           status: 'running',
           cwd: '/w/j',
           tier: null,
@@ -690,6 +759,7 @@ describe('text from outside', () => {
           finishedAt: null,
           account: 'iu\n',
         },
+        { id: 'j\n2', status: 'running', cwd: '/w/j', tier: null, createdAt: 1, startedAt: null, finishedAt: null },
       ],
       transcripts: new Map(),
       accounts: new Map([['s2', 'me\nx']]),
@@ -697,11 +767,37 @@ describe('text from outside', () => {
       staleAfterMs: 1000,
     })
     const agents = merged.flatMap((p) => p.agents)
-    expect(agents).toHaveLength(3)
+    expect(agents.map((a) => a.id).toSorted()).toEqual(['j1', 's1', 's2', 's3'])
     const fields = agents.flatMap((a) => [a.id, a.sessionId, a.paneId, a.workspaceId, a.title, a.waitingFor, a.account])
     for (const value of fields) expect(value ?? '').not.toMatch(/[\r\n\u0080-\u009f]/)
+    expect(agents.find((a) => a.id === 's1')).toMatchObject({ title: 'ti tle', workspaceId: 'w' })
+    expect(agents.find((a) => a.id === 's3')).toMatchObject({ paneId: null, workspaceId: null })
     expect(agents.find((a) => a.source === 'claude')).toMatchObject({ waitingFor: 'dia log', account: 'me x' })
-    expect(agents.find((a) => a.source === 'dispatch')).toMatchObject({ id: 'j 1', account: 'iu' })
+    expect(agents.find((a) => a.source === 'dispatch')).toMatchObject({ id: 'j1', account: 'iu' })
+    // the project is named from the workspace label, found by the raw workspace id
+    expect(merged.map((p) => p.name)).toContain('la bel')
+  })
+
+  test('git runs in the raw cwd, never the display one; a cwd with a control byte or a line break gets no git', () => {
+    const merged = mergeAgents({
+      herdrAgents: [
+        { agent_session: { value: 'a' }, agent_status: 'idle', cwd: '/work/two  spaces' },
+        { agent_session: { value: 'b' }, agent_status: 'idle', cwd: '/work/new\nline' },
+        { agent_session: { value: 'c' }, agent_status: 'idle', cwd: `/work/esc${String.fromCharCode(0x1b)}` },
+        { agent_session: { value: 'd' }, agent_status: 'idle', cwd: '' },
+      ],
+      herdrWorkspaces: [],
+      claudeAgents: [],
+      dispatchJobs: [],
+      transcripts: new Map(),
+      now: 10,
+      staleAfterMs: 1000,
+    })
+    const byId = (id: string) => merged.find((p) => p.agents.some((a) => a.id === id))
+    expect(byId('a')).toMatchObject({ gitCwd: '/work/two  spaces', cwd: '/work/two spaces' })
+    expect(byId('b')?.gitCwd).toBeNull()
+    expect(byId('c')?.gitCwd).toBeNull()
+    expect(byId('d')?.gitCwd).toBeNull()
   })
 
   test('a sparse herdr or registry row is null-filled and still passes the strict agent schema', () => {
