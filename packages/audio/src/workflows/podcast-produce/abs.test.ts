@@ -4,6 +4,7 @@ import {
   type AbsDeps,
   type AbsPublishInput,
   episodeFilename,
+  episodeToken,
   filenameMatches,
   findPublishedEpisode,
   publishToAudiobookshelf,
@@ -395,11 +396,14 @@ describe('publishToAudiobookshelf: failures', () => {
 })
 
 describe('filenameMatches', () => {
-  test('matches on the job-id token regardless of how ABS sanitized the rest', () => {
+  test('matches the whole name, whatever ABS did to whitespace and the Unicode form', () => {
     expect(
       filenameMatches('2026-09-02 Camper die Zahl [3965afde].mp3', '2026-09-02 Camper  die Zahl [3965afde].mp3'),
     ).toBe(true)
+    expect(filenameMatches('2026-09-02 U\u0308ber [3965afde].mp3', '2026-09-02 \u00dcber [3965afde].mp3')).toBe(true)
     expect(filenameMatches('2026-09-02 Camper [c2e279c6].mp3', '2026-09-02 Camper [3965afde].mp3')).toBe(false)
+    // Same token, another episode: never this one's file.
+    expect(filenameMatches('2026-09-02 Other [3965afde].mp3', '2026-09-02 Camper [3965afde].mp3')).toBe(false)
     expect(filenameMatches('plain.mp3', 'plain.mp3')).toBe(true)
     expect(filenameMatches(undefined, 'plain.mp3')).toBe(false)
   })
@@ -420,13 +424,23 @@ describe('slugifyFilename', () => {
 })
 
 describe('episodeFilename', () => {
-  test('embeds the first 8 chars of the job id so two jobs with the same title never collide', () => {
+  test("embeds 8 hex of the id's random tail so two jobs with the same title never collide", () => {
     const a = episodeFilename('2026-09-02', 'Nordspanien 2026', 'c2e279c6-b004-49cd-91b7-89d969856bf8')
     const b = episodeFilename('2026-09-02', 'Nordspanien 2026', '13f825b0-034e-4856-8bbb-64e6f4f01c3c')
-    expect(a).toBe('2026-09-02 Nordspanien 2026 [c2e279c6].mp3')
+    expect(a).toBe('2026-09-02 Nordspanien 2026 [69856bf8].mp3')
     expect(a).not.toBe(b)
-    expect(episodeFilename('2026-09-02', 'Camper – die Zahl, die zählt', '3965afde-0000')).toBe(
-      '2026-09-02 Camper die Zahl die zählt [3965afde].mp3',
+    expect(episodeFilename('2026-09-02', 'Camper – die Zahl, die zählt', '3965afde-0000-4000-8000-00000000abcd')).toBe(
+      '2026-09-02 Camper die Zahl die zählt [0000abcd].mp3',
     )
+  })
+
+  test('two UUIDv7 run ids of the same millisecond window get different tokens and names', () => {
+    const first = Bun.randomUUIDv7('hex', 1_761_728_400_000)
+    const second = Bun.randomUUIDv7('hex', 1_761_728_400_000)
+    expect(first.slice(0, 8)).toBe(second.slice(0, 8))
+    expect(episodeToken(first)).not.toBe(episodeToken(second))
+    const a = episodeFilename('2026-10-29', 'Same Title', first)
+    const b = episodeFilename('2026-10-29', 'Same Title', second)
+    expect(filenameMatches(a, b)).toBe(false)
   })
 })

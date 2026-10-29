@@ -56,8 +56,10 @@ had them (`abs.libraryItemId`, `publish.ok/error`, `brainNote.committed/pushed`,
 Each effect runs under the runtime's key `<runId>:<stepId>` (`ctx.effect`); a resumed effect waits out the body grace,
 then runs again, and every effect checks its target before acting:
 
-- **publish:** the file name carries the episode token `[<first 8 of the episode id>]` (legacy `episodeFilename`). Before
-  uploading, `publishToAudiobookshelf` polls once for an episode with that token; found, it skips upload, scan and wait
+- **publish:** the file name carries the episode token `[<8 hex of the episode id's random tail>]` (legacy
+  `episodeFilename` took the first 8 of a UUIDv4; a run id is a UUIDv7, whose first 8 hex repeat for about a minute).
+  Before uploading, `publishToAudiobookshelf` polls once for an episode with this whole file name (whitespace and
+  Unicode form normalised, as ABS's sanitizer may change them); found, it skips upload, scan and wait
   and only patches (idempotent). An upload ABS already holds under the same name replaces its own file, as in legacy,
   never a second episode.
 - **brain-note:** the commit carries `Effect-Key: <runId>:brain-note` as its second paragraph. After writing the two
