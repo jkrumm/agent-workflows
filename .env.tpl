@@ -2,7 +2,7 @@ IU_API_KEY=op://common/anthropic/API_KEY
 IU_BASE_URL=op://common/anthropic/BASE_URL
 # web.* capabilities (same items research-gateway reads): Tavily search fallback and Extract, Context7 docs.
 TAVILY_API_KEY=op://common/tavily/API_KEY
-CONTEXT7_API_KEY=op://vps/research-gateway/CONTEXT7_API_KEY
+CONTEXT7_API_KEY=op://mini/agent-workflows/CONTEXT7_API_KEY
 # hdx.* capabilities (HyperDX/ClickStack HTTP API), prod: the agent access key and the domain the capability builds
 # https://hyperdx.<domain> from. Local needs no ref: its key is read from ~/.config/hyperdx/local.env at call time.
 HYPERDX_PROD_ACCESS_KEY=op://vps/clickstack/AGENT_ACCESS_KEY
