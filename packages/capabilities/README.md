@@ -167,3 +167,34 @@ research-gateway's tools as capabilities (Wave 6), behaviour ported and code rew
   ```sh
   AGW_LIVE=1 secrets-run run --env-file=.env.tpl -- bun test packages/capabilities
   ```
+
+## HyperDX capabilities (`src/hdx/`)
+
+The HyperDX / ClickStack HTTP API (concept N7), ported from `hdx.py`: the MCP endpoint (`POST <base>/api/mcp`, stateless JSON-RPC answered as SSE) and REST v2 (`<base>/api/api/v2`), one bearer key per environment. Every capability takes `env: 'local' | 'prod'` (default `prod`). A call costs no money and records `Usage` `{ model: 'hyperdx', cost: 0, costSource: 'rate' }`: a known price of 0, so it never counts as unpriced (`web.fetch`'s direct read is the precedent). Spans come from the middleware around every step, like any capability.
+
+| `hdx.py` | Capability | `agw` |
+|-|-|-|
+| `tools`, `schema [tool]` | `hdx.tools` | `agw hdx tools [name]`: no name lists `{ name, summary, readOnly, readOnlyHint }`; a name adds the full description and `inputSchema`. Folded into one |
+| `instructions`, `prompt <name>` | `hdx.guide` | `agw hdx guide [prompt]`: no prompt returns the server's tool-selection instructions, else that prompt (`query_guide`). Folded into one |
+| `call <tool> '<json>'` | `hdx.query` | `agw hdx query <tool> '<json>'`: read-only tools only |
+| `call <tool>` (mutating), `rest POST\|PUT\|PATCH\|DELETE` | `hdx.write` | `agw hdx write …`: `cli.mutating` (needs `--commit` off a TTY); never granted to an agent |
+| `rest GET` | `hdx.rest` | `agw hdx rest <path>`: read-only |
+| `link <id> --last` | `hdx.link` | `agw hdx link <id> [--last 24h]`: needs no key |
+| `call --raw` | dropped | the JSON-RPC envelope adds nothing over `isError` + `text` |
+
+- **Read-only is an allowlist** (`src/hdx/allowlist.ts`): the 22 tools the server annotates `readOnlyHint: true`, by name. `hdx.query`'s `tool` input is validated against it, so a mutating or unknown tool is a `400 BAD_REQUEST` on every door before anything is sent; the allowed names are in the operation's summary. A ClickStack upgrade that adds a tool leaves it refused until it is read and added. `hdx.write` refuses exactly the allowlisted tools (use `hdx.query`), so the two cannot overlap. The opt-in live test compares the list with the server's annotations in both directions.
+- **Writes are sent once.** `hdx.write` never retries a 5xx (a resent save could apply twice); reads retry 429/5xx and transport failures three times like the other capabilities. A 400 with an empty body (the dev ClickStack's connection race, rejected before processing) is resent once on every method, as `hdx.py` did.
+- **Size cap.** `maxChars` (default 50 000, at most 500 000) cuts the text and appends `[truncated: showing N of M characters; …]`, with `truncated: true` and `totalChars`. `hdx.tools` is small by construction (one tool's schema at most).
+- **Errors.** `NOT_CONFIGURED` (503) when the key or base is missing or malformed, naming the variable, nothing sent; the rest of the host is unaffected. `UPSTREAM_ERROR` carries `data.status`: 401/403 read "rejected the access key", a JSON-RPC error carries its code and message, an unreachable server reads "hdx <env> unreachable" (the URL is not in the message). A tool that ran and failed (`isError`) is returned as data, because the reader needs its text to fix the call.
+- **`hdx.rest` and `hdx.write` paths** must stay under `/api/api/v2` after the URL parser collapses `..` (also `%2e%2e`); anything else is a `400`.
+
+Configuration (environment, read on each call):
+
+| Variable | Meaning |
+|-|-|
+| `HYPERDX_PROD_ACCESS_KEY` | prod bearer key (`op://vps/clickstack/AGENT_ACCESS_KEY` in `.env.tpl`) |
+| `HYPERDX_DOMAIN` | prod base is `https://hyperdx.<domain>` (`op://vps/config/DOMAIN`). The capability composes the URL rather than `scripts/launch.sh`: the domain is a whole-value ref that `secrets-run` already resolves, a launcher edit would add shell for no gain, and the composition is unit-tested. `HYPERDX_PROD_URL` overrides the composed base |
+| `HYPERDX_LOCAL_ACCESS_KEY` | local bearer key; unset: read from `~/.config/hyperdx/local.env` at call time, as `hdx.py` did. No ref in `.env.tpl` |
+| `HYPERDX_LOCAL_URL` | default `http://localhost:7707` |
+
+No key or URL is logged or put in an error message. `createCapabilities(llmDeps, webDeps, hdxDeps)` registers all six; `HdxDeps` injects `fetch`, `env`, `readLocalEnvFile`, `retry` and `now`. Tests (`src/hdx/hdx.test.ts`) run against a fake HyperDX on a real socket speaking the SSE framing; `src/hdx/hdx.live.test.ts` reaches a real one with `AGW_LIVE_HDX=local,prod` and prints counts only.
