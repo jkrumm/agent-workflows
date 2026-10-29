@@ -452,25 +452,30 @@ export function createProduceWorkflows(deps: ProduceDeps) {
     )
 
     // 5. The Slack notice, only where legacy's env is set; best-effort.
-    await ctx.effect('notify', async () => {
+    await ctx.effect('notify', async (_key, { signal }) => {
       if (!config.notify) return null
-      const text = podcastDoneMessage({
-        title: input.metadata.title,
-        durationSeconds: mastered.durationSeconds,
-        chapters: mastered.chapters.map((c) => c.title),
-        absUrl: published.abs?.url ?? null,
-        costUsd: (await deps.journal.runCost(ctx.runId)).usd,
-        publishRequested: input.request.publish,
-        publishError:
-          published.publish.ok === false && published.publish.error !== 'not configured'
-            ? published.publish.error
-            : null,
-        format: input.profile.format,
-        lead: input.profile.lead,
-        humor: input.profile.humor,
-        hostNames: [input.hosts[0].name, input.hosts[1].name],
-      })
-      return json(await notifyPodcastResult(config.notify, text, deps.notifyFetch))
+      try {
+        const text = podcastDoneMessage({
+          title: input.metadata.title,
+          durationSeconds: mastered.durationSeconds,
+          chapters: mastered.chapters.map((c) => c.title),
+          absUrl: published.abs?.url ?? null,
+          // The whole episode's spend, as legacy's job total: the room, this run and its units, the cover.
+          costUsd: (await deps.journal.episodeCost(ctx.runId)).usd,
+          publishRequested: input.request.publish,
+          publishError:
+            published.publish.ok === false && published.publish.error !== 'not configured'
+              ? published.publish.error
+              : null,
+          format: input.profile.format,
+          lead: input.profile.lead,
+          humor: input.profile.humor,
+          hostNames: [input.hosts[0].name, input.hosts[1].name],
+        })
+        return json(await notifyPodcastResult(config.notify, text, deps.notifyFetch))
+      } catch (error) {
+        return json(fallBack('notify', error, signal, { sent: false, error: messageOf(error) }))
+      }
     })
 
     // 6. The brain note: best-effort, an effect keyed (runId, 'brain-note'); a resume never commits twice.

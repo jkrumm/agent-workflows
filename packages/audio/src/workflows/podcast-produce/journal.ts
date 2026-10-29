@@ -18,6 +18,11 @@ export interface ProduceJournal {
   episodesInSeries(series: string): Promise<number>
   /** The spend recorded on this run's steps and its children's (the per-unit synth runs). */
   runCost(runId: string): Promise<Spent>
+  /**
+   * The spend of the whole episode `runId` belongs to: every run under its root (the room, this run, its units), as the
+   * room's `produceUsd` reads it. Research runs are roots of their own and not in it, as legacy's `costUsd` was not.
+   */
+  episodeCost(runId: string): Promise<Spent>
   /** The newest done `podcast.produce` run that is `runId` itself or a child of the `podcast` run `runId`; else null. */
   producedRun(runId: string): Promise<ProducedRun | null>
 }
@@ -43,6 +48,15 @@ export function postgresProduceJournal(db: Queryable, schema: string): ProduceJo
         `select coalesce(sum(st.cost), 0)::float8 as usd, coalesce(sum(st.unpriced_calls), 0)::int as unpriced
            from ${s}.steps st join ${s}.runs r on r.id = st.run_id
           where r.id = $1 or r.parent_id = $1`,
+        [runId],
+      )
+      return { usd: Number(rows[0]?.usd ?? 0), unpriced: Number(rows[0]?.unpriced ?? 0) }
+    },
+    async episodeCost(runId) {
+      const { rows } = await db.query<{ usd: number | string | null; unpriced: number | string | null }>(
+        `select coalesce(sum(st.cost), 0)::float8 as usd, coalesce(sum(st.unpriced_calls), 0)::int as unpriced
+           from ${s}.steps st join ${s}.runs r on r.id = st.run_id
+          where r.root_id = (select root_id from ${s}.runs where id = $1)`,
         [runId],
       )
       return { usd: Number(rows[0]?.usd ?? 0), unpriced: Number(rows[0]?.unpriced ?? 0) }
