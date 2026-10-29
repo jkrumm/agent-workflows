@@ -1,9 +1,11 @@
 import { describe, expect, test } from 'bun:test'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 import { audioRoutes } from '../../routes.ts'
 import { DEFAULT_TTS_ROUTE, produceConfigFromEnv, ttsRouteFor } from './config.ts'
 
 describe('produceConfigFromEnv', () => {
-  test("legacy's defaults with an empty env; publish, brain note and the Slack notice are off", () => {
+  test("legacy's defaults with an empty env; publish and the Slack notice are off", () => {
     const config = produceConfigFromEnv({})
     expect(config).toMatchObject({
       ttsRouteId: DEFAULT_TTS_ROUTE,
@@ -17,7 +19,6 @@ describe('produceConfigFromEnv', () => {
       shortGapMs: 160,
       author: 'Hermes',
       abs: null,
-      brainDir: null,
       notify: null,
     })
   })
@@ -34,10 +35,17 @@ describe('produceConfigFromEnv', () => {
     )
   })
 
-  test('BRAIN_DIR resolves to an absolute path', () => {
-    const dir = produceConfigFromEnv({ BRAIN_DIR: 'vault/' }).brainDir as string
-    expect(dir.startsWith('/')).toBe(true)
-    expect(dir.endsWith('/vault')).toBe(true)
+  test('the vault defaults to ~/SourceRoot/brain when AGW_BRAIN_DIR is unset or blank', () => {
+    const expected = join(homedir(), 'SourceRoot', 'brain')
+    expect(produceConfigFromEnv({}).brainDir).toBe(expected)
+    expect(produceConfigFromEnv({ AGW_BRAIN_DIR: '  ' }).brainDir).toBe(expected)
+  })
+
+  test('AGW_BRAIN_DIR wins, trimmed, without a trailing slash, absolute; the old BRAIN_DIR is ignored', () => {
+    expect(produceConfigFromEnv({ AGW_BRAIN_DIR: ' /srv/vault/ ', BRAIN_DIR: '/old' }).brainDir).toBe('/srv/vault')
+    const relative = produceConfigFromEnv({ AGW_BRAIN_DIR: 'vault/' }).brainDir
+    expect(relative.startsWith('/')).toBe(true)
+    expect(relative.endsWith('/vault')).toBe(true)
   })
 
   test('a malformed number fails loudly, naming the variable', () => {

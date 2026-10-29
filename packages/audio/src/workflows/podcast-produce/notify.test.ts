@@ -191,29 +191,27 @@ describe('notifyConfigFromEnv', () => {
     expect(
       notifyConfigFromEnv({
         PODCAST_NOTIFY_CHANNEL: 'media',
-        ARGO_BASE_URL: 'http://argo.example.com/',
+        ARGO_URL: 'http://argo.example.com/',
         ARGO_API_SECRET: 's',
       }),
     ).toEqual({ channel: 'media', argoBaseUrl: 'http://argo.example.com', argoApiSecret: 's' })
   })
 
-  test('derives the Argo base from USAGE_HTTP_URL unless ARGO_BASE_URL is set', () => {
+  test('the legacy names ARGO_BASE_URL and USAGE_HTTP_URL are not read', () => {
     const env = {
       PODCAST_NOTIFY_CHANNEL: 'media',
       ARGO_API_SECRET: 's',
+      ARGO_BASE_URL: 'http://argo.example.com',
       USAGE_HTTP_URL: 'http://argo.example.com/usage/records',
     }
-    expect(notifyConfigFromEnv(env)?.argoBaseUrl).toBe('http://argo.example.com')
-    expect(notifyConfigFromEnv({ ...env, ARGO_BASE_URL: 'http://other.example.com' })?.argoBaseUrl).toBe(
-      'http://other.example.com',
-    )
+    expect(notifyConfigFromEnv(env)).toBeNull()
   })
 
   test('null when the channel, the base url or the secret is unset', () => {
-    const full = { PODCAST_NOTIFY_CHANNEL: 'media', ARGO_BASE_URL: 'http://argo.example.com', ARGO_API_SECRET: 's' }
+    const full = { PODCAST_NOTIFY_CHANNEL: 'media', ARGO_URL: 'http://argo.example.com', ARGO_API_SECRET: 's' }
     expect(notifyConfigFromEnv(full)).not.toBeNull()
     expect(notifyConfigFromEnv({ ...full, PODCAST_NOTIFY_CHANNEL: undefined })).toBeNull()
-    expect(notifyConfigFromEnv({ ...full, ARGO_BASE_URL: '' })).toBeNull()
+    expect(notifyConfigFromEnv({ ...full, ARGO_URL: '' })).toBeNull()
     expect(notifyConfigFromEnv({ ...full, ARGO_API_SECRET: undefined })).toBeNull()
     expect(notifyConfigFromEnv({})).toBeNull()
   })
