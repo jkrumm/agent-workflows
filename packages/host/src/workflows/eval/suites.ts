@@ -4,7 +4,7 @@ import { checkReference } from '../check/scorer.ts'
 import { reviewReference } from '../review/scorer.ts'
 
 /** The workflows `agw eval run|compare` know: a recorded case set (`$AGW_EVAL_DIR/<workflow>/cases.jsonl`) and a scorer. */
-export const SUITE_IDS = ['review', 'check', 'research', 'prose', 'brain', 'diagram'] as const
+export const SUITE_IDS = ['review', 'check', 'research', 'prose', 'brain', 'diagram', 'otel'] as const
 /** Suites whose cases need no tree: `PlainCase` lines, run as recorded. */
 const PLAIN_SUITES: readonly SuiteId[] = ['research', 'prose', 'brain', 'diagram']
 export type SuiteId = (typeof SUITE_IDS)[number]

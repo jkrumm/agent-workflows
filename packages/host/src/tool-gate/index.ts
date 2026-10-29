@@ -1,6 +1,7 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
 import { chmodSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
+import { AGENT_SAFE_HDX } from '@agent-workflows/capabilities'
 import { isStepSession } from '@agent-workflows/opencode-host'
 import type { Json, Logger, Usage } from '@agent-workflows/runtime'
 import { z } from 'zod'
@@ -25,12 +26,15 @@ export type ToolCallRecord = {
  * What a workflow grants one of its steps: the tools the step's agent may call, as the model names them, each mapped
  * to the capability it runs; and an optional hook told of every call once it has been answered (research records the
  * URLs a call retrieved or saw). The hook runs inside the call's in-flight window, so a drain waits for it. It should
- * not throw; one that does is logged and the call's answer stands.
+ * not throw; one that does is logged and the call's answer stands. `fixed` arguments are set on every call after the
+ * agent's own, so a value the run decides (otel's environment) is not the agent's to choose; the hook sees the
+ * arguments as they ran.
  */
 export type ToolGrant = {
   runId: string
   stepId: string
   tools: Readonly<Record<string, string>>
+  fixed?: Readonly<Record<string, Json>>
   onCall?: (call: ToolCallRecord) => void | Promise<void>
 }
 
@@ -42,6 +46,7 @@ type Grant = {
   stepId: string
   stepKey: string
   tools: Readonly<Record<string, string>>
+  fixed: Readonly<Record<string, Json>>
   onCall: ToolGrant['onCall']
   controller: AbortController
   /** Calls still being served: a drop waits for them, so every row is written before a step reads its evidence. */
@@ -115,6 +120,7 @@ export class ToolGate {
   private server: ReturnType<typeof Bun.serve> | null = null
   private readonly key = randomBytes(32).toString('hex')
   private readonly logger: Logger
+  private lookup: ((id: string) => { mutating: boolean } | undefined) | null = null
 
   constructor(private readonly options: GateOptions) {
     this.logger = options.logger ?? silent
@@ -158,11 +164,37 @@ export class ToolGate {
   }
 
   /**
+   * Teaches the gate what the host's capabilities are (`mutating` is the CLI spec's flag; `undefined`: no such
+   * capability). `createWorkflows` calls it with the registry it serves, before any run: from then on `open` refuses a
+   * grant of a mutating or unknown capability. Until it is called only the `hdx.*` name rule holds, which is how
+   * tests with fake capabilities run.
+   */
+  useCapabilities(lookup: (id: string) => { mutating: boolean } | undefined) {
+    this.lookup = lookup
+  }
+
+  /** Why a grant of `capability` to an agent is refused, or null. Structural: no workflow's prose can widen it. */
+  private refusal(capability: string): string | null {
+    if (capability.startsWith('hdx.') && !(AGENT_SAFE_HDX as readonly string[]).includes(capability)) {
+      return `${capability} is not agent-safe (hdx grants draw from AGENT_SAFE_HDX)`
+    }
+    if (!this.lookup) return null
+    const spec = this.lookup(capability)
+    if (!spec) return `${capability} is not a capability of this host`
+    return spec.mutating ? `${capability} is mutating` : null
+  }
+
+  /**
    * Grants step `stepId` of run `runId` its tools until the returned close, which aborts and awaits (bounded) the
    * calls still in flight. Call it in a `finally`: a cancelled run leaves no grant behind. A second grant for the same
-   * step (a resumed run) replaces the first.
+   * step (a resumed run) replaces the first. A grant that maps a tool to a mutating or unknown capability, or to an
+   * `hdx.*` capability outside `AGENT_SAFE_HDX`, throws before anything is opened: an agent holds read tools only.
    */
   open(input: ToolGrant): () => Promise<void> {
+    for (const [tool, capability] of Object.entries(input.tools)) {
+      const reason = this.refusal(capability)
+      if (reason) throw new Error(`tool grant refused: ${tool} -> ${reason}`)
+    }
     this.ensureServing()
     const stepKey = `${input.runId}:${input.stepId}`
     const previous = this.grants.get(stepKey)
@@ -172,6 +204,7 @@ export class ToolGate {
       stepId: input.stepId,
       stepKey,
       tools: { ...input.tools },
+      fixed: { ...input.fixed },
       onCall: input.onCall,
       controller: new AbortController(),
       inflight: new Set(),
@@ -297,7 +330,7 @@ export class ToolGate {
     if (!grant) return refuse(403, 'no_grant', 'this session holds no tool grant')
     const capability = Object.hasOwn(grant.tools, tool) ? grant.tools[tool] : undefined
     if (capability === undefined) return refuse(403, 'not_granted', `${tool} is not granted to this agent`)
-    const work = this.serve(grant, tool, capability, call.args)
+    const work = this.serve(grant, tool, capability, { ...call.args, ...grant.fixed })
     grant.inflight.add(work)
     try {
       return answer(200, await work)

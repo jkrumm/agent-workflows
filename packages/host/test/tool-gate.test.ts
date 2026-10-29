@@ -456,3 +456,64 @@ describe('settle and close', () => {
     expect(await Bun.file(legacy).exists()).toBe(false)
   })
 })
+
+describe('agent safety is structural', () => {
+  const specs: Record<string, { mutating: boolean }> = {
+    'cap.read': { mutating: false },
+    'cap.save': { mutating: true },
+    'hdx.query': { mutating: false },
+    'hdx.link': { mutating: false },
+    'hdx.tools': { mutating: false },
+    'hdx.write': { mutating: true },
+    'hdx.rest': { mutating: false },
+  }
+
+  test('a grant of an hdx capability outside AGENT_SAFE_HDX is refused, with or without a registry, and nothing opens', () => {
+    for (const lookup of [false, true]) {
+      if (lookup) gate.useCapabilities((id) => specs[id])
+      for (const capabilityId of ['hdx.write', 'hdx.rest', 'hdx.unclassified']) {
+        expect(() => gate.open({ runId: 'a', stepId: 's', tools: { find: 'hdx.query', other: capabilityId } })).toThrow(
+          `tool grant refused: other -> ${capabilityId} is not agent-safe`,
+        )
+      }
+    }
+    expect(() =>
+      gate.open({ runId: 'a', stepId: 's', tools: { find: 'hdx.query', link: 'hdx.link', t: 'hdx.tools' } }),
+    ).not.toThrow()
+  })
+
+  test('with the registry known, a mutating or unknown capability is refused; a read-only one is granted', async () => {
+    gate.useCapabilities((id) => specs[id])
+    expect(() => gate.open({ runId: 'a', stepId: 's', tools: { save: 'cap.save' } })).toThrow(
+      'tool grant refused: save -> cap.save is mutating',
+    )
+    expect(() => gate.open({ runId: 'a', stepId: 's', tools: { typo: 'cap.reed' } })).toThrow(
+      'tool grant refused: typo -> cap.reed is not a capability of this host',
+    )
+    const close = gate.open({ runId: 'b', stepId: 's', tools: { read: 'cap.read' } })
+    expect((await post('read', 'b:s')).body.ok).toBe(true)
+    // A refused grant left no grant behind: the session is unknown.
+    expect((await post('save', 'a:s')).body.code).toBe('no_grant')
+    await close()
+  })
+
+  test('fixed arguments win over the agent’s and are what the hook sees', async () => {
+    const records: ToolCallRecord[] = []
+    const close = gate.open({
+      runId: 'a',
+      stepId: 's',
+      tools: { find: 'cap.find' },
+      fixed: { env: 'prod' },
+      onCall: (call) => {
+        records.push(call)
+      },
+    })
+    const answered = await post('find', 'a:s', { env: 'local', q: 1 })
+    expect(answered.body.result).toEqual({ id: 'cap.find', input: { env: 'prod', q: 1 } })
+    expect(capabilityCalls).toEqual([{ id: 'cap.find', input: { env: 'prod', q: 1 } }])
+    expect(records[0]?.args).toEqual({ env: 'prod', q: 1 })
+    await post('find', 'a:s')
+    expect(capabilityCalls[1]?.input).toEqual({ env: 'prod' })
+    await close()
+  })
+})

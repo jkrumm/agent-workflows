@@ -85,12 +85,13 @@ Model ids and efforts are what agent-gateway resolves today. None of these seats
 | `research.agent` | research-gateway's `IU_LEAD_MODEL` / `IU_WORKER_MODEL` (not agent-gateway) | deepseek-v4.1-flash | opencode |
 | `brain.agent` | none (new; Wave 7, the brain agent over the private vault; **no fallback**) | claude-haiku-5-5-eu | opencode |
 | `diagram.agent` | `excalidraw` (Wave 10 bench: Haiku 5.5 EU on OpenCode) | claude-haiku-5-5-eu | opencode |
+| `otel.agent` | `otel` (Sonnet on Max; none on IU) | deepseek-v4.1-flash | opencode |
 
 Deliberate differences from the gateway:
 
 - `cheap.summarize` and `cheap.title` run in the gateway as a Haiku 5.5 EU OpenCode session. As cheap single-shots they use the native Messages wire with the same model. There is no separate title seat there; `narrative` is the closest.
 - `maxOutputTokens: 16000` is the floor `single-shot.ts` sends for reasoning models.
-- Not ported: the Max-lane fallback (`fallback: sonnet` on Max), `prose_*`, `read_image`, `review_ocr`, dispatch and otel seats. They belong to the Claude runtime or to later waves.
+- Not ported: the Max-lane fallback (`fallback: sonnet` on Max), `prose_*`, `read_image`, `review_ocr` and dispatch seats (`otel` is `otel.agent`). They belong to the Claude runtime or to later waves.
 - The `decide` rate is the UE price list from `decision.ts`.
 
 ## Token effect / cache effect

@@ -1,0 +1,22 @@
+{
+  "route": "otel.agent",
+  "permissions": {
+    "rules": [
+      {
+        "action": "hdx_tools",
+        "resource": "*",
+        "effect": "allow"
+      },
+      {
+        "action": "hdx_guide",
+        "resource": "*",
+        "effect": "allow"
+      },
+      {
+        "action": "hdx_query",
+        "resource": "*",
+        "effect": "allow"
+      }
+    ]
+  }
+}
