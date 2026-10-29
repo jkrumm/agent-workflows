@@ -4,7 +4,7 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
 `docs/waves/PLAN.md` and this file, then continues from **Next action**.
 
 ## State
-- Waves 1–9 done (retros in concept.md). Active wave: 10 (Claude Code and Hermes slimmed, P5).
+- Waves 1–10 done (retros in concept.md). Active wave: 11 (Retire and hand over, P6) — the last.
 - Lead's close-out channel: `docs/waves/handoff/lead.md` (the mother owns PLAN.md and the retro log;
   the lead writes per-step verdicts, Left behind, gate evidence and retro notes there, then idles).
 - dotfiles is free: P0 done (owner, 2026-10-27).
@@ -13,7 +13,7 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
   `com.jkrumm.vps-pg-backup` is ours: P0b maps it in dotfiles `docs/architecture.md`. Relayed to the lead.
 
 ## Lead
-- `agent-workflows-w1` (pane w40:p2F), Opus/high, spawned 2026-10-29 ~20:20: the second Wave 10 lead.
+- `agent-workflows-w1` (pane w40:p2G), Opus/high, fresh, spawned 2026-10-29 ~21:15 for Wave 11.
   Rotation policy: a fresh lead per wave unless the last one closed under ~30% context.
 - The mother is agent `agent-workflows-mother` (pane w40:p1).
 
@@ -45,6 +45,8 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
 
 - 2026-10-29 owner: dispatch unused → agent-gateway and `agw-legacy` retire completely in Wave 11
   (concept v3.9). Worker tabs close right after merge; herdr-reap to close merged fan tabs (Wave 10).
+
+- Wave 11 data rule: gateway data is backed up and kept, never deleted (stop reason 2).
 
 ## Open decisions
 - none
@@ -112,4 +114,4 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
 
 ## Next action
 - Watch the lead (`wave-watch.sh --agents agent-workflows-w1 --heartbeat 9`, bounded 10 min), read
-  `handoff/lead.md` on idle, write Wave 10's Left behind and retro, flip Wave 11 active, rotate the lead.
+  `handoff/lead.md` on idle, write Wave 11's Left behind and the final retro; then write docs/waves/handoff/STOP (plan finished) so the keepalive exits, and report to the owner, rotate the lead.
