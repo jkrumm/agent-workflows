@@ -184,8 +184,9 @@ Define it with `defineWorkflow` (input must be a `z.object`; list its agents in 
   is a `cap.<id>` run of its own, recorded and priced like a direct capability call, with purpose `eval` (regression)
   or `drift`, keyed by the score source (drift also by its pass, the UTC day), the scorer version, the scored run, the capability and its input under the
   shared attempt rule (a retried scoring adopts a finished call and re-runs a failed one; a drift re-score under a new
-  scorer fetches fresh; an aborted scoring cancels the call it started); an inline gate (none judges today) calls in process on its step. A capability's typed failure (a cited
-  page that is gone) is an answer (`{error: {code, message}}`), anything else an infra failure the scoring retries.
+  scorer fetches fresh; an aborted scoring cancels the call it started); an inline gate (none judges today) calls in process on its step. Only a failure that is an
+  answer comes back (`answerOf`: a page gone, a package not found, a refused URL, as `{error: {code, message}}`);
+  every other failure, an outage, throws and the scoring retries.
   Review's and check's scorers never judge. **Drift on research** spends per sampled run up to three `web.fetch` (direct
   or Tavily Extract, ≈ $0) and three `decide` calls on ≤ 20k characters each (≈ 5k tokens at $0.04/M, ≈ $0.0002 each):
   ≈ $0.001 per scored run, as up to six `cap.*` runs with purpose `drift`; drift has no reference, so no `web.package`.
@@ -207,13 +208,15 @@ the pre-registered rule, results).
   the tools its arm is granted. Its key is per process, in `<stateDir>/research/gate.json` (0600), outside every
   location; it is not the API secret and opens nothing but these tools. A call's cost is booked as it is reported
   on the run's `tools` step, which lives as long as the agent's turns (a cancelled or failed run keeps its spend; an
-  engine job once per run: its ledger row, which carries the engine's reported cost, is what keeps it from being booked twice and what `engine.costUsd` sums; a failed one at the engine's reported cost or unknown). Its evidence is written apart to
-  `research_tool_calls` (migration 0007, rows go with their run; in memory on a host without a database), so a step
+  engine job once per step: the ledger row that claims it books it, atomically (migration 0008; a retried write
+  recognises its own claim), and the rows' reported costs are what `engine.costUsd` sums; a failed one at the
+  engine's reported cost or unknown). Its evidence is written apart to
+  `research_tool_calls` (migrations 0007 and 0008, rows go with their run; in memory on a host without a database), so a step
   retry or a host restart loses nothing; `tools` reads it once the grant has drained, and a citation whose URL was
   never retrieved is dropped to `unverified` (the engine's grounding rule; ≥ 10 % dropped makes the report `partial`).
   A ledger write is retried and logged and never fails a call that worked. Engine jobs and the judge's calls share
-  one key rule (`src/attempt-keys.ts`): adopt what is done (a typed capability failure is a final answer), step past an untyped failure or a cancel. The server has no idle timeout (an engine job holds a request 10-60 s), caps a body at 64 KiB before
-  buffering, and is closed with the host (`gate.json` removed).
+  one key rule (`src/attempt-keys.ts`): adopt what is done (a failure that is an answer is final), step past an outage or a cancel. The server has no idle timeout (an engine job holds a request 10-60 s), caps a body at 64 KiB before
+  buffering, and is closed with the host (`gate.json` removed while it still holds this host's key).
 - **Scorer** (`scorer.ts`): `valid`, `complete`, `grounded` (code), `golden` (the case's `expect`, research-gateway
   `evals/lib.ts` semantics; `live:` via `web.package`), `supported` (judged: `web.fetch` + `decide` on up to 3 cited
   pages). Cases are plain eval cases in `$AGW_EVAL_DIR/research/cases.jsonl`; `compare.ts` prints the comparison's

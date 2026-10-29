@@ -5,7 +5,7 @@ import { GoldenExpect, liveTarget, liveValue, matchExpect, withinMaxChars } from
 import { type ResearchInputValue, ResearchOutput, type ResearchResult } from './schema.ts'
 
 /** Bump on any change to what a score means: compare refuses to mix scorer versions silently. */
-export const RESEARCH_SCORER_VERSION = '2026-10-29.2'
+export const RESEARCH_SCORER_VERSION = '2026-10-29.3'
 
 /** A golden case's expected result (research-gateway `evals/golden.jsonl`: `expect`, optional `maxChars`). */
 export const ResearchReference = z.object({ expect: GoldenExpect, maxChars: z.number().int().positive().optional() })
@@ -32,8 +32,9 @@ export function sampleCitations(citations: ResearchResult['citations'], n = SUPP
 }
 
 /**
- * One citation against its page: true or false, or `null` (unscored) when the judge could not say: the page could not
- * be fetched, it was empty, or `decide` answered a typed error. Unscored is never "unsupported".
+ * One citation against its page: true or false, or `null` (unscored) when the judge could not say: the page is gone
+ * or its URL refused (the judge's answer failures), it was empty, or `decide` gave no boolean. Unscored is never
+ * "unsupported". A fetch or `decide` outage throws, and the runtime retries the scoring.
  */
 async function supports(judge: ScoreJudge, claim: string, url: string): Promise<boolean | null> {
   const page = record(await judge('web.fetch', { url, maxChars: PAGE_CHARS }))
@@ -56,10 +57,10 @@ async function supports(judge: ScoreJudge, claim: string, url: string): Promise<
  *   `live:` value comes from `web.package` through the judge, so without a judge the score is left out;
  * - `supported` (judged, regression and drift only): for up to three citations with distinct URLs, does the page
  *   (`web.fetch`) support the claim (`decide`), over the citations the judge could score; a citation it could not
- *   (page unreachable or empty, a typed `decide` error) is unscored; `judgedShare` is the share of the sampled
+ *   (page gone or refused, empty, no boolean from `decide`) is unscored; `judgedShare` is the share of the sampled
  *   citations the judge could score, and when none could be `supported` is left out. A report without citations
- *   scores 0. A `live:` value the registry answers without (a typed error, no usable `latest`) leaves `golden`
- *   unscored; an outage is the judge's error, which the runtime retries.
+ *   scores 0. A `live:` package the registry does not have (not found) or answers without a usable `latest` leaves
+ *   `golden` unscored; a registry outage throws through the judge, and the runtime retries the scoring.
  * `pass`: valid, and with a reference the golden check passed (an unscored golden never passes); without one, a
  * complete report.
  */
@@ -95,8 +96,8 @@ export const researchScorer: Scorer<ResearchInputValue, ResearchReference> = {
         const latest = answer.error === undefined ? answer.latest : undefined
         live = typeof latest === 'string' && latest ? liveValue(target.registry, latest) : null
       }
-      // The registry answered without a usable version (a typed error, no `latest`): golden is unscored, which never
-      // passes. An outage never gets here: the judge throws, and the runtime retries the scoring.
+      // The package is not found, or the answer holds no usable `latest`: golden is unscored, which never passes. A
+      // registry outage never gets here: the judge throws, and the runtime retries the scoring.
       const liveUnscored = 'live' in expect && ctx.judge !== undefined && live === null
       if (liveUnscored) problems.push(`golden unscored: ${expect.live} gave no usable live value`)
       if ((!('live' in expect) || ctx.judge) && !liveUnscored) {

@@ -533,16 +533,50 @@ describe('the tool gate ledger: evidence the decision rests on', () => {
     for (const dir of [first, second]) rmSync(dir, { recursive: true, force: true })
   })
 
-  test('close removes only the gate.json this instance wrote', async () => {
+  test("close removes gate.json only while it holds this instance's key", async () => {
     const dir = mkdtempSync(join(tmpdir(), 'agw-gate-own-'))
-    const owner = new ToolGate({ stateDir: dir, ledger, engine: () => null, call: fakeCapability })
-    owner.ensureServing()
+    const file = join(dir, 'research', 'gate.json')
+    const first = new ToolGate({ stateDir: dir, ledger, engine: () => null, call: fakeCapability })
+    first.ensureServing()
     const bystander = new ToolGate({ stateDir: dir, ledger, engine: () => null, call: fakeCapability })
     await bystander.close()
-    expect(await Bun.file(join(dir, 'research', 'gate.json')).exists()).toBe(true)
-    await owner.close()
-    expect(await Bun.file(join(dir, 'research', 'gate.json')).exists()).toBe(false)
+    expect(await Bun.file(file).exists()).toBe(true)
+    // A later host took the file over: the first one's close leaves it alone.
+    const later = new ToolGate({ stateDir: dir, ledger, engine: () => null, call: fakeCapability })
+    later.ensureServing()
+    await first.close()
+    expect(await Bun.file(file).exists()).toBe(true)
+    await later.close()
+    expect(await Bun.file(file).exists()).toBe(false)
     rmSync(dir, { recursive: true, force: true })
+  })
+
+  test('the Postgres ledger books an engine job once per step; a retried write finds its own claim', async () => {
+    const pg = pgToolLedger(sql.pool, db.schema)
+    const runId = 'r-claim'
+    await sql.pool.query(
+      `insert into "${db.schema}".runs (id, workflow, root_id, purpose, input, input_hash, lock_key, version_started)
+       values ($1, 'research', $1, 'eval', '{}', 'h', 1, 1)`,
+      [runId],
+    )
+    const entry = {
+      runId,
+      stepId: 'research',
+      tool: 'engine_research',
+      argsDigest: 'd',
+      ok: true,
+      retrieved: [],
+      seen: [],
+      engineJob: 'job-1',
+      engineCostUsd: 0.04,
+    }
+    expect(await pg.append(entry, 'claim-a')).toBe(true)
+    expect(await pg.append(entry, 'claim-b')).toBe(false)
+    // claim-a's write landed but its acknowledgement was lost: the retry knows it booked, and writes no second row.
+    expect(await pg.append(entry, 'claim-a')).toBe(true)
+    expect(await pg.append({ ...entry, engineJob: 'job-2' }, 'claim-b')).toBe(true)
+    expect(await pg.append({ ...entry, tool: 'web_search', engineJob: undefined }, 'claim-c')).toBe(false)
+    expect((await pg.read(runId, 'research')).map((e) => e.engineJob ?? '-')).toEqual(['job-1', 'job-1', 'job-2', '-'])
   })
 
   test('close stops the gate and removes gate.json', async () => {
