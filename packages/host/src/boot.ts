@@ -51,6 +51,8 @@ export function processLogger(name: string): Logger {
 
 export interface RunningHost {
   port: number
+  /** The bound ports of the definition's `doorOnly` listeners, in declaration order. */
+  doorOnlyPorts: number[]
   /**
    * The friction job's state. `/health` serves `enabled` and `state` only; the reason (which can name a setting) stays
    * in this process and its log.
@@ -209,6 +211,18 @@ export interface ProcessRuntime extends ProcessBase {
 export type ProcessRoute = (request: Request, url: URL) => Promise<Response> | undefined
 
 /**
+ * A second loopback listener that serves only the routes given and answers 404 with no body for everything else:
+ * `/health`, `/openapi.json` and the whole API are not reachable on it. For callers that reach the process through a
+ * forwarded port (a `tailscale serve` row) and must see one surface, not the process's.
+ */
+export interface DoorOnlyListener {
+  /** 0 binds a free port (tests). A taken port refuses the start, like the main listener. */
+  port: number
+  /** Built before the listener binds; the routes own their auth, as on the main listener. */
+  routes(process: ProcessRuntime): ProcessRoute[]
+}
+
+/**
  * One platform process (concept §8): its name, its workflows, and what it adds to the shared core. The core is the
  * same for every process: the journal and the platform middleware (run record, fingerprint, telemetry, Argo outbox),
  * the runaway cap and the wallet gate, the bearer-authenticated API with its OpenAPI and `x-cli`, `/health` with the
@@ -233,7 +247,11 @@ export interface ProcessDefinition {
   jobs?(process: ProcessRuntime): { start(): void } | undefined
   /** Built before the server binds. */
   routes?(process: ProcessRuntime): ProcessRoute[]
+  /** Extra listeners that serve only their own routes (see `DoorOnlyListener`), bound with the main one. */
+  doorOnly?: DoorOnlyListener[]
 }
+
+const NOT_FOUND = () => new Response(null, { status: 404 })
 
 export async function bootProcess(
   definition: ProcessDefinition,
@@ -398,20 +416,46 @@ export async function bootProcess(
     }
 
     // Bind before the runtime opens: a taken port (a deploy overlap) must fail before any run is claimed.
+    const servers: ReturnType<typeof Bun.serve>[] = []
+    closers.push(async () => {
+      // Stop accepting; give held `Prefer: wait` requests a moment to answer, then cut them (the CLI resumes). Every
+      // listener drains at once, so the grace is one wait, not one per listener.
+      await Promise.all(
+        servers.map(async (server) => {
+          const draining = server.stop().catch((error: unknown) => {
+            console.error(`${tag} graceful stop failed:`, error instanceof Error ? error.message : error)
+          })
+          await Promise.race([draining, Bun.sleep(SHUTDOWN_GRACE_MS)])
+          await server.stop(true)
+        }),
+      )
+    })
     const server = Bun.serve({
       hostname: '127.0.0.1',
       port: config.port,
       idleTimeout: IDLE_TIMEOUT_S,
       fetch: serve,
     })
-    closers.push(async () => {
-      // Stop accepting; give held `Prefer: wait` requests a moment to answer, then cut them (the CLI resumes).
-      const draining = server.stop().catch((error: unknown) => {
-        console.error(`${tag} graceful stop failed:`, error instanceof Error ? error.message : error)
+    servers.push(server)
+    const doorOnlyPorts: number[] = []
+    for (const listener of definition.doorOnly ?? []) {
+      const doorRoutes = listener.routes(processRuntime)
+      const doorServer = Bun.serve({
+        hostname: '127.0.0.1',
+        port: listener.port,
+        idleTimeout: IDLE_TIMEOUT_S,
+        fetch: (request) => {
+          const url = new URL(request.url)
+          for (const route of doorRoutes) {
+            const answer = route(request, url)
+            if (answer) return answer
+          }
+          return NOT_FOUND()
+        },
       })
-      await Promise.race([draining, Bun.sleep(SHUTDOWN_GRACE_MS)])
-      await server.stop(true)
-    })
+      servers.push(doorServer)
+      doorOnlyPorts.push(doorServer.port ?? listener.port)
+    }
 
     await runtime.open()
     open = true
@@ -463,7 +507,7 @@ export async function bootProcess(
     }, FLUSH_INTERVAL_MS)
     closers.push(async () => clearInterval(flushTimer))
 
-    return { port: server.port ?? config.port, friction: frictionState, shutdown }
+    return { port: server.port ?? config.port, doorOnlyPorts, friction: frictionState, shutdown }
   } catch (error) {
     await shutdown().catch(() => {}) // already logged by the closer
     throw error
