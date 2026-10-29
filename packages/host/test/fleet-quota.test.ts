@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import {
+  ACCOUNT_SLACK,
   type AccountCli,
   accountColumnWidth,
   claudeAccountCli,
@@ -241,6 +242,19 @@ describe('createQuota (fake CLI, fake clock)', () => {
     expect(b).toBe(first)
     await quota.settled()
     expect(state.calls.filter((c) => c[0] === 'pick')).toHaveLength(LANE_PICKS.length * 2)
+  })
+})
+
+describe('reported accounts are capped', () => {
+  test("new ids are accepted up to the registry's accounts plus the slack, known ones always", async () => {
+    const { cli } = fakeCli() // the registry has one account: iu
+    const quota = createQuota({ cli })
+    await quota.accounts()
+    const report = { five_hour_pct: 1, five_hour_mins_left: null, seven_day_pct: null }
+    for (let i = 0; i < ACCOUNT_SLACK; i++) expect(quota.record(`x${i}`, report)).not.toBeNull()
+    expect(quota.record('one-too-many', report)).toBeNull()
+    expect(quota.record('x0', { ...report, five_hour_pct: 2 })?.five_hour_pct).toBe(2) // a reported id still updates
+    expect(quota.record('iu', report)).not.toBeNull() // a registry account is never refused
   })
 })
 

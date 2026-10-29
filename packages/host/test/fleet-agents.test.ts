@@ -1018,18 +1018,18 @@ describe('readHumanQueue', () => {
     writeFileSync(join(dir, `${id}.req`), JSON.stringify({ id, created: '2026-09-07T08:00:00Z', text, cmd: null }))
   }
 
-  test('a missing directory is an empty queue with no warning', () => {
-    expect(readHumanQueue(join(dir, 'nope'))).toEqual({ items: [], warning: null })
+  test('a missing directory is an empty queue with no warning', async () => {
+    expect(await readHumanQueue(join(dir, 'nope'))).toEqual({ items: [], warning: null })
   })
 
-  test('only .req files WITHOUT a matching .res are pending, newest id first', () => {
+  test('only .req files WITHOUT a matching .res are pending, newest id first', async () => {
     req('20260901T000000-1', 'old, answered')
     writeFileSync(join(dir, '20260901T000000-1.res'), '{"status":"done"}')
     req('20260905T000000-2', 'older pending')
     req('20260907T000000-3', 'newest pending')
     writeFileSync(join(dir, '.20260907T000000-9.req.tmp'), '{}') // ask-human's temp file
     writeFileSync(join(dir, '20260907T000000-4.req'), 'garbage')
-    const { items, warning } = readHumanQueue(dir)
+    const { items, warning } = await readHumanQueue(dir)
     expect(warning).toBeNull()
     expect(items.map((i: HumanQueueEntry) => i.id)).toEqual(['20260907T000000-3', '20260905T000000-2'])
   })

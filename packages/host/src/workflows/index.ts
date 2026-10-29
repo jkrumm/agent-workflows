@@ -34,7 +34,7 @@ export interface WorkflowDeps {
   /** Where research's tool gate records every call (Postgres on the host); absent: in memory. */
   research?: { ledger: ToolLedger }
   /** The agents overview (collectors, quota) and its Argo push; the host process builds one, a test host may leave it out. */
-  fleet?: { fleet: Fleet; argo: ArgoPush }
+  fleet?: { fleet: Fleet; argo: ArgoPush; purposeOf?: (runId: string) => Promise<string | null> }
   /** The host's one tool gate; see `HostDeps`. */
   toolGate?: ToolGate
   /** Where a workflow's non-fatal failures (a hook, a ledger write) are logged; default: nowhere. */

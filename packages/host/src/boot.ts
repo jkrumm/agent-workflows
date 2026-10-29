@@ -29,7 +29,7 @@ import { type LearningsStore, pgLearningsStore, withLearnedFacts, withLearningsF
 import { argoTimerEnabled, hostFleet, startArgoSchedule } from './fleet/index.ts'
 import { fleetOperations } from './fleet/operations.ts'
 import { type HostOperation, type HostWorkflow, IDLE_TIMEOUT_S } from './operations.ts'
-import { pgLatestOverview } from './workflows/overview/latest.ts'
+import { pgLatestOverview, pgRunPurpose } from './workflows/overview/latest.ts'
 import { ghCli } from './workflows/retrospective/gh.ts'
 import { RETRO_WORKFLOW_ID } from './workflows/retrospective/index.ts'
 import { pgJournalReader } from './workflows/retrospective/sample.ts'
@@ -516,7 +516,7 @@ export function hostProcess(config: HostConfig): ProcessDefinition {
         toolGate,
         logger,
         retro: { journal, learnings, gh, tracked },
-        fleet: { fleet: fleet.fleet, argo: fleet.argo },
+        fleet: { fleet: fleet.fleet, argo: fleet.argo, purposeOf: pgRunPurpose(readPool, base.schema) },
         research: { ledger: pgToolLedger(ledgerPool, base.schema) },
       })
     },

@@ -10,6 +10,8 @@ import { type AccountQuota, LANE_PICKS, type LanePick, type LanePicks } from './
 
 const CLI_TIMEOUT_MS = 5_000
 const MEMO_MS = 15_000
+/** Distinct reported accounts beyond the CLI's registry that `record` accepts. */
+export const ACCOUNT_SLACK = 4
 /** A sample older than this is `stale`: the picker's eligibility cutoff. */
 export const STALE_AFTER_MS = 6 * 3600 * 1000
 /** Account id shape: the one definition, used by the CLI parser and the report body. */
@@ -85,7 +87,7 @@ export type AccountCli = (args: string[]) => Promise<{ stdout: string; exitCode:
 /** The real CLI with the four variables it needs to find bun, the keychain and a temp dir, never the parent's credentials. */
 export function claudeAccountCli(options: { bin?: string; env?: Record<string, string | undefined> } = {}): AccountCli {
   const env = options.env ?? process.env
-  const bin = options.bin ?? env.AGW_CLAUDE_ACCOUNT_BIN?.trim() ?? join(homedir(), '.local', 'bin', 'claude-account')
+  const bin = options.bin ?? (env.AGW_CLAUDE_ACCOUNT_BIN?.trim() || join(homedir(), '.local', 'bin', 'claude-account'))
   const childEnv: Record<string, string> = {}
   for (const key of ['PATH', 'HOME', 'TMPDIR', 'LANG']) {
     const value = env[key]
@@ -201,6 +203,8 @@ function swr<T>(options: { load: () => Promise<T | null>; empty: T | null; onFai
       if (!inflight && options.now() - lastAttempt < MEMO_MS && lastAttempt !== 0) return options.empty
       return (await refresh()) ?? options.empty
     },
+    /** The last good value without refreshing. */
+    peek: () => lastGood,
     settled: async () => {
       await inflight
     },
@@ -214,8 +218,8 @@ export interface QuotaOptions {
 }
 
 export interface Quota {
-  /** Records a statusline report for `account`. */
-  record(account: string, usage: Omit<PostedUsage, 'updated_at'>): PostedUsage
+  /** Records a statusline report for `account`; null when the account is new and the distinct accounts are at the cap. */
+  record(account: string, usage: Omit<PostedUsage, 'updated_at'>): PostedUsage | null
   /** The last report for `account`, exactly as `agw quota` answers it under `data`. */
   posted(account: string): PostedUsage | null
   /** Every known account (the CLI registry and the reported ids), keyed by id. Disabled ones included. */
@@ -268,6 +272,12 @@ export function createQuota(options: QuotaOptions): Quota {
 
   return {
     record(account, body) {
+      // A report is memory the caller grows: a new id is allowed up to the registry's accounts plus a little slack, a
+      // registry account or one already reported always.
+      const registry = usage.peek()?.accounts.map((a) => a.id) ?? []
+      if (!posted.has(account) && !registry.includes(account)) {
+        if (new Set([...registry, ...posted.keys()]).size >= registry.length + ACCOUNT_SLACK) return null
+      }
       const entry = { ...body, updated_at: now() }
       posted.set(account, entry)
       return entry

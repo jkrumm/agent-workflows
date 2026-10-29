@@ -13,7 +13,7 @@ import { claudeAccountCli, createQuota, type Quota } from './quota.ts'
 import { type AgentEnrichment, parseCols, renderText } from './render.ts'
 import type { AccountQuota, OverviewOutput, OverviewPayload, Snapshot } from './schema.ts'
 
-export { agentIds, buildAgentFacts, reconcileOverview } from './overview.ts'
+export { buildAgentFacts, type ClassifyInput, classifyInput, reconcileKnown, reconcileOverview } from './overview.ts'
 export { startArgoSchedule } from './argo.ts'
 export { fleetConfig } from './collect.ts'
 export type { ArgoPush } from './argo.ts'

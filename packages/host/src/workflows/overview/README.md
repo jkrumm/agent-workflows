@@ -42,6 +42,26 @@ not Requesty.
   cap, no credential prompt) so ahead/behind is current; the status itself needs the branch, `status --porcelain`,
   `rev-list --left-right --count HEAD...@{upstream}` and the newest commit beyond the main branch (else on it).
 
+## Hardening (review r1)
+
+- **Children get four variables.** `git`, `herdr` and `claude` run with `PATH`, `HOME`, `TMPDIR`, `LANG` and
+  `GIT_TERMINAL_PROMPT=0`, never the host's environment (`AGW_API_SECRET`, `ARGO_API_SECRET`, `IU_API_KEY`).
+- **A session id is a path segment.** Only `[A-Za-z0-9_-]` reaches a transcript or pin path; anything else reads nothing.
+- **Text from outside loses its control bytes** (transcript fields, titles, wait reasons, project and branch names, commit
+  subjects, the model's standing and blocker) before it reaches a pane, Argo or a prompt.
+- **No sync fs on the host loop:** the human queue, the pins and the session-env logs (the last 2 MB of each of the newest
+  three day files) are read async.
+- **A sparse herdr or registry row** is null-filled in `mergeAgents`, a row with no identity is skipped; `agw agents`'
+  strict output never 500s on a missing field.
+- **The journal keeps** the facts text, the ids and the minimal `known` list of the snapshot step, and the verdicts: no
+  transcript excerpt beyond what classify is shown, no queued command. The run time is taken inside the classify step.
+- **The seat's cap:** the facts are cut to the capability's limits (400 000 characters, 500 agents), most recently active
+  agents first, whole agents only; the rest are `synthesized` placeholders.
+- **The Argo push goes out for `prod` runs only.** The workflow context carries no purpose, so the host reads
+  `runs.purpose` of the run in the `push` step; a build or verify run pushes nothing.
+- **`quota-report` is bounded:** percentages 0..100, minutes left 0..10 080, and a new account id is accepted only up to
+  the CLI registry's accounts plus 4.
+
 ## Environment (host)
 
 | Variable | Default | |

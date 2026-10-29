@@ -1,8 +1,10 @@
-import { existsSync, lstatSync, readdirSync, readFileSync } from 'node:fs'
+import { existsSync } from 'node:fs'
+import { lstat, readdir, readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
 import {
   type ClaudeAgentRaw,
+  clean,
   type DispatchJobRaw,
   EMPTY_TAIL,
   encodeProjectDir,
@@ -35,10 +37,16 @@ export interface CollectorResult<T> {
 /** Runs a command and answers its stdout; `null` on a spawn error, a timeout or a non-zero exit. */
 export type RunCommand = (cmd: string[], options?: { timeoutMs?: number }) => Promise<string | null>
 
-/** The command runner on `env`: a child sees the host's environment as the process was started with it, never `process.env` read late. */
+/** What a child (git, herdr, claude) is given of the host's environment: never a secret the host holds. */
+const CHILD_ENV_KEYS = ['PATH', 'HOME', 'TMPDIR', 'LANG']
+
+/** The command runner on `env`: children get {@link CHILD_ENV_KEYS} and no credential prompts, nothing else. */
 export function commandRunner(env: Record<string, string | undefined> = process.env): RunCommand {
   const childEnv: Record<string, string> = { GIT_TERMINAL_PROMPT: '0' }
-  for (const [key, value] of Object.entries(env)) if (value !== undefined) childEnv[key] = value
+  for (const key of CHILD_ENV_KEYS) {
+    const value = env[key]
+    if (value !== undefined) childEnv[key] = value
+  }
   return async (cmd, options = {}) => {
     try {
       const proc = Bun.spawn(cmd, { stdout: 'pipe', stderr: 'ignore', env: childEnv })
@@ -123,16 +131,16 @@ export function parseHumanQueueRequest(text: string, fallbackId: string): HumanQ
 }
 
 /** Pending requests in `dir`, newest first (ids sort chronologically). A missing directory is an empty queue, never a warning. */
-export function readHumanQueue(dir: string): CollectorResult<HumanQueueEntry> {
+export async function readHumanQueue(dir: string): Promise<CollectorResult<HumanQueueEntry>> {
   if (!existsSync(dir)) return { items: [], warning: null }
   try {
-    const names = new Set(readdirSync(dir))
+    const names = new Set(await readdir(dir))
     const items: HumanQueueEntry[] = []
     for (const name of names) {
       if (!name.endsWith('.req') || name.startsWith('.')) continue
       const id = name.slice(0, -'.req'.length)
       if (names.has(`${id}.res`)) continue
-      const entry = parseHumanQueueRequest(readFileSync(join(dir, name), 'utf-8'), id)
+      const entry = parseHumanQueueRequest(await readFile(join(dir, name), 'utf-8'), id)
       if (entry) items.push(entry)
     }
     items.sort((a, b) => (a.id < b.id ? 1 : a.id > b.id ? -1 : 0))
@@ -182,6 +190,13 @@ export async function readTranscriptTailFile(path: string): Promise<TranscriptTa
   }
 }
 
+/** The last {@link LOG_TAIL_BYTES} of a log day file: a bounded async read; a partial first line fails to parse and is skipped. */
+const LOG_TAIL_BYTES = 2 * 1024 * 1024
+async function readLogTail(path: string): Promise<string> {
+  const file = Bun.file(path)
+  return file.slice(Math.max(0, file.size - LOG_TAIL_BYTES), file.size).text()
+}
+
 /** sessionId to account for every `session_env` line carrying an `account`; later lines win. */
 export function parseSessionAccounts(text: string): Map<string, string> {
   const out = new Map<string, string>()
@@ -199,15 +214,16 @@ export function parseSessionAccounts(text: string): Map<string, string> {
   return out
 }
 
-const SESSION_ID_RE = /^[A-Za-z0-9_-]+$/
+/** A session id is a path segment (a transcript, a pin): letters, digits, `_` and `-` only, never a separator or `..`. */
+export const SESSION_ID_RE = /^[A-Za-z0-9_-]+$/
 
 /** The account agent-gateway pinned for a session at spawn, or null when absent or unusable. */
-export function readSessionPin(dir: string, sessionId: string): string | null {
+export async function readSessionPin(dir: string, sessionId: string): Promise<string | null> {
   if (!SESSION_ID_RE.test(sessionId)) return null
   try {
     const path = join(dir, `${sessionId}.json`)
-    if (!lstatSync(path).isFile()) return null // never follow a symlink or read a directory
-    const raw = JSON.parse(readFileSync(path, 'utf8'))
+    if (!(await lstat(path)).isFile()) return null // never follow a symlink or read a directory
+    const raw = JSON.parse(await readFile(path, 'utf8'))
     if (typeof raw?.account !== 'string' || raw.account === '') return null
     if (typeof raw.dir === 'string' && raw.dir !== '' && !existsSync(raw.dir)) return null // a pinned dir must still exist
     return raw.account
@@ -237,7 +253,7 @@ function capMap<V>(map: Map<string, V>): void {
 export function sessionAccountResolver(config: Pick<FleetConfig, 'claudeLogDir' | 'sessionAccountsDir'>) {
   const cache = new Map<string, string>()
   const misses = new Map<string, { at: number; n: number }>()
-  return (sessionIds: Iterable<string>, now: number): Map<string, string> => {
+  return async (sessionIds: Iterable<string>, now: number): Promise<Map<string, string>> => {
     const result = new Map<string, string>()
     let missing: string[] = []
     for (const id of new Set(sessionIds)) {
@@ -248,7 +264,7 @@ export function sessionAccountResolver(config: Pick<FleetConfig, 'claudeLogDir' 
       }
       const miss = misses.get(id)
       if (miss && now - miss.at < Math.min(MISS_RETRY_MS * 2 ** (miss.n - 1), MISS_RETRY_MAX_MS)) continue
-      const pinned = readSessionPin(config.sessionAccountsDir, id)
+      const pinned = await readSessionPin(config.sessionAccountsDir, id)
       if (pinned) {
         cache.set(id, pinned)
         result.set(id, pinned)
@@ -259,13 +275,13 @@ export function sessionAccountResolver(config: Pick<FleetConfig, 'claudeLogDir' 
 
     if (missing.length > 0) {
       try {
-        const files = readdirSync(config.claudeLogDir)
+        const files = (await readdir(config.claudeLogDir))
           .filter((f) => /^\d{4}-\d{2}-\d{2}\.jsonl$/.test(f))
           .toSorted()
           .toReversed()
           .slice(0, SESSION_LOG_DAYS)
         for (const file of files) {
-          const found = parseSessionAccounts(readFileSync(join(config.claudeLogDir, file), 'utf8'))
+          const found = parseSessionAccounts(await readLogTail(join(config.claudeLogDir, file)))
           for (const id of missing) {
             const account = found.get(id)
             if (account) {
@@ -297,7 +313,7 @@ export async function gitProject(run: RunCommand, cwd: string): Promise<ProjectG
     g(['status', '--porcelain']),
     g(['symbolic-ref', 'refs/remotes/origin/HEAD']),
   ])
-  const branch = branchOut?.trim()
+  const branch = clean(branchOut?.trim())
   if (!branch) return null
   const mainBranch = symbolicRef ? (symbolicRef.trim().split('/').pop() ?? 'main') : 'main'
   const format = '--format=%h%n%s%n%cI'
@@ -309,7 +325,9 @@ export async function gitProject(run: RunCommand, cwd: string): Promise<ProjectG
   const [ahead = 0, behind = 0] = (aheadBehind?.trim().split(/\s+/) ?? []).map((n) => Number.parseInt(n, 10) || 0)
   const commit = (out: string | null) => {
     const [sha, subject, at] = out?.trim().split('\n') ?? []
-    return sha ? { sha: sha.trim(), subject: (subject ?? '').trim(), at: (at ?? '').trim() } : null
+    return sha
+      ? { sha: clean(sha.trim()) ?? '', subject: clean((subject ?? '').trim()) ?? '', at: (at ?? '').trim() }
+      : null
   }
   return {
     branch,
@@ -349,9 +367,15 @@ export async function readDispatchJobs(
       if (job.status === 'running' || job.status === 'pending') return true
       return now - (job.finishedAt ?? job.createdAt) <= DISPATCH_RECENT_MS
     })
+    const details = await Promise.allSettled(relevant.map((entry) => get(`/api/jobs/${encodeURIComponent(entry.id)}`)))
     const items: DispatchJobRaw[] = []
-    for (const entry of relevant) {
-      const job = (await get(`/api/jobs/${encodeURIComponent(entry.id)}`)).job as
+    let failed = 0
+    for (const detail of details) {
+      if (detail.status === 'rejected') {
+        failed += 1
+        continue
+      }
+      const job = detail.value.job as
         | (JobListEntry & { params?: Record<string, unknown>; startedAt?: number | null; sessionId?: string | null })
         | undefined
       const cwd = typeof job?.params?.cwd === 'string' ? job.params.cwd : ''
@@ -367,6 +391,9 @@ export async function readDispatchJobs(
         sessionId: job.sessionId ?? null,
       })
     }
+    if (failed > 0) {
+      return { items, warning: `agent-gateway dispatch jobs: ${failed} of ${relevant.length} could not be read` }
+    }
     return { items, warning: null }
   } catch (error) {
     return {
@@ -381,10 +408,10 @@ export interface Collectors {
   herdrAgents(): Promise<CollectorResult<HerdrAgentRaw>>
   herdrWorkspaces(): Promise<CollectorResult<HerdrWorkspaceRaw>>
   claudeAgents(): Promise<CollectorResult<ClaudeAgentRaw>>
-  humanQueue(): CollectorResult<HumanQueueEntry>
+  humanQueue(): Promise<CollectorResult<HumanQueueEntry>>
   transcriptTail(cwd: string, sessionId: string): Promise<TranscriptTail>
   dispatchJobs(now: number): Promise<CollectorResult<DispatchJobRaw>>
-  sessionAccounts(sessionIds: Iterable<string>, now: number): Map<string, string>
+  sessionAccounts(sessionIds: Iterable<string>, now: number): Promise<Map<string, string>>
   git(cwd: string): Promise<ProjectGit | null>
 }
 
@@ -412,6 +439,7 @@ export function defaultCollectors(
       }),
     humanQueue: () => readHumanQueue(config.humanQueueDir),
     async transcriptTail(cwd, sessionId) {
+      if (!SESSION_ID_RE.test(sessionId)) return EMPTY_TAIL // a session id from outside is a path segment
       const path = join(config.claudeProjectsDir, encodeProjectDir(cwd), `${sessionId}.jsonl`)
       try {
         return await readTranscriptTailFile(path)
@@ -454,7 +482,7 @@ export async function buildSnapshot(
     collectors.herdrWorkspaces(),
     collectors.claudeAgents(),
   ])
-  const humanQueue = collectors.humanQueue()
+  const humanQueue = await collectors.humanQueue()
   const dispatch = await collectors.dispatchJobs(now)
   const warnings = [
     herdrAgents.warning,
@@ -468,9 +496,9 @@ export async function buildSnapshot(
   const cwdBySession = new Map<string, string>()
   for (const a of herdrAgents.items) {
     const sessionId = a.agent_session?.value
-    if (sessionId) cwdBySession.set(sessionId, a.cwd)
+    if (sessionId) cwdBySession.set(sessionId, a.cwd ?? '')
   }
-  for (const c of claudeAgents.items) cwdBySession.set(c.sessionId, c.cwd)
+  for (const c of claudeAgents.items) if (c.sessionId) cwdBySession.set(c.sessionId, c.cwd ?? '')
 
   const transcripts = new Map(
     await Promise.all(
@@ -484,7 +512,7 @@ export async function buildSnapshot(
   )
 
   // One resolve for panes and dispatch workers alike: only rows that have a session id.
-  const accounts = collectors.sessionAccounts(
+  const accounts = await collectors.sessionAccounts(
     [...cwdBySession.keys(), ...dispatch.items.flatMap((j) => (j.sessionId ? [j.sessionId] : []))],
     now,
   )
