@@ -297,8 +297,9 @@ describe('the audio process', () => {
     } finally {
       await audio.shutdown()
     }
-  })
+  }, 30_000)
 
+  // Explicit timeout: the first process's shutdown holds the cut request for the server's 5 s grace.
   test('a request cut by a restart: the next process fails its run as lost, it never hangs', async () => {
     let release = () => {}
     const hold = new Promise<void>((resolve) => {
@@ -337,7 +338,7 @@ describe('the audio process', () => {
       await second?.shutdown()
       await first.shutdown()
     }
-  })
+  }, 30_000)
 })
 
 const PLATFORM = 'agw'
