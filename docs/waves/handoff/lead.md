@@ -1,80 +1,81 @@
-# Lead handoff — Wave 10 (Claude Code and Hermes slimmed; P5): ROTATION at ~58% context
+# Lead handoff — Wave 10 (Claude Code and Hermes slimmed; P5): CLOSE-OUT
 
-Lead `agent-workflows-w1` rotates out 2026-10-29 ~20:20. Wave 9 close-out is in git at `06f0af1`. Briefs, review fix lists
-and the Hermes live patch: `~/.local/state/agent-workflows/briefs/w10/` on the mini (not in git; `_common.md` = Wave 9 rules
-+ Wave 10 scope: Wave 11 owns the retirements, polled reads never journal).
+Second Wave 10 lead (took over from `agent-workflows-w1` at ~20:20), closed 2026-10-29 ~21:00. Briefs, review fix lists
+and the Hermes live patch: `~/.local/state/agent-workflows/briefs/w10/` on the mini (not in git).
 
 ## Live state
 
-agent-workflows release `13b79da` (host + audio), `make verify` PASS. agent-gateway `084fefc` (MCP server deleted, Argo push
-removed; reloaded, its verify OK). hermes-agent `e5cba18` deployed (`make deploy` verified). dotfiles `be3b987`. modelpick
-`bf8aa4f`+3 refresh commits pushed. Main checkout clean.
+agent-workflows release `0ac0fc8` (host + audio; docs-only commits on top of the code at `13b79da`), `make verify` PASS
+(smoke `01a1891b-1afe-728b-…`, cap `01a1891b-24be-761b-…`, audio `01a1891b-2c36-71a7-…`). agent-gateway `084fefc` (MCP server
+deleted, Argo push removed). hermes-agent `e5cba18` deployed. dotfiles `d5562f0` (global CLAUDE.md and herdr-reap live from
+the checkout). modelpick `bf8aa4f`+refresh commits. basalt-ui `74b1ac9`. Main checkout clean, no worker tabs open.
 
-## Per-step verdict so far
+## Per-step verdict
 
 |Step|Verdict|Evidence|
 |-|-|-|
-|Global CLAUDE.md, skills, Makefile MCP registration; agw MCP server deleted|**done, live** — and an owner direction pending (below)|dotfiles #44 (Async jobs → one paragraph, model-ids line, skills on `/check` `/review` `agw-legacy`, Makefile registration removed + per-account `claude mcp remove`, OpenCode mini MCP config deleted, dead `agent-gateway:review` lane, `com.jkrumm.agent-workflows-audio` mapped). Deregistered on the mini: `claude mcp list` shows 0 agent-gateway entries in all three accounts. agent-gateway #39: `server/mcp.ts` + `server/mcp/tools/**` + MCP-only libs deleted (−2,469 lines), job server builds, reloaded, verify OK|
-|Hermes scripts and skills on agw; narratives and overview ported|**done, live**|agent-workflows #65 (`narrative`, `prose-polish`, capabilities `prose.write`/`narrative.compose`, new `internal` capability option: not on HTTP/OpenAPI/CLI/tool gate) and #66 (`agw overview` run, unjournaled `agw agents`/`quota`/`quota-report`, Argo push from the host, prod-purpose only), #64 `agw routes`. hermes-agent #10 (skills: `agw-research`, hyperdx on `agw hdx`/`agw otel`, dispatch skill on the CLI, warden leftovers) and #11 (scripts via `scripts/agw_run.py`: narratives, agents-overview, prose, quota-nudge; cron prompt text); out-of-git patch applied to `~/.hermes/cron/jobs.json` and `~/.hermes/skills/fleet-status/**` (backups `/tmp/w10-jobs.json.bak`, `/tmp/w10-fleet-status.bak`). @verifier 8/8 PASS on `13b79da`: routes; agents/quota reads write no journal rows (runs 3476 = 3476); quota-report bounds (150 → exit 2); overview run `01a18901-b37d-…` $0.0043, journal holds ids + facts hash + verdicts only; host log `argo push ok` 201, 26 agents; prose-polish `01a18903-5757-…` $0.0438 (write on Opus); narrative `01a18903-b9c9-…` $0.0049; `/prose/write`, `/narrative/compose`, `/overview/classify` 404|
-|No-MCP-gateway sweep|**done in tracked docs; final proof run pending**|Fixed beyond the fleet repos: brain wiki `remote-dev-orchestration.md` (pushed), email-gateway PLAN (pushed), basalt-ui handoff (**PR #565 open, CI pending — merge it**), weatherorb stale permission (untracked). Remaining hits are history docs only (modelpick decision record, dotfiles archive/factory docs)|
-|Every remaining runtime caller moved|**done except Wave 11 items**|statusline + fetch_usage → `agw quota-report` (64 ms, throttled 1/min, backgrounded; dotfiles #45), devhost-health overview/usage probes, `make agent-overview` pane on `agw agents --text --format plain` (pane restarted, renders), modelpick verify on `agw routes` (#2; `tts-wave5.ts` deleted: finished experiment), warden repo archived on GitHub (its client goes with it), `wave-watch.sh` warden call dropped. iris: verified, no agent-gateway call since 12:40 (two `triage` jobs before its switch)|
+|Global CLAUDE.md, skills, Makefile MCP registration; agw MCP server deleted|**done, live**|dotfiles #44, #46 (`ec11197`: no dispatch lane; lanes are `@implementer` and `rd wave`/`rd fan`; `agw-legacy` gone from global CLAUDE.md, `docs/agent-platform.md`, `docs/global-reference.md`, AGENTS.md, skills `implement`/`wave`/`remote-dev`). agent-gateway #39 (MCP server, tools and MCP-only libs deleted). @verifier: `~/.claude/CLAUDE.md` = dotfiles `origin/master` byte for byte, no `agw-legacy`/`dispatch`; `mcpServers` in every Claude config dir hold no gateway (chrome-devtools; PandaOS's own `pandactions`/`pandaos-browser` in two project scopes, not ours); `:7705/mcp` 404 with `/health` 200|
+|Hermes scripts and skills on agw; narratives and overview ported|**done, live**|agent-workflows #65, #66, #64; hermes-agent #10, #11; `~/.hermes` cron/skills patch. Previous lead's @verifier 8/8 on `13b79da` (routes, unjournaled reads, quota-report bounds, overview, prose-polish, narrative, internal capabilities 404 over HTTP). This rotation's @verifier: 20 `agw.runs` rows with caller `hermes` in 24 h (research, hdx, narrative, narrative-polish, prose-polish; all `done`); Hermes scheduler ran `quota-nudge.py` on agw at 20:08 `ok`; `narratives-cron.py` loads `project-narratives.py`, which calls `agw` through `scripts/agw_run.py`; no gateway URL in `~/.hermes/scripts`|
+|No-MCP-gateway sweep|**done**|@verifier rg (`mcp__agent-gateway|mcp__research-gateway|mcp__audio-gateway|job_wait`) over every repo's skills, AGENTS.md, config, scripts, `~/.claude/{skills,agents}`, `~/.config/opencode/agent`, `~/.hermes/{skills,scripts,cron}`: no live hit. Fixed this rotation: `~/.config/opencode/agent/implementer.md` was rendered before dotfiles moved `/research` to agw (said `job_wait`); re-rendered with `scripts/opencode-agents.py`. basalt-ui #565 merged (CI green; it also carried the owner's unpushed friction-log commit `f409b81` from 2026-10-27). Remaining hits are history or not ours: email-gateway's own `job_wait` comment, jkrumm.com diagram label, brain wiki/Inbox narrative pages, modelpick decision record, `brain/.scripts/extract-research-result.py` (a research-gateway result helper, no caller; goes with Wave 11)|
+|Tab hygiene: tabs closed after merge; `herdr-reap.py` closes merged fan tabs during an active wave; dispatch lane dropped|**done, live**|dotfiles #46 (dispatch lane) and #47 (`d5562f0`). #47: a tab closes once its `rd-fan`-marked worktree's branch is merged into the default (PR MERGED with base = default and HEAD inside the PR head, or own commits all patch-equal and pushed) or deleted on origin, active wave or not; never a working/unknown agent, dirty/unpushed/fresh tree, a new pane, moved HEAD, or a mother/lead/`wave <n>`/`-w<n>` tab (re-checked from a fresh roster right before the close). 37 tests green; dry run on the mini: would close only iris's merged `fan w16-s5-host-caller`, kept a dirty fan tab and a live branch. Live: the 20:43:50 launchd tick closed exactly that tab (`why="PR merged"`) during iris's active wave. Worker tabs `dotfiles-no-dispatch-lane`, `dotfiles-herdr-reap-merged` and the stray workspace tab closed right after their merges; `rd fan --clean dotfiles`: no extra worktrees|
+|Every runtime caller of the old gateways moved|**done except Wave 11 items (owner: everything agent-gateway retires in Wave 11)**|Previous lead: statusline/fetch_usage → `agw quota-report`, devhost overview/usage probes, `make agent-overview` on `agw agents`, modelpick verify on `agw routes`, warden archived, `wave-watch.sh` warden call dropped, iris on agw (no gateway call since 12:40). Gateway logs this rotation: research-gateway sees only the devhost health probe (404 triplets on `/health*`), no functional caller. Remaining, all Wave 11: Hermes `dispatch` skill and `brain-drift-audit` cron prompt (`agw-legacy dispatch`), hermes-agent `make doctor` `:7705` probe, dotfiles Makefile `install-cli` (agw-legacy), `wave-watch.sh` `:7705/api/jobs` poll, `remote-dev.sh:1096` hint text, Caddy `agent-gateway.test`, devhost probes for agent-/audio-/research-gateway, Kuma push, modelpick's agent-gateway rows via `agw-legacy routing`, argo `/ai` audio proxy|
 
-## In flight (the next lead finishes these)
+## Reviews (all on Max, detached worktrees; no fork touched a main checkout)
 
-1. **Owner direction (2026-10-29, via mother):** no dispatch; agent-gateway retires COMPLETELY in Wave 11, `agw-legacy`
-   included. Worker `dotfiles-no-dispatch-lane` (branch `w10/no-dispatch-lane`, brief `briefs/w10/dotfiles-nodispatch.md`):
-   global CLAUDE.md lanes become `@implementer`, `rd wave`/`rd fan`, in-session tools; skills/docs lose `agw-legacy`. Read the
-   diff, `/code-review` not needed for docs (lead read), merge with `gh pr merge --rebase` (dotfiles train is red only on the
-   not-ours `com.iu.*` architecture rows; record that reason), close its tab at once.
-2. **Owner direction:** worker `dotfiles-herdr-reap-merged` (branch `w10/herdr-reap-merged`, brief `briefs/w10/herdr-reap.md`):
-   `scripts/herdr-reap.py` closes a fan tab once its branch is merged (gh PR state, rebase merges) or deleted, even during an
-   active wave; never working/dirty/mother/lead tabs. Review on Max (`/code-review high`, detached worktree), merge, close tab.
-3. **Owner direction (tab hygiene):** close every fan tab right after its merge or abandonment (`herdr tab close <tab_id>`,
-   ids from `herdr agent list`), not at wave end. Done for all merged Wave 10 tabs at 20:10.
-4. basalt-ui PR #565 (one doc line): merge when CI is green.
-5. Then the close-out: final sweep proof (`rg -n 'mcp__agent-gateway|mcp__research-gateway|job_wait'` over every repo's skills,
-   AGENTS.md, config, scripts — history docs excluded and named), Hermes live proof (tomorrow's 06:30 narratives cron leaves an
-   `agw.runs` row with caller `hermes`; or run `narratives-cron.py` once), overwrite this file with the full close-out.
-
-## Reviews (all on Max, detached worktrees, no fork touched the main checkout)
-
-- #64 routes: r1 blocker (both processes declared `routes`: CLI conflict on the mini), env injection, prices; r2 table built
-  once from a boot snapshot, CLI-level two-process test; r3 diff read.
-- #65 narrative: r1 security (Opus seat reachable over HTTP → `internal` capabilities), clamp, child error/cancel, bounds; r2
-  internal seat still grantable via the tool gate → one `served` list, `git log -n`, stable reason (no home path); r3 one bug
-  (`Date.parse` rollover) fixed and read.
-- #66 overview: r1 security (host secrets in git/herdr child env, unvalidated session id in a path, terminal escapes, sync fs
-  on the runtime loop, journal holding transcripts and queued commands); r2 git env too narrow, purpose gate on the cache,
-  C1/CR stripping, shape checks, pool, lean journal; r3 session-less panes, raw keys/paths; final rebase read. Worker rotated
-  at 78% (`overview-r2` continued the PR).
-- Lead diff reads only (with reason): dotfiles #44/#45, agent-gateway #39/#40, hermes-agent #10/#11, modelpick #2, the doc
-  one-liners (docs, deletions, scripts with a live proof).
+- dotfiles #46: docs only, lead read the full diff (lane table, agent-platform, global-reference, three skills). Review: lead
+  diff read only — docs, no code.
+- dotfiles #47: `/code-review high` r1 on `f24fa1e`: 10 findings (stale PR by branch name closed a fresh worker; closed PR
+  with a live branch; ownership by path, not the `rd-fan` marker; label-side lead guard; no status re-check before close; no
+  network timeouts; `fetch.prune` config; merge commits invisible to `git cherry`; `unknown` agents not protecting a shared
+  checkout; tests missing). All fixed in `1d15315`. r2: 10 findings, lead triage: 6 fixed in `bcccacf` (fresh pushed branch;
+  stacked-PR base; close-time re-check of pane set, other agents, dirty tree, moved HEAD; local checks before network and a
+  failed fetch cached; keep reason logged; file handles). Declined with reason: CLOSED PR + branch deleted closes (that is
+  abandonment, the owner's intent); the name-suffix guard stays a backstop (the marker is ownership); no dedupe with
+  `checkout_problem`; test suite speed (~75 s) not tuned. Lead read both fix diffs.
+- Previous lead's reviews (#64, #65, #66 three rounds each; lead diff reads for dotfiles #44/#45, agent-gateway #39/#40,
+  hermes-agent #10/#11, modelpick #2): unchanged, in git history of this file (`7058b35`).
 
 ## Gate
 
-agent-workflows: train `make check` + CI green on #64, #65, #66 (each needed a retry: load flakes named below). CI on master
-green. dotfiles #44/#45, agent-gateway #39/#40: merged with `gh` — dotfiles' `make check` fails only on the not-ours `com.iu.*`
-architecture rows; agent-gateway's suite only on the known not-ours `GIT_DENY_CREDENTIALS_ENV` test; workers ran every other
-target green. hermes-agent and modelpick: train green (no CI configured).
+agent-workflows: `make check` + CI green on #64, #65, #66 (load-flake retries, named below); CI on master green at `13b79da`,
+docs-only commits since. dotfiles #47: every `make check` target green on the PR head except `architecture-check`, which
+fails only on the not-ours rows (`com.iu.athena-postgres` unmapped, four `com.iu.teamchat-*` mapped-but-absent); the rest run
+with `make -k` (37 herdr-reap tests, all suites OK). dotfiles #46 docs only. basalt-ui #565 CI green. agent-gateway's suite
+red only on the known not-ours `GIT_DENY_CREDENTIALS_ENV` test. hermes-agent and modelpick: train green (no CI).
+
+## Live proof
+
+`make verify` PASS on `0ac0fc8` (redeployed this rotation: the docs-only commits had left the deployed sha behind master,
+which `make verify` refuses). @verifier checks 2–6 PASS (above). herdr-reap: the first launchd tick after the merge
+(20:43:50) closed iris's merged fan tab `w4V:t23` and nothing else. Not yet observable: the 06:30 narratives cron on the new path (`narratives-cron.py`, next run 2026-10-30
+06:30); the script path itself is proven by the `hermes` narrative/narrative-polish runs at 18:58.
 
 ## Spend
 
-IU team key: verifier runs $0.053; workers' route probes and live criteria (one research quick run $0.0053, hdx reads, one
-overview/narrative/prose-polish each) < $0.15 est. Max: lead, 13 workers, 9 `/code-review high`.
+IU team key: previous lead's verifier $0.053 + workers' probes < $0.15 est.; this rotation `make verify` ×1 (< $0.0001) and
+the redeploy. Max: lead (two rotations), 15 workers, 11 `/code-review high`, 2 @verifier.
 
-## Left behind (for the close-out)
+## Left behind
 
-- Load flakes seen in the train (not ours to this wave, fix at cause later): `opencode-host/test/friction.test.ts` "re-attached
-  wait … does not repeat a note" (`settle()` waits on poll counts, not on the nudge); `middleware/test/platform.test.ts`
-  concurrent runs (spans dropped / tool events empty, also on GitHub CI once); `review` pr-mode clone test (11.7 s timeout);
-  capabilities stream-idle 150 ms test.
-- `quota-nudge.py:290` references undefined `RECENT_WORK_S` (pre-existing; NameError on a stalled non-allowlisted pane).
+- Load flakes (not ours to this wave): `opencode-host/test/friction.test.ts` re-attached wait note; `middleware/test/
+  platform.test.ts` concurrent runs; `review` pr-mode clone test timeout; capabilities stream-idle 150 ms test.
+- `quota-nudge.py:290` undefined `RECENT_WORK_S` (pre-existing NameError on a stalled non-allowlisted pane).
 - Morning briefing prompt (disabled cron) still calls retired warden's `:7735/board`.
-- `prose.py --timeout 900` kept for parity (conflicts with agent-limits rule).
-- Narrative pages keep `generated_by: agent-gateway/narrative` frontmatter (existing vault pages carry it).
-- `internal` capability option is new: concept.md needs a version note (mother).
-- modelpick verify now shows real drift in its own rows (old `-eu` ids, Terra 5.6 → 6.1): a `/refresh-stack` decision.
-- modelpick's refresh pushes had been failing on a diverged checkout; rebased (STACK.md: refresh version kept) and pushed.
-- hermes-agent: `scripts/model-release-watch.py` is a live cron script, untracked (not ours).
-- Wave 11 (owner: nothing stays on agent-gateway): Hermes `dispatch` skill and `brain-drift-audit` cron use `agw-legacy
-  dispatch`; dotfiles Makefile `install-cli`, `wave-watch.sh` 7705 poll, Caddy `agent-gateway.test`, Kuma push, devhost probes.
+- `prose.py --timeout 900` kept for parity (conflicts with the agent-limits rule).
+- Narrative pages keep `generated_by: agent-gateway/narrative` frontmatter.
+- modelpick verify shows real drift in its own rows (old `-eu` ids, Terra 5.6 → 6.1): a `/refresh-stack` decision.
+- hermes-agent `scripts/model-release-watch.py`: live cron script, untracked (not ours).
+- `rd reap --help` in `scripts/remote-dev.sh` still describes only the idle rule.
+- herdr-reap test suite takes ~75 s inside dotfiles `make check`.
+- devhost-health research-gateway probe gets 404s on `/health*` (goes with the retirement).
+- Wave 11 caller list: the last row of the step table.
+
+## Retro notes
+
+- **Previous lead:** verify before building held again (Argo, iris needed no port); the security reviews changed designs
+  (`internal` capabilities, host env leaks), not just diffs; rotation at 58 % with a written handoff was clean.
+- **This rotation:** a script that decides to kill a tab needs two review rounds: r1 found that a PR looked up by branch name
+  outlives the branch, r2 that every guard must be re-read at close time, not plan time. A dry run on the live fleet is the
+  cheap last gate (it found exactly one, correct, close). A rendered config (OpenCode agents) drifts from its source
+  silently: the sweep must include render targets, not only repos. `make verify` refuses docs-only drift, so a docs commit
+  after a deploy needs a redeploy before the close-out proof.
