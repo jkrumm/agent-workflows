@@ -143,7 +143,7 @@ telemetry as `service.name` `agw-audio`, the Argo outbox), the runaway cap and t
 
 | | host | audio |
 |-|-|-|
-| Workflows | `packages/host/src/workflows/*/module.ts` | `src/workflows/*/module.ts` (`discoverWorkflowModules`) plus the two door workflows |
+| Workflows | `packages/host/src/workflows/*/module.ts` | `src/workflows/*/module.ts` (`discoverWorkflowModules`) plus the two door workflows; module deps add `journal` (read pool, schema) and `audio` (the door's config, media port and env, which `podcast.produce` synthesizes on) |
 | Capabilities over HTTP | yes (`agw llm title …`) | no: the CLI refuses a command two processes declare; workflows still call every capability in-process |
 | State dir (tool gate, OpenCode) | `~/.local/state/agent-workflows` | `~/.local/state/agent-workflows-audio` (`AGW_AUDIO_STATE_DIR`): two tool gates never share one `gate.json` |
 | OpenCode agent host | lazy | lazy: none of its workflows has an agent step, so `opencode` is never spawned |

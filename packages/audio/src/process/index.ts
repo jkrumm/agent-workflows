@@ -11,6 +11,7 @@ import {
 } from '@agent-workflows/host'
 import type { Runtime } from '@agent-workflows/runtime'
 import type { Pool } from 'pg'
+import type { AudioDeps } from '../scope.ts'
 import { callerAuth } from './callers.ts'
 import type { AudioProcessConfig } from './config.ts'
 import { createDoor, type Door, type DoorHandlers, type Fetch } from './door.ts'
@@ -37,7 +38,11 @@ export const AUDIO_MODULES_DIR = join(import.meta.dir, '..', 'workflows')
  * What the audio process's workflow modules are built from: `HostDeps` plus the journal (its read pool and schema),
  * which the podcast room reads for the show's history and an episode's recorded cost.
  */
-export type AudioWorkflowDeps = HostDeps & { journal: { db: Pick<Pool, 'query'>; schema: string } }
+export type AudioWorkflowDeps = HostDeps & {
+  journal: { db: Pick<Pool, 'query'>; schema: string }
+  /** The lanes' config, media port and env, shared with the door: the podcast's production synthesizes on them. */
+  audio: Omit<AudioDeps, 'usage'>
+}
 
 export interface AudioProcessOptions {
   config: AudioProcessConfig
@@ -47,6 +52,8 @@ export interface AudioProcessOptions {
   tokens: ReadonlyMap<string, string>
   /** What the door's upstream calls go through (bound per request to its signal). Default: the global `fetch`. */
   fetch?: Fetch
+  /** The lanes' deps the workflows synthesize on (`podcast.produce`); the same config the door handlers are bound to. */
+  audio: Omit<AudioDeps, 'usage'>
   /** Replaces the discovered modules (tests). */
   modules?: readonly DiscoveredModule[]
 }
@@ -79,7 +86,13 @@ export function audioProcess(options: AudioProcessOptions): ProcessDefinition {
         logger,
         ...(options.fetch ? { fetch: options.fetch } : {}),
       })
-      const deps: AudioWorkflowDeps = { registry, toolGate, logger, journal: { db: readPool, schema: base.schema } }
+      const deps: AudioWorkflowDeps = {
+        registry,
+        toolGate,
+        logger,
+        journal: { db: readPool, schema: base.schema },
+        audio: options.audio,
+      }
       return [...(await createWorkflows(deps, modules)), ...door.workflows]
     },
     routes(process) {
