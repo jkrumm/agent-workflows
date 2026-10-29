@@ -159,11 +159,14 @@ a running host and broke every run. A Homebrew copy ahead of the pin on `PATH` (
 | the probe wrapper | `scripts/opencode-safe`, linked as `~/.local/bin/opencode-safe`: refuses to start `opencode` when the IU endpoint is down (exit 75) instead of retrying forever |
 | react-doctor (the `review` workflow) | `~/.local/share/agent-workflows/react-doctor/<version>/`, `REACT_DOCTOR_VERSION` in `packages/host/src/workflows/review/react-doctor.ts` |
 
-`make install-opencode` (from the dev checkout; the links point at its `scripts/`) installs both pins and links the two
-scripts. Idempotent: a version that is present is not downloaded again. It never restarts the host. The host's OpenCode
+`make install-opencode` (from the main checkout, never a linked worktree: the links point at its `scripts/`) installs the
+OpenCode pin, links the two scripts, then installs react-doctor (a react-doctor failure only warns). Idempotent: a version
+that is present is not downloaded again; an install is built in a temp directory and renamed into place, and `current` is
+repointed atomically, so an interrupted run leaves nothing half-installed. It never restarts the host. The host's OpenCode
 server runs the new binary on its next start: the binary path is part of the launch fingerprint, so the first `start()`
-after a version bump sees drift and restarts the server (logged). `AGW_OPENCODE_ROOT`, `AGW_REACT_DOCTOR_ROOT` and
-`AGW_BIN_DIR` redirect the installs and the links.
+after a version bump sees drift and restarts the server (logged). `make verify` fails, naming `make install-opencode`,
+when either pinned install is missing. `AGW_OPENCODE_ROOT`, `AGW_REACT_DOCTOR_ROOT` and `AGW_BIN_DIR` (absolute paths)
+redirect the installs and the links; `scripts/pins.sh` resolves them and reads the pinned versions.
 
 **Upgrade** is a deliberate act, gated on the live tests:
 

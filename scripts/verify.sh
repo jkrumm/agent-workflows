@@ -4,6 +4,7 @@
 # journal, and a direct `agw llm title` call left a done `cap.llm.title` run with priced usage. The audio process must be
 # healthy at the same sha, `agw audio ping` (routed to it by AGW_PROCESSES) must leave a done run, and its door must
 # refuse an unauthenticated request (401) and answer an authenticated one with a bad body with the legacy 400.
+# The pinned OpenCode build and react-doctor of the deployed release must be installed (scripts/pins.sh check).
 # Prints the run ids.
 
 set -u
@@ -25,6 +26,10 @@ ok() { print "verify: ok: $*"; }
 for tool in git curl jq psql secrets-run agw; do
   command -v "$tool" >/dev/null 2>&1 || fail "$tool not found on PATH"
 done
+
+# 0. the pinned builds the OpenCode host and the review workflow exec exist where they are looked for
+pins=$("${0:A:h}/pins.sh" check "$ROOT/current" 2>&1) || fail "$pins"
+ok "$pins"
 
 # 1. health
 health=$(curl -fsS --max-time 5 "$HEALTH_URL") || fail "no answer from $HEALTH_URL"
