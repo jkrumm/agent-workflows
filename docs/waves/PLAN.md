@@ -167,8 +167,10 @@ Workers: Opus/medium for the comparison design, Sonnet/high for the port.
 - [x] P2's gate: Sonnet angles vs today's on the 20 paired review cases (`agw eval run|compare`, ≈ $5).
   Answer: recall 0.017 → 0.13, located +0.09, cost 9.4×. Decision (mother): Sonnet angles for `--deep`
   reviews only, Haiku stays the default
-- [ ] Three-way comparison on research-gateway's 28 golden questions: code-led pipeline vs pure
-  agent vs agent on the pipeline, yolo vs focused — correctness, cost, wall time
+- [x] Three-way comparison on research-gateway's 28 golden questions: code-led pipeline vs pure
+  agent vs agent on the pipeline, yolo vs focused — correctness, cost, wall time.
+  Decided by the pre-registered rule: pure agent, yolo — supported +0.185 [0.065, 0.321] vs the engine,
+  golden level held, $0.028 vs $0.138 per question, p50 39 s vs 171 s; 420/420 runs, team key $12.57
 - [ ] `research` ported in the winning shape, follow-up on a finished report included
 - [ ] `/research` switched; research-gateway's `/mcp` deleted and its MCP registration removed
 **Left behind:**
