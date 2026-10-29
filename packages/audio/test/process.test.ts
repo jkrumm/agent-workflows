@@ -124,9 +124,11 @@ describe('the audio process', () => {
         paths: Record<string, Record<string, { operationId: string; 'x-cli'?: { command: string[] } }>>
       }
       const ops = Object.values(doc.paths).flatMap((methods) => Object.values(methods))
-      const commands = ops.map((op) => op['x-cli']?.command.join(' ')).sort()
-      // No capability (the host serves them; two processes declaring one is a CLI conflict), no door route.
-      expect(commands.filter((c) => !c?.startsWith('run '))).toEqual(['audio ping'])
+      const commands = ops.map((op) => op['x-cli']?.command.join(' '))
+      expect(commands).toContain('audio ping')
+      // Workflows and run operations only: no capability (the host serves them; two processes declaring one is a CLI
+      // conflict) and no door route. The workflow set grows with the tree (`src/workflows/*/module.ts`).
+      expect(Object.keys(doc.paths).filter((path) => !/^\/(workflows|runs)\//.test(path))).toEqual([])
 
       expect((await fetch(`${audio.url}/openapi.json`)).status).toBe(401)
       const res = await fetch(`${audio.url}/workflows/audio/ping`, {
