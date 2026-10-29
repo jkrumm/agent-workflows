@@ -266,8 +266,16 @@ export function createDoor(options: DoorOptions): Door {
 
     // The client going away aborts every upstream call; the record still lasts until the handler's work is over.
     const { signal } = request
+    // Once the client is gone a failed call rejects as an `AbortError`, whatever reason Bun gave the signal, so the
+    // lanes' retry (`rawFetch`) sees it as final and bills nothing more.
     const fetch: Fetch = (url, init) =>
-      baseFetch(url, { ...init, signal: init?.signal ? AbortSignal.any([init.signal, signal]) : signal })
+      baseFetch(url, { ...init, signal: init?.signal ? AbortSignal.any([init.signal, signal]) : signal }).catch(
+        (error: unknown) => {
+          if (signal.aborted && !(error instanceof Error && error.name === 'AbortError'))
+            throw new DOMException('the client went away', 'AbortError')
+          throw error
+        },
+      )
     const finish = () => sink.finish(signal.aborted ? 'client-gone' : 'done')
     const usage = {
       record(event: DoorEvent) {

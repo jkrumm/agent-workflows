@@ -97,6 +97,24 @@ describe('rawFetch', () => {
     expect(scope.meta.retries).toBe(1)
   })
 
+  test('an abort from a signal the fetch port merged in is final: no retry, no sleep, no retries counted', async () => {
+    const { scope, sleeps, calls } = scopeWith([
+      () => {
+        throw new DOMException('The operation was aborted.', 'AbortError')
+      },
+      () => new Response('never'),
+    ])
+    // No `init.signal`: the abort came from inside the port (the door's client-bound fetch).
+    const error = await rawFetch(scope, 'http://x', { method: 'GET' }).then(
+      () => null,
+      (e: unknown) => e,
+    )
+    expect((error as Error).name).toBe('AbortError')
+    expect(calls()).toBe(1)
+    expect(sleeps).toEqual([])
+    expect(scope.meta.retries).toBe(0)
+  })
+
   test("waits out the server's hint on 429 instead of the fixed 500 ms backoff, capped at 15 s", async () => {
     const { scope, sleeps } = scopeWith([
       () => new Response('throttled', { status: 429, headers: { 'retry-after': '0.6' } }),
