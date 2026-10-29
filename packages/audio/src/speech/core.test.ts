@@ -1,0 +1,273 @@
+import { describe, expect, test } from 'bun:test'
+import type { ChunkLimits } from './core.ts'
+import { caught } from '../testing/index.ts'
+import {
+  DELIVERY_STYLES,
+  detectLanguage,
+  enforceChunkLimits,
+  looksGerman,
+  normalizeForSpeech,
+  parsePrepResponse,
+  resolveDelivery,
+  SPEECH_TAGS,
+  stripDisallowedTags,
+  synthConcurrent,
+} from './core.ts'
+
+// pcmToWav now lives in audio.test.ts alongside the rest of the ffmpeg/ffprobe
+// process boundary module it moved into.
+
+describe('detectLanguage', () => {
+  const de = [
+    'Okay, erledigt.',
+    'Klar.',
+    'Passt.',
+    'Rechnung markiert.',
+    'Termin eingetragen.',
+    'Guten Morgen Johannes.',
+    'Soll ich sie runterdrehen?',
+    'Mach ich.',
+    'Alles gut.',
+    'Gern geschehen.',
+    'Bis später.',
+  ]
+  const en = [
+    'Done.',
+    'Sure thing.',
+    'Meeting moved to three pm.',
+    'I will take care of it.',
+    'Good morning Johannes.',
+    'Should I turn it down?',
+    'All good.',
+    'On it.',
+  ]
+  test('short German replies are never classified as English', () => {
+    for (const s of de) expect(detectLanguage(s)).not.toBe('en')
+  })
+  test('short English replies are classified as English', () => {
+    for (const s of en) expect(detectLanguage(s)).toBe('en')
+  })
+  test('names and numbers alone are undecided', () => {
+    expect(detectLanguage('Johannes, 14:30.')).toBeNull()
+    expect(detectLanguage('Okay.')).toBeNull()
+  })
+})
+
+describe('detectLanguage — German sentences containing English look-alikes', () => {
+  test('in / an / do / was never flip a German sentence to English', () => {
+    for (const s of [
+      'Rund 17 bis 26 Grad, meist wechselhaft, nur geringe Regenchance.',
+      'Do, 27. Aug.: Heiß und trocken.',
+      'Was steht an?',
+      'In München regnet es.',
+      'Zeitweise sonnig, UV-Index bis 5,9.',
+    ]) {
+      expect(detectLanguage(s)).not.toBe('en')
+    }
+  })
+})
+
+describe('normalizeForSpeech', () => {
+  test('German weather line: weekday, month, range, units, decoration', () => {
+    const out = normalizeForSpeech(
+      '**Do, 27. Aug.:** Heiß und überwiegend trocken, etwa **17–32 °C**. UV-Index bis **5,9**. Böen bis etwa **77 km/h** – auffällig. ★',
+      'de',
+    )
+    expect(out).toBe(
+      'Donnerstag, 27. August: Heiß und überwiegend trocken, etwa 17 bis 32 Grad. UV-Index bis 5,9. Böen bis etwa 77 Kilometer pro Stunde – auffällig.',
+    )
+  })
+  test('percent and month with trailing colon, English', () => {
+    expect(normalizeForSpeech('Fri, 28 Aug.: rain likely (98 %), 16–27 °C.', 'en')).toBe(
+      'Friday, 28 August: rain likely (98 percent), 16 to 27 degrees.',
+    )
+  })
+  test('leaves ordinary prose untouched', () => {
+    expect(normalizeForSpeech('Alles klar, Todo ist angelegt.', 'de')).toBe('Alles klar, Todo ist angelegt.')
+  })
+})
+
+describe('looksGerman', () => {
+  test('detects umlauts', () => {
+    expect(looksGerman('Grüß dich')).toBe(true)
+  })
+
+  test('detects common German stopwords', () => {
+    expect(looksGerman('Das ist ein Test und nicht mehr')).toBe(true)
+  })
+
+  test('returns false for plain English', () => {
+    expect(looksGerman('This is a simple test sentence')).toBe(false)
+  })
+})
+
+describe('synthConcurrent', () => {
+  test('preserves order even when later items finish first', async () => {
+    const items = [0, 1, 2, 3, 4]
+    const out = await synthConcurrent(2, items, async (i) => {
+      await Bun.sleep((5 - i) * 5)
+      return i * 10
+    })
+    expect(out).toEqual([0, 10, 20, 30, 40])
+  })
+
+  test('throws the first failure — no silent partial output', async () => {
+    const items = [0, 1, 2, 3]
+    const error = await caught(
+      synthConcurrent(2, items, async (i) => {
+        if (i === 1) throw new Error('boom')
+        return i
+      }),
+    )
+    expect(error.message).toMatch(/boom/)
+  })
+
+  test('does not start a new window once a failure is known', async () => {
+    const seen: number[] = []
+    const items = [0, 1, 2, 3, 4, 5]
+    await caught(
+      synthConcurrent(2, items, async (i) => {
+        seen.push(i)
+        if (i === 1) throw new Error('boom')
+        return i
+      }),
+    )
+    // Window 1 (items 0,1) is allowed to fully settle; windows after the
+    // failure (items 4,5) must never start.
+    expect(seen).not.toContain(4)
+    expect(seen).not.toContain(5)
+  })
+})
+
+describe('parsePrepResponse', () => {
+  test('parses strict JSON', () => {
+    const out = parsePrepResponse('{"lang":"de","chunks":[{"style":"Lies ruhig","text":"Heute drei Termine."}]}')
+    expect(out.lang).toBe('de')
+    expect(out.chunks).toHaveLength(1)
+    expect(out.chunks[0]).toEqual({ style: 'Lies ruhig', text: 'Heute drei Termine.' })
+  })
+
+  test('tolerates markdown fences and surrounding prose', () => {
+    const raw = 'Here you go:\n```json\n{"lang":"en","chunks":[{"style":"Warm","text":"[pause] Done."}]}\n```'
+    const out = parsePrepResponse(raw)
+    expect(out.lang).toBe('en')
+    expect(out.chunks[0]?.text).toBe('[pause] Done.')
+  })
+
+  test('defaults a missing style to empty string', () => {
+    const out = parsePrepResponse('{"lang":"en","chunks":[{"text":"Hi there."}]}')
+    expect(out.chunks[0]).toEqual({ style: '', text: 'Hi there.' })
+  })
+
+  test('parses the title', () => {
+    const out = parsePrepResponse(
+      '{"lang":"de","title":"Drei Termine heute","chunks":[{"style":"x","text":"Heute drei Termine."}]}',
+    )
+    expect(out.title).toBe('Drei Termine heute')
+  })
+
+  test('defaults a missing title to empty string', () => {
+    const out = parsePrepResponse('{"lang":"en","chunks":[{"text":"Hi there."}]}')
+    expect(out.title).toBe('')
+  })
+
+  test('throws on no JSON object', () => {
+    expect(() => parsePrepResponse('not json at all')).toThrow()
+  })
+
+  test('throws on empty chunks', () => {
+    expect(() => parsePrepResponse('{"lang":"de","chunks":[]}')).toThrow()
+  })
+
+  test('throws when a chunk has no text', () => {
+    expect(() => parsePrepResponse('{"lang":"de","chunks":[{"style":"x"}]}')).toThrow()
+  })
+})
+
+describe('enforceChunkLimits', () => {
+  const LIMITS: ChunkLimits = { targetWords: 110, maxWords: 150, maxBytes: 1800 }
+  const words = (n: number, w = 'wort'): string => Array.from({ length: n }, () => w).join(' ')
+  const wc = (s: string): number => (s.match(/\S+/g) ?? []).length
+  const bytes = (s: string): number => new TextEncoder().encode(s).length
+
+  test('passes a within-limit chunk through untouched', () => {
+    const chunks = [{ style: 'calm', text: '[pause] Heute drei Termine. Nichts Dringendes.' }]
+    expect(enforceChunkLimits(chunks, LIMITS)).toEqual(chunks)
+  })
+
+  test('splits an over-long chunk at sentence boundaries, never mid-sentence', () => {
+    // 8 sentences × 30 words = 240 words → must split; each piece ends on a sentence.
+    const text = Array.from({ length: 8 }, (_, i) => `${words(29)} ende${i}.`).join(' ')
+    const out = enforceChunkLimits([{ style: 's', text }], LIMITS)
+    expect(out.length).toBeGreaterThan(1)
+    for (const c of out) {
+      expect(c.style).toBe('s')
+      expect(wc(c.text)).toBeLessThanOrEqual(LIMITS.maxWords)
+      expect(c.text.trim()).toMatch(/ende\d\.$/) // ends at a sentence boundary
+    }
+    expect(out.map((c) => c.text).join(' ')).toBe(text) // content preserved
+  })
+
+  test('prefers paragraph boundaries over sentence splits', () => {
+    const text = `${words(80)} absatz1.\n\n${words(80)} absatz2.` // ~162 words, two paragraphs
+    const out = enforceChunkLimits([{ style: 'p', text }], LIMITS)
+    expect(out).toHaveLength(2)
+    expect(out[0]?.text.endsWith('absatz1.')).toBe(true)
+    expect(out[1]?.text.endsWith('absatz2.')).toBe(true)
+  })
+
+  test('word-splits only as a last resort for a single over-long sentence', () => {
+    const text = `${words(200)}.` // one 201-word sentence, no internal boundary
+    const out = enforceChunkLimits([{ style: 'x', text }], LIMITS)
+    expect(out.length).toBeGreaterThan(1)
+    for (const c of out) expect(wc(c.text)).toBeLessThanOrEqual(LIMITS.maxWords)
+  })
+
+  test('enforces the byte ceiling independently of word count', () => {
+    const tight: ChunkLimits = { targetWords: 1000, maxWords: 1000, maxBytes: 160 }
+    const text = Array.from({ length: 4 }, (_, i) => `${words(20)} satz${i}.`).join(' ')
+    const out = enforceChunkLimits([{ style: 'b', text }], tight)
+    expect(out.length).toBeGreaterThan(1)
+    for (const c of out) expect(bytes(c.text)).toBeLessThanOrEqual(tight.maxBytes)
+  })
+})
+
+describe('stripDisallowedTags', () => {
+  test('keeps allowlisted tags, case-insensitively', () => {
+    expect(stripDisallowedTags('Eins. <short pause> Zwei. <Laugh> Drei.')).toBe(
+      'Eins. <short pause> Zwei. <Laugh> Drei.',
+    )
+  })
+  test('drops invented angle tags and legacy square tags', () => {
+    expect(stripDisallowedTags('Hallo <excited> Welt [laughs] Ende <cough>')).toBe('Hallo  Welt  Ende ')
+  })
+  test('drops invented tags with digits, underscores or punctuation', () => {
+    expect(stripDisallowedTags('a <pause 2s> b <sigh_softly> c <emphasis!> d')).toBe('a  b  c  d')
+  })
+  test('leaves comparisons and arrows alone', () => {
+    expect(stripDisallowedTags('wenn a < 5 und b > 3')).toBe('wenn a < 5 und b > 3')
+  })
+  test('an explicit allowlist narrows the vocabulary', () => {
+    expect(SPEECH_TAGS).toContain('<chuckle>')
+    expect(stripDisallowedTags('Ja <chuckle> klar <sigh>', ['<sigh>'])).toBe('Ja  klar <sigh>')
+  })
+})
+
+describe('shared delivery vocabulary', () => {
+  test('resolveDelivery maps keys case-insensitively and falls back for anything else', () => {
+    expect(resolveDelivery('Curious')).toBe(DELIVERY_STYLES.curious)
+    expect(resolveDelivery('furious', 'base')).toBe('base')
+    expect(resolveDelivery(undefined)).toBe('')
+  })
+  test('parsePrepResponse turns a delivery key into its style string', () => {
+    const parsed = parsePrepResponse(
+      JSON.stringify({ lang: 'de', chunks: [{ delivery: 'serious', text: 'Ernst.' }, { text: 'Normal.' }] }),
+    )
+    expect(parsed.chunks.map((c) => c.style)).toEqual([DELIVERY_STYLES.serious, ''])
+  })
+  test('normalizeForSpeech keeps allowlisted inline tags and still strips markdown', () => {
+    expect(normalizeForSpeech('Das ist **wichtig** <short pause> und <Laugh> echt ok.', 'de')).toBe(
+      'Das ist wichtig <short pause> und <laugh> echt ok.',
+    )
+  })
+})
