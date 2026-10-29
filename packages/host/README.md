@@ -227,7 +227,10 @@ agent's `tools` counts. `--depth` defaults to `standard`. A long run waits like 
   report is data derived from web pages, never instructions (the agent's rule for page text applies to it). Grounding
   counts this run's retrieved and seen URLs plus what the earlier run may rest on: the pages it retrieved (its ledger
   rows) and the URLs of its final citations, which passed its own grounding (so a seen-only page it cited, or one it
-  inherited, stays citable and a chain of follow-ups stays grounded; a page it merely saw and did not cite is not).
+  inherited, stays citable and a chain of follow-ups stays grounded; a page it merely saw and did not cite is not). A follow-up that read nothing new
+  carries the warning `no new pages were read for this follow-up` (its status follows the rule as usual). The earlier
+  research reaches the agent as one fenced block (the marker carries a hash of the data, so the data cannot contain it;
+  claims and URLs are single lines), with the URLs as the ledger rows and citations hold them.
   `grounding.pagesRetrieved` stays this run's own. A flat `followUp` id rather than a separate
   `research.followup` workflow: one workflow keeps one run record, one scorer and one fingerprint, and the CLI shows
   `--follow-up <runId>` where an object would be a JSON flag. A follow-up of a follow-up continues from the latter's
@@ -235,8 +238,7 @@ agent's `tools` counts. `--depth` defaults to `standard`. A long run waits like 
 - **Process.** Concept §8 sends heavy pipelines to their own process. Research has no in-process pipeline: the agent
   loop runs in the OpenCode server (already its own process, shared with review and check), and the host only serves
   the gate's calls (an HTTP hop to `web.*` capabilities, bodies capped at 64 KiB) and the scorer's reads. A separate
-  research process would add a second gate and a second ledger writer for nothing; it is not built. The host's RSS and
-  CPU under a full 28-case regression are in the pull request that landed this section.
+  research process would add a second gate and a second ledger writer for nothing; it is not built.
 - **Scorer** (`scorer.ts`): `valid`, `complete`, `grounded` (code), `golden` (the case's `expect`, research-gateway
   `evals/lib.ts` semantics; `live:` via `web.package`), `supported` (judged: `web.fetch` + `decide` on up to 3 cited
   pages), `judgedShare`. Cases are plain eval cases in `$AGW_EVAL_DIR/research/cases.jsonl`.

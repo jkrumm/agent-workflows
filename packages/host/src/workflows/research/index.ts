@@ -57,12 +57,13 @@ const Followed = z.discriminatedUnion('ok', [
  * search result is dropped and restated in `unverified`; dropping 10 % or more, or retrieving nothing at all, makes
  * the report `partial`. `grounding` counts before the drop. `earlier` is what a follow-up may also rest on (the pages
  * its earlier run retrieved and the URLs of that run's final citations): a citation of one is grounded, but they are
- * not this run's retrievals and are not counted.
+ * not this run's retrievals and are not counted. `earlier` is undefined for a run that is not a follow-up.
  */
-export function assemble(draft: Draft, ev: Evidence, earlier: readonly string[] = []): ResearchResult {
+export function assemble(draft: Draft, ev: Evidence, earlier?: readonly string[]): ResearchResult {
   const retrieved = new Set(ev.retrieved)
   const seen = new Set(ev.seen)
-  const before = new Set(earlier.map(normalizeUrl))
+  const before = new Set((earlier ?? []).map(normalizeUrl))
+  const never = earlier ? 'neither read this run nor carried from the earlier run' : 'never retrieved this run'
   const known = (url: string) => {
     const key = normalizeUrl(url)
     return retrieved.has(key) || seen.has(key) || before.has(key)
@@ -70,9 +71,11 @@ export function assemble(draft: Draft, ev: Evidence, earlier: readonly string[] 
   const kept = draft.citations.filter((c) => known(c.url))
   const dropped = draft.citations.filter((c) => !known(c.url))
   const warnings: string[] = []
-  if (dropped.length) warnings.push(`${dropped.length} citation(s) dropped: their URL was never retrieved this run`)
-  const noPages = retrieved.size === 0 && seen.size === 0 && before.size === 0
+  if (dropped.length) warnings.push(`${dropped.length} citation(s) dropped: their URL was ${never}`)
+  const nothingNew = retrieved.size === 0 && seen.size === 0
+  const noPages = nothingNew && before.size === 0
   if (noPages) warnings.push('nothing was retrieved this run')
+  else if (nothingNew && earlier) warnings.push('no new pages were read for this follow-up')
   const partial =
     noPages || (draft.citations.length > 0 && dropped.length / draft.citations.length >= PARTIAL_DROP_SHARE)
   const sources = [...new Set([...draft.sources.filter(known), ...ev.retrieved])]
@@ -85,7 +88,7 @@ export function assemble(draft: Draft, ev: Evidence, earlier: readonly string[] 
       ...dropped.map((c) => ({
         topic: c.claim,
         url: c.url,
-        reason: 'cited, but the page was never retrieved this run',
+        reason: `cited, but the page was ${never}`,
       })),
     ],
     status: partial ? 'partial' : 'ok',
@@ -154,9 +157,11 @@ export function createResearchWorkflows(deps: WorkflowDeps, options: ResearchOpt
       const output = ResearchOutput.safeParse(run.output)
       if (!input.success || !output.success) return { ok: false, reason: `run ${runId} holds no research report` }
       const { report, citations } = output.data
-      const retrieved = [...evidence(await ledger.read(runId, 'research')).retrieved]
-      const have = new Set(retrieved)
-      for (const { url } of citations) {
+      // The agent sees the URLs as the ledger rows and the citations hold them (raw), one per normalized page.
+      const retrieved: string[] = []
+      const have = new Set<string>()
+      const rows = await ledger.read(runId, 'research')
+      for (const url of [...rows.flatMap((row) => row.retrieved), ...citations.map((c) => c.url)]) {
         if (have.has(normalizeUrl(url))) continue
         have.add(normalizeUrl(url))
         retrieved.push(url)
