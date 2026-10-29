@@ -28,6 +28,8 @@ PROCESSES=(host audio)
 typeset -A LABELS PORTS
 LABELS=(host com.jkrumm.agent-workflows-host audio com.jkrumm.agent-workflows-audio)
 PORTS=(host 7791 audio 7792)
+# The sha each process's plist was last rendered for by this deploy: a rollback removes only what this deploy wrote.
+typeset -A RENDERED_SHA
 ROOT="${AGW_ROOT:-$HOME/.agent-workflows}"
 REPO_DIR="$ROOT/repo"
 RELEASES="$ROOT/releases"
@@ -124,7 +126,9 @@ start_process() {  # $1 process, $2 release dir, $3 sha
     print -u2 "[deploy] ERROR: rendering the plist of $1 failed ($tmp)"
     return 1
   fi
-  mv -f "$tmp" "$plist" && launchctl bootstrap "gui/$(id -u)" "$plist"
+  mv -f "$tmp" "$plist" || return 1
+  RENDERED_SHA[$1]="$3"
+  launchctl bootstrap "gui/$(id -u)" "$plist"
 }
 
 # The processes a release has a plist template for: a rollback target may predate a process.
@@ -170,22 +174,25 @@ ensure_door_tokens() {
 
 # The door tokens read with the release's own parser (mode, owner, every line), the one the audio process starts
 # with: a bad file refuses the deploy before anything is stopped, never as a rollback. Messages name the file and the
-# line, never a token.
+# line, never a token. `tokens.ts` imports nothing beyond node, so a failure here is about the file, and bun's own
+# stderr (a failed import, a crash) is kept in the message rather than passing for one.
 check_door_tokens() {  # $1 release dir
   local why
   why=$(cd "$1/packages/audio" && bun -e '
-    const { readDoorTokens } = await import("./src/process/callers.ts")
+    const { readDoorTokens } = await import("./src/process/tokens.ts")
     try {
       readDoorTokens(process.argv[1])
     } catch (error) {
       process.stdout.write(error instanceof Error ? error.message : String(error))
       process.exit(3)
     }
-  ' "$DOOR_TOKENS" 2>/dev/null) || die "the door tokens are unusable: ${why:-the release could not read them}; nothing was stopped"
+  ' "$DOOR_TOKENS" 2>&1) || die "the door tokens are unusable: ${why:-bun exited without a message}; nothing was stopped"
 }
 
-# A process left booted out must not come back at the next login (RunAtLoad) on a release that failed: its plist goes.
-remove_plist() {  # $1 process
+# A process left booted out must not come back at the next login (RunAtLoad) on a release that failed: the plist goes,
+# but only one this deploy rendered for that failed sha. Any other plist on disk is not this deploy's to remove.
+remove_failed_plist() {  # $1 process, $2 failed sha
+  [[ "${RENDERED_SHA[$1]:-}" == "$2" ]] || return 0
   rm -f "$(plist_of "$1")" && print -u2 "[deploy] removed $(plist_of "$1") (${LABELS[$1]} stays down)"
 }
 
@@ -231,14 +238,19 @@ prune_releases() {  # $@ shas never to remove
 
 # The new build never became healthy: say so with the log tails, then put the previous release back, every process
 # together (one sha live, never a mix).
-roll_back() {  # $1 failed sha, $2 previous sha ("" = none), $3 unload wait
+roll_back() {  # $1 failed sha, $2 previous sha ("" = none), $3 unload wait, $4 live sha ("" = none)
   local p
   print -u2 "[deploy] ERROR: ${1[1,12]} did not become healthy within ${HEALTH_WAIT_SECS}s"
   tail_logs
   if [[ -z "$2" ]]; then
     stop_all "$3" || print -u2 "[deploy] WARNING: could not unload every process"
-    for p in $PROCESSES; do loaded "$p" || remove_plist "$p"; done
-    print -u2 "[deploy] no previous release (first deploy or same sha): every process left booted out so KeepAlive does not loop a failing launch. deployed-sha unchanged."
+    if [[ -n "$4" && "$4" == "$1" ]]; then
+      # A redeploy of the live sha (a transient health failure): its plists are the live release's, kept for the next login.
+      print -u2 "[deploy] redeploy of the live sha ${1[1,12]}: every process left booted out, plists kept. deployed-sha unchanged."
+      return 0
+    fi
+    for p in $PROCESSES; do loaded "$p" || remove_failed_plist "$p" "$1"; done
+    print -u2 "[deploy] no previous release (first deploy): every process left booted out so KeepAlive does not loop a failing launch. deployed-sha unchanged."
     return 0
   fi
   print -u2 "[deploy] rolling back to ${2[1,12]}"
@@ -251,7 +263,7 @@ roll_back() {  # $1 failed sha, $2 previous sha ("" = none), $3 unload wait
   for p in $PROCESSES; do
     (( ${back[(Ie)$p]} )) && continue
     print -u2 "[deploy] ${2[1,12]} has no $p process: ${LABELS[$p]} left booted out"
-    remove_plist "$p"
+    remove_failed_plist "$p" "$1"
   done
   for p in $back; do start_process "$p" "$RELEASES/$2" "$2" && started+=("$p"); done
   if (( ${#started} == ${#back} )) && wait_healthy "$2" "${back[@]}"; then
@@ -331,9 +343,11 @@ main() {
     for p in $PROCESSES; do urls+=("$(health_url "$p")"); done
     act "wait up to ${HEALTH_WAIT_SECS}s for every /health (${urls[*]}) = ok, version $sha"
     if [[ -n "$prev" ]]; then
-      act "on failure: print every log tail, bootout every process, re-render each process ${prev[1,12]} has a template for, bootstrap, wait for its version; remove the plist of each it has none for; exit 1"
+      act "on failure: print every log tail, bootout every process, re-render each process ${prev[1,12]} has a template for, bootstrap, wait for its version; remove the plist this deploy rendered for each it has none for; exit 1"
+    elif [[ -n "$old" && "$old" == "$sha" ]]; then
+      act "on failure: print every log tail, bootout every process (a redeploy of the live sha: plists kept for the next login), exit 1"
     else
-      act "on failure: print every log tail, bootout every process and remove their plists (no previous release: left down, not crash-looping, not back at login), exit 1"
+      act "on failure: print every log tail, bootout every process and remove the plists this deploy rendered (no previous release: left down, not crash-looping, not back at login), exit 1"
     fi
     act ln -sfn "$release" "$CURRENT"
     [[ -n "$old" && "$old" != "$sha" ]] && act "write $PREV_FILE ($old)"
@@ -393,13 +407,13 @@ main() {
   for p in $PROCESSES; do
     if ! start_process "$p" "$release" "$sha"; then
       print -u2 "[deploy] ERROR: launchctl bootstrap failed for $p at ${sha[1,12]}"
-      roll_back "$sha" "$prev" "$unload_secs"
+      roll_back "$sha" "$prev" "$unload_secs" "$old"
       return 1
     fi
   done
   log "waiting up to ${HEALTH_WAIT_SECS}s for every /health (version ${sha[1,12]})"
   if ! wait_healthy "$sha" "${PROCESSES[@]}"; then
-    roll_back "$sha" "$prev" "$unload_secs"
+    roll_back "$sha" "$prev" "$unload_secs" "$old"
     return 1
   fi
 
