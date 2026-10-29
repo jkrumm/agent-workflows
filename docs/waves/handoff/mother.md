@@ -43,6 +43,9 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
 - 2026-10-29: research, otel, prose and podcast stay on their Requesty routes with the Terra fallback
   (parity; the per-workflow reworks may move them).
 
+- 2026-10-29 owner: dispatch unused → agent-gateway and `agw-legacy` retire completely in Wave 11
+  (concept v3.9). Worker tabs close right after merge; herdr-reap to close merged fan tabs (Wave 10).
+
 ## Open decisions
 - none
 
