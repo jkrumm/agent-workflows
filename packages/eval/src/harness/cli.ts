@@ -12,6 +12,7 @@ import {
   DEFAULT_THRESHOLD,
   isReproducible,
   readRows,
+  recordedSelfAgreement,
   reproducibilityPath,
   reproducibleCases,
   type SelfAgreementOptions,
@@ -42,7 +43,8 @@ const USAGE = `usage: bun packages/eval/src/harness/cli.ts review|check [flags]
 
 self-agreement: reruns the new side on every case and writes the raw agreement numbers to
 $AGW_EVAL_DIR/<workflow>/reproducibility.jsonl. review|check then score blocking recall (check: failure recall) on
-the reproducible cases only, when every scored case has a recorded legacy row; rows measured here are informational.
+the reproducible cases only, when every scored case has a row (either side; a legacy row wins). The verdict's
+agreement floors are legacy's recorded self-agreement (its legacy rows) minus the margin, else the fixed floors.
   --runs N           reruns per case (default 2, at least 2); compared with each other and the recorded run;
                      self-agreement only
   also: --ids --limit --concurrency --judge --depth --keep --agw-args (review)
@@ -243,7 +245,7 @@ async function selfAgreement(
   const rows = readRows(path).filter((r) => r.side === 'new' && cases.some((c) => c.id === r.id))
   const reproducible = rows.filter((r) => isReproducible(r, flags.threshold)).length
   deps.out(
-    `${workflow} self-agreement (${runs} reruns): measured ${measured}, skipped ${count('skipped')}, errored ${count('error')}; ${reproducible} of ${rows.length} measured cases reproducible at threshold ${flags.threshold}; informational, scoring reads the recorded legacy rows only`,
+    `${workflow} self-agreement (${runs} reruns): measured ${measured}, skipped ${count('skipped')}, errored ${count('error')}; ${reproducible} of ${rows.length} measured cases reproducible at threshold ${flags.threshold}`,
   )
   deps.out(`file: ${path}`)
   if (outcomes.length > 0 && measured === 0) {
@@ -341,7 +343,13 @@ export async function main(argv: string[], deps: CliDeps): Promise<number> {
   }
 
   // Reproducibility data decides which cases the recorded findings can be scored on; none: every case counts.
-  const reproducible = reproducibleCases(readRows(reproducibilityPath(workflow, deps.env)), flags.threshold)
+  const rows = readRows(reproducibilityPath(workflow, deps.env))
+  const reproducible = reproducibleCases(rows, flags.threshold)
+  // Legacy's own noise floor, from the rows recorded while agent-gateway ran; none: the fixed floors apply.
+  const recordedFloor = recordedSelfAgreement(
+    rows,
+    cases.map((c) => c.id),
+  )
   let report: Report
   if (workflow === 'review') {
     const results = await runReview(
@@ -352,7 +360,7 @@ export async function main(argv: string[], deps: CliDeps): Promise<number> {
       },
       options,
     )
-    const aggregate = aggregateReview(results, flags.seed, reproducible)
+    const aggregate = aggregateReview(results, flags.seed, reproducible, recordedFloor)
     report = {
       workflow,
       meta: { ...meta, finishedAt: now().toISOString() },
@@ -362,7 +370,7 @@ export async function main(argv: string[], deps: CliDeps): Promise<number> {
     }
   } else {
     const results = await runCheck(cases as CheckCase[], { next: agwCheckRunner(agw) }, options)
-    const aggregate = aggregateCheck(results, flags.seed, reproducible)
+    const aggregate = aggregateCheck(results, flags.seed, reproducible, recordedFloor)
     report = {
       workflow,
       meta: { ...meta, finishedAt: now().toISOString() },

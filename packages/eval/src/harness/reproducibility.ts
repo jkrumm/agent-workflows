@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path'
 import { z } from 'zod'
 import { type CheckCase, evalDir, type ReviewCase } from '../cases.ts'
 import { matchFindings } from './match.ts'
-import type { ReproducibleCases } from './aggregate.ts'
+import type { RecordedSelfAgreement, ReproducibleCases } from './aggregate.ts'
 import type { CheckRunner, Judge, Located, ReviewRunner } from './ports.ts'
 import { type HarnessOptions, pool, requestedDepth, withTree } from './run.ts'
 import { rate } from './stats.ts'
@@ -70,14 +70,34 @@ export const isReproducible = (row: ReproducibilityRow, threshold: number) =>
   row.outcomeAgreement >= threshold && (row.blockingRecall === null || row.blockingRecall >= threshold)
 
 /**
- * Which cases the recorded findings can be scored on at `threshold`, from the legacy rows: the recorded reference is a
- * legacy artifact, so legacy's reruns are the ones that say whether it comes back. `null`: no legacy rows at all, so
- * nothing is known (the report says so). Rows of the `new` side never feed scoring.
+ * Which cases the recorded findings can be scored on at `threshold`, from the rows of either side: legacy rows were
+ * measured while agent-gateway ran, new rows come from `self-agreement`. A legacy row wins over a new row of the same
+ * case (the recorded reference is a legacy artifact). `null`: no rows at all, so nothing is known (the report says so).
  */
 export function reproducibleCases(rows: ReproducibilityRow[], threshold: number): ReproducibleCases | null {
-  const legacy = rows.filter((r) => r.side === 'legacy')
+  if (!rows.length) return null
+  const byId = new Map<string, boolean>()
+  for (const side of ['new', 'legacy'] as const) {
+    for (const row of rows) if (row.side === side) byId.set(row.id, isReproducible(row, threshold))
+  }
+  return { threshold, byId }
+}
+
+const meanOf = (values: number[]) => (values.length ? values.reduce((a, b) => a + b, 0) / values.length : null)
+
+/**
+ * Legacy's own noise floor from the recorded legacy rows of the given cases (see {@link RecordedSelfAgreement}); `null`
+ * when none of them has a legacy row.
+ */
+export function recordedSelfAgreement(rows: ReproducibilityRow[], ids: Iterable<string>): RecordedSelfAgreement | null {
+  const wanted = new Set(ids)
+  const legacy = rows.filter((r) => r.side === 'legacy' && wanted.has(r.id))
   if (!legacy.length) return null
-  return { threshold, byId: new Map(legacy.map((r) => [r.id, isReproducible(r, threshold)])) }
+  return {
+    cases: legacy.length,
+    outcomeAgreement: meanOf(legacy.map((r) => r.outcomeAgreement)),
+    blockingRecall: meanOf(legacy.flatMap((r) => (r.blockingRecall === null ? [] : [r.blockingRecall]))),
+  }
 }
 
 /** One run as the comparison sees it: its outcome, and what a later run is asked to find again. */
