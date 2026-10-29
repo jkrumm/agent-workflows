@@ -207,6 +207,9 @@ export function answeredBy(id: number): (text: string) => boolean {
   }
 }
 
+/** A fresh unguessable positive integer per call: an answer to another request (or a forged one) cannot match it by luck. */
+const requestId = () => (crypto.getRandomValues(new Uint32Array(1))[0]! % 2_000_000_000) + 1
+
 /** A JSON-RPC call to the ClickStack MCP endpoint (stateless: no session, no `initialized`). Returns `result`. */
 export async function rpc(
   deps: ResolvedHdxDeps,
@@ -216,7 +219,7 @@ export async function rpc(
   params: Record<string, unknown>,
   options: { retry?: boolean } = {},
 ): Promise<Record<string, unknown>> {
-  const id = 1
+  const id = requestId()
   const sent = await send(
     deps,
     hdxEnv,
