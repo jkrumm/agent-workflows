@@ -8,7 +8,14 @@ import {
   withCli,
 } from '@agent-workflows/capabilities'
 import type { AgentRef } from '@agent-workflows/middleware'
-import { type RouteEntry, resolveRoute, routeIds, routeSchema } from '@agent-workflows/routes'
+import {
+  type Price,
+  type RouteEntry,
+  RouteOverrideError,
+  resolveRoute,
+  routeIds,
+  routeSchema,
+} from '@agent-workflows/routes'
 import type { AnyWorkflow, Logger, Runtime } from '@agent-workflows/runtime'
 import { IdempotencyConflict, WorkflowError } from '@agent-workflows/runtime'
 import { ORPCError, os } from '@orpc/server'
@@ -600,11 +607,22 @@ const RoutesSchema = z.object({
   table: z.string().describe('The same data as a compact table; what `--format plain` prints'),
 })
 
-const usd = (n: number | undefined) => (n === undefined ? '-' : String(n))
+const num = (n: number | undefined) => (n === undefined ? '-' : String(n))
 
-/** One line per route, columns padded: id, wire, model, effort, USD per million in/out, fallback model. */
+/** A non-token price in one short cell: `0.01/call`, `0.036/1000 character*` (`*`: some calls price by tier). */
+function priceCell(price: Price | undefined): string {
+  if (!price) return '-'
+  if (price.kind === 'unit') {
+    return `${price.usd}/${price.per && price.per > 1 ? `${price.per} ` : ''}${price.unit}${price.tiers ? '*' : ''}`
+  }
+  if (price.kind === 'image-tokens')
+    return `M: ${price.textInPerM} text, ${price.imageInPerM} img in, ${price.outputPerM} out`
+  return `M: ${price.textInPerM} text, ${price.audioInPerM} audio in, ${price.outputPerM} out`
+}
+
+/** One line per route, columns padded: id, wire, model, effort, USD per million in/out, other price, fallback model. */
 export function routesTable(routes: Record<string, RouteEntry>): string {
-  const header = ['route', 'wire', 'model', 'effort', 'in/M', 'out/M', 'fallback']
+  const header = ['route', 'wire', 'model', 'effort', 'in/M', 'out/M', 'price', 'fallback']
   const rows = [
     header,
     ...Object.entries(routes).map(([id, r]) => [
@@ -612,8 +630,9 @@ export function routesTable(routes: Record<string, RouteEntry>): string {
       r.wire,
       r.model,
       r.effort ?? '-',
-      usd(r.rate?.inputPerM),
-      usd(r.rate?.outputPerM),
+      num(r.rate?.inputPerM),
+      num(r.rate?.outputPerM),
+      priceCell(r.price),
       r.fallback?.model ?? '-',
     ]),
   ]
@@ -629,10 +648,13 @@ export function routesTable(routes: Record<string, RouteEntry>): string {
 }
 
 /**
- * `agw routes`: the route table as this process resolves it (`AGW_ROUTES` applied). An unjournaled read like
- * `run status`: no run, no LLM. The entries carry model ids and prices only; routes hold no key or base URL.
+ * `agw routes`: the route table as this process resolves it, with the `AGW_ROUTES` its boot validated (`env`; never
+ * the process environment, which a caller of `createHost` may not share). An unjournaled read like `run status`: no
+ * run, no LLM. The entries carry model ids and prices only; routes hold no key or base URL. An override that no
+ * longer resolves is a typed `ROUTE_OVERRIDE_INVALID` (500) with the override error's message, which names ids and
+ * keys, never a value.
  */
-export function routesOperation(env: Record<string, string | undefined> = process.env): HostOperation {
+export function routesOperation(env: Record<string, string | undefined>): HostOperation {
   const operationId = operationIdOf('routes')
   const cli: ResolvedCliSpec = {
     command: ['routes'],
@@ -654,9 +676,16 @@ export function routesOperation(env: Record<string, string | undefined> = proces
     .output(RoutesSchema)
     .handler(() => {
       const routes: Record<string, RouteEntry> = {}
-      for (const id of routeIds()) {
-        const { id: _id, ...entry } = resolveRoute(id, env)
-        routes[id] = entry
+      try {
+        for (const id of routeIds()) {
+          const { id: _id, ...entry } = resolveRoute(id, env)
+          routes[id] = entry
+        }
+      } catch (error) {
+        if (error instanceof RouteOverrideError) {
+          throw new ORPCError('ROUTE_OVERRIDE_INVALID', { status: 500, message: error.message })
+        }
+        throw error
       }
       return { routes, table: routesTable(routes) }
     })

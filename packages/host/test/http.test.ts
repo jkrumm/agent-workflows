@@ -276,7 +276,7 @@ describe('openapi document and contract sha', () => {
 
 describe('command collisions throw at creation', () => {
   test('a capability id under the host-reserved router keys is refused', () => {
-    for (const key of ['workflows', 'runs']) {
+    for (const key of ['workflows', 'runs', 'routes']) {
       const registry = { capabilities: [], router: { [key]: {} }, requestContext: {} }
       const attempt = () =>
         createHost({
