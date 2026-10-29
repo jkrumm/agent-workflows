@@ -218,6 +218,9 @@ Workers: Sonnet/high; Opus/medium for the pipeline's durable stages.
 - [ ] `/podcast`, `/img`, Hermes TTS/STT switched; one episode produced end to end on the new path
 - [ ] The TTS/STT door serves every audio caller, not only Hermes: iris (its own fleet switches it)
   (argo moves in Wave 9); the contract (endpoints, auth, env names) sent to iris-mother
+- [ ] All review off Max (owner, 2026-10-29): agent-gateway's review routes lose their `claude -p` Max
+  fallback now; its review tool refuses with a pointer to `agw review` once iris (its last caller) has
+  switched to `agw review --pr N`; review OCR off by default (`AGW_REVIEW_OCR=0`)
 - [ ] `triage` ported as-is for iris (schema-constrained call: destination + transcript excerpt + reply →
   {headline ≤60, detail ≤240, spoken ≤2 sentences}); `triage` and `decide` cancel, attribute the caller,
   return usage + `cost_usd`, never route via Requesty; contract sent to iris-mother (unblocks iris Wave 17)
