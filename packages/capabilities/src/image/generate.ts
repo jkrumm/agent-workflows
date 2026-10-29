@@ -4,13 +4,12 @@ import type { Usage } from '../context.ts'
 import { fail } from '../errors.ts'
 import { defineCapability } from '../procedure.ts'
 import { iuConfig } from '../transports/config.ts'
-import { readJson, withRetries } from '../transports/http.ts'
 import { within } from '../web/deps.ts'
 import type { ImageRouteId, ResolvedImageDeps } from './deps.ts'
 import { MAX_EDIT_IMAGE_BYTES, MAX_EDIT_IMAGES, readInputImage } from './files.ts'
 import { magicBytesValid, MIME, readPng } from './png.ts'
 import { snapSize } from './size.ts'
-import { failedImageResponse } from './upstream.ts'
+import { readJsonBounded, send } from './wire.ts'
 
 export const QUALITIES = ['low', 'medium', 'high', 'xhigh', 'max', 'auto'] as const
 export const GENERATE_MODELS = ['flare', 'sunburst'] as const
@@ -90,6 +89,11 @@ const upstreamResponse = z.object({
 })
 
 const REQUEST_TIMEOUT_MS = 180_000
+/** One generated PNG, decoded: gpt-image answers at most ~3839 px a side; an entry over this is not an image we keep. */
+export const MAX_IMAGE_BYTES = 32 * 1024 * 1024
+const MAX_IMAGE_B64 = Math.ceil((MAX_IMAGE_BYTES * 4) / 3)
+/** The whole answer, whatever n. */
+const MAX_RESPONSE_BYTES = 256 * 1024 * 1024
 const HIGH_QUALITY = new Set<string>(['high', 'xhigh', 'max'])
 
 /** The seat for a request: an explicit model wins; `auto` is image-gateway's rule (an edit and a final-quality render go to the quality model). */
@@ -144,16 +148,26 @@ export function createGenerate(deps: ResolvedImageDeps) {
       const url = `${config.openaiBase}/${edit ? 'images/edits' : 'images/generations'}`
 
       const started = performance.now()
-      const json = await withRetries(deps.retry, ctx.signal, async () => {
-        const { body: payload, headers } = body()
-        const res = await deps.fetch(url, {
-          method: 'POST',
-          headers: { authorization: `Bearer ${config.apiKey}`, ...headers },
-          body: payload,
-          signal: within(ctx.signal, REQUEST_TIMEOUT_MS),
-        })
-        if (!res.ok) throw await failedImageResponse(res, 'image')
-        return readJson(res, 'image')
+      // The request may have landed and been billed by the time anything goes wrong, so only an error status the endpoint
+      // answered with (image-gateway's retry set), or a refused connection, is sent again; never a dropped or garbled 200.
+      const json = await send({
+        retry: deps.retry,
+        signal: ctx.signal,
+        wire: 'image',
+        idempotent: false,
+        status: () => true,
+        request: () => {
+          const { body: payload, headers } = body()
+          return deps.fetch(url, {
+            method: 'POST',
+            headers: { authorization: `Bearer ${config.apiKey}`, ...headers },
+            body: payload,
+            redirect: 'error',
+            signal: within(ctx.signal, REQUEST_TIMEOUT_MS),
+          })
+        },
+        read: (res) =>
+          readJsonBounded(res, 'image', Math.min(MAX_RESPONSE_BYTES, input.n * MAX_IMAGE_B64 + 1024 * 1024), false),
       })
       const parsed = upstreamResponse.safeParse(json)
       if (!parsed.success) throw fail('UPSTREAM_ERROR', 'image answered with a body that does not fit', {})
@@ -174,6 +188,10 @@ export function createGenerate(deps: ResolvedImageDeps) {
       const images: GeneratedImage[] = []
       const rejected: { index: number; reason: string }[] = []
       data.forEach((entry, index) => {
+        if (entry.b64_json.length > MAX_IMAGE_B64) {
+          rejected.push({ index, reason: `over the ${MAX_IMAGE_BYTES} byte cap for one image` })
+          return
+        }
         const bytes = Buffer.from(entry.b64_json, 'base64')
         const info = magicBytesValid(bytes, 'png') ? readPng(bytes) : null
         if (info) images.push({ b64: entry.b64_json, bytes: bytes.length, ...info })

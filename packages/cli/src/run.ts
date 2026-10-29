@@ -25,7 +25,7 @@ interface RunState {
 const SCHEMA_HELP = `usage: ${BIN} schema [command…] [--refresh] [--exit-codes] [--format json|plain]
 
 Offline: reads the cached contract; fetches one only when there is none.
-  ${BIN} schema                 every command, the contract sha, and skipped operations with their reason
+  ${BIN} schema                 every command, the contract sha, skipped operations with their reason, and hidden ones
   ${BIN} schema <command…>      that operation's input schema, output schema and x-cli
   --refresh                 fetch the host's contract first
   --exit-codes              the exit-code table; needs neither a cache nor a host
@@ -424,6 +424,7 @@ class Runner {
     const declarations = this.platform.declarations()
     if (!words.length) {
       const skipped = this.platform.processes.flatMap((p) => p.skipped.map((s) => ({ ...named(p), ...s })))
+      const hidden = this.platform.processes.flatMap((p) => p.hidden.map((h) => ({ ...named(p), ...h })))
       const conflicts = this.platform.commands.flatMap((c) => {
         const processes = this.platform.conflict(c)
         return processes ? [{ command: c.words.join(' '), processes }] : []
@@ -441,6 +442,7 @@ class Runner {
             }
           : {}),
         ...(skipped.length ? { skipped } : {}),
+        ...(hidden.length ? { hidden } : {}),
         ...(conflicts.length ? { conflicts } : {}),
         commands: declarations.map(({ host, command: c }) => ({
           ...named(host),

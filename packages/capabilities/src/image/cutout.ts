@@ -3,13 +3,12 @@ import { z } from 'zod'
 import { fail } from '../errors.ts'
 import { defineCapability } from '../procedure.ts'
 import { iuConfig } from '../transports/config.ts'
-import { readJson, withRetries } from '../transports/http.ts'
 import { within } from '../web/deps.ts'
 import type { ImageRouteId, ResolvedImageDeps } from './deps.ts'
 import { readInputImage } from './files.ts'
 import { displayedSize, readHeader } from './header.ts'
-import { magicBytesValid, MIME, readPng, toPng } from './png.ts'
-import { failedImageResponse } from './upstream.ts'
+import { MIME, readPng, toPng } from './png.ts'
+import { readBytes, readJsonBounded, send } from './wire.ts'
 
 /**
  * recraft's documented input limits (image-gateway `CUTOUT_LIMITS`), enforced for both models so the contract is uniform.
@@ -57,16 +56,22 @@ const DELIVERY_TIMEOUT_MS = 30_000
 /** A cutout is one image: a delivery over this is not one. */
 const MAX_DELIVERY_BYTES = 64 * 1024 * 1024
 
-interface Prediction {
-  id?: string
-  status: string
-  output?: string | string[] | null
-  error?: string | null
-}
+/** What Replicate answers about a prediction. A body that does not fit is not trusted: in particular, nothing is billed for it. */
+const prediction = z.object({
+  id: z.string().optional(),
+  status: z.enum(['starting', 'processing', 'succeeded', 'failed', 'canceled', 'aborted']),
+  output: z.union([z.string(), z.array(z.string())]).nullish(),
+  error: z.string().nullish(),
+})
+type Prediction = z.infer<typeof prediction>
 
-const running = (status: string) => status === 'starting' || status === 'processing'
+const running = (status: Prediction['status']) => status === 'starting' || status === 'processing'
 /** A prediction that was started and is not failed or cancelled is billed, whatever it goes on to do. */
-const billed = (status: string) => status !== 'failed' && status !== 'canceled'
+const billed = (status: Prediction['status']) => status !== 'failed' && status !== 'canceled' && status !== 'aborted'
+/** The create and poll answers are small JSON documents. */
+const MAX_JSON_BYTES = 1024 * 1024
+/** recraft keeps the input's pixels and bria shrinks them, so an output past twice the input limit is not a cutout. */
+const MAX_DELIVERY_PIXELS = 2 * CUTOUT_LIMITS.maxPixels
 
 /** Replicate serves prediction output from its own CDN only; anything else is refused. */
 export function isReplicateDeliveryUrl(raw: string): boolean {
@@ -95,27 +100,6 @@ export function replicateBase(openaiBase: string, override?: string): string {
     )
   }
   return openaiBase.replace(suffix, '/replicate/v1')
-}
-
-/** The body of a response, read to the end only while it stays within `max` bytes. */
-async function readBounded(res: Response, max: number): Promise<Uint8Array | null> {
-  const declared = Number(res.headers.get('content-length'))
-  if (Number.isFinite(declared) && declared > max) return null
-  const reader = res.body?.getReader()
-  if (!reader) return new Uint8Array()
-  const chunks: Uint8Array[] = []
-  let total = 0
-  for (;;) {
-    const { done, value } = await reader.read()
-    if (done) break
-    total += value.length
-    if (total > max) {
-      await reader.cancel()
-      return null
-    }
-    chunks.push(value)
-  }
-  return new Uint8Array(Buffer.concat(chunks))
 }
 
 /**
@@ -181,18 +165,35 @@ export function createCutout(deps: ResolvedImageDeps) {
       const headers = { authorization: `Bearer ${config.apiKey}` }
       const started = performance.now()
 
-      const created = await withRetries(deps.retry, ctx.signal, async () => {
-        const res = await deps.fetch(`${base}/models/${route.model}/predictions`, {
-          method: 'POST',
-          headers: { ...headers, 'content-type': 'application/json', prefer: 'wait' },
-          body: JSON.stringify({
-            input: { image: `data:${sent.mime};base64,${Buffer.from(sent.bytes).toString('base64')}` },
-          }),
-          signal: within(ctx.signal, CREATE_TIMEOUT_MS),
-        })
-        if (!res.ok) throw await failedImageResponse(res, 'replicate')
-        return (await readJson(res, 'replicate')) as Prediction
-      })
+      const parse = (json: unknown, wire: string): Prediction => {
+        const checked = prediction.safeParse(json)
+        if (!checked.success) throw fail('UPSTREAM_ERROR', `${wire} answered with a body that does not fit`, {})
+        return checked.data
+      }
+      // The create POST starts and bills a prediction. Once it may have landed it is not sent again: only a refused
+      // connection, or a 429 (throttled before anything started), repeats it. A dropped or garbled answer is an error that
+      // says the prediction may have started.
+      const created = parse(
+        await send({
+          retry: deps.retry,
+          signal: ctx.signal,
+          wire: 'replicate',
+          idempotent: false,
+          status: (status) => status === 429,
+          request: () =>
+            deps.fetch(`${base}/models/${route.model}/predictions`, {
+              method: 'POST',
+              headers: { ...headers, 'content-type': 'application/json', prefer: 'wait' },
+              body: JSON.stringify({
+                input: { image: `data:${sent.mime};base64,${Buffer.from(sent.bytes).toString('base64')}` },
+              }),
+              redirect: 'error',
+              signal: within(ctx.signal, CREATE_TIMEOUT_MS),
+            }),
+          read: (res) => readJsonBounded(res, 'replicate', MAX_JSON_BYTES, false),
+        }),
+        'replicate',
+      )
 
       // Replicate bills a started prediction, so the price is recorded here, once, not after the output is in hand:
       // a poll that fails or runs out of time must not leave a billed call off the run.
@@ -206,47 +207,61 @@ export function createCutout(deps: ResolvedImageDeps) {
         })
       }
 
-      let prediction = created
-      if (running(prediction.status)) {
-        const id = prediction.id
+      let current = created
+      if (running(current.status)) {
+        const id = current.id
         if (!id) throw fail('UPSTREAM_ERROR', 'replicate prediction has no id to poll', {})
         const deadline = Date.now() + POLL_DEADLINE_MS
-        while (running(prediction.status)) {
+        while (running(current.status)) {
           if (Date.now() >= deadline) throw fail('UPSTREAM_ERROR', `replicate prediction ${id} timed out`, {})
           await new Promise((resolve) => setTimeout(resolve, deps.pollMs))
           ctx.signal.throwIfAborted()
           // The flat path keyed by id, never the `urls.get` the API returns (that points at the public Replicate host).
-          // A transient failure of one poll is retried; the prediction is still running on the other side.
-          prediction = await withRetries(deps.retry, ctx.signal, async () => {
-            const res = await deps.fetch(`${base}/predictions/${id}`, {
-              headers,
-              signal: within(ctx.signal, DELIVERY_TIMEOUT_MS),
-            })
-            if (!res.ok) throw await failedImageResponse(res, 'replicate poll')
-            return (await readJson(res, 'replicate poll')) as Prediction
-          })
+          // A GET: a transient failure of one poll is retried; the prediction is still running on the other side.
+          current = parse(
+            await send({
+              retry: deps.retry,
+              signal: ctx.signal,
+              wire: 'replicate poll',
+              idempotent: true,
+              status: () => true,
+              request: () =>
+                deps.fetch(`${base}/predictions/${id}`, {
+                  headers,
+                  redirect: 'error',
+                  signal: within(ctx.signal, DELIVERY_TIMEOUT_MS),
+                }),
+              read: (res) => readJsonBounded(res, 'replicate poll', MAX_JSON_BYTES, true),
+            }),
+            'replicate poll',
+          )
         }
       }
-      if (prediction.status !== 'succeeded') {
-        throw fail(
-          'UPSTREAM_ERROR',
-          `replicate prediction ${prediction.status}: ${prediction.error ?? 'unknown error'}`,
-          {},
-        )
+      if (current.status !== 'succeeded') {
+        throw fail('UPSTREAM_ERROR', `replicate prediction ${current.status}: ${current.error ?? 'unknown error'}`, {})
       }
 
-      const url = Array.isArray(prediction.output) ? prediction.output[0] : prediction.output
+      const url = Array.isArray(current.output) ? current.output[0] : current.output
       if (!url) throw fail('UPSTREAM_ERROR', 'replicate prediction succeeded with no output URL', {})
       if (!isReplicateDeliveryUrl(url))
         throw fail('UPSTREAM_ERROR', 'replicate output URL is not a replicate.delivery URL', {})
       // A redirect would leave the allowlisted host: it is an error, not something to follow.
       const delivered = await deps.fetch(url, { redirect: 'manual', signal: within(ctx.signal, DELIVERY_TIMEOUT_MS) })
       if (!delivered.ok) throw fail('UPSTREAM_ERROR', `replicate output could not be fetched (${delivered.status})`, {})
-      const raw = await readBounded(delivered, MAX_DELIVERY_BYTES)
+      const raw = await readBytes(delivered, MAX_DELIVERY_BYTES)
       if (!raw) throw fail('UPSTREAM_ERROR', `replicate output is over ${MAX_DELIVERY_BYTES} bytes`, {})
-      // recraft delivers RGBA WebP, bria PNG: every caller gets the PNG this capability promises.
-      if (!magicBytesValid(raw, 'png') && !magicBytesValid(raw, 'webp')) {
-        throw fail('UPSTREAM_ERROR', 'replicate output is neither png nor webp (bad magic bytes)', {})
+      // recraft delivers RGBA WebP, bria PNG: every caller gets the PNG this capability promises. The header is read first,
+      // so a delivery that claims a huge canvas is refused before anything decodes for it.
+      const header = readHeader(raw)
+      if (!header || (header.format !== 'png' && header.format !== 'webp')) {
+        throw fail('UPSTREAM_ERROR', 'replicate output is neither png nor webp (bad magic bytes or header)', {})
+      }
+      if (header.width * header.height > MAX_DELIVERY_PIXELS) {
+        throw fail(
+          'UPSTREAM_ERROR',
+          `replicate output claims ${header.width}x${header.height} pixels, over the bound`,
+          {},
+        )
       }
       const out = await toPng(raw)
       const info = readPng(out)

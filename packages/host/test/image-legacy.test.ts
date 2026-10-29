@@ -139,8 +139,8 @@ fi`,
     const agw = script(
       'agw',
       `case "$*" in
-  *--file*) printf '{"status":"done","cost":0.01,"output":{"kind":"cutout","generationId":"c2","model":"${MODEL}","params":{"model":"${MODEL}","n":1},"dir":"${root}","files":[{"path":"${CUT}","bytes":${Bun.file(CUT).size},"width":300,"height":280,"hasAlpha":true}],"cost":{"usd":0.01,"source":"rate"},"latencyMs":3}}\\n' ;;
-  *) printf '{"status":"done","cost":0.006,"output":{"kind":"generate","generationId":"g2","model":"${MODEL}","params":{"model":"${MODEL}","size":"1024x640","quality":"low","n":1},"size":"1024x640","dir":"${root}","files":[{"path":"${GEN}","bytes":${Bun.file(GEN).size},"width":1024,"height":640,"hasAlpha":true}],"cost":{"usd":0.006,"source":"rate"},"latencyMs":5}}\\n' ;;
+  *--file*) printf '{"status":"done","cost":0.01,"output":{"kind":"cutout","generationId":"c2","model":"${MODEL}","params":{"model":"${MODEL}","n":1,"returned":1},"dir":"${root}","files":[{"path":"${CUT}","bytes":${Bun.file(CUT).size},"width":300,"height":280,"hasAlpha":true}],"cost":{"usd":0.01,"source":"rate"},"latencyMs":3}}\\n' ;;
+  *) printf '{"status":"done","cost":0.006,"output":{"kind":"generate","generationId":"g2","model":"${MODEL}","params":{"model":"${MODEL}","size":"1024x640","quality":"low","n":1,"returned":1},"size":"1024x640","dir":"${root}","files":[{"path":"${GEN}","bytes":${Bun.file(GEN).size},"width":1024,"height":640,"hasAlpha":true}],"cost":{"usd":0.006,"source":"rate"},"latencyMs":5}}\\n' ;;
 esac`,
     )
     const env = { ...process.env, AGW_EVAL_DIR: join(root, 'eval') }

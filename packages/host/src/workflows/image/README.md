@@ -28,10 +28,20 @@ Exactly one of `prompt` and `file`. The run answers with the files it made:
   must be absolute. Each input is checked before a request: a regular file, within the size limit, a PNG, JPEG or WebP by
   its first bytes (never by its name). The host trusts its bearer-authenticated callers with a path, as `review` does with `cwd`.
 - **The host writes no caller path.** Output goes to the platform artifact store (`packages/host/src/artifacts.ts`):
-  `<root>/image/<runId>/<n>.png`, root `$AGW_ARTIFACTS_DIR` or `~/.local/state/agent-workflows/artifacts`. **Retention
+  `<root>/image/<runId>/<n>.png`, root `~/.local/state/agent-workflows/artifacts` (fixed: no variable redirects the root, because the sweep deletes). **Retention
   30 days**, swept on write (the first `artifactDir` of a process, then hourly); copy a file out to keep it.
-- **The step journals paths, not pixels.** The capability returns base64, the step writes the files in the same body and
-  journals only the listing: a 10-image high-quality run would otherwise put tens of MB in the journal.
+- **The step journals paths, not pixels, and persists the bytes as its last act.** The capability returns base64 and the
+  same step writes the files (each through a temp file and a rename, so a file is whole or absent) before it returns the
+  listing: a 10-image high-quality run would otherwise put tens of MB in the journal. The alternative, a separate store step,
+  would need the bytes in the journal (rejected). A write that fails removes what was written and fails the run with a
+  message that the images were billed and what they cost; a step runs once by default, so a disk failure does not pay
+  again. The window that remains is a crash between the billed answer and the journal write, which no design without
+  journaled bytes closes.
+- **No resend of a billed request.** The generation POST and Replicate's create POST are not sent again once they may
+  have landed: only an error status the endpoint answered with (generation: image-gateway's retry set) or a refused
+  connection repeats them, and the create POST repeats only on a refused connection or a 429. A dropped connection or a
+  garbled 200 is an error. Every upstream answer is read within a byte bound, a generated entry is capped at 32 MiB, and
+  redirects are errors.
 - **Cost is recorded on the step** like an LLM call, through `ctx.addUsage`. Image generation bills tokens at three rates
   (text in, image in, image out), Replicate bills a flat price per call, so routes carry a `price`
   (`packages/routes/src/price.ts`: a general `unit` price, per image, character, second or call, with optional `per` scaling

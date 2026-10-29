@@ -14,7 +14,7 @@ import {
   timeoutS,
 } from './config.ts'
 import { AgwError, kindForStatus } from './exit.ts'
-import { buildCommands, type Command, type Document, type Skipped, servedSha } from './spec.ts'
+import { buildCommands, type Command, type Document, type Hidden, type Skipped, servedSha } from './spec.ts'
 
 /** The host waits at most this long per request (Bun's `idleTimeout` ceiling is 255 s). */
 export const MAX_WAIT_S = 240
@@ -66,6 +66,7 @@ export class Host {
   #doc: Document | undefined
   #commands: Command[] = []
   #skipped: Skipped[] = []
+  #hidden: Hidden[] = []
   #sha = ''
   #refreshed = false
 
@@ -90,6 +91,11 @@ export class Host {
   /** Operations in the document the CLI could not turn into a command, with the reason. */
   get skipped(): Skipped[] {
     return this.#skipped
+  }
+
+  /** Operations the document marks `x-cli.hidden`: no command, by design. */
+  get hidden(): Hidden[] {
+    return this.#hidden
   }
 
   get sha(): string {
@@ -119,9 +125,10 @@ export class Host {
     return this.#creds
   }
 
-  private use(doc: Document, { commands, skipped }: ReturnType<typeof buildCommands>): void {
+  private use(doc: Document, { commands, skipped, hidden }: ReturnType<typeof buildCommands>): void {
     this.#commands = commands
     this.#skipped = skipped
+    this.#hidden = hidden
     this.#doc = doc
     this.#sha = servedSha(doc)
   }

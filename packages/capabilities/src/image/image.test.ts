@@ -539,6 +539,126 @@ describe('review fixes', () => {
     expect(reported).toHaveLength(1)
   })
 
+  /** The registry over a `fetch` of the test's own, to make the transport fail the way a network does. */
+  const withFetch = (impl: (url: string, init: RequestInit) => Promise<Response>) =>
+    createRegistry(createImageCapabilities({ env: env(), retry: { backoffMs: 0 }, pollMs: 1, fetch: impl }))
+  const refused = () => Object.assign(new Error('Unable to connect'), { code: 'ConnectionRefused' })
+
+  test('the billed create POST is not sent again after it may have landed: a 503, a dropped connection, a garbled 200', async () => {
+    handlers[PREDICT] = () => new Response('upstream busy', { status: 503 })
+    const { error } = await failure('image.cutout', { file: subject() })
+    expect(error.code).toBe('UPSTREAM_ERROR')
+    expect(fake.seen).toHaveLength(1)
+
+    fake.reset()
+    handlers[PREDICT] = () => new Response('not json', { status: 200 })
+    expect((await failure('image.cutout', { file: subject() })).usage).toEqual([])
+    expect(fake.seen).toHaveLength(1)
+
+    fake.reset()
+    let sent = 0
+    const dropped = withFetch(async () => {
+      sent++
+      throw new Error('socket hang up')
+    })
+    await dropped.call('image.cutout', { file: subject() }).then(
+      () => undefined,
+      () => undefined,
+    )
+    expect(sent).toBe(1)
+  })
+
+  test('only proof that nothing started repeats the create POST: a refused connection, a 429', async () => {
+    let sent = 0
+    const refusedOnce = withFetch(async (url, init) => {
+      sent++
+      if (sent === 1) throw refused()
+      return fetch(url, init)
+    })
+    cdn[DELIVERED] = pngFixture(300, 280)
+    handlers[PREDICT] = () => Response.json({ status: 'succeeded', output: DELIVERED })
+    const usage: Usage[] = []
+    // the delivery URL is the CDN map's, which `refusedOnce` does not have: it goes to the real fetch and fails after the create succeeded
+    await refusedOnce
+      .call('image.cutout', { file: subject() }, { addUsage: (u) => usage.push(u) })
+      .catch(() => undefined)
+    expect(fake.seen).toHaveLength(1)
+    expect(usage).toHaveLength(1)
+
+    fake.reset()
+    handlers[PREDICT] = (_s, attempt) =>
+      attempt === 0
+        ? new Response('slow down', { status: 429 })
+        : Response.json({ status: 'succeeded', output: DELIVERED })
+    const { usage: after429 } = await call('image.cutout', { file: subject() })
+    expect(fake.seen).toHaveLength(2)
+    expect(after429).toHaveLength(1)
+  })
+
+  test('a create body that does not fit, or a status Replicate does not have, is not billed', async () => {
+    for (const body of [{}, { status: 'warming' }, { status: 7 }, []]) {
+      handlers[PREDICT] = () => Response.json(body)
+      const { error, usage } = await failure('image.cutout', { file: subject() })
+      expect(error.message).toContain('does not fit')
+      expect(usage).toEqual([])
+    }
+  })
+
+  test('a delivery whose header claims too many pixels is refused before it decodes, PNG or WebP', async () => {
+    handlers[PREDICT] = () => Response.json({ status: 'succeeded', output: DELIVERED })
+    const huge = pngFixture(300, 280)
+    new DataView(huge.buffer).setUint32(16, 20_000)
+    new DataView(huge.buffer).setUint32(20, 20_000)
+    // RIFF....WEBPVP8X, 20000 x 20000
+    const webp = new Uint8Array(30)
+    webp.set(new TextEncoder().encode('RIFF'), 0)
+    webp.set(new TextEncoder().encode('WEBPVP8X'), 8)
+    webp.set([19_999 & 255, (19_999 >> 8) & 255, 0, 19_999 & 255, (19_999 >> 8) & 255, 0], 24)
+    for (const bytes of [huge, webp]) {
+      cdn[DELIVERED] = bytes
+      expect((await failure('image.cutout', { file: subject() })).error.message).toContain('pixels, over the bound')
+    }
+  })
+
+  test('the create and poll answers are read within a bound, and redirects are not followed', async () => {
+    handlers[PREDICT] = () => new Response(`${' '.repeat(1_100_000)}{}`)
+    expect((await failure('image.cutout', { file: subject() })).error.message).toContain('is over 1048576 bytes')
+    fake.reset()
+    handlers[PREDICT] = () => new Response(null, { status: 302, headers: { location: 'http://127.0.0.1:1/' } })
+    const { error } = await failure('image.cutout', { file: subject() })
+    expect(error.code).toBe('UPSTREAM_ERROR')
+    expect(fake.seen).toHaveLength(1)
+  })
+
+  test('image answers are read within a bound; an entry over the per-image cap is rejected, not decoded; redirects are errors', async () => {
+    handlers[POST_GEN] = () => new Response(' '.repeat(46_000_000))
+    expect((await failure('image.generate', { prompt: 'x' })).error.message).toContain('body is over')
+    fake.reset()
+    handlers[POST_GEN] = () =>
+      Response.json({ data: [{ b64_json: b64(png) }, { b64_json: 'A'.repeat(44_800_000) }], usage })
+    const { result } = await call('image.generate', { prompt: 'x', n: 2 })
+    expect(result.images).toHaveLength(1)
+    expect(result.rejected).toEqual([{ index: 1, reason: 'over the 33554432 byte cap for one image' }])
+    fake.reset()
+    handlers[POST_GEN] = () =>
+      new Response(null, { status: 302, headers: { location: `http://127.0.0.1:${fake.baseUrl}/` } })
+    expect((await failure('image.generate', { prompt: 'x' })).error.code).toBe('UPSTREAM_ERROR')
+    expect(fake.seen).toHaveLength(1)
+  })
+
+  test('a billed generation is not sent again after a dropped connection or a garbled 200; an error status still retries', async () => {
+    let sent = 0
+    const dropped = withFetch(async () => {
+      sent++
+      throw new Error('socket hang up')
+    })
+    await dropped.call('image.generate', { prompt: 'x' }).catch(() => undefined)
+    expect(sent).toBe(1)
+    handlers[POST_GEN] = () => new Response('{"data":', { status: 200 })
+    expect((await failure('image.generate', { prompt: 'x' })).usage).toEqual([])
+    expect(fake.seen).toHaveLength(1)
+  })
+
   test('a cutout of a real alpha matte decodes to the shares the rule needs', async () => {
     const matte = pngFixture(300, 280, { alphaAt: (x) => (x < 150 ? 0 : 255) })
     expect(await decodeAlphaStats(matte)).toMatchObject({ translucent: 150 * 280, opaque: 150 * 280 })

@@ -22,7 +22,7 @@ export interface CliSpec {
   kind?: CliKind
   /** The command that continues a long operation (`agw run wait <runId>`); workflows only. */
   resume?: CliResume
-  /** Default: false. True: no CLI command (its answer is not for a terminal, e.g. megabytes of base64); the operation stays on HTTP and in process, and its `command` still has to be unique. */
+  /** Default: false. True: no CLI command (its answer is not for a terminal, e.g. megabytes of base64); the operation stays on HTTP and in process. The CLI lists it under `hidden` in `agw schema`. Its `command` is still checked for uniqueness: the host's `assertCommands` covers every capability, hidden or not. */
   hidden?: boolean
 }
 

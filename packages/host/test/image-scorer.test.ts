@@ -32,7 +32,7 @@ const output = (files: ReturnType<typeof made>[], extra: Partial<ImageOutputValu
   kind: 'generate',
   generationId: 'g1',
   model: 'm',
-  params: { model: 'm', size: '64x48', quality: 'low', n: files.length },
+  params: { model: 'm', size: '64x48', quality: 'low', n: files.length, returned: files.length },
   size: '64x48',
   dir,
   files,
@@ -81,12 +81,16 @@ describe('image scorer: generation', () => {
   test('with --enhance the planner chose n, and the run’s own params say what that was', async () => {
     const verdict = await score(
       input({ enhance: true }),
-      output([made('e1.png', 8, 8), made('e2.png', 8, 8)], { params: { model: 'm', n: 2 } }),
+      output([made('e1.png', 8, 8), made('e2.png', 8, 8)], { params: { model: 'm', n: 2, returned: 2 } }),
     )
     expect(verdict.scores.valid).toBe(1)
     expect(
-      (await score(input({ enhance: true }), output([made('e3.png', 8, 8)], { params: { model: 'm', n: 2 } }))).scores
-        .valid,
+      (
+        await score(
+          input({ enhance: true }),
+          output([made('e3.png', 8, 8)], { params: { model: 'm', n: 2, returned: 2 } }),
+        )
+      ).scores.valid,
     ).toBe(0)
   })
 
@@ -101,7 +105,8 @@ describe('image scorer: generation', () => {
 describe('image scorer: cutout', () => {
   const source = join(root, 'subject.png')
   beforeAll(() => writeFileSync(source, pngFixture(300, 280, { kind: 'rgb' })))
-  const cut = (file: ReturnType<typeof made>) => output([file], { kind: 'cutout', params: { model: 'm', n: 1 } })
+  const cut = (file: ReturnType<typeof made>) =>
+    output([file], { kind: 'cutout', params: { model: 'm', n: 1, returned: 1 } })
   const cutInput = () => ImageInput.parse({ file: source })
 
   test('input dimensions, an alpha channel with at least 5 % transparent and 5 % opaque pixels, a price: pass', async () => {
@@ -156,7 +161,9 @@ describe('image scorer: files that are not what they say', () => {
       [{ ...good, path: 'relative/1.png' }],
       [],
     ]) {
-      expect((await score(input({}), output(files, { params: { model: 'm', n: 1 } }))).scores).toEqual({ valid: 0 })
+      expect((await score(input({}), output(files, { params: { model: 'm', n: 1, returned: 1 } }))).scores).toEqual({
+        valid: 0,
+      })
     }
   })
 
