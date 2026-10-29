@@ -70,7 +70,11 @@ const reviewSchema = (verdictFirst: boolean) =>
  * call), so nothing reachable over HTTP or the CLI is a free prompt on the paid reviewer seat.
  */
 export const proseReviewInput = z.object({
-  text: z.string().min(1).max(MAX_PROSE_TEXT_CHARS).describe('The draft under review'),
+  text: z
+    .string()
+    .max(MAX_PROSE_TEXT_CHARS)
+    .refine((text) => text.trim() !== '', { message: 'text must not be empty or whitespace only' })
+    .describe('The draft under review'),
   medium: z.enum(PROSE_MEDIUMS).describe('Where the text will be read'),
   register: z.enum(PROSE_REGISTERS).describe('Reader register'),
   language: z.enum(PROSE_LANGUAGES).describe('The draft’s language, already resolved (no `auto`)'),
@@ -89,24 +93,35 @@ export const proseReviewOutput = REVIEW.extend({ model: z.string() })
 /** Any model of the writer's lab: the calling Claude Code session is always Anthropic, by family name or vendor prefix. */
 const WRITER_LAB = /claude|anthropic|opus|sonnet|haiku|fable/i
 
-/** The first model of the route (and its fallback) that belongs to the writer's lab, or null. */
-function sameLabModel(route: ResolvedRoute): string | null {
-  const models = [route.model, fallbackRoute(route)?.model]
-  return models.find((model) => model !== undefined && WRITER_LAB.test(model)) ?? null
+/** The review call speaks the OpenAI chat wire; any other wire (an agent harness, an Anthropic wire) is not this seat. */
+const REVIEW_WIRE = 'iu-openai'
+
+/**
+ * Why a review route (primary and fallback) may not carry the review, or null: a model of the writer's lab, or a wire
+ * other than the OpenAI chat wire (so never an Anthropic wire, never an agent harness).
+ */
+export function reviewRouteRefusal(route: ResolvedRoute): string | null {
+  const fallback = fallbackRoute(route)
+  for (const [which, r] of [
+    ['route', route],
+    ['fallback', fallback],
+  ] as const) {
+    if (!r) continue
+    if (WRITER_LAB.test(r.model))
+      return `prose.review: ${which} model ${r.model} is from the writer's lab (the calling session is Anthropic); the reviewer must be a different lab`
+    if (r.wire !== REVIEW_WIRE)
+      return `prose.review: ${which} wire "${r.wire}" is not the OpenAI chat wire (the review is a single cross-lab call)`
+  }
+  return null
 }
 
-function refuseSameLab(route: ResolvedRoute) {
-  const offending = sameLabModel(route)
-  if (offending) {
-    throw new CapabilityError(
-      'NOT_CONFIGURED',
-      `prose.review: route model ${offending} is from the writer's lab (the calling session is Anthropic); the reviewer must be a different lab`,
-    )
-  }
+function refuseUnfitRoute(route: ResolvedRoute) {
+  const refusal = reviewRouteRefusal(route)
+  if (refusal) throw new CapabilityError('NOT_CONFIGURED', refusal)
 }
 
 /**
- * Refuses a review route on the writer's lab, at definition time (a boot with `AGW_ROUTES` pointing `prose.review`
+ * Refuses an unfit review route (the writer's lab, another wire), at definition time (a boot with `AGW_ROUTES` pointing `prose.review`
  * at an Anthropic model fails here, not on the first call): a reviewer from the writer's own lab is the same-lab
  * review the cross-lab rule exists to prevent. A malformed override is not this check's to report: it stays the
  * `NOT_CONFIGURED` of the first call, as for every other capability.
@@ -119,7 +134,7 @@ export function assertCrossLab(deps: LlmDeps) {
     if (error instanceof CapabilityError) return
     throw error
   }
-  refuseSameLab(route)
+  refuseUnfitRoute(route)
 }
 
 export const createProseReview = (deps: LlmDeps) => {
@@ -134,7 +149,7 @@ export const createProseReview = (deps: LlmDeps) => {
     cli: { command: ['prose-critique'], stdin: 'text', defaultFormat: 'json' },
     async handler({ text, medium, register, language, draftFormat, verdictFirst, brief, context }, ctx) {
       // On the resolved route, overrides applied, primary and fallback: a route changed since boot is refused too.
-      refuseSameLab(resolve(deps, 'prose.review'))
+      refuseUnfitRoute(resolve(deps, 'prose.review'))
       const prompt = buildReviewPrompt({
         text,
         medium,

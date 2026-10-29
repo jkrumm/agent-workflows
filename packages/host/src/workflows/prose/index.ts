@@ -2,7 +2,6 @@ import {
   type CallOptions,
   DEFAULT_REGISTER,
   MEDIUM_NOTE,
-  neutralizeFenceMarkers,
   type ProseFormat,
   type ProseLanguage,
   type ProseMedium,
@@ -100,24 +99,9 @@ export function createProseWorkflows(deps: ProseDeps): HostWorkflow[] {
           { addUsage, signal },
         ),
       )
-      // The reviewer is a model reading a draft: it can echo any marker the draft carries. Inert before it is returned
-      // or quoted into the brief.
-      const notes = reviewed.notes.map((n) => ({ ...n, note: neutralizeFenceMarkers(n.note) }))
-      const visualSuggestions = reviewed.visualSuggestions.map((v) => ({
-        kind: v.kind,
-        shows: neutralizeFenceMarkers(v.shows),
-        where: neutralizeFenceMarkers(v.where),
-      }))
-      return {
-        language: plan.language,
-        format: plan.format,
-        mediumNote: MEDIUM_NOTE[input.medium],
-        lint: { findings: plan.findings, counts: plan.counts },
-        review: { scores: reviewed.scores, notes },
-        visualSuggestions,
-        reviewer: model,
-        voicePath,
-        writerBrief: buildWriterBrief({
+      // The brief is a journaled step: its fence token is random, so a resumed run must read it back, not rebuild it.
+      const writerBrief = await ctx.step('brief', () =>
+        buildWriterBrief({
           text: input.text,
           medium: input.medium,
           register,
@@ -127,9 +111,21 @@ export function createProseWorkflows(deps: ProseDeps): HostWorkflow[] {
           brief: input.brief,
           context: input.context,
           findings: plan.findings,
-          notes,
+          notes: reviewed.notes,
           voicePath,
         }),
+      )
+      return {
+        language: plan.language,
+        format: plan.format,
+        mediumNote: MEDIUM_NOTE[input.medium],
+        lint: { findings: plan.findings, counts: plan.counts },
+        // As the reviewer wrote them: fence-like markers are made inert only where text is inlined into the brief.
+        review: { scores: reviewed.scores, notes: reviewed.notes },
+        visualSuggestions: reviewed.visualSuggestions,
+        reviewer: model,
+        voicePath,
+        writerBrief,
       }
     },
   })
@@ -145,6 +141,7 @@ export function createProseWorkflows(deps: ProseDeps): HostWorkflow[] {
         const tally = (findings: { rule: string }[]) => ({ count: findings.length, byRule: byRule(findings) })
         return {
           kept: verdict.kept,
+          text: verdict.text,
           ...(verdict.reason ? { reason: verdict.reason } : {}),
           language: verdict.language,
           format: verdict.format,

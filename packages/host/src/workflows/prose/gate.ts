@@ -58,6 +58,8 @@ export function judgeRewrite(
 
 export interface GateVerdict {
   kept: 'rewrite' | 'original'
+  /** What the caller writes: the judged (trimmed) rewrite when kept, else the original exactly as given. */
+  text: string
   reason?: string
   language: ProseLanguage
   format: ProseFormat
@@ -76,11 +78,20 @@ export function keepGate(input: { original: string; rewrite: string; language: P
   const before = lintProse(input.original, language)
   const rewrite = input.rewrite.trim()
   if (!rewrite) {
-    return { kept: 'original', reason: 'rewrite is empty', language, format, before, after: before }
+    return {
+      kept: 'original',
+      text: input.original,
+      reason: 'rewrite is empty',
+      language,
+      format,
+      before,
+      after: before,
+    }
   }
   const verdict = judgeRewrite(input.original, rewrite, before, language, format)
   return {
     kept: verdict.reason ? 'original' : 'rewrite',
+    text: verdict.reason ? input.original : rewrite,
     ...(verdict.reason ? { reason: verdict.reason } : {}),
     language,
     format,

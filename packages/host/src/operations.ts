@@ -66,8 +66,13 @@ const RunStateSchema = z.object({
 
 const RunIdInput = z.object({ runId: z.string().min(1).describe('The run id') })
 
-// A hyphen inside a segment is allowed (`prose-gate`): the command is the id split on dots, a segment one word.
-const ID_PATTERN = /^[a-z][a-z0-9-]*(\.[a-z][a-z0-9-]*)*$/
+// A hyphen inside a segment is allowed (`prose-gate`): only between alphanumerics and before a letter, so never leading,
+// trailing, doubled or before a digit. The command is the id split on dots, a segment one word.
+const SEGMENT = '[a-z][a-z0-9]*(?:-[a-z][a-z0-9]*)*'
+const ID_PATTERN = new RegExp(`^${SEGMENT}(?:\\.${SEGMENT})*$`)
+
+/** The operation id of a workflow, for the route and for the uniqueness check: `prose-gate` → `proseGate`. */
+const workflowOperationId = (id: string) => operationIdOf(id.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase()))
 
 /** What a workflow needs beyond its definition to appear as a command; the runtime's definition has no CLI notion. */
 export interface HostWorkflow {
@@ -399,7 +404,7 @@ function buildWorkflow(
     .route({
       method: 'POST',
       path: path as `/${string}`,
-      operationId: operationIdOf(workflow.id),
+      operationId: workflowOperationId(workflow.id),
       summary: entry.summary ?? `Run ${workflow.id}`,
       tags: ['workflows'],
       spec: (operation) => withCli(cli)(withAccepted(withOutputType(operation, workflow), headers)),
@@ -549,7 +554,7 @@ export function workflowOperation(entry: HostWorkflow, deps: OperationDeps): Hos
   }
   const path = `/workflows/${workflow.id.split('.').join('/')}`
   return {
-    operationId: operationIdOf(workflow.id.replace(/-(\w)/g, (_, c: string) => c.toUpperCase())),
+    operationId: workflowOperationId(workflow.id),
     method: 'POST',
     path,
     cli,
