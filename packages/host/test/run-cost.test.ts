@@ -1,9 +1,12 @@
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
+import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test'
 import { z } from 'zod'
 import { defineWorkflow } from '@agent-workflows/runtime'
-import { RECORD_FRESH_MS, waitFor } from '../src/operations.ts'
-import type { RunState, StoredRun } from '../src/store.ts'
+import { waitFor } from '../src/operations.ts'
+import type { StoredRun } from '../src/store.ts'
 import { gate, startTestHost, type TestHost, until } from './support.ts'
+
+const runGate = gate() // holds the run's first step: the run is live until a test releases it
+const postHooks = gate() // holds the run record (runPost), so a run can have ended without it
 
 /** Steps with a known price, one call without: the record sums 0.03 and counts one unpriced call. */
 const mixed = defineWorkflow({
@@ -12,6 +15,14 @@ const mixed = defineWorkflow({
   input: z.object({}),
   output: z.object({ ok: z.boolean() }),
   async run(ctx) {
+    await ctx.step('hold', ({ signal }) =>
+      Promise.race([
+        runGate.released,
+        new Promise<never>((_, reject) =>
+          signal.addEventListener('abort', () => reject(signal.reason), { once: true }),
+        ),
+      ]).then(() => true),
+    )
     await ctx.step('priced', ({ addUsage }) => {
       addUsage({ model: 'm1', tokens: { input: 10, output: 2, cacheRead: 0, reasoning: 0 }, cost: 0.03 })
       return 1
@@ -24,23 +35,25 @@ const mixed = defineWorkflow({
   },
 })
 
-const postHooks = gate()
-postHooks.release() // a gate starts closed; tests close it when they need the record held
 /** Every store read, so a test can tell a wait that is polling from one that has answered, and how often it read. */
-const reads: { runId: string; unrecorded: boolean; ended: boolean }[] = []
+const reads: { runId: string; live: boolean; unrecorded: boolean }[] = []
+const readsOf = (runId: string) => reads.filter((r) => r.runId === runId)
+const endedReadsOf = (runId: string) => readsOf(runId).filter((r) => !r.live)
 let t: TestHost
 beforeAll(async () => {
+  runGate.release()
+  postHooks.release()
   t = await startTestHost({
     prefix: 'runcost',
     wrapStore: (store) => ({
       ping: (timeoutMs) => store.ping(timeoutMs),
       async get(runId) {
-        const state = await store.get(runId)
-        if (state) {
-          const ended = state.status === 'done'
-          reads.push({ runId, ended, unrecorded: ended && !state.recorded && !state.postHooksDone })
+        const run = await store.get(runId)
+        if (run) {
+          const live = run.status === 'pending' || run.status === 'running'
+          reads.push({ runId, live, unrecorded: !live && !run.postHooksDone })
         }
-        return state
+        return run
       },
     }),
     platform: true,
@@ -50,212 +63,281 @@ beforeAll(async () => {
   })
 })
 afterAll(async () => {
+  runGate.release()
   postHooks.release()
   await t.close()
 })
 
-describe('a run answer carries its final priced cost', () => {
-  test('a priced run answers with its cost on the start call, run wait and run status', async () => {
-    const started = await t.json(await t.call('/workflows/smoke/ping', { body: {}, headers: { prefer: 'wait=20' } }))
-    expect(started.status).toBe(200)
-    expect(started.body.cost).toBeCloseTo(0.0007, 6)
-    expect(started.body.unpricedCalls).toBe(0)
-    expect(started.body.costPending).toBeUndefined()
-    expect(started.body.postHooksDone).toBeUndefined() // the wait's business, not the wire's
-
-    for (const [path, method] of [
-      [`/runs/${started.body.runId}`, 'GET'],
-      [`/runs/${started.body.runId}/wait`, 'POST'],
-    ] as const) {
-      const again = await t.json(await t.call(path, { method }))
-      expect(again.status).toBe(200)
-      expect(again.body).toMatchObject({ cost: started.body.cost, unpricedCalls: 0 })
-      expect(again.body.costPending).toBeUndefined()
-    }
-  })
-
-  test('an unpriced call shows in the answer: the cost is the priced part, unpricedCalls counts the rest', async () => {
-    const { status, body } = await t.json(
-      await t.call('/workflows/cost/mixed', { body: {}, headers: { prefer: 'wait=20' } }),
+const sql = (runId: string, set: string) => t.pool.query(`update "${t.schema}".runs set ${set} where id = $1`, [runId])
+const latestRun = async () =>
+  (
+    await t.pool.query(
+      `select id from "${t.schema}".runs where workflow = 'cost.mixed' order by created_at desc, id desc limit 1`,
     )
-    expect(status).toBe(200)
-    expect(body.cost).toBeCloseTo(0.03, 6)
-    expect(body.unpricedCalls).toBe(1)
-    expect(body.costPending).toBeUndefined()
-  })
+  ).rows[0]?.id as string | undefined
 
-  test('a failed run carries a record too, with no cost when nothing was priced', async () => {
-    const { body } = await t.json(await t.call('/workflows/boom/fail', { body: {}, headers: { prefer: 'wait=20' } }))
-    expect(body).toMatchObject({ status: 'failed', cost: null, unpricedCalls: 0 })
-  })
+/** A `cost.mixed` run held live on its step gate, with `postHooks` as the caller left them. */
+async function liveRun() {
+  runGate.reset()
+  const started = await t.json(await t.call('/workflows/cost/mixed', { body: {} }))
+  expect(started.status).toBe(202)
+  return started.body.runId as string
+}
+const waitCall = (runId: string) => t.call(`/runs/${runId}/wait`, { method: 'POST', headers: { prefer: 'wait=20' } })
+const polling = (runId: string) => until(() => readsOf(runId).some((r) => r.live), 'the wait polling the live run')
 
-  test('a run that has not ended carries no cost fields', async () => {
-    const { body } = await t.json(await t.call('/workflows/hold/open', { body: {} }))
-    expect(body.status).not.toBe('done')
-    expect(body.cost).toBeUndefined()
-    expect(body.unpricedCalls).toBeUndefined()
-    expect(body.costPending).toBeUndefined()
-    t.gate.release()
-    await t.call(`/runs/${body.runId}/cancel`, { method: 'POST' })
-  })
-
-  test('the answer to an ended run waits for the record held in runPost: no cost before it lands', async () => {
-    postHooks.reset()
-    const started = await t.json(await t.call('/workflows/cost/mixed', { body: {} }))
-    const wait = t.call(`/runs/${started.body.runId}/wait`, { method: 'POST', headers: { prefer: 'wait=20' } })
-    let answered = false
-    void wait.then(() => {
-      answered = true
-    })
-    // the wait has read the ended run, hooks still held, and read it again: it is polling for the record, not answering
-    await until(
-      () => reads.filter((r) => r.runId === started.body.runId && r.unrecorded).length >= 2,
-      'two reads of the ended, unrecorded run',
-    )
-    expect(answered).toBe(false)
-    postHooks.release()
-    const { status, body } = await t.json(await wait)
+describe('a wait that sees the run end answers with its cost', () => {
+  test('run wait: the final cost of the run own steps, an unpriced call counted', async () => {
+    const runId = await liveRun()
+    const waiting = waitCall(runId)
+    await polling(runId)
+    runGate.release()
+    const { status, body } = await t.json(await waiting)
     expect(status).toBe(200)
     expect(body.status).toBe('done')
     expect(body.cost).toBeCloseTo(0.03, 6)
     expect(body.unpricedCalls).toBe(1)
     expect(body.costPending).toBeUndefined()
+    expect(body.recordFailed).toBeUndefined()
+    expect(Object.keys(body)).not.toContain('postHooksDone')
   })
 
-  const readsOf = (runId: string) => reads.filter((r) => r.runId === runId).length
-  const setSql = (runId: string, set: string) =>
-    t.pool.query(`update "${t.schema}".runs set ${set} where id = $1`, [runId])
+  test('the start route holds the same way', async () => {
+    runGate.reset()
+    const started = t.call('/workflows/cost/mixed', { body: {}, headers: { prefer: 'wait=20' } })
+    const runId = await until(latestRun, 'the started run')
+    await polling(runId)
+    runGate.release()
+    const { status, body } = await t.json(await started)
+    expect(status).toBe(200)
+    expect(body.cost).toBeCloseTo(0.03, 6)
+    expect(body.unpricedCalls).toBe(1)
+  })
 
-  test('an old ended run whose hooks never came answers costPending at once, without the hold', async () => {
+  test('the record held in runPost: the wait polls for it and does not answer before it lands', async () => {
     postHooks.reset()
-    const started = await t.json(await t.call('/workflows/cost/mixed', { body: {} }))
-    const runId = started.body.runId as string
+    const runId = await liveRun()
+    const waiting = waitCall(runId)
+    let answered = false
+    void waiting.then(() => {
+      answered = true
+    })
+    await polling(runId)
+    runGate.release()
+    await until(() => readsOf(runId).filter((r) => r.unrecorded).length >= 2, 'two reads of the ended, unrecorded run')
+    expect(answered).toBe(false)
+    postHooks.release()
+    const { body } = await t.json(await waiting)
+    expect(body.cost).toBeCloseTo(0.03, 6)
+    expect(body.costPending).toBeUndefined()
+  })
+
+  test('a priced run read after its hooks delivered carries the cost on run status', async () => {
+    const { body: started } = await t.json(
+      await t.call('/workflows/smoke/ping', { body: {}, headers: { prefer: 'wait=20' } }),
+    )
+    await until(
+      async () =>
+        (
+          await t.pool.query(`select 1 from "${t.schema}".runs where id = $1 and post_hooks_at is not null`, [
+            started.runId,
+          ])
+        ).rows[0],
+      'the run record',
+    )
+    const { status, body } = await t.json(await t.call(`/runs/${started.runId}`))
+    expect(status).toBe(200)
+    expect(body.cost).toBeCloseTo(0.0007, 6)
+    expect(body.unpricedCalls).toBe(0)
+  })
+})
+
+describe('a read that did not see the run end answers the record as it is', () => {
+  /** An ended run whose record is held; its reads are counted from here. */
+  async function endedHeld() {
+    postHooks.reset()
+    const runId = await liveRun()
+    runGate.release()
     await t.runtime.wait(runId) // the journal's own wait: no store read to count
-    await setSql(runId, `finished_at = now() - interval '1 hour'`)
-    const before = readsOf(runId)
+    return runId
+  }
+
+  test('run status never holds: costPending at once, one read', async () => {
+    const runId = await endedHeld()
     const { status, body } = await t.json(await t.call(`/runs/${runId}`))
     expect(status).toBe(200)
     expect(body).toMatchObject({ status: 'done', costPending: true })
     expect(body.cost).toBeUndefined()
-    expect(readsOf(runId) - before).toBe(1) // one read, no polling for a record that is not coming
+    expect(endedReadsOf(runId)).toHaveLength(1)
     postHooks.release()
   })
 
-  test('hooks given up on without a record answer costPending, never a final cost of null', async () => {
-    postHooks.reset()
-    const started = await t.json(await t.call('/workflows/cost/mixed', { body: {} }))
-    const runId = started.body.runId as string
-    await t.runtime.wait(runId) // the journal's own wait: no store read to count
-    await setSql(runId, 'post_hooks_at = now()') // what postHooksFailed does after maxPostHookAttempts
-    const before = readsOf(runId)
-    const { body } = await t.json(await t.call(`/runs/${runId}/wait`, { method: 'POST' }))
+  test('run wait on a run that already ended never holds', async () => {
+    const runId = await endedHeld()
+    const { body } = await t.json(await waitCall(runId))
     expect(body).toMatchObject({ status: 'done', costPending: true })
-    expect(body.cost).toBeUndefined()
-    expect(body.unpricedCalls).toBeUndefined()
-    expect(readsOf(runId) - before).toBe(1)
+    expect(endedReadsOf(runId)).toHaveLength(1)
     postHooks.release()
   })
 
-  test('a direct capability call does not pay the hold for a record it never reads', async () => {
+  test('run cancel of an ended run never holds either', async () => {
+    const runId = await endedHeld()
+    const { body } = await t.json(await t.call(`/runs/${runId}/cancel`, { method: 'POST' }))
+    expect(body).toMatchObject({ status: 'done', costPending: true })
+    expect(endedReadsOf(runId)).toHaveLength(2) // the existence check and the wait's single read
+    postHooks.release()
+  })
+
+  test('a direct capability call does not pay a hold for a record it never reads', async () => {
     postHooks.reset()
     const response = await t.call('/llm/title', { body: { text: 'Hold nothing' } })
     expect(response.status).toBe(200)
     const runId = response.headers.get('agw-run-id') as string
-    // one read of the ended run, and it was not held for the (held) record
-    expect(reads.filter((r) => r.runId === runId && r.unrecorded)).toHaveLength(1)
+    expect(readsOf(runId).filter((r) => r.unrecorded)).toHaveLength(1) // read once at the end, not polled
     postHooks.release()
   })
 })
 
-describe('waitFor holds an ended run for its record, bounded', () => {
-  const ended: StoredRun = {
-    runId: 'r',
-    workflowId: 'w',
-    status: 'done',
-    output: null,
-    cost: 0.5,
-    unpricedCalls: 0,
-    recorded: true,
-    postHooksDone: true,
-    endedAt: Date.now(),
+describe('what the answer says about the record', () => {
+  async function endedHeld() {
+    postHooks.reset()
+    const runId = await liveRun()
+    runGate.release()
+    await t.runtime.wait(runId)
+    return runId
   }
-  const unrecorded: StoredRun = { ...ended, cost: null, recorded: false, postHooksDone: false }
-  const quiet = { warn() {}, error() {} }
-  const storeOf = (get: () => StoredRun) => ({ get: async () => get(), ping: async () => {} })
 
-  test('a record that never lands within the bound answers costPending, not a number', async () => {
-    const answer = await waitFor(
-      storeOf(() => unrecorded),
-      'r',
-      0,
-      quiet,
-      undefined,
-      60,
-    )
-    expect(answer).toMatchObject({ status: 'done', costPending: true })
-    expect(answer).not.toHaveProperty('cost')
-    for (const own of ['postHooksDone', 'recorded', 'endedAt']) expect(answer).not.toHaveProperty(own)
+  test('hooks given up on: recordFailed, no cost, never a free run', async () => {
+    const runId = await endedHeld()
+    await sql(runId, 'post_hooks_at = now(), post_hooks_failed_at = now()') // what postHooksFailed writes at the cap
+    const { body } = await t.json(await t.call(`/runs/${runId}`))
+    expect(body).toMatchObject({ status: 'done', recordFailed: true })
+    for (const absent of ['cost', 'unpricedCalls', 'costPending']) expect(body[absent]).toBeUndefined()
+    postHooks.release()
   })
 
-  test('a record that lands inside the bound is the answer, with no costPending', async () => {
-    let reads = 0
-    const answer = await waitFor(
-      storeOf(() => (++reads > 3 ? ended : unrecorded)),
-      'r',
-      0,
-      quiet,
-      undefined,
-      5000,
+  test('a delivered row without the run-record columns (older than the record) answers a cost of null, not a failure', async () => {
+    const runId = await endedHeld()
+    await sql(runId, 'post_hooks_at = now(), cost = null, unpriced_calls = null') // delivered, failed_at stays null
+    const { body } = await t.json(await t.call(`/runs/${runId}`))
+    expect(body).toMatchObject({ status: 'done', cost: null, unpricedCalls: 0 })
+    expect(body.costPending).toBeUndefined()
+    expect(body.recordFailed).toBeUndefined()
+    postHooks.release()
+  })
+})
+
+describe('waitFor', () => {
+  const live: StoredRun = {
+    runId: 'r',
+    workflowId: 'w',
+    status: 'running',
+    cost: null,
+    unpricedCalls: 0,
+    postHooksDone: false,
+    postHooksFailed: false,
+  }
+  const unrecorded: StoredRun = { ...live, status: 'done', output: null }
+  const recorded: StoredRun = { ...unrecorded, cost: 0.5, postHooksDone: true }
+  const logs: string[] = []
+  const logger = { warn: (m: string) => logs.push(m), error: (m: string) => logs.push(m) }
+  /** A store replaying `script` (the last entry repeats); an Error entry is a failed read. */
+  const scripted = (script: (StoredRun | Error)[]) => {
+    const state = { reads: 0 }
+    return {
+      state,
+      store: {
+        ping: async () => {},
+        get: async () => {
+          const step = script[Math.min(state.reads++, script.length - 1)]
+          if (step instanceof Error) throw step
+          return step as StoredRun
+        },
+      },
+    }
+  }
+  const sleeps: number[] = []
+  const sleep = spyOn(Bun, 'sleep')
+  beforeAll(() => {
+    sleep.mockImplementation(async (ms) => {
+      sleeps.push(Number(ms))
+    })
+  })
+  afterAll(() => sleep.mockRestore())
+  const wait = (
+    store: ReturnType<typeof scripted>['store'],
+    over: { recordWaitMs?: number; seconds?: number } = {},
+  ) => {
+    sleeps.length = 0
+    logs.length = 0
+    return waitFor({ store, runId: 'r', seconds: over.seconds ?? 60, logger, ...over })
+  }
+
+  test('a run seen ending is held until its record lands, then answers the sums', async () => {
+    const { store, state } = scripted([live, unrecorded, unrecorded, recorded])
+    const answer = await wait(store, { recordWaitMs: 5000 })
+    expect(state.reads).toBe(4)
+    expect(answer).toEqual({ runId: 'r', workflowId: 'w', status: 'done', output: null, cost: 0.5, unpricedCalls: 0 })
+  })
+
+  test('a record that never lands within the bound answers costPending and no cost', async () => {
+    const { store } = scripted([live, unrecorded])
+    const answer = await wait(store, { recordWaitMs: 40 })
+    expect(answer).toMatchObject({ status: 'done', costPending: true })
+    for (const own of ['cost', 'unpricedCalls', 'postHooksDone', 'postHooksFailed'])
+      expect(answer).not.toHaveProperty(own)
+  })
+
+  test('the backoff restarts when the hold starts', async () => {
+    const { store } = scripted([...Array(8).fill(live), unrecorded, unrecorded, recorded])
+    await wait(store, { recordWaitMs: 5000 })
+    expect(Math.max(...sleeps.slice(0, 8))).toBe(250) // the run phase backed off to its ceiling
+    expect(sleeps.slice(8)).toEqual([25, 50]) // the hold's own, from the start
+  })
+
+  test('a run already ended at the first read is not held, nor is a wait without recordWaitMs', async () => {
+    const ended = scripted([unrecorded])
+    expect(await wait(ended.store, { recordWaitMs: 5000 })).toMatchObject({ costPending: true })
+    expect(ended.state.reads).toBe(1)
+    const noHold = scripted([live, unrecorded])
+    expect(await wait(noHold.store)).toMatchObject({ costPending: true })
+    expect(noHold.state.reads).toBe(2)
+  })
+
+  test('read failures in the hold are retried until the record lands, and warn only a few times', async () => {
+    const down = new Error('connection lost')
+    const { store, state } = scripted([live, unrecorded, ...Array(10).fill(down), recorded])
+    expect(await wait(store, { recordWaitMs: 5000 })).toMatchObject({ cost: 0.5 })
+    expect(state.reads).toBe(13)
+    expect(logs).toHaveLength(3)
+  })
+
+  test('reads that keep failing through the hold answer pending when its deadline passes', async () => {
+    const down = new Error('connection lost')
+    const { store } = scripted([live, unrecorded, down])
+    expect(await wait(store, { recordWaitMs: 40 })).toMatchObject({ status: 'done', costPending: true })
+  })
+
+  test('reads failing before the run ended still end the wait with the error', async () => {
+    const down = new Error('connection lost')
+    const { store, state } = scripted([live, down])
+    const outcome = await wait(store, { recordWaitMs: 5000 }).then(
+      () => 'answered',
+      (error: Error) => error.message,
     )
-    expect(reads).toBe(4)
-    expect(answer).toEqual({
+    expect(outcome).toBe('connection lost')
+    expect(state.reads).toBe(6) // the live read, then five failures in a row
+  })
+
+  test('hooks given up on answer recordFailed with no cost; delivered sums come with no failure flag', async () => {
+    const gaveUp = scripted([{ ...unrecorded, postHooksDone: true, postHooksFailed: true }])
+    expect(await wait(gaveUp.store)).toEqual({
       runId: 'r',
       workflowId: 'w',
       status: 'done',
       output: null,
-      cost: 0.5,
-      unpricedCalls: 0,
+      recordFailed: true,
     })
-  })
-
-  test('a read that fails during the hold is retried until the record lands', async () => {
-    let reads = 0
-    const store = {
-      ping: async () => {},
-      get: async (): Promise<StoredRun> => {
-        reads++
-        if (reads === 2 || reads === 3) throw new Error('connection lost')
-        return reads > 3 ? ended : unrecorded
-      },
-    }
-    expect(await waitFor(store, 'r', 0, quiet)).toMatchObject({ status: 'done', cost: 0.5 })
-    expect(reads).toBe(4)
-  })
-
-  test('reads that keep failing through the hold answer pending when its deadline passes', async () => {
-    let reads = 0
-    const store = {
-      ping: async () => {},
-      get: async (): Promise<StoredRun> => {
-        if (++reads > 1) throw new Error('connection lost')
-        return unrecorded
-      },
-    }
-    expect(await waitFor(store, 'r', 0, quiet, undefined, 80)).toMatchObject({ status: 'done', costPending: true })
-    expect(reads).toBeGreaterThan(2)
-  })
-
-  test('recordWaitMs 0 skips the hold; a run ended long ago, or with its hooks done, is not held either', async () => {
-    let reads = 0
-    const count = (state: StoredRun) => () => {
-      reads++
-      return state
-    }
-    expect(await waitFor(storeOf(count(unrecorded)), 'r', 0, quiet, undefined, 0)).toMatchObject({ costPending: true })
-    const old = { ...unrecorded, endedAt: Date.now() - RECORD_FRESH_MS - 1000 }
-    expect(await waitFor(storeOf(count(old)), 'r', 0, quiet)).toMatchObject({ costPending: true })
-    const gaveUp = { ...unrecorded, postHooksDone: true }
-    expect(await waitFor(storeOf(count(gaveUp)), 'r', 0, quiet)).toMatchObject({ costPending: true })
-    expect(reads).toBe(3) // one read each, no polling
+    expect(await wait(scripted([recorded]).store)).not.toHaveProperty('recordFailed')
   })
 })

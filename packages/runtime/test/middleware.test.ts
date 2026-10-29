@@ -319,6 +319,11 @@ describe('middleware', () => {
       expect((await sql.run(a))?.post_hooks_attempts).toBe(2)
       expect(calls.get(never)).toBe(4)
       expect((await sql.run(never))?.post_hooks_attempts).toBe(4)
+      // delivered after retries is not a give-up; only the run that failed every attempt says so
+      expect((await sql.run(a))?.post_hooks_failed_at).toBeNull()
+      expect((await sql.run(never))?.post_hooks_failed_at).toBeInstanceOf(Date)
+      expect(await rt.getRun(a)).toMatchObject({ postHooksDone: true, postHooksFailed: false })
+      expect(await rt.getRun(never)).toMatchObject({ postHooksDone: true, postHooksFailed: true })
       expect(logger.lines.filter((l) => l.message.startsWith('runPost failed every attempt'))).toHaveLength(1)
       await Bun.sleep(300)
       expect(calls.get(never)).toBe(4)
