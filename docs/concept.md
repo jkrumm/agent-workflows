@@ -374,3 +374,16 @@ One entry per phase: what we learned, what changed on this page, and why.
   host process. Callers moved: `/research`; research-gateway's MCP deleted.
 - **Spend.** Team key $26.13 (the comparison $12.57, the Sonnet experiment, the port's regression).
 - **Does the page hold?** Yes; the engine design in §11 P3 is superseded by numbers, as §0 intends.
+
+### Wave 7 — otel, brain, diagram, prose (P3b), 2026-10-29 (v3.7)
+
+- **Learned.** Four rules written before any run made four verdicts queries; the one gap was an
+  unstated aggregation (per item vs mean), so rules now name it. Shared registry files are the merge
+  train's bottleneck: five parallel ports collided on almost every rebase. Design changes beat patch
+  rounds again (run-cost, otel). Live use found what fakes did not (`--format plain`, stale CLI help).
+  Workers follow input-box suggestions: three ran `agw review` against the owner direction.
+- **Changed.** v3.7: P3b as built — `hdx` a capability over HyperDX HTTP, a shared tool gate, `brain`
+  shared by research and otel, prose's rewrite in the calling session. Callers moved: `/otel`,
+  `/excalidraw-diagram`, `/prose`; their MCP tools deleted.
+- **Spend.** Team key ≈ $0.03; personal $0.50 (three unwanted reviews, verification).
+- **Does the page hold?** Yes. Registration by directory is next (Wave 8, first).

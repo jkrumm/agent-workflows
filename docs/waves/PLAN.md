@@ -182,21 +182,29 @@ research-gateway's 1Password item (move before P6); engine columns 0007/0008 kep
 later, expand/contract); CLI's synchronous answer lacks final cost; one sleep-synchronised test left.
 Evidence: `docs/waves/handoff/lead.md` at `57ef3ab`.
 
-## Wave 7 — otel, brain, diagram, prose (P3b)            <!-- status: active -->
+## Wave 7 — otel, brain, diagram, prose (P3b)            <!-- status: done -->
 Workers: Sonnet/high.
 
-- [ ] `otel` workflow with `hdx` as a capability (HyperDX HTTP API, no MCP); cost per query recorded
-- [ ] `brain` agent shared by workflows; `diagram` (excalidraw) ported
-- [ ] `prose`: lint + cross-lab review + keep gate as a workflow; the rewrite in the calling session on Max
-- [ ] `/otel`, `/excalidraw-diagram`, `/prose` switched; their agw MCP tools removed
-- [ ] Wave 6 leftovers (Sonnet/high): the CLI's synchronous answer carries the final cost; the last
+- [x] `otel` workflow with `hdx` as a capability (HyperDX HTTP API, no MCP); cost per query recorded
+- [x] `brain` agent shared by workflows; `diagram` (excalidraw) ported
+- [x] `prose`: lint + cross-lab review + keep gate as a workflow; the rewrite in the calling session on Max
+- [x] `/otel`, `/excalidraw-diagram`, `/prose` switched; their agw MCP tools removed
+- [x] Wave 6 leftovers (Sonnet/high; the CONTEXT7 move carried to Wave 8, owner-gated): the CLI's synchronous answer carries the final cost; the last
   sleep-synchronised test (`opencode-host` abort) on an in-flight signal; `rd fan --clean` scoped to the
   fleet's own worktrees (dotfiles); CONTEXT7_API_KEY moved off research-gateway's 1Password item
-**Left behind:**
+**Left behind:** all four ports passed their pre-registered rules (`docs/research/2026-10-29-wave7-ports.md`);
+release `adc586d` on the personal key, `make verify` PASS, `@verifier` 11/11. `/otel`, `/excalidraw-diagram`,
+`/prose` run on `agw`; their agw-legacy MCP tools removed. Concept v3.7. Carried: CONTEXT7 move (owner
+request `20261029T070930-17518`, MacBook unreachable); `clickstack_sql` stays CLI-only until proven
+read-only; legacy `research/gate.json` and agent-gateway routing rows go in P6; workers ran `agw review`
+three times against the owner direction ($0.46). Evidence: `docs/waves/handoff/lead.md` at `f8671d5`.
 
-## Wave 8 — Audio, image, podcast (P4a)            <!-- status: pending -->
+## Wave 8 — Audio, image, podcast (P4a)            <!-- status: active -->
 Workers: Sonnet/high; Opus/medium for the pipeline's durable stages.
 
+- [ ] **First:** workflows, eval suites and routes register by directory (or one entry per file), so
+  parallel ports stop colliding in shared registry files; the load-scaled test timeout sampled per test
+- [ ] **Owner-gated, carried:** CONTEXT7_API_KEY moved once request `20261029T070930-17518` is answered
 - [ ] Audio pipeline as a workflow in its own process; an OpenAI-compatible TTS/STT door for Hermes
 - [ ] `podcast` (writers' room, TTS, mastering, publish) and `image` ported
 - [ ] `/podcast`, `/img`, Hermes TTS/STT switched; one episode produced end to end on the new path
