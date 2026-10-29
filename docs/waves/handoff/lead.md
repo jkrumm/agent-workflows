@@ -17,6 +17,16 @@ agent-gateway's Argo overview push removed in the same live step as the host's p
 Wave 11 by scope (not moved here): research-gateway/audio-gateway services and their probes, Caddy rows, Kuma monitors,
 HyperDX alerts; argo's audio routes; usage-tracker collectors; agent-gateway's HTTP job handlers.
 
+## State (19:05)
+
+- Merged and live: agent-workflows #64 `agw routes` (release `5ae9fb4`, `make verify` PASS); dotfiles #44 (global CLAUDE.md
+  slimmed, skills, MCP registration removed; deregistered on the mini in all three accounts); agent-gateway #39 (MCP server
+  deleted, reloaded, verify OK); hermes-agent #10 (research on `agw research` as `agw-research`, hyperdx on `agw hdx`/`agw otel`,
+  dispatch skill on `agw-legacy`; deployed `5e690c9`); modelpick #2 (verify against `agw routes`).
+- In the train: #65 narrative + prose-polish (reviews r1-r3 on Max, `internal` capabilities). Next: #66 overview (r1-r3 done,
+  rebase pending), then deploy + agent-gateway #40 (its Argo push removed) in one live step, then batch 2 (Hermes scripts,
+  dotfiles statusline/pane) on the new commands.
+
 ## Done inline
 
 - warden: GitHub repo archived (its agent-gateway client goes with it).
