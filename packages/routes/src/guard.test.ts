@@ -29,11 +29,19 @@ function sourceFiles(): string[] {
     .concat([...walk(import.meta.dir)].filter((file) => !file.startsWith(`${TABLE}/`) && !TEST_FILE.match(file)))
 }
 
+/**
+ * Every line naming a table model id as a whole token: an id inside a longer word is not one (`whisper` is a model id,
+ * `<whispers>` a Gemini TTS tag). Adjacent `-`, `.`, `/` and quotes still delimit, so `'whisper'` and `x/whisper` hit.
+ */
 export function findModelIds(files: Map<string, string>, ids: string[]): string[] {
+  const patterns = ids.map((id) => ({
+    id,
+    re: new RegExp(`(?<![A-Za-z0-9_])${id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![A-Za-z0-9_])`),
+  }))
   const hits: string[] = []
   for (const [file, text] of files) {
     text.split('\n').forEach((line, i) => {
-      for (const id of ids) if (line.includes(id)) hits.push(`${file}:${i + 1} contains model id "${id}"`)
+      for (const { id, re } of patterns) if (re.test(line)) hits.push(`${file}:${i + 1} contains model id "${id}"`)
     })
   }
   return hits
@@ -52,6 +60,19 @@ test('no source outside the route table contains a model id from it', () => {
 test('the guard catches a planted model id with file:line', () => {
   const files = new Map([['packages/x/src/a.ts', `const a = 1\nconst m = "${modelIds()[0]}"\n`]])
   expect(findModelIds(files, modelIds())).toEqual([`packages/x/src/a.ts:2 contains model id "${modelIds()[0]}"`])
+})
+
+test('the guard matches whole tokens: a model id inside a longer word is not a hit', () => {
+  const files = new Map([
+    [
+      'packages/x/src/b.ts',
+      `const tag = '<whispers>'\nconst m = 'whisper'\nconst r = 'audio.stt/whisper.x'\nconst w = whisperish`,
+    ],
+  ])
+  expect(findModelIds(files, ['whisper'])).toEqual([
+    'packages/x/src/b.ts:2 contains model id "whisper"',
+    'packages/x/src/b.ts:3 contains model id "whisper"',
+  ])
 })
 
 function modelIds(): string[] {

@@ -127,7 +127,7 @@ const sttEncodeArgs = (bitrateKbps: number): string[] => [
 
 /**
  * `-t` is NOT optional, even for a final chunk that runs to the end: a slice cut without it is decoded as
- * near-silence by IU's gpt-4o-transcribe backend (HTTP 200, one sentence for eight minutes; measured 2026-09-10,
+ * near-silence by IU's 4o transcribe backend (HTTP 200, one sentence for eight minutes; measured 2026-09-10,
  * 99/99 sentences with `-t`, 0 without). Callers overshoot the end instead of omitting it.
  */
 export const sliceArgs = (tmp: string, startSec: number, durationSec: number, bitrateKbps: number): string[] => [

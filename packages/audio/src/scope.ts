@@ -1,9 +1,10 @@
 import type { AudioConfig } from './config.ts'
 import { ffmpegMedia, type MediaPort } from './media/audio.ts'
-import { AUDIO_ROUTES, type AudioRoute, type AudioWire } from './routes.pending.ts'
+import { type AudioLane, type AudioRoute, type AudioRouteId, audioRoutes } from './routes.ts'
 import {
   type CallEndpoint,
   type CallEvent,
+  priceOf,
   type Measure,
   priceCall,
   type RequestEndpoint,
@@ -33,8 +34,8 @@ export interface AudioDeps {
   fetch?: Fetch
   /** The ffmpeg/ffprobe boundary; default spawns the host binaries. */
   media?: MediaPort
-  /** Route table by id; default the pending audio routes (later: `packages/routes`). */
-  routes?: Readonly<Record<string, AudioRoute>>
+  /** The env `AGW_ROUTES` overrides are read from, once, when a handler or scope is built. Default `process.env`. */
+  env?: Record<string, string | undefined>
   log?: AudioLog
   /** The request id stamped on every usage event of one request. Default: a fresh UUID. */
   requestId?: (req: Request) => string
@@ -56,7 +57,7 @@ export interface Resolved {
   clock: Clock
   fetch: Fetch
   media: MediaPort
-  routes: Readonly<Record<string, AudioRoute>>
+  routes: Readonly<Record<AudioRouteId, AudioRoute>>
   log: AudioLog
 }
 
@@ -69,7 +70,7 @@ export function resolveDeps(deps: AudioDeps): Resolved {
     media:
       deps.media ??
       ffmpegMedia({ mp3BitrateKbps: deps.config.ttsBitrateKbps, opusBitrateKbps: deps.config.ttsOpusBitrateKbps }),
-    routes: deps.routes ?? AUDIO_ROUTES,
+    routes: audioRoutes(deps.env),
     log: deps.log ?? CONSOLE_LOG,
   }
 }
@@ -140,16 +141,16 @@ export class AudioScope {
   }
 
   route(id: string): AudioRoute {
-    const route = this.deps.routes[id]
+    const route = this.deps.routes[id as AudioRouteId]
     if (!route) throw new Error(`audio route "${id}" is not in the route table`)
     return route
   }
 
   /** The route id serving `model` on one of `wires`, or null. */
-  routeIdForModel(model: string, wires: readonly AudioWire[]): string | null {
+  routeIdForModel(model: string, lanes: readonly AudioLane[]): AudioRouteId | null {
     if (!model) return null
-    for (const [id, route] of Object.entries(this.deps.routes)) {
-      if (route.model === model && wires.includes(route.wire)) return id
+    for (const route of Object.values(this.deps.routes)) {
+      if (route.model === model && lanes.includes(route.lane)) return route.id
     }
     return null
   }
@@ -160,7 +161,7 @@ export class AudioScope {
 
   /** Price and record one billed upstream call. Never blocks on the port. */
   call(input: CallInput): CallEvent {
-    const route = input.routeId ? this.deps.routes[input.routeId] : undefined
+    const route = input.routeId ? this.deps.routes[input.routeId as AudioRouteId] : undefined
     const priced = priceCall(route, input.status, input)
     const event: CallEvent = {
       kind: 'call',
@@ -183,17 +184,18 @@ export class AudioScope {
 
   /** The request's one summary event: totals over its calls, quantity of the serving route. */
   summary(input: SummaryInput): RequestEvent {
-    const route = input.routeId ? this.deps.routes[input.routeId] : undefined
+    const route = input.routeId ? this.deps.routes[input.routeId as AudioRouteId] : undefined
+    const price = route ? priceOf(route) : undefined
     const event: RequestEvent = {
       kind: 'request',
       requestId: this.requestId,
       caller: this.caller,
       ...input,
-      units: route?.price?.unit ?? null,
+      units: price?.unit ?? null,
       quantity: input.routeId ? (this.quantities.get(input.routeId) ?? null) : null,
       costUsd: this.meta.unpricedCalls > 0 ? null : this.meta.costUsd,
       costSource: this.meta.unpricedCalls > 0 ? 'unknown' : this.meta.calls === 0 ? 'not-billed' : 'rate',
-      priceVerified: route?.price ? route.price.stamp.verified : null,
+      priceVerified: price ? price.stamp.verified : null,
       calls: this.meta.calls,
       unpricedCalls: this.meta.unpricedCalls,
       retries: this.meta.retries,

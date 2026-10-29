@@ -1,7 +1,10 @@
 import { z } from 'zod'
 
-/** Transports. `opencode` is an agent step on the OpenCode host; the other three are single calls. */
-export const WIRES = ['iu-openai', 'iu-anthropic', 'iu-decision', 'opencode'] as const
+/**
+ * Transports. `opencode` is an agent step on the OpenCode host; the others are single calls. `iu-gemini` is IU's native
+ * Gemini `generateContent`/`streamGenerateContent` (TTS), `iu-replicate` IU's Replicate predictions (ElevenLabs).
+ */
+export const WIRES = ['iu-openai', 'iu-anthropic', 'iu-decision', 'opencode', 'iu-gemini', 'iu-replicate'] as const
 export type Wire = (typeof WIRES)[number]
 
 /** Reasoning levels. `none` is OpenCode's own "thinking off" variant; the rest are shared. */

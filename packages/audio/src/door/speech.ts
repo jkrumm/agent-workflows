@@ -1,20 +1,20 @@
 import { errorMessage } from '../http.ts'
 import { parseOutputFormat } from '../media/audio.ts'
-import { AUDIO_DEFAULT_ROUTES, type AudioWire } from '../routes.pending.ts'
+import { AUDIO_DEFAULT_ROUTES, type AudioLane } from '../routes.ts'
 import { type AudioDeps, AudioScope, resolveDeps } from '../scope.ts'
 import { DELIVERY_KEYS, isDeliveryKey } from '../speech/core.ts'
 import { handleGeminiSpeech, type LaneResult } from '../speech/gemini.ts'
 import { handleReplicateSpeech, replicateWantsPrep } from '../speech/replicate.ts'
 import { callerOf, internalError, invalid, requestIdOf } from './common.ts'
 
-const TTS_WIRES: readonly AudioWire[] = ['iu-gemini-tts', 'iu-replicate-tts']
+const TTS_LANES: readonly AudioLane[] = ['gemini', 'replicate']
 
 /**
  * The TTS lane for a requested model: its route when the table has one on a TTS wire; anything else (empty, a typo,
  * an unknown id) is the default route. The door owns model choice, so a caller's wrong model never reaches upstream.
  */
 export function resolveTtsRoute(scope: AudioScope, requested: string): { routeId: string; overridden: boolean } {
-  const routeId = scope.routeIdForModel(requested, TTS_WIRES)
+  const routeId = scope.routeIdForModel(requested, TTS_LANES)
   if (routeId) return { routeId, overridden: false }
   return { routeId: AUDIO_DEFAULT_ROUTES.tts, overridden: requested.length > 0 }
 }
@@ -101,11 +101,7 @@ async function dispatchSpeech(scope: AudioScope, req: Request): Promise<Response
 
   const { routeId, overridden } = resolveTtsRoute(scope, body.model)
   const route = scope.route(routeId)
-  if (
-    route.wire === 'iu-gemini-tts' &&
-    body.delivery !== undefined &&
-    !isDeliveryKey(body.delivery.trim().toLowerCase())
-  ) {
+  if (route.lane === 'gemini' && body.delivery !== undefined && !isDeliveryKey(body.delivery.trim().toLowerCase())) {
     return invalid(`unsupported delivery "${body.delivery}" — expected one of: ${DELIVERY_KEYS.join(', ')}`)
   }
   if (overridden) {
@@ -117,7 +113,7 @@ async function dispatchSpeech(scope: AudioScope, req: Request): Promise<Response
   const { config } = scope
   const autoSummarize =
     !body.summarize &&
-    route.wire === 'iu-replicate-tts' &&
+    route.lane === 'replicate' &&
     !replicateWantsPrep(scope, route.model) &&
     responseFormat !== 'pcm' &&
     config.ttsAutoSummarizeMinChars > 0 &&
@@ -159,7 +155,7 @@ async function dispatchSpeech(scope: AudioScope, req: Request): Promise<Response
   let result: LaneResult
   try {
     result =
-      route.wire === 'iu-gemini-tts'
+      route.lane === 'gemini'
         ? await handleGeminiSpeech(scope, {
             routeId,
             input: body.input,

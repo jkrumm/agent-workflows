@@ -9,5 +9,8 @@
   },
   "scripts": {
     "test": "bun test --isolate"
+  },
+  "dependencies": {
+    "@agent-workflows/routes": "workspace:*"
   }
 }

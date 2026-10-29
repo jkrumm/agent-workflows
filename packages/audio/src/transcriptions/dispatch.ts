@@ -14,7 +14,7 @@ export class PartFailure extends Error {
   }
 }
 
-/** `{ text, usage, language }` of an upstream body. Non-JSON bodies (whisper's rich formats) pass through as text. */
+/** `{ text, usage, language }` of an upstream body. Non-JSON bodies (Whisper's rich formats) pass through as text. */
 export function extractTextAndUsage(
   body: string,
   contentType: string,
@@ -28,7 +28,7 @@ export function extractTextAndUsage(
   }
 }
 
-/** gpt-transcribe reports `languages: [{code}]` instead of a `language` string. */
+/** The OpenAI transcribe model reports `languages: [{code}]` instead of a `language` string. */
 function firstLanguageCode(languages: unknown): string | null {
   const first: unknown = Array.isArray(languages) ? languages[0] : undefined
   if (typeof first !== 'object' || first === null || !('code' in first)) return null

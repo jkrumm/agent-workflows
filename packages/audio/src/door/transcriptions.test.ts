@@ -1,15 +1,17 @@
 import { afterEach, beforeAll, describe, expect, test } from 'bun:test'
 import type { AudioConfig } from '../config.ts'
 import { ffmpegMedia, type MediaPort } from '../media/audio.ts'
-import { AUDIO_ROUTES } from '../routes.pending.ts'
+import { audioRoutes } from '../routes.ts'
+
+const ROUTES = audioRoutes()
 import { type FakeIu, type FakeRequest, hasFfmpeg, startFakeIu, testDeps, toneFile } from '../testing/index.ts'
 import type { CallEvent, RequestEvent, UsageEvent } from '../usage.ts'
 import { createTranscriptionsHandler } from './transcriptions.ts'
 
-const VOXTRAL = AUDIO_ROUTES['audio.stt.voxtral-mini'].model
-const GPT_TRANSCRIBE = AUDIO_ROUTES['audio.stt.gpt-transcribe'].model
-const GPT_4O = AUDIO_ROUTES['audio.stt.gpt-4o-transcribe'].model
-const WHISPER = AUDIO_ROUTES['audio.stt.whisper'].model
+const VOXTRAL = ROUTES['audio.stt.voxtral-mini'].model
+const GPT_TRANSCRIBE = ROUTES['audio.stt.openai'].model
+const GPT_4O = ROUTES['audio.stt.openai-4o'].model
+const WHISPER = ROUTES['audio.stt.openai-legacy'].model
 const PROMPT = 'Die Aufnahme ist auf Deutsch oder Englisch.'
 
 let tenSeconds: Uint8Array<ArrayBuffer>
@@ -62,7 +64,7 @@ describe.skipIf(!hasFfmpeg)('transcriptions door', () => {
     expect(summary(deps.usage.events)).toMatchObject({ status: 500, model: GPT_TRANSCRIBE, requestedModel: '' })
   })
 
-  test('the fallback chain: gpt-transcribe falls back to whisper; whisper is terminal; a 4xx never falls back', async () => {
+  test('the fallback chain: the OpenAI model falls back to Whisper; Whisper is terminal; a 4xx never falls back', async () => {
     const { transcribe } = setup((r) =>
       r.form?.get('model') === WHISPER ? Response.json({ text: 'ok' }) : new Response('down', { status: 404 }),
     )
@@ -132,7 +134,7 @@ describe.skipIf(!hasFfmpeg)('transcriptions door', () => {
     expect(await text.text()).toBe('Hallo Welt')
   })
 
-  test('whisper rich formats pass through raw and untouched by prompt stripping', async () => {
+  test('Whisper rich formats pass through raw and untouched by prompt stripping', async () => {
     const raw = `1\n00:00:00,000 --> 00:00:02,000\n${PROMPT} Hallo\n`
     const { transcribe } = setup(() => new Response(raw, { headers: { 'content-type': 'text/plain' } }), {
       config: { sttPrompt: PROMPT },

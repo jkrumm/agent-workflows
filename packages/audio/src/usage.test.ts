@@ -1,9 +1,11 @@
 import { describe, expect, test } from 'bun:test'
 import { AudioConfigError, audioConfig, audioTransports } from './config.ts'
-import { AUDIO_ROUTES, type AudioRoute } from './routes.pending.ts'
+import { type AudioRouteId, audioRoutes } from './routes.ts'
+
+const ROUTES = audioRoutes()
 import { measureFromOpenAiUsage, priceCall } from './usage.ts'
 
-const route = (id: keyof typeof AUDIO_ROUTES) => AUDIO_ROUTES[id] as AudioRoute
+const route = (id: AudioRouteId) => ROUTES[id]
 
 describe('priceCall (legacy computeCost rates)', () => {
   test('Gemini TTS: input and audio-output tokens', () => {
@@ -21,9 +23,9 @@ describe('priceCall (legacy computeCost rates)', () => {
   })
 
   test('STT per minute; token STT bills the audio share at the audio rate (all input when the split is missing)', () => {
-    expect(priceCall(route('audio.stt.whisper'), 200, { audioSeconds: 90 }).costUsd).toBeCloseTo(0.009, 12)
+    expect(priceCall(route('audio.stt.openai-legacy'), 200, { audioSeconds: 90 }).costUsd).toBeCloseTo(0.009, 12)
     expect(priceCall(route('audio.stt.voxtral-mini'), 200, {})).toMatchObject({ costSource: 'unknown' })
-    const mini = priceCall(route('audio.stt.gpt-4o-mini-transcribe'), 200, { inputTokens: 1000, outputTokens: 10 })
+    const mini = priceCall(route('audio.stt.openai-4o-mini'), 200, { inputTokens: 1000, outputTokens: 10 })
     expect(mini.costUsd).toBeCloseTo((1000 * 1.25 + 10 * 5) / 1e6, 12)
     expect(mini.priceVerified).toBe(true)
   })
@@ -45,7 +47,9 @@ describe('priceCall (legacy computeCost rates)', () => {
       costUsd: 0,
       costSource: 'not-billed',
     })
-    expect(priceCall({ wire: 'iu-openai', model: 'm' }, 200, { inputChars: 5 })).toMatchObject({
+    expect(
+      priceCall({ id: 'audio.tts.prep', lane: 'llm', wire: 'iu-openai', model: 'm' }, 200, { inputChars: 5 }),
+    ).toMatchObject({
       costUsd: null,
       costSource: 'unknown',
     })
@@ -77,8 +81,8 @@ describe('config', () => {
   test('legacy env names and defaults; prep models default to the routes flagged prep', () => {
     const env = { IU_API_KEY: 'k', IU_BASE_URL: 'https://iu.example.com/anthropic' }
     const config = audioConfig(env)
-    expect(config.ttsGeminiPrepModels).toEqual([AUDIO_ROUTES['audio.tts.gemini-flash'].model])
-    expect(config.ttsReplicatePrepModels).toEqual([AUDIO_ROUTES['audio.tts.elevenlabs-v3'].model])
+    expect(config.ttsGeminiPrepModels).toEqual([ROUTES['audio.tts.gemini-flash'].model])
+    expect(config.ttsReplicatePrepModels).toEqual([ROUTES['audio.tts.elevenlabs-v3'].model])
     expect(config.sttMaxChunkSeconds).toBe(240)
     const tuned = audioConfig({ ...env, STT_PROMPT: 'p', TTS_CONCURRENCY: '20', TTS_GEMINI_PREP_MODELS: 'a, b' })
     expect(tuned).toMatchObject({ sttPrompt: 'p', ttsConcurrency: 8, ttsGeminiPrepModels: ['a', 'b'] })
@@ -97,9 +101,9 @@ describe('config', () => {
     expect(() => audioConfig({ ...env, TTS_PREP: 'sometimes' })).toThrow(/TTS_PREP/)
   })
 
-  test('every STT fallback names a route in the table', () => {
-    for (const r of Object.values(AUDIO_ROUTES as Record<string, AudioRoute>)) {
-      if (r.fallback) expect(Object.keys(AUDIO_ROUTES)).toContain(r.fallback)
+  test('every STT fallback is an STT route', () => {
+    for (const r of Object.values(ROUTES)) {
+      if (r.sttFallback) expect(ROUTES[r.sttFallback as AudioRouteId]?.lane).toBe('stt')
     }
   })
 })

@@ -1,13 +1,15 @@
 import { afterEach, beforeAll, describe, expect, test } from 'bun:test'
 import { createSpeechHandler } from '../door/speech.ts'
-import { AUDIO_ROUTES } from '../routes.pending.ts'
+import { audioRoutes } from '../routes.ts'
+
+const ROUTES = audioRoutes()
 import { createAudioScope } from '../scope.ts'
 import { caught, type FakeIu, hasFfmpeg, prepAnswer, startFakeIu, testDeps, toneFile } from '../testing/index.ts'
 import type { CallEvent, RequestEvent, UsageEvent } from '../usage.ts'
 import { ReplicateSynthError, synthReplicateChunk } from './replicate.ts'
 
-const FLASH = AUDIO_ROUTES['audio.tts.elevenlabs-flash'].model
-const V3 = AUDIO_ROUTES['audio.tts.elevenlabs-v3'].model
+const FLASH = ROUTES['audio.tts.elevenlabs-flash'].model
+const V3 = ROUTES['audio.tts.elevenlabs-v3'].model
 const DELIVERY_URL = 'https://abc.replicate.delivery/out.mp3'
 
 let mp3: Uint8Array<ArrayBuffer>
@@ -134,7 +136,7 @@ describe.skipIf(!hasFfmpeg)('replicate lane', () => {
     expect((chat?.json as { messages: Array<{ content: string }> } | undefined)?.messages[0]?.content).toContain(
       'what should be SPOKEN aloud',
     )
-    expect(chat?.json?.model).toBe(AUDIO_ROUTES['audio.tts.summary'].model)
+    expect(chat?.json?.model).toBe(ROUTES['audio.tts.summary'].model)
     expect(predictionInputs()).toHaveLength(1)
     expect(summary(deps.usage.events)?.mode).toBe('summary')
   })

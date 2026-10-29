@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { AUDIO_ROUTES } from '../routes.pending.ts'
+import { audioRoutes } from '../routes.ts'
+
+const ROUTES = audioRoutes()
 import {
   audioEvent,
   type FakeIu,
@@ -14,8 +16,8 @@ import type { RequestEvent, UsageEvent } from '../usage.ts'
 import { createSpeechHandler } from './speech.ts'
 import { createTranscriptionsHandler } from './transcriptions.ts'
 
-const LITE = AUDIO_ROUTES['audio.tts.gemini-flash-lite'].model
-const VOXTRAL = AUDIO_ROUTES['audio.stt.voxtral-mini'].model
+const LITE = ROUTES['audio.tts.gemini-flash-lite'].model
+const VOXTRAL = ROUTES['audio.stt.voxtral-mini'].model
 
 let iu: FakeIu
 let door: ReturnType<typeof Bun.serve> | undefined

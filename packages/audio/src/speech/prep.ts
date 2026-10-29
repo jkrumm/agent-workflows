@@ -1,5 +1,5 @@
 import { errorMessage, iuHeaders, rawFetch } from '../http.ts'
-import { AUDIO_DEFAULT_ROUTES } from '../routes.pending.ts'
+import { AUDIO_DEFAULT_ROUTES } from '../routes.ts'
 import type { AudioScope } from '../scope.ts'
 import { measureFromOpenAiUsage } from '../usage.ts'
 import { DELIVERY_KEYS, DELIVERY_STYLES, type PrepResult, parsePrepResponse, SPEECH_TAGS } from './core.ts'

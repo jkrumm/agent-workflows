@@ -1,5 +1,5 @@
 import { errorMessage } from '../http.ts'
-import { AUDIO_DEFAULT_ROUTES } from '../routes.pending.ts'
+import { AUDIO_DEFAULT_ROUTES } from '../routes.ts'
 import { type AudioDeps, AudioScope, resolveDeps } from '../scope.ts'
 import {
   PartFailure,
@@ -24,7 +24,7 @@ const isOk = (status: number): boolean => status >= 200 && status < 300
  * name IU lists but does not serve here, a realtime-only model, a typo) is the default.
  */
 export function resolveSttRoute(scope: AudioScope, requested: string): { routeId: string; overridden: boolean } {
-  const routeId = scope.routeIdForModel(requested, ['iu-openai-stt'])
+  const routeId = scope.routeIdForModel(requested, ['stt'])
   if (routeId) return { routeId, overridden: false }
   return { routeId: AUDIO_DEFAULT_ROUTES.stt, overridden: requested.length > 0 }
 }
@@ -185,7 +185,7 @@ async function dispatchTranscription(scope: AudioScope, req: Request): Promise<R
   let result: AttemptResult
   const joined = parts.length > 1
   if (joined) {
-    const fallbackRouteId = scope.route(routeId).fallback ?? null
+    const fallbackRouteId = scope.route(routeId).sttFallback ?? null
     try {
       const { text, usedFallback } = await transcribeParts(scope, {
         parts,
@@ -204,7 +204,7 @@ async function dispatchTranscription(scope: AudioScope, req: Request): Promise<R
     }
   } else {
     result = await attemptSingle(routeId)
-    const fallback = scope.route(routeId).fallback
+    const fallback = scope.route(routeId).sttFallback
     if (!isOk(result.status) && !result.final && isModelUnavailable(result.status) && fallback) {
       scope.log.warn('stt upstream unavailable; retrying on fallback', {
         model: scope.route(routeId).model,
@@ -238,7 +238,7 @@ async function dispatchTranscription(scope: AudioScope, req: Request): Promise<R
     })
   }
 
-  // A collapsed chunk can echo the prompt verbatim. Stripped from the text we build responses from; whisper's raw rich
+  // A collapsed chunk can echo the prompt verbatim. Stripped from the text we build responses from; Whisper's raw rich
   // bodies below stay untouched (stripping inside SRT/VTT framing would corrupt the cues).
   const text = stripPromptEcho(result.text, scope.config.sttPrompt)
   if (text !== result.text)
