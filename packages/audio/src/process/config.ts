@@ -11,7 +11,7 @@ export interface AudioProcessConfig extends ProcessConfig {
    * sharing one `gate.json` would overwrite each other's address and key.
    */
   stateDir: string
-  /** `name=token` lines, mode 0600 (`AGW_DOOR_TOKENS`, default `~/.agent-workflows/data/door-tokens`). */
+  /** `name=token` lines, mode 0600 (`AGW_DOOR_CALLERS_FILE`, default `~/.agent-workflows/data/door-tokens`). */
   doorTokensFile: string
 }
 
@@ -21,7 +21,7 @@ export function loadAudioProcessConfig(env: Env): AudioProcessConfig {
   const base = readProcessConfig(env, { name: 'AGW_AUDIO_PORT', fallback: AUDIO_PORT }, problems)
   const home = env.HOME?.trim() || homedir()
   const stateDir = env.AGW_AUDIO_STATE_DIR?.trim() || join(home, '.local', 'state', 'agent-workflows-audio')
-  const doorTokensFile = env.AGW_DOOR_TOKENS?.trim() || join(home, '.agent-workflows', 'data', 'door-tokens')
+  const doorTokensFile = env.AGW_DOOR_CALLERS_FILE?.trim() || join(home, '.agent-workflows', 'data', 'door-tokens')
   assertNoProblems(problems)
   return { ...base, stateDir, doorTokensFile }
 }

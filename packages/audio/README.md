@@ -187,7 +187,7 @@ Hermes' stock OpenAI TTS and STT clients never call it.
 ### Caller auth
 
 The process binds 127.0.0.1, so a caller is a process on this machine. It presents `Authorization: Bearer <token>`
-from the caller-token file `~/.agent-workflows/data/door-tokens` (`AGW_DOOR_TOKENS`): `name=token` lines, a regular
+from the caller-token file `~/.agent-workflows/data/door-tokens` (`AGW_DOOR_CALLERS_FILE`): `name=token` lines, a regular
 file of the user at mode 0600, names `[a-z][a-z0-9-]*`, tokens at least 32 characters and distinct. `make deploy`
 creates it with one `hermes` token if it is missing and never touches an existing one. The platform's API secret is
 accepted too, as the caller `agw` (`make verify`, the eval harness): it already grants the whole API. A missing,
