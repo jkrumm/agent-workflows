@@ -2,6 +2,7 @@ import type { createCapabilities, Registry } from '@agent-workflows/capabilities
 import type { AgentRef } from '@agent-workflows/middleware'
 import { createLearningsWorkflows, type LearningsStore } from '../learnings/index.ts'
 import type { HostWorkflow } from '../operations.ts'
+import type { ToolGate } from '../tool-gate/index.ts'
 import { createCheckWorkflows } from './check/index.ts'
 import { createRetrospective } from './retrospective/index.ts'
 import type { GhPort } from './retrospective/gh.ts'
@@ -23,7 +24,9 @@ export interface WorkflowDeps {
   retro?: { journal: JournalReader; learnings: LearningsStore; gh?: GhPort; tracked?: () => Promise<TrackedPaths> }
   /** Where research's tool gate records every call (Postgres on the host); absent: in memory. */
   research?: { ledger: ToolLedger }
-  /** Registers what the host must close on shutdown (research's tool gate). */
+  /** The host's one tool gate: a workflow that gives its agent tools opens a grant on it. Absent: research builds its own. */
+  toolGate?: ToolGate
+  /** Registers what the host must close on shutdown. */
   onClose?: (close: () => void | Promise<void>) => void
 }
 

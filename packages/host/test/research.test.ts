@@ -5,12 +5,13 @@ import { join } from 'node:path'
 import type { Json, ScoreJudge } from '@agent-workflows/runtime'
 import { FakeAgentHost, type FakeSession } from '@agent-workflows/runtime/testing'
 import type { HostRegistry } from '../src/workflows/index.ts'
-import { evidence, MAX_BODY_BYTES, ToolGate } from '../src/workflows/research/gate.ts'
+import { MAX_BODY_BYTES, ToolGate } from '../src/tool-gate/index.ts'
 import { matchExpect } from '../src/workflows/research/golden.ts'
 import { assemble, createResearchWorkflows, RESEARCH_VERSION } from '../src/workflows/research/index.ts'
 import { memoryToolLedger, pgToolLedger } from '../src/workflows/research/ledger.ts'
 import { ResearchInput, ResearchOutput, type ResearchResult } from '../src/workflows/research/schema.ts'
 import { researchScorer } from '../src/workflows/research/scorer.ts'
+import { evidence, researchGrant } from '../src/workflows/research/tools.ts'
 import { freshSchema, inspector, testRuntime } from '../../runtime/test/support/pg.ts'
 
 const db = freshSchema('research')
@@ -53,7 +54,6 @@ async function fakeCapability(id: string, input: Json, scope: { addUsage: (u: ne
 const ledger = pgToolLedger(sql.pool, db.schema)
 const gate = new ToolGate({
   stateDir,
-  ledger,
   call: fakeCapability,
   // The fake host's session ids are not OpenCode's: the fake agent sends its step key as the session id.
   belongsTo: (sessionId, stepKey) => sessionId === stepKey,
@@ -61,13 +61,13 @@ const gate = new ToolGate({
 
 /** What the plugin does: POST the tool call with the session id and the key from gate.json. */
 async function callTool(session: FakeSession, tool: string, args: Record<string, Json>) {
-  const { url, key } = (await Bun.file(join(stateDir, 'research', 'gate.json')).json()) as { url: string; key: string }
+  const { url, key } = (await Bun.file(join(stateDir, 'gate.json')).json()) as { url: string; key: string }
   const response = await fetch(`${url}/tool/${tool}`, {
     method: 'POST',
     headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
     body: JSON.stringify({ sessionID: session.root.spec.key, args }),
   })
-  return (await response.json()) as { ok: boolean; result?: Json; error?: string }
+  return (await response.json()) as { ok: boolean; result?: Json; error?: string; code?: string }
 }
 
 const draft = (citations: { claim: string; url: string }[]) =>
@@ -129,7 +129,7 @@ describe('research workflow on a fake host', () => {
         callTool(s, 'web_crawl', { url: PG_DOCS }),
       ])
       expect(results.map((r) => r.ok)).toEqual([true, true, true, true, false, false])
-      expect(results[5]?.error).toBe('no tool web_crawl')
+      expect(results[5]?.error).toBe('web_crawl is not granted to this agent')
       return {
         output: draft([
           { claim: 'default 5432', url: `${PG_DOCS}#port` },
@@ -207,13 +207,14 @@ describe('research workflow on a fake host', () => {
   })
 
   test('a session without a grant is refused, and so is a wrong key', async () => {
-    const { url } = (await Bun.file(join(stateDir, 'research', 'gate.json')).json()) as { url: string }
+    const { url } = (await Bun.file(join(stateDir, 'gate.json')).json()) as { url: string }
     const noKey = await fetch(`${url}/tool/web_search`, { method: 'POST', body: '{}' })
     expect(noKey.status).toBe(401)
     const fake = { root: { spec: { key: 'nobody:research' } } } as unknown as FakeSession
     expect(await callTool(fake, 'web_search', { query: 'x' })).toEqual({
       ok: false,
-      error: 'this session holds no research grant',
+      error: 'this session holds no tool grant',
+      code: 'no_grant',
     })
   })
 })
@@ -559,7 +560,7 @@ describe('the tool gate ledger: the evidence the grounding rule rests on', () =>
   })
 
   test('a body over the byte cap is refused before it is buffered, by its length or while it streams', async () => {
-    const { url, key } = (await Bun.file(join(stateDir, 'research', 'gate.json')).json()) as {
+    const { url, key } = (await Bun.file(join(stateDir, 'gate.json')).json()) as {
       url: string
       key: string
     }
@@ -607,19 +608,26 @@ describe('the tool gate ledger: the evidence the grounding rule rests on', () =>
     const errors: string[] = []
     const own = new ToolGate({
       stateDir: dir,
-      ledger: {
+      call: fakeCapability,
+      belongsTo: (sessionId, stepKey) => sessionId === stepKey,
+    })
+    const failing = researchGrant(
+      {
         append: () => Promise.reject(new Error('database down')),
         read: () => Promise.resolve([]),
         run: () => Promise.resolve(null),
         hasJournal: true,
       },
-      call: fakeCapability,
-      belongsTo: (sessionId, stepKey) => sessionId === stepKey,
-      logger: { warn: () => {}, error: (m) => errors.push(m) },
+      { warn: () => {}, error: (m) => errors.push(m) },
+    )
+    const close = own.open({
+      runId: 'r-ledger',
+      stepId: 'research',
+      ...failing,
+      tools: { web_search: 'web.search' },
     })
-    const close = own.open({ runId: 'r-ledger', stepId: 'research', tools: ['web_search'] })
     try {
-      const { url, key } = (await Bun.file(join(dir, 'research', 'gate.json')).json()) as { url: string; key: string }
+      const { url, key } = (await Bun.file(join(dir, 'gate.json')).json()) as { url: string; key: string }
       const response = await fetch(`${url}/tool/web_search`, {
         method: 'POST',
         headers: { authorization: `Bearer ${key}` },
@@ -640,7 +648,6 @@ describe('the tool gate ledger: the evidence the grounding rule rests on', () =>
     const started = Promise.withResolvers<void>()
     const own = new ToolGate({
       stateDir: dir,
-      ledger: memory,
       call: async (id, input, scope) => {
         started.resolve() // the gate holds this call in flight from here on
         await Bun.sleep(300)
@@ -648,10 +655,15 @@ describe('the tool gate ledger: the evidence the grounding rule rests on', () =>
       },
       belongsTo: (sessionId, stepKey) => sessionId === stepKey,
     })
-    const close = own.open({ runId: 'r-drain', stepId: 'research', tools: ['web_search'] })
+    const close = own.open({
+      runId: 'r-drain',
+      stepId: 'research',
+      ...researchGrant(memory),
+      tools: { web_search: 'web.search' },
+    })
     let pending: Promise<unknown> = Promise.resolve()
     try {
-      const { url, key } = (await Bun.file(join(dir, 'research', 'gate.json')).json()) as { url: string; key: string }
+      const { url, key } = (await Bun.file(join(dir, 'gate.json')).json()) as { url: string; key: string }
       // Settled inside this test either way: a reset left over must not fail the next one.
       pending = fetch(`${url}/tool/web_search`, {
         method: 'POST',
@@ -674,14 +686,14 @@ describe('the tool gate ledger: the evidence the grounding rule rests on', () =>
 
   test("close removes gate.json only while it holds this instance's key", async () => {
     const dir = mkdtempSync(join(tmpdir(), 'agw-gate-own-'))
-    const file = join(dir, 'research', 'gate.json')
-    const first = new ToolGate({ stateDir: dir, ledger, call: fakeCapability })
+    const file = join(dir, 'gate.json')
+    const first = new ToolGate({ stateDir: dir, call: fakeCapability })
     first.ensureServing()
-    const bystander = new ToolGate({ stateDir: dir, ledger, call: fakeCapability })
+    const bystander = new ToolGate({ stateDir: dir, call: fakeCapability })
     await bystander.close()
     expect(await Bun.file(file).exists()).toBe(true)
     // A later host took the file over: the first one's close leaves it alone.
-    const later = new ToolGate({ stateDir: dir, ledger, call: fakeCapability })
+    const later = new ToolGate({ stateDir: dir, call: fakeCapability })
     later.ensureServing()
     await first.close()
     expect(await Bun.file(file).exists()).toBe(true)
@@ -692,9 +704,9 @@ describe('the tool gate ledger: the evidence the grounding rule rests on', () =>
 
   test('close stops the gate and removes gate.json', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'agw-gate-close-'))
-    const own = new ToolGate({ stateDir: dir, ledger, call: fakeCapability })
+    const own = new ToolGate({ stateDir: dir, call: fakeCapability })
     own.ensureServing()
-    const file = join(dir, 'research', 'gate.json')
+    const file = join(dir, 'gate.json')
     expect(await Bun.file(file).exists()).toBe(true)
     await own.close()
     expect(await Bun.file(file).exists()).toBe(false)

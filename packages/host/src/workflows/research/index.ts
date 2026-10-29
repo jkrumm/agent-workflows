@@ -1,14 +1,15 @@
 import { parseJsonLoose } from '@agent-workflows/capabilities'
 import { DEFAULT_STATE_DIR } from '@agent-workflows/opencode-host'
-import { type Ctx, defineWorkflow, type Json, WorkflowError } from '@agent-workflows/runtime'
+import { type Ctx, defineWorkflow, type Json, type Logger, WorkflowError } from '@agent-workflows/runtime'
 import { z } from 'zod'
 import type { HostWorkflow } from '../../operations.ts'
+import { type CapabilityCall, ToolGate } from '../../tool-gate/index.ts'
 import type { WorkflowDeps } from '../index.ts'
-import { type CapabilityCall, evidence, GATE_TOOLS, normalizeUrl, ToolGate } from './gate.ts'
 import { memoryToolLedger, type ToolLedger } from './ledger.ts'
 import { type EarlierResearch, JSON_ONLY_REASK, researchTask } from './prompts.ts'
 import { Citation, Draft, ResearchInput, ResearchOutput, type ResearchResult } from './schema.ts'
 import { researchScorer } from './scorer.ts'
+import { evidence, normalizeUrl, researchGrant } from './tools.ts'
 
 export const RESEARCH_VERSION = '2026-10-29.1'
 
@@ -20,9 +21,12 @@ const PARTIAL_DROP_SHARE = 0.1
 
 export type ResearchOptions = {
   stateDir?: string
+  /** The host's tool gate; default `deps.toolGate`, else one of its own on `stateDir`. */
   gate?: ToolGate
   /** Where the gate records every call; default the host's (`deps.research.ledger`), else in memory. */
   ledger?: ToolLedger
+  /** Where a failed ledger write is logged. */
+  logger?: Logger
   /** Wait before the agent step's second attempt. Default 1 s. */
   agentBackoffMs?: number
 }
@@ -125,18 +129,21 @@ async function untilAborted(done: Promise<void>, signal: AbortSignal): Promise<v
 }
 
 export function createResearchWorkflows(deps: WorkflowDeps, options: ResearchOptions = {}): HostWorkflow[] {
-  const stateDir = options.stateDir ?? DEFAULT_STATE_DIR
-  // The gate calls `web.*` by a string id from its tool map (`gate.ts` CAPABILITY), so the typed ids are widened here.
-  const registry = deps.registry as unknown as { call: CapabilityCall }
   const ledger = options.ledger ?? deps.research?.ledger ?? memoryToolLedger()
-  const gate =
-    options.gate ??
-    new ToolGate({
-      stateDir,
-      ledger,
+  const grant = researchGrant(ledger, options.logger)
+  let gate = options.gate ?? deps.toolGate
+  if (!gate) {
+    // A host that built no gate (tests): research opens one of its own and closes it with the host.
+    // The gate calls `web.*` by a string id from the tool map (`tools.ts`), so the typed ids are widened here.
+    const registry = deps.registry as unknown as { call: CapabilityCall }
+    const own = new ToolGate({
+      stateDir: options.stateDir ?? DEFAULT_STATE_DIR,
       call: (id, input, scope) => registry.call(id, input, scope),
     })
-  deps.onClose?.(() => gate.close())
+    deps.onClose?.(() => own.close())
+    gate = own
+  }
+  const toolGate = gate
 
   /**
    * The finished research run a follow-up continues: its question, report and citations, and the URLs a new citation
@@ -177,7 +184,7 @@ export function createResearchWorkflows(deps: WorkflowDeps, options: ResearchOpt
   async function runAgent(ctx: Ctx, input: z.output<typeof ResearchInput>): Promise<ResearchResult> {
     const runId = ctx.runId
     const followed = input.followUp ? await loadEarlier(ctx, input.followUp) : undefined
-    const close = gate.open({ runId, stepId: 'research', tools: GATE_TOOLS })
+    const close = toolGate.open({ runId, stepId: 'research', ...grant })
     let agentEnded!: () => void
     const ended = new Promise<void>((resolve) => {
       agentEnded = resolve
@@ -187,7 +194,7 @@ export function createResearchWorkflows(deps: WorkflowDeps, options: ResearchOpt
     let teardown: Promise<void> | undefined
     const endAgent = (drain = !ctx.signal.aborted) => {
       agentEnded()
-      teardown ??= (drain ? gate.settle(runId, 'research') : Promise.resolve()).then(close)
+      teardown ??= (drain ? toolGate.settle(runId, 'research') : Promise.resolve()).then(close)
       return teardown
     }
     let toolsBound!: () => void
@@ -200,7 +207,7 @@ export function createResearchWorkflows(deps: WorkflowDeps, options: ResearchOpt
       // a cancelled or failed run keeps its spend (the step records its usage whatever its end). Its output is the
       // evidence from the ledger, read once the agent has ended and every call in flight is served.
       const tools = ctx.step('tools', async ({ addUsage, signal }) => {
-        const unbind = gate.bindUsage(runId, 'research', addUsage)
+        const unbind = toolGate.bindUsage(runId, 'research', addUsage)
         toolsBound()
         try {
           await untilAborted(ended, signal)

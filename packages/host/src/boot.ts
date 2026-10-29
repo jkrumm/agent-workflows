@@ -8,7 +8,7 @@ import {
   JournalDb,
   platformMiddleware,
 } from '@agent-workflows/middleware'
-import { basePolicyDigest, OpenCodeHost, OpenCodeServer } from '@agent-workflows/opencode-host'
+import { basePolicyDigest, DEFAULT_STATE_DIR, OpenCodeHost, OpenCodeServer } from '@agent-workflows/opencode-host'
 import { validateOverrides } from '@agent-workflows/routes'
 import { type AgentHost, type Json, Runtime } from '@agent-workflows/runtime'
 import { resolve } from 'node:path'
@@ -32,6 +32,7 @@ import { pgJournalReader } from './workflows/retrospective/sample.ts'
 import { startRetroSchedule } from './workflows/retrospective/schedule.ts'
 import { listTrackedFiles, type TrackedPaths } from './workflows/retrospective/tracked.ts'
 import { scorerJudge } from './judge.ts'
+import { type CapabilityCall, ToolGate } from './tool-gate/index.ts'
 import { pgToolLedger } from './workflows/research/ledger.ts'
 import { wireEval } from './workflows/eval/index.ts'
 import { createWorkflows, fingerprintWorkflows } from './workflows/index.ts'
@@ -218,8 +219,16 @@ export async function boot(config: HostConfig, options: BootOptions = {}): Promi
     })
     ledgerPool.on('error', (err) => console.warn('[agw-host] research ledger pool: idle connection error', err.message))
     closers.push(() => ledgerPool.end())
+    // One tool gate per process: every workflow that gives an agent tools opens its grants on it.
+    const gateCalls = registry as unknown as { call: CapabilityCall }
+    const toolGate = new ToolGate({
+      stateDir: DEFAULT_STATE_DIR,
+      call: (id, input, scope) => gateCalls.call(id, input, scope),
+    })
+    closers.push(() => toolGate.close())
     const workflows = createWorkflows({
       registry,
+      toolGate,
       retro: { journal, learnings, gh, tracked },
       research: { ledger: pgToolLedger(ledgerPool, config.schema) },
       onClose: (close) => closers.push(async () => close()),

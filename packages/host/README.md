@@ -202,17 +202,13 @@ agent's `tools` counts. `--depth` defaults to `standard`. A long run waits like 
 (`docs/research/2026-10-28-research-three-way.md`: one agent with the platform's web tools); the other arms are gone.
 
 - **The agent** (`agents/research`, route `research.agent`) runs on the shared OpenCode server. Its four tools
-  (`web_search`, `web_fetch`, `web_docs`, `web_package`) are a plugin forwarding to the **tool gate** (`gate.ts`): a
-  loopback server in the host process that runs the `web.*` capabilities only for a session of a running, granted
-  research step. Its key is per process, in `<stateDir>/research/gate.json` (0600), outside every location; it is not
-  the API secret and opens nothing but these tools. A call's cost is booked as it is reported on the run's `tools`
-  step, which lives as long as the agent's turns (a cancelled or failed run keeps its spend). Its evidence is written
-  apart to `research_tool_calls` (migration 0007; rows go with their run; in memory on a host without a
-  database), so a step retry or a host restart loses nothing; `tools` reads it once the grant has drained (at the
-  agent's end, calls in flight are served first, bounded). A ledger write is retried and logged and never fails a call
-  that worked. The server has no idle timeout (a capability call may outlast Bun's default 10 s cut; the grant's
-  abort ends it), caps a body at 64 KiB before buffering, and is closed with the host (`gate.json` removed while it
-  still holds this host's key).
+  (`web_search`, `web_fetch`, `web_docs`, `web_package`) go through the host's **tool gate** (§Tool gate) with a
+  grant `src/workflows/research/tools.ts` builds (`researchGrant`): the four tools mapped to the `web.*` capabilities,
+  and a hook that writes every call's evidence apart to `research_tool_calls` (migration 0007; rows go with their
+  run; in memory on a host without a database), so a step retry or a host restart loses nothing. A call's cost is
+  booked as it is reported on the run's `tools` step, which lives as long as the agent's turns (a cancelled or failed
+  run keeps its spend); `tools` reads the ledger once the grant has drained (at the agent's end, calls in flight are
+  served first, bounded). A ledger write is retried (three attempts) and logged and never fails a call that worked.
 - **Unused columns.** `research_tool_calls.engine_job`, `engine_cost` and `booked_by` (migration 0008) and the
   partial unique index on them stay in the table: nullable, never written or read by this code. The previous release,
   the rollback target of a failed deploy, still uses them; they are dropped by a later migration once no rollback
@@ -242,6 +238,42 @@ agent's `tools` counts. `--depth` defaults to `standard`. A long run waits like 
 - **Scorer** (`scorer.ts`): `valid`, `complete`, `grounded` (code), `golden` (the case's `expect`, research-gateway
   `evals/lib.ts` semantics; `live:` via `web.package`), `supported` (judged: `web.fetch` + `decide` on up to 3 cited
   pages), `judgedShare`. Cases are plain eval cases in `$AGW_EVAL_DIR/research/cases.jsonl`.
+
+## Tool gate
+
+`src/tool-gate/` is how an agent reaches the platform without a shell. One `ToolGate` per host process, built in
+`boot` and handed to workflows as `WorkflowDeps.toolGate`; research is its first caller, `otel` and `brain` open
+grants on it with their own tools.
+
+- **Why a gate.** An agent reading untrusted input (web pages, logs, notes) must not hold a shell, and a shell reaches
+  the host's full API secret on disk. The gate is a loopback `Bun.serve` (no idle timeout: a capability call may
+  outlast Bun's 10 s cut; the grant's abort ends it) whose only verbs are the tools of a grant, only for the sessions
+  of a step that is running now. Its key is per process, in `<stateDir>/gate.json` (0600), outside every location (the
+  sessions deny `external_directory`); it is not the API secret and opens nothing but these tools. `close` removes the
+  file only while it still holds this host's key, never another host's.
+- **A grant** (`gate.open({ runId, stepId, tools, onCall? })`, returns the close) carries its own tool set: a map of
+  tool name to capability id, and an optional hook the workflow supplies. A call is `POST /tool/<name>` with
+  `{sessionID, args}` and the bearer key; the session resolves to its step's grant by the OpenCode host's
+  deterministic session ids (`isStepSession`), so a run's session never reaches another run's grant. A tool outside
+  that grant is refused (`403`, `code: 'not_granted'`) before any capability or hook is reached; a session with no
+  grant is `no_grant`; the other refusals are `unauthorized`, `not_found`, `too_large` (64 KiB, checked before
+  anything is buffered) and `bad_request`. Every answer is `{ok, result}` or `{ok: false, error, code?}`.
+- **Usage and evidence are kept apart.** The capability's usage is booked on the granting step as it is reported
+  (`bindUsage(runId, stepId, addUsage)`; held until bound, returns the unbind). The `onCall` hook is told each
+  call's arguments and outcome and records the workflow's own evidence; one that throws is logged and the call stands.
+  A hook runs inside the call's in-flight window.
+- **Settle and close.** `settle(runId, stepId)` waits (bounded, 10 s) for the step's calls in flight, hook included,
+  so a last call books its cost and writes its row before the step reads them. The close of a grant aborts what is
+  still in flight, awaits it (bounded) and revokes: a later call is `no_grant`. Call it in a `finally`. A second grant
+  for the same step (a resumed run) replaces the first.
+- **The plugin.** An agent's tools are an OpenCode plugin in its location (`agents/<name>/plugins/agw-tools.ts`)
+  that forwards each call to the gate. `agents/research/plugins/agw-tools.ts` is the template: copy it, change `id`
+  and the `TOOLS` table (name, description, input schema), nothing else; the gate's address and key are found at
+  `../../../../../gate.json` from the file (`<stateDir>/gate.json`), one mechanism for every agent. The plugin is not
+  shared as one module: `loadAgentDefinitions` reads only `agents/<name>/plugins/**` and `compileLocation` writes only
+  that into the location, so a shared file would need a loader change (and a copy step into each content-hashed
+  location); the forwarding is ~15 lines, kept per agent. An agent's `agent.json` lists the same tool names as
+  `allow` permissions.
 
 ## Process
 
