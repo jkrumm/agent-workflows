@@ -4,8 +4,8 @@
 help:
 	@echo "make check   format, lint, oxlint type-aware, tsc, bun test (the merge gate)"
 	@echo "make fmt     apply formatting"
-	@echo "make deploy  deploy origin/master on the mini: clone, LaunchAgent, health, agw on PATH (DRY_RUN=1 prints the plan)"
-	@echo "make verify  prove the deployment: health, sha, a real agw smoke ping and its journal row"
+	@echo "make deploy  deploy origin/master on the mini: release, both LaunchAgents (host, audio), health, agw on PATH (DRY_RUN=1 prints the plan)"
+	@echo "make verify  prove the deployment: both healths at the sha, agw smoke ping and audio ping with their journal rows, the door's auth"
 
 # docs/spikes/** is excluded from every tool (see biome.json, .oxlintrc.json, tsconfig.json, bunfig.toml).
 # Tests need Postgres via AGW_TEST_PG_URL; unset on the mini, it is built from .env.test.tpl through secrets-run.

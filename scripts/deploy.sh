@@ -11,7 +11,11 @@
 # and the deploy exits 1. The plist points at the release path, not at `current`: the plist is then the single
 # statement of what runs, and a swap of the symlink can never change a running host's code underneath it.
 #
-# DRY_RUN=1 prints the plan and the rendered plist and touches nothing (no fetch, no launchd, no ~/.local/bin).
+# Every platform process (concept §8) is a LaunchAgent of its own, all from the same release: the host and the audio
+# process are stopped, started and awaited (each /health at the sha) together, and rolled back together. A previous
+# release without a process's plist template (it predates the process) rolls that process back to booted out.
+#
+# DRY_RUN=1 prints the plan and every rendered plist and touches nothing (no fetch, no launchd, no ~/.local/bin).
 #
 # Everything lives inside `main`, called on the last line: this file is tracked in the repo the deploy exports, and
 # zsh parses a function body as one unit at definition time. After the release is built `main` re-executes that
@@ -19,7 +23,11 @@
 
 set -u
 
-LABEL="com.jkrumm.agent-workflows-host"
+# The processes, in start order. Each: a LaunchAgent label, a port, `deploy/<label>.plist.template` and its logs.
+PROCESSES=(host audio)
+typeset -A LABELS PORTS
+LABELS=(host com.jkrumm.agent-workflows-host audio com.jkrumm.agent-workflows-audio)
+PORTS=(host 7791 audio 7792)
 ROOT="${AGW_ROOT:-$HOME/.agent-workflows}"
 REPO_DIR="$ROOT/repo"
 RELEASES="$ROOT/releases"
@@ -28,11 +36,8 @@ DATA_DIR="$ROOT/data"
 SHA_FILE="$DATA_DIR/deployed-sha"
 PREV_FILE="$DATA_DIR/previous-sha"
 KEEP_RELEASES=3
-PORT=7791
-HEALTH_URL="http://127.0.0.1:$PORT/health"
-PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
-OUT_LOG="$HOME/Library/Logs/agent-workflows-host.out.log"
-ERR_LOG="$HOME/Library/Logs/agent-workflows-host.err.log"
+PORT="${PORTS[host]}"
+DOOR_TOKENS="$DATA_DIR/door-tokens"
 BIN_DIR="$HOME/.local/bin"
 CLI_LINK="$BIN_DIR/agw"
 ENV_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/agw/env"
@@ -71,54 +76,96 @@ mark_deliberate_restart() {
 }
 
 render_plist() {  # $1 template, $2 release dir, $3 sha -> stdout
-  /usr/bin/sed -e "s|__HOME__|$HOME|g" -e "s|__RELEASE_DIR__|$2|g" -e "s|__SHA__|$3|g" "$1"
+  /usr/bin/sed -e "s|__HOME__|$HOME|g" -e "s|__RELEASE_DIR__|$2|g" -e "s|__SHA__|$3|g" -e "s|__DATA_DIR__|$DATA_DIR|g" "$1"
 }
 
+template_of() { print "$1/deploy/${LABELS[$2]}.plist.template"; }  # $1 release dir, $2 process
+plist_of() { print "$HOME/Library/LaunchAgents/${LABELS[$1]}.plist"; }  # $1 process
+health_url() { print "http://127.0.0.1:${PORTS[$1]}/health"; }  # $1 process
+
 tail_logs() {
-  local f
-  for f in "$ERR_LOG" "$OUT_LOG"; do
-    [[ -f "$f" ]] && { print -u2 "--- tail -n 40 $f"; tail -n 40 "$f" >&2; }
+  local p f
+  for p in $PROCESSES; do
+    for f in "$HOME/Library/Logs/agent-workflows-$p.err.log" "$HOME/Library/Logs/agent-workflows-$p.out.log"; do
+      [[ -f "$f" ]] && { print -u2 "--- tail -n 40 $f"; tail -n 40 "$f" >&2; }
+    done
   done
 }
 
-loaded() { launchctl print "gui/$(id -u)/$LABEL" >/dev/null 2>&1; }
+loaded() { launchctl print "gui/$(id -u)/${LABELS[$1]}" >/dev/null 2>&1; }  # $1 process
 
-# SIGTERM shutdown may take up to the plist's ExitTimeOut before launchd kills the host: wait that long and a bit.
+# SIGTERM shutdown may take up to the plist's ExitTimeOut before launchd kills a process: wait that long and a bit.
 unload_wait_secs() {
   local t
   t=$(plutil -extract ExitTimeOut raw -o - "$1" 2>/dev/null)
   print $(( ${t:-120} + 10 ))
 }
 
-stop_host() {  # $1 max seconds to wait for the unload
-  loaded || return 0
-  mark_deliberate_restart "$LABEL"
-  launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null
+stop_process() {  # $1 process, $2 max seconds to wait for the unload
+  loaded "$1" || return 0
+  mark_deliberate_restart "${LABELS[$1]}"
+  launchctl bootout "gui/$(id -u)/${LABELS[$1]}" 2>/dev/null
   local i=0
-  while (( i < $1 )) && loaded; do sleep 1; i=$((i + 1)); done
-  ! loaded
+  while (( i < $2 )) && loaded "$1"; do sleep 1; i=$((i + 1)); done
+  ! loaded "$1"
 }
 
-start_host() {  # $1 template, $2 release dir, $3 sha
-  local tmp="$PLIST.tmp.$$"
-  if ! { render_plist "$1" "$2" "$3" > "$tmp" && plutil -lint "$tmp" >/dev/null; }; then
-    print -u2 "[deploy] ERROR: rendering the plist failed ($tmp)"
+# Every process stopped (all are tried); fails naming the ones still loaded.
+stop_all() {  # $1 max seconds to wait for each unload
+  local p stuck=()
+  for p in $PROCESSES; do stop_process "$p" "$1" || stuck+=("${LABELS[$p]}"); done
+  (( ${#stuck} == 0 )) || { print -u2 "[deploy] still loaded after ${1}s: ${stuck[*]}"; return 1; }
+}
+
+start_process() {  # $1 process, $2 release dir, $3 sha
+  local plist tmp
+  plist=$(plist_of "$1"); tmp="$plist.tmp.$$"
+  if ! { render_plist "$(template_of "$2" "$1")" "$2" "$3" > "$tmp" && plutil -lint "$tmp" >/dev/null; }; then
+    print -u2 "[deploy] ERROR: rendering the plist of $1 failed ($tmp)"
     return 1
   fi
-  mv -f "$tmp" "$PLIST" && launchctl bootstrap "gui/$(id -u)" "$PLIST"
+  mv -f "$tmp" "$plist" && launchctl bootstrap "gui/$(id -u)" "$plist"
 }
 
-# The host answers /health with its version (AGW_VERSION = the sha it was started for); only that process counts.
-wait_healthy() {  # $1 sha
-  local i=0 body
+# The processes a release has a plist template for: a rollback target may predate a process.
+processes_of() {  # $1 release dir -> process names
+  local p
+  for p in $PROCESSES; do [[ -f "$(template_of "$1" "$p")" ]] && print "$p"; done
+}
+
+# Each process answers /health with its version (AGW_VERSION = the sha it was started for); only those count. One
+# deadline for all of them, so two processes cost no more wait than one.
+wait_healthy() {  # $1 sha, $2... processes
+  local sha=$1; shift
+  local i=0 body p pending=("$@")
   while (( i < HEALTH_WAIT_SECS )); do
-    if body=$(curl -fsS --max-time 2 "$HEALTH_URL" 2>/dev/null) \
-      && [[ "$(print -r -- "$body" | jq -r '.status + " " + .version' 2>/dev/null)" == "ok $1" ]]; then
-      return 0
-    fi
+    local still=()
+    for p in $pending; do
+      if body=$(curl -fsS --max-time 2 "$(health_url "$p")" 2>/dev/null) \
+        && [[ "$(print -r -- "$body" | jq -r '.status + " " + .version' 2>/dev/null)" == "ok $sha" ]]; then
+        continue
+      fi
+      still+=("$p")
+    done
+    pending=("${still[@]}")
+    (( ${#pending} == 0 )) && return 0
     sleep 1; i=$((i + 1))
   done
+  print -u2 "[deploy] not healthy at ${sha[1,12]}: ${pending[*]}"
   return 1
+}
+
+# The door's caller tokens (`name=token`, mode 0600): created once with a hermes token, never overwritten, never printed.
+# The audio process refuses to start without the file (or with a wider mode).
+ensure_door_tokens() {
+  [[ -e "$DOOR_TOKENS" ]] && return 0
+  (
+    umask 077
+    token=$(openssl rand -hex 32) && [[ ${#token} -eq 64 ]] || exit 1
+    tmp="$DOOR_TOKENS.tmp.$$"
+    print -r -- "hermes=$token" > "$tmp" && chmod 600 "$tmp" && mv -f "$tmp" "$DOOR_TOKENS"
+  ) || die "creating $DOOR_TOKENS failed"
+  log "created $DOOR_TOKENS (one hermes token, mode 0600)"
 }
 
 is_sha() { [[ "$1" =~ '^[0-9a-f]{40}$' ]]; }
@@ -161,26 +208,38 @@ prune_releases() {  # $@ shas never to remove
   done
 }
 
-# The new build never became healthy: say so with its log tail, then put the previous release back.
-roll_back() {  # $1 failed sha, $2 previous sha ("" = none), $3 template, $4 unload wait
+# The new build never became healthy: say so with the log tails, then put the previous release back, every process
+# together (one sha live, never a mix).
+roll_back() {  # $1 failed sha, $2 previous sha ("" = none), $3 unload wait
   print -u2 "[deploy] ERROR: ${1[1,12]} did not become healthy within ${HEALTH_WAIT_SECS}s"
   tail_logs
   if [[ -z "$2" ]]; then
-    stop_host "$4" || print -u2 "[deploy] WARNING: could not unload $LABEL"
-    print -u2 "[deploy] no previous release (first deploy or same sha): $LABEL left booted out so KeepAlive does not loop a failing launch. deployed-sha unchanged."
+    stop_all "$3" || print -u2 "[deploy] WARNING: could not unload every process"
+    print -u2 "[deploy] no previous release (first deploy or same sha): every process left booted out so KeepAlive does not loop a failing launch. deployed-sha unchanged."
     return 0
   fi
   print -u2 "[deploy] rolling back to ${2[1,12]}"
-  if ! stop_host "$4"; then
-    print -u2 "[deploy] ROLLBACK FAILED: $LABEL did not unload within ${4}s"
+  if ! stop_all "$3"; then
+    print -u2 "[deploy] ROLLBACK FAILED: not every process unloaded within ${3}s"
     return 0
   fi
-  if start_host "$3" "$RELEASES/$2" "$2" && wait_healthy "$2"; then
-    print -u2 "[deploy] rollback OK: ${2[1,12]} is healthy again. deployed-sha unchanged."
+  local p back=() started=()
+  back=( ${(f)"$(processes_of "$RELEASES/$2")"} )
+  for p in $PROCESSES; do (( ${back[(Ie)$p]} )) || print -u2 "[deploy] ${2[1,12]} has no $p process: ${LABELS[$p]} left booted out"; done
+  for p in $back; do start_process "$p" "$RELEASES/$2" "$2" && started+=("$p"); done
+  if (( ${#started} == ${#back} )) && wait_healthy "$2" "${back[@]}"; then
+    print -u2 "[deploy] rollback OK: ${2[1,12]} is healthy again (${back[*]}). deployed-sha unchanged."
   else
-    stop_host "$4"
-    print -u2 "[deploy] ROLLBACK FAILED: ${2[1,12]} did not become healthy either; $LABEL left booted out."
+    stop_all "$3"
+    print -u2 "[deploy] ROLLBACK FAILED: ${2[1,12]} did not become healthy either; every process left booted out."
   fi
+}
+
+# The CLI's process list (`AGW_PROCESSES`, packages/cli README): every process but the host.
+processes_env() {
+  local p entries=()
+  for p in $PROCESSES; do [[ "$p" == host ]] || entries+=("$p=http://127.0.0.1:${PORTS[$p]}"); done
+  print -r -- "AGW_PROCESSES=${(j:,:)entries}"
 }
 
 write_env_file() {  # $1 content
@@ -194,11 +253,11 @@ write_env_file() {  # $1 content
 }
 
 main() {
-  local repo_url sha old prev="" release template unload_secs env_content
+  local repo_url sha old prev="" release unload_secs env_content p
 
   # --- preflight: everything that can refuse does so before anything is built, stopped or written
   local tool
-  for tool in git bun curl jq secrets-run launchctl plutil tar; do
+  for tool in git bun curl jq secrets-run launchctl plutil tar openssl; do
     command -v "$tool" >/dev/null 2>&1 || die "$tool not found on PATH"
   done
   if [[ -e "$CLI_LINK" && ! -L "$CLI_LINK" ]]; then
@@ -213,7 +272,7 @@ main() {
     local secret
     secret=$(secrets-run read "$API_SECRET_REF" 2>/dev/null)
     [[ -n "$secret" ]] || die "cannot read $API_SECRET_REF through secrets-run (seed it: make secrets-seed on the MacBook); nothing was changed"
-    env_content="AGW_URL=http://127.0.0.1:$PORT"$'\n'"AGW_API_SECRET=$secret"
+    env_content="AGW_URL=http://127.0.0.1:$PORT"$'\n'"AGW_API_SECRET=$secret"$'\n'"$(processes_env)"
   fi
 
   if [[ -n "$DRY_RUN" ]]; then
@@ -222,26 +281,35 @@ main() {
     old=$(read_sha "$SHA_FILE")
     [[ -n "$old" && "$old" != "$sha" && -f "$RELEASES/$old/.complete" ]] && prev="$old"
     release="$RELEASES/$sha"
-    log "DRY RUN: nothing is changed. Release ${sha[1,12]}, live ${old:-none}, label $LABEL"
+    log "DRY RUN: nothing is changed. Release ${sha[1,12]}, live ${old:-none}, processes: ${PROCESSES[*]}"
     log "preflight: would read $API_SECRET_REF through secrets-run (value never printed)"
     [[ -d "$REPO_DIR/.git" ]] || act git clone "${repo_url:-<origin url>}" "$REPO_DIR"
     act git -C "$REPO_DIR" fetch --prune origin master
     act "git -C $REPO_DIR archive $sha | tar -x -C $release   (the live release is never written to)"
     act bun install --frozen-lockfile "(in $release)"
     act "re-exec $release/scripts/deploy.sh once, pinned to $sha"
-    log "rendered $PLIST (points at the release, not at current):"
-    render_plist "$repo_root/deploy/$LABEL.plist.template" "$release" "$sha"
-    act launchctl bootout "gui/$(id -u)/$LABEL" "(wait up to $(unload_wait_secs "$repo_root/deploy/$LABEL.plist.template")s for the unload, ExitTimeOut + 10)"
-    act launchctl bootstrap "gui/$(id -u)" "$PLIST"
-    act "wait up to ${HEALTH_WAIT_SECS}s for $HEALTH_URL = ok, version $sha"
-    if [[ -n "$prev" ]]; then
-      act "on failure: print the log tail, bootout, re-render for ${prev[1,12]}, bootstrap, wait for its version, exit 1"
+    if [[ -e "$DOOR_TOKENS" ]]; then
+      log "$DOOR_TOKENS exists: kept as is"
     else
-      act "on failure: print the log tail, bootout (no previous release: left booted out, not crash-looping), exit 1"
+      act "create $DOOR_TOKENS (mode 0600, one line hermes=<64 hex from openssl rand>, never printed)"
+    fi
+    for p in $PROCESSES; do
+      log "rendered $(plist_of "$p") (points at the release, not at current):"
+      render_plist "$(template_of "$repo_root" "$p")" "$release" "$sha"
+    done
+    act "launchctl bootout every process (${LABELS[host]} ${LABELS[audio]}), waiting up to $(unload_wait_secs "$(template_of "$repo_root" host)")s for each unload (ExitTimeOut + 10)"
+    for p in $PROCESSES; do act launchctl bootstrap "gui/$(id -u)" "$(plist_of "$p")"; done
+    local urls=()
+    for p in $PROCESSES; do urls+=("$(health_url "$p")"); done
+    act "wait up to ${HEALTH_WAIT_SECS}s for every /health (${urls[*]}) = ok, version $sha"
+    if [[ -n "$prev" ]]; then
+      act "on failure: print every log tail, bootout every process, re-render each process ${prev[1,12]} has a template for, bootstrap, wait for its version, exit 1"
+    else
+      act "on failure: print every log tail, bootout every process (no previous release: left booted out, not crash-looping), exit 1"
     fi
     act ln -sfn "$release" "$CURRENT"
     [[ -n "$old" && "$old" != "$sha" ]] && act "write $PREV_FILE ($old)"
-    act "write $ENV_FILE (mode 0600; AGW_URL=http://127.0.0.1:$PORT, AGW_API_SECRET=<redacted>)"
+    act "write $ENV_FILE (mode 0600; AGW_URL=http://127.0.0.1:$PORT, AGW_API_SECRET=<redacted>, $(processes_env))"
     act ln -sf "$CURRENT/packages/cli/bin/agw.ts" "$CLI_LINK"
     act "write $SHA_FILE ($sha)"
     act "prune releases beyond the newest $KEEP_RELEASES (never ${sha[1,12]} or ${old:+${old[1,12]}})"
@@ -280,25 +348,29 @@ main() {
     AGW_DEPLOY_REEXEC=1 AGW_DEPLOY_SHA="$sha" exec /bin/zsh "$release/scripts/deploy.sh"
   fi
 
-  template="$release/deploy/$LABEL.plist.template"
-  [[ -f "$template" ]] || die "$template missing"
-  unload_secs=$(unload_wait_secs "$template")
+  for p in $PROCESSES; do
+    [[ -f "$(template_of "$release" "$p")" ]] || die "$(template_of "$release" "$p") missing"
+  done
+  unload_secs=$(unload_wait_secs "$(template_of "$release" host)")
+  ensure_door_tokens
 
   # The release that is live now is the rollback target, unless it is the one being deployed again.
   old=$(read_sha "$SHA_FILE")
   [[ -n "$old" && "$old" != "$sha" && -f "$RELEASES/$old/.complete" ]] && prev="$old"
 
   # --- switch
-  log "deploying ${sha[1,12]} (live: ${old:-none}), stopping $LABEL"
-  stop_host "$unload_secs" || die "$LABEL is still loaded ${unload_secs}s after bootout (ExitTimeOut + 10); not bootstrapping over it. The old host may still be shutting down: retry the deploy."
-  if ! start_host "$template" "$release" "$sha"; then
-    print -u2 "[deploy] ERROR: launchctl bootstrap failed for ${sha[1,12]}"
-    roll_back "$sha" "$prev" "$template" "$unload_secs"
-    return 1
-  fi
-  log "waiting up to ${HEALTH_WAIT_SECS}s for $HEALTH_URL (version ${sha[1,12]})"
-  if ! wait_healthy "$sha"; then
-    roll_back "$sha" "$prev" "$template" "$unload_secs"
+  log "deploying ${sha[1,12]} (live: ${old:-none}), stopping ${PROCESSES[*]}"
+  stop_all "$unload_secs" || die "a process is still loaded ${unload_secs}s after bootout (ExitTimeOut + 10); not bootstrapping over it. It may still be shutting down: retry the deploy."
+  for p in $PROCESSES; do
+    if ! start_process "$p" "$release" "$sha"; then
+      print -u2 "[deploy] ERROR: launchctl bootstrap failed for $p at ${sha[1,12]}"
+      roll_back "$sha" "$prev" "$unload_secs"
+      return 1
+    fi
+  done
+  log "waiting up to ${HEALTH_WAIT_SECS}s for every /health (version ${sha[1,12]})"
+  if ! wait_healthy "$sha" "${PROCESSES[@]}"; then
+    roll_back "$sha" "$prev" "$unload_secs"
     return 1
   fi
 
@@ -309,7 +381,7 @@ main() {
   ln -sf "$CURRENT/packages/cli/bin/agw.ts" "$CLI_LINK" || die "linking $CLI_LINK failed"
   write_atomic "$SHA_FILE" "$sha" || die "writing $SHA_FILE failed"
   prune_releases "$sha" "$(read_sha "$PREV_FILE")"
-  log "deploy OK: ${sha[1,12]} healthy; agw -> $CLI_LINK, credentials in $ENV_FILE"
+  log "deploy OK: ${sha[1,12]} healthy (${PROCESSES[*]}); agw -> $CLI_LINK, credentials in $ENV_FILE"
 }
 
 main

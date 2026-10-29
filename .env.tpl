@@ -19,3 +19,6 @@ OTEL_EXPORTER_OTLP_AUTHORIZATION=op://vps/argo/HYPERDX_API_KEY_PROD
 AGW_PG_PASSWORD=op://mini/vps-dev/AGENT_WORKFLOWS_DB_PASSWORD
 # Where the friction job files issues (plain value, not a secret: passes through secrets-run as is).
 AGW_FRICTION_REPO=jkrumm/agent-workflows
+# Audio process (packages/audio): the STT language steer the door's transcriptions send when a client sets none (plain
+# value, as audio-gateway sets it). Its IU lanes derive the OpenAI, Gemini and Replicate bases from IU_BASE_URL.
+STT_PROMPT=Die Aufnahme ist auf Deutsch oder Englisch.
