@@ -249,8 +249,14 @@ grants on it with their own tools.
   the host's full API secret on disk. The gate is a loopback `Bun.serve` (no idle timeout: a capability call may
   outlast Bun's 10 s cut; the grant's abort ends it) whose only verbs are the tools of a grant, only for the sessions
   of a step that is running now. Its key is per process, in `<stateDir>/gate.json` (0600), outside every location (the
-  sessions deny `external_directory`); it is not the API secret and opens nothing but these tools. `close` removes the
-  file only while it still holds this host's key, never another host's.
+  sessions deny `external_directory`); it is not the API secret and opens nothing but these tools. `close` removes a
+  file only while it still holds this host's key, never another host's. The state dir is `BootOptions.stateDir`, the
+  one the OpenCode server and the locations use (plugins find the gate five levels up from their location, so the two
+  must agree). A gate file that cannot be written fails `open` and leaves nothing serving; the next `open` retries.
+  **Expand/contract:** for this release the gate also writes `<stateDir>/research/gate.json` (same url and key,
+  same 0600 and atomic rename; removed on close under the same ownership rule), because a run resumed across a deploy
+  re-attaches to a session in its old content-hashed location, whose plugin reads that path. The old path is dropped in
+  a later release, once no live location reads it.
 - **A grant** (`gate.open({ runId, stepId, tools, onCall? })`, returns the close) carries its own tool set: a map of
   tool name to capability id, and an optional hook the workflow supplies. A call is `POST /tool/<name>` with
   `{sessionID, args}` and the bearer key; the session resolves to its step's grant by the OpenCode host's
@@ -260,8 +266,12 @@ grants on it with their own tools.
   anything is buffered) and `bad_request`. Every answer is `{ok, result}` or `{ok: false, error, code?}`.
 - **Usage and evidence are kept apart.** The capability's usage is booked on the granting step as it is reported
   (`bindUsage(runId, stepId, addUsage)`; held until bound, returns the unbind). The `onCall` hook is told each
-  call's arguments and outcome and records the workflow's own evidence; one that throws is logged and the call stands.
-  A hook runs inside the call's in-flight window.
+  call's arguments and outcome and records the workflow's own evidence; one that throws is logged (to the host logger,
+  `WorkflowDeps.logger`) and the call stands. A hook runs inside the call's in-flight window. Usage booked while no
+  step is bound (never bound, unbound, or after the grant ended) is logged at error with run, step, call count and cost
+  when the grant ends, never dropped silently.
+- **One gate.** `HostDeps` (what `createWorkflows` takes) requires the host's `toolGate`; no workflow builds its own,
+  because two gates would fight over one `gate.json`.
 - **Settle and close.** `settle(runId, stepId)` waits (bounded, 10 s) for the step's calls in flight, hook included,
   so a last call books its cost and writes its row before the step reads them. The close of a grant aborts what is
   still in flight, awaits it (bounded) and revokes: a later call is `no_grant`. Call it in a `finally`. A second grant

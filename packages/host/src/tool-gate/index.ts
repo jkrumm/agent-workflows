@@ -1,6 +1,6 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
 import { chmodSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { isStepSession } from '@agent-workflows/opencode-host'
 import type { Json, Logger, Usage } from '@agent-workflows/runtime'
 import { z } from 'zod'
@@ -49,6 +49,7 @@ type Grant = {
   /** Where a call's usage is booked: the step's own usage, once it is bound; held here until then. */
   sink: ((usage: Usage) => void) | null
   held: Usage[]
+  dropped: boolean
 }
 
 export type GateOptions = {
@@ -64,6 +65,13 @@ export type GateOptions = {
 
 /** Byte cap of a tool call's body: arguments are a query, a URL or a question. Checked before anything is buffered. */
 export const MAX_BODY_BYTES = 64 * 1024
+
+/**
+ * Where the previous release's plugins look for the gate (relative to `stateDir`). A run resumed across a deploy
+ * re-attaches to a session in its old content-hashed location, whose plugin still reads this path, so for this release
+ * the gate writes it too, with the same url and key. Dropped in a later release, once no live location reads it.
+ */
+const LEGACY_FILES = [join('research', 'gate.json')]
 
 const ToolCall = z.object({ sessionID: z.string().min(1), args: z.record(z.string(), z.json()).default({}) })
 
@@ -112,22 +120,37 @@ export class ToolGate {
     this.logger = options.logger ?? silent
   }
 
-  private get file() {
-    return join(this.options.stateDir, 'gate.json')
+  /** Every path the gate's address and key are written to: `<stateDir>/gate.json`, then the legacy ones. */
+  private get files() {
+    return ['gate.json', ...LEGACY_FILES].map((name) => join(this.options.stateDir, name))
   }
 
-  /** Starts the server on first use and (re)writes `gate.json`; idempotent. */
+  /**
+   * Starts the server on first use and (re)writes the gate files; idempotent. A write that fails stops the server
+   * again and throws, so the next call retries from scratch rather than serving with no file for the agents to read.
+   */
   ensureServing(): { url: string } {
     if (!this.server) {
       // No idle timeout: a capability call may hold its request past Bun's default 10 s cut; the grant's abort ends it.
-      this.server = Bun.serve({ hostname: '127.0.0.1', port: 0, idleTimeout: 0, fetch: (req) => this.handle(req) })
-      mkdirSync(this.options.stateDir, { recursive: true, mode: 0o700 })
-      const tmp = `${this.file}.tmp-${process.pid}`
-      writeFileSync(tmp, `${JSON.stringify({ url: this.url(), key: this.key })}\n`, { mode: 0o600 })
-      chmodSync(tmp, 0o600)
-      renameSync(tmp, this.file)
+      const server = Bun.serve({ hostname: '127.0.0.1', port: 0, idleTimeout: 0, fetch: (req) => this.handle(req) })
+      try {
+        const content = `${JSON.stringify({ url: `http://127.0.0.1:${server.port}`, key: this.key })}\n`
+        for (const file of this.files) this.writeFile(file, content)
+      } catch (error) {
+        void server.stop(true)
+        throw error
+      }
+      this.server = server
     }
     return { url: this.url() }
+  }
+
+  private writeFile(file: string, content: string) {
+    mkdirSync(dirname(file), { recursive: true, mode: 0o700 })
+    const tmp = `${file}.tmp-${process.pid}`
+    writeFileSync(tmp, content, { mode: 0o600 })
+    chmodSync(tmp, 0o600)
+    renameSync(tmp, file)
   }
 
   private url(): string {
@@ -154,6 +177,7 @@ export class ToolGate {
       inflight: new Set(),
       sink: null,
       held: [],
+      dropped: false,
     }
     this.grants.set(stepKey, grant)
     return () => (this.grants.get(stepKey) === grant ? this.drop(grant) : Promise.resolve())
@@ -194,22 +218,36 @@ export class ToolGate {
     for (const [id, owner] of this.bySession) if (owner === grant) this.bySession.delete(id)
     grant.controller.abort(new Error('the tool grant ended'))
     await this.drain(grant)
+    grant.dropped = true
+    this.reportLost(grant)
+  }
+
+  /** Usage no step took (booked while unbound, or after the grant ended) is logged, never dropped silently. */
+  private reportLost(grant: Grant) {
+    if (grant.held.length === 0) return
+    const lost = grant.held.splice(0)
+    this.logger.error('tool gate: usage booked on a step that was not bound to take it', {
+      runId: grant.runId,
+      stepId: grant.stepId,
+      calls: lost.length,
+      cost: lost.reduce((sum, usage) => sum + (usage.cost ?? 0), 0),
+    })
   }
 
   /**
-   * Ends every grant (awaiting their calls), stops the server and removes `gate.json` if it still holds this instance's
-   * key: never a file another host wrote, before or after this one. The host calls it on shutdown.
+   * Ends every grant (awaiting their calls), stops the server and removes each gate file that still holds this
+   * instance's key: never a file another host wrote, before or after this one. The host calls it on shutdown.
    */
   async close() {
     await Promise.all([...this.grants.values()].map((grant) => this.drop(grant)))
     void this.server?.stop(true)
     this.server = null
-    if (this.ownsFile()) rmSync(this.file, { force: true })
+    for (const file of this.files) if (this.owns(file)) rmSync(file, { force: true })
   }
 
-  private ownsFile(): boolean {
+  private owns(file: string): boolean {
     try {
-      return (JSON.parse(readFileSync(this.file, 'utf8')) as { key?: unknown }).key === this.key
+      return (JSON.parse(readFileSync(file, 'utf8')) as { key?: unknown }).key === this.key
     } catch {
       return false // gone, or not ours to read
     }
@@ -300,5 +338,6 @@ export class ToolGate {
   private book(grant: Grant, usage: Usage) {
     if (grant.sink) grant.sink(usage)
     else grant.held.push(usage)
+    if (grant.dropped) this.reportLost(grant) // a call that outlived its grant's drain: nothing will bind again
   }
 }

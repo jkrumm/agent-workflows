@@ -4,6 +4,7 @@ import { rejection } from './support.ts'
 import { fakeTransports } from '@agent-workflows/capabilities/testing'
 import { loadConfig } from '../src/config.ts'
 import { ghCli } from '../src/workflows/retrospective/gh.ts'
+import { ToolGate } from '../src/tool-gate/index.ts'
 import { agentNames, createWorkflows, fingerprintWorkflows } from '../src/workflows/index.ts'
 
 const base = { AGW_API_SECRET: 'x'.repeat(40), AGW_MACHINE: 'm', AGW_PG_URL: 'postgres://u@h/d' }
@@ -29,19 +30,21 @@ describe('retrospective config', () => {
 
 describe('registration', () => {
   const registry = createRegistry(createCapabilities({ transports: fakeTransports({}), env: {} }))
+  // Never opened: a gate touches nothing on disk until a workflow grants a step.
+  const toolGate = new ToolGate({ stateDir: '/nonexistent/agw-retro-wiring', call: async () => null })
   const stub = {
     journal: { sample: async () => [], countFinished: async () => 0, weekRuns: async () => [] },
     learnings: {} as never,
   }
 
   test('without the retro deps the host serves what it did before', () => {
-    const ids = createWorkflows({ registry }).map((w) => w.workflow.id)
+    const ids = createWorkflows({ registry, toolGate }).map((w) => w.workflow.id)
     expect(ids).not.toContain('retrospective')
     expect(ids.some((id) => id.startsWith('learnings.'))).toBe(false)
   })
 
   test('with them: the learnings commands and the retrospective, which runs the retrospective agent on its own route', () => {
-    const entries = createWorkflows({ registry, retro: stub })
+    const entries = createWorkflows({ registry, toolGate, retro: stub })
     const ids = entries.map((w) => w.workflow.id)
     expect(ids).toEqual(
       expect.arrayContaining([
@@ -56,7 +59,7 @@ describe('registration', () => {
   })
 
   test('the retrospective is told each agent once, though review lists its angles on two routes', () => {
-    const review = agentNames(createWorkflows({ registry })).get('review') ?? []
+    const review = agentNames(createWorkflows({ registry, toolGate })).get('review') ?? []
     expect(new Set(review).size).toBe(review.length)
     expect(review.filter((a) => a === 'review-architect')).toHaveLength(1)
   })

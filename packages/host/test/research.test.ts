@@ -79,8 +79,8 @@ const draft = (citations: { claim: string; url: string }[]) =>
   })
 
 const workflows = createResearchWorkflows(
-  { registry: {} as HostRegistry },
-  { stateDir, gate, ledger, agentBackoffMs: 10 },
+  { registry: {} as HostRegistry, toolGate: gate },
+  { ledger, agentBackoffMs: 10 },
 )
 const research = workflows[0]?.workflow as NonNullable<(typeof workflows)[0]>['workflow']
 
@@ -396,8 +396,8 @@ describe('follow-up on a finished report', () => {
 
   test('a host without a run journal says so, not that the run does not exist', async () => {
     const memory = createResearchWorkflows(
-      { registry: {} as HostRegistry },
-      { stateDir, gate, ledger: memoryToolLedger() },
+      { registry: {} as HostRegistry, toolGate: gate },
+      { ledger: memoryToolLedger() },
     )
     const wf = memory[0]?.workflow as NonNullable<(typeof memory)[0]>['workflow']
     const rt = testRuntime({ schema: db.schema, workflows: [wf], host: new FakeAgentHost() })
@@ -640,6 +640,25 @@ describe('the tool gate ledger: the evidence the grounding rule rests on', () =>
       await own.close()
       rmSync(dir, { recursive: true, force: true })
     }
+  })
+
+  test('an evidence row that cannot be built is written minimal, with the error, and logged', async () => {
+    const errors: string[] = []
+    const memory = memoryToolLedger()
+    const grant = researchGrant(memory, { warn: () => {}, error: (m) => errors.push(m) })
+    const circular: Record<string, Json> = {}
+    circular.self = circular
+    await grant.onCall?.({
+      runId: 'r-row',
+      stepId: 'research',
+      tool: 'web_search',
+      args: circular,
+      outcome: { ok: true, result: { results: [] } },
+    })
+    const [row] = await memory.read('r-row', 'research')
+    expect(row).toMatchObject({ tool: 'web_search', ok: true, argsDigest: 'unavailable', retrieved: [], seen: [] })
+    expect(row?.error).toStartWith('evidence row failed:')
+    expect(errors).toEqual(['research tool gate: the evidence row could not be built; a minimal row is written'])
   })
 
   test('closing a grant waits for the calls in flight, so their rows are written before evidence is read', async () => {

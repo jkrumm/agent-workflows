@@ -79,10 +79,10 @@ export function researchGrant(ledger: ToolLedger, logger?: Logger): Pick<ToolGra
       }
     }
   }
-  return {
-    tools: RESEARCH_TOOLS,
-    onCall: (call) =>
-      record({
+  /** The call's evidence row; if building it throws, a minimal row that says so, so a call is never absent from the ledger. */
+  const rowOf = (call: ToolCallRecord): LedgerEntry => {
+    try {
+      return {
         runId: call.runId,
         stepId: call.stepId,
         tool: call.tool,
@@ -92,8 +92,26 @@ export function researchGrant(ledger: ToolLedger, logger?: Logger): Pick<ToolGra
         seen: [],
         ...urlsOf(call),
         ...(call.outcome.ok ? {} : { error: call.outcome.error.slice(0, 300) }),
-      }),
+      }
+    } catch (error) {
+      logger?.error('research tool gate: the evidence row could not be built; a minimal row is written', {
+        runId: call.runId,
+        tool: call.tool,
+        error: message(error),
+      })
+      return {
+        runId: call.runId,
+        stepId: call.stepId,
+        tool: call.tool,
+        argsDigest: 'unavailable',
+        ok: call.outcome.ok,
+        retrieved: [],
+        seen: [],
+        error: `evidence row failed: ${message(error)}`.slice(0, 300),
+      }
+    }
   }
+  return { tools: RESEARCH_TOOLS, onCall: (call) => record(rowOf(call)) }
 }
 
 /** What a step's recorded calls add up to: URLs retrieved and seen (normalized), failed fetches, calls per tool. */

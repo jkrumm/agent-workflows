@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { mkdtempSync, rmSync, statSync } from 'node:fs'
+import { mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Json, Usage } from '@agent-workflows/runtime'
@@ -212,6 +212,42 @@ describe('the door', () => {
     expect(file.key).toMatch(/^[0-9a-f]{64}$/)
   })
 
+  test("the previous release's path holds the same url and key, so a resumed run's old plugin still finds the gate", async () => {
+    const close = gate.open({ runId: 'a', stepId: 's', tools: { find: 'cap.find' } })
+    const legacy = join(dir, 'research', 'gate.json')
+    expect(statSync(legacy).mode & 0o777).toBe(0o600)
+    expect(await Bun.file(legacy).json()).toEqual(await gateFile())
+    // The old plugin reads that file and posts as the new one does.
+    const { url, key } = (await Bun.file(legacy).json()) as { url: string; key: string }
+    const response = await fetch(`${url}/tool/find`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${key}` },
+      body: JSON.stringify({ sessionID: 'a:s', args: { q: 1 } }),
+    })
+    expect(((await response.json()) as Answer).ok).toBe(true)
+    await close()
+  })
+
+  test('a gate file that cannot be written leaves nothing serving, and the next open retries', async () => {
+    // A regular file where the state dir should be: mkdir and write both fail.
+    const blocked = join(dir, 'blocked')
+    writeFileSync(blocked, '')
+    const broken = new ToolGate({ stateDir: join(blocked, 'state'), call: echo })
+    expect(() => broken.ensureServing()).toThrow()
+    expect(() => broken.open({ runId: 'a', stepId: 's', tools: {} })).toThrow()
+    rmSync(blocked)
+    const close = broken.open({ runId: 'a', stepId: 's', tools: { find: 'cap.find' } })
+    const { url, key } = (await Bun.file(join(blocked, 'state', 'gate.json')).json()) as { url: string; key: string }
+    const response = await fetch(`${url}/tool/find`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${key}` },
+      body: JSON.stringify({ sessionID: 'a:s' }),
+    })
+    expect(response.status).toBe(403) // served; the session resolves by the OpenCode ids, which this one is not
+    await close()
+    await broken.close()
+  })
+
   test('malformed and oversized bodies are refused with a code', async () => {
     const close = gate.open({ runId: 'a', stepId: 's', tools: { find: 'cap.find' } })
     const { url, key } = await gateFile()
@@ -254,6 +290,62 @@ describe('usage', () => {
     unbindB()
     await closeA()
     await closeB()
+  })
+})
+
+describe('usage no step took', () => {
+  test('usage booked on a grant that was never bound is logged with run, step and amount when the grant ends', async () => {
+    const close = gate.open({ runId: 'a', stepId: 's', tools: { find: 'cap.find' } })
+    await post('find', 'a:s')
+    await post('find', 'a:s')
+    expect(errors).toEqual([])
+    await close()
+    expect(errors).toEqual(['tool gate: usage booked on a step that was not bound to take it'])
+  })
+
+  test('usage booked after the step unbound is logged, not dropped; usage on a bound step is delivered and not logged', async () => {
+    const lost: Record<string, unknown>[] = []
+    gate = new ToolGate({
+      stateDir: dir,
+      call: echo,
+      belongsTo: (sessionId, stepKey) => sessionId === stepKey,
+      logger: { warn: () => {}, error: (_m, meta) => lost.push(meta ?? {}) },
+    })
+    const taken: number[] = []
+    const close = gate.open({ runId: 'a', stepId: 's', tools: { find: 'cap.find' } })
+    const unbind = gate.bindUsage('a', 's', (u) => taken.push(u.cost ?? 0))
+    await post('find', 'a:s')
+    unbind()
+    await post('find', 'a:s')
+    await post('find', 'a:s')
+    await close()
+    expect(taken).toEqual([1])
+    expect(lost).toEqual([{ runId: 'a', stepId: 's', calls: 2, cost: 2 }])
+  })
+
+  test('a call that outlives its grant books after the drain: logged at once, with the bound sink first', async () => {
+    const entered = Promise.withResolvers<void>()
+    const release = Promise.withResolvers<void>()
+    const lost: Record<string, unknown>[] = []
+    gate = new ToolGate({
+      stateDir: dir,
+      call: async (id, input, scope) => {
+        entered.resolve()
+        await release.promise // ignores the abort: the drain's bound passes first
+        return echo(id, input, scope)
+      },
+      belongsTo: (sessionId, stepKey) => sessionId === stepKey,
+      logger: { warn: () => {}, error: (_m, meta) => lost.push(meta ?? {}) },
+      drainMs: 1,
+    })
+    const close = gate.open({ runId: 'a', stepId: 's', tools: { find: 'cap.find' } })
+    const pending = post('find', 'a:s')
+    await entered.promise
+    await close() // gives up on the call after drainMs
+    expect(lost).toEqual([])
+    release.resolve()
+    await pending
+    expect(lost).toEqual([{ runId: 'a', stepId: 's', calls: 1, cost: 1 }])
   })
 })
 
@@ -339,10 +431,13 @@ describe('settle and close', () => {
   test("the gate's close ends every grant, stops serving and removes gate.json only while it holds this key", async () => {
     gate.open({ runId: 'a', stepId: 's', tools: { find: 'cap.find' } })
     const file = join(dir, 'gate.json')
+    const legacy = join(dir, 'research', 'gate.json')
     expect(await Bun.file(file).exists()).toBe(true)
+    expect(await Bun.file(legacy).exists()).toBe(true)
     const { url } = await gateFile()
     await gate.close()
     expect(await Bun.file(file).exists()).toBe(false)
+    expect(await Bun.file(legacy).exists()).toBe(false)
     expect(fetch(`${url}/tool/find`, { method: 'POST', body: '{}' })).rejects.toBeDefined()
 
     // Another host's file is never removed, before or after this one.
@@ -355,7 +450,9 @@ describe('settle and close', () => {
     later.ensureServing()
     await first.close()
     expect(await Bun.file(file).exists()).toBe(true)
+    expect(await Bun.file(legacy).exists()).toBe(true)
     await later.close()
     expect(await Bun.file(file).exists()).toBe(false)
+    expect(await Bun.file(legacy).exists()).toBe(false)
   })
 })

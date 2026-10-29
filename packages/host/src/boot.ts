@@ -10,7 +10,7 @@ import {
 } from '@agent-workflows/middleware'
 import { basePolicyDigest, DEFAULT_STATE_DIR, OpenCodeHost, OpenCodeServer } from '@agent-workflows/opencode-host'
 import { validateOverrides } from '@agent-workflows/routes'
-import { type AgentHost, type Json, Runtime } from '@agent-workflows/runtime'
+import { type AgentHost, type Json, type Logger, Runtime } from '@agent-workflows/runtime'
 import { resolve } from 'node:path'
 import { Pool } from 'pg'
 import { loadAgentDefinitions } from './agents.ts'
@@ -40,6 +40,12 @@ import { createWorkflows, fingerprintWorkflows } from './workflows/index.ts'
 const FLUSH_INTERVAL_MS = 30_000
 const SHUTDOWN_GRACE_MS = 5000
 
+/** The host's logger: the process's console, every line tagged. */
+const hostLogger: Logger = {
+  warn: (message, meta) => console.warn(`[agw-host] ${message}`, meta ?? ''),
+  error: (message, meta) => console.error(`[agw-host] ${message}`, meta ?? ''),
+}
+
 export interface RunningHost {
   port: number
   /**
@@ -55,6 +61,8 @@ export interface BootOptions {
   /** Replaces the OpenCode host (tests). */
   agentHost?: AgentHost
   env?: Record<string, string | undefined>
+  /** Where the OpenCode server, the agents' locations and the tool gate's `gate.json` live; they must agree (the plugins find the gate relative to their location). Default: the OpenCode host's state dir. */
+  stateDir?: string
   /** Replaces the `gh` CLI the friction job opens issues through (tests). */
   gh?: GhPort
 }
@@ -220,18 +228,20 @@ export async function boot(config: HostConfig, options: BootOptions = {}): Promi
     ledgerPool.on('error', (err) => console.warn('[agw-host] research ledger pool: idle connection error', err.message))
     closers.push(() => ledgerPool.end())
     // One tool gate per process: every workflow that gives an agent tools opens its grants on it.
+    const stateDir = options.stateDir ?? DEFAULT_STATE_DIR
     const gateCalls = registry as unknown as { call: CapabilityCall }
     const toolGate = new ToolGate({
-      stateDir: DEFAULT_STATE_DIR,
+      stateDir,
       call: (id, input, scope) => gateCalls.call(id, input, scope),
+      logger: hostLogger,
     })
     closers.push(() => toolGate.close())
     const workflows = createWorkflows({
       registry,
       toolGate,
+      logger: hostLogger,
       retro: { journal, learnings, gh, tracked },
       research: { ledger: pgToolLedger(ledgerPool, config.schema) },
-      onClose: (close) => closers.push(async () => close()),
     })
     // Direct capability calls over HTTP run as `cap.<id>` workflows (concept N6): registered, but not operations.
     const capabilityWorkflows = createCapabilityWorkflows(registry)
@@ -269,6 +279,7 @@ export async function boot(config: HostConfig, options: BootOptions = {}): Promi
       ? undefined
       : lazyOpenCodeHost(env, (runId, stepId) => platform.telemetry.traceparent(runId, stepId) ?? undefined, {
           agents,
+          stateDir,
         })
     const agentHost = options.agentHost ?? owned
     const lazy = owned
