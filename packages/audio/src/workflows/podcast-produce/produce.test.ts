@@ -6,6 +6,7 @@ import { freshSchema, inspector, testRuntime, until } from '../../../../runtime/
 import { geminiAudio, instantClock, silentLog, startFakeIu, testConfig } from '../../testing/index.ts'
 import type { ProduceConfig } from './config.ts'
 import { createProduceWorkflow, laneFor, type ProduceDeps, type ProduceResult, planSynthesis } from './index.ts'
+import { episodeToken } from './abs.ts'
 import { postgresProduceJournal } from './journal.ts'
 import { setProduceLogger } from './log.ts'
 import { measureLoudnessLufs } from './mux.ts'
@@ -241,7 +242,7 @@ describe('podcast.produce', () => {
         expect(out.publish).toEqual({ requested: true, ok: true, error: null })
         expect(out.abs).toEqual({ url: 'https://abs.example.com/item/item1', libraryItemId: 'item1', episodeId: 'ep1' })
         expect(abs.count('POST', '/api/upload')).toBe(1)
-        expect(abs.episodes).toEqual([`2026-10-29 Die Woche planen [${input.episode.id.slice(0, 8)}].mp3`])
+        expect(abs.episodes).toEqual([`2026-10-29 Die Woche planen [${episodeToken(input.episode.id)}].mp3`])
         expect(out.brainNote).toMatchObject({ committed: true, pushed: false })
         const note = readFileSync(out.brainNote?.path as string, 'utf8')
         expect(note).toContain('abs: item1')

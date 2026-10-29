@@ -114,24 +114,32 @@ export function slugifyFilename(title: string): string {
 }
 
 /**
+ * The episode token in a file name: 8 hex of the id's random tail. Legacy took the first 8 of a random UUIDv4; a run id is
+ * a UUIDv7, whose first 8 hex are the timestamp's top bits and repeat for about a minute, so the tail it is.
+ */
+export function episodeToken(jobId: string): string {
+  return jobId.replace(/-/g, '').slice(-8).toLowerCase()
+}
+
+/**
  * The file name inside the show folder. ABS's upload MOVES the file onto `<show>/<filename>` without checking for an
  * existing one, so a second episode with the same date and title silently replaced the first (2026-09-02, v1 → v2 of the
  * Spain briefing). The job id makes the name unique per job while a re-publish of the SAME job still overwrites its own file.
  */
 export function episodeFilename(date: string, title: string, jobId: string): string {
-  return `${date} ${slugifyFilename(title)} [${jobId.slice(0, 8)}].mp3`
+  return `${date} ${slugifyFilename(title)} [${episodeToken(jobId)}].mp3`
 }
 
+/** What ABS's sanitizer may change in a name: runs of whitespace, Unicode normalisation form. */
+const normalizedName = (name: string): string => name.normalize('NFC').replace(/\s+/g, ' ').trim()
+
 /**
- * ABS sanitizes the uploaded name on its own terms (whitespace, odd characters), so an exact comparison is brittle. The
- * job-id token that `episodeFilename` embeds (`[c2e279c6]`) survives any sanitizer and is unique per job — match on it
- * when present, exact name otherwise.
+ * The stored file is the wanted one: the whole name, after what ABS's sanitizer may change (whitespace runs, Unicode
+ * form). Legacy matched the token alone; a whole-name match never takes another episode's file for this one.
  */
 export function filenameMatches(stored: string | undefined, wanted: string): boolean {
   if (!stored) return false
-  const token = /\[[0-9a-f]{8}\]/.exec(wanted)?.[0]
-  if (token) return stored.includes(token)
-  return stored === wanted
+  return normalizedName(stored) === normalizedName(wanted)
 }
 
 // ---------------------------------------------------------------------------
