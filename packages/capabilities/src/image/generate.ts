@@ -1,5 +1,4 @@
-import type { ImageRouteId } from '@agent-workflows/routes'
-import { priceCall } from '@agent-workflows/routes'
+import { costFromUsage } from '@agent-workflows/routes'
 import { z } from 'zod'
 import type { Usage } from '../context.ts'
 import { fail } from '../errors.ts'
@@ -7,7 +6,7 @@ import { defineCapability } from '../procedure.ts'
 import { iuConfig } from '../transports/config.ts'
 import { readJson, withRetries } from '../transports/http.ts'
 import { within } from '../web/deps.ts'
-import type { ResolvedImageDeps } from './deps.ts'
+import type { ImageRouteId, ResolvedImageDeps } from './deps.ts'
 import { MAX_EDIT_IMAGE_BYTES, MAX_EDIT_IMAGES, readInputImage } from './files.ts'
 import { magicBytesValid, MIME, readPng } from './png.ts'
 import { snapSize } from './size.ts'
@@ -110,8 +109,10 @@ export function createGenerate(deps: ResolvedImageDeps) {
     summary: 'Generate images from a prompt, or edit reference images; returns the PNGs and what the call cost',
     input: generateInput,
     output: generateOutput,
-    // No command: a result that is megabytes of base64 is for workflows (`agw image`), not a terminal.
-    cli: { command: [], defaultFormat: 'json' },
+    // Hidden from the CLI: a result that is megabytes of base64 is for workflows (`agw image`), not a terminal.
+    // The workflow is the command `agw image`, and the host refuses a command that is the prefix of another: the capabilities'
+    // commands are single hyphenated words.
+    cli: { command: ['image-generate'], hidden: true, defaultFormat: 'json' },
     async handler(input, ctx) {
       const edit = input.images.length > 0
       const route = deps.route(pickRoute(input.model, input.quality, edit))
@@ -159,7 +160,7 @@ export function createGenerate(deps: ResolvedImageDeps) {
       const { data, usage } = parsed.data
 
       // The call is billed from here on, whatever the images turn out to be.
-      const cost = priceCall(route.price, usage)
+      const cost = costFromUsage(route.wire, usage, route.rate, route.price)
       const reported: Usage = {
         model: route.model,
         tokens: { input: usage?.input_tokens ?? 0, output: usage?.output_tokens ?? 0, cacheRead: 0, reasoning: 0 },

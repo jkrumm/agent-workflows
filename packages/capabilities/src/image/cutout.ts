@@ -1,11 +1,11 @@
-import { type ImageRouteId, priceCall } from '@agent-workflows/routes'
+import { costFromUsage } from '@agent-workflows/routes'
 import { z } from 'zod'
 import { fail } from '../errors.ts'
 import { defineCapability } from '../procedure.ts'
 import { iuConfig } from '../transports/config.ts'
 import { readJson, withRetries } from '../transports/http.ts'
 import { within } from '../web/deps.ts'
-import type { ResolvedImageDeps } from './deps.ts'
+import type { ImageRouteId, ResolvedImageDeps } from './deps.ts'
 import { readInputImage } from './files.ts'
 import { displayedSize, readHeader } from './header.ts'
 import { magicBytesValid, MIME, readPng, toPng } from './png.ts'
@@ -167,8 +167,10 @@ export function createCutout(deps: ResolvedImageDeps) {
     summary: 'Remove the background of an image (Replicate); returns an RGBA PNG and what the call cost',
     input: cutoutInput,
     output: cutoutOutput,
-    // No command: a result that is megabytes of base64 is for workflows (`agw image --file`), not a terminal.
-    cli: { command: [], defaultFormat: 'json' },
+    // Hidden from the CLI: a result that is megabytes of base64 is for workflows (`agw image --file`), not a terminal.
+    // The workflow is the command `agw image`, and the host refuses a command that is the prefix of another: the capabilities'
+    // commands are single hyphenated words.
+    cli: { command: ['image-cutout'], hidden: true, defaultFormat: 'json' },
     async handler(input, ctx) {
       const route = deps.route(`image.cutout.${input.model}` satisfies ImageRouteId)
       const env = deps.env()
@@ -194,7 +196,7 @@ export function createCutout(deps: ResolvedImageDeps) {
 
       // Replicate bills a started prediction, so the price is recorded here, once, not after the output is in hand:
       // a poll that fails or runs out of time must not leave a billed call off the run.
-      const cost = priceCall(route.price, null)
+      const cost = costFromUsage(route.wire, null, route.rate, route.price)
       if (billed(created.status)) {
         ctx.addUsage({
           model: route.model,

@@ -337,8 +337,12 @@ describe('fallback', () => {
   test('every iu-openai, iu-anthropic and opencode route has one; decide, brain.agent and audio.* have none', () => {
     for (const id of routeIds()) {
       const route = resolveRoute(id, {})
+      // an audio seat has none; an image or Replicate model (`price`) has no text model to move to
       expect(route.fallback === undefined).toBe(
-        route.wire === 'iu-decision' || id === 'brain.agent' || id.startsWith('audio.'),
+        route.wire === 'iu-decision' ||
+          id === 'brain.agent' ||
+          id.startsWith('audio.') ||
+          route.price !== undefined,
       )
     }
   })

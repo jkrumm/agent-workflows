@@ -62,15 +62,29 @@ Exactly one of `prompt` and `file`. The run answers with the files it made:
   gave win over the plan's, a `hard` warning refuses the run before an image is paid for. The model, effort (high) and
   a 32k ceiling are the `image.enhance` route (the gateway sent 16k and retried once with double on a truncated answer).
   Not ported: the studio-only inputs (style guide, series context, iteration `delta`, preserve list, pinned overrides).
-- **The raw capabilities have no CLI command.** `image.generate` and `image.cutout` answer megabytes of base64, so
-  their `x-cli` command is empty and the generated CLI lists them under `agw schema`'s skipped operations; they stay on
-  HTTP and in process. `image.enhance` is `agw image enhance`.
+- **The raw capabilities are hidden from the CLI.** `image.generate` and `image.cutout` answer megabytes of base64, so
+  they carry `cli: { hidden: true }` (new in `CliSpec`; the generated CLI builds no command for them and does not list
+  them as skipped). They stay on HTTP and in process. `image.enhance` is `agw image-enhance` (the workflow owns `agw image`, and the host refuses a command that is the prefix of another).
 - **One bad image among n** does not discard the valid, billed ones: the output lists `rejected` entries and the valid
   files; the run fails only when none is valid.
 - **Icon stays on image-gateway** (`imgcli icon`: upscale, cutout, trim, `.ico`/`.icns` writers, svgo vectorize). It needs
   `sharp` and `svgo` and has no model logic beyond `gen`, so it is deterministic image processing, not an agent
   capability. The icon *source* is `agw image … --size 1024x1024 --background transparent`; the gateway keeps the set
   builder and the studio app until a later wave decides.
+
+## Route
+
+Group file `packages/routes/src/table/image.ts`, image-gateway's seats called directly (no gateway in between), all on
+IU's OpenAI base (`iu-openai`; Replicate is the `/replicate/v1` route of the same host). Overridable by `AGW_ROUTES` like
+any route, `price` included (a model override without a price drops the old one).
+
+|Route|Seat in image-gateway|Price|
+|-|-|-|
+|`image.flare`|speed model, drafts (`gateway/src/lib/pricing.ts` `RATES`)|`image-tokens`: text in 5, image in 8, out 30 USD/M|
+|`image.sunburst`|quality model, finals and every edit|the same|
+|`image.cutout.recraft`|`CUTOUT_PRICE_USD` (`shared/src/assets.ts`)|`unit` call, 0.01|
+|`image.cutout.bria`|the same|`unit` call, 0.018|
+|`image.enhance`|`ENHANCE_MODEL`, effort `high` (`gateway/src/env.ts`)|`rate` in 0.10, cached 0.01, out 0.50 USD/M; balance fallback like any text route|
 
 ## Eval
 

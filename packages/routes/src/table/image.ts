@@ -1,4 +1,5 @@
-import type { ResolvedRoute, RouteEntry } from './schema.ts'
+import type { RouteEntry } from '../schema.ts'
+import { CALL_FALLBACK } from './_shared.ts'
 
 // The image seats (Wave 8). The platform calls IU's OpenAI images endpoint directly (and Replicate through the same IU
 // host), where the personal image-gateway wrapped them. Source of every figure: image-gateway `gateway/src/lib/pricing.ts`
@@ -9,7 +10,7 @@ import type { ResolvedRoute, RouteEntry } from './schema.ts'
 // picks between them the way the gateway's `model: auto` did.
 const IMAGE_PRICE = { kind: 'image-tokens', textInPerM: 5, imageInPerM: 8, outputPerM: 30 } as const
 
-export const IMAGE_ROUTES = {
+const routes = {
   'image.flare': { wire: 'iu-openai', model: 'gpt-image-2.5-flare', price: IMAGE_PRICE },
   'image.sunburst': { wire: 'iu-openai', model: 'gpt-image-2.5-sunburst', price: IMAGE_PRICE },
   // Replicate bills per run, not per token. recraft keeps the input resolution; bria may downscale to 1024 px.
@@ -23,6 +24,7 @@ export const IMAGE_ROUTES = {
     model: 'bria/remove-background',
     price: { kind: 'unit', unit: 'call', usd: 0.018 },
   },
+  // No fallback on the image seats: a provider-balance failure on an image model has no text model to move to.
   // The enhance planner (imgcli `gen --enhance`): one JSON plan per brief. image-gateway's ENHANCE_MODEL and its
   // `ENHANCE_REASONING_EFFORT` (high); gateway `pricing.ts` TEXT_RATES: in 0.10, cached in 0.01, out 0.50 USD/M, from the
   // OpenAI price page, not measured on IU (IU's own `usage.cost` wins when it reports one). Reasoning tokens count against
@@ -33,15 +35,13 @@ export const IMAGE_ROUTES = {
     effort: 'high',
     maxOutputTokens: 32_000,
     rate: { inputPerM: 0.1, outputPerM: 0.5, cacheReadPerM: 0.01 },
+    // A text call like every iu-openai route: the provider-balance fallback applies (owner direction 2026-10-28).
+    fallback: CALL_FALLBACK,
   },
-} as const satisfies Record<string, RouteEntry>
+} satisfies Record<string, RouteEntry>
 
-export type ImageRouteId = keyof typeof IMAGE_ROUTES
+export default routes
 
-/**
- * The route for an image seat. Until the route table registers the image seats by directory (Wave 8 registry), this reads
- * `IMAGE_ROUTES` directly and applies no `AGW_ROUTES` override; once registered, callers use `resolveRoute`.
- */
-export function resolveImageRoute(id: ImageRouteId): ResolvedRoute {
-  return { id, ...structuredClone(IMAGE_ROUTES[id]) }
+declare module '../schema.ts' {
+  interface RouteTable extends Record<keyof typeof routes, true> {}
 }

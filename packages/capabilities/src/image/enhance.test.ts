@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { IMAGE_ROUTES } from '@agent-workflows/routes'
+import { DEFAULT_ROUTES as IMAGE_ROUTES } from '@agent-workflows/routes'
 import type { Usage } from '../context.ts'
 import { CapabilityCallError } from '../errors.ts'
 import { createRegistry } from '../registry.ts'

@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'bun:test'
-import { IMAGE_ROUTES, resolveImageRoute } from './image-routes.ts'
 import { applyPatch } from './overrides.ts'
 import { costFromUsage } from './cost.ts'
 import { type Price, priceCall, priceSchema } from './price.ts'
+import { DEFAULT_ROUTES, resolveRoute } from './index.ts'
 import { routeSchema } from './schema.ts'
 
 const tokens = { kind: 'image-tokens', textInPerM: 5, imageInPerM: 8, outputPerM: 30 } as const
@@ -55,6 +55,13 @@ describe('priceCall', () => {
   })
 })
 
+const IMAGE_ROUTES = Object.fromEntries(
+  Object.entries(DEFAULT_ROUTES).filter(([id]) => id.startsWith('image.')),
+) as Record<
+  'image.flare' | 'image.sunburst' | 'image.cutout.recraft' | 'image.cutout.bria' | 'image.enhance',
+  (typeof DEFAULT_ROUTES)[keyof typeof DEFAULT_ROUTES]
+>
+
 describe('the image routes', () => {
   test('every seat is a valid route entry with a price', () => {
     for (const [id, entry] of Object.entries(IMAGE_ROUTES)) {
@@ -72,11 +79,15 @@ describe('the image routes', () => {
     expect(IMAGE_ROUTES['image.cutout.bria'].price).toEqual({ kind: 'unit', unit: 'call', usd: 0.018 })
   })
 
-  test('a resolved route is a copy', () => {
-    const route = resolveImageRoute('image.flare')
+  test('a resolved route is a copy, and AGW_ROUTES overrides it like any route', () => {
+    const route = resolveRoute('image.flare', {})
     expect(route.id).toBe('image.flare')
     route.model = 'changed'
     expect(IMAGE_ROUTES['image.flare'].model).not.toBe('changed')
+    const patched = resolveRoute('image.cutout.recraft', {
+      AGW_ROUTES: JSON.stringify({ 'image.cutout.recraft': { price: { kind: 'unit', unit: 'call', usd: 0.5 } } }),
+    })
+    expect(patched.price).toEqual({ kind: 'unit', unit: 'call', usd: 0.5 })
   })
 
   test('an override that changes the model drops the price (a stale price would price the new model wrongly), one that names a price keeps it', () => {

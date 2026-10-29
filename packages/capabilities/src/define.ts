@@ -22,6 +22,8 @@ export interface CliSpec {
   kind?: CliKind
   /** The command that continues a long operation (`agw run wait <runId>`); workflows only. */
   resume?: CliResume
+  /** Default: false. True: no CLI command (its answer is not for a terminal, e.g. megabytes of base64); the operation stays on HTTP and in process, and its `command` still has to be unique. */
+  hidden?: boolean
 }
 
 export type CliKind = 'capability' | 'workflow' | 'run'
@@ -35,7 +37,7 @@ export interface CliResume {
 export type ResolvedCliSpec = Required<
   Pick<CliSpec, 'command' | 'positional' | 'mutating' | 'defaultFormat' | 'kind'>
 > &
-  Pick<CliSpec, 'stdin' | 'plainField' | 'resume'>
+  Pick<CliSpec, 'stdin' | 'plainField' | 'resume' | 'hidden'>
 
 export interface RouteSpec {
   /** Default: `POST`. */
@@ -96,6 +98,7 @@ export function resolveDefinition<I extends z.ZodObject, O extends z.ZodType>(
       ...(def.cli?.resume ? { resume: def.cli.resume } : {}),
       ...(def.cli?.stdin ? { stdin: def.cli.stdin } : {}),
       ...(def.cli?.plainField ? { plainField: def.cli.plainField } : {}),
+      ...(def.cli?.hidden ? { hidden: true } : {}),
     },
     route: {
       method: def.route?.method ?? 'POST',

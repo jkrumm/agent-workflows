@@ -4,7 +4,6 @@ import { DEFAULT_ROUTES } from './registry.ts'
 import type { ResolvedRoute, RouteEntry, RouteId } from './schema.ts'
 
 export { BALANCE_MARKER, isBalanceFailure } from './balance.ts'
-export { IMAGE_ROUTES, type ImageRouteId, resolveImageRoute } from './image-routes.ts'
 export {
   type Price,
   type PriceUsage,

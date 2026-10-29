@@ -24,6 +24,7 @@ export interface XCli {
   plainField?: string
   kind: 'capability' | 'workflow' | 'run'
   resume?: { command: string[]; positional: string[] }
+  hidden?: boolean
 }
 
 interface Parameter {
@@ -215,6 +216,8 @@ export function buildCommands(doc: Document): { commands: Command[]; skipped: Sk
       const op = deref(doc, rawOp) as Operation
       if (!op['x-cli']) continue
       const operation = `${method.toUpperCase()} ${path}`
+      // Intentionally not a command (`x-cli.hidden`): neither a command nor a skipped operation.
+      if (op['x-cli'].hidden === true) continue
       const x = readXCli(op['x-cli'])
       if (typeof x === 'string') {
         skipped.push({ operation, reason: x })
