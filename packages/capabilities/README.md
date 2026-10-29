@@ -102,7 +102,7 @@ All four are `POST` with a JSON body. The model comes from the route; override w
 
 `agw llm summarize [text] [--max-words 100] [--style paragraph|bullets]`, text from stdin when omitted. Input `{ text, maxWords = 100, style = 'paragraph' }`, output `{ summary }`.
 
-**Token effect / cache effect.** Cost grows with the text: the whole input is sent once, output is capped by `maxWords` in the prompt (the ceiling is `maxOutputTokens`, default 8192, or 32000 when the route has an effort). The system prompt is fixed and first, so repeated calls share a cacheable prefix; the text follows it. IU's Messages wire reports no cost, so the cost comes from the route's Haiku 5.5 EU `rate` (`costSource: 'rate'`), cache reads and writes at their own rates. Prompts over 100K tokens bill at 5x on the vendor list; `Rate` has no tier for that, so such a call reports `unknown` cost rather than an under-price. A route flip to a model with an effort turns adaptive thinking on: reasoning tokens bill as output and count against the ceiling.
+**Token effect / cache effect.** Cost grows with the text: the whole input is sent once, output is capped by `maxWords` in the prompt (the ceiling is `maxOutputTokens`, default 8192, or 32000 when the route has an effort). The system prompt is fixed and first, so repeated calls share a cacheable prefix; the text follows it. IU's Messages wire reports no cost, so the cost comes from the route's Haiku 5.5 `rate` (`costSource: 'rate'`), cache reads and writes at their own rates. Prompts over 100K tokens bill at 5x on every column (the rate's `longPrompt` tier), and `costFromUsage` prices such a call at it. A route flip to a model with an effort turns adaptive thinking on: reasoning tokens bill as output and count against the ceiling.
 
 ### `llm.title` — route `cheap.title` (`iu-anthropic`)
 
@@ -110,9 +110,9 @@ All four are `POST` with a JSON body. The model comes from the route; override w
 
 **Token effect / cache effect.** Output is a handful of tokens, so cost is almost all input. Same fixed-prefix layout and rate-based cost as `llm.summarize`. Titling a text you already summarized with `llm.summarize` is cheaper on the summary than on the original.
 
-### `llm.classify` — route `cheap.classify` (`iu-openai`)
+### `llm.classify` — route `cheap.classify` (`iu-openai`, Haiku 5.5)
 
-`agw llm classify [text] --labels '{"bug":"something is broken","feature":"a new behaviour"}'`. Input `{ text, labels }` where `labels` maps each label to what it means (at least two); output `{ label, reason }` with `label` exactly one of the keys, validated per call. JSON mode is requested; a wrong label or unparseable answer is re-asked once with the reason.
+`agw llm classify [text] --labels '{"bug":"something is broken","feature":"a new behaviour"}'`. Input `{ text, labels }` where `labels` maps each label to what it means (at least two); output `{ label, reason }` with `label` exactly one of the keys, validated per call. Haiku 5.5 on the chat wire (the gateway used deepseek-v4.1-flash, a Requesty model; IU reports no cost there, so the route carries the rate). JSON mode is requested; a wrong label or unparseable answer is re-asked once with the reason.
 
 **Token effect / cache effect.** The label list and the instruction come first and the text last, so the prefix is identical across calls with the same labels and the provider's prompt cache applies (`cacheRead` is reported; the cost in `usage.cost` already reflects it). The model reasons, so `output` includes reasoning tokens, and `max_completion_tokens` is the route's 16000 so reasoning cannot starve the answer. A failed first answer costs a second full call. Cost is the provider's.
 
@@ -128,7 +128,7 @@ Ported as-is from agent-gateway's `triage` job as iris uses it, for iris's voice
 
 **`usage` and cost, on `triage` and `decide`.** Legacy's field names, which iris reads: `usage: { inputTokens, outputTokens, reasoningTokens, totalTokens, cacheReadTokens, costUsd }`, summed over every attempt of the call (`inputTokens` includes cache reads, `outputTokens` includes reasoning, as the provider reports them). `costUsd` is `null` when any attempt has no price, never a partial sum. The same calls are reported to the run record and Argo.
 
-**Route.** Haiku 5.5 EU over the native Messages wire; no Requesty hop and no fallback (`packages/routes` README §Deliberate differences). The gateway used deepseek-v4.1-flash, a Requesty model.
+**Route.** Haiku 5.5 over the native Messages wire; no Requesty hop and no fallback (`packages/routes` README §Deliberate differences). The gateway used deepseek-v4.1-flash, a Requesty model.
 
 **Cancel.** The call's signal reaches the HTTP request: `agw run cancel <runId>` or `POST /runs/{runId}/cancel` ends an in-flight `triage` or `decide` (`packages/host/test/iris-calls.test.ts`), as does a client that disconnects without an `Idempotency-Key`.
 
