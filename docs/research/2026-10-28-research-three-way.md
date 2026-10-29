@@ -196,4 +196,84 @@ standard run per arm makes the range ≈ $5–20. The judge's 38 `web.fetch` run
 
 ## Results
 
-Pending the live window.
+Full run, 2026-10-29 (deploy `5025eec`, team key, `deepseek-v4.1-flash` in every arm): 3 passes × 5 arms × 28
+questions, the five arms of a pass side by side, so they share the host's load. 420 research runs, all done, none
+failed or incomplete, every one priced.
+
+**Verdict: A-yolo.** Of the two arms rule 3 lets through (A-yolo, P-yolo) only A-yolo is eligible. On supported citations it beats E by +0.19 (CI 0.07 to 0.32),
+and on golden it is level with E. Its median cost on standard and deep questions is $0.028 against E's $0.138, about
+5× cheaper, and its p50 wall time is a quarter of E's (39 s vs 171 s on standard).
+
+- **Profile:** focused never beat yolo with a CI excluding 0, so yolo stays the profile in both designs.
+- **P is not eligible:** P-yolo's golden CI against E reaches −0.12, below the −0.10 bound, and its supported-citation
+  gain (+0.06) is not significant. It also costs about twice A and is about 3× slower.
+- **E's weak spot is citations:** it is grounded (0.99), but the judge holds only 0.73 of its citations supported,
+  against 0.91 for A-yolo. Its standard and deep questions cost about 5× those of A.
+- **Unscored and partial:** E leaves 3 runs unscored (all standard). A-focused leaves 5 unscored and has 11 partial, the most of any arm.
+  P-focused's judged share drops to 0.87 on standard.
+
+Spend on the team key: **$12.57** in total, against an estimate of about $10 (range $5–20).
+
+| Arm | 84 runs |
+|-|-|
+| E | $4.97 |
+| A-yolo | $1.18 |
+| A-focused | $1.08 |
+| P-yolo | $2.55 |
+| P-focused | $2.50 |
+| judge (`cap.decide` $0.16, `cap.web.fetch` $0.14, `cap.web.package` $0) | $0.30 |
+
+The judge figure covers every purpose-`eval` capability run in the window. Six `cap.web.package` runs carry no
+price.
+
+`compare.ts` output:
+
+#### All questions
+
+| arm | runs | failed | incomplete | unscored | partial | golden | supported | judged share | grounded | median $ | p50 wall s | tokens (median) | cache read share | tool calls (median) |
+|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|
+| engine | 84 | 0 | 0 | 3 | 5 | 0.99 | 0.73 | 0.97 | 0.99 | 0.0101 | 22 | 0 | n/a | 0 |
+| agent-yolo | 84 | 0 | 0 | 0 | 8 | 0.98 | 0.91 | 0.99 | 0.97 | 0.0063 | 9 | 14964 | 0.82 | 3 |
+| agent-focused | 84 | 0 | 0 | 5 | 11 | 0.97 | 0.93 | 0.99 | 0.94 | 0.0054 | 8 | 11695 | 0.73 | 2 |
+| pilot-yolo | 84 | 0 | 0 | 4 | 5 | 0.97 | 0.79 | 0.99 | 0.98 | 0.0135 | 30 | 11163 | 0.76 | 2 |
+| pilot-focused | 84 | 0 | 0 | 4 | 0 | 1.00 | 0.75 | 0.96 | 1.00 | 0.0128 | 34 | 7134 | 0.59 | 1 |
+
+#### quick
+
+| arm | runs | failed | incomplete | unscored | partial | golden | supported | judged share | grounded | median $ | p50 wall s | tokens (median) | cache read share | tool calls (median) |
+|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|
+| engine | 57 | 0 | 0 | 0 | 1 | 1.00 | 0.69 | 0.97 | 0.99 | 0.0075 | 18 | 0 | n/a | 0 |
+| agent-yolo | 57 | 0 | 0 | 0 | 5 | 0.98 | 0.89 | 0.99 | 0.97 | 0.0041 | 7 | 11361 | 0.69 | 2 |
+| agent-focused | 57 | 0 | 0 | 3 | 8 | 0.98 | 0.94 | 0.99 | 0.94 | 0.0047 | 7 | 7017 | 0.70 | 1 |
+| pilot-yolo | 57 | 0 | 0 | 2 | 2 | 0.98 | 0.76 | 0.99 | 0.99 | 0.0099 | 24 | 7979 | 0.77 | 1 |
+| pilot-focused | 57 | 0 | 0 | 1 | 0 | 1.00 | 0.73 | 0.99 | 1.00 | 0.0099 | 28 | 6786 | 0.70 | 1 |
+
+#### standard
+
+| arm | runs | failed | incomplete | unscored | partial | golden | supported | judged share | grounded | median $ | p50 wall s | tokens (median) | cache read share | tool calls (median) |
+|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|
+| engine | 24 | 0 | 0 | 3 | 3 | 0.95 | 0.81 | 0.98 | 0.99 | 0.1331 | 171 | 0 | n/a | 0 |
+| agent-yolo | 24 | 0 | 0 | 0 | 3 | 0.96 | 0.97 | 1.00 | 0.96 | 0.0260 | 39 | 79924 | 0.80 | 10 |
+| agent-focused | 24 | 0 | 0 | 2 | 3 | 0.95 | 0.90 | 0.98 | 0.94 | 0.0180 | 35 | 50746 | 0.72 | 6 |
+| pilot-yolo | 24 | 0 | 0 | 2 | 3 | 0.95 | 0.86 | 0.98 | 0.95 | 0.0479 | 104 | 52244 | 0.75 | 8 |
+| pilot-focused | 24 | 0 | 0 | 3 | 0 | 1.00 | 0.81 | 0.87 | 1.00 | 0.0455 | 91 | 13135 | 0.46 | 3 |
+
+#### deep
+
+| arm | runs | failed | incomplete | unscored | partial | golden | supported | judged share | grounded | median $ | p50 wall s | tokens (median) | cache read share | tool calls (median) |
+|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|
+| engine | 3 | 0 | 0 | 0 | 1 | 1.00 | 1.00 | 1.00 | 0.99 | 0.4833 | 417 | 0 | n/a | 0 |
+| agent-yolo | 3 | 0 | 0 | 0 | 0 | 1.00 | 0.78 | 1.00 | 1.00 | 0.0882 | 174 | 740783 | 0.90 | 30 |
+| agent-focused | 3 | 0 | 0 | 0 | 0 | 1.00 | 1.00 | 1.00 | 1.00 | 0.0587 | 185 | 338675 | 0.77 | 17 |
+| pilot-yolo | 3 | 0 | 0 | 0 | 0 | 1.00 | 0.89 | 1.00 | 1.00 | 0.2037 | 279 | 196267 | 0.77 | 20 |
+| pilot-focused | 3 | 0 | 0 | 0 | 0 | 1.00 | 0.89 | 1.00 | 1.00 | 0.2246 | 351 | 55705 | 0.58 | 9 |
+
+#### Verdict by the rule
+
+- **profile**: agent: focused − yolo golden 0.000 [0.000, 0.000] (n=28), supported 0.018 [-0.048, 0.089] (n=28) → agent-yolo
+- **profile**: pilot: focused − yolo golden 0.012 [0.000, 0.037] (n=27), supported -0.033 [-0.101, 0.033] (n=27) → pilot-yolo
+- **eligible**: agent-yolo − engine: golden 0.012 [-0.036, 0.071] (n=28), supported 0.185 [0.065, 0.321] (n=28) → eligible
+- **eligible**: pilot-yolo − engine: golden -0.012 [-0.119, 0.095] (n=28), supported 0.060 [-0.019, 0.149] (n=28) → not eligible
+- **cost**: agent-yolo $0.0279 vs engine $0.1383 → agent-yolo
+
+**Winner: agent-yolo**
