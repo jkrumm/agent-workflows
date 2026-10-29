@@ -12,6 +12,13 @@ import { ROUTE_ID, type RouteEntry, routeSchema } from './schema.ts'
 // prices each message with them) and prices a message OpenCode reports at cost 0 with it.
 const HAIKU_55_EU_RATE = { inputPerM: 0.1, outputPerM: 0.5, cacheReadPerM: 0.01, cacheWritePerM: 0.125 }
 
+// Sonnet 5.5 EU rate, USD/M: in 2.00, out 10.00, cache read 0.20 (0.1x in), cache write 2.50 (1.25x in). The Anthropic
+// list price for `claude-sonnet-5`, which the `-eu` twin shares (modelpick `src/server/bench/cost.ts`
+// CLAUDE_LIST_RATES, "confirmed against the CLI's own reported cost"; agent-gateway `server/lib/models.ts` carries the
+// same in/out, dated 2026-09-13). Neither source records a >100K-prompt tier for Sonnet, so none is modelled here; as
+// for Haiku, a call over a tier `Rate` cannot express would be priced `unknown`, never under-priced silently.
+const SONNET_55_EU_RATE = { inputPerM: 2, outputPerM: 10, cacheReadPerM: 0.2, cacheWritePerM: 2.5 }
+
 // GPT-6.1 Terra, Standard tier, USD/M: in 1.00, cached in 0.05, out 5.00, cache write 1.25 (30-min). Above 272K input
 // tokens the whole request bills 2x input/cache and 1.5x output; `Rate` does not model that tier, so such a call is
 // priced `unknown`. Source: developers.openai.com via /research, and a probe of the IU OpenAI endpoint (listed in
@@ -81,6 +88,15 @@ const TABLE = {
     wire: 'opencode',
     model: 'claude-haiku-5-5-eu',
     rate: HAIKU_55_EU_RATE,
+    fallback: AGENT_FALLBACK,
+  },
+  // Angles of a `depth: deep` review (owner, 2026-10-29; Wave 6 experiment, 20 paired cases: Haiku -> Sonnet angles
+  // recall 0.017 -> 0.13, precision 0.10 -> 0.50, cost per review $0.057 -> $0.542). The review workflow names this
+  // route in the angle steps' `options.route`; every other depth runs `review.angle`.
+  'review.angle.deep': {
+    wire: 'opencode',
+    model: 'claude-sonnet-5-5-eu',
+    rate: SONNET_55_EU_RATE,
     fallback: AGENT_FALLBACK,
   },
   'review.synthesis': {

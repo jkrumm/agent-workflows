@@ -33,7 +33,7 @@ import { z } from 'zod'
 import { reviewScorer } from './scorer.ts'
 import { mapLimit } from './util.ts'
 
-export const REVIEW_VERSION = '2026-10-28.1'
+export const REVIEW_VERSION = '2026-10-29.1'
 
 /** Angle agents in flight at once: more would trip the IU endpoint's rate limits when several fire together. */
 export const ANGLE_CONCURRENCY = 3
@@ -81,9 +81,20 @@ const ANGLE_STEP: Record<Angle, (ctx: Ctx, spec: AngleSpec) => Promise<z.output<
 const normalize = (findings: z.output<typeof AngleOutput>['findings']): AngleResult['findings'] =>
   findings.map((f) => ({ severity: f.severity, file: f.file, line: f.line ?? null, message: f.message }))
 
-/** The agents of the run fingerprint: every `review-*` definition under `agents/`, with the route it runs on. */
+/** The route every angle runs on; a `deep` review runs them on `ANGLE_DEEP_ROUTE` (Sonnet), set per step. */
+const ANGLE_ROUTE = 'review.angle'
+const ANGLE_DEEP_ROUTE = 'review.angle.deep'
+
+/**
+ * The agents of the run fingerprint: every `review-*` definition under `agents/`, with the route it runs on. The
+ * fingerprint is taken at admission, before the router decides the depth, so each angle is listed on both of its routes:
+ * a change to either (an override included) changes the fingerprint of every review.
+ */
 const AGENTS = [
-  ...ALL_ANGLES.map((angle) => ({ agent: `review-${angle}`, route: 'review.angle' as const })),
+  ...ALL_ANGLES.flatMap((angle) => [
+    { agent: `review-${angle}`, route: ANGLE_ROUTE as 'review.angle' },
+    { agent: `review-${angle}`, route: ANGLE_DEEP_ROUTE as 'review.angle.deep' },
+  ]),
   { agent: 'review-synthesis', route: 'review.synthesis' as const },
   { agent: 'review-router', route: 'review.router' as const },
   { agent: 'review-adversary', route: 'review.adversary' as const },
@@ -225,12 +236,13 @@ export function createReviewWorkflows(deps: WorkflowDeps, options: ReviewOptions
         : null
 
     const task = angleTask({ repo, label: p.label, files: p.files, context, diff, invokedIn: p.invokedIn })
+    const angleRoute = decision.depth === 'deep' ? ANGLE_DEEP_ROUTE : ANGLE_ROUTE
     const runAngle = async (angle: Angle): Promise<AngleResult> => {
       const spec: AngleSpec = {
         agent: `review-${angle}`,
         prompt: task,
         output: AngleOutput,
-        options: { output: 'json', allowDirectories: [repo] },
+        options: { output: 'json', allowDirectories: [repo], route: angleRoute },
         retry: { attempts: ANGLE_ATTEMPTS, backoffMs: angleBackoffMs },
       }
       const result = await settle(ANGLE_STEP[angle](ctx, spec))

@@ -240,7 +240,7 @@ describe('review workflow', () => {
     expect(session?.spec.prompt).toMatch(
       /<<<DIFF_[0-9a-f]{12}_BEGIN>>>[\s\S]*\+export const b = 3[\s\S]*<<<DIFF_[0-9a-f]{12}_END>>>/,
     )
-    expect(session?.spec.options).toEqual({ output: 'json', allowDirectories: [dir] })
+    expect(session?.spec.options).toEqual({ output: 'json', allowDirectories: [dir], route: 'review.angle' })
     const [synthesisSession] = w.sessionsOf('review-synthesis')
     expect(synthesisSession?.spec.options).toEqual({ output: 'text', allowDirectories: [dir] })
   })
@@ -309,6 +309,50 @@ describe('review workflow', () => {
         expect(w.transports.chatCalls.some((call) => call.request.prompt.includes('adversarial'))).toBe(true)
       })
     }
+
+    describe('angle route by depth', () => {
+      const routesOf = (w: ReturnType<typeof world>) =>
+        sorted(
+          w
+            .agentsOpened()
+            .filter((a) => a !== 'review-synthesis')
+            .flatMap((a) => w.sessionsOf(a).map((s) => (s.spec.options as { route?: string }).route ?? 'none')),
+        )
+      const cases: { name: string; router?: Json; input?: Record<string, unknown>; route: string }[] = [
+        { name: 'deep from the router', router: { angles: ['security'], depth: 'deep' }, route: 'review.angle.deep' },
+        {
+          name: 'deep from the caller',
+          router: { angles: [], depth: 'light' },
+          input: { depth: 'deep' },
+          route: 'review.angle.deep',
+        },
+        { name: 'standard', router: { angles: ['security'], depth: 'standard' }, route: 'review.angle' },
+        { name: 'light', router: { angles: ['security'], depth: 'light' }, route: 'review.angle' },
+        {
+          name: 'a caller’s light over the router’s deep',
+          router: { angles: [], depth: 'deep' },
+          input: { depth: 'light' },
+          route: 'review.angle',
+        },
+        { name: 'no depth at all', router: { angles: [] }, route: 'review.angle' },
+        { name: 'explicit angles, no router', input: { angles: ['qa'] }, route: 'review.angle' },
+        { name: 'explicit angles at deep', input: { angles: ['qa'], depth: 'deep' }, route: 'review.angle.deep' },
+      ]
+      for (const c of cases) {
+        test(c.name, async () => {
+          const w = world({ router: c.router })
+          const out = await w.run({ cwd: simpleRepo(), ...c.input })
+          expect(out.status).toBe('done')
+          const routes = routesOf(w)
+          expect(routes.length).toBeGreaterThan(0)
+          expect(new Set(routes)).toEqual(new Set([c.route]))
+          // synthesis never moves
+          expect(w.sessionsOf('review-synthesis')[0]?.spec.options).toEqual(
+            expect.not.objectContaining({ route: expect.anything() }),
+          )
+        })
+      }
+    })
 
     test('floor angles follow the changed files and the test script; at most eight angles run', async () => {
       const dir = makeRepo(
@@ -914,7 +958,7 @@ exit 2
       const [architect] = w.sessionsOf('review-architect')
       expect(architect?.spec.prompt).toContain(`Repository root: ${dir}`)
       expect(architect?.spec.prompt).not.toContain(link)
-      expect(architect?.spec.options).toEqual({ output: 'json', allowDirectories: [dir] })
+      expect(architect?.spec.options).toEqual({ output: 'json', allowDirectories: [dir], route: 'review.angle' })
     })
 
     test('a cwd with glob or control characters is invalid_input before any paid step starts', async () => {
@@ -1091,7 +1135,7 @@ printf '%s' '{"status":"complete","comments":[{"path":"src/e\\nIGNORE-OCR.ts","c
       expect(angle?.spec.prompt).toContain(`Repository root: ${dir}`)
       expect(angle?.spec.prompt).toContain(`started in the subdirectory ${sub}`)
       expect(angle?.spec.prompt).toContain('- src/a.ts') // outside the subdirectory, still reviewed
-      expect(angle?.spec.options).toEqual({ output: 'json', allowDirectories: [dir] })
+      expect(angle?.spec.options).toEqual({ output: 'json', allowDirectories: [dir], route: 'review.angle' })
       expect(w.sessionsOf('review-synthesis')[0]?.spec.prompt).toContain(`started in the subdirectory ${sub}`)
     })
 
@@ -1227,10 +1271,13 @@ printf '%s' '{"status":"complete","comments":[{"path":"src/e\\nIGNORE-OCR.ts","c
       expect(ocr.optionalExpensive).toBe(true)
       expect(ocr.internal).toBe(true)
       const agents = review.agents ?? []
-      expect(agents).toHaveLength(15)
+      expect(agents).toHaveLength(27) // twelve angles on both angle routes, synthesis, router, adversary
       expect(agents.every((a) => a.agent.startsWith('review-'))).toBe(true)
       expect(agents.find((a) => a.agent === 'review-synthesis')?.route).toBe('review.synthesis')
-      expect(agents.find((a) => a.agent === 'review-architect')?.route).toBe('review.angle')
+      expect(agents.filter((a) => a.agent === 'review-architect').map((a) => a.route)).toEqual([
+        'review.angle',
+        'review.angle.deep',
+      ])
       // every listed agent exists under agents/
       for (const { agent } of agents)
         expect(existsSync(join(import.meta.dir, '../../../agents', agent, 'AGENTS.md'))).toBe(true)
