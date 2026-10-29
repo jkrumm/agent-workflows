@@ -1,6 +1,6 @@
 import { capDiff, parseJsonLoose } from '@agent-workflows/capabilities'
 import { DEFAULT_STATE_DIR } from '@agent-workflows/opencode-host'
-import { isBalanceFailure } from '@agent-workflows/routes'
+import { isBalanceFailure, type RouteId } from '@agent-workflows/routes'
 import { type AgentSpec, type Ctx, defineWorkflow, StepFailed, WorkflowError } from '@agent-workflows/runtime'
 import type { HostWorkflow } from '../../operations.ts'
 import type { WorkflowDeps } from '../index.ts'
@@ -82,8 +82,9 @@ const normalize = (findings: z.output<typeof AngleOutput>['findings']): AngleRes
   findings.map((f) => ({ severity: f.severity, file: f.file, line: f.line ?? null, message: f.message }))
 
 /** The route every angle runs on; a review the caller asked to run at `deep` runs them on `ANGLE_DEEP_ROUTE` (Sonnet), set per step. */
-const ANGLE_ROUTE = 'review.angle' as const
-const ANGLE_DEEP_ROUTE = 'review.angle.deep' as const
+// Typed `RouteId`: the step's `options.route` is untyped, so the constants are checked against the table here.
+const ANGLE_ROUTE: RouteId = 'review.angle'
+const ANGLE_DEEP_ROUTE: RouteId = 'review.angle.deep'
 
 /**
  * The agents of the run fingerprint: every `review-*` definition under `agents/`, with the route it runs on. The

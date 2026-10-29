@@ -236,7 +236,7 @@ export async function boot(config: HostConfig, options: BootOptions = {}): Promi
       logger: hostLogger,
     })
     closers.push(() => toolGate.close())
-    const workflows = createWorkflows({
+    const workflows = await createWorkflows({
       registry,
       toolGate,
       logger: hostLogger,

@@ -41,13 +41,23 @@ export interface WorkflowDeps {
 /** What the host builds its workflows from: `WorkflowDeps` plus its one tool gate, which a workflow that gives its agent tools opens a grant on. Two gates would fight over one `gate.json`, so there is no per-workflow fallback. */
 export type HostDeps = WorkflowDeps & { toolGate: ToolGate }
 
-/** Every `src/workflows/<id>/module.ts`, discovered once per process at import. Heavy pipelines run in their own processes (concept §8). */
-export const HOST_MODULES: readonly DiscoveredModule[] = await discoverWorkflowModules(import.meta.dir)
+let discovered: Promise<readonly DiscoveredModule[]> | undefined
 
-/** Every workflow the host process serves: each module's, built from `deps`. */
-export function createWorkflows(deps: HostDeps, modules: readonly DiscoveredModule[] = HOST_MODULES): HostWorkflow[] {
+/**
+ * Every `src/workflows/<id>/module.ts`, discovered on first use and memoised; never at import, so a module (or any
+ * importer of this file's types and helpers) loads nothing until the host builds. Heavy pipelines run in their own
+ * processes (concept §8).
+ */
+export function hostModules(): Promise<readonly DiscoveredModule[]> {
+  discovered ??= discoverWorkflowModules(import.meta.dir)
+  return discovered
+}
+
+/** Every workflow the host process serves: each module's (default: the host's tree), built from `deps`. */
+export async function createWorkflows(deps: HostDeps, modules?: readonly DiscoveredModule[]): Promise<HostWorkflow[]> {
+  const list = modules ?? (await hostModules())
   // The gate refuses to grant an agent a mutating or unknown capability: it learns what the registry holds.
   deps.toolGate.setCapabilities((id) => deps.registry.capabilities.find((c) => c.id === id)?.cli)
   const known = new Set<string>(routeIds())
-  return buildWorkflows(modules, deps, (id) => known.has(id))
+  return buildWorkflows(list, deps, (id) => known.has(id))
 }

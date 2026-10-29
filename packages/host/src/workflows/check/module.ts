@@ -1,6 +1,6 @@
 import { CheckCase, readCases } from '@agent-workflows/eval'
-import { defined } from '../eval/suites.ts'
 import { defineWorkflowModule } from '../registry.ts'
+import { defined } from '../suite.ts'
 import { createCheckWorkflows } from './index.ts'
 import { checkReference } from './scorer.ts'
 

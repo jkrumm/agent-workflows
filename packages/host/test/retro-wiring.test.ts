@@ -37,14 +37,14 @@ describe('registration', () => {
     learnings: {} as never,
   }
 
-  test('without the retro deps the host serves what it did before', () => {
-    const ids = createWorkflows({ registry, toolGate }).map((w) => w.workflow.id)
+  test('without the retro deps the host serves what it did before', async () => {
+    const ids = (await createWorkflows({ registry, toolGate })).map((w) => w.workflow.id)
     expect(ids).not.toContain('retrospective')
     expect(ids.some((id) => id.startsWith('learnings.'))).toBe(false)
   })
 
-  test('with them: the learnings commands and the retrospective, which runs the retrospective agent on its own route', () => {
-    const entries = createWorkflows({ registry, toolGate, retro: stub })
+  test('with them: the learnings commands and the retrospective, which runs the retrospective agent on its own route', async () => {
+    const entries = await createWorkflows({ registry, toolGate, retro: stub })
     const ids = entries.map((w) => w.workflow.id)
     expect(ids).toEqual(
       expect.arrayContaining([
@@ -58,8 +58,8 @@ describe('registration', () => {
     expect(fingerprintWorkflows(entries).retrospective).toEqual([{ agent: 'retrospective', route: 'retro.analyze' }])
   })
 
-  test('the retrospective is told each agent once, though review lists its angles on two routes', () => {
-    const review = agentNames(createWorkflows({ registry, toolGate })).get('review') ?? []
+  test('the retrospective is told each agent once, though review lists its angles on two routes', async () => {
+    const review = agentNames(await createWorkflows({ registry, toolGate })).get('review') ?? []
     expect(new Set(review).size).toBe(review.length)
     expect(review.filter((a) => a === 'review-architect')).toHaveLength(1)
   })

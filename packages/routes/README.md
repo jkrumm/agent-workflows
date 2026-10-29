@@ -23,12 +23,18 @@ costFromUsage(route.wire, usage, route.rate) // { usd, source: 'provider' | 'rat
 `src/table/<group>.ts`, one file per workflow or capability group (`review.ts`, `check.ts`, `cheap.ts`, ...), each
 default-exporting its entries; `src/table/_shared.ts` holds the rates and fallbacks several groups use
 (`HAIKU_55_EU_RATE`, `SONNET_55_EU_RATE`, `CALL_FALLBACK`, `AGENT_FALLBACK`). `discoverRoutes(dir)` imports every
-`*.ts` there in sorted order (`_`-prefixed and `*.test.ts` skipped) once per process; `DEFAULT_ROUTES` is the result,
+`*.ts` there in sorted order (only `_shared.ts` and `*.test.ts` skipped; any other file is a group) once per process; `DEFAULT_ROUTES` is the result,
 validated and deeply frozen. An empty directory, a default export that is not an object, an invalid id or entry, or a
 route id a second file declares fails the import, naming the file.
 
 Route ids stay typed though the table is discovered: each group file adds its ids to the `RouteTable` interface by
-module augmentation, and `RouteId = keyof RouteTable`, so a typo in a caller is a compile error. The host also checks at
+module augmentation, and `RouteId = keyof RouteTable`, so a typo in a caller is a compile error. `guard.test.ts` holds
+every group to that shape (`export default routes` plus the augmentation over `keyof typeof routes`, so the typed key
+set is the exported one by construction; a type cannot be listed at runtime to compare) and to importing only
+`../schema.ts` and `./_shared.ts`, so the table's top-level await can never wait on an import cycle. It also checks that
+every route literal in a route position under `packages/*/src` (`route:`, `routeId:`, `resolve(deps, …)`,
+`resolveRoute(…)`, `*_ROUTE[: RouteId] = …`) is a route the table serves: that covers call-time routes such as a step's untyped
+`options.route`. The host also checks at
 boot that every agent a workflow lists runs on a route the table has (`packages/host/README.md` §Adding a workflow).
 
 A new workflow's routes are a new group file, ending with the augmentation (copy it from any group):

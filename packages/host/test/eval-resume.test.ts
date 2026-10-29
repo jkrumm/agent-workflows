@@ -7,8 +7,10 @@ import type { Runtime } from '@agent-workflows/runtime'
 import { FakeAgentHost } from '@agent-workflows/runtime/testing'
 import { createCheckWorkflows } from '../src/workflows/check/index.ts'
 import { createEvalWorkflows, sweepCaseTrees, wireEval } from '../src/workflows/eval/index.ts'
-import { HOST_MODULES, suitesOf } from '../src/workflows/index.ts'
+import { hostModules, suitesOf } from '../src/workflows/index.ts'
 import { freshSchema, inspector, testRuntime, until } from '../../runtime/test/support/pg.ts'
+
+const HOST_SUITES = suitesOf(await hostModules())
 
 /** A resumed or cancelled `eval.run`: what it adopts, what it starts, what it leaves behind. */
 const db = freshSchema('evalres')
@@ -88,7 +90,7 @@ function boot(
   overrides: (rt: Runtime) => Overrides = () => ({}),
 ): { rt: Runtime; evalRun: ReturnType<typeof createEvalWorkflows>[0]['workflow'] } {
   const check = createCheckWorkflows()
-  const evals = createEvalWorkflows(suitesOf(HOST_MODULES), { env, tmpRoot, exec: counting })
+  const evals = createEvalWorkflows(HOST_SUITES, { env, tmpRoot, exec: counting })
   const rt = testRuntime({ schema: db.schema, workflows: [...check, ...evals].map((e) => e.workflow), host })
   const view = {
     start: rt.start.bind(rt),
@@ -348,7 +350,7 @@ describe('eval.run resume and cancel', () => {
     }
     const wiring = wireEval({
       runtime: runtime as never,
-      workflows: createEvalWorkflows(suitesOf(HOST_MODULES), { env, tmpRoot: root }),
+      workflows: createEvalWorkflows(HOST_SUITES, { env, tmpRoot: root }),
       env: { AGW_DRIFT_RATE: '0' },
       logger: { warn: () => {}, error: () => {} },
     })
