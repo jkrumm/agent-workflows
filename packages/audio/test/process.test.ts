@@ -1,7 +1,7 @@
 // The audio process booted for real (Postgres, HTTP on port 0) with stub door handlers of the lanes' interface
 // (`createSpeechHandler(deps)`, `createTranscriptionsHandler(deps)`): the process core, the ping workflow, the door's
 // auth and its one run per request.
-import { afterAll, describe, expect, test } from 'bun:test'
+import { afterAll, describe, expect, spyOn, test } from 'bun:test'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -26,6 +26,7 @@ import {
   type DoorEvent,
   type DoorHandlerDeps,
   type DoorHandlers,
+  type Fetch,
   loadAudioProcessConfig,
 } from '../src/process/index.ts'
 
@@ -100,8 +101,13 @@ function stubHandlers(hold?: Promise<void>): DoorHandlers & { seen: string[] } {
   }
 }
 
-async function start(handlers: DoorHandlers): Promise<RunningHost & { url: string }> {
-  const running = await bootAudio({ config: config(), handlers, tokens: new Map([['hermes', HERMES]]) })
+async function start(handlers: DoorHandlers, fetch?: Fetch): Promise<RunningHost & { url: string }> {
+  const running = await bootAudio({
+    config: config(),
+    handlers,
+    tokens: new Map([['hermes', HERMES]]),
+    ...(fetch ? { fetch } : {}),
+  })
   return { ...running, url: `http://127.0.0.1:${running.port}` }
 }
 
@@ -179,6 +185,7 @@ describe('the audio process', () => {
         costUsd: 0.002,
         calls: 2,
         complete: true,
+        ended: 'done',
       })
       const step = await sql.step(runId as string, 'request')
       expect(Number(step?.cost)).toBeCloseTo(0.002, 6)
@@ -243,15 +250,17 @@ describe('the audio process', () => {
     })
     const lanes = {
       config: testConfig(iu.baseUrl),
-      fetch: iu.fetch,
       media: fakeMedia,
       clock: instantClock,
       log: silentLog,
     }
-    const audio = await start({
-      speech: (deps) => createSpeechHandler({ ...lanes, ...deps }),
-      transcriptions: (deps) => createTranscriptionsHandler({ ...lanes, ...deps }),
-    })
+    const audio = await start(
+      {
+        speech: (deps) => createSpeechHandler({ ...lanes, ...deps }),
+        transcriptions: (deps) => createTranscriptionsHandler({ ...lanes, ...deps }),
+      },
+      iu.fetch,
+    )
     try {
       const pcm = await fetch(`${audio.url}/v1/audio/speech`, {
         method: 'POST',
@@ -288,7 +297,8 @@ describe('the audio process', () => {
     }
   })
 
-  test('a recording failure never fails the request: it is answered, and no run exists under its id', async () => {
+  test('a recording failure never fails the request: answered, no run under its id, the id logged', async () => {
+    const errors = spyOn(console, 'error')
     const audio = await start(stubHandlers())
     try {
       const res = await fetch(`${audio.url}/v1/audio/transcriptions`, {
@@ -301,7 +311,17 @@ describe('the audio process', () => {
       const runId = res.headers.get('agw-run-id')
       expect(runId).toBeTruthy()
       expect(await sql.run(runId as string)).toBeUndefined()
+      const logged = await until(
+        () =>
+          errors.mock.calls.find(
+            ([line, meta]) =>
+              String(line).includes('door request not recorded') && (meta as { runId?: string })?.runId === runId,
+          ),
+        'the not-recorded line with the id',
+      )
+      expect(logged).toBeTruthy()
     } finally {
+      errors.mockRestore()
       await audio.shutdown()
     }
   })
@@ -354,11 +374,112 @@ describe('the audio process', () => {
         'the cut run',
         15_000,
       )
-      expect(done.output).toMatchObject({ calls: 1, complete: false, costUsd: 0.002 })
+      expect(done.output).toMatchObject({ calls: 1, complete: false, costUsd: 0.002, ended: 'client-gone' })
     } finally {
       await audio.shutdown()
     }
   }, 30_000)
+
+  test('a client gone before the answer aborts the upstream call; the call billed after that is still recorded', async () => {
+    let reached = () => {}
+    const upstreamReached = new Promise<void>((resolve) => {
+      reached = resolve
+    })
+    let upstreamAborted = false
+    const upstream = Bun.serve({
+      hostname: '127.0.0.1',
+      port: 0,
+      fetch: (req) =>
+        new Promise<Response>((resolve) => {
+          req.signal.addEventListener('abort', () => {
+            upstreamAborted = true
+            resolve(new Response('gone'))
+          })
+          reached()
+        }),
+    })
+    const handlers = stubHandlers()
+    let runId = ''
+    handlers.speech = (deps) => async (req) => {
+      runId = deps.requestId(req)
+      try {
+        await deps.fetch(`http://127.0.0.1:${upstream.port}/tts`)
+      } catch {
+        // The attempt the upstream had started: recorded after the client left, at the provider's charge.
+        deps.usage.record(call(deps, req, { status: 499, costUsd: 0.001 }))
+      }
+      return new Response(null, { status: 499 })
+    }
+    const audio = await start(handlers)
+    try {
+      const abort = new AbortController()
+      const answered = fetch(`${audio.url}/v1/audio/speech`, {
+        method: 'POST',
+        body: '{}',
+        headers: bearer(HERMES),
+        signal: abort.signal,
+      }).catch(() => 'gone')
+      await upstreamReached
+      abort.abort()
+      expect(await answered).toBe('gone')
+      const done = await until(
+        async () => {
+          const row = await sql.run(runId)
+          return row?.status === 'done' ? row : undefined
+        },
+        'the abandoned run',
+        15_000,
+      )
+      expect(upstreamAborted).toBe(true)
+      expect(done.output).toMatchObject({ calls: 1, costUsd: 0.001, ended: 'client-gone' })
+    } finally {
+      await audio.shutdown()
+      await upstream.stop(true)
+    }
+  }, 30_000)
+
+  test('a handler that cannot be built is the door 500 with its run id; the record closes at once', async () => {
+    const handlers = stubHandlers()
+    handlers.speech = () => {
+      throw new Error('lane misconfigured')
+    }
+    const audio = await start(handlers)
+    try {
+      const res = await fetch(`${audio.url}/v1/audio/speech`, { method: 'POST', body: '{}', headers: bearer(HERMES) })
+      expect(res.status).toBe(500)
+      expect(await res.json()).toEqual({ error: { message: 'lane misconfigured', type: 'proxy_error' } })
+      const runId = res.headers.get('agw-run-id') as string
+      const done = await until(async () => {
+        const row = await sql.run(runId)
+        return row?.status === 'done' ? row : undefined
+      }, 'the failed-build run')
+      expect(done.output).toMatchObject({ calls: 0, complete: false, ended: 'done' })
+    } finally {
+      await audio.shutdown()
+    }
+  })
+
+  test("an event under another request's id is dropped, never put on this run", async () => {
+    const handlers = stubHandlers()
+    handlers.speech = (deps) => async (req) => {
+      deps.usage.record({ ...call(deps, req), requestId: 'another-request' })
+      deps.usage.record({ ...call(deps, req), kind: 'request' })
+      return Response.json({ ok: true })
+    }
+    const audio = await start(handlers)
+    try {
+      const res = await fetch(`${audio.url}/v1/audio/speech`, { method: 'POST', body: '{}', headers: bearer(HERMES) })
+      const runId = res.headers.get('agw-run-id') as string
+      await res.arrayBuffer()
+      const done = await until(async () => {
+        const row = await sql.run(runId)
+        return row?.status === 'done' ? row : undefined
+      }, 'the run')
+      expect(done.output).toMatchObject({ calls: 0, complete: true, costUsd: null })
+    } finally {
+      await audio.shutdown()
+    }
+  })
 
   // Explicit timeout: the first process's shutdown holds the cut request for the server's 5 s grace.
   test('a request cut by a restart: the next process fails its run as lost, it never hangs', async () => {
