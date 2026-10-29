@@ -116,7 +116,7 @@ export async function startTestHost(
     /** Ahead of the platform middleware, so a `runPost` held here holds the run record behind it. */
     middleware?: Middleware[]
     /** The environment `agw routes` resolves with (`AGW_ROUTES`); default none. */
-    routesEnv?: Record<string, string | undefined>
+    routesEnv?: { AGW_ROUTES?: string | undefined }
   } = {},
 ) {
   const fresh = freshSchema(options.prefix ?? 'host')

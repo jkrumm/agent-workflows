@@ -382,7 +382,7 @@ export async function bootProcess(
       version: config.version,
       isOpen: () => open,
       logger,
-      ...(definition.serveCapabilities ? { routesEnv: env } : {}),
+      ...(definition.serveCapabilities ? { routesEnv: { AGW_ROUTES: env.AGW_ROUTES } } : {}),
       ...(definition.friction ? { friction: { enabled: frictionState.enabled, state: frictionState.state } } : {}),
     })
     await host.openapi() // a broken contract fails the start, not the first request

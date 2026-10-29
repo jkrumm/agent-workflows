@@ -52,10 +52,11 @@ export interface HostOptions {
    */
   friction?: FrictionStatus
   /**
-   * Serves `agw routes` with this environment (the one `boot` validated `AGW_ROUTES` in). Set by the process that serves
-   * capabilities only: the CLI refuses a command two processes declare, so the audio process leaves it out.
+   * Serves `agw routes`, built once from this snapshot of the `AGW_ROUTES` `boot` validated (a bad one throws here).
+   * Set by the process that serves capabilities only: the CLI refuses a command two processes declare, so the audio
+   * process leaves it out.
    */
-  routesEnv?: Record<string, string | undefined>
+  routesEnv?: { AGW_ROUTES?: string | undefined }
   /** Upper bound of the Postgres probe behind `/health`. Default 2 s. */
   healthTimeoutMs?: number
   logger?: Logger

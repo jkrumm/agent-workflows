@@ -607,17 +607,20 @@ const RoutesSchema = z.object({
   table: z.string().describe('The same data as a compact table; what `--format plain` prints'),
 })
 
-const num = (n: number | undefined) => (n === undefined ? '-' : String(n))
+/** Fixed decimals, trailing zeros trimmed, never exponent notation (`1e-7` prints `0`, `0.5` stays `0.5`). */
+const fixed = (n: number) => n.toFixed(6).replace(/\.?0+$/, '')
+const num = (n: number | undefined) => (n === undefined ? '-' : fixed(n))
+const TIER_LEGEND = '* the price varies by tier (call attributes such as quality or size)'
 
 /** A non-token price in one short cell: `0.01/call`, `0.036/1000 character*` (`*`: some calls price by tier). */
 function priceCell(price: Price | undefined): string {
   if (!price) return '-'
   if (price.kind === 'unit') {
-    return `${price.usd}/${price.per && price.per > 1 ? `${price.per} ` : ''}${price.unit}${price.tiers ? '*' : ''}`
+    return `${fixed(price.usd)}/${price.per && price.per > 1 ? `${price.per} ` : ''}${price.unit}${price.tiers ? '*' : ''}`
   }
   if (price.kind === 'image-tokens')
-    return `M: ${price.textInPerM} text, ${price.imageInPerM} img in, ${price.outputPerM} out`
-  return `M: ${price.textInPerM} text, ${price.audioInPerM} audio in, ${price.outputPerM} out`
+    return `M: ${fixed(price.textInPerM)} text, ${fixed(price.imageInPerM)} img in, ${fixed(price.outputPerM)} out`
+  return `M: ${fixed(price.textInPerM)} text, ${fixed(price.audioInPerM)} audio in, ${fixed(price.outputPerM)} out`
 }
 
 /** One line per route, columns padded: id, wire, model, effort, USD per million in/out, other price, fallback model. */
@@ -637,24 +640,22 @@ export function routesTable(routes: Record<string, RouteEntry>): string {
     ]),
   ]
   const widths = header.map((_, col) => Math.max(...rows.map((row) => row[col]?.length ?? 0)))
-  return rows
-    .map((row) =>
-      row
-        .map((cell, col) => cell.padEnd(widths[col] ?? 0))
-        .join('  ')
-        .trimEnd(),
-    )
-    .join('\n')
+  const lines = rows.map((row) =>
+    row
+      .map((cell, col) => cell.padEnd(widths[col] ?? 0))
+      .join('  ')
+      .trimEnd(),
+  )
+  return (rows.some((row) => row[6]?.endsWith('*')) ? [...lines, TIER_LEGEND] : lines).join('\n')
 }
 
 /**
- * `agw routes`: the route table as this process resolves it, with the `AGW_ROUTES` its boot validated (`env`; never
- * the process environment, which a caller of `createHost` may not share). An unjournaled read like `run status`: no
- * run, no LLM. The entries carry model ids and prices only; routes hold no key or base URL. An override that no
- * longer resolves is a typed `ROUTE_OVERRIDE_INVALID` (500) with the override error's message, which names ids and
- * keys, never a value.
+ * `agw routes`: the route table with the `AGW_ROUTES` its boot validated (`overrides`: a snapshot, never the live
+ * process environment). Built once, here: the table cannot change while the host runs, and `boot` has already refused
+ * a bad override, so a bad one here throws at creation. An unjournaled read like `run status`: no run, no LLM. The
+ * entries carry model ids and prices only; routes hold no key or base URL.
  */
-export function routesOperation(env: Record<string, string | undefined>): HostOperation {
+export function routesOperation(overrides: { AGW_ROUTES?: string | undefined }): HostOperation {
   const operationId = operationIdOf('routes')
   const cli: ResolvedCliSpec = {
     command: ['routes'],
@@ -664,6 +665,12 @@ export function routesOperation(env: Record<string, string | undefined>): HostOp
     kind: 'capability',
     plainField: 'table',
   }
+  const routes: Record<string, RouteEntry> = {}
+  for (const id of routeIds()) {
+    const { id: _id, ...entry } = resolveRoute(id, overrides)
+    routes[id] = entry
+  }
+  const answer = { routes, table: routesTable(routes) }
   const procedure = base
     .route({
       method: 'GET',
@@ -674,20 +681,6 @@ export function routesOperation(env: Record<string, string | undefined>): HostOp
       spec: withCli(cli),
     })
     .output(RoutesSchema)
-    .handler(() => {
-      const routes: Record<string, RouteEntry> = {}
-      try {
-        for (const id of routeIds()) {
-          const { id: _id, ...entry } = resolveRoute(id, env)
-          routes[id] = entry
-        }
-      } catch (error) {
-        if (error instanceof RouteOverrideError) {
-          throw new ORPCError('ROUTE_OVERRIDE_INVALID', { status: 500, message: error.message })
-        }
-        throw error
-      }
-      return { routes, table: routesTable(routes) }
-    })
+    .handler(() => structuredClone(answer))
   return { operationId, method: 'GET', path: '/routes', cli, procedure }
 }
