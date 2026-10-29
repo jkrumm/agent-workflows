@@ -64,6 +64,39 @@ describe('priceCall (legacy computeCost rates)', () => {
   })
 })
 
+describe('prices come from the route table', () => {
+  test('per 1k characters, per minute and the audio-token split are the table entries', () => {
+    expect(route('audio.tts.elevenlabs-flash').price).toEqual({ kind: 'unit', unit: 'character', usd: 0.05, per: 1000 })
+    expect(route('audio.stt.voxtral-mini').price).toEqual({ kind: 'unit', unit: 'second', usd: 0.0035, per: 60 })
+    expect(route('audio.stt.openai-4o').price).toMatchObject({ kind: 'audio-tokens', audioInPerM: 6 })
+    const split = priceCall(route('audio.stt.openai-4o'), 200, {
+      inputTokens: 1000,
+      audioTokens: 800,
+      outputTokens: 50,
+    })
+    expect(split).toMatchObject({ units: 'tokens', quantity: 1050, costSource: 'rate' })
+    expect(split.costUsd).toBeCloseTo((200 * 2.5 + 800 * 6 + 50 * 10) / 1e6, 12)
+  })
+
+  test('an AGW_ROUTES override of a price reaches the door', () => {
+    const env = {
+      AGW_ROUTES: JSON.stringify({
+        'audio.stt.voxtral-mini': { price: { kind: 'unit', unit: 'second', usd: 0.006, per: 60 } },
+      }),
+    }
+    const overridden = audioRoutes(env)['audio.stt.voxtral-mini']
+    expect(priceCall(overridden, 200, { audioSeconds: 60 }).costUsd).toBeCloseTo(0.006, 12)
+  })
+
+  test("a unit price takes the provider's own cost where it sends one; a missing quantity is unknown", () => {
+    expect(priceCall(route('audio.tts.elevenlabs-v3'), 200, { inputChars: 10, providerCostUsd: 0.5 })).toMatchObject({
+      costUsd: 0.5,
+      costSource: 'provider',
+    })
+    expect(priceCall(route('audio.stt.openai'), 200, {})).toMatchObject({ costUsd: null, costSource: 'unknown' })
+  })
+})
+
 describe('config', () => {
   test('every base derives from IU_BASE_URL; the key and a /anthropic base are required', () => {
     expect(audioTransports({ IU_API_KEY: 'k', IU_BASE_URL: 'https://iu.example.com/x/anthropic/' })).toEqual({

@@ -39,7 +39,21 @@ export const imageTokenPriceSchema = z.strictObject({
   outputPerM: z.number().nonnegative(),
 })
 
-export const priceSchema = z.discriminatedUnion('kind', [unitPriceSchema, imageTokenPriceSchema])
+/**
+ * A token-billed speech-to-text model: the audio share of the input at `audioInPerM`, the rest at `textInPerM`. Without
+ * the split the whole input is audio (STT input is audio-dominated; audio-gateway's rule, never an under-price).
+ */
+export const audioTokenPriceSchema = z.strictObject({
+  kind: z.literal('audio-tokens'),
+  /** USD per million text input tokens (the prompt). */
+  textInPerM: z.number().nonnegative(),
+  /** USD per million audio input tokens. */
+  audioInPerM: z.number().nonnegative(),
+  /** USD per million output tokens. */
+  outputPerM: z.number().nonnegative(),
+})
+
+export const priceSchema = z.discriminatedUnion('kind', [unitPriceSchema, imageTokenPriceSchema, audioTokenPriceSchema])
 export type Price = z.infer<typeof priceSchema>
 export type UnitPrice = z.infer<typeof unitPriceSchema>
 
@@ -56,7 +70,11 @@ export interface PriceUsage {
   cost?: number | null
   input_tokens?: number
   output_tokens?: number
-  input_tokens_details?: { text_tokens?: number | null; image_tokens?: number | null } | null
+  input_tokens_details?: {
+    text_tokens?: number | null
+    image_tokens?: number | null
+    audio_tokens?: number | null
+  } | null
   units?: UnitsUsed | null
 }
 
@@ -74,7 +92,8 @@ function unitCost(price: UnitPrice, used: UnitsUsed | null | undefined): Cost {
 /**
  * USD for one call under a non-token price. The provider's `usage.cost` wins when it reports one; otherwise the price:
  * `unit` is `usd × quantity / per` (the matching tier's `usd` when a tier matches) and needs `usage.units`, except for
- * `call`, which defaults to one; `image-tokens` splits the input by `input_tokens_details` (without the split the whole
+ * `call`, which defaults to one; `audio-tokens` bills `input_tokens_details.audio_tokens` at the audio rate (the whole
+ * input without it); `image-tokens` splits the input by `input_tokens_details` (without the split the whole
  * input is text) and needs both token counts. Anything else is `unknown`: never free, never 0.
  */
 export function priceCall(price: Price | undefined, usage: PriceUsage | null | undefined): Cost {
@@ -85,6 +104,13 @@ export function priceCall(price: Price | undefined, usage: PriceUsage | null | u
   const input = count(usage?.input_tokens)
   const output = count(usage?.output_tokens)
   if (input === null || output === null) return { usd: null, source: 'unknown' }
+  if (price.kind === 'audio-tokens') {
+    const audioTokens = count(usage?.input_tokens_details?.audio_tokens) ?? input
+    if (audioTokens > input) return { usd: null, source: 'unknown' }
+    const usd =
+      ((input - audioTokens) * price.textInPerM + audioTokens * price.audioInPerM + output * price.outputPerM) / 1e6
+    return { usd, source: 'rate' }
+  }
   // The input splits into text and image tokens: a side the endpoint did not report is the remainder. Two sides that do not
   // add up to the input, or one that exceeds it, are a split we do not understand: unknown, never an under-price.
   const reportedText = count(usage?.input_tokens_details?.text_tokens)

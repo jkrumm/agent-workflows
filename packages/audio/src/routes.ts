@@ -1,32 +1,12 @@
-import { type Rate, type RouteId, resolveRoute, type Wire } from '@agent-workflows/routes'
+import { type Price, type Rate, type RouteId, resolveRoute, type Wire } from '@agent-workflows/routes'
 
 // The audio routes. Model, wire, effort and token rates live in the route table (`packages/routes/src/table/audio.ts`)
 // and honour `AGW_ROUTES` overrides; this file adds what only the audio lanes read, keyed by route id, and names no
-// model. The non-token prices (per 1k characters, per minute, the STT audio-token split) stay here until the general
-// price shape lands in `packages/routes` with the image port; `priceCall` in `usage.ts` is the one place reading them.
-// Rates and stamps: audio-gateway `src/usage.ts` (`RATES`) at 568c281.
+// model and no price: every price (token `rate`, or `price` per 1k characters, per minute, audio-token split) is the
+// table's, read by `priceCall` in `usage.ts`. The one price fact the table has no field for, an invoice-verified stamp,
+// is `priceVerified` here (audio-gateway `src/usage.ts` RATES at 568c281: only `audio.stt.openai-4o-mini`).
 
 export type AudioLane = 'gemini' | 'replicate' | 'stt' | 'llm'
-
-export interface PriceStamp {
-  /** True only for a rate confirmed against an invoice or the billing provider's statement. */
-  verified: boolean
-  note: string
-}
-
-export type AudioPrice =
-  | {
-      unit: 'tokens'
-      inputPerM: number
-      outputPerM: number
-      /** Prompt-cache hits, a subset of input. */
-      cachedInputPerM?: number
-      /** Audio input tokens (STT), billed instead of `inputPerM` for that share. */
-      audioInputPerM?: number
-      stamp: PriceStamp
-    }
-  | { unit: 'characters'; per1k: number; stamp: PriceStamp }
-  | { unit: 'audio-seconds'; perMinute: number; stamp: PriceStamp }
 
 interface LaneSpec {
   lane: AudioLane
@@ -40,16 +20,9 @@ interface LaneSpec {
   synthesizeEnvelope?: boolean
   /** STT: the model takes `context_bias` (Voxtral) instead of honouring `prompt`. */
   contextBias?: boolean
-  /** A price the route table's token `rate` cannot express; wins over the rate. */
-  price?: AudioPrice
+  /** The route's price is invoice-verified (default: a list price or an inference). */
+  priceVerified?: true
 }
-
-const ELEVENLABS = 'per character at the vendor list rate; IU meters per prediction (legacy usage.ts, 2026-09-10)'
-const minutes = (perMinute: number, note: string): AudioPrice => ({
-  unit: 'audio-seconds',
-  perMinute,
-  stamp: { verified: false, note },
-})
 
 export const AUDIO_LANES = {
   'audio.tts.gemini-flash-lite': { lane: 'gemini' },
@@ -57,23 +30,16 @@ export const AUDIO_LANES = {
   'audio.tts.elevenlabs-flash': {
     lane: 'replicate',
     continuity: true,
-    price: { unit: 'characters', per1k: 0.05, stamp: { verified: false, note: ELEVENLABS } },
   },
   'audio.tts.elevenlabs-turbo': {
     lane: 'replicate',
     continuity: true,
-    price: { unit: 'characters', per1k: 0.05, stamp: { verified: false, note: 'assumed identical to flash-v2.5' } },
   },
   // v3 rejects previous_text/next_text since 2026-10-24.
   'audio.tts.elevenlabs-v3': {
     lane: 'replicate',
     prep: true,
     continuity: false,
-    price: {
-      unit: 'characters',
-      per1k: 0.1,
-      stamp: { verified: false, note: 'elevenlabs.io/pricing/api, 2026-09-02' },
-    },
   },
   'audio.tts.prep': { lane: 'llm' },
   'audio.tts.summary': { lane: 'llm' },
@@ -83,47 +49,31 @@ export const AUDIO_LANES = {
     sttFallback: 'audio.stt.openai',
     synthesizeEnvelope: true,
     contextBias: true,
-    price: minutes(0.0035, 'docs.mistral.ai pricing, 2026-10-25'),
   },
   'audio.stt.voxtral-small': {
     lane: 'stt',
     sttFallback: 'audio.stt.openai',
     synthesizeEnvelope: true,
     contextBias: true,
-    price: minutes(0.004, 'docs.mistral.ai pricing, 2026-10-25'),
   },
   'audio.stt.openai': {
     lane: 'stt',
     sttFallback: 'audio.stt.openai-legacy',
     synthesizeEnvelope: true,
-    price: minutes(0.0045, 'OpenAI list price, 2026-10-15, duration-billed'),
   },
   'audio.stt.openai-4o': {
     lane: 'stt',
     sttFallback: 'audio.stt.openai',
     synthesizeEnvelope: true,
-    price: {
-      unit: 'tokens',
-      inputPerM: 2.5,
-      audioInputPerM: 6,
-      outputPerM: 10,
-      stamp: { verified: false, note: 'OpenAI list price' },
-    },
   },
   'audio.stt.openai-4o-mini': {
     lane: 'stt',
+    priceVerified: true,
     sttFallback: 'audio.stt.openai',
     synthesizeEnvelope: true,
-    price: {
-      unit: 'tokens',
-      inputPerM: 1.25,
-      audioInputPerM: 1.25,
-      outputPerM: 5,
-      stamp: { verified: true, note: 'platform.openai.com/docs/pricing, verified 2026-07-24' },
-    },
   },
   // Whisper answers verbose_json/srt/vtt natively (real segment timing): passed through.
-  'audio.stt.openai-legacy': { lane: 'stt', price: minutes(0.006, 'OpenAI list price') },
+  'audio.stt.openai-legacy': { lane: 'stt' },
 } as const satisfies Partial<Record<RouteId, LaneSpec>>
 
 export type AudioRouteId = keyof typeof AUDIO_LANES
@@ -135,6 +85,7 @@ export interface AudioRoute extends LaneSpec {
   model: string
   effort?: string
   rate?: Rate
+  price?: Price
 }
 
 type Env = Record<string, string | undefined>
@@ -143,8 +94,8 @@ type Env = Record<string, string | undefined>
 export function audioRoutes(env: Env = process.env): Readonly<Record<AudioRouteId, AudioRoute>> {
   const out = {} as Record<AudioRouteId, AudioRoute>
   for (const [id, lane] of Object.entries(AUDIO_LANES) as [AudioRouteId, LaneSpec][]) {
-    const { wire, model, effort, rate } = resolveRoute(id, env)
-    out[id] = { ...lane, id, wire, model, ...(effort && { effort }), ...(rate && { rate }) }
+    const { wire, model, effort, rate, price } = resolveRoute(id, env)
+    out[id] = { ...lane, id, wire, model, ...(effort && { effort }), ...(rate && { rate }), ...(price && { price }) }
   }
   return Object.freeze(out)
 }
