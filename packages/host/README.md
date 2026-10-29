@@ -161,7 +161,7 @@ The OpenCode `AgentHost` is wired in `boot.ts` (`lazyOpenCodeHost`): an `OpenCod
 
 ## Deploy
 
-`make deploy` (`scripts/deploy.sh`) deploys `origin/master` on the mini as a **release**; `make deploy DRY_RUN=1` prints the plan and every rendered plist and changes nothing. A release runs every platform process (concept §8), each its own LaunchAgent from the same release: the host (`com.jkrumm.agent-workflows-host`, port 7791) and the audio process (`com.jkrumm.agent-workflows-audio`, port 7792, `packages/audio`). They are stopped, started, awaited and rolled back together, so one sha is live, never a mix.
+`make deploy` (`scripts/deploy.sh`) deploys `origin/master` on the mini as a **release**; `make deploy DRY_RUN=1` prints the plan and every rendered plist and changes nothing. A release runs every platform process (concept §8), each its own LaunchAgent from the same release: the host (`com.jkrumm.agent-workflows-host`, port 7791) and the audio process (`com.jkrumm.agent-workflows-audio`, port 7792, `packages/audio`; plus a door-only listener on 7793 that serves the door's routes and a 404 for everything else, `ProcessDefinition.doorOnly`). They are stopped, started, awaited and rolled back together, so one sha is live, never a mix.
 
 | Path (under `~/.agent-workflows`) | Is |
 |-|-|

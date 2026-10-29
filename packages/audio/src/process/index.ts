@@ -7,6 +7,8 @@ import {
   discoverWorkflowModules,
   type HostDeps,
   type ProcessDefinition,
+  type ProcessRoute,
+  type ProcessRuntime,
   type RunningHost,
 } from '@agent-workflows/host'
 import type { Runtime } from '@agent-workflows/runtime'
@@ -17,7 +19,7 @@ import type { AudioProcessConfig } from './config.ts'
 import { createDoor, type Door, type DoorHandlers, type Fetch } from './door.ts'
 
 export { callerAuth, type CallerAuth, parseDoorTokens, PLATFORM_CALLER, readDoorTokens } from './callers.ts'
-export { AUDIO_PORT, type AudioProcessConfig, loadAudioProcessConfig } from './config.ts'
+export { AUDIO_DOOR_PORT, AUDIO_PORT, type AudioProcessConfig, loadAudioProcessConfig } from './config.ts'
 export {
   createDoor,
   type Door,
@@ -68,6 +70,12 @@ export function audioProcess(options: AudioProcessOptions): ProcessDefinition {
   let runtime: Runtime | undefined
   let open = () => false
   let door: Door | undefined
+  const doorRoutes = (process: ProcessRuntime): ProcessRoute[] => {
+    runtime = process.runtime
+    open = process.isOpen
+    const mounted = door
+    return mounted ? [(request, url) => mounted.route(request, url)] : []
+  }
   return {
     name: 'audio',
     serviceName: 'agw-audio',
@@ -95,12 +103,9 @@ export function audioProcess(options: AudioProcessOptions): ProcessDefinition {
       }
       return [...(await createWorkflows(deps, modules)), ...door.workflows]
     },
-    routes(process) {
-      runtime = process.runtime
-      open = process.isOpen
-      const mounted = door
-      return mounted ? [(request, url) => mounted.route(request, url)] : []
-    },
+    routes: doorRoutes,
+    // The door alone: 7792 also serves the API and `/health`, which a forwarded port must not reach.
+    doorOnly: [{ port: config.doorPort, routes: doorRoutes }],
   }
 }
 
