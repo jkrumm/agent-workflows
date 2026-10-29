@@ -98,6 +98,10 @@ describe('prose.review route: the reviewer is never the writer’s lab', () => {
     expect(() => createCapabilities({ transports: noCalls, env: { AGW_ROUTES: '{nope' } })).not.toThrow()
   })
 
+  test('a vendor-prefixed Anthropic id is refused too', () => {
+    expect(build({ 'prose.review': { model: 'anthropic/claude-test-model' } })).toThrow(/writer's lab/)
+  })
+
   test('an Anthropic fallback model is refused too', () => {
     expect(build({ 'prose.review': { fallback: { model: 'claude-test-model' } } })).toThrow(/writer's lab/)
   })

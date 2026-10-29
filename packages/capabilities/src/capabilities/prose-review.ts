@@ -70,13 +70,13 @@ export const proseReviewInput = z.object({
 
 export const proseReviewOutput = REVIEW.extend({ model: z.string() })
 
-/** The id prefix of the writer's lab: the writer is the calling Claude Code session, always Anthropic. */
-const WRITER_LAB_PREFIX = 'claude-'
+/** The writer is the calling Claude Code session, always Anthropic: any model id naming that lab, with or without a vendor prefix. */
+const WRITER_LAB = /claude|anthropic/i
 
 /** The first model of the route (and its fallback) that belongs to the writer's lab, or null. */
 function sameLabModel(route: ResolvedRoute): string | null {
   const models = [route.model, fallbackRoute(route)?.model]
-  return models.find((model) => model?.toLowerCase().startsWith(WRITER_LAB_PREFIX)) ?? null
+  return models.find((model) => model !== undefined && WRITER_LAB.test(model)) ?? null
 }
 
 /**
