@@ -119,6 +119,11 @@ export type OutboxStep = {
     workflowId: string
     rootId: string
     purpose: string
+    /** `runs.caller`: who admitted the run; null when the host itself started it (see {@link callerOf}). */
+    caller?: string | null
+    project?: string | null
+    /** `work` or `private` as the caller declared it; null lets Argo classify from the project. */
+    workspace?: string | null
     /** The label of the IU key the host that admitted the run held; rows stored before it read `personal`. */
     iuKey: IuKeyId
     traceparent: string | null
@@ -133,7 +138,18 @@ export type OutboxStep = {
   }
 }
 
-export type ArgoRowOptions = { machine: string; billing?: string; workspace?: string; now?: Date }
+export type ArgoRowOptions = { machine: string; billing?: string; now?: Date }
+
+/** The caller of a run no door admitted: the eval harness (`eval`, `drift`) or the host's own jobs (`host`). */
+const HARNESS_PURPOSES: ReadonlySet<string> = new Set(['eval', 'drift'])
+
+/**
+ * Every door stamps `runs.caller`; a run without one was started inside the host process (retrospective, the eval
+ * harness and its judge, recovery), which its purpose tells apart.
+ */
+export function callerOf(run: { caller?: string | null; purpose: string }): string {
+  return run.caller ?? (HARNESS_PURPOSES.has(run.purpose) ? 'eval' : 'host')
+}
 
 /**
  * Raw provider counts → Argo's additive contract: `input` fresh uncached input only (minus cache reads and cache
@@ -200,6 +216,7 @@ export function argoRowsForStep(step: OutboxStep, options: ArgoRowOptions): Argo
   const durationMs = step.finishedAt ? Math.max(0, step.finishedAt.getTime() - step.startedAt.getTime()) : null
   const ingestedAt = (options.now ?? new Date()).toISOString()
   const billing = options.billing ?? 'iu'
+  const caller = callerOf(run)
   return perModel(step).map(({ model, ...usage }) => ({
     source: 'agent-workflows',
     source_id: `${step.runId}:${step.stepId}:${model}`,
@@ -207,8 +224,10 @@ export function argoRowsForStep(step: OutboxStep, options: ArgoRowOptions): Argo
     ts: step.startedAt.toISOString(),
     model,
     model_norm: model,
-    project: null,
-    workspace: options.workspace ?? 'private',
+    // Argo groups "Projects" by `project`: the repo the caller worked in, else the caller itself (iris, hermes, agw).
+    project: run.project ?? caller,
+    // Declared by the caller (its working copy's location); absent, Argo classifies from the project name.
+    ...(run.workspace === 'work' || run.workspace === 'private' ? { workspace: run.workspace } : {}),
     sub_tool: run.workflowId,
     machine: options.machine,
     billing,
@@ -225,6 +244,7 @@ export function argoRowsForStep(step: OutboxStep, options: ArgoRowOptions): Argo
       stepId: step.stepId,
       rootId: run.rootId,
       purpose: run.purpose,
+      caller,
       fingerprint: run.fingerprint,
       traceId: run.traceId ?? traceIdForRun(run),
       sessionId: step.sessionId,
@@ -274,6 +294,9 @@ type OutboxRow = {
   workflow: string
   root_id: string
   purpose: string
+  caller: string | null
+  project: string | null
+  workspace: string | null
   iu_key: string
   traceparent: string | null
   trace_id: string | null
@@ -309,6 +332,9 @@ function toOutboxStep(row: OutboxRow): OutboxStep {
       workflowId: row.workflow,
       rootId: row.root_id,
       purpose: row.purpose,
+      caller: row.caller,
+      project: row.project,
+      workspace: row.workspace,
       iuKey: isIuKeyId(row.iu_key) ? row.iu_key : 'personal',
       traceparent: row.traceparent,
       traceId: row.trace_id,
@@ -494,7 +520,7 @@ export class ArgoOutbox {
          returning s.*
        )
        select ${STEP_COLUMNS.replaceAll(/(\w+)/g, 'c.$1')}, c.handle->'handle'->>'sessionId' as session_id,
-         r.workflow, r.root_id, r.purpose, r.iu_key, r.traceparent, r.trace_id, r.fingerprint, r.friction, r.scores,
+         r.workflow, r.root_id, r.purpose, r.caller, r.project, r.workspace, r.iu_key, r.traceparent, r.trace_id, r.fingerprint, r.friction, r.scores,
          r.status as run_status, r.error_kind as run_error_kind, r.wall_ms
        from claimed c join ${db.runs} r on r.id = c.run_id
        order by c.finished_at, c.run_id, c.step_id`,

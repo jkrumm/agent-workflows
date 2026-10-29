@@ -328,6 +328,12 @@ export type Logger = {
 export type StartOptions = {
   /** Why this run exists (`build`, `prod`, `eval`, …); persisted on the run. */
   purpose: string
+  /** Who started the run (`runs.caller`); child runs inherit it. Absent: the host itself. */
+  caller?: string
+  /** The repo the caller works in (`runs.project`), a bare name. */
+  project?: string
+  /** `work` or `private` (`runs.workspace`); absent lets Argo classify from the project. */
+  workspace?: 'work' | 'private'
   traceparent?: string
   /** Same workflow + key → the same run id; the second start is a no-op. */
   idempotencyKey?: string

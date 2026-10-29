@@ -61,9 +61,13 @@ The platform runs one `host` process plus own processes for heavy pipelines (con
 - **Mutating commands** (`x-cli.mutating`) need `--commit` (or `--commit=true`) when stdin is not a TTY. Without it, or with `--commit=false`, the CLI exits 6 and sends nothing.
 - **Deadlines:** a request that waits on a run gets `Prefer: wait` plus 30 s. Every other request gets `AGW_TIMEOUT_S` (default 1800 s), a hang guard for a capability that runs a model synchronously, never a budget. A deadline hit exits 7 with `no answer from <url> within <n>s`.
 
+### Who is calling
+
+Every call sends `x-agw-caller`, and inside a git repo `x-agw-project` and `x-agw-workspace`, so spend in Argo is attributable (the host honours them only for the API secret; a door token fixes its own name). `x-agw-caller` is `AGW_CALLER` (`[a-z][a-z0-9-]{0,31}`, else exit 2 naming the rule), else `claude-code` when `CLAUDECODE=1`, else `cli`. Hermes sets no marker in its terminal environment (checked in its repo and config), so it names itself with `AGW_CALLER=hermes`. `x-agw-project` is the repo's name read from the files git keeps, without spawning a process: the nearest `.git` upward, and for a linked worktree the repo it was cut from (`commondir`), so every checkout is one project. `x-agw-workspace` is `work` when the working copy lives under `IuRoot`, `private` under `SourceRoot`, else absent. Only the repo name and that one word leave the machine, never a path; a folder name the host would refuse is not sent. Outside a repo only the caller is sent.
+
 ### Workflows and runs
 
-- `kind: 'workflow'` commands `POST /workflows/…` with `Prefer: wait=<min(remaining, 240)>`. They forward `x-agw-purpose` (`AGW_PURPOSE`). A workflow start and every mutating call carry an `Idempotency-Key`: `--idempotency-key <k>`, else one generated before the first send. If the network fails on that send, the hint is `the run may have started; retry with --idempotency-key <k>`.
+- `kind: 'workflow'` commands `POST /workflows/…` with `Prefer: wait=<min(remaining, 240)>`. They forward `x-agw-purpose` (`AGW_PURPOSE`) and the caller headers below. A workflow start and every mutating call carry an `Idempotency-Key`: `--idempotency-key <k>`, else one generated before the first send. If the network fails on that send, the hint is `the run may have started; retry with --idempotency-key <k>`.
 - A `202` answer means the run is still going. The CLI loops on the command named by `x-cli.resume` (`run wait <runId>`) until the run ends or `AGW_WAIT_BUDGET_S` (default 110) is spent. A host that answers `202` at once is polled at most once a second.
 - **`done`** prints the state and exits 0. **`failed`/`cancelled`** prints the state and exits 1.
 - **Budget spent:** stdout carries the last state, the error line `kind: pending` with `hint: "agw run wait <runId>"`, and the CLI exits 10. That hint is exactly the command to run next.

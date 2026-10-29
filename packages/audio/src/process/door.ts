@@ -238,6 +238,8 @@ export function createDoor(options: DoorOptions): Door {
       const value = request.headers.get(name)
       if (value !== null) headers.set(name, value)
     }
+    // The run's caller is the credential's name, never a header the client sent (`startRun` reads it from here).
+    headers.set('x-agw-caller', input.caller)
     startRun({ runtime: options.runtime() }, workflows[endpoint], input, headers, { runId }).catch((error: unknown) => {
       // The response still names this id (it went out before the journal answered): a lookup finds no run, and this
       // line, with the id, says why.

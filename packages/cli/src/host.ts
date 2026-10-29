@@ -1,5 +1,5 @@
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
-import { dirname } from 'node:path'
+import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
+import { basename, dirname, join, resolve } from 'node:path'
 import { BIN } from './args.ts'
 import {
   assertSafeUrl,
@@ -20,6 +20,66 @@ import { buildCommands, type Command, type Document, type Hidden, type Skipped, 
 export const MAX_WAIT_S = 240
 /** Added to a wait request's `Prefer: wait`, so the host answers before the client gives up. */
 const SLACK_S = 30
+
+/** The host's own rules for `x-agw-caller` and `x-agw-project`; a header outside them is a 400, so the CLI never sends one it inferred. */
+const CALLER_NAME = /^[a-z][a-z0-9-]{0,31}$/
+const PROJECT_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
+
+/**
+ * The repo a directory belongs to and where its working copy lives, read from the files git keeps (no process is
+ * spawned): the nearest `.git` upward. A linked worktree (`.git` is a file) resolves to the repo it was cut from
+ * through its `commondir`, so every checkout of a repo is one project. Null outside a repo.
+ */
+export function gitProject(cwd: string): { name: string; root: string } | null {
+  let dir = resolve(cwd)
+  for (;;) {
+    const dotGit = join(dir, '.git')
+    if (existsSync(dotGit)) return { name: repoName(dir, dotGit), root: dir }
+    const parent = dirname(dir)
+    if (parent === dir) return null
+    dir = parent
+  }
+}
+
+function repoName(root: string, dotGit: string): string {
+  try {
+    if (statSync(dotGit).isFile()) {
+      const gitdir = /^gitdir: *(.+)$/m.exec(readFileSync(dotGit, 'utf8'))?.[1]?.trim()
+      if (gitdir) {
+        const linked = resolve(root, gitdir)
+        const common = resolve(linked, readFileSync(join(linked, 'commondir'), 'utf8').trim())
+        if (basename(common) === '.git') return basename(dirname(common))
+      }
+    }
+  } catch {
+    // A submodule's or an unreadable `.git`: the checkout's own folder name stands.
+  }
+  return basename(root)
+}
+
+/**
+ * Who this CLI call is for, sent as headers (the host trusts them only from the API secret): `x-agw-caller` from
+ * `AGW_CALLER`, else `claude-code` inside a Claude Code session (`CLAUDECODE=1`), else `cli`; `x-agw-project` the name
+ * of the git repo the cwd is in, and `x-agw-workspace` `work` or `private` from where that working copy lives
+ * (`IuRoot` or `SourceRoot`; else none and Argo classifies the name). Only the repo's name and that one word leave the
+ * machine, never a path. Hermes sets no marker in its terminal environment, so it names itself with `AGW_CALLER`.
+ */
+export function callerHeaders(env: Env, cwd: string): Record<string, string> {
+  const declared = env.AGW_CALLER?.trim()
+  if (declared && !CALLER_NAME.test(declared)) {
+    throw new AgwError('usage', 'AGW_CALLER must match [a-z][a-z0-9-]{0,31}', { hint: 'e.g. AGW_CALLER=hermes' })
+  }
+  const headers: Record<string, string> = {
+    'x-agw-caller': declared || (env.CLAUDECODE === '1' ? 'claude-code' : 'cli'),
+  }
+  const project = gitProject(cwd)
+  if (project && PROJECT_NAME.test(project.name)) {
+    headers['x-agw-project'] = project.name
+    const place = /(?:^|\/)(IuRoot|SourceRoot)\//.exec(`${project.root}/`)?.[1]
+    if (place) headers['x-agw-workspace'] = place === 'IuRoot' ? 'work' : 'private'
+  }
+  return headers
+}
 
 export interface Reply {
   status: number
@@ -62,6 +122,7 @@ const CONTRACT_FETCH_S = 10
  * cached OpenAPI document and its contract sha, and one request per command with the contract header on every call.
  */
 export class Host {
+  #caller: Record<string, string> | undefined
   #creds: Credentials | undefined
   #doc: Document | undefined
   #commands: Command[] = []
@@ -211,6 +272,8 @@ export class Host {
     if (waitS !== undefined) headers.prefer = `wait=${waitS}`
     if (options.idempotencyKey) headers['idempotency-key'] = options.idempotencyKey
     if (this.env.AGW_PURPOSE) headers['x-agw-purpose'] = this.env.AGW_PURPOSE
+    this.#caller ??= callerHeaders(this.env, process.cwd())
+    Object.assign(headers, this.#caller)
 
     const deadlineS = options.deadlineS ?? (waitS === undefined ? timeoutS(this.env) : waitS + SLACK_S)
     const signal = AbortSignal.timeout(deadlineS * 1000)
