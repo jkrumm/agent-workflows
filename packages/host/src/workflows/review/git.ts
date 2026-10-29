@@ -452,13 +452,18 @@ function readPackageJson(repo: string): { scripts?: { test?: unknown } } | null 
   }
 }
 
+/** OCR is opt-in (owner pause, open-ended): on only for an exact `1`. The parent and `runOcr` both ask, so a stale journal cannot start it. */
+export function ocrSwitchOn(env: Env): boolean {
+  return env.AGW_REVIEW_OCR?.trim() === '1'
+}
+
 /** Env switches, read once in `prepare` so a resumed run decides the same way. */
 function switches(env: Env) {
   const minLines = Number(env.AGW_REVIEW_OCR_MIN_LINES)
   return {
     gating: env.AGW_REVIEW_DEPTH_GATING !== '0',
     adversary: env.AGW_REVIEW_ADVERSARY !== 'false',
-    ocrEnabled: env.AGW_REVIEW_OCR?.trim() === '1',
+    ocrEnabled: ocrSwitchOn(env),
     ocrMinLines: env.AGW_REVIEW_OCR_MIN_LINES?.trim() && Number.isFinite(minLines) && minLines >= 0 ? minLines : 100,
   }
 }

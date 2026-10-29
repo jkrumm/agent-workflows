@@ -782,6 +782,62 @@ JSON
       expect(w.sessionsOf('review-synthesis')[0]?.spec.prompt).toContain(`OpenCodeReview: skipped (${reason}`)
     })
 
+    // An ocr that records every start: the marker file exists only if it was spawned.
+    const markingOcr = () => {
+      const bin = join(scratch, `ocr-mark-${++repoSeq}`)
+      const marker = `${bin}.started`
+      writeFileSync(bin, `#!/bin/sh\ntouch "${marker}"\nexit 2\n`)
+      chmodSync(bin, 0o755)
+      return { bin, marker }
+    }
+
+    test('review.ocr run directly with the switch unset skips and never spawns', async () => {
+      const { bin, marker } = markingOcr()
+      const w = world({ env: withoutSwitch, which: (b) => (b === 'ocr' ? bin : null) })
+      await w.rt.open()
+      const { runId } = await w.rt.start(
+        (w.workflows[1] as HostWorkflow).workflow,
+        { cwd: makeRepo(BASE, bigChange), mode: 'head' },
+        { purpose: 'test' },
+      )
+      const out = await w.rt.wait(runId)
+      expect(out.status).toBe('done')
+      expect(out.output).toEqual({ block: 'OpenCodeReview: skipped (AGW_REVIEW_OCR=0)', ran: false })
+      expect(existsSync(marker)).toBe(false)
+    })
+
+    test('a parent whose prepare journaled the switch on does not run OCR once the env is off at OCR time', async () => {
+      const { bin, marker } = markingOcr()
+      const env: Record<string, string> = { ...credentials }
+      // The router runs after `prepare` is journaled and before the OCR decision: its reply turns the switch off.
+      const router = {
+        depth: 'deep',
+        get angles() {
+          delete env.AGW_REVIEW_OCR
+          return []
+        },
+      }
+      const w = world({ env, router, which: (b) => (b === 'ocr' ? bin : null), rollingSpend: 10 })
+      const out = await w.run({ cwd: makeRepo(BASE, bigChange) })
+      expect(out.status).toBe('done')
+      expect(existsSync(marker)).toBe(false)
+      expect(w.sessionsOf('review-synthesis')[0]?.spec.prompt).toContain('OpenCodeReview: skipped (AGW_REVIEW_OCR=0)')
+    })
+
+    test.each(['', 'true', ' 1 '])('AGW_REVIEW_OCR=%j follows the exact-1 predicate', async (value) => {
+      const on = value.trim() === '1'
+      const { bin, marker } = markingOcr()
+      const w = world({ env: { ...credentials, AGW_REVIEW_OCR: value }, which: (b) => (b === 'ocr' ? bin : null) })
+      await w.rt.open()
+      const { runId } = await w.rt.start(
+        (w.workflows[1] as HostWorkflow).workflow,
+        { cwd: makeRepo(BASE, bigChange), mode: 'head' },
+        { purpose: 'test' },
+      )
+      await w.rt.wait(runId)
+      expect(existsSync(marker)).toBe(on)
+    })
+
     test('a scope with no ocr mode (a file path) starts no child', async () => {
       const dir = makeRepo(BASE, bigChange)
       const w = ocrWorld({ rollingSpend: 10 })

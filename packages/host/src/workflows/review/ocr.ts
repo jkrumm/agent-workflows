@@ -7,7 +7,7 @@ import { defineWorkflow, type StepScope, type Usage } from '@agent-workflows/run
 import { z } from 'zod'
 import type { HostWorkflow } from '../../operations.ts'
 import { killTree } from './exec.ts'
-import type { ReviewPorts } from './git.ts'
+import { ocrSwitchOn, type ReviewPorts } from './git.ts'
 import { escapeName } from './util.ts'
 
 // OpenCodeReview (`ocr`, alibaba/open-code-review): one more review input, never a gate. Cross-file consistency,
@@ -218,6 +218,9 @@ export async function runOcr(
   scope: StepScope,
   ports: ReviewPorts,
 ): Promise<z.output<typeof OcrOutput>> {
+  // The live env, not the parent's journaled `prepare`: a run journaled before the pause, or a child resumed after a
+  // restart, must not start OCR while it is off.
+  if (!ocrSwitchOn(ports.env)) return { block: skipped('AGW_REVIEW_OCR=0'), ran: false }
   const bin = ports.which('ocr')
   if (!bin) return { block: skipped('ocr not found on PATH'), ran: false }
   let iu: ReturnType<typeof iuFromEnv>
