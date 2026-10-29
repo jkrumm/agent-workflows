@@ -1,7 +1,7 @@
 import type { HostDeps } from '../../../../host/src/workflows/index.ts'
 import { defineWorkflowModule } from '../../../../host/src/workflows/registry.ts'
 import { brainCapabilities, brainPort } from './brain.ts'
-import { postgresCosts, postgresHistory, type Queryable } from './history.ts'
+import { postgresJournal, postgresHistory, type Queryable } from './history.ts'
 import { createPodcastWorkflow, type PodcastDeps } from './index.ts'
 import { researchClient, researchClientFromEnv } from './research-client.ts'
 
@@ -26,7 +26,7 @@ export default defineWorkflowModule({
     const produce = peers.find((p) => p.workflow.id === 'podcast.produce')?.workflow as PodcastDeps['produce']
     const podcast = createPodcastWorkflow({
       history: postgresHistory(journal.db, journal.schema),
-      costs: postgresCosts(journal.db, journal.schema),
+      journal: postgresJournal(journal.db, journal.schema),
       brain: brainPort(brainCapabilities(deps.registry.capabilities)),
       ...(research ? { research: researchClient(research) } : {}),
       ...(produce ? { produce } : {}),

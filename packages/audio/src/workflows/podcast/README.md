@@ -20,9 +20,11 @@ Output: `title`, `description`, `chapters` (with start times from the produce re
 `steps.unpriced_calls`), of the host `research` runs it started (found by their idempotency-key prefix
 `podcast:<runId>:`) and of its `podcast.produce` child (`history.ts` `postgresCosts`). Nothing is summed in memory or
 carried through step outputs, so failed attempts, retries and resumed steps count as the runtime recorded them. A
-call that came back without usage is recorded unpriced (`cost: null`), never priced at $0; every `*Unpriced` count
-above 0 makes the matching USD a lower bound. Output: `scriptUsd`, `researchUsd` (+ `researchRuns`), `produceUsd`,
-`totalUsd`, each with its unpriced count.
+request that left and came back without usage is recorded unpriced (`cost: null`), never priced at $0; a call that
+never sent one records nothing. Output: `scriptUsd`, `researchUsd` (+ `researchRuns`, `researchPending`),
+`produceUsd`, `totalUsd`, each with its unpriced count, and `complete`: false whenever a call was unpriced or a research
+run (or a step of it) had not ended when the cost was read, so the figure is a lower bound, never an exact one. The
+profile's `researchUsd` carries `researchUnpriced` beside it and is null while a research run had not ended.
 
 ## Steps
 
@@ -37,7 +39,7 @@ fallback (so a resume never retries it), unless the step was aborted (cancel, le
 | `research` | code | best-effort → empty dossier | tool loop: `brain_search`, `brain_read`, `past_episodes`, `past_transcript`, `research` (quick depth only) |
 | `history` | code | required | the last `PODCAST_HISTORY_DEPTH` (8) episodes of the series, for the editor |
 | `editorial` | code | best-effort → default brief | one call: format, roles, tone, humor, length, asks, load-bearing facts |
-| `research:fact:0..2` | code | best-effort | one step per load-bearing fact the editor named (at most 3), standard depth; answered open questions dropped |
+| `research:fact:0..2` | code | best-effort | one step per load-bearing fact the editor named (duplicates once, at most 3), standard depth; answered open questions dropped |
 | `outline` | code | required | one call; unrequested devices pruned, targets normalised, asks assigned; capped at 9 segments before targets and asks |
 | `segment:0`..`segment:8` | code | required | three at a time; the agentic writer, the single-shot call as its fallback |
 | `lint` | code | required | deterministic lint (`lint.ts`), rendered for the reviewers; its unambiguous findings become notes |
@@ -95,7 +97,7 @@ budget or empty retries once at double; no round cap. On the Anthropic wire: ada
   (`brain.ts`): only `wiki/`, `Areas/` and `Projects/`, no dotfiles, real path inside the vault.
 - **Vault, source side** (decision): `sourcePaths` keep legacy's contract, read by the podcast's own reader
   (`source.ts`): any non-hidden `.md` inside the vault (an `Inbox/` draft included), symlink-safe, the path
-  NFC-normalised, raw with frontmatter. The source is the owner's choice of notes, the agent's reads are the model's,
+  NFC-normalised, raw with frontmatter. The rule holds for the symlink's target as well as the name asked for. The source is the owner's choice of notes, the agent's reads are the model's,
   so only the agent gets the narrower allowlist. A note above 200k characters fails the run; nothing is cut silently.
 - **Memory** (`history.ts`): finished `podcast` runs of purpose `prod` (title, description, profile from the run's
   output, the transcript from its `script` step) plus the legacy episodes in `podcast_episodes` (runtime migration
@@ -104,14 +106,21 @@ budget or empty retries once at double; no round cap. On the Anthropic wire: ada
 - **Research**: the `research` tool runs the host's `research` workflow over its HTTP API (`research-client.ts`,
   `AGW_URL` and `AGW_API_SECRET` from the process env), quick depth only, identical queries answered once, the optional
   `PODCAST_RESEARCH_MAX_CALLS` valve as on legacy. Standard depth runs only for the editor's load-bearing facts, one
-  step each. Every host run starts under an idempotency key `podcast:<runId>:<stepId>:<hash of depth and query>`: a
-  resumed or retried step re-attaches to the run it already paid for instead of starting another; a transient error
-  while starting or waiting retries the same request; an aborted step cancels the host run.
+  step each (a fact the quick pass already asked still runs at standard depth, as on legacy: the editor names a fact
+  because the quick answer was too thin). Every host run starts under an idempotency key
+  `podcast:<runId>:<stepId>:<hash of depth and query>`; a transient error while starting or waiting retries the same
+  request. The host keeps a key's run for good (a repeat of the key gets that run, ended or going), so: a resumed or
+  retried step re-attaches to the run it already paid for; only a cancel of the podcast run cancels the host run (a
+  shutdown, a lease loss or a step timeout leaves it going for the resume); a question whose run ended failed or
+  cancelled runs once more under `<key>:2` (the host's attempt-key convention) and no more. Which runs a step already
+  started is read from the journal at the step's start, so the `PODCAST_RESEARCH_MAX_CALLS` valve and the repeat rule
+  hold across attempts, not per attempt. An unknown run status fails the call rather than polling on.
 
 **Privacy.** As on legacy, the notes the room reads (the source, `sourcePaths`, brain reads) go to the research,
 editorial, writer and reviewer models: they are the episode's source. The voice guide is journaled in the `house` step.
-Every tool result that carries outside text (vault notes and search hits, past episodes and transcripts, research
-reports) reaches the model inside an untrusted-data fence with a per-loop random token (`fence.ts`), and the loop's
+Every tool result and tool error that carries outside text (vault notes and search hits, past episodes and
+transcripts, research reports, host and vault errors), and the research loop's SOURCE, reach the model inside an
+untrusted-data fence with a per-loop random token (`fence.ts`), and the loop's
 system prompt says what the fence means and forbids copying private note content into research queries: a note that
 reads like an instruction cannot steer the agent into reading other notes and sending them out.
 

@@ -22,6 +22,8 @@ async function rejected(promise: Promise<unknown>): Promise<Error> {
 
 const ENV = { IU_API_KEY: 'k', IU_BASE_URL: 'https://iu.example.com/anthropic' }
 const SIGNAL = new AbortController().signal
+/** The tests that do not count sends. */
+const NOT_SENT = () => {}
 
 const OK_STREAM = [
   'data: {"type":"message_start","message":{"usage":{"input_tokens":3}}}',
@@ -301,7 +303,7 @@ describe('iuModelPort', () => {
   test('chat on the OpenAI wire streams the text, reports usage and posts to the derived openai base', async () => {
     const { seen, fetch } = scripted([() => new Response(OPENAI_STREAM)])
     const { usages, onUsage } = usageSink()
-    const reply = await port(fetch).chat({ ...chatCall, effort: 'high' }, SIGNAL, onUsage)
+    const reply = await port(fetch).chat({ ...chatCall, effort: 'high' }, SIGNAL, onUsage, NOT_SENT)
     expect(reply).toEqual({ text: 'Hallo', stop: 'complete' })
     expect(usages).toEqual([
       {
@@ -326,8 +328,12 @@ describe('iuModelPort', () => {
     const filtered = sse({ choices: [{ delta: { content: '' }, finish_reason: 'content_filter' }] })
     const { fetch } = scripted([() => new Response(cut), () => new Response(filtered)])
     const p = port(fetch)
-    expect(await p.chat(chatCall, SIGNAL, () => {})).toEqual({ text: 'x', stop: 'length' })
-    expect(await p.chat(chatCall, SIGNAL, () => {})).toEqual({ text: '', stop: 'other', stopDetail: 'content_filter' })
+    expect(await p.chat(chatCall, SIGNAL, () => {}, NOT_SENT)).toEqual({ text: 'x', stop: 'length' })
+    expect(await p.chat(chatCall, SIGNAL, () => {}, NOT_SENT)).toEqual({
+      text: '',
+      stop: 'other',
+      stopDetail: 'content_filter',
+    })
   })
 
   test('retries on a 503, then succeeds', async () => {
@@ -335,7 +341,7 @@ describe('iuModelPort', () => {
       () => new Response('overloaded', { status: 503 }),
       () => new Response(OPENAI_STREAM),
     ])
-    const reply = await port(fetch).chat(chatCall, SIGNAL, () => {})
+    const reply = await port(fetch).chat(chatCall, SIGNAL, () => {}, NOT_SENT)
     expect(reply.text).toBe('Hallo')
     expect(seen).toHaveLength(2)
   })
@@ -346,7 +352,7 @@ describe('iuModelPort', () => {
       () => new Response('overloaded', { status: 503 }),
       () => new Response('overloaded', { status: 503 }),
     ])
-    expect(await rejected(port(fetch).chat(chatCall, SIGNAL, () => {}))).toBeInstanceOf(ModelError)
+    expect(await rejected(port(fetch).chat(chatCall, SIGNAL, () => {}, NOT_SENT))).toBeInstanceOf(ModelError)
     expect(seen).toHaveLength(3)
   })
 
@@ -354,14 +360,16 @@ describe('iuModelPort', () => {
     const { seen, fetch } = scripted([
       () => new Response('{"error":{"type":"invalid_request_error"}}', { status: 503 }),
     ])
-    expect((await rejected(port(fetch).chat(chatCall, SIGNAL, () => {}))).message).toContain('invalid_request_error')
+    expect((await rejected(port(fetch).chat(chatCall, SIGNAL, () => {}, NOT_SENT))).message).toContain(
+      'invalid_request_error',
+    )
     expect(seen).toHaveLength(1)
   })
 
   test('a 402 surfaces as a ModelError with balance === true, without a retry', async () => {
     const { seen, fetch } = scripted([() => new Response('Insufficient Balance', { status: 402 })])
     const error = await port(fetch)
-      .chat(chatCall, SIGNAL, () => {})
+      .chat(chatCall, SIGNAL, () => {}, NOT_SENT)
       .catch((e: unknown) => e)
     expect(error).toBeInstanceOf(ModelError)
     expect((error as ModelError).balance).toBe(true)
@@ -373,7 +381,7 @@ describe('iuModelPort', () => {
       () => new Response('Insufficient Balance (PaymentRequired) on provider', { status: 503 }),
     ])
     const error = await port(fetch)
-      .chat(chatCall, SIGNAL, () => {})
+      .chat(chatCall, SIGNAL, () => {}, NOT_SENT)
       .catch((e: unknown) => e)
     expect((error as ModelError).balance).toBe(true)
   })
@@ -381,7 +389,7 @@ describe('iuModelPort', () => {
   test('a stream that ends without a finish reason is retried', async () => {
     const cutOff = sse({ choices: [{ delta: { content: 'Ha' } }] })
     const { seen, fetch } = scripted([() => new Response(cutOff), () => new Response(OPENAI_STREAM)])
-    const reply = await port(fetch).chat(chatCall, SIGNAL, () => {})
+    const reply = await port(fetch).chat(chatCall, SIGNAL, () => {}, NOT_SENT)
     expect(reply.text).toBe('Hallo')
     expect(seen).toHaveLength(2)
   })
@@ -396,7 +404,7 @@ describe('iuModelPort', () => {
     ].join('\n')
     const { seen, fetch } = scripted([() => new Response(stream)])
     const { usages, onUsage } = usageSink()
-    const reply = await port(fetch).chat(anthropicCall, SIGNAL, onUsage)
+    const reply = await port(fetch).chat(anthropicCall, SIGNAL, onUsage, NOT_SENT)
     expect(reply).toEqual({ text: 'Hallo', stop: 'complete' })
     expect(usages).toEqual([
       {
@@ -415,13 +423,17 @@ describe('iuModelPort', () => {
       `data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":"x"}}\ndata: {"type":"message_delta","delta":{"stop_reason":"${reason}"}}\n`
     const { fetch } = scripted([() => new Response(stream('max_tokens')), () => new Response(stream('refusal'))])
     const p = port(fetch)
-    expect(await p.chat(anthropicCall, SIGNAL, () => {})).toEqual({ text: 'x', stop: 'length' })
-    expect(await p.chat(anthropicCall, SIGNAL, () => {})).toEqual({ text: 'x', stop: 'other', stopDetail: 'refusal' })
+    expect(await p.chat(anthropicCall, SIGNAL, () => {}, NOT_SENT)).toEqual({ text: 'x', stop: 'length' })
+    expect(await p.chat(anthropicCall, SIGNAL, () => {}, NOT_SENT)).toEqual({
+      text: 'x',
+      stop: 'other',
+      stopDetail: 'refusal',
+    })
   })
 
   test('an empty 200 body is retried and the next attempt answers', async () => {
     const { seen, fetch } = scripted([() => new Response(''), () => new Response(OK_STREAM)])
-    const reply = await port(fetch).chat(anthropicCall, SIGNAL, () => {})
+    const reply = await port(fetch).chat(anthropicCall, SIGNAL, () => {}, NOT_SENT)
     expect(reply.text).toBe('Hallo')
     expect(seen).toHaveLength(2)
   })
@@ -430,7 +442,7 @@ describe('iuModelPort', () => {
     const junk = () => new Response('data: [DONE]\n')
     const { seen, fetch } = scripted([junk, junk, junk])
     const error = await port(fetch)
-      .chat(anthropicCall, SIGNAL, () => {})
+      .chat(anthropicCall, SIGNAL, () => {}, NOT_SENT)
       .catch((e: unknown) => e)
     expect(error).toBeInstanceOf(ModelError)
     expect((error as ModelError).message).toContain('unreadable response')
@@ -441,11 +453,11 @@ describe('iuModelPort', () => {
     const overloaded = 'data: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}\n'
     const invalid = 'data: {"type":"error","error":{"type":"invalid_request_error","message":"bad"}}\n'
     const retried = scripted([() => new Response(overloaded), () => new Response(OK_STREAM)])
-    expect((await port(retried.fetch).chat(anthropicCall, SIGNAL, () => {})).text).toBe('Hallo')
+    expect((await port(retried.fetch).chat(anthropicCall, SIGNAL, () => {}, NOT_SENT)).text).toBe('Hallo')
     expect(retried.seen).toHaveLength(2)
 
     const fatal = scripted([() => new Response(invalid)])
-    expect((await rejected(port(fatal.fetch).chat(anthropicCall, SIGNAL, () => {}))).message).toContain(
+    expect((await rejected(port(fatal.fetch).chat(anthropicCall, SIGNAL, () => {}, NOT_SENT))).message).toContain(
       'invalid_request_error: bad',
     )
     expect(fatal.seen).toHaveLength(1)
@@ -454,7 +466,7 @@ describe('iuModelPort', () => {
   test('a 200 JSON error envelope (overloaded) on the Anthropic wire is retried per its type', async () => {
     const envelope = () => new Response('{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}')
     const { seen, fetch } = scripted([envelope, () => new Response(OK_STREAM)])
-    expect((await port(fetch).chat(anthropicCall, SIGNAL, () => {})).text).toBe('Hallo')
+    expect((await port(fetch).chat(anthropicCall, SIGNAL, () => {}, NOT_SENT)).text).toBe('Hallo')
     expect(seen).toHaveLength(2)
   })
 
@@ -469,7 +481,7 @@ describe('iuModelPort', () => {
     })
     const { fetch } = scripted([() => new Response(body)])
     const usages: unknown[] = []
-    const reply = await port(fetch).chat(anthropicCall, SIGNAL, (u) => usages.push(u))
+    const reply = await port(fetch).chat(anthropicCall, SIGNAL, (u) => usages.push(u), NOT_SENT)
     expect(reply).toEqual({ text: 'Plain', stop: 'complete' })
     expect(usages).toHaveLength(1)
   })
@@ -480,7 +492,7 @@ describe('iuModelPort', () => {
         init.signal?.addEventListener('abort', () => reject(init.signal?.reason))
       })
     const p = iuModelPort({ env: ENV, fetch: stalled, backoffMs: 1, idleTimeoutMs: 20 })
-    expect((await rejected(p.chat(chatCall, SIGNAL, () => {}))).message).toContain('stream idle')
+    expect((await rejected(p.chat(chatCall, SIGNAL, () => {}, NOT_SENT))).message).toContain('stream idle')
   })
 
   test('a tool round that never answers is cut by the hang guard and fails as a ModelError', async () => {
@@ -492,7 +504,7 @@ describe('iuModelPort', () => {
       })
     }
     const p = iuModelPort({ env: ENV, fetch: stalled, backoffMs: 1, hangGuardMs: 20 })
-    expect(await rejected(p.round(roundCall, SIGNAL, () => {}))).toBeInstanceOf(ModelError)
+    expect(await rejected(p.round(roundCall, SIGNAL, () => {}, NOT_SENT))).toBeInstanceOf(ModelError)
     // A hang is terminal: the wait is spent and the abandoned request may still bill, so it is not retried.
     expect(calls).toBe(1)
   })
@@ -500,8 +512,11 @@ describe('iuModelPort', () => {
   test('a missing key or a base URL not ending in /anthropic is a ModelError', async () => {
     const { fetch } = scripted([])
     expect(
-      (await rejected(iuModelPort({ env: { IU_BASE_URL: ENV.IU_BASE_URL }, fetch }).chat(chatCall, SIGNAL, () => {})))
-        .message,
+      (
+        await rejected(
+          iuModelPort({ env: { IU_BASE_URL: ENV.IU_BASE_URL }, fetch }).chat(chatCall, SIGNAL, () => {}, NOT_SENT),
+        )
+      ).message,
     ).toContain('IU_API_KEY')
     expect(
       (
@@ -510,6 +525,7 @@ describe('iuModelPort', () => {
             chatCall,
             SIGNAL,
             () => {},
+            NOT_SENT,
           ),
         )
       ).message,
@@ -528,7 +544,7 @@ describe('iuModelPort', () => {
     }
     const { seen, fetch } = scripted([() => Response.json(json)])
     const { usages, onUsage } = usageSink()
-    const reply = await port(fetch).round(roundCall, SIGNAL, onUsage)
+    const reply = await port(fetch).round(roundCall, SIGNAL, onUsage, NOT_SENT)
     expect(reply.message).toEqual(message)
     expect(reply.finishReason).toBe('tool_calls')
     expect(usages).toEqual([
@@ -545,7 +561,7 @@ describe('iuModelPort', () => {
     }
     const { seen, fetch } = scripted([() => Response.json(json)])
     const { usages, onUsage } = usageSink()
-    const reply = await port(fetch).round({ ...roundCall, api: 'responses' }, SIGNAL, onUsage)
+    const reply = await port(fetch).round({ ...roundCall, api: 'responses' }, SIGNAL, onUsage, NOT_SENT)
     expect(seen[0]?.url).toBe('https://iu.example.com/openai/v1/responses')
     expect(reply.message.tool_calls?.[0]?.id).toBe('c1')
     expect(reply.raw).toEqual(json.output)
@@ -559,15 +575,49 @@ describe('iuModelPort', () => {
       () => new Response('{"choices":[{"mess'),
       () => Response.json(ok),
     ])
-    expect((await port(retry.fetch).round(roundCall, SIGNAL, () => {})).message.content).toBe('done')
+    let sent = 0
+    expect(
+      (
+        await port(retry.fetch).round(
+          roundCall,
+          SIGNAL,
+          () => {},
+          () => sent++,
+        )
+      ).message.content,
+    ).toBe('done')
     expect(retry.seen).toHaveLength(3)
+    // Every request that left is signalled: the caller records an unpriced call only when one did.
+    expect(sent).toBe(3)
 
     const broke = scripted([() => new Response('payment required', { status: 402 })])
     const error = await port(broke.fetch)
-      .round(roundCall, SIGNAL, () => {})
+      .round(roundCall, SIGNAL, () => {}, NOT_SENT)
       .catch((e: unknown) => e)
     expect(error).toBeInstanceOf(ModelError)
     expect((error as ModelError).balance).toBe(true)
+  })
+
+  test('a call without credentials sends nothing', async () => {
+    let sent = 0
+    const fetch = async () => Response.json({})
+    await rejected(
+      iuModelPort({ env: {}, fetch }).chat(
+        chatCall,
+        SIGNAL,
+        () => {},
+        () => sent++,
+      ),
+    )
+    await rejected(
+      iuModelPort({ env: {}, fetch }).round(
+        roundCall,
+        SIGNAL,
+        () => {},
+        () => sent++,
+      ),
+    )
+    expect(sent).toBe(0)
   })
 
   test('an aborted signal is not retried', async () => {
@@ -576,6 +626,8 @@ describe('iuModelPort', () => {
       abort.abort(new Error('cancelled'))
       throw new Error('socket closed')
     }
-    expect((await rejected(port(fetch).round(roundCall, abort.signal, () => {}))).message).toContain('cancelled')
+    expect((await rejected(port(fetch).round(roundCall, abort.signal, () => {}, NOT_SENT))).message).toContain(
+      'cancelled',
+    )
   })
 })

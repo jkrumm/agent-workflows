@@ -49,7 +49,8 @@ class FakePort implements ModelPort {
     private readonly roundSteps: Array<Step<RoundReply>> = [],
   ) {}
 
-  async chat(call: ChatCall, _signal: AbortSignal, onUsage: OnWireUsage): Promise<ChatReply> {
+  async chat(call: ChatCall, signal: AbortSignal, onUsage: OnWireUsage, onSent: () => void): Promise<ChatReply> {
+    if (!signal.aborted) onSent()
     this.chats.push(structuredClone(call))
     const step = this.chatSteps.shift()
     if (!step) throw new Error('FakePort: no chat reply scripted')
@@ -58,7 +59,8 @@ class FakePort implements ModelPort {
     return typeof step === 'function' ? step(call as never) : step
   }
 
-  async round(call: RoundCall, _signal: AbortSignal, onUsage: OnWireUsage): Promise<RoundReply> {
+  async round(call: RoundCall, signal: AbortSignal, onUsage: OnWireUsage, onSent: () => void): Promise<RoundReply> {
+    if (!signal.aborted) onSent()
     this.rounds.push(structuredClone(call))
     const step = this.roundSteps.shift()
     if (!step) throw new Error('FakePort: no round reply scripted')
@@ -397,7 +399,7 @@ describe('Llm usage', () => {
     ])
   })
 
-  test('a call that failed after the step was cancelled is still recorded, unpriced (it may have billed)', async () => {
+  test('a call aborted before its request left records nothing (nothing sent cannot have billed)', async () => {
     const abort = new AbortController()
     const port = new FakePort([new ModelError('cancelled')])
     port.usage = null
@@ -416,14 +418,7 @@ describe('Llm usage', () => {
         )
       ).message,
     ).toContain('cancelled')
-    expect(usages).toEqual([
-      {
-        model: 'fake-model',
-        tokens: { input: 0, output: 0, cacheRead: 0, reasoning: 0 },
-        cost: null,
-        costSource: 'unknown',
-      },
-    ])
+    expect(usages).toEqual([])
     expect(llm.aborted).toBe(true)
   })
 

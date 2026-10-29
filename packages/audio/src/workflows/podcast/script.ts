@@ -1143,7 +1143,6 @@ export function buildEpisodeProfile(params: {
     segmentCount: script.segments.length,
     toolCalls: dossier.toolCalls.length,
     researchCalls: dossier.toolCalls.filter((c) => c.tool === 'research').length,
-    ...(dossier.researchUsd !== undefined && { researchUsd: Math.round(dossier.researchUsd * 1000) / 1000 }),
     expression: expressionSummary(lintSegments(script.segments, { hostNames: hosts.map((h) => h.name) })),
     ...lengthProfile({ requestedMinutes, words: total }),
     ...asksProfile({ brief, script, hostNames: hosts.map((h) => h.name) }),

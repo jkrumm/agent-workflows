@@ -24,8 +24,6 @@ export interface Dossier {
   priorCoverage: Array<{ episodeId: string; title: string; covered: string }>
   openQuestions: string[]
   toolCalls: ToolCallRecord[]
-  /** research-gateway spend of this run, USD, as the gateway reported it. */
-  researchUsd?: number
 }
 
 export const EMPTY_DOSSIER: Dossier = Object.freeze({
@@ -94,8 +92,13 @@ export interface EpisodeProfile {
   segmentCount: number
   toolCalls: number
   researchCalls: number
-  /** research-gateway spend, USD (absent before 2026-10-26). */
-  researchUsd?: number
+  /**
+   * Research spend, USD, from the journal (absent before 2026-10-26). Null when a research run had not ended when the
+   * script was locked (the spend was not all recorded yet).
+   */
+  researchUsd?: number | null
+  /** Research calls recorded without a price; above 0, `researchUsd` is a lower bound. */
+  researchUnpriced?: number
   /** Deterministic expression lint of the final script (podcast-lint.ts): allowed tags, writer-set deliveries, findings per rule. Absent on episodes before 2026-10-26. */
   expression?: { tags: number; deliveries: number; findings: Record<string, number> }
   /** The agentic writer's loops (podcast-agent.ts): runs, model rounds, rejected submits, loops that ended without an accepted submit. Absent when the single-shot writer ran. */

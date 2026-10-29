@@ -1,3 +1,4 @@
+import { Cancelled } from '../../../../runtime/src/index.ts'
 import type { ResearchAnswer, ResearchPort } from './ports.ts'
 
 // The host's `research` workflow over its HTTP API (host `operations.ts`): `POST /workflows/research` starts a run under
@@ -5,8 +6,10 @@ import type { ResearchAnswer, ResearchPort } from './ports.ts'
 // the start re-attachable: a resumed or retried podcast step that asks the same question gets the run it already
 // started (and paid for), never a second one. No time cap on the wait: a research run ends on its own (the host's
 // watchdog turns a stalled one into a failure). A transient failure of a start or a wait (network, 5xx) is retried on
-// the same key or run id; an abort of the podcast step cancels the host run. The bearer is the platform's API secret
-// from the process env; the run carries the podcast's purpose.
+// the same key or run id. Only a cancel of the podcast run cancels the host run: a shutdown, a lease loss or a step
+// timeout leaves it going, so the resumed or retried step re-attaches by its key and gets the answer it paid for (a
+// cancelled run under a key would stay cancelled for good). The bearer is the platform's API secret from the process
+// env; the run carries the podcast's purpose.
 
 /** One held request; the host answers before Bun's 255 s idle ceiling (`MAX_WAIT_S`). */
 const WAIT_S = 240
@@ -46,6 +49,8 @@ export function researchClientFromEnv(
 }
 
 const ENDED = new Set(['done', 'failed', 'cancelled'])
+/** The only states worth waiting on; anything else (a status this client does not know) fails the call. */
+const GOING = new Set(['pending', 'running'])
 
 export function researchClient(options: ResearchClientOptions): ResearchPort {
   const doFetch = options.fetch ?? fetch
@@ -93,7 +98,7 @@ export function researchClient(options: ResearchClientOptions): ResearchPort {
     }
   }
 
-  /** Best effort: the podcast step is ending, the host run must not go on paying. */
+  /** Best effort: the podcast run was cancelled, its research must not go on paying. */
   async function cancel(runId: string) {
     await doFetch(`${options.url}/runs/${runId}/cancel`, {
       method: 'POST',
@@ -113,11 +118,14 @@ export function researchClient(options: ResearchClientOptions): ResearchPort {
         runId = state.runId
         if (!runId) return { ok: false, error: 'error: research start returned no run id' }
         const id = runId
-        while (!ENDED.has(state.status ?? '')) {
+        while (GOING.has(state.status ?? '')) {
           progress()
           state = await retrying(signal, () => post(`/runs/${id}/wait`, {}, signal))
         }
         progress()
+        if (!ENDED.has(state.status ?? '')) {
+          return { ok: false, error: `error: research run ${id} answered an unknown status "${String(state.status)}"` }
+        }
         if (state.status !== 'done') {
           return { ok: false, error: `error: research ${state.status}: ${state.error?.message ?? 'unknown error'}` }
         }
@@ -128,7 +136,7 @@ export function researchClient(options: ResearchClientOptions): ResearchPort {
         return { ok: true, report, sources, runId: id }
       } catch (err) {
         if (signal.aborted) {
-          if (runId) await cancel(runId)
+          if (runId && signal.reason instanceof Cancelled) await cancel(runId)
           throw err
         }
         return { ok: false, error: `error: ${err instanceof Error ? err.message : String(err)}` }

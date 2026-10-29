@@ -76,10 +76,13 @@ export interface RoundReply {
   raw?: WireMessage[]
 }
 
-/** The transport. Rejects with a `ModelError` on a failed call; reports every billed attempt to `onUsage`. */
+/**
+ * The transport. Rejects with a `ModelError` on a failed call; reports every billed attempt to `onUsage`, and calls
+ * `onSent` each time a request leaves (a call that never sent one cannot have billed).
+ */
 export interface ModelPort {
-  chat(call: ChatCall, signal: AbortSignal, onUsage: OnWireUsage): Promise<ChatReply>
-  round(call: RoundCall, signal: AbortSignal, onUsage: OnWireUsage): Promise<RoundReply>
+  chat(call: ChatCall, signal: AbortSignal, onUsage: OnWireUsage, onSent: () => void): Promise<ChatReply>
+  round(call: RoundCall, signal: AbortSignal, onUsage: OnWireUsage, onSent: () => void): Promise<RoundReply>
 }
 
 /** A failed model call. `balance`: the provider refused for account balance; the route's fallback answers it. */
@@ -156,17 +159,27 @@ export class Llm {
    * Runs `call` on the route; a provider-balance failure moves it once to the route's fallback (concept v3.3). A call
    * that came back without usage is still reported, unpriced, under the model it ran on.
    */
-  private async onRoute<T>(id: PodcastRouteId, call: (route: ResolvedRoute, onUsage: OnWireUsage) => Promise<T>) {
+  private async onRoute<T>(
+    id: PodcastRouteId,
+    call: (route: ResolvedRoute, onUsage: OnWireUsage, onSent: () => void) => Promise<T>,
+  ) {
     const primary = this.route(id)
     const attempt = async (route: ResolvedRoute) => {
       let reported = 0
+      let sent = 0
       try {
-        return await call(route, (usage) => {
-          reported++
-          this.report(route, usage)
-        })
+        return await call(
+          route,
+          (usage) => {
+            reported++
+            this.report(route, usage)
+          },
+          () => sent++,
+        )
       } finally {
-        if (reported === 0) this.reportUnknown(route.model)
+        // A request left and no usage came back: it may have billed. Nothing sent (a pre-flight error, an abort before
+        // the send) is nothing to record.
+        if (reported === 0 && sent > 0) this.reportUnknown(route.model)
       }
     }
     try {
@@ -194,7 +207,7 @@ export class Llm {
     cacheableSystemPrefix?: string
     jsonSchema?: Record<string, unknown>
   }): Promise<string> {
-    const reply = await this.onRoute(params.route, (route, onUsage) =>
+    const reply = await this.onRoute(params.route, (route, onUsage, onSent) =>
       this.port.chat(
         {
           wire: route.wire,
@@ -208,6 +221,7 @@ export class Llm {
         },
         this.scope.signal,
         onUsage,
+        onSent,
       ),
     )
     if (!reply.text.trim()) {
@@ -227,7 +241,7 @@ export class Llm {
 
   /** One tool-loop round on the route, IU's OpenAI dialect (chat, or responses for the GPT-6.1 family). */
   round(id: PodcastRouteId, messages: WireMessage[], tools: ToolSchema[], maxTokens: number): Promise<RoundReply> {
-    return this.onRoute(id, (route, onUsage) =>
+    return this.onRoute(id, (route, onUsage, onSent) =>
       this.port.round(
         {
           api: usesResponsesApi(route.model) ? 'responses' : 'chat',
@@ -239,6 +253,7 @@ export class Llm {
         },
         this.scope.signal,
         onUsage,
+        onSent,
       ),
     )
   }

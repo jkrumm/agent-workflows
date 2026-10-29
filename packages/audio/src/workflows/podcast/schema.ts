@@ -83,7 +83,8 @@ export const Profile = z.object({
   segmentCount: z.number(),
   toolCalls: z.number(),
   researchCalls: z.number(),
-  researchUsd: z.number().optional(),
+  researchUsd: z.number().nullable().optional(),
+  researchUnpriced: z.number().optional(),
   expression: z
     .object({ tags: z.number(), deliveries: z.number(), findings: z.record(z.string(), z.number()) })
     .optional(),
@@ -132,11 +133,15 @@ export const PodcastOutput = z.object({
     researchUsd: z.number(),
     researchUnpriced: z.number(),
     researchRuns: z.number(),
+    /** Research runs (or their steps) not ended when the cost was read: their spend is not all in yet. */
+    researchPending: z.number(),
     /** The `podcast.produce` child. */
     produceUsd: z.number(),
     produceUnpriced: z.number(),
     totalUsd: z.number(),
     unpriced: z.number(),
+    /** False: a lower bound (an unpriced call, or a research run not ended), never an exact figure. */
+    complete: z.boolean(),
   }),
   /** `podcast.produce`'s output; null when no produce workflow is wired (the writers' room ran alone). */
   produce: ProduceResult.nullable(),

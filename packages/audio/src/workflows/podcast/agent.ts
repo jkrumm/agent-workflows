@@ -2,7 +2,7 @@ import { type Llm, runToolLoop, type ToolDef, writerBudget } from './llm.ts'
 import { log } from './log.ts'
 import type { BrainPort } from './ports.ts'
 import { lintSegmentation, lintSegments, TAG_BAND_PER_TEN_TURNS, type LintFinding, type LintOptions } from './lint.ts'
-import { fenceRule, fenceToken } from './fence.ts'
+import { fenceErrors, fenceRule, fenceToken } from './fence.ts'
 import { brainReadTool, brainSearchTool } from './research.ts'
 import {
   buildRevisionUserContent,
@@ -287,7 +287,9 @@ async function runAgent(
     },
     glossaryTool(req, Boolean(opts.brain)),
     ...(opts.brain
-      ? [brainSearchTool(opts.brain, llm.signal, token), brainReadTool(opts.brain, llm.signal, token)]
+      ? [brainSearchTool(opts.brain, llm.signal, token), brainReadTool(opts.brain, llm.signal, token)].map((tool) =>
+          fenceErrors(tool, token),
+        )
       : []),
     {
       name: 'submit_segment',

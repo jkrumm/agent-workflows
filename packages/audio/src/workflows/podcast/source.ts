@@ -41,8 +41,11 @@ export function vaultSourceReader(vaultDir: string): SourceReader {
       } catch {
         throw new Error(`"${requested}": not found`)
       }
-      // A symlink inside the vault that points out of it is refused like `..`.
-      if (escapes(relative(root, real))) throw new Error(`"${requested}": the path escapes the vault`)
+      // The rule holds for what is read, not only for the name asked for: a symlink that points out of the vault is
+      // refused like `..`, and one inside it that points at a hidden or non-markdown file (`.git/config`) like that file.
+      const target = relative(root, real)
+      if (escapes(target)) throw new Error(`"${requested}": the path escapes the vault`)
+      if (!allowed(target)) throw new Error(`"${requested}": only markdown notes outside hidden directories`)
       if (!(await stat(real)).isFile()) throw new Error(`"${requested}": not a file`)
       const text = await readFile(real, 'utf8')
       if (text.length > SOURCE_NOTE_MAX_CHARS) {

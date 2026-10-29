@@ -87,6 +87,21 @@ describe('vaultSourceReader', () => {
     expect((await rejected(reader.read('linked-dir/secret.md'))).message).toContain('escapes the vault')
   })
 
+  test('refuses an in-vault symlink whose target is hidden or not markdown', async () => {
+    mkdirSync(join(vault, '.git'))
+    writeFileSync(join(vault, '.git', 'config'), '[core] secret = yes')
+    writeFileSync(join(vault, 'notes.txt'), 'plain text, not a note')
+    symlinkSync(join(vault, '.git', 'config'), join(vault, 'Inbox', 'to-git.md'))
+    symlinkSync(join(vault, 'Areas', '.hidden.md'), join(vault, 'Inbox', 'to-hidden.md'))
+    symlinkSync(join(vault, 'notes.txt'), join(vault, 'Inbox', 'to-text.md'))
+    symlinkSync(join(vault, '.obsidian'), join(vault, 'Inbox', 'to-dir'))
+    for (const path of ['Inbox/to-git.md', 'Inbox/to-hidden.md', 'Inbox/to-text.md', 'Inbox/to-dir/x.md']) {
+      const error = await rejected(reader.read(path))
+      expect(error.message).toContain('outside hidden directories')
+      expect(error.message).not.toContain('secret')
+    }
+  })
+
   test('follows a symlink that stays inside the vault', async () => {
     symlinkSync(join(vault, 'Inbox', 'x.md'), join(vault, 'alias.md'))
     expect(await reader.read('alias.md')).toBe('An inbox draft.')
