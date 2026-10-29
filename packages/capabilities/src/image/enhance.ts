@@ -212,20 +212,19 @@ export function createEnhance(deps: ResolvedImageDeps, llm: LlmDeps) {
       'Turn an image brief into a playbook-conditioned prompt, derived settings, an estimated cost and policy warnings',
     input: enhanceInput,
     output: enhanceOutput,
-    cli: { positional: ['brief'], defaultFormat: 'json' },
+    // `agw image` is the workflow, and the host refuses a command that is the prefix of another: one hyphenated word.
+    cli: { command: ['image-enhance'], positional: ['brief'], defaultFormat: 'json' },
     async handler(input, ctx: Ctx) {
       const route = deps.route('image.enhance')
       const applied = modeApplied(input.mode, input.brief)
       const { system, user } = planMessages(input, applied)
 
       // The route is pinned: a re-ask stays on the route that answered (the planner has no fallback).
-      // biome-ignore lint/suspicious/noExplicitAny: `image.enhance` joins the route table when the registry lands; the id is only a label until then
-      const routeId = 'image.enhance' as any
       let prompt = user
       let reason = ''
       let plan: LlmPlan | undefined
       for (let attempt = 1; attempt <= 2 && !plan; attempt++) {
-        const { text } = await complete(llm, { routeId, system, prompt, json: true, ctx }, route)
+        const { text } = await complete(llm, { routeId: 'image.enhance', system, prompt, json: true, ctx }, route)
         const parsed = parseJsonLoose(text)
         const checked = parsed === null ? null : llmPlan.safeParse(parsed)
         if (checked?.success) plan = checked.data

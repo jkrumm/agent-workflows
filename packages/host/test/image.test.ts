@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createRegistry } from '@agent-workflows/capabilities'
 import { fakeTransports } from '@agent-workflows/capabilities/testing'
-import { IMAGE_ROUTES } from '@agent-workflows/routes'
+import { DEFAULT_ROUTES as IMAGE_ROUTES } from '@agent-workflows/routes'
 import { createImageCapabilities } from '../../capabilities/src/image/index.ts'
 import {
   b64,
@@ -51,7 +51,8 @@ const handlers = new Proxy<Record<string, FakeHandler>>(
 )
 const GEN = '/openai/v1/images/generations'
 const EDIT = '/openai/v1/images/edits'
-const PREDICT = (key: keyof typeof IMAGE_ROUTES) => `/replicate/v1/models/${IMAGE_ROUTES[key].model}/predictions`
+const PREDICT = (key: 'image.cutout.recraft' | 'image.cutout.bria') =>
+  `/replicate/v1/models/${IMAGE_ROUTES[key].model}/predictions`
 const DELIVERED = 'https://replicate.delivery/out/cutout.webp'
 const usage = { input_tokens: 100, output_tokens: 1000, input_tokens_details: { text_tokens: 100, image_tokens: 0 } }
 

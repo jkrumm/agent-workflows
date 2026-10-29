@@ -1,6 +1,9 @@
-import { type ImageRouteId, type ResolvedRoute, resolveImageRoute } from '@agent-workflows/routes'
+import { type ResolvedRoute, type RouteId, resolveRoute } from '@agent-workflows/routes'
 import type { Env } from '../transports/config.ts'
 import type { HttpOptions } from '../transports/http.ts'
+
+/** The image seats of the route table (`packages/routes/src/table/image.ts`). */
+export type ImageRouteId = Extract<RouteId, `image.${string}`>
 
 /** What the image capabilities are built from. Every field defaults to production; tests inject fakes. */
 export interface ImageDeps {
@@ -9,7 +12,7 @@ export interface ImageDeps {
   fetch?: (url: string, init: RequestInit) => Promise<Response>
   /** Retry knobs of the package's helper (`withRetries`); tests set `backoffMs: 0`. */
   retry?: Pick<HttpOptions, 'attempts' | 'backoffMs'>
-  /** The route of an image seat. Default: the route table. */
+  /** The route of an image seat. Default: the route table with `AGW_ROUTES` applied, read from `env`. */
   route?: (id: ImageRouteId) => ResolvedRoute
   /** Wait between Replicate polls. Default 1 s. */
   pollMs?: number
@@ -28,7 +31,7 @@ export function resolveImageDeps(deps: ImageDeps = {}): ResolvedImageDeps {
     env: () => deps.env ?? process.env,
     fetch: deps.fetch ?? ((url, init) => fetch(url, init)),
     retry: deps.retry ?? {},
-    route: deps.route ?? resolveImageRoute,
+    route: deps.route ?? ((id) => resolveRoute(id, deps.env ?? process.env)),
     pollMs: deps.pollMs ?? 1_000,
   }
 }

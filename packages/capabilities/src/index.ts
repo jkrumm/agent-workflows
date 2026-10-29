@@ -59,6 +59,7 @@ export {
   CUTOUT_MODELS,
   createImageCapabilities,
   decodeAlphaStats,
+  type EnhanceOutput,
   GENERATE_MODELS,
   type ImageDeps,
   MAX_EDIT_IMAGES,
