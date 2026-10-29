@@ -12,7 +12,7 @@ import { matchExpect } from '../src/workflows/research/golden.ts'
 import { createResearchWorkflows } from '../src/workflows/research/index.ts'
 import { ResearchOutput, type ResearchResult } from '../src/workflows/research/schema.ts'
 import { researchScorer } from '../src/workflows/research/scorer.ts'
-import { freshSchema, inspector, testRuntime } from '../../runtime/test/support/pg.ts'
+import { freshSchema, inspector, testRuntime, until } from '../../runtime/test/support/pg.ts'
 
 const db = freshSchema('research')
 const sql = inspector(db.schema)
@@ -451,29 +451,37 @@ describe('the tool gate ledger: evidence the decision rests on', () => {
   test('closing a grant waits for the calls in flight, so their rows are written before evidence is read', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'agw-gate-drain-'))
     const memory = memoryToolLedger() // no run row for this grant: the Postgres ledger's foreign key would refuse it
+    const started = Promise.withResolvers<void>()
     const own = new ToolGate({
       stateDir: dir,
       ledger: memory,
       engine: () => null,
       call: async (id, input, scope) => {
+        started.resolve() // the gate holds this call in flight from here on
         await Bun.sleep(300)
         return fakeCapability(id, input, scope)
       },
       belongsTo: (sessionId, stepKey) => sessionId === stepKey,
     })
     const close = own.open({ runId: 'r-drain', stepId: 'research', tools: ['web_search'] })
+    let pending: Promise<unknown> = Promise.resolve()
     try {
       const { url, key } = (await Bun.file(join(dir, 'research', 'gate.json')).json()) as { url: string; key: string }
-      const pending = fetch(`${url}/tool/web_search`, {
+      // Settled inside this test either way: a reset left over must not fail the next one.
+      pending = fetch(`${url}/tool/web_search`, {
         method: 'POST',
         headers: { authorization: `Bearer ${key}` },
         body: JSON.stringify({ sessionID: 'r-drain:research', args: { query: 'q' } }),
-      })
-      await Bun.sleep(50)
+      }).then(
+        (r) => r.json(),
+        (error: unknown) => error,
+      )
+      await started.promise
       await close()
       expect((await memory.read('r-drain', 'research')).map((e) => e.tool)).toEqual(['web_search'])
-      await pending
+      expect(await pending).toMatchObject({ ok: true })
     } finally {
+      await pending
       await own.close()
       rmSync(dir, { recursive: true, force: true })
     }
@@ -546,31 +554,40 @@ describe('the tool gate ledger: evidence the decision rests on', () => {
       enginePollMs: 5,
       belongsTo: (sessionId, stepKey) => sessionId === stepKey,
     })
-    const ask = async (runId: string, end: (close: () => Promise<void>) => Promise<void>) => {
+    // LAGGY finishes 300 ms after its submit, inside the drain bound; SLOW (11 s) is still running at the cut.
+    const ask = async (runId: string, kind: 'LAGGY' | 'SLOW', end: (close: () => Promise<void>) => Promise<void>) => {
       const booked: (number | null | undefined)[] = []
       const close = own.open({ runId, stepId: 'research', tools: ['engine_research'] })
       const unbind = own.bindUsage(runId, 'research', (u) => booked.push(u.cost))
       const { url, key } = (await Bun.file(join(dir, 'research', 'gate.json')).json()) as { url: string; key: string }
+      const question = `${kind} ${runId}: postgres port?`
       const pending = fetch(`${url}/tool/engine_research`, {
         method: 'POST',
         headers: { authorization: `Bearer ${key}` },
-        body: JSON.stringify({ sessionID: `${runId}:research`, args: { question: `LAGGY ${runId}: postgres port?` } }),
-      })
-      await Bun.sleep(50) // the job is running when the agent ends
-      await end(close)
-      unbind()
-      await pending
+        body: JSON.stringify({ sessionID: `${runId}:research`, args: { question } }),
+      }).then(
+        (r) => r.json(),
+        (error: unknown) => error,
+      )
+      try {
+        // The job is submitted, so the gate holds the call in flight, when the agent ends.
+        await until(() => [...engine.jobs.values()].some((j) => j.body.query === question), `${runId} submitted`)
+        await end(close)
+      } finally {
+        unbind()
+        await pending
+      }
       return { booked, rows: await memory.read(runId, 'research') }
     }
     try {
-      const served = await ask('r-end', async (close) => {
+      const served = await ask('r-end', 'LAGGY', async (close) => {
         await own.settle('r-end', 'research')
         await close()
       })
       expect(served.booked).toEqual([0.04])
       expect(served.rows).toMatchObject([{ ok: true, engineJob: expect.any(String), engineCostUsd: 0.04 }])
 
-      const cut = await ask('r-cut', (close) => close())
+      const cut = await ask('r-cut', 'SLOW', (close) => close())
       expect(cut.booked).toEqual([null])
       expect(cut.rows).toMatchObject([{ ok: false, engineJob: expect.any(String), engineCostUsd: null }])
       expect(cut.rows[0]?.error).toContain('abandoned')
