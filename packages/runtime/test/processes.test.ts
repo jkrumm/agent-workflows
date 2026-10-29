@@ -3,7 +3,7 @@
 // process is down waits for it instead of being taken over (or failed) by the other.
 import { afterAll, describe, expect, test } from 'bun:test'
 import { z } from 'zod'
-import { defineWorkflow, type Middleware } from '../src/index.ts'
+import { defineWorkflow, type Middleware, WorkflowError } from '../src/index.ts'
 import { freshSchema, inspector, testRuntime, until } from './support/pg.ts'
 
 const db = freshSchema('procs')
@@ -166,10 +166,19 @@ describe('a caller-chosen run id', () => {
       const refused = (promise: Promise<unknown>) =>
         promise.then(
           () => 'started',
-          (error: unknown) => (error instanceof Error ? error.message : String(error)),
+          (error: unknown) =>
+            error instanceof WorkflowError ? `${error.kind}: ${error.message}` : `untyped: ${String(error)}`,
         )
-      expect(await refused(rt.start(wf, {}, { purpose: 'test', runId }))).toContain('already used')
-      expect(await refused(rt.start(wf, {}, { purpose: 'test', runId: 'not-a-uuid' }))).toContain('must be a UUID')
+      expect(await refused(rt.start(wf, {}, { purpose: 'test', runId }))).toBe(
+        `invalid_input: run id ${runId} is already used`,
+      )
+      // Two starts racing for one fresh id: the insert decides, exactly one wins.
+      const raced = Bun.randomUUIDv7()
+      const outcomes = await Promise.all([1, 2].map(() => refused(rt.start(wf, {}, { purpose: 'test', runId: raced }))))
+      expect(outcomes.sort()).toEqual(['invalid_input: run id ' + raced + ' is already used', 'started'].sort())
+      expect(await refused(rt.start(wf, {}, { purpose: 'test', runId: 'not-a-uuid' }))).toContain(
+        'invalid_input: start: runId must be a UUID',
+      )
       expect(
         await refused(rt.start(wf, {}, { purpose: 'test', runId: Bun.randomUUIDv7(), idempotencyKey: 'k' })),
       ).toContain('exclude each other')
