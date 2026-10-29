@@ -72,7 +72,7 @@ export const ReviewInput = z
       .enum(REVIEW_DEPTHS)
       .optional()
       .describe(
-        'light (mechanical, docs, test-only), standard (ordinary logic), deep (auth, destructive data ops, concurrency, public contracts). Wins over the router; omit to let it decide.',
+        "light (mechanical, docs, test-only), standard (ordinary logic), deep (auth, destructive data ops, concurrency, public contracts). Wins over the router; omit to let it decide. A caller's deep runs the angles on a dearer model (about 10x the angle spend); a router-chosen deep does not.",
       ),
     context: z
       .string()
