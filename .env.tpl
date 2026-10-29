@@ -22,3 +22,6 @@ AGW_FRICTION_REPO=jkrumm/agent-workflows
 # Audio process (packages/audio): the STT language steer the door's transcriptions send when a client sets none (plain
 # value, as audio-gateway sets it). Its IU lanes derive the OpenAI, Gemini and Replicate bases from IU_BASE_URL.
 STT_PROMPT=Die Aufnahme ist auf Deutsch oder Englisch.
+# Audiobookshelf, where the podcast's publish stage uploads an episode (audio process).
+ABS_URL=op://vps/audiobookshelf/URL
+ABS_API_KEY=op://vps/audiobookshelf/API_KEY

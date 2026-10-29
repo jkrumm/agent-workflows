@@ -41,4 +41,7 @@ try {
 console.log(`[agw-audio] listening on 127.0.0.1:${started.port} (${version})`)
 
 // Deploys need no drain (concept §3): runs stay `running` and the next process resumes them.
-installLifecycle({ shutdown: () => started.shutdown() })
+installLifecycle({
+  shutdown: () => started.shutdown(),
+  log: (message, meta) => console.error(`[agw-audio] ${message}`, meta ?? ''),
+})

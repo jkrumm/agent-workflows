@@ -135,6 +135,7 @@ describe('the audio process', () => {
       const refused = await fetch(`${audio.url}/v1/audio/speech`, { method: 'POST', body })
       expect(refused.status).toBe(401)
       expect(await refused.json()).toEqual({ error: { message: 'unauthorized', type: 'invalid_request_error' } })
+      expect(refused.headers.get('www-authenticate')).toBe('Bearer')
       const wrong = await fetch(`${audio.url}/v1/audio/speech`, { method: 'POST', body, headers: bearer(`${HERMES}x`) })
       expect(wrong.status).toBe(401)
       expect(handlers.seen).toEqual([])
@@ -226,7 +227,7 @@ describe('the audio process', () => {
     }
   })
 
-  test('a recording failure never fails the request: it is answered, without a run id', async () => {
+  test('a recording failure never fails the request: it is answered, and no run exists under its id', async () => {
     const audio = await start(stubHandlers())
     try {
       const res = await fetch(`${audio.url}/v1/audio/transcriptions`, {
@@ -236,7 +237,63 @@ describe('the audio process', () => {
       })
       expect(res.status).toBe(200)
       expect(await res.json()).toEqual({ text: 'hallo' })
-      expect(res.headers.get('agw-run-id')).toBeNull()
+      const runId = res.headers.get('agw-run-id')
+      expect(runId).toBeTruthy()
+      expect(await sql.run(runId as string)).toBeUndefined()
+    } finally {
+      await audio.shutdown()
+    }
+  })
+
+  test('only the exact door paths are the door: a workflow path that ends like one reaches the API', async () => {
+    const audio = await start(stubHandlers())
+    try {
+      for (const path of ['/workflows/audio/speech', '/v2/audio/speech', '/v1/audio/speech/x']) {
+        const res = await fetch(`${audio.url}${path}`, { method: 'POST', body: '{}', headers: bearer(HERMES) })
+        // The API's own answer to a door token: its 401 envelope, not the door's.
+        expect(res.status).toBe(401)
+        expect(((await res.json()) as { code?: string }).code).toBe('UNAUTHORIZED')
+      }
+    } finally {
+      await audio.shutdown()
+    }
+  })
+
+  test('a client that goes away mid-stream ends the record: the run finishes incomplete, it never stays running', async () => {
+    const handlers: DoorHandlers = {
+      speech: (deps) => async (req) => {
+        deps.usage.record(call(deps, req))
+        // A stream that never ends on its own: only the client going away stops it.
+        const body = new ReadableStream<Uint8Array>({
+          pull: (controller) => controller.enqueue(new Uint8Array(1024)),
+        })
+        return new Response(body, { headers: { 'content-type': 'audio/pcm' } })
+      },
+      transcriptions: () => async () => Response.json({ text: '' }),
+    }
+    const audio = await start(handlers)
+    try {
+      const abort = new AbortController()
+      const res = await fetch(`${audio.url}/v1/audio/speech`, {
+        method: 'POST',
+        body: '{}',
+        headers: bearer(HERMES),
+        signal: abort.signal,
+      })
+      const runId = res.headers.get('agw-run-id') as string
+      const reader = (res.body as ReadableStream<Uint8Array>).getReader()
+      await reader.read()
+      abort.abort()
+      await reader.read().catch(() => undefined)
+      const done = await until(
+        async () => {
+          const row = await sql.run(runId)
+          return row?.status === 'done' ? row : undefined
+        },
+        'the cut run',
+        15_000,
+      )
+      expect(done.output).toMatchObject({ calls: 1, complete: false, costUsd: 0.002 })
     } finally {
       await audio.shutdown()
     }

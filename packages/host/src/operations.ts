@@ -160,12 +160,19 @@ export async function startRun(
   workflow: AnyWorkflow,
   input: unknown,
   headers: Headers,
+  /** `runId`: the caller's own id for the run (`StartOptions.runId`), known before the start returns. */
+  options: { runId?: string } = {},
 ): Promise<{ runId: string; idempotencyKey: string | undefined }> {
   const purpose = purposeOf(headers)
   const idempotencyKey = idempotencyKeyOf(headers)
   const traceparent = headers.get('traceparent') ?? undefined
   try {
-    const { runId } = await deps.runtime.start(workflow, input, { purpose, idempotencyKey, traceparent })
+    const { runId } = await deps.runtime.start(workflow, input, {
+      purpose,
+      idempotencyKey,
+      traceparent,
+      ...(options.runId ? { runId: options.runId } : {}),
+    })
     return { runId, idempotencyKey }
   } catch (error) {
     if (error instanceof WorkflowError && error.kind === 'invalid_input') throw badRequest(error.message)

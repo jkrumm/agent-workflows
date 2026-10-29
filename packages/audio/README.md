@@ -168,12 +168,19 @@ finishes all three. The Argo outbox claims its rows (`for update skip locked`, a
 journal post each row once (middleware `outbox.test.ts`, two flushers racing). The friction job and the retrospective
 run in the host only.
 
+### Env
+
+`.env.tpl` is shared by both processes (each fail-closed on all of it). The audio process reads `IU_API_KEY` and
+`IU_BASE_URL` (the lanes derive the OpenAI, Gemini and Replicate bases from it), `STT_PROMPT` (a plain value, as
+audio-gateway set it) and `ABS_URL` / `ABS_API_KEY` (Audiobookshelf, the podcast's publish stage).
+
 ## The door on the process
 
-`POST /v1/audio/speech` and `POST /v1/audio/transcriptions`, and every path ending in `/audio/speech` or
-`/audio/transcriptions` (audio-gateway matched by suffix, so OpenAI clients with either base form work). The handlers
-are `createSpeechHandler(deps)` and `createTranscriptionsHandler(deps)` of `src/door/`; the process mounts them
-(`src/process/door.ts`) and gives them the usage port, the request id and the caller. `GET /v1/models` is not served:
+`POST /v1/audio/speech` and `POST /v1/audio/transcriptions`, and the same paths without `/v1` (OpenAI clients with
+either base form). Exactly these: audio-gateway matched any suffix, but the door is served ahead of the API, so an
+unanchored match would take over a workflow path such as `/workflows/audio/speech`. The handlers are
+`createSpeechHandler(deps)` and `createTranscriptionsHandler(deps)` of `src/door/`; the process builds one per request
+(`src/process/door.ts`) with the request's usage port, id and caller passed in explicitly. `GET /v1/models` is not served:
 Hermes' stock OpenAI TTS and STT clients never call it.
 
 ### Caller auth
@@ -184,13 +191,14 @@ file of the user at mode 0600, names `[a-z][a-z0-9-]*`, tokens at least 32 chara
 creates it with one `hermes` token if it is missing and never touches an existing one. The platform's API secret is
 accepted too, as the caller `agw` (`make verify`, the eval harness): it already grants the whole API. A missing,
 wider-mode or malformed file refuses the start, naming the file and the line, never a token. Every known bearer is
-compared hashed and in constant time. Rotation: edit the file, restart the LaunchAgent.
+compared hashed and in constant time (`bearerCaller`, the host's own `auth.ts`). `make deploy` checks the file
+with the same parser before it stops anything, so a bad file refuses the deploy instead of rolling it back. Rotation: edit the file, restart the LaunchAgent.
 
 Decision: a local token file, not a 1Password item. A new ref before its item exists breaks every reseal of the
 headless cache, and a token that only grants a loopback port on this machine gains nothing from a vault.
 
 Without a valid bearer: 401 `{"error":{"message":"unauthorized","type":"invalid_request_error"}}`, audio-gateway's
-answer. While the runtime is not open: 503 `proxy_error`.
+answer, with `WWW-Authenticate: Bearer`. While the runtime is not open: 503 `proxy_error`.
 
 ### One run per request
 
@@ -199,14 +207,17 @@ Every door request is a run of its own, `door.speech` or `door.transcriptions` (
 (it would fold two real requests into one record). Its input is the authenticated caller (the token's name), the
 `x-audio-source` label when sent, the path and the request id; its output the status, route, served and requested
 model, cost (only when every call is priced) and the call count. The step's usage is one `addUsage` per billed
-upstream call, failed attempts at 0, so the run record carries the cost like any run. The run id goes back in
-`agw-run-id`.
+upstream call, failed attempts at 0, so the run record carries the cost like any run.
 
 The run observes, it never gates:
 
-- It is started beside the handler, not in front of it; the response waits for the run id at most 2 s, so a slow
-  journal costs at most the header, never the audio. The first byte is never behind a journal write.
-- The handler's events land in an in-memory sink keyed by the request id; the run's one step waits until the
-  `request` summary arrived, or 2 s after the body ended without one (a cut stream, a 400 before any call).
-- A start that fails (a bad purpose header, the journal down) is logged; the request is answered as if nothing happened.
+- Its id is chosen by the door before the handler runs (a UUIDv7, `StartOptions.runId`) and is also the request id
+  every usage event carries; `agw-run-id` goes out with the response at once, the 500 path included. The run is
+  started in the background: no response, and no first byte, waits on the journal.
+- The handler's events land in an in-memory sink under that id; the run's one step waits until the `request` summary
+  arrived, or 2 s after the request ended without one. A request ends when its body ended, failed or was cancelled,
+  when the client went away (`request.signal`), or at the latest one hour after it arrived: a door run never stays
+  running and no sink is kept.
+- A start that fails (a bad purpose header, the journal down) is logged and drops the sink; the request is answered as
+  if nothing happened, and its `agw-run-id` then names no run.
 - A request cut by a restart: the next process resumes its run, finds no sink and fails it as lost; it never hangs.

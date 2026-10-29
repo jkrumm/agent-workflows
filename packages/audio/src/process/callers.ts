@@ -2,14 +2,12 @@
 // machine; it presents a bearer from the local caller-token file (`name=token` lines, mode 0600, written by
 // `make deploy`). The platform's own API secret is accepted too, as the caller `agw` (verify, the eval harness): it
 // already grants the whole API, so it adds no reach. No 1Password item: a token is local to the machine it serves.
-import crypto from 'node:crypto'
 import { lstatSync, readFileSync } from 'node:fs'
+import { bearerCaller } from '@agent-workflows/host'
 
 export const PLATFORM_CALLER = 'agw'
 const NAME = /^[a-z][a-z0-9-]{0,31}$/
 const MIN_TOKEN_LENGTH = 32
-
-const sha256 = (text: string) => crypto.createHash('sha256').update(text).digest()
 
 /**
  * The file's tokens by caller name. Fails naming the file and the line, never a value: a malformed line, a bad or
@@ -56,22 +54,8 @@ export function readDoorTokens(file: string): Map<string, string> {
 /** The caller an `Authorization` header authenticates, or null. */
 export type CallerAuth = (authorization: string | null) => string | null
 
-/**
- * Every known bearer is compared, hashed and in constant time, whatever matched first, so the answer's timing says
- * nothing about which token (or how much of one) was right.
- */
+/** The door tokens plus the API secret as `agw`, matched by the host's own constant-time `bearerCaller`. */
 export function callerAuth(options: { tokens: ReadonlyMap<string, string>; secret: string }): CallerAuth {
-  const known = [
-    { name: PLATFORM_CALLER, hash: sha256(options.secret) },
-    ...[...options.tokens].map(([name, token]) => ({ name, hash: sha256(token) })),
-  ]
-  return (authorization) => {
-    const match = authorization ? /^Bearer +(\S+)$/i.exec(authorization) : null
-    const candidate = sha256(match?.[1] ?? '')
-    let caller: string | null = null
-    for (const entry of known) {
-      if (crypto.timingSafeEqual(candidate, entry.hash) && match) caller ??= entry.name
-    }
-    return caller
-  }
+  const known = new Map([[PLATFORM_CALLER, options.secret], ...options.tokens])
+  return (authorization) => bearerCaller(authorization, known)
 }
