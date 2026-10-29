@@ -7,7 +7,7 @@ import { casesPath } from '@agent-workflows/eval'
 import { defineWorkflow, type Json, type Runtime } from '@agent-workflows/runtime'
 import { z } from 'zod'
 import { createCapabilityWorkflows } from '../src/capability-runs.ts'
-import { judgeAllowed, scorerJudge } from '../src/judge.ts'
+import { answerOf, judgeAllowed, scorerJudge } from '../src/judge.ts'
 import type { HostWorkflow } from '../src/operations.ts'
 import { createEvalWorkflows, wireEval } from '../src/workflows/eval/index.ts'
 import { readSuite } from '../src/workflows/eval/suites.ts'
@@ -122,6 +122,16 @@ test('agw eval run on a tree-less suite: every case runs with the arm args and i
     [`eval:${runId}:miss`],
   )
   expect((await byCase()).miss).toEqual(['pilot-yolo', null, true])
+
+  // A cancelled (or still running) run is a miss, not ok, and its partial cost stays out of every median.
+  await sql.pool.query(`update "${db.schema}".runs set status = 'cancelled', cost = 9 where idempotency_key = $1`, [
+    `eval:${runId}:port`,
+  ])
+  const port = (await load(sql.pool, db.schema, [runId])).find((l) => l.row.caseId === 'port')
+  expect(port).toMatchObject({ state: 'incomplete', status: 'cancelled', unscored: false, tokens: null })
+  expect(port?.row).toMatchObject({ ok: false, cost: null, wallMs: null })
+  // The id is a prefix, not a pattern: a `_` matches itself only.
+  expect(await load(sql.pool, db.schema, [`${runId.slice(0, -1)}_`])).toEqual([])
 })
 
 describe("the scorers' judge", () => {
@@ -138,6 +148,8 @@ describe("the scorers' judge", () => {
         costSource: 'rate',
       })
       if (url.includes('gone')) throw fail('UPSTREAM_ERROR', 'the page is gone', { status: 404 })
+      if (url.includes('down')) throw fail('UPSTREAM_ERROR', 'the site answered 503', { status: 503 })
+      if (url.includes('refused')) throw fail('URL_REFUSED', 'a private address')
       if (url.includes('crash')) throw new Error('the fetcher crashed')
       if (url.includes('slow'))
         await new Promise((_resolve, reject) => ctx.signal.addEventListener('abort', () => reject(ctx.signal.reason)))
@@ -197,7 +209,7 @@ describe("the scorers' judge", () => {
     ])
   })
 
-  test("a capability's typed failure is an answer; a call outside the allowlist is refused", async () => {
+  test("a capability's gone answer is an answer; a call outside the allowlist is refused", async () => {
     expect(await judge()('web.fetch', { url: 'https://example.com/gone' }, scope('regression'))).toEqual({
       error: { code: 'UPSTREAM_ERROR', message: 'the page is gone' },
     })
@@ -221,9 +233,34 @@ describe("the scorers' judge", () => {
     const url = 'https://example.com/gone-twice'
     const typed = { error: { code: 'UPSTREAM_ERROR', message: 'the page is gone' } }
     expect(await judge()('web.fetch', { url }, scope('regression', 'scored-10'))).toEqual(typed)
-    // A typed failure is a final answer: the retried scoring adopts it.
+    // A gone page is a final answer: the retried scoring adopts it.
     expect(await judge()('web.fetch', { url }, scope('regression', 'scored-10'))).toEqual(typed)
     expect(await capRuns(url)).toEqual(['failed'])
+  })
+
+  test('an outage (a defined code, but no answer) throws and is stepped past; a refused URL is an answer', async () => {
+    const url = 'https://example.com/down'
+    expect(await rejection(judge()('web.fetch', { url }, scope('regression', 'scored-14')))).toContain('503')
+    expect(await rejection(judge()('web.fetch', { url }, scope('regression', 'scored-14')))).toContain('503')
+    expect(await capRuns(url)).toEqual(['failed', 'failed'])
+    const refused = 'https://example.com/refused'
+    const answer = { error: { code: 'URL_REFUSED', message: 'a private address' } }
+    expect(await judge()('web.fetch', { url: refused }, scope('regression', 'scored-14'))).toEqual(answer)
+    expect(await judge()('web.fetch', { url: refused }, scope('regression', 'scored-14'))).toEqual(answer)
+    expect(await capRuns(refused)).toEqual(['failed'])
+  })
+
+  test('answerOf: only gone (404, 410) and refused are answers', () => {
+    const of = (code: string, data?: unknown) => answerOf({ code, message: 'm', data }) !== null
+    expect(of('UPSTREAM_ERROR', { status: 404 })).toBe(true)
+    expect(of('UPSTREAM_ERROR', { status: 410 })).toBe(true)
+    expect(of('URL_REFUSED')).toBe(true)
+    expect(of('UPSTREAM_ERROR', { status: 503 })).toBe(false)
+    expect(of('UPSTREAM_ERROR', {})).toBe(false)
+    expect(of('NOT_CONFIGURED')).toBe(false)
+    expect(of('CANCELLED')).toBe(false)
+    expect(of('INTERNAL_SERVER_ERROR')).toBe(false)
+    expect(answerOf(null)).toBeNull()
   })
 
   test('an untyped failure is stepped past: the retried scoring runs the call again', async () => {

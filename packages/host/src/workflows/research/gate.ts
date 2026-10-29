@@ -1,12 +1,12 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
-import { chmodSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { isStepSession } from '@agent-workflows/opencode-host'
 import type { Json, Logger, Usage } from '@agent-workflows/runtime'
 import { z } from 'zod'
 import { canonicalJson } from '../../canonical.ts'
 import { type EngineClient, EngineJobFailed, runEngineJob } from './engine.ts'
-import type { LedgerEntry, ToolLedger } from './ledger.ts'
+import { bookingClaim, type LedgerEntry, type ToolLedger } from './ledger.ts'
 import { asRecord } from './util.ts'
 
 /**
@@ -41,8 +41,6 @@ type Grant = {
   /** Where a call's usage is booked: the research run's `tools` step, once it is bound; held here until then. */
   sink: ((usage: Usage) => void) | null
   held: Usage[]
-  /** Engine jobs booked in this process (two calls in flight on one question); the ledger answers across processes. */
-  bookedJobs: Set<string>
 }
 
 export type GateOptions = {
@@ -122,8 +120,6 @@ export class ToolGate {
   private readonly grants = new Map<string, Grant>()
   private readonly bySession = new Map<string, Grant>()
   private server: ReturnType<typeof Bun.serve> | null = null
-  /** Set once this instance wrote `gate.json`: only then does `close` remove it (another host may own the file). */
-  private wroteFile = false
   private readonly key = randomBytes(32).toString('hex')
   private readonly logger: Logger
 
@@ -145,7 +141,6 @@ export class ToolGate {
       writeFileSync(tmp, `${JSON.stringify({ url: this.url(), key: this.key })}\n`, { mode: 0o600 })
       chmodSync(tmp, 0o600)
       renameSync(tmp, this.file)
-      this.wroteFile = true
     }
     return { url: this.url() }
   }
@@ -173,7 +168,6 @@ export class ToolGate {
       inflight: new Set(),
       sink: null,
       held: [],
-      bookedJobs: new Set(),
     }
     this.grants.set(stepKey, grant)
     return () => (this.grants.get(stepKey) === grant ? this.drop(grant) : Promise.resolve())
@@ -188,12 +182,6 @@ export class ToolGate {
     return () => {
       if (grant.sink === addUsage) grant.sink = null
     }
-  }
-
-  /** Waits (bounded) until the step's calls in flight are served. */
-  async settle(runId: string, stepId: string): Promise<void> {
-    const grant = this.grants.get(`${runId}:${stepId}`)
-    if (grant) await this.drain(grant)
   }
 
   private async drain(grant: Grant) {
@@ -214,15 +202,22 @@ export class ToolGate {
   }
 
   /**
-   * Ends every grant (awaiting their calls), stops the server and removes the `gate.json` this instance wrote, never
-   * one another process wrote. The host calls it on shutdown.
+   * Ends every grant (awaiting their calls), stops the server and removes `gate.json` if it still holds this instance's
+   * key: never a file another host wrote, before or after this one. The host calls it on shutdown.
    */
   async close() {
     await Promise.all([...this.grants.values()].map((grant) => this.drop(grant)))
     void this.server?.stop(true)
     this.server = null
-    if (this.wroteFile) rmSync(this.file, { force: true })
-    this.wroteFile = false
+    if (this.ownsFile()) rmSync(this.file, { force: true })
+  }
+
+  private ownsFile(): boolean {
+    try {
+      return (JSON.parse(readFileSync(this.file, 'utf8')) as { key?: unknown }).key === this.key
+    } catch {
+      return false // gone, or not ours to read
+    }
   }
 
   private grantOf(sessionId: string): Grant | null {
@@ -278,21 +273,20 @@ export class ToolGate {
     }
   }
 
-  /** One call: run it (its usage booked as reported), then record its evidence apart. Never throws. */
+  /**
+   * One call: run it (its usage booked as reported), then record its evidence apart. An engine job's cost is booked
+   * once per step, by the call whose ledger row claims it (the engine adopts a repeated question's job). Never throws.
+   */
   private async serve(grant: Grant, tool: GateTool, args: Record<string, Json>): Promise<Record<string, unknown>> {
     let served: Served
     try {
       served = { ok: true, ...(await this.run(grant, tool, args)) }
     } catch (error) {
-      const entry: Partial<LedgerEntry> = {}
-      if (error instanceof EngineJobFailed) {
-        entry.engineJob = error.jobId
-        entry.engineCostUsd = error.costUsd
-        await this.bookEngine(grant, error.jobId, error.costUsd)
-      }
+      const entry: Partial<LedgerEntry> =
+        error instanceof EngineJobFailed ? { engineJob: error.jobId, engineCostUsd: error.costUsd } : {}
       served = { ok: false, error: message(error), entry }
     }
-    await this.record({
+    const booked = await this.record({
       runId: grant.runId,
       stepId: grant.stepId,
       tool,
@@ -303,25 +297,32 @@ export class ToolGate {
       ...served.entry,
       ...(served.ok ? {} : { error: served.error.slice(0, 300) }),
     })
+    if (served.entry.engineJob && booked) this.book(grant, engineUsage(served.entry.engineCostUsd))
     return served.ok ? { ok: true, result: served.result } : { ok: false, error: served.error.slice(0, 1_000) }
   }
 
-  /** The ledger write, retried a bounded number of times; a lasting failure is logged and loses only evidence. */
-  private async record(entry: LedgerEntry) {
-    for (let attempt = 1; attempt <= APPEND_ATTEMPTS; attempt++) {
+  /**
+   * The ledger write, retried a bounded number of times under one booking claim; answers whether this call books its
+   * engine job. A lasting failure is logged and loses the evidence row; an engine job's cost is then booked anyway
+   * (the money was spent) and the log says its booking could not be checked.
+   */
+  private async record(entry: LedgerEntry): Promise<boolean> {
+    const claim = bookingClaim()
+    for (let attempt = 1; ; attempt++) {
       try {
-        await this.options.ledger.append(entry)
-        return
+        return await this.options.ledger.append(entry, claim)
       } catch (error) {
-        if (attempt === APPEND_ATTEMPTS) {
-          this.logger.error('research tool gate: the ledger write failed; the call stands without its evidence row', {
-            runId: entry.runId,
-            tool: entry.tool,
-            error: message(error),
-          })
-          return
+        if (attempt < APPEND_ATTEMPTS) {
+          await Bun.sleep(100 * attempt)
+          continue
         }
-        await Bun.sleep(100 * attempt)
+        this.logger.error('research tool gate: the ledger write failed; the call stands without its evidence row', {
+          runId: entry.runId,
+          tool: entry.tool,
+          error: message(error),
+          ...(entry.engineJob ? { engineJob: entry.engineJob, booking: 'booked unchecked' } : {}),
+        })
+        return entry.engineJob !== undefined
       }
     }
   }
@@ -329,18 +330,6 @@ export class ToolGate {
   private book(grant: Grant, usage: Usage) {
     if (grant.sink) grant.sink(usage)
     else grant.held.push(usage)
-  }
-
-  /**
-   * An engine job's cost, booked once: not when this process booked it already (a repeated question in flight), nor
-   * when the ledger already holds the job (an earlier call adopted or ran it). A ledger that cannot be read books it.
-   */
-  private async bookEngine(grant: Grant, jobId: string, costUsd: number | null) {
-    if (grant.bookedJobs.has(jobId)) return
-    grant.bookedJobs.add(jobId)
-    const known = await this.options.ledger.read(grant.runId, grant.stepId).catch(() => [])
-    if (known.some((entry) => entry.engineJob === jobId)) return
-    this.book(grant, engineUsage(costUsd))
   }
 
   private async run(
@@ -384,7 +373,6 @@ export class ToolGate {
     )
     const cost = report.cost?.totalUsd
     const costUsd = typeof cost === 'number' ? cost : null
-    await this.bookEngine(grant, jobId, costUsd)
     return {
       result: {
         report: report.report,

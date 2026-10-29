@@ -117,6 +117,8 @@ test('the report prints a table per depth and the verdict', async () => {
     ...arm('agent-yolo', { cost: 0.05, wallMs: 100_000, failEvery: 9 }),
   ].map((row) => ({
     row,
+    state: row.ok ? ('done' as const) : ('failed' as const),
+    status: row.ok ? 'done' : 'failed',
     partial: false,
     errorKind: row.ok ? null : 'step_failed',
     grounded: 1,
@@ -128,8 +130,9 @@ test('the report prints a table per depth and the verdict', async () => {
   }))
   const text = report(rows)
   expect(text).toContain('### standard')
-  expect(text).toContain('| engine | 36 | 0 | 0 | 0 | 1.00 | 0.80 | 1.00 | 1.00 | 0.1000 | 100 | 10 | 0.50 | 3 |')
-  expect(text).toContain('### Failed runs')
+  expect(text).toContain('| engine | 36 | 0 | 0 | 0 | 0 | 1.00 | 0.80 | 1.00 | 1.00 | 0.1000 | 100 | 10 | 0.50 | 3 |')
+  expect(text).toContain('### Failed or incomplete runs')
+  expect(text).toContain('| failed | step_failed |')
   expect(text).toContain('**Winner:')
 })
 

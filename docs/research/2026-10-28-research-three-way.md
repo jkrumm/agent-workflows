@@ -57,12 +57,13 @@ output shape.
      grounding never comes from the model and survives a step retry and a host restart; `tools` reads it after the
      grant has drained (never consumes it). A ledger write is retried and logged and never fails a call that worked.
      The engine's cost has one source: its job's ledger row. The run's `engine.costUsd` sums the rows (each job once,
-     null when any is unknown), and a job already in the ledger (a repeated question, an adopted job) is not booked
-     again. Grants are in memory and end with their step on every path out, a cancelled run included.
+     null when any is unknown). The ledger decides the booking: the row that claims a job (migration 0008, one claim
+     per run, step and job, atomic) books its cost on the run; a repeated question or an adopted job books nothing, and
+     a retried write recognises its own claim. Grants are in memory and end with their step on every path out, a cancelled run included.
    - *One key rule* for the engine's jobs and the judge's calls (`attempt-keys.ts`): a key whose job or run is done is
-     adopted, and so is a typed capability failure (one of the capabilities' defined error codes: a page gone, a
-     package not found, a final answer); an untyped or internal failure, an engine `error` or a cancel is stepped past
-     (`key:2`, …) and runs again. Judge keys carry the score source, the scorer version and the scored run; drift keys
+     adopted, and so is a failure that is an answer (`judge.ts` `answerOf`: a page gone, 404/410; a package not
+     found; a refused URL); an outage (5xx, timeout, network, `NOT_CONFIGURED`, `CANCELLED`, an internal error), an
+     engine `error` or a cancel throws and is stepped past (`key:2`, …) on the retried scoring. Judge keys carry the score source, the scorer version and the scored run; drift keys
      also the pass (its UTC day), so each drift pass fetches fresh.
    - *Transport:* the gate's server has no idle timeout (`engine_research` holds a request for a whole job; Bun's
      default cuts at 10 s), refuses a body over 64 KiB by its length or while it streams, and the host closes it on
@@ -98,7 +99,7 @@ output shape.
 | `golden` | the case's `expect` on the report text and its `maxChars`, `evals/lib.ts` semantics exactly (`any`/`all` case-insensitive regex, `live:` a literal substring of the registry's latest version, fetched via `web.package` at scoring time, `v`/`bun-v` stripped for GitHub releases) | no (`live` needs the judge) |
 | `supported` | up to 3 citations with distinct URLs, in report order: the judge fetches the page (`web.fetch`, 20k chars) and asks `decide` whether it supports the claim; the share over the citations the judge could score. A typed judge error (page gone or empty, `decide` failed) leaves a citation unscored, never unsupported; `judgedShare` (in [0, 1]) is the share the judge could score; none scored leaves `supported` out; no citation at all scores 0 | judged |
 
-`pass` = valid and golden passed. A `live:` case whose registry answers a typed error or no usable version leaves `golden` unscored (`pass` false, feedback says why); a registry outage is the judge's error, which the runtime retries. Cases: the 28 golden questions (19 quick, 8 standard, 1 deep) as plain eval cases in
+`pass` = valid and golden passed. A `live:` case whose package the registry does not have, or answers without a usable version, leaves `golden` unscored (`pass` false, feedback says why); a registry outage throws through the judge, and the runtime retries the scoring. Cases: the 28 golden questions (19 quick, 8 standard, 1 deep) as plain eval cases in
 `$AGW_EVAL_DIR/research/cases.jsonl` (outside git): `{id, input: {query, depth}, reference: {expect, maxChars?}}`.
 
 ## Decision rule (pre-registered by the lead, fixed 2026-10-28 before the first live run)
@@ -159,6 +160,20 @@ Prior, before the smoke (the smoke's measured cost replaces it):
 
 Full run ≈ $30 (± 2×), on the Athena team key. Smoke: every arm once on 3 questions (`rfc9110-413` quick,
 `npm-hono-latest` quick/live, `bun-serve-idle-timeout` standard) ≈ $1.
+
+Smoke, measured (2026-10-29, deploy `fa5e07d`, team key): 15 of 15 runs done, golden 15 of 15, every research run
+priced.
+
+| Arm | 2 quick | 1 standard | Per full pass (19 quick, 8 standard, 1 deep at 3× standard) |
+|-|-|-|-|
+| E | $0.0071 | $0.1098 | $1.28 |
+| A-yolo | $0.0083 | $0.0279 | $0.39 |
+| A-focused | $0.0079 | $0.0300 | $0.41 |
+| P-yolo | $0.0114 | $0.0333 | $0.47 |
+| P-focused | $0.0093 | $0.0419 | $0.55 |
+
+Full run (3 passes × 5 arms) ≈ $9.3 plus the judge (≈ $0.2: `decide` measured $0.0053 for 38 calls) ≈ $10; one
+standard run per arm makes the range ≈ $5–20. The judge's 38 `web.fetch` runs carry no cost: each was a direct fetch, which reports no usage (free); only the Tavily fallback is priced.
 
 ## Live window (the lead's)
 
