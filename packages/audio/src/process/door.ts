@@ -1,10 +1,10 @@
-// The OpenAI-compatible door on the audio process: `/v1/audio/speech` and `/v1/audio/transcriptions` (and every
-// path ending in `/audio/speech|transcriptions`, as audio-gateway matched them). Each request is one run of its own
+// The OpenAI-compatible door on the audio process: `/v1/audio/speech` and `/v1/audio/transcriptions`, and the same
+// without `/v1` (audio-gateway matched any suffix; anchored here so no API path is ever taken over). Each request is one run of its own
 // (concept N6, the pattern of `packages/host/src/capability-runs.ts`): the journal, the run record with cost,
 // telemetry and the Argo outbox apply to it like to any workflow. The run is started beside the handler, never in
 // front of it, and only observes: the handler's usage events land in an in-memory sink the run's one step reads when
 // the request has ended. Recording never delays the audio and a recording failure never fails the request (logged).
-import { type HostWorkflow, RUN_ID_HEADER, startRun } from '@agent-workflows/host'
+import { BEARER_CHALLENGE, type HostWorkflow, RUN_ID_HEADER, startRun } from '@agent-workflows/host'
 import { defineWorkflow, type Logger, type Runtime, type Usage } from '@agent-workflows/runtime'
 import { z } from 'zod'
 import type { CallerAuth } from './callers.ts'
@@ -30,7 +30,7 @@ export interface DoorEvent {
   requestedModel?: string
 }
 
-/** What the door gives a handler factory beside its own config: the usage port and the request's id and caller. */
+/** What the door gives a handler factory, per request, beside its own config: the usage port, the request's id and caller. */
 export interface DoorHandlerDeps {
   usage: { record(event: DoorEvent): void }
   requestId(req: Request): string
@@ -47,15 +47,21 @@ export const DOOR_WORKFLOW_IDS: Record<DoorEndpoint, string> = {
   transcriptions: 'door.transcriptions',
 }
 
-/** How long a response waits for its run id (`agw-run-id`) when the journal is slow; past it, it goes without. */
-const START_WAIT_MS = 2000
 /** After the body ended, how long the run waits for a `request` summary the handler did not send. */
 const SUMMARY_GRACE_MS = 2000
+/**
+ * A request's record ends at the latest this long after it arrived, whatever the body does (a stream nobody reads to
+ * the end and nobody cancels): the run then records what arrived, never stays running. Far above a long transcription.
+ */
+const RECORD_MAX_MS = 60 * 60_000
 /** A sink no run ever read (the run was never driven here) is dropped this long after its request ended. */
 const ORPHAN_MS = 10 * 60_000
 
-const doorError = (status: number, message: string, type: string) =>
-  Response.json({ error: { message, type } }, { status })
+/** Paths the door owns, exactly: `/v1/audio/…` and the base form without `/v1` legacy clients use. */
+const DOOR_PATH = /^(?:\/v1)?\/audio\/(speech|transcriptions)$/
+
+const doorError = (status: number, message: string, type: string, headers?: Record<string, string>) =>
+  Response.json({ error: { message, type } }, { status, headers })
 
 /** One request's events, read by its run. */
 class Sink {
@@ -64,12 +70,15 @@ class Sink {
   ended = false
   readonly settled: Promise<void>
   private settle = () => {}
+  private readonly bound: ReturnType<typeof setTimeout>
   private orphan: ReturnType<typeof setTimeout> | undefined
 
   constructor(private readonly drop: () => void) {
     this.settled = new Promise((resolve) => {
       this.settle = resolve
     })
+    this.bound = setTimeout(() => this.end(), RECORD_MAX_MS)
+    this.bound.unref()
   }
 
   record(event: DoorEvent) {
@@ -80,22 +89,24 @@ class Sink {
     }
   }
 
+  /** The request is over (body ended, failed or cancelled; client gone; the bound hit). Idempotent. */
   end() {
     if (this.ended) return
     this.ended = true
+    clearTimeout(this.bound)
     setTimeout(() => this.settle(), SUMMARY_GRACE_MS).unref()
     this.orphan = setTimeout(() => this.drop(), ORPHAN_MS)
     this.orphan.unref()
   }
 
   close() {
+    clearTimeout(this.bound)
     clearTimeout(this.orphan)
     this.drop()
   }
 }
 
 const DoorInput = z.object({
-  requestId: z.string().min(1),
   /** The authenticated caller (its door token's name, `agw` for the API secret). */
   caller: z.string().min(1),
   /** `x-audio-source`, when sent: the label the handler's events carry. */
@@ -154,32 +165,18 @@ export interface DoorOptions {
 
 export function createDoor(options: DoorOptions): Door {
   const { auth, logger } = options
+  // By run id: the run's step finds its request's events under its own id.
   const sinks = new Map<string, Sink>()
-  const requestIds = new WeakMap<Request, string>()
-  const callers = new WeakMap<Request, string>()
-
-  const usage = {
-    record(event: DoorEvent) {
-      const sink = sinks.get(event.requestId)
-      if (sink) sink.record(event)
-      else logger.warn('door usage event without an open request', { requestId: event.requestId, kind: event.kind })
-    },
-  }
-  const deps: DoorHandlerDeps = {
-    usage,
-    requestId: (req) => requestIds.get(req) ?? crypto.randomUUID(),
-    caller: (req) => callers.get(req),
-  }
 
   const workflowOf = (endpoint: DoorEndpoint) =>
     defineWorkflow({
       id: DOOR_WORKFLOW_IDS[endpoint],
-      version: '2026-10-29.1',
+      version: '2026-10-29.2',
       input: DoorInput,
       output: DoorOutput,
-      async run(ctx, input) {
+      async run(ctx) {
         return ctx.step('request', async ({ addUsage, signal }) => {
-          const sink = sinks.get(input.requestId)
+          const sink = sinks.get(ctx.runId)
           // Resumed in a process that never served the request (a restart mid-request): its events died with it.
           if (!sink) throw new Error('the request was served by a process that has stopped; its usage is lost')
           await raceAbort(sink.settled, signal)
@@ -204,58 +201,63 @@ export function createDoor(options: DoorOptions): Door {
     })
 
   const workflows = { speech: workflowOf('speech'), transcriptions: workflowOf('transcriptions') }
-  const handlers = {
-    speech: options.handlers.speech(deps),
-    transcriptions: options.handlers.transcriptions(deps),
-  }
 
-  /** The run's id, or undefined (logged) when it could not be started; never throws. */
-  function startRecord(endpoint: DoorEndpoint, request: Request, input: z.infer<typeof DoorInput>) {
+  /** Records the request as run `runId`, in the background; a failure is logged and drops the sink, never thrown. */
+  function startRecord(endpoint: DoorEndpoint, request: Request, runId: string, input: z.infer<typeof DoorInput>) {
     // Purpose and trace only: an `Idempotency-Key` would fold two real requests into one record.
     const headers = new Headers()
     for (const name of ['x-agw-purpose', 'traceparent']) {
       const value = request.headers.get(name)
       if (value !== null) headers.set(name, value)
     }
-    return startRun({ runtime: options.runtime() }, workflows[endpoint], input, headers).then(
-      ({ runId }) => runId,
-      (error: unknown) => {
-        logger.error('door request not recorded', {
-          requestId: input.requestId,
-          error: error instanceof Error ? error.message : String(error),
-        })
-        return undefined
-      },
-    )
+    startRun({ runtime: options.runtime() }, workflows[endpoint], input, headers, { runId }).catch((error: unknown) => {
+      sinks.get(runId)?.close()
+      logger.error('door request not recorded', {
+        runId,
+        error: error instanceof Error ? error.message : String(error),
+      })
+    })
   }
 
   async function serve(endpoint: DoorEndpoint, request: Request, path: string): Promise<Response> {
     if (!options.isOpen()) return doorError(503, 'service is shutting down', 'proxy_error')
     const caller = auth(request.headers.get('authorization'))
-    if (!caller) return doorError(401, 'unauthorized', 'invalid_request_error')
+    if (!caller) return doorError(401, 'unauthorized', 'invalid_request_error', BEARER_CHALLENGE)
 
-    const requestId = crypto.randomUUID()
-    const sink = new Sink(() => sinks.delete(requestId))
-    sinks.set(requestId, sink)
-    requestIds.set(request, requestId)
-    callers.set(request, caller)
-    const source = request.headers.get('x-audio-source')
-    const started = startRecord(endpoint, request, { requestId, caller, source, path })
+    // The run id is chosen here, so `agw-run-id` goes out with the first byte and nothing waits on the journal.
+    const runId = Bun.randomUUIDv7()
+    const sink = new Sink(() => sinks.delete(runId))
+    sinks.set(runId, sink)
+    request.signal.addEventListener('abort', () => sink.end(), { once: true })
+    startRecord(endpoint, request, runId, { caller, source: request.headers.get('x-audio-source'), path })
 
+    // Built per request: the request's id and caller go in explicitly, every event of the handler is this request's.
+    const handler = options.handlers[endpoint]({
+      usage: {
+        record(event) {
+          if (event.requestId !== runId)
+            logger.warn('door usage event under another request id', { runId, requestId: event.requestId })
+          sink.record(event)
+        },
+      },
+      requestId: () => runId,
+      caller: () => caller,
+    })
     let response: Response
     try {
-      response = await handlers[endpoint](request)
+      response = await handler(request)
     } catch (error) {
       // The handlers answer their own failures; a throw past them is answered as legacy's top-level catch did.
       sink.end()
       const message = error instanceof Error ? error.message : 'internal error'
-      logger.error('door handler threw', { requestId, error: message })
-      return withRunId(doorError(500, message, 'proxy_error'), await within(started, START_WAIT_MS))
+      logger.error('door handler threw', { runId, error: message })
+      return doorError(500, message, 'proxy_error', { [RUN_ID_HEADER]: runId })
     }
     const body = response.body ? onEnd(response.body, () => sink.end()) : null
     if (!body) sink.end()
-    const runId = await within(started, START_WAIT_MS)
-    return withRunId(new Response(body, response), runId)
+    const answer = new Response(body, response)
+    answer.headers.set(RUN_ID_HEADER, runId)
+    return answer
   }
 
   return {
@@ -265,31 +267,10 @@ export function createDoor(options: DoorOptions): Door {
     ],
     route(request, url) {
       if (request.method !== 'POST') return undefined
-      if (url.pathname.endsWith('/audio/speech')) return serve('speech', request, url.pathname)
-      if (url.pathname.endsWith('/audio/transcriptions')) return serve('transcriptions', request, url.pathname)
-      return undefined
+      const endpoint = DOOR_PATH.exec(url.pathname)?.[1] as DoorEndpoint | undefined
+      return endpoint ? serve(endpoint, request, url.pathname) : undefined
     },
   }
-}
-
-/** The run id once known, else undefined after `ms`: a slow journal never holds the response. */
-async function within(started: Promise<string | undefined>, ms: number): Promise<string | undefined> {
-  let timer: ReturnType<typeof setTimeout> | undefined
-  try {
-    return await Promise.race([
-      started,
-      new Promise<undefined>((resolve) => {
-        timer = setTimeout(() => resolve(undefined), ms)
-      }),
-    ])
-  } finally {
-    clearTimeout(timer)
-  }
-}
-
-function withRunId(response: Response, runId: string | undefined): Response {
-  if (runId) response.headers.set(RUN_ID_HEADER, runId)
-  return response
 }
 
 /** The same bytes, pulled as the client reads them; `end` runs once when the body ended, failed or was cancelled. */

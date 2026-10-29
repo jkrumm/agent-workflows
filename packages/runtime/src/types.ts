@@ -331,6 +331,12 @@ export type StartOptions = {
   traceparent?: string
   /** Same workflow + key → the same run id; the second start is a no-op. */
   idempotencyKey?: string
+  /**
+   * The run's id, chosen by the caller (a UUID, best v7: ids sort by time) so it is known before the start returns: a
+   * response header can carry it without waiting for the journal. Never together with `idempotencyKey`; an id already
+   * in the journal is refused.
+   */
+  runId?: string
 }
 
 export type RunResult = {

@@ -168,6 +168,27 @@ ensure_door_tokens() {
   log "created $DOOR_TOKENS (one hermes token, mode 0600)"
 }
 
+# The door tokens read with the release's own parser (mode, owner, every line), the one the audio process starts
+# with: a bad file refuses the deploy before anything is stopped, never as a rollback. Messages name the file and the
+# line, never a token.
+check_door_tokens() {  # $1 release dir
+  local why
+  why=$(cd "$1/packages/audio" && bun -e '
+    const { readDoorTokens } = await import("./src/process/callers.ts")
+    try {
+      readDoorTokens(process.argv[1])
+    } catch (error) {
+      process.stdout.write(error instanceof Error ? error.message : String(error))
+      process.exit(3)
+    }
+  ' "$DOOR_TOKENS" 2>/dev/null) || die "the door tokens are unusable: ${why:-the release could not read them}; nothing was stopped"
+}
+
+# A process left booted out must not come back at the next login (RunAtLoad) on a release that failed: its plist goes.
+remove_plist() {  # $1 process
+  rm -f "$(plist_of "$1")" && print -u2 "[deploy] removed $(plist_of "$1") (${LABELS[$1]} stays down)"
+}
+
 is_sha() { [[ "$1" =~ '^[0-9a-f]{40}$' ]]; }
 
 # The only place a release is deleted: the name must be a full sha, and both path parts are guarded against empty.
@@ -211,10 +232,12 @@ prune_releases() {  # $@ shas never to remove
 # The new build never became healthy: say so with the log tails, then put the previous release back, every process
 # together (one sha live, never a mix).
 roll_back() {  # $1 failed sha, $2 previous sha ("" = none), $3 unload wait
+  local p
   print -u2 "[deploy] ERROR: ${1[1,12]} did not become healthy within ${HEALTH_WAIT_SECS}s"
   tail_logs
   if [[ -z "$2" ]]; then
     stop_all "$3" || print -u2 "[deploy] WARNING: could not unload every process"
+    for p in $PROCESSES; do loaded "$p" || remove_plist "$p"; done
     print -u2 "[deploy] no previous release (first deploy or same sha): every process left booted out so KeepAlive does not loop a failing launch. deployed-sha unchanged."
     return 0
   fi
@@ -223,9 +246,13 @@ roll_back() {  # $1 failed sha, $2 previous sha ("" = none), $3 unload wait
     print -u2 "[deploy] ROLLBACK FAILED: not every process unloaded within ${3}s"
     return 0
   fi
-  local p back=() started=()
+  local back=() started=()
   back=( ${(f)"$(processes_of "$RELEASES/$2")"} )
-  for p in $PROCESSES; do (( ${back[(Ie)$p]} )) || print -u2 "[deploy] ${2[1,12]} has no $p process: ${LABELS[$p]} left booted out"; done
+  for p in $PROCESSES; do
+    (( ${back[(Ie)$p]} )) && continue
+    print -u2 "[deploy] ${2[1,12]} has no $p process: ${LABELS[$p]} left booted out"
+    remove_plist "$p"
+  done
   for p in $back; do start_process "$p" "$RELEASES/$2" "$2" && started+=("$p"); done
   if (( ${#started} == ${#back} )) && wait_healthy "$2" "${back[@]}"; then
     print -u2 "[deploy] rollback OK: ${2[1,12]} is healthy again (${back[*]}). deployed-sha unchanged."
@@ -293,6 +320,7 @@ main() {
     else
       act "create $DOOR_TOKENS (mode 0600, one line hermes=<64 hex from openssl rand>, never printed)"
     fi
+    act "check $DOOR_TOKENS with the release's readDoorTokens (mode, owner, every line) before stopping anything"
     for p in $PROCESSES; do
       log "rendered $(plist_of "$p") (points at the release, not at current):"
       render_plist "$(template_of "$repo_root" "$p")" "$release" "$sha"
@@ -303,9 +331,9 @@ main() {
     for p in $PROCESSES; do urls+=("$(health_url "$p")"); done
     act "wait up to ${HEALTH_WAIT_SECS}s for every /health (${urls[*]}) = ok, version $sha"
     if [[ -n "$prev" ]]; then
-      act "on failure: print every log tail, bootout every process, re-render each process ${prev[1,12]} has a template for, bootstrap, wait for its version, exit 1"
+      act "on failure: print every log tail, bootout every process, re-render each process ${prev[1,12]} has a template for, bootstrap, wait for its version; remove the plist of each it has none for; exit 1"
     else
-      act "on failure: print every log tail, bootout every process (no previous release: left booted out, not crash-looping), exit 1"
+      act "on failure: print every log tail, bootout every process and remove their plists (no previous release: left down, not crash-looping, not back at login), exit 1"
     fi
     act ln -sfn "$release" "$CURRENT"
     [[ -n "$old" && "$old" != "$sha" ]] && act "write $PREV_FILE ($old)"
@@ -353,6 +381,7 @@ main() {
   done
   unload_secs=$(unload_wait_secs "$(template_of "$release" host)")
   ensure_door_tokens
+  check_door_tokens "$release"
 
   # The release that is live now is the rollback target, unless it is the one being deployed again.
   old=$(read_sha "$SHA_FILE")

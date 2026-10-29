@@ -153,3 +153,28 @@ describe('two processes on one journal', () => {
     }
   })
 })
+
+describe('a caller-chosen run id', () => {
+  test('the run gets the id; a used id, a malformed one or one beside an idempotency key is refused', async () => {
+    const wf = defineWorkflow({ id: 'proc.chosen', version: 'v1', input: empty, output: empty, run: async () => ({}) })
+    const rt = testRuntime({ schema: db.schema, workflows: [wf] })
+    await rt.open()
+    try {
+      const runId = Bun.randomUUIDv7()
+      expect((await rt.start(wf, {}, { purpose: 'test', runId })).runId).toBe(runId)
+      expect((await rt.wait(runId, { pollMs: 20 })).status).toBe('done')
+      const refused = (promise: Promise<unknown>) =>
+        promise.then(
+          () => 'started',
+          (error: unknown) => (error instanceof Error ? error.message : String(error)),
+        )
+      expect(await refused(rt.start(wf, {}, { purpose: 'test', runId }))).toContain('already used')
+      expect(await refused(rt.start(wf, {}, { purpose: 'test', runId: 'not-a-uuid' }))).toContain('must be a UUID')
+      expect(
+        await refused(rt.start(wf, {}, { purpose: 'test', runId: Bun.randomUUIDv7(), idempotencyKey: 'k' })),
+      ).toContain('exclude each other')
+    } finally {
+      await rt.close()
+    }
+  })
+})

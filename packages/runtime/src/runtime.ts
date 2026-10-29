@@ -115,6 +115,9 @@ const MAX_INFRA_BACKOFF_MS = 60_000
 
 type Backoff = { failures: number; nextAt: number }
 
+/** A run id a caller may choose (`StartOptions.runId`): lowercase hex UUID. */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+
 export class Runtime {
   readonly schema: string
   private readonly journal: Journal
@@ -225,7 +228,12 @@ export class Runtime {
     const value = parsed.data as Json
     const violation = jsonViolation(value)
     if (violation) throw new WorkflowError('invalid_input', `${workflow.id}: input ${violation}`)
-    const id = Bun.randomUUIDv7()
+    const id = options.runId ?? Bun.randomUUIDv7()
+    if (options.runId !== undefined) {
+      if (!UUID.test(options.runId)) throw new Error('start: runId must be a UUID')
+      if (options.idempotencyKey) throw new Error('start: runId and idempotencyKey exclude each other')
+      if (await this.journal.getRun(options.runId)) throw new Error(`start: run id ${options.runId} is already used`)
+    }
     const inputHash = hashJson(value)
     const runId = await this.journal.insertRun({
       id,

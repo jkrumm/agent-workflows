@@ -1,4 +1,4 @@
-export { assertSecret, bearerMatches, MIN_SECRET_LENGTH } from './auth.ts'
+export { assertSecret, BEARER_CHALLENGE, bearerCaller, bearerMatches, MIN_SECRET_LENGTH } from './auth.ts'
 export { canonicalJson, contractSha } from './canonical.ts'
 export { createHost, type Host, type HostOptions } from './app.ts'
 export { DEFAULT_PURPOSE, type HostWorkflow, IDLE_TIMEOUT_S, MAX_WAIT_S, preferWait } from './operations.ts'

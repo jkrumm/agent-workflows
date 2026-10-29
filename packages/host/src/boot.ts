@@ -415,10 +415,11 @@ export async function bootProcess(
 
     await runtime.open()
     open = true
-    jobs?.start()
+    // Pushed before the jobs start, so their closers (the retrospective schedule) run before `open` turns false.
     closers.push(async () => {
       open = false
     })
+    jobs?.start()
 
     if (frictionSettings?.enabled) {
       const frictionDb = new JournalDb({ connectionString: config.pgUrl, schema: config.schema, poolSize: 1 }, console)
