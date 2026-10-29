@@ -16,6 +16,8 @@ degrades to "review in-session" on a balance failure.
 **Scope (owner, 2026-10-29):** individual workflows only need to work properly — parity and
 correctness, verified live. No tuning, experiments or quality rounds beyond that; big per-workflow
 reworks (review especially) come later, outside this plan.
+**Regions (owner, 2026-10-29):** EU runtime does not matter; routes are chosen by availability, cost
+and quality, never pinned to EU variants.
 **Stops:** only the four in `roles/mother.md`.
 
 Outside this repo: **P0 (warden off)** runs as dotfiles Wave 1, orchestrated from the owner's main
@@ -223,6 +225,8 @@ Workers: Sonnet/high; Opus/medium for the pipeline's durable stages.
 Workers: Sonnet/high.
 
 - [ ] Usage projection from run records into Argo's usage ingest
+- [ ] Route table without region pinning: EU-only model ids re-pointed to the best available ids on
+  the endpoint (probe + header check per route), prices updated, one `make verify`
 - [ ] Usage rows correct (argo audit 2026-10-29): 99 review rows unpriced (`cost_source=none`, Haiku/Sonnet EU
   routes) priced; reasoning tokens checked not to be counted inside output too (fresh tokens double
   counted otherwise); every row carries its caller/project (`agw` CLI session, iris, Hermes, eval) so
