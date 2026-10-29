@@ -5,7 +5,7 @@ import { freshSchema, inspector, testRuntime, until } from '../../../../runtime/
 import { type PodcastDeps, createPodcastWorkflow, PodcastInput } from './index.ts'
 import { ProduceInput, type ProduceInputValue } from './produce-input.ts'
 import { MAX_MINUTES, MIN_MINUTES } from './schema.ts'
-import { postgresCosts } from './history.ts'
+import { postgresJournal } from './history.ts'
 import { fakeBrain, fakeHistory, fakeResearch, fakeRoom, type Stage } from './testing.ts'
 
 // The room as journaled steps on a real runtime (Postgres) with a fake model transport: the full pass, resume after a
@@ -13,7 +13,7 @@ import { fakeBrain, fakeHistory, fakeResearch, fakeRoom, type Stage } from './te
 
 const db = freshSchema('podcast')
 const sql = inspector(db.schema)
-const costs = postgresCosts(sql.pool, db.schema)
+const journal = postgresJournal(sql.pool, db.schema)
 
 beforeAll(async () => {
   const rt = testRuntime({ schema: db.schema, workflows: [] })
@@ -70,7 +70,7 @@ describe('podcast workflow', () => {
     const research = fakeResearch()
     const produced: ProduceInputValue[] = []
     const podcast = createPodcastWorkflow({
-      costs,
+      journal,
       history: fakeHistory([
         { id: 'old-1', createdAt: '2026-10-01T00:00:00.000Z', title: 'Old', description: 'Earlier.', profile: null },
       ]),
@@ -139,10 +139,12 @@ describe('podcast workflow', () => {
         researchUsd: 0,
         researchUnpriced: 0,
         researchRuns: 0,
+        researchPending: 0,
         produceUsd: 0,
         produceUnpriced: 0,
         totalUsd: Number((room.calls.length * 0.001).toFixed(6)),
         unpriced: 0,
+        complete: true,
       })
 
       // What the produce child received: the locked script with chapter titles, hosts, metadata, request, profile.
@@ -192,7 +194,7 @@ describe('podcast workflow', () => {
       },
     })
     const podcast = createPodcastWorkflow({
-      costs,
+      journal,
       history: fakeHistory(),
       models: room,
       config: config({ agentic: false }),
@@ -252,7 +254,7 @@ describe('podcast workflow', () => {
     })
     const research = fakeResearch()
     const podcast = createPodcastWorkflow({
-      costs,
+      journal,
       history: fakeHistory(),
       models: room,
       research,
@@ -280,7 +282,7 @@ describe('podcast workflow', () => {
     const fail: Partial<Record<Stage, boolean>> = { research: true, editorial: true, review: true, metadata: true }
     const room = fakeRoom({ segments: 3, fail })
     const podcast = createPodcastWorkflow({
-      costs,
+      journal,
       history: fakeHistory(),
       models: room,
       config: config({ agentic: false }),
@@ -308,7 +310,7 @@ describe('podcast workflow', () => {
   test('a required stage failing is fatal: the outline', async () => {
     const room = fakeRoom({ fail: { outline: true } })
     const podcast = createPodcastWorkflow({
-      costs,
+      journal,
       history: fakeHistory(),
       models: room,
       config: config({ agentic: false }),
@@ -328,7 +330,7 @@ describe('podcast workflow', () => {
   test('a failed produce child fails the run after the script is journaled', async () => {
     const produced: ProduceInputValue[] = []
     const podcast = createPodcastWorkflow({
-      costs,
+      journal,
       history: fakeHistory(),
       models: fakeRoom(),
       produce: stubProduce(produced, true),
@@ -350,7 +352,7 @@ describe('podcast workflow', () => {
   test('sourcePaths are read through the source reader and appended to the source', async () => {
     const room = fakeRoom()
     const podcast = createPodcastWorkflow({
-      costs,
+      journal,
       history: fakeHistory(),
       models: room,
       sources: {

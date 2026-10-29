@@ -283,10 +283,9 @@ describe('buildEpisodeProfile', () => {
     expect(profile.segmentCount).toBe(0)
   })
 
-  test("counts the dossier's tool calls, research calls separately, and carries the research spend", () => {
+  test("counts the dossier's tool calls, research calls separately (the spend is the journal's, set by the run)", () => {
     const dossier: Dossier = {
       ...EMPTY_DOSSIER,
-      researchUsd: 0.12345,
       toolCalls: [
         { tool: 'brain_search', args: {}, ok: true, ms: 5 },
         { tool: 'research', args: {}, ok: true, ms: 900 },
@@ -296,7 +295,7 @@ describe('buildEpisodeProfile', () => {
     const profile = buildEpisodeProfile({ brief: BASE_BRIEF, script: scriptWith([]), dossier })
     expect(profile.toolCalls).toBe(3)
     expect(profile.researchCalls).toBe(2)
-    expect(profile.researchUsd).toBe(0.123)
+    expect(profile.researchUsd).toBeUndefined()
   })
 
   describe('length and asks', () => {

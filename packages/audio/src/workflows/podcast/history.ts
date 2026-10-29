@@ -1,4 +1,4 @@
-import type { CostPort, EpisodeCost, HistoryPort, Spent } from './ports.ts'
+import type { EpisodeCost, HistoryPort, PodcastJournal, Spent, StartedResearch } from './ports.ts'
 import { researchKeyPrefix } from './ports.ts'
 import type { HostValue } from './schema.ts'
 import type { EpisodeProfile, EpisodeSummary } from './types.ts'
@@ -85,7 +85,12 @@ export function postgresHistory(db: Queryable, schema: string): HistoryPort {
   }
 }
 
-type SpentRow = { usd: number | string | null; unpriced: number | string | null; runs?: number | string | null }
+type SpentRow = {
+  usd: number | string | null
+  unpriced: number | string | null
+  runs?: number | string | null
+  pending?: number | string | null
+}
 
 const spent = (row: SpentRow | undefined): Spent => ({
   usd: Number(row?.usd ?? 0),
@@ -93,10 +98,10 @@ const spent = (row: SpentRow | undefined): Spent => ({
 })
 
 /**
- * An episode's cost from the journal's step records (`steps.cost`, `steps.unpriced_calls`): the step rows exist the
+ * The journal as the room reads it. The cost comes from the step records (`steps.cost`, `steps.unpriced_calls`): the step rows exist the
  * moment a step ends, so this needs no run record to be delivered first, and a failed attempt or retry is in them.
  */
-export function postgresCosts(db: Queryable, schema: string): CostPort {
+export function postgresJournal(db: Queryable, schema: string): PodcastJournal {
   if (!/^[a-z_][a-z0-9_]{0,62}$/.test(schema)) throw new Error(`invalid journal schema name "${schema}"`)
   const s = `"${schema}"`
   const sums = 'coalesce(sum(st.cost), 0)::float8 as usd, coalesce(sum(st.unpriced_calls), 0)::int as unpriced'
@@ -106,7 +111,11 @@ export function postgresCosts(db: Queryable, schema: string): CostPort {
       const [own, research, produce] = await Promise.all([
         db.query<SpentRow>(`select ${sums} from ${s}.steps st where st.run_id = $1`, [runId]),
         db.query<SpentRow>(
-          `select ${sums}, count(distinct r.id)::int as runs
+          // A run that has not ended, or a step of it still going, has not recorded all it spends.
+          `select ${sums}, count(distinct r.id)::int as runs,
+                  count(distinct r.id) filter (
+                    where r.status not in ('done', 'failed', 'cancelled') or st.status = 'running'
+                  )::int as pending
              from ${s}.runs r left join ${s}.steps st on st.run_id = r.id
             where r.workflow = 'research' and left(r.idempotency_key, length($1)) = $1`,
           [prefix],
@@ -119,9 +128,21 @@ export function postgresCosts(db: Queryable, schema: string): CostPort {
       ])
       return {
         script: spent(own.rows[0]),
-        research: { ...spent(research.rows[0]), runs: Number(research.rows[0]?.runs ?? 0) },
+        research: {
+          ...spent(research.rows[0]),
+          runs: Number(research.rows[0]?.runs ?? 0),
+          pending: Number(research.rows[0]?.pending ?? 0),
+        },
         produce: spent(produce.rows[0]),
       }
+    },
+    async startedResearch(keyPrefix): Promise<StartedResearch[]> {
+      const { rows } = await db.query<StartedResearch>(
+        `select idempotency_key as key, status from ${s}.runs
+          where workflow = 'research' and left(idempotency_key, length($1)) = $1`,
+        [keyPrefix],
+      )
+      return rows
     },
   }
 }

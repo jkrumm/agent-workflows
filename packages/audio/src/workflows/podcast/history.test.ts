@@ -1,8 +1,8 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { freshSchema, inspector, testRuntime } from '../../../../runtime/test/support/pg.ts'
-import { postgresCosts, postgresHistory, type Queryable, renderTranscriptMarkdown } from './history.ts'
+import { postgresJournal, postgresHistory, type Queryable, renderTranscriptMarkdown } from './history.ts'
 import { createPodcastWorkflow } from './index.ts'
-import { researchKey } from './ports.ts'
+import { researchKey, startedByKey } from './ports.ts'
 import { fakeHistory, fakeRoom } from './testing.ts'
 
 // The show's memory on Postgres: imported legacy episodes and finished `podcast` runs, one order, per series.
@@ -55,7 +55,7 @@ describe('postgresHistory', () => {
     )
     const room = fakeRoom()
     const podcast = createPodcastWorkflow({
-      costs: postgresCosts(pool, db.schema),
+      journal: postgresJournal(pool, db.schema),
       history: fakeHistory(),
       models: room,
       config: {
@@ -104,18 +104,18 @@ describe('postgresHistory', () => {
 
   test('refuses a schema name it would have to quote', () => {
     expect(() => postgresHistory(pool, 'x"; drop')).toThrow('invalid journal schema name')
-    expect(() => postgresCosts(pool, 'x"; drop')).toThrow('invalid journal schema name')
+    expect(() => postgresJournal(pool, 'x"; drop')).toThrow('invalid journal schema name')
   })
 })
 
-describe('postgresCosts', () => {
+describe('postgresJournal', () => {
   /** A run row as the runtime writes it, reduced to the columns these queries read. */
-  async function run(id: string, workflow: string, rootId: string, key: string | null) {
+  async function run(id: string, workflow: string, rootId: string, key: string | null, status = 'done') {
     await sql.pool.query(
       `insert into "${db.schema}".runs (id, workflow, parent_id, root_id, status, purpose, input, input_hash, lock_key,
          version_started, idempotency_key)
-       values ($1, $2, $3, $4, 'done', 'build', '{}', 'h', 1, 'v', $5)`,
-      [id, workflow, id === rootId ? null : rootId, rootId, key],
+       values ($1, $2, $3, $4, $6, 'build', '{}', 'h', 1, 'v', $5)`,
+      [id, workflow, id === rootId ? null : rootId, rootId, key, status],
     )
   }
   async function step(runId: string, stepId: string, cost: number | null, unpriced: number) {
@@ -144,15 +144,26 @@ describe('postgresCosts', () => {
     await run('ep-1/produce/0', 'podcast.produce', 'ep-1', null)
     await step('ep-1/produce/0', 'synth', 1, 0)
 
-    const cost = await postgresCosts(pool, db.schema).episodeCost('ep-1')
+    const cost = await postgresJournal(pool, db.schema).episodeCost('ep-1')
     expect(cost.script).toEqual({ usd: 0.75, unpriced: 2 })
     expect(cost.research.runs).toBe(2)
     expect(cost.research.usd).toBeCloseTo(0.3, 9)
     expect(cost.research.unpriced).toBe(1)
+    expect(cost.research.pending).toBe(0)
     expect(cost.produce).toEqual({ usd: 1, unpriced: 0 })
-    expect(await postgresCosts(pool, db.schema).episodeCost('nobody')).toEqual({
+    // A research run not ended (a resume left it going): its spend is not all in, the figure is a lower bound.
+    await run('rs-5', 'research', 'rs-5', researchKey('ep-1', 'research', 'quick', 'c'), 'running')
+    expect((await postgresJournal(pool, db.schema).episodeCost('ep-1')).research.pending).toBe(1)
+
+    // The runs one step started, by key: what a resumed step re-attaches to.
+    const started = await postgresJournal(pool, db.schema).startedResearch('podcast:ep-1:research:')
+    // The prefix also matches `research:fact:0`'s key; `startedByKey` keeps the step's own keys only.
+    expect(started).toHaveLength(3)
+    expect([...startedByKey('podcast:ep-1:research:', started).values()].sort()).toEqual(['done', 'running'])
+
+    expect(await postgresJournal(pool, db.schema).episodeCost('nobody')).toEqual({
       script: { usd: 0, unpriced: 0 },
-      research: { usd: 0, unpriced: 0, runs: 0 },
+      research: { usd: 0, unpriced: 0, runs: 0, pending: 0 },
       produce: { usd: 0, unpriced: 0 },
     })
   })

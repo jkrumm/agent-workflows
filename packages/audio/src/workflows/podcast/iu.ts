@@ -155,6 +155,7 @@ export function iuModelPort(options: IuOptions = {}): ModelPort {
     body: unknown,
     signal: AbortSignal,
     onLine: (line: string) => void,
+    onSent: () => void,
   ) {
     const idle = new AbortController()
     let timer: ReturnType<typeof setTimeout> | undefined
@@ -164,6 +165,7 @@ export function iuModelPort(options: IuOptions = {}): ModelPort {
     }
     try {
       arm()
+      onSent()
       const res = await doFetch(url, {
         method: 'POST',
         headers,
@@ -195,7 +197,12 @@ export function iuModelPort(options: IuOptions = {}): ModelPort {
     }
   }
 
-  async function openaiChat(call: ChatCall, signal: AbortSignal, onUsage: OnWireUsage): Promise<ChatReply> {
+  async function openaiChat(
+    call: ChatCall,
+    signal: AbortSignal,
+    onUsage: OnWireUsage,
+    onSent: () => void,
+  ): Promise<ChatReply> {
     const { apiKey, openaiBase } = iuConfig(options.env ?? process.env)
     return withRetries('iu-openai', signal, async () => {
       let text = ''
@@ -235,6 +242,7 @@ export function iuModelPort(options: IuOptions = {}): ModelPort {
             if (typeof choice.finish_reason === 'string') finish = choice.finish_reason
             if (chunk.usage) usage = openaiUsage(chunk.usage, model)
           },
+          onSent,
         )
         if (!finish) throw new Retryable('iu-openai stream ended without a finish reason')
       } finally {
@@ -245,7 +253,12 @@ export function iuModelPort(options: IuOptions = {}): ModelPort {
     })
   }
 
-  async function anthropicChat(call: ChatCall, signal: AbortSignal, onUsage: OnWireUsage): Promise<ChatReply> {
+  async function anthropicChat(
+    call: ChatCall,
+    signal: AbortSignal,
+    onUsage: OnWireUsage,
+    onSent: () => void,
+  ): Promise<ChatReply> {
     const { apiKey, anthropicBase } = iuConfig(options.env ?? process.env)
     const body = anthropicBody(call)
     return withRetries('iu-anthropic', signal, async () => {
@@ -262,6 +275,7 @@ export function iuModelPort(options: IuOptions = {}): ModelPort {
         signal,
         // The whole body: SSE events, or a plain JSON message or error envelope from a proxy that ignores `stream`.
         (raw) => events.push(raw),
+        onSent,
       )
       const parsed = parseAnthropicStream(events.join('\n'))
       if (!parsed.ok) throw new Retryable(`unreadable response: ${parsed.reason}`)
@@ -281,13 +295,19 @@ export function iuModelPort(options: IuOptions = {}): ModelPort {
     })
   }
 
-  async function round(call: RoundCall, signal: AbortSignal, onUsage: OnWireUsage): Promise<RoundReply> {
+  async function round(
+    call: RoundCall,
+    signal: AbortSignal,
+    onUsage: OnWireUsage,
+    onSent: () => void,
+  ): Promise<RoundReply> {
     const { apiKey, openaiBase } = iuConfig(options.env ?? process.env)
     const responses = call.api === 'responses'
     const wire = responses ? 'iu-responses' : 'iu-openai'
     return withRetries(wire, signal, async () => {
       let res: Response
       try {
+        onSent()
         res = await doFetch(`${openaiBase}${responses ? '/responses' : '/chat/completions'}`, {
           method: 'POST',
           headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
@@ -316,8 +336,10 @@ export function iuModelPort(options: IuOptions = {}): ModelPort {
   }
 
   return {
-    chat: (call, signal, onUsage) =>
-      call.wire === 'iu-anthropic' ? anthropicChat(call, signal, onUsage) : openaiChat(call, signal, onUsage),
+    chat: (call, signal, onUsage, onSent) =>
+      call.wire === 'iu-anthropic'
+        ? anthropicChat(call, signal, onUsage, onSent)
+        : openaiChat(call, signal, onUsage, onSent),
     round,
   }
 }

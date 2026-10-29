@@ -160,14 +160,16 @@ export function fakeRoom(options: FakeRoomOptions = {}): FakeRoom {
     rounds,
     count: (stage, index) =>
       calls.filter((c) => c.stage === stage && (index === undefined || c.index === index)).length,
-    async chat(call: ChatCall, _signal: AbortSignal, onUsage: OnWireUsage): Promise<ChatReply> {
+    async chat(call: ChatCall, signal: AbortSignal, onUsage: OnWireUsage, onSent: () => void): Promise<ChatReply> {
+      if (!signal.aborted) onSent()
       const stage = stageOf(call.system)
       const index = segmentIndex(call.system)
       await enter(stage, index)
       usage(call.model, onUsage)
       return { text: answer(stage, index), stop: 'complete' }
     },
-    async round(call: RoundCall, _signal: AbortSignal, onUsage: OnWireUsage): Promise<RoundReply> {
+    async round(call: RoundCall, signal: AbortSignal, onUsage: OnWireUsage, onSent: () => void): Promise<RoundReply> {
+      if (!signal.aborted) onSent()
       const system = String(call.messages[0]?.content ?? '')
       const stage = stageOf(system)
       const index = segmentIndex(system)

@@ -1,9 +1,9 @@
-import { fenced, fenceRule, fenceToken } from './fence.ts'
+import { fenced, fenceErrors, fenceRule, fenceToken } from './fence.ts'
 import type { Llm, ToolDef } from './llm.ts'
 import { runToolLoop } from './llm.ts'
 import { log } from './log.ts'
 import type { BrainPort, HistoryPort, ResearchDepth, ResearchPort } from './ports.ts'
-import { researchKey } from './ports.ts'
+import { researchAnswered, researchKey, researchRunKey } from './ports.ts'
 import { repairGermanQuotes } from './script.ts'
 import type { Dossier, LoadBearingFact, ToolCallRecord } from './types.ts'
 
@@ -34,7 +34,13 @@ export interface ResearchDeps {
   /** Absent: no brain tools. */
   brain?: BrainPort
   /** Absent: no `research` tool. `maxCalls`: an optional emergency valve on runs per episode (absent: unlimited). */
-  research?: { port: ResearchPort; origin: ResearchOrigin; maxCalls?: number }
+  research?: {
+    port: ResearchPort
+    origin: ResearchOrigin
+    /** The runs this step already started, by key and status (`startedByKey` over the journal). */
+    started: ReadonlyMap<string, string>
+    maxCalls?: number
+  }
   history: HistoryPort
   series: string
   signal: AbortSignal
@@ -138,40 +144,51 @@ function renderAnswer(report: string, sources: string[]): string {
   return `${report.slice(0, RESEARCH_REPORT_MAX_CHARS)}${sourcesBlock}`
 }
 
+/** A query as it is keyed and sent: trimmed, whitespace collapsed. The host keys the input too, so both must agree. */
+const asAsked = (query: string): string => query.replace(/\s+/g, ' ').trim()
+
+/** How many distinct questions already have a finished answer among a step's started runs. */
+function answeredCount(started: ReadonlyMap<string, string>): number {
+  const bases = new Set<string>()
+  for (const [key, status] of started) if (status === 'done') bases.add(key.replace(/:2$/, ''))
+  return bases.size
+}
+
 function researchTool(
   research: NonNullable<ResearchDeps['research']>,
   signal: AbortSignal,
   progress: () => void,
   token: string,
 ): ToolDef {
-  let used = 0
-  /** An identical query returns what it returned the first time: no second run, no second charge. */
-  const answered = new Map<string, string>()
-  const normalize = (q: string): string => q.toLowerCase().replace(/\s+/g, ' ').trim()
+  // The step's own record, not this attempt's: runs an earlier attempt or a resumed run of this step started are in
+  // `started` (from the journal), so the valve bounds the step and a repeated question re-attaches to its run.
+  const started = new Map(research.started)
+  let used = answeredCount(started)
   return {
     name: 'research',
     description:
       "Web research through the platform's research workflow — EXPECTED, not a last resort, for anything the listener needs that the SOURCE and the brain do not explain: the external third-party names, projects, tools, companies and standards the notes take for granted (batch them in ONE query asking for one plain sentence each: what it is and what it is for here), facts the episode hinges on, current numbers, and the claims the notes make about the outside world. Several runs per episode are normal; keep each query specific and distinct (an identical query is not run twice). Every run here is quick depth — a name or term needing one plain sentence; it is not yours to request more than that (see the system prompt).",
     parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] },
     execute: async (rawArgs) => {
-      const query = String((rawArgs as { query?: unknown }).query ?? '')
+      const query = asAsked(String((rawArgs as { query?: unknown }).query ?? ''))
+      if (!query) throw new Error('give a query')
       // Quick only: the researcher's own judgement on what deserves standard depth was the overspend failure on
       // legacy. Standard depth exists only in the follow-up, on facts the editor named.
       const depth: ResearchDepth = 'quick'
-      const normalized = normalize(query)
-      const earlier = answered.get(normalized)
-      if (earlier !== undefined) return `(this exact query was already run — same result)\n${earlier}`
-      if (research.maxCalls !== undefined && research.maxCalls > 0 && used >= research.maxCalls) {
+      const base = researchKey(research.origin.runId, research.origin.stepId, depth, query)
+      // An identical query gets its finished run's answer back from the host: no second run, no second charge.
+      const repeat = researchAnswered(base, started)
+      if (!repeat && research.maxCalls !== undefined && research.maxCalls > 0 && used >= research.maxCalls) {
         return `research budget exhausted (${research.maxCalls} calls)`
       }
-      const key = researchKey(research.origin.runId, research.origin.stepId, depth, normalized)
+      const key = researchRunKey(base, started)
       const result = await research.port.run(query, depth, { key, signal, progress })
-      if (!result.ok) return result.error
+      started.set(key, result.ok ? 'done' : 'failed')
+      if (!result.ok) return fenced(result.error, token)
       // Debited only once a run ended done: a refused or failed run does not consume a slot.
-      used++
+      if (!repeat) used++
       const answer = fenced(renderAnswer(result.report, result.sources), token)
-      answered.set(normalized, answer)
-      return answer
+      return repeat ? `(this exact query was already run — same result)\n${answer}` : answer
     },
   }
 }
@@ -186,23 +203,26 @@ export interface LoadBearingAnswer {
 /**
  * One editor-named load-bearing fact at standard depth: the only place `standard` runs. Code decides the query
  * (`fact.question`); the answer closes `fact.openQuestion`, the editor's verbatim copy. Best-effort: a failed run is
- * logged and comes back without an addition. One call per workflow step (`research:fact:<i>`), keyed to that step, so a
- * resume never repeats a finished fact and re-attaches to an unfinished one.
+ * logged and comes back without an addition. One call per workflow step (`research:fact:<i>`), keyed to that step:
+ * a resume never repeats a finished fact and re-attaches to an unfinished one (`started`, the step's journal record).
  */
 export async function researchLoadBearingFact(
   fact: LoadBearingFact,
-  deps: { research: ResearchPort; origin: ResearchOrigin; signal: AbortSignal; progress: () => void },
+  deps: {
+    research: ResearchPort
+    origin: ResearchOrigin
+    started: ReadonlyMap<string, string>
+    signal: AbortSignal
+    progress: () => void
+  },
 ): Promise<LoadBearingAnswer> {
   const startedAt = Date.now()
-  const args = { query: fact.question, depth: 'standard' }
-  const key = researchKey(deps.origin.runId, deps.origin.stepId, 'standard', fact.question)
-  const result = await deps.research.run(fact.question, 'standard', {
-    key,
-    signal: deps.signal,
-    progress: deps.progress,
-  })
+  const question = asAsked(fact.question)
+  const args = { query: question, depth: 'standard' }
+  const key = researchRunKey(researchKey(deps.origin.runId, deps.origin.stepId, 'standard', question), deps.started)
+  const result = await deps.research.run(question, 'standard', { key, signal: deps.signal, progress: deps.progress })
   if (!result.ok) {
-    log.warn('podcast load-bearing research failed, skipping this fact', { fact: fact.question, error: result.error })
+    log.warn('podcast load-bearing research failed, skipping this fact', { fact: question, error: result.error })
     return {
       addition: null,
       toolCall: { tool: 'research', args, ok: false, ms: Date.now() - startedAt },
@@ -210,10 +230,27 @@ export async function researchLoadBearingFact(
     }
   }
   return {
-    addition: { source: `research: ${fact.question}`, text: renderAnswer(result.report, result.sources) },
+    addition: { source: `research: ${question}`, text: renderAnswer(result.report, result.sources) },
     toolCall: { tool: 'research', args, ok: true, ms: Date.now() - startedAt },
     answeredOpenQuestion: fact.openQuestion || null,
   }
+}
+
+/**
+ * The editor's facts as they run: duplicates (by normalised question) once, at most `MAX_LOAD_BEARING_FACTS`. A fact
+ * the quick pass already asked is still run at standard depth, as on legacy: the editor names a fact exactly because
+ * the quick answer was too thin to put on air, and the two depths are different runs under different keys.
+ */
+export function loadBearingToRun(facts: LoadBearingFact[]): LoadBearingFact[] {
+  const seen = new Set<string>()
+  return facts
+    .filter((fact) => {
+      const normalized = asAsked(fact.question).toLowerCase()
+      if (!normalized || seen.has(normalized)) return false
+      seen.add(normalized)
+      return true
+    })
+    .slice(0, MAX_LOAD_BEARING_FACTS)
 }
 
 export function buildResearchTools(deps: ResearchDeps & { token: string }): ToolDef[] {
@@ -224,7 +261,8 @@ export function buildResearchTools(deps: ResearchDeps & { token: string }): Tool
   }
   tools.push(pastEpisodesTool(deps.history, deps.series, token), pastTranscriptTool(deps.history, token))
   if (deps.research) tools.push(researchTool(deps.research, deps.signal, deps.progress, token))
-  return tools
+  // A thrown error carries outside text too (a vault refusal names the note, a host error quotes the host).
+  return tools.map((tool) => fenceErrors(tool, token))
 }
 
 // ---------------------------------------------------------------------------
@@ -311,8 +349,9 @@ Finish with STRICT JSON and nothing else, matching exactly this shape:
 {"summary":"…","additions":[{"source":"brain: <path>"|"research: <query>"|"episode: <id>","text":"…"}],"glossary":[{"term":"…","plain":"…"}],"priorCoverage":[{"episodeId":"…","title":"…","covered":"…"}],"openQuestions":["…"]}${availability}${fenceRule(token)}`
 }
 
-function buildUserContent(input: ResearchInput): string {
-  const parts = [`SOURCE:\n${input.source}`]
+function buildUserContent(input: ResearchInput, token: string): string {
+  // The source is the owner's notes and pasted text: material to research, read as data like any tool result.
+  const parts = [`SOURCE:\n${fenced(input.source, token)}`]
   if (input.brief) parts.push(`BRIEF:\n${input.brief}`)
   if (input.title) parts.push(`TITLE HINT:\n${input.title}`)
   return parts.join('\n\n')
@@ -324,7 +363,7 @@ export async function runPodcastResearch(llm: Llm, input: ResearchInput, deps: R
   const result = await runToolLoop(llm, {
     route: 'podcast.research',
     systemPrompt: buildSystemPrompt(input, deps, token),
-    userContent: buildUserContent(input),
+    userContent: buildUserContent(input, token),
     tools: buildResearchTools({ ...deps, token }),
     // Reasoning at high effort spends generously against the same budget; a starved round retries with double.
     maxCompletionTokens: 32000,

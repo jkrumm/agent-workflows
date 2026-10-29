@@ -7,12 +7,13 @@ import { iuModelPort } from './iu.ts'
 import { lintNotes, lintSegments, renderLintReport } from './lint.ts'
 import { Llm, type ModelPort } from './llm.ts'
 import { log, setPodcastLogger } from './log.ts'
-import type { BrainPort, CostPort, EpisodeCost, HistoryPort, ResearchPort, Spent } from './ports.ts'
+import type { BrainPort, EpisodeCost, HistoryPort, PodcastJournal, ResearchPort, Spent } from './ports.ts'
+import { researchStepPrefix, startedByKey } from './ports.ts'
 import type { ProduceInput, ProduceInputValue } from './produce-input.ts'
 import {
   dropAnsweredOpenQuestions,
   type LoadBearingAnswer,
-  MAX_LOAD_BEARING_FACTS,
+  loadBearingToRun,
   researchLoadBearingFact,
   runPodcastResearch,
 } from './research.ts'
@@ -65,12 +66,15 @@ export const PODCAST_VERSION = '2026-10-29.2'
 export { ProduceInput, type ProduceInputValue } from './produce-input.ts'
 export { PodcastInput, PodcastOutput } from './schema.ts'
 
-/** What the workflow is built from. `history` and `costs` are the journal; the rest defaults to production. */
+/** What the workflow is built from. `history` and `journal` read the journal; the rest defaults to production. */
 export interface PodcastDeps {
   /** The show's memory (`postgresHistory`). */
   history: HistoryPort
-  /** The episode's recorded cost (`postgresCosts`): the output's `cost` is read from the journal, never summed here. */
-  costs: CostPort
+  /**
+   * The journal (`postgresJournal`): the episode's recorded cost (the output's `cost` is read from it, never summed
+   * here) and the research runs a step already started (a resumed step re-attaches to them).
+   */
+  journal: PodcastJournal
   /** The model transport. Default: IU (`iu.ts`). */
   models?: ModelPort
   /** The vault for the research agent's tools (`brain.ts`, the capability allowlist); absent: no brain tools. */
@@ -216,6 +220,12 @@ export function createPodcastWorkflow(deps: PodcastDeps) {
     ...(deps.brain ? { brain: deps.brain } : {}),
   }
 
+  /** The research runs one step already started (an earlier attempt, a run before a restart), by key. */
+  async function startedIn(runId: string, stepId: string): Promise<Map<string, string>> {
+    const prefix = researchStepPrefix(runId, stepId)
+    return startedByKey(prefix, await deps.journal.startedResearch(prefix))
+  }
+
   async function run(ctx: Ctx, request: PodcastRequest): Promise<PodcastResult> {
     // 0. The house texts and hosts, fixed for the run (a resume after a deploy writes with the same ones).
     const house = await as<HouseStep>(
@@ -274,6 +284,7 @@ export function createPodcastWorkflow(deps: PodcastDeps) {
                       research: {
                         port: deps.research,
                         origin: { runId: ctx.runId, stepId: 'research' },
+                        started: await startedIn(ctx.runId, 'research'),
                         ...(config.researchMaxCalls > 0 ? { maxCalls: config.researchMaxCalls } : {}),
                       },
                     }
@@ -314,7 +325,7 @@ export function createPodcastWorkflow(deps: PodcastDeps) {
 
     // 3b. Load-bearing follow-up: each fact the editor named, at standard depth, its own step; best-effort per fact.
     const research = deps.research
-    const facts = request.research && research ? brief.loadBearingFacts.slice(0, MAX_LOAD_BEARING_FACTS) : []
+    const facts = request.research && research ? loadBearingToRun(brief.loadBearingFacts) : []
     const answers = await Promise.all(
       facts.map((fact, i) => {
         const step = FACT_STEPS[i] as (typeof FACT_STEPS)[number]
@@ -325,6 +336,7 @@ export function createPodcastWorkflow(deps: PodcastDeps) {
                 await researchLoadBearingFact(fact, {
                   research: research as ResearchPort,
                   origin: { runId: ctx.runId, stepId: step.id },
+                  started: await startedIn(ctx.runId, step.id),
                   signal,
                   progress,
                 }),
@@ -477,15 +489,20 @@ export function createPodcastWorkflow(deps: PodcastDeps) {
     const locked = await as<ScriptStep>(
       ctx.step('script', async () => {
         const script = assembleScript({ outline, segments: finalSegments, metadata, request, brief })
-        const recorded = await deps.costs.episodeCost(ctx.runId)
+        const recorded = await deps.journal.episodeCost(ctx.runId)
         const profile = buildEpisodeProfile({
           brief,
           script,
-          dossier: { ...dossier, ...(recorded.research.runs > 0 ? { researchUsd: recorded.research.usd } : {}) },
+          dossier,
           hosts,
           requestedMinutes: request.minutes,
         })
         if (agentRuns.length > 0) profile.agent = agentProfile(agentRuns)
+        // The research spend as recorded: with how many calls had no price, and null while a run has not ended.
+        if (recorded.research.runs > 0) {
+          profile.researchUsd = recorded.research.pending > 0 ? null : usd(recorded.research.usd)
+          profile.researchUnpriced = recorded.research.unpriced
+        }
         return json({ script: { ...script, hosts }, profile } satisfies ScriptStep)
       }),
     )
@@ -532,7 +549,9 @@ export function createPodcastWorkflow(deps: PodcastDeps) {
     }
 
     // 12. Cost: the journal's record of every call this episode made (retries, failed attempts, resumes included).
-    const recorded = await as<EpisodeCost>(ctx.step('cost', async () => json(await deps.costs.episodeCost(ctx.runId))))
+    const recorded = await as<EpisodeCost>(
+      ctx.step('cost', async () => json(await deps.journal.episodeCost(ctx.runId))),
+    )
     const all = total(recorded.script, recorded.research, recorded.produce)
     return {
       title: script.title,
@@ -545,10 +564,13 @@ export function createPodcastWorkflow(deps: PodcastDeps) {
         researchUsd: usd(recorded.research.usd),
         researchUnpriced: recorded.research.unpriced,
         researchRuns: recorded.research.runs,
+        researchPending: recorded.research.pending,
         produceUsd: usd(recorded.produce.usd),
         produceUnpriced: recorded.produce.unpriced,
         totalUsd: all.usd,
         unpriced: all.unpriced,
+        // Exact only when every call was priced and every research run had ended; otherwise a lower bound.
+        complete: all.unpriced === 0 && recorded.research.pending === 0,
       },
       produce: produced,
     }

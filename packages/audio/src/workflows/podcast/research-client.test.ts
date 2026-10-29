@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import { Cancelled, InfraError, Shutdown } from '../../../../runtime/src/index.ts'
 import { researchKey, researchKeyPrefix } from './ports.ts'
 import { researchClient, researchClientFromEnv } from './research-client.ts'
 
@@ -86,21 +87,45 @@ describe('researchClient', () => {
     expect(retriedStart?.['idempotency-key']).toBe(KEY)
   })
 
-  test('an abort cancels the host run and rethrows', async () => {
+  /** A host that answers the start, then aborts the step with `reason` on the first wait. */
+  function abortingHost(reason: unknown) {
     const abort = new AbortController()
     const calls: string[] = []
     const fetch = async (url: string, init: RequestInit) => {
       calls.push(url.replace(OPTIONS.url, ''))
       if (url.endsWith('/workflows/research')) return Response.json({ runId: 'r9', status: 'running' }, { status: 202 })
       if (url.endsWith('/cancel')) return Response.json({ runId: 'r9', status: 'cancelled' })
-      abort.abort(new Error('step cancelled'))
+      abort.abort(reason)
       throw (init.signal as AbortSignal).reason
     }
-    const error = await researchClient({ ...OPTIONS, fetch })
-      .run('q?', 'quick', call(abort.signal))
+    return { abort, calls, fetch }
+  }
+
+  test('a cancel of the podcast run cancels the host run and rethrows', async () => {
+    const host = abortingHost(new Cancelled('podcast-run'))
+    const error = await researchClient({ ...OPTIONS, fetch: host.fetch })
+      .run('q?', 'quick', call(host.abort.signal))
       .catch((e: unknown) => e)
-    expect((error as Error).message).toBe('step cancelled')
-    expect(calls).toEqual(['/workflows/research', '/runs/r9/wait', '/runs/r9/cancel'])
+    expect(error).toBeInstanceOf(Cancelled)
+    expect(host.calls).toEqual(['/workflows/research', '/runs/r9/wait', '/runs/r9/cancel'])
+  })
+
+  test('a shutdown, lease loss or step timeout leaves the host run going: the resume re-attaches by key', async () => {
+    for (const reason of [new Shutdown('runtime closing'), new InfraError('lease lost'), new Error('idle timeout')]) {
+      const host = abortingHost(reason)
+      const error = await researchClient({ ...OPTIONS, fetch: host.fetch })
+        .run('q?', 'quick', call(host.abort.signal))
+        .catch((e: unknown) => e)
+      expect(error).toBe(reason)
+      expect(host.calls).toEqual(['/workflows/research', '/runs/r9/wait'])
+    }
+  })
+
+  test('an unknown run status fails the call instead of polling forever', async () => {
+    const host = scriptedHost([{ status: 202, body: { runId: 'r1', status: 'paused' } }])
+    const answer = await researchClient({ ...OPTIONS, fetch: host.fetch }).run('q?', 'quick', call())
+    expect(answer).toEqual({ ok: false, error: 'error: research run r1 answered an unknown status "paused"' })
+    expect(host.calls).toHaveLength(1)
   })
 
   test('a failed run and a refused start are tool errors, never throws', async () => {
