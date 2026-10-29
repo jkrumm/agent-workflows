@@ -7,7 +7,7 @@ import { geminiAudio, instantClock, silentLog, startFakeIu, testConfig } from '.
 import type { ProduceConfig } from './config.ts'
 import { createProduceWorkflow, laneFor, type ProduceDeps, type ProduceResult, planSynthesis } from './index.ts'
 import { episodeToken } from './abs.ts'
-import { postgresProduceJournal } from './journal.ts'
+import { type ProduceJournal, postgresProduceJournal } from './journal.ts'
 import { setProduceLogger } from './log.ts'
 import { measureLoudnessLufs } from './mux.ts'
 import { createPublishWorkflow } from './publish.ts'
@@ -107,10 +107,13 @@ function produceWith(
     abs?: ReturnType<typeof fakeAudiobookshelf>
     config?: Partial<ProduceConfig>
     concurrency?: number
+    journal?: ProduceJournal
+    notifyFetch?: typeof fetch
   } = {},
 ) {
   const deps: ProduceDeps = {
-    journal,
+    journal: opts.journal ?? journal,
+    ...(opts.notifyFetch ? { notifyFetch: opts.notifyFetch } : {}),
     audio: {
       config: testConfig(tts.iu.baseUrl, { ttsConcurrency: opts.concurrency ?? 2 }),
       fetch: tts.iu.fetch,
@@ -172,7 +175,8 @@ async function runOnce(workflow: ReturnType<typeof produceWith>, input: ReturnTy
   const rt = testRuntime({ schema: db.schema, workflows: [workflow] })
   await rt.open()
   try {
-    return await rt.wait((await rt.start(workflow, input, { purpose: 'build' })).runId)
+    const { runId } = await rt.start(workflow, input, { purpose: 'build' })
+    return { ...(await rt.wait(runId)), id: runId }
   } finally {
     await rt.close()
   }
@@ -412,6 +416,49 @@ describe('podcast.produce', () => {
           error: 'not configured',
         })
         expect((skipped.output as ProduceResult).brainNote).toBeNull()
+      } finally {
+        tts.iu.stop()
+      }
+    },
+    TIMEOUT,
+  )
+
+  test(
+    "the Slack notice carries the whole episode's cost; a journal error there never fails the run",
+    async () => {
+      const NOTIFY = { channel: 'C0TESTCHAN1', argoBaseUrl: 'https://argo.example.com', argoApiSecret: 'test-secret' }
+      const texts: string[] = []
+      const notifyFetch = (async (_url: string | URL | Request, init?: RequestInit) => {
+        texts.push((JSON.parse(String(init?.body)) as { text: string }).text)
+        return Response.json({ ok: true })
+      }) as unknown as typeof fetch
+      const tts = fakeTts()
+      try {
+        const sent = await runOnce(
+          produceWith(tts, { config: { notify: NOTIFY }, notifyFetch }),
+          episodeInput({ publish: false, brainNote: false }),
+        )
+        expect(sent.status).toBe('done')
+        const whole = await journal.episodeCost(sent.id)
+        expect(whole.usd).toBeGreaterThan(0.04)
+        expect(texts).toHaveLength(1)
+        expect(texts[0]).toContain(`Kosten: ${whole.usd.toFixed(2)} USD`)
+
+        // Postgres fails while the notice is built: the run still files its brain note and ends done.
+        const flaky: ProduceJournal = {
+          ...journal,
+          episodeCost: async () => {
+            throw new Error('connection terminated')
+          },
+        }
+        const failed = await runOnce(
+          produceWith(tts, { config: { notify: NOTIFY }, notifyFetch, journal: flaky }),
+          episodeInput({ publish: false }),
+        )
+        expect(failed.status).toBe('done')
+        expect((failed.output as ProduceResult).brainNote?.committed).toBe(true)
+        expect((await sql.step(failed.id, 'notify'))?.output).toEqual({ sent: false, error: 'connection terminated' })
+        expect(texts).toHaveLength(1)
       } finally {
         tts.iu.stop()
       }
