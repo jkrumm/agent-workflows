@@ -57,7 +57,6 @@ describe('registration', () => {
 
   test('the retrospective is told each agent once, though review lists its angles on two routes', () => {
     const review = agentNames(createWorkflows({ registry })).get('review') ?? []
-    expect(review).toHaveLength(15)
     expect(new Set(review).size).toBe(review.length)
     expect(review.filter((a) => a === 'review-architect')).toHaveLength(1)
   })

@@ -319,7 +319,11 @@ describe('review workflow', () => {
             .flatMap((a) => w.sessionsOf(a).map((s) => (s.spec.options as { route?: string }).route ?? 'none')),
         )
       const cases: { name: string; router?: Json; input?: Record<string, unknown>; route: string }[] = [
-        { name: 'deep from the router', router: { angles: ['security'], depth: 'deep' }, route: 'review.angle.deep' },
+        {
+          name: 'deep chosen by the router stays on Haiku',
+          router: { angles: ['security'], depth: 'deep' },
+          route: 'review.angle',
+        },
         {
           name: 'deep from the caller',
           router: { angles: [], depth: 'light' },

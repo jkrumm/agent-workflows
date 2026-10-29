@@ -12,12 +12,20 @@ import { ROUTE_ID, type RouteEntry, routeSchema } from './schema.ts'
 // prices each message with them) and prices a message OpenCode reports at cost 0 with it.
 const HAIKU_55_EU_RATE = { inputPerM: 0.1, outputPerM: 0.5, cacheReadPerM: 0.01, cacheWritePerM: 0.125 }
 
-// Sonnet 5.5 EU rate, USD/M: in 2.00, out 10.00, cache read 0.20 (0.1x in), cache write 2.50 (1.25x in). The Anthropic
-// list price for `claude-sonnet-5`, which the `-eu` twin shares (modelpick `src/server/bench/cost.ts`
-// CLAUDE_LIST_RATES, "confirmed against the CLI's own reported cost"; agent-gateway `server/lib/models.ts` carries the
-// same in/out, dated 2026-09-13). Neither source records a >100K-prompt tier for Sonnet, so none is modelled here; as
-// for Haiku, a call over a tier `Rate` cannot express would be priced `unknown`, never under-priced silently.
-const SONNET_55_EU_RATE = { inputPerM: 2, outputPerM: 10, cacheReadPerM: 0.2, cacheWritePerM: 2.5 }
+// Sonnet 5.5 EU rate, USD/M: in 2.00, out 10.00, cache read 0.10 (0.05x in), cache write 2.50 (5-minute, 1.25x in).
+// Source: Anthropic pricing page (platform.claude.com/docs/en/about-claude/pricing), read 2026-10-29: the Sonnet 5.5 row,
+// and footnote 2 "Cache hits and refreshes on Claude Opus 5.5 and Claude Sonnet 5.5 are priced at 0.05x the base input
+// price"; the `-eu` twin shares the card (modelpick CLAUDE_LIST_RATES; agent-gateway `server/lib/models.ts` agrees on
+// in/out). The page lists no long-context tier for Sonnet 5.5: the 1M window is billed at the standard rate ("long-context
+// requests are billed at standard pricing, except on Claude Haiku 5.5"). `longPromptTokens` is therefore the window
+// itself, 1M, so the 100K default of `Rate` (the Haiku step) does not price a long angle prompt `unknown`.
+const SONNET_55_EU_RATE = {
+  inputPerM: 2,
+  outputPerM: 10,
+  cacheReadPerM: 0.1,
+  cacheWritePerM: 2.5,
+  longPromptTokens: 1_000_000,
+}
 
 // GPT-6.1 Terra, Standard tier, USD/M: in 1.00, cached in 0.05, out 5.00, cache write 1.25 (30-min). Above 272K input
 // tokens the whole request bills 2x input/cache and 1.5x output; `Rate` does not model that tier, so such a call is
@@ -90,9 +98,10 @@ const TABLE = {
     rate: HAIKU_55_EU_RATE,
     fallback: AGENT_FALLBACK,
   },
-  // Angles of a `depth: deep` review (mother decision, 2026-10-29; Wave 6 experiment, 20 paired cases: Haiku -> Sonnet angles
-  // recall 0.017 -> 0.13, precision 0.10 -> 0.50, cost per review $0.057 -> $0.542). The review workflow names this
-  // route in the angle steps' `options.route`; every other depth runs `review.angle`.
+  // Angles of a review the caller asked to run `depth: deep` (mother decision, 2026-10-29; Wave 6 experiment, 20 paired
+  // cases: Haiku -> Sonnet angles recall 0.017 -> 0.13, precision 0.10 -> 0.50, cost per review $0.057 -> $0.542, about
+  // 10x). Opt-in: a router-chosen deep keeps `review.angle`. The review workflow names this route in the angle steps'
+  // `options.route`.
   'review.angle.deep': {
     wire: 'opencode',
     model: 'claude-sonnet-5-5-eu',
