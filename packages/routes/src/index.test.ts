@@ -61,8 +61,18 @@ describe('resolveRoute', () => {
   test('the deep angle route is its own seat: Sonnet, priced, overridden independently of review.angle', () => {
     const deep = resolveRoute('review.angle.deep', {})
     expect(deep).toMatchObject({ wire: 'opencode', model: 'claude-sonnet-5-5-eu' })
-    expect(deep.rate).toEqual({ inputPerM: 2, outputPerM: 10, cacheReadPerM: 0.2, cacheWritePerM: 2.5 })
+    expect(deep.rate).toEqual({
+      inputPerM: 2,
+      outputPerM: 10,
+      cacheReadPerM: 0.1,
+      cacheWritePerM: 2.5,
+      longPromptTokens: 1_000_000,
+    })
     expect(deep.fallback?.wire).toBe('opencode')
+    // a 150K-token angle prompt (past Haiku's 100K step) is priced, not unknown
+    expect(costFromUsage('opencode', { input_tokens: 150_000, output_tokens: 1_000 }, deep.rate)).toMatchObject({
+      source: 'rate',
+    })
     const e = env({ 'review.angle.deep': { model: 'some-model' } })
     expect(resolveRoute('review.angle.deep', e)).toMatchObject({ model: 'some-model' })
     expect(resolveRoute('review.angle.deep', e).rate).toBeUndefined() // a new model drops the old rate

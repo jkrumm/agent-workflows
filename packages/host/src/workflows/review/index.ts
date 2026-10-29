@@ -81,9 +81,9 @@ const ANGLE_STEP: Record<Angle, (ctx: Ctx, spec: AngleSpec) => Promise<z.output<
 const normalize = (findings: z.output<typeof AngleOutput>['findings']): AngleResult['findings'] =>
   findings.map((f) => ({ severity: f.severity, file: f.file, line: f.line ?? null, message: f.message }))
 
-/** The route every angle runs on; a `deep` review runs them on `ANGLE_DEEP_ROUTE` (Sonnet), set per step. */
-const ANGLE_ROUTE = 'review.angle'
-const ANGLE_DEEP_ROUTE = 'review.angle.deep'
+/** The route every angle runs on; a review the caller asked to run at `deep` runs them on `ANGLE_DEEP_ROUTE` (Sonnet), set per step. */
+const ANGLE_ROUTE = 'review.angle' as const
+const ANGLE_DEEP_ROUTE = 'review.angle.deep' as const
 
 /**
  * The agents of the run fingerprint: every `review-*` definition under `agents/`, with the route it runs on. The
@@ -91,10 +91,9 @@ const ANGLE_DEEP_ROUTE = 'review.angle.deep'
  * a change to either (an override included) changes the fingerprint of every review.
  */
 const AGENTS = [
-  ...ALL_ANGLES.flatMap((angle) => [
-    { agent: `review-${angle}`, route: ANGLE_ROUTE as 'review.angle' },
-    { agent: `review-${angle}`, route: ANGLE_DEEP_ROUTE as 'review.angle.deep' },
-  ]),
+  ...ALL_ANGLES.flatMap((angle) =>
+    [ANGLE_ROUTE, ANGLE_DEEP_ROUTE].map((route) => ({ agent: `review-${angle}`, route })),
+  ),
   { agent: 'review-synthesis', route: 'review.synthesis' as const },
   { agent: 'review-router', route: 'review.router' as const },
   { agent: 'review-adversary', route: 'review.adversary' as const },
@@ -236,7 +235,8 @@ export function createReviewWorkflows(deps: WorkflowDeps, options: ReviewOptions
         : null
 
     const task = angleTask({ repo, label: p.label, files: p.files, context, diff, invokedIn: p.invokedIn })
-    const angleRoute = decision.depth === 'deep' ? ANGLE_DEEP_ROUTE : ANGLE_ROUTE
+    // Opt-in: only the caller's `deep` moves the angles to Sonnet (about 10x the spend); a router-chosen deep does not.
+    const angleRoute = input.depth === 'deep' ? ANGLE_DEEP_ROUTE : ANGLE_ROUTE
     const runAngle = async (angle: Angle): Promise<AngleResult> => {
       const spec: AngleSpec = {
         agent: `review-${angle}`,
