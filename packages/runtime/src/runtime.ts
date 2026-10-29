@@ -230,9 +230,9 @@ export class Runtime {
     if (violation) throw new WorkflowError('invalid_input', `${workflow.id}: input ${violation}`)
     const id = options.runId ?? Bun.randomUUIDv7()
     if (options.runId !== undefined) {
-      if (!UUID.test(options.runId)) throw new Error('start: runId must be a UUID')
-      if (options.idempotencyKey) throw new Error('start: runId and idempotencyKey exclude each other')
-      if (await this.journal.getRun(options.runId)) throw new Error(`start: run id ${options.runId} is already used`)
+      if (!UUID.test(options.runId)) throw new WorkflowError('invalid_input', 'start: runId must be a UUID')
+      if (options.idempotencyKey)
+        throw new WorkflowError('invalid_input', 'start: runId and idempotencyKey exclude each other')
     }
     const inputHash = hashJson(value)
     const runId = await this.journal.insertRun({
@@ -247,6 +247,7 @@ export class Runtime {
       traceparent: options.traceparent ?? null,
       traceId: traceIdOf(options.traceparent),
       version: workflow.version,
+      chosenId: options.runId !== undefined,
     })
     // A replay of a key: the same input is the same run, a different one is a caller bug.
     if (runId !== id && options.idempotencyKey && (await this.journal.inputHashOf(runId)) !== inputHash) {

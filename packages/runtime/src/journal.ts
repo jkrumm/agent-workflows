@@ -1,5 +1,5 @@
 import type { Pool, QueryResult, QueryResultRow } from 'pg'
-import { type ErrorKind, errorMessage, InfraError, LeaseLost } from './errors.ts'
+import { type ErrorKind, errorMessage, InfraError, LeaseLost, WorkflowError } from './errors.ts'
 import type { Json } from './json.ts'
 import { lockKey } from './lease.ts'
 import type {
@@ -78,6 +78,8 @@ export type NewRun = {
   version: string
   status?: 'pending' | 'failed'
   error?: { kind: ErrorKind; message: string }
+  /** The caller chose `id` (`StartOptions.runId`): a conflict on it is refused, never answered with the existing run. */
+  chosenId?: boolean
 }
 
 export type RunEnd = {
@@ -197,6 +199,8 @@ export class Journal {
       ],
     )
     if (rows[0]) return rows[0].id
+    // Enforced by the insert itself (the primary key), so two starts with one chosen id never both pass a check.
+    if (run.chosenId) throw new WorkflowError('invalid_input', `run id ${run.id} is already used`)
     if (fence) await this.assertLease(fence)
     const existing = await this.query<{ id: string }>(
       `select id from ${this.runs} where id = $1 or (workflow = $2 and idempotency_key = $3)`,
