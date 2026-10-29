@@ -38,7 +38,8 @@ jobs:
         with:
           bun-version: 1.4.4
       # packages/audio exercises the real ffmpeg/ffprobe boundary (transcode, STT slicing, silence detection); without
-      # the binaries those tests skip, and a skip on CI is coverage the gate never had.
-      - run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg
+      # the binaries those tests skip, and a skip on CI is coverage the gate never had. scripts/launch.sh is zsh (the
+      # mini's /bin/zsh), and its tests run the real interpreter.
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg zsh
       - run: bun install --frozen-lockfile
       - run: make check
