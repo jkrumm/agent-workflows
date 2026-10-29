@@ -14,7 +14,7 @@ export {
   type UnitPrice,
   type UnitsUsed,
 } from './price.ts'
-export { type Cost, costFromUsage, LONG_PROMPT_TOKENS, type ProviderUsage } from './cost.ts'
+export { type Cost, costFromUsage, type ProviderUsage } from './cost.ts'
 export { OVERRIDES_ENV, RouteOverrideError } from './overrides.ts'
 export { DEFAULT_ROUTES, discoverRoutes } from './registry.ts'
 export {

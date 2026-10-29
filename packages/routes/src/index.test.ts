@@ -13,7 +13,7 @@ import {
   UnknownRouteError,
   validateOverrides,
 } from './index.ts'
-import { ROUTE_ID } from './schema.ts'
+import { ROUTE_ID, rateSchema } from './schema.ts'
 
 function entry(id: RouteId) {
   const e = DEFAULT_ROUTES[id]
@@ -73,11 +73,11 @@ describe('resolveRoute', () => {
       outputPerM: 10,
       cacheReadPerM: 0.1,
       cacheWritePerM: 2.5,
-      longPromptTokens: 1_000_000,
     })
     expect(deep.fallback?.wire).toBe('opencode')
-    // a 150K-token angle prompt (past Haiku's 100K step) is priced, not unknown
-    expect(costFromUsage('opencode', { input_tokens: 150_000, output_tokens: 1_000 }, deep.rate)).toMatchObject({
+    // no tier: a 1.5M-token prompt is priced flat, at any size
+    expect(costFromUsage('opencode', { input_tokens: 1_500_000, output_tokens: 1_000 }, deep.rate)).toEqual({
+      usd: (1_500_000 * 2 + 1_000 * 10) / 1e6,
       source: 'rate',
     })
     const e = env({ 'review.angle.deep': { model: 'some-model' } })
@@ -297,17 +297,12 @@ describe('costFromUsage', () => {
       expect(costFromUsage('iu-openai', usage, cached)).toEqual({ usd: null, source: 'unknown' })
     })
 
-    test('a prompt above 100K tokens including cache is unknown; exactly 100K is priced', () => {
-      const long = { input_tokens: 1000, output_tokens: 5, cache_read_input_tokens: 99_000 }
-      expect(costFromUsage('iu-anthropic', long, cached)).toEqual(usd(1000 * 1 + 99_000 * 0.1 + 5 * 5))
-      expect(costFromUsage('iu-anthropic', { ...long, input_tokens: 1001 }, cached)).toEqual({
-        usd: null,
-        source: 'unknown',
-      })
-      expect(costFromUsage('iu-openai', { prompt_tokens: 100_001, completion_tokens: 5 }, cached)).toEqual({
-        usd: null,
-        source: 'unknown',
-      })
+    test('a rate without a longPrompt tier is flat at any size', () => {
+      const long = { input_tokens: 1001, output_tokens: 5, cache_read_input_tokens: 99_000 }
+      expect(costFromUsage('iu-anthropic', long, cached)).toEqual(usd(1001 * 1 + 99_000 * 0.1 + 5 * 5))
+      expect(costFromUsage('iu-openai', { prompt_tokens: 5_000_001, completion_tokens: 5 }, cached)).toEqual(
+        usd(5_000_001 * 1 + 5 * 5),
+      )
     })
 
     test('the provider cost still wins over cache pricing', () => {
@@ -375,18 +370,29 @@ describe('fallback', () => {
 
   // Owner direction (2026-10-29): no region-pinned ids, nothing via Requesty. A route is proven by its response header,
   // not its id; the ids below are the ones the endpoint's header named Requesty (probed 2026-10-29).
-  test('no route or fallback is region-pinned or on a model IU forwards to Requesty', () => {
-    const requesty = /^(eu\/)?deepseek-v4\.1-flash|^DeepSeek-V4|^pplx-decider|^kimi-k[23]\.[17]|^kimi-k3/i
+  test('no route or fallback anywhere in the table is region-pinned', () => {
     for (const id of routeIds()) {
       const route = resolveRoute(id, {})
-      for (const r of [route, route.fallback]) {
-        if (!r) continue
-        expect(r.model).not.toMatch(/-eu$|^eu\//)
-        if (['review.router', 'review.adversary', 'review.ocr', 'cheap.classify'].includes(id)) {
-          expect(r.model).not.toMatch(requesty)
-        }
-      }
+      for (const r of [route, route.fallback]) if (r) expect(r.model).not.toMatch(/-eu$|^eu\//)
     }
+  })
+
+  // The Requesty check covers ONLY the four routes Wave 9 moved (route and fallback). Every other `deepseek-v4.1-flash`
+  // route (research.agent, otel.agent, prose.review, podcast.*) is Requesty-Global too and stays: its pre-registered
+  // port rules ran on that model, so it moves by the lead's decision, not by this guard.
+  test('the four routes moved off Requesty (router, adversary, ocr, classify) and their fallbacks name no Requesty model', () => {
+    const requesty = /^(eu\/)?deepseek-v4\.1-flash|^DeepSeek-V4|^pplx-decider|^kimi-k3|^kimi-k2\.7/i
+    for (const id of ['review.router', 'review.adversary', 'review.ocr', 'cheap.classify'] as const) {
+      const route = resolveRoute(id, {})
+      for (const r of [route, route.fallback]) expect(r?.model).not.toMatch(requesty)
+    }
+  })
+
+  test('the adversary fallback keeps the ceiling the Terra fallback had (32k)', () => {
+    expect(resolveRoute('review.adversary', {}).fallback).toMatchObject({
+      model: 'claude-haiku-5-5',
+      maxOutputTokens: 32_000,
+    })
   })
 
   test('fallbackRoute is the fallback as a route of the same id, marked, without a fallback of its own', () => {
@@ -430,7 +436,7 @@ describe('fallback', () => {
     expect(routeSchema.safeParse({ ...base, fallback: { wire: 'iu-anthropic', model: 'f' } }).success).toBe(true)
   })
 
-  test('the long-prompt tier of a rate moves the unpriced line', () => {
+  test('the long-prompt tier of a rate is where the price steps up', () => {
     const rate = resolveRoute('cheap.classify', {}).fallback?.rate
     const usage = (prompt: number) => ({ prompt_tokens: prompt, completion_tokens: 1_000 })
     expect(costFromUsage('iu-openai', usage(200_000), rate)).toEqual({ usd: 0.205, source: 'rate' })
@@ -440,9 +446,10 @@ describe('fallback', () => {
       usd: (272_001 * 2 + 1_000 * 7.5) / 1e6,
       source: 'rate',
     })
-    expect(costFromUsage('iu-openai', usage(200_000), { inputPerM: 1, outputPerM: 5 })).toEqual({
-      usd: null,
-      source: 'unknown',
+    // a rate without the tier is flat at the same size
+    expect(costFromUsage('iu-openai', usage(300_000), { inputPerM: 1, outputPerM: 5 })).toEqual({
+      usd: 0.305,
+      source: 'rate',
     })
   })
 })
@@ -498,6 +505,16 @@ describe('the long-prompt tier of Haiku 5.5 (>100K prompt tokens bill 5x on ever
       if (route.model !== 'claude-haiku-5-5') continue
       expect(route.rate).toEqual(haiku)
     }
+  })
+})
+
+describe('rate schema', () => {
+  test('a longPrompt tier needs the size it starts above', () => {
+    const tier = { inputMultiplier: 5, outputMultiplier: 5 }
+    const base = { inputPerM: 1, outputPerM: 5 }
+    expect(rateSchema.safeParse({ ...base, longPrompt: tier }).success).toBe(false)
+    expect(rateSchema.safeParse({ ...base, longPrompt: tier, longPromptTokens: 100_000 }).success).toBe(true)
+    expect(rateSchema.safeParse(base).success).toBe(true)
   })
 })
 

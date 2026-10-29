@@ -188,6 +188,7 @@ describe('provider-balance fallback: the review seats', () => {
       expect(iu.requests.map((r) => r.body.model)).toEqual([adversary.model, adversaryFallback.model])
       // The fallback is Haiku, which the route sends no effort to: it runs at its own route's, not the adversary's.
       expect(iu.requests[1]?.body.reasoning_effort).toBeUndefined()
+      expect(iu.requests[1]?.body.max_completion_tokens).toBe(adversaryFallback.maxOutputTokens)
       expect(usages).toEqual([
         {
           model: adversaryFallback.model,

@@ -38,16 +38,13 @@ export function opencodeRoutes(env: Env = process.env): ResolvedRoute[] {
 }
 
 /**
- * Which IU leg serves a model. OpenAI's own models (`gpt-`) go the Responses way: an agent session needs tool calls,
- * which they make only there. Otherwise it is read from the table: a single-call route on the same model names its
- * wire. Without one, a `claude-` model goes the native Anthropic way and anything else the OpenAI-compatible chat way.
+ * Which IU leg serves a model, by its family alone: no other route sharing the id can move it. OpenAI's own models
+ * (`gpt-`) go the Responses way (an agent session needs tool calls, which they make only there), a `claude-` model the
+ * native Anthropic way, anything else the OpenAI-compatible chat way. A single-call route on the same model (Haiku on
+ * `iu-openai`, say) does not change the leg an agent session uses.
  */
-function providerFor(model: string, env: Env): string {
+function providerFor(model: string): string {
   if (model.startsWith('gpt-')) return PROVIDER_RESPONSES
-  const siblings = routeIds().map((id) => resolveRoute(id, env))
-  const wire = siblings.find((r) => r.model === model && r.wire !== 'opencode')?.wire
-  if (wire === 'iu-anthropic') return PROVIDER_ANTHROPIC
-  if (wire === 'iu-openai') return PROVIDER_CHAT
   return model.startsWith('claude-') ? PROVIDER_ANTHROPIC : PROVIDER_CHAT
 }
 
@@ -60,7 +57,7 @@ export function rateFor(route: ResolvedRoute): Rate | null {
 export function modelRef(routeId: RouteId, env: Env = process.env): { route: ResolvedRoute; model: ModelRef } {
   const route = resolveRoute(routeId, env)
   if (route.wire !== 'opencode') throw new Error(`route "${routeId}" is on the ${route.wire} wire, not opencode`)
-  return { route, model: refFor(route, env) }
+  return { route, model: refFor(route) }
 }
 
 /** The session's model for a route's provider-balance fallback, or `undefined` when the route has none. */
@@ -69,11 +66,11 @@ export function fallbackModelRef(
   env: Env = process.env,
 ): { route: ResolvedRoute; model: ModelRef } | undefined {
   const route = fallbackRoute(modelRef(routeId, env).route)
-  return route ? { route, model: refFor(route, env) } : undefined
+  return route ? { route, model: refFor(route) } : undefined
 }
 
-function refFor(route: ResolvedRoute, env: Env): ModelRef {
-  const model: ModelRef = { providerID: providerFor(route.model, env), id: route.model }
+function refFor(route: ResolvedRoute): ModelRef {
+  const model: ModelRef = { providerID: providerFor(route.model), id: route.model }
   if (route.effort) model.variant = route.effort
   return model
 }
@@ -122,7 +119,7 @@ export function buildServerConfig(env: Env = process.env): Record<string, unknow
     [PROVIDER_RESPONSES]: {},
   }
   for (const route of opencodeRoutes(env)) {
-    const provider = providerFor(route.model, env)
+    const provider = providerFor(route.model)
     const rows = models[provider] as Record<string, unknown>
     const row = modelRow(route, provider)
     const existing = rows[route.model] as { variants?: { id: string }[] } | undefined

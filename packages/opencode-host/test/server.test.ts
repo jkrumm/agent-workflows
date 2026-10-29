@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { resolveRoute } from '@agent-workflows/routes'
 import type { AgentWaitOptions } from '@agent-workflows/runtime'
 import {
   buildServerConfig,
@@ -13,7 +14,14 @@ import {
   type ServerOptions,
   serverEnv,
 } from '../src/index.ts'
-import { fallbackModelRef } from '../src/config.ts'
+import {
+  fallbackModelRef,
+  modelRef,
+  opencodeRoutes,
+  PROVIDER_ANTHROPIC,
+  PROVIDER_CHAT,
+  PROVIDER_RESPONSES,
+} from '../src/config.ts'
 
 // The supervisor against a real child process: `fake-opencode-bin.ts` stands in for `opencode serve`.
 const BIN = ['bun', join(import.meta.dir, 'fake-opencode-bin.ts')]
@@ -339,6 +347,53 @@ describe('buildServerConfig: review.angle.deep', () => {
     const fallback = fallbackModelRef('review.angle.deep', {})
     expect(fallback?.model.id).toBe('gpt-6.1-terra')
     expect(config.providers['iu-responses']?.models[fallback?.model.id ?? '']).toBeDefined()
+  })
+})
+
+describe('buildServerConfig: the provider follows the model family, whatever other routes share the id', () => {
+  const providerOf = (model: string) =>
+    model.startsWith('gpt-') ? PROVIDER_RESPONSES : model.startsWith('claude-') ? PROVIDER_ANTHROPIC : PROVIDER_CHAT
+
+  test('every opencode-wire route and fallback sits on the provider of its family: Claude native, gpt Responses, the rest chat', () => {
+    const config = buildServerConfig({}) as { providers: Record<string, { models: Record<string, unknown> }> }
+    const routes = opencodeRoutes({})
+    expect(routes.length).toBeGreaterThan(0)
+    for (const route of routes) {
+      const home = Object.entries(config.providers)
+        .filter(([, p]) => route.model in p.models)
+        .map(([id]) => id)
+      expect(home).toEqual([providerOf(route.model)])
+    }
+    const claude = routes.filter((r) => r.model.startsWith('claude-'))
+    expect(claude.length).toBeGreaterThan(0)
+    for (const route of claude) expect(config.providers[PROVIDER_ANTHROPIC]?.models[route.model]).toBeDefined()
+  })
+
+  test('Haiku 5.5 on a single-call chat route (cheap.classify) does not move the agent routes off the native provider', () => {
+    expect(resolveRoute('cheap.classify', {})).toMatchObject({ wire: 'iu-openai', model: 'claude-haiku-5-5' })
+    for (const id of [
+      'check',
+      'review.angle',
+      'review.synthesis',
+      'brain.agent',
+      'diagram.agent',
+      'retro.analyze',
+    ] as const) {
+      expect(modelRef(id, {}).model).toMatchObject({ providerID: PROVIDER_ANTHROPIC, id: 'claude-haiku-5-5' })
+    }
+    const config = buildServerConfig({}) as {
+      providers: Record<string, { models: Record<string, { compatibility?: unknown }> }>
+    }
+    expect(config.providers[PROVIDER_ANTHROPIC]?.models['claude-haiku-5-5']?.compatibility).toEqual({
+      supportsThinkingBlockBinding: false,
+    })
+    expect(config.providers[PROVIDER_CHAT]?.models['claude-haiku-5-5']).toBeUndefined()
+  })
+
+  test('the deepseek routes stay on chat and the Terra fallbacks on Responses', () => {
+    expect(modelRef('research.agent', {}).model.providerID).toBe(PROVIDER_CHAT)
+    expect(modelRef('otel.agent', {}).model.providerID).toBe(PROVIDER_CHAT)
+    expect(fallbackModelRef('check', {})?.model.providerID).toBe(PROVIDER_RESPONSES)
   })
 })
 
