@@ -7,6 +7,7 @@ import {
   type FakeIu,
   geminiAudio,
   hasFfmpeg,
+  realMedia,
   startFakeIu,
   streamBody,
   testDeps,
@@ -54,7 +55,7 @@ describe.skipIf(!hasFfmpeg)('both handlers mounted on Bun.serve (acceptance)', (
       geminiStream: () => streamBody(audioEvent(new Uint8Array(4800)), audioEvent(new Uint8Array(4800))),
       transcriptions: () => Response.json({ text: 'Hallo Welt', language: null, usage: { prompt_audio_seconds: 2 } }),
     })
-    const deps = testDeps(iu)
+    const deps = testDeps(iu, { media: realMedia() })
     const base = mount(deps)
 
     const mp3 = await fetch(`${base}/audio/speech`, {

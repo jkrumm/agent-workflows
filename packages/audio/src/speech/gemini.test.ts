@@ -25,21 +25,9 @@ const FLASH = ROUTES['audio.tts.gemini-flash'].model
 let iu: FakeIu
 afterEach(() => iu?.stop())
 
-/** A fake media port: transcode returns the PCM as is (tagged), so lane tests need no ffmpeg. */
-const passMedia = {
-  transcode: async (input: Uint8Array, _from: unknown, to: string) => ({
-    bytes: input.slice().buffer,
-    contentType: to === 'mp3' ? 'audio/mpeg' : `audio/${to}`,
-  }),
-  duration: async () => 0,
-  compressForStt: async () => new ArrayBuffer(0),
-  slice: async () => new ArrayBuffer(0),
-  detectSilence: async () => [],
-}
-
 function setup(handlers: Parameters<typeof startFakeIu>[0] = {}, config = {}) {
   iu = startFakeIu(handlers)
-  const deps = testDeps(iu, { media: passMedia, config })
+  const deps = testDeps(iu, { config })
   return { deps, speak: createSpeechHandler(deps) }
 }
 
@@ -424,7 +412,7 @@ describe('billing and audio integrity', () => {
     const sentence = `${Array.from({ length: 140 }, () => 'wort').join(' ')}.`
     const { speak } = setup({ gemini: () => geminiAudio(Uint8Array.from([1, 0, 9])) })
     const res = await speak(post({ model: LITE, input: `${sentence} ${sentence}`, response_format: 'wav' }))
-    // passMedia returns the joined PCM: 2 + 19,200 silence + 2, the stray byte gone.
+    // The fake media port returns the joined PCM: 2 + 19,200 silence + 2, the stray byte gone.
     expect((await res.arrayBuffer()).byteLength).toBe(2 + 19_200 + 2)
   })
 
