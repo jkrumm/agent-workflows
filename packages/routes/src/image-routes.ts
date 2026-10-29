@@ -23,6 +23,17 @@ export const IMAGE_ROUTES = {
     model: 'bria/remove-background',
     price: { kind: 'unit', unit: 'call', usd: 0.018 },
   },
+  // The enhance planner (imgcli `gen --enhance`): one JSON plan per brief. image-gateway's ENHANCE_MODEL and its
+  // `ENHANCE_REASONING_EFFORT` (high); gateway `pricing.ts` TEXT_RATES: in 0.10, cached in 0.01, out 0.50 USD/M, from the
+  // OpenAI price page, not measured on IU (IU's own `usage.cost` wins when it reports one). Reasoning tokens count against
+  // the ceiling, so it is 32k where the gateway sent 16k and retried once with double on a truncated answer.
+  'image.enhance': {
+    wire: 'iu-openai',
+    model: 'gpt-6-luna',
+    effort: 'high',
+    maxOutputTokens: 32_000,
+    rate: { inputPerM: 0.1, outputPerM: 0.5, cacheReadPerM: 0.01 },
+  },
 } as const satisfies Record<string, RouteEntry>
 
 export type ImageRouteId = keyof typeof IMAGE_ROUTES

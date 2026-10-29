@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test'
-import { existsSync, mkdtempSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { artifactDir, artifactRoot, RETENTION_MS, sweep } from '../src/artifacts.ts'
+import { artifactDir, artifactRoot, MARKER, RETENTION_MS, sweep } from '../src/artifacts.ts'
 
 let root: string
 beforeEach(() => {
@@ -78,4 +78,30 @@ test('writing sweeps: the first artifactDir of a root removes what is past reten
   expect(existsSync(later)).toBe(true)
   artifactDir('image.generate', 'next-window', { root: join(root, 'a'), now: now + 61 * 60_000 })
   expect(existsSync(later)).toBe(false)
+})
+
+test('the sweep leaves a directory that is not an artifact store alone, whatever is in it', () => {
+  const shared = join(root, 'shared')
+  const stale = join(shared, 'projects', 'old-project')
+  mkdirSync(stale, { recursive: true })
+  writeFileSync(join(stale, 'notes.txt'), 'mine')
+  const now = Date.now()
+  aged(stale, 400, now)
+  expect(sweep(RETENTION_MS, { root: shared, now })).toEqual({ removed: [] })
+  expect(existsSync(stale)).toBe(true)
+})
+
+test('inside a store the sweep touches only names artifactDir would have made', () => {
+  const now = Date.now()
+  const made = artifactDir('image', 'old-run', { root, now })
+  const foreign = join(root, 'Documents', 'taxes')
+  const oddRun = join(root, 'image', 'Old Run!')
+  mkdirSync(foreign, { recursive: true })
+  mkdirSync(oddRun, { recursive: true })
+  expect(existsSync(join(root, MARKER))).toBe(true)
+  for (const dir of [made, foreign, oddRun]) aged(dir, 90, now)
+
+  expect(sweep(RETENTION_MS, { root, now }).removed).toEqual([made])
+  expect(existsSync(foreign)).toBe(true)
+  expect(existsSync(oddRun)).toBe(true)
 })

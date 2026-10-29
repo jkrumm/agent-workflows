@@ -52,5 +52,19 @@ export {
 export type { RequestContext } from './procedure.ts'
 export { iuTransports } from './transports/index.ts'
 export type { IuTransports } from './transports/port.ts'
+// The image capabilities and the vocabulary the `image` workflow's input is built from.
+export {
+  type AlphaStats,
+  CUTOUT_LIMITS,
+  CUTOUT_MODELS,
+  createImageCapabilities,
+  decodeAlphaStats,
+  GENERATE_MODELS,
+  type ImageDeps,
+  MAX_EDIT_IMAGES,
+  QUALITIES,
+  readPng,
+  snapSize,
+} from './image/index.ts'
 export { createWebCapabilities, TAVILY_USD_PER_CREDIT, type WebDeps } from './web/index.ts'
 export { AGENT_SAFE_HDX, CLI_ONLY_HDX } from './hdx/allowlist.ts'

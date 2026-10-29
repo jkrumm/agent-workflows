@@ -1,4 +1,4 @@
-import { mkdirSync, readdirSync, rmdirSync, rmSync, statSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, rmdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { DEFAULT_STATE_DIR } from '@agent-workflows/opencode-host'
 
@@ -12,10 +12,15 @@ import { DEFAULT_STATE_DIR } from '@agent-workflows/opencode-host'
  * **Retention: 30 days.** A run's directory is removed once nothing in it changed for `RETENTION_DAYS`. The sweep runs on
  * write (the first `artifactDir` of a process, then at most hourly), so the store needs no schedule of its own; `sweep`
  * is exported for a caller that wants one. A file a caller wants to keep is copied out of the store.
+ *
+ * **The sweep deletes, so it is narrow.** It runs only in a root that carries the `.agw-artifacts` marker (written when
+ * `artifactDir` creates the store), and only removes `<workflow>/<runId>` directories whose names match the patterns
+ * `artifactDir` accepts. A root redirected at a shared directory is left alone.
  */
 export const RETENTION_DAYS = 30
 export const RETENTION_MS = RETENTION_DAYS * 24 * 60 * 60 * 1000
 const SWEEP_EVERY_MS = 60 * 60 * 1000
+export const MARKER = '.agw-artifacts'
 
 type Env = Record<string, string | undefined>
 
@@ -44,6 +49,11 @@ export function artifactDir(workflow: string, runId: string, options: ArtifactOp
   const now = options.now ?? Date.now()
   const dir = join(root, workflow, runId)
   mkdirSync(dir, { recursive: true, mode: 0o700 })
+  const marker = join(root, MARKER)
+  if (!existsSync(marker))
+    writeFileSync(marker, 'agent-workflows artifact store; directories under it are swept after 30 days\n', {
+      mode: 0o600,
+    })
   if (now - (lastSweep.get(root) ?? -Infinity) >= SWEEP_EVERY_MS) {
     lastSweep.set(root, now)
     sweep(RETENTION_MS, { root, now })
@@ -62,11 +72,12 @@ export interface SweepResult {
  */
 export function sweep(olderThanMs: number, options: ArtifactOptions = {}): SweepResult {
   const root = options.root ?? artifactRoot(options.env)
+  if (!existsSync(join(root, MARKER))) return { removed: [] }
   const cutoff = (options.now ?? Date.now()) - olderThanMs
   const removed: string[] = []
-  for (const workflow of listDirs(root)) {
+  for (const workflow of listDirs(root).filter((name) => WORKFLOW.test(name))) {
     const workflowDir = join(root, workflow)
-    for (const run of listDirs(workflowDir)) {
+    for (const run of listDirs(workflowDir).filter((name) => RUN.test(name))) {
       const dir = join(workflowDir, run)
       try {
         if (statSync(dir).mtimeMs >= cutoff) continue

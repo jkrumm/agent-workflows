@@ -16,19 +16,23 @@ afterAll(() => rmSync(root, { recursive: true, force: true }))
 
 const input = (extra: Record<string, unknown>): ImageInputValue =>
   ImageInput.parse({ prompt: 'a header image', ...extra })
-const cutoutInput = (): ImageInputValue => ImageInput.parse({ file: '/abs/subject.png' })
 
+type Fixture = Parameters<typeof pngFixture>[2]
 /** A listed file backed by a real PNG on disk, so the scorer reads what the run left. */
-function made(name: string, width: number, height: number, kind: 'rgba' | 'rgb' | 'palette' = 'rgba') {
-  const bytes = pngFixture(width, height, { kind })
+function made(name: string, width: number, height: number, options: Fixture = {}) {
+  const bytes = pngFixture(width, height, options)
   const path = join(dir, name)
   writeFileSync(path, bytes)
-  return { path, bytes: bytes.length, width, height, hasAlpha: kind !== 'rgb' }
+  return { path, bytes: bytes.length, width, height, hasAlpha: (options?.kind ?? 'rgba') !== 'rgb' }
 }
+const matte = (width: number, share: number): Fixture => ({
+  alphaAt: (x) => (x < width * share ? 0 : 255),
+})
 const output = (files: ReturnType<typeof made>[], extra: Partial<ImageOutputValue> = {}): ImageOutputValue => ({
   kind: 'generate',
   generationId: 'g1',
   model: 'm',
+  params: { model: 'm', size: '64x48', quality: 'low', n: files.length },
   size: '64x48',
   dir,
   files,
@@ -37,80 +41,132 @@ const output = (files: ReturnType<typeof made>[], extra: Partial<ImageOutputValu
   ...extra,
 })
 const score = (i: ImageInputValue, o: unknown) =>
-  imageScorer.score(i, o as never, ctx) as { scores: Record<string, number>; pass: boolean; feedback?: string }
+  imageScorer.score(i, o as never, ctx) as Promise<{ scores: Record<string, number>; pass: boolean; feedback?: string }>
 
-describe('image scorer', () => {
-  test('a generation that made the images asked for, at the size asked for, with a price, passes', () => {
-    const verdict = score(input({ n: 2, size: '64x48' }), output([made('a1.png', 64, 48), made('a2.png', 64, 48)]))
-    expect(verdict).toEqual({ scores: { valid: 1, count: 1, size: 1, cost: 1 }, pass: true })
+describe('image scorer: generation', () => {
+  test('n valid PNGs at the requested size with a price pass', async () => {
+    const verdict = await score(
+      input({ n: 2, size: '1024x640' }),
+      output([made('a1.png', 1024, 640), made('a2.png', 1024, 640)]),
+    )
+    expect(verdict).toEqual({ scores: { valid: 1, priced: 1 }, pass: true })
   })
 
-  test('size auto asks nothing of the dimensions; no alpha is asked of an opaque generation', () => {
-    const verdict = score(input({}), output([made('b1.png', 77, 33, 'rgb')]))
-    expect(verdict.scores).toEqual({ valid: 1, count: 1, cost: 1 })
-    expect(verdict.pass).toBe(true)
+  test('size auto asks nothing of the dimensions; alpha is not asked of a generation', async () => {
+    const verdict = await score(input({}), output([made('b1.png', 77, 33, { kind: 'rgb' })]))
+    expect(verdict).toEqual({ scores: { valid: 1, priced: 1 }, pass: true })
   })
 
-  test('a size that was snapped is compared with the size the run reports it requested', () => {
-    const snapped = output([made('c1.png', 48, 48)], { size: '48x48', snappedFrom: '50x50' })
-    expect(score(input({ size: '50x50' }), snapped).scores.size).toBe(1)
-    // a report that does not follow from the input scores 0 even when the files match it
-    expect(score(input({ size: '64x64' }), snapped).scores.size).toBe(0)
-    const silent = output([made('c2.png', 48, 48)], { size: '48x48' })
-    expect(score(input({ size: '50x50' }), silent)).toMatchObject({ pass: false, scores: { size: 0 } })
+  test('the requested size is checked after snapping, by the capability’s own snapping', async () => {
+    // 1250x1250 is not a multiple of 16; the endpoint takes 1248x1248
+    const snapped = await score(input({ size: '1250x1250' }), output([made('c1.png', 1248, 1248, { kind: 'rgb' })]))
+    expect(snapped.scores.valid).toBe(1)
+    const unsnapped = await score(input({ size: '1250x1250' }), output([made('c2.png', 1250, 1250, { kind: 'rgb' })]))
+    expect(unsnapped).toMatchObject({ pass: false, scores: { valid: 0 } })
+    expect(unsnapped.feedback).toContain('expected 1248x1248')
   })
 
-  test('the share of files at the requested size is the score', () => {
-    const verdict = score(input({ n: 2, size: '64x48' }), output([made('d1.png', 64, 48), made('d2.png', 32, 32)]))
-    expect(verdict.scores.size).toBe(0.5)
-    expect(verdict.pass).toBe(false)
-    expect(verdict.feedback).toContain('not every image is 64x48')
+  test('another count than n, or a file at the wrong size, is not valid', async () => {
+    const count = await score(input({ n: 3 }), output([made('d1.png', 8, 8)]))
+    expect(count).toMatchObject({ pass: false, scores: { valid: 0 } })
+    expect(count.feedback).toContain('1 image(s), expected 3')
+    const size = await score(
+      input({ n: 2, size: '1024x640' }),
+      output([made('d2.png', 1024, 640), made('d3.png', 32, 32)]),
+    )
+    expect(size.scores).toEqual({ valid: 0 })
+    expect(size.feedback).toContain('file 2 is 32x32, expected 1024x640')
   })
 
-  test('n images asked, another count made', () => {
-    const verdict = score(input({ n: 3 }), output([made('e1.png', 8, 8)]))
-    expect(verdict).toMatchObject({ pass: false, scores: { valid: 1, count: 0 } })
-    expect(verdict.feedback).toContain('1 image(s), asked for 3')
+  test('with --enhance the planner chose n, and the run’s own params say what that was', async () => {
+    const verdict = await score(
+      input({ enhance: true }),
+      output([made('e1.png', 8, 8), made('e2.png', 8, 8)], { params: { model: 'm', n: 2 } }),
+    )
+    expect(verdict.scores.valid).toBe(1)
+    expect(
+      (await score(input({ enhance: true }), output([made('e3.png', 8, 8)], { params: { model: 'm', n: 2 } }))).scores
+        .valid,
+    ).toBe(0)
   })
 
-  test('a cutout is one image and must carry an alpha channel', () => {
-    const good = output([made('f1.png', 300, 280, 'palette')], { kind: 'cutout' })
-    expect(score(cutoutInput(), good)).toEqual({ scores: { valid: 1, count: 1, alpha: 1, cost: 1 }, pass: true })
-    const opaque = output([{ ...made('f2.png', 300, 280, 'rgb'), hasAlpha: true }], { kind: 'cutout' })
-    // the output claims alpha; the file on disk has none
-    expect(score(cutoutInput(), opaque)).toMatchObject({ pass: false, scores: { alpha: 0 } })
+  test('priced means a cost above 0 in the run: null and 0 are both unpriced', async () => {
+    for (const usd of [null, 0]) {
+      const verdict = await score(input({}), output([made('f1.png', 8, 8)], { cost: { usd, source: 'unknown' } }))
+      expect(verdict).toMatchObject({ pass: false, scores: { valid: 1, priced: 0 } })
+    }
+  })
+})
+
+describe('image scorer: cutout', () => {
+  const source = join(root, 'subject.png')
+  beforeAll(() => writeFileSync(source, pngFixture(300, 280, { kind: 'rgb' })))
+  const cut = (file: ReturnType<typeof made>) => output([file], { kind: 'cutout', params: { model: 'm', n: 1 } })
+  const cutInput = () => ImageInput.parse({ file: source })
+
+  test('input dimensions, an alpha channel with at least 5 % transparent and 5 % opaque pixels, a price: pass', async () => {
+    const verdict = await score(cutInput(), cut(made('g1.png', 300, 280, matte(300, 0.4))))
+    expect(verdict).toEqual({ scores: { valid: 1, alpha: 1, priced: 1 }, pass: true })
   })
 
-  test('a generation with a transparent background is held to alpha too', () => {
-    const verdict = score(input({ background: 'transparent' }), output([made('g1.png', 8, 8, 'rgb')]))
-    expect(verdict.scores.alpha).toBe(0)
-    expect(verdict.pass).toBe(false)
+  test('the thresholds are 5 % each way, on the pixels', async () => {
+    expect((await score(cutInput(), cut(made('h1.png', 300, 280, matte(300, 0.05))))).scores.alpha).toBe(1)
+    expect((await score(cutInput(), cut(made('h2.png', 300, 280, matte(300, 0.04))))).scores.alpha).toBe(0)
+    expect((await score(cutInput(), cut(made('h3.png', 300, 280, matte(300, 0.96))))).scores.alpha).toBe(0)
   })
 
-  test('a run that recorded no price fails the cost score', () => {
-    const verdict = score(input({}), output([made('h1.png', 8, 8)], { cost: { usd: null, source: 'unknown' } }))
-    expect(verdict).toMatchObject({ pass: false, scores: { cost: 0 } })
+  test('an alpha channel that is all opaque, or all transparent, or absent, is not a cutout', async () => {
+    expect((await score(cutInput(), cut(made('i1.png', 300, 280)))).scores.alpha).toBe(0)
+    expect((await score(cutInput(), cut(made('i2.png', 300, 280, { alpha: 0 })))).scores.alpha).toBe(0)
+    // the output claims alpha; the pixels on disk have none
+    const claimed = { ...made('i3.png', 300, 280, { kind: 'rgb' }), hasAlpha: true }
+    const verdict = await score(cutInput(), cut(claimed))
+    expect(verdict).toMatchObject({ pass: false, scores: { valid: 1, alpha: 0 } })
+    expect(verdict.feedback).toContain('5 %')
   })
 
-  test('valid is the only score when a listed file is missing, not a PNG, or differs from what the output lists', () => {
-    const good = made('i1.png', 8, 8)
-    const text = join(dir, 'i2.png')
+  test('a model that downscaled the picture is not valid: the cutout has the input’s dimensions', async () => {
+    const verdict = await score(cutInput(), cut(made('j1.png', 256, 239, matte(256, 0.4))))
+    expect(verdict.scores).toEqual({ valid: 0 })
+    expect(verdict.feedback).toContain('the input is 300x280')
+  })
+
+  test('a JPEG input is measured too', async () => {
+    const jpeg = join(root, 'camera.jpg')
+    writeFileSync(jpeg, await new Bun.Image(pngFixture(300, 280, { kind: 'rgb' })).jpeg().bytes())
+    const verdict = await score(ImageInput.parse({ file: jpeg }), cut(made('k1.png', 300, 280, matte(300, 0.4))))
+    expect(verdict.scores.valid).toBe(1)
+  })
+})
+
+describe('image scorer: files that are not what they say', () => {
+  test('missing, not a PNG, corrupt, or differing from the listing: valid 0 and nothing else', async () => {
+    const good = made('l1.png', 8, 8)
+    const text = join(dir, 'l2.png')
     writeFileSync(text, 'not a png, not at all, not a png, not at all')
+    const corrupt = join(dir, 'l3.png')
+    const bytes = pngFixture(16, 16)
+    writeFileSync(corrupt, bytes.slice(0, bytes.length - 40))
     for (const files of [
       [{ ...good, path: join(dir, 'gone.png') }],
       [{ ...good, path: text }],
+      [{ ...good, path: corrupt, bytes: bytes.length - 40, width: 16, height: 16 }],
       [{ ...good, width: 9 }],
       [{ ...good, bytes: good.bytes + 1 }],
       [{ ...good, path: 'relative/1.png' }],
       [],
     ]) {
-      expect(score(input({}), output(files)).scores).toEqual({ valid: 0 })
+      expect((await score(input({}), output(files, { params: { model: 'm', n: 1 } }))).scores).toEqual({ valid: 0 })
     }
   })
 
-  test('a failed run (null) and an output that does not fit the schema score valid 0', () => {
-    expect(score(input({}), null)).toMatchObject({ pass: false, scores: { valid: 0 }, feedback: 'the run failed' })
-    expect(score(input({}), { files: 'nope' })).toMatchObject({ pass: false, scores: { valid: 0 } })
+  test('a failed run (null) and an output that does not fit the schema score valid 0', async () => {
+    expect(await score(input({}), null)).toMatchObject({
+      pass: false,
+      scores: { valid: 0 },
+      feedback: 'the run failed',
+    })
+    expect(await score(input({}), { files: 'nope' })).toMatchObject({ pass: false, scores: { valid: 0 } })
   })
 })
 

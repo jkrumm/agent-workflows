@@ -9,6 +9,7 @@ agw image "a lighthouse at dusk, blog header" --size 1536x1024 --quality low --n
 agw image "make it dusk" --images '["/abs/photo.jpg"]'      # an edit
 agw image "a leaf icon, bold silhouette" --size 1024x1024 --background transparent
 agw image --file /abs/subject.png [--model bria]            # a cutout
+agw image "a leaf icon" --enhance --quality low             # plan first: playbook prompt, derived settings, policy check
 ```
 
 Exactly one of `prompt` and `file`. The run answers with the files it made:
@@ -45,29 +46,50 @@ Exactly one of `prompt` and `file`. The run answers with the files it made:
   body, the `StatusCode: BadRequest` body), is never retried and carries the vendor's message, moderation stage and
   categories included. A body that is not a PNG by its first bytes fails the run; the call was billed, so its usage is on the run.
 - **Cutout (Replicate through the same IU host).** The base is IU's OpenAI base with `/openai/v1` swapped for
-  `/replicate/v1` (`REPLICATE_BASE_URL` overrides). `Prefer: wait`, then poll the flat `/predictions/{id}` while it runs;
-  the output URL must be on `replicate.delivery`. recraft delivers WebP, bria PNG: both come back PNG (`Bun.Image`, no
-  `sharp`). recraft's input limits (5 MB, sides 256–4096 px, 16 MP) are enforced up front.
-- **Left on image-gateway:** `imgcli icon` (the favicon/app-icon set: upscale, cutout, trim, `.ico`/`.icns` writers,
-  vectorize) needs `sharp` and `svgo` and is deterministic image processing, not an agent capability; `imgcli gen
-  --enhance` (the gateway's playbook planner). The icon *source* is `agw image … --size 1024x1024 --background transparent`.
-  The gateway keeps both, and the studio app, until a later wave decides.
+  `/replicate/v1` (`REPLICATE_BASE_URL` overrides). `Prefer: wait`, then poll the flat `/predictions/{id}` while it runs
+  (a transient poll failure is retried); the output URL must be on `replicate.delivery`, is fetched without following
+  redirects and read within a byte bound. recraft delivers WebP, bria PNG: both come back PNG (`Bun.Image`, no `sharp`).
+  recraft's input limits (5 MB, sides 256–4096 px, 16 MP) are checked on the file's **header** before anything decodes,
+  so a crafted header cannot make the host allocate; the file is sent as it is (a camera JPEG stays a JPEG), except a
+  JPEG with an EXIF rotation, which is re-encoded upright. **A started prediction is billed:** its price is recorded as
+  soon as it is created, so a failed poll or the poll deadline still leaves the cost on the run.
+- **`--enhance` is `imgcli gen --enhance`, ported** as the capability `image.enhance` (`brief`, `hasReferences`, optional
+  `intent` and `mode`). image-gateway's playbook (`packages/capabilities/playbook/`, version 5) is the system prompt, one
+  JSON plan comes back, and code disposes of it: the aggressiveness gate is by word count (under 25 full, 25–100
+  gap-fill, over 100 passthrough, never the model's call), settings are routed and an invalid size snaps to the nearest
+  preset (each correction is a note), a verbatim check lists brief tokens the prompt dropped, the cost is estimated from
+  measured per-quality token anchors and the route's price. The workflow runs it as its own step; settings the caller
+  gave win over the plan's, a `hard` warning refuses the run before an image is paid for. The model, effort (high) and
+  a 32k ceiling are the `image.enhance` route (the gateway sent 16k and retried once with double on a truncated answer).
+  Not ported: the studio-only inputs (style guide, series context, iteration `delta`, preserve list, pinned overrides).
+- **The raw capabilities have no CLI command.** `image.generate` and `image.cutout` answer megabytes of base64, so
+  their `x-cli` command is empty and the generated CLI lists them under `agw schema`'s skipped operations; they stay on
+  HTTP and in process. `image.enhance` is `agw image enhance`.
+- **One bad image among n** does not discard the valid, billed ones: the output lists `rejected` entries and the valid
+  files; the run fails only when none is valid.
+- **Icon stays on image-gateway** (`imgcli icon`: upscale, cutout, trim, `.ico`/`.icns` writers, svgo vectorize). It needs
+  `sharp` and `svgo` and has no model logic beyond `gen`, so it is deterministic image processing, not an agent
+  capability. The icon *source* is `agw image … --size 1024x1024 --background transparent`; the gateway keeps the set
+  builder and the studio app until a later wave decides.
 
 ## Eval
 
 Suite `image` (`agw eval run image`), plain cases in `$AGW_EVAL_DIR/image/cases.jsonl` (private):
 `{id, input: <workflow input>, reference: null}`. Eight cases: a blog header, an icon source (transparent), an OG image,
-a photo edit with an input image, two cutouts on generated images, and two more of the kinds the `/img` skill names.
+a photo edit with an input image, two more generations of the kinds the `/img` skill names, two cutouts of generated images.
+Generations carry `size`, `n` and `quality: low`; both arms use the same.
 
-The scorer (`scorer.ts`) is deterministic and reads the files on disk, not the output's claims:
+The scorer (`scorer.ts`) is deterministic and reads the files on disk, not the output's claims, as pre-registered in
+`docs/research/2026-10-29-wave8-ports.md` §image:
 
 |Score|Meaning|
 |-|-|
-|`valid`|the output fits its schema; every listed file is a PNG on disk whose header agrees with the listed size and bytes. Failing it is the only score|
-|`count`|`n` images for a generation, one for a cutout|
-|`size`|share of files at the size the run reports as requested after snapping; 0 if that report does not follow from the input. Left out for `auto`|
-|`alpha`|cutout, or `background: transparent`: share of files with an alpha channel (header; says nothing about a pixel being transparent)|
-|`cost`|the run recorded a price|
+|`valid`|every listed file is a PNG (magic bytes) that decodes and agrees with the listing; `n` images (one for a cutout); a generation at a requested `WxH` is that size after snapping; a cutout has its input's dimensions. Failing it is the only score|
+|`alpha`|cutout only: the decoded pixels carry an alpha channel with at least 5 % below 255 and at least 5 % at 255|
+|`priced`|the run recorded a cost above 0|
 
-`pass` = every score present is 1. The legacy arm is `scripts/eval-legacy/image.ts` (`imgcli gen|cutout --json`, scored by
-the same function). Neither is run live without the lead.
+`pass` = every score present is 1. The rule across arms is `rule.ts` (`evaluateRule`): (1) `valid` in every case and `alpha`
+on both cutouts; (2) request parameters equal per case (model, size after snapping, quality, `n`); (3) per case
+N cost ≤ 1.10 × L where both are priced, N priced in every case; (4) median wall(N) ≤ 1.25 × median wall(L).
+`scripts/eval-legacy/image.ts` runs both arms (`imgcli gen|cutout --json` and `agw image`), one run per case each, scores both
+with the same scorer and applies the rule; N's cost is the run record's. Neither is run live without the lead.
