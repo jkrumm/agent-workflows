@@ -78,7 +78,7 @@ const gate = new ToolGate({
   // The fake host's session ids are not OpenCode's: the fake agent sends its step key as the session id.
   belongsTo: (sessionId, stepKey) => sessionId === stepKey,
 })
-gate.useCapabilities((id) => (id.startsWith('hdx.') ? { mutating: false } : undefined))
+gate.setCapabilities((id) => (id.startsWith('hdx.') ? { mutating: false } : undefined))
 
 /** What the plugin does: POST the tool call with the session id and the key from gate.json. */
 async function callTool(session: FakeSession, tool: string, args: Record<string, Json>) {

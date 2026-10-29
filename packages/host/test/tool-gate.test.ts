@@ -470,7 +470,7 @@ describe('agent safety is structural', () => {
 
   test('a grant of an hdx capability outside AGENT_SAFE_HDX is refused, with or without a registry, and nothing opens', () => {
     for (const lookup of [false, true]) {
-      if (lookup) gate.useCapabilities((id) => specs[id])
+      if (lookup) gate.setCapabilities((id) => specs[id])
       for (const capabilityId of ['hdx.write', 'hdx.rest', 'hdx.unclassified']) {
         expect(() => gate.open({ runId: 'a', stepId: 's', tools: { find: 'hdx.query', other: capabilityId } })).toThrow(
           `tool grant refused: other -> ${capabilityId} is not agent-safe`,
@@ -483,7 +483,7 @@ describe('agent safety is structural', () => {
   })
 
   test('with the registry known, a mutating or unknown capability is refused; a read-only one is granted', async () => {
-    gate.useCapabilities((id) => specs[id])
+    gate.setCapabilities((id) => specs[id])
     expect(() => gate.open({ runId: 'a', stepId: 's', tools: { save: 'cap.save' } })).toThrow(
       'tool grant refused: save -> cap.save is mutating',
     )

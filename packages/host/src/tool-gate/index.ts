@@ -179,7 +179,7 @@ export class ToolGate {
    * grant of a mutating or unknown capability. Until it is called only the `hdx.*` name rule holds, which is how
    * tests with fake capabilities run.
    */
-  useCapabilities(lookup: (id: string) => { mutating: boolean } | undefined) {
+  setCapabilities(lookup: (id: string) => { mutating: boolean } | undefined) {
     this.lookup = lookup
   }
 
