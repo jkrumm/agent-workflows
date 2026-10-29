@@ -143,11 +143,15 @@ const TABLE = {
     fallback: AGENT_FALLBACK,
   },
   // Brain agent seat (Wave 7): read-only Q&A over the owner's private vault (health, finance, personal notes) through
-  // the tool gate. Haiku 5.5 EU rather than DeepSeek, and NO fallback (owner decision, 2026-10-29): the notes it reads
+  // the tool gate. Haiku 5.5 EU rather than DeepSeek, and NO fallback (lead decision, Wave 7): the notes it reads
   // never leave the Anthropic EU route, so a provider-balance failure fails the run with the typed error instead of
   // moving to another provider. `AGW_ROUTES` cannot add one (a route without a fallback cannot gain one). Same model,
   // wire and rate as `check`; a handful of short tool calls per question.
   'brain.agent': { wire: 'opencode', model: 'claude-haiku-5-5-eu', rate: HAIKU_55_EU_RATE },
+  // Diagram agent seat (Wave 7): agent-gateway's `excalidraw_diagram` ran Haiku 5.5 EU on OpenCode after its Wave 10
+  // bench (23-30 s, $0.003-0.005, 26-27 elements per diagram; Sonnet 111-121 s, $0.13). One read-only session that
+  // answers the skeleton JSON; the host hydrates it in code. Same model and wire as `check`.
+  'diagram.agent': { wire: 'opencode', model: 'claude-haiku-5-5-eu', rate: HAIKU_55_EU_RATE, fallback: AGENT_FALLBACK },
 } satisfies Record<string, RouteEntry>
 
 export type RouteId = keyof typeof TABLE

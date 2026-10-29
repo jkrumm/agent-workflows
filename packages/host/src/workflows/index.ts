@@ -6,6 +6,7 @@ import type { HostWorkflow } from '../operations.ts'
 import type { ToolGate } from '../tool-gate/index.ts'
 import { createBrainWorkflows } from './brain/index.ts'
 import { createCheckWorkflows } from './check/index.ts'
+import { createDiagramWorkflows } from './diagram/index.ts'
 import { createRetrospective } from './retrospective/index.ts'
 import type { GhPort } from './retrospective/gh.ts'
 import type { JournalReader } from './retrospective/sample.ts'
@@ -46,6 +47,7 @@ export function createWorkflows(deps: HostDeps): HostWorkflow[] {
     ...createResearchWorkflows(deps),
     ...createProseWorkflows(deps),
     ...createBrainWorkflows(deps),
+    ...createDiagramWorkflows(deps),
   ]
   if (!deps.retro) return base
   const { journal, learnings, gh, tracked } = deps.retro
