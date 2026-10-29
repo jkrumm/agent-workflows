@@ -22,6 +22,9 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
 - 2026-10-29: Sonnet review angles for `--deep` only, Haiku default (recall 0.017 → 0.13 at 9.4× cost;
   IU constrained). Revisit when the IU budget relaxes.
 
+- 2026-10-29 owner: workflows only need to work properly (parity, verified live); no tuning or
+  experiments; per-workflow reworks (review especially) come later. In PLAN's header; relayed.
+
 ## Open decisions
 - none
 
