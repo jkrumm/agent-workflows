@@ -152,3 +152,17 @@ failed angles, adversary failure, OCR admitted / refused by the wallet gate / sk
 on balance, the provider-balance degrade, synthesis retry and salvage, verdict overrides, resume after a crash, `pr`/`branch`. `review-git.test.ts`: scopes, untracked files, the
 clone and its housekeeping. `review-agents.test.ts`: the agent definitions. The permission option is proven live in
 `packages/opencode-host/test/live.test.ts`.
+
+## Route
+
+Model and rate: `packages/routes/src/table/review.ts` (the only home of model ids). Source seat: agent-gateway
+`GET /api/routing`, 2026-10-27, unless noted.
+
+| Route | Source seat | Wire |
+|-|-|-|
+| `review.router` | `review_router` (SINGLE_SHOT) | iu-openai |
+| `review.adversary` | `adversary` | iu-openai |
+| `review.ocr` | `review_ocr` (transport external-iu; the `ocr` CLI takes only the model) | iu-openai |
+| `review.angle` | `review_angle_senior_dev`, `_typescript`, `_frontend`, `_qa` (ANGLE_OC, identical) | opencode |
+| `review.angle.deep` | none (new; angles of a `depth: deep` review, Wave 6 experiment) | opencode |
+| `review.synthesis` | `review` (CLASSIFY) | opencode |

@@ -4,9 +4,10 @@ import { createEvalCompare } from './compare.ts'
 import { DriftJob, driftOptionsFromEnv } from './drift.ts'
 import { createEvalRun, type EvalRunOptions, sweepCaseTrees } from './run.ts'
 import { type EvalRuntime, EvalSlot } from './slot.ts'
+import type { Suites } from './suites.ts'
 
-export { DEFAULT_DRIFT, DriftJob, type DriftOptions, type DriftTick, driftOptionsFromEnv } from './drift.ts'
 export { EVAL_COMPARE_ID } from './compare.ts'
+export { DEFAULT_DRIFT, DriftJob, type DriftOptions, type DriftTick, driftOptionsFromEnv } from './drift.ts'
 export { caseTreeDir, EVAL_RUN_ID, sweepCaseTrees } from './run.ts'
 
 /** A case tree older than this whose run ended (or never existed) is leftover. */
@@ -17,9 +18,9 @@ const SWEEP_INTERVAL_MS = 3_600_000
 const slots = new WeakMap<AnyWorkflow, EvalSlot>()
 
 /** `agw eval run` and `agw eval compare` (concept §6). They need the runtime, which exists after them: `wireEval`. */
-export function createEvalWorkflows(options: EvalRunOptions = {}): HostWorkflow[] {
+export function createEvalWorkflows(suites: Suites, options: EvalRunOptions = {}): HostWorkflow[] {
   const slot = new EvalSlot()
-  const entries = [createEvalRun(slot, options), createEvalCompare(slot)]
+  const entries = [createEvalRun(slot, suites, options), createEvalCompare(slot, suites)]
   for (const entry of entries) slots.set(entry.workflow, slot)
   return entries
 }

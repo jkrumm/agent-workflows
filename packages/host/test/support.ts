@@ -8,7 +8,7 @@ import { createHost, type Host } from '../src/app.ts'
 import { createCapabilityWorkflows } from '../src/capability-runs.ts'
 import type { HostWorkflow } from '../src/operations.ts'
 import { type RunStore, runtimeRunStore } from '../src/store.ts'
-import { createSmokePing } from '../src/workflows/smoke.ts'
+import { createSmokePing } from '../src/workflows/smoke/index.ts'
 import { FakeArgo, testPlatform } from '../../middleware/test/support.ts'
 import { freshSchema, PG_URL, testRuntime } from '../../runtime/test/support/pg.ts'
 

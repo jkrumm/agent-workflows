@@ -11,6 +11,7 @@ import { answerOf, judgeAllowed, scorerJudge } from '../src/judge.ts'
 import type { HostWorkflow } from '../src/operations.ts'
 import { createEvalWorkflows, wireEval } from '../src/workflows/eval/index.ts'
 import { readSuite } from '../src/workflows/eval/suites.ts'
+import { HOST_MODULES, suitesOf } from '../src/workflows/index.ts'
 import { rejection, until } from './support.ts'
 import { testPlatform } from '../../middleware/test/support.ts'
 import { freshSchema, inspector, testRuntime } from '../../runtime/test/support/pg.ts'
@@ -48,7 +49,7 @@ const target: HostWorkflow = {
 let rt: Runtime
 let platform: ReturnType<typeof testPlatform>
 let wiring: ReturnType<typeof wireEval>
-const evals = createEvalWorkflows({ env, tmpRoot })
+const evals = createEvalWorkflows(suitesOf(HOST_MODULES), { env, tmpRoot })
 const evalRun = evals[0]?.workflow as NonNullable<(typeof evals)[0]>['workflow']
 
 beforeAll(async () => {
@@ -85,7 +86,7 @@ afterAll(async () => {
 })
 
 test('readSuite: a plain case carries no tree; its input runs as recorded and the arm args win', () => {
-  const [first] = readSuite('research', env)
+  const [first] = readSuite(suitesOf(HOST_MODULES), 'research', env)
   expect(first?.tree).toBeNull()
   expect(first?.input('/ignored', { depth: 'deep', context: 'known' })).toEqual({
     query: 'port 5432?',

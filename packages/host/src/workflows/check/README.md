@@ -99,3 +99,12 @@ stream; it never throws out of `run`. What leaves a step is the truncated tail i
   cache-read rate; a second miss costs two sessions and no more.
 - The agent is told to run each command once and never to re-read: that, not the prompt size, is where tokens go.
   Route `check` is the cheap classify seat.
+
+## Route
+
+Model and rate: `packages/routes/src/table/check.ts` (the only home of model ids). Source seat: agent-gateway
+`GET /api/routing`, 2026-10-27, unless noted.
+
+| Route | Source seat | Wire |
+|-|-|-|
+| `check` | `check` (CLASSIFY) | opencode |

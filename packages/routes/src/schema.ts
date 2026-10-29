@@ -84,3 +84,12 @@ export const routePatchSchema = z.strictObject({ ...patchFields, fallback: fallb
 export type RoutePatch = z.infer<typeof routePatchSchema>
 
 export const overridesSchema = z.record(z.string(), routePatchSchema)
+
+/**
+ * Every route id, one key per route: each `table/<group>.ts` adds its own by module augmentation, so the ids stay
+ * typed though the table is discovered at runtime. A route a group file does not declare here is still served, but no
+ * caller can name it without a cast.
+ */
+// biome-ignore lint/suspicious/noEmptyInterface: filled by declaration merging from table/<group>.ts
+export interface RouteTable {}
+export type RouteId = keyof RouteTable & string

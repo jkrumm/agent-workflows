@@ -86,6 +86,14 @@ Credentials come from the environment only: `IU_API_KEY` and `IU_BASE_URL` (endi
 
 Content failures (`stop_reason: max_tokens`, empty text, a refusal or any non-final stop) are judged once in `src/llm/model-call.ts`, after usage is reported. JSON answers are parsed loosely (code fence, prose around the object), validated, re-asked once with the rejection reason, then `INVALID_OUTPUT`; a transport failure is never re-asked, so a retry cannot bill twice.
 
+## Registering a group
+
+`src/capabilities/index.ts` is one line per group (`createLlmCapabilities` in `src/capabilities/llm.ts`, web, hdx,
+brain), each group in its own file. It stays a static list, not a directory scan: the `as const` tuple it returns is
+what types `Registry<ReturnType<typeof createCapabilities>>`, so every `registry.call(id, input)` in a workflow is
+checked against the capability's schemas; a runtime scan has no static type to give. A new group is its own file plus
+one spread line (and its deps parameter); a new model-backed capability is one line in `llm.ts`.
+
 ## Capabilities
 
 All four are `POST` with a JSON body. The model comes from the route; override with `AGW_ROUTES` (see the routes README).

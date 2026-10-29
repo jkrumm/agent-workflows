@@ -1,23 +1,26 @@
 import type { createCapabilities, Registry } from '@agent-workflows/capabilities'
-import type { AgentRef } from '@agent-workflows/middleware'
+import { routeIds } from '@agent-workflows/routes'
 import type { Logger } from '@agent-workflows/runtime'
-import { createLearningsWorkflows, type LearningsStore } from '../learnings/index.ts'
+import type { LearningsStore } from '../learnings/index.ts'
 import type { HostWorkflow } from '../operations.ts'
 import type { ToolGate } from '../tool-gate/index.ts'
-import { createBrainWorkflows } from './brain/index.ts'
-import { createCheckWorkflows } from './check/index.ts'
-import { createDiagramWorkflows } from './diagram/index.ts'
-import { createRetrospective } from './retrospective/index.ts'
+import { buildWorkflows, type DiscoveredModule, discoverWorkflowModules } from './registry.ts'
+import type { ToolLedger } from './research/ledger.ts'
 import type { GhPort } from './retrospective/gh.ts'
 import type { JournalReader } from './retrospective/sample.ts'
 import type { TrackedPaths } from './retrospective/tracked.ts'
-import { createEvalWorkflows } from './eval/index.ts'
-import { createOtelWorkflows } from './otel/index.ts'
-import { createProseWorkflows } from './prose/index.ts'
-import { createResearchWorkflows } from './research/index.ts'
-import type { ToolLedger } from './research/ledger.ts'
-import { createReviewWorkflows } from './review/index.ts'
-import { createSmokePing } from './smoke.ts'
+
+export {
+  agentNames,
+  buildWorkflows,
+  type DiscoveredModule,
+  defineWorkflowModule,
+  discoverWorkflowModules,
+  fingerprintWorkflows,
+  suitesOf,
+  type WorkflowContext,
+  type WorkflowModule,
+} from './registry.ts'
 
 /** The host's capability registry: what a workflow's code steps call in-process. */
 export type HostRegistry = Registry<ReturnType<typeof createCapabilities>>
@@ -38,41 +41,13 @@ export interface WorkflowDeps {
 /** What the host builds its workflows from: `WorkflowDeps` plus its one tool gate, which a workflow that gives its agent tools opens a grant on. Two gates would fight over one `gate.json`, so there is no per-workflow fallback. */
 export type HostDeps = WorkflowDeps & { toolGate: ToolGate }
 
-/** Every workflow the host process serves. Heavy pipelines run in their own processes (concept §8). */
-export function createWorkflows(deps: HostDeps): HostWorkflow[] {
+/** Every `src/workflows/<id>/module.ts`, discovered once per process at import. Heavy pipelines run in their own processes (concept §8). */
+export const HOST_MODULES: readonly DiscoveredModule[] = await discoverWorkflowModules(import.meta.dir)
+
+/** Every workflow the host process serves: each module's, built from `deps`. */
+export function createWorkflows(deps: HostDeps, modules: readonly DiscoveredModule[] = HOST_MODULES): HostWorkflow[] {
   // The gate refuses to grant an agent a mutating or unknown capability: it learns what the registry holds.
   deps.toolGate.setCapabilities((id) => deps.registry.capabilities.find((c) => c.id === id)?.cli)
-  const base = [
-    createSmokePing(deps.registry),
-    ...createReviewWorkflows(deps),
-    ...createCheckWorkflows(deps),
-    ...createEvalWorkflows(),
-    ...createResearchWorkflows(deps),
-    ...createProseWorkflows(deps),
-    ...createBrainWorkflows(deps),
-    ...createDiagramWorkflows(deps),
-    ...createOtelWorkflows(deps),
-  ]
-  if (!deps.retro) return base
-  const { journal, learnings, gh, tracked } = deps.retro
-  const agents = agentNames(base)
-  return [
-    ...base,
-    ...createLearningsWorkflows(learnings),
-    createRetrospective({ journal, learnings, gh, tracked, agentsOf: (id) => agents.get(id) }),
-  ]
-}
-
-/** The distinct agent names each hosted workflow runs: an agent listed on two routes (review's angles) counts once. */
-export function agentNames(workflows: HostWorkflow[]): Map<string, string[]> {
-  return new Map(
-    Object.entries(fingerprintWorkflows(workflows)).map(([id, refs]) => [id, [...new Set(refs.map((r) => r.agent))]]),
-  )
-}
-
-/** The agents each hosted workflow runs, for the run fingerprint; workflows without agents are left out. */
-export function fingerprintWorkflows(workflows: HostWorkflow[]): Record<string, AgentRef[]> {
-  return Object.fromEntries(
-    workflows.filter((entry) => entry.agents?.length).map((entry) => [entry.workflow.id, entry.agents ?? []]),
-  )
+  const known = new Set<string>(routeIds())
+  return buildWorkflows(modules, deps, (id) => known.has(id))
 }
