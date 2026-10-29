@@ -84,6 +84,10 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
 - 2026-10-29 ~13:00 owner: Argo shows "review 46.7 M" and combines personal IU with the team key.
   Agent `argo` (pane w5V:p1, rd work) runs `~/.local/state/agent-workflows/briefs/argo-usage.md` end to end
   and reports via rd say; findings inside agent-workflows come back to the mother for the lead.
+- 2026-10-29 ~13:25: triage + decide live for iris (purpose `iris`; per-caller identity is only
+  `x-agw-purpose`); contract delivered; iris-mother switches audio (S3) then decide/triage (S4) in its
+  Wave 16 and reports when iris no longer calls the old gateways. Asked the lead to confirm decide's new
+  route avoids Requesty. For Wave 8's retro: decide's model move shifts the scorer judges' calibration.
 
 ## Next action
 - Watch the lead (`wave-watch.sh --agents agent-workflows-w1 --heartbeat 9`, bounded 10 min), read
