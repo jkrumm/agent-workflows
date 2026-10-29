@@ -178,6 +178,12 @@ describe('OpenAPI', () => {
     expect(operations.map((o) => `${o.method} ${o.path}`).sort()).toEqual(
       [
         'post /decide',
+        'post /hdx/guide',
+        'post /hdx/link',
+        'post /hdx/query',
+        'post /hdx/rest',
+        'post /hdx/tools',
+        'post /hdx/write',
         'post /llm/classify',
         'post /llm/summarize',
         'post /llm/title',
@@ -216,6 +222,12 @@ describe('OpenAPI', () => {
     )
     expect(ids.sort()).toEqual([
       'decide',
+      'hdxGuide',
+      'hdxLink',
+      'hdxQuery',
+      'hdxRest',
+      'hdxTools',
+      'hdxWrite',
       'llmClassify',
       'llmSummarize',
       'llmTitle',
