@@ -415,7 +415,7 @@ function probe(path: string, rawPcm: boolean): Probe | null {
     'ffprobe',
     '-v',
     'error',
-    ...(rawPcm ? ['-f', 's16le', '-ar', '24000', '-ac', '1'] : []),
+    ...(rawPcm ? ['-f', 's16le', '-ar', '24000', '-ch_layout', 'mono'] : []),
     '-show_entries',
     'format=format_name,duration:stream=codec_name,sample_rate,channels',
     '-of',
