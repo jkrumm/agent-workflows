@@ -101,8 +101,8 @@ budget or empty retries once at double; no round cap. On the Anthropic wire: ada
   so only the agent gets the narrower allowlist. A note above 200k characters fails the run; nothing is cut silently.
 - **Memory** (`history.ts`): finished `podcast` runs of purpose `prod` (title, description, profile from the run's
   output, the transcript from its `script` step) plus the legacy episodes in `podcast_episodes` (runtime migration
-  0010), imported once by `scripts/import-podcast-history.ts` (dry run by default; `--commit` writes). Only done legacy
-  jobs are imported: 19 of the 20 recorded jobs (one failed before mastering).
+  0010), imported once from audio-gateway's job store (done jobs only: 19 of the 20 recorded jobs, one failed before
+  mastering). The import script is deleted with the gateway (Wave 11); the rows stay.
 - **Research**: the `research` tool runs the host's `research` workflow over its HTTP API (`research-client.ts`,
   `AGW_URL` and `AGW_API_SECRET` from the process env), quick depth only, identical queries answered once, the optional
   `PODCAST_RESEARCH_MAX_CALLS` valve as on legacy. Standard depth runs only for the editor's load-bearing facts, one
@@ -146,5 +146,6 @@ modules built before it when one is registered; neither imports the other. Resea
 
 - `bun test packages/audio/src/workflows/podcast`: the room on a fake transport (`testing.ts`), resume after a kill,
   fallbacks, clamps, history on Postgres, plus the legacy unit cases ported.
-- `bun scripts/eval-legacy/podcast-lint.ts`: the ported lint against legacy's own on the recorded scripts (rule 1 of
-  `docs/research/2026-10-29-wave8-ports.md` §podcast), and the rule-6 baseline (findings per 10 turns).
+- The ported lint was checked once against legacy's own on the recorded scripts (rule 1 of
+  `docs/research/2026-10-29-wave8-ports.md` §podcast), with the rule-6 baseline (findings per 10 turns); the comparison
+  script went with the gateway (Wave 11).

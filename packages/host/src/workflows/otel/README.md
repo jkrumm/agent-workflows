@@ -41,8 +41,8 @@ start time is in its prompt, since the agent has no clock).
   `grounded` (the share of findings not flagged `unverified`; only when the output has `queries`, so the legacy arm is scored by the
   same function). `pass`: valid, status matches and every fact stated. Cases are plain eval cases in
   `$AGW_EVAL_DIR/otel/cases.jsonl` (`{id, input: {investigation, env, since}, reference: {status, facts}}`);
-  `scripts/eval-legacy/otel.ts` runs agent-gateway's MCP `otel` tool per case and appends scored rows to
-  `<evalDir>/otel/legacy-runs.jsonl`.
+  the legacy arm's scored rows (agent-gateway's MCP `otel` tool per case) are recorded in
+  `<evalDir>/otel/legacy-runs.jsonl`; the script that wrote them is deleted with the gateway (Wave 11).
 
 ## Route
 

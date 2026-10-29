@@ -38,7 +38,7 @@ Names only; values come from 1Password through `secrets-run`, never from the rep
 | `AGW_DRIFT_RATE`, `AGW_DRIFT_INTERVAL_S` | no | drift: the share of finished production runs scored after the fact (default `0.1`, `0` turns it off) and the tick (default 300 s); a bad value refuses to start |
 | `AGW_EVAL_DIR`, `AGW_EVAL_HOME` | no | `agw eval run`: where `<workflow>/cases.jsonl` live (default `~/.local/share/agent-workflows/eval`) and the root a case's `repo` is relative to (default `$HOME`) |
 | `AGW_VOICE_PATH` | no | the voice guide `prose` checks and names in its brief; default the brain vault's `voice.md`. Unreadable or empty: `prose` fails before any model call, naming this variable |
-| `AGW_ARGO_PUSH`, `AGW_AGENT_STALE_HOURS`, `AGW_HERDR_BIN`, `AGW_CLAUDE_BIN`, `AGW_CLAUDE_ACCOUNT_BIN`, `AGW_CLAUDE_LOG_DIR`, `AGW_SESSION_ACCOUNTS_DIR`, `AGW_AGENT_GATEWAY_URL` | no | the agents overview (§Host reads, `src/workflows/overview/README.md` §Environment): the Argo timer switch (`ARGO_URL` and `ARGO_API_SECRET` above are its target) and where the collectors read |
+| `AGW_ARGO_PUSH`, `AGW_AGENT_STALE_HOURS`, `AGW_HERDR_BIN`, `AGW_CLAUDE_BIN`, `AGW_CLAUDE_ACCOUNT_BIN`, `AGW_CLAUDE_LOG_DIR` | no | the agents overview (§Host reads, `src/workflows/overview/README.md` §Environment): the Argo timer switch (`ARGO_URL` and `ARGO_API_SECRET` above are its target) and where the collectors read |
 | `AGW_BRAIN_DIR` | no | the vault the `brain.*` capabilities read (default `~/SourceRoot/brain`); a path that is no directory is `NOT_CONFIGURED` |
 
 ## Routes
@@ -92,7 +92,7 @@ processes and checks that rule. Settings reach them as closures over the process
 
 | Command | Method, path | Does |
 |-|-|-|
-| `agw agents [--text] [--cols N] [--color]` | `POST /agents` | the agents overview, `{data}` (agent-gateway's `GET /api/overview` `data`, field for field, which Argo's `/agents/overview` takes as it is) or `{text}` for `watch` (`--format plain` prints it) |
+| `agw agents [--text] [--cols N] [--color]` | `POST /agents` | the agents overview, `{data}` (what agent-gateway's `GET /api/overview` returned under `data`, minus the retired dispatch fields; `summary.dispatch` stays a constant `0` until Argo's `/agents/overview` ingest stops requiring it) or `{text}` for `watch` (`--format plain` prints it) |
 | `agw quota` | `GET /quota` | `{data, accounts}`: the last `iu` report and every account's quota (the CLI numbers, overridden per window by a newer report, `stale` after 6 h) |
 | `agw quota-report --five-hour-pct N [--five-hour-mins-left N] [--seven-day-pct N] [--account ID]` | `POST /quota/report` | the statusline's report, kept in memory (`account` default `iu`) |
 

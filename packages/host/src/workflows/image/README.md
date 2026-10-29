@@ -115,5 +115,6 @@ The scorer (`scorer.ts`) is deterministic and reads the files on disk, not the o
 `pass` = every score present is 1. The rule across arms is `rule.ts` (`evaluateRule`): (1) `valid` in every case and `alpha`
 on both cutouts; (2) request parameters equal per case (model, size after snapping, quality, `n`); (3) per case
 N cost ≤ 1.10 × L where both are priced, N priced in every case; (4) median wall(N) ≤ 1.25 × median wall(L).
-`scripts/eval-legacy/image.ts` runs both arms (`imgcli gen|cutout --json` and `agw image`), one run per case each, scores both
-with the same scorer and applies the rule; N's cost is the run record's. Neither is run live without the lead.
+The rule was applied once to both arms (`imgcli gen|cutout --json` and `agw image`, one run per case each, the same
+scorer; N's cost is the run record's). The comparison script is deleted with the other legacy scripts (Wave 11); `rule.ts`
+stays.

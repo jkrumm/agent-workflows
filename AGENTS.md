@@ -50,8 +50,7 @@ Shape and roles: the `/wave` skill, fleet mode (`~/.claude/skills/wave/roles/{mo
 
 1. The worker's cheap check (`bun test <path>` or the brief's command).
 2. The lead reads the diff — a report is a claim, the diff is the proof.
-3. `/review` — agent-gateway until the new `agw review` passes its cutover (concept §11 P1), then
-   the new one (dogfood). Standard depth; `--deep` for the runtime, middleware, CLI contract and
+3. `/review` — `agw review` (dogfood). Standard depth; `--deep` for the runtime, middleware, CLI contract and
    anything security-adjacent. OCR stays off (IU budget).
 4. The lead's own review on Max: `/code-review high` on core packages and on every cross-package
    interface.
@@ -68,8 +67,7 @@ be free (`rd agents`).
 |-|-|
 | vps | P0b: the mini's Postgres as a maintained instance |
 | dotfiles | architecture map, herdr groups, skills, global CLAUDE.md (P5). **Held by the P0 wave until it closes** |
-| agent-gateway | rename its CLI to `agw-legacy` (P1); shrink to `dispatch` (P6). Frozen otherwise |
-| research-gateway, audio-gateway | frozen (fixes only) until cut over; archived in P6 |
+| agent-gateway, research-gateway, audio-gateway | retired, archived (P6) |
 | argo, usage-tracker | usage projection and trimmed collectors (P4) |
 | hermes-agent, `~/.hermes` | `agw` instead of HTTP calls (P5) |
 

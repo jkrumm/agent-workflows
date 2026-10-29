@@ -86,13 +86,10 @@ brief, an architecture, a flow, an extend on an existing drawing, German labels,
 shapes; a shape holding another entirely is a container, not an overlap), `textOverflow` (a label wider than its
 container); a case's reference only bounds the element count (`inRange`). An invalid run scores `valid: 0` and nothing
 else, so a failure counts in the valid rate and never pulls another mean down; the other means are over valid runs, for
-both arms. The legacy arm is `bun scripts/eval-legacy/diagram.ts [--runs 2]`: it submits the same cases to agent-gateway's
-job API (a scratch directory per run; an extend job that leaves the seeded file byte-identical counts as invalid), scores
-the written files with the same metrics and writes a report next to the cases. The job view carries no cost, so the cost
-of a run is joined from the usage tracker's `agent-gateway-sessions.jsonl`: on the job id where a row names it, else the `excalidraw-diagram` sessions that started
-between the run's submit and the poll that saw it finish (summed when a job retried; runs are sequential so windows do not
-overlap; a window join could count another caller's diagram job started in the same window, so the summary flags it as `foreignSessionRisk` with the count of runs per join kind, and `multiSessionRuns` counts runs with more than one session: run the arm on an idle gateway). A run with no such session, or whose session two runs claim, has `costUsd: null` and `costJoin` names why; the
-summary reports `costJoined` as `n/total`. `--join <report.json>` redoes only the join once the tracker has caught up.
+both arms. The legacy arm was run once against agent-gateway's job API (a scratch directory per run; an extend job that left the
+seeded file byte-identical counted as invalid) and scored with the same metrics. The job view carried no cost, so a
+run's cost was joined from the usage tracker's `agent-gateway-sessions.jsonl`, and a join that could have counted another
+caller's job was flagged. The script is deleted with the gateway (Wave 11); the recorded report stays next to the cases.
 
 ## Route
 

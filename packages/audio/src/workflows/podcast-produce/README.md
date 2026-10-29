@@ -108,11 +108,9 @@ multi-speaker TTS, legacy's `PODCAST_TTS_MODEL` default); the cover is `image.ge
 
 ## Parity and tools
 
-- `scripts/eval-legacy/podcast-units.ts`: rule 2 of `docs/research/2026-10-29-wave8-ports.md` §podcast, the ported
-  `turnsForSynthesis` + `unitsForMultiSpeaker` against legacy's on the 20 recorded scripts (also at 1500 and 6000
-  characters). 20/20 exact on 2026-10-29.
-- `scripts/produce-from-legacy.ts <job id>`: the `ProduceInput` of a recorded legacy job (`legacy-input.ts`); dry run by
-  default, `--run` produces it on an in-process runtime, `--publish` / `--brain-note` opt into those effects.
+- Rule 2 of `docs/research/2026-10-29-wave8-ports.md` §podcast: the ported `turnsForSynthesis` + `unitsForMultiSpeaker`
+  against legacy's on the 20 recorded scripts (also at 1500 and 6000 characters), 20/20 exact on 2026-10-29. The
+  comparison script and the `produce-from-legacy` hand-off are deleted with the gateway (Wave 11).
 
 ## Tests
 
