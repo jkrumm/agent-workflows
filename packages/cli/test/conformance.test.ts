@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { EXIT } from '../src/exit.ts'
 import { contractSha, servedSha } from '../src/spec.ts'
-import { type FakeHost, hostSha, startFakeHost } from './fake-host.ts'
+import { type FakeHost, hostSha, type RunStore, startFakeHost, type Workflow } from './fake-host.ts'
 
 const BIN = join(import.meta.dir, '..', 'bin', 'agw.ts')
 
@@ -756,6 +756,210 @@ describe('agw against the fake host', () => {
     expect(r.code).toBe(0)
     const table = r.json().exitCodes as { code: number; kind: string }[]
     expect(table.map((row) => [row.kind, row.code])).toEqual(Object.entries(EXIT))
+  })
+})
+
+/** A second platform process: its own workflows on its own port, the run ops, the host's journal. */
+const audioWorkflows = (runs: RunStore): Workflow[] => [
+  {
+    id: 'audio.speak',
+    summary: 'Speak the text after durationS seconds',
+    input: {
+      type: 'object',
+      properties: { text: { type: 'string', minLength: 1 }, durationS: { type: 'number', default: 0 } },
+      required: ['text'],
+    },
+    positional: ['text'],
+    outcome: (input) => ({ durationS: Number(input.durationS ?? 0), output: { spoken: input.text } }),
+  },
+  {
+    // Answers 202 at once, so the CLI's own wait loop runs: it must poll the process that started the run.
+    id: 'audio.queue',
+    summary: 'Queue a run and answer at once',
+    input: { type: 'object', properties: {} },
+    outcome: () => {
+      const runId = crypto.randomUUID()
+      runs.set(runId, {
+        runId,
+        workflowId: 'audio.queue',
+        endsAt: Date.now() + 1500,
+        output: { queued: true },
+        cancelled: false,
+        input: '{}',
+      })
+      return { respond: Response.json({ runId, workflowId: 'audio.queue', status: 'running' }, { status: 202 }) }
+    },
+  },
+]
+
+describe('agw across platform processes (AGW_PROCESSES)', () => {
+  let host: FakeHost
+  let audio: FakeHost
+  const runs: RunStore = new Map()
+  const box = (processes = `audio=${audio.url}`) =>
+    sandbox({ AGW_URL: host.url, AGW_API_SECRET: host.secret, AGW_PROCESSES: processes })
+  const fetches = (h: FakeHost) => h.requests.filter((q) => q.path === '/openapi.json').length
+
+  beforeAll(async () => {
+    host = await startFakeHost({ runs })
+    audio = await startFakeHost({ runs, capabilities: false, workflows: audioWorkflows(runs) })
+  })
+  afterAll(async () => {
+    await host.stop()
+    await audio.stop()
+  })
+
+  test('help merges every process; each command goes to the process that declared it; one cache each', async () => {
+    const b = box()
+    const [hostFetches, audioFetches] = [fetches(host), fetches(audio)]
+    const help = await agw(b, ['--help'])
+    expect(help.code).toBe(0)
+    expect(help.stdout).toContain('agw llm title')
+    expect(help.stdout).toContain('agw audio speak')
+    expect(help.stdout).not.toContain('unavailable')
+    // Help fetches each contract once, no more.
+    expect(fetches(host) - hostFetches).toBe(1)
+    expect(fetches(audio) - audioFetches).toBe(1)
+    expect(JSON.parse(readFileSync(cacheFile(b, audio.url), 'utf8')).info['x-contract-sha']).toBe(audio.sha())
+    expect(JSON.parse(readFileSync(cacheFile(b, host.url), 'utf8')).info['x-contract-sha']).toBe(host.sha())
+
+    const before = host.requests.length
+    const spoken = await agw(b, ['audio', 'speak', 'hello'])
+    expect(spoken.code).toBe(0)
+    expect(spoken.json()).toMatchObject({ status: 'done', output: { spoken: 'hello' } })
+    const call = audio.requests.findLast((q) => q.path === '/workflows/audio/speak')
+    expect(call?.headers['x-agw-contract']).toBe(audio.sha())
+    expect(host.requests.length).toBe(before)
+
+    const title = await agw(b, ['llm', 'title', 'Routing across processes'])
+    expect(title.code).toBe(0)
+    expect(host.requests.findLast((q) => q.path === '/llm/title')?.headers['x-agw-contract']).toBe(host.sha())
+    // No refetch on a call: the caches answered.
+    expect(fetches(host) - hostFetches).toBe(1)
+    expect(fetches(audio) - audioFetches).toBe(1)
+  })
+
+  test('the run commands are shared: one entry each in help, never a conflict', async () => {
+    const help = await agw(box(), ['--help'])
+    expect(help.stdout.match(/agw run wait/g)).toHaveLength(1)
+    expect(help.stdout).not.toContain('conflict')
+  })
+
+  test('a pending answer from the second process: the wait loop polls it, the printed resume command finishes', async () => {
+    const b = box()
+    const queued = await agw(b, ['audio', 'queue'], { env: { AGW_WAIT_BUDGET_S: '20' } })
+    expect(queued.code).toBe(0)
+    const runId = String(queued.json().runId)
+    expect(audio.requests.some((q) => q.path === `/runs/${runId}/wait`)).toBe(true)
+    expect(host.requests.some((q) => q.path.startsWith(`/runs/${runId}`))).toBe(false)
+
+    const r = await agw(b, ['audio', 'speak', 'slow', '--duration-s', '2.5'], { env: { AGW_WAIT_BUDGET_S: '1' } })
+    expect(r.code).toBe(EXIT.pending)
+    const state = r.json()
+    expect(r.error?.hint).toBe(`agw run wait ${String(state.runId)}`)
+    const done = await agw(b, resumeArgs(r.error?.hint ?? ''))
+    expect(done.code).toBe(0)
+    expect(done.json()).toMatchObject({ runId: state.runId, status: 'done', output: { spoken: 'slow' } })
+    const status = await agw(b, ['run', 'status', String(state.runId)])
+    expect(status.json()).toMatchObject({ status: 'done', workflowId: 'audio.speak' })
+  })
+
+  test('a run follow-up reaches the second process when the host is down', async () => {
+    const b = box()
+    const started = await agw(b, ['audio', 'speak', 'later', '--duration-s', '30'], { env: { AGW_WAIT_BUDGET_S: '0' } })
+    expect(started.code).toBe(EXIT.pending)
+    const runId = String(started.json().runId)
+    const down = sandbox({
+      AGW_URL: 'http://127.0.0.1:1',
+      AGW_API_SECRET: host.secret,
+      AGW_PROCESSES: `audio=${audio.url}`,
+    })
+    mkdirSync(join(cacheFile(down, 'http://127.0.0.1:1'), '..'), { recursive: true })
+    cpSync(cacheFile(b, host.url), cacheFile(down, 'http://127.0.0.1:1'))
+    mkdirSync(join(cacheFile(down, audio.url), '..'), { recursive: true })
+    cpSync(cacheFile(b, audio.url), cacheFile(down, audio.url))
+    const status = await agw(down, ['run', 'status', runId])
+    expect(status.code).toBe(0)
+    expect(status.json()).toMatchObject({ runId, status: 'running' })
+    const cancel = await agw(down, ['run', 'cancel', runId, '--commit'])
+    expect(cancel.code).toBe(0)
+    expect(audio.requests.findLast((q) => q.path === `/runs/${runId}/cancel`)).toBeDefined()
+    expect(cancel.json().status).toBe('cancelled')
+  })
+
+  test('a command two processes declare fails loudly, naming both', async () => {
+    const clash = await startFakeHost({ runs, capabilities: false })
+    try {
+      const b = box(`clash=${clash.url}`)
+      const r = await agw(b, ['fixture', 'echo', 'hi'])
+      expect(r.code).toBe(EXIT.contract_mismatch)
+      expect(r.error?.message).toBe("'fixture echo' is declared by more than one process: host, clash")
+      expect(clash.requests.some((q) => q.path.startsWith('/workflows'))).toBe(false)
+      const help = await agw(b, ['--help'])
+      expect(help.stdout).toContain('[conflict: host, clash]')
+      const schema = (await agw(b, ['schema'])).json()
+      expect(schema.conflicts).toContainEqual({ command: 'fixture echo', processes: ['host', 'clash'] })
+      expect(schema.conflicts).not.toContainEqual(expect.objectContaining({ command: 'run wait' }))
+      // A command only the host declares still runs.
+      expect((await agw(b, ['llm', 'title', 'Still fine'])).code).toBe(0)
+    } finally {
+      await clash.stop()
+    }
+  })
+
+  test('a second process that is down: host commands work, its cached commands show unavailable and exit 7', async () => {
+    const gone = await startFakeHost({ runs, capabilities: false, workflows: audioWorkflows(runs) })
+    const b = box(`gone=${gone.url}`)
+    expect((await agw(b, ['schema', '--refresh'])).code).toBe(0)
+    await gone.stop()
+
+    expect((await agw(b, ['llm', 'title', 'Host is up'])).code).toBe(0)
+    const help = await agw(b, ['--help'])
+    expect(help.code).toBe(0)
+    expect(help.stdout).toContain('agw audio speak')
+    expect(help.stdout).toMatch(/agw audio speak .*\[unavailable: gone\]/)
+    expect(help.stdout).toContain(`(unavailable: process gone unreachable at ${gone.url}`)
+    expect((await agw(b, ['audio', 'speak', '--help'])).stdout).toContain('(unavailable: process gone unreachable')
+    const r = await agw(b, ['audio', 'speak', 'hi'])
+    expect(r.code).toBe(EXIT.network)
+    expect(r.error?.message).toStartWith(`process gone unreachable at ${gone.url}`)
+
+    // Offline: both caches answer, every entry naming its process.
+    const schema = (await agw(b, ['schema'])).json()
+    const commands = schema.commands as { process: string; command: string }[]
+    expect(commands).toContainEqual(expect.objectContaining({ process: 'gone', command: 'audio speak' }))
+    expect(commands).toContainEqual(expect.objectContaining({ process: 'host', command: 'llm title' }))
+    expect(schema.contractSha).toBe(host.sha())
+    const one = (await agw(b, ['schema', 'audio', 'speak'])).json()
+    expect(one).toMatchObject({ process: 'gone', command: 'audio speak' })
+
+    // Never cached and down: the host alone serves, without an error.
+    const fresh = box(`gone=${gone.url}`)
+    expect((await agw(fresh, ['llm', 'title', 'No second cache'])).code).toBe(0)
+  })
+
+  test('a 412 from the second process refreshes its contract only and retries', async () => {
+    const b = box()
+    expect((await agw(b, ['schema', '--refresh'])).code).toBe(0)
+    audio.bumpVersion()
+    const hostFetches = fetches(host)
+    const r = await agw(b, ['audio', 'speak', 'again'])
+    expect(r.code).toBe(0)
+    expect(fetches(host)).toBe(hostFetches)
+    expect(JSON.parse(readFileSync(cacheFile(b, audio.url), 'utf8')).info['x-contract-sha']).toBe(audio.sha())
+  })
+
+  test('AGW_PROCESSES: a malformed list is a usage error naming the entry', async () => {
+    for (const bad of [
+      'audio',
+      'host=http://127.0.0.1:9',
+      'Audio=http://127.0.0.1:9',
+      `a=${audio.url},b=${audio.url}`,
+    ]) {
+      const r = await agw(box(bad), ['llm', 'title', 'x'])
+      expect(r.code).toBe(EXIT.usage)
+      expect(r.error?.message).toStartWith('AGW_PROCESSES: ')
+    }
   })
 })
 

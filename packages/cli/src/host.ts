@@ -8,6 +8,8 @@ import {
   credentials,
   type Env,
   envFilePath,
+  HOST_PROCESS,
+  type ProcessTarget,
   requireSecret,
   timeoutS,
 } from './config.ts'
@@ -46,9 +48,12 @@ function hintFor(kind: AgwError['kind'], env: Env, command: Command | undefined,
   return ''
 }
 
+/** The connection failed before any answer: nothing reached the process, so another one may be asked. */
+export class Unreachable extends AgwError {}
+
 /**
- * The host as the CLI sees it: credentials, the cached OpenAPI document and its contract sha, and
- * one request per command with the contract header on every call.
+ * One platform process as the CLI sees it (the host, or a process named in `AGW_PROCESSES`): credentials, the
+ * cached OpenAPI document and its contract sha, and one request per command with the contract header on every call.
  */
 export class Host {
   #creds: Credentials | undefined
@@ -58,7 +63,15 @@ export class Host {
   #sha = ''
   #refreshed = false
 
-  constructor(readonly env: Env) {}
+  /** `target` is a process from `AGW_PROCESSES`; without one this is the host at `AGW_URL`. */
+  constructor(
+    readonly env: Env,
+    private readonly target?: ProcessTarget,
+  ) {}
+
+  get name(): string {
+    return this.target?.name ?? HOST_PROCESS
+  }
 
   get commands(): Command[] {
     return this.#commands
@@ -83,7 +96,12 @@ export class Host {
   }
 
   get url(): string {
-    return this.creds().url
+    return this.target?.url ?? this.creds().url
+  }
+
+  /** How messages name this process: the host keeps the words it always had. */
+  private get label(): string {
+    return this.target ? `process ${this.target.name}` : 'host'
   }
 
   private creds(): Credentials {
@@ -124,7 +142,7 @@ export class Host {
     if (!built?.commands.length) {
       throw new AgwError(
         'general',
-        `${this.url}/openapi.json has no usable x-cli operations; the cached contract is kept`,
+        `${this.target ? `${this.label}: ` : ''}${this.url}/openapi.json has no usable x-cli operations; the cached contract is kept`,
       )
     }
     const path = cachePath(this.env, this.url)
@@ -161,7 +179,8 @@ export class Host {
     options: CallOptions & { body?: unknown; command?: Command; contract?: boolean },
   ): Promise<Reply> {
     const creds = this.creds()
-    assertSafeUrl(creds.url)
+    const url = this.url
+    assertSafeUrl(url, this.target ? `${this.label} (AGW_PROCESSES)` : undefined)
     const headers: Record<string, string> = {
       accept: 'application/json',
       authorization: `Bearer ${requireSecret(this.env, creds)}`,
@@ -178,7 +197,7 @@ export class Host {
     let response: Response
     let text: string
     try {
-      response = await fetch(`${creds.url}${path}`, {
+      response = await fetch(`${url}${path}`, {
         method,
         headers,
         ...(options.body !== undefined ? { body: JSON.stringify(options.body) } : {}),
@@ -187,12 +206,9 @@ export class Host {
       text = await response.text()
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error)
-      const message = signal.aborted
-        ? `no answer from ${creds.url} within ${deadlineS}s`
-        : `host unreachable at ${creds.url}: ${reason}`
-      throw new AgwError('network', message, {
-        hint: `is the host up? ${BIN} schema works offline from the cache`,
-      })
+      const hint = `is the ${this.label} up? ${BIN} schema works offline from the cache`
+      if (signal.aborted) throw new AgwError('network', `no answer from ${url} within ${deadlineS}s`, { hint })
+      throw new Unreachable('network', `${this.label} unreachable at ${url}: ${reason}`, { hint })
     }
     let body: unknown = text
     try {

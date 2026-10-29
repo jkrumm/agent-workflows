@@ -70,27 +70,71 @@ function readEnvFile(env: Env): Env {
   }
 }
 
+/** A platform process besides the host: its own port and contract, the same secret. */
+export interface ProcessTarget {
+  name: string
+  url: string
+}
+
 export interface Credentials {
   url: string
   secret: string | undefined
+  /** The other processes, in declared order; the host (`AGW_URL`) is not among them. */
+  processes: ProcessTarget[]
 }
 
-/** The environment wins key by key; the env file is read only for what it leaves unset. */
+/** The name the host process goes by in messages and `agw schema`; no other process may take it. */
+export const HOST_PROCESS = 'host'
+const PROCESS_NAME = /^[a-z][a-z0-9-]*$/
+const trimUrl = (url: string) => url.trim().replace(/\/+$/, '')
+
+/** `AGW_PROCESSES=<name>=<url>[,<name>=<url>…]`; a malformed list is a usage error, never a silently dropped process. */
+export function parseProcesses(raw: string | undefined, hostUrl: string): ProcessTarget[] {
+  const out: ProcessTarget[] = []
+  const bad = (message: string) =>
+    new AgwError('usage', `AGW_PROCESSES: ${message}`, {
+      hint: 'AGW_PROCESSES=audio=http://127.0.0.1:7792[,<name>=<url>…]',
+    })
+  for (const item of (raw ?? '').split(',')) {
+    if (!item.trim()) continue
+    const eq = item.indexOf('=')
+    const name = item.slice(0, Math.max(eq, 0)).trim()
+    const url = trimUrl(item.slice(eq + 1))
+    if (eq < 1 || !url) throw bad(`"${item.trim()}" is not <name>=<url>`)
+    if (!PROCESS_NAME.test(name)) throw bad(`process name "${name}" must match ${PROCESS_NAME.source}`)
+    if (name === HOST_PROCESS) throw bad(`"${HOST_PROCESS}" is AGW_URL's process`)
+    if (out.some((p) => p.name === name)) throw bad(`process "${name}" is listed twice`)
+    if (url === hostUrl || out.some((p) => p.url === url)) throw bad(`${url} is listed for two processes`)
+    out.push({ name, url })
+  }
+  return out
+}
+
+/**
+ * The environment wins key by key; the env file is read only for what it leaves unset. The process list goes with
+ * the host URL: an `AGW_URL` from the environment takes `AGW_PROCESSES` from the environment only, so a shell pointed
+ * at another host never mixes in the deployed processes of the env file.
+ */
 export function credentials(env: Env): Credentials {
   const file = env.AGW_URL && env.AGW_API_SECRET ? {} : readEnvFile(env)
-  const url = (env.AGW_URL || file.AGW_URL || DEFAULT_URL).replace(/\/+$/, '')
-  return { url, secret: env.AGW_API_SECRET || file.AGW_API_SECRET || undefined }
+  const url = trimUrl(env.AGW_URL || file.AGW_URL || DEFAULT_URL)
+  const processes = env.AGW_URL ? env.AGW_PROCESSES : (env.AGW_PROCESSES ?? file.AGW_PROCESSES)
+  return {
+    url,
+    secret: env.AGW_API_SECRET || file.AGW_API_SECRET || undefined,
+    processes: parseProcesses(processes, url),
+  }
 }
 
 const LOOPBACK = new Set(['127.0.0.1', '[::1]', 'localhost'])
 
 /** The bearer never leaves in cleartext: plain http only to loopback. */
-export function assertSafeUrl(url: string): void {
+export function assertSafeUrl(url: string, label = 'AGW_URL'): void {
   let parsed: URL
   try {
     parsed = new URL(url)
   } catch {
-    throw new AgwError('auth', `AGW_URL is not a URL: ${url}`)
+    throw new AgwError('auth', `${label} is not a URL: ${url}`)
   }
   if (parsed.protocol === 'https:' || (parsed.protocol === 'http:' && LOOPBACK.has(parsed.hostname))) return
   throw new AgwError('auth', `refused to send the secret to ${url}: plain http is allowed only to loopback`, {
