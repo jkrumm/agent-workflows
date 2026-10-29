@@ -18,6 +18,8 @@ export interface HdxDeps {
   retry?: Pick<HttpOptions, 'attempts' | 'backoffMs'>
   /** For dashboard links. Default `Date.now`. */
   now?: () => number
+  /** Per HTTP attempt, body included. Default 60 s. */
+  timeoutMs?: number
 }
 
 export interface ResolvedHdxDeps {
@@ -26,6 +28,7 @@ export interface ResolvedHdxDeps {
   readLocalEnvFile: () => string | undefined
   retry: Pick<HttpOptions, 'attempts' | 'backoffMs'>
   now: () => number
+  timeoutMs: number
 }
 
 const LOCAL_ENV_FILE = join(homedir(), '.config', 'hyperdx', 'local.env')
@@ -46,6 +49,7 @@ export function resolveHdxDeps(deps: HdxDeps = {}): ResolvedHdxDeps {
       }),
     retry: deps.retry ?? {},
     now: deps.now ?? Date.now,
+    timeoutMs: deps.timeoutMs ?? 60_000,
   }
 }
 
@@ -68,7 +72,12 @@ function dotenvValue(text: string, name: string): string | undefined {
   return undefined
 }
 
-/** A base URL: http(s), no credentials, no query, no trailing slash. A malformed one is `NOT_CONFIGURED` (names the variable). */
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]'])
+
+/**
+ * A base URL: https, or http on a loopback host only (the bearer key never crosses a network in the clear); no
+ * credentials, query or fragment; no trailing slash. A malformed one is `NOT_CONFIGURED` (names the variable).
+ */
 function baseUrl(raw: string, variable: string): string {
   let url: URL
   try {
@@ -76,8 +85,10 @@ function baseUrl(raw: string, variable: string): string {
   } catch {
     throw fail('NOT_CONFIGURED', `hdx unavailable: ${variable} is not a URL`)
   }
-  if ((url.protocol !== 'https:' && url.protocol !== 'http:') || url.username || url.password || url.search || url.hash)
-    throw fail('NOT_CONFIGURED', `hdx unavailable: ${variable} must be a plain http(s) URL`)
+  const secure = url.protocol === 'https:' || (url.protocol === 'http:' && LOOPBACK_HOSTS.has(url.hostname))
+  if (!secure) throw fail('NOT_CONFIGURED', `hdx unavailable: ${variable} must be https (http only for localhost)`)
+  if (url.username || url.password || url.search || url.hash)
+    throw fail('NOT_CONFIGURED', `hdx unavailable: ${variable} must be a plain URL`)
   return url.origin + url.pathname.replace(/\/+$/, '')
 }
 
