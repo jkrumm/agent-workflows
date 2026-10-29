@@ -1,28 +1,20 @@
 // The audio process's entry: `scripts/launch.sh audio` under the LaunchAgent com.jkrumm.agent-workflows-audio.
 import { installLifecycle, processLogger } from '@agent-workflows/host'
+import { audioConfig, createSpeechHandler, createTranscriptionsHandler, ffmpegMedia } from './index.ts'
 import { bootAudio, type DoorHandlers, loadAudioProcessConfig, readDoorTokens } from './process/index.ts'
 
 const logger = processLogger('audio')
 
 /**
- * The door handlers and their config (`src/door/`, `audioConfig` from `IU_API_KEY` and `IU_BASE_URL`), loaded at
- * start. Imported by URL until the lanes' package entry (`src/index.ts`) is on this branch's base; then this becomes a
- * static import. A missing or broken entry refuses the start, naming it.
+ * The door handlers of the lanes (`src/door/`), on one config and one media port (`audioConfig` from `IU_API_KEY` and
+ * `IU_BASE_URL`; a bad value refuses the start). The door builds one handler per request with that request's deps.
  */
-async function loadDoorHandlers(env: Record<string, string | undefined>): Promise<DoorHandlers> {
-  const entry = new URL('./index.ts', import.meta.url).href
-  const lanes = (await import(entry)) as {
-    audioConfig?: (env: Record<string, string | undefined>) => unknown
-    createSpeechHandler?: (deps: object) => (req: Request) => Promise<Response>
-    createTranscriptionsHandler?: (deps: object) => (req: Request) => Promise<Response>
-  }
-  const { audioConfig, createSpeechHandler, createTranscriptionsHandler } = lanes
-  if (!audioConfig || !createSpeechHandler || !createTranscriptionsHandler)
-    throw new Error(`${entry} does not export audioConfig, createSpeechHandler and createTranscriptionsHandler`)
+function doorHandlers(env: Record<string, string | undefined>): DoorHandlers {
   const config = audioConfig(env)
+  const media = ffmpegMedia({ mp3BitrateKbps: config.ttsBitrateKbps, opusBitrateKbps: config.ttsOpusBitrateKbps })
   return {
-    speech: (deps) => createSpeechHandler({ config, ...deps }),
-    transcriptions: (deps) => createTranscriptionsHandler({ config, ...deps }),
+    speech: (deps) => createSpeechHandler({ config, media, env, ...deps }),
+    transcriptions: (deps) => createTranscriptionsHandler({ config, media, env, ...deps }),
   }
 }
 
@@ -32,7 +24,7 @@ try {
   const config = loadAudioProcessConfig(process.env)
   version = config.version
   const tokens = readDoorTokens(config.doorTokensFile)
-  const handlers = await loadDoorHandlers(process.env)
+  const handlers = doorHandlers(process.env)
   started = await bootAudio({ config, handlers, tokens })
 } catch (error) {
   logger.error(`start failed: ${error instanceof Error ? error.message : String(error)}`)
