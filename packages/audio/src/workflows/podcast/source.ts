@@ -1,5 +1,5 @@
-import { readFile, realpath, stat } from 'node:fs/promises'
-import { isAbsolute, relative, resolve, sep } from 'node:path'
+import { readdir, readFile, realpath, stat } from 'node:fs/promises'
+import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 // `sourcePaths`: the notes the owner names as an episode's source, read as legacy read them (audio-gateway
 // `podcast-research.ts` `resolveInVault` / `readBrainNotes`): any non-hidden `.md` inside the vault, raw (frontmatter
@@ -22,12 +22,36 @@ function allowed(rel: string): boolean {
   return rel.toLowerCase().endsWith('.md')
 }
 
+/**
+ * The path on disk for a vault-relative path, segment by segment: the entry whose name is the segment's NFC form. A
+ * vault synced from macOS can hold either form of a name and Linux file systems keep the bytes as written (APFS
+ * matches either), so the file system alone does not settle it; this matches on any of them, as the vault capability
+ * does (`canonical`). `null` when a segment has no such entry. `.` and `..` were refused before this runs.
+ */
+async function onDisk(root: string, rel: string): Promise<string | null> {
+  let dir = root
+  for (const segment of rel.split(sep).filter(Boolean)) {
+    const wanted = segment.normalize('NFC')
+    let entries: string[]
+    try {
+      entries = await readdir(dir)
+    } catch {
+      return null
+    }
+    // The exact name first: two entries that differ only in normalization are distinct files there.
+    const name = entries.includes(segment) ? segment : entries.find((entry) => entry.normalize('NFC') === wanted)
+    if (name === undefined) return null
+    dir = join(dir, name)
+  }
+  return dir
+}
+
 const escapes = (rel: string) => rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)
 
 export function vaultSourceReader(vaultDir: string): SourceReader {
   return {
     async read(requested) {
-      // The vault may store a name decomposed or composed; the caller's form is normalised, the file system matches.
+      // The vault may store a name decomposed or composed; the caller's form is normalised, `onDisk` finds the entry.
       const path = requested.normalize('NFC')
       if (isAbsolute(path)) throw new Error(`"${requested}": the path must be relative to the vault`)
       const lexical = relative(vaultDir, resolve(vaultDir, path))
@@ -37,7 +61,9 @@ export function vaultSourceReader(vaultDir: string): SourceReader {
       let root: string
       try {
         root = await realpath(vaultDir)
-        real = await realpath(resolve(vaultDir, path))
+        const found = await onDisk(vaultDir, lexical)
+        if (found === null) throw new Error('no entry')
+        real = await realpath(found)
       } catch {
         throw new Error(`"${requested}": not found`)
       }
