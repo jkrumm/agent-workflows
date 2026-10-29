@@ -118,9 +118,23 @@ All four are `POST` with a JSON body. The model comes from the route; override w
 
 ### `decide` — route `decide` (`iu-decision`)
 
-`agw decide --questions '{"q":{"type":"choice","instructions":"…","options":{"a":"…","b":"…"}}}'`, state from stdin; JSON output. Input `{ state, questions }` where each question is `choice` (`options`: id → description, 2 to 255) or `boolean`. Output `{ answers, model, truncatedChars }`: a choice answers `{ choice, confidence, probabilities }`, a boolean `{ value, confidence, probability }` (`probability` is P(true), `value` is `probability >= 0.5`). The API rounds probabilities to two decimals. The model cannot search or read anything: `state` is its whole world. State beyond 60 000 characters is cut and reported in `truncatedChars`.
+`agw decide --questions '{"q":{"type":"choice","instructions":"…","options":{"a":"…","b":"…"}}}'`, state from stdin; JSON output. Input `{ state, questions }` where each question is `choice` (`options`: id → description, 2 to 255) or `boolean`. Output `{ answers, model, truncatedChars, latencyMs, usage }` (`usage`: see `triage`): a choice answers `{ choice, confidence, probabilities }`, a boolean `{ value, confidence, probability }` (`probability` is P(true), `value` is `probability >= 0.5`). The API rounds probabilities to two decimals. The model cannot search or read anything: `state` is its whole world. State beyond 60 000 characters is cut and reported in `truncatedChars`.
 
 **Token effect / cache effect.** There is no generated text, so output is a few tokens and cost is the input at the route's rate (`costSource: 'rate'`, because the decision API drops IU's own cost). More questions in one call share one state, which is the cheap way to ask: the state is paid for once. No cache effect is reported on this wire. Changing the model through `AGW_ROUTES` drops the rate, so cost reads `unknown` until a new rate is supplied.
+
+### `triage` — route `triage` (`iu-anthropic`)
+
+Ported as-is from agent-gateway's `triage` job as iris uses it, for iris's voice-memo notification. `agw triage '<destination>' --reply '<text>'`, transcript from stdin; HTTP `POST /triage`; import `registry.call('triage', …)`. Input `{ destination, transcript, reply? }` (`reply` may be `null`); transcript and reply are cut to 4000 characters (`\n[truncated]` marks the cut), as iris's adapter did. Output `{ headline, detail, spoken, model, attempts, latencyMs, usage }`: `headline` at most 60 characters, `detail` at most 240, `spoken` at most 300 (the legacy length cap standing for "two sentences"; sentences are not counted). One model call, the prompt of iris's `buildPrompt` followed by the gateway's output contract (the JSON Schema). An answer that is not JSON or breaks a limit is re-asked once with the reason (`attempts` 2); a second bad answer is `INVALID_OUTPUT` (HTTP 502).
+
+**`usage` and cost, on `triage` and `decide`.** Legacy's field names, which iris reads: `usage: { inputTokens, outputTokens, reasoningTokens, totalTokens, cacheReadTokens, costUsd }`, summed over every attempt of the call (`inputTokens` includes cache reads, `outputTokens` includes reasoning, as the provider reports them). `costUsd` is `null` when any attempt has no price, never a partial sum. The same calls are reported to the run record and Argo.
+
+**Route.** Haiku 5.5 EU over the native Messages wire; no Requesty hop and no fallback (`packages/routes` README §Deliberate differences). The gateway used deepseek-v4.1-flash, a Requesty model.
+
+**Cancel.** The call's signal reaches the HTTP request: `agw run cancel <runId>` or `POST /runs/{runId}/cancel` ends an in-flight `triage` or `decide` (`packages/host/test/iris-calls.test.ts`), as does a client that disconnects without an `Idempotency-Key`.
+
+**Caller.** The host has no caller identity beyond `x-agw-purpose`: iris sends `x-agw-purpose: iris`, and the run's `purpose`, its span attribute `agw.purpose` and the Argo row's `raw.purpose` carry it. A user's own call is `prod`; the follow-up and drift samples look at `prod` only, so iris's calls are not in them.
+
+**Token effect / cache effect.** The prompt is about a page, the answer under 100 tokens; the instruction comes first and the memo last, so the prompt cache has a short common prefix at best. A rejected answer costs a second full call.
 
 ## Web capabilities (`src/web/`)
 

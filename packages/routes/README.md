@@ -115,14 +115,16 @@ The capability seats (`src/table/cheap.ts`, `decide.ts`); a workflow's seats are
 | `cheap.classify` | `triage` (SINGLE_SHOT) | deepseek-v4.1-flash | iu-openai |
 | `cheap.summarize` | `overview` (CLASSIFY) | claude-haiku-5-5-eu | iu-anthropic |
 | `cheap.title` | `narrative` (CLASSIFY) | claude-haiku-5-5-eu | iu-anthropic |
-| `decide` | `DEFAULT_DECISION_MODEL` | pplx-decider-v1-27b | iu-decision |
+| `decide` | `DEFAULT_DECISION_MODEL` | decision-1-eu | iu-decision |
+| `triage` | `triage` (SINGLE_SHOT) | claude-haiku-5-5-eu | iu-anthropic |
 
 Deliberate differences from the gateway:
 
 - `cheap.summarize` and `cheap.title` run in the gateway as a Haiku 5.5 EU OpenCode session. As cheap single-shots they use the native Messages wire with the same model. There is no separate title seat there; `narrative` is the closest.
 - `maxOutputTokens: 16000` is the floor `single-shot.ts` sends for reasoning models.
 - Not ported: the Max-lane fallback (`fallback: sonnet` on Max), `prose_*`, `read_image`, `review_ocr` and dispatch seats (`otel` is `otel.agent`). They belong to the Claude runtime or to later waves.
-- The `decide` rate is the UE price list from `decision.ts`.
+- The `decide` rate is the UE price list from `decision.ts`. The gateway's default `pplx-decider-v1-27b` is served by IU's "Requesty decision compatibility API" (`x-middleware-forwarded-server`, probed 2026-10-29), so `decide` runs `decision-1-eu` (Microsoft, Sweden Central), which carries no such header: same wire, request shape and 60k-character cap, input-only rate $0.042/M. Its confidences are calibrated by another model; a caller that thresholds on them re-checks the threshold.
+- `triage` moved off the gateway's deepseek-v4.1-flash (IU forwards that id to Requesty-Global, which answers 402/503 "Insufficient Balance") to Haiku 5.5 EU on the native Messages wire, the route `cheap.summarize` serves. Owner direction 2026-10-29: neither `triage` nor `decide` routes via Requesty. `triage` has no fallback (the default one is a Requesty list model); `decide` has none either. `cheap.classify` still sits on deepseek.
 
 ## Token effect / cache effect
 

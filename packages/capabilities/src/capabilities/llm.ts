@@ -6,6 +6,7 @@ import { createReviewAdversary } from './review-adversary.ts'
 import { createReviewRoute } from './review-route.ts'
 import { createSummarize } from './summarize.ts'
 import { createTitle } from './title.ts'
+import { createTriage } from './triage.ts'
 
 /** The model-backed capabilities: one single call each on its route. */
 export function createLlmCapabilities(deps: LlmDeps) {
@@ -14,6 +15,7 @@ export function createLlmCapabilities(deps: LlmDeps) {
     createTitle(deps),
     createClassify(deps),
     createDecide(deps),
+    createTriage(deps),
     createReviewRoute(deps),
     createReviewAdversary(deps),
     createProseReview(deps),

@@ -315,6 +315,15 @@ describe('decide (iu-decision)', () => {
       },
       model: 'fake-decider',
       truncatedChars: 0,
+      latencyMs: expect.any(Number),
+      usage: {
+        inputTokens: 100,
+        outputTokens: 10,
+        reasoningTokens: 0,
+        totalTokens: 110,
+        cacheReadTokens: 0,
+        costUsd: (100 * (route.rate?.inputPerM ?? 0) + 10 * (route.rate?.outputPerM ?? 0)) / 1_000_000,
+      },
     })
     const rate = route.rate
     expect(usages).toEqual([
