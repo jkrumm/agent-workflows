@@ -81,6 +81,9 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
   Answered: iris switches audio now (its Wave 16 S3); `triage` ported as-is in our Wave 8, then iris
   Wave 17 drops its agw adapters once our lead sends the decide + triage contract. argo's audio switch
   moved to Wave 9 (VPS reachability by the tailnet-grant precedent; security review).
+- 2026-10-29 ~13:00 owner: Argo shows "review 46.7 M" and combines personal IU with the team key.
+  Agent `argo` (pane w5V:p1, rd work) runs `~/.local/state/agent-workflows/briefs/argo-usage.md` end to end
+  and reports via rd say; findings inside agent-workflows come back to the mother for the lead.
 
 ## Next action
 - Watch the lead (`wave-watch.sh --agents agent-workflows-w1 --heartbeat 9`, bounded 10 min), read
