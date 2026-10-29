@@ -33,6 +33,9 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
   loses its Max fallback now and refuses once iris (last caller, 16 jobs since 10-28) uses
   `agw review --pr N`; asked iris-mother. Review OCR off by default. agent-gateway/.env's
   AGENT_GATEWAY_REVIEW_OCR=0 (set by the argo session) is kept and owned by us.
+  iris switched its review to `agw review --pr N` (~14:20); confirmation pending → then the refusal.
+  Kept on Max by assumption: in-session `/review --deep`, the degrade-to-`/code-review` fallback, the
+  fleet's own `/code-review high` (none is `claude -p`); flip if the owner says so.
 
 ## Open decisions
 - none
