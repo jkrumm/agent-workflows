@@ -26,7 +26,10 @@ import {
   startFrictionJob,
 } from './friction/index.ts'
 import { type LearningsStore, pgLearningsStore, withLearnedFacts, withLearningsFingerprint } from './learnings/index.ts'
-import { type HostWorkflow, IDLE_TIMEOUT_S } from './operations.ts'
+import { argoTimerEnabled, hostFleet, startArgoSchedule } from './fleet/index.ts'
+import { fleetOperations } from './fleet/operations.ts'
+import { type HostOperation, type HostWorkflow, IDLE_TIMEOUT_S } from './operations.ts'
+import { pgLatestOverview } from './workflows/overview/latest.ts'
 import { ghCli } from './workflows/retrospective/gh.ts'
 import { RETRO_WORKFLOW_ID } from './workflows/retrospective/index.ts'
 import { pgJournalReader } from './workflows/retrospective/sample.ts'
@@ -229,6 +232,8 @@ export interface ProcessDefinition {
   /** The daily friction job: `/health` reports its state, `settings` (absent: off) start it. Only the host runs one. */
   friction?: { settings: FrictionSettings | undefined }
   workflows(base: ProcessBase): Promise<HostWorkflow[]>
+  /** Read operations that start no run, served beside the run operations; built after `workflows`. */
+  reads?(): Record<string, HostOperation>
   /** Wired before the runtime opens (recovery may resume a run that needs them); `start` runs once it is open. */
   jobs?(process: ProcessRuntime): { start(): void } | undefined
   /** Built before the server binds. */
@@ -377,6 +382,7 @@ export async function bootProcess(
         ? registry
         : { served: [], router: {}, requestContext: registry.requestContext },
       workflows,
+      reads: definition.reads?.(),
       capabilityWorkflows,
       secret: config.secret,
       version: config.version,
@@ -474,13 +480,16 @@ export async function bootProcess(
 /** The host process: every workflow under `src/workflows`, the capabilities over HTTP, the retrospective, eval and friction. */
 export function hostProcess(config: HostConfig): ProcessDefinition {
   let journal: ReturnType<typeof pgJournalReader> | undefined
+  let fleet: ReturnType<typeof hostFleet> | undefined
   return {
     name: 'host',
     serviceName: 'agw',
     serveCapabilities: true,
     friction: { settings: config.friction },
-    async workflows({ config: base, registry, toolGate, logger, readPool, learnings, onClose }) {
+    async workflows({ config: base, env, registry, toolGate, logger, readPool, learnings, onClose }) {
       journal = pgJournalReader(readPool, base.schema)
+      // The agents overview: its collectors and quota are shared by `agw agents`, the `overview` workflow and the push.
+      fleet = hostFleet({ env, logger, machine: base.machine, latestOverview: pgLatestOverview(readPool, base.schema) })
       const gh = config.retroFileIssues && config.retroIssueRepo ? ghCli({ repo: config.retroIssueRepo }) : undefined
       // Issues may name only paths this repo tracks; a release is a `git archive` of the commit (see tracked.ts).
       const repoRoot = resolve(import.meta.dir, '../../..')
@@ -507,9 +516,11 @@ export function hostProcess(config: HostConfig): ProcessDefinition {
         toolGate,
         logger,
         retro: { journal, learnings, gh, tracked },
+        fleet: { fleet: fleet.fleet, argo: fleet.argo },
         research: { ledger: pgToolLedger(ledgerPool, base.schema) },
       })
     },
+    reads: () => (fleet ? fleetOperations(fleet.fleet) : {}),
     jobs({ runtime, workflows, env, onClose, logger }) {
       // Eval runs reach the runtime before it opens (recovery may resume one); drift scores sampled production runs.
       const evalJobs = wireEval({ runtime, workflows: [...workflows], env })
@@ -517,6 +528,10 @@ export function hostProcess(config: HostConfig): ProcessDefinition {
       return {
         start() {
           evalJobs.start()
+          if (fleet && argoTimerEnabled(env)) {
+            const push = startArgoSchedule({ push: fleet.argo })
+            onClose(async () => push.stop())
+          }
           const retrospective = workflows.find((entry) => entry.workflow.id === RETRO_WORKFLOW_ID)
           if (!config.retroWeekly || !retrospective || !journal) return
           const schedule = startRetroSchedule({

@@ -50,6 +50,7 @@ describe('workflow discovery', () => {
       'learnings',
       'narrative',
       'otel',
+      'overview',
       'prose-polish',
       'prose',
       'research',

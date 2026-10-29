@@ -38,6 +38,7 @@ Names only; values come from 1Password through `secrets-run`, never from the rep
 | `AGW_DRIFT_RATE`, `AGW_DRIFT_INTERVAL_S` | no | drift: the share of finished production runs scored after the fact (default `0.1`, `0` turns it off) and the tick (default 300 s); a bad value refuses to start |
 | `AGW_EVAL_DIR`, `AGW_EVAL_HOME` | no | `agw eval run`: where `<workflow>/cases.jsonl` live (default `~/.local/share/agent-workflows/eval`) and the root a case's `repo` is relative to (default `$HOME`) |
 | `AGW_VOICE_PATH` | no | the voice guide `prose` checks and names in its brief; default the brain vault's `voice.md`. Unreadable or empty: `prose` fails before any model call, naming this variable |
+| `AGW_ARGO_PUSH`, `AGW_AGENT_STALE_HOURS`, `AGW_HERDR_BIN`, `AGW_CLAUDE_BIN`, `AGW_CLAUDE_ACCOUNT_BIN`, `AGW_CLAUDE_LOG_DIR`, `AGW_SESSION_ACCOUNTS_DIR`, `AGW_AGENT_GATEWAY_URL` | no | the agents overview (§Host reads, `src/workflows/overview/README.md` §Environment): the Argo timer switch (`ARGO_URL` and `ARGO_API_SECRET` above are its target) and where the collectors read |
 | `AGW_BRAIN_DIR` | no | the vault the `brain.*` capabilities read (default `~/SourceRoot/brain`); a path that is no directory is `NOT_CONFIGURED` |
 
 ## Routes
@@ -80,6 +81,26 @@ Names only; values come from 1Password through `secrets-run`, never from the rep
 
 Run state comes from `Runtime.getRun` and `Runtime.ping` (the runtime's public read API). The only SQL in the host is the learnings store and the retrospective's sampling (below), through one small pool of its own (2 connections, 30 s statement timeout) that never touches the run path. A held `Prefer: wait` polls `getRun`: one primary-key read per poll, backed off from 25 ms to 250 ms, so waiters cost the journal pool far less than the run writes. If that ever starves the pool (the runtime's `journalPoolSize`, default 10), the fix is a separate read pool inside the runtime, not more SQL in the host.
 
+## Host reads
+
+Three commands answer from the host without journaling a run, the way `run status` does: a herdr pane polls the first
+every half minute and the statusline reports to the third on every render. They are operations handed to `createHost`
+(`reads`, listed beside the run operations in the contract; the router key `reads` is reserved) and built by
+`src/fleet/operations.ts`. Only the host process serves them (`ProcessDefinition.reads`; audio defines none): the CLI refuses a
+command two processes declare unless every owner is a run command, and `packages/audio/test/read-operations.test.ts` boots both
+processes and checks that rule. Settings reach them as closures over the process `env`, never `process.env` inside an operation.
+
+| Command | Method, path | Does |
+|-|-|-|
+| `agw agents [--text] [--cols N] [--color]` | `POST /agents` | the agents overview, `{data}` (agent-gateway's `GET /api/overview` `data`, field for field, which Argo's `/agents/overview` takes as it is) or `{text}` for `watch` (`--format plain` prints it) |
+| `agw quota` | `GET /quota` | `{data, accounts}`: the last `iu` report and every account's quota (the CLI numbers, overridden per window by a newer report, `stale` after 6 h) |
+| `agw quota-report --five-hour-pct N [--five-hour-mins-left N] [--seven-day-pct N] [--account ID]` | `POST /quota/report` | the statusline's report, kept in memory (`account` default `iu`) |
+
+`agents` is a POST because its flags are typed (`--cols` is an integer, `--text` a boolean) and a GET query string would
+make the CLI send them as text. The host also pushes the same payload to Argo after each `overview` run and every ten
+minutes (`startArgoSchedule`, stopped on close, off with `AGW_ARGO_PUSH=0`); a failed push is one log line. Details,
+decisions and the environment: `src/workflows/overview/README.md`.
+
 ## Known gaps
 
 - `/health` does not reflect stale recovery ticks: it says the runtime is open and Postgres answers, not that recovery is still running.
@@ -87,7 +108,7 @@ Run state comes from `Runtime.getRun` and `Runtime.ping` (the runtime's public r
 ## Workflows
 
 Each workflow lives in `src/workflows/<id>/`, its docs in `src/workflows/<id>/README.md`: `brain`, `check`,
-`diagram`, `eval`, `otel`, `prose`, `research`, `retrospective` (with the learnings commands), `review`. This file keeps
+`diagram`, `eval`, `otel`, `overview`, `prose`, `research`, `retrospective` (with the learnings commands), `review`. This file keeps
 what they share (HTTP, the tool gate, process, deploy). `smoke.ping` (`src/workflows/smoke/`) is the reference: one
 code step calling `llm.title` through `registry.call`, its usage passed to the step's `addUsage` so the run has priced
 usage that reaches Argo.

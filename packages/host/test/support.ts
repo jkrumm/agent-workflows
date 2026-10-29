@@ -6,7 +6,7 @@ import { Pool } from 'pg'
 import { z } from 'zod'
 import { createHost, type Host } from '../src/app.ts'
 import { createCapabilityWorkflows } from '../src/capability-runs.ts'
-import type { HostWorkflow } from '../src/operations.ts'
+import type { HostOperation, HostWorkflow } from '../src/operations.ts'
 import { type RunStore, runtimeRunStore } from '../src/store.ts'
 import { createSmokePing } from '../src/workflows/smoke/index.ts'
 import { FakeArgo, testPlatform } from '../../middleware/test/support.ts'
@@ -106,6 +106,8 @@ export async function startTestHost(
     secret?: string
     isOpen?: () => boolean
     extra?: HostWorkflow[]
+    /** Read operations served beside the run operations (`host.reads`). */
+    reads?: Record<string, HostOperation>
     iu?: FakeIuServer
     ping?: () => Promise<void>
     healthTimeoutMs?: number
@@ -170,6 +172,7 @@ export async function startTestHost(
       runtime,
       registry,
       workflows,
+      reads: options.reads,
       capabilityWorkflows,
       store,
       logger: options.logger,

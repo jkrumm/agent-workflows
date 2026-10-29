@@ -39,6 +39,8 @@ export interface HostOptions {
   workflows: HostWorkflow[]
   /** The `cap.<id>` workflows direct capability calls run as; the runtime must have been given the same map. */
   capabilityWorkflows: CapabilityWorkflows
+  /** Read operations that start no run (`agw agents`, `quota`): served and listed in the contract beside the run operations. */
+  reads?: Record<string, HostOperation>
   /** Run state bodies and the `/health` probe. Default: the runtime's own read API. */
   store?: RunStore
   /** `AGW_API_SECRET`: at least 32 characters, else creation throws. */
@@ -122,6 +124,7 @@ export function createHost(options: HostOptions): Host {
     .map((entry) => ({ entry, op: workflowOperation(entry, deps) }))
   const runs = runOperations(deps)
   const routes = options.routesEnv ? routesOperation(options.routesEnv) : undefined
+  const reads = options.reads ?? {}
   // A direct capability call over HTTP is a one-step run; `boot` registers the same workflows with the runtime.
   const invoke = capabilityRuns(options.capabilityWorkflows, { ...deps, isOpen })
 
@@ -145,6 +148,7 @@ export function createHost(options: HostOptions): Host {
     ...workflows.map(({ entry, op }) => ({ owner: `workflow ${entry.workflow.id}`, op })),
     ...Object.entries(runs).map(([name, op]) => ({ owner: `run ${name}`, op })),
     ...(routes ? [{ owner: 'routes', op: routes }] : []),
+    ...Object.entries(reads).map(([name, op]) => ({ owner: `read ${name}`, op })),
   ]
   assertCommands(operations.map(({ owner, op }) => ({ owner, command: op.cli.command })))
   for (const key of ['operationId', 'path'] as const) {
@@ -157,7 +161,7 @@ export function createHost(options: HostOptions): Host {
     }
   }
 
-  for (const reserved of ['workflows', 'runs', 'routes']) {
+  for (const reserved of ['workflows', 'runs', 'routes', 'reads']) {
     if (reserved in registry.router)
       throw new Error(`capability ids may not start with "${reserved}." (reserved by the host)`)
   }
@@ -166,6 +170,7 @@ export function createHost(options: HostOptions): Host {
     workflows: Object.fromEntries(workflows.map(({ entry, op }) => [entry.workflow.id, op.procedure])),
     runs: Object.fromEntries(Object.entries(runs).map(([name, op]) => [name, op.procedure])),
     ...(routes ? { routes: routes.procedure } : {}),
+    reads: Object.fromEntries(Object.entries(reads).map(([name, op]) => [name, op.procedure])),
   }
   const handler = new OpenAPIHandler(router as never, {
     interceptors: [
