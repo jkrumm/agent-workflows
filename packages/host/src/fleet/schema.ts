@@ -2,7 +2,7 @@ import { CONFIDENCES, RECOMMENDATIONS } from '@agent-workflows/capabilities'
 import { z } from 'zod'
 
 // The shapes of the agents overview. They are the payload `agw agents` answers and the Argo push posts, field for field
-// what agent-gateway's `GET /api/overview` returned under `data` (minus the retired dispatch fields).
+// what agent-gateway's `GET /api/overview` returned under `data` (minus the retired dispatch fields, `summary.dispatch` included).
 
 export const AGENT_SOURCE = z.enum(['herdr', 'claude'])
 export type AgentSource = z.infer<typeof AGENT_SOURCE>
@@ -75,9 +75,6 @@ export const SUMMARY = z.object({
   idle: z.number(),
   stale: z.number(),
   done: z.number(),
-  dispatch: z
-    .literal(0)
-    .describe("Retired with the dispatch lane; Argo's ingest still requires the field, so it stays 0"),
 })
 export type Summary = z.infer<typeof SUMMARY>
 

@@ -78,7 +78,7 @@ describe('buildSnapshot (fake collectors)', () => {
     )
 
     expect(snapshot.generatedAt).toBe(NOW)
-    expect(snapshot.summary).toEqual({ needsYou: 1, working: 1, idle: 0, stale: 0, done: 0, dispatch: 0 })
+    expect(snapshot.summary).toEqual({ needsYou: 1, working: 1, idle: 0, stale: 0, done: 0 })
     expect(snapshot.projects.map((p) => p.name)).toEqual(['alpha-ws', 'beta', 'gamma'])
     const agents = Object.fromEntries(snapshot.projects.flatMap((p) => p.agents).map((a) => [a.id, a]))
     expect(agents.s1).toMatchObject({ state: 'needs_you', account: 'me', title: 'fix the build' })

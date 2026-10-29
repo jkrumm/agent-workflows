@@ -36,8 +36,7 @@ not Requesty.
 - **The push carries the run itself.** The `push` step posts the payload merged with the run that is just ending: its
   output is not in the journal until the run ends, so reading "the newest run" there would push the previous one.
 - **No dispatch lane.** Dispatch retired with agent-gateway (owner, 2026-10-29): the collector reads herdr, Claude's
-  registry, transcripts and the human queue only. `summary.dispatch` stays on the wire as a constant `0` because Argo's
-  ingest still requires the field; it goes when Argo drops it. The `agent-gateway:review` and `agent-gateway:dispatch`
+  registry, transcripts and the human queue only. `summary.dispatch` is gone from the wire too (Argo's ingest no longer requires it). The `agent-gateway:review` and `agent-gateway:dispatch`
   quota lanes left the pick list for the same reason (only gateway workers used them).
 - **Git status is read-only except one fetch.** As in legacy each project's checkout is `git fetch --quiet --prune`d (5 s
   cap, no credential prompt) so ahead/behind is current; the status itself needs the branch, `status --porcelain`,

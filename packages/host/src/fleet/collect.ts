@@ -443,7 +443,7 @@ async function mapPool<T, R>(items: readonly T[], limit: number, fn: (item: T) =
 }
 
 function summarize(projects: Snapshot['projects']): Summary {
-  const summary: Summary = { needsYou: 0, working: 0, idle: 0, stale: 0, done: 0, dispatch: 0 }
+  const summary: Summary = { needsYou: 0, working: 0, idle: 0, stale: 0, done: 0 }
   for (const project of projects) {
     for (const agent of project.agents) {
       if (agent.state === 'needs_you') summary.needsYou += 1

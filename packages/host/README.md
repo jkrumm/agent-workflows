@@ -92,7 +92,7 @@ processes and checks that rule. Settings reach them as closures over the process
 
 | Command | Method, path | Does |
 |-|-|-|
-| `agw agents [--text] [--cols N] [--color]` | `POST /agents` | the agents overview, `{data}` (what agent-gateway's `GET /api/overview` returned under `data`, minus the retired dispatch fields; `summary.dispatch` stays a constant `0` until Argo's `/agents/overview` ingest stops requiring it) or `{text}` for `watch` (`--format plain` prints it) |
+| `agw agents [--text] [--cols N] [--color]` | `POST /agents` | the agents overview, `{data}` (what agent-gateway's `GET /api/overview` returned under `data`, minus the retired dispatch fields, `summary.dispatch` included) or `{text}` for `watch` (`--format plain` prints it) |
 | `agw quota` | `GET /quota` | `{data, accounts}`: the last `iu` report and every account's quota (the CLI numbers, overridden per window by a newer report, `stale` after 6 h) |
 | `agw quota-report --five-hour-pct N [--five-hour-mins-left N] [--seven-day-pct N] [--account ID]` | `POST /quota/report` | the statusline's report, kept in memory (`account` default `iu`) |
 

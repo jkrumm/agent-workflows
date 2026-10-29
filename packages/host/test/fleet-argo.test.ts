@@ -6,7 +6,7 @@ import type { OverviewPayload } from '../src/fleet/schema.ts'
 const payload = {
   generatedAt: 1_800_000_000_000,
   staleAfterHours: 24,
-  summary: { needsYou: 0, working: 1, idle: 0, stale: 0, done: 0, dispatch: 0 },
+  summary: { needsYou: 0, working: 1, idle: 0, stale: 0, done: 0 },
   projects: [{ name: 'p', cwd: '/x', git: null, agents: [{ id: 'a' }, { id: 'b' }] }],
   humanQueue: [],
   warnings: [],
