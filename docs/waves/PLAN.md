@@ -223,6 +223,10 @@ Workers: Sonnet/high; Opus/medium for the pipeline's durable stages.
 Workers: Sonnet/high.
 
 - [ ] Usage projection from run records into Argo's usage ingest
+- [ ] Usage rows correct (argo audit 2026-10-29): 99 review rows unpriced (`cost_source=none`, Haiku/Sonnet EU
+  routes) priced; reasoning tokens checked not to be counted inside output too (fresh tokens double
+  counted otherwise); every row carries its caller/project (`agw` CLI session, iris, Hermes, eval) so
+  spend is attributable per caller
 - [ ] argo's `/ai` audio proxy on the new audio door: reachable from the VPS by the existing tailnet-grant
   precedent plus a Caddy row, per-caller bearer, the `podcast` and `file/:hash` endpoints ported; a
   security review; VPS audio-gateway serves argo until this lands
