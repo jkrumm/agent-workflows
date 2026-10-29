@@ -21,11 +21,13 @@ export type FinishedRun = {
 }
 
 /**
- * Where the gate's calls go (migrations 0007, 0009). Append-only: `read` never consumes, so a retried or resumed step
+ * Where the gate's calls go (migration 0007; 0008 added columns the code no longer reads or writes, left for a rollback target). Append-only: `read` never consumes, so a retried or resumed step
  * reads the same calls. A call's cost is booked on the run itself; the row is only its evidence. The same store reads
  * a run's record for a follow-up, because it already holds the host's journal connection.
  */
 export interface ToolLedger {
+  /** Whether `run` can read the journal: false on a host without a database. */
+  readonly hasJournal: boolean
   append(entry: LedgerEntry): Promise<void>
   read(runId: string, stepId: string): Promise<LedgerEntry[]>
   /** The run's record, or null when no such run exists (or the host has no journal). */
@@ -44,6 +46,7 @@ type Row = {
 export function pgToolLedger(pool: Pick<Pool, 'query'>, schema: string): ToolLedger {
   const table = `"${schema}".research_tool_calls`
   return {
+    hasJournal: true,
     async append(e) {
       await pool.query(
         `insert into ${table} (run_id, step_id, tool, args_digest, ok, retrieved, seen, error)
@@ -91,6 +94,7 @@ export function pgToolLedger(pool: Pick<Pool, 'query'>, schema: string): ToolLed
 export function memoryToolLedger(): ToolLedger {
   const entries: LedgerEntry[] = []
   return {
+    hasJournal: false,
     async append(e) {
       entries.push(structuredClone(e))
     },
