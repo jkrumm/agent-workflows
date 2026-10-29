@@ -277,31 +277,35 @@ describe('podcast.produce', () => {
       const heldText = units[2] as string
       // Unit 2's first request never answers: the process dies with it in flight.
       const tts = fakeTts((text, attempt) => (text === heldText && attempt === 1 ? never() : undefined))
-      // One TTS request at a time, so units 0 and 1 are done when unit 2 is in flight. Each process has its own limiter.
-      const produce = produceWith(tts, { concurrency: 1 })
+      const produce = produceWith(tts, { concurrency: 8 })
       const first = testRuntime({ schema: db.schema, workflows: [produce] })
       await first.open()
-      const { runId } = await first.start(produce, episodeInput(), { purpose: 'build' })
-      await until(
-        async () => (await sql.step(`${runId}/synth/1`, 'synth'))?.status === 'done' && tts.calls(heldText) === 1,
-        'units 0 and 1 done, unit 2 in flight',
-      )
-      await first.close() // a deploy mid-synth: the run stays running
+      let runId = ''
+      try {
+        runId = (await first.start(produce, episodeInput(), { purpose: 'build' })).runId
+        await until(
+          async () => {
+            const done = (await unitSteps(runId)).filter((s) => s.status === 'done').length
+            return done === units.length - 1 && tts.calls(heldText) === 1
+          },
+          'every unit done but unit 2, which is in flight',
+          60_000,
+        )
+      } finally {
+        await first.close() // a deploy mid-synth: the run stays running
+      }
       expect((await sql.run(runId))?.status).toBe('running')
 
-      const second = testRuntime({ schema: db.schema, workflows: [produceWith(tts, { concurrency: 1 })] })
+      const second = testRuntime({ schema: db.schema, workflows: [produceWith(tts, { concurrency: 8 })] })
       await second.open()
       try {
         expect((await second.wait(runId)).status).toBe('done')
         // Done units replayed from the journal; the interrupted one ran again; the rest once.
-        expect(tts.calls(units[0] as string)).toBe(1)
-        expect(tts.calls(units[1] as string)).toBe(1)
-        expect(tts.calls(heldText)).toBe(2)
-        for (const text of units.slice(3)) expect(tts.calls(text)).toBe(1)
         const synth = await unitSteps(runId)
-        expect(synth[0]).toMatchObject({ status: 'done', attempts: 1 })
-        expect(synth[1]).toMatchObject({ status: 'done', attempts: 1 })
-        expect(synth[2]).toMatchObject({ status: 'done', attempts: 2 })
+        units.forEach((text, i) => {
+          expect(tts.calls(text)).toBe(i === 2 ? 2 : 1)
+          expect(synth[i]).toMatchObject({ status: 'done', attempts: i === 2 ? 2 : 1 })
+        })
       } finally {
         await second.close()
         tts.iu.stop()
@@ -349,13 +353,17 @@ describe('podcast.produce', () => {
       const produce = produceWith(tts, { abs })
       const first = testRuntime({ schema: db.schema, workflows: [produce] })
       await first.open()
-      const { runId } = await first.start(produce, episodeInput({ brainNote: false }), { purpose: 'build' })
-      await until(
-        () => abs.count('PATCH', '/api/podcasts/item1/episode/ep1') === 1,
-        'publish held at the episode patch',
-        60_000,
-      )
-      await first.close()
+      let runId = ''
+      try {
+        runId = (await first.start(produce, episodeInput({ brainNote: false }), { purpose: 'build' })).runId
+        await until(
+          () => abs.count('PATCH', '/api/podcasts/item1/episode/ep1') === 1,
+          'publish held at the episode patch',
+          60_000,
+        )
+      } finally {
+        await first.close()
+      }
 
       const second = testRuntime({ schema: db.schema, workflows: [produce] })
       await second.open()
