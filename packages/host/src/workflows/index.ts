@@ -1,5 +1,6 @@
 import type { createCapabilities, Registry } from '@agent-workflows/capabilities'
 import type { AgentRef } from '@agent-workflows/middleware'
+import type { Logger } from '@agent-workflows/runtime'
 import { createLearningsWorkflows, type LearningsStore } from '../learnings/index.ts'
 import type { HostWorkflow } from '../operations.ts'
 import type { ToolGate } from '../tool-gate/index.ts'
@@ -24,14 +25,17 @@ export interface WorkflowDeps {
   retro?: { journal: JournalReader; learnings: LearningsStore; gh?: GhPort; tracked?: () => Promise<TrackedPaths> }
   /** Where research's tool gate records every call (Postgres on the host); absent: in memory. */
   research?: { ledger: ToolLedger }
-  /** The host's one tool gate: a workflow that gives its agent tools opens a grant on it. Absent: research builds its own. */
+  /** The host's one tool gate; see `HostDeps`. */
   toolGate?: ToolGate
-  /** Registers what the host must close on shutdown. */
-  onClose?: (close: () => void | Promise<void>) => void
+  /** Where a workflow's non-fatal failures (a hook, a ledger write) are logged; default: nowhere. */
+  logger?: Logger
 }
 
+/** What the host builds its workflows from: `WorkflowDeps` plus its one tool gate, which a workflow that gives its agent tools opens a grant on. Two gates would fight over one `gate.json`, so there is no per-workflow fallback. */
+export type HostDeps = WorkflowDeps & { toolGate: ToolGate }
+
 /** Every workflow the host process serves. Heavy pipelines run in their own processes (concept §8). */
-export function createWorkflows(deps: WorkflowDeps): HostWorkflow[] {
+export function createWorkflows(deps: HostDeps): HostWorkflow[] {
   const base = [
     createSmokePing(deps.registry),
     ...createReviewWorkflows(deps),
