@@ -1,3 +1,4 @@
+import { type BrainDeps, createBrainCapabilities } from '../brain/index.ts'
 import type { LlmDeps } from '../llm/model-call.ts'
 import { createHdxCapabilities, type HdxDeps } from '../hdx/index.ts'
 import { iuTransports } from '../transports/index.ts'
@@ -10,11 +11,12 @@ import { createReviewRoute } from './review-route.ts'
 import { createSummarize } from './summarize.ts'
 import { createTitle } from './title.ts'
 
-/** The model-backed capabilities, the research tools and the HyperDX API. `deps`, `web` and `hdx` default to production on `process.env`. */
+/** The model-backed capabilities, the research tools, the HyperDX API and the vault tools. `deps`, `web`, `hdx` and `brain` default to production on `process.env`. */
 export function createCapabilities(
   deps: LlmDeps = { transports: iuTransports() },
   web: WebDeps = {},
   hdx: HdxDeps = {},
+  brain: BrainDeps = {},
 ) {
   return [
     createSummarize(deps),
@@ -26,5 +28,6 @@ export function createCapabilities(
     createProseReview(deps),
     ...createWebCapabilities(web),
     ...createHdxCapabilities(hdx),
+    ...createBrainCapabilities(brain),
   ] as const
 }

@@ -83,6 +83,7 @@ Model ids and efforts are what agent-gateway resolves today. None of these seats
 | `check` | `check` (CLASSIFY) | claude-haiku-5-5-eu | opencode |
 | `retro.analyze` | none (new; copied from `check`, concept §7) | claude-haiku-5-5-eu | opencode |
 | `research.agent` | research-gateway's `IU_LEAD_MODEL` / `IU_WORKER_MODEL` (not agent-gateway) | deepseek-v4.1-flash | opencode |
+| `brain.agent` | none (new; Wave 7, the brain agent over the private vault; **no fallback**) | claude-haiku-5-5-eu | opencode |
 
 Deliberate differences from the gateway:
 

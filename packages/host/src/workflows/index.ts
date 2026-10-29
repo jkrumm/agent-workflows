@@ -4,6 +4,7 @@ import type { Logger } from '@agent-workflows/runtime'
 import { createLearningsWorkflows, type LearningsStore } from '../learnings/index.ts'
 import type { HostWorkflow } from '../operations.ts'
 import type { ToolGate } from '../tool-gate/index.ts'
+import { createBrainWorkflows } from './brain/index.ts'
 import { createCheckWorkflows } from './check/index.ts'
 import { createRetrospective } from './retrospective/index.ts'
 import type { GhPort } from './retrospective/gh.ts'
@@ -44,6 +45,7 @@ export function createWorkflows(deps: HostDeps): HostWorkflow[] {
     ...createEvalWorkflows(),
     ...createResearchWorkflows(deps),
     ...createProseWorkflows(deps),
+    ...createBrainWorkflows(deps),
   ]
   if (!deps.retro) return base
   const { journal, learnings, gh, tracked } = deps.retro

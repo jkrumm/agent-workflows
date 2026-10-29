@@ -38,6 +38,7 @@ Names only; values come from 1Password through `secrets-run`, never from the rep
 | `AGW_DRIFT_RATE`, `AGW_DRIFT_INTERVAL_S` | no | drift: the share of finished production runs scored after the fact (default `0.1`, `0` turns it off) and the tick (default 300 s); a bad value refuses to start |
 | `AGW_EVAL_DIR`, `AGW_EVAL_HOME` | no | `agw eval run`: where `<workflow>/cases.jsonl` live (default `~/.local/share/agent-workflows/eval`) and the root a case's `repo` is relative to (default `$HOME`) |
 | `AGW_VOICE_PATH` | no | the voice guide `prose` checks and names in its brief; default the brain vault's `voice.md`. Unreadable or empty: `prose` fails before any model call, naming this variable |
+| `AGW_BRAIN_DIR` | no | the vault the `brain.*` capabilities read (default `~/SourceRoot/brain`); a path that is no directory is `NOT_CONFIGURED` |
 
 ## Routes
 
@@ -240,6 +241,43 @@ agent's `tools` counts. `--depth` defaults to `standard`. A long run waits like 
 - **Scorer** (`scorer.ts`): `valid`, `complete`, `grounded` (code), `golden` (the case's `expect`, research-gateway
   `evals/lib.ts` semantics; `live:` via `web.package`), `supported` (judged: `web.fetch` + `decide` on up to 3 cited
   pages), `judgedShare`. Cases are plain eval cases in `$AGW_EVAL_DIR/research/cases.jsonl`.
+
+## Brain (Wave 7)
+
+`src/workflows/brain/`: `agw brain "<question>"` answers a question from the owner's vault, read-only. Output (the
+contract; `schema.ts`): `{ answer, citations: [{ path, claim }], read: [path], status: ok|partial|notfound, warnings,
+grounding: { citations, grounded } }`. Input `{ question }`, strict. A long run waits like research (exit 10, `agw run
+wait <runId>`).
+
+- **The agent** (`agents/brain`, route `brain.agent`) holds `brain_search` and `brain_read` and nothing else: they go
+  through the tool gate (§Tool gate) to the `brain.*` capabilities (`packages/capabilities` §Brain capabilities). OpenCode's
+  own `read`, `grep` and `glob` are offered but denied outside the agent's location (`external_directory`), which
+  `brain-opencode.test.ts` proves against the real `opencode`, so the gate is the only way to the vault.
+- **Route decision: `claude-haiku-5-5-eu`, not DeepSeek, and no fallback.** The agent reads arbitrary private notes
+  (health, finance); that content never leaves the Anthropic EU route. Unlike every other agent route, `brain.agent`
+  has no provider-balance fallback (owner decision, 2026-10-29): a balance failure fails the run with the typed error
+  instead of moving the notes to another provider, and `AGW_ROUTES` cannot add one. `brain.test.ts` pins it.
+- **Grounding.** The gate's per-call hook (research's guarded one, `ledgerGrant`) records each `brain_read` that found
+  a note into the evidence ledger (the `research_tool_calls` table, the note's canonical path in `retrieved`; reused,
+  no migration), the `tools` step reads it once the agent has ended. A citation whose path is not a note the run opened
+  (compared `./`-stripped, NFC and case-folded; a kept citation carries the canonical path) is dropped into `warnings`;
+  a search hit alone does not ground one. `partial`: a citation was dropped, none was grounded, or nothing was read.
+  `notfound`: the agent's own `found: false` ("Not in the vault."). `grounding` counts before the drop. Because the
+  ledger is the table, a host restart mid-run loses nothing.
+- **Per attempt.** A failed agent step is tried once more as a second step, `brain:retry`, with its own grant, `tools:retry`
+  evidence step and ledger step: the answer is grounded on the notes the attempt that produced it read, so a note an
+  attempt read before it died grounds nothing in the retry, and calls are not summed across attempts. The runtime's own
+  step retry is not used for this (one grant and one ledger step would span both sessions). A cancel is not retried.
+- **Re-ask.** A non-JSON answer gets one re-ask in the same session (`brain:reask`), then `invalid_output`.
+- **As a child.** `createBrainWorkflows(deps)[0].workflow` is the `Workflow` a parent passes to
+  `ctx.workflow('<step>', brain, [{ question }, …])`; a child that fails is `null`. The input and output above are the
+  stable contract; a change to either bumps `BRAIN_VERSION`. `brain.test.ts` calls it from a fake parent.
+- **Eval** (`docs/research/2026-10-29-wave7-ports.md` §brain): suite `brain`, plain cases in
+  `$AGW_EVAL_DIR/brain/cases.jsonl` (`{id, input: {question}, reference: {notes: [1-2 vault paths], facts: [1-3]}}`).
+  The scorer reports `valid`, `reference` (a reference note is cited; with two notes, either), `grounded` (cited and
+  read; the rule needs 1 on every case) and `facts` (judged: one `decide` boolean per reference fact, regression and
+  drift only); `pass` is valid, reference cited, nothing dropped. Cost is the harness's `costUsd` (median ≤ $0.01).
+  The live run is `agw eval run brain --yes`, once, by the lead.
 
 ## Tool gate
 
@@ -460,6 +498,8 @@ Otherwise none of its own beyond the OpenCode adapter's repeat-tool nudge (openc
 | `eval.test.ts` | `eval.run` on a fake agent host with two check cases on a real git repo (plan without `--yes`, purpose `eval`, scores and fingerprint recorded, clones removed, bad ids and args refused), `eval.compare` with equal fingerprints by args and on synthetic runs with known deltas, drift scoring each sampled run once across two jobs |
 | `eval-cli.test.ts` | the document as the CLI reads it: `agw eval run` and `agw eval compare` are commands with their flags, none skipped |
 | `eval-resume.test.ts` | a resumed `eval.run` adopts its case runs (no new clone, a scored case not scored again, the running one's clone kept across the shutdown and removed by the adopting process); a cancelled one cancels its running case, starts no further case and removes a clone only after its run ended (a slowed cancel proves the order); an adopt-path failure and a scorer error are per-case errors outside the pass rate |
+| `brain.test.ts` | the brain workflow on `FakeAgentHost` with the real `brain.*` capabilities on a temp vault behind the gate: grounding (an unread, search-only, refused or invented path dropped), ok / partial / notfound, the ledger rows, `$0` usage on the `tools` step, the re-ask, a parent calling it as a child, the agent's grant (agent.json, plugin, `BRAIN_TOOLS` agree on two tools), the scorer and the suite reader |
+| `brain-opencode.test.ts` | the brain agent on the real `opencode` with a scripted model (skipped without the binary): offered exactly its two tools plus the denied file tools, the plugin reaches the gate, a refused read reaches the model, `read` and `grep` of the vault are denied |
 | `main.test.ts` | config, `lazyOpenCodeHost` (nothing built before the first agent step, a failed start retried), `boot` (a taken port fails before the runtime opens), the process entry: refusals, SIGTERM leaves a run `running` with exit 0, a second process resumes it |
 | `friction.test.ts` | the threshold job against Postgres rows: breach, no breach (rate, minimum, build/verify/eval traffic, window, cancelled, unrecorded), top-level only, every default limit alone, `off` limits, the issue record (open: skip by number; closed: only newer runs; reopened; deleted; a `gh` error; intent rows after a crash), a failing `gh`, incomplete runs recounted before the rates (capped), the timer and a bounded `close()`; follow-up detection incl. fractional minutes; config parsing and the running host's `friction` state in `boot` and `/health`; the money-rule prefixes against the real `limits` errors; the lazy host's counters source |
 | `launch-override.test.ts` | the `launch.sh` IU override block in `/bin/sh` with a fake HOME: absent file, both names override, other lines warned by name only, CR and quote styles, refused with 78: a mode other than 0600, a missing name, an empty key, an unknown label |

@@ -177,6 +177,8 @@ describe('OpenAPI', () => {
     )
     expect(operations.map((o) => `${o.method} ${o.path}`).sort()).toEqual(
       [
+        'post /brain/read',
+        'post /brain/search',
         'post /decide',
         'post /hdx/guide',
         'post /hdx/link',
@@ -222,6 +224,8 @@ describe('OpenAPI', () => {
       Object.values(item).map((op) => op.operationId),
     )
     expect(ids.sort()).toEqual([
+      'brainRead',
+      'brainSearch',
       'decide',
       'hdxGuide',
       'hdxLink',

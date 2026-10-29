@@ -324,10 +324,11 @@ describe('fallback', () => {
   ]
   const agentSteps: RouteId[] = ['review.angle', 'review.synthesis', 'check']
 
-  test('every iu-openai, iu-anthropic and opencode route has one; decide has none', () => {
+  // `brain.agent` reads private notes and stays on its own provider: no fallback (owner decision, 2026-10-29).
+  test('every iu-openai, iu-anthropic and opencode route has one; decide and brain.agent have none', () => {
     for (const id of routeIds()) {
       const route = resolveRoute(id, {})
-      expect(route.fallback === undefined).toBe(route.wire === 'iu-decision')
+      expect(route.fallback === undefined).toBe(route.wire === 'iu-decision' || id === 'brain.agent')
     }
   })
 
