@@ -13,7 +13,7 @@ import type { Runtime } from '@agent-workflows/runtime'
 import type { Pool } from 'pg'
 import { callerAuth } from './callers.ts'
 import type { AudioProcessConfig } from './config.ts'
-import { createDoor, type Door, type DoorHandlers } from './door.ts'
+import { createDoor, type Door, type DoorHandlers, type Fetch } from './door.ts'
 
 export { callerAuth, type CallerAuth, parseDoorTokens, PLATFORM_CALLER, readDoorTokens } from './callers.ts'
 export { AUDIO_PORT, type AudioProcessConfig, loadAudioProcessConfig } from './config.ts'
@@ -21,11 +21,13 @@ export {
   createDoor,
   type Door,
   DOOR_WORKFLOW_IDS,
+  type DoorEnd,
   type DoorEndpoint,
   type DoorEvent,
   type DoorHandler,
   type DoorHandlerDeps,
   type DoorHandlers,
+  type Fetch,
 } from './door.ts'
 
 /** `src/workflows/<id>/module.ts`: the audio process's own tree, discovered like the host's. */
@@ -43,6 +45,8 @@ export interface AudioProcessOptions {
   handlers: DoorHandlers
   /** The caller tokens (`readDoorTokens`): read before boot, so a bad file refuses the start. */
   tokens: ReadonlyMap<string, string>
+  /** What the door's upstream calls go through (bound per request to its signal). Default: the global `fetch`. */
+  fetch?: Fetch
   /** Replaces the discovered modules (tests). */
   modules?: readonly DiscoveredModule[]
 }
@@ -73,6 +77,7 @@ export function audioProcess(options: AudioProcessOptions): ProcessDefinition {
         },
         isOpen: () => open(),
         logger,
+        ...(options.fetch ? { fetch: options.fetch } : {}),
       })
       const deps: AudioWorkflowDeps = { registry, toolGate, logger, journal: { db: readPool, schema: base.schema } }
       return [...(await createWorkflows(deps, modules)), ...door.workflows]

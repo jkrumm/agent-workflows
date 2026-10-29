@@ -214,10 +214,16 @@ The run observes, it never gates:
 - Its id is chosen by the door before the handler runs (a UUIDv7, `StartOptions.runId`) and is also the request id
   every usage event carries; `agw-run-id` goes out with the response at once, the 500 path included. The run is
   started in the background: no response, and no first byte, waits on the journal.
-- The handler's events land in an in-memory sink under that id; the run's one step waits until the `request` summary
-  arrived, or 2 s after the request ended without one. A request ends when its body ended, failed or was cancelled,
-  when the client went away (`request.signal`), or at the latest one hour after it arrived: a door run never stays
-  running and no sink is kept.
-- A start that fails (a bad purpose header, the journal down) is logged and drops the sink; the request is answered as
-  if nothing happened, and its `agw-run-id` then names no run.
+- The handler's events land in an in-memory sink under that id; an event under any other id is dropped (logged),
+  never put on this run. The record lasts as long as the handler's work: until its promise settled and its body
+  ended, failed or was cancelled, then up to 2 s more for a `request` summary not yet in (a pcm stream records it as
+  its body ends). At the latest one hour after the request arrived it ends anyway. The output's `ended` says why:
+  `done`, `client-gone` (the client had gone away) or `bound`.
+- The client going away does not end the record: it aborts the handler's upstream calls (every handler gets a
+  `fetch` bound to `request.signal`), and a call billed on the way out is still recorded.
+- A handler that cannot even be built is answered like one that threw: 500 `proxy_error`, with `agw-run-id`, and
+  its record closes at once.
+- A start that fails (a bad purpose header, the journal down) is logged as `door request not recorded` with the run
+  id; the request is answered as if nothing happened, and its `agw-run-id` then names no run (a lookup is a
+  not-found; the log line says why).
 - A request cut by a restart: the next process resumes its run, finds no sink and fails it as lost; it never hangs.

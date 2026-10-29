@@ -2,8 +2,9 @@
 // without `/v1` (audio-gateway matched any suffix; anchored here so no API path is ever taken over). Each request is one run of its own
 // (concept N6, the pattern of `packages/host/src/capability-runs.ts`): the journal, the run record with cost,
 // telemetry and the Argo outbox apply to it like to any workflow. The run is started beside the handler, never in
-// front of it, and only observes: the handler's usage events land in an in-memory sink the run's one step reads when
-// the request has ended. Recording never delays the audio and a recording failure never fails the request (logged).
+// front of it, and only observes: the handler's usage events land in an in-memory sink the run's one step reads once
+// the handler's work is over (its promise settled and its body ended). Recording never delays the audio and a
+// recording failure never fails the request (logged).
 import { BEARER_CHALLENGE, type HostWorkflow, RUN_ID_HEADER, startRun } from '@agent-workflows/host'
 import { defineWorkflow, type Logger, type Runtime, type Usage } from '@agent-workflows/runtime'
 import { z } from 'zod'
@@ -30,12 +31,21 @@ export interface DoorEvent {
   requestedModel?: string
 }
 
-/** What the door gives a handler factory, per request, beside its own config: the usage port, the request's id and caller. */
+export type Fetch = (url: string, init?: RequestInit) => Promise<Response>
+
+/**
+ * What the door gives a handler factory, per request, beside its own config: the usage port, the request's id and
+ * caller, and a `fetch` bound to the request's signal, so the client going away aborts the upstream calls.
+ */
 export interface DoorHandlerDeps {
   usage: { record(event: DoorEvent): void }
   requestId(req: Request): string
   caller(req: Request): string | undefined
+  fetch: Fetch
 }
+
+/** Why a request's record ended: its handler finished, the client went away, or the upper bound hit. */
+export type DoorEnd = 'done' | 'client-gone' | 'bound'
 
 export type DoorHandler = (req: Request) => Promise<Response>
 
@@ -47,11 +57,15 @@ export const DOOR_WORKFLOW_IDS: Record<DoorEndpoint, string> = {
   transcriptions: 'door.transcriptions',
 }
 
-/** After the body ended, how long the run waits for a `request` summary the handler did not send. */
+/**
+ * After the handler's work is over, how long the run waits for a `request` summary not yet recorded: a pcm stream
+ * records it as its body ends, which may land just after the door saw the end.
+ */
 const SUMMARY_GRACE_MS = 2000
 /**
- * A request's record ends at the latest this long after it arrived, whatever the body does (a stream nobody reads to
- * the end and nobody cancels): the run then records what arrived, never stays running. Far above a long transcription.
+ * A request's record ends at the latest this long after it arrived, whatever the handler does (a stream nobody reads
+ * to the end and nobody cancels): the run then records what arrived as `bound`, never stays running. Far above a long
+ * transcription.
  */
 const RECORD_MAX_MS = 60 * 60_000
 /** A sink no run ever read (the run was never driven here) is dropped this long after its request ended. */
@@ -67,40 +81,48 @@ const doorError = (status: number, message: string, type: string, headers?: Reco
 class Sink {
   readonly calls: DoorEvent[] = []
   request: DoorEvent | undefined
-  ended = false
+  ended: DoorEnd | undefined
+  closed = false
+  /** Its run never started (logged once, with the id): later events have nowhere to go and are not warned about. */
+  unrecorded = false
   readonly settled: Promise<void>
   private settle = () => {}
   private readonly bound: ReturnType<typeof setTimeout>
+  private grace: ReturnType<typeof setTimeout> | undefined
   private orphan: ReturnType<typeof setTimeout> | undefined
 
   constructor(private readonly drop: () => void) {
     this.settled = new Promise((resolve) => {
       this.settle = resolve
     })
-    this.bound = setTimeout(() => this.end(), RECORD_MAX_MS)
+    this.bound = setTimeout(() => this.finish('bound'), RECORD_MAX_MS)
     this.bound.unref()
   }
 
   record(event: DoorEvent) {
     if (event.kind === 'call') this.calls.push(event)
-    else {
-      this.request = event
-      this.settle()
-    }
+    else this.request = event
+    if (this.ended && this.request) this.settle()
   }
 
-  /** The request is over (body ended, failed or cancelled; client gone; the bound hit). Idempotent. */
-  end() {
+  /** The handler's work is over (or the bound hit). Idempotent: the first reason stands. */
+  finish(reason: DoorEnd) {
     if (this.ended) return
-    this.ended = true
+    this.ended = reason
     clearTimeout(this.bound)
-    setTimeout(() => this.settle(), SUMMARY_GRACE_MS).unref()
-    this.orphan = setTimeout(() => this.drop(), ORPHAN_MS)
+    if (this.request) this.settle()
+    else {
+      this.grace = setTimeout(() => this.settle(), SUMMARY_GRACE_MS)
+      this.grace.unref()
+    }
+    this.orphan = setTimeout(() => this.close(), ORPHAN_MS)
     this.orphan.unref()
   }
 
   close() {
+    this.closed = true
     clearTimeout(this.bound)
+    clearTimeout(this.grace)
     clearTimeout(this.orphan)
     this.drop()
   }
@@ -123,6 +145,8 @@ const DoorOutput = z.object({
   calls: z.number(),
   /** False when the handler ended without a `request` summary (a cut stream, a thrown handler). */
   complete: z.boolean(),
+  /** Why the record ended: `done` (the handler finished), `client-gone` (the client went away), `bound` (one hour). */
+  ended: z.enum(['done', 'client-gone', 'bound']),
 })
 
 const raceAbort = <T>(promise: Promise<T>, signal: AbortSignal): Promise<T> =>
@@ -157,6 +181,8 @@ export interface Door {
 
 export interface DoorOptions {
   handlers: DoorHandlers
+  /** What every upstream call goes through, bound per request to its signal. Default: the global `fetch`. */
+  fetch?: Fetch
   auth: CallerAuth
   runtime: () => Runtime
   isOpen: () => boolean
@@ -165,13 +191,14 @@ export interface DoorOptions {
 
 export function createDoor(options: DoorOptions): Door {
   const { auth, logger } = options
+  const baseFetch: Fetch = options.fetch ?? ((url, init) => fetch(url, init))
   // By run id: the run's step finds its request's events under its own id.
   const sinks = new Map<string, Sink>()
 
   const workflowOf = (endpoint: DoorEndpoint) =>
     defineWorkflow({
       id: DOOR_WORKFLOW_IDS[endpoint],
-      version: '2026-10-29.2',
+      version: '2026-10-29.3',
       input: DoorInput,
       output: DoorOutput,
       async run(ctx) {
@@ -195,6 +222,7 @@ export function createDoor(options: DoorOptions): Door {
             costUsd,
             calls: sink.calls.length,
             complete: summary !== undefined,
+            ended: sink.ended ?? 'bound',
           }
         })
       },
@@ -211,7 +239,13 @@ export function createDoor(options: DoorOptions): Door {
       if (value !== null) headers.set(name, value)
     }
     startRun({ runtime: options.runtime() }, workflows[endpoint], input, headers, { runId }).catch((error: unknown) => {
-      sinks.get(runId)?.close()
+      // The response still names this id (it went out before the journal answered): a lookup finds no run, and this
+      // line, with the id, says why.
+      const sink = sinks.get(runId)
+      if (sink) {
+        sink.unrecorded = true
+        sink.close()
+      }
       logger.error('door request not recorded', {
         runId,
         error: error instanceof Error ? error.message : String(error),
@@ -228,33 +262,40 @@ export function createDoor(options: DoorOptions): Door {
     const runId = Bun.randomUUIDv7()
     const sink = new Sink(() => sinks.delete(runId))
     sinks.set(runId, sink)
-    request.signal.addEventListener('abort', () => sink.end(), { once: true })
     startRecord(endpoint, request, runId, { caller, source: request.headers.get('x-audio-source'), path })
 
-    // Built per request: the request's id and caller go in explicitly, every event of the handler is this request's.
-    const handler = options.handlers[endpoint]({
-      usage: {
-        record(event) {
-          if (event.requestId !== runId)
-            logger.warn('door usage event under another request id', { runId, requestId: event.requestId })
-          sink.record(event)
-        },
+    // The client going away aborts every upstream call; the record still lasts until the handler's work is over.
+    const { signal } = request
+    const fetch: Fetch = (url, init) =>
+      baseFetch(url, { ...init, signal: init?.signal ? AbortSignal.any([init.signal, signal]) : signal })
+    const finish = () => sink.finish(signal.aborted ? 'client-gone' : 'done')
+    const usage = {
+      record(event: DoorEvent) {
+        // Built for this request alone: an event of another id would put its cost on the wrong run.
+        if (event.requestId !== runId) {
+          logger.warn('door usage event of another request dropped', { runId, requestId: event.requestId })
+          return
+        }
+        if (!sink.closed) sink.record(event)
+        else if (!sink.unrecorded) logger.warn('door usage event after its record closed', { runId, kind: event.kind })
       },
-      requestId: () => runId,
-      caller: () => caller,
-    })
+    }
+
     let response: Response
     try {
+      // Built per request: the request's id, caller and fetch go in explicitly.
+      const handler = options.handlers[endpoint]({ usage, requestId: () => runId, caller: () => caller, fetch })
       response = await handler(request)
     } catch (error) {
-      // The handlers answer their own failures; a throw past them is answered as legacy's top-level catch did.
-      sink.end()
+      // The handlers answer their own failures; a throw past them (or from building one) is answered as legacy's
+      // top-level catch did.
+      finish()
       const message = error instanceof Error ? error.message : 'internal error'
       logger.error('door handler threw', { runId, error: message })
       return doorError(500, message, 'proxy_error', { [RUN_ID_HEADER]: runId })
     }
-    const body = response.body ? onEnd(response.body, () => sink.end()) : null
-    if (!body) sink.end()
+    const body = response.body ? onEnd(response.body, finish) : null
+    if (!body) finish()
     const answer = new Response(body, response)
     answer.headers.set(RUN_ID_HEADER, runId)
     return answer
