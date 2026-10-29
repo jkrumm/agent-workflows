@@ -104,6 +104,8 @@ export async function startTestHost(
   options: {
     prefix?: string
     secret?: string
+    /** Named tokens the API accepts beside the secret (what `parseApiCallers` returned). */
+    callers?: ReadonlyMap<string, string>
     isOpen?: () => boolean
     extra?: HostWorkflow[]
     iu?: FakeIuServer
@@ -172,6 +174,7 @@ export async function startTestHost(
       store,
       logger: options.logger,
       secret: options.secret ?? SECRET,
+      ...(options.callers ? { callers: options.callers } : {}),
       version: '1.2.3',
       isOpen: options.isOpen ?? (() => open),
       healthTimeoutMs: options.healthTimeoutMs,

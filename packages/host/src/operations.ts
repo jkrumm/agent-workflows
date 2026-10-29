@@ -12,6 +12,7 @@ import type { AnyWorkflow, Logger, Runtime } from '@agent-workflows/runtime'
 import { IdempotencyConflict, WorkflowError } from '@agent-workflows/runtime'
 import { ORPCError, os } from '@orpc/server'
 import { z } from 'zod'
+import { WhoHeaderError, whoFromHeaders } from './auth.ts'
 import { isTerminal, type RunState, type RunStore, type StoredRun } from './store.ts'
 
 /** The most one request waits: Bun's `idleTimeout` ceiling is 255 s, so a held request must answer before it. */
@@ -143,6 +144,20 @@ function purposeOf(headers: Headers): string {
   return purpose
 }
 
+/**
+ * The run's attribution from `x-agw-caller` / `x-agw-project` / `x-agw-workspace`. The host door has already replaced
+ * what the client sent with the credentialed values (`stampWho`), so these are trusted; they are still validated here.
+ * None: the run is attributed to nobody (a start that did not come through a door).
+ */
+function whoOf(headers: Headers) {
+  try {
+    return whoFromHeaders(headers)
+  } catch (error) {
+    if (error instanceof WhoHeaderError) throw badRequest(error.message)
+    throw error
+  }
+}
+
 function idempotencyKeyOf(headers: Headers): string | undefined {
   const key = headers.get('idempotency-key')?.trim()
   if (!key) return undefined
@@ -166,11 +181,19 @@ export async function startRun(
   const purpose = purposeOf(headers)
   const idempotencyKey = idempotencyKeyOf(headers)
   const traceparent = headers.get('traceparent') ?? undefined
+  const who = whoOf(headers)
   try {
     const { runId } = await deps.runtime.start(workflow, input, {
       purpose,
       idempotencyKey,
       traceparent,
+      ...(who
+        ? {
+            caller: who.caller,
+            ...(who.project ? { project: who.project } : {}),
+            ...(who.workspace ? { workspace: who.workspace } : {}),
+          }
+        : {}),
       ...(options.runId ? { runId: options.runId } : {}),
     })
     return { runId, idempotencyKey }

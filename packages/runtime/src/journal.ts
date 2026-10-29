@@ -41,11 +41,17 @@ export type RunRow = {
   /** The run record's sums, written by `runPost`: `numeric` arrives as a string; null until then or when nothing was priced. */
   cost: string | null
   unpriced_calls: number | null
+  /** Who admitted the run (a door token's name, or a self-declared sub-caller of the API secret); null: the host itself. */
+  caller: string | null
+  /** The repo the caller works in, as a bare name; null when none was declared. */
+  project: string | null
+  /** `work` or `private`, declared by the caller; null lets Argo classify from the project. */
+  workspace: string | null
 }
 
 const RUN_COLUMNS = `id, workflow, parent_id, root_id, status, purpose, input, output, error, error_kind, traceparent,
   version_started, version_finished, started_at, finished_at, cancel_requested_at, admitted_at, post_hooks_at,
-  post_hooks_failed_at, cost, unpriced_calls`
+  post_hooks_failed_at, cost, unpriced_calls, caller, project, workspace`
 
 export type CancelledStep = { run_id: string; step_id: string; kind: StepKind; handle: AgentHandleState | null }
 
@@ -80,6 +86,10 @@ export type NewRun = {
   error?: { kind: ErrorKind; message: string }
   /** The caller chose `id` (`StartOptions.runId`): a conflict on it is refused, never answered with the existing run. */
   chosenId?: boolean
+  /** Who started the run; a child inherits its parent's. Absent: null. */
+  caller?: string | null
+  project?: string | null
+  workspace?: string | null
 }
 
 export type RunEnd = {
@@ -172,12 +182,13 @@ export class Journal {
    * inserted under its root's fence.
    */
   async insertRun(run: NewRun, fence: Fence | null = null): Promise<string> {
-    const guard = fence ? `where ${this.fence(16, 17)}` : ''
+    const guard = fence ? `where ${this.fence(19, 20)}` : ''
     const { rows } = await this.query<{ id: string }>(
       `insert into ${this.runs} (id, workflow, parent_id, root_id, purpose, input, input_hash, idempotency_key,
-         traceparent, trace_id, version_started, status, error, error_kind, finished_at, lock_key)
+         traceparent, trace_id, version_started, status, error, error_kind, finished_at, lock_key, caller, project,
+         workspace)
        select $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
-         case when $12 = 'failed' then now() end, $15::bigint ${guard}
+         case when $12 = 'failed' then now() end, $15::bigint, $16, $17, $18 ${guard}
        ${run.chosenId ? 'on conflict (id) do nothing' : 'on conflict do nothing'} returning id`,
       [
         run.id,
@@ -195,6 +206,9 @@ export class Journal {
         run.error?.message ?? null,
         run.error?.kind ?? null,
         this.lockKey(run.rootId),
+        run.caller ?? null,
+        run.project ?? null,
+        run.workspace ?? null,
         ...(fence ? [fence.rootId, fence.token] : []),
       ],
     )
