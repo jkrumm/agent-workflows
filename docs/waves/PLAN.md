@@ -1,8 +1,8 @@
 # agent-workflows — build plan
 
 **Goal:** every repetitive agent job runs as a workflow on this platform, verified live on the mini;
-Claude Code and Hermes reach it only through `agw`; research-gateway and audio-gateway are archived
-and agent-gateway is down to `dispatch` (concept §11, P1–P6).
+Claude Code and Hermes reach it only through `agw`; research-gateway, audio-gateway and agent-gateway are
+retired and archived, `agw-legacy` included (concept §11, P1–P6; dispatch is unused, owner 2026-10-29).
 **Gate (every wave):** `make check` green; the review flow in `AGENTS.md` done for every merged
 change; deployed on the mini and proven live by `@verifier`; a retro entry in `docs/concept.md`.
 **Fleet:** mother (Opus/high) → lead (Opus/high) → workers by model class (`AGENTS.md` §The fleet).
@@ -262,6 +262,8 @@ Workers: Sonnet/high; Haiku for the sweeps.
 - [ ] Global CLAUDE.md, skills and the Makefile MCP registration per concept §10; agw MCP server deleted
 - [ ] Hermes scripts and skills call `agw`; narratives and overview ported as workflows
 - [ ] A sweep shows no skill, doc or script naming an MCP gateway tool
+- [ ] Tab hygiene: worker tabs closed right after merge; `herdr-reap.py` closes merged fan tabs even while
+  a plan wave is active; the dispatch lane dropped from the global CLAUDE.md
 - [ ] Every runtime caller of the old gateways moved (inventory 2026-10-29): iris (`agw` jobs
   `triage`/`decide`, audio STT/TTS; its fleet does the switch, we port what it lacks), argo audio proxy,
   hermes-agent scripts (`overview`, `narrative`, `prose`, `/api/usage`) and skills (research, podcast,
@@ -273,7 +275,8 @@ Workers: Sonnet/high; Haiku for the sweeps.
 ## Wave 11 — Retire and hand over (P6)            <!-- status: pending -->
 Workers: Haiku for the sweeps, Sonnet/high for the rest.
 
-- [ ] research-gateway and audio-gateway LaunchAgents removed, repos archived; agent-gateway down to `dispatch`
+- [ ] research-gateway, audio-gateway and agent-gateway retired: LaunchAgents removed, repos archived,
+  `agw-legacy` CLI and its PATH link deleted; the `dispatch` lane removed everywhere (unused, owner 2026-10-29)
 - [ ] argo's `/ai` audio proxy routes and dashboard audio calls deleted (no bridge; owner 2026-10-29)
 - [ ] usage-tracker's agent-gateway OpenCode/IU collectors removed once Argo totals reconcile over a full
   week of overlap (earliest ~2026-11-05); if Wave 11 ends earlier, the date is written into Left behind
