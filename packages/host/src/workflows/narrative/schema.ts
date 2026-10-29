@@ -6,15 +6,34 @@ export { NARRATIVE_SECTIONS }
 
 const SINCE_FORMAT = /^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?)?$/
 
+/** Whether the written calendar and clock values exist: `Date.parse` rolls 2026-02-30 and T24:00:00Z over instead of refusing them. */
+function realValues(value: string): boolean {
+  const [date = '', rest = ''] = value.split('T')
+  const [year, month, day] = date.split('-').map(Number) as [number, number, number]
+  const calendar = new Date(Date.UTC(year, month - 1, day))
+  if (calendar.getUTCFullYear() !== year || calendar.getUTCMonth() !== month - 1 || calendar.getUTCDate() !== day)
+    return false
+  if (!rest) return true
+  const clock = /^(\d{2}):(\d{2})(?::(\d{2}))?/.exec(rest)
+  const offset = /([+-])(\d{2}):?(\d{2})$/.exec(rest)
+  return (
+    Number(clock?.[1]) <= 23 &&
+    Number(clock?.[2]) <= 59 &&
+    Number(clock?.[3] ?? 0) <= 59 &&
+    (!offset || (Number(offset[2]) <= 23 && Number(offset[3]) <= 59))
+  )
+}
+
 /** A date, a time without an offset (UTC) or a full ISO timestamp, as a UTC ISO string; anything else is an issue. */
 const SinceSchema = z
   .string()
   .max(100)
   .transform((value, ctx) => {
     const match = SINCE_FORMAT.exec(value)
-    const parsed = match
-      ? Date.parse(value.includes('T') ? (match[1] ? value : `${value}Z`) : `${value}T00:00:00Z`)
-      : Number.NaN
+    const parsed =
+      match && realValues(value)
+        ? Date.parse(value.includes('T') ? (match[1] ? value : `${value}Z`) : `${value}T00:00:00Z`)
+        : Number.NaN
     if (Number.isNaN(parsed)) {
       ctx.addIssue({
         code: 'custom',
