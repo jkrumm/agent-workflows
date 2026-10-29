@@ -1,118 +1,112 @@
-# Lead handoff — Wave 6 (research; P3a), rotation checkpoint
+# Lead handoff — Wave 6 (research; P3a), close-out
 
-Lead 1: `agent-workflows-w1` (pane w40:p16), 2026-10-28 ~22:05 → 2026-10-29 ~01:30 UTC+1, rotated at ~60 % context.
-Briefs: `~/.local/state/agent-workflows/briefs/w6/` on the mini (not in git: they name local paths). This is a rotation
-checkpoint; the wave-end close-out overwrites it.
+Leads: `agent-workflows-w1` first lead (pane w40:p16, 2026-10-28 ~22:05 → 2026-10-29 ~01:30 UTC+1, rotated at ~60 %), second lead
+`agent-workflows-w1` (pane w40:p1B, 2026-10-29 ~01:35 → ~03:45). Briefs: `~/.local/state/agent-workflows/briefs/w6/` on the
+mini (not in git: they name local paths). The rotation checkpoint is in git history at `2ddc777`.
 
-## Next actions for the new lead (in order)
+## Per-step verdict
 
-1. **#32 `w6/research-followup`** (worker `agent-workflows-research-compare`, Opus/medium) is fixing `/code-review high`
-   round 2 of #32: drain gate calls before aborting at agent end; `answerOf` = any page 4xx + URL_REFUSED is an answer
-   (citation unjudged), outages (5xx, timeout, network, NOT_CONFIGURED, CANCELLED) throw; compare excludes cancelled and
-   in-flight runs from quality (only failed = 0); three ledger edge cases documented as experiment-only. Read the round's
-   diff, then the worker merges it (the owner asked the worker directly to merge/deploy for the research window; it did so
-   for #31), deploys on the team key and runs the full comparison: 3 runs × 28 golden questions × 5 arms, estimate ≈ $10
-   (smoke-measured), approved.
-2. **Verdict** by the pre-registered rule in `docs/research/2026-10-28-research-three-way.md` (worker fills results). Check
-   the numbers yourself: `agw eval compare research …` or the worker's `research/compare.ts` report; judgedShare per arm
-   must be in the table.
-3. **Switch the host back to the personal key** after the window: `rm ~/.config/agw/iu.env`,
-   `launchctl kickstart -k gui/$(id -u)/com.jkrumm.agent-workflows-host`, check `/health`; the worker stops its engine eval
-   instance (`~/.local/state/agent-workflows/research-eval/engine.sh`, port 7795; never the live research-gateway).
-4. **Port in the winning shape** (new brief, Sonnet/high per PLAN): the losing arms, `design`/`profile` inputs and the
-   engine adapter deleted (concept §0, no shim; Wave 5's cleanup #27 is the pattern); follow-up on a finished report;
-   research-gateway's output shape kept for `/research` callers; concept §8 says research runs in its own process: decide by
-   evidence and write it down.
-5. **`/research` switched** (dotfiles skill to `agw research`), then **research-gateway `/mcp` deleted** (one commit in
-   research-gateway: `src/routes/mcp.ts`, `.use(mcpRoutes)` at `src/index.ts:316`) and its MCP registration removed
-   (dotfiles `Makefile` target `_setup-research-gateway-mcp`, ~line 1537, plus `claude mcp remove research-gateway`).
-6. Wave close-out: deploy on the personal key, `make verify`, `@verifier`, handoff overwrite, commit, push.
-
-## Per-step state
-
-|Step|State|Evidence|
+|Step|Verdict|Evidence|
 |-|-|-|
-|CI green on master|**done, #28**|(1) Not a credential leak: `commandEnv` passed the outer `make check`'s `MAKELEVEL`/`MAKEFLAGS` into the validated repo's make (GNU make 4 printed "Entering directory"); make state is dropped now, and the credential test's `leak-` assertions pass on Linux CI for the first time. (2) `run-step.sh` under dash (Ubuntu `sh`): `set -m` and `kill -- -PGID` fail without a tty, so the group kill reached nothing (orphan alive, PPid 1): it re-execs under bash. (3) The bunExec test raced the orphan's reap: a shared liveness helper (gone or zombie). Bun is not a subreaper (orphan PPid 1). Plus a friction query tiebreaker. CI green on master from `e65cebb`, every run since|
-|Merge train gates on CI|**done, dotfiles #39**|`ci_wait`: one `gh pr view --json headRefOid,statusCheckRollup` per poll, trusted only on the pushed sha; pass needs ≥ 1 non-skipping check and `RD_CI_GRACE` (30 s, measured 0–5 s); failure dies with names + link; `RD_CI_TIMEOUT` 1200 s; `--no-ci`. Live: "CI passed for w6/… at <sha>" on #28, #29, #30|
-|Load-aware test timeouts|**done, #28**|`bun test --timeout` = 5000 ms × load1/cores, floor 5 s, cap 30 s (printed). Limit: sampled once at start; spikes mid-run still hit 5 s (seen by three workers and one train run)|
-|Sonnet angles (P2 gate)|**answered**, default unchanged|Below|
-|Research three-way|harness merged (#31), smoke done, follow-up #32 in review; full run pending|Smoke below|
-|`research` port, `/research` switched, research-gateway `/mcp` deleted|pending|—|
+|CI green on master; train gates on CI; load-aware timeouts|**done** (first lead)|#28, dotfiles #39. Not a credential leak: make recursion state (`MAKELEVEL`/`MAKEFLAGS`) and `run-step.sh` under dash. CI green on every master push since `e65cebb`; the train printed "CI passed for … at <sha>" on #29–#36|
+|P2 gate: Sonnet angles vs Haiku (20 paired cases)|**answered** (first lead), **implemented** (#33)|Recall 0.017 → 0.13, located +0.09, precision 0.10 → 0.50, cost $0.057 → $0.542 per review, wall unchanged. Mother decision: Sonnet for `--deep` only. #33: route `review.angle.deep` (`claude-sonnet-5-5-eu`, in 2 / out 10 / cache read 0.10 (0.05×) / write 2.50 per M, `longPromptTokens` 1M: Anthropic's page lists no long-context tier for Sonnet 5.5). Sonnet only when the **caller** passes `depth: deep` (`decision.source === 'caller'`); a router-chosen deep stays on Haiku. `plan` records `angleRoute`; the fingerprint lists both routes. Concept v3.5|
+|Three-way comparison on the 28 golden questions|**done**: A-yolo|Numbers below; doc `docs/research/2026-10-28-research-three-way.md` §Results (#35). Checked by the lead from the run records (`compare.ts` over the 15 eval run ids)|
+|`research` ported in the winning shape, follow-up included|**done** (#36)|One agent `agents/research`, web tools through the gate; engine, pilot, focused arms, `design`/`profile`, the engine adapter, `compare.ts`/`decision.ts` deleted (−1833/+518). Follow-up: `agw research "<q>" --follow-up <runId>`; citable set = the earlier run's retrieved pages + its final citations' URLs; earlier research fenced as data in the prompt. Live regression (1 pass × 28, team key): golden 0.964, supported 0.929, judgedShare 1.0, median $0.0069, p50 9.7 s (A-yolo: 0.98 / 0.91 / 0.99 / $0.0063 / 9 s); standard+deep golden 1.0, $0.033, 42 s; one miss `notfound-rfc-99999`. Eval run `01a1857a-fb12-7320-a3a6-b74b9776b6da`. Research stays in the host process (concept v3.6): host RSS 52 → 97 MB mean (157 max), CPU 0.3 → 3.4 % mean during the pass|
+|`/research` switched; research-gateway `/mcp` deleted, MCP registration removed|**done**|dotfiles #40 (skill on `agw research` incl. `--follow-up`; global CLAUDE.md, rules, implement/upgrade-deps skills, docs; Makefile MCP target + doctor line, settings template permissions, Codex and OpenCode MCP entries, `scripts/mcp-research-headers.sh` removed; `_setup-codex` re-rendered). research-gateway #42 (`src/routes/mcp.ts`, `.use(mcpRoutes)`, discovery entry, MCP SDK dep, `wait.ts` deleted), auto-deployed by its CI-gated poller at 03:32. `claude mcp remove research-gateway -s user` on the mini in `~/.claude`, `-me`, `-me2`. MacBook: unreachable (ssh iumac timed out), queued as ask-human `20261029T033409-656`|
 
-Also merged: #29 route override (`~/.config/agw/routes.json` → `AGW_ROUTES`, validated by `validateOverrides` in launch.sh and at
-boot, exit 78 on a bad file, never echoes content), #30 `web.search|fetch|docs|package` (Sonar → Tavily fallback; SSRF guard
-with pinned addresses on every hop; HTMLRewriter text; charset; typed `URL_REFUSED`), #31 research workflow with five arms, the
-loopback tool gate for OpenCode plugins (per-process key in `<stateDir>/research/gate.json`, 0600, outside every location, serves
-only `web.*` + `engine_research` to sessions of a running research step), the scorers' judge (allowlist), the tree-less eval suite,
-route `research.agent`, migration 0007.
+## Comparison numbers (420 runs, 0 failed, every run priced; deploy `5025eec`, team key)
 
-## Sonnet angles vs Haiku angles (review, 20 paired cases, team key)
+|Arm|golden|supported|judged share|median $|p50 wall s|unscored|partial|
+|-|-|-|-|-|-|-|-|
+|E engine|0.99|0.73|0.97|0.0101|22|3|5|
+|**A-yolo**|0.98|0.91|0.99|0.0063|9|0|8|
+|A-focused|0.97|0.93|0.99|0.0054|8|5|11|
+|P-yolo|0.97|0.79|0.99|0.0135|30|4|5|
+|P-focused|1.00|0.75|0.96|0.0128|34|4|0|
 
-Deploy `1625a3b`, same code both arms; B = `review.angle` → IU Sonnet 5.5 EU (id probed 200) via `routes.json`, vendor rate
-2/10/0.10/2.50 per M. Fingerprints A `c244dcb6`, B `41ce61cd`. `agw eval compare review --a c244dcb6… --b 41ce61cd…`:
+Rule: A-yolo − E golden +0.012 [−0.036, 0.071], supported +0.185 [0.065, 0.321] → eligible; P-yolo − E golden −0.012
+[−0.119, 0.095] → not eligible; cost standard+deep A-yolo $0.0279 vs E $0.1383 → **A-yolo**. Profile: focused never beat
+yolo with a CI excluding 0. Standard: E $0.133 / 171 s vs A-yolo $0.026 / 39 s. Deep is n = 3 per arm (indicative only).
+Engine token columns are n/a (the engine reports cost only).
 
-|Metric|Haiku|Sonnet|Δ (95 % CI)|Verdict|
+## Merged this wave (second lead)
+
+|PR|What|Review|
+|-|-|-|
+|#32|research follow-up round 5 (settle before close, abandoned engine job booked, 4xx `answerOf`, incomplete runs out of the rule)|lead read r5 (first lead: `/code-review high` r1–r4); merged by the worker on the owner's ask|
+|#33|deep angles on Sonnet|`/code-review high` r1 (8: caller-only opt-in, long-prompt tier, casts, magic number; 4 dismissed: shared fingerprint by design, dedupe level, synthesis on Haiku as measured, Sonnet config proven live at verify), r2 ran on a stale local branch (see Friction) and was discarded, r3 on the real head (8: one depth derivation, `angleRoute` recorded, schema help, Sonnet config test; 4 dismissed), lead read r4|
+|#34|test race: gate drain tests synchronised on "in flight", requests settled inside their test|lead read (test-only)|
+|#35|comparison results doc|lead read (doc-only)|
+|#36|research port|`/code-review high` r1 (10: migration 0009 unsafe for a rollback → removed, engine columns kept; follow-up citable set; no-journal message; data framing; 2 dismissed), r2 (8: no-new-pages warning, drop reason, fenced block, raw URLs, README; 3 dismissed: strict input with no runs in flight, seen-only citations as in the first-run rule, journal size), lead read r3|
+|dotfiles #40|`/research` switch, MCP registrations removed|lead read|
+|research-gateway #42|`/mcp` deleted|lead read (deletion only, REST unchanged)|
+
+`make check` at the last merge (#36 in the train): 1193 pass, 15 skip, 0 fail, 1208 tests. CI green on master through
+`0c360db`; `de21c26` (docs) running at close.
+
+## Live proof (`@verifier`, personal key, release `0c360db`): 8/8 PASS
+
+1. `make verify` PASS (run `01a18585-f995-…`, cap run `01a18585-fead-…`).
+2. `agw research` quick: done, ok, 2/2 grounded, $0.0067, deepseek-v4.1-flash answered (no fallback), iu_key personal,
+   purpose verify (run `01a18585-0bfd-77a6-a97e-dba1647bb478`).
+3. Follow-up on it: done, 3/3 grounded, $0.0068 (run `01a18585-4228-…`); a random run id → typed `invalid_input`.
+4. Spans in prod ClickStack: `agw.run research` with `agw.step tools` and `agw.step research`, OpenCode spans under the step.
+5. Argo outbox: every priced step synced (`argo_synced_at`), 0 pending, 0 `argo_error` (Argo's DB itself not read).
+6. Deep review live: `angleRoute: review.angle.deep`, angles on claude-sonnet-5-5-eu, synthesis on Haiku, $0.118, 36 s,
+   0 unpriced (run `01a18585-da99-75bf-8d0f-ce7b1d149f7c`).
+7. research-gateway: `POST /mcp` 404, discovery lists no mcp, `/health` ok; no research-gateway MCP in any mini account.
+8. `/research` skill calls `agw research`; no `mcp__research-gateway` in `~/.claude/{CLAUDE.md,rules,skills}`.
+
+## Host state
+
+Release `0c360db` on the **personal key** (`~/.config/agw/iu.env` removed, host kickstarted, `/health` ok). DeepSeek
+answers on the personal key again. No `routes.json`. Engine eval instance on :7795 stopped. Main checkout clean on master.
+`~/.config/agw/athena-iu.env` is still on disk (not loaded by `launch.sh`; not the fleet's to delete without the owner).
+
+## IU spend, by key (runs since 2026-10-28 21:50 UTC)
+
+|Key|Purpose|Runs|Spend|What|
 |-|-|-|-|-|
-|recall (n=15)|0.017|0.130|+0.113 (0.017..0.25)|Sonnet|
-|located|0.868|0.960|+0.091 (0.022..0.185)|Sonnet|
-|precision (n=5)|0.10|0.50|+0.40 (0.1..0.7)|Sonnet|
-|pass|0.35|0.30|−0.05 (−0.25..0.15)|tie|
-|decided|0.80|0.85|+0.05|tie|
-|cost per review (17 priced)|$0.057|$0.542|+$0.485 (0.30..0.68)|Haiku|
-|wall|264 s|281 s|+16 s (CI incl. 0)|tie|
-|tool calls|17.6|36.1|+18.6|—|
+|athena-team|eval|2750 top-level|**$26.13**|Haiku baseline $1.18, Sonnet arm $11.60, research smoke $0.29, full comparison $12.57, port regression $0.49; 48 unpriced (review long-prompt tier, 6 `web.package`)|
+|athena-team|prod|28|$0.23|callers of the live host during the window (24 unpriced), not the fleet's evals|
+|athena-team|verify|6|$0.00|deploy verifications|
+|personal|verify/prod/retro|7|≈ $0.14|`@verifier` (research, follow-up, deep review $0.118), smokes|
 
-**Answer:** Sonnet angles recover more recorded blockers (recall ×8, still only 13 %) and locate better, at 9.4× the cost, no
-wall-time change; pass and outcome agreement do not move. Default left on Haiku: ~10× dearer reviews is a spend call under the
-IU constraint (N8), the owner's. Recommendation for the mother/owner: Sonnet angles for `--depth deep` only (opt-in).
+## Left behind
 
-## Research smoke (deploy `fa5e07d`, team key, 3 questions × 5 arms, by the worker)
+- MacBook: research-gateway MCP registration not removed (unreachable); ask-human `20261029T033409-656` queued.
+- research_tool_calls keeps the unused engine columns and booking index (0007/0008) for the rollback target; drop them in
+  a later release once no rollback target reads them.
+- research-gateway's REST door, its `research` CLI and `scripts/opencode-service-env.sh`'s `RESEARCH_GATEWAY_AUTH` stay
+  until P6 archives it. CONTEXT7_API_KEY still resolves through research-gateway's 1Password item: move it first.
+- Run fingerprints: review lists both angle routes, so a deep and a standard review share a fingerprint; `plan.angleRoute`
+  separates them in queries. The eval harness's `--depth matched` sends recorded deep cases to Sonnet angles (~10×).
+- `agw research` printed `cost: null` in its CLI response while the run record was priced ($0.0018): the CLI's
+  synchronous answer does not carry the final cost.
+- The eval plan's estimate for research ($1.83 for one pass, actual $0.49) averages history that includes the deleted arms.
+- `opencode-host/test/host.test.ts` "abort interrupts once and is idempotent" uses `Bun.sleep(50)` as synchronisation
+  (same class as #34), seen failing once under load; and the load-scaled timeout is still sampled once per `make check`
+  (git-heavy review `scopes` tests hit 5.1 s under load spikes; two train reruns).
+- Not ours: dotfiles architecture-check rows (com.iu.athena-postgres, com.iu.teamchat-*, collie pin, tailscale drift);
+  agent-gateway dispatch-worktree credential test.
 
-15/15 done, golden 15/15, 0 errors, 0 unpriced research runs.
+## Retro notes (both leads)
 
-|Arm|Cost (2 quick + 1 standard)|supported (3-citation sample)|median wall|
-|-|-|-|-|
-|E engine|$0.117|0.56|16 s|
-|A-yolo|$0.036|0.89|9 s|
-|A-focused|$0.038|1.00|7 s|
-|P-yolo|$0.045|0.50|24 s|
-|P-focused|$0.051|0.50|18 s|
-
-n = 3, no verdict. OpenCode's own `websearch` hung and `webfetch` has no SSRF guard (fetched loopback), so "yolo" = all platform
-web tools + broad directive, "focused" = search + fetch only (A) or the engine tool only (P) + narrow directive.
-
-## Reviews (all `/code-review high` on Max; no gateway `/review`, owner direction)
-
-|PR|Rounds|
-|-|-|
-|dotfiles #39 train CI gate|r1 (8: skipping-only/partial lists passed early → grace + non-skipping rule, one rollup call, gh timeouts; 1 dismissed), lead read r2; merged|
-|#28 CI|lead read r1 (+friction tiebreak), r1 review (10: shared liveness helper, timeout as positional arg, robust make assertion; 3 dismissed: load-scaled timeout is the brief, bash-absent hosts, operator MAKEFLAGS), lead read r2; merged|
-|#29 routes override|lead read r1 (boot validation added), review r1 (10: one validator for boot + launch.sh, read once, exit 78; 3 dismissed), lead read r2–r3; merged|
-|#30 web capabilities|r1 (10), r2 (10, five tokenizer classes → design change to HTMLRewriter), r3 (8, converging), lead read r4; merged|
-|#31 research harness|r1 (10 → persisted ledger), r2 (10 → simplified: one attempt-key rule, usage per call), r3 (8 → last round, edge cases documented), lead read; merged by the worker on the owner's direct ask; r4 on merged state (9 → #32)|
-|#32 research follow-up|r1 (6: 3 fixed in progress, 3 documented)|
-
-Fix rounds on #30/#31 kept finding new classes; design changes (HTMLRewriter; simplified key/usage rules; "experiment harness:
-fix what bends the numbers, document the rest") closed them.
-
-## IU spend so far, by key
-
-|Key|Spend|What|
-|-|-|-|
-|athena-team|$13.08 (150 eval runs) + 9 prod/verify runs ≈ $0|Haiku baseline $1.18, Sonnet arm $11.60, research smoke $0.29; window open since ~22:55 UTC+1 2026-10-28|
-|personal|< $0.05|worker live smokes of `web.*`, one `llm classify` probe|
-
-The 7 `prod` runs on the team key during the window are not the fleet's (callers of the live host); list them in the close-out.
-
-## Host state (now)
-
-Deployed `fa5e07d` on the **team key** (`~/.config/agw/iu.env` present), no `routes.json`. Engine eval instance on :7795 (the
-worker's). Main checkout clean on master (a review fork had left it detached at `origin/master`; restored).
-
-## Left behind (so far)
-
-- CONTEXT7_API_KEY resolves through research-gateway's 1Password item, which P6 archives: move it to a platform item first.
-- Load-aware timeout sampled once per `make check`; mid-run spikes still flake 5 s tests.
-- 13 unpriced calls per 20 reviews in both review arms (3 cases): the long-prompt tier, known.
-- Sonnet-for-deep recommendation needs an owner/mother decision.
-- `/code-review` forks run in the main checkout and may leave it detached: check `git status -sb` before committing there.
+- **Pre-registered rules pay.** The rule fixed before the first live run made the verdict a query, not a debate; the
+  lead re-derived it from the run records in one command.
+- **Experiment harness: fix what bends the numbers, document the rest** (first lead). #30/#31 fix rounds kept finding new
+  classes until design changes (HTMLRewriter; one attempt-key rule) closed them; #36 converged in two rounds once
+  findings were split into "bends correctness" and "hygiene".
+- **Deleting the experiment is a migration hazard.** The port's first draft dropped columns the rollback target still
+  writes; expand/contract (keep, drop later) is the rule for any column a previous release touches.
+- **Review forks and the shared checkout.** A `/code-review` fork created a local `pr33` branch in the main checkout; the
+  next review read that stale branch and reported already-fixed findings. Pass the remote ref and "never check out in
+  this checkout" in the review args; `git status -sb` before trusting a review.
+- **Sleep-as-synchronisation is a flake class.** Two test races (#34) failed the train only under load; deterministic
+  "in flight" signals fixed them; one more remains (Left behind).
+- **`rd fan --clean <repo>` is repo-wide**: it also reclaimed another session's merged worktree in research-gateway
+  (merged a month ago, nothing lost). Fleet-scoped cleanup would be safer.
+- **Order of cutover steps.** The MCP was removed on the mini a few minutes before the new skill merged; harmless here,
+  but the switch (skill live) should land before the old door is removed.
+- **Spend.** Team key $26.13 against estimates of ≈ $5 (Sonnet arm, actual $11.60) and ≈ $10 (comparison, actual
+  $12.57): Sonnet arm was the miss (long agentic turns, 2× the tool calls).
