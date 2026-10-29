@@ -242,6 +242,70 @@ describe('agw against the fake host', () => {
     }
   })
 
+  test('--help is never stale: a command added since the cache is found, a changed shape is shown, one fetch', async () => {
+    const b = box()
+    await agw(b, ['schema', '--refresh'])
+    host.addWorkflow({
+      id: 'fixture.shape',
+      summary: 'Gets a flag later',
+      input: { type: 'object', properties: { first: { type: 'string' } } },
+      outcome: () => ({ output: {} }),
+    })
+    try {
+      // a command added since the cache: top help and its own help both see it
+      const top = await agw(b, ['--help'])
+      expect(top.code).toBe(0)
+      expect(top.stdout).toContain('agw fixture shape')
+      host.removeWorkflow('fixture.shape')
+      await agw(b, ['schema', '--refresh'])
+      host.addWorkflow({
+        id: 'fixture.shape',
+        summary: 'Gets a flag later',
+        input: { type: 'object', properties: { first: { type: 'string' } } },
+        outcome: () => ({ output: {} }),
+      })
+      await agw(b, ['schema', '--refresh'])
+      // the same command, a flag added on the host since the cache was written
+      host.removeWorkflow('fixture.shape')
+      host.addWorkflow({
+        id: 'fixture.shape',
+        summary: 'Gets a flag later',
+        input: { type: 'object', properties: { first: { type: 'string' }, second: { type: 'string' } } },
+        outcome: () => ({ output: {} }),
+      })
+      const before = host.requests.filter((q) => q.path === '/openapi.json').length
+      const help = await agw(b, ['fixture', 'shape', '--help'])
+      expect(help.code).toBe(0)
+      expect(help.stdout).toContain('--second')
+      expect(host.requests.filter((q) => q.path === '/openapi.json').length).toBe(before + 1)
+    } finally {
+      host.removeWorkflow('fixture.shape')
+    }
+  })
+
+  test('--help answers from the cache when the host cannot be asked; an unknown command then says why', async () => {
+    const own = await startFakeHost()
+    const b = sandbox({ AGW_URL: own.url, AGW_API_SECRET: own.secret })
+    expect((await agw(b, ['schema', '--refresh'])).code).toBe(0)
+    await own.stop()
+    const top = await agw(b, ['--help'])
+    expect(top.code).toBe(0)
+    expect(top.stdout).toContain('agw fixture echo')
+    const one = await agw(b, ['fixture', 'echo', '--help'])
+    expect(one.code).toBe(0)
+    expect(one.stdout).toContain('usage: agw fixture echo')
+    // no secret: help still works from the cache
+    const keyless = sandbox({ AGW_URL: own.url })
+    mkdirSync(join(keyless.dir, 'cache', 'agw'), { recursive: true })
+    cpSync(join(b.dir, 'cache', 'agw'), join(keyless.dir, 'cache', 'agw'), { recursive: true })
+    expect((await agw(keyless, ['fixture', 'echo', '--help'])).code).toBe(0)
+    // a command the cache lacks, host unreachable: the refresh failure is in the message, not only in the details
+    const unknown = await agw(b, ['fixture', 'nonesuch', '--help'])
+    expect(unknown.code).toBe(EXIT.usage)
+    expect(unknown.error?.message).toContain("unknown command 'fixture nonesuch'")
+    expect(unknown.error?.message).toContain('the cached contract could not be refreshed')
+  })
+
   test('--help per command comes from the schema', async () => {
     const r = await agw(box(), ['fixture', 'echo', '--help'])
     expect(r.code).toBe(0)

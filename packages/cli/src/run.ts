@@ -45,6 +45,19 @@ class StaleContract extends Error {
   }
 }
 
+/** A usage error a stale cache explains, when the refresh that would have settled it failed: the reason is in the message. */
+const unrefreshed = (error: AgwError, refresh: string) =>
+  new AgwError('usage', `${error.message} (the cached contract could not be refreshed: ${refresh})`, {
+    hint: error.hint,
+    details: { ...error.details, refresh },
+  })
+
+/** `-h` or `--help` among the arguments (not after `--`): the same rule `parseArgs` applies. */
+const wantsHelp = (argv: string[]) => {
+  const end = argv.indexOf('--')
+  return (end < 0 ? argv : argv.slice(0, end)).some((word) => word === '-h' || word === '--help')
+}
+
 const shellWord = (word: string) => (/^[\w@%+=:,./-]+$/.test(word) ? word : `'${word.replaceAll("'", `'\\''`)}'`)
 
 function dig(value: unknown, path: string): unknown {
@@ -73,6 +86,8 @@ class Runner {
   readonly host: Host
   #stdin: Promise<string> | undefined
   #key: string | undefined
+  /** Why the best-effort refresh before a help call failed, for the error that follows if the cache lacks the command. */
+  #refreshFailure: string | undefined
 
   constructor(readonly io: Io) {
     this.host = new Host(io.env)
@@ -89,6 +104,10 @@ class Runner {
     if (first === undefined || first === '--help' || first === '-h') return this.topHelp()
 
     await this.host.load()
+    // Help is printed from the contract and sends no request, so no `x-agw-contract` check can tell that the cache is
+    // stale (a command added, a flag added or dropped since it was written): ask the host first, keep the cache if it
+    // cannot answer. Every other command carries the sha, and a stale one is a 412 that refreshes and retries.
+    if (wantsHelp(argv)) await this.freshen()
     const call = await this.prepareFresh(argv)
     if (call.parsed.globals.help) {
       this.io.out(helpText(call.command))
@@ -100,6 +119,14 @@ class Runner {
       if (!(error instanceof StaleContract)) throw error
       return this.retryAfterMismatch(argv, error.mismatch)
     }
+  }
+
+  /** Fetches the contract once per call; a host that cannot answer (down, no secret) leaves the cached one in use. */
+  private async freshen(): Promise<void> {
+    if (this.host.refreshed) return
+    await this.host.refresh().catch((error: unknown) => {
+      this.#refreshFailure = error instanceof Error ? error.message : String(error)
+    })
   }
 
   /** argv → command and input values. Every check here runs before anything is sent. */
@@ -128,12 +155,13 @@ class Runner {
     try {
       return await this.prepare(argv)
     } catch (error) {
-      if (!(error instanceof AgwError) || !error.stale || this.host.refreshed) throw error
+      if (!(error instanceof AgwError) || !error.stale) throw error
+      // Already fetched this call (a help call, or no cache to start with): nothing more to try, unless that failed.
+      if (this.host.refreshed) throw this.#refreshFailure ? unrefreshed(error, this.#refreshFailure) : error
       try {
         await this.host.refresh()
       } catch (refreshError) {
-        const refresh = refreshError instanceof Error ? refreshError.message : String(refreshError)
-        throw new AgwError('usage', error.message, { hint: error.hint, details: { ...error.details, refresh } })
+        throw unrefreshed(error, refreshError instanceof Error ? refreshError.message : String(refreshError))
       }
       return this.prepare(argv)
     }
@@ -295,7 +323,8 @@ class Runner {
   }
 
   private async topHelp(): Promise<number> {
-    if (!this.host.loadCache()) await this.host.refresh().catch(() => undefined)
+    this.host.loadCache()
+    await this.freshen()
     const lines = [
       `${BIN} <command> [args] [--help]    ${BIN} schema [command…] [--refresh] [--exit-codes]`,
       '',
