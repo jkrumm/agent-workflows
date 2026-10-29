@@ -4,7 +4,7 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
 `docs/waves/PLAN.md` and this file, then continues from **Next action**.
 
 ## State
-- Waves 1–8 done (retros in concept.md). Active wave: 9 (Usage, P4b).
+- Waves 1–9 done (retros in concept.md). Active wave: 10 (Claude Code and Hermes slimmed, P5).
 - Lead's close-out channel: `docs/waves/handoff/lead.md` (the mother owns PLAN.md and the retro log;
   the lead writes per-step verdicts, Left behind, gate evidence and retro notes there, then idles).
 - dotfiles is free: P0 done (owner, 2026-10-27).
@@ -13,7 +13,7 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
   `com.jkrumm.vps-pg-backup` is ours: P0b maps it in dotfiles `docs/architecture.md`. Relayed to the lead.
 
 ## Lead
-- `agent-workflows-w1` (pane w40:p25), Opus/high, fresh, spawned 2026-10-29 ~15:25 for Wave 9.
+- `agent-workflows-w1` (pane w40:p2A), Opus/high, fresh, spawned 2026-10-29 ~16:55 for Wave 10.
   Rotation policy: a fresh lead per wave unless the last one closed under ~30% context.
 - The mother is agent `agent-workflows-mother` (pane w40:p1).
 
@@ -39,6 +39,9 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
 
 - 2026-10-29 owner: no argo audio bridge; argo needs no audio integration. Door-only listener
   (91de8f3) to be deleted; argo's audio routes removed with audio-gateway in Wave 11.
+
+- 2026-10-29: research, otel, prose and podcast stay on their Requesty routes with the Terra fallback
+  (parity; the per-workflow reworks may move them).
 
 ## Open decisions
 - none
@@ -106,4 +109,4 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
 
 ## Next action
 - Watch the lead (`wave-watch.sh --agents agent-workflows-w1 --heartbeat 9`, bounded 10 min), read
-  `handoff/lead.md` on idle, write Wave 9's Left behind and retro, flip Wave 10 active, rotate the lead.
+  `handoff/lead.md` on idle, write Wave 10's Left behind and retro, flip Wave 11 active, rotate the lead.
