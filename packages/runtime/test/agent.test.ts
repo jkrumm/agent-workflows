@@ -40,7 +40,7 @@ describe('agent steps', () => {
       toolPost: (event) => void tools.push({ phase: 'post', event }),
     }
     const host = new FakeAgentHost(async (s) => {
-      await s.sleep(30) // the session starts at the prompt; let the step attach its waiter first
+      await s.attached // the session starts at the prompt; hooks fire only once the step has attached its waiter
       await s.tool('read', { path: 'a' }, 'content')
       return { output: { answer: 'forty-two' }, usage }
     })
