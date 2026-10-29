@@ -134,7 +134,7 @@ export function renderNarrativePage(input: RenderNarrativePageInput): string {
     `timestamp: ${timestamp}`,
     `repo: ${yamlString(basename(cwd))}`,
     `revised_from: ${yamlString(since ?? 'bootstrap')}`,
-    'generated_by: agent-gateway/narrative',
+    'generated_by: agent-workflows/narrative',
     '---',
   ].join('\n')
 

@@ -15,9 +15,7 @@ import {
   pickHerdrAgents,
   pickHerdrWorkspaces,
   type RunCommand,
-  readDispatchJobs,
   readHumanQueue,
-  readSessionPin,
   runCommand,
   sessionAccountResolver,
 } from '../src/fleet/collect.ts'
@@ -36,7 +34,6 @@ function collectors(over: Partial<Collectors> = {}): Collectors {
     claudeAgents: async () => ok([]),
     humanQueue: async () => ok([]),
     transcriptTail: async () => EMPTY_TAIL,
-    dispatchJobs: async () => ok([]),
     sessionAccounts: async () => new Map(),
     git: async () => null,
     ...over,
@@ -73,21 +70,7 @@ describe('buildSnapshot (fake collectors)', () => {
           aiTitle: `title of ${sessionId}`,
           lastActivityAt: NOW - 1000,
         }),
-        dispatchJobs: async () =>
-          ok([
-            {
-              id: 'job1',
-              status: 'running',
-              cwd: '/work/delta',
-              tier: 'implement',
-              createdAt: NOW - 5000,
-              startedAt: NOW - 4000,
-              finishedAt: null,
-              sessionId: 'ds1',
-            },
-          ]),
-        sessionAccounts: async (ids) =>
-          new Map([...ids].filter((id) => id === 's1' || id === 'ds1').map((id) => [id, 'me'])),
+        sessionAccounts: async (ids) => new Map([...ids].filter((id) => id === 's1').map((id) => [id, 'me'])),
         humanQueue: async () => ok([{ id: 'q1', askedAt: null, question: 'sign', cmd: null }]),
         git: async (cwd) => ({ branch: cwd.slice(-1), dirty: false, ahead: 0, behind: 0, lastCommit: null }),
       }),
@@ -95,12 +78,11 @@ describe('buildSnapshot (fake collectors)', () => {
     )
 
     expect(snapshot.generatedAt).toBe(NOW)
-    expect(snapshot.summary).toEqual({ needsYou: 1, working: 2, idle: 0, stale: 0, done: 0, dispatch: 1 })
-    expect(snapshot.projects.map((p) => p.name)).toEqual(['alpha-ws', 'beta', 'delta', 'gamma'])
+    expect(snapshot.summary).toEqual({ needsYou: 1, working: 1, idle: 0, stale: 0, done: 0, dispatch: 0 })
+    expect(snapshot.projects.map((p) => p.name)).toEqual(['alpha-ws', 'beta', 'gamma'])
     const agents = Object.fromEntries(snapshot.projects.flatMap((p) => p.agents).map((a) => [a.id, a]))
     expect(agents.s1).toMatchObject({ state: 'needs_you', account: 'me', title: 'fix the build' })
     expect(agents.s2).toMatchObject({ state: 'working', account: null, title: 'title of s2' })
-    expect(agents.job1).toMatchObject({ source: 'dispatch', account: 'me', tier: 'implement', state: 'working' })
     expect(agents.s3).toMatchObject({ source: 'claude', state: 'unknown' })
     expect(snapshot.humanQueue).toHaveLength(1)
     expect(snapshot.projects[0]?.git?.branch).toBe('a')
@@ -110,7 +92,6 @@ describe('buildSnapshot (fake collectors)', () => {
     const snapshot = await buildSnapshot(
       collectors({
         herdrAgents: async () => ({ items: [], warning: 'herdr agent list failed or timed out' }),
-        dispatchJobs: async () => ({ items: [], warning: 'agent-gateway dispatch jobs unavailable: HTTP 500' }),
         claudeAgents: async () => ok([{ cwd: '/w/x', sessionId: 's', startedAt: 1, status: 'busy' }]),
         git: async () => {
           throw new Error('git blew up')
@@ -120,7 +101,6 @@ describe('buildSnapshot (fake collectors)', () => {
     )
     expect(snapshot.warnings).toEqual([
       'herdr agent list failed or timed out',
-      'agent-gateway dispatch jobs unavailable: HTTP 500',
       'git status failed for x: Error: git blew up',
     ])
     expect(snapshot.projects[0]?.git).toBeNull()
@@ -174,77 +154,17 @@ describe('buildSnapshot (fake collectors)', () => {
   })
 })
 
-describe('readDispatchJobs (fake agent-gateway)', () => {
-  const job = (id: string, over: Record<string, unknown> = {}) => ({
-    id,
-    tool: 'dispatch',
-    status: 'running',
-    createdAt: NOW - 1000,
-    startedAt: NOW - 900,
-    finishedAt: null,
-    params: { cwd: `/work/${id}`, tier: 'author' },
-    sessionId: `sess-${id}`,
-    ...over,
-  })
-  const gateway = (jobs: ReturnType<typeof job>[]) =>
-    (async (input: string | URL | Request) => {
-      const path = new URL(String(input)).pathname
-      if (path === '/api/jobs') {
-        return Response.json({ ok: true, jobs: jobs.map(({ params: _p, sessionId: _s, ...view }) => view) })
-      }
-      const found = jobs.find((j) => path === `/api/jobs/${j.id}`)
-      return found ? Response.json({ ok: true, job: found }) : new Response('nope', { status: 404 })
-    }) as unknown as typeof fetch
-
-  test('keeps running, queued and recently finished dispatch jobs, with params and session from the detail', async () => {
-    const result = await readDispatchJobs(
-      'http://gw',
-      NOW,
-      gateway([
-        job('run'),
-        job('queued', { status: 'pending', startedAt: null }),
-        job('recent', { status: 'done', finishedAt: NOW - HOUR }),
-        job('old', { status: 'done', finishedAt: NOW - 7 * HOUR }),
-        job('other', { tool: 'triage' }),
-        job('nocwd', { params: {} }),
-      ]),
-    )
-    expect(result.warning).toBeNull()
-    expect(result.items.map((j) => j.id)).toEqual(['run', 'queued', 'recent'])
-    expect(result.items[0]).toMatchObject({
-      cwd: '/work/run',
-      tier: 'author',
-      sessionId: 'sess-run',
-      status: 'running',
-    })
-  })
-
-  test('an agent-gateway that is down or answers an error is a warning with no jobs', async () => {
-    const down = (async () => {
-      throw new Error('connect ECONNREFUSED')
-    }) as unknown as typeof fetch
-    const refused = await readDispatchJobs('http://gw', NOW, down)
-    expect(refused.items).toEqual([])
-    expect(refused.warning).toContain('agent-gateway dispatch jobs unavailable')
-    const broken = (async () => new Response('x', { status: 500 })) as unknown as typeof fetch
-    expect((await readDispatchJobs('http://gw', NOW, broken)).warning).toContain('HTTP 500')
-  })
-})
-
 describe('session accounts', () => {
   let dir: string
-  let pins: string
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'claude-logs-'))
-    pins = mkdtempSync(join(tmpdir(), 'pins-'))
   })
   afterEach(() => {
     rmSync(dir, { recursive: true, force: true })
-    rmSync(pins, { recursive: true, force: true })
   })
   const line = (session: string, account?: string, event = 'session_env') =>
     JSON.stringify({ ts: 't', event, data: { session, ...(account ? { account } : {}) } })
-  const resolver = () => sessionAccountResolver({ claudeLogDir: dir, sessionAccountsDir: pins })
+  const resolver = () => sessionAccountResolver({ claudeLogDir: dir })
 
   test('parse: the newest line wins, lines without an account and other events are skipped', () => {
     const m = parseSessionAccounts(
@@ -274,17 +194,6 @@ describe('session accounts', () => {
     expect((await resolve(['old'], 80_000)).get('old')).toBe('me')
   })
 
-  test('a spawn pin resolves without any log line; a pin whose dir is gone, or a symlink, does not', async () => {
-    const resolve = resolver()
-    writeFileSync(join(pins, 'pinned-1.json'), JSON.stringify({ account: 'me', dir: null }))
-    writeFileSync(join(pins, 'gone.json'), JSON.stringify({ account: 'me', dir: join(pins, 'missing') }))
-    expect([...(await resolve(['pinned-1', 'gone', 'none'], 5))]).toEqual([['pinned-1', 'me']])
-    const target = join(pins, 'target.json')
-    writeFileSync(target, JSON.stringify({ account: 'me', dir: null }))
-    Bun.spawnSync(['ln', '-s', target, join(pins, 'linked.json')])
-    expect((await resolve(['linked'], 6)).has('linked')).toBe(false)
-  })
-
   test('repeated misses back off exponentially (60 s, 120 s, …)', async () => {
     const resolve = resolver()
     const file = join(dir, '2026-10-24.jsonl')
@@ -300,9 +209,7 @@ describe('session accounts', () => {
   })
 
   test('a missing log dir is unknown, no throw', async () => {
-    expect(
-      (await sessionAccountResolver({ claudeLogDir: join(dir, 'nope'), sessionAccountsDir: pins })(['x'], 0)).size,
-    ).toBe(0)
+    expect((await sessionAccountResolver({ claudeLogDir: join(dir, 'nope') })(['x'], 0)).size).toBe(0)
   })
 })
 
@@ -374,7 +281,6 @@ describe('fleetConfig', () => {
       expect(config.claudeBin).toBe('claude') // not installed there: found on PATH
       expect(config.humanQueueDir).toBe(join(home, '.local', 'state', 'human-queue'))
       expect(config.claudeLogDir).toBe(join(home, '.claude', 'logs'))
-      expect(config.agentGatewayUrl).toBe('http://localhost:7705')
       expect(config.staleAfterHours).toBe(24)
 
       const custom = fleetConfig(
@@ -382,8 +288,6 @@ describe('fleetConfig', () => {
           AGW_HERDR_BIN: '/opt/herdr',
           XDG_STATE_HOME: '/state',
           AGW_CLAUDE_LOG_DIR: '/logs',
-          AGW_SESSION_ACCOUNTS_DIR: '/pins',
-          AGW_AGENT_GATEWAY_URL: 'http://gw:1/',
           AGW_AGENT_STALE_HOURS: '48',
         },
         home,
@@ -392,8 +296,6 @@ describe('fleetConfig', () => {
         herdrBin: '/opt/herdr',
         humanQueueDir: '/state/human-queue',
         claudeLogDir: '/logs',
-        sessionAccountsDir: '/pins',
-        agentGatewayUrl: 'http://gw:1',
         staleAfterHours: 48,
       })
       expect(fleetConfig({ AGW_AGENT_STALE_HOURS: 'x' }, home).staleAfterHours).toBe(24)
@@ -496,7 +398,6 @@ describe('collector output is shape-validated', () => {
       herdrAgents: picked.items,
       herdrWorkspaces: [],
       claudeAgents: [],
-      dispatchJobs: [],
       transcripts: new Map(),
       now: 10,
       staleAfterMs: 1000,
@@ -621,7 +522,7 @@ describe('collector output is shape-validated', () => {
   })
 })
 
-describe('the human queue and session pins are read async and bounded', () => {
+describe('the human queue is read async and bounded', () => {
   let dir: string
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'queue-'))
@@ -650,13 +551,6 @@ describe('the human queue and session pins are read async and bounded', () => {
     expect(queue.items[0]?.id).toBe('0229')
     expect(queue.items.at(-1)?.id).toBe('0030')
     expect(queue.warning).toContain('30 request(s) skipped')
-  })
-
-  test('a pin whose dir is gone is no pin; an existing one is', async () => {
-    writeFileSync(join(dir, 's1.json'), JSON.stringify({ account: 'iu', dir }))
-    writeFileSync(join(dir, 's2.json'), JSON.stringify({ account: 'iu', dir: join(dir, 'gone') }))
-    expect(await readSessionPin(dir, 's1')).toBe('iu')
-    expect(await readSessionPin(dir, 's2')).toBeNull()
   })
 })
 
@@ -718,7 +612,6 @@ describe('text from outside', () => {
       ],
       herdrWorkspaces: [{ workspace_id: 'w', label: `la${ESC}bel` }],
       claudeAgents: [{ cwd: '/w/c', sessionId: 's2', startedAt: 1, status: 'waiting', waitingFor: `dia${ESC}log` }],
-      dispatchJobs: [],
       transcripts: new Map(),
       now: 10,
       staleAfterMs: 1000,
@@ -748,32 +641,18 @@ describe('text from outside', () => {
         { cwd: '/w/c', sessionId: 's2', status: 'waiting', waitingFor: `dia\nlog${c1}` },
         { cwd: '/w/d', sessionId: 's2\n', status: 'idle' },
       ],
-      dispatchJobs: [
-        {
-          id: 'j1',
-          status: 'running',
-          cwd: '/w/j',
-          tier: null,
-          createdAt: 1,
-          startedAt: null,
-          finishedAt: null,
-          account: 'iu\n',
-        },
-        { id: 'j\n2', status: 'running', cwd: '/w/j', tier: null, createdAt: 1, startedAt: null, finishedAt: null },
-      ],
       transcripts: new Map(),
       accounts: new Map([['s2', 'me\nx']]),
       now: 10,
       staleAfterMs: 1000,
     })
     const agents = merged.flatMap((p) => p.agents)
-    expect(agents.map((a) => a.id).toSorted()).toEqual(['j1', 's1', 's2', 's3'])
+    expect(agents.map((a) => a.id).toSorted()).toEqual(['s1', 's2', 's3'])
     const fields = agents.flatMap((a) => [a.id, a.sessionId, a.paneId, a.workspaceId, a.title, a.waitingFor, a.account])
     for (const value of fields) expect(value ?? '').not.toMatch(/[\r\n\u0080-\u009f]/)
     expect(agents.find((a) => a.id === 's1')).toMatchObject({ title: 'ti tle', workspaceId: 'w' })
     expect(agents.find((a) => a.id === 's3')).toMatchObject({ paneId: null, workspaceId: null })
     expect(agents.find((a) => a.source === 'claude')).toMatchObject({ waitingFor: 'dia log', account: 'me x' })
-    expect(agents.find((a) => a.source === 'dispatch')).toMatchObject({ id: 'j1', account: 'iu' })
     // the project is named from the workspace label, found by the raw workspace id
     expect(merged.map((p) => p.name)).toContain('la bel')
   })
@@ -788,7 +667,6 @@ describe('text from outside', () => {
       ],
       herdrWorkspaces: [],
       claudeAgents: [],
-      dispatchJobs: [],
       transcripts: new Map(),
       now: 10,
       staleAfterMs: 1000,
@@ -805,7 +683,6 @@ describe('text from outside', () => {
       herdrAgents: [{ agent_session: { value: 's1' } }, { pane_id: 'only-pane' }, {}],
       herdrWorkspaces: [],
       claudeAgents: [{ sessionId: 's2' }, { cwd: '/w/nosession' }, {}],
-      dispatchJobs: [],
       transcripts: new Map(),
       now: 10,
       staleAfterMs: 1000,
@@ -814,30 +691,5 @@ describe('text from outside', () => {
     expect(agents.map((a) => a.id).toSorted()).toEqual(['only-pane', 's1', 's2'])
     for (const agent of agents) expect(AGENT.strict().safeParse(agent).success).toBe(true)
     expect(agents.find((a) => a.id === 's2')).toMatchObject({ startedAt: null, paneId: null })
-  })
-})
-
-describe('readDispatchJobs partial failure', () => {
-  test('a detail that fails costs one warning for the failures; the others are kept', async () => {
-    const job = (id: string) => ({
-      id,
-      tool: 'dispatch',
-      status: 'running',
-      createdAt: NOW - 1000,
-      startedAt: NOW - 900,
-      finishedAt: null,
-      params: { cwd: `/work/${id}` },
-      sessionId: null,
-    })
-    const jobs = [job('a'), job('b'), job('c')]
-    const fetcher = (async (input: string | URL | Request) => {
-      const path = new URL(String(input)).pathname
-      if (path === '/api/jobs') return Response.json({ jobs })
-      if (path.endsWith('/b')) return new Response('boom', { status: 500 })
-      return Response.json({ job: jobs.find((j) => path.endsWith(`/${j.id}`)) })
-    }) as unknown as typeof fetch
-    const result = await readDispatchJobs('http://gw', NOW, fetcher)
-    expect(result.items.map((j) => j.id)).toEqual(['a', 'c'])
-    expect(result.warning).toBe('agent-gateway dispatch jobs: 1 of 3 could not be read')
   })
 })

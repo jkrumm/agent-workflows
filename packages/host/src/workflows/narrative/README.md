@@ -32,4 +32,4 @@ minus `backend` (the platform has one): `project`, `changed`, `reason`, `summary
   the run, as the legacy job threw.
 - **Route.** `narrative` (`packages/routes/src/table/narrative.ts`): `iu-anthropic`, Haiku 5.5, legacy's CLASSIFY tier. The
   gateway ran a tool-less OpenCode session; the platform asks for the same JSON as one Messages request.
-- The page's frontmatter still says `generated_by: agent-gateway/narrative` (legacy's, so the vault does not churn).
+- New pages carry `generated_by: agent-workflows/narrative`. Existing vault pages are not rewritten, so older ones still say `agent-gateway/narrative`.

@@ -9,9 +9,11 @@ import { type Exec, exec } from '../src/harness/exec.ts'
 import type { ReviewOutput, ReviewRequest, ReviewRunner } from '../src/harness/ports.ts'
 import { renderAggregate, renderMarkdown } from '../src/harness/report.ts'
 import {
+  appendRow,
   DEFAULT_THRESHOLD,
   isReproducible,
   readRows,
+  type ReproducibilityRow,
   reproducibleCases,
   type SelfAgreementOptions,
   selfAgreementCheck,
@@ -24,6 +26,9 @@ import { BAD_DIFF, checkCase, fixtureHome, reviewCase, reviewOutput } from './ha
 const spend = { costUsd: 0.04, costExact: true, wallMs: 1 }
 const clean = reviewOutput({ outcome: 'clean', blocking: [] })
 
+/** The measured rows as rows recorded while agent-gateway still ran: the only side `reproducibleCases` scores on. */
+const asRecorded = (rows: ReproducibilityRow[]): ReproducibilityRow[] => rows.map((r) => ({ ...r, side: 'legacy' }))
+
 function options(home: string, overrides: Partial<SelfAgreementOptions> = {}): SelfAgreementOptions {
   return {
     exec,
@@ -32,7 +37,6 @@ function options(home: string, overrides: Partial<SelfAgreementOptions> = {}): S
     keep: false,
     depthMode: 'matched',
     resultsPath: join(mkdtempSync(join(tmpdir(), 'agw-eval-repro-')), 'reproducibility.jsonl'),
-    side: 'legacy',
     runs: 2,
     ...overrides,
   }
@@ -62,7 +66,7 @@ describe('self-agreement: review', () => {
     expect(outcomes.map((o) => o.status)).toEqual(['measured', 'measured'])
     const rows = readRows(opts.resultsPath)
     expect(rows.find((r) => r.id === 'stable')).toMatchObject({
-      side: 'legacy',
+      side: 'new',
       runs: 2,
       outcomeAgreement: 1,
       blockingRecall: 1,
@@ -72,7 +76,7 @@ describe('self-agreement: review', () => {
       outcomeAgreement: 1 / 3,
       blockingRecall: 0,
     })
-    expect(reproducibleCases(rows, DEFAULT_THRESHOLD)).toEqual({
+    expect(reproducibleCases(asRecorded(rows), DEFAULT_THRESHOLD)).toEqual({
       threshold: DEFAULT_THRESHOLD,
       byId: new Map([
         ['stable', true],
@@ -93,7 +97,7 @@ describe('self-agreement: review', () => {
     const rows = readRows(opts.resultsPath)
     expect(rows.every((r) => !('reproducible' in r) && !('threshold' in r))).toBe(true)
     // flaky: outcome agreement 1/3, recall 0 -> reproducible only at a threshold of 0
-    const at = (threshold: number) => reproducibleCases(rows, threshold)?.byId
+    const at = (threshold: number) => reproducibleCases(asRecorded(rows), threshold)?.byId
     expect(at(0.5)).toEqual(
       new Map([
         ['flaky', false],
@@ -157,24 +161,21 @@ describe('self-agreement: review', () => {
     expect(readRows(opts.resultsPath).map((r) => r.id)).toEqual(['ok', 'down'])
   })
 
-  test('the legacy side gets no depth; the new side gets the depth the legacy run recorded', async () => {
+  test('the new side gets the depth the legacy run recorded', async () => {
     const fx = fixtureHome()
     const cases = [reviewCase({ id: 'a', baseSha: fx.baseSha, diff: fx.diff })]
-    const legacy = scripted([])
-    await selfAgreementReview(cases, { runner: legacy.runner }, options(fx.home))
-    expect(legacy.calls).toHaveLength(2)
-    expect(legacy.calls.every((c) => c.depth === undefined)).toBe(true)
     const next = scripted([])
-    await selfAgreementReview(cases, { runner: next.runner }, options(fx.home, { side: 'new', runs: 3 }))
+    await selfAgreementReview(cases, { runner: next.runner }, options(fx.home, { runs: 3 }))
     expect(next.calls.map((c) => c.depth)).toEqual(['standard', 'standard', 'standard'])
   })
 
-  test('legacy and new rows of one case are kept apart; the baseline reads the legacy rows only', async () => {
+  test('legacy and new rows of one case are kept apart; the baseline reads the recorded legacy rows only', async () => {
     const fx = fixtureHome()
     const cases = [reviewCase({ id: 'a', baseSha: fx.baseSha, diff: fx.diff })]
     const opts = options(fx.home)
-    await selfAgreementReview(cases, { runner: scripted([clean, clean]).runner }, opts)
-    await selfAgreementReview(cases, { runner: scripted([]).runner }, { ...opts, side: 'new' })
+    // a row measured while agent-gateway still ran: 1 of 3 outcome pairs agree, no blocker recovered
+    appendRow(opts.resultsPath, { id: 'a', side: 'legacy', runs: 2, outcomeAgreement: 1 / 3, blockingRecall: 0 })
+    await selfAgreementReview(cases, { runner: scripted([]).runner }, opts)
     const rows = readRows(opts.resultsPath)
     expect(rows.map((r) => [r.side, isReproducible(r, 0.5)])).toEqual([
       ['legacy', false],
@@ -212,7 +213,7 @@ describe('self-agreement: check', () => {
       blockingRecall: 0,
     })
     expect(rows.find((r) => r.id === 'green')).toMatchObject({ outcomeAgreement: 1, blockingRecall: null })
-    expect(reproducibleCases(rows, 0.5)?.byId).toEqual(
+    expect(reproducibleCases(asRecorded(rows), 0.5)?.byId).toEqual(
       new Map([
         ['red', false],
         ['green', true],
@@ -364,7 +365,6 @@ const meta = () => ({
   startedAt: '2026-10-28T09:00:00.000Z',
   finishedAt: '2026-10-28T09:10:00.000Z',
   depthMode: 'matched' as const,
-  rerunLegacy: false,
   judge: false,
   concurrency: 1,
   seed: 1,
@@ -459,12 +459,12 @@ describe('cli', () => {
     const out: string[] = []
     const err: string[] = []
     const deps = { env, exec: fakeAgw(counter), out: (l: string) => out.push(l), err: (l: string) => err.push(l) }
-    expect(await main(['self-agreement', 'review', '--side', 'new', '--runs', '3'], deps)).toBe(0)
+    expect(await main(['self-agreement', 'review', '--runs', '3'], deps)).toBe(0)
     expect(counter.agw).toBe(3)
     const file = join(evalDir, 'review', 'reproducibility.jsonl')
     expect(readRows(file)).toMatchObject([{ id: 'a', side: 'new', runs: 3, outcomeAgreement: 1, blockingRecall: 1 }])
     expect(out.join('\n')).toContain(
-      '1 of 1 measured cases reproducible at threshold 0.5 (informational: scoring reads legacy rows only)',
+      '1 of 1 measured cases reproducible at threshold 0.5; informational, scoring reads the recorded legacy rows only',
     )
 
     // Only the new side was measured: the baseline is legacy's, so the review run still has no data.
@@ -499,7 +499,7 @@ describe('cli', () => {
     const err: string[] = []
     const out: string[] = []
     const run = (agwCode: number) =>
-      main(['self-agreement', 'review', '--side', 'new'], {
+      main(['self-agreement', 'review'], {
         env,
         exec: fakeAgw({ agw: 0 }, agwCode),
         out: (l) => out.push(l),
@@ -523,7 +523,7 @@ describe('cli', () => {
     expect(await run(1)).toBe(0) // already measured: nothing to rerun, nothing failed
   })
 
-  test('--side and --runs outside self-agreement are a usage error; self-agreement rejects what does not apply', async () => {
+  test('--runs outside self-agreement is a usage error; self-agreement rejects what does not apply', async () => {
     const { fx, evalDir, env } = evalEnv()
     writeCases(join(evalDir, 'check', 'cases.jsonl'), CheckCase, [checkCase({ baseSha: fx.baseSha })])
     writeCases(join(evalDir, 'review', 'cases.jsonl'), ReviewCase, [
@@ -532,20 +532,13 @@ describe('cli', () => {
     const err: string[] = []
     const counter = { agw: 0 }
     const run = (argv: string[]) => main(argv, { env, exec: fakeAgw(counter), out: () => {}, err: (l) => err.push(l) })
-    for (const argv of [
-      ['review', '--side', 'new'],
-      ['check', '--runs', '3'],
-      ['review', '--side', 'legacy', '--runs', '2'],
-    ]) {
-      expect(await run(argv)).toBe(2)
-    }
-    expect(err.join('\n')).toContain('apply to self-agreement only')
-    expect(await run(['self-agreement', 'check', '--rerun-legacy'])).toBe(2)
+    expect(await run(['check', '--runs', '3'])).toBe(2)
+    expect(err.join('\n')).toContain('--runs applies to self-agreement only')
     expect(await run(['self-agreement', 'check', '--dry-run'])).toBe(2)
     expect(await run(['self-agreement', 'check', '--resume', 'x'])).toBe(2)
     expect(err.join('\n')).toContain('self-agreement does not take')
     for (const bad of [
-      ['--side', 'both'],
+      ['--side', 'legacy'],
       ['--runs', '1'],
       ['--threshold', '1.5'],
     ]) {

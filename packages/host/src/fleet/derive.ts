@@ -1,16 +1,8 @@
 import { basename } from 'node:path'
-import type {
-  Agent,
-  AgentSource,
-  AgentState,
-  ClaudeAgentStatus,
-  DispatchTierName,
-  HerdrAgentStatus,
-  JobStatus,
-} from './schema.ts'
+import type { Agent, AgentState, ClaudeAgentStatus, HerdrAgentStatus } from './schema.ts'
 import { hasControlBytes, oneLine, stripControlBytes } from './text.ts'
 
-// Pure steps of the snapshot: what a transcript tail says, an agent's urgency, and the merge of the three collectors.
+// Pure steps of the snapshot: what a transcript tail says, an agent's urgency, and the merge of the collectors.
 
 /** `~/.claude/projects/<encoded cwd>/<sessionId>.jsonl`: the absolute path with every non-alphanumeric turned to `-`. */
 export function encodeProjectDir(cwd: string): string {
@@ -99,26 +91,21 @@ export interface DeriveStateInput {
   lastActivityAt: number | null
   now: number
   staleAfterMs: number
-  source: AgentSource
-  jobStatus: JobStatus | null
 }
 
 /**
  * First match wins:
  * - needs_you: herdr `blocked`, or claude `waiting`
- * - working: herdr `working`, claude `busy`, or a dispatch job `running` / `pending`
+ * - working: herdr `working`, or claude `busy`
  * - stale: herdr `idle` / `done` and the last activity older than `staleAfterMs`
- * - idle: herdr `idle`; done: herdr `done`, or a terminal dispatch job
+ * - idle: herdr `idle`; done: herdr `done`
  * - unknown: anything else
- *
- * A dispatch job never resolves to `needs_you`: the needs-human verdict is not in the job list.
  */
 export function deriveState(input: DeriveStateInput): AgentState {
-  const { herdrStatus, claudeStatus, lastActivityAt, now, staleAfterMs, source, jobStatus } = input
+  const { herdrStatus, claudeStatus, lastActivityAt, now, staleAfterMs } = input
 
   if (herdrStatus === 'blocked' || claudeStatus === 'waiting') return 'needs_you'
   if (herdrStatus === 'working' || claudeStatus === 'busy') return 'working'
-  if (source === 'dispatch' && (jobStatus === 'running' || jobStatus === 'pending')) return 'working'
 
   if (
     (herdrStatus === 'idle' || herdrStatus === 'done') &&
@@ -129,7 +116,6 @@ export function deriveState(input: DeriveStateInput): AgentState {
   }
   if (herdrStatus === 'idle') return 'idle'
   if (herdrStatus === 'done') return 'done'
-  if (source === 'dispatch' && jobStatus != null && jobStatus !== 'running' && jobStatus !== 'pending') return 'done'
   return 'unknown'
 }
 
@@ -157,25 +143,10 @@ export interface ClaudeAgentRaw {
   waitingFor?: string
 }
 
-export interface DispatchJobRaw {
-  id: string
-  status: JobStatus
-  cwd: string
-  tier: string | null
-  createdAt: number
-  startedAt: number | null
-  finishedAt: number | null
-  /** The worker's Claude session id, once known. */
-  sessionId?: string | null
-  /** The account of the session; filled by the snapshot builder. */
-  account?: string | null
-}
-
 export interface MergeAgentsInput {
   herdrAgents: HerdrAgentRaw[]
   herdrWorkspaces: HerdrWorkspaceRaw[]
   claudeAgents: ClaudeAgentRaw[]
-  dispatchJobs: DispatchJobRaw[]
   /** Transcript tails by Claude session id: reading them is I/O, so the caller resolves them first. */
   transcripts: Map<string, TranscriptTail>
   /** Session id to account id. Absent: every account unknown. */
@@ -193,7 +164,7 @@ export interface MergedProject {
   agents: Agent[]
 }
 
-/** An identifier used as a key or a lookup (session, pane, workspace, job): itself when it is already one clean line, else null. */
+/** An identifier used as a key or a lookup (session, pane, workspace): itself when it is already one clean line, else null. */
 const safeId = (raw: string | null | undefined): string | null => (raw && cleanLine(raw) === raw ? raw : null)
 
 const normalizeHerdrStatus = (raw: string): HerdrAgentStatus =>
@@ -202,23 +173,18 @@ const normalizeHerdrStatus = (raw: string): HerdrAgentStatus =>
 const normalizeClaudeStatus = (raw: string): ClaudeAgentStatus | null =>
   raw === 'idle' || raw === 'busy' || raw === 'waiting' ? raw : null
 
-const normalizeTier = (raw: string | null): DispatchTierName | null =>
-  raw === 'investigate' || raw === 'author' || raw === 'implement' ? raw : null
-
 const STATE_RANK: Record<AgentState, number> = { needs_you: 0, working: 1, idle: 2, stale: 3, done: 4, unknown: 5 }
 
 /**
- * Merges the three collectors into one project-grouped, urgency-sorted list. Entries are keyed by Claude session id: a
+ * Merges the collectors into one project-grouped, urgency-sorted list. Entries are keyed by Claude session id: a
  * herdr pane and the claude registry entry of the same session collapse into one agent, herdr's status winning.
- * Dispatch jobs have no session key and are always their own entry.
  */
 export function mergeAgents(input: MergeAgentsInput): MergedProject[] {
-  const { herdrAgents, herdrWorkspaces, claudeAgents, dispatchJobs, transcripts, accounts, now, staleAfterMs } = input
+  const { herdrAgents, herdrWorkspaces, claudeAgents, transcripts, accounts, now, staleAfterMs } = input
   const workspaceLabels = new Map(herdrWorkspaces.map((w) => [w.workspace_id, w.label]))
 
   interface Entry {
     agent: Agent
-    jobStatus: JobStatus | null
     workspaceId: string | null
     cwd: string
   }
@@ -234,7 +200,6 @@ export function mergeAgents(input: MergeAgentsInput): MergedProject[] {
     if (!sessionId && !paneId) continue // nothing to identify the row by
     const tail = sessionId ? (transcripts.get(sessionId) ?? EMPTY_TAIL) : EMPTY_TAIL
     entries.set(sessionId ?? `pane:${paneId}`, {
-      jobStatus: null,
       workspaceId,
       cwd: a.cwd ?? '',
       agent: {
@@ -248,7 +213,6 @@ export function mergeAgents(input: MergeAgentsInput): MergedProject[] {
         herdrStatus: normalizeHerdrStatus(a.agent_status ?? ''),
         claudeStatus: null,
         waitingFor: null,
-        tier: null,
         lastPrompt: tail.lastPrompt,
         lastReply: tail.lastReply,
         lastActivityAt: tail.lastActivityAt,
@@ -272,7 +236,6 @@ export function mergeAgents(input: MergeAgentsInput): MergedProject[] {
     }
     const tail = transcripts.get(sessionId) ?? EMPTY_TAIL
     entries.set(sessionId, {
-      jobStatus: null,
       workspaceId: null,
       cwd: c.cwd ?? '',
       agent: {
@@ -286,40 +249,11 @@ export function mergeAgents(input: MergeAgentsInput): MergedProject[] {
         herdrStatus: null,
         claudeStatus,
         waitingFor: cleanLine(c.waitingFor),
-        tier: null,
         lastPrompt: tail.lastPrompt,
         lastReply: tail.lastReply,
         lastActivityAt: tail.lastActivityAt,
         account: cleanLine(accounts?.get(sessionId)) || null,
         startedAt,
-      },
-    })
-  }
-
-  for (const job of dispatchJobs) {
-    const jobId = safeId(job.id)
-    if (!jobId) continue
-    entries.set(`dispatch:${jobId}`, {
-      jobStatus: job.status,
-      workspaceId: null,
-      cwd: job.cwd,
-      agent: {
-        id: jobId,
-        source: 'dispatch',
-        sessionId: null,
-        paneId: null,
-        workspaceId: null,
-        title: null,
-        state: 'unknown',
-        herdrStatus: null,
-        claudeStatus: null,
-        waitingFor: null,
-        tier: normalizeTier(job.tier),
-        lastPrompt: null,
-        lastReply: null,
-        lastActivityAt: job.finishedAt ?? job.startedAt ?? job.createdAt,
-        account: cleanLine(job.account) || null,
-        startedAt: job.startedAt ?? job.createdAt,
       },
     })
   }
@@ -332,8 +266,6 @@ export function mergeAgents(input: MergeAgentsInput): MergedProject[] {
       lastActivityAt: entry.agent.lastActivityAt,
       now,
       staleAfterMs,
-      source: entry.agent.source,
-      jobStatus: entry.jobStatus,
     })
     const label = entry.workspaceId ? workspaceLabels.get(entry.workspaceId) : undefined
     const projectName = cleanLine(label ?? basename(entry.cwd)) ?? ''

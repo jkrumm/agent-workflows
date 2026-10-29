@@ -39,8 +39,6 @@ function agentLines(agent: Agent, generatedAt: number): string[] {
   if (agent.herdrStatus) lines.push(`  herdrStatus: ${agent.herdrStatus}`)
   if (agent.claudeStatus) lines.push(`  claudeStatus: ${agent.claudeStatus}`)
   if (agent.waitingFor) lines.push(`  waitingFor: ${agent.waitingFor}`)
-  // The derived state collapses a job's status to working / done / unknown: spelled out for the model.
-  if (agent.tier) lines.push(`  dispatch tier: ${agent.tier}  job activity: ${agent.state}`)
   // One line each: a multi-line prompt must not open a line of its own, least of all a forged `- agent id:`.
   const prompt = agent.lastPrompt && oneLine(agent.lastPrompt)
   const reply = agent.lastReply && oneLine(agent.lastReply)

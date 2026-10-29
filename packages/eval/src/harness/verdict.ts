@@ -3,11 +3,9 @@ import type { RatioSummary } from './stats.ts'
 
 /** The P1 cutover gate (concept §11): the new workflow is not worse than agent-gateway. Defaults, overridable. */
 export const DEFAULT_THRESHOLDS = {
-  /** Allowed drop below legacy's own self-agreement (the noise floor from `--rerun-legacy`). */
-  margin: 0.1,
-  /** Review floor for blocking recall and outcome agreement when no rerun measured the noise floor. */
+  /** Review floor for blocking recall and outcome agreement. */
   reviewFloor: 0.6,
-  /** Check floor for `passed` agreement without a rerun: check is deterministic, so the bar is high. */
+  /** Check floor for `passed` agreement and failure recall: check is deterministic, so the bar is high. */
   checkFloor: 0.9,
   maxCostRatio: 1.1,
   maxWallRatio: 1.25,
@@ -55,10 +53,6 @@ function ratioCriterion(metric: string, ratio: RatioSummary, threshold: number, 
   return { ...base, pass: null, note: `${ratio.n} paired cases, fewer than ${minPairs}` }
 }
 
-/** Legacy's self-agreement minus the margin, or the fixed floor when no rerun measured it. */
-const floorOf = (self: number | null | undefined, fallback: number, margin: number) =>
-  self === null || self === undefined ? fallback : Math.max(0, self - margin)
-
 function decide(cases: CaseCounts, min: number, criteria: Criterion[], thresholds: Thresholds): Verdict {
   if (cases.scored < min) {
     return { verdict: 'inconclusive', reasons: [`${cases.scored} cases ran, fewer than ${min}`], criteria, thresholds }
@@ -82,15 +76,9 @@ function decide(cases: CaseCounts, min: number, criteria: Criterion[], threshold
 
 export function reviewVerdict(agg: ReviewAggregate, overrides: Partial<Thresholds> = {}): Verdict {
   const t = { ...DEFAULT_THRESHOLDS, ...overrides }
-  const self = agg.selfAgreement
   const criteria = [
-    criterion('blocking recall', agg.blocking.recall, '>=', floorOf(self?.blockingRecall, t.reviewFloor, t.margin)),
-    criterion(
-      'outcome agreement',
-      agg.outcome.agreement,
-      '>=',
-      floorOf(self?.outcomeAgreement, t.reviewFloor, t.margin),
-    ),
+    criterion('blocking recall', agg.blocking.recall, '>=', t.reviewFloor),
+    criterion('outcome agreement', agg.outcome.agreement, '>=', t.reviewFloor),
     ratioCriterion('median cost ratio', agg.cost, t.maxCostRatio, t.minReviewPairs),
     ratioCriterion('median wall ratio', agg.wall, t.maxWallRatio, t.minReviewPairs),
   ]
@@ -99,15 +87,9 @@ export function reviewVerdict(agg: ReviewAggregate, overrides: Partial<Threshold
 
 export function checkVerdict(agg: CheckAggregate, overrides: Partial<Thresholds> = {}): Verdict {
   const t = { ...DEFAULT_THRESHOLDS, ...overrides }
-  const self = agg.selfAgreement
   const criteria = [
-    criterion('passed agreement', agg.passed.agreement, '>=', floorOf(self?.passedAgreement, t.checkFloor, t.margin)),
-    criterion(
-      'legacy failure recall',
-      agg.failureRecall.recall,
-      '>=',
-      floorOf(self?.failureRecall, t.checkFloor, t.margin),
-    ),
+    criterion('passed agreement', agg.passed.agreement, '>=', t.checkFloor),
+    criterion('legacy failure recall', agg.failureRecall.recall, '>=', t.checkFloor),
     ratioCriterion('median cost ratio', agg.cost, t.maxCostRatio, t.minCheckPairs),
     ratioCriterion('median wall ratio', agg.wall, t.maxWallRatio, t.minCheckPairs),
   ]

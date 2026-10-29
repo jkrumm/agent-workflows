@@ -32,14 +32,11 @@ export interface HarnessOptions {
 
 export interface ReviewPorts {
   next: ReviewRunner
-  /** The legacy rerun (`--rerun-legacy`); absent: compare against the recorded run only. */
-  legacy?: ReviewRunner
   judge?: Judge
 }
 
 export interface CheckPorts {
   next: CheckRunner
-  legacy?: CheckRunner
 }
 
 const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error))
@@ -54,33 +51,6 @@ export async function pool<T>(items: T[], limit: number, fn: (item: T, index: nu
     }
   }
   await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, worker))
-}
-
-/** Runs one call at a time: legacy reruns go serially, so the IU time-window cost match never sees two jobs. */
-export function serialLock() {
-  let tail: Promise<unknown> = Promise.resolve()
-  return <T>(fn: () => Promise<T>): Promise<T> => {
-    const run = tail.then(fn, fn)
-    tail = run.catch(() => undefined)
-    return run
-  }
-}
-type Lock = ReturnType<typeof serialLock>
-
-/** Both sides on the same tree, one after the other; the order alternates per case so neither side always goes first. */
-async function bothSides<T>(index: number, next: () => Promise<T>, legacy?: () => Promise<T>) {
-  let legacyResult: { ok: true; value: T } | { ok: false; error: string } | undefined
-  const runLegacy = async () => {
-    if (!legacy) return
-    legacyResult = await legacy().then(
-      (value) => ({ ok: true as const, value }),
-      (error: unknown) => ({ ok: false as const, error: errorText(error) }),
-    )
-  }
-  if (index % 2 === 1) await runLegacy()
-  const nextResult = await next()
-  if (index % 2 === 0) await runLegacy()
-  return { next: nextResult, legacy: legacyResult }
 }
 
 export async function withTree<R>(
@@ -140,7 +110,7 @@ const reviewBase = (c: ReviewCase, options: HarnessOptions) => ({
   legacy: recordedReviewSide(c),
 })
 
-async function reviewCase(c: ReviewCase, index: number, ports: ReviewPorts, options: HarnessOptions, lock: Lock) {
+async function reviewCase(c: ReviewCase, ports: ReviewPorts, options: HarnessOptions) {
   const base = reviewBase(c, options)
   const { depth } = base
   return withTree<ReviewCaseResult>(
@@ -153,29 +123,23 @@ async function reviewCase(c: ReviewCase, index: number, ports: ReviewPorts, opti
         ...(depth ? { depth } : {}),
         ...(c.input.context ? { context: c.input.context } : {}),
       }
-      // The legacy CLI takes no depth: its rerun is always router-chosen.
-      const legacy = ports.legacy
-      let sides: Awaited<ReturnType<typeof bothSides<ReviewRun>>>
+      let run: ReviewRun
       try {
-        sides = await bothSides(
-          index,
-          () => ports.next.review(request),
-          legacy && (() => lock(() => legacy.review({ cwd: tree.dir }))),
-        )
+        run = await ports.next.review(request)
       } catch (error) {
         return { ...base, status: 'error', reason: 'new_failed', detail: errorText(error) }
       }
       const reference: Located[] = c.legacy.findings
         .filter((f) => f.severity === 'blocking')
         .map((f) => ({ file: f.file, line: f.line ?? null, message: f.message }))
-      const candidate = blockingOf(sides.next.output)
+      const candidate = blockingOf(run.output)
       const match = await matchFindings(reference, candidate, { judge: ports.judge, diff: c.diff })
       const matchedR = new Set(match.pairs.map(([r]) => r))
       const matchedC = new Set(match.pairs.map(([, cIndex]) => cIndex))
-      const result: ReviewCaseResult = {
+      return {
         ...base,
         status: 'ok',
-        new: reviewSide(sides.next),
+        new: reviewSide(run),
         match: {
           reference: match.reference,
           matched: match.matched,
@@ -186,17 +150,6 @@ async function reviewCase(c: ReviewCase, index: number, ports: ReviewPorts, opti
         missed: reference.filter((_, r) => !matchedR.has(r)),
         newOnly: candidate.filter((_, i) => !matchedC.has(i)),
       }
-      if (sides.legacy?.ok) {
-        const self = await matchFindings(reference, blockingOf(sides.legacy.value.output), {
-          judge: ports.judge,
-          diff: c.diff,
-        })
-        result.rerun = {
-          ...reviewSide(sides.legacy.value),
-          self: { reference: self.reference, matched: self.matched, judged: self.judged, unsure: self.unsure },
-        }
-      } else if (sides.legacy) result.rerunError = sides.legacy.error
-      return result
     },
     (tree) => ({ ...base, status: 'skipped', reason: tree.reason, detail: tree.detail }),
   )
@@ -228,7 +181,7 @@ const checkBase = (c: CheckCase) => ({
   legacy: recordedCheckSide(c),
 })
 
-async function checkCase(c: CheckCase, index: number, ports: CheckPorts, options: HarnessOptions, lock: Lock) {
+async function checkCase(c: CheckCase, ports: CheckPorts, options: HarnessOptions) {
   const base = checkBase(c)
   return withTree<CheckCaseResult>(
     options,
@@ -236,21 +189,13 @@ async function checkCase(c: CheckCase, index: number, ports: CheckPorts, options
     true,
     async (tree) => {
       const request = { cwd: tree.dir, ...(c.input.commands ? { commands: c.input.commands } : {}) }
-      const legacy = ports.legacy
-      let sides: Awaited<ReturnType<typeof bothSides<CheckRun>>>
+      let run: CheckRun
       try {
-        sides = await bothSides(
-          index,
-          () => ports.next.check(request),
-          legacy && (() => lock(() => legacy.check(request))),
-        )
+        run = await ports.next.check(request)
       } catch (error) {
         return { ...base, status: 'error', reason: 'new_failed', detail: errorText(error) }
       }
-      const result: CheckCaseResult = { ...base, status: 'ok', new: checkSide(sides.next) }
-      if (sides.legacy?.ok) result.rerun = checkSide(sides.legacy.value)
-      else if (sides.legacy) result.rerunError = sides.legacy.error
-      return result
+      return { ...base, status: 'ok', new: checkSide(run) }
     },
     (tree) => ({ ...base, status: 'skipped', reason: tree.reason, detail: tree.detail }),
   )
@@ -265,16 +210,14 @@ function pending<T extends { id: string }>(cases: T[], resultsPath: string): T[]
 async function runAll<C extends { id: string }, R extends ReviewCaseResult | CheckCaseResult>(
   cases: C[],
   options: HarnessOptions,
-  one: (c: C, index: number) => Promise<R>,
+  one: (c: C) => Promise<R>,
   failed: (c: C, error: unknown) => R,
 ): Promise<R[]> {
   const todo = pending(cases, options.resultsPath)
   if (todo.length < cases.length) options.log?.(`resume: ${cases.length - todo.length} cases already finished`)
-  // The case's position in the full set fixes its side order, so a resumed run alternates as the first did.
-  const position = new Map(cases.map((c, index) => [c.id, index]))
   await pool(todo, options.concurrency, async (c) => {
     // A throw anywhere in a case (materialize, the judge, the matcher) is that case's error; the pool keeps going.
-    const result = await one(c, position.get(c.id) ?? 0).catch((error: unknown) => failed(c, error))
+    const result = await one(c).catch((error: unknown) => failed(c, error))
     appendResult(options.resultsPath, result)
     options.log?.(`${result.status.padEnd(7)} ${c.id}${result.reason ? ` (${result.reason})` : ''}`)
   })
@@ -289,21 +232,19 @@ const harnessFailed = (error: unknown) => ({
 })
 
 export function runReview(cases: ReviewCase[], ports: ReviewPorts, options: HarnessOptions) {
-  const lock = serialLock()
   return runAll<ReviewCase, ReviewCaseResult>(
     cases,
     options,
-    (c, i) => reviewCase(c, i, ports, options, lock),
+    (c) => reviewCase(c, ports, options),
     (c, error) => ({ ...reviewBase(c, options), ...harnessFailed(error) }),
   )
 }
 
 export function runCheck(cases: CheckCase[], ports: CheckPorts, options: HarnessOptions) {
-  const lock = serialLock()
   return runAll<CheckCase, CheckCaseResult>(
     cases,
     options,
-    (c, i) => checkCase(c, i, ports, options, lock),
+    (c) => checkCase(c, ports, options),
     (c, error) => ({ ...checkBase(c), ...harnessFailed(error) }),
   )
 }

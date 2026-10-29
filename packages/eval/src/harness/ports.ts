@@ -2,8 +2,7 @@ import { z } from 'zod'
 import { type Depth, ReviewOutcome } from '../cases.ts'
 
 /**
- * Everything the harness talks to is a port: the new platform (`agw`), agent-gateway (`agw-legacy`), the cost
- * sources and the judge. Production adapters live in `adapters/`; tests pass fakes.
+ * Everything the harness talks to is a port: the new platform (`agw`), its run journal and the judge. Production adapters live in `adapters/`; tests pass fakes.
  */
 
 const Item = z.object({
@@ -50,7 +49,7 @@ export interface ReviewRequest {
 export interface ReviewRun {
   output: ReviewOutput
   spend: Spend
-  /** The new platform's run id or the legacy job id. */
+  /** The new platform's run id. */
   runId?: string
 }
 
@@ -98,12 +97,4 @@ export interface RunCost {
 export interface RunJournal {
   /** `null` while the row is missing or the run has not ended. */
   runCost(runId: string): Promise<RunCost | null>
-}
-
-/** agent-gateway's spend for one job: usage-tracker rows by job id, plus IU rows by time window. */
-export interface LegacyCostSource {
-  jobCost(job: { jobId: string; tool: 'review' | 'check'; startMs: number; endMs: number }): Promise<{
-    costUsd: number | null
-    exact: boolean
-  }>
 }

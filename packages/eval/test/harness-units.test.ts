@@ -192,9 +192,8 @@ function aggregate(overrides: Partial<ReviewAggregate> = {}): ReviewAggregate {
     improvementsPerCase: { legacy: 3, new: 3 },
     needsHumanRate: { legacy: 0, new: 0 },
     failedAngleRate: { legacy: 0, new: 0 },
-    cost: { ...ratio, baseline: 'recorded', newUsd: 1, legacyUsd: 1, inexact: { new: 0, legacy: 0 } },
-    wall: { ...ratio, baseline: 'recorded' },
-    selfAgreement: null,
+    cost: { ...ratio, newUsd: 1, legacyUsd: 1, inexact: { new: 0, legacy: 0 } },
+    wall: ratio,
     ...overrides,
   }
 }
@@ -209,9 +208,8 @@ function checkAggregate(overrides: Partial<CheckAggregate> = {}): CheckAggregate
     },
     failureRecall: { legacyFailed: 1, caught: 1, recall: 1, basis: null, coverage: null },
     steps: { compared: 5, agreement: 1 },
-    cost: { ...ratio, baseline: 'recorded', newUsd: 0, legacyUsd: 0, inexact: { new: 0, legacy: 0 } },
-    wall: { ...ratio, baseline: 'recorded' },
-    selfAgreement: null,
+    cost: { ...ratio, newUsd: 0, legacyUsd: 0, inexact: { new: 0, legacy: 0 } },
+    wall: ratio,
     ...overrides,
   }
 }
@@ -228,14 +226,12 @@ describe('verdict', () => {
     expect(v.criteria.find((c) => c.metric === 'median cost ratio')?.ci95).toEqual([0.9, 1.1])
   })
 
-  test('the floor is legacy self-agreement minus the margin when a rerun measured it', () => {
-    const blocking = { ...aggregate().blocking, recall: 0.75 }
-    const strict = aggregate({ blocking, selfAgreement: { cases: 25, blockingRecall: 0.9, outcomeAgreement: 0.85 } })
-    const v = reviewVerdict(strict)
+  test('blocking recall is held to the fixed floor', () => {
+    const at = (recall: number) => aggregate({ blocking: { ...aggregate().blocking, recall } })
+    expect(reviewVerdict(at(0.75)).verdict).toBe('not-worse')
+    const v = reviewVerdict(at(0.5))
     expect(v.verdict).toBe('worse')
-    expect(v.criteria[0]?.threshold).toBeCloseTo(0.8)
-    const lax = aggregate({ selfAgreement: { cases: 25, blockingRecall: 0.7, outcomeAgreement: 0.7 } })
-    expect(reviewVerdict(lax).verdict).toBe('not-worse')
+    expect(v.criteria[0]?.threshold).toBe(0.6)
   })
 
   test('inconclusive below the case minimum or without data', () => {

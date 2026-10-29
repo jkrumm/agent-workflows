@@ -5,11 +5,11 @@ import { type CheckCase, evalDir, type ReviewCase } from '../cases.ts'
 import { matchFindings } from './match.ts'
 import type { ReproducibleCases } from './aggregate.ts'
 import type { CheckRunner, Judge, Located, ReviewRunner } from './ports.ts'
-import { type HarnessOptions, pool, requestedDepth, serialLock, withTree } from './run.ts'
+import { type HarnessOptions, pool, requestedDepth, withTree } from './run.ts'
 import { rate } from './stats.ts'
 
 /**
- * Reproducibility of an eval set (PLAN Wave 5): before recorded findings count as a baseline, one side reruns each
+ * Reproducibility of an eval set (PLAN Wave 5): before recorded findings count as a baseline, the new side reruns each
  * case N times and the runs are compared with each other and with the recorded reference. Wave 4 found that
  * agent-gateway's own rerun recovered none of its recorded blockers, so a recorded finding is no ground truth until
  * the case shows it comes back.
@@ -110,24 +110,17 @@ async function measure(views: View[], recall: Recall) {
 
 /** `resultsPath` is the workflow's `reproducibility.jsonl`. */
 export interface SelfAgreementOptions extends HarnessOptions {
-  side: Side
   /** Reruns per case, at least 2. */
   runs: number
 }
 
 const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error))
 
-/** Legacy reruns go one at a time: its IU cost is matched by time window, which two jobs at once would blur. */
-function serialFor(side: Side) {
-  const lock = serialLock()
-  return side === 'legacy' ? lock : <R>(fn: () => Promise<R>) => fn()
-}
-
-/** Skips the cases already measured for this side with at least this many reruns: the file is the resume point. */
+/** Skips the cases already measured with at least this many reruns: the file is the resume point. */
 function pending<C extends { id: string }>(cases: C[], options: SelfAgreementOptions): C[] {
   const done = new Set(
     readRows(options.resultsPath)
-      .filter((r) => r.side === options.side && r.runs >= options.runs)
+      .filter((r) => r.side === 'new' && r.runs >= options.runs)
       .map((r) => r.id),
   )
   const todo = cases.filter((c) => !done.has(c.id))
@@ -168,7 +161,7 @@ async function rerunAll<C extends { id: string }, V>(
         const views = [plan.recorded(c)]
         for (let run = 0; run < options.runs; run++) views.push(plan.view(await plan.rerun(c, dir)))
         const m = await measure(views, plan.recall(c))
-        appendRow(options.resultsPath, { id: c.id, side: options.side, runs: options.runs, ...m })
+        appendRow(options.resultsPath, { id: c.id, side: 'new', runs: options.runs, ...m })
         return { id: c.id, status: 'measured' }
       },
       (skipped) => ({ id: c.id, status: 'skipped', detail: skipped.reason }),
@@ -185,23 +178,22 @@ const recordedBlocking = (c: ReviewCase): Located[] =>
     .map((f) => ({ file: f.file, line: f.line ?? null, message: f.message }))
 
 export interface ReviewReruns {
-  /** The side under test. The legacy CLI takes no depth: its router decides. */
+  /** The side under test. */
   runner: ReviewRunner
   judge?: Judge
 }
 
 export function selfAgreementReview(cases: ReviewCase[], ports: ReviewReruns, options: SelfAgreementOptions) {
-  const serial = serialFor(options.side)
   return rerunAll(cases, options, {
     tree: (c) => ({ repo: c.repo, baseSha: c.baseSha, patch: c.diff, setup: false }),
     rerun: (c, dir) => {
-      const depth = options.side === 'new' ? requestedDepth(c, options.depthMode) : null
+      const depth = requestedDepth(c, options.depthMode)
       const request = {
         cwd: dir,
         ...(depth ? { depth } : {}),
         ...(c.input.context ? { context: c.input.context } : {}),
       }
-      return serial(() => ports.runner.review(request))
+      return ports.runner.review(request)
     },
     view: (run) => ({
       outcome: run.output.outcome,
@@ -218,11 +210,9 @@ export function selfAgreementReview(cases: ReviewCase[], ports: ReviewReruns, op
 
 /** Check has no findings to match: a red run is the one thing a later run must show again (the failure recall). */
 export function selfAgreementCheck(cases: CheckCase[], runner: CheckRunner, options: SelfAgreementOptions) {
-  const serial = serialFor(options.side)
   return rerunAll(cases, options, {
     tree: (c) => ({ repo: c.repo, baseSha: c.baseSha, patch: c.patch, setup: true }),
-    rerun: (c, dir) =>
-      serial(() => runner.check({ cwd: dir, ...(c.input.commands ? { commands: c.input.commands } : {}) })),
+    rerun: (c, dir) => runner.check({ cwd: dir, ...(c.input.commands ? { commands: c.input.commands } : {}) }),
     view: (run) => ({ outcome: run.output.passed ? 'pass' : 'fail', blocking: [], red: !run.output.passed }),
     recorded: (c) => ({ outcome: c.legacy.passed ? 'pass' : 'fail', blocking: [], red: !c.legacy.passed }),
     recall: () => async (reference, other) => ({

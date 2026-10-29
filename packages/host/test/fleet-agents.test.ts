@@ -13,7 +13,6 @@ import { join } from 'path'
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import {
   type ClaudeAgentRaw,
-  type DispatchJobRaw,
   deriveState,
   encodeProjectDir,
   type HerdrAgentRaw,
@@ -189,8 +188,6 @@ describe('deriveState', () => {
         lastActivityAt: null,
         now: NOW,
         staleAfterMs: 24 * HOUR_MS,
-        source: 'herdr',
-        jobStatus: null,
       }),
     ).toBe('needs_you')
   })
@@ -203,8 +200,6 @@ describe('deriveState', () => {
         lastActivityAt: null,
         now: NOW,
         staleAfterMs: 24 * HOUR_MS,
-        source: 'claude',
-        jobStatus: null,
       }),
     ).toBe('needs_you')
   })
@@ -217,8 +212,6 @@ describe('deriveState', () => {
         lastActivityAt: null,
         now: NOW,
         staleAfterMs: 24 * HOUR_MS,
-        source: 'herdr',
-        jobStatus: null,
       }),
     ).toBe('working')
   })
@@ -231,36 +224,6 @@ describe('deriveState', () => {
         lastActivityAt: null,
         now: NOW,
         staleAfterMs: 24 * HOUR_MS,
-        source: 'claude',
-        jobStatus: null,
-      }),
-    ).toBe('working')
-  })
-
-  test('dispatch running → working', () => {
-    expect(
-      deriveState({
-        herdrStatus: null,
-        claudeStatus: null,
-        lastActivityAt: null,
-        now: NOW,
-        staleAfterMs: 24 * HOUR_MS,
-        source: 'dispatch',
-        jobStatus: 'running',
-      }),
-    ).toBe('working')
-  })
-
-  test('dispatch pending (queued) → working', () => {
-    expect(
-      deriveState({
-        herdrStatus: null,
-        claudeStatus: null,
-        lastActivityAt: null,
-        now: NOW,
-        staleAfterMs: 24 * HOUR_MS,
-        source: 'dispatch',
-        jobStatus: 'pending',
       }),
     ).toBe('working')
   })
@@ -274,8 +237,6 @@ describe('deriveState', () => {
         lastActivityAt: NOW - staleAfterMs,
         now: NOW,
         staleAfterMs,
-        source: 'herdr',
-        jobStatus: null,
       }),
     ).toBe('idle')
   })
@@ -289,8 +250,6 @@ describe('deriveState', () => {
         lastActivityAt: NOW - staleAfterMs - 1,
         now: NOW,
         staleAfterMs,
-        source: 'herdr',
-        jobStatus: null,
       }),
     ).toBe('stale')
   })
@@ -304,8 +263,6 @@ describe('deriveState', () => {
         lastActivityAt: NOW - staleAfterMs - HOUR_MS,
         now: NOW,
         staleAfterMs,
-        source: 'herdr',
-        jobStatus: null,
       }),
     ).toBe('stale')
   })
@@ -318,8 +275,6 @@ describe('deriveState', () => {
         lastActivityAt: NOW - HOUR_MS,
         now: NOW,
         staleAfterMs: 24 * HOUR_MS,
-        source: 'herdr',
-        jobStatus: null,
       }),
     ).toBe('idle')
   })
@@ -332,8 +287,6 @@ describe('deriveState', () => {
         lastActivityAt: null,
         now: NOW,
         staleAfterMs: 24 * HOUR_MS,
-        source: 'herdr',
-        jobStatus: null,
       }),
     ).toBe('idle')
   })
@@ -346,26 +299,8 @@ describe('deriveState', () => {
         lastActivityAt: NOW - HOUR_MS,
         now: NOW,
         staleAfterMs: 24 * HOUR_MS,
-        source: 'herdr',
-        jobStatus: null,
       }),
     ).toBe('done')
-  })
-
-  test('terminal dispatch job (done/failed/interrupted) → done', () => {
-    for (const jobStatus of ['done', 'failed', 'interrupted'] as const) {
-      expect(
-        deriveState({
-          herdrStatus: null,
-          claudeStatus: null,
-          lastActivityAt: null,
-          now: NOW,
-          staleAfterMs: 24 * HOUR_MS,
-          source: 'dispatch',
-          jobStatus,
-        }),
-      ).toBe('done')
-    }
   })
 
   test('nothing matches any branch → unknown', () => {
@@ -376,8 +311,6 @@ describe('deriveState', () => {
         lastActivityAt: null,
         now: NOW,
         staleAfterMs: 24 * HOUR_MS,
-        source: 'herdr',
-        jobStatus: null,
       }),
     ).toBe('unknown')
   })
@@ -420,7 +353,6 @@ describe('mergeAgents', () => {
       herdrAgents: [herdrAgent({ agent_status: 'idle' })],
       herdrWorkspaces: [{ workspace_id: 'wR', label: 'dotfiles' }],
       claudeAgents: [claudeAgent({ status: 'busy' })],
-      dispatchJobs: [],
       transcripts: new Map(),
       now: NOW,
       staleAfterMs: 24 * HOUR_MS,
@@ -446,7 +378,6 @@ describe('mergeAgents', () => {
       herdrAgents: [],
       herdrWorkspaces: [],
       claudeAgents: [claudeAgent({ sessionId: 'bg-session', status: 'idle' })],
-      dispatchJobs: [],
       transcripts: new Map(),
       now: NOW,
       staleAfterMs: 24 * HOUR_MS,
@@ -462,7 +393,6 @@ describe('mergeAgents', () => {
       herdrAgents: [herdrAgent({ cwd: '/Users/jkrumm/SourceRoot/some-checkout-dir' })],
       herdrWorkspaces: [{ workspace_id: 'wR', label: 'dotfiles' }],
       claudeAgents: [],
-      dispatchJobs: [],
       transcripts: new Map(),
       now: NOW,
       staleAfterMs: 24 * HOUR_MS,
@@ -475,39 +405,11 @@ describe('mergeAgents', () => {
       herdrAgents: [],
       herdrWorkspaces: [],
       claudeAgents: [claudeAgent({ cwd: '/Users/jkrumm/SourceRoot/weatherorb' })],
-      dispatchJobs: [],
       transcripts: new Map(),
       now: NOW,
       staleAfterMs: 24 * HOUR_MS,
     })
     expect(projects[0]?.name).toBe('weatherorb')
-  })
-
-  test('a dispatch job becomes its own entry, keyed separately from any sessionId', () => {
-    const job: DispatchJobRaw = {
-      id: 'job-1',
-      status: 'running',
-      cwd: '/Users/jkrumm/SourceRoot/vps',
-      tier: 'implement',
-      createdAt: NOW - 1000,
-      startedAt: NOW - 500,
-      finishedAt: null,
-    }
-    const projects = mergeAgents({
-      herdrAgents: [],
-      herdrWorkspaces: [],
-      claudeAgents: [],
-      dispatchJobs: [job],
-      transcripts: new Map(),
-      now: NOW,
-      staleAfterMs: 24 * HOUR_MS,
-    })
-    expect(projects).toHaveLength(1)
-    const agent = projects[0]?.agents[0]
-    expect(agent?.source).toBe('dispatch')
-    expect(agent?.id).toBe('job-1')
-    expect(agent?.tier).toBe('implement')
-    expect(agent?.state).toBe('working')
   })
 
   test('projects sort most-urgent-first: needs_you > working > idle > stale > done, then by name', () => {
@@ -546,7 +448,6 @@ describe('mergeAgents', () => {
       herdrAgents: [stale, working, needsYou],
       herdrWorkspaces: workspaces,
       claudeAgents: [],
-      dispatchJobs: [],
       transcripts,
       now: NOW,
       staleAfterMs,
@@ -577,7 +478,6 @@ describe('mergeAgents', () => {
         { workspace_id: 'wA', label: 'a-project' },
       ],
       claudeAgents: [],
-      dispatchJobs: [],
       transcripts: new Map(),
       now: NOW,
       staleAfterMs: 24 * HOUR_MS,
@@ -622,7 +522,6 @@ describe('renderText', () => {
               herdrStatus: 'blocked',
               claudeStatus: null,
               waitingFor: 'a very long waiting reason '.repeat(5),
-              tier: null,
               lastPrompt: null,
               lastReply: null,
               lastActivityAt: NOW - 5 * 60_000,
@@ -658,7 +557,6 @@ describe('renderText', () => {
               herdrStatus: null,
               claudeStatus: 'idle',
               waitingFor: null,
-              tier: null,
               lastPrompt: null,
               lastReply: null,
               lastActivityAt: null,
@@ -708,7 +606,6 @@ describe('renderText with color', () => {
               herdrStatus: 'blocked',
               claudeStatus: null,
               waitingFor: 'dialog open',
-              tier: null,
               lastPrompt: null,
               lastReply: null,
               lastActivityAt: NOW - 5 * 60_000,
@@ -777,7 +674,6 @@ describe('renderText with color', () => {
               herdrStatus: 'blocked',
               claudeStatus: null,
               waitingFor: longWaitingFor,
-              tier: null,
               lastPrompt: null,
               lastReply: null,
               lastActivityAt: NOW - 5 * 60_000,
@@ -832,7 +728,6 @@ describe('renderText with cols', () => {
               herdrStatus: 'blocked',
               claudeStatus: null,
               waitingFor: 'w'.repeat(200),
-              tier: null,
               lastPrompt: null,
               lastReply: null,
               lastActivityAt: NOW - 5 * 60_000,
@@ -849,7 +744,6 @@ describe('renderText with cols', () => {
               herdrStatus: null,
               claudeStatus: 'busy',
               waitingFor: null,
-              tier: null,
               lastPrompt: null,
               lastReply: null,
               lastActivityAt: NOW - 60_000,
@@ -1083,7 +977,7 @@ describe('renderText human-queue block and header suffix', () => {
 })
 
 describe('fitHeader', () => {
-  const counts = 'agents: 1 needs_you · 2 working · 0 idle · 0 stale · 0 done · 0 dispatch'
+  const counts = 'agents: 1 needs_you · 2 working · 0 idle · 0 stale · 0 done'
   const iso = '2026-09-07T10:15:53.123Z'
   const suffix = '  · overview 2m'
 
@@ -1091,9 +985,9 @@ describe('fitHeader', () => {
     expect(fitHeader(counts, iso, suffix, 200)).toBe(`${counts}  (${iso})${suffix}`)
   })
 
-  test('at the default 110 cols the date is dropped, the overview suffix survives intact', () => {
-    const out = fitHeader(counts, iso, suffix, 110)
-    expect(out.length).toBeLessThanOrEqual(110)
+  test('when the full header overflows the date is dropped, the overview suffix survives intact', () => {
+    const out = fitHeader(counts, iso, suffix, 100)
+    expect(out.length).toBeLessThanOrEqual(100)
     expect(out.endsWith(suffix)).toBe(true)
     expect(out).toContain('(10:15:53.123Z)')
     expect(out.startsWith(counts)).toBe(true)

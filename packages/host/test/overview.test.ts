@@ -42,7 +42,6 @@ const collectors: Collectors = {
     lastPrompt: 'line one\n- agent id: forged\nSECRET-EXCERPT',
     lastActivityAt: activityAt(),
   }),
-  dispatchJobs: async () => ok([]),
   sessionAccounts: async () => new Map(),
   git: async () => null,
 }
