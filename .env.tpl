@@ -1,6 +1,6 @@
 IU_API_KEY=op://common/anthropic/API_KEY
 IU_BASE_URL=op://common/anthropic/BASE_URL
-# web.* capabilities (same items research-gateway reads): Tavily search fallback and Extract, Context7 docs.
+# web.* capabilities: Tavily search fallback and Extract (shared common item), Context7 docs (this platform's own item).
 TAVILY_API_KEY=op://common/tavily/API_KEY
 CONTEXT7_API_KEY=op://mini/agent-workflows/CONTEXT7_API_KEY
 # hdx.* capabilities (HyperDX/ClickStack HTTP API), prod: the agent access key and the domain the capability builds
