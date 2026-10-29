@@ -18,6 +18,8 @@ correctness, verified live. No tuning, experiments or quality rounds beyond that
 reworks (review especially) come later, outside this plan.
 **Regions (owner, 2026-10-29):** EU runtime does not matter; routes are chosen by availability, cost
 and quality, never pinned to EU variants.
+**Review OCR (owner, 2026-10-29):** paused open-ended (`AGW_REVIEW_OCR=0`, default off) until the owner
+re-enables it; not tied to the wallet gate's date.
 **Stops:** only the four in `roles/mother.md`.
 
 Outside this repo: **P0 (warden off)** runs as dotfiles Wave 1, orchestrated from the owner's main
