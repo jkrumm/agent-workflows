@@ -118,8 +118,14 @@ export async function throttleDelay(res: Response, attempt: number): Promise<num
 }
 
 /**
+ * An abort is final, whoever's signal it was: the caller's `init.signal`, or one the fetch port merged in (the door
+ * binds every upstream call to its client's connection). Retrying it would bill calls nobody waits for.
+ */
+const isAbort = (error: unknown): boolean => error instanceof Error && error.name === 'AbortError'
+
+/**
  * fetch with backoff on 503/429 (honouring the server's hint) and on transport failures (a reset or a socket closed
- * mid-body is as transient as a 503). The last attempt's error propagates; an aborted signal is never retried.
+ * mid-body is as transient as a 503). The last attempt's error propagates; an abort is never retried.
  */
 export async function rawFetch(scope: AudioScope, url: string, init: RequestInit, attempts = 3): Promise<RawResponse> {
   const { fetch, clock } = scope.deps
@@ -133,7 +139,7 @@ export async function rawFetch(scope: AudioScope, url: string, init: RequestInit
       }
       return { status: res.status, body: await res.text() }
     } catch (error) {
-      if (attempt >= attempts || init.signal?.aborted) throw error
+      if (attempt >= attempts || init.signal?.aborted || isAbort(error)) throw error
       scope.retried()
       await clock.sleep(1000 * attempt)
     }
