@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { priceSchema } from './price.ts'
 
 /**
  * Transports. `opencode` is an agent step on the OpenCode host; the others are single calls. `iu-gemini` is IU's native
@@ -43,6 +44,8 @@ const routeFields = {
   effort: z.enum(EFFORTS).optional(),
   maxOutputTokens: maxOutputTokens.optional(),
   rate: rateSchema.optional(),
+  /** A price that is not per text token: an image model's token split, a flat price per call (`price.ts`). */
+  price: priceSchema.optional(),
 }
 
 const decisionRule = [
@@ -73,6 +76,7 @@ const patchFields = {
   effort: z.enum(EFFORTS).nullable().optional(),
   maxOutputTokens: maxOutputTokens.nullable().optional(),
   rate: rateSchema.nullable().optional(),
+  price: priceSchema.nullable().optional(),
 }
 
 /** A patch of a route's fallback: the same fields, merged over the table's fallback. `null` removes the fallback. */
