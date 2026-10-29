@@ -6,6 +6,7 @@ import { createHash } from 'node:crypto'
 import { chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import type { Socket } from 'bun'
 import { EXIT } from '../src/exit.ts'
 import { contractSha, servedSha } from '../src/spec.ts'
 import { type FakeHost, hostSha, type RunStore, startFakeHost, type Workflow } from './fake-host.ts'
@@ -891,6 +892,8 @@ describe('agw across platform processes (AGW_PROCESSES)', () => {
     const clash = await startFakeHost({ runs, capabilities: false })
     try {
       const b = box(`clash=${clash.url}`)
+      // A conflict is seen once both contracts are known: a call never fetches another process's contract.
+      expect((await agw(b, ['schema'])).code).toBe(0)
       const r = await agw(b, ['fixture', 'echo', 'hi'])
       expect(r.code).toBe(EXIT.contract_mismatch)
       expect(r.error?.message).toBe("'fixture echo' is declared by more than one process: host, clash")
@@ -918,7 +921,7 @@ describe('agw across platform processes (AGW_PROCESSES)', () => {
     expect(help.code).toBe(0)
     expect(help.stdout).toContain('agw audio speak')
     expect(help.stdout).toMatch(/agw audio speak .*\[unavailable: gone\]/)
-    expect(help.stdout).toContain(`(unavailable: process gone unreachable at ${gone.url}`)
+    expect(help.stdout).toContain(`(process gone unavailable: process gone unreachable at ${gone.url}`)
     expect((await agw(b, ['audio', 'speak', '--help'])).stdout).toContain('(unavailable: process gone unreachable')
     const r = await agw(b, ['audio', 'speak', 'hi'])
     expect(r.code).toBe(EXIT.network)
@@ -947,6 +950,129 @@ describe('agw across platform processes (AGW_PROCESSES)', () => {
     expect(r.code).toBe(0)
     expect(fetches(host)).toBe(hostFetches)
     expect(JSON.parse(readFileSync(cacheFile(b, audio.url), 'utf8')).info['x-contract-sha']).toBe(audio.sha())
+  })
+
+  /** A cached copy of the host's contract under another URL: the host as seen from a process that is not there. */
+  const hostAt = (b: Sandbox, url: string) => {
+    mkdirSync(join(cacheFile(b, url), '..'), { recursive: true })
+    cpSync(cacheFile(b, host.url), cacheFile(b, url))
+  }
+
+  test('a 412 on a shared run command refreshes the process that answered it, not a down one', async () => {
+    const gone = await startFakeHost({ runs, capabilities: false, workflows: audioWorkflows(runs) })
+    const b = box(`gone=${gone.url}`)
+    expect((await agw(b, ['schema', '--refresh'])).code).toBe(0)
+    await gone.stop()
+    const started = await agw(b, ['fixture', 'echo', 'x'])
+    host.bumpVersion()
+    const r = await agw(b, ['run', 'status', String(started.json().runId)])
+    expect(r.code).toBe(0)
+    expect(r.json().status).toBe('done')
+  })
+
+  test('schema --refresh with the host down still refreshes the other processes, then reports the host', async () => {
+    const b = box()
+    expect((await agw(b, ['schema', '--refresh'])).code).toBe(0)
+    audio.bumpVersion()
+    const dead = 'http://127.0.0.1:1'
+    hostAt(b, dead)
+    const r = await agw(b, ['schema', '--refresh'], { env: { AGW_URL: dead } })
+    expect(r.code).toBe(EXIT.network)
+    expect(r.error?.message).toStartWith(`host unreachable at ${dead}`)
+    expect(JSON.parse(readFileSync(cacheFile(b, audio.url), 'utf8')).info['x-contract-sha']).toBe(audio.sha())
+  })
+
+  test('a connection that drops after the request was sent is never resent to the next process', async () => {
+    const b = box()
+    const started = await agw(b, ['audio', 'speak', 'once'])
+    const runId = String(started.json().runId)
+    let accepted = 0
+    const dropper = Bun.listen({
+      hostname: '127.0.0.1',
+      port: 0,
+      socket: {
+        open: () => {
+          accepted++
+        },
+        data: (socket: Socket) => {
+          socket.end()
+        },
+      },
+    })
+    try {
+      const url = `http://127.0.0.1:${dropper.port}`
+      hostAt(b, url)
+      const before = audio.requests.length
+      const r = await agw(b, ['run', 'status', runId], { env: { AGW_URL: url } })
+      expect(r.code).toBe(EXIT.network)
+      expect(accepted).toBeGreaterThan(0)
+      expect(audio.requests.slice(before).some((q) => q.path.startsWith('/runs/'))).toBe(false)
+    } finally {
+      dropper.stop(true)
+    }
+  })
+
+  test('a host command never waits on another process: an uncached hung process is not contacted', async () => {
+    let accepted = 0
+    const hung = Bun.listen({
+      hostname: '127.0.0.1',
+      port: 0,
+      socket: {
+        open: () => {
+          accepted++
+        },
+        data: () => {},
+      },
+    })
+    try {
+      const r = await agw(box(`hung=http://127.0.0.1:${hung.port}`), ['llm', 'title', 'Not waiting'])
+      expect(r.code).toBe(0)
+      expect(accepted).toBe(0)
+    } finally {
+      hung.stop(true)
+    }
+  })
+
+  test('--help on a conflicting command shows the help and names the conflict', async () => {
+    const clash = await startFakeHost({ runs, capabilities: false })
+    try {
+      const r = await agw(box(`clash=${clash.url}`), ['fixture', 'echo', '--help'])
+      expect(r.code).toBe(0)
+      expect(r.stdout).toContain('agw fixture echo')
+      expect(r.stdout).toContain("'fixture echo' is declared by more than one process: host, clash")
+    } finally {
+      await clash.stop()
+    }
+  })
+
+  test('run operations that drifted between processes are a conflict, not silently merged', async () => {
+    const drifted = await startFakeHost({
+      runs,
+      capabilities: false,
+      workflows: [],
+      runIdSchema: { type: 'string', format: 'uuid' },
+    })
+    try {
+      const b = box(`drifted=${drifted.url}`)
+      expect((await agw(b, ['schema'])).code).toBe(0)
+      const r = await agw(b, ['run', 'status', crypto.randomUUID()])
+      expect(r.code).toBe(EXIT.contract_mismatch)
+      expect(r.error?.message).toBe("'run status' is declared by more than one process: host, drifted")
+    } finally {
+      await drifted.stop()
+    }
+  })
+
+  test("a typo in a host command does not blame an unrelated process's failure", async () => {
+    const gone = await startFakeHost({ runs, capabilities: false, workflows: audioWorkflows(runs) })
+    const b = box(`gone=${gone.url}`)
+    expect((await agw(b, ['schema', '--refresh'])).code).toBe(0)
+    await gone.stop()
+    const typo = await agw(b, ['llm', 'titel'])
+    expect(typo.code).toBe(EXIT.usage)
+    expect(typo.error?.message).not.toContain('gone')
+    const own = await agw(b, ['audio', 'speek'])
+    expect(own.error?.message).toContain('process gone unreachable')
   })
 
   test('AGW_PROCESSES: a malformed list is a usage error naming the entry', async () => {

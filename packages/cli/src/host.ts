@@ -48,8 +48,14 @@ function hintFor(kind: AgwError['kind'], env: Env, command: Command | undefined,
   return ''
 }
 
-/** The connection failed before any answer: nothing reached the process, so another one may be asked. */
+/** The connection was never opened (refused, no such name): nothing reached the process, so another may be asked. */
 export class Unreachable extends AgwError {}
+
+/** The fetch error codes that prove no byte of the request left; a reset or a lost answer is not among them. */
+const NOTHING_SENT = new Set(['ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'ConnectionRefused'])
+
+/** A hang guard on another process's contract fetch: it is a plain document, and a hung process must not stall host commands. */
+const CONTRACT_FETCH_S = 10
 
 /**
  * One platform process as the CLI sees it (the host, or a process named in `AGW_PROCESSES`): credentials, the
@@ -63,10 +69,14 @@ export class Host {
   #sha = ''
   #refreshed = false
 
-  /** `target` is a process from `AGW_PROCESSES`; without one this is the host at `AGW_URL`. */
+  /**
+   * `target` is a process from `AGW_PROCESSES`; without one this is the host at `AGW_URL`. `shared` hands over the
+   * credentials the platform already read, so the env file is read and the process list validated once per call.
+   */
   constructor(
     readonly env: Env,
     private readonly target?: ProcessTarget,
+    private readonly shared?: () => Credentials,
   ) {}
 
   get name(): string {
@@ -105,7 +115,7 @@ export class Host {
   }
 
   private creds(): Credentials {
-    this.#creds ??= credentials(this.env)
+    this.#creds ??= this.shared ? this.shared() : credentials(this.env)
     return this.#creds
   }
 
@@ -136,7 +146,10 @@ export class Host {
   /** Commands are built and checked before the cache is written: a bad document never replaces a good one. */
   async refresh(): Promise<void> {
     this.#refreshed = true
-    const { body } = await this.send('GET', '/openapi.json', { contract: false })
+    const { body } = await this.send('GET', '/openapi.json', {
+      contract: false,
+      ...(this.target ? { deadlineS: CONTRACT_FETCH_S } : {}),
+    })
     const doc = body as Document
     const built = doc && typeof doc === 'object' && !Array.isArray(doc) ? buildCommands(doc) : undefined
     if (!built?.commands.length) {
@@ -176,7 +189,7 @@ export class Host {
   private async send(
     method: string,
     path: string,
-    options: CallOptions & { body?: unknown; command?: Command; contract?: boolean },
+    options: CallOptions & { body?: unknown; command?: Command; contract?: boolean; deadlineS?: number },
   ): Promise<Reply> {
     const creds = this.creds()
     const url = this.url
@@ -192,7 +205,7 @@ export class Host {
     if (options.idempotencyKey) headers['idempotency-key'] = options.idempotencyKey
     if (this.env.AGW_PURPOSE) headers['x-agw-purpose'] = this.env.AGW_PURPOSE
 
-    const deadlineS = waitS === undefined ? timeoutS(this.env) : waitS + SLACK_S
+    const deadlineS = options.deadlineS ?? (waitS === undefined ? timeoutS(this.env) : waitS + SLACK_S)
     const signal = AbortSignal.timeout(deadlineS * 1000)
     let response: Response
     let text: string
@@ -208,7 +221,10 @@ export class Host {
       const reason = error instanceof Error ? error.message : String(error)
       const hint = `is the ${this.label} up? ${BIN} schema works offline from the cache`
       if (signal.aborted) throw new AgwError('network', `no answer from ${url} within ${deadlineS}s`, { hint })
-      throw new Unreachable('network', `${this.label} unreachable at ${url}: ${reason}`, { hint })
+      const message = `${this.label} unreachable at ${url}: ${reason}`
+      const code = (error as { code?: unknown } | null)?.code
+      if (typeof code === 'string' && NOTHING_SENT.has(code)) throw new Unreachable('network', message, { hint })
+      throw new AgwError('network', message, { hint })
     }
     let body: unknown = text
     try {

@@ -234,6 +234,8 @@ export interface FakeHostOptions {
   capabilities?: boolean
   /** One store passed to two fakes is one journal. */
   runs?: RunStore
+  /** Replaces the run id's schema: a process whose run operations drifted from the host's. */
+  runIdSchema?: Json
 }
 
 export interface FakeHost {
@@ -315,7 +317,9 @@ export async function startFakeHost(options: FakeHostOptions = {}): Promise<Fake
       paths,
       components: {
         schemas: { RunState: runStateSchema, Tags: { type: 'object', additionalProperties: { type: 'string' } } },
-        parameters: { RunId: { name: 'runId', in: 'path', required: true, schema: { type: 'string' } } },
+        parameters: {
+          RunId: { name: 'runId', in: 'path', required: true, schema: options.runIdSchema ?? { type: 'string' } },
+        },
         requestBodies: Object.fromEntries(
           [...workflows.values()]
             .filter((w) => w.mutating)
