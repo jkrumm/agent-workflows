@@ -1,103 +1,123 @@
 import { readFileSync } from 'node:fs'
 import { isAbsolute } from 'node:path'
+import { decodeAlphaStats, readPng, snapSize } from '@agent-workflows/capabilities'
 import type { Scorer, Verdict } from '@agent-workflows/runtime'
 import { ImageOutput, type ImageInputValue } from './schema.ts'
 
 /** Bump on any change to what a score means: compare refuses to mix scorer versions silently. */
-export const IMAGE_SCORER_VERSION = '2026-10-29.1'
+export const IMAGE_SCORER_VERSION = '2026-10-29.2'
 
-const SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]
-const be32 = (b: Buffer, at: number) => b.readUInt32BE(at)
+/** The share of pixels that must be below, and at, full opacity for a cutout to count as one (the pre-registered thresholds). */
+export const ALPHA_MIN_SHARE = 0.05
 
-/** Width, height and alpha of the file on disk, or null when it is missing or not a PNG with a valid header. */
-function pngOnDisk(path: string): { width: number; height: number; hasAlpha: boolean; bytes: number } | null {
+function readBytes(path: string): Uint8Array | null {
   if (!isAbsolute(path)) return null
-  let bytes: Buffer
   try {
-    bytes = readFileSync(path)
+    return new Uint8Array(readFileSync(path))
   } catch {
     return null
   }
-  if (bytes.length < 33 || SIGNATURE.some((v, i) => bytes[i] !== v)) return null
-  if (be32(bytes, 8) !== 13 || bytes.toString('latin1', 12, 16) !== 'IHDR') return null
-  const colorType = bytes[25]
-  let hasAlpha = colorType === 4 || colorType === 6
-  if (colorType === 3) {
-    for (let at = 33; at + 8 <= bytes.length; at += 12 + be32(bytes, at)) {
-      const type = bytes.toString('latin1', at + 4, at + 8)
-      if (type === 'tRNS') hasAlpha = true
-      if (type === 'IDAT' || type === 'IEND') break
-    }
+}
+
+/** The displayed size of an input file: a PNG's header, or the image decoded for the size of a JPEG or WebP. */
+async function sizeOf(path: string): Promise<{ width: number; height: number } | null> {
+  const bytes = readBytes(path)
+  if (!bytes) return null
+  const png = readPng(bytes)
+  if (png) return { width: png.width, height: png.height }
+  try {
+    const { width, height } = await new Bun.Image(bytes, { maxPixels: 100_000_000 }).metadata()
+    return { width, height }
+  } catch {
+    return null
   }
-  return { width: be32(bytes, 16), height: be32(bytes, 20), hasAlpha, bytes: bytes.length }
 }
 
 /**
- * The `image` scorer (concept §6; the rule is `docs/research/2026-10-29-wave8-ports.md` §image). Deterministic, from the
- * files the run left in the artifact store, never from what the output claims:
- * - `valid`: 1 when the output fits its schema and every listed file is a PNG on disk whose header agrees with the listed
- *   size and bytes; else 0 and the only score (a failed run counts in the valid rate);
- * - `count`: 1 when the run made the images asked for (`n` for a generation, one for a cutout);
- * - `size`: generation with a requested `WxH`: the share of files that are the size the run reports as requested after
- *   snapping (the snapping itself is the capability's, tested there); 0 when the report disagrees with the input
- *   (`size` differs from the input without `snappedFrom`, or `snappedFrom` is not the input); left out for `auto`;
- * - `alpha`: a cutout, or a generation with `background: transparent`: the share of files that carry an alpha channel;
- * - `cost`: 1 when the run recorded a price.
- * `pass`: every score present is 1.
+ * The `image` scorer (concept §6; the rule is `docs/research/2026-10-29-wave8-ports.md` §image, applied by `rule.ts`).
+ * Deterministic, from the files the run left in the artifact store, never from what the output claims:
+ * - `valid`: every listed file is on disk, a PNG by its magic bytes, decodes, and agrees with the listed size and bytes;
+ *   the run made `n` images (one for a cutout); a generation at a requested `WxH` is that size after snapping; a cutout
+ *   has its input's dimensions. A failed or unreadable run scores `valid` 0 and nothing else;
+ * - `alpha` (cutout only): the decoded pixels have an alpha channel with at least 5 % of them below 255 and at least
+ *   5 % at 255;
+ * - `priced`: the run recorded a non-null cost above 0. The run record's cost is the sum of the same step usage as the
+ *   output's `cost`, which is what a scorer can see.
+ * Wall time is the run's, compared by the rule, not scored here. `pass`: every score present is 1.
  */
 export const imageScorer: Scorer<ImageInputValue> = {
   version: IMAGE_SCORER_VERSION,
-  score(input, output): Verdict {
+  async score(input, output): Promise<Verdict> {
     const parsed = ImageOutput.safeParse(output)
-    if (!parsed.success)
+    if (!parsed.success) {
       return {
         scores: { valid: 0 },
         pass: false,
         feedback: output === null ? 'the run failed' : 'the output does not fit the image output schema',
       }
-    const run = parsed.data
-    const disk = run.files.map((file) => ({ listed: file, found: pngOnDisk(file.path) }))
-    const broken = disk.filter(
-      ({ listed, found }) =>
-        !found || found.width !== listed.width || found.height !== listed.height || found.bytes !== listed.bytes,
-    )
-    if (run.files.length === 0 || broken.length > 0) {
-      return {
-        scores: { valid: 0 },
-        pass: false,
-        feedback:
-          run.files.length === 0
-            ? 'the run listed no files'
-            : `${broken.length} file(s) are missing, not a PNG, or differ from what the output lists`,
-      }
     }
-    const share = (hits: number) => hits / disk.length
-    const scores: Record<string, number> = { valid: 1 }
+    const run = parsed.data
+    const cutout = input.file !== undefined
     const problems: string[] = []
 
-    const wanted = input.file !== undefined ? 1 : input.n
-    scores.count = run.files.length === wanted ? 1 : 0
-    if (scores.count === 0) problems.push(`${run.files.length} image(s), asked for ${wanted}`)
+    const expectedN = cutout ? 1 : (input.n ?? run.params.n)
+    if (run.files.length !== expectedN) problems.push(`${run.files.length} image(s), expected ${expectedN}`)
+    const expectedSize = !cutout && input.size && input.size !== 'auto' ? snapSize(input.size) : null
+    const inputSize = cutout ? await sizeOf(input.file as string) : null
+    if (cutout && !inputSize) problems.push('the cutout input cannot be read to compare sizes')
 
-    if (input.file === undefined && input.size !== 'auto') {
-      const expected = run.size
-      const reported = run.snappedFrom === undefined ? run.size === input.size : run.snappedFrom === input.size
-      scores.size = reported
-        ? share(disk.filter(({ found }) => `${found?.width}x${found?.height}` === expected).length)
-        : 0
-      if (scores.size < 1)
-        problems.push(reported ? `not every image is ${expected}` : 'the reported size does not follow from the input')
+    const alpha: Array<{ translucent: number; opaque: number; total: number }> = []
+    for (const [index, file] of run.files.entries()) {
+      const label = `file ${index + 1}`
+      const bytes = readBytes(file.path)
+      const header = bytes ? readPng(bytes) : null
+      if (!bytes || !header) {
+        problems.push(`${label} is missing or not a PNG`)
+        continue
+      }
+      const stats = await decodeAlphaStats(bytes)
+      if (!stats) problems.push(`${label} does not decode`)
+      if (header.width !== file.width || header.height !== file.height || bytes.length !== file.bytes) {
+        problems.push(`${label} differs from what the output lists`)
+      }
+      if (expectedSize && `${header.width}x${header.height}` !== expectedSize) {
+        problems.push(`${label} is ${header.width}x${header.height}, expected ${expectedSize}`)
+      }
+      if (inputSize && (header.width !== inputSize.width || header.height !== inputSize.height)) {
+        problems.push(
+          `${label} is ${header.width}x${header.height}, the input is ${inputSize.width}x${inputSize.height}`,
+        )
+      }
+      if (stats) alpha.push({ translucent: stats.translucent, opaque: stats.opaque, total: stats.width * stats.height })
     }
-    if (input.file !== undefined || input.background === 'transparent') {
-      scores.alpha = share(disk.filter(({ found }) => found?.hasAlpha).length)
-      if (scores.alpha < 1) problems.push('not every image has an alpha channel')
+    if (run.files.length === 0) problems.push('the run listed no files')
+
+    if (problems.length > 0) return { scores: { valid: 0 }, pass: false, feedback: problems.join('; ') }
+    const scores: Record<string, number> = { valid: 1 }
+    if (cutout) {
+      const good = alpha.every(
+        (a) => a.translucent / a.total >= ALPHA_MIN_SHARE && a.opaque / a.total >= ALPHA_MIN_SHARE,
+      )
+      scores.alpha = good ? 1 : 0
     }
-    scores.cost = run.cost.usd !== null ? 1 : 0
-    if (scores.cost === 0) problems.push('the run recorded no price')
+    scores.priced = run.cost.usd !== null && run.cost.usd > 0 ? 1 : 0
+    const failed = Object.entries(scores)
+      .filter(([, v]) => v !== 1)
+      .map(([k]) => k)
     return {
       scores,
-      pass: Object.values(scores).every((v) => v === 1),
-      ...(problems.length ? { feedback: problems.join('; ') } : {}),
+      pass: failed.length === 0,
+      ...(failed.length
+        ? {
+            feedback: failed
+              .map((k) =>
+                k === 'alpha'
+                  ? 'less than 5 % of the pixels are transparent or less than 5 % opaque'
+                  : 'the run recorded no price',
+              )
+              .join('; '),
+          }
+        : {}),
     }
   },
 }

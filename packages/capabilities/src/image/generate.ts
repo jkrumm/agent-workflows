@@ -14,7 +14,8 @@ import { snapSize } from './size.ts'
 import { failedImageResponse } from './upstream.ts'
 
 export const QUALITIES = ['low', 'medium', 'high', 'xhigh', 'max', 'auto'] as const
-export const MODELS = ['auto', 'flare', 'sunburst'] as const
+export const GENERATE_MODELS = ['flare', 'sunburst'] as const
+export const MODELS = ['auto', ...GENERATE_MODELS] as const
 
 export const generateInput = z.object({
   prompt: z.string().min(1).max(32_000).describe('What to draw, or with images, what to change'),
@@ -66,7 +67,10 @@ export const generateOutput = z.object({
   quality: z.string(),
   background: z.string(),
   edit: z.boolean(),
-  images: z.array(image),
+  images: z.array(image).describe('The images that came back valid, in order'),
+  rejected: z
+    .array(z.object({ index: z.int().nonnegative(), reason: z.string() }))
+    .describe('Entries of the answer that were not a valid png: billed, not returned'),
   cost: z.object({ usd: z.number().nonnegative().nullable(), source: z.enum(['provider', 'rate', 'unknown']) }),
   latencyMs: z.int().nonnegative(),
 })
@@ -106,7 +110,8 @@ export function createGenerate(deps: ResolvedImageDeps) {
     summary: 'Generate images from a prompt, or edit reference images; returns the PNGs and what the call cost',
     input: generateInput,
     output: generateOutput,
-    cli: { positional: ['prompt'], defaultFormat: 'json' },
+    // No command: a result that is megabytes of base64 is for workflows (`agw image`), not a terminal.
+    cli: { command: [], defaultFormat: 'json' },
     async handler(input, ctx) {
       const edit = input.images.length > 0
       const route = deps.route(pickRoute(input.model, input.quality, edit))
@@ -164,12 +169,22 @@ export function createGenerate(deps: ResolvedImageDeps) {
       ctx.addUsage(reported)
 
       if (data.length === 0) throw fail('UPSTREAM_ERROR', 'image returned no images', {})
-      const images = data.map((entry, index) => {
+      // One bad entry among n does not discard the valid, already billed ones: they are returned, the bad one reported.
+      const images: GeneratedImage[] = []
+      const rejected: { index: number; reason: string }[] = []
+      data.forEach((entry, index) => {
         const bytes = Buffer.from(entry.b64_json, 'base64')
         const info = magicBytesValid(bytes, 'png') ? readPng(bytes) : null
-        if (!info) throw fail('UPSTREAM_ERROR', `image ${index + 1} is not a valid png (bad magic bytes)`, {})
-        return { b64: entry.b64_json, bytes: bytes.length, ...info }
+        if (info) images.push({ b64: entry.b64_json, bytes: bytes.length, ...info })
+        else rejected.push({ index, reason: 'not a valid png (bad magic bytes)' })
       })
+      if (images.length === 0) {
+        throw fail(
+          'UPSTREAM_ERROR',
+          `image returned no valid png: ${rejected.map((r) => `#${r.index + 1} ${r.reason}`).join('; ')}`,
+          {},
+        )
+      }
       return {
         id: crypto.randomUUID(),
         model: route.model,
@@ -179,6 +194,7 @@ export function createGenerate(deps: ResolvedImageDeps) {
         background: input.background,
         edit,
         images,
+        rejected,
         cost,
         latencyMs: Math.round(performance.now() - started),
       }

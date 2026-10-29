@@ -59,7 +59,10 @@ describe('the image routes', () => {
   test('every seat is a valid route entry with a price', () => {
     for (const [id, entry] of Object.entries(IMAGE_ROUTES)) {
       expect(routeSchema.safeParse(entry).success, id).toBe(true)
-      expect(priceSchema.safeParse((entry as { price: unknown }).price).success, id).toBe(true)
+      const price = (entry as { price?: unknown }).price
+      // the planner is a text model: priced by `rate`, not by `price`
+      if (id === 'image.enhance') expect(price).toBeUndefined()
+      else expect(priceSchema.safeParse(price).success, id).toBe(true)
     }
   })
 

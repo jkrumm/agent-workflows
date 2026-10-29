@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createRegistry } from '@agent-workflows/capabilities'
+import { fakeTransports } from '@agent-workflows/capabilities/testing'
 import { IMAGE_ROUTES } from '@agent-workflows/routes'
 import { createImageCapabilities } from '../../capabilities/src/image/index.ts'
 import {
@@ -13,6 +14,7 @@ import {
   webpFixture,
 } from '../../capabilities/src/image/testing.ts'
 import { createImageWorkflows, type ImageCaller } from '../src/workflows/image/index.ts'
+import { ImageInput } from '../src/workflows/image/schema.ts'
 import { imageScorer } from '../src/workflows/image/scorer.ts'
 import { startTestHost, type TestHost, until } from './support.ts'
 
@@ -22,16 +24,20 @@ const artifacts = join(root, 'artifacts')
 let cdn: Record<string, Uint8Array<ArrayBuffer>> = {}
 
 /** The image capabilities over the fake endpoint, behind the real registry; Replicate's CDN is a map inside `fetch`. */
+const planner = fakeTransports({ openai: [{ text: '' }] })
 const registry = createRegistry(
-  createImageCapabilities({
-    env: { IU_API_KEY: 'test-key', IU_BASE_URL: fake.baseUrl },
-    retry: { backoffMs: 0 },
-    pollMs: 1,
-    fetch: (url, init) => {
-      const hit = cdn[url]
-      return hit ? Promise.resolve(new Response(hit)) : fetch(url, init)
+  createImageCapabilities(
+    {
+      env: { IU_API_KEY: 'test-key', IU_BASE_URL: fake.baseUrl },
+      retry: { backoffMs: 0 },
+      pollMs: 1,
+      fetch: (url, init) => {
+        const hit = cdn[url]
+        return hit ? Promise.resolve(new Response(hit)) : fetch(url, init)
+      },
     },
-  }),
+    { transports: planner, env: {} },
+  ),
 )
 
 const handlers = new Proxy<Record<string, FakeHandler>>(
@@ -96,6 +102,7 @@ describe('image end to end', () => {
       expect(file).toMatchObject({ bytes: png.length, width: 16, height: 12, hasAlpha: true })
     }
     expect(out.cost).toEqual({ usd: 0.0305, source: 'rate' })
+    expect(out.params).toEqual({ model: IMAGE_ROUTES['image.flare'].model, size: '1536x1024', quality: 'low', n: 2 })
 
     // the request the endpoint saw
     expect(fake.seen[0]?.json).toMatchObject({
@@ -143,7 +150,7 @@ describe('image end to end', () => {
   test('a cutout: recraft’s WebP comes back a PNG with alpha in the store, priced per call', async () => {
     const source = join(root, 'subject.png')
     writeFileSync(source, pngFixture(300, 280, { kind: 'rgb' }))
-    cdn[DELIVERED] = await webpFixture(300, 280)
+    cdn[DELIVERED] = await webpFixture(300, 280, (x) => (x < 100 ? 0 : 255))
     handlers[PREDICT('image.cutout.recraft')] = () =>
       Response.json({ id: 'p1', status: 'succeeded', output: DELIVERED })
     const { body } = await run({ file: source })
@@ -159,18 +166,105 @@ describe('image end to end', () => {
     expect(out.files[0]).toMatchObject({ path: join(out.dir, '1.png'), width: 300, height: 280, hasAlpha: true })
     expect(readPngSize(out.files[0].path)).toEqual({ width: 300, height: 280, signature: 'PNG' })
 
-    const verdict = imageScorer.score(
-      { file: source, size: 'auto', n: 1, quality: 'auto', model: 'auto', background: 'auto', images: [] },
-      out,
-      {
-        source: 'regression',
-        signal: new AbortController().signal,
-      },
-    )
-    expect(verdict).toMatchObject({ pass: true, scores: { valid: 1, count: 1, alpha: 1, cost: 1 } })
+    const verdict = await imageScorer.score(ImageInput.parse({ file: source }), out, {
+      source: 'regression',
+      signal: new AbortController().signal,
+    })
+    expect(verdict).toMatchObject({ pass: true, scores: { valid: 1, alpha: 1, priced: 1 } })
 
     const { rows } = await t.pool.query(`select * from "${t.schema}".steps where run_id = $1`, [body.runId])
     expect(Number(rows[0].cost)).toBeCloseTo(0.01, 8)
+  })
+
+  test("--enhance: the planner step runs first, its settings fill what the caller left unset, the caller's win, both calls are on the run", async () => {
+    const png = pngFixture(8, 8)
+    const plan = {
+      intent: { detected: 'hero', confidence: 0.9 },
+      prompt: 'PLAYBOOK PROMPT: a lighthouse at dusk',
+      additions: [],
+      assumptions: [],
+      warnings: [{ code: 'note', severity: 'warn', message: 'busy scene' }],
+      proposed_settings: { model: 'auto', size: '1536x1024', quality: 'low', background: 'auto', n: 3 },
+    }
+    handlers[GEN] = () => Response.json({ data: [{ b64_json: b64(png) }, { b64_json: b64(png) }], usage })
+    const enhanced = createRegistry(
+      createImageCapabilities(
+        { env: { IU_API_KEY: 'test-key', IU_BASE_URL: fake.baseUrl }, retry: { backoffMs: 0 } },
+        {
+          transports: fakeTransports({
+            openai: [{ text: JSON.stringify(plan), tokens: { input: 1000, output: 2000, cacheRead: 0, reasoning: 0 } }],
+          }),
+          env: {},
+        },
+      ),
+    )
+    const [entry] = createImageWorkflows(
+      { registry: enhanced as unknown as ImageCaller },
+      { artifacts: { root: artifacts } },
+    )
+    const t2 = await startTestHost({ prefix: 'imageenh', extra: entry ? [entry] : [] })
+    try {
+      const { body } = await t2.json(
+        await t2.call('/workflows/image', {
+          method: 'POST',
+          body: { prompt: 'a lighthouse', enhance: true, n: 2 },
+          headers: { prefer: 'wait=30' },
+        }),
+      )
+      expect(body.status).toBe('done')
+      // the plan's prompt and size went to the endpoint; the caller's n=2 beat the plan's 3
+      expect(fake.seen[0]?.json).toMatchObject({
+        prompt: 'PLAYBOOK PROMPT: a lighthouse at dusk',
+        size: '1536x1024',
+        quality: 'low',
+        n: 2,
+      })
+      expect(body.output.plan).toMatchObject({ prompt: plan.prompt, intent: 'hero', warnings: [{ code: 'note' }] })
+      expect(body.output.params).toMatchObject({ size: '1536x1024', quality: 'low', n: 2 })
+      const { rows } = await t2.pool.query(
+        `select step_id, cost from "${t2.schema}".steps where run_id = $1 order by step_id`,
+        [body.runId],
+      )
+      expect(rows.map((r: { step_id: string }) => r.step_id)).toEqual(['enhance', 'generate'])
+      expect(Number(rows[0].cost)).toBeCloseTo(0.0011, 8)
+    } finally {
+      await t2.close()
+    }
+  })
+
+  test('--enhance with a hard policy warning stops the run before any image is paid for', async () => {
+    const plan = {
+      intent: { detected: 'hero', confidence: 0.9 },
+      prompt: 'x',
+      warnings: [{ code: 'real_person', severity: 'hard', message: 'names a real person' }],
+      proposed_settings: {},
+    }
+    handlers[GEN] = () => Response.json({ data: [], usage })
+    const enhanced = createRegistry(
+      createImageCapabilities(
+        { env: { IU_API_KEY: 'test-key', IU_BASE_URL: fake.baseUrl }, retry: { backoffMs: 0 } },
+        { transports: fakeTransports({ openai: [{ text: JSON.stringify(plan) }] }), env: {} },
+      ),
+    )
+    const [entry] = createImageWorkflows(
+      { registry: enhanced as unknown as ImageCaller },
+      { artifacts: { root: artifacts } },
+    )
+    const t2 = await startTestHost({ prefix: 'imagehard', extra: entry ? [entry] : [] })
+    try {
+      const { body } = await t2.json(
+        await t2.call('/workflows/image', {
+          method: 'POST',
+          body: { prompt: 'x', enhance: true },
+          headers: { prefer: 'wait=30' },
+        }),
+      )
+      expect(body.status).toBe('failed')
+      expect(JSON.stringify(body.error)).toContain('plan refused (hard policy wall): names a real person')
+      expect(fake.seen).toEqual([])
+    } finally {
+      await t2.close()
+    }
   })
 
   test('a vendor-wrapped 400 fails the run with the vendor message, once, and writes nothing', async () => {

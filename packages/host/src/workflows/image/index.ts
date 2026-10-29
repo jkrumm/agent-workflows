@@ -1,6 +1,6 @@
 import { join } from 'node:path'
 import type { CallOptions } from '@agent-workflows/capabilities'
-import { defineWorkflow, type Json, type StepScope } from '@agent-workflows/runtime'
+import { defineWorkflow, type Json, type StepScope, WorkflowError } from '@agent-workflows/runtime'
 import { type ArtifactOptions, artifactDir } from '../../artifacts.ts'
 import type { HostWorkflow } from '../../operations.ts'
 import { ImageInput, type ImageInputValue, ImageOutput, type ImageOutputValue } from './schema.ts'
@@ -27,6 +27,23 @@ interface GenerateResult extends Priced {
   snappedFrom?: string
   edit: boolean
   images: ImageResult[]
+  rejected: { index: number; reason: string }[]
+}
+interface PlanResult {
+  intent: { detected: string }
+  prompt: string
+  assumptions: string[]
+  settings: {
+    model: 'flare' | 'sunburst'
+    size: string
+    quality: ImageInputValue['quality']
+    background: ImageInputValue['background']
+    n: number
+  }
+  estimatedCost: { totalUsd: number } | null
+  warnings: { code: string; severity: string; message: string }[]
+  playbookVersion: string
+  enhanceModel: string
 }
 interface CutoutResult extends Priced {
   image: ImageResult
@@ -40,13 +57,18 @@ export interface ImageCaller {
       prompt: string
       size: string
       n: number
-      quality: ImageInputValue['quality']
+      quality: NonNullable<ImageInputValue['quality']>
       model: 'auto' | 'flare' | 'sunburst'
-      background: ImageInputValue['background']
+      background: NonNullable<ImageInputValue['background']>
       images: string[]
     },
     options?: CallOptions,
   ): Promise<GenerateResult>
+  call(
+    id: 'image.enhance',
+    input: { brief: string; hasReferences: boolean },
+    options?: CallOptions,
+  ): Promise<PlanResult>
   call(
     id: 'image.cutout',
     input: { file: string; model: 'recraft' | 'bria' },
@@ -96,6 +118,7 @@ export function createImageWorkflows(
               kind: 'cutout',
               generationId: out.id,
               model: out.model,
+              params: { model: out.model, n: 1 },
               dir: dir(),
               files,
               cost: out.cost,
@@ -104,32 +127,61 @@ export function createImageWorkflows(
           }),
         )
       }
-      const prompt = input.prompt ?? ''
-      const model = input.model === 'flare' || input.model === 'sunburst' ? input.model : 'auto'
+
+      // --enhance: the planner turns the brief into a playbook prompt and derives settings; a setting the caller gave wins,
+      // and a hard policy warning is a wall the generation would hit, so the run stops before spending on it.
+      let prompt = input.prompt ?? ''
+      let plan: PlanResult | undefined
+      if (input.enhance) {
+        plan = (await ctx.step('enhance', async ({ addUsage, signal }: StepScope): Promise<Json> => {
+          return (await registry.call(
+            'image.enhance',
+            { brief: prompt, hasReferences: input.images.length > 0 },
+            { addUsage, signal },
+          )) as unknown as Json
+        })) as unknown as PlanResult
+        const hard = plan.warnings.filter((w) => w.severity === 'hard')
+        if (hard.length)
+          throw new WorkflowError(
+            'invalid_input',
+            `plan refused (hard policy wall): ${hard.map((w) => w.message).join('; ')}`,
+          )
+        prompt = plan.prompt
+      }
+      const request = {
+        prompt,
+        size: input.size ?? plan?.settings.size ?? 'auto',
+        n: input.n ?? plan?.settings.n ?? 1,
+        quality: input.quality ?? plan?.settings.quality ?? 'auto',
+        model: input.model === 'flare' || input.model === 'sunburst' ? input.model : ('auto' as const),
+        // The planner writes its prompt to match its background: dropping the background while sending that prompt paints a checkerboard.
+        background: input.background ?? plan?.settings.background ?? 'auto',
+        images: input.images,
+      }
+      const planned = plan && {
+        prompt: plan.prompt,
+        intent: plan.intent.detected,
+        assumptions: plan.assumptions,
+        warnings: plan.warnings,
+        estimatedCostUsd: plan.estimatedCost?.totalUsd ?? null,
+        playbookVersion: plan.playbookVersion,
+        enhanceModel: plan.enhanceModel,
+      }
       return ImageOutput.parse(
         await ctx.step('generate', async ({ addUsage, signal }: StepScope): Promise<Json> => {
-          const out = await registry.call(
-            'image.generate',
-            {
-              prompt,
-              size: input.size,
-              n: input.n,
-              quality: input.quality,
-              model,
-              background: input.background,
-              images: input.images,
-            },
-            { addUsage, signal },
-          )
+          const out = await registry.call('image.generate', request, { addUsage, signal })
           const files = await store(dir(), out.images)
           return {
             kind: out.edit ? 'edit' : 'generate',
             generationId: out.id,
             model: out.model,
+            params: { model: out.model, size: out.size, quality: request.quality, n: request.n },
             size: out.size,
             ...(out.snappedFrom ? { snappedFrom: out.snappedFrom } : {}),
             dir: dir(),
             files,
+            ...(out.rejected.length ? { rejected: out.rejected } : {}),
+            ...(planned ? { plan: planned } : {}),
             cost: out.cost,
             latencyMs: out.latencyMs,
           }
@@ -142,7 +194,7 @@ export function createImageWorkflows(
     {
       workflow: image,
       summary:
-        'Generate or edit images from a prompt (--images for an edit), or cut a background out of --file; the PNGs land in the artifact store and the output lists their paths',
+        'Generate or edit images from a prompt (--images for an edit, --enhance to plan it first), or cut a background out of --file; the PNGs land in the artifact store and the output lists their paths',
       cli: { positional: ['prompt'], defaultFormat: 'json' },
     },
   ]

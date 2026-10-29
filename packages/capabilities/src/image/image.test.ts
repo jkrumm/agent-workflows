@@ -11,10 +11,12 @@ import { magicBytesValid, readPng } from './png.ts'
 import { SIZE_PRESETS, snapSize, validateSize } from './size.ts'
 import { pickRoute } from './generate.ts'
 import { b64, type FakeHandler, pngFixture, startFakeImageServer, webpFixture } from './testing.ts'
+import { decodeAlphaStats } from './png.ts'
 
 // A fake IU endpoint on a real socket answering the images API and Replicate; Replicate's CDN is a map inside `fetch`.
 const fake = startFakeImageServer()
-let cdn: Record<string, Uint8Array<ArrayBuffer>> = {}
+let cdn: Record<string, Uint8Array<ArrayBuffer> | (() => Response)> = {}
+let delivered: { url: string; init: RequestInit }[] = []
 const root = mkdtempSync(join(tmpdir(), 'agw-image-cap-'))
 
 const POST_GEN = '/openai/v1/images/generations'
@@ -28,6 +30,7 @@ afterAll(() => {
 beforeEach(() => {
   fake.reset()
   cdn = {}
+  delivered = []
 })
 
 /** `handlers[path] = fn` reads like the table of what the endpoint answers. */
@@ -50,7 +53,9 @@ const registry = () =>
       pollMs: 1,
       fetch: (url, init) => {
         const hit = cdn[url]
-        return hit ? Promise.resolve(new Response(hit)) : fetch(url, init)
+        if (!hit) return fetch(url, init)
+        delivered.push({ url, init })
+        return Promise.resolve(typeof hit === 'function' ? hit() : new Response(hit))
       },
     }),
   )
@@ -366,6 +371,177 @@ describe('image.cutout', () => {
     expect(replicateBase('https://iu.example/openai/v1/')).toBe('https://iu.example/replicate/v1')
     expect(replicateBase('https://iu.example/openai/v1', 'https://r.example/v1/')).toBe('https://r.example/v1')
     expect(() => replicateBase('https://iu.example/other')).toThrow('cannot derive')
+  })
+})
+
+describe('review fixes', () => {
+  const sentImage = () => String((fake.seen[0]?.json?.input as { image?: string } | undefined)?.image)
+  const DELIVERED = 'https://replicate.delivery/out/cutout.png'
+  const RECRAFT = IMAGE_ROUTES['image.cutout.recraft'].model
+  const PREDICT = `/replicate/v1/models/${RECRAFT}/predictions`
+  const u16 = (n: number) => [(n >> 8) & 255, n & 255]
+  /** A JPEG that is only headers, claiming a huge canvas. */
+  const hugeJpeg = () =>
+    new Uint8Array([
+      0xff,
+      0xd8,
+      0xff,
+      0xe0,
+      0,
+      4,
+      0,
+      0,
+      0xff,
+      0xc0,
+      0,
+      17,
+      8,
+      ...u16(60_000),
+      ...u16(60_000),
+      3,
+      1,
+      0x22,
+      0,
+      2,
+      0x11,
+      1,
+      3,
+      0x11,
+      1,
+      0xff,
+      0xd9,
+    ])
+  const subject = () => file('review-subject.png', pngFixture(300, 280, { kind: 'rgb' }))
+
+  test('a crafted header claiming 60000x60000 is refused on its numbers, before anything decodes or is sent', async () => {
+    const { error } = await failure('image.cutout', { file: file('huge.jpg', hugeJpeg()) })
+    expect(error.code).toBe('INVALID_INPUT')
+    expect(error.message).toContain('at most 4096px')
+    expect(fake.seen).toEqual([])
+  })
+
+  test('an ordinary JPEG is sent as it is: the 5 MB limit is on the file, not on a PNG re-encode of it', async () => {
+    const jpeg = await new Bun.Image(pngFixture(1600, 1200, { kind: 'rgb' })).jpeg({ quality: 90 }).bytes()
+    cdn[DELIVERED] = pngFixture(1600, 1200)
+    handlers[PREDICT] = () => Response.json({ status: 'succeeded', output: DELIVERED })
+    await call('image.cutout', { file: file('camera.jpg', jpeg) })
+    const sent = sentImage()
+    expect(sent).toStartWith('data:image/jpeg;base64,')
+    expect(Buffer.from(sent.split(',')[1] ?? '', 'base64').equals(Buffer.from(jpeg))).toBe(true)
+  })
+
+  test('a source over the limit says so', async () => {
+    const big = new Uint8Array(5 * 1024 * 1024 + 1)
+    big.set(pngFixture(300, 280, { kind: 'rgb' }))
+    const { error } = await failure('image.cutout', { file: file('big.png', big) })
+    expect(error.message).toContain('over the 5242880 byte limit')
+  })
+
+  test('a JPEG with an EXIF rotation is re-encoded upright, and its displayed size is what the limits see', async () => {
+    const jpeg = await new Bun.Image(pngFixture(300, 280, { kind: 'rgb' })).jpeg({ quality: 90 }).bytes()
+    // insert an APP1/Exif segment with orientation 6 right after SOI
+    const exif = [
+      0xff,
+      0xe1,
+      ...u16(2 + 6 + 8 + 2 + 12 + 4),
+      0x45,
+      0x78,
+      0x69,
+      0x66,
+      0,
+      0,
+      0x4d,
+      0x4d,
+      0,
+      0x2a,
+      0,
+      0,
+      0,
+      8,
+      0,
+      1,
+      0x01,
+      0x12,
+      0,
+      3,
+      0,
+      0,
+      0,
+      1,
+      ...u16(6),
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+    ]
+    const rotated = new Uint8Array([0xff, 0xd8, ...exif, ...jpeg.slice(2)])
+    cdn[DELIVERED] = pngFixture(280, 300)
+    handlers[PREDICT] = () => Response.json({ status: 'succeeded', output: DELIVERED })
+    await call('image.cutout', { file: file('rotated.jpg', rotated) })
+    const sent = Buffer.from(sentImage().split(',')[1] ?? '', 'base64')
+    expect(sent.equals(Buffer.from(rotated))).toBe(false)
+    const meta = await new Bun.Image(sent, { autoOrient: false }).metadata()
+    expect(meta.format).toBe('jpeg')
+  })
+
+  test('a started prediction is on the run even when polling then fails', async () => {
+    handlers[PREDICT] = () => Response.json({ id: 'px', status: 'starting' })
+    handlers['/replicate/v1/predictions/px'] = () => new Response('{"detail":"bad request"}', { status: 400 })
+    const { error, usage } = await failure('image.cutout', { file: subject() })
+    expect(error.code).toBe('UPSTREAM_ERROR')
+    expect(usage).toHaveLength(1)
+    expect(usage[0]).toMatchObject({ model: RECRAFT, cost: 0.01, costSource: 'rate' })
+  })
+
+  test('a prediction that fails on create is not billed', async () => {
+    handlers[PREDICT] = () => Response.json({ status: 'failed', error: 'boom' })
+    expect((await failure('image.cutout', { file: subject() })).usage).toEqual([])
+  })
+
+  test('a transient failure of one poll is retried, and the price is recorded once', async () => {
+    cdn[DELIVERED] = pngFixture(300, 280)
+    handlers[PREDICT] = () => Response.json({ id: 'py', status: 'processing' })
+    handlers['/replicate/v1/predictions/py'] = (_s, attempt) =>
+      attempt === 0
+        ? new Response('busy', { status: 503 })
+        : Response.json({ id: 'py', status: 'succeeded', output: DELIVERED })
+    const { usage } = await call('image.cutout', { file: subject() })
+    expect(fake.attempts['/replicate/v1/predictions/py']).toBe(2)
+    expect(usage).toHaveLength(1)
+  })
+
+  test('the output is fetched without following redirects, and a redirect is an error', async () => {
+    cdn[DELIVERED] = () => new Response(null, { status: 302, headers: { location: 'http://169.254.169.254/' } })
+    handlers[PREDICT] = () => Response.json({ status: 'succeeded', output: DELIVERED })
+    const { error, usage } = await failure('image.cutout', { file: subject() })
+    expect(error.message).toContain('could not be fetched (302)')
+    expect(delivered[0]?.init.redirect).toBe('manual')
+    expect(usage).toHaveLength(1)
+  })
+
+  test('an output body over the bound is refused, declared or not', async () => {
+    handlers[PREDICT] = () => Response.json({ status: 'succeeded', output: DELIVERED })
+    cdn[DELIVERED] = () => new Response('x', { headers: { 'content-length': String(65 * 1024 * 1024) } })
+    expect((await failure('image.cutout', { file: subject() })).error.message).toContain('over 67108864 bytes')
+  })
+
+  test('one bad image among n does not discard the valid, billed ones; it is reported', async () => {
+    handlers[POST_GEN] = () =>
+      Response.json({
+        data: [{ b64_json: b64(png) }, { b64_json: b64(new TextEncoder().encode('<html>')) }, { b64_json: b64(png) }],
+        usage,
+      })
+    const { result, usage: reported } = await call('image.generate', { prompt: 'x', n: 3 })
+    expect(result.images).toHaveLength(2)
+    expect(result.rejected).toEqual([{ index: 1, reason: 'not a valid png (bad magic bytes)' }])
+    expect(reported).toHaveLength(1)
+  })
+
+  test('a cutout of a real alpha matte decodes to the shares the rule needs', async () => {
+    const matte = pngFixture(300, 280, { alphaAt: (x) => (x < 150 ? 0 : 255) })
+    expect(await decodeAlphaStats(matte)).toMatchObject({ translucent: 150 * 280, opaque: 150 * 280 })
   })
 })
 
