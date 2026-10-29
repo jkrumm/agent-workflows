@@ -246,9 +246,8 @@ Workers: Sonnet/high.
   routes) priced; reasoning tokens checked not to be counted inside output too (fresh tokens double
   counted otherwise); every row carries its caller/project (`agw` CLI session, iris, Hermes, eval) so
   spend is attributable per caller
-- [ ] argo's `/ai` audio proxy on the new audio door: reachable from the VPS by the existing tailnet-grant
-  precedent plus a Caddy row, per-caller bearer, the `podcast` and `file/:hash` endpoints ported; a
-  security review; VPS audio-gateway serves argo until this lands
+- [x] ~~argo's `/ai` audio proxy on the new audio door~~ dropped (owner, 2026-10-29): argo needs no audio
+  integration; the door-only listener built for it is deleted; argo's audio routes go with audio-gateway (Wave 11)
 - [ ] usage-tracker's agent-gateway, research-gateway and agw-OpenCode collectors removed; Argo
   totals reconciled for one week of overlap
 **Left behind:**
@@ -271,6 +270,7 @@ Workers: Sonnet/high; Haiku for the sweeps.
 Workers: Haiku for the sweeps, Sonnet/high for the rest.
 
 - [ ] research-gateway and audio-gateway LaunchAgents removed, repos archived; agent-gateway down to `dispatch`
+- [ ] argo's `/ai` audio proxy routes and dashboard audio calls deleted (no bridge; owner 2026-10-29)
 - [ ] Architecture map and `make doctor` clean on the mini
 - [ ] Final retro and `docs/factory-input.md`: what the factory re-plan can build on
 **Left behind:**
