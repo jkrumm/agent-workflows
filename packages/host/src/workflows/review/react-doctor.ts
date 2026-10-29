@@ -14,7 +14,7 @@ import { escapeName } from './util.ts'
 // - A working-tree scope (`--base HEAD`) needs `--include-untracked` to see new files.
 // - A diagnostic's `filePath` is relative to the scanned project; the repo-relative path is the prefix of its `id`.
 
-/** Pinned in one place: an upgrade is a deliberate act (report shape, rule names, flags). */
+/** Pinned in one place: an upgrade is a deliberate act (report shape, rule names, flags). `scripts/install-react-doctor.sh` reads this line. */
 export const REACT_DOCTOR_VERSION = '0.9.18'
 /** A helper timeout, not an agent run. */
 export const REACT_DOCTOR_TIMEOUT_MS = 120_000
@@ -31,11 +31,11 @@ const ENV_TEMPLATE_PATH = /\.env.*\.tpl$/
 
 export type ReactDoctorRaw = { stdout: string; ok: boolean }
 
-/** The pinned binary: `AGW_REACT_DOCTOR_BIN`, else agent-gateway's install of the pinned version. */
+/** The pinned binary: `AGW_REACT_DOCTOR_BIN`, else `make install-opencode`'s install of the pinned version. */
 export function reactDoctorBin(env: ReviewPorts['env']): string {
   return (
     env.AGW_REACT_DOCTOR_BIN?.trim() ||
-    join(homedir(), '.local/share/agent-gateway/react-doctor', REACT_DOCTOR_VERSION, 'node_modules/.bin/react-doctor')
+    join(homedir(), '.local/share/agent-workflows/react-doctor', REACT_DOCTOR_VERSION, 'node_modules/.bin/react-doctor')
   )
 }
 

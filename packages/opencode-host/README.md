@@ -146,6 +146,38 @@ The allow-list forwards `OTEL_EXPORTER_OTLP_*`, and on the mini the deploy sets 
 shells, readable by a shell-capable agent exactly like the IU key. Accepted by the lead for the same reason: the shell
 tool is denied unless an agent opts in, and the key is an ingest key.
 
+## Pinned build
+
+One OpenCode build for the whole machine: `OPENCODE_VERSION` (`src/server.ts`, 2.0.32), the npm package `@opencode/cli`.
+Homebrew's `opencode` is not used: its bottle lags the npm releases, and a `brew upgrade` once changed behaviour under
+a running host and broke every run. A Homebrew copy ahead of the pin on `PATH` (`which -a opencode`) is a defect; remove it.
+
+| What | Where |
+|-|-|
+| the build | `~/.local/share/agent-workflows/opencode-bin/<version>/`, `current` links the pinned one |
+| the shim | `scripts/opencode`, linked as `~/.local/bin/opencode`: execs `current`. The host (`resolveOpencodeBinary`), interactive `oc`, `rd wave\|fan --kind opencode` and herdr panes all resolve `opencode` through it |
+| the probe wrapper | `scripts/opencode-safe`, linked as `~/.local/bin/opencode-safe`: refuses to start `opencode` when the IU endpoint is down (exit 75) instead of retrying forever |
+| react-doctor (the `review` workflow) | `~/.local/share/agent-workflows/react-doctor/<version>/`, `REACT_DOCTOR_VERSION` in `packages/host/src/workflows/review/react-doctor.ts` |
+
+`make install-opencode` (from the dev checkout; the links point at its `scripts/`) installs both pins and links the two
+scripts. Idempotent: a version that is present is not downloaded again. It never restarts the host. The host's OpenCode
+server runs the new binary on its next start: the binary path is part of the launch fingerprint, so the first `start()`
+after a version bump sees drift and restarts the server (logged). `AGW_OPENCODE_ROOT`, `AGW_REACT_DOCTOR_ROOT` and
+`AGW_BIN_DIR` redirect the installs and the links.
+
+**Upgrade** is a deliberate act, gated on the live tests:
+
+1. No OpenCode run in flight (the restart interrupts sessions; re-attach resumes them, §Re-attach).
+2. Bump `OPENCODE_VERSION` in `src/server.ts` (the installer reads that line, so there is one pin), then `make install-opencode`.
+3. Gate: `AGW_LIVE=1 secrets-run run --env-file=.env.tpl -- timeout 600 bun test packages/opencode-host` (§Tests). It covers
+   what a new build can break: kill and re-attach, the deny-by-default tool list, skills and `AGENTS.md`, home isolation,
+   tokens and cost. Update §Measured for what changed.
+4. Green: `make deploy`. Red: restore the old `OPENCODE_VERSION` and `make install-opencode`; the old directory is still
+   there, so nothing is downloaded and `current` returns to it.
+
+Skip a fresh minor release until its first patch. The first start of an interactive pane on a new version shows a one-time
+release-notes dialog that swallows the initial prompt; dismiss it with Enter.
+
 ## Locations
 
 `compileLocation(def)` writes `<stateDir>/locations/<name>/<hash16>/`: `AGENTS.md`, skills under

@@ -22,7 +22,10 @@ import { DEFAULT_STATE_DIR } from './locations.ts'
 
 type Env = Record<string, string | undefined>
 
-/** The build the host is verified against (README §Measured). A server reporting another version is refused. */
+/**
+ * The build the host is verified against (README §Measured). A server reporting another version is refused.
+ * `scripts/install-opencode-bin.sh` reads this line to install the same version (README §Pinned build).
+ */
 export const OPENCODE_VERSION = '2.0.32'
 
 export type ServerOptions = {
