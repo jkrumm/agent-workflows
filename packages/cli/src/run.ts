@@ -55,9 +55,16 @@ function dig(value: unknown, path: string): unknown {
   return node
 }
 
+/**
+ * `--format plain` prints `x-cli.plainField`, a dotted path. A capability answers its output directly, so the path starts
+ * at the response. A workflow answers a run envelope (`runId`, `status`, `output`, ...) and its path starts at `.output`,
+ * but only once the run is done: a pending, failed or cancelled answer has no output to print, and keeps the whole state.
+ */
 function render(body: unknown, format: 'json' | 'plain', command: Command): string {
   if (format === 'json') return JSON.stringify(body)
-  const field = command.x.plainField ? dig(body, command.x.plainField) : undefined
+  const done = (body as { status?: unknown } | null)?.status === 'done'
+  const root = command.x.kind === 'workflow' && done ? (body as { output?: unknown }).output : body
+  const field = command.x.plainField ? dig(root, command.x.plainField) : undefined
   if (typeof field === 'string') return field
   return JSON.stringify(field ?? body, null, 2)
 }
