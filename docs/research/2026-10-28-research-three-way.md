@@ -120,7 +120,8 @@ Operationalized in `packages/host/src/workflows/research/decision.ts` (tested), 
   the judge left unscored on a score (no citation it could judge, no live value) is left out of that score, never
   counted as 0 (amended in review round 1, before any live run). A run that never ended (cancelled, still running) is
   no result: listed and counted in the report, left out of quality, medians and the rule (review round 5, before the
-  full run). `judgedShare` is reported per arm, so a lean toward easy-to-fetch citations shows. The paired difference is taken over questions both arms ran; the bootstrap resamples
+  full run). `judgedShare` is reported per arm, so a lean toward easy-to-fetch citations shows. A 429 from a source is an answer
+  too, adopted as final: a rate-limited citation lowers `judgedShare` rather than being retried. The paired difference is taken over questions both arms ran; the bootstrap resamples
   questions with replacement, 10,000 iterations, seed 20261028, percentile interval.
 - Rule 3 runs first, per agent design (focused − yolo, paired), and picks the one A arm and the one P arm that enter
   rules 1 and 2.
