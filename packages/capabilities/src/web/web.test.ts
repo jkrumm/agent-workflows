@@ -265,7 +265,7 @@ describe('web.fetch', () => {
     expect(out.text).toContain('Heading')
     expect(out.text).not.toContain('evil')
     expect(out.text).not.toContain('menu')
-    expect(usage).toEqual([]) // nothing was billed
+    expect(usage).toMatchObject([{ model: 'direct', cost: 0, costSource: 'rate' }]) // a free read, priced at $0
   })
 
   test('a redirect is followed and the final URL reported', async () => {
@@ -441,9 +441,10 @@ describe('web.fetch', () => {
       extract_depth: 'basic',
       format: 'text',
     })
-    expect(usage).toHaveLength(1)
-    expect(usage[0]).toMatchObject({ model: 'tavily-extract', costSource: 'rate' })
-    expect(usage[0]!.cost).toBeCloseTo(0.0016, 10)
+    expect(usage).toHaveLength(2)
+    expect(usage[0]).toMatchObject({ model: 'direct', cost: 0, costSource: 'rate' })
+    expect(usage[1]).toMatchObject({ model: 'tavily-extract', costSource: 'rate' })
+    expect(usage[1]!.cost).toBeCloseTo(0.0016, 10)
   })
 
   test('a short real page, even with a script tag, is just short: no paid second read', async () => {
@@ -459,7 +460,7 @@ describe('web.fetch', () => {
       text: 'This domain is for use in examples.',
     })
     expect(n.to('https://api.tavily.com')).toHaveLength(0)
-    expect(usage).toEqual([])
+    expect(usage).toMatchObject([{ model: 'direct', cost: 0, costSource: 'rate' }])
   })
 
   test('a script-built shell and a non-text type both go to Tavily; a failed extraction costs nothing', async () => {
@@ -480,7 +481,8 @@ describe('web.fetch', () => {
     const error = await failure(call('web.fetch', { url: 'https://example.com/doc.pdf' }))
     expect(error.message).toContain('unsupported content type application/pdf')
     expect(error.message).toContain('Failed to fetch url')
-    expect(usage).toHaveLength(1)
+    // One paid extraction (the shell's); each direct read is free.
+    expect(usage.map((u) => u.model)).toEqual(['direct', 'tavily-extract', 'direct'])
   })
 
   test('a thin page nobody can improve on is returned rather than an error', async () => {
@@ -817,7 +819,7 @@ describe('web.fetch decoding and emptiness', () => {
         'tavily-extract',
       )
     }
-    expect(usage).toHaveLength(2)
+    expect(usage.map((u) => u.model)).toEqual(['direct', 'tavily-extract', 'direct', 'tavily-extract'])
   })
 
   test('a response without a Content-Type is judged on its bytes: binary is not text, a page is', async () => {
