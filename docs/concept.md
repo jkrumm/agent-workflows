@@ -403,3 +403,15 @@ One entry per phase: what we learned, what changed on this page, and why.
   `rd say` to a busy lead queues, so the mother saw state late.
 - **Spend.** Team key ≈ $6.1, personal ≈ $0.02, plus TTS/image vendors for two episodes.
 - **Does the page hold?** Yes.
+
+### Wave 9 — Usage (P4b), 2026-10-29
+
+- **Learned.** Verify before building: the Argo projection already held to $0.0001 and needed no work.
+  A security review changes the design, not just the diff (the audio port also served the host API);
+  applying nothing live before review made the owner's later "no bridge" a clean unwind. A shared model
+  id is a hidden coupling between routes; only a review reading the untouched caller caught it. A
+  calendar criterion ("one week of overlap") is stated as such, never rounded.
+- **Changed.** No region pinning; review's Requesty hops moved; usage rows carry caller and project;
+  reasoning counted once. Callers moved: usage-tracker's research-gateway collector removed.
+- **Spend.** Small; the unpriced backfill ($13.56) is a correction of earlier rows, not new spend.
+- **Does the page hold?** Yes.

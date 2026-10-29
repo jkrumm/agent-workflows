@@ -234,25 +234,29 @@ for two episodes). Carried: Requesty and EU route sweep, caller identity beyond 
 CI flakes in runtime tests, judge calibration shifted by `decide`'s model move (no re-tuning), fan tabs
 for `rd reap`. Evidence: `docs/waves/handoff/lead.md` at `bdcd841`.
 
-## Wave 9 — Usage (P4b)            <!-- status: active -->
+## Wave 9 — Usage (P4b)            <!-- status: done -->
 Workers: Sonnet/high.
 
-- [ ] Usage projection from run records into Argo's usage ingest
-- [ ] Wave 8 leftovers: the two runtime CI flakes (lease-grace clock comparison, `toolPre` sleep-as-sync)
+- [x] Usage projection from run records into Argo's usage ingest
+- [x] Wave 8 leftovers: the two runtime CI flakes (lease-grace clock comparison, `toolPre` sleep-as-sync)
   fixed at their cause; fan tabs reaped (`rd reap`)
-- [ ] Route table without region pinning: EU-only model ids re-pointed to the best available ids on
+- [x] Route table without region pinning: EU-only model ids re-pointed to the best available ids on
   the endpoint (probe + header check per route), prices updated, one `make verify`
-- [ ] Usage rows correct (argo audit 2026-10-29): 99 review rows unpriced (`cost_source=none`, Haiku/Sonnet EU
+- [x] Usage rows correct (argo audit 2026-10-29): 99 review rows unpriced (`cost_source=none`, Haiku/Sonnet EU
   routes) priced; reasoning tokens checked not to be counted inside output too (fresh tokens double
   counted otherwise); every row carries its caller/project (`agw` CLI session, iris, Hermes, eval) so
   spend is attributable per caller
 - [x] ~~argo's `/ai` audio proxy on the new audio door~~ dropped (owner, 2026-10-29): argo needs no audio
   integration; the door-only listener built for it is deleted; argo's audio routes go with audio-gateway (Wave 11)
-- [ ] usage-tracker's agent-gateway, research-gateway and agw-OpenCode collectors removed; Argo
-  totals reconciled for one week of overlap
-**Left behind:**
+- [x] usage-tracker's research-gateway collector removed; its agent-gateway OpenCode/IU collectors stay until
+  a full week of overlap exists (moved to Wave 11)
+**Left behind:** release `f84fa7a`, `make verify` PASS. Argo projection matches the journal to $0.0001; usage
+rows fixed (123 steps backfilled, $13.56; reasoning counted once; caller/project live: claude-code, iris,
+host); route sweep done (no EU ids, review's four Requesty hops moved, long-prompt tier); runtime CI flakes
+fixed at their cause; the argo bridge dropped and fully unwound. Kept on Requesty with the Terra fallback,
+by decision (parity): research, otel, prose, podcast routes. Evidence: `docs/waves/handoff/lead.md` at `06f0af1`.
 
-## Wave 10 — Claude Code and Hermes slimmed (P5)            <!-- status: pending -->
+## Wave 10 — Claude Code and Hermes slimmed (P5)            <!-- status: active -->
 Workers: Sonnet/high; Haiku for the sweeps.
 
 - [ ] Global CLAUDE.md, skills and the Makefile MCP registration per concept §10; agw MCP server deleted
@@ -271,6 +275,8 @@ Workers: Haiku for the sweeps, Sonnet/high for the rest.
 
 - [ ] research-gateway and audio-gateway LaunchAgents removed, repos archived; agent-gateway down to `dispatch`
 - [ ] argo's `/ai` audio proxy routes and dashboard audio calls deleted (no bridge; owner 2026-10-29)
+- [ ] usage-tracker's agent-gateway OpenCode/IU collectors removed once Argo totals reconcile over a full
+  week of overlap (earliest ~2026-11-05); if Wave 11 ends earlier, the date is written into Left behind
 - [ ] Architecture map and `make doctor` clean on the mini
 - [ ] Final retro and `docs/factory-input.md`: what the factory re-plan can build on
 **Left behind:**
