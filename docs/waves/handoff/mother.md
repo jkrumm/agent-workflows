@@ -25,6 +25,10 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
 - 2026-10-29 owner: workflows only need to work properly (parity, verified live); no tuning or
   experiments; per-workflow reworks (review especially) come later. In PLAN's header; relayed.
 
+- 2026-10-29 owner: EU runtime does not matter; no EU pinning of routes (PLAN header, Wave 9 step).
+- 2026-10-29: decide confirmed off Requesty (decision-1-eu answers from Sweden Central); triage on
+  Bedrock, no Requesty.
+
 ## Open decisions
 - none
 
