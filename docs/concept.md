@@ -430,3 +430,32 @@ One entry per phase: what we learned, what changed on this page, and why.
 - **Friction.** Leftover worker tabs in other workspaces cost the owner manual cleanup; tabs now close
   at merge and the reaper closes merged fan tabs.
 - **Does the page hold?** Yes. P5's gate (no MCP gateway tool referenced) is met.
+
+### Wave 11 — Retire and hand over (P6), 2026-10-30
+
+- **Learned.** A retirement inventory must ask what the replacement itself depends on (agw's OpenCode
+  build lived inside agent-gateway) and must read the old service's access logs: they found a live owner
+  device (MacWhisper) and dated every last call better than any code sweep. Observers go first (monitors
+  and alerts deleted before the stops, so nothing paged). Retired services leave state outside their own
+  directories; the stop checklist names it. Read every `make doctor` row, not the summary.
+- **Changed.** All three gateways retired and archived, data kept and backed up; P6's gate is met.
+
+### Final retro — the whole plan, 2026-10-30
+
+- **Outcome.** Eleven waves in about 3.5 days. Every repetitive agent job (review, check, research, otel,
+  brain, diagram, prose, image, podcast, audio, triage, decide, overview, narrative) runs as a workflow
+  on this platform, verified live; Claude Code, Hermes and iris reach it only through `agw` and the
+  audio door; the three gateways are retired with their data kept.
+- **What carried it.** Pre-registered decision rules turned every comparison into a query (research's
+  design, the review experiments, each port's parity). Lead reads on Max found what tests and gateway
+  reviews missed in nearly every wave. Live verification after each deploy found the gaps fakes hid.
+  Rotating leads at ~60 % context with a written handoff kept quality flat across 24 lead contexts.
+- **What it cost.** IU: about $70 on the team key (mostly evals) and well under $20 personal; the
+  legacy gateway reviews before Wave 4 cost more per week than the whole rebuild's evals. Max: the three
+  accounts ran at their limits twice (one 3-hour pause), never spilled.
+- **What to change next time.** Gate merges on CI from day one; put the caller inventory (incl. access
+  logs) into Wave 1, not Wave 8; close worker tabs at merge from the first wave; keep the main checkout
+  out of every `/code-review`. Owner directions mid-run (parity only, IU limits, no EU pinning, OCR off,
+  review off Max, no argo bridge, dispatch unused) each landed as one small change; the plan header kept
+  them standing.
+- **Does the page hold?** Yes, as v3.10. The factory re-plan starts from `docs/factory-input.md`.

@@ -276,18 +276,24 @@ the dispatch lane gone; agent-gateway's MCP server and Argo push deleted; Hermes
 reads; warden archived; herdr-reap closes merged fan tabs. No live MCP-gateway reference anywhere. Every
 remaining caller is a Wave 11 retirement item (list in `docs/waves/handoff/lead.md` at `c30f318`).
 
-## Wave 11 — Retire and hand over (P6)            <!-- status: active -->
+## Wave 11 — Retire and hand over (P6)            <!-- status: done -->
 Workers: Haiku for the sweeps, Sonnet/high for the rest.
 
-- [ ] research-gateway, audio-gateway and agent-gateway retired: LaunchAgents removed, repos archived,
+- [x] research-gateway, audio-gateway and agent-gateway retired: LaunchAgents removed, repos archived,
   `agw-legacy` CLI and its PATH link deleted; the `dispatch` lane removed everywhere (unused, owner 2026-10-29)
-- [ ] argo's `/ai` audio proxy routes and dashboard audio calls deleted (no bridge; owner 2026-10-29)
-- [ ] usage-tracker's agent-gateway OpenCode/IU collectors removed right after agent-gateway stops (they
+- [x] argo's `/ai` audio proxy routes and dashboard audio calls deleted (no bridge; owner 2026-10-29)
+- [x] usage-tracker's agent-gateway OpenCode/IU collectors removed right after agent-gateway stops (they
   read its own store, so no overlap can accrue; Wave 9 proved journal = Argo); historical rows stay
-- [ ] The last callers removed before the services stop (Wave 10 list): Hermes `dispatch` skill and the
+- [x] The last callers removed before the services stop (Wave 10 list): Hermes `dispatch` skill and the
   `brain-drift-audit` cron prompt, hermes-agent `make doctor` probe, dotfiles `install-cli`, `wave-watch.sh`
   job poll, `remote-dev.sh` hint, Caddy rows, devhost probes, Kuma pushes/monitors, modelpick's agent-gateway
   rows, the eval harness's legacy adapter, argo's `/ai` audio proxy (above)
-- [ ] Architecture map and `make doctor` clean on the mini
-- [ ] Final retro and `docs/factory-input.md`: what the factory re-plan can build on
-**Left behind:**
+- [x] Architecture map and `make doctor` clean on the mini
+- [x] Final retro and `docs/factory-input.md`: what the factory re-plan can build on
+**Left behind:** research-gateway, audio-gateway and agent-gateway stopped, final-backed-up to the HomeLab
+(8 files, sha256 verified), data left in place, repos archived; `agw-legacy` gone; argo's audio routes,
+usage-tracker's gateway collectors, Kuma monitors and HyperDX alerts removed; agw owns its OpenCode build.
+Release `098b7e6`, `make verify` PASS, `@verifier` 16/16. `docs/factory-input.md` written. Owner-side:
+MacWhisper needs its new door key pasted (proof: a second `"caller":"macwhisper"` line in the audio
+log); re-enabling review OCR (`AGW_REVIEW_OCR=1`) and the paused Hermes morning briefing (update its
+prompt first) are owner calls. Evidence: `docs/waves/handoff/lead.md` at `c507e4c`.

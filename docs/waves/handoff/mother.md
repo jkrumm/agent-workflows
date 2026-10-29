@@ -4,7 +4,7 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
 `docs/waves/PLAN.md` and this file, then continues from **Next action**.
 
 ## State
-- Waves 1–10 done (retros in concept.md). Active wave: 11 (Retire and hand over, P6) — the last.
+- **Plan finished 2026-10-30.** All eleven waves done; final retro in concept.md; STOP written.
 - Lead's close-out channel: `docs/waves/handoff/lead.md` (the mother owns PLAN.md and the retro log;
   the lead writes per-step verdicts, Left behind, gate evidence and retro notes there, then idles).
 - dotfiles is free: P0 done (owner, 2026-10-27).
@@ -114,5 +114,5 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
   route avoids Requesty. For Wave 8's retro: decide's model move shifts the scorer judges' calibration.
 
 ## Next action
-- Watch the lead (`wave-watch.sh --agents agent-workflows-w1 --heartbeat 9`, bounded 10 min), read
-  `handoff/lead.md` on idle, write Wave 11's Left behind and the final retro; then write docs/waves/handoff/STOP (plan finished) so the keepalive exits, and report to the owner, rotate the lead.
+- None. Owner-side open items: MacWhisper key paste; OCR and Hermes morning briefing re-enable are owner calls.
+  The factory re-plan starts from `docs/factory-input.md`.
