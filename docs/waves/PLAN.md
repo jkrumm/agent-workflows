@@ -206,30 +206,40 @@ request `20261029T070930-17518`, MacBook unreachable); `clickstack_sql` stays CL
 read-only; legacy `research/gate.json` and agent-gateway routing rows go in P6; workers ran `agw review`
 three times against the owner direction ($0.46). Evidence: `docs/waves/handoff/lead.md` at `f8671d5`.
 
-## Wave 8 — Audio, image, podcast (P4a)            <!-- status: active -->
+## Wave 8 — Audio, image, podcast (P4a)            <!-- status: done -->
 Workers: Sonnet/high; Opus/medium for the pipeline's durable stages.
 
-- [ ] **First:** workflows, eval suites and routes register by directory (or one entry per file), so
+- [x] **First:** workflows, eval suites and routes register by directory (or one entry per file), so
   parallel ports stop colliding in shared registry files; the load-scaled test timeout sampled per test
-- [ ] CONTEXT7_API_KEY: field created and resealed (owner request `20261029T080529-10120`); swap the
+- [x] CONTEXT7_API_KEY: field created and resealed (owner request `20261029T080529-10120`); swap the
   `.env.tpl` ref and deploy
-- [ ] Audio pipeline as a workflow in its own process; an OpenAI-compatible TTS/STT door for Hermes
-- [ ] `podcast` (writers' room, TTS, mastering, publish) and `image` ported
-- [ ] `/podcast`, `/img`, Hermes TTS/STT switched; one episode produced end to end on the new path
-- [ ] The TTS/STT door serves every audio caller, not only Hermes: iris (its own fleet switches it)
-  (argo moves in Wave 9); the contract (endpoints, auth, env names) sent to iris-mother
-- [ ] All review off Max (owner, 2026-10-29): agent-gateway's review routes lose their `claude -p` Max
+- [x] Audio pipeline as a workflow in its own process; an OpenAI-compatible TTS/STT door for Hermes
+- [x] `podcast` (writers' room, TTS, mastering, publish) and `image` ported
+- [x] `/podcast`, `/img`, Hermes TTS/STT switched; one episode produced end to end on the new path
+- [x] The TTS/STT door serves every audio caller, not only Hermes: iris (its own fleet switches it)
+  (argo moved to Wave 9); the contract (endpoints, auth, env names) sent to iris-mother
+- [x] All review off Max (owner, 2026-10-29): agent-gateway's review routes lose their `claude -p` Max
   fallback now; its review tool refuses with a pointer to `agw review` once iris (its last caller) has
   switched to `agw review --pr N`; review OCR off by default (`AGW_REVIEW_OCR=0`)
-- [ ] `triage` ported as-is for iris (schema-constrained call: destination + transcript excerpt + reply →
+- [x] `triage` ported as-is for iris (schema-constrained call: destination + transcript excerpt + reply →
   {headline ≤60, detail ≤240, spoken ≤2 sentences}); `triage` and `decide` cancel, attribute the caller,
   return usage + `cost_usd`, never route via Requesty; contract sent to iris-mother (unblocks iris Wave 17)
-**Left behind:**
+**Left behind:** every step done and live; release `927dc85`, `make verify` PASS, `@verifier` 10/10, CI green.
+Registration by directory; audio process with an OpenAI-compatible door (Hermes and iris on it); `image`,
+`podcast` (two episodes, rule passes on the second) and `triage` ported; `/img`, `/podcast`, Hermes TTS/STT
+switched. iris no longer calls agent-gateway or audio-gateway at runtime (its Wave 16). All review off Max:
+agent-gateway's review lost its Max fallback and now refuses with a pointer to `agw review`; review OCR
+off unless `AGW_REVIEW_OCR=1` (owner-gated). Spend ≈ $6.1 team key, ≈ $0.02 personal (+ ElevenLabs/Gemini
+for two episodes). Carried: Requesty and EU route sweep, caller identity beyond `x-agw-purpose`, two
+CI flakes in runtime tests, judge calibration shifted by `decide`'s model move (no re-tuning), fan tabs
+for `rd reap`. Evidence: `docs/waves/handoff/lead.md` at `bdcd841`.
 
-## Wave 9 — Usage (P4b)            <!-- status: pending -->
+## Wave 9 — Usage (P4b)            <!-- status: active -->
 Workers: Sonnet/high.
 
 - [ ] Usage projection from run records into Argo's usage ingest
+- [ ] Wave 8 leftovers: the two runtime CI flakes (lease-grace clock comparison, `toolPre` sleep-as-sync)
+  fixed at their cause; fan tabs reaped (`rd reap`)
 - [ ] Route table without region pinning: EU-only model ids re-pointed to the best available ids on
   the endpoint (probe + header check per route), prices updated, one `make verify`
 - [ ] Usage rows correct (argo audit 2026-10-29): 99 review rows unpriced (`cost_source=none`, Haiku/Sonnet EU

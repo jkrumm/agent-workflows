@@ -4,6 +4,7 @@
 
 **Where to look:** workflow shape §3, middleware §4, porting a skill or a Hermes path §10, phase order §11.
 
+> **v3.8, 2026-10-29:** P4a as built: audio in its own process with an OpenAI-compatible TTS/STT door (per-caller tokens), `image`, `podcast` and `triage` ported; workflows, eval suites and routes register by directory. Owner directions: review never runs on Max (agent-gateway's Max fallback removed, its review refuses), review OCR off unless `AGW_REVIEW_OCR=1`, routes are not pinned to EU. No decision reversed.
 > **v3.7, 2026-10-29:** P3b as built (§2, §10; `docs/research/2026-10-29-wave7-ports.md`, all four pre-registered rules passed). The tool gate is one host-wide module that every agent's workflow opens with its own tool set; a grant cannot map a mutating capability. `otel` is one OpenCode agent querying HyperDX through the gate with the read-only `hdx.*` capabilities (raw SQL, webhook reads and writes are CLI-only through `agw hdx write --commit`); a finding is grounded only when it cites a query id of this run that returned rows. `brain` is a shared agent (vault search and read through the gate) with `agw brain` as its workflow, on Haiku 5.5 EU with no provider fallback: private notes never leave the Anthropic EU route. `diagram` hydrates in a short-lived child process from the pinned npm Excalidraw (no CDN at runtime) and returns the document; the host writes no caller path. `prose` is two commands: `agw prose` (lint, cross-lab review, a writer brief) and `agw prose-gate` (the keep gate, no model); the rewrite runs in the calling session on Max. No decision reversed.
 >
 > **v3.6, 2026-10-29:** research's design picked by numbers (§11 P3, `docs/research/2026-10-28-research-three-way.md`). The workflow is one OpenCode agent with the platform's web tools behind the tool gate (arm A-yolo), not research-gateway's code-led pipeline and not an agent driving it: on 28 golden questions × 3 runs, supported citations +0.19 over the pipeline (CI 0.07..0.32), golden level, ~5× cheaper and ~4× faster on standard questions; the focused profile never beat yolo (D4 holds). The grounding rule moved into code for every arm and stays. A follow-up continues a finished report (`--follow-up <runId>`). §8: research runs in the host process, not its own: the in-process pipeline that justified one is gone, and a full 28-case pass moved the host by +45 MB RSS and ~3 % CPU. No decision reversed.
@@ -387,3 +388,18 @@ One entry per phase: what we learned, what changed on this page, and why.
   `/excalidraw-diagram`, `/prose`; their MCP tools deleted.
 - **Spend.** Team key ≈ $0.44 (evals $0.41); personal ≈ $0.50 (three unwanted reviews, verification).
 - **Does the page hold?** Yes. Registration by directory is next (Wave 8, first).
+
+### Wave 8 — Audio, image, podcast (P4a), 2026-10-29 (v3.8)
+
+- **Learned.** A pre-registered live criterion caught what every unit test passed: two best-effort env
+  misses (`BRAIN_DIR`, notify) failed the first episode loudly. Best-effort steps need a live criterion,
+  and a port sweeps the legacy launch env by name. A JSON shape in a doc or skill is checked against a
+  real run before use. Owner directives mid-wave (OCR off, review off Max, the refusal) landed as one
+  small change each with a live probe as proof. Registration by directory removed the merge collisions
+  of Wave 7.
+- **Changed.** v3.8. Callers moved: `/img`, `/podcast`, Hermes TTS/STT, iris (audio, `decide`,
+  `triage`, review). Old paths closed: agent-gateway review (refuses), iris's gateway adapters (deleted).
+- **Friction.** `/code-review` forked into the main checkout again; a detached worktree fixes it.
+  `rd say` to a busy lead queues, so the mother saw state late.
+- **Spend.** Team key ≈ $6.1, personal ≈ $0.02, plus TTS/image vendors for two episodes.
+- **Does the page hold?** Yes.
