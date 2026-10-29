@@ -37,6 +37,9 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
   Kept on Max by assumption: in-session `/review --deep`, the degrade-to-`/code-review` fallback, the
   fleet's own `/code-review high` (none is `claude -p`); flip if the owner says so.
 
+- 2026-10-29 owner: no argo audio bridge; argo needs no audio integration. Door-only listener
+  (91de8f3) to be deleted; argo's audio routes removed with audio-gateway in Wave 11.
+
 ## Open decisions
 - none
 
