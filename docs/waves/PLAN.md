@@ -13,6 +13,9 @@ balance. Until lifted: no gateway `/review` in the fleet (the lead's `/code-revi
 review step); interim tests and evals use the Athena teamchat team key, kept out of this repo; routes
 fall back to GPT-6.1 Terra at medium effort on a provider-balance failure; the ported `review`
 degrades to "review in-session" on a balance failure.
+**Scope (owner, 2026-10-29):** individual workflows only need to work properly — parity and
+correctness, verified live. No tuning, experiments or quality rounds beyond that; big per-workflow
+reworks (review especially) come later, outside this plan.
 **Stops:** only the four in `roles/mother.md`.
 
 Outside this repo: **P0 (warden off)** runs as dotfiles Wave 1, orchestrated from the owner's main
