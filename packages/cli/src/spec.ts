@@ -87,7 +87,7 @@ export interface Skipped {
 
 export const kebab = (name: string) => name.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)
 
-function canonical(value: unknown): unknown {
+export function canonical(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonical)
   if (value === null || typeof value !== 'object') return value
   const sorted: Record<string, unknown> = {}

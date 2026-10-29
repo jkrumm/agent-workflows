@@ -43,7 +43,8 @@ interface Call {
 class StaleContract extends Error {
   constructor(
     readonly mismatch: AgwError,
-    readonly command: Command,
+    /** The process that answered 412: its contract, and only its, is fetched again. */
+    readonly host: Host,
   ) {
     super(mismatch.message)
   }
@@ -115,13 +116,14 @@ class Runner {
     // its process cannot answer. Every other command carries the sha, and a stale one is a 412 that refreshes and retries.
     if (wantsHelp(argv)) await this.freshen()
     const call = await this.prepareFresh(argv)
-    this.platform.assertNoConflict(call.command)
+    const conflict = this.platform.conflictError(call.command)
     if (call.parsed.globals.help) {
       this.io.out(helpText(call.command))
-      const down = this.unavailable(call.command)
-      if (down) this.io.out(`\n(${down})\n`)
+      const note = conflict ? `${conflict.message}; it does not run (${conflict.hint})` : this.unavailable(call.command)
+      if (note) this.io.out(`\n(${note})\n`)
       return EXIT.ok
     }
+    if (conflict) throw conflict
     try {
       return await this.execute(call)
     } catch (error) {
@@ -172,7 +174,7 @@ class Runner {
       if (!(error instanceof AgwError) || !error.stale) throw error
       // Already fetched this call (a help call, or no cache to start with): nothing more to try, unless that failed.
       if (this.platform.allRefreshed) {
-        const why = this.platform.failures()
+        const why = this.platform.failuresFor(argv)
         throw why ? unrefreshed(error, why) : error
       }
       try {
@@ -183,7 +185,7 @@ class Runner {
       try {
         return await this.prepare(argv)
       } catch (again) {
-        const why = this.platform.failures()
+        const why = this.platform.failuresFor(argv)
         if (!(again instanceof AgwError) || !again.stale || !why) throw again
         throw unrefreshed(again, why)
       }
@@ -192,7 +194,7 @@ class Runner {
 
   private async retryAfterMismatch(argv: string[], stale: StaleContract): Promise<number> {
     const { mismatch } = stale
-    await this.platform.refreshOwners(stale.command)
+    await this.platform.refreshProcess(stale.host)
     let call: Call
     try {
       call = await this.prepare(argv)
@@ -204,7 +206,8 @@ class Runner {
         details: mismatch.details,
       })
     }
-    this.platform.assertNoConflict(call.command)
+    const conflict = this.platform.conflictError(call.command)
+    if (conflict) throw conflict
     try {
       return await this.execute(call)
     } catch (error) {
@@ -252,7 +255,7 @@ class Runner {
       }))
     } catch (error) {
       if (!(error instanceof AgwError)) throw error
-      if (error.kind === 'contract_mismatch') throw new StaleContract(error, command)
+      if (error.kind === 'contract_mismatch') throw new StaleContract(error, this.platform.sentTo(error) ?? this.host)
       if (error.kind === 'network' && startsWork) {
         throw new AgwError('network', error.message, {
           hint: `the run may have started; retry with --idempotency-key ${this.#key}`,
@@ -362,7 +365,7 @@ class Runner {
     if (!commands.length) lines.push(`  (no cached contract; ${BIN} schema --refresh fetches it)`)
     for (const p of this.platform.secondaries) {
       const why = this.platform.failure(p)
-      if (why !== undefined) lines.push(`  (unavailable: ${why})`)
+      if (why !== undefined) lines.push(`  (process ${p.name} unavailable: ${why})`)
     }
     this.io.out(`${lines.join('\n')}\n`)
     return EXIT.ok
@@ -413,7 +416,7 @@ class Runner {
       return EXIT.ok
     }
     if (refresh) await this.platform.refreshAll()
-    else await this.platform.load()
+    else await this.platform.load({ fetchMissing: true })
 
     const { multi } = this.platform
     // With one process the output is what it always was; with more, every entry names its process.
