@@ -8,6 +8,7 @@ import {
   withCli,
 } from '@agent-workflows/capabilities'
 import type { AgentRef } from '@agent-workflows/middleware'
+import { type RouteEntry, resolveRoute, routeIds, routeSchema } from '@agent-workflows/routes'
 import type { AnyWorkflow, Logger, Runtime } from '@agent-workflows/runtime'
 import { IdempotencyConflict, WorkflowError } from '@agent-workflows/runtime'
 import { ORPCError, os } from '@orpc/server'
@@ -590,4 +591,74 @@ export function workflowOperation(entry: HostWorkflow, deps: OperationDeps): Hos
     cli,
     procedure: buildWorkflow(entry, input, deps, cli, path),
   }
+}
+
+const RoutesSchema = z.object({
+  routes: z
+    .record(z.string(), routeSchema)
+    .describe('Per route id, the entry the live host resolves: wire, model, effort, fallback, rate, price'),
+  table: z.string().describe('The same data as a compact table; what `--format plain` prints'),
+})
+
+const usd = (n: number | undefined) => (n === undefined ? '-' : String(n))
+
+/** One line per route, columns padded: id, wire, model, effort, USD per million in/out, fallback model. */
+export function routesTable(routes: Record<string, RouteEntry>): string {
+  const header = ['route', 'wire', 'model', 'effort', 'in/M', 'out/M', 'fallback']
+  const rows = [
+    header,
+    ...Object.entries(routes).map(([id, r]) => [
+      id,
+      r.wire,
+      r.model,
+      r.effort ?? '-',
+      usd(r.rate?.inputPerM),
+      usd(r.rate?.outputPerM),
+      r.fallback?.model ?? '-',
+    ]),
+  ]
+  const widths = header.map((_, col) => Math.max(...rows.map((row) => row[col]?.length ?? 0)))
+  return rows
+    .map((row) =>
+      row
+        .map((cell, col) => cell.padEnd(widths[col] ?? 0))
+        .join('  ')
+        .trimEnd(),
+    )
+    .join('\n')
+}
+
+/**
+ * `agw routes`: the route table as this process resolves it (`AGW_ROUTES` applied). An unjournaled read like
+ * `run status`: no run, no LLM. The entries carry model ids and prices only; routes hold no key or base URL.
+ */
+export function routesOperation(env: Record<string, string | undefined> = process.env): HostOperation {
+  const operationId = operationIdOf('routes')
+  const cli: ResolvedCliSpec = {
+    command: ['routes'],
+    positional: [],
+    mutating: false,
+    defaultFormat: 'json',
+    kind: 'capability',
+    plainField: 'table',
+  }
+  const procedure = base
+    .route({
+      method: 'GET',
+      path: '/routes',
+      operationId,
+      summary: 'List the route table as the host resolves it',
+      tags: ['routes'],
+      spec: withCli(cli),
+    })
+    .output(RoutesSchema)
+    .handler(() => {
+      const routes: Record<string, RouteEntry> = {}
+      for (const id of routeIds()) {
+        const { id: _id, ...entry } = resolveRoute(id, env)
+        routes[id] = entry
+      }
+      return { routes, table: routesTable(routes) }
+    })
+  return { operationId, method: 'GET', path: '/routes', cli, procedure }
 }

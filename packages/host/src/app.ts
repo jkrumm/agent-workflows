@@ -20,6 +20,7 @@ import {
   type HostContext,
   type HostOperation,
   type HostWorkflow,
+  routesOperation,
   runOperations,
   workflowOperation,
 } from './operations.ts'
@@ -114,6 +115,7 @@ export function createHost(options: HostOptions): Host {
     .filter((entry) => !entry.internal)
     .map((entry) => ({ entry, op: workflowOperation(entry, deps) }))
   const runs = runOperations(deps)
+  const routes = routesOperation()
   // A direct capability call over HTTP is a one-step run; `boot` registers the same workflows with the runtime.
   const invoke = capabilityRuns(options.capabilityWorkflows, { ...deps, isOpen })
 
@@ -134,6 +136,7 @@ export function createHost(options: HostOptions): Host {
     })),
     ...workflows.map(({ entry, op }) => ({ owner: `workflow ${entry.workflow.id}`, op })),
     ...Object.entries(runs).map(([name, op]) => ({ owner: `run ${name}`, op })),
+    { owner: 'routes', op: routes },
   ]
   assertCommands(operations.map(({ owner, op }) => ({ owner, command: op.cli.command })))
   for (const key of ['operationId', 'path'] as const) {
@@ -146,7 +149,7 @@ export function createHost(options: HostOptions): Host {
     }
   }
 
-  for (const reserved of ['workflows', 'runs']) {
+  for (const reserved of ['workflows', 'runs', 'routes']) {
     if (reserved in registry.router)
       throw new Error(`capability ids may not start with "${reserved}." (reserved by the host)`)
   }
@@ -154,6 +157,7 @@ export function createHost(options: HostOptions): Host {
     ...registry.router,
     workflows: Object.fromEntries(workflows.map(({ entry, op }) => [entry.workflow.id, op.procedure])),
     runs: Object.fromEntries(Object.entries(runs).map(([name, op]) => [name, op.procedure])),
+    routes: routes.procedure,
   }
   const handler = new OpenAPIHandler(router as never, {
     interceptors: [

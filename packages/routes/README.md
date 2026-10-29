@@ -18,6 +18,8 @@ costFromUsage(route.wire, usage, route.rate) // { usd, source: 'provider' | 'rat
 
 `resolveRoute` and `routeFingerprint` take a `RouteId` (the table's keys, typed: see §Table); `resolveRoute` returns a copy, so mutating it changes nothing shared. An unknown id from an untyped caller throws `UnknownRouteError`; a bad override throws `RouteOverrideError`.
 
+The host serves the resolved table (`AGW_ROUTES` applied) as `agw routes` (`GET /routes`, unjournaled): per route id the wire, model, effort, fallback, rate and price; `--format plain` is a compact table.
+
 ## Table
 
 `src/table/<group>.ts`, one file per workflow or capability group (`review.ts`, `check.ts`, `cheap.ts`, ...), each
