@@ -1,5 +1,7 @@
 # Research three-way: engine vs agent vs agent on the engine
 
+**Ported:** the winner, one agent with the platform's web tools (`agents/research`), runs as workflow `research`; the engine, pilot and focused arms, the `design`/`profile` inputs and the comparison harness are deleted (Wave 6, `w6/research-port`).
+
 **Status:** design and decision rule fixed (2026-10-28), before the first live run. Results follow in §Results after
 the live window; the rule in §Decision rule does not change after that.
 **Inputs:** concept §11 P3, D4, §3's research example; dotfiles `docs/factory/design/gateways.md` §9; research-gateway

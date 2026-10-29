@@ -27,7 +27,7 @@ const target: HostWorkflow = {
   workflow: defineWorkflow({
     id: 'research',
     version: 't1',
-    input: z.object({ query: z.string(), depth: z.string(), design: z.string().optional() }),
+    input: z.object({ query: z.string(), depth: z.string(), context: z.string().optional() }),
     output: z.object({ answer: z.string() }),
     scorer: {
       version: 's1',
@@ -87,17 +87,17 @@ afterAll(async () => {
 test('readSuite: a plain case carries no tree; its input runs as recorded and the arm args win', () => {
   const [first] = readSuite('research', env)
   expect(first?.tree).toBeNull()
-  expect(first?.input('/ignored', { depth: 'deep', design: 'agent' })).toEqual({
+  expect(first?.input('/ignored', { depth: 'deep', context: 'known' })).toEqual({
     query: 'port 5432?',
     depth: 'deep',
-    design: 'agent',
+    context: 'known',
   })
 })
 
 test('agw eval run on a tree-less suite: every case runs with the arm args and is scored', async () => {
   const { runId } = await rt.start(
     evalRun,
-    { workflow: 'research', yes: true, args: { design: 'pilot' } },
+    { workflow: 'research', yes: true, args: { context: 'known' } },
     { purpose: 'prod' },
   )
   const end = await rt.wait(runId)
@@ -107,31 +107,7 @@ test('agw eval run on a tree-less suite: every case runs with the arm args and i
     ['port', 'scored', true],
     ['miss', 'scored', false],
   ])
-  expect(seen).toContainEqual({ query: 'port 5432?', depth: 'quick', design: 'pilot' })
-
-  // The comparison's report reads every case run by its key: a scorer error is unscored (left out), never a miss.
-  const { load } = await import('../src/workflows/research/compare.ts')
-  const byCase = async () =>
-    Object.fromEntries(
-      (await load(sql.pool, db.schema, [runId])).map((l) => [l.row.caseId, [l.row.arm, l.row.golden, l.unscored]]),
-    )
-  expect(await byCase()).toEqual({ port: ['pilot-yolo', 1, false], miss: ['pilot-yolo', 0, false] })
-  await sql.pool.query(
-    `update "${db.schema}".runs set scores = jsonb_set(scores, '{final}', (scores->'final') || '{"error":"judge outage","scores":{}}')
-      where idempotency_key = $1`,
-    [`eval:${runId}:miss`],
-  )
-  expect((await byCase()).miss).toEqual(['pilot-yolo', null, true])
-
-  // A cancelled (or still running) run is a miss, not ok, and its partial cost stays out of every median.
-  await sql.pool.query(`update "${db.schema}".runs set status = 'cancelled', cost = 9 where idempotency_key = $1`, [
-    `eval:${runId}:port`,
-  ])
-  const port = (await load(sql.pool, db.schema, [runId])).find((l) => l.row.caseId === 'port')
-  expect(port).toMatchObject({ state: 'incomplete', status: 'cancelled', unscored: false, tokens: null })
-  expect(port?.row).toMatchObject({ ok: false, cost: null, wallMs: null })
-  // The id is a prefix, not a pattern: a `_` matches itself only.
-  expect(await load(sql.pool, db.schema, [`${runId.slice(0, -1)}_`])).toEqual([])
+  expect(seen).toContainEqual({ query: 'port 5432?', depth: 'quick', context: 'known' })
 })
 
 describe("the scorers' judge", () => {

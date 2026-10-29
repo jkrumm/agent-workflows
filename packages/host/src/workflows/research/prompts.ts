@@ -1,9 +1,9 @@
-import type { Depth, Design } from './schema.ts'
+import type { Depth } from './schema.ts'
 
 /** How much work a depth asks for: research-gateway's depth profiles (`src/agent/depth.ts`), as one directive each. */
 const EFFORT: Record<Depth, string> = {
   quick:
-    'QUICK: answer directly and precisely. One focused search, read the most relevant page if the snippets are not enough, then answer.',
+    'QUICK: answer directly and precisely. One targeted search, read the most relevant page if the snippets are not enough, then answer.',
   standard:
     'STANDARD: search, then read the 2-3 most relevant pages. Cross-verify the answer across at least 2 independent sources.',
   deep: 'DEEP: survey the question. Search from several angles, read the primary sources, cross-verify every key claim across independent sources, and name what stays uncertain.',
@@ -16,22 +16,29 @@ const LENGTH: Record<Depth, string> = {
   deep: 'Length target: about 20,000 characters; do not exceed 30,000.',
 }
 
-/** Sub-questions the pilot hands to the engine: the engine's own worker counts per depth (1, 4, 8), as a range. */
-const SUB_QUESTIONS: Record<Depth, string> = {
-  quick: 'one sub-question (the question itself, sharpened)',
-  standard: '2 to 4 sub-questions',
-  deep: '4 to 8 sub-questions',
+/** What a follow-up carries from the finished run it continues. */
+export type EarlierResearch = {
+  question: string
+  report: string
+  citations: { claim: string; url: string; confidence: string }[]
+  /** The pages that run retrieved: the only URLs the new answer may cite from it. */
+  retrieved: string[]
 }
 
-export function researchTask(input: {
-  query: string
-  depth: Depth
-  context?: string
-  design: Exclude<Design, 'engine'>
-}) {
+function earlierSection(earlier: EarlierResearch): string {
+  const citations = earlier.citations.map((c) => `- ${c.claim} (${c.confidence}) ${c.url}`)
+  return [
+    '## Earlier research',
+    `Question: ${earlier.question.trim()}`,
+    `Report:\n\n${earlier.report.trim()}`,
+    `Citations:\n${citations.join('\n') || '(none)'}`,
+    `Pages already read, citable without reading again:\n${earlier.retrieved.map((u) => `- ${u}`).join('\n') || '(none)'}`,
+  ].join('\n\n')
+}
+
+export function researchTask(input: { query: string; depth: Depth; context?: string; earlier?: EarlierResearch }) {
   const lines = [`## Question\n\n${input.query.trim()}`, `## Depth\n\n${EFFORT[input.depth]} ${LENGTH[input.depth]}`]
-  if (input.design === 'pilot')
-    lines.push(`## Plan\n\nResearch it as ${SUB_QUESTIONS[input.depth]} through \`engine_research\`.`)
+  if (input.earlier) lines.push(earlierSection(input.earlier))
   if (input.context) lines.push(`## Given background\n\n${input.context.trim()}`)
   lines.push('Answer with the JSON object only.')
   return lines.join('\n\n')

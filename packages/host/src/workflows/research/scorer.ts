@@ -25,7 +25,7 @@ const SUPPORT_QUESTION = {
   },
 } as const
 
-/** The first `n` citations with distinct URLs, in report order: deterministic, so arms are judged alike. */
+/** The first `n` citations with distinct URLs, in report order: deterministic, so every report is judged alike. */
 export function sampleCitations(citations: ResearchResult['citations'], n = SUPPORTED_SAMPLE) {
   const seen = new Set<string>()
   return citations.filter((c) => !seen.has(c.url) && seen.add(c.url)).slice(0, n)
@@ -53,7 +53,7 @@ async function supports(judge: ScoreJudge, claim: string, url: string): Promise<
  * - `valid`: the output parses as the report shape (else every other score is 0);
  * - `complete`: the report's status is `ok`, not `partial`;
  * - `grounded`: the share of the run's citations whose URL it actually retrieved or saw as a search result, counted in
- *   code (the engine's own grounding ledger, the agents' tool gate); left out when the run cited nothing;
+ *   code (the tool gate's ledger); left out when the run cited nothing;
  * - `golden` (with a reference): the case's `expect` on the report and its `maxChars` (`evals/lib.ts` semantics); a
  *   `live:` value comes from `web.package` through the judge, so without a judge the score is left out;
  * - `supported` (judged, regression and drift only): for up to three citations with distinct URLs, does the page
@@ -114,7 +114,7 @@ export const researchScorer: Scorer<ResearchInputValue, ResearchReference> = {
       const verdicts = await Promise.all(sample.map((c) => supports(judge, c.claim, c.url)))
       const scored = verdicts.filter((v) => v !== null)
       const unscored = verdicts.length - scored.length
-      // A report without a citation supports nothing: 0, the same for every arm.
+      // A report without a citation supports nothing: 0, the same for every report.
       if (!sample.length) {
         scores.supported = 0
         problems.push('no citations')

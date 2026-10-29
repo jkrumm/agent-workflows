@@ -192,37 +192,48 @@ Define it with `defineWorkflow` (input must be a `z.object`; list its agents in 
   or Tavily Extract, ≈ $0) and three `decide` calls on ≤ 20k characters each (≈ 5k tokens at $0.04/M, ≈ $0.0002 each):
   ≈ $0.001 per scored run, as up to six `cap.*` runs with purpose `drift`; drift has no reference, so no `web.package`.
 
-## Research (Wave 6 comparison, concept P3)
+## Research (concept P3)
 
-`src/workflows/research/`: `agw research <query> [--depth quick|standard|deep] [--context …] [--design engine|agent|pilot] [--profile yolo|focused]`
-answers research-gateway's report shape (`report`, `citations`, `sources`, `unverified`, `status`, `warnings`) plus a
-code-counted `grounding`, the `arm`, the agents' `tools` and the engine's jobs and cost. `design` and `profile` are the
-comparison's arms and go once it has decided (`docs/research/2026-10-28-research-three-way.md`: design, decisions,
-the pre-registered rule, results).
+`src/workflows/research/`: `agw research <query> [--depth quick|standard|deep] [--context …] [--follow-up <runId>]`
+answers research-gateway's report shape (`report`, `citations [{claim, url, confidence}]`, `sources`,
+`unverified [{topic, url, reason}]`, `status` `ok|partial`, `warnings`) plus a code-counted `grounding` and the
+agent's `tools` counts. `--depth` defaults to `standard`. A long run waits like check and review: after
+`AGW_WAIT_BUDGET_S` the CLI exits 10 with `agw run wait <runId>`. The shape is the winner of the three-way comparison
+(`docs/research/2026-10-28-research-three-way.md`: one agent with the platform's web tools); the other arms are gone.
 
-- **engine**: one job of a research-gateway instance over REST (`AGW_RESEARCH_ENGINE_URL` + `_TOKEN`, else the
-  untracked `<stateDir>/research/engine.json`), keyed by the step (a resumed run adopts its job), polled to its end
-  with no cap; its `cost.totalUsd` is the step's usage.
-- **agent / pilot**: an OpenCode agent (`agents/research-{agent,pilot}-{yolo,focused}`, route `research.agent`) whose
-  web tools are a plugin forwarding to the **tool gate** (`gate.ts`): a loopback server in the host process that runs
-  `web.*` (and, for the pilot, an engine quick job) only for a session of a running, granted research step and only
-  the tools its arm is granted. Its key is per process, in `<stateDir>/research/gate.json` (0600), outside every
-  location; it is not the API secret and opens nothing but these tools. A call's cost is booked as it is reported
-  on the run's `tools` step, which lives as long as the agent's turns (a cancelled or failed run keeps its spend; an
-  engine job once per step: the ledger row that claims it books it, atomically (migration 0008; a retried write
-  recognises its own claim), and the rows' reported costs are what `engine.costUsd` sums; a failed one at the
-  engine's reported cost or unknown). Its evidence is written apart to
-  `research_tool_calls` (migrations 0007 and 0008, rows go with their run; in memory on a host without a database), so a step
-  retry or a host restart loses nothing; `tools` reads it once the grant has drained (at the agent's end, calls in flight are served first, bounded; an
-  engine job cut off at the bound is recorded and booked as abandoned, cost unknown), and a citation whose URL was
-  never retrieved is dropped to `unverified` (the engine's grounding rule; ≥ 10 % dropped makes the report `partial`).
-  A ledger write is retried and logged and never fails a call that worked. Engine jobs and the judge's calls share
-  one key rule (`src/attempt-keys.ts`): adopt what is done (a failure that is an answer is final), step past an outage or a cancel. The server has no idle timeout (an engine job holds a request 10-60 s), caps a body at 64 KiB before
-  buffering, and is closed with the host (`gate.json` removed while it still holds this host's key).
+- **The agent** (`agents/research`, route `research.agent`) runs on the shared OpenCode server. Its four tools
+  (`web_search`, `web_fetch`, `web_docs`, `web_package`) are a plugin forwarding to the **tool gate** (`gate.ts`): a
+  loopback server in the host process that runs the `web.*` capabilities only for a session of a running, granted
+  research step. Its key is per process, in `<stateDir>/research/gate.json` (0600), outside every location; it is not
+  the API secret and opens nothing but these tools. A call's cost is booked as it is reported on the run's `tools`
+  step, which lives as long as the agent's turns (a cancelled or failed run keeps its spend). Its evidence is written
+  apart to `research_tool_calls` (migrations 0007 and 0009; rows go with their run; in memory on a host without a
+  database), so a step retry or a host restart loses nothing; `tools` reads it once the grant has drained (at the
+  agent's end, calls in flight are served first, bounded). A ledger write is retried and logged and never fails a call
+  that worked. The server has no idle timeout (a capability call may outlast Bun's default 10 s cut; the grant's
+  abort ends it), caps a body at 64 KiB before buffering, and is closed with the host (`gate.json` removed while it
+  still holds this host's key).
+- **Grounding** (`assemble`, in code): a citation whose URL the run neither retrieved nor saw as a search result is
+  dropped to `unverified`; dropping 10 % or more, or retrieving nothing at all, makes the report `partial`.
+  `grounding` counts before the drop.
+- **Follow-up** (`--follow-up <runId>`, `followUp` in the input): the query is a new question about a finished
+  report. The run must be a `done` `research` run, else the follow-up fails `invalid_input` with the reason (no such
+  run, another workflow, not done, no report). The agent gets the earlier question, report and citations and the
+  pages that run retrieved, researches only what the new question adds, and answers in the same shape. Grounding
+  counts this run's retrieved and seen URLs plus the earlier run's **retrieved** ones (read from its ledger rows: those
+  pages were fetched, so a citation of one is as grounded as a fresh read; a page the earlier run only saw in search
+  results is not). `grounding.pagesRetrieved` stays this run's own. A flat `followUp` id rather than a separate
+  `research.followup` workflow: one workflow keeps one run record, one scorer and one fingerprint, and the CLI shows
+  `--follow-up <runId>` where an object would be a JSON flag. A follow-up of a follow-up continues from the latter's
+  own report only (the chain is not walked).
+- **Process.** Concept §8 sends heavy pipelines to their own process. Research has no in-process pipeline: the agent
+  loop runs in the OpenCode server (already its own process, shared with review and check), and the host only serves
+  the gate's calls (an HTTP hop to `web.*` capabilities, bodies capped at 64 KiB) and the scorer's reads. A separate
+  research process would add a second gate and a second ledger writer for nothing; it is not built. The host's RSS and
+  CPU under a full 28-case regression are in the pull request that landed this section.
 - **Scorer** (`scorer.ts`): `valid`, `complete`, `grounded` (code), `golden` (the case's `expect`, research-gateway
   `evals/lib.ts` semantics; `live:` via `web.package`), `supported` (judged: `web.fetch` + `decide` on up to 3 cited
-  pages). Cases are plain eval cases in `$AGW_EVAL_DIR/research/cases.jsonl`; `compare.ts` prints the comparison's
-  tables and the rule's verdict (`decision.ts`) from the recorded runs.
+  pages), `judgedShare`. Cases are plain eval cases in `$AGW_EVAL_DIR/research/cases.jsonl`.
 
 ## Process
 
@@ -316,11 +327,11 @@ output, path, repository name, prompt or transcript is ever selected. `friction.
 
 ## Token effect / cache effect
 
-Research's agent arms: the agent's `AGENTS.md` and its five tool schemas are the cached prefix (identical across runs
-of an arm); the question, depth directive and background are the task message. The tool gate adds no model-visible text
-beyond each tool's JSON answer (page text up to `maxChars`, 20k by default), which is where a research session's
-tokens go; DeepSeek's prefix cache holds because the session's history is never edited (cache reads recorded and priced
-at the route's rate). The engine arm spends what the engine spends; its tokens are not reported (its cost is).
+The research agent: its `AGENTS.md` and its four tool schemas are the cached prefix (identical across runs); the
+question, depth directive, background and a follow-up's earlier report are the task message. The tool gate adds no
+model-visible text beyond each tool's JSON answer (page text up to `maxChars`, 20k by default), which is where a
+research session's tokens go; DeepSeek's prefix cache holds because the session's history is never edited (cache
+reads recorded and priced at the route's rate).
 
 The learnings read-back adds tokens only where a fact is active: the fenced block is appended **after the task message**, never
 into `AGENTS.md`, so the agent's cached prefix (system prompt, skills) is untouched; the block costs its own tokens

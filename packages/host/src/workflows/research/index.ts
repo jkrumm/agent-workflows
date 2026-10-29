@@ -1,53 +1,28 @@
 import { parseJsonLoose } from '@agent-workflows/capabilities'
 import { DEFAULT_STATE_DIR } from '@agent-workflows/opencode-host'
-import { type Ctx, defineWorkflow, WorkflowError } from '@agent-workflows/runtime'
+import { type Ctx, defineWorkflow, type Json, WorkflowError } from '@agent-workflows/runtime'
 import { z } from 'zod'
 import type { HostWorkflow } from '../../operations.ts'
 import type { WorkflowDeps } from '../index.ts'
-import {
-  createEngineClient,
-  type EngineClient,
-  EngineJobFailed,
-  EngineReport,
-  engineEndpoint,
-  runEngineJob,
-} from './engine.ts'
-import { type CapabilityCall, engineUsage, evidence, type GateTool, normalizeUrl, ToolGate } from './gate.ts'
+import { type CapabilityCall, evidence, GATE_TOOLS, normalizeUrl, ToolGate } from './gate.ts'
 import { memoryToolLedger, type ToolLedger } from './ledger.ts'
-import { JSON_ONLY_REASK, researchTask } from './prompts.ts'
-import { type Design, Draft, type Profile, ResearchInput, ResearchOutput, type ResearchResult } from './schema.ts'
+import { type EarlierResearch, JSON_ONLY_REASK, researchTask } from './prompts.ts'
+import { Citation, Draft, ResearchInput, ResearchOutput, type ResearchResult } from './schema.ts'
 import { researchScorer } from './scorer.ts'
 
-export const RESEARCH_VERSION = '2026-10-28.2'
+export const RESEARCH_VERSION = '2026-10-29.1'
 
-/** The tools each agent arm is granted; its agent definition allows exactly these (`agents/research-*`). */
-export const ARM_TOOLS: Record<Exclude<Design, 'engine'>, Record<Profile, GateTool[]>> = {
-  agent: { yolo: ['web_search', 'web_fetch', 'web_docs', 'web_package'], focused: ['web_search', 'web_fetch'] },
-  pilot: {
-    yolo: ['engine_research', 'web_search', 'web_fetch', 'web_docs', 'web_package'],
-    focused: ['engine_research'],
-  },
-}
+/** The agent's definition (`agents/research`) allows exactly the gate's tools. */
+const AGENT = 'research'
 
-/** A citation share at or above this dropped for lack of a retrieved page makes the report `partial` (the engine's rule). */
+/** A citation share at or above this dropped for lack of a retrieved page makes the report `partial`. */
 const PARTIAL_DROP_SHARE = 0.1
 
-const AGENTS = (['agent', 'pilot'] as const).flatMap((design) =>
-  (['yolo', 'focused'] as const).map((profile) => ({
-    agent: `research-${design}-${profile}`,
-    route: 'research.agent' as const,
-  })),
-)
-
 export type ResearchOptions = {
-  env?: Record<string, string | undefined>
   stateDir?: string
-  /** The engine; default from `AGW_RESEARCH_ENGINE_URL`/`_TOKEN` or `<stateDir>/research/engine.json`. */
-  engine?: EngineClient | null
   gate?: ToolGate
   /** Where the gate records every call; default the host's (`deps.research.ledger`), else in memory. */
   ledger?: ToolLedger
-  enginePollMs?: number
   /** Wait before the agent step's second attempt. Default 1 s. */
   agentBackoffMs?: number
 }
@@ -61,49 +36,41 @@ export const Evidence = z.object({
   seen: z.array(z.string()),
   failed: z.number().int(),
   counts: z.record(z.string(), z.number().int()),
-  engineJobs: z.array(z.string()),
-  engineCostUsd: z.number().nullable(),
   calls: z.number().int(),
 })
 export type Evidence = z.output<typeof Evidence>
 
-/** The engine's report in the platform's shape; its grounding ledger says how many citations it kept and dropped. */
-export function fromEngine(jobId: string, report: EngineReport): ResearchResult {
-  const g = report.grounding
-  const citations = g ? g.citationsKept + g.citationsDropped : report.citations.length
-  return {
-    report: report.report,
-    citations: report.citations,
-    sources: report.sources,
-    unverified: report.unverified,
-    status: report.status,
-    warnings: report.warnings,
-    grounding: {
-      source: 'engine',
-      citations,
-      grounded: g ? g.citationsKept : report.citations.length,
-      pagesRetrieved: g?.pagesRetrieved ?? 0,
-      pagesFailed: g?.pagesFailed ?? 0,
-    },
-    arm: { design: 'engine', profile: null },
-    engine: { jobs: [jobId], costUsd: report.cost?.totalUsd ?? null },
-  }
-}
+/** What the `followup` step journals: the finished run a follow-up continues, or why it cannot. */
+const Followed = z.discriminatedUnion('ok', [
+  z.object({
+    ok: z.literal(true),
+    question: z.string(),
+    report: z.string(),
+    citations: z.array(Citation),
+    retrieved: z.array(z.string()),
+  }),
+  z.object({ ok: z.literal(false), reason: z.string() }),
+])
 
 /**
- * An agent's draft against what its tools retrieved, the engine's grounding rule in code: a citation whose URL the
- * run never retrieved nor saw as a search result is dropped and restated in `unverified`; dropping 10 % or more, or
- * retrieving nothing at all, makes the report `partial`. `grounding` counts before the drop.
+ * An agent's draft against what its tools retrieved: a citation whose URL the run never retrieved nor saw as a
+ * search result is dropped and restated in `unverified`; dropping 10 % or more, or retrieving nothing at all, makes
+ * the report `partial`. `grounding` counts before the drop. `earlier` is the pages a follow-up's earlier run retrieved:
+ * they were fetched, so a citation of one is grounded, but they are not this run's retrievals and are not counted.
  */
-export function assemble(draft: Draft, ev: Evidence, arm: { design: Design; profile: Profile }): ResearchResult {
+export function assemble(draft: Draft, ev: Evidence, earlier: readonly string[] = []): ResearchResult {
   const retrieved = new Set(ev.retrieved)
   const seen = new Set(ev.seen)
-  const known = (url: string) => retrieved.has(normalizeUrl(url)) || seen.has(normalizeUrl(url))
+  const before = new Set(earlier.map(normalizeUrl))
+  const known = (url: string) => {
+    const key = normalizeUrl(url)
+    return retrieved.has(key) || seen.has(key) || before.has(key)
+  }
   const kept = draft.citations.filter((c) => known(c.url))
   const dropped = draft.citations.filter((c) => !known(c.url))
   const warnings: string[] = []
   if (dropped.length) warnings.push(`${dropped.length} citation(s) dropped: their URL was never retrieved this run`)
-  const noPages = retrieved.size === 0 && seen.size === 0
+  const noPages = retrieved.size === 0 && seen.size === 0 && before.size === 0
   if (noPages) warnings.push('nothing was retrieved this run')
   const partial =
     noPages || (draft.citations.length > 0 && dropped.length / draft.citations.length >= PARTIAL_DROP_SHARE)
@@ -123,15 +90,12 @@ export function assemble(draft: Draft, ev: Evidence, arm: { design: Design; prof
     status: partial ? 'partial' : 'ok',
     warnings,
     grounding: {
-      source: 'tools',
       citations: draft.citations.length,
       grounded: kept.length,
       pagesRetrieved: retrieved.size,
       pagesFailed: ev.failed,
     },
-    arm,
     tools: ev.counts,
-    ...(ev.engineJobs.length ? { engine: { jobs: ev.engineJobs, costUsd: ev.engineCostUsd } } : {}),
   }
 }
 
@@ -157,13 +121,7 @@ async function untilAborted(done: Promise<void>, signal: AbortSignal): Promise<v
 }
 
 export function createResearchWorkflows(deps: WorkflowDeps, options: ResearchOptions = {}): HostWorkflow[] {
-  const env = options.env ?? process.env
   const stateDir = options.stateDir ?? DEFAULT_STATE_DIR
-  const engine = (): EngineClient | null => {
-    if (options.engine !== undefined) return options.engine
-    const endpoint = engineEndpoint(env, stateDir)
-    return endpoint ? createEngineClient(endpoint) : null
-  }
   // The gate calls `web.*` by a string id from its tool map (`gate.ts` CAPABILITY), so the typed ids are widened here.
   const registry = deps.registry as unknown as { call: CapabilityCall }
   const ledger = options.ledger ?? deps.research?.ledger ?? memoryToolLedger()
@@ -171,49 +129,40 @@ export function createResearchWorkflows(deps: WorkflowDeps, options: ResearchOpt
     options.gate ??
     new ToolGate({
       stateDir,
-      engine,
       ledger,
       call: (id, input, scope) => registry.call(id, input, scope),
-      ...(options.enginePollMs ? { enginePollMs: options.enginePollMs } : {}),
     })
   deps.onClose?.(() => gate.close())
-  const pollMs = options.enginePollMs
 
-  async function runEngine(ctx: Ctx, input: z.output<typeof ResearchInput>): Promise<ResearchResult> {
-    const client = engine()
-    if (!client) throw new WorkflowError('error', 'no research engine is configured (AGW_RESEARCH_ENGINE_URL)')
-    const out = await ctx.step('engine', async ({ key, signal, progress, addUsage }) => {
-      try {
-        const { jobId, report } = await runEngineJob(
-          client,
-          {
-            query: input.query,
-            depth: input.depth,
-            ...(input.context ? { context: input.context } : {}),
-            idempotencyKey: key,
-          },
-          { signal, progress, ...(pollMs ? { pollMs } : {}) },
-        )
-        addUsage(engineUsage(report.cost?.totalUsd))
-        return { jobId, report }
-      } catch (error) {
-        // A failed job still cost what the engine says it cost, or an unknown amount: never 0.
-        if (error instanceof EngineJobFailed) addUsage(engineUsage(error.costUsd))
-        throw error
-      }
+  /**
+   * The finished research run a follow-up continues: its question, report and citations, and the pages its tools
+   * retrieved (its ledger rows, so only pages that were actually read). Journaled as a step, so a resumed run sees
+   * the same context. Anything else than a `done` research run is `invalid_input`.
+   */
+  async function loadEarlier(ctx: Ctx, runId: string): Promise<{ earlier: EarlierResearch; retrieved: string[] }> {
+    const out = await ctx.step('followup', async (): Promise<Json> => {
+      const run = await ledger.run(runId)
+      if (!run) return { ok: false, reason: `run ${runId} does not exist` }
+      if (run.workflow !== 'research')
+        return { ok: false, reason: `run ${runId} is a ${run.workflow} run, not research` }
+      if (run.status !== 'done') return { ok: false, reason: `run ${runId} is ${run.status}, not done` }
+      const input = z.object({ query: z.string() }).safeParse(run.input)
+      const output = ResearchOutput.safeParse(run.output)
+      if (!input.success || !output.success) return { ok: false, reason: `run ${runId} holds no research report` }
+      const { report, citations } = output.data
+      const retrieved = [...evidence(await ledger.read(runId, 'research')).retrieved]
+      return { ok: true, question: input.data.query, report, citations, retrieved }
     })
-    const { jobId, report } = z.object({ jobId: z.string(), report: EngineReport }).parse(out)
-    return fromEngine(jobId, report)
+    const followed = Followed.parse(out)
+    if (!followed.ok) throw new WorkflowError('invalid_input', `cannot follow up: ${followed.reason}`)
+    const { question, report, citations, retrieved } = followed
+    return { earlier: { question, report, citations, retrieved }, retrieved }
   }
 
-  async function runAgent(
-    ctx: Ctx,
-    input: z.output<typeof ResearchInput>,
-    design: Exclude<Design, 'engine'>,
-  ): Promise<ResearchResult> {
-    const { profile } = input
+  async function runAgent(ctx: Ctx, input: z.output<typeof ResearchInput>): Promise<ResearchResult> {
     const runId = ctx.runId
-    const close = gate.open({ runId, stepId: 'research', tools: ARM_TOOLS[design][profile] })
+    const followed = input.followUp ? await loadEarlier(ctx, input.followUp) : undefined
+    const close = gate.open({ runId, stepId: 'research', tools: GATE_TOOLS })
     let agentEnded!: () => void
     const ended = new Promise<void>((resolve) => {
       agentEnded = resolve
@@ -252,8 +201,6 @@ export function createResearchWorkflows(deps: WorkflowDeps, options: ResearchOpt
           seen: [...ev.seen],
           failed: ev.failed,
           counts: ev.counts,
-          engineJobs: ev.engineJobs,
-          engineCostUsd: ev.engineCostUsd,
           calls: entries.length,
         } satisfies Evidence
       })
@@ -267,11 +214,11 @@ export function createResearchWorkflows(deps: WorkflowDeps, options: ResearchOpt
         const prompt = researchTask({
           query: input.query,
           depth: input.depth,
-          design,
           ...(input.context ? { context: input.context } : {}),
+          ...(followed ? { earlier: followed.earlier } : {}),
         })
         const text = await ctx.agent('research', {
-          agent: `research-${design}-${profile}`,
+          agent: AGENT,
           prompt,
           output: z.string(),
           options: { output: 'text' },
@@ -289,7 +236,7 @@ export function createResearchWorkflows(deps: WorkflowDeps, options: ResearchOpt
       const recorded = await tools
       if (failure) throw failure
       if (!draft) throw new WorkflowError('invalid_output', 'the research agent did not answer with the report JSON')
-      return assemble(draft, Evidence.parse(recorded), { design, profile })
+      return assemble(draft, Evidence.parse(recorded), followed?.retrieved)
     } finally {
       await endAgent()
     }
@@ -301,17 +248,16 @@ export function createResearchWorkflows(deps: WorkflowDeps, options: ResearchOpt
     input: ResearchInput,
     output: ResearchOutput,
     scorer: researchScorer,
-    async run(ctx, input) {
-      return input.design === 'engine' ? runEngine(ctx, input) : runAgent(ctx, input, input.design)
-    },
+    run: runAgent,
   })
 
   return [
     {
       workflow: research,
-      summary: 'Research a question into a cited report (Wave 6: engine, agent or pilot design)',
+      summary:
+        'Research a question into a cited report; with --follow-up, continue a finished report with a new question',
       cli: { positional: ['query'], defaultFormat: 'json' },
-      agents: AGENTS,
+      agents: [{ agent: AGENT, route: 'research.agent' }],
     },
   ]
 }
