@@ -3,9 +3,11 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
 import { DEFAULT_ROUTES } from './index.ts'
 
-// The home-of-model-ids rule: no other package's source names a model that this table names.
+// The home-of-model-ids rule: no source outside `packages/routes/src/table/` names a model that the table names. The
+// routes package's own tests may (they pin what the table says).
 const PACKAGES = resolve(import.meta.dir, '../..')
 const OWN = 'routes'
+const TABLE = join(import.meta.dir, 'table')
 
 function* walk(dir: string): Generator<string> {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -22,6 +24,7 @@ function sourceFiles(): string[] {
     .map((d) => join(PACKAGES, d.name, 'src'))
     .filter(existsSync)
     .flatMap((src) => [...walk(src)])
+    .concat([...walk(import.meta.dir)].filter((file) => !file.startsWith(`${TABLE}/`) && !file.endsWith('.test.ts')))
 }
 
 export function findModelIds(files: Map<string, string>, ids: string[]): string[] {
@@ -38,7 +41,7 @@ test('the table names models', () => {
   expect(modelIds().length).toBeGreaterThan(0)
 })
 
-test('no other package source contains a model id from the route table', () => {
+test('no source outside the route table contains a model id from it', () => {
   const files = new Map<string, string>()
   for (const file of sourceFiles()) files.set(relative(resolve(PACKAGES, '..'), file), readFileSync(file, 'utf8'))
   expect(findModelIds(files, modelIds())).toEqual([])

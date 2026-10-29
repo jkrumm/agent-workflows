@@ -16,7 +16,7 @@ import { BrainInput, BrainOutput, type BrainResult } from '../src/workflows/brai
 import { brainScorer } from '../src/workflows/brain/scorer.ts'
 import { BRAIN_TOOLS, brainGrant, evidence } from '../src/workflows/brain/tools.ts'
 import { readSuite } from '../src/workflows/eval/suites.ts'
-import type { HostRegistry } from '../src/workflows/index.ts'
+import { type HostRegistry, HOST_MODULES, suitesOf } from '../src/workflows/index.ts'
 import { freshSchema, inspector, testRuntime } from '../../runtime/test/support/pg.ts'
 import { memoryToolLedger, pgToolLedger } from '../src/workflows/research/ledger.ts'
 
@@ -512,7 +512,7 @@ describe('brain scorer and suite', () => {
     const path = casesPath('brain', env)
     mkdirSync(join(path, '..'), { recursive: true })
     writeFileSync(path, `${JSON.stringify({ id: 'c1', input: { question: 'How many billing lanes?' }, reference })}\n`)
-    const [c] = readSuite('brain', env)
+    const [c] = readSuite(suitesOf(HOST_MODULES), 'brain', env)
     expect(c).toMatchObject({ id: 'c1', tree: null, setup: false, reference })
     expect(c?.input('', {})).toEqual({ question: 'How many billing lanes?' })
     expect(brainScorer.reference?.safeParse(c?.reference).success).toBe(true)

@@ -2,8 +2,9 @@
 
 The route table: the **only place model ids live** in this repo (concept §4 Money, §5 fingerprint,
 §8). Agent steps, capabilities and evals name a route id (`cheap.classify`, `decide`,
-`review.angle`, …) and resolve it here. `src/guard.test.ts` fails with `file:line` when any other
-package's `src/**` contains a model id from the table. No network calls.
+`review.angle`, …) and resolve it here. `src/guard.test.ts` fails with `file:line` when any source outside
+`src/table/` (other packages' `src/**`, this package's non-test files) contains a model id from the table. No network
+calls.
 
 ```ts
 import { resolveRoute, routeFingerprint, costFromUsage } from '@agent-workflows/routes'
@@ -15,7 +16,40 @@ routeFingerprint('cheap.classify') // sha256 hex of the resolved entry, override
 costFromUsage(route.wire, usage, route.rate) // { usd, source: 'provider' | 'rate' | 'unknown' }
 ```
 
-`resolveRoute` and `routeFingerprint` take a `RouteId` (the table's keys); `resolveRoute` returns a copy, so mutating it changes nothing shared. An unknown id from an untyped caller throws `UnknownRouteError`; a bad override throws `RouteOverrideError`.
+`resolveRoute` and `routeFingerprint` take a `RouteId` (the table's keys, typed: see §Table); `resolveRoute` returns a copy, so mutating it changes nothing shared. An unknown id from an untyped caller throws `UnknownRouteError`; a bad override throws `RouteOverrideError`.
+
+## Table
+
+`src/table/<group>.ts`, one file per workflow or capability group (`review.ts`, `check.ts`, `cheap.ts`, ...), each
+default-exporting its entries; `src/table/_shared.ts` holds the rates and fallbacks several groups use
+(`HAIKU_55_EU_RATE`, `SONNET_55_EU_RATE`, `CALL_FALLBACK`, `AGENT_FALLBACK`). `discoverRoutes(dir)` imports every
+`*.ts` there in sorted order (`_`-prefixed and `*.test.ts` skipped) once per process; `DEFAULT_ROUTES` is the result,
+validated and deeply frozen. An empty directory, a default export that is not an object, an invalid id or entry, or a
+route id a second file declares fails the import, naming the file.
+
+Route ids stay typed though the table is discovered: each group file adds its ids to the `RouteTable` interface by
+module augmentation, and `RouteId = keyof RouteTable`, so a typo in a caller is a compile error. The host also checks at
+boot that every agent a workflow lists runs on a route the table has (`packages/host/README.md` §Adding a workflow).
+
+A new workflow's routes are a new group file, ending with the augmentation (copy it from any group):
+
+```ts
+import type { RouteEntry } from '../schema.ts'
+import { AGENT_FALLBACK, HAIKU_55_EU_RATE } from './_shared.ts'
+
+const routes = {
+  'audio.agent': { wire: 'opencode', model: '<model-id>', rate: HAIKU_55_EU_RATE, fallback: AGENT_FALLBACK },
+} satisfies Record<string, RouteEntry>
+
+export default routes
+
+declare module '../schema.ts' {
+  interface RouteTable extends Record<keyof typeof routes, true> {}
+}
+```
+
+`_shared.ts` is imported, never edited by a port: a rate only one group uses lives in that group's file. A group's
+seat provenance (which legacy seat it copies, and why) is its file's comments and its workflow's README.
 
 ## Entry
 
@@ -67,7 +101,8 @@ The fallback (GPT-6.1 Terra) carries a rate on every route: $1.00 in, $0.05 cach
 
 ## Source seats (agent-gateway `GET /api/routing`, 2026-10-27)
 
-Model ids and efforts are what agent-gateway resolves today. None of these seats sets an effort: Haiku 5.5 EU exposes no variants and the single-shot calls send none.
+The capability seats (`src/table/cheap.ts`, `decide.ts`); a workflow's seats are in its README's §Route
+(`packages/host/src/workflows/<id>/README.md`). Model ids and efforts are what agent-gateway resolves today. None of these seats sets an effort: Haiku 5.5 EU exposes no variants and the single-shot calls send none.
 
 | Route | agent-gateway seat | Model | Wire |
 |-|-|-|-|
@@ -75,17 +110,6 @@ Model ids and efforts are what agent-gateway resolves today. None of these seats
 | `cheap.summarize` | `overview` (CLASSIFY) | claude-haiku-5-5-eu | iu-anthropic |
 | `cheap.title` | `narrative` (CLASSIFY) | claude-haiku-5-5-eu | iu-anthropic |
 | `decide` | `DEFAULT_DECISION_MODEL` | pplx-decider-v1-27b | iu-decision |
-| `review.router` | `review_router` (SINGLE_SHOT) | deepseek-v4.1-flash | iu-openai |
-| `review.adversary` | `adversary` | deepseek-v4.1-flash | iu-openai |
-| `review.angle` | `review_angle_senior_dev`, `_typescript`, `_frontend`, `_qa` (ANGLE_OC, identical) | claude-haiku-5-5-eu | opencode |
-| `review.angle.deep` | none (new; angles of a `depth: deep` review, Wave 6 experiment) | claude-sonnet-5-5-eu | opencode |
-| `review.synthesis` | `review` (CLASSIFY) | claude-haiku-5-5-eu | opencode |
-| `check` | `check` (CLASSIFY) | claude-haiku-5-5-eu | opencode |
-| `retro.analyze` | none (new; copied from `check`, concept §7) | claude-haiku-5-5-eu | opencode |
-| `research.agent` | research-gateway's `IU_LEAD_MODEL` / `IU_WORKER_MODEL` (not agent-gateway) | deepseek-v4.1-flash | opencode |
-| `brain.agent` | none (new; Wave 7, the brain agent over the private vault; **no fallback**) | claude-haiku-5-5-eu | opencode |
-| `diagram.agent` | `excalidraw` (Wave 10 bench: Haiku 5.5 EU on OpenCode) | claude-haiku-5-5-eu | opencode |
-| `otel.agent` | `otel` (Sonnet on Max; none on IU) | deepseek-v4.1-flash | opencode |
 
 Deliberate differences from the gateway:
 
@@ -95,12 +119,6 @@ Deliberate differences from the gateway:
 - The `decide` rate is the UE price list from `decision.ts`.
 
 ## Token effect / cache effect
-
-`retro.analyze` is a new seat (the weekly retrospective's one agent step) on `check`'s model and wire: a cheap Haiku-class call, no new cache group beyond its own agent.
-
-`diagram.agent` is the diagram workflow's one agent step (Wave 7), on `check`'s model and wire: a single read-only session that answers the skeleton JSON, about 25 s and $0.003-0.005 in the legacy bench; the host hydrates in code.
-
-`research.agent` is the research agents' seat (Wave 6 comparison, concept P3). A research session is a long tool loop, so its cost is dominated by re-sent context: DeepSeek's prefix cache (cache read at 2% of input) only holds while the session's history is never edited (concept §8 wire rules).
 
 A route flip changes what the next run costs and how well it caches:
 

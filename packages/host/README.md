@@ -72,258 +72,33 @@ Run state comes from `Runtime.getRun` and `Runtime.ping` (the runtime's public r
 
 - `/health` does not reflect stale recovery ticks: it says the runtime is open and Postgres answers, not that recovery is still running.
 
-## Retrospective and learnings (concept §7)
+## Workflows
 
-**`agw retrospective <workflow>`** (`src/workflows/retrospective/`) looks back on one workflow that runs agents.
-Input: `workflow`, `window` (days, default 7), `sample` (runs, default 20), `fileIssues` (default false).
-
-| Step | Does |
-|-|-|
-| `sample` | Finished (`done`/`failed`) top-level runs of the workflow inside the window, `purpose <> 'eval'`, failed runs first, then a stable spread by id hash. Reads outcome, wall time, cost, tool calls, `friction` (null until `w5/friction` fills it; tolerated), and per step: kind, status, model, error, a 1 200-character output preview. **Never the run input** (it holds working directories and diffs) |
-| `analyze` | One agent step (`agents/retrospective/`, route `retro.analyze`, a copy of `check`'s model and wire, no tools, edit denied) over the sample rendered as text (at most 120k characters; step previews shrink 600 → 300 → 120 → none before runs are cut; absolute paths become `<path>`). One JSON-only retry on invalid output, then the run fails |
-| `store-learnings` | Candidate facts are stored as **`proposed`**, never active |
-| `file-issues` | Only with `fileIssues: true`. Per proposal: filter, find an issue with the same title, else create one |
-
-Output (typed): `proposals[]` (kind `capability | agents-md | skill | cli`, target, title, change, evidence run ids,
-confidence), `learnings[]` (agent, fact, evidence, stored id), `issues[]` (title, `filed | duplicate | refused`, url or reason)
-and `dropped[]`. Before anything is stored or filed the answer is checked in code: evidence must be run ids that were in the
-sample, a learning must name an agent the workflow runs, a target must be an agent, an `agw` command or a path in this repo;
-the rest is dropped with its reason, never repaired. Proposals are never applied.
-
-**Issues and the public repo** (`issue.ts`, `tracked.ts`, `gh.ts`). Public by construction, not by filtering: an issue is
-built from structured fields only: kind, **target** (must be a path tracked in this repo: a file, a directory holding
-tracked files, or an agent name standing for `agents/<name>`), confidence, evidence run ids and a fixed line pointing at
-`agw run status <retroRunId>`. The model's free text (`change`, `title`, facts) never goes into an issue; it stays in the run
-output (the private journal). A proposal whose target is not tracked is `refused` (it still appears in the output). *What is
-tracked:* a release is a `git archive` of the commit plus `node_modules` (`scripts/deploy.sh`), so the release tree minus
-`node_modules` is the tracked list; a dev checkout asks `git ls-files`. Read once per process, on the first filing. The same
-function builds the title (`retro(<workflow>): <kind> change for <path> [<hash8>]`) and a marker
-`<!-- agw-retro:<sha256(kind + target + normalised change), first 16 hex> -->` (case and whitespace of the change do not
-matter). **Dedupe** searches the marker (`gh issue list --state all --search '"agw-retro:<hash>" in:body'`) and verifies it
-against the issue's own body; two proposals with one hash in a run collapse. **Known window:** GitHub's search index lags a
-new issue by seconds to minutes, so a second run in that window can file a duplicate; the weekly cadence and the retry bound
-keep that rare, and no lock closes it. Without `AGW_RETRO_FILE_ISSUES` the port is never called. The agent's *prompt* data is
-still scrubbed (`scrub.ts`: absolute paths of any shape, `~/…`, Windows drive paths, single-segment paths like `/tmp`, token-shaped
-strings), as hygiene for what the model sees, not as a boundary.
-
-**Weekly schedule** (`schedule.ts`, `boot.ts`). An hourly tick (and one at start) asks the journal which agent workflows had
-finished non-eval runs in the last 7 days and starts one `retrospective` per workflow with the idempotency key
-`retro:<workflow>:<ISO week>` (purpose `retro`). A week whose runs have **all failed** is retried under
-`<key>:retry-<n>` (at most 3 per week, a lifecycle bound on re-starts and not a cap on the agent; a running, done or
-cancelled run of the week stands, so a retry never doubles one). The `(workflow, idempotency_key)` constraint makes it once per workflow and
-week however often it ticks or the host restarts; the first tick of a new week starts it, so a host down on Monday catches up.
-Flipping `fileIssues` mid-week hits the same key with another input: that week's run stands (no error, no second run).
-
-**`agw learnings list|add|activate|retire`** (`src/learnings/`). Per-agent facts in `<schema>.learnings`
-(migration `0005_learnings.sql`: agent, fact, source = run id or `manual`, evidence, status `proposed | active | retired`,
-`created_at`, `activated_at`, `retired_at`; one row per fact and agent, **retired rows included**: a retired fact is a rejected
-one and a retrospective never proposes it again (the add returns the retired row). A human brings it back with
-`agw learnings add` (source `manual`), which reuses the row. A fact containing the learned-facts fence tag is refused on add and
-on activate and skipped when rendering). Decision: each command is a
-one-step workflow rather than a new operation kind, so it appears in the generated CLI through the existing workflow path,
-carries the platform contract and leaves a run record of who changed what; the cost is a journal row per command.
-`add` proposes (`--activate` for the human path), `activate` makes a proposed fact live, `retire` ends any fact.
-
-**Read-back.** `RuntimeOptions.agentPrompt` (runtime, additive) lets the host append to an agent step's task message right
-before the session is opened or prompted (not on a re-attach to a prompted session). The host appends the agent's active facts
-(the 25 most recently *activated*, in activation order, so a late activation of an old fact is not lost) as a fenced
-`<learned_facts>` block after the task and before the step's `tail` (a retry directive such as "answer with JSON only",
-which `AgentSpec.tail` keeps last; the retrospective uses it, `check` and `review` still append theirs to the prompt and could
-adopt it); with no active facts the message is unchanged. A
-lookup failure is logged and the plain task is sent. `withLearningsFingerprint` wraps the fingerprint source: an agent with
-active facts gets a `learnings/active` pseudo-file holding the digest of its set, so activate and retire change the fingerprint
-of every workflow that runs the agent, and an agent without facts keeps the fingerprint it has today. The fingerprint is read at
-admission and the facts at the step's prompt, so a fact changed during a run shows in that run's output but in the next run's
-fingerprint (a window of minutes). Retire takes effect on the next run.
+Each workflow lives in `src/workflows/<id>/`, its docs in `src/workflows/<id>/README.md`: `brain`, `check`,
+`diagram`, `eval`, `otel`, `prose`, `research`, `retrospective` (with the learnings commands), `review`. This file keeps
+what they share (HTTP, the tool gate, process, deploy). `smoke.ping` (`src/workflows/smoke/`) is the reference: one
+code step calling `llm.title` through `registry.call`, its usage passed to the step's `addUsage` so the run has priced
+usage that reaches Argo.
 
 ## Adding a workflow
 
-Define it with `defineWorkflow` (input must be a `z.object`; list its agents in `HostWorkflow.agents` so their files and routes feed the run fingerprint), add it to `src/workflows/index.ts` as a `HostWorkflow`, and it appears as `POST /workflows/…` and `agw <id words>` with no other code. `smoke.ping` (`src/workflows/smoke.ts`) is the reference: one code step calling `llm.title` through `registry.call`, its usage passed to the step's `addUsage` so the run has priced usage that reaches Argo.
+Adding one touches no shared file (`package.json`/`bun.lock` excepted):
 
-## Evals (concept §6)
+1. `src/workflows/<id>/` with the workflow (`defineWorkflow`; input a `z.object`; its agents in `HostWorkflow.agents`
+   so their files and routes feed the run fingerprint) and a `module.ts` whose default export is
+   `defineWorkflowModule({ id: '<id>', create: (deps, context) => HostWorkflow[], suite?, phase? })`. `id` is the
+   directory name. `suite: 'plain'` (or an object with `read(path)` for cases that need a tree, as `review` and `check`
+   have) puts `<id>` into the `agw eval run|compare` enum. `phase: 'last'` builds the module after all others, with
+   their workflows as `context.peers` (the retrospective reads their agents); `context.suites` is every suite.
+2. Its routes: `packages/routes/src/table/<group>.ts` (`packages/routes/README.md` §Table).
+3. Its docs: `src/workflows/<id>/README.md`, including a §Route with each route's source seat.
 
-`src/workflows/eval/` serves the regression and comparison side of the scorers; `review` and `check` carry a scorer
-(`src/workflows/{review,check}/scorer.ts`), attached for regression and drift only: neither workflow calls
-`ctx.score`, so production behaviour is unchanged (an inline gate is a later experiment).
-
-| Command | Does |
-|-|-|
-| `agw eval run <review\|check\|research> [--ids a,b] [--limit N] [--concurrency N] [--args '{…}'] [--yes]` | Without `--yes`: the plan (selected case ids) and an estimate (mean cost of the workflow's latest 50 done runs × cases), nothing runs. With `--yes`: each case materialized like the harness does (`materialize` from `@agent-workflows/eval`; a plain case, research's, needs no tree and runs its recorded input), run as its own top-level run with purpose `eval`, scored against the case's reference, the verdict and the arm's `args` recorded on that run (`scores.final`); the output lists per-case scores, the fingerprints and the means |
-| `agw eval compare <review\|check> --a <fp> --b <fp> [--a-args '{…}'] [--b-args '{…}'] [--seed N]` | Two arms paired by case id: per metric the means, the mean and median delta (B − A) with seeded bootstrap 95% CIs (harness `stats.ts`), and which arm the CI favours. Scores are higher-is-better; `costUsd`, `wallMs`, `tokens`, `toolCalls` lower-is-better. Reads only |
-| drift (no command) | every `AGW_DRIFT_INTERVAL_S`, up to 20 sampled, unscored production runs of a workflow with a scorer are scored (`source: drift`); the sample is a hash of the run id, the write first-writer-wins, so several hosts never score a run twice. A tick counts verdicts and recorded scorer errors apart (and warns on errors) |
-
-- **Spend gate: `--yes`, not `--commit`.** The CLI's `--commit` gate (mutating operations) applies only off a TTY and
-  shows nothing first; an eval spends IU money (concept N8) whoever types it, so `eval.run` is not `mutating`: the
-  default answer is the plan with the estimate, and only `--yes` spends.
-- **An arm is a fingerprint plus the exact `--args`.** A workflow input that is not part of the fingerprint
-  changes behaviour without changing the fingerprint, so compare selects by both: equal fingerprints compare when the args differ, and two
-  identical arms are refused. A fingerprint may be given as a unique prefix (8+ characters). Reruns of a case in one
-  arm are averaged before pairing; a run with unpriced calls leaves its cost out instead of comparing a lower bound;
-  mixed scorer versions and fewer than 10 paired cases are reported as `warnings`.
-- **Resume and cancel.** Each case run is keyed `eval:<evalRunId>:<caseId>`, and its clone lives in a directory
-  derived from that key (`agw_eval_case_<sha256[:16]>` in the temp dir). A resumed `eval.run` looks the key up before
-  anything else: a case scored by this eval run is reported as recorded (no clone, no install, no second score); one
-  still running is waited on and scored; only a case with no run is materialized and started. A failure on that path
-  (a lookup, a wait, a score) is that case's error result, never the whole step's. After a case is done its directory
-  is removed, so the process that adopts a case after a shutdown removes the tree the first process kept. Cases go
-  through a pool that takes no new case after the first failure. Cancelling `eval.run` cancels its case runs (a case
-  run that starts after the cancel fired is cancelled too, and no case starts after it), waits up to 30 s for each to
-  end, and only then removes its clone. A tree is removed only when its run is known ended (a terminal status read
-  just then) or known never started; a failed lookup or wait, or a live run, keeps it, and a sweep (at start and
-  hourly) removes `agw_eval_case_*` directories older than 3 h whose marker names a run that ended or does not exist;
-  a directory without its marker is never deleted, only logged. A sweep never overlaps itself, and close waits for it. On resume, a case whose recorded score is a scorer error is scored again. A shutdown or a lost lease leaves
-  the case runs going and keeps their clones for the next process. A scorer error is a case `error` (reason
-  `scorer: …`), out of the pass rate and the means. Repeated `--ids` are deduplicated.
-- **What compare will not call.** A metric with fewer than 5 pairs gets `better: unknown`, whatever its CI, and a
-  warning says the verdict is withheld (for every metric when fewer than 5 cases pair at all). A case with any
-  unpriced rerun leaves `costUsd` on that side (`cases.unpricedCost`), never averaged over its priced reruns; a case
-  with no cost recorded at all is counted apart (`cases.noCost`), and the cost warning names both. A run with a scorer
-  error is no verdict: it is left out of its arm (`scorerErrors`, warned). An arm that itself mixes scorer versions
-  is warned too. Each arm is read with its fingerprint prefix and args in SQL, never the workflow's whole
-  history.
-- **Wiring.** `wireEval` (in `boot`) binds the eval workflows to the runtime before it opens (recovery may resume an
-  eval run at once) and owns the drift job's timer. The runtime's `judge` (`src/judge.ts`) lets a scorer call only
-  `web.fetch`, `web.package`, `decide` and `llm.*` (never a workflow or an effect). For regression and drift each call
-  is a `cap.<id>` run of its own, recorded and priced like a direct capability call, with purpose `eval` (regression)
-  or `drift`, keyed by the score source (drift also by its pass, the UTC day), the scorer version, the scored run, the capability and its input under the
-  shared attempt rule (a retried scoring adopts a finished call and re-runs a failed one; a drift re-score under a new
-  scorer fetches fresh; an aborted scoring cancels the call it started); an inline gate (none judges today) calls in process on its step. Only a failure that is an
-  answer comes back (`answerOf`: a 4xx from the source, such as a page gone, forbidden or rate-limited, or a package
-  not found; a refused URL; as `{error: {code, message}}`);
-  every other failure, an outage, throws and the scoring retries.
-  Review's and check's scorers never judge. **Drift on research** spends per sampled run up to three `web.fetch` (direct
-  or Tavily Extract, ≈ $0) and three `decide` calls on ≤ 20k characters each (≈ 5k tokens at $0.04/M, ≈ $0.0002 each):
-  ≈ $0.001 per scored run, as up to six `cap.*` runs with purpose `drift`; drift has no reference, so no `web.package`.
-
-## Research (concept P3)
-
-`src/workflows/research/`: `agw research <query> [--depth quick|standard|deep] [--context …] [--follow-up <runId>]`
-answers research-gateway's report shape (`report`, `citations [{claim, url, confidence}]`, `sources`,
-`unverified [{topic, url, reason}]`, `status` `ok|partial`, `warnings`) plus a code-counted `grounding` and the
-agent's `tools` counts. `--depth` defaults to `standard`. A long run waits like check and review: after
-`AGW_WAIT_BUDGET_S` the CLI exits 10 with `agw run wait <runId>`. The shape is the winner of the three-way comparison
-(`docs/research/2026-10-28-research-three-way.md`: one agent with the platform's web tools); the other arms are gone.
-
-- **The agent** (`agents/research`, route `research.agent`) runs on the shared OpenCode server. Its four tools
-  (`web_search`, `web_fetch`, `web_docs`, `web_package`) go through the host's **tool gate** (§Tool gate) with a
-  grant `src/workflows/research/tools.ts` builds (`researchGrant`): the four tools mapped to the `web.*` capabilities,
-  and a hook that writes every call's evidence apart to `research_tool_calls` (migration 0007; rows go with their
-  run; in memory on a host without a database), so a step retry or a host restart loses nothing. A call's cost is
-  booked as it is reported on the run's `tools` step, which lives as long as the agent's turns (a cancelled or failed
-  run keeps its spend); `tools` reads the ledger once the grant has drained (at the agent's end, calls in flight are
-  served first, bounded). A ledger write is retried (three attempts) and logged and never fails a call that worked.
-- **Unused columns.** `research_tool_calls.engine_job`, `engine_cost` and `booked_by` (migration 0008) and the
-  partial unique index on them stay in the table: nullable, never written or read by this code. The previous release,
-  the rollback target of a failed deploy, still uses them; they are dropped by a later migration once no rollback
-  target reads them.
-- **Grounding** (`assemble`, in code): a citation whose URL the run neither retrieved nor saw as a search result is
-  dropped to `unverified`; dropping 10 % or more, or retrieving nothing at all, makes the report `partial`.
-  `grounding` counts before the drop.
-- **Follow-up** (`--follow-up <runId>`, `followUp` in the input): the query is a new question about a finished
-  report. The run must be a `done` `research` run, else the follow-up fails `invalid_input` with the reason (no such
-  run, another workflow, not done, no report). The agent gets the earlier question, report and citations and the
-  pages that run retrieved, researches only what the new question adds, and answers in the same shape. The earlier
-  report is data derived from web pages, never instructions (the agent's rule for page text applies to it). Grounding
-  counts this run's retrieved and seen URLs plus what the earlier run may rest on: the pages it retrieved (its ledger
-  rows) and the URLs of its final citations, which passed its own grounding (so a seen-only page it cited, or one it
-  inherited, stays citable and a chain of follow-ups stays grounded; a page it merely saw and did not cite is not). A follow-up that read nothing new
-  carries the warning `no new pages were read for this follow-up` (its status follows the rule as usual). The earlier
-  research reaches the agent as one fenced block (the marker carries a hash of the data, so the data cannot contain it;
-  claims and URLs are single lines), with the URLs as the ledger rows and citations hold them.
-  `grounding.pagesRetrieved` stays this run's own. A flat `followUp` id rather than a separate
-  `research.followup` workflow: one workflow keeps one run record, one scorer and one fingerprint, and the CLI shows
-  `--follow-up <runId>` where an object would be a JSON flag. A follow-up of a follow-up continues from the latter's
-  own report only (the chain is not walked).
-- **Process.** Concept §8 sends heavy pipelines to their own process. Research has no in-process pipeline: the agent
-  loop runs in the OpenCode server (already its own process, shared with review and check), and the host only serves
-  the gate's calls (an HTTP hop to `web.*` capabilities, bodies capped at 64 KiB) and the scorer's reads. A separate
-  research process would add a second gate and a second ledger writer for nothing; it is not built.
-- **Scorer** (`scorer.ts`): `valid`, `complete`, `grounded` (code), `golden` (the case's `expect`, research-gateway
-  `evals/lib.ts` semantics; `live:` via `web.package`), `supported` (judged: `web.fetch` + `decide` on up to 3 cited
-  pages), `judgedShare`. Cases are plain eval cases in `$AGW_EVAL_DIR/research/cases.jsonl`.
-
-## Brain (Wave 7)
-
-`src/workflows/brain/`: `agw brain "<question>"` answers a question from the owner's vault, read-only. Output (the
-contract; `schema.ts`): `{ answer, citations: [{ path, claim }], read: [path], status: ok|partial|notfound, warnings,
-grounding: { citations, grounded } }`. Input `{ question }`, strict. A long run waits like research (exit 10, `agw run
-wait <runId>`).
-
-- **The agent** (`agents/brain`, route `brain.agent`) holds `brain_search` and `brain_read` and nothing else: they go
-  through the tool gate (§Tool gate) to the `brain.*` capabilities (`packages/capabilities` §Brain capabilities). OpenCode's
-  own `read`, `grep` and `glob` are offered but denied outside the agent's location (`external_directory`), which
-  `brain-opencode.test.ts` proves against the real `opencode`, so the gate is the only way to the vault.
-- **Route decision: `claude-haiku-5-5-eu`, not DeepSeek, and no fallback.** The agent reads arbitrary private notes
-  (health, finance); that content never leaves the Anthropic EU route. Unlike every other agent route, `brain.agent`
-  has no provider-balance fallback (lead decision, Wave 7): a balance failure fails the run with the typed error
-  instead of moving the notes to another provider, and `AGW_ROUTES` cannot add one. `brain.test.ts` pins it.
-- **Grounding.** The gate's per-call hook (research's guarded one, `ledgerGrant`) records each `brain_read` that found
-  a note into the evidence ledger (the `research_tool_calls` table, the note's canonical path in `retrieved`; reused,
-  no migration), the `tools` step reads it once the agent has ended. A citation whose path is not a note the run opened
-  (compared `./`-stripped, NFC and case-folded; a kept citation carries the canonical path) is dropped into `warnings`;
-  a search hit alone does not ground one. `partial`: a citation was dropped, none was grounded, or nothing was read.
-  `notfound`: the agent's own `found: false` ("Not in the vault."). `grounding` counts before the drop. Because the
-  ledger is the table, a host restart mid-run loses nothing.
-- **Per attempt.** A failed agent step is tried once more as a second step, `brain:retry`, with its own grant, `tools:retry`
-  evidence step and ledger step: the answer is grounded on the notes the attempt that produced it read, so a note an
-  attempt read before it died grounds nothing in the retry, and calls are not summed across attempts. The runtime's own
-  step retry is not used for this (one grant and one ledger step would span both sessions). A cancel is not retried.
-- **Re-ask.** A non-JSON answer gets one re-ask in the same session (`brain:reask`), then `invalid_output`.
-- **As a child.** `createBrainWorkflows(deps)[0].workflow` is the `Workflow` a parent passes to
-  `ctx.workflow('<step>', brain, [{ question }, …])`; a child that fails is `null`. The input and output above are the
-  stable contract; a change to either bumps `BRAIN_VERSION`. `brain.test.ts` calls it from a fake parent.
-- **Eval** (`docs/research/2026-10-29-wave7-ports.md` §brain): suite `brain`, plain cases in
-  `$AGW_EVAL_DIR/brain/cases.jsonl` (`{id, input: {question}, reference: {notes: [1-2 vault paths], facts: [1-3]}}`).
-  The scorer reports `valid`, `reference` (a reference note is cited; with two notes, either), `grounded` (cited and
-  read; the rule needs 1 on every case) and `facts` (judged: one `decide` boolean per reference fact, regression and
-  drift only); `pass` is valid, reference cited, nothing dropped. Cost is the harness's `costUsd` (median ≤ $0.01).
-  The live run is `agw eval run brain --yes`, once, by the lead.
-
-## Otel (concept N7)
-
-`agw otel "<investigation>" [--env prod|local] [--since 2h | <from>/<to>]` investigates traces, logs and metrics in
-ClickStack/HyperDX and answers in agent-gateway's `otel` shape: `status` `healthy|degraded|errors`, `environment`,
-`timeRange`, `findings [{service, summary, severity, evidence?, unverified}]`, `recommendations`. Changed from the
-legacy tool: `hyperdx` is typed (`{connected, reason?}`), and the answer adds `queries` (every tool call of the run:
-`id`, `tool`, `target`, `argsDigest`, `ok`, `error?`, `rows?`, `chars`) and `warnings`. `--since` is a duration ending
-now (`30m`, `2h`, `3d`) or an absolute `<from>/<to>` of strict ISO-8601 instants with a zone (`2026-10-27T08:00:00Z`;
-dates alone, local times, impossible days and a reversed range are refused); without it the agent chooses (the run's journaled
-start time is in its prompt, since the agent has no clock).
-
-- **The agent** (`agents/otel`, route `otel.agent`: deepseek on OpenCode, `AGENT_FALLBACK`) holds three tools through the
-  tool gate (§Tool gate): `hdx_tools`, `hdx_guide`, `hdx_query`, mapped to `hdx.tools|guide|query` (`otelGrant`). No
-  shell, no `query.py`, and no SQL: `clickstack_sql` is outside `AGENT_READ_TOOLS` (CLI-only, see the capabilities
-  README), so the builder tools are the whole path (legacy's "SQL last" step is gone, deliberately). `hdx.link` is not
-  granted: no finding carries a URL.
-- **The environment is the run's.** The grant carries `fixed: { env }`; the gate sets it on every call after the agent's
-  own arguments, and the plugin offers no `env` argument. The agent cannot choose or switch it; `environment` in the
-  answer is the input's, not the agent's.
-- **Query ids are the agent's citations.** The grant's `onStart` hook numbers each `hdx_query` when the call starts (issue
-  order: `q1`, `q2`, ...) and the gate sends that label back with the answer, so the agent's tool shows `query q3: ...`
-  and what it cites is what was recorded. `hdx_tools` and `hdx_guide` are `t<n>` and carry no label (reading about the
-  tools is not a query). The recorder is per run (no global state): `onCall` writes the query's record (`tool`,
-  `target`, `argsDigest`, `ok`, `rows`, `chars`) and the `tools` step journals the list, so a replay grounds the same
-  way. A retried or resumed `tools` step numbers its queries `q<attempt>.<n>` (`q2.1`), so an id never means two calls;
-  calls made before a host restart are lost, the resumed agent's earlier ids match nothing, and those findings are
-  flagged, never dropped. A hook that fires after the step has taken its calls is ignored (nothing re-inserted).
-- **Grounding** (`assemble`, in code). A finding is grounded when its `evidence` names at least one query of this run
-  that read telemetry (`clickstack_table|timeseries|search|event_*|service_health|trace_*|query_tile(s)`), worked and
-  returned rows (`rows > 0`, read from the answer's `result.rows`/`data` or a `services` list; an answer cut inside a
-  non-empty `data` list counts as at least one). Nothing in the evidence text itself grounds it (a trace id, a quote,
-  a date or a column name would ground a hallucination). Otherwise it stays in the answer with `unverified: true` and
-  the run carries a warning. Quoted excerpts in evidence add a warning too.
-- **Untrusted output.** Summaries, evidence and recommendations come from an agent that read logs any observed system
-  can write: the answer carries an `untrusted` note, and the calling session reads it without obeying it.
-- **Status is cross-checked.** `healthy` needs a query that returned rows (see above); without one the answer is
-  `degraded` with a warning (health nobody looked at, or an empty window, is not health). `degraded` or `errors` with
-  no such query keeps its status and adds a warning. `hyperdx.connected` is true when any call was answered.
-- **One re-ask** (`otel:reask`, the same session) when the answer is not the findings JSON, then `invalid_output`.
-- **Scorer** (`scorer.ts`): `valid`, `status` (match), `facts` (judged: one `decide` boolean per reference fact),
-  `grounded` (the share of findings not flagged `unverified`; only when the output has `queries`, so the legacy arm is scored by the
-  same function). `pass`: valid, status matches and every fact stated. Cases are plain eval cases in
-  `$AGW_EVAL_DIR/otel/cases.jsonl` (`{id, input: {investigation, env, since}, reference: {status, facts}}`);
-  `scripts/eval-legacy/otel.ts` runs agent-gateway's MCP `otel` tool per case and appends scored rows to
-  `<evalDir>/otel/legacy-runs.jsonl`.
+`discoverWorkflowModules(dir)` (`src/workflows/registry.ts`) imports every `<dir>/*/module.ts` in sorted order;
+`HOST_MODULES` is the host's tree, discovered once at import, and a second process (audio) calls it on its own tree.
+`createWorkflows(deps, modules = HOST_MODULES)` builds them. Boot fails, naming the file, on an empty dir, a default
+export that is not a `defineWorkflowModule`, an id that is not its directory, a workflow id two modules register, a
+suite whose module serves no workflow of its id, or an agent on a route the table does not have. The workflow then
+appears as `POST /workflows/…` and `agw <id words>` with no other code.
 
 ## Tool gate
 
@@ -375,149 +150,6 @@ start time is in its prompt, since the agent has no clock).
   that into the location, so a shared file would need a loader change (and a copy step into each content-hashed
   location); the forwarding is ~15 lines, kept per agent. An agent's `agent.json` lists the same tool names as
   `allow` permissions.
-
-## Prose (concept §10)
-
-`prose` is agent-gateway's lint → cross-lab review → rewrite → keep gate, minus the writer: the rewrite runs in the
-calling Claude Code session on Max, so the platform does the two parts that need no Opus.
-
-| Command | Does | Cost |
-|-|-|-|
-| `agw prose` | lint (code) and one cross-lab review call (route `prose.review`); answers `{language, format, mediumNote, lint{findings, counts}, review{scores, notes}, visualSuggestions, reviewer, voicePath, writerBrief}` | one call on the review route (about $0.004 on legacy's recorded jobs) |
-| `agw prose-gate` | the keep decision on `{original, rewrite}`: `{kept: rewrite\|original, text, reason?, lint{before, after}}`; no model, a recorded run at cost 0. An empty rewrite is valid and keeps the original; a blank original is refused | 0 |
-
-- **Command names.** The gate is the workflow `prose-gate`, command `agw prose-gate`. The host refuses a command that is
-  a prefix of another, so `agw prose gate` cannot sit beside `agw prose`; workflow ids may now carry a hyphen inside a
-  segment, only between alphanumerics and before a letter (`prose-gate`; the one operation-id helper makes it `proseGate`
-  for the route and the uniqueness check). The brief names `agw prose-gate`; a test asserts it is the
-  registered command.
-- **The brief.** `writerBrief` is legacy's writer system prompt (rules and rubric) and user prompt (lint findings, reviewer
-  notes, brief, context and draft as fenced data) in one block, without the voice guide: the session reads `voicePath`
-  itself. The review prompt is legacy's, word for word, and carries no voice guide (legacy's did not either).
-- **Fences.** Every prompt gets a fresh 128-bit random token, never derived from the text; it is regenerated while any
-  fenced body contains it. Resume determinism comes from the journal (the step result), not from rebuilding the prompt.
-  The brief has a token of its own, never the one the reviewer saw, built in a journaled step (`brief`) so a resumed run
-  reads it back; the reviewer's notes and the lint excerpts (quoted draft text) have `<<<` and `>>>` made inert where they
-  are inlined into the brief, which also lists at most 50 findings and 30 notes and counts the rest. The returned review
-  keeps the reviewer's own words. A draft can make the reviewer echo its closing marker; the regeneration loop is capped
-  at 8 tries.
-- **The gate** takes no `medium` (its rules do not depend on it). It judges the trimmed rewrite and answers `text`: that
-  trimmed rewrite when kept, else the original as given; the caller writes `text`. It is `judgeRewrite` unchanged: same format, every fenced block, URL and wikilink target kept, none added, no
-  fence left open, no lint rule with more findings. `lint.after` is the rewrite's own lint, kept or not (an empty rewrite
-  is kept out with the original's).
-- **Cross-lab refusal.** The writer is always the calling session (Anthropic). `prose.critique` refuses a `prose.review`
-  route whose primary or fallback is not on the OpenAI chat wire (an agent harness, an Anthropic wire) or whose model names an Anthropic family (`claude`, `anthropic`, `opus`, `sonnet`, `haiku`,
-  `fable`, vendor prefix included): at boot (`createCapabilities`, after `AGW_ROUTES`) and again on the route each call
-  resolves. A malformed `AGW_ROUTES` stays the first call's `NOT_CONFIGURED`, as for every other capability.
-- **Capability.** `prose.critique` (route `prose.review`, `agw prose-critique`) takes the review fields (non-blank text, medium,
-  register, language, `draftFormat`, verdictFirst, brief, context), never a prompt: it builds the fenced reviewer prompt
-  itself, so no free prompt on the paid seat is reachable over HTTP or the CLI. A `verdictFirst: false` draft gets no
-  `verdict_first` score, stripped in code. The registry has no internal registration, hence the structured input.
-- **Port.** `lint.ts` is `server/lib/prose-lint.ts` of agent-gateway at `15a8e6d` with `noUncheckedIndexedAccess` casts
-  and its tests (`prose-lint.test.ts`); `gate.ts` is `judgeRewrite`/`worsenedRule` from `server/jobs/handlers/prose.ts`.
-- **Eval.** Suite `prose` (plain cases, scorer `scorer.ts`: `valid`, `notesPresent` (reported, not part of `pass`: a clean
-  draft may get none), `scoresInRange`, and against a recorded case `scoreAgreement` and `lintAgreement`, which compares
-  the findings (rule and line), not their count). Rules 1 and 2 of the pre-registered set are offline:
-  `bun scripts/eval-legacy/prose.ts --offline` (legacy lint and the real legacy `runProsePipeline` with canned
-  adapters); `--build-cases` writes `$AGW_EVAL_DIR/prose/cases.jsonl` from the recorded params (language included).
-  Rules 3 and 4 need live review calls.
-- No agent definitions: the workflow runs no agent step, so it adds nothing to the run fingerprint beyond its `version`.
-
-## Diagram (Wave 7)
-
-`agw diagram "<brief>"` (`src/workflows/diagram/`): an Excalidraw diagram from a brief; port of agent-gateway's
-`excalidraw_diagram`. One agent (`agents/diagram`, route `diagram.agent` = Haiku 5.5 EU on OpenCode, the model the legacy
-tool settled on after its bench) answers `{rationale, elements[]}`, the skeleton. Code does the rest; **the host writes no
-caller path**, the caller writes the file.
-
-| Step | What |
-|-|-|
-| `agent` | The skeleton envelope. No tools (OpenCode's deny-by-default), no web |
-| `hydrate` | Parse and check the skeleton (`skeleton.ts`: ids, unique, bound arrows point at existing ids, field types), split off the pseudo-elements, convert with `@excalidraw/excalidraw` in a short-lived child process (`hydrate.ts`) |
-| `diagram:reask`, `hydrate:reask` | One re-ask in the same session with the errors (a failed check, or a skeleton the library throws on); a second failure is `invalid_output` |
-
-Input `brief`, `mode` (`create` or `extend`), `existing` (the current `.excalidraw` as a string, extend only:
-`--existing "$(cat x.excalidraw)"`; the CLI reads stdin implicitly only for a required field and has no file argument,
-so `existing` is a flag). **`existing` is capped at 512 KB** (UTF-8 bytes, about 400 elements; checked on the input).
-One command-line argument that large is fine on macOS and over Linux's 128 KB per-argument limit; a bigger file (embedded
-images, which are most of the weight) goes in without them, `jq '.files={}' x.excalidraw`, and the caller puts the `files`
-back into the result. The agent never sees `files`, nor the app state: it reads a compact view of the elements.
-Output `{document, elementCount, viewport, rationale}`; `document` is the v2 file as JSON text, so
-`agw diagram "..." --format plain > x.excalidraw` writes the file (the contract's `plainField` is `document`).
-
-**Pseudo-elements** (code, `skeleton.ts`): `cameraUpdate` becomes `viewport` (the last one wins), `delete` and
-`restoreCheckpoint` act on the existing document. Legacy parsed them and then only filtered its own skeleton, so a
-`restoreCheckpoint` lost the old diagram. Here extend has two honest modes: a skeleton that starts with
-`restoreCheckpoint` keeps the existing elements (minus the deleted ones, their labels and arrows) and adds the new ones,
-whose arrows may bind to old boxes; any other skeleton replaces the diagram. Rejected for the one re-ask, with the error
-text: `restoreCheckpoint` in create mode, `delete` without `restoreCheckpoint`, a `delete` id the existing diagram does not
-have, and a new element that reuses the id of an element it keeps (reject, not drop the old copy, so the agent decides); a deleted
-id may be drawn again (delete and redraw). What hangs off a deleted element goes too, transitively (its label, an arrow
-attached to it, that arrow's label), and survivors' `boundElements` lose the entries of anything deleted. To let a new arrow bind to an old box
-the library needs the box in the skeleton it converts, and converting a finished arrow again drops its bindings;
-so the new skeleton is converted with bare stand-ins for the boxes it binds to, and the real elements are swapped back in
-(`document.ts` `bindingStubs`, `mergeExtension`). In extend mode the agent reads a compact view of the old diagram
-(one JSON line per element in skeleton vocabulary), not the hydrated file.
-
-### Hydration decision
-
-Three options, one spike each in a scratch directory (not committed), 5 elements incl. a German label and an arrow
-label, compared with a headless Chrome that had the pinned bundle and the Excalifont file loaded (the app's own widths):
-
-| | Text widths vs the app | Cost per call | Runtime dependency |
-|-|-|-|-|
-| (c) legacy: Chrome + `import ... from "https://esm.sh/..."` | **9-23 % too narrow** (180.52 against 198.38 px for one label): its widths equal a canvas that has no Excalifont, i.e. a fallback font | Chrome start and a CDN fetch (the legacy bench saw a hydrate timeout, 1 of 2 runs on its flash arm) | CDN at runtime: supply chain; Chrome on the host |
-| (b) Chrome + a local `bun build` of the pinned package (7.8 MB) + the font awaited | exact (this is the reference) | Chrome start ≈ 1 s; CDP or `--dump-dom`; a PID to kill | Chrome on the host |
-| **(a) Bun child process + DOM shim + `@napi-rs/canvas` registering the package's own woff2 files** | **identical to (b)**: 144.86, 148.02, 51.06, 108.20, 150.76 px, including the mid-word wrap of "Größenänderung" in a 120 px box | 295-340 ms per call (below) | pinned npm packages only |
-
-**(a) wins**: same widths as the app, no network, no browser. It first ran in a Bun `Worker`; review moved it into a
-child process: the canvas is native code (a crash or an OOM kill must not take the host with it), and its font registry
-is process-wide, so a worker registers the fonts again on every call and the host's memory only grows. One `bun
-hydrate-child.ts` per call (stdin in, one JSON reply out), run from its package directory (no `.env` or `bunfig.toml` of
-the host's cwd) with `PATH`, `HOME`, `TMPDIR` and its own variables only (no secrets), killed by its PID on timeout (30 s)
-or abort, a silent exit seen at once (the pipes close), at most 2 alive at once (`MAX_CONCURRENT_HYDRATIONS`, the rest queue
-for at most 60 s), stdout capped at 32 MB and stderr read but only its last 4 KB kept. It ends itself too (`watchdog.ts`):
-at the host's timeout plus 5 s, and when its parent pid changes, so a host crash or a deploy leaves no orphan. Who owns
-which failure: only a conversion error is an `{ok: false}` reply (the agent's skeleton, so the one re-ask); a child that
-cannot run (unreadable input, the package, the shim, the fonts or the canvas failing, a crash, an OOM kill, a flood) exits
-non-zero and is an `InfraError`, which the runtime does not retry as a step but takes the run back for, and which never
-reaches the agent; a timeout or an over-long queue wait is a `timeout` failure that is not retried (the same skeleton would
-hang again). A native crash on a Linux host whose `core_pattern` is apport (GitHub's runners) is only reaped after the kernel has written the core dump, 12-17 s, still bounded by the 30 s timeout; the tests use SIGKILL (the OOM killer's signal) for "killed" for that reason. Per call, 12 boxes and 11
-arrows, 8 sequential calls, load 8: **Worker** 304-666 ms for the first, then 66-77 ms (median 69-71): warm only because
-the library and the fonts stay in the host; **child process** 295-340 ms for every call (median 298-326), 4 calls through
-the cap of 2 in 670-720 ms. Hydration is one journaled `hydrate` step. Dependencies, exact: `@excalidraw/excalidraw` 0.18.0 (legacy's version),
-`@napi-rs/canvas` 1.0.13 (a prebuilt native module per platform, optional dependencies in the lockfile), `react`
-and `react-dom` 19.3.1 (the library's peers, loaded but never rendered).
-
-Traps found on the way, all handled in `hydrate.ts` / `dom-shim.ts`:
-- The library multiplies every measured width by 10 when it thinks it runs under a test runner (`MODE === "test"`,
-  which `bun test` sets); the child is started with `NODE_ENV=production` and nothing else in its environment.
-- The shim lives in the child's global scope; importing it into the host process would give every other workflow a
-  `window` and a `document`.
-- A font family that registers no file throws (`registerFonts`): a canvas without the font measures in a fallback and
-  every label of that family would come out the wrong width without a sign.
-- A family ships as unicode-range subsets, and a canvas font string takes one typeface per name: each subset is
-  registered under its own alias and the library's font string is rewritten to the list (per-glyph fallback). `Helvetica`
-  maps to Liberation Sans (metric-compatible). Xiaolai (CJK, 209 files) is not registered: CJK falls back to a system font.
-- Legacy widths come from a fallback font, so its labels are narrower than the app's: a legacy diagram opened in
-  Excalidraw can overflow where this one fits.
-
-### Eval
-
-Suite `diagram` (`agw eval run diagram`), plain cases in `$AGW_EVAL_DIR/diagram/cases.jsonl` (private): the legacy bench
-brief, an architecture, a flow, an extend on an existing drawing, German labels, a dense one. The scorer
-(`scorer.ts`, `metrics.ts`) follows the pre-registered rule in `docs/research/2026-10-29-wave7-ports.md` §diagram:
-`valid` (a v2 document), `elementCount`, `boundArrowShare` (both ends bound to existing ids), `overlaps` (crossing
-shapes; a shape holding another entirely is a container, not an overlap), `textOverflow` (a label wider than its
-container); a case's reference only bounds the element count (`inRange`). An invalid run scores `valid: 0` and nothing
-else, so a failure counts in the valid rate and never pulls another mean down; the other means are over valid runs, for
-both arms. The legacy arm is `bun scripts/eval-legacy/diagram.ts [--runs 2]`: it submits the same cases to agent-gateway's
-job API (a scratch directory per run; an extend job that leaves the seeded file byte-identical counts as invalid), scores
-the written files with the same metrics and writes a report next to the cases. The job view carries no cost, so the cost
-of a run is joined from the usage tracker's `agent-gateway-sessions.jsonl`: on the job id where a row names it, else the `excalidraw-diagram` sessions that started
-between the run's submit and the poll that saw it finish (summed when a job retried; runs are sequential so windows do not
-overlap; a window join could count another caller's diagram job started in the same window, so the summary flags it as `foreignSessionRisk` with the count of runs per join kind, and `multiSessionRuns` counts runs with more than one session: run the arm on an idle gateway). A run with no such session, or whose session two runs claim, has `costUsd: null` and `costJoin` names why; the
-summary reports `costJoined` as `n/total`. `--join <report.json>` redoes only the join once the tracker has caught up.
 
 ## Process
 
@@ -611,19 +243,7 @@ output, path, repository name, prompt or transcript is ever selected. `friction.
 
 ## Token effect / cache effect
 
-The research agent: its `AGENTS.md` and its four tool schemas are the cached prefix (identical across runs); the
-question, depth directive, background and a follow-up's earlier report are the task message. The tool gate adds no
-model-visible text beyond each tool's JSON answer (page text up to `maxChars`, 20k by default), which is where a
-research session's tokens go; DeepSeek's prefix cache holds because the session's history is never edited (cache
-reads recorded and priced at the route's rate).
-
-The learnings read-back adds tokens only where a fact is active: the fenced block is appended **after the task message**, never
-into `AGENTS.md`, so the agent's cached prefix (system prompt, skills) is untouched; the block costs its own tokens
-(at most 25 facts of at most 400 characters, in practice a few hundred) on every step of that agent, and a changed fact set
-changes the message tail only. Activating or retiring a fact changes the run fingerprint (one new fingerprint group, no
-cold prompt cache: the prefix is unchanged). The retrospective is its own spend: one Haiku-class agent step per workflow and week
-over at most ~30k input tokens of sampled records, no tools, plus at most one JSON retry; nothing runs when a workflow had no runs.
-Otherwise none of its own beyond the OpenCode adapter's repeat-tool nudge (opencode-host README). The host adds no model-visible text and no tokens (the default scorers and drift are deterministic; `agw eval run --yes` costs what its case runs cost, tagged `purpose: eval`, and says so before it runs): workflow input goes to the runtime unchanged and capability calls go to the route table as the capabilities README describes. Held requests poll the journal, not a model. Two things to know: `agw schema <workflow>` now prints the workflow's output schema too (about a screenful for `review`), which a caller reading it spends context on once; a deploy that changes an `AGENTS.md`, skill, route or the OpenCode version changes the run fingerprint and costs one cold prompt cache (middleware README), and a capability called straight over HTTP (`agw llm title`) is a `cap.<id>` run of its own, recorded and in Argo like any run; one inside a workflow step counts on that step.
+Per workflow: its README. The host itself: none of its own beyond the OpenCode adapter's repeat-tool nudge (opencode-host README). The host adds no model-visible text and no tokens (the default scorers and drift are deterministic; `agw eval run --yes` costs what its case runs cost, tagged `purpose: eval`, and says so before it runs): workflow input goes to the runtime unchanged and capability calls go to the route table as the capabilities README describes. Held requests poll the journal, not a model. Two things to know: `agw schema <workflow>` now prints the workflow's output schema too (about a screenful for `review`), which a caller reading it spends context on once; a deploy that changes an `AGENTS.md`, skill, route or the OpenCode version changes the run fingerprint and costs one cold prompt cache (middleware README), and a capability called straight over HTTP (`agw llm title`) is a `cap.<id>` run of its own, recorded and in Argo like any run; one inside a workflow step counts on that step.
 
 ## Tests
 
@@ -636,6 +256,7 @@ Otherwise none of its own beyond the OpenCode adapter's repeat-tool nudge (openc
 | `learnings.test.ts` | the store (propose, activate, retire at once, dedupe, a retired fact is never re-proposed and only a manual add revives it, activation order, the fence refused, the newest 25 read back), the read-back into the task message (proposed no, active yes, retired no on the next run), the fingerprint (unchanged without facts, moved by activate and retire), `agw learnings` over HTTP |
 | `retrospective.test.ts` | sampling (window, eval/running/cancelled/child runs excluded, failed first, limit, null friction, no run input, preview cut), the agent step on `FakeAgentHost` with a fixture answer, dropped answers, the JSON retry (facts before the directive), no runs → no session, issues off/on/dedupe by marker/refused on a fake `gh` port, ISO weeks, weekly idempotency, failed-week retries and their bound |
 | `retro-issue.test.ts` | the issue (structured fields only, hostile model text never in it, untracked targets refused, hash stability), `TrackedPaths` on a release tree and a git checkout, target shape, the prompt scrub |
+| `registry.test.ts` | discovery on fixture trees (`test/fixtures/registry/`): a new module dir is discovered, its suite joins the eval enum, its route group the table; a duplicate workflow id, a duplicate route id, an agent on an unknown route, a non-module default export, an id that is not its directory and an empty dir each fail naming the file |
 | `retro-wiring.test.ts` | config (`AGW_RETRO_*`), registration and fingerprint refs, the `gh` argument lists |
 | `prose.test.ts` | `prose` on a fake registry: lint and review shape, the fenced review prompt and writer brief (no voice text inlined), identical prompts for identical input, `verdictFirst: false`, a missing voice guide fails before any call, German draft; the keep gate (faithful kept; lost URL/fence, added fence/URL, open fence, worsened rule, format switch, empty kept as original); the scorer; `rewrite gate` over HTTP |
 | `prose-lint.test.ts` | agent-gateway's lint tests, ported: every rule fires and stays silent, German with English terms yields no findings, the fence parser, content-integrity helpers |

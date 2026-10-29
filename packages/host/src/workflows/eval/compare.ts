@@ -4,20 +4,22 @@ import { z } from 'zod'
 import type { HostWorkflow } from '../../operations.ts'
 import { JsonRecord } from './run.ts'
 import type { EvalSlot } from './slot.ts'
-import { SUITE_IDS } from './suites.ts'
+import { type Suites, suiteIds } from './suites.ts'
 
 export const EVAL_COMPARE_ID = 'eval.compare'
 
-export const EvalCompareInput = z
-  .object({
-    workflow: z.enum(SUITE_IDS).describe('The workflow whose regression runs to compare'),
-    a: z.string().min(8).describe('Arm A: a fingerprint, or a unique prefix of one (at least 8 characters)'),
-    b: z.string().min(8).describe('Arm B: a fingerprint or a unique prefix; may equal A when the args differ'),
-    aArgs: JsonRecord.optional().describe('Arm A: the --args its eval runs used, exactly (default {})'),
-    bArgs: JsonRecord.optional().describe('Arm B: the --args its eval runs used, exactly (default {})'),
-    seed: z.number().int().optional().describe('Bootstrap seed, default 1: the same seed gives the same CIs'),
-  })
-  .strict()
+/** The `agw eval compare` input over the discovered suites' ids. */
+export const evalCompareInput = (ids: [string, ...string[]]) =>
+  z
+    .object({
+      workflow: z.enum(ids).describe('The workflow whose regression runs to compare'),
+      a: z.string().min(8).describe('Arm A: a fingerprint, or a unique prefix of one (at least 8 characters)'),
+      b: z.string().min(8).describe('Arm B: a fingerprint or a unique prefix; may equal A when the args differ'),
+      aArgs: JsonRecord.optional().describe('Arm A: the --args its eval runs used, exactly (default {})'),
+      bArgs: JsonRecord.optional().describe('Arm B: the --args its eval runs used, exactly (default {})'),
+      seed: z.number().int().optional().describe('Bootstrap seed, default 1: the same seed gives the same CIs'),
+    })
+    .strict()
 
 const Ci = z.tuple([z.number(), z.number()]).nullable()
 
@@ -29,41 +31,42 @@ const Arm = z.object({
   scorers: z.array(z.string()).describe('Scorer versions of its runs'),
 })
 
-export const EvalCompareOutput = z.object({
-  workflow: z.enum(SUITE_IDS),
-  a: Arm,
-  b: Arm,
-  cases: z.object({
-    a: z.number().int(),
-    b: z.number().int(),
-    paired: z.number().int(),
-    onlyA: z.array(z.string()),
-    onlyB: z.array(z.string()),
-    unpricedCost: z
-      .object({ a: z.number().int(), b: z.number().int() })
-      .describe('Paired cases out of costUsd on that side: a rerun had unpriced calls'),
-    noCost: z
-      .object({ a: z.number().int(), b: z.number().int() })
-      .describe('Paired cases out of costUsd on that side: no run recorded a cost'),
-  }),
-  metrics: z.array(
-    z.object({
-      metric: z.string(),
-      direction: z.enum(['higher', 'lower']),
-      n: z.number().int(),
-      meanA: z.number().nullable(),
-      meanB: z.number().nullable(),
-      meanDelta: z.number().nullable(),
-      meanDeltaCi95: Ci,
-      medianDelta: z.number().nullable(),
-      medianDeltaCi95: Ci,
-      better: z.enum(['a', 'b', 'tie', 'unknown']),
+export const evalCompareOutput = (ids: [string, ...string[]]) =>
+  z.object({
+    workflow: z.enum(ids),
+    a: Arm,
+    b: Arm,
+    cases: z.object({
+      a: z.number().int(),
+      b: z.number().int(),
+      paired: z.number().int(),
+      onlyA: z.array(z.string()),
+      onlyB: z.array(z.string()),
+      unpricedCost: z
+        .object({ a: z.number().int(), b: z.number().int() })
+        .describe('Paired cases out of costUsd on that side: a rerun had unpriced calls'),
+      noCost: z
+        .object({ a: z.number().int(), b: z.number().int() })
+        .describe('Paired cases out of costUsd on that side: no run recorded a cost'),
     }),
-  ),
-  bBetter: z.array(z.string()).describe('Metrics where B beats A with the 95% CI of the mean delta clear of 0'),
-  bWorse: z.array(z.string()),
-  warnings: z.array(z.string()),
-})
+    metrics: z.array(
+      z.object({
+        metric: z.string(),
+        direction: z.enum(['higher', 'lower']),
+        n: z.number().int(),
+        meanA: z.number().nullable(),
+        meanB: z.number().nullable(),
+        meanDelta: z.number().nullable(),
+        meanDeltaCi95: Ci,
+        medianDelta: z.number().nullable(),
+        medianDeltaCi95: Ci,
+        better: z.enum(['a', 'b', 'tie', 'unknown']),
+      }),
+    ),
+    bBetter: z.array(z.string()).describe('Metrics where B beats A with the 95% CI of the mean delta clear of 0'),
+    bWorse: z.array(z.string()),
+    warnings: z.array(z.string()),
+  })
 
 /** Canonical JSON (keys sorted), so `{"x":1,"y":2}` and `{"y":2,"x":1}` name the same arm. */
 export function canonical(value: unknown): string {
@@ -130,12 +133,14 @@ async function arm(slot: EvalSlot, workflow: string, side: string, prefix: strin
  * its eval runs used: an input that is not part of the fingerprint changes behaviour without changing it, so equal
  * fingerprints compare when the args differ. Reads only; spends nothing.
  */
-export function createEvalCompare(slot: EvalSlot): HostWorkflow {
+export function createEvalCompare(slot: EvalSlot, suites: Suites): HostWorkflow {
+  const ids = suiteIds(suites)
+  const output = evalCompareOutput(ids)
   const workflow = defineWorkflow({
     id: EVAL_COMPARE_ID,
     version: '2026-10-28.1',
-    input: EvalCompareInput,
-    output: EvalCompareOutput,
+    input: evalCompareInput(ids),
+    output,
     async run(ctx, input) {
       const aArgs = input.aArgs ?? {}
       const bArgs = input.bArgs ?? {}
@@ -177,7 +182,7 @@ export function createEvalCompare(slot: EvalSlot): HostWorkflow {
           )
         }
         return { workflow: input.workflow, a: a.info, b: b.info, ...comparison, warnings } as unknown as Json
-      }) as Promise<z.input<typeof EvalCompareOutput>>
+      }) as Promise<z.input<typeof output>>
     },
   })
   return {

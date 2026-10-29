@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test'
-import { SMOKE_TEXT } from '../src/workflows/smoke.ts'
+import { SMOKE_TEXT } from '../src/workflows/smoke/index.ts'
 import { startTestHost, type TestHost, until } from './support.ts'
 
 let t: TestHost

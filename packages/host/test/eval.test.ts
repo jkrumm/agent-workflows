@@ -7,6 +7,7 @@ import type { FinalScore, Runtime } from '@agent-workflows/runtime'
 import { FakeAgentHost } from '@agent-workflows/runtime/testing'
 import { createCheckWorkflows } from '../src/workflows/check/index.ts'
 import { DriftJob, driftOptionsFromEnv, wireEval, createEvalWorkflows } from '../src/workflows/eval/index.ts'
+import { HOST_MODULES, suitesOf } from '../src/workflows/index.ts'
 import { testPlatform } from '../../middleware/test/support.ts'
 import { freshSchema, inspector, testRuntime } from '../../runtime/test/support/pg.ts'
 
@@ -51,7 +52,7 @@ const host = new FakeAgentHost(async () => ({
   usage: { model: 'm', tokens: { input: 100, output: 10, cacheRead: 0, reasoning: 0 }, cost: 0.02, toolCalls: 3 },
 }))
 const check = createCheckWorkflows()
-const evals = createEvalWorkflows({ env, tmpRoot })
+const evals = createEvalWorkflows(suitesOf(HOST_MODULES), { env, tmpRoot })
 const [evalRun, evalCompare] = evals.map((e) => e.workflow) as [
   (typeof evals)[0]['workflow'],
   (typeof evals)[1]['workflow'],

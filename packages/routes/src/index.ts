@@ -1,11 +1,12 @@
 import { createHash } from 'node:crypto'
 import { applyPatch, OVERRIDES_ENV, RouteOverrideError, readOverrides } from './overrides.ts'
-import type { ResolvedRoute, RouteEntry } from './schema.ts'
-import { DEFAULT_ROUTES, type RouteId } from './table.ts'
+import { DEFAULT_ROUTES } from './registry.ts'
+import type { ResolvedRoute, RouteEntry, RouteId } from './schema.ts'
 
 export { BALANCE_MARKER, isBalanceFailure } from './balance.ts'
 export { type Cost, costFromUsage, LONG_PROMPT_TOKENS, type ProviderUsage } from './cost.ts'
 export { OVERRIDES_ENV, RouteOverrideError } from './overrides.ts'
+export { DEFAULT_ROUTES, discoverRoutes } from './registry.ts'
 export {
   EFFORTS,
   type Effort,
@@ -13,11 +14,12 @@ export {
   type Rate,
   type ResolvedRoute,
   type RouteEntry,
+  type RouteTable,
   routeSchema,
   WIRES,
   type Wire,
 } from './schema.ts'
-export { DEFAULT_ROUTES, type RouteId }
+export type { RouteId }
 
 type Env = Record<string, string | undefined>
 

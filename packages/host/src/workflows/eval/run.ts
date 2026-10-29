@@ -14,7 +14,7 @@ import {
 import { z } from 'zod'
 import type { HostWorkflow } from '../../operations.ts'
 import type { EvalRuntime, EvalSlot } from './slot.ts'
-import { type EvalCase, readSuite, SUITE_IDS, type SuiteId } from './suites.ts'
+import { type EvalCase, readSuite, type Suites, suiteIds } from './suites.ts'
 
 export const EVAL_RUN_ID = 'eval.run'
 /** Estimates read the latest this many done runs of the workflow. */
@@ -31,27 +31,29 @@ export interface EvalRunOptions {
 /** Plain JSON from the wire; the runtime refuses anything else on the run input. */
 export const JsonRecord = z.record(z.string(), z.unknown()) as unknown as z.ZodType<Record<string, Json>>
 
-export const EvalRunInput = z
-  .object({
-    workflow: z.enum(SUITE_IDS).describe('The workflow to replay its recorded cases against'),
-    ids: z.string().optional().describe('Comma-separated case ids (first), then --limit; an unknown id is an error'),
-    limit: z.number().int().positive().optional().describe('Only the first N selected cases'),
-    concurrency: z
-      .number()
-      .int()
-      .min(1)
-      .max(8)
-      .optional()
-      .describe(`Cases in flight at once, default ${DEFAULT_CONCURRENCY} (IU rate limits, host load)`),
-    args: JsonRecord.optional().describe(
-      'Extra workflow input for every case, the experiment arm, e.g. {"depth":"deep"}; kept with each score for `agw eval compare --a-args/--b-args`',
-    ),
-    yes: z
-      .boolean()
-      .optional()
-      .describe('Run the cases: spends IU money. Without it, only the plan and a cost estimate; nothing runs'),
-  })
-  .strict()
+/** The `agw eval run` input over the discovered suites' ids. */
+export const evalRunInput = (ids: [string, ...string[]]) =>
+  z
+    .object({
+      workflow: z.enum(ids).describe('The workflow to replay its recorded cases against'),
+      ids: z.string().optional().describe('Comma-separated case ids (first), then --limit; an unknown id is an error'),
+      limit: z.number().int().positive().optional().describe('Only the first N selected cases'),
+      concurrency: z
+        .number()
+        .int()
+        .min(1)
+        .max(8)
+        .optional()
+        .describe(`Cases in flight at once, default ${DEFAULT_CONCURRENCY} (IU rate limits, host load)`),
+      args: JsonRecord.optional().describe(
+        'Extra workflow input for every case, the experiment arm, e.g. {"depth":"deep"}; kept with each score for `agw eval compare --a-args/--b-args`',
+      ),
+      yes: z
+        .boolean()
+        .optional()
+        .describe('Run the cases: spends IU money. Without it, only the plan and a cost estimate; nothing runs'),
+    })
+    .strict()
 
 const CaseResult = z.object({
   caseId: z.string(),
@@ -65,30 +67,31 @@ const CaseResult = z.object({
 })
 type CaseResult = z.infer<typeof CaseResult>
 
-export const EvalRunOutput = z.object({
-  workflow: z.enum(SUITE_IDS),
-  ran: z.boolean().describe('False: the plan only (no --yes)'),
-  args: JsonRecord,
-  plan: z.object({
-    ids: z.array(z.string()),
-    estimate: z.object({
-      historyRuns: z.number().int().describe('Done runs the mean is taken over'),
-      meanCostUsd: z.number().nullable(),
-      totalUsd: z.number().nullable().describe('Mean cost × cases; null without priced history'),
+export const evalRunOutput = (ids: [string, ...string[]]) =>
+  z.object({
+    workflow: z.enum(ids),
+    ran: z.boolean().describe('False: the plan only (no --yes)'),
+    args: JsonRecord,
+    plan: z.object({
+      ids: z.array(z.string()),
+      estimate: z.object({
+        historyRuns: z.number().int().describe('Done runs the mean is taken over'),
+        meanCostUsd: z.number().nullable(),
+        totalUsd: z.number().nullable().describe('Mean cost × cases; null without priced history'),
+      }),
     }),
-  }),
-  fingerprints: z
-    .array(z.string())
-    .describe('The fingerprints the replayed runs ran on (one, unless a deploy crossed)'),
-  cases: z.array(CaseResult),
-  summary: z.object({
-    scored: z.number().int(),
-    skipped: z.number().int(),
-    errors: z.number().int(),
-    passRate: z.number().nullable(),
-    means: z.record(z.string(), z.number()).describe('Each score averaged over the scored cases that have it'),
-  }),
-})
+    fingerprints: z
+      .array(z.string())
+      .describe('The fingerprints the replayed runs ran on (one, unless a deploy crossed)'),
+    cases: z.array(CaseResult),
+    summary: z.object({
+      scored: z.number().int(),
+      skipped: z.number().int(),
+      errors: z.number().int(),
+      passRate: z.number().nullable(),
+      means: z.record(z.string(), z.number()).describe('Each score averaged over the scored cases that have it'),
+    }),
+  })
 
 const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error))
 
@@ -136,7 +139,8 @@ function summarize(cases: CaseResult[]) {
  * reference and recorded on that run (`scores.final`, `source: regression`). Without `--yes` it answers the plan and an
  * estimate and spends nothing.
  */
-export function createEvalRun(slot: EvalSlot, options: EvalRunOptions = {}): HostWorkflow {
+export function createEvalRun(slot: EvalSlot, suites: Suites, options: EvalRunOptions = {}): HostWorkflow {
+  const ids = suiteIds(suites)
   slot.tmpRoot = options.tmpRoot
   const env = options.env ?? process.env
   const exec = options.exec ?? bunExec
@@ -145,15 +149,15 @@ export function createEvalRun(slot: EvalSlot, options: EvalRunOptions = {}): Hos
   const workflow = defineWorkflow({
     id: EVAL_RUN_ID,
     version: '2026-10-28.1',
-    input: EvalRunInput,
-    output: EvalRunOutput,
+    input: evalRunInput(ids),
+    output: evalRunOutput(ids),
     async run(ctx, input) {
       const args = input.args ?? {}
       const plan = await ctx.step('plan', async () => {
         const target = slot.target(input.workflow)
         let cases: EvalCase[]
         try {
-          cases = readSuite(input.workflow, env)
+          cases = readSuite(suites, input.workflow, env)
         } catch (error) {
           throw new WorkflowError('invalid_input', `${input.workflow} cases: ${errorText(error)}`)
         }
@@ -181,7 +185,7 @@ export function createEvalRun(slot: EvalSlot, options: EvalRunOptions = {}): Hos
 
       const results = await ctx.step('cases', ({ signal }) =>
         replay(
-          { slot, exec, env, home, tmpRoot: options.tmpRoot },
+          { slot, suites, exec, env, home, tmpRoot: options.tmpRoot },
           {
             evalRunId: ctx.runId,
             workflow: input.workflow,
@@ -205,6 +209,7 @@ export function createEvalRun(slot: EvalSlot, options: EvalRunOptions = {}): Hos
 
 type ReplayDeps = {
   slot: EvalSlot
+  suites: Suites
   exec: Exec
   env: Record<string, string | undefined>
   home: string
@@ -213,7 +218,7 @@ type ReplayDeps = {
 
 type Job = {
   evalRunId: string
-  workflow: SuiteId
+  workflow: string
   ids: string[]
   args: Record<string, Json>
   concurrency: number
@@ -246,7 +251,7 @@ const caseKey = (evalRunId: string, caseId: string) => `eval:${evalRunId}:${case
 async function replay(deps: ReplayDeps, job: Job): Promise<CaseResult[]> {
   const runtime = deps.slot.get()
   const target = deps.slot.target(job.workflow)
-  const byId = new Map(readSuite(job.workflow, deps.env).map((c) => [c.id, c]))
+  const byId = new Map(readSuite(deps.suites, job.workflow, deps.env).map((c) => [c.id, c]))
   const results: CaseResult[] = []
   const started = new Set<string>()
   // A cancelled eval run cancels its cases; a shutdown leaves them running for the next process to adopt.

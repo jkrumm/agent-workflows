@@ -1,7 +1,7 @@
 import type { CallOptions } from '@agent-workflows/capabilities'
 import { defineWorkflow } from '@agent-workflows/runtime'
 import { z } from 'zod'
-import type { HostWorkflow } from '../operations.ts'
+import type { HostWorkflow } from '../../operations.ts'
 
 export const SMOKE_TEXT = 'The host answers a smoke test: one workflow, one code step, one capability call.'
 
