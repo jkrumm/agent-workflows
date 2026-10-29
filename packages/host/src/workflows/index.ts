@@ -12,6 +12,7 @@ import type { GhPort } from './retrospective/gh.ts'
 import type { JournalReader } from './retrospective/sample.ts'
 import type { TrackedPaths } from './retrospective/tracked.ts'
 import { createEvalWorkflows } from './eval/index.ts'
+import { createOtelWorkflows } from './otel/index.ts'
 import { createProseWorkflows } from './prose/index.ts'
 import { createResearchWorkflows } from './research/index.ts'
 import type { ToolLedger } from './research/ledger.ts'
@@ -39,6 +40,8 @@ export type HostDeps = WorkflowDeps & { toolGate: ToolGate }
 
 /** Every workflow the host process serves. Heavy pipelines run in their own processes (concept §8). */
 export function createWorkflows(deps: HostDeps): HostWorkflow[] {
+  // The gate refuses to grant an agent a mutating or unknown capability: it learns what the registry holds.
+  deps.toolGate.useCapabilities((id) => deps.registry.capabilities.find((c) => c.id === id)?.cli)
   const base = [
     createSmokePing(deps.registry),
     ...createReviewWorkflows(deps),
@@ -48,6 +51,7 @@ export function createWorkflows(deps: HostDeps): HostWorkflow[] {
     ...createProseWorkflows(deps),
     ...createBrainWorkflows(deps),
     ...createDiagramWorkflows(deps),
+    ...createOtelWorkflows(deps),
   ]
   if (!deps.retro) return base
   const { journal, learnings, gh, tracked } = deps.retro

@@ -255,7 +255,7 @@ wait <runId>`).
   `brain-opencode.test.ts` proves against the real `opencode`, so the gate is the only way to the vault.
 - **Route decision: `claude-haiku-5-5-eu`, not DeepSeek, and no fallback.** The agent reads arbitrary private notes
   (health, finance); that content never leaves the Anthropic EU route. Unlike every other agent route, `brain.agent`
-  has no provider-balance fallback (owner decision, 2026-10-29): a balance failure fails the run with the typed error
+  has no provider-balance fallback (lead decision, Wave 7): a balance failure fails the run with the typed error
   instead of moving the notes to another provider, and `AGW_ROUTES` cannot add one. `brain.test.ts` pins it.
 - **Grounding.** The gate's per-call hook (research's guarded one, `ledgerGrant`) records each `brain_read` that found
   a note into the evidence ledger (the `research_tool_calls` table, the note's canonical path in `retrieved`; reused,
@@ -279,11 +279,50 @@ wait <runId>`).
   drift only); `pass` is valid, reference cited, nothing dropped. Cost is the harness's `costUsd` (median ≤ $0.01).
   The live run is `agw eval run brain --yes`, once, by the lead.
 
+## Otel (concept N7)
+
+`agw otel "<investigation>" [--env prod|local] [--since 2h | <from>/<to>]` investigates traces, logs and metrics in
+ClickStack/HyperDX and answers in agent-gateway's `otel` shape: `status` `healthy|degraded|errors`, `environment`,
+`timeRange`, `findings [{service, summary, severity, evidence?, unverified}]`, `recommendations`. Changed from the
+legacy tool: `hyperdx` is typed (`{connected, reason?}`), and the answer adds `queries` (every tool call of the run:
+`id`, `tool`, `target`, `argsDigest`, `ok`, `error?`, `rows?`, `chars`) and `warnings`. `--since` is a duration ending
+now (`30m`, `2h`, `3d`) or an absolute `<from>/<to>` of ISO instants; without it the agent chooses (the run's journaled
+start time is in its prompt, since the agent has no clock).
+
+- **The agent** (`agents/otel`, route `otel.agent`: deepseek on OpenCode, `AGENT_FALLBACK`) holds three tools through the
+  tool gate (§Tool gate): `hdx_tools`, `hdx_guide`, `hdx_query`, mapped to `hdx.tools|guide|query` (`otelGrant`). No
+  shell, no `query.py`, and no SQL: `clickstack_sql` is outside `AGENT_READ_TOOLS` (CLI-only, see the capabilities
+  README), so the builder tools are the whole path (legacy's "SQL last" step is gone, deliberately). `hdx.link` is not
+  granted: no finding carries a URL.
+- **The environment is the run's.** The grant carries `fixed: { env }`; the gate sets it on every call after the agent's
+  own arguments, and the plugin offers no `env` argument. The agent cannot choose or switch it; `environment` in the
+  answer is the input's, not the agent's.
+- **Grounding** (`assemble`, in code). The gate's hook records each call (`otel` does not write a ledger table: the
+  calls are held in memory per run and journaled as the `tools` step's output, with a bounded, normalized copy of each
+  answer, at most 30 000 characters per call and 300 000 per run; a host restart between the agent's first call and the
+  `tools` step's end loses the earlier calls, and those findings then end up flagged, never dropped). A finding is
+  grounded when its `evidence` names a `hdx_query` call of this run that worked (`q3`; `t<n>` ids are tool listings and
+  guides and ground nothing) or contains something specific that appears in a worked query's answer: a hex id of 16+
+  characters, a quoted excerpt, an identifier like `http.status_code` or `/api/v1/x`, or the whole evidence text.
+  Otherwise it stays in the answer with `unverified: true` and the run carries a warning. Matching is a heuristic: a
+  true finding whose evidence paraphrases (`p95 2.3 s` for `2300000000`) is flagged too; that costs the `grounded`
+  score, never a finding.
+- **Status is cross-checked.** `healthy` needs a successful query of telemetry (`clickstack_table`, `_timeseries`,
+  `_search`, `_service_health`, ... not sources, schemas or dashboards); without one the answer is `degraded` with a
+  warning (health nobody looked at is not health). `degraded` or `errors` with no such query keeps its status and adds
+  a warning. `hyperdx.connected` is true when any call was answered.
+- **One re-ask** (`otel:reask`, the same session) when the answer is not the findings JSON, then `invalid_output`.
+- **Scorer** (`scorer.ts`): `valid`, `status` (match), `facts` (judged: one `decide` boolean per reference fact),
+  `grounded` (the share of findings not flagged; only when the output has `queries`, so the legacy arm is scored by the
+  same function). `pass`: valid, status matches and every fact stated. Cases are plain eval cases in
+  `$AGW_EVAL_DIR/otel/cases.jsonl` (`{id, input: {investigation, env, since}, reference: {status, facts}}`);
+  `scripts/eval-legacy/otel.ts` runs agent-gateway's MCP `otel` tool per case and appends scored rows to
+  `<evalDir>/otel/legacy-runs.jsonl`.
+
 ## Tool gate
 
 `src/tool-gate/` is how an agent reaches the platform without a shell. One `ToolGate` per host process, built in
-`boot` and handed to workflows as `WorkflowDeps.toolGate`; research is its first caller, `otel` and `brain` open
-grants on it with their own tools.
+`boot` and handed to workflows as `WorkflowDeps.toolGate`; research and `otel` open grants on it with their own tools (`brain` will).
 
 - **Why a gate.** An agent reading untrusted input (web pages, logs, notes) must not hold a shell, and a shell reaches
   the host's full API secret on disk. The gate is a loopback `Bun.serve` (no idle timeout: a capability call may
@@ -297,8 +336,12 @@ grants on it with their own tools.
   same 0600 and atomic rename; removed on close under the same ownership rule), because a run resumed across a deploy
   re-attaches to a session in its old content-hashed location, whose plugin reads that path. The old path is dropped in
   a later release, once no live location reads it.
-- **A grant** (`gate.open({ runId, stepId, tools, onCall? })`, returns the close) carries its own tool set: a map of
-  tool name to capability id, and an optional hook the workflow supplies. A call is `POST /tool/<name>` with
+- **A grant** (`gate.open({ runId, stepId, tools, fixed?, onCall? })`, returns the close) carries its own tool set: a map of
+  tool name to capability id, `fixed` arguments the gate sets on every call over the agent's own (a run's environment is
+  not the agent's to pick), and an optional hook the workflow supplies. **An agent holds read tools only, structurally:**
+  `open` throws `tool grant refused: <tool> -> …` for an `hdx.*` capability outside `AGENT_SAFE_HDX`, and (once
+  `createWorkflows` has told the gate what the registry holds, `useCapabilities`) for a capability whose CLI spec is
+  `mutating` or that does not exist; nothing is opened. A call is `POST /tool/<name>` with
   `{sessionID, args}` and the bearer key; the session resolves to its step's grant by the OpenCode host's
   deterministic session ids (`isStepSession`), so a run's session never reaches another run's grant. A tool outside
   that grant is refused (`403`, `code: 'not_granted'`) before any capability or hook is reached; a session with no
