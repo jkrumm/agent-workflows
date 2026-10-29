@@ -6,6 +6,7 @@ import { postgresJournal } from '../podcast/history.ts'
 import { createPodcastWorkflow } from '../podcast/index.ts'
 import { ProduceInput } from '../podcast/produce-input.ts'
 import { fakeHistory, fakeRoom } from '../podcast/testing.ts'
+import { episodeToken } from './abs.ts'
 
 // Legacy's Slack line for a failed episode ("Podcast-Job <id8> ist fehlgeschlagen: <message>"), posted once at the
 // root when production fails; none without legacy's Slack env.
@@ -69,7 +70,7 @@ test('a failed episode posts legacy failure line once; without the Slack env not
     expect((await rt.wait(runId)).status).toBe('failed')
     expect(posts).toHaveLength(1)
     expect(posts[0]?.url).toBe('https://argo.example.com/slack/channels/C0TESTCHAN1/messages')
-    expect(posts[0]?.body.text).toStartWith(`Podcast-Job ${runId.slice(0, 8)} ist fehlgeschlagen: `)
+    expect(posts[0]?.body.text).toStartWith(`Podcast-Job ${episodeToken(runId)} ist fehlgeschlagen: `)
     expect(posts[0]?.body.text).toContain('podcast.produce failed')
   } finally {
     await rt.close()

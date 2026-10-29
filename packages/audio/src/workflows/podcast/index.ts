@@ -1,5 +1,6 @@
 import type { AnyWorkflow, Ctx, Json, Logger, StepScope, Workflow } from '../../../../runtime/src/index.ts'
 import { Cancelled, defineWorkflow, InfraError, WorkflowError } from '../../../../runtime/src/index.ts'
+import { episodeToken } from '../podcast-produce/abs.ts'
 import { type NotifyConfig, notifyConfigFromEnv, notifyPodcastResult } from '../podcast-produce/notify.ts'
 import type { AgentRun } from './agent.ts'
 import { type PodcastConfig, podcastConfigFromEnv } from './config.ts'
@@ -239,7 +240,8 @@ export function createPodcastWorkflow(deps: PodcastDeps) {
   async function noticeFailure(ctx: Ctx, error: unknown): Promise<void> {
     if (!notify.config || ctx.signal.aborted || error instanceof InfraError || error instanceof Cancelled) return
     const message = (error instanceof Error ? error.message : String(error)).slice(0, 500)
-    const text = `Podcast-Job ${ctx.runId.slice(0, 8)} ist fehlgeschlagen: ${message}`
+    // The episode token of its Audiobookshelf file name, as legacy's id8 was.
+    const text = `Podcast-Job ${episodeToken(ctx.runId)} ist fehlgeschlagen: ${message}`
     try {
       await notifyPodcastResult(notify.config, text, notify.fetch)
     } catch (err) {
