@@ -139,17 +139,20 @@ processes_of() {  # $1 release dir -> process names
 
 # Each process answers /health with its version (AGW_VERSION = the sha it was started for); only those count. One
 # deadline for all of them, so two processes cost no more wait than one.
+# One probe: the process answers /health ok at the sha.
+is_healthy() {  # $1 sha, $2 process
+  local body
+  body=$(curl -fsS --max-time 2 "$(health_url "$2")" 2>/dev/null) \
+    && [[ "$(print -r -- "$body" | jq -r '.status + " " + .version' 2>/dev/null)" == "ok $1" ]]
+}
+
 wait_healthy() {  # $1 sha, $2... processes
   local sha=$1; shift
-  local i=0 body p pending=("$@")
+  local i=0 p pending=("$@")
   while (( i < HEALTH_WAIT_SECS )); do
     local still=()
     for p in $pending; do
-      if body=$(curl -fsS --max-time 2 "$(health_url "$p")" 2>/dev/null) \
-        && [[ "$(print -r -- "$body" | jq -r '.status + " " + .version' 2>/dev/null)" == "ok $sha" ]]; then
-        continue
-      fi
-      still+=("$p")
+      is_healthy "$sha" "$p" || still+=("$p")
     done
     pending=("${still[@]}")
     (( ${#pending} == 0 )) && return 0
@@ -245,8 +248,18 @@ roll_back() {  # $1 failed sha, $2 previous sha ("" = none), $3 unload wait, $4 
   if [[ -z "$2" ]]; then
     stop_all "$3" || print -u2 "[deploy] WARNING: could not unload every process"
     if [[ -n "$4" && "$4" == "$1" ]]; then
-      # A redeploy of the live sha (a transient health failure): its plists are the live release's, kept for the next login.
-      print -u2 "[deploy] redeploy of the live sha ${1[1,12]}: every process left booted out, plists kept. deployed-sha unchanged."
+      # A redeploy of the live sha (a transient health failure): same sha, same release, so its plists are the live
+      # ones. They are kept and bootstrapped once more; the deploy still exits 1, naming what is up.
+      local up=() down=()
+      print -u2 "[deploy] redeploy of the live sha ${1[1,12]}: starting every process again from its plist"
+      for p in $PROCESSES; do
+        [[ -f "$(plist_of "$p")" ]] && launchctl bootstrap "gui/$(id -u)" "$(plist_of "$p")" 2>/dev/null
+      done
+      wait_healthy "$1" "${PROCESSES[@]}" >/dev/null 2>&1
+      for p in $PROCESSES; do
+        if is_healthy "$1" "$p"; then up+=("$p"); else down+=("$p"); fi
+      done
+      print -u2 "[deploy] redeploy of the live sha ${1[1,12]} failed; up again: ${up[*]:-none}; down: ${down[*]:-none}. Plists kept, deployed-sha unchanged."
       return 0
     fi
     for p in $PROCESSES; do loaded "$p" || remove_failed_plist "$p" "$1"; done
@@ -345,7 +358,7 @@ main() {
     if [[ -n "$prev" ]]; then
       act "on failure: print every log tail, bootout every process, re-render each process ${prev[1,12]} has a template for, bootstrap, wait for its version; remove the plist this deploy rendered for each it has none for; exit 1"
     elif [[ -n "$old" && "$old" == "$sha" ]]; then
-      act "on failure: print every log tail, bootout every process (a redeploy of the live sha: plists kept for the next login), exit 1"
+      act "on failure: print every log tail, bootout every process, bootstrap each again from its kept plist (a redeploy of the live sha: same release), wait for health once more, name the processes up and down, exit 1"
     else
       act "on failure: print every log tail, bootout every process and remove the plists this deploy rendered (no previous release: left down, not crash-looping, not back at login), exit 1"
     fi

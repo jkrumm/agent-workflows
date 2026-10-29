@@ -35,24 +35,27 @@ function setup(prevHas: string[]) {
   mkdirSync(join(home, 'Library', 'LaunchAgents'), { recursive: true })
   const plist = (label: string) => join(home, 'Library', 'LaunchAgents', `${label}.plist`)
   /** Runs `body` after sourcing every function of deploy.sh (not `main`), with launchd, logs and health stubbed. */
-  const run = (body: string) => {
+  const run = (body: string, healthy = '') => {
     if (!ZSH) throw new Error('zsh is not on PATH: scripts/deploy.sh needs it (CI installs it in ci.yml)')
     const fns = readFileSync(join(ROOT, 'scripts', 'deploy.sh'), 'utf8').replace(/\nmain\s*$/, '\n')
     const script = `${fns}
-launchctl() { return 0 }
+launchctl() { [[ "$1" == bootstrap ]] && print -r -- "bootstrap $3" >> "$HOME/launchctl.log"; return 0 }
 plutil() { return 0 }
 loaded() { return 1 }
 stop_all() { return 0 }
 tail_logs() { :; }
 wait_healthy() { return 0 }
+is_healthy() { [[ " \${HEALTHY:-} " == *" $2 "* ]] }
 mark_deliberate_restart() { :; }
 ${body}`
-    const proc = Bun.spawnSync([ZSH, '-c', script], { env: { PATH: process.env.PATH ?? '', HOME: home } })
+    const proc = Bun.spawnSync([ZSH, '-c', script], {
+      env: { PATH: process.env.PATH ?? '', HOME: home, HEALTHY: healthy },
+    })
     if (proc.exitCode !== 0) throw new Error(`zsh exited ${proc.exitCode}: ${proc.stderr.toString()}`)
     return proc.stderr.toString()
   }
   const renderedFor = (label: string) => (existsSync(plist(label)) ? readFileSync(plist(label), 'utf8') : null)
-  return { run, plist, renderedFor, releases }
+  return { run, plist, renderedFor, home }
 }
 
 const startNew = 'for p in $PROCESSES; do start_process "$p" "$RELEASES/' + NEW + '" ' + NEW + '; done'
@@ -73,12 +76,16 @@ describe('deploy.sh rollback plists', () => {
     expect(t.renderedFor(AUDIO)).toBeNull()
   })
 
-  test('a redeploy of the live sha that fails keeps every plist for the next login', () => {
+  test('a redeploy of the live sha that fails keeps its plists, starts them again and names what is up', () => {
     const t = setup([])
-    const out = t.run(`${startNew}\nroll_back ${NEW} "" 1 ${NEW}`)
+    // Only the host answers healthy on the second try.
+    const out = t.run(`${startNew}\nroll_back ${NEW} "" 1 ${NEW}`, 'host')
     expect(t.renderedFor(HOST)).toContain(NEW)
     expect(t.renderedFor(AUDIO)).toContain(NEW)
-    expect(out).toContain('plists kept')
+    // Bootstrapped twice each: by the deploy, then again from the kept plists.
+    const bootstraps = readFileSync(join(t.home, 'launchctl.log'), 'utf8').trim().split('\n')
+    expect(bootstraps).toEqual([HOST, AUDIO, HOST, AUDIO].map((label) => `bootstrap ${t.plist(label)}`))
+    expect(out).toContain('up again: host; down: audio')
   })
 
   test('a plist this deploy never rendered is never removed', () => {
