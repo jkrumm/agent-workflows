@@ -211,6 +211,10 @@ and on golden it is level with E. Its median cost on standard and deep questions
   against 0.91 for A-yolo. Its standard and deep questions cost about 5× those of A.
 - **Unscored and partial:** E leaves 3 runs unscored (all standard). A-focused leaves 5 unscored and has 11 partial, the most of any arm.
   P-focused's judged share drops to 0.87 on standard.
+- **Engine tokens:** E shows 0 tokens and n/a cache reads because the engine reports its cost only. Its token and
+  cache-read columns mean n/a, not zero.
+- **Deep is indicative only:** one deep question gives n=3 runs per arm. A-yolo's 0.78 supported there is three runs,
+  not a trend.
 
 Spend on the team key: **$12.57** in total, against an estimate of about $10 (range $5–20).
 
