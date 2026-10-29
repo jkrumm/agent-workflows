@@ -213,13 +213,19 @@ Workers: Sonnet/high; Opus/medium for the pipeline's durable stages.
 - [ ] `podcast` (writers' room, TTS, mastering, publish) and `image` ported
 - [ ] `/podcast`, `/img`, Hermes TTS/STT switched; one episode produced end to end on the new path
 - [ ] The TTS/STT door serves every audio caller, not only Hermes: iris (its own fleet switches it)
-  and argo's `/ai` audio proxy; the contract (endpoints, auth, env names) sent to iris-mother
+  (argo moves in Wave 9); the contract (endpoints, auth, env names) sent to iris-mother
+- [ ] `triage` ported as-is for iris (schema-constrained call: destination + transcript excerpt + reply →
+  {headline ≤60, detail ≤240, spoken ≤2 sentences}); `triage` and `decide` cancel, attribute the caller,
+  return usage + `cost_usd`, never route via Requesty; contract sent to iris-mother (unblocks iris Wave 17)
 **Left behind:**
 
 ## Wave 9 — Usage (P4b)            <!-- status: pending -->
 Workers: Sonnet/high.
 
 - [ ] Usage projection from run records into Argo's usage ingest
+- [ ] argo's `/ai` audio proxy on the new audio door: reachable from the VPS by the existing tailnet-grant
+  precedent plus a Caddy row, per-caller bearer, the `podcast` and `file/:hash` endpoints ported; a
+  security review; VPS audio-gateway serves argo until this lands
 - [ ] usage-tracker's agent-gateway, research-gateway and agw-OpenCode collectors removed; Argo
   totals reconciled for one week of overlap
 **Left behind:**
