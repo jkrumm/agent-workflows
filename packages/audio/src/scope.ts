@@ -4,7 +4,7 @@ import { type AudioLane, type AudioRoute, type AudioRouteId, audioRoutes } from 
 import {
   type CallEndpoint,
   type CallEvent,
-  priceOf,
+  unitsOf,
   type Measure,
   priceCall,
   type RequestEndpoint,
@@ -185,17 +185,16 @@ export class AudioScope {
   /** The request's one summary event: totals over its calls, quantity of the serving route. */
   summary(input: SummaryInput): RequestEvent {
     const route = input.routeId ? this.deps.routes[input.routeId as AudioRouteId] : undefined
-    const price = route ? priceOf(route) : undefined
     const event: RequestEvent = {
       kind: 'request',
       requestId: this.requestId,
       caller: this.caller,
       ...input,
-      units: price?.unit ?? null,
+      units: route ? unitsOf(route) : null,
       quantity: input.routeId ? (this.quantities.get(input.routeId) ?? null) : null,
       costUsd: this.meta.unpricedCalls > 0 ? null : this.meta.costUsd,
       costSource: this.meta.unpricedCalls > 0 ? 'unknown' : this.meta.calls === 0 ? 'not-billed' : 'rate',
-      priceVerified: price ? price.stamp.verified : null,
+      priceVerified: route && (route.price || route.rate) ? route.priceVerified === true : null,
       calls: this.meta.calls,
       unpricedCalls: this.meta.unpricedCalls,
       retries: this.meta.retries,

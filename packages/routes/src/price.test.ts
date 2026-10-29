@@ -198,4 +198,26 @@ describe('unit prices', () => {
       costFromUsage('iu-openai', { prompt_tokens: 50_000, completion_tokens: 0 }, { inputPerM: 2, outputPerM: 1 }),
     ).toEqual({ usd: 0.1, source: 'rate' })
   })
+
+  test('audio tokens: the audio share at the audio rate, the rest at the text rate', () => {
+    const price = { kind: 'audio-tokens', textInPerM: 2.5, audioInPerM: 6, outputPerM: 10 } as const
+    const split = priceCall(price, {
+      input_tokens: 1000,
+      output_tokens: 100,
+      input_tokens_details: { audio_tokens: 900 },
+    })
+    expect(split.usd).toBeCloseTo((100 * 2.5 + 900 * 6 + 100 * 10) / 1e6, 12)
+    // Without the split the whole input is audio (never an under-price).
+    expect(priceCall(price, { input_tokens: 1000, output_tokens: 100 }).usd).toBeCloseTo(
+      (1000 * 6 + 100 * 10) / 1e6,
+      12,
+    )
+    expect(
+      priceCall(price, { input_tokens: 10, output_tokens: 1, input_tokens_details: { audio_tokens: 11 } }),
+    ).toEqual({
+      usd: null,
+      source: 'unknown',
+    })
+    expect(priceCall(price, { input_tokens: 10 })).toEqual({ usd: null, source: 'unknown' })
+  })
 })

@@ -81,14 +81,14 @@ Each call is priced and recorded on `scope` like a door call; `ReplicateSynthErr
 ## Routes and prices
 
 The routes are a group of the route table, `packages/routes/src/table/audio.ts`: one per model the door accepts, plus
-the prep (`audio.tts.prep`, effort `low`) and summary (`audio.tts.summary`) LLMs, with their wire (`iu-gemini`,
-`iu-replicate`, `iu-openai`), model and token rate. `AGW_ROUTES` overrides them like any route. `src/routes.ts` adds,
-keyed by route id and naming no model, what only the lanes read: the lane, prep, continuity, the STT fallback chain,
-envelope synthesis, `context_bias`, and the prices the table's token `rate` cannot express yet (per 1k characters, per
-minute, the STT audio-token split; legacy's `RATES` with their verified/assumed stamps). `priceCall` is the one
-function reading them, so the general price shape (`packages/routes`, with the image port) is a one-place swap.
-STT route ids name the provider, not the model (`audio.stt.openai`, `audio.stt.openai-legacy`, ...): the routes guard
-matches model ids as tokens, and an id containing one would read as a model id outside the table.
+the prep (`audio.tts.prep`, effort `low`) and summary (`audio.tts.summary`) LLMs, with wire (`iu-gemini`,
+`iu-replicate`, `iu-openai`), model and price: a token `rate` (Gemini TTS, prep, summary), or a `price` from
+`packages/routes/src/price.ts` (ElevenLabs per 1k characters, STT per minute as `second` units with `per: 60`, the 4o
+transcribe models as `audio-tokens`). `AGW_ROUTES` overrides any of it. `src/routes.ts` adds, keyed by route id and
+naming no model or price, what only the lanes read (lane, prep, continuity, STT fallback chain, envelope synthesis,
+`context_bias`) and `priceVerified`, the one stamp the table has no field for. `priceCall` (`src/usage.ts`) feeds each
+call's measure to the table's pricing. STT route ids name the provider, not the model (`audio.stt.openai`, ...): the
+routes guard matches model ids as tokens.
 
 ## Decisions (differences from legacy, with the reason)
 

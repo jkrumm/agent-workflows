@@ -1,10 +1,11 @@
-import type { AudioPrice, AudioRoute } from './routes.ts'
+import { type Cost, costFromUsage, priceCall as priceByTable } from '@agent-workflows/routes'
+import type { AudioRoute } from './routes.ts'
 
 /** What a billed upstream call was: legacy's usage endpoints, so a run record reads like audio-gateway's ledger. */
 export type CallEndpoint = 'speech' | 'speech-prep' | 'speech-summary' | 'transcriptions'
 export type RequestEndpoint = 'speech-request' | 'transcription-request'
 
-export type Units = AudioPrice['unit']
+export type Units = 'tokens' | 'characters' | 'audio-seconds'
 
 /**
  * `rate`: the route's price applied; `provider`: the upstream's own `usage.cost`; `not-billed`: a failed call (no
@@ -91,80 +92,60 @@ export interface Priced {
 
 const num = (v: number | null | undefined): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null)
 
-/** A route's price: the lane's own (non-token, or the STT audio split), else the table's token rate. */
-export function priceOf(route: AudioRoute): AudioPrice | undefined {
-  if (route.price) return route.price
-  if (!route.rate) return undefined
-  return {
-    unit: 'tokens',
-    inputPerM: route.rate.inputPerM,
-    outputPerM: route.rate.outputPerM,
-    ...(route.rate.cacheReadPerM !== undefined && { cachedInputPerM: route.rate.cacheReadPerM }),
-    stamp: { verified: false, note: 'route table rate' },
-  }
+/** What a route bills by: its `price`'s unit (characters, seconds of audio), else tokens (a `rate` or an audio split). */
+export function unitsOf(route: AudioRoute): Units | null {
+  const price = route.price
+  if (price?.kind === 'unit')
+    return price.unit === 'character' ? 'characters' : price.unit === 'second' ? 'audio-seconds' : null
+  return price || route.rate ? 'tokens' : null
 }
 
 /**
- * The one pricing function (legacy `computeCost`). A failed call is `not-billed` at 0. Per minute needs audio
- * seconds, per 1k characters needs input characters; a missing quantity is `unknown`. Tokens: the STT audio share at
- * `audioInputPerM` (all input when the split is missing, as legacy), the cached share at `cachedInputPerM`.
+ * The one pricing function: the route table's price (`packages/routes` `priceCall`: per 1k characters, per minute,
+ * audio-token split) or token rate (`costFromUsage`), fed this call's measure. A failed call is `not-billed` at 0. The
+ * provider's own `usage.cost` wins where it sends one. A missing quantity is `unknown`, never 0; a token call that
+ * reports only one side counts the other as 0 (a stream reports no output tokens, only its duration does).
  */
 export function priceCall(route: AudioRoute | undefined, status: number, m: Measure): Priced {
-  const price = route ? priceOf(route) : undefined
-  const units = price?.unit ?? null
-  const verified = price ? price.stamp.verified : null
-  if (status < 200 || status >= 300) {
-    return { units, quantity: null, costUsd: 0, costSource: 'not-billed', priceVerified: verified }
+  const units = route ? unitsOf(route) : null
+  const priceVerified = route && (route.price || route.rate) ? route.priceVerified === true : null
+  if (status < 200 || status >= 300)
+    return { units, quantity: null, costUsd: 0, costSource: 'not-billed', priceVerified }
+  const n = (v: number | null | undefined) => (typeof v === 'number' && Number.isFinite(v) ? v : null)
+  const tokensKnown = n(m.inputTokens) !== null || n(m.outputTokens) !== null
+  const input = n(m.inputTokens) ?? 0
+  const output = n(m.outputTokens) ?? 0
+  let quantity: number | null
+  let cost: Cost
+  const price = route?.price
+  if (price?.kind === 'unit') {
+    quantity = n(price.unit === 'character' ? m.inputChars : price.unit === 'second' ? m.audioSeconds : null)
+    cost = priceByTable(price, {
+      cost: n(m.providerCostUsd),
+      ...(quantity !== null && { units: { quantity } }),
+    })
+  } else if (price) {
+    quantity = tokensKnown ? input + output : null
+    cost = priceByTable(price, {
+      cost: n(m.providerCostUsd),
+      ...(tokensKnown && { input_tokens: input, output_tokens: output }),
+      ...(n(m.audioTokens) !== null && { input_tokens_details: { audio_tokens: n(m.audioTokens) } }),
+    })
+  } else {
+    quantity = tokensKnown ? input + output : null
+    cost = costFromUsage(
+      route?.wire ?? 'iu-openai',
+      {
+        cost: n(m.providerCostUsd),
+        ...(tokensKnown && { prompt_tokens: input, completion_tokens: output }),
+        // Cache hits only where the rate prices them (as before): without a cache rate they bill as plain input.
+        ...(n(m.cachedTokens) !== null &&
+          route?.rate?.cacheReadPerM !== undefined && { prompt_tokens_details: { cached_tokens: n(m.cachedTokens) } }),
+      },
+      route?.rate,
+    )
   }
-  const provider = num(m.providerCostUsd)
-  if (!price) {
-    if (provider !== null)
-      return { units, quantity: null, costUsd: provider, costSource: 'provider', priceVerified: null }
-    return { units, quantity: null, costUsd: null, costSource: 'unknown', priceVerified: null }
-  }
-  const unknown = (quantity: number | null): Priced => ({
-    units,
-    quantity,
-    costUsd: null,
-    costSource: 'unknown',
-    priceVerified: verified,
-  })
-  if (price.unit === 'audio-seconds') {
-    const seconds = num(m.audioSeconds)
-    if (seconds === null) return unknown(null)
-    return {
-      units,
-      quantity: seconds,
-      costUsd: (seconds / 60) * price.perMinute,
-      costSource: 'rate',
-      priceVerified: verified,
-    }
-  }
-  if (price.unit === 'characters') {
-    const chars = num(m.inputChars)
-    if (chars === null) return unknown(null)
-    return {
-      units,
-      quantity: chars,
-      costUsd: (chars / 1000) * price.per1k,
-      costSource: 'rate',
-      priceVerified: verified,
-    }
-  }
-  const input = num(m.inputTokens) ?? 0
-  const output = num(m.outputTokens)
-  const quantity = input + (output ?? 0)
-  if (provider !== null) return { units, quantity, costUsd: provider, costSource: 'provider', priceVerified: verified }
-  if (output === null && num(m.inputTokens) === null) return unknown(null)
-  const audioIn = price.audioInputPerM !== undefined ? (num(m.audioTokens) ?? input) : 0
-  const textIn = input - audioIn
-  const cachedIn = price.cachedInputPerM !== undefined ? Math.min(num(m.cachedTokens) ?? 0, textIn) : 0
-  const usd =
-    (textIn - cachedIn) * price.inputPerM +
-    cachedIn * (price.cachedInputPerM ?? 0) +
-    audioIn * (price.audioInputPerM ?? 0) +
-    (output ?? 0) * price.outputPerM
-  return { units, quantity, costUsd: usd / 1_000_000, costSource: 'rate', priceVerified: verified }
+  return { units, quantity, costUsd: cost.usd, costSource: cost.source, priceVerified }
 }
 
 /** OpenAI-shaped usage (chat completions, STT) read into a `Measure`; legacy `tokens()`. */
