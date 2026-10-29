@@ -339,10 +339,7 @@ describe('fallback', () => {
       const route = resolveRoute(id, {})
       // an audio seat has none; an image or Replicate model (`price`) has no text model to move to
       expect(route.fallback === undefined).toBe(
-        route.wire === 'iu-decision' ||
-          id === 'brain.agent' ||
-          id.startsWith('audio.') ||
-          route.price !== undefined,
+        route.wire === 'iu-decision' || id === 'brain.agent' || id.startsWith('audio.') || route.price !== undefined,
       )
     }
   })
