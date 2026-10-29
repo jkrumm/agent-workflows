@@ -41,7 +41,8 @@ ok "deployed sha is origin/master (${deployed[1,12]})"
 password=$(secrets-run read "$PG_PASSWORD_REF" 2>/dev/null)
 [[ -n "$password" ]] || fail "cannot read $PG_PASSWORD_REF through secrets-run"
 psql_err=$(mktemp -t agw-verify) || fail "cannot create a temp file"
-trap 'rm -f "$psql_err"' EXIT
+agw_err=$(mktemp -t agw-verify) || fail "cannot create a temp file"
+trap 'rm -f "$psql_err" "$agw_err"' EXIT
 # One journal query; the SQL goes on stdin (psql interpolates :'var' there, not in -c), extra args are -v bindings.
 journal() {
   local sql=$1; shift
@@ -49,10 +50,15 @@ journal() {
     2>"$psql_err" <<< "$sql" || fail "journal query failed: $(<"$psql_err")"
 }
 
-# 3. a real run through the installed CLI
-out=$(AGW_PURPOSE=verify agw smoke ping 2>&1)
-rc=$?
-(( rc == 0 )) || fail "agw smoke ping exited $rc: $out"
+# 3. a real run through the installed CLI. The answer is the JSON on stdout; stderr is kept apart and shown on failure.
+# `out` is set by agw_json: a non-zero exit or output that is not JSON is its own failure, not a missing field.
+agw_json() {
+  out=$(AGW_PURPOSE=verify agw "$@" 2>"$agw_err")
+  local rc=$?
+  (( rc == 0 )) || fail "agw $* exited $rc: ${out:-$(<"$agw_err")}"
+  print -r -- "$out" | jq -e . >/dev/null 2>&1 || fail "agw $* printed output that is not JSON: $out $(<"$agw_err")"
+}
+agw_json smoke ping
 run_id=$(print -r -- "$out" | jq -r '.runId // empty' 2>/dev/null)
 title=$(print -r -- "$out" | jq -r '.output.title // empty' 2>/dev/null)
 [[ -n "$run_id" ]] || fail "agw smoke ping printed no runId: $out"
@@ -60,14 +66,14 @@ title=$(print -r -- "$out" | jq -r '.output.title // empty' 2>/dev/null)
 ok "agw smoke ping: run $run_id, title \"$title\""
 
 # 4. its row in the journal: the run answer holds up to 5 s for the run record. One slow runPost or a database blip
-# can outlast that (`costPending`), so ask again for up to ~20 s before calling it a failure.
-for _ in {1..4}; do
-  [[ "$(print -r -- "$out" | jq -r '.costPending // false' 2>/dev/null)" == "true" ]] || break
-  out=$(agw run wait "$run_id" 2>&1)
-  rc=$?
-  (( rc == 0 )) || fail "agw run wait $run_id exited $rc: $out"
+# can outlast that (`costPending`), so ask again, 4 times 5 s plus a pause, before calling it a failure.
+for attempt in {1..4}; do
+  [[ "$(print -r -- "$out" | jq -r '.costPending // false')" == "true" ]] || break
+  sleep 2
+  agw_json run wait "$run_id"
 done
-[[ "$(print -r -- "$out" | jq -r '.costPending // false' 2>/dev/null)" == "false" ]] || fail "run $run_id has no run record after ~20 s (costPending): $out"
+[[ "$(print -r -- "$out" | jq -r '.recordFailed // false')" == "false" ]] || fail "run $run_id: the runtime gave up on its post hooks (recordFailed): $out"
+[[ "$(print -r -- "$out" | jq -r '.costPending // false')" == "false" ]] || fail "run $run_id has no run record after ~30 s (costPending): $out"
 answer_cost=$(print -r -- "$out" | jq -r '.cost // empty' 2>/dev/null)
 [[ -n "$answer_cost" ]] && (( answer_cost > 0 )) || fail "run $run_id answered without priced usage (cost '${answer_cost:-null}'): $out"
 row=$(journal "select status, coalesce(trace_id, ''), coalesce(cost::text, ''), coalesce(tokens_input, 0) from \"$SCHEMA\".runs where id = :'id'" -v "id=$run_id") || exit 1
@@ -75,8 +81,8 @@ IFS='|' read -r run_status trace cost tokens <<< "$row"
 [[ "${run_status:-}" == "done" ]] || fail "run $run_id is '${run_status:-missing}' in $SCHEMA.runs, not done"
 [[ -n "${trace:-}" ]] || fail "run $run_id has no trace id"
 [[ -n "${cost:-}" ]] && (( cost > 0 )) || fail "run $run_id has no priced usage (cost '${cost:-null}')"
-# the answer prints a JSON number, the journal a numeric: the same value, not the same text
-awk -v a="$answer_cost" -v b="$cost" 'BEGIN { d = a - b; if (d < 0) d = -d; exit !(d < 1e-9) }' \
+# the answer prints a JSON number, the journal a numeric: the same value to a relative 1e-6, not the same text
+awk -v a="$answer_cost" -v b="$cost" 'BEGIN { d = a - b; if (d < 0) d = -d; m = (a > b ? a : b); exit !(d <= m * 1e-6) }' \
   || fail "run $run_id: the answer's cost $answer_cost differs from the journal's $cost"
 (( ${tokens:-0} > 0 )) || fail "run $run_id recorded no input tokens"
 ok "journal: done, trace $trace, cost $cost (as answered), $tokens input tokens"

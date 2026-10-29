@@ -36,6 +36,8 @@ export type RunRow = {
   cancel_requested_at: Date | null
   admitted_at: Date | null
   post_hooks_at: Date | null
+  /** Set when the post hooks were given up on rather than delivered; the run record may then be missing. */
+  post_hooks_failed_at: Date | null
   /** The run record's sums, written by `runPost`: `numeric` arrives as a string; null until then or when nothing was priced. */
   cost: string | null
   unpriced_calls: number | null
@@ -43,7 +45,7 @@ export type RunRow = {
 
 const RUN_COLUMNS = `id, workflow, parent_id, root_id, status, purpose, input, output, error, error_kind, traceparent,
   version_started, version_finished, started_at, finished_at, cancel_requested_at, admitted_at, post_hooks_at,
-  cost, unpriced_calls`
+  post_hooks_failed_at, cost, unpriced_calls`
 
 export type CancelledStep = { run_id: string; step_id: string; kind: StepKind; handle: AgentHandleState | null }
 
@@ -290,7 +292,8 @@ export class Journal {
   async postHooksFailed(id: string, max: number): Promise<{ attempts: number; gaveUp: boolean }> {
     const { rows } = await this.query<{ attempts: number; gave_up: boolean }>(
       `update ${this.runs} set post_hooks_attempts = post_hooks_attempts + 1,
-         post_hooks_at = case when post_hooks_attempts + 1 >= $2 then now() end
+         post_hooks_at = case when post_hooks_attempts + 1 >= $2 then now() end,
+         post_hooks_failed_at = case when post_hooks_attempts + 1 >= $2 then now() end
        where id = $1 and post_hooks_at is null
        returning post_hooks_attempts as attempts, post_hooks_at is not null as gave_up`,
       [id, max],

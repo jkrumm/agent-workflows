@@ -271,10 +271,8 @@ export class Runtime {
       error: run.error_kind ? { kind: run.error_kind, message: run.error ?? '' } : null,
       cost: run.cost === null ? null : Number(run.cost),
       unpricedCalls: run.unpriced_calls ?? 0,
-      // the record sets `unpriced_calls` (never null) together with the sums; a run without a record has it null
-      recorded: run.unpriced_calls !== null,
       postHooksDone: run.post_hooks_at !== null,
-      finishedAt: run.finished_at,
+      postHooksFailed: run.post_hooks_failed_at !== null,
     }
   }
 

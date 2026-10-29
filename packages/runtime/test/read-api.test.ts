@@ -69,9 +69,8 @@ describe('getRun and ping', () => {
         error: null,
         cost: null,
         unpricedCalls: 0,
-        recorded: false, // no record middleware here
         postHooksDone: true,
-        finishedAt: expect.any(Date),
+        postHooksFailed: false,
       })
 
       const failed = await rt.start(boom, {}, { purpose: 'test' })
@@ -90,9 +89,8 @@ describe('getRun and ping', () => {
         error: null,
         cost: null,
         unpricedCalls: 0,
-        recorded: false,
         postHooksDone: false,
-        finishedAt: null,
+        postHooksFailed: false,
       })
       await rt.cancel(running.runId)
       await rt.wait(running.runId)
@@ -144,7 +142,6 @@ describe('getRun and ping', () => {
         status: 'done',
         cost: 0.25,
         unpricedCalls: 2,
-        recorded: true,
         postHooksDone: true,
       })
     } finally {

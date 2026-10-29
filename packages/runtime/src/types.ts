@@ -238,11 +238,11 @@ export type AnyWorkflow = Workflow<any, any>
 export type RunError = { kind: ErrorKind; message: string }
 
 /**
- * A run as the outside world sees it (`Runtime.getRun`): output only once `done`, error only once ended badly. `cost`
- * and `unpricedCalls` are the run record's sums, which `runPost` writes after the terminal status commits, so a reader
- * tells a final cost from one still to come by `recorded`. `postHooksDone` is the delivery marker: set once the hooks
- * ran or were given up on, so `postHooksDone && !recorded` means the record was never written (or no record
- * middleware is installed) and `cost` will not change.
+ * A run as the outside world sees it (`Runtime.getRun`): output only once `done`, error only once ended badly.
+ * `cost` and `unpricedCalls` are the run record's sums over the run's own steps (a fan-out child carries its own record,
+ * its parent's sums do not include it). `runPost` writes them after the terminal status commits: `postHooksDone`
+ * says the hooks were delivered or given up on, and `postHooksFailed` that it was the give-up, so the record may be
+ * missing. Before `postHooksDone` the sums are not to be read as final.
  */
 export type RunSnapshot = {
   runId: string
@@ -250,14 +250,11 @@ export type RunSnapshot = {
   status: RunStatus
   output: Json | null
   error: RunError | null
-  /** Sum of the priced usage; null when nothing was priced or the record is not written yet. A lower bound while `unpricedCalls > 0`. */
+  /** Sum of the priced usage; null when nothing was priced. A lower bound while `unpricedCalls > 0`. */
   cost: number | null
   unpricedCalls: number
-  /** The run record's sums were written (a run that priced nothing is recorded with `cost: null`). */
-  recorded: boolean
   postHooksDone: boolean
-  /** When the run reached its terminal status; null while it runs. */
-  finishedAt: Date | null
+  postHooksFailed: boolean
 }
 
 export type RunInfo = {
