@@ -1,112 +1,109 @@
-# Lead handoff — Wave 6 (research; P3a), close-out
+# Lead handoff — Wave 7 (otel, brain, diagram, prose; P3b), close-out
 
-Leads: `agent-workflows-w1` first lead (pane w40:p16, 2026-10-28 ~22:05 → 2026-10-29 ~01:30 UTC+1, rotated at ~60 %), second lead
-`agent-workflows-w1` (pane w40:p1B, 2026-10-29 ~01:35 → ~03:45). Briefs: `~/.local/state/agent-workflows/briefs/w6/` on the
-mini (not in git: they name local paths). The rotation checkpoint is in git history at `2ddc777`.
+Lead: `agent-workflows-w1` (pane w40:p1E), 2026-10-29 ~03:50 → ~07:20 UTC+1, one context, no rotation. Briefs:
+`~/.local/state/agent-workflows/briefs/w7/` on the mini (not in git: they name local paths), incl. `results.md`.
+Rules and results: `docs/research/2026-10-29-wave7-ports.md` (rules committed at `b144ae1` before any run; results
+`d6e272d`). Concept v3.7 (`8de034e`) describes P3b as built.
 
 ## Per-step verdict
 
 |Step|Verdict|Evidence|
 |-|-|-|
-|CI green on master; train gates on CI; load-aware timeouts|**done** (first lead)|#28, dotfiles #39. Not a credential leak: make recursion state (`MAKELEVEL`/`MAKEFLAGS`) and `run-step.sh` under dash. CI green on every master push since `e65cebb`; the train printed "CI passed for … at <sha>" on #29–#36|
-|P2 gate: Sonnet angles vs Haiku (20 paired cases)|**answered** (first lead), **implemented** (#33)|Recall 0.017 → 0.13, located +0.09, precision 0.10 → 0.50, cost $0.057 → $0.542 per review, wall unchanged. Mother decision: Sonnet for `--deep` only. #33: route `review.angle.deep` (`claude-sonnet-5-5-eu`, in 2 / out 10 / cache read 0.10 (0.05×) / write 2.50 per M, `longPromptTokens` 1M: Anthropic's page lists no long-context tier for Sonnet 5.5). Sonnet only when the **caller** passes `depth: deep` (`decision.source === 'caller'`); a router-chosen deep stays on Haiku. `plan` records `angleRoute`; the fingerprint lists both routes. Concept v3.5|
-|Three-way comparison on the 28 golden questions|**done**: A-yolo|Numbers below; doc `docs/research/2026-10-28-research-three-way.md` §Results (#35). Checked by the lead from the run records (`compare.ts` over the 15 eval run ids)|
-|`research` ported in the winning shape, follow-up included|**done** (#36)|One agent `agents/research`, web tools through the gate; engine, pilot, focused arms, `design`/`profile`, the engine adapter, `compare.ts`/`decision.ts` deleted (−1833/+518). Follow-up: `agw research "<q>" --follow-up <runId>`; citable set = the earlier run's retrieved pages + its final citations' URLs; earlier research fenced as data in the prompt. Live regression (1 pass × 28, team key): golden 0.964, supported 0.929, judgedShare 1.0, median $0.0069, p50 9.7 s (A-yolo: 0.98 / 0.91 / 0.99 / $0.0063 / 9 s); standard+deep golden 1.0, $0.033, 42 s; one miss `notfound-rfc-99999`. Eval run `01a1857a-fb12-7320-a3a6-b74b9776b6da`. Research stays in the host process (concept v3.6): host RSS 52 → 97 MB mean (157 max), CPU 0.3 → 3.4 % mean during the pass|
-|`/research` switched; research-gateway `/mcp` deleted, MCP registration removed|**done**|dotfiles #40 (skill on `agw research` incl. `--follow-up`; global CLAUDE.md, rules, implement/upgrade-deps skills, docs; Makefile MCP target + doctor line, settings template permissions, Codex and OpenCode MCP entries, `scripts/mcp-research-headers.sh` removed; `_setup-codex` re-rendered). research-gateway #42 (`src/routes/mcp.ts`, `.use(mcpRoutes)`, discovery entry, MCP SDK dep, `wait.ts` deleted), auto-deployed by its CI-gated poller at 03:32. `claude mcp remove research-gateway -s user` on the mini in `~/.claude`, `-me`, `-me2`. MacBook: unreachable (ssh iumac timed out), queued as ask-human `20261029T033409-656`|
+|`otel` workflow, `hdx` as a capability, cost per query recorded|**done**|#39 `hdx.*` capabilities (HyperDX JSON-RPC/SSE + REST, no MCP; agent-safe set `AGENT_SAFE_HDX`; `clickstack_sql`, webhook reads and writes CLI-only via `agw hdx write --commit`). #43 workflow `otel`: one agent (deepseek flash) through the tool gate, env pinned per grant, findings grounded only by a query id that returned rows, `untrusted` note. Rule PASS: facts 0.875 vs legacy 0.5625, status 0.875 vs 0.625, 16/16 runs priced. Cost per investigation ≈ $0.019 (legacy ≈ $0.265 Max-equivalent); wall p50 49.5 s vs 51 s|
+|`brain` agent shared by workflows|**done**|#42 `agw brain` + `agw vault search|read` capabilities through the gate; Haiku 5.5 EU, **no fallback** (private notes stay on the Anthropic EU route; lead decision); usable as a child workflow (`ctx.workflow`). Rule PASS: reference cited 10/10, facts 0.9, 41/41 citations grounded, median $0.0013. No legacy exists, so no side-by-side (pre-registered)|
+|`diagram` (excalidraw) ported|**done**|#40 `agw diagram` (create/extend), hydration in a short-lived `bun` child from pinned npm `@excalidraw/excalidraw` 0.18.0 + `@napi-rs/canvas` (label widths identical to Chrome; legacy's esm.sh path measured 9–23 % narrow), concurrency 2, host writes no caller path. Rule PASS: valid 12/12 vs 12/12, bound arrows 1.0 vs 0.976, overlaps 0.08 vs 0, median cost $0.0028 vs $0.0052, wall 21.5 s vs 29.1 s|
+|`prose`: lint + cross-lab review + keep gate; rewrite in the calling session|**done**|#41 `agw prose` (lint, review on deepseek via `prose.critique` with structured input, `writerBrief` fenced with a random nonce journaled in a step, `voicePath`) and `agw prose-gate` (no model, cost 0, answers the text to write). Lab refusal on the resolved route + wire. Rule PASS: lint 12/12 identical, gate 41/41 decisions equal, review mean |N−L| 0.389 ≤ 0.556 (averaged reading; `precision` alone 0.625 > 0.5), cost 1.04× mean (one call 1.58×). Legacy ≈ $0.09/call (Opus writer) → the writer moves to Max|
+|`/otel`, `/excalidraw-diagram`, `/prose` switched; agw MCP tools removed|**done**|dotfiles #42 (`/prose`, `/excalidraw-diagram`, `/brain` lookup section, global CLAUDE.md, docs), dotfiles #43 (`/otel` on `agw otel` + `agw hdx`, `hdx.py` deleted, `query.py` kept as last resort). agent-gateway #38: MCP `otel`, `prose`, `excalidraw_diagram` and `agw-legacy prose` removed (−2705 lines; the prose pipeline stays as a library for `narrative`), deployed `8a25212`. Switches merged before the removal (Wave 6 ordering lesson)|
+|Wave 6 leftovers: CLI answer carries the final cost|**done**|#38: held waits that see the run end hold ≤ 5 s for the record; `cost`, `unpricedCalls`, `costPending`, `recordFailed` (new expand-only column `post_hooks_failed_at`, migration 0009); `run status/get/cancel` never hold. Live: verify reads "cost … (as answered)"|
+|Leftover: last sleep-synchronised test|**done**|#38: `opencode-host` abort, kill/restart, follow-up re-attach and poll-count tests on in-flight signals; justified sleeps listed in the PR|
+|Leftover: `rd fan --clean` scoped (dotfiles)|**done**|dotfiles #41: `rd fan` marks its worktrees (`<git-dir>/rd-fan`); `--clean` keeps unmarked ones unless `--all`. Used at close: 10 worktrees reclaimed, nothing foreign touched|
+|Leftover: CONTEXT7_API_KEY off research-gateway's item|**not done (owner-gated)**|MacBook unreachable all wave (ssh rc=255). ask-human `20261029T070930-17518` queued: creates the field in `mini/agent-workflows`, adds the ref to `headless.refs`, reseals. Then `.env.tpl` line 5 → `op://mini/agent-workflows/CONTEXT7_API_KEY` and a deploy. Request `20261029T035706-12839` is superseded (discard)|
 
-## Comparison numbers (420 runs, 0 failed, every run priced; deploy `5025eec`, team key)
+Also merged (found on the way): #37 the tool gate as one host-wide module (research unchanged; writes both `gate.json`
+and the legacy `research/gate.json` for one release, expand/contract), #44 hdx test JSON-RPC id collision under load,
+#45 `--format plain` on a workflow reads `plainField` from `.output`, #46 `--help` fetches the contract first (new
+commands were invisible after a deploy until `agw schema --refresh`).
 
-|Arm|golden|supported|judged share|median $|p50 wall s|unscored|partial|
-|-|-|-|-|-|-|-|-|
-|E engine|0.99|0.73|0.97|0.0101|22|3|5|
-|**A-yolo**|0.98|0.91|0.99|0.0063|9|0|8|
-|A-focused|0.97|0.93|0.99|0.0054|8|5|11|
-|P-yolo|0.97|0.79|0.99|0.0135|30|4|5|
-|P-focused|1.00|0.75|0.96|0.0128|34|4|0|
+## Reviews (owner direction: no gateway `/review`; the lead's `/code-review` on Max)
 
-Rule: A-yolo − E golden +0.012 [−0.036, 0.071], supported +0.185 [0.065, 0.321] → eligible; P-yolo − E golden −0.012
-[−0.119, 0.095] → not eligible; cost standard+deep A-yolo $0.0279 vs E $0.1383 → **A-yolo**. Profile: focused never beat
-yolo with a CI excluding 0. Standard: E $0.133 / 171 s vs A-yolo $0.026 / 39 s. Deep is n = 3 per arm (indicative only).
-Engine token columns are n/a (the engine reports cost only).
+|PR|Review|
+|-|-|
+|#37 tool gate|high r1 (10: 7 fixed incl. cutover dual-write, boot stateDir, logger, write-failure reset, single gate, guarded ledger row, lost-usage log; 3 dismissed: negative cache, 404→403 text, migration comment), lead read r2|
+|#38 run cost|high r1 (8: 7 fixed, flush helper dismissed), high r2 (10 → **design change**: hold only in a wait that saw the transition, no age/clock), lead read r3|
+|#39 hdx|high r1 (10 fixed; `clickstack_sql` kept CLI-only because no local ClickStack existed for the write probe), high r2 (8 fixed: message shape, cursor, caps, structural agent-safe set)|
+|#40 diagram|high r1 (10 fixed; Worker → child process), medium r2 (10 fixed), CI Linux timing failure fixed at the cause; lead resolved one rebase|
+|#41 prose|high r1 (7 fixed: fencing, command name, no free-prompt capability, lab refusal), medium r2 (9 fixed)|
+|#42 brain|high r1 (10 fixed: YAML alias bomb, per-attempt grounding, NFC paths, fd-checked reads, linear link scan)|
+|#43 otel|high r1 (10: grounding redesigned on query ids; no env-pin escape, mutating refusal holds); lead resolved one rebase|
+|#44, #45, #46; dotfiles #41, #42, #43; agent-gateway #38|lead read (test-only, small CLI fixes, skills/docs, deletion)|
 
-## Merged this wave (second lead)
+## Gate
 
-|PR|What|Review|
-|-|-|-|
-|#32|research follow-up round 5 (settle before close, abandoned engine job booked, 4xx `answerOf`, incomplete runs out of the rule)|lead read r5 (first lead: `/code-review high` r1–r4); merged by the worker on the owner's ask|
-|#33|deep angles on Sonnet|`/code-review high` r1 (8: caller-only opt-in, long-prompt tier, casts, magic number; 4 dismissed: shared fingerprint by design, dedupe level, synthesis on Haiku as measured, Sonnet config proven live at verify), r2 ran on a stale local branch (see Friction) and was discarded, r3 on the real head (8: one depth derivation, `angleRoute` recorded, schema help, Sonnet config test; 4 dismissed), lead read r4|
-|#34|test race: gate drain tests synchronised on "in flight", requests settled inside their test|lead read (test-only)|
-|#35|comparison results doc|lead read (doc-only)|
-|#36|research port|`/code-review high` r1 (10: migration 0009 unsafe for a rollback → removed, engine columns kept; follow-up citable set; no-journal message; data framing; 2 dismissed), r2 (8: no-new-pages warning, drop reason, fenced block, raw URLs, README; 3 dismissed: strict input with no runs in flight, seen-only citations as in the first-run rule, journal size), lead read r3|
-|dotfiles #40|`/research` switch, MCP registrations removed|lead read|
-|research-gateway #42|`/mcp` deleted|lead read (deletion only, REST unchanged)|
+- `make check` at the last merge (#46 in the train): green after a load retry (host load 96 → 11; earlier
+  attempts failed on unrelated load-timeouts, `run-step.sh` idle kill and the credentials test). Last worker
+  `make check`: 1608 pass, 17 skip, 0 fail, 1625 tests.
+- CI: green on every merged head (train-gated); `adc586d` superseded by `8de034e` (docs) mid-run.
+- Live: release `adc586d` on the personal key; `make verify` PASS (run `01a18646-09db-…`); `@verifier` **11/11 PASS**:
+  otel (run `01a18646-212a-77c0-a81c-5b2102a86923`, $0.018, answer carries the cost, 17 queries, all findings cite
+  query ids), spans `agw.run otel` + steps in prod ClickStack, diagram create/extend valid, prose + prose-gate (URL loss
+  → original; faithful rewrite kept), brain grounded 4/4 on Haiku EU, `vault read Inbox/…` refused, hdx tools/query/
+  rest/link, `hdx write` without `--commit` → confirmation_required, fresh `--help` without a manual refresh, Argo
+  outbox synced with 0 errors, agent-gateway MCP list without the three tools, skills grep clean.
 
-`make check` at the last merge (#36 in the train): 1193 pass, 15 skip, 0 fail, 1208 tests. CI green on master through
-`0c360db`; `de21c26` (docs) running at close.
-
-## Live proof (`@verifier`, personal key, release `0c360db`): 8/8 PASS
-
-1. `make verify` PASS (run `01a18585-f995-…`, cap run `01a18585-fead-…`).
-2. `agw research` quick: done, ok, 2/2 grounded, $0.0067, deepseek-v4.1-flash answered (no fallback), iu_key personal,
-   purpose verify (run `01a18585-0bfd-77a6-a97e-dba1647bb478`).
-3. Follow-up on it: done, 3/3 grounded, $0.0068 (run `01a18585-4228-…`); a random run id → typed `invalid_input`.
-4. Spans in prod ClickStack: `agw.run research` with `agw.step tools` and `agw.step research`, OpenCode spans under the step.
-5. Argo outbox: every priced step synced (`argo_synced_at`), 0 pending, 0 `argo_error` (Argo's DB itself not read).
-6. Deep review live: `angleRoute: review.angle.deep`, angles on claude-sonnet-5-5-eu, synthesis on Haiku, $0.118, 36 s,
-   0 unpriced (run `01a18585-da99-75bf-8d0f-ce7b1d149f7c`).
-7. research-gateway: `POST /mcp` 404, discovery lists no mcp, `/health` ok; no research-gateway MCP in any mini account.
-8. `/research` skill calls `agw research`; no `mcp__research-gateway` in `~/.claude/{CLAUDE.md,rules,skills}`.
-
-## Host state
-
-Release `0c360db` on the **personal key** (`~/.config/agw/iu.env` removed, host kickstarted, `/health` ok). DeepSeek
-answers on the personal key again. No `routes.json`. Engine eval instance on :7795 stopped. Main checkout clean on master.
-`~/.config/agw/athena-iu.env` is still on disk (not loaded by `launch.sh`; not the fleet's to delete without the owner).
-
-## IU spend, by key (runs since 2026-10-28 21:50 UTC)
+## IU spend, by key (runs since 2026-10-29 02:50 UTC)
 
 |Key|Purpose|Runs|Spend|What|
 |-|-|-|-|-|
-|athena-team|eval|2750 top-level|**$26.13**|Haiku baseline $1.18, Sonnet arm $11.60, research smoke $0.29, full comparison $12.57, port regression $0.49; 48 unpriced (review long-prompt tier, 6 `web.package`)|
-|athena-team|prod|28|$0.23|callers of the live host during the window (24 unpriced), not the fleet's evals|
-|athena-team|verify|6|$0.00|deploy verifications|
-|personal|verify/prod/retro|7|≈ $0.14|`@verifier` (research, follow-up, deep review $0.118), smokes|
+|athena-team|eval|94|**$0.41**|otel $0.30, prose $0.054, diagram $0.036, brain $0.015, judge calls $0.001; 0 unpriced|
+|athena-team|prod|35|$0.026|other callers while the host ran on the team key|
+|personal|prod|3 reviews|$0.46|**workers ran `agw review` on their PRs** (04:30, 04:33, 05:04) against the owner direction; 9 unpriced calls. Rule restated to every worker at ~04:45|
+|personal|verify/retro|10|≈ $0.04|deploy verification, `@verifier`, weekly retro|
+
+Outside agw: legacy arms ran on agent-gateway (diagram ≈ $0.07 on its IU key; otel ≈ $2.12 of Max), skills-switch
+proofs and the narrative smoke ($0.068) on agent-gateway/personal.
+
+## Host state
+
+Release `adc586d`, personal key (`~/.config/agw/iu.env` removed; `athena-iu.env` untouched). agent-gateway `8a25212`.
+Main checkout clean on master. No worker tabs or fleet worktrees left.
 
 ## Left behind
 
-- MacBook: research-gateway MCP registration not removed (unreachable); ask-human `20261029T033409-656` queued.
-- research_tool_calls keeps the unused engine columns and booking index (0007/0008) for the rollback target; drop them in
-  a later release once no rollback target reads them.
-- research-gateway's REST door, its `research` CLI and `scripts/opencode-service-env.sh`'s `RESEARCH_GATEWAY_AUTH` stay
-  until P6 archives it. CONTEXT7_API_KEY still resolves through research-gateway's 1Password item: move it first.
-- Run fingerprints: review lists both angle routes, so a deep and a standard review share a fingerprint; `plan.angleRoute`
-  separates them in queries. The eval harness's `--depth matched` sends recorded deep cases to Sonnet angles (~10×).
-- `agw research` printed `cost: null` in its CLI response while the run record was priced ($0.0018): the CLI's
-  synchronous answer does not carry the final cost.
-- The eval plan's estimate for research ($1.83 for one pass, actual $0.49) averages history that includes the deleted arms.
-- `opencode-host/test/host.test.ts` "abort interrupts once and is idempotent" uses `Bun.sleep(50)` as synchronisation
-  (same class as #34), seen failing once under load; and the load-scaled timeout is still sampled once per `make check`
-  (git-heavy review `scopes` tests hit 5.1 s under load spikes; two train reruns).
-- Not ours: dotfiles architecture-check rows (com.iu.athena-postgres, com.iu.teamchat-*, collie pin, tailscale drift);
-  agent-gateway dispatch-worktree credential test.
+- CONTEXT7_API_KEY move: owner request `20261029T070930-17518` (see table); then the `.env.tpl` swap and a deploy.
+- `clickstack_sql` is CLI-only until a write probe on a local ClickStack proves it read-only (nothing listens on :7707
+  on the mini). Move it to `AGENT_READ_TOOLS` only with that evidence.
+- `clickstack_list_dashboards` is not on the agent/CLI read allowlist (verifier used `hdx rest /dashboards`).
+- `research_tool_calls` now also holds brain's evidence (shared guarded hook); otel keeps its calls in memory and
+  journals them. A neutral table name is an expand/contract rename for later.
+- Tool gate writes the legacy `research/gate.json` too: drop it in a release after no live location reads it.
+- agent-gateway: `server/lib/routing.ts` rows for otel/excalidraw/prose_* and the `mcpServers` session option remain
+  (heavily pinned by tests; P6 shrink). Already-connected MCP sessions keep the old tool list until reconnect.
+- Prose rule 3/4 readings: the doc states the averaged/mean readings taken; `precision` alone and one call at 1.58×
+  are outside a per-item reading.
+- Load-induced flakes in untouched tests under host load 60–200: `run-step.sh` idle kill, "credentials of the host
+  never reach make check", review `git init`, two `opencode-host` locations tests at the 5 s default. The load-scaled
+  timeout is still sampled once per `make check`.
+- `agw vault read` of a refused path answers `found: false` with exit 0 (by design, a typed miss, not an error).
+- Diagram on Linux: a native crash takes 12–17 s to be reaped where apport runs (README); the mini is macOS.
+- Not ours: dotfiles architecture-check rows (com.iu.athena-postgres, com.iu.teamchat-*); agent-gateway
+  `dispatch-worktree.test.ts` credential helper.
 
-## Retro notes (both leads)
+## Retro notes
 
-- **Pre-registered rules pay.** The rule fixed before the first live run made the verdict a query, not a debate; the
-  lead re-derived it from the run records in one command.
-- **Experiment harness: fix what bends the numbers, document the rest** (first lead). #30/#31 fix rounds kept finding new
-  classes until design changes (HTMLRewriter; one attempt-key rule) closed them; #36 converged in two rounds once
-  findings were split into "bends correctness" and "hygiene".
-- **Deleting the experiment is a migration hazard.** The port's first draft dropped columns the rollback target still
-  writes; expand/contract (keep, drop later) is the rule for any column a previous release touches.
-- **Review forks and the shared checkout.** A `/code-review` fork created a local `pr33` branch in the main checkout; the
-  next review read that stale branch and reported already-fixed findings. Pass the remote ref and "never check out in
-  this checkout" in the review args; `git status -sb` before trusting a review.
-- **Sleep-as-synchronisation is a flake class.** Two test races (#34) failed the train only under load; deterministic
-  "in flight" signals fixed them; one more remains (Left behind).
-- **`rd fan --clean <repo>` is repo-wide**: it also reclaimed another session's merged worktree in research-gateway
-  (merged a month ago, nothing lost). Fleet-scoped cleanup would be safer.
-- **Order of cutover steps.** The MCP was removed on the mini a few minutes before the new skill merged; harmless here,
-  but the switch (skill live) should land before the old door is removed.
-- **Spend.** Team key $26.13 against estimates of ≈ $5 (Sonnet arm, actual $11.60) and ≈ $10 (comparison, actual
-  $12.57): Sonnet arm was the miss (long agentic turns, 2× the tool calls).
+- **Pre-registration held up again, with one gap.** Four rules written before any run made four verdicts queries.
+  The gap: prose rules 3–4 did not say "per criterion / per call" vs "averaged / mean"; the reading had to be chosen
+  and disclosed after the numbers. Write the aggregation into the rule.
+- **The shared files are the merge train's bottleneck.** Five ports appending to `suites.ts`, `workflows/index.ts`,
+  the route table and two READMEs produced a rebase conflict on almost every merge (4 round trips, 2 resolved by the
+  lead). A registry that discovers workflows/suites by directory, or one-line-per-entry files, would remove the class.
+- **Design changes beat patch rounds** (Wave 5's lesson, confirmed twice): run-cost r2 (freshness hold → hold only in
+  the observing wait) and otel r1 (token matching → query ids returned to the agent) each ended a growing finding list.
+- **Live use finds what fakes don't.** The skills-switch worker found `--format plain` broken for workflows and the
+  stale CLI help after a deploy; both were invisible to unit tests and to the porting workers' "checked on the
+  contract".
+- **Workers ran `/review` from the input-box suggestion** ($0.46 on the personal key) until told. Put "no `/review`"
+  into `_common.md` from the first brief while the IU constraint stands.
+- **A secrets ref before its item is a fleet-wide hazard:** adding `op://…` to `headless.refs` before the item exists
+  makes every `make secrets-seed` abort. The request now creates the item, adds the ref and reseals in one command.
+- **Host load 60–200** from parallel fleets made `make check` take 4–6 min and fail on timeouts in untouched tests;
+  waiting for the 1-min load to drop below 30 before a train run was the reliable fix.
