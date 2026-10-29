@@ -94,6 +94,11 @@ export function stripControlBytes(text: string): string {
   return out
 }
 
+/** True when `text` carries a control byte or a line break: not a value to hand to a path argument or a key. */
+export function hasControlBytes(text: string): boolean {
+  return stripControlBytes(text) !== text || /[\r\n]/.test(text)
+}
+
 /** One line of text: control bytes dropped, every run of whitespace (CR and LF included) one space, trimmed. */
 export function oneLine(text: string): string {
   return stripControlBytes(text).replace(/\s+/g, ' ').trim()

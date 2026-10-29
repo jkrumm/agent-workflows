@@ -8,7 +8,7 @@ import type {
   HerdrAgentStatus,
   JobStatus,
 } from './schema.ts'
-import { oneLine, stripControlBytes } from './text.ts'
+import { hasControlBytes, oneLine, stripControlBytes } from './text.ts'
 
 // Pure steps of the snapshot: what a transcript tail says, an agent's urgency, and the merge of the three collectors.
 
@@ -135,7 +135,8 @@ export function deriveState(input: DeriveStateInput): AgentState {
 
 /** What herdr and Claude's registry answer; a row may lack any field but the identifying one, and the merge copes. */
 export interface HerdrAgentRaw {
-  agent_session?: { value: string } | null
+  /** A pane with no Claude session reports `null`, `{}` or `{ value: null }`. */
+  agent_session?: { value?: string | null } | null
   agent_status?: string
   cwd?: string
   pane_id?: string
@@ -185,9 +186,15 @@ export interface MergeAgentsInput {
 
 export interface MergedProject {
   name: string
+  /** For display (Argo, the render, the model): one line, no control bytes. */
   cwd: string
+  /** The checkout to run git in: the raw cwd, or null when it is empty or carries a control byte or a line break. */
+  gitCwd: string | null
   agents: Agent[]
 }
+
+/** An identifier used as a key or a lookup (session, pane, workspace, job): itself when it is already one clean line, else null. */
+const safeId = (raw: string | null | undefined): string | null => (raw && cleanLine(raw) === raw ? raw : null)
 
 const normalizeHerdrStatus = (raw: string): HerdrAgentStatus =>
   raw === 'working' || raw === 'idle' || raw === 'blocked' || raw === 'done' ? raw : 'unknown'
@@ -218,12 +225,14 @@ export function mergeAgents(input: MergeAgentsInput): MergedProject[] {
   const entries = new Map<string, Entry>()
 
   for (const a of herdrAgents) {
+    // Keys and lookups use the raw value; a value that cleaning would change cannot be one (a UUID never is).
     const rawSession = a.agent_session?.value ?? null
-    const sessionId = cleanLine(rawSession) || null
-    const paneId = cleanLine(a.pane_id) || null
-    const workspaceId = cleanLine(a.workspace_id) || null
+    const sessionId = safeId(rawSession)
+    if (rawSession && !sessionId) continue
+    const paneId = safeId(a.pane_id)
+    const workspaceId = safeId(a.workspace_id)
     if (!sessionId && !paneId) continue // nothing to identify the row by
-    const tail = rawSession ? (transcripts.get(rawSession) ?? EMPTY_TAIL) : EMPTY_TAIL
+    const tail = sessionId ? (transcripts.get(sessionId) ?? EMPTY_TAIL) : EMPTY_TAIL
     entries.set(sessionId ?? `pane:${paneId}`, {
       jobStatus: null,
       workspaceId,
@@ -243,15 +252,14 @@ export function mergeAgents(input: MergeAgentsInput): MergedProject[] {
         lastPrompt: tail.lastPrompt,
         lastReply: tail.lastReply,
         lastActivityAt: tail.lastActivityAt,
-        account: rawSession ? cleanLine(accounts?.get(rawSession)) || null : null,
+        account: sessionId ? cleanLine(accounts?.get(sessionId)) || null : null,
         startedAt: null,
       },
     })
   }
 
   for (const c of claudeAgents) {
-    if (typeof c.sessionId !== 'string') continue
-    const sessionId = cleanLine(c.sessionId)
+    const sessionId = safeId(c.sessionId)
     if (!sessionId) continue
     const claudeStatus = normalizeClaudeStatus(c.status ?? '')
     const startedAt = typeof c.startedAt === 'number' ? c.startedAt : null
@@ -262,7 +270,7 @@ export function mergeAgents(input: MergeAgentsInput): MergedProject[] {
       existing.agent.startedAt = startedAt
       continue
     }
-    const tail = transcripts.get(c.sessionId) ?? EMPTY_TAIL
+    const tail = transcripts.get(sessionId) ?? EMPTY_TAIL
     entries.set(sessionId, {
       jobStatus: null,
       workspaceId: null,
@@ -282,14 +290,14 @@ export function mergeAgents(input: MergeAgentsInput): MergedProject[] {
         lastPrompt: tail.lastPrompt,
         lastReply: tail.lastReply,
         lastActivityAt: tail.lastActivityAt,
-        account: cleanLine(accounts?.get(c.sessionId)) || null,
+        account: cleanLine(accounts?.get(sessionId)) || null,
         startedAt,
       },
     })
   }
 
   for (const job of dispatchJobs) {
-    const jobId = cleanLine(job.id)
+    const jobId = safeId(job.id)
     if (!jobId) continue
     entries.set(`dispatch:${jobId}`, {
       jobStatus: job.status,
@@ -329,9 +337,14 @@ export function mergeAgents(input: MergeAgentsInput): MergedProject[] {
     })
     const label = entry.workspaceId ? workspaceLabels.get(entry.workspaceId) : undefined
     const projectName = cleanLine(label ?? basename(entry.cwd)) ?? ''
+    const gitCwd = entry.cwd !== '' && !hasControlBytes(entry.cwd) ? entry.cwd : null
     const group = groups.get(projectName)
-    if (group) group.agents.push(entry.agent)
-    else groups.set(projectName, { name: projectName, cwd: cleanLine(entry.cwd) ?? '', agents: [entry.agent] })
+    if (!group) {
+      groups.set(projectName, { name: projectName, cwd: cleanLine(entry.cwd) ?? '', gitCwd, agents: [entry.agent] })
+      continue
+    }
+    group.agents.push(entry.agent)
+    if (group.gitCwd == null && gitCwd != null) Object.assign(group, { cwd: gitCwd, gitCwd }) // the first usable checkout stands
   }
 
   const rank = (g: MergedProject) => Math.min(...g.agents.map((a) => STATE_RANK[a.state]))

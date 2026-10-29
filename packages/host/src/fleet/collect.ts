@@ -222,7 +222,9 @@ const herdrList = (parsed: unknown, key: string): unknown =>
 export const pickHerdrAgents = (parsed: unknown): Picked<HerdrAgentRaw> =>
   pickRows(herdrList(parsed, 'agents'), (row) => {
     const session = row.agent_session
-    const sessionOk = session == null || (isRecord(session) && typeof session.value === 'string')
+    // A pane without a Claude session is valid: `null`, `{}` and `{ value: null }` all mean "no session".
+    const sessionOk =
+      session == null || (isRecord(session) && (session.value == null || typeof session.value === 'string'))
     return (
       sessionOk && typed(row, 'string', 'agent_status', 'cwd', 'pane_id', 'workspace_id', 'terminal_title_stripped')
     )
@@ -567,7 +569,7 @@ export async function buildSnapshot(
   collectors: Collectors,
   options: { now?: number; staleAfterHours: number },
 ): Promise<Snapshot> {
-  const now = options.now ?? Date.now()
+  const startedAt = options.now ?? Date.now()
   const staleAfterMs = options.staleAfterHours * 60 * 60 * 1000
 
   const [herdrAgents, herdrWorkspaces, claudeAgents] = await Promise.all([
@@ -576,7 +578,7 @@ export async function buildSnapshot(
     collectors.claudeAgents(),
   ])
   const humanQueue = await collectors.humanQueue()
-  const dispatch = await collectors.dispatchJobs(now)
+  const dispatch = await collectors.dispatchJobs(startedAt)
   const warnings = [
     herdrAgents.warning,
     herdrWorkspaces.warning,
@@ -606,6 +608,10 @@ export async function buildSnapshot(
     ),
   )
 
+  // The snapshot's time is taken after the tails are read: a line a tail carries is never newer than the snapshot, so a
+  // verdict is only called stale for activity the model could not have seen. A caller-set clock (the cache) is kept.
+  const now = options.now ?? Date.now()
+
   // One resolve for panes and dispatch workers alike: only rows that have a session id.
   const accounts = await collectors.sessionAccounts(
     [...cwdBySession.keys(), ...dispatch.items.flatMap((j) => (j.sessionId ? [j.sessionId] : []))],
@@ -630,7 +636,7 @@ export async function buildSnapshot(
   const projects = await mapPool(merged, POOL_SIZE, async (project) => {
     let git: ProjectGit | null = null
     try {
-      git = project.cwd === '' ? null : await collectors.git(project.cwd)
+      git = project.gitCwd == null ? null : await collectors.git(project.gitCwd) // the raw cwd, never the display one
     } catch (error) {
       warnings.push(`git status failed for ${project.name}: ${String(error)}`)
     }
