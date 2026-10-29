@@ -4,7 +4,7 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
 `docs/waves/PLAN.md` and this file, then continues from **Next action**.
 
 ## State
-- Waves 1–6 done (retros in concept.md). Active wave: 7 (otel, brain, diagram, prose; P3b).
+- Waves 1–7 done (retros in concept.md). Active wave: 8 (Audio, image, podcast; P4a).
 - Lead's close-out channel: `docs/waves/handoff/lead.md` (the mother owns PLAN.md and the retro log;
   the lead writes per-step verdicts, Left behind, gate evidence and retro notes there, then idles).
 - dotfiles is free: P0 done (owner, 2026-10-27).
@@ -13,7 +13,7 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
   `com.jkrumm.vps-pg-backup` is ours: P0b maps it in dotfiles `docs/architecture.md`. Relayed to the lead.
 
 ## Lead
-- `agent-workflows-w1` (pane w40:p1E), Opus/high, fresh, spawned 2026-10-29 ~03:50 for Wave 7.
+- `agent-workflows-w1` (pane w40:p1P), Opus/high, fresh, spawned 2026-10-29 ~07:25 for Wave 8.
   Rotation policy: a fresh lead per wave unless the last one closed under ~30% context.
 - The mother is agent `agent-workflows-mother` (pane w40:p1).
 
@@ -69,7 +69,9 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
 - Gate lesson: the merge train read only the mini's `make check`; CI was red for a wave. Wave 6 fixes it.
 - For the owner: MacBook ask-human `20261029T033409-656` (remove research-gateway's MCP registration
   there). Team key: Wave 6 $26.13 (running total since Wave 4 ≈ $44).
+- For the owner: request `20261029T070930-17518` (CONTEXT7 key move) pending, MacBook unreachable.
+  Workers ran `agw review` 3× against the direction in Wave 7 ($0.46); briefs now forbid it.
 
 ## Next action
 - Watch the lead (`wave-watch.sh --agents agent-workflows-w1 --heartbeat 9`, bounded 10 min), read
-  `handoff/lead.md` on idle, write Wave 7's Left behind and retro, flip Wave 8 active, rotate the lead.
+  `handoff/lead.md` on idle, write Wave 8's Left behind and retro, flip Wave 9 active, rotate the lead.
