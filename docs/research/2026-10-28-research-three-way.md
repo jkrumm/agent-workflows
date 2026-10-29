@@ -59,10 +59,10 @@ output shape.
      The engine's cost has one source: its job's ledger row. The run's `engine.costUsd` sums the rows (each job once,
      null when any is unknown). The ledger decides the booking: the row that claims a job (migration 0008, one claim
      per run, step and job, atomic) books its cost on the run; a repeated question or an adopted job books nothing, and
-     a retried write recognises its own claim. Grants are in memory and end with their step on every path out, a cancelled run included.
+     a retried write recognises its own claim. Grants are in memory and end with their step on every path out, a cancelled run included. When the agent ends, its calls in flight are served first (bounded, 10 s; not on a cancel), so a last engine job finishes, books and writes its row; one still running at the bound is abandoned and recorded as a failed job of unknown cost, booked as such.
    - *One key rule* for the engine's jobs and the judge's calls (`attempt-keys.ts`): a key whose job or run is done is
-     adopted, and so is a failure that is an answer (`judge.ts` `answerOf`: a page gone, 404/410; a package not
-     found; a refused URL); an outage (5xx, timeout, network, `NOT_CONFIGURED`, `CANCELLED`, an internal error), an
+     adopted, and so is a failure that is an answer (`judge.ts` `answerOf`: the source answered a client error,
+     4xx: a page gone, forbidden, paywalled or rate-limited, a package not found; or a refused URL); an outage (5xx, timeout, network, `NOT_CONFIGURED`, `CANCELLED`, an internal error), an
      engine `error` or a cancel throws and is stepped past (`key:2`, …) on the retried scoring. Judge keys carry the score source, the scorer version and the scored run; drift keys
      also the pass (its UTC day), so each drift pass fetches fresh.
    - *Transport:* the gate's server has no idle timeout (`engine_research` holds a request for a whole job; Bun's
@@ -97,7 +97,7 @@ output shape.
 | `complete` | status `ok`, not `partial` | no |
 | `grounded` | share of the run's citations whose URL it retrieved or saw as a search result (left out without citations) | no |
 | `golden` | the case's `expect` on the report text and its `maxChars`, `evals/lib.ts` semantics exactly (`any`/`all` case-insensitive regex, `live:` a literal substring of the registry's latest version, fetched via `web.package` at scoring time, `v`/`bun-v` stripped for GitHub releases) | no (`live` needs the judge) |
-| `supported` | up to 3 citations with distinct URLs, in report order: the judge fetches the page (`web.fetch`, 20k chars) and asks `decide` whether it supports the claim; the share over the citations the judge could score. A typed judge error (page gone or empty, `decide` failed) leaves a citation unscored, never unsupported; `judgedShare` (in [0, 1]) is the share the judge could score; none scored leaves `supported` out; no citation at all scores 0 | judged |
+| `supported` | up to 3 citations with distinct URLs, in report order: the judge fetches the page (`web.fetch`, 20k chars) and asks `decide` whether it supports the claim; the share over the citations the judge could score. A page the judge cannot read (a 4xx from the source, a refused URL, an empty page) or a `decide` without a boolean leaves a citation unscored, never unsupported; a fetch or `decide` outage throws and the scoring is retried; `judgedShare` (in [0, 1]) is the share the judge could score; none scored leaves `supported` out; no citation at all scores 0 | judged |
 
 `pass` = valid and golden passed. A `live:` case whose package the registry does not have, or answers without a usable version, leaves `golden` unscored (`pass` false, feedback says why); a registry outage throws through the judge, and the runtime retries the scoring. Cases: the 28 golden questions (19 quick, 8 standard, 1 deep) as plain eval cases in
 `$AGW_EVAL_DIR/research/cases.jsonl` (outside git): `{id, input: {query, depth}, reference: {expect, maxChars?}}`.
@@ -118,7 +118,9 @@ Operationalized in `packages/host/src/workflows/research/decision.ts` (tested), 
 
 - Per question, an arm's score is the mean of its runs; a failed run counts as golden 0 and supported 0, a done run
   the judge left unscored on a score (no citation it could judge, no live value) is left out of that score, never
-  counted as 0 (amended in review round 1, before any live run). The paired difference is taken over questions both arms ran; the bootstrap resamples
+  counted as 0 (amended in review round 1, before any live run). A run that never ended (cancelled, still running) is
+  no result: listed and counted in the report, left out of quality, medians and the rule (review round 5, before the
+  full run). `judgedShare` is reported per arm, so a lean toward easy-to-fetch citations shows. The paired difference is taken over questions both arms ran; the bootstrap resamples
   questions with replacement, 10,000 iterations, seed 20261028, percentile interval.
 - Rule 3 runs first, per agent design (focused − yolo, paired), and picks the one A arm and the one P arm that enter
   rules 1 and 2.
@@ -139,8 +141,12 @@ cleanly. These edges are known and left as they are, because none of them bends 
   from the ledger, stays right.
 - **Late calls:** a tool call that reaches the gate after its grant closed is refused; a usage report that arrives
   after the `tools` step ended is not booked.
-- **Two processes on one question at once** (a deploy overlap) both check the ledger before either writes: the job
-  could be booked twice. One process per host makes this a deploy-overlap case only.
+- **A lost write acknowledgement** that the claim token cannot settle (the evidence row landed, the retry then failed
+  for good) leaves a duplicate unbooked row; `evidence` counts each job once, so only the call count reads high.
+- **A resumed step** gets a fresh grant under the same run and step: a job adopted in it finds the earlier claim and
+  books nothing, but that earlier booking's usage was lost with the interrupted execution (as above).
+- **The database down for every write retry** books an engine job without checking its claim (logged as
+  `booked unchecked`): a repeated question could then be booked twice.
 - **`stateDir`:** the gate writes `gate.json` under the host's default state directory, where the OpenCode host
   compiles locations too (boot passes neither a different one). A host given another `stateDir` must give it to both.
 - **Search results count as grounded,** as in the engine (`citationsKept`: "a page this run actually retrieved or

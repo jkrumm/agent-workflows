@@ -278,6 +278,8 @@ export const createFetch = (deps: ResolvedWebDeps) =>
       // `direct` checks the URL before it sends anything, so a refused URL never reaches Tavily either.
       const failures: string[] = []
       let sparse: Read | undefined
+      // The page's own client error (401, 403, 429, a paywall): carried in `data.status` when no read succeeds.
+      let pageStatus: number | undefined
       // A direct read that went out costs nothing, and says so: the run is priced at $0, not unknown. A refused URL
       // sends nothing and reports nothing.
       const free = () => ctx.addUsage(webUsage('direct', 0))
@@ -292,6 +294,7 @@ export const createFetch = (deps: ResolvedWebDeps) =>
         free()
         // A page that is definitively gone is not worth a paid second opinion.
         if (error.missing) throw fail('UPSTREAM_ERROR', `web.fetch: ${error.message}`, { status: error.status ?? 404 })
+        if (error.status !== undefined && error.status >= 400 && error.status < 500) pageStatus = error.status
         failures.push(`direct: ${error.message}`)
       }
 
@@ -305,7 +308,7 @@ export const createFetch = (deps: ResolvedWebDeps) =>
 
       // A kept thin read is still a read: better than an error for a short page.
       if (sparse && sparse.text.length > 0) return shape(url, sparse, 'direct', maxChars)
-      throw fail('UPSTREAM_ERROR', `web.fetch: ${failures.join(' · ')}`, {})
+      throw fail('UPSTREAM_ERROR', `web.fetch: ${failures.join(' · ')}`, pageStatus ? { status: pageStatus } : {})
     },
   })
 

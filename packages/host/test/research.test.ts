@@ -55,7 +55,9 @@ function fakeEngine() {
         job.status = 'error'
         return Response.json({ status: 'error', depth: 'quick', error: 'worker crashed' })
       }
-      const slow = query.includes('SLOW') && Date.now() - job.at < 11_000
+      const slow =
+        (query.includes('SLOW') && Date.now() - job.at < 11_000) ||
+        (query.includes('LAGGY') && Date.now() - job.at < 300)
       if (job.polls < 2 || slow) return Response.json({ status: 'running', depth: 'quick' })
       job.status = 'done'
       return Response.json({
@@ -531,6 +533,51 @@ describe('the tool gate ledger: evidence the decision rests on', () => {
     const ev = evidence(await memory.read('r-once', 'research'))
     expect(ev).toMatchObject({ engineJobs: [expect.any(String)], engineCostUsd: 0.04 })
     for (const dir of [first, second]) rmSync(dir, { recursive: true, force: true })
+  })
+
+  test('an engine job in flight at the agent end is served first; one cut off is recorded and booked as abandoned', async () => {
+    const memory = memoryToolLedger()
+    const dir = mkdtempSync(join(tmpdir(), 'agw-gate-end-'))
+    const own = new ToolGate({
+      stateDir: dir,
+      ledger: memory,
+      engine: () => createEngineClient({ url: engine.url, token: 'engine-token' }),
+      call: fakeCapability,
+      enginePollMs: 5,
+      belongsTo: (sessionId, stepKey) => sessionId === stepKey,
+    })
+    const ask = async (runId: string, end: (close: () => Promise<void>) => Promise<void>) => {
+      const booked: (number | null | undefined)[] = []
+      const close = own.open({ runId, stepId: 'research', tools: ['engine_research'] })
+      const unbind = own.bindUsage(runId, 'research', (u) => booked.push(u.cost))
+      const { url, key } = (await Bun.file(join(dir, 'research', 'gate.json')).json()) as { url: string; key: string }
+      const pending = fetch(`${url}/tool/engine_research`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${key}` },
+        body: JSON.stringify({ sessionID: `${runId}:research`, args: { question: `LAGGY ${runId}: postgres port?` } }),
+      })
+      await Bun.sleep(50) // the job is running when the agent ends
+      await end(close)
+      unbind()
+      await pending
+      return { booked, rows: await memory.read(runId, 'research') }
+    }
+    try {
+      const served = await ask('r-end', async (close) => {
+        await own.settle('r-end', 'research')
+        await close()
+      })
+      expect(served.booked).toEqual([0.04])
+      expect(served.rows).toMatchObject([{ ok: true, engineJob: expect.any(String), engineCostUsd: 0.04 }])
+
+      const cut = await ask('r-cut', (close) => close())
+      expect(cut.booked).toEqual([null])
+      expect(cut.rows).toMatchObject([{ ok: false, engineJob: expect.any(String), engineCostUsd: null }])
+      expect(cut.rows[0]?.error).toContain('abandoned')
+    } finally {
+      await own.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 
   test("close removes gate.json only while it holds this instance's key", async () => {

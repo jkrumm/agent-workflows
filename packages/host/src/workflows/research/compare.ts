@@ -32,10 +32,10 @@ const armOf = (input: { design?: string; profile?: string }): ArmId | null => {
 
 /**
  * Every research run the eval runs started, found by their case key (`eval:<evalRunId>:<caseId>`), so none drops out
- * silently. Only a `done` run is ok. A failed run is a miss (golden 0, supported 0) whose cost and wall time count. An
- * incomplete run (cancelled, still running) is a miss too, but its cost, wall time, tokens and tool calls are partial,
- * so they stay out of every median. A done run without a verdict (not scored yet, a recorded scorer error) is left out
- * of the quality scores and counted as unscored.
+ * silently. Only a `done` run is ok. A failed run is a miss (golden 0, supported 0, the pre-registered rule) whose cost
+ * and wall time count. An incomplete run (cancelled, still running) never ended: it is listed and counted, but left
+ * out of quality, of every median and of the rule. A done run without a verdict (not scored yet, a recorded scorer
+ * error) is left out of the quality scores and counted as unscored.
  */
 export async function load(pool: Pool, schema: string, evalRunIds: string[]) {
   const { rows } = await pool.query<DbRow>(
@@ -103,9 +103,9 @@ export function report(loaded: Loaded[]): string {
       if (!mine.length) continue
       const ok = mine.filter((l) => l.row.ok)
       const ended = mine.filter((l) => l.state !== 'incomplete')
-      // Failed and incomplete runs count 0; a done run left unscored is left out (as in the rule).
+      // Failed runs count 0; a done run left unscored and an incomplete run are left out (as in the rule).
       const score = (key: 'golden' | 'supported') =>
-        avg(mine.flatMap((l) => (!l.row.ok ? [0] : l.row[key] === null ? [] : [l.row[key]])))
+        avg(ended.flatMap((l) => (!l.row.ok ? [0] : l.row[key] === null ? [] : [l.row[key]])))
       const tokens = ended.reduce((a, l) => a + (l.tokens ?? 0), 0)
       lines.push(
         `| ${arm} | ${mine.length} | ${mine.filter((l) => l.state === 'failed').length} | ${mine.filter((l) => l.state === 'incomplete').length} | ${mine.filter((l) => l.unscored).length} | ${ok.filter((l) => l.partial).length} | ${f(score('golden'))} | ${f(score('supported'))} | ${f(avg(ok.flatMap((l) => (l.judgedShare === null ? [] : [l.judgedShare]))))} | ${f(avg(ok.flatMap((l) => (l.grounded === null ? [] : [l.grounded]))))} | ${f(median(mine.flatMap((l) => (l.row.cost === null ? [] : [l.row.cost]))), 4)} | ${f(seconds(median(mine.flatMap((l) => (l.row.wallMs === null ? [] : [l.row.wallMs])))), 0)} | ${median(ended.map((l) => l.tokens ?? 0)) ?? 'n/a'} | ${tokens ? f(ended.reduce((a, l) => a + (l.cacheRead ?? 0), 0) / tokens) : 'n/a'} | ${median(ended.map((l) => l.toolCalls ?? 0)) ?? 'n/a'} |`,
@@ -121,7 +121,8 @@ export function report(loaded: Loaded[]): string {
     for (const l of failures) lines.push(`| ${l.row.arm} | ${l.row.caseId} | ${l.status} | ${l.errorKind ?? 'n/a'} |`)
     lines.push('')
   }
-  const verdict = decide(loaded.map((l) => l.row))
+  // The rule sees ended runs only: an incomplete run is no result (listed above), not a miss.
+  const verdict = decide(loaded.filter((l) => l.state !== 'incomplete').map((l) => l.row))
   lines.push(
     '### Verdict by the rule',
     '',

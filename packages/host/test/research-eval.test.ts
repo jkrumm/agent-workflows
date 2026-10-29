@@ -250,10 +250,10 @@ describe("the scorers' judge", () => {
     expect(await capRuns(refused)).toEqual(['failed'])
   })
 
-  test('answerOf: only gone (404, 410) and refused are answers', () => {
+  test('answerOf: a client error from the source (4xx) and a refused URL are answers; the rest are outages', () => {
     const of = (code: string, data?: unknown) => answerOf({ code, message: 'm', data }) !== null
-    expect(of('UPSTREAM_ERROR', { status: 404 })).toBe(true)
-    expect(of('UPSTREAM_ERROR', { status: 410 })).toBe(true)
+    for (const status of [401, 403, 404, 410, 429]) expect(of('UPSTREAM_ERROR', { status })).toBe(true)
+    expect(of('UPSTREAM_ERROR', { status: 500 })).toBe(false)
     expect(of('URL_REFUSED')).toBe(true)
     expect(of('UPSTREAM_ERROR', { status: 503 })).toBe(false)
     expect(of('UPSTREAM_ERROR', {})).toBe(false)

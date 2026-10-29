@@ -128,9 +128,19 @@ test('the report prints a table per depth and the verdict', async () => {
     cacheRead: 5,
     toolCalls: 3,
   }))
-  const text = report(rows)
+  // A cancelled engine run: listed and counted, but no result, so neither a 0 nor a cost.
+  const first = rows[0] as (typeof rows)[number]
+  const cancelled = {
+    ...first,
+    row: { ...first.row, caseId: 'cancelled', ok: false, golden: null, supported: null, cost: null, wallMs: null },
+    state: 'incomplete' as const,
+    status: 'cancelled',
+    errorKind: null,
+  }
+  const text = report([...rows, cancelled])
   expect(text).toContain('### standard')
-  expect(text).toContain('| engine | 36 | 0 | 0 | 0 | 0 | 1.00 | 0.80 | 1.00 | 1.00 | 0.1000 | 100 | 10 | 0.50 | 3 |')
+  expect(text).toContain('| engine | 37 | 0 | 1 | 0 | 0 | 1.00 | 0.80 | 1.00 | 1.00 | 0.1000 | 100 | 10 | 0.50 | 3 |')
+  expect(text).toContain('| engine | cancelled | cancelled | n/a |')
   expect(text).toContain('### Failed or incomplete runs')
   expect(text).toContain('| failed | step_failed |')
   expect(text).toContain('**Winner:')

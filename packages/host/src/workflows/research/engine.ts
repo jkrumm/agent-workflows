@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { z } from 'zod'
 import { type KeyAttempt, withAttemptKeys } from '../../attempt-keys.ts'
 import { Citation, type Depth, Unverified } from './schema.ts'
+import { message } from './util.ts'
 
 /**
  * research-gateway's REST surface (`src/routes/research.ts`): `POST /research` answers a job id at once, `GET
@@ -113,8 +114,9 @@ export class EngineJobFailed extends Error {
     readonly jobId: string,
     readonly costUsd: number | null,
     message: string,
+    options?: { cause?: unknown },
   ) {
-    super(message)
+    super(message, options)
   }
 }
 
@@ -138,14 +140,21 @@ export async function runEngineJob(
     if (submitted.status === 'error' || submitted.status === 'cancelled') return { failedBefore: true }
     const adopted = submitted.status === 'done'
     const { jobId } = submitted
+    // Abandoned mid-job (a cancel, the grant closing): the job ran and costs something, so it ends as a failed job with
+    // an unknown cost, never as a bare abort that would leave it out of the ledger and the run's spend.
+    const abandoned = () =>
+      new EngineJobFailed(jobId, null, `engine job ${jobId} abandoned: ${message(signal.reason)}`, {
+        cause: signal.reason,
+      })
     let failures = 0
     for (let first = true; ; first = false) {
-      if (!(first && adopted)) await sleep(pollMs, signal)
+      if (!(first && adopted)) await sleep(pollMs, signal).catch(() => Promise.reject(abandoned()))
       let job: EngineJob
       try {
         job = await client.poll(jobId, signal)
       } catch (error) {
-        if (signal.aborted || ++failures >= maxPollFailures) throw error
+        if (signal.aborted) throw abandoned()
+        if (++failures >= maxPollFailures) throw error
         continue
       }
       failures = 0
