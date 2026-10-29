@@ -1,5 +1,5 @@
 import { type StepSessions, usageFromOpenCodeMessages } from '@agent-workflows/middleware'
-import { costFromUsage, isBalanceFailure, LONG_PROMPT_TOKENS, type Rate, type RouteId } from '@agent-workflows/routes'
+import { costFromUsage, isBalanceFailure, type Rate, type RouteId } from '@agent-workflows/routes'
 import {
   type AgentFollowUpSpec,
   type AgentHost,
@@ -1031,9 +1031,9 @@ export class OpenCodeHost implements AgentHost {
  * The cost of a session's assistant messages, or `null` when one cannot be priced. Per message: OpenCode's when it is
  * positive (it prices with the config's cost rows, i.e. the route's base rate); a message it reports at 0 with tokens
  * is priced with the route's rate (`costFromUsage`). The exception is a message above the rate's long-prompt threshold
- * on a rate that models the tier (`longPrompt`): OpenCode's flat rows cannot know the tier, so that message is priced
- * by the rate whatever OpenCode reported. A long message on a rate without the tier is OpenCode's cost when it reported
- * one, else unpriced. The threshold applies per message, never to the step. `byRate`: some message was priced by the rate.
+ * on a rate that has a tier (`longPrompt`): OpenCode's flat rows cannot know the tier, so that message is priced by the
+ * rate whatever OpenCode reported. A rate without a tier is flat at any size. The threshold applies per message, never
+ * to the step. `byRate`: some message was priced by the rate.
  */
 export function priceOpenCodeMessages(
   messages: readonly Message[],
@@ -1050,7 +1050,7 @@ export function priceOpenCodeMessages(
     if (total === 0) continue
     const tiered =
       rate?.longPrompt !== undefined &&
-      (t.input ?? 0) + cacheRead + cacheWrite > (rate.longPromptTokens ?? LONG_PROMPT_TOKENS)
+      (t.input ?? 0) + cacheRead + cacheWrite > (rate.longPromptTokens ?? Number.POSITIVE_INFINITY)
     if (!tiered && typeof m.cost === 'number' && Number.isFinite(m.cost) && m.cost > 0) {
       cost += m.cost
       continue

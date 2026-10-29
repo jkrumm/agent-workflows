@@ -240,12 +240,11 @@ describe('open / prompt / wait', () => {
     expect((await t.host.wait(handle, waitOptions())).usage?.cost).toBeCloseTo(HAIKU_LONG, 12)
   })
 
-  test('a long message on a rate without the tier keeps the cost OpenCode reported', async () => {
-    const t = setup({
-      env: {
-        AGW_ROUTES: JSON.stringify({ check: { rate: { inputPerM: 0.1, outputPerM: 0.5, cacheReadPerM: 0.01 } } }),
-      },
-    })
+  const FLAT = { inputPerM: 0.1, outputPerM: 0.5, cacheReadPerM: 0.01, cacheWritePerM: 0.125 }
+  const flat = () => setup({ env: { AGW_ROUTES: JSON.stringify({ check: { rate: FLAT } }) } })
+
+  test('a long message on a rate without a tier keeps the cost OpenCode reported', async () => {
+    const t = flat()
     const handle = await t.host.open(spec('x'))
     await t.host.prompt(handle, '[long] x')
     const { usage } = await t.host.wait(handle, waitOptions())
@@ -253,17 +252,13 @@ describe('open / prompt / wait', () => {
     expect(usage?.cost).toBeCloseTo(0.001, 12)
   })
 
-  test('a long message on a rate without the tier that OpenCode reported at 0 is unpriced, never under-priced', async () => {
-    const t = setup({
-      env: {
-        AGW_ROUTES: JSON.stringify({ check: { rate: { inputPerM: 0.1, outputPerM: 0.5, cacheReadPerM: 0.01 } } }),
-      },
-    })
+  test('a long message on a rate without a tier that OpenCode reported at 0 is priced flat, at any size', async () => {
+    const t = flat()
     const handle = await t.host.open(spec('x'))
     await t.host.prompt(handle, '[free] [long] x')
     const { usage } = await t.host.wait(handle, waitOptions())
-    expect(usage?.cost).toBeNull()
-    expect(usage?.costSource).toBe('unknown')
+    expect(usage?.costSource).toBe('rate')
+    expect(usage?.cost).toBeCloseTo((150_000 * 0.1 + 100 * 0.01 + 20 * 0.125 + 6 * 0.5) / 1e6, 12)
   })
 
   test('cost 0 on a route without a rate is unpriced, never 0', async () => {

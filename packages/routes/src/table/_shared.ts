@@ -24,14 +24,13 @@ export const HAIKU_55_RATE = {
 // Source: Anthropic pricing page (platform.claude.com/docs/en/about-claude/pricing), read 2026-10-29: the Sonnet 5.5 row,
 // and footnote 2 "Cache hits and refreshes on Claude Opus 5.5 and Claude Sonnet 5.5 are priced at 0.05x the base input
 // price". The page lists no long-context tier for Sonnet 5.5: "Claude 4.6 and later models (except Claude Haiku 5.5) ...
-// include the full 1M token context window at standard pricing". `longPromptTokens` is therefore the window itself, 1M,
-// so the 100K default of `Rate` (the Haiku step) does not price a long angle prompt `unknown`.
+// include the full 1M token context window at standard pricing". The rate has no `longPrompt` tier, so it is priced flat
+// at any size (before 2026-10-29 a 100K default applied to every rate and priced 13 deep-review steps `unknown`).
 export const SONNET_55_RATE = {
   inputPerM: 2,
   outputPerM: 10,
   cacheReadPerM: 0.1,
   cacheWritePerM: 2.5,
-  longPromptTokens: 1_000_000,
 }
 
 // GPT-6.1 Terra, Standard tier, USD/M: in 1.00, cached in 0.05, out 5.00, cache write 1.25 (30-min). Above 272K input
@@ -56,4 +55,9 @@ export const AGENT_FALLBACK = { wire: 'opencode', ...TERRA } as const
 
 // The single-call fallback for a route whose primary is Terra (a Terra fallback would be the same model): Haiku 5.5 on
 // the chat wire. Anthropic's balance is not OpenAI's.
-export const HAIKU_CALL_FALLBACK = { wire: 'iu-openai', model: 'claude-haiku-5-5', rate: HAIKU_55_RATE } as const
+export const HAIKU_CALL_FALLBACK = {
+  wire: 'iu-openai',
+  model: 'claude-haiku-5-5',
+  maxOutputTokens: TERRA.maxOutputTokens,
+  rate: HAIKU_55_RATE,
+} as const

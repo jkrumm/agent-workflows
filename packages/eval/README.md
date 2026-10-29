@@ -176,6 +176,8 @@ Result: one row, `review` / `agent` / Haiku 5.5 EU, 11 steps, each with `unprice
 angle steps (architect 1, security 2, data-migration 2, concurrency 1, senior-dev 1, frontend 1, backend 1, typescript 1,
 api-contract 1) of two `deep` review runs; no other workflow, no judge call and no capability call was unpriced.
 
+**Superseded 2026-10-29 (Wave 9): the host now prices a message above the threshold at the rate's `longPrompt` tier, and a rate without a tier is flat; the text below is the finding as it stood.**
+
 **By design, not a missing rate.** `OpenCodeHost.usage` prices a step message by message and returns `unpriced` for
 the whole step when any one message has a prompt (input plus cache reads and writes) above 100K tokens
 (`LONG_PROMPT_TOKENS`): vendors bill the long-prompt tier of Haiku at 5x, which `Rate` does not model, so the cost is

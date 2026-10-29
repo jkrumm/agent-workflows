@@ -272,8 +272,9 @@ models the queued one for that race).
 OpenCode's when it is positive (it prices with the config's cost rows, i.e. the route's own `rate`, `costSource:
 provider`); a message reported at cost 0 with tokens is priced with the route's rate through `costFromUsage`
 (`costSource: rate`). The step is unpriced (`cost: null`, `costSource: unknown`) when that has no rate, when cache
-tokens appear without the matching cache rate, or when one call exceeds the rate's `longPromptTokens` (default 100K;
-the vendor's higher tier): never free, never under-priced. A step that moved to its fallback session is priced with
+tokens appear without the matching cache rate: never free. A message above the rate's `longPromptTokens` on a rate with a
+`longPrompt` tier is priced by the rate whatever OpenCode reported (its cost rows are flat and cannot know the tier); a
+rate without the tier is flat at any size. A step that moved to its fallback session is priced with
 the fallback's rate and reports the fallback's model. Every `opencode`-wire route carries its own rate (`packages/routes`).
 
 ## Provider-balance fallback

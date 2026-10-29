@@ -22,7 +22,6 @@ export const OPUS_55_RATE = {
   outputPerM: 20,
   cacheReadPerM: 0.2,
   cacheWritePerM: 5,
-  longPromptTokens: 1_000_000,
 }
 
 const cheapSeat = {
