@@ -59,8 +59,15 @@ title=$(print -r -- "$out" | jq -r '.output.title // empty' 2>/dev/null)
 [[ -n "$title" ]] || fail "run $run_id has no output title: $out"
 ok "agw smoke ping: run $run_id, title \"$title\""
 
-# 4. its row in the journal: the run answer waits for the run record, so the record is already there (no polling)
-[[ "$(print -r -- "$out" | jq -r '.costPending // false')" == "false" ]] || fail "run $run_id answered before its run record landed (costPending): $out"
+# 4. its row in the journal: the run answer holds up to 5 s for the run record. One slow runPost or a database blip
+# can outlast that (`costPending`), so ask again for up to ~20 s before calling it a failure.
+for _ in {1..4}; do
+  [[ "$(print -r -- "$out" | jq -r '.costPending // false' 2>/dev/null)" == "true" ]] || break
+  out=$(agw run wait "$run_id" 2>&1)
+  rc=$?
+  (( rc == 0 )) || fail "agw run wait $run_id exited $rc: $out"
+done
+[[ "$(print -r -- "$out" | jq -r '.costPending // false' 2>/dev/null)" == "false" ]] || fail "run $run_id has no run record after ~20 s (costPending): $out"
 answer_cost=$(print -r -- "$out" | jq -r '.cost // empty' 2>/dev/null)
 [[ -n "$answer_cost" ]] && (( answer_cost > 0 )) || fail "run $run_id answered without priced usage (cost '${answer_cost:-null}'): $out"
 row=$(journal "select status, coalesce(trace_id, ''), coalesce(cost::text, ''), coalesce(tokens_input, 0) from \"$SCHEMA\".runs where id = :'id'" -v "id=$run_id") || exit 1
@@ -68,7 +75,9 @@ IFS='|' read -r run_status trace cost tokens <<< "$row"
 [[ "${run_status:-}" == "done" ]] || fail "run $run_id is '${run_status:-missing}' in $SCHEMA.runs, not done"
 [[ -n "${trace:-}" ]] || fail "run $run_id has no trace id"
 [[ -n "${cost:-}" ]] && (( cost > 0 )) || fail "run $run_id has no priced usage (cost '${cost:-null}')"
-(( cost == answer_cost )) || fail "run $run_id: the answer's cost $answer_cost differs from the journal's $cost"
+# the answer prints a JSON number, the journal a numeric: the same value, not the same text
+awk -v a="$answer_cost" -v b="$cost" 'BEGIN { d = a - b; if (d < 0) d = -d; exit !(d < 1e-9) }' \
+  || fail "run $run_id: the answer's cost $answer_cost differs from the journal's $cost"
 (( ${tokens:-0} > 0 )) || fail "run $run_id recorded no input tokens"
 ok "journal: done, trace $trace, cost $cost (as answered), $tokens input tokens"
 

@@ -158,7 +158,8 @@ export function capabilityRuns(workflows: CapabilityWorkflows, deps: CapabilityR
     context.response.headers = { ...context.response.headers, [RUN_ID_HEADER]: runId }
 
     // No deadline: the wait ends when the run does, or early only when the caller goes away.
-    const state = await waitFor(deps.store, runId, Number.POSITIVE_INFINITY, deps.logger, signal)
+    // It reads the output only, so it does not pay the hold for the run record.
+    const state = await waitFor(deps.store, runId, Number.POSITIVE_INFINITY, deps.logger, signal, 0)
     if (!state) throw new Error(`run ${runId} vanished`)
     if (state.status === 'done') return state.output
     if (isTerminal(state.status)) throw failureOf(state, deps.logger)

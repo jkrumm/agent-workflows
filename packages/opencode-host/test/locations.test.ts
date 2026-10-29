@@ -136,8 +136,8 @@ test('stale temp builds and server.json temps are swept, fresh ones kept', () =>
 })
 
 /**
- * Lets every pending microtask run. The cache is in-process promises with no timer or IO of its own, so once the
- * macrotask queue turns, each continuation that could run has run; no duration is involved.
+ * Lets every pending microtask run. Deterministic only while the cache is in-process promises with no timer or IO of
+ * its own (it is): once the macrotask queue turns, each continuation that could run has run; no duration is involved.
  */
 const flush = () => new Promise<void>((resolve) => setImmediate(resolve))
 

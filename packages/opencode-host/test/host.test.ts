@@ -965,7 +965,12 @@ describe('followUp (ctx.continue)', () => {
     await t.host.prompt(first, 'draft it')
     await t.host.wait(first, waitOptions())
     const next = await t.host.followUp(first, turn())
-    await t.host.prompt(next, 'more') // the turn runs from the admitted prompt on: the kill cuts it off
+    await t.host.prompt(next, 'more')
+    // the fake opens the turn's assistant message when it starts: the kill below lands inside the 300 ms turn
+    await until(
+      async () => (await t.client.messages(sid(next))).some((m) => m.type === 'assistant'),
+      'the turn to start',
+    )
     t.kill()
     t.boot()
     expect((await t.host.wait(next, waitOptions())).output).toMatch(/^resumed: echo: /)
