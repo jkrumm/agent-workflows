@@ -64,6 +64,10 @@ Declared on every operation (they land in the OpenAPI document), keyed by `code`
 | `URL_REFUSED` | 422 | `web.fetch` will not fetch the URL (not http(s), credentials in it, an internal name, or a non-public address, on the first URL or on a redirect hop). Nothing was sent. The CLI maps 422 to its usage exit code |
 | `CANCELLED` | 499 | the caller's signal aborted |
 
+### `internal` and `hidden`
+
+`cli.hidden` only drops the CLI command: the capability is still on the HTTP router and in OpenAPI. `internal: true` serves it nowhere (no route, no OpenAPI operation, no CLI, no host `cap.<id>` run, never grantable to an agent); `registry.call` from a workflow step still works, and `registry.served` is the one list of what has a door.
+
 ### `x-cli`
 
 Every operation carries `x-cli`, with defaults filled in: `{ command, positional, mutating, defaultFormat, kind, stdin?, plainField?, resume? }`. Flags come from the input schema's properties that are not positional. `kind` is `capability` here; the host's workflow and run operations set `workflow` and `run`, and `resume` (`{ command, positional }`, the command that continues a still-running workflow) rides on workflows only. The host attaches the same block to its own operations through the exported `withCli`, and merges a registry into its router through `registry.router` and `registry.requestContext` (see the host README). `stdin` names the input property that is read from stdin when it is not given as an argument or flag. It is new in this package (the S3 spike's `x-cli` had no equivalent), so the Wave 3 generator must read it. The block is attached through one `spec` callback in `procedure.ts`.

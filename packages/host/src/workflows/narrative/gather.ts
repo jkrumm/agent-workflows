@@ -8,9 +8,13 @@ import { join } from 'node:path'
 
 export const BOOTSTRAP_DAYS = 180
 export const BOOTSTRAP_COMMIT_LIMIT = 120
+/** The newest commits read for a real cutoff: the 30 KB cap keeps only the newest anyway, a few hundred bound the `git log`. */
+export const SINCE_COMMIT_LIMIT = 300
 export const BOOTSTRAP_SESSION_LIMIT = 12
 /** The newest transcripts read for a real cutoff: a project with hundreds of files since the cutoff does not read them all. */
 export const SINCE_SESSION_LIMIT = 24
+/** Transcripts opened per included one, at most, whether or not they yield prose: a project of hundreds of quiet files reads a bounded few. */
+export const SESSION_READ_FACTOR = 3
 export const MIN_SESSION_FILE_BYTES = 4 * 1024
 /** Never read a whole transcript (they reach 16 MB): only this tail. */
 export const SESSION_TAIL_BYTES = 1024 * 1024
@@ -151,8 +155,9 @@ async function gatherCommits(
     '--no-merges',
     `--pretty=format:%h %cI %s%n%b${COMMIT_SEP}`,
     `--since=${since ?? bootstrapSince}`,
+    '-n',
+    String(since ? SINCE_COMMIT_LIMIT : BOOTSTRAP_COMMIT_LIMIT),
   ]
-  if (!since) args.push('-n', String(BOOTSTRAP_COMMIT_LIMIT))
   const entries = (await ports.git(cwd, args))
     .split(COMMIT_SEP)
     .map((e) => e.trim())
@@ -170,8 +175,9 @@ async function gatherCommits(
 
 /**
  * Transcripts under `<projects>/<encodeProjectDir(cwd)>/*.jsonl`, newest first, 40 KB total cap. Bootstrap (no `since`)
- * takes the newest 12 files with no date filter; a real `since` filters by mtime instead and reads the newest 24 of them. Files under 4 KB are skipped
- * outright, and a file that yields no title and no long assistant block is dropped without consuming any budget.
+ * includes up to 12 sessions with no date filter; a real `since` filters by mtime instead and includes up to 24. The count
+ * is of sessions that yielded prose: a file with no title and no long assistant block is dropped without consuming any
+ * budget or a place, and files under 4 KB are skipped outright. At most 3 times the count are opened, yielding or not.
  */
 async function gatherSessions(ports: GatherPorts, cwd: string, since: string | null): Promise<Gathered['sessions']> {
   const dir = join(ports.projectsDir, encodeProjectDir(cwd))
@@ -179,11 +185,13 @@ async function gatherSessions(ports: GatherPorts, cwd: string, since: string | n
   let candidates = (await ports.sessionFiles(dir)).filter((s) => s.size >= MIN_SESSION_FILE_BYTES)
   if (sinceMs !== null) candidates = candidates.filter((s) => s.mtimeMs > sinceMs)
   candidates = candidates.toSorted((a, b) => b.mtimeMs - a.mtimeMs)
-  candidates = candidates.slice(0, sinceMs === null ? BOOTSTRAP_SESSION_LIMIT : SINCE_SESSION_LIMIT)
+  const limit = sinceMs === null ? BOOTSTRAP_SESSION_LIMIT : SINCE_SESSION_LIMIT
+  candidates = candidates.slice(0, limit * SESSION_READ_FACTOR)
 
   const entries: string[] = []
   let bytes = 0
   for (const c of candidates) {
+    if (entries.length >= limit) break
     // Fail soft, as a transcript the user is writing to right now may vanish or tear: an unreadable tail is an empty one.
     const prose = await ports
       .readTail(join(dir, c.file), SESSION_TAIL_BYTES)

@@ -375,7 +375,7 @@ export async function bootProcess(
       runtime,
       registry: definition.serveCapabilities
         ? registry
-        : { capabilities: [], router: {}, requestContext: registry.requestContext },
+        : { served: [], router: {}, requestContext: registry.requestContext },
       workflows,
       capabilityWorkflows,
       secret: config.secret,

@@ -100,8 +100,10 @@ export const MAX_BRIEF_FINDINGS = 50
 export const MAX_BRIEF_NOTES = 30
 
 /** At most `max` lines, then the count of the rest (`omitted` lines the caller never sent are part of it). */
-const capped = (lines: string[], max: number, omitted = 0) =>
-  lines.length + omitted > max ? [...lines.slice(0, max), `- … and ${lines.length + omitted - max} more`] : lines
+const capped = (lines: string[], max: number, omitted = 0) => {
+  const more = Math.max(0, lines.length - max) + omitted
+  return lines.length > max || omitted > 0 ? [...lines.slice(0, max), `- … and ${more} more`] : lines
+}
 
 export interface WriterDataArgs {
   text: string

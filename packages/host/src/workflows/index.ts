@@ -56,8 +56,9 @@ export function hostModules(): Promise<readonly DiscoveredModule[]> {
 /** Every workflow the host process serves: each module's (default: the host's tree), built from `deps`. */
 export async function createWorkflows(deps: HostDeps, modules?: readonly DiscoveredModule[]): Promise<HostWorkflow[]> {
   const list = modules ?? (await hostModules())
-  // The gate refuses to grant an agent a mutating or unknown capability: it learns what the registry holds.
-  deps.toolGate.setCapabilities((id) => deps.registry.capabilities.find((c) => c.id === id)?.cli)
+  // The gate refuses to grant an agent a mutating or unknown capability: it learns what the registry serves. An internal
+  // capability (a metered seat whose guards live in a workflow) is unknown to it, so no agent is ever granted one.
+  deps.toolGate.setCapabilities((id) => deps.registry.served.find((c) => c.id === id)?.cli)
   const known = new Set<string>(routeIds())
   return buildWorkflows(list, deps, (id) => known.has(id))
 }

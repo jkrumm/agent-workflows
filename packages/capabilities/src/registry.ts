@@ -19,6 +19,8 @@ export interface RegistryOptions {
 
 export interface Registry<C extends readonly AnyCapability[]> {
   readonly capabilities: C
+  /** The capabilities that have a door (`internal` ones left out): the one list the router, the OpenAPI document, the host's commands, its `cap.<id>` runs and the agent tool gate are built from. */
+  readonly served: readonly C[number][]
   ids: () => C[number]['id'][]
   get: <Id extends C[number]['id']>(id: Id) => ById<C, Id>
   call: <Id extends C[number]['id']>(
@@ -82,14 +84,14 @@ export function createRegistry<const C extends readonly AnyCapability[]>(
     byId.set(capability.id, capability)
   }
   const paths = new Set<string>()
-  for (const { route, id } of capabilities.filter((c) => !c.internal)) {
+  const served = capabilities.filter((c) => !c.internal)
+  for (const { route, id } of served) {
     const key = `${route.method} ${route.path}`
     if (paths.has(key)) throw new Error(`capability "${id}": route ${key} is taken`)
     paths.add(key)
   }
 
   // An internal capability is callable in process only: no route, no OpenAPI operation, no CLI command.
-  const served = capabilities.filter((c) => !c.internal)
   const router = nest(served)
   const handler = new OpenAPIHandler(router as never)
   const context: RequestContext = { onUsage: options.onUsage }
@@ -102,6 +104,7 @@ export function createRegistry<const C extends readonly AnyCapability[]>(
 
   return {
     capabilities,
+    served,
     router,
     requestContext: context,
     ids: () => capabilities.map((c) => c.id),

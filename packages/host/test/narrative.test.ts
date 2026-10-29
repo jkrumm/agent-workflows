@@ -9,6 +9,8 @@ import {
   BOOTSTRAP_COMMIT_LIMIT,
   BOOTSTRAP_DAYS,
   BOOTSTRAP_SESSION_LIMIT,
+  SESSION_READ_FACTOR,
+  SINCE_COMMIT_LIMIT,
   SINCE_SESSION_LIMIT,
   COMMITS_MAX_BYTES,
   encodeProjectDir,
@@ -89,11 +91,11 @@ describe('gatherFacts: the bounds are legacy’s', () => {
     expect(out.commits.count).toBe(2)
   })
 
-  test('with a cutoff: commits since it, no count limit', async () => {
+  test('with a cutoff: commits since it, newest few hundred at most', async () => {
     const f = fakePorts()
     const out = await gatherFacts(f.ports, { cwd: CWD, since: '2026-10-01T00:00:00.000Z', now: NOW.getTime() })
     expect(f.gitCalls[0]).toContain('--since=2026-10-01T00:00:00.000Z')
-    expect(f.gitCalls[0]).not.toContain('-n')
+    expect(f.gitCalls[0]?.slice(-2)).toEqual(['-n', String(SINCE_COMMIT_LIMIT)])
     expect(out.sinceUsed).toBe('2026-10-01T00:00:00.000Z')
   })
 
@@ -155,13 +157,26 @@ describe('gatherFacts: the bounds are legacy’s', () => {
     expect(after.sessions.count).toBe(4)
   })
 
-  test('with a cutoff, only the newest 24 transcripts are read, however many changed since', async () => {
+  test('quiet transcripts do not use up the cap, but only a bounded number is ever opened', async () => {
+    const files = Array.from({ length: 40 }, (_, i) => file(`s${i}`, 2_000_000 + i))
+    // The newest 20 say nothing; the 20 before them do.
+    const tails = Object.fromEntries(
+      files.map((f, i) => [
+        f.file,
+        i < 20 ? transcript(f.file) : jsonl({ type: 'assistant', message: { content: [] } }),
+      ]),
+    )
+    const out = await gatherFacts(fakePorts({ files, tails }).ports, { cwd: CWD, since: null, now: NOW.getTime() })
+    expect(out.sessions.count).toBe(BOOTSTRAP_SESSION_LIMIT)
+  })
+
+  test('with a cutoff, a bounded number of transcripts is opened, however many changed since', async () => {
     const files = Array.from({ length: 300 }, (_, i) => file(`s${i}`, 2_000_000 + i))
     const tails = Object.fromEntries(files.map((f) => [f.file, jsonl({ type: 'assistant', message: { content: [] } })]))
     const f = fakePorts({ files, tails })
     await gatherFacts(f.ports, { cwd: CWD, since: new Date(1_000).toISOString(), now: NOW.getTime() })
-    // Nothing yields prose, so nothing stops the loop but the cap.
-    expect(f.reads).toHaveLength(SINCE_SESSION_LIMIT)
+    // Nothing yields prose, so nothing stops the loop but the bound.
+    expect(f.reads).toHaveLength(SINCE_SESSION_LIMIT * SESSION_READ_FACTOR)
     expect(f.reads[0]).toBe('s299.jsonl')
   })
 
@@ -279,14 +294,19 @@ function setup(
       files: [file('s1', 1_000)],
       tails: { 's1.jsonl': transcript('second provider') },
     }).ports
-  const [narrative, polish] = createNarrative({ registry, gather: ports, now: () => NOW, env }) as [
+  const warnings: { message: string; meta?: Record<string, unknown> }[] = []
+  const logger = {
+    warn: (message: string, meta?: Record<string, unknown>) => warnings.push({ message, meta }),
+    error: () => {},
+  }
+  const [narrative, polish] = createNarrative({ registry, gather: ports, now: () => NOW, env, logger }) as [
     HostWorkflow,
     HostWorkflow,
   ]
   const composed = () => transports.chatCalls.filter((c) => c.wire === 'anthropic' && !c.request.system)
   const writes = () => transports.chatCalls.filter((c) => c.wire === 'anthropic' && c.request.system)
   const reviews = () => transports.chatCalls.filter((c) => c.wire === 'openai')
-  return { transports, narrative, polish, composed, writes, reviews }
+  return { transports, narrative, polish, composed, writes, reviews, warnings }
 }
 
 const db = freshSchema('narrative')
@@ -319,12 +339,21 @@ describe('narrative', () => {
     expect(NarrativeInput.safeParse({ ...INPUT, model: 'anything' }).success).toBe(false)
   })
 
-  test('since must be an ISO datetime (an unparseable one would drop every session silently), cwd is bounded', () => {
-    for (const since of ['yesterday', '2026-10-01', 'NaN', '']) {
+  test('since is a date or timestamp, normalised to UTC; an unparseable one is refused, not read as "no sessions"; cwd is bounded', () => {
+    for (const since of ['yesterday', 'NaN', '', '2026-13-45', '2026-10-01T25:00:00Z', '10/01/2026']) {
       expect(NarrativeInput.safeParse({ ...INPUT, since }).success).toBe(false)
     }
-    for (const since of ['2026-10-01T00:00:00Z', '2026-10-01T00:00:00.000Z', '2026-10-01T02:00:00+02:00']) {
-      expect(NarrativeInput.safeParse({ ...INPUT, since }).success).toBe(true)
+    const normalised: Record<string, string> = {
+      '2026-10-01': '2026-10-01T00:00:00.000Z',
+      '2026-10-01T02:00': '2026-10-01T02:00:00.000Z',
+      '2026-10-01T02:00:00': '2026-10-01T02:00:00.000Z',
+      '2026-10-01T02:00:00.5': '2026-10-01T02:00:00.500Z',
+      '2026-10-01T00:00:00Z': '2026-10-01T00:00:00.000Z',
+      '2026-10-01T00:00:00.000Z': '2026-10-01T00:00:00.000Z',
+      '2026-10-01T02:00:00+02:00': '2026-10-01T00:00:00.000Z',
+    }
+    for (const [since, utc] of Object.entries(normalised)) {
+      expect(NarrativeInput.parse({ ...INPUT, since }).since).toBe(utc)
     }
     expect(NarrativeInput.safeParse({ ...INPUT, cwd: `/${'a'.repeat(1_000)}` }).success).toBe(false)
     expect(NarrativeInput.safeParse({ ...INPUT, cwd: `/${'a'.repeat(999)}` }).success).toBe(true)
@@ -451,10 +480,13 @@ describe('narrative', () => {
     expect(out.prose).toEqual({
       status: 'errored',
       kept: 'original',
-      // The child's own error, naming the step that failed.
-      keptReason: expect.stringMatching(/^prose failed: step "review" failed \(error\): /),
+      // A stable short reason: the step and its kind, never the error text.
+      keptReason: 'prose failed: review error',
       costUsd: null,
     })
+    // The detail is logged instead.
+    expect(w.warnings.map((x) => x.message)).toEqual(['narrative polish failed'])
+    expect(w.warnings[0]?.meta).toMatchObject({ reason: 'review error' })
     expect(out.page).toContain('A weather service for surf spots.')
   })
 
@@ -463,7 +495,10 @@ describe('narrative', () => {
     const out = output(await run(w, INPUT))
     expect(out.changed).toBe(true)
     expect(out.prose?.status).toBe('errored')
-    expect(out.prose?.keptReason).toContain('AGW_VOICE_PATH')
+    // The page carries no path and no variable; the log has the detail.
+    expect(out.prose?.keptReason).toBe('prose failed: voice error')
+    expect(JSON.stringify(out)).not.toContain(dir)
+    expect(String(w.warnings[0]?.meta?.error)).toContain('AGW_VOICE_PATH')
     expect(w.reviews()).toHaveLength(0)
   })
 

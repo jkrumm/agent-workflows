@@ -4,6 +4,27 @@ import { BOOTSTRAP_COMMIT_LIMIT, BOOTSTRAP_DAYS } from './gather.ts'
 
 export { NARRATIVE_SECTIONS }
 
+const SINCE_FORMAT = /^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?)?$/
+
+/** A date, a time without an offset (UTC) or a full ISO timestamp, as a UTC ISO string; anything else is an issue. */
+const SinceSchema = z
+  .string()
+  .max(100)
+  .transform((value, ctx) => {
+    const match = SINCE_FORMAT.exec(value)
+    const parsed = match
+      ? Date.parse(value.includes('T') ? (match[1] ? value : `${value}Z`) : `${value}T00:00:00Z`)
+      : Number.NaN
+    if (Number.isNaN(parsed)) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'since must be an ISO date or timestamp, e.g. 2026-10-01 or 2026-10-01T00:00:00Z',
+      })
+      return z.NEVER
+    }
+    return new Date(parsed).toISOString()
+  })
+
 /** agent-gateway's `NARRATIVE_INPUT` minus the free `model` override (the model is the `narrative` route's). */
 export const NarrativeInput = z
   .object({
@@ -17,12 +38,12 @@ export const NarrativeInput = z
       .describe(
         'Full markdown of the existing page, including frontmatter, or null on a first run (bootstrap from project history).',
       ),
-    since: z.iso
-      .datetime({ offset: true })
-      .nullable()
+    since: SinceSchema.nullable()
       .default(null)
       .describe(
-        'ISO timestamp: only commits and session prose strictly after this count. null bootstraps from history: ' +
+        'ISO timestamp or date: only commits and session prose strictly after this count. A date alone is midnight and a ' +
+          'time without an offset is UTC; the value is normalised to a UTC timestamp. Anything unparseable is refused, not ' +
+          'silently read as "no sessions". null bootstraps from history: ' +
           `the last ${BOOTSTRAP_COMMIT_LIMIT} commits or ${BOOTSTRAP_DAYS} days, whichever is smaller.`,
       ),
     polish: z

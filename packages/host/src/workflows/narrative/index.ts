@@ -5,10 +5,10 @@ import {
   type NarrativeComposeOutput,
 } from '@agent-workflows/capabilities'
 import { resolveRoute } from '@agent-workflows/routes'
-import { Cancelled, defineWorkflow, InfraError } from '@agent-workflows/runtime'
+import { Cancelled, defineWorkflow, InfraError, type Logger, StepFailed } from '@agent-workflows/runtime'
 import { z } from 'zod'
 import type { HostWorkflow } from '../../operations.ts'
-import { type PolishCaller, polishDraft } from '../prose-polish/index.ts'
+import { PROSE_POLISH_VERSION, type PolishCaller, polishDraft } from '../prose-polish/index.ts'
 import { ProsePolishInput, ProsePolishOutput } from '../prose-polish/schema.ts'
 import { defaultGatherPorts, type GatherPorts, gatherFacts } from './gather.ts'
 import { NarrativeInput, NarrativeOutput, type NarrativeOutputValue, type NarrativeProseValue } from './schema.ts'
@@ -36,6 +36,8 @@ export interface NarrativeDeps {
   /** Where the commits and the session tails are read from. Default: `git` and `~/.claude/projects`. */
   gather?: GatherPorts
   now?: () => Date
+  /** Where a failed polish's detail goes (it carries paths and upstream text the page's `keptReason` must not). */
+  logger?: Logger
   /** Where `AGW_ROUTES` and `AGW_VOICE_PATH` are read from. Default `process.env`. */
   env?: Record<string, string | undefined>
 }
@@ -43,7 +45,10 @@ export interface NarrativeDeps {
 const PolishAttempt = z.object({
   ok: z.boolean(),
   output: ProsePolishOutput.optional(),
-  error: z.string().optional().describe('Why the polish failed, when it did'),
+  error: z
+    .string()
+    .optional()
+    .describe('A stable short reason (`<step id> <kind>`); the detail is logged, never returned'),
 })
 
 type Polish = { page: string; prose?: NarrativeProseValue }
@@ -70,7 +75,8 @@ export function createNarrative(deps: NarrativeDeps): HostWorkflow[] {
   // The polish is a child run so its spend and journal are its own; a failure is its result, never the page's.
   const polishChild = defineWorkflow({
     id: NARRATIVE_POLISH_ID,
-    version: NARRATIVE_VERSION,
+    // Its code is `polishDraft`'s as much as this file's.
+    version: `${NARRATIVE_VERSION}+${PROSE_POLISH_VERSION}`,
     input: ProsePolishInput,
     output: PolishAttempt,
     async run(ctx, input) {
@@ -79,7 +85,13 @@ export function createNarrative(deps: NarrativeDeps): HostWorkflow[] {
       } catch (error) {
         // A cancel, a shutdown and an infrastructure failure belong to the runtime, not to the page.
         if (error instanceof Cancelled || error instanceof InfraError || ctx.signal.aborted) throw error
-        return { ok: false, error: error instanceof Error ? error.message : String(error) }
+        const reason = error instanceof StepFailed ? `${error.stepId} ${error.stepKind}` : 'error'
+        deps.logger?.warn('narrative polish failed', {
+          runId: ctx.runId,
+          reason,
+          error: error instanceof Error ? error.message : String(error),
+        })
+        return { ok: false, error: reason }
       }
     },
   })
