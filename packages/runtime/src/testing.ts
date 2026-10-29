@@ -10,6 +10,11 @@ export class FakeSession {
   private readonly abortController = new AbortController()
   private waiter: AgentWaitOptions | null = null
   private steerListeners: ((text: string) => void)[] = []
+  private markAttached!: () => void
+  /** Resolves once a step has attached its waiter (first `wait`); `tool`/`progress` before that reach no hook. */
+  readonly attached = new Promise<void>((resolve) => {
+    this.markAttached = resolve
+  })
   result: Promise<AgentResult> | null = null
   /** The text `prompt` sent: the open spec's prompt, or a follow-up turn's own text. */
   sent: string | null = null
@@ -58,6 +63,7 @@ export class FakeSession {
 
   attach(options: AgentWaitOptions | null) {
     this.waiter = options
+    if (options) this.markAttached()
   }
 
   receiveSteer(text: string) {
