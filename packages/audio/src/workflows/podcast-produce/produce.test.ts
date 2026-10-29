@@ -109,9 +109,11 @@ function produceWith(
     concurrency?: number
     journal?: ProduceJournal
     notifyFetch?: typeof fetch
+    onStored?: ProduceDeps['onStored']
   } = {},
 ) {
   const deps: ProduceDeps = {
+    ...(opts.onStored ? { onStored: opts.onStored } : {}),
     journal: opts.journal ?? journal,
     ...(opts.notifyFetch ? { notifyFetch: opts.notifyFetch } : {}),
     audio: {
@@ -338,11 +340,81 @@ describe('podcast.produce', () => {
         const reused = await unitSteps(runId)
         expect(reused).toHaveLength(unitTexts(input).length)
         expect(reused.every((s) => (s.output as { reused: boolean }).reused)).toBe(true)
+        // Another run paid for that audio: this one records no cost for it.
+        expect(reused.every((s) => Number(s.cost ?? 0) === 0)).toBe(true)
         // The journal's hashes are what is on disk: pcm and sidecar per unit, nothing else in `units/`.
         const dir = join(artifactRoot, 'podcast', input.episode.id, 'units')
         expect(readdirSync(dir).filter((f) => f.endsWith('.pcm'))).toHaveLength(reused.length)
       } finally {
         await rt.close()
+        tts.iu.stop()
+      }
+    },
+    TIMEOUT,
+  )
+
+  test(
+    'a kill after a unit and the cover were stored: neither is paid for again, and both are still in the cost',
+    async () => {
+      const tts = fakeTts()
+      const coversBefore = coverCalls.length
+      let unitHeld = false
+      let coverHeld = false
+      // The process dies right after unit 1's audio and the cover reached the store, before their steps ended.
+      const onStored = async (file: { path: string }) => {
+        if (file.path.endsWith('cover.png') && !coverHeld) {
+          coverHeld = true
+          await never()
+        }
+        if (file.path.includes(`${join('units', '0001-')}`) && !unitHeld) {
+          unitHeld = true
+          await never()
+        }
+      }
+      const units = unitTexts()
+      const produce = produceWith(tts, { onStored, config: { abs: null } })
+      const first = testRuntime({ schema: db.schema, workflows: [produce] })
+      await first.open()
+      let runId = ''
+      try {
+        runId = (await first.start(produce, episodeInput({ publish: false, brainNote: false }), { purpose: 'build' }))
+          .runId
+        await until(
+          async () =>
+            unitHeld &&
+            coverHeld &&
+            (await unitSteps(runId)).filter((s) => s.status === 'done').length === units.length - 1,
+          'unit 1 and the cover stored and held, every other unit done',
+          60_000,
+        )
+      } finally {
+        await first.close()
+      }
+
+      const second = testRuntime({ schema: db.schema, workflows: [produceWith(tts, { config: { abs: null } })] })
+      await second.open()
+      try {
+        const result = await second.wait(runId)
+        expect(result.status).toBe('done')
+        const out = result.output as ProduceResult
+        // Neither generated again.
+        expect(coverCalls.length - coversBefore).toBe(1)
+        for (const text of units) expect(tts.calls(text)).toBe(1)
+        // Both reused by the second attempt of their own step, which recorded what the first attempt was billed.
+        const synth = await unitSteps(runId)
+        expect(synth[1]).toMatchObject({ status: 'done', attempts: 2 })
+        expect(synth[1]?.output.reused).toBe(true)
+        expect(Number(synth[1]?.cost)).toBeGreaterThan(0)
+        expect(Number(synth[1]?.cost)).toBeCloseTo(Number(synth[0]?.cost), 9)
+        const coverStep = await sql.step(runId, 'cover')
+        expect(coverStep).toMatchObject({ status: 'done', attempts: 2 })
+        expect(Number(coverStep?.cost)).toBeCloseTo(0.04, 9)
+        expect(out.coverPath).not.toBeNull()
+        const recorded = [...(await sql.steps(runId)), ...synth].reduce((n, s) => n + Number(s.cost ?? 0), 0)
+        expect(out.cost.usd).toBeCloseTo(recorded, 6)
+        expect(out.cost.complete).toBe(true)
+      } finally {
+        await second.close()
         tts.iu.stop()
       }
     },
