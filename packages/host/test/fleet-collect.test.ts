@@ -4,15 +4,20 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   buildSnapshot,
-  commandRunner,
-  defaultCollectors,
   type CollectorResult,
   type Collectors,
+  commandRunner,
+  defaultCollectors,
   fleetConfig,
   gitProject,
   parseSessionAccounts,
-  readDispatchJobs,
+  pickClaudeAgents,
+  pickHerdrAgents,
+  pickHerdrWorkspaces,
   type RunCommand,
+  readDispatchJobs,
+  readHumanQueue,
+  readSessionPin,
   runCommand,
   sessionAccountResolver,
 } from '../src/fleet/collect.ts'
@@ -411,7 +416,185 @@ describe('children get a minimal environment', () => {
     const out = (await run(['env'])) ?? ''
     expect(out).toContain('HOME=/home/x')
     expect(out).toContain('GIT_TERMINAL_PROMPT=0')
+    expect(out).toContain('GIT_OPTIONAL_LOCKS=0')
     expect(out).not.toMatch(/secret|IU_API_KEY|iu-key/i)
+  })
+
+  test('only a network call (git fetch) also gets the SSH agent, config dir and proxy/CA variables', async () => {
+    const run = commandRunner({
+      PATH: process.env.PATH,
+      HOME: '/home/x',
+      SSH_AUTH_SOCK: '/tmp/agent.sock',
+      XDG_CONFIG_HOME: '/home/x/.config',
+      HTTPS_PROXY: 'http://proxy.example.com:3128',
+      SSL_CERT_FILE: '/etc/ca.pem',
+      AGW_API_SECRET: 'api-secret',
+      ARGO_API_SECRET: 'argo-secret',
+      IU_API_KEY: 'iu-key',
+    })
+    const local = (await run(['env'])) ?? ''
+    expect(local).not.toMatch(/SSH_AUTH_SOCK|XDG_CONFIG_HOME|PROXY|SSL_CERT_FILE/)
+    const network = (await run(['env'], { network: true })) ?? ''
+    expect(network).toContain('SSH_AUTH_SOCK=/tmp/agent.sock')
+    expect(network).toContain('XDG_CONFIG_HOME=/home/x/.config')
+    expect(network).toContain('HTTPS_PROXY=http://proxy.example.com:3128')
+    expect(network).toContain('SSL_CERT_FILE=/etc/ca.pem')
+    expect(network).toContain('GIT_OPTIONAL_LOCKS=0')
+    expect(network).not.toMatch(/secret|IU_API_KEY|iu-key/i)
+  })
+
+  test('gitProject: only the fetch asks for the network, and an empty cwd runs nothing', async () => {
+    const calls: { cmd: string[]; network: boolean }[] = []
+    const run: RunCommand = async (cmd, options) => {
+      calls.push({ cmd, network: options?.network === true })
+      return null
+    }
+    expect(await gitProject(run, '')).toBeNull()
+    expect(calls).toHaveLength(0)
+    await gitProject(run, '/work/x')
+    expect(calls.filter((c) => c.network).map((c) => c.cmd[3])).toEqual(['fetch'])
+    expect(calls.length).toBeGreaterThan(1)
+  })
+})
+
+describe('collector output is shape-validated', () => {
+  test('herdr rows: wrong types and null or scalar elements are dropped and counted, never thrown', () => {
+    const picked = pickHerdrAgents({
+      result: {
+        agents: [
+          { agent_session: { value: 's1' }, agent_status: 'idle', cwd: '/w' },
+          null,
+          'x',
+          7,
+          { cwd: 5 },
+          { agent_session: { value: 9 } },
+          { agent_session: 'nope' },
+          { pane_id: null, cwd: null },
+        ],
+      },
+    })
+    expect(picked.items).toHaveLength(2)
+    expect(picked.dropped).toBe(6)
+    expect(pickHerdrAgents({ result: {} })).toEqual({ items: [], dropped: 0 })
+    expect(pickHerdrAgents(null)).toEqual({ items: [], dropped: 0 })
+    expect(() => pickHerdrAgents({ result: { agents: 'not a list' } })).toThrow()
+  })
+
+  test('workspaces and registry rows', () => {
+    expect(
+      pickHerdrWorkspaces({ result: { workspaces: [{ workspace_id: 'w', label: 'l' }, { workspace_id: 'w' }, null] } }),
+    ).toMatchObject({ dropped: 2, items: [{ workspace_id: 'w', label: 'l' }] })
+    expect(
+      pickClaudeAgents([
+        { sessionId: 's', startedAt: 1 },
+        { sessionId: 's', startedAt: 'late' },
+        null,
+        [],
+        { status: 4 },
+      ]),
+    ).toMatchObject({ dropped: 4, items: [{ sessionId: 's', startedAt: 1 }] })
+  })
+
+  test('a collector with malformed rows answers a warning and the good rows', async () => {
+    const run: RunCommand = async (cmd) =>
+      cmd.includes('agent')
+        ? JSON.stringify({ result: { agents: [null, { agent_session: { value: 's' } }] } })
+        : '{"result":'
+    const c = defaultCollectors(fleetConfig({}, '/nonexistent'), run)
+    const agents = await c.herdrAgents()
+    expect(agents.items).toHaveLength(1)
+    expect(agents.warning).toBe('herdr agent list: 1 malformed row(s) dropped')
+    expect((await c.herdrWorkspaces()).warning).toBe('herdr workspace list returned unparseable JSON')
+  })
+
+  test('a row without a cwd gets no transcript read and no git call', async () => {
+    const reads: string[] = []
+    const gits: string[] = []
+    const snapshot = await buildSnapshot(
+      collectors({
+        herdrAgents: async () => ok([{ agent_session: { value: 's1' }, agent_status: 'idle' }]),
+        transcriptTail: async (cwd) => {
+          reads.push(cwd)
+          return EMPTY_TAIL
+        },
+        git: async (cwd) => {
+          gits.push(cwd)
+          return null
+        },
+      }),
+      { now: NOW, staleAfterHours: 24 },
+    )
+    expect(snapshot.projects[0]?.agents).toHaveLength(1)
+    expect(reads).toEqual([])
+    expect(gits).toEqual([])
+  })
+
+  test('transcript tails and git statuses run at most 8 at a time', async () => {
+    let inFlight = 0
+    let peak = 0
+    const slow = async <T>(value: T): Promise<T> => {
+      inFlight += 1
+      peak = Math.max(peak, inFlight)
+      await new Promise((resolve) => setTimeout(resolve, 5))
+      inFlight -= 1
+      return value
+    }
+    await buildSnapshot(
+      collectors({
+        herdrAgents: async () =>
+          ok(
+            Array.from({ length: 30 }, (_, i) => ({
+              agent_session: { value: `s${i}` },
+              agent_status: 'idle',
+              cwd: `/work/p${i}`,
+            })),
+          ),
+        transcriptTail: (_cwd, _id) => slow(EMPTY_TAIL),
+        git: () => slow(null),
+      }),
+      { now: NOW, staleAfterHours: 24 },
+    )
+    expect(peak).toBeGreaterThan(1)
+    expect(peak).toBeLessThanOrEqual(8)
+  })
+})
+
+describe('the human queue and session pins are read async and bounded', () => {
+  let dir: string
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'queue-'))
+  })
+  afterEach(() => rmSync(dir, { recursive: true, force: true }))
+
+  test('a missing directory is an empty queue; answered, hidden and oversized requests are not entries', async () => {
+    expect(await readHumanQueue(join(dir, 'absent'))).toEqual({ items: [], warning: null })
+    const req = (id: string, text: string) => writeFileSync(join(dir, `${id}.req`), JSON.stringify({ text }))
+    req('20260101-a', 'open')
+    req('20260101-b', 'answered')
+    writeFileSync(join(dir, '20260101-b.res'), '{}')
+    writeFileSync(join(dir, '.20260101-c.req'), '{"text":"hidden"}')
+    writeFileSync(join(dir, '20260101-big.req'), JSON.stringify({ text: 'x'.repeat(100_000) }))
+    const queue = await readHumanQueue(dir)
+    expect(queue.items.map((e) => e.id)).toEqual(['20260101-a'])
+    expect(queue.warning).toContain('1 request(s) skipped')
+  })
+
+  test('at most 200 files are read, newest first', async () => {
+    for (let i = 0; i < 230; i++) {
+      writeFileSync(join(dir, `${String(i).padStart(4, '0')}.req`), JSON.stringify({ text: `q${i}` }))
+    }
+    const queue = await readHumanQueue(dir)
+    expect(queue.items).toHaveLength(200)
+    expect(queue.items[0]?.id).toBe('0229')
+    expect(queue.items.at(-1)?.id).toBe('0030')
+    expect(queue.warning).toContain('30 request(s) skipped')
+  })
+
+  test('a pin whose dir is gone is no pin; an existing one is', async () => {
+    writeFileSync(join(dir, 's1.json'), JSON.stringify({ account: 'iu', dir }))
+    writeFileSync(join(dir, 's2.json'), JSON.stringify({ account: 'iu', dir: join(dir, 'gone') }))
+    expect(await readSessionPin(dir, 's1')).toBe('iu')
+    expect(await readSessionPin(dir, 's2')).toBeNull()
   })
 })
 
@@ -479,6 +662,46 @@ describe('text from outside', () => {
       staleAfterMs: 1000,
     })
     expect(JSON.stringify(merged)).not.toContain(ESC)
+  })
+
+  test('ids, account, pane, workspace, wait reason and titles are one line free of C0 and C1 controls', () => {
+    const c1 = String.fromCharCode(0x9b)
+    const merged = mergeAgents({
+      herdrAgents: [
+        {
+          agent_session: { value: `s1\r\n- agent id: forged${c1}` },
+          agent_status: 'idle',
+          cwd: '/w/a',
+          pane_id: `p\nq`,
+          workspace_id: `w\r\nx`,
+          terminal_title_stripped: `ti\ntle`,
+        },
+      ],
+      herdrWorkspaces: [],
+      claudeAgents: [{ cwd: '/w/c', sessionId: 's2', status: 'waiting', waitingFor: `dia\nlog${c1}` }],
+      dispatchJobs: [
+        {
+          id: 'j\n1',
+          status: 'running',
+          cwd: '/w/j',
+          tier: null,
+          createdAt: 1,
+          startedAt: null,
+          finishedAt: null,
+          account: 'iu\n',
+        },
+      ],
+      transcripts: new Map(),
+      accounts: new Map([['s2', 'me\nx']]),
+      now: 10,
+      staleAfterMs: 1000,
+    })
+    const agents = merged.flatMap((p) => p.agents)
+    expect(agents).toHaveLength(3)
+    const fields = agents.flatMap((a) => [a.id, a.sessionId, a.paneId, a.workspaceId, a.title, a.waitingFor, a.account])
+    for (const value of fields) expect(value ?? '').not.toMatch(/[\r\n\u0080-\u009f]/)
+    expect(agents.find((a) => a.source === 'claude')).toMatchObject({ waitingFor: 'dia log', account: 'me x' })
+    expect(agents.find((a) => a.source === 'dispatch')).toMatchObject({ id: 'j 1', account: 'iu' })
   })
 
   test('a sparse herdr or registry row is null-filled and still passes the strict agent schema', () => {

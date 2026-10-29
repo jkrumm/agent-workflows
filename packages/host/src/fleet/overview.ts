@@ -1,3 +1,4 @@
+import { cleanLine } from './derive.ts'
 import type { AgentEnrichment } from './render.ts'
 import {
   type Agent,
@@ -9,8 +10,7 @@ import {
   type Project,
   type Snapshot,
 } from './schema.ts'
-import { clean } from './derive.ts'
-import { relativeAge, truncate } from './text.ts'
+import { oneLine, relativeAge, truncate } from './text.ts'
 
 const MAX_LAST_PROMPT_CHARS = 600
 const MAX_LAST_REPLY_CHARS = 800
@@ -41,8 +41,11 @@ function agentLines(agent: Agent, generatedAt: number): string[] {
   if (agent.waitingFor) lines.push(`  waitingFor: ${agent.waitingFor}`)
   // The derived state collapses a job's status to working / done / unknown: spelled out for the model.
   if (agent.tier) lines.push(`  dispatch tier: ${agent.tier}  job activity: ${agent.state}`)
-  if (agent.lastPrompt) lines.push(`  lastPrompt: ${truncate(agent.lastPrompt, MAX_LAST_PROMPT_CHARS)}`)
-  if (agent.lastReply) lines.push(`  lastReply: ${truncate(agent.lastReply, MAX_LAST_REPLY_CHARS)}`)
+  // One line each: a multi-line prompt must not open a line of its own, least of all a forged `- agent id:`.
+  const prompt = agent.lastPrompt && oneLine(agent.lastPrompt)
+  const reply = agent.lastReply && oneLine(agent.lastReply)
+  if (prompt) lines.push(`  lastPrompt: ${truncate(prompt, MAX_LAST_PROMPT_CHARS)}`)
+  if (reply) lines.push(`  lastReply: ${truncate(reply, MAX_LAST_REPLY_CHARS)}`)
   lines.push(`  lastActivity: ${relativeAge(agent.lastActivityAt, generatedAt)} ago`)
   return lines
 }
@@ -135,8 +138,8 @@ export function reconcileKnown(
     seen.add(v.id)
     agents.push({
       ...v,
-      standing: clean(v.standing),
-      blocker: clean(v.blocker),
+      standing: cleanLine(v.standing),
+      blocker: cleanLine(v.blocker),
       sessionId: meta.sessionId,
       project: meta.project,
     })
@@ -161,7 +164,7 @@ export type MergedOverview = Pick<OverviewPayload, 'projects' | 'overview'>
 
 /**
  * The newest completed run's verdicts on a fresh snapshot, by agent id. No run yet (`cached: null`): every agent with
- * null fields and `overview: null`. An agent active more recently than the run is nulled and marked
+ * null fields and `overview: null`. An agent active after the snapshot the run classified is nulled and marked
  * `recommendationStale`: it did something after the model looked.
  */
 export function mergeOverviewIntoSnapshot(snapshot: Snapshot, cached: OverviewOutput | null): MergedOverview {
@@ -180,7 +183,8 @@ export function mergeOverviewIntoSnapshot(snapshot: Snapshot, cached: OverviewOu
     agents: project.agents.map((agent: Agent): EnrichedAgent => {
       const verdict = cached ? byId.get(agent.id) : undefined
       if (!verdict || !cached) return { ...agent, ...blank }
-      if (agent.lastActivityAt != null && cached.generatedAt < agent.lastActivityAt) {
+      // Against the snapshot the model looked at, not the moment it answered: activity in between is still unseen.
+      if (agent.lastActivityAt != null && cached.snapshotGeneratedAt < agent.lastActivityAt) {
         return { ...agent, ...blank, recommendationStale: true }
       }
       return {

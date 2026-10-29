@@ -8,7 +8,7 @@ import {
   reconcileOverview,
 } from '../src/fleet/overview.ts'
 import { renderText } from '../src/fleet/render.ts'
-import type { Agent, OverviewAgent, OverviewOutput, Project, Snapshot as AgentsSnapshot } from '../src/fleet/schema.ts'
+import type { Agent, Snapshot as AgentsSnapshot, OverviewAgent, OverviewOutput, Project } from '../src/fleet/schema.ts'
 import { stripAnsi } from '../src/fleet/text.ts'
 
 type OverviewWorkerAgent = Pick<OverviewAgent, 'id' | 'recommendation' | 'standing' | 'blocker' | 'confidence'>
@@ -274,6 +274,15 @@ describe('mergeOverviewIntoSnapshot', () => {
       confidence: null,
       recommendationStale: true,
     })
+  })
+
+  test('staleness is against the snapshot the run classified: activity during the model call is unseen', () => {
+    // the model looked at the fleet an hour ago and answered 5 min ago; the agent moved 30 min ago, in between
+    const data = snapshot({
+      projects: [project({ agents: [agent({ id: 'a1', lastActivityAt: NOW - 30 * 60_000 })] })],
+    })
+    const merged = mergeOverviewIntoSnapshot(data, cachedResult({ generatedAt: NOW - 5 * 60_000 }))
+    expect(merged.projects[0]?.agents[0]).toMatchObject({ recommendation: null, recommendationStale: true })
   })
 
   test('an agent the cached job never saw (new since) gets null enrichment, not stale', () => {
