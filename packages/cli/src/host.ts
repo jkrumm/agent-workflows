@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { BIN } from './args.ts'
 import {
@@ -22,39 +23,46 @@ export const MAX_WAIT_S = 240
 const SLACK_S = 30
 
 /** The host's own rules for `x-agw-caller` and `x-agw-project`; a header outside them is a 400, so the CLI never sends one it inferred. */
-const CALLER_NAME = /^[a-z][a-z0-9-]{0,31}$/
-const PROJECT_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
+export const CALLER_NAME = /^[a-z][a-z0-9-]{0,31}$/
+export const PROJECT_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
 
 /**
- * The repo a directory belongs to and where its working copy lives, read from the files git keeps (no process is
- * spawned): the nearest `.git` upward. A linked worktree (`.git` is a file) resolves to the repo it was cut from
- * through its `commondir`, so every checkout of a repo is one project. Null outside a repo.
+ * The repo a directory belongs to, read from the files git keeps (no process is spawned): the nearest `.git` upward,
+ * never `home` itself or above (a `~/.git` must not make the home folder a project). Both answers come from the
+ * resolved common git directory, so every linked worktree of a repo is that repo: `name` is its folder (the common
+ * directory's parent for `<repo>/.git`, else the directory's own name minus a `.git` suffix: a bare `x.git`, a
+ * `--separate-git-dir`), `root` the repo's location (the parent for `<repo>/.git`, else the directory itself). A
+ * `.git` that cannot be read falls back to the checkout's own folder. Null outside a repo.
  */
-export function gitProject(cwd: string): { name: string; root: string } | null {
+export function gitProject(cwd: string, home?: string): { name: string; root: string } | null {
+  const stop = home ? resolve(home) : null
   let dir = resolve(cwd)
-  for (;;) {
+  while (dir !== stop) {
     const dotGit = join(dir, '.git')
-    if (existsSync(dotGit)) return { name: repoName(dir, dotGit), root: dir }
+    if (existsSync(dotGit)) return repoOf(dir, dotGit)
     const parent = dirname(dir)
     if (parent === dir) return null
     dir = parent
   }
+  return null
 }
 
-function repoName(root: string, dotGit: string): string {
+function repoOf(checkout: string, dotGit: string): { name: string; root: string } {
   try {
+    let common = dotGit
     if (statSync(dotGit).isFile()) {
       const gitdir = /^gitdir: *(.+)$/m.exec(readFileSync(dotGit, 'utf8'))?.[1]?.trim()
-      if (gitdir) {
-        const linked = resolve(root, gitdir)
-        const common = resolve(linked, readFileSync(join(linked, 'commondir'), 'utf8').trim())
-        if (basename(common) === '.git') return basename(dirname(common))
-      }
+      if (!gitdir) throw new Error('no gitdir')
+      common = resolve(checkout, gitdir)
+      // A linked worktree's admin directory names the shared one; a separate git dir or a submodule is its own.
+      const commondir = join(common, 'commondir')
+      if (existsSync(commondir)) common = resolve(common, readFileSync(commondir, 'utf8').trim())
     }
+    if (basename(common) === '.git') return { name: basename(dirname(common)), root: dirname(common) }
+    return { name: basename(common).replace(/\.git$/, '') || basename(common), root: common }
   } catch {
-    // A submodule's or an unreadable `.git`: the checkout's own folder name stands.
+    return { name: basename(checkout), root: checkout }
   }
-  return basename(root)
 }
 
 /**
@@ -72,7 +80,7 @@ export function callerHeaders(env: Env, cwd: string): Record<string, string> {
   const headers: Record<string, string> = {
     'x-agw-caller': declared || (env.CLAUDECODE === '1' ? 'claude-code' : 'cli'),
   }
-  const project = gitProject(cwd)
+  const project = gitProject(cwd, env.HOME?.trim() || homedir())
   if (project && PROJECT_NAME.test(project.name)) {
     headers['x-agw-project'] = project.name
     const place = /(?:^|\/)(IuRoot|SourceRoot)\//.exec(`${project.root}/`)?.[1]

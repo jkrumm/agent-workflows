@@ -1,9 +1,10 @@
 // The door's caller-token file (`name=token` lines, mode 0600, written by `make deploy`): read and validated here,
-// with no import beyond node, so `make deploy` checks the file with this very module before it stops anything.
+// with no import beyond node and the host's `auth` module (itself node-only), so `make deploy` checks the file with
+// this very module before it stops anything. The caller-name rule is the host's, one source.
 import { lstatSync, readFileSync } from 'node:fs'
+import { CALLER_PATTERN, PLATFORM_CALLER } from '@agent-workflows/host/auth'
 
-export const PLATFORM_CALLER = 'agw'
-const NAME = /^[a-z][a-z0-9-]{0,31}$/
+export { PLATFORM_CALLER }
 const MIN_TOKEN_LENGTH = 32
 
 /**
@@ -21,7 +22,7 @@ export function parseDoorTokens(text: string, file: string): Map<string, string>
     if (eq < 0) throw new Error(`${where}: expected name=token`)
     const name = line.slice(0, eq).trim()
     const token = line.slice(eq + 1).trim()
-    if (!NAME.test(name)) throw new Error(`${where}: a caller name is [a-z][a-z0-9-]*, at most 32 characters`)
+    if (!CALLER_PATTERN.test(name)) throw new Error(`${where}: a caller name is [a-z][a-z0-9-]*, at most 32 characters`)
     if (name === PLATFORM_CALLER) throw new Error(`${where}: "${PLATFORM_CALLER}" is reserved for the API secret`)
     if (tokens.has(name)) throw new Error(`${where}: caller "${name}" is listed twice`)
     if (token.length < MIN_TOKEN_LENGTH || /\s/.test(token))

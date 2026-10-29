@@ -1,5 +1,5 @@
 // A door token is a door credential only: the audio process serves the door and the whole host API on one port, and
-// a token the deploy did not list in AGW_API_CALLERS must not open the API.
+// the API's only credential is the API secret.
 import { afterAll, describe, expect, test } from 'bun:test'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
