@@ -340,7 +340,24 @@ describe('narrative', () => {
   })
 
   test('since is a date or timestamp, normalised to UTC; an unparseable one is refused, not read as "no sessions"; cwd is bounded', () => {
-    for (const since of ['yesterday', 'NaN', '', '2026-13-45', '2026-10-01T25:00:00Z', '10/01/2026']) {
+    for (const since of [
+      'yesterday',
+      'NaN',
+      '',
+      '2026-13-45',
+      '2026-10-01T25:00:00Z',
+      '10/01/2026',
+      // Values Date.parse rolls over instead of refusing.
+      '2026-02-30',
+      '2026-02-30T10:00:00Z',
+      '2025-02-29',
+      '2026-04-31',
+      '2026-10-01T24:00:00Z',
+      '2026-10-01T10:60:00Z',
+      '2026-10-01T10:00:60Z',
+      '2026-10-01T10:00:00+24:00',
+      '2026-10-01T10:00:00+02:60',
+    ]) {
       expect(NarrativeInput.safeParse({ ...INPUT, since }).success).toBe(false)
     }
     const normalised: Record<string, string> = {
@@ -351,6 +368,8 @@ describe('narrative', () => {
       '2026-10-01T00:00:00Z': '2026-10-01T00:00:00.000Z',
       '2026-10-01T00:00:00.000Z': '2026-10-01T00:00:00.000Z',
       '2026-10-01T02:00:00+02:00': '2026-10-01T00:00:00.000Z',
+      '2024-02-29': '2024-02-29T00:00:00.000Z',
+      '2026-10-01T23:59:59Z': '2026-10-01T23:59:59.000Z',
     }
     for (const [since, utc] of Object.entries(normalised)) {
       expect(NarrativeInput.parse({ ...INPUT, since }).since).toBe(utc)
