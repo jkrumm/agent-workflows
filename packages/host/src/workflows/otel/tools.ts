@@ -31,140 +31,129 @@ export const DATA_TOOLS: ReadonlySet<string> = new Set([
   'clickstack_query_tiles',
 ])
 
-/** Text kept per call, and per run, to match evidence against: bounded, since the `tools` step journals it. */
-const TEXT_PER_CALL = 30_000
-const TEXT_PER_RUN = 300_000
-
-/** A recorded call: the digest the output carries, and the (normalized, bounded) answer text grounding reads. */
-export const Recorded = z.object({ query: Query, text: z.string(), data: z.boolean() })
-export type Recorded = z.output<typeof Recorded>
-
-/** What the `tools` step journals: the run's calls in the order they were answered. */
-export const Calls = z.object({ calls: z.array(Recorded) })
+/** What the `tools` step journals: the run's calls, in the order they started. */
+export const Calls = z.object({ calls: z.array(Query) })
 export type Calls = z.output<typeof Calls>
-
-export const normalize = (text: string) => text.toLowerCase().replace(/\s+/g, ' ').trim()
 
 const digest = (args: Record<string, Json>) =>
   createHash('sha256').update(canonicalJson(args)).digest('hex').slice(0, 12)
 
-/** Rows of a tool answer when it is a JSON list, or an object holding one; undefined when the text says no. */
-export function rowsOf(text: string): number | undefined {
+/** Rows of a tool answer: the `rows` or `data` of a ClickHouse-shaped `result`, or a list under a known key. */
+export function rowsOf(text: string, truncated = false): number | undefined {
   let value: unknown
   try {
     value = JSON.parse(text)
   } catch {
-    return undefined
+    // A cut answer is not JSON; if it is cut inside a non-empty `data` list, there is at least one row.
+    return truncated && /"data":\s*\[\s*\{/.test(text) ? 1 : undefined
   }
   if (Array.isArray(value)) return value.length
-  const object = asRecord(value as Json)
-  for (const key of ['rows', 'data', 'results', 'series', 'events']) {
-    const list = object[key]
-    if (Array.isArray(list)) return list.length
+  const top = asRecord(value as Json)
+  for (const holder of [asRecord(top.result), top]) {
+    if (typeof holder.rows === 'number' && Number.isInteger(holder.rows)) return holder.rows
+    for (const key of ['data', 'rows', 'results', 'series', 'events', 'services']) {
+      const list = holder[key]
+      if (Array.isArray(list)) return list.length
+    }
   }
   return undefined
 }
 
+/** Whether a recorded call is a query that read telemetry, worked, and returned rows: what a finding may rest on. */
+export const returnedRows = (query: Query) =>
+  query.ok && query.target !== undefined && DATA_TOOLS.has(query.target) && (query.rows ?? 0) > 0
+
 /**
- * One gate call as a record, `id` given by the store: `q<n>` for the n-th `hdx_query` answered, `t<n>` for the
- * n-th `hdx_tools` or `hdx_guide` (reading about the tools is not a query). `budget` is the text left for the run.
+ * The calls of one run. A call gets its id when it STARTS (`q<n>` for the n-th `hdx_query`, in the order they reach
+ * the gate; a retried or resumed `tools` step prefixes its attempt, `q2.<n>`, so an id never means two calls), and the
+ * agent is shown that id with the answer (the grant's label), so what it cites is what was recorded. `hdx_tools` and
+ * `hdx_guide` get `t<n>` ids and no label: reading about the tools is not a query. Once `take` or `close` has run the
+ * recorder is closed: a late hook (a call that outlived the step) changes nothing and nothing is kept for it.
  */
-export function recordOf(call: ToolCallRecord, id: string, budget: number): Recorded {
-  const base = { id, tool: call.tool, argsDigest: digest(call.args) }
-  const target = typeof call.args.tool === 'string' && call.tool === 'hdx_query' ? call.args.tool : undefined
-  const query = (extra: Partial<Query>): Query => ({
-    ...base,
-    ...(target ? { target } : {}),
-    ok: false,
-    chars: 0,
-    ...extra,
-  })
-  if (!call.outcome.ok) {
-    return { query: query({ error: call.outcome.error.slice(0, 300) }), text: '', data: false }
+export function runCalls() {
+  let attempt = 1
+  let queries = 0
+  let tools = 0
+  let closed = false
+  const calls: Query[] = []
+  const ids = new Map<string, string>()
+  /** Place of each call in the run: a query's at its start, a tool listing's at its end. */
+  const place = new Map<string, number>()
+
+  const queryId = () => `q${attempt > 1 ? `${attempt}.` : ''}${++queries}`
+
+  /** The tools step's `attempt`: a later one numbers its own queries apart from the earlier attempt's. */
+  const begin = (n: number) => {
+    if (n === attempt) return
+    attempt = n
+    queries = 0
   }
+
+  const onStart: NonNullable<ToolGrant['onStart']> = (call) => {
+    if (closed || call.tool !== 'hdx_query') return undefined
+    const id = queryId()
+    ids.set(`query ${id}`, id)
+    place.set(id, place.size)
+    return `query ${id}`
+  }
+
+  const onCall: NonNullable<ToolGrant['onCall']> = (call) => {
+    if (closed) return
+    const id = (call.label && ids.get(call.label)) || `t${++tools}`
+    if (!place.has(id)) place.set(id, place.size)
+    calls.push(recordOf(call, id))
+  }
+
+  return {
+    begin,
+    onStart,
+    onCall,
+    /** The recorded calls in start order; closes the recorder. */
+    take(): Query[] {
+      closed = true
+      return [...calls].sort((a, b) => (place.get(a.id) ?? 0) - (place.get(b.id) ?? 0))
+    },
+    close() {
+      closed = true
+      calls.length = 0
+    },
+  }
+}
+
+/** One gate call as a query record. Never throws. */
+export function recordOf(call: ToolCallRecord, id: string): Query {
+  const base = { id, tool: call.tool, argsDigest: digest(call.args) }
+  const target = call.tool === 'hdx_query' && typeof call.args.tool === 'string' ? call.args.tool : undefined
+  const head = { ...base, ...(target ? { target } : {}) }
+  if (!call.outcome.ok) return { ...head, ok: false, chars: 0, error: call.outcome.error.slice(0, 300) }
   const result = asRecord(call.outcome.result)
   const text = typeof result.text === 'string' ? result.text : JSON.stringify(call.outcome.result)
-  const failed = result.isError === true
   const chars = typeof result.totalChars === 'number' ? result.totalChars : text.length
-  const rows = failed ? undefined : rowsOf(text)
-  return {
-    query: query({
-      ok: !failed,
-      chars,
-      ...(failed ? { error: text.slice(0, 300) } : {}),
-      ...(rows === undefined ? {} : { rows }),
-    }),
-    text: failed ? '' : normalize(text).slice(0, Math.max(0, Math.min(TEXT_PER_CALL, budget))),
-    data: !failed && target !== undefined && DATA_TOOLS.has(target),
-  }
-}
-
-/** Calls per run, held until the run's `tools` step reads them (and the step journals them). */
-export type CallStore = {
-  /** The grant's hook for one run. */
-  hook(runId: string): ToolGrant['onCall']
-  /** The run's calls so far, answered order; drops them. */
-  take(runId: string): Recorded[]
-  clear(runId: string): void
-}
-
-export function callStore(): CallStore {
-  const runs = new Map<string, Recorded[]>()
-  return {
-    hook: (runId) => (call) => {
-      const calls = runs.get(runId) ?? []
-      runs.set(runId, calls)
-      const used = calls.reduce((sum, c) => sum + c.text.length, 0)
-      const asked = call.tool === 'hdx_query'
-      const nth = calls.filter((c) => (c.query.tool === 'hdx_query') === asked).length + 1
-      calls.push(recordOf(call, `${asked ? 'q' : 't'}${nth}`, TEXT_PER_RUN - used))
-    },
-    take: (runId) => {
-      const calls = runs.get(runId) ?? []
-      runs.delete(runId)
-      return calls
-    },
-    clear: (runId) => void runs.delete(runId),
-  }
+  if (result.isError === true) return { ...head, ok: false, chars, error: text.slice(0, 300) }
+  const rows = rowsOf(text, result.truncated === true)
+  return { ...head, ok: true, chars, ...(rows === undefined ? {} : { rows }) }
 }
 
 /**
  * The otel step's grant: its three tools, the run's environment pinned (the agent's own `env` argument is overwritten,
- * and the plugin does not offer one), and the hook that records every call.
+ * and the plugin does not offer one), and the hooks that number and record every call.
  */
 export function otelGrant(
-  store: CallStore,
-  runId: string,
+  calls: Pick<ReturnType<typeof runCalls>, 'onStart' | 'onCall'>,
   env: 'local' | 'prod',
-): Pick<ToolGrant, 'tools' | 'fixed' | 'onCall'> {
-  return { tools: OTEL_TOOLS, fixed: { env }, onCall: store.hook(runId) }
+): Pick<ToolGrant, 'tools' | 'fixed' | 'onStart' | 'onCall'> {
+  return { tools: OTEL_TOOLS, fixed: { env }, onStart: calls.onStart, onCall: calls.onCall }
 }
 
-const HEX_ID = /\b[0-9a-f]{16,}\b/g
-const QUOTED = /"([^"]{8,})"|'([^']{8,})'|`([^`]{8,})`/g
-/** A dotted, slashed or colon-joined identifier of 8+ characters: `http.status_code`, `/api/v1/users`, `db:main`. */
-const IDENT = /[\w]+(?:[./:-][\w]+)+/g
-const CITED = /\bq(\d+)\b/gi
+const CITED = /\bq\d+(?:\.\d+)?\b/gi
 
 /**
- * Whether a finding's evidence rests on this run's queries. It does when it names a query of the run that worked
- * (`q3`; `hdx_query` calls only), or when something specific in it (a hex id, a quoted excerpt, a dotted or pathlike identifier of 8+
- * characters, or the whole text) appears in the answer of a query that worked. An evidence-less finding, or one that
- * names only a query that failed or does not exist, rests on nothing.
+ * Whether a finding's evidence rests on this run's queries: it names (`q3`) at least one query that read telemetry,
+ * worked and returned rows. Nothing else grounds it: a trace id, a quote or a column name in the text proves
+ * nothing, and a failed, empty, metadata or unknown query supports no finding.
  */
-export function isGrounded(evidence: string | undefined, calls: readonly Recorded[]): boolean {
-  if (!evidence?.trim()) return false
-  const worked = new Map(calls.filter((c) => c.query.ok && c.query.tool === 'hdx_query').map((c) => [c.query.id, c]))
-  for (const match of evidence.matchAll(CITED)) if (worked.has(`q${match[1]}`)) return true
-  const haystacks = [...worked.values()].map((c) => c.text).filter(Boolean)
-  if (haystacks.length === 0) return false
-  const found = (needle: string) => needle.length >= 8 && haystacks.some((text) => text.includes(needle))
-  const text = normalize(evidence)
-  const needles = [
-    text,
-    ...(text.match(HEX_ID) ?? []),
-    ...[...evidence.matchAll(QUOTED)].map((m) => normalize(m[1] ?? m[2] ?? m[3] ?? '')),
-    ...(text.match(IDENT) ?? []),
-  ]
-  return needles.some(found)
+export function isGrounded(evidence: string | undefined, calls: readonly Query[]): boolean {
+  if (!evidence) return false
+  const solid = new Set(calls.filter(returnedRows).map((q) => q.id))
+  return [...evidence.matchAll(CITED)].some((m) => solid.has(m[0].toLowerCase()))
 }

@@ -19,6 +19,8 @@ export type ToolCallRecord = {
   stepId: string
   tool: string
   args: Record<string, Json>
+  /** What `onStart` returned for this call: the label the agent was shown with the answer. */
+  label?: string
   outcome: { ok: true; result: Json } | { ok: false; error: string }
 }
 
@@ -35,6 +37,13 @@ export type ToolGrant = {
   stepId: string
   tools: Readonly<Record<string, string>>
   fixed?: Readonly<Record<string, Json>>
+  /**
+   * Told of each call as it starts, after the grant check and before the capability runs, in the order calls arrive;
+   * the string it returns is the call's `label`: sent back with the answer (`label` next to `result` or `error`),
+   * where the agent's tool shows it, and passed to `onCall`. Otel numbers its queries this way, so the ids an agent
+   * cites are the ones the run recorded. It must not throw; one that does is logged and the call runs unlabeled.
+   */
+  onStart?: (call: { runId: string; stepId: string; tool: string; args: Record<string, Json> }) => string | undefined
   onCall?: (call: ToolCallRecord) => void | Promise<void>
 }
 
@@ -47,6 +56,7 @@ type Grant = {
   stepKey: string
   tools: Readonly<Record<string, string>>
   fixed: Readonly<Record<string, Json>>
+  onStart: ToolGrant['onStart']
   onCall: ToolGrant['onCall']
   controller: AbortController
   /** Calls still being served: a drop waits for them, so every row is written before a step reads its evidence. */
@@ -205,6 +215,7 @@ export class ToolGate {
       stepKey,
       tools: { ...input.tools },
       fixed: { ...input.fixed },
+      onStart: input.onStart,
       onCall: input.onCall,
       controller: new AbortController(),
       inflight: new Set(),
@@ -330,12 +341,27 @@ export class ToolGate {
     if (!grant) return refuse(403, 'no_grant', 'this session holds no tool grant')
     const capability = Object.hasOwn(grant.tools, tool) ? grant.tools[tool] : undefined
     if (capability === undefined) return refuse(403, 'not_granted', `${tool} is not granted to this agent`)
-    const work = this.serve(grant, tool, capability, { ...call.args, ...grant.fixed })
+    const args = { ...call.args, ...grant.fixed }
+    const label = this.label(grant, tool, args)
+    const work = this.serve(grant, tool, capability, args, label)
     grant.inflight.add(work)
     try {
       return answer(200, await work)
     } finally {
       grant.inflight.delete(work)
+    }
+  }
+
+  private label(grant: Grant, tool: string, args: Record<string, Json>): string | undefined {
+    try {
+      return grant.onStart?.({ runId: grant.runId, stepId: grant.stepId, tool, args })
+    } catch (error) {
+      this.logger.error('tool gate: the start hook failed; the call runs unlabeled', {
+        runId: grant.runId,
+        tool,
+        error: message(error),
+      })
+      return undefined
     }
   }
 
@@ -345,6 +371,7 @@ export class ToolGate {
     tool: string,
     capability: string,
     args: Record<string, Json>,
+    label: string | undefined,
   ): Promise<Record<string, unknown>> {
     let outcome: ToolCallRecord['outcome']
     try {
@@ -357,7 +384,14 @@ export class ToolGate {
       outcome = { ok: false, error: message(error) }
     }
     try {
-      await grant.onCall?.({ runId: grant.runId, stepId: grant.stepId, tool, args, outcome })
+      await grant.onCall?.({
+        runId: grant.runId,
+        stepId: grant.stepId,
+        tool,
+        args,
+        ...(label ? { label } : {}),
+        outcome,
+      })
     } catch (error) {
       this.logger.error('tool gate: the call hook failed; the call stands', {
         runId: grant.runId,
@@ -365,7 +399,10 @@ export class ToolGate {
         error: message(error),
       })
     }
-    return outcome.ok ? { ok: true, result: outcome.result } : { ok: false, error: outcome.error.slice(0, 1_000) }
+    const tag = label ? { label } : {}
+    return outcome.ok
+      ? { ok: true, result: outcome.result, ...tag }
+      : { ok: false, error: outcome.error.slice(0, 1_000), ...tag }
   }
 
   private book(grant: Grant, usage: Usage) {

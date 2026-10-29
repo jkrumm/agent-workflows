@@ -12,7 +12,7 @@ const usage = (cost: number): Usage => ({
   costSource: 'rate',
 })
 
-type Answer = { ok: boolean; result?: Json; error?: string; code?: string }
+type Answer = { ok: boolean; result?: Json; error?: string; code?: string; label?: string }
 
 let dir: string
 let gate: ToolGate
@@ -514,6 +514,55 @@ describe('agent safety is structural', () => {
     expect(records[0]?.args).toEqual({ env: 'prod', q: 1 })
     await post('find', 'a:s')
     expect(capabilityCalls[1]?.input).toEqual({ env: 'prod' })
+    await close()
+  })
+
+  test('onStart runs once per granted call, before the capability; its label comes back with the answer and to the hook', async () => {
+    const order: string[] = []
+    const records: ToolCallRecord[] = []
+    capability = async (id, input) => {
+      order.push('capability')
+      return { id, input }
+    }
+    let n = 0
+    const close = gate.open({
+      runId: 'a',
+      stepId: 's',
+      tools: { find: 'cap.find' },
+      onStart: (call) => {
+        order.push(`start ${call.tool}`)
+        return `query q${++n}`
+      },
+      onCall: (call) => {
+        records.push(call)
+      },
+    })
+    const first = await post('find', 'a:s', { q: 1 })
+    expect(first.body).toEqual({ ok: true, result: { id: 'cap.find', input: { q: 1 } }, label: 'query q1' })
+    capability = async () => {
+      throw new Error('boom')
+    }
+    expect((await post('find', 'a:s')).body).toEqual({ ok: false, error: 'boom', label: 'query q2' })
+    // A tool outside the grant is refused before the start hook is told.
+    expect((await post('write', 'a:s')).body.code).toBe('not_granted')
+    expect(n).toBe(2)
+    expect(order).toEqual(['start find', 'capability', 'start find'])
+    expect(records.map((r) => r.label)).toEqual(['query q1', 'query q2'])
+    await close()
+  })
+
+  test('a start hook that throws is logged and the call runs unlabeled', async () => {
+    const close = gate.open({
+      runId: 'a',
+      stepId: 's',
+      tools: { find: 'cap.find' },
+      onStart: () => {
+        throw new Error('no label')
+      },
+    })
+    const answered = await post('find', 'a:s', { q: 1 })
+    expect(answered.body).toEqual({ ok: true, result: { id: 'cap.find', input: { q: 1 } } })
+    expect(errors).toEqual(['tool gate: the start hook failed; the call runs unlabeled'])
     await close()
   })
 })

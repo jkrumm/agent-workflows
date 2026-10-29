@@ -55,8 +55,8 @@ function stateOf(result: z.output<typeof Scorable>): string {
  * - `status` (with a reference): the answered status equals the expected one;
  * - `facts` (judged, with a reference): the share of the reference's facts the result states, one `decide` boolean per
  *   fact; left out without a judge or when the judge could not answer;
- * - `grounded` (the new arm only: it needs `queries`): the share of findings not flagged `unverified`, counted in code
- *   from the run's tool calls; left out when there are no findings.
+ * - `grounded` (the new arm only: it needs `queries`): the share of findings not flagged `unverified` (their evidence names a query of the
+ *   run that read telemetry and returned rows), counted in code from the run's tool calls; left out when there are no findings.
  * `pass`: valid, and with a reference the status matches and every fact is stated (an unscored `facts` never passes).
  */
 export const otelScorer: Scorer<OtelInputValue, OtelReference> = {
