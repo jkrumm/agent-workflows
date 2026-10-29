@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { completeJson, type LlmDeps } from '../llm/model-call.ts'
 import { defineCapability } from '../procedure.ts'
 import { callUsageSchema, trackUsage } from './call-usage.ts'
+import { cutPoint } from './cut-point.ts'
 
 // Ported as-is from agent-gateway's `triage` job as iris calls it: iris composed the prompt (its `agw.ts` buildPrompt)
 // and the gateway wrapped it with the answer's JSON Schema (`jobs/handlers/triage.ts` buildPrompt). Both live here now.
@@ -11,11 +12,11 @@ const DETAIL_MAX = 240
 const SPOKEN_MAX = 300
 /** Legacy cut the transcript and the reply at this many characters. */
 const EXCERPT_MAX = 4000
-/** Legacy bounded the whole prompt at 400k; the two texts are the only free part of it. */
+/** Bound on each input string, so none is unbounded. Legacy bounded the finished prompt at 400k; here the transcript and reply are cut to `EXCERPT_MAX`, the destination goes into the prompt as given. */
 const INPUT_MAX = 400_000
 
 export const triageInput = z.object({
-  destination: z.string().describe('Where the memo was routed'),
+  destination: z.string().min(1).max(INPUT_MAX).describe('Where the memo was routed'),
   transcript: z.string().max(INPUT_MAX).describe(`The dictated memo; cut to ${EXCERPT_MAX} characters`),
   reply: z
     .string()
@@ -50,7 +51,8 @@ export const triageOutput = summary.extend({
   usage: callUsageSchema,
 })
 
-const excerpt = (text: string) => (text.length > EXCERPT_MAX ? `${text.slice(0, EXCERPT_MAX)}\n[truncated]` : text)
+const excerpt = (text: string) =>
+  text.length > EXCERPT_MAX ? `${text.slice(0, cutPoint(text, EXCERPT_MAX))}\n[truncated]` : text
 
 export function buildTriagePrompt(input: z.output<typeof triageInput>): string {
   const task = [

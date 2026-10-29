@@ -3,6 +3,7 @@ import { CapabilityError, fail } from '../errors.ts'
 import { type LlmDeps, resolve, toUsage } from '../llm/model-call.ts'
 import { defineCapability } from '../procedure.ts'
 import { callUsageSchema, trackUsage } from './call-usage.ts'
+import { cutPoint } from './cut-point.ts'
 
 /** The decision API takes at most this many options per choice question. */
 const MAX_OPTIONS = 255
@@ -55,13 +56,6 @@ export const decideOutput = z.object({
   latencyMs: z.int().nonnegative(),
   usage: callUsageSchema,
 })
-
-/** Where to cut `text` to at most `max` UTF-16 units without splitting a surrogate pair. */
-function cutPoint(text: string, max: number): number {
-  if (text.length <= max) return text.length
-  const high = text.charCodeAt(max - 1)
-  return high >= 0xd800 && high <= 0xdbff ? max - 1 : max
-}
 
 const inRange = (p: number) => Number.isFinite(p) && p >= 0 && p <= 1
 
