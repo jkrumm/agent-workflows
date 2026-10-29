@@ -153,6 +153,50 @@ research-gateway's tools as capabilities (Wave 6), behaviour ported and code rew
 
 **Testing.** `fakeWeb(script?)` from `@agent-workflows/capabilities/testing` returns the four capabilities with the real ids, schemas and CLI shapes and canned results (`{ capabilities, calls }`); a per-capability reply (value, `Error`, or function of the input) scripts it, and each call reports a priced zero-cost usage unless `usage: null`.
 
+## Brain capabilities (`src/brain/`)
+
+The brain agent's tools (Wave 7): read-only search and read over the owner's vault, no model, no network. A direct
+read is priced at `$0` (`rate`, like `web.fetch`'s direct read), not `unknown`. The vault is `AGW_BRAIN_DIR`, read on each call
+(default `~/SourceRoot/brain`); a path that is no directory is `NOT_CONFIGURED`. The CLI commands are `agw vault …`, not
+`agw brain …`: `agw brain "<question>"` is the workflow, and the host refuses a command that is the prefix of another.
+
+| Capability | CLI | Input | Output |
+|-|-|-|-|
+| `brain.search` | `agw vault search <query> [--max-results n]` | `{ query, maxResults = 20 (1..50) }` | `{ matches: [{ path, line, snippet }], notes, truncated, warnings }` |
+| `brain.read` | `agw vault read <note> [--max-chars n]` | `{ note, maxChars = 20000 (1..100000) }` | `{ found: true, path, frontmatter (raw text), body, links, truncated }` or `{ found: false, reason, candidates? }` |
+
+**What is readable.** A positive list (`vault.ts`, `readable`): a `.md` file under `wiki/`, `Areas/` or `Projects/`, or the
+root `index.md`. `Inbox/`, `docs/`, `log.md`, every other root file, every dotdir and dotfile, `node_modules` and anything
+not `.md` are outside, for search and for read alike. Every comparison is case-insensitive (the vault lives on a case-insensitive file system: `INBOX`, `NODE_MODULES` and `.MD` are the same names). A new top-level directory in the vault stays unreadable until it is
+added to the list.
+
+**What cannot get out.** A request path is refused when it is empty, holds a NUL or a backslash, is absolute, has a `..`
+segment, is not `.md`, or is not in the readable set; percent escapes are not decoded (`%2e%2e` is a file name, which does
+not exist). A path that passes is resolved with `realpath`, and the real path must again be inside the vault's real path
+and again readable: a symlink out of the vault, or into `Inbox/`, reads as not found. Refusal and absence give the same
+answer (`found: false`), so the answer does not map what exists outside. 
+
+**TOCTOU.** The check and the read are not two steps on a path: `readNote` resolves the path, vets the real path, then reads through **one descriptor** opened with `O_NOFOLLOW`, and that descriptor's `fstat` (device and inode) must equal the `lstat` of the vetted real path. A path swapped for a symlink or another file after the check is refused, not read; the path is never opened a second time. (A hard link to a file outside the vault is out of scope: it needs write access to the vault.)
+
+**Canonical paths.** A tool prints the path of the file it opened, from its `realpath`, in Unicode NFC. A request is matched as typed first, then through the listing by NFC and case-folded comparison, so an NFD file name, a case variant (`WIKI/…/Pinning.MD`) and a `[[name]]` find the same note whether or not the file system folds them; two notes that fold alike are `found: false` with `candidates`. An in-vault symlink is an alias: it reads as the note it points to (canonical path of the target) and is never listed on its own, so a note appears once.
+
+**Decision (owner, 2026-10-29): a symlinked note whose target is outside the vault stays unreadable, and the vault root
+is not widened.** The vault today has two (relative links into another repository, which the vault's `AGENTS.md` calls
+real notes for Obsidian); the agent cannot read them, and search does not list them. Their content has to be copied into
+the vault, or linked to from a note that summarises it, for the brain to answer from it.
+
+**`brain.search`.** Case-insensitive, the query split on whitespace into at most 8 words; a line matches when it holds
+any of them. Notes are ranked by how many distinct words they hold, then by matching lines, then by path, so the same
+query ranks the same; at most 3 lines per note and `maxResults` lines in all, `truncated` says there were more (over `maxResults`, or a note had more than 3 matching lines). Words are tested with escaped case-insensitive regexes on the very (NFC) line the snippet is cut from. One listing per call; a tree over 20,000 notes stops there and says so in `warnings`. A
+snippet is the line cut to 200 characters around the first match. Not ripgrep: no regex, so there is no pattern that
+can run long on the event loop, and no binary to depend on; the whole vault (about 300 notes) is read per call.
+
+**`brain.read`.** `note` is a vault-relative path, or `[[name]]` (alias and `#heading` ignored). A name is an exact path
+first, then the one path that ends in the name (Obsidian's rule: `b/dup` and `dup` both find `wiki/b/dup.md`), compared
+case-insensitively; two matches are `found: false` with the `candidates`. `frontmatter` is the raw text between the `---` fences, **not parsed** (a YAML parser expands anchors and aliases: a few nested lines become gigabytes), `""` when there is none; `links` are the body's `[[wikilink]]` targets, found in one linear pass (a line of `[[[[…` costs one step per character).
+`maxChars` covers the whole result: the frontmatter is cut to at most half of it, the body gets the rest, each with a `[truncated: n more characters]` marker. A note is read up to 1 MB. The body is
+untrusted data: a note may say anything.
+
 ## Tests
 
 `bun test packages/capabilities` (Bun's `--isolate` runs it under `make check`):
@@ -162,6 +206,7 @@ research-gateway's tools as capabilities (Wave 6), behaviour ported and code rew
 - `transports.test.ts`: retries, fail-fast statuses, cancel, idle watchdog.
 - `fallback.test.ts`: 402 and the 503 balance body each make one fallback call (priced, its model recorded); a 503 without the text is retried on the primary only; a failing fallback answers the primary's error; a re-ask stays on the fallback; an `iu-anthropic` route falls back over chat; `AGW_ROUTES` patches or removes the fallback; `review.adversary` (402 and 503 balance, the fallback at its own effort, its re-ask too, no fallback on a plain 503) and `review.route`.
 - `web/web.test.ts`: the web capabilities against a fake network: Sonar mapping, cost and the fallback rule, Tavily credit pricing, the SSRF refusals (schemes, loopback, private, tailnet, metadata, IPv6 forms, a name that resolves privately, a redirect to a private IP, a second hop), DNS rebinding (a resolver that turns private after the guard is never asked again and the request is pinned per hop), the pinned transport against a local server, hostile 2 MB bodies, `parseHtml` edge cases (entities, separators), the streamed read cap, pinned-transport hardening (undecodable and stacked encodings, a failing gzip body), an unresolvable host, the byte-cap flag, charsets, empty and binary reads, truncation, the Extract chain, the typed errors, registry and OpenAPI shape, `fakeWeb`.
+- `brain/brain.test.ts`: both capabilities on a temp vault with a secret outside it: search (scope, ranking, caps, snippets, priced `$0`), read (path, wikilink forms, ambiguity, frontmatter edge cases, truncation), and 27 refused reads (`..`, absolute, symlinks out of the vault and into `Inbox/`, `Inbox/`, dotdirs, `node_modules`, `docs/`, `log.md`, encoded names, backslash, NUL, wikilink escapes), `NOT_CONFIGURED`.
 - `live.test.ts`: one real call per capability, **skipped unless `AGW_LIVE=1`** (the skipped names say so). It costs well under $0.001:
 
   ```sh

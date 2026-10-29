@@ -56,11 +56,19 @@ function urlsOf(call: ToolCallRecord): Partial<LedgerEntry> {
 }
 
 /**
- * The research step's grant: its four tools, and a hook that appends every call to the ledger as the evidence the
- * step's `tools` reads. A ledger write that fails is retried and logged; it never turns a call that worked into a
- * failed one.
+ * A step's grant that records every call to the ledger as the evidence the step reads: its tools, and a hook that
+ * appends a row per call (`extract` says what the call retrieved or saw). A ledger write that fails is retried and
+ * logged, and a row that cannot be built is replaced by a minimal one that says so, so a call is never absent from the
+ * ledger and a call that worked never turns into a failed one. `label` names the workflow in the log lines.
  */
-export function researchGrant(ledger: ToolLedger, logger?: Logger): Pick<ToolGrant, 'tools' | 'onCall'> {
+export function ledgerGrant(options: {
+  tools: Readonly<Record<string, string>>
+  ledger: ToolLedger
+  logger?: Logger
+  label: string
+  extract: (call: ToolCallRecord) => Partial<LedgerEntry>
+}): Pick<ToolGrant, 'tools' | 'onCall'> {
+  const { ledger, logger, label, extract } = options
   const record = async (entry: LedgerEntry): Promise<void> => {
     for (let attempt = 1; ; attempt++) {
       try {
@@ -70,7 +78,7 @@ export function researchGrant(ledger: ToolLedger, logger?: Logger): Pick<ToolGra
           await Bun.sleep(100 * attempt)
           continue
         }
-        logger?.error('research tool gate: the ledger write failed; the call stands without its evidence row', {
+        logger?.error(`${label} tool gate: the ledger write failed; the call stands without its evidence row`, {
           runId: entry.runId,
           tool: entry.tool,
           error: message(error),
@@ -90,11 +98,11 @@ export function researchGrant(ledger: ToolLedger, logger?: Logger): Pick<ToolGra
         ok: call.outcome.ok,
         retrieved: [],
         seen: [],
-        ...urlsOf(call),
+        ...extract(call),
         ...(call.outcome.ok ? {} : { error: call.outcome.error.slice(0, 300) }),
       }
     } catch (error) {
-      logger?.error('research tool gate: the evidence row could not be built; a minimal row is written', {
+      logger?.error(`${label} tool gate: the evidence row could not be built; a minimal row is written`, {
         runId: call.runId,
         tool: call.tool,
         error: message(error),
@@ -111,7 +119,12 @@ export function researchGrant(ledger: ToolLedger, logger?: Logger): Pick<ToolGra
       }
     }
   }
-  return { tools: RESEARCH_TOOLS, onCall: (call) => record(rowOf(call)) }
+  return { tools: options.tools, onCall: (call) => record(rowOf(call)) }
+}
+
+/** The research step's grant: its four tools, recorded with the URLs each call retrieved or saw. */
+export function researchGrant(ledger: ToolLedger, logger?: Logger): Pick<ToolGrant, 'tools' | 'onCall'> {
+  return ledgerGrant({ tools: RESEARCH_TOOLS, ledger, logger, label: 'research', extract: urlsOf })
 }
 
 /** What a step's recorded calls add up to: URLs retrieved and seen (normalized), failed fetches, calls per tool. */

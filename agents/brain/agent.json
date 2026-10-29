@@ -1,0 +1,17 @@
+{
+  "route": "brain.agent",
+  "permissions": {
+    "rules": [
+      {
+        "action": "brain_search",
+        "resource": "*",
+        "effect": "allow"
+      },
+      {
+        "action": "brain_read",
+        "resource": "*",
+        "effect": "allow"
+      }
+    ]
+  }
+}
