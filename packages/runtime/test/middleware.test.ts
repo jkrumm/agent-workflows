@@ -349,7 +349,7 @@ describe('middleware', () => {
     const posts: StepPostArgs[] = []
     const seen: Middleware = { name: 'seen', stepPost: (a) => void posts.push(a) }
     const host = new FakeAgentHost(async (s) => {
-      await s.sleep(30) // the session starts at the prompt; let the step attach its waiter first
+      await s.attached // the session starts at the prompt; hooks fire only once the step has attached its waiter
       for (let i = 0; i < 10; i++) await s.tool('grep', { i }, 'hit')
       return { output: { done: true } }
     })
@@ -390,7 +390,7 @@ describe('middleware', () => {
     const posts: StepPostArgs[] = []
     const seen: Middleware = { name: 'seen', stepPost: (a) => void posts.push(a) }
     const host = new FakeAgentHost(async (s) => {
-      await s.sleep(30)
+      await s.attached
       await s.tool('read', {}, 'x')
       return { output: {} }
     })

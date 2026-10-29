@@ -16,6 +16,12 @@ afterAll(async () => {
 
 const empty = z.object({})
 
+/** Postgres' wall clock in epoch ms: the clock the journal measures the body grace on (`attempt_started_at`). */
+async function pgNowMs(): Promise<number> {
+  const { rows } = await sql.pool.query('select (extract(epoch from clock_timestamp()) * 1000)::float8 as ms')
+  return rows[0].ms as number
+}
+
 describe('lease grace (#2)', () => {
   test('after a lease loss mid-effect, the next process waits out the grace before re-running the body', async () => {
     const runs: { start: number; end?: number }[] = []
@@ -26,10 +32,10 @@ describe('lease grace (#2)', () => {
       output: empty,
       async run(ctx) {
         await ctx.effect('send', async () => {
-          const entry: { start: number; end?: number } = { start: Date.now() }
+          const entry: { start: number; end?: number } = { start: await pgNowMs() }
           runs.push(entry)
           if (runs.length === 1) await Bun.sleep(600) // ignores the abort: an outside call already in flight
-          entry.end = Date.now()
+          entry.end = await pgNowMs()
           return null
         })
         return {}
@@ -47,6 +53,13 @@ describe('lease grace (#2)', () => {
     await a.open()
     const { runId } = await a.start(wf, {}, { purpose: 'build' })
     await until(() => runs.length === 1, 'first effect start')
+    // The grace runs from the journal's attempt start, not from the body's first line: read it before the retry
+    // (the second attempt overwrites it), on the same clock the bodies' timestamps use.
+    const { rows } = await sql.pool.query(
+      `select (extract(epoch from attempt_started_at) * 1000)::float8 as ms from "${db.schema}".steps where run_id = $1 and step_id = 'send'`,
+      [runId],
+    )
+    const attemptStart = rows[0].ms as number
     await sql.pool.query('select pg_terminate_backend(pid) from pg_stat_activity where application_name = $1', [
       `agw-lease:${db.schema}`,
     ])
@@ -55,8 +68,8 @@ describe('lease grace (#2)', () => {
       expect((await b.wait(runId)).status).toBe('done')
       expect(runs).toHaveLength(2)
       const [first, second] = runs as [{ start: number; end: number }, { start: number }]
+      expect(second.start).toBeGreaterThanOrEqual(attemptStart + grace)
       expect(second.start).toBeGreaterThanOrEqual(first.end)
-      expect(second.start - first.start).toBeGreaterThanOrEqual(grace - 50)
     } finally {
       await Promise.all([a.close(), b.close()])
     }
