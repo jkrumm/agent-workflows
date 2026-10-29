@@ -184,6 +184,13 @@ interface GeminiTtsResponse {
   usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number }
 }
 
+const tokensOf = (usage: GeminiTtsResponse['usageMetadata']) => ({
+  inputTokens: usage?.promptTokenCount ?? null,
+  outputTokens: usage?.candidatesTokenCount ?? null,
+})
+
+const evenBytes = (pcm: Uint8Array): Uint8Array => (pcm.byteLength % 2 ? pcm.subarray(0, pcm.byteLength - 1) : pcm)
+
 /** POST one unary synth request on a route; priced and recorded before any throw. */
 async function postSynth(scope: AudioScope, routeId: string, body: Record<string, unknown>): Promise<ChunkAudio> {
   const model = scope.route(routeId).model
@@ -194,9 +201,10 @@ async function postSynth(scope: AudioScope, routeId: string, body: Record<string
     body: JSON.stringify(body),
   })
   const latencyMs = scope.deps.clock.now() - start
-  const fail = (errorText: string, message: string): never => {
+  const fail = (errorText: string, message: string, usage?: GeminiTtsResponse['usageMetadata']): never => {
     scope.log.error('gemini tts synth error', { model, status: res.status, latencyMs, error: errorText })
-    scope.call({ endpoint: 'speech', routeId, model, status: res.status, latencyMs, errorText })
+    // A 2xx without audio still bills its prompt (and whatever it generated): its usageMetadata is recorded.
+    scope.call({ endpoint: 'speech', routeId, model, status: res.status, latencyMs, errorText, ...tokensOf(usage) })
     throw new Error(message)
   }
   if (res.status < 200 || res.status >= 300) {
@@ -213,9 +221,11 @@ async function postSynth(scope: AudioScope, routeId: string, body: Record<string
     return fail(
       `no audio in response: ${res.body.slice(0, 400)}`,
       `Gemini TTS returned no audio: HTTP ${res.status} ${res.body.slice(0, 300)}`,
+      parsed.usageMetadata,
     )
   }
-  const pcm = stripWavHeader(Uint8Array.from(Buffer.from(inline.data, 'base64')))
+  // An odd byte count would shift every later chunk by one byte into noise: trimmed to whole samples.
+  const pcm = evenBytes(stripWavHeader(Uint8Array.from(Buffer.from(inline.data, 'base64'))))
   const sampleRate = Number(/rate=(\d+)/.exec(inline.mimeType ?? '')?.[1]) || SAMPLE_RATE_DEFAULT
   scope.call({
     endpoint: 'speech',
@@ -223,8 +233,7 @@ async function postSynth(scope: AudioScope, routeId: string, body: Record<string
     model,
     status: res.status,
     latencyMs,
-    inputTokens: parsed.usageMetadata?.promptTokenCount ?? null,
-    outputTokens: parsed.usageMetadata?.candidatesTokenCount ?? null,
+    ...tokensOf(parsed.usageMetadata),
     audioSeconds: pcm.byteLength / (2 * sampleRate),
     bytesOut: pcm.byteLength,
   })
@@ -295,6 +304,11 @@ export function synthChunksConcurrent(
 
 /** The base64 PCM of one SSE `data:` payload; null for an event without audio; a garbled or error event throws. */
 export function sseAudio(data: string): Uint8Array | null {
+  return sseEvent(data).audio
+}
+
+/** One SSE `data:` payload: its audio and the prompt token count it reports (input is billed once per call). */
+export function sseEvent(data: string): { audio: Uint8Array | null; promptTokens: number | null } {
   let event: GeminiTtsResponse & { error?: { message?: string } }
   try {
     event = JSON.parse(data) as typeof event
@@ -307,7 +321,11 @@ export function sseAudio(data: string): Uint8Array | null {
     )
   }
   const b64 = event.candidates?.[0]?.content?.parts?.find((p) => p.inlineData?.data)?.inlineData?.data
-  return b64 ? Uint8Array.from(Buffer.from(b64, 'base64')) : null
+  const prompt = event.usageMetadata?.promptTokenCount
+  return {
+    audio: b64 ? Uint8Array.from(Buffer.from(b64, 'base64')) : null,
+    promptTokens: typeof prompt === 'number' && Number.isFinite(prompt) ? prompt : null,
+  }
 }
 
 async function readWithIdleGuard(
@@ -325,7 +343,13 @@ async function readWithIdleGuard(
 }
 
 /** Open the SSE stream for one chunk; 429/503 and transport failures are retried before any body byte is read. */
-async function openStream(scope: AudioScope, model: string, voiceName: string, chunk: PrepChunk): Promise<Response> {
+async function openStream(
+  scope: AudioScope,
+  model: string,
+  voiceName: string,
+  chunk: PrepChunk,
+  signal: AbortSignal,
+): Promise<Response> {
   const attempts = 3
   for (let attempt = 1; ; attempt++) {
     let res: Response
@@ -334,9 +358,10 @@ async function openStream(scope: AudioScope, model: string, voiceName: string, c
         method: 'POST',
         headers: iuHeaders(scope, { 'content-type': 'application/json' }),
         body: JSON.stringify(synthBody(voiceName, chunk, { rawPcm: false })),
+        signal,
       })
     } catch (error) {
-      if (attempt >= attempts) throw error
+      if (attempt >= attempts || signal.aborted) throw error
       scope.retried()
       await scope.deps.clock.sleep(1000 * attempt)
       continue
@@ -357,9 +382,11 @@ async function* streamChunkPcm(
   voiceName: string,
   chunk: PrepChunk,
   started: number,
+  signal: AbortSignal,
+  meter: { promptTokens: number | null },
 ): AsyncGenerator<Uint8Array> {
   const model = scope.route(routeId).model
-  const res = await openStream(scope, model, voiceName, chunk)
+  const res = await openStream(scope, model, voiceName, chunk, signal)
   const fail = (errorText: string, message: string): never => {
     scope.log.error('gemini tts stream error', { model, status: res.status, error: errorText })
     scope.call({
@@ -369,6 +396,7 @@ async function* streamChunkPcm(
       status: res.ok ? 502 : res.status,
       latencyMs: scope.deps.clock.now() - started,
       errorText,
+      inputTokens: meter.promptTokens,
     })
     throw new Error(message)
   }
@@ -399,7 +427,9 @@ async function* streamChunkPcm(
           .filter((l) => l.startsWith('data:'))
           .map((l) => l.slice(5).trim())
           .join('')
-        const audio = data ? sseAudio(data) : null
+        const event = data ? sseEvent(data) : null
+        if (event?.promptTokens != null) meter.promptTokens = event.promptTokens
+        const audio = event?.audio ?? null
         const run = audio ? emit(audio) : null
         if (run) {
           yielded = true
@@ -430,6 +460,8 @@ async function streamGeminiSpeech(
   const clock = scope.deps.clock
   const started = clock.now()
   let cancelled = false
+  // A client that leaves aborts the upstream read too: Gemini would otherwise keep generating (and billing).
+  const upstream = new AbortController()
   let controller!: ReadableStreamDefaultController<Uint8Array>
   let wake: (() => void) | null = null
   // Pull-based backpressure: ~256 KiB (~5 s of audio) may queue ahead of the client; a cancelled stream stops asking.
@@ -443,6 +475,7 @@ async function streamGeminiSpeech(
       },
       cancel() {
         cancelled = true
+        upstream.abort()
         wake?.()
       },
     },
@@ -472,13 +505,22 @@ async function streamGeminiSpeech(
         const chunkStart = clock.now()
         let chunkBytes = 0
         let chunkStatus = 500
+        const meter: { promptTokens: number | null } = { promptTokens: null }
         try {
           if (i > 0 && firstByteMs !== null) {
             const gap = silencePcm(sampleRate)
             totalBytes += gap.byteLength
             await push(gap)
           }
-          for await (const bytes of streamChunkPcm(scope, routeId, voiceName, chunk, chunkStart)) {
+          for await (const bytes of streamChunkPcm(
+            scope,
+            routeId,
+            voiceName,
+            chunk,
+            chunkStart,
+            upstream.signal,
+            meter,
+          )) {
             if (cancelled) break
             if (firstByteMs === null) {
               firstByteMs = clock.now() - started
@@ -489,6 +531,9 @@ async function streamGeminiSpeech(
             await push(bytes)
           }
           if (!cancelled) chunkStatus = 200
+        } catch (error) {
+          // The abort a cancel caused is the end of the request, not a failure.
+          if (!cancelled) throw error
         } finally {
           if (chunkBytes > 0) {
             const seconds = chunkBytes / (2 * sampleRate)
@@ -503,6 +548,7 @@ async function streamGeminiSpeech(
                   ? null
                   : `${cancelled ? 'client cancelled' : 'stream failed'} after ${chunkBytes} bytes`,
               latencyMs: clock.now() - chunkStart,
+              inputTokens: meter.promptTokens,
               outputTokens: Math.round(seconds * AUDIO_TOKENS_PER_SECOND),
               audioSeconds: seconds,
               bytesOut: chunkBytes,

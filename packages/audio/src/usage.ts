@@ -58,7 +58,7 @@ export interface RequestEvent extends EventBase {
   unpricedCalls: number
   retries: number
   responseFormat: string
-  /** `direct` | `prep` | `summary` | `passthrough` (speech); null for transcriptions. */
+  /** `direct` | `prep` | `summary` (speech); null for transcriptions. */
   mode: string | null
   lane: string | null
   chunks: number | null

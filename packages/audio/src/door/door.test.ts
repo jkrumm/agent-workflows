@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { AUDIO_ROUTES, type AudioRoute } from '../routes.pending.ts'
+import { AUDIO_ROUTES } from '../routes.pending.ts'
 import {
   audioEvent,
   type FakeIu,
@@ -182,33 +182,15 @@ describe('door contract', () => {
     expect(warnings[0]).toBe('usage port failed')
   })
 
-  test('the passthrough lane proxies IU /audio/speech with the resolved model', async () => {
-    iu = startFakeIu({
-      speech: (r) =>
-        new Response(new Uint8Array([7, 7]), {
-          headers: { 'content-type': `audio/${String(r.json?.response_format)}` },
-        }),
-    })
-    const routes: Record<string, AudioRoute> = {
-      ...AUDIO_ROUTES,
-      'audio.tts.gemini-flash-lite': { wire: 'iu-openai-speech', model: 'plain-speech-model' },
-    }
-    const deps = { ...testDeps(iu), routes }
-    const res = await createSpeechHandler(deps)(
-      post(JSON.stringify({ model: 'typo', input: 'Hallo.', voice: 'alloy', response_format: 'wav', speed: 1.1 })),
-    )
-    expect(res.status).toBe(200)
-    expect(res.headers.get('content-type')).toBe('audio/wav')
-    expect(iu.requests[0]?.json).toEqual({
-      model: 'plain-speech-model',
-      input: 'Hallo.',
-      voice: 'alloy',
-      response_format: 'wav',
-      speed: 1.1,
-    })
-    expect(deps.usage.events.find((e) => e.kind === 'request')).toMatchObject({
-      lane: 'passthrough',
-      costSource: 'unknown',
-    })
+  test('a TTS id the route table does not serve (a retired Gemini preview, any owner/name) lands on the default', async () => {
+    iu = startFakeIu({ gemini: () => geminiAudio(Uint8Array.from([1, 0])) })
+    const deps = testDeps(iu)
+    const speak = createSpeechHandler(deps)
+    await speak(post(JSON.stringify({ model: 'gemini-3.1-flash-tts-preview', input: 'Hallo.' })))
+    await speak(post(JSON.stringify({ model: 'someone/voice-1', input: 'Hallo.' })))
+    expect(iu.requests.map((r) => r.path)).toEqual([
+      `/gemini/v1beta/models/${LITE}:generateContent`,
+      `/gemini/v1beta/models/${LITE}:generateContent`,
+    ])
   })
 })

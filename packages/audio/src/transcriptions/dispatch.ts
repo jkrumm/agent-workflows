@@ -123,9 +123,9 @@ export async function transcribeParts(
       record(scope, routeId, reply, null)
       throw new PartFailure(reply.status, reply.body, reply.contentType)
     }
-    const { text, usage } = extractTextAndUsage(reply.body, reply.contentType)
-    record(scope, routeId, reply, usage, null, opts.partSeconds?.(index) ?? null)
-    return text
+    const read = readReply(scope, routeId, reply, null, opts.partSeconds?.(index) ?? null)
+    if ('failure' in read) throw new PartFailure(502, JSON.stringify(read.failure), 'application/json')
+    return read.text
   })
   return { text: texts.join(' '), usedFallback }
 }
@@ -141,6 +141,7 @@ export function record(
   usage: unknown,
   probedSeconds: number | null = null,
   cutSeconds: number | null = null,
+  errorText: string | null = null,
 ): void {
   const ok = reply.status >= 200 && reply.status < 300
   const measure = measureFromOpenAiUsage(usage)
@@ -151,7 +152,36 @@ export function record(
     status: reply.status,
     latencyMs: reply.latencyMs,
     ...measure,
-    audioSeconds: probedSeconds ?? measure.audioSeconds ?? cutSeconds,
-    errorText: ok ? null : reply.body.slice(0, 500),
+    // A probe that failed reports 0: that is no measurement, never a free call.
+    audioSeconds: positive(probedSeconds) ?? positive(measure.audioSeconds) ?? positive(cutSeconds),
+    errorText: errorText ?? (ok ? null : reply.body.slice(0, 500)),
   })
+}
+
+const positive = (n: number | null | undefined): number | null => (typeof n === 'number' && n > 0 ? n : null)
+
+export interface ReadFailure {
+  error: { message: string; type: 'upstream_error' }
+}
+
+/**
+ * A 2xx reply read into `{ text, language }` and recorded, billed or not. A body that cannot be read is still a billed
+ * call: it is recorded first (priced from the duration we know, else unknown), then answered as a 502.
+ */
+export function readReply(
+  scope: AudioScope,
+  routeId: string,
+  reply: UpstreamReply,
+  probedSeconds: number | null,
+  cutSeconds: number | null = null,
+): { text: string; language: string | null } | { failure: ReadFailure } {
+  try {
+    const { text, usage, language } = extractTextAndUsage(reply.body, reply.contentType)
+    record(scope, routeId, reply, usage, probedSeconds, cutSeconds)
+    return { text, language }
+  } catch {
+    const message = `upstream ${scope.route(routeId).model} answered ${reply.status} with an unreadable body`
+    record(scope, routeId, reply, null, probedSeconds, cutSeconds, `${message}: ${reply.body.slice(0, 300)}`)
+    return { failure: { error: { message, type: 'upstream_error' } } }
+  }
 }

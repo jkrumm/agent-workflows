@@ -22,6 +22,8 @@ export interface FakeRequest {
   json: Record<string, unknown> | null
   /** Parsed multipart body (transcriptions). */
   form: FormData | null
+  /** Aborts when the client drops the request. */
+  signal: AbortSignal
 }
 
 type Handler = (request: FakeRequest, attempt: number) => Response | Promise<Response>
@@ -67,7 +69,7 @@ export function startFakeIu(handlers: Partial<Record<FakeRoute, Handler>> = {}):
         const text = await req.text()
         json = text ? (JSON.parse(text) as Record<string, unknown>) : null
       }
-      const request: FakeRequest = { route, path: url.pathname, headers: req.headers, json, form }
+      const request: FakeRequest = { route, path: url.pathname, headers: req.headers, json, form, signal: req.signal }
       requests.push(request)
       const attempt = (attempts.get(route) ?? 0) + 1
       attempts.set(route, attempt)

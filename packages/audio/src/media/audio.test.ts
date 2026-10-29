@@ -31,6 +31,15 @@ describe('framing (pure)', () => {
     })
   })
 
+  test('concatPcm refuses parts at different sample rates', () => {
+    expect(() =>
+      concatPcm([
+        { pcm: Uint8Array.from([1, 0]), sampleRate: 24_000 },
+        { pcm: Uint8Array.from([1, 0]), sampleRate: 16_000 },
+      ]),
+    ).toThrow(/24000 Hz and 16000 Hz/)
+  })
+
   test('parseSilence pairs start/end lines and runs a trailing start to the end', () => {
     const stderr = [
       '[silencedetect @ 0x1] silence_start: 1.5',

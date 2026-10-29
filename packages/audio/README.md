@@ -61,7 +61,6 @@ when that chunk ends.
 - **Replicate / ElevenLabs** (`iu-replicate-tts`): create, poll, fetch the `replicate.delivery` MP3 (no other host);
   prep only for prep models or `summarize`; whole-file requests with long text on a prep-off model get the spoken
   summary (`TTS_AUTO_SUMMARIZE_MIN_CHARS`); `previous_text`/`next_text` only where the route allows continuity.
-- **Passthrough** (`iu-openai-speech`): IU's `/audio/speech` with the resolved model, for a route on that wire (none by default).
 - **Transcriptions** (`iu-openai-stt`): an upload over the byte or duration limit is compressed to 16 kHz mono mp3
   and, if still too big or too long, sliced at silence-snapped cuts (`-t` always passed) and transcribed
   `STT_CHUNK_CONCURRENCY` wide; a part that hits a 404/5xx retries alone on its route's `fallback` (voxtral →
@@ -89,11 +88,26 @@ characters, per minute) live behind one function, `priceCall`, so the general pr
 ## Decisions (differences from legacy, with the reason)
 
 - **Model choice is the route table's.** A requested model is honoured only when a route serves it on the lane's wire;
-  anything else lands on the default route. Legacy also forwarded any unlisted `gemini-*-tts` or `owner/name` id; the
-  door now refuses to reach an unpriced model (model ids live only in the route table). `TTS_MODEL`, `STT_MODEL`,
-  `TTS_PREP_MODEL`, `TTS_SUMMARY_MODEL` and `TTS_PREP_EFFORT` are gone: route overrides do that.
-- **A failed call is `not-billed` at 0**, where legacy priced an ElevenLabs 502 row by its characters: no audio was
-  delivered. A streamed chunk cut off after audio arrived is still billed for the audio it delivered.
+  anything else lands on the default route. Legacy also accepted any `/gemini.*tts/` id and any Replicate `owner/name`
+  id. Evidence that the table covers what callers send: audio-gateway's VPS usage ledger, 2026-09-29 to 2026-10-29,
+  holds exactly the TTS models `gemini-3.8-flash-lite-tts`, `gemini-3.8-flash-tts`, `elevenlabs/flash-v2.5`,
+  `elevenlabs/v3`, and the STT models voxtral-mini, gpt-transcribe, gpt-4o-transcribe and whisper, all routes here;
+  the one other id, `gemini-3.1-flash-tts-preview` (shut down 2026-11-17), came only from `verify` callers and now
+  lands on the default. Argo sends no model. The door never reaches an unpriced model.
+- **`TTS_MODEL`, `STT_MODEL`, `TTS_PREP_MODEL`, `TTS_SUMMARY_MODEL` and `TTS_PREP_EFFORT` are gone, not carried over.**
+  The default TTS and STT models (`AUDIO_DEFAULT_ROUTES`), the prep and summary models and the prep effort are route
+  entries; changing one is a route override.
+- **No passthrough lane.** Legacy's IU `/audio/speech` proxy was reachable only when `TTS_MODEL` named a non-Gemini,
+  non-Replicate model; no caller does, so the lane and its code are gone.
+- **Billed means recorded, failure or not.** A failed upstream call is `not-billed` at 0. A call the provider billed is
+  recorded with its quantity even when we fail after it: an ElevenLabs prediction that succeeded is billed by its
+  characters when the delivery fetch or decode fails; a 2xx STT reply we cannot read is recorded (priced from the
+  duration we measured, else `unknown`) and answered 502, never retried on the fallback; a 2xx Gemini reply without
+  audio records its `usageMetadata`; a streamed chunk cut off after audio arrived is billed for what it delivered, and
+  each streamed call carries its prompt tokens. A probed duration of 0 is a failed probe, never a free call.
+- **A client that leaves a pcm stream aborts the upstream read**, so Gemini stops generating.
+- **The ElevenLabs delivery fetch** refuses redirects (the `replicate.delivery` allowlist cannot be left), has a 2-minute
+  hang guard and a 50 MiB cap; the prediction id is URL-encoded.
 - **The prep LLM's own `usage.cost` wins** over the rate when IU sends one (the platform rule in `packages/routes`).
 - **A sliced part without a duration in its reply is priced from its cut length**, where legacy left it unpriced.
 - **No spans.** Legacy's OTel spans become the run record the process books from the usage port.

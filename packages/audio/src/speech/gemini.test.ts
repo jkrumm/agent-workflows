@@ -406,3 +406,61 @@ describe('pcm streaming', () => {
     expect(iu.requests.map((r) => r.route)).toEqual(['gemini'])
   })
 })
+
+describe('billing and audio integrity', () => {
+  test('a 2xx without audio records its usageMetadata (the prompt is billed) and fails', async () => {
+    const { deps, speak } = setup({
+      gemini: () => Response.json({ candidates: [], usageMetadata: { promptTokenCount: 40, candidatesTokenCount: 0 } }),
+    })
+    expect((await speak(post({ model: LITE, input: 'Hallo.' }))).status).toBe(500)
+    const [call] = calls(deps.usage.events)
+    expect(call).toMatchObject({ status: 200, inputTokens: 40, costSource: 'rate' })
+    expect(call?.costUsd).toBeCloseTo((40 * 0.5) / 1e6, 12)
+  })
+
+  test('an odd unary byte count is trimmed to whole samples, so later chunks stay aligned', async () => {
+    const sentence = `${Array.from({ length: 140 }, () => 'wort').join(' ')}.`
+    const { speak } = setup({ gemini: () => geminiAudio(Uint8Array.from([1, 0, 9])) })
+    const res = await speak(post({ model: LITE, input: `${sentence} ${sentence}`, response_format: 'wav' }))
+    // passMedia returns the joined PCM: 2 + 19,200 silence + 2, the stray byte gone.
+    expect((await res.arrayBuffer()).byteLength).toBe(2 + 19_200 + 2)
+  })
+
+  test('a streamed call carries the prompt tokens it reported, once', async () => {
+    const usage = `data: ${JSON.stringify({ usageMetadata: { promptTokenCount: 12, candidatesTokenCount: 1 } })}\n\n`
+    const { deps, speak } = setup({ geminiStream: () => streamBody(audioEvent([1, 0]), usage) })
+    const res = await speak(post({ model: LITE, input: 'Hallo.', response_format: 'pcm' }))
+    await res.arrayBuffer()
+    await deps.usage.settledSummary()
+    expect(calls(deps.usage.events)).toEqual([expect.objectContaining({ inputTokens: 12, outputTokens: 0 })])
+  })
+
+  test('a client that cancels a pcm stream aborts the upstream read', async () => {
+    let aborted!: () => void
+    const upstreamAborted = new Promise<void>((resolve) => {
+      aborted = resolve
+    })
+    const { deps, speak } = setup({
+      geminiStream: (r) => {
+        r.signal.addEventListener('abort', () => aborted(), { once: true })
+        // One event, then an upstream that keeps the stream open (still "generating").
+        return new Response(
+          new ReadableStream<Uint8Array>({
+            start(c) {
+              c.enqueue(new TextEncoder().encode(audioEvent([3, 0])))
+            },
+          }),
+          { headers: { 'content-type': 'text/event-stream' } },
+        )
+      },
+    })
+    const res = await speak(post({ model: LITE, input: 'Hallo.', response_format: 'pcm' }))
+    const reader = res.body?.getReader()
+    await reader?.read()
+    await reader?.cancel()
+    await upstreamAborted
+    const summary = await deps.usage.settledSummary()
+    expect(summary.status).toBe(200)
+    expect(calls(deps.usage.events)[0]?.errorText).toContain('client cancelled')
+  })
+})

@@ -12,8 +12,6 @@ export type AudioWire =
   | 'iu-gemini-tts'
   /** ElevenLabs on IU's Replicate route: create prediction, poll, fetch the delivery MP3. */
   | 'iu-replicate-tts'
-  /** IU's OpenAI `/audio/speech`, proxied unchanged (the passthrough lane). */
-  | 'iu-openai-speech'
   /** IU's OpenAI `/audio/transcriptions`. */
   | 'iu-openai-stt'
   /** IU chat completions (the prep and summary LLMs). */

@@ -203,9 +203,12 @@ function splitSentences(text: string): string[] {
     .filter(Boolean)
 }
 
-/** Last resort: pack words into groups within the hard ceilings — only for a single over-long sentence. */
+/**
+ * Last resort: pack words into groups within the hard ceilings — only for a single over-long sentence. An inline tag
+ * is one token even with a space inside (`<short pause>`), so a cut never splits it into two spoken halves.
+ */
 function splitWords(text: string, limits: ChunkLimits): string[] {
-  const words = text.match(/\S+/g) ?? []
+  const words = text.match(/<[^\s<>][^<>\n]{0,40}>|\S+/g) ?? []
   const out: string[] = []
   let buf: string[] = []
   for (const word of words) {
