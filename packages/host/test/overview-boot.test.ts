@@ -50,8 +50,9 @@ test('a booted host serves agents, quota and quota-report beside the overview wo
 
     const doc = (await (await call('/openapi.json')).json()) as { paths: Record<string, unknown> }
     expect(Object.keys(doc.paths)).toEqual(
-      expect.arrayContaining(['/agents', '/quota', '/quota/report', '/workflows/overview', '/overview/classify']),
+      expect.arrayContaining(['/agents', '/quota', '/quota/report', '/workflows/overview']),
     )
+    expect(Object.keys(doc.paths)).not.toContain('/overview/classify') // the seat is internal: only the workflow calls it
 
     const { Pool } = await import('pg')
     const pool = new Pool({ connectionString: PG_URL, max: 1 })

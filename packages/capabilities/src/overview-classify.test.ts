@@ -92,11 +92,11 @@ describe('overview.classify', () => {
     expect(prompt.indexOf('END OF DATA')).toBeGreaterThan(prompt.indexOf(`_END>>>`))
   })
 
-  test('is not a free prompt: unknown input keys are refused and the CLI command is hidden', () => {
+  test('is not a free prompt: unknown input keys are refused and nothing serves it', () => {
     expect(overviewClassifyInput.strict().safeParse({ ...input, prompt: 'x' }).success).toBe(false)
-    const capability = registry().capabilities.find((c) => c.id === 'overview.classify')
-    expect(capability?.cli.hidden).toBe(true)
-    expect(capability?.cli.command).toEqual(['overview-classify'])
+    const r = registry()
+    expect(r.capabilities.find((c) => c.id === 'overview.classify')?.internal).toBe(true)
+    expect(r.served.map((c) => c.id)).not.toContain('overview.classify')
   })
 
   test('the prompt carries the whole instruction set before the data', () => {
