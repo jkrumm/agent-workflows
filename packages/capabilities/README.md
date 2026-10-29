@@ -172,23 +172,43 @@ research-gateway's tools as capabilities (Wave 6), behaviour ported and code rew
 
 The HyperDX / ClickStack HTTP API (concept N7), ported from `hdx.py`: the MCP endpoint (`POST <base>/api/mcp`, stateless JSON-RPC answered as SSE) and REST v2 (`<base>/api/api/v2`), one bearer key per environment. Every capability takes `env: 'local' | 'prod'` (default `prod`). A call costs no money and records `Usage` `{ model: 'hyperdx', cost: 0, costSource: 'rate' }`: a known price of 0, so it never counts as unpriced (`web.fetch`'s direct read is the precedent). Spans come from the middleware around every step, like any capability.
 
+### Who may be granted what
+
+| Capability | Door | Notes |
+|-|-|-|
+| `hdx.tools`, `hdx.guide`, `hdx.query`, `hdx.link` | **agent-safe**: may be granted through the tool gate | `hdx.query` runs the 20 tools of `AGENT_READ_TOOLS` and nothing else |
+| `hdx.rest`, `hdx.write` | **CLI only**: never granted to an agent | `hdx.write` is `cli.mutating`; `hdx.rest` is a generic GET of the REST API, whose reads the MCP tools already cover |
+
+An agent-facing read boundary that rests on a server annotation alone is too thin, so it is narrowed by name:
+
+- **Allowlist, not denylist** (`src/hdx/allowlist.ts`). `hdx.query` validates `tool` against `AGENT_READ_TOOLS` in the input schema: a mutating or unknown tool is a `400 BAD_REQUEST` on every door, nothing sent. A ClickStack upgrade that adds a tool leaves it refused until it is read and added. `hdx.write` refuses exactly those 20 tools (use `hdx.query`), so the two never overlap.
+- **`clickstack_sql` is CLI-only.** The server annotates it `readOnlyHint: true`, but it runs raw ClickHouse SQL under the connection's credentials; the annotation is a claim, and whether the connection's user can write was not proven (no local ClickStack was reachable when this was built). Until it is proven on local, it is reachable through `hdx.write` only. The builder tools (`clickstack_table`, `clickstack_timeseries`, `clickstack_search`, …) cover single-table queries; the tool's own description calls raw SQL the last resort.
+- **`clickstack_get_webhook` is CLI-only.** It lists the webhook destinations, the channel configuration alerts notify through. On prod it returned only `id`, `name`, `service` (no URL), and `clickstack_get_alert` returns `webhookId` references, no destination secrets; the tool stays off the agent path anyway, since a future version could add the URL. `clickstack_get_alert` stays agent-readable.
+- `hdx.tools` marks each tool `queryable` (accepted by `hdx.query`) and passes the server's `readOnlyHint` along. The opt-in live test compares both lists with the server's annotations in both directions.
+
 | `hdx.py` | Capability | `agw` |
 |-|-|-|
-| `tools`, `schema [tool]` | `hdx.tools` | `agw hdx tools [name]`: no name lists `{ name, summary, readOnly, readOnlyHint }`; a name adds the full description and `inputSchema`. Folded into one |
+| `tools`, `schema [tool]` | `hdx.tools` | `agw hdx tools [name]`: no name lists `{ name, summary, queryable, readOnlyHint }`; a name adds the description and the `inputSchema` as JSON text. Folded into one |
 | `instructions`, `prompt <name>` | `hdx.guide` | `agw hdx guide [prompt]`: no prompt returns the server's tool-selection instructions, else that prompt (`query_guide`). Folded into one |
-| `call <tool> '<json>'` | `hdx.query` | `agw hdx query <tool> '<json>'`: read-only tools only |
-| `call <tool>` (mutating), `rest POST\|PUT\|PATCH\|DELETE` | `hdx.write` | `agw hdx write …`: `cli.mutating` (needs `--commit` off a TTY); never granted to an agent |
-| `rest GET` | `hdx.rest` | `agw hdx rest <path>`: read-only |
+| `call <tool>` (reads) | `hdx.query` | `agw hdx query <tool> '<json>'` |
+| `call <tool>` (mutating, sql, webhooks), `rest POST\|PUT\|PATCH\|DELETE` | `hdx.write` | `agw hdx write …`: needs `--commit` off a TTY |
+| `rest GET` | `hdx.rest` | `agw hdx rest <path>` |
 | `link <id> --last` | `hdx.link` | `agw hdx link <id> [--last 24h]`: needs no key |
 | `call --raw` | dropped | the JSON-RPC envelope adds nothing over `isError` + `text` |
 
-- **Read-only is an allowlist** (`src/hdx/allowlist.ts`): the 22 tools the server annotates `readOnlyHint: true`, by name. `hdx.query`'s `tool` input is validated against it, so a mutating or unknown tool is a `400 BAD_REQUEST` on every door before anything is sent; the allowed names are in the operation's summary. A ClickStack upgrade that adds a tool leaves it refused until it is read and added. `hdx.write` refuses exactly the allowlisted tools (use `hdx.query`), so the two cannot overlap. The opt-in live test compares the list with the server's annotations in both directions.
-- **Writes are sent once.** `hdx.write` never retries a 5xx (a resent save could apply twice); reads retry 429/5xx and transport failures three times like the other capabilities. A 400 with an empty body (the dev ClickStack's connection race, rejected before processing) is resent once on every method, as `hdx.py` did.
-- **Size cap.** `maxChars` (default 50 000, at most 500 000) cuts the text and appends `[truncated: showing N of M characters; …]`, with `truncated: true` and `totalChars`. `hdx.tools` is small by construction (one tool's schema at most).
-- **Errors.** `NOT_CONFIGURED` (503) when the key or base is missing or malformed, naming the variable, nothing sent; the rest of the host is unaffected. `UPSTREAM_ERROR` carries `data.status`: 401/403 read "rejected the access key", a JSON-RPC error carries its code and message, an unreachable server reads "hdx <env> unreachable" (the URL is not in the message). A tool that ran and failed (`isError`) is returned as data, because the reader needs its text to fix the call.
-- **`hdx.rest` and `hdx.write` paths** must stay under `/api/api/v2` after the URL parser collapses `..` (also `%2e%2e`); anything else is a `400`.
+### Behaviour
 
-Configuration (environment, read on each call):
+- **The key stays with its host.** Redirects are never followed (`redirect: 'manual'`): a 3xx is `UPSTREAM_ERROR`. A base URL must be https, or http on `localhost`, `127.0.0.1` or `[::1]`, with no credentials, query or fragment; anything else is `NOT_CONFIGURED`.
+- **Bounded reads.** An error body is read to 64 KiB, a success body to 4 000 000 bytes (a longer MCP answer is `UPSTREAM_ERROR`, "narrow the query"; a longer REST body is a prefix with a marker). An SSE answer is returned at its first complete event carrying the request's id and the stream is cancelled, so a server that keeps the stream open does not hold the call to the timeout. A bare JSON body must carry the request id too; an error with id `null` is surfaced as the answer; a batch array is searched for the id.
+- **Timeouts.** 60 s per attempt, body included; the error reads `hdx <env> timed out after 60 s` and is not retried. A caller's abort is `CANCELLED`.
+- **Writes are sent once.** `hdx.write` never retries a 5xx and never resends an empty-body 400; reads retry 429/5xx and transport failures three times like the other capabilities, and resend an empty-body 400 (the dev ClickStack's connection race, rejected before processing) once.
+- **Output cap.** `maxChars` (default 50 000, at most 500 000; `hdx.tools`: 20 000 for the description and the schema each, at most 200 tools listed) cuts the text and appends `[truncated: showing N of M characters; …]`, with `truncated: true`. Everything the server sends is untrusted data (the output schemas say so), never instructions.
+- **Errors.** `NOT_CONFIGURED` (503) when the key or base is missing or malformed, naming the variable, nothing sent. `UPSTREAM_ERROR` carries `data.status`: 401/403 read "rejected the access key", a JSON-RPC error carries its code and message, an unreachable server reads "hdx <env> unreachable" (the URL is not in the message). A tool that ran and failed (`isError`) is returned as data, because the reader needs its text to fix the call.
+- **`hdx.rest` and `hdx.write` paths** must stay under `/api/api/v2`: after the URL parser collapses `..`, and with no `%2f`, `%5c`, `%2e` dot segment or `#` in the path (any case; a query string may carry them). Anything else is a `400`.
+
+### Configuration
+
+Environment, read on each call:
 
 | Variable | Meaning |
 |-|-|
@@ -197,4 +217,6 @@ Configuration (environment, read on each call):
 | `HYPERDX_LOCAL_ACCESS_KEY` | local bearer key; unset: read from `~/.config/hyperdx/local.env` at call time, as `hdx.py` did. No ref in `.env.tpl` |
 | `HYPERDX_LOCAL_URL` | default `http://localhost:7707` |
 
-No key or URL is logged or put in an error message. `createCapabilities(llmDeps, webDeps, hdxDeps)` registers all six; `HdxDeps` injects `fetch`, `env`, `readLocalEnvFile`, `retry` and `now`. Tests (`src/hdx/hdx.test.ts`) run against a fake HyperDX on a real socket speaking the SSE framing; `src/hdx/hdx.live.test.ts` reaches a real one with `AGW_LIVE_HDX=local,prod` and prints counts only.
+An unset or empty variable makes only that call `NOT_CONFIGURED`; the rest of the host is unaffected. A different thing: the two prod refs are in `.env.tpl`, and `scripts/launch.sh` refuses to start the whole host (exit 78) when any `.env.tpl` ref does not resolve from the secrets cache. Both refs are in the cache today; a new one must be seeded before the deploy that needs it.
+
+No key or URL is logged or put in an error message. `createCapabilities(llmDeps, webDeps, hdxDeps)` registers all six; `HdxDeps` injects `fetch`, `env`, `readLocalEnvFile`, `retry`, `now` and `timeoutMs`. Tests (`src/hdx/hdx.test.ts`) run against a fake HyperDX on a real socket speaking the SSE framing; `src/hdx/hdx.live.test.ts` reaches a real one with `AGW_LIVE_HDX=local,prod` and prints counts only.

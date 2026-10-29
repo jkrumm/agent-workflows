@@ -2,18 +2,18 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import type { Usage } from '../context.ts'
 import { CapabilityCallError } from '../errors.ts'
 import { createRegistry } from '../registry.ts'
-import { MUTATING_TOOLS, READ_ONLY_TOOLS } from './allowlist.ts'
+import { AGENT_READ_TOOLS, CLI_ONLY_READ_TOOLS, MUTATING_TOOLS } from './allowlist.ts'
 import { parseRpcMessage, restPathStaysUnder } from './client.ts'
 import { createHdxCapabilities, type HdxDeps } from './index.ts'
 
 const KEY = 'test-hdx-key'
 const sse = (message: unknown) => `event: message\ndata: ${JSON.stringify(message)}\n\n`
 
-const TOOL_LIST = [...READ_ONLY_TOOLS, ...MUTATING_TOOLS].map((name) => ({
+const TOOL_LIST = [...AGENT_READ_TOOLS, ...CLI_ONLY_READ_TOOLS, ...MUTATING_TOOLS].map((name) => ({
   name,
   description: `Does ${name}. More detail follows here.`,
   inputSchema: { type: 'object', properties: { sourceId: { type: 'string' } } },
-  annotations: { readOnlyHint: (READ_ONLY_TOOLS as readonly string[]).includes(name) },
+  annotations: { readOnlyHint: !(MUTATING_TOOLS as readonly string[]).includes(name) },
 }))
 
 interface Seen {
@@ -119,10 +119,10 @@ describe('hdx.tools', () => {
     expect(out.tools.find((t) => t.name === 'clickstack_sql')).toEqual({
       name: 'clickstack_sql',
       summary: 'Does clickstack_sql.',
-      readOnly: true,
+      queryable: false,
       readOnlyHint: true,
     })
-    expect(out.tools.find((t) => t.name === 'clickstack_save_dashboard')?.readOnly).toBe(false)
+    expect(out.tools.find((t) => t.name === 'clickstack_save_dashboard')?.queryable).toBe(false)
     expect(hdx.seen[0]).toMatchObject({ method: 'POST', path: '/api/mcp', auth: `Bearer ${KEY}` })
     expect(hdx.seen[0]!.body).toMatchObject({ jsonrpc: '2.0', method: 'tools/list' })
   })
@@ -132,7 +132,8 @@ describe('hdx.tools', () => {
     const out = await by['hdx.tools'].call({ env: 'local', name: 'clickstack_table' }, opts)
     expect(out.tools).toHaveLength(1)
     expect(out.tools[0]!.description).toContain('More detail follows here.')
-    expect(out.tools[0]!.inputSchema).toMatchObject({ type: 'object' })
+    expect(JSON.parse(out.tools[0]!.inputSchema!)).toMatchObject({ type: 'object' })
+    expect(out.truncated).toBe(false)
   })
 })
 
@@ -179,6 +180,7 @@ describe('hdx.query', () => {
     const { by, hdx, opts } = setup()
     for (const tool of [
       ...MUTATING_TOOLS,
+      ...CLI_ONLY_READ_TOOLS,
       'clickstack_delete_alert',
       'clickstack_delete_saved_search',
       'clickstack_new_thing',
@@ -193,9 +195,10 @@ describe('hdx.query', () => {
 
   test('every allowlisted tool is accepted, and none is a known mutating tool', async () => {
     const { by, hdx, opts } = setup()
-    for (const tool of READ_ONLY_TOOLS) await by['hdx.query'].call({ env: 'local', tool }, opts)
-    expect(hdx.seen).toHaveLength(READ_ONLY_TOOLS.length)
-    for (const tool of MUTATING_TOOLS) expect(READ_ONLY_TOOLS as readonly string[]).not.toContain(tool)
+    for (const tool of AGENT_READ_TOOLS) await by['hdx.query'].call({ env: 'local', tool }, opts)
+    expect(hdx.seen).toHaveLength(AGENT_READ_TOOLS.length)
+    for (const tool of [...MUTATING_TOOLS, ...CLI_ONLY_READ_TOOLS])
+      expect(AGENT_READ_TOOLS as readonly string[]).not.toContain(tool)
   })
 
   test('the answer is cut at maxChars with a marker', async () => {
@@ -207,7 +210,7 @@ describe('hdx.query', () => {
             )
           : undefined,
     })
-    const out = await by['hdx.query'].call({ env: 'local', tool: 'clickstack_sql', maxChars: 100 }, opts)
+    const out = await by['hdx.query'].call({ env: 'local', tool: 'clickstack_table', maxChars: 100 }, opts)
     expect(out.truncated).toBe(true)
     expect(out.totalChars).toBe(1000)
     expect(out.text.startsWith('x'.repeat(100))).toBe(true)
@@ -233,14 +236,14 @@ describe('hdx.query', () => {
             )
           : undefined,
     })
-    expect((await by['hdx.query'].call({ env: 'local', tool: 'clickstack_sql' }, opts)).text).toBe(
+    expect((await by['hdx.query'].call({ env: 'local', tool: 'clickstack_table' }, opts)).text).toBe(
       'a\n[image content omitted]',
     )
   })
 
   test('records a call that costs nothing, priced (rate, 0), never unknown', async () => {
     const { by, usage, opts } = setup()
-    await by['hdx.query'].call({ env: 'local', tool: 'clickstack_sql' }, opts)
+    await by['hdx.query'].call({ env: 'local', tool: 'clickstack_table' }, opts)
     expect(usage).toEqual([
       { model: 'hyperdx', tokens: { input: 0, output: 0, cacheRead: 0, reasoning: 0 }, cost: 0, costSource: 'rate' },
     ])
@@ -306,9 +309,15 @@ describe('hdx.write', () => {
     expect(hdx.seen[1]).toMatchObject({ method: 'DELETE', path: '/api/api/v2/dashboards/abc' })
   })
 
-  test('refuses read-only tools (use hdx.query), and an ambiguous call', async () => {
+  test('runs the read tools kept from agents (sql, webhooks) for the CLI', async () => {
     const { by, hdx, opts } = setup()
-    for (const tool of READ_ONLY_TOOLS)
+    for (const tool of CLI_ONLY_READ_TOOLS) await by['hdx.write'].call({ env: 'local', tool }, opts)
+    expect(hdx.seen.map((s) => (s.body as { params: { name: string } }).params.name)).toEqual([...CLI_ONLY_READ_TOOLS])
+  })
+
+  test('refuses the tools hdx.query runs (use hdx.query), and an ambiguous call', async () => {
+    const { by, hdx, opts } = setup()
+    for (const tool of AGENT_READ_TOOLS)
       expect(await errorOf(by['hdx.write'].call({ env: 'local', tool }, opts))).toMatchObject({ code: 'BAD_REQUEST' })
     for (const input of [
       {},
@@ -356,11 +365,11 @@ describe('hdx.link', () => {
 describe('configuration', () => {
   test('prod without its domain or key is NOT_CONFIGURED, naming the variable, and nothing was sent', async () => {
     const noDomain = setup({ env: { HYPERDX_PROD_URL: '', HYPERDX_DOMAIN: '   ', HYPERDX_PROD_ACCESS_KEY: 'k' } })
-    const domainError = await errorOf(noDomain.by['hdx.query'].call({ tool: 'clickstack_sql' }, noDomain.opts))
+    const domainError = await errorOf(noDomain.by['hdx.query'].call({ tool: 'clickstack_table' }, noDomain.opts))
     expect(domainError).toMatchObject({ code: 'NOT_CONFIGURED', status: 503 })
     expect(domainError.message).toContain('HYPERDX_DOMAIN')
     const noKey = setup({ env: { HYPERDX_DOMAIN: 'example.com', HYPERDX_PROD_ACCESS_KEY: '' } })
-    const keyError = await errorOf(noKey.by['hdx.query'].call({ tool: 'clickstack_sql' }, noKey.opts))
+    const keyError = await errorOf(noKey.by['hdx.query'].call({ tool: 'clickstack_table' }, noKey.opts))
     expect(keyError).toMatchObject({ code: 'NOT_CONFIGURED', status: 503 })
     expect(keyError.message).toContain('HYPERDX_PROD_ACCESS_KEY')
     expect(noDomain.hdx.seen.length + noKey.hdx.seen.length).toBe(0)
@@ -502,6 +511,249 @@ describe('registry', () => {
       }),
     )
     expect(res.status).toBe(400)
+    expect(hdx.seen).toHaveLength(0)
+  })
+})
+
+const rpcAnswer = (result: unknown, id = 1) => new Response(sse({ jsonrpc: '2.0', id, result }))
+
+describe('the bearer key stays with its host', () => {
+  test('a redirect is never followed: UPSTREAM_ERROR, and the other host sees nothing', async () => {
+    const elsewhere = fakeHyperdx()
+    servers.push(elsewhere)
+    const { by, hdx, opts } = setup({
+      override: () => new Response(null, { status: 302, headers: { location: `${elsewhere.base}/api/mcp` } }),
+    })
+    const error = await errorOf(by['hdx.tools'].call({ env: 'local' }, opts))
+    expect(error).toMatchObject({ code: 'UPSTREAM_ERROR', data: { status: 302 } })
+    expect(error.message).toContain('redirect (302)')
+    const write = await errorOf(by['hdx.write'].call({ env: 'local', path: '/dashboards', body: {} }, opts))
+    expect(write).toMatchObject({ data: { status: 302 } })
+    expect(hdx.seen).toHaveLength(2)
+    expect(elsewhere.seen).toHaveLength(0)
+  })
+
+  test('every request asks the fetch not to follow', async () => {
+    const inits: RequestInit[] = []
+    const { by } = setup({
+      deps: {
+        fetch: async (_url, init) => {
+          inits.push(init)
+          return rpcAnswer({ tools: [] })
+        },
+      },
+    })
+    await by['hdx.tools'].call({ env: 'local' })
+    expect(inits[0]!.redirect).toBe('manual')
+  })
+
+  test('http is for loopback only; https anywhere', async () => {
+    const refused: Record<string, string>[] = [
+      { HYPERDX_PROD_ACCESS_KEY: 'k', HYPERDX_PROD_URL: 'http://hyperdx.example.com' },
+      { HYPERDX_PROD_ACCESS_KEY: 'k', HYPERDX_PROD_URL: 'http://10.0.0.5:7707' },
+      { HYPERDX_LOCAL_URL: 'http://hyperdx.example.com' },
+    ]
+    for (const env of refused) {
+      const { by, hdx, opts } = setup({ env })
+      const error = await errorOf(by['hdx.tools'].call({ env: 'HYPERDX_LOCAL_URL' in env ? 'local' : 'prod' }, opts))
+      expect(error).toMatchObject({ code: 'NOT_CONFIGURED' })
+      expect(error.message).toContain('must be https')
+      expect(hdx.seen).toHaveLength(0)
+    }
+    const urls: string[] = []
+    const fetched = setup({
+      env: { HYPERDX_PROD_ACCESS_KEY: 'k', HYPERDX_DOMAIN: 'example.com', HYPERDX_LOCAL_URL: 'http://localhost:7707' },
+      deps: {
+        fetch: async (url) => {
+          urls.push(url)
+          return rpcAnswer({ tools: [] })
+        },
+      },
+    })
+    await fetched.by['hdx.tools'].call({})
+    await fetched.by['hdx.tools'].call({ env: 'local' })
+    expect(urls).toEqual(['https://hyperdx.example.com/api/mcp', 'http://localhost:7707/api/mcp'])
+  })
+})
+
+describe('bounded reads', () => {
+  test('an error body is read to a bound and cut in the message', async () => {
+    const { by, opts } = setup({ override: () => new Response('x'.repeat(5_000_000), { status: 422 }) })
+    const error = await errorOf(by['hdx.rest'].call({ env: 'local', path: '/sources' }, opts))
+    expect(error).toMatchObject({ code: 'UPSTREAM_ERROR', data: { status: 422 } })
+    expect(error.message.length).toBeLessThan(2_200)
+  })
+
+  test('a REST body over the byte cap is a prefix with a marker', async () => {
+    const { by, opts } = setup({
+      override: (seen) => (seen.path.startsWith('/api/api/v2') ? new Response('y'.repeat(5_000_000)) : undefined),
+    })
+    const out = await by['hdx.rest'].call({ env: 'local', path: '/sources', maxChars: 500_000 }, opts)
+    expect(out.truncated).toBe(true)
+    expect(out.text).toContain('the response was cut at 4000000 bytes')
+    expect(out.text.length).toBeLessThan(500_300)
+  })
+
+  test('an MCP answer over the byte cap is UPSTREAM_ERROR, not a hang or a partial parse', async () => {
+    const { by, opts } = setup({
+      override: (seen) => (seen.path === '/api/mcp' ? new Response(`data: ${'z'.repeat(5_000_000)}\n\n`) : undefined),
+    })
+    const error = await errorOf(by['hdx.query'].call({ env: 'local', tool: 'clickstack_table' }, opts))
+    expect(error).toMatchObject({ code: 'UPSTREAM_ERROR' })
+    expect(error.message).toContain('narrow the query')
+  })
+
+  test('an SSE stream that stays open after its answer does not hold the call to the timeout', async () => {
+    const encoder = new TextEncoder()
+    const { by, opts } = setup({
+      deps: { timeoutMs: 20_000 },
+      override: (seen) =>
+        seen.path === '/api/mcp'
+          ? new Response(
+              new ReadableStream({
+                start(controller) {
+                  controller.enqueue(
+                    encoder.encode(`: ping\n\n${sse({ jsonrpc: '2.0', id: 1, result: { tools: [] } })}`),
+                  )
+                },
+              }),
+              { headers: { 'content-type': 'text/event-stream' } },
+            )
+          : undefined,
+    })
+    const started = performance.now()
+    const out = await by['hdx.tools'].call({ env: 'local' }, opts)
+    expect(out.tools).toEqual([])
+    expect(performance.now() - started).toBeLessThan(5_000)
+  })
+
+  test('hdx.tools cuts a long description and schema, and a long list, and says so', async () => {
+    const big = setup({
+      override: (seen) =>
+        seen.path === '/api/mcp'
+          ? rpcAnswer({
+              tools: Array.from({ length: 300 }, (_, i) => ({
+                name: `t${i}`,
+                description: `${'d'.repeat(4_000)}`,
+                inputSchema: { type: 'object', big: 'e'.repeat(4_000) },
+              })),
+            })
+          : undefined,
+    })
+    const list = await big.by['hdx.tools'].call({ env: 'local' }, big.opts)
+    expect(list.tools).toHaveLength(200)
+    expect(list.truncated).toBe(true)
+    expect(list.tools[0]!.summary.length).toBeLessThanOrEqual(300)
+    const one = await big.by['hdx.tools'].call({ env: 'local', name: 't1', maxChars: 100 }, big.opts)
+    expect(one.truncated).toBe(true)
+    expect(one.tools[0]!.description!.length).toBeLessThan(300)
+    expect(one.tools[0]!.inputSchema!.length).toBeLessThan(300)
+    expect(one.tools[0]!.description).toContain('[truncated:')
+  })
+})
+
+describe('sent once', () => {
+  test('an empty 400 is not resent when the call must be sent once', async () => {
+    const { by, hdx, opts } = setup({
+      override: (seen) => (seen.path === '/api/mcp' ? new Response('', { status: 400 }) : undefined),
+    })
+    const error = await errorOf(by['hdx.write'].call({ env: 'local', tool: 'clickstack_save_dashboard' }, opts))
+    expect(error).toMatchObject({ code: 'UPSTREAM_ERROR', data: { status: 400 } })
+    expect(hdx.seen).toHaveLength(1)
+  })
+})
+
+describe('JSON-RPC framing', () => {
+  test('a bare JSON message must carry the request id; an error with id null is the answer', () => {
+    expect(parseRpcMessage('{"jsonrpc":"2.0","id":2,"result":{}}', 1)).toBeUndefined()
+    expect(parseRpcMessage('{"jsonrpc":"2.0","id":1,"result":{"a":1}}', 1)).toMatchObject({ result: { a: 1 } })
+    expect(
+      parseRpcMessage('{"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"Parse error"}}', 1),
+    ).toMatchObject({
+      error: { code: -32700 },
+    })
+    expect(parseRpcMessage('data: {"jsonrpc":"2.0","id":9,"error":{"code":1,"message":"x"}}\n\n', 1)).toBeUndefined()
+  })
+
+  test('a batch array is searched for the id, not rejected blindly or taken whole', () => {
+    expect(
+      parseRpcMessage('[{"jsonrpc":"2.0","id":5,"result":{}},{"jsonrpc":"2.0","id":1,"result":{"ok":1}}]', 1),
+    ).toMatchObject({ result: { ok: 1 } })
+    expect(parseRpcMessage('[{"jsonrpc":"2.0","id":5,"result":{}}]', 1)).toBeUndefined()
+    expect(parseRpcMessage('data: [{"id":1,"result":{"ok":2}}]\n\n', 1)).toMatchObject({ result: { ok: 2 } })
+  })
+
+  test('an id-null error surfaces as UPSTREAM_ERROR with the server message', async () => {
+    const { by, opts } = setup({
+      override: () => Response.json({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } }),
+    })
+    const error = await errorOf(by['hdx.tools'].call({ env: 'local' }, opts))
+    expect(error.message).toContain('Parse error')
+  })
+
+  test('a message for another id is not taken as the answer', async () => {
+    const { by, opts } = setup({ override: () => Response.json({ jsonrpc: '2.0', id: 99, result: { tools: [] } }) })
+    expect((await errorOf(by['hdx.tools'].call({ env: 'local' }, opts))).message).toContain(
+      'without a JSON-RPC message',
+    )
+  })
+})
+
+describe('timeouts and cancellation', () => {
+  const hanging = (_url: string, init: RequestInit) =>
+    new Promise<Response>((_, reject) => init.signal?.addEventListener('abort', () => reject(init.signal?.reason)))
+
+  test('a timeout names hdx, the environment and that it timed out, and is not retried', async () => {
+    let calls = 0
+    const { by } = setup({
+      deps: {
+        timeoutMs: 30,
+        fetch: (url, init) => {
+          calls++
+          return hanging(url, init)
+        },
+      },
+    })
+    const error = await errorOf(by['hdx.tools'].call({ env: 'local' }))
+    expect(error).toMatchObject({ code: 'UPSTREAM_ERROR' })
+    expect(error.message).toBe('hdx local timed out after 0.03 s')
+    expect(calls).toBe(1)
+  })
+
+  test('a caller abort is CANCELLED, not a timeout', async () => {
+    const { by } = setup({ deps: { fetch: hanging } })
+    const controller = new AbortController()
+    const call = by['hdx.tools'].call({ env: 'local' }, { signal: controller.signal })
+    setTimeout(() => controller.abort(), 20)
+    expect(await errorOf(call)).toMatchObject({ code: 'CANCELLED' })
+  })
+})
+
+describe('REST path guard', () => {
+  test('encoded separators and dot segments are refused in any case; a query may carry them', async () => {
+    for (const path of [
+      '/%2e%2e/mcp',
+      '/%2E%2E/mcp',
+      '/a/%2e/b',
+      '/a/.%2e/b',
+      '/a/%2E./b',
+      '/a%2fb',
+      '/a%2Fb',
+      '/a/%2F..%2Fmcp',
+      '/a%5cb',
+      '/a%5Cb',
+      '/x#y',
+    ])
+      expect(restPathStaysUnder(path), path).toBe(false)
+    for (const path of ['/dashboards', '/dashboards/abc%20d', '/dashboards?q=%2f&r=..', '/sources/a.b'])
+      expect(restPathStaysUnder(path), path).toBe(true)
+    const { by, hdx, opts } = setup()
+    expect(await errorOf(by['hdx.rest'].call({ env: 'local', path: '/a%2Fb' }, opts))).toMatchObject({
+      code: 'BAD_REQUEST',
+    })
+    expect(await errorOf(by['hdx.write'].call({ env: 'local', path: '/%2E%2E/mcp', body: {} }, opts))).toMatchObject({
+      code: 'BAD_REQUEST',
+    })
     expect(hdx.seen).toHaveLength(0)
   })
 })

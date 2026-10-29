@@ -1,15 +1,15 @@
 /**
- * The ClickStack MCP tools `hdx.query` will run: every tool the server annotates `readOnlyHint: true`, listed by name
- * (checked against the live `tools/list`, 2026-10-29). An allowlist, not a denylist: a tool added by a ClickStack
- * upgrade is refused until it is read and added here. `hdx.live.test.ts` compares this list with the live annotations.
+ * The ClickStack MCP tools `hdx.query` will run, and so the only ones an agent can reach: read-only by the server's
+ * own `readOnlyHint` annotation, listed by name (checked against the live `tools/list`, 2026-10-29), minus
+ * `CLI_ONLY_READ_TOOLS`. An allowlist, not a denylist: a tool added by a ClickStack upgrade is refused until it is read
+ * and added here. `hdx.live.test.ts` compares the lists with the live annotations.
  */
-export const READ_ONLY_TOOLS = [
+export const AGENT_READ_TOOLS = [
   'clickstack_list_sources',
   'clickstack_describe_source',
   'clickstack_list_metrics',
   'clickstack_describe_metric',
   'clickstack_get_alert',
-  'clickstack_get_webhook',
   'clickstack_get_dashboard',
   'clickstack_get_dashboard_tile',
   'clickstack_search_dashboards',
@@ -22,19 +22,26 @@ export const READ_ONLY_TOOLS = [
   'clickstack_event_patterns',
   'clickstack_event_deltas',
   'clickstack_emerging_signals',
-  'clickstack_sql',
   'clickstack_get_saved_search',
   'clickstack_trace_waterfall',
   'clickstack_trace_top_time_consuming_operations',
 ] as const
 
-export type ReadOnlyTool = (typeof READ_ONLY_TOOLS)[number]
+/**
+ * Annotated read-only by the server, but kept from agents: `clickstack_sql` runs raw ClickHouse SQL under the
+ * connection's credentials, and the annotation is the server's claim, not a guarantee the database enforces (it reaches
+ * any table, system tables included); `clickstack_get_webhook` is the webhook destinations, the channel configuration an
+ * alert notifies through. Reachable through `hdx.write` (CLI only).
+ */
+export const CLI_ONLY_READ_TOOLS = ['clickstack_sql', 'clickstack_get_webhook'] as const
 
-const READ_ONLY = new Set<string>(READ_ONLY_TOOLS)
+export type AgentReadTool = (typeof AGENT_READ_TOOLS)[number]
 
-export const isReadOnlyTool = (name: string): name is ReadOnlyTool => READ_ONLY.has(name)
+const AGENT_READ = new Set<string>(AGENT_READ_TOOLS)
 
-/** The tools `hdx.write` is known to be for (the server's `readOnlyHint: false` set; informational, the gate is `!isReadOnlyTool`). */
+export const isAgentReadTool = (name: string): name is AgentReadTool => AGENT_READ.has(name)
+
+/** The server's `readOnlyHint: false` set (informational: the gate on `hdx.write` is `!isAgentReadTool`). */
 export const MUTATING_TOOLS = [
   'clickstack_save_source',
   'clickstack_delete_source',

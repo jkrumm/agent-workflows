@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { READ_ONLY_TOOLS } from './allowlist.ts'
+import { AGENT_READ_TOOLS, CLI_ONLY_READ_TOOLS } from './allowlist.ts'
 import { createHdxCapabilities } from './index.ts'
 
 // HyperDX only, no money. Opt in with the environments to reach (comma-separated):
@@ -14,11 +14,12 @@ for (const env of ['local', 'prod'] as const) {
       const { tools: list } = await tools.call({ env })
       const serverReadOnly = list.filter((t) => t.readOnlyHint === true).map((t) => t.name)
       console.log(
-        `live hdx ${env}: ${list.length} tools, ${serverReadOnly.length} annotated read-only, ${list.filter((t) => t.readOnly).length} accepted by hdx.query`,
+        `live hdx ${env}: ${list.length} tools, ${serverReadOnly.length} annotated read-only, ${list.filter((t) => t.queryable).length} accepted by hdx.query`,
       )
-      // Drift both ways: a read-only tool the allowlist does not name yet, and an allowlisted tool the server no longer calls read-only.
-      expect(serverReadOnly.filter((name) => !(READ_ONLY_TOOLS as readonly string[]).includes(name))).toEqual([])
-      expect(list.filter((t) => t.readOnly && t.readOnlyHint !== true).map((t) => t.name)).toEqual([])
+      // Drift both ways: a read-only tool no list names yet, and a listed tool the server no longer calls read-only.
+      const known: readonly string[] = [...AGENT_READ_TOOLS, ...CLI_ONLY_READ_TOOLS]
+      expect(serverReadOnly.filter((name) => !known.includes(name))).toEqual([])
+      expect(known.filter((name) => !serverReadOnly.includes(name))).toEqual([])
 
       const sources = await query.call({ env, tool: 'clickstack_list_sources' })
       expect(sources.isError).toBe(false)
