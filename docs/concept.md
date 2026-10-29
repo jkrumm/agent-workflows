@@ -385,5 +385,5 @@ One entry per phase: what we learned, what changed on this page, and why.
 - **Changed.** v3.7: P3b as built — `hdx` a capability over HyperDX HTTP, a shared tool gate, `brain`
   shared by research and otel, prose's rewrite in the calling session. Callers moved: `/otel`,
   `/excalidraw-diagram`, `/prose`; their MCP tools deleted.
-- **Spend.** Team key ≈ $0.03; personal $0.50 (three unwanted reviews, verification).
+- **Spend.** Team key ≈ $0.44 (evals $0.41); personal ≈ $0.50 (three unwanted reviews, verification).
 - **Does the page hold?** Yes. Registration by directory is next (Wave 8, first).
