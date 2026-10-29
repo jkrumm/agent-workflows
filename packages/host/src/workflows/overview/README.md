@@ -23,8 +23,8 @@ not Requesty.
 - **The model call is a capability.** `overview.classify` (`packages/capabilities/src/capabilities/overview-classify.ts`)
   takes `{facts, agentIds}`, builds the fenced prompt inside (legacy's skill text word for word, a fresh 128-bit fence,
   fence markers in the facts made inert, the re-assertion after the data) and answers the validated verdicts for the
-  listed ids only. No free prompt is reachable. Its CLI command `overview-classify` is hidden: `agw overview` is the
-  command, the capability is the seat.
+  listed ids only. No free prompt is reachable: the capability is `internal`, so no route and no CLI command serves it and
+  only the `overview` workflow calls it.
 - **The run is the cache.** Legacy kept the newest overview job and merged it onto a fresh snapshot on every read; here
   the newest `done` top-level `prod` `overview` run's output (the push's own gate: a build or verify run is never served) is that job (`latest.ts`, one indexed read on the process's own
   pool), re-validated against `OVERVIEW_OUTPUT` so a drifted old run reads as "no overview" and not as an error. An

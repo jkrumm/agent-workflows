@@ -351,7 +351,7 @@ describe('agw quota and agw quota-report', () => {
 })
 
 describe('contract', () => {
-  test('the reads and the workflow are commands; the classify seat is hidden from the CLI', async () => {
+  test('the reads and the workflow are commands; the classify seat is not served', async () => {
     const doc = (await t.json(await t.call('/openapi.json'))).body
     const commands = Object.fromEntries(
       Object.values(doc.paths as Body).flatMap((methods: Body) =>
@@ -362,6 +362,6 @@ describe('contract', () => {
     expect(commands.quota).toMatchObject({ command: ['quota'], mutating: false })
     expect(commands.quotaReport).toMatchObject({ command: ['quota-report'], mutating: false })
     expect(commands.overview).toMatchObject({ command: ['overview'], kind: 'workflow' })
-    expect(commands.overviewClassify).toMatchObject({ command: ['overview-classify'], hidden: true })
+    expect(commands.overviewClassify).toBeUndefined() // internal: only the workflow calls it
   })
 })
