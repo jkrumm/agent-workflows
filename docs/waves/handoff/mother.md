@@ -13,7 +13,8 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
   `com.jkrumm.vps-pg-backup` is ours: P0b maps it in dotfiles `docs/architecture.md`. Relayed to the lead.
 
 ## Lead
-- `agent-workflows-w1` (pane w40:p1P), Opus/high, fresh, spawned 2026-10-29 ~07:25 for Wave 8.
+- `agent-workflows-w1` (pane w40:p1Y), Opus/high, spawned 2026-10-29 ~09:30: the second Wave 8 lead
+  (first rotated at 60%; state in `handoff/lead.md` at `2e513fc`).
   Rotation policy: a fresh lead per wave unless the last one closed under ~30% context.
 - The mother is agent `agent-workflows-mother` (pane w40:p1).
 
@@ -69,7 +70,7 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
 - Gate lesson: the merge train read only the mini's `make check`; CI was red for a wave. Wave 6 fixes it.
 - For the owner: MacBook ask-human `20261029T033409-656` (remove research-gateway's MCP registration
   there). Team key: Wave 6 $26.13 (running total since Wave 4 ≈ $44).
-- For the owner: request `20261029T070930-17518` (CONTEXT7 key move) pending, MacBook unreachable.
+- CONTEXT7 key: done via athena-orchestrator (request `20261029T080529-10120`); ref swapped (`349ad6b`).
   Workers ran `agw review` 3× against the direction in Wave 7 ($0.46); briefs now forbid it.
 
 ## Next action
