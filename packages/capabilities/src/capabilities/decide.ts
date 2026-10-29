@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { CapabilityError, fail } from '../errors.ts'
 import { type LlmDeps, resolve, toUsage } from '../llm/model-call.ts'
 import { defineCapability } from '../procedure.ts'
+import { callUsageSchema, trackUsage } from './call-usage.ts'
 
 /** The decision API takes at most this many options per choice question. */
 const MAX_OPTIONS = 255
@@ -51,6 +52,8 @@ export const decideOutput = z.object({
   answers: z.record(z.string(), answer),
   model: z.string(),
   truncatedChars: z.int().nonnegative().describe('State characters cut to fit the cap; 0 when nothing was cut'),
+  latencyMs: z.int().nonnegative(),
+  usage: callUsageSchema,
 })
 
 /** Where to cut `text` to at most `max` UTF-16 units without splitting a surrogate pair. */
@@ -71,7 +74,9 @@ export const createDecide = (deps: LlmDeps) =>
     input: decideInput,
     output: decideOutput,
     cli: { stdin: 'state', defaultFormat: 'json' },
-    async handler({ state, questions }, ctx) {
+    async handler({ state, questions }, base) {
+      const started = performance.now()
+      const { ctx, total } = trackUsage(base)
       const route = resolve(deps, 'decide')
       if (route.wire !== 'iu-decision') {
         throw new CapabilityError('NOT_CONFIGURED', `decide: wire "${route.wire}" is not the decision wire`)
@@ -119,6 +124,12 @@ export const createDecide = (deps: LlmDeps) =>
         }
         answers[id] = { type: 'choice', choice: given.choice, confidence, probabilities: given.probabilities }
       }
-      return { answers, model: result.model, truncatedChars }
+      return {
+        answers,
+        model: result.model,
+        truncatedChars,
+        latencyMs: Math.round(performance.now() - started),
+        usage: total(),
+      }
     },
   })

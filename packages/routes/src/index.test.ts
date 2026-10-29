@@ -137,7 +137,7 @@ describe('resolveRoute', () => {
     resolved.model = 'tampered'
     if (resolved.rate) resolved.rate.inputPerM = 0
     expect(resolveRoute('decide', {})).toEqual({ id: 'decide', ...entry('decide') })
-    expect(entry('decide').rate?.inputPerM).toBe(0.04)
+    expect(entry('decide').rate?.inputPerM).toBe(0.042)
     expect(routeFingerprint('decide', {})).toBe(before)
   })
 
@@ -334,12 +334,17 @@ describe('fallback', () => {
   // `brain.agent` reads private notes and stays on its own provider: no fallback (owner decision, 2026-10-29). The audio
   // door's routes have none either: STT has its own model chain, and TTS, prep and summary keep audio-gateway's
   // behaviour (no balance fallback; packages/audio calls IU directly, not through the capability transports).
-  test('every iu-openai, iu-anthropic and opencode route has one; decide, brain.agent and audio.* have none', () => {
+  // `triage` is owner-directed off Requesty (the default fallback is a Requesty list model), so it has none.
+  test('every iu-openai, iu-anthropic and opencode route has one; decide, triage, brain.agent and audio.* have none', () => {
     for (const id of routeIds()) {
       const route = resolveRoute(id, {})
       // an audio seat has none; an image or Replicate model (`price`) has no text model to move to
       expect(route.fallback === undefined).toBe(
-        route.wire === 'iu-decision' || id === 'brain.agent' || id.startsWith('audio.') || route.price !== undefined,
+        route.wire === 'iu-decision' ||
+          id === 'triage' ||
+          id === 'brain.agent' ||
+          id.startsWith('audio.') ||
+          route.price !== undefined,
       )
     }
   })
