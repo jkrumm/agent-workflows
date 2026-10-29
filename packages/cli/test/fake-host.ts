@@ -15,7 +15,7 @@ export interface Recorded {
   body: unknown
 }
 
-interface Workflow {
+export interface Workflow {
   id: string
   summary: string
   input: Json
@@ -33,7 +33,7 @@ interface Workflow {
   outcome?: (input: Json) => { durationS?: number; fail?: string; output?: unknown; respond?: Response }
 }
 
-interface Run {
+export interface Run {
   runId: string
   workflowId: string
   endsAt: number
@@ -224,6 +224,18 @@ function workflowOperation(w: Workflow) {
   }
 }
 
+/** The shared Postgres journal, as two fakes see it: every process answers for every run. */
+export type RunStore = Map<string, Run>
+
+export interface FakeHostOptions {
+  /** The fixture workflows this process serves; default {@link FIXTURE_WORKFLOWS}. */
+  workflows?: Workflow[]
+  /** Serve the capabilities registry; default true. A second process serves only its own workflows and the run ops. */
+  capabilities?: boolean
+  /** One store passed to two fakes is one journal. */
+  runs?: RunStore
+}
+
 export interface FakeHost {
   url: string
   secret: string
@@ -241,7 +253,7 @@ export interface FakeHost {
   stop: () => Promise<void>
 }
 
-export async function startFakeHost(): Promise<FakeHost> {
+export async function startFakeHost(options: FakeHostOptions = {}): Promise<FakeHost> {
   const secret = 'conformance-secret-0123456789abcdef'
   const registry = createRegistry(
     createCapabilities({
@@ -250,9 +262,9 @@ export async function startFakeHost(): Promise<FakeHost> {
       }),
     }),
   )
-  const capabilityDoc = (await registry.openapi()) as Json
-  const workflows = new Map(FIXTURE_WORKFLOWS.map((w) => [w.id, w]))
-  const runs = new Map<string, Run>()
+  const capabilityDoc = options.capabilities === false ? { paths: {} } : ((await registry.openapi()) as Json)
+  const workflows = new Map((options.workflows ?? FIXTURE_WORKFLOWS).map((w) => [w.id, w]))
+  const runs: RunStore = options.runs ?? new Map()
   const requests: Recorded[] = []
   let version = 1
   let override: unknown
@@ -406,6 +418,7 @@ export async function startFakeHost(): Promise<FakeHost> {
         runs.set(run.runId, run)
         return waitFor(run, request)
       }
+      if (options.capabilities === false) return errorBody('NOT_FOUND', 404, 'Not found')
       return registry.fetch(request)
     },
   })

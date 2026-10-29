@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto'
 import { assertValues, BIN, coerceStdin, helpText, type Parsed, parseArgs, unsafePathField, usageLine } from './args.ts'
 import { type Env, waitBudgetS } from './config.ts'
 import { AgwError, EXIT, EXIT_MEANING, type ExitKind, usage } from './exit.ts'
-import { Host, MAX_WAIT_S, type Reply } from './host.ts'
+import { type Host, MAX_WAIT_S, type Reply } from './host.ts'
+import { Platform } from './platform.ts'
 import { type Command, nextWords, resolveCommand, type Schema, waitPlan } from './spec.ts'
 
 export interface Io {
@@ -40,7 +41,10 @@ interface Call {
 
 /** A 412 on the first request of a command: nothing ran, so refresh and retry once is safe. */
 class StaleContract extends Error {
-  constructor(readonly mismatch: AgwError) {
+  constructor(
+    readonly mismatch: AgwError,
+    readonly command: Command,
+  ) {
     super(mismatch.message)
   }
 }
@@ -83,14 +87,16 @@ function render(body: unknown, format: 'json' | 'plain', command: Command): stri
 }
 
 class Runner {
-  readonly host: Host
+  readonly platform: Platform
   #stdin: Promise<string> | undefined
   #key: string | undefined
-  /** Why the best-effort refresh before a help call failed, for the error that follows if the cache lacks the command. */
-  #refreshFailure: string | undefined
 
   constructor(readonly io: Io) {
-    this.host = new Host(io.env)
+    this.platform = new Platform(io.env)
+  }
+
+  private get host(): Host {
+    return this.platform.host
   }
 
   private stdin(): Promise<string> {
@@ -103,35 +109,43 @@ class Runner {
     if (first === 'schema') return this.schema(rest)
     if (first === undefined || first === '--help' || first === '-h') return this.topHelp()
 
-    await this.host.load()
+    await this.platform.load()
     // Help is printed from the contract and sends no request, so no `x-agw-contract` check can tell that the cache is
-    // stale (a command added, a flag added or dropped since it was written): ask the host first, keep the cache if it
-    // cannot answer. Every other command carries the sha, and a stale one is a 412 that refreshes and retries.
+    // stale (a command added, a flag added or dropped since it was written): ask every process first, keep a cache if
+    // its process cannot answer. Every other command carries the sha, and a stale one is a 412 that refreshes and retries.
     if (wantsHelp(argv)) await this.freshen()
     const call = await this.prepareFresh(argv)
+    this.platform.assertNoConflict(call.command)
     if (call.parsed.globals.help) {
       this.io.out(helpText(call.command))
+      const down = this.unavailable(call.command)
+      if (down) this.io.out(`\n(${down})\n`)
       return EXIT.ok
     }
     try {
       return await this.execute(call)
     } catch (error) {
       if (!(error instanceof StaleContract)) throw error
-      return this.retryAfterMismatch(argv, error.mismatch)
+      return this.retryAfterMismatch(argv, error)
     }
   }
 
-  /** Fetches the contract once per call; a host that cannot answer (down, no secret) leaves the cached one in use. */
+  /** Fetches each contract once per call; a process that cannot answer (down, no secret) leaves its cached one in use. */
   private async freshen(): Promise<void> {
-    if (this.host.refreshed) return
-    await this.host.refresh().catch((error: unknown) => {
-      this.#refreshFailure = error instanceof Error ? error.message : String(error)
-    })
+    await this.platform.freshen()
+  }
+
+  /** Why the process that declares this command could not be asked for its contract, when it is not the host. */
+  private unavailable(command: Command): string | undefined {
+    const owners = this.platform.owners(command).filter((d) => d.host !== this.host)
+    const down = owners.filter((d) => this.platform.failure(d.host) !== undefined)
+    if (!down.length || down.length < this.platform.owners(command).length) return undefined
+    return down.map((d) => `unavailable: ${this.platform.failure(d.host)}`).join('; ')
   }
 
   /** argv → command and input values. Every check here runs before anything is sent. */
   private async prepare(argv: string[]): Promise<Call> {
-    const hit = resolveCommand(this.host.commands, argv)
+    const hit = resolveCommand(this.platform.commands, argv)
     if (!hit) throw this.unknownCommand(argv)
     const { command } = hit
     const parsed = parseArgs(command, hit.rest)
@@ -157,18 +171,28 @@ class Runner {
     } catch (error) {
       if (!(error instanceof AgwError) || !error.stale) throw error
       // Already fetched this call (a help call, or no cache to start with): nothing more to try, unless that failed.
-      if (this.host.refreshed) throw this.#refreshFailure ? unrefreshed(error, this.#refreshFailure) : error
+      if (this.platform.allRefreshed) {
+        const why = this.platform.failures()
+        throw why ? unrefreshed(error, why) : error
+      }
       try {
-        await this.host.refresh()
+        await this.platform.refreshAll()
       } catch (refreshError) {
         throw unrefreshed(error, refreshError instanceof Error ? refreshError.message : String(refreshError))
       }
-      return this.prepare(argv)
+      try {
+        return await this.prepare(argv)
+      } catch (again) {
+        const why = this.platform.failures()
+        if (!(again instanceof AgwError) || !again.stale || !why) throw again
+        throw unrefreshed(again, why)
+      }
     }
   }
 
-  private async retryAfterMismatch(argv: string[], mismatch: AgwError): Promise<number> {
-    await this.host.refresh()
+  private async retryAfterMismatch(argv: string[], stale: StaleContract): Promise<number> {
+    const { mismatch } = stale
+    await this.platform.refreshOwners(stale.command)
     let call: Call
     try {
       call = await this.prepare(argv)
@@ -180,6 +204,7 @@ class Runner {
         details: mismatch.details,
       })
     }
+    this.platform.assertNoConflict(call.command)
     try {
       return await this.execute(call)
     } catch (error) {
@@ -189,7 +214,7 @@ class Runner {
   }
 
   private unknownCommand(argv: string[]): AgwError {
-    const { prefix, options } = nextWords(this.host.commands, argv)
+    const { prefix, options } = nextWords(this.platform.commands, argv)
     const words = argv.filter((w) => !w.startsWith('-'))
     const message =
       prefix.length === words.length
@@ -213,19 +238,21 @@ class Runner {
     if (startsWork) this.#key ??= parsed.globals.idempotencyKey ?? randomUUID()
     const format = parsed.globals.format ?? (io.stdoutIsTTY ? command.x.defaultFormat : 'json')
     const emit = (body: unknown) => io.out(`${render(body, format, command)}\n`)
-    const plan = waitPlan(this.host.commands, command)
+    const plan = waitPlan(this.platform.commands, command)
     const budgetS = waitBudgetS(io.env)
     const deadline = Date.now() + budgetS * 1000
 
     let reply: Reply
+    // The process that answered the start: the wait loop stays on it, so a run is followed where it was started.
+    let owner: Host
     try {
-      reply = await this.host.call(command, values, {
+      ;({ reply, host: owner } = await this.platform.call(command, values, {
         ...(startsWork ? { idempotencyKey: this.#key } : {}),
         ...(plan ? { waitS: Math.floor(budgetS) } : {}),
-      })
+      }))
     } catch (error) {
       if (!(error instanceof AgwError)) throw error
-      if (error.kind === 'contract_mismatch') throw new StaleContract(error)
+      if (error.kind === 'contract_mismatch') throw new StaleContract(error, command)
       if (error.kind === 'network' && startsWork) {
         throw new AgwError('network', error.message, {
           hint: `the run may have started; retry with --idempotency-key ${this.#key}`,
@@ -241,7 +268,7 @@ class Runner {
 
     let state = (reply.body ?? {}) as RunState
     const resume = plan.resume
-    const resumeCommand = resume && this.host.commands.find((c) => c.words.join(' ') === resume.command.join(' '))
+    const resumeCommand = resume && owner.commands.find((c) => c.words.join(' ') === resume.command.join(' '))
     const resumeValues = Object.fromEntries((resume?.positional ?? []).map((name) => [name, state[name]]))
     const usable = (v: unknown) => (typeof v === 'string' && v !== '') || typeof v === 'number'
     if (
@@ -271,7 +298,7 @@ class Runner {
       ...Object.values(resumeValues).map((v) => shellWord(String(v))),
     ].join(' ')
     if (resumeCommand)
-      ({ reply, state } = await this.poll({ reply, state, resumeCommand, resumeValues, resumeLine, deadline }))
+      ({ reply, state } = await this.poll({ owner, reply, state, resumeCommand, resumeValues, resumeLine, deadline }))
 
     emit(state)
     const status = String(state.status)
@@ -290,6 +317,7 @@ class Runner {
 
   /** Loops the resume command while the host answers 202, until the run ends or the deadline passes. */
   private async poll(loop: {
+    owner: Host
     reply: Reply
     state: RunState
     resumeCommand: Command
@@ -303,9 +331,9 @@ class Runner {
       if (leftS < 1) break
       const started = Date.now()
       try {
-        reply = await this.host.call(loop.resumeCommand, loop.resumeValues, { waitS: Math.min(leftS, MAX_WAIT_S) })
+        reply = await loop.owner.call(loop.resumeCommand, loop.resumeValues, { waitS: Math.min(leftS, MAX_WAIT_S) })
       } catch (error) {
-        throw await this.resumable(error, loop.resumeLine)
+        throw await this.resumable(error, loop.owner, loop.resumeLine)
       }
       state = (reply.body ?? {}) as RunState
       // A host that answers 202 at once must not be hammered.
@@ -315,24 +343,40 @@ class Runner {
   }
 
   /** A failure mid-wait: the run keeps going server-side, so the hint is the resume command. */
-  private async resumable(error: unknown, resumeLine: string): Promise<unknown> {
+  private async resumable(error: unknown, owner: Host, resumeLine: string): Promise<unknown> {
     if (!(error instanceof AgwError) || !resumeLine) return error
-    if (error.kind === 'contract_mismatch') await this.host.refresh().catch(() => undefined)
+    if (error.kind === 'contract_mismatch') await owner.refresh().catch(() => undefined)
     if (error.kind !== 'network' && error.kind !== 'contract_mismatch') return error
     return new AgwError(error.kind, error.message, { code: error.code, hint: resumeLine, details: error.details })
   }
 
   private async topHelp(): Promise<number> {
-    this.host.loadCache()
+    for (const p of this.platform.processes) p.loadCache()
     await this.freshen()
+    const commands = this.platform.commands
     const lines = [
       `${BIN} <command> [args] [--help]    ${BIN} schema [command…] [--refresh] [--exit-codes]`,
       '',
-      ...this.host.commands.map((c) => `  ${usageLine(c)}`),
+      ...commands.map((c) => `  ${usageLine(c)}${this.marker(c)}`),
     ]
-    if (!this.host.commands.length) lines.push(`  (no cached contract; ${BIN} schema --refresh fetches it)`)
+    if (!commands.length) lines.push(`  (no cached contract; ${BIN} schema --refresh fetches it)`)
+    for (const p of this.platform.secondaries) {
+      const why = this.platform.failure(p)
+      if (why !== undefined) lines.push(`  (unavailable: ${why})`)
+    }
     this.io.out(`${lines.join('\n')}\n`)
     return EXIT.ok
+  }
+
+  /** In the command list: a command no reachable process can serve, or one two processes claim. */
+  private marker(command: Command): string {
+    const conflict = this.platform.conflict(command)
+    if (conflict) return `    [conflict: ${conflict.join(', ')}]`
+    const owners = this.platform.owners(command)
+    if (owners.some((d) => d.host === this.host)) return ''
+    if (owners.every((d) => this.platform.failure(d.host) !== undefined))
+      return `    [unavailable: ${owners.map((d) => d.host.name).join(', ')}]`
+    return ''
   }
 
   private async schema(tokens: string[]): Promise<number> {
@@ -368,15 +412,35 @@ class Runner {
       else print({ exitCodes: table })
       return EXIT.ok
     }
-    if (refresh) await this.host.refresh()
-    else await this.host.load()
+    if (refresh) await this.platform.refreshAll()
+    else await this.platform.load()
 
-    const { commands, sha, skipped } = this.host
+    const { multi } = this.platform
+    // With one process the output is what it always was; with more, every entry names its process.
+    const named = (host: Host) => (multi ? { process: host.name } : {})
+    const declarations = this.platform.declarations()
     if (!words.length) {
+      const skipped = this.platform.processes.flatMap((p) => p.skipped.map((s) => ({ ...named(p), ...s })))
+      const conflicts = this.platform.commands.flatMap((c) => {
+        const processes = this.platform.conflict(c)
+        return processes ? [{ command: c.words.join(' '), processes }] : []
+      })
       print({
-        contractSha: sha,
+        contractSha: this.host.sha,
+        ...(multi
+          ? {
+              processes: this.platform.processes.map((p) => ({
+                process: p.name,
+                url: p.url,
+                contractSha: p.sha,
+                ...(this.platform.failure(p) === undefined ? {} : { unavailable: this.platform.failure(p) }),
+              })),
+            }
+          : {}),
         ...(skipped.length ? { skipped } : {}),
-        commands: commands.map((c) => ({
+        ...(conflicts.length ? { conflicts } : {}),
+        commands: declarations.map(({ host, command: c }) => ({
+          ...named(host),
           command: c.words.join(' '),
           kind: c.x.kind,
           mutating: c.x.mutating,
@@ -386,35 +450,41 @@ class Runner {
       })
       return EXIT.ok
     }
-    const exact = commands.find((c) => c.words.join(' ') === words.join(' '))
-    if (exact) {
-      print(this.describe(exact))
+    const exact = declarations.filter((d) => d.command.words.join(' ') === words.join(' '))
+    if (exact.length === 1 && exact[0]) {
+      print(this.describe(exact[0].command, exact[0].host))
       return EXIT.ok
     }
-    const below = commands.filter((c) => words.every((w, i) => c.words[i] === w))
+    // The same command from more than one process: every declaration, each naming its process.
+    if (exact.length) {
+      print(exact.map((d) => this.describe(d.command, d.host)))
+      return EXIT.ok
+    }
+    const below = declarations.filter((d) => words.every((w, i) => d.command.words[i] === w))
     if (!below.length) {
-      const { prefix, options } = nextWords(commands, words)
+      const { prefix, options } = nextWords(this.platform.commands, words)
       throw usage(
         `unknown command '${words.join(' ')}'`,
         options.length ? `${[BIN, 'schema', ...prefix].join(' ')} ${options.join('|')}` : `${BIN} schema`,
       )
     }
-    print(below.map((c) => this.describe(c)))
+    print(below.map((d) => this.describe(d.command, d.host)))
     return EXIT.ok
   }
 
-  private describe(command: Command) {
+  private describe(command: Command, host: Host) {
     const properties: Record<string, Schema> = {}
     for (const f of command.fields) {
       const at = command.x.positional.indexOf(f.name)
       properties[f.name] = { ...f.schema, ...(at >= 0 ? { 'x-positional': at } : { 'x-flag': `--${f.flag}` }) }
     }
     return {
+      ...(this.platform.multi ? { process: host.name } : {}),
       command: command.words.join(' '),
       kind: command.x.kind,
       summary: command.summary,
       usage: usageLine(command),
-      contractSha: this.host.sha,
+      contractSha: host.sha,
       input: { type: 'object', properties, required: command.fields.filter((f) => f.required).map((f) => f.name) },
       output: command.output,
       'x-cli': command.x,
