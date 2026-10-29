@@ -147,7 +147,7 @@ research-gateway's tools as capabilities (Wave 6), behaviour ported and code rew
 | Tavily search | `model: tavily-search`, no tokens | credits (the response's `usage.credits`, else 1 basic / 2 advanced per the API-credits page) x `$0.008` |
 | Tavily extract | `model: tavily-extract` | `1/5` credit per successful URL (basic: every 5 URLs cost 1 credit; a failed extraction is not billed; the response's `usage.credits` reads 0 for a single URL, measured by research-gateway) x `$0.008`; reported only when a page came back |
 | Context7, registries | `model: context7` / the registry | `0`, `costSource: rate` (free) |
-| Direct fetch | none | no external service |
+| Direct fetch | `model: direct`, no tokens | `0`, `costSource: rate`, once per read that went out (no external service; the run is priced at $0, not unknown); a refused URL sends nothing and reports nothing |
 
 `$0.008` is Tavily's pay-as-you-go list price per credit (docs.tavily.com/documentation/api-credits and tavily.com/pricing, read 2026-10-28). The plan price is lower, so the figure never under-prices; research-gateway carried no USD rate for Tavily at all. It is `TAVILY_USD_PER_CREDIT`.
 

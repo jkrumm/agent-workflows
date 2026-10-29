@@ -278,13 +278,18 @@ export const createFetch = (deps: ResolvedWebDeps) =>
       // `direct` checks the URL before it sends anything, so a refused URL never reaches Tavily either.
       const failures: string[] = []
       let sparse: Read | undefined
+      // A direct read that went out costs nothing, and says so: the run is priced at $0, not unknown. A refused URL
+      // sends nothing and reports nothing.
+      const free = () => ctx.addUsage(webUsage('direct', 0))
       try {
         const read = await direct(deps, url, ctx.signal)
+        free()
         if (!read.shell) return shape(url, read, 'direct', maxChars)
         sparse = read
         failures.push(`direct: only ${read.text.length} characters of text from a script-built page`)
       } catch (error) {
         if (!(error instanceof DirectFailure)) throw error
+        free()
         // A page that is definitively gone is not worth a paid second opinion.
         if (error.missing) throw fail('UPSTREAM_ERROR', `web.fetch: ${error.message}`, { status: error.status ?? 404 })
         failures.push(`direct: ${error.message}`)
