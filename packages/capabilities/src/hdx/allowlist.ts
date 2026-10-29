@@ -53,3 +53,13 @@ export const MUTATING_TOOLS = [
   'clickstack_delete_dashboard',
   'clickstack_save_saved_search',
 ] as const
+
+/**
+ * The capabilities a grant to an agent (the tool gate) may draw from. Structural, not prose: a test pins that none is
+ * mutating and that every `hdx.*` capability is in exactly one of this list and `CLI_ONLY_HDX`, so a new capability must
+ * be classified to pass.
+ */
+export const AGENT_SAFE_HDX = ['hdx.tools', 'hdx.guide', 'hdx.query', 'hdx.link'] as const
+
+/** Never granted to an agent: `hdx.write` changes ClickStack and reaches the tools kept from agents; `hdx.rest` is a generic REST GET. */
+export const CLI_ONLY_HDX = ['hdx.rest', 'hdx.write'] as const
