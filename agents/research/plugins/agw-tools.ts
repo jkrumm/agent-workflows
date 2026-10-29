@@ -1,8 +1,8 @@
-// The research agents' web tools: an OpenCode 2.0 plugin (promise adapter), discovered in the location's
+// The research agent's web tools: an OpenCode 2.0 plugin (promise adapter), discovered in the location's
 // `.opencode/plugins/`. Each tool forwards its arguments and the session id to the host's research tool gate
 // (packages/host/src/workflows/research/gate.ts), which runs the platform capability for a granted session only.
 // The gate's address and key are read from <stateDir>/research/gate.json at every call: outside the location, so the
-// session's own read tool cannot reach it (external_directory is denied). Identical in every research agent.
+// session's own read tool cannot reach it (external_directory is denied).
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -57,12 +57,6 @@ const TOOLS = [
     description:
       'The latest released version of a package. Arguments: registry ("npm", "pypi", "crates" or "github-release"); name (for github-release: owner/repo).',
     input: Schema.Struct({ registry: Schema.String, name: Schema.String }),
-  },
-  {
-    name: 'engine_research',
-    description:
-      'Research one focused sub-question with the research engine (searches, reads pages, verifies). Returns a short cited report: report, citations [{claim, url, confidence}], sources, unverified, status. Takes 10 to 60 seconds. Argument: question.',
-    input: Schema.Struct({ question: Schema.String }),
   },
 ]
 

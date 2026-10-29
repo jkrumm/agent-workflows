@@ -10,10 +10,10 @@ import {
 } from '@agent-workflows/opencode-host'
 import type { Json } from '@agent-workflows/runtime'
 import { loadAgentDefinitions } from '../src/agents.ts'
-import { ToolGate } from '../src/workflows/research/gate.ts'
+import { GATE_TOOLS, ToolGate } from '../src/workflows/research/gate.ts'
 import { memoryToolLedger } from '../src/workflows/research/ledger.ts'
 
-// The research agents on the real `opencode` 2.0.32 against a scripted fake model (no spend): the plugin in their
+// The research agent on the real `opencode` 2.0.32 against a scripted fake model (no spend): the plugin in their
 // location reaches the tool gate with the session id, the gate refuses an ungranted tool, and the DeepSeek route keeps
 // the wire rules (reasoning passed back verbatim, cache reads recorded and priced). Skipped where no opencode is
 // installed (CI runners).
@@ -89,7 +89,6 @@ const ledger = memoryToolLedger()
 const gate = new ToolGate({
   stateDir,
   ledger,
-  engine: () => null,
   call: async (id, input, { addUsage }) => {
     calls.push({ id, input })
     addUsage({
@@ -158,12 +157,21 @@ test.skipIf(!binary)(
   'a research agent calls the platform web tools through the gate; the DeepSeek wire rules hold',
   async () => {
     const { result, seen, entries } = await runAgent(
-      'research-agent-focused',
+      'research',
       [{ tool: 'web_search', args: { query: 'postgres default port' } }, { text: REPORT }],
-      ['web_search', 'web_fetch'],
+      [...GATE_TOOLS],
     )
     // The model is offered exactly the agent's tools (deny by default, then its allow rules): no OpenCode web tools.
-    expect(seen[0]?.tools).toEqual(['glob', 'grep', 'read', 'skill', 'web_fetch', 'web_search'])
+    expect(seen[0]?.tools).toEqual([
+      'glob',
+      'grep',
+      'read',
+      'skill',
+      'web_docs',
+      'web_fetch',
+      'web_package',
+      'web_search',
+    ])
     expect(calls).toEqual([{ id: 'web.search', input: { query: 'postgres default port' } }])
     expect(entries).toMatchObject([
       {
@@ -194,7 +202,7 @@ test.skipIf(!binary)(
   'the gate refuses a tool the grant does not hold, and the model sees the refusal',
   async () => {
     const { seen, entries } = await runAgent(
-      'research-agent-yolo',
+      'research',
       [{ tool: 'web_package', args: { registry: 'npm', name: 'hono' } }, { text: REPORT }],
       ['web_search'],
     )
@@ -209,11 +217,7 @@ test.skipIf(!binary)(
   "the gate's key is out of the session's reach: read is refused outside the location",
   async () => {
     const keyFile = join(stateDir, 'research', 'gate.json')
-    const { seen } = await runAgent(
-      'research-agent-yolo',
-      [{ tool: 'read', args: { path: keyFile } }, { text: REPORT }],
-      [],
-    )
+    const { seen } = await runAgent('research', [{ tool: 'read', args: { path: keyFile } }, { text: REPORT }], [])
     const toolMessage = String(seen[1]?.messages.find((m) => m.role === 'tool')?.content)
     const { key } = JSON.parse(await Bun.file(keyFile).text()) as { key: string }
     expect(toolMessage).not.toContain(key)
@@ -241,35 +245,32 @@ test("an agent's plugins are written to its location's .opencode/plugins/ and mo
     )
 
     const agentsDir = join(dir, 'agents')
-    cpSync(
-      join(import.meta.dir, '..', '..', '..', 'agents', 'research-agent-focused'),
-      join(agentsDir, 'research-agent-focused'),
-      { recursive: true },
-    )
+    cpSync(join(import.meta.dir, '..', '..', '..', 'agents', 'research'), join(agentsDir, 'research'), {
+      recursive: true,
+    })
     const source = fsFingerprintSource({
       agentsDir,
-      workflows: { research: [{ agent: 'research-agent-focused', route: 'research.agent' }] },
+      workflows: { research: [{ agent: 'research', route: 'research.agent' }] },
       opencodeBin: binary ?? '/bin/echo',
     })
     const before = JSON.stringify(await source.inputs({ id: 'research' } as never))
     expect(before).toContain('plugins/agw-tools.ts')
-    writeFileSync(join(agentsDir, 'research-agent-focused', 'plugins', 'agw-tools.ts'), '// changed\n')
+    writeFileSync(join(agentsDir, 'research', 'plugins', 'agw-tools.ts'), '// changed\n')
     expect(JSON.stringify(await source.inputs({ id: 'research' } as never))).not.toBe(before)
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
 })
 
-test('every research agent carries the same plugin', async () => {
+test('the research agent holds the gate tools and no shell', async () => {
   const agents = loadAgentDefinitions(join(import.meta.dir, '..', '..', '..', 'agents')).filter((a) =>
-    a.name.startsWith('research-'),
+    a.name.startsWith('research'),
   )
-  expect(agents.map((a) => a.name)).toEqual([
-    'research-agent-focused',
-    'research-agent-yolo',
-    'research-pilot-focused',
-    'research-pilot-yolo',
-  ])
-  expect(new Set(agents.map((a) => a.plugins?.['agw-tools.ts'])).size).toBe(1)
-  for (const agent of agents) expect(agent.permissions?.shell).toBeUndefined()
+  expect(agents.map((a) => a.name)).toEqual(['research'])
+  const [agent] = agents
+  expect(agent?.permissions?.shell).toBeUndefined()
+  expect(agent?.permissions?.rules?.map((r) => r.action)).toEqual([...GATE_TOOLS])
+  const plugin = agent?.plugins?.['agw-tools.ts'] ?? ''
+  for (const tool of GATE_TOOLS) expect(plugin).toContain(`name: '${tool}'`)
+  expect(plugin.match(/name: '/g)).toHaveLength(GATE_TOOLS.length)
 })
