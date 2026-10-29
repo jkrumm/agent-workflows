@@ -29,6 +29,11 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
 - 2026-10-29: decide confirmed off Requesty (decision-1-eu answers from Sweden Central); triage on
   Bedrock, no Requesty.
 
+- 2026-10-29 owner: all review off Max (claude -p burns ~1.8x the Max window). agent-gateway review
+  loses its Max fallback now and refuses once iris (last caller, 16 jobs since 10-28) uses
+  `agw review --pr N`; asked iris-mother. Review OCR off by default. agent-gateway/.env's
+  AGENT_GATEWAY_REVIEW_OCR=0 (set by the argo session) is kept and owned by us.
+
 ## Open decisions
 - none
 
