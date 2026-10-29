@@ -41,7 +41,7 @@ export type HostDeps = WorkflowDeps & { toolGate: ToolGate }
 /** Every workflow the host process serves. Heavy pipelines run in their own processes (concept §8). */
 export function createWorkflows(deps: HostDeps): HostWorkflow[] {
   // The gate refuses to grant an agent a mutating or unknown capability: it learns what the registry holds.
-  deps.toolGate.useCapabilities((id) => deps.registry.capabilities.find((c) => c.id === id)?.cli)
+  deps.toolGate.setCapabilities((id) => deps.registry.capabilities.find((c) => c.id === id)?.cli)
   const base = [
     createSmokePing(deps.registry),
     ...createReviewWorkflows(deps),

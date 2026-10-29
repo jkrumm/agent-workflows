@@ -348,7 +348,7 @@ start time is in its prompt, since the agent has no clock).
   back with the answer for the agent's tool to show, and handed to `onCall`), and an optional `onCall` hook the workflow supplies.
   **An agent holds read tools only, structurally:**
   `open` throws `tool grant refused: <tool> -> …` for an `hdx.*` capability outside `AGENT_SAFE_HDX`, and (once
-  `createWorkflows` has told the gate what the registry holds, `useCapabilities`) for a capability whose CLI spec is
+  `createWorkflows` has told the gate what the registry holds, `setCapabilities`) for a capability whose CLI spec is
   `mutating` or that does not exist; nothing is opened. A call is `POST /tool/<name>` with
   `{sessionID, args}` and the bearer key; the session resolves to its step's grant by the OpenCode host's
   deterministic session ids (`isStepSession`), so a run's session never reaches another run's grant. A tool outside
