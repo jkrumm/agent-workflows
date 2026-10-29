@@ -121,6 +121,27 @@ describe('agw against the fake host', () => {
     expect(wf.stdout).toBe('hi\n')
   })
 
+  test('--format plain on a workflow reads plainField from .output, and only once the run is done', async () => {
+    const b = box()
+    // done: the field of the run's output, not of the envelope
+    const done = await agw(b, ['fixture', 'echo', 'hi', '--format', 'plain'])
+    expect(done.code).toBe(0)
+    expect(done.stdout).toBe('hi\n')
+    // pending (exit 10): no output yet, the whole state as before; the resume command then prints the field
+    const pending = await agw(b, ['fixture', 'echo', 'slow', '--duration-s', '2.5', '--format', 'plain'], {
+      env: { AGW_WAIT_BUDGET_S: '1' },
+    })
+    expect(pending.code).toBe(EXIT.pending)
+    expect(JSON.parse(pending.stdout)).toMatchObject({ status: 'running' })
+    const resumed = await agw(b, [...resumeArgs(pending.error?.hint ?? ''), '--format', 'plain'])
+    expect(resumed.code).toBe(0)
+    expect(JSON.parse(resumed.stdout)).toMatchObject({ status: 'done', output: { echo: 'slow' } })
+    // failed: the state, exit 1
+    const failed = await agw(b, ['fixture', 'fail', '--format', 'plain'])
+    expect(failed.code).toBe(EXIT.general)
+    expect(JSON.parse(failed.stdout)).toMatchObject({ status: 'failed' })
+  })
+
   test('stdin fills the x-cli.stdin property when it is not given', async () => {
     const b = box()
     const r = await agw(b, ['fixture', 'echo', '--format', 'plain'], { stdin: 'from stdin' })

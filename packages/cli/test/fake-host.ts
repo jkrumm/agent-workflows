@@ -120,7 +120,7 @@ export const FIXTURE_WORKFLOWS: Workflow[] = [
     },
     positional: ['message'],
     stdin: 'message',
-    plainField: 'output.echo',
+    plainField: 'echo',
     outcome: (input) => {
       const text = String(input.message).repeat(Number(input.times ?? 1))
       return {
@@ -161,6 +161,7 @@ export const FIXTURE_WORKFLOWS: Workflow[] = [
     id: 'fixture.fail',
     summary: 'A run that ends failed',
     input: { type: 'object', properties: {} },
+    plainField: 'echo',
     outcome: () => ({ fail: 'the fixture always fails' }),
   },
   {
