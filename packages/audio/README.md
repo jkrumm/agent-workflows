@@ -29,7 +29,7 @@ routing by path, `/health` and `/models` are the process's.
 | `clock?` | `{ now, sleep }`; tests pass an instant one |
 | `fetch?` | the upstream transport |
 | `media?` | the ffmpeg/ffprobe boundary (`MediaPort`); default spawns the host binaries |
-| `routes?` | the route table; default the pending audio routes |
+| `env?` | where `AGW_ROUTES` overrides are read, once per handler or scope; default `process.env` |
 | `log?` | `{ info, warn, error }(message, fields)`; default JSON lines on the console |
 | `requestId?(req)` | the id stamped on every event of one request; default a UUID |
 | `caller?(req)` | the caller when `x-audio-source` is absent (e.g. a mapped bearer token); default `unknown` |
@@ -51,21 +51,21 @@ when that chunk ends.
 
 ## Lanes
 
-- **Gemini** (`iu-gemini-tts`): the chat model is one raw `generateContent` call (deterministic cleanup, allowlisted
+- **Gemini** (wire `iu-gemini`): the chat model is one raw `generateContent` call (deterministic cleanup, allowlisted
   inline tags kept, a caller `delivery` or string `style` from the shared vocabulary, anything else a 400); prep
   models (`TTS_GEMINI_PREP_MODELS`, default the routes flagged `prep`) run the prep LLM first (per-chunk `delivery`,
   tag band, title). `response_format: pcm` streams `streamGenerateContent?alt=sse`: sample-aligned passthrough, the
   400 ms join, billed from duration × 25 tokens/s. The contract: a failure before the first byte is a normal HTTP
   error, one after it errors the body (a transfer error, never a clean EOF). Request shapes and traps: modelpick
   `docs/gemini-tts.md`.
-- **Replicate / ElevenLabs** (`iu-replicate-tts`): create, poll, fetch the `replicate.delivery` MP3 (no other host);
+- **Replicate / ElevenLabs** (wire `iu-replicate`): create, poll, fetch the `replicate.delivery` MP3 (no other host);
   prep only for prep models or `summarize`; whole-file requests with long text on a prep-off model get the spoken
   summary (`TTS_AUTO_SUMMARIZE_MIN_CHARS`); `previous_text`/`next_text` only where the route allows continuity.
-- **Transcriptions** (`iu-openai-stt`): an upload over the byte or duration limit is compressed to 16 kHz mono mp3
+- **Transcriptions** (wire `iu-openai`, `/audio/transcriptions`): an upload over the byte or duration limit is compressed to 16 kHz mono mp3
   and, if still too big or too long, sliced at silence-snapped cuts (`-t` always passed) and transcribed
   `STT_CHUNK_CONCURRENCY` wide; a part that hits a 404/5xx retries alone on its route's `fallback` (voxtral →
-  gpt-transcribe → whisper). verbose_json/srt/vtt are synthesized for json-only models and every joined transcript;
-  whisper's own rich formats pass through raw. An echoed `STT_PROMPT` is stripped.
+  `audio.stt.openai` → `audio.stt.openai-legacy`, i.e. the OpenAI transcribe model, then Whisper). verbose_json/srt/vtt
+  are synthesized for json-only models and every joined transcript; Whisper's own rich formats pass through raw. An echoed `STT_PROMPT` is stripped.
 
 ## For the podcast's production stage
 
@@ -80,10 +80,15 @@ Each call is priced and recorded on `scope` like a door call; `ReplicateSynthErr
 
 ## Routes and prices
 
-`src/routes.pending.ts` is the only file here that names a model id: one route per model the door accepts, plus the
-prep (`audio.tts.prep`, effort `low`) and summary (`audio.tts.summary`) LLMs. It moves into `packages/routes` once the
-registry split lands. Prices are legacy's `RATES` with their verified/assumed stamps; the non-token shapes (per 1k
-characters, per minute) live behind one function, `priceCall`, so the general price shape is a one-place swap.
+The routes are a group of the route table, `packages/routes/src/table/audio.ts`: one per model the door accepts, plus
+the prep (`audio.tts.prep`, effort `low`) and summary (`audio.tts.summary`) LLMs, with their wire (`iu-gemini`,
+`iu-replicate`, `iu-openai`), model and token rate. `AGW_ROUTES` overrides them like any route. `src/routes.ts` adds,
+keyed by route id and naming no model, what only the lanes read: the lane, prep, continuity, the STT fallback chain,
+envelope synthesis, `context_bias`, and the prices the table's token `rate` cannot express yet (per 1k characters, per
+minute, the STT audio-token split; legacy's `RATES` with their verified/assumed stamps). `priceCall` is the one
+function reading them, so the general price shape (`packages/routes`, with the image port) is a one-place swap.
+STT route ids name the provider, not the model (`audio.stt.openai`, `audio.stt.openai-legacy`, ...): the routes guard
+matches model ids as tokens, and an id containing one would read as a model id outside the table.
 
 ## Decisions (differences from legacy, with the reason)
 

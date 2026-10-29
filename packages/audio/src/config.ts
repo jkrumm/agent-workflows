@@ -1,4 +1,4 @@
-import { AUDIO_ROUTES, type AudioRoute } from './routes.pending.ts'
+import { type AudioLane, audioRoutes } from './routes.ts'
 
 export type Env = Record<string, string | undefined>
 
@@ -47,7 +47,7 @@ export interface AudioTuning {
   sttMaxUploadBytes: number
   sttCompressBitrateKbps: number
   sttMaxChunks: number
-  /** Output quality collapses past ~240 s on gpt-4o-transcribe; also whisper's ~230 s timeout. */
+  /** Output quality collapses past ~240 s on the 4o transcribe model; also Whisper's ~230 s timeout. */
   sttMaxChunkSeconds: number
   sttSilenceNoiseDb: number
   sttSilenceMinSec: number
@@ -62,42 +62,42 @@ export interface AudioConfig extends AudioTuning {
 
 export class AudioConfigError extends Error {}
 
-const prepModels = (wire: AudioRoute['wire']): string[] =>
-  Object.values(AUDIO_ROUTES as Record<string, AudioRoute>)
-    .filter((r) => r.wire === wire && r.prep)
+const prepModels = (lane: AudioLane, env: Env): string[] =>
+  Object.values(audioRoutes(env))
+    .filter((r) => r.lane === lane && r.prep)
     .map((r) => r.model)
 
-export const AUDIO_TUNING_DEFAULTS: Readonly<AudioTuning> = Object.freeze({
-  ttsGeminiPrepModels: prepModels('iu-gemini-tts'),
-  ttsReplicatePrepModels: prepModels('iu-replicate-tts'),
-  ttsPrep: 'always',
-  ttsAutoSummarizeMinChars: 120,
-  ttsBitrateKbps: 48,
-  ttsOpusBitrateKbps: 32,
-  ttsChunkCharThreshold: 700,
-  ttsChunkTargetWords: 110,
-  ttsChunkMaxWords: 150,
-  ttsChunkMaxBytes: 1100,
-  ttsConcurrency: 4,
-  ttsElevenLabsVoice: 'Mark',
-  ttsDefaultLanguage: 'de',
-  ttsElevenLabsStability: 0.5,
-  ttsElevenLabsStyle: 0,
-  ttsElevenLabsSimilarity: 0.75,
-  ttsReplicateChunkTargetWords: 60,
-  ttsReplicateChunkMaxWords: 80,
-  sttLanguage: '',
-  sttPrompt: '',
-  sttContextBias: '',
-  sttMaxUploadBytes: 24 * 1024 * 1024,
-  sttCompressBitrateKbps: 32,
-  sttMaxChunks: 32,
-  sttMaxChunkSeconds: 240,
-  sttSilenceNoiseDb: -30,
-  sttSilenceMinSec: 0.2,
-  sttSilenceWindowSec: 90,
-  sttChunkConcurrency: 4,
-})
+/** Legacy's defaults. The prep model lists default to the routes flagged `prep`, resolved with the same env. */
+export const AUDIO_TUNING_DEFAULTS: Readonly<Omit<AudioTuning, 'ttsGeminiPrepModels' | 'ttsReplicatePrepModels'>> =
+  Object.freeze({
+    ttsPrep: 'always',
+    ttsAutoSummarizeMinChars: 120,
+    ttsBitrateKbps: 48,
+    ttsOpusBitrateKbps: 32,
+    ttsChunkCharThreshold: 700,
+    ttsChunkTargetWords: 110,
+    ttsChunkMaxWords: 150,
+    ttsChunkMaxBytes: 1100,
+    ttsConcurrency: 4,
+    ttsElevenLabsVoice: 'Mark',
+    ttsDefaultLanguage: 'de',
+    ttsElevenLabsStability: 0.5,
+    ttsElevenLabsStyle: 0,
+    ttsElevenLabsSimilarity: 0.75,
+    ttsReplicateChunkTargetWords: 60,
+    ttsReplicateChunkMaxWords: 80,
+    sttLanguage: '',
+    sttPrompt: '',
+    sttContextBias: '',
+    sttMaxUploadBytes: 24 * 1024 * 1024,
+    sttCompressBitrateKbps: 32,
+    sttMaxChunks: 32,
+    sttMaxChunkSeconds: 240,
+    sttSilenceNoiseDb: -30,
+    sttSilenceMinSec: 0.2,
+    sttSilenceWindowSec: 90,
+    sttChunkConcurrency: 4,
+  })
 
 /** IU credentials from `IU_API_KEY` and `IU_BASE_URL` only. Messages never echo a value. */
 export function audioTransports(env: Env): AudioTransports {
@@ -152,8 +152,8 @@ export function audioConfig(env: Env): AudioConfig {
   }
   return {
     transports: audioTransports(env),
-    ttsGeminiPrepModels: list('TTS_GEMINI_PREP_MODELS', d.ttsGeminiPrepModels),
-    ttsReplicatePrepModels: list('TTS_REPLICATE_PREP_MODELS', d.ttsReplicatePrepModels),
+    ttsGeminiPrepModels: list('TTS_GEMINI_PREP_MODELS', prepModels('gemini', env)),
+    ttsReplicatePrepModels: list('TTS_REPLICATE_PREP_MODELS', prepModels('replicate', env)),
     ttsPrep: oneOf('TTS_PREP', ['always', 'long', 'off'] as const, d.ttsPrep),
     ttsAutoSummarizeMinChars: num('TTS_AUTO_SUMMARIZE_MIN_CHARS', d.ttsAutoSummarizeMinChars),
     ttsBitrateKbps: num('TTS_MP3_BITRATE', d.ttsBitrateKbps),

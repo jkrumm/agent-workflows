@@ -20,7 +20,7 @@ import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSyn
 import { homedir, tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { evalDir } from '../../packages/eval/src/index.ts'
-import { AUDIO_ROUTES } from '../../packages/audio/src/routes.pending.ts'
+import { type AudioRouteId, audioRoutes } from '../../packages/audio/src/routes.ts'
 import { measureFromOpenAiUsage } from '../../packages/audio/src/usage.ts'
 
 type Suite = 'speech' | 'transcriptions'
@@ -29,7 +29,7 @@ type Arm = 'L' | 'N'
 interface SpeechCase {
   id: string
   kind: 'chat' | 'stream' | 'briefing' | 'elevenlabs' | 'delivery'
-  route: keyof typeof AUDIO_ROUTES
+  route: AudioRouteId
   input: string
   response_format: 'mp3' | 'opus' | 'wav' | 'pcm'
   voice?: string
@@ -71,6 +71,8 @@ interface CostRow {
 type Row = CallRow | CostRow
 
 const env = process.env
+/** The route table as the door resolves it (route overrides applied), so a case names a route, never a model. */
+const ROUTES = audioRoutes(env)
 const HOME = homedir()
 const LEGACY_AUDIO = env.AGW_LEGACY_AUDIO_DIR ?? join(HOME, 'SourceRoot', 'audio-gateway')
 const PROD_DB_GLOB = 'vps:/var/lib/audio-gateway/usage.db*'
@@ -191,7 +193,7 @@ async function run(args: ReturnType<typeof parseArgs>) {
   if (args.ids) cases = cases.filter((c) => args.ids?.includes(c.id))
   if (cases.length === 0) throw new Error(`no ${args.suite} cases`)
   for (const c of cases) {
-    if (args.suite === 'speech' && !AUDIO_ROUTES[c.route]) throw new Error(`case ${c.id}: unknown route ${c.route}`)
+    if (args.suite === 'speech' && !ROUTES[c.route]) throw new Error(`case ${c.id}: unknown route ${c.route}`)
     if (args.suite === 'transcriptions' && !existsSync(join(suiteDir('transcriptions'), c.file))) {
       throw new Error(`case ${c.id}: ${c.file} is not in the eval dir`)
     }
@@ -237,7 +239,7 @@ async function run(args: ReturnType<typeof parseArgs>) {
               door,
               '/audio/speech',
               JSON.stringify({
-                model: AUDIO_ROUTES[c.route].model,
+                model: ROUTES[c.route].model,
                 input: c.input,
                 voice: c.voice,
                 response_format: c.response_format,

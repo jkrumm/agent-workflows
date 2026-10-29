@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test'
 import { extractTextAndUsage, stripPromptEcho } from './dispatch.ts'
-import { AUDIO_ROUTES } from '../routes.pending.ts'
+import { audioRoutes } from '../routes.ts'
+
+const ROUTES = audioRoutes()
 
 const PROMPT = 'Die Aufnahme ist auf Deutsch oder Englisch.'
 
@@ -90,7 +92,7 @@ describe('extractTextAndUsage', () => {
 
   test('parses a voxtral body: null language stays null, prompt_audio_seconds usage is kept', () => {
     const body = JSON.stringify({
-      model: AUDIO_ROUTES['audio.stt.voxtral-mini'].model,
+      model: ROUTES['audio.stt.voxtral-mini'].model,
       text: 'hallo',
       language: null,
       segments: [],

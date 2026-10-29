@@ -38,7 +38,14 @@ describe('table', () => {
 
   test('every wire is represented', () => {
     const wires = new Set(routeIds().map((id) => DEFAULT_ROUTES[id]?.wire))
-    expect([...wires].sort()).toEqual(['iu-anthropic', 'iu-decision', 'iu-openai', 'opencode'])
+    expect([...wires].sort()).toEqual([
+      'iu-anthropic',
+      'iu-decision',
+      'iu-gemini',
+      'iu-openai',
+      'iu-replicate',
+      'opencode',
+    ])
   })
 })
 
@@ -324,11 +331,15 @@ describe('fallback', () => {
   ]
   const agentSteps: RouteId[] = ['review.angle', 'review.synthesis', 'check']
 
-  // `brain.agent` reads private notes and stays on its own provider: no fallback (owner decision, 2026-10-29).
-  test('every iu-openai, iu-anthropic and opencode route has one; decide and brain.agent have none', () => {
+  // `brain.agent` reads private notes and stays on its own provider: no fallback (owner decision, 2026-10-29). The audio
+  // door's routes have none either: STT has its own model chain, and TTS, prep and summary keep audio-gateway's
+  // behaviour (no balance fallback; packages/audio calls IU directly, not through the capability transports).
+  test('every iu-openai, iu-anthropic and opencode route has one; decide, brain.agent and audio.* have none', () => {
     for (const id of routeIds()) {
       const route = resolveRoute(id, {})
-      expect(route.fallback === undefined).toBe(route.wire === 'iu-decision' || id === 'brain.agent')
+      expect(route.fallback === undefined).toBe(
+        route.wire === 'iu-decision' || id === 'brain.agent' || id.startsWith('audio.'),
+      )
     }
   })
 

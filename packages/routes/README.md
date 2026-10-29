@@ -61,7 +61,7 @@ seat provenance (which legacy seat it copies, and why) is its file's comments an
 
 | Field | Meaning |
 |-|-|
-| `wire` | `iu-openai` (IU chat completions), `iu-anthropic` (native Messages), `iu-decision` (IU decision API), `opencode` (agent step on the OpenCode host) |
+| `wire` | `iu-openai` (IU OpenAI dialect: chat completions, `/audio/transcriptions`), `iu-anthropic` (native Messages), `iu-decision` (IU decision API), `opencode` (agent step on the OpenCode host), `iu-gemini` (native Gemini TTS), `iu-replicate` (Replicate predictions) |
 | `model` | the provider's model id |
 | `effort` | `none\|low\|medium\|high\|xhigh\|max`. Absent when the model exposes none |
 | `maxOutputTokens` | output ceiling; reasoning tokens count against it |

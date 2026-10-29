@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import { createSpeechHandler } from '../door/speech.ts'
-import { AUDIO_ROUTES } from '../routes.pending.ts'
+import { audioRoutes } from '../routes.ts'
+
+const ROUTES = audioRoutes()
 import { createAudioScope } from '../scope.ts'
 import {
   audioEvent,
@@ -17,8 +19,8 @@ import { DELIVERY_STYLES } from './core.ts'
 import { multiSpeakerBody, sseAudio, stripWavHeader, synthBody, synthMultiSpeaker } from './gemini.ts'
 import { PREP_STYLE } from './prep.ts'
 
-const LITE = AUDIO_ROUTES['audio.tts.gemini-flash-lite'].model
-const FLASH = AUDIO_ROUTES['audio.tts.gemini-flash'].model
+const LITE = ROUTES['audio.tts.gemini-flash-lite'].model
+const FLASH = ROUTES['audio.tts.gemini-flash'].model
 
 let iu: FakeIu
 afterEach(() => iu?.stop())
@@ -231,7 +233,7 @@ describe('briefing lane (prep)', () => {
     expect(res.status).toBe(200)
     expect(decodeURIComponent(res.headers.get('x-audio-title') ?? '')).toBe('Wetter morgen')
     const chat = iu.requests.find((r) => r.route === 'chat')
-    expect(chat?.json?.model).toBe(AUDIO_ROUTES['audio.tts.prep'].model)
+    expect(chat?.json?.model).toBe(ROUTES['audio.tts.prep'].model)
     expect(chat?.json?.reasoning_effort).toBe('low')
     const synths = iu.requests.filter((r) => r.route === 'gemini').map(sentText)
     expect(synths.map((p) => p?.speechMetadata?.style).sort()).toEqual([DELIVERY_STYLES.serious, PREP_STYLE].sort())
@@ -259,7 +261,7 @@ describe('briefing lane (prep)', () => {
     })
     await speak(post({ model: FLASH, input: 'Ein Satz.', summarize: true }))
     const chat = iu.requests.find((r) => r.route === 'chat')
-    expect(chat?.json?.model).toBe(AUDIO_ROUTES['audio.tts.summary'].model)
+    expect(chat?.json?.model).toBe(ROUTES['audio.tts.summary'].model)
     expect(chat?.json?.reasoning_effort).toBeUndefined()
     expect(sentText(iu.requests.find((r) => r.route === 'gemini') ?? { json: null })?.speechMetadata?.style).toBe(
       PREP_STYLE,

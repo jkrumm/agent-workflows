@@ -19,7 +19,14 @@ export {
   parseOutputFormat,
   SAMPLE_RATE_DEFAULT,
 } from './media/audio.ts'
-export { AUDIO_DEFAULT_ROUTES, AUDIO_ROUTES, type AudioRoute, type AudioRouteId } from './routes.pending.ts'
+export {
+  AUDIO_DEFAULT_ROUTES,
+  AUDIO_LANES,
+  type AudioLane,
+  type AudioRoute,
+  type AudioRouteId,
+  audioRoutes,
+} from './routes.ts'
 export { type AudioDeps, type AudioLog, AudioScope, type Clock, createAudioScope, type Fetch } from './scope.ts'
 export {
   DELIVERY_KEYS,

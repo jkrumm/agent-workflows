@@ -1,8 +1,8 @@
 import type { SilenceRange } from '../media/audio.ts'
 import type { AudioScope } from '../scope.ts'
 
-// IU's `POST /audio/transcriptions` has four measured limits: a 25 MiB body (HTTP 500, empty body), gpt-4o-transcribe
-// 400s over 1400 s, whisper's ~230 s processing timeout, and gpt-4o-transcribe silently truncating past ~20 min. This
+// IU's `POST /audio/transcriptions` has four measured limits: a 25 MiB body (HTTP 500, empty body), the 4o transcribe
+// model 400s over 1400 s, Whisper's ~230 s processing timeout, and the 4o model silently truncating past ~20 min. This
 // module makes an upload fit: short clips pass untouched (one ffprobe); anything larger is compressed to 16 kHz mono
 // mp3 and, if still too big or too long, time-sliced into chunks whose cuts snap to nearby silence.
 

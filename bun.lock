@@ -16,6 +16,9 @@
     "packages/audio": {
       "name": "@agent-workflows/audio",
       "version": "0.0.0",
+      "dependencies": {
+        "@agent-workflows/routes": "workspace:*",
+      },
     },
     "packages/capabilities": {
       "name": "@agent-workflows/capabilities",

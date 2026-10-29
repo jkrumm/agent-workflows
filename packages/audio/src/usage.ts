@@ -1,4 +1,4 @@
-import type { AudioPrice, AudioRoute } from './routes.pending.ts'
+import type { AudioPrice, AudioRoute } from './routes.ts'
 
 /** What a billed upstream call was: legacy's usage endpoints, so a run record reads like audio-gateway's ledger. */
 export type CallEndpoint = 'speech' | 'speech-prep' | 'speech-summary' | 'transcriptions'
@@ -91,13 +91,26 @@ export interface Priced {
 
 const num = (v: number | null | undefined): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null)
 
+/** A route's price: the lane's own (non-token, or the STT audio split), else the table's token rate. */
+export function priceOf(route: AudioRoute): AudioPrice | undefined {
+  if (route.price) return route.price
+  if (!route.rate) return undefined
+  return {
+    unit: 'tokens',
+    inputPerM: route.rate.inputPerM,
+    outputPerM: route.rate.outputPerM,
+    ...(route.rate.cacheReadPerM !== undefined && { cachedInputPerM: route.rate.cacheReadPerM }),
+    stamp: { verified: false, note: 'route table rate' },
+  }
+}
+
 /**
  * The one pricing function (legacy `computeCost`). A failed call is `not-billed` at 0. Per minute needs audio
  * seconds, per 1k characters needs input characters; a missing quantity is `unknown`. Tokens: the STT audio share at
  * `audioInputPerM` (all input when the split is missing, as legacy), the cached share at `cachedInputPerM`.
  */
 export function priceCall(route: AudioRoute | undefined, status: number, m: Measure): Priced {
-  const price = route?.price
+  const price = route ? priceOf(route) : undefined
   const units = price?.unit ?? null
   const verified = price ? price.stamp.verified : null
   if (status < 200 || status >= 300) {
