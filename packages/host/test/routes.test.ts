@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { OVERRIDES_ENV, resolveRoute, routeIds } from '@agent-workflows/routes'
+import { OVERRIDES_ENV, type RouteEntry, resolveRoute, routeIds } from '@agent-workflows/routes'
 import { createHost } from '../src/app.ts'
+import { routesTable } from '../src/operations.ts'
 import { type Body, SECRET, startTestHost, type TestHost } from './support.ts'
 
 const OVERRIDE = { 'cheap.classify': { model: 'override-model', effort: 'low' } }
@@ -8,14 +9,22 @@ const env = (value: unknown) => ({ [OVERRIDES_ENV]: typeof value === 'string' ? 
 
 let t: TestHost
 let overridden: TestHost
-let malformed: TestHost
 beforeAll(async () => {
   t = await startTestHost({ prefix: 'routes' })
   overridden = await startTestHost({ prefix: 'routesov', routesEnv: env(OVERRIDE) })
-  malformed = await startTestHost({ prefix: 'routesbad', routesEnv: env('{not json') })
 })
 afterAll(async () => {
-  await Promise.all([t.close(), overridden.close(), malformed.close()])
+  await Promise.all([t.close(), overridden.close()])
+})
+
+/** The audio process's shape: no capabilities served, and no `routesEnv`. */
+const hostOptions = () => ({
+  runtime: t.runtime,
+  registry: { capabilities: [], router: {}, requestContext: t.registry.requestContext },
+  workflows: [],
+  capabilityWorkflows: new Map(),
+  secret: SECRET,
+  version: 'x',
 })
 
 describe('GET /routes', () => {
@@ -43,19 +52,15 @@ describe('GET /routes', () => {
     expect(plain.body.routes['cheap.classify'].model).not.toBe('override-model')
   })
 
-  test('a malformed override is a typed error with its message, never the override text', async () => {
-    const response = await malformed.call('/routes')
-    expect(response.status).toBe(500)
-    const body = (await response.json()) as Body
-    expect(body.code).toBe('ROUTE_OVERRIDE_INVALID')
-    expect(body.message).toBe(`${OVERRIDES_ENV}: not valid JSON`)
-    expect(JSON.stringify(body)).not.toContain('{not json')
+  test('the table is built once, at creation: a malformed override throws there, never the override text', () => {
+    const attempt = () => createHost({ ...hostOptions(), routesEnv: { [OVERRIDES_ENV]: '{not json' } })
+    expect(attempt).toThrow(`${OVERRIDES_ENV}: not valid JSON`)
   })
 
   test('the plain table has a header, one line per route, and a price for price-based routes; no URL or key', async () => {
     const { body } = await t.json(await t.call('/routes'))
     const lines = body.table.split('\n')
-    expect(lines).toHaveLength(routeIds().length + 1)
+    expect(lines.filter((l: string) => !l.startsWith('* '))).toHaveLength(routeIds().length + 1)
     expect(lines[0]).toMatch(/^route\s+wire\s+model\s+effort\s+in\/M\s+out\/M\s+price\s+fallback$/)
     const line = (id: string) => lines.find((l: string) => l.startsWith(`${id} `)) as string
     expect(line('image.flare')).toMatch(/M: \d/) // image-tokens price
@@ -76,21 +81,36 @@ describe('GET /routes', () => {
   })
 })
 
+describe('routesTable', () => {
+  const entry = (price: RouteEntry['price']): RouteEntry => ({ wire: 'iu-openai', model: 'm', price })
+
+  test('prices print in fixed decimals, never exponent notation', () => {
+    const table = routesTable({
+      tiny: entry({ kind: 'unit', unit: 'call', usd: 1e-7 }),
+      small: entry({ kind: 'unit', unit: 'character', usd: 0.000036, per: 1000 }),
+      tokens: entry({ kind: 'image-tokens', textInPerM: 5, imageInPerM: 0.5, outputPerM: 30 }),
+    })
+    expect(table).not.toMatch(/\de[-+]?\d/i)
+    expect(table).toContain('0/call')
+    expect(table).toContain('0.000036/1000 character')
+    expect(table).toContain('M: 5 text, 0.5 img in, 30 out')
+  })
+
+  test('a tiered price carries * and the table ends with its legend; without one there is none', () => {
+    const tiered = entry({ kind: 'unit', unit: 'image', usd: 0.04, tiers: [{ match: { quality: 'high' }, usd: 0.1 }] })
+    const withTier = routesTable({ a: tiered }).split('\n')
+    expect(withTier[1]).toContain('0.04/image*')
+    expect(withTier.at(-1)).toStartWith('* ')
+    expect(routesTable({ a: entry({ kind: 'unit', unit: 'call', usd: 0.01 }) })).not.toContain('* ')
+  })
+})
+
 describe('one process declares routes', () => {
   const commandsOf = async (host: { openapi: () => Promise<Record<string, unknown>> }) =>
     Object.values(((await host.openapi()).paths as Body) ?? {}).flatMap((methods: Body) =>
       Object.values(methods).map((operation) => (operation as Body)['x-cli']?.command?.join(' ')),
     )
-  /** The audio process's shape: no capabilities served, and no `routesEnv`. */
-  const second = () =>
-    createHost({
-      runtime: t.runtime,
-      registry: { capabilities: [], router: {}, requestContext: t.registry.requestContext },
-      workflows: [],
-      capabilityWorkflows: new Map(),
-      secret: SECRET,
-      version: 'x',
-    })
+  const second = () => createHost(hostOptions())
 
   test('a host given no routesEnv (the audio process) has no routes path and no command', async () => {
     const other = second()

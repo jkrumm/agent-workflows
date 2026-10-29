@@ -9,7 +9,7 @@ import { join } from 'node:path'
 import type { Socket } from 'bun'
 import { EXIT } from '../src/exit.ts'
 import { contractSha, servedSha } from '../src/spec.ts'
-import { type FakeHost, hostSha, type RunStore, startFakeHost, type Workflow } from './fake-host.ts'
+import { FIXTURE_WORKFLOWS, type FakeHost, hostSha, type RunStore, startFakeHost, type Workflow } from './fake-host.ts'
 
 const BIN = join(import.meta.dir, '..', 'bin', 'agw.ts')
 
@@ -908,6 +908,47 @@ describe('agw across platform processes (AGW_PROCESSES)', () => {
     } finally {
       await clash.stop()
     }
+  })
+
+  describe('a read command like `routes` (kind capability, not run)', () => {
+    const routesCommand: Workflow = {
+      id: 'routes',
+      summary: 'List the route table',
+      kind: 'capability',
+      input: { type: 'object', properties: {} },
+    }
+    const withRoutes = (extra: Workflow[] = []) => [...FIXTURE_WORKFLOWS, routesCommand, ...extra]
+
+    test('declared by the host only: no conflict, help lists it once', async () => {
+      const owner = await startFakeHost({ runs, workflows: withRoutes() })
+      try {
+        const b = sandbox({ AGW_URL: owner.url, AGW_API_SECRET: owner.secret, AGW_PROCESSES: `audio=${audio.url}` })
+        const schema = (await agw(b, ['schema'])).json()
+        expect(schema.conflicts ?? []).not.toContainEqual(expect.objectContaining({ command: 'routes' }))
+        const help = await agw(b, ['--help'])
+        expect(help.stdout.match(/agw routes/g)).toHaveLength(1)
+        expect(help.stdout).not.toContain('[conflict')
+      } finally {
+        await owner.stop()
+      }
+    })
+
+    test('declared by both processes: a conflict naming both, unlike the shared run commands', async () => {
+      const owner = await startFakeHost({ runs, workflows: withRoutes() })
+      const clash = await startFakeHost({ runs, capabilities: false, workflows: [routesCommand] })
+      try {
+        const b = sandbox({ AGW_URL: owner.url, AGW_API_SECRET: owner.secret, AGW_PROCESSES: `clash=${clash.url}` })
+        const schema = (await agw(b, ['schema'])).json()
+        expect(schema.conflicts).toContainEqual({ command: 'routes', processes: ['host', 'clash'] })
+        expect((await agw(b, ['--help'])).stdout).toContain('[conflict: host, clash]')
+        const r = await agw(b, ['routes'])
+        expect(r.code).toBe(EXIT.contract_mismatch)
+        expect(r.error?.message).toBe("'routes' is declared by more than one process: host, clash")
+      } finally {
+        await owner.stop()
+        await clash.stop()
+      }
+    })
   })
 
   test('a second process that is down: host commands work, its cached commands show unavailable and exit 7', async () => {
