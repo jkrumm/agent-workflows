@@ -9,6 +9,16 @@ import { defineWorkflowModule, type RunningHost } from '@agent-workflows/host'
 import { defineWorkflow } from '@agent-workflows/runtime'
 import { z } from 'zod'
 import { freshSchema, inspector, PG_URL, until } from '../../runtime/test/support/pg.ts'
+import { audioRoutes, createSpeechHandler, createTranscriptionsHandler } from '../src/index.ts'
+import {
+  audioEvent,
+  fakeMedia,
+  instantClock,
+  silentLog,
+  startFakeIu,
+  streamBody,
+  testConfig,
+} from '../src/testing/index.ts'
 import {
   type AudioWorkflowDeps,
   bootAudio,
@@ -227,6 +237,57 @@ describe('the audio process', () => {
     }
   })
 
+  test("the lanes' real door handlers, mounted: a pcm stream and a bad body, each one recorded run", async () => {
+    const iu = startFakeIu({
+      geminiStream: () => streamBody(audioEvent(new Uint8Array(4800)), audioEvent(new Uint8Array(4800))),
+    })
+    const lanes = {
+      config: testConfig(iu.baseUrl),
+      fetch: iu.fetch,
+      media: fakeMedia,
+      clock: instantClock,
+      log: silentLog,
+    }
+    const audio = await start({
+      speech: (deps) => createSpeechHandler({ ...lanes, ...deps }),
+      transcriptions: (deps) => createTranscriptionsHandler({ ...lanes, ...deps }),
+    })
+    try {
+      const pcm = await fetch(`${audio.url}/v1/audio/speech`, {
+        method: 'POST',
+        headers: { ...bearer(HERMES), 'content-type': 'application/json' },
+        body: JSON.stringify({ model: LITE, input: 'Hallo.', voice: 'Charon', response_format: 'pcm' }),
+      })
+      expect(pcm.status).toBe(200)
+      const pcmRun = pcm.headers.get('agw-run-id') as string
+      expect((await pcm.arrayBuffer()).byteLength).toBe(9600)
+      const bad = await fetch(`${audio.url}/v1/audio/speech`, {
+        method: 'POST',
+        body: 'model=x',
+        headers: bearer(SECRET),
+      })
+      expect(bad.status).toBe(400)
+      expect(await bad.json()).toEqual({
+        error: { message: 'request body must be valid JSON', type: 'invalid_request_error' },
+      })
+      const badRun = bad.headers.get('agw-run-id') as string
+
+      const done = (id: string) =>
+        until(async () => {
+          const row = await sql.run(id)
+          return row?.status === 'done' ? row : undefined
+        }, `run ${id}`)
+      const pcmRow = await done(pcmRun)
+      expect(pcmRow.input).toMatchObject({ caller: 'hermes' })
+      expect(pcmRow.output).toMatchObject({ status: 200, complete: true })
+      expect((pcmRow.output as { calls: number }).calls).toBeGreaterThan(0)
+      expect((await done(badRun)).output).toMatchObject({ calls: 0 })
+    } finally {
+      await audio.shutdown()
+      iu.stop()
+    }
+  })
+
   test('a recording failure never fails the request: it is answered, and no run exists under its id', async () => {
     const audio = await start(stubHandlers())
     try {
@@ -342,3 +403,4 @@ describe('the audio process', () => {
 })
 
 const PLATFORM = 'agw'
+const LITE = audioRoutes()['audio.tts.gemini-flash-lite'].model
