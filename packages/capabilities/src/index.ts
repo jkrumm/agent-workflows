@@ -3,6 +3,29 @@ export { createCapabilities } from './capabilities/index.ts'
 export { capDiff, dataBlock, MAX_DIFF_CHARS } from './capabilities/review-prompts.ts'
 export { ROUTER_ANGLES } from './capabilities/review-route.ts'
 export { parseJsonLoose } from './llm/model-call.ts'
+// `prose` shares its prompt vocabulary and fence with the host's writer brief instead of keeping copies.
+export {
+  briefBlock,
+  contextBlock,
+  DEFAULT_REGISTER,
+  endOfData,
+  fenceNonce,
+  fencedBlock,
+  fencePreamble,
+  MEDIUM_NOTE,
+  neutralizeFenceMarkers,
+  PROSE_FORMATS,
+  PROSE_LANGUAGES,
+  PROSE_MEDIUMS,
+  PROSE_REGISTERS,
+  type ProseFormat,
+  type ProseLanguage,
+  type ProseMedium,
+  type ProseRegister,
+  proseContextLines,
+  proseRubric,
+} from './capabilities/prose-prompts.ts'
+export { MAX_PROSE_BRIEF_CHARS, MAX_PROSE_CONTEXT_CHARS, MAX_PROSE_TEXT_CHARS } from './capabilities/prose-review.ts'
 export type { Ctx, Usage } from './context.ts'
 export { usageSchema } from './context.ts'
 export type {
