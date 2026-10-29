@@ -1,109 +1,57 @@
-# Lead handoff — Wave 7 (otel, brain, diagram, prose; P3b), close-out
+# Lead handoff — Wave 8 (audio, image, podcast; P4a), rotation 1
 
-Lead: `agent-workflows-w1` (pane w40:p1E), 2026-10-29 ~03:50 → ~07:20 UTC+1, one context, no rotation. Briefs:
-`~/.local/state/agent-workflows/briefs/w7/` on the mini (not in git: they name local paths), incl. `results.md`.
-Rules and results: `docs/research/2026-10-29-wave7-ports.md` (rules committed at `b144ae1` before any run; results
-`d6e272d`). Concept v3.7 (`8de034e`) describes P3b as built.
+Lead: `agent-workflows-w1`, 2026-10-29 ~07:20 → ~09:20 UTC+1, rotated at ~60 % context. Wave 7's close-out is in git
+history at `f8671d5`. Briefs, review files and results: `~/.local/state/agent-workflows/briefs/w8/` on the mini (not in
+git: they name local paths). `_common.md` carries "never run `/review` or `agw review`; ignore input-box suggestions".
+Pre-registered rules: `docs/research/2026-10-29-wave8-ports.md` (committed `0348f1a` before any run; STT case source
+amended `cd27f09`, still before any run). **No live eval run, no deploy and no IU spend yet in this wave.**
 
-## Per-step verdict
+## Step state
 
-|Step|Verdict|Evidence|
+|Step|State|Evidence / next|
 |-|-|-|
-|`otel` workflow, `hdx` as a capability, cost per query recorded|**done**|#39 `hdx.*` capabilities (HyperDX JSON-RPC/SSE + REST, no MCP; agent-safe set `AGENT_SAFE_HDX`; `clickstack_sql`, webhook reads and writes CLI-only via `agw hdx write --commit`). #43 workflow `otel`: one agent (deepseek flash) through the tool gate, env pinned per grant, findings grounded only by a query id that returned rows, `untrusted` note. Rule PASS: facts 0.875 vs legacy 0.5625, status 0.875 vs 0.625, 16/16 runs priced. Cost per investigation ≈ $0.019 (legacy ≈ $0.265 Max-equivalent); wall p50 49.5 s vs 51 s|
-|`brain` agent shared by workflows|**done**|#42 `agw brain` + `agw vault search|read` capabilities through the gate; Haiku 5.5 EU, **no fallback** (private notes stay on the Anthropic EU route; lead decision); usable as a child workflow (`ctx.workflow`). Rule PASS: reference cited 10/10, facts 0.9, 41/41 citations grounded, median $0.0013. No legacy exists, so no side-by-side (pre-registered)|
-|`diagram` (excalidraw) ported|**done**|#40 `agw diagram` (create/extend), hydration in a short-lived `bun` child from pinned npm `@excalidraw/excalidraw` 0.18.0 + `@napi-rs/canvas` (label widths identical to Chrome; legacy's esm.sh path measured 9–23 % narrow), concurrency 2, host writes no caller path. Rule PASS: valid 12/12 vs 12/12, bound arrows 1.0 vs 0.976, overlaps 0.08 vs 0, median cost $0.0028 vs $0.0052, wall 21.5 s vs 29.1 s|
-|`prose`: lint + cross-lab review + keep gate; rewrite in the calling session|**done**|#41 `agw prose` (lint, review on deepseek via `prose.critique` with structured input, `writerBrief` fenced with a random nonce journaled in a step, `voicePath`) and `agw prose-gate` (no model, cost 0, answers the text to write). Lab refusal on the resolved route + wire. Rule PASS: lint 12/12 identical, gate 41/41 decisions equal, review mean |N−L| 0.389 ≤ 0.556 (averaged reading; `precision` alone 0.625 > 0.5), cost 1.04× mean (one call 1.58×). Legacy ≈ $0.09/call (Opus writer) → the writer moves to Max|
-|`/otel`, `/excalidraw-diagram`, `/prose` switched; agw MCP tools removed|**done**|dotfiles #42 (`/prose`, `/excalidraw-diagram`, `/brain` lookup section, global CLAUDE.md, docs), dotfiles #43 (`/otel` on `agw otel` + `agw hdx`, `hdx.py` deleted, `query.py` kept as last resort). agent-gateway #38: MCP `otel`, `prose`, `excalidraw_diagram` and `agw-legacy prose` removed (−2705 lines; the prose pipeline stays as a library for `narrative`), deployed `8a25212`. Switches merged before the removal (Wave 6 ordering lesson)|
-|Wave 6 leftovers: CLI answer carries the final cost|**done**|#38: held waits that see the run end hold ≤ 5 s for the record; `cost`, `unpricedCalls`, `costPending`, `recordFailed` (new expand-only column `post_hooks_failed_at`, migration 0009); `run status/get/cancel` never hold. Live: verify reads "cost … (as answered)"|
-|Leftover: last sleep-synchronised test|**done**|#38: `opencode-host` abort, kill/restart, follow-up re-attach and poll-count tests on in-flight signals; justified sleeps listed in the PR|
-|Leftover: `rd fan --clean` scoped (dotfiles)|**done**|dotfiles #41: `rd fan` marks its worktrees (`<git-dir>/rd-fan`); `--clean` keeps unmarked ones unless `--all`. Used at close: 10 worktrees reclaimed, nothing foreign touched|
-|Leftover: CONTEXT7_API_KEY off research-gateway's item|**not done (owner-gated)**|MacBook unreachable all wave (ssh rc=255). ask-human `20261029T070930-17518` queued: creates the field in `mini/agent-workflows`, adds the ref to `headless.refs`, reseals. Then `.env.tpl` line 5 → `op://mini/agent-workflows/CONTEXT7_API_KEY` and a deploy. Request `20261029T035706-12839` is superseded (discard)|
+|Registration by directory|**merged** #50|`defineWorkflowModule` in `<process>/src/workflows/<id>/module.ts`, routes in `packages/routes/src/table/<group>.ts` (+ `declare module` line keeps `RouteId` typed), suites from modules, per-workflow READMEs; host OpenAPI identical (38 ops); capabilities stay one spread line per group (typed registry). Review: high r1 (6 fixed, order dismissed), lead read r2|
+|Load-scaled timeout per test|**merged** #47|Per test file (preload, `bunfig.toml`): Bun binds a test's timeout at registration, proven by probe; finer is impossible. Lead read|
+|CONTEXT7 move|**ref swapped** `349ad6b`|Owner step done via request `20261029T080529-10120` (mother); 17518 and 12839 discarded. `secrets-run` resolves the new ref. **Goes live with the next `make deploy`; verify `agw research` once after it**|
+|CLI over several processes|**merged** #48|`AGW_PROCESSES=audio=http://127.0.0.1:7792`; run follow-ups via the shared journal (any process answers status/wait/cancel). Review: high r1 (10 fixed), lead read r2|
+|TTS/STT lanes + door handlers|**merged** #51|`packages/audio` (speech, transcriptions, media, door); dead passthrough lane removed with evidence; ffmpeg installed in CI. Review: high r1 (11 fixed). Follow-up **w8/audio-price** (worker `agent-workflows-tts-stt`, waiting): switch its `priceCall` to #49's `packages/routes/src/price.ts` once #49 is on master|
+|image (generate, edit, cutout, enhance)|**PR #49, rebase conflict**|Worker `agent-workflows-image` resolving the rebase onto #51 (sent ~09:15). Reviews: high r1 (10), medium r2 (10) all fixed (`702fdb6`; artifact root fixed, not env-redirectable). Icon stays on image-gateway (sharp/svgo/ico/icns; README says so). `CliSpec.hidden` added for raw capabilities. Merge with `rd merge agent-workflows w8/image` once pushed|
+|podcast writers' room|**PR #52, CI red on Linux**|20/20 lint parity (rule 1). Reviews: high r1 → design change (cost from the journal, idempotent host research runs keyed by run/step/query, one step per load-bearing fact, untrusted fences, podcast-own source reader), medium r2 (10 fixed). CI: an NFC test passes on APFS only; worker `agent-workflows-podcast-room` fixing at the cause and rebasing (sent ~09:12). Rule 6 threshold from its script: legacy p75 = **2.75 findings / 10 turns** (median 1.16)|
+|Audio process|**PR #53, review r1 out**|Boot refactor (host OpenAPI byte-identical), `packages/audio/src/main.ts` on :7792, own state dir, runtime already scopes recovery per process (two-runtime test), door caller tokens in `<data dir>/door-tokens` (0600, deploy creates a `hermes` token), deploy/verify for both LaunchAgents. Worker `agent-workflows-audio-process` fixing `review-53-r1.md` (10: no 2 s wait for the run id before first byte, anchored door paths, plist left on rollback, sink end on disconnect, explicit request id, shared bearer helper, token-file preflight, closer order, logger tag) and wiring the ABS refs; then a static import of the door once rebased on #51|
+|podcast production (`podcast.produce`)|**brief ready, not spawned**|`briefs/w8/podcast-produce.md` (Opus/medium). Spawn once #49 and #52 are on master (it reads `produce-input.ts`, the image capability and the artifact store). Rule 2 (segmentation parity) runs in that PR|
+|Switches: `/podcast`, `/img`, Hermes TTS/STT|**not started**|After deploy and passing rules. Callers found: dotfiles skills `podcast` (stale: says ElevenLabs v3/Opus; code defaults Gemini TTS + gpt-6.1-sol) and `img` + `imgcli gen/cutout/--enhance` (icon stays); `~/.hermes/config.yaml` `tts.openai.base_url`/`stt.openai.base_url` (today the VPS audio-gateway) → `http://127.0.0.1:7792/v1` with the door token; Hermes skills `podcast` (curls :7719 `/v1/podcasts`), `briefing-tts`, `capture/voice-memo-intake`, the speak-stream relay (pcm). Live use before claiming each switch|
+|One episode end to end|**not started**|Rules 3–8 in the rules doc (15 min, publish, cover, brain note, research on; one restart at a stage boundary after the script). Run on the team key; report spend|
 
-Also merged (found on the way): #37 the tool gate as one host-wide module (research unchanged; writes both `gate.json`
-and the legacy `research/gate.json` for one release, expand/contract), #44 hdx test JSON-RPC id collision under load,
-#45 `--format plain` on a workflow reads `plainField` from `.output`, #46 `--help` fetches the contract first (new
-commands were invisible after a deploy until `agw schema --refresh`).
+## Order from here
 
-## Reviews (owner direction: no gateway `/review`; the lead's `/code-review` on Max)
+1. Land #49 (after its rebase), then tell `agent-workflows-tts-stt` to do w8/audio-price; land #52 (after the NFC fix).
+2. Spawn `podcast-produce.md` (`RD_ORCHESTRATED=1 RD_WAVE_MODEL=opus RD_WAVE_EFFORT=medium rd fan agent-workflows podcast-produce.md` from the briefs dir). Review it (`/code-review high`).
+3. Land #53 after r1 (re-review the fix round at medium), then `make deploy` (personal key) and `make verify`; `agw research` once (CONTEXT7 proof).
+4. Evals on the team key (`~/.config/agw/athena-iu.env` → host env for the eval window, as Wave 7 did; restore the personal key after): image (`agw eval run image --yes` + `scripts/eval-legacy/image.ts`), speech/transcriptions (`scripts/eval-legacy/audio.ts` against the VPS audio-gateway and the new door), offline podcast rules 1–2, then the one episode. Append results under §Results.
+5. Switch brief (Sonnet/high, dotfiles + `~/.hermes` + hermes-agent skills as needed; dotfiles PR-required per `config/pr-required-repos.json`), live use of each, then `@verifier`, close-out.
 
-|PR|Review|
-|-|-|
-|#37 tool gate|high r1 (10: 7 fixed incl. cutover dual-write, boot stateDir, logger, write-failure reset, single gate, guarded ledger row, lost-usage log; 3 dismissed: negative cache, 404→403 text, migration comment), lead read r2|
-|#38 run cost|high r1 (8: 7 fixed, flush helper dismissed), high r2 (10 → **design change**: hold only in a wait that saw the transition, no age/clock), lead read r3|
-|#39 hdx|high r1 (10 fixed; `clickstack_sql` kept CLI-only because no local ClickStack existed for the write probe), high r2 (8 fixed: message shape, cursor, caps, structural agent-safe set)|
-|#40 diagram|high r1 (10 fixed; Worker → child process), medium r2 (10 fixed), CI Linux timing failure fixed at the cause; lead resolved one rebase|
-|#41 prose|high r1 (7 fixed: fencing, command name, no free-prompt capability, lab refusal), medium r2 (9 fixed)|
-|#42 brain|high r1 (10 fixed: YAML alias bomb, per-attempt grounding, NFC paths, fd-checked reads, linear link scan)|
-|#43 otel|high r1 (10: grounding redesigned on query ids; no env-pin escape, mutating refusal holds); lead resolved one rebase|
-|#44, #45, #46; dotfiles #41, #42, #43; agent-gateway #38|lead read (test-only, small CLI fixes, skills/docs, deletion)|
+## Gate so far
 
-## Gate
+- `make check` green at each merge (train); CI green on #47, #48, #50, #51 heads. CI caught two Linux-only classes the mini
+  cannot: tests silently depending on ffmpeg (#51) and on APFS normalisation-insensitivity (#52).
+- Host load 25–60 during the wave; workers saw unrelated load flakes (opencode-host, friction, eval-resume) that passed alone.
 
-- `make check` at the last merge (#46 in the train): green after a load retry (host load 96 → 11; earlier
-  attempts failed on unrelated load-timeouts, `run-step.sh` idle kill and the credentials test). Last worker
-  `make check`: 1608 pass, 17 skip, 0 fail, 1625 tests.
-- CI: green on every merged head (train-gated); `adc586d` superseded by `8de034e` (docs) mid-run.
-- Live: release `adc586d` on the personal key; `make verify` PASS (run `01a18646-09db-…`); `@verifier` **11/11 PASS**:
-  otel (run `01a18646-212a-77c0-a81c-5b2102a86923`, $0.018, answer carries the cost, 17 queries, all findings cite
-  query ids), spans `agw.run otel` + steps in prod ClickStack, diagram create/extend valid, prose + prose-gate (URL loss
-  → original; faithful rewrite kept), brain grounded 4/4 on Haiku EU, `vault read Inbox/…` refused, hdx tools/query/
-  rest/link, `hdx write` without `--commit` → confirmation_required, fresh `--help` without a manual refresh, Argo
-  outbox synced with 0 errors, agent-gateway MCP list without the three tools, skills grep clean.
+## Spend
 
-## IU spend, by key (runs since 2026-10-29 02:50 UTC)
+None yet: no live run in Wave 8 (all tests on fakes). Reviews ran as the lead's `/code-review` on Max; no `agw review`.
 
-|Key|Purpose|Runs|Spend|What|
-|-|-|-|-|-|
-|athena-team|eval|94|**$0.41**|otel $0.30, prose $0.054, diagram $0.036, brain $0.015, judge calls $0.001; 0 unpriced|
-|athena-team|prod|35|$0.026|other callers while the host ran on the team key|
-|personal|prod|3 reviews|$0.46|**workers ran `agw review` on their PRs** (04:30, 04:33, 05:04) against the owner direction; 9 unpriced calls. Rule restated to every worker at ~04:45|
-|personal|verify/retro|10|≈ $0.04|deploy verification, `@verifier`, weekly retro|
+## Retro notes so far
 
-Outside agw: legacy arms ran on agent-gateway (diagram ≈ $0.07 on its IU key; otel ≈ $2.12 of Max), skills-switch
-proofs and the narrative smoke ($0.068) on agent-gateway/personal.
-
-## Host state
-
-Release `adc586d`, personal key (`~/.config/agw/iu.env` removed; `athena-iu.env` untouched). agent-gateway `8a25212`.
-Main checkout clean on master. No worker tabs or fleet worktrees left.
-
-## Left behind
-
-- CONTEXT7_API_KEY move: owner request `20261029T070930-17518` (see table); then the `.env.tpl` swap and a deploy.
-- `clickstack_sql` is CLI-only until a write probe on a local ClickStack proves it read-only (nothing listens on :7707
-  on the mini). Move it to `AGENT_READ_TOOLS` only with that evidence.
-- `clickstack_list_dashboards` is not on the agent/CLI read allowlist (verifier used `hdx rest /dashboards`).
-- `research_tool_calls` now also holds brain's evidence (shared guarded hook); otel keeps its calls in memory and
-  journals them. A neutral table name is an expand/contract rename for later.
-- Tool gate writes the legacy `research/gate.json` too: drop it in a release after no live location reads it.
-- agent-gateway: `server/lib/routing.ts` rows for otel/excalidraw/prose_* and the `mcpServers` session option remain
-  (heavily pinned by tests; P6 shrink). Already-connected MCP sessions keep the old tool list until reconnect.
-- Prose rule 3/4 readings: the doc states the averaged/mean readings taken; `precision` alone and one call at 1.58×
-  are outside a per-item reading.
-- Load-induced flakes in untouched tests under host load 60–200: `run-step.sh` idle kill, "credentials of the host
-  never reach make check", review `git init`, two `opencode-host` locations tests at the 5 s default. The load-scaled
-  timeout is still sampled once per `make check`.
-- `agw vault read` of a refused path answers `found: false` with exit 0 (by design, a typed miss, not an error).
-- Diagram on Linux: a native crash takes 12–17 s to be reaped where apport runs (README); the mini is macOS.
-- Not ours: dotfiles architecture-check rows (com.iu.athena-postgres, com.iu.teamchat-*); agent-gateway
-  `dispatch-worktree.test.ts` credential helper.
-
-## Retro notes
-
-- **Pre-registration held up again, with one gap.** Four rules written before any run made four verdicts queries.
-  The gap: prose rules 3–4 did not say "per criterion / per call" vs "averaged / mean"; the reading had to be chosen
-  and disclosed after the numbers. Write the aggregation into the rule.
-- **The shared files are the merge train's bottleneck.** Five ports appending to `suites.ts`, `workflows/index.ts`,
-  the route table and two READMEs produced a rebase conflict on almost every merge (4 round trips, 2 resolved by the
-  lead). A registry that discovers workflows/suites by directory, or one-line-per-entry files, would remove the class.
-- **Design changes beat patch rounds** (Wave 5's lesson, confirmed twice): run-cost r2 (freshness hold → hold only in
-  the observing wait) and otel r1 (token matching → query ids returned to the agent) each ended a growing finding list.
-- **Live use finds what fakes don't.** The skills-switch worker found `--format plain` broken for workflows and the
-  stale CLI help after a deploy; both were invisible to unit tests and to the porting workers' "checked on the
-  contract".
-- **Workers ran `/review` from the input-box suggestion** ($0.46 on the personal key) until told. Put "no `/review`"
-  into `_common.md` from the first brief while the IU constraint stands.
-- **A secrets ref before its item is a fleet-wide hazard:** adding `op://…` to `headless.refs` before the item exists
-  makes every `make secrets-seed` abort. The request now creates the item, adds the ref and reseals in one command.
-- **Host load 60–200** from parallel fleets made `make check` take 4–6 min and fail on timeouts in untouched tests;
-  waiting for the 1-min load to drop below 30 before a train run was the reliable fix.
+- **The forked `/code-review` checked out `FETCH_HEAD` and then `origin/w8/registry` in the main checkout** (twice),
+  leaving it detached while the mother shares it. Fixed by restoring master and giving every later review the explicit
+  argument "review from remote refs only (`git diff origin/master...origin/<branch>`, `git show`); never check out".
+  Make that the default in the lead role.
+- **Registration by directory paid off at once:** four ports ran in parallel after #50 with no registry-file conflict;
+  the remaining conflicts were in genuinely shared schema/test files (routes `schema.ts`, the fallback guard test).
+- **Design change over patch rounds held again:** #52 r1 collapsed five cost/durability findings into one change (cost
+  from the journal, idempotent host research runs).
+- **Workers end turns on background shells** (podcast-room twice) despite the rule; a nudge was needed each time.
+- **CI is the only Linux gate**, and audio work is filesystem- and binary-sensitive: brief audio workers that CI must run
+  their tests, not skip them.
+- Left for later: `CliSpec.hidden` operations are not listed in `agw schema` as hidden yet (asked in #49 r2 item 9; check
+  the merged diff).
