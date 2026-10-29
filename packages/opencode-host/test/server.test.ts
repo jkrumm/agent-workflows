@@ -223,8 +223,16 @@ describe('OpenCodeServer', () => {
     const dir = scratch()
     const { s } = server(dir)
     await s.start()
+    // `ready` runs at the top of every poll of a wait: two calls mean the wait is in flight and has read the session once
+    let polls = 0
     const host = new OpenCodeHost({
-      server: s,
+      server: {
+        endpoint: () => s.endpoint(),
+        ready: (signal) => {
+          polls++
+          return s.ready(signal)
+        },
+      },
       agents: [{ name: 'tester', agentsMd: '# t\n', route: 'check' }],
       stateDir: dir,
       pollIntervalMs: 30,
@@ -241,7 +249,7 @@ describe('OpenCodeServer', () => {
         onTool: async () => {},
       }
       const waiting = host.wait(handle, options)
-      await Bun.sleep(200)
+      await until(() => polls >= 2)
       await fetch(`${s.endpoint().baseUrl}/__fake/hang`)
       const result = await waiting
       expect(s.restartCount).toBe(1)

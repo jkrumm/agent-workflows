@@ -96,6 +96,21 @@ const sid = (handle: Json) => (handle as OpenCodeHandle).sessionId
 const userMessages = async (t: ReturnType<typeof setup>, handle: Json) =>
   (await t.client.messages(sid(handle))).filter((m) => m.type === 'user')
 
+/** Polls a condition on a short tick; the condition, not a duration, decides when the test goes on. */
+async function until(check: () => boolean | Promise<boolean>, label: string, ms = 10_000) {
+  const deadline = Date.now() + ms
+  while (!(await check())) {
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${label}`)
+    await Bun.sleep(10)
+  }
+}
+
+/** `host.wait` reads the session's messages on every poll: once the fake has seen one more, the wait is in flight. */
+const messageReads = (t: ReturnType<typeof setup>, handle: Json) =>
+  t.fake.count(`GET /api/session/${sid(handle)}/message`)
+const waitPolling = (t: ReturnType<typeof setup>, handle: Json, since: number) =>
+  until(() => messageReads(t, handle) > since, 'the wait polling the session')
+
 describe('open / prompt / wait', () => {
   test('a turn returns the final text and usage from the messages', async () => {
     const t = setup()
@@ -530,10 +545,12 @@ describe('re-attach across a server restart', () => {
     const handle = await t.host.open(spec('long'))
     await t.host.prompt(handle, 'long task')
     let progress = 0
+    const reads = messageReads(t, handle)
     const waiting = t.host.wait(handle, waitOptions({ onProgress: () => progress++ }))
-    await Bun.sleep(100)
+    await waitPolling(t, handle, reads)
     t.kill()
-    await Bun.sleep(200) // the wait sees refused connections and keeps polling
+    // the wait sees refused connections and keeps polling
+    await until(() => t.warnings.includes('opencode session read failed; retried next poll'), 'a failed read')
     t.boot()
     const result = await waiting
     expect(result.output).toBe('resumed: echo: long task')
@@ -550,7 +567,7 @@ describe('re-attach across a server restart', () => {
     const t = setup()
     const handle = await t.host.open(spec('quick'))
     await t.host.prompt(handle, 'quick')
-    await Bun.sleep(200)
+    await until(async () => (await t.client.messages(sid(handle))).some((m) => m.type === 'idle'), 'the turn ending')
     t.kill()
     t.boot()
     expect((await t.host.wait(handle, waitOptions())).output).toBe('echo: quick')
@@ -569,8 +586,9 @@ describe('steer and abort', () => {
     const t = setup({ turnMs: 300 })
     const handle = await t.host.open(spec('s'))
     await t.host.prompt(handle, 'first')
+    const reads = messageReads(t, handle)
     const waiting = t.host.wait(handle, waitOptions())
-    await Bun.sleep(50)
+    await waitPolling(t, handle, reads)
     await t.host.steer(handle, 'use plan B', { signalId: '7' })
     await t.host.steer(handle, 'use plan B', { signalId: '7' }) // a re-delivery of row 7
     await t.host.steer(handle, 'use plan B', { signalId: '8' })
@@ -586,8 +604,9 @@ describe('steer and abort', () => {
     const handle = await t.host.open(spec('a'))
     await t.host.prompt(handle, 'a')
     const controller = new AbortController()
+    const reads = messageReads(t, handle)
     const waiting = t.host.wait(handle, waitOptions({ signal: controller.signal }))
-    await Bun.sleep(50)
+    await waitPolling(t, handle, reads)
     await t.host.abort(handle)
     await t.host.abort(handle)
     controller.abort(new Error('cancelled by test'))
@@ -660,8 +679,9 @@ describe('locations', () => {
     await t.host.prompt(handle, 'x')
     const deletes = () => t.fake.count('DELETE /api/debug/location')
     const before = deletes()
+    const reads = messageReads(t, handle)
     const waiting = t.host.wait(handle, waitOptions())
-    await Bun.sleep(80)
+    await waitPolling(t, handle, reads)
     await t.host.maintain()
     expect(deletes()).toBe(before)
     await waiting
@@ -945,8 +965,7 @@ describe('followUp (ctx.continue)', () => {
     await t.host.prompt(first, 'draft it')
     await t.host.wait(first, waitOptions())
     const next = await t.host.followUp(first, turn())
-    await t.host.prompt(next, 'more')
-    await Bun.sleep(100)
+    await t.host.prompt(next, 'more') // the turn runs from the admitted prompt on: the kill cuts it off
     t.kill()
     t.boot()
     expect((await t.host.wait(next, waitOptions())).output).toMatch(/^resumed: echo: /)
