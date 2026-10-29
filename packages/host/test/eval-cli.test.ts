@@ -1,12 +1,14 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { buildCommands } from '../../cli/src/spec.ts'
 import { createEvalWorkflows } from '../src/workflows/eval/index.ts'
-import { HOST_MODULES, suitesOf } from '../src/workflows/index.ts'
+import { hostModules, suitesOf } from '../src/workflows/index.ts'
 import { startTestHost, type TestHost } from './support.ts'
+
+const HOST_SUITES = suitesOf(await hostModules())
 
 let t: TestHost
 beforeAll(async () => {
-  t = await startTestHost({ prefix: 'evalcli', extra: createEvalWorkflows(suitesOf(HOST_MODULES)) })
+  t = await startTestHost({ prefix: 'evalcli', extra: createEvalWorkflows(HOST_SUITES) })
 })
 afterAll(async () => {
   await t.close()

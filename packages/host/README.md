@@ -88,14 +88,16 @@ Adding one touches no shared file (`package.json`/`bun.lock` excepted):
    so their files and routes feed the run fingerprint) and a `module.ts` whose default export is
    `defineWorkflowModule({ id: '<id>', create: (deps, context) => HostWorkflow[], suite?, phase? })`. `id` is the
    directory name. `suite: 'plain'` (or an object with `read(path)` for cases that need a tree, as `review` and `check`
-   have) puts `<id>` into the `agw eval run|compare` enum. `phase: 'last'` builds the module after all others, with
+   have; its types and `defined` are in `src/workflows/suite.ts`) puts `<id>` into the `agw eval run|compare` enum. `phase: 'last'` builds the module after all others, with
    their workflows as `context.peers` (the retrospective reads their agents); `context.suites` is every suite.
 2. Its routes: `packages/routes/src/table/<group>.ts` (`packages/routes/README.md` §Table).
 3. Its docs: `src/workflows/<id>/README.md`, including a §Route with each route's source seat.
 
 `discoverWorkflowModules(dir)` (`src/workflows/registry.ts`) imports every `<dir>/*/module.ts` in sorted order;
-`HOST_MODULES` is the host's tree, discovered once at import, and a second process (audio) calls it on its own tree.
-`createWorkflows(deps, modules = HOST_MODULES)` builds them. Boot fails, naming the file, on an empty dir, a default
+`hostModules()` is the host's tree, discovered on first use and memoised (never at import, so importing
+`workflows/index.ts` for a type loads nothing), and a second process (audio) calls `discoverWorkflowModules` on its own
+tree. `await createWorkflows(deps, modules?)` builds them (default: `hostModules()`); a tree without suites serves no
+`eval` commands. Boot fails, naming the file, on an empty dir, a default
 export that is not a `defineWorkflowModule`, an id that is not its directory, a workflow id two modules register, a
 suite whose module serves no workflow of its id, or an agent on a route the table does not have. The workflow then
 appears as `POST /workflows/…` and `agw <id words>` with no other code.

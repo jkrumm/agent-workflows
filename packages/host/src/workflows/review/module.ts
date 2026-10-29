@@ -1,6 +1,6 @@
 import { ReviewCase, readCases } from '@agent-workflows/eval'
-import { defined } from '../eval/suites.ts'
 import { defineWorkflowModule } from '../registry.ts'
+import { defined } from '../suite.ts'
 import { createReviewWorkflows } from './index.ts'
 import { reviewReference } from './scorer.ts'
 

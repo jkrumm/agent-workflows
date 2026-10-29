@@ -11,7 +11,7 @@ import {
   buildWorkflows,
   createWorkflows,
   discoverWorkflowModules,
-  HOST_MODULES,
+  hostModules,
   suitesOf,
 } from '../src/workflows/index.ts'
 
@@ -39,7 +39,8 @@ const known =
     tables.some((t) => Object.hasOwn(t, id))
 
 describe('workflow discovery', () => {
-  test('the host tree: every workflow directory, sorted, the retrospective in the last phase', () => {
+  test('the host tree: every workflow directory, sorted, the retrospective in the last phase', async () => {
+    const HOST_MODULES = await hostModules()
     expect(HOST_MODULES.map((m) => m.id)).toEqual([
       'brain',
       'check',
@@ -71,7 +72,7 @@ describe('workflow discovery', () => {
     const routes = await discoverRoutes(at('ok/routes'))
     expect(Object.keys(routes)).toEqual(['alpha.agent'])
 
-    const modules = [...HOST_MODULES, alpha].filter((m) => m !== undefined)
+    const modules = [...(await hostModules()), alpha].filter((m) => m !== undefined)
     const workflows = buildWorkflows(modules, deps, known(DEFAULT_ROUTES, routes))
     expect(workflows.map((w) => w.workflow.id)).toContain('alpha')
     const inputs = { [EVAL_RUN_ID]: {}, [EVAL_COMPARE_ID]: { a: 'a'.repeat(8), b: 'b'.repeat(8) } }
@@ -82,8 +83,8 @@ describe('workflow discovery', () => {
     }
   })
 
-  test('the host tree builds against the default route table', () => {
-    expect(createWorkflows(deps).map((w) => w.workflow.id)).toContain('smoke.ping')
+  test('the host tree builds against the default route table', async () => {
+    expect((await createWorkflows(deps)).map((w) => w.workflow.id)).toContain('smoke.ping')
   })
 
   test('a duplicate workflow id fails, naming both files', async () => {
@@ -113,7 +114,21 @@ describe('workflow discovery', () => {
   })
 })
 
+test('a tree without suites builds no eval commands instead of failing on an empty enum', async () => {
+  const evalModule = (await hostModules()).find((m) => m.id === 'eval')
+  const [ghost] = await discoverWorkflowModules(at('unknown-route'))
+  if (!evalModule || !ghost) throw new Error('fixture missing')
+  const ids = buildWorkflows([evalModule, ghost], deps, () => true).map((w) => w.workflow.id)
+  expect(ids).toEqual(['ghost'])
+})
+
 describe('route discovery', () => {
+  test('a file in the table directory other than _shared.ts is a group: a stray one fails, naming it', async () => {
+    expect(await rejection(discoverRoutes(at('stray-route')))).toContain(
+      `${at('stray-route/_draft.ts')}: default export is not an object of routes`,
+    )
+  })
+
   test('a duplicate route id fails, naming both files', async () => {
     expect(await rejection(discoverRoutes(at('dup-route')))).toContain(
       `${at('dup-route/b.ts')}: route "same.route" is already declared by ${at('dup-route/a.ts')}`,

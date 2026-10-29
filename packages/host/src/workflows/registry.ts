@@ -1,7 +1,7 @@
 import { relative } from 'node:path'
 import type { AgentRef } from '@agent-workflows/middleware'
 import type { HostWorkflow } from '../operations.ts'
-import type { Suite, Suites } from './eval/suites.ts'
+import type { Suite, Suites } from './suite.ts'
 import type { HostDeps } from './index.ts'
 
 /** What a module's `create` gets beside the deps: the discovered eval suites and, in the `last` phase, every workflow built before. */
