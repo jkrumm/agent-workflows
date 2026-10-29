@@ -19,14 +19,14 @@ Rules: `docs/research/2026-10-29-wave8-ports.md` (§Results has image, speech, t
 |Hermes TTS/STT switch|**done, live**|hermes-agent `accd198` (Hermes' own pending skill learnings, committed unchanged) + `73cd54b` (config `tts/stt.openai` → `http://127.0.0.1:7792/v1`, `api_key: ${AUDIO_DOOR_TOKEN}` from the door-tokens file via `secrets.command`; skills, cron briefing prompts + live jobs, cron allowlist patch on the door, `make status`). Hermes `make deploy`: all green except `cron skill "quota-nudge" missing [job: Fleet babysitter]` (not ours: someone's untracked `scripts/quota-nudge.py`). Proofs as caller hermes: mp3 `01a1873c-2068-746e-a38c-43291072deea`, pcm `01a1873c-24ec-750e-8f95-a5b536982f63`, briefing lane `01a1873b-d510-74e2-846e-264b66587cea` ($0.0019), STT `01a1873c-2a8d-76db-b182-74a6d7ccb7b3`. The worker also swapped the allowlist patch in the live tree `~/.hermes/hermes-agent` (needed by `make patch-check`)|
 |iris on the door|**contract sent** to iris-mother (~11:50)|iris got its own caller token (`iris=` line in `~/.agent-workflows/data/door-tokens`, audio process restarted, authenticates). iris's fleet switches its adapters; we never edit iris|
 |argo `/ai` audio proxy|**moved to Wave 9** (mother decision)|argo's API is on the VPS, the door is loopback; needs a tailnet grant + Caddy row, per-caller bearer, `/audio/podcast` and `/audio/file/:hash` ported, `/code-review high` as security review. VPS audio-gateway keeps serving argo until then|
-|`podcast.produce`|**PR #55, in the merge train** (rerun at ~12:00 after a load flake)|r1 high (6: ABS token from the UUIDv7 timestamp prefix collided → random tail + full filename match; failure notice; Slack cost by root; reused unit + cover record stored usage; cover durable; notify best-effort), r2 medium (3; item 2 rejected by the worker with evidence: `finishStep` replaces usage, failed steps never re-run — accepted). Failure notice carries "its run record holds the error", not the child's message (room journal port out of scope): Left behind. Parity: segmentation 20/20 (rule 2). Registered in the audio process (`podcast`, `podcast-publish` public; `podcast.produce` internal). Check `/tmp/lead-merge-55b.log`; if red again on an untouched timing test, rerun|
+|`podcast.produce`|**merged #55** (CI green `1fa302a`; not deployed yet)|r1 high (6: ABS token from the UUIDv7 timestamp prefix collided → random tail + full filename match; failure notice; Slack cost by root; reused unit + cover record stored usage; cover durable; notify best-effort), r2 medium (3; item 2 rejected by the worker with evidence: `finishStep` replaces usage, failed steps never re-run — accepted). Failure notice carries "its run record holds the error", not the child's message (room journal port out of scope): Left behind. Parity: segmentation 20/20 (rule 2). Registered in the audio process (`podcast`, `podcast-publish` public; `podcast.produce` internal).|
 |`triage` port (+ decide for iris)|**worker `agent-workflows-triage` running** (Sonnet/high, `briefs/w8/triage.md`)|Mother decision ~11:55: port agent-gateway `triage` AS-IS for iris Wave 17; triage AND decide: cancel works, caller `iris` in the usage feed, per-call usage + `cost_usd` in the answer, route not via Requesty (402 today). Review at high (new interface), merge, deploy, then send iris-mother the decide + triage contract (endpoints, auth, env names, op:// refs) by `rd say`|
 |`/podcast` switch|**not started**|After the episode passes. Callers: dotfiles `skills/podcast/SKILL.md` (`bun run podcast` in audio-gateway → `agw podcast`, `agw podcast-publish <runId>`, `agw run status`), Hermes `skills/podcast/SKILL.md` (curls `:7719/v1/podcasts` → `agw podcast` via terminal). Both repos direct-to-master; brief Sonnet/high; live use before claiming|
 |One episode end to end|**not started**|See Order|
 
 ## Order from here
 
-1. #55 lands (train). `rm ~/.config/agw/iu.env` → `make deploy` → `make verify` (personal key) → restore the team key
+1. #55 is on master. `rm ~/.config/agw/iu.env` → `make deploy` → `make verify` (personal key) → restore the team key
    (`cp -p ~/.config/agw/athena-iu.env ~/.config/agw/iu.env`, `launchctl kickstart -k` both `com.jkrumm.agent-workflows-{host,audio}`).
 2. The episode on the team key: `agw podcast --source-paths '["wiki/engineering/model-routing.md"]' --minutes 15 --publish --series "Brain Sonderausgabe"`
    (cover, research, brain note default on; legacy's series; language de). Restart the audio process once at a stage
@@ -40,7 +40,7 @@ Rules: `docs/research/2026-10-29-wave8-ports.md` (§Results has image, speech, t
 
 `make check` green at every merge (the train reran twice on load flakes in untouched timing tests: run-step.sh,
 path-scope, orphans, extend, parseHtml, review.test, opencode-host). CI green on every merged head (#49 `1cb13d7`, #52
-`e7b3b08`, #54 `7b547d4`, #53 `c35d4f2`, #55 `6ba1bf8`). CI caught a third Linux-only class: a test spawning `/bin/zsh`.
+`e7b3b08`, #54 `7b547d4`, #53 `c35d4f2`, #55 `1fa302a`). CI caught a third Linux-only class: a test spawning `/bin/zsh`.
 
 ## Spend (this rotation)
 
