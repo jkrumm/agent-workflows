@@ -30,6 +30,8 @@ import {
   loadAudioProcessConfig,
 } from '../src/process/index.ts'
 
+/** The lanes' deps the workflows are built with (no request reaches IU in these tests). */
+const AUDIO = { config: testConfig('https://iu.example.com/anthropic'), env: {} }
 const SECRET = 'test-secret-0123456789abcdef-0123456789'
 const HERMES = 'hermes-token-0123456789abcdef-0123456789'
 const db = freshSchema('audio')
@@ -103,6 +105,7 @@ function stubHandlers(hold?: Promise<void>): DoorHandlers & { seen: string[] } {
 
 async function start(handlers: DoorHandlers, fetch?: Fetch): Promise<RunningHost & { url: string }> {
   const running = await bootAudio({
+    audio: AUDIO,
     config: config(),
     handlers,
     tokens: new Map([['hermes', HERMES]]),
@@ -126,6 +129,10 @@ describe('the audio process', () => {
       const ops = Object.values(doc.paths).flatMap((methods) => Object.values(methods))
       const commands = ops.map((op) => op['x-cli']?.command.join(' '))
       expect(commands).toContain('audio ping')
+      // The podcast tree: the room and the publish follow-up are commands; production and its units are internal.
+      expect(commands).toContain('podcast')
+      expect(commands).toContain('podcast-publish')
+      expect(Object.keys(doc.paths).some((path) => path.startsWith('/workflows/podcast/produce'))).toBe(false)
       // Workflows and run operations only: no capability (the host serves them; two processes declaring one is a CLI
       // conflict) and no door route. The workflow set grows with the tree (`src/workflows/*/module.ts`).
       expect(Object.keys(doc.paths).filter((path) => !/^\/(workflows|runs)\//.test(path))).toEqual([])
@@ -227,6 +234,7 @@ describe('the audio process', () => {
       },
     })
     const running = await bootAudio({
+      audio: AUDIO,
       config: config(),
       handlers: stubHandlers(),
       tokens: new Map(),
