@@ -67,7 +67,8 @@ export interface GateVerdict {
 
 /**
  * The keep gate over a finished rewrite, as the pipeline ran it: the language and format come from the original, the
- * rewrite is trimmed, and an empty one keeps the original. `after` is always the rewrite's own lint, kept or not.
+ * rewrite is trimmed, and an empty one keeps the original. `after` is the rewrite's own lint, kept or not (an empty rewrite has none: the
+ * original's).
  */
 export function keepGate(input: { original: string; rewrite: string; language: ProseLanguage | 'auto' }): GateVerdict {
   const language = input.language === 'auto' ? detectLanguage(input.original) : input.language

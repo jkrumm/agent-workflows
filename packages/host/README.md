@@ -305,7 +305,7 @@ calling Claude Code session on Max, so the platform does the two parts that need
   itself. Fence tokens are a hash of the untrusted inputs, not random as in legacy, so a resumed run re-sends the prompt
   it sent. The review prompt is legacy's, word for word, and carries no voice guide (legacy's did not either).
 - **The gate** is `judgeRewrite` unchanged: same format, every fenced block, URL and wikilink target kept, none added, no
-  fence left open, no lint rule with more findings. `lint.after` is always the rewrite's own lint, kept or not.
+  fence left open, no lint rule with more findings. `lint.after` is the rewrite's own lint, kept or not (an empty rewrite is kept out with the original's).
 - **Cross-lab refusal.** The writer is always the calling session (Anthropic), so `createCapabilities` refuses a
   `prose.review` route (primary or fallback) on an Anthropic model: a boot with such an `AGW_ROUTES` fails, not the first call.
 - **Capability.** `prose.critique` (route `prose.review`, `agw prose-critique`) is the one model call: a built prompt in,
