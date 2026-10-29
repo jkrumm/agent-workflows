@@ -382,6 +382,37 @@ describe('the audio process', () => {
     }
   }, 30_000)
 
+  test('a pcm stream the client cancels is client-gone, whatever the abort signal says by then', async () => {
+    const handlers = stubHandlers()
+    handlers.speech = (deps) => async (req) => {
+      deps.usage.record(call(deps, req))
+      const body = new ReadableStream<Uint8Array>({
+        pull: (controller) => controller.enqueue(new Uint8Array(1024)),
+      })
+      return new Response(body, { headers: { 'content-type': 'audio/pcm' } })
+    }
+    const audio = await start(handlers)
+    try {
+      const res = await fetch(`${audio.url}/v1/audio/speech`, { method: 'POST', body: '{}', headers: bearer(HERMES) })
+      const runId = res.headers.get('agw-run-id') as string
+      const reader = (res.body as ReadableStream<Uint8Array>).getReader()
+      await reader.read()
+      // The reader goes away; the request's fetch is never aborted.
+      await reader.cancel()
+      const done = await until(
+        async () => {
+          const row = await sql.run(runId)
+          return row?.status === 'done' ? row : undefined
+        },
+        'the cancelled stream run',
+        15_000,
+      )
+      expect(done.output).toMatchObject({ calls: 1, complete: false, ended: 'client-gone' })
+    } finally {
+      await audio.shutdown()
+    }
+  }, 30_000)
+
   test('a client gone before the answer aborts the upstream call; the call billed after that is still recorded', async () => {
     let reached = () => {}
     const upstreamReached = new Promise<void>((resolve) => {
