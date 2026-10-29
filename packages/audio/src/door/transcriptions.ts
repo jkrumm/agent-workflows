@@ -2,9 +2,9 @@ import { errorMessage } from '../http.ts'
 import { AUDIO_DEFAULT_ROUTES } from '../routes.pending.ts'
 import { type AudioDeps, AudioScope, resolveDeps } from '../scope.ts'
 import {
-  extractTextAndUsage,
   PartFailure,
   postTranscription,
+  readReply,
   record,
   stripPromptEcho,
   transcribeParts,
@@ -35,6 +35,8 @@ interface AttemptResult {
   contentType: string
   text: string
   language: string | null
+  /** A billed reply that could not be read: never retried on the fallback. */
+  final?: boolean
 }
 
 /**
@@ -164,9 +166,19 @@ async function dispatchTranscription(scope: AudioScope, req: Request): Promise<R
       record(scope, routeId, reply, null)
       return { ...reply, text: '', language: null }
     }
-    const { text, usage, language: detected } = extractTextAndUsage(reply.body, reply.contentType)
-    record(scope, routeId, reply, usage, totalSeconds)
-    return { ...reply, text, language: detected }
+    const read = readReply(scope, routeId, reply, totalSeconds)
+    if ('failure' in read) {
+      // Billed and recorded already: a fallback would bill the same audio again, so this ends here.
+      return {
+        status: 502,
+        body: JSON.stringify(read.failure),
+        contentType: 'application/json',
+        text: '',
+        language: null,
+        final: true,
+      }
+    }
+    return { ...reply, text: read.text, language: read.language }
   }
 
   let routeId = resolved.routeId
@@ -193,7 +205,7 @@ async function dispatchTranscription(scope: AudioScope, req: Request): Promise<R
   } else {
     result = await attemptSingle(routeId)
     const fallback = scope.route(routeId).fallback
-    if (!isOk(result.status) && isModelUnavailable(result.status) && fallback) {
+    if (!isOk(result.status) && !result.final && isModelUnavailable(result.status) && fallback) {
       scope.log.warn('stt upstream unavailable; retrying on fallback', {
         model: scope.route(routeId).model,
         fallback: scope.route(fallback).model,
@@ -236,7 +248,8 @@ async function dispatchTranscription(scope: AudioScope, req: Request): Promise<R
   // A joined transcript has no real segment timing: a rich format is always synthesized there.
   const synthesize = RICH_FORMATS.has(clientFormat) && (joined || route.synthesizeEnvelope === true)
   if (synthesize && file) {
-    const duration = await scope.deps.media.duration(file)
+    // The duration prepareSttInput already measured; a probe only when preparation fell back to the raw upload.
+    const duration = totalSeconds && totalSeconds > 0 ? totalSeconds : await scope.deps.media.duration(file)
     const done = { routeId, status, audioSeconds: duration }
     if (clientFormat === 'verbose_json') return finish(Response.json(verboseJson(text, duration, detectedLang)), done)
     if (clientFormat === 'srt') {

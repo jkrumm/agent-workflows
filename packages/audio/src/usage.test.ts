@@ -45,7 +45,7 @@ describe('priceCall (legacy computeCost rates)', () => {
       costUsd: 0,
       costSource: 'not-billed',
     })
-    expect(priceCall({ wire: 'iu-openai-speech', model: 'm' }, 200, { inputChars: 5 })).toMatchObject({
+    expect(priceCall({ wire: 'iu-openai', model: 'm' }, 200, { inputChars: 5 })).toMatchObject({
       costUsd: null,
       costSource: 'unknown',
     })
@@ -82,6 +82,17 @@ describe('config', () => {
     expect(config.sttMaxChunkSeconds).toBe(240)
     const tuned = audioConfig({ ...env, STT_PROMPT: 'p', TTS_CONCURRENCY: '20', TTS_GEMINI_PREP_MODELS: 'a, b' })
     expect(tuned).toMatchObject({ sttPrompt: 'p', ttsConcurrency: 8, ttsGeminiPrepModels: ['a', 'b'] })
+    for (const [raw, n] of [
+      ['0', 1],
+      ['-3', 1],
+      ['2.7', 2],
+      ['99', 8],
+    ] as const) {
+      expect(audioConfig({ ...env, STT_CHUNK_CONCURRENCY: raw, TTS_CONCURRENCY: raw })).toMatchObject({
+        sttChunkConcurrency: n,
+        ttsConcurrency: n,
+      })
+    }
     expect(() => audioConfig({ ...env, STT_MAX_CHUNKS: 'many' })).toThrow(/STT_MAX_CHUNKS/)
     expect(() => audioConfig({ ...env, TTS_PREP: 'sometimes' })).toThrow(/TTS_PREP/)
   })

@@ -53,6 +53,9 @@ const LANGUAGE_CODE = /^[a-z]{2,3}(-[A-Za-z]{2,4})?$/
 
 const POLL_DEADLINE_MS = 60_000
 const POLL_INTERVAL_MS = 500
+/** The delivery fetch: a hang guard on a plain CDN download, and a cap far above any chunk (~1 MB per minute). */
+const DELIVERY_TIMEOUT_MS = 120_000
+const MAX_DELIVERY_BYTES = 50 * 1024 * 1024
 
 /** Prep-off models: above this many characters, split at sentence boundaries (no rewriting). */
 const NO_PREP_SPLIT_THRESHOLD = 4000
@@ -153,7 +156,18 @@ async function createPrediction(
   if (res.status < 200 || res.status >= 300) {
     throw new ReplicateSynthError(`Replicate create failed: HTTP ${res.status} ${res.body.slice(0, 300)}`)
   }
-  return JSON.parse(res.body) as ReplicatePrediction
+  return parsePrediction(res.body, 'create')
+}
+
+/** A prediction body; anything unreadable is a Replicate-side failure (502), never a 500. */
+function parsePrediction(body: string, stage: string): ReplicatePrediction {
+  try {
+    const pred = JSON.parse(body) as ReplicatePrediction | null
+    if (pred && typeof pred.status === 'string') return pred
+  } catch {
+    // below
+  }
+  throw new ReplicateSynthError(`Replicate ${stage} answered an unreadable body: ${body.slice(0, 200)}`)
 }
 
 async function pollPrediction(scope: AudioScope, id: string): Promise<ReplicatePrediction> {
@@ -162,14 +176,18 @@ async function pollPrediction(scope: AudioScope, id: string): Promise<ReplicateP
   while (clock.now() < deadline) {
     await clock.sleep(POLL_INTERVAL_MS)
     // Flat under the Replicate base, keyed by prediction id alone.
-    const res = await rawFetch(scope, `${scope.config.transports.replicateBase}/predictions/${id}`, {
-      method: 'GET',
-      headers: iuHeaders(scope),
-    })
+    const res = await rawFetch(
+      scope,
+      `${scope.config.transports.replicateBase}/predictions/${encodeURIComponent(id)}`,
+      {
+        method: 'GET',
+        headers: iuHeaders(scope),
+      },
+    )
     if (res.status < 200 || res.status >= 300) {
       throw new ReplicateSynthError(`Replicate poll failed: HTTP ${res.status} ${res.body.slice(0, 300)}`)
     }
-    const pred = JSON.parse(res.body) as ReplicatePrediction
+    const pred = parsePrediction(res.body, 'poll')
     if (pred.status !== 'starting' && pred.status !== 'processing') return pred
   }
   throw new ReplicateSynthError(`Replicate prediction ${id} timed out after ${POLL_DEADLINE_MS}ms`)
@@ -212,9 +230,39 @@ async function fetchDelivery(scope: AudioScope, pred: ReplicatePrediction): Prom
   if (!url) throw new ReplicateSynthError('Replicate prediction succeeded with no output URL')
   if (!isReplicateDeliveryUrl(url))
     throw new ReplicateSynthError('Replicate output URL is not a replicate.delivery URL')
-  const res = await scope.deps.fetch(url)
+  let res: Response
+  try {
+    // No redirects (a redirect could leave the allowlisted host), a hang guard, and a byte cap below.
+    res = await scope.deps.fetch(url, { redirect: 'error', signal: AbortSignal.timeout(DELIVERY_TIMEOUT_MS) })
+  } catch (error) {
+    throw new ReplicateSynthError(`Failed to fetch Replicate output: ${errorMessage(error)}`)
+  }
   if (!res.ok) throw new ReplicateSynthError(`Failed to fetch Replicate output: HTTP ${res.status}`)
-  return new Uint8Array(await res.arrayBuffer())
+  const declared = Number(res.headers.get('content-length'))
+  if (Number.isFinite(declared) && declared > MAX_DELIVERY_BYTES) {
+    res.body?.cancel().catch(() => {})
+    throw new ReplicateSynthError(`Replicate output is ${declared} bytes, over the ${MAX_DELIVERY_BYTES}-byte cap`)
+  }
+  const reader = res.body?.getReader()
+  if (!reader) throw new ReplicateSynthError('Replicate output has no body')
+  const parts: Uint8Array[] = []
+  let total = 0
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      total += value.byteLength
+      if (total > MAX_DELIVERY_BYTES) {
+        reader.cancel().catch(() => {})
+        throw new ReplicateSynthError(`Replicate output exceeds the ${MAX_DELIVERY_BYTES}-byte cap`)
+      }
+      parts.push(value)
+    }
+  } catch (error) {
+    if (error instanceof ReplicateSynthError) throw error
+    throw new ReplicateSynthError(`Failed to read Replicate output: ${errorMessage(error)}`)
+  }
+  return new Uint8Array(Buffer.concat(parts))
 }
 
 /** `speed` into ElevenLabs' 0.7–1.2; the neutral 1 is omitted. */
@@ -248,9 +296,9 @@ export interface ReplicateChunkResult {
 }
 
 /**
- * One chunk (or one podcast turn) on ElevenLabs, decoded to PCM. Usage is recorded right after the billed call, never
- * behind the concat/transcode stage (an ffmpeg failure later cannot lose a paid event); a failure records a 502 event
- * and rethrows. The podcast's production stage calls this in-process, per turn.
+ * One chunk (or one podcast turn) on ElevenLabs, decoded to PCM. One usage event per prediction: a failed prediction is
+ * a not-billed 502; once it succeeded its characters are billed, even when the delivery fetch or the decode fails
+ * afterwards (the event then carries the error). Failures rethrow. The podcast's production stage calls this per turn.
  */
 export async function synthReplicateChunk(
   scope: AudioScope,
@@ -271,9 +319,33 @@ export async function synthReplicateChunk(
     ...(continuity && params.nextText && { next_text: params.nextText }),
   }
   const start = scope.deps.clock.now()
+  const record = (status: number, extra: { audioSeconds?: number; bytesOut?: number; errorText?: string } = {}) =>
+    scope.call({
+      endpoint: 'speech',
+      routeId: params.routeId,
+      model: route.model,
+      status,
+      latencyMs: scope.deps.clock.now() - start,
+      // ElevenLabs bills per input character, not per token.
+      inputChars: params.text.length,
+      ...extra,
+    })
+  const fail = (status: number, error: unknown): never => {
+    const errorText = errorMessage(error).slice(0, 500)
+    scope.log.error('replicate tts synth error', { model: route.model, status, error: errorText })
+    record(status, { errorText })
+    throw error
+  }
+
+  let pred: ReplicatePrediction
+  try {
+    pred = await runPrediction(scope, route.model, input)
+  } catch (error) {
+    return fail(502, error)
+  }
+  // The prediction succeeded: its characters are billed from here on, whatever happens to the delivery.
   let result: ReplicateChunkResult
   try {
-    const pred = await runPrediction(scope, route.model, input)
     const mp3 = await fetchDelivery(scope, pred)
     const latencyMs = scope.deps.clock.now() - start
     const decoded = await scope.deps.media.transcode(mp3, { kind: 'auto' }, 'pcm')
@@ -287,31 +359,9 @@ export async function synthReplicateChunk(
       predictTime: pred.metrics?.predict_time ?? null,
     }
   } catch (error) {
-    const latencyMs = scope.deps.clock.now() - start
-    const errorText = errorMessage(error).slice(0, 500)
-    scope.log.error('replicate tts synth error', { model: route.model, latencyMs, error: errorText })
-    scope.call({
-      endpoint: 'speech',
-      routeId: params.routeId,
-      model: route.model,
-      status: 502,
-      latencyMs,
-      inputChars: params.text.length,
-      errorText,
-    })
-    throw error
+    return fail(200, error)
   }
-  // ElevenLabs bills per input character, not per token.
-  scope.call({
-    endpoint: 'speech',
-    routeId: params.routeId,
-    model: route.model,
-    status: 200,
-    latencyMs: result.latencyMs,
-    inputChars: result.inputChars,
-    audioSeconds: result.audioSeconds,
-    bytesOut: result.mp3.byteLength,
-  })
+  record(200, { audioSeconds: result.audioSeconds, bytesOut: result.mp3.byteLength })
   return result
 }
 

@@ -260,4 +260,57 @@ describe.skipIf(!hasFfmpeg)('transcriptions door', () => {
       expect(iu.requests).toHaveLength(3)
     })
   })
+
+  describe('billed means recorded', () => {
+    test('a 2xx reply that is not readable JSON is recorded, answered 502 and never retried on the fallback', async () => {
+      const { deps, transcribe } = setup(
+        () => new Response('{"text": "cut', { headers: { 'content-type': 'application/json' } }),
+      )
+      const res = await transcribe(post(twoSeconds))
+      expect(res.status).toBe(502)
+      expect(((await res.json()) as { error: { type: string } }).error.type).toBe('upstream_error')
+      expect(sentModels()).toEqual([VOXTRAL])
+      const [call] = calls(deps.usage.events)
+      expect(call).toMatchObject({ status: 200, costSource: 'rate' })
+      expect(Math.abs((call?.quantity ?? 0) - 2)).toBeLessThan(0.2)
+    })
+
+    test('an unreadable part fails the joined request as 502 after recording it', async () => {
+      const { deps, transcribe } = setup(
+        (r) =>
+          fileName(r).includes('part2')
+            ? new Response('garbage', { headers: { 'content-type': 'application/json' } })
+            : Response.json({ text: 'ok' }),
+        { config: { sttMaxUploadBytes: 18_000 } },
+      )
+      expect((await transcribe(post(tenSeconds))).status).toBe(502)
+      expect(calls(deps.usage.events)).toHaveLength(iu.requests.length)
+    })
+
+    test('a failed probe (0 s) is no measurement: the reply seconds price it, else the cost is unknown', async () => {
+      const blind = { ...media, duration: async () => 0 }
+      const { deps, transcribe } = setup(() => voxtralBody(), { media: blind })
+      await transcribe(post(twoSeconds))
+      expect(calls(deps.usage.events)[0]).toMatchObject({ quantity: 6, costSource: 'rate' })
+      iu.stop()
+      const second = setup(() => Response.json({ text: 'x' }), { media: blind })
+      await second.transcribe(post(twoSeconds))
+      expect(calls(second.deps.usage.events)[0]).toMatchObject({ costUsd: null, costSource: 'unknown' })
+    })
+
+    test('envelope synthesis reuses the measured duration instead of probing the upload again', async () => {
+      let probes = 0
+      const counting = {
+        ...media,
+        duration: (data: Blob | ArrayBuffer | Uint8Array) => {
+          probes++
+          return media.duration(data)
+        },
+      }
+      const { transcribe } = setup(() => voxtralBody(), { media: counting })
+      const res = await transcribe(post(twoSeconds, { response_format: 'verbose_json' }))
+      expect(Math.abs(((await res.json()) as { duration: number }).duration - 2)).toBeLessThan(0.2)
+      expect(probes).toBe(1)
+    })
+  })
 })

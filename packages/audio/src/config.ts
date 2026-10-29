@@ -29,7 +29,7 @@ export interface AudioTuning {
   ttsChunkTargetWords: number
   ttsChunkMaxWords: number
   ttsChunkMaxBytes: number
-  /** Chunks synthesized at once, 1 to 8. */
+  /** Chunks synthesized at once, an integer in [1, 8]. */
   ttsConcurrency: number
   ttsElevenLabsVoice: string
   ttsDefaultLanguage: 'de' | 'en'
@@ -52,6 +52,7 @@ export interface AudioTuning {
   sttSilenceNoiseDb: number
   sttSilenceMinSec: number
   sttSilenceWindowSec: number
+  /** Parts transcribed at once, an integer in [1, 8]. */
   sttChunkConcurrency: number
 }
 
@@ -119,6 +120,9 @@ export function audioTransports(env: Env): AudioTransports {
   }
 }
 
+/** A worker count: an integer in [1, 8]. 0 or a negative would never start a window, a fraction misaligns them. */
+const concurrency = (n: number): number => Math.min(8, Math.max(1, Math.floor(n)))
+
 /** The whole config from the environment; unset or blank variables keep the default, a malformed one throws. */
 export function audioConfig(env: Env): AudioConfig {
   const d = AUDIO_TUNING_DEFAULTS
@@ -158,7 +162,7 @@ export function audioConfig(env: Env): AudioConfig {
     ttsChunkTargetWords: num('TTS_CHUNK_TARGET_WORDS', d.ttsChunkTargetWords),
     ttsChunkMaxWords: num('TTS_CHUNK_MAX_WORDS', d.ttsChunkMaxWords),
     ttsChunkMaxBytes: num('TTS_CHUNK_MAX_BYTES', d.ttsChunkMaxBytes),
-    ttsConcurrency: Math.min(8, Math.max(1, num('TTS_CONCURRENCY', d.ttsConcurrency))),
+    ttsConcurrency: concurrency(num('TTS_CONCURRENCY', d.ttsConcurrency)),
     ttsElevenLabsVoice: str('TTS_ELEVENLABS_VOICE', d.ttsElevenLabsVoice),
     ttsDefaultLanguage: oneOf('TTS_DEFAULT_LANGUAGE', ['de', 'en'] as const, d.ttsDefaultLanguage),
     ttsElevenLabsStability: num('TTS_ELEVENLABS_STABILITY', d.ttsElevenLabsStability),
@@ -176,6 +180,6 @@ export function audioConfig(env: Env): AudioConfig {
     sttSilenceNoiseDb: num('STT_SILENCE_NOISE_DB', d.sttSilenceNoiseDb),
     sttSilenceMinSec: num('STT_SILENCE_MIN_SEC', d.sttSilenceMinSec),
     sttSilenceWindowSec: num('STT_SILENCE_WINDOW_SEC', d.sttSilenceWindowSec),
-    sttChunkConcurrency: num('STT_CHUNK_CONCURRENCY', d.sttChunkConcurrency),
+    sttChunkConcurrency: concurrency(num('STT_CHUNK_CONCURRENCY', d.sttChunkConcurrency)),
   }
 }

@@ -271,3 +271,13 @@ describe('shared delivery vocabulary', () => {
     )
   })
 })
+
+describe('splitWords keeps inline tags whole', () => {
+  test('a tag with a space is never cut across chunks', () => {
+    const limits: ChunkLimits = { targetWords: 3, maxWords: 3, maxBytes: 1000 }
+    const text = `eins zwei <short pause> drei vier <long pause> fünf sechs sieben acht neun zehn elf zwölf`
+    const out = enforceChunkLimits([{ style: '', text }], limits)
+    for (const c of out) expect(c.text).not.toMatch(/<[^>]*$|^[^<]*>/)
+    expect(out.map((c) => c.text).join(' ')).toBe(text)
+  })
+})

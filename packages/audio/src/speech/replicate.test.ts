@@ -206,4 +206,40 @@ describe.skipIf(!hasFfmpeg)('replicate lane', () => {
       ['episode-1', 502],
     ])
   })
+
+  test('a prediction that succeeded is billed by its characters even when the delivery fetch fails', async () => {
+    const { deps, speak } = setup({ delivery: () => new Response('gone', { status: 404 }) })
+    const res = await speak(post({ model: FLASH, input: 'Hallo Welt.' }))
+    expect(res.status).toBe(502)
+    const [call] = calls(deps.usage.events)
+    expect(call).toMatchObject({ status: 200, inputChars: 11, costSource: 'rate' })
+    expect(call?.costUsd).toBeCloseTo((11 / 1000) * 0.05, 12)
+    expect(call?.errorText).toContain('HTTP 404')
+  })
+
+  test('an unreadable prediction body is a 502, not a 500', async () => {
+    const { deps, speak } = setup({ replicateCreate: () => new Response('<html>oops</html>') })
+    const res = await speak(post({ model: FLASH, input: 'Hallo.' }))
+    expect(res.status).toBe(502)
+    expect(((await res.json()) as { error: { message: string } }).error.message).toContain('unreadable body')
+    expect(calls(deps.usage.events)[0]).toMatchObject({ status: 502, costSource: 'not-billed' })
+  })
+
+  test('the delivery fetch refuses a redirect off the allowlisted host', async () => {
+    const { speak } = setup({
+      delivery: () => new Response(null, { status: 302, headers: { location: 'https://evil.example/x.mp3' } }),
+    })
+    expect((await speak(post({ model: FLASH, input: 'Hallo.' }))).status).toBe(502)
+  })
+
+  test('the prediction id is URL-encoded in the poll path', async () => {
+    const { speak } = setup({
+      replicateCreate: () => Response.json({ id: 'p/../x?y', status: 'processing' }),
+      replicatePoll: () => succeeded('p/../x?y'),
+    })
+    expect((await speak(post({ model: FLASH, input: 'Hallo.' }))).status).toBe(200)
+    expect(iu.requests.find((r) => r.route === 'replicatePoll')?.path).toBe(
+      `/replicate/v1/predictions/${encodeURIComponent('p/../x?y')}`,
+    )
+  })
 })

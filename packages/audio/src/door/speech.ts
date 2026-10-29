@@ -1,4 +1,4 @@
-import { errorMessage, iuHeaders } from '../http.ts'
+import { errorMessage } from '../http.ts'
 import { parseOutputFormat } from '../media/audio.ts'
 import { AUDIO_DEFAULT_ROUTES, type AudioWire } from '../routes.pending.ts'
 import { type AudioDeps, AudioScope, resolveDeps } from '../scope.ts'
@@ -7,7 +7,7 @@ import { handleGeminiSpeech, type LaneResult } from '../speech/gemini.ts'
 import { handleReplicateSpeech, replicateWantsPrep } from '../speech/replicate.ts'
 import { callerOf, internalError, invalid, requestIdOf } from './common.ts'
 
-const TTS_WIRES: readonly AudioWire[] = ['iu-gemini-tts', 'iu-replicate-tts', 'iu-openai-speech']
+const TTS_WIRES: readonly AudioWire[] = ['iu-gemini-tts', 'iu-replicate-tts']
 
 /**
  * The TTS lane for a requested model: its route when the table has one on a TTS wire; anything else (empty, a typo,
@@ -71,8 +71,8 @@ function parseSpeechBody(json: Record<string, unknown>): SpeechBody {
 }
 
 /**
- * `POST /v1/audio/speech`, OpenAI-compatible, as audio-gateway serves it: lanes gemini / replicate / passthrough by
- * the requested model's route; status codes, error bodies and `X-Audio-Title` unchanged. Every billed upstream call is
+ * `POST /v1/audio/speech`, OpenAI-compatible, as audio-gateway serves it: lane gemini or replicate by the requested
+ * model's route; status codes, error bodies and `X-Audio-Title` unchanged. Every billed upstream call is
  * one usage event; the request ends with one `speech-request` event (a pcm stream: when its body ended).
  */
 export function createSpeechHandler(deps: AudioDeps): (req: Request) => Promise<Response> {
@@ -156,8 +156,6 @@ async function dispatchSpeech(scope: AudioScope, req: Request): Promise<Response
     }
   }
 
-  if (route.wire === 'iu-openai-speech') return passthrough(scope, routeId, body, responseFormat, summary)
-
   let result: LaneResult
   try {
     result =
@@ -199,53 +197,4 @@ function pick<T extends object, K extends keyof T>(source: T, keys: K[]): Partia
   const out: Partial<Pick<T, K>> = {}
   for (const key of keys) if (source[key] !== undefined) out[key] = source[key]
   return out
-}
-
-/** IU's OpenAI `/audio/speech`, body rebuilt from the parsed fields so the resolved model is what goes upstream. */
-async function passthrough(
-  scope: AudioScope,
-  routeId: string,
-  body: SpeechBody,
-  responseFormat: string,
-  summary: (status: number, errorText: string | null) => void,
-): Promise<Response> {
-  const model = scope.route(routeId).model
-  const start = scope.deps.clock.now()
-  const res = await scope.deps.fetch(`${scope.config.transports.openaiBase}/audio/speech`, {
-    method: 'POST',
-    headers: iuHeaders(scope, { 'content-type': 'application/json' }),
-    body: JSON.stringify({
-      model,
-      input: body.input,
-      ...(body.voice && { voice: body.voice }),
-      response_format: responseFormat,
-      ...(body.speed !== undefined && { speed: body.speed }),
-    }),
-  })
-  const latencyMs = scope.deps.clock.now() - start
-  const audio = await res.arrayBuffer()
-  const errorText = res.ok ? null : new TextDecoder().decode(audio).slice(0, 500)
-  if (!res.ok) scope.log.error('tts upstream error', { model, status: res.status, latencyMs, error: errorText })
-  scope.call({
-    endpoint: 'speech',
-    routeId,
-    model,
-    status: res.status,
-    latencyMs,
-    inputChars: body.input.length,
-    bytesOut: audio.byteLength,
-    errorText,
-  })
-  Object.assign(scope.meta, {
-    mode: 'passthrough',
-    lane: 'passthrough',
-    chunks: 1,
-    outputText: body.input,
-    bytesOut: audio.byteLength,
-  })
-  summary(res.status, errorText)
-  return new Response(audio, {
-    status: res.status,
-    headers: { 'content-type': res.headers.get('content-type') ?? 'audio/mpeg' },
-  })
 }
