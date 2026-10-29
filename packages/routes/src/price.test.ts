@@ -24,9 +24,24 @@ describe('priceCall', () => {
     })
   })
 
-  test('image tokens above the input total are clamped, text is the rest', () => {
-    const usage = { input_tokens: 10, output_tokens: 0, input_tokens_details: { image_tokens: 99 } }
-    expect(priceCall(tokens, usage)).toEqual({ usd: (10 * 8) / 1e6, source: 'rate' })
+  test('a side of the input split the endpoint did not report is the remainder of the input', () => {
+    const onlyText = { input_tokens: 150, output_tokens: 0, input_tokens_details: { text_tokens: 50 } }
+    expect(priceCall(tokens, onlyText)).toEqual({ usd: (50 * 5 + 100 * 8) / 1e6, source: 'rate' })
+    const onlyImage = { input_tokens: 150, output_tokens: 0, input_tokens_details: { image_tokens: 100 } }
+    expect(priceCall(tokens, onlyImage)).toEqual({ usd: (50 * 5 + 100 * 8) / 1e6, source: 'rate' })
+  })
+
+  test('a split that does not add up to the input is unknown, never an under-price', () => {
+    const over = { input_tokens: 10, output_tokens: 0, input_tokens_details: { image_tokens: 99 } }
+    expect(priceCall(tokens, over)).toEqual({ usd: null, source: 'unknown' })
+    const mismatch = {
+      input_tokens: 150,
+      output_tokens: 0,
+      input_tokens_details: { text_tokens: 50, image_tokens: 50 },
+    }
+    expect(priceCall(tokens, mismatch)).toEqual({ usd: null, source: 'unknown' })
+    const textOver = { input_tokens: 10, output_tokens: 0, input_tokens_details: { text_tokens: 11 } }
+    expect(priceCall(tokens, textOver)).toEqual({ usd: null, source: 'unknown' })
   })
 
   test('the provider cost wins, even over a flat price', () => {

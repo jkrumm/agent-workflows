@@ -79,6 +79,12 @@ const METHODS = ['get', 'post', 'put', 'patch', 'delete']
 /** Always the CLI's own flags; an operation with an input property of one of these names is skipped. */
 export const RESERVED_FLAGS: readonly string[] = ['format', 'commit', 'idempotency-key', 'help']
 
+/** An operation that is deliberately no command (`x-cli.hidden`); `agw schema` lists it apart from the skipped ones. */
+export interface Hidden {
+  operation: string
+  command?: string
+}
+
 /** An operation the CLI could not turn into a command, and why; `agw schema` lists it. */
 export interface Skipped {
   operation: string
@@ -203,9 +209,10 @@ function buildCommand(doc: Document, path: string, method: string, op: Operation
  * Every operation carrying a usable `x-cli` becomes one command; nothing per command is written by
  * hand. An operation the CLI cannot read is skipped with its reason and never takes the others down.
  */
-export function buildCommands(doc: Document): { commands: Command[]; skipped: Skipped[] } {
+export function buildCommands(doc: Document): { commands: Command[]; skipped: Skipped[]; hidden: Hidden[] } {
   const commands: Command[] = []
   const skipped: Skipped[] = []
+  const hidden: Hidden[] = []
   const taken = new Set<string>()
   const paths = doc.paths !== null && typeof doc.paths === 'object' ? doc.paths : {}
   for (const [path, rawItem] of Object.entries(paths)) {
@@ -216,8 +223,14 @@ export function buildCommands(doc: Document): { commands: Command[]; skipped: Sk
       const op = deref(doc, rawOp) as Operation
       if (!op['x-cli']) continue
       const operation = `${method.toUpperCase()} ${path}`
-      // Intentionally not a command (`x-cli.hidden`): neither a command nor a skipped operation.
-      if (op['x-cli'].hidden === true) continue
+      // Intentionally not a command (`x-cli.hidden`): not a skipped operation either, but `agw schema` says it is hidden.
+      if (op['x-cli'].hidden === true) {
+        hidden.push({
+          operation,
+          ...(words(op['x-cli'].command) ? { command: words(op['x-cli'].command)?.join(' ') } : {}),
+        })
+        continue
+      }
       const x = readXCli(op['x-cli'])
       if (typeof x === 'string') {
         skipped.push({ operation, reason: x })
@@ -241,7 +254,7 @@ export function buildCommands(doc: Document): { commands: Command[]; skipped: Sk
       }
     }
   }
-  return { commands, skipped }
+  return { commands, skipped, hidden }
 }
 
 /** The longest command whose words prefix argv. */

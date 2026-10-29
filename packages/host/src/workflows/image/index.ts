@@ -1,3 +1,4 @@
+import { rename, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { EnhanceOutput } from '@agent-workflows/capabilities'
 import { defineWorkflow, type Json, type StepScope, WorkflowError } from '@agent-workflows/runtime'
@@ -8,6 +9,8 @@ import { ImageInput, type ImageInputValue, ImageOutput, type ImageOutputValue } 
 import { imageScorer } from './scorer.ts'
 
 export const IMAGE_VERSION = '2026-10-29.1'
+
+const describeCost = (cost: { usd: number | null }) => (cost.usd === null ? 'cost unknown' : `$${cost.usd}`)
 
 /** The registry the workflow calls: the host's, typed by the image capabilities it holds. */
 export type ImageCaller = Pick<HostRegistry, 'call'>
@@ -21,15 +24,32 @@ interface ImageResult {
   hasAlpha: boolean
 }
 
-/** Writes `<dir>/<n>.png` for each image; the run's step journals paths and sizes, never the bytes. */
-async function store(dir: string, images: ImageResult[]) {
-  return Promise.all(
-    images.map(async (image, index) => {
-      const path = join(dir, `${index + 1}.png`)
-      await Bun.write(path, Buffer.from(image.b64, 'base64'))
-      return { path, bytes: image.bytes, width: image.width, height: image.height, hasAlpha: image.hasAlpha }
-    }),
-  )
+/**
+ * Writes `<dir>/<n>.png` for each image, each through a temp file and a rename, so a file is whole or absent; the run's step
+ * journals paths and sizes, never the bytes. If a write fails, the files already written are removed and the error says the
+ * images were billed: the step is not retried (a step's default is one attempt), so a disk failure does not pay again.
+ */
+async function store(directory: () => string, images: ImageResult[], billed: string) {
+  const written: string[] = []
+  try {
+    const dir = directory()
+    return await Promise.all(
+      images.map(async (image, index) => {
+        const path = join(dir, `${index + 1}.png`)
+        const temp = `${path}.tmp`
+        await Bun.write(temp, Buffer.from(image.b64, 'base64'))
+        await rename(temp, path)
+        written.push(path, temp)
+        return { path, bytes: image.bytes, width: image.width, height: image.height, hasAlpha: image.hasAlpha }
+      }),
+    )
+  } catch (error) {
+    await Promise.all(written.map((file) => rm(file, { force: true })))
+    throw new WorkflowError(
+      'error',
+      `${images.length} image(s) were generated and billed (${billed}) but could not be written to the artifact store: ${error instanceof Error ? error.message : String(error)}`,
+    )
+  }
 }
 
 /**
@@ -58,12 +78,12 @@ export function createImageWorkflows(
         return ImageOutput.parse(
           await ctx.step('cutout', async ({ addUsage, signal }: StepScope): Promise<Json> => {
             const out = await registry.call('image.cutout', { file, model }, { addUsage, signal })
-            const files = await store(dir(), [out.image])
+            const files = await store(dir, [out.image], describeCost(out.cost))
             return {
               kind: 'cutout',
               generationId: out.id,
               model: out.model,
-              params: { model: out.model, n: 1 },
+              params: { model: out.model, n: 1, returned: files.length },
               dir: dir(),
               files,
               cost: out.cost,
@@ -115,12 +135,18 @@ export function createImageWorkflows(
       return ImageOutput.parse(
         await ctx.step('generate', async ({ addUsage, signal }: StepScope): Promise<Json> => {
           const out = await registry.call('image.generate', request, { addUsage, signal })
-          const files = await store(dir(), out.images)
+          const files = await store(dir, out.images, describeCost(out.cost))
           return {
             kind: out.edit ? 'edit' : 'generate',
             generationId: out.id,
             model: out.model,
-            params: { model: out.model, size: out.size, quality: request.quality, n: request.n },
+            params: {
+              model: out.model,
+              size: out.size,
+              quality: request.quality,
+              n: request.n,
+              returned: files.length,
+            },
             size: out.size,
             ...(out.snappedFrom ? { snappedFrom: out.snappedFrom } : {}),
             dir: dir(),

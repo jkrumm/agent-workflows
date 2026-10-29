@@ -14,7 +14,7 @@ const output = (params: ImageOutputValue['params']): ImageOutputValue => ({
 })
 const arm = (
   over: Partial<ArmResult> = {},
-  params: ImageOutputValue['params'] = { model: 'm', size: '1024x1024', quality: 'low', n: 1 },
+  params: ImageOutputValue['params'] = { model: 'm', size: '1024x1024', quality: 'low', n: 1, returned: 1 },
 ): ArmResult => ({
   output: output(params),
   scores: { valid: 1, priced: 1 },
@@ -31,8 +31,8 @@ const gen = (id: string, n: Partial<ArmResult> = {}, l: Partial<ArmResult> = {})
 const cutout = (id: string, nScores: Record<string, number> = { valid: 1, alpha: 1, priced: 1 }): CaseResult => ({
   id,
   input: ImageInput.parse({ file: '/abs/a.png' }),
-  n: arm({ scores: nScores }, { model: 'r', n: 1 }),
-  l: arm({}, { model: 'r', n: 1 }),
+  n: arm({ scores: nScores }, { model: 'r', n: 1, returned: 1 }),
+  l: arm({}, { model: 'r', n: 1, returned: 1 }),
 })
 const verdictOf = (cases: CaseResult[]) => evaluateRule(cases)
 const named = (cases: CaseResult[], prefix: string) => verdictOf(cases).criteria.find((c) => c.name.startsWith(prefix))
@@ -57,16 +57,16 @@ describe('the image rule', () => {
   })
 
   test('2: parameters compare model, size, quality and n; auto size and a side without a parameter match', () => {
-    const base = { model: 'm', size: '1024x1024', quality: 'low', n: 1 }
+    const base = { model: 'm', size: '1024x1024', quality: 'low', n: 1, returned: 1 }
     expect(paramsEqual(base, base)).toEqual([])
     expect(paramsEqual(base, { ...base, model: 'other' })).toEqual(['model m vs other'])
     expect(paramsEqual(base, { ...base, size: '1536x1024' })).toEqual(['size 1024x1024 vs 1536x1024'])
     expect(paramsEqual(base, { ...base, quality: 'high' })).toEqual(['quality low vs high'])
     expect(paramsEqual(base, { ...base, n: 2 })).toEqual(['n 1 vs 2'])
     expect(paramsEqual({ ...base, size: 'auto' }, { ...base, size: '1254x1254' })).toEqual([])
-    expect(paramsEqual({ model: 'r', n: 1 }, { model: 'r', n: 1 })).toEqual([])
+    expect(paramsEqual({ model: 'r', n: 1, returned: 1 }, { model: 'r', n: 1, returned: 1 })).toEqual([])
     const cases = eight()
-    cases[0] = { ...gen('g0'), l: arm({}, { model: 'm', size: '1536x1024', quality: 'low', n: 1 }) }
+    cases[0] = { ...gen('g0'), l: arm({}, { model: 'm', size: '1536x1024', quality: 'low', n: 1, returned: 1 }) }
     expect(named(cases, '2')).toMatchObject({ pass: false })
     expect(named(cases, '2')?.detail).toContain('g0: size')
   })

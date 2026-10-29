@@ -85,8 +85,13 @@ export function priceCall(price: Price | undefined, usage: PriceUsage | null | u
   const input = count(usage?.input_tokens)
   const output = count(usage?.output_tokens)
   if (input === null || output === null) return { usd: null, source: 'unknown' }
-  const imageTokens = Math.min(count(usage?.input_tokens_details?.image_tokens) ?? 0, input)
-  const textTokens = count(usage?.input_tokens_details?.text_tokens) ?? input - imageTokens
+  // The input splits into text and image tokens: a side the endpoint did not report is the remainder. Two sides that do not
+  // add up to the input, or one that exceeds it, are a split we do not understand: unknown, never an under-price.
+  const reportedText = count(usage?.input_tokens_details?.text_tokens)
+  const reportedImage = count(usage?.input_tokens_details?.image_tokens)
+  const textTokens = reportedText ?? (reportedImage === null ? input : input - reportedImage)
+  const imageTokens = reportedImage ?? input - textTokens
+  if (textTokens < 0 || imageTokens < 0 || textTokens + imageTokens !== input) return { usd: null, source: 'unknown' }
   const usd = (textTokens * price.textInPerM + imageTokens * price.imageInPerM + output * price.outputPerM) / 1_000_000
   return { usd, source: 'rate' }
 }

@@ -14,10 +14,10 @@ const le16 = (b: Uint8Array, at: number) => (b[at] ?? 0) | ((b[at + 1] ?? 0) << 
 const le24 = (b: Uint8Array, at: number) => (b[at] ?? 0) | ((b[at + 1] ?? 0) << 8) | ((b[at + 2] ?? 0) << 16)
 const SOF = new Set([0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf])
 
-/** Orientation from an APP1 `Exif` segment whose data starts at `at` (the TIFF header is 6 bytes in), or 1. */
-function exifOrientation(b: Uint8Array, at: number, end: number): number {
+/** Orientation from an APP1 `Exif` segment whose data starts at `at` (the TIFF header is 6 bytes in); null when the segment is not Exif (an XMP APP1, say). */
+function exifOrientation(b: Uint8Array, at: number, end: number): number | null {
   const tiff = at + 6
-  if (b[at] !== 0x45 || b[at + 1] !== 0x78 || b[at + 2] !== 0x69 || b[at + 3] !== 0x66) return 1
+  if (b[at] !== 0x45 || b[at + 1] !== 0x78 || b[at + 2] !== 0x69 || b[at + 3] !== 0x66) return null
   const little = b[tiff] === 0x49
   const u16 = (p: number) => (little ? le16(b, p) : be16(b, p))
   const u32 = (p: number) => (little ? le16(b, p) + le16(b, p + 2) * 65536 : be16(b, p) * 65536 + be16(b, p + 2))
@@ -37,6 +37,7 @@ function exifOrientation(b: Uint8Array, at: number, end: number): number {
 
 function jpegHeader(b: Uint8Array): ImageHeader | null {
   let orientation = 1
+  let seenExif = false
   let pos = 2
   while (pos + 4 <= b.length) {
     if (b[pos] !== 0xff) return null
@@ -57,7 +58,14 @@ function jpegHeader(b: Uint8Array): ImageHeader | null {
       return width > 0 && height > 0 ? { format: 'jpeg', width, height, orientation } : null
     }
     if (marker === 0xda) return null
-    if (marker === 0xe1) orientation = exifOrientation(b, pos + 4, pos + 2 + length)
+    // Only an Exif APP1 sets the orientation, and the first one wins: a later XMP APP1 must not reset it.
+    if (marker === 0xe1 && !seenExif) {
+      const found = exifOrientation(b, pos + 4, pos + 2 + length)
+      if (found !== null) {
+        orientation = found
+        seenExif = true
+      }
+    }
     pos += 2 + length
   }
   return null

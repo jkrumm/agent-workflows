@@ -103,7 +103,13 @@ describe('image end to end', () => {
       expect(file).toMatchObject({ bytes: png.length, width: 16, height: 12, hasAlpha: true })
     }
     expect(out.cost).toEqual({ usd: 0.0305, source: 'rate' })
-    expect(out.params).toEqual({ model: IMAGE_ROUTES['image.flare'].model, size: '1536x1024', quality: 'low', n: 2 })
+    expect(out.params).toEqual({
+      model: IMAGE_ROUTES['image.flare'].model,
+      size: '1536x1024',
+      quality: 'low',
+      n: 2,
+      returned: 2,
+    })
 
     // the request the endpoint saw
     expect(fake.seen[0]?.json).toMatchObject({
@@ -263,6 +269,41 @@ describe('image end to end', () => {
       expect(body.status).toBe('failed')
       expect(JSON.stringify(body.error)).toContain('plan refused (hard policy wall): names a real person')
       expect(fake.seen).toEqual([])
+    } finally {
+      await t2.close()
+    }
+  })
+
+  test('a partial answer: the valid images are written, params say what was asked and what came back', async () => {
+    const png = pngFixture(8, 8)
+    handlers[GEN] = () =>
+      Response.json({ data: [{ b64_json: b64(png) }, { b64_json: b64(new TextEncoder().encode('<html>')) }], usage })
+    const { body } = await run({ prompt: 'x', n: 2 })
+    expect(body.status).toBe('done')
+    expect(body.output.params).toMatchObject({ n: 2, returned: 1 })
+    expect(body.output.files).toHaveLength(1)
+    expect(body.output.rejected).toEqual([{ index: 1, reason: 'not a valid png (bad magic bytes)' }])
+  })
+
+  test('a disk failure after the billed call fails the run once, says the images were billed, leaves no file, and does not pay again', async () => {
+    const png = pngFixture(8, 8)
+    handlers[GEN] = () => Response.json({ data: [{ b64_json: b64(png) }], usage })
+    const blocked = join(root, 'a-file-where-the-store-should-be')
+    writeFileSync(blocked, 'x')
+    const registryOnFile = createImageWorkflows(
+      { registry: registry as unknown as ImageCaller },
+      { artifacts: { root: blocked } },
+    )
+    const t2 = await startTestHost({ prefix: 'imagedisk', extra: registryOnFile })
+    try {
+      const { body } = await t2.json(
+        await t2.call('/workflows/image', { method: 'POST', body: { prompt: 'x' }, headers: { prefer: 'wait=30' } }),
+      )
+      expect(body.status).toBe('failed')
+      expect(JSON.stringify(body.error)).toMatch(/generated and billed \(\$0\.0305\) but could not be written/)
+      expect(fake.seen).toHaveLength(1)
+      const { rows } = await t2.pool.query(`select cost from "${t2.schema}".steps where run_id = $1`, [body.runId])
+      expect(Number(rows[0].cost)).toBeCloseTo(0.0305, 8)
     } finally {
       await t2.close()
     }

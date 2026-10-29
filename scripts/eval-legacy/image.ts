@@ -92,14 +92,14 @@ const fileInfo = (path: string) => {
 export function legacyOutput(input: ImageInputValue, json: GenJson | CutoutJson): ImageOutputValue {
   const cost = { usd: json.cost_usd, source: json.cost_usd === null ? ('unknown' as const) : ('provider' as const) }
   if ('file' in json) {
-    return { kind: 'cutout', generationId: json.id, model: json.model, params: { model: json.model, n: 1 }, dir: dirname(json.file), files: [fileInfo(json.file)], cost, latencyMs: json.latency_ms }
+    return { kind: 'cutout', generationId: json.id, model: json.model, params: { model: json.model, n: 1, returned: 1 }, dir: dirname(json.file), files: [fileInfo(json.file)], cost, latencyMs: json.latency_ms }
   }
   const files = json.images.map((image) => fileInfo(image.file))
   return {
     kind: input.images.length ? 'edit' : 'generate',
     generationId: json.id,
     model: json.model,
-    params: { model: json.model, size: json.size, ...(json.quality ? { quality: json.quality } : {}), n: input.n ?? 1 },
+    params: { model: json.model, size: json.size, ...(json.quality ? { quality: json.quality } : {}), n: input.n ?? 1, returned: files.length },
     size: json.size,
     dir: dirname(files[0]?.path ?? ''),
     files,

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, test } from 'bun:test'
 import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { artifactDir, artifactRoot, MARKER, RETENTION_MS, sweep } from '../src/artifacts.ts'
+import { ARTIFACT_ROOT, artifactDir, RETENTION_MS, sweep } from '../src/artifacts.ts'
 
 let root: string
 beforeEach(() => {
@@ -33,9 +33,17 @@ test('names that could leave the store are refused', () => {
   expect(existsSync(join(root, '..', 'x'))).toBe(false)
 })
 
-test('the root is AGW_ARTIFACTS_DIR, else artifacts/ under the state dir', () => {
-  expect(artifactRoot({ AGW_ARTIFACTS_DIR: ' /data/art ' })).toBe('/data/art')
-  expect(artifactRoot({})).toEndWith('/agent-workflows/artifacts')
+test('the root is fixed under the state dir: no environment variable moves it', () => {
+  expect(ARTIFACT_ROOT).toEndWith('/agent-workflows/artifacts')
+  const before = process.env.AGW_ARTIFACTS_DIR
+  process.env.AGW_ARTIFACTS_DIR = join(root, 'elsewhere')
+  try {
+    expect(artifactDir('image', 'run-env', { root })).toBe(join(root, 'image', 'run-env'))
+    expect(existsSync(join(root, 'elsewhere'))).toBe(false)
+  } finally {
+    if (before === undefined) delete process.env.AGW_ARTIFACTS_DIR
+    else process.env.AGW_ARTIFACTS_DIR = before
+  }
 })
 
 test('sweep removes run directories older than the cutoff and keeps the rest, newest activity wins', () => {
@@ -80,25 +88,13 @@ test('writing sweeps: the first artifactDir of a root removes what is past reten
   expect(existsSync(later)).toBe(false)
 })
 
-test('the sweep leaves a directory that is not an artifact store alone, whatever is in it', () => {
-  const shared = join(root, 'shared')
-  const stale = join(shared, 'projects', 'old-project')
-  mkdirSync(stale, { recursive: true })
-  writeFileSync(join(stale, 'notes.txt'), 'mine')
-  const now = Date.now()
-  aged(stale, 400, now)
-  expect(sweep(RETENTION_MS, { root: shared, now })).toEqual({ removed: [] })
-  expect(existsSync(stale)).toBe(true)
-})
-
-test('inside a store the sweep touches only names artifactDir would have made', () => {
+test('the sweep touches only names artifactDir would have made, two levels deep', () => {
   const now = Date.now()
   const made = artifactDir('image', 'old-run', { root, now })
   const foreign = join(root, 'Documents', 'taxes')
   const oddRun = join(root, 'image', 'Old Run!')
   mkdirSync(foreign, { recursive: true })
   mkdirSync(oddRun, { recursive: true })
-  expect(existsSync(join(root, MARKER))).toBe(true)
   for (const dir of [made, foreign, oddRun]) aged(dir, 90, now)
 
   expect(sweep(RETENTION_MS, { root, now }).removed).toEqual([made])

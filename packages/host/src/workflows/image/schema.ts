@@ -94,7 +94,11 @@ export const ImageOutput = z.object({
       model: z.string(),
       size: z.string().optional().describe('Generate: the size requested after snapping'),
       quality: z.string().optional(),
-      n: z.int().positive(),
+      n: z.int().positive().describe('Requested'),
+      returned: z
+        .int()
+        .nonnegative()
+        .describe('Images that came back valid and were written: below n after a partial answer'),
     })
     .describe('The request parameters that were sent: what two arms of an eval compare'),
   size: z.string().optional().describe('Generate: the size requested after snapping'),

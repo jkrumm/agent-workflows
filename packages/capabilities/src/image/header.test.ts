@@ -78,7 +78,59 @@ function jpegHeaderOnly(width: number, height: number, orientation?: number) {
   ])
 }
 
+/** An XMP APP1 segment: an APP1 that is not Exif. */
+const xmp = () => {
+  const body = [...new TextEncoder().encode('http://ns.adobe.com/xap/1.0/\0<x:xmpmeta/>')]
+  return [0xff, 0xe1, ...u16(2 + body.length), ...body]
+}
+const withSegments = (jpeg: Uint8Array, ...segments: number[][]) =>
+  new Uint8Array([0xff, 0xd8, ...segments.flat(), ...jpeg.slice(2)])
+const exifOf = (orientation: number) => [
+  0xff,
+  0xe1,
+  ...u16(2 + 6 + 8 + 2 + 12 + 4),
+  0x45,
+  0x78,
+  0x69,
+  0x66,
+  0,
+  0,
+  0x4d,
+  0x4d,
+  0,
+  0x2a,
+  0,
+  0,
+  0,
+  8,
+  0,
+  1,
+  0x01,
+  0x12,
+  0,
+  3,
+  0,
+  0,
+  0,
+  1,
+  ...u16(orientation),
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+]
+
 describe('image headers', () => {
+  test('only an Exif APP1 sets the orientation, and the first one wins: a following XMP APP1 does not reset it', () => {
+    const base = jpegHeaderOnly(300, 200)
+    expect(readHeader(withSegments(base, exifOf(6), xmp()))?.orientation).toBe(6)
+    expect(readHeader(withSegments(base, xmp(), exifOf(8)))?.orientation).toBe(8)
+    expect(readHeader(withSegments(base, exifOf(3), exifOf(6)))?.orientation).toBe(3)
+    expect(readHeader(withSegments(base, xmp()))?.orientation).toBe(1)
+  })
+
   test('a JPEG that claims a huge canvas is read from its header alone', () => {
     expect(readHeader(jpegHeaderOnly(60_000, 50_000))).toEqual({
       format: 'jpeg',
