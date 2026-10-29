@@ -67,6 +67,9 @@ describe('getRun and ping', () => {
         status: 'done',
         output: { n: 7 },
         error: null,
+        cost: null,
+        unpricedCalls: 0,
+        postHooksDone: true,
       })
 
       const failed = await rt.start(boom, {}, { purpose: 'test' })
@@ -83,12 +86,59 @@ describe('getRun and ping', () => {
         status: 'running',
         output: null,
         error: null,
+        cost: null,
+        unpricedCalls: 0,
+        postHooksDone: false,
       })
       await rt.cancel(running.runId)
       await rt.wait(running.runId)
       expect(await rt.getRun(running.runId)).toMatchObject({ status: 'cancelled', error: { kind: 'cancelled' } })
     } finally {
       release()
+      await rt.close()
+    }
+  })
+
+  test('the run record shows in the snapshot, and postHooksDone tells a final cost from one still to come', async () => {
+    let releasePost!: () => void
+    const postHeld = new Promise<void>((resolve) => {
+      releasePost = resolve
+    })
+    const rt = testRuntime({
+      schema: db.schema,
+      workflows: [ok],
+      middleware: [
+        {
+          name: 'record-stub',
+          // stands in for the run record: the sums land in runPost, after the terminal status is committed
+          async runPost({ runId }) {
+            await postHeld
+            await sql.pool.query(`update "${db.schema}".runs set cost = 0.25, unpriced_calls = 2 where id = $1`, [
+              runId,
+            ])
+          },
+        },
+      ],
+    })
+    await rt.open()
+    try {
+      const { runId } = await rt.start(ok, {}, { purpose: 'test' })
+      await rt.wait(runId)
+      // terminal, hooks held on the latch: no cost, not done
+      expect(await rt.getRun(runId)).toMatchObject({
+        status: 'done',
+        cost: null,
+        unpricedCalls: 0,
+        postHooksDone: false,
+      })
+      releasePost()
+      const final = await until(async () => {
+        const snapshot = await rt.getRun(runId)
+        return snapshot?.postHooksDone ? snapshot : null
+      }, 'post hooks')
+      expect(final).toMatchObject({ status: 'done', cost: 0.25, unpricedCalls: 2, postHooksDone: true })
+    } finally {
+      releasePost()
       await rt.close()
     }
   })

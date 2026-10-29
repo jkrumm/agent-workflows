@@ -40,6 +40,20 @@ const RunStateSchema = z.object({
   status: z.enum(['pending', 'running', 'done', 'failed', 'cancelled']),
   output: z.unknown().optional().describe("The workflow's output, once done"),
   error: z.object({ kind: z.string(), message: z.string() }).optional(),
+  cost: z
+    .number()
+    .nullable()
+    .optional()
+    .describe('Once the run ended: its final priced cost in USD, null when nothing was priced'),
+  unpricedCalls: z
+    .number()
+    .int()
+    .optional()
+    .describe('Once the run ended: calls with no price; above 0 the cost is a lower bound'),
+  costPending: z
+    .literal(true)
+    .optional()
+    .describe('The run ended but its record had not landed within the wait, so cost is not final yet'),
 })
 
 const RunIdInput = z.object({ runId: z.string().min(1).describe('The run id') })
@@ -148,6 +162,14 @@ export async function startRun(
   }
 }
 
+/**
+ * How long an ended run's answer holds for its record. `Runtime.finish` commits the terminal status first and writes
+ * `runs.cost` in `runPost` after it, so an answer at the status alone would carry a cost that is still to come. A
+ * record takes milliseconds normally; five seconds is far above that while still bounded when a hook is slow or
+ * stuck, in which case the answer says `costPending` instead of a number that may be wrong.
+ */
+export const RECORD_WAIT_MS = 5000
+
 const POLL_MIN_MS = 25
 const POLL_MAX_MS = 250
 
@@ -158,6 +180,10 @@ const MAX_READ_FAILURES = 5
  * Reads the run until it ends, `seconds` pass (`Infinity`: no deadline) or the caller goes away; `null` when the run
  * does not exist. A failed read is logged and retried on the same backoff, inside the deadline; the error surfaces
  * once reads fail {@link MAX_READ_FAILURES} times in a row or the deadline passes with the last read failing.
+ *
+ * An ended run is then held up to `recordWaitMs` ({@link RECORD_WAIT_MS}) for its record (cost, unpriced calls) beyond `seconds`; the
+ * answer carries `costPending` if the record has not landed by then. A failed read in that hold ends it with the
+ * state already in hand, marked pending, rather than failing an answer that is complete but for the cost.
  */
 export async function waitFor(
   store: RunStore,
@@ -165,10 +191,13 @@ export async function waitFor(
   seconds: number,
   logger: Logger,
   signal?: AbortSignal,
+  recordWaitMs = RECORD_WAIT_MS,
 ): Promise<RunState | null> {
   const deadline = Date.now() + seconds * 1000
+  let recordDeadline: number | null = null
   let delay = POLL_MIN_MS
   let failures = 0
+  let last: RunState | null = null
   for (;;) {
     let state: RunState | null
     try {
@@ -177,18 +206,36 @@ export async function waitFor(
     } catch (error) {
       failures++
       logger.warn('run state read failed', { runId, attempt: failures, error: errorText(error) })
+      if (last && recordDeadline !== null) return answer(last, false)
       const left = deadline - Date.now()
       if (failures >= MAX_READ_FAILURES || left <= 0 || signal?.aborted) throw error
       await Bun.sleep(Math.min(delay, left))
       delay = Math.min(delay * 2, POLL_MAX_MS)
       continue
     }
-    if (!state || isTerminal(state.status) || signal?.aborted) return state
+    if (!state) return null
+    if (isTerminal(state.status)) {
+      if (state.postHooksDone) return answer(state, true)
+      last = state
+      recordDeadline ??= Date.now() + recordWaitMs
+      const left = recordDeadline - Date.now()
+      if (left <= 0 || signal?.aborted) return answer(state, false)
+      await Bun.sleep(Math.min(delay, left))
+      delay = Math.min(delay * 2, POLL_MAX_MS)
+      continue
+    }
+    if (signal?.aborted) return state
     const left = deadline - Date.now()
     if (left <= 0) return state
     await Bun.sleep(Math.min(delay, left))
     delay = Math.min(delay * 2, POLL_MAX_MS)
   }
+}
+
+/** The wire body of an ended run: `postHooksDone` is the wait's business, `costPending` is the caller's. */
+function answer(state: RunState, recorded: boolean): RunState {
+  const { postHooksDone: _, ...body } = state
+  return recorded ? body : { ...body, costPending: true }
 }
 
 function respond(context: HostContext, state: RunState): RunState {
@@ -368,8 +415,9 @@ export function runOperations(deps: OperationDeps): Record<'status' | 'wait' | '
       summary: 'Show a run',
       mutating: false,
       headers: [],
-      async handler({ input, context }) {
-        const state = await deps.store.get(input.runId)
+      async handler({ input, context, signal }) {
+        // seconds 0: no wait for the run, but an ended run still holds for its record
+        const state = await waitFor(deps.store, input.runId, 0, deps.logger, signal)
         if (!state) throw notFound(input.runId)
         return respond(context, state)
       },
