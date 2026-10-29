@@ -1,0 +1,367 @@
+// Pure, config-free transforms shared by both TTS lanes: prep-response
+// parsing, chunk-size enforcement, language detection, and the bounded-
+// concurrency synth runner. Kept separate from gemini-tts.ts/replicate-tts.ts
+// (which boot config, fetch and ffmpeg) so these can be unit-tested without
+// any environment. PCM/WAV framing and transcoding live in audio.ts instead —
+// that's a real ffmpeg/ffprobe process boundary, not a pure transform.
+
+export interface PrepChunk {
+  /** Natural-language delivery directive, in the transcript's language. Spoken as direction, not aloud. */
+  style: string
+  /** The transcript to speak, with sparse inline tags embedded. */
+  text: string
+}
+
+export interface PrepResult {
+  lang: string
+  /** Short human label (3–6 words) for the audio, in the transcript's language. Used as a filename/Slack title. */
+  title: string
+  chunks: PrepChunk[]
+}
+
+/** Crude German detection shared by both TTS lanes (no-LLM default path, and language steering). */
+const DE_MARKERS =
+  /\b(der|die|das|und|nicht|ein|eine|ist|mit|für|auch|werden|heute|ich|du|dir|dich|wir|uns|ihr|sie|sich|mach|mache|gern|gerne|alles|gut|klar|passt|erledigt|bis|später|soll|sollte|noch|schon|jetzt|hier|habe|hast|hat|kann|kannst|wird|wenn|dann|oder|aber|nach|vor|bei|zum|zur|vom|im|am|auf|aus|morgen|guten|termin|rechnung|grad|uhr|nur|sehr|etwa|rund|meist|wieder|kein|keine|mehr|weniger|möglich|über|unter|zwischen|gestern|wetter|regen|wind|tag|tage)\b/i
+const EN_MARKERS =
+  /\b(the|and|or|but|is|are|were|been|of|with|from|this|that|these|those|it|its|you|your|i'm|i'll|we|they|he|she|will|would|can|could|should|does|did|not|yes|done|sure|thing|good|morning|meeting|moved|take|care|turn|down|weather|tomorrow|today)\b/i
+
+/**
+ * Best-effort DE/EN detection for a single request. Umlauts or German
+ * function words → "de"; English function words → "en"; nothing decisive
+ * (names, numbers, "Okay.") → null, and the caller applies the configured
+ * default. A wrong code is audible on ElevenLabs — `language_code` steers
+ * pronunciation — so ambiguity must fall to the household default rather
+ * than to English.
+ */
+export function detectLanguage(text: string): 'de' | 'en' | null {
+  if (/[äöüßÄÖÜ]/.test(text)) return 'de'
+  if (DE_MARKERS.test(text)) return 'de'
+  if (EN_MARKERS.test(text)) return 'en'
+  return null
+}
+
+/** Legacy boolean form: true unless the text is decisively English. */
+export function looksGerman(text: string): boolean {
+  return detectLanguage(text) !== 'en'
+}
+
+/**
+ * Run `synth` over `items` with bounded concurrency, reassembling results in
+ * original order regardless of completion order (Decision 1). Processes in
+ * windows of `concurrency`; if any item in a window fails after its own
+ * retries, the window is allowed to fully settle (so every item's outcome is
+ * observable) but no further windows start — "no silent partial output": the
+ * caller gets either every result in order, or the first error.
+ */
+export async function synthConcurrent<I, O>(
+  concurrency: number,
+  items: readonly I[],
+  synth: (item: I, index: number) => Promise<O>,
+): Promise<O[]> {
+  const results: (O | Error)[] = new Array(items.length)
+
+  for (let windowStart = 0; windowStart < items.length; windowStart += concurrency) {
+    const windowEnd = Math.min(windowStart + concurrency, items.length)
+    const batch = items.slice(windowStart, windowEnd)
+    const settled = await Promise.allSettled(batch.map((item, i) => synth(item, windowStart + i)))
+    for (let i = 0; i < settled.length; i++) {
+      const outcome = settled[i]
+      if (outcome === undefined) continue // required by noUncheckedIndexedAccess
+      if (outcome.status === 'fulfilled') {
+        results[windowStart + i] = outcome.value
+      } else {
+        results[windowStart + i] = outcome.reason instanceof Error ? outcome.reason : new Error(String(outcome.reason))
+      }
+    }
+    if (results.some((r) => r instanceof Error)) break
+  }
+
+  const out: O[] = []
+  for (const result of results) {
+    if (result instanceof Error) throw result
+    if (result !== undefined) out.push(result)
+  }
+  return out
+}
+
+/**
+ * Parse the prep LLM's reply into a PrepResult. Tolerates markdown code fences
+ * and leading/trailing prose by extracting the first balanced JSON object.
+ * Throws if no usable `{lang, chunks:[{delivery?,text}]}` shape is present.
+ */
+export function parsePrepResponse(raw: string): PrepResult {
+  const fenced = raw.replace(/```(?:json)?/gi, '').trim()
+  const start = fenced.indexOf('{')
+  const end = fenced.lastIndexOf('}')
+  if (start === -1 || end === -1 || end < start) {
+    throw new Error(`prep returned no JSON object: ${raw.slice(0, 200)}`)
+  }
+  const parsed = JSON.parse(fenced.slice(start, end + 1)) as {
+    lang?: unknown
+    title?: unknown
+    chunks?: unknown
+  }
+  if (!Array.isArray(parsed.chunks) || parsed.chunks.length === 0) {
+    throw new Error(`prep returned no chunks: ${raw.slice(0, 200)}`)
+  }
+  const chunks: PrepChunk[] = parsed.chunks.map((c) => {
+    const obj = (c ?? {}) as { style?: unknown; delivery?: unknown; text?: unknown }
+    const text = typeof obj.text === 'string' ? obj.text.trim() : ''
+    if (!text) throw new Error('prep chunk missing text')
+    // A vocabulary `delivery` key wins; a legacy free-form `style` is kept verbatim for the caller to vet.
+    const style = resolveDelivery(obj.delivery) || (typeof obj.style === 'string' ? obj.style.trim() : '')
+    return { style, text }
+  })
+  const lang = typeof parsed.lang === 'string' ? parsed.lang : ''
+  const title = typeof parsed.title === 'string' ? parsed.title.trim() : ''
+  return { lang, title, chunks }
+}
+
+/**
+ * Allowed Gemini 3.8 inline tags (docs/gemini-tts.md §Tag vocabulary) — angle brackets, English,
+ * never spoken. Pauses plus a handful of human vocalisations; mood is the style string, not a tag.
+ * One allowlist for every lane — podcast, briefing prep and the chat lane's input pass-through — and one
+ * delivery vocabulary ({@link DELIVERY_STYLES}), so all of them use the same words.
+ */
+export const SPEECH_TAGS = [
+  '<short pause>',
+  '<long pause>',
+  '<laugh>',
+  '<chuckle>',
+  '<sigh>',
+  '<exhales>',
+  '<breath>',
+  '<whispers>',
+] as const
+
+/**
+ * Per-turn delivery vocabulary for the podcast writers: the writer picks a KEY, the synth sends the
+ * English style string (`speechMetadata.style`, never spoken — modelpick `docs/gemini-tts.md` §Style
+ * control). Closed on purpose: reused exact strings keep the voice from drifting, and nothing the
+ * writer invents can reach the TTS request. No transcript words, no age/gender/accent in a string.
+ */
+export const DELIVERY_STYLES = {
+  curious: 'curious, leaning in',
+  amused: 'amused, a smile in the voice',
+  surprised: 'surprised, a little incredulous',
+  serious: 'serious, measured',
+  thoughtful: 'thoughtful, a bit slower',
+  energetic: 'energetic, a little faster',
+  dry: 'dry, understated',
+  warm: 'warm, reassuring',
+} as const satisfies Record<string, string>
+
+export type DeliveryKey = keyof typeof DELIVERY_STYLES
+export const DELIVERY_KEYS = Object.keys(DELIVERY_STYLES) as DeliveryKey[]
+/** The style string for a vocabulary key (case-insensitive), or `fallback` for anything else — nothing outside the vocabulary reaches a TTS request. */
+export function resolveDelivery(key: unknown, fallback = ''): string {
+  const k = typeof key === 'string' ? key.trim().toLowerCase() : ''
+  return isDeliveryKey(k) ? DELIVERY_STYLES[k] : fallback
+}
+export const isDeliveryKey = (value: string): value is DeliveryKey => Object.hasOwn(DELIVERY_STYLES, value)
+
+/** True when a turn's last sentence is a question (a trailing tag aside) — its answer belongs in the same synth request. */
+export const endsOnQuestion = (text: string): boolean =>
+  /\?["»“”')\]]*\s*$/.test(text.replace(/<[^<>\n]{1,24}>\s*$/, '').trim())
+
+/** Any `<angle tag>` (no space after `<`, so `a < 5 und b > 3` survives) or `[square]` tag-shaped span. */
+export const TAG_PATTERN = /<[^\s<>][^<>\n]{0,40}>|\[[^\]\n]+\]/g
+
+/** Remove a tag-shaped span unless it is in `allowed` (case-insensitive) — invented and legacy `[v3]` tags go. */
+export function stripDisallowedTags(text: string, allowed: readonly string[] = SPEECH_TAGS): string {
+  const set = new Set(allowed.map((t) => t.toLowerCase()))
+  return text.replace(TAG_PATTERN, (m) => (set.has(m.toLowerCase()) ? m : ''))
+}
+
+/** Per-chunk size ceilings for {@link enforceChunkLimits}. */
+export interface ChunkLimits {
+  /** Preferred words per chunk when regrouping smaller pieces. */
+  targetWords: number
+  /** Hard ceiling: a chunk above this many words is re-split. */
+  maxWords: number
+  /** Hard ceiling: a chunk whose text exceeds this many UTF-8 bytes is re-split. */
+  maxBytes: number
+}
+
+const byteLength = (s: string): number => new TextEncoder().encode(s).length
+const wordCount = (s: string): number => (s.match(/\S+/g) ?? []).length
+
+/** Whether a chunk's text sits within both hard ceilings (words and bytes). */
+function withinHardLimits(text: string, limits: ChunkLimits): boolean {
+  return wordCount(text) <= limits.maxWords && byteLength(text) <= limits.maxBytes
+}
+
+/**
+ * Split into sentences, keeping terminal punctuation. Breaks on `. ! ? …` (incl.
+ * runs) followed by whitespace — good enough for spoken-text seams; an occasional
+ * abbreviation mis-split only shifts a boundary, it never drops content.
+ */
+function splitSentences(text: string): string[] {
+  return text
+    .split(/(?<=[.!?…])\s+/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+}
+
+/** Last resort: pack words into groups within the hard ceilings — only for a single over-long sentence. */
+function splitWords(text: string, limits: ChunkLimits): string[] {
+  const words = text.match(/\S+/g) ?? []
+  const out: string[] = []
+  let buf: string[] = []
+  for (const word of words) {
+    const merged = buf.length > 0 ? `${buf.join(' ')} ${word}` : word
+    if (buf.length > 0 && (buf.length + 1 > limits.maxWords || byteLength(merged) > limits.maxBytes)) {
+      out.push(buf.join(' '))
+      buf = [word]
+    } else {
+      buf.push(word)
+    }
+  }
+  if (buf.length > 0) out.push(buf.join(' '))
+  return out
+}
+
+/**
+ * Break one over-long text into pieces each within the hard ceilings, always
+ * preferring the largest natural boundary first: paragraphs, then sentences, and
+ * only a single sentence that alone exceeds a ceiling is split between words.
+ */
+function atomize(text: string, limits: ChunkLimits): string[] {
+  if (withinHardLimits(text, limits)) return [text]
+  const paragraphs = text
+    .split(/\n{2,}/)
+    .map((p) => p.trim())
+    .filter(Boolean)
+  if (paragraphs.length > 1) return paragraphs.flatMap((p) => atomize(p, limits))
+  const sentences = splitSentences(text)
+  if (sentences.length > 1) return sentences.flatMap((s) => atomize(s, limits))
+  return splitWords(text, limits)
+}
+
+/** Greedily pack natural-boundary pieces toward `targetWords` without crossing a hard ceiling. */
+function pack(pieces: string[], style: string, limits: ChunkLimits): PrepChunk[] {
+  const out: PrepChunk[] = []
+  let buf: string[] = []
+  for (const piece of pieces) {
+    const merged = buf.length > 0 ? `${buf.join(' ')} ${piece}` : piece
+    if (buf.length > 0 && (wordCount(merged) > limits.targetWords || byteLength(merged) > limits.maxBytes)) {
+      out.push({ style, text: buf.join(' ') })
+      buf = [piece]
+    } else {
+      buf.push(piece)
+    }
+  }
+  if (buf.length > 0) out.push({ style, text: buf.join(' ') })
+  return out
+}
+
+/**
+ * Enforce per-chunk size ceilings on the prep output. Chunks already within the
+ * hard limits pass through untouched (preserving the prep LLM's semantic chunking
+ * and inline tags); over-long chunks are re-split at natural boundaries —
+ * paragraphs, then sentences, then (only for a single giant sentence) words — and
+ * regrouped toward `targetWords`. The point is to keep every Gemini generation
+ * short enough that voice quality does not drift, without ever cutting
+ * mid-sentence unless a lone sentence is itself too long to fit.
+ */
+export function enforceChunkLimits(chunks: PrepChunk[], limits: ChunkLimits): PrepChunk[] {
+  const out: PrepChunk[] = []
+  for (const chunk of chunks) {
+    if (withinHardLimits(chunk.text, limits)) {
+      out.push(chunk)
+      continue
+    }
+    out.push(...pack(atomize(chunk.text, limits), chunk.style, limits))
+  }
+  return out
+}
+
+const DE_MONTHS: Record<string, string> = {
+  jan: 'Januar',
+  feb: 'Februar',
+  mär: 'März',
+  mrz: 'März',
+  apr: 'April',
+  jun: 'Juni',
+  jul: 'Juli',
+  aug: 'August',
+  sep: 'September',
+  sept: 'September',
+  okt: 'Oktober',
+  nov: 'November',
+  dez: 'Dezember',
+}
+const EN_MONTHS: Record<string, string> = {
+  jan: 'January',
+  feb: 'February',
+  mar: 'March',
+  apr: 'April',
+  jun: 'June',
+  jul: 'July',
+  aug: 'August',
+  sep: 'September',
+  sept: 'September',
+  oct: 'October',
+  nov: 'November',
+  dec: 'December',
+}
+const DE_WEEKDAYS: Record<string, string> = {
+  mo: 'Montag',
+  di: 'Dienstag',
+  mi: 'Mittwoch',
+  do: 'Donnerstag',
+  fr: 'Freitag',
+  sa: 'Samstag',
+  so: 'Sonntag',
+}
+const EN_WEEKDAYS: Record<string, string> = {
+  mon: 'Monday',
+  tue: 'Tuesday',
+  wed: 'Wednesday',
+  thu: 'Thursday',
+  fri: 'Friday',
+  sat: 'Saturday',
+  sun: 'Sunday',
+}
+
+/**
+ * Deterministic spoken-form rewrite for text that skips the prep LLM (the
+ * chat fast path): abbreviated weekdays/months, units and symbols, numeric
+ * ranges, and leftover markdown/decoration TTS would otherwise read out or
+ * mispronounce ("Aug.", "°C", "17–32", "★"). Numbers themselves are left to
+ * the TTS engine, which handles digits fine once `language_code` is right.
+ */
+export function normalizeForSpeech(text: string, lang: 'de' | 'en'): string {
+  const de = lang === 'de'
+  const months = de ? DE_MONTHS : EN_MONTHS
+  const weekdays = de ? DE_WEEKDAYS : EN_WEEKDAYS
+  // Allowed inline tags survive: the markdown strip below would eat their closing `>`.
+  const tags: string[] = []
+  const protectedText = text.replace(TAG_PATTERN, (m) => {
+    if (!SPEECH_TAGS.some((t) => t === m.toLowerCase())) return m
+    tags.push(m.toLowerCase())
+    return `\uE000${tags.length - 1}\uE001`
+  })
+  let out = protectedText
+    .replace(/[*_`#>]+/g, '')
+    .replace(/[★☆•▪●◦✓✔➜→]+/g, ' ')
+    .replace(/\p{Extended_Pictographic}\uFE0F?/gu, ' ')
+    .replace(/(\d)\s*[–—-]\s*(\d)/g, de ? '$1 bis $2' : '$1 to $2')
+    .replace(/(\d)\s*°\s*C\b/g, de ? '$1 Grad' : '$1 degrees')
+    .replace(/(\d)\s*°/g, de ? '$1 Grad' : '$1 degrees')
+    .replace(/(\d)\s*%/g, de ? '$1 Prozent' : '$1 percent')
+    .replace(/\bkm\/h\b/gi, de ? 'Kilometer pro Stunde' : 'kilometres per hour')
+    .replace(/(\d)\s*km\b/g, de ? '$1 Kilometer' : '$1 kilometres')
+    .replace(/\bca\.\s*/gi, de ? 'circa ' : 'approximately ')
+    .replace(/\bz\.\s?B\.\s*/g, 'zum Beispiel ')
+    .replace(/\bbzw\.\s*/gi, 'beziehungsweise ')
+    .replace(/\bEUR\b|€/g, de ? 'Euro' : 'euros')
+  // "Do, 27. Aug.:" → "Donnerstag, 27. August:" — only abbreviated forms with a trailing dot/comma
+  out = out.replace(/\b([A-Za-zÄÖÜäöü]{2,4})\.(?=\s|,|:|$)/g, (m, abbr: string) => months[abbr.toLowerCase()] ?? m)
+  out = out.replace(/\b([A-Za-z]{2,3})(?=,\s*\d)/g, (m, abbr: string) => weekdays[abbr.toLowerCase()] ?? m)
+  return out
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/\s+([,.;:!?])/g, '$1')
+    .trim()
+    .replace(/\uE000(\d+)\uE001/g, (_, i: string) => tags[Number(i)] ?? '')
+}

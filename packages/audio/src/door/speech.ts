@@ -1,0 +1,251 @@
+import { errorMessage, iuHeaders } from '../http.ts'
+import { parseOutputFormat } from '../media/audio.ts'
+import { AUDIO_DEFAULT_ROUTES, type AudioWire } from '../routes.pending.ts'
+import { type AudioDeps, AudioScope, resolveDeps } from '../scope.ts'
+import { DELIVERY_KEYS, isDeliveryKey } from '../speech/core.ts'
+import { handleGeminiSpeech, type LaneResult } from '../speech/gemini.ts'
+import { handleReplicateSpeech, replicateWantsPrep } from '../speech/replicate.ts'
+import { callerOf, internalError, invalid, requestIdOf } from './common.ts'
+
+const TTS_WIRES: readonly AudioWire[] = ['iu-gemini-tts', 'iu-replicate-tts', 'iu-openai-speech']
+
+/**
+ * The TTS lane for a requested model: its route when the table has one on a TTS wire; anything else (empty, a typo,
+ * an unknown id) is the default route. The door owns model choice, so a caller's wrong model never reaches upstream.
+ */
+export function resolveTtsRoute(scope: AudioScope, requested: string): { routeId: string; overridden: boolean } {
+  const routeId = scope.routeIdForModel(requested, TTS_WIRES)
+  if (routeId) return { routeId, overridden: false }
+  return { routeId: AUDIO_DEFAULT_ROUTES.tts, overridden: requested.length > 0 }
+}
+
+interface SpeechBody {
+  model: string
+  input: string
+  voice: string
+  responseFormat: string
+  summarize: boolean
+  speed?: number
+  instructions?: string
+  language?: string
+  stability?: number
+  style?: number
+  similarityBoost?: number
+  delivery?: string
+}
+
+/** The OpenAI body plus legacy's extras. `style` is a NUMBER for ElevenLabs; a string `style` means `delivery`. */
+function parseSpeechBody(json: Record<string, unknown>): SpeechBody {
+  const str = (v: unknown) => (typeof v === 'string' ? v : undefined)
+  const numOf = (v: unknown) => (typeof v === 'number' ? v : undefined)
+  // `lang_code` is what Hermes' OpenAI provider sends (tts.openai.language -> extra_body.lang_code).
+  const delivery = json.delivery ?? (typeof json.style === 'string' ? json.style : undefined)
+  const deliveryRaw =
+    delivery === undefined || delivery === null
+      ? undefined
+      : typeof delivery === 'string'
+        ? delivery.trim()
+          ? delivery
+          : undefined
+        : String(delivery)
+  const body: SpeechBody = {
+    model: str(json.model) ?? '',
+    input: str(json.input) ?? '',
+    voice: str(json.voice) ?? '',
+    responseFormat: str(json.response_format) ?? '',
+    summarize: json.summarize === true,
+  }
+  const optional = {
+    speed: numOf(json.speed),
+    instructions: str(json.instructions),
+    language: str(json.language ?? json.lang_code),
+    stability: numOf(json.stability),
+    style: numOf(json.style),
+    similarityBoost: numOf(json.similarity_boost),
+    delivery: deliveryRaw,
+  }
+  for (const [key, value] of Object.entries(optional)) {
+    if (value !== undefined) Object.assign(body, { [key]: value })
+  }
+  return body
+}
+
+/**
+ * `POST /v1/audio/speech`, OpenAI-compatible, as audio-gateway serves it: lanes gemini / replicate / passthrough by
+ * the requested model's route; status codes, error bodies and `X-Audio-Title` unchanged. Every billed upstream call is
+ * one usage event; the request ends with one `speech-request` event (a pcm stream: when its body ended).
+ */
+export function createSpeechHandler(deps: AudioDeps): (req: Request) => Promise<Response> {
+  const resolved = resolveDeps(deps)
+  return async (req) => {
+    const scope = new AudioScope(resolved, requestIdOf(deps, req), callerOf(deps, req))
+    try {
+      return await dispatchSpeech(scope, req)
+    } catch (error) {
+      return internalError(scope, error)
+    }
+  }
+}
+
+async function dispatchSpeech(scope: AudioScope, req: Request): Promise<Response> {
+  const requestStart = scope.deps.clock.now()
+  let body: SpeechBody
+  try {
+    body = parseSpeechBody(JSON.parse(await req.text()) as Record<string, unknown>)
+  } catch {
+    // No blank-model usage event for a body that is not JSON.
+    return invalid('request body must be valid JSON')
+  }
+  const responseFormat = parseOutputFormat(body.responseFormat)
+  if (responseFormat === null) return invalid(`unsupported response_format: ${body.responseFormat}`)
+
+  const { routeId, overridden } = resolveTtsRoute(scope, body.model)
+  const route = scope.route(routeId)
+  if (
+    route.wire === 'iu-gemini-tts' &&
+    body.delivery !== undefined &&
+    !isDeliveryKey(body.delivery.trim().toLowerCase())
+  ) {
+    return invalid(`unsupported delivery "${body.delivery}" — expected one of: ${DELIVERY_KEYS.join(', ')}`)
+  }
+  if (overridden) {
+    scope.log.warn('tts model overridden', { requested: body.model, used: route.model, caller: scope.caller })
+  }
+
+  // Whole-file clients (Slack auto-TTS) cannot ask for a summary: long text on a prep-off ElevenLabs model gets one.
+  // pcm is a streaming client speaking one sentence at a time: never summarized.
+  const { config } = scope
+  const autoSummarize =
+    !body.summarize &&
+    route.wire === 'iu-replicate-tts' &&
+    !replicateWantsPrep(scope, route.model) &&
+    responseFormat !== 'pcm' &&
+    config.ttsAutoSummarizeMinChars > 0 &&
+    body.input.trim().length >= config.ttsAutoSummarizeMinChars
+  const summarize = body.summarize || autoSummarize
+
+  const summary = (status: number, errorText: string | null) => {
+    const m = scope.meta
+    scope.summary({
+      endpoint: 'speech-request',
+      routeId,
+      model: route.model,
+      requestedModel: body.model,
+      status,
+      latencyMs: scope.deps.clock.now() - requestStart,
+      errorText,
+      responseFormat,
+      mode: m.mode ?? null,
+      lane: m.lane ?? null,
+      chunks: m.chunks ?? null,
+      languageCode: m.languageCode ?? null,
+      voice: m.voice ?? null,
+      title: m.title ?? null,
+      audioSeconds: m.audioSeconds ?? null,
+      bytesOut: m.bytesOut ?? null,
+      inputChars: body.input.length,
+    })
+    if (status < 400) {
+      scope.log.info('tts.done', {
+        model: route.model,
+        lane: m.lane,
+        caller: scope.caller,
+        latencyMs: scope.deps.clock.now() - requestStart,
+        audioSeconds: m.audioSeconds ?? null,
+      })
+    }
+  }
+
+  if (route.wire === 'iu-openai-speech') return passthrough(scope, routeId, body, responseFormat, summary)
+
+  let result: LaneResult
+  try {
+    result =
+      route.wire === 'iu-gemini-tts'
+        ? await handleGeminiSpeech(scope, {
+            routeId,
+            input: body.input,
+            voice: body.voice,
+            responseFormat,
+            summarize,
+            ...(body.delivery !== undefined && { delivery: body.delivery }),
+          })
+        : await handleReplicateSpeech(scope, {
+            routeId,
+            input: body.input,
+            voice: body.voice,
+            responseFormat,
+            summarize,
+            ...pick(body, ['speed', 'instructions', 'language', 'stability', 'style', 'similarityBoost']),
+          })
+  } catch (error) {
+    summary(500, errorMessage(error).slice(0, 500))
+    throw error
+  }
+  const { response, settled } = result
+  if (!settled) {
+    summary(response.status, null)
+    return response
+  }
+  // A streamed body is still being written: its summary (audio seconds, bytes) waits for the body to end.
+  settled.then(
+    () => summary(response.status, null),
+    (error: unknown) => summary(500, errorMessage(error).slice(0, 500)),
+  )
+  return response
+}
+
+function pick<T extends object, K extends keyof T>(source: T, keys: K[]): Partial<Pick<T, K>> {
+  const out: Partial<Pick<T, K>> = {}
+  for (const key of keys) if (source[key] !== undefined) out[key] = source[key]
+  return out
+}
+
+/** IU's OpenAI `/audio/speech`, body rebuilt from the parsed fields so the resolved model is what goes upstream. */
+async function passthrough(
+  scope: AudioScope,
+  routeId: string,
+  body: SpeechBody,
+  responseFormat: string,
+  summary: (status: number, errorText: string | null) => void,
+): Promise<Response> {
+  const model = scope.route(routeId).model
+  const start = scope.deps.clock.now()
+  const res = await scope.deps.fetch(`${scope.config.transports.openaiBase}/audio/speech`, {
+    method: 'POST',
+    headers: iuHeaders(scope, { 'content-type': 'application/json' }),
+    body: JSON.stringify({
+      model,
+      input: body.input,
+      ...(body.voice && { voice: body.voice }),
+      response_format: responseFormat,
+      ...(body.speed !== undefined && { speed: body.speed }),
+    }),
+  })
+  const latencyMs = scope.deps.clock.now() - start
+  const audio = await res.arrayBuffer()
+  const errorText = res.ok ? null : new TextDecoder().decode(audio).slice(0, 500)
+  if (!res.ok) scope.log.error('tts upstream error', { model, status: res.status, latencyMs, error: errorText })
+  scope.call({
+    endpoint: 'speech',
+    routeId,
+    model,
+    status: res.status,
+    latencyMs,
+    inputChars: body.input.length,
+    bytesOut: audio.byteLength,
+    errorText,
+  })
+  Object.assign(scope.meta, {
+    mode: 'passthrough',
+    lane: 'passthrough',
+    chunks: 1,
+    outputText: body.input,
+    bytesOut: audio.byteLength,
+  })
+  summary(res.status, errorText)
+  return new Response(audio, {
+    status: res.status,
+    headers: { 'content-type': res.headers.get('content-type') ?? 'audio/mpeg' },
+  })
+}
