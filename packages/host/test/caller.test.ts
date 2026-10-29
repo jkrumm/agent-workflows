@@ -1,25 +1,19 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { parseApiCallers } from '../src/auth.ts'
-import { SECRET, startTestHost, type TestHost, until } from './support.ts'
+import { startTestHost, type TestHost, until } from './support.ts'
 
-const IRIS = 'iris-token-0123456789abcdef-0123456789ab'
-const HERMES = 'hermes-token-0123456789abcdef-0123456789'
-const DOOR_TOKENS = new Map([
-  ['iris', IRIS],
-  ['hermes', HERMES],
-])
+// A door-tokens-file token: valid at the audio door, unknown to the host API.
+const DOOR_TOKEN = 'iris-token-0123456789abcdef-0123456789ab'
 
 let t: TestHost
 beforeAll(async () => {
-  // The deploy lists `iris` for the API; `hermes` stays a door token only.
-  t = await startTestHost({ prefix: 'caller', platform: true, callers: parseApiCallers('iris', DOOR_TOKENS) })
+  t = await startTestHost({ prefix: 'caller', platform: true })
 })
 afterAll(async () => {
   await t.close()
 })
 
-const start = (headers: Record<string, string>, auth?: string | null) =>
-  t.call('/workflows/echo/say', { body: { text: 'x' }, headers: { prefer: 'wait=20', ...headers }, auth })
+const start = (headers: Record<string, string>) =>
+  t.call('/workflows/echo/say', { body: { text: 'x' }, headers: { prefer: 'wait=20', ...headers } })
 
 async function runRow(response: Response) {
   expect(response.status).toBe(200)
@@ -70,44 +64,26 @@ describe('caller attribution at the host door', () => {
     expect(await count()).toBe(before)
   })
 
-  test('a listed door token fixes the caller to its name; no header overrides it', async () => {
-    const { row } = await runRow(
-      await start({ 'x-agw-caller': 'agw', 'x-agw-project': 'forged', 'x-agw-workspace': 'work' }, IRIS),
-    )
-    expect(row).toEqual({ caller: 'iris', project: null, workspace: null })
-  })
-
-  test('a door token the deploy did not list is refused on every API path', async () => {
+  test('a door token is not an API credential: 401 on every API path', async () => {
     const { runId } = await runRow(await start({}))
+    const before = (await t.pool.query(`select count(*)::int as n from "${t.schema}".runs`)).rows[0].n
     for (const [path, init] of [
       ['/workflows/echo/say', { body: { text: 'x' } }],
       [`/runs/${runId}`, {}],
       ['/openapi.json', {}],
     ] as const) {
-      const response = await t.call(path, { ...init, auth: HERMES })
+      const response = await t.call(path, { ...init, auth: DOOR_TOKEN, headers: { 'x-agw-caller': 'iris' } })
       expect(response.status).toBe(401)
       expect(response.headers.get('www-authenticate')).toBe('Bearer')
     }
-    // Listed, the same token passes.
-    expect((await t.call('/openapi.json', { auth: IRIS })).status).toBe(200)
-  })
-
-  test('with no allowlist no door token opens the API, only the secret does', async () => {
-    const none = await startTestHost({ prefix: 'callernone', callers: parseApiCallers(undefined, DOOR_TOKENS) })
-    try {
-      expect((await none.call('/openapi.json', { auth: IRIS })).status).toBe(401)
-      expect((await none.call('/openapi.json', { auth: SECRET })).status).toBe(200)
-    } finally {
-      await none.close()
-    }
+    expect((await t.pool.query(`select count(*)::int as n from "${t.schema}".runs`)).rows[0].n).toBe(before)
   })
 
   test('Argo gets project and caller: the declared repo, else the caller', async () => {
-    const ping = async (headers: Record<string, string>, auth?: string) => {
+    const ping = async (headers: Record<string, string>) => {
       const response = await t.call('/workflows/smoke/ping', {
         method: 'POST',
         headers: { prefer: 'wait=20', ...headers },
-        auth,
       })
       const { runId } = (await runRow(response)) as { runId: string }
       await until(
@@ -123,30 +99,6 @@ describe('caller attribution at the host door', () => {
       project: 'agent-workflows',
       raw: { caller: 'claude-code' },
     })
-    expect(await ping({}, IRIS)).toMatchObject({ project: 'iris', raw: { caller: 'iris' } })
     expect(await ping({})).toMatchObject({ project: 'agw', raw: { caller: 'agw' } })
-  })
-})
-
-describe('parseApiCallers', () => {
-  test('unset, empty and blank lists allow none', () => {
-    for (const raw of [undefined, '', ' , ']) expect(parseApiCallers(raw, DOOR_TOKENS).size).toBe(0)
-  })
-
-  test('picks the listed names from the door tokens', () => {
-    expect([...parseApiCallers(' iris , hermes ', DOOR_TOKENS).keys()]).toEqual(['iris', 'hermes'])
-  })
-
-  test('refuses every bad name at once, never echoing a token', () => {
-    let message = ''
-    try {
-      parseApiCallers('agw,Nope,absent', DOOR_TOKENS)
-    } catch (error) {
-      message = (error as Error).message
-    }
-    expect(message).toContain('"agw"')
-    expect(message).toContain('"Nope"')
-    expect(message).toContain('"absent" has no token')
-    expect(message).not.toContain(IRIS)
   })
 })

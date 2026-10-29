@@ -12,16 +12,7 @@ import { OpenAPIGenerator } from '@orpc/openapi'
 import { OpenAPIHandler } from '@orpc/openapi/fetch'
 import { onError } from '@orpc/server'
 import { ZodToJsonSchemaConverter } from '@orpc/zod/zod4'
-import {
-  assertSecret,
-  type BearerKeys,
-  bearerCaller,
-  bearerKeys,
-  PLATFORM_CALLER,
-  resolveWho,
-  stampWho,
-  WhoHeaderError,
-} from './auth.ts'
+import { assertSecret, bearerMatches, resolveWho, stampWho, WhoHeaderError } from './auth.ts'
 import { CONTRACT_FIELD, contractSha } from './canonical.ts'
 import { type CapabilityWorkflows, capabilityRuns } from './capability-runs.ts'
 import {
@@ -51,12 +42,6 @@ export interface HostOptions {
   store?: RunStore
   /** `AGW_API_SECRET`: at least 32 characters, else creation throws. */
   secret: string
-  /**
-   * Named bearer tokens the API accepts beside the secret: only door tokens the deploy allowlisted
-   * (`parseApiCallers`); none by default, so a door token alone never opens the API. A request with one is attributed
-   * to its name and cannot override it with a header. `agw` is reserved for the secret.
-   */
-  callers?: ReadonlyMap<string, string>
   version: string
   /** False while the runtime is not open (before `open()`, after `close()`): `/health` is degraded and every other route is a 503. */
   isOpen?: () => boolean
@@ -118,10 +103,7 @@ function assertCommands(commands: { owner: string; command: string[] }[]) {
 
 export function createHost(options: HostOptions): Host {
   assertSecret(options.secret)
-  const { runtime, registry } = options
-  if (options.callers?.has(PLATFORM_CALLER))
-    throw new Error(`caller "${PLATFORM_CALLER}" is reserved for the API secret`)
-  const keys: BearerKeys = bearerKeys(new Map([[PLATFORM_CALLER, options.secret], ...(options.callers ?? [])]))
+  const { runtime, registry, secret } = options
   const store = options.store ?? runtimeRunStore(runtime)
   const logger = options.logger ?? consoleLogger
   const isOpen = options.isOpen ?? (() => true)
@@ -246,8 +228,7 @@ export function createHost(options: HostOptions): Host {
   async function serve(request: Request): Promise<Response> {
     const { pathname } = new URL(request.url)
     if (request.method === 'GET' && pathname === '/health') return health()
-    const credential = bearerCaller(request.headers.get('authorization'), keys)
-    if (!credential) return unauthorized()
+    if (!bearerMatches(request.headers.get('authorization'), secret)) return unauthorized()
     if (!isOpen()) return json(503, 'SERVICE_UNAVAILABLE', 'The runtime is not open')
 
     try {
@@ -262,10 +243,10 @@ export function createHost(options: HostOptions): Host {
         })
       }
 
-      // Trust by credential: the caller headers behind this point are the resolved ones, never the client's.
+      // The caller headers behind this point are the validated ones; the audio door sets its own from its credential.
       const headers = new Headers(request.headers)
       try {
-        stampWho(headers, resolveWho(credential, request.headers))
+        stampWho(headers, resolveWho(request.headers))
       } catch (error) {
         if (error instanceof WhoHeaderError) return json(400, 'BAD_REQUEST', error.message)
         throw error
