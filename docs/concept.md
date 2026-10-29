@@ -417,3 +417,16 @@ One entry per phase: what we learned, what changed on this page, and why.
   reasoning counted once. Callers moved: usage-tracker's research-gateway collector removed.
 - **Spend.** Small; the unpriced backfill ($13.56) is a correction of earlier rows, not new spend.
 - **Does the page hold?** Yes.
+
+### Wave 10 — Claude Code and Hermes slimmed (P5), 2026-10-29 (v3.9, v3.10)
+
+- **Learned.** Verify before building held again (Argo, iris needed no port). Security reviews changed
+  designs (`internal` capabilities, host env leaks), not only diffs. A script that decides to close tabs
+  needs every guard re-read at close time; a dry run on the live fleet is the cheap last gate. Rendered
+  configs (OpenCode agents) drift from their source silently, so sweeps include render targets.
+- **Changed.** v3.9: dispatch is unused, agent-gateway retires completely. v3.10: `internal`
+  capabilities. Callers moved: global CLAUDE.md and skills, Hermes scripts and skills, statusline,
+  overview, modelpick; agent-gateway's MCP server deleted; warden archived.
+- **Friction.** Leftover worker tabs in other workspaces cost the owner manual cleanup; tabs now close
+  at merge and the reaper closes merged fan tabs.
+- **Does the page hold?** Yes. P5's gate (no MCP gateway tool referenced) is met.

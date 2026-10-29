@@ -256,23 +256,27 @@ host); route sweep done (no EU ids, review's four Requesty hops moved, long-prom
 fixed at their cause; the argo bridge dropped and fully unwound. Kept on Requesty with the Terra fallback,
 by decision (parity): research, otel, prose, podcast routes. Evidence: `docs/waves/handoff/lead.md` at `06f0af1`.
 
-## Wave 10 — Claude Code and Hermes slimmed (P5)            <!-- status: active -->
+## Wave 10 — Claude Code and Hermes slimmed (P5)            <!-- status: done -->
 Workers: Sonnet/high; Haiku for the sweeps.
 
-- [ ] Global CLAUDE.md, skills and the Makefile MCP registration per concept §10; agw MCP server deleted
-- [ ] Hermes scripts and skills call `agw`; narratives and overview ported as workflows
-- [ ] A sweep shows no skill, doc or script naming an MCP gateway tool
-- [ ] Tab hygiene: worker tabs closed right after merge; `herdr-reap.py` closes merged fan tabs even while
+- [x] Global CLAUDE.md, skills and the Makefile MCP registration per concept §10; agw MCP server deleted
+- [x] Hermes scripts and skills call `agw`; narratives and overview ported as workflows
+- [x] A sweep shows no skill, doc or script naming an MCP gateway tool
+- [x] Tab hygiene: worker tabs closed right after merge; `herdr-reap.py` closes merged fan tabs even while
   a plan wave is active; the dispatch lane dropped from the global CLAUDE.md
-- [ ] Every runtime caller of the old gateways moved (inventory 2026-10-29): iris (`agw` jobs
+- [x] Every runtime caller of the old gateways moved (inventory 2026-10-29): iris (`agw` jobs
   `triage`/`decide`, audio STT/TTS; its fleet does the switch, we port what it lacks), argo audio proxy,
   hermes-agent scripts (`overview`, `narrative`, `prose`, `/api/usage`) and skills (research, podcast,
   briefing TTS), dotfiles usage push, `wave-watch.sh` job polling, health checks and Caddy doors,
   modelpick (`agw routing`, a direct audio-gateway import), homelab Kuma monitors, warden's client
   (retired: archive or delete), stale `mcp__research-gateway__*` permissions in other repos
-**Left behind:**
+**Left behind:** all done and live; `make verify` PASS, `@verifier` PASS. Global CLAUDE.md and skills on `agw`,
+the dispatch lane gone; agent-gateway's MCP server and Argo push deleted; Hermes scripts and skills on `agw`
+(overview, narrative ported at parity); `agw routes`, `agw quota-report`, `agw agents` replace the legacy
+reads; warden archived; herdr-reap closes merged fan tabs. No live MCP-gateway reference anywhere. Every
+remaining caller is a Wave 11 retirement item (list in `docs/waves/handoff/lead.md` at `c30f318`).
 
-## Wave 11 — Retire and hand over (P6)            <!-- status: pending -->
+## Wave 11 — Retire and hand over (P6)            <!-- status: active -->
 Workers: Haiku for the sweeps, Sonnet/high for the rest.
 
 - [ ] research-gateway, audio-gateway and agent-gateway retired: LaunchAgents removed, repos archived,
@@ -280,6 +284,10 @@ Workers: Haiku for the sweeps, Sonnet/high for the rest.
 - [ ] argo's `/ai` audio proxy routes and dashboard audio calls deleted (no bridge; owner 2026-10-29)
 - [ ] usage-tracker's agent-gateway OpenCode/IU collectors removed once Argo totals reconcile over a full
   week of overlap (earliest ~2026-11-05); if Wave 11 ends earlier, the date is written into Left behind
+- [ ] The last callers removed before the services stop (Wave 10 list): Hermes `dispatch` skill and the
+  `brain-drift-audit` cron prompt, hermes-agent `make doctor` probe, dotfiles `install-cli`, `wave-watch.sh`
+  job poll, `remote-dev.sh` hint, Caddy rows, devhost probes, Kuma pushes/monitors, modelpick's agent-gateway
+  rows, the eval harness's legacy adapter, argo's `/ai` audio proxy (above)
 - [ ] Architecture map and `make doctor` clean on the mini
 - [ ] Final retro and `docs/factory-input.md`: what the factory re-plan can build on
 **Left behind:**
