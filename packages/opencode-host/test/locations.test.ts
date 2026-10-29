@@ -135,6 +135,12 @@ test('stale temp builds and server.json temps are swept, fresh ones kept', () =>
   expect([oldBuild, newBuild, oldState].map(existsSync)).toEqual([false, true, false])
 })
 
+/**
+ * Lets every pending microtask run. The cache is in-process promises with no timer or IO of its own, so once the
+ * macrotask queue turns, each continuation that could run has run; no duration is involved.
+ */
+const flush = () => new Promise<void>((resolve) => setImmediate(resolve))
+
 /** A port whose warm and evict calls block until released, so tests can interleave them. */
 function gatedPort() {
   const log: string[] = []
@@ -149,11 +155,11 @@ function gatedPort() {
     port: { warm: (d: string) => call(`warm ${d}`), evict: (d: string) => call(`evict ${d}`) },
     /** Releases the oldest pending call. */
     async next(err?: Error) {
-      for (let i = 0; i < 50 && gates.length === 0; i++) await Bun.sleep(1)
+      for (let i = 0; i < 50 && gates.length === 0; i++) await flush()
       const gate = gates.shift()
       if (!gate) throw new Error('no pending call')
       gate.release(err)
-      await Bun.sleep(1)
+      await flush()
       return gate.op
     },
     pending: () => gates.map((g) => g.op),
@@ -179,7 +185,7 @@ describe('WarmCache', () => {
     const p = gatedPort()
     const c = new WarmCache(p.port, { evictAfterMs: 0 })
     const uses = [c.use('/a'), c.use('/a'), c.use('/a')]
-    await Bun.sleep(5)
+    await flush()
     expect(p.pending()).toEqual(['warm /a'])
     await p.next()
     const releases = await Promise.all(uses)
@@ -199,7 +205,7 @@ describe('WarmCache', () => {
     const p = gatedPort()
     const c = new WarmCache(p.port)
     const uses = Promise.allSettled([c.use('/a'), c.use('/a')])
-    await Bun.sleep(5)
+    await flush()
     await p.next(new Error('down'))
     expect((await uses).map((r) => (r.status === 'rejected' ? (r.reason as Error).message : 'ok'))).toEqual([
       'down',
@@ -239,7 +245,7 @@ describe('WarmCache', () => {
     for (const r of releases) r()
     const d = c.use('/d') // warm 4 > 1: shrink snapshots idle [/a, /b, /c] and evicts /a first
     await p.next() // warm /d
-    await Bun.sleep(5)
+    await flush()
     expect(p.pending()).toEqual(['evict /a'])
     const useB = c.use('/b') // /b is in use while /a's DELETE is in flight
     for (let i = 0; i < 10 && p.pending().length > 0; i++) await p.next()
@@ -256,10 +262,10 @@ describe('WarmCache', () => {
     await p.next()
     ;(await first)()
     const ticking = c.tick()
-    await Bun.sleep(5)
+    await flush()
     expect(p.pending()).toEqual(['evict /a'])
     const again = c.use('/a') // arrives while the DELETE is in flight
-    await Bun.sleep(5)
+    await flush()
     expect(p.pending()).toEqual(['evict /a']) // it waits; no warm yet
     await p.next()
     await ticking

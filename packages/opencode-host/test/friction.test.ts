@@ -296,7 +296,24 @@ async function held(t: ReturnType<typeof setup>, prompt = '[hold] work') {
 }
 
 const STEP = { runId: 'run-1', stepId: 'agent' }
-const settle = () => Bun.sleep(150)
+const MESSAGE_READ = /^GET \/api\/session\/[^/]+\/message$/
+const messageReads = (t: ReturnType<typeof setup>) => t.fake.requests.filter((r) => MESSAGE_READ.test(r)).length
+/**
+ * Waits until the wait in flight has taken in everything added so far. Its polls run one after another: a read that
+ * began before the call may have missed the change, the next one sees it, and the one after starts only once that
+ * one (nudge included) is fully handled.
+ */
+async function settle(t: ReturnType<typeof setup>) {
+  const from = messageReads(t)
+  await until(() => messageReads(t) >= from + 2, 'two more polls of the wait')
+}
+async function until(check: () => boolean, label: string, ms = 10_000) {
+  const deadline = Date.now() + ms
+  while (!check()) {
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${label}`)
+    await Bun.sleep(10)
+  }
+}
 /** Nudge notes in the session: admitted ones wait in the inbox while the turn is held, then become messages. */
 const nudges = async (t: ReturnType<typeof setup>, sessionId: string) => {
   const session = t.fake.state.sessions[sessionId]
@@ -313,7 +330,7 @@ describe('the repeat-tool nudge in a live wait', () => {
     const sent: number[] = []
     for (let call = 1; call <= 9; call++) {
       t.fake.addTool(sessionId, { name: 'read', input: { path: 'a.ts', limit: 20 } })
-      await settle()
+      await settle(t)
       sent.push((await nudges(t, sessionId)).length)
     }
     // Calls 1..9: the count of notes after each. A note appears at 3, 5 and 8 only.
@@ -339,14 +356,14 @@ describe('the repeat-tool nudge in a live wait', () => {
     const waiting = t.host.wait(handle, t.waitOptions())
     for (let call = 0; call < 6; call++) t.fake.addTool(sessionId, { name: 'read', input: { path: `f${call}.ts` } })
     for (let call = 0; call < 6; call++) t.fake.addTool(sessionId, { name: `tool${call}`, input: { path: 'same' } })
-    await settle()
+    await settle(t)
     expect(await nudges(t, sessionId)).toHaveLength(0)
     t.fake.addTool(sessionId, { name: 'grep', input: { a: 1, b: 2 } })
     t.fake.addTool(sessionId, { name: 'grep', input: { b: 2, a: 1 } })
-    await settle()
+    await settle(t)
     expect(await nudges(t, sessionId)).toHaveLength(0)
     t.fake.addTool(sessionId, { name: 'grep', input: { b: 2, a: 1 } })
-    await settle()
+    await settle(t)
     expect(await nudges(t, sessionId)).toHaveLength(1)
     t.fake.release(sessionId)
     await waiting
@@ -357,7 +374,7 @@ describe('the repeat-tool nudge in a live wait', () => {
     const { handle, sessionId } = await held(t)
     const waiting = t.host.wait(handle, t.waitOptions())
     for (let call = 0; call < 5; call++) t.fake.addTool(sessionId, { name: 'read', input: { path: 'a' } })
-    await settle()
+    await settle(t)
     const notes = await nudges(t, sessionId)
     expect(notes).toHaveLength(1)
     expect(notes[0]?.text).toContain('identical input 5 times')
@@ -371,7 +388,7 @@ describe('the repeat-tool nudge in a live wait', () => {
     const first = new AbortController()
     const waiting = t.host.wait(handle, t.waitOptions({ signal: first.signal })).catch(() => 'aborted')
     for (let call = 0; call < 3; call++) t.fake.addTool(sessionId, { name: 'read', input: { path: 'a' } })
-    await settle()
+    await settle(t)
     expect(await nudges(t, sessionId)).toHaveLength(1)
     first.abort()
     await waiting
@@ -379,11 +396,11 @@ describe('the repeat-tool nudge in a live wait', () => {
     const second = t.makeHost()
     cleanups.push(() => second.close())
     const again = second.wait(handle, t.waitOptions())
-    await settle()
+    await settle(t)
     expect(await nudges(t, sessionId)).toHaveLength(1)
     t.fake.addTool(sessionId, { name: 'read', input: { path: 'a' } })
     t.fake.addTool(sessionId, { name: 'read', input: { path: 'a' } })
-    await settle()
+    await settle(t)
     expect(await nudges(t, sessionId)).toHaveLength(2) // the 5th call, once
     t.fake.release(sessionId)
     await again
@@ -401,7 +418,7 @@ describe('the repeat-tool nudge in a live wait', () => {
     }
     const waiting = t.host.wait(handle, t.waitOptions())
     for (let call = 0; call < 3; call++) t.fake.addTool(sessionId, { name: 'read', input: { path: 'a' } })
-    await settle()
+    await settle(t)
     expect(posts).toBe(1)
     t.fake.release(sessionId)
     expect((await waiting).output).toContain('held answer')
@@ -412,7 +429,7 @@ describe('the repeat-tool nudge in a live wait', () => {
     const { handle, sessionId } = await held(t)
     const waiting = t.host.wait(handle, t.waitOptions())
     for (let call = 0; call < 3; call++) t.fake.addTool(sessionId, { name: 'read', input: { path: 'a' } })
-    await settle()
+    await settle(t)
     t.fake.release(sessionId)
     expect((await waiting).output).toBe('held answer')
     const types = (await t.client.messages(sessionId)).map(
@@ -427,7 +444,7 @@ describe('the repeat-tool nudge in a live wait', () => {
     const { handle, sessionId } = await held(t)
     const waiting = t.host.wait(handle, t.waitOptions())
     for (let call = 0; call < 3; call++) t.fake.addTool(sessionId, { name: 'read', input: { path: 'a' } })
-    await settle()
+    await settle(t)
     t.fake.release(sessionId)
     const result = await waiting
     expect(result.output).toBe('held answer') // not the reply of the nudge turn
@@ -440,7 +457,7 @@ describe('the repeat-tool nudge in a live wait', () => {
     const first = await held(t)
     const waiting = t.host.wait(first.handle, t.waitOptions())
     t.fake.addTool(first.sessionId, { name: 'read', input: { path: 'x' }, status: 'error', error: 'no' })
-    await settle()
+    await settle(t)
     t.fake.release(first.sessionId)
     await waiting
     // The retry: the same step key opens generation 2.
@@ -448,7 +465,7 @@ describe('the repeat-tool nudge in a live wait', () => {
     expect(second.sessionId).not.toBe(first.sessionId)
     const again = t.host.wait(second.handle, t.waitOptions())
     for (let call = 0; call < 3; call++) t.fake.addTool(second.sessionId, { name: 'read', input: { path: 'a' } })
-    await settle()
+    await settle(t)
     t.fake.release(second.sessionId)
     await again
     expect(await t.host.stepFriction(STEP)).toEqual({
@@ -490,9 +507,9 @@ describe('the repeat-tool nudge in a live wait', () => {
     }
     const waiting = t.host.wait(handle, t.waitOptions())
     for (let call = 0; call < 3; call++) t.fake.addTool(sessionId, { name: 'read', input: { path: 'a' } })
-    await settle()
+    await settle(t)
     t.fake.addTool(sessionId, { name: 'grep', input: { q: 'later' } }) // the turn went on past the threshold
-    await settle()
+    await settle(t)
     t.fake.release(sessionId)
     await waiting
     const log = t.logs.find((l) => l.message.startsWith('opencode nudge not sent'))
@@ -519,10 +536,10 @@ describe('the repeat-tool nudge in a live wait', () => {
     }
     const waiting = t.host.wait(handle, t.waitOptions())
     for (let call = 0; call < 3; call++) t.fake.addTool(sessionId, { name: 'read', input: { path: 'a' } })
-    await Bun.sleep(400) // many polls
+    await until(() => posts === 3, 'the third post') // retried, then given up: the polls below must not add a fourth
     expect(posts).toBe(3)
     t.fake.addTool(sessionId, { name: 'grep', input: { q: 'later' } }) // the turn went on past the threshold
-    await settle()
+    await settle(t)
     t.fake.release(sessionId)
     await waiting
     const gaveUp = t.logs.filter((l) => l.message.startsWith('opencode nudge not sent') && l.meta?.gaveUp === true)
@@ -538,7 +555,7 @@ describe('the repeat-tool nudge in a live wait', () => {
     t.fake.addTool(sessionId, { name: 'read', input: { path: 'x' }, status: 'error', error: 'no such file' })
     t.fake.addTool(sessionId, { name: 'read', input: { path: 'y' }, status: 'error', error: 'no such file' })
     t.fake.addTool(sessionId, { name: 'read', input: { path: 'z' } })
-    await settle()
+    await settle(t)
     t.fake.release(sessionId)
     await waiting
     const once = await t.host.stepFriction(STEP)
