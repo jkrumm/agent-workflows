@@ -89,6 +89,8 @@ export const proseReviewInput = z.object({
 })
 
 export const proseReviewOutput = REVIEW.extend({ model: z.string() })
+export type ProseReviewInput = z.input<typeof proseReviewInput>
+export type ProseReviewOutput = z.output<typeof proseReviewOutput>
 
 /** Any model of the writer's lab: the calling Claude Code session is always Anthropic, by family name or vendor prefix. */
 const WRITER_LAB = /claude|anthropic|opus|sonnet|haiku|fable/i

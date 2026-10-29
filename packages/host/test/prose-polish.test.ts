@@ -130,6 +130,19 @@ describe('prose-polish', () => {
     expect(out.reason).toBe(reason)
   })
 
+  test('a long bad draft (more findings than the writer lists) is not a failed run: the first 50 are sent, the rest counted', async () => {
+    const bad = Array.from({ length: 120 }, (_, i) => `We leverage cache ${i}.`).join('\n\n')
+    const w = setup({ anthropic: [{ text: bad.replaceAll('leverage', 'use'), cost: 0.05 }] })
+    const result = await run(w.workflow, { text: bad, medium: 'article' })
+    expect(result.status).toBe('done')
+    const out = ProsePolishOutput.parse(result.output)
+    expect(out.kept).toBe('rewrite')
+    expect(out.lint.before).toBe(120)
+    const prompt = w.writes()[0]?.request.prompt ?? ''
+    expect(prompt.match(/^- line \d+ \[banned-leverage\]/gm)).toHaveLength(50)
+    expect(prompt).toContain('- … and 70 more')
+  })
+
   test('verdictFirst false reaches the writer and the review', async () => {
     const w = setup({
       openai: [{ text: JSON.stringify({ ...REVIEW, scores: { ...SCORES, verdict_first: undefined } }) }],

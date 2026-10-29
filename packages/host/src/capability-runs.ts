@@ -80,6 +80,8 @@ export function journaledError(text: string): ORPCError<string, unknown> | null 
 export function createCapabilityWorkflows(registry: { capabilities: readonly Capability[] }): CapabilityWorkflows {
   const workflows = new Map<string, AnyWorkflow>()
   for (const capability of registry.capabilities) {
+    // An internal capability has no door, so no direct-call run either.
+    if (capability.internal) continue
     const workflow = defineWorkflow({
       id: workflowIdOf(capability.id),
       version: versionOf(capability),

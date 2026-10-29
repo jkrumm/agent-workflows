@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createCapabilities } from './capabilities/index.ts'
-import { MAX_BRIEF_FINDINGS, MAX_BRIEF_NOTES, VOICE_MAX_BYTES } from './capabilities/prose-write.ts'
+import { MAX_BRIEF_FINDINGS, MAX_BRIEF_NOTES, VOICE_MAX_BYTES, writerData } from './capabilities/prose-write.ts'
 import type { Usage } from './context.ts'
 import { CapabilityCallError } from './errors.ts'
 import { createRegistry } from './registry.ts'
@@ -99,10 +99,9 @@ describe('prose.write', () => {
     expect(Object.keys(write?.input.shape ?? {})).not.toContain('system')
   })
 
-  test('is not a CLI command (nested input), but stays on HTTP', () => {
+  test('is internal: in-process only, never served', async () => {
     const write = createCapabilities({ transports: fakeTransports({}), env: {} }).find((c) => c.id === 'prose.write')
-    expect(write?.cli.hidden).toBe(true)
-    expect(write?.cli.command).toEqual(['prose-write'])
+    expect(write?.internal).toBe(true)
   })
 
   test('a blank draft is refused before any call', async () => {
@@ -142,20 +141,50 @@ describe('the writer’s fence', () => {
     expect(prompt.match(/‹‹‹DRAFT_0+_END›››/g)).toHaveLength(2)
   })
 
-  test('lists at most 50 findings and 30 notes and counts the rest', async () => {
+  test('the shared writer data lists at most 50 findings and 30 notes and counts the rest', () => {
     const findings = Array.from({ length: MAX_BRIEF_FINDINGS + 7 }, (_, i) => ({
       rule: 'r',
       line: i + 1,
       excerpt: `f${i}`,
     }))
     const notes = Array.from({ length: MAX_BRIEF_NOTES + 3 }, (_, i) => ({ criterion: 'clarity', note: `n${i}` }))
+    const data = writerData({
+      text: 'Draft.',
+      medium: 'article',
+      register: 'peer-technical',
+      language: 'en',
+      format: 'markdown',
+      findings,
+      notes,
+      closing: 'Go.',
+    })
+    expect(data).toContain('- … and 7 more')
+    expect(data).toContain('- … and 3 more')
+    expect(data).toContain('f49')
+    expect(data).not.toContain('f50')
+  })
+
+  test('a caller that left findings and notes out says how many: they are counted with the rest', async () => {
     const t = setup({ anthropic: [{ text: 'Rewritten.' }] })
-    await t.registry.call('prose.write', { ...INPUT, findings, notes }, t.options)
+    const findings = Array.from({ length: MAX_BRIEF_FINDINGS }, (_, i) => ({
+      rule: 'r',
+      line: i + 1,
+      excerpt: `f${i}`,
+    }))
+    await t.registry.call('prose.write', { ...INPUT, findings, findingsOmitted: 950, notesOmitted: 4 }, t.options)
     const prompt = request(t)?.prompt ?? ''
-    expect(prompt).toContain('- … and 7 more')
-    expect(prompt).toContain('- … and 3 more')
-    expect(prompt).toContain('f49')
-    expect(prompt).not.toContain('f50')
+    expect(prompt).toContain('- … and 950 more')
+  })
+
+  test('more findings or notes than the lists render are refused: the caller sends the first N and counts the rest', async () => {
+    const t = setup({ anthropic: [{ text: 'Rewritten.' }] })
+    const findings = Array.from({ length: MAX_BRIEF_FINDINGS + 1 }, (_, i) => ({
+      rule: 'r',
+      line: i + 1,
+      excerpt: 'x',
+    }))
+    expect(await rejected(t.registry.call('prose.write', { ...INPUT, findings }, t.options))).toBeDefined()
+    expect(t.transports.chatCalls).toHaveLength(0)
   })
 })
 
