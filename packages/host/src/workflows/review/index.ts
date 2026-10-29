@@ -203,6 +203,8 @@ export function createReviewWorkflows(deps: WorkflowDeps, options: ReviewOptions
     const angles = explicit
       ? requestedAngles(input.angles ?? [])
       : gatedAngles(decision.depth, p.gating, selectFloor(p.files, p.hasTestScript), routerPicks(router?.angles ?? []))
+    // Opt-in: only the caller's `deep` moves the angles to Sonnet (about 10x the spend); a router-chosen deep does not.
+    const angleRoute = decision.source === 'caller' && decision.depth === 'deep' ? ANGLE_DEEP_ROUTE : ANGLE_ROUTE
     const skip = ocrSkipReason(p, decision.depth)
     await ctx.step('plan', () => ({
       depth: decision.depth,
@@ -210,6 +212,7 @@ export function createReviewWorkflows(deps: WorkflowDeps, options: ReviewOptions
       depthReason: decision.reason,
       gating: p.gating,
       angles,
+      angleRoute,
       routerFailed: routed !== null && !routed.ok,
       changedLines: p.changedLines,
       ocr: skip === null ? 'run' : `skipped: ${skip}`,
@@ -235,8 +238,6 @@ export function createReviewWorkflows(deps: WorkflowDeps, options: ReviewOptions
         : null
 
     const task = angleTask({ repo, label: p.label, files: p.files, context, diff, invokedIn: p.invokedIn })
-    // Opt-in: only the caller's `deep` moves the angles to Sonnet (about 10x the spend); a router-chosen deep does not.
-    const angleRoute = input.depth === 'deep' ? ANGLE_DEEP_ROUTE : ANGLE_ROUTE
     const runAngle = async (angle: Angle): Promise<AngleResult> => {
       const spec: AngleSpec = {
         agent: `review-${angle}`,

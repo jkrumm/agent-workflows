@@ -350,6 +350,7 @@ describe('review workflow', () => {
           const routes = routesOf(w)
           expect(routes.length).toBeGreaterThan(0)
           expect(new Set(routes)).toEqual(new Set([c.route]))
+          expect((await sql.step(out.runId, 'plan'))?.output).toMatchObject({ angleRoute: c.route })
           // synthesis never moves
           expect(w.sessionsOf('review-synthesis')[0]?.spec.options).toEqual(
             expect.not.objectContaining({ route: expect.anything() }),

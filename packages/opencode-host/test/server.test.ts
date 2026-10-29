@@ -13,6 +13,7 @@ import {
   type ServerOptions,
   serverEnv,
 } from '../src/index.ts'
+import { fallbackModelRef } from '../src/config.ts'
 
 // The supervisor against a real child process: `fake-opencode-bin.ts` stands in for `opencode serve`.
 const BIN = ['bun', join(import.meta.dir, 'fake-opencode-bin.ts')]
@@ -314,6 +315,22 @@ describe('buildServerConfig', () => {
       'question:deny',
       'external_directory:deny',
     ])
+  })
+})
+
+describe('buildServerConfig: review.angle.deep', () => {
+  test('the Sonnet row sits on the native Anthropic provider with its cost rows, and the route’s fallback resolves', () => {
+    const config = buildServerConfig({}) as {
+      providers: Record<string, { models: Record<string, { cost?: unknown }> }>
+    }
+    expect(config.providers['iu-anthropic']?.models['claude-sonnet-5-5-eu']?.cost).toEqual({
+      input: 2,
+      output: 10,
+      cache: { read: 0.1, write: 2.5 },
+    })
+    const fallback = fallbackModelRef('review.angle.deep', {})
+    expect(fallback?.model.id).toBe('gpt-6.1-terra')
+    expect(config.providers['iu-responses']?.models[fallback?.model.id ?? '']).toBeDefined()
   })
 })
 
