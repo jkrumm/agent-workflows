@@ -12,7 +12,7 @@ import type { AnyWorkflow, Logger, Runtime } from '@agent-workflows/runtime'
 import { IdempotencyConflict, WorkflowError } from '@agent-workflows/runtime'
 import { ORPCError, os } from '@orpc/server'
 import { z } from 'zod'
-import { isTerminal, type RunState, type RunStore } from './store.ts'
+import { isTerminal, type RunState, type RunStore, type StoredRun } from './store.ts'
 
 /** The most one request waits: Bun's `idleTimeout` ceiling is 255 s, so a held request must answer before it. */
 export const MAX_WAIT_S = 240
@@ -170,6 +170,12 @@ export async function startRun(
  */
 export const RECORD_WAIT_MS = 5000
 
+/**
+ * Only a run that ended this recently is held for its record. An older one whose hooks are still undelivered will not
+ * get them from a read (its workflow was removed or renamed, another host owns it): it answers `costPending` at once.
+ */
+export const RECORD_FRESH_MS = 30_000
+
 const POLL_MIN_MS = 25
 const POLL_MAX_MS = 250
 
@@ -181,9 +187,11 @@ const MAX_READ_FAILURES = 5
  * does not exist. A failed read is logged and retried on the same backoff, inside the deadline; the error surfaces
  * once reads fail {@link MAX_READ_FAILURES} times in a row or the deadline passes with the last read failing.
  *
- * An ended run is then held up to `recordWaitMs` ({@link RECORD_WAIT_MS}) for its record (cost, unpriced calls) beyond `seconds`; the
- * answer carries `costPending` if the record has not landed by then. A failed read in that hold ends it with the
- * state already in hand, marked pending, rather than failing an answer that is complete but for the cost.
+ * A run that ended less than {@link RECORD_FRESH_MS} ago with its record still to come is then held up to
+ * `recordWaitMs` (default {@link RECORD_WAIT_MS}; 0: no hold, for a caller that does not read the cost), beyond
+ * `seconds`. The answer carries the cost once the record is written, else `costPending` and no cost: the hold ran
+ * out, the run is too old to expect it, or the hooks were given up on without writing it. Read failures in the hold
+ * are retried on the backoff until the hold's deadline, which then answers pending with the state already in hand.
  */
 export async function waitFor(
   store: RunStore,
@@ -197,16 +205,22 @@ export async function waitFor(
   let recordDeadline: number | null = null
   let delay = POLL_MIN_MS
   let failures = 0
-  let last: RunState | null = null
+  let last: StoredRun | null = null
   for (;;) {
-    let state: RunState | null
+    let state: StoredRun | null
     try {
       state = await store.get(runId)
       failures = 0
     } catch (error) {
       failures++
       logger.warn('run state read failed', { runId, attempt: failures, error: errorText(error) })
-      if (last && recordDeadline !== null) return answer(last, false)
+      if (last && recordDeadline !== null) {
+        const left = recordDeadline - Date.now()
+        if (left <= 0 || signal?.aborted) return answer(last)
+        await Bun.sleep(Math.min(delay, left))
+        delay = Math.min(delay * 2, POLL_MAX_MS)
+        continue
+      }
       const left = deadline - Date.now()
       if (failures >= MAX_READ_FAILURES || left <= 0 || signal?.aborted) throw error
       await Bun.sleep(Math.min(delay, left))
@@ -215,27 +229,37 @@ export async function waitFor(
     }
     if (!state) return null
     if (isTerminal(state.status)) {
-      if (state.postHooksDone) return answer(state, true)
+      const expected = !state.recorded && !state.postHooksDone && endedRecently(state)
+      if (!expected || recordWaitMs <= 0) return answer(state)
       last = state
-      recordDeadline ??= Date.now() + recordWaitMs
+      if (recordDeadline === null) {
+        recordDeadline = Date.now() + recordWaitMs
+        delay = POLL_MIN_MS // the backoff so far was the run's; the record is milliseconds away
+      }
       const left = recordDeadline - Date.now()
-      if (left <= 0 || signal?.aborted) return answer(state, false)
+      if (left <= 0 || signal?.aborted) return answer(state)
       await Bun.sleep(Math.min(delay, left))
       delay = Math.min(delay * 2, POLL_MAX_MS)
       continue
     }
-    if (signal?.aborted) return state
+    if (signal?.aborted) return answer(state)
     const left = deadline - Date.now()
-    if (left <= 0) return state
+    if (left <= 0) return answer(state)
     await Bun.sleep(Math.min(delay, left))
     delay = Math.min(delay * 2, POLL_MAX_MS)
   }
 }
 
-/** The wire body of an ended run: `postHooksDone` is the wait's business, `costPending` is the caller's. */
-function answer(state: RunState, recorded: boolean): RunState {
-  const { postHooksDone: _, ...body } = state
-  return recorded ? body : { ...body, costPending: true }
+const endedRecently = (state: StoredRun) => state.endedAt === null || Date.now() - state.endedAt < RECORD_FRESH_MS
+
+/**
+ * The wire body: the wait's own fields leave it, and an ended run whose record is not written has no cost, only
+ * `costPending`: a missing record is never a cost of null (which means the run priced nothing).
+ */
+function answer(state: StoredRun): RunState {
+  const { recorded, postHooksDone: _, endedAt: __, cost, unpricedCalls, ...body } = state
+  if (!isTerminal(state.status)) return body
+  return recorded ? { ...body, cost, unpricedCalls } : { ...body, costPending: true }
 }
 
 function respond(context: HostContext, state: RunState): RunState {
