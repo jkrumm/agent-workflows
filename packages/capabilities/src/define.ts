@@ -54,6 +54,12 @@ export interface CapabilityDefinition<I extends z.ZodObject, O extends z.ZodType
   output: O
   cli?: CliSpec
   route?: RouteSpec
+  /**
+   * True: the capability is not served. It is out of the HTTP router, the OpenAPI document, the CLI and the host's
+   * `cap.<id>` runs; `registry.call` from a workflow step (and the capability's own `call`) still work. For a metered
+   * seat whose guards (lint, review, the keep gate) live in the workflow that calls it, so no door caller reaches it bare.
+   */
+  internal?: true
   /** A plain function; it never sees the HTTP framework. Throw `fail(code, …)` for typed errors. */
   handler: (input: z.output<I>, ctx: Ctx) => Promise<z.input<O>> | z.input<O>
 }

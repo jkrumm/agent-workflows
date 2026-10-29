@@ -9,6 +9,8 @@ import { join } from 'node:path'
 export const BOOTSTRAP_DAYS = 180
 export const BOOTSTRAP_COMMIT_LIMIT = 120
 export const BOOTSTRAP_SESSION_LIMIT = 12
+/** The newest transcripts read for a real cutoff: a project with hundreds of files since the cutoff does not read them all. */
+export const SINCE_SESSION_LIMIT = 24
 export const MIN_SESSION_FILE_BYTES = 4 * 1024
 /** Never read a whole transcript (they reach 16 MB): only this tail. */
 export const SESSION_TAIL_BYTES = 1024 * 1024
@@ -168,7 +170,7 @@ async function gatherCommits(
 
 /**
  * Transcripts under `<projects>/<encodeProjectDir(cwd)>/*.jsonl`, newest first, 40 KB total cap. Bootstrap (no `since`)
- * takes the newest 12 files with no date filter; a real `since` filters by mtime instead. Files under 4 KB are skipped
+ * takes the newest 12 files with no date filter; a real `since` filters by mtime instead and reads the newest 24 of them. Files under 4 KB are skipped
  * outright, and a file that yields no title and no long assistant block is dropped without consuming any budget.
  */
 async function gatherSessions(ports: GatherPorts, cwd: string, since: string | null): Promise<Gathered['sessions']> {
@@ -177,7 +179,7 @@ async function gatherSessions(ports: GatherPorts, cwd: string, since: string | n
   let candidates = (await ports.sessionFiles(dir)).filter((s) => s.size >= MIN_SESSION_FILE_BYTES)
   if (sinceMs !== null) candidates = candidates.filter((s) => s.mtimeMs > sinceMs)
   candidates = candidates.toSorted((a, b) => b.mtimeMs - a.mtimeMs)
-  if (sinceMs === null) candidates = candidates.slice(0, BOOTSTRAP_SESSION_LIMIT)
+  candidates = candidates.slice(0, sinceMs === null ? BOOTSTRAP_SESSION_LIMIT : SINCE_SESSION_LIMIT)
 
   const entries: string[] = []
   let bytes = 0

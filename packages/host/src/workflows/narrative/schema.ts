@@ -7,7 +7,7 @@ export { NARRATIVE_SECTIONS }
 /** agent-gateway's `NARRATIVE_INPUT` minus the free `model` override (the model is the `narrative` route's). */
 export const NarrativeInput = z
   .object({
-    cwd: z.string().min(1).describe('Absolute path to the target repo.'),
+    cwd: z.string().min(1).max(1_000).describe('Absolute path to the target repo.'),
     project: z.string().min(1).max(200).describe('Vault page name for this project, e.g. "weatherorb".'),
     previousPage: z
       .string()
@@ -17,9 +17,8 @@ export const NarrativeInput = z
       .describe(
         'Full markdown of the existing page, including frontmatter, or null on a first run (bootstrap from project history).',
       ),
-    since: z
-      .string()
-      .max(100)
+    since: z.iso
+      .datetime({ offset: true })
       .nullable()
       .default(null)
       .describe(

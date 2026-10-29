@@ -29,9 +29,25 @@ export {
   MAX_PAGE_CHARS,
   NARRATIVE_LIMITS,
   NARRATIVE_SECTIONS,
+  type NarrativeComposeInput,
+  type NarrativeComposeOutput,
   type NarrativeSections,
 } from './capabilities/narrative-compose.ts'
-export { MAX_BRIEF_FINDINGS, MAX_BRIEF_NOTES, writerData, writerInstructions } from './capabilities/prose-write.ts'
+export type {
+  ProseReviewInput as ProseCritiqueInput,
+  ProseReviewOutput as ProseCritiqueOutput,
+} from './capabilities/prose-review.ts'
+export {
+  MAX_BRIEF_FINDINGS,
+  MAX_BRIEF_NOTES,
+  type ProseWriteInput,
+  type ProseWriteOutput,
+  readVoiceGuide,
+  VOICE_PATH_ENV,
+  voiceGuidePath,
+  writerData,
+  writerInstructions,
+} from './capabilities/prose-write.ts'
 export { MAX_PROSE_BRIEF_CHARS, MAX_PROSE_CONTEXT_CHARS, MAX_PROSE_TEXT_CHARS } from './capabilities/prose-review.ts'
 export type { Ctx, Usage } from './context.ts'
 export { usageSchema } from './context.ts'

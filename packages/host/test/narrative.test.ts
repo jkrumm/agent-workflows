@@ -9,6 +9,7 @@ import {
   BOOTSTRAP_COMMIT_LIMIT,
   BOOTSTRAP_DAYS,
   BOOTSTRAP_SESSION_LIMIT,
+  SINCE_SESSION_LIMIT,
   COMMITS_MAX_BYTES,
   encodeProjectDir,
   type GatherPorts,
@@ -18,7 +19,7 @@ import {
 } from '../src/workflows/narrative/gather.ts'
 import { createNarrative } from '../src/workflows/narrative/index.ts'
 import { NarrativeInput, NarrativeOutput } from '../src/workflows/narrative/schema.ts'
-import { createProsePolish } from '../src/workflows/prose-polish/index.ts'
+import type { HostWorkflow } from '../src/operations.ts'
 import { freshSchema, testRuntime } from '../../runtime/test/support/pg.ts'
 
 const dir = mkdtempSync(join(tmpdir(), 'agw-narrative-'))
@@ -44,6 +45,7 @@ const file = (name: string, mtimeMs: number, size = 8 * 1024): SessionFile => ({
 function fakePorts(options: { commits?: string; files?: SessionFile[]; tails?: Record<string, string> } = {}) {
   const gitCalls: string[][] = []
   const dirs: string[] = []
+  const reads: string[] = []
   const tails = options.tails ?? {}
   const ports: GatherPorts = {
     projectsDir: '/projects',
@@ -56,12 +58,13 @@ function fakePorts(options: { commits?: string; files?: SessionFile[]; tails?: R
       return options.files ?? []
     },
     async readTail(path) {
+      reads.push(path.slice(path.lastIndexOf('/') + 1))
       const tail = tails[path.slice(path.lastIndexOf('/') + 1)]
       if (tail === undefined) throw new Error('ENOENT')
       return tail
     },
   }
-  return { ports, gitCalls, dirs }
+  return { ports, gitCalls, dirs, reads }
 }
 
 const commit = (n: number, body = '') =>
@@ -152,6 +155,16 @@ describe('gatherFacts: the bounds are legacy’s', () => {
     expect(after.sessions.count).toBe(4)
   })
 
+  test('with a cutoff, only the newest 24 transcripts are read, however many changed since', async () => {
+    const files = Array.from({ length: 300 }, (_, i) => file(`s${i}`, 2_000_000 + i))
+    const tails = Object.fromEntries(files.map((f) => [f.file, jsonl({ type: 'assistant', message: { content: [] } })]))
+    const f = fakePorts({ files, tails })
+    await gatherFacts(f.ports, { cwd: CWD, since: new Date(1_000).toISOString(), now: NOW.getTime() })
+    // Nothing yields prose, so nothing stops the loop but the cap.
+    expect(f.reads).toHaveLength(SINCE_SESSION_LIMIT)
+    expect(f.reads[0]).toBe('s299.jsonl')
+  })
+
   test('a transcript with no title and no long assistant block is dropped without consuming budget', async () => {
     const f = fakePorts({
       files: [file('quiet', 2), file('loud', 1)],
@@ -226,7 +239,15 @@ const polishedBody = (prompt: string) => {
 
 type Script = Parameters<typeof fakeTransports>[0]
 
-function setup(options: { script?: Script; ports?: GatherPorts; env?: Record<string, string> } = {}) {
+function setup(
+  options: {
+    script?: Script
+    ports?: GatherPorts
+    env?: Record<string, string>
+    /** The reviewer call waits for this, after saying it has arrived. */
+    hold?: { entered: () => void; released: Promise<void> }
+  } = {},
+) {
   const env = options.env ?? { AGW_VOICE_PATH: VOICE }
   const transports = fakeTransports({
     openai: [{ text: JSON.stringify(REVIEW), cost: 0.002 }],
@@ -239,8 +260,18 @@ function setup(options: { script?: Script; ports?: GatherPorts; env?: Record<str
     ],
     ...options.script,
   })
-  const registry = createRegistry(createCapabilities({ transports, env }))
-  const polish = createProsePolish({ registry, env })
+  const real = createRegistry(createCapabilities({ transports, env }))
+  const registry = options.hold
+    ? ({
+        call: async (id: string, input: object, callOptions: object) => {
+          if (id === 'prose.critique') {
+            options.hold?.entered()
+            await options.hold?.released
+          }
+          return (real.call as (...args: unknown[]) => Promise<unknown>)(id, input, callOptions)
+        },
+      } as unknown as typeof real)
+    : real
   const ports =
     options.ports ??
     fakePorts({
@@ -248,7 +279,10 @@ function setup(options: { script?: Script; ports?: GatherPorts; env?: Record<str
       files: [file('s1', 1_000)],
       tails: { 's1.jsonl': transcript('second provider') },
     }).ports
-  const narrative = createNarrative({ registry, polish: polish.workflow, gather: ports, now: () => NOW, env })
+  const [narrative, polish] = createNarrative({ registry, gather: ports, now: () => NOW, env }) as [
+    HostWorkflow,
+    HostWorkflow,
+  ]
   const composed = () => transports.chatCalls.filter((c) => c.wire === 'anthropic' && !c.request.system)
   const writes = () => transports.chatCalls.filter((c) => c.wire === 'anthropic' && c.request.system)
   const reviews = () => transports.chatCalls.filter((c) => c.wire === 'openai')
@@ -283,6 +317,17 @@ describe('narrative', () => {
     })
     expect(NarrativeInput.parse({ ...INPUT, polish: false }).polish).toBe(false)
     expect(NarrativeInput.safeParse({ ...INPUT, model: 'anything' }).success).toBe(false)
+  })
+
+  test('since must be an ISO datetime (an unparseable one would drop every session silently), cwd is bounded', () => {
+    for (const since of ['yesterday', '2026-10-01', 'NaN', '']) {
+      expect(NarrativeInput.safeParse({ ...INPUT, since }).success).toBe(false)
+    }
+    for (const since of ['2026-10-01T00:00:00Z', '2026-10-01T00:00:00.000Z', '2026-10-01T02:00:00+02:00']) {
+      expect(NarrativeInput.safeParse({ ...INPUT, since }).success).toBe(true)
+    }
+    expect(NarrativeInput.safeParse({ ...INPUT, cwd: `/${'a'.repeat(1_000)}` }).success).toBe(false)
+    expect(NarrativeInput.safeParse({ ...INPUT, cwd: `/${'a'.repeat(999)}` }).success).toBe(true)
   })
 
   test('no new commits or sessions: unchanged, no model call, the route’s model', async () => {
@@ -406,7 +451,8 @@ describe('narrative', () => {
     expect(out.prose).toEqual({
       status: 'errored',
       kept: 'original',
-      keptReason: 'prose failed: the polish run did not finish',
+      // The child's own error, naming the step that failed.
+      keptReason: expect.stringMatching(/^prose failed: step "review" failed \(error\): /),
       costUsd: null,
     })
     expect(out.page).toContain('A weather service for surf spots.')
@@ -417,7 +463,34 @@ describe('narrative', () => {
     const out = output(await run(w, INPUT))
     expect(out.changed).toBe(true)
     expect(out.prose?.status).toBe('errored')
+    expect(out.prose?.keptReason).toContain('AGW_VOICE_PATH')
     expect(w.reviews()).toHaveLength(0)
+  })
+
+  test('a cancelled parent ends cancelled, not done with an unpolished page', async () => {
+    let enter = () => {}
+    let release = () => {}
+    const entered = new Promise<void>((resolve) => {
+      enter = resolve
+    })
+    const released = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const w = setup({ hold: { entered: () => enter(), released } })
+    const rt = testRuntime({ schema: db.schema, workflows: [w.narrative.workflow, w.polish.workflow] })
+    await rt.open()
+    try {
+      const { runId } = await rt.start(w.narrative.workflow, INPUT, { purpose: 'build' })
+      await entered
+      await rt.cancel(runId)
+      release()
+      const result = await rt.wait(runId)
+      expect(result.status).toBe('cancelled')
+      expect(w.writes()).toHaveLength(0)
+    } finally {
+      release()
+      await rt.close()
+    }
   })
 
   test('the composer’s answer is rejected twice: the run fails, as the legacy job threw', async () => {

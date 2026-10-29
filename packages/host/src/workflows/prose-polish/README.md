@@ -18,11 +18,15 @@ review{scores, notes}, visualSuggestions, models{writer, reviewer}, cost}`: `lin
 rewrite's when it was kept, else the original's (legacy's `after`); `cost` is the reviewer's and the writer's USD
 together (legacy's sum: an unpriced call counts 0 unless neither was priced, then `null`).
 
-- **The writer is a capability, not a prompt.** `prose.write` takes the writer's fields (draft, medium, register,
-  language, format, verdictFirst, brief, context, lint findings, reviewer notes) and builds both prompts itself, so no
-  free prompt on the paid Opus seat is reachable over HTTP or in process (`prose.critique`'s rule). It is not a CLI
-  command (`hidden`): nested input has no flags; callers use this workflow. The rules (`writerInstructions`) and the
-  fenced data (`writerData`) are shared with `prose`'s `writerBrief` for the session, one definition.
+- **The writer is a capability, not a prompt, and not served.** `prose.write` takes the writer's fields (draft, medium,
+  register, language, format, verdictFirst, brief, context, lint findings, reviewer notes) and builds both prompts
+  itself, so no free prompt reaches the paid Opus seat (`prose.critique`'s rule). It is `internal`: out of the HTTP
+  router, the OpenAPI document, the CLI and the `cap.<id>` runs, so a door caller reaches Opus only through this workflow's
+  lint, review and keep gate; `registry.call` from a step works. The rules (`writerInstructions`) and the fenced data
+  (`writerData`) are shared with `prose`'s `writerBrief` for the session, one definition.
+- **Findings and notes are clamped to what the prompt renders.** The writer lists the first 50 findings and 30 notes and
+  counts the rest; the workflow sends exactly those and the number left out, so a long bad draft is never a failed run.
+- `polishDraft` is the steps; the public workflow runs it, and `narrative`'s polish child runs it too.
 - **A content failure is a result, a transport failure is an error.** An empty, truncated, starved or non-finished writer
   answer keeps the original with `reason` (`writer returned empty text`, `writer failed: …`), as legacy's `keptReason`; a
   failed call, an unreadable voice guide or a failed review fails the run, as legacy threw.

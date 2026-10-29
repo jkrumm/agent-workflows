@@ -63,9 +63,10 @@ export const narrativeComposeInput = z.object({
   sessionsText: z.string().max(MAX_SESSIONS_CHARS).describe('The session excerpts included, capped by the caller'),
   sessionCount: z.number().int().nonnegative(),
 })
-export type NarrativeComposeInput = z.output<typeof narrativeComposeInput>
+export type NarrativeComposeInput = z.input<typeof narrativeComposeInput>
 
-export const narrativeComposeOutput = WORKER_OUTPUT.extend({ model: z.string().describe('The model that answered') })
+export const narrativeComposeOutput = WORKER_OUTPUT.extend({ model: z.string().describe('The route’s model') })
+export type NarrativeComposeOutput = z.output<typeof narrativeComposeOutput>
 
 const SKILL = readFileSync(new URL('./narrative-skill.md', import.meta.url), 'utf8')
 
@@ -118,8 +119,8 @@ export const createNarrativeCompose = (deps: LlmDeps) =>
       'The narrative page writer: one JSON-only call that revises a project page from gathered commits and session excerpts (route narrative)',
     input: narrativeComposeInput,
     output: narrativeComposeOutput,
-    // Structured multi-field input; callers reach it through the `narrative` workflow.
-    cli: { command: ['narrative-compose'], defaultFormat: 'json', hidden: true },
+    // Not served: the metered seat's guards (lint, review, keep gate) live in the workflow that calls it.
+    internal: true,
     async handler(input, ctx) {
       // The voice guide is optional here: a page can still be written without it.
       const voice = await readVoiceGuide(deps.env ?? process.env, false)

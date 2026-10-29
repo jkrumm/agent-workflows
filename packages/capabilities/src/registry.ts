@@ -82,13 +82,15 @@ export function createRegistry<const C extends readonly AnyCapability[]>(
     byId.set(capability.id, capability)
   }
   const paths = new Set<string>()
-  for (const { route, id } of capabilities) {
+  for (const { route, id } of capabilities.filter((c) => !c.internal)) {
     const key = `${route.method} ${route.path}`
     if (paths.has(key)) throw new Error(`capability "${id}": route ${key} is taken`)
     paths.add(key)
   }
 
-  const router = nest(capabilities)
+  // An internal capability is callable in process only: no route, no OpenAPI operation, no CLI command.
+  const served = capabilities.filter((c) => !c.internal)
+  const router = nest(served)
   const handler = new OpenAPIHandler(router as never)
   const context: RequestContext = { onUsage: options.onUsage }
 

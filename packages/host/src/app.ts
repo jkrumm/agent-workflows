@@ -125,13 +125,15 @@ export function createHost(options: HostOptions): Host {
   // A direct capability call over HTTP is a one-step run; `boot` registers the same workflows with the runtime.
   const invoke = capabilityRuns(options.capabilityWorkflows, { ...deps, isOpen })
 
-  for (const c of registry.capabilities) assertNoReservedFlags(`capability ${c.id}`, c.input)
-  for (const c of registry.capabilities) {
+  // An internal capability has no door: no command, no route and no `cap.<id>` run.
+  const served = registry.capabilities.filter((c) => !c.internal)
+  for (const c of served) assertNoReservedFlags(`capability ${c.id}`, c.input)
+  for (const c of served) {
     if (!options.capabilityWorkflows.has(c.id)) throw new Error(`capability ${c.id} has no cap.${c.id} workflow`)
   }
 
   const operations: { owner: string; op: Pick<HostOperation, 'operationId' | 'method' | 'path' | 'cli'> }[] = [
-    ...registry.capabilities.map((c) => ({
+    ...served.map((c) => ({
       owner: `capability ${c.id}`,
       op: {
         operationId: operationIdOf(c.id),

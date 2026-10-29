@@ -99,8 +99,9 @@ export function writerInstructions(args: { medium: ProseMedium; format: ProseFor
 export const MAX_BRIEF_FINDINGS = 50
 export const MAX_BRIEF_NOTES = 30
 
-const capped = (lines: string[], max: number) =>
-  lines.length > max ? [...lines.slice(0, max), `- … and ${lines.length - max} more`] : lines
+/** At most `max` lines, then the count of the rest (`omitted` lines the caller never sent are part of it). */
+const capped = (lines: string[], max: number, omitted = 0) =>
+  lines.length + omitted > max ? [...lines.slice(0, max), `- … and ${lines.length + omitted - max} more`] : lines
 
 export interface WriterDataArgs {
   text: string
@@ -112,6 +113,9 @@ export interface WriterDataArgs {
   context?: string
   findings: { rule: string; line: number; excerpt: string }[]
   notes: { criterion: string; note: string }[]
+  /** Findings and notes the caller left out because the lists only render the first `MAX_BRIEF_*`: counted in the "… and N more" line. */
+  findingsOmitted?: number
+  notesOmitted?: number
   /** The sentence(s) after the shared "END OF DATA" line: the task as the reader of this prompt does it. */
   closing: string
 }
@@ -129,6 +133,7 @@ export function writerData(args: WriterDataArgs): string {
       : capped(
           args.findings.map((f) => `- line ${f.line} [${f.rule}]: ${neutralizeFenceMarkers(f.excerpt)}`),
           MAX_BRIEF_FINDINGS,
+          args.findingsOmitted,
         ).join('\n')
   const notes =
     args.notes.length === 0
@@ -136,6 +141,7 @@ export function writerData(args: WriterDataArgs): string {
       : capped(
           args.notes.map((n) => `- ${n.criterion}: ${neutralizeFenceMarkers(n.note)}`),
           MAX_BRIEF_NOTES,
+          args.notesOmitted,
         ).join('\n')
   const nonce = fenceNonce([args.text, args.brief, args.context, findings, notes])
   return (
@@ -207,15 +213,29 @@ export const proseWriteInput = z.object({
         excerpt: z.string().max(MAX_PROSE_TEXT_CHARS),
       }),
     )
-    .max(1_000)
+    .max(MAX_BRIEF_FINDINGS)
     .default([])
-    .describe('The lint findings of the draft; listed to the writer as data'),
+    .describe(`The first ${MAX_BRIEF_FINDINGS} lint findings of the draft; listed to the writer as data`),
+  findingsOmitted: z
+    .number()
+    .int()
+    .nonnegative()
+    .default(0)
+    .describe('How many further findings the caller left out; counted, not listed'),
   notes: z
     .array(z.object({ criterion: z.string().max(100), note: z.string().max(2_000) }))
-    .max(200)
+    .max(MAX_BRIEF_NOTES)
     .default([])
-    .describe('The reviewer notes; listed to the writer as data'),
+    .describe(`The first ${MAX_BRIEF_NOTES} reviewer notes; listed to the writer as data`),
+  notesOmitted: z
+    .number()
+    .int()
+    .nonnegative()
+    .default(0)
+    .describe('How many further notes the caller left out; counted, not listed'),
 })
+
+export type ProseWriteInput = z.input<typeof proseWriteInput>
 
 export const proseWriteOutput = z.object({
   text: z.string().describe('The rewrite, trimmed. Empty when the writer failed on content (`failure` says how)'),
@@ -226,6 +246,8 @@ export const proseWriteOutput = z.object({
     .describe('Why `text` is unusable: an empty answer, the output ceiling, or a stop that is not a finish'),
 })
 
+export type ProseWriteOutput = z.output<typeof proseWriteOutput>
+
 export const createProseWrite = (deps: LlmDeps) =>
   defineCapability({
     id: 'prose.write',
@@ -233,8 +255,8 @@ export const createProseWrite = (deps: LlmDeps) =>
       'The prose writer: one non-agentic call that rewrites a draft against the voice guide (route prose.write); for callers with no Claude Code session',
     input: proseWriteInput,
     output: proseWriteOutput,
-    // Structured nested input (findings, notes) the CLI has no flags for; callers reach it through the `prose-polish` workflow.
-    cli: { command: ['prose-write'], defaultFormat: 'json', hidden: true },
+    // Not served: the metered seat's guards (lint, review, keep gate) live in the workflow that calls it.
+    internal: true,
     async handler(input, ctx) {
       const voice = await readVoiceGuide(deps.env ?? process.env, true)
       const format = input.draftFormat

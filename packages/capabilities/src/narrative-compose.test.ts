@@ -95,11 +95,11 @@ describe('narrative.compose', () => {
     expect(t.transports.chatCalls).toHaveLength(2)
   })
 
-  test('is not a CLI command, takes the gathered facts and never a prompt', () => {
+  test('is internal, takes the gathered facts and never a prompt', () => {
     const compose = createCapabilities({ transports: fakeTransports({}), env: {} }).find(
       (c) => c.id === 'narrative.compose',
     )
-    expect(compose?.cli.hidden).toBe(true)
+    expect(compose?.internal).toBe(true)
     expect(Object.keys(compose?.input.shape ?? {})).not.toContain('prompt')
   })
 
