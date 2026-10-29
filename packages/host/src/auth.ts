@@ -11,20 +11,30 @@ const sha256 = (text: string) => crypto.createHash('sha256').update(text).digest
  * comparison against an empty candidate.
  */
 export function bearerMatches(header: string | null, secret: string): boolean {
-  return bearerCaller(header, new Map([['secret', secret]])) !== null
+  return bearerCaller(header, bearerKeys(new Map([['secret', secret]]))) !== null
+}
+
+/** Named bearer tokens, hashed once (`bearerKeys`), for `bearerCaller`. */
+export interface BearerKeys {
+  readonly entries: readonly { readonly name: string; readonly hash: Buffer }[]
+}
+
+/** Hashes every token once; build it at start, not per request. */
+export function bearerKeys(known: ReadonlyMap<string, string>): BearerKeys {
+  return { entries: [...known].map(([name, token]) => ({ name, hash: sha256(token) })) }
 }
 
 /**
- * Which of several named bearers `Authorization: Bearer <token>` carries, or null. Every known token is compared,
- * hashed and in constant time, whatever matched first, so the timing says nothing about which one (or how much of
- * one) was right. A missing or malformed header never matches, not even an empty token.
+ * Which of several named bearers `Authorization: Bearer <token>` carries, or null. Every key is compared in constant
+ * time against the hashed candidate, whatever matched first, so the timing says nothing about which one (or how much
+ * of one) was right. A missing or malformed header never matches, not even an empty token.
  */
-export function bearerCaller(header: string | null, known: ReadonlyMap<string, string>): string | null {
+export function bearerCaller(header: string | null, keys: BearerKeys): string | null {
   const match = header ? /^Bearer +(\S+)$/i.exec(header) : null
   const candidate = sha256(match?.[1] ?? '')
   let caller: string | null = null
-  for (const [name, token] of known) {
-    if (crypto.timingSafeEqual(candidate, sha256(token)) && match) caller ??= name
+  for (const { name, hash } of keys.entries) {
+    if (crypto.timingSafeEqual(candidate, hash) && match) caller ??= name
   }
   return caller
 }
