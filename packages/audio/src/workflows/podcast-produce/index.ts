@@ -12,7 +12,16 @@ import { ProduceInput, type ProduceInputValue } from '../podcast/produce-input.t
 import { type AbsDeps, episodeFilename, publishToAudiobookshelf } from './abs.ts'
 import { writeEpisodeBrainNote } from './brain-note.ts'
 import { type ProduceConfig, produceConfigFromEnv } from './config.ts'
-import { readStored, type StoredFile, type StoredUnit, store } from './files.ts'
+import {
+  findCover,
+  readStored,
+  type StoredFile,
+  type StoredUnit,
+  store,
+  storeCover,
+  unitRequestHash,
+  usageToRecord,
+} from './files.ts'
 import type { ProduceJournal } from './journal.ts'
 import { log, messageOf, setProduceLogger } from './log.ts'
 import {
@@ -107,6 +116,8 @@ export interface ProduceDeps extends EffectDeps {
   /** The artifact store's root (tests). Default the host's (`artifacts.ts`). */
   artifactRoot?: string
   logger?: Logger
+  /** Test seam: called after a billed file (a unit, the cover) is stored, before its step ends: a kill there. */
+  onStored?: (file: StoredFile) => Promise<void>
   /** The clock for the episode's date (tests). */
   now?: () => Date
 }
@@ -326,6 +337,7 @@ export function createProduceWorkflows(deps: ProduceDeps) {
   const unitWorkflow = createUnitWorkflow({
     audio: deps.audio,
     dirOf: (episodeId) => episodeDir(episodeId, deps.artifactRoot),
+    ...(deps.onStored ? { onStored: deps.onStored } : {}),
     usage: stepUsage,
   })
 
@@ -367,16 +379,34 @@ export function createProduceWorkflows(deps: ProduceDeps) {
         ),
       ),
       as<StoredFile | null>(
-        ctx.step('cover', async ({ signal, addUsage }) => {
+        ctx.step('cover', async ({ signal, addUsage, key }) => {
           if (!input.request.cover || !deps.cover) return null
+          const request = { prompt: input.metadata.coverPrompt, size: '1024x1024', quality: 'medium' as const, n: 1 }
+          const hash = unitRequestHash(request)
+          const found = await findCover(dir, hash)
+          if (found) {
+            // Stored by an earlier attempt (of this step: its usage is recorded here) or run: not generated again.
+            log.info('podcast cover found in the store, not generated again', { key })
+            for (const usage of usageToRecord(found.billed, key)) addUsage(usage)
+            return json(found.file)
+          }
           try {
-            const out = await deps.cover.call(
-              { prompt: input.metadata.coverPrompt, size: '1024x1024', quality: 'medium', n: 1 },
-              { signal, addUsage },
-            )
+            const reported: Usage[] = []
+            const out = await deps.cover.call(request, {
+              signal,
+              addUsage: (usage) => {
+                reported.push(usage)
+                addUsage(usage)
+              },
+            })
             const b64 = out.images[0]?.b64
             if (!b64) throw new Error('the image capability returned no image')
-            return json(await store(join(dir, 'cover.png'), Uint8Array.from(Buffer.from(b64, 'base64'))))
+            const file = await storeCover(dir, hash, Uint8Array.from(Buffer.from(b64, 'base64')), {
+              producedBy: key,
+              usage: reported,
+            })
+            await deps.onStored?.(file)
+            return json(file)
           } catch (error) {
             return json(fallBack('cover', error, signal, null))
           }

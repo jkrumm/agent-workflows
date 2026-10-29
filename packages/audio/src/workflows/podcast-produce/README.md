@@ -39,10 +39,14 @@ had them (`abs.libraryItemId`, `publish.ok/error`, `brainNote.committed/pushed`,
   a `.json` sidecar per unit, `cover.png`, `episode.mp3`. A file is written to a temp name and renamed; a unit's sidecar
   is written after its PCM, so a sidecar means whole audio.
 - **A restart mid-synth resumes at the first unfinished unit.** Done unit children replay from the journal (no
-  request, no bill). The child that was in flight runs its step again; if its audio reached the store before the process died
-  (sidecar present, sha256 equal, same request hash: the lane and its route, the speaker pair, the unit's turns), it is reused, not
-  synthesized again, and the step records `reused: true`. A second production of the same episode reuses every unit the
-  same way.
+  request, no bill). The child that was in flight runs its step again; if its audio reached the store before the
+  process died (sidecar present, sha256 equal, same request hash: the lane and its route, the speaker pair, the unit's
+  turns), it is reused, not synthesized again, and the step records `reused: true`.
+- **A reused file keeps its cost.** The sidecar records what the call reported (`usage`) and which step was billed for
+  it (`producedBy`, the step key). A reuse by a later attempt of that same step records that usage (the dead attempt
+  never did); a reuse by another run (a second production of the episode) records none, since that run paid nothing.
+- **The cover is persisted the same way** (`cover.png` + `cover.json`, the prompt's request hash): a resumed cover step
+  reuses it and never calls `image.generate` twice.
 - **`master` reads every unit back against its journaled sha256**; a changed or missing file fails the step by name
   rather than mastering wrong audio. Retention is the store's (30 days): `podcast-publish` on an older episode fails at
   the read.

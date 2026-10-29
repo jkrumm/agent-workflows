@@ -2,7 +2,7 @@ import { z } from 'zod'
 import type { Ctx, Json, Usage } from '../../../../runtime/src/index.ts'
 import { defineWorkflow } from '../../../../runtime/src/index.ts'
 import { type AudioDeps, createAudioScope } from '../../scope.ts'
-import { findUnit, type StoredUnit, storeUnit, unitRequestHash } from './files.ts'
+import { findUnit, type StoredUnit, storeUnit, unitRequestHash, usageToRecord } from './files.ts'
 import { log } from './log.ts'
 import type { UsagePort } from '../../usage.ts'
 import { type SynthTurnInput, synthesizeUnit, type TtsLane } from './synth.ts'
@@ -69,6 +69,8 @@ export function speakersOf(turns: SynthTurnInput[]): SynthTurnInput[] {
 export function createUnitWorkflow(deps: {
   audio: Omit<AudioDeps, 'usage'>
   dirOf: (episodeId: string) => string
+  /** Test seam: called after the unit is stored, before its step ends. */
+  onStored?: (file: StoredUnit) => Promise<void>
   /** The audio scope's usage sink for one step: its calls priced onto that step. */
   usage: (addUsage: (usage: Usage) => void) => UsagePort
 }) {
@@ -89,10 +91,19 @@ export function createUnitWorkflow(deps: {
             unit: input.index,
             key: scope.key,
           })
-          return found as unknown as Json
+          // An earlier attempt of this step stored it and died before recording the usage: recorded here.
+          for (const usage of usageToRecord(found.billed, scope.key)) scope.addUsage(usage)
+          return found.unit as unknown as Json
         }
+        const reported: Usage[] = []
         const audio = createAudioScope(
-          { ...deps.audio, usage: deps.usage(scope.addUsage) },
+          {
+            ...deps.audio,
+            usage: deps.usage((usage) => {
+              reported.push(usage)
+              scope.addUsage(usage)
+            }),
+          },
           { requestId: scope.key, caller: 'podcast.produce' },
         )
         // The speakers lead the list so the request's labels are the script's; the unit's turns follow them.
@@ -100,7 +111,9 @@ export function createUnitWorkflow(deps: {
           turnIndexes: turns.map((_, i) => speakers.length + i),
         })
         scope.progress()
-        return (await storeUnit(dir, input.index, hash, out)) as unknown as Json
+        const unit = await storeUnit(dir, input.index, hash, out, { producedBy: scope.key, usage: reported })
+        await deps.onStored?.(unit)
+        return unit as unknown as Json
       }),
     )) as unknown as StoredUnit
   }
