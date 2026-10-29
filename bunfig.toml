@@ -1,3 +1,5 @@
 [test]
 # Packages live under packages/; docs/spikes carry their own package.json and are never run from here.
 root = "packages"
+# Each test file samples the host load as it starts and sets its default timeout from it (packages/testing).
+preload = ["./packages/testing/src/preload.ts"]
