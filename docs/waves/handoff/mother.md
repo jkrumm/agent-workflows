@@ -75,6 +75,10 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
   there). Team key: Wave 6 $26.13 (running total since Wave 4 ≈ $44).
 - CONTEXT7 key: done via athena-orchestrator (request `20261029T080529-10120`); ref swapped (`349ad6b`).
   Workers ran `agw review` 3× against the direction in Wave 7 ($0.46); briefs now forbid it.
+- 2026-10-29: old-gateway caller inventory (owner asked about iris): iris, argo, hermes-agent,
+  dotfiles, modelpick, homelab monitors, warden (retired), usage-tracker collectors. In PLAN Waves 8
+  and 10. Asked iris-mother (rd say) to plan a switch wave and say whether `triage` must be ported;
+  awaiting its answer via rd say to agent-workflows-mother.
 
 ## Next action
 - Watch the lead (`wave-watch.sh --agents agent-workflows-w1 --heartbeat 9`, bounded 10 min), read
