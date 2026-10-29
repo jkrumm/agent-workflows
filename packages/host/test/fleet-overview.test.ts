@@ -1,5 +1,12 @@
 import { describe, expect, test } from 'bun:test'
-import { buildAgentFacts, enrichmentOf, mergeOverviewIntoSnapshot, reconcileOverview } from '../src/fleet/overview.ts'
+import {
+  buildAgentFacts,
+  classifyInput,
+  enrichmentOf,
+  mergeOverviewIntoSnapshot,
+  reconcileKnown,
+  reconcileOverview,
+} from '../src/fleet/overview.ts'
 import { renderText } from '../src/fleet/render.ts'
 import type { Agent, OverviewAgent, OverviewOutput, Project, Snapshot as AgentsSnapshot } from '../src/fleet/schema.ts'
 import { stripAnsi } from '../src/fleet/text.ts'
@@ -460,5 +467,68 @@ describe('renderText with overview enrichment and color', () => {
       .split('   ')
       .map((segment) => segment.split(' ')[0])
     expect(new Set(glyphs).size).toBe(glyphs.length)
+  })
+})
+
+describe('classifyInput (the seat’s input cap)', () => {
+  const many = (n: number) =>
+    snapshot({
+      projects: [
+        project({
+          agents: Array.from({ length: n }, (_, i) =>
+            agent({ id: `a${i}`, sessionId: `a${i}`, lastActivityAt: NOW - i * 1000 }),
+          ),
+        }),
+      ],
+    })
+
+  test('within the caps everything is listed', () => {
+    const input = classifyInput(many(3), { maxChars: 100_000, maxAgents: 10 })
+    expect(input.agentIds).toEqual(['a0', 'a1', 'a2'])
+    expect(input.known.map((k) => k.id)).toEqual(['a0', 'a1', 'a2'])
+    expect(input.facts).toBe(buildAgentFacts(many(3)))
+  })
+
+  test('over the agent cap the most recently active agents are kept, the rest stay known for the merge', () => {
+    const input = classifyInput(many(5), { maxChars: 100_000, maxAgents: 2 })
+    expect(input.agentIds).toEqual(['a0', 'a1'])
+    expect(input.facts).toContain('agent id: a1')
+    expect(input.facts).not.toContain('agent id: a2')
+    expect(input.known).toHaveLength(5)
+  })
+
+  test('over the character cap whole agents are dropped, never cut, and the facts stay under it', () => {
+    const one = buildAgentFacts(many(1)).length
+    const input = classifyInput(many(5), { maxChars: one * 2, maxAgents: 10 })
+    expect(input.facts.length).toBeLessThanOrEqual(one * 2)
+    expect(input.agentIds.length).toBeGreaterThan(0)
+    expect(input.agentIds.length).toBeLessThan(5)
+    for (const id of input.agentIds) expect(input.facts).toContain(`agent id: ${id}`)
+  })
+
+  test('an agent left out comes back as a synthesized placeholder, and control bytes in a verdict are stripped', () => {
+    const snap = many(3)
+    const input = classifyInput(snap, { maxChars: 100_000, maxAgents: 1 })
+    const out = reconcileKnown(
+      input.generatedAt,
+      new Map(input.known.map((k) => [k.id, k])),
+      [
+        {
+          id: 'a0',
+          recommendation: 'ship',
+          standing: `done${String.fromCharCode(27)}[31m`,
+          blocker: null,
+          confidence: 'high',
+        },
+      ],
+      'm',
+      NOW,
+    )
+    expect(out.agents.map((a) => [a.id, a.synthesized])).toEqual([
+      ['a0', undefined],
+      ['a1', true],
+      ['a2', true],
+    ])
+    expect(out.agents[0]?.standing).toBe('done[31m')
   })
 })

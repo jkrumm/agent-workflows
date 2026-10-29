@@ -1,4 +1,5 @@
 import { basename } from 'node:path'
+import { stripControlBytes } from './text.ts'
 import type {
   Agent,
   AgentSource,
@@ -15,6 +16,9 @@ import type {
 export function encodeProjectDir(cwd: string): string {
   return cwd.replace(/[^A-Za-z0-9]/g, '-')
 }
+
+/** Text that came from outside (a transcript, a pane title, a branch name) never carries a control byte into a pane, Argo or a prompt. */
+export const clean = (text: string | null | undefined): string | null => (text == null ? null : stripControlBytes(text))
 
 export interface TranscriptTail {
   lastPrompt: string | null
@@ -78,7 +82,12 @@ export function parseTranscriptTail(text: string): TranscriptTail {
     }
   }
 
-  return { lastPrompt, aiTitle, lastReply, lastActivityAt }
+  return {
+    lastPrompt: clean(lastPrompt),
+    aiTitle: clean(aiTitle),
+    lastReply: clean(lastReply),
+    lastActivityAt,
+  }
 }
 
 export interface DeriveStateInput {
@@ -121,13 +130,14 @@ export function deriveState(input: DeriveStateInput): AgentState {
   return 'unknown'
 }
 
+/** What herdr and Claude's registry answer; a row may lack any field but the identifying one, and the merge copes. */
 export interface HerdrAgentRaw {
-  agent_session: { value: string } | null
-  agent_status: string
-  cwd: string
-  pane_id: string
-  workspace_id: string
-  terminal_title_stripped: string
+  agent_session?: { value: string } | null
+  agent_status?: string
+  cwd?: string
+  pane_id?: string
+  workspace_id?: string
+  terminal_title_stripped?: string
 }
 
 export interface HerdrWorkspaceRaw {
@@ -136,10 +146,10 @@ export interface HerdrWorkspaceRaw {
 }
 
 export interface ClaudeAgentRaw {
-  cwd: string
-  sessionId: string
-  startedAt: number
-  status: string
+  cwd?: string
+  sessionId?: string
+  startedAt?: number
+  status?: string
   waitingFor?: string
 }
 
@@ -206,20 +216,22 @@ export function mergeAgents(input: MergeAgentsInput): MergedProject[] {
 
   for (const a of herdrAgents) {
     const sessionId = a.agent_session?.value ?? null
+    const paneId = a.pane_id ?? null
+    if (!sessionId && !paneId) continue // nothing to identify the row by
     const tail = sessionId ? (transcripts.get(sessionId) ?? EMPTY_TAIL) : EMPTY_TAIL
-    entries.set(sessionId ?? `pane:${a.pane_id}`, {
+    entries.set(sessionId ?? `pane:${paneId}`, {
       jobStatus: null,
-      workspaceId: a.workspace_id,
-      cwd: a.cwd,
+      workspaceId: a.workspace_id ?? null,
+      cwd: a.cwd ?? '',
       agent: {
-        id: sessionId ?? a.pane_id,
+        id: sessionId ?? paneId ?? '',
         source: 'herdr',
         sessionId,
-        paneId: a.pane_id,
-        workspaceId: a.workspace_id,
-        title: a.terminal_title_stripped || tail.aiTitle || null,
+        paneId,
+        workspaceId: a.workspace_id ?? null,
+        title: clean(a.terminal_title_stripped) || tail.aiTitle || null,
         state: 'unknown',
-        herdrStatus: normalizeHerdrStatus(a.agent_status),
+        herdrStatus: normalizeHerdrStatus(a.agent_status ?? ''),
         claudeStatus: null,
         waitingFor: null,
         tier: null,
@@ -233,19 +245,21 @@ export function mergeAgents(input: MergeAgentsInput): MergedProject[] {
   }
 
   for (const c of claudeAgents) {
-    const claudeStatus = normalizeClaudeStatus(c.status)
+    if (typeof c.sessionId !== 'string' || c.sessionId === '') continue
+    const claudeStatus = normalizeClaudeStatus(c.status ?? '')
+    const startedAt = typeof c.startedAt === 'number' ? c.startedAt : null
     const existing = entries.get(c.sessionId)
     if (existing) {
       existing.agent.claudeStatus = claudeStatus
-      existing.agent.waitingFor = c.waitingFor ?? null
-      existing.agent.startedAt = c.startedAt
+      existing.agent.waitingFor = clean(c.waitingFor)
+      existing.agent.startedAt = startedAt
       continue
     }
     const tail = transcripts.get(c.sessionId) ?? EMPTY_TAIL
     entries.set(c.sessionId, {
       jobStatus: null,
       workspaceId: null,
-      cwd: c.cwd,
+      cwd: c.cwd ?? '',
       agent: {
         id: c.sessionId,
         source: 'claude',
@@ -256,13 +270,13 @@ export function mergeAgents(input: MergeAgentsInput): MergedProject[] {
         state: 'unknown',
         herdrStatus: null,
         claudeStatus,
-        waitingFor: c.waitingFor ?? null,
+        waitingFor: clean(c.waitingFor),
         tier: null,
         lastPrompt: tail.lastPrompt,
         lastReply: tail.lastReply,
         lastActivityAt: tail.lastActivityAt,
         account: accounts?.get(c.sessionId) ?? null,
-        startedAt: c.startedAt,
+        startedAt,
       },
     })
   }
@@ -305,10 +319,10 @@ export function mergeAgents(input: MergeAgentsInput): MergedProject[] {
       jobStatus: entry.jobStatus,
     })
     const label = entry.workspaceId ? workspaceLabels.get(entry.workspaceId) : undefined
-    const projectName = label ?? basename(entry.cwd)
+    const projectName = clean(label ?? basename(entry.cwd)) ?? ''
     const group = groups.get(projectName)
     if (group) group.agents.push(entry.agent)
-    else groups.set(projectName, { name: projectName, cwd: entry.cwd, agents: [entry.agent] })
+    else groups.set(projectName, { name: projectName, cwd: clean(entry.cwd) ?? '', agents: [entry.agent] })
   }
 
   const rank = (g: MergedProject) => Math.min(...g.agents.map((a) => STATE_RANK[a.state]))

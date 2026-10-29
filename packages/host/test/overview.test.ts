@@ -7,7 +7,7 @@ import { createFleet } from '../src/fleet/index.ts'
 import { fleetOperations } from '../src/fleet/operations.ts'
 import { createQuota } from '../src/fleet/quota.ts'
 import { createOverview } from '../src/workflows/overview/index.ts'
-import { pgLatestOverview } from '../src/workflows/overview/latest.ts'
+import { pgLatestOverview, pgRunPurpose } from '../src/workflows/overview/latest.ts'
 import { type Body, startTestHost, type TestHost } from './support.ts'
 
 const ok = <T>(items: T[]): CollectorResult<T> => ({ items, warning: null })
@@ -34,11 +34,11 @@ const collectors: Collectors = {
   herdrAgents: async () => ok(panes),
   herdrWorkspaces: async () => ok([]),
   claudeAgents: async () => ok([]),
-  humanQueue: () => ok([]),
+  humanQueue: async () => ok([{ id: 'q1', askedAt: null, question: 'sign it', cmd: 'rm -rf /precious' }]),
   // activity well before any run, so a verdict is never marked stale
   transcriptTail: async () => ({ ...EMPTY_TAIL, lastActivityAt: activityAt() }),
   dispatchJobs: async () => ok([]),
-  sessionAccounts: () => new Map(),
+  sessionAccounts: async () => new Map(),
   git: async () => null,
 }
 
@@ -51,8 +51,8 @@ let latest: () => Promise<unknown> = async () => null
 
 const runs = async () => Number((await t.pool.query(`select count(*) as n from "${t.schema}".runs`)).rows[0].n)
 const post = (path: string, body: unknown = {}) => t.call(path, { method: 'POST', body })
-const startOverview = async (body: unknown = {}) =>
-  t.json(await t.call('/workflows/overview', { method: 'POST', body, headers: { prefer: 'wait=20' } }))
+const startOverview = async (body: unknown = {}, headers: Record<string, string> = {}) =>
+  t.json(await t.call('/workflows/overview', { method: 'POST', body, headers: { prefer: 'wait=20', ...headers } }))
 
 beforeAll(async () => {
   const quota = createQuota({
@@ -89,6 +89,7 @@ beforeAll(async () => {
         registry: { call: (...args: unknown[]) => Reflect.apply(t.registry.call, t.registry, args) } as never,
         fleet,
         argo,
+        purposeOf: (runId) => pgRunPurpose(t.pool, t.schema)(runId),
       }),
     ],
     reads: fleetOperations(fleet),
@@ -243,6 +244,35 @@ describe('overview workflow', () => {
   })
 })
 
+describe('overview workflow: what is journaled and what is pushed', () => {
+  test('the journal keeps the facts and the verdicts, not the snapshot with its queued commands', async () => {
+    const { body } = await startOverview()
+    const { rows } = await t.pool.query(
+      `select step_id, output::text as output from "${t.schema}".steps where run_id = $1 order by started_at`,
+      [body.runId],
+    )
+    const journaled = rows.map((r) => r.output).join('\n')
+    expect(journaled).not.toContain('rm -rf /precious')
+    expect(journaled).not.toContain('humanQueue')
+    const snapshotStep = JSON.parse(rows[0].output)
+    expect(Object.keys(snapshotStep).toSorted()).toEqual(['agentIds', 'facts', 'generatedAt', 'known'])
+    // the time of the run comes from the classify step, which a resume reads back
+    const classify = JSON.parse(rows[1].output)
+    expect(body.output.generatedAt).toBe(classify.generatedAt)
+    // the queued command is still on the read side
+    const read = (await t.json(await post('/agents'))).body
+    expect(JSON.stringify(read.data.humanQueue)).toContain('rm -rf /precious')
+  })
+
+  test('only a prod run pushes: a build or verify run puts nothing into the owner’s fleet view', async () => {
+    expect((await startOverview({}, { 'x-agw-purpose': 'build' })).body.status).toBe('done')
+    expect((await startOverview({}, { 'x-agw-purpose': 'verify' })).body.status).toBe('done')
+    expect(pushed).toHaveLength(0)
+    expect((await startOverview()).body.status).toBe('done') // the default purpose is prod
+    expect(pushed).toHaveLength(1)
+  })
+})
+
 describe('agw quota and agw quota-report', () => {
   test('a report is kept per account and read back; the account defaults to iu', async () => {
     expect((await t.json(await post('/quota/report', { fiveHourPct: 42, fiveHourMinsLeft: 30 }))).body).toEqual({
@@ -254,6 +284,23 @@ describe('agw quota and agw quota-report', () => {
     expect(typeof body.data.updated_at).toBe('number')
     expect(body.accounts.iu).toMatchObject({ five_hour_pct: 42, source: 'post' })
     expect(body.accounts.me).toMatchObject({ five_hour_pct: 7, seven_day_pct: 9, source: 'post' })
+  })
+
+  test('figures out of range and an account beyond the cap are 400s', async () => {
+    for (const bad of [
+      { fiveHourPct: 101 },
+      { fiveHourPct: -1 },
+      { fiveHourPct: 1, fiveHourMinsLeft: -5 },
+      { fiveHourPct: 1, fiveHourMinsLeft: 10081 },
+      { fiveHourPct: 1, sevenDayPct: 120 },
+    ]) {
+      expect((await post('/quota/report', bad)).status).toBe(400)
+    }
+    // iu is the registry; the slack of 4 is shared with `me` from the test above
+    let refused = 0
+    for (let i = 0; i < 8; i++)
+      refused += (await post('/quota/report', { fiveHourPct: 1, account: `extra${i}` })).status === 400 ? 1 : 0
+    expect(refused).toBeGreaterThan(0)
   })
 
   test('a bad account id or a missing figure is a 400', async () => {

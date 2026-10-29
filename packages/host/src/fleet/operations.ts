@@ -1,5 +1,5 @@
 import { type ResolvedCliSpec, withCli } from '@agent-workflows/capabilities'
-import { os } from '@orpc/server'
+import { ORPCError, os } from '@orpc/server'
 import { z } from 'zod'
 import type { HostContext, HostOperation } from '../operations.ts'
 import { type Fleet, renderView } from './index.ts'
@@ -17,10 +17,18 @@ export const AGENTS_OUTPUT = z.object({
   text: z.string().optional().describe('The text render; only with --text'),
 })
 
+const MINUTES_PER_WEEK = 7 * 24 * 60
+
 export const QUOTA_REPORT_INPUT = z.object({
-  fiveHourPct: z.number().describe('Utilisation of the 5-hour window, percent'),
-  fiveHourMinsLeft: z.number().nullable().optional().describe('Minutes until the 5-hour window resets'),
-  sevenDayPct: z.number().nullable().optional().describe('Utilisation of the 7-day window, percent'),
+  fiveHourPct: z.number().min(0).max(100).describe('Utilisation of the 5-hour window, percent'),
+  fiveHourMinsLeft: z
+    .number()
+    .min(0)
+    .max(MINUTES_PER_WEEK)
+    .nullable()
+    .optional()
+    .describe('Minutes until the 5-hour window resets'),
+  sevenDayPct: z.number().min(0).max(100).nullable().optional().describe('Utilisation of the 7-day window, percent'),
   account: z
     .string()
     .regex(new RegExp(ACCOUNT_ID_PATTERN))
@@ -132,11 +140,15 @@ export function fleetOperations(fleet: Fleet): Record<'agents' | 'quota' | 'quot
         .output(z.object({ ok: z.literal(true) }))
         .handler(({ input }) => {
           const { account = DEFAULT_ACCOUNT, ...usage } = input
-          fleet.quota.record(account, {
+          const kept = fleet.quota.record(account, {
             five_hour_pct: usage.fiveHourPct,
             five_hour_mins_left: usage.fiveHourMinsLeft ?? null,
             seven_day_pct: usage.sevenDayPct ?? null,
           })
+          if (!kept)
+            throw new ORPCError('BAD_REQUEST', {
+              message: `account ${account} is unknown and the reported accounts are at their cap`,
+            })
           return { ok: true as const }
         }),
     },

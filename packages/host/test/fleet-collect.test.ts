@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   buildSnapshot,
+  commandRunner,
+  defaultCollectors,
   type CollectorResult,
   type Collectors,
   fleetConfig,
@@ -14,7 +16,8 @@ import {
   runCommand,
   sessionAccountResolver,
 } from '../src/fleet/collect.ts'
-import { EMPTY_TAIL } from '../src/fleet/derive.ts'
+import { EMPTY_TAIL, mergeAgents, parseTranscriptTail } from '../src/fleet/derive.ts'
+import { AGENT } from '../src/fleet/schema.ts'
 
 const NOW = Date.parse('2026-10-29T12:00:00.000Z')
 const HOUR = 3_600_000
@@ -26,10 +29,10 @@ function collectors(over: Partial<Collectors> = {}): Collectors {
     herdrAgents: async () => ok([]),
     herdrWorkspaces: async () => ok([]),
     claudeAgents: async () => ok([]),
-    humanQueue: () => ok([]),
+    humanQueue: async () => ok([]),
     transcriptTail: async () => EMPTY_TAIL,
     dispatchJobs: async () => ok([]),
-    sessionAccounts: () => new Map(),
+    sessionAccounts: async () => new Map(),
     git: async () => null,
     ...over,
   }
@@ -78,8 +81,9 @@ describe('buildSnapshot (fake collectors)', () => {
               sessionId: 'ds1',
             },
           ]),
-        sessionAccounts: (ids) => new Map([...ids].filter((id) => id === 's1' || id === 'ds1').map((id) => [id, 'me'])),
-        humanQueue: () => ok([{ id: 'q1', askedAt: null, question: 'sign', cmd: null }]),
+        sessionAccounts: async (ids) =>
+          new Map([...ids].filter((id) => id === 's1' || id === 'ds1').map((id) => [id, 'me'])),
+        humanQueue: async () => ok([{ id: 'q1', askedAt: null, question: 'sign', cmd: null }]),
         git: async (cwd) => ({ branch: cwd.slice(-1), dirty: false, ahead: 0, behind: 0, lastCommit: null }),
       }),
       { now: NOW, staleAfterHours: 24 },
@@ -246,52 +250,54 @@ describe('session accounts', () => {
     expect([...m]).toEqual([['a', 'me']])
   })
 
-  test('resolves across day files, caches hits, retries misses after the window', () => {
+  test('resolves across day files, caches hits, retries misses after the window', async () => {
     const resolve = resolver()
     writeFileSync(join(dir, '2026-10-23.jsonl'), `${line('old', 'me')}\n`)
     writeFileSync(join(dir, '2026-10-24.jsonl'), `${line('new', 'iu')}\n`)
-    const r = resolve(['old', 'new', 'ghost'], 1_000)
+    const r = await resolve(['old', 'new', 'ghost'], 1_000)
     expect(r.get('old')).toBe('me')
     expect(r.get('new')).toBe('iu')
     expect(r.has('ghost')).toBe(false)
 
     // the line appears later: not re-read inside the miss window, found after it
     writeFileSync(join(dir, '2026-10-24.jsonl'), `${line('ghost', 'me')}\n`)
-    expect(resolve(['ghost'], 2_000).has('ghost')).toBe(false)
-    expect(resolve(['ghost'], 70_000).get('ghost')).toBe('me')
+    expect((await resolve(['ghost'], 2_000)).has('ghost')).toBe(false)
+    expect((await resolve(['ghost'], 70_000)).get('ghost')).toBe('me')
 
     // hits survive log removal: an account never changes for a session
     rmSync(dir, { recursive: true, force: true })
-    expect(resolve(['old'], 80_000).get('old')).toBe('me')
+    expect((await resolve(['old'], 80_000)).get('old')).toBe('me')
   })
 
-  test('a spawn pin resolves without any log line; a pin whose dir is gone, or a symlink, does not', () => {
+  test('a spawn pin resolves without any log line; a pin whose dir is gone, or a symlink, does not', async () => {
     const resolve = resolver()
     writeFileSync(join(pins, 'pinned-1.json'), JSON.stringify({ account: 'me', dir: null }))
     writeFileSync(join(pins, 'gone.json'), JSON.stringify({ account: 'me', dir: join(pins, 'missing') }))
-    expect([...resolve(['pinned-1', 'gone', 'none'], 5)]).toEqual([['pinned-1', 'me']])
+    expect([...(await resolve(['pinned-1', 'gone', 'none'], 5))]).toEqual([['pinned-1', 'me']])
     const target = join(pins, 'target.json')
     writeFileSync(target, JSON.stringify({ account: 'me', dir: null }))
     Bun.spawnSync(['ln', '-s', target, join(pins, 'linked.json')])
-    expect(resolve(['linked'], 6).has('linked')).toBe(false)
+    expect((await resolve(['linked'], 6)).has('linked')).toBe(false)
   })
 
-  test('repeated misses back off exponentially (60 s, 120 s, …)', () => {
+  test('repeated misses back off exponentially (60 s, 120 s, …)', async () => {
     const resolve = resolver()
     const file = join(dir, '2026-10-24.jsonl')
     writeFileSync(file, `${line('other', 'iu')}\n`)
-    expect(resolve(['g'], 0).size).toBe(0) // miss 1, retry after 60 s
+    expect((await resolve(['g'], 0)).size).toBe(0) // miss 1, retry after 60 s
     writeFileSync(file, `${line('g', 'me')}\n`)
-    expect(resolve(['g'], 59_000).size).toBe(0)
+    expect((await resolve(['g'], 59_000)).size).toBe(0)
     writeFileSync(file, `${line('other', 'iu')}\n`)
-    expect(resolve(['g'], 60_000).size).toBe(0) // miss 2, retry after 120 s
+    expect((await resolve(['g'], 60_000)).size).toBe(0) // miss 2, retry after 120 s
     writeFileSync(file, `${line('g', 'me')}\n`)
-    expect(resolve(['g'], 120_000).size).toBe(0) // still backing off
-    expect(resolve(['g'], 180_000).get('g')).toBe('me')
+    expect((await resolve(['g'], 120_000)).size).toBe(0) // still backing off
+    expect((await resolve(['g'], 180_000)).get('g')).toBe('me')
   })
 
-  test('a missing log dir is unknown, no throw', () => {
-    expect(sessionAccountResolver({ claudeLogDir: join(dir, 'nope'), sessionAccountsDir: pins })(['x'], 0).size).toBe(0)
+  test('a missing log dir is unknown, no throw', async () => {
+    expect(
+      (await sessionAccountResolver({ claudeLogDir: join(dir, 'nope'), sessionAccountsDir: pins })(['x'], 0)).size,
+    ).toBe(0)
   })
 })
 
@@ -389,5 +395,130 @@ describe('fleetConfig', () => {
     } finally {
       rmSync(home, { recursive: true, force: true })
     }
+  })
+})
+
+describe('children get a minimal environment', () => {
+  test('PATH, HOME, TMPDIR and LANG pass; the host’s secrets and everything else do not', async () => {
+    const run = commandRunner({
+      PATH: process.env.PATH,
+      HOME: '/home/x',
+      LANG: 'C',
+      AGW_API_SECRET: 'api-secret',
+      ARGO_API_SECRET: 'argo-secret',
+      IU_API_KEY: 'iu-key',
+    })
+    const out = (await run(['env'])) ?? ''
+    expect(out).toContain('HOME=/home/x')
+    expect(out).toContain('GIT_TERMINAL_PROMPT=0')
+    expect(out).not.toMatch(/secret|IU_API_KEY|iu-key/i)
+  })
+})
+
+describe('a session id is a path segment', () => {
+  let dir: string
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'projects-'))
+  })
+  afterEach(() => rmSync(dir, { recursive: true, force: true }))
+
+  test('only [A-Za-z0-9_-] reaches the transcript path: a traversal reads nothing', async () => {
+    mkdirSync(join(dir, 'projects', '-work-x'), { recursive: true })
+    const line = (text: string) =>
+      JSON.stringify({
+        type: 'assistant',
+        timestamp: '2026-10-29T10:00:00Z',
+        message: { content: [{ type: 'text', text }] },
+      })
+    writeFileSync(join(dir, 'projects', '-work-x', 'good-1.jsonl'), line('inside'))
+    writeFileSync(join(dir, 'outside.jsonl'), line('outside the projects dir'))
+    const collectors = defaultCollectors({
+      ...fleetConfig({}, dir),
+      claudeProjectsDir: join(dir, 'projects'),
+    })
+    expect((await collectors.transcriptTail('/work/x', 'good-1')).lastReply).toBe('inside')
+    for (const bad of ['../../outside', '../outside', 'a/b', '..', '']) {
+      expect(await collectors.transcriptTail('/work/x', bad)).toEqual(EMPTY_TAIL)
+    }
+  })
+})
+
+describe('text from outside', () => {
+  const ESC = String.fromCharCode(27)
+
+  test('control bytes never survive a transcript tail, a title, a wait reason or a project name', () => {
+    const tail = parseTranscriptTail(
+      [
+        JSON.stringify({ type: 'last-prompt', lastPrompt: `p${ESC}[31m` }),
+        JSON.stringify({ type: 'ai-title', aiTitle: `t${ESC}]0;x` }),
+        JSON.stringify({
+          type: 'assistant',
+          timestamp: '2026-10-29T10:00:00Z',
+          message: { content: [{ type: 'text', text: `r${ESC}[2J` }] },
+        }),
+      ].join('\n'),
+    )
+    expect([tail.lastPrompt, tail.aiTitle, tail.lastReply].join('')).not.toContain(ESC)
+
+    const merged = mergeAgents({
+      herdrAgents: [
+        {
+          agent_session: { value: 's1' },
+          agent_status: 'idle',
+          cwd: `/w/dir${ESC}x`,
+          pane_id: 'p',
+          workspace_id: 'w',
+          terminal_title_stripped: `ti${ESC}tle`,
+        },
+      ],
+      herdrWorkspaces: [{ workspace_id: 'w', label: `la${ESC}bel` }],
+      claudeAgents: [{ cwd: '/w/c', sessionId: 's2', startedAt: 1, status: 'waiting', waitingFor: `dia${ESC}log` }],
+      dispatchJobs: [],
+      transcripts: new Map(),
+      now: 10,
+      staleAfterMs: 1000,
+    })
+    expect(JSON.stringify(merged)).not.toContain(ESC)
+  })
+
+  test('a sparse herdr or registry row is null-filled and still passes the strict agent schema', () => {
+    const merged = mergeAgents({
+      herdrAgents: [{ agent_session: { value: 's1' } }, { pane_id: 'only-pane' }, {}],
+      herdrWorkspaces: [],
+      claudeAgents: [{ sessionId: 's2' }, { cwd: '/w/nosession' }, {}],
+      dispatchJobs: [],
+      transcripts: new Map(),
+      now: 10,
+      staleAfterMs: 1000,
+    })
+    const agents = merged.flatMap((p) => p.agents)
+    expect(agents.map((a) => a.id).toSorted()).toEqual(['only-pane', 's1', 's2'])
+    for (const agent of agents) expect(AGENT.strict().safeParse(agent).success).toBe(true)
+    expect(agents.find((a) => a.id === 's2')).toMatchObject({ startedAt: null, paneId: null })
+  })
+})
+
+describe('readDispatchJobs partial failure', () => {
+  test('a detail that fails costs one warning for the failures; the others are kept', async () => {
+    const job = (id: string) => ({
+      id,
+      tool: 'dispatch',
+      status: 'running',
+      createdAt: NOW - 1000,
+      startedAt: NOW - 900,
+      finishedAt: null,
+      params: { cwd: `/work/${id}` },
+      sessionId: null,
+    })
+    const jobs = [job('a'), job('b'), job('c')]
+    const fetcher = (async (input: string | URL | Request) => {
+      const path = new URL(String(input)).pathname
+      if (path === '/api/jobs') return Response.json({ jobs })
+      if (path.endsWith('/b')) return new Response('boom', { status: 500 })
+      return Response.json({ job: jobs.find((j) => path.endsWith(`/${j.id}`)) })
+    }) as unknown as typeof fetch
+    const result = await readDispatchJobs('http://gw', NOW, fetcher)
+    expect(result.items.map((j) => j.id)).toEqual(['a', 'c'])
+    expect(result.warning).toBe('agent-gateway dispatch jobs: 1 of 3 could not be read')
   })
 })
