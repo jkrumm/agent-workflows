@@ -204,7 +204,8 @@ Workers: Sonnet/high; Opus/medium for the pipeline's durable stages.
 
 - [ ] **First:** workflows, eval suites and routes register by directory (or one entry per file), so
   parallel ports stop colliding in shared registry files; the load-scaled test timeout sampled per test
-- [ ] **Owner-gated, carried:** CONTEXT7_API_KEY moved once request `20261029T070930-17518` is answered
+- [ ] CONTEXT7_API_KEY: field created and resealed (owner request `20261029T080529-10120`); swap the
+  `.env.tpl` ref and deploy
 - [ ] Audio pipeline as a workflow in its own process; an OpenAI-compatible TTS/STT door for Hermes
 - [ ] `podcast` (writers' room, TTS, mastering, publish) and `image` ported
 - [ ] `/podcast`, `/img`, Hermes TTS/STT switched; one episode produced end to end on the new path
