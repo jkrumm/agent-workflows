@@ -390,6 +390,7 @@ export function createProduceWorkflows(deps: ProduceDeps) {
             for (const usage of usageToRecord(found.billed, key)) addUsage(usage)
             return json(found.file)
           }
+          let file: StoredFile
           try {
             const reported: Usage[] = []
             const out = await deps.cover.call(request, {
@@ -401,15 +402,16 @@ export function createProduceWorkflows(deps: ProduceDeps) {
             })
             const b64 = out.images[0]?.b64
             if (!b64) throw new Error('the image capability returned no image')
-            const file = await storeCover(dir, hash, Uint8Array.from(Buffer.from(b64, 'base64')), {
+            file = await storeCover(dir, hash, Uint8Array.from(Buffer.from(b64, 'base64')), {
               producedBy: key,
               usage: reported,
             })
-            await deps.onStored?.(file)
-            return json(file)
           } catch (error) {
             return json(fallBack('cover', error, signal, null))
           }
+          // Outside the fallback: a stored, billed cover is never dropped as a failed generation.
+          await deps.onStored?.(file)
+          return json(file)
         }),
       ),
     ])
