@@ -331,7 +331,7 @@ describe('buildServerConfig: review.angle.deep', () => {
     const config = buildServerConfig({}) as {
       providers: Record<string, { models: Record<string, { cost?: unknown }> }>
     }
-    expect(config.providers['iu-anthropic']?.models['claude-sonnet-5-5-eu']?.cost).toEqual({
+    expect(config.providers['iu-anthropic']?.models['claude-sonnet-5-5']?.cost).toEqual({
       input: 2,
       output: 10,
       cache: { read: 0.1, write: 2.5 },

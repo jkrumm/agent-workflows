@@ -208,8 +208,62 @@ describe('open / prompt / wait', () => {
     await t.host.prompt(handle, '[free] x')
     const { usage } = await t.host.wait(handle, waitOptions())
     expect(usage?.costSource).toBe('rate')
-    // 10 input, 100 cache read, 20 cache write, 6 output at the Haiku 5.5 EU rate.
+    // 10 input, 100 cache read, 20 cache write, 6 output at the Haiku 5.5 rate.
     expect(usage?.cost).toBeCloseTo((10 * 0.1 + 100 * 0.01 + 20 * 0.125 + 6 * 0.5) / 1e6, 12)
+  })
+
+  // Haiku 5.5: 5x on every column for a prompt over 100K tokens; the tier is per message, not per step.
+  const HAIKU_LONG = (150_000 * 0.5 + 100 * 0.05 + 20 * 0.625 + 6 * 2.5) / 1e6
+
+  test('a message above the long-prompt tier is priced at the tier, not at the cost OpenCode reported', async () => {
+    const t = setup()
+    const handle = await t.host.open(spec('x'))
+    await t.host.prompt(handle, '[long] x')
+    const { usage } = await t.host.wait(handle, waitOptions())
+    expect(usage?.costSource).toBe('rate')
+    expect(usage?.cost).toBeCloseTo(HAIKU_LONG, 12)
+  })
+
+  test('one long message does not void a step: the short messages keep the cost OpenCode reported', async () => {
+    const t = setup()
+    const handle = await t.host.open(spec('x'))
+    await t.host.prompt(handle, '[tool:read] [long] x')
+    const { usage } = await t.host.wait(handle, waitOptions())
+    expect(usage?.costSource).toBe('rate')
+    expect(usage?.cost).toBeCloseTo(0.001 + HAIKU_LONG, 12)
+  })
+
+  test('a long message OpenCode reported at 0 is priced at the tier too', async () => {
+    const t = setup()
+    const handle = await t.host.open(spec('x'))
+    await t.host.prompt(handle, '[free] [long] x')
+    expect((await t.host.wait(handle, waitOptions())).usage?.cost).toBeCloseTo(HAIKU_LONG, 12)
+  })
+
+  test('a long message on a rate without the tier keeps the cost OpenCode reported', async () => {
+    const t = setup({
+      env: {
+        AGW_ROUTES: JSON.stringify({ check: { rate: { inputPerM: 0.1, outputPerM: 0.5, cacheReadPerM: 0.01 } } }),
+      },
+    })
+    const handle = await t.host.open(spec('x'))
+    await t.host.prompt(handle, '[long] x')
+    const { usage } = await t.host.wait(handle, waitOptions())
+    expect(usage?.costSource).toBe('provider')
+    expect(usage?.cost).toBeCloseTo(0.001, 12)
+  })
+
+  test('a long message on a rate without the tier that OpenCode reported at 0 is unpriced, never under-priced', async () => {
+    const t = setup({
+      env: {
+        AGW_ROUTES: JSON.stringify({ check: { rate: { inputPerM: 0.1, outputPerM: 0.5, cacheReadPerM: 0.01 } } }),
+      },
+    })
+    const handle = await t.host.open(spec('x'))
+    await t.host.prompt(handle, '[free] [long] x')
+    const { usage } = await t.host.wait(handle, waitOptions())
+    expect(usage?.cost).toBeNull()
+    expect(usage?.costSource).toBe('unknown')
   })
 
   test('cost 0 on a route without a rate is unpriced, never 0', async () => {

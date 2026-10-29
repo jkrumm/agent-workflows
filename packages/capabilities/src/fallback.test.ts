@@ -179,22 +179,20 @@ describe('provider-balance fallback: the review seats', () => {
     ['402', () => new Response('{"error":"payment required"}', { status: 402 })],
     ['503 Insufficient Balance', () => new Response(BALANCE_503, { status: 503 })],
   ] as const) {
-    test(`review.adversary, ${name}: one fallback call at the adversary’s effort, priced, model recorded`, async () => {
+    test(`review.adversary, ${name}: one fallback call, priced, model recorded`, async () => {
       iu.on('chat', (request) =>
         request.body.model === adversary.model ? failure() : answer(request, JSON.stringify({ findings: [finding] })),
       )
       const out = await call('review.adversary', { diff: '+added line' })
       expect(out).toMatchObject({ findings: [finding], model: adversaryFallback.model })
       expect(iu.requests.map((r) => r.body.model)).toEqual([adversary.model, adversaryFallback.model])
-      expect(iu.requests[1]?.body).toMatchObject({
-        reasoning_effort: 'medium',
-        max_completion_tokens: adversaryFallback.maxOutputTokens,
-      })
+      // The fallback is Haiku, which the route sends no effort to: it runs at its own route's, not the adversary's.
+      expect(iu.requests[1]?.body.reasoning_effort).toBeUndefined()
       expect(usages).toEqual([
         {
           model: adversaryFallback.model,
           tokens: { input: 1_000, output: 200, cacheRead: 0, reasoning: 50 },
-          cost: (1_000 * 1 + 200 * 5) / 1_000_000,
+          cost: (1_000 * 0.1 + 200 * 0.5) / 1_000_000,
           costSource: 'rate',
         },
       ])

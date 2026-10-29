@@ -67,7 +67,7 @@ describe('resolveRoute', () => {
 
   test('the deep angle route is its own seat: Sonnet, priced, overridden independently of review.angle', () => {
     const deep = resolveRoute('review.angle.deep', {})
-    expect(deep).toMatchObject({ wire: 'opencode', model: 'claude-sonnet-5-5-eu' })
+    expect(deep).toMatchObject({ wire: 'opencode', model: 'claude-sonnet-5-5' })
     expect(deep.rate).toEqual({
       inputPerM: 2,
       outputPerM: 10,
@@ -350,11 +350,17 @@ describe('fallback', () => {
   })
 
   test('single calls fall back to a priced call on the chat wire, agent steps to an opencode step', () => {
-    for (const id of [...singleCall, 'review.ocr' as const]) {
+    // The adversary runs on Terra, so its fallback is Haiku (a Terra fallback would be itself).
+    const terraFallbacks = [...singleCall.filter((id) => id !== 'review.adversary'), 'review.ocr' as const]
+    for (const id of terraFallbacks) {
       expect(resolveRoute(id, {}).fallback).toMatchObject({ wire: 'iu-openai', effort: 'medium' })
     }
+    expect(resolveRoute('review.adversary', {}).fallback).toMatchObject({
+      wire: 'iu-openai',
+      model: 'claude-haiku-5-5',
+    })
     for (const id of agentSteps) expect(resolveRoute(id, {}).fallback).toMatchObject({ wire: 'opencode' })
-    for (const id of [...singleCall, ...agentSteps]) {
+    for (const id of [...terraFallbacks, ...agentSteps]) {
       const fallback = resolveRoute(id, {}).fallback
       expect(fallback?.model).not.toBe(resolveRoute(id, {}).model)
       expect(fallback?.rate).toMatchObject({
@@ -362,7 +368,24 @@ describe('fallback', () => {
         outputPerM: 5,
         cacheReadPerM: 0.05,
         longPromptTokens: 272_000,
+        longPrompt: { inputMultiplier: 2, outputMultiplier: 1.5 },
       })
+    }
+  })
+
+  // Owner direction (2026-10-29): no region-pinned ids, nothing via Requesty. A route is proven by its response header,
+  // not its id; the ids below are the ones the endpoint's header named Requesty (probed 2026-10-29).
+  test('no route or fallback is region-pinned or on a model IU forwards to Requesty', () => {
+    const requesty = /^(eu\/)?deepseek-v4\.1-flash|^DeepSeek-V4|^pplx-decider|^kimi-k[23]\.[17]|^kimi-k3/i
+    for (const id of routeIds()) {
+      const route = resolveRoute(id, {})
+      for (const r of [route, route.fallback]) {
+        if (!r) continue
+        expect(r.model).not.toMatch(/-eu$|^eu\//)
+        if (['review.router', 'review.adversary', 'review.ocr', 'cheap.classify'].includes(id)) {
+          expect(r.model).not.toMatch(requesty)
+        }
+      }
     }
   })
 
@@ -411,11 +434,70 @@ describe('fallback', () => {
     const rate = resolveRoute('cheap.classify', {}).fallback?.rate
     const usage = (prompt: number) => ({ prompt_tokens: prompt, completion_tokens: 1_000 })
     expect(costFromUsage('iu-openai', usage(200_000), rate)).toEqual({ usd: 0.205, source: 'rate' })
-    expect(costFromUsage('iu-openai', usage(272_001), rate)).toEqual({ usd: null, source: 'unknown' })
+    // above 272K the whole request bills 2x input and 1.5x output
+    expect(costFromUsage('iu-openai', usage(272_000), rate)).toEqual({ usd: 0.277, source: 'rate' })
+    expect(costFromUsage('iu-openai', usage(272_001), rate)).toEqual({
+      usd: (272_001 * 2 + 1_000 * 7.5) / 1e6,
+      source: 'rate',
+    })
     expect(costFromUsage('iu-openai', usage(200_000), { inputPerM: 1, outputPerM: 5 })).toEqual({
       usd: null,
       source: 'unknown',
     })
+  })
+})
+
+describe('the long-prompt tier of Haiku 5.5 (>100K prompt tokens bill 5x on every column)', () => {
+  const haiku = resolveRoute('cheap.summarize', {}).rate
+  const at = (inputTokens: number, cacheRead = 0, cacheWrite = 0) =>
+    costFromUsage(
+      'iu-anthropic',
+      {
+        input_tokens: inputTokens,
+        output_tokens: 1_000,
+        cache_read_input_tokens: cacheRead,
+        cache_creation_input_tokens: cacheWrite,
+      },
+      haiku,
+    )
+  const price = (input: number, read: number, write: number, output: number, scale: number) => ({
+    usd: ((input * 0.1 + read * 0.01 + write * 0.125) * scale + output * 0.5 * scale) / 1e6,
+    source: 'rate' as const,
+  })
+
+  test('exactly 100K is the base card; one token more is the tier, not unknown', () => {
+    expect(at(100_000)).toEqual(price(100_000, 0, 0, 1_000, 1))
+    expect(at(100_001)).toEqual(price(100_001, 0, 0, 1_000, 5))
+  })
+
+  test('cache reads and writes count toward the prompt and are repriced with it', () => {
+    expect(at(1_000, 99_000)).toEqual(price(1_000, 99_000, 0, 1_000, 1))
+    expect(at(1_001, 99_000)).toEqual(price(1_001, 99_000, 0, 1_000, 5))
+    expect(at(10, 90_000, 10_000)).toEqual(price(10, 90_000, 10_000, 1_000, 5))
+  })
+
+  test('the OpenAI-shaped usage (prompt_tokens includes the cache) is split the same way', () => {
+    const usage = {
+      prompt_tokens: 150_000,
+      completion_tokens: 1_000,
+      prompt_tokens_details: { cached_tokens: 100_000 },
+    }
+    expect(costFromUsage('opencode', usage, haiku)).toEqual(price(50_000, 100_000, 0, 1_000, 5))
+  })
+
+  test('a provider-reported cost still wins above the threshold', () => {
+    expect(costFromUsage('iu-anthropic', { cost: 0.5, input_tokens: 500_000, output_tokens: 1 }, haiku)).toEqual({
+      usd: 0.5,
+      source: 'provider',
+    })
+  })
+
+  test('every Anthropic route on the opencode and Messages wires carries the same tiered card', () => {
+    for (const id of routeIds()) {
+      const route = resolveRoute(id, {})
+      if (route.model !== 'claude-haiku-5-5') continue
+      expect(route.rate).toEqual(haiku)
+    }
   })
 })
 

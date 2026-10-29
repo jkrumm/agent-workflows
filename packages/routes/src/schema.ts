@@ -29,10 +29,17 @@ export const rateSchema = z.strictObject({
   /** Writes of a prompt-cache entry. */
   cacheWritePerM: z.number().nonnegative().optional(),
   /**
-   * Prompts (input including cache) above this many tokens bill a higher tier that `Rate` does not model, so they are
-   * priced `unknown`. Default `LONG_PROMPT_TOKENS` (100K, the Anthropic-family step).
+   * Prompts (input including cache) above this many tokens bill a higher tier. Default `LONG_PROMPT_TOKENS` (100K, the
+   * Anthropic-family step). Without `longPrompt` the tier is not modelled and such a call is priced `unknown`.
    */
   longPromptTokens: z.int().positive().optional(),
+  /**
+   * The tier above `longPromptTokens`, as the vendor states it: the whole request bills `inputMultiplier` times the input,
+   * cache read and cache write rates and `outputMultiplier` times the output rate (Haiku 5.5: 5 and 5).
+   */
+  longPrompt: z
+    .strictObject({ inputMultiplier: z.number().positive(), outputMultiplier: z.number().positive() })
+    .optional(),
 })
 export type Rate = z.infer<typeof rateSchema>
 
