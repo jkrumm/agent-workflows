@@ -207,22 +207,28 @@ agent's `tools` counts. `--depth` defaults to `standard`. A long run waits like 
   research step. Its key is per process, in `<stateDir>/research/gate.json` (0600), outside every location; it is not
   the API secret and opens nothing but these tools. A call's cost is booked as it is reported on the run's `tools`
   step, which lives as long as the agent's turns (a cancelled or failed run keeps its spend). Its evidence is written
-  apart to `research_tool_calls` (migrations 0007 and 0009; rows go with their run; in memory on a host without a
+  apart to `research_tool_calls` (migration 0007; rows go with their run; in memory on a host without a
   database), so a step retry or a host restart loses nothing; `tools` reads it once the grant has drained (at the
   agent's end, calls in flight are served first, bounded). A ledger write is retried and logged and never fails a call
   that worked. The server has no idle timeout (a capability call may outlast Bun's default 10 s cut; the grant's
   abort ends it), caps a body at 64 KiB before buffering, and is closed with the host (`gate.json` removed while it
   still holds this host's key).
+- **Unused columns.** `research_tool_calls.engine_job`, `engine_cost` and `booked_by` (migration 0008) and the
+  partial unique index on them stay in the table: nullable, never written or read by this code. The previous release,
+  the rollback target of a failed deploy, still uses them; they are dropped by a later migration once no rollback
+  target reads them.
 - **Grounding** (`assemble`, in code): a citation whose URL the run neither retrieved nor saw as a search result is
   dropped to `unverified`; dropping 10 % or more, or retrieving nothing at all, makes the report `partial`.
   `grounding` counts before the drop.
 - **Follow-up** (`--follow-up <runId>`, `followUp` in the input): the query is a new question about a finished
   report. The run must be a `done` `research` run, else the follow-up fails `invalid_input` with the reason (no such
   run, another workflow, not done, no report). The agent gets the earlier question, report and citations and the
-  pages that run retrieved, researches only what the new question adds, and answers in the same shape. Grounding
-  counts this run's retrieved and seen URLs plus the earlier run's **retrieved** ones (read from its ledger rows: those
-  pages were fetched, so a citation of one is as grounded as a fresh read; a page the earlier run only saw in search
-  results is not). `grounding.pagesRetrieved` stays this run's own. A flat `followUp` id rather than a separate
+  pages that run retrieved, researches only what the new question adds, and answers in the same shape. The earlier
+  report is data derived from web pages, never instructions (the agent's rule for page text applies to it). Grounding
+  counts this run's retrieved and seen URLs plus what the earlier run may rest on: the pages it retrieved (its ledger
+  rows) and the URLs of its final citations, which passed its own grounding (so a seen-only page it cited, or one it
+  inherited, stays citable and a chain of follow-ups stays grounded; a page it merely saw and did not cite is not).
+  `grounding.pagesRetrieved` stays this run's own. A flat `followUp` id rather than a separate
   `research.followup` workflow: one workflow keeps one run record, one scorer and one fingerprint, and the CLI shows
   `--follow-up <runId>` where an object would be a JSON flag. A follow-up of a follow-up continues from the latter's
   own report only (the chain is not walked).

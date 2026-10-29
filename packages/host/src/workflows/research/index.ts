@@ -55,8 +55,9 @@ const Followed = z.discriminatedUnion('ok', [
 /**
  * An agent's draft against what its tools retrieved: a citation whose URL the run never retrieved nor saw as a
  * search result is dropped and restated in `unverified`; dropping 10 % or more, or retrieving nothing at all, makes
- * the report `partial`. `grounding` counts before the drop. `earlier` is the pages a follow-up's earlier run retrieved:
- * they were fetched, so a citation of one is grounded, but they are not this run's retrievals and are not counted.
+ * the report `partial`. `grounding` counts before the drop. `earlier` is what a follow-up may also rest on (the pages
+ * its earlier run retrieved and the URLs of that run's final citations): a citation of one is grounded, but they are
+ * not this run's retrievals and are not counted.
  */
 export function assemble(draft: Draft, ev: Evidence, earlier: readonly string[] = []): ResearchResult {
   const retrieved = new Set(ev.retrieved)
@@ -135,12 +136,15 @@ export function createResearchWorkflows(deps: WorkflowDeps, options: ResearchOpt
   deps.onClose?.(() => gate.close())
 
   /**
-   * The finished research run a follow-up continues: its question, report and citations, and the pages its tools
-   * retrieved (its ledger rows, so only pages that were actually read). Journaled as a step, so a resumed run sees
-   * the same context. Anything else than a `done` research run is `invalid_input`.
+   * The finished research run a follow-up continues: its question, report and citations, and the URLs a new citation
+   * may rest on: the pages its tools retrieved (its ledger rows) and the URLs of its final citations, which passed its
+   * own grounding (a search result it saw, a page its own earlier run retrieved), so a chain of follow-ups stays
+   * grounded. Journaled as a step, so a resumed run sees the same context. Anything else than a `done` research run is
+   * `invalid_input`.
    */
-  async function loadEarlier(ctx: Ctx, runId: string): Promise<{ earlier: EarlierResearch; retrieved: string[] }> {
+  async function loadEarlier(ctx: Ctx, runId: string): Promise<EarlierResearch> {
     const out = await ctx.step('followup', async (): Promise<Json> => {
+      if (!ledger.hasJournal) return { ok: false, reason: 'this host keeps no run journal' }
       const run = await ledger.run(runId)
       if (!run) return { ok: false, reason: `run ${runId} does not exist` }
       if (run.workflow !== 'research')
@@ -151,12 +155,18 @@ export function createResearchWorkflows(deps: WorkflowDeps, options: ResearchOpt
       if (!input.success || !output.success) return { ok: false, reason: `run ${runId} holds no research report` }
       const { report, citations } = output.data
       const retrieved = [...evidence(await ledger.read(runId, 'research')).retrieved]
+      const have = new Set(retrieved)
+      for (const { url } of citations) {
+        if (have.has(normalizeUrl(url))) continue
+        have.add(normalizeUrl(url))
+        retrieved.push(url)
+      }
       return { ok: true, question: input.data.query, report, citations, retrieved }
     })
     const followed = Followed.parse(out)
     if (!followed.ok) throw new WorkflowError('invalid_input', `cannot follow up: ${followed.reason}`)
     const { question, report, citations, retrieved } = followed
-    return { earlier: { question, report, citations, retrieved }, retrieved }
+    return { question, report, citations, retrieved }
   }
 
   async function runAgent(ctx: Ctx, input: z.output<typeof ResearchInput>): Promise<ResearchResult> {
@@ -215,7 +225,7 @@ export function createResearchWorkflows(deps: WorkflowDeps, options: ResearchOpt
           query: input.query,
           depth: input.depth,
           ...(input.context ? { context: input.context } : {}),
-          ...(followed ? { earlier: followed.earlier } : {}),
+          ...(followed ? { earlier: followed } : {}),
         })
         const text = await ctx.agent('research', {
           agent: AGENT,
