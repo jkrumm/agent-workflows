@@ -1,5 +1,6 @@
 import type { AnyWorkflow, Ctx, Json, Logger, StepScope, Workflow } from '../../../../runtime/src/index.ts'
-import { defineWorkflow, WorkflowError } from '../../../../runtime/src/index.ts'
+import { Cancelled, defineWorkflow, InfraError, WorkflowError } from '../../../../runtime/src/index.ts'
+import { type NotifyConfig, notifyConfigFromEnv, notifyPodcastResult } from '../podcast-produce/notify.ts'
 import type { AgentRun } from './agent.ts'
 import { type PodcastConfig, podcastConfigFromEnv } from './config.ts'
 import { decideEpisodeBrief, defaultEpisodeBrief } from './editorial.ts'
@@ -89,6 +90,8 @@ export interface PodcastDeps {
    */
   produce?: Workflow<typeof ProduceInput, AnyWorkflow['output']>
   config?: Partial<PodcastConfig>
+  /** The Slack notice of a failed episode (legacy's env, `notify.ts`); default from the process env, null = none. */
+  notify?: { config: NotifyConfig | null; fetch?: typeof fetch }
   logger?: Logger
 }
 
@@ -224,6 +227,33 @@ export function createPodcastWorkflow(deps: PodcastDeps) {
   async function startedIn(runId: string, stepId: string): Promise<Map<string, string>> {
     const prefix = researchStepPrefix(runId, stepId)
     return startedByKey(prefix, await deps.journal.startedResearch(prefix))
+  }
+
+  const notify = deps.notify ?? { config: notifyConfigFromEnv(process.env) }
+
+  /**
+   * Legacy's failure line in Slack for a failed episode, room or production (its child's failure ends the room). Not for
+   * a run that resumes (an infra error, a shutdown, a lost lease) or one that was cancelled. Best-effort: never masks
+   * the failure itself.
+   */
+  async function noticeFailure(ctx: Ctx, error: unknown): Promise<void> {
+    if (!notify.config || ctx.signal.aborted || error instanceof InfraError || error instanceof Cancelled) return
+    const message = (error instanceof Error ? error.message : String(error)).slice(0, 500)
+    const text = `Podcast-Job ${ctx.runId.slice(0, 8)} ist fehlgeschlagen: ${message}`
+    try {
+      await notifyPodcastResult(notify.config, text, notify.fetch)
+    } catch (err) {
+      log.warn('podcast failure notice failed', { error: err instanceof Error ? err.message : String(err) })
+    }
+  }
+
+  async function runWithNotice(ctx: Ctx, request: PodcastRequest): Promise<PodcastResult> {
+    try {
+      return await run(ctx, request)
+    } catch (error) {
+      await noticeFailure(ctx, error)
+      throw error
+    }
   }
 
   async function run(ctx: Ctx, request: PodcastRequest): Promise<PodcastResult> {
@@ -583,7 +613,7 @@ export function createPodcastWorkflow(deps: PodcastDeps) {
     output: PodcastOutput,
     // Legacy ran one episode at a time (one queue); the produce stage's synth and mastering are the heavy part.
     concurrency: 1,
-    run,
+    run: runWithNotice,
   })
 }
 
