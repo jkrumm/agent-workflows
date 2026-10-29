@@ -5,7 +5,7 @@
 // own read tool cannot reach it (external_directory is denied).
 //
 // This file is the template for every agent's tools: copy it to agents/<name>/plugins/agw-tools.ts and change only
-// `id` and `TOOLS` (name, description, input schema). The compiler copies a plugins/ directory per agent and nothing
+// `id` and `TOOLS` (name, description, input schema). This copy also shows the gate's `label` before an answer. The compiler copies a plugins/ directory per agent and nothing
 // from outside it, so the forwarding stays a few lines repeated per agent (packages/host/README.md §Tool gate).
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -27,8 +27,10 @@ async function forward(tool: string, args: Record<string, unknown>, ctx: Ctx) {
       body: JSON.stringify({ sessionID: ctx.sessionID, args }),
       ...(ctx.signal ? { signal: ctx.signal } : {}),
     })
-    const body = (await response.json()) as { ok: boolean; result?: unknown; error?: string }
-    content = body.ok ? JSON.stringify(body.result) : `ERROR: ${body.error ?? `HTTP ${response.status}`}`
+    const body = (await response.json()) as { ok: boolean; result?: unknown; error?: string; label?: string }
+    const answer = body.ok ? JSON.stringify(body.result) : `ERROR: ${body.error ?? `HTTP ${response.status}`}`
+    // The gate's label (otel's `query q3`) comes first: it is the id the agent cites as evidence.
+    content = body.label ? `${body.label}: ${answer}` : answer
   } catch (error) {
     content = `ERROR: the tool gate is unreachable (${error instanceof Error ? error.message : String(error)})`
   }

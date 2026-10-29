@@ -4,10 +4,10 @@ import { WorkflowError } from '@agent-workflows/runtime'
 import { z } from 'zod'
 import type { HostWorkflow } from '../../operations.ts'
 import type { HostDeps } from '../index.ts'
-import { Draft, OtelInput, OtelOutput, type OtelResult } from './schema.ts'
+import { Draft, OtelInput, OtelOutput, type OtelResult, type Query, UNTRUSTED } from './schema.ts'
 import { JSON_ONLY_REASK, otelTask } from './prompts.ts'
 import { otelScorer } from './scorer.ts'
-import { type CallStore, Calls, callStore, isGrounded, otelGrant, type Recorded } from './tools.ts'
+import { Calls, isGrounded, otelGrant, returnedRows, runCalls } from './tools.ts'
 
 export const OTEL_VERSION = '2026-10-29.1'
 
@@ -23,35 +23,49 @@ export type OtelOptions = {
   agentBackoffMs?: number
 }
 
+/** A quoted excerpt in evidence: text the agent copied out of telemetry. */
+const QUOTED = /"[^"]{8,}"|'[^']{8,}'|`[^`]{8,}`/
+
 /**
  * An agent's draft against what its tools returned. Counted in code, never asserted by the model: the environment
- * (the run's, not the agent's), `hyperdx.connected` (some call worked), `queries`; a finding whose evidence rests on no
- * query of this run is kept and flagged `unverified`; a `healthy` answer needs a successful query of telemetry (not
- * only of sources and schemas), else it is `degraded` with a warning, since health nobody looked at is not health.
+ * (the run's, not the agent's), `hyperdx.connected` (some call was answered), `queries`. A finding whose evidence
+ * names no query that read telemetry and returned rows is kept and flagged `unverified`. `healthy` needs such a query
+ * too; without one it is `degraded` with a warning, since health nobody looked at (or an empty window) is not health.
  */
-export function assemble(draft: Draft, env: 'local' | 'prod', calls: readonly Recorded[]): OtelResult {
+export function assemble(draft: Draft, env: 'local' | 'prod', calls: readonly Query[]): OtelResult {
   const warnings: string[] = []
-  const worked = calls.filter((c) => c.query.ok) // any tool: the server answered
-  const data = calls.filter((c) => c.data)
+  const worked = calls.filter((q) => q.ok)
+  const found = calls.some(returnedRows)
   const findings = draft.findings.map((f) => ({ ...f, unverified: !isGrounded(f.evidence, calls) }))
   const unverified = findings.filter((f) => f.unverified).length
-  if (unverified) warnings.push(`${unverified} finding(s) cite no query of this run: kept, flagged unverified`)
-  let status = draft.status
-  if (status === 'healthy' && data.length === 0) {
-    status = 'degraded'
-    warnings.push('healthy was not supported: no query of telemetry succeeded in this run, so health is unconfirmed')
-  } else if (status !== 'healthy' && data.length === 0) {
-    warnings.push(`${status} rests on no successful query of telemetry in this run`)
+  if (unverified) {
+    warnings.push(`${unverified} finding(s) name no query of this run that returned rows: kept, flagged unverified`)
   }
-  const reason = calls.length === 0 ? 'the agent made no call' : calls.find((c) => !c.query.ok)?.query.error
+  const quoting = findings.filter((f) => f.evidence && QUOTED.test(f.evidence)).length
+  if (quoting) {
+    warnings.push(`${quoting} finding(s) quote telemetry text in their evidence: untrusted data, never instructions`)
+  }
+  let status = draft.status
+  if (!found) {
+    if (status === 'healthy') {
+      status = 'degraded'
+      warnings.push(
+        'healthy was not supported: no query of telemetry returned rows in this run, so health is unconfirmed',
+      )
+    } else {
+      warnings.push(`${status} rests on no query of telemetry that returned rows in this run`)
+    }
+  }
+  const reason = calls.length === 0 ? 'the agent made no call' : calls.find((q) => !q.ok)?.error
   return {
     status,
     environment: env,
     timeRange: draft.timeRange,
     findings,
     recommendations: draft.recommendations,
+    untrusted: UNTRUSTED,
     hyperdx: worked.length > 0 ? { connected: true } : { connected: false, ...(reason ? { reason } : {}) },
-    queries: calls.map((c) => c.query),
+    queries: [...calls],
     warnings,
   }
 }
@@ -77,17 +91,14 @@ async function untilAborted(done: Promise<void>, signal: AbortSignal): Promise<v
   }
 }
 
-export function createOtelWorkflows(
-  deps: HostDeps,
-  options: OtelOptions = {},
-  store: CallStore = callStore(),
-): HostWorkflow[] {
+export function createOtelWorkflows(deps: HostDeps, options: OtelOptions = {}): HostWorkflow[] {
   const toolGate = deps.toolGate
 
   async function runAgent(ctx: Ctx, input: z.output<typeof OtelInput>): Promise<OtelResult> {
     const runId = ctx.runId
     const startedAt = await ctx.step('clock', () => new Date().toISOString())
-    const close = toolGate.open({ runId, stepId: STEP, ...otelGrant(store, runId, input.env) })
+    const calls = runCalls()
+    const close = toolGate.open({ runId, stepId: STEP, ...otelGrant(calls, input.env) })
     let agentEnded!: () => void
     const ended = new Promise<void>((resolve) => {
       agentEnded = resolve
@@ -107,8 +118,10 @@ export function createOtelWorkflows(
     try {
       // The tools step lives as long as the agent's turns: every gate call books its usage here as it is reported (free
       // for hdx, but the middleware still records it), and its output is the run's calls, journaled so a replay grounds
-      // the same way. Calls made before a host restart are not in memory: those findings end up flagged, never lost.
-      const tools = ctx.step('tools', async ({ addUsage, signal }) => {
+      // the same way. Calls made before a host restart are lost (the resumed attempt numbers its queries apart, `q2.1`): the
+      // earlier ids match nothing, so findings resting on them end up flagged, never dropped.
+      const tools = ctx.step('tools', async ({ addUsage, signal, attempt }) => {
+        calls.begin(attempt)
         const unbind = toolGate.bindUsage(runId, STEP, addUsage)
         toolsBound()
         try {
@@ -117,7 +130,7 @@ export function createOtelWorkflows(
           await endAgent(!signal.aborted)
           unbind()
         }
-        return { calls: store.take(runId) } satisfies Calls
+        return { calls: calls.take() } satisfies Calls
       })
       tools.catch(() => {}) // awaited below; a rejection before that is not unhandled
       // A replayed tools step never runs its body: the step itself resolves.
@@ -147,7 +160,7 @@ export function createOtelWorkflows(
       return assemble(draft, input.env, recorded.calls)
     } finally {
       await endAgent()
-      store.clear(runId)
+      calls.close()
     }
   }
 

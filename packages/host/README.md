@@ -286,7 +286,8 @@ ClickStack/HyperDX and answers in agent-gateway's `otel` shape: `status` `health
 `timeRange`, `findings [{service, summary, severity, evidence?, unverified}]`, `recommendations`. Changed from the
 legacy tool: `hyperdx` is typed (`{connected, reason?}`), and the answer adds `queries` (every tool call of the run:
 `id`, `tool`, `target`, `argsDigest`, `ok`, `error?`, `rows?`, `chars`) and `warnings`. `--since` is a duration ending
-now (`30m`, `2h`, `3d`) or an absolute `<from>/<to>` of ISO instants; without it the agent chooses (the run's journaled
+now (`30m`, `2h`, `3d`) or an absolute `<from>/<to>` of strict ISO-8601 instants with a zone (`2026-10-27T08:00:00Z`;
+dates alone, local times, impossible days and a reversed range are refused); without it the agent chooses (the run's journaled
 start time is in its prompt, since the agent has no clock).
 
 - **The agent** (`agents/otel`, route `otel.agent`: deepseek on OpenCode, `AGENT_FALLBACK`) holds three tools through the
@@ -297,23 +298,28 @@ start time is in its prompt, since the agent has no clock).
 - **The environment is the run's.** The grant carries `fixed: { env }`; the gate sets it on every call after the agent's
   own arguments, and the plugin offers no `env` argument. The agent cannot choose or switch it; `environment` in the
   answer is the input's, not the agent's.
-- **Grounding** (`assemble`, in code). The gate's hook records each call (`otel` does not write a ledger table: the
-  calls are held in memory per run and journaled as the `tools` step's output, with a bounded, normalized copy of each
-  answer, at most 30 000 characters per call and 300 000 per run; a host restart between the agent's first call and the
-  `tools` step's end loses the earlier calls, and those findings then end up flagged, never dropped). A finding is
-  grounded when its `evidence` names a `hdx_query` call of this run that worked (`q3`; `t<n>` ids are tool listings and
-  guides and ground nothing) or contains something specific that appears in a worked query's answer: a hex id of 16+
-  characters, a quoted excerpt, an identifier like `http.status_code` or `/api/v1/x`, or the whole evidence text.
-  Otherwise it stays in the answer with `unverified: true` and the run carries a warning. Matching is a heuristic: a
-  true finding whose evidence paraphrases (`p95 2.3 s` for `2300000000`) is flagged too; that costs the `grounded`
-  score, never a finding.
-- **Status is cross-checked.** `healthy` needs a successful query of telemetry (`clickstack_table`, `_timeseries`,
-  `_search`, `_service_health`, ... not sources, schemas or dashboards); without one the answer is `degraded` with a
-  warning (health nobody looked at is not health). `degraded` or `errors` with no such query keeps its status and adds
-  a warning. `hyperdx.connected` is true when any call was answered.
+- **Query ids are the agent's citations.** The grant's `onStart` hook numbers each `hdx_query` when the call starts (issue
+  order: `q1`, `q2`, ...) and the gate sends that label back with the answer, so the agent's tool shows `query q3: ...`
+  and what it cites is what was recorded. `hdx_tools` and `hdx_guide` are `t<n>` and carry no label (reading about the
+  tools is not a query). The recorder is per run (no global state): `onCall` writes the query's record (`tool`,
+  `target`, `argsDigest`, `ok`, `rows`, `chars`) and the `tools` step journals the list, so a replay grounds the same
+  way. A retried or resumed `tools` step numbers its queries `q<attempt>.<n>` (`q2.1`), so an id never means two calls;
+  calls made before a host restart are lost, the resumed agent's earlier ids match nothing, and those findings are
+  flagged, never dropped. A hook that fires after the step has taken its calls is ignored (nothing re-inserted).
+- **Grounding** (`assemble`, in code). A finding is grounded when its `evidence` names at least one query of this run
+  that read telemetry (`clickstack_table|timeseries|search|event_*|service_health|trace_*|query_tile(s)`), worked and
+  returned rows (`rows > 0`, read from the answer's `result.rows`/`data` or a `services` list; an answer cut inside a
+  non-empty `data` list counts as at least one). Nothing in the evidence text itself grounds it (a trace id, a quote,
+  a date or a column name would ground a hallucination). Otherwise it stays in the answer with `unverified: true` and
+  the run carries a warning. Quoted excerpts in evidence add a warning too.
+- **Untrusted output.** Summaries, evidence and recommendations come from an agent that read logs any observed system
+  can write: the answer carries an `untrusted` note, and the calling session reads it without obeying it.
+- **Status is cross-checked.** `healthy` needs a query that returned rows (see above); without one the answer is
+  `degraded` with a warning (health nobody looked at, or an empty window, is not health). `degraded` or `errors` with
+  no such query keeps its status and adds a warning. `hyperdx.connected` is true when any call was answered.
 - **One re-ask** (`otel:reask`, the same session) when the answer is not the findings JSON, then `invalid_output`.
 - **Scorer** (`scorer.ts`): `valid`, `status` (match), `facts` (judged: one `decide` boolean per reference fact),
-  `grounded` (the share of findings not flagged; only when the output has `queries`, so the legacy arm is scored by the
+  `grounded` (the share of findings not flagged `unverified`; only when the output has `queries`, so the legacy arm is scored by the
   same function). `pass`: valid, status matches and every fact stated. Cases are plain eval cases in
   `$AGW_EVAL_DIR/otel/cases.jsonl` (`{id, input: {investigation, env, since}, reference: {status, facts}}`);
   `scripts/eval-legacy/otel.ts` runs agent-gateway's MCP `otel` tool per case and appends scored rows to
@@ -336,9 +342,11 @@ start time is in its prompt, since the agent has no clock).
   same 0600 and atomic rename; removed on close under the same ownership rule), because a run resumed across a deploy
   re-attaches to a session in its old content-hashed location, whose plugin reads that path. The old path is dropped in
   a later release, once no live location reads it.
-- **A grant** (`gate.open({ runId, stepId, tools, fixed?, onCall? })`, returns the close) carries its own tool set: a map of
+- **A grant** (`gate.open({ runId, stepId, tools, fixed?, onStart?, onCall? })`, returns the close) carries its own tool set: a map of
   tool name to capability id, `fixed` arguments the gate sets on every call over the agent's own (a run's environment is
-  not the agent's to pick), and an optional hook the workflow supplies. **An agent holds read tools only, structurally:**
+  not the agent's to pick), an optional `onStart` hook (told of each granted call before it runs; the string it returns is the call's `label`, sent
+  back with the answer for the agent's tool to show, and handed to `onCall`), and an optional `onCall` hook the workflow supplies.
+  **An agent holds read tools only, structurally:**
   `open` throws `tool grant refused: <tool> -> …` for an `hdx.*` capability outside `AGENT_SAFE_HDX`, and (once
   `createWorkflows` has told the gate what the registry holds, `useCapabilities`) for a capability whose CLI spec is
   `mutating` or that does not exist; nothing is opened. A call is `POST /tool/<name>` with
