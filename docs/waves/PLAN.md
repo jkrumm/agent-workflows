@@ -282,8 +282,8 @@ Workers: Haiku for the sweeps, Sonnet/high for the rest.
 - [ ] research-gateway, audio-gateway and agent-gateway retired: LaunchAgents removed, repos archived,
   `agw-legacy` CLI and its PATH link deleted; the `dispatch` lane removed everywhere (unused, owner 2026-10-29)
 - [ ] argo's `/ai` audio proxy routes and dashboard audio calls deleted (no bridge; owner 2026-10-29)
-- [ ] usage-tracker's agent-gateway OpenCode/IU collectors removed once Argo totals reconcile over a full
-  week of overlap (earliest ~2026-11-05); if Wave 11 ends earlier, the date is written into Left behind
+- [ ] usage-tracker's agent-gateway OpenCode/IU collectors removed right after agent-gateway stops (they
+  read its own store, so no overlap can accrue; Wave 9 proved journal = Argo); historical rows stay
 - [ ] The last callers removed before the services stop (Wave 10 list): Hermes `dispatch` skill and the
   `brain-drift-audit` cron prompt, hermes-agent `make doctor` probe, dotfiles `install-cli`, `wave-watch.sh`
   job poll, `remote-dev.sh` hint, Caddy rows, devhost probes, Kuma pushes/monitors, modelpick's agent-gateway
