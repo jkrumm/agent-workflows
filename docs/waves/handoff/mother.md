@@ -78,7 +78,9 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
 - 2026-10-29: old-gateway caller inventory (owner asked about iris): iris, argo, hermes-agent,
   dotfiles, modelpick, homelab monitors, warden (retired), usage-tracker collectors. In PLAN Waves 8
   and 10. Asked iris-mother (rd say) to plan a switch wave and say whether `triage` must be ported;
-  awaiting its answer via rd say to agent-workflows-mother.
+  Answered: iris switches audio now (its Wave 16 S3); `triage` ported as-is in our Wave 8, then iris
+  Wave 17 drops its agw adapters once our lead sends the decide + triage contract. argo's audio switch
+  moved to Wave 9 (VPS reachability by the tailnet-grant precedent; security review).
 
 ## Next action
 - Watch the lead (`wave-watch.sh --agents agent-workflows-w1 --heartbeat 9`, bounded 10 min), read
