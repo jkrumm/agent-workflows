@@ -4,7 +4,7 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
 `docs/waves/PLAN.md` and this file, then continues from **Next action**.
 
 ## State
-- Waves 1–7 done (retros in concept.md). Active wave: 8 (Audio, image, podcast; P4a).
+- Waves 1–8 done (retros in concept.md). Active wave: 9 (Usage, P4b).
 - Lead's close-out channel: `docs/waves/handoff/lead.md` (the mother owns PLAN.md and the retro log;
   the lead writes per-step verdicts, Left behind, gate evidence and retro notes there, then idles).
 - dotfiles is free: P0 done (owner, 2026-10-27).
@@ -13,8 +13,7 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
   `com.jkrumm.vps-pg-backup` is ours: P0b maps it in dotfiles `docs/architecture.md`. Relayed to the lead.
 
 ## Lead
-- `agent-workflows-w1` (pane w40:p22), Opus/high, spawned 2026-10-29 ~12:25: the third Wave 8 lead
-  (state in `handoff/lead.md` at `f25d98b`). Under host load use `herdr agent list` (rd agents stalls).
+- `agent-workflows-w1` (pane w40:p25), Opus/high, fresh, spawned 2026-10-29 ~15:25 for Wave 9.
   Rotation policy: a fresh lead per wave unless the last one closed under ~30% context.
 - The mother is agent `agent-workflows-mother` (pane w40:p1).
 
@@ -33,7 +32,8 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
   loses its Max fallback now and refuses once iris (last caller, 16 jobs since 10-28) uses
   `agw review --pr N`; asked iris-mother. Review OCR off by default. agent-gateway/.env's
   AGENT_GATEWAY_REVIEW_OCR=0 (set by the argo session) is kept and owned by us.
-  iris switched its review to `agw review --pr N` (~14:20); confirmation pending → then the refusal.
+  iris confirmed: review on `agw review`, audio and decide/triage on the host; it no longer calls
+  agent-gateway or audio-gateway at runtime. agent-gateway's review refuses (fe14b53).
   Kept on Max by assumption: in-session `/review --deep`, the degrade-to-`/code-review` fallback, the
   fleet's own `/code-review high` (none is `claude -p`); flip if the owner says so.
 
@@ -103,4 +103,4 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
 
 ## Next action
 - Watch the lead (`wave-watch.sh --agents agent-workflows-w1 --heartbeat 9`, bounded 10 min), read
-  `handoff/lead.md` on idle, write Wave 8's Left behind and retro, flip Wave 9 active, rotate the lead.
+  `handoff/lead.md` on idle, write Wave 9's Left behind and retro, flip Wave 10 active, rotate the lead.
