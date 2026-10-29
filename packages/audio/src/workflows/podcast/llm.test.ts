@@ -19,7 +19,7 @@ import {
   type WireUsage,
   writerBudget,
 } from './llm.ts'
-import { type PodcastRouteId, resolvePodcastRoute } from './routes.pending.ts'
+import { type PodcastRouteId, resolvePodcastRoute } from './routes.ts'
 
 /** The error a promise rejects with; fails the test when it resolves. */
 async function rejected(promise: Promise<unknown>): Promise<Error> {
@@ -359,8 +359,6 @@ describe('Llm usage', () => {
     await runToolLoop(llm, params({ tools: [noopTool] }))
     expect(usages).toHaveLength(3)
     expect(usages[0]).toMatchObject({ model: 'fake-model', tokens: USAGE.tokens, cost: 0.01, costSource: 'provider' })
-    expect(llm.spend.usd).toBeCloseTo(0.03)
-    expect(llm.spend.unpriced).toBe(0)
   })
 
   test('a call without provider cost is priced by the route rate, or counted unpriced when the route has none', async () => {
@@ -376,13 +374,12 @@ describe('Llm usage', () => {
     const unratedLlm = llmFor(unrated)
     await runToolLoop(unratedLlm.llm, params())
     expect(unratedLlm.usages[0]).toMatchObject({ cost: null, costSource: 'unknown' })
-    expect(unratedLlm.llm.spend).toEqual({ usd: 0, unpriced: 1 })
   })
 
-  test('a call that came back without usage is still reported, unpriced, under the route model', async () => {
+  test('a call that came back without usage is reported unpriced, never priced at $0 by the route rate', async () => {
     const port = new FakePort([{ text: 'x', stop: 'complete' }])
     port.usage = null
-    const { llm, usages } = llmFor(port)
+    const { llm, usages } = llmFor(port, route({ rate: { inputPerM: 1, outputPerM: 2 } }))
     await llm.call({
       route: 'podcast.editorial',
       systemPrompt: 's',
@@ -398,10 +395,9 @@ describe('Llm usage', () => {
         costSource: 'unknown',
       },
     ])
-    expect(llm.spend.unpriced).toBe(1)
   })
 
-  test('nothing is reported for a call that failed after the step was cancelled', async () => {
+  test('a call that failed after the step was cancelled is still recorded, unpriced (it may have billed)', async () => {
     const abort = new AbortController()
     const port = new FakePort([new ModelError('cancelled')])
     port.usage = null
@@ -420,7 +416,14 @@ describe('Llm usage', () => {
         )
       ).message,
     ).toContain('cancelled')
-    expect(usages).toEqual([])
+    expect(usages).toEqual([
+      {
+        model: 'fake-model',
+        tokens: { input: 0, output: 0, cacheRead: 0, reasoning: 0 },
+        cost: null,
+        costSource: 'unknown',
+      },
+    ])
     expect(llm.aborted).toBe(true)
   })
 
@@ -472,13 +475,9 @@ describe('Llm balance fallback', () => {
     expect((await rejected(runToolLoop(llmFor(other, resolvePodcastRoute).llm, params()))).message).toContain('500')
     expect(other.rounds).toHaveLength(1)
 
-    const write = resolvePodcastRoute('podcast.write')
-    expect(write.fallback).toBeUndefined()
+    // A route without a fallback (`route()` builds none): the balance failure stands.
     const noFallback = new FakePort([], [new ModelError('provider balance exhausted (402)', true)])
-    expect(
-      (await rejected(runToolLoop(llmFor(noFallback, resolvePodcastRoute).llm, params({ route: 'podcast.write' }))))
-        .message,
-    ).toContain('balance')
+    expect((await rejected(runToolLoop(llmFor(noFallback).llm, params()))).message).toContain('balance')
     expect(noFallback.rounds).toHaveLength(1)
   })
 

@@ -296,6 +296,10 @@ export function iuModelPort(options: IuOptions = {}): ModelPort {
         })
       } catch (error) {
         if (signal.aborted) throw error
+        // The hang guard fired: the wait is spent (and the abandoned request may still bill), so it is not retried.
+        if (error instanceof Error && error.name === 'TimeoutError') {
+          throw new ModelError(`${wire} round produced no response within ${Math.round(hangMs / 60_000)} minutes`)
+        }
         throw new Retryable(error instanceof Error ? error.message : String(error))
       }
       if (!res.ok) throw await failed(res, wire)

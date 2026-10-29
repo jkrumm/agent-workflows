@@ -1,7 +1,7 @@
 import { costFromUsage, fallbackRoute, type ResolvedRoute } from '../../../../routes/src/index.ts'
 import type { StepScope, Usage } from '../../../../runtime/src/index.ts'
 import { log } from './log.ts'
-import { type PodcastRouteId, resolvePodcastRoute } from './routes.pending.ts'
+import { type PodcastRouteId, resolvePodcastRoute } from './routes.ts'
 import type { ToolCallRecord } from './types.ts'
 
 // The writers' room's model calls. Every call goes through a `ModelPort` (production: `iu.ts`, tests: a fake), is
@@ -96,19 +96,11 @@ export class ModelError extends Error {
 /** IU serves function tools for the GPT-6.1 family only on `/v1/responses` (chat/completions 503s; probed 2026-10-26). */
 export const usesResponsesApi = (model: string): boolean => /^gpt-6\.1/.test(model)
 
-/** What a step spent on model calls: summed over priced calls, `unpriced` counts the rest. */
-export interface Spend {
-  usd: number
-  unpriced: number
-}
-
 /**
- * The model calls of ONE step: bound to its `addUsage` and signal, summing what it spent. Created inside the step
- * body, so a retried or resumed step starts from zero and reports only its own calls.
+ * The model calls of ONE step, bound to its `addUsage` and signal. What they cost lives in the journal only (the
+ * step's recorded usage, retries and failed attempts included); nothing here sums it.
  */
 export class Llm {
-  readonly spend: Spend = { usd: 0, unpriced: 0 }
-
   constructor(
     private readonly port: ModelPort,
     private readonly scope: Pick<StepScope, 'addUsage' | 'signal' | 'progress'>,
@@ -146,10 +138,18 @@ export class Llm {
       route.rate,
     )
     const priced: Usage = { model: usage.model, tokens: usage.tokens, cost: cost.usd, costSource: cost.source }
-    if (cost.usd === null) this.spend.unpriced++
-    else this.spend.usd += cost.usd
     this.scope.addUsage(priced)
     this.scope.progress()
+  }
+
+  /** A call that came back with no usage: unpriced in the record, never priced at $0 by a rate over zero tokens. */
+  private reportUnknown(model: string) {
+    this.scope.addUsage({
+      model,
+      tokens: { input: 0, output: 0, cacheRead: 0, reasoning: 0 },
+      cost: null,
+      costSource: 'unknown',
+    })
   }
 
   /**
@@ -166,13 +166,7 @@ export class Llm {
           this.report(route, usage)
         })
       } finally {
-        if (reported === 0 && !this.scope.signal.aborted) {
-          this.report(route, {
-            model: route.model,
-            tokens: { input: 0, output: 0, cacheRead: 0, reasoning: 0 },
-            cost: null,
-          })
-        }
+        if (reported === 0) this.reportUnknown(route.model)
       }
     }
     try {

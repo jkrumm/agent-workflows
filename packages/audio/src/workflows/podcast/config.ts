@@ -18,6 +18,8 @@ export interface PodcastConfig {
   maxUnitChars: number
   /** Parallel segment writes and revisions (legacy: 3). */
   concurrency: number
+  /** The vault (`AGW_BRAIN_DIR`) `sourcePaths` are read from. */
+  vaultDir: string
   /** The owner's voice guide (`voice.md` at the vault root, `AGW_BRAIN_DIR`); unreadable = written from the show bible alone. */
   voicePath: string | null
 }
@@ -58,6 +60,7 @@ export function podcastConfigFromEnv(env: Env = process.env): PodcastConfig {
     agentic: (env.PODCAST_AGENTIC_WRITER ?? 'on').trim().toLowerCase() !== 'off',
     maxUnitChars: int(env, 'PODCAST_MULTISPEAKER_MAX_CHARS', 3000),
     concurrency: 3,
+    vaultDir: brainDir,
     voicePath: join(brainDir, 'voice.md'),
   }
 }

@@ -1,7 +1,8 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { freshSchema, inspector, testRuntime } from '../../../../runtime/test/support/pg.ts'
-import { postgresHistory, type Queryable, renderTranscriptMarkdown } from './history.ts'
+import { postgresCosts, postgresHistory, type Queryable, renderTranscriptMarkdown } from './history.ts'
 import { createPodcastWorkflow } from './index.ts'
+import { researchKey } from './ports.ts'
 import { fakeHistory, fakeRoom } from './testing.ts'
 
 // The show's memory on Postgres: imported legacy episodes and finished `podcast` runs, one order, per series.
@@ -54,6 +55,7 @@ describe('postgresHistory', () => {
     )
     const room = fakeRoom()
     const podcast = createPodcastWorkflow({
+      costs: postgresCosts(pool, db.schema),
       history: fakeHistory(),
       models: room,
       config: {
@@ -102,5 +104,56 @@ describe('postgresHistory', () => {
 
   test('refuses a schema name it would have to quote', () => {
     expect(() => postgresHistory(pool, 'x"; drop')).toThrow('invalid journal schema name')
+    expect(() => postgresCosts(pool, 'x"; drop')).toThrow('invalid journal schema name')
+  })
+})
+
+describe('postgresCosts', () => {
+  /** A run row as the runtime writes it, reduced to the columns these queries read. */
+  async function run(id: string, workflow: string, rootId: string, key: string | null) {
+    await sql.pool.query(
+      `insert into "${db.schema}".runs (id, workflow, parent_id, root_id, status, purpose, input, input_hash, lock_key,
+         version_started, idempotency_key)
+       values ($1, $2, $3, $4, 'done', 'build', '{}', 'h', 1, 'v', $5)`,
+      [id, workflow, id === rootId ? null : rootId, rootId, key],
+    )
+  }
+  async function step(runId: string, stepId: string, cost: number | null, unpriced: number) {
+    await sql.pool.query(
+      `insert into "${db.schema}".steps (run_id, step_id, kind, status, cost, unpriced_calls)
+       values ($1, $2, 'code', 'failed', $3, $4)`,
+      [runId, stepId, cost, unpriced],
+    )
+  }
+
+  test("sums the run's own steps, its keyed research runs and its produce child; failed steps included", async () => {
+    await run('ep-1', 'podcast', 'ep-1', null)
+    await step('ep-1', 'segment:0', 0.5, 0)
+    await step('ep-1', 'segment:1', 0.25, 2) // a failed attempt still carries what it billed
+    await step('ep-1', 'house', null, 0)
+    // Two research runs this episode started (a resumed step re-attached to the first, so it is counted once).
+    await run('rs-1', 'research', 'rs-1', researchKey('ep-1', 'research', 'quick', 'a'))
+    await step('rs-1', 'research', 0.1, 0)
+    await run('rs-2', 'research', 'rs-2', researchKey('ep-1', 'research:fact:0', 'standard', 'b'))
+    await step('rs-2', 'research', 0.2, 1)
+    // Another episode's research run and an unkeyed one are not this episode's.
+    await run('rs-3', 'research', 'rs-3', researchKey('ep-2', 'research', 'quick', 'a'))
+    await step('rs-3', 'research', 9, 0)
+    await run('rs-4', 'research', 'rs-4', null)
+    await step('rs-4', 'research', 9, 0)
+    await run('ep-1/produce/0', 'podcast.produce', 'ep-1', null)
+    await step('ep-1/produce/0', 'synth', 1, 0)
+
+    const cost = await postgresCosts(pool, db.schema).episodeCost('ep-1')
+    expect(cost.script).toEqual({ usd: 0.75, unpriced: 2 })
+    expect(cost.research.runs).toBe(2)
+    expect(cost.research.usd).toBeCloseTo(0.3, 9)
+    expect(cost.research.unpriced).toBe(1)
+    expect(cost.produce).toEqual({ usd: 1, unpriced: 0 })
+    expect(await postgresCosts(pool, db.schema).episodeCost('nobody')).toEqual({
+      script: { usd: 0, unpriced: 0 },
+      research: { usd: 0, unpriced: 0, runs: 0 },
+      produce: { usd: 0, unpriced: 0 },
+    })
   })
 })

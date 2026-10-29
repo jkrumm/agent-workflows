@@ -1,7 +1,9 @@
+import { fenced, fenceRule, fenceToken } from './fence.ts'
 import type { Llm, ToolDef } from './llm.ts'
 import { runToolLoop } from './llm.ts'
 import { log } from './log.ts'
 import type { BrainPort, HistoryPort, ResearchDepth, ResearchPort } from './ports.ts'
+import { researchKey } from './ports.ts'
 import { repairGermanQuotes } from './script.ts'
 import type { Dossier, LoadBearingFact, ToolCallRecord } from './types.ts'
 
@@ -10,7 +12,9 @@ import type { Dossier, LoadBearingFact, ToolCallRecord } from './types.ts'
 // missing. Best-effort: the workflow decides what a throw means (write from the source alone).
 //
 // Privacy: the brain notes the tools read go to the research model, as they did on legacy; they are the episode's
-// source. The vault capabilities keep the reads inside `wiki/`, `Areas/` and `Projects/`.
+// source. The vault capabilities keep the agent's reads inside `wiki/`, `Areas/` and `Projects/`, and every tool result
+// reaches the model fenced as untrusted data (`fence.ts`), so a note cannot steer the loop into reading other notes
+// and sending them out in a research query.
 
 export interface ResearchInput {
   source: string
@@ -20,18 +24,24 @@ export interface ResearchInput {
   series: string
 }
 
+/** Where a host research run comes from: its idempotency key is this run, this step and the query. */
+export interface ResearchOrigin {
+  runId: string
+  stepId: string
+}
+
 export interface ResearchDeps {
   /** Absent: no brain tools. */
   brain?: BrainPort
   /** Absent: no `research` tool. `maxCalls`: an optional emergency valve on runs per episode (absent: unlimited). */
-  research?: { port: ResearchPort; maxCalls?: number }
-  /** Running spend of the `research` workflow runs this stage started (their own run records hold the detail). */
-  spend?: { usd: number; unpriced: number }
+  research?: { port: ResearchPort; origin: ResearchOrigin; maxCalls?: number }
   history: HistoryPort
   series: string
   signal: AbortSignal
   /** Resets the step's idle timer while a research run is waited on. */
   progress: () => void
+  /** The fence token of this loop's tool results; default a fresh one. */
+  token?: string
 }
 
 const BRAIN_READ_MAX_CHARS = 60_000
@@ -41,33 +51,17 @@ const DEFAULT_SEARCH_LIMIT = 8
 /** The vault capability's ceiling per search. */
 const MAX_SEARCH_LIMIT = 50
 const DEFAULT_PAST_EPISODES_LIMIT = 10
-/** A source note read through `sourcePaths`: the vault capability's ceiling. */
-export const SOURCE_NOTE_MAX_CHARS = 100_000
+/** The editor names at most this many load-bearing facts; each is one standard-depth run and one step. */
+export const MAX_LOAD_BEARING_FACTS = 3
 
 const clampLimit = (value: unknown, fallback: number, max: number) =>
   typeof value === 'number' && Number.isFinite(value) ? Math.min(max, Math.max(1, Math.round(value))) : fallback
 
-/** Read brain-relative note paths (`sourcePaths`) up front, frontmatter included, as legacy read the raw file. */
-export async function readBrainNotes(
-  brain: BrainPort,
-  paths: string[],
-  signal: AbortSignal,
-): Promise<Array<{ path: string; text: string }>> {
-  const out: Array<{ path: string; text: string }> = []
-  for (const path of paths) {
-    const note = await brain.read(path, SOURCE_NOTE_MAX_CHARS, signal)
-    if (!note.found) throw new Error(`sourcePaths: "${path}": ${note.reason}`)
-    const text = note.frontmatter ? `---\n${note.frontmatter}\n---\n${note.body}` : note.body
-    out.push({ path, text })
-  }
-  return out
-}
-
 // ---------------------------------------------------------------------------
-// Tools
+// Tools: every result that carries outside text goes back fenced.
 // ---------------------------------------------------------------------------
 
-export function brainSearchTool(brain: BrainPort, signal: AbortSignal): ToolDef {
+export function brainSearchTool(brain: BrainPort, signal: AbortSignal, token: string): ToolDef {
   return {
     name: 'brain_search',
     description:
@@ -85,12 +79,12 @@ export function brainSearchTool(brain: BrainPort, signal: AbortSignal): ToolDef 
       const query = typeof args.query === 'string' ? args.query : ''
       if (!query.trim()) throw new Error('give a query')
       const result = await brain.search(query, clampLimit(args.limit, DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT), signal)
-      return JSON.stringify(result)
+      return fenced(JSON.stringify(result), token)
     },
   }
 }
 
-export function brainReadTool(brain: BrainPort, signal: AbortSignal): ToolDef {
+export function brainReadTool(brain: BrainPort, signal: AbortSignal, token: string): ToolDef {
   return {
     name: 'brain_read',
     description: "Read one note from the listener's vault by its vault-relative path (as returned by brain_search).",
@@ -99,17 +93,13 @@ export function brainReadTool(brain: BrainPort, signal: AbortSignal): ToolDef {
       const path = String((rawArgs as { path?: unknown }).path ?? '')
       const note = await brain.read(path, BRAIN_READ_MAX_CHARS, signal)
       if (!note.found) throw new Error(note.reason)
-      return JSON.stringify({
-        path: note.path,
-        frontmatter: note.frontmatter,
-        body: note.body,
-        truncated: note.truncated,
-      })
+      const { frontmatter, body, truncated } = note
+      return fenced(JSON.stringify({ path: note.path, frontmatter, body, truncated }), token)
     },
   }
 }
 
-function pastEpisodesTool(history: HistoryPort, series: string): ToolDef {
+function pastEpisodesTool(history: HistoryPort, series: string, token: string): ToolDef {
   return {
     name: 'past_episodes',
     description: 'List recent finished episodes of this podcast, newest first, with their editorial profile.',
@@ -119,12 +109,12 @@ function pastEpisodesTool(history: HistoryPort, series: string): ToolDef {
     },
     execute: async (rawArgs) => {
       const limit = clampLimit((rawArgs as { limit?: unknown }).limit, DEFAULT_PAST_EPISODES_LIMIT, 50)
-      return JSON.stringify(await history.recent(series, limit))
+      return fenced(JSON.stringify(await history.recent(series, limit)), token)
     },
   }
 }
 
-function pastTranscriptTool(history: HistoryPort): ToolDef {
+function pastTranscriptTool(history: HistoryPort, token: string): ToolDef {
   return {
     name: 'past_transcript',
     description: 'Read the full markdown transcript of a past episode by its id (from past_episodes).',
@@ -133,9 +123,11 @@ function pastTranscriptTool(history: HistoryPort): ToolDef {
       const id = String((rawArgs as { id?: unknown }).id ?? '')
       const transcript = await history.transcript(id)
       if (transcript == null) return `error: no transcript found for episode "${id}"`
-      return transcript.length > PAST_TRANSCRIPT_MAX_CHARS
-        ? `${transcript.slice(0, PAST_TRANSCRIPT_MAX_CHARS)}\n\n[truncated at ${PAST_TRANSCRIPT_MAX_CHARS} chars]`
-        : transcript
+      const capped =
+        transcript.length > PAST_TRANSCRIPT_MAX_CHARS
+          ? `${transcript.slice(0, PAST_TRANSCRIPT_MAX_CHARS)}\n\n[truncated at ${PAST_TRANSCRIPT_MAX_CHARS} chars]`
+          : transcript
+      return fenced(capped, token)
     },
   }
 }
@@ -146,16 +138,11 @@ function renderAnswer(report: string, sources: string[]): string {
   return `${report.slice(0, RESEARCH_REPORT_MAX_CHARS)}${sourcesBlock}`
 }
 
-function addSpend(spend: { usd: number; unpriced: number }, usd: number | null) {
-  if (usd === null) spend.unpriced++
-  else spend.usd += usd
-}
-
 function researchTool(
   research: NonNullable<ResearchDeps['research']>,
-  spend: { usd: number; unpriced: number },
   signal: AbortSignal,
   progress: () => void,
+  token: string,
 ): ToolDef {
   let used = 0
   /** An identical query returns what it returned the first time: no second run, no second charge. */
@@ -169,83 +156,74 @@ function researchTool(
     execute: async (rawArgs) => {
       const query = String((rawArgs as { query?: unknown }).query ?? '')
       // Quick only: the researcher's own judgement on what deserves standard depth was the overspend failure on
-      // legacy. Standard depth exists only in `runLoadBearingResearch`, on facts the editor named.
+      // legacy. Standard depth exists only in the follow-up, on facts the editor named.
       const depth: ResearchDepth = 'quick'
-      const key = normalize(query)
-      const earlier = answered.get(key)
+      const normalized = normalize(query)
+      const earlier = answered.get(normalized)
       if (earlier !== undefined) return `(this exact query was already run — same result)\n${earlier}`
       if (research.maxCalls !== undefined && research.maxCalls > 0 && used >= research.maxCalls) {
         return `research budget exhausted (${research.maxCalls} calls)`
       }
-      const result = await research.port.run(query, depth, signal, progress)
+      const key = researchKey(research.origin.runId, research.origin.stepId, depth, normalized)
+      const result = await research.port.run(query, depth, { key, signal, progress })
       if (!result.ok) return result.error
       // Debited only once a run ended done: a refused or failed run does not consume a slot.
       used++
-      addSpend(spend, result.usd)
-      const answer = renderAnswer(result.report, result.sources)
-      answered.set(key, answer)
+      const answer = fenced(renderAnswer(result.report, result.sources), token)
+      answered.set(normalized, answer)
       return answer
     },
   }
 }
 
-export interface LoadBearingResearchResult {
-  additions: Dossier['additions']
-  toolCalls: ToolCallRecord[]
-  usdSpent: number
-  unpriced: number
-  /** The `openQuestion` of each resolved fact that named one (verbatim): the caller drops exactly these. */
-  answeredOpenQuestions: string[]
+export interface LoadBearingAnswer {
+  addition: Dossier['additions'][number] | null
+  toolCall: ToolCallRecord
+  /** The fact's `openQuestion` when it was answered and named one: the caller drops exactly that entry. */
+  answeredOpenQuestion: string | null
 }
 
 /**
- * Standard-depth research for the facts the editor named load-bearing (`EpisodeBrief.loadBearingFacts`), the only
- * place `standard` depth runs. Code decides the query (`fact.question`); matching back to `dossier.openQuestions` uses
- * `fact.openQuestion`, the editor's verbatim copy. Best-effort per fact: a failed run is logged and skipped.
+ * One editor-named load-bearing fact at standard depth: the only place `standard` runs. Code decides the query
+ * (`fact.question`); the answer closes `fact.openQuestion`, the editor's verbatim copy. Best-effort: a failed run is
+ * logged and comes back without an addition. One call per workflow step (`research:fact:<i>`), keyed to that step, so a
+ * resume never repeats a finished fact and re-attaches to an unfinished one.
  */
-export async function runLoadBearingResearch(
-  facts: LoadBearingFact[],
-  deps: { research?: ResearchPort; signal: AbortSignal; progress: () => void },
-): Promise<LoadBearingResearchResult> {
-  const out: LoadBearingResearchResult = {
-    additions: [],
-    toolCalls: [],
-    usdSpent: 0,
-    unpriced: 0,
-    answeredOpenQuestions: [],
-  }
-  if (!deps.research || facts.length === 0) return out
-  for (const fact of facts) {
-    const startedAt = Date.now()
-    const args = { query: fact.question, depth: 'standard' }
-    try {
-      const result = await deps.research.run(fact.question, 'standard', deps.signal, deps.progress)
-      if (!result.ok) throw new Error(result.error)
-      if (result.usd === null) out.unpriced++
-      else out.usdSpent += result.usd
-      out.additions.push({ source: `research: ${fact.question}`, text: renderAnswer(result.report, result.sources) })
-      if (fact.openQuestion) out.answeredOpenQuestions.push(fact.openQuestion)
-      out.toolCalls.push({ tool: 'research', args, ok: true, ms: Date.now() - startedAt })
-    } catch (err) {
-      if (deps.signal.aborted) throw err
-      log.warn('podcast load-bearing research failed, skipping this fact', {
-        fact: fact.question,
-        error: err instanceof Error ? err.message : String(err),
-      })
-      out.toolCalls.push({ tool: 'research', args, ok: false, ms: Date.now() - startedAt })
+export async function researchLoadBearingFact(
+  fact: LoadBearingFact,
+  deps: { research: ResearchPort; origin: ResearchOrigin; signal: AbortSignal; progress: () => void },
+): Promise<LoadBearingAnswer> {
+  const startedAt = Date.now()
+  const args = { query: fact.question, depth: 'standard' }
+  const key = researchKey(deps.origin.runId, deps.origin.stepId, 'standard', fact.question)
+  const result = await deps.research.run(fact.question, 'standard', {
+    key,
+    signal: deps.signal,
+    progress: deps.progress,
+  })
+  if (!result.ok) {
+    log.warn('podcast load-bearing research failed, skipping this fact', { fact: fact.question, error: result.error })
+    return {
+      addition: null,
+      toolCall: { tool: 'research', args, ok: false, ms: Date.now() - startedAt },
+      answeredOpenQuestion: null,
     }
   }
-  return out
+  return {
+    addition: { source: `research: ${fact.question}`, text: renderAnswer(result.report, result.sources) },
+    toolCall: { tool: 'research', args, ok: true, ms: Date.now() - startedAt },
+    answeredOpenQuestion: fact.openQuestion || null,
+  }
 }
 
-export function buildResearchTools(deps: ResearchDeps): ToolDef[] {
+export function buildResearchTools(deps: ResearchDeps & { token: string }): ToolDef[] {
+  const { token } = deps
   const tools: ToolDef[] = []
-  if (deps.brain) tools.push(brainSearchTool(deps.brain, deps.signal), brainReadTool(deps.brain, deps.signal))
-  tools.push(pastEpisodesTool(deps.history, deps.series), pastTranscriptTool(deps.history))
-  if (deps.research) {
-    deps.spend ??= { usd: 0, unpriced: 0 }
-    tools.push(researchTool(deps.research, deps.spend, deps.signal, deps.progress))
+  if (deps.brain) {
+    tools.push(brainSearchTool(deps.brain, deps.signal, token), brainReadTool(deps.brain, deps.signal, token))
   }
+  tools.push(pastEpisodesTool(deps.history, deps.series, token), pastTranscriptTool(deps.history, token))
+  if (deps.research) tools.push(researchTool(deps.research, deps.signal, deps.progress, token))
   return tools
 }
 
@@ -314,7 +292,7 @@ export function parseDossier(raw: string): Dossier {
 // Public entry point
 // ---------------------------------------------------------------------------
 
-function buildSystemPrompt(input: ResearchInput, deps: ResearchDeps): string {
+function buildSystemPrompt(input: ResearchInput, deps: ResearchDeps, token: string): string {
   const languageName = input.language === 'de' ? 'German' : 'English'
   const notes: string[] = []
   if (!deps.brain)
@@ -330,7 +308,7 @@ function buildSystemPrompt(input: ResearchInput, deps: ResearchDeps): string {
 The SOURCE is the listener's material and stays verbatim for the writers — your job is to make the writers' room UNDERSTAND it and to bring what they lack: context from the listener's brain (search it for the topic and adjacent notes, read what matters), what previous episodes already covered (so they don't repeat it), and the outside world. The listener's recurring failure is EXTERNAL NAMES nobody explains — third-party projects, tools, companies, standards and acronyms the notes take for granted (the notes' author knows them, a listener does not). So: first list every such name in the SOURCE that neither the SOURCE itself nor the brain notes you read explain, then look them up with ONE batched \`research\` query (all names in one question, asking for one plain sentence each: what it is and what it is for here). Web research is expected, not a last resort: follow with further, distinct runs for every fact the episode hinges on, every claim the notes make about the outside world that you cannot confirm from the brain, and every name the first run left unclear. Every proper name, place or term a listener would not know goes into the glossary with a plain-words handle — the glossary is built from what the brain and the research found, never from your guess; a name you could not resolve is glossed with only what the SOURCE implies. There is no research budget to ration — quality first — but batch the names, never one call per name, never the same query twice. Every \`research\` run here is quick depth — good for a name or term needing one plain sentence; that is a fixed property of this stage, not your call. If quick's answer leaves a fact genuinely too thin to put on air, do not re-run it deeper — list it in \`openQuestions\` instead, in enough concrete words that the editor can tell it is load-bearing; a deeper look happens later, if the editor decides it is.
 
 Finish with STRICT JSON and nothing else, matching exactly this shape:
-{"summary":"…","additions":[{"source":"brain: <path>"|"research: <query>"|"episode: <id>","text":"…"}],"glossary":[{"term":"…","plain":"…"}],"priorCoverage":[{"episodeId":"…","title":"…","covered":"…"}],"openQuestions":["…"]}${availability}`
+{"summary":"…","additions":[{"source":"brain: <path>"|"research: <query>"|"episode: <id>","text":"…"}],"glossary":[{"term":"…","plain":"…"}],"priorCoverage":[{"episodeId":"…","title":"…","covered":"…"}],"openQuestions":["…"]}${availability}${fenceRule(token)}`
 }
 
 function buildUserContent(input: ResearchInput): string {
@@ -340,25 +318,14 @@ function buildUserContent(input: ResearchInput): string {
   return parts.join('\n\n')
 }
 
-/** The dossier and what the stage's `research` runs cost (their own run records carry the detail). */
-export interface ResearchStageResult {
-  dossier: Dossier
-  researchUnpriced: number
-}
-
 /** Run the research stage; rethrows on failure: the caller proceeds without a dossier. */
-export async function runPodcastResearch(
-  llm: Llm,
-  input: ResearchInput,
-  deps: ResearchDeps,
-): Promise<ResearchStageResult> {
-  deps.spend ??= { usd: 0, unpriced: 0 }
-  const spend = deps.spend
+export async function runPodcastResearch(llm: Llm, input: ResearchInput, deps: ResearchDeps): Promise<Dossier> {
+  const token = deps.token ?? fenceToken()
   const result = await runToolLoop(llm, {
     route: 'podcast.research',
-    systemPrompt: buildSystemPrompt(input, deps),
+    systemPrompt: buildSystemPrompt(input, deps, token),
     userContent: buildUserContent(input),
-    tools: buildResearchTools(deps),
+    tools: buildResearchTools({ ...deps, token }),
     // Reasoning at high effort spends generously against the same budget; a starved round retries with double.
     maxCompletionTokens: 32000,
     stage: 'research',
@@ -383,10 +350,7 @@ export async function runPodcastResearch(
     })
     dossier = parseDossier(fixed.content)
   }
-  return {
-    dossier: { ...dossier, toolCalls: result.calls, researchUsd: spend.usd },
-    researchUnpriced: spend.unpriced,
-  }
+  return { ...dossier, toolCalls: result.calls }
 }
 
 /** Case/whitespace/punctuation-insensitive key, so a trivial slip in the editor's verbatim copy still matches. */

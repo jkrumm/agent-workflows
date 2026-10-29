@@ -5,6 +5,7 @@ import { freshSchema, inspector, testRuntime, until } from '../../../../runtime/
 import { type PodcastDeps, createPodcastWorkflow, PodcastInput } from './index.ts'
 import { ProduceInput, type ProduceInputValue } from './produce-input.ts'
 import { MAX_MINUTES, MIN_MINUTES } from './schema.ts'
+import { postgresCosts } from './history.ts'
 import { fakeBrain, fakeHistory, fakeResearch, fakeRoom, type Stage } from './testing.ts'
 
 // The room as journaled steps on a real runtime (Postgres) with a fake model transport: the full pass, resume after a
@@ -12,6 +13,7 @@ import { fakeBrain, fakeHistory, fakeResearch, fakeRoom, type Stage } from './te
 
 const db = freshSchema('podcast')
 const sql = inspector(db.schema)
+const costs = postgresCosts(sql.pool, db.schema)
 
 beforeAll(async () => {
   const rt = testRuntime({ schema: db.schema, workflows: [] })
@@ -68,6 +70,7 @@ describe('podcast workflow', () => {
     const research = fakeResearch()
     const produced: ProduceInputValue[] = []
     const podcast = createPodcastWorkflow({
+      costs,
       history: fakeHistory([
         { id: 'old-1', createdAt: '2026-10-01T00:00:00.000Z', title: 'Old', description: 'Earlier.', profile: null },
       ]),
@@ -93,7 +96,6 @@ describe('podcast workflow', () => {
         'research',
         'history',
         'editorial',
-        'research:follow-up',
         'outline',
         'segment:0',
         'segment:1',
@@ -118,6 +120,10 @@ describe('podcast workflow', () => {
 
       // The editor's load-bearing fact ran at standard depth and closed its open question.
       expect(research.queries).toEqual(['standard:What is OKR?'])
+      // Keyed to this run and the fact's own step: a resume re-attaches to the same host run.
+      expect(research.keys[0]?.startsWith(`podcast:${runId}:research:fact:0:`)).toBe(true)
+      expect(steps).toContain('research:fact:0')
+      expect(steps).not.toContain('research:fact:1')
 
       expect(output.title).toBe('Final title')
       expect(output.chapters).toEqual([
@@ -126,10 +132,18 @@ describe('podcast workflow', () => {
       ])
       expect(output.profile).toMatchObject({ format: 'Gespräch', durationSeconds: 321, segmentCount: 2 })
       expect((output.profile as { agent?: { runs: number } }).agent?.runs).toBeGreaterThanOrEqual(3)
-      const cost = output.cost as { scriptUsd: number; scriptUnpriced: number; researchUsd: number }
-      expect(cost.scriptUsd).toBeCloseTo(room.calls.length * 0.001, 6)
-      expect(cost.scriptUnpriced).toBe(0)
-      expect(cost.researchUsd).toBeCloseTo(0.05, 6)
+      // Cost is the journal's record: every call priced on its step; the fake research runs are not in the journal.
+      expect(output.cost).toEqual({
+        scriptUsd: Number((room.calls.length * 0.001).toFixed(6)),
+        scriptUnpriced: 0,
+        researchUsd: 0,
+        researchUnpriced: 0,
+        researchRuns: 0,
+        produceUsd: 0,
+        produceUnpriced: 0,
+        totalUsd: Number((room.calls.length * 0.001).toFixed(6)),
+        unpriced: 0,
+      })
 
       // What the produce child received: the locked script with chapter titles, hosts, metadata, request, profile.
       expect(produced).toHaveLength(1)
@@ -177,7 +191,12 @@ describe('podcast workflow', () => {
         return gate
       },
     })
-    const podcast = createPodcastWorkflow({ history: fakeHistory(), models: room, config: config({ agentic: false }) })
+    const podcast = createPodcastWorkflow({
+      costs,
+      history: fakeHistory(),
+      models: room,
+      config: config({ agentic: false }),
+    })
     const first = testRuntime({ schema: db.schema, workflows: [podcast] })
     await first.open()
     const { runId } = await first.start(podcast, { ...REQUEST, research: false }, { purpose: 'build' })
@@ -206,6 +225,52 @@ describe('podcast workflow', () => {
         expect(await sql.step(runId, id)).toMatchObject({ status: 'done', attempts: 1 })
       }
       expect((result.output as { produce: unknown }).produce).toBeNull()
+      // The output's cost is what the journal recorded, the resumed run's steps included.
+      const recorded = (await sql.steps(runId)).reduce((n, s) => n + Number(s.cost ?? 0), 0)
+      expect((result.output as { cost: { scriptUsd: number } }).cost.scriptUsd).toBeCloseTo(recorded, 6)
+    } finally {
+      await second.close()
+    }
+  })
+
+  test('resume after a kill re-runs no finished research: the research step and each fact step replay', async () => {
+    let release: () => void = () => {}
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let held = false
+    const room = fakeRoom({
+      loadBearing: [
+        { question: 'Fact one?', open_question: 'Open one' },
+        { question: 'Fact two?', open_question: '' },
+      ],
+      hold: (stage) => {
+        if (stage !== 'outline' || held) return undefined
+        held = true
+        return gate
+      },
+    })
+    const research = fakeResearch()
+    const podcast = createPodcastWorkflow({
+      costs,
+      history: fakeHistory(),
+      models: room,
+      research,
+      config: config({ agentic: false }),
+    })
+    const first = testRuntime({ schema: db.schema, workflows: [podcast] })
+    await first.open()
+    const { runId } = await first.start(podcast, REQUEST, { purpose: 'build' })
+    await until(() => held, 'the outline call to start')
+    await first.close()
+    release()
+    const second = testRuntime({ schema: db.schema, workflows: [podcast] })
+    await second.open()
+    try {
+      expect((await second.wait(runId)).status).toBe('done')
+      expect(room.count('research')).toBe(2) // the loop's two rounds, once
+      expect([...research.queries].sort()).toEqual(['standard:Fact one?', 'standard:Fact two?'])
+      expect(room.count('outline')).toBe(2)
     } finally {
       await second.close()
     }
@@ -214,7 +279,12 @@ describe('podcast workflow', () => {
   test('best-effort stages fall back: research, editorial, reviewers and metadata failing still yield an episode', async () => {
     const fail: Partial<Record<Stage, boolean>> = { research: true, editorial: true, review: true, metadata: true }
     const room = fakeRoom({ segments: 3, fail })
-    const podcast = createPodcastWorkflow({ history: fakeHistory(), models: room, config: config({ agentic: false }) })
+    const podcast = createPodcastWorkflow({
+      costs,
+      history: fakeHistory(),
+      models: room,
+      config: config({ agentic: false }),
+    })
     const rt = testRuntime({ schema: db.schema, workflows: [podcast] })
     await rt.open()
     try {
@@ -229,8 +299,7 @@ describe('podcast workflow', () => {
       expect(output.chapters.map((c) => c.title)).toEqual(['Working title 1', 'Working title 2', 'Working title 3'])
       // A failed reviewer is skipped, never fatal (a transport failure is not re-asked; only an unparseable answer is).
       expect(room.count('review')).toBe(6)
-      const review = (await sql.step(runId, 'review:dramaturge:a')) as { output: { value: unknown } }
-      expect(review.output.value).toBeNull()
+      expect((await sql.step(runId, 'review:dramaturge:a'))?.output).toBeNull()
     } finally {
       await rt.close()
     }
@@ -238,7 +307,12 @@ describe('podcast workflow', () => {
 
   test('a required stage failing is fatal: the outline', async () => {
     const room = fakeRoom({ fail: { outline: true } })
-    const podcast = createPodcastWorkflow({ history: fakeHistory(), models: room, config: config({ agentic: false }) })
+    const podcast = createPodcastWorkflow({
+      costs,
+      history: fakeHistory(),
+      models: room,
+      config: config({ agentic: false }),
+    })
     const rt = testRuntime({ schema: db.schema, workflows: [podcast] })
     await rt.open()
     try {
@@ -254,6 +328,7 @@ describe('podcast workflow', () => {
   test('a failed produce child fails the run after the script is journaled', async () => {
     const produced: ProduceInputValue[] = []
     const podcast = createPodcastWorkflow({
+      costs,
       history: fakeHistory(),
       models: fakeRoom(),
       produce: stubProduce(produced, true),
@@ -272,12 +347,18 @@ describe('podcast workflow', () => {
     }
   })
 
-  test('sourcePaths are read through the vault and appended to the source', async () => {
+  test('sourcePaths are read through the source reader and appended to the source', async () => {
     const room = fakeRoom()
     const podcast = createPodcastWorkflow({
+      costs,
       history: fakeHistory(),
       models: room,
-      brain: fakeBrain({ 'Areas/Plan.md': 'Der Plan.' }),
+      sources: {
+        read: async (path) => {
+          if (path === 'Inbox/Plan.md') return 'Der Plan.'
+          throw new Error(`"${path}": not found`)
+        },
+      },
       config: config({ agentic: false }),
     })
     const rt = testRuntime({ schema: db.schema, workflows: [podcast] })
@@ -285,11 +366,11 @@ describe('podcast workflow', () => {
     try {
       const { runId } = await rt.start(
         podcast,
-        { sourcePaths: ['Areas/Plan.md'], research: false },
+        { sourcePaths: ['Inbox/Plan.md'], research: false },
         { purpose: 'build' },
       )
       expect((await rt.wait(runId)).status).toBe('done')
-      expect((await sql.step(runId, 'source'))?.output).toBe('\n\n## Areas/Plan.md\nDer Plan.')
+      expect((await sql.step(runId, 'source'))?.output).toBe('\n\n## Inbox/Plan.md\nDer Plan.')
 
       const missing = await rt.start(podcast, { sourcePaths: ['Areas/Nope.md'], research: false }, { purpose: 'build' })
       const failed = await rt.wait(missing.runId)

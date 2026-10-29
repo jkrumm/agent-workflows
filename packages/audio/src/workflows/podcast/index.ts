@@ -5,11 +5,17 @@ import { type PodcastConfig, podcastConfigFromEnv } from './config.ts'
 import { decideEpisodeBrief, defaultEpisodeBrief } from './editorial.ts'
 import { iuModelPort } from './iu.ts'
 import { lintNotes, lintSegments, renderLintReport } from './lint.ts'
-import { Llm, type ModelPort, type Spend } from './llm.ts'
+import { Llm, type ModelPort } from './llm.ts'
 import { log, setPodcastLogger } from './log.ts'
-import type { BrainPort, HistoryPort, ResearchPort } from './ports.ts'
+import type { BrainPort, CostPort, EpisodeCost, HistoryPort, ResearchPort, Spent } from './ports.ts'
 import type { ProduceInput, ProduceInputValue } from './produce-input.ts'
-import { dropAnsweredOpenQuestions, readBrainNotes, runLoadBearingResearch, runPodcastResearch } from './research.ts'
+import {
+  dropAnsweredOpenQuestions,
+  type LoadBearingAnswer,
+  MAX_LOAD_BEARING_FACTS,
+  researchLoadBearingFact,
+  runPodcastResearch,
+} from './research.ts'
 import {
   type House,
   planOutline,
@@ -23,9 +29,9 @@ import {
 } from './room.ts'
 import {
   type HostValue,
+  MAX_MINUTES,
   MAX_SOURCE_CHARS,
   MIN_MINUTES,
-  MAX_MINUTES,
   PodcastInput,
   PodcastOutput,
   type PodcastRequest,
@@ -50,22 +56,27 @@ import {
   WORDS_PER_MINUTE,
   writeEpisodeMetadata,
 } from './script.ts'
+import { type SourceReader, vaultSourceReader } from './source.ts'
 import type { Dossier, EpisodeBrief, EpisodeProfile, EpisodeSummary } from './types.ts'
 import { EMPTY_DOSSIER } from './types.ts'
 import { mapConcurrent } from './vocab.ts'
 
-export const PODCAST_VERSION = '2026-10-29.1'
+export const PODCAST_VERSION = '2026-10-29.2'
 export { ProduceInput, type ProduceInputValue } from './produce-input.ts'
 export { PodcastInput, PodcastOutput } from './schema.ts'
 
-/** What the workflow is built from. Everything but `history` defaults to production on `process.env`. */
+/** What the workflow is built from. `history` and `costs` are the journal; the rest defaults to production. */
 export interface PodcastDeps {
-  /** The show's memory (`history.ts` on Postgres in production). */
+  /** The show's memory (`postgresHistory`). */
   history: HistoryPort
+  /** The episode's recorded cost (`postgresCosts`): the output's `cost` is read from the journal, never summed here. */
+  costs: CostPort
   /** The model transport. Default: IU (`iu.ts`). */
   models?: ModelPort
-  /** The vault (`brain.ts`); absent: no brain tools, and `sourcePaths` are refused. */
+  /** The vault for the research agent's tools (`brain.ts`, the capability allowlist); absent: no brain tools. */
   brain?: BrainPort
+  /** Where `sourcePaths` are read (`source.ts`, legacy's rule). Default: the vault at `config.vaultDir`. */
+  sources?: SourceReader
   /** The host's `research` workflow (`research-client.ts`); absent: no `research` tool and no follow-up. */
   research?: ResearchPort
   /**
@@ -117,6 +128,12 @@ const TIGHTEN_STEPS: StepAt[] = [
   (ctx, body) => ctx.step('tighten:7', body),
   (ctx, body) => ctx.step('tighten:8', body),
 ]
+/** One step per load-bearing fact (at most `MAX_LOAD_BEARING_FACTS`): a resume never repeats a finished one. */
+const FACT_STEPS: { id: string; at: StepAt }[] = [
+  { id: 'research:fact:0', at: (ctx, body) => ctx.step('research:fact:0', body) },
+  { id: 'research:fact:1', at: (ctx, body) => ctx.step('research:fact:1', body) },
+  { id: 'research:fact:2', at: (ctx, body) => ctx.step('research:fact:2', body) },
+]
 const REVIEW_STEPS: Record<`${ReviewerRole}:${ReviewRoute}`, StepAt> = {
   'dramaturge:podcast.review.a': (ctx, body) => ctx.step('review:dramaturge:a', body),
   'dramaturge:podcast.review.b': (ctx, body) => ctx.step('review:dramaturge:b', body),
@@ -131,16 +148,9 @@ const REVIEWER_ROLES: ReviewerRole[] = ['dramaturge', 'conversation-coach', 'fac
 const json = (value: unknown): Json => JSON.parse(JSON.stringify(value)) as Json
 const as = async <T>(value: Promise<Json>): Promise<T> => (await value) as unknown as T
 
-/** What a model-calling step journals besides its value: its spend, summed into the run's output. */
-type Metered<T> = { value: T; spend: Spend }
-
-/** The step's model calls, metered; the body's value and the spend journal together. */
-function metered<T>(models: ModelPort, fn: (llm: Llm, scope: StepScope) => Promise<T>): Body {
-  return async (scope) => {
-    const llm = new Llm(models, scope)
-    const value = await fn(llm, scope)
-    return json({ value, spend: llm.spend } satisfies Metered<T>)
-  }
+/** A model-calling step: its calls bound to the step's `addUsage` (the journal records what they cost). */
+function withLlm<T>(models: ModelPort, fn: (llm: Llm, scope: StepScope) => Promise<T>): Body {
+  return async (scope) => json(await fn(new Llm(models, scope), scope))
 }
 
 /** A best-effort stage's failure: its fallback stands, unless the step was aborted (cancel, lease loss, shutdown). */
@@ -152,8 +162,11 @@ function fallBack<T>(stage: string, error: unknown, signal: AbortSignal, fallbac
   return fallback
 }
 
-const sumSpend = (spends: Spend[]): Spend =>
-  spends.reduce((a, b) => ({ usd: a.usd + b.usd, unpriced: a.unpriced + b.unpriced }), { usd: 0, unpriced: 0 })
+const usd = (value: number) => Math.round(value * 1e6) / 1e6
+const total = (...parts: Spent[]): Spent => ({
+  usd: usd(parts.reduce((n, p) => n + p.usd, 0)),
+  unpriced: parts.reduce((n, p) => n + p.unpriced, 0),
+})
 
 /** What the `house` step journals: the texts and hosts every later step reads, fixed for the run. */
 interface HouseStep extends House {
@@ -182,9 +195,20 @@ async function readOptional(path: URL | string | null, what: string): Promise<st
   }
 }
 
+/** The loops' counters for the profile; the loops themselves are not journaled beyond these. */
+function agentProfile(runs: AgentRun[]): EpisodeProfile['agent'] {
+  return {
+    runs: runs.length,
+    rounds: runs.reduce((n, r) => n + r.rounds, 0),
+    rejections: runs.reduce((n, r) => n + r.rejections, 0),
+    fellBack: runs.filter((r) => r.fellBack).length,
+  }
+}
+
 export function createPodcastWorkflow(deps: PodcastDeps) {
   const config: PodcastConfig = { ...podcastConfigFromEnv(), ...deps.config }
   const models = deps.models ?? iuModelPort()
+  const sources = deps.sources ?? vaultSourceReader(config.vaultDir)
   if (deps.logger) setPodcastLogger(deps.logger)
   const writer: WriterOptions = {
     agentic: config.agentic,
@@ -206,16 +230,15 @@ export function createPodcastWorkflow(deps: PodcastDeps) {
     )
     const hosts = house.hosts
 
-    // 1. The source: the request's text plus the notes it names, read in-process through the vault capabilities.
+    // 1. The source: the request's text plus the notes it names, raw, read by legacy's rule (`source.ts`).
     const source = await as<string>(
-      ctx.step('source', async ({ signal }) => {
+      ctx.step('source', async () => {
         let text = request.source
-        if (request.sourcePaths.length > 0) {
-          if (!deps.brain) throw new WorkflowError('invalid_input', 'sourcePaths needs the vault (AGW_BRAIN_DIR)')
-          const notes = await readBrainNotes(deps.brain, request.sourcePaths, signal).catch((err: unknown) => {
-            throw new WorkflowError('invalid_input', err instanceof Error ? err.message : String(err))
+        for (const path of request.sourcePaths) {
+          const note = await sources.read(path).catch((err: unknown) => {
+            throw new WorkflowError('invalid_input', `sourcePaths: ${err instanceof Error ? err.message : String(err)}`)
           })
-          for (const note of notes) text += `\n\n## ${note.path}\n${note.text}`
+          text += `\n\n## ${path}\n${note}`
         }
         if (text.length > MAX_SOURCE_CHARS) {
           throw new WorkflowError('invalid_input', `source exceeds ${MAX_SOURCE_CHARS} characters`)
@@ -225,11 +248,11 @@ export function createPodcastWorkflow(deps: PodcastDeps) {
     )
 
     // 2. Research: best-effort, an episode without a dossier beats no episode.
-    const research = await as<Metered<{ dossier: Dossier; researchUnpriced: number }>>(
+    const researched = await as<Dossier>(
       ctx.step(
         'research',
-        metered(models, async (llm, scope) => {
-          if (!request.research) return { dossier: EMPTY_DOSSIER, researchUnpriced: 0 }
+        withLlm(models, async (llm, scope) => {
+          if (!request.research) return EMPTY_DOSSIER
           try {
             return await runPodcastResearch(
               llm,
@@ -250,6 +273,7 @@ export function createPodcastWorkflow(deps: PodcastDeps) {
                   ? {
                       research: {
                         port: deps.research,
+                        origin: { runId: ctx.runId, stepId: 'research' },
                         ...(config.researchMaxCalls > 0 ? { maxCalls: config.researchMaxCalls } : {}),
                       },
                     }
@@ -257,7 +281,7 @@ export function createPodcastWorkflow(deps: PodcastDeps) {
               },
             )
           } catch (err) {
-            return fallBack('research', err, scope.signal, { dossier: EMPTY_DOSSIER, researchUnpriced: 0 })
+            return fallBack('research', err, scope.signal, EMPTY_DOSSIER)
           }
         }),
       ),
@@ -268,7 +292,7 @@ export function createPodcastWorkflow(deps: PodcastDeps) {
       ctx.step('history', async () => json(await deps.history.recent(request.series, config.historyDepth))),
     )
     const editorialInput = {
-      dossier: research.value.dossier,
+      dossier: researched,
       source,
       language: request.language,
       minutes: request.minutes,
@@ -281,43 +305,46 @@ export function createPodcastWorkflow(deps: PodcastDeps) {
       ...(request.brief ? { brief: request.brief } : {}),
       ...(request.title ? { title: request.title } : {}),
     }
-    const editorial = await as<Metered<EpisodeBrief>>(
+    const brief = await as<EpisodeBrief>(
       ctx.step(
         'editorial',
-        metered(models, (llm) => decideEpisodeBrief(llm, editorialInput)),
+        withLlm(models, (llm) => decideEpisodeBrief(llm, editorialInput)),
       ),
     )
-    const brief = editorial.value
 
-    // 3b. Load-bearing follow-up: the facts the editor named, at standard depth; best-effort per fact.
-    const followUp = await as<{ dossier: Dossier; usd: number; unpriced: number }>(
-      ctx.step('research:follow-up', async ({ signal, progress }) => {
-        const dossier = research.value.dossier
-        const none = { dossier, usd: 0, unpriced: 0 }
-        if (!request.research || !deps.research || brief.loadBearingFacts.length === 0) return json(none)
-        try {
-          const found = await runLoadBearingResearch(brief.loadBearingFacts, {
-            research: deps.research,
-            signal,
-            progress,
-          })
-          return json({
-            dossier: {
-              ...dossier,
-              additions: [...dossier.additions, ...found.additions],
-              toolCalls: [...dossier.toolCalls, ...found.toolCalls],
-              openQuestions: dropAnsweredOpenQuestions(dossier.openQuestions, found.answeredOpenQuestions),
-              researchUsd: (dossier.researchUsd ?? 0) + found.usdSpent,
-            },
-            usd: found.usdSpent,
-            unpriced: found.unpriced,
-          })
-        } catch (err) {
-          return json(fallBack('research follow-up', err, signal, none))
-        }
+    // 3b. Load-bearing follow-up: each fact the editor named, at standard depth, its own step; best-effort per fact.
+    const research = deps.research
+    const facts = request.research && research ? brief.loadBearingFacts.slice(0, MAX_LOAD_BEARING_FACTS) : []
+    const answers = await Promise.all(
+      facts.map((fact, i) => {
+        const step = FACT_STEPS[i] as (typeof FACT_STEPS)[number]
+        return as<LoadBearingAnswer | null>(
+          step.at(ctx, async ({ signal, progress }) => {
+            try {
+              return json(
+                await researchLoadBearingFact(fact, {
+                  research: research as ResearchPort,
+                  origin: { runId: ctx.runId, stepId: step.id },
+                  signal,
+                  progress,
+                }),
+              )
+            } catch (err) {
+              return json(fallBack('load-bearing research', err, signal, null))
+            }
+          }),
+        )
       }),
     )
-    const dossier = followUp.dossier
+    const dossier: Dossier = {
+      ...researched,
+      additions: [...researched.additions, ...answers.flatMap((a) => (a?.addition ? [a.addition] : []))],
+      toolCalls: [...researched.toolCalls, ...answers.flatMap((a) => (a ? [a.toolCall] : []))],
+      openQuestions: dropAnsweredOpenQuestions(
+        researched.openQuestions,
+        answers.flatMap((a) => (a?.answeredOpenQuestion ? [a.answeredOpenQuestion] : [])),
+      ),
+    }
 
     const req: PodcastScriptRequest = {
       source,
@@ -331,39 +358,31 @@ export function createPodcastWorkflow(deps: PodcastDeps) {
       ...(request.title ? { title: request.title } : {}),
     }
 
-    // 4. Outline: required. The editor's segment count, clamped defensively.
+    // 4. Outline: required. The editor's segment count, clamped defensively; at most one step per segment.
     const segmentCount = Math.min(MAX_SEGMENTS, Math.max(1, Math.round(brief.segments)))
     const targetWords = Math.round(brief.minutes * WORDS_PER_MINUTE)
-    const outlined = await as<Metered<Outline>>(
+    const outline = await as<Outline>(
       ctx.step(
         'outline',
-        metered(models, async (llm) => {
-          const outline = await planOutline(llm, { req, house, segmentCount, targetWords })
-          if (outline.segments.length <= MAX_SEGMENTS) return outline
-          // One journaled step per segment exists up to MAX_SEGMENTS; the brief never asks for more.
-          log.warn('podcast outline returned more segments than the room writes; keeping the first ones', {
-            segments: outline.segments.length,
-            kept: MAX_SEGMENTS,
-          })
-          return { ...outline, segments: outline.segments.slice(0, MAX_SEGMENTS) }
-        }),
+        withLlm(models, (llm) =>
+          planOutline(llm, { req, house, segmentCount, targetWords, maxSegments: SEGMENT_STEPS.length }),
+        ),
       ),
     )
-    const outline = outlined.value
     const indexes = outline.segments.map((_, i) => i)
 
     // 5. Segments: required, three at a time; the agentic writer, the single-shot call as its fallback.
     const drafted = await mapConcurrent(config.concurrency, indexes, (index) =>
-      as<Metered<WrittenSegment>>(
+      as<WrittenSegment>(
         (SEGMENT_STEPS[index] as StepAt)(
           ctx,
-          metered(models, (llm) => writeSegment(llm, { req, outline, index, house, writer })),
+          withLlm(models, (llm) => writeSegment(llm, { req, outline, index, house, writer })),
         ),
       ),
     )
     const segments: ScriptSegment[] = drafted.map((d, i) => ({
       title: outline.segments[i]?.title ?? `Segment ${i + 1}`,
-      turns: d.value.turns,
+      turns: d.turns,
     }))
 
     // 6. Lint: deterministic, the reviewers read it and its unambiguous findings become notes.
@@ -388,10 +407,10 @@ export function createPodcastWorkflow(deps: PodcastDeps) {
     const reviews = await Promise.all(
       REVIEWER_ROLES.flatMap((role) =>
         REVIEW_ROUTES.map((route) =>
-          as<Metered<{ notes: ReviewNote[] } | null>>(
+          as<{ notes: ReviewNote[] } | null>(
             REVIEW_STEPS[`${role}:${route}`](
               ctx,
-              metered(models, (llm) =>
+              withLlm(models, (llm) =>
                 reviewDraft(llm, { req, outline, segments, role, route, house, lintReport: lint.report }),
               ),
             ),
@@ -399,16 +418,16 @@ export function createPodcastWorkflow(deps: PodcastDeps) {
         ),
       ),
     )
-    const notes = [...reviews.flatMap((r) => r.value?.notes ?? []), ...lengthNotes(segments, outline), ...lint.notes]
+    const notes = [...reviews.flatMap((r) => r?.notes ?? []), ...lengthNotes(segments, outline), ...lint.notes]
 
     // 8. Revise every segment with notes, then tighten what is still over length; each best-effort per segment.
     const revisePass = async (steps: StepAt[], current: ScriptSegment[], passNotes: ReviewNote[]) => {
       const targets = indexes.filter((i) => segmentNotesFor(passNotes, i).length > 0)
       const done = await mapConcurrent(config.concurrency, targets, (index) =>
-        as<Metered<WrittenSegment | null>>(
+        as<WrittenSegment | null>(
           (steps[index] as StepAt)(
             ctx,
-            metered(models, (llm) =>
+            withLlm(models, (llm) =>
               reviseSegment(llm, { req, outline, segments: current, index, notes: passNotes, house, writer }),
             ),
           ),
@@ -417,13 +436,13 @@ export function createPodcastWorkflow(deps: PodcastDeps) {
       const byIndex = new Map(targets.map((index, k) => [index, done[k]]))
       return {
         segments: current.map((seg, i) => {
-          const turns = byIndex.get(i)?.value?.turns
+          const turns = byIndex.get(i)?.turns
           return turns ? { ...seg, turns } : seg
         }),
-        metered: done,
+        written: done,
       }
     }
-    const revised = notes.length > 0 ? await revisePass(REVISE_STEPS, segments, notes) : { segments, metered: [] }
+    const revised = notes.length > 0 ? await revisePass(REVISE_STEPS, segments, notes) : { segments, written: [] }
     const stillLong = lengthNotes(revised.segments, outline)
     if (stillLong.length > 0) {
       log.warn('podcast segments still over length after revision, tightening', {
@@ -433,14 +452,14 @@ export function createPodcastWorkflow(deps: PodcastDeps) {
     const tightened =
       stillLong.length > 0
         ? await revisePass(TIGHTEN_STEPS, revised.segments, stillLong)
-        : { segments: revised.segments, metered: [] }
+        : { segments: revised.segments, written: [] }
     const finalSegments = tightened.segments
 
     // 9. Metadata: best-effort, field by field over the outline's drafts.
-    const meta = await as<Metered<EpisodeMetadata | null>>(
+    const metadata = await as<EpisodeMetadata | null>(
       ctx.step(
         'metadata',
-        metered(models, async (llm, scope) => {
+        withLlm(models, async (llm, scope) => {
           try {
             return await writeEpisodeMetadata(llm, { req, outline, segments: finalSegments })
           } catch (err) {
@@ -450,102 +469,92 @@ export function createPodcastWorkflow(deps: PodcastDeps) {
       ),
     )
 
-    // 10. The locked script and its profile: the transcript source of `past_transcript` and the editor's history.
-    const agentRuns: AgentRun[] = [
-      ...drafted.map((d) => d.value.agent),
-      ...revised.metered.map((m) => m.value?.agent ?? null),
-      ...tightened.metered.map((m) => m.value?.agent ?? null),
-    ].filter((r): r is AgentRun => r !== null)
+    // 10. The locked script and its profile: the transcript source of `past_transcript` and the editor's history. The
+    // research spend in the profile is the journal's record of the research runs, all finished by now.
+    const agentRuns: AgentRun[] = [...drafted, ...revised.written, ...tightened.written].flatMap((w) =>
+      w?.agent ? [w.agent] : [],
+    )
     const locked = await as<ScriptStep>(
       ctx.step('script', async () => {
-        const script = assembleScript({ outline, segments: finalSegments, metadata: meta.value, request, brief })
-        const profile = buildEpisodeProfile({ brief, script, dossier, hosts, requestedMinutes: request.minutes })
-        if (agentRuns.length > 0) {
-          profile.agent = {
-            runs: agentRuns.length,
-            rounds: agentRuns.reduce((n, r) => n + r.rounds, 0),
-            rejections: agentRuns.reduce((n, r) => n + r.rejections, 0),
-            fellBack: agentRuns.filter((r) => r.fellBack).length,
-          }
-        }
+        const script = assembleScript({ outline, segments: finalSegments, metadata, request, brief })
+        const recorded = await deps.costs.episodeCost(ctx.runId)
+        const profile = buildEpisodeProfile({
+          brief,
+          script,
+          dossier: { ...dossier, ...(recorded.research.runs > 0 ? { researchUsd: recorded.research.usd } : {}) },
+          hosts,
+          requestedMinutes: request.minutes,
+        })
+        if (agentRuns.length > 0) profile.agent = agentProfile(agentRuns)
         return json({ script: { ...script, hosts }, profile } satisfies ScriptStep)
       }),
     )
     const { script, profile } = locked
-
-    const spend = sumSpend([
-      research.spend,
-      editorial.spend,
-      outlined.spend,
-      ...drafted.map((d) => d.spend),
-      ...reviews.map((r) => r.spend),
-      ...revised.metered.map((m) => m.spend),
-      ...tightened.metered.map((m) => m.spend),
-      meta.spend,
-    ])
-    const cost = {
-      scriptUsd: Math.round(spend.usd * 1e6) / 1e6,
-      scriptUnpriced: spend.unpriced,
-      researchUsd: Math.round((dossier.researchUsd ?? 0) * 1e6) / 1e6,
-      researchUnpriced: research.value.researchUnpriced + followUp.unpriced,
-    }
     const chapterTitles = script.segments.map((s) => ({ title: s.title }))
 
     // 11. Produce: the internal child (synth, master, cover, publish, brain note). Required once wired.
-    if (!deps.produce) {
-      log.warn('podcast.produce is not wired: the run ends with the script', { runId: ctx.runId })
-      return {
-        title: script.title,
-        description: script.description,
-        chapters: chapterTitles,
+    let produced: Produced | null = null
+    if (deps.produce) {
+      const input: ProduceInputValue = {
+        episode: { id: ctx.runId, createdAt: house.createdAt },
+        script: {
+          language: script.language,
+          segments: script.segments,
+          wordCount: script.wordCount,
+          ...(script.asks ? { asks: script.asks } : {}),
+          ...(script.openingFrame ? { openingFrame: script.openingFrame } : {}),
+        },
+        hosts,
+        metadata: {
+          title: script.title,
+          description: script.description,
+          coverPrompt: script.coverPrompt,
+          genres: script.genres,
+          topics: script.topics,
+        },
+        request: {
+          series: request.series,
+          language: request.language,
+          minutes: request.minutes,
+          publish: request.publish,
+          cover: request.cover,
+          brainNote: request.brainNote,
+        },
         profile,
-        cost,
-        produce: null,
       }
+      const [result] = await ctx.workflow('produce', deps.produce, [input])
+      if (result === null || result === undefined) {
+        throw new WorkflowError('step_failed', 'podcast.produce failed; its run record holds the error')
+      }
+      produced = ProduceResult.parse(result)
+    } else {
+      log.warn('podcast.produce is not wired: the run ends with the script', { runId: ctx.runId })
     }
-    const input: ProduceInputValue = {
-      episode: { id: ctx.runId, createdAt: house.createdAt },
-      script: {
-        language: script.language,
-        segments: script.segments,
-        wordCount: script.wordCount,
-        ...(script.asks ? { asks: script.asks } : {}),
-        ...(script.openingFrame ? { openingFrame: script.openingFrame } : {}),
-      },
-      hosts,
-      metadata: {
-        title: script.title,
-        description: script.description,
-        coverPrompt: script.coverPrompt,
-        genres: script.genres,
-        topics: script.topics,
-      },
-      request: {
-        series: request.series,
-        language: request.language,
-        minutes: request.minutes,
-        publish: request.publish,
-        cover: request.cover,
-        brainNote: request.brainNote,
-      },
-      profile,
-    }
-    const [produced] = await ctx.workflow('produce', deps.produce, [input])
-    if (produced === null || produced === undefined) {
-      throw new WorkflowError('step_failed', 'podcast.produce failed; its run record holds the error')
-    }
-    const result = ProduceResult.parse(produced)
+
+    // 12. Cost: the journal's record of every call this episode made (retries, failed attempts, resumes included).
+    const recorded = await as<EpisodeCost>(ctx.step('cost', async () => json(await deps.costs.episodeCost(ctx.runId))))
+    const all = total(recorded.script, recorded.research, recorded.produce)
     return {
       title: script.title,
       description: script.description,
-      chapters: result.chapters ?? chapterTitles,
-      profile: { ...profile, durationSeconds: result.durationSeconds ?? profile.durationSeconds },
-      cost,
-      produce: result,
+      chapters: produced?.chapters ?? chapterTitles,
+      profile: { ...profile, durationSeconds: produced?.durationSeconds ?? profile.durationSeconds },
+      cost: {
+        scriptUsd: usd(recorded.script.usd),
+        scriptUnpriced: recorded.script.unpriced,
+        researchUsd: usd(recorded.research.usd),
+        researchUnpriced: recorded.research.unpriced,
+        researchRuns: recorded.research.runs,
+        produceUsd: usd(recorded.produce.usd),
+        produceUnpriced: recorded.produce.unpriced,
+        totalUsd: all.usd,
+        unpriced: all.unpriced,
+      },
+      produce: produced,
     }
   }
 
-  const podcast = defineWorkflow({
+  return defineWorkflow({
     id: 'podcast',
     version: PODCAST_VERSION,
     input: PodcastInput,
@@ -554,8 +563,9 @@ export function createPodcastWorkflow(deps: PodcastDeps) {
     concurrency: 1,
     run,
   })
-  return podcast
 }
+
+type Produced = ReturnType<typeof ProduceResult.parse>
 
 /** The final script: the metadata pass field by field over the outline's drafts, chapter titles per segment. */
 export function assembleScript(params: {
