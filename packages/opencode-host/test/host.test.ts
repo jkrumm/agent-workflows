@@ -515,16 +515,22 @@ describe('wait reads', () => {
   })
 
   test('polls read one newest-first page, not the whole session', async () => {
-    const t = setup({ turnMs: 300 })
-    const handle = await t.host.open(spec('x'))
-    await t.host.prompt(handle, 'x')
-    await t.host.wait(handle, waitOptions())
-    const reads = t.fake.urls.filter((r) => r.startsWith(`GET /api/session/${sid(handle)}/message`))
-    const walks = reads.filter((r) => r.includes('order=asc'))
-    const pages = reads.filter((r) => r.includes('order=desc&limit=50'))
+    const t = setup()
+    const handle = await t.host.open(spec('[hold] x'))
+    await t.host.prompt(handle, '[hold] x')
+    const reads = () => t.fake.urls.filter((r) => r.startsWith(`GET /api/session/${sid(handle)}/message`))
+    const pagesOf = () => reads().filter((r) => r.includes('order=desc&limit=50'))
+    // the turn stays open on the fake's latch until the wait has polled six times, however slow the host is
+    const waiting = t.host.wait(handle, waitOptions())
+    await until(() => pagesOf().length >= 6, 'six polls of the held turn')
+    t.fake.release(sid(handle))
+    await waiting
+    const walks = reads().filter((r) => r.includes('order=asc'))
     // prompt's check, the first read and the final usage read walk the session; every other poll is one page.
     expect(walks).toHaveLength(3)
-    expect(pages.length).toBeGreaterThan(5)
+    expect(pagesOf().length).toBeGreaterThanOrEqual(6)
+    // nothing but those first walk pages, their cursor continuations and the newest-first pages was ever read
+    expect(reads().filter((r) => !/order=asc|cursor=|order=desc&limit=50/.test(r))).toEqual([])
   })
 })
 
