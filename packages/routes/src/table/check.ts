@@ -1,9 +1,9 @@
 import type { RouteEntry } from '../schema.ts'
-import { AGENT_FALLBACK, HAIKU_55_EU_RATE } from './_shared.ts'
+import { AGENT_FALLBACK, HAIKU_55_RATE } from './_shared.ts'
 
 const routes = {
   // Check seat. Gateway: `check`, CLASSIFY tier.
-  check: { wire: 'opencode', model: 'claude-haiku-5-5-eu', rate: HAIKU_55_EU_RATE, fallback: AGENT_FALLBACK },
+  check: { wire: 'opencode', model: 'claude-haiku-5-5', rate: HAIKU_55_RATE, fallback: AGENT_FALLBACK },
 } satisfies Record<string, RouteEntry>
 
 export default routes

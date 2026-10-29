@@ -395,7 +395,7 @@ describe("the ledger hook is research's guarded one", () => {
 describe('the route', () => {
   test('brain.agent is Haiku EU on opencode with no fallback, and no override can add one', () => {
     const route = resolveRoute('brain.agent', {})
-    expect(route).toMatchObject({ wire: 'opencode', model: 'claude-haiku-5-5-eu' })
+    expect(route).toMatchObject({ wire: 'opencode', model: 'claude-haiku-5-5' })
     expect(route.fallback).toBeUndefined()
     expect(fallbackRoute(route)).toBeUndefined()
     const patched = { AGW_ROUTES: JSON.stringify({ 'brain.agent': { fallback: { model: 'other-model' } } }) }

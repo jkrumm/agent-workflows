@@ -1008,45 +1008,13 @@ export class OpenCodeHost implements AgentHost {
     return { output: h.output === 'json' ? parseStructured(text) : text, usage: this.usage(h, messages) }
   }
 
-  /**
-   * Tokens from the messages (`usageFromOpenCodeMessages`), cost per message: OpenCode's when it is positive (it
-   * prices with the config's cost rows, i.e. the route's rate); a message it reports at 0 with tokens is priced with
-   * the route's rate (`costFromUsage`), else the step is unpriced. A call above the long-prompt tier is unpriced
-   * either way: never free, never under-priced.
-   */
+  /** Tokens from the messages (`usageFromOpenCodeMessages`), cost per message by `priceOpenCodeMessages`. */
   private usage(h: OpenCodeHandle, messages: Message[]): Usage {
     const usage = usageFromOpenCodeMessages(messages, { model: h.model })
-    const rate = this.routeRate(h)
-    let cost = 0
-    let byRate = false
-    for (const m of messages) {
-      if (m.type !== 'assistant' || !m.tokens) continue
-      const t = m.tokens
-      const cacheRead = t.cache?.read ?? 0
-      const cacheWrite = t.cache?.write ?? 0
-      const total = (t.input ?? 0) + cacheRead + cacheWrite + (t.output ?? 0) + (t.reasoning ?? 0)
-      if (total === 0) continue
-      if ((t.input ?? 0) + cacheRead + cacheWrite > (rate?.longPromptTokens ?? LONG_PROMPT_TOKENS))
-        return unpriced(usage)
-      if (typeof m.cost === 'number' && Number.isFinite(m.cost) && m.cost > 0) {
-        cost += m.cost
-        continue
-      }
-      const priced = costFromUsage(
-        'opencode',
-        {
-          input_tokens: t.input ?? 0,
-          output_tokens: (t.output ?? 0) + (t.reasoning ?? 0),
-          cache_read_input_tokens: cacheRead,
-          cache_creation_input_tokens: cacheWrite,
-        },
-        rate ?? undefined,
-      )
-      if (priced.usd === null) return unpriced(usage)
-      cost += priced.usd
-      byRate = true
-    }
-    return { ...usage, cost, costSource: byRate ? 'rate' : 'provider' }
+    const priced = priceOpenCodeMessages(messages, this.routeRate(h))
+    return priced === null
+      ? unpriced(usage)
+      : { ...usage, cost: priced.cost, costSource: priced.byRate ? 'rate' : 'provider' }
   }
 
   private routeRate(h: OpenCodeHandle): Rate | null {
@@ -1057,6 +1025,51 @@ export class OpenCodeHost implements AgentHost {
       return null
     }
   }
+}
+
+/**
+ * The cost of a session's assistant messages, or `null` when one cannot be priced. Per message: OpenCode's when it is
+ * positive (it prices with the config's cost rows, i.e. the route's base rate); a message it reports at 0 with tokens
+ * is priced with the route's rate (`costFromUsage`). The exception is a message above the rate's long-prompt threshold
+ * on a rate that models the tier (`longPrompt`): OpenCode's flat rows cannot know the tier, so that message is priced
+ * by the rate whatever OpenCode reported. A long message on a rate without the tier is OpenCode's cost when it reported
+ * one, else unpriced. The threshold applies per message, never to the step. `byRate`: some message was priced by the rate.
+ */
+export function priceOpenCodeMessages(
+  messages: readonly Message[],
+  rate: Rate | null,
+): { cost: number; byRate: boolean } | null {
+  let cost = 0
+  let byRate = false
+  for (const m of messages) {
+    if (m.type !== 'assistant' || !m.tokens) continue
+    const t = m.tokens
+    const cacheRead = t.cache?.read ?? 0
+    const cacheWrite = t.cache?.write ?? 0
+    const total = (t.input ?? 0) + cacheRead + cacheWrite + (t.output ?? 0) + (t.reasoning ?? 0)
+    if (total === 0) continue
+    const tiered =
+      rate?.longPrompt !== undefined &&
+      (t.input ?? 0) + cacheRead + cacheWrite > (rate.longPromptTokens ?? LONG_PROMPT_TOKENS)
+    if (!tiered && typeof m.cost === 'number' && Number.isFinite(m.cost) && m.cost > 0) {
+      cost += m.cost
+      continue
+    }
+    const priced = costFromUsage(
+      'opencode',
+      {
+        input_tokens: t.input ?? 0,
+        output_tokens: (t.output ?? 0) + (t.reasoning ?? 0),
+        cache_read_input_tokens: cacheRead,
+        cache_creation_input_tokens: cacheWrite,
+      },
+      rate ?? undefined,
+    )
+    if (priced.usd === null) return null
+    cost += priced.usd
+    byRate = true
+  }
+  return { cost, byRate }
 }
 
 const unpriced = (usage: Usage): Usage => ({ ...usage, cost: null, costSource: 'unknown' })

@@ -7,7 +7,8 @@
 // The model is scripted by the prompt text: `[slow:<ms>]` turn length, `[tool:<name>]` one tool call first,
 // `[shell:<ms>]` a running shell tool that only prints, `[json]` a fenced JSON answer, `[fail]` a failed turn,
 // `[hold]` the first turn stays open until the test calls `release` (tool parts are added by `addTool`),
-// `[free]` an answer reported at cost 0, `[balance]` a turn IU refuses for provider balance unless the session runs on
+// `[free]` an answer reported at cost 0, `[long]` an answer whose prompt is 150K input tokens (a call above the
+// long-prompt tier), `[balance]` a turn IU refuses for provider balance unless the session runs on
 // the Responses provider (the fallback), `[balance-all]` the same refusal on every provider.
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 
@@ -217,7 +218,8 @@ export function startFake(options: FakeOptions) {
           : `${resumed}echo: ${last.type === 'user' ? last.text : prompt}`
         reply.content = [{ type: 'text', text }]
         const cost = /\[free\]/.test(prompt) ? 0 : 0.001 // OpenCode reports 0 when its config has no cost row
-        Object.assign(reply, { finish: 'stop', tokens, cost, time: { ...reply.time, completed: now() } })
+        const answerTokens = /\[long\]/.test(prompt) ? { ...tokens, input: 150_000 } : tokens
+        Object.assign(reply, { finish: 'stop', tokens: answerTokens, cost, time: { ...reply.time, completed: now() } })
         save()
         running.get(s.id)?.finish()
       },

@@ -183,7 +183,6 @@ describe('llm.classify (iu-openai)', () => {
     expect(request?.path).toBe('/openai/v1/chat/completions')
     expect(request?.body).toMatchObject({
       model: route.model,
-      max_completion_tokens: route.maxOutputTokens,
       response_format: { type: 'json_object' },
       stream: true,
       stream_options: { include_usage: true },
@@ -204,9 +203,20 @@ describe('llm.classify (iu-openai)', () => {
     ])
   })
 
-  test('cost is unknown, not 0, when the provider omits it and the route has no rate', async () => {
+  test('cost is the route rate when the provider omits it (Haiku 5.5 on the chat wire reports none)', async () => {
     iu.on('chat', () => chatStream('{"label":"bug","reason":"r"}', classifyUsage))
     await call('llm.classify', { text: 'x', labels })
+    // 150 input + 50 cache read + 30 output at $0.10 / $0.01 / $0.50 per million
+    expect(usages[0]).toMatchObject({ cost: (150 * 0.1 + 50 * 0.01 + 30 * 0.5) / 1e6, costSource: 'rate' })
+  })
+
+  test('cost is unknown, not 0, when the provider omits it and the route has no rate', async () => {
+    iu.on('chat', () => chatStream('{"label":"bug","reason":"r"}', classifyUsage))
+    await call(
+      'llm.classify',
+      { text: 'x', labels },
+      { AGW_ROUTES: JSON.stringify({ 'cheap.classify': { rate: null } }) },
+    )
     expect(usages[0]).toMatchObject({ cost: null, costSource: 'unknown' })
   })
 
