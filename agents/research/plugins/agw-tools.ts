@@ -1,15 +1,19 @@
 // The research agent's web tools: an OpenCode 2.0 plugin (promise adapter), discovered in the location's
-// `.opencode/plugins/`. Each tool forwards its arguments and the session id to the host's research tool gate
-// (packages/host/src/workflows/research/gate.ts), which runs the platform capability for a granted session only.
-// The gate's address and key are read from <stateDir>/research/gate.json at every call: outside the location, so the
-// session's own read tool cannot reach it (external_directory is denied).
+// `.opencode/plugins/`. Each tool forwards its arguments and the session id to the host's tool gate
+// (packages/host/src/tool-gate), which runs the platform capability only if the session's grant holds that tool.
+// The gate's address and key are read from <stateDir>/gate.json at every call: outside the location, so the session's
+// own read tool cannot reach it (external_directory is denied).
+//
+// This file is the template for every agent's tools: copy it to agents/<name>/plugins/agw-tools.ts and change only
+// `id` and `TOOLS` (name, description, input schema). The compiler copies a plugins/ directory per agent and nothing
+// from outside it, so the forwarding stays a few lines repeated per agent (packages/host/README.md §Tool gate).
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Schema } from 'effect'
 
 // <stateDir>/locations/<agent>/<hash>/.opencode/plugins/agw-tools.ts
-const GATE_FILE = join(fileURLToPath(new URL('.', import.meta.url)), '..', '..', '..', '..', '..', 'research', 'gate.json')
+const GATE_FILE = join(fileURLToPath(new URL('.', import.meta.url)), '..', '..', '..', '..', '..', 'gate.json')
 
 type Ctx = { sessionID: string; signal?: AbortSignal }
 

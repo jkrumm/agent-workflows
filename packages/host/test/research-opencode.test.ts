@@ -10,7 +10,8 @@ import {
 } from '@agent-workflows/opencode-host'
 import type { Json } from '@agent-workflows/runtime'
 import { loadAgentDefinitions } from '../src/agents.ts'
-import { GATE_TOOLS, ToolGate } from '../src/workflows/research/gate.ts'
+import { ToolGate } from '../src/tool-gate/index.ts'
+import { GATE_TOOLS, RESEARCH_TOOLS, researchGrant } from '../src/workflows/research/tools.ts'
 import { memoryToolLedger } from '../src/workflows/research/ledger.ts'
 
 // The research agent on the real `opencode` 2.0.32 against a scripted fake model (no spend): the plugin in their
@@ -88,7 +89,6 @@ const calls: { id: string; input: Json }[] = []
 const ledger = memoryToolLedger()
 const gate = new ToolGate({
   stateDir,
-  ledger,
   call: async (id, input, { addUsage }) => {
     calls.push({ id, input })
     addUsage({
@@ -127,7 +127,12 @@ async function runAgent(agent: string, script: Step[], grantTools: string[]) {
   const host = new OpenCodeHost({ server, stateDir, env, agents })
   const runId = `r${Math.random().toString(36).slice(2)}`
   const key = `${runId}:research`
-  const close = gate.open({ runId, stepId: 'research', tools: grantTools as never })
+  const close = gate.open({
+    runId,
+    stepId: 'research',
+    ...researchGrant(ledger),
+    tools: Object.fromEntries(grantTools.map((tool) => [tool, RESEARCH_TOOLS[tool as keyof typeof RESEARCH_TOOLS]])),
+  })
   try {
     await server.start()
     const handle = (await host.open({
@@ -193,7 +198,7 @@ test.skipIf(!binary)(
     expect(usage?.cost).toBeGreaterThan(0)
     expect(result.output as Record<string, unknown>).toMatchObject({ report: '## Bottom line\nPort 5432.' })
     // The gate's key file is the user's only.
-    expect(statSync(join(stateDir, 'research', 'gate.json')).mode & 0o777).toBe(0o600)
+    expect(statSync(join(stateDir, 'gate.json')).mode & 0o777).toBe(0o600)
   },
   120_000,
 )
@@ -216,7 +221,7 @@ test.skipIf(!binary)(
 test.skipIf(!binary)(
   "the gate's key is out of the session's reach: read is refused outside the location",
   async () => {
-    const keyFile = join(stateDir, 'research', 'gate.json')
+    const keyFile = join(stateDir, 'gate.json')
     const { seen } = await runAgent('research', [{ tool: 'read', args: { path: keyFile } }, { text: REPORT }], [])
     const toolMessage = String(seen[1]?.messages.find((m) => m.role === 'tool')?.content)
     const { key } = JSON.parse(await Bun.file(keyFile).text()) as { key: string }
