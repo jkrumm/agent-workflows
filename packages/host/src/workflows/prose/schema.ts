@@ -1,13 +1,15 @@
+import {
+  MAX_PROSE_BRIEF_CHARS as MAX_BRIEF_CHARS,
+  MAX_PROSE_CONTEXT_CHARS as MAX_CONTEXT_CHARS,
+  MAX_PROSE_TEXT_CHARS as MAX_TEXT_CHARS,
+  PROSE_FORMATS as FORMATS,
+  PROSE_LANGUAGES as LANGUAGES,
+  PROSE_MEDIUMS as MEDIUMS,
+  PROSE_REGISTERS as REGISTERS,
+} from '@agent-workflows/capabilities'
 import { z } from 'zod'
 
-export const MAX_TEXT_CHARS = 60_000
-export const MAX_BRIEF_CHARS = 2_000
-export const MAX_CONTEXT_CHARS = 8_000
-
-export const MEDIUMS = ['article', 'vault', 'landing', 'ui', 'chat', 'docs', 'briefing'] as const
-export const REGISTERS = ['peer-technical', 'broad', 'personal'] as const
-export type Medium = (typeof MEDIUMS)[number]
-export type Register = (typeof REGISTERS)[number]
+export { MAX_TEXT_CHARS }
 
 const medium = z
   .enum(MEDIUMS)
@@ -55,9 +57,6 @@ export const ProseReviewInput = z
   .strict()
 export type ProseReviewInputValue = z.output<typeof ProseReviewInput>
 
-export const LANGUAGES = ['en', 'de', 'neutral'] as const
-export const FORMATS = ['markdown', 'html'] as const
-
 const Finding = z.object({ rule: z.string(), line: z.number().int(), excerpt: z.string() })
 const Scores = z.object({
   verdict_first: z.number().optional(),
@@ -100,9 +99,8 @@ export const ProseGateInput = z
     original: z.string().min(1).max(MAX_TEXT_CHARS).describe('The draft as it was'),
     rewrite: z
       .string()
-      .min(1)
       .max(MAX_TEXT_CHARS * 2)
-      .describe('The rewrite to judge'),
+      .describe('The rewrite to judge; an empty one is valid and keeps the original'),
     medium: medium.optional().describe('Where the text will be read; the gate rules do not depend on it'),
     language: language.describe('Language of the draft. `auto` detects it from the original.'),
   })

@@ -295,27 +295,39 @@ calling Claude Code session on Max, so the platform does the two parts that need
 | Command | Does | Cost |
 |-|-|-|
 | `agw prose` | lint (code) and one cross-lab review call (route `prose.review`); answers `{language, format, mediumNote, lint{findings, counts}, review{scores, notes}, visualSuggestions, reviewer, voicePath, writerBrief}` | one call on the review route (about $0.004 on legacy's recorded jobs) |
-| `agw rewrite gate` | the keep decision on `{original, rewrite}`: `{kept: rewrite\|original, reason?, lint{before, after}}`; no model, a recorded run at cost 0 | 0 |
+| `agw prose-gate` | the keep decision on `{original, rewrite}`: `{kept: rewrite\|original, reason?, lint{before, after}}`; no model, a recorded run at cost 0. An empty rewrite is valid and keeps the original | 0 |
 
-- **Why `rewrite gate`, not `prose gate`.** The host refuses a command that is a prefix of another (`agw prose` is a prefix
-  of `agw prose gate`), and the eval suite id `prose` must equal the id of the workflow it replays. The review keeps the
-  name `prose`; the gate is named for what it judges.
+- **Command names.** The gate is the workflow `prose-gate`, command `agw prose-gate`. The host refuses a command that is
+  a prefix of another, so `agw prose gate` cannot sit beside `agw prose`; workflow ids may now carry a hyphen inside a
+  segment (`prose-gate`; the operation id is `proseGate`). The brief names `agw prose-gate`; a test asserts it is the
+  registered command.
 - **The brief.** `writerBrief` is legacy's writer system prompt (rules and rubric) and user prompt (lint findings, reviewer
   notes, brief, context and draft as fenced data) in one block, without the voice guide: the session reads `voicePath`
-  itself. Fence tokens are a hash of the untrusted inputs, not random as in legacy, so a resumed run re-sends the prompt
-  it sent. The review prompt is legacy's, word for word, and carries no voice guide (legacy's did not either).
+  itself. The review prompt is legacy's, word for word, and carries no voice guide (legacy's did not either).
+- **Fences.** Every prompt gets a fresh 128-bit random token, never derived from the text; it is regenerated while any
+  fenced body contains it. Resume determinism comes from the journal (the step result), not from rebuilding the prompt.
+  The brief has a token of its own, never the one the reviewer saw, and the reviewer's notes, suggestions and the lint
+  excerpts (quoted draft text) have `<<<` and `>>>` made inert before they are returned or inlined: a draft can make the
+  reviewer echo its closing marker.
 - **The gate** is `judgeRewrite` unchanged: same format, every fenced block, URL and wikilink target kept, none added, no
-  fence left open, no lint rule with more findings. `lint.after` is the rewrite's own lint, kept or not (an empty rewrite is kept out with the original's).
-- **Cross-lab refusal.** The writer is always the calling session (Anthropic), so `createCapabilities` refuses a
-  `prose.review` route (primary or fallback) on an Anthropic model: a boot with such an `AGW_ROUTES` fails, not the first call.
-- **Capability.** `prose.critique` (route `prose.review`, `agw prose-critique`) is the one model call: a built prompt in,
-  the validated review out. A `verdictFirst: false` draft gets no `verdict_first` score, stripped in code.
+  fence left open, no lint rule with more findings. `lint.after` is the rewrite's own lint, kept or not (an empty rewrite
+  is kept out with the original's).
+- **Cross-lab refusal.** The writer is always the calling session (Anthropic). `prose.critique` refuses a `prose.review`
+  route whose primary or fallback model names an Anthropic family (`claude`, `anthropic`, `opus`, `sonnet`, `haiku`,
+  `fable`, vendor prefix included): at boot (`createCapabilities`, after `AGW_ROUTES`) and again on the route each call
+  resolves. A malformed `AGW_ROUTES` stays the first call's `NOT_CONFIGURED`, as for every other capability.
+- **Capability.** `prose.critique` (route `prose.review`, `agw prose-critique`) takes the review fields (text, medium,
+  register, language, `draftFormat`, verdictFirst, brief, context), never a prompt: it builds the fenced reviewer prompt
+  itself, so no free prompt on the paid seat is reachable over HTTP or the CLI. A `verdictFirst: false` draft gets no
+  `verdict_first` score, stripped in code. The registry has no internal registration, hence the structured input.
 - **Port.** `lint.ts` is `server/lib/prose-lint.ts` of agent-gateway at `15a8e6d` with `noUncheckedIndexedAccess` casts
   and its tests (`prose-lint.test.ts`); `gate.ts` is `judgeRewrite`/`worsenedRule` from `server/jobs/handlers/prose.ts`.
-- **Eval.** Suite `prose` (plain cases, scorer `scorer.ts`: `valid`, `notesPresent`, `scoresInRange`, and against a
-  recorded legacy review `scoreAgreement` and `lintAgreement`). Rules 1 and 2 of the pre-registered set are offline:
+- **Eval.** Suite `prose` (plain cases, scorer `scorer.ts`: `valid`, `notesPresent` (reported, not part of `pass`: a clean
+  draft may get none), `scoresInRange`, and against a recorded case `scoreAgreement` and `lintAgreement`, which compares
+  the findings (rule and line), not their count). Rules 1 and 2 of the pre-registered set are offline:
   `bun scripts/eval-legacy/prose.ts --offline` (legacy lint and the real legacy `runProsePipeline` with canned
-  adapters); `--build-cases` writes `$AGW_EVAL_DIR/prose/cases.jsonl`. Rules 3 and 4 need live review calls.
+  adapters); `--build-cases` writes `$AGW_EVAL_DIR/prose/cases.jsonl` from the recorded params (language included).
+  Rules 3 and 4 need live review calls.
 - No agent definitions: the workflow runs no agent step, so it adds nothing to the run fingerprint beyond its `version`.
 
 ## Process

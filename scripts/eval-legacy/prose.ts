@@ -159,6 +159,7 @@ const FENCE_RE = /```[^\n]*\n[\s\S]*?\n```/
 
 /** Synthetic rewrites of a faithful rewrite, one per way a rewrite can break the contract; null when it does not apply. */
 const MUTATIONS: Record<string, (rewrite: string) => string | null> = {
+  'empty rewrite': () => '',
   'lost URL': (r) => (URL_RE.test(r) ? r.replace(URL_RE, 'the docs') : null),
   'lost fence': (r) => (FENCE_RE.test(r) ? r.replace(FENCE_RE, '') : null),
   'added fence': (r) => `${r}\n\n\`\`\`sh\nrm -rf build\n\`\`\``,
@@ -231,8 +232,13 @@ function writeCases(drafts: Draft[]) {
   const lines = drafts.map((draft) => {
     const { model: _w, reviewModel: _r, text: _t, ...recordedInput } = draft.recorded?.params ?? {}
     const input = { ...recordedInput, text: draft.text, medium: draft.medium }
-    const language = legacyLint.detectLanguage(draft.text)
-    const reference: Record<string, unknown> = { lintCount: legacyLint.lintProse(draft.text, language).length }
+    // The language the run lints in: the recorded param when the job named one, else detected, as the workflow does.
+    const recordedLanguage = recordedInput.language as string | undefined
+    const language = (
+      recordedLanguage && recordedLanguage !== 'auto' ? recordedLanguage : legacyLint.detectLanguage(draft.text)
+    ) as ProseLanguage
+    const lint = legacyLint.lintProse(draft.text, language).map((f) => ({ rule: f.rule, line: f.line }))
+    const reference: Record<string, unknown> = { lint }
     if (draft.recorded) reference.scores = draft.recorded.result.review.scores
     return JSON.stringify({ id: draft.id, input, reference })
   })

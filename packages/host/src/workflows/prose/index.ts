@@ -1,9 +1,18 @@
-import type { CallOptions } from '@agent-workflows/capabilities'
+import {
+  type CallOptions,
+  DEFAULT_REGISTER,
+  MEDIUM_NOTE,
+  neutralizeFenceMarkers,
+  type ProseFormat,
+  type ProseLanguage,
+  type ProseMedium,
+  type ProseRegister,
+} from '@agent-workflows/capabilities'
 import { defineWorkflow } from '@agent-workflows/runtime'
 import type { HostWorkflow } from '../../operations.ts'
 import { keepGate } from './gate.ts'
 import { detectFormat, detectLanguage, lintProse } from './lint.ts'
-import { buildReviewPrompt, buildWriterBrief, DEFAULT_REGISTER, fenceNonce, MEDIUM_NOTE } from './prompts.ts'
+import { buildWriterBrief, GATE_WORKFLOW_ID } from './prompts.ts'
 import {
   ProseGateInput,
   ProseGateOutput,
@@ -21,7 +30,20 @@ type Review = ProseReviewOutputValue['review'] & Pick<ProseReviewOutputValue, 'v
 
 /** The one capability the review calls; any registry that has `prose.critique` fits. */
 export interface CritiqueCaller {
-  call(id: 'prose.critique', input: { prompt: string; verdictFirst: boolean }, options?: CallOptions): Promise<Review>
+  call(
+    id: 'prose.critique',
+    input: {
+      text: string
+      medium: ProseMedium
+      register: ProseRegister
+      language: ProseLanguage
+      draftFormat: ProseFormat
+      verdictFirst: boolean
+      brief?: string
+      context?: string
+    },
+    options?: CallOptions,
+  ): Promise<Review>
 }
 
 /** What the module can be given beyond the host's shared deps. */
@@ -39,7 +61,7 @@ const byRule = (findings: { rule: string }[]): Record<string, number> => {
 
 /**
  * `prose` (concept §10): lint and one cross-lab review of a human-facing draft, answered with the brief the calling
- * session rewrites from. The rewrite is not a step: it runs in the caller's own session on Max. `rewrite.gate` decides
+ * session rewrites from. The rewrite is not a step: it runs in the caller's own session on Max. `prose-gate` decides
  * afterwards whether the rewrite may replace the draft. The pair is agent-gateway's `prose` job minus its writer.
  */
 export function createProseWorkflows(deps: ProseDeps): HostWorkflow[] {
@@ -62,40 +84,58 @@ export function createProseWorkflows(deps: ProseDeps): HostWorkflow[] {
       // A missing voice guide fails before any spend: the caller would have nothing to write in.
       const voicePath = await ctx.step('voice', () => checkVoiceGuide(env))
       const register = input.register ?? DEFAULT_REGISTER[input.medium]
-      const args = {
-        text: input.text,
-        medium: input.medium,
-        register,
-        language: plan.language,
-        format: plan.format,
-        verdictFirst: input.verdictFirst,
-        brief: input.brief,
-        context: input.context,
-        nonce: fenceNonce(input.text, input.brief, input.context),
-      }
       const { model, ...reviewed } = await ctx.step('review', ({ addUsage, signal }) =>
         registry.call(
           'prose.critique',
-          { prompt: buildReviewPrompt(args), verdictFirst: input.verdictFirst },
+          {
+            text: input.text,
+            medium: input.medium,
+            register,
+            language: plan.language,
+            draftFormat: plan.format,
+            verdictFirst: input.verdictFirst,
+            ...(input.brief ? { brief: input.brief } : {}),
+            ...(input.context ? { context: input.context } : {}),
+          },
           { addUsage, signal },
         ),
       )
+      // The reviewer is a model reading a draft: it can echo any marker the draft carries. Inert before it is returned
+      // or quoted into the brief.
+      const notes = reviewed.notes.map((n) => ({ ...n, note: neutralizeFenceMarkers(n.note) }))
+      const visualSuggestions = reviewed.visualSuggestions.map((v) => ({
+        kind: v.kind,
+        shows: neutralizeFenceMarkers(v.shows),
+        where: neutralizeFenceMarkers(v.where),
+      }))
       return {
         language: plan.language,
         format: plan.format,
         mediumNote: MEDIUM_NOTE[input.medium],
         lint: { findings: plan.findings, counts: plan.counts },
-        review: { scores: reviewed.scores, notes: reviewed.notes },
-        visualSuggestions: reviewed.visualSuggestions,
+        review: { scores: reviewed.scores, notes },
+        visualSuggestions,
         reviewer: model,
         voicePath,
-        writerBrief: buildWriterBrief({ ...args, findings: plan.findings, notes: reviewed.notes, voicePath }),
+        writerBrief: buildWriterBrief({
+          text: input.text,
+          medium: input.medium,
+          register,
+          language: plan.language,
+          format: plan.format,
+          verdictFirst: input.verdictFirst,
+          brief: input.brief,
+          context: input.context,
+          findings: plan.findings,
+          notes,
+          voicePath,
+        }),
       }
     },
   })
 
   const gate = defineWorkflow({
-    id: 'rewrite.gate',
+    id: GATE_WORKFLOW_ID,
     version: PROSE_GATE_VERSION,
     input: ProseGateInput,
     output: ProseGateOutput,

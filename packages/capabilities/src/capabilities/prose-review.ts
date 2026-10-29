@@ -1,12 +1,21 @@
 import type { ResolvedRoute } from '@agent-workflows/routes'
 import { fallbackRoute } from '@agent-workflows/routes'
 import { z } from 'zod'
-import { completeJson, type LlmDeps, resolve } from '../llm/model-call.ts'
 import { CapabilityError } from '../errors.ts'
+import { completeJson, type LlmDeps, resolve } from '../llm/model-call.ts'
 import { defineCapability } from '../procedure.ts'
+import {
+  buildReviewPrompt,
+  fenceNonce,
+  PROSE_FORMATS,
+  PROSE_LANGUAGES,
+  PROSE_MEDIUMS,
+  PROSE_REGISTERS,
+} from './prose-prompts.ts'
 
-/** The most prompt the seat reads: the draft is at most 60k characters, the rest is instructions and fenced context. */
-export const MAX_PROSE_PROMPT_CHARS = 100_000
+export const MAX_PROSE_TEXT_CHARS = 60_000
+export const MAX_PROSE_BRIEF_CHARS = 2_000
+export const MAX_PROSE_CONTEXT_CHARS = 8_000
 
 export const PROSE_CRITERIA = [
   'verdict_first',
@@ -56,27 +65,44 @@ const reviewSchema = (verdictFirst: boolean) =>
       })
     : REVIEW
 
+/**
+ * The review fields, not a prompt: the capability builds the fenced reviewer prompt itself (a fresh random fence per
+ * call), so nothing reachable over HTTP or the CLI is a free prompt on the paid reviewer seat.
+ */
 export const proseReviewInput = z.object({
-  prompt: z
-    .string()
-    .min(1)
-    .max(MAX_PROSE_PROMPT_CHARS)
-    .describe('The whole review prompt: instructions, rubric and the fenced draft. The caller builds it'),
+  text: z.string().min(1).max(MAX_PROSE_TEXT_CHARS).describe('The draft under review'),
+  medium: z.enum(PROSE_MEDIUMS).describe('Where the text will be read'),
+  register: z.enum(PROSE_REGISTERS).describe('Reader register'),
+  language: z.enum(PROSE_LANGUAGES).describe('The draft’s language, already resolved (no `auto`)'),
+  // Not `format`: that is the CLI's own output flag (RESERVED_FLAGS).
+  draftFormat: z.enum(PROSE_FORMATS).describe('The draft’s format'),
   verdictFirst: z
     .boolean()
     .default(true)
     .describe('false: the author builds criteria → candidates → verdict; the answer carries no verdict_first score'),
+  brief: z.string().max(MAX_PROSE_BRIEF_CHARS).optional().describe('The audience or goal; fenced as data'),
+  context: z.string().max(MAX_PROSE_CONTEXT_CHARS).optional().describe('The surrounding outline; fenced as data'),
 })
 
 export const proseReviewOutput = REVIEW.extend({ model: z.string() })
 
-/** The writer is the calling Claude Code session, always Anthropic: any model id naming that lab, with or without a vendor prefix. */
-const WRITER_LAB = /claude|anthropic/i
+/** Any model of the writer's lab: the calling Claude Code session is always Anthropic, by family name or vendor prefix. */
+const WRITER_LAB = /claude|anthropic|opus|sonnet|haiku|fable/i
 
 /** The first model of the route (and its fallback) that belongs to the writer's lab, or null. */
 function sameLabModel(route: ResolvedRoute): string | null {
   const models = [route.model, fallbackRoute(route)?.model]
   return models.find((model) => model !== undefined && WRITER_LAB.test(model)) ?? null
+}
+
+function refuseSameLab(route: ResolvedRoute) {
+  const offending = sameLabModel(route)
+  if (offending) {
+    throw new CapabilityError(
+      'NOT_CONFIGURED',
+      `prose.review: route model ${offending} is from the writer's lab (the calling session is Anthropic); the reviewer must be a different lab`,
+    )
+  }
 }
 
 /**
@@ -93,13 +119,7 @@ export function assertCrossLab(deps: LlmDeps) {
     if (error instanceof CapabilityError) return
     throw error
   }
-  const offending = sameLabModel(route)
-  if (offending) {
-    throw new CapabilityError(
-      'NOT_CONFIGURED',
-      `prose.review: route model ${offending} is from the writer's lab (the calling session is Anthropic); the reviewer must be a different lab`,
-    )
-  }
+  refuseSameLab(route)
 }
 
 export const createProseReview = (deps: LlmDeps) => {
@@ -110,9 +130,22 @@ export const createProseReview = (deps: LlmDeps) => {
       'The cross-lab prose reviewer: one non-agentic call that scores a draft and returns notes (route prose.review)',
     input: proseReviewInput,
     output: proseReviewOutput,
-    // Not `agw prose critique`: `agw prose` is the family of the prose workflows.
-    cli: { command: ['prose-critique'], stdin: 'prompt', defaultFormat: 'json' },
-    async handler({ prompt, verdictFirst }, ctx) {
+    // Not `agw prose critique`: `agw prose` is the review workflow.
+    cli: { command: ['prose-critique'], stdin: 'text', defaultFormat: 'json' },
+    async handler({ text, medium, register, language, draftFormat, verdictFirst, brief, context }, ctx) {
+      // On the resolved route, overrides applied, primary and fallback: a route changed since boot is refused too.
+      refuseSameLab(resolve(deps, 'prose.review'))
+      const prompt = buildReviewPrompt({
+        text,
+        medium,
+        register,
+        language,
+        format: draftFormat,
+        verdictFirst,
+        brief,
+        context,
+        nonce: fenceNonce([text, brief, context]),
+      })
       const { data, route } = await completeJson(deps, {
         routeId: 'prose.review',
         prompt,
