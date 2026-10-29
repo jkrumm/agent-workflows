@@ -1,4 +1,9 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { createWorkflows } from '../src/workflows/index.ts'
+import { ToolGate } from '../src/tool-gate/index.ts'
 import { startTestHost, type TestHost } from './support.ts'
 
 // `prose.write` and `narrative.compose` are metered seats whose guards (lint, review, the keep gate) live in their
@@ -40,5 +45,20 @@ describe('internal capabilities at the host door', () => {
     expect(commands).not.toContain('prose-write')
     expect(commands).not.toContain('narrative-compose')
     expect(JSON.stringify(doc)).not.toMatch(/proseWrite|narrativeCompose/)
+  })
+
+  test('can never be granted to an agent: the tool gate treats them as unknown', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'agw-internal-gate-'))
+    const gate = new ToolGate({ stateDir, call: async () => ({ ok: true }) })
+    try {
+      await createWorkflows({ registry: t.registry, toolGate: gate }, [])
+      for (const id of INTERNAL) {
+        expect(() => gate.open({ runId: 'r', stepId: 's', tools: { opus: id } })).toThrow(
+          `tool grant refused: opus -> ${id} is not a capability of this host`,
+        )
+      }
+    } finally {
+      rmSync(stateDir, { recursive: true, force: true })
+    }
   })
 })

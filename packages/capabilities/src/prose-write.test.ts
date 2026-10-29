@@ -164,6 +164,21 @@ describe('the writer’s fence', () => {
     expect(data).not.toContain('f50')
   })
 
+  test('the omitted count is added to the lines over the cap, and shows with a short list too', () => {
+    const base = {
+      text: 'Draft.',
+      medium: 'article' as const,
+      register: 'peer-technical' as const,
+      language: 'en' as const,
+      format: 'markdown' as const,
+      closing: 'Go.',
+    }
+    const lines = (n: number) => Array.from({ length: n }, (_, i) => ({ rule: 'r', line: i + 1, excerpt: `f${i}` }))
+    expect(writerData({ ...base, findings: lines(57), notes: [], findingsOmitted: 3 })).toContain('- … and 10 more')
+    expect(writerData({ ...base, findings: lines(2), notes: [], findingsOmitted: 5 })).toContain('- … and 5 more')
+    expect(writerData({ ...base, findings: lines(50), notes: [] })).not.toContain('more')
+  })
+
   test('a caller that left findings and notes out says how many: they are counted with the rest', async () => {
     const t = setup({ anthropic: [{ text: 'Rewritten.' }] })
     const findings = Array.from({ length: MAX_BRIEF_FINDINGS }, (_, i) => ({

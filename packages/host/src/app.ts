@@ -28,7 +28,7 @@ import { type RunStore, runtimeRunStore } from './store.ts'
 
 /** What the host reads of a capability registry; any `createRegistry(...)` fits. */
 interface RegistryLike {
-  readonly capabilities: readonly Capability[]
+  readonly served: readonly Capability[]
   readonly router: RouterNode
   readonly requestContext: RequestContext
 }
@@ -125,8 +125,8 @@ export function createHost(options: HostOptions): Host {
   // A direct capability call over HTTP is a one-step run; `boot` registers the same workflows with the runtime.
   const invoke = capabilityRuns(options.capabilityWorkflows, { ...deps, isOpen })
 
-  // An internal capability has no door: no command, no route and no `cap.<id>` run.
-  const served = registry.capabilities.filter((c) => !c.internal)
+  // An internal capability has no door (`registry.served` leaves it out): no command, no route and no `cap.<id>` run.
+  const { served } = registry
   for (const c of served) assertNoReservedFlags(`capability ${c.id}`, c.input)
   for (const c of served) {
     if (!options.capabilityWorkflows.has(c.id)) throw new Error(`capability ${c.id} has no cap.${c.id} workflow`)

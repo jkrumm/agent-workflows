@@ -1,7 +1,5 @@
-import { readVoiceGuide, VOICE_PATH_ENV, voiceGuidePath } from '@agent-workflows/capabilities'
+import { readVoiceGuide, voiceGuidePath } from '@agent-workflows/capabilities'
 import { WorkflowError } from '@agent-workflows/runtime'
-
-export { VOICE_PATH_ENV, voiceGuidePath as voicePath }
 
 /** The voice guide cannot be read: a configuration failure, not a verdict on the draft. Names the variable. */
 export class VoiceGuideError extends WorkflowError {

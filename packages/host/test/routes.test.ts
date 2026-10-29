@@ -20,7 +20,7 @@ afterAll(async () => {
 /** The audio process's shape: no capabilities served, and no `routesEnv`. */
 const hostOptions = () => ({
   runtime: t.runtime,
-  registry: { capabilities: [], router: {}, requestContext: t.registry.requestContext },
+  registry: { served: [], router: {}, requestContext: t.registry.requestContext },
   workflows: [],
   capabilityWorkflows: new Map(),
   secret: SECRET,

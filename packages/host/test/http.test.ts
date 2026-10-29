@@ -277,7 +277,7 @@ describe('openapi document and contract sha', () => {
 describe('command collisions throw at creation', () => {
   test('a capability id under the host-reserved router keys is refused', () => {
     for (const key of ['workflows', 'runs', 'routes']) {
-      const registry = { capabilities: [], router: { [key]: {} }, requestContext: {} }
+      const registry = { served: [], router: { [key]: {} }, requestContext: {} }
       const attempt = () =>
         createHost({
           runtime: t.runtime,
@@ -347,7 +347,7 @@ describe('document build failure', () => {
     const flaky = createHost({
       runtime: t.runtime,
       registry: {
-        capabilities: [],
+        served: [],
         requestContext: {},
         router: {
           llm: {

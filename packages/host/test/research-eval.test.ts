@@ -135,7 +135,7 @@ describe("the scorers' judge", () => {
       return { url, text: 'page text' }
     },
   })
-  const capWorkflows = createCapabilityWorkflows({ capabilities: [pageCap] })
+  const capWorkflows = createCapabilityWorkflows({ served: [pageCap] })
   let jrt: Runtime
   let jplatform: ReturnType<typeof testPlatform>
   const jdb = freshSchema('judge')
