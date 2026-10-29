@@ -358,3 +358,17 @@ One entry per phase: what we learned, what changed on this page, and why.
   `pkill` by a lead may have hit another fleet's test run (kills are scoped to a PID from now on).
 - **Spend.** Team key ≈ $4.64; personal key for deploy verification only.
 - **Does the page hold?** Yes. P2's model/effort question moves into Wave 6 (Sonnet angles).
+
+### Wave 6 — Research (P3a), 2026-10-29 (v3.5, v3.6)
+
+- **Learned.** A rule fixed before the first live run turned the verdict into a query: pure agent, yolo
+  beat the code-led engine on supported claims (+0.185) at a fifth of the cost and a quarter of the
+  wall time, golden level held (420/420 runs). D4 (yolo by default) holds on numbers. Sonnet review
+  angles raise recall from 0.017 to 0.13 at 9.4× cost, so they run only for caller-asked deep reviews
+  (v3.5). Deleting an experiment's columns is a migration hazard: expand/contract for anything a
+  rollback target writes. Sleep-as-synchronisation is a flake class under load. A red CI hid behind a
+  mini-only gate for a wave; the train now gates on CI.
+- **Changed.** v3.5: review angles routed by depth. v3.6: research is one agent with web tools in the
+  host process. Callers moved: `/research`; research-gateway's MCP deleted.
+- **Spend.** Team key $26.13 (the comparison $12.57, the Sonnet experiment, the port's regression).
+- **Does the page hold?** Yes; the engine design in §11 P3 is superseded by numbers, as §0 intends.

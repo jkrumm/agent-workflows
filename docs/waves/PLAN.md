@@ -157,7 +157,7 @@ angles carried into Wave 6. **CI on master red since `fd03b01`** on two Linux-on
 real credential leak on Linux): the merge train gated on the mini's `make check` only. Team key ≈ $4.64.
 Evidence: `docs/waves/handoff/lead.md` at `f562b05`.
 
-## Wave 6 — Research (P3a)            <!-- status: active -->
+## Wave 6 — Research (P3a)            <!-- status: done -->
 Workers: Opus/medium for the comparison design, Sonnet/high for the port.
 
 - [x] **First:** CI green on master — the Linux-only failures fixed at their cause (`credentials of the
@@ -171,17 +171,27 @@ Workers: Opus/medium for the comparison design, Sonnet/high for the port.
   agent vs agent on the pipeline, yolo vs focused — correctness, cost, wall time.
   Decided by the pre-registered rule: pure agent, yolo — supported +0.185 [0.065, 0.321] vs the engine,
   golden level held, $0.028 vs $0.138 per question, p50 39 s vs 171 s; 420/420 runs, team key $12.57
-- [ ] `research` ported in the winning shape, follow-up on a finished report included
-- [ ] `/research` switched; research-gateway's `/mcp` deleted and its MCP registration removed
-**Left behind:**
+- [x] `research` ported in the winning shape, follow-up on a finished report included
+- [x] `/research` switched; research-gateway's `/mcp` deleted and its MCP registration removed
+**Left behind:** all done; release `0c360db` on the personal key, `make verify` PASS, `@verifier` 8/8, CI
+green and gating the train. Research is one OpenCode agent with the platform's web tools in the host
+process; `/research` runs on `agw research`; research-gateway's `/mcp` deleted (live 404), its MCP
+registration removed on the mini (MacBook: ask-human `20261029T033409-656` queued). Review angles on
+Sonnet for caller-asked deep reviews. Team key $26.13. Carried: CONTEXT7_API_KEY still resolves via
+research-gateway's 1Password item (move before P6); engine columns 0007/0008 kept for rollback (drop
+later, expand/contract); CLI's synchronous answer lacks final cost; one sleep-synchronised test left.
+Evidence: `docs/waves/handoff/lead.md` at `57ef3ab`.
 
-## Wave 7 — otel, brain, diagram, prose (P3b)            <!-- status: pending -->
+## Wave 7 — otel, brain, diagram, prose (P3b)            <!-- status: active -->
 Workers: Sonnet/high.
 
 - [ ] `otel` workflow with `hdx` as a capability (HyperDX HTTP API, no MCP); cost per query recorded
 - [ ] `brain` agent shared by workflows; `diagram` (excalidraw) ported
 - [ ] `prose`: lint + cross-lab review + keep gate as a workflow; the rewrite in the calling session on Max
 - [ ] `/otel`, `/excalidraw-diagram`, `/prose` switched; their agw MCP tools removed
+- [ ] Wave 6 leftovers (Sonnet/high): the CLI's synchronous answer carries the final cost; the last
+  sleep-synchronised test (`opencode-host` abort) on an in-flight signal; `rd fan --clean` scoped to the
+  fleet's own worktrees (dotfiles); CONTEXT7_API_KEY moved off research-gateway's 1Password item
 **Left behind:**
 
 ## Wave 8 — Audio, image, podcast (P4a)            <!-- status: pending -->
