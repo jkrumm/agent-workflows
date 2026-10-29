@@ -177,7 +177,7 @@ ensure_door_tokens() {
 
 # The door tokens read with the release's own parser (mode, owner, every line), the one the audio process starts
 # with: a bad file refuses the deploy before anything is stopped, never as a rollback. Messages name the file and the
-# line, never a token. `tokens.ts` imports nothing beyond node, so a failure here is about the file, and bun's own
+# line, never a token. `tokens.ts` imports node and the host auth module (node-only), so a failure here is about the file, and bun's own
 # stderr (a failed import, a crash) is kept in the message rather than passing for one.
 check_door_tokens() {  # $1 release dir
   local why
