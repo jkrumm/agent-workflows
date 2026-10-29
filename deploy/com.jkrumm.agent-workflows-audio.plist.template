@@ -29,7 +29,7 @@
     <key>AGW_VERSION</key>
     <string>__SHA__</string>
     <!-- The door's caller tokens (name=token, mode 0600); make deploy creates the file with a hermes token. -->
-    <key>AGW_DOOR_TOKENS</key>
+    <key>AGW_DOOR_CALLERS_FILE</key>
     <string>__DATA_DIR__/door-tokens</string>
   </dict>
 
