@@ -59,19 +59,18 @@ title=$(print -r -- "$out" | jq -r '.output.title // empty' 2>/dev/null)
 [[ -n "$title" ]] || fail "run $run_id has no output title: $out"
 ok "agw smoke ping: run $run_id, title \"$title\""
 
-# 4. its row in the journal (the run record lands in runPost, a moment after the run ends)
-row=""
-for _ in {1..20}; do
-  row=$(journal "select status, coalesce(trace_id, ''), coalesce(cost::text, ''), coalesce(tokens_input, 0) from \"$SCHEMA\".runs where id = :'id'" -v "id=$run_id") || exit 1
-  IFS='|' read -r run_status trace cost tokens <<< "$row"
-  [[ "$run_status" == "done" && -n "${trace:-}" && -n "${cost:-}" ]] && break
-  sleep 1
-done
+# 4. its row in the journal: the run answer waits for the run record, so the record is already there (no polling)
+[[ "$(print -r -- "$out" | jq -r '.costPending // false')" == "false" ]] || fail "run $run_id answered before its run record landed (costPending): $out"
+answer_cost=$(print -r -- "$out" | jq -r '.cost // empty' 2>/dev/null)
+[[ -n "$answer_cost" ]] && (( answer_cost > 0 )) || fail "run $run_id answered without priced usage (cost '${answer_cost:-null}'): $out"
+row=$(journal "select status, coalesce(trace_id, ''), coalesce(cost::text, ''), coalesce(tokens_input, 0) from \"$SCHEMA\".runs where id = :'id'" -v "id=$run_id") || exit 1
+IFS='|' read -r run_status trace cost tokens <<< "$row"
 [[ "${run_status:-}" == "done" ]] || fail "run $run_id is '${run_status:-missing}' in $SCHEMA.runs, not done"
 [[ -n "${trace:-}" ]] || fail "run $run_id has no trace id"
 [[ -n "${cost:-}" ]] && (( cost > 0 )) || fail "run $run_id has no priced usage (cost '${cost:-null}')"
+(( cost == answer_cost )) || fail "run $run_id: the answer's cost $answer_cost differs from the journal's $cost"
 (( ${tokens:-0} > 0 )) || fail "run $run_id recorded no input tokens"
-ok "journal: done, trace $trace, cost $cost, $tokens input tokens"
+ok "journal: done, trace $trace, cost $cost (as answered), $tokens input tokens"
 
 # 5. a direct capability call is a run of its own (cap.<id>), recorded like any other
 since=$(journal "select now()") || exit 1

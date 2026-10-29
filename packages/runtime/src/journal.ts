@@ -36,10 +36,14 @@ export type RunRow = {
   cancel_requested_at: Date | null
   admitted_at: Date | null
   post_hooks_at: Date | null
+  /** The run record's sums, written by `runPost`: `numeric` arrives as a string; null until then or when nothing was priced. */
+  cost: string | null
+  unpriced_calls: number | null
 }
 
 const RUN_COLUMNS = `id, workflow, parent_id, root_id, status, purpose, input, output, error, error_kind, traceparent,
-  version_started, version_finished, started_at, finished_at, cancel_requested_at, admitted_at, post_hooks_at`
+  version_started, version_finished, started_at, finished_at, cancel_requested_at, admitted_at, post_hooks_at,
+  cost, unpriced_calls`
 
 export type CancelledStep = { run_id: string; step_id: string; kind: StepKind; handle: AgentHandleState | null }
 

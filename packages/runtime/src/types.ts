@@ -237,13 +237,21 @@ export type AnyWorkflow = Workflow<any, any>
 
 export type RunError = { kind: ErrorKind; message: string }
 
-/** A run as the outside world sees it (`Runtime.getRun`): output only once `done`, error only once ended badly. */
+/**
+ * A run as the outside world sees it (`Runtime.getRun`): output only once `done`, error only once ended badly. `cost`
+ * and `unpricedCalls` are the run record's sums, which `runPost` writes after the terminal status commits:
+ * `postHooksDone` says whether that has happened, so a reader can tell a final cost from one still to come.
+ */
 export type RunSnapshot = {
   runId: string
   workflowId: string
   status: RunStatus
   output: Json | null
   error: RunError | null
+  /** Sum of the priced usage; null when nothing was priced or the record is not written yet. A lower bound while `unpricedCalls > 0`. */
+  cost: number | null
+  unpricedCalls: number
+  postHooksDone: boolean
 }
 
 export type RunInfo = {

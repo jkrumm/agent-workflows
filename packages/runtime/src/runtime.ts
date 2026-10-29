@@ -269,6 +269,9 @@ export class Runtime {
       status: run.status,
       output: run.status === 'done' ? run.output : null,
       error: run.error_kind ? { kind: run.error_kind, message: run.error ?? '' } : null,
+      cost: run.cost === null ? null : Number(run.cost),
+      unpricedCalls: run.unpriced_calls ?? 0,
+      postHooksDone: run.post_hooks_at !== null,
     }
   }
 

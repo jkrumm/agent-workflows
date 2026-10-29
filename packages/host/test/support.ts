@@ -1,7 +1,7 @@
 import { createCapabilities, createRegistry } from '@agent-workflows/capabilities'
 import { startFakeIu, messageResponse, type FakeIuServer } from '@agent-workflows/capabilities/testing'
 import { iuTransports } from '@agent-workflows/capabilities'
-import { defineWorkflow, type Logger, type Runtime } from '@agent-workflows/runtime'
+import { defineWorkflow, type Logger, type Middleware, type Runtime } from '@agent-workflows/runtime'
 import { Pool } from 'pg'
 import { z } from 'zod'
 import { createHost, type Host } from '../src/app.ts'
@@ -113,6 +113,8 @@ export async function startTestHost(
     logger?: Logger
     /** Runs behind the platform middleware with an in-memory Argo, as in production. */
     platform?: boolean
+    /** Ahead of the platform middleware, so a `runPost` held here holds the run record behind it. */
+    middleware?: Middleware[]
   } = {},
 ) {
   const fresh = freshSchema(options.prefix ?? 'host')
@@ -144,7 +146,7 @@ export async function startTestHost(
   const runtime: Runtime = testRuntime({
     schema,
     workflows: [...workflows.map((w) => w.workflow), ...capabilityWorkflows.values()],
-    middleware: platform?.middleware,
+    middleware: [...(options.middleware ?? []), ...(platform?.middleware ?? [])],
   })
   await runtime.open()
   const pool = new Pool({ connectionString: PG_URL, max: 2 })
