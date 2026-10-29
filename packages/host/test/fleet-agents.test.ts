@@ -493,7 +493,7 @@ describe('renderText', () => {
     return {
       generatedAt: NOW,
       staleAfterHours: 24,
-      summary: { needsYou: 0, working: 0, idle: 0, stale: 0, done: 0, dispatch: 0 },
+      summary: { needsYou: 0, working: 0, idle: 0, stale: 0, done: 0 },
       projects: [],
       humanQueue: [],
       warnings: [],
@@ -504,7 +504,7 @@ describe('renderText', () => {
   test('every line is at most 110 chars, even with a long title', () => {
     const longTitle = 'T'.repeat(400)
     const data = snapshot({
-      summary: { needsYou: 1, working: 0, idle: 0, stale: 0, done: 0, dispatch: 0 },
+      summary: { needsYou: 1, working: 0, idle: 0, stale: 0, done: 0 },
       projects: [
         {
           name: 'some-project',
@@ -588,7 +588,7 @@ describe('renderText with color', () => {
     return {
       generatedAt: NOW,
       staleAfterHours: 24,
-      summary: { needsYou: 1, working: 0, idle: 0, stale: 0, done: 0, dispatch: 0 },
+      summary: { needsYou: 1, working: 0, idle: 0, stale: 0, done: 0 },
       projects: [
         {
           name: 'some-project',
@@ -702,7 +702,7 @@ describe('renderText with cols', () => {
     const data: AgentsSnapshot = {
       generatedAt: NOW,
       staleAfterHours: 24,
-      summary: { needsYou: 1, working: 1, idle: 0, stale: 0, done: 0, dispatch: 0 },
+      summary: { needsYou: 1, working: 1, idle: 0, stale: 0, done: 0 },
       warnings: [],
       humanQueue: [],
       projects: [
@@ -935,7 +935,7 @@ describe('renderText human-queue block and header suffix', () => {
     return {
       generatedAt: NOW_MS,
       staleAfterHours: 24,
-      summary: { needsYou: 0, working: 0, idle: 0, stale: 0, done: 0, dispatch: 0 },
+      summary: { needsYou: 0, working: 0, idle: 0, stale: 0, done: 0 },
       projects: [],
       humanQueue,
       warnings: [],
@@ -1005,7 +1005,7 @@ describe('fitHeader', () => {
       {
         generatedAt: Date.parse(iso),
         staleAfterHours: 24,
-        summary: { needsYou: 1, working: 2, idle: 0, stale: 0, done: 0, dispatch: 0 },
+        summary: { needsYou: 1, working: 2, idle: 0, stale: 0, done: 0 },
         projects: [],
         humanQueue: [],
         warnings: [],

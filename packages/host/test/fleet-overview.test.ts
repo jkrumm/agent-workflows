@@ -52,7 +52,7 @@ function snapshot(overrides: Partial<AgentsSnapshot> = {}): AgentsSnapshot {
   return {
     generatedAt: NOW,
     staleAfterHours: 24,
-    summary: { needsYou: 0, working: 1, idle: 0, stale: 0, done: 0, dispatch: 0 },
+    summary: { needsYou: 0, working: 1, idle: 0, stale: 0, done: 0 },
     projects: [project()],
     warnings: [],
     humanQueue: [],
