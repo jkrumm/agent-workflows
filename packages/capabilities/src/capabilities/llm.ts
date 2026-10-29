@@ -2,6 +2,7 @@ import type { LlmDeps } from '../llm/model-call.ts'
 import { createClassify } from './classify.ts'
 import { createDecide } from './decide.ts'
 import { createNarrativeCompose } from './narrative-compose.ts'
+import { createOverviewClassify } from './overview-classify.ts'
 import { createProseReview } from './prose-review.ts'
 import { createProseWrite } from './prose-write.ts'
 import { createReviewAdversary } from './review-adversary.ts'
@@ -23,5 +24,6 @@ export function createLlmCapabilities(deps: LlmDeps) {
     createProseReview(deps),
     createProseWrite(deps),
     createNarrativeCompose(deps),
+    createOverviewClassify(deps),
   ] as const
 }

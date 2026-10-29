@@ -3,6 +3,8 @@ export { createCapabilities } from './capabilities/index.ts'
 export { capDiff, dataBlock, MAX_DIFF_CHARS } from './capabilities/review-prompts.ts'
 export { ROUTER_ANGLES } from './capabilities/review-route.ts'
 export { parseJsonLoose } from './llm/model-call.ts'
+// The `overview` workflow validates a merged answer against the same vocabulary the classify seat answers in.
+export { CONFIDENCES, RECOMMENDATIONS } from './capabilities/overview-classify.ts'
 // `prose` shares its prompt vocabulary and fence with the host's writer brief instead of keeping copies.
 export {
   briefBlock,
