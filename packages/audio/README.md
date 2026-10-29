@@ -126,8 +126,9 @@ from its duration.
 
 ## Eval
 
-`scripts/eval-legacy/audio.ts` runs the speech and transcriptions suites against both arms and scores them per
-`docs/research/2026-10-29-wave8-ports.md` §speech and §transcriptions. N's cost is read from the run record named by
+The speech and transcriptions suites were run against both arms and scored per
+`docs/research/2026-10-29-wave8-ports.md` §speech and §transcriptions; the comparison script is deleted with
+audio-gateway (Wave 11). N's cost is read from the run record named by
 the response header `agw-run-id`, so the process must send it on both door routes.
 
 ## Process

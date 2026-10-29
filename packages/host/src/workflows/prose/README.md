@@ -39,10 +39,8 @@ calling Claude Code session on Max, so the platform does the two parts that need
   and its tests (`prose-lint.test.ts`); `gate.ts` is `judgeRewrite`/`worsenedRule` from `server/jobs/handlers/prose.ts`.
 - **Eval.** Suite `prose` (plain cases, scorer `scorer.ts`: `valid`, `notesPresent` (reported, not part of `pass`: a clean
   draft may get none), `scoresInRange`, and against a recorded case `scoreAgreement` and `lintAgreement`, which compares
-  the findings (rule and line), not their count). Rules 1 and 2 of the pre-registered set are offline:
-  `bun scripts/eval-legacy/prose.ts --offline` (legacy lint and the real legacy `runProsePipeline` with canned
-  adapters); `--build-cases` writes `$AGW_EVAL_DIR/prose/cases.jsonl` from the recorded params (language included).
-  Rules 3 and 4 need live review calls.
+  the findings (rule and line), not their count). Rules 1 and 2 of the pre-registered set were offline (legacy lint and the real legacy `runProsePipeline` on canned
+  adapters) and were run once; that script is deleted with agent-gateway (Wave 11). Rules 3 and 4 need live review calls.
 - No agent definitions: the workflow runs no agent step, so it adds nothing to the run fingerprint beyond its `version`.
 
 ## Callers without a Claude session
