@@ -178,7 +178,7 @@ export class Journal {
          traceparent, trace_id, version_started, status, error, error_kind, finished_at, lock_key)
        select $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
          case when $12 = 'failed' then now() end, $15::bigint ${guard}
-       on conflict do nothing returning id`,
+       ${run.chosenId ? 'on conflict (id) do nothing' : 'on conflict do nothing'} returning id`,
       [
         run.id,
         run.workflow,
@@ -199,7 +199,8 @@ export class Journal {
       ],
     )
     if (rows[0]) return rows[0].id
-    // Enforced by the insert itself (the primary key), so two starts with one chosen id never both pass a check.
+    // Enforced by the insert itself, aimed at the primary key alone: two starts with one chosen id never both pass,
+    // and a conflict on any other unique key is that key's own error, never read as this one.
     if (run.chosenId) throw new WorkflowError('invalid_input', `run id ${run.id} is already used`)
     if (fence) await this.assertLease(fence)
     const existing = await this.query<{ id: string }>(
