@@ -1,5 +1,4 @@
 import { basename } from 'node:path'
-import { stripControlBytes } from './text.ts'
 import type {
   Agent,
   AgentSource,
@@ -9,6 +8,7 @@ import type {
   HerdrAgentStatus,
   JobStatus,
 } from './schema.ts'
+import { oneLine, stripControlBytes } from './text.ts'
 
 // Pure steps of the snapshot: what a transcript tail says, an agent's urgency, and the merge of the three collectors.
 
@@ -19,6 +19,9 @@ export function encodeProjectDir(cwd: string): string {
 
 /** Text that came from outside (a transcript, a pane title, a branch name) never carries a control byte into a pane, Argo or a prompt. */
 export const clean = (text: string | null | undefined): string | null => (text == null ? null : stripControlBytes(text))
+
+/** {@link clean} for a field that is one line by nature (id, title, account, branch): CR/LF and runs of whitespace collapse too. */
+export const cleanLine = (text: string | null | undefined): string | null => (text == null ? null : oneLine(text))
 
 export interface TranscriptTail {
   lastPrompt: string | null
@@ -84,7 +87,7 @@ export function parseTranscriptTail(text: string): TranscriptTail {
 
   return {
     lastPrompt: clean(lastPrompt),
-    aiTitle: clean(aiTitle),
+    aiTitle: cleanLine(aiTitle),
     lastReply: clean(lastReply),
     lastActivityAt,
   }
@@ -215,21 +218,23 @@ export function mergeAgents(input: MergeAgentsInput): MergedProject[] {
   const entries = new Map<string, Entry>()
 
   for (const a of herdrAgents) {
-    const sessionId = a.agent_session?.value ?? null
-    const paneId = a.pane_id ?? null
+    const rawSession = a.agent_session?.value ?? null
+    const sessionId = cleanLine(rawSession) || null
+    const paneId = cleanLine(a.pane_id) || null
+    const workspaceId = cleanLine(a.workspace_id) || null
     if (!sessionId && !paneId) continue // nothing to identify the row by
-    const tail = sessionId ? (transcripts.get(sessionId) ?? EMPTY_TAIL) : EMPTY_TAIL
+    const tail = rawSession ? (transcripts.get(rawSession) ?? EMPTY_TAIL) : EMPTY_TAIL
     entries.set(sessionId ?? `pane:${paneId}`, {
       jobStatus: null,
-      workspaceId: a.workspace_id ?? null,
+      workspaceId,
       cwd: a.cwd ?? '',
       agent: {
         id: sessionId ?? paneId ?? '',
         source: 'herdr',
         sessionId,
         paneId,
-        workspaceId: a.workspace_id ?? null,
-        title: clean(a.terminal_title_stripped) || tail.aiTitle || null,
+        workspaceId,
+        title: cleanLine(a.terminal_title_stripped) || tail.aiTitle || null,
         state: 'unknown',
         herdrStatus: normalizeHerdrStatus(a.agent_status ?? ''),
         claudeStatus: null,
@@ -238,56 +243,60 @@ export function mergeAgents(input: MergeAgentsInput): MergedProject[] {
         lastPrompt: tail.lastPrompt,
         lastReply: tail.lastReply,
         lastActivityAt: tail.lastActivityAt,
-        account: sessionId ? (accounts?.get(sessionId) ?? null) : null,
+        account: rawSession ? cleanLine(accounts?.get(rawSession)) || null : null,
         startedAt: null,
       },
     })
   }
 
   for (const c of claudeAgents) {
-    if (typeof c.sessionId !== 'string' || c.sessionId === '') continue
+    if (typeof c.sessionId !== 'string') continue
+    const sessionId = cleanLine(c.sessionId)
+    if (!sessionId) continue
     const claudeStatus = normalizeClaudeStatus(c.status ?? '')
     const startedAt = typeof c.startedAt === 'number' ? c.startedAt : null
-    const existing = entries.get(c.sessionId)
+    const existing = entries.get(sessionId)
     if (existing) {
       existing.agent.claudeStatus = claudeStatus
-      existing.agent.waitingFor = clean(c.waitingFor)
+      existing.agent.waitingFor = cleanLine(c.waitingFor)
       existing.agent.startedAt = startedAt
       continue
     }
     const tail = transcripts.get(c.sessionId) ?? EMPTY_TAIL
-    entries.set(c.sessionId, {
+    entries.set(sessionId, {
       jobStatus: null,
       workspaceId: null,
       cwd: c.cwd ?? '',
       agent: {
-        id: c.sessionId,
+        id: sessionId,
         source: 'claude',
-        sessionId: c.sessionId,
+        sessionId,
         paneId: null,
         workspaceId: null,
         title: tail.aiTitle,
         state: 'unknown',
         herdrStatus: null,
         claudeStatus,
-        waitingFor: clean(c.waitingFor),
+        waitingFor: cleanLine(c.waitingFor),
         tier: null,
         lastPrompt: tail.lastPrompt,
         lastReply: tail.lastReply,
         lastActivityAt: tail.lastActivityAt,
-        account: accounts?.get(c.sessionId) ?? null,
+        account: cleanLine(accounts?.get(c.sessionId)) || null,
         startedAt,
       },
     })
   }
 
   for (const job of dispatchJobs) {
-    entries.set(`dispatch:${job.id}`, {
+    const jobId = cleanLine(job.id)
+    if (!jobId) continue
+    entries.set(`dispatch:${jobId}`, {
       jobStatus: job.status,
       workspaceId: null,
       cwd: job.cwd,
       agent: {
-        id: job.id,
+        id: jobId,
         source: 'dispatch',
         sessionId: null,
         paneId: null,
@@ -301,7 +310,7 @@ export function mergeAgents(input: MergeAgentsInput): MergedProject[] {
         lastPrompt: null,
         lastReply: null,
         lastActivityAt: job.finishedAt ?? job.startedAt ?? job.createdAt,
-        account: job.account ?? null,
+        account: cleanLine(job.account) || null,
         startedAt: job.startedAt ?? job.createdAt,
       },
     })
@@ -319,10 +328,10 @@ export function mergeAgents(input: MergeAgentsInput): MergedProject[] {
       jobStatus: entry.jobStatus,
     })
     const label = entry.workspaceId ? workspaceLabels.get(entry.workspaceId) : undefined
-    const projectName = clean(label ?? basename(entry.cwd)) ?? ''
+    const projectName = cleanLine(label ?? basename(entry.cwd)) ?? ''
     const group = groups.get(projectName)
     if (group) group.agents.push(entry.agent)
-    else groups.set(projectName, { name: projectName, cwd: clean(entry.cwd) ?? '', agents: [entry.agent] })
+    else groups.set(projectName, { name: projectName, cwd: cleanLine(entry.cwd) ?? '', agents: [entry.agent] })
   }
 
   const rank = (g: MergedProject) => Math.min(...g.agents.map((a) => STATE_RANK[a.state]))

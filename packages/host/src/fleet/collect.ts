@@ -1,10 +1,11 @@
 import { existsSync } from 'node:fs'
-import { lstat, readdir, readFile } from 'node:fs/promises'
+import { lstat, readdir, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
+import { helperEnv, networkEnv } from '../workflows/review/exec.ts'
 import {
   type ClaudeAgentRaw,
-  clean,
+  cleanLine,
   type DispatchJobRaw,
   EMPTY_TAIL,
   encodeProjectDir,
@@ -15,7 +16,7 @@ import {
   type TranscriptTail,
 } from './derive.ts'
 import type { HumanQueueEntry, ProjectGit, Snapshot, Summary } from './schema.ts'
-import { stripControlBytes } from './text.ts'
+import { oneLine, stripControlBytes } from './text.ts'
 
 // The impure half of the snapshot: herdr and Claude's registry, transcript tails, the human queue, session accounts,
 // git status and agent-gateway's dispatch jobs. Every one is a port, so tests run the whole builder on fakes.
@@ -34,22 +35,23 @@ export interface CollectorResult<T> {
   warning: string | null
 }
 
-/** Runs a command and answers its stdout; `null` on a spawn error, a timeout or a non-zero exit. */
-export type RunCommand = (cmd: string[], options?: { timeoutMs?: number }) => Promise<string | null>
+/**
+ * Runs a command and answers its stdout; `null` on a spawn error, a timeout or a non-zero exit. `network` is for the one
+ * call that talks to a remote (`git fetch`): it adds the credential and proxy variables to the child's environment.
+ */
+export type RunCommand = (cmd: string[], options?: { timeoutMs?: number; network?: boolean }) => Promise<string | null>
 
-/** What a child (git, herdr, claude) is given of the host's environment: never a secret the host holds. */
-const CHILD_ENV_KEYS = ['PATH', 'HOME', 'TMPDIR', 'LANG']
-
-/** The command runner on `env`: children get {@link CHILD_ENV_KEYS} and no credential prompts, nothing else. */
+/**
+ * The command runner on `env`. A child (git, herdr, claude) gets the review helpers' allowlist (`helperEnv`: no
+ * credential prompts, no optional git locks) and, for a `network` call, the SSH agent, config directory and proxy/CA
+ * settings (`networkEnv`); never `AGW_API_SECRET`, `ARGO_API_SECRET` or `IU_API_KEY`.
+ */
 export function commandRunner(env: Record<string, string | undefined> = process.env): RunCommand {
-  const childEnv: Record<string, string> = { GIT_TERMINAL_PROMPT: '0' }
-  for (const key of CHILD_ENV_KEYS) {
-    const value = env[key]
-    if (value !== undefined) childEnv[key] = value
-  }
+  const local = helperEnv(env)
+  const remote = { ...local, ...networkEnv(env) }
   return async (cmd, options = {}) => {
     try {
-      const proc = Bun.spawn(cmd, { stdout: 'pipe', stderr: 'ignore', env: childEnv })
+      const proc = Bun.spawn(cmd, { stdout: 'pipe', stderr: 'ignore', env: options.network ? remote : local })
       let timedOut = false
       const timer = setTimeout(() => {
         timedOut = true
@@ -123,47 +125,120 @@ export function parseHumanQueueRequest(text: string, fallbackId: string): HumanQ
   // A request is written by an agent and lands in a coloured pane and in a chat: a stray ESC must reach neither.
   const cmd = typeof r.cmd === 'string' ? stripControlBytes(r.cmd) : ''
   return {
-    id: typeof r.id === 'string' && r.id ? r.id : fallbackId,
-    askedAt: typeof r.created === 'string' ? r.created : null,
+    id: (typeof r.id === 'string' && oneLine(r.id)) || oneLine(fallbackId),
+    askedAt: typeof r.created === 'string' ? oneLine(r.created) || null : null,
     question: stripControlBytes(r.text),
     cmd: cmd || null,
   }
 }
 
+/** A queue is a handful of requests: the newest this many are read, none larger than {@link MAX_REQUEST_BYTES}. */
+const MAX_QUEUE_FILES = 200
+const MAX_REQUEST_BYTES = 64 * 1024
+
 /** Pending requests in `dir`, newest first (ids sort chronologically). A missing directory is an empty queue, never a warning. */
 export async function readHumanQueue(dir: string): Promise<CollectorResult<HumanQueueEntry>> {
-  if (!existsSync(dir)) return { items: [], warning: null }
+  let names: Set<string>
   try {
-    const names = new Set(await readdir(dir))
-    const items: HumanQueueEntry[] = []
-    for (const name of names) {
-      if (!name.endsWith('.req') || name.startsWith('.')) continue
-      const id = name.slice(0, -'.req'.length)
-      if (names.has(`${id}.res`)) continue
-      const entry = parseHumanQueueRequest(await readFile(join(dir, name), 'utf-8'), id)
-      if (entry) items.push(entry)
-    }
-    items.sort((a, b) => (a.id < b.id ? 1 : a.id > b.id ? -1 : 0))
-    return { items, warning: null }
+    names = new Set(await readdir(dir))
   } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { items: [], warning: null }
     return { items: [], warning: `human-queue read failed: ${String(error)}` }
   }
+  const pending = [...names]
+    .filter((name) => name.endsWith('.req') && !name.startsWith('.') && !names.has(`${name.slice(0, -4)}.res`))
+    .toSorted()
+    .toReversed()
+  const items: HumanQueueEntry[] = []
+  let skipped = 0
+  for (const name of pending.slice(0, MAX_QUEUE_FILES)) {
+    try {
+      const path = join(dir, name)
+      const info = await lstat(path)
+      if (!info.isFile() || info.size > MAX_REQUEST_BYTES) {
+        skipped += 1
+        continue
+      }
+      const entry = parseHumanQueueRequest(await Bun.file(path).text(), name.slice(0, -'.req'.length))
+      if (entry) items.push(entry)
+    } catch {
+      skipped += 1 // answered or removed while reading
+    }
+  }
+  items.sort((a, b) => (a.id < b.id ? 1 : a.id > b.id ? -1 : 0))
+  const dropped = skipped + Math.max(0, pending.length - MAX_QUEUE_FILES)
+  return {
+    items,
+    warning: dropped > 0 ? `human-queue: ${dropped} request(s) skipped (unreadable, oversized or over the cap)` : null,
+  }
+}
+
+/** What a `pick` answers: the rows that passed the shape check, and how many did not. */
+interface Picked<T> {
+  items: T[]
+  dropped: number
 }
 
 async function readJsonCommand<T>(
   run: RunCommand,
   cmd: string[],
   label: string,
-  pick: (parsed: unknown) => T[],
+  pick: (parsed: unknown) => Picked<T>,
 ): Promise<CollectorResult<T>> {
   const out = await run(cmd)
   if (out == null) return { items: [], warning: `${label} failed or timed out` }
+  let parsed: unknown
   try {
-    return { items: pick(JSON.parse(out)), warning: null }
+    parsed = JSON.parse(out)
   } catch {
     return { items: [], warning: `${label} returned unparseable JSON` }
   }
+  try {
+    const { items, dropped } = pick(parsed)
+    return { items, warning: dropped > 0 ? `${label}: ${dropped} malformed row(s) dropped` : null }
+  } catch {
+    return { items: [], warning: `${label} returned an unexpected shape` }
+  }
 }
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+/** Every named field is absent, null or of `type`. */
+const typed = (row: Record<string, unknown>, type: 'string' | 'number', ...keys: string[]) =>
+  keys.every((key) => row[key] == null || typeof row[key] === type)
+
+/** The rows of `list` that `valid` accepts, narrowed; a null, a scalar or a wrong-typed row is counted, never thrown on. */
+function pickRows<T>(list: unknown, valid: (row: Record<string, unknown>) => boolean): Picked<T> {
+  if (!Array.isArray(list)) throw new Error('not a list')
+  const items = list.filter((row): row is Record<string, unknown> => isRecord(row) && valid(row)) as unknown as T[]
+  return { items, dropped: list.length - items.length }
+}
+
+/** `{result: {<key>: [...]}}` as herdr prints it; a missing list is an empty one. */
+const herdrList = (parsed: unknown, key: string): unknown =>
+  isRecord(parsed) && isRecord(parsed.result) ? (parsed.result[key] ?? []) : []
+
+export const pickHerdrAgents = (parsed: unknown): Picked<HerdrAgentRaw> =>
+  pickRows(herdrList(parsed, 'agents'), (row) => {
+    const session = row.agent_session
+    const sessionOk = session == null || (isRecord(session) && typeof session.value === 'string')
+    return (
+      sessionOk && typed(row, 'string', 'agent_status', 'cwd', 'pane_id', 'workspace_id', 'terminal_title_stripped')
+    )
+  })
+
+export const pickHerdrWorkspaces = (parsed: unknown): Picked<HerdrWorkspaceRaw> =>
+  pickRows(
+    herdrList(parsed, 'workspaces'),
+    (row) => typeof row.workspace_id === 'string' && typeof row.label === 'string',
+  )
+
+export const pickClaudeAgents = (parsed: unknown): Picked<ClaudeAgentRaw> =>
+  pickRows(
+    parsed,
+    (row) => typed(row, 'string', 'cwd', 'sessionId', 'status', 'waitingFor') && typed(row, 'number', 'startedAt'),
+  )
 
 /**
  * The tail of a transcript file, growing the window while no line carries a timestamp. A single line (an
@@ -173,8 +248,12 @@ async function readJsonCommand<T>(
  */
 export async function readTranscriptTailFile(path: string): Promise<TranscriptTail> {
   const file = Bun.file(path)
-  if (!(await file.exists())) return EMPTY_TAIL
-  const size = file.size
+  let size: number
+  try {
+    size = (await stat(path)).size
+  } catch {
+    return EMPTY_TAIL // a missing file
+  }
   let attemptBytes = TAIL_BYTES
   let tail: TranscriptTail = EMPTY_TAIL
   for (;;) {
@@ -193,8 +272,10 @@ export async function readTranscriptTailFile(path: string): Promise<TranscriptTa
 /** The last {@link LOG_TAIL_BYTES} of a log day file: a bounded async read; a partial first line fails to parse and is skipped. */
 const LOG_TAIL_BYTES = 2 * 1024 * 1024
 async function readLogTail(path: string): Promise<string> {
-  const file = Bun.file(path)
-  return file.slice(Math.max(0, file.size - LOG_TAIL_BYTES), file.size).text()
+  const { size } = await stat(path)
+  return Bun.file(path)
+    .slice(Math.max(0, size - LOG_TAIL_BYTES), size)
+    .text()
 }
 
 /** sessionId to account for every `session_env` line carrying an `account`; later lines win. */
@@ -223,9 +304,17 @@ export async function readSessionPin(dir: string, sessionId: string): Promise<st
   try {
     const path = join(dir, `${sessionId}.json`)
     if (!(await lstat(path)).isFile()) return null // never follow a symlink or read a directory
-    const raw = JSON.parse(await readFile(path, 'utf8'))
+    const raw = JSON.parse(await Bun.file(path).text())
     if (typeof raw?.account !== 'string' || raw.account === '') return null
-    if (typeof raw.dir === 'string' && raw.dir !== '' && !existsSync(raw.dir)) return null // a pinned dir must still exist
+    if (
+      typeof raw.dir === 'string' &&
+      raw.dir !== '' &&
+      !(await stat(raw.dir).then(
+        () => true,
+        () => false,
+      ))
+    )
+      return null // a pinned dir must still exist
     return raw.account
   } catch {
     return null
@@ -306,14 +395,16 @@ export function sessionAccountResolver(config: Pick<FleetConfig, 'claudeLogDir' 
 
 /** Branch, dirtiness, ahead/behind and the newest commit of the checkout at `cwd`; null when it is not a git repo. */
 export async function gitProject(run: RunCommand, cwd: string): Promise<ProjectGit | null> {
-  const g = (args: string[], timeoutMs?: number) => run(['git', '-C', cwd, ...args], timeoutMs ? { timeoutMs } : {})
+  if (cwd === '') return null // `git -C ''` would read the host's own directory
+  const g = (args: string[], options: { timeoutMs?: number; network?: boolean } = {}) =>
+    run(['git', '-C', cwd, ...args], options)
   const [, branchOut, status, symbolicRef] = await Promise.all([
-    g(['fetch', '--quiet', '--prune'], GIT_FETCH_TIMEOUT_MS), // refreshes the remote-tracking refs behind ahead/behind
+    g(['fetch', '--quiet', '--prune'], { timeoutMs: GIT_FETCH_TIMEOUT_MS, network: true }), // refreshes the remote-tracking refs behind ahead/behind
     g(['rev-parse', '--abbrev-ref', 'HEAD']),
     g(['status', '--porcelain']),
     g(['symbolic-ref', 'refs/remotes/origin/HEAD']),
   ])
-  const branch = clean(branchOut?.trim())
+  const branch = cleanLine(branchOut?.trim())
   if (!branch) return null
   const mainBranch = symbolicRef ? (symbolicRef.trim().split('/').pop() ?? 'main') : 'main'
   const format = '--format=%h%n%s%n%cI'
@@ -325,9 +416,7 @@ export async function gitProject(run: RunCommand, cwd: string): Promise<ProjectG
   const [ahead = 0, behind = 0] = (aheadBehind?.trim().split(/\s+/) ?? []).map((n) => Number.parseInt(n, 10) || 0)
   const commit = (out: string | null) => {
     const [sha, subject, at] = out?.trim().split('\n') ?? []
-    return sha
-      ? { sha: clean(sha.trim()) ?? '', subject: clean((subject ?? '').trim()) ?? '', at: (at ?? '').trim() }
-      : null
+    return sha ? { sha: cleanLine(sha) ?? '', subject: cleanLine(subject) ?? '', at: cleanLine(at) ?? '' } : null
   }
   return {
     branch,
@@ -422,24 +511,14 @@ export function defaultCollectors(
 ): Collectors {
   const resolveAccounts = sessionAccountResolver(config)
   return {
-    herdrAgents: () =>
-      readJsonCommand(run, [config.herdrBin, 'agent', 'list'], 'herdr agent list', (parsed) => {
-        const agents = (parsed as { result?: { agents?: unknown[] } }).result?.agents ?? []
-        return agents as HerdrAgentRaw[]
-      }),
+    herdrAgents: () => readJsonCommand(run, [config.herdrBin, 'agent', 'list'], 'herdr agent list', pickHerdrAgents),
     herdrWorkspaces: () =>
-      readJsonCommand(run, [config.herdrBin, 'workspace', 'list'], 'herdr workspace list', (parsed) => {
-        const workspaces = (parsed as { result?: { workspaces?: unknown[] } }).result?.workspaces ?? []
-        return workspaces as HerdrWorkspaceRaw[]
-      }),
+      readJsonCommand(run, [config.herdrBin, 'workspace', 'list'], 'herdr workspace list', pickHerdrWorkspaces),
     claudeAgents: () =>
-      readJsonCommand(run, [config.claudeBin, 'agents', '--json'], 'claude agents --json', (parsed) => {
-        if (!Array.isArray(parsed)) throw new Error('not a list')
-        return parsed as ClaudeAgentRaw[]
-      }),
+      readJsonCommand(run, [config.claudeBin, 'agents', '--json'], 'claude agents --json', pickClaudeAgents),
     humanQueue: () => readHumanQueue(config.humanQueueDir),
     async transcriptTail(cwd, sessionId) {
-      if (!SESSION_ID_RE.test(sessionId)) return EMPTY_TAIL // a session id from outside is a path segment
+      if (cwd === '' || !SESSION_ID_RE.test(sessionId)) return EMPTY_TAIL // a session id from outside is a path segment
       const path = join(config.claudeProjectsDir, encodeProjectDir(cwd), `${sessionId}.jsonl`)
       try {
         return await readTranscriptTailFile(path)
@@ -452,6 +531,20 @@ export function defaultCollectors(
     sessionAccounts: resolveAccounts,
     git: (cwd) => gitProject(run, cwd),
   }
+}
+
+/** At most this many transcript tails and git statuses run at once: a fleet of dozens must not fork dozens of processes. */
+const POOL_SIZE = 8
+
+/** `fn` over `items` with at most `limit` in flight; results keep the input order. */
+async function mapPool<T, R>(items: readonly T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const results = new Array<R>(items.length)
+  let next = 0
+  const worker = async () => {
+    for (let i = next++; i < items.length; i = next++) results[i] = await fn(items[i] as T)
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker))
+  return results
 }
 
 function summarize(projects: Snapshot['projects']): Summary {
@@ -498,16 +591,18 @@ export async function buildSnapshot(
     const sessionId = a.agent_session?.value
     if (sessionId) cwdBySession.set(sessionId, a.cwd ?? '')
   }
-  for (const c of claudeAgents.items) if (c.sessionId) cwdBySession.set(c.sessionId, c.cwd ?? '')
+  for (const c of claudeAgents.items) {
+    if (c.sessionId && (c.cwd || !cwdBySession.has(c.sessionId))) cwdBySession.set(c.sessionId, c.cwd ?? '')
+  }
 
   const transcripts = new Map(
-    await Promise.all(
-      [...cwdBySession].map(
-        async ([sessionId, cwd]): Promise<[string, TranscriptTail]> => [
-          sessionId,
-          await collectors.transcriptTail(cwd, sessionId),
-        ],
-      ),
+    await mapPool(
+      [...cwdBySession],
+      POOL_SIZE,
+      async ([sessionId, cwd]): Promise<[string, TranscriptTail]> => [
+        sessionId,
+        cwd === '' ? EMPTY_TAIL : await collectors.transcriptTail(cwd, sessionId), // no cwd, no transcript directory
+      ],
     ),
   )
 
@@ -532,17 +627,15 @@ export async function buildSnapshot(
     staleAfterMs,
   })
 
-  const projects = await Promise.all(
-    merged.map(async (project) => {
-      let git: ProjectGit | null = null
-      try {
-        git = await collectors.git(project.cwd)
-      } catch (error) {
-        warnings.push(`git status failed for ${project.name}: ${String(error)}`)
-      }
-      return { name: project.name || basename(project.cwd), cwd: project.cwd, git, agents: project.agents }
-    }),
-  )
+  const projects = await mapPool(merged, POOL_SIZE, async (project) => {
+    let git: ProjectGit | null = null
+    try {
+      git = project.cwd === '' ? null : await collectors.git(project.cwd)
+    } catch (error) {
+      warnings.push(`git status failed for ${project.name}: ${String(error)}`)
+    }
+    return { name: project.name || basename(project.cwd), cwd: project.cwd, git, agents: project.agents }
+  })
 
   return {
     generatedAt: now,

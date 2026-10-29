@@ -77,16 +77,24 @@ export function relativeAge(ms: number | null, now: number): string {
 }
 
 /**
- * Drops the C0 bytes a terminal would act on (tab, newline and carriage return stay; callers collapse whitespace).
- * Text from an agent or a queue request must never put an ESC into a coloured pane. A char-code scan, for the same
- * reason as `stripAnsi`.
+ * Drops the control bytes a terminal would act on: C0 (tab, newline and carriage return stay; callers collapse
+ * whitespace) and C1 (U+0080 to U+009F, which several terminals read as an escape introducer). Text from an agent or a
+ * queue request must never put an ESC into a coloured pane. A char-code scan, for the same reason as `stripAnsi`.
  */
 export function stripControlBytes(text: string): string {
   let out = ''
   for (const ch of text) {
-    const code = ch.charCodeAt(0)
-    const control = (code < 0x20 && code !== 0x09 && code !== 0x0a && code !== 0x0d) || code === 0x7f
+    const code = ch.codePointAt(0) ?? 0
+    const control =
+      (code < 0x20 && code !== 0x09 && code !== 0x0a && code !== 0x0d) ||
+      code === 0x7f ||
+      (code >= 0x80 && code <= 0x9f)
     if (!control) out += ch
   }
   return out
+}
+
+/** One line of text: control bytes dropped, every run of whitespace (CR and LF included) one space, trimmed. */
+export function oneLine(text: string): string {
+  return stripControlBytes(text).replace(/\s+/g, ' ').trim()
 }
