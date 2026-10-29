@@ -90,7 +90,7 @@ const TABLE = {
     rate: HAIKU_55_EU_RATE,
     fallback: AGENT_FALLBACK,
   },
-  // Angles of a `depth: deep` review (owner, 2026-10-29; Wave 6 experiment, 20 paired cases: Haiku -> Sonnet angles
+  // Angles of a `depth: deep` review (mother decision, 2026-10-29; Wave 6 experiment, 20 paired cases: Haiku -> Sonnet angles
   // recall 0.017 -> 0.13, precision 0.10 -> 0.50, cost per review $0.057 -> $0.542). The review workflow names this
   // route in the angle steps' `options.route`; every other depth runs `review.angle`.
   'review.angle.deep': {

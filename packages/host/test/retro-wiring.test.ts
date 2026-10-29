@@ -4,7 +4,7 @@ import { rejection } from './support.ts'
 import { fakeTransports } from '@agent-workflows/capabilities/testing'
 import { loadConfig } from '../src/config.ts'
 import { ghCli } from '../src/workflows/retrospective/gh.ts'
-import { createWorkflows, fingerprintWorkflows } from '../src/workflows/index.ts'
+import { agentNames, createWorkflows, fingerprintWorkflows } from '../src/workflows/index.ts'
 
 const base = { AGW_API_SECRET: 'x'.repeat(40), AGW_MACHINE: 'm', AGW_PG_URL: 'postgres://u@h/d' }
 
@@ -53,6 +53,13 @@ describe('registration', () => {
       ]),
     )
     expect(fingerprintWorkflows(entries).retrospective).toEqual([{ agent: 'retrospective', route: 'retro.analyze' }])
+  })
+
+  test('the retrospective is told each agent once, though review lists its angles on two routes', () => {
+    const review = agentNames(createWorkflows({ registry })).get('review') ?? []
+    expect(review).toHaveLength(15)
+    expect(new Set(review).size).toBe(review.length)
+    expect(review.filter((a) => a === 'review-architect')).toHaveLength(1)
   })
 })
 

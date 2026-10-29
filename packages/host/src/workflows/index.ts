@@ -38,12 +38,19 @@ export function createWorkflows(deps: WorkflowDeps): HostWorkflow[] {
   ]
   if (!deps.retro) return base
   const { journal, learnings, gh, tracked } = deps.retro
-  const agents = new Map(Object.entries(fingerprintWorkflows(base)).map(([id, refs]) => [id, refs.map((r) => r.agent)]))
+  const agents = agentNames(base)
   return [
     ...base,
     ...createLearningsWorkflows(learnings),
     createRetrospective({ journal, learnings, gh, tracked, agentsOf: (id) => agents.get(id) }),
   ]
+}
+
+/** The distinct agent names each hosted workflow runs: an agent listed on two routes (review's angles) counts once. */
+export function agentNames(workflows: HostWorkflow[]): Map<string, string[]> {
+  return new Map(
+    Object.entries(fingerprintWorkflows(workflows)).map(([id, refs]) => [id, [...new Set(refs.map((r) => r.agent))]]),
+  )
 }
 
 /** The agents each hosted workflow runs, for the run fingerprint; workflows without agents are left out. */
