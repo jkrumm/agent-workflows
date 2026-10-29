@@ -37,6 +37,7 @@ Names only; values come from 1Password through `secrets-run`, never from the rep
 | `AGW_ROUTES`, `AGW_WALLET_*` | no | route overrides (routes README), wallet gate (limits README) |
 | `AGW_DRIFT_RATE`, `AGW_DRIFT_INTERVAL_S` | no | drift: the share of finished production runs scored after the fact (default `0.1`, `0` turns it off) and the tick (default 300 s); a bad value refuses to start |
 | `AGW_EVAL_DIR`, `AGW_EVAL_HOME` | no | `agw eval run`: where `<workflow>/cases.jsonl` live (default `~/.local/share/agent-workflows/eval`) and the root a case's `repo` is relative to (default `$HOME`) |
+| `AGW_VOICE_PATH` | no | the voice guide `prose` checks and names in its brief; default the brain vault's `voice.md`. Unreadable or empty: `prose` fails before any model call, naming this variable |
 
 ## Routes
 
@@ -286,6 +287,37 @@ grants on it with their own tools.
   location); the forwarding is ~15 lines, kept per agent. An agent's `agent.json` lists the same tool names as
   `allow` permissions.
 
+## Prose (concept §10)
+
+`prose` is agent-gateway's lint → cross-lab review → rewrite → keep gate, minus the writer: the rewrite runs in the
+calling Claude Code session on Max, so the platform does the two parts that need no Opus.
+
+| Command | Does | Cost |
+|-|-|-|
+| `agw prose` | lint (code) and one cross-lab review call (route `prose.review`); answers `{language, format, mediumNote, lint{findings, counts}, review{scores, notes}, visualSuggestions, reviewer, voicePath, writerBrief}` | one call on the review route (about $0.004 on legacy's recorded jobs) |
+| `agw rewrite gate` | the keep decision on `{original, rewrite}`: `{kept: rewrite\|original, reason?, lint{before, after}}`; no model, a recorded run at cost 0 | 0 |
+
+- **Why `rewrite gate`, not `prose gate`.** The host refuses a command that is a prefix of another (`agw prose` is a prefix
+  of `agw prose gate`), and the eval suite id `prose` must equal the id of the workflow it replays. The review keeps the
+  name `prose`; the gate is named for what it judges.
+- **The brief.** `writerBrief` is legacy's writer system prompt (rules and rubric) and user prompt (lint findings, reviewer
+  notes, brief, context and draft as fenced data) in one block, without the voice guide: the session reads `voicePath`
+  itself. Fence tokens are a hash of the untrusted inputs, not random as in legacy, so a resumed run re-sends the prompt
+  it sent. The review prompt is legacy's, word for word, and carries no voice guide (legacy's did not either).
+- **The gate** is `judgeRewrite` unchanged: same format, every fenced block, URL and wikilink target kept, none added, no
+  fence left open, no lint rule with more findings. `lint.after` is always the rewrite's own lint, kept or not.
+- **Cross-lab refusal.** The writer is always the calling session (Anthropic), so `createCapabilities` refuses a
+  `prose.review` route (primary or fallback) on an Anthropic model: a boot with such an `AGW_ROUTES` fails, not the first call.
+- **Capability.** `prose.critique` (route `prose.review`, `agw prose-critique`) is the one model call: a built prompt in,
+  the validated review out. A `verdictFirst: false` draft gets no `verdict_first` score, stripped in code.
+- **Port.** `lint.ts` is `server/lib/prose-lint.ts` of agent-gateway at `15a8e6d` with `noUncheckedIndexedAccess` casts
+  and its tests (`prose-lint.test.ts`); `gate.ts` is `judgeRewrite`/`worsenedRule` from `server/jobs/handlers/prose.ts`.
+- **Eval.** Suite `prose` (plain cases, scorer `scorer.ts`: `valid`, `notesPresent`, `scoresInRange`, and against a
+  recorded legacy review `scoreAgreement` and `lintAgreement`). Rules 1 and 2 of the pre-registered set are offline:
+  `bun scripts/eval-legacy/prose.ts --offline` (legacy lint and the real legacy `runProsePipeline` with canned
+  adapters); `--build-cases` writes `$AGW_EVAL_DIR/prose/cases.jsonl`. Rules 3 and 4 need live review calls.
+- No agent definitions: the workflow runs no agent step, so it adds nothing to the run fingerprint beyond its `version`.
+
 ## Process
 
 `main.ts` binds the port first and only then opens the runtime, so a taken port (a deploy overlap) fails before any run is claimed; every resource registers its closer as it is created, and a failure anywhere in the start runs the same teardown as a signal. It builds the runtime with `platformMiddleware` (purpose, fingerprint, record, telemetry) followed by the wallet gate and the runaway cap, opens it (migrates the journal, starts the recovery tick), starts the outbox flush tick (30 s, when Argo is configured) and serves. SIGTERM/SIGINT: stop accepting (held waits get 5 s to answer), `runtime.close()`, the cap's pool, `platform.close()` (flushes telemetry), exit 0. A second signal exits at once, and an unref'd timer (45 s, past the runtime's body grace) exits regardless if a close hangs. An uncaught exception shuts down the same way (exit 1); an unhandled rejection is logged and the process keeps serving. Until the runtime is open, `/health` is degraded and every other route is `503`. Runs stay `running` and the next process resumes them (concept §3: deploys need no drain); `test/main.test.ts` kills a process mid-run and watches a second one finish it.
@@ -404,6 +436,8 @@ Otherwise none of its own beyond the OpenCode adapter's repeat-tool nudge (openc
 | `retrospective.test.ts` | sampling (window, eval/running/cancelled/child runs excluded, failed first, limit, null friction, no run input, preview cut), the agent step on `FakeAgentHost` with a fixture answer, dropped answers, the JSON retry (facts before the directive), no runs → no session, issues off/on/dedupe by marker/refused on a fake `gh` port, ISO weeks, weekly idempotency, failed-week retries and their bound |
 | `retro-issue.test.ts` | the issue (structured fields only, hostile model text never in it, untracked targets refused, hash stability), `TrackedPaths` on a release tree and a git checkout, target shape, the prompt scrub |
 | `retro-wiring.test.ts` | config (`AGW_RETRO_*`), registration and fingerprint refs, the `gh` argument lists |
+| `prose.test.ts` | `prose` on a fake registry: lint and review shape, the fenced review prompt and writer brief (no voice text inlined), identical prompts for identical input, `verdictFirst: false`, a missing voice guide fails before any call, German draft; the keep gate (faithful kept; lost URL/fence, added fence/URL, open fence, worsened rule, format switch, empty kept as original); the scorer; `rewrite gate` over HTTP |
+| `prose-lint.test.ts` | agent-gateway's lint tests, ported: every rule fires and stays silent, German with English terms yields no findings, the fence parser, content-integrity helpers |
 | `smoke.test.ts` | `smoke.ping` end to end behind the platform middleware: usage on the step, the row in Argo |
 | `capability-runs.test.ts` | a direct `llm.title` call as a `cap.llm.title` run: same body and errors as without a run, usage and the Argo row, invalid input starts nothing, no nested run under `smoke.ping`, idempotent replay (success and failure), an unkeyed abort cancels the run, a keyed one does not (alone or as a retry of a running key), the journaled error wire format, opaque and refusal failures |
 | `scorers.test.ts` | the review and check scorers on fixed fixtures: structure without a reference (failed angles, salvage, balance, invalid output), recall / precision / outcome against a reference |

@@ -115,6 +115,15 @@ const TABLE = {
     fallback: AGENT_FALLBACK,
   },
 
+  // Prose review seat. Gateway: `prose_review` (SINGLE_SHOT, iu-openai). The reviewer must be a different lab than the
+  // writer, and the writer is the calling Claude Code session (Anthropic): the capability refuses an Anthropic route.
+  'prose.review': {
+    wire: 'iu-openai',
+    model: 'deepseek-v4.1-flash',
+    maxOutputTokens: 16_000,
+    fallback: CALL_FALLBACK,
+  },
+
   // Check seat. Gateway: `check`, CLASSIFY tier.
   check: { wire: 'opencode', model: 'claude-haiku-5-5-eu', rate: HAIKU_55_EU_RATE, fallback: AGENT_FALLBACK },
 

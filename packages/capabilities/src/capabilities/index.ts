@@ -4,6 +4,7 @@ import { iuTransports } from '../transports/index.ts'
 import { createWebCapabilities, type WebDeps } from '../web/index.ts'
 import { createClassify } from './classify.ts'
 import { createDecide } from './decide.ts'
+import { createProseReview } from './prose-review.ts'
 import { createReviewAdversary } from './review-adversary.ts'
 import { createReviewRoute } from './review-route.ts'
 import { createSummarize } from './summarize.ts'
@@ -22,6 +23,7 @@ export function createCapabilities(
     createDecide(deps),
     createReviewRoute(deps),
     createReviewAdversary(deps),
+    createProseReview(deps),
     ...createWebCapabilities(web),
     ...createHdxCapabilities(hdx),
   ] as const
