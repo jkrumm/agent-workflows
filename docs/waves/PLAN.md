@@ -160,10 +160,13 @@ Evidence: `docs/waves/handoff/lead.md` at `f562b05`.
 ## Wave 6 — Research (P3a)            <!-- status: active -->
 Workers: Opus/medium for the comparison design, Sonnet/high for the port.
 
-- [ ] **First:** CI green on master — the Linux-only failures fixed at their cause (`credentials of the
+- [x] **First:** CI green on master — the Linux-only failures fixed at their cause (`credentials of the
   host never reach make check` may be a real leak: treat as security), `run-step` idle kill; the merge
   train gates on CI as well as on the mini's `make check` (dotfiles); load-aware test timeouts
-- [ ] P2's gate: Sonnet angles vs today's on the 20 paired review cases (`agw eval run|compare`, ≈ $5)
+  (done: #28, dotfiles #39; not a leak — make recursion state, `run-step.sh` under dash)
+- [x] P2's gate: Sonnet angles vs today's on the 20 paired review cases (`agw eval run|compare`, ≈ $5).
+  Answer: recall 0.017 → 0.13, located +0.09, cost 9.4×. Decision (mother): Sonnet angles for `--deep`
+  reviews only, Haiku stays the default
 - [ ] Three-way comparison on research-gateway's 28 golden questions: code-led pipeline vs pure
   agent vs agent on the pipeline, yolo vs focused — correctness, cost, wall time
 - [ ] `research` ported in the winning shape, follow-up on a finished report included
