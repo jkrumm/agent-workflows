@@ -13,9 +13,14 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
   `com.jkrumm.vps-pg-backup` is ours: P0b maps it in dotfiles `docs/architecture.md`. Relayed to the lead.
 
 ## Lead
-- `agent-workflows-w1` (pane w40:p16), Opus/high, fresh, spawned 2026-10-28 ~22:10 for Wave 6.
+- `agent-workflows-w1` (pane w40:p1B), Opus/high, spawned 2026-10-29 ~01:35: the second Wave 6 lead
+  (first rotated at 60%; state in `handoff/lead.md` at `2ddc777`).
   Rotation policy: a fresh lead per wave unless the last one closed under ~30% context.
 - The mother is agent `agent-workflows-mother` (pane w40:p1).
+
+## Decisions taken
+- 2026-10-29: Sonnet review angles for `--deep` only, Haiku default (recall 0.017 → 0.13 at 9.4× cost;
+  IU constrained). Revisit when the IU budget relaxes.
 
 ## Open decisions
 - none
