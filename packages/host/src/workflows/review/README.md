@@ -133,7 +133,7 @@ with their routes.
   adversary and the file list the staged changes only when any were staged, and the angles `git diff HEAD`.
 - No `model` input (route overrides go through `AGW_ROUTES`), no Max fallback, no research-gateway block in the angle prompts.
 - OCR speaks the OpenAI chat protocol for the primary (route `review.ocr` is on the `iu-openai` wire) and Responses for a `gpt-` fallback, as legacy does for GPT ids.
-- react-doctor reads the install agent-gateway keeps (`AGW_REACT_DOCTOR_BIN` overrides it) until the platform owns an install.
+- react-doctor reads the pinned install under `~/.local/share/agent-workflows/react-doctor/<version>/` (`make install-opencode`; `AGW_REACT_DOCTOR_BIN` overrides it).
 - Helpers run as argv, not `bash -c`: a scope can no longer reach a shell, and a fallow timeout is reported as `fallow failed`.
 - The OCR route is not part of the run fingerprint (it is no agent definition); a model change there does not move it.
 
