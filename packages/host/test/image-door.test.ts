@@ -1,6 +1,6 @@
 // The host process booted for real (Postgres, HTTP on port 0) with the image door mounted and a fake upstream fetch:
 // auth, the path restriction, the studio wire (JSON, multipart, SSE), the failure mapping and the one run per request.
-import { afterAll, beforeEach, describe, expect, test } from 'bun:test'
+import { afterAll, beforeEach, describe, expect, spyOn, test } from 'bun:test'
 import { tmpdir } from 'node:os'
 import type { EnhanceOutput } from '@agent-workflows/capabilities'
 import { b64, pngFixture } from '../../capabilities/src/image/testing.ts'
@@ -109,6 +109,9 @@ let plan: () => EnhanceOutput = () => planned
 
 // --- the host ---
 
+/** Read by the door on every request: tests lower the in-flight cap and the upload deadline and put them back. */
+const limits = { uploadDeadlineMs: 5_000, maxInFlight: 4 }
+
 let host: RunningHost
 let runtime: Runtime
 let workflows: ReturnType<typeof Array.prototype.slice> = []
@@ -129,6 +132,7 @@ const started = (async () => {
       ['studio', STUDIO],
       ['other', OTHER],
     ]),
+    limits,
     image: {
       env: { IU_API_KEY: 'test-key', IU_BASE_URL: 'https://iu.example.com/anthropic' },
       fetch: fakeFetch,
@@ -168,6 +172,8 @@ beforeEach(async () => {
   enhanced.length = 0
   handler = () => new Response('no handler', { status: 500 })
   plan = () => planned
+  limits.uploadDeadlineMs = 5_000
+  limits.maxInFlight = 4
 })
 
 const bearer = (token: string) => ({ authorization: `Bearer ${token}` })
@@ -753,5 +759,222 @@ describe('the run of a request', () => {
     expect(Object.keys(doc.paths).filter((path) => path.includes('door'))).toEqual([])
     const res = await fetch(`${base}/workflows/door/image/generate`, { method: 'POST', headers: bearer(SECRET) })
     expect(res.status).toBe(404)
+  })
+})
+
+describe('request fields', () => {
+  test('unknown fields are ignored, as the studio schemas do (a misspelled partial_image changes nothing)', async () => {
+    handler = answer()
+    const res = await generate({ prompt: 'x', partial_image: 2, surprise: true })
+    expect(res.status).toBe(200)
+    expect(res.headers.get('content-type')).toContain('application/json')
+    expect(upstream[0]?.json).not.toHaveProperty('stream')
+    expect(upstream[0]?.json).not.toHaveProperty('surprise')
+    const { row } = await runOf(res)
+    expect(JSON.stringify(row.input)).not.toContain('surprise')
+  })
+
+  test('a purpose the run cannot be started with is a 400 before the body is read: no run, no upstream call', async () => {
+    const before = (await sql.pool.query(`select count(*)::int as n from "${db.schema}".runs`)).rows[0].n
+    const res = await post('/door/image/generate', { prompt: 'x' }, STUDIO, { 'x-agw-purpose': 'not valid!' })
+    expect(res.status).toBe(400)
+    expect(errorResponseSchema.parse(await res.json()).error.message).toContain('x-agw-purpose')
+    expect(upstream).toHaveLength(0)
+    expect((await sql.pool.query(`select count(*)::int as n from "${db.schema}".runs`)).rows[0].n).toBe(before)
+
+    handler = answer()
+    const ok = await post('/door/image/generate', { prompt: 'x' }, STUDIO, { 'x-agw-purpose': 'verify' })
+    expect((await runOf(ok)).row.purpose).toBe('verify')
+  })
+})
+
+describe('failures the client is told about, and the ones it is not', () => {
+  test('a transport failure is a generic 502 for the client; its text is logged with the run id', async () => {
+    const logged = spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      handler = () => {
+        throw new TypeError('fetch failed: connect ECONNRESET 10.1.2.3:443')
+      }
+      const res = await generate({ prompt: 'x' })
+      expect(res.status).toBe(502)
+      const text = JSON.stringify(await res.json())
+      expect(text).toContain('upstream unavailable')
+      expect(text).not.toContain('10.1.2.3')
+      const { runId, row } = await runOf(res, 'failed')
+      expect(String(row.error)).not.toContain('10.1.2.3')
+      const lines = logged.mock.calls
+        .map((call) => call.map((part) => (typeof part === 'string' ? part : JSON.stringify(part))).join(' '))
+        .join('\n')
+      expect(lines).toContain(runId)
+      expect(lines).toContain('10.1.2.3')
+    } finally {
+      logged.mockRestore()
+    }
+  })
+
+  test('a mid-stream moderation block reaches the final error frame with its code and details', async () => {
+    handler = sseAnswer(
+      partialFrame(0),
+      frame('image_generation.error', {
+        error: {
+          message: 'Blocked at the output stage.',
+          code: 'moderation_blocked',
+          moderation_details: { moderation_stage: 'output', categories: ['violence'] },
+        },
+      }),
+    )
+    // raw frames: the studio's own event schema would strip the extra keys, which the app reads when they are there
+    const text = await (await generate({ prompt: 'x', partial_images: 1 })).text()
+    const frames = text
+      .split('\n\n')
+      .filter((chunk) => chunk.trim() !== '')
+      .map((chunk) => JSON.parse(chunk.slice('data: '.length)) as Record<string, unknown>)
+    expect(frames.map((f) => f.type)).toEqual(['partial_image', 'error'])
+    expect(frames[1]).toEqual({
+      type: 'error',
+      error: {
+        message: 'Blocked at the output stage.',
+        type: 'upstream_error',
+        code: 'moderation_blocked',
+        moderation_details: { moderation_stage: 'output', categories: ['violence'] },
+      },
+    })
+  })
+
+  test('a block naming only a stage still carries details: the missing half is empty', async () => {
+    const wrapped = `[OpenAI Vendor Group Key StatusCode: BadRequest] ${JSON.stringify({
+      error: {
+        message: 'blocked',
+        type: 'image_generation_user_error',
+        code: 'moderation_blocked',
+        moderation_details: { moderation_stage: 'input' },
+      },
+    })}`
+    handler = () => new Response(wrapped, { status: 503 })
+    const res = await generate({ prompt: 'x' })
+    expect(moderationErrorResponseSchema.parse(await res.json()).error.moderation_details).toEqual({
+      moderation_stage: 'input',
+      categories: [],
+    })
+  })
+})
+
+describe('limits on what is in flight', () => {
+  /** An upstream call that waits until its call is aborted, like a real slow one. */
+  const hang: Handler = ({ signal }) =>
+    new Promise<Response>((_, reject) => {
+      signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')))
+    })
+
+  test('an upload that does not finish in time is a 408 with the envelope, and its slot is freed', async () => {
+    limits.uploadDeadlineMs = 300
+    const encoder = new TextEncoder()
+    const stalled = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode('{"prompt":"x'))
+      },
+    })
+    const res = await fetch(`${base}/door/image/generate`, {
+      method: 'POST',
+      headers: { ...bearer(STUDIO), 'content-type': 'application/json' },
+      body: stalled,
+      duplex: 'half',
+    } as RequestInit)
+    expect(res.status).toBe(408)
+    expect(errorResponseSchema.parse(await res.json()).error.message).toContain('not received in time')
+    expect(upstream).toHaveLength(0)
+
+    limits.maxInFlight = 1
+    handler = answer()
+    expect((await generate({ prompt: 'x' })).status).toBe(200) // the stalled upload's slot was given back
+  })
+
+  test('a client that leaves during the upload starts nothing, and its slot is freed', async () => {
+    limits.maxInFlight = 1
+    const encoder = new TextEncoder()
+    const controller = new AbortController()
+    const stalled = new ReadableStream<Uint8Array>({
+      start(c) {
+        c.enqueue(encoder.encode('{"prompt":"x'))
+      },
+    })
+    const sent = fetch(`${base}/door/image/generate`, {
+      method: 'POST',
+      headers: { ...bearer(STUDIO), 'content-type': 'application/json' },
+      body: stalled,
+      signal: controller.signal,
+      duplex: 'half',
+    } as RequestInit).catch(() => undefined)
+    await Bun.sleep(100)
+    // the upload holds the only slot
+    expect((await generate({ prompt: 'x' })).status).toBe(503)
+    controller.abort()
+    await sent
+    handler = answer()
+    const next = await until(async () => {
+      const res = await generate({ prompt: 'x' })
+      return res.status === 200 ? res : undefined
+    }, 'the slot freed')
+    expect(next.status).toBe(200)
+    expect(upstream).toHaveLength(1) // only the later request reached upstream
+  })
+
+  test('the fifth request in flight is a 503 proxy_error with retry-after; slots come back as requests end', async () => {
+    handler = hang
+    const controllers = Array.from({ length: 4 }, () => new AbortController())
+    const held = controllers.map((c) =>
+      fetch(`${base}/door/image/generate`, {
+        method: 'POST',
+        headers: { ...bearer(STUDIO), 'content-type': 'application/json' },
+        body: JSON.stringify({ prompt: 'x' }),
+        signal: c.signal,
+      }).catch(() => undefined),
+    )
+    await until(() => upstream.length === 4, 'four calls in flight')
+    const fifth = await generate({ prompt: 'x' })
+    expect(fifth.status).toBe(503)
+    expect(fifth.headers.get('retry-after')).toBe('5')
+    expect(errorResponseSchema.parse(await fifth.json()).error.type).toBe('proxy_error')
+    expect(upstream).toHaveLength(4)
+
+    handler = answer()
+    controllers[0]?.abort()
+    const again = await until(async () => {
+      const res = await generate({ prompt: 'x' })
+      return res.status === 200 ? res : undefined
+    }, 'a slot freed by an abort')
+    expect(again.status).toBe(200)
+    for (const c of controllers) c.abort()
+    await Promise.all(held)
+  })
+
+  test('a stream the client cancels, and one that ends or fails, give their slot back', async () => {
+    limits.maxInFlight = 1
+    const silentStream: Handler = ({ signal }) =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode(partialFrame(0)))
+            signal?.addEventListener('abort', () => controller.error(new DOMException('aborted', 'AbortError')))
+          },
+        }),
+        { headers: { 'content-type': 'text/event-stream' } },
+      )
+    handler = silentStream
+    const res = await generate({ prompt: 'x', partial_images: 1 })
+    const reader = res.body?.getReader()
+    await reader?.read()
+    expect((await generate({ prompt: 'x' })).status).toBe(503) // the open stream holds the slot
+    await reader?.cancel()
+    handler = sseAnswer(partialFrame(0), completedFrame())
+    const next = await until(async () => {
+      const r = await generate({ prompt: 'x', partial_images: 1 })
+      return r.headers.get('content-type') === 'text/event-stream' ? r : undefined
+    }, 'the cancelled stream freed its slot')
+    await readFrames(next) // ends normally
+    handler = () => Response.json({ error: { message: 'boom' } }, { status: 500 })
+    expect((await generate({ prompt: 'x' })).status).toBe(502) // fails
+    handler = answer()
+    expect((await generate({ prompt: 'x' })).status).toBe(200) // both gave the slot back
   })
 })

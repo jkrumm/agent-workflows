@@ -13,15 +13,19 @@ export const MAX_JSON_BYTES = 2 * 1024 * 1024
 /**
  * The most a multipart edit carries in total: two full-size references (the per-file limit is 50 MB, 16 files, which
  * would be 800 MB). Below Bun's own cap for the whole server (`MAX_REQUEST_BODY_BYTES`, 128 MiB, shared with every route),
- * so a request over it is answered here with the studio's envelope instead of Bun's bare 413. The body is buffered and
- * copied once to rebuild the upstream form: about three times this in memory at the limit.
+ * so a request over it is answered here with the studio's envelope instead of Bun's bare 413. Peak memory at the limit
+ * is at most four copies of it in flight, by construction (not measured): the received chunks, the joined body, the parsed
+ * files, and the references' bytes rebuilt into the upstream form; the earlier ones are released as the later ones are
+ * built, and at most `MAX_IN_FLIGHT` requests are in flight at once.
  */
 export const MAX_MULTIPART_BYTES = 100 * 1024 * 1024
+/** How long a request body may take to arrive in all (wall clock): a client that trickles an upload is not held forever. */
+export const UPLOAD_DEADLINE_MS = 5 * 60_000
 
-/** A request the door refuses before any work; `status` is 400 or 413. */
+/** A request the door refuses before any work; `status` is 400, 408 or 413. */
 export class RequestError extends Error {
   constructor(
-    readonly status: 400 | 413,
+    readonly status: 400 | 408 | 413,
     message: string,
   ) {
     super(message)
@@ -31,43 +35,51 @@ export class RequestError extends Error {
 
 const tooLarge = (max: number) => new RequestError(413, `request body is over ${max} bytes`)
 
-/** The body, read only while it stays within `max` bytes: a declared length over it is refused without reading. */
-export async function readBounded(request: Request, max: number): Promise<Uint8Array<ArrayBuffer>> {
+/**
+ * The body, read only while it stays within `max` bytes and `deadlineMs` of wall clock: a declared length over the cap is
+ * refused without reading, a body still arriving at the deadline is a 408. Kept as a `Blob` of the received chunks, so
+ * nothing joins them into one more contiguous copy.
+ */
+export async function readBounded(request: Request, max: number, deadlineMs = UPLOAD_DEADLINE_MS): Promise<Blob> {
   const declared = Number(request.headers.get('content-length'))
   if (Number.isFinite(declared) && declared > max) {
     await request.body?.cancel().catch(() => undefined)
     throw tooLarge(max)
   }
   const reader = request.body?.getReader()
-  if (!reader) return new Uint8Array(0)
-  const chunks: Uint8Array[] = []
+  if (!reader) return new Blob([])
+  const chunks: Uint8Array<ArrayBuffer>[] = []
   let total = 0
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const late = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new RequestError(408, 'the request body was not received in time')), deadlineMs)
+  })
   try {
     for (;;) {
-      const { done, value } = await reader.read()
+      const { done, value } = await Promise.race([reader.read(), late])
       if (done) break
       total += value.length
-      if (total > max) {
-        await reader.cancel().catch(() => undefined)
-        throw tooLarge(max)
-      }
+      if (total > max) throw tooLarge(max)
       chunks.push(value)
     }
   } catch (error) {
+    await reader.cancel().catch(() => undefined)
     if (error instanceof RequestError) throw error
     throw new RequestError(400, 'the request body could not be read')
+  } finally {
+    clearTimeout(timer)
   }
-  return new Uint8Array(Buffer.concat(chunks))
+  return new Blob(chunks)
 }
 
 /** The studio's way of wording a schema failure: the issues' messages, joined. */
 const messageOf = (error: z.ZodError) => error.issues.map((issue) => issue.message).join('; ')
 
 /** The body as JSON through a schema; a body that is not JSON, or does not fit, is a 400. */
-export function parseJson<S extends z.ZodType>(bytes: Uint8Array, schema: S): z.output<S> {
+export async function parseJson<S extends z.ZodType>(body: Blob, schema: S): Promise<z.output<S>> {
   let json: unknown
   try {
-    json = JSON.parse(new TextDecoder().decode(bytes))
+    json = JSON.parse(await body.text())
   } catch {
     throw new RequestError(400, 'the request body is not valid JSON')
   }
@@ -91,10 +103,10 @@ export interface EditUpload {
 const FILE_FIELDS = new Set(['image[]', 'image', 'mask'])
 
 /** The multipart edit request: its non-file fields through the schema, its `image[]`/`image` parts as references, an optional `mask`. */
-export async function parseEdit(bytes: Uint8Array<ArrayBuffer>, contentType: string | null): Promise<EditUpload> {
+export async function parseEdit(body: Blob, contentType: string | null): Promise<EditUpload> {
   let form: FormData
   try {
-    form = await new Response(bytes, { headers: contentType ? { 'content-type': contentType } : {} }).formData()
+    form = await new Response(body, { headers: contentType ? { 'content-type': contentType } : {} }).formData()
   } catch {
     throw new RequestError(400, 'the multipart body could not be parsed')
   }

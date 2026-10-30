@@ -190,6 +190,8 @@ export const sseFrame = (event: StreamEvent): Uint8Array =>
 export interface Failure {
   status: number
   body: ErrorBody
+  /** What the client is not told (a transport failure's text): the caller logs it with the run id. */
+  detail?: string
 }
 
 export const doorFailure = (status: number, message: string, type: string): Failure => ({
@@ -227,11 +229,18 @@ export function failureOf(error: unknown): Failure {
     case 'UPSTREAM_ERROR':
     case 'INVALID_OUTPUT':
     case 'OUTPUT_TRUNCATED': {
-      const user = (
-        typed.data as
-          | { userError?: { message: string; code?: string; moderation?: { stage: string; categories: string[] } } }
-          | undefined
-      )?.userError
+      const data = typed.data as
+        | {
+            transport?: true
+            userError?: { message: string; code?: string; moderation?: { stage?: string; categories?: string[] } }
+          }
+        | undefined
+      // The client library's text of a failed connection (a host, a port, a reset) is not for the app: a generic message,
+      // the text kept for the log.
+      if (data?.transport) {
+        return { ...doorFailure(502, 'upstream unavailable', 'upstream_error'), detail: typed.message }
+      }
+      const user = data?.userError
       const message = user?.message ?? typed.message
       if (user?.code === 'moderation_blocked' && user.moderation) {
         return {
@@ -242,8 +251,8 @@ export function failureOf(error: unknown): Failure {
               type: 'upstream_error',
               code: user.code,
               moderation_details: {
-                moderation_stage: user.moderation.stage,
-                categories: user.moderation.categories,
+                moderation_stage: user.moderation.stage ?? 'unknown',
+                categories: user.moderation.categories ?? [],
               },
             },
           },

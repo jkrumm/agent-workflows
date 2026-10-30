@@ -18,8 +18,16 @@ import { z } from 'zod'
 import { BEARER_CHALLENGE } from '../auth.ts'
 import { RUN_ID_HEADER } from '../capability-runs.ts'
 import { type CallerAuth, callerAuth } from '../door-tokens.ts'
-import { type HostWorkflow, startRun } from '../operations.ts'
-import { MAX_JSON_BYTES, MAX_MULTIPART_BYTES, parseEdit, parseJson, readBounded, RequestError } from './body.ts'
+import { type HostWorkflow, purposeOf, startRun } from '../operations.ts'
+import {
+  MAX_JSON_BYTES,
+  MAX_MULTIPART_BYTES,
+  parseEdit,
+  parseJson,
+  RequestError,
+  readBounded,
+  UPLOAD_DEADLINE_MS,
+} from './body.ts'
 import {
   type GenerateResponse,
   generateRequestSchema,
@@ -61,6 +69,13 @@ const DOOR_PREFIX = /^\/door(?:\/|$)/
  * unrecorded.
  */
 const START_WAIT_MS = 15_000
+/**
+ * How many door requests are in flight at once, from the moment a body starts to arrive until the request is over (its
+ * response sent or its stream closed or cancelled): each holds up to a full request in memory, and each is a billed
+ * upstream call. The fifth is answered `503` with `retry-after`.
+ */
+export const MAX_IN_FLIGHT = 4
+const RETRY_AFTER_S = 5
 /** An abandoned job's entry (its bytes already dropped) is forgotten this long after, in case its run never starts. */
 const ORPHAN_MS = 10 * 60_000
 
@@ -81,6 +96,8 @@ export interface ImageDoorOptions {
   image?: ImageDeps
   /** Replaces the planner call (tests). Default: the registry's `image.enhance`. */
   enhance?: Enhance
+  /** Replaces the upload deadline (`UPLOAD_DEADLINE_MS`) and the in-flight cap (`MAX_IN_FLIGHT`) (tests). */
+  limits?: { uploadDeadlineMs?: number; maxInFlight?: number }
 }
 
 /** The part of Bun's server a door needs: lifting the idle timeout of one request. */
@@ -286,8 +303,9 @@ export function createImageDoor(deps: ImageDoorDeps): ImageDoor {
               return summary(GONE_STATUS, 'client-gone', null, costUsd(), job)
             }
             const failure = failureOf(error)
-            if (failure.status === 500)
-              logger.error('image door request failed', { runId: ctx.runId, error: messageOf(error) })
+            // What the client is not told (an unexpected error, a transport failure's text) is logged with the run id.
+            if (failure.status === 500 || failure.detail)
+              logger.error('image door request failed', { runId: ctx.runId, error: failure.detail ?? messageOf(error) })
             job.settle({ ok: false, failure })
             throw new Error(`${failure.status} ${failure.body.error.type}: ${failure.body.error.message}`, {
               cause: error,
@@ -323,8 +341,9 @@ export function createImageDoor(deps: ImageDoorDeps): ImageDoor {
   }
 
   async function prepare(endpoint: ImageEndpoint, request: Request): Promise<Prepared> {
+    const deadlineMs = options.limits?.uploadDeadlineMs ?? UPLOAD_DEADLINE_MS
     if (endpoint === 'edit') {
-      const body = await readBounded(request, MAX_MULTIPART_BYTES)
+      const body = await readBounded(request, MAX_MULTIPART_BYTES, deadlineMs)
       const { fields, references, mask } = await parseEdit(body, request.headers.get('content-type'))
       const rule = ruleError(fields, true)
       if (rule) throw new RequestError(400, rule)
@@ -339,9 +358,9 @@ export function createImageDoor(deps: ImageDoorDeps): ImageDoor {
         work: imageWork(fields, imageRequest(fields, { references, ...(mask ? { mask } : {}) })),
       }
     }
-    const body = await readBounded(request, MAX_JSON_BYTES)
+    const body = await readBounded(request, MAX_JSON_BYTES, deadlineMs)
     if (endpoint === 'generate') {
-      const fields = parseJson(body, generateRequestSchema)
+      const fields = await parseJson(body, generateRequestSchema)
       const rule = ruleError(fields, false)
       if (rule) throw new RequestError(400, rule)
       return {
@@ -350,7 +369,7 @@ export function createImageDoor(deps: ImageDoorDeps): ImageDoor {
         work: imageWork(fields, imageRequest(fields)),
       }
     }
-    const fields = parseJson(body, planRequestSchema)
+    const fields = await parseJson(body, planRequestSchema)
     return {
       request: { ...fields },
       streaming: false,
@@ -373,27 +392,35 @@ export function createImageDoor(deps: ImageDoorDeps): ImageDoor {
     }
   }
 
-  /** Records the request as run `runId`, in the background; a failure is logged and gives the request up, never thrown. */
-  function startRecord(
-    endpoint: ImageEndpoint,
-    request: Request,
-    runId: string,
-    input: z.infer<typeof DoorInput>,
-    giveUp: (failure: Failure) => void,
-  ) {
-    // Purpose and trace only: an `Idempotency-Key` would fold two real requests into one record.
+  /** The headers the run is started with: purpose and trace only (an `Idempotency-Key` would fold two real requests into one record), the caller from the credential. */
+  function runHeaders(request: Request, caller: string): Headers {
     const headers = new Headers()
     for (const name of ['x-agw-purpose', 'traceparent']) {
       const value = request.headers.get(name)
       if (value !== null) headers.set(name, value)
     }
     // The run's caller is the credential's name, never a header the client sent (`startRun` reads it from here).
-    headers.set('x-agw-caller', input.caller)
-    startRun({ runtime: deps.runtime() }, workflows[endpoint], input, headers, { runId }).catch((error: unknown) => {
-      logger.error('image door request not recorded', { runId, error: messageOf(error) })
-      giveUp(doorFailure(503, 'the request could not be recorded', 'proxy_error'))
-    })
+    headers.set('x-agw-caller', caller)
+    return headers
   }
+
+  /** Records the request as run `runId`, in the background; a failure is logged and gives the request up, never thrown. */
+  function startRecord(
+    endpoint: ImageEndpoint,
+    headers: Headers,
+    runId: string,
+    input: z.infer<typeof DoorInput>,
+    giveUp: (failure: Failure) => void,
+  ) {
+    Promise.resolve()
+      .then(() => startRun({ runtime: deps.runtime() }, workflows[endpoint], input, headers, { runId }))
+      .catch((error: unknown) => {
+        logger.error('image door request not recorded', { runId, error: messageOf(error) })
+        giveUp(doorFailure(503, 'the request could not be recorded', 'proxy_error'))
+      })
+  }
+
+  let inFlight = 0
 
   async function serve(
     endpoint: ImageEndpoint,
@@ -409,6 +436,30 @@ export function createImageDoor(deps: ImageDoorDeps): ImageDoor {
         headers: BEARER_CHALLENGE,
       })
     }
+    // Cheap checks first: a purpose the run could not be started with is the client's 400, before anything is read.
+    const headers = runHeaders(request, caller)
+    try {
+      purposeOf(headers)
+    } catch (error) {
+      return failureResponse(doorFailure(400, messageOf(error), 'invalid_request_error'))
+    }
+    if (request.signal.aborted) return failureResponse(doorFailure(GONE_STATUS, 'the client went away', 'proxy_error'))
+
+    // A slot for the whole request, freed exactly once however it ends.
+    if (inFlight >= (options.limits?.maxInFlight ?? MAX_IN_FLIGHT)) {
+      return Response.json(doorFailure(503, 'too many image requests in flight', 'proxy_error').body, {
+        status: 503,
+        headers: { 'retry-after': String(RETRY_AFTER_S) },
+      })
+    }
+    inFlight++
+    let held = true
+    const release = () => {
+      if (!held) return
+      held = false
+      inFlight--
+    }
+
     // An image can take minutes to come back: the server's idle timeout (255 s at most) would cut a held request. The
     // upstream calls carry their own hang guards.
     server?.timeout(request, 0)
@@ -417,11 +468,17 @@ export function createImageDoor(deps: ImageDoorDeps): ImageDoor {
     try {
       prepared = await prepare(endpoint, request)
     } catch (error) {
+      release()
       if (error instanceof RequestError) {
         return failureResponse(doorFailure(error.status, error.message, 'invalid_request_error'))
       }
       logger.error('image door request could not be read', { error: messageOf(error) })
       return failureResponse(doorFailure(500, 'internal error', 'proxy_error'))
+    }
+    // The client may have gone while the body was still arriving: no job, no run, no upstream call.
+    if (request.signal.aborted) {
+      release()
+      return failureResponse(doorFailure(GONE_STATUS, 'the client went away', 'proxy_error'))
     }
 
     // The run id is chosen here, so `agw-run-id` goes out with the response and nothing waits on the journal for it.
@@ -456,18 +513,21 @@ export function createImageDoor(deps: ImageDoorDeps): ImageDoor {
       START_WAIT_MS,
     )
     startTimer.unref()
-    startRecord(endpoint, request, runId, input, giveUp)
+    startRecord(endpoint, headers, runId, input, giveUp)
 
-    const headers = withRunId(runId)
+    const responseHeaders = withRunId(runId)
+    let handedToStream = false
     try {
       if (!streaming) {
         const outcome = await job.outcome
-        return outcome.ok ? Response.json(outcome.response, { headers }) : failureResponse(outcome.failure, headers)
+        return outcome.ok
+          ? Response.json(outcome.response, { headers: responseHeaders })
+          : failureResponse(outcome.failure, responseHeaders)
       }
       // Streaming: a failure before the first preview is a plain JSON error with its status; from the first preview on
       // the stream has begun and ends in exactly one `completed` or one `error` frame.
       const first = await Promise.race([job.firstPartial.then(() => 'partial' as const), job.outcome])
-      if (first !== 'partial' && !first.ok) return failureResponse(first.failure, headers)
+      if (first !== 'partial' && !first.ok) return failureResponse(first.failure, responseHeaders)
       void job.outcome.then((outcome) => {
         job.frames.push(
           sseFrame(
@@ -483,19 +543,25 @@ export function createImageDoor(deps: ImageDoorDeps): ImageDoor {
           async pull(controller) {
             const frame = await job.frames.next()
             if (frame) controller.enqueue(frame)
-            else controller.close()
+            else {
+              controller.close()
+              release()
+            }
           },
           cancel() {
             job.clientGone()
+            release()
           },
         },
         { highWaterMark: 0 },
       )
+      handedToStream = true
       return new Response(body, {
-        headers: { ...headers, 'content-type': 'text/event-stream', 'cache-control': 'no-store' },
+        headers: { ...responseHeaders, 'content-type': 'text/event-stream', 'cache-control': 'no-store' },
       })
     } finally {
       clearTimeout(startTimer)
+      if (!handedToStream) release()
     }
   }
 

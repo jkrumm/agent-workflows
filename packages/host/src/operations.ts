@@ -149,7 +149,8 @@ export function preferWait(headers: Headers, fallback = 0): number {
   return Math.min(Number(match[2]), MAX_WAIT_S)
 }
 
-function purposeOf(headers: Headers): string {
+/** The run's purpose from `x-agw-purpose` (default `prod`); a malformed one is a 400 (`ORPCError`). */
+export function purposeOf(headers: Headers): string {
   const purpose = headers.get('x-agw-purpose')?.trim()
   if (purpose === undefined || purpose === '') return DEFAULT_PURPOSE
   if (purpose.length > 64 || !/^[\w.-]+$/.test(purpose))
