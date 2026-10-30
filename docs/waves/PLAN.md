@@ -74,6 +74,8 @@ Workers: Sonnet. Orchestrated. Needs track R0 closed (dotfiles).
 ## Wave 3 — Retire the gateway            <!-- status: active -->
 Workers: Sonnet, Haiku for the sweep. Orchestrated.
 
+**Gate before the second step:** the owner's ImageGen click-through (Wave 2's open item, `ask-human.sh status 20261030T163835-8260`) is answered `done`. Still pending: `ask-human.sh push 20261030T163835-8260` once; unanswered after that, finish the first step, write "stopped: click-through pending" into Left behind and close out. Denied: stop and report what failed.
+
 - [ ] `imgcli icon` calls `agw image-icon` (the command is hyphenated, see Wave 1); `load_gen_config`, `gen_request` and `op://vps/image-gateway` go from `imgcli`.
 - [ ] Remove `vps/apps/image-gateway`, its Makefile targets and docs; the Kuma monitor in `homelab/uptime-kuma/monitors.yaml`
   (`make uk-sync`); the RollHook registration; `dotfiles-private/headless.refs` entries; the Caddy local-dev block.
