@@ -53,7 +53,7 @@ The platform runs one `host` process plus own processes for heavy pipelines (con
 | a union of literals (`anyOf` of `const`s) | an enum: every value in usage and help |
 | a union of scalars (`string\|number`) | the string passes through; the host validates it |
 | objects, arrays, unions with an object or array | one JSON value: `--labels '{"bug":"…"}'` |
-| `x-cli.stdin` | read from stdin only when that field is required, not given otherwise, and stdin is not a TTY. An optional field is never read implicitly, so an inherited open pipe cannot hang the call |
+| `x-cli.stdin` | read from stdin only when that field is required, not given otherwise, and stdin is not a TTY. An optional field is never read implicitly, so an inherited open pipe cannot hang the call; given as `-` it is read from stdin |
 
 - **Globals:** `--format json|plain`, `--help`. `--commit` exists only on mutating commands, and `--idempotency-key <k>` only on workflows and mutating commands. They are reserved: an operation with a non-positional input property of one of those names (`format`, `commit`, `idempotencyKey`, `help`) is skipped like one with an unknown `kind`, and `agw schema` lists it under `skipped` with the reason. The host refuses such operations at start, so this is defence only.
 - **Errors before sending:** an unknown flag or command exits 2 and the hint lists the valid ones. A missing required input, a bad value, and a path parameter that decodes to `.` or `..` (checked after every decode, up to 8) or is still percent-encoded after 8 decodes also exit 2, client-side.

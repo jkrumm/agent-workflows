@@ -140,7 +140,7 @@ export function helpText(command: Command): string {
       isBoolean(f) ? '' : typeLabel(f),
       f.required ? 'required' : '',
       f.schema.default !== undefined ? `default ${JSON.stringify(f.schema.default)}` : '',
-      command.x.stdin === f.name ? 'read from stdin when omitted' : '',
+      command.x.stdin === f.name ? (f.required ? 'read from stdin when omitted' : 'pass - to read from stdin') : '',
     ].filter(Boolean)
     return `  ${label.padEnd(22)} ${facts.join(', ')}${f.schema.description ? ` — ${f.schema.description}` : ''}`
   }

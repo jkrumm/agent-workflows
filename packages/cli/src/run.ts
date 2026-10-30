@@ -154,10 +154,16 @@ class Runner {
     const values = { ...parsed.values }
     if (parsed.globals.help) return { command, parsed, values }
     // Only a required field is read implicitly: an inherited open pipe must not hang an optional one.
+    // An optional one is read when given as `-`, the Unix marker for "from stdin".
     const stdinField = command.fields.find((f) => f.name === command.x.stdin)
-    if (stdinField?.required && values[stdinField.name] === undefined && !this.io.stdinIsTTY) {
-      const text = await this.stdin()
-      if (text !== '') values[stdinField.name] = coerceStdin(command, text)
+    if (stdinField) {
+      const explicit = values[stdinField.name] === '-'
+      const implicit = stdinField.required && values[stdinField.name] === undefined && !this.io.stdinIsTTY
+      if (explicit || implicit) {
+        const text = await this.stdin()
+        if (text !== '') values[stdinField.name] = coerceStdin(command, text)
+        else if (explicit) delete values[stdinField.name]
+      }
     }
     assertValues(command, values)
     return { command, parsed, values }

@@ -595,6 +595,15 @@ describe('agw against the fake host', () => {
     expect(r.json()).toMatchObject({ status: 'done', output: { text: null } })
   })
 
+  test('an optional stdin field given as `-` is read from stdin', async () => {
+    const b = box()
+    const r = await agw(b, ['fixture', 'note', '--text', '-'], { stdin: 'from stdin' })
+    expect(r.code).toBe(0)
+    expect(r.json()).toMatchObject({ status: 'done', output: { text: 'from stdin' } })
+    const empty = await agw(b, ['fixture', 'note', '--text', '-'], { stdin: '' })
+    expect(empty.json()).toMatchObject({ status: 'done', output: { text: null } })
+  })
+
   test('one cache per host URL', async () => {
     const other = await startFakeHost()
     try {
