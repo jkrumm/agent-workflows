@@ -17,10 +17,11 @@ import { join } from 'node:path'
 import { CapabilityError, createCapabilities, createRegistry } from '@agent-workflows/capabilities'
 import { type FakeTransports, fakeTransports } from '@agent-workflows/capabilities/testing'
 import { walletGate } from '@agent-workflows/limits'
-import { resolveRoute } from '@agent-workflows/routes'
+import { fallbackRoute, resolveRoute } from '@agent-workflows/routes'
 import type { AgentResult, Json, Middleware, Runtime } from '@agent-workflows/runtime'
 import { FakeAgentHost, type FakeSession } from '@agent-workflows/runtime/testing'
 import type { HostWorkflow } from '../src/operations.ts'
+import { ocrTransport } from '../src/workflows/review/ocr.ts'
 import { createReviewWorkflows, type ReviewOptions } from '../src/workflows/review/index.ts'
 import { freshSchema, inspector, until } from './support.ts'
 import { testRuntime } from '../../runtime/test/support/pg.ts'
@@ -320,7 +321,7 @@ describe('review workflow', () => {
         )
       const cases: { name: string; router?: Json; input?: Record<string, unknown>; route: string }[] = [
         {
-          name: 'deep chosen by the router stays on Haiku',
+          name: 'deep chosen by the router keeps the angle route',
           router: { angles: ['security'], depth: 'deep' },
           route: 'review.angle',
         },
@@ -858,14 +859,15 @@ JSON
       )
     })
 
-    test('an ocr refused on provider balance runs once more on the fallback route, over the chat wire', async () => {
+    test('an ocr refused on provider balance runs once more on the fallback route, over the protocol its model gets', async () => {
       const bin = join(scratch, `ocr-balance-${++repoSeq}`)
+      const primaryModel = resolveRoute('review.ocr', {}).model
       const calls = join(scratch, `ocr-balance-calls-${repoSeq}`)
       writeFileSync(
         bin,
         `#!/bin/sh
 echo "$OCR_LLM_MODEL $OCR_LLM_PROTOCOL" >> "${calls}"
-if [ "$OCR_LLM_PROTOCOL" = "openai-responses" ]; then
+if [ "$OCR_LLM_MODEL" = "${primaryModel}" ]; then
   echo "llm error: IU request failed (503) — Insufficient Balance (PaymentRequired) on Requesty-Global" >&2
   exit 2
 fi
@@ -881,15 +883,19 @@ JSON
       expect(out.status).toBe('done')
       expect(w.sessionsOf('review-synthesis')[0]?.spec.prompt).toContain('src/a.ts:2 — seen by the fallback')
       const route = resolveRoute('review.ocr', {})
+      const transport = { anthropicBase: 'https://a.example.com', openaiBase: 'https://o.example.com' }
+      const fallback = fallbackRoute(route)
+      if (!fallback) throw new Error('review.ocr has a fallback')
       expect(readFileSync(calls, 'utf8').trim().split('\n')).toEqual([
-        `${route.model} openai-responses`,
-        `${route.fallback?.model} openai`,
+        `${route.model} ${ocrTransport(route, transport).protocol}`,
+        `${fallback.model} ${ocrTransport(fallback, transport).protocol}`,
       ])
     })
 
     test('the fallback attempt’s recovered usage never counts the primary’s session log', async () => {
       const home = join(scratch, `home-${++repoSeq}`)
       const bin = join(scratch, `ocr-logs-${repoSeq}`)
+      const primaryModel = resolveRoute('review.ocr', {}).model
       // Each attempt writes its own session log (as ocr does), then fails: the primary on balance (100 input tokens),
       // the fallback without it (7).
       writeFileSync(
@@ -898,8 +904,8 @@ JSON
 repo=$(pwd)
 dir="$HOME/.opencodereview/sessions/$(printf '%s' "$repo" | sed 's|/|-|g; s|^-||')"
 mkdir -p "$dir"
-if [ "$OCR_LLM_PROTOCOL" = "openai-responses" ]; then tokens=100; else tokens=7; fi
-printf '{"type":"session_start","timestamp":%s000,"cwd":"%s"}\n{"type":"llm_response","usage":{"prompt_tokens":%s,"completion_tokens":1}}\n' "$(date +%s)" "$repo" "$tokens" > "$dir/$OCR_LLM_PROTOCOL.jsonl"
+if [ "$OCR_LLM_MODEL" = "${primaryModel}" ]; then tokens=100; else tokens=7; fi
+printf '{"type":"session_start","timestamp":%s000,"cwd":"%s"}\n{"type":"llm_response","usage":{"prompt_tokens":%s,"completion_tokens":1}}\n' "$(date +%s)" "$repo" "$tokens" > "$dir/$OCR_LLM_MODEL.jsonl"
 if [ "$tokens" = 100 ]; then
   echo "llm error: IU request failed (503) — Insufficient Balance (PaymentRequired) on Requesty-Global" >&2
 else

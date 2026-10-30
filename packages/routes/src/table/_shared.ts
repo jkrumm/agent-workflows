@@ -2,26 +2,6 @@
 // model that serves a role is chosen once, in the SEATS below: a route spreads a seat (`...EASY`) instead of naming the
 // model, so moving every route of a role to another model, rate or effort is one edit here. A route that needs another
 // effort or output limit than its seat overrides it after the spread. A new rate goes next to the seat that uses it.
-// Haiku 5.5 rate, USD/M: in 0.10, out 0.50, cache read 0.01 (0.1x in), cache write 0.125 (5-minute, 1.25x in), for
-// prompts up to 100K tokens. Above 100K prompt tokens (input including cache reads and writes, counted per request) the
-// request bills 5x on every column: in 0.50, out 2.50, cache read 0.05, cache write 0.625. Source: Anthropic pricing page
-// (https://platform.claude.com/docs/en/about-claude/pricing), read 2026-10-29: the two Haiku 5.5 rows "(for prompts up
-// to 100,000 tokens)" and "(for prompts over 100,000 tokens)", and "Long context pricing": "Claude Haiku 5.5 is priced
-// by prompt length ... a request over the threshold pays the higher prices even when part of its prompt is a cache hit".
-// The page lists one card and no regional variant: the card the retired region-pinned id carried (agent-gateway
-// server/lib/models.ts, 2026-10-14) is the same, so the rename changes no price. Used by the Haiku routes on the iu-anthropic wire, whose
-// Messages response carries no `usage.cost`, and by the Haiku routes on the opencode wire: the OpenCode host writes the
-// base rate into the server config's cost rows (OpenCode prices each message with them, so it knows no tier) and
-// re-prices a message above the threshold, and one OpenCode reports at cost 0, with this rate.
-export const HAIKU_55_RATE = {
-  inputPerM: 0.1,
-  outputPerM: 0.5,
-  cacheReadPerM: 0.01,
-  cacheWritePerM: 0.125,
-  longPromptTokens: 100_000,
-  longPrompt: { inputMultiplier: 5, outputMultiplier: 5 },
-}
-
 // GPT-6.1 Terra, Standard tier, USD/M: in 1.00, cached in 0.05, out 5.00, cache write 1.25 (30-min). Above 272K input
 // tokens the whole request bills 2x input/cache and 1.5x output (`longPrompt`). Source: developers.openai.com via /research, and a probe of the IU OpenAI endpoint (listed in
 // /models, chat completions with reasoning_effort=medium answered 200), both 2026-10-28. Context 1.05M, output 128K.
@@ -54,9 +34,6 @@ export const EASY = { model: 'gpt-6.1-terra', effort: 'low', rate: TERRA_RATE } 
 export const STRONG = { model: 'gpt-6.1-terra', effort: 'medium', rate: TERRA_RATE } as const
 /** The second lab: cross-lab reviewers, the long-read agents the benchmarks favour it on (research, otel), and the balance fallback of the GPT-stack routes, since OpenAI's balance is not DeepSeek's. */
 export const CHEAP = { model: 'deepseek-v4.1-flash', rate: DEEPSEEK_FLASH_RATE } as const
-/** The private vault only: its notes never leave Anthropic's EU leg (owner decision, Wave 7), which is why the brain agent is not on the GPT stack and has no fallback. */
-export const PRIVATE = { model: 'claude-haiku-5-5', rate: HAIKU_55_RATE } as const
-
 // The provider-balance fallback (owner, 2026-10-28): a call that fails with HTTP 402, or 503 "Insufficient Balance", runs
 // once more on this route instead of failing. A route on the GPT stack falls back to the other lab; a route on DeepSeek
 // falls back to Terra. Single calls go over IU's OpenAI chat wire; agent steps run on OpenCode, whose host speaks the
@@ -69,8 +46,14 @@ export const OPENAI_CALL_FALLBACK = {
   maxOutputTokens: OUTPUT_CEILING,
 } as const
 export const OPENAI_AGENT_FALLBACK = { wire: 'opencode', ...CHEAP, maxOutputTokens: OUTPUT_CEILING } as const
-// The four routes owner-directed off Requesty (cheap.classify, review.router, review.ocr, review.adversary) fall back to
-// Anthropic on the chat wire instead: DeepSeek flash is a Requesty-hosted model. `triage` has no fallback at all.
-export const ANTHROPIC_CALL_FALLBACK = { wire: 'iu-openai', ...PRIVATE, maxOutputTokens: OUTPUT_CEILING } as const
+// The four routes owner-directed off Requesty (cheap.classify, review.router, review.ocr, review.adversary) fall back
+// across the two GPT models instead: DeepSeek flash is a Requesty-hosted model. On the chat wire Luna answers from Azure
+// Sweden Central and Terra from AWS us-east-1 (probed 2026-10-30), so one backend's balance failure leaves the other.
+export const LUNA_CALL_FALLBACK = {
+  wire: 'iu-openai',
+  ...TRIVIAL,
+  effort: 'medium',
+  maxOutputTokens: OUTPUT_CEILING,
+} as const
 export const CALL_FALLBACK = { wire: 'iu-openai', ...STRONG, maxOutputTokens: OUTPUT_CEILING } as const
 export const AGENT_FALLBACK = { wire: 'opencode', ...STRONG, maxOutputTokens: OUTPUT_CEILING } as const

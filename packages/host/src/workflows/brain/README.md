@@ -9,10 +9,11 @@ wait <runId>`).
   through the tool gate (`packages/host/README.md` §Tool gate) to the `brain.*` capabilities (`packages/capabilities` §Brain capabilities). OpenCode's
   own `read`, `grep` and `glob` are offered but denied outside the agent's location (`external_directory`), which
   `brain-opencode.test.ts` proves against the real `opencode`, so the gate is the only way to the vault.
-- **Route decision: Haiku 5.5 EU (`brain.agent`), not DeepSeek, and no fallback.** The agent reads arbitrary private notes
-  (health, finance); that content never leaves the Anthropic EU route. Unlike every other agent route, `brain.agent`
-  has no provider-balance fallback (lead decision, Wave 7): a balance failure fails the run with the typed error
-  instead of moving the notes to another provider, and `AGW_ROUTES` cannot add one. `brain.test.ts` pins it.
+- **Route decision: Terra at effort low (`brain.agent`, the `EASY` seat), with the usual provider-balance fallback.** The
+  agent reads arbitrary private notes (health, finance) through a handful of short tool calls per question. It was Haiku
+  5.5 on Anthropic's EU leg with no fallback (lead decision, Wave 7), so the notes never left one provider. The owner
+  dropped that constraint on 2026-10-30 (residency is not a concern, Haiku is off the platform), so it runs on the GPT stack like the other agent routes and
+  falls back to DeepSeek flash. Luna and Terra on the Responses wire are served from AWS us-east-1.
 - **Grounding.** The gate's per-call hook (research's guarded one, `ledgerGrant`) records each `brain_read` that found
   a note into the evidence ledger (the `research_tool_calls` table, the note's canonical path in `retrieved`; reused,
   no migration), the `tools` step reads it once the agent has ended. A citation whose path is not a note the run opened

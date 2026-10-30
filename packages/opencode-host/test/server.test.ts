@@ -103,7 +103,10 @@ describe('OpenCodeServer', () => {
     await s.start()
     const names = JSON.parse(readFileSync(join(dir, 'opencode/data/fake-env.json'), 'utf8')) as string[]
     const values = JSON.parse(readFileSync(join(dir, 'opencode/data/fake-env-values.json'), 'utf8'))
-    expect(values).toEqual({ OPENCODE_DISABLE_FILEWATCHER: '1', HOME: join(dir, 'opencode/home') })
+    expect(values).toEqual({
+      OPENCODE_DISABLE_FILEWATCHER: '1',
+      HOME: join(dir, 'opencode/home'),
+    })
     expect(names).toContain('OTEL_EXPORTER_OTLP_ENDPOINT')
     expect(names).toContain('IU_KEY')
     expect(names).not.toContain('GITHUB_TOKEN')
@@ -166,7 +169,10 @@ describe('OpenCodeServer', () => {
   })
 
   test('a server of another version is refused', async () => {
-    const { s } = server(scratch(), { expectedVersion: '9.9.9', bootTimeoutMs: 1_000 })
+    const { s } = server(scratch(), {
+      expectedVersion: '9.9.9',
+      bootTimeoutMs: 1_000,
+    })
     expect(await failure(s.start())).toContain('did not answer')
   })
 
@@ -177,7 +183,9 @@ describe('OpenCodeServer', () => {
     const pid = first.pid as number
     await first.close()
     servers.splice(servers.indexOf(first), 1)
-    const { s, warnings } = server(dir, { config: { test: 'changed by a deploy' } })
+    const { s, warnings } = server(dir, {
+      config: { test: 'changed by a deploy' },
+    })
     await s.start()
     expect(s.pid).not.toBe(pid)
     expect(alive(pid)).toBe(false)
@@ -249,7 +257,13 @@ describe('OpenCodeServer', () => {
       logger: { warn: () => {}, error: () => {} },
     })
     try {
-      const handle = await host.open({ runId: 'r', stepId: 's', key: 'r:s', agent: 'tester', prompt: 'p' })
+      const handle = await host.open({
+        runId: 'r',
+        stepId: 's',
+        key: 'r:s',
+        agent: 'tester',
+        prompt: 'p',
+      })
       await host.prompt(handle, '[slow:1500] long work')
       const options: AgentWaitOptions = {
         signal: new AbortController().signal,
@@ -273,7 +287,12 @@ describe('OpenCodeServer', () => {
 describe('serverEnv', () => {
   const iu = { IU_API_KEY: 'k', IU_BASE_URL: 'https://example.com/anthropic' }
   const envOf = (extra: Record<string, string>) =>
-    serverEnv({ root: '/r', password: 'p', config: {}, env: { PATH: '/bin', ...iu, ...extra } })
+    serverEnv({
+      root: '/r',
+      password: 'p',
+      config: {},
+      env: { PATH: '/bin', ...iu, ...extra },
+    })
 
   test('IU_KEY_ID is the parsed label, always set; never the key', () => {
     expect(envOf({ IU_KEY_ID: 'athena-team' }).IU_KEY_ID).toBe('athena-team')
@@ -315,7 +334,13 @@ describe('resolveOpencodeBinary', () => {
 describe('buildServerConfig', () => {
   test('every opencode route has a model row on an IU provider, priced from the table, no literal key', () => {
     const config = buildServerConfig({}) as {
-      providers: Record<string, { settings: { apiKey: string }; models: Record<string, { cost?: unknown }> }>
+      providers: Record<
+        string,
+        {
+          settings: { apiKey: string }
+          models: Record<string, { cost?: unknown }>
+        }
+      >
       permissions: { action: string; effect: string }[]
     }
     const rows = Object.values(config.providers).flatMap((p) => Object.values(p.models))
@@ -341,18 +366,33 @@ describe('buildServerConfig: review.angle.deep', () => {
     }
     expect(config.providers[PROVIDER_RESPONSES]?.models['gpt-6.1-terra']?.cost).toMatchObject({ input: 1, output: 5 })
     const fallback = fallbackModelRef('review.angle.deep', {})
-    expect(fallback?.model).toMatchObject({ providerID: PROVIDER_CHAT, id: 'deepseek-v4.1-flash' })
+    expect(fallback?.model).toMatchObject({
+      providerID: PROVIDER_CHAT,
+      id: 'deepseek-v4.1-flash',
+    })
     expect(config.providers[PROVIDER_CHAT]?.models[fallback?.model.id ?? '']).toBeDefined()
   })
 })
 
 describe('buildServerConfig: the provider follows the model family, whatever other routes share the id', () => {
+  // No table route runs a Claude model, so the native Anthropic provider is covered through an override of `brain.agent`.
+  const claudeEnv = {
+    AGW_ROUTES: JSON.stringify({
+      'brain.agent': {
+        model: 'claude-haiku-5-5',
+        effort: null,
+        fallback: null,
+      },
+    }),
+  }
   const providerOf = (model: string) =>
     model.startsWith('gpt-') ? PROVIDER_RESPONSES : model.startsWith('claude-') ? PROVIDER_ANTHROPIC : PROVIDER_CHAT
 
   test('every opencode-wire route and fallback sits on the provider of its family: Claude native, gpt Responses, the rest chat', () => {
-    const config = buildServerConfig({}) as { providers: Record<string, { models: Record<string, unknown> }> }
-    const routes = opencodeRoutes({})
+    const config = buildServerConfig(claudeEnv) as {
+      providers: Record<string, { models: Record<string, unknown> }>
+    }
+    const routes = opencodeRoutes(claudeEnv)
     expect(routes.length).toBeGreaterThan(0)
     for (const route of routes) {
       const home = Object.entries(config.providers)
@@ -365,13 +405,26 @@ describe('buildServerConfig: the provider follows the model family, whatever oth
     for (const route of claude) expect(config.providers[PROVIDER_ANTHROPIC]?.models[route.model]).toBeDefined()
   })
 
-  test('the agent routes run Terra on Responses; only the private brain agent stays on the native Anthropic provider', () => {
-    expect(resolveRoute('cheap.classify', {})).toMatchObject({ wire: 'iu-openai', model: 'gpt-6-luna' })
+  test('the agent routes run Terra on Responses; a Claude model (pinned onto brain.agent) goes to the native Anthropic provider', () => {
+    expect(resolveRoute('cheap.classify', {})).toMatchObject({
+      wire: 'iu-openai',
+      model: 'gpt-6-luna',
+    })
     for (const id of ['check', 'review.angle', 'review.synthesis', 'diagram.agent', 'retro.analyze'] as const) {
-      expect(modelRef(id, {}).model).toMatchObject({ providerID: PROVIDER_RESPONSES, id: 'gpt-6.1-terra' })
+      expect(modelRef(id, {}).model).toMatchObject({
+        providerID: PROVIDER_RESPONSES,
+        id: 'gpt-6.1-terra',
+      })
     }
-    expect(modelRef('brain.agent', {}).model).toMatchObject({ providerID: PROVIDER_ANTHROPIC, id: 'claude-haiku-5-5' })
-    const config = buildServerConfig({}) as {
+    expect(modelRef('brain.agent', {}).model).toMatchObject({
+      providerID: PROVIDER_RESPONSES,
+      id: 'gpt-6.1-terra',
+    })
+    expect(modelRef('brain.agent', claudeEnv).model).toMatchObject({
+      providerID: PROVIDER_ANTHROPIC,
+      id: 'claude-haiku-5-5',
+    })
+    const config = buildServerConfig(claudeEnv) as {
       providers: Record<string, { models: Record<string, { compatibility?: unknown }> }>
     }
     expect(config.providers[PROVIDER_ANTHROPIC]?.models['claude-haiku-5-5']?.compatibility).toEqual({
@@ -392,7 +445,13 @@ describe('buildServerConfig: the provider follows the model family, whatever oth
 describe('buildServerConfig: fallbacks', () => {
   test('the Responses provider has one Terra row with one variant per effort the routes and fallbacks use', () => {
     const config = buildServerConfig({}) as {
-      providers: Record<string, { package: string; models: Record<string, { variants?: { id: string }[] }> }>
+      providers: Record<
+        string,
+        {
+          package: string
+          models: Record<string, { variants?: { id: string }[] }>
+        }
+      >
     }
     const responses = config.providers['iu-responses']
     expect(responses?.package).toBe('aisdk:@ai-sdk/openai')

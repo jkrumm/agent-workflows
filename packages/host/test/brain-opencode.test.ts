@@ -18,7 +18,7 @@ import { BRAIN_TOOLS, brainGrant, evidence } from '../src/workflows/brain/tools.
 // The brain agent on the real `opencode` against a scripted fake model (no spend): the plugin in their location reaches
 // the tool gate with the session id, the real brain capabilities run on a temp vault, and the agent's own file tools
 // cannot reach the vault around the gate. The route is overridden to the OpenAI-compatible fake (the production route is
-// Haiku on the Anthropic wire, which the review and check agents already exercise); the agent, its plugin and its
+// Terra on the Responses wire, which the review and check agents already exercise); the agent, its plugin and its
 // permissions are the production ones. Skipped where no opencode is installed (CI runners).
 let binary: string | null = null
 try {

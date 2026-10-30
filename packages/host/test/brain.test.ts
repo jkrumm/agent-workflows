@@ -393,13 +393,16 @@ describe("the ledger hook is research's guarded one", () => {
 })
 
 describe('the route', () => {
-  test('brain.agent is Haiku EU on opencode with no fallback, and no override can add one', () => {
+  test('brain.agent is Terra low on opencode with a DeepSeek fallback, and an override patches the fallback like any route', () => {
     const route = resolveRoute('brain.agent', {})
-    expect(route).toMatchObject({ wire: 'opencode', model: 'claude-haiku-5-5' })
-    expect(route.fallback).toBeUndefined()
-    expect(fallbackRoute(route)).toBeUndefined()
+    expect(route).toMatchObject({ wire: 'opencode', model: 'gpt-6.1-terra', effort: 'low' })
+    expect(route.fallback).toMatchObject({ wire: 'opencode', model: 'deepseek-v4.1-flash', maxOutputTokens: 32_000 })
+    expect(fallbackRoute(route)).toMatchObject({ model: 'deepseek-v4.1-flash' })
     const patched = { AGW_ROUTES: JSON.stringify({ 'brain.agent': { fallback: { model: 'other-model' } } }) }
-    expect(() => resolveRoute('brain.agent', patched)).toThrow(/no fallback to patch/)
+    expect(fallbackRoute(resolveRoute('brain.agent', patched))).toMatchObject({
+      wire: 'opencode',
+      model: 'other-model',
+    })
   })
 })
 

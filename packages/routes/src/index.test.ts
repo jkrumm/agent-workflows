@@ -45,7 +45,10 @@ describe('table', () => {
 
 describe('resolveRoute', () => {
   test('returns the entry with its id', () => {
-    expect(resolveRoute('decide', {})).toEqual({ id: 'decide', ...entry('decide') })
+    expect(resolveRoute('decide', {})).toEqual({
+      id: 'decide',
+      ...entry('decide'),
+    })
   })
 
   test('unknown id is a typed error', () => {
@@ -55,23 +58,40 @@ describe('resolveRoute', () => {
 
   test('override changes model and effort, leaves the table alone', () => {
     const e = env({ 'review.angle': { model: 'some-model', effort: 'high' } })
-    expect(resolveRoute('review.angle', e)).toMatchObject({ model: 'some-model', effort: 'high', wire: 'opencode' })
+    expect(resolveRoute('review.angle', e)).toMatchObject({
+      model: 'some-model',
+      effort: 'high',
+      wire: 'opencode',
+    })
     expect(resolveRoute('review.angle', {}).model).toBe(entry('review.angle').model)
   })
 
   test('the deep angle route is its own seat: Terra medium, priced, overridden independently of review.angle', () => {
     const deep = resolveRoute('review.angle.deep', {})
-    expect(deep).toMatchObject({ wire: 'opencode', model: 'gpt-6.1-terra', effort: 'medium' })
-    expect(deep.rate).toMatchObject({ inputPerM: 1, outputPerM: 5, cacheReadPerM: 0.05 })
+    expect(deep).toMatchObject({
+      wire: 'opencode',
+      model: 'gpt-6.1-terra',
+      effort: 'medium',
+    })
+    expect(deep.rate).toMatchObject({
+      inputPerM: 1,
+      outputPerM: 5,
+      cacheReadPerM: 0.05,
+    })
     // the fallback is not the primary's own model, and runs the same kind of step
-    expect(deep.fallback).toMatchObject({ wire: 'opencode', model: 'deepseek-v4.1-flash' })
+    expect(deep.fallback).toMatchObject({
+      wire: 'opencode',
+      model: 'deepseek-v4.1-flash',
+    })
     // the long-prompt tier applies above 272K prompt tokens: the whole request bills 2x input, 1.5x output
     expect(costFromUsage('opencode', { input_tokens: 1_500_000, output_tokens: 1_000 }, deep.rate)).toEqual({
       usd: (1_500_000 * 1 * 2 + 1_000 * 5 * 1.5) / 1e6,
       source: 'rate',
     })
     const e = env({ 'review.angle.deep': { model: 'some-model' } })
-    expect(resolveRoute('review.angle.deep', e)).toMatchObject({ model: 'some-model' })
+    expect(resolveRoute('review.angle.deep', e)).toMatchObject({
+      model: 'some-model',
+    })
     expect(resolveRoute('review.angle.deep', e).rate).toBeUndefined() // a new model drops the old rate
     expect(resolveRoute('review.angle', e).model).toBe(entry('review.angle').model)
     expect(routeFingerprint('review.angle.deep', e)).not.toBe(routeFingerprint('review.angle.deep', {}))
@@ -126,7 +146,10 @@ describe('resolveRoute', () => {
     const resolved = resolveRoute('decide', {})
     resolved.model = 'tampered'
     if (resolved.rate) resolved.rate.inputPerM = 0
-    expect(resolveRoute('decide', {})).toEqual({ id: 'decide', ...entry('decide') })
+    expect(resolveRoute('decide', {})).toEqual({
+      id: 'decide',
+      ...entry('decide'),
+    })
     expect(entry('decide').rate?.inputPerM).toBe(0.042)
     expect(routeFingerprint('decide', {})).toBe(before)
   })
@@ -198,11 +221,17 @@ describe('costFromUsage', () => {
       usd: 0.0123,
       source: 'provider',
     })
-    expect(costFromUsage('iu-openai', { cost: 0 })).toEqual({ usd: 0, source: 'provider' })
+    expect(costFromUsage('iu-openai', { cost: 0 })).toEqual({
+      usd: 0,
+      source: 'provider',
+    })
   })
 
   test('falls back to the rate across usage key conventions', () => {
-    const expected = { usd: (1000 * 0.04 + 500 * 0.04) / 1e6, source: 'rate' } as const
+    const expected = {
+      usd: (1000 * 0.04 + 500 * 0.04) / 1e6,
+      source: 'rate',
+    } as const
     expect(costFromUsage('iu-decision', { inputTokens: 1000, outputTokens: 500 }, rate)).toEqual(expected)
     expect(costFromUsage('iu-decision', { prompt_tokens: 1000, completion_tokens: 500 }, rate)).toEqual(expected)
     expect(costFromUsage('iu-anthropic', { input_tokens: 1000, output_tokens: 500, cost: null }, rate)).toEqual(
@@ -222,8 +251,14 @@ describe('costFromUsage', () => {
       usd: null,
       source: 'unknown',
     })
-    expect(costFromUsage('iu-openai', undefined, rate)).toEqual({ usd: null, source: 'unknown' })
-    expect(costFromUsage('iu-decision', {}, rate)).toEqual({ usd: null, source: 'unknown' })
+    expect(costFromUsage('iu-openai', undefined, rate)).toEqual({
+      usd: null,
+      source: 'unknown',
+    })
+    expect(costFromUsage('iu-decision', {}, rate)).toEqual({
+      usd: null,
+      source: 'unknown',
+    })
   })
 
   test('a malformed provider cost is ignored', () => {
@@ -234,8 +269,16 @@ describe('costFromUsage', () => {
   })
 
   describe('cache tokens', () => {
-    const cached = { inputPerM: 1, outputPerM: 5, cacheReadPerM: 0.1, cacheWritePerM: 1.25 }
-    const usd = (v: number) => ({ usd: expect.closeTo(v / 1e6, 12), source: 'rate' as const })
+    const cached = {
+      inputPerM: 1,
+      outputPerM: 5,
+      cacheReadPerM: 0.1,
+      cacheWritePerM: 1.25,
+    }
+    const usd = (v: number) => ({
+      usd: expect.closeTo(v / 1e6, 12),
+      source: 'rate' as const,
+    })
 
     test('Anthropic: input_tokens excludes the cache counts, each bucket has its own rate', () => {
       const usage = {
@@ -248,7 +291,11 @@ describe('costFromUsage', () => {
     })
 
     test('OpenAI: prompt_tokens includes cached_tokens, which are priced at the read rate instead', () => {
-      const usage = { prompt_tokens: 5000, completion_tokens: 200, prompt_tokens_details: { cached_tokens: 4000 } }
+      const usage = {
+        prompt_tokens: 5000,
+        completion_tokens: 200,
+        prompt_tokens_details: { cached_tokens: 4000 },
+      }
       expect(costFromUsage('iu-openai', usage, cached)).toEqual(usd(1000 * 1 + 4000 * 0.1 + 200 * 5))
     })
 
@@ -283,12 +330,23 @@ describe('costFromUsage', () => {
     })
 
     test('cache counts above the cache-inclusive prompt total are unknown, not clamped to zero input', () => {
-      const usage = { prompt_tokens: 100, completion_tokens: 5, prompt_tokens_details: { cached_tokens: 101 } }
-      expect(costFromUsage('iu-openai', usage, cached)).toEqual({ usd: null, source: 'unknown' })
+      const usage = {
+        prompt_tokens: 100,
+        completion_tokens: 5,
+        prompt_tokens_details: { cached_tokens: 101 },
+      }
+      expect(costFromUsage('iu-openai', usage, cached)).toEqual({
+        usd: null,
+        source: 'unknown',
+      })
     })
 
     test('a rate without a longPrompt tier is flat at any size', () => {
-      const long = { input_tokens: 1001, output_tokens: 5, cache_read_input_tokens: 99_000 }
+      const long = {
+        input_tokens: 1001,
+        output_tokens: 5,
+        cache_read_input_tokens: 99_000,
+      }
       expect(costFromUsage('iu-anthropic', long, cached)).toEqual(usd(1001 * 1 + 99_000 * 0.1 + 5 * 5))
       expect(costFromUsage('iu-openai', { prompt_tokens: 5_000_001, completion_tokens: 5 }, cached)).toEqual(
         usd(5_000_001 * 1 + 5 * 5),
@@ -296,8 +354,16 @@ describe('costFromUsage', () => {
     })
 
     test('the provider cost still wins over cache pricing', () => {
-      const usage = { cost: 0.5, input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 5 }
-      expect(costFromUsage('iu-anthropic', usage, cached)).toEqual({ usd: 0.5, source: 'provider' })
+      const usage = {
+        cost: 0.5,
+        input_tokens: 1,
+        output_tokens: 1,
+        cache_read_input_tokens: 5,
+      }
+      expect(costFromUsage('iu-anthropic', usage, cached)).toEqual({
+        usd: 0.5,
+        source: 'provider',
+      })
       expect(costFromUsage('iu-anthropic', { ...usage, input_tokens: 200_000 }, cached)).toEqual({
         usd: 0.5,
         source: 'provider',
@@ -316,25 +382,24 @@ describe('fallback', () => {
   ]
   const agentSteps: RouteId[] = ['review.angle', 'review.synthesis', 'check']
 
-  // `brain.agent` reads private notes and stays on its own provider: no fallback (owner decision, 2026-10-29). The audio
-  // door's routes have none either: STT has its own model chain, and TTS, prep and summary keep audio-gateway's
+  // The audio door's routes have no fallback: STT has its own model chain, and TTS, prep and summary keep audio-gateway's
   // behaviour (no balance fallback; packages/audio calls IU directly, not through the capability transports).
-  test('every iu-openai and opencode text route has one; decide, triage, brain.agent and audio.* have none', () => {
+  test('every iu-openai and opencode text route has one; decide, triage and audio.* have none', () => {
     for (const id of routeIds()) {
       const route = resolveRoute(id, {})
       // an audio seat has none; an image or Replicate model (`price`) has no text model to move to
       expect(route.fallback === undefined).toBe(
-        route.wire === 'iu-decision' ||
-          id === 'brain.agent' ||
-          id === 'triage' ||
-          id.startsWith('audio.') ||
-          route.price !== undefined,
+        route.wire === 'iu-decision' || id === 'triage' || id.startsWith('audio.') || route.price !== undefined,
       )
     }
   })
 
   test('a Terra or Luna route falls back to DeepSeek flash (chat call or agent step), a DeepSeek route to Terra', () => {
-    const deepseekRate = { inputPerM: 0.3, outputPerM: 1.2, cacheReadPerM: 0.006 }
+    const deepseekRate = {
+      inputPerM: 0.3,
+      outputPerM: 1.2,
+      cacheReadPerM: 0.006,
+    }
     const terraRate = {
       inputPerM: 1,
       outputPerM: 5,
@@ -359,11 +424,17 @@ describe('fallback', () => {
         rate: deepseekRate,
       })
     }
-    // the four owner-directed off Requesty fall back to Haiku on the chat wire
-    for (const id of ['cheap.classify', 'review.router', 'review.ocr', 'review.adversary'] as const) {
+    // the four owner-directed off Requesty fall back across the two GPT models on the chat wire
+    expect(resolveRoute('cheap.classify', {}).fallback).toMatchObject({
+      wire: 'iu-openai',
+      model: 'gpt-6.1-terra',
+      maxOutputTokens: 32_000,
+    })
+    for (const id of ['review.router', 'review.ocr', 'review.adversary'] as const) {
       expect(resolveRoute(id, {}).fallback).toMatchObject({
         wire: 'iu-openai',
-        model: 'claude-haiku-5-5',
+        model: 'gpt-6-luna',
+        effort: 'medium',
         maxOutputTokens: 32_000,
       })
     }
@@ -384,7 +455,11 @@ describe('fallback', () => {
       })
     }
     for (const id of ['research.agent', 'otel.agent'] as const) {
-      expect(resolveRoute(id, {}).fallback).toMatchObject({ wire: 'opencode', model: 'gpt-6.1-terra', rate: terraRate })
+      expect(resolveRoute(id, {}).fallback).toMatchObject({
+        wire: 'opencode',
+        model: 'gpt-6.1-terra',
+        rate: terraRate,
+      })
     }
     for (const id of [...singleFallbacks, ...agentSteps, 'prose.review', 'research.agent', 'review.router'] as const) {
       expect(resolveRoute(id, {}).fallback?.model).not.toBe(resolveRoute(id, {}).model)
@@ -402,13 +477,15 @@ describe('fallback', () => {
 
   // The Requesty check covers ONLY the four routes Wave 9 moved (route and fallback). Every other `deepseek-v4.1-flash`
   // route (research.agent, otel.agent, prose.review, podcast.*) is Requesty-Global too and stays: its pre-registered
-  // decision is the lead's, not this guard's. The four run on the GPT stack and fall back to Haiku on the chat wire.
+  // decision is the lead's, not this guard's. The four run on the GPT stack and fall back to the other GPT model.
   test('the four routes moved off Requesty (router, adversary, ocr, classify) and their fallbacks name no Requesty model', () => {
     const requesty = /^(eu\/)?deepseek-v4\.1-flash|^DeepSeek-V4|^pplx-decider|^kimi-k3|^kimi-k2\.7/i
     for (const id of ['review.router', 'review.adversary', 'review.ocr', 'cheap.classify'] as const) {
       const route = resolveRoute(id, {})
       expect(route.model).not.toMatch(requesty)
-      expect(route.fallback?.model).toBe('claude-haiku-5-5')
+      // the two GPT models fall back to each other, on the chat wire
+      expect(route.fallback?.wire).toBe('iu-openai')
+      expect(route.fallback?.model).not.toBe(route.model)
       expect(route.fallback?.model).not.toMatch(requesty)
     }
     // triage is owner-directed off Requesty too, and the only fallback that is not OpenAI's balance is a Requesty model
@@ -417,7 +494,7 @@ describe('fallback', () => {
 
   test('the adversary fallback keeps the 32k output ceiling', () => {
     expect(resolveRoute('review.adversary', {}).fallback).toMatchObject({
-      model: 'claude-haiku-5-5',
+      model: 'gpt-6-luna',
       maxOutputTokens: 32_000,
     })
   })
@@ -425,16 +502,26 @@ describe('fallback', () => {
   test('fallbackRoute is the fallback as a route of the same id, marked, without a fallback of its own', () => {
     const route = resolveRoute('cheap.classify', {})
     const fallback = fallbackRoute(route)
-    expect(fallback).toEqual({ id: 'cheap.classify', ...(route.fallback as object), isFallback: true } as never)
+    expect(fallback).toEqual({
+      id: 'cheap.classify',
+      ...(route.fallback as object),
+      isFallback: true,
+    } as never)
     expect(fallback?.fallback).toBeUndefined()
     expect(fallbackRoute(resolveRoute('decide', {}))).toBeUndefined()
   })
 
   test('AGW_ROUTES patches a fallback like a primary, and only the part it names', () => {
-    const e = env({ 'cheap.classify': { fallback: { model: 'other-model', effort: 'high' } } })
+    const e = env({
+      'cheap.classify': { fallback: { model: 'other-model', effort: 'high' } },
+    })
     const route = resolveRoute('cheap.classify', e)
     expect(route.model).toBe(entry('cheap.classify').model)
-    expect(route.fallback).toMatchObject({ wire: 'iu-openai', model: 'other-model', effort: 'high' })
+    expect(route.fallback).toMatchObject({
+      wire: 'iu-openai',
+      model: 'other-model',
+      effort: 'high',
+    })
     // A new fallback model without a rate drops the old rate, as on the primary.
     expect(route.fallback?.rate).toBeUndefined()
     expect(routeFingerprint('cheap.classify', e)).not.toBe(routeFingerprint('cheap.classify', {}))
@@ -459,31 +546,54 @@ describe('fallback', () => {
 
   test('the table refuses a fallback of the other step kind', () => {
     const base = { wire: 'iu-openai', model: 'm' }
-    expect(routeSchema.safeParse({ ...base, fallback: { wire: 'opencode', model: 'f' } }).success).toBe(false)
-    expect(routeSchema.safeParse({ ...base, fallback: { wire: 'iu-anthropic', model: 'f' } }).success).toBe(true)
+    expect(
+      routeSchema.safeParse({
+        ...base,
+        fallback: { wire: 'opencode', model: 'f' },
+      }).success,
+    ).toBe(false)
+    expect(
+      routeSchema.safeParse({
+        ...base,
+        fallback: { wire: 'iu-anthropic', model: 'f' },
+      }).success,
+    ).toBe(true)
   })
 
   test('the long-prompt tier of a rate is where the price steps up', () => {
     const rate = resolveRoute('cheap.summarize', {}).rate
-    const usage = (prompt: number) => ({ prompt_tokens: prompt, completion_tokens: 1_000 })
-    expect(costFromUsage('iu-openai', usage(200_000), rate)).toEqual({ usd: 0.205, source: 'rate' })
+    const usage = (prompt: number) => ({
+      prompt_tokens: prompt,
+      completion_tokens: 1_000,
+    })
+    expect(costFromUsage('iu-openai', usage(200_000), rate)).toEqual({
+      usd: 0.205,
+      source: 'rate',
+    })
     // above 272K the whole request bills 2x input and 1.5x output
-    expect(costFromUsage('iu-openai', usage(272_000), rate)).toEqual({ usd: 0.277, source: 'rate' })
+    expect(costFromUsage('iu-openai', usage(272_000), rate)).toEqual({
+      usd: 0.277,
+      source: 'rate',
+    })
     expect(costFromUsage('iu-openai', usage(272_001), rate)).toEqual({
       usd: (272_001 * 2 + 1_000 * 7.5) / 1e6,
       source: 'rate',
     })
     // a rate without the tier is flat at the same size
-    expect(costFromUsage('iu-openai', usage(300_000), { inputPerM: 1, outputPerM: 5 })).toEqual({
+    expect(
+      costFromUsage('iu-openai', usage(300_000), {
+        inputPerM: 1,
+        outputPerM: 5,
+      }),
+    ).toEqual({
       usd: 0.305,
       source: 'rate',
     })
   })
 })
 
-describe('the long-prompt tier of Haiku 5.5 (>100K prompt tokens bill 5x on every column)', () => {
-  // brain.agent is the one Haiku route left in the table.
-  const haiku = resolveRoute('brain.agent', {}).rate
+describe('the long-prompt tier of Terra (>272K prompt tokens bill 2x input and cache, 1.5x output)', () => {
+  const terra = resolveRoute('brain.agent', {}).rate
   const at = (inputTokens: number, cacheRead = 0, cacheWrite = 0) =>
     costFromUsage(
       'iu-anthropic',
@@ -493,45 +603,45 @@ describe('the long-prompt tier of Haiku 5.5 (>100K prompt tokens bill 5x on ever
         cache_read_input_tokens: cacheRead,
         cache_creation_input_tokens: cacheWrite,
       },
-      haiku,
+      terra,
     )
-  const price = (input: number, read: number, write: number, output: number, scale: number) => ({
-    usd: ((input * 0.1 + read * 0.01 + write * 0.125) * scale + output * 0.5 * scale) / 1e6,
+  const price = (input: number, read: number, write: number, output: number, tier: boolean) => ({
+    usd: ((input * 1 + read * 0.05 + write * 1.25) * (tier ? 2 : 1) + output * 5 * (tier ? 1.5 : 1)) / 1e6,
     source: 'rate' as const,
   })
 
-  test('exactly 100K is the base card; one token more is the tier, not unknown', () => {
-    expect(at(100_000)).toEqual(price(100_000, 0, 0, 1_000, 1))
-    expect(at(100_001)).toEqual(price(100_001, 0, 0, 1_000, 5))
+  test('exactly 272K is the base card; one token more is the tier, not unknown', () => {
+    expect(at(272_000)).toEqual(price(272_000, 0, 0, 1_000, false))
+    expect(at(272_001)).toEqual(price(272_001, 0, 0, 1_000, true))
   })
 
   test('cache reads and writes count toward the prompt and are repriced with it', () => {
-    expect(at(1_000, 99_000)).toEqual(price(1_000, 99_000, 0, 1_000, 1))
-    expect(at(1_001, 99_000)).toEqual(price(1_001, 99_000, 0, 1_000, 5))
-    expect(at(10, 90_000, 10_000)).toEqual(price(10, 90_000, 10_000, 1_000, 5))
+    expect(at(1_000, 271_000)).toEqual(price(1_000, 271_000, 0, 1_000, false))
+    expect(at(1_001, 271_000)).toEqual(price(1_001, 271_000, 0, 1_000, true))
+    expect(at(10, 260_000, 12_000)).toEqual(price(10, 260_000, 12_000, 1_000, true))
   })
 
   test('the OpenAI-shaped usage (prompt_tokens includes the cache) is split the same way', () => {
     const usage = {
-      prompt_tokens: 150_000,
+      prompt_tokens: 350_000,
       completion_tokens: 1_000,
-      prompt_tokens_details: { cached_tokens: 100_000 },
+      prompt_tokens_details: { cached_tokens: 300_000 },
     }
-    expect(costFromUsage('opencode', usage, haiku)).toEqual(price(50_000, 100_000, 0, 1_000, 5))
+    expect(costFromUsage('opencode', usage, terra)).toEqual(price(50_000, 300_000, 0, 1_000, true))
   })
 
   test('a provider-reported cost still wins above the threshold', () => {
-    expect(costFromUsage('iu-anthropic', { cost: 0.5, input_tokens: 500_000, output_tokens: 1 }, haiku)).toEqual({
+    expect(costFromUsage('iu-anthropic', { cost: 0.5, input_tokens: 500_000, output_tokens: 1 }, terra)).toEqual({
       usd: 0.5,
       source: 'provider',
     })
   })
 
-  test('every Haiku route carries the same tiered card', () => {
+  test('every Terra route carries the same tiered card', () => {
     for (const id of routeIds()) {
       const route = resolveRoute(id, {})
-      if (route.model !== 'claude-haiku-5-5') continue
-      expect(route.rate).toEqual(haiku)
+      if (route.model !== 'gpt-6.1-terra') continue
+      expect(route.rate).toEqual(terra)
     }
   })
 })
@@ -541,7 +651,13 @@ describe('rate schema', () => {
     const tier = { inputMultiplier: 5, outputMultiplier: 5 }
     const base = { inputPerM: 1, outputPerM: 5 }
     expect(rateSchema.safeParse({ ...base, longPrompt: tier }).success).toBe(false)
-    expect(rateSchema.safeParse({ ...base, longPrompt: tier, longPromptTokens: 100_000 }).success).toBe(true)
+    expect(
+      rateSchema.safeParse({
+        ...base,
+        longPrompt: tier,
+        longPromptTokens: 100_000,
+      }).success,
+    ).toBe(true)
     expect(rateSchema.safeParse(base).success).toBe(true)
   })
 })

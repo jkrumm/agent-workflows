@@ -71,14 +71,16 @@ describe('provider-balance fallback', () => {
       expect(await call('llm.classify', classify)).toEqual({ label: 'bug', reason: 'crash' })
 
       expect(iu.requests.map((r) => r.body.model)).toEqual([primary.model, fallback.model])
-      expect(iu.requests[1]?.body).toMatchObject({ max_completion_tokens: fallback.maxOutputTokens })
-      expect(iu.requests[1]?.body.reasoning_effort).toBeUndefined()
-      // IU sent no cost: the fallback's rate prices it (Haiku 5.5, $0.10/M in, $0.50/M out).
+      expect(iu.requests[1]?.body).toMatchObject({
+        reasoning_effort: fallback.effort,
+        max_completion_tokens: fallback.maxOutputTokens,
+      })
+      // IU sent no cost: the fallback's rate prices it (Terra, $1/M in, $5/M out).
       expect(usages).toEqual([
         {
           model: fallback.model,
           tokens: { input: 1_000, output: 200, cacheRead: 0, reasoning: 50 },
-          cost: (1_000 * 0.1 + 200 * 0.5) / 1_000_000,
+          cost: (1_000 * 1 + 200 * 5) / 1_000_000,
           costSource: 'rate',
         },
       ])
@@ -198,9 +200,9 @@ describe('provider-balance fallback: the review seats', () => {
       const out = await call('review.adversary', { diff: '+added line' })
       expect(out).toMatchObject({ findings: [finding], model: adversaryFallback.model })
       expect(iu.requests.map((r) => r.body.model)).toEqual([adversary.model, adversaryFallback.model])
-      // The fallback runs at its own route's effort (none sent), not the adversary's (medium).
+      // The fallback runs at its own route's effort, not the adversary's.
       expect(iu.requests[0]?.body.reasoning_effort).toBe('medium')
-      expect(iu.requests[1]?.body.reasoning_effort).toBeUndefined()
+      expect(iu.requests[1]?.body.reasoning_effort).toBe(adversaryFallback.effort)
       expect(iu.requests[1]?.body.max_completion_tokens).toBe(adversaryFallback.maxOutputTokens)
       expect(usages).toEqual([
         {
