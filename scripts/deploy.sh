@@ -179,7 +179,7 @@ ensure_door_tokens() {
     return 0
   fi
   # Only a regular file at 0600 is extended: anything else is left for check_door_tokens to refuse.
-  [[ -f "$DOOR_TOKENS" && ! -L "$DOOR_TOKENS" && "$(/usr/bin/stat -f %Lp "$DOOR_TOKENS")" == 600 ]] || return 0
+  [[ -f "$DOOR_TOKENS" && ! -L "$DOOR_TOKENS" && -n "$(/usr/bin/find "$DOOR_TOKENS" -maxdepth 0 -perm 600)" ]] || return 0
   /usr/bin/grep -Eq '^[[:space:]]*studio[[:space:]]*=' "$DOOR_TOKENS" && return 0
   (
     umask 077
