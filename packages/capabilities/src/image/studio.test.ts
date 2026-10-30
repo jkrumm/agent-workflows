@@ -505,6 +505,29 @@ describe('requestImages: streaming', () => {
     expect(reported).toEqual([])
   })
 
+  test('a failure below the vendor (no answer, a cut body) is marked transport; a vendor status line is not', async () => {
+    const env = { IU_API_KEY: 'test-key', IU_BASE_URL: fake.baseUrl }
+    const reset = resolveImageDeps({
+      env,
+      retry: { backoffMs: 0 },
+      fetch: () => Promise.reject(new TypeError('fetch failed: ECONNRESET 10.0.0.5:443')),
+    })
+    const failure = await requestImages(
+      reset,
+      { addUsage: () => {}, signal: new AbortController().signal },
+      { prompt: 'x' },
+    ).then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+    expect(failure).toMatchObject({ code: 'UPSTREAM_ERROR', data: { transport: true } })
+
+    fake.on(POST_GEN, () => Response.json({ error: { message: 'overloaded' } }, { status: 500 }))
+    const status = await refused({ prompt: 'x' })
+    expect(status.error.data).toMatchObject({ status: 500 })
+    expect(status.error.data).not.toHaveProperty('transport')
+  })
+
   test('the magic check reads the first bytes only: a valid header with a junk body is not decoded further', async () => {
     const junk = new Uint8Array(png.length + 64).fill(7)
     junk.set(png.subarray(0, 12))

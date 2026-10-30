@@ -13,6 +13,8 @@ export const ERRORS = {
     message: 'Upstream model call failed',
     data: z.object({
       status: z.number().int().optional(),
+      /** The call never got an answer (a refused connection, a reset, a body that could not be read): the message is the client library's text, not the vendor's. */
+      transport: z.literal(true).optional(),
       /** A vendor-wrapped 400 or an error frame of a stream: the vendor's own words, structured (a moderation block names its stage and categories). */
       userError: z
         .object({

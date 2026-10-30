@@ -30,6 +30,8 @@ export class Attempt extends Error {
     readonly status?: number,
     /** The vendor's own words of a wrapped 400 (`UPSTREAM_ERROR` data `userError`). */
     readonly userError?: UserError,
+    /** The attempt failed below the vendor's answer (no response, a cut body): the message is the client library's text. */
+    readonly transport?: true,
   ) {
     super(message)
   }
@@ -100,6 +102,7 @@ export async function withRetries<T>(options: HttpOptions, signal: AbortSignal, 
         throw fail('UPSTREAM_ERROR', failure.message, {
           ...(failure.status === undefined ? {} : { status: failure.status }),
           ...(failure.userError ? { userError: failure.userError } : {}),
+          ...(failure.transport ? { transport: true as const } : {}),
         })
       }
       await sleep(backoffMs * 3 ** i, signal)

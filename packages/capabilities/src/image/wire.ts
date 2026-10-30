@@ -1,3 +1,4 @@
+import { CapabilityError } from '../errors.ts'
 import { Attempt, describe, type HttpOptions, withRetries } from '../transports/http.ts'
 import { failedImageResponse } from './upstream.ts'
 
@@ -71,7 +72,7 @@ export function send<T>(options: SendOptions<T>): Promise<T> {
       const retryable = options.idempotent
         ? !(error instanceof Error && ['TimeoutError', 'AbortError'].includes(error.name))
         : isConnectRefused(error)
-      throw new Attempt(describe(error), retryable)
+      throw new Attempt(describe(error), retryable, undefined, undefined, true)
     }
     if (!res.ok) {
       const failed = await failedImageResponse(res, options.wire)
@@ -83,7 +84,14 @@ export function send<T>(options: SendOptions<T>): Promise<T> {
       return await options.read(res)
     } catch (error) {
       if (error instanceof Attempt) throw error
-      throw new Attempt(describe(error), options.idempotent)
+      // A CapabilityError is the reader's own verdict (a frame that does not fit); anything else is the connection failing.
+      throw new Attempt(
+        describe(error),
+        options.idempotent,
+        undefined,
+        undefined,
+        error instanceof CapabilityError ? undefined : true,
+      )
     }
   })
 }
