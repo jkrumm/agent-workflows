@@ -228,7 +228,7 @@ Facts in `docs/research/2026-10-27-setup-inventory.md`.
 | `excalidraw-diagram` | agw MCP | `agw diagram` (P3) |
 | `prose` | `agw prose`: lint → cross-lab review → Opus rewrite → keep gate, all on IU (~$0.05/call) | `agw prose` does lint + cross-lab review + keep gate; **the rewrite moves into the calling Claude Code session on Max** (P3) |
 | `podcast` | `bun run podcast` in audio-gateway | `agw podcast` (P4) |
-| `img` | `imgcli` | `agw image` (P4) |
+| `img` | `imgcli` | `agw image` (P4); icon sets are `agw image-icon` (the host refuses `agw image icon`, a command may not prefix another) |
 | `implement`, `wave`, `remote-dev` | name `mcp__agent-gateway__dispatch` | name `agw-legacy dispatch` until the factory replaces it |
 | `browse` | chrome-devtools MCP | unchanged |
 | agw MCP server | 16 tools | deleted per tool as ported; server gone at P5 |

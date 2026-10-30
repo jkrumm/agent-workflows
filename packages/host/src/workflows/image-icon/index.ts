@@ -6,6 +6,7 @@ import { type ArtifactOptions, artifactDir } from '../../artifacts.ts'
 import type { HostWorkflow } from '../../operations.ts'
 import type { HostRegistry } from '../index.ts'
 import {
+  assertCutoutReachable,
   buildMaster,
   CUTOUT_INPUT_MAX_EDGE,
   cleanVectorized,
@@ -134,6 +135,7 @@ const listing = (
 async function prepareStep({ input, workDir }: IconRun): Promise<PrepareResult> {
   const rgba = await decodeRgba(await readSource(input.file))
   const scale = upscaleScale(input.upscale, rgba)
+  assertCutoutReachable({ rgba, scale, cutout: input.cutout })
   const sourcePath = join(workDir(), 'source.png')
   await writeFile(sourcePath, await encodePng(rgba))
   return { scale, sourcePath }

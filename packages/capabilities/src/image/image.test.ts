@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, describe, expect, test } from 'bun:test'
+import { afterAll, beforeEach, describe, expect, spyOn, test } from 'bun:test'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -93,6 +93,29 @@ const images = (n: number, bytes: Uint8Array = png) => ({
   data: Array.from({ length: n }, () => ({ b64_json: b64(bytes) })),
 })
 const usage = { input_tokens: 100, output_tokens: 1000, input_tokens_details: { text_tokens: 100, image_tokens: 0 } }
+
+/**
+ * Runs `work` with the clock `skew.ms` ahead of real time; a fake handler bumps `skew.ms` to simulate a slow model
+ * without waiting for it.
+ */
+async function withSkewedClock<T>(skew: { ms: number }, work: () => Promise<T>): Promise<T> {
+  const realNow = Date.now.bind(Date)
+  const spy = spyOn(Date, 'now').mockImplementation(() => realNow() + skew.ms)
+  try {
+    return await work()
+  } finally {
+    spy.mockRestore()
+  }
+}
+
+/** A prediction that is still `processing` on its first poll, which then takes 100 s of (simulated) time to answer. */
+function slowPrediction(id: string, output: string, skew: { ms: number }) {
+  handlers[`/replicate/v1/predictions/${id}`] = (_s, attempt) => {
+    if (attempt > 0) return Response.json({ id, status: 'succeeded', output })
+    skew.ms += 100_000
+    return Response.json({ id, status: 'processing' })
+  }
+}
 
 describe('image.generate', () => {
   test('a prompt: the request names the routed model, snapped size and png; images come back decoded, the call is priced', async () => {
@@ -283,6 +306,16 @@ describe('image.cutout', () => {
   const BRIA = IMAGE_ROUTES['image.cutout.bria'].model
   const DELIVERED = 'https://replicate.delivery/out/cutout.webp'
 
+  test('the default poll deadline is 60 s: a cutout that takes 100 s times out, its price already on the run', async () => {
+    const skew = { ms: 0 }
+    handlers[POST_PREDICT(RECRAFT)] = () => Response.json({ id: 'cs', status: 'processing' })
+    slowPrediction('cs', DELIVERED, skew)
+    const { error, usage: reported } = await withSkewedClock(skew, () => failure('image.cutout', { file: source() }))
+    expect(error.message).toContain('timed out')
+    expect(fake.attempts['/replicate/v1/predictions/cs']).toBe(1)
+    expect(reported).toHaveLength(1)
+  })
+
   test('recraft delivers WebP: it comes back a PNG with an alpha channel, priced per call, and the request is the data-URI input', async () => {
     cdn[DELIVERED] = await webpFixture(300, 280)
     handlers[POST_PREDICT(RECRAFT)] = () => Response.json({ id: 'p1', status: 'succeeded', output: DELIVERED })
@@ -441,6 +474,15 @@ describe('image.upscale', () => {
       )
     await call('image.upscale', { file: source() })
     expect(fake.attempts['/replicate/v1/predictions/u9']).toBe(3)
+  })
+
+  test('the poll waits up to 180 s for an upscale: one that takes 100 s is still delivered', async () => {
+    cdn[DELIVERED] = pngFixture(480, 400)
+    const skew = { ms: 0 }
+    handlers[PREDICT] = () => Response.json({ id: 'us', status: 'processing' })
+    slowPrediction('us', DELIVERED, skew)
+    await withSkewedClock(skew, () => call('image.upscale', { file: source() }))
+    expect(fake.attempts['/replicate/v1/predictions/us']).toBe(2)
   })
 
   test('a started prediction is on the run even when polling then fails; one that fails on create is not billed', async () => {

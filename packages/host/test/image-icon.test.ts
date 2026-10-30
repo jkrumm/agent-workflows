@@ -323,6 +323,64 @@ describe('image-icon end to end', () => {
     expect(fake.seen).toEqual([])
   })
 
+  test('a tiny opaque source whose upscale would stay under the 256 px cutout minimum fails before any billed call', async () => {
+    const { body } = await run({ file: await writeSource('tiny.png', await subject(16, true)) })
+    expect(body.status).toBe('failed')
+    expect(body.error.message).toContain('failed (invalid_input)')
+    expect(body.error.message).toContain('at least 256px')
+    expect(body.error.message).toContain('128px after the upscale')
+    expect(body.error.message).toContain('--cutout never')
+    expect(fake.seen).toEqual([])
+    expect((await recorded(body.runId)).usd).toBe(0)
+  })
+
+  test('the same tiny source with cutout: never runs: upscale 8x, render, vectorize', async () => {
+    delivers('upscale', await subject(128, true), UPSCALE)
+    delivers('vectorize', text(RAW_SVG), VECTORIZE)
+    const { body } = await run({ file: await writeSource('tiny2.png', await subject(16, true)), cutout: 'never' })
+    expect(body.status).toBe('done')
+    expect(body.output.steps.map((s: { step: string }) => s.step)).toEqual(['upscale', 'vectorize'])
+    expect(requestImage(UPSCALE).input).toMatchObject({ scale: 8 })
+    expect(fake.seen.map((r) => r.path)).toEqual([UPSCALE, VECTORIZE])
+  })
+
+  test('a 20000x1000 source is refused when the square master would be over 8192 px, before any canvas or call', async () => {
+    const wide = await png(sharp({ create: { width: 20_000, height: 1000, channels: 3, background: '#c83c28' } }))
+    const { body } = await run({
+      file: await writeSource('wide.png', wide),
+      cutout: 'never',
+      upscale: 'never',
+      svg: 'never',
+    })
+    expect(body.status).toBe('failed')
+    expect(body.error.message).toContain('failed (invalid_input)')
+    expect(body.error.message).toContain('20000x1000px; the square master is at most 8192px a side')
+    expect(fake.seen).toEqual([])
+    expect(existsSync(join(artifacts, 'image-icon', body.runId, 'work', 'master.png'))).toBe(false)
+  })
+
+  test('a vectorized SVG with a script, a handler or a javascript: link is written clean, never as delivered', async () => {
+    const dirty =
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8" onload="alert(1)"><script>alert(1)</script><a href="javascript:alert(1)"><path d="M0 0h8v8z" onclick="alert(1)"/></a></svg>'
+    delivers('vectorize', text(dirty), VECTORIZE)
+    const { body } = await run({ file: GOLDEN_SOURCE })
+    expect(body.status).toBe('done')
+    const written = readFileSync(join(body.output.dir, 'favicon.svg'), 'utf8')
+    expect(written).toContain('<path')
+    expect(written).not.toMatch(/<script|<foreignObject|\son[a-z]+\s*=|javascript:/i)
+  })
+
+  test('a vectorized SVG with a foreignObject fails the run and writes no favicon.svg; the vectorize price stays', async () => {
+    const foreign =
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8"><foreignObject width="8" height="8"><div xmlns="http://www.w3.org/1999/xhtml">x</div></foreignObject></svg>'
+    delivers('vectorize', text(foreign), VECTORIZE)
+    const { body } = await run({ file: GOLDEN_SOURCE })
+    expect(body.status).toBe('failed')
+    expect(JSON.stringify(body.error)).toContain('vectorized SVG contains active content')
+    expect(existsSync(join(artifacts, 'image-icon', body.runId, 'favicon.svg'))).toBe(false)
+    expect((await recorded(body.runId)).usd).toBeCloseTo(0.01, 8)
+  })
+
   test('vectorize failing after upscale and cutout fails the run, keeps their 0.012 on the run record, and names them', async () => {
     delivers('upscale', await subject(800, true), UPSCALE)
     delivers('cutout', await subject(800), CUTOUT)

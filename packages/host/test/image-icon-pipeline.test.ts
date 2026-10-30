@@ -1,8 +1,10 @@
 import { describe, expect, test } from 'bun:test'
 import { randomBytes } from 'node:crypto'
+import { deflateSync } from 'node:zlib'
 import { WorkflowError } from '@agent-workflows/runtime'
 import sharp from 'sharp'
 import {
+  assertCutoutReachable,
   buildMaster,
   CUTOUT_INPUT_MAX_EDGE,
   cleanVectorized,
@@ -47,6 +49,22 @@ const solid = (width: number, height: number, format: 'png' | 'jpeg' | 'webp'): 
     .toFormat(format)
     .toBuffer()
 
+/** A valid, flat 1-bit PNG of `width` x `height`: a few KB on disk, a decompression bomb for the decoder. */
+function bombPng(width: number, height: number): Buffer {
+  const u32 = (n: number) => Buffer.from([(n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255])
+  const chunk = (type: string, data: Buffer) => {
+    const body = Buffer.concat([Buffer.from(type, 'latin1'), data])
+    return Buffer.concat([u32(data.length), body, u32(Bun.hash.crc32(body))])
+  }
+  const rows = Buffer.alloc(height * (Math.ceil(width / 8) + 1))
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk('IHDR', Buffer.concat([u32(width), u32(height), Buffer.from([1, 0, 0, 0, 0])])),
+    chunk('IDAT', deflateSync(rows)),
+    chunk('IEND', Buffer.alloc(0)),
+  ])
+}
+
 const rejectsInvalidInput = async (promise: Promise<unknown>, message?: RegExp): Promise<void> => {
   const err = await promise.then(
     () => undefined,
@@ -74,12 +92,44 @@ describe('decodeRgba', () => {
   test('garbage bytes are invalid_input', async () => {
     await rejectsInvalidInput(decodeRgba(new Uint8Array([1, 2, 3])), /^unreadable image/)
   })
+
+  test('an image declaring more than 64 MP is refused as invalid_input, quickly, before any pixel is read', async () => {
+    const started = performance.now()
+    await rejectsInvalidInput(decodeRgba(bombPng(12_000, 12_000)), /^unreadable image: .*exceeds pixel limit/i)
+    expect(performance.now() - started).toBeLessThan(2000)
+  })
 })
 
 describe('lacksTransparency', () => {
   test('is true only when every pixel alpha is >= 250', () => {
     expect(lacksTransparency(Buffer.from([1, 2, 3, 255, 4, 5, 6, 250]))).toBe(true)
     expect(lacksTransparency(Buffer.from([1, 2, 3, 255, 4, 5, 6, 249]))).toBe(false)
+  })
+})
+
+describe('assertCutoutReachable', () => {
+  const opaque = (width: number, height: number): Rgba => ({
+    data: Buffer.alloc(width * height * 4, 255),
+    width,
+    height,
+  })
+
+  test('an opaque 16 px image whose 8x upscale (128 px) is under the 256 px cutout minimum is refused, naming both', () => {
+    const run = () => assertCutoutReachable({ rgba: opaque(16, 16), scale: 8, cutout: 'auto' })
+    expect(run).toThrow(WorkflowError)
+    expect(run).toThrow(/at least 256px .* 128px after the upscale; use --cutout never or a larger source/)
+  })
+
+  test('the short edge counts, with no upscale it is the source edge, and always applies to a transparent image too', () => {
+    expect(() => assertCutoutReachable({ rgba: opaque(2000, 100), scale: null, cutout: 'always' })).toThrow(/100px/)
+    expect(() => assertCutoutReachable({ rgba: blank(100, 100), scale: null, cutout: 'always' })).toThrow(/100px/)
+  })
+
+  test('passes when no cutout is needed or the edge reaches 256 px', () => {
+    assertCutoutReachable({ rgba: opaque(16, 16), scale: 8, cutout: 'never' })
+    assertCutoutReachable({ rgba: blank(16, 16), scale: 8, cutout: 'auto' })
+    assertCutoutReachable({ rgba: opaque(64, 64), scale: 4, cutout: 'auto' })
+    assertCutoutReachable({ rgba: opaque(300, 300), scale: null, cutout: 'always' })
   })
 })
 
@@ -161,6 +211,10 @@ describe('prepareCutoutInput', () => {
     await rejectsInvalidInput(prepareCutoutInput(new Uint8Array([1, 2, 3])), /^unreadable image/)
   })
 
+  test('an image declaring more than 64 MP is refused as invalid_input by the metadata read', async () => {
+    await rejectsInvalidInput(prepareCutoutInput(bombPng(12_000, 12_000)), /^unreadable image: .*pixel limit/i)
+  })
+
   test('rejects images above 16 megapixels', async () => {
     await rejectsInvalidInput(prepareCutoutInput(await solid(4096, 4000, 'png')), /16000000 pixels/)
   })
@@ -203,6 +257,22 @@ describe('buildMaster', () => {
     expect(alphaAt(300)).toBe(255)
     expect(alphaAt(50)).toBe(0)
     expect(alphaAt(550)).toBe(0)
+  })
+
+  test('a subject with a side over 8192 px is refused before any canvas is built', async () => {
+    // 20000x1000 with two opaque pixels at the far ends: the trimmed subject is 20000 px wide.
+    const wide = blank(20_000, 1000)
+    wide.data.set([220, 30, 30, 255], 0)
+    wide.data.set([220, 30, 30, 255], 19_999 * 4)
+    await rejectsInvalidInput(buildMaster(wide), /20000x1\s?px; the square master is at most 8192px a side/)
+  })
+
+  test('a subject of exactly 8192 px on its long side is still built', async () => {
+    const edge = blank(8192, 4)
+    edge.data.set([220, 30, 30, 255], 0)
+    edge.data.set([220, 30, 30, 255], 8191 * 4)
+    const meta = await sharp(await buildMaster(edge)).metadata()
+    expect([meta.width, meta.height]).toEqual([8192, 8192])
   })
 
   test('an odd-sized subject still yields an exactly square master', async () => {
@@ -314,6 +384,28 @@ describe('cleanVectorized', () => {
     expect(() => cleanVectorized('<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>')).toThrow(
       'vectorized SVG has no viewBox',
     )
+  })
+
+  const SVG = (inner: string, attrs = '') =>
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8"${attrs}>${inner}<path d="M0 0h8v8z"/></svg>`
+
+  test('scripts, event handlers and javascript: links are removed from the result', () => {
+    const dirty = [
+      SVG('<script>alert(1)</script>'),
+      SVG('', ' onload="alert(1)"'),
+      SVG('<path onclick="alert(1)" d="M0 0h1v1z"/>'),
+      SVG('<a href="javascript:alert(1)"><path d="M0 0h1v1z"/></a>'),
+    ]
+    for (const svg of dirty) {
+      expect(cleanVectorized(svg)).not.toMatch(/<script|<foreignObject|\son[a-z]+\s*=|javascript:/i)
+    }
+  })
+
+  test('a foreignObject cannot be cleaned and fails the call', () => {
+    const svg = SVG(
+      '<foreignObject width="8" height="8"><div xmlns="http://www.w3.org/1999/xhtml">x</div></foreignObject>',
+    )
+    expect(() => cleanVectorized(svg)).toThrow('vectorized SVG contains active content')
   })
 
   test('the size cap is 64 KB', () => {

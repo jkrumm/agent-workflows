@@ -46,7 +46,7 @@ capabilities read their input from the host's disk.
 
 |Step|Cost|What|
 |-|-|-|
-|`prepare`|free|Read and validate the file, decode it (EXIF applied), choose the upscale scale, write `work/source.png`|
+|`prepare`|free|Read and validate the file, decode it (EXIF applied), choose the upscale scale, refuse a run whose cutout could not take the upscaled size (see Decisions), write `work/source.png`|
 |`upscale`|$0.002|Only when a scale was chosen: `image.upscale` (real-esrgan) on `source.png` -> `work/upscaled.png`|
 |`cutout`|$0.01 (bria $0.018)|Decided inside the step on the current image: `always`, or `auto` and no real transparency. Then the image is normalised (PNG, at most 1536 px) into `work/cutout-input.png` and sent to `image.cutout` -> `work/cutout.png`. Otherwise it returns `ran: false` with no call|
 |`render`|free|Clean near-transparent pixels, trim and centre on a square master (`work/master.png`), render every raster and write it to `<dir>/`|
@@ -69,6 +69,23 @@ and the error names them with their total ("already billed: upscale $0.002, cuto
   the rasters, the ICO, the ICNS and the cleaned SVG are byte-identical to the gateway's (`image-icon-golden.test.ts`).
 - **The SVG is omitted above 64 KB.** Browsers prefer the SVG icon, so a bloated one (gradient or photographic art) is
   worse than none; the PNG/ICO set stands and the head tags have no svg link.
+- **The cutout's 256 px minimum is checked in `prepare`, before anything is billed.** recraft needs a short edge of at
+  least 256 px, and `upscale: auto` makes an 8x of a source under 128 px, so a 16 px opaque icon would pay for an upscale
+  (128 px) and then fail its cutout. When a cutout will run (`always`, or `auto` on an image without transparency) and
+  `min(width, height) * scale` is under 256, the run fails with `invalid_input` naming both sizes and suggesting
+  `--cutout never` or a larger source. With `--cutout never` such a source runs as usual (upscale, render, vectorize).
+- **The square master is at most 8192 px a side.** The master is the trimmed subject on a square canvas of its long side,
+  so a 20000x1000 subject would allocate 20000x20000 before failing in the renderer on sharp's 268 MP limit. A subject
+  over 8192 px on its long side is `invalid_input` from `buildMaster`, before any canvas exists.
+- **Caller bytes decode up to 64 MP** (`limitInputPixels`, a deliberate source limit instead of sharp's 268 MP default).
+  A larger image is `invalid_input` ("unreadable image: Input image exceeds pixel limit") from the first read. The
+  64 MP is also what `image.upscale` may deliver.
+- **The SVG is guarded against active content.** It is published under `public/`. svgo runs with `removeScripts` on
+  top of the default preset (scripts, event-handler attributes, `javascript:` links); if the result still contains
+  `<script`, `<foreignObject`, an `on...=` attribute or `javascript:`, `cleanVectorized` throws and no `favicon.svg` is
+  written (the vectorize price stays on the run).
+- **The poll deadline is per capability.** Replicate predictions are polled for 60 s by default; `image.upscale` waits
+  up to 180 s because real-esrgan 4x/8x can run longer than a cutout.
 - **The Replicate models are routes** in the route table (`image.upscale`, `image.vectorize`, `image.cutout.*`;
   `packages/routes/src/table/image.ts`), priced per call and overridable by `AGW_ROUTES` like any route.
 - **No eval suite.** The outputs are deterministic image processing, covered by the golden and pipeline tests; the three

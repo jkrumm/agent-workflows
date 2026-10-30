@@ -10,6 +10,7 @@ import { readPng, toPng } from './png.ts'
 import { readBytes, readJsonBounded, send } from './wire.ts'
 
 const CREATE_TIMEOUT_MS = 90_000
+/** How long a prediction may keep running before the poll gives up; a run can ask for more (`pollDeadlineMs`). */
 const POLL_DEADLINE_MS = 60_000
 const DELIVERY_TIMEOUT_MS = 30_000
 /** The create and poll answers are small JSON documents. */
@@ -70,6 +71,8 @@ export interface PredictionRun {
   input: Record<string, unknown>
   /** A delivery over this is not what the model is supposed to return. */
   maxDeliveryBytes: number
+  /** The longest the poll waits for the prediction to settle; default 60 s. */
+  pollDeadlineMs?: number
 }
 
 const parse = (json: unknown, wire: string): Prediction => {
@@ -122,13 +125,13 @@ async function createPrediction(deps: ResolvedImageDeps, ctx: Ctx, { route, acce
 async function pollPrediction(
   deps: ResolvedImageDeps,
   ctx: Ctx,
-  { access }: PredictionRun,
+  { access, pollDeadlineMs = POLL_DEADLINE_MS }: PredictionRun,
   started: Prediction,
 ): Promise<Prediction> {
   const { base, headers } = access
   const id = started.id
   if (!id) throw fail('UPSTREAM_ERROR', 'replicate prediction has no id to poll', {})
-  const deadline = Date.now() + POLL_DEADLINE_MS
+  const deadline = Date.now() + pollDeadlineMs
   let current = started
   while (running(current.status)) {
     if (Date.now() >= deadline) throw fail('UPSTREAM_ERROR', `replicate prediction ${id} timed out`, {})

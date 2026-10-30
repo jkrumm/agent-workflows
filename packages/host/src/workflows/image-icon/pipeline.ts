@@ -34,6 +34,12 @@ const CUTOUT_LIMITS = {
   maxEdge: 4096,
 } as const
 
+/** Caller bytes decode only up to this many pixels (sharp's own default is 268 MP); a larger image is `invalid_input`. */
+const SOURCE_MAX_PIXELS = 64_000_000
+
+/** The master is a square of the trimmed subject's long side; a larger subject is refused before the canvas is built. */
+const MASTER_MAX_SIDE = 8192
+
 /** Below this alpha a pixel is treated as fully transparent (recraft's "transparent" is alpha=1). */
 const ALPHA_FLOOR = 8
 
@@ -97,12 +103,15 @@ export const ICONS_MANIFEST: IconsManifest = {
   ],
 }
 
+/** `sharp` on bytes from the caller, under the source pixel limit. */
+const sharpSource = (bytes: Uint8Array) => sharp(bytes, { limitInputPixels: SOURCE_MAX_PIXELS })
+
 const reason = (err: unknown): string => (err instanceof Error ? err.message : String(err))
 
 /** Decode any supported image into straight sRGB RGBA, applying EXIF orientation. */
 export async function decodeRgba(bytes: Uint8Array): Promise<Rgba> {
   try {
-    const { data, info } = await sharp(bytes)
+    const { data, info } = await sharpSource(bytes)
       .rotate()
       .toColourspace('srgb')
       .ensureAlpha()
@@ -135,6 +144,22 @@ export function upscaleScale(mode: UpscaleMode, { width, height }: Rgba): number
     )
   }
   return longEdge < UPSCALE_X8_BELOW_EDGE ? 8 : 4
+}
+
+/**
+ * Refuses, before anything is billed, a run whose cutout would be rejected for size: the image the cutout gets is the
+ * source scaled by the upscale, and recraft needs a short edge of at least `CUTOUT_LIMITS.minEdge`.
+ */
+export function assertCutoutReachable(args: { rgba: Rgba; scale: number | null; cutout: 'auto' | 'always' | 'never' }) {
+  const { rgba, scale, cutout } = args
+  const needed = cutout === 'always' || (cutout === 'auto' && lacksTransparency(rgba.data))
+  if (!needed) return
+  const edge = Math.min(rgba.width, rgba.height) * (scale ?? 1)
+  if (edge >= CUTOUT_LIMITS.minEdge) return
+  throw new WorkflowError(
+    'invalid_input',
+    `the cutout needs a short edge of at least ${CUTOUT_LIMITS.minEdge}px but this image would be ${edge}px after the upscale; use --cutout never or a larger source`,
+  )
 }
 
 export const encodePng = (rgba: Rgba): Promise<Buffer> =>
@@ -181,11 +206,11 @@ function assertCutoutLimits(width: number, height: number): void {
  */
 export async function prepareCutoutInput(bytes: Uint8Array, options: { maxEdge?: number } = {}): Promise<Buffer> {
   try {
-    const { width, height, scale, swapped } = cutoutSize(await sharp(bytes).metadata(), options.maxEdge)
+    const { width, height, scale, swapped } = cutoutSize(await sharpSource(bytes).metadata(), options.maxEdge)
     const passthrough = scale === 1 && swapped === false && isPng(bytes)
     const png = passthrough
       ? Buffer.from(bytes)
-      : await sharp(bytes).rotate().resize(width, height).png({ compressionLevel: 9 }).toBuffer()
+      : await sharpSource(bytes).rotate().resize(width, height).png({ compressionLevel: 9 }).toBuffer()
     if (png.byteLength > CUTOUT_LIMITS.maxImageBytes) {
       throw new WorkflowError('invalid_input', `image must be at most ${CUTOUT_LIMITS.maxImageBytes} bytes for cutout`)
     }
@@ -227,6 +252,13 @@ function cleanAlphaAndBounds(rgba: Rgba): { left: number; top: number; width: nu
 export async function buildMaster(rgba: Rgba): Promise<Buffer> {
   const bounds = cleanAlphaAndBounds(rgba)
   if (!bounds) throw new WorkflowError('invalid_input', 'image has no visible content')
+  const side = Math.max(bounds.width, bounds.height)
+  if (side > MASTER_MAX_SIDE) {
+    throw new WorkflowError(
+      'invalid_input',
+      `the subject is ${bounds.width}x${bounds.height}px; the square master is at most ${MASTER_MAX_SIDE}px a side (downscale the image or crop it)`,
+    )
+  }
 
   const trimmed = await sharp(rgba.data, {
     raw: { width: rgba.width, height: rgba.height, channels: 4 },
@@ -235,7 +267,6 @@ export async function buildMaster(rgba: Rgba): Promise<Buffer> {
     .png()
     .toBuffer()
 
-  const side = Math.max(bounds.width, bounds.height)
   const left = Math.floor((side - bounds.width) / 2)
   const top = Math.floor((side - bounds.height) / 2)
   return sharp(trimmed)
@@ -335,10 +366,14 @@ export async function renderRasters(master: Buffer, background: string): Promise
 export const vectorizeInput = (master: Buffer): Promise<Buffer> =>
   renderIcon({ master, size: VECTORIZE_SIZE, box: boxFor(VECTORIZE_SIZE, PADDING.favicon) })
 
+/** Markup that runs or embeds foreign content; the SVG is published under `public/`, so none of it may be written. */
+const ACTIVE_SVG_CONTENT = /<script|<foreignObject|\son[a-z]+\s*=|javascript:/i
+
 /**
  * recraft-vectorize emits a fixed `width`/`height`/`style` on the root and a no-op
  * `translate(0,0)` per path. Strip them (keep `viewBox`, so the icon scales), then let svgo shrink
- * the rest. Throws when the result has no viewBox - it would not scale as an icon.
+ * the rest, dropping scripts and event handlers. Throws when active content survives or the result has no viewBox - it
+ * would not scale as an icon.
  */
 export function cleanVectorized(svg: string): string {
   const stripped = svg
@@ -346,7 +381,8 @@ export function cleanVectorized(svg: string): string {
       root.replace(/\s(?:width|height|style|preserveAspectRatio)=(?:"[^"]*"|'[^']*')/g, ''),
     )
     .replace(/\s+transform="translate\(0,\s*0\)"/g, '')
-  const optimized = optimize(stripped, { multipass: true }).data
+  const optimized = optimize(stripped, { multipass: true, plugins: ['preset-default', 'removeScripts'] }).data
+  if (ACTIVE_SVG_CONTENT.test(optimized)) throw new Error('vectorized SVG contains active content')
   if (!/<svg\b[^>]*\sviewBox=/.test(optimized)) throw new Error('vectorized SVG has no viewBox')
   return optimized
 }

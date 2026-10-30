@@ -32,6 +32,9 @@ export type UpscaleOutput = z.infer<typeof upscaleOutput>
 /** An upscale is one image: a delivery over this is not one. */
 const MAX_DELIVERY_BYTES = 64 * 1024 * 1024
 
+/** real-esrgan 4x/8x can run longer than a cutout, so the poll waits longer than the 60 s default. */
+const UPSCALE_POLL_DEADLINE_MS = 180_000
+
 export function createUpscale(deps: ResolvedImageDeps) {
   return defineCapability({
     id: 'image.upscale',
@@ -78,6 +81,7 @@ export function createUpscale(deps: ResolvedImageDeps) {
           face_enhance: false,
         },
         maxDeliveryBytes: MAX_DELIVERY_BYTES,
+        pollDeadlineMs: UPSCALE_POLL_DEADLINE_MS,
       })
       // real-esrgan delivers PNG (alpha kept); a WebP is converted, so every caller gets the PNG promised.
       const { png: out, info } = await deliveredPng(bytes, UPSCALE_LIMITS.maxOutputPixels)
