@@ -493,7 +493,7 @@ describe('DISCOVER stays read-only', () => {
     expect(discover).toContain('`format:check`')
     expect(discover).toContain('never `bun run format`')
     expect(discover).toContain('`prettier --check .`')
-    expect(discover).toMatch(/`biome format \.` \(without `--write`\)/)
+    expect(discover).toContain('`oxfmt --check .`')
     expect(discover).toMatch(/skip the format step and say in the summary/)
   })
 

@@ -1,0 +1,12 @@
+{
+  "printWidth": 120,
+  "tabWidth": 2,
+  "useTabs": false,
+  "singleQuote": true,
+  "trailingComma": "all",
+  "semi": false,
+  "arrowParens": "always",
+  "bracketSpacing": true,
+  "sortPackageJson": false,
+  "ignorePatterns": ["**/*.md", "docs/**", "agents/**", "scripts/**", ".claude/**", "bun.lock", "node_modules/**"]
+}

@@ -269,7 +269,7 @@ describe('ctx.continue', () => {
     }
 
     class Plain extends FakeAgentHost {}
-    // biome-ignore lint/suspicious/noExplicitAny: removing an optional method for the test
+    // oxlint-disable-next-line typescript/no-explicit-any -- removing an optional method for the test
     ;(Plain.prototype as any).followUp = undefined
     const wf = gated('continue.nohost')
     const plain = testRuntime({

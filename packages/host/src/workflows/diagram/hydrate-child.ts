@@ -21,9 +21,9 @@ async function load(): Promise<Convert> {
   installDomShim(join(dirname(entry), 'fonts'))
   const { convertToExcalidrawElements, serializeAsJSON } = await import('@excalidraw/excalidraw')
   return (skeleton) => {
-    // biome-ignore lint/suspicious/noExplicitAny: the library types its skeleton as a union of element types
+    // oxlint-disable-next-line typescript/no-explicit-any -- the library types its skeleton as a union of element types
     const elements = convertToExcalidrawElements(skeleton as any, { regenerateIds: false })
-    // biome-ignore lint/suspicious/noExplicitAny: appState is a partial of the library's AppState
+    // oxlint-disable-next-line typescript/no-explicit-any -- appState is a partial of the library's AppState
     return serializeAsJSON(elements, APP_STATE as any, {}, 'local')
   }
 }

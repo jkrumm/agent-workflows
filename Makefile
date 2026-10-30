@@ -2,14 +2,14 @@
 .PHONY: help check fmt deploy verify install-opencode research-chrome
 
 help:
-	@echo "make check   format, lint, oxlint type-aware, tsc, bun test (the merge gate)"
+	@echo "make check   oxfmt check, oxlint type-aware, tsc, bun test (the merge gate)"
 	@echo "make fmt     apply formatting"
 	@echo "make deploy  deploy origin/master on the mini: release, both LaunchAgents (host, audio), health, agw on PATH (DRY_RUN=1 prints the plan)"
 	@echo "make install-opencode  install the pinned OpenCode build and react-doctor, link opencode and opencode-safe into ~/.local/bin from the main checkout (never restarts the host)"
 	@echo "make research-chrome  install and start the headed Chrome (LaunchAgent, DevTools on loopback) web.fetch reads bot-walled pages with"
 	@echo "make verify  prove the deployment: the pinned OpenCode and react-doctor present, both healths at the sha, agw smoke ping and audio ping with their journal rows, the door's auth"
 
-# docs/spikes/** is excluded from every tool (see biome.json, .oxlintrc.json, tsconfig.json, bunfig.toml).
+# docs/spikes/** is excluded from every tool (see .oxfmtrc.json, .oxlintrc.json, tsconfig.json, bunfig.toml).
 # Tests need Postgres via AGW_TEST_PG_URL; unset on the mini, it is built from .env.test.tpl through secrets-run, together with
 # USAGE_TEST_PG_URL (admin, for the usage schema suite's scratch database; that suite skips visibly without it).
 # The test environment therefore holds the admin Postgres credential: CREATE DATABASE needs CREATEDB, which the journal's
@@ -21,10 +21,8 @@ help:
 check:
 	@echo "==> install (bun install --frozen-lockfile)"
 	@bun install --frozen-lockfile
-	@echo "==> format (biome format)"
-	@bunx --no-install biome format .
-	@echo "==> lint (biome lint)"
-	@bunx --no-install biome lint .
+	@echo "==> format (oxfmt --check)"
+	@bunx --no-install oxfmt --check .
 	@echo "==> lint (oxlint --type-aware)"
 	@bunx --no-install oxlint -c .oxlintrc.json --type-aware packages
 	@echo "==> typecheck (tsc --noEmit)"
@@ -41,7 +39,7 @@ check:
 	@echo "==> check passed"
 
 fmt:
-	@bunx --no-install biome format --write .
+	@bunx --no-install oxfmt --write .
 
 # A release (~/.agent-workflows/releases/<sha>, live via `current`) is what runs, never this checkout; scripts/deploy.sh owns the steps.
 deploy:

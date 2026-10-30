@@ -65,7 +65,7 @@ type ImageCapabilityId = 'image.generate' | 'image.cutout' | 'image.upscale' | '
 async function call(id: ImageCapabilityId, input: Record<string, unknown>) {
   const usage: Usage[] = []
   const result = await registry().call(id, input as never, { addUsage: (u) => usage.push(u) })
-  // biome-ignore lint/suspicious/noExplicitAny: the outputs are asserted field by field
+  // oxlint-disable-next-line typescript/no-explicit-any -- the outputs are asserted field by field
   return { result: result as Record<string, any>, usage }
 }
 async function failure(id: ImageCapabilityId, input: Record<string, unknown>) {

@@ -41,7 +41,7 @@ exists. Do not spend turns hunting: try the obvious path once and skip what is a
 - **Node / Bun** (`package.json`): the declared scripts, via `bun run <script>` (`npm run` without bun).
   `lint`, `typecheck` and `test` as declared. For `format` use only a check-mode script (`format:check`,
   `check-format`, `fmt:check`, `format-check`); never `bun run format`, which writes. With no such script, use the
-  formatter's own check flag when its config or dependency is present: `biome format .` (without `--write`),
+  formatter's own check flag when its config or dependency is present: `oxfmt --check .`,
   `prettier --check .`. With neither, skip the format step and say in the summary that it was skipped because the
   repo declares no check-mode formatter. Never invent a script.
 - **Python / uv** (`pyproject.toml`, `uv.lock`, `.venv/`): prefer `uv run <tool>`, else `.venv/bin/<tool>`.

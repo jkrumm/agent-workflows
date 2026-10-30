@@ -95,7 +95,7 @@ afterAll(async () => {
   rmSync(root, { recursive: true, force: true })
 })
 
-// biome-ignore lint/suspicious/noExplicitAny: outputs are asserted field by field
+// oxlint-disable-next-line typescript/no-explicit-any -- outputs are asserted field by field
 type Out = Record<string, any>
 async function evalOnce(input: Record<string, unknown>): Promise<{ output: Out; error: string | null }> {
   const { runId } = await rt.start(evalRun, input, { purpose: 'prod' })
