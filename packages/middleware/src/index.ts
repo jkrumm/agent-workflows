@@ -49,4 +49,6 @@ export {
   UsageWriteError,
   usageRowsForStep,
   usageTransportFromEnv,
+  type WriteBatchOptions,
+  writeBatch,
 } from './usage.ts'

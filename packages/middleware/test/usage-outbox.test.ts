@@ -170,11 +170,11 @@ describe('usage outbox', () => {
         reasoning_tokens: 10,
         cost_reported_usd: 0.01,
         lane_detail: { workflow: 'o.busy', step: 'two-models' },
-        raw: { purpose: 'build', unpricedCalls: 1 },
+        raw: { purpose: 'build', unpricedCalls: 0 },
       })
       expect(typeof (m1?.raw as { fingerprint?: unknown } | undefined)?.fingerprint).toBe('string')
       const m2 = [...usage.stored.values()].find((r) => r.source_id === `${runIds[0]}:two-models:m2`)
-      expect(m2).toMatchObject({ cost_reported_usd: null })
+      expect(m2).toMatchObject({ cost_reported_usd: null, raw: { unpricedCalls: 1 } })
       expect(logger.lines.some((l) => l.message.startsWith('usage outbox: flush failed'))).toBe(true)
 
       // Nothing left: a further flush posts nothing.

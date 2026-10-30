@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import type { ModelUsage } from '@agent-workflows/runtime'
 import { additiveTokens, type OutboxStep, repoOf, sessionsOf, traceIdForRun, usageRowsForStep } from '../src/index.ts'
 
 const startedAt = new Date('2026-10-27T10:00:00.000Z')
@@ -205,6 +206,72 @@ describe('usage rows', () => {
       ['run_1:ask:unknown', 50, 0],
     ])
     expect(withRest[1]?.cost_reported_usd).toBeCloseTo(0.02, 12)
+  })
+
+  test('a model with an unpriced call posts no reported cost: the priced sum is only a lower bound', () => {
+    const rows = usageRowsForStep(
+      step({
+        model: null,
+        tokens: { input: 300, output: 60, cacheRead: 0, cacheWrite: 0, reasoning: 0 },
+        cost: 0.03,
+        unpricedCalls: 2,
+        byModel: {
+          priced: {
+            tokens: { input: 100, output: 20, cacheRead: 0, cacheWrite: 0, reasoning: 0 },
+            cost: 0.01,
+            toolCalls: 0,
+            unpricedCalls: 0,
+          },
+          partial: {
+            tokens: { input: 200, output: 40, cacheRead: 0, cacheWrite: 0, reasoning: 0 },
+            cost: 0.02, // the one priced call of two
+            toolCalls: 0,
+            unpricedCalls: 2,
+          },
+        },
+      }),
+      opts,
+    )
+    expect(rows.map((r) => [r.model, r.cost_reported_usd, r.raw.unpricedCalls])).toEqual([
+      ['priced', 0.01, 0],
+      ['partial', null, 2],
+    ])
+  })
+
+  test('an unsplit remainder with unpriced calls posts no reported cost either', () => {
+    const noModel = usageRowsForStep(step({ model: 'sonar', cost: 0.005, unpricedCalls: 1, byModel: null }), opts)
+    expect(noModel.map((r) => [r.model, r.cost_reported_usd, r.raw.unpricedCalls])).toEqual([['sonar', null, 1]])
+    const withRest = usageRowsForStep(
+      step({
+        model: null,
+        tokens: { input: 150, output: 10, cacheRead: 0, cacheWrite: 0, reasoning: 0 },
+        cost: 0.03,
+        unpricedCalls: 1,
+        byModel: {
+          a: {
+            tokens: { input: 100, output: 12, cacheRead: 0, cacheWrite: 0, reasoning: 0 },
+            cost: 0.01,
+            toolCalls: 0,
+            unpricedCalls: 0,
+          },
+        },
+      }),
+      opts,
+    )
+    // The model-less call is the unpriced one: only the remainder loses its reported cost.
+    expect(withRest.map((r) => [r.model, r.cost_reported_usd, r.raw.unpricedCalls])).toEqual([
+      ['a', 0.01, 0],
+      ['unknown', null, 1],
+    ])
+  })
+
+  test('a split stored without per-model unpricedCalls reads the step figure (conservative)', () => {
+    const legacy = { tokens: { ...none, input: 5, output: 1 }, cost: 0.002, toolCalls: 0 } as unknown as ModelUsage
+    const [row] = usageRowsForStep(
+      step({ cost: 0.002, unpricedCalls: 1, tokens: legacy.tokens, byModel: { m: legacy } }),
+      opts,
+    )
+    expect(row?.cost_reported_usd).toBeNull()
   })
 
   test('a cost-only step (zero tokens, a price) keeps its row', () => {

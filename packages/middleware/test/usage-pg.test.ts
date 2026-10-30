@@ -349,6 +349,67 @@ describePg(suite, () => {
       await transport.close?.()
     }
   })
+
+  test('a write stalled on a lock aborts server-side at its deadline: it fails transient and commits nothing, even after the lock frees', async () => {
+    const transport = pgUsageTransport({ connectionString: scratchUrl, logger, writeTimeoutMs: 800 })
+    const runId = `run_stall_${crypto.randomUUID().slice(0, 8)}`
+    const first = usageRowsForStep(stepAt(runId, 'a', new Date('2026-10-27T10:00:00Z')), { machine: 'm' })
+    const later = usageRowsForStep(stepAt(runId, 'b', new Date('2026-10-27T10:30:00Z')), { machine: 'm' })
+    const holder = await scratch.connect()
+    try {
+      await transport.write(first)
+      // Another transaction holds the run's session row; the write needs it (last_ts grows) and has to wait.
+      await holder.query('begin')
+      await holder.query('select 1 from usage.sessions where source_session_id = $1 for update', [runId])
+      const started = Date.now()
+      const failure = await transport.write(later).catch((err: unknown) => err)
+      expect(failure).toMatchObject({ name: 'UsageWriteError', permanent: false })
+      expect(Date.now() - started).toBeLessThan(5000)
+      await holder.query('rollback')
+      // Had the transaction outlived its caller it would commit now that the lock is free.
+      await Bun.sleep(600)
+      expect(await record(`${runId}:b:m1`)).toBeUndefined()
+      const { rows } = await scratch.query('select last_ts from usage.sessions where source_session_id = $1', [runId])
+      expect(rows[0]?.last_ts).toEqual(new Date('2026-10-27T10:00:00.000Z'))
+      // The same connection pool still writes.
+      await transport.write(later)
+      expect(await record(`${runId}:b:m1`)).toBeDefined()
+    } finally {
+      holder.release()
+      await transport.close?.()
+    }
+  })
+
+  test('a terminated backend fails transient and its connection is destroyed, not pooled: the next write works', async () => {
+    const transport = pgUsageTransport({ connectionString: scratchUrl, logger, poolSize: 1 })
+    const runId = `run_kill_${crypto.randomUUID().slice(0, 8)}`
+    const first = usageRowsForStep(stepAt(runId, 'a', new Date('2026-10-27T10:00:00Z')), { machine: 'm' })
+    const second = usageRowsForStep(stepAt(runId, 'b', new Date('2026-10-27T10:30:00Z')), { machine: 'm' })
+    const holder = await scratch.connect()
+    try {
+      await transport.write(first)
+      await holder.query('begin')
+      await holder.query('select 1 from usage.sessions where source_session_id = $1 for update', [runId])
+      const blocked = transport.write(second).catch((err: unknown) => err)
+      await until(async () => {
+        const { rowCount } = await scratch.query(
+          `select 1 from pg_stat_activity where application_name = 'agw-usage' and datname = current_database() and wait_event_type = 'Lock'`,
+        )
+        return (rowCount ?? 0) > 0
+      }, 'the write waiting on the lock')
+      await scratch.query(
+        `select pg_terminate_backend(pid) from pg_stat_activity where application_name = 'agw-usage' and datname = current_database()`,
+      )
+      expect(await blocked).toMatchObject({ name: 'UsageWriteError', permanent: false, code: '57P01' })
+      await holder.query('rollback')
+      // Pool of one: a dead connection returned as healthy would fail this write.
+      await transport.write(second)
+      expect(await record(`${runId}:b:m1`)).toBeDefined()
+    } finally {
+      holder.release()
+      await transport.close?.()
+    }
+  })
 })
 
 function stepAt(runId: string, stepId: string, startedAt: Date) {

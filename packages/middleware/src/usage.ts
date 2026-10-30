@@ -79,9 +79,17 @@ const isRowRefusal = (code: string): boolean => code.startsWith('22') || code.st
 const needsHuman = (code: string): boolean => /^(28|3D|42)/.test(code)
 
 /** The usage sink: throws when the database did not take the whole batch (rows and their sessions, atomically). */
-export type UsageTransport = { write(rows: UsageRow[]): Promise<void>; close?(): Promise<void> }
+export type UsageTransport = {
+  write(rows: UsageRow[]): Promise<void>
+  close?(): Promise<void>
+  /** The server-side deadline of one write, when the sink has one; the outbox's `postTimeoutMs` must exceed it. */
+  writeTimeoutMs?: number
+}
 
 const SOURCE = 'agent-workflows'
+
+/** Below the outbox's default `postTimeoutMs` (30 s) and the pool's own 20 s statement timeout. */
+const DEFAULT_WRITE_TIMEOUT_MS = 15_000
 
 /** Columns `ON CONFLICT` may change on a re-post; `WHERE ... IS DISTINCT FROM` skips the update when none did. */
 const RECORD_COLUMNS = [
@@ -167,10 +175,36 @@ export function sessionsOf(rows: UsageRow[]): UsageSession[] {
   })
 }
 
-async function writeBatch(client: PoolClient, rows: UsageRow[]): Promise<void> {
-  await client.query('begin')
+/** Deterministic order for the locks a batch takes: every flusher (host and audio process) sorts the same way. */
+const byKey =
+  <T>(key: (item: T) => string) =>
+  (a: T, b: T) => {
+    const [ka, kb] = [key(a), key(b)]
+    return ka < kb ? -1 : ka > kb ? 1 : 0
+  }
+
+export type WriteBatchOptions = {
+  /** The transaction's server-side deadline (`transaction_timeout`, `statement_timeout`; `lock_timeout` is half of it). */
+  timeoutMs: number
+  /** Called when the client can no longer be trusted (its rollback failed): release it as broken. */
+  onBroken: () => void
+}
+
+/**
+ * One transaction: the sessions, then the records, each sorted by its key so concurrent flushers lock rows in one
+ * order. The deadlines are set inside the transaction (`set local`), so a write that outlives its caller's timeout is
+ * aborted by the database itself and can never commit after a newer flusher wrote the same rows.
+ */
+export async function writeBatch(client: PoolClient, rows: UsageRow[], options: WriteBatchOptions): Promise<void> {
+  const timeout = Math.max(1, Math.floor(options.timeoutMs))
   try {
-    for (const s of sessionsOf(rows)) {
+    await client.query('begin')
+    await client.query(
+      `select set_config('transaction_timeout', $1, true), set_config('statement_timeout', $1, true),
+        set_config('lock_timeout', $2, true)`,
+      [String(timeout), String(Math.max(1, Math.floor(timeout / 2)))],
+    )
+    for (const s of sessionsOf(rows).sort(byKey((x) => x.source_session_id))) {
       await client.query(SESSION_UPSERT, [
         SOURCE,
         s.source_session_id,
@@ -183,7 +217,7 @@ async function writeBatch(client: PoolClient, rows: UsageRow[]): Promise<void> {
         s.last_ts,
       ])
     }
-    for (const r of rows) {
+    for (const r of [...rows].sort(byKey((x) => x.source_id))) {
       await client.query(RECORD_UPSERT, [
         r.source,
         r.source_id,
@@ -214,24 +248,40 @@ async function writeBatch(client: PoolClient, rows: UsageRow[]): Promise<void> {
     }
     await client.query('commit')
   } catch (err) {
-    await client.query('rollback').catch(() => undefined)
+    try {
+      await client.query('rollback')
+    } catch {
+      options.onBroken()
+    }
     throw err
   }
 }
+
+/**
+ * A database error that leaves the connection unusable: connection exception (class 08), operator intervention (57P:
+ * admin shutdown, crash shutdown, a terminated backend), or any FATAL/PANIC (the server ended the session, e.g. on
+ * `transaction_timeout`).
+ */
+const connectionLost = (err: DatabaseError): boolean =>
+  /^(08|57P)/.test(err.code ?? '') || err.severity === 'FATAL' || err.severity === 'PANIC'
 
 /**
  * Writes into the `usage` schema of the shared database (`USAGE_PG_URL`) on its own small pool: the `usage` role has a
  * connection limit shared with usage-tracker. One transaction per batch: the run's session first, then its records,
  * each an upsert on the table's unique key that changes nothing when nothing differs, so a re-post is free. Cost comes
  * from `usage.compute_cost` in the same statement (agw's measured cost wins as the reported one, else the price tables).
- * The connection string is never logged.
+ * The transaction carries its own server-side deadline (`writeTimeoutMs`, below the outbox's `postTimeoutMs`): a write
+ * the caller gave up on is aborted by the database. The connection string is never logged.
  */
 export function pgUsageTransport(options: {
   connectionString: string
   logger: Logger
   /** Default 2. */
   poolSize?: number
+  /** Server-side deadline of one write transaction; must stay below the outbox's `postTimeoutMs`. Default 15 s. */
+  writeTimeoutMs?: number
 }): UsageTransport {
+  const writeTimeoutMs = options.writeTimeoutMs ?? DEFAULT_WRITE_TIMEOUT_MS
   const pool = new Pool({
     connectionString: options.connectionString,
     max: options.poolSize ?? 2,
@@ -242,21 +292,34 @@ export function pgUsageTransport(options: {
   })
   pool.on('error', (err) => options.logger.warn('usage pool: idle connection error', { error: err.message }))
   return {
+    writeTimeoutMs,
     async write(rows) {
       if (rows.length === 0) return
       let client: PoolClient | undefined
       let broken = false
+      // A checked-out client has no error listener: a connection ended by the server mid-write would be an uncaught 'error' event.
+      const onClientError = (err: Error) => {
+        broken = true
+        options.logger.warn('usage write: connection error', { error: err.message })
+      }
       try {
         client = await pool.connect()
-        await writeBatch(client, rows)
+        client.on('error', onClientError)
+        await writeBatch(client, rows, {
+          timeoutMs: writeTimeoutMs,
+          onBroken: () => {
+            broken = true
+          },
+        })
       } catch (err) {
-        // A database answer carries a SQLSTATE; a refused connection or a timeout is a plain system error, and the connection is dropped.
-        broken = !(err instanceof DatabaseError)
+        // A database answer carries a SQLSTATE; a refused connection or a client-side timeout is a plain system error, and the connection is dropped.
+        broken ||= !(err instanceof DatabaseError) || connectionLost(err)
         if (err instanceof DatabaseError && err.code) {
           throw new UsageWriteError(`usage write: ${err.code} ${err.message}`, isRowRefusal(err.code), err.code)
         }
         throw err
       } finally {
+        client?.off('error', onClientError)
         client?.release(broken)
       }
     },
@@ -264,7 +327,10 @@ export function pgUsageTransport(options: {
   }
 }
 
-/** `USAGE_PG_URL`; null when unset (the usage outbox is then off and steps wait in the journal). */
+/**
+ * `USAGE_PG_URL`; null when unset (an embedder without a usage database: the outbox is then off and steps wait in the
+ * journal). A deployed host never reaches that: `scripts/launch.sh` exits 78 without the `USAGE_PG_PASSWORD` ref.
+ */
 export function usageTransportFromEnv(
   logger: Logger,
   env: Record<string, string | undefined> = process.env,
@@ -350,7 +416,14 @@ const counts = (t: Partial<TokenCounts>): TokenCounts => ({
   reasoning: t.reasoning ?? 0,
 })
 
-type ModelRow = { model: string; tokens: TokenCounts; cost: number | null; toolCalls: number }
+type ModelRow = {
+  model: string
+  tokens: TokenCounts
+  cost: number | null
+  toolCalls: number
+  /** Calls whose cost could not be priced; `cost` is then a lower bound. */
+  unpricedCalls: number
+}
 
 /**
  * One entry per model; usage reported without a model is the step total minus the per-model split (each bucket
@@ -362,6 +435,8 @@ function perModel(step: OutboxStep): ModelRow[] {
     tokens: counts(u.tokens),
     cost: u.cost,
     toolCalls: u.toolCalls,
+    // A split stored without the per-model count is read conservatively: the step's figure.
+    unpricedCalls: u.unpricedCalls ?? step.unpricedCalls,
   }))
   const tokens = counts({})
   for (const key of BUCKETS) {
@@ -375,6 +450,7 @@ function perModel(step: OutboxStep): ModelRow[] {
     tokens,
     cost: rows.length === 0 ? step.cost : restCost !== null && restCost > 0 ? restCost : null,
     toolCalls: Math.max(0, step.toolCalls - rows.reduce((sum, r) => sum + r.toolCalls, 0)),
+    unpricedCalls: Math.max(0, step.unpricedCalls - rows.reduce((sum, r) => sum + r.unpricedCalls, 0)),
   }
   const keep = (r: ModelRow) => spent(r.tokens) || (r.cost ?? 0) > 0
   const split = rows.filter(keep)
@@ -422,7 +498,8 @@ export function usageRowsForStep(step: OutboxStep, options: UsageRowOptions): Us
     run_id: step.runId,
     ...additiveTokens(usage.tokens),
     duration_ms: durationMs,
-    cost_reported_usd: usage.cost,
+    // The priced calls' sum is only a lower bound while any call was unpriced: NULL lets `usage.compute_cost` price the tokens.
+    cost_reported_usd: usage.unpricedCalls > 0 ? null : usage.cost,
     raw: {
       runId: step.runId,
       stepId: step.stepId,
@@ -433,7 +510,7 @@ export function usageRowsForStep(step: OutboxStep, options: UsageRowOptions): Us
       traceId: run.traceId ?? traceIdForRun(run),
       sessionId: step.sessionId,
       toolCalls: usage.toolCalls,
-      unpricedCalls: step.unpricedCalls,
+      unpricedCalls: usage.unpricedCalls,
       runOutcome: run.errorKind ?? run.status,
       runWallMs: run.wallMs,
       scores: run.scores ?? null,
@@ -610,6 +687,8 @@ export class UsageOutbox {
     this.claimTtlMs = options.claimTtlMs ?? 120_000
     if (this.claimTtlMs <= this.postTimeoutMs * 2)
       throw new Error('usage outbox: claimTtlMs must exceed 2× postTimeoutMs')
+    if (options.transport.writeTimeoutMs !== undefined && this.postTimeoutMs <= options.transport.writeTimeoutMs)
+      throw new Error('usage outbox: postTimeoutMs must exceed the transport writeTimeoutMs')
     this.now = options.now ?? Date.now
     this.chunkSize = Math.max(1, options.chunkSize ?? 500)
   }
