@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test'
+import { afterEach, describe, expect, setSystemTime, test } from 'bun:test'
 import { createCapabilities } from '../capabilities/index.ts'
 import type { Usage } from '../context.ts'
 import { CapabilityCallError } from '../errors.ts'
@@ -481,7 +481,7 @@ describe('web.fetch', () => {
       'tavily-extract',
     )
     const error = await failure(call('web.fetch', { url: 'https://example.com/doc.pdf' }))
-    expect(error.message).toContain('unsupported content type application/pdf')
+    expect(error.message).toContain('the file is not a PDF')
     expect(blockedReason(error.message)).toBe('unsupported-type')
     expect(error.message).toContain('Failed to fetch url')
     // One paid extraction (the shell's); each direct read is free.
@@ -549,6 +549,53 @@ describe('web.fetch', () => {
     expect(blockedReason(await read('boom'))).toBeUndefined()
     expect(blockedReason(await read('shop'))).toBe('rejected')
     expect(await read('cf')).toContain('blocked (cloudflare-challenge) · direct: HTTP 403 (cloudflare-challenge)')
+  })
+
+  describe('PDF', () => {
+    /** A one-page PDF per text, without an xref table (the reader rebuilds it). */
+    const pdf = (...pages: string[]) => {
+      const objects = [
+        '<</Type/Catalog/Pages 2 0 R>>',
+        `<</Type/Pages/Kids[${pages.map((_, i) => `${3 + i * 2} 0 R`).join(' ')}]/Count ${pages.length}>>`,
+        ...pages.flatMap((text, i) => {
+          const stream = text ? `BT /F1 18 Tf 20 100 Td (${text}) Tj ET` : ''
+          return [
+            `<</Type/Page/Parent 2 0 R/MediaBox[0 0 400 200]/Contents ${4 + i * 2} 0 R/Resources<</Font<</F1 ${3 + pages.length * 2} 0 R>>>>>>`,
+            `<</Length ${stream.length}>>\nstream\n${stream}\nendstream`,
+          ]
+        }),
+        '<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>',
+      ]
+      const body = objects.map((o, i) => `${i + 1} 0 obj\n${o}\nendobj\n`).join('')
+      return `%PDF-1.4\n${body}trailer\n<</Root 1 0 R/Size ${objects.length + 1}>>\n%%EOF\n`
+    }
+    const asPdf =
+      (body: string, headers: Record<string, string> = {}): Handler =>
+      () =>
+        new Response(body, { headers: { 'content-type': 'application/pdf', ...headers } })
+
+    test('a PDF is read as text, page by page, free; a scan without a text layer is a no-text block', async () => {
+      const n = net({
+        'https://example.com/manual.pdf': asPdf(pdf('Entkalken alle drei Monate', 'Wasserhaerte 4 einstellen')),
+        'https://example.com/scan.pdf': asPdf(pdf('')),
+      })
+      const { call, usage } = run({ ...n.deps, env: {} })
+      const out = (await call('web.fetch', { url: 'https://example.com/manual.pdf' })) as { text: string; via: string }
+      expect(out.via).toBe('direct')
+      expect(out.text).toContain('[page 1]\nEntkalken alle drei Monate')
+      expect(out.text).toContain('[page 2]\nWasserhaerte 4 einstellen')
+      expect([...out.text].some((c) => c.charCodeAt(0) < 9)).toBe(false)
+      expect(usage.map((u) => u.model)).toEqual(['direct'])
+      const scan = await failure(call('web.fetch', { url: 'https://example.com/scan.pdf' }))
+      expect(blockedReason(scan.message)).toBe('no-text')
+    })
+
+    test('a file that says it is a PDF and is not, and an oversized one, are failures the chain names', async () => {
+      const n = net({ 'https://example.com/fake.pdf': asPdf('<html>nope</html>') })
+      const { call } = run({ ...n.deps, env: {} })
+      const error = await failure(call('web.fetch', { url: 'https://example.com/fake.pdf' }))
+      expect(error.message).toContain('the file is not a PDF')
+    })
   })
 
   test('a network error on the direct read also falls through', async () => {
@@ -1605,6 +1652,66 @@ describe('web.fetch through a real browser', () => {
     expect(browserFromEnv('http://10.0.0.5:9222', allow)).toBeUndefined()
     expect(browserFromEnv('https://example.com', allow)).toBeUndefined()
     expect(browserFromEnv('not a url', allow)).toBeUndefined()
+  })
+})
+
+describe('web.fetch read cache', () => {
+  afterEach(() => setSystemTime())
+  const page = (text: string) => html(`<html><head><title>T</title></head><body><p>${text}</p></body></html>`)
+  /** A handler that counts the reads that reach it. */
+  const counted =
+    (inner: Handler, counter: { reads: number }): Handler =>
+    (url, init) => {
+      counter.reads++
+      return inner(url, init)
+    }
+
+  test('a page read once is served to the next caller of the process, free, with its age; fresh reads again', async () => {
+    const counter = { reads: 0 }
+    const n = net({ 'https://shop.example.com/e4': counted(page('Jura E4 549 Euro'), counter) })
+    const { call, usage } = run({ ...n.deps, env: {} })
+    const first = (await call('web.fetch', { url: 'https://shop.example.com/e4' })) as {
+      cached: boolean
+      fetchedAt: string
+      text: string
+    }
+    const second = (await call('web.fetch', {
+      url: 'https://shop.example.com/e4#reviews',
+      maxChars: 10,
+    })) as typeof first & { truncated: boolean }
+    expect(counter.reads).toBe(1)
+    expect([first.cached, second.cached]).toEqual([false, true])
+    expect(second.fetchedAt).toBe(first.fetchedAt)
+    expect(second.text).toBe(first.text.slice(0, 10)) // cut to the caller's maxChars from the full kept read
+    expect(second.truncated).toBe(true)
+    expect(usage.map((u) => u.model)).toEqual(['direct', 'cache'])
+    const again = (await call('web.fetch', { url: 'https://shop.example.com/e4', fresh: true })) as { cached: boolean }
+    expect(counter.reads).toBe(2)
+    expect(again.cached).toBe(false)
+  })
+
+  test('a read expires after six hours; a failure is never kept', async () => {
+    setSystemTime(new Date('2026-10-30T10:00:00Z'))
+    const counter = { reads: 0 }
+    const n = net({
+      'https://shop.example.com/old': counted(page('x'.repeat(50)), counter),
+      'https://shop.example.com/down': [status(500), page('back again')],
+    })
+    const { call } = run({ ...n.deps, env: {} })
+    await call('web.fetch', { url: 'https://shop.example.com/old' })
+    setSystemTime(new Date('2026-10-30T15:59:00Z'))
+    expect(((await call('web.fetch', { url: 'https://shop.example.com/old' })) as { cached: boolean }).cached).toBe(
+      true,
+    )
+    setSystemTime(new Date('2026-10-30T16:01:00Z'))
+    expect(((await call('web.fetch', { url: 'https://shop.example.com/old' })) as { cached: boolean }).cached).toBe(
+      false,
+    )
+    expect(counter.reads).toBe(2)
+    await failure(call('web.fetch', { url: 'https://shop.example.com/down' }))
+    expect(((await call('web.fetch', { url: 'https://shop.example.com/down' })) as { text: string }).text).toContain(
+      'back again',
+    )
   })
 })
 

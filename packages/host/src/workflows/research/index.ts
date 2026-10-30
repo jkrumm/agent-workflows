@@ -139,8 +139,13 @@ export function createResearchWorkflows(deps: HostDeps, options: ResearchOptions
    * grounded. Journaled as a step, so a resumed run sees the same context. Anything else than a `done` research run is
    * `invalid_input`.
    */
-  async function loadEarlier(ctx: Ctx, runId: string): Promise<EarlierResearch> {
-    const out = await ctx.step('followup', async (): Promise<Json> => {
+  async function loadEarlier(
+    ctx: Ctx,
+    runId: string,
+    stepId = 'followup',
+    what = 'follow up',
+  ): Promise<EarlierResearch> {
+    const out = await ctx.step(stepId, async (): Promise<Json> => {
       if (!ledger.hasJournal) return { ok: false, reason: 'this host keeps no run journal' }
       const run = await ledger.run(runId)
       if (!run) return { ok: false, reason: `run ${runId} does not exist` }
@@ -163,7 +168,7 @@ export function createResearchWorkflows(deps: HostDeps, options: ResearchOptions
       return { ok: true, question: input.data.query, report, citations, retrieved }
     })
     const followed = Followed.parse(out)
-    if (!followed.ok) throw new WorkflowError('invalid_input', `cannot follow up: ${followed.reason}`)
+    if (!followed.ok) throw new WorkflowError('invalid_input', `cannot ${what}: ${followed.reason}`)
     const { question, report, citations, retrieved } = followed
     return { question, report, citations, retrieved }
   }
@@ -171,6 +176,10 @@ export function createResearchWorkflows(deps: HostDeps, options: ResearchOptions
   async function runAgent(ctx: Ctx, input: z.output<typeof ResearchInput>): Promise<ResearchResult> {
     const runId = ctx.runId
     const followed = input.followUp ? await loadEarlier(ctx, input.followUp) : undefined
+    // Parallel runs of one task, read one after the other (each a journaled step, so a resumed run sees the same context).
+    const siblings: EarlierResearch[] = []
+    for (const [i, id] of [...new Set(input.contextRuns ?? [])].entries())
+      siblings.push(await loadEarlier(ctx, id, `context-run:${i}`, 'use as context'))
     const close = toolGate.open({ runId, stepId: 'research', ...grant })
     let agentEnded!: () => void
     const ended = new Promise<void>((resolve) => {
@@ -226,6 +235,7 @@ export function createResearchWorkflows(deps: HostDeps, options: ResearchOptions
           depth: input.depth,
           ...(input.context ? { context: input.context } : {}),
           ...(followed ? { earlier: followed } : {}),
+          ...(siblings.length ? { siblings } : {}),
         })
         const text = await ctx.agent('research', {
           agent: AGENT,
@@ -246,7 +256,13 @@ export function createResearchWorkflows(deps: HostDeps, options: ResearchOptions
       const recorded = await tools
       if (failure) throw failure
       if (!draft) throw new WorkflowError('invalid_output', 'the research agent did not answer with the report JSON')
-      return assemble(draft, Evidence.parse(recorded), followed?.retrieved)
+      return assemble(
+        draft,
+        Evidence.parse(recorded),
+        followed || siblings.length
+          ? [...(followed?.retrieved ?? []), ...siblings.flatMap((s) => s.retrieved)]
+          : undefined,
+      )
     } finally {
       await endAgent()
     }

@@ -363,6 +363,57 @@ describe('follow-up on a finished report', () => {
     expect(nonce).not.toContain('>')
   })
 
+  test('parallel runs are context: their reports and sources reach the prompt as data, and their pages are citable; a missing run is invalid_input', async () => {
+    const tls = 'https://example.com/pg-tls'
+    const a = await run(
+      { query: 'Does the E4 have a hot water outlet?', depth: 'quick' },
+      new FakeAgentHost(async (s) => {
+        await callTool(s, 'web_fetch', { url: PG_DOCS })
+        return { output: draft([{ claim: 'yes, hot water outlet', url: PG_DOCS }]) }
+      }),
+    )
+    const b = await run(
+      { query: 'Which E4 variants exist?', depth: 'quick' },
+      new FakeAgentHost(async (s) => {
+        await callTool(s, 'web_fetch', { url: tls })
+        return { output: draft([{ claim: 'two variants', url: tls }]) }
+      }),
+    )
+    let prompt = ''
+    const c = await run(
+      { query: 'Settle the E4 spec.', depth: 'quick', contextRuns: [a.runId, b.runId, a.runId] },
+      new FakeAgentHost(async (s) => {
+        prompt = s.spec.prompt
+        return {
+          output: draft([
+            { claim: 'carried over', url: tls },
+            { claim: 'carried too', url: PG_DOCS },
+          ]),
+        }
+      }),
+    )
+    const out = ResearchOutput.parse(c.result.output)
+    expect(out.status).toBe('ok') // both citations rest on the parallel runs' pages, none read here
+    expect(out.citations.map((x) => x.url)).toEqual([tls, PG_DOCS])
+    expect(prompt).toContain('## Parallel research')
+    expect(prompt).toContain('### Parallel run 1')
+    expect(prompt).toContain('### Parallel run 2')
+    expect(prompt).not.toContain('### Parallel run 3') // the repeated id is one run
+    expect(prompt).toContain('Question: Does the E4 have a hot water outlet?')
+    expect(prompt).toContain('where two disagree on a fact')
+    const markers = [...prompt.matchAll(/^(<<<)?PARALLEL-RESEARCH ([0-9a-f]{24})(>>>)?$/gm)]
+    expect(markers).toHaveLength(4) // an open and a close line per run
+
+    const missing = await run(
+      { query: 'Anything else?', depth: 'quick', contextRuns: [a.runId, 'r-nope'] },
+      new FakeAgentHost(async () => ({ output: draft([]) })),
+    )
+    expect(missing.result.error).toEqual({
+      kind: 'invalid_input',
+      message: 'cannot use as context: run r-nope does not exist',
+    })
+  })
+
   test('a citation the earlier run kept on a seen-only page stays grounded, and so does a two-step chain', async () => {
     // A saw PG_BLOG in a search and cited it; it never fetched it.
     const a = await run(
@@ -925,7 +976,7 @@ describe('the generated CLI surface', () => {
       const schema = JSON.parse(body).content['application/json'].schema as {
         properties: Record<string, { default?: unknown; enum?: string[] }>
       }
-      expect(Object.keys(schema.properties).sort()).toEqual(['context', 'depth', 'followUp', 'query'])
+      expect(Object.keys(schema.properties).sort()).toEqual(['context', 'contextRuns', 'depth', 'followUp', 'query'])
       expect(schema.properties.depth?.enum).toEqual(['quick', 'standard', 'deep'])
       expect(schema.properties.depth?.default).toBe('standard')
     } finally {

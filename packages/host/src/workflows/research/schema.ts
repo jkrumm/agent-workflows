@@ -13,6 +13,13 @@ export const ResearchInput = z
       .max(20_000)
       .optional()
       .describe('Background the caller already knows: treated as established, never re-searched, never cited'),
+    contextRuns: z
+      .array(z.string().min(1))
+      .max(6)
+      .optional()
+      .describe(
+        'Ids of finished research runs on related questions (parallel runs of one task): their reports are background, their sources citable, and where they contradict each other or this question the answer says so and settles it against a primary source',
+      ),
     followUp: z
       .string()
       .min(1)

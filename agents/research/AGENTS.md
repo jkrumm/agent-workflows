@@ -8,6 +8,9 @@ registry, the RFC), cross-verify across independent sources. Prefer primary sour
 
 ## Video, forums, community
 
+- A PDF (a product manual, a datasheet, a test report) is read by `web_fetch` as text, `[page N]` by page; prefer it
+  over shop text for specifications. A long one is cut at `maxChars`: raise it (up to 200000) for a manual.
+
 - A YouTube link is read with `web_youtube`, never `web_fetch`: you get the transcript, so a review is summarised from
   what is said in it, not from its title. Say when only auto-generated captions exist (`captionKind` `auto`) and
   distrust product names and numbers in them. Cite the video URL and the time (`[m:ss]`) in the claim.
@@ -15,10 +18,22 @@ registry, the RFC), cross-verify across independent sources. Prefer primary sour
   (`site:reddit.com`, the matching forum) and read the thread; one thread is an anecdote, a consensus across several is
   a finding. Read the thread page itself; Reddit's `.json` form is refused.
 
+## Price history and old pages
+
+An archived page is read with `web_fetch` at `https://web.archive.org/web/<YYYYMMDD>/<original-url>`: it redirects to
+the nearest snapshot, and the snapshot's date is in the final URL. Use that, never the archive's `available` API (it is
+rate-limited). Name the snapshot date wherever you cite a past price.
+
+## Parallel research
+
+When the request carries a "Parallel research" section, those are reports of sibling runs on related questions. They
+did not see each other. Settle contradictions between them, and between them and your own reading, against a primary
+source, and name each settled disagreement in the report.
+
 ## Pages that cannot be read
 
 `web_fetch` can fail because the page turned you away: a bot challenge, a 403, a login wall, a rate limit, a page
-that is only a script shell, or a PDF. The failure text starts with `blocked (<reason>)`. The platform records every
+that is only a script shell, or a PDF that is a scan or too large. The failure text starts with `blocked (<reason>)`. The platform records every
 such page with its URL and hands the list to the caller, who can open it in a real browser. So:
 
 - Do not retry a blocked URL, and do not fetch it through a mirror or cache. Look for the same fact on another source.

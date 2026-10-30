@@ -87,6 +87,8 @@ export function fakeWeb(script: Script = {}): FakeWeb {
           text: 'Canned page text.',
           truncated: false,
           via: 'direct' as const,
+          cached: false,
+          fetchedAt: '2026-10-30T12:00:00.000Z',
         }),
       }),
       defineCapability({

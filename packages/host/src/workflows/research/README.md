@@ -24,10 +24,18 @@ agent's `tools` counts. `--depth` defaults to `standard`. A long run waits like 
   `grounding` counts before the drop.
 - **Blocked pages** (`blocked: [{url, reason}]` in the output): a `web_fetch` that no read could satisfy is classified by
   `web.fetch` (`blocked (<reason>)` at the head of its failure text; reasons `cloudflare-challenge`, `bot-protection`,
-  `login-required`, `forbidden`, `rate-limited`, `legal-block`, `no-text`, `unsupported-type`). The gate's hook keeps the
+  `login-required`, `forbidden`, `rate-limited`, `legal-block`, `rejected`, `no-text`, `unsupported-type`, `needs-human`). The gate's hook keeps the
   URL and reason on the call's ledger row (`research_tool_calls.blocked`, migration 0012), counted in code, never
   asserted by the agent. A page read on another try is not listed. The caller opens the list in a real browser and
   feeds the text back as `--context` ("Given background") on the next run. A 404 or 5xx is not a block.
+- **Context runs** (`--context-runs '["<runId>", …]'`, at most 6): finished research runs on related questions, for
+  parallel runs of one task that did not see each other. Each report (cut to 14,000 characters), citations and read
+  pages enter the prompt as a fenced block of data under "Parallel research"; their pages are citable as for a
+  follow-up; the agent is told to settle contradictions between them against a primary source and say so. A run that
+  does not exist, is not research or is not `done` fails the new run `invalid_input` (`cannot use as context: …`).
+- **Fetch cache.** `web.fetch` keeps every complete read for 6 hours in the process (300 entries, 60 M characters), so
+  parallel runs reading the same shop page read it once; the output says `cached` and `fetchedAt`, and `fresh` (the
+  CLI's `--fresh`) reads again. Failures and thin script-shell reads are never kept.
 - **Follow-up** (`--follow-up <runId>`, `followUp` in the input): the query is a new question about a finished
   report. The run must be a `done` `research` run, else the follow-up fails `invalid_input` with the reason (no such
   run, another workflow, not done, no report). The agent gets the earlier question, report and citations and the
