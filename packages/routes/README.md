@@ -59,6 +59,25 @@ declare module '../schema.ts' {
 `_shared.ts` is imported, never edited by a port: a rate only one group uses lives in that group's file. A group's
 seat provenance (which legacy seat it copies, and why) is its file's comments and its workflow's README.
 
+## Seats
+
+A text model is chosen once per role, in `src/table/_shared.ts`, and a route spreads the seat instead of naming the model:
+
+| Seat | Model today | Routes |
+|-|-|-|
+| `FAST` | Haiku 5.5 | classify, title, summarize, extract, triage, narrative, overview, the review router, OCR, angles and synthesis, check, brain, diagram, retro |
+| `CHEAP` | DeepSeek flash | research, otel, the podcast stages, prose review, deep review angles |
+| `WRITER` | Terra, effort medium | `prose.write`, `review.adversary` |
+| `PLANNER` | Luna | TTS briefing prep, the image enhance planner |
+| `FALLBACK` | Terra, effort medium | the provider-balance fallback of every route (`CALL_FALLBACK`, `AGENT_FALLBACK`); a route whose own seat is Terra takes `HAIKU_CALL_FALLBACK` |
+
+```ts
+'cheap.title': { wire: 'iu-anthropic', ...FAST, fallback: CALL_FALLBACK },
+'research.agent': { wire: 'opencode', ...CHEAP, maxOutputTokens: 16_000, fallback: AGENT_FALLBACK },
+```
+
+Moving every route of a role to another model, rate or effort is one edit to the seat. Effort and output limit after the spread override the seat for one route. The wire is the route's own (a transport is code, `AGW_ROUTES` cannot change it), so a seat that moves to another provider family also needs its routes' `wire` changed where the family speaks another dialect. Specialist models stay in their group file: the TTS and STT voices, the image models, `decide`, the Gemini reviewer seat. Model ids stay under `src/table/` only (`guard.test.ts`).
+
 ## Entry
 
 | Field | Meaning |

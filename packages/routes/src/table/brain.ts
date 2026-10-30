@@ -1,5 +1,5 @@
 import type { RouteEntry } from '../schema.ts'
-import { HAIKU_55_RATE } from './_shared.ts'
+import { FAST } from './_shared.ts'
 
 const routes = {
   // Brain agent seat (Wave 7): read-only Q&A over the owner's private vault (health, finance, personal notes) through
@@ -7,7 +7,7 @@ const routes = {
   // never leave Anthropic, so a provider-balance failure fails the run with the typed error instead of
   // moving to another provider. `AGW_ROUTES` cannot add one (a route without a fallback cannot gain one). Same model,
   // wire and rate as `check`; a handful of short tool calls per question.
-  'brain.agent': { wire: 'opencode', model: 'claude-haiku-5-5', rate: HAIKU_55_RATE },
+  'brain.agent': { wire: 'opencode', ...FAST },
 } satisfies Record<string, RouteEntry>
 
 export default routes

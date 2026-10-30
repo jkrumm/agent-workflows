@@ -1,5 +1,5 @@
 import type { RouteEntry } from '../schema.ts'
-import { CALL_FALLBACK } from './_shared.ts'
+import { CALL_FALLBACK, PLANNER } from './_shared.ts'
 
 // The image seats (Wave 8). The platform calls IU's OpenAI images endpoint directly (and Replicate through the same IU
 // host), where the personal image-gateway wrapped them. Source of every figure: image-gateway `gateway/src/lib/pricing.ts`
@@ -45,10 +45,9 @@ const routes = {
   // the ceiling, so it is 32k where the gateway sent 16k and retried once with double on a truncated answer.
   'image.enhance': {
     wire: 'iu-openai',
-    model: 'gpt-6-luna',
+    ...PLANNER,
     effort: 'high',
     maxOutputTokens: 32_000,
-    rate: { inputPerM: 0.1, outputPerM: 0.5, cacheReadPerM: 0.01 },
     // A text call like every iu-openai route: the provider-balance fallback applies (owner direction 2026-10-28).
     fallback: CALL_FALLBACK,
   },

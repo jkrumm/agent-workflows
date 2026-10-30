@@ -1,5 +1,5 @@
 import type { RouteEntry } from '../schema.ts'
-import { CALL_FALLBACK, HAIKU_55_RATE } from './_shared.ts'
+import { CALL_FALLBACK, FAST } from './_shared.ts'
 
 const routes = {
   // The narrative page writer. Gateway: `narrative` (CLASSIFY tier, a tool-less Haiku 5.5 session on OpenCode over IU).
@@ -7,8 +7,7 @@ const routes = {
   // IU's Messages response carries no `usage.cost`, so the route carries the rate.
   narrative: {
     wire: 'iu-anthropic',
-    model: 'claude-haiku-5-5',
-    rate: HAIKU_55_RATE,
+    ...FAST,
     fallback: CALL_FALLBACK,
   },
 } satisfies Record<string, RouteEntry>

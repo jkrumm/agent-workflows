@@ -1,5 +1,5 @@
 import type { RouteEntry } from '../schema.ts'
-import { CALL_FALLBACK, HAIKU_55_RATE } from './_shared.ts'
+import { CALL_FALLBACK, FAST } from './_shared.ts'
 
 const routes = {
   // Cheap single-shot seats. Gateway: SINGLE_SHOT (triage) on deepseek-v4.1-flash over the iu-openai transport, which IU
@@ -9,29 +9,25 @@ const routes = {
   // the route carries the rate. No reasoning, so no 16k output floor.
   'cheap.classify': {
     wire: 'iu-openai',
-    model: 'claude-haiku-5-5',
-    rate: HAIKU_55_RATE,
+    ...FAST,
     fallback: CALL_FALLBACK,
   },
   // Gateway: CLASSIFY tier (overview, narrative), a Haiku 5.5 session on OpenCode. The platform
   // calls it as one native Messages request; the model is unchanged. The model exposes no effort.
   'cheap.summarize': {
     wire: 'iu-anthropic',
-    model: 'claude-haiku-5-5',
-    rate: HAIKU_55_RATE,
+    ...FAST,
     fallback: CALL_FALLBACK,
   },
   // `web.read`: the page extraction behind `agw web read`, a single Haiku 5.5 request like `cheap.summarize`.
   'cheap.extract': {
     wire: 'iu-anthropic',
-    model: 'claude-haiku-5-5',
-    rate: HAIKU_55_RATE,
+    ...FAST,
     fallback: CALL_FALLBACK,
   },
   'cheap.title': {
     wire: 'iu-anthropic',
-    model: 'claude-haiku-5-5',
-    rate: HAIKU_55_RATE,
+    ...FAST,
     fallback: CALL_FALLBACK,
   },
 } satisfies Record<string, RouteEntry>

@@ -1,4 +1,5 @@
 import type { RouteEntry } from '../schema.ts'
+import { PLANNER } from './_shared.ts'
 
 // The audio door's seats (Wave 8, concept §8/§10): one route per TTS/STT model the door accepts, plus the prep and
 // spoken-summary LLMs. Ported from audio-gateway (`src/config.ts` defaults, `src/usage.ts` RATES at 568c281); the
@@ -38,9 +39,8 @@ const routes = {
   // Prep: OpenAI list price, short-context tier, 2026-09-23. Effort `low`: this call dominates briefing latency.
   'audio.tts.prep': {
     wire: 'iu-openai',
-    model: 'gpt-6-luna',
+    ...PLANNER,
     effort: 'low',
-    rate: { inputPerM: 0.1, outputPerM: 0.5, cacheReadPerM: 0.01 },
   },
   // Spoken summary: ai.google.dev pricing, read 2026-09-02. Measured 0.8–1.0 s (legacy config, 2026-08-27).
   'audio.tts.summary': { wire: 'iu-openai', model: 'gemini-3.5-flash-lite', rate: { inputPerM: 0.3, outputPerM: 2.5 } },

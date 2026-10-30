@@ -1,12 +1,12 @@
 import type { RouteEntry } from '../schema.ts'
-import { CALL_FALLBACK, HAIKU_CALL_FALLBACK, TERRA } from './_shared.ts'
+import { CALL_FALLBACK, CHEAP, HAIKU_CALL_FALLBACK, WRITER } from './_shared.ts'
 
 const routes = {
   // Prose review seat. Gateway: `prose_review` (SINGLE_SHOT, iu-openai). The reviewer must be a different lab than the
   // writer, and the writer is the calling Claude Code session (Anthropic): the capability refuses an Anthropic route.
   'prose.review': {
     wire: 'iu-openai',
-    model: 'deepseek-v4.1-flash',
+    ...CHEAP,
     maxOutputTokens: 16_000,
     fallback: CALL_FALLBACK,
   },
@@ -17,7 +17,7 @@ const routes = {
   // never call this route.
   'prose.write': {
     wire: 'iu-openai',
-    ...TERRA,
+    ...WRITER,
     fallback: HAIKU_CALL_FALLBACK,
   },
 } satisfies Record<string, RouteEntry>

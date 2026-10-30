@@ -1,5 +1,5 @@
 import type { RouteEntry } from '../schema.ts'
-import { CALL_FALLBACK, HAIKU_55_RATE } from './_shared.ts'
+import { CALL_FALLBACK, FAST } from './_shared.ts'
 
 const routes = {
   // Overview seat. Gateway: `overview`, CLASSIFY tier (Haiku 5.5, one batched prompt-only session). The platform calls it
@@ -7,8 +7,7 @@ const routes = {
   // Owner direction (2026-10-29): nothing routes via Requesty, no region is pinned.
   'overview.classify': {
     wire: 'iu-anthropic',
-    model: 'claude-haiku-5-5',
-    rate: HAIKU_55_RATE,
+    ...FAST,
     fallback: CALL_FALLBACK,
   },
 } satisfies Record<string, RouteEntry>

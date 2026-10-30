@@ -1,5 +1,5 @@
 import type { RouteEntry } from '../schema.ts'
-import { AGENT_FALLBACK, CALL_FALLBACK, HAIKU_55_RATE, HAIKU_CALL_FALLBACK, TERRA, TERRA_RATE } from './_shared.ts'
+import { AGENT_FALLBACK, CALL_FALLBACK, CHEAP, FAST, HAIKU_CALL_FALLBACK, WRITER } from './_shared.ts'
 
 const routes = {
   // Review seats. Gateway: review_router is SINGLE_SHOT and the adversary is deepseek-v4.1-flash, both on iu-openai. IU
@@ -12,8 +12,7 @@ const routes = {
   // there, so the route carries the rate. Fallback: Terra (AWS mantle, probed).
   'review.router': {
     wire: 'iu-openai',
-    model: 'claude-haiku-5-5',
-    rate: HAIKU_55_RATE,
+    ...FAST,
     fallback: CALL_FALLBACK,
   },
   // The adversary is the cross-family critic (the writer is the calling Claude session) and the capability needs the
@@ -24,23 +23,20 @@ const routes = {
   // to itself): on a provider-balance failure the critique comes from the writer's family rather than not at all.
   'review.adversary': {
     wire: 'iu-openai',
-    model: TERRA.model,
-    effort: TERRA.effort,
+    ...WRITER,
     maxOutputTokens: 16_000,
-    rate: TERRA_RATE,
     fallback: HAIKU_CALL_FALLBACK,
   },
   // Gateway: review_ocr (transport external-iu). `ocr` is an external CLI that talks to IU itself; the platform only
   // takes the model from here, and the wire says which of the CLI's protocols to speak (openai: chat completions). Haiku 5.5
   // for the reasons of `review.router` (OCR spends 1.5-3M tokens a run; the cost is unknown to the platform either way,
   // `ocr` reports tokens only). Switched off by default (AGW_REVIEW_OCR); no live `ocr` run on this model yet.
-  'review.ocr': { wire: 'iu-openai', model: 'claude-haiku-5-5', rate: HAIKU_55_RATE, fallback: CALL_FALLBACK },
+  'review.ocr': { wire: 'iu-openai', ...FAST, fallback: CALL_FALLBACK },
   // Gateway: ANGLE_OC (review_angle_senior_dev|typescript|frontend|qa all resolve to the same entry)
   // and `review` (synthesis, CLASSIFY tier), both Haiku 5.5 on the OpenCode harness.
   'review.angle': {
     wire: 'opencode',
-    model: 'claude-haiku-5-5',
-    rate: HAIKU_55_RATE,
+    ...FAST,
     fallback: AGENT_FALLBACK,
   },
   // Angles of a review the caller asked to run `depth: deep` (mother decision, 2026-10-29). Opt-in: a router-chosen deep keeps
@@ -49,14 +45,12 @@ const routes = {
   // while the team key pays.
   'review.angle.deep': {
     wire: 'opencode',
-    model: 'deepseek-v4.1-flash',
-    rate: { inputPerM: 0.3, outputPerM: 1.2, cacheReadPerM: 0.006 },
+    ...CHEAP,
     fallback: AGENT_FALLBACK,
   },
   'review.synthesis': {
     wire: 'opencode',
-    model: 'claude-haiku-5-5',
-    rate: HAIKU_55_RATE,
+    ...FAST,
     fallback: AGENT_FALLBACK,
   },
 } satisfies Record<string, RouteEntry>

@@ -1,5 +1,5 @@
 import type { RouteEntry } from '../schema.ts'
-import { AGENT_FALLBACK } from './_shared.ts'
+import { AGENT_FALLBACK, CHEAP } from './_shared.ts'
 
 const routes = {
   // Research agent seat (concept P3): research-gateway's lead and worker model, the same model as `review.adversary`.
@@ -9,9 +9,8 @@ const routes = {
   // conservative row; an off-peak reading was half). No cache-write price: DeepSeek reports none.
   'research.agent': {
     wire: 'opencode',
-    model: 'deepseek-v4.1-flash',
+    ...CHEAP,
     maxOutputTokens: 16_000,
-    rate: { inputPerM: 0.3, outputPerM: 1.2, cacheReadPerM: 0.006 },
     fallback: AGENT_FALLBACK,
   },
 } satisfies Record<string, RouteEntry>
