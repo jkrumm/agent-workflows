@@ -260,7 +260,7 @@ export async function startFakeHost(options: FakeHostOptions = {}): Promise<Fake
   const registry = createRegistry(
     createCapabilities({
       transports: fakeTransports({
-        anthropic: [(r) => ({ text: `Title: ${/<text>\n([\s\S]*)\n<\/text>/.exec(r.prompt)?.[1] ?? ''}` })],
+        openai: [(r) => ({ text: `Title: ${/<text>\n([\s\S]*)\n<\/text>/.exec(r.prompt)?.[1] ?? ''}` })],
       }),
     }),
   )

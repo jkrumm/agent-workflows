@@ -30,6 +30,6 @@ minus `backend` (the platform has one): `project`, `changed`, `reason`, `summary
   legacy re-asked once with a JSON-only directive after a rejected answer (and once more after a session failure), the
   call is `completeJson` (one re-ask echoing the rejection) and the transport's own retries; a second rejected answer fails
   the run, as the legacy job threw.
-- **Route.** `narrative` (`packages/routes/src/table/narrative.ts`): `iu-anthropic`, Haiku 5.5, legacy's CLASSIFY tier. The
-  gateway ran a tool-less OpenCode session; the platform asks for the same JSON as one Messages request.
+- **Route.** `narrative` (`packages/routes/src/table/narrative.ts`): `iu-openai`, Terra at effort medium (the `STRONG` seat; Haiku 5.5 on
+  `iu-anthropic` until 2026-10-30). The gateway ran a tool-less OpenCode session; the platform asks for the same JSON as one chat request.
 - `generated_by` is `agent-workflows/narrative`. There is no batch rewrite: a page flips to it on its next re-render, so older pages still say `agent-gateway/narrative` until then.

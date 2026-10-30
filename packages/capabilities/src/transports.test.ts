@@ -198,6 +198,65 @@ describe('openai wire details', () => {
   })
 })
 
+describe('messages wire details', () => {
+  test('effort turns adaptive thinking on and rides in output_config; max_tokens is the request ceiling', async () => {
+    iu.on('messages', () => messageResponse('ok', null))
+    const port = iuAnthropic({ env: env() })
+    await port.complete({ ...chatRequest, system: 'be brief', effort: 'high', maxOutputTokens: 32_000 }, never())
+    await port.complete(chatRequest, never())
+    expect(iu.requests[0]?.path).toBe('/anthropic/v1/messages')
+    expect(iu.requests[0]?.headers.get('anthropic-version')).toBe('2023-06-01')
+    expect(iu.requests[0]?.body).toMatchObject({
+      system: 'be brief',
+      thinking: { type: 'adaptive' },
+      output_config: { effort: 'high' },
+      max_tokens: 32_000,
+    })
+    expect(iu.requests[1]?.body.thinking).toBeUndefined()
+    expect(iu.requests[1]?.body.output_config).toBeUndefined()
+    expect(iu.requests[1]?.body.max_tokens).toBe(100)
+  })
+
+  test('stop reasons: max_tokens is length (empty or cut), end_turn complete, anything else carries its detail', async () => {
+    const port = iuAnthropic({ env: env() })
+    iu.on('messages', () => messageResponse('', null, 'max_tokens'))
+    expect(await port.complete(chatRequest, never())).toMatchObject({ text: '', stop: 'length' })
+    iu.on('messages', () => messageResponse('half an ans', null, 'max_tokens'))
+    expect(await port.complete(chatRequest, never())).toMatchObject({ text: 'half an ans', stop: 'length' })
+    iu.on('messages', () => messageResponse('done', null, 'end_turn'))
+    expect(await port.complete(chatRequest, never())).toMatchObject({ stop: 'complete' })
+    iu.on('messages', () => messageResponse('I cannot', null, 'refusal'))
+    expect(await port.complete(chatRequest, never())).toMatchObject({ stop: 'other', stopDetail: 'refusal' })
+  })
+
+  test('usage counts cache reads and writes in the input; a cost the provider reports is passed on; no usage reports nothing', async () => {
+    const reported: unknown[] = []
+    iu.on('messages', () =>
+      messageResponse('  The gist.  ', {
+        input_tokens: 100,
+        output_tokens: 20,
+        cache_read_input_tokens: 40,
+        cache_creation_input_tokens: 10,
+        cost: 0.0042,
+      }),
+    )
+    const port = iuAnthropic({ env: env() })
+    const result = await port.complete(chatRequest, never(), (u) => reported.push(u))
+    expect(result.text).toBe('The gist.')
+    expect(reported).toEqual([
+      { model: 'fake', tokens: { input: 150, output: 20, cacheRead: 40, cacheWrite: 10, reasoning: 0 }, cost: 0.0042 },
+    ])
+
+    iu.on('messages', () => messageResponse('ok', { input_tokens: 1, output_tokens: 1 }))
+    await port.complete(chatRequest, never(), (u) => reported.push(u))
+    expect(reported[1]).toMatchObject({ cost: null })
+
+    iu.on('messages', () => messageResponse('ok', null))
+    await port.complete(chatRequest, never(), (u) => reported.push(u))
+    expect(reported).toHaveLength(2)
+  })
+})
+
 describe('ports reject, they never throw synchronously', () => {
   const request = { model: 'm', state: 's', questions: { q: { type: 'boolean', instructions: 'i' } } } as const
   const calls = {

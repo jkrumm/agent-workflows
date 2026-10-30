@@ -255,7 +255,11 @@ const polishedBody = (prompt: string) => {
   return draft.replace('surf spots.', 'surf spots, polished.')
 }
 
-type Script = Parameters<typeof fakeTransports>[0]
+type Replies = NonNullable<Parameters<typeof fakeTransports>[0]['openai']>
+/** `openai` scripts the reviewer and the polish writer; `compose` scripts the composer. All three are calls on the same wire. */
+type Script = { openai?: Replies; compose?: Replies }
+/** The composer's prompt fences the gathered facts under the NARRATIVE label; no other caller's does. */
+const isCompose = (request: { prompt: string }) => /<<<NARRATIVE_[0-9a-f]+_BEGIN>>>/.test(request.prompt)
 
 function setup(
   options: {
@@ -267,12 +271,25 @@ function setup(
   } = {},
 ) {
   const env = options.env ?? { AGW_VOICE_PATH: VOICE }
-  const transports = fakeTransports({
-    // The reviewer and the polish writer share the OpenAI wire; the composer is the only caller on the Anthropic wire.
-    openai: [(request) => (isWrite(request) ? { text: polishedBody(request.prompt), cost: 0.05 } : REVIEW_REPLY)],
-    anthropic: [{ text: JSON.stringify(CHANGED), cost: 0.001 }],
-    ...options.script,
+  // The composer, the reviewer and the polish writer all answer over the chat wire: two scripted fakes, split by prompt.
+  const composer = fakeTransports({
+    openai: options.script?.compose ?? [{ text: JSON.stringify(CHANGED), cost: 0.001 }],
   })
+  const rest = fakeTransports({
+    openai: options.script?.openai ?? [
+      (request) => (isWrite(request) ? { text: polishedBody(request.prompt), cost: 0.05 } : REVIEW_REPLY),
+    ],
+  })
+  const transports = {
+    ...rest,
+    openai: {
+      complete: (...args: Parameters<typeof rest.openai.complete>) =>
+        (isCompose(args[0]) ? composer : rest).openai.complete(...args),
+    },
+    get chatCalls() {
+      return [...composer.chatCalls, ...rest.chatCalls]
+    },
+  }
   const real = createRegistry(createCapabilities({ transports, env }))
   const registry = options.hold
     ? ({
@@ -301,9 +318,9 @@ function setup(
     HostWorkflow,
     HostWorkflow,
   ]
-  const composed = () => transports.chatCalls.filter((c) => c.wire === 'anthropic')
-  const writes = () => transports.chatCalls.filter((c) => c.wire === 'openai' && isWrite(c.request))
-  const reviews = () => transports.chatCalls.filter((c) => c.wire === 'openai' && !isWrite(c.request))
+  const composed = () => composer.chatCalls
+  const writes = () => rest.chatCalls.filter((c) => isWrite(c.request))
+  const reviews = () => rest.chatCalls.filter((c) => !isWrite(c.request))
   return { transports, narrative, polish, composed, writes, reviews, warnings }
 }
 
@@ -430,7 +447,7 @@ describe('narrative', () => {
   test('the composer says nothing changed: unchanged with its reason, no polish', async () => {
     const w = setup({
       script: {
-        anthropic: [{ text: JSON.stringify({ changed: false, reason: 'only chores', summary: null, sections: null }) }],
+        compose: [{ text: JSON.stringify({ changed: false, reason: 'only chores', summary: null, sections: null }) }],
       },
     })
     const out = output(await run(w, INPUT))
@@ -543,7 +560,7 @@ describe('narrative', () => {
   })
 
   test('the composer’s answer is rejected twice: the run fails, as the legacy job threw', async () => {
-    const w = setup({ script: { anthropic: [{ text: 'All done, nothing to report!' }] } })
+    const w = setup({ script: { compose: [{ text: 'All done, nothing to report!' }] } })
     const result = await run(w, INPUT)
     expect(result.status).toBe('failed')
     expect(w.composed()).toHaveLength(2)
@@ -551,7 +568,7 @@ describe('narrative', () => {
   })
 
   test('the composer’s transport failure fails the run', async () => {
-    const w = setup({ script: { anthropic: [new Error('connection reset')] } })
+    const w = setup({ script: { compose: [new Error('connection reset')] } })
     expect((await run(w, INPUT)).status).toBe('failed')
   })
 
@@ -565,7 +582,7 @@ describe('narrative', () => {
 
   test('sections over their caps are clamped in code, whatever the composer sent', async () => {
     const long = { ...SECTIONS, whereItStands: Array.from({ length: 8 }, (_, i) => `item ${i} ${'y'.repeat(200)}`) }
-    const w = setup({ script: { anthropic: [{ text: JSON.stringify({ ...CHANGED, sections: long }) }] } })
+    const w = setup({ script: { compose: [{ text: JSON.stringify({ ...CHANGED, sections: long }) }] } })
     const out = output(await run(w, { ...INPUT, polish: false }))
     expect(out.sections?.whereItStands).toHaveLength(5)
     for (const s of out.sections?.whereItStands ?? []) expect(s.length).toBeLessThanOrEqual(160)

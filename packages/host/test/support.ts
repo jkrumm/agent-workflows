@@ -1,5 +1,5 @@
 import { createCapabilities, createRegistry } from '@agent-workflows/capabilities'
-import { startFakeIu, messageResponse, type FakeIuServer } from '@agent-workflows/capabilities/testing'
+import { startFakeIu, chatStream, type FakeIuServer } from '@agent-workflows/capabilities/testing'
 import { iuTransports } from '@agent-workflows/capabilities'
 import { defineWorkflow, type Logger, type Middleware, type Runtime } from '@agent-workflows/runtime'
 import { Pool } from 'pg'
@@ -126,11 +126,11 @@ export async function startTestHost(
   const iu =
     options.iu ??
     startFakeIu({
-      messages: () =>
-        messageResponse('A Smoke Title', {
-          input_tokens: 40,
-          output_tokens: 6,
-          cache_read_input_tokens: 10,
+      chat: () =>
+        chatStream('A Smoke Title', {
+          prompt_tokens: 50,
+          completion_tokens: 6,
+          prompt_tokens_details: { cached_tokens: 10 },
           cost: 0.0007,
         }),
     })

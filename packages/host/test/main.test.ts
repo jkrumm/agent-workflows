@@ -356,12 +356,17 @@ describe('process entry', () => {
       fetch: () =>
         phase === 'hang'
           ? new Promise<Response>(() => {})
-          : Response.json({
-              model: 'fake',
-              stop_reason: 'end_turn',
-              content: [{ type: 'text', text: 'Resumed Title' }],
-              usage: { input_tokens: 3, output_tokens: 2 },
-            }),
+          : new Response(
+              [
+                { model: 'fake', choices: [{ delta: { content: 'Resumed Title' } }] },
+                { choices: [{ delta: {}, finish_reason: 'stop' }] },
+                { choices: [], usage: { prompt_tokens: 3, completion_tokens: 2 } },
+              ]
+                .map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`)
+                .join('')
+                .concat('data: [DONE]\n\n'),
+              { headers: { 'content-type': 'text/event-stream' } },
+            ),
     })
     const pool = new Pool({ connectionString: PG_URL, max: 1 })
     try {

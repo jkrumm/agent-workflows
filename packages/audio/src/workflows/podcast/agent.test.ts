@@ -378,11 +378,19 @@ describe('segment agent', () => {
     ).toContain('out of range')
   })
 
-  test('the write route runs the agent loop on chat completions (DeepSeek), the Responses API only for the GPT-6.1 family', async () => {
-    const port = new ScriptedPort([plainReply('kein Tool')])
-    expect((await rejected(draftWith(port, undefined, { resolve: resolvePodcastRoute }))).message).toMatch(
+  test('the write route (GPT-6.1 family) runs the agent loop on the Responses API, a DeepSeek route on chat completions', async () => {
+    const responses = new ScriptedPort([plainReply('kein Tool')])
+    expect((await rejected(draftWith(responses, undefined, { resolve: resolvePodcastRoute }))).message).toMatch(
       /without a measured draft/,
     )
-    expect(port.rounds[0]?.api).toBe('chat')
+    expect(responses.rounds[0]?.api).toBe('responses')
+
+    // podcast.research is a DeepSeek route: the same loop, pinned to it, goes over chat completions.
+    const chat = new ScriptedPort([plainReply('kein Tool')])
+    const onDeepSeek = () => resolvePodcastRoute('podcast.research')
+    expect((await rejected(draftWith(chat, undefined, { resolve: onDeepSeek }))).message).toMatch(
+      /without a measured draft/,
+    )
+    expect(chat.rounds[0]?.api).toBe('chat')
   })
 })

@@ -56,29 +56,29 @@ const promptOf = (t: ReturnType<typeof setup>, call = 0) => t.transports.chatCal
 
 describe('narrative.compose', () => {
   test('one call on the narrative route; the validated answer and the route’s model', async () => {
-    const t = setup({ anthropic: [{ text: JSON.stringify(CHANGED) }] })
+    const t = setup({ openai: [{ text: JSON.stringify(CHANGED) }] })
     const out = await t.registry.call('narrative.compose', FACTS, t.options)
     expect(out).toEqual({ ...CHANGED, model: resolveRoute('narrative', {}).model })
     expect(t.transports.chatCalls).toHaveLength(1)
-    expect(t.transports.chatCalls[0]?.wire).toBe('anthropic')
+    expect(t.transports.chatCalls[0]?.wire).toBe('openai')
     expect(t.usages).toHaveLength(1)
   })
 
   test('changed:false with null sections and summary is a valid answer', async () => {
     const t = setup({
-      anthropic: [{ text: JSON.stringify({ changed: false, reason: 'only chores', summary: null, sections: null }) }],
+      openai: [{ text: JSON.stringify({ changed: false, reason: 'only chores', summary: null, sections: null }) }],
     })
     const out = await t.registry.call('narrative.compose', FACTS, t.options)
     expect(out).toMatchObject({ changed: false, summary: null, sections: null })
   })
 
   test('a JSON object wrapped in a code fence is accepted', async () => {
-    const t = setup({ anthropic: [{ text: `\`\`\`json\n${JSON.stringify(CHANGED)}\n\`\`\`` }] })
+    const t = setup({ openai: [{ text: `\`\`\`json\n${JSON.stringify(CHANGED)}\n\`\`\`` }] })
     expect((await t.registry.call('narrative.compose', FACTS, t.options)).changed).toBe(true)
   })
 
   test('prose instead of JSON is re-asked once, then accepted', async () => {
-    const t = setup({ anthropic: [{ text: 'All done, nothing to report!' }, { text: JSON.stringify(CHANGED) }] })
+    const t = setup({ openai: [{ text: 'All done, nothing to report!' }, { text: JSON.stringify(CHANGED) }] })
     const out = await t.registry.call('narrative.compose', FACTS, t.options)
     expect(out.changed).toBe(true)
     expect(t.transports.chatCalls).toHaveLength(2)
@@ -88,7 +88,7 @@ describe('narrative.compose', () => {
 
   test('a reason past 200 characters is rejected like any schema miss; never a second re-ask', async () => {
     const long = JSON.stringify({ ...CHANGED, reason: 'r'.repeat(201) })
-    const t = setup({ anthropic: [{ text: long }] })
+    const t = setup({ openai: [{ text: long }] })
     const error = await rejected(t.registry.call('narrative.compose', FACTS, t.options))
     expect(error).toBeInstanceOf(CapabilityCallError)
     expect((error as CapabilityCallError).code).toBe('INVALID_OUTPUT')
@@ -104,7 +104,7 @@ describe('narrative.compose', () => {
   })
 
   test('a missing voice guide is not fatal: a page can still be written', async () => {
-    const t = setup({ anthropic: [{ text: JSON.stringify(CHANGED) }] }, { AGW_VOICE_PATH: join(dir, 'missing.md') })
+    const t = setup({ openai: [{ text: JSON.stringify(CHANGED) }] }, { AGW_VOICE_PATH: join(dir, 'missing.md') })
     await t.registry.call('narrative.compose', FACTS, t.options)
     expect(promptOf(t)).toContain('## Style contract (voice.md — trusted, not data)')
   })

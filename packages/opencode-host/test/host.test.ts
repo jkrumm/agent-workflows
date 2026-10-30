@@ -32,6 +32,33 @@ async function failure(promise: Promise<unknown>): Promise<string> {
   return outcome.message
 }
 
+/**
+ * The host tests are about the harness (pricing tiers, balance fallback), not about which model a route runs today. They
+ * pin `check` to the shape they assert: a Haiku 5.5 primary with its long-prompt tier, and a Terra fallback.
+ */
+const pinnedCheck = (patch: Record<string, unknown> = {}) =>
+  JSON.stringify({
+    check: {
+      model: 'claude-haiku-5-5',
+      effort: null,
+      rate: {
+        inputPerM: 0.1,
+        outputPerM: 0.5,
+        cacheReadPerM: 0.01,
+        cacheWritePerM: 0.125,
+        longPromptTokens: 100_000,
+        longPrompt: { inputMultiplier: 5, outputMultiplier: 5 },
+      },
+      fallback: {
+        model: 'gpt-6.1-terra',
+        effort: 'medium',
+        maxOutputTokens: 32_000,
+        rate: { inputPerM: 1, outputPerM: 5, cacheReadPerM: 0.05, cacheWritePerM: 1.25 },
+      },
+      ...patch,
+    },
+  })
+
 function setup(options: { env?: Record<string, string>; turnMs?: number; agents?: AgentDefinition[] } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'och-host-'))
   const statePath = join(dir, 'fake.json')
@@ -51,7 +78,7 @@ function setup(options: { env?: Record<string, string>; turnMs?: number; agents?
       stateDir: dir,
       pollIntervalMs: 20,
       cutoffGraceMs: 150,
-      env: options.env ?? {},
+      env: options.env ?? { AGW_ROUTES: pinnedCheck() },
       locations: { evictAfterMs: 0, tickMs: 60_000, retentionMs: 0, ...locations },
     })
   const host = makeHost()
@@ -915,7 +942,7 @@ describe('provider-balance fallback', () => {
   })
 
   test('AGW_ROUTES without a fallback for the route: the balance error fails the step', async () => {
-    const t = setup({ env: { AGW_ROUTES: JSON.stringify({ check: { fallback: null } }) } })
+    const t = setup({ env: { AGW_ROUTES: pinnedCheck({ fallback: null }) } })
     const handle = await t.host.open(spec('x'))
     await t.host.prompt(handle, '[balance] x')
     expect(await failure(t.host.wait(handle, waitOptions()))).toContain('Insufficient Balance')

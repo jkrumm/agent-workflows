@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
-import { messageResponse, startFakeIu } from '@agent-workflows/capabilities/testing'
+import { chatStream, startFakeIu } from '@agent-workflows/capabilities/testing'
+import { resolveRoute } from '@agent-workflows/routes'
 import { createArgoPush } from '../src/fleet/argo.ts'
 import type { CollectorResult, Collectors } from '../src/fleet/collect.ts'
 import { EMPTY_TAIL, type HerdrAgentRaw } from '../src/fleet/derive.ts'
@@ -83,7 +84,7 @@ beforeAll(async () => {
       return new Response('{}', { status: argoStatus })
     }) as unknown as typeof fetch,
   })
-  const iu = startFakeIu({ messages: () => answer() })
+  const iu = startFakeIu({ chat: () => answer() })
   t = await startTestHost({
     prefix: 'overview',
     iu,
@@ -107,9 +108,9 @@ beforeEach(() => {
   clock += 60_000
   panes = [pane('s1', 'blocked'), pane('s2', 'working')]
   answer = () =>
-    messageResponse(JSON.stringify({ agents: [verdict('s1', 'answer'), verdict('s2', 'watch')] }), {
-      input_tokens: 200,
-      output_tokens: 60,
+    chatStream(JSON.stringify({ agents: [verdict('s1', 'answer'), verdict('s2', 'watch')] }), {
+      prompt_tokens: 200,
+      completion_tokens: 60,
     })
   argoStatus = 200
   purposeLookup = pgRunPurpose(t.pool, t.schema)
@@ -166,7 +167,7 @@ describe('overview workflow', () => {
       ['s1', 'answer', 'proj', undefined],
       ['s2', 'watch', 'proj', undefined],
     ])
-    expect(body.output.model).toBe('claude-haiku-5-5')
+    expect(body.output.model).toBe(resolveRoute('overview.classify', {}).model)
 
     // the facts reached the model fenced, once
     expect(t.iu.requests).toHaveLength(1)
@@ -182,11 +183,11 @@ describe('overview workflow', () => {
       ])
     ).rows
     expect(steps.map((s) => s.step_id)).toEqual(['classify', 'push'])
-    expect(Number(steps[0]?.cost)).toBeCloseTo((200 * 0.1 + 60 * 0.5) / 1_000_000, 10)
+    expect(Number(steps[0]?.cost)).toBeCloseTo((200 * 1 + 60 * 5) / 1_000_000, 10)
 
     // the run is the cache behind `agents`
     const merged = await t.json(await post('/agents'))
-    expect(merged.body.data.overview).toMatchObject({ model: 'claude-haiku-5-5' })
+    expect(merged.body.data.overview).toMatchObject({ model: resolveRoute('overview.classify', {}).model })
     expect(merged.body.data.projects[0].agents.map((a: Body) => [a.id, a.recommendation, a.standing])).toEqual([
       ['s1', 'answer', 'standing of s1'],
       ['s2', 'watch', 'standing of s2'],
@@ -204,7 +205,7 @@ describe('overview workflow', () => {
     expect(pushed[0]?.url).toBe('https://argo.example.com/api/agents/overview')
     const sent = pushed[0]?.body as Body
     expect(sent.machine).toBe('host-1')
-    expect(sent.overview).toMatchObject({ model: 'claude-haiku-5-5' })
+    expect(sent.overview).toMatchObject({ model: resolveRoute('overview.classify', {}).model })
     expect(sent.projects[0].agents[0]).toMatchObject({ id: 's1', recommendation: 'answer' })
     expect(typeof sent.generatedAt).toBe('number')
   })
@@ -218,9 +219,9 @@ describe('overview workflow', () => {
 
   test('an agent the model skipped is a synthesized watch placeholder, an invented id is dropped', async () => {
     answer = () =>
-      messageResponse(JSON.stringify({ agents: [verdict('s1', 'ship'), verdict('ghost', 'close')] }), {
-        input_tokens: 10,
-        output_tokens: 10,
+      chatStream(JSON.stringify({ agents: [verdict('s1', 'ship'), verdict('ghost', 'close')] }), {
+        prompt_tokens: 10,
+        completion_tokens: 10,
       })
     const { body } = await startOverview()
     expect(body.output.agents).toHaveLength(2)

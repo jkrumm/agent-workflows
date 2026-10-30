@@ -12,8 +12,8 @@ this directory the one workflow that spends. Section §Host reads in `packages/h
 
 ## Route
 
-`overview.classify` (`packages/routes/src/table/overview.ts`): Haiku 5.5 on IU's native Messages wire, priced at the Haiku
-5.5 table rate, balance fallback to GPT-6.1 Terra (the route `cheap.summarize` takes). Source seat: agent-gateway's
+`overview.classify` (`packages/routes/src/table/overview.ts`): Terra at effort low on IU's OpenAI chat wire (the `EASY` seat; Haiku 5.5 on the native Messages wire until 2026-10-30), priced at
+the Terra table rate, balance fallback to DeepSeek flash. Source seat: agent-gateway's
 `overview` tool, the CLASSIFY tier. Hop checked 2026-10-29 with one 17-token probe on the team key: response header
 `x-middleware-forwarded-server: AWS Bedrock us-east-1` (`x-middleware-forwarded-model` the Haiku 5.5 Bedrock profile),
 not Requesty.

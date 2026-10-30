@@ -34,7 +34,7 @@ const errorJson = (e: unknown) => {
 }
 
 describe('one definition, two doors', () => {
-  const a = build({ anthropic: [{ text: 'A short summary.', tokens: usage }] })
+  const a = build({ openai: [{ text: 'A short summary.', tokens: usage }] })
   const server = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: a.registry.fetch })
   const base = `http://127.0.0.1:${server.port}`
   afterAll(() => void server.stop(true))
@@ -70,7 +70,7 @@ describe('one definition, two doors', () => {
   })
 
   test('a typed handler error fails identically, defined, with its data', async () => {
-    const b = build({ anthropic: [fail('UPSTREAM_ERROR', 'iu-anthropic request failed (503): down', { status: 503 })] })
+    const b = build({ openai: [fail('UPSTREAM_ERROR', 'iu-openai request failed (503): down', { status: 503 })] })
     const s = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: b.registry.fetch })
     try {
       const viaImport = await b.registry.call('llm.title', { text: 'x' }).catch(errorJson)
@@ -81,7 +81,7 @@ describe('one definition, two doors', () => {
         defined: true,
         code: 'UPSTREAM_ERROR',
         status: 502,
-        message: 'iu-anthropic request failed (503): down',
+        message: 'iu-openai request failed (503): down',
         data: { status: 503 },
       })
     } finally {
@@ -90,7 +90,7 @@ describe('one definition, two doors', () => {
   })
 
   test('an untyped throw is an opaque INTERNAL_SERVER_ERROR on both doors', async () => {
-    const b = build({ anthropic: [new Error('secret detail')] })
+    const b = build({ openai: [new Error('secret detail')] })
     const s = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: b.registry.fetch })
     try {
       const viaImport = await b.registry.call('llm.title', { text: 'x' }).catch(errorJson)
@@ -119,7 +119,7 @@ describe('one definition, two doors', () => {
   })
 
   test('usage reaches the registry sink from both doors, tagged with the capability', async () => {
-    const b = build({ anthropic: [{ text: 'T', tokens: usage }] })
+    const b = build({ openai: [{ text: 'T', tokens: usage }] })
     const s = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: b.registry.fetch })
     try {
       const own: Usage[] = []
@@ -140,7 +140,7 @@ describe('one definition, two doors', () => {
   })
 
   test('a capability can be called on its own, through the same pipeline', async () => {
-    const title = createTitle({ transports: fakeTransports({ anthropic: [{ text: '"A Title."' }] }), env: {} })
+    const title = createTitle({ transports: fakeTransports({ openai: [{ text: '"A Title."' }] }), env: {} })
     expect(await title.call({ text: 'x' })).toEqual({ title: 'A Title' })
     expect(await title.call({ text: '' }).catch(errorJson)).toMatchObject({ code: 'BAD_REQUEST' })
   })

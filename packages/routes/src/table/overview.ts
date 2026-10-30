@@ -1,15 +1,10 @@
 import type { RouteEntry } from '../schema.ts'
-import { CALL_FALLBACK, FAST } from './_shared.ts'
+import { EASY, OPENAI_CALL_FALLBACK } from './_shared.ts'
 
 const routes = {
-  // Overview seat. Gateway: `overview`, CLASSIFY tier (Haiku 5.5, one batched prompt-only session). The platform calls it
-  // as one native Messages request, like `cheap.summarize` and `triage`; the model is unchanged and exposes no effort.
-  // Owner direction (2026-10-29): nothing routes via Requesty, no region is pinned.
-  'overview.classify': {
-    wire: 'iu-anthropic',
-    ...FAST,
-    fallback: CALL_FALLBACK,
-  },
+  // Overview seat. Gateway: `overview`, CLASSIFY tier: one batched prompt-only call that classifies the fleet's items.
+  // Nothing routes via Requesty, no region is pinned (owner direction 2026-10-29). Easy, clear shape: Terra low.
+  'overview.classify': { wire: 'iu-openai', ...EASY, fallback: OPENAI_CALL_FALLBACK },
 } satisfies Record<string, RouteEntry>
 
 export default routes

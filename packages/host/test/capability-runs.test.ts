@@ -1,13 +1,18 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test'
 import { CapabilityCallError } from '@agent-workflows/capabilities'
 import { StepFailed } from '@agent-workflows/runtime'
-import { messageResponse } from '@agent-workflows/capabilities/testing'
+import { chatStream } from '@agent-workflows/capabilities/testing'
 import { failureOf, journaled, journaledError, RUN_ID_HEADER } from '../src/capability-runs.ts'
 import { type Body, SECRET, startTestHost, type TestHost, until } from './support.ts'
 
 const TITLE = 'A Smoke Title'
 const ok = () =>
-  messageResponse(TITLE, { input_tokens: 40, output_tokens: 6, cache_read_input_tokens: 10, cost: 0.0007 })
+  chatStream(TITLE, {
+    prompt_tokens: 50,
+    completion_tokens: 6,
+    prompt_tokens_details: { cached_tokens: 10 },
+    cost: 0.0007,
+  })
 
 const silent = { warn: () => {}, error: () => {} }
 
@@ -16,7 +21,7 @@ beforeAll(async () => {
   t = await startTestHost({ prefix: 'caprun', platform: true })
 })
 afterEach(() => {
-  t.iu.on('messages', ok)
+  t.iu.on('chat', ok)
 })
 afterAll(async () => {
   await t.close()
@@ -71,7 +76,7 @@ test('a direct llm.title call answers as before and leaves a done cap.llm.title 
 })
 
 test('an upstream failure answers with the same error and leaves the run failed', async () => {
-  t.iu.on('messages', () => new Response('upstream down', { status: 500 }))
+  t.iu.on('chat', () => new Response('upstream down', { status: 500 }))
   const response = await t.call('/llm/title', { body: { text: 'Broken' } })
   const expected = await plain({ text: 'Broken' })
   expect(response.status).toBe(expected.status)
@@ -133,7 +138,7 @@ test('the same Idempotency-Key twice answers with the first run, without a secon
 })
 
 test('a replayed failed run answers with the same code from the journal', async () => {
-  t.iu.on('messages', () => new Response('upstream down', { status: 500 }))
+  t.iu.on('chat', () => new Response('upstream down', { status: 500 }))
   const headers = { 'idempotency-key': 'title-failing' }
   const first = await t.call('/llm/title', { body: { text: 'Failing' }, headers })
   const calls = t.iu.requests.length
@@ -151,7 +156,7 @@ function holdIu() {
   const held = new Promise<void>((resolve) => {
     release = resolve
   })
-  t.iu.on('messages', async () => {
+  t.iu.on('chat', async () => {
     await held
     return ok()
   })
@@ -252,7 +257,7 @@ describe('the journaled error wire format', () => {
     expect(journaledError(failed.message)?.toJSON()).toMatchObject({ code: 'UPSTREAM_ERROR', data: { status: 500 } })
 
     // ... and the run row a real upstream failure leaves in the journal
-    t.iu.on('messages', () => new Response('upstream down', { status: 500 }))
+    t.iu.on('chat', () => new Response('upstream down', { status: 500 }))
     const response = await t.call('/llm/title', { body: { text: 'Journaled' } })
     const run = await runRow(response.headers.get(RUN_ID_HEADER) as string)
     expect(journaledError(run.error)?.toJSON()).toMatchObject({ code: 'UPSTREAM_ERROR', status: 502 })

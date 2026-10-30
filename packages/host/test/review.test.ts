@@ -858,14 +858,14 @@ JSON
       )
     })
 
-    test('an ocr refused on provider balance runs once more on the fallback route, over Responses', async () => {
+    test('an ocr refused on provider balance runs once more on the fallback route, over the chat wire', async () => {
       const bin = join(scratch, `ocr-balance-${++repoSeq}`)
       const calls = join(scratch, `ocr-balance-calls-${repoSeq}`)
       writeFileSync(
         bin,
         `#!/bin/sh
 echo "$OCR_LLM_MODEL $OCR_LLM_PROTOCOL" >> "${calls}"
-if [ "$OCR_LLM_PROTOCOL" != "openai-responses" ]; then
+if [ "$OCR_LLM_PROTOCOL" = "openai-responses" ]; then
   echo "llm error: IU request failed (503) — Insufficient Balance (PaymentRequired) on Requesty-Global" >&2
   exit 2
 fi
@@ -882,8 +882,8 @@ JSON
       expect(w.sessionsOf('review-synthesis')[0]?.spec.prompt).toContain('src/a.ts:2 — seen by the fallback')
       const route = resolveRoute('review.ocr', {})
       expect(readFileSync(calls, 'utf8').trim().split('\n')).toEqual([
-        `${route.model} openai`,
-        `${route.fallback?.model} openai-responses`,
+        `${route.model} openai-responses`,
+        `${route.fallback?.model} openai`,
       ])
     })
 
@@ -898,7 +898,7 @@ JSON
 repo=$(pwd)
 dir="$HOME/.opencodereview/sessions/$(printf '%s' "$repo" | sed 's|/|-|g; s|^-||')"
 mkdir -p "$dir"
-if [ "$OCR_LLM_PROTOCOL" != "openai-responses" ]; then tokens=100; else tokens=7; fi
+if [ "$OCR_LLM_PROTOCOL" = "openai-responses" ]; then tokens=100; else tokens=7; fi
 printf '{"type":"session_start","timestamp":%s000,"cwd":"%s"}\n{"type":"llm_response","usage":{"prompt_tokens":%s,"completion_tokens":1}}\n' "$(date +%s)" "$repo" "$tokens" > "$dir/$OCR_LLM_PROTOCOL.jsonl"
 if [ "$tokens" = 100 ]; then
   echo "llm error: IU request failed (503) — Insufficient Balance (PaymentRequired) on Requesty-Global" >&2

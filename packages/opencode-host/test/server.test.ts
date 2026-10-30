@@ -335,18 +335,14 @@ describe('buildServerConfig', () => {
 })
 
 describe('buildServerConfig: review.angle.deep', () => {
-  test('the deep angle row sits on the chat provider with its cost rows, and the route’s fallback resolves', () => {
+  test('the deep angle row sits on the Responses provider with its cost rows, and the route’s fallback is the other lab on chat', () => {
     const config = buildServerConfig({}) as {
       providers: Record<string, { models: Record<string, { cost?: unknown }> }>
     }
-    expect(config.providers[PROVIDER_CHAT]?.models['deepseek-v4.1-flash']?.cost).toEqual({
-      input: 0.3,
-      output: 1.2,
-      cache: { read: 0.006 },
-    })
+    expect(config.providers[PROVIDER_RESPONSES]?.models['gpt-6.1-terra']?.cost).toMatchObject({ input: 1, output: 5 })
     const fallback = fallbackModelRef('review.angle.deep', {})
-    expect(fallback?.model.id).toBe('gpt-6.1-terra')
-    expect(config.providers['iu-responses']?.models[fallback?.model.id ?? '']).toBeDefined()
+    expect(fallback?.model).toMatchObject({ providerID: PROVIDER_CHAT, id: 'deepseek-v4.1-flash' })
+    expect(config.providers[PROVIDER_CHAT]?.models[fallback?.model.id ?? '']).toBeDefined()
   })
 })
 
@@ -369,36 +365,32 @@ describe('buildServerConfig: the provider follows the model family, whatever oth
     for (const route of claude) expect(config.providers[PROVIDER_ANTHROPIC]?.models[route.model]).toBeDefined()
   })
 
-  test('Haiku 5.5 on a single-call chat route (cheap.classify) does not move the agent routes off the native provider', () => {
-    expect(resolveRoute('cheap.classify', {})).toMatchObject({ wire: 'iu-openai', model: 'claude-haiku-5-5' })
-    for (const id of [
-      'check',
-      'review.angle',
-      'review.synthesis',
-      'brain.agent',
-      'diagram.agent',
-      'retro.analyze',
-    ] as const) {
-      expect(modelRef(id, {}).model).toMatchObject({ providerID: PROVIDER_ANTHROPIC, id: 'claude-haiku-5-5' })
+  test('the agent routes run Terra on Responses; only the private brain agent stays on the native Anthropic provider', () => {
+    expect(resolveRoute('cheap.classify', {})).toMatchObject({ wire: 'iu-openai', model: 'gpt-6-luna' })
+    for (const id of ['check', 'review.angle', 'review.synthesis', 'diagram.agent', 'retro.analyze'] as const) {
+      expect(modelRef(id, {}).model).toMatchObject({ providerID: PROVIDER_RESPONSES, id: 'gpt-6.1-terra' })
     }
+    expect(modelRef('brain.agent', {}).model).toMatchObject({ providerID: PROVIDER_ANTHROPIC, id: 'claude-haiku-5-5' })
     const config = buildServerConfig({}) as {
       providers: Record<string, { models: Record<string, { compatibility?: unknown }> }>
     }
     expect(config.providers[PROVIDER_ANTHROPIC]?.models['claude-haiku-5-5']?.compatibility).toEqual({
       supportsThinkingBlockBinding: false,
     })
-    expect(config.providers[PROVIDER_CHAT]?.models['claude-haiku-5-5']).toBeUndefined()
+    // a single-call model never lands in the agent providers
+    expect(config.providers[PROVIDER_RESPONSES]?.models['gpt-6-luna']).toBeUndefined()
   })
 
-  test('the deepseek routes stay on chat and the Terra fallbacks on Responses', () => {
+  test('the deepseek routes stay on chat, their Terra fallbacks on Responses, and the Terra routes fall back to chat', () => {
     expect(modelRef('research.agent', {}).model.providerID).toBe(PROVIDER_CHAT)
     expect(modelRef('otel.agent', {}).model.providerID).toBe(PROVIDER_CHAT)
-    expect(fallbackModelRef('check', {})?.model.providerID).toBe(PROVIDER_RESPONSES)
+    expect(fallbackModelRef('research.agent', {})?.model.providerID).toBe(PROVIDER_RESPONSES)
+    expect(fallbackModelRef('check', {})?.model.providerID).toBe(PROVIDER_CHAT)
   })
 })
 
 describe('buildServerConfig: fallbacks', () => {
-  test('each opencode route’s fallback has one row on the Responses provider, one variant per effort', () => {
+  test('the Responses provider has one Terra row with one variant per effort the routes and fallbacks use', () => {
     const config = buildServerConfig({}) as {
       providers: Record<string, { package: string; models: Record<string, { variants?: { id: string }[] }> }>
     }
@@ -406,6 +398,6 @@ describe('buildServerConfig: fallbacks', () => {
     expect(responses?.package).toBe('aisdk:@ai-sdk/openai')
     const rows = Object.values(responses?.models ?? {})
     expect(rows).toHaveLength(1)
-    expect(rows[0]?.variants?.map((v) => v.id)).toEqual(['medium'])
+    expect(rows[0]?.variants?.map((v) => v.id)).toEqual(['low', 'medium'])
   })
 })

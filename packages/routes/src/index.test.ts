@@ -36,16 +36,10 @@ describe('table', () => {
     for (const id of needed) expect(routeIds()).toContain(id)
   })
 
-  test('every wire is represented', () => {
+  // `iu-anthropic` is still a wire (the schema accepts it, the transport has its own tests) but no route in the table uses it.
+  test('every wire the table uses is represented', () => {
     const wires = new Set(routeIds().map((id) => DEFAULT_ROUTES[id]?.wire))
-    expect([...wires].sort()).toEqual([
-      'iu-anthropic',
-      'iu-decision',
-      'iu-gemini',
-      'iu-openai',
-      'iu-replicate',
-      'opencode',
-    ])
+    expect([...wires].sort()).toEqual(['iu-decision', 'iu-gemini', 'iu-openai', 'iu-replicate', 'opencode'])
   })
 })
 
@@ -65,14 +59,15 @@ describe('resolveRoute', () => {
     expect(resolveRoute('review.angle', {}).model).toBe(entry('review.angle').model)
   })
 
-  test('the deep angle route is its own seat: DeepSeek flash, priced, overridden independently of review.angle', () => {
+  test('the deep angle route is its own seat: Terra medium, priced, overridden independently of review.angle', () => {
     const deep = resolveRoute('review.angle.deep', {})
-    expect(deep).toMatchObject({ wire: 'opencode', model: 'deepseek-v4.1-flash' })
-    expect(deep.rate).toEqual({ inputPerM: 0.3, outputPerM: 1.2, cacheReadPerM: 0.006 })
-    expect(deep.fallback?.wire).toBe('opencode')
-    // no tier: a 1.5M-token prompt is priced flat, at any size
+    expect(deep).toMatchObject({ wire: 'opencode', model: 'gpt-6.1-terra', effort: 'medium' })
+    expect(deep.rate).toMatchObject({ inputPerM: 1, outputPerM: 5, cacheReadPerM: 0.05 })
+    // the fallback is not the primary's own model, and runs the same kind of step
+    expect(deep.fallback).toMatchObject({ wire: 'opencode', model: 'deepseek-v4.1-flash' })
+    // the long-prompt tier applies above 272K prompt tokens: the whole request bills 2x input, 1.5x output
     expect(costFromUsage('opencode', { input_tokens: 1_500_000, output_tokens: 1_000 }, deep.rate)).toEqual({
-      usd: (1_500_000 * 0.3 + 1_000 * 1.2) / 1e6,
+      usd: (1_500_000 * 1 * 2 + 1_000 * 5 * 1.5) / 1e6,
       source: 'rate',
     })
     const e = env({ 'review.angle.deep': { model: 'some-model' } })
@@ -324,42 +319,75 @@ describe('fallback', () => {
   // `brain.agent` reads private notes and stays on its own provider: no fallback (owner decision, 2026-10-29). The audio
   // door's routes have none either: STT has its own model chain, and TTS, prep and summary keep audio-gateway's
   // behaviour (no balance fallback; packages/audio calls IU directly, not through the capability transports).
-  // `triage` is owner-directed off Requesty (the default fallback is a Requesty list model), so it has none.
-  test('every iu-openai, iu-anthropic and opencode route has one; decide, triage, brain.agent and audio.* have none', () => {
+  test('every iu-openai and opencode text route has one; decide, triage, brain.agent and audio.* have none', () => {
     for (const id of routeIds()) {
       const route = resolveRoute(id, {})
       // an audio seat has none; an image or Replicate model (`price`) has no text model to move to
       expect(route.fallback === undefined).toBe(
         route.wire === 'iu-decision' ||
-          id === 'triage' ||
           id === 'brain.agent' ||
+          id === 'triage' ||
           id.startsWith('audio.') ||
           route.price !== undefined,
       )
     }
   })
 
-  test('single calls fall back to a priced call on the chat wire, agent steps to an opencode step', () => {
-    // The adversary runs on Terra, so its fallback is Haiku (a Terra fallback would be itself).
-    const terraFallbacks = [...singleCall.filter((id) => id !== 'review.adversary'), 'review.ocr' as const]
-    for (const id of terraFallbacks) {
-      expect(resolveRoute(id, {}).fallback).toMatchObject({ wire: 'iu-openai', effort: 'medium' })
+  test('a Terra or Luna route falls back to DeepSeek flash (chat call or agent step), a DeepSeek route to Terra', () => {
+    const deepseekRate = { inputPerM: 0.3, outputPerM: 1.2, cacheReadPerM: 0.006 }
+    const terraRate = {
+      inputPerM: 1,
+      outputPerM: 5,
+      cacheReadPerM: 0.05,
+      longPromptTokens: 272_000,
+      longPrompt: { inputMultiplier: 2, outputMultiplier: 1.5 },
     }
-    expect(resolveRoute('review.adversary', {}).fallback).toMatchObject({
-      wire: 'iu-openai',
-      model: 'claude-haiku-5-5',
-    })
-    for (const id of agentSteps) expect(resolveRoute(id, {}).fallback).toMatchObject({ wire: 'opencode' })
-    for (const id of [...terraFallbacks, ...agentSteps]) {
-      const fallback = resolveRoute(id, {}).fallback
-      expect(fallback?.model).not.toBe(resolveRoute(id, {}).model)
-      expect(fallback?.rate).toMatchObject({
-        inputPerM: 1,
-        outputPerM: 5,
-        cacheReadPerM: 0.05,
-        longPromptTokens: 272_000,
-        longPrompt: { inputMultiplier: 2, outputMultiplier: 1.5 },
+    const singleFallbacks: RouteId[] = [
+      'cheap.summarize',
+      'cheap.extract',
+      'cheap.title',
+      'overview.classify',
+      'narrative',
+      'prose.write',
+    ]
+    for (const id of singleFallbacks) {
+      expect(resolveRoute(id, {}).fallback).toMatchObject({
+        wire: 'iu-openai',
+        model: 'deepseek-v4.1-flash',
+        effort: 'high',
+        maxOutputTokens: 32_000,
+        rate: deepseekRate,
       })
+    }
+    // the four owner-directed off Requesty fall back to Haiku on the chat wire
+    for (const id of ['cheap.classify', 'review.router', 'review.ocr', 'review.adversary'] as const) {
+      expect(resolveRoute(id, {}).fallback).toMatchObject({
+        wire: 'iu-openai',
+        model: 'claude-haiku-5-5',
+        maxOutputTokens: 32_000,
+      })
+    }
+    for (const id of agentSteps) {
+      expect(resolveRoute(id, {}).fallback).toMatchObject({
+        wire: 'opencode',
+        model: 'deepseek-v4.1-flash',
+        maxOutputTokens: 32_000,
+        rate: deepseekRate,
+      })
+    }
+    for (const id of ['prose.review', 'podcast.outline'] as const) {
+      expect(resolveRoute(id, {}).fallback).toMatchObject({
+        wire: 'iu-openai',
+        model: 'gpt-6.1-terra',
+        effort: 'medium',
+        rate: terraRate,
+      })
+    }
+    for (const id of ['research.agent', 'otel.agent'] as const) {
+      expect(resolveRoute(id, {}).fallback).toMatchObject({ wire: 'opencode', model: 'gpt-6.1-terra', rate: terraRate })
+    }
+    for (const id of [...singleFallbacks, ...agentSteps, 'prose.review', 'research.agent', 'review.router'] as const) {
+      expect(resolveRoute(id, {}).fallback?.model).not.toBe(resolveRoute(id, {}).model)
     }
   })
 
@@ -374,16 +402,20 @@ describe('fallback', () => {
 
   // The Requesty check covers ONLY the four routes Wave 9 moved (route and fallback). Every other `deepseek-v4.1-flash`
   // route (research.agent, otel.agent, prose.review, podcast.*) is Requesty-Global too and stays: its pre-registered
-  // port rules ran on that model, so it moves by the lead's decision, not by this guard.
+  // decision is the lead's, not this guard's. The four run on the GPT stack and fall back to Haiku on the chat wire.
   test('the four routes moved off Requesty (router, adversary, ocr, classify) and their fallbacks name no Requesty model', () => {
     const requesty = /^(eu\/)?deepseek-v4\.1-flash|^DeepSeek-V4|^pplx-decider|^kimi-k3|^kimi-k2\.7/i
     for (const id of ['review.router', 'review.adversary', 'review.ocr', 'cheap.classify'] as const) {
       const route = resolveRoute(id, {})
-      for (const r of [route, route.fallback]) expect(r?.model).not.toMatch(requesty)
+      expect(route.model).not.toMatch(requesty)
+      expect(route.fallback?.model).toBe('claude-haiku-5-5')
+      expect(route.fallback?.model).not.toMatch(requesty)
     }
+    // triage is owner-directed off Requesty too, and the only fallback that is not OpenAI's balance is a Requesty model
+    expect(resolveRoute('triage', {}).fallback).toBeUndefined()
   })
 
-  test('the adversary fallback keeps the ceiling the Terra fallback had (32k)', () => {
+  test('the adversary fallback keeps the 32k output ceiling', () => {
     expect(resolveRoute('review.adversary', {}).fallback).toMatchObject({
       model: 'claude-haiku-5-5',
       maxOutputTokens: 32_000,
@@ -432,7 +464,7 @@ describe('fallback', () => {
   })
 
   test('the long-prompt tier of a rate is where the price steps up', () => {
-    const rate = resolveRoute('cheap.classify', {}).fallback?.rate
+    const rate = resolveRoute('cheap.summarize', {}).rate
     const usage = (prompt: number) => ({ prompt_tokens: prompt, completion_tokens: 1_000 })
     expect(costFromUsage('iu-openai', usage(200_000), rate)).toEqual({ usd: 0.205, source: 'rate' })
     // above 272K the whole request bills 2x input and 1.5x output
@@ -450,7 +482,8 @@ describe('fallback', () => {
 })
 
 describe('the long-prompt tier of Haiku 5.5 (>100K prompt tokens bill 5x on every column)', () => {
-  const haiku = resolveRoute('cheap.summarize', {}).rate
+  // brain.agent is the one Haiku route left in the table.
+  const haiku = resolveRoute('brain.agent', {}).rate
   const at = (inputTokens: number, cacheRead = 0, cacheWrite = 0) =>
     costFromUsage(
       'iu-anthropic',
@@ -494,7 +527,7 @@ describe('the long-prompt tier of Haiku 5.5 (>100K prompt tokens bill 5x on ever
     })
   })
 
-  test('every Anthropic route on the opencode and Messages wires carries the same tiered card', () => {
+  test('every Haiku route carries the same tiered card', () => {
     for (const id of routeIds()) {
       const route = resolveRoute(id, {})
       if (route.model !== 'claude-haiku-5-5') continue

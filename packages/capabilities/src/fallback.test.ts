@@ -71,16 +71,14 @@ describe('provider-balance fallback', () => {
       expect(await call('llm.classify', classify)).toEqual({ label: 'bug', reason: 'crash' })
 
       expect(iu.requests.map((r) => r.body.model)).toEqual([primary.model, fallback.model])
-      expect(iu.requests[1]?.body).toMatchObject({
-        reasoning_effort: fallback.effort,
-        max_completion_tokens: fallback.maxOutputTokens,
-      })
-      // IU sent no cost: the fallback's rate prices it ($1/M in, $5/M out).
+      expect(iu.requests[1]?.body).toMatchObject({ max_completion_tokens: fallback.maxOutputTokens })
+      expect(iu.requests[1]?.body.reasoning_effort).toBeUndefined()
+      // IU sent no cost: the fallback's rate prices it (Haiku 5.5, $0.10/M in, $0.50/M out).
       expect(usages).toEqual([
         {
           model: fallback.model,
           tokens: { input: 1_000, output: 200, cacheRead: 0, reasoning: 50 },
-          cost: (1_000 * 1 + 200 * 5) / 1_000_000,
+          cost: (1_000 * 0.1 + 200 * 0.5) / 1_000_000,
           costSource: 'rate',
         },
       ])
@@ -138,13 +136,27 @@ describe('provider-balance fallback', () => {
     expect(usages.map((u) => u.model)).toEqual([fallback.model, fallback.model])
   })
 
-  test('an iu-anthropic route falls back over the chat wire', async () => {
-    iu.on('messages', () => new Response(BALANCE_503, { status: 503 }))
-    iu.on('chat', (request) => answer(request, 'A short summary.'))
+  test('a second single-call route (llm.summarize) falls back to its own model over the chat wire', async () => {
+    const summarize = resolveRoute('cheap.summarize', {})
+    expect(summarize.model).not.toBe(primary.model)
+    // a route off the four Requesty-directed ones falls back to the other lab, not to Anthropic
+    expect(summarize.fallback).toMatchObject({
+      wire: 'iu-openai',
+      model: resolveRoute('narrative', {}).fallback?.model,
+    })
+    expect(summarize.fallback?.model).not.toBe(fallback.model)
+    iu.on('chat', (request) =>
+      request.body.model === summarize.model
+        ? new Response(BALANCE_503, { status: 503 })
+        : answer(request, 'A short summary.'),
+    )
     const out = await call('llm.summarize', { text: 'Some long text to summarize.' })
     expect(out).toMatchObject({ summary: 'A short summary.' })
-    expect(iu.requests.map((r) => r.path)).toEqual(['/anthropic/v1/messages', '/openai/v1/chat/completions'])
-    expect(usages).toEqual([expect.objectContaining({ model: resolveRoute('cheap.summarize', {}).fallback?.model })])
+    expect(iu.requests.map((r) => [r.path, r.body.model])).toEqual([
+      ['/openai/v1/chat/completions', summarize.model],
+      ['/openai/v1/chat/completions', summarize.fallback?.model],
+    ])
+    expect(usages).toEqual([expect.objectContaining({ model: summarize.fallback?.model })])
   })
 
   test('AGW_ROUTES overrides the fallback: its model and effort are what runs', async () => {
@@ -186,7 +198,8 @@ describe('provider-balance fallback: the review seats', () => {
       const out = await call('review.adversary', { diff: '+added line' })
       expect(out).toMatchObject({ findings: [finding], model: adversaryFallback.model })
       expect(iu.requests.map((r) => r.body.model)).toEqual([adversary.model, adversaryFallback.model])
-      // The fallback is Haiku, which the route sends no effort to: it runs at its own route's, not the adversary's.
+      // The fallback runs at its own route's effort (none sent), not the adversary's (medium).
+      expect(iu.requests[0]?.body.reasoning_effort).toBe('medium')
       expect(iu.requests[1]?.body.reasoning_effort).toBeUndefined()
       expect(iu.requests[1]?.body.max_completion_tokens).toBe(adversaryFallback.maxOutputTokens)
       expect(usages).toEqual([
@@ -204,18 +217,18 @@ describe('provider-balance fallback: the review seats', () => {
   }
 
   test('review.adversary: the fallback runs at its own effort, its empty-answer re-ask too', async () => {
-    const env = { [OVERRIDES_ENV]: JSON.stringify({ 'review.adversary': { fallback: { effort: 'high' } } }) }
+    const env = { [OVERRIDES_ENV]: JSON.stringify({ 'review.adversary': { fallback: { effort: 'low' } } }) }
     let answers = 0
     iu.on('chat', (request) => {
       if (request.body.model === adversary.model) return new Response(BALANCE_503, { status: 503 })
       return answer(request, answers++ === 0 ? '' : '{"findings":[]}')
     })
     await call('review.adversary', { diff: '+x' }, env)
-    // medium and low are the adversary's efforts for its primary; the fallback keeps its route's.
+    // medium is the adversary's effort for its primary; the fallback keeps its route's (overridden to low).
     expect(iu.requests.map((r) => [r.body.model, r.body.reasoning_effort])).toEqual([
       [adversary.model, 'medium'],
-      [adversaryFallback.model, 'high'],
-      [adversaryFallback.model, 'high'],
+      [adversaryFallback.model, 'low'],
+      [adversaryFallback.model, 'low'],
     ])
   })
 

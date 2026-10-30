@@ -1,7 +1,7 @@
 # Diagram (Wave 7)
 
 `agw diagram "<brief>"` (`src/workflows/diagram/`): an Excalidraw diagram from a brief; port of agent-gateway's
-`excalidraw_diagram`. One agent (`agents/diagram`, route `diagram.agent` = Haiku 5.5 EU on OpenCode, the model the legacy
+`excalidraw_diagram`. One agent (`agents/diagram`, route `diagram.agent` = Terra (effort medium) on OpenCode since 2026-10-30; the legacy
 tool settled on after its bench) answers `{rationale, elements[]}`, the skeleton. Code does the rest; **the host writes no
 caller path**, the caller writes the file.
 
@@ -98,6 +98,6 @@ Model and rate: `packages/routes/src/table/diagram.ts` (the only home of model i
 
 | Route | Source seat | Wire |
 |-|-|-|
-| `diagram.agent` | `excalidraw` (Wave 10 bench: Haiku 5.5 EU on OpenCode) | opencode |
+| `diagram.agent` | `excalidraw` (Wave 10 bench ran Haiku 5.5 EU on OpenCode; Terra medium since 2026-10-30) | opencode |
 
 Token effect: one read-only session that answers the skeleton JSON on `check`'s model and wire, about 25 s and $0.003-0.005 in the legacy bench; the host hydrates in code.

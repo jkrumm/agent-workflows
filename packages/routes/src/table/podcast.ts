@@ -1,5 +1,5 @@
 import type { RouteEntry } from '../schema.ts'
-import { CALL_FALLBACK, CHEAP } from './_shared.ts'
+import { CALL_FALLBACK, CHEAP, OPENAI_CALL_FALLBACK, STRONG } from './_shared.ts'
 
 // The podcast writers' room (audio `workflows/podcast`), one route per stage. Defaults are audio-gateway's
 // (`src/config.ts`, 2026-10-29): research, editorial, outline and metadata on DeepSeek flash at effort high; the reviewer
@@ -22,7 +22,7 @@ const routes = {
   'podcast.outline': cheapSeat,
   // The voice owner: every segment draft, revision and tightening pass. The shared balance fallback (concept v3.3, every
   // IU route has one) applies only when IU refuses for provider balance.
-  'podcast.write': cheapSeat,
+  'podcast.write': { wire: 'iu-openai', ...STRONG, effort: 'high', fallback: OPENAI_CALL_FALLBACK },
   // No effort on the Gemini seat: its OpenAI-compatible leg rejects `reasoning_effort`.
   'podcast.review.a': {
     wire: 'iu-openai',

@@ -71,7 +71,7 @@ Model and rate: `packages/routes/src/table/retrospective.ts` (the only home of m
 |-|-|-|
 | `retro.analyze` | none (new; copied from `check`, concept §7) | opencode |
 
-Token effect: a cheap Haiku-class call on `check`'s model and wire, no new cache group beyond its own agent.
+Token effect: one Terra-medium agent step on `retro.analyze`'s model and wire, no new cache group beyond its own agent.
 
 ## Token effect / cache effect
 
@@ -79,5 +79,5 @@ The learnings read-back adds tokens only where a fact is active: the fenced bloc
 into `AGENTS.md`, so the agent's cached prefix (system prompt, skills) is untouched; the block costs its own tokens
 (at most 25 facts of at most 400 characters, in practice a few hundred) on every step of that agent, and a changed fact set
 changes the message tail only. Activating or retiring a fact changes the run fingerprint (one new fingerprint group, no
-cold prompt cache: the prefix is unchanged). The retrospective is its own spend: one Haiku-class agent step per workflow and week
+cold prompt cache: the prefix is unchanged). The retrospective is its own spend: one Terra-medium agent step per workflow and week
 over at most ~30k input tokens of sampled records, no tools, plus at most one JSON retry; nothing runs when a workflow had no runs.

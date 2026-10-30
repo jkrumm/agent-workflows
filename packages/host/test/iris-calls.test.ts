@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { messageResponse } from '@agent-workflows/capabilities/testing'
+import { chatStream } from '@agent-workflows/capabilities/testing'
 import { RUN_ID_HEADER } from '../src/capability-runs.ts'
 import { type Body, startTestHost, type TestHost, until } from './support.ts'
 
@@ -32,8 +32,8 @@ const recorded = (runId: string) =>
 
 describe('a call that identifies as iris', () => {
   test('triage answers the summary with usage and cost, and the run and its Argo row carry purpose iris', async () => {
-    t.iu.on('messages', () =>
-      messageResponse(JSON.stringify(SUMMARY), { input_tokens: 100, output_tokens: 20, cost: 0.0004 }),
+    t.iu.on('chat', () =>
+      chatStream(JSON.stringify(SUMMARY), { prompt_tokens: 100, completion_tokens: 20, cost: 0.0004 }),
     )
     const response = await t.call('/triage', { body: TRIAGE, headers: IRIS })
     expect(response.status).toBe(200)
@@ -74,7 +74,7 @@ describe('a call that identifies as iris', () => {
   })
 
   test('without the header a call is purpose prod, not iris', async () => {
-    t.iu.on('messages', () => messageResponse(JSON.stringify(SUMMARY), { input_tokens: 1, output_tokens: 1 }))
+    t.iu.on('chat', () => chatStream(JSON.stringify(SUMMARY), { prompt_tokens: 1, completion_tokens: 1 }))
     const response = await t.call('/triage', { body: TRIAGE })
     expect((await recorded(response.headers.get(RUN_ID_HEADER) as string)).purpose).toBe('prod')
   })
@@ -82,7 +82,7 @@ describe('a call that identifies as iris', () => {
 
 describe('the run cancel of a call held by a slow provider', () => {
   test.each([
-    ['triage', 'messages', TRIAGE],
+    ['triage', 'chat', TRIAGE],
     ['decide', 'decide', DECIDE],
   ] as const)(
     '%s: POST /runs/{runId}/cancel ends the call and the held request answers CANCELLED',

@@ -1,35 +1,14 @@
 import type { RouteEntry } from '../schema.ts'
-import { CALL_FALLBACK, FAST } from './_shared.ts'
+import { ANTHROPIC_CALL_FALLBACK, EASY, OPENAI_CALL_FALLBACK, TRIVIAL } from './_shared.ts'
 
 const routes = {
-  // Cheap single-shot seats. Gateway: SINGLE_SHOT (triage) on deepseek-v4.1-flash over the iu-openai transport, which IU
-  // forwards to Requesty-Global (header x-middleware-forwarded-server, probed 2026-10-29). Owner direction: nothing routes
-  // via Requesty, so a label and a reason come from Haiku 5.5, the model `triage` and `cheap.summarize` already run, on the same
-  // chat wire with JSON mode (header "LiteLLM 2026 Gateway GDPR", probed 2026-10-29). IU reports no `usage.cost` there, so
-  // the route carries the rate. No reasoning, so no 16k output floor.
-  'cheap.classify': {
-    wire: 'iu-openai',
-    ...FAST,
-    fallback: CALL_FALLBACK,
-  },
-  // Gateway: CLASSIFY tier (overview, narrative), a Haiku 5.5 session on OpenCode. The platform
-  // calls it as one native Messages request; the model is unchanged. The model exposes no effort.
-  'cheap.summarize': {
-    wire: 'iu-anthropic',
-    ...FAST,
-    fallback: CALL_FALLBACK,
-  },
-  // `web.read`: the page extraction behind `agw web read`, a single Haiku 5.5 request like `cheap.summarize`.
-  'cheap.extract': {
-    wire: 'iu-anthropic',
-    ...FAST,
-    fallback: CALL_FALLBACK,
-  },
-  'cheap.title': {
-    wire: 'iu-anthropic',
-    ...FAST,
-    fallback: CALL_FALLBACK,
-  },
+  // Single-call seats on the GPT stack. Nothing routes via Requesty (owner direction 2026-10-29); Luna and Terra answer
+  // on IU's OpenAI chat wire. A label needs no judgment (Luna low); a summary or an extraction needs a clear read (Terra
+  // low). `title` shares the label seat. IU reports no `usage.cost` for these, so the routes carry the rate.
+  'cheap.classify': { wire: 'iu-openai', ...TRIVIAL, fallback: ANTHROPIC_CALL_FALLBACK },
+  'cheap.summarize': { wire: 'iu-openai', ...EASY, fallback: OPENAI_CALL_FALLBACK },
+  'cheap.extract': { wire: 'iu-openai', ...EASY, fallback: OPENAI_CALL_FALLBACK },
+  'cheap.title': { wire: 'iu-openai', ...TRIVIAL, fallback: OPENAI_CALL_FALLBACK },
 } satisfies Record<string, RouteEntry>
 
 export default routes

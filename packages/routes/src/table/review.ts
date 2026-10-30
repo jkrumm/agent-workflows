@@ -1,58 +1,36 @@
 import type { RouteEntry } from '../schema.ts'
-import { AGENT_FALLBACK, CALL_FALLBACK, CHEAP, FAST, HAIKU_CALL_FALLBACK, WRITER } from './_shared.ts'
+import { ANTHROPIC_CALL_FALLBACK, EASY, OPENAI_AGENT_FALLBACK, STRONG } from './_shared.ts'
 
 const routes = {
-  // Review seats. Gateway: review_router is SINGLE_SHOT and the adversary is deepseek-v4.1-flash, both on iu-openai. IU
-  // forwards that id to Requesty-Global (response header x-middleware-forwarded-server, probed 2026-10-29), and no other
-  // DeepSeek id on the endpoint avoids Requesty (`DeepSeek-V4-Flash` also answers from Requesty-Global; the one
-  // Nebius-hosted `deepseek-ai/DeepSeek-V3.2` answers "model does not exist"). Owner direction: nothing routes via Requesty.
-  // The router picks angles and a depth as a small JSON object, the job `triage` does on Haiku 5.5. Haiku answers on the
-  // same OpenAI chat wire the seat already uses, with `response_format: json_object` and reasoning_effort accepted (200,
-  // header "LiteLLM 2026 Gateway GDPR", probed 2026-10-29), at a tenth of Terra's price; IU reports no `usage.cost` for it
-  // there, so the route carries the rate. Fallback: Terra (AWS mantle, probed).
-  'review.router': {
-    wire: 'iu-openai',
-    ...FAST,
-    fallback: CALL_FALLBACK,
-  },
+  // Review seats on the GPT stack (owner direction 2026-10-30). Nothing routes via Requesty (owner direction 2026-10-29),
+  // no region is pinned. The router picks angles and a depth as a small JSON object: an easy call (Terra low, chat wire
+  // with `response_format: json_object`). The first Haiku seat there agreed with the review verdict on 0.17 of the paired
+  // eval's cases against Terra's 0.67, so the angles and the adversary are Terra medium; Terra low is too thin for them.
+  'review.router': { wire: 'iu-openai', ...EASY, fallback: ANTHROPIC_CALL_FALLBACK },
   // The adversary is the cross-family critic (the writer is the calling Claude session) and the capability needs the
-  // OpenAI chat wire, so Haiku is out. Of the non-Requesty candidates, `gpt-6.1-terra` answers on the chat wire with
-  // reasoning_effort (header: AWS mantle us-east-1, probed 2026-10-29) and has a published card; `Kimi-K2.6` answers
-  // from IU's Sweden sink but IU reports no cost for it and no list price is on record. Terra reports no `usage.cost`
-  // on this wire, so the route carries its rate. The fallback is Haiku 5.5 on the chat wire (Terra would fall back
-  // to itself): on a provider-balance failure the critique comes from the writer's family rather than not at all.
+  // OpenAI chat wire. Terra medium; on a provider-balance failure the critique comes from the writer's own family (Haiku, not Requesty) rather than not at all.
   'review.adversary': {
     wire: 'iu-openai',
-    ...WRITER,
+    ...STRONG,
     maxOutputTokens: 16_000,
-    fallback: HAIKU_CALL_FALLBACK,
+    fallback: ANTHROPIC_CALL_FALLBACK,
   },
   // Gateway: review_ocr (transport external-iu). `ocr` is an external CLI that talks to IU itself; the platform only
-  // takes the model from here, and the wire says which of the CLI's protocols to speak (openai: chat completions). Haiku 5.5
-  // for the reasons of `review.router` (OCR spends 1.5-3M tokens a run; the cost is unknown to the platform either way,
-  // `ocr` reports tokens only). Switched off by default (AGW_REVIEW_OCR); no live `ocr` run on this model yet.
-  'review.ocr': { wire: 'iu-openai', ...FAST, fallback: CALL_FALLBACK },
-  // Gateway: ANGLE_OC (review_angle_senior_dev|typescript|frontend|qa all resolve to the same entry)
-  // and `review` (synthesis, CLASSIFY tier), both Haiku 5.5 on the OpenCode harness.
-  'review.angle': {
-    wire: 'opencode',
-    ...FAST,
-    fallback: AGENT_FALLBACK,
-  },
-  // Angles of a review the caller asked to run `depth: deep` (mother decision, 2026-10-29). Opt-in: a router-chosen deep keeps
-  // `review.angle`; the review workflow names this route in the angle steps' `options.route`. Sonnet 5.5 here (Wave 6
-  // experiment: recall 0.017 -> 0.13, $0.057 -> $0.542 a review) is off since 2026-10-30: owner direction, DeepSeek flash only
-  // while the team key pays.
-  'review.angle.deep': {
-    wire: 'opencode',
-    ...CHEAP,
-    fallback: AGENT_FALLBACK,
-  },
-  'review.synthesis': {
-    wire: 'opencode',
-    ...FAST,
-    fallback: AGENT_FALLBACK,
-  },
+  // takes the model from here, and the wire says which of the CLI's protocols to speak (openai: chat completions). It
+  // spends 1.5-3M tokens a run and reports tokens only, so the cost is unknown to the platform. Switched off by default
+  // (AGW_REVIEW_OCR); no live `ocr` run on this model yet.
+  'review.ocr': { wire: 'iu-openai', ...EASY, fallback: ANTHROPIC_CALL_FALLBACK },
+  // Gateway: ANGLE_OC (review_angle_senior_dev|typescript|frontend|qa all resolve to the same entry) and `review`
+  // (synthesis), on the OpenCode harness. Reading code and finding what is wrong is the job of the review: Terra medium.
+  'review.angle': { wire: 'opencode', ...STRONG, fallback: OPENAI_AGENT_FALLBACK },
+  // Angles of a review the caller asked to run `depth: deep` (mother decision, 2026-10-29). Opt-in: a router-chosen deep
+  // keeps `review.angle`; the review workflow names this route in the angle steps' `options.route`. Paired eval 2026-10-30
+  // (12 recorded cases, `depth: deep`, same cases and scorer per arm): Terra medium and DeepSeek flash tie on every quality
+  // metric (verdict agreement 0.67 both), Terra costs $0.43 a review against $0.51 and uses 13x fewer input tokens; Haiku
+  // costs $0.04 but agreed with the verdict on 0.17. Recall is 0.05 or below on all three; Sonnet 5.5 (0.13, $0.54) is off
+  // while the team key pays. Today the same seat as `review.angle`, kept as its own route so a deeper setting is one edit.
+  'review.angle.deep': { wire: 'opencode', ...STRONG, fallback: OPENAI_AGENT_FALLBACK },
+  'review.synthesis': { wire: 'opencode', ...STRONG, fallback: OPENAI_AGENT_FALLBACK },
 } satisfies Record<string, RouteEntry>
 
 export default routes

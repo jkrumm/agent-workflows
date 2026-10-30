@@ -629,7 +629,7 @@ function priceCell(price: Price | undefined): string {
   return `M: ${fixed(price.textInPerM)} text, ${fixed(price.audioInPerM)} audio in, ${fixed(price.outputPerM)} out`
 }
 
-/** One line per route, columns padded: id, wire, model, effort, USD per million in/out, other price, fallback model. */
+/** One line per route, columns padded: id, wire, model, effort (`default`: none sent, the vendor's own level), USD per million in/out, other price, fallback model. */
 export function routesTable(routes: Record<string, RouteEntry>): string {
   const header = ['route', 'wire', 'model', 'effort', 'in/M', 'out/M', 'price', 'fallback']
   const rows = [
@@ -638,7 +638,7 @@ export function routesTable(routes: Record<string, RouteEntry>): string {
       id,
       r.wire,
       r.model,
-      r.effort ?? '-',
+      r.effort ?? (r.rate && r.wire !== 'iu-decision' ? 'default' : '-'),
       num(r.rate?.inputPerM),
       num(r.rate?.outputPerM),
       priceCell(r.price),
