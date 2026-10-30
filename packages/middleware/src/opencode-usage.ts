@@ -30,7 +30,7 @@ function modelOf(message: OpenCodeMessage): string | null {
  * One agent step's usage from its session's messages: the source of truth for tokens, cost and tool calls
  * (S2: OpenCode emits no model or token spans). Converts OpenCode's additive counts to the runtime's raw provider
  * counts (`input` includes cache reads and writes, `output` includes reasoning, each also in its own bucket); the
- * Argo projection subtracts them again.
+ * usage projection subtracts them again.
  *
  * `cost` is the sum of the messages' reported cost, or null when any assistant message with tokens carries none:
  * the runtime then counts the step as unpriced instead of a silent undercount. `model` is the route's model when

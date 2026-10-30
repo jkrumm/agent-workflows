@@ -1,104 +1,276 @@
 import { hostname } from 'node:os'
 import type { Logger, ModelUsage, RunScores, TokenCounts } from '@agent-workflows/runtime'
-import { z } from 'zod'
+import { DatabaseError, Pool, type PoolClient } from 'pg'
 import { errorMessage, type JournalDb } from './db.ts'
 import { traceIdForRun } from './ids.ts'
-import { IU_KEY_IDS, type IuKeyId, isIuKeyId } from './iu-key.ts'
+import type { IuKeyId } from './iu-key.ts'
+import { isIuKeyId } from './iu-key.ts'
 import { hasPurpose } from './purpose.ts'
 
-/** Argo's `UsageRecordInputSchema` (argo `apps/api/src/routes/usage.ts`), copied verbatim; the contract of the port. */
-export const ArgoUsageRecordInput = z.object({
-  source: z.string(),
-  source_id: z.string(),
-  grain: z.string(),
-  ts: z.string().describe('ISO 8601 timestamp'),
-  model: z.string().nullable(),
-  model_norm: z.string().nullable(),
-  project: z.string().nullable(),
-  workspace: z.string().nullable().optional(),
-  sub_tool: z.string().nullable(),
-  machine: z.string().nullable(),
-  billing: z.string(),
-  account: z.string().nullable().optional(),
-  // Not in Argo's schema yet: Argo gains `iu_key` per the usage-tracker contract ("IU keys"). Until then its zod
-  // object strips it, so posting it is harmless; a missing field means `personal` on Argo's side.
-  iu_key: z.enum(IU_KEY_IDS).nullable().optional(),
-  outcome: z.string().default('ok'),
-  input_tokens: z.number().int().default(0),
-  output_tokens: z.number().int().default(0),
-  cache_read_tokens: z.number().int().default(0),
-  cache_write_tokens: z.number().int().default(0),
-  reasoning_tokens: z.number().int().default(0),
-  duration_ms: z.number().int().nullable(),
-  cost_usd: z.number().nullable(),
-  cost_source: z.string().default('none'),
-  raw: z.unknown().nullable(),
-  ingested_at: z.string().describe('Source-local ingest time, ISO 8601'),
-})
+/**
+ * One row of `usage.records` (usage-tracker `migrations/pg/0002_sessions_records.sql`, `docs/usage-schema.md`) as the
+ * platform writes it: one per finished step and model, grain `session` (a step is a whole agent loop of many requests,
+ * never one message). `cost_usd`, `cost_source`, `price_id`, `session_id` and `ingested_at` are not here: the database
+ * derives them (`usage.compute_cost`, the run's session row, the column default).
+ */
+export type UsageRow = {
+  source: 'agent-workflows'
+  /** `<runId>:<stepId>:<model>`; with `source` the table's unique key (machine is an attribute). */
+  source_id: string
+  grain: 'session'
+  ts: string
+  model_raw: string
+  model: string
+  /** The project when it is a plain SourceRoot directory slug; null otherwise. */
+  repo: string | null
+  project_raw: string | null
+  workspace: 'work' | 'private' | null
+  billing: 'api_key'
+  /** The label of the IU key that paid (`personal`, `athena-team`). */
+  api_key: IuKeyId
+  machine: string
+  outcome: 'ok' | 'error'
+  lane: 'agw_workflow'
+  lane_detail: { workflow: string; step: string; caller: string; purpose: string }
+  run_id: string
+  input_tokens: number
+  output_tokens: number
+  cache_read_tokens: number
+  cache_write_5m_tokens: number
+  cache_write_1h_tokens: number
+  reasoning_tokens: number
+  duration_ms: number | null
+  /** What agw measured for this step and model; null when it could not price the usage (never a placeholder 0). */
+  cost_reported_usd: number | null
+  raw: Record<string, unknown>
+}
 
-export type ArgoUsageRecord = z.input<typeof ArgoUsageRecordInput>
-
-/** Argo accepts 1–1000 records per call. */
-export const ARGO_MAX_BATCH = 1000
+/** The `usage.sessions` row of a run, derived from its records. */
+export type UsageSession = {
+  source_session_id: string
+  lane_detail: { workflow: string; caller: string; purpose: string }
+  api_key: IuKeyId
+  machine: string
+  model: string
+  repo: string | null
+  first_ts: string
+  last_ts: string
+}
 
 /**
- * A post Argo answered. `permanent`: Argo refused the rows themselves (400, 422), so retrying them as they are can
- * never succeed. Every other status (401/403/404 config or auth trouble, 408, 429, 5xx) and anything else a
- * transport throws (network, timeout, redirect) is transient: the rows are fine, the path to Argo is not.
+ * A write the database answered. `permanent`: it refused the rows themselves (SQLSTATE class 22 data exception, 23
+ * integrity constraint), so retrying them as they are can never succeed. Everything else (a refused connection, a
+ * timeout, authentication, a missing table, a deadlock) is transient: the rows are fine, the path to them is not.
  */
-export class ArgoPostError extends Error {
-  override name = 'ArgoPostError'
+export class UsageWriteError extends Error {
+  override name = 'UsageWriteError'
   constructor(
     message: string,
     readonly permanent: boolean,
-    readonly status: number | null = null,
+    readonly code: string | null = null,
   ) {
     super(message)
   }
 }
 
-/** Only a row refusal is permanent; auth, routing and availability problems are transient. */
-export function isRowRefusal(status: number): boolean {
-  return status === 400 || status === 422
+/** SQLSTATE classes of a row the database refuses: data exception (22) and integrity constraint violation (23). */
+const isRowRefusal = (code: string): boolean => code.startsWith('22') || code.startsWith('23')
+/** Authentication (28), an absent database (3D), a syntax or access error such as a missing table (42): a human fixes it. */
+const needsHuman = (code: string): boolean => /^(28|3D|42)/.test(code)
+
+/** The usage sink: throws when the database did not take the whole batch (rows and their sessions, atomically). */
+export type UsageTransport = { write(rows: UsageRow[]): Promise<void>; close?(): Promise<void> }
+
+const SOURCE = 'agent-workflows'
+
+/** Columns `ON CONFLICT` may change on a re-post; `WHERE ... IS DISTINCT FROM` skips the update when none did. */
+const RECORD_COLUMNS = [
+  'grain',
+  'ts',
+  'session_id',
+  'model_raw',
+  'model',
+  'repo',
+  'project_raw',
+  'workspace',
+  'billing',
+  'api_key',
+  'machine',
+  'outcome',
+  'lane',
+  'lane_detail',
+  'run_id',
+  'input_tokens',
+  'output_tokens',
+  'cache_read_tokens',
+  'cache_write_5m_tokens',
+  'cache_write_1h_tokens',
+  'reasoning_tokens',
+  'duration_ms',
+  'cost_reported_usd',
+  'cost_usd',
+  'cost_source',
+  'price_id',
+  'raw',
+] as const
+
+const RECORD_UPSERT = `
+  insert into usage.records (source, source_id, ${RECORD_COLUMNS.join(', ')})
+  select $1::text, $2::text, $3::text, $4::timestamptz,
+    (select s.id from usage.sessions s where s.source = $1::text and s.source_session_id = $5::text),
+    $6::text, $7::text, $8::text, $9::text, $10::text, $11::text, $12::text, $13::text, $14::text, $15::text,
+    $16::jsonb, $5::text, $17::bigint, $18::bigint, $19::bigint, $20::bigint, $21::bigint, $22::bigint,
+    $23::integer, $24::numeric, c.cost_usd, c.cost_source, c.price_id, $25::jsonb
+  from usage.compute_cost($7::text, $4::timestamptz, $17::bigint, $18::bigint, $19::bigint, $20::bigint, $21::bigint,
+    $22::bigint, 'session', $24::numeric) c
+  on conflict (source, source_id) do update set
+    ${RECORD_COLUMNS.map((c) => `${c} = excluded.${c}`).join(', ')}
+  where (${RECORD_COLUMNS.map((c) => `usage.records.${c}`).join(', ')})
+    is distinct from (${RECORD_COLUMNS.map((c) => `excluded.${c}`).join(', ')})`
+
+const SESSION_UPSERT = `
+  insert into usage.sessions (source, source_session_id, lane, lane_detail, billing, api_key, machine, model, repo, run_id,
+    first_ts, last_ts)
+  values ($1::text, $2::text, 'agw_workflow', $3::jsonb, 'api_key', $4::text, $5::text, $6::text, $7::text, $2::text,
+    $8::timestamptz, $9::timestamptz)
+  on conflict (source, source_session_id) do update set
+    lane_detail = excluded.lane_detail, billing = excluded.billing, api_key = excluded.api_key,
+    machine = excluded.machine, repo = excluded.repo, model = coalesce(usage.sessions.model, excluded.model),
+    first_ts = least(usage.sessions.first_ts, excluded.first_ts), last_ts = greatest(usage.sessions.last_ts, excluded.last_ts)
+  where (usage.sessions.lane_detail, usage.sessions.billing, usage.sessions.api_key, usage.sessions.machine,
+      usage.sessions.repo, usage.sessions.model, usage.sessions.first_ts, usage.sessions.last_ts)
+    is distinct from (excluded.lane_detail, excluded.billing, excluded.api_key, excluded.machine, excluded.repo,
+      coalesce(usage.sessions.model, excluded.model), least(usage.sessions.first_ts, excluded.first_ts),
+      greatest(usage.sessions.last_ts, excluded.last_ts))`
+
+/** One session per run: the earliest row names the model, the first and last `ts` bound it. */
+export function sessionsOf(rows: UsageRow[]): UsageSession[] {
+  const byRun = new Map<string, UsageRow[]>()
+  for (const row of rows) byRun.set(row.run_id, [...(byRun.get(row.run_id) ?? []), row])
+  return [...byRun].map(([runId, runRows]) => {
+    const sorted = [...runRows].sort((a, b) => a.ts.localeCompare(b.ts) || a.source_id.localeCompare(b.source_id))
+    const first = sorted[0] as UsageRow
+    return {
+      source_session_id: runId,
+      lane_detail: {
+        workflow: first.lane_detail.workflow,
+        caller: first.lane_detail.caller,
+        purpose: first.lane_detail.purpose,
+      },
+      api_key: first.api_key,
+      machine: first.machine,
+      model: first.model,
+      repo: first.repo,
+      first_ts: first.ts,
+      last_ts: (sorted.at(-1) as UsageRow).ts,
+    }
+  })
 }
 
-/** The usage ingest. Throws when Argo did not accept the batch; Argo upserts on `(source, source_id, machine)`. */
-export type ArgoTransport = { post(records: ArgoUsageRecord[]): Promise<void> }
-
-const LOOPBACK = new Set(['localhost', '127.0.0.1', '[::1]', '::1'])
+async function writeBatch(client: PoolClient, rows: UsageRow[]): Promise<void> {
+  await client.query('begin')
+  try {
+    for (const s of sessionsOf(rows)) {
+      await client.query(SESSION_UPSERT, [
+        SOURCE,
+        s.source_session_id,
+        JSON.stringify(s.lane_detail),
+        s.api_key,
+        s.machine,
+        s.model,
+        s.repo,
+        s.first_ts,
+        s.last_ts,
+      ])
+    }
+    for (const r of rows) {
+      await client.query(RECORD_UPSERT, [
+        r.source,
+        r.source_id,
+        r.grain,
+        r.ts,
+        r.run_id,
+        r.model_raw,
+        r.model,
+        r.repo,
+        r.project_raw,
+        r.workspace,
+        r.billing,
+        r.api_key,
+        r.machine,
+        r.outcome,
+        r.lane,
+        JSON.stringify(r.lane_detail),
+        r.input_tokens,
+        r.output_tokens,
+        r.cache_read_tokens,
+        r.cache_write_5m_tokens,
+        r.cache_write_1h_tokens,
+        r.reasoning_tokens,
+        r.duration_ms,
+        r.cost_reported_usd,
+        JSON.stringify(r.raw),
+      ])
+    }
+    await client.query('commit')
+  } catch (err) {
+    await client.query('rollback').catch(() => undefined)
+    throw err
+  }
+}
 
 /**
- * `POST <url>/usage/records` with the bearer `API_SECRET`, as email-gateway and usage-tracker do. Refuses a
- * non-https URL unless it is loopback: the bearer must never cross a network in clear text.
+ * Writes into the `usage` schema of the shared database (`USAGE_PG_URL`) on its own small pool: the `usage` role has a
+ * connection limit shared with usage-tracker. One transaction per batch: the run's session first, then its records,
+ * each an upsert on the table's unique key that changes nothing when nothing differs, so a re-post is free. Cost comes
+ * from `usage.compute_cost` in the same statement (agw's measured cost wins as the reported one, else the price tables).
+ * The connection string is never logged.
  */
-export function httpArgoTransport(options: { url: string; token: string; timeoutMs?: number }): ArgoTransport {
-  const base = new URL(options.url)
-  if (base.protocol !== 'https:' && !(base.protocol === 'http:' && LOOPBACK.has(base.hostname))) {
-    throw new Error(`ARGO_URL must be https (or http on loopback), got ${base.protocol}//${base.hostname}`)
-  }
-  const endpoint = `${options.url.replace(/\/+$/, '')}/usage/records`
+export function pgUsageTransport(options: {
+  connectionString: string
+  logger: Logger
+  /** Default 2. */
+  poolSize?: number
+}): UsageTransport {
+  const pool = new Pool({
+    connectionString: options.connectionString,
+    max: options.poolSize ?? 2,
+    application_name: 'agw-usage',
+    connectionTimeoutMillis: 10_000,
+    query_timeout: 20_000,
+    statement_timeout: 20_000,
+  })
+  pool.on('error', (err) => options.logger.warn('usage pool: idle connection error', { error: err.message }))
   return {
-    async post(records) {
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: { authorization: `Bearer ${options.token}`, 'content-type': 'application/json' },
-        body: JSON.stringify({ records }),
-        signal: AbortSignal.timeout(options.timeoutMs ?? 15_000),
-        // A redirect would re-send the bearer to wherever it points.
-        redirect: 'error',
-      })
-      if (res.ok) return
-      const body = (await res.text()).slice(0, 300)
-      throw new ArgoPostError(`argo usage ingest: HTTP ${res.status} ${body}`, isRowRefusal(res.status), res.status)
+    async write(rows) {
+      if (rows.length === 0) return
+      let client: PoolClient | undefined
+      let broken = false
+      try {
+        client = await pool.connect()
+        await writeBatch(client, rows)
+      } catch (err) {
+        // A database answer carries a SQLSTATE; a refused connection or a timeout is a plain system error, and the connection is dropped.
+        broken = !(err instanceof DatabaseError)
+        if (err instanceof DatabaseError && err.code) {
+          throw new UsageWriteError(`usage write: ${err.code} ${err.message}`, isRowRefusal(err.code), err.code)
+        }
+        throw err
+      } finally {
+        client?.release(broken)
+      }
     },
+    close: () => pool.end(),
   }
 }
 
-/** `ARGO_URL` (base, e.g. `https://argo.<your-domain>/api`) and `ARGO_API_SECRET`; null when either is unset. */
-export function argoTransportFromEnv(env: Record<string, string | undefined> = process.env): ArgoTransport | null {
-  const url = env.ARGO_URL?.trim()
-  const token = env.ARGO_API_SECRET?.trim()
-  return url && token ? httpArgoTransport({ url, token }) : null
+/** `USAGE_PG_URL`; null when unset (the usage outbox is then off and steps wait in the journal). */
+export function usageTransportFromEnv(
+  logger: Logger,
+  env: Record<string, string | undefined> = process.env,
+): UsageTransport | null {
+  const url = env.USAGE_PG_URL?.trim()
+  return url ? pgUsageTransport({ connectionString: url, logger }) : null
 }
 
 /** One finished step of a finished run, as the outbox reads it. */
@@ -122,7 +294,7 @@ export type OutboxStep = {
     /** `runs.caller`: who admitted the run; null when the host itself started it (see {@link callerOf}). */
     caller?: string | null
     project?: string | null
-    /** `work` or `private` as the caller declared it; null lets Argo classify from the project. */
+    /** `work` or `private` as the caller declared it; null when it did not. */
     workspace?: string | null
     /** The label of the IU key the host that admitted the run held; rows stored before it read `personal`. */
     iuKey: IuKeyId
@@ -138,7 +310,7 @@ export type OutboxStep = {
   }
 }
 
-export type ArgoRowOptions = { machine: string; billing?: string; now?: Date }
+export type UsageRowOptions = { machine: string }
 
 /** The caller of a run no door admitted: the eval harness (`eval`, `drift`) or the host's own jobs (`host`). */
 const HARNESS_PURPOSES: ReadonlySet<string> = new Set(['eval', 'drift'])
@@ -152,16 +324,17 @@ export function callerOf(run: { caller?: string | null; purpose: string }): stri
 }
 
 /**
- * Raw provider counts → Argo's additive contract: `input` fresh uncached input only (minus cache reads and cache
- * writes), `output` without reasoning (Argo adds `reasoning` on top). Provider usage is not additive; skipping
- * this double-counts reasoning and cache.
+ * Raw provider counts → the additive contract of `usage.records`: `input` fresh uncached input only (minus cache reads
+ * and cache writes), `output` without reasoning (`reasoning_tokens` is billed on top). Provider usage is not additive;
+ * skipping this double-counts reasoning and cache. agw cannot split cache writes by TTL, so all of it is 5-minute.
  */
 export function additiveTokens(tokens: TokenCounts) {
   return {
     input_tokens: Math.max(0, tokens.input - tokens.cacheRead - tokens.cacheWrite),
     output_tokens: Math.max(0, tokens.output - tokens.reasoning),
     cache_read_tokens: tokens.cacheRead,
-    cache_write_tokens: tokens.cacheWrite,
+    cache_write_5m_tokens: tokens.cacheWrite,
+    cache_write_1h_tokens: 0,
     reasoning_tokens: tokens.reasoning,
   }
 }
@@ -208,37 +381,48 @@ function perModel(step: OutboxStep): ModelRow[] {
   return keep(rest) ? [...split, rest] : split
 }
 
-/** One Argo `usage_record` per step and model (concept §5); none for a step that spent nothing. */
-export function argoRowsForStep(step: OutboxStep, options: ArgoRowOptions): ArgoUsageRecord[] {
+/** A project is a SourceRoot repo only when it is a plain directory slug (no path, no leading dot). */
+const REPO_SLUG = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
+
+/**
+ * `usage.records.repo`: the project when it is a plain slug and the run is not declared `work` (a work project lives
+ * under IuRoot, whose namespace `iu/<dir>` is usage-tracker's to name); otherwise null. The raw string stays in `project_raw`.
+ */
+export function repoOf(project: string | null | undefined, workspace: string | null | undefined): string | null {
+  if (!project || workspace === 'work') return null
+  return REPO_SLUG.test(project) ? project : null
+}
+
+/** One `usage.records` row per step and model (concept §5); none for a step that spent nothing. */
+export function usageRowsForStep(step: OutboxStep, options: UsageRowOptions): UsageRow[] {
   const { run } = step
   if (!hasPurpose(run.purpose)) throw new Error(`run ${step.runId}: a run without a purpose cannot exist`)
   const outcome = step.status !== 'done' || run.errorKind === 'invalid_output' ? 'error' : 'ok'
   const durationMs = step.finishedAt ? Math.max(0, step.finishedAt.getTime() - step.startedAt.getTime()) : null
-  const ingestedAt = (options.now ?? new Date()).toISOString()
-  const billing = options.billing ?? 'iu'
   const caller = callerOf(run)
   return perModel(step).map(({ model, ...usage }) => ({
-    source: 'agent-workflows',
+    source: SOURCE,
     source_id: `${step.runId}:${step.stepId}:${model}`,
-    grain: 'step',
+    grain: 'session',
     ts: step.startedAt.toISOString(),
+    // agw model ids are already normalized: the raw and the normalized string are one.
+    model_raw: model,
     model,
-    model_norm: model,
-    // Argo groups "Projects" by `project`: the repo the caller worked in, else the caller itself (iris, hermes, agw).
-    project: run.project ?? caller,
-    // Declared by the caller (its working copy's location); absent, Argo classifies from the project name.
-    ...(run.workspace === 'work' || run.workspace === 'private' ? { workspace: run.workspace } : {}),
-    sub_tool: run.workflowId,
+    repo: repoOf(run.project, run.workspace),
+    project_raw: run.project ?? null,
+    workspace: run.workspace === 'work' || run.workspace === 'private' ? run.workspace : null,
+    // Every platform route is IU API; `api_key` names the key that paid, never the key.
+    billing: 'api_key',
+    api_key: run.iuKey,
     machine: options.machine,
-    billing,
-    account: null,
-    // Top level only: never in `raw`, never in `account` (the Max account id).
-    iu_key: billing === 'iu' ? run.iuKey : null,
     outcome,
+    lane: 'agw_workflow',
+    // The run has no route of its own to name (routes belong to agents); `caller` is who asked, `purpose` why.
+    lane_detail: { workflow: run.workflowId, step: step.stepId, caller, purpose: run.purpose },
+    run_id: step.runId,
     ...additiveTokens(usage.tokens),
     duration_ms: durationMs,
-    cost_usd: usage.cost,
-    cost_source: usage.cost === null ? 'none' : 'reported',
+    cost_reported_usd: usage.cost,
     raw: {
       runId: step.runId,
       stepId: step.stepId,
@@ -257,7 +441,6 @@ export function argoRowsForStep(step: OutboxStep, options: ArgoRowOptions): Argo
       ...finalScoreFields(run.scores),
       friction: run.friction ?? null,
     },
-    ingested_at: ingestedAt,
   }))
 }
 
@@ -349,17 +532,12 @@ function toOutboxStep(row: OutboxRow): OutboxStep {
 }
 
 export type OutboxOptions = {
-  /** Its own pool (not the record's), so a slow Argo can never starve run-path writes. */
+  /** Its own pool (not the record's), so a slow usage database can never starve run-path writes. */
   db: JournalDb
-  transport: ArgoTransport
+  transport: UsageTransport
   logger: Logger
-  /**
-   * Argo's `machine`, part of its upsert key `(source, source_id, machine)`: it must be stable across restarts or
-   * a re-post lands as a second row. Default `AGW_MACHINE`; unset, the host name with a logged warning.
-   */
+  /** The row's `machine` attribute (not part of its key). Default `AGW_MACHINE`; unset, the host name with a logged warning. */
   machine?: string
-  /** Default `iu` (every platform route is IU API, S2 gap 11). */
-  billing?: string
   /** Steps per claim. Default 200. */
   batchSize?: number
   /** Backoff after a transient failure: first delay, doubled per failure up to `maxMs`. Default 5 s / 5 min. */
@@ -368,17 +546,17 @@ export type OutboxOptions = {
   postTimeoutMs?: number
   /** How long a claim holds; renewed before every chunk; an expired claim (a crashed flusher) is claimable again. Default 2 min. */
   claimTtlMs?: number
-  /** Records per post. Default (and Argo's maximum) 1000. */
+  /** Rows per write, one transaction each. Default 500. */
   chunkSize?: number
   now?: () => number
 }
 
 export type FlushResult = {
-  /** Argo rows accepted. */
+  /** Rows written. */
   posted: number
   /** Steps marked synced. */
   marked: number
-  /** Steps set aside with `argo_error`: a row that cannot be built or that Argo refuses (400, 422). */
+  /** Steps set aside with `argo_error`: a row that cannot be built or that the database refuses (SQLSTATE 22, 23). */
   quarantined: number
   /** Why nothing was tried: still backing off after a transient failure. */
   skipped: 'backoff' | null
@@ -386,7 +564,7 @@ export type FlushResult = {
   error: string | null
 }
 
-type Claimed = { step: OutboxStep; records: ArgoUsageRecord[] }
+type Claimed = { step: OutboxStep; records: UsageRow[] }
 type StepKey = { runId: string; stepId: string }
 
 class Transient extends Error {}
@@ -395,18 +573,19 @@ const STEP_COLUMNS = `run_id, step_id, status, model, tokens_input, tokens_outpu
   tokens_cache_write, tokens_reasoning, cost, tool_calls, unpriced_calls, usage_by_model, started_at, finished_at`
 
 /**
- * Posts the usage of finished steps to Argo once their run's record is written (`runPost` delivered). No
- * transaction spans a post:
+ * Writes the usage of finished steps into `usage.records` once their run's record is written (`runPost` delivered). No
+ * transaction of the journal spans a write:
  * 1. claim a batch in one statement (`for update skip locked`, a random `argo_claim` token and an expiry), commit;
- * 2. build and validate the rows, post them outside any transaction;
+ * 2. build the rows, write them outside any journal transaction;
  * 3. mark the batch synced where the token still matches, in a second short statement.
- * Concurrent flushers never post the same claimed step; a crashed flusher's claim expires; a crash after the post
- * re-posts, which Argo's upsert absorbs. A run scored after its steps synced (regression, drift) puts them back into
- * the outbox (the runtime clears `argo_synced_at` and any claim with the score), so `raw.scores` is re-posted. A transient failure releases the claim and backs off. A permanent one (a
- * row that cannot be built, fails Argo's schema or gets a 400/422) quarantines only that step (`argo_error`, logged,
- * counted); the rest keep flowing.
+ * Concurrent flushers never write the same claimed step; a crashed flusher's claim expires; a crash after the write
+ * re-writes, which the upsert absorbs. A run scored after its steps synced (regression, drift) puts them back into
+ * the outbox (the runtime clears `argo_synced_at` and any claim with the score), so `raw.scores` is rewritten. A
+ * transient failure releases the claim and backs off. A permanent one (a row that cannot be built or that the database
+ * refuses) quarantines only that step (`argo_error`, logged, counted); the rest keep flowing. The `argo_*` column names
+ * are the journal's, from before the sink moved.
  */
-export class ArgoOutbox {
+export class UsageOutbox {
   private failures = 0
   private nextAt = 0
   private inflight: Promise<FlushResult> | null = null
@@ -421,7 +600,7 @@ export class ArgoOutbox {
   constructor(private readonly options: OutboxOptions) {
     const machine = options.machine ?? process.env.AGW_MACHINE?.trim()
     if (!machine) {
-      options.logger.warn('argo outbox: AGW_MACHINE unset; using the host name as the Argo machine id', {
+      options.logger.warn('usage outbox: AGW_MACHINE unset; using the host name as the machine id', {
         machine: hostname(),
       })
     }
@@ -430,9 +609,9 @@ export class ArgoOutbox {
     this.postTimeoutMs = options.postTimeoutMs ?? 30_000
     this.claimTtlMs = options.claimTtlMs ?? 120_000
     if (this.claimTtlMs <= this.postTimeoutMs * 2)
-      throw new Error('argo outbox: claimTtlMs must exceed 2× postTimeoutMs')
+      throw new Error('usage outbox: claimTtlMs must exceed 2× postTimeoutMs')
     this.now = options.now ?? Date.now
-    this.chunkSize = Math.min(ARGO_MAX_BATCH, Math.max(1, options.chunkSize ?? ARGO_MAX_BATCH))
+    this.chunkSize = Math.max(1, options.chunkSize ?? 500)
   }
 
   flush(): Promise<FlushResult> {
@@ -485,11 +664,11 @@ export class ArgoOutbox {
         const delay = Math.min(maxMs, baseMs * 2 ** (this.failures - 1))
         this.nextAt = this.now() + delay
         result.error = errorMessage(err)
-        // A 4xx that is not a row refusal (auth, a wrong URL) needs a human; an outage only needs time.
-        const level = err instanceof ArgoPostError && err.status !== null && err.status < 500 ? 'error' : 'warn'
-        this.options.logger[level]('argo outbox: flush failed; retried after backoff', {
+        // An answer that is no row refusal and no outage (authentication, a missing table) needs a human; an outage only needs time.
+        const level = err instanceof UsageWriteError && err.code !== null && needsHuman(err.code) ? 'error' : 'warn'
+        this.options.logger[level]('usage outbox: flush failed; retried after backoff', {
           error: result.error,
-          status: err instanceof ArgoPostError ? err.status : null,
+          code: err instanceof UsageWriteError ? err.code : null,
           failures: this.failures,
           retryInMs: delay,
         })
@@ -529,25 +708,16 @@ export class ArgoOutbox {
     return rows.map(toOutboxStep)
   }
 
-  /** The step's rows, validated against Argo's schema; a message when they cannot be built (permanent). */
-  private build(step: OutboxStep): ArgoUsageRecord[] | string {
+  /** The step's rows; a message when they cannot be built (permanent). */
+  private build(step: OutboxStep): UsageRow[] | string {
     try {
-      const records = argoRowsForStep(step, {
-        machine: this.machine,
-        billing: this.options.billing,
-        now: new Date(this.now()),
-      })
-      for (const record of records) {
-        const parsed = ArgoUsageRecordInput.safeParse(record)
-        if (!parsed.success) return `${record.source_id}: ${parsed.error.message.slice(0, 300)}`
-      }
-      return records
+      return usageRowsForStep(step, { machine: this.machine })
     } catch (err) {
       return errorMessage(err)
     }
   }
 
-  /** Posts the batch; on a permanent refusal, step by step so only the bad ones are quarantined. */
+  /** Writes the batch; on a permanent refusal, step by step so only the bad ones are quarantined. */
   private async send(token: string, live: Claimed[], result: FlushResult) {
     try {
       await this.post(
@@ -556,29 +726,29 @@ export class ArgoOutbox {
       )
       await this.mark(token, live, result)
     } catch (err) {
-      if (!(err instanceof ArgoPostError && err.permanent)) throw err
+      if (!(err instanceof UsageWriteError && err.permanent)) throw err
       for (const one of live) {
         try {
           await this.post(token, one.records)
           await this.mark(token, [one], result)
         } catch (stepErr) {
-          if (!(stepErr instanceof ArgoPostError && stepErr.permanent)) throw stepErr
+          if (!(stepErr instanceof UsageWriteError && stepErr.permanent)) throw stepErr
           result.quarantined += await this.quarantine(token, [one.step], errorMessage(stepErr))
         }
       }
     }
   }
 
-  private async post(token: string, records: ArgoUsageRecord[]) {
+  private async post(token: string, records: UsageRow[]) {
     for (let i = 0; i < records.length; i += this.chunkSize) {
       if (i > 0) await this.renew(token)
       let timer: ReturnType<typeof setTimeout> | undefined
       try {
         await Promise.race([
-          this.options.transport.post(records.slice(i, i + this.chunkSize)),
+          this.options.transport.write(records.slice(i, i + this.chunkSize)),
           new Promise<never>((_, reject) => {
             timer = setTimeout(
-              () => reject(new Transient(`argo post timed out after ${this.postTimeoutMs} ms`)),
+              () => reject(new Transient(`usage write timed out after ${this.postTimeoutMs} ms`)),
               this.postTimeoutMs,
             )
           }),
@@ -609,8 +779,8 @@ export class ArgoOutbox {
     result.posted += done.reduce((sum, c) => sum + c.records.length, 0)
     result.marked += rowCount ?? 0
     if ((rowCount ?? 0) < keys.length) {
-      // The claim expired and another flusher took (and will post) these steps; Argo's upsert absorbs the re-post.
-      this.options.logger.warn('argo outbox: claim lost before mark; those steps are posted again', {
+      // The claim expired and another flusher took (and will write) these steps; the upsert absorbs the re-write.
+      this.options.logger.warn('usage outbox: claim lost before mark; those steps are written again', {
         claimed: keys.length,
         marked: rowCount ?? 0,
       })
@@ -624,7 +794,7 @@ export class ArgoOutbox {
        where s.run_id = k.run_id and s.step_id = k.step_id and s.argo_claim = $4`,
       [steps.map((k) => k.runId), steps.map((k) => k.stepId), error.slice(0, 1000), token],
     )
-    this.options.logger.error('argo outbox: step quarantined (permanent failure); the rest keep flowing', {
+    this.options.logger.error('usage outbox: step quarantined (permanent failure); the rest keep flowing', {
       steps: steps.map((k) => `${k.runId}:${k.stepId}`),
       error,
     })
@@ -638,7 +808,7 @@ export class ArgoOutbox {
         token,
       ])
       .catch((err: unknown) =>
-        this.options.logger.warn('argo outbox: claim release failed; it expires', { error: errorMessage(err) }),
+        this.options.logger.warn('usage outbox: claim release failed; it expires', { error: errorMessage(err) }),
       )
   }
 }

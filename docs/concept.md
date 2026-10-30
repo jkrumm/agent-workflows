@@ -4,6 +4,7 @@
 
 **Where to look:** workflow shape §3, middleware §4, porting a skill or a Hermes path §10, phase order §11.
 
+> **v3.11, 2026-10-30:** §5 usage projection as built for the shared usage schema: the outbox writes `usage.records` / `usage.sessions` in Postgres (`USAGE_PG_URL`) instead of posting to Argo's HTTP `POST /usage/records`; the outbox, claim and quarantine machinery are unchanged, the sink is the seam. No decision reversed (N6 holds: the platform is still the system of record, Argo just no longer receives usage).
 > **v3.10, 2026-10-29:** capabilities may be `internal`: callable by workflows in-process, not exposed over HTTP or the CLI (first: `overview.classify`).
 > **v3.9, 2026-10-29:** §12.6 flipped by the owner: `dispatch` is unused, so agent-gateway retires completely in P6 (its `agw-legacy` CLI included) instead of shrinking to `dispatch`.
 > **v3.8, 2026-10-29:** P4a as built: audio in its own process with an OpenAI-compatible TTS/STT door (per-caller tokens), `image`, `podcast` and `triage` ported; workflows, eval suites and routes register by directory. Owner directions: review never runs on Max (agent-gateway's Max fallback removed, its review refuses), review OCR off unless `AGW_REVIEW_OCR=1`, routes are not pinned to EU. No decision reversed.
@@ -140,10 +141,10 @@ The **fingerprint** is a hash over everything that can change behaviour:
 
 "Did the change help?" becomes a query: score, cost, latency, tokens and tool calls grouped by fingerprint.
 
-**Argo projection (S2).** One Argo `usage_record` row per agent step and model: `source` `agent-workflows`, `source_id` `<runId>:<stepId>:<model>`, `sub_tool` the workflow id, step start as `ts`; run-level facts (fingerprint, scores, friction, trace id) ride in `raw`. Two rules the projection must hold:
+**Usage projection (S2, sink moved in v3.11).** One `usage.records` row per agent step and model in the shared usage schema (usage-tracker owns the DDL: `migrations/pg`, `docs/usage-schema.md`): `source` `agent-workflows`, `source_id` `<runId>:<stepId>:<model>`, grain `session`, lane `agw_workflow` with `lane_detail` `{workflow, step, caller, purpose}`, step start as `ts`, plus one `usage.sessions` row per run; run-level facts (fingerprint, scores, friction, trace id) ride in `raw`. Cost is `cost_reported_usd` (what agw measured, NULL when unpriced) and the database's `usage.compute_cost` makes it final. Two rules the projection must hold:
 
-- **Tokens are normalised to Argo's additive contract** before the row (input minus cache read, output minus reasoning); provider usage is not additive, and getting it wrong double-counts reasoning.
-- **Rows leave through an outbox** (`argo_synced_at` on the step row, retried by the host), because the platform is the system of record and Argo may be down. No usage-tracker collector reads the platform's OpenCode store (P4 order).
+- **Tokens are normalised to the additive contract** before the row (input minus cache read and cache write, output minus reasoning); provider usage is not additive, and getting it wrong double-counts reasoning.
+- **Rows leave through an outbox** (`argo_synced_at` on the step row, retried by the host), because the platform is the system of record and the usage database may be down. Both tables are upserted on their unique keys, so a re-post (after a crash, or a rescore) is free. No usage-tracker collector reads the platform's OpenCode store (P4 order).
 
 ## 6. Evals
 
@@ -459,3 +460,14 @@ One entry per phase: what we learned, what changed on this page, and why.
   review off Max, no argo bridge, dispatch unused) each landed as one small change; the plan header kept
   them standing.
 - **Does the page hold?** Yes, as v3.10. The factory re-plan starts from `docs/factory-input.md`.
+
+### Usage sink moved to the shared usage schema, 2026-10-30
+
+- **Learned.** The outbox kept its shape: only the transport seam changed (HTTP to Argo to a Postgres
+  transaction), so claim, backoff and quarantine needed no change. Session grain is the honest one for a
+  step; the database prices a row (`usage.compute_cost`), so agw's measured cost is only the reported
+  value, NULL when unknown. A step the database refuses (SQLSTATE 22/23) is the new permanent case.
+- **Changed.** v3.11: §5 names `usage.records` / `usage.sessions` as the sink; `ArgoOutbox` is `UsageOutbox`,
+  `ARGO_URL`/`ARGO_API_SECRET` no longer carry usage (Argo keeps the overview push and the podcast notice),
+  `USAGE_PG_URL` is built by `scripts/launch.sh`. The journal's `argo_*` column names stay (a rename needs a runtime migration).
+- **Does the page hold?** Yes, as v3.11.

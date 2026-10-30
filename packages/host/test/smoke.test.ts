@@ -43,10 +43,10 @@ test('smoke.ping end to end: llm.title through the registry, usage on the step, 
     'run record',
   )
   await t.platform?.outbox?.flush()
-  const stored = [...t.argo.stored.values()].filter((r) => r.source_id.startsWith(`${body.runId}:title`))
+  const stored = [...t.usage.stored.values()].filter((r) => r.source_id.startsWith(`${body.runId}:title`))
   expect(stored).toHaveLength(1)
   expect(stored[0]).toMatchObject({
-    sub_tool: 'smoke.ping',
+    lane_detail: { workflow: 'smoke.ping' },
     machine: 'test-machine',
     input_tokens: 40,
     output_tokens: 6,

@@ -1,5 +1,5 @@
 // A capability called over the host's HTTP door runs as a one-step run (concept N6): journal, record, purpose,
-// fingerprint, telemetry, the Argo outbox and the limits apply to it like to any workflow. In-process calls
+// fingerprint, telemetry, the usage outbox and the limits apply to it like to any workflow. In-process calls
 // (`registry.call` from a workflow step) stay plain calls; their usage belongs to the calling step.
 import { createHash } from 'node:crypto'
 import { type Capability, CapabilityCallError, ERRORS } from '@agent-workflows/capabilities'

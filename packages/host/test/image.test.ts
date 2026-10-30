@@ -139,9 +139,9 @@ describe('image end to end', () => {
       'run record',
     )
     await t.platform?.outbox?.flush()
-    const stored = [...t.argo.stored.values()].filter((r) => r.source_id.startsWith(`${body.runId}:generate`))
+    const stored = [...t.usage.stored.values()].filter((r) => r.source_id.startsWith(`${body.runId}:generate`))
     expect(stored).toHaveLength(1)
-    expect(stored[0]).toMatchObject({ sub_tool: 'image', output_tokens: 1000 })
+    expect(stored[0]).toMatchObject({ lane_detail: { workflow: 'image' }, output_tokens: 1000 })
   })
 
   test('an edit: reference image paths become a multipart call on the quality model, reported as an edit', async () => {

@@ -61,9 +61,13 @@ test('a direct llm.title call answers as before and leaves a done cap.llm.title 
   expect(steps[0]).toMatchObject({ step_id: 'call', kind: 'code', status: 'done', tokens_input: '50' })
 
   await t.platform?.outbox?.flush()
-  const stored = [...t.argo.stored.values()].filter((r) => r.source_id.startsWith(`${runId}:call:`))
+  const stored = [...t.usage.stored.values()].filter((r) => r.source_id.startsWith(`${runId}:call:`))
   expect(stored).toHaveLength(1)
-  expect(stored[0]).toMatchObject({ sub_tool: 'cap.llm.title', machine: 'test-machine', input_tokens: 40 })
+  expect(stored[0]).toMatchObject({
+    lane_detail: { workflow: 'cap.llm.title' },
+    machine: 'test-machine',
+    input_tokens: 40,
+  })
 })
 
 test('an upstream failure answers with the same error and leaves the run failed', async () => {

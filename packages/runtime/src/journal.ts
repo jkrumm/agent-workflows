@@ -45,7 +45,7 @@ export type RunRow = {
   caller: string | null
   /** The repo the caller works in, as a bare name; null when none was declared. */
   project: string | null
-  /** `work` or `private`, declared by the caller; null lets Argo classify from the project. */
+  /** `work` or `private`, declared by the caller; null when the caller did not say. */
   workspace: string | null
 }
 
@@ -568,7 +568,7 @@ export class Journal {
          where id = $1 and status in ('done', 'failed') ${onlyUnscored ? unscored : ''}
          returning id
        ), resync as (
-         -- The Argo rows carry the scores in raw: steps already posted (or being posted) go back into the outbox,
+         -- The usage rows carry the scores in raw: steps already written (or being written) go back into the outbox,
          -- and a claim in flight is dropped so its mark misses and the next flush posts the scored rows.
          update ${this.steps} s set argo_synced_at = null, argo_claim = null, argo_claimed_until = null
          from scored where s.run_id = scored.id and s.argo_error is null

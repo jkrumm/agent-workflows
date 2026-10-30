@@ -12,7 +12,7 @@ export interface TitleCaller {
 
 /**
  * The smallest workflow that exercises the whole path: HTTP, journal, a capability call through the registry and
- * priced usage on the step (so the run reaches Argo). `make verify` and the live proof run it as `agw smoke ping`.
+ * priced usage on the step (so the run reaches the usage schema). `make verify` and the live proof run it as `agw smoke ping`.
  */
 export function createSmokePing(registry: TitleCaller): HostWorkflow {
   const workflow = defineWorkflow({

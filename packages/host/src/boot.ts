@@ -213,7 +213,7 @@ export type ProcessRoute = (request: Request, url: URL) => Promise<Response> | u
 
 /**
  * One platform process (concept §8): its name, its workflows, and what it adds to the shared core. The core is the
- * same for every process: the journal and the platform middleware (run record, fingerprint, telemetry, Argo outbox),
+ * same for every process: the journal and the platform middleware (run record, fingerprint, telemetry, usage outbox),
  * the runaway cap and the wallet gate, the bearer-authenticated API with its OpenAPI and `x-cli`, `/health` with the
  * version, and the OpenCode agent host built lazily on the first agent step.
  */
@@ -335,7 +335,7 @@ export async function bootProcess(
       iuKey: config.iuKey,
       friction: frictionSource,
       telemetry: { exporter: exporterFor(env), serviceName: definition.serviceName },
-      argo: { machine: config.machine },
+      usage: { machine: config.machine },
     })
     closers.push(() => platform.close())
     owned = options.agentHost

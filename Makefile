@@ -9,7 +9,8 @@ help:
 	@echo "make verify  prove the deployment: the pinned OpenCode and react-doctor present, both healths at the sha, agw smoke ping and audio ping with their journal rows, the door's auth"
 
 # docs/spikes/** is excluded from every tool (see biome.json, .oxlintrc.json, tsconfig.json, bunfig.toml).
-# Tests need Postgres via AGW_TEST_PG_URL; unset on the mini, it is built from .env.test.tpl through secrets-run.
+# Tests need Postgres via AGW_TEST_PG_URL; unset on the mini, it is built from .env.test.tpl through secrets-run, together with
+# USAGE_TEST_PG_URL (admin, for the usage schema suite's scratch database; that suite skips visibly without it).
 # The test timeout scales with host load, sampled as each test file starts (bunfig.toml preload, packages/testing); tests that
 # pass their own timeout keep it.
 check:
@@ -28,7 +29,9 @@ check:
 		bun test --isolate; \
 	else \
 		secrets-run run --env-file=.env.test.tpl -- sh -c \
-			'AGW_TEST_PG_URL="postgres://agent_workflows:$$(bun -e "process.stdout.write(encodeURIComponent(process.env.AGW_TEST_PG_PASSWORD))")@127.0.0.1:5432/agent_workflows" exec bun test --isolate'; \
+			'AGW_TEST_PG_URL="postgres://agent_workflows:$$(bun -e "process.stdout.write(encodeURIComponent(process.env.AGW_TEST_PG_PASSWORD))")@127.0.0.1:5432/agent_workflows"; \
+			USAGE_TEST_PG_URL="postgres://$$(bun -e "process.stdout.write(encodeURIComponent(process.env.USAGE_TEST_PG_USER))"):$$(bun -e "process.stdout.write(encodeURIComponent(process.env.USAGE_TEST_PG_PASSWORD))")@127.0.0.1:5432/postgres"; \
+			export AGW_TEST_PG_URL USAGE_TEST_PG_URL; exec bun test --isolate'; \
 	fi
 	@echo "==> check passed"
 

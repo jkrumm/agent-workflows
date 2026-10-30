@@ -69,7 +69,7 @@ function repoOf(checkout: string, dotGit: string): { name: string; root: string 
  * Who this CLI call is for, sent as headers (the host trusts them only from the API secret): `x-agw-caller` from
  * `AGW_CALLER`, else `claude-code` inside a Claude Code session (`CLAUDECODE=1`), else `cli`; `x-agw-project` the name
  * of the git repo the cwd is in, and `x-agw-workspace` `work` or `private` from where that working copy lives
- * (`IuRoot` or `SourceRoot`; else none and Argo classifies the name). Only the repo's name and that one word leave the
+ * (`IuRoot` or `SourceRoot`; else none). Only the repo's name and that one word leave the
  * machine, never a path. Hermes sets no marker in its terminal environment, so it names itself with `AGW_CALLER`.
  */
 export function callerHeaders(env: Env, cwd: string): Record<string, string> {

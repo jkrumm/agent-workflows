@@ -1,43 +1,39 @@
 import { InMemorySpanExporter, type ReadableSpan } from '@opentelemetry/sdk-trace'
-import { z } from 'zod'
 import {
-  ArgoPostError,
-  type ArgoTransport,
-  type ArgoUsageRecord,
-  ArgoUsageRecordInput,
   type FingerprintInputs,
   type FingerprintSource,
   type Platform,
   type PlatformOptions,
   platformMiddleware,
+  type UsageRow,
+  type UsageTransport,
+  UsageWriteError,
 } from '../src/index.ts'
 import { captureLogger, PG_URL } from '../../runtime/test/support/pg.ts'
 
 export { captureLogger, freshSchema, inspector, PG_URL, testRuntime, until } from '../../runtime/test/support/pg.ts'
 
-const ArgoBody = z.object({ records: z.array(ArgoUsageRecordInput).min(1).max(1000) })
-
-/** Argo's usage ingest in memory: validates like Argo, upserts on (source, source_id, machine), can be down. */
-export class FakeArgo implements ArgoTransport {
-  readonly stored = new Map<string, ArgoUsageRecord>()
-  /** Accepted posts per source_id: a duplicate post shows here even though the upsert would hide it. */
+/** The usage database in memory: upserts on (source, source_id), can be down, can refuse rows, can hang. */
+export class FakeUsage implements UsageTransport {
+  readonly stored = new Map<string, UsageRow>()
+  /** Accepted writes per source_id: a duplicate write shows here even though the upsert would hide it. */
   readonly accepted = new Map<string, number>()
   down = false
-  /** Posts never answer (a wedged Argo); `inflight` counts the hanging ones. */
+  /** Writes never answer (a wedged database); `inflight` counts the hanging ones. */
   hang = false
   inflight = 0
-  /** Records Argo refuses with a 422: the whole batch is refused, as Argo does. */
-  refuse: (record: ArgoUsageRecord) => boolean = () => false
-  /** Thrown for every post while set (e.g. a 401 from a wrong secret). */
+  /** Rows the database refuses (a constraint violation): the whole batch is refused, as a transaction is. */
+  refuse: (row: UsageRow) => boolean = () => false
+  /** Thrown for every write while set (e.g. an authentication failure). */
   failWith: Error | null = null
-  /** Runs before a post is accepted (a test can inspect or change the journal mid-flush). */
-  onPost: (records: ArgoUsageRecord[]) => Promise<void> = async () => {}
+  /** Runs before a write is accepted (a test can inspect or change the journal mid-flush). */
+  onPost: (rows: UsageRow[]) => Promise<void> = async () => {}
   failedPosts = 0
   posts = 0
 
-  async post(records: ArgoUsageRecord[]): Promise<void> {
+  async write(rows: UsageRow[]): Promise<void> {
     this.posts++
-    await this.onPost(records)
+    await this.onPost(rows)
     if (this.failWith) {
       this.failedPosts++
       throw this.failWith
@@ -49,13 +45,11 @@ export class FakeArgo implements ArgoTransport {
     await Bun.sleep(5)
     if (this.down) {
       this.failedPosts++
-      throw new ArgoPostError('argo usage ingest: HTTP 503 down', false)
+      throw new Error('connect ECONNREFUSED 127.0.0.1:5432')
     }
-    const parsed = ArgoBody.safeParse({ records })
-    if (!parsed.success) throw new ArgoPostError(`argo usage ingest: HTTP 422 ${parsed.error.message}`, true)
-    if (records.some(this.refuse)) throw new ArgoPostError('argo usage ingest: HTTP 422 refused record', true)
-    for (const r of records) {
-      this.stored.set(`${r.source}|${r.source_id}|${r.machine}`, r)
+    if (rows.some(this.refuse)) throw new UsageWriteError('usage write: 23514 refused row', true, '23514')
+    for (const r of rows) {
+      this.stored.set(`${r.source}|${r.source_id}`, r)
       this.accepted.set(r.source_id, (this.accepted.get(r.source_id) ?? 0) + 1)
     }
   }
@@ -102,7 +96,7 @@ export function testPlatform(
     fingerprint: fakeFingerprint(),
     iuKey: 'personal',
     telemetry: { exporter: spans, scheduledDelayMillis: 50 },
-    argo: { transport: null },
+    usage: { transport: null },
     ...options,
   })
   return { ...platform, spans, logger }

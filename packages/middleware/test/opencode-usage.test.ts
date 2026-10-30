@@ -30,15 +30,15 @@ describe('usageFromOpenCodeMessages', () => {
     })
   })
 
-  test('round trip: the Argo projection gets back what OpenCode billed, reasoning counted once', () => {
-    const argo = additiveTokens({ cacheWrite: 0, ...usageFromOpenCodeMessages(toolTurns).tokens })
-    // Argo's total adds input + output + cache_write + reasoning; OpenCode's own (non-cache-read) total is the same.
+  test('round trip: the usage projection gets back what OpenCode billed, reasoning counted once', () => {
+    const row = additiveTokens({ cacheWrite: 0, ...usageFromOpenCodeMessages(toolTurns).tokens })
+    // The total input + output + cache_write + reasoning; OpenCode's own (non-cache-read) total is the same.
     const opencodeTotal = 1200 + 40 + 300 + 64 + (150 + 25 + 60)
-    expect(argo.input_tokens + argo.output_tokens + argo.cache_write_tokens + argo.reasoning_tokens).toBe(opencodeTotal)
-    expect(argo.reasoning_tokens).toBe(360)
-    expect(argo.cache_write_tokens).toBe(64)
-    expect(argo.input_tokens).toBe(1200 + 150)
-    expect(argo.output_tokens).toBe(65)
+    expect(row.input_tokens + row.output_tokens + row.cache_write_5m_tokens + row.reasoning_tokens).toBe(opencodeTotal)
+    expect(row.reasoning_tokens).toBe(360)
+    expect(row.cache_write_5m_tokens).toBe(64)
+    expect(row.input_tokens).toBe(1200 + 150)
+    expect(row.output_tokens).toBe(65)
   })
 
   test('one unpriced message makes the step unpriced, never a silent undercount', () => {

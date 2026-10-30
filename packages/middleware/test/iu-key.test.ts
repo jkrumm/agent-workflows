@@ -2,7 +2,16 @@ import { afterAll, describe, expect, test } from 'bun:test'
 import { defineWorkflow, type RunPreArgs } from '@agent-workflows/runtime'
 import { z } from 'zod'
 import { isIuKeyId, iuKeyMiddleware, JournalDb, parseIuKeyId } from '../src/index.ts'
-import { captureLogger, FakeArgo, freshSchema, inspector, PG_URL, testPlatform, testRuntime, until } from './support.ts'
+import {
+  captureLogger,
+  FakeUsage,
+  freshSchema,
+  inspector,
+  PG_URL,
+  testPlatform,
+  testRuntime,
+  until,
+} from './support.ts'
 
 const db = freshSchema('mwk')
 const sql = inspector(db.schema)
@@ -68,7 +77,7 @@ describe('isIuKeyId', () => {
   })
 })
 
-describe('iu_key on Argo rows', () => {
+describe('api_key on usage rows', () => {
   test('the run keeps the label of the host that started it; a flush under another key does not change it', async () => {
     const started = testPlatform(db.schema, { iuKey: 'athena-team' })
     const runId = await runUnder(started)
@@ -76,33 +85,17 @@ describe('iu_key on Argo rows', () => {
     expect((await sql.run(runId))?.iu_key).toBe('athena-team')
 
     // A restarted host that holds the personal key flushes the outbox.
-    const argo = new FakeArgo()
-    const flusher = testPlatform(db.schema, { iuKey: 'personal', argo: { transport: argo, machine: 'm' } })
+    const usage = new FakeUsage()
+    const flusher = testPlatform(db.schema, { iuKey: 'personal', usage: { transport: usage, machine: 'm' } })
     try {
       await flusher.outbox?.flush()
     } finally {
       await flusher.close()
     }
-    const rows = [...argo.stored.values()].filter((r) => r.source_id.startsWith(`${runId}:`))
+    const rows = [...usage.stored.values()].filter((r) => r.source_id.startsWith(`${runId}:`))
     expect(rows).toHaveLength(1)
-    expect(rows[0]).toMatchObject({ billing: 'iu', iu_key: 'athena-team', account: null })
+    expect(rows[0]).toMatchObject({ billing: 'api_key', api_key: 'athena-team' })
     expect(JSON.stringify(rows[0]?.raw)).not.toMatch(/iu_?key|athena/i)
-  })
-
-  test('a billing other than iu carries iu_key null', async () => {
-    const started = testPlatform(db.schema, { iuKey: 'athena-team' })
-    const runId = await runUnder(started)
-    await started.close()
-    const argo = new FakeArgo()
-    const flusher = testPlatform(db.schema, { argo: { transport: argo, machine: 'm2', billing: 'max' } })
-    try {
-      await flusher.outbox?.flush()
-    } finally {
-      await flusher.close()
-    }
-    const rows = [...argo.stored.values()].filter((r) => r.source_id.startsWith(`${runId}:`))
-    expect(rows).toHaveLength(1)
-    expect(rows[0]).toMatchObject({ billing: 'max', iu_key: null })
   })
 
   test('a run row stored before the label existed reads as personal', async () => {
@@ -114,15 +107,15 @@ describe('iu_key on Argo rows', () => {
     )
     await platform.close()
     expect((await sql.run(runId))?.iu_key).toBe('personal')
-    const argo = new FakeArgo()
-    const flusher = testPlatform(db.schema, { iuKey: 'athena-team', argo: { transport: argo, machine: 'm3' } })
+    const usage = new FakeUsage()
+    const flusher = testPlatform(db.schema, { iuKey: 'athena-team', usage: { transport: usage, machine: 'm3' } })
     try {
       await flusher.outbox?.flush()
     } finally {
       await flusher.close()
     }
-    const rows = [...argo.stored.values()].filter((r) => r.source_id.startsWith(`${runId}:`))
-    expect(rows[0]).toMatchObject({ iu_key: 'personal' })
+    const rows = [...usage.stored.values()].filter((r) => r.source_id.startsWith(`${runId}:`))
+    expect(rows[0]).toMatchObject({ api_key: 'personal' })
   })
 
   test('a resumed run is not re-stamped by a host with another key', async () => {

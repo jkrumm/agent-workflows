@@ -56,7 +56,7 @@ Shape and roles: the `/wave` skill, fleet mode (`~/.claude/skills/wave/roles/{mo
    interface.
 5. Fixes back to the worker with `rd say`; merge train (`rd merge`) runs `make check` after every rebase.
 6. At each wave's end: deploy on the mini and `@verifier` proves the wiring live — run record in
-   Postgres, spans in ClickStack, usage in Argo, the CLI end to end.
+   Postgres, spans in ClickStack, usage rows in the `usage` schema, the CLI end to end.
 
 ## Other repos the fleet touches
 
@@ -68,7 +68,8 @@ be free (`rd agents`).
 | vps | P0b: the mini's Postgres as a maintained instance |
 | dotfiles | architecture map, herdr groups, skills, global CLAUDE.md (P5). **Held by the P0 wave until it closes** |
 | agent-gateway, research-gateway, audio-gateway | retired, archived (P6) |
-| argo, usage-tracker | usage projection and trimmed collectors (P4) |
+| usage-tracker | owns the `usage` schema agw writes its usage rows into (`migrations/pg`); trimmed collectors (P4) |
+| argo | overview push and Slack only; no longer receives usage |
 | hermes-agent, `~/.hermes` | `agw` instead of HTTP calls (P5) |
 
 PR-required repos (`~/.claude/pr-required-repos.json`) go through a PR, self-review, merge.
@@ -89,7 +90,7 @@ excluded from every tool.
 CI (`.github/workflows/ci.yml`) runs `bun install --frozen-lockfile` and `make check` on pushes to `master` and
 on pull requests, on GitHub-hosted runners.
 
-`make check` needs Postgres: tests read `AGW_TEST_PG_URL` and fail when it is unset. On the mini `make check` builds it from `.env.test.tpl` through `secrets-run`; elsewhere set `AGW_TEST_PG_URL` (CI uses a `postgres:18` service). Each test file works in its own throwaway schema. Each test file sets a load-scaled default timeout as it starts (`packages/testing` preload from `bunfig.toml`: 5000 ms × 1-minute load average per core, floor 5000, cap 30000; Bun binds a timeout at test registration, so per file is the finest grain); a test with its own explicit timeout keeps it.
+`make check` needs Postgres: tests read `AGW_TEST_PG_URL` and fail when it is unset. On the mini `make check` builds it from `.env.test.tpl` through `secrets-run`; elsewhere set `AGW_TEST_PG_URL` (CI uses a `postgres:18` service). `packages/middleware/test/usage-pg.test.ts` also needs `USAGE_TEST_PG_URL` (an admin connection, built by `make check` from `.env.test.tpl`) and the usage-tracker checkout beside this repo (`USAGE_MIGRATIONS_DIR` overrides); without either it skips with the reason in its name, so it never runs in CI. Each test file works in its own throwaway schema. Each test file sets a load-scaled default timeout as it starts (`packages/testing` preload from `bunfig.toml`: 5000 ms × 1-minute load average per core, floor 5000, cap 30000; Bun binds a timeout at test registration, so per file is the finest grain); a test with its own explicit timeout keeps it.
 
 ## Gotchas
 

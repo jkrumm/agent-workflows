@@ -60,7 +60,7 @@ without it fails loudly rather than leaving the command running.
 
 Every spawn (`make check`, `fallow`, the `make -p -q` probe, the git probes) runs with the host's environment minus
 anything credential-shaped: legacy's pattern (`TOKEN|SECRET|PASSWORD|PASSWD|_KEY|APIKEY|API_KEY|CREDENTIAL|BEARER|SESSION_ID`,
-case-insensitive, no exemptions, so `CLAUDE_CODE_OAUTH_TOKEN` goes too) plus `AUTHORIZATION`, `AGW_PG_URL`, `IU_*` and
+case-insensitive, no exemptions, so `CLAUDE_CODE_OAUTH_TOKEN` goes too) plus `AUTHORIZATION`, `AGW_PG_URL`, `USAGE_PG_URL`, `IU_*` and
 `OTEL_EXPORTER_OTLP_*HEADERS`. A `$(shell …)` in an untrusted Makefile runs in the probe as well.
 
 Make's own recursion state (`MAKELEVEL`, `MAKEFLAGS`, `MFLAGS`, `MAKEOVERRIDES`, `GNUMAKEFLAGS`, `MAKEFILES`,

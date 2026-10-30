@@ -117,7 +117,7 @@ defineWorkflow({ id: 'research.report', scorer: draftScorer, async run(ctx, inpu
   hosts on different scorer versions would re-score each other's errors back and forth (accepted: one host per
   deploy). Both re-scores back off like unscored runs (doubling from the last attempt), so a failing one is never
   reselected every tick. Workflows without a scorer are never in that branch. A shutdown is rethrown uncounted. `onlyUnscored` makes the write first-writer-wins. The write also clears `argo_synced_at` (and a
-  claim in flight) on the run's steps, so the Argo rows are re-posted with the scores in `raw`.
+  claim in flight) on the run's steps, so the usage rows are re-written with the scores in `raw`.
 - **Drift's sample.** `runtime.driftCandidates({ rate, since, limit, purposes? = ['prod'], workflows? })`: done,
   unscored top-level runs whose persisted sample position `runs.drift_sample` (a generated column: the first 32 bits
   of md5(id)) is below rate × 2^32. Deterministic per run: the same in every tick and process, and a smaller rate is a
@@ -133,7 +133,7 @@ defineWorkflow({ id: 'research.report', scorer: draftScorer, async run(ctx, inpu
 
 - Journal in its own schema (`schema`, default `agw`): `runs`, `steps`, `signals`, migrated from
   `src/migrations/NNNN_*.sql` in one transaction under an advisory lock, recorded in `schema_migrations`. The
-  run-record columns (fingerprint, tokens, cost, `unpriced_calls`, `tool_calls`, friction, `scores`) and the Argo outbox
+  run-record columns (fingerprint, tokens, cost, `unpriced_calls`, `tool_calls`, friction, `scores`) and the usage outbox
   columns on steps (`argo_synced_at`, `argo_claim`, `argo_claimed_until`, `argo_error`, migration 0002) exist for
   the middleware to fill. A merged migration is never edited; changes take the next number.
 - **Lease:** one `pg_try_advisory_lock` per top-level run (64-bit key from sha256), held on a dedicated

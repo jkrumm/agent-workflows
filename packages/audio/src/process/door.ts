@@ -1,7 +1,7 @@
 // The OpenAI-compatible door on the audio process: `/v1/audio/speech` and `/v1/audio/transcriptions`, and the same
 // without `/v1` (audio-gateway matched any suffix; anchored here so no API path is ever taken over). Each request is one run of its own
 // (concept N6, the pattern of `packages/host/src/capability-runs.ts`): the journal, the run record with cost,
-// telemetry and the Argo outbox apply to it like to any workflow. The run is started beside the handler, never in
+// telemetry and the usage outbox apply to it like to any workflow. The run is started beside the handler, never in
 // front of it, and only observes: the handler's usage events land in an in-memory sink the run's one step reads once
 // the handler's work is over (its promise settled and its body ended). Recording never delays the audio and a
 // recording failure never fails the request (logged).

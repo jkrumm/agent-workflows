@@ -139,7 +139,7 @@ same release as the host (deploy and rollback: `packages/host/README.md` §Deplo
 
 It boots through the host's `bootProcess` (`packages/host/src/boot.ts`), the code the host itself boots with, from a
 `ProcessDefinition` (`src/process/index.ts`): the same journal and platform middleware (run record, fingerprint,
-telemetry as `service.name` `agw-audio`, the Argo outbox), the runaway cap and the wallet gate, the same bearer
+telemetry as `service.name` `agw-audio`, the usage outbox), the runaway cap and the wallet gate, the same bearer
 (`AGW_API_SECRET`) on the API, the same OpenAPI with `x-cli`, `/health` with the version. What differs:
 
 | | host | audio |
@@ -165,7 +165,7 @@ Recovery, leases, post-hook redelivery and drift sampling only ever touch runs o
 `packages/runtime/test/processes.test.ts` proves it with two runtimes on one schema and disjoint workflow sets: with
 one process down, its running run (mid-step), its pending run and its run with an undelivered post hook are left
 exactly as they were by the other one's recovery passes (no claim, no drive, no hook), and the restarted process
-finishes all three. The Argo outbox claims its rows (`for update skip locked`, a claim token), so processes flushing one
+finishes all three. The usage outbox claims its rows (`for update skip locked`, a claim token), so processes flushing one
 journal post each row once (middleware `outbox.test.ts`, two flushers racing). The friction job and the retrospective
 run in the host only.
 

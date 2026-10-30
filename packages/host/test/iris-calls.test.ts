@@ -46,9 +46,13 @@ describe('a call that identifies as iris', () => {
     const runId = response.headers.get(RUN_ID_HEADER) as string
     expect(await recorded(runId)).toMatchObject({ workflow: 'cap.triage', status: 'done', purpose: 'iris' })
     await t.platform?.outbox?.flush()
-    const rows = [...t.argo.stored.values()].filter((r) => r.source_id.startsWith(`${runId}:call:`))
+    const rows = [...t.usage.stored.values()].filter((r) => r.source_id.startsWith(`${runId}:call:`))
     expect(rows).toHaveLength(1)
-    expect(rows[0]).toMatchObject({ sub_tool: 'cap.triage', cost_usd: 0.0004, raw: { purpose: 'iris' } })
+    expect(rows[0]).toMatchObject({
+      lane_detail: { workflow: 'cap.triage' },
+      cost_reported_usd: 0.0004,
+      raw: { purpose: 'iris' },
+    })
   })
 
   test('decide answers with usage and cost, and the run carries purpose iris', async () => {

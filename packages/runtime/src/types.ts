@@ -31,7 +31,7 @@ export type Usage = {
 /** `cost` sums the priced reports only; `unpricedCalls > 0` marks it as a lower bound. */
 export type ModelUsage = { tokens: TokenCounts; cost: number | null; toolCalls: number; unpricedCalls: number }
 
-/** The per-step sum of every `addUsage`, with a per-model split for the Argo projection. */
+/** The per-step sum of every `addUsage`, with a per-model split for the usage projection. */
 export type StepUsage = ModelUsage & { byModel: Record<string, ModelUsage> }
 
 export type RetryPolicy = {
@@ -332,7 +332,7 @@ export type StartOptions = {
   caller?: string
   /** The repo the caller works in (`runs.project`), a bare name. */
   project?: string
-  /** `work` or `private` (`runs.workspace`); absent lets Argo classify from the project. */
+  /** `work` or `private` (`runs.workspace`); absent leaves the workspace unclassified. */
   workspace?: 'work' | 'private'
   traceparent?: string
   /** Same workflow + key → the same run id; the second start is a no-op. */

@@ -9,7 +9,7 @@ import { createCapabilityWorkflows } from '../src/capability-runs.ts'
 import type { HostOperation, HostWorkflow } from '../src/operations.ts'
 import { type RunStore, runtimeRunStore } from '../src/store.ts'
 import { createSmokePing } from '../src/workflows/smoke/index.ts'
-import { FakeArgo, testPlatform } from '../../middleware/test/support.ts'
+import { FakeUsage, testPlatform } from '../../middleware/test/support.ts'
 import { freshSchema, PG_URL, testRuntime } from '../../runtime/test/support/pg.ts'
 
 export { captureLogger, freshSchema, inspector, PG_URL, until } from '../../runtime/test/support/pg.ts'
@@ -113,7 +113,7 @@ export async function startTestHost(
     healthTimeoutMs?: number
     wrapStore?: (store: RunStore) => RunStore
     logger?: Logger
-    /** Runs behind the platform middleware with an in-memory Argo, as in production. */
+    /** Runs behind the platform middleware with an in-memory usage sink, as in production. */
     platform?: boolean
     /** Ahead of the platform middleware, so a `runPost` held here holds the run record behind it. */
     middleware?: Middleware[]
@@ -143,9 +143,9 @@ export async function startTestHost(
   const held = testWorkflows()
   const workflows = [createSmokePing(registry), ...held.entries, ...(options.extra ?? [])]
   const capabilityWorkflows = createCapabilityWorkflows(registry)
-  const argo = new FakeArgo()
+  const usage = new FakeUsage()
   const platform = options.platform
-    ? testPlatform(schema, { argo: { transport: argo, machine: 'test-machine' } })
+    ? testPlatform(schema, { usage: { transport: usage, machine: 'test-machine' } })
     : null
   const runtime: Runtime = testRuntime({
     schema,
@@ -212,7 +212,7 @@ export async function startTestHost(
     registry,
     runtime,
     iu,
-    argo,
+    usage,
     platform,
     gate: held.gate,
     schema,

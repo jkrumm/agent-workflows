@@ -59,8 +59,9 @@ fi
 KEYS=( ${(f)"$(/usr/bin/grep -hoE '^[A-Za-z_][A-Za-z0-9_]*=' "$TPL" | /usr/bin/tr -d =)"} )
 
 # secrets-run resolves whole-value refs only, so the composite values are built after it, inside its child. The
-# password is URL-encoded the way `make check` does it; the raw AGW_PG_PASSWORD and OTEL_EXPORTER_OTLP_AUTHORIZATION
-# are dropped before the host starts. The built OTEL_EXPORTER_OTLP_HEADERS (`authorization=<ClickStack ingest key>`)
+# password is URL-encoded the way `make check` does it (the usage database URL the same way: role usage, database
+# shared); the raw AGW_PG_PASSWORD, USAGE_PG_PASSWORD and OTEL_EXPORTER_OTLP_AUTHORIZATION are dropped before the host
+# starts. The built OTEL_EXPORTER_OTLP_HEADERS (`authorization=<ClickStack ingest key>`)
 # stays: it is what the exporter reads, and the OpenCode server's env allow-list forwards every OTEL_EXPORTER_OTLP_*
 # variable, so the ingest key is also in that server's env and its tool shells, like the IU key (accepted risk:
 # packages/opencode-host/README.md, "Accepted risk").
@@ -167,8 +168,9 @@ exec "$SECRETS_RUN" run --env-file="$TPL" -- /bin/sh -c '
     [ -n "$value" ] || { echo "agent-workflows-host: $key resolved to an empty value; refusing to start." >&2; exit 78; }
   done
   AGW_PG_URL="postgres://agent_workflows:$(bun -e "process.stdout.write(encodeURIComponent(process.env.AGW_PG_PASSWORD))")@127.0.0.1:5432/agent_workflows"
+  USAGE_PG_URL="postgres://usage:$(bun -e "process.stdout.write(encodeURIComponent(process.env.USAGE_PG_PASSWORD))")@127.0.0.1:5432/shared"
   OTEL_EXPORTER_OTLP_HEADERS="authorization=$OTEL_EXPORTER_OTLP_AUTHORIZATION"
-  export AGW_PG_URL OTEL_EXPORTER_OTLP_HEADERS
-  unset AGW_PG_PASSWORD OTEL_EXPORTER_OTLP_AUTHORIZATION
+  export AGW_PG_URL USAGE_PG_URL OTEL_EXPORTER_OTLP_HEADERS
+  unset AGW_PG_PASSWORD USAGE_PG_PASSWORD OTEL_EXPORTER_OTLP_AUTHORIZATION
   exec bun "$AGW_LAUNCH_ENTRY"
 ' sh "${KEYS[@]}"

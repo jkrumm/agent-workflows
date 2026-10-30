@@ -1,7 +1,7 @@
 # @agent-workflows/middleware
 
 The platform layer every workflow runs inside (concept §4 rows Record and Telemetry, §5): purpose, fingerprint,
-run record and telemetry as runtime `Middleware`, plus the Argo outbox the host flushes. Built on the S2 verdicts
+run record and telemetry as runtime `Middleware`, plus the usage outbox the host flushes. Built on the S2 verdicts
 (`docs/spikes/s2-telemetry/REPORT.md`).
 
 ## Shape
@@ -45,7 +45,7 @@ span before telemetry ends it. `platform.close()` comes after
   changed (a directory walk and a `stat` per file per admission), so an edited `AGENTS.md` changes the fingerprint
   without a restart. It runs `opencode --version` once per process (a failed run is retried) and never for a
   workflow without agents. Tests pass a fake.
-- **Purpose.** On the run span (`agw.purpose`) and in every Argo row's `raw.purpose`. The projection refuses a run
+- **Purpose.** On the run span (`agw.purpose`) and in every usage row's `raw.purpose`. The projection refuses a run
   without one.
 - **Tokens.** `usageFromOpenCodeMessages(messages, { model })` turns an agent session's
   `GET /api/session/:id/message` page into the runtime's `Usage`. The Wave 3 OpenCode host returns it as
@@ -83,7 +83,7 @@ host could not answer in full.
   (the agent server restarting), keeps the entries an earlier answer wrote, and per session the fuller entry wins
   (counters only grow, so a shorter read never lowers a count); the document says `incomplete: true`. `runPost` does
   not throw for it: a redelivery would turn one restart into five failed deliveries at 2 s apart, re-run the other
-  hooks, delay the Argo projection, and the run span is finalized from the first delivery anyway. Instead the span
+  hooks, delay the usage projection, and the run span is finalized from the first delivery anyway. Instead the span
   carries `agw.friction.incomplete`, and **the host's daily friction job recounts the incomplete runs of its window**
   (fewest attempts first, newest first among equals, at most 20 per tick, through `frictionRecounter`, the same code
   `runPost` runs) before it computes rates. A complete answer replaces the step and clears the flag. Each recount by the
@@ -104,7 +104,7 @@ host could not answer in full.
   host's. Without one only step outcomes are counted. The database work of `runPost` is retried like every other
   post-hook write.
 - **Order.** `friction` must come before `record` in the list (the record reads the finished document); a test pins it.
-- **Totals on the run span** as `agw.friction.*` attributes. Argo's `raw.friction` carries the whole document.
+- **Totals on the run span** as `agw.friction.*` attributes. The usage row's `raw.friction` carries the whole document.
 
 ### Spans
 
@@ -163,68 +163,80 @@ Packages, pinned exactly: `@opentelemetry/sdk-trace` 3.0.0, `exporter-trace-otlp
 for hosts that want an active context. The hooks don't wrap step bodies, so this package parents every span
 explicitly.
 
-## Argo outbox
+## Usage outbox
 
-`ArgoOutbox.flush()` projects finished steps of finished runs (`argo_synced_at is null`) into Argo `usage_record`
-rows and posts them through the `ArgoTransport` port. Production: `POST <ARGO_URL>/usage/records`, bearer
-`ARGO_API_SECRET`, Argo's `UsageRecordInputSchema` (copied verbatim as `ArgoUsageRecordInput`).
+`UsageOutbox.flush()` projects finished steps of finished runs (`argo_synced_at is null`) into rows of
+`usage.records` and writes them, with the run's `usage.sessions` row, through the `UsageTransport` port. Production is
+`pgUsageTransport`: the `usage` schema of the `shared` database on the mini, role `usage`, connection string
+`USAGE_PG_URL` (never logged). usage-tracker owns that schema (`migrations/pg/`, `docs/usage-schema.md`); this package
+never creates or alters it. Argo no longer receives usage rows.
 
 - **After the record.** Only steps of runs whose `runPost` was delivered (`post_hooks_at`), so `raw` carries the
   run's wall time, trace id and friction.
-- **No transaction spans a post.** A batch is claimed in one statement (`for update skip locked`, a random
-  `argo_claim` token, `argo_claimed_until`), posted outside any transaction in chunks of up to 1000 (the claim is
-  renewed before each chunk), then marked synced where the token still matches. Racing flushers never post the same
+- **No journal transaction spans a write.** A batch is claimed in one statement (`for update skip locked`, a random
+  `argo_claim` token, `argo_claimed_until`), written outside any transaction in chunks of up to 500 rows (the claim is
+  renewed before each chunk), then marked synced where the token still matches. Racing flushers never write the same
   claimed step; a crashed flusher's claim expires (2 min); a mark that matches fewer steps than claimed is warned.
-- **Own pool.** The outbox has its own connection pool, so a slow or hanging Argo cannot starve the record's writes.
-  A post that does not answer in `postTimeoutMs` (30 s) counts as transient.
-- **Transient vs permanent.** Only a row refusal is permanent: a row that cannot be built, fails Argo's schema, or
-  gets a 400/422. The batch is then re-posted step by step and only the bad step is quarantined (`argo_error`,
-  logged, counted in `FlushResult.quarantined`); the rest keep flowing. Everything else is transient and releases
-  the claim and backs off (5 s doubling to 5 min): 5xx, 408, 429, network errors, timeouts, redirects, and
-  401/403/404, which mean a wrong secret or URL (logged as an error, since it needs a human, never quarantined).
-- **Requeue.** `outbox.requeue({ runId? })` clears `argo_error` once the cause is fixed; the next flush posts them.
+  (The `argo_*` column names are the journal's, from before the sink moved.)
+- **One transaction per chunk, in the usage database.** The run's session is upserted first, then each record, so a
+  record never exists without its session, and a refused row rolls the whole chunk back.
+- **Idempotent.** Both tables are upserted on their unique keys, `(source, source_id)` and
+  `(source, source_session_id)`, and the `DO UPDATE` carries `WHERE ... IS DISTINCT FROM`: a re-post of identical
+  rows writes no new tuple. A rescored run (regression, drift) puts its steps back into the outbox and the re-post
+  updates `raw` in place; a session grows its `first_ts`/`last_ts` over all steps ever written (`least`/`greatest`).
+- **Own pool, small.** `pgUsageTransport` has its own pool of 2 (the `usage` role's connection limit of 10 is shared with
+  usage-tracker), and the outbox its own journal pool, so a slow or hanging usage database cannot starve the record's
+  writes. A write that does not answer in `postTimeoutMs` (30 s) counts as transient; the pool's statement timeout is 20 s.
+- **Transient vs permanent.** Only a row the database refuses is permanent: SQLSTATE class 22 (data exception, e.g. a
+  duration that overflows `integer`) or 23 (constraint violation), or a row that cannot be built. The batch is then
+  written step by step and only the bad step is quarantined (`argo_error`, logged, counted in
+  `FlushResult.quarantined`); the rest keep flowing. Everything else is transient and releases the claim and backs
+  off (5 s doubling to 5 min): a refused connection, a timeout, a deadlock, a shutdown. Authentication (class 28), a
+  missing database (3D) and a missing table or function (42, the schema is not migrated) are transient too but logged
+  as errors, since they need a human; they are never quarantined.
+- **Requeue.** `outbox.requeue({ runId? })` clears `argo_error` once the cause is fixed; the next flush writes them.
 - **Close.** `outbox.close()` refuses new flushes and waits for the one in flight; `platform.close()` calls it
-  before closing the outbox pool.
-- **Crash after the post.** The rows are posted again; Argo's upsert on `(source, source_id, machine)` absorbs it.
+  before closing the pools, and closes the usage pool it created from `USAGE_PG_URL`.
+- **Crash after the write.** The rows are written again; the upsert absorbs it.
 - **No usage, no row.** Only steps with tokens or a cost are outbox candidates (the `steps_argo_outbox` index).
 - **Scores ride in `raw.scores`** (`runs.scores`: the inline gate verdicts, and `final` once the run is scored),
   never as top-level fields. `raw.scorePass` and `raw.scoreError` make the final score explicit: a scorer error is
-  `scorePass: null` with `scoreError: { kind: 'scorer' | 'infra', message }`, never a fail. A run scored after its rows were posted (regression, drift) puts its steps back into the
-  outbox: the runtime's score write clears `argo_synced_at` and drops a claim in flight (that flush's mark then
-  misses, and is warned), so the next flush re-posts the rows with the scores and Argo's upsert replaces them.
-- **`https` only.** `httpArgoTransport` refuses a non-https `ARGO_URL` unless it is loopback, and posts with
-  `redirect: 'error'` so the bearer never follows a redirect.
-- **Machine id.** `AGW_MACHINE`; unset, the host name with a logged warning. It is part of Argo's upsert key, so it
-  must stay stable across restarts and renames, or a re-post lands as a second row.
-- **IU key label.** A `billing=iu` row carries a top-level `iu_key` (`personal` | `athena-team`), `null` for any
-  other billing (usage-tracker contract, "IU keys"). Nothing in a model call says which key paid, so the label is
-  stamped from the non-secret host env `IU_KEY_ID` (`parseIuKeyId`: unset or empty is `personal`; an unknown value is
-  `personal` plus one warning) and never from key material. It belongs to the run: `iuKeyMiddleware` writes it to
-  `runs.iu_key` at admission (`resume: false`), so an outbox that flushes after a restart with another key still
-  posts the label the run started with; a run stored before the column reads `personal`. It is never in `raw` or
-  `account` (the Max account id). Argo's schema gains the field per the contract; until then it strips it, and a
-  missing field means `personal` there.
-- **Off without config.** No `ARGO_URL`/`ARGO_API_SECRET` means no outbox, and the steps wait in Postgres.
+  `scorePass: null` with `scoreError: { kind: 'scorer' | 'infra', message }`, never a fail.
+- **Machine id.** `AGW_MACHINE`; unset, the host name with a logged warning. It is an attribute of the row, not part of
+  its key: a changed name does not duplicate a row.
+- **IU key label.** `billing` = `api_key` and `api_key` = the label of the IU key that paid (`personal` |
+  `athena-team`). Nothing in a model call says which key paid, so the label is stamped from the non-secret host env
+  `IU_KEY_ID` (`parseIuKeyId`: unset or empty is `personal`; an unknown value is `personal` plus one warning) and never
+  from key material. It belongs to the run: `iuKeyMiddleware` writes it to `runs.iu_key` at admission
+  (`resume: false`), so an outbox that flushes after a restart with another key still writes the label the run started
+  with; a run stored before the column reads `personal`. It is never in `raw`.
+- **Off without config.** No `USAGE_PG_URL` means no outbox (one warning at start), and the steps wait in the journal.
 
-| Run record / step | Argo `usage_record` | Note |
+| Run record / step | `usage.records` | Note |
 |-|-|-|
-| — | `source` = `agent-workflows`, `grain` = `step` | |
+| — | `source` = `agent-workflows`, `grain` = `session` | a step is a whole agent loop of many requests, never one message; session grain also keeps price tiers off (they apply to a single request) |
 | run id, step id, model | `source_id` = `<runId>:<stepId>:<model>` | one row per step and model (`usage_by_model`); usage reported without a model is the remainder, as `unknown` |
-| workflow id | `sub_tool` | |
+| model | `model_raw` = `model` | agw ids are already normalized |
 | step start (`steps.started_at`) | `ts` | |
-| step finish − start | `duration_ms` | |
-| model | `model`, `model_norm` | route table holds canonical ids |
-| tokens input / output / cache read / cache write / reasoning | `input_tokens` = input − cache read − cache write, `output_tokens` = output − reasoning, `cache_read_tokens`, `cache_write_tokens`, `reasoning_tokens` | **additive contract** |
-| cost | `cost_usd`, `cost_source` = `reported` (or `none` when unpriced) | |
+| step finish − start | `duration_ms` | a step longer than an `integer` of milliseconds (about 24.8 days) is refused and quarantined |
+| tokens input / output / cache read / cache write / reasoning | `input_tokens` = input − cache read − cache write, `output_tokens` = output − reasoning, `cache_read_tokens`, `cache_write_5m_tokens`, `cache_write_1h_tokens` = 0, `reasoning_tokens` | **additive contract**; agw cannot split cache writes by TTL, so all of it is 5-minute |
+| cost | `cost_reported_usd` = what agw measured, NULL when the usage could not be priced | never a placeholder 0 |
+| — | `cost_usd`, `cost_source`, `price_id` | from `usage.compute_cost(...)` in the same `INSERT`: the reported cost wins, else the price tables, else NULL / `none` for an unknown model. Pricing is never reimplemented here |
 | step failed/cancelled, or run `invalid_output` | `outcome` = `error` (else `ok`) | |
-| — | `billing` = `iu`, `account` = null, `workspace` = `private`, `project` = null | `project` needs the caller's cwd (CLI, Wave 3) |
-| — | `machine` = `AGW_MACHINE` (else the host name, warned) | part of Argo's upsert key; must be stable |
-| run id, step id, root id, purpose, fingerprint, trace id, session id, tool calls, unpriced calls, run outcome, run wall ms, scores, friction | `raw` | Argo has no columns for them; `raw.scores` is null until scorers exist |
+| project, workspace | `project_raw` (verbatim), `repo`, `workspace` | `repo` is the project only when it is a plain SourceRoot directory slug and the run is not declared `work` (work projects live under IuRoot, whose `iu/<dir>` namespace is usage-tracker's); else NULL. `workspace` only as declared |
+| — | `billing` = `api_key`, `api_key` = IU key label, `account` = NULL | |
+| — | `lane` = `agw_workflow`, `lane_detail` = `{ workflow, step, caller, purpose }` | the run has no route of its own, so none is named |
+| run id | `run_id`, and `session_id` of the run's `usage.sessions` row | |
+| — | `machine` = `AGW_MACHINE` (else the host name, warned) | an attribute, not part of the key |
+| run id, step id, root id, purpose, fingerprint, trace id, session id, tool calls, unpriced calls, run outcome, run wall ms, scores, friction | `raw` | the table has no columns for them |
+
+`usage.sessions` gets one row per run: `source` = `agent-workflows`, `source_session_id` = `run_id` = the run id, lane
+`agw_workflow`, `lane_detail` = `{ workflow, caller, purpose }`, `billing`, `api_key`, `machine`, `repo`, `model` (the
+earliest row's, set once), and `first_ts`/`last_ts` over its steps. A child run is its own session; no parent link is written.
 
 **Why normalise.** Provider usage is not additive. `output` includes reasoning, `input` includes cache reads and
-writes. Argo
-adds `reasoning_tokens` on top of `output_tokens`, so an unnormalised row counts reasoning twice
-(`test/argo-rows.test.ts`).
+writes. `reasoning_tokens` is billed on top of `output_tokens`, so an unnormalised row counts reasoning twice
+(`test/usage-rows.test.ts`).
 
 ## Token effect / cache effect
 
@@ -235,7 +247,7 @@ adds `reasoning_tokens` on top of `output_tokens`, so an unnormalised row counts
 - **Cache writes are recorded.** They have their own bucket end to end (`Tokens.cacheWrite`, `tokens_cache_write`,
   `cache_write_tokens`), so a prompt that keeps rewriting the cache shows as write volume, not as fresh input.
 - **Scores cost no tokens here.** They are read from the run row; a re-post after an after-the-fact score is one more
-  Argo upsert per step, no model call.
+  usage upsert per step, no model call.
 - **A fingerprint change is expected to cost a cold cache once.** It means a changed `AGENTS.md`, skill, route or
   OpenCode version, and a changed prompt head misses the provider cache. Compare cache share by fingerprint before
   calling a prompt change cheaper.
@@ -243,16 +255,20 @@ adds `reasoning_tokens` on top of `output_tokens`, so an unnormalised row counts
 ## Tests
 
 Real Postgres through the runtime's test support (`AGW_TEST_PG_URL`, a throwaway schema per file). Concurrency
-runs through every test, never a single run:
+runs through every test, never a single run. `usage-pg.test.ts` additionally needs an admin connection
+(`USAGE_TEST_PG_URL`, built by `make check` from `.env.test.tpl`) and usage-tracker's migrations
+(`USAGE_MIGRATIONS_DIR`, default `../usage-tracker/migrations/pg` beside this repo); without either it skips, the reason
+in the suite's name and on stderr (so it does not run in CI):
 
 | File | Covers |
 |-|-|
 | `platform.test.ts` | 18 concurrent top-level runs with a fan-out: run record, fingerprint, purpose, span tree; `runPost` re-delivery; `wall_ms` null for a never-started run; a fingerprint source blip retried; resume of 5 runs in a second "process" keeps the admission fingerprint and links a new run span in the same trace |
-| `outbox.test.ts` | 24 concurrent runs (72 runs incl. children), two racing flushers, an Argo outage then recovery: every row exactly once, none lost; a hanging Argo with 24 concurrent runs: every record written, no connection held; poison rows quarantined; `runPost` gating; backoff; machine id |
+| `usage-outbox.test.ts` | the outbox against an in-memory sink: 24 concurrent runs (72 runs incl. children), two racing flushers, an outage then recovery: every row exactly once, none lost; a hanging sink with 24 concurrent runs: every record written, no connection held; poison rows quarantined; `runPost` gating; backoff; machine id |
+| `usage-pg.test.ts` | the real `usage` schema in a scratch database (usage-tracker's migrations applied as they are): first post (record and session), idempotent re-post (no new tuple), rescored re-post updates `raw`, unknown model cost NULL / catalog model priced by the tables, a refused row quarantined alone, a down database then recovery, a session spanning two batches |
 | `friction.test.ts` | the document on every run, session sums and the highest repeat, every session of a step, a lost document rebuilt, `runPost` as a true recompute (stale events and steps gone, re-delivery changes nothing), `invalid_output` and re-ask steps, wallet refusal and runaway-cap failure, a failing or partial probe (incomplete, earlier entries kept, redelivered and completed), bounded probe concurrency |
 | `telemetry.test.ts` | steps ended without `stepPost`, session id from the handle, redaction, the diag sink |
 | `flush.test.ts` | subprocess with a fake OTLP receiver: SIGTERM and SIGINT re-raised after flush, crash exit 1, export failure and dropped spans logged |
-| `fingerprint.test.ts`, `opencode-usage.test.ts`, `argo-rows.test.ts` | pure: stability, each input changes the hash, the OpenCode conversion, the additive projection |
+| `fingerprint.test.ts`, `opencode-usage.test.ts`, `usage-rows.test.ts`, `usage-caller.test.ts` | pure: stability, each input changes the hash, the OpenCode conversion, the additive projection and the row mapping |
 
 The OpenCode message fixtures are shaped from the measured sources S2 points at, not from S2 itself. Every S2
 prompt wedged, so it captured no session. The sources are usage-tracker's live-schema message and agent-gateway's

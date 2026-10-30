@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
-// Prices the agent steps the journal holds with `cost IS NULL` (Claude routes by default), and re-posts them to Argo.
+// Prices the agent steps the journal holds with `cost IS NULL` (Claude routes by default), and re-queues them for the usage outbox.
 //   bun scripts/backfill-step-cost.ts             dry run (default): prints the plan, writes nothing
-//   bun scripts/backfill-step-cost.ts --commit    writes steps.cost, the run sums, and re-queues the Argo rows
+//   bun scripts/backfill-step-cost.ts --commit    writes steps.cost, the run sums, and re-queues the usage rows
 //   --all-models                                  include non-Claude steps (default: `claude-*` only)
 //   --estimates                                   also price steps whose per-call split is gone (default: leave them null)
 // Why these steps are unpriced: `OpenCodeHost.usage()` voided a whole step when ONE of its messages was above the rate's
@@ -21,10 +21,10 @@
 //
 // `--commit`, one short transaction per run: its steps' cost, unpriced_calls = 0, the model's entry in usage_by_model
 // (cost, a `costBackfill` marker saying how it was priced), the run's sums (as the `record` middleware computes them, only
-// when a step of the run was written), and `argo_synced_at`/claim cleared so the outbox re-posts; Argo upserts on (source,
-// source_id, machine). A step quarantined by Argo (`argo_error` set) is never selected or written. Re-running is a no-op:
-// priced steps are no longer null. The row's `cost_source` is whatever `packages/middleware/src/argo.ts` writes for a
-// step that has a cost.
+// when a step of the run was written), and `argo_synced_at`/claim cleared so the outbox re-writes; the usage upsert is keyed on (source,
+// source_id). A step quarantined by the outbox (`argo_error` set) is never selected or written. Re-running is a no-op:
+// priced steps are no longer null. The usage row's `cost_reported_usd` is then the step's cost
+// (`packages/middleware/src/usage.ts`), and `usage.compute_cost` makes it the final cost.
 import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { homedir } from 'node:os'
@@ -96,7 +96,7 @@ export interface BackfillResult {
   usd: number
   /** Steps actually written (0 on a dry run). */
   written: number
-  /** Argo rows actually put back in the outbox (a step the update matched). */
+  /** Usage rows actually put back in the outbox (a step the update matched). */
   requeued: number
   /** Runs whose sums were recomputed. */
   runs: number
@@ -234,7 +234,7 @@ export async function backfillStepCost(options: BackfillOptions): Promise<Backfi
   if (all.length > selected.length) {
     log(`  not selected: ${all.length - selected.length} non-Claude step(s) with cost NULL (--all-models to include)`)
   }
-  if (quarantined) log(`  left alone: ${quarantined} step(s) with cost NULL that Argo quarantined (argo_error set)`)
+  if (quarantined) log(`  left alone: ${quarantined} step(s) with cost NULL that the outbox quarantined (argo_error set)`)
 
   const result: BackfillResult = { planned: planned.length, usd: 0, written: 0, requeued: 0, runs: 0, skipped: skipped.length }
   result.usd = planned.reduce((n, p) => n + p.usd, 0)
@@ -284,7 +284,7 @@ export async function backfillStepCost(options: BackfillOptions): Promise<Backfi
       client.release()
     }
   }
-  log(`wrote ${result.written} step(s) in ${result.runs} run(s); ${result.requeued} Argo row(s) re-queued`)
+  log(`wrote ${result.written} step(s) in ${result.runs} run(s); ${result.requeued} usage row(s) re-queued`)
   return result
 }
 

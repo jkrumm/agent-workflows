@@ -172,7 +172,7 @@ describe('platform middleware through a real runtime', () => {
       const spans = platform.spans.getFinishedSpans()
       expect(byName(spans, 'agw.run p.priced')).toHaveLength(6)
       expect(byName(spans, 'agw.run p.child')).toHaveLength(18)
-      expect(platform.logger.lines.filter((l) => !l.message.startsWith('argo outbox off'))).toEqual([])
+      expect(platform.logger.lines.filter((l) => !l.message.startsWith('usage outbox off'))).toEqual([])
 
       // A run with the caller's traceparent: parented to it, the admission span id derived from the run id.
       const pricedId = starts[0]?.runId ?? ''

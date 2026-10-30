@@ -1,8 +1,17 @@
 import { afterAll, describe, expect, test } from 'bun:test'
 import { defineWorkflow, type Json } from '@agent-workflows/runtime'
 import { z } from 'zod'
-import { ArgoOutbox, JournalDb, type RunRecord, recordMiddleware } from '../src/index.ts'
-import { captureLogger, FakeArgo, freshSchema, inspector, PG_URL, testPlatform, testRuntime, until } from './support.ts'
+import { UsageOutbox, JournalDb, type RunRecord, recordMiddleware } from '../src/index.ts'
+import {
+  captureLogger,
+  FakeUsage,
+  freshSchema,
+  inspector,
+  PG_URL,
+  testPlatform,
+  testRuntime,
+  until,
+} from './support.ts'
 
 const db = freshSchema('mwscore')
 const sql = inspector(db.schema)
@@ -38,12 +47,12 @@ function setup() {
   const recordDb = new JournalDb({ connectionString: PG_URL, schema: db.schema }, logger)
   const record = recordMiddleware({ db: recordDb, logger, onRecord: (r) => records.push(r) })
   const rt = testRuntime({ schema: db.schema, workflows: [scored], middleware: [...platform.middleware, record] })
-  const argo = new FakeArgo()
+  const usage = new FakeUsage()
   const outboxDb = new JournalDb({ connectionString: PG_URL, schema: db.schema }, logger)
-  const outbox = new ArgoOutbox({ db: outboxDb, transport: argo, logger, machine: 'test-machine' })
+  const outbox = new UsageOutbox({ db: outboxDb, transport: usage, logger, machine: 'test-machine' })
   return {
     rt,
-    argo,
+    usage,
     outbox,
     records,
     async run(n: number) {
@@ -53,7 +62,7 @@ function setup() {
       return runId
     },
     rawScores: (runId: string) =>
-      argo.stored.get(`agent-workflows|${runId}:work:m1|test-machine`)?.raw as { scores: Json } | undefined,
+      usage.stored.get(`agent-workflows|${runId}:work:m1`)?.raw as { scores: Json } | undefined,
     async close() {
       await outbox.close()
       await rt.close()
@@ -66,7 +75,7 @@ function setup() {
 
 const gate = { scores: { big: 1 }, pass: true }
 
-describe('scores in the run record and in Argo raw', () => {
+describe('scores in the run record and in the usage rows raw', () => {
   test('the gate verdicts ride the record and raw; a later score re-posts the rows with it', async () => {
     const t = setup()
     await t.rt.open()
@@ -82,9 +91,9 @@ describe('scores in the run record and in Argo raw', () => {
       expect((await sql.step(runId, 'gate'))?.argo_synced_at).toBeNull() // no usage: never in the outbox
       await t.outbox.flush()
       expect(t.rawScores(runId)?.scores).toEqual({ gates: { gate }, final })
-      expect(t.argo.accepted.get(`${runId}:work:m1`)).toBe(2)
+      expect(t.usage.accepted.get(`${runId}:work:m1`)).toBe(2)
       // Top level never carries the scores.
-      const row = t.argo.stored.get(`agent-workflows|${runId}:work:m1|test-machine`) as Record<string, unknown>
+      const row = t.usage.stored.get(`agent-workflows|${runId}:work:m1`) as Record<string, unknown>
       expect(Object.keys(row)).not.toContain('scores')
     } finally {
       await t.close()
@@ -97,7 +106,7 @@ describe('scores in the run record and in Argo raw', () => {
     try {
       const runId = await t.run(3)
       let scoredMidPost = false
-      t.argo.onPost = async () => {
+      t.usage.onPost = async () => {
         if (scoredMidPost) return
         scoredMidPost = true
         await t.rt.scoreRun(runId, { source: 'drift', onlyUnscored: true })

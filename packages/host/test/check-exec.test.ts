@@ -100,6 +100,8 @@ describe('credentials', () => {
     AGW_API_SECRET: 'x',
     AGW_PG_URL: 'postgres://user:pw@db.example.com/agw',
     AGW_PG_PASSWORD: 'x',
+    USAGE_PG_URL: 'postgres://usage:pw@db.example.com/shared',
+    USAGE_PG_PASSWORD: 'x',
     IU_API_KEY: 'x',
     IU_BASE_URL: 'https://iu.example.com',
     OTEL_EXPORTER_OTLP_HEADERS: 'authorization=Bearer x',

@@ -149,11 +149,11 @@ describe('backfillStepCost', () => {
     expect(out).toContain('rate source: claude-haiku-5-5-eu -> route ') // per model, which route's rate priced it
     expect(out).toContain('tier x5/x5 over 100000')
     expect(out).toContain('per-call')
-    expect(out).toContain('Argo quarantined') // s4 is counted, not touched
+    expect(out).toContain('the outbox quarantined') // s4 is counted, not touched
     expect(out).toContain('--all-models') // s5 is not selected
   })
 
-  test('--commit prices per call, re-queues the Argo row and recomputes only that run', async () => {
+  test('--commit prices per call, re-queues the usage row and recomputes only that run', async () => {
     await seed()
     const result = await backfillStepCost(options({ commit: true }))
     expect(result).toMatchObject({ planned: 1, written: 1, requeued: 1, runs: 1 })
@@ -199,7 +199,7 @@ describe('backfillStepCost', () => {
     expect((s3.usage_by_model as Record<string, Record<string, unknown>>)['claude-haiku-5-5-eu']).toMatchObject({
       costBackfill: 'step-total-tier',
     })
-    expect((await stepRow('s4')).cost).toBeNull() // quarantined by Argo: never written, whatever the flags
+    expect((await stepRow('s4')).cost).toBeNull() // quarantined by the outbox: never written, whatever the flags
   })
 
   test('--all-models includes the non-Claude step, priced by its route rate', async () => {
