@@ -4,7 +4,7 @@
 
 **Where to look:** workflow shape §3, middleware §4, porting a skill or a Hermes path §10, phase order §11.
 
-> **v3.12, 2026-10-30:** toolchain: oxfmt replaces Biome (format), `oxlint` with `.oxlintrc.json` carries the rules Biome enforced (§Stack); owner decision, no decision reversed.
+> **v3.12, 2026-10-30:** toolchain: oxfmt formats and `oxlint` (`.oxlintrc.json`) lints, no second linter or formatter (§Stack); owner decision, no decision reversed.
 > **v3.11, 2026-10-30:** §5 usage projection as built for the shared usage schema: the outbox writes `usage.records` / `usage.sessions` in Postgres (`USAGE_PG_URL`) instead of posting to Argo's HTTP `POST /usage/records`; the outbox, claim and quarantine machinery are unchanged, the sink is the seam. No decision reversed (N6 holds: the platform is still the system of record, Argo just no longer receives usage).
 > **v3.10, 2026-10-29:** capabilities may be `internal`: callable by workflows in-process, not exposed over HTTP or the CLI (first: `overview.classify`).
 > **v3.9, 2026-10-29:** §12.6 flipped by the owner: `dispatch` is unused, so agent-gateway retires completely in P6 (its `agw-legacy` CLI included) instead of shrinking to `dispatch`.
@@ -180,7 +180,7 @@ Learned facts ("this shop blocks at TLS") go into a per-agent learnings store an
 - **Agent steps run on one OpenCode server**, one location directory per agent, compiled outside any repo. Otherwise an ancestor `AGENTS.md` leaks in.
 - **Processes by deploy unit, not per workflow:** one `host` process (light workflows, capabilities, HTTP API), plus own processes for heavy in-process pipelines (audio). Research runs in the host (v3.6): its agent loop runs on the shared OpenCode server, and the host only serves the tool gate and web reads. A heavy pipeline gets its own process so its deploy and its memory spikes never touch review.
 - **Store:** Postgres, the matured mini instance (N9, §12.2). Since P0b: database `agent_workflows` with its own least-privilege role, nightly backup to the HomeLab that ends in a restore drill on exact snapshot counts, a minor-upgrade target, a heartbeat probe; the whole-DB `sync-from-prod` is gone. Runbook: vps `docs/mini-postgres.md`.
-- **Stack (S3,** `docs/spikes/s3-stack/REPORT.md`**):** oRPC 1.x with zod 4 for every route and capability, because only oRPC calls one definition in-process (`call`) through the same validation and middleware as HTTP, which is what "import, HTTP and CLI from one definition" (§2) needs. `x-cli` rides on each procedure's `spec` callback behind one helper; the CLI generator maps oRPC's typed `code` to exit codes and dereferences `$ref`. Handlers stay plain functions of `(input, ctx)` so the framework coupling stays in the procedure layer. Toolchain: `bun test`, oxfmt (format), oxlint with `--type-aware` (lint, typed rules; replaced Biome 2026-10-30), TypeScript 7 `tsc`, all pinned exactly.
+- **Stack (S3,** `docs/spikes/s3-stack/REPORT.md`**):** oRPC 1.x with zod 4 for every route and capability, because only oRPC calls one definition in-process (`call`) through the same validation and middleware as HTTP, which is what "import, HTTP and CLI from one definition" (§2) needs. `x-cli` rides on each procedure's `spec` callback behind one helper; the CLI generator maps oRPC's typed `code` to exit codes and dereferences `$ref`. Handlers stay plain functions of `(input, ctx)` so the framework coupling stays in the procedure layer. Toolchain: `bun test`, oxfmt (format), oxlint with `--type-aware` (lint, typed rules), TypeScript 7 `tsc`, all pinned exactly.
 
 ### OpenCode stays the agent runtime
 
@@ -473,9 +473,9 @@ One entry per phase: what we learned, what changed on this page, and why.
   `USAGE_PG_URL` is built by `scripts/launch.sh`. The journal's `argo_*` column names stay (a rename needs a runtime migration).
 - **Does the page hold?** Yes, as v3.11.
 
-### Track T — oxfmt replaces Biome, 2026-10-30
+### Track T — one formatter, one linter, 2026-10-30
 
-- **Learned.** Biome's `recommended` gate was warn/info-level for everything the code actually violated, so the mapped oxlint rules that
+- **Learned.** The previous linter's gate was warn/info-level for everything the code actually violated, so the oxlint rules that
   hit existing code stay `warn` and never fail `make check`; the rest are `error`.
-- **Changed.** v3.12: Stack line names oxfmt and oxlint instead of Biome; no other page content moved.
+- **Changed.** v3.12: Stack line names oxfmt and oxlint only; no other page content moved.
 - **Does the page hold?** Yes, as v3.12.
