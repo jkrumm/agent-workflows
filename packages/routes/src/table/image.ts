@@ -8,6 +8,10 @@ import { CALL_FALLBACK } from './_shared.ts'
 // Both generation models bill identically, USD/M: text in 5.00, image in 8.00, image out 30.00; they trade latency, not
 // price. `flare` is the speed model (drafts), `sunburst` the quality model (final renders and every edit): the capability
 // picks between them the way the gateway's `model: auto` did.
+//
+// The icon-set pipeline's model steps ride the same Replicate-through-IU lane as the cutout: `image.upscale`
+// (real-esrgan, alpha preserved) and `image.vectorize` (recraft, PNG to SVG). Source: image-gateway `shared/src/assets.ts`
+// UPSCALE_MODEL / UPSCALE_PRICE_USD and VECTORIZE_MODEL / VECTORIZE_PRICE_USD.
 const IMAGE_PRICE = { kind: 'image-tokens', textInPerM: 5, imageInPerM: 8, outputPerM: 30 } as const
 
 const routes = {
@@ -23,6 +27,16 @@ const routes = {
     wire: 'iu-openai',
     model: 'bria/remove-background',
     price: { kind: 'unit', unit: 'call', usd: 0.018 },
+  },
+  'image.upscale': {
+    wire: 'iu-openai',
+    model: 'nightmareai/real-esrgan',
+    price: { kind: 'unit', unit: 'call', usd: 0.002 },
+  },
+  'image.vectorize': {
+    wire: 'iu-openai',
+    model: 'recraft-ai/recraft-vectorize',
+    price: { kind: 'unit', unit: 'call', usd: 0.01 },
   },
   // No fallback on the image seats: a provider-balance failure on an image model has no text model to move to.
   // The enhance planner (imgcli `gen --enhance`): one JSON plan per brief. image-gateway's ENHANCE_MODEL and its

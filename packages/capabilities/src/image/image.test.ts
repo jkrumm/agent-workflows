@@ -1,5 +1,5 @@
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DEFAULT_ROUTES as IMAGE_ROUTES } from '@agent-workflows/routes'
@@ -60,13 +60,15 @@ const registry = () =>
     }),
   )
 
-async function call(id: 'image.generate' | 'image.cutout', input: Record<string, unknown>) {
+type ImageCapabilityId = 'image.generate' | 'image.cutout' | 'image.upscale' | 'image.vectorize'
+
+async function call(id: ImageCapabilityId, input: Record<string, unknown>) {
   const usage: Usage[] = []
   const result = await registry().call(id, input as never, { addUsage: (u) => usage.push(u) })
   // biome-ignore lint/suspicious/noExplicitAny: the outputs are asserted field by field
   return { result: result as Record<string, any>, usage }
 }
-async function failure(id: 'image.generate' | 'image.cutout', input: Record<string, unknown>) {
+async function failure(id: ImageCapabilityId, input: Record<string, unknown>) {
   const usage: Usage[] = []
   const error = await registry()
     .call(id, input as never, { addUsage: (u) => usage.push(u) })
@@ -371,6 +373,324 @@ describe('image.cutout', () => {
     expect(replicateBase('https://iu.example/openai/v1/')).toBe('https://iu.example/replicate/v1')
     expect(replicateBase('https://iu.example/openai/v1', 'https://r.example/v1/')).toBe('https://r.example/v1')
     expect(() => replicateBase('https://iu.example/other')).toThrow('cannot derive')
+  })
+})
+
+/** A delivery URL's bytes, as the CDN map holds them. */
+const text = (value: string) => new TextEncoder().encode(value)
+
+describe('image.upscale', () => {
+  const REAL_ESRGAN = IMAGE_ROUTES['image.upscale'].model
+  const PREDICT = POST_PREDICT(REAL_ESRGAN)
+  const DELIVERED = 'https://replicate.delivery/out/upscaled.png'
+  const source = () => file('icon.png', pngFixture(120, 100))
+  /** A PNG whose header claims `width` x `height`, with the pixels of a small one. */
+  const claiming = (width: number, height: number) => {
+    const bytes = pngFixture(120, 100)
+    new DataView(bytes.buffer).setUint32(16, width)
+    new DataView(bytes.buffer).setUint32(20, height)
+    return bytes
+  }
+
+  test('the request is the model path with the file as it is, the scale and face_enhance off; the PNG comes back priced per call', async () => {
+    const upscaled = pngFixture(240, 200)
+    cdn[DELIVERED] = upscaled
+    handlers[PREDICT] = () => Response.json({ id: 'u1', status: 'succeeded', output: DELIVERED })
+    const path = source()
+    const { result, usage: reported } = await call('image.upscale', { file: path, scale: 2 })
+
+    expect(fake.seen).toHaveLength(1)
+    expect(fake.seen[0]?.path).toBe(PREDICT)
+    expect(fake.seen[0]?.headers.get('prefer')).toBe('wait')
+    expect(fake.seen[0]?.headers.get('authorization')).toBe('Bearer test-key')
+    const sent = fake.seen[0]?.json?.input as { image: string; scale: number; face_enhance: boolean }
+    expect(sent).toMatchObject({ scale: 2, face_enhance: false })
+    expect(sent.image).toStartWith('data:image/png;base64,')
+    expect(Buffer.from(sent.image.split(',')[1] ?? '', 'base64').equals(Buffer.from(readFileSync(path)))).toBe(true)
+    expect(result.image).toMatchObject({ width: 240, height: 200, hasAlpha: true, bytes: upscaled.length })
+    expect(Buffer.from(result.image.b64, 'base64').equals(Buffer.from(upscaled))).toBe(true)
+    expect(result).toMatchObject({ model: REAL_ESRGAN, cost: { usd: 0.002, source: 'rate' } })
+    expect(reported).toEqual([
+      {
+        model: REAL_ESRGAN,
+        tokens: { input: 0, output: 0, cacheRead: 0, reasoning: 0 },
+        cost: 0.002,
+        costSource: 'rate',
+      },
+    ])
+  })
+
+  test('the scale defaults to 4, a JPEG keeps its mime, and a WebP delivery comes back a PNG with alpha', async () => {
+    const jpeg = await new Bun.Image(pngFixture(120, 100, { kind: 'rgb' })).jpeg({ quality: 90 }).bytes()
+    cdn[DELIVERED] = await webpFixture(480, 400)
+    handlers[PREDICT] = () => Response.json({ status: 'succeeded', output: [DELIVERED] })
+    const { result } = await call('image.upscale', { file: file('photo.jpg', jpeg) })
+    const sent = fake.seen[0]?.json?.input as { image: string; scale: number }
+    expect(sent.scale).toBe(4)
+    expect(sent.image).toStartWith('data:image/jpeg;base64,')
+    expect(magicBytesValid(Buffer.from(result.image.b64, 'base64'), 'png')).toBe(true)
+    expect(result.image).toMatchObject({ width: 480, height: 400, hasAlpha: true })
+  })
+
+  test('a prediction still running is polled on the flat /predictions/{id} path until it succeeds', async () => {
+    cdn[DELIVERED] = pngFixture(480, 400)
+    handlers[PREDICT] = () => Response.json({ id: 'u9', status: 'starting' })
+    handlers['/replicate/v1/predictions/u9'] = (_s, attempt) =>
+      Response.json(
+        attempt < 2 ? { id: 'u9', status: 'processing' } : { id: 'u9', status: 'succeeded', output: DELIVERED },
+      )
+    await call('image.upscale', { file: source() })
+    expect(fake.attempts['/replicate/v1/predictions/u9']).toBe(3)
+  })
+
+  test('a started prediction is on the run even when polling then fails; one that fails on create is not billed', async () => {
+    handlers[PREDICT] = () => Response.json({ id: 'ux', status: 'starting' })
+    handlers['/replicate/v1/predictions/ux'] = () => new Response('{"detail":"bad request"}', { status: 400 })
+    const polled = await failure('image.upscale', { file: source() })
+    expect(polled.error.code).toBe('UPSTREAM_ERROR')
+    expect(polled.usage).toHaveLength(1)
+    expect(polled.usage[0]).toMatchObject({ model: REAL_ESRGAN, cost: 0.002, costSource: 'rate' })
+
+    handlers[PREDICT] = () => Response.json({ status: 'failed', error: 'out of memory' })
+    const failed = await failure('image.upscale', { file: source() })
+    expect(failed.error.message).toContain('failed: out of memory')
+    expect(failed.usage).toEqual([])
+  })
+
+  test('an output URL outside replicate.delivery is refused and never fetched; the succeeded call was billed', async () => {
+    cdn['https://evil.example/out.png'] = pngFixture(480, 400)
+    handlers[PREDICT] = () => Response.json({ status: 'succeeded', output: 'https://evil.example/out.png' })
+    const { error, usage: reported } = await failure('image.upscale', { file: source() })
+    expect(error.message).toContain('not a replicate.delivery URL')
+    expect(delivered).toEqual([])
+    expect(reported).toHaveLength(1)
+  })
+
+  test('the delivery is fetched without following redirects; a body over the bound, a non-image and a huge claimed canvas are refused', async () => {
+    handlers[PREDICT] = () => Response.json({ status: 'succeeded', output: DELIVERED })
+    cdn[DELIVERED] = () => new Response(null, { status: 302, headers: { location: 'http://169.254.169.254/' } })
+    expect((await failure('image.upscale', { file: source() })).error.message).toContain('could not be fetched (302)')
+    expect(delivered[0]?.init.redirect).toBe('manual')
+
+    cdn[DELIVERED] = () => new Response('x', { headers: { 'content-length': String(65 * 1024 * 1024) } })
+    expect((await failure('image.upscale', { file: source() })).error.message).toContain('over 67108864 bytes')
+
+    cdn[DELIVERED] = text('<html>')
+    expect((await failure('image.upscale', { file: source() })).error.message).toContain('neither png nor webp')
+
+    // 9000 x 8000 = 72 MP
+    cdn[DELIVERED] = claiming(9000, 8000)
+    expect((await failure('image.upscale', { file: source() })).error.message).toContain('pixels, over the bound')
+  })
+
+  test('an input long edge over 1440 px is refused on its header before any request, and the limit is named', async () => {
+    handlers[PREDICT] = () => Response.json({ status: 'failed' })
+    const { error } = await failure('image.upscale', { file: file('wide.png', claiming(1441, 10)) })
+    expect(error.code).toBe('INVALID_INPUT')
+    expect(error.message).toContain('at most 1440px')
+    // 1440 itself is allowed through to the request
+    await failure('image.upscale', { file: file('edge.png', claiming(1440, 10)) })
+    expect(fake.seen).toHaveLength(1)
+  })
+
+  test('an input whose pixels or whose result would be over the bound, and a non-image, are refused before any request', async () => {
+    handlers[PREDICT] = () => Response.json({ status: 'failed' })
+    const cases = [
+      [file('tall.png', claiming(1440, 1440)), 8, 'upscaled 8x'],
+      [file('plain.png', text('hello')), 4, 'png, jpeg or webp'],
+      [join(root, 'missing.png'), 4, 'no such file'],
+    ] as const
+    for (const [path, scale, message] of cases) {
+      const { error } = await failure('image.upscale', { file: path, scale })
+      expect(error.code).toBe('INVALID_INPUT')
+      expect(error.message).toContain(message)
+    }
+    expect(fake.seen).toEqual([])
+  })
+
+  test('the schema takes a scale of 2 to 8 and nothing else', async () => {
+    for (const bad of [{ scale: 1 }, { scale: 9 }, { scale: 2.5 }, { colour: 'red' }]) {
+      const { error } = await failure('image.upscale', { file: source(), ...bad })
+      expect(error.status).toBe(400)
+    }
+    expect(fake.seen).toEqual([])
+  })
+
+  test('the billed create POST is not sent again after a dropped connection, a 503 or a garbled 200', async () => {
+    let sent = 0
+    const dropped = createRegistry(
+      createImageCapabilities({
+        env: env(),
+        retry: { backoffMs: 0 },
+        pollMs: 1,
+        fetch: async () => {
+          sent++
+          throw new Error('socket hang up')
+        },
+      }),
+    )
+    await dropped.call('image.upscale', { file: source() }).catch(() => undefined)
+    expect(sent).toBe(1)
+
+    handlers[PREDICT] = () => new Response('upstream busy', { status: 503 })
+    expect((await failure('image.upscale', { file: source() })).error.code).toBe('UPSTREAM_ERROR')
+    expect(fake.seen).toHaveLength(1)
+
+    fake.reset()
+    handlers[PREDICT] = () => new Response('not json', { status: 200 })
+    expect((await failure('image.upscale', { file: source() })).usage).toEqual([])
+    expect(fake.seen).toHaveLength(1)
+  })
+})
+
+describe('image.vectorize', () => {
+  const RECRAFT_VECTORIZE = IMAGE_ROUTES['image.vectorize'].model
+  const PREDICT = POST_PREDICT(RECRAFT_VECTORIZE)
+  const DELIVERED = 'https://replicate.delivery/out/icon.svg'
+  const SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8"><path d="M0 0h8v8z"/></svg>'
+  const source = () => file('master.png', pngFixture(300, 280, { kind: 'rgb' }))
+
+  test('the request is the model path with the file as a data URI; the SVG comes back as it was delivered, priced per call', async () => {
+    cdn[DELIVERED] = text(`<?xml version="1.0" encoding="UTF-8"?>\n${SVG}`)
+    handlers[PREDICT] = () => Response.json({ id: 'v1', status: 'succeeded', output: DELIVERED })
+    const path = source()
+    const { result, usage: reported } = await call('image.vectorize', { file: path })
+
+    expect(fake.seen).toHaveLength(1)
+    expect(fake.seen[0]?.path).toBe(PREDICT)
+    expect(fake.seen[0]?.headers.get('prefer')).toBe('wait')
+    const sent = fake.seen[0]?.json?.input as { image: string }
+    expect(Object.keys(fake.seen[0]?.json?.input as object)).toEqual(['image'])
+    expect(sent.image).toStartWith('data:image/png;base64,')
+    expect(Buffer.from(sent.image.split(',')[1] ?? '', 'base64').equals(Buffer.from(readFileSync(path)))).toBe(true)
+    expect(result.svg).toBe(`<?xml version="1.0" encoding="UTF-8"?>\n${SVG}`)
+    expect(result.bytes).toBe(Buffer.byteLength(result.svg))
+    expect(result).toMatchObject({ model: RECRAFT_VECTORIZE, cost: { usd: 0.01, source: 'rate' } })
+    expect(reported).toEqual([
+      {
+        model: RECRAFT_VECTORIZE,
+        tokens: { input: 0, output: 0, cacheRead: 0, reasoning: 0 },
+        cost: 0.01,
+        costSource: 'rate',
+      },
+    ])
+  })
+
+  test('a BOM and leading whitespace before the root are allowed; the document is not touched', async () => {
+    const body = `﻿\n  ${SVG}`
+    cdn[DELIVERED] = new Uint8Array(Buffer.from(body))
+    handlers[PREDICT] = () => Response.json({ status: 'succeeded', output: [DELIVERED] })
+    const { result } = await call('image.vectorize', { file: source() })
+    expect(result.svg.trim()).toBe(SVG)
+    expect(result.bytes).toBe(Buffer.byteLength(body))
+  })
+
+  test('a delivery that is not an SVG document is refused, the billed call still reported', async () => {
+    handlers[PREDICT] = () => Response.json({ status: 'succeeded', output: DELIVERED })
+    for (const body of [
+      new Uint8Array(pngFixture(8, 8)),
+      text('<html><svg></svg></html>'),
+      text('<svgx></svgx>'),
+      text(''),
+      new Uint8Array([0x3c, 0x73, 0x76, 0x67, 0x20, 0xff, 0xfe]),
+    ]) {
+      cdn[DELIVERED] = body
+      const { error, usage: reported } = await failure('image.vectorize', { file: source() })
+      expect(error.code).toBe('UPSTREAM_ERROR')
+      expect(error.message).toContain('replicate vectorize output is not an SVG')
+      expect(reported).toHaveLength(1)
+    }
+  })
+
+  test('a body over 8 MiB is refused, declared or not', async () => {
+    handlers[PREDICT] = () => Response.json({ status: 'succeeded', output: DELIVERED })
+    cdn[DELIVERED] = () => new Response('x', { headers: { 'content-length': String(9 * 1024 * 1024) } })
+    expect((await failure('image.vectorize', { file: source() })).error.message).toContain('over 8388608 bytes')
+    cdn[DELIVERED] = () => new Response(`<svg>${' '.repeat(9 * 1024 * 1024)}</svg>`)
+    expect((await failure('image.vectorize', { file: source() })).error.message).toContain('over 8388608 bytes')
+  })
+
+  test('a prediction still running is polled on the flat path; the price is recorded even when polling then fails', async () => {
+    cdn[DELIVERED] = text(SVG)
+    handlers[PREDICT] = () => Response.json({ id: 'v9', status: 'starting' })
+    handlers['/replicate/v1/predictions/v9'] = (_s, attempt) =>
+      Response.json(
+        attempt < 1 ? { id: 'v9', status: 'processing' } : { id: 'v9', status: 'succeeded', output: DELIVERED },
+      )
+    const ok = await call('image.vectorize', { file: source() })
+    expect(fake.attempts['/replicate/v1/predictions/v9']).toBe(2)
+    expect(ok.usage).toHaveLength(1)
+
+    handlers[PREDICT] = () => Response.json({ id: 'vx', status: 'starting' })
+    handlers['/replicate/v1/predictions/vx'] = () => new Response('{"detail":"bad request"}', { status: 400 })
+    const { error, usage: reported } = await failure('image.vectorize', { file: source() })
+    expect(error.code).toBe('UPSTREAM_ERROR')
+    expect(reported).toHaveLength(1)
+    expect(reported[0]).toMatchObject({ model: RECRAFT_VECTORIZE, cost: 0.01, costSource: 'rate' })
+
+    handlers[PREDICT] = () => Response.json({ status: 'failed', error: 'boom' })
+    expect((await failure('image.vectorize', { file: source() })).usage).toEqual([])
+  })
+
+  test('an output URL outside replicate.delivery is refused and never fetched', async () => {
+    cdn['https://evil.example/out.svg'] = text(SVG)
+    handlers[PREDICT] = () => Response.json({ status: 'succeeded', output: 'https://evil.example/out.svg' })
+    const { error, usage: reported } = await failure('image.vectorize', { file: source() })
+    expect(error.message).toContain('not a replicate.delivery URL')
+    expect(delivered).toEqual([])
+    expect(reported).toHaveLength(1)
+  })
+
+  test('the delivery is fetched without following redirects', async () => {
+    cdn[DELIVERED] = () => new Response(null, { status: 302, headers: { location: 'http://169.254.169.254/' } })
+    handlers[PREDICT] = () => Response.json({ status: 'succeeded', output: DELIVERED })
+    expect((await failure('image.vectorize', { file: source() })).error.message).toContain('could not be fetched (302)')
+    expect(delivered[0]?.init.redirect).toBe('manual')
+  })
+
+  test("recraft's input limits are enforced before the call, and name the capability", async () => {
+    handlers[PREDICT] = () => Response.json({ status: 'failed' })
+    const cases = [
+      [file('tiny.png', pngFixture(100, 100)), 'at least 256px for vectorize'],
+      [file('plain.png', text('hello')), 'png, jpeg or webp'],
+    ] as const
+    for (const [path, message] of cases) {
+      const { error } = await failure('image.vectorize', { file: path })
+      expect(error.code).toBe('INVALID_INPUT')
+      expect(error.message).toContain(message)
+    }
+    const big = new Uint8Array(5 * 1024 * 1024 + 1)
+    big.set(pngFixture(300, 280, { kind: 'rgb' }))
+    expect((await failure('image.vectorize', { file: file('big.png', big) })).error.message).toContain(
+      'over the 5242880 byte limit',
+    )
+    expect(fake.seen).toEqual([])
+  })
+
+  test('the billed create POST is not sent again after a dropped connection, a 503 or a garbled 200', async () => {
+    let sent = 0
+    const dropped = createRegistry(
+      createImageCapabilities({
+        env: env(),
+        retry: { backoffMs: 0 },
+        pollMs: 1,
+        fetch: async () => {
+          sent++
+          throw new Error('socket hang up')
+        },
+      }),
+    )
+    await dropped.call('image.vectorize', { file: source() }).catch(() => undefined)
+    expect(sent).toBe(1)
+
+    handlers[PREDICT] = () => new Response('upstream busy', { status: 503 })
+    expect((await failure('image.vectorize', { file: source() })).error.code).toBe('UPSTREAM_ERROR')
+    expect(fake.seen).toHaveLength(1)
+
+    fake.reset()
+    handlers[PREDICT] = () => new Response('not json', { status: 200 })
+    expect((await failure('image.vectorize', { file: source() })).usage).toEqual([])
+    expect(fake.seen).toHaveLength(1)
   })
 })
 

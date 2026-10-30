@@ -73,7 +73,13 @@ describe('priceCall', () => {
 const IMAGE_ROUTES = Object.fromEntries(
   Object.entries(DEFAULT_ROUTES).filter(([id]) => id.startsWith('image.')),
 ) as Record<
-  'image.flare' | 'image.sunburst' | 'image.cutout.recraft' | 'image.cutout.bria' | 'image.enhance',
+  | 'image.flare'
+  | 'image.sunburst'
+  | 'image.cutout.recraft'
+  | 'image.cutout.bria'
+  | 'image.upscale'
+  | 'image.vectorize'
+  | 'image.enhance',
   (typeof DEFAULT_ROUTES)[keyof typeof DEFAULT_ROUTES]
 >
 
@@ -88,10 +94,12 @@ describe('the image routes', () => {
     }
   })
 
-  test('both generation models bill alike; the cutout models bill per call', () => {
+  test('both generation models bill alike; the Replicate models bill per call', () => {
     expect(IMAGE_ROUTES['image.flare'].price).toEqual(IMAGE_ROUTES['image.sunburst'].price)
     expect(IMAGE_ROUTES['image.cutout.recraft'].price).toEqual({ kind: 'unit', unit: 'call', usd: 0.01 })
     expect(IMAGE_ROUTES['image.cutout.bria'].price).toEqual({ kind: 'unit', unit: 'call', usd: 0.018 })
+    expect(IMAGE_ROUTES['image.upscale'].price).toEqual({ kind: 'unit', unit: 'call', usd: 0.002 })
+    expect(IMAGE_ROUTES['image.vectorize'].price).toEqual({ kind: 'unit', unit: 'call', usd: 0.01 })
   })
 
   test('a resolved route is a copy, and AGW_ROUTES overrides it like any route', () => {
