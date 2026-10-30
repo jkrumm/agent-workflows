@@ -4,6 +4,7 @@
 # journal, and a direct `agw llm title` call left a done `cap.llm.title` run with priced usage. The audio process must be
 # healthy at the same sha, `agw audio ping` (routed to it by AGW_PROCESSES) must leave a done run, and its door must
 # refuse an unauthenticated request (401) and answer an authenticated one with a bad body with the legacy 400.
+# The host's image door (/door/image/generate) must do the same: 401 without a token, the studio's 400 envelope on a bad body.
 # The pinned OpenCode build and react-doctor of the deployed release must be installed (scripts/pins.sh check).
 # Prints the run ids.
 
@@ -14,6 +15,7 @@ REPO_DIR="$ROOT/repo"
 SHA_FILE="$ROOT/data/deployed-sha"
 HEALTH_URL="http://127.0.0.1:7791/health"
 AUDIO_URL="http://127.0.0.1:7792"
+IMAGE_DOOR_URL="http://127.0.0.1:7791/door/image"
 API_SECRET_REF="op://mini/agent-workflows/API_SECRET"
 PG_PASSWORD_REF="op://mini/vps-dev/AGENT_WORKFLOWS_DB_PASSWORD"
 SCHEMA="${AGW_PG_SCHEMA:-agw}"
@@ -147,5 +149,16 @@ door_status=$(print -r -- "header = \"authorization: Bearer $secret\"" | curl -s
 [[ "$(jq -r '.error.type // empty' "$door_body" 2>/dev/null)" == "invalid_request_error" ]] \
   || fail "the door's 400 is not the legacy envelope: $(<"$door_body")"
 ok "door: 401 without a caller token, legacy 400 on a bad body"
+
+# 7. the host's image door: refused without a caller token, the studio's error envelope on a bad body
+door_status=$(curl -sS --max-time 10 -o /dev/null -w '%{http_code}' -X POST -H 'content-type: application/json' \
+  --data '{}' "$IMAGE_DOOR_URL/generate") || fail "no answer from the image door"
+[[ "$door_status" == "401" ]] || fail "an unauthenticated image door request got $door_status, not 401"
+door_status=$(print -r -- "header = \"authorization: Bearer $secret\"" | curl -sS --max-time 30 -K - -o "$door_body" \
+  -w '%{http_code}' -X POST -H 'content-type: application/json' --data '{}' "$IMAGE_DOOR_URL/generate") \
+  || fail "no answer from the image door"
+[[ "$door_status" == "400" && "$(jq -r '.error.type // empty' "$door_body" 2>/dev/null)" == "invalid_request_error" ]] \
+  || fail "the image door's bad-body answer is not the studio's 400 envelope ($door_status): $(<"$door_body")"
+ok "image door: 401 without a caller token, studio 400 envelope on a bad body"
 
 print "verify: PASS run $run_id, cap run $cap_id, audio run $audio_run"
