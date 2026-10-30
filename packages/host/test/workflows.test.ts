@@ -73,6 +73,7 @@ describe('workflow start', () => {
       expect(error).toMatchObject({ code: 'BAD_REQUEST', status: 400 })
     }
     expect((await t.pool.query(`select count(*)::int as n from "${t.schema}".runs`)).rows[0].n).toBe(before)
+    // oxlint-disable-next-line typescript/no-explicit-any -- the OpenAPI document is asserted path by path
     const doc = (await t.host.openapi()) as Record<string, any>
     expect(
       doc.paths['/workflows/smoke/ping'].post.requestBody.content['application/json'].schema.additionalProperties,

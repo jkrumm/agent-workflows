@@ -38,7 +38,7 @@ describe('image.enhance', () => {
 
     const first = transports.chatCalls[0]
     const wire = first?.wire
-    // biome-ignore lint/suspicious/noExplicitAny: the request is asserted field by field
+    // oxlint-disable-next-line typescript/no-explicit-any -- the request is asserted field by field
     const request = first?.request as Record<string, any>
     expect(wire).toBe('openai')
     expect(request).toMatchObject({ model: route.model, effort: 'high', maxOutputTokens: 32_000, json: true })

@@ -56,7 +56,7 @@ export function installDomShim(fontsDir: string): void {
   const canvas = () => {
     const element = createCanvas(10, 10)
     const getContext = element.getContext.bind(element)
-    // biome-ignore lint/suspicious/noExplicitAny: the shim hands Excalidraw a canvas it types as the DOM's
+    // oxlint-disable-next-line typescript/no-explicit-any -- the shim hands Excalidraw a canvas it types as the DOM's
     ;(element as any).getContext = (type: '2d') => {
       const context = getContext(type)
       return new Proxy(context, {

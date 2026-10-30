@@ -489,6 +489,7 @@ describe('registry', () => {
   test('the document carries x-cli and the strict inputs; hdx.write is the only mutating one', async () => {
     const { caps, hdx } = setup()
     const registry = createRegistry(caps)
+    // oxlint-disable-next-line typescript/no-explicit-any -- the OpenAPI document is asserted path by path
     const doc = (await registry.openapi()) as { paths: Record<string, Record<string, Record<string, any>>> }
     const cli = Object.fromEntries(
       Object.entries(doc.paths)

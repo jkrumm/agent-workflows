@@ -121,7 +121,7 @@ export function episodeNoteFilename(createdAt: string, title: string): string {
   const date = createdAt.slice(0, 10)
   const sanitized = title
     // Strips filesystem-hostile chars and control chars on purpose.
-    // biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are exactly what is stripped here
+    // oxlint-disable-next-line no-control-regex -- control characters are exactly what is stripped here
     .replace(/[/\\:*?"<>|\u0000-\u001f]/g, '')
     .replace(/\s+/g, ' ')
     .trim()

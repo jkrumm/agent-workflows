@@ -107,6 +107,6 @@ export const overridesSchema = z.record(z.string(), routePatchSchema)
  * typed though the table is discovered at runtime. A route a group file does not declare here is still served, but no
  * caller can name it without a cast.
  */
-// biome-ignore lint/suspicious/noEmptyInterface: filled by declaration merging from table/<group>.ts
+// oxlint-disable-next-line typescript/no-empty-object-type -- filled by declaration merging from table/<group>.ts
 export interface RouteTable {}
 export type RouteId = keyof RouteTable & string

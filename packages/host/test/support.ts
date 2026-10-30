@@ -14,7 +14,7 @@ import { freshSchema, PG_URL, testRuntime } from '../../runtime/test/support/pg.
 
 export { captureLogger, freshSchema, inspector, PG_URL, until } from '../../runtime/test/support/pg.ts'
 
-// biome-ignore lint/suspicious/noExplicitAny: response bodies are asserted field by field
+// oxlint-disable-next-line typescript/no-explicit-any -- response bodies are asserted field by field
 export type Body = Record<string, any>
 
 export const SECRET = 'test-secret-0123456789abcdef-0123456789'

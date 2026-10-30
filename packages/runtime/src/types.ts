@@ -225,14 +225,14 @@ export type WorkflowDefinition<I extends z.ZodType, O extends z.ZodType> = {
   /** Max top-level runs of this workflow in `running` across all processes; the rest stay pending. */
   concurrency?: number
   /** Scores the workflow's results: the inline gate (`ctx.score`), regression and drift (concept §6). */
-  // biome-ignore lint/suspicious/noExplicitAny: a scorer's reference type is its own business
+  // oxlint-disable-next-line typescript/no-explicit-any -- a scorer's reference type is its own business
   scorer?: Scorer<z.output<I>, any>
   run(ctx: Ctx, input: z.output<I>): Promise<z.input<O>>
 }
 
 export type Workflow<I extends z.ZodType, O extends z.ZodType> = Readonly<WorkflowDefinition<I, O>>
 
-// biome-ignore lint/suspicious/noExplicitAny: the registry holds workflows of every input and output type
+// oxlint-disable-next-line typescript/no-explicit-any -- the registry holds workflows of every input and output type
 export type AnyWorkflow = Workflow<any, any>
 
 export type RunError = { kind: ErrorKind; message: string }
