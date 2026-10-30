@@ -1,7 +1,7 @@
 # Factory input: what the re-plan can build on
 
 **TLDR.** The platform (concept §11, P0–P6) is done and the three gateways are retired. The factory
-re-plan (dotfiles `docs/factory/`, TDD v2.4, deferred by N1) starts from a running, journaled,
+re-plan (`software-factory`: `docs/decisions.md`, `docs/design.md`, `docs/program.md`) starts from a running, journaled,
 evaluated workflow host on the mini, reached only through `agw`. Build stations as workflows on it.
 Don't build a second runtime, a second CLI, or a second usage path.
 
