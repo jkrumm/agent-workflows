@@ -1,13 +1,5 @@
 import type { RouteEntry } from '../schema.ts'
-import {
-  AGENT_FALLBACK,
-  CALL_FALLBACK,
-  HAIKU_55_RATE,
-  HAIKU_CALL_FALLBACK,
-  SONNET_55_RATE,
-  TERRA,
-  TERRA_RATE,
-} from './_shared.ts'
+import { AGENT_FALLBACK, CALL_FALLBACK, HAIKU_55_RATE, HAIKU_CALL_FALLBACK, TERRA, TERRA_RATE } from './_shared.ts'
 
 const routes = {
   // Review seats. Gateway: review_router is SINGLE_SHOT and the adversary is deepseek-v4.1-flash, both on iu-openai. IU
@@ -51,14 +43,14 @@ const routes = {
     rate: HAIKU_55_RATE,
     fallback: AGENT_FALLBACK,
   },
-  // Angles of a review the caller asked to run `depth: deep` (mother decision, 2026-10-29; Wave 6 experiment, 20 paired
-  // cases: Haiku -> Sonnet angles recall 0.017 -> 0.13, precision 0.10 -> 0.50, cost per review $0.057 -> $0.542, about
-  // 10x). Opt-in: a router-chosen deep keeps `review.angle`. The review workflow names this route in the angle steps'
-  // `options.route`.
+  // Angles of a review the caller asked to run `depth: deep` (mother decision, 2026-10-29). Opt-in: a router-chosen deep keeps
+  // `review.angle`; the review workflow names this route in the angle steps' `options.route`. Sonnet 5.5 here (Wave 6
+  // experiment: recall 0.017 -> 0.13, $0.057 -> $0.542 a review) is off since 2026-10-30: owner direction, DeepSeek flash only
+  // while the team key pays.
   'review.angle.deep': {
     wire: 'opencode',
-    model: 'claude-sonnet-5-5',
-    rate: SONNET_55_RATE,
+    model: 'deepseek-v4.1-flash',
+    rate: { inputPerM: 0.3, outputPerM: 1.2, cacheReadPerM: 0.006 },
     fallback: AGENT_FALLBACK,
   },
   'review.synthesis': {

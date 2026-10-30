@@ -20,8 +20,8 @@ together (legacy's sum: an unpriced call counts 0 unless neither was priced, the
 
 - **The writer is a capability, not a prompt, and not served.** `prose.write` takes the writer's fields (draft, medium,
   register, language, format, verdictFirst, brief, context, lint findings, reviewer notes) and builds both prompts
-  itself, so no free prompt reaches the paid Opus seat (`prose.critique`'s rule). It is `internal`: out of the HTTP
-  router, the OpenAPI document, the CLI and the `cap.<id>` runs, so a door caller reaches Opus only through this workflow's
+  itself, so no free prompt reaches the metered writer seat (`prose.critique`'s rule). It is `internal`: out of the HTTP
+  router, the OpenAPI document, the CLI and the `cap.<id>` runs, so a door caller reaches the writer only through this workflow's
   lint, review and keep gate; `registry.call` from a step works. The rules (`writerInstructions`) and the fenced data
   (`writerData`) are shared with `prose`'s `writerBrief` for the session, one definition.
 - **Findings and notes are clamped to what the prompt renders.** The writer lists the first 50 findings and 30 notes and
@@ -30,6 +30,6 @@ together (legacy's sum: an unpriced call counts 0 unless neither was priced, the
 - **A content failure is a result, a transport failure is an error.** An empty, truncated, starved or non-finished writer
   answer keeps the original with `reason` (`writer returned empty text`, `writer failed: …`), as legacy's `keptReason`; a
   failed call, an unreadable voice guide or a failed review fails the run, as legacy threw.
-- **Route.** `prose.write` (`packages/routes/src/table/prose.ts`): `iu-anthropic` (native Messages), Opus 5.5, effort high,
-  32k output, legacy's `prose_write`. The gateway seat had no fallback; the shared balance fallback applies.
+- **Route.** `prose.write` (`packages/routes/src/table/prose.ts`): `iu-openai`, DeepSeek flash, effort high,
+  32k output (legacy's `prose_write` was Opus 5.5 on `iu-anthropic`; DeepSeek only since 2026-10-30, owner direction). The shared balance fallback applies.
 - No agent definitions: no agent step runs.

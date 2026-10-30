@@ -20,19 +20,6 @@ export const HAIKU_55_RATE = {
   longPrompt: { inputMultiplier: 5, outputMultiplier: 5 },
 }
 
-// Sonnet 5.5 rate, USD/M: in 2.00, out 10.00, cache read 0.10 (0.05x in), cache write 2.50 (5-minute, 1.25x in).
-// Source: Anthropic pricing page (platform.claude.com/docs/en/about-claude/pricing), read 2026-10-29: the Sonnet 5.5 row,
-// and footnote 2 "Cache hits and refreshes on Claude Opus 5.5 and Claude Sonnet 5.5 are priced at 0.05x the base input
-// price". The page lists no long-context tier for Sonnet 5.5: "Claude 4.6 and later models (except Claude Haiku 5.5) ...
-// include the full 1M token context window at standard pricing". The rate has no `longPrompt` tier, so it is priced flat
-// at any size (before 2026-10-29 a 100K default applied to every rate and priced 13 deep-review steps `unknown`).
-export const SONNET_55_RATE = {
-  inputPerM: 2,
-  outputPerM: 10,
-  cacheReadPerM: 0.1,
-  cacheWritePerM: 2.5,
-}
-
 // GPT-6.1 Terra, Standard tier, USD/M: in 1.00, cached in 0.05, out 5.00, cache write 1.25 (30-min). Above 272K input
 // tokens the whole request bills 2x input/cache and 1.5x output (`longPrompt`). Source: developers.openai.com via /research, and a probe of the IU OpenAI endpoint (listed in
 // /models, chat completions with reasoning_effort=medium answered 200), both 2026-10-28. Context 1.05M, output 128K.

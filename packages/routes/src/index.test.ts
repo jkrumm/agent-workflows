@@ -65,19 +65,14 @@ describe('resolveRoute', () => {
     expect(resolveRoute('review.angle', {}).model).toBe(entry('review.angle').model)
   })
 
-  test('the deep angle route is its own seat: Sonnet, priced, overridden independently of review.angle', () => {
+  test('the deep angle route is its own seat: DeepSeek flash, priced, overridden independently of review.angle', () => {
     const deep = resolveRoute('review.angle.deep', {})
-    expect(deep).toMatchObject({ wire: 'opencode', model: 'claude-sonnet-5-5' })
-    expect(deep.rate).toEqual({
-      inputPerM: 2,
-      outputPerM: 10,
-      cacheReadPerM: 0.1,
-      cacheWritePerM: 2.5,
-    })
+    expect(deep).toMatchObject({ wire: 'opencode', model: 'deepseek-v4.1-flash' })
+    expect(deep.rate).toEqual({ inputPerM: 0.3, outputPerM: 1.2, cacheReadPerM: 0.006 })
     expect(deep.fallback?.wire).toBe('opencode')
     // no tier: a 1.5M-token prompt is priced flat, at any size
     expect(costFromUsage('opencode', { input_tokens: 1_500_000, output_tokens: 1_000 }, deep.rate)).toEqual({
-      usd: (1_500_000 * 2 + 1_000 * 10) / 1e6,
+      usd: (1_500_000 * 0.3 + 1_000 * 1.2) / 1e6,
       source: 'rate',
     })
     const e = env({ 'review.angle.deep': { model: 'some-model' } })

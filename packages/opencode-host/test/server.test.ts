@@ -335,14 +335,14 @@ describe('buildServerConfig', () => {
 })
 
 describe('buildServerConfig: review.angle.deep', () => {
-  test('the Sonnet row sits on the native Anthropic provider with its cost rows, and the route’s fallback resolves', () => {
+  test('the deep angle row sits on the chat provider with its cost rows, and the route’s fallback resolves', () => {
     const config = buildServerConfig({}) as {
       providers: Record<string, { models: Record<string, { cost?: unknown }> }>
     }
-    expect(config.providers['iu-anthropic']?.models['claude-sonnet-5-5']?.cost).toEqual({
-      input: 2,
-      output: 10,
-      cache: { read: 0.1, write: 2.5 },
+    expect(config.providers[PROVIDER_CHAT]?.models['deepseek-v4.1-flash']?.cost).toEqual({
+      input: 0.3,
+      output: 1.2,
+      cache: { read: 0.006 },
     })
     const fallback = fallbackModelRef('review.angle.deep', {})
     expect(fallback?.model.id).toBe('gpt-6.1-terra')

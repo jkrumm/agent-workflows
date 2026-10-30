@@ -45,17 +45,25 @@ const DRAFT = [
 // Same facts, no banned word.
 const REWRITE = DRAFT.replace('We leverage the new cache.', 'We use the new cache.')
 
-type Script = Parameters<typeof fakeTransports>[0]
+type Script = NonNullable<Parameters<typeof fakeTransports>[0]>
+type Reply = Exclude<NonNullable<Script['openai']>[number], (...args: never[]) => unknown>
 
-function setup(script: Script = {}, env: Record<string, string> = { AGW_VOICE_PATH: VOICE }) {
+/** The polish writer's user prompt closes on this line; the reviewer's does not. */
+const isWrite = (request: { prompt: string }) => request.prompt.includes('Return only the rewritten text')
+
+/** The reviewer and the writer share the OpenAI wire: `reviewer` and `writer` script each seat's replies. */
+function setup(
+  script: { reviewer?: Reply; writer?: Reply } = {},
+  env: Record<string, string> = { AGW_VOICE_PATH: VOICE },
+) {
+  const reviewer = script.reviewer ?? { text: JSON.stringify(REVIEW), cost: 0.002 }
+  const writer = script.writer ?? { text: REWRITE, cost: 0.05 }
   const transports = fakeTransports({
-    openai: [{ text: JSON.stringify(REVIEW), cost: 0.002 }],
-    anthropic: [{ text: REWRITE, cost: 0.05 }],
-    ...script,
+    openai: [(request) => (isWrite(request) ? writer : reviewer)],
   })
   const registry = createRegistry(createCapabilities({ transports, env }))
   const { workflow } = createProsePolish({ registry, env })
-  return { transports, workflow, writes: () => transports.chatCalls.filter((c) => c.wire === 'anthropic') }
+  return { transports, workflow, writes: () => transports.chatCalls.filter((c) => isWrite(c.request)) }
 }
 
 const db = freshSchema('prose_polish')
@@ -91,7 +99,7 @@ describe('prose-polish', () => {
     expect(out.models.reviewer).toBeTruthy()
     expect(out.models.writer).toBeTruthy()
     expect(out.cost).toBeCloseTo(0.052, 6)
-    expect(w.transports.chatCalls.map((c) => c.wire)).toEqual(['openai', 'anthropic'])
+    expect(w.transports.chatCalls.map((c) => c.wire)).toEqual(['openai', 'openai'])
   })
 
   test('the writer gets the voice guide, the lint findings and the reviewer notes, fenced', async () => {
@@ -106,7 +114,7 @@ describe('prose-polish', () => {
   })
 
   test('a rewrite the gate refuses keeps the original byte for byte, with the gate’s reason and the original’s lint', async () => {
-    const w = setup({ anthropic: [{ text: `${REWRITE}\n\nSee https://example.com/invented.`, cost: 0.05 }] })
+    const w = setup({ writer: { text: `${REWRITE}\n\nSee https://example.com/invented.`, cost: 0.05 } })
     const out = ProsePolishOutput.parse((await run(w.workflow, { text: DRAFT, medium: 'article' })).output)
     expect(out.kept).toBe('original')
     expect(out.text).toBe(DRAFT)
@@ -121,7 +129,7 @@ describe('prose-polish', () => {
     ['empty text', { text: '' }, 'writer returned empty text'],
     ['a truncated answer', { text: 'half a sent', stop: 'length' as const }, 'writer failed: the answer stops mid-way'],
   ])('%s from the writer keeps the original with the writer’s reason', async (_name, reply, reason) => {
-    const w = setup({ anthropic: [{ ...reply, cost: 0.01 }] })
+    const w = setup({ writer: { ...reply, cost: 0.01 } })
     const result = await run(w.workflow, { text: DRAFT, medium: 'article' })
     expect(result.status).toBe('done')
     const out = ProsePolishOutput.parse(result.output)
@@ -132,7 +140,7 @@ describe('prose-polish', () => {
 
   test('a long bad draft (more findings than the writer lists) is not a failed run: the first 50 are sent, the rest counted', async () => {
     const bad = Array.from({ length: 120 }, (_, i) => `We leverage cache ${i}.`).join('\n\n')
-    const w = setup({ anthropic: [{ text: bad.replaceAll('leverage', 'use'), cost: 0.05 }] })
+    const w = setup({ writer: { text: bad.replaceAll('leverage', 'use'), cost: 0.05 } })
     const result = await run(w.workflow, { text: bad, medium: 'article' })
     expect(result.status).toBe('done')
     const out = ProsePolishOutput.parse(result.output)
@@ -145,7 +153,7 @@ describe('prose-polish', () => {
 
   test('verdictFirst false reaches the writer and the review', async () => {
     const w = setup({
-      openai: [{ text: JSON.stringify({ ...REVIEW, scores: { ...SCORES, verdict_first: undefined } }) }],
+      reviewer: { text: JSON.stringify({ ...REVIEW, scores: { ...SCORES, verdict_first: undefined } }) },
     })
     const out = ProsePolishOutput.parse(
       (await run(w.workflow, { text: DRAFT, medium: 'article', verdictFirst: false })).output,
@@ -155,13 +163,13 @@ describe('prose-polish', () => {
   })
 
   test('a writer transport failure fails the run: an infra failure is not a verdict on the draft', async () => {
-    const w = setup({ anthropic: [new Error('connection reset')] })
+    const w = setup({ writer: new Error('connection reset') })
     const result = await run(w.workflow, { text: DRAFT, medium: 'article' })
     expect(result.status).toBe('failed')
   })
 
   test('a reviewer failure fails the run before the writer is paid', async () => {
-    const w = setup({ openai: [new Error('connection reset')] })
+    const w = setup({ reviewer: new Error('connection reset') })
     const result = await run(w.workflow, { text: DRAFT, medium: 'article' })
     expect(result.status).toBe('failed')
     expect(w.writes()).toHaveLength(0)

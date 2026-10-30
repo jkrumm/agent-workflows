@@ -59,9 +59,8 @@ are never re-run (`podcast.test.ts`). A change to a step's meaning or output sha
 Every model id is in the route table (`packages/routes/src/table/podcast.ts`; `AGW_ROUTES` applies, resolved per
 call): `podcast.research`, `podcast.editorial`, `podcast.outline`,
 `podcast.write`, `podcast.review.a`, `podcast.review.b`, `podcast.metadata`. Defaults are legacy's: the cheap seat at
-effort high for research, editorial, outline and metadata; Gemini flash and the cheap seat as reviewers; the GPT-6.1
-Sol writer at effort high. The writer's rollback is one table line to the Opus 5.5 entry on `iu-anthropic` (the
-comment in the table file). Effort is the route's: a route without one sends none (the Gemini reviewer).
+effort high for research, editorial, outline and metadata; Gemini flash and the cheap seat as reviewers; the DeepSeek
+flash writer at effort high (GPT-6.1 Sol until 2026-10-30, owner direction: DeepSeek only while the team key pays). Effort is the route's: a route without one sends none (the Gemini reviewer).
 
 **Decision: an own model port (`llm.ts`, `iu.ts`) instead of the platform transports.** The capabilities transports are
 single-call text wires; the room needs function tools on both OpenAI APIs (chat completions, and `/v1/responses`,

@@ -233,6 +233,9 @@ const REVIEW = {
   notes: [],
   visualSuggestions: [],
 }
+const REVIEW_REPLY = { text: JSON.stringify(REVIEW), cost: 0.002 }
+/** The polish writer's user prompt closes on this line; the reviewer's does not. */
+const isWrite = (request: { prompt: string }) => request.prompt.includes('Return only the rewritten text')
 const SECTIONS = {
   whatItIs: 'A weather service for [[surf-spots|surf spots]].',
   whereItStands: ['Live on the VPS.', 'Ingests two providers.'],
@@ -265,14 +268,9 @@ function setup(
 ) {
   const env = options.env ?? { AGW_VOICE_PATH: VOICE }
   const transports = fakeTransports({
-    openai: [{ text: JSON.stringify(REVIEW), cost: 0.002 }],
-    // The composer sends no system prompt; the polish writer always does.
-    anthropic: [
-      (request) =>
-        request.system
-          ? { text: polishedBody(request.prompt), cost: 0.05 }
-          : { text: JSON.stringify(CHANGED), cost: 0.001 },
-    ],
+    // The reviewer and the polish writer share the OpenAI wire; the composer is the only caller on the Anthropic wire.
+    openai: [(request) => (isWrite(request) ? { text: polishedBody(request.prompt), cost: 0.05 } : REVIEW_REPLY)],
+    anthropic: [{ text: JSON.stringify(CHANGED), cost: 0.001 }],
     ...options.script,
   })
   const real = createRegistry(createCapabilities({ transports, env }))
@@ -303,9 +301,9 @@ function setup(
     HostWorkflow,
     HostWorkflow,
   ]
-  const composed = () => transports.chatCalls.filter((c) => c.wire === 'anthropic' && !c.request.system)
-  const writes = () => transports.chatCalls.filter((c) => c.wire === 'anthropic' && c.request.system)
-  const reviews = () => transports.chatCalls.filter((c) => c.wire === 'openai')
+  const composed = () => transports.chatCalls.filter((c) => c.wire === 'anthropic')
+  const writes = () => transports.chatCalls.filter((c) => c.wire === 'openai' && isWrite(c.request))
+  const reviews = () => transports.chatCalls.filter((c) => c.wire === 'openai' && !isWrite(c.request))
   return { transports, narrative, polish, composed, writes, reviews, warnings }
 }
 
@@ -455,11 +453,11 @@ describe('narrative', () => {
   test('a rewrite the keep gate refuses: the original page byte for byte, declined with the gate’s reason', async () => {
     const w = setup({
       script: {
-        anthropic: [
+        openai: [
           (request) =>
-            request.system
+            isWrite(request)
               ? { text: `${polishedBody(request.prompt)}\n\nSee https://example.com/invented.`, cost: 0.05 }
-              : { text: JSON.stringify(CHANGED) },
+              : REVIEW_REPLY,
         ],
       },
     })
@@ -478,10 +476,7 @@ describe('narrative', () => {
   ])('a rewrite that changes the headings (%s) is declined with the original page', async (_name, change) => {
     const w = setup({
       script: {
-        anthropic: [
-          (request) =>
-            request.system ? { text: change(polishedBody(request.prompt)) } : { text: JSON.stringify(CHANGED) },
-        ],
+        openai: [(request) => (isWrite(request) ? { text: change(polishedBody(request.prompt)) } : REVIEW_REPLY)],
       },
     })
     const out = output(await run(w, INPUT))

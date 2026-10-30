@@ -47,7 +47,7 @@ calling Claude Code session on Max, so the platform does the two parts that need
 
 Hermes and the `narrative` workflow have no Claude Code session to rewrite in, and a cheap brain model is not legacy's Opus
 writer, so the platform carries the rewrite for them: `agw prose-polish` (`../prose-polish/`) runs this workflow's lint and
-`prose.critique`, one call on the `prose.write` route (Opus on IU, native Messages) with the writer prompt the brief above
+`prose.critique`, one call on the `prose.write` route (DeepSeek flash on IU) with the writer prompt the brief above
 is built from, and the same keep gate. The `/prose` skill flow for Claude Code is unchanged: the rewrite stays in the
 calling session on Max.
 
@@ -59,4 +59,4 @@ Model and rate: `packages/routes/src/table/prose.ts` (the only home of model ids
 | Route | Source seat | Wire |
 |-|-|-|
 | `prose.review` | `prose_review` (SINGLE_SHOT); the capability `prose.review` calls it and refuses an Anthropic route | iu-openai |
-| `prose.write` | `prose_write` (iu-anthropic, native Messages, Opus 5.5, adaptive thinking at effort high, 32k output); used by `prose-polish` only, never by this workflow | iu-anthropic |
+| `prose.write` | `prose_write` (iu-openai, DeepSeek flash, effort high, 32k output); used by `prose-polish` only, never by this workflow | iu-anthropic |
