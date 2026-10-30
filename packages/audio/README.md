@@ -187,13 +187,16 @@ Hermes' stock OpenAI TTS and STT clients never call it.
 ### Caller auth
 
 The process binds 127.0.0.1, so a caller is a process on this machine. It presents `Authorization: Bearer <token>`
-from the caller-token file `~/.agent-workflows/data/door-tokens` (`AGW_DOOR_CALLERS_FILE`): `name=token` lines, a regular
+from the caller-token file `~/.agent-workflows/data/door-tokens` (`AGW_DOOR_CALLERS_FILE`), **shared with the host's image
+door** (`packages/host/README.md` §Image door; the MacBook studio app is the caller `studio`): one file, one parser
+(`packages/host/src/door-tokens.ts`, re-exported here by `src/process/tokens.ts`) and one rotation procedure, each process
+reading it once at start. `name=token` lines, a regular
 file of the user at mode 0600, names `[a-z][a-z0-9-]*`, tokens at least 32 characters and distinct. `make deploy`
-creates it with one `hermes` token if it is missing and never touches an existing one. The platform's API secret is
+creates it with a `hermes` and a `studio` token if it is missing, adds a `studio` line to an existing file that has none, and never rewrites another line. The platform's API secret is
 accepted too, as the caller `agw` (`make verify`, the eval harness): it already grants the whole API. A missing,
 wider-mode or malformed file refuses the start, naming the file and the line, never a token. Every known bearer is
 compared hashed and in constant time (`bearerCaller`, the host's own `auth.ts`). `make deploy` checks the file
-with the same parser before it stops anything, so a bad file refuses the deploy instead of rolling it back. Rotation: edit the file, restart the LaunchAgent.
+with the same parser before it stops anything, so a bad file refuses the deploy instead of rolling it back. Rotation: edit the file, restart both LaunchAgents (the audio process and the host).
 
 Decision: a local token file, not a 1Password item. A new ref before its item exists breaks every reseal of the
 headless cache, and a token that only grants a loopback port on this machine gains nothing from a vault.

@@ -27,6 +27,9 @@
     <string>7791</string>
     <key>AGW_VERSION</key>
     <string>__SHA__</string>
+    <!-- The image door's caller tokens (name=token, mode 0600): the file the audio process reads, one for both doors. -->
+    <key>AGW_DOOR_CALLERS_FILE</key>
+    <string>__DATA_DIR__/door-tokens</string>
   </dict>
 
   <key>RunAtLoad</key>

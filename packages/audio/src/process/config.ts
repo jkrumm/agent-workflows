@@ -1,6 +1,12 @@
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { assertNoProblems, type Env, type ProcessConfig, readProcessConfig } from '@agent-workflows/host'
+import {
+  assertNoProblems,
+  type Env,
+  type ProcessConfig,
+  readDoorTokensFile,
+  readProcessConfig,
+} from '@agent-workflows/host'
 
 export const AUDIO_PORT = 7792
 
@@ -21,7 +27,7 @@ export function loadAudioProcessConfig(env: Env): AudioProcessConfig {
   const base = readProcessConfig(env, { name: 'AGW_AUDIO_PORT', fallback: AUDIO_PORT }, problems)
   const home = env.HOME?.trim() || homedir()
   const stateDir = env.AGW_AUDIO_STATE_DIR?.trim() || join(home, '.local', 'state', 'agent-workflows-audio')
-  const doorTokensFile = env.AGW_DOOR_CALLERS_FILE?.trim() || join(home, '.agent-workflows', 'data', 'door-tokens')
+  const doorTokensFile = readDoorTokensFile(env)
   assertNoProblems(problems)
   return { ...base, stateDir, doorTokensFile }
 }

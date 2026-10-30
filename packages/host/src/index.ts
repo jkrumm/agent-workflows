@@ -23,7 +23,14 @@ export {
   type RunningHost,
 } from './boot.ts'
 export { RUN_ID_HEADER } from './capability-runs.ts'
-export { assertNoProblems, type Env, type PortSetting, type ProcessConfig, readProcessConfig } from './config.ts'
+export {
+  assertNoProblems,
+  type Env,
+  type PortSetting,
+  type ProcessConfig,
+  readDoorTokensFile,
+  readProcessConfig,
+} from './config.ts'
 export { installLifecycle } from './lifecycle.ts'
 export { startRun } from './operations.ts'
 export {

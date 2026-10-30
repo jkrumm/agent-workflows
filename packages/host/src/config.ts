@@ -1,3 +1,5 @@
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 import { IU_KEY_IDS, type IuKeyId, isIuKeyId, parseIuKeyId } from '@agent-workflows/middleware'
 import { secretProblem } from './auth.ts'
 import { type FrictionSettings, frictionSettings } from './friction/settings.ts'
@@ -20,6 +22,8 @@ export interface ProcessConfig {
 
 /** The host process: a `ProcessConfig` plus the jobs only the host runs (the retrospective, the friction job). */
 export interface HostConfig extends ProcessConfig {
+  /** The image door's caller tokens, the file the audio process's door reads (`AGW_DOOR_CALLERS_FILE`, `readDoorTokensFile`). */
+  doorTokensFile: string
   /** The weekly retrospective schedule (`AGW_RETRO_WEEKLY`, on unless `0`, `off` or `false`). */
   retroWeekly: boolean
   /** Scheduled retrospectives file their proposals as GitHub issues (`AGW_RETRO_FILE_ISSUES=1`); off by default. */
@@ -76,6 +80,12 @@ export function readProcessConfig(env: Env, port: PortSetting, problems: string[
   }
 }
 
+/** The caller-token file every door reads (`AGW_DOOR_CALLERS_FILE`, default `~/.agent-workflows/data/door-tokens`). */
+export function readDoorTokensFile(env: Env): string {
+  const home = env.HOME?.trim() || homedir()
+  return env.AGW_DOOR_CALLERS_FILE?.trim() || join(home, '.agent-workflows', 'data', 'door-tokens')
+}
+
 /** Throws once with every problem; the message format every process's start refusal shares. */
 export function assertNoProblems(problems: string[]): void {
   if (problems.length > 0) throw new Error(`invalid configuration:\n- ${problems.join('\n- ')}`)
@@ -96,6 +106,7 @@ export function loadConfig(env: Env): HostConfig {
   assertNoProblems(problems)
   return {
     ...base,
+    doorTokensFile: readDoorTokensFile(env),
     retroWeekly: !OFF.has(env.AGW_RETRO_WEEKLY?.trim().toLowerCase() ?? ''),
     retroFileIssues,
     retroIssueRepo,

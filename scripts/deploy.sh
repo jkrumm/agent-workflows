@@ -162,27 +162,45 @@ wait_healthy() {  # $1 sha, $2... processes
   return 1
 }
 
-# The door's caller tokens (`name=token`, mode 0600): created once with a hermes token, never overwritten, never printed.
-# The audio process refuses to start without the file (or with a wider mode).
+# The doors' caller tokens (`name=token`, mode 0600), read by the audio process's door and the host's image door:
+# created once with a hermes and a studio token, never overwritten, never printed. Both processes refuse to start
+# without the file (or with a wider mode). A file that exists already gains a studio line when it has no studio caller
+# (the host's image door serves the MacBook studio app under that name); its other lines are never touched.
 ensure_door_tokens() {
-  [[ -e "$DOOR_TOKENS" ]] && return 0
+  if [[ ! -e "$DOOR_TOKENS" ]]; then
+    (
+      umask 077
+      hermes=$(openssl rand -hex 32) && [[ ${#hermes} -eq 64 ]] || exit 1
+      studio=$(openssl rand -hex 32) && [[ ${#studio} -eq 64 ]] || exit 1
+      tmp="$DOOR_TOKENS.tmp.$$"
+      print -r -- "hermes=$hermes" > "$tmp" && print -r -- "studio=$studio" >> "$tmp" && chmod 600 "$tmp" && mv -f "$tmp" "$DOOR_TOKENS"
+    ) || die "creating $DOOR_TOKENS failed"
+    log "created $DOOR_TOKENS (a hermes and a studio token, mode 0600)"
+    return 0
+  fi
+  # Only a regular file at 0600 is extended: anything else is left for check_door_tokens to refuse.
+  [[ -f "$DOOR_TOKENS" && ! -L "$DOOR_TOKENS" && "$(/usr/bin/stat -f %Lp "$DOOR_TOKENS")" == 600 ]] || return 0
+  /usr/bin/grep -Eq '^[[:space:]]*studio[[:space:]]*=' "$DOOR_TOKENS" && return 0
   (
     umask 077
-    token=$(openssl rand -hex 32) && [[ ${#token} -eq 64 ]] || exit 1
+    studio=$(openssl rand -hex 32) && [[ ${#studio} -eq 64 ]] || exit 1
     tmp="$DOOR_TOKENS.tmp.$$"
-    print -r -- "hermes=$token" > "$tmp" && chmod 600 "$tmp" && mv -f "$tmp" "$DOOR_TOKENS"
-  ) || die "creating $DOOR_TOKENS failed"
-  log "created $DOOR_TOKENS (one hermes token, mode 0600)"
+    last=$(/usr/bin/tail -c 1 "$DOOR_TOKENS")  # empty when the file ends in a newline (or is empty)
+    { /bin/cat "$DOOR_TOKENS"; [[ -z "$last" ]] || print; print -r -- "studio=$studio"; } > "$tmp" \
+      && chmod 600 "$tmp" && mv -f "$tmp" "$DOOR_TOKENS"
+  ) || die "adding the studio token to $DOOR_TOKENS failed"
+  log "added a studio token to $DOOR_TOKENS (the other lines are untouched)"
 }
 
-# The door tokens read with the release's own parser (mode, owner, every line), the one the audio process starts
-# with: a bad file refuses the deploy before anything is stopped, never as a rollback. Messages name the file and the
-# line, never a token. `tokens.ts` imports node and the host auth module (node-only), so a failure here is about the file, and bun's own
-# stderr (a failed import, a crash) is kept in the message rather than passing for one.
+# The door tokens read with the release's own parser (mode, owner, every line), the one both processes start with (the
+# host's image door and the audio process's door): a bad file refuses the deploy before anything is stopped, never as a
+# rollback. Messages name the file and the line, never a token. `door-tokens.ts` imports node and the host auth module
+# (node-only), so a failure here is about the file, and bun's own stderr (a failed import, a crash) is kept in the
+# message rather than passing for one.
 check_door_tokens() {  # $1 release dir
   local why
-  why=$(cd "$1/packages/audio" && bun -e '
-    const { readDoorTokens } = await import("./src/process/tokens.ts")
+  why=$(cd "$1/packages/host" && bun -e '
+    const { readDoorTokens } = await import("./src/door-tokens.ts")
     try {
       readDoorTokens(process.argv[1])
     } catch (error) {
@@ -341,9 +359,12 @@ main() {
     act bun install --frozen-lockfile "(in $release)"
     act "re-exec $release/scripts/deploy.sh once, pinned to $sha"
     if [[ -e "$DOOR_TOKENS" ]]; then
-      log "$DOOR_TOKENS exists: kept as is"
+      log "$DOOR_TOKENS exists: existing lines are never rewritten"
     else
-      act "create $DOOR_TOKENS (mode 0600, one line hermes=<64 hex from openssl rand>, never printed)"
+      act "create $DOOR_TOKENS (mode 0600, two lines hermes=<64 hex from openssl rand> and studio=<64 hex>, never printed)"
+    fi
+    if [[ -e "$DOOR_TOKENS" ]] && ! /usr/bin/grep -Eq '^[[:space:]]*studio[[:space:]]*=' "$DOOR_TOKENS"; then
+      act "append studio=<64 hex from openssl rand> to $DOOR_TOKENS (mode stays 0600, the other lines are untouched, never printed)"
     fi
     act "check $DOOR_TOKENS with the release's readDoorTokens (mode, owner, every line) before stopping anything"
     for p in $PROCESSES; do
