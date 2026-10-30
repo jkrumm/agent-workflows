@@ -26,6 +26,11 @@ import { isTerminal, type RunState, type RunStore, type StoredRun } from './stor
 /** The most one request waits: Bun's `idleTimeout` ceiling is 255 s, so a held request must answer before it. */
 export const MAX_WAIT_S = 240
 export const IDLE_TIMEOUT_S = 255
+/**
+ * The largest request body any route of a process accepts: Bun's own default, set explicitly so the number is on record.
+ * It is per server, not per route; the image door's multipart cap sits below it (`image-door/body.ts`).
+ */
+export const MAX_REQUEST_BODY_BYTES = 128 * 1024 * 1024
 /** How long `run cancel` waits for a running run to reach `cancelled` when the caller gave no `Prefer: wait`. */
 const CANCEL_GRACE_S = 10
 

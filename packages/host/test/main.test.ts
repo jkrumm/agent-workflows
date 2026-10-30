@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, test } from 'bun:test'
-import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { afterAll, afterEach, describe, expect, test } from 'bun:test'
+import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { resolveRoute } from '@agent-workflows/routes'
@@ -9,6 +9,13 @@ import { Pool } from 'pg'
 import { freshSchema, PG_URL, rejection, SECRET, until } from './support.ts'
 
 const MAIN = new URL('../src/main.ts', import.meta.url).pathname
+
+/** The door-tokens file every spawned host reads (`AGW_DOOR_CALLERS_FILE`): the process refuses to start without a good one. */
+const DOOR_TOKEN = 'studio-token-0123456789abcdef-0123456789'
+const tokensDir = mkdtempSync(join(tmpdir(), 'agw-main-tokens-'))
+const TOKENS_FILE = join(tokensDir, 'door-tokens')
+writeFileSync(TOKENS_FILE, `studio=${DOOR_TOKEN}\n`, { mode: 0o600 })
+afterAll(() => rmSync(tokensDir, { recursive: true, force: true }))
 
 /** A minimal environment: nothing of the developer's shell (secrets, OTEL, Argo) leaks into the process. */
 function envFor(extra: Record<string, string>): Record<string, string> {
@@ -29,6 +36,12 @@ describe('loadConfig', () => {
   const base = { AGW_API_SECRET: SECRET, AGW_MACHINE: 'm', AGW_PG_URL: 'postgres://x' }
   test('defaults', () => {
     expect(loadConfig(base)).toMatchObject({ port: 7791, schema: 'agw', machine: 'm', version: 'dev' })
+  })
+  test('the door tokens file is AGW_DOOR_CALLERS_FILE, else data/door-tokens under HOME (the audio process reads the same one)', () => {
+    expect(loadConfig({ ...base, HOME: '/home/u' }).doorTokensFile).toBe('/home/u/.agent-workflows/data/door-tokens')
+    expect(loadConfig({ ...base, HOME: '/home/u', AGW_DOOR_CALLERS_FILE: '/x/tokens' }).doorTokensFile).toBe(
+      '/x/tokens',
+    )
   })
   test('IU_KEY_ID: unset or empty is personal, a known id is kept, an unknown one refuses without echoing it', () => {
     expect(loadConfig(base).iuKey).toBe('personal')
@@ -213,7 +226,7 @@ describe('process entry', () => {
 
   function start(env: Record<string, string>) {
     const child = Bun.spawn([process.execPath, MAIN], {
-      env: envFor(env),
+      env: envFor({ AGW_DOOR_CALLERS_FILE: TOKENS_FILE, ...env }),
       stdout: 'pipe',
       stderr: 'pipe',
       stdin: 'ignore',
@@ -256,6 +269,46 @@ describe('process entry', () => {
     expect(await new Response(child.stderr).text()).toContain(variable)
     expect(stdout).not.toContain('listening')
   })
+
+  test.each([
+    ['no file', (dir: string) => join(dir, 'absent'), 'is missing'],
+    [
+      'a wider mode',
+      (dir: string) => {
+        const file = join(dir, 'wide')
+        writeFileSync(file, `studio=${DOOR_TOKEN}\n`)
+        chmodSync(file, 0o644)
+        return file
+      },
+      'mode 0600',
+    ],
+    [
+      'a malformed line',
+      (dir: string) => {
+        const file = join(dir, 'malformed')
+        writeFileSync(file, `# callers\nstudio ${DOOR_TOKEN}\n`, { mode: 0o600 })
+        return file
+      },
+      'malformed:2: expected name=token',
+    ],
+  ])(
+    'refuses to start on a door-tokens file with %s, naming the file and never a token',
+    async (_name, make, message) => {
+      const dir = mkdtempSync(join(tmpdir(), 'agw-main-bad-tokens-'))
+      try {
+        const file = make(dir)
+        const child = start(valid('agw_t_main_refuse', { AGW_DOOR_CALLERS_FILE: file }))
+        expect(await child.exited).not.toBe(0)
+        const stderr = await new Response(child.stderr).text()
+        expect(stderr).toContain(message)
+        expect(stderr).toContain(file)
+        expect(stderr).not.toContain(DOOR_TOKEN)
+        expect(await new Response(child.stdout).text()).not.toContain('listening')
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+      }
+    },
+  )
 
   test('SIGTERM stops the process with exit 0 and leaves a running run running', async () => {
     const fresh = freshSchema('main')

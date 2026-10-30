@@ -28,7 +28,8 @@ import {
 import { type LearningsStore, pgLearningsStore, withLearnedFacts, withLearningsFingerprint } from './learnings/index.ts'
 import { argoTimerEnabled, hostFleet, startArgoSchedule } from './fleet/index.ts'
 import { fleetOperations } from './fleet/operations.ts'
-import { type HostOperation, type HostWorkflow, IDLE_TIMEOUT_S } from './operations.ts'
+import { createImageDoor, type ImageDoor, type ImageDoorOptions, type ServerHandle } from './image-door/index.ts'
+import { type HostOperation, type HostWorkflow, IDLE_TIMEOUT_S, MAX_REQUEST_BODY_BYTES } from './operations.ts'
 import { pgLatestOverview, pgRunPurpose } from './workflows/overview/latest.ts'
 import { ghCli } from './workflows/retrospective/gh.ts'
 import { RETRO_WORKFLOW_ID } from './workflows/retrospective/index.ts'
@@ -207,9 +208,9 @@ export interface ProcessRuntime extends ProcessBase {
 
 /**
  * A route served beside the API, ahead of its bearer check: it owns its auth. Answers its requests, `undefined` for
- * the rest (they reach the API).
+ * the rest (they reach the API). `server` lifts the idle timeout of one request (`ServerHandle.timeout`).
  */
-export type ProcessRoute = (request: Request, url: URL) => Promise<Response> | undefined
+export type ProcessRoute = (request: Request, url: URL, server: ServerHandle) => Promise<Response> | undefined
 
 /**
  * One platform process (concept §8): its name, its workflows, and what it adds to the shared core. The core is the
@@ -393,11 +394,11 @@ export async function bootProcess(
     })
     await host.openapi() // a broken contract fails the start, not the first request
     const routes = definition.routes?.(processRuntime) ?? []
-    const serve = async (request: Request): Promise<Response> => {
+    const serve = async (request: Request, handle: ServerHandle): Promise<Response> => {
       if (routes.length > 0) {
         const url = new URL(request.url)
         for (const route of routes) {
-          const answer = route(request, url)
+          const answer = route(request, url, handle)
           if (answer) return answer
         }
       }
@@ -409,6 +410,7 @@ export async function bootProcess(
       hostname: '127.0.0.1',
       port: config.port,
       idleTimeout: IDLE_TIMEOUT_S,
+      maxRequestBodySize: MAX_REQUEST_BODY_BYTES,
       fetch: serve,
     })
     closers.push(async () => {
@@ -477,10 +479,21 @@ export async function bootProcess(
   }
 }
 
-/** The host process: every workflow under `src/workflows`, the capabilities over HTTP, the retrospective, eval and friction. */
-export function hostProcess(config: HostConfig): ProcessDefinition {
+/** What `boot` takes beyond a process's own options: the image door's tokens and seams. Without `door` the host serves none. */
+export interface HostBootOptions extends BootOptions {
+  door?: ImageDoorOptions
+}
+
+/**
+ * The host process: every workflow under `src/workflows`, the capabilities over HTTP, the retrospective, eval and
+ * friction, and, given `door`, the image door (`src/image-door/`) beside the API.
+ */
+export function hostProcess(config: HostConfig, door?: ImageDoorOptions): ProcessDefinition {
   let journal: ReturnType<typeof pgJournalReader> | undefined
   let fleet: ReturnType<typeof hostFleet> | undefined
+  let imageDoor: ImageDoor | undefined
+  let runtime: Runtime | undefined
+  let open = () => false
   return {
     name: 'host',
     serviceName: 'agw',
@@ -511,7 +524,7 @@ export function hostProcess(config: HostConfig): ProcessDefinition {
         console.warn('[agw-host] research ledger pool: idle connection error', err.message),
       )
       onClose(() => ledgerPool.end())
-      return createWorkflows({
+      const workflows = await createWorkflows({
         registry,
         toolGate,
         logger,
@@ -519,6 +532,26 @@ export function hostProcess(config: HostConfig): ProcessDefinition {
         fleet: { fleet: fleet.fleet, argo: fleet.argo, purposeOf: pgRunPurpose(readPool, base.schema) },
         research: { ledger: pgToolLedger(ledgerPool, base.schema) },
       })
+      if (!door) return workflows
+      imageDoor = createImageDoor({
+        options: door,
+        secret: base.secret,
+        env,
+        enhance: (input, io) => registry.call('image.enhance', input, io),
+        runtime: () => {
+          if (!runtime) throw new Error('the host runtime is not built yet')
+          return runtime
+        },
+        isOpen: () => open(),
+        logger,
+      })
+      return [...workflows, ...imageDoor.workflows]
+    },
+    routes(process) {
+      runtime = process.runtime
+      open = process.isOpen
+      const mounted = imageDoor
+      return mounted ? [(request, url, server) => mounted.route(request, url, server)] : []
     },
     reads: () => (fleet ? fleetOperations(fleet.fleet) : {}),
     jobs({ runtime, workflows, env, onClose, logger }) {
@@ -551,6 +584,6 @@ export function hostProcess(config: HostConfig): ProcessDefinition {
   }
 }
 
-export function boot(config: HostConfig, options: BootOptions = {}): Promise<RunningHost> {
-  return bootProcess(hostProcess(config), config, options)
+export function boot(config: HostConfig, options: HostBootOptions = {}): Promise<RunningHost> {
+  return bootProcess(hostProcess(config, options.door), config, options)
 }

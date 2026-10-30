@@ -1,0 +1,142 @@
+// Reading and checking a door request: the body bounded, JSON or multipart parsed, the studio's schemas applied, the
+// edit endpoint's file rules checked in the studio's order and wording. Every refusal is a `RequestError` the door
+// answers with the studio's error envelope; nothing here reaches upstream.
+import type { ImageFile } from '@agent-workflows/capabilities'
+import type { z } from 'zod'
+import { EDIT_LIMITS, INPUT_IMAGE_MIME_TYPES, editRequestSchema } from './contract.ts'
+
+/**
+ * The most a JSON request carries: a prompt is 32 000 characters, a plan request adds a style guide and a series of
+ * prior prompts. Far above any real one.
+ */
+export const MAX_JSON_BYTES = 2 * 1024 * 1024
+/**
+ * The most a multipart edit carries in total: two full-size references (the per-file limit is 50 MB, 16 files, which
+ * would be 800 MB). Below Bun's own cap for the whole server (`MAX_REQUEST_BODY_BYTES`, 128 MiB, shared with every route),
+ * so a request over it is answered here with the studio's envelope instead of Bun's bare 413. The body is buffered and
+ * copied once to rebuild the upstream form: about three times this in memory at the limit.
+ */
+export const MAX_MULTIPART_BYTES = 100 * 1024 * 1024
+
+/** A request the door refuses before any work; `status` is 400 or 413. */
+export class RequestError extends Error {
+  constructor(
+    readonly status: 400 | 413,
+    message: string,
+  ) {
+    super(message)
+    this.name = 'RequestError'
+  }
+}
+
+const tooLarge = (max: number) => new RequestError(413, `request body is over ${max} bytes`)
+
+/** The body, read only while it stays within `max` bytes: a declared length over it is refused without reading. */
+export async function readBounded(request: Request, max: number): Promise<Uint8Array<ArrayBuffer>> {
+  const declared = Number(request.headers.get('content-length'))
+  if (Number.isFinite(declared) && declared > max) {
+    await request.body?.cancel().catch(() => undefined)
+    throw tooLarge(max)
+  }
+  const reader = request.body?.getReader()
+  if (!reader) return new Uint8Array(0)
+  const chunks: Uint8Array[] = []
+  let total = 0
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      total += value.length
+      if (total > max) {
+        await reader.cancel().catch(() => undefined)
+        throw tooLarge(max)
+      }
+      chunks.push(value)
+    }
+  } catch (error) {
+    if (error instanceof RequestError) throw error
+    throw new RequestError(400, 'the request body could not be read')
+  }
+  return new Uint8Array(Buffer.concat(chunks))
+}
+
+/** The studio's way of wording a schema failure: the issues' messages, joined. */
+const messageOf = (error: z.ZodError) => error.issues.map((issue) => issue.message).join('; ')
+
+/** The body as JSON through a schema; a body that is not JSON, or does not fit, is a 400. */
+export function parseJson<S extends z.ZodType>(bytes: Uint8Array, schema: S): z.output<S> {
+  let json: unknown
+  try {
+    json = JSON.parse(new TextDecoder().decode(bytes))
+  } catch {
+    throw new RequestError(400, 'the request body is not valid JSON')
+  }
+  const parsed = schema.safeParse(json)
+  if (!parsed.success) throw new RequestError(400, messageOf(parsed.error))
+  return parsed.data
+}
+
+const imageFile = (file: File, bytes: Uint8Array<ArrayBuffer>): ImageFile => ({
+  bytes,
+  name: file.name,
+  mime: file.type,
+})
+
+export interface EditUpload {
+  fields: z.output<typeof editRequestSchema>
+  references: ImageFile[]
+  mask: ImageFile | undefined
+}
+
+const FILE_FIELDS = new Set(['image[]', 'image', 'mask'])
+
+/** The multipart edit request: its non-file fields through the schema, its `image[]`/`image` parts as references, an optional `mask`. */
+export async function parseEdit(bytes: Uint8Array<ArrayBuffer>, contentType: string | null): Promise<EditUpload> {
+  let form: FormData
+  try {
+    form = await new Response(bytes, { headers: contentType ? { 'content-type': contentType } : {} }).formData()
+  } catch {
+    throw new RequestError(400, 'the multipart body could not be parsed')
+  }
+  const files = [...form.getAll('image[]'), ...form.getAll('image')].filter(
+    (part): part is File => part instanceof File,
+  )
+  const maskPart = form.get('mask')
+  const mask = maskPart instanceof File ? maskPart : undefined
+
+  if (files.length === 0) throw new RequestError(400, 'at least one reference image is required')
+  if (files.length > EDIT_LIMITS.maxImages) {
+    throw new RequestError(400, `at most ${EDIT_LIMITS.maxImages} reference images are allowed`)
+  }
+  for (const file of files) {
+    if (file.size > EDIT_LIMITS.maxImageBytes) {
+      throw new RequestError(400, `each reference image must be at most ${EDIT_LIMITS.maxImageBytes} bytes`)
+    }
+    if (!(INPUT_IMAGE_MIME_TYPES as readonly string[]).includes(file.type)) {
+      throw new RequestError(400, `reference images must be one of: ${INPUT_IMAGE_MIME_TYPES.join(', ')}`)
+    }
+  }
+  if (mask !== undefined) {
+    if (mask.size > EDIT_LIMITS.maxMaskBytes) {
+      throw new RequestError(400, `mask must be at most ${EDIT_LIMITS.maxMaskBytes} bytes`)
+    }
+    if (mask.type !== 'image/png') throw new RequestError(400, 'mask must be image/png (needs an alpha channel)')
+  }
+
+  const raw: Record<string, string> = {}
+  for (const [key, value] of form.entries()) {
+    if (FILE_FIELDS.has(key) || typeof value !== 'string') continue
+    raw[key] = value
+  }
+  const parsed = editRequestSchema.safeParse(raw)
+  if (!parsed.success) throw new RequestError(400, messageOf(parsed.error))
+
+  const references = await Promise.all(
+    files.map(async (file) => imageFile(file, new Uint8Array(await file.arrayBuffer()))),
+  )
+  return {
+    fields: parsed.data,
+    references,
+    mask: mask ? imageFile(mask, new Uint8Array(await mask.arrayBuffer())) : undefined,
+  }
+}
