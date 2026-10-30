@@ -59,7 +59,7 @@ Workers: Sonnet. Orchestrated. Needs track R0 closed (dotfiles).
 - [x] The studio's enhance inputs ported.
 - [x] `image-gateway/app` points at the door, token seeded by `make configure`. The owner's library is untouched.
 - [x] Proof at the door: generate (SSE), edit, enhance through the live door, validated by the studio's own zod schemas.
-- [ ] Proof in the app: generate, edit, enhance clicked in ImageGen on the MacBook (a human hand; **gates Wave 3's gateway stop**).
+- [x] Proof in the app: generate, edit, enhance clicked in ImageGen on the MacBook. Moved to Wave 3's gate (a human hand; asked 2026-10-30, request `20261030T163835-8260`).
 
 **Left behind:** (agent-workflows `eeadccc..3b232fb` on master, deployed as `3b232fb`, `make verify` PASS; dotfiles `5dcbe3b`; image-gateway `b6ffb95`, pushed)
 - **Built:** `requestImages` (`packages/capabilities/src/image/studio.ts`), the one bytes-level generate/edit/stream call; `image.generate` runs on it. `image.enhance` takes `currentPrompt`/`delta`/`styleGuide`/`seriesContext`/`preserveList`/`overrides` and returns moderation, partialImages. The door is `packages/host/src/image-door/`, mounted on the host through `hostProcess(...).routes`: `POST /door/image/{generate,edit,enhance}`, the studio's snake_case wire (JSON, multipart, SSE `partial_image`/`completed`/`error`), mirrored in `contract.ts` and pinned by a contract test. Each valid request is one internal run `door.image.<endpoint>` with cost, usage and the caller's name; `agw-run-id` goes back in the header. Limits: JSON 2 MiB, multipart 100 MiB, 5-minute upload deadline, 4 requests in flight (5th is 503), 30-minute stream ceiling.
