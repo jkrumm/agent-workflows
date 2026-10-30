@@ -65,8 +65,9 @@ install-opencode:
 
 # The headed Chrome behind web.fetch's browser fallback (AGW_BROWSER_CDP_URL in .env.tpl). Not a release artifact: the
 # profile and its cookies live in ~/.local/share/research-chrome, so it is installed once per machine. Idempotent; a
-# Chrome already running on that profile keeps running (the LaunchAgent's launch hands over and exits). An unchanged,
-# loaded agent is left alone; a changed plist is the only reason to boot it out and in again.
+# Chrome already running on that profile keeps running: the agent is a supervisor loop that waits while 9222 answers and
+# starts Chrome when it stops. An unchanged, loaded agent is left alone; a changed plist is the only reason to boot it
+# out and in again.
 research-chrome:
 	@plist="$$HOME/Library/LaunchAgents/com.jkrumm.research-chrome.plist"; tmp="$$plist.tmp.$$$$"; target="gui/$$(id -u)/com.jkrumm.research-chrome"; \
 		probe() { curl -fs -m 2 http://127.0.0.1:9222/json/version >/dev/null; }; \

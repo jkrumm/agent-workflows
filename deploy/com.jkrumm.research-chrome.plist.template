@@ -8,26 +8,22 @@
   <!-- The headed Chrome web.fetch falls back to for pages that turn a plain HTTP client away (AGW_BROWSER_CDP_URL).
        Headed on purpose: a headless Chrome is flagged by bot walls. DevTools listens on loopback only; the profile
        is dedicated, so its cookies (a solved challenge) persist and nothing else shares them. Not part of a release:
-       `make research-chrome` installs it. A Chrome already running on this profile makes this launch hand over and
-       exit 0, which KeepAlive below does not restart; a crash or kill does. -->
+       `make research-chrome` installs it.
+       The agent is a supervisor, not the browser: Chrome hands a second launch over to a running instance on the same
+       profile and the launch exits 0, so a plain agent would end the moment someone else's Chrome held the port and
+       watch nothing afterwards. The loop stays resident, does nothing while 9222 answers (whoever owns it), and starts
+       Chrome when it does not, again after every exit. -->
   <key>ProgramArguments</key>
   <array>
-    <string>/Applications/Google Chrome.app/Contents/MacOS/Google Chrome</string>
-    <string>--remote-debugging-port=9222</string>
-    <string>--remote-debugging-address=127.0.0.1</string>
-    <string>--user-data-dir=__HOME__/.local/share/research-chrome</string>
-    <string>--no-first-run</string>
-    <string>--no-default-browser-check</string>
-    <string>about:blank</string>
+    <string>/bin/zsh</string>
+    <string>-c</string>
+    <string>while true; do if /usr/bin/curl -fs -m 2 http://127.0.0.1:9222/json/version >/dev/null; then sleep 15; else "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --remote-debugging-port=9222 --remote-debugging-address=127.0.0.1 --user-data-dir="$HOME/.local/share/research-chrome" --no-first-run --no-default-browser-check about:blank; sleep 5; fi; done</string>
   </array>
 
   <key>RunAtLoad</key>
   <true/>
   <key>KeepAlive</key>
-  <dict>
-    <key>SuccessfulExit</key>
-    <false/>
-  </dict>
+  <true/>
   <key>ThrottleInterval</key>
   <integer>30</integer>
   <key>ProcessType</key>
