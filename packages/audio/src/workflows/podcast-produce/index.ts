@@ -364,15 +364,13 @@ export function createProduceWorkflows(deps: ProduceDeps) {
       ctx.workflow(
         'synth',
         unitWorkflow,
-        plan.units.map(
-          (unit, index): UnitInputValue => ({
-            episodeId: input.episode.id,
-            index,
-            lane: { ...plan.lane },
-            speakers: speakers.map((t) => ({ ...t })),
-            turns: unit.turnIndexes.map((t) => ({ ...(plan.turns[t] as SynthTurnInput) })),
-          }),
-        ),
+        plan.units.map((unit, index): UnitInputValue => ({
+          episodeId: input.episode.id,
+          index,
+          lane: { ...plan.lane },
+          speakers: speakers.map((t) => ({ ...t })),
+          turns: unit.turnIndexes.map((t) => ({ ...(plan.turns[t] as SynthTurnInput) })),
+        })),
       ),
       as<StoredFile | null>(
         ctx.step('cover', async ({ signal, addUsage, key }) => {

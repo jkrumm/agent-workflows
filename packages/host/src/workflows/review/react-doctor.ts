@@ -179,16 +179,14 @@ function parse(result: ReactDoctorRaw): Outcome {
     (d) => !DROPPED_RULES.includes(d.rule) && !(d.rule === TEMPLATE_SECRET_RULE && ENV_TEMPLATE_PATH.test(d.filePath)),
   )
   const findings = kept
-    .map(
-      (d): Finding => ({
-        severity: d.severity === 'error' ? 'error' : 'warning',
-        rule: d.rule,
-        file: repoRelative(d),
-        ...(d.line === undefined ? {} : { line: d.line }),
-        title: d.title,
-        category: d.category ?? '',
-      }),
-    )
+    .map((d): Finding => ({
+      severity: d.severity === 'error' ? 'error' : 'warning',
+      rule: d.rule,
+      file: repoRelative(d),
+      ...(d.line === undefined ? {} : { line: d.line }),
+      title: d.title,
+      category: d.category ?? '',
+    }))
     .toSorted(
       (a, b) =>
         Number(a.severity === 'warning') - Number(b.severity === 'warning') ||

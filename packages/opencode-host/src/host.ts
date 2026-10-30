@@ -183,9 +183,11 @@ export function sessionPermissions(def: AgentDefinition, allowDirectories: reado
     ...basePolicy(),
     ...(def.permissions?.shell ? [{ action: 'shell', resource: '*', effect: 'allow' } satisfies PermissionRule] : []),
     ...(def.permissions?.rules ?? []),
-    ...allowDirectories.map(
-      (dir): PermissionRule => ({ action: 'external_directory', resource: `${dir}/*`, effect: 'allow' }),
-    ),
+    ...allowDirectories.map((dir): PermissionRule => ({
+      action: 'external_directory',
+      resource: `${dir}/*`,
+      effect: 'allow',
+    })),
   ]
 }
 

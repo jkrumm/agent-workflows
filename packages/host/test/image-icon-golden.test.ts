@@ -112,7 +112,7 @@ function icoFrames(ico: Buffer): { size: number; png: Buffer }[] {
 /** The PNG payloads of an ICNS, by chunk. */
 function icnsChunks(icns: Buffer): { type: string; png: Buffer }[] {
   const chunks: { type: string; png: Buffer }[] = []
-  for (let offset = 8; offset < icns.length; ) {
+  for (let offset = 8; offset < icns.length;) {
     const length = icns.readUInt32BE(offset + 4)
     chunks.push({
       type: icns.subarray(offset, offset + 4).toString('ascii'),

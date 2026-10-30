@@ -7,13 +7,7 @@ import { type HdxDeps, hdxBase, resolveHdxDeps } from './deps.ts'
 import { contentToText, initialize, promptGet, shaped, toolCall, toolsList } from './shapes.ts'
 
 export type { HdxDeps } from './deps.ts'
-export {
-  AGENT_READ_TOOLS,
-  AGENT_SAFE_HDX,
-  CLI_ONLY_HDX,
-  CLI_ONLY_READ_TOOLS,
-  MUTATING_TOOLS,
-} from './allowlist.ts'
+export { AGENT_READ_TOOLS, AGENT_SAFE_HDX, CLI_ONLY_HDX, CLI_ONLY_READ_TOOLS, MUTATING_TOOLS } from './allowlist.ts'
 
 const MAX_CHARS_CEILING = 500_000
 const MAX_LISTED_TOOLS = 200

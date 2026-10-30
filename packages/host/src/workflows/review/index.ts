@@ -170,8 +170,8 @@ export function createReviewWorkflows(deps: WorkflowDeps, options: ReviewOptions
 
     // Started now, awaited at synthesis: their wall time hides behind the router and the angles.
     const reactDoctor = track(
-      settle(ctx.step('react-doctor', () => runReactDoctor(ports, repo, p.base))).then(
-        (r): ReactDoctorRaw => (r.ok ? r.value : { stdout: `react-doctor failed: ${r.reason}`, ok: true }),
+      settle(ctx.step('react-doctor', () => runReactDoctor(ports, repo, p.base))).then((r): ReactDoctorRaw =>
+        r.ok ? r.value : { stdout: `react-doctor failed: ${r.reason}`, ok: true },
       ),
     )
     const adversary: Promise<AngleResult> | null = p.adversary

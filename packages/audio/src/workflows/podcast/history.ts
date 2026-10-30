@@ -57,15 +57,13 @@ export function postgresHistory(db: Queryable, schema: string): HistoryPort {
          limit $3`,
         [WORKFLOW_ID, series, limit],
       )
-      return rows.map(
-        (row): EpisodeSummary => ({
-          id: row.id,
-          createdAt: new Date(row.created_at).toISOString(),
-          title: row.title ?? '',
-          description: row.description ?? '',
-          profile: (row.profile as EpisodeProfile | null) ?? null,
-        }),
-      )
+      return rows.map((row): EpisodeSummary => ({
+        id: row.id,
+        createdAt: new Date(row.created_at).toISOString(),
+        title: row.title ?? '',
+        description: row.description ?? '',
+        profile: (row.profile as EpisodeProfile | null) ?? null,
+      }))
     },
     async transcript(id) {
       const imported = await db.query<{ transcript: string | null }>(

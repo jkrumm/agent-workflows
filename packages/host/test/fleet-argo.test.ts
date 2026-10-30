@@ -150,8 +150,7 @@ describe('Argo schedule', () => {
     const push = {
       async push(trigger: 'run' | 'timer') {
         started.push(trigger)
-        if (started.length === 1)
-          await firstDone // the first push is slow
+        if (started.length === 1) await firstDone // the first push is slow
         else secondStarted()
         return 'ok' as const
       },
