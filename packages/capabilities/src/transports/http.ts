@@ -39,7 +39,8 @@ export class Attempt extends Error {
 export interface UserError {
   message: string
   code?: string
-  moderation?: { stage: string; categories: string[] }
+  /** A block names its stage, its categories, or both; whichever the vendor sent. */
+  moderation?: { stage?: string; categories?: string[] }
 }
 
 /**

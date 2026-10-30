@@ -37,7 +37,9 @@ const overrides = z
     inputFidelity: z.enum(INPUT_FIDELITIES).optional(),
     partialImages: z.int().min(0).max(MAX_PARTIAL_IMAGES).optional(),
   })
-  .describe('Settings the user pinned: echoed verbatim into the plan settings, never derived over')
+  .describe(
+    "Settings the user pinned: they replace the planner's proposal field by field and are not re-derived. The settings are still checked against the model: a size outside the envelope is snapped to the nearest preset, a pinned input_fidelity is dropped, and every correction is a note in assumptions",
+  )
 
 const styleGuide = z.object({
   promptFragment: z.string().refine((value) => wordCount(value) <= MAX_PROMPT_FRAGMENT_WORDS, {
@@ -404,6 +406,10 @@ export function createEnhance(deps: ResolvedImageDeps, llm: LlmDeps) {
             ? `${base}\n\n${plan.constraint_block.trim()}`
             : base
       const { settings, notes } = resolveSettings(plan.proposed_settings, input.hasReferences, input.overrides)
+      // Passthrough returns the current prompt as it is (the gateway does the same): a delta given with it is not applied, and says so.
+      if (applied === 'off' && input.delta !== undefined) {
+        notes.push('delta not applied: mode off (passthrough) keeps the current prompt unchanged')
+      }
       const price = deps.route(settings.model === 'flare' ? 'image.flare' : 'image.sunburst').price
       return {
         intent: input.intent === 'auto' ? plan.intent : { detected: input.intent, confidence: plan.intent.confidence },

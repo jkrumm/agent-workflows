@@ -5,6 +5,12 @@ import { DEFAULTS, type HttpOptions } from '../transports/http.ts'
 /** The image seats of the route table (`packages/routes/src/table/image.ts`). */
 export type ImageRouteId = Extract<RouteId, `image.${string}`>
 
+/**
+ * The whole-stream ceiling: a hang guard, not a budget. 30 minutes is the agent-limits rule's minimum for a single
+ * non-agentic request (a short timeout on a slow answer only turns it into a failure).
+ */
+export const STREAM_MAX_MS = 30 * 60_000
+
 /** What the image capabilities are built from. Every field defaults to production; tests inject fakes. */
 export interface ImageDeps {
   /** Where `IU_API_KEY`, `IU_BASE_URL` and the optional `REPLICATE_BASE_URL` are read, on each call. Default `process.env`. */
@@ -18,6 +24,8 @@ export interface ImageDeps {
   pollMs?: number
   /** A streamed image request is aborted after this long without a byte from the endpoint (a hang guard, never a budget). Default 30 minutes. */
   streamIdleMs?: number
+  /** A streamed image request is aborted after this long in all, whatever arrives (a hang guard, never a budget). Default 30 minutes. */
+  streamMaxMs?: number
 }
 
 export interface ResolvedImageDeps {
@@ -27,6 +35,7 @@ export interface ResolvedImageDeps {
   route: (id: ImageRouteId) => ResolvedRoute
   pollMs: number
   streamIdleMs: number
+  streamMaxMs: number
 }
 
 export function resolveImageDeps(deps: ImageDeps = {}): ResolvedImageDeps {
@@ -37,5 +46,6 @@ export function resolveImageDeps(deps: ImageDeps = {}): ResolvedImageDeps {
     route: deps.route ?? ((id) => resolveRoute(id, deps.env ?? process.env)),
     pollMs: deps.pollMs ?? 1_000,
     streamIdleMs: deps.streamIdleMs ?? DEFAULTS.hangGuardMs,
+    streamMaxMs: deps.streamMaxMs ?? STREAM_MAX_MS,
   }
 }

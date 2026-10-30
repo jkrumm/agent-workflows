@@ -227,6 +227,50 @@ describe('image.enhance', () => {
     expect(out.modeApplied).toBe('off')
   })
 
+  describe('the gate of an iteration reads the delta, as image-gateway does (computeModeApplied: brief ?? delta ?? "")', () => {
+    const words = (n: number) => Array.from({ length: n }, (_, i) => `w${i}`).join(' ')
+    const current = `${words(150)} lighthouse`
+
+    test('auto, no delta: no words this round, so FULL, whatever the length of the current prompt', async () => {
+      const { run, transports } = enhance([reply(plan({ prompt: 'REWRITTEN' }))], { currentPrompt: current })
+      const out = await run()
+      expect(out.modeApplied).toBe('full')
+      expect(out.prompt).toBe('REWRITTEN')
+      expect(out.assumptions.some((a) => a.includes('delta not applied'))).toBe(false)
+      expect(transports.chatCalls[0]?.request.prompt).toContain('treat as a verbatim re-run request')
+    })
+
+    test('auto, a delta of 30 words: GAPS, though the current prompt alone would be passthrough', async () => {
+      const { run } = enhance([reply(plan())], { currentPrompt: current, delta: words(30) })
+      expect((await run()).modeApplied).toBe('gaps')
+    })
+
+    test('auto, a delta over 100 words: passthrough keeps the current prompt, and says the delta was not applied', async () => {
+      const { run } = enhance([reply(plan({ prompt: 'REWRITTEN', constraint_block: 'Keep the sea teal.' }))], {
+        currentPrompt: current,
+        delta: words(101),
+      })
+      const out = await run()
+      expect(out.modeApplied).toBe('off')
+      expect(out.prompt).toBe(`${current}\n\nKeep the sea teal.`)
+      expect(out.assumptions).toContain('delta not applied: mode off (passthrough) keeps the current prompt unchanged')
+    })
+
+    test('mode off with a short delta: the same note; a brief in passthrough has no delta to note', async () => {
+      const { run } = enhance([reply(plan({ prompt: 'REWRITTEN' }))], {
+        currentPrompt: 'a lighthouse',
+        delta: 'add a moon',
+        mode: 'off',
+      })
+      const out = await run()
+      expect(out.prompt).toBe('a lighthouse')
+      expect(out.assumptions).toContain('delta not applied: mode off (passthrough) keeps the current prompt unchanged')
+
+      const brief = await enhance([reply(plan())], { brief: 'a lighthouse', mode: 'off' }).run()
+      expect(brief.assumptions.some((a) => a.includes('delta not applied'))).toBe(false)
+    })
+  })
+
   test('exactly one of brief and currentPrompt, and a delta only with a currentPrompt: a 400, nothing is called', async () => {
     for (const bad of [
       {},

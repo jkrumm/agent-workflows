@@ -11,7 +11,31 @@ export function isWrappedUserErrorBody(text: string): boolean {
   return text.includes('StatusCode: BadRequest') && text.includes('"invalid_request_error"')
 }
 
-/** What a wrapped 400's embedded JSON says: its message, its code and the moderation stage and categories when it is a block; null when it has no parseable error object. */
+/**
+ * The vendor's error object as a `UserError`: its message, its code and, when it names a moderation stage or categories (one
+ * of the two is enough), the block's details. `fallback` words a message the object does not carry.
+ */
+export function userErrorOf(error: Record<string, unknown>, fallback: string): UserError {
+  const details = error.moderation_details as { moderation_stage?: unknown; categories?: unknown } | null | undefined
+  const stage = typeof details?.moderation_stage === 'string' ? details.moderation_stage : undefined
+  const categories = Array.isArray(details?.categories)
+    ? details.categories.filter((c): c is string => typeof c === 'string')
+    : undefined
+  return {
+    message: typeof error.message === 'string' ? error.message : fallback,
+    ...(typeof error.code === 'string' ? { code: error.code } : {}),
+    ...(stage !== undefined || categories !== undefined
+      ? {
+          moderation: {
+            ...(stage !== undefined ? { stage } : {}),
+            ...(categories !== undefined ? { categories } : {}),
+          },
+        }
+      : {}),
+  }
+}
+
+/** What a wrapped 400's embedded JSON says; null when it has no parseable error object. */
 export function parseWrappedUserError(text: string): UserError | null {
   const start = text.indexOf('{')
   if (start === -1) return null
@@ -23,19 +47,7 @@ export function parseWrappedUserError(text: string): UserError | null {
   }
   const error = (parsed as { error?: Record<string, unknown> } | null)?.error
   if (!error || typeof error !== 'object') return null
-  const details = error.moderation_details as { moderation_stage?: unknown; categories?: unknown } | undefined
-  return {
-    message: typeof error.message === 'string' ? error.message : `request rejected: ${text.slice(0, 300)}`,
-    ...(typeof error.code === 'string' ? { code: error.code } : {}),
-    ...(typeof details?.moderation_stage === 'string' && Array.isArray(details.categories)
-      ? {
-          moderation: {
-            stage: details.moderation_stage,
-            categories: details.categories.filter((c): c is string => typeof c === 'string'),
-          },
-        }
-      : {}),
-  }
+  return userErrorOf(error, `request rejected: ${text.slice(0, 300)}`)
 }
 
 /** What a wrapped 400's embedded JSON says, as one line: its message, its code, and the moderation stage and categories when it is a block. */
@@ -43,12 +55,12 @@ export function describeWrappedUserError(text: string): string {
   const parsed = parseWrappedUserError(text)
   if (!parsed) return `request rejected: ${text.slice(0, 300)}`
   const code = parsed.code ? ` [${parsed.code}]` : ''
-  const stage = parsed.moderation ? ` (moderation stage ${parsed.moderation.stage}` : ''
-  const categories = parsed.moderation
-    ? `${stage ? ', ' : ' ('}categories ${parsed.moderation.categories.join(', ')}`
-    : ''
-  const detail = stage || categories ? `${stage}${categories})` : ''
-  return `${parsed.message}${code}${detail}`
+  const { stage, categories } = parsed.moderation ?? {}
+  const parts = [
+    ...(stage !== undefined ? [`moderation stage ${stage}`] : []),
+    ...(categories !== undefined ? [`categories ${categories.join(', ')}`] : []),
+  ]
+  return `${parsed.message}${code}${parts.length > 0 ? ` (${parts.join(', ')})` : ''}`
 }
 
 /**

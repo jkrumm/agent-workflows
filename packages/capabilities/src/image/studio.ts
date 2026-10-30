@@ -8,6 +8,7 @@ import { within } from '../web/deps.ts'
 import type { ImageRouteId, ResolvedImageDeps } from './deps.ts'
 import { MAX_EDIT_IMAGE_BYTES, MAX_EDIT_IMAGES } from './files.ts'
 import { magicBytesValid } from './png.ts'
+import { userErrorOf } from './upstream.ts'
 import { validateSize } from './size.ts'
 import { readJsonBounded, send } from './wire.ts'
 
@@ -257,6 +258,8 @@ function editBody(fields: Record<string, Field>, references: ImageFile[], mask: 
   return form
 }
 
+const MAGIC_B64_CHARS = 16
+
 /** Entries that are the format they claim to be and fit the per-image cap, and the ones that are not (billed all the same). */
 function sortEntries(entries: string[], format: OutputFormat) {
   const images: ImageResultImage[] = []
@@ -266,7 +269,9 @@ function sortEntries(entries: string[], format: OutputFormat) {
       rejected.push({ index, reason: `over the ${MAX_IMAGE_BYTES} byte cap for one image` })
       return
     }
-    if (magicBytesValid(Buffer.from(entry, 'base64'), format)) images.push({ index, b64: entry, format })
+    // Twelve bytes decide every format's magic: the first 16 base64 characters, not the whole image decoded.
+    if (magicBytesValid(Buffer.from(entry.slice(0, MAGIC_B64_CHARS), 'base64'), format))
+      images.push({ index, b64: entry, format })
     else rejected.push({ index, reason: `not a valid ${format} (bad magic bytes)` })
   })
   return { images, rejected }
@@ -309,6 +314,7 @@ async function readStream(
   requested: OutputFormat,
   onChunk: () => void,
   onPartial: ImageRequest['onPartial'],
+  asked: number,
 ): Promise<Answer> {
   if (!res.body) throw fail('UPSTREAM_ERROR', 'image answered with no stream body', {})
   const reader = res.body.getReader()
@@ -320,14 +326,21 @@ async function readStream(
     const frame = parseFrame(text)
     if (!frame) return null
     if (frame.event === 'error' || frame.event.endsWith('.error')) {
-      const message = upstreamErrorMessage(frame.data)
-      throw new Attempt(`image stream failed: ${message}`, false, undefined, { message })
+      const error = (frame.data as { error?: unknown } | null)?.error
+      const userError = userErrorOf(
+        error && typeof error === 'object' ? (error as Record<string, unknown>) : {},
+        upstreamErrorMessage(frame.data),
+      )
+      throw new Attempt(`image stream failed: ${userError.message}`, false, undefined, userError)
     }
     if (frame.event.endsWith('.partial_image')) {
       const data = frame.data as { b64_json?: unknown; partial_image_index?: unknown; output_format?: unknown }
       if (typeof data.b64_json !== 'string') return null
       const index = typeof data.partial_image_index === 'number' ? data.partial_image_index : previews
       previews++
+      // Asked for `asked` previews; one more is slack, beyond it the endpoint is not honouring the request.
+      if (previews > asked + 1)
+        throw fail('UPSTREAM_ERROR', `image stream sent more than the ${asked} previews asked for`, {})
       await onPartial?.({ b64: data.b64_json, format: asFormat(data.output_format) ?? requested, index })
       return null
     }
@@ -427,6 +440,8 @@ export async function requestImages(
       : { body: JSON.stringify(fields), headers: { 'content-type': 'application/json' } }
 
   const idle = new AbortController()
+  // The whole stream, whatever arrives: a hang guard against a stream that trickles forever, never a budget.
+  const ceiling = streaming ? AbortSignal.timeout(deps.streamMaxMs) : undefined
   let timer: ReturnType<typeof setTimeout> | undefined
   const arm = () => {
     clearTimeout(timer)
@@ -450,11 +465,13 @@ export async function requestImages(
           headers: { authorization: `Bearer ${config.apiKey}`, ...headers },
           body: payload,
           redirect: 'error',
-          signal: streaming ? AbortSignal.any([ctx.signal, idle.signal]) : within(ctx.signal, REQUEST_TIMEOUT_MS),
+          signal: streaming
+            ? AbortSignal.any([ctx.signal, idle.signal, ...(ceiling ? [ceiling] : [])])
+            : within(ctx.signal, REQUEST_TIMEOUT_MS),
         })
       },
       read: streaming
-        ? (res) => readStream(res, format, arm, request.onPartial)
+        ? (res) => readStream(res, format, arm, request.onPartial, partials)
         : async (res) => {
             const json = await readJsonBounded(
               res,
@@ -486,6 +503,9 @@ export async function requestImages(
   } catch (error) {
     if (idle.signal.aborted && !ctx.signal.aborted) {
       throw fail('UPSTREAM_ERROR', `image stream idle for ${deps.streamIdleMs}ms with no data`, {})
+    }
+    if (ceiling?.aborted && !ctx.signal.aborted) {
+      throw fail('UPSTREAM_ERROR', `image stream ran past ${deps.streamMaxMs}ms in all`, {})
     }
     throw error
   } finally {

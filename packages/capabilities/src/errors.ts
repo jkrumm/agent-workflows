@@ -18,7 +18,7 @@ export const ERRORS = {
         .object({
           message: z.string(),
           code: z.string().optional(),
-          moderation: z.object({ stage: z.string(), categories: z.array(z.string()) }).optional(),
+          moderation: z.object({ stage: z.string().optional(), categories: z.array(z.string()).optional() }).optional(),
         })
         .optional(),
     }),

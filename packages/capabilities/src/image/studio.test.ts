@@ -21,18 +21,19 @@ const webp = new Uint8Array([0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x45, 0x4
 const usage = { input_tokens: 100, output_tokens: 1000, input_tokens_details: { text_tokens: 100, image_tokens: 0 } }
 const COST = (100 * 5 + 1000 * 30) / 1e6
 
-const deps = (streamIdleMs?: number) =>
+const deps = (streamIdleMs?: number, streamMaxMs?: number) =>
   resolveImageDeps({
     env: { IU_API_KEY: 'test-key', IU_BASE_URL: fake.baseUrl },
     retry: { backoffMs: 0 },
     ...(streamIdleMs ? { streamIdleMs } : {}),
+    ...(streamMaxMs ? { streamMaxMs } : {}),
   })
 
-async function run(request: ImageRequest, idleMs?: number) {
+async function run(request: ImageRequest, idleMs?: number, maxMs?: number) {
   const reported: Usage[] = []
   const controller = new AbortController()
   const result = await requestImages(
-    deps(idleMs),
+    deps(idleMs, maxMs),
     { addUsage: (u) => reported.push(u), signal: controller.signal },
     request,
   ).then(
@@ -46,8 +47,8 @@ async function ok(request: ImageRequest) {
   if (!value) throw error
   return { result: value, reported }
 }
-async function refused(request: ImageRequest, idleMs?: number) {
-  const { error, reported } = await run(request, idleMs)
+async function refused(request: ImageRequest, idleMs?: number, maxMs?: number) {
+  const { error, reported } = await run(request, idleMs, maxMs)
   if (!(error instanceof CapabilityError)) throw new Error(`expected a CapabilityError, got ${String(error)}`)
   return { error, reported }
 }
@@ -412,6 +413,105 @@ describe('requestImages: streaming', () => {
     })
     expect(error.message).toContain('moderation stage input')
     expect(fake.attempts[POST_GEN]).toBe(1)
+  })
+
+  test('a mid-stream moderation block keeps its code, stage and categories', async () => {
+    fake.on(
+      POST_GEN,
+      stream(
+        sse([
+          partial(0),
+          [
+            'image_generation.error',
+            {
+              error: {
+                message: 'Blocked at the output stage.',
+                code: 'moderation_blocked',
+                moderation_details: { moderation_stage: 'output', categories: ['violence'] },
+              },
+            },
+          ],
+        ]),
+      ),
+    )
+    const { error } = await refused({ prompt: 'x', partial_images: 1 })
+    expect(error).toMatchObject({
+      code: 'UPSTREAM_ERROR',
+      data: {
+        userError: {
+          message: 'Blocked at the output stage.',
+          code: 'moderation_blocked',
+          moderation: { stage: 'output', categories: ['violence'] },
+        },
+      },
+    })
+  })
+
+  test('a vendor block that names only a stage, or only categories, keeps what it names', async () => {
+    const wrap = (details: Record<string, unknown>) =>
+      `[OpenAI Vendor Group Key StatusCode: BadRequest] ${JSON.stringify({
+        error: {
+          message: 'blocked',
+          type: 'image_generation_user_error',
+          code: 'moderation_blocked',
+          moderation_details: details,
+        },
+      })}`
+    fake.on(POST_GEN, () => new Response(wrap({ moderation_stage: 'input' }), { status: 503 }))
+    const stageOnly = await refused({ prompt: 'x' })
+    expect(stageOnly.error).toMatchObject({ data: { userError: { moderation: { stage: 'input' } } } })
+    expect(stageOnly.error.message).toContain('(moderation stage input)')
+    expect((stageOnly.error.data as { userError: { moderation: object } }).userError.moderation).not.toHaveProperty(
+      'categories',
+    )
+
+    fake.reset()
+    fake.on(POST_GEN, () => new Response(wrap({ categories: ['violence', 7, 'self-harm'] }), { status: 503 }))
+    const categoriesOnly = await refused({ prompt: 'x' })
+    expect(categoriesOnly.error).toMatchObject({
+      data: { userError: { moderation: { categories: ['violence', 'self-harm'] } } },
+    })
+    expect(categoriesOnly.error.message).toContain('(categories violence, self-harm)')
+  })
+
+  test('a stream that sends more previews than asked (and one slack) is dropped, not forwarded', async () => {
+    fake.on(POST_GEN, stream(sse([partial(0), partial(1), partial(2), completed()])))
+    const seen: number[] = []
+    const { error } = await refused({ prompt: 'x', partial_images: 1, onPartial: (p) => void seen.push(p.index) })
+    expect(error).toMatchObject({ code: 'UPSTREAM_ERROR' })
+    expect(error.message).toContain('more than the 1 previews asked for')
+    expect(seen).toEqual([0, 1]) // asked + 1 slack, the third is refused
+  })
+
+  test('a stream that keeps trickling is cut at the whole-stream ceiling, though it is never idle', async () => {
+    const encoder = new TextEncoder()
+    fake.on(POST_GEN, () => {
+      let timer: ReturnType<typeof setInterval> | undefined
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            timer = setInterval(() => controller.enqueue(encoder.encode(': keepalive\n')), 10)
+          },
+          cancel() {
+            clearInterval(timer)
+          },
+        }),
+        { headers: { 'content-type': 'text/event-stream' } },
+      )
+    })
+    const { error, reported } = await refused({ prompt: 'x', partial_images: 1 }, 5_000, 120)
+    expect(error).toMatchObject({ code: 'UPSTREAM_ERROR' })
+    expect(error.message).toContain('ran past 120ms in all')
+    expect(reported).toEqual([])
+  })
+
+  test('the magic check reads the first bytes only: a valid header with a junk body is not decoded further', async () => {
+    const junk = new Uint8Array(png.length + 64).fill(7)
+    junk.set(png.subarray(0, 12))
+    fake.on(POST_GEN, () => Response.json({ data: [{ b64_json: b64(junk) }, { b64_json: b64(jpeg) }], usage }))
+    const { result } = await ok({ prompt: 'x', n: 2 })
+    expect(result.images.map((i) => i.index)).toEqual([0])
+    expect(result.rejected).toEqual([{ index: 1, reason: 'not a valid png (bad magic bytes)' }])
   })
 
   test('a stream with no completed frame is an error, previews or not', async () => {
