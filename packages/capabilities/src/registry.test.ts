@@ -201,6 +201,7 @@ describe('OpenAPI', () => {
         'post /web/docs',
         'post /web/fetch',
         'post /web/package',
+        'post /web/read',
         'post /web/search',
         'post /web/youtube',
       ].sort(),
@@ -255,6 +256,7 @@ describe('OpenAPI', () => {
       'webDocs',
       'webFetch',
       'webPackage',
+      'webRead',
       'webSearch',
       'webYoutube',
     ])

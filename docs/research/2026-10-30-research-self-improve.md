@@ -75,7 +75,11 @@ could not read either) and two archive.org availability calls (`rate-limited`).
 - `research-chrome` is a supervisor loop: an adopted Chrome made the first version exit 0 and watch nothing.
 - A long transcript is summarised by composition, not by a new flag: `agw llm summarize` already takes stdin
   (`agw web youtube <url> --format json | jq -r .transcript | agw llm summarize`); the research agent reads it raw.
-- Claude Code sessions are pointed at `agw web fetch` and `agw web youtube` by a paragraph in `rules/research-first.md`.
+- Claude Code sessions: `web.read` (`agw web read <url> --ask <question>`) is `web.fetch` plus one Haiku-class extraction
+  pass (short pages skip the model), sharing the fetch cache. A dotfiles `PreToolUse` hook (`web-fetch-route.ts`) denies
+  `WebFetch` on a machine with agw and names the `agw web read` / `agw web youtube` call to run instead. It carries no host
+  list: a list would be a second copy of what the fetch chain already knows. Private hosts, other machines and a missing
+  agw fail open.
 
 ## Still weak
 

@@ -21,6 +21,13 @@ const routes = {
     rate: HAIKU_55_RATE,
     fallback: CALL_FALLBACK,
   },
+  // `web.read`: the page extraction behind `agw web read`, a single Haiku 5.5 request like `cheap.summarize`.
+  'cheap.extract': {
+    wire: 'iu-anthropic',
+    model: 'claude-haiku-5-5',
+    rate: HAIKU_55_RATE,
+    fallback: CALL_FALLBACK,
+  },
   'cheap.title': {
     wire: 'iu-anthropic',
     model: 'claude-haiku-5-5',
