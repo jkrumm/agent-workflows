@@ -484,14 +484,10 @@ export async function buildSnapshot(
   }
 
   const transcripts = new Map(
-    await mapPool(
-      [...cwdBySession],
-      POOL_SIZE,
-      async ([sessionId, cwd]): Promise<[string, TranscriptTail]> => [
-        sessionId,
-        cwd === '' ? EMPTY_TAIL : await collectors.transcriptTail(cwd, sessionId), // no cwd, no transcript directory
-      ],
-    ),
+    await mapPool([...cwdBySession], POOL_SIZE, async ([sessionId, cwd]): Promise<[string, TranscriptTail]> => [
+      sessionId,
+      cwd === '' ? EMPTY_TAIL : await collectors.transcriptTail(cwd, sessionId), // no cwd, no transcript directory
+    ]),
   )
 
   // The snapshot's time is taken after the tails are read: a line a tail carries is never newer than the snapshot, so a

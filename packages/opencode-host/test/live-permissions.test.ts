@@ -272,7 +272,7 @@ test.skipIf(!live)(
       })) as OpenCodeHandle
       const turn = async (id: string) => {
         await client.prompt(handle.sessionId, { id, text: ask })
-        for (let calm = 0; calm < 3; ) {
+        for (let calm = 0; calm < 3;) {
           const [messages, active] = await Promise.all([client.messages(handle.sessionId), client.active()])
           calm = !active.has(handle.sessionId) && messages.at(-1)?.type === 'idle' ? calm + 1 : 0
           await Bun.sleep(300)

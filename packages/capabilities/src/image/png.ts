@@ -55,7 +55,7 @@ export function readPng(bytes: Uint8Array): PngInfo | null {
   let hasAlpha = colorType === 4 || colorType === 6
   if (colorType === 3) {
     // Chunks follow IHDR (8 + 25 bytes in); `tRNS` precedes the first IDAT.
-    for (let at = 33; at + 8 <= bytes.length; ) {
+    for (let at = 33; at + 8 <= bytes.length;) {
       const type = chunkType(bytes, at + 4)
       if (type === 'tRNS') hasAlpha = true
       if (type === 'IDAT' || type === 'IEND') break
@@ -94,7 +94,7 @@ function alphaStatsSync(bytes: Uint8Array): AlphaStats | null | 'unsupported' {
   if (!channels || bytes[28] === 1 || depth < 8 || depth > 16 || (colorType === 3 && depth !== 8)) return 'unsupported'
   const idat: Buffer[] = []
   let trns: Uint8Array = new Uint8Array()
-  for (let at = 33; at + 8 <= view.length; ) {
+  for (let at = 33; at + 8 <= view.length;) {
     const length = view.readUInt32BE(at)
     const type = view.toString('latin1', at + 4, at + 8)
     if (at + 12 + length > view.length) return null
