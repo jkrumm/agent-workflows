@@ -12,6 +12,10 @@ help:
 # docs/spikes/** is excluded from every tool (see biome.json, .oxlintrc.json, tsconfig.json, bunfig.toml).
 # Tests need Postgres via AGW_TEST_PG_URL; unset on the mini, it is built from .env.test.tpl through secrets-run, together with
 # USAGE_TEST_PG_URL (admin, for the usage schema suite's scratch database; that suite skips visibly without it).
+# The test environment therefore holds the admin Postgres credential: CREATE DATABASE needs CREATEDB, which the journal's
+# test role (schemas only) lacks, and the suite must never touch the live `shared` database. The suite only ever runs DDL
+# on the usage_test_<random> name it generated. Follow-up: a dedicated CREATEDB-only test role, so no admin credential
+# reaches the test run.
 # The test timeout scales with host load, sampled as each test file starts (bunfig.toml preload, packages/testing); tests that
 # pass their own timeout keep it.
 check:
