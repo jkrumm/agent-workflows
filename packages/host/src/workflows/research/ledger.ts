@@ -10,6 +10,8 @@ export type LedgerEntry = {
   retrieved: string[]
   seen: string[]
   error?: string
+  /** A fetch the page turned away: its URL and why. */
+  blocked?: { url: string; reason: string }
 }
 
 /** A research run as a follow-up reads it: its status and workflow, its question, and the report it answered with. */
@@ -41,6 +43,7 @@ type Row = {
   retrieved: string[]
   seen: string[]
   error: string | null
+  blocked: { url: string; reason: string } | null
 }
 
 export function pgToolLedger(pool: Pick<Pool, 'query'>, schema: string): ToolLedger {
@@ -49,8 +52,8 @@ export function pgToolLedger(pool: Pick<Pool, 'query'>, schema: string): ToolLed
     hasJournal: true,
     async append(e) {
       await pool.query(
-        `insert into ${table} (run_id, step_id, tool, args_digest, ok, retrieved, seen, error)
-         values ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        `insert into ${table} (run_id, step_id, tool, args_digest, ok, retrieved, seen, error, blocked)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
         [
           e.runId,
           e.stepId,
@@ -60,12 +63,13 @@ export function pgToolLedger(pool: Pick<Pool, 'query'>, schema: string): ToolLed
           JSON.stringify(e.retrieved),
           JSON.stringify(e.seen),
           e.error ?? null,
+          e.blocked ? JSON.stringify(e.blocked) : null,
         ],
       )
     },
     async read(runId, stepId) {
       const { rows } = await pool.query<Row>(
-        `select tool, args_digest, ok, retrieved, seen, error
+        `select tool, args_digest, ok, retrieved, seen, error, blocked
            from ${table} where run_id = $1 and step_id = $2 order by id`,
         [runId, stepId],
       )
@@ -78,6 +82,7 @@ export function pgToolLedger(pool: Pick<Pool, 'query'>, schema: string): ToolLed
         retrieved: r.retrieved,
         seen: r.seen,
         ...(r.error === null ? {} : { error: r.error }),
+        ...(r.blocked === null ? {} : { blocked: r.blocked }),
       }))
     },
     async run(runId) {

@@ -3,6 +3,7 @@ import type { Usage } from '../context.ts'
 import { fail } from '../errors.ts'
 import type { Env } from '../transports/config.ts'
 import type { HttpOptions } from '../transports/http.ts'
+import { type BrowserRead, browserFromEnv, type RequestPolicy } from './browser.ts'
 import { pinnedFetch } from './pinned.ts'
 
 /**
@@ -23,6 +24,8 @@ export interface WebDeps {
   retry?: Pick<HttpOptions, 'attempts' | 'backoffMs'>
   /** Where a provider fallback is reported. Default `console.warn`. */
   warn?: (message: string) => void
+  /** Reads a page in a real browser. Default: the loopback CDP endpoint `AGW_BROWSER_CDP_URL` names, if it is set. */
+  browser?: BrowserRead
 }
 
 /** The addresses a URL's host was vetted to, so the connection goes to one of them and DNS is not asked again. */
@@ -36,6 +39,8 @@ export interface ResolvedWebDeps {
   env: () => Env
   retry: Pick<HttpOptions, 'attempts' | 'backoffMs'>
   warn: (message: string) => void
+  /** The browser reader, decided per call (the environment is read on each call); undefined when none is configured. `policy` vets every request an environment-configured browser makes. */
+  browser: (policy: RequestPolicy) => BrowserRead | undefined
 }
 
 export function resolveWebDeps(deps: WebDeps = {}): ResolvedWebDeps {
@@ -45,6 +50,7 @@ export function resolveWebDeps(deps: WebDeps = {}): ResolvedWebDeps {
     env: () => deps.env ?? process.env,
     retry: deps.retry ?? {},
     warn: deps.warn ?? ((message) => console.warn(message)),
+    browser: (policy) => deps.browser ?? browserFromEnv(keyOf(deps.env ?? process.env, 'AGW_BROWSER_CDP_URL'), policy),
   }
 }
 

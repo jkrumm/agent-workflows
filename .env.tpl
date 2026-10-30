@@ -20,6 +20,9 @@ AGW_PG_PASSWORD=op://mini/vps-dev/AGENT_WORKFLOWS_DB_PASSWORD
 # Usage database (schema `usage` in `shared`, role `usage`): the middleware outbox writes usage rows there. launch.sh builds
 # USAGE_PG_URL from the password, the same way.
 USAGE_PG_PASSWORD=op://mini/vps-dev/SHARED_USAGE_DB_PASSWORD
+# web.fetch's browser fallback: the loopback DevTools endpoint of the headed research Chrome (`make research-chrome`). Plain
+# value, not a secret. Unset, the fallback is off.
+AGW_BROWSER_CDP_URL=http://127.0.0.1:9222
 # Where the friction job files issues (plain value, not a secret: passes through secrets-run as is).
 AGW_FRICTION_REPO=jkrumm/agent-workflows
 # Audio process (packages/audio): the STT language steer the door's transcriptions send when a client sets none (plain

@@ -52,6 +52,9 @@ export const Grounding = z.object({
 })
 export type Grounding = z.output<typeof Grounding>
 
+/** A page that turned the reader away (bot challenge, 403, login wall): the caller can open it in a real browser and feed the text back as `context`. */
+export const Blocked = z.object({ url: z.string(), reason: z.string() })
+
 /** Tool calls the agent made through the platform's tool gate, by tool. */
 export const ToolCounts = z.record(z.string(), z.number().int().nonnegative())
 
@@ -68,5 +71,6 @@ export const ResearchOutput = z.object({
   warnings: z.array(z.string()),
   grounding: Grounding,
   tools: ToolCounts.optional(),
+  blocked: z.array(Blocked).default([]),
 })
 export type ResearchResult = z.output<typeof ResearchOutput>

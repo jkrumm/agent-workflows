@@ -100,5 +100,12 @@ export {
   type UpscaleOutput,
   type VectorizeOutput,
 } from './image/index.ts'
-export { createWebCapabilities, TAVILY_USD_PER_CREDIT, type WebDeps } from './web/index.ts'
+export {
+  BLOCK_REASONS,
+  type BlockReason,
+  blockedReason,
+  createWebCapabilities,
+  TAVILY_USD_PER_CREDIT,
+  type WebDeps,
+} from './web/index.ts'
 export { AGENT_SAFE_HDX, CLI_ONLY_HDX } from './hdx/allowlist.ts'

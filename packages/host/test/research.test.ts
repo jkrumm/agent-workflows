@@ -44,6 +44,10 @@ async function fakeCapability(id: string, input: Json, scope: { addUsage: (u: ne
   if (id === 'web.fetch') {
     const url = (input as { url: string }).url
     if (url.includes('broken')) throw new Error('fetch refused: private address')
+    if (url.includes('walled'))
+      throw new Error(
+        'web.fetch: blocked (cloudflare-challenge) · direct: HTTP 403 (cloudflare-challenge) · tavily-extract: Failed to fetch url',
+      )
     return { url, finalUrl: url, title: 'Connections', text: 'The default is 5432.', truncated: false, via: 'direct' }
   }
   if (id === 'web.docs') return { source: 'https://context7.com/postgres', text: 'port 5432' }
@@ -153,8 +157,28 @@ describe('research workflow on a fake host', () => {
     const evidenceStep = await sql.step(runId, 'tools')
     expect(Number(evidenceStep?.cost)).toBeCloseTo(0.005)
     expect(Object.keys(out).sort()).toEqual(
-      ['citations', 'grounding', 'report', 'sources', 'status', 'tools', 'unverified', 'warnings'].sort(),
+      ['blocked', 'citations', 'grounding', 'report', 'sources', 'status', 'tools', 'unverified', 'warnings'].sort(),
     )
+  })
+
+  test('a page that turned the reader away reaches the output with its reason, in the ledger and the report', async () => {
+    const walled = 'https://shop.example.com/walled'
+    const host = new FakeAgentHost(async (s) => {
+      await callTool(s, 'web_fetch', { url: walled })
+      await callTool(s, 'web_fetch', { url: 'https://broken.example.com' })
+      await callTool(s, 'web_fetch', { url: PG_DOCS })
+      return { output: draft([{ claim: 'default 5432', url: PG_DOCS }]) }
+    })
+    const { runId, result } = await run({ query: 'Is the shop page readable?', depth: 'quick' }, host)
+    const out = ResearchOutput.parse(result.output)
+    expect(out.blocked).toEqual([{ url: walled, reason: 'cloudflare-challenge' }])
+    expect(out.warnings).toEqual(['1 page(s) turned the reader away: see blocked'])
+    expect(out.status).toBe('ok')
+    const { rows } = await sql.pool.query(
+      `select blocked from "${db.schema}".research_tool_calls where run_id = $1 and blocked is not null`,
+      [runId],
+    )
+    expect(rows).toEqual([{ blocked: { url: walled, reason: 'cloudflare-challenge' } }])
   })
 
   test('every citation retrieved or seen: the report is ok with no warning', async () => {
@@ -501,7 +525,28 @@ describe('assemble', () => {
       seen: new Set([PG_BLOG]),
       failed: 1,
       counts: { web_fetch: 2, web_search: 1 },
+      blocked: [],
     })
+  })
+
+  test('a blocked page is kept with its reason, unless the same page was read on another try', () => {
+    const entry = { runId: 'r', stepId: 'research', argsDigest: 'd', retrieved: [], seen: [], tool: 'web_fetch' }
+    const shop = { url: 'https://shop.example.com/machine', reason: 'cloudflare-challenge' }
+    const forum = { url: 'https://forum.example.com/t/1', reason: 'forbidden' }
+    const blocked = (b: { url: string; reason: string }) => ({ ...entry, ok: false, blocked: b })
+    expect(evidence([blocked(shop), blocked(forum)]).blocked).toEqual([shop, forum])
+    expect(
+      evidence([blocked(shop), { ...entry, ok: true, retrieved: [`${shop.url}/`] }, blocked(forum)]).blocked,
+    ).toEqual([forum])
+  })
+
+  test('assemble hands blocked pages over and says so in a warning', () => {
+    const blocked = [{ url: 'https://shop.example.com/machine', reason: 'cloudflare-challenge' }]
+    const out = assemble({ report: 'r', citations: [], sources: [], unverified: [] }, { ...ev, blocked })
+    expect(out.blocked).toEqual(blocked)
+    expect(out.warnings).toEqual(['1 page(s) turned the reader away: see blocked'])
+    expect(out.status).toBe('ok')
+    expect(assemble({ report: 'r', citations: [], sources: [], unverified: [] }, ev).blocked).toEqual([])
   })
 })
 

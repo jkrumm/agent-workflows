@@ -22,6 +22,12 @@ agent's `tools` counts. `--depth` defaults to `standard`. A long run waits like 
 - **Grounding** (`assemble`, in code): a citation whose URL the run neither retrieved nor saw as a search result is
   dropped to `unverified`; dropping 10 % or more, or retrieving nothing at all, makes the report `partial`.
   `grounding` counts before the drop.
+- **Blocked pages** (`blocked: [{url, reason}]` in the output): a `web_fetch` that no read could satisfy is classified by
+  `web.fetch` (`blocked (<reason>)` at the head of its failure text; reasons `cloudflare-challenge`, `bot-protection`,
+  `login-required`, `forbidden`, `rate-limited`, `legal-block`, `no-text`, `unsupported-type`). The gate's hook keeps the
+  URL and reason on the call's ledger row (`research_tool_calls.blocked`, migration 0012), counted in code, never
+  asserted by the agent. A page read on another try is not listed. The caller opens the list in a real browser and
+  feeds the text back as `--context` ("Given background") on the next run. A 404 or 5xx is not a block.
 - **Follow-up** (`--follow-up <runId>`, `followUp` in the input): the query is a new question about a finished
   report. The run must be a `done` `research` run, else the follow-up fails `invalid_input` with the reason (no such
   run, another workflow, not done, no report). The agent gets the earlier question, report and citations and the

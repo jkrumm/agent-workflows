@@ -21,6 +21,11 @@
         "action": "web_package",
         "resource": "*",
         "effect": "allow"
+      },
+      {
+        "action": "web_youtube",
+        "resource": "*",
+        "effect": "allow"
       }
     ]
   }

@@ -5,6 +5,7 @@ import { docsInput, docsOutput } from './docs.ts'
 import { fetchInput, fetchOutput } from './fetch.ts'
 import { packageInput, packageOutput } from './package.ts'
 import { searchInput, searchOutput } from './search.ts'
+import { youtubeInput, youtubeOutput } from './youtube.ts'
 import type { z } from 'zod'
 
 type Reply<I, O> = O | Error | ((input: I) => O | Error)
@@ -18,9 +19,10 @@ export interface FakeWeb {
     ReturnType<typeof defineCapability<typeof fetchInput, typeof fetchOutput, 'web.fetch'>>,
     ReturnType<typeof defineCapability<typeof docsInput, typeof docsOutput, 'web.docs'>>,
     ReturnType<typeof defineCapability<typeof packageInput, typeof packageOutput, 'web.package'>>,
+    ReturnType<typeof defineCapability<typeof youtubeInput, typeof youtubeOutput, 'web.youtube'>>,
   ]
   /** Every call, in order, with the input as the handler saw it (defaults applied). */
-  calls: { id: 'web.search' | 'web.fetch' | 'web.docs' | 'web.package'; input: unknown }[]
+  calls: { id: 'web.search' | 'web.fetch' | 'web.docs' | 'web.package' | 'web.youtube'; input: unknown }[]
 }
 
 type Script = {
@@ -28,6 +30,7 @@ type Script = {
   fetch?: Reply<z.output<typeof fetchInput>, z.input<typeof fetchOutput>>
   docs?: Reply<z.output<typeof docsInput>, z.input<typeof docsOutput>>
   package?: Reply<z.output<typeof packageInput>, z.input<typeof packageOutput>>
+  youtube?: Reply<z.output<typeof youtubeInput>, z.input<typeof youtubeOutput>>
   /** What each call reports through `addUsage`. Default: a priced, free call. `null` reports nothing. */
   usage?: Usage | null
 }
@@ -108,6 +111,26 @@ export function fakeWeb(script: Script = {}): FakeWeb {
           latest: '1.2.3',
           publishedAt: '2026-10-01T00:00:00Z',
           url: 'https://www.npmjs.com/package/example',
+        }),
+      }),
+      defineCapability({
+        id: 'web.youtube',
+        summary: 'Fake web.youtube',
+        input: youtubeInput,
+        output: youtubeOutput,
+        cli: { positional: ['url'], defaultFormat: 'json' },
+        handler: answer('web.youtube', script.youtube, {
+          url: 'https://www.youtube.com/watch?v=aaaaaaaaaaa',
+          videoId: 'aaaaaaaaaaa',
+          title: 'Example video',
+          channel: 'Example channel',
+          durationSeconds: 600,
+          description: 'Canned description.',
+          language: 'de',
+          captionKind: 'auto' as const,
+          tracks: ['de (auto)'],
+          transcript: '[0:00] Canned transcript.',
+          truncated: false,
         }),
       }),
     ],

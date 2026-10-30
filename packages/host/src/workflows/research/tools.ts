@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { blockedReason } from '@agent-workflows/capabilities'
 import type { Logger } from '@agent-workflows/runtime'
 import { canonicalJson } from '../../canonical.ts'
 import type { ToolCallRecord, ToolGrant } from '../../tool-gate/index.ts'
@@ -11,6 +12,7 @@ export const RESEARCH_TOOLS = {
   web_fetch: 'web.fetch',
   web_docs: 'web.docs',
   web_package: 'web.package',
+  web_youtube: 'web.youtube',
 } as const satisfies Record<string, string>
 
 export const GATE_TOOLS = Object.keys(RESEARCH_TOOLS) as (keyof typeof RESEARCH_TOOLS)[]
@@ -34,7 +36,11 @@ const digest = (text: string) => createHash('sha256').update(text).digest('hex')
 
 /** The URLs a call read (`retrieved`) or only listed (`seen`), by tool; what grounding rests on. */
 function urlsOf(call: ToolCallRecord): Partial<LedgerEntry> {
-  if (!call.outcome.ok) return {}
+  if (!call.outcome.ok) {
+    // A page that turned the reader away is kept with its URL, so the run can hand it over instead of losing it.
+    const reason = call.tool === 'web_fetch' ? blockedReason(call.outcome.error) : undefined
+    return reason && typeof call.args.url === 'string' ? { blocked: { url: call.args.url, reason } } : {}
+  }
   const out = asRecord(call.outcome.result)
   const { tool, args } = call
   if (tool === 'web_search') {
@@ -48,7 +54,7 @@ function urlsOf(call: ToolCallRecord): Partial<LedgerEntry> {
   if (tool === 'web_fetch') {
     return { retrieved: [args.url, out.url, out.finalUrl].filter((u): u is string => typeof u === 'string') }
   }
-  if (tool === 'web_package' && typeof out.url === 'string') return { retrieved: [out.url] }
+  if ((tool === 'web_package' || tool === 'web_youtube') && typeof out.url === 'string') return { retrieved: [out.url] }
   if (tool === 'web_docs' && typeof out.source === 'string' && /^https?:/.test(out.source)) {
     return { retrieved: [out.source] }
   }
@@ -132,12 +138,16 @@ export function evidence(entries: LedgerEntry[]) {
   const retrieved = new Set<string>()
   const seen = new Set<string>()
   const counts: Record<string, number> = {}
+  const blocked = new Map<string, { url: string; reason: string }>()
   let failed = 0
   for (const entry of entries) {
+    if (entry.blocked) blocked.set(normalizeUrl(entry.blocked.url), entry.blocked)
     for (const url of entry.retrieved) retrieved.add(normalizeUrl(url))
     for (const url of entry.seen) seen.add(normalizeUrl(url))
     counts[entry.tool] = (counts[entry.tool] ?? 0) + 1
     if (!entry.ok && entry.tool === 'web_fetch') failed++
   }
-  return { retrieved, seen, failed, counts }
+  // A page blocked on one try and read on another (a retry, the same page under a second URL) is not lost.
+  for (const key of retrieved) blocked.delete(key)
+  return { retrieved, seen, failed, counts, blocked: [...blocked.values()] }
 }

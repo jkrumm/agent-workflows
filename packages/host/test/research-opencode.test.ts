@@ -176,6 +176,7 @@ test.skipIf(!binary)(
       'web_fetch',
       'web_package',
       'web_search',
+      'web_youtube',
     ])
     expect(calls).toEqual([{ id: 'web.search', input: { query: 'postgres default port' } }])
     expect(entries).toMatchObject([

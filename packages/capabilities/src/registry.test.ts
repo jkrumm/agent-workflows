@@ -202,6 +202,7 @@ describe('OpenAPI', () => {
         'post /web/fetch',
         'post /web/package',
         'post /web/search',
+        'post /web/youtube',
       ].sort(),
     )
     for (const { op } of operations) {
@@ -255,6 +256,7 @@ describe('OpenAPI', () => {
       'webFetch',
       'webPackage',
       'webSearch',
+      'webYoutube',
     ])
     const json = JSON.stringify(doc)
     for (const code of ['NOT_CONFIGURED', 'UPSTREAM_ERROR', 'INVALID_OUTPUT', 'OUTPUT_TRUNCATED', 'CANCELLED']) {

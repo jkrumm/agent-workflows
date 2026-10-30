@@ -5,7 +5,7 @@ import type { HostWorkflow } from '../../operations.ts'
 import type { HostDeps } from '../index.ts'
 import { memoryToolLedger, type ToolLedger } from './ledger.ts'
 import { type EarlierResearch, JSON_ONLY_REASK, researchTask } from './prompts.ts'
-import { Citation, Draft, ResearchInput, ResearchOutput, type ResearchResult } from './schema.ts'
+import { Blocked, Citation, Draft, ResearchInput, ResearchOutput, type ResearchResult } from './schema.ts'
 import { researchScorer } from './scorer.ts'
 import { evidence, normalizeUrl, researchGrant } from './tools.ts'
 
@@ -36,6 +36,7 @@ export const Evidence = z.object({
   failed: z.number().int(),
   counts: z.record(z.string(), z.number().int()),
   calls: z.number().int(),
+  blocked: z.array(Blocked).default([]),
 })
 export type Evidence = z.output<typeof Evidence>
 
@@ -58,7 +59,7 @@ const Followed = z.discriminatedUnion('ok', [
  * its earlier run retrieved and the URLs of that run's final citations): a citation of one is grounded, but they are
  * not this run's retrievals and are not counted. `earlier` is undefined for a run that is not a follow-up.
  */
-export function assemble(draft: Draft, ev: Evidence, earlier?: readonly string[]): ResearchResult {
+export function assemble(draft: Draft, ev: z.input<typeof Evidence>, earlier?: readonly string[]): ResearchResult {
   const retrieved = new Set(ev.retrieved)
   const seen = new Set(ev.seen)
   const before = new Set((earlier ?? []).map(normalizeUrl))
@@ -73,6 +74,8 @@ export function assemble(draft: Draft, ev: Evidence, earlier?: readonly string[]
   if (dropped.length) warnings.push(`${dropped.length} citation(s) dropped: their URL was ${never}`)
   const nothingNew = retrieved.size === 0 && seen.size === 0
   const noPages = nothingNew && before.size === 0
+  const blocked = ev.blocked ?? []
+  if (blocked.length) warnings.push(`${blocked.length} page(s) turned the reader away: see blocked`)
   if (noPages) warnings.push('nothing was retrieved this run')
   else if (nothingNew && earlier) warnings.push('no new pages were read for this follow-up')
   const partial =
@@ -99,6 +102,7 @@ export function assemble(draft: Draft, ev: Evidence, earlier?: readonly string[]
       pagesFailed: ev.failed,
     },
     tools: ev.counts,
+    blocked,
   }
 }
 
@@ -207,6 +211,7 @@ export function createResearchWorkflows(deps: HostDeps, options: ResearchOptions
           failed: ev.failed,
           counts: ev.counts,
           calls: entries.length,
+          blocked: ev.blocked,
         } satisfies Evidence
       })
       tools.catch(() => {}) // awaited below; a rejection before that is not unhandled
