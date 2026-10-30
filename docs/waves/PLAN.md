@@ -76,7 +76,7 @@ Workers: Sonnet, Haiku for the sweep. Orchestrated.
 
 **Gate before the second step:** the owner's ImageGen click-through (Wave 2's open item, `ask-human.sh status 20261030T163835-8260`) is answered `done`. Still pending: `ask-human.sh push 20261030T163835-8260` once; unanswered after that, finish the first step, write "stopped: click-through pending" into Left behind and close out. Denied: stop and report what failed.
 
-- [ ] `imgcli icon` calls `agw image-icon` (the command is hyphenated, see Wave 1); `load_gen_config`, `gen_request` and `op://vps/image-gateway` go from `imgcli`.
+- [x] `imgcli icon` calls `agw image-icon` (the command is hyphenated, see Wave 1); `load_gen_config`, `gen_request` and `op://vps/image-gateway` go from `imgcli`.
 - [ ] Remove `vps/apps/image-gateway`, its Makefile targets and docs; the Kuma monitor in `homelab/uptime-kuma/monitors.yaml`
   (`make uk-sync`); the RollHook registration; `dotfiles-private/headless.refs` entries; the Caddy local-dev block.
 - [ ] Sweep: `hermes-agent/skills/image-delivery`, `hermes-agent/scripts/hermes-ops.sh`, `basalt-ui` consumers (its own
@@ -84,4 +84,7 @@ Workers: Sonnet, Haiku for the sweep. Orchestrated.
   `packages/capabilities/src/image/`.
 - [ ] `image-gateway` keeps only the studio app: decide the repo's name and shape in Left behind.
 
-**Left behind:**
+**Left behind:** stopped: click-through pending. Step 1 only.
+- **Step 1 done** (dotfiles `64e9553`, pushed): `imgcli icon` runs `agw image-icon` (new generic `agw_run`, `agw_image` wraps it); `load_gen_config`, `gen_request`, `gen_session`, `REF_GEN_ITEM` and every `op://vps/image-gateway` line are gone from `imgcli` and `skills/img/SKILL.md`. Live proof: `imgcli icon --from <golden source.png>` produced the 10-file set (ico, svg, 192/512/mask/touch/1024, icns, head.html, manifest) for $0.0100. Bash syntax checked; no repo check run (the change is a shell script and a skill doc; agent-workflows untouched except this plan). Committed only those two paths: the dotfiles checkout carries another agent's uncommitted `kuma-door/*`, `Makefile`, `AGENTS.md`, `docs/*` work, not touched.
+- **Gate not passed:** ImageGen click-through request `20261030T163835-8260` was pushed once (`ask-human.sh push`, 600 s) and came back unanswered; the request stays pending. Steps 2 to 4 (VPS removal, Kuma monitor, RollHook, `headless.refs`, Caddy block, sweep, repo shape) were **not started**; the gateway is still running. The orchestrator re-asks or the owner clicks via `make human-queue`; then re-run Wave 3 from step 2. `op://vps/image-gateway` stays in `dotfiles-private/headless.refs` until step 2.
+- **Still mentions the gateway for step 3's sweep:** `skills/img/SKILL.md` description ("mentions image-gateway") and line 63 ("ImageGen Mac app from the `image-gateway` repo"), `packages/host/src/workflows/image{,-icon}/README.md` (historical port notes, correct as history).
