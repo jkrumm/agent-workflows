@@ -27,7 +27,7 @@ function enhance(replies: ReturnType<typeof reply>[], input: Record<string, unkn
   const transports = fakeTransports({ openai: replies })
   const registry = createRegistry(createImageCapabilities({ env: {} }, { transports, env: {} }))
   const usage: Usage[] = []
-  const run = () => registry.call('image.enhance', input as never, { addUsage: (u) => usage.push(u) })
+  const run = () => registry.call('image.enhance', input, { addUsage: (u) => usage.push(u) })
   return { run, transports, usage }
 }
 
@@ -161,6 +161,228 @@ describe('image.enhance', () => {
     expect(verbatimTokens(brief).sort()).toEqual(['#1A2B3C', '3', 'Anna', 'Nordlicht'])
     expect(checkVerbatim(brief, 'A logo: Nordlicht, #1A2B3C, 3 stars, Anna')).toEqual({ ok: true, missing: [] })
     expect(checkVerbatim(brief, 'A logo with stars').missing.sort()).toEqual(['#1A2B3C', '3', 'Anna', 'Nordlicht'])
+  })
+
+  test('a brief-only call is unchanged: no iteration, style, series or pin sections, and the new settings take their defaults', async () => {
+    const { run, transports } = enhance([reply(plan())], { brief: 'a lighthouse at dusk' })
+    const out = await run()
+    const prompt = transports.chatCalls[0]?.request.prompt ?? ''
+    expect(prompt).toBe(
+      [
+        "Aggressiveness: FULL. Fully enhance the brief per the playbook's canonical ordering, filling every reasonable gap (lighting, composition, medium, mood, style anchor).",
+        'Detect the intent from the brief and report it as "intent.detected", choosing the closest match from the enum.',
+        'Brief: "a lighthouse at dusk"',
+      ].join('\n\n'),
+    )
+    expect(out.settings).toEqual({
+      endpoint: 'generate',
+      model: 'flare',
+      size: '1536x1024',
+      quality: 'low',
+      background: 'auto',
+      n: 1,
+      moderation: 'auto',
+      partialImages: 1,
+    })
+  })
+
+  test('an iteration: the current prompt, the delta and the preserve list are in the request; the delta decides the gate', async () => {
+    const current = 'A watercolour lighthouse at dusk, teal sea, "Nordlicht" painted on the hull. No text.'
+    const { run, transports } = enhance([reply(plan({ prompt: 'REWRITTEN with the moon' }))], {
+      currentPrompt: current,
+      delta: 'add a moon',
+      preserveList: ['the teal sea', 'the hull lettering'],
+    })
+    const out = await run()
+    const prompt = transports.chatCalls[0]?.request.prompt ?? ''
+    expect(prompt).toContain('Aggressiveness: FULL')
+    expect(prompt).toContain('This is an iteration on an existing accepted prompt.')
+    expect(prompt).toContain(`Current accepted prompt: "${current}"`)
+    expect(prompt).toContain('Requested change (the delta): "add a moon"')
+    expect(prompt).toContain(
+      'Preserve list (must survive unchanged; re-state it in "constraint_block"): the teal sea, the hull lettering',
+    )
+    expect(prompt).toContain('Apply ONLY the delta')
+    expect(prompt).not.toContain('Brief: ')
+    expect(out.prompt).toBe('REWRITTEN with the moon')
+    // the verbatim check reads what this round adds
+    expect(out.verbatimCheck).toEqual({ ok: true, missing: [] })
+  })
+
+  test('an iteration without a delta is a verbatim re-run; passthrough keeps the current prompt, plus the constraint block', async () => {
+    const current = Array.from({ length: 120 }, (_, i) => `w${i}`).join(' ')
+    const { run, transports } = enhance(
+      [reply(plan({ prompt: 'REWRITTEN', constraint_block: 'Keep the sea teal.' }))],
+      {
+        currentPrompt: current,
+        mode: 'off',
+      },
+    )
+    const out = await run()
+    const prompt = transports.chatCalls[0]?.request.prompt ?? ''
+    expect(prompt).toContain('treat as a verbatim re-run request')
+    expect(prompt).toContain('PASSTHROUGH')
+    expect(prompt).toContain('the current prompt')
+    expect(out.prompt).toBe(`${current}\n\nKeep the sea teal.`)
+    expect(out.modeApplied).toBe('off')
+  })
+
+  test('exactly one of brief and currentPrompt, and a delta only with a currentPrompt: a 400, nothing is called', async () => {
+    for (const bad of [
+      {},
+      { brief: 'x', currentPrompt: 'y' },
+      { brief: 'x', delta: 'z' },
+      { delta: 'z' },
+      { currentPrompt: 'y', delta: '' },
+    ]) {
+      const { run, transports } = enhance([reply(plan())], bad)
+      expect(
+        await run().then(
+          () => undefined,
+          (e: unknown) => e,
+        ),
+      ).toMatchObject({ status: 400 })
+      expect(transports.chatCalls).toEqual([])
+    }
+  })
+
+  test('a style guide is woven into the request; a fragment over 40 words is a 400', async () => {
+    const { run, transports } = enhance([reply(plan())], {
+      brief: 'a leaf',
+      styleGuide: {
+        promptFragment: 'flat vector, bold outlines',
+        palette: ['#1A2B3C', '#FFEEDD'],
+        avoid: ['gradients', 'text'],
+        refImageCount: 2,
+      },
+    })
+    await run()
+    const prompt = transports.chatCalls[0]?.request.prompt ?? ''
+    expect(prompt).toContain('weave this fragment verbatim into the prompt: "flat vector, bold outlines"')
+    expect(prompt).toContain('Palette (verbatim hexes, do not alter): #1A2B3C, #FFEEDD')
+    expect(prompt).toContain('Avoid: gradients, text')
+    expect(prompt).toContain('2 style reference image(s) will ride along.')
+
+    const words = (n: number) => Array.from({ length: n }, () => 'word').join(' ')
+    expect(
+      (await enhance([reply(plan())], { brief: 'x', styleGuide: { promptFragment: words(40) } }).run()).prompt,
+    ).toBeString()
+    const tooLong = enhance([reply(plan())], { brief: 'x', styleGuide: { promptFragment: words(41) } })
+    expect(
+      await tooLong.run().then(
+        () => undefined,
+        (e: unknown) => e,
+      ),
+    ).toMatchObject({ status: 400 })
+  })
+
+  test('series context lists the prior prompts, and nothing of their settings', async () => {
+    const { run, transports } = enhance([reply(plan())], {
+      brief: 'a fox',
+      seriesContext: [
+        { prompt: 'A flat vector owl, teal and cream.', settings: { size: '1024x1024' } },
+        { prompt: 'A flat vector hare, teal and cream.' },
+      ],
+    })
+    await run()
+    const prompt = transports.chatCalls[0]?.request.prompt ?? ''
+    expect(prompt).toContain('belongs to an ongoing series')
+    expect(prompt).toContain('- A flat vector owl, teal and cream.\n- A flat vector hare, teal and cream.')
+    expect(prompt).not.toContain('1024x1024')
+  })
+
+  test('pinned overrides win over the proposal and are echoed verbatim into the settings', async () => {
+    const { run, transports } = enhance(
+      [
+        reply(
+          plan({
+            proposed_settings: {
+              model: 'flare',
+              size: '1024x1024',
+              quality: 'low',
+              background: 'opaque',
+              n: 3,
+              moderation: 'auto',
+              partial_images: 2,
+            },
+          }),
+        ),
+      ],
+      {
+        brief: 'x',
+        overrides: {
+          model: 'sunburst',
+          size: '1536x640',
+          quality: 'xhigh',
+          background: 'transparent',
+          n: 2,
+          moderation: 'low',
+          partialImages: 0,
+        },
+      },
+    )
+    const out = await run()
+    expect(out.settings).toEqual({
+      endpoint: 'generate',
+      model: 'sunburst',
+      size: '1536x640',
+      quality: 'xhigh',
+      background: 'transparent',
+      n: 2,
+      moderation: 'low',
+      partialImages: 0,
+    })
+    // an explicit model is not a routing decision, so there is no routing note
+    expect(out.assumptions.some((a) => a.startsWith('Routed'))).toBe(false)
+    const prompt = transports.chatCalls[0]?.request.prompt ?? ''
+    expect(prompt).toContain('The user has pinned these settings')
+    expect(prompt).toContain('"moderation":"low"')
+    expect(prompt).toContain('"partial_images":0')
+    expect(prompt).not.toContain('partialImages')
+  })
+
+  test('a pinned auto model is still routed; an empty overrides object adds no section', async () => {
+    const pinned = await enhance([reply(plan({ proposed_settings: { model: 'flare', quality: 'low' } }))], {
+      brief: 'x',
+      overrides: { model: 'auto', quality: 'high' },
+    }).run()
+    expect(pinned.settings).toMatchObject({ model: 'sunburst', quality: 'high' })
+    expect(pinned.assumptions).toContain('Routed to sunburst: a high-quality final render.')
+
+    const empty = enhance([reply(plan())], { brief: 'x', overrides: {} })
+    await empty.run()
+    expect(empty.transports.chatCalls[0]?.request.prompt ?? '').not.toContain('pinned')
+  })
+
+  test('input_fidelity never survives: neither model takes it, proposed or pinned, with a note', async () => {
+    const proposed = await enhance([reply(plan({ proposed_settings: { input_fidelity: 'high' } }))], {
+      brief: 'x',
+      hasReferences: true,
+    }).run()
+    expect(proposed.settings).not.toHaveProperty('inputFidelity')
+    expect(proposed.assumptions.some((a) => a.startsWith('Dropped input_fidelity'))).toBe(true)
+
+    const pinned = await enhance([reply(plan())], {
+      brief: 'x',
+      hasReferences: true,
+      overrides: { inputFidelity: 'low' },
+    }).run()
+    expect(pinned.settings).not.toHaveProperty('inputFidelity')
+    expect(pinned.assumptions.some((a) => a.startsWith('Dropped input_fidelity'))).toBe(true)
+  })
+
+  test('previews need one image: an unpinned proposal of previews for n>1 is set to 0, a pinned one is kept', async () => {
+    const corrected = await enhance([reply(plan({ proposed_settings: { n: 4, partial_images: 2, quality: 'low' } }))], {
+      brief: 'x',
+    }).run()
+    expect(corrected.settings).toMatchObject({ n: 4, partialImages: 0 })
+    expect(corrected.assumptions.some((a) => a.startsWith('Set partialImages to 0'))).toBe(true)
+
+    const kept = await enhance([reply(plan({ proposed_settings: { n: 4, quality: 'low' } }))], {
+      brief: 'x',
+      overrides: { partialImages: 2 },
+    }).run()
+    expect(kept.settings).toMatchObject({ n: 4, partialImages: 2 })
   })
 
   test('an out-of-range brief is a 400, nothing is called', async () => {

@@ -71,7 +71,11 @@ Exactly one of `prompt` and `file`. The run answers with the files it made:
   measured per-quality token anchors and the route's price. The workflow runs it as its own step; settings the caller
   gave win over the plan's, a `hard` warning refuses the run before an image is paid for. The model, effort (high) and
   a 32k ceiling are the `image.enhance` route (the gateway sent 16k and retried once with double on a truncated answer).
-  Not ported: the studio-only inputs (style guide, series context, iteration `delta`, preserve list, pinned overrides).
+  The studio's inputs are ported too, all optional (the workflow sends only `brief`): iteration (`currentPrompt` instead of
+  `brief`, `delta` with it, `preserveList`), `styleGuide`, `seriesContext` and pinned `overrides`, which win over the plan's
+  settings and are echoed verbatim. The settings also carry `moderation`, `partialImages` and, where a model takes it, `inputFidelity`
+  (neither does today: it is dropped with a note). The studio door's generate/edit/stream call is `requestImages`
+  (`packages/capabilities/src/image/studio.ts`), the one upstream implementation `image.generate` runs on.
 - **The raw capabilities are hidden from the CLI.** `image.generate`, `image.cutout`, `image.upscale` and `image.vectorize` answer megabytes of base64 (or an SVG document), so
   they carry `cli: { hidden: true }` (new in `CliSpec`; the generated CLI builds no command for them and does not list
   them as skipped). They stay on HTTP and in process. `image.enhance` is `agw image-enhance` (the workflow owns `agw image`, and the host refuses a command that is the prefix of another).
