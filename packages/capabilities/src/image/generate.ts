@@ -1,19 +1,13 @@
-import { costFromUsage } from '@agent-workflows/routes'
 import { z } from 'zod'
-import type { Usage } from '../context.ts'
 import { fail } from '../errors.ts'
 import { defineCapability } from '../procedure.ts'
-import { iuConfig } from '../transports/config.ts'
-import { within } from '../web/deps.ts'
-import type { ImageRouteId, ResolvedImageDeps } from './deps.ts'
+import type { ResolvedImageDeps } from './deps.ts'
 import { MAX_EDIT_IMAGE_BYTES, MAX_EDIT_IMAGES, readInputImage } from './files.ts'
-import { magicBytesValid, MIME, readPng } from './png.ts'
+import { MIME, magicBytesValid, readPng } from './png.ts'
 import { snapSize } from './size.ts'
-import { readJsonBounded, send } from './wire.ts'
+import { GENERATE_MODELS, MODELS, pickRoute, QUALITIES, requestImages } from './studio.ts'
 
-export const QUALITIES = ['low', 'medium', 'high', 'xhigh', 'max', 'auto'] as const
-export const GENERATE_MODELS = ['flare', 'sunburst'] as const
-export const MODELS = ['auto', ...GENERATE_MODELS] as const
+export { GENERATE_MODELS, MODELS, pickRoute, QUALITIES }
 
 export const generateInput = z.object({
   prompt: z.string().min(1).max(32_000).describe('What to draw, or with images, what to change'),
@@ -74,39 +68,6 @@ export const generateOutput = z.object({
 })
 export type GenerateOutput = z.infer<typeof generateOutput>
 
-const upstreamResponse = z.object({
-  data: z.array(z.object({ b64_json: z.string() })),
-  usage: z
-    .object({
-      cost: z.number().nullish(),
-      input_tokens: z.number().optional(),
-      output_tokens: z.number().optional(),
-      input_tokens_details: z
-        .object({ text_tokens: z.number().nullish(), image_tokens: z.number().nullish() })
-        .nullish(),
-    })
-    .nullish(),
-})
-
-const REQUEST_TIMEOUT_MS = 180_000
-/** One generated PNG, decoded: gpt-image answers at most ~3839 px a side; an entry over this is not an image we keep. */
-export const MAX_IMAGE_BYTES = 32 * 1024 * 1024
-const MAX_IMAGE_B64 = Math.ceil((MAX_IMAGE_BYTES * 4) / 3)
-/** The whole answer, whatever n. */
-const MAX_RESPONSE_BYTES = 256 * 1024 * 1024
-const HIGH_QUALITY = new Set<string>(['high', 'xhigh', 'max'])
-
-/** The seat for a request: an explicit model wins; `auto` is image-gateway's rule (an edit and a final-quality render go to the quality model). */
-export function pickRoute(
-  model: (typeof MODELS)[number],
-  quality: (typeof QUALITIES)[number],
-  edit: boolean,
-): ImageRouteId {
-  if (model === 'flare') return 'image.flare'
-  if (model === 'sunburst') return 'image.sunburst'
-  return edit || HIGH_QUALITY.has(quality) ? 'image.sunburst' : 'image.flare'
-}
-
 export function createGenerate(deps: ResolvedImageDeps) {
   return defineCapability({
     id: 'image.generate',
@@ -118,85 +79,34 @@ export function createGenerate(deps: ResolvedImageDeps) {
     // commands are single hyphenated words.
     cli: { command: ['image-generate'], hidden: true, defaultFormat: 'json' },
     async handler(input, ctx) {
-      const edit = input.images.length > 0
-      const route = deps.route(pickRoute(input.model, input.quality, edit))
-      const config = iuConfig(deps.env())
       const size = snapSize(input.size)
       const references = await Promise.all(input.images.map((path) => readInputImage(path, MAX_EDIT_IMAGE_BYTES)))
-
-      const fields = {
-        model: route.model,
+      const answer = await requestImages(deps, ctx, {
         prompt: input.prompt,
-        n: input.n,
         size,
+        n: input.n,
         quality: input.quality,
+        model: input.model,
         background: input.background,
         output_format: 'png',
-      }
-      // Multiple references use the repeated `image[]` field (verified with 2), exactly one the plain `image` field.
-      const body = (): { body: BodyInit; headers: Record<string, string> } => {
-        if (!edit) return { body: JSON.stringify(fields), headers: { 'content-type': 'application/json' } }
-        const form = new FormData()
-        for (const [key, value] of Object.entries(fields)) form.append(key, String(value))
-        const field = references.length > 1 ? 'image[]' : 'image'
-        for (const ref of references) {
-          const name = ref.path.slice(ref.path.lastIndexOf('/') + 1)
-          form.append(field, new File([ref.bytes], name, { type: MIME[ref.format] }))
-        }
-        return { body: form, headers: {} }
-      }
-      const url = `${config.openaiBase}/${edit ? 'images/edits' : 'images/generations'}`
-
-      const started = performance.now()
-      // The request may have landed and been billed by the time anything goes wrong, so only an error status the endpoint
-      // answered with (image-gateway's retry set), or a refused connection, is sent again; never a dropped or garbled 200.
-      const json = await send({
-        retry: deps.retry,
-        signal: ctx.signal,
-        wire: 'image',
-        idempotent: false,
-        status: () => true,
-        request: () => {
-          const { body: payload, headers } = body()
-          return deps.fetch(url, {
-            method: 'POST',
-            headers: { authorization: `Bearer ${config.apiKey}`, ...headers },
-            body: payload,
-            redirect: 'error',
-            signal: within(ctx.signal, REQUEST_TIMEOUT_MS),
-          })
-        },
-        read: (res) =>
-          readJsonBounded(res, 'image', Math.min(MAX_RESPONSE_BYTES, input.n * MAX_IMAGE_B64 + 1024 * 1024), false),
+        references: references.map((ref) => ({
+          bytes: ref.bytes,
+          name: ref.path.slice(ref.path.lastIndexOf('/') + 1),
+          mime: MIME[ref.format],
+        })),
       })
-      const parsed = upstreamResponse.safeParse(json)
-      if (!parsed.success) throw fail('UPSTREAM_ERROR', 'image answered with a body that does not fit', {})
-      const { data, usage } = parsed.data
 
-      // The call is billed from here on, whatever the images turn out to be.
-      const cost = costFromUsage(route.wire, usage, route.rate, route.price)
-      const reported: Usage = {
-        model: route.model,
-        tokens: { input: usage?.input_tokens ?? 0, output: usage?.output_tokens ?? 0, cacheRead: 0, reasoning: 0 },
-        cost: cost.usd,
-        costSource: cost.source,
-      }
-      ctx.addUsage(reported)
-
-      if (data.length === 0) throw fail('UPSTREAM_ERROR', 'image returned no images', {})
-      // One bad entry among n does not discard the valid, already billed ones: they are returned, the bad one reported.
+      // The images are PNGs by their magic bytes; `generate` also needs their header (size, alpha), and an entry without a
+      // readable one is rejected like any other bad entry.
       const images: GeneratedImage[] = []
-      const rejected: { index: number; reason: string }[] = []
-      data.forEach((entry, index) => {
-        if (entry.b64_json.length > MAX_IMAGE_B64) {
-          rejected.push({ index, reason: `over the ${MAX_IMAGE_BYTES} byte cap for one image` })
-          return
-        }
-        const bytes = Buffer.from(entry.b64_json, 'base64')
+      const rejected = [...answer.rejected]
+      for (const entry of answer.images) {
+        const bytes = Buffer.from(entry.b64, 'base64')
         const info = magicBytesValid(bytes, 'png') ? readPng(bytes) : null
-        if (info) images.push({ b64: entry.b64_json, bytes: bytes.length, ...info })
-        else rejected.push({ index, reason: 'not a valid png (bad magic bytes)' })
-      })
+        if (info) images.push({ b64: entry.b64, bytes: bytes.length, ...info })
+        else rejected.push({ index: entry.index, reason: 'not a valid png (bad magic bytes)' })
+      }
+      rejected.sort((a, b) => a.index - b.index)
       if (images.length === 0) {
         throw fail(
           'UPSTREAM_ERROR',
@@ -205,17 +115,17 @@ export function createGenerate(deps: ResolvedImageDeps) {
         )
       }
       return {
-        id: crypto.randomUUID(),
-        model: route.model,
+        id: answer.id,
+        model: answer.model,
         size,
         ...(size !== input.size ? { snappedFrom: input.size } : {}),
         quality: input.quality,
         background: input.background,
-        edit,
+        edit: answer.edit,
         images,
         rejected,
-        cost,
-        latencyMs: Math.round(performance.now() - started),
+        cost: answer.cost,
+        latencyMs: answer.latencyMs,
       }
     },
   })

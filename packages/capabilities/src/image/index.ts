@@ -14,6 +14,21 @@ export type { EnhanceOutput } from './enhance.ts'
 export { MAX_EDIT_IMAGES } from './files.ts'
 export type { GenerateOutput, GeneratedImage } from './generate.ts'
 export { GENERATE_MODELS, pickRoute, QUALITIES } from './generate.ts'
+export {
+  type ImageFile,
+  type ImagePartial,
+  type ImageRequest,
+  type ImageResult,
+  type ImageResultImage,
+  type ImageUsage,
+  INPUT_FIDELITIES,
+  MAX_MASK_BYTES,
+  MAX_PARTIAL_IMAGES,
+  MODEL_CAPABILITIES,
+  MODERATIONS,
+  OUTPUT_FORMATS,
+  requestImages,
+} from './studio.ts'
 export { type AlphaStats, decodeAlphaStats, magicBytesValid, readPng } from './png.ts'
 export { replicateBase } from './replicate.ts'
 export { snapSize, validateSize } from './size.ts'

@@ -1,6 +1,6 @@
 import { type ResolvedRoute, type RouteId, resolveRoute } from '@agent-workflows/routes'
 import type { Env } from '../transports/config.ts'
-import type { HttpOptions } from '../transports/http.ts'
+import { DEFAULTS, type HttpOptions } from '../transports/http.ts'
 
 /** The image seats of the route table (`packages/routes/src/table/image.ts`). */
 export type ImageRouteId = Extract<RouteId, `image.${string}`>
@@ -16,6 +16,8 @@ export interface ImageDeps {
   route?: (id: ImageRouteId) => ResolvedRoute
   /** Wait between Replicate polls. Default 1 s. */
   pollMs?: number
+  /** A streamed image request is aborted after this long without a byte from the endpoint (a hang guard, never a budget). Default 30 minutes. */
+  streamIdleMs?: number
 }
 
 export interface ResolvedImageDeps {
@@ -24,6 +26,7 @@ export interface ResolvedImageDeps {
   retry: Pick<HttpOptions, 'attempts' | 'backoffMs'>
   route: (id: ImageRouteId) => ResolvedRoute
   pollMs: number
+  streamIdleMs: number
 }
 
 export function resolveImageDeps(deps: ImageDeps = {}): ResolvedImageDeps {
@@ -33,5 +36,6 @@ export function resolveImageDeps(deps: ImageDeps = {}): ResolvedImageDeps {
     retry: deps.retry ?? {},
     route: deps.route ?? ((id) => resolveRoute(id, deps.env ?? process.env)),
     pollMs: deps.pollMs ?? 1_000,
+    streamIdleMs: deps.streamIdleMs ?? DEFAULTS.hangGuardMs,
   }
 }
