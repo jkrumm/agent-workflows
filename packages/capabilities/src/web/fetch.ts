@@ -67,7 +67,8 @@ class ReadCache {
   static key(url: string): string {
     try {
       const parsed = new URL(url.trim())
-      parsed.hash = ''
+      // A fragment is dropped (the server never sees it) unless it is a client-side route, where it names the page.
+      if (!/^#[/!]/.test(parsed.hash)) parsed.hash = ''
       return parsed.toString()
     } catch {
       return url.trim()
@@ -82,7 +83,10 @@ class ReadCache {
     return undefined
   }
 
-  set(key: string, read: Read, via: CachedRead['via']): CachedRead {
+  /** Keeps the read, unless a read that started later is already there (a slow read must not bury a fresh one). */
+  set(key: string, read: Read, via: CachedRead['via'], startedAt: number): CachedRead {
+    const newer = this.entries.get(key)
+    if (newer && newer.at > startedAt) return { read, via, at: Date.now() }
     this.delete(key)
     const entry = { read, via, at: Date.now() }
     this.entries.set(key, entry)
@@ -372,6 +376,7 @@ async function pdfRead(res: Response, finalUrl: string, signal: AbortSignal): Pr
   if (new TextDecoder('latin1').decode(bytes.subarray(0, 8)).indexOf('%PDF-') !== 0)
     throw new DirectFailure('the file is not a PDF', false, undefined, 'unsupported-type')
   try {
+    // The bundled pdf.js (6.4.x) is past CVE-2024-4367 (fixed in 4.2.67) and has no eval option left.
     const pdf = await getDocumentProxy(bytes)
     const { text: pages } = await extractText(pdf, { mergePages: false })
     const read = pages.slice(0, MAX_PDF_PAGES)
@@ -437,6 +442,7 @@ export const createFetch = (deps: ResolvedWebDeps) => {
     cli: { positional: ['url'], defaultFormat: 'json' },
     async handler({ url, maxChars, fresh }, ctx) {
       const key = ReadCache.key(url)
+      const startedAt = Date.now()
       const hit = fresh ? undefined : cache.get(key)
       if (hit) {
         ctx.addUsage(webUsage('cache', 0))
@@ -444,12 +450,13 @@ export const createFetch = (deps: ResolvedWebDeps) => {
       }
       /** A complete read: kept for the next caller, then shaped. */
       const done = (read: Read, via: CachedRead['via']) => {
-        const entry = cache.set(key, read, via)
+        const entry = cache.set(key, read, via, startedAt)
         return shape(url, read, via, maxChars, { cached: false, at: entry.at })
       }
       // `direct` checks the URL before it sends anything, so a refused URL never reaches Tavily either.
       const failures: string[] = []
       let sparse: Read | undefined
+      let sparseAt = 0
       // The page's own client error (401, 403, 429, a paywall): carried in `data.status` when no read succeeds.
       let pageStatus: number | undefined
       // Why the page turned the direct read away, when it did: the failure says `blocked (<reason>)` up front.
@@ -462,6 +469,7 @@ export const createFetch = (deps: ResolvedWebDeps) => {
         free()
         if (!read.shell) return done(read, 'direct')
         sparse = read
+        sparseAt = Date.now()
         failures.push(`direct: only ${read.text.length} characters of text from a script-built page`)
       } catch (error) {
         if (!(error instanceof DirectFailure)) throw error
@@ -528,7 +536,7 @@ export const createFetch = (deps: ResolvedWebDeps) => {
 
       // A kept thin read is still a read: better than an error for a short page.
       if (sparse && sparse.text.length > 0)
-        return shape(url, sparse, 'direct', maxChars, { cached: false, at: Date.now() })
+        return shape(url, sparse, 'direct', maxChars, { cached: false, at: sparseAt })
       throw fail(
         'UPSTREAM_ERROR',
         `web.fetch: ${blocked ? `blocked (${blocked}) · ` : ''}${failures.join(' · ')}`,

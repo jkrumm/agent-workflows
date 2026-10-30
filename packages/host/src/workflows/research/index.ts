@@ -26,6 +26,20 @@ export type ResearchOptions = {
   agentBackoffMs?: number
 }
 
+/**
+ * One literal step id per context run (`ResearchInput.contextRuns` holds at most six): a computed id would silently make a
+ * new step on replay (`runtime/test/step-id-literal.test.ts`).
+ */
+type ContextStep = (ctx: Ctx, body: () => Promise<Json>) => Promise<Json>
+const CONTEXT_STEP: ContextStep[] = [
+  (ctx, body) => ctx.step('context-run:0', body),
+  (ctx, body) => ctx.step('context-run:1', body),
+  (ctx, body) => ctx.step('context-run:2', body),
+  (ctx, body) => ctx.step('context-run:3', body),
+  (ctx, body) => ctx.step('context-run:4', body),
+  (ctx, body) => ctx.step('context-run:5', body),
+]
+
 /** One retry of the agent step: a flaky attempt (a died session, an idle kill) must not decide the run. */
 const AGENT_ATTEMPTS = 2
 
@@ -140,12 +154,11 @@ export function createResearchWorkflows(deps: HostDeps, options: ResearchOptions
    * `invalid_input`.
    */
   async function loadEarlier(
-    ctx: Ctx,
+    step: (body: () => Promise<Json>) => Promise<Json>,
     runId: string,
-    stepId = 'followup',
     what = 'follow up',
   ): Promise<EarlierResearch> {
-    const out = await ctx.step(stepId, async (): Promise<Json> => {
+    const out = await step(async (): Promise<Json> => {
       if (!ledger.hasJournal) return { ok: false, reason: 'this host keeps no run journal' }
       const run = await ledger.run(runId)
       if (!run) return { ok: false, reason: `run ${runId} does not exist` }
@@ -175,11 +188,13 @@ export function createResearchWorkflows(deps: HostDeps, options: ResearchOptions
 
   async function runAgent(ctx: Ctx, input: z.output<typeof ResearchInput>): Promise<ResearchResult> {
     const runId = ctx.runId
-    const followed = input.followUp ? await loadEarlier(ctx, input.followUp) : undefined
+    const followed = input.followUp
+      ? await loadEarlier((body) => ctx.step('followup', body), input.followUp)
+      : undefined
     // Parallel runs of one task, read one after the other (each a journaled step, so a resumed run sees the same context).
     const siblings: EarlierResearch[] = []
     for (const [i, id] of [...new Set(input.contextRuns ?? [])].entries())
-      siblings.push(await loadEarlier(ctx, id, `context-run:${i}`, 'use as context'))
+      siblings.push(await loadEarlier((body) => (CONTEXT_STEP[i] as ContextStep)(ctx, body), id, 'use as context'))
     const close = toolGate.open({ runId, stepId: 'research', ...grant })
     let agentEnded!: () => void
     const ended = new Promise<void>((resolve) => {

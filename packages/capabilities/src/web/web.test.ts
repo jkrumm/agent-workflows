@@ -1690,6 +1690,42 @@ describe('web.fetch read cache', () => {
     expect(again.cached).toBe(false)
   })
 
+  test('a hash route names its page; a plain fragment does not', async () => {
+    const counter = { reads: 0 }
+    const n = net({ 'https://shop.example.com/app': counted(page('x'.repeat(50)), counter) })
+    const { call } = run({ ...n.deps, env: {} })
+    await call('web.fetch', { url: 'https://shop.example.com/app#/product/a' })
+    await call('web.fetch', { url: 'https://shop.example.com/app#/product/b' })
+    expect(counter.reads).toBe(2)
+    await call('web.fetch', { url: 'https://shop.example.com/app#reviews' })
+    await call('web.fetch', { url: 'https://shop.example.com/app#specs' })
+    expect(counter.reads).toBe(3) // the two plain fragments are one page
+  })
+
+  test('a read that started before a fresh one does not replace it', async () => {
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let served = 0
+    const n = net({
+      'https://shop.example.com/p': async () => {
+        const mine = ++served
+        if (mine === 1) await gate // the slow, older read
+        return page(`version ${mine}`)('', {})
+      },
+    })
+    const { call } = run({ ...n.deps, env: {} })
+    const slow = call('web.fetch', { url: 'https://shop.example.com/p' })
+    await Bun.sleep(20)
+    await call('web.fetch', { url: 'https://shop.example.com/p', fresh: true })
+    release()
+    await slow
+    const cached = (await call('web.fetch', { url: 'https://shop.example.com/p' })) as { text: string; cached: boolean }
+    expect(cached.cached).toBe(true)
+    expect(cached.text).toContain('version 2')
+  })
+
   test('a read expires after six hours; a failure is never kept', async () => {
     setSystemTime(new Date('2026-10-30T10:00:00Z'))
     const counter = { reads: 0 }
