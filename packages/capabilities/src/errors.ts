@@ -11,7 +11,17 @@ export const ERRORS = {
   UPSTREAM_ERROR: {
     status: 502,
     message: 'Upstream model call failed',
-    data: z.object({ status: z.number().int().optional() }),
+    data: z.object({
+      status: z.number().int().optional(),
+      /** A vendor-wrapped 400 or an error frame of a stream: the vendor's own words, structured (a moderation block names its stage and categories). */
+      userError: z
+        .object({
+          message: z.string(),
+          code: z.string().optional(),
+          moderation: z.object({ stage: z.string(), categories: z.array(z.string()) }).optional(),
+        })
+        .optional(),
+    }),
   },
   /** The call worked but the answer was unusable after one re-ask (schema or parse failure). */
   INVALID_OUTPUT: {

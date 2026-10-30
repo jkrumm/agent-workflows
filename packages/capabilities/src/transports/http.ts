@@ -28,9 +28,18 @@ export class Attempt extends Error {
     message: string,
     readonly retryable: boolean,
     readonly status?: number,
+    /** The vendor's own words of a wrapped 400 (`UPSTREAM_ERROR` data `userError`). */
+    readonly userError?: UserError,
   ) {
     super(message)
   }
+}
+
+/** What a vendor-wrapped 400 says, structured: its message, its code and, for a moderation block, the stage and categories. */
+export interface UserError {
+  message: string
+  code?: string
+  moderation?: { stage: string; categories: string[] }
 }
 
 /**
@@ -87,7 +96,10 @@ export async function withRetries<T>(options: HttpOptions, signal: AbortSignal, 
       if (error instanceof CapabilityError) throw error
       const failure = error instanceof Attempt ? error : new Attempt(describe(error), !isAbort(error))
       if (!failure.retryable || i >= attempts - 1) {
-        throw fail('UPSTREAM_ERROR', failure.message, failure.status === undefined ? {} : { status: failure.status })
+        throw fail('UPSTREAM_ERROR', failure.message, {
+          ...(failure.status === undefined ? {} : { status: failure.status }),
+          ...(failure.userError ? { userError: failure.userError } : {}),
+        })
       }
       await sleep(backoffMs * 3 ** i, signal)
     }

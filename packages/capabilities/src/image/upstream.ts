@@ -1,4 +1,4 @@
-import { Attempt, failedResponse } from '../transports/http.ts'
+import { Attempt, failedResponse, type UserError } from '../transports/http.ts'
 
 /**
  * True for either shape the vendor proxy uses to wrap a 400-class validation error inside a 503 (image-gateway's
@@ -11,28 +11,44 @@ export function isWrappedUserErrorBody(text: string): boolean {
   return text.includes('StatusCode: BadRequest') && text.includes('"invalid_request_error"')
 }
 
-/** What a wrapped 400's embedded JSON says: its message, its code, and the moderation stage and categories when it is a block. */
-export function describeWrappedUserError(text: string): string {
-  const fallback = `request rejected: ${text.slice(0, 300)}`
+/** What a wrapped 400's embedded JSON says: its message, its code and the moderation stage and categories when it is a block; null when it has no parseable error object. */
+export function parseWrappedUserError(text: string): UserError | null {
   const start = text.indexOf('{')
-  if (start === -1) return fallback
+  if (start === -1) return null
   let parsed: unknown
   try {
     parsed = JSON.parse(text.slice(start))
   } catch {
-    return fallback
+    return null
   }
   const error = (parsed as { error?: Record<string, unknown> } | null)?.error
-  if (!error || typeof error !== 'object') return fallback
-  const message = typeof error.message === 'string' ? error.message : fallback
-  const code = typeof error.code === 'string' ? ` [${error.code}]` : ''
+  if (!error || typeof error !== 'object') return null
   const details = error.moderation_details as { moderation_stage?: unknown; categories?: unknown } | undefined
-  const stage = typeof details?.moderation_stage === 'string' ? ` (moderation stage ${details.moderation_stage}` : ''
-  const categories = Array.isArray(details?.categories)
-    ? `${stage ? ', ' : ' ('}categories ${details.categories.filter((c) => typeof c === 'string').join(', ')}`
+  return {
+    message: typeof error.message === 'string' ? error.message : `request rejected: ${text.slice(0, 300)}`,
+    ...(typeof error.code === 'string' ? { code: error.code } : {}),
+    ...(typeof details?.moderation_stage === 'string' && Array.isArray(details.categories)
+      ? {
+          moderation: {
+            stage: details.moderation_stage,
+            categories: details.categories.filter((c): c is string => typeof c === 'string'),
+          },
+        }
+      : {}),
+  }
+}
+
+/** What a wrapped 400's embedded JSON says, as one line: its message, its code, and the moderation stage and categories when it is a block. */
+export function describeWrappedUserError(text: string): string {
+  const parsed = parseWrappedUserError(text)
+  if (!parsed) return `request rejected: ${text.slice(0, 300)}`
+  const code = parsed.code ? ` [${parsed.code}]` : ''
+  const stage = parsed.moderation ? ` (moderation stage ${parsed.moderation.stage}` : ''
+  const categories = parsed.moderation
+    ? `${stage ? ', ' : ' ('}categories ${parsed.moderation.categories.join(', ')}`
     : ''
   const detail = stage || categories ? `${stage}${categories})` : ''
-  return `${message}${code}${detail}`
+  return `${parsed.message}${code}${detail}`
 }
 
 /**
@@ -43,7 +59,12 @@ export function describeWrappedUserError(text: string): string {
 export async function failedImageResponse(res: Response, wire: string): Promise<Attempt> {
   const text = await res.text().catch(() => '')
   if (res.status !== 410 && isWrappedUserErrorBody(text)) {
-    return new Attempt(`${wire} ${describeWrappedUserError(text)}`, false, res.status)
+    return new Attempt(
+      `${wire} ${describeWrappedUserError(text)}`,
+      false,
+      res.status,
+      parseWrappedUserError(text) ?? undefined,
+    )
   }
   return failedResponse(new Response(text, { status: res.status }), wire)
 }

@@ -9,9 +9,10 @@ import { createVectorize } from './vectorize.ts'
 
 export { CUTOUT_LIMITS, CUTOUT_MODELS } from './cutout.ts'
 export type { CutoutOutput } from './cutout.ts'
-export type { ImageDeps } from './deps.ts'
-export type { EnhanceOutput } from './enhance.ts'
-export { MAX_EDIT_IMAGES } from './files.ts'
+export type { ImageDeps, ResolvedImageDeps } from './deps.ts'
+export { resolveImageDeps } from './deps.ts'
+export type { EnhanceOutput, EnhanceParams } from './enhance.ts'
+export { MAX_EDIT_IMAGE_BYTES, MAX_EDIT_IMAGES } from './files.ts'
 export type { GenerateOutput, GeneratedImage } from './generate.ts'
 export { GENERATE_MODELS, pickRoute, QUALITIES } from './generate.ts'
 export {
@@ -28,6 +29,7 @@ export {
   MODERATIONS,
   OUTPUT_FORMATS,
   requestImages,
+  routingWhy,
 } from './studio.ts'
 export { type AlphaStats, decodeAlphaStats, magicBytesValid, readPng } from './png.ts'
 export { replicateBase } from './replicate.ts'

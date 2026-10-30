@@ -106,6 +106,17 @@ describe('requestImages: the request', () => {
     ])
   })
 
+  test('output_compression is sent only when set, and refused outside 0-100', async () => {
+    fake.on(POST_GEN, () => Response.json({ data: [{ b64_json: b64(png) }], usage }))
+    await ok({ prompt: 'x', output_compression: 70 })
+    await ok({ prompt: 'x' })
+    expect(fake.seen[0]?.json?.output_compression).toBe(70)
+    expect(fake.seen[1]?.json).not.toHaveProperty('output_compression')
+    for (const bad of [101, -1, 1.5]) {
+      expect((await refused({ prompt: 'x', output_compression: bad })).error).toMatchObject({ code: 'INVALID_INPUT' })
+    }
+  })
+
   test('moderation is sent when set, on the JSON body and on the multipart one', async () => {
     fake.on(POST_GEN, () => Response.json({ data: [{ b64_json: b64(png) }], usage }))
     fake.on(POST_EDIT, () => Response.json({ data: [{ b64_json: b64(png) }], usage }))
@@ -374,6 +385,33 @@ describe('requestImages: streaming', () => {
     fake.reset()
     fake.on(POST_GEN, stream(sse([['image_generation.error', { oops: true }]])))
     expect((await refused({ prompt: 'x', partial_images: 1 })).error.message).toContain('image stream error')
+  })
+
+  test('an error frame and a vendor-wrapped 400 keep the vendor words structured, for the door to answer with', async () => {
+    fake.on(POST_GEN, stream(sse([['image_generation.error', { error: { message: 'blocked at output' } }]])))
+    expect((await refused({ prompt: 'x', partial_images: 1 })).error).toMatchObject({
+      code: 'UPSTREAM_ERROR',
+      data: { userError: { message: 'blocked at output' } },
+    })
+
+    fake.reset()
+    const wrapped =
+      '[OpenAI Vendor Group Key StatusCode: BadRequest] {"error":{"message":"Your request was rejected by the safety system.","type":"image_generation_user_error","code":"moderation_blocked","moderation_details":{"moderation_stage":"input","categories":["violence","self-harm"]}}}'
+    fake.on(POST_GEN, () => new Response(wrapped, { status: 503 }))
+    const { error } = await refused({ prompt: 'x' })
+    expect(error).toMatchObject({
+      code: 'UPSTREAM_ERROR',
+      data: {
+        status: 503,
+        userError: {
+          message: 'Your request was rejected by the safety system.',
+          code: 'moderation_blocked',
+          moderation: { stage: 'input', categories: ['violence', 'self-harm'] },
+        },
+      },
+    })
+    expect(error.message).toContain('moderation stage input')
+    expect(fake.attempts[POST_GEN]).toBe(1)
   })
 
   test('a stream with no completed frame is an error, previews or not', async () => {

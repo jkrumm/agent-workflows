@@ -3,6 +3,7 @@ import { z } from 'zod'
 import type { Ctx } from '../context.ts'
 import { fail } from '../errors.ts'
 import { iuConfig } from '../transports/config.ts'
+import { Attempt } from '../transports/http.ts'
 import { within } from '../web/deps.ts'
 import type { ImageRouteId, ResolvedImageDeps } from './deps.ts'
 import { MAX_EDIT_IMAGE_BYTES, MAX_EDIT_IMAGES } from './files.ts'
@@ -97,6 +98,8 @@ export interface ImageRequest {
   background?: Background
   /** Default `png`. */
   output_format?: OutputFormat
+  /** 0-100, for jpeg and webp. Sent only when set. */
+  output_compression?: number
   /** Sent only when set. */
   moderation?: Moderation
   /** Edits only, and only on a model that takes it (`MODEL_CAPABILITIES`): refused otherwise. Sent only when set. */
@@ -216,6 +219,10 @@ function validate(request: ImageRequest, seat: GenerateSeat, edit: boolean): voi
   if (!Number.isInteger(partials) || partials < 0 || partials > MAX_PARTIAL_IMAGES) {
     invalid(`partial_images must be an integer 0-${MAX_PARTIAL_IMAGES}`)
   }
+  const compression = request.output_compression
+  if (compression !== undefined && (!Number.isInteger(compression) || compression < 0 || compression > 100)) {
+    invalid('output_compression must be an integer 0-100')
+  }
   const sizeError = validateSize(request.size ?? 'auto')
   if (sizeError) invalid(sizeError)
   if ((request.background ?? 'auto') === 'transparent' && request.output_format === 'jpeg') {
@@ -313,7 +320,8 @@ async function readStream(
     const frame = parseFrame(text)
     if (!frame) return null
     if (frame.event === 'error' || frame.event.endsWith('.error')) {
-      throw fail('UPSTREAM_ERROR', `image stream failed: ${upstreamErrorMessage(frame.data)}`, {})
+      const message = upstreamErrorMessage(frame.data)
+      throw new Attempt(`image stream failed: ${message}`, false, undefined, { message })
     }
     if (frame.event.endsWith('.partial_image')) {
       const data = frame.data as { b64_json?: unknown; partial_image_index?: unknown; output_format?: unknown }
@@ -407,6 +415,7 @@ export async function requestImages(
     quality,
     background,
     output_format: format,
+    ...(request.output_compression !== undefined ? { output_compression: request.output_compression } : {}),
     ...(request.moderation !== undefined ? { moderation: request.moderation } : {}),
     ...(request.input_fidelity !== undefined ? { input_fidelity: request.input_fidelity } : {}),
     ...(streaming ? { stream: true, partial_images: partials } : {}),

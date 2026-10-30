@@ -131,6 +131,8 @@ export const enhanceOutput = z.object({
   enhanceModel: z.string(),
 })
 export type EnhanceOutput = z.infer<typeof enhanceOutput>
+/** What a caller passes `image.enhance` (defaults not yet applied). */
+export type EnhanceParams = z.input<typeof enhanceInput>
 
 /** The model's part of the plan; everything else is derived by code. Its settings are advisory. */
 const llmPlan = z.object({
