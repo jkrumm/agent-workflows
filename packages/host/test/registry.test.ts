@@ -46,6 +46,7 @@ describe('workflow discovery', () => {
       'check',
       'diagram',
       'eval',
+      'image-icon',
       'image',
       'learnings',
       'narrative',

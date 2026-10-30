@@ -72,15 +72,16 @@ Exactly one of `prompt` and `file`. The run answers with the files it made:
   gave win over the plan's, a `hard` warning refuses the run before an image is paid for. The model, effort (high) and
   a 32k ceiling are the `image.enhance` route (the gateway sent 16k and retried once with double on a truncated answer).
   Not ported: the studio-only inputs (style guide, series context, iteration `delta`, preserve list, pinned overrides).
-- **The raw capabilities are hidden from the CLI.** `image.generate` and `image.cutout` answer megabytes of base64, so
+- **The raw capabilities are hidden from the CLI.** `image.generate`, `image.cutout`, `image.upscale` and `image.vectorize` answer megabytes of base64 (or an SVG document), so
   they carry `cli: { hidden: true }` (new in `CliSpec`; the generated CLI builds no command for them and does not list
   them as skipped). They stay on HTTP and in process. `image.enhance` is `agw image-enhance` (the workflow owns `agw image`, and the host refuses a command that is the prefix of another).
 - **One bad image among n** does not discard the valid, billed ones: the output lists `rejected` entries and the valid
   files; the run fails only when none is valid.
-- **Icon stays on image-gateway** (`imgcli icon`: upscale, cutout, trim, `.ico`/`.icns` writers, svgo vectorize). It needs
-  `sharp` and `svgo` and has no model logic beyond `gen`, so it is deterministic image processing, not an agent
-  capability. The icon *source* is `agw image … --size 1024x1024 --background transparent`; the gateway keeps the set
-  builder and the studio app until a later wave decides.
+- **Icon sets are `agw image-icon`, not part of `agw image`.** The earlier note that icon "has no model logic" was wrong:
+  image-gateway's `/icons` runs upscale (real-esrgan) and vectorize (recraft-vectorize), both Replicate and priced, beside
+  the cutout. They are the capabilities `image.upscale` and `image.vectorize` (hidden from the CLI like `image.cutout`),
+  the deterministic sharp + svgo half lives in the `image-icon` workflow (`../image-icon/README.md`). The icon *source*
+  is still `agw image … --size 1024x1024 --background transparent`.
 
 ## Route
 
@@ -94,6 +95,8 @@ any route, `price` included (a model override without a price drops the old one)
 |`image.sunburst`|quality model, finals and every edit|the same|
 |`image.cutout.recraft`|`CUTOUT_PRICE_USD` (`shared/src/assets.ts`)|`unit` call, 0.01|
 |`image.cutout.bria`|the same|`unit` call, 0.018|
+|`image.upscale`|`UPSCALE_MODEL` / `UPSCALE_PRICE_USD` (`shared/src/assets.ts`), real-esrgan; used by `image-icon`|`unit` call, 0.002|
+|`image.vectorize`|`VECTORIZE_MODEL` / `VECTORIZE_PRICE_USD`, recraft-vectorize; used by `image-icon`|`unit` call, 0.01|
 |`image.enhance`|`ENHANCE_MODEL`, effort `high` (`gateway/src/env.ts`)|`rate` in 0.10, cached 0.01, out 0.50 USD/M; balance fallback like any text route|
 
 ## Eval

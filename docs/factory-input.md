@@ -22,7 +22,7 @@ proven live, what the factory gets for free, and what is still open.
 | **Audio** | its own process, OpenAI-compatible TTS/STT door with per-caller tokens (Hermes, MacWhisper, iris) | `packages/audio` |
 | **Deploy** | release directories with rollback, fail-closed on the secrets cache, `make verify` proves a priced run end to end | AGENTS.md §Validate / Deploy / Verify |
 
-Workflows on it: review, check, research, otel, brain, diagram, prose (+ polish, gate), image, podcast,
+Workflows on it: review, check, research, otel, brain, diagram, prose (+ polish, gate), image, image-icon, podcast,
 narrative, overview, triage, decide, eval, retrospective, learnings, smoke. Callers: Claude Code
 skills, Hermes, iris, Argo (overview, usage), usage-tracker (runtimes outside the platform only).
 

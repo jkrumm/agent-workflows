@@ -29,16 +29,23 @@ Findings of 2026-10-30, checked against the code:
 ## Wave 1 — `agw image icon`            <!-- status: active -->
 Workers: Sonnet. Orchestrated: do NOT spawn Wave 2. Scope: agent-workflows only; dotfiles is busy with track R0.
 
-- [ ] Routes for upscale and vectorize in `packages/routes` (Replicate), priced like the other image routes, so runs carry
+- [x] Routes for upscale and vectorize in `packages/routes` (Replicate), priced like the other image routes, so runs carry
   cost and usage.
-- [ ] Image processing: port trim, master, rasters and the `.ico`/`.icns` writers from `image-gateway/gateway/src/lib/`.
+- [x] Image processing: port trim, master, rasters and the `.ico`/`.icns` writers from `image-gateway/gateway/src/lib/`.
   Decide `Bun.Image` vs `sharp` by test: agw uses `Bun.Image` today, and whether it covers trim, compositing and raw RGBA
   is unverified. svgo only cleans vectorize output.
-- [ ] `agw image icon`: a workflow with the same outputs as `/icons`, an eval or a golden comparison against the gateway's
+- [x] `agw image-icon`: a workflow with the same outputs as `/icons`, an eval or a golden comparison against the gateway's
   output for one real source image.
 - [ ] Correct the README's §Icon, update `AGENTS.md`, deploy, `make verify`, one live run with priced usage.
 
-**Left behind:**
+**Left behind:** stopped: usage limit reached mid-wave. Wave 1 stays `active`.
+- Done and committed on master: routes `image.upscale` (0.002/call) and `image.vectorize` (0.01/call); capabilities of the same names on one shared Replicate runner extracted from cutout (`capabilities/src/image/replicate.ts`); workflow `image-icon` (`packages/host/src/workflows/image-icon/`); the image README §Icon corrected, `docs/factory-input.md` updated. `AGENTS.md` lists no image workflows, so it is unchanged.
+- **Command is `agw image-icon`, not `agw image icon`:** `assertCommands` (`packages/host/src/app.ts`) refuses a command that prefixes another and `agw image` exists. Wave 3's `imgcli icon` calls `agw image-icon`.
+- **Bun.Image vs sharp, decided by test:** Bun.Image has no raw RGBA output, extract, pad or flatten, so the pipeline uses `sharp` 0.35.5 and `svgo` 4.1.0 (the gateway's versions) in `packages/host`.
+- **Golden:** `packages/host/test/fixtures/image-icon/` holds the source of the gateway's real `/icons` run of 2026-10-29; every raster, the ICO frames and the ICNS chunks match its output byte for byte.
+- Gate: `make check` green except load flakes (review hardening timeouts, `steer and abort`, `credentials ... make check`), each green when rerun alone; `fallow audit` passes with zero introduced findings.
+- **Still open:** `/review` on the diff; `make deploy` + `make verify`; one live `agw image-icon` run on a real image showing priced usage (use `~/Pictures/imgcli/icons-20261029-095415/source.png`, vectorize costs 0.01); `docs/concept.md:231` still maps `img` to `agw image`.
+- Do not run two `agw check`/`make check` at once: the load causes the timeouts above.
 
 ## Wave 2 — The studio on agw            <!-- status: pending -->
 Workers: Sonnet. Orchestrated. Needs track R0 closed (dotfiles).
