@@ -11,8 +11,11 @@ import { basePolicy } from './locations.ts'
 
 type Env = Record<string, string | undefined>
 
-/** OpenCode provider ids the server config defines. All go through IU; the key never leaves the server env. */
-export const PROVIDER_ANTHROPIC = 'iu-anthropic'
+/**
+ * OpenCode provider ids the server config defines. The chat and Responses legs go through IU with the IU key; the
+ * `claude-` leg goes straight to api.anthropic.com with a direct key (`ANTHROPIC_API_KEY`). Keys never leave the server env.
+ */
+export const PROVIDER_ANTHROPIC = 'anthropic-direct'
 export const PROVIDER_CHAT = 'iu-chat'
 /** IU's OpenAI endpoint over the Responses API: OpenAI's own models call tools only there (IU, 2026-10-28). */
 export const PROVIDER_RESPONSES = 'iu-responses'
@@ -38,9 +41,9 @@ export function opencodeRoutes(env: Env = process.env): ResolvedRoute[] {
 }
 
 /**
- * Which IU leg serves a model, by its family alone: no other route sharing the id can move it. OpenAI's own models
+ * Which leg serves a model, by its family alone: no other route sharing the id can move it. OpenAI's own models
  * (`gpt-`) go the Responses way (an agent session needs tool calls, which they make only there), a `claude-` model the
- * native Anthropic way, anything else the OpenAI-compatible chat way. A single-call route on the same model (Haiku on
+ * direct Anthropic API, anything else the OpenAI-compatible chat way. A single-call route on the same model (Haiku on
  * `iu-openai`, say) does not change the leg an agent session uses.
  */
 function providerFor(model: string): string {
@@ -79,8 +82,8 @@ function modelRow(route: ResolvedRoute, provider: string) {
   const rate = rateFor(route)
   return {
     name: route.model,
-    // IU's gateway answers the `thinking-binding-controls` beta with a 503 for EU Haiku ids (agent-gateway,
-    // measured 2026-10-14); without the binding, `thinking` is omitted (the model default).
+    // Kept from the IU gateway leg (it answered the `thinking-binding-controls` beta with a 503 for EU Haiku ids,
+    // agent-gateway, measured 2026-10-14); without the binding, `thinking` is omitted (the model default).
     ...(provider === PROVIDER_ANTHROPIC ? { compatibility: { supportsThinkingBlockBinding: false } } : {}),
     ...(route.maxOutputTokens ? { limit: { output: route.maxOutputTokens } } : {}),
     ...(rate
@@ -99,12 +102,22 @@ function modelRow(route: ResolvedRoute, provider: string) {
           },
         }
       : {}),
-    ...(route.effort ? { variants: [{ id: route.effort, settings: { reasoningEffort: route.effort } }] } : {}),
+    ...(route.effort ? { variants: [{ id: route.effort, settings: variantSettings(route.effort, provider) }] } : {}),
   }
 }
 
 /**
- * `OPENCODE_CONFIG_CONTENT`: the three IU providers with every `opencode`-wire route's model and its fallback's, no
+ * Per-effort provider options. OpenCode's Anthropic protocol ignores `reasoningEffort`: it reads `effort`
+ * (`output_config.effort`) and `thinking`. Effort `none` turns thinking off; any other effort runs adaptive thinking.
+ */
+function variantSettings(effort: string, provider: string): Record<string, unknown> {
+  if (provider !== PROVIDER_ANTHROPIC) return { reasoningEffort: effort }
+  if (effort === 'none') return { thinking: { type: 'disabled' } }
+  return { effort, thinking: { type: 'adaptive' } }
+}
+
+/**
+ * `OPENCODE_CONFIG_CONTENT`: the three providers with every `opencode`-wire route's model and its fallback's, no
  * updates, no share.
  * The server policy is deny by default as the sessions' are (`basePolicy`: catch-all deny, then the read-only tools), so
  * a session created without rules, or by something other than the host, is not allow-all. A session's own rules come
@@ -140,8 +153,8 @@ export function buildServerConfig(env: Env = process.env): Record<string, unknow
     providers: {
       [PROVIDER_ANTHROPIC]: {
         package: 'aisdk:@ai-sdk/anthropic',
-        name: 'IU (native Anthropic route)',
-        settings: { baseURL: '{env:IU_ANTHROPIC_BASE}', apiKey: '{env:IU_KEY}' },
+        name: 'Anthropic API (direct key)',
+        settings: { baseURL: 'https://api.anthropic.com/v1', apiKey: '{env:ANTHROPIC_API_KEY}' },
         models: models[PROVIDER_ANTHROPIC],
       },
       [PROVIDER_CHAT]: {

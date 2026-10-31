@@ -300,6 +300,21 @@ describe('serverEnv', () => {
     expect(envOf({}).IU_KEY_ID).toBe('personal')
     expect(envOf({ IU_KEY_ID: 'junk' }).IU_KEY_ID).toBe('personal')
   })
+
+  const claudeConfig = { providers: { [PROVIDER_ANTHROPIC]: { models: { 'claude-haiku-5-5': {} } } } }
+  const envWith = (config: Record<string, unknown>, extra: Record<string, string>) =>
+    serverEnv({ root: '/r', password: 'p', config, env: { PATH: '/bin', ...iu, ...extra } })
+
+  test('ANTHROPIC_API_KEY passes through when set, and is absent when not', () => {
+    expect(envWith(claudeConfig, { ANTHROPIC_API_KEY: ' sk-direct ' }).ANTHROPIC_API_KEY).toBe('sk-direct')
+    expect('ANTHROPIC_API_KEY' in envOf({})).toBe(false)
+  })
+
+  test('a claude model row without ANTHROPIC_API_KEY fails early; no claude rows need no key', () => {
+    expect(() => envWith(claudeConfig, {})).toThrow('ANTHROPIC_API_KEY is not set')
+    expect(() => envWith(claudeConfig, { ANTHROPIC_API_KEY: '  ' })).toThrow('ANTHROPIC_API_KEY is not set')
+    expect(() => envWith(buildServerConfig({}), {})).not.toThrow()
+  })
 })
 
 describe('isServeOnPort', () => {
@@ -346,7 +361,9 @@ describe('buildServerConfig', () => {
     const rows = Object.values(config.providers).flatMap((p) => Object.values(p.models))
     expect(rows.length).toBeGreaterThan(0)
     for (const row of rows) expect(row.cost).toBeDefined()
-    for (const p of Object.values(config.providers)) expect(p.settings.apiKey).toBe('{env:IU_KEY}')
+    for (const [id, p] of Object.entries(config.providers)) {
+      expect(p.settings.apiKey).toBe(id === PROVIDER_ANTHROPIC ? '{env:ANTHROPIC_API_KEY}' : '{env:IU_KEY}')
+    }
     expect(config.permissions.map((r) => `${r.action}:${r.effect}`)).toEqual([
       '*:deny',
       'read:allow',
@@ -430,6 +447,17 @@ describe('buildServerConfig: the provider follows the model family, whatever oth
     expect(config.providers[PROVIDER_ANTHROPIC]?.models['claude-haiku-5-5']?.compatibility).toEqual({
       supportsThinkingBlockBinding: false,
     })
+    const provider = (config.providers[PROVIDER_ANTHROPIC] ?? {}) as {
+      package?: string
+      name?: string
+      settings?: unknown
+    }
+    expect(PROVIDER_ANTHROPIC).toBe('anthropic-direct')
+    expect(provider).toMatchObject({
+      package: 'aisdk:@ai-sdk/anthropic',
+      name: 'Anthropic API (direct key)',
+      settings: { baseURL: 'https://api.anthropic.com/v1', apiKey: '{env:ANTHROPIC_API_KEY}' },
+    })
     // a single-call model never lands in the agent providers
     expect(config.providers[PROVIDER_RESPONSES]?.models['gpt-6-luna']).toBeUndefined()
   })
@@ -439,6 +467,36 @@ describe('buildServerConfig: the provider follows the model family, whatever oth
     expect(modelRef('otel.agent', {}).model.providerID).toBe(PROVIDER_CHAT)
     expect(fallbackModelRef('research.agent', {})?.model.providerID).toBe(PROVIDER_RESPONSES)
     expect(fallbackModelRef('check', {})?.model.providerID).toBe(PROVIDER_CHAT)
+  })
+})
+
+describe('buildServerConfig: claude variants use the Anthropic options, not reasoningEffort', () => {
+  const variantsOf = (effort: string | null, fallbackEffort?: string) => {
+    const env = {
+      AGW_ROUTES: JSON.stringify({
+        'brain.agent': {
+          model: 'claude-haiku-5-5',
+          effort,
+          fallback: fallbackEffort ? { model: 'claude-haiku-5-5', effort: fallbackEffort } : null,
+        },
+      }),
+    }
+    const config = buildServerConfig(env) as {
+      providers: Record<string, { models: Record<string, { variants?: { id: string; settings: unknown }[] }> }>
+    }
+    return config.providers[PROVIDER_ANTHROPIC]?.models['claude-haiku-5-5']?.variants
+  }
+
+  test('effort none disables thinking', () => {
+    expect(variantsOf('none')).toEqual([{ id: 'none', settings: { thinking: { type: 'disabled' } } }])
+  })
+
+  test('any other effort sets effort and adaptive thinking', () => {
+    expect(variantsOf('high')).toEqual([{ id: 'high', settings: { effort: 'high', thinking: { type: 'adaptive' } } }])
+  })
+
+  test('routes sharing the model merge their variants', () => {
+    expect(variantsOf('high', 'none')?.map((v) => v.id)).toEqual(['high', 'none'])
   })
 })
 

@@ -96,12 +96,12 @@ key, a shell-capable agent reads what the user can): the repo is the owner's, an
 - **Env is an allow-list** (`serverEnv`): `PATH`, `TMPDIR`, `LANG`, `HOME` = `<root>/home` (the server's own), the
   `XDG_*` roots, `OPENCODE_DB`, `OPENCODE_DISABLE_FILEWATCHER=1`, `OPENCODE_DISABLE_CLAUDE_CODE=1`,
   `OPENCODE_DISABLE_MODELS_FETCH=1`, `OPENCODE_DISABLE_AUTOUPDATE=1`, the server password, the generated config,
-  `IU_KEY` / `IU_ANTHROPIC_BASE` / `IU_OPENAI_BASE` (from `IU_API_KEY` and `IU_BASE_URL`), `IU_KEY_ID` (the parsed label of that key, always set, never the key; nothing here reads it, the host stamps rows at admission), and
+  `IU_KEY` / `IU_ANTHROPIC_BASE` / `IU_OPENAI_BASE` (from `IU_API_KEY` and `IU_BASE_URL`), `ANTHROPIC_API_KEY` (when set; required if a route uses a `claude-` model), `IU_KEY_ID` (the parsed label of that key, always set, never the key; nothing here reads it, the host stamps rows at admission), and
   `OTEL_EXPORTER_OTLP_*` when set. Nothing else (tokens, `CLAUDE_*`, database URLs).
-- **Config** (`buildServerConfig`): three IU providers (`iu-anthropic`, `iu-chat`, `iu-responses`) with a model row
+- **Config** (`buildServerConfig`): three providers (`anthropic-direct`, `iu-chat`, `iu-responses`) with a model row
   for every `opencode`-wire route and its fallback, cost rows from each route's own `rate`. OpenAI's own models
   (`gpt-`) go on `iu-responses` (`@ai-sdk/openai`): they call tools only over the Responses API. Routes sharing a
-  model and effort share one variant. Model ids come only from `@agent-workflows/routes`.
+  model and effort share one variant. `claude-` models go direct to api.anthropic.com (`anthropic-direct`, `@ai-sdk/anthropic`, `ANTHROPIC_API_KEY`), not through IU; their variants set `effort` plus adaptive `thinking` (effort `none`: thinking disabled), since the Anthropic protocol ignores `reasoningEffort`. Model ids come only from `@agent-workflows/routes`.
 - **Detached.** The server is its own process group. A host restart (deploy) leaves it and its running sessions
   alone; the next `start()` adopts it after an authenticated `GET /api/info` with the pinned version
   (`OPENCODE_VERSION`, `2.0.32`; another version is refused) **and** the same launch fingerprint (sha256 of command

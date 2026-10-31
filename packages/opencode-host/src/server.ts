@@ -17,7 +17,7 @@ import { delimiter, isAbsolute, join } from 'node:path'
 import { parseIuKeyId } from '@agent-workflows/middleware'
 import type { Logger } from '@agent-workflows/runtime'
 import { createClient, type Endpoint } from './client.ts'
-import { buildServerConfig, iuFromEnv } from './config.ts'
+import { buildServerConfig, iuFromEnv, PROVIDER_ANTHROPIC } from './config.ts'
 import { DEFAULT_STATE_DIR } from './locations.ts'
 
 type Env = Record<string, string | undefined>
@@ -77,7 +77,7 @@ const consoleLogger: Logger = {
 
 /**
  * The server's complete environment, an explicit allow-list: the process basics, the server's own state roots,
- * the IU leg the routes need, and `OTEL_EXPORTER_OTLP_*` when set. Nothing else from the host's env (tokens,
+ * the IU leg the routes need, `ANTHROPIC_API_KEY` when set (required when a claude model row exists), and `OTEL_EXPORTER_OTLP_*` when set. Nothing else from the host's env (tokens,
  * `CLAUDE_*`, database URLs) reaches the server or a tool shell. `OTEL_EXPORTER_OTLP_HEADERS` is one of those
  * variables: on the mini it carries the ClickStack ingest key, so that key is in the server's env and in a
  * shell-capable agent's reach, like the IU key (README, "Accepted risk"). `HOME` is the server's own (`<root>/home`), so
@@ -87,6 +87,14 @@ const consoleLogger: Logger = {
 export function serverEnv(input: { root: string; password: string; config: Record<string, unknown>; env?: Env }) {
   const env = input.env ?? process.env
   const iu = iuFromEnv(env)
+  const anthropicKey = env.ANTHROPIC_API_KEY?.trim()
+  const providers = input.config.providers as Record<string, { models?: Record<string, unknown> }> | undefined
+  const hasClaudeRows = Object.keys(providers?.[PROVIDER_ANTHROPIC]?.models ?? {}).length > 0
+  if (hasClaudeRows && !anthropicKey) {
+    throw new Error(
+      'ANTHROPIC_API_KEY is not set, but an opencode-wire route uses a claude- model (direct Anthropic API)',
+    )
+  }
   const out: Record<string, string> = {
     PATH: env.PATH ?? '/usr/bin:/bin',
     HOME: join(input.root, 'home'),
@@ -111,6 +119,7 @@ export function serverEnv(input: { root: string; password: string; config: Recor
     // admission by the host. It is forwarded so the label and the key never drift apart in a server's env.
     IU_KEY_ID: parseIuKeyId(env.IU_KEY_ID),
   }
+  if (anthropicKey) out.ANTHROPIC_API_KEY = anthropicKey
   for (const [name, value] of Object.entries(env)) {
     if (name.startsWith('OTEL_EXPORTER_OTLP_') && value) out[name] = value
   }

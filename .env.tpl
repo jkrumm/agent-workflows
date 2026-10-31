@@ -1,5 +1,7 @@
 IU_API_KEY=op://common/anthropic/API_KEY
 IU_BASE_URL=op://common/anthropic/BASE_URL
+# Direct Anthropic API key for claude models on the opencode wire (not required while no opencode route uses one).
+ANTHROPIC_API_KEY=op://common/claude-platform/API_KEY_IU
 # web.* capabilities: Tavily search fallback and Extract (shared common item), Context7 docs (this platform's own item).
 TAVILY_API_KEY=op://common/tavily/API_KEY
 CONTEXT7_API_KEY=op://mini/agent-workflows/CONTEXT7_API_KEY
