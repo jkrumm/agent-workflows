@@ -60,7 +60,7 @@ reaches the agent; a timeout or an over-long queue wait is a `timeout` failure t
 hang again). A native crash on a Linux host whose `core_pattern` is apport (GitHub's runners) is only reaped after the kernel has written the core dump, 12-17 s, still bounded by the 30 s timeout; the tests use SIGKILL (the OOM killer's signal) for "killed" for that reason. Per call, 12 boxes and 11
 arrows, 8 sequential calls, load 8: **Worker** 304-666 ms for the first, then 66-77 ms (median 69-71): warm only because
 the library and the fonts stay in the host; **child process** 295-340 ms for every call (median 298-326), 4 calls through
-the cap of 2 in 670-720 ms. Hydration is one journaled `hydrate` step. Dependencies, exact: `@excalidraw/excalidraw` 0.18.0 (legacy's version),
+the cap of 2 in 670-720 ms. Hydration is one journaled `hydrate` step. Dependencies, exact: `@excalidraw/excalidraw` 0.18.1 (legacy's 0.18 line, with the Mermaid XSS backport),
 `@napi-rs/canvas` 1.0.13 (a prebuilt native module per platform, optional dependencies in the lockfile), `react`
 and `react-dom` 19.3.1 (the library's peers, loaded but never rendered).
 

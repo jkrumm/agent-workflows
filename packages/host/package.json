@@ -20,7 +20,7 @@
     "@agent-workflows/opencode-host": "workspace:*",
     "@agent-workflows/routes": "workspace:*",
     "@agent-workflows/runtime": "workspace:*",
-    "@excalidraw/excalidraw": "0.18.0",
+    "@excalidraw/excalidraw": "0.18.1",
     "@napi-rs/canvas": "1.0.13",
     "@orpc/openapi": "1.16.1",
     "@orpc/server": "1.16.1",
