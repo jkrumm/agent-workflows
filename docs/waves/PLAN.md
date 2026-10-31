@@ -1,7 +1,7 @@
-# Model tiers, a trustworthy eval, and the maturity pass
+# Central model tiers and the maturity pass
 
 **Goal:** routes name one of four central tiers instead of a model and effort each; every tier choice rests on an eval
-that measures the job, recorded as a committed report; and the gaps the 2026-10-31 audit found in accounting,
+that measures the job (the review eval comes with the owner's review rework), recorded as a committed report; and the gaps the 2026-10-31 audit found in accounting,
 telemetry, tests and docs are closed.
 **Gate:** `make check`, `/review` on non-doc changes, `make deploy` + `make verify` after each wave, a live call per
 changed route. Own-repo pushes and deploys are routine.
@@ -13,36 +13,43 @@ Context (2026-10-31):
 - The review eval of 2026-10-31 (`docs/evals/2026-10-31-review-claude-direct.md`) settled cost, wall time and failure
   modes per arm but **cannot rank models**: its reference is the retired gateway's outcome and agreement tracks how
   readily a model says "blocking".
-- Target tiers (owner, 2026-10-31): `FAST` (single call, no agent loop: titles, labels, short summaries), `EASY`
-  (extract, classify, triage, router, check, vault Q&A), `HARD` (review, prose, diagrams, retro, research, otel; no
-  separate research tier), `DECIDE` (the typed decision route). Candidates: FAST Haiku none or Luna low; EASY Haiku
-  high or Terra low; HARD Terra medium, DeepSeek flash high, Sonnet low or medium.
+- Tiers (owner, 2026-10-31): `FAST` (single call, no agent loop: titles, labels, short summaries), `EASY` (extract,
+  classify, triage, router, check, vault Q&A), `HARD` (review, prose, diagrams, retro, research, otel; no separate
+  research tier), `DECIDE` (the typed decision route).
+- The quality eval moves to the owner's review-pipeline rework, which builds its own eval; the lessons are in
+  `docs/evals/README.md`. Tier picks below are provisional until it exists.
 - Audit (outside the repo, private numbers: `~/SourceRoot/agw-maturity-audit.md`). Findings carried below.
 
-## Wave 1 — An eval that measures review quality            <!-- status: pending -->
+## Wave 1 — Central tiers            <!-- status: pending -->
 
-- Research first (`/research`): how public code-review benchmarks build ground truth (planted defects, SWE-bench-style
-  fixed bugs, CodeReviewer, CRScore) and how they score severity and false positives.
-- Build a planted-defect review set from corpus diffs: known bugs injected per case, with the expected file, line and
-  severity; clean controls with no defect. Score recall, false-positive rate and severity calibration, not agreement
-  with a past run. Aggregates only in the repo; cases stay under `$AGW_EVAL_DIR`.
-- Same shape for research: the 28 recorded cases plus a golden-answer check, so `HARD` can be judged on research too.
-- Eval spend rolls up: `eval.run` records the cost of its case runs (today null on all of them).
-- Committed report per tier change under `docs/evals/` (change, case-set hash, metrics with CIs, cost, wall time,
-  tokens, fingerprints, verdict).
+Provisional picks (2026-10-31, from cost, wall time, failure modes and the AA index; quality unmeasured):
 
-## Wave 2 — Central tiers            <!-- status: pending -->
+| Tier | Primary | Fallback (other vendor) | Why |
+|-|-|-|-|
+| `FAST` | Haiku 5.5, effort `none`, direct single call | Luna low (IU) | same price as Luna ($0.10 / $0.50), higher index, 36 s per review-sized load without thinking |
+| `EASY` | Haiku 5.5, effort `high` | Terra low (IU) | the only Haiku effort whose verdicts move; $0.15 per deep review; 10x cheaper tokens than Terra |
+| `HARD` | Terra medium (IU) | Sonnet 5.5 low (direct) | decisive, $0.43 and 83 s per deep review; Sonnet low is as fast and cheap as DeepSeek and the candidate once an eval measures it |
+| `DECIDE` | `decision-1` (IU decision API) | none | unchanged |
 
-- `packages/routes/src/table/_shared.ts`: `FAST`, `EASY`, `HARD`, `DECIDE`, each with its fallback on another vendor.
-  Routes spread a tier and nothing else; the per-route effort and output-limit overrides (podcast.write, image.enhance,
-  the agents' `maxOutputTokens`) become tier properties or go. A guard test fails a route that names a model.
-- Tier picks from Wave 1's reports, recorded in `modelpick/docs/decisions/agw-text-seats.md`.
+DeepSeek flash leaves the primaries: 576 s p50 per deep review, 14.7 M input tokens, IU bills it at peak rate. Haiku
+`max` and `low` are out for agent steps (overflow; no signal). Research and otel move to `HARD` with the rest.
+
+- `packages/routes/src/table/_shared.ts`: `FAST`, `EASY`, `HARD`, `DECIDE` with their fallbacks. Routes spread a tier
+  and nothing else; the per-route effort and output-limit overrides (podcast.write, image.enhance, the agents'
+  `maxOutputTokens`) become tier properties or go. A guard test fails a route that names a model.
 - Direct single-call wire `anthropic` (sibling of `iu-anthropic`, same request shape) with structured outputs:
   `output_config.format` json_schema from the capability's zod type via `z.toJSONSchema`, zod parse kept as the last
   check. The OpenAI wire moves from `json_object` to `json_schema` where IU supports it.
 - Sonnet guard: effort `none` on a Sonnet route is a config error (Sonnet 5.5 rejects `thinking: disabled`).
-- Spend on the direct key: its own key label on usage rows, priced from route rates, and a monthly budget check against
-  the plan credit (the IU wallet gate does not cover it).
+- Spend on the direct key: its own key label on usage rows, priced from route rates. The Console org carries a $200
+  monthly limit (owner, 2026-10-31); no IU wallet gate covers this key.
+- Picks recorded in `modelpick/docs/decisions/agw-text-seats.md`; a live call per tier after deploy.
+
+## Wave 2 — Eval plumbing            <!-- status: pending -->
+
+- Eval spend rolls up: `eval.run` records the cost of its case runs (today null on all of them).
+- A committed report per tier change under `docs/evals/` (shape in `docs/evals/README.md`).
+- The review eval itself belongs to the review rework; research's 28 cases get a golden-answer check here.
 
 ## Wave 3 — Accounting and telemetry            <!-- status: pending -->
 
