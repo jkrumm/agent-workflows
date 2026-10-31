@@ -35,6 +35,14 @@ not Requesty.
 - **No agent, no call.** An empty fleet is a run with an empty `agents` list and no model call.
 - **The push carries the run itself.** The `push` step posts the payload merged with the run that is just ending: its
   output is not in the journal until the run ends, so reading "the newest run" there would push the previous one.
+- **Two terminal worlds until classic herdr retires.** Beside `herdr agent list` the collector reads herdr-core
+  (`source: hc`): one `hc connect` session answers `terminal.list` (labels, parent, 7501 status; linked machines arrive as
+  `machine/tN`) and `doc.get herdr-app` (space names). A live terminal that reported a status is an agent, its session id
+  is the `jk.claude.session` label, its project the `herdr.space` space's name, its status the 7501 state
+  (`herdrStatus` stays the runner-neutral field, Argo stores it as is). A session both worlds report is the hc terminal.
+  The collector asks `launchctl print` first and calls `hc` only while the `com.jkrumm.herdr-core` job runs, since an `hc`
+  call with no core would start one outside launchd; a stopped job is one warning. `TODO(Wave 7): drop classic` in
+  `collect.ts` and `derive.ts` marks the classic path.
 - **No dispatch lane.** Dispatch retired with agent-gateway (owner, 2026-10-29): the collector reads herdr, Claude's
   registry, transcripts and the human queue only. `summary.dispatch` is gone from the wire too (Argo's ingest no longer requires it). The `agent-gateway:review` and `agent-gateway:dispatch`
   quota lanes left the pick list for the same reason (only gateway workers used them).
@@ -85,7 +93,7 @@ not Requesty.
 | `ARGO_URL`, `ARGO_API_SECRET` | | the push is off unless both are set; `ARGO_URL` must be https (loopback http allowed), no redirect is followed |
 | `AGW_ARGO_PUSH` | on | `0`, `off`, `false` or `no` turns the ten-minute timer off (tests); the push after a run stays |
 | `AGW_AGENT_STALE_HOURS` | 24 | the stale threshold (legacy `AGENT_GATEWAY_AGENT_STALE_HOURS`) |
-| `AGW_HERDR_BIN`, `AGW_CLAUDE_BIN` | `~/.local/bin/<name>`, else on `PATH` | |
+| `AGW_HERDR_BIN`, `AGW_HC_BIN`, `AGW_CLAUDE_BIN` | `~/.local/bin/<name>`, else on `PATH` | |
 | `AGW_CLAUDE_ACCOUNT_BIN` | `~/.local/bin/claude-account` | legacy `AGENT_GATEWAY_CLAUDE_ACCOUNT_BIN` |
 | `AGW_CLAUDE_LOG_DIR` | `~/.claude/logs` | the `session_env` lines (legacy `AGENT_GATEWAY_CLAUDE_LOG_DIR`) |
 | `XDG_STATE_HOME` | `~/.local/state` | `human-queue/` below it |

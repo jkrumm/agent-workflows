@@ -4,12 +4,13 @@ import { z } from 'zod'
 // The shapes of the agents overview. They are the payload `agw agents` answers and the Argo push posts, field for field
 // what agent-gateway's `GET /api/overview` returned under `data` (minus the retired dispatch fields, `summary.dispatch` included).
 
-export const AGENT_SOURCE = z.enum(['herdr', 'claude'])
+export const AGENT_SOURCE = z.enum(['herdr', 'hc', 'claude'])
 export type AgentSource = z.infer<typeof AGENT_SOURCE>
 
 export const AGENT_STATE = z.enum(['needs_you', 'working', 'idle', 'stale', 'done', 'unknown'])
 export type AgentState = z.infer<typeof AGENT_STATE>
 
+/** The terminal's own word, runner-neutral despite the name (Argo stores it as `herdrStatus`): classic herdr's agent status or hc's 7501 state. */
 export const HERDR_STATUS = z.enum(['working', 'idle', 'blocked', 'done', 'unknown'])
 export type HerdrAgentStatus = z.infer<typeof HERDR_STATUS>
 
@@ -34,12 +35,17 @@ export const RECOMMENDATION_ICON: Record<Recommendation, string> = {
 }
 
 export const AGENT = z.object({
-  id: z.string().describe('The Claude session id, or the herdr pane id when the pane has no session'),
-  source: AGENT_SOURCE.describe("Which collector produced it: a herdr pane or Claude's own registry"),
+  id: z.string().describe('The Claude session id, or the pane id / terminal address when the terminal has no session'),
+  source: AGENT_SOURCE.describe(
+    "Which collector produced it: a classic herdr pane, an hc terminal or Claude's own registry",
+  ),
   sessionId: z.string().nullable(),
-  paneId: z.string().nullable().describe("herdr pane id, e.g. 'wR:p4'"),
-  workspaceId: z.string().nullable(),
-  title: z.string().nullable().describe("herdr's stripped terminal title, else the transcript's ai-title"),
+  paneId: z.string().nullable().describe("herdr pane id (e.g. 'wR:p4') or hc terminal address (e.g. 't7', 'mini/t7')"),
+  workspaceId: z.string().nullable().describe('herdr workspace id, or the hc space id (`herdr.space` label)'),
+  title: z
+    .string()
+    .nullable()
+    .describe("The terminal's stripped title (hc: the program's own title first), else the transcript's ai-title"),
   state: AGENT_STATE.describe('The one derived urgency state'),
   herdrStatus: HERDR_STATUS.nullable(),
   claudeStatus: CLAUDE_STATUS.nullable(),
@@ -62,7 +68,9 @@ export const PROJECT_GIT = z.object({
 export type ProjectGit = z.infer<typeof PROJECT_GIT>
 
 export const PROJECT = z.object({
-  name: z.string().describe('The herdr workspace label when a pane resolves it, else the cwd basename'),
+  name: z
+    .string()
+    .describe('The herdr workspace label or hc space name when a terminal resolves it, else the cwd basename'),
   cwd: z.string(),
   git: PROJECT_GIT.nullable(),
   agents: z.array(AGENT),

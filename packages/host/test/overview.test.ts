@@ -35,6 +35,7 @@ let answer: () => Response
 const collectors: Collectors = {
   herdrAgents: async () => ok(panes),
   herdrWorkspaces: async () => ok([]),
+  hc: async () => ({ terminals: [], spaces: [], warning: null }),
   claudeAgents: async () => ok([]),
   humanQueue: async () => ok([{ id: 'q1', askedAt: null, question: 'sign it', cmd: 'rm -rf /precious' }]),
   // activity well before any run, so a verdict is never marked stale

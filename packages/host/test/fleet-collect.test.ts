@@ -31,6 +31,7 @@ function collectors(over: Partial<Collectors> = {}): Collectors {
   return {
     herdrAgents: async () => ok([]),
     herdrWorkspaces: async () => ok([]),
+    hc: async () => ({ terminals: [], spaces: [], warning: null }),
     claudeAgents: async () => ok([]),
     humanQueue: async () => ok([]),
     transcriptTail: async () => EMPTY_TAIL,

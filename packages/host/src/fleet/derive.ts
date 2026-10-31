@@ -135,6 +135,26 @@ export interface HerdrWorkspaceRaw {
   label: string
 }
 
+/** One hc terminal as `terminal.list` answers it; only the fields the merge reads. */
+export interface HcTerminalRaw {
+  /** `t7`, or `machine/t7` for a linked machine's terminal. */
+  address: string
+  cwd?: string
+  title?: string
+  state?: string
+  /** `herdr.space`, `jk.claude.session`, ... Values that are not strings are dropped by the collector. */
+  labels?: Record<string, string>
+  foreground?: { cwd?: string } | null
+  /** The program's own OSC 7501 word; null until it ever reported. */
+  status?: { app?: string; state?: string; title?: string } | null
+}
+
+/** One space of the `herdr-app` doc. */
+export interface HcSpaceRaw {
+  id: string
+  name: string
+}
+
 export interface ClaudeAgentRaw {
   cwd?: string
   sessionId?: string
@@ -146,6 +166,9 @@ export interface ClaudeAgentRaw {
 export interface MergeAgentsInput {
   herdrAgents: HerdrAgentRaw[]
   herdrWorkspaces: HerdrWorkspaceRaw[]
+  /** Absent: no hc world was collected. */
+  hcTerminals?: HcTerminalRaw[]
+  hcSpaces?: HcSpaceRaw[]
   claudeAgents: ClaudeAgentRaw[]
   /** Transcript tails by Claude session id: reading them is I/O, so the caller resolves them first. */
   transcripts: Map<string, TranscriptTail>
@@ -173,6 +196,23 @@ const normalizeHerdrStatus = (raw: string): HerdrAgentStatus =>
 const normalizeClaudeStatus = (raw: string): ClaudeAgentStatus | null =>
   raw === 'idle' || raw === 'busy' || raw === 'waiting' ? raw : null
 
+/** The label the Claude SessionStart hook sets on its terminal: the resume id, and the only place hc carries a session id. */
+export const HC_SESSION_LABEL = 'jk.claude.session'
+/** The label that files a terminal into a space of the `herdr-app` doc. */
+export const HC_SPACE_LABEL = 'herdr.space'
+
+/** A live terminal whose program reported through OSC 7501 is an agent; a bare shell, or a finished terminal, is not. */
+export const isHcAgent = (t: HcTerminalRaw): boolean => t.state !== 'finished' && !!t.status?.state
+
+/** The generic `✳ Claude Code` banner says nothing; anything else loses only its leading symbols and spaces (`(wip)` and `#42` keep their punctuation). */
+function hcTitle(raw: string | undefined): string | null {
+  const title = cleanLine(raw)?.replace(/^[^\p{L}\p{N}\p{P}]+/u, '') ?? ''
+  return title === '' || /^claude code$/i.test(title) ? null : title
+}
+
+/** Urgency of a terminal's own status, lower first. */
+const HC_STATUS_RANK: Record<HerdrAgentStatus, number> = { blocked: 0, working: 1, idle: 2, done: 3, unknown: 4 }
+
 const STATE_RANK: Record<AgentState, number> = { needs_you: 0, working: 1, idle: 2, stale: 3, done: 4, unknown: 5 }
 
 /**
@@ -182,14 +222,20 @@ const STATE_RANK: Record<AgentState, number> = { needs_you: 0, working: 1, idle:
 export function mergeAgents(input: MergeAgentsInput): MergedProject[] {
   const { herdrAgents, herdrWorkspaces, claudeAgents, transcripts, accounts, now, staleAfterMs } = input
   const workspaceLabels = new Map(herdrWorkspaces.map((w) => [w.workspace_id, w.label]))
+  const hcSpaceNames = new Map((input.hcSpaces ?? []).map((space) => [space.id, space.name]))
 
   interface Entry {
     agent: Agent
     workspaceId: string | null
     cwd: string
+    /** The two worlds' ids are separate namespaces: an hc space id never looks up a herdr workspace. */
+    hc?: boolean
+    /** A linked machine's terminal: its cwd is a path on that machine, so nothing on this host reads it as one. */
+    remote?: boolean
   }
   const entries = new Map<string, Entry>()
 
+  // TODO(Wave 7): drop classic herdr
   for (const a of herdrAgents) {
     // Keys and lookups use the raw value; a value that cleaning would change cannot be one (a UUID never is).
     const rawSession = a.agent_session?.value ?? null
@@ -211,6 +257,45 @@ export function mergeAgents(input: MergeAgentsInput): MergedProject[] {
         title: cleanLine(a.terminal_title_stripped) || tail.aiTitle || null,
         state: 'unknown',
         herdrStatus: normalizeHerdrStatus(a.agent_status ?? ''),
+        claudeStatus: null,
+        waitingFor: null,
+        lastPrompt: tail.lastPrompt,
+        lastReply: tail.lastReply,
+        lastActivityAt: tail.lastActivityAt,
+        account: sessionId ? cleanLine(accounts?.get(sessionId)) || null : null,
+        startedAt: null,
+      },
+    })
+  }
+
+  // hc after classic herdr: a session both worlds report (a resumed one) is the hc terminal from here on.
+  for (const t of input.hcTerminals ?? []) {
+    if (!isHcAgent(t)) continue
+    const address = safeId(t.address)
+    if (!address) continue
+    const rawSession = t.labels?.[HC_SESSION_LABEL] || null
+    const sessionId = safeId(rawSession)
+    if (rawSession && !sessionId) continue
+    const workspaceId = safeId(t.labels?.[HC_SPACE_LABEL])
+    const tail = sessionId ? (transcripts.get(sessionId) ?? EMPTY_TAIL) : EMPTY_TAIL
+    const herdrStatus = normalizeHerdrStatus(t.status?.state ?? '')
+    // One session in two live terminals: the more urgent status stands, so a blocked one is never hidden by an idle one.
+    const existing = sessionId ? entries.get(sessionId) : undefined
+    if (existing?.hc && HC_STATUS_RANK[herdrStatus] >= HC_STATUS_RANK[existing.agent.herdrStatus ?? 'unknown']) continue
+    entries.set(sessionId ?? `hc:${address}`, {
+      workspaceId,
+      cwd: t.foreground?.cwd || t.cwd || '',
+      hc: true,
+      remote: address.includes('/'),
+      agent: {
+        id: sessionId ?? address,
+        source: 'hc',
+        sessionId,
+        paneId: address,
+        workspaceId,
+        title: hcTitle(t.status?.title) ?? hcTitle(t.title) ?? tail.aiTitle ?? null,
+        state: 'unknown',
+        herdrStatus,
         claudeStatus: null,
         waitingFor: null,
         lastPrompt: tail.lastPrompt,
@@ -267,9 +352,10 @@ export function mergeAgents(input: MergeAgentsInput): MergedProject[] {
       now,
       staleAfterMs,
     })
-    const label = entry.workspaceId ? workspaceLabels.get(entry.workspaceId) : undefined
+    const names = entry.hc ? hcSpaceNames : workspaceLabels
+    const label = entry.workspaceId ? names.get(entry.workspaceId) : undefined
     const projectName = cleanLine(label ?? basename(entry.cwd)) ?? ''
-    const gitCwd = entry.cwd !== '' && !hasControlBytes(entry.cwd) ? entry.cwd : null
+    const gitCwd = entry.cwd !== '' && !entry.remote && !hasControlBytes(entry.cwd) ? entry.cwd : null
     const group = groups.get(projectName)
     if (!group) {
       groups.set(projectName, { name: projectName, cwd: cleanLine(entry.cwd) ?? '', gitCwd, agents: [entry.agent] })

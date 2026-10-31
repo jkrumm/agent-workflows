@@ -8,8 +8,12 @@ import {
   cleanLine,
   EMPTY_TAIL,
   encodeProjectDir,
+  HC_SESSION_LABEL,
+  type HcSpaceRaw,
+  type HcTerminalRaw,
   type HerdrAgentRaw,
   type HerdrWorkspaceRaw,
+  isHcAgent,
   mergeAgents,
   parseTranscriptTail,
   type TranscriptTail,
@@ -35,19 +39,27 @@ export interface CollectorResult<T> {
  * Runs a command and answers its stdout; `null` on a spawn error, a timeout or a non-zero exit. `network` is for the one
  * call that talks to a remote (`git fetch`): it adds the credential and proxy variables to the child's environment.
  */
-export type RunCommand = (cmd: string[], options?: { timeoutMs?: number; network?: boolean }) => Promise<string | null>
+export type RunCommand = (
+  cmd: string[],
+  options?: { timeoutMs?: number; network?: boolean; input?: string },
+) => Promise<string | null>
 
 /**
  * The command runner on `env`. A child (git, herdr, claude) gets the review helpers' allowlist (`helperEnv`: no
  * credential prompts, no optional git locks) and, for a `network` call, the SSH agent, config directory and proxy/CA
- * settings (`networkEnv`); never `AGW_API_SECRET`, `ARGO_API_SECRET` or `IU_API_KEY`.
+ * settings (`networkEnv`); never `AGW_API_SECRET`, `ARGO_API_SECRET` or `IU_API_KEY`. `input` is written to the child's stdin.
  */
 export function commandRunner(env: Record<string, string | undefined> = process.env): RunCommand {
   const local = helperEnv(env)
   const remote = { ...local, ...networkEnv(env) }
   return async (cmd, options = {}) => {
     try {
-      const proc = Bun.spawn(cmd, { stdout: 'pipe', stderr: 'ignore', env: options.network ? remote : local })
+      const proc = Bun.spawn(cmd, {
+        stdin: options.input == null ? 'ignore' : new Blob([options.input]),
+        stdout: 'pipe',
+        stderr: 'ignore',
+        env: options.network ? remote : local,
+      })
       let timedOut = false
       const timer = setTimeout(() => {
         timedOut = true
@@ -70,6 +82,8 @@ export const runCommand: RunCommand = commandRunner()
 
 export interface FleetConfig {
   herdrBin: string
+  /** The hc CLI (`hc connect` speaks the core's API over stdin/stdout). */
+  hcBin: string
   claudeBin: string
   /** `<state>/human-queue`: `<id>.req` is a pending request, `<id>.res` its answer. */
   humanQueueDir: string
@@ -92,6 +106,7 @@ export function fleetConfig(env: Env, home = homedir()): FleetConfig {
   const hours = Number.parseInt(env.AGW_AGENT_STALE_HOURS ?? '', 10)
   return {
     herdrBin: bin('herdr', env.AGW_HERDR_BIN),
+    hcBin: bin('hc', env.AGW_HC_BIN),
     claudeBin: bin('claude', env.AGW_CLAUDE_BIN),
     humanQueueDir: join(env.XDG_STATE_HOME?.trim() || join(home, '.local', 'state'), 'human-queue'),
     claudeProjectsDir: join(home, '.claude', 'projects'),
@@ -224,6 +239,101 @@ export const pickHerdrWorkspaces = (parsed: unknown): Picked<HerdrWorkspaceRaw> 
     herdrList(parsed, 'workspaces'),
     (row) => typeof row.workspace_id === 'string' && typeof row.label === 'string',
   )
+
+/** The launchd job that owns the core: `hc` starts a core of its own when none runs, so nothing calls it before this job does. */
+export const HC_LAUNCHD_LABEL = 'com.jkrumm.herdr-core'
+
+/** `terminal.list` and `doc.get herdr-app` in one `hc connect` session; the answers come back by `id`. */
+export const HC_REQUESTS = `${[
+  { jsonrpc: '2.0', id: 1, method: 'terminal.list', params: {} },
+  { jsonrpc: '2.0', id: 2, method: 'doc.get', params: { name: 'herdr-app' } },
+]
+  .map((request) => JSON.stringify(request))
+  .join('\n')}\n`
+
+export interface HcCollected {
+  terminals: HcTerminalRaw[]
+  spaces: HcSpaceRaw[]
+  warning: string | null
+}
+
+const EMPTY_HC: HcCollected = { terminals: [], spaces: [], warning: null }
+
+/** A label map keeps its string values only: a label is data from any terminal and lands in an id and a project name. */
+function stringLabels(value: unknown): Record<string, string> {
+  if (!isRecord(value)) return {}
+  return Object.fromEntries(
+    Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
+  )
+}
+
+class RpcError {
+  constructor(readonly message: string) {}
+}
+
+/** The responses of an `hc connect` session by request id (an error response keeps its message); a line that is not a JSON-RPC response is skipped. */
+function rpcResults(out: string): Map<number, unknown> {
+  const results = new Map<number, unknown>()
+  for (const line of out.split('\n')) {
+    try {
+      const message = JSON.parse(line)
+      if (!isRecord(message) || typeof message.id !== 'number') continue
+      if ('result' in message) results.set(message.id, message.result)
+      else if (isRecord(message.error))
+        results.set(message.id, new RpcError(oneLine(String(message.error.message ?? ''))))
+    } catch {
+      // a blank or partial line
+    }
+  }
+  return results
+}
+
+/** The hc world out of one `hc connect` session's output: agents' raw terminals and the `herdr-app` doc's spaces. */
+export function parseHcSession(out: string): HcCollected {
+  const results = rpcResults(out)
+  const list = results.get(1)
+  if (!isRecord(list) || !Array.isArray(list.terminals)) {
+    const why = list instanceof RpcError ? `: ${list.message}` : ' returned no terminals list'
+    return { ...EMPTY_HC, warning: `hc terminal.list${why}` }
+  }
+  const terminals = list.terminals
+    .filter((row): row is Record<string, unknown> => isRecord(row) && typeof row.address === 'string')
+    .filter((row) => typed(row, 'string', 'cwd', 'title', 'state'))
+    .map((row) => ({ ...row, labels: stringLabels(row.labels) }) as unknown as HcTerminalRaw)
+  const dropped = list.terminals.length - terminals.length
+
+  const doc = results.get(2)
+  const value = !(doc instanceof RpcError) && isRecord(doc) && isRecord(doc.value) ? doc.value : null
+  const spaces = Array.isArray(value?.spaces)
+    ? value.spaces
+        .filter((row): row is HcSpaceRaw => isRecord(row) && typeof row.id === 'string' && typeof row.name === 'string')
+        .map(({ id, name }) => ({ id, name }))
+    : []
+  const warnings = [
+    dropped > 0 ? `hc terminal.list: ${dropped} malformed row(s) dropped` : null,
+    doc instanceof RpcError || !isRecord(doc)
+      ? `hc herdr-app doc unreadable${doc instanceof RpcError ? `: ${doc.message}` : ''}`
+      : null,
+  ].filter((w): w is string => w != null)
+  return { terminals, spaces, warning: warnings.length > 0 ? warnings.join('; ') : null }
+}
+
+/**
+ * The hc world, beside classic herdr: one `hc connect` session answers every terminal (labels, parent and status that the
+ * compact `hc ls` leaves out; linked machines arrive as `machine/tN`) and the space names. Only when launchd runs the
+ * core: an `hc` call with no core would start one outside launchd.
+ */
+async function collectHc(run: RunCommand, config: FleetConfig, uid: number | undefined): Promise<HcCollected> {
+  if (uid == null) return { ...EMPTY_HC, warning: 'hc not collected: no user id to address the launchd domain' }
+  const job = await run(['launchctl', 'print', `gui/${uid}/${HC_LAUNCHD_LABEL}`])
+  // The job's own `state` sits one tab in; nested sections (endpoints, triggers) indent deeper.
+  if (job == null || !/^\tstate = running$/m.test(job)) {
+    return { ...EMPTY_HC, warning: `hc core not running (launchd job ${HC_LAUNCHD_LABEL})` }
+  }
+  const out = await run([config.hcBin, 'connect'], { input: HC_REQUESTS })
+  if (out == null) return { ...EMPTY_HC, warning: 'hc connect failed or timed out' }
+  return parseHcSession(out)
+}
 
 export const pickClaudeAgents = (parsed: unknown): Picked<ClaudeAgentRaw> =>
   pickRows(
@@ -393,6 +503,7 @@ export async function gitProject(run: RunCommand, cwd: string): Promise<ProjectG
 export interface Collectors {
   herdrAgents(): Promise<CollectorResult<HerdrAgentRaw>>
   herdrWorkspaces(): Promise<CollectorResult<HerdrWorkspaceRaw>>
+  hc(): Promise<HcCollected>
   claudeAgents(): Promise<CollectorResult<ClaudeAgentRaw>>
   humanQueue(): Promise<CollectorResult<HumanQueueEntry>>
   transcriptTail(cwd: string, sessionId: string): Promise<TranscriptTail>
@@ -403,13 +514,15 @@ export interface Collectors {
 export function defaultCollectors(
   config: FleetConfig,
   run: RunCommand = runCommand,
-  options: { warn?: (message: string, meta: Record<string, unknown>) => void } = {},
+  options: { warn?: (message: string, meta: Record<string, unknown>) => void; uid?: number } = {},
 ): Collectors {
   const resolveAccounts = sessionAccountResolver(config)
   return {
+    // TODO(Wave 7): drop classic herdr (herdrAgents, herdrWorkspaces) once hc is the only world
     herdrAgents: () => readJsonCommand(run, [config.herdrBin, 'agent', 'list'], 'herdr agent list', pickHerdrAgents),
     herdrWorkspaces: () =>
       readJsonCommand(run, [config.herdrBin, 'workspace', 'list'], 'herdr workspace list', pickHerdrWorkspaces),
+    hc: () => collectHc(run, config, options.uid ?? process.getuid?.()),
     claudeAgents: () =>
       readJsonCommand(run, [config.claudeBin, 'agents', '--json'], 'claude agents --json', pickClaudeAgents),
     humanQueue: () => readHumanQueue(config.humanQueueDir),
@@ -463,21 +576,31 @@ export async function buildSnapshot(
 ): Promise<Snapshot> {
   const staleAfterMs = options.staleAfterHours * 60 * 60 * 1000
 
-  const [herdrAgents, herdrWorkspaces, claudeAgents] = await Promise.all([
+  const [herdrAgents, herdrWorkspaces, hc, claudeAgents] = await Promise.all([
     collectors.herdrAgents(),
     collectors.herdrWorkspaces(),
+    collectors.hc(),
     collectors.claudeAgents(),
   ])
   const humanQueue = await collectors.humanQueue()
-  const warnings = [herdrAgents.warning, herdrWorkspaces.warning, claudeAgents.warning, humanQueue.warning].filter(
-    (w): w is string => w != null,
-  )
+  const warnings = [
+    herdrAgents.warning,
+    herdrWorkspaces.warning,
+    hc.warning,
+    claudeAgents.warning,
+    humanQueue.warning,
+  ].filter((w): w is string => w != null)
 
-  // Unique (session, cwd) pairs across both sources: a herdr pane and its registry entry share a session and one tail read.
+  // Unique (session, cwd) pairs across all sources: a herdr pane, an hc terminal and the registry entry of one session share one tail read.
   const cwdBySession = new Map<string, string>()
   for (const a of herdrAgents.items) {
     const sessionId = a.agent_session?.value
     if (sessionId) cwdBySession.set(sessionId, a.cwd ?? '')
+  }
+  for (const t of hc.terminals) {
+    const sessionId = isHcAgent(t) ? t.labels?.[HC_SESSION_LABEL] : undefined
+    // A linked machine's cwd is a path there, not here: no transcript read for it.
+    if (sessionId) cwdBySession.set(sessionId, t.address.includes('/') ? '' : t.foreground?.cwd || t.cwd || '')
   }
   for (const c of claudeAgents.items) {
     if (c.sessionId && (c.cwd || !cwdBySession.has(c.sessionId))) cwdBySession.set(c.sessionId, c.cwd ?? '')
@@ -499,6 +622,8 @@ export async function buildSnapshot(
   const merged = mergeAgents({
     herdrAgents: herdrAgents.items,
     herdrWorkspaces: herdrWorkspaces.items,
+    hcTerminals: hc.terminals,
+    hcSpaces: hc.spaces,
     claudeAgents: claudeAgents.items,
     transcripts,
     accounts,
