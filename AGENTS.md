@@ -44,7 +44,7 @@ Shape and roles: the `/wave` skill, fleet mode (`~/.claude/skills/wave/roles/{mo
   free tab number and never collides with a phase number. Spawns from the mother set
   `RD_ORCHESTRATED=1`; the mother decides when a deploy happens, not a keyword gate.
 - Max subscriptions only for every Claude session; the picker switches accounts, `rd` pauses when
-  both are out. IU tokens only for agent steps inside workflows, review and research.
+  both are out. API tokens (IU, and the direct Anthropic key for Claude routes) only for agent steps inside workflows, review and research.
 
 ## Review flow (every change)
 
