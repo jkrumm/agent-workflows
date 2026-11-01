@@ -1,0 +1,354 @@
+[A0/anthropic] session=ses_aaaaaaaa… exit=0 tail="OK"
+[A0/chat] session=ses_aaaaaaaa… exit=0 tail="OK"
+[A0/responses] session=ses_aaaaaaaa… exit=0 tail="OK"
+
+--- A0 OpenCode baseline (no headers configured), `opencode-safe run --standalone`: 6 request(s)
+#1 POST /v1/messages  [anthropic] model=capmodel
+    anthropic-beta: interleaved-thinking-2025-05-14
+    anthropic-version: 2023-06-01
+    b3: 8ac4d75ad5abd34e57bcad5889517e29-df2e26133eca9ca6-1-56ea24b287dd76f1
+    traceparent: 00-8ac4d75ad5abd34e57bcad5889517e29-df2e26133eca9ca6-01
+    user-agent: opencode/latest/2.0.32/cli
+    x-api-key: <redacted>
+    x-opencode-client: cli
+    x-opencode-project: 59288fd53dbc7752db1a977bde4ef4b2ce40ee01
+    x-opencode-session: ses_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac0de00
+    x-opencode-session-id: ses_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac0de00
+    x-session-affinity: ses_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac0de00
+    x-session-id: ses_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac0de00
+    body.metadata: null  openai-identity: {}
+#2 POST /v1/messages  [anthropic] model=capmodel
+    anthropic-beta: interleaved-thinking-2025-05-14
+    anthropic-version: 2023-06-01
+    b3: 8ac4d75ad5abd34e57bcad5889517e29-c669eadfb4feb3f8-1-7d3273f5cbcab887
+    traceparent: 00-8ac4d75ad5abd34e57bcad5889517e29-c669eadfb4feb3f8-01
+    user-agent: opencode/latest/2.0.32/cli
+    x-api-key: <redacted>
+    x-opencode-client: cli
+    x-opencode-project: 59288fd53dbc7752db1a977bde4ef4b2ce40ee01
+    x-opencode-session: ses_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac0de00
+    x-opencode-session-id: ses_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac0de00
+    x-session-affinity: ses_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac0de00
+    x-session-id: ses_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac0de00
+    body.metadata: null  openai-identity: {}
+#3 POST /openai/v1/chat/completions  [openai-chat] model=capmodel
+    authorization: <redacted>
+    b3: 7ca57a8900528e963f877fdb72de62c4-63027aafd1036473-1-759400ef79c12bf3
+    traceparent: 00-7ca57a8900528e963f877fdb72de62c4-63027aafd1036473-01
+    user-agent: opencode/latest/2.0.32/cli
+    x-opencode-client: cli
+    x-opencode-project: 3b3481950f78192a9698027187ab2646dd20d038
+    x-opencode-session: ses_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac0de01
+    x-opencode-session-id: ses_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac0de01
+    x-session-affinity: ses_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac0de01
+    x-session-id: ses_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac0de01
+    body.metadata: null  openai-identity: {}
+#4 POST /openai/v1/chat/completions  [openai-chat] model=capmodel
+    authorization: <redacted>
+    b3: 7ca57a8900528e963f877fdb72de62c4-8b7f194f0c37802d-1-f72eba66f74164d7
+    traceparent: 00-7ca57a8900528e963f877fdb72de62c4-8b7f194f0c37802d-01
+    user-agent: opencode/latest/2.0.32/cli
+    x-opencode-client: cli
+    x-opencode-project: 3b3481950f78192a9698027187ab2646dd20d038
+    x-opencode-session: ses_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac0de01
+    x-opencode-session-id: ses_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac0de01
+    x-session-affinity: ses_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac0de01
+    x-session-id: ses_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac0de01
+    body.metadata: null  openai-identity: {}
+#5 POST /openai/v1/responses  [openai-responses] model=capmodel
+    authorization: <redacted>
+    b3: a9c84622f47320f91d62ccfca44ad34a-08c90704cc54c94e-1-4520f088443d1742
+    traceparent: 00-a9c84622f47320f91d62ccfca44ad34a-08c90704cc54c94e-01
+    user-agent: opencode/latest/2.0.32/cli
+    x-opencode-client: cli
+    x-opencode-project: 04b1f079a21b0ca15aa76a1bc79243b7f77d48c9
+    x-opencode-session: ses_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac0de02
+    x-opencode-session-id: ses_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac0de02
+    x-session-affinity: ses_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac0de02
+    x-session-id: ses_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac0de02
+    body.metadata: null  openai-identity: {"prompt_cache_key":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac0de02"}
+#6 POST /openai/v1/responses  [openai-responses] model=capmodel
+    authorization: <redacted>
+    b3: a9c84622f47320f91d62ccfca44ad34a-32a3e6628b8f2aaa-1-499d002ee3bb4711
+    traceparent: 00-a9c84622f47320f91d62ccfca44ad34a-32a3e6628b8f2aaa-01
+    user-agent: opencode/latest/2.0.32/cli
+    x-opencode-client: cli
+    x-opencode-project: 04b1f079a21b0ca15aa76a1bc79243b7f77d48c9
+    x-opencode-session: ses_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac0de02
+    x-opencode-session-id: ses_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac0de02
+    x-session-affinity: ses_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac0de02
+    x-session-id: ses_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac0de02
+    body.metadata: null  openai-identity: {"prompt_cache_key":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac0de02"}
+[A1/anthropic] session=ses_aaaaaaaa… exit=0 tail="OK"
+[A1/chat] session=ses_aaaaaaaa… exit=0 tail="OK"
+[A1/responses] session=ses_aaaaaaaa… exit=0 tail="OK"
+
+--- A1 OpenCode static headers: provider `headers`, `settings.headers`, model `headers`; body overlay: 6 request(s)
+#7 POST /v1/messages  [anthropic] model=capmodel
+    anthropic-beta: interleaved-thinking-2025-05-14
+    anthropic-version: 2023-06-01
+    b3: 298bf33817d12d7b544b505bfd108386-7853f302a9bf418a-1-b33bd873449a9841
+    traceparent: 00-298bf33817d12d7b544b505bfd108386-7853f302a9bf418a-01
+    user-agent: opencode/latest/2.0.32/cli
+    x-agw-static-model: from-model.headers
+    x-agw-static-provider: from-provider.headers
+    x-agw-static-settings: from-settings.headers
+    x-api-key: <redacted>
+    x-opencode-client: cli
+    x-opencode-project: 3753727b0b8c3b3ae88dc0e618562e18a7ee9b93
+    x-opencode-session: ses_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac0de06
+    x-opencode-session-id: ses_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac0de06
+    x-session-affinity: ses_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac0de06
+    x-session-id: ses_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac0de06
+    body.metadata: {"user_id":"static-body-user"}  openai-identity: {}
+#8 POST /v1/messages  [anthropic] model=capmodel
+    anthropic-beta: interleaved-thinking-2025-05-14
+    anthropic-version: 2023-06-01
+    b3: 298bf33817d12d7b544b505bfd108386-c9c31b2ba6217f5a-1-3257acb13b52dd1b
+    traceparent: 00-298bf33817d12d7b544b505bfd108386-c9c31b2ba6217f5a-01
+    user-agent: opencode/latest/2.0.32/cli
+    x-agw-static-model: from-model.headers
+    x-agw-static-provider: from-provider.headers
+    x-agw-static-settings: from-settings.headers
+    x-api-key: <redacted>
+    x-opencode-client: cli
+    x-opencode-project: 3753727b0b8c3b3ae88dc0e618562e18a7ee9b93
+    x-opencode-session: ses_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac0de06
+    x-opencode-session-id: ses_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac0de06
+    x-session-affinity: ses_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac0de06
+    x-session-id: ses_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac0de06
+    body.metadata: {"user_id":"static-body-user"}  openai-identity: {}
+#9 POST /openai/v1/chat/completions  [openai-chat] model=capmodel
+    authorization: <redacted>
+    b3: 2f44170ec962c75c0293374889e13793-f53db2f4259cf940-1-b8ac07f7743d08c8
+    traceparent: 00-2f44170ec962c75c0293374889e13793-f53db2f4259cf940-01
+    user-agent: opencode/latest/2.0.32/cli
+    x-agw-static-model: from-model.headers
+    x-agw-static-provider: from-provider.headers
+    x-agw-static-settings: from-settings.headers
+    x-opencode-client: cli
+    x-opencode-project: f9350b15e5f9050817624c32da2aecd0fec87167
+    x-opencode-session: ses_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac0de07
+    x-opencode-session-id: ses_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac0de07
+    x-session-affinity: ses_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac0de07
+    x-session-id: ses_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac0de07
+    body.metadata: null  openai-identity: {"user":"static-body-user"}
+#10 POST /openai/v1/chat/completions  [openai-chat] model=capmodel
+    authorization: <redacted>
+    b3: 2f44170ec962c75c0293374889e13793-b7ff88225ea87e40-1-9883a28457c42224
+    traceparent: 00-2f44170ec962c75c0293374889e13793-b7ff88225ea87e40-01
+    user-agent: opencode/latest/2.0.32/cli
+    x-agw-static-model: from-model.headers
+    x-agw-static-provider: from-provider.headers
+    x-agw-static-settings: from-settings.headers
+    x-opencode-client: cli
+    x-opencode-project: f9350b15e5f9050817624c32da2aecd0fec87167
+    x-opencode-session: ses_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac0de07
+    x-opencode-session-id: ses_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac0de07
+    x-session-affinity: ses_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac0de07
+    x-session-id: ses_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac0de07
+    body.metadata: null  openai-identity: {"user":"static-body-user"}
+#11 POST /openai/v1/responses  [openai-responses] model=capmodel
+    authorization: <redacted>
+    b3: bf965f66efc05d489d1dcdfb4c11ac07-ae77ff6f65c5d2d3-1-7f225f56af72dd88
+    traceparent: 00-bf965f66efc05d489d1dcdfb4c11ac07-ae77ff6f65c5d2d3-01
+    user-agent: opencode/latest/2.0.32/cli
+    x-agw-static-model: from-model.headers
+    x-agw-static-provider: from-provider.headers
+    x-agw-static-settings: from-settings.headers
+    x-opencode-client: cli
+    x-opencode-project: 9a9ce1dabca41721c2fc3c5c1e788157643103f9
+    x-opencode-session: ses_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac0de08
+    x-opencode-session-id: ses_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac0de08
+    x-session-affinity: ses_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac0de08
+    x-session-id: ses_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac0de08
+    body.metadata: null  openai-identity: {"user":"static-body-user","prompt_cache_key":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac0de08"}
+#12 POST /openai/v1/responses  [openai-responses] model=capmodel
+    authorization: <redacted>
+    b3: bf965f66efc05d489d1dcdfb4c11ac07-e6482ebf27ee7b46-1-a21dc5ec1e428b76
+    traceparent: 00-bf965f66efc05d489d1dcdfb4c11ac07-e6482ebf27ee7b46-01
+    user-agent: opencode/latest/2.0.32/cli
+    x-agw-static-model: from-model.headers
+    x-agw-static-provider: from-provider.headers
+    x-agw-static-settings: from-settings.headers
+    x-opencode-client: cli
+    x-opencode-project: 9a9ce1dabca41721c2fc3c5c1e788157643103f9
+    x-opencode-session: ses_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac0de08
+    x-opencode-session-id: ses_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac0de08
+    x-session-affinity: ses_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac0de08
+    x-session-id: ses_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac0de08
+    body.metadata: null  openai-identity: {"user":"static-body-user","prompt_cache_key":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac0de08"}
+[A2/anthropic] create 200 id=ses_aaaaaaaa…
+[A2/chat] create 200 id=ses_aaaaaaaa…
+[A2/responses] create 200 id=ses_aaaaaaaa…
+
+--- A2 OpenCode plugin (`model.request` + `context` hooks), host path: `opencode-safe serve` + HTTP API with session metadata: 3 request(s)
+#13 POST /v1/messages  [anthropic] model=capmodel
+    anthropic-beta: interleaved-thinking-2025-05-14
+    anthropic-version: 2023-06-01
+    b3: 1e442728cc72bbdc8375405acb2e8d57-7b7606f5ffcbe121-1-091df2e976c182bd
+    traceparent: 00-1e442728cc72bbdc8375405acb2e8d57-7b7606f5ffcbe121-01
+    user-agent: opencode/latest/2.0.32/cli
+    x-agw-kind: primary
+    x-agw-run-id: run-0
+    x-agw-session: ses_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaafeed00
+    x-agw-step: step-0
+    x-api-key: <redacted>
+    x-opencode-client: cli
+    x-opencode-project: d5640791bed9872bbeee231c2db3b9fafe7a0178
+    x-opencode-session: ses_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaafeed00
+    x-opencode-session-id: ses_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaafeed00
+    x-session-affinity: ses_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaafeed00
+    x-session-id: ses_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaafeed00
+    body.metadata: {"user_id":"ses_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaafeed00"}  openai-identity: {}
+#14 POST /openai/v1/chat/completions  [openai-chat] model=capmodel
+    authorization: <redacted>
+    b3: 1e442728cc72bbdc8375405acb2e8d57-655be3e7ea8dccc3-1-7397ad3b2b8e2a1f
+    traceparent: 00-1e442728cc72bbdc8375405acb2e8d57-655be3e7ea8dccc3-01
+    user-agent: opencode/latest/2.0.32/cli
+    x-agw-kind: primary
+    x-agw-run-id: run-1
+    x-agw-session: ses_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaafeed01
+    x-agw-step: step-1
+    x-opencode-client: cli
+    x-opencode-project: d5640791bed9872bbeee231c2db3b9fafe7a0178
+    x-opencode-session: ses_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaafeed01
+    x-opencode-session-id: ses_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaafeed01
+    x-session-affinity: ses_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaafeed01
+    x-session-id: ses_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaafeed01
+    body.metadata: null  openai-identity: {}
+#15 POST /openai/v1/responses  [openai-responses] model=capmodel
+    authorization: <redacted>
+    b3: 1e442728cc72bbdc8375405acb2e8d57-47d656799a5821c9-1-14478e296edeaa44
+    traceparent: 00-1e442728cc72bbdc8375405acb2e8d57-47d656799a5821c9-01
+    user-agent: opencode/latest/2.0.32/cli
+    x-agw-kind: primary
+    x-agw-run-id: run-2
+    x-agw-session: ses_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaafeed02
+    x-agw-step: step-2
+    x-opencode-client: cli
+    x-opencode-project: d5640791bed9872bbeee231c2db3b9fafe7a0178
+    x-opencode-session: ses_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaafeed02
+    x-opencode-session-id: ses_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaafeed02
+    x-session-affinity: ses_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaafeed02
+    x-session-id: ses_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaafeed02
+    body.metadata: {"user_id":"ses_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaafeed02"}  openai-identity: {"prompt_cache_key":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaafeed02"}
+[B0#1] exit=0 tail="re` (v0.10.4) was included because `hermes-pm-runtime` (v0.0.0) depends on `truststore` — retry, or run `hermes pm doctor`; running with the previous dependencies — run `hermes update` to finish it\nOK"
+
+--- B0 Hermes baseline (custom provider, nothing configured), chat_completions: 2 request(s)
+#16 POST /openai/v1/chat/completions  [openai-chat] model=capmodel
+    authorization: <redacted>
+    user-agent: OpenAI/Python 2.24.0
+    x-stainless-arch: arm64
+    x-stainless-async: false
+    x-stainless-lang: python
+    x-stainless-os: MacOS
+    x-stainless-package-version: 2.24.0
+    x-stainless-read-timeout: 1800.0
+    x-stainless-retry-count: 0
+    x-stainless-runtime: CPython
+    x-stainless-runtime-version: 3.11.15
+    body.metadata: null  openai-identity: {}
+#17 POST /openai/v1/chat/completions  [openai-chat] model=capmodel
+    authorization: <redacted>
+    user-agent: OpenAI/Python 2.24.0
+    x-stainless-arch: arm64
+    x-stainless-async: false
+    x-stainless-lang: python
+    x-stainless-os: MacOS
+    x-stainless-package-version: 2.24.0
+    x-stainless-read-timeout: 30.0
+    x-stainless-retry-count: 0
+    x-stainless-runtime: CPython
+    x-stainless-runtime-version: 3.11.15
+    body.metadata: null  openai-identity: {}
+[B1#1] exit=0 tail="re` (v0.10.4) was included because `hermes-pm-runtime` (v0.0.0) depends on `truststore` — retry, or run `hermes pm doctor`; running with the previous dependencies — run `hermes update` to finish it\nOK"
+[B1#2] exit=0 tail="re` (v0.10.4) was included because `hermes-pm-runtime` (v0.0.0) depends on `truststore` — retry, or run `hermes pm doctor`; running with the previous dependencies — run `hermes update` to finish it\nOK"
+
+--- B1 Hermes chat_completions: extra_headers + session_affinity_header (two separate conversations): 4 request(s)
+#18 POST /openai/v1/chat/completions  [openai-chat] model=capmodel
+    authorization: <redacted>
+    user-agent: OpenAI/Python 2.24.0
+    x-agw-caller: hermes
+    x-agw-session: 20261101_183016_46a65a
+    x-agw-workflow: static-value
+    x-stainless-arch: arm64
+    x-stainless-async: false
+    x-stainless-lang: python
+    x-stainless-os: MacOS
+    x-stainless-package-version: 2.24.0
+    x-stainless-read-timeout: 1800.0
+    x-stainless-retry-count: 0
+    x-stainless-runtime: CPython
+    x-stainless-runtime-version: 3.11.15
+    body.metadata: null  openai-identity: {}
+#19 POST /openai/v1/chat/completions  [openai-chat] model=capmodel
+    authorization: <redacted>
+    user-agent: OpenAI/Python 2.24.0
+    x-agw-session: 20261101_183016_46a65a
+    x-stainless-arch: arm64
+    x-stainless-async: false
+    x-stainless-lang: python
+    x-stainless-os: MacOS
+    x-stainless-package-version: 2.24.0
+    x-stainless-read-timeout: 30.0
+    x-stainless-retry-count: 0
+    x-stainless-runtime: CPython
+    x-stainless-runtime-version: 3.11.15
+    body.metadata: null  openai-identity: {}
+#20 POST /openai/v1/chat/completions  [openai-chat] model=capmodel
+    authorization: <redacted>
+    user-agent: OpenAI/Python 2.24.0
+    x-agw-caller: hermes
+    x-agw-session: 20261101_183024_68c787
+    x-agw-workflow: static-value
+    x-stainless-arch: arm64
+    x-stainless-async: false
+    x-stainless-lang: python
+    x-stainless-os: MacOS
+    x-stainless-package-version: 2.24.0
+    x-stainless-read-timeout: 1800.0
+    x-stainless-retry-count: 0
+    x-stainless-runtime: CPython
+    x-stainless-runtime-version: 3.11.15
+    body.metadata: null  openai-identity: {}
+#21 POST /openai/v1/chat/completions  [openai-chat] model=capmodel
+    authorization: <redacted>
+    user-agent: OpenAI/Python 2.24.0
+    x-agw-session: 20261101_183024_68c787
+    x-stainless-arch: arm64
+    x-stainless-async: false
+    x-stainless-lang: python
+    x-stainless-os: MacOS
+    x-stainless-package-version: 2.24.0
+    x-stainless-read-timeout: 30.0
+    x-stainless-retry-count: 0
+    x-stainless-runtime: CPython
+    x-stainless-runtime-version: 3.11.15
+    body.metadata: null  openai-identity: {}
+[B2#1] exit=0 tail="re` (v0.10.4) was included because `hermes-pm-runtime` (v0.0.0) depends on `truststore` — retry, or run `hermes pm doctor`; running with the previous dependencies — run `hermes update` to finish it\nOK"
+
+--- B2 Hermes anthropic_messages: extra_headers + session_affinity_header: 1 request(s)
+#22 POST /v1/messages  [anthropic] model=capmodel
+    anthropic-beta: interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14
+    anthropic-version: 2023-06-01
+    user-agent: Anthropic/Python 0.87.0
+    x-agw-caller: hermes
+    x-agw-session: 20261101_183031_958e10
+    x-agw-workflow: static-value
+    x-api-key: <redacted>
+    x-stainless-arch: arm64
+    x-stainless-async: false
+    x-stainless-helper-method: stream
+    x-stainless-lang: python
+    x-stainless-os: MacOS
+    x-stainless-package-version: 0.87.0
+    x-stainless-read-timeout: 900.0
+    x-stainless-retry-count: 0
+    x-stainless-runtime: CPython
+    x-stainless-runtime-version: 3.11.15
+    x-stainless-stream-helper: messages
+    x-stainless-timeout: NOT_GIVEN
+    body.metadata: null  openai-identity: {}
+
+raw capture: docs/spikes/gateway/headers/evidence/capture.json (22 requests)
