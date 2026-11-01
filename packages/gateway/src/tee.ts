@@ -4,6 +4,8 @@ import { isRecord } from './json.ts'
 
 /** A held copy, and what it decodes to, stops here and the usage is given up: no JSON or SSE response comes close. */
 const MAX_BUFFERED_BYTES = 64 * 1024 * 1024
+/** One SSE event past this ends the parsing of that response; the caller's bytes go on untouched. */
+const MAX_PENDING_EVENT_CHARS = 1024 * 1024
 
 /** The token columns of `usage.records`: additive, `input` without cache, `output` without reasoning. */
 export interface TokenColumns {
@@ -137,6 +139,8 @@ export class UsageTee {
   private received = 0
   /** Anthropic's `message_start` came and its `message_delta` has not. */
   private awaitingFinal = false
+  /** An event outgrew the cap: what came before stands, the block is not complete. */
+  private abandoned = false
 
   constructor(response: { contentType: string | null; contentEncoding: string | null }) {
     const type = (response.contentType ?? '').toLowerCase()
@@ -182,6 +186,7 @@ export class UsageTee {
   }
 
   private complete(): boolean {
+    if (this.abandoned) return false
     if (this.gemini !== null) return geminiColumns(this.gemini) !== null
     if (this.usage === null || this.awaitingFinal) return false
     if (count(this.usage.cost) !== null) return true
@@ -208,12 +213,17 @@ export class UsageTee {
   }
 
   private feedSse(text: string): void {
+    if (this.abandoned) return
     this.rest = (this.rest + text).replaceAll('\r\n', '\n')
     let end = this.rest.indexOf('\n\n')
-    while (end >= 0) {
+    while (end >= 0 && end <= MAX_PENDING_EVENT_CHARS) {
       this.event(this.rest.slice(0, end))
       this.rest = this.rest.slice(end + 2)
       end = this.rest.indexOf('\n\n')
+    }
+    if (end > MAX_PENDING_EVENT_CHARS || (end < 0 && this.rest.length > MAX_PENDING_EVENT_CHARS)) {
+      this.abandoned = true
+      this.rest = ''
     }
   }
 

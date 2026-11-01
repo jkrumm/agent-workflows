@@ -1023,6 +1023,16 @@ describe('a credit request without a complete usage block', () => {
     expectEstimate(gw, price(Math.ceil(bodyBytes(body) / 3), Math.ceil(bomb.byteLength / 3)))
   })
 
+  test('an SSE event past 1 MiB: the caller gets every byte, the charge is the estimate', async () => {
+    const first = sse([{ type: 'message_start', message: { model: haikuId, usage: { ...USAGE, output_tokens: 1 } } }])
+    const text = `${first}data: ${'x'.repeat(2 * 1024 * 1024)}\n\n${sse([{ type: 'message_delta', usage: USAGE }])}`
+    anthropic.reply(() => sseResponse(text))
+    const gw = start({ registry: [pool('iu')] })
+    const response = await gw.call(MESSAGES, jsonBody(request({ stream: true })))
+    expect(await response.text()).toBe(text)
+    expectEstimate(gw, costOfUsage({ ...USAGE, output_tokens: Math.ceil(text.length / 3) }))
+  })
+
   test('an unknown encoding on a 2xx charges by its bytes', async () => {
     const bytes = 'x'.repeat(30)
     anthropic.reply(
