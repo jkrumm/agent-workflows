@@ -497,7 +497,10 @@ export function createProxy(options: ProxyOptions): GatewayProxy {
     options.outbox?.poke()
   }
 
-  /** §Picking a pool: the pick, the forward, and on a balance refusal one more pick and forward. */
+  /**
+   * §Picking a pool: the pick and the forward. A balance refusal drains that pool and picks again without it, until the
+   * pick is no pool: the loop ends after at most one attempt per pool, on IU or on the 402.
+   */
   const serveMessages = async (
     x: Exchange,
     picking: { claudeCodeShaped: boolean; fallbackNone: boolean },
@@ -506,7 +509,6 @@ export function createProxy(options: ProxyOptions): GatewayProxy {
     const record = !countTokens
     const input = { caller: x.caller, session: x.session, ...picking }
     const exclude: string[] = []
-    let retried = false
     for (;;) {
       const pick = pools.pick({ ...input, exclude })
       recordPick(x, pick, record)
@@ -523,11 +525,8 @@ export function createProxy(options: ProxyOptions): GatewayProxy {
           held = refusal.bytes
           if (refusal.balance) {
             pools.drained(pick.pool, pick.cycleStart)
-            if (!retried) {
-              retried = true
-              exclude.push(pick.pool)
-              continue
-            }
+            exclude.push(pick.pool)
+            continue
           }
         }
       } catch (error) {

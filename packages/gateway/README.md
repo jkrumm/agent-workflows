@@ -55,8 +55,8 @@ pool's refs are not read. The process never reads `iu.env` or `athena-iu.env`.
 3. A new session takes the eligible pool that expires soonest.
 4. With no pool eligible the request goes to IU, unless the caller sent `x-agw-fallback: none`: then a 402 with the
    balance marker.
-5. A pool's balance refusal marks it drained and runs the request once more on a fresh pick. A second refusal is
-   answered as it came.
+5. A pool's balance refusal marks it drained and picks again without it, pool by pool, until the pick is no pool: IU,
+   or the 402.
 
 The label of the IU passthrough is `iu-api` everywhere, because a credit pool is named `iu`. Bindings are written only
 after an upstream 2xx.
