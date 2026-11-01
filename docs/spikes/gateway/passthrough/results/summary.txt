@@ -1,0 +1,33 @@
+== passthrough spike summary ==
+model claude-haiku-5-5 listed by GET /v1/models; beta list: interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14,extended-cache-ttl-2025-04-11
+PASS  1 body hash identity: 4/4 calls client == inbound == sent (sha256 of 22216 / 22214 bytes)
+PASS  2 cache read, non-streamed: call 1 write 7680 read 0 (1h write 7680); call 2 write 0 read 7680
+PASS  2 cache read, streamed: call 1 write 7681 read 0 (1h write 7681); call 2 write 0 read 7681
+PASS  3 tee usage == raw usage: 4/4 calls equal on input/cache_creation/cache_read/output; e.g. {"input_tokens":88,"cache_creation_input_tokens":0,"cache_read_input_tokens":7681,"output_tokens":4}
+
+TTFT, streamed, N=5 per path, interleaved (alternating order), cache warm (all reads > 0: true); ms from fetch() to:
+| path | headers med | first byte med | min-max | sd | first content_block_delta med | min-max | sd |
+|-|-|-|-|-|-|-|-|
+| direct | 745 | 745 | 693-884 | 72 | 745 | 694-884 | 72 |
+| proxy | 733 | 733 | 679-766 | 33 | 733 | 679-766 | 33 |
+PASS  4 TTFT first byte: proxy - direct median = -12 ms, noise (larger sd) 72 ms
+PASS  4 TTFT first content delta: proxy - direct median = -12 ms, noise (larger sd) 72 ms
+   raw samples (ms) first byte: direct 766,884,745,693,736 | proxy 766,745,719,733,679
+   raw samples (ms) first delta: direct 766,884,745,694,736 | proxy 766,745,719,733,679
+
+malformed (no `messages`): proxy 400 {"type":"error","error":{"type":"invalid_request_error","message":"messages: Field required"},"request_id":"req_<id>"}
+                           direct 400 {"type":"error","error":{"type":"invalid_request_error","message":"messages: Field required"},"request_id":"req_<id>"}
+PASS  malformed passes through unchanged: status 400 vs 400, bodies equal after id strip
+
+headers: direct 30, proxy 29; ratelimit+request-id direct [anthropic-ratelimit-input-tokens-limit, anthropic-ratelimit-input-tokens-remaining, anthropic-ratelimit-input-tokens-reset, anthropic-ratelimit-output-tokens-limit, anthropic-ratelimit-output-tokens-remaining, anthropic-ratelimit-output-tokens-reset, anthropic-ratelimit-requests-limit, anthropic-ratelimit-requests-remaining, anthropic-ratelimit-requests-reset, anthropic-ratelimit-tokens-limit, anthropic-ratelimit-tokens-remaining, anthropic-ratelimit-tokens-reset, request-id]
+PASS  ratelimit + request-id headers pass: 13 headers match by name; only in direct: [connection], only in proxy: []
+   content-encoding direct/proxy: gzip/gzip; forwarded request headers (names): accept,accept-encoding,anthropic-beta,anthropic-version,content-type,user-agent,x-agw-run-id,x-api-key; dropped: authorization,connection,content-length,host,x-api-key
+
+probe beta +claude-code-20250219: 400 {"type":"error","error":{"type":"invalid_request_error","message":"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits."},"request_id":"req_<id>"}
+probe beta +claude-code-20250219 + oauth-2025-04-20: 400 {"type":"error","error":{"type":"invalid_request_error","message":"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits."},"request_id":"req_<id>"}
+
+probe identity system prefix "You are Claude Code, Anthropic's official CLI for Claude.": 400 {"type":"error","error":{"type":"invalid_request_error","message":"Your credit balance is too low to access the Anthropi
+probe identity user-agent claude-cli/2.1 + x-app: cli: 400 {"type":"error","error":{"type":"invalid_request_error","message":"Your credit balance is too low to access the Anthropi
+
+upstream /v1/messages calls this run: 22 (total spent 28/40)
+RESULT: all checks PASS

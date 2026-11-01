@@ -1,0 +1,9 @@
+{
+  "name": "spike-gateway-passthrough",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "replay": "bun replay.ts",
+    "selftest": "bun selftest.ts"
+  }
+}
