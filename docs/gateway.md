@@ -113,8 +113,10 @@ with an admin key, at boot (before listening, 30 s at most) and hourly:
   reads the rolling 31 days, and there the reconciled figure replaces the floor.
 - **Any failure** (admin key missing, a non-2xx, a 30 s timeout) keeps the ledger meter. It shows as `reconcileError` on
   `/health` and logs once per kind.
-- **The last figure is stored per pool and cycle in the ledger DB.** A boot whose live reconcile fails takes it plus the
-  ledger since it, so a restart during an Admin API outage keeps the outside spend.
+- **The high-water mark is stored per pool and cycle in the ledger DB:** the larger of the last mark plus the ledger since
+  it and the new figure. Each start applies it first, before listening and before any live call, so a restart during an
+  Admin API outage or on a lagging report keeps the outside spend. An unknown cycle stores its latest figure, since its
+  window moves.
 
 ## Callers and attribution
 
