@@ -56,7 +56,7 @@ const reconciler = new Reconciler({
   logger,
   baseUrl: ANTHROPIC_BASE,
 })
-await Promise.race([reconciler.runAll(), Bun.sleep(FIRST_RECONCILE_MS)])
+await Promise.race([reconciler.boot(), Bun.sleep(FIRST_RECONCILE_MS)])
 reconciler.start()
 
 const requeuedAtStart = ledger.requeueQuarantined()

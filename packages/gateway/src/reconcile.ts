@@ -1,9 +1,13 @@
 import { z } from 'zod'
-import type { Logger } from './log.ts'
+import type { FloorStore } from './ledger.ts'
+import { errorMessage, type Logger } from './log.ts'
 import { cycleOf, type MeterSource, type Pools, type RegistryPool } from './pools/index.ts'
 
 const DAY_MS = 86_400_000
 const HOUR_MS = 3_600_000
+/** A stored figure of an unknown (rolling) cycle stops being one after the window it covered. */
+const ROLLING_WINDOW_MS = 31 * DAY_MS
+const ROLLING_KEY = 'rolling'
 /** The whole cost-report read of one pool, pages included. */
 const CALL_TIMEOUT_MS = 30_000
 const ANTHROPIC_VERSION = '2023-06-01'
@@ -77,7 +81,9 @@ async function costReportUsd(input: {
 /**
  * Spend made outside the gateway counts against the credit, and no API returns a balance. At boot and hourly: reconciled
  * = the cost report over the cycle's complete UTC days + the ledger since the start of the current UTC day (the report
- * has no row for today), handed to `pools.reconcile`, which keeps it as a floor. Any failure keeps the ledger meter.
+ * has no row for today), handed to `pools.reconcile`, which keeps it as a floor, and stored. Any failure keeps the ledger
+ * meter; at boot, the stored figure of the current cycle plus the ledger since it, so a restart during an Admin API
+ * outage keeps the outside spend.
  */
 export class Reconciler {
   private readonly state = new Map<string, ReconcileStatus>()
@@ -86,7 +92,7 @@ export class Reconciler {
   private readonly registry: RegistryPool[]
   private readonly adminKeys: ReadonlyMap<string, string>
   private readonly pools: Pick<Pools, 'reconcile'>
-  private readonly ledger: MeterSource
+  private readonly ledger: MeterSource & FloorStore
   private readonly logger: Logger
   private readonly baseUrl: string
   private readonly now: () => Date
@@ -97,7 +103,7 @@ export class Reconciler {
     registry: RegistryPool[]
     adminKeys: ReadonlyMap<string, string>
     pools: Pick<Pools, 'reconcile'>
-    ledger: MeterSource
+    ledger: MeterSource & FloorStore
     logger: Logger
     baseUrl: string
     now?: () => Date
@@ -120,6 +126,15 @@ export class Reconciler {
     await Promise.all(this.registry.map((pool) => this.run(pool)))
   }
 
+  /** The start's run: a pool whose live reconcile fails falls back on its stored figure. Never rejects. */
+  async boot(): Promise<void> {
+    await Promise.all(
+      this.registry.map(async (pool) => {
+        if (!(await this.run(pool))) this.restoreFloor(pool)
+      }),
+    )
+  }
+
   start(): void {
     this.timer = setInterval(() => void this.runAll(), HOUR_MS)
     this.timer.unref()
@@ -130,7 +145,8 @@ export class Reconciler {
     this.timer = null
   }
 
-  private async run(pool: RegistryPool): Promise<void> {
+  /** True when the pool was reconciled. */
+  private async run(pool: RegistryPool): Promise<boolean> {
     try {
       const adminKey = this.adminKeys.get(pool.id)
       if (adminKey === undefined) throw new ReportFailure('admin-key-missing')
@@ -142,11 +158,44 @@ export class Reconciler {
       const reported =
         startingAt < today ? await costReportUsd({ baseUrl: this.baseUrl, adminKey, startingAt, endingAt: today }) : 0
       // One synchronous tick from here on: no charge may fall between the ledger read and the reconcile.
-      this.pools.reconcile(pool.id, reported + this.ledger.spentSince(pool.id, today), cycle.start.toISOString())
-      this.state.set(pool.id, { reconciledAt: this.now().toISOString(), reconcileError: null })
+      const usd = reported + this.ledger.spentSince(pool.id, today)
+      const reconciledAt = this.now()
+      this.pools.reconcile(pool.id, usd, cycle.start.toISOString())
+      this.store(pool, usd, reconciledAt)
+      this.state.set(pool.id, { reconciledAt: reconciledAt.toISOString(), reconcileError: null })
       this.logged.delete(pool.id)
+      return true
     } catch (error) {
       this.failed(pool.id, error)
+      return false
+    }
+  }
+
+  private cycleKey(pool: RegistryPool, start: Date): string {
+    return pool.cycleDay === null ? ROLLING_KEY : start.toISOString()
+  }
+
+  /** A figure not stored costs one restart's fallback, never this reconcile. */
+  private store(pool: RegistryPool, usd: number, at: Date): void {
+    try {
+      this.ledger.saveFloor(pool.id, this.cycleKey(pool, cycleOf(pool.cycleDay, at).start), { usd, at })
+    } catch (error) {
+      this.logger.warn(`reconcile ${pool.id}: the figure was not stored`, { error: errorMessage(error) })
+    }
+  }
+
+  private restoreFloor(pool: RegistryPool): void {
+    try {
+      const at = this.now()
+      const cycle = cycleOf(pool.cycleDay, at)
+      const floor = this.ledger.floorOf(pool.id, this.cycleKey(pool, cycle.start))
+      if (floor === null) return
+      if (pool.cycleDay === null && at.getTime() - floor.at.getTime() > ROLLING_WINDOW_MS) return
+      const usd = floor.usd + this.ledger.spentSince(pool.id, floor.at)
+      this.pools.reconcile(pool.id, usd, cycle.start.toISOString())
+      this.logger.info(`reconcile ${pool.id}: restored the stored figure`, { pool: pool.id, usd })
+    } catch (error) {
+      this.logger.warn(`reconcile ${pool.id}: the stored figure was not restored`, { error: errorMessage(error) })
     }
   }
 

@@ -89,8 +89,27 @@ const SCHEMA = `
     unique (request_id, picked)
   );
   create index if not exists picks_outbox on picks (id) where synced_at_ms is null and quarantine_error is null;
+  create table if not exists reconcile_floors (
+    pool text primary key,
+    cycle_key text not null,
+    usd real not null,
+    at_ms integer not null
+  );
   create table if not exists probe (id integer primary key check (id = 1), at_ms integer not null);
 `
+
+/** The last reconciled figure of a pool, and the instant it counts up to. */
+export interface StoredFloor {
+  usd: number
+  at: Date
+}
+
+/** Where a reconciled figure outlives the process. */
+export interface FloorStore {
+  saveFloor(pool: string, cycleKey: string, floor: StoredFloor): void
+  /** Null when the pool has no figure for this cycle. */
+  floorOf(pool: string, cycleKey: string): StoredFloor | null
+}
 
 type Stored = { id: number; row_json: string }
 
@@ -100,7 +119,7 @@ type Stored = { id: number; row_json: string }
  * the meter survives a restart without Postgres). `written_at_ms` is the instant the meter works with: `pools.charge`
  * takes the same instant as `rowAt`.
  */
-export class Ledger implements MeterSource {
+export class Ledger implements MeterSource, FloorStore {
   private readonly db: Database
   private readonly now: () => number
   private lastWriteError: string | null = null
@@ -157,6 +176,24 @@ export class Ledger implements MeterSource {
       )
       .get({ pool, since: since.getTime() })
     return row?.usd ?? 0
+  }
+
+  saveFloor(pool: string, cycleKey: string, floor: StoredFloor): void {
+    this.db
+      .query(
+        `insert into reconcile_floors (pool, cycle_key, usd, at_ms) values ($pool, $key, $usd, $at)
+         on conflict (pool) do update set cycle_key = excluded.cycle_key, usd = excluded.usd, at_ms = excluded.at_ms`,
+      )
+      .run({ pool, key: cycleKey, usd: floor.usd, at: floor.at.getTime() })
+  }
+
+  floorOf(pool: string, cycleKey: string): StoredFloor | null {
+    const row = this.db
+      .query<{ usd: number; at_ms: number }, { pool: string; key: string }>(
+        'select usd, at_ms from reconcile_floors where pool = $pool and cycle_key = $key',
+      )
+      .get({ pool, key: cycleKey })
+    return row === null ? null : { usd: row.usd, at: new Date(row.at_ms) }
   }
 
   /** The oldest rows the outbox still owes, up to `limit` per table. */
