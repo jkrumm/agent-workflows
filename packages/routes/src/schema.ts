@@ -27,8 +27,10 @@ export const rateSchema = z
     outputPerM: z.number().nonnegative(),
     /** Reads of a prompt-cache entry. */
     cacheReadPerM: z.number().nonnegative().optional(),
-    /** Writes of a prompt-cache entry. */
+    /** Writes of a prompt-cache entry (Anthropic: the 5-minute entry). */
     cacheWritePerM: z.number().nonnegative().optional(),
+    /** Writes of a 1-hour prompt-cache entry (Anthropic: 2x input); `cacheWritePerM` prices them where this is absent. */
+    cacheWrite1hPerM: z.number().nonnegative().optional(),
     /**
      * The long-prompt tier. A rate without `longPrompt` has no tier and is priced flat at any size. With it, a request
      * whose prompt (input including cache reads and writes) is above `longPromptTokens` bills `inputMultiplier` times the

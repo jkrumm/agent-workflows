@@ -162,3 +162,23 @@ A route flip changes what the next run costs and how well it caches:
 - **A fallback** runs on another model: its first call pays full input price (the cache is per model), at Terra's rate, which is 10x Haiku 5.5's input and output. It only runs while the primary's provider is out of balance.
 - **Haiku 5.5** bills 5x above 100K prompt tokens per request; a long agent episode costs more than the list rate suggests. `costFromUsage` prices a single call over that size at the tier; OpenCode's own per-message cost knows only the base card, so the OpenCode host re-prices a message over the threshold with the rate (`priceOpenCodeMessages`).
 - The fingerprint changes on any of these, so runs before and after a flip never share a group.
+
+## Claude models
+
+`src/table/claude.ts` holds the three current Claude models (`claude-haiku-5-5`, `claude-sonnet-5-5`, `claude-opus-5-5`), their
+list rates and the alias map `haiku | sonnet | opus`. It is a route group with no routes: nothing in the agw route table runs
+on a Claude model. Its one user is the inference gateway (`docs/gateway.md` §Model aliases, §Picking a pool), which resolves
+the alias a client sends and prices each Anthropic response.
+
+```ts
+import { claudeRate, CLAUDE_MODELS, costFromUsage, resolveModelAlias } from '@agent-workflows/routes'
+
+resolveModelAlias('sonnet') // the Sonnet id; anything else (an id, 'Sonnet', 'gpt-x') comes back untouched
+claudeRate('opus') // Rate | undefined, by id or alias; a copy
+costFromUsage('iu-anthropic', usage, claudeRate(model)) // usage as Anthropic returns it
+```
+
+`Rate.cacheWrite1hPerM` prices the 1-hour cache write (2x input; the 5-minute write, `cacheWritePerM`, is 1.25x). `costFromUsage` reads
+Anthropic's `usage.cache_creation.{ephemeral_5m,ephemeral_1h}_input_tokens`: `cache_creation_input_tokens` is the total, the 1h part is
+priced at the 1h rate and the rest as 5m; without the split every write is 5m. Haiku 5.5 carries the long-prompt tier (5x over 100,000
+prompt tokens, the whole request); Sonnet and Opus 5.5 bill the full 1M context flat. Sources and dates are in the file.

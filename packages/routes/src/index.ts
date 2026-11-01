@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto'
 import { applyPatch, OVERRIDES_ENV, RouteOverrideError, readOverrides } from './overrides.ts'
 import { DEFAULT_ROUTES } from './registry.ts'
-import type { ResolvedRoute, RouteEntry, RouteId } from './schema.ts'
+import type { Rate, ResolvedRoute, RouteEntry, RouteId } from './schema.ts'
+import { CLAUDE_ALIASES, CLAUDE_RATES } from './table/claude.ts'
 
 export { BALANCE_MARKER, isBalanceFailure } from './balance.ts'
 export {
@@ -107,4 +108,24 @@ export function routeFingerprint(id: RouteId, env: Env = process.env): string {
   return createHash('sha256')
     .update(canonical(resolveRoute(id, env)))
     .digest('hex')
+}
+
+/** Every Claude model id the table prices (read-only). */
+export const CLAUDE_MODELS: readonly string[] = Object.freeze(Object.keys(CLAUDE_RATES))
+
+/**
+ * An alias (`haiku`, `sonnet`, `opus`: exact, case-sensitive) to the id of the current model of that tier; anything
+ * else, including a concrete id, comes back untouched.
+ */
+export function resolveModelAlias(model: string): string {
+  return Object.hasOwn(CLAUDE_ALIASES, model) ? (CLAUDE_ALIASES[model] as string) : model
+}
+
+/**
+ * The rate of a Claude model by concrete id or alias, a copy that is safe to mutate; `undefined` for any other model.
+ * The gateway prices an Anthropic response with `costFromUsage('iu-anthropic', usage, claudeRate(model))`.
+ */
+export function claudeRate(model: string): Rate | undefined {
+  const id = resolveModelAlias(model)
+  return Object.hasOwn(CLAUDE_RATES, id) ? structuredClone(CLAUDE_RATES[id]) : undefined
 }

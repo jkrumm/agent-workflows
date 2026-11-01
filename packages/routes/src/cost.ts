@@ -18,6 +18,11 @@ export interface ProviderUsage extends Pick<PriceUsage, 'input_tokens_details' |
   outputTokens?: number
   cache_read_input_tokens?: number | null
   cache_creation_input_tokens?: number | null
+  /** Anthropic's split of the cache writes by lifetime; absent on older responses, then every write counts as 5m. */
+  cache_creation?: {
+    ephemeral_5m_input_tokens?: number | null
+    ephemeral_1h_input_tokens?: number | null
+  } | null
   prompt_tokens_details?: { cached_tokens?: number | null } | null
 }
 
@@ -29,9 +34,23 @@ function count(...values: (number | undefined)[]): number | null {
 }
 
 /**
+ * Cache writes split by lifetime. `cache_creation_input_tokens` is the total; `cache_creation.ephemeral_1h_input_tokens`
+ * is the part written to the 1-hour cache, and the rest counts as 5-minute, as it did before the split existed. Without
+ * the total, the split's own two counts are the writes. `null` when the 1h part exceeds the total (a malformed block).
+ */
+function cacheWrites(usage: ProviderUsage): { write5m: number; write1h: number } | null {
+  const total = count(usage.cache_creation_input_tokens ?? undefined)
+  const write1h = count(usage.cache_creation?.ephemeral_1h_input_tokens ?? undefined) ?? 0
+  if (total === null)
+    return { write5m: count(usage.cache_creation?.ephemeral_5m_input_tokens ?? undefined) ?? 0, write1h }
+  return write1h > total ? null : { write5m: total - write1h, write1h }
+}
+
+/**
  * USD for one call. The provider's `usage.cost` wins on every wire; otherwise the route's rate is
  * applied: input excluding cache tokens at `inputPerM`, cache reads at `cacheReadPerM`, cache writes
- * at `cacheWritePerM`, output (reasoning tokens are already inside it) at `outputPerM`. Cache tokens
+ * at `cacheWritePerM` (1-hour writes at `cacheWrite1hPerM`, else the same), output (reasoning tokens are already
+ * inside it) at `outputPerM`. Cache tokens
  * without the matching cache rate, neither cost nor rate, cache counts above the cache-inclusive prompt
  * total make the cost `unknown`: never free, never 0. One rule for size: a rate without `longPrompt` has no tier and is
  * priced flat at any size; a rate with it prices a prompt (input including cache) above `longPromptTokens` at the
@@ -48,7 +67,10 @@ export function costFromUsage(_wire: Wire, usage: ProviderUsage | null | undefin
   const output = count(usage.completion_tokens, usage.output_tokens, usage.outputTokens)
   const cacheRead =
     count(usage.cache_read_input_tokens ?? undefined, usage.prompt_tokens_details?.cached_tokens ?? undefined) ?? 0
-  const cacheWrite = count(usage.cache_creation_input_tokens ?? undefined) ?? 0
+  const written = cacheWrites(usage)
+  if (!written) return { usd: null, source: 'unknown' }
+  const { write5m, write1h } = written
+  const cacheWrite = write5m + write1h
   const cacheIncluded = count(usage.prompt_tokens, usage.inputTokens)
   if (cacheIncluded !== null && cacheRead + cacheWrite > cacheIncluded) return { usd: null, source: 'unknown' }
   const input = cacheIncluded !== null ? cacheIncluded - cacheRead - cacheWrite : count(usage.input_tokens)
@@ -56,13 +78,21 @@ export function costFromUsage(_wire: Wire, usage: ProviderUsage | null | undefin
   const tier = rate.longPrompt
   const long =
     tier !== undefined && input + cacheRead + cacheWrite > (rate.longPromptTokens ?? Number.POSITIVE_INFINITY)
-  if ((cacheRead > 0 && rate.cacheReadPerM === undefined) || (cacheWrite > 0 && rate.cacheWritePerM === undefined)) {
+  const rate1h = rate.cacheWrite1hPerM ?? rate.cacheWritePerM
+  if (
+    (cacheRead > 0 && rate.cacheReadPerM === undefined) ||
+    (write5m > 0 && rate.cacheWritePerM === undefined) ||
+    (write1h > 0 && rate1h === undefined)
+  ) {
     return { usd: null, source: 'unknown' }
   }
   const inputScale = long ? tier.inputMultiplier : 1
   const outputScale = long ? tier.outputMultiplier : 1
   const usd =
-    (input * rate.inputPerM + cacheRead * (rate.cacheReadPerM ?? 0) + cacheWrite * (rate.cacheWritePerM ?? 0)) *
+    (input * rate.inputPerM +
+      cacheRead * (rate.cacheReadPerM ?? 0) +
+      write5m * (rate.cacheWritePerM ?? 0) +
+      write1h * (rate1h ?? 0)) *
       inputScale +
     output * rate.outputPerM * outputScale
   return { usd: usd / 1_000_000, source: 'rate' }
