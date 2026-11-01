@@ -51,5 +51,7 @@ accepted); Haiku 5.5 caches from 512 tokens; the Anthropic SDK sends the key as 
 - **Payment method and billing days** are still owed by the owner (PLAN context). With a payment method on file,
   overspend past the credit bills instead of being refused, and the headroom is only a buffer.
 - `me`'s cost units and grouping follow from the same endpoint but were not observed (no spend yet).
+- Owner check (2026-11-01, from the mini): the `iu` and `me` API keys answer `count_tokens` 200 direct, and both admin
+  keys answer `cost_report` 200; `me2` is still a placeholder. Through the proxy `count_tokens` stays unexercised.
 - Not exercised: OpenCode child sessions (source only), tool-use responses, `count_tokens`, mid-stream upstream errors
   and client disconnects through the proxy.
