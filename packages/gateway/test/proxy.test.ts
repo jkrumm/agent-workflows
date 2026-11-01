@@ -484,15 +484,39 @@ describe('picking', () => {
     expect(response.headers.get('x-agw-pool')).toBe('iu-api')
   })
 
-  test('with two pools the retry takes the next; a second refusal is answered, both drained', async () => {
+  test('every refusing pool is drained and skipped until the pick is no pool', async () => {
     anthropic.reply(refusalResponse)
+    const gw = start({ registry: [pool('a'), pool('b'), pool('c')] })
+    const response = await gw.call(MESSAGES, jsonBody(request()))
+    expect(response.status).toBe(200)
+    await response.text()
+    expect(response.headers.get('x-agw-pool')).toBe('iu-api')
+    expect(anthropic.seen).toHaveLength(3)
+    expect(iu.seen).toHaveLength(1)
+    expect(gw.pools.status().every((status) => status.drainedUntil !== null)).toBe(true)
+    expect(gw.rows().picks.map(({ row }) => row.picked)).toEqual(['a', 'b', 'c', 'iu-api'])
+    expect(gw.rows().records).toHaveLength(1)
+  })
+
+  test('a retry stops on the first pool that serves', async () => {
+    let calls = 0
+    anthropic.reply(() => (++calls === 1 ? refusalResponse() : anthropicReply()))
     const gw = start({ registry: [pool('a'), pool('b')] })
     const response = await gw.call(MESSAGES, jsonBody(request()))
-    expect(response.status).toBe(400)
-    expect(await response.json()).toEqual(BALANCE_REFUSAL)
-    expect(anthropic.seen).toHaveLength(2)
+    await response.text()
+    expect(response.headers.get('x-agw-pool')).toBe('b')
+    expect(gw.pools.status().map((status) => status.drainedUntil !== null)).toEqual([true, false])
+    expect(gw.rows().records[0]?.row.account).toBe('b')
+  })
+
+  test('with every pool refusing and x-agw-fallback: none, the end is the 402', async () => {
+    anthropic.reply(refusalResponse)
+    const gw = start({ registry: [pool('a'), pool('b')] })
+    const init = jsonBody(request())
+    const response = await gw.call(MESSAGES, { ...init, headers: { ...init.headers, 'x-agw-fallback': 'none' } })
+    expect(response.status).toBe(402)
     expect(iu.seen).toHaveLength(0)
-    expect(gw.pools.status().every((status) => status.drainedUntil !== null)).toBe(true)
+    expect(gw.rows().picks.map(({ row }) => row.picked)).toEqual(['a', 'b', 'refused'])
   })
 
   test('x-agw-fallback: none answers 402 with the marker', async () => {

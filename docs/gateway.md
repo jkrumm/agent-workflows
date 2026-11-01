@@ -84,9 +84,9 @@ Per request, in order:
 3. **No pool eligible.** IU `/anthropic`, unless the caller sent `x-agw-fallback: none`. Then the gateway answers 402
    with the balance marker, and the caller's own route fallback (agw: GPT on IU) takes over.
 4. **Refused for balance anyway** (meter drift): `isBalanceFailure` knows Anthropic's 400 "credit balance is too low";
-   the pool is marked drained for the cycle and the request runs once more on a fresh pick (the next pool, else IU, else
-   the 402). A second refusal is answered as it came. One cache miss, accepted. Step 0 keeps a funded pool from being
-   drain-marked by a Claude Code refusal.
+   the pool is marked drained for the cycle and the request is picked again without it, pool by pool, until the pick is
+   no pool: IU, or the 402. One cache miss, accepted. Step 0 keeps a funded pool from being drain-marked by a Claude Code
+   refusal.
 
 **Meter.** Per pool and cycle: at boot the ledger's rows since the cycle start, then each response priced with the route
 rates. A model with no rate is charged at the most expensive Claude rate, and its row says `costEstimated: true`.
