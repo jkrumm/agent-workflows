@@ -53,7 +53,7 @@ eval needs move into Wave 5. The rest waits.
   `make secrets-seed` treats a ref that does not exist yet before adding refs to `dotfiles-private/headless.refs`.
 - [x] `isBalanceFailure` (`packages/routes/src/balance.ts`) learns Anthropic's "credit balance is too low" refusal, with tests.
 - [x] `docs/spikes/gateway/REPORT.md` with the verdicts; anything that contradicts `docs/gateway.md` is fixed there.
-- Close-out: `docs/waves/handoff/lead.md` at the Wave 1 commit; verdicts `docs/spikes/gateway/REPORT.md`. Wave 2 also
+**Left behind:** close-out in `docs/waves/handoff/lead.md` at the Wave 1 commit; verdicts `docs/spikes/gateway/REPORT.md`. Wave 2 also
   builds §Picking a pool step 0 (Claude-Code-shaped requests skip the credit pools) and the 20–70 min cost-API lag
   rule (verify never waits on the cost API).
 
