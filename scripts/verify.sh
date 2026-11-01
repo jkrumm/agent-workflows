@@ -61,8 +61,8 @@ ok "deployed sha is origin/master (${deployed[1,12]})"
 
 password=$(secrets-run read "$PG_PASSWORD_REF" 2>/dev/null)
 [[ -n "$password" ]] || fail "cannot read $PG_PASSWORD_REF through secrets-run"
-psql_err=$(mktemp -t agw-verify) || fail "cannot create a temp file"
-agw_err=$(mktemp -t agw-verify) || fail "cannot create a temp file"
+psql_err=$(mktemp "${TMPDIR:-/tmp}/agw-verify.XXXXXX") || fail "cannot create a temp file"
+agw_err=$(mktemp "${TMPDIR:-/tmp}/agw-verify.XXXXXX") || fail "cannot create a temp file"
 trap 'rm -f "$psql_err" "$agw_err"' EXIT
 # One journal query; the SQL goes on stdin (psql interpolates :'var' there, not in -c), extra args are -v bindings.
 journal() {
@@ -149,7 +149,7 @@ door_status=$(curl -sS --max-time 10 -o /dev/null -w '%{http_code}' -X POST -H '
 secret=$(secrets-run read "$API_SECRET_REF" 2>/dev/null)
 [[ -n "$secret" ]] || fail "cannot read $API_SECRET_REF through secrets-run"
 # The bearer goes through curl's config on stdin, never the command line (ps would show it).
-door_body=$(mktemp -t agw-verify) || fail "cannot create a temp file"
+door_body=$(mktemp "${TMPDIR:-/tmp}/agw-verify.XXXXXX") || fail "cannot create a temp file"
 trap 'rm -f "$psql_err" "$agw_err" "$door_body"' EXIT
 door_status=$(print -r -- "header = \"authorization: Bearer $secret\"" | curl -sS --max-time 30 -K - -o "$door_body" \
   -w '%{http_code}' -X POST -H 'content-type: application/json' -H 'x-agw-purpose: verify' --data '{}' \
@@ -193,8 +193,8 @@ gw_body=$(jq -n --arg system "$gw_system" '{
   messages: [{role: "user", content: "Reply with OK."}]
 }')
 gw_session="verify-$(date +%s)"
-gw_head=$(mktemp -t agw-verify) || fail "cannot create a temp file"
-gw_resp=$(mktemp -t agw-verify) || fail "cannot create a temp file"
+gw_head=$(mktemp "${TMPDIR:-/tmp}/agw-verify.XXXXXX") || fail "cannot create a temp file"
+gw_resp=$(mktemp "${TMPDIR:-/tmp}/agw-verify.XXXXXX") || fail "cannot create a temp file"
 trap 'rm -f "$psql_err" "$agw_err" "$door_body" "$gw_head" "$gw_resp"' EXIT
 
 # One POST through the gateway; the key goes to curl on stdin, never the command line. Sets gw_status, gw_id, gw_pool.
