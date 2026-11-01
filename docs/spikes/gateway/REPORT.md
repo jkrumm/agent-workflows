@@ -9,7 +9,7 @@ Verdicts for Wave 1 of `docs/waves/PLAN.md` (2026-11-01). Detail and evidence pe
 |-|-|-|
 | Passthrough spike | **PASS** on every check, Haiku 5.5 on the `iu` org, 28 upstream calls. Inbound and upstream bytes hash equal; the second identical call reads the 1h cache (7,680 tokens written, then read); the tee's usage equals the raw response's on streamed and non-streamed calls; TTFT through the proxy is within jitter of direct (median −12 ms, sd 72 ms); errors, `request-id` and the 12 `anthropic-ratelimit-*` headers pass through | [passthrough.md](passthrough.md) |
 | Header probes | **OpenCode: yes.** The pinned build sends `x-opencode-session-id` and `x-session-affinity` on every request unasked; a `model.request` plugin hook adds `x-agw-*` headers per request with the session's `metadata` in scope. **Hermes: yes.** `session_affinity_header: <name>` puts the conversation id on every request, auxiliary calls included; static `extra_headers` are dropped on auxiliary calls. Zero LLM calls (loopback capture server) | [headers.md](headers.md) |
-| Admin API probe | **Works on a one-person org** (`iu` and `me`, every endpoint 200). `analytics/cost` (beta) is the reconciler's endpoint: it groups by API key, `amount` is cents at list price, before credits. Legacy `cost_report` cannot group by key and has no row for the current UTC day. No endpoint returns a balance. **Lag of a fresh request: not measured** (below) | [admin-api.md](admin-api.md) |
+| Admin API probe | **Works on a one-person org** (`iu` and `me`, every endpoint 200). `analytics/cost` (beta) is the reconciler's endpoint: it groups by API key, `amount` is cents at list price, before credits. Legacy `cost_report` cannot group by key and has no row for the current UTC day. No endpoint returns a balance. fresh-request usage appears after 20 to 70 minutes (below) | [admin-api.md](admin-api.md) |
 | Registry | `platform` block per account in dotfiles `config/claude-accounts.json`, refs under `op://mini/claude-platform/`: `iu` and `me` enabled, `me2` disabled (its keys are a `REPLACE` placeholder until about 2026-11-02), `cycleDay` null on all three until the owner gives the billing days. Documented in dotfiles `docs/claude-accounts.md` | dotfiles PR #55 |
 | `isBalanceFailure` | Knows Anthropic's drained-org refusal: HTTP **400** `invalid_request_error`, "Your credit balance is too low to access the Anthropic API…" (not 402), on a 400 and without a status; a 400 carrying the transports' marker stays balance after truncation | PR #77 |
 | `secrets-seed` and missing refs | Moot: the owner seeded every `op://mini/claude-platform/*` ref on 2026-11-01. For the record, a ref whose item does not exist aborts the whole reseal (dotfiles `scripts/secrets-seed.sh`, `dead_refs`), so a ref goes into `headless.refs` only after its item exists | — |
@@ -40,11 +40,11 @@ accepted); Haiku 5.5 caches from 512 tokens; the Anthropic SDK sends the key as 
 
 ## Open findings
 
-- **Usage lag of a fresh request.** The passthrough spike's 28 Haiku calls (about 17:25–17:42 UTC) did not appear in the
-  `iu` org's `usage_report/messages` (1m buckets) or `analytics/usage` by 18:02 UTC, although the spike's key is the
-  org's active key (matched against the Admin API's key list). Anthropic documents about 5 minutes for the legacy usage
-  report and up to 24 hours for analytics. Wave 2's `make verify` must not assume the cost API sees a call within the
-  run; re-measure with `admin-api/probe.ts --watch` once the gateway carries traffic.
+- **Usage lag of a fresh request: 20 to 70 minutes.** The passthrough spike's Haiku calls (about 17:25–17:42 UTC) were
+  absent from the `iu` org's `usage_report/messages` and `analytics/usage` at 18:02 UTC and present (the 17:00 hourly
+  bucket) at 18:32 UTC, against Anthropic's "about 5 minutes" for the legacy report. The spike's key is the org's
+  active key (matched against the Admin API's key list). Wave 2's `make verify` must not expect the cost API to see a
+  call within the run; the reconciler stays hourly.
 - **Admin keys sit in the mini's shared secrets cache.** Any agent that can run `secrets-run` holds org-wide Admin
   authority for `iu` and `me` (raised in review of dotfiles PR #55). An owner decision; a least-privilege option is a
   separate reconciler-only cache scope.
