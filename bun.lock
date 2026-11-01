@@ -56,6 +56,13 @@
         "zod": "4.6.7",
       },
     },
+    "packages/gateway": {
+      "name": "@agent-workflows/gateway",
+      "version": "0.0.0",
+      "dependencies": {
+        "zod": "4.6.7",
+      },
+    },
     "packages/host": {
       "name": "@agent-workflows/host",
       "version": "0.0.0",
@@ -151,6 +158,8 @@
     "@agent-workflows/cli": ["@agent-workflows/cli@workspace:packages/cli"],
 
     "@agent-workflows/eval": ["@agent-workflows/eval@workspace:packages/eval"],
+
+    "@agent-workflows/gateway": ["@agent-workflows/gateway@workspace:packages/gateway"],
 
     "@agent-workflows/host": ["@agent-workflows/host@workspace:packages/host"],
 
