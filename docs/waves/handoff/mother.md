@@ -14,7 +14,7 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
   tailscale drift). Not ours; gates are judged on our rows only.
 
 ## Lead
-- None live. Spawn a fresh lead for Wave 1 (`RD_ORCHESTRATED=1 rd wave --role lead`).
+- Wave 1 lead `agent-workflows-w1-r3` (pane t3t, account me), spawned 2026-11-01 by mother t3s.
   Rotation policy: a fresh lead per wave unless the last one closed under ~30% context.
 
 ## Decisions taken
@@ -115,5 +115,5 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
   route avoids Requesty. For Wave 8's retro: decide's model move shifts the scorer judges' calibration.
 
 ## Next action
-- None. Owner-side open items: MacWhisper key paste; OCR and Hermes morning briefing re-enable are owner calls.
-  The factory re-plan starts from `docs/factory-input.md`.
+- Wait for the Wave 1 close-out in `docs/waves/handoff/lead.md`; judge it, tick PLAN, write the retro entry, then spawn
+  the Wave 2 lead. Owner-side open items: MacWhisper key paste; OCR and Hermes morning briefing re-enable.
