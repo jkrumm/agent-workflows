@@ -100,7 +100,8 @@ after an upstream 2xx.
 
 ## Lifecycle
 
-SIGTERM stops accepting, lets streams finish for 50 s, cuts the rest (each still writes its row), flushes for 5 s and
+SIGTERM stops accepting and lets requests finish for 50 s, an upload in progress included. It then cuts the rest: each
+writes its row and charge before the ledger closes, except an upload, which never went upstream. It flushes for 5 s and
 exits, within 60 s in all. The first reconcile holds the start for 30 s at most, then the gateway listens anyway.
 
 ## Tests
