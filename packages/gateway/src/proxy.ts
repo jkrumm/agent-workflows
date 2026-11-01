@@ -41,8 +41,12 @@ const HOP_BY_HOP: ReadonlySet<string> = new Set([
   'transfer-encoding',
   'upgrade',
 ])
+/** Header carriers of a door token beside `authorization`: the Anthropic, Gemini and Azure-style SDKs. */
+const CREDENTIAL_HEADERS = ['x-api-key', 'x-goog-api-key', 'api-key'] as const
+/** The query carrier (Gemini-style SDKs). */
+const CREDENTIAL_PARAM = 'key'
 /** Replaced (the caller's credentials) or recomputed by `fetch`. */
-const NOT_FORWARDED: ReadonlySet<string> = new Set(['authorization', 'x-api-key', 'host', 'content-length'])
+const NOT_FORWARDED: ReadonlySet<string> = new Set(['authorization', ...CREDENTIAL_HEADERS, 'host', 'content-length'])
 
 export interface ProxyOptions {
   pools: Pools
@@ -126,6 +130,15 @@ function upstreamHeaders(inbound: Headers, credential: Target['credential']): He
   return headers
 }
 
+/** The query string without the credential parameter; every other pair keeps its bytes. */
+function withoutCredential(search: string): string {
+  const kept = search
+    .slice(1)
+    .split('&')
+    .filter((pair) => pair !== '' && ![...new URLSearchParams(pair).keys()].includes(CREDENTIAL_PARAM))
+  return kept.length === 0 ? '' : `?${kept.join('&')}`
+}
+
 function responseHeaders(upstream: Headers, x: { requestId: string }, pool: string): Headers {
   const headers = new Headers()
   for (const [name, value] of upstream) if (!HOP_BY_HOP.has(name)) headers.append(name, value)
@@ -197,9 +210,15 @@ export function createProxy(options: ProxyOptions): GatewayProxy {
   const auth = callerAuth({ tokens: options.doorTokens, secret: options.apiSecret })
   const inflight = new Map<Exchange, Promise<void>>()
 
-  const callerOf = (headers: Headers): string | null => {
-    const key = headers.get('x-api-key')
-    return auth(headers.get('authorization')) ?? (key ? auth(`Bearer ${key}`) : null)
+  const callerOf = (headers: Headers, query: URLSearchParams): string | null => {
+    const bearer = auth(headers.get('authorization'))
+    if (bearer !== null) return bearer
+    const carried = [...CREDENTIAL_HEADERS.map((name) => headers.get(name)), ...query.getAll(CREDENTIAL_PARAM)]
+    for (const token of carried) {
+      const caller = token ? auth(`Bearer ${token}`) : null
+      if (caller !== null) return caller
+    }
+    return null
   }
 
   const routeOf = (pathname: string, search: string): Route | null => {
@@ -531,7 +550,7 @@ export function createProxy(options: ProxyOptions): GatewayProxy {
     }
   }
 
-  const open = (request: Request, url: URL, caller: string, system: string): Exchange => {
+  const open = (request: Request, url: URL, search: string, caller: string, system: string): Exchange => {
     const span = telemetry.span(`gateway ${request.method} ${url.pathname}`, request.headers)
     const abort = new AbortController()
     let timer: ReturnType<typeof setTimeout> | undefined
@@ -546,7 +565,7 @@ export function createProxy(options: ProxyOptions): GatewayProxy {
       session: null,
       method: request.method,
       path: url.pathname,
-      search: url.search,
+      search,
       inbound: request.headers,
       body: undefined,
       requestedModel: null,
@@ -598,8 +617,9 @@ export function createProxy(options: ProxyOptions): GatewayProxy {
   return {
     async handle(request, server) {
       const url = new URL(request.url)
-      const route = routeOf(url.pathname, url.search)
-      const caller = callerOf(request.headers)
+      const search = withoutCredential(url.search)
+      const route = routeOf(url.pathname, search)
+      const caller = callerOf(request.headers, url.searchParams)
       if (caller === null) {
         return route === null
           ? undefined
@@ -615,7 +635,7 @@ export function createProxy(options: ProxyOptions): GatewayProxy {
       const bytes = hasBody ? new Uint8Array(await request.arrayBuffer()) : undefined
       const anthropic = route.kind === 'messages'
       const parsed = bytes === undefined ? null : parseBody(bytes, request.headers.get('content-type'), anthropic)
-      const x = open(request, url, caller, anthropic ? 'anthropic' : route.system)
+      const x = open(request, url, search, caller, anthropic ? 'anthropic' : route.system)
       const onLeave = () => x.abort.abort()
       request.signal.addEventListener('abort', onLeave, { once: true })
       prepare(x, bytes, parsed, anthropic)
