@@ -33,28 +33,40 @@ function count(...values: (number | undefined)[]): number | null {
   return null
 }
 
-/**
- * Cache writes split by lifetime. `cache_creation_input_tokens` is the total; `cache_creation.ephemeral_1h_input_tokens`
- * is the part written to the 1-hour cache, and the rest counts as 5-minute, as it did before the split existed. Without
- * the total, the split's own two counts are the writes. `null` when the 1h part exceeds the total (a malformed block).
- */
-function cacheWrites(usage: ProviderUsage): { write5m: number; write1h: number } | null {
-  const total = count(usage.cache_creation_input_tokens ?? undefined)
-  const write1h = count(usage.cache_creation?.ephemeral_1h_input_tokens ?? undefined) ?? 0
-  if (total === null)
-    return { write5m: count(usage.cache_creation?.ephemeral_5m_input_tokens ?? undefined) ?? 0, write1h }
-  return write1h > total ? null : { write5m: total - write1h, write1h }
+/** A split count: absent (`null`/`undefined`), a valid count, or `'bad'` (negative or non-finite). */
+function splitCount(value: number | null | undefined): number | undefined | 'bad' {
+  if (value === null || value === undefined) return undefined
+  return Number.isFinite(value) && value >= 0 ? value : 'bad'
 }
 
 /**
- * USD for one call. The provider's `usage.cost` wins on every wire; otherwise the route's rate is
- * applied: input excluding cache tokens at `inputPerM`, cache reads at `cacheReadPerM`, cache writes
- * at `cacheWritePerM` (1-hour writes at `cacheWrite1hPerM`, else the same), output (reasoning tokens are already
- * inside it) at `outputPerM`. Cache tokens
- * without the matching cache rate, neither cost nor rate, cache counts above the cache-inclusive prompt
- * total make the cost `unknown`: never free, never 0. One rule for size: a rate without `longPrompt` has no tier and is
- * priced flat at any size; a rate with it prices a prompt (input including cache) above `longPromptTokens` at the
- * tier: the whole request, every input column times `inputMultiplier`, output times `outputMultiplier`.
+ * Cache writes split by lifetime. `cache_creation_input_tokens` is the total; `cache_creation.ephemeral_1h_input_tokens`
+ * is the part written to the 1-hour cache, and the rest counts as 5-minute, as it did before the split existed. Without
+ * the total, the split's own two counts are the writes. `null` (the cost is unknown) for a block that contradicts
+ * itself: a present split count that is negative or not finite, or a split (5m plus 1h) that is larger than the total.
+ */
+function cacheWrites(usage: ProviderUsage): { write5m: number; write1h: number } | null {
+  const total = count(usage.cache_creation_input_tokens ?? undefined)
+  const m5 = splitCount(usage.cache_creation?.ephemeral_5m_input_tokens)
+  const h1 = splitCount(usage.cache_creation?.ephemeral_1h_input_tokens)
+  if (m5 === 'bad' || h1 === 'bad') return null
+  const write1h = h1 ?? 0
+  if (total === null) return { write5m: m5 ?? 0, write1h }
+  if ((m5 ?? 0) + write1h > total) return null
+  return { write5m: total - write1h, write1h }
+}
+
+/**
+ * USD for one call. The provider's `usage.cost` wins on every wire; otherwise the route's rate is applied: input
+ * excluding cache tokens at `inputPerM`, cache reads at `cacheReadPerM`, 5-minute cache writes at `cacheWritePerM`,
+ * 1-hour cache writes at `cacheWrite1hPerM`, output (reasoning tokens are already inside it) at `outputPerM`.
+ * The cost is `unknown`, never free and never 0, when: there is no usage or no rate, or no input or output count;
+ * cache tokens come without the matching cache rate (a 1-hour write needs `cacheWrite1hPerM` itself, it does not fall
+ * back to the 5-minute rate); the cache counts are above the cache-inclusive prompt total; or the cache-write split
+ * contradicts itself (`cacheWrites`).
+ * One rule for size: a rate without `longPrompt` has no tier and is priced flat at any size; a rate with it prices a
+ * prompt (input including cache) above `longPromptTokens` at the tier: the whole request, every input column times
+ * `inputMultiplier`, output times `outputMultiplier`.
  * A route with a `price` (image, audio, Replicate: `price.ts`) is priced by it alone; `rate` is the text-token path.
  * `wire` is reserved for wire-specific cost rules; no wire needs one yet, so it is not read.
  */
@@ -78,11 +90,10 @@ export function costFromUsage(_wire: Wire, usage: ProviderUsage | null | undefin
   const tier = rate.longPrompt
   const long =
     tier !== undefined && input + cacheRead + cacheWrite > (rate.longPromptTokens ?? Number.POSITIVE_INFINITY)
-  const rate1h = rate.cacheWrite1hPerM ?? rate.cacheWritePerM
   if (
     (cacheRead > 0 && rate.cacheReadPerM === undefined) ||
     (write5m > 0 && rate.cacheWritePerM === undefined) ||
-    (write1h > 0 && rate1h === undefined)
+    (write1h > 0 && rate.cacheWrite1hPerM === undefined)
   ) {
     return { usd: null, source: 'unknown' }
   }
@@ -92,7 +103,7 @@ export function costFromUsage(_wire: Wire, usage: ProviderUsage | null | undefin
     (input * rate.inputPerM +
       cacheRead * (rate.cacheReadPerM ?? 0) +
       write5m * (rate.cacheWritePerM ?? 0) +
-      write1h * (rate1h ?? 0)) *
+      write1h * (rate.cacheWrite1hPerM ?? 0)) *
       inputScale +
     output * rate.outputPerM * outputScale
   return { usd: usd / 1_000_000, source: 'rate' }

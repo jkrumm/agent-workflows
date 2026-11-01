@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { applyPatch, OVERRIDES_ENV, RouteOverrideError, readOverrides } from './overrides.ts'
 import { DEFAULT_ROUTES } from './registry.ts'
 import type { Rate, ResolvedRoute, RouteEntry, RouteId } from './schema.ts'
-import { CLAUDE_ALIASES, CLAUDE_RATES } from './table/claude.ts'
+import { CLAUDE_ALIASES, CLAUDE_RATES, CLAUDE_SNAPSHOT_ID } from './table/claude.ts'
 
 export { BALANCE_MARKER, isBalanceFailure } from './balance.ts'
 export {
@@ -122,10 +122,11 @@ export function resolveModelAlias(model: string): string {
 }
 
 /**
- * The rate of a Claude model by concrete id or alias, a copy that is safe to mutate; `undefined` for any other model.
- * The gateway prices an Anthropic response with `costFromUsage('iu-anthropic', usage, claudeRate(model))`.
+ * The rate of a Claude model by alias, concrete id, or dated snapshot / `[1m]` form of one (`CLAUDE_SNAPSHOT_ID`);
+ * `undefined` for any other model. The shared, deeply frozen object: do not mutate it. The gateway prices an
+ * Anthropic response with `costFromUsage('iu-anthropic', usage, claudeRate(model))`.
  */
-export function claudeRate(model: string): Rate | undefined {
-  const id = resolveModelAlias(model)
-  return Object.hasOwn(CLAUDE_RATES, id) ? structuredClone(CLAUDE_RATES[id]) : undefined
+export function claudeRate(model: string): Readonly<Rate> | undefined {
+  const id = resolveModelAlias(model).replace(CLAUDE_SNAPSHOT_ID, '$1')
+  return Object.hasOwn(CLAUDE_RATES, id) ? CLAUDE_RATES[id] : undefined
 }

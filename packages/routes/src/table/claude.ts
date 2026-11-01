@@ -43,12 +43,23 @@ export const CLAUDE_OPUS_RATE = {
   cacheWrite1hPerM: 8,
 } satisfies Rate
 
-/** Concrete id to its rate. The key set is the one list of Claude models. */
+const frozen = (rate: Rate): Readonly<Rate> => {
+  if (rate.longPrompt) Object.freeze(rate.longPrompt)
+  return Object.freeze(rate)
+}
+
+/** Concrete id to its rate, deeply frozen. The key set is the one list of Claude models. */
 export const CLAUDE_RATES: Readonly<Record<string, Readonly<Rate>>> = Object.freeze({
-  'claude-haiku-5-5': CLAUDE_HAIKU_RATE,
-  'claude-sonnet-5-5': CLAUDE_SONNET_RATE,
-  'claude-opus-5-5': CLAUDE_OPUS_RATE,
+  'claude-haiku-5-5': frozen(CLAUDE_HAIKU_RATE),
+  'claude-sonnet-5-5': frozen(CLAUDE_SONNET_RATE),
+  'claude-opus-5-5': frozen(CLAUDE_OPUS_RATE),
 })
+
+/**
+ * A dated snapshot (`claude-sonnet-5-5-20261001`) or the context-window flag Claude Code appends (`[1m]`, same schedule:
+ * usage-tracker's price aliases) is the same model at the same rate. The match is on these models only.
+ */
+export const CLAUDE_SNAPSHOT_ID = /^(claude-(?:haiku|sonnet|opus)-5-5)(?:-[0-9]{8})?(?:\[[^\]]*\])?$/
 
 /** The short names a caller may send instead of an id: `haiku | sonnet | opus` to the current model of that tier. */
 export const CLAUDE_ALIASES: Readonly<Record<string, string>> = Object.freeze({

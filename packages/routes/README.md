@@ -178,7 +178,15 @@ claudeRate('opus') // Rate | undefined, by id or alias; a copy
 costFromUsage('iu-anthropic', usage, claudeRate(model)) // usage as Anthropic returns it
 ```
 
-`Rate.cacheWrite1hPerM` prices the 1-hour cache write (2x input; the 5-minute write, `cacheWritePerM`, is 1.25x). `costFromUsage` reads
-Anthropic's `usage.cache_creation.{ephemeral_5m,ephemeral_1h}_input_tokens`: `cache_creation_input_tokens` is the total, the 1h part is
-priced at the 1h rate and the rest as 5m; without the split every write is 5m. Haiku 5.5 carries the long-prompt tier (5x over 100,000
-prompt tokens, the whole request); Sonnet and Opus 5.5 bill the full 1M context flat. Sources and dates are in the file.
+`claudeRate` takes an alias, a concrete id, or a dated snapshot / `[1m]` form of one (`claude-sonnet-5-5-20261001`); it returns the
+shared, deeply frozen rate. `Rate.cacheWrite1hPerM` prices the 1-hour cache write (2x input; the 5-minute write, `cacheWritePerM`,
+is 1.25x). `costFromUsage` reads Anthropic's `usage.cache_creation.{ephemeral_5m,ephemeral_1h}_input_tokens`:
+`cache_creation_input_tokens` is the total, the 1h part is priced at the 1h rate and the rest as 5m; without the split every write is 5m.
+The cost is `unknown` when the split contradicts the total (a negative or non-finite count, or 5m plus 1h above the total) and when a
+call has 1h writes against a rate without `cacheWrite1hPerM`. Haiku 5.5 carries the long-prompt tier (5x over 100,000 prompt tokens, the
+whole request; the pricing page's threshold, which overstates against the Admin API's 200k label, the safe side for the meter); Sonnet and
+Opus 5.5 bill the full 1M context flat. Sources and dates are in the file.
+
+**Known gap:** the 1h split is priced only where the caller passes `cache_creation` through (the gateway). Capabilities' `toUsage`,
+`iu-anthropic` and the OpenCode pricing still pass only `cache_creation_input_tokens`, so their 1h writes price as 5m (under-stated).
+Wave 3 moves the Claude callers; those packages are unchanged here.

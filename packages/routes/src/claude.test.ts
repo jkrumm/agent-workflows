@@ -81,13 +81,39 @@ describe('claudeRate', () => {
     expect(claudeRate('gpt-6.1-terra')).toBeUndefined()
   })
 
-  test('returns a copy: mutating it changes nothing shared', () => {
+  test('returns the shared, deeply frozen rate: no copy per call, no mutation', () => {
     const rate = claudeRate(HAIKU)
-    if (!rate?.longPrompt) throw new Error('test setup: no tier')
-    rate.inputPerM = 999
-    rate.longPrompt.inputMultiplier = 999
+    expect(rate).toBe(claudeRate('haiku'))
+    expect(Object.isFrozen(rate)).toBe(true)
+    expect(Object.isFrozen(rate?.longPrompt)).toBe(true)
+    expect(() => {
+      ;(rate as { inputPerM: number }).inputPerM = 999
+    }).toThrow()
     expect(claudeRate(HAIKU)?.inputPerM).toBe(0.1)
-    expect(claudeRate(HAIKU)?.longPrompt?.inputMultiplier).toBe(5)
+  })
+
+  test('a dated snapshot or the [1m] flag of these models is the same rate; nothing else is', () => {
+    for (const [id, alias] of [
+      [HAIKU, 'haiku'],
+      [SONNET, 'sonnet'],
+      [OPUS, 'opus'],
+    ] as const) {
+      expect(claudeRate(`${id}-20261001`)).toBe(claudeRate(alias))
+      expect(claudeRate(`${id}[1m]`)).toBe(claudeRate(alias))
+      expect(claudeRate(`${id}-20261001[1m]`)).toBe(claudeRate(alias))
+    }
+    for (const model of [
+      'claude-sonnet-5-5-2026',
+      'claude-sonnet-5-5-20261001-x',
+      'claude-sonnet-5-5-latest',
+      'claude-sonnet-5-20261001',
+      'claude-sonnet-4-6',
+      'claude-fable-5-1',
+      'xclaude-sonnet-5-5',
+      'sonnet-20261001',
+    ]) {
+      expect(claudeRate(model)).toBeUndefined()
+    }
   })
 })
 
@@ -164,7 +190,7 @@ describe('1h cache writes', () => {
     })
   })
 
-  test('a rate without a 1h rate prices 1h writes at the write rate', () => {
+  test('a rate without a 1h rate does not guess: 1h writes are unknown, 5m-only usage still prices', () => {
     const { cacheWrite1hPerM: _drop, ...flat } = rate
     const usage = {
       input_tokens: 0,
@@ -172,11 +198,14 @@ describe('1h cache writes', () => {
       cache_creation_input_tokens: 1_000_000,
       cache_creation: { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 1_000_000 },
     }
-    expect(cost(usage, flat)).toEqual({ usd: 1.25, source: 'rate' })
+    expect(cost(usage, flat)).toEqual({ usd: null, source: 'unknown' })
+    expect(
+      cost({ ...usage, cache_creation: { ephemeral_5m_input_tokens: 1_000_000, ephemeral_1h_input_tokens: 0 } }, flat),
+    ).toEqual({ usd: 1.25, source: 'rate' })
     expect(cost(usage)).toEqual({ usd: 2, source: 'rate' })
   })
 
-  test('the total wins over a lower 5m count: the remainder after 1h is 5m, never dropped', () => {
+  test('a split below the total: the rest is 5m, never dropped', () => {
     expect(
       cost({
         input_tokens: 0,
@@ -185,6 +214,43 @@ describe('1h cache writes', () => {
         cache_creation: { ephemeral_5m_input_tokens: 500_000, ephemeral_1h_input_tokens: 1_000_000 },
       }),
     ).toEqual({ usd: 3.25, source: 'rate' })
+  })
+
+  test('a split above the total contradicts it: unknown, in both directions', () => {
+    const at = (total: number, m5?: number, h1?: number) =>
+      cost({
+        input_tokens: 0,
+        output_tokens: 0,
+        cache_creation_input_tokens: total,
+        cache_creation: { ephemeral_5m_input_tokens: m5, ephemeral_1h_input_tokens: h1 },
+      })
+    const unknown = { usd: null, source: 'unknown' } as const
+    expect(at(10, 11, 0)).toEqual(unknown)
+    expect(at(10, 0, 11)).toEqual(unknown)
+    expect(at(10, 6, 5)).toEqual(unknown)
+    expect(at(0, 5, 0)).toEqual(unknown)
+    expect(at(0, 0, 5)).toEqual(unknown)
+    expect(at(10, 5, 5).usd).toBeCloseTo(0.00001625, 12)
+  })
+
+  test('a present split count that is negative or not finite is unknown, with or without the total', () => {
+    const unknown = { usd: null, source: 'unknown' } as const
+    for (const bad of [-1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(cost({ input_tokens: 0, output_tokens: 0, cache_creation: { ephemeral_5m_input_tokens: bad } })).toEqual(
+        unknown,
+      )
+      expect(cost({ input_tokens: 0, output_tokens: 0, cache_creation: { ephemeral_1h_input_tokens: bad } })).toEqual(
+        unknown,
+      )
+      expect(
+        cost({
+          input_tokens: 0,
+          output_tokens: 0,
+          cache_creation_input_tokens: 100,
+          cache_creation: { ephemeral_5m_input_tokens: 50, ephemeral_1h_input_tokens: bad },
+        }),
+      ).toEqual(unknown)
+    }
   })
 
   test('without the total the split is the writes', () => {
