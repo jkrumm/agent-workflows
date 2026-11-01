@@ -6,8 +6,8 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
 ## State
 - **New plan 2026-11-01:** inference gateway (Waves 1–4, `docs/gateway.md`), then review v2 and the maturity pass
   (Waves 5–13). Wave 1 done (release `767f643`, REPORT `docs/spikes/gateway/REPORT.md`); Wave 2 active. The 2026-10-30 plan is finished (concept.md Final retro); STOP removed.
-- Owner actions pending (PLAN context): `me`/`me2` Console orgs linked, API and Admin keys under
-  `op://mini/claude-platform/`, billing days. Not blocking: Waves 1–3 run on the `iu` pool alone.
+- Owner actions done (PLAN context): orgs linked, keys seeded, cycle days, no payment method. Left: `me2` keys
+  (~2026-11-02, 7-day claim window); until then the `me2` pool stays disabled.
 - Lead's close-out channel: `docs/waves/handoff/lead.md` (the mother owns PLAN.md and the retro log;
   the lead writes per-step verdicts, Left behind, gate evidence and retro notes there, then idles).
 - dotfiles `make doctor` / architecture-check may be red outside this fleet (Athena, teamchat, collie pin,
@@ -18,6 +18,10 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
   Rotation policy: a fresh lead per wave unless the last one closed under ~30% context.
 
 ## Decisions taken
+- 2026-11-01 owner: Admin keys in the mini's secrets cache are authorized (the owner asked for them to be wired, for the
+  Wave 4 reconciler). Personal one-person orgs, no payment method; accepted risk, not a stop.
+- 2026-11-01: mother and lead (`w1-r2`, `w1-r3`) ended ~19:46 mid-Wave 2 (the `iu` session window at 98 %); a fresh
+  mother resumes from PRs #81 and #82.
 - 2026-11-01 owner Admin API facts: cost_report in cents with group_by description; spend_limits/balance unreadable on
   Individual Orgs, the registry stays the source; iu spent $56.11 on 10-31 outside any gateway. Lead told: meter seeds
   from max(ledger, cost_report) since cycle start.
