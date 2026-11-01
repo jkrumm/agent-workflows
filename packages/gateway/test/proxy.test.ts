@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import { gzipSync } from 'node:zlib'
 import { BALANCE_MARKER, claudeRate, costFromUsage, resolveModelAlias } from '@agent-workflows/routes'
@@ -435,6 +436,47 @@ describe('picking', () => {
       ['oc', 's1', 'iu'],
       ['oc', 's1', null],
     ])
+  })
+
+  describe('a long session id', () => {
+    const LONG = 's'.repeat(201)
+    const BOUND = `h:${createHash('sha256').update(LONG).digest('hex').slice(0, 32)}`
+
+    test('from a header: picks, binding, row and span all carry the bounded form', async () => {
+      const exporter = new InMemorySpanExporter()
+      const telemetry = createTelemetry({ env: {}, logger: silentLogger(), exporter, scheduledDelayMillis: 1 })
+      const gw = start({ registry: [pool('iu')], telemetry })
+      const served: unknown[] = []
+      const original = gw.pools.served.bind(gw.pools)
+      gw.pools.served = (caller, id, target) => {
+        served.push(id)
+        original(caller, id, target)
+      }
+      await (await gw.call(MESSAGES, session(LONG, jsonBody(request())))).text()
+      await (await gw.call(MESSAGES, session(LONG, jsonBody(request())))).text()
+      expect(served).toEqual([BOUND, BOUND])
+      const { picks, records } = gw.rows()
+      expect(picks.map(({ row }) => row.session)).toEqual([BOUND, BOUND])
+      // The second call found the binding the first one wrote.
+      expect(picks[1]?.row.reason).toBe('bound')
+      expect(records[0]?.row.lane_detail.session).toBe(BOUND)
+      for (let i = 0; i < 100 && exporter.getFinishedSpans().length < 2; i++) await Bun.sleep(5)
+      expect(exporter.getFinishedSpans()[0]?.attributes['agw.gateway.session']).toBe(BOUND)
+      expect(JSON.stringify(records)).not.toContain(LONG)
+    })
+
+    test('from metadata.user_id', async () => {
+      const gw = start({ registry: [pool('iu')] })
+      await (await gw.call(MESSAGES, jsonBody(request({ metadata: { user_id: LONG } })))).text()
+      expect(gw.rows().picks[0]?.row.session).toBe(BOUND)
+    })
+
+    test('200 characters stay as they are', async () => {
+      const gw = start({ registry: [pool('iu')] })
+      const id = 's'.repeat(200)
+      await (await gw.call(MESSAGES, session(id, jsonBody(request())))).text()
+      expect(gw.rows().picks[0]?.row.session).toBe(id)
+    })
   })
 
   test('a credit pool gets its own key at the Anthropic path; the row is api_credit', async () => {

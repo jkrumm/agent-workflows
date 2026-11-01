@@ -79,6 +79,7 @@ Per request, in order:
    `session_affinity_header`), `x-claude-code-session-id`, `x-session-affinity` (OpenCode's root session, so sub-agents
    share their parent's pool), `metadata.user_id`, a hash of the first user message. A bound session stays on its pool while that pool is eligible.
    Bindings are written only when a request is served, TTL 1 h refreshed per request, in memory.
+   A value over 200 characters is replaced by `h:` + its hash before any use, so picks, rows and spans stay bounded.
 2. **New session.** The eligible pool whose cycle ends soonest. Eligible: enabled, key resolved, and
    `meter + headroom < credit`.
 3. **No pool eligible.** IU `/anthropic`, unless the caller sent `x-agw-fallback: none`. Then the gateway answers 402
