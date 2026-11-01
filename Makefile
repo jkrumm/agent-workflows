@@ -4,10 +4,10 @@
 help:
 	@echo "make check   oxfmt check, oxlint type-aware, tsc, bun test (the merge gate)"
 	@echo "make fmt     apply formatting"
-	@echo "make deploy  deploy origin/master on the mini: release, both LaunchAgents (host, audio), health, agw on PATH (DRY_RUN=1 prints the plan)"
+	@echo "make deploy  deploy origin/master on the mini: release, LaunchAgents host and audio, the gateway as a third (restarted only when its build changed), health, agw on PATH (DRY_RUN=1 prints the plan)"
 	@echo "make install-opencode  install the pinned OpenCode build and react-doctor, link opencode and opencode-safe into ~/.local/bin from the main checkout (never restarts the host)"
 	@echo "make research-chrome  install and start the headed Chrome (LaunchAgent, DevTools on loopback) web.fetch reads bot-walled pages with"
-	@echo "make verify  prove the deployment: the pinned OpenCode and react-doctor present, both healths at the sha, agw smoke ping and audio ping with their journal rows, the door's auth"
+	@echo "make verify  prove the deployment: the pinned OpenCode and react-doctor present, the healths at the sha (the gateway at its build), agw smoke ping and audio ping with their journal rows, the door's auth, three real Haiku calls through the gateway with their usage rows"
 
 # docs/spikes/** is excluded from every tool (see .oxfmtrc.json, .oxlintrc.json, tsconfig.json, bunfig.toml).
 # Tests need Postgres via AGW_TEST_PG_URL; unset on the mini, it is built from .env.test.tpl through secrets-run, together with
