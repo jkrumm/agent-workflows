@@ -50,6 +50,9 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
 
 - Wave 11 data rule: gateway data is backed up and kept, never deleted (stop reason 2).
 
+- 2026-11-01 owner (d56e8c1): claude-platform keys in vault `mini`, seeded; IU and ME resolve, ME2 placeholder until
+  ~11-02 (me2 stays disabled). Admin probe on IU and ME. Relayed to the Wave 1 lead.
+
 ## Open decisions
 - none
 
