@@ -255,6 +255,31 @@ describe('reconcile', () => {
     })
   })
 
+  test('a cycle that turns over while the report is in flight discards the result', async () => {
+    const iu = pool('iu', { cycleDay: 21 })
+    const { reconciler, pools } = scene([iu])
+    admin.reply(() => {
+      clockMs = Date.parse('2026-11-21T00:00:05Z')
+      return page([bucket('9000')])
+    })
+    await reconciler.runAll()
+    expect(pools.status()[0]).toMatchObject({ cycleStart: '2026-11-21T00:00:00.000Z', meterUsd: 0 })
+    expect(ledger.floorOf('iu', '2026-10-21T00:00:00.000Z')).toBeNull()
+    expect(ledger.floorOf('iu', '2026-11-21T00:00:00.000Z')).toBeNull()
+    expect(reconciler.status('iu')).toEqual({ reconciledAt: null, reconcileError: null })
+  })
+
+  test('the same cycle after the call goes through, whatever the day', async () => {
+    const iu = pool('iu', { cycleDay: 15 })
+    const { reconciler, pools } = scene([iu])
+    admin.reply(() => {
+      clockMs = Date.parse('2026-11-21T00:00:05Z')
+      return page([bucket('900')])
+    })
+    await reconciler.runAll()
+    expect(pools.status()[0]?.meterUsd).toBe(9)
+  })
+
   test('no admin key: no call, the status says so, one pool failing leaves the other', async () => {
     admin.reply(() => page([bucket('100')]))
     const registry = [pool('iu', { cycleDay: 15 }), pool('me', { cycleDay: 15 })]

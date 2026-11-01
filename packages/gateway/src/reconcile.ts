@@ -153,6 +153,12 @@ export class Reconciler {
       const reported =
         startingAt < today ? await costReportUsd({ baseUrl: this.baseUrl, adminKey, startingAt, endingAt: today }) : 0
       // One synchronous tick from here on: no charge may fall between the ledger read and the reconcile.
+      if (this.rolledOver(pool, cycle.start)) {
+        this.logger.info(`reconcile ${pool.id}: the cycle turned over during the call; result discarded`, {
+          pool: pool.id,
+        })
+        return
+      }
       const usd = reported + this.ledger.spentSince(pool.id, today)
       const reconciledAt = this.now()
       this.pools.reconcile(pool.id, usd, cycle.start.toISOString())
@@ -162,6 +168,11 @@ export class Reconciler {
     } catch (error) {
       this.failed(pool.id, error)
     }
+  }
+
+  /** A report in flight across a credit's expiry counts the old cycle: it must reach neither the meter nor the store. */
+  private rolledOver(pool: RegistryPool, start: Date): boolean {
+    return pool.cycleDay !== null && cycleOf(pool.cycleDay, this.now()).start.getTime() !== start.getTime()
   }
 
   private cycleKey(pool: RegistryPool, start: Date): string {
