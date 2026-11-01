@@ -1,5 +1,6 @@
 import { brotliDecompressSync, constants, gunzipSync, inflateSync, zstdDecompressSync } from 'node:zlib'
-import type { ProviderUsage } from './routes.ts'
+import type { ProviderUsage } from '@agent-workflows/routes/pricing'
+import { isRecord } from './json.ts'
 
 /** A buffered copy of a response stops here and the usage is given up: no JSON or SSE response comes close. */
 const MAX_BUFFERED_BYTES = 64 * 1024 * 1024
@@ -22,9 +23,6 @@ export interface TeeResult {
   /** An SSE stream carried an `error` event after its 2xx. */
   streamError: boolean
 }
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value)
 
 const count = (value: unknown): number | null =>
   typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null
