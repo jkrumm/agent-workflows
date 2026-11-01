@@ -38,6 +38,8 @@ describe('isBalanceFailure', () => {
     })
     expect(isBalanceFailure({ status: 400, text: other })).toBe(false)
     expect(isBalanceFailure({ status: 400, text: '' })).toBe(false)
+    // Free text that merely mentions a low balance is not Anthropic's sentence.
+    expect(isBalanceFailure({ status: 400, text: 'the credit balance is too low, top it up' })).toBe(false)
   })
 
   test('a 400 carrying the marker is balance: the transport message re-classified with its status', () => {
@@ -54,6 +56,8 @@ describe('isBalanceFailure', () => {
     expect(isBalanceFailure({ text: ANTHROPIC_MESSAGE })).toBe(true)
     expect(isBalanceFailure({ text: `opencode session ses_x failed: ${ANTHROPIC_400}` })).toBe(true)
     for (const status of [200, 429, 500]) expect(isBalanceFailure({ status, text: ANTHROPIC_400 })).toBe(false)
+    expect(isBalanceFailure({ text: 'the credit balance is too low, top it up' })).toBe(false)
+    expect(isBalanceFailure({ text: 'credit balance is too low' })).toBe(false)
   })
 
   test('without a status: the marker, IU’s body shape, or a 402 token with the wording', () => {

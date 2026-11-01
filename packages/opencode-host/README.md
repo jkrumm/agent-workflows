@@ -315,7 +315,7 @@ the fallback's rate and reports the fallback's model. Every `opencode`-wire rout
 ## Provider-balance fallback
 
 A turn that ends `failed` with a provider-balance error (`isBalanceFailure` from `@agent-workflows/routes`: the IU
-503 "Insufficient Balance (PaymentRequired)" wording, or a 402) reopens the step once on the route's `fallback`:
+503 "Insufficient Balance (PaymentRequired)" wording, a 402, or Anthropic's "credit balance is too low to access the Anthropic API" sentence) reopens the step once on the route's `fallback`:
 
 - Only when the turn did nothing: no tool call and no output tokens after the prompt. A turn that ran is never
   prompted a second time (concept §3); its step fails with the balance error, logged.

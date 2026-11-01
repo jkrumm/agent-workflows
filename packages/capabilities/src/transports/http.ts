@@ -47,8 +47,10 @@ export interface UserError {
 
 /**
  * A non-2xx response. 410 (dead model) and client errors fail fast; IU relays some upstream 400s as 503. A provider
- * balance failure (`isBalanceFailure`: 402, or 503 "Insufficient Balance") fails fast too: retrying an empty account
- * only bills the wait, and the caller moves to the route's fallback. Its message carries `BALANCE_MARKER`.
+ * balance failure (`isBalanceFailure`: 402, 503 "Insufficient Balance", or Anthropic's 400 "credit balance is too low to
+ * access the Anthropic API") fails fast too: retrying an empty account only bills the wait, and the caller moves to
+ * the route's fallback. Its message carries `BALANCE_MARKER`, which `isBalanceError` re-classifies on a 400 too: the
+ * body is cut to 300 chars, so the marker is what survives when the sentence sits past the cut.
  */
 export async function failedResponse(res: Response, wire: string): Promise<Attempt> {
   const body = await res.text().catch(() => '')
