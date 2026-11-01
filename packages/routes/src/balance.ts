@@ -11,16 +11,17 @@ const IU_BODY = /insufficient balance\s*\(paymentrequired\)/i
 /** A text-only 402 (OpenCode's turn error, `ocr`'s stderr): the status token and the wording, together. */
 const STATUS_402 = /\b402\b/
 const PAYMENT_WORDING = /payment required|insufficient balance/i
-/** Anthropic's refusal of a drained Console org: a 400 `invalid_request_error` whose message is "Your credit balance is too low …". */
-const CREDIT_BALANCE_LOW = /credit balance is too low/i
+/** Anthropic's refusal of a drained Console org: a 400 `invalid_request_error` whose message is "Your credit balance is too low to access the Anthropic API. …". */
+const CREDIT_BALANCE_LOW = /credit balance is too low to access the Anthropic API/i
 
 /**
  * The one provider-balance classifier. With a status: 402, 503 whose body says "Insufficient Balance" /
- * "PaymentRequired" (or carries `BALANCE_MARKER`), or 400 whose body says "credit balance is too low" (Anthropic's
- * drained-org refusal) or carries `BALANCE_MARKER` (the transports' own message, re-classified with its status; any
+ * "PaymentRequired" (or carries `BALANCE_MARKER`), or 400 whose body says "credit balance is too low to access the Anthropic API"
+ * (Anthropic's drained-org refusal, anchored on its full sentence start so free text that merely mentions a low balance
+ * does not trigger a fallback) or carries `BALANCE_MARKER` (the transports' own message, re-classified with its status; any
  * other 400 is not balance); any other status is not balance. Without one (an OpenCode turn
  * error, a step's failure reason, a CLI's stderr) the transports' `BALANCE_MARKER`, IU's body shape
- * ("Insufficient Balance (PaymentRequired)"), Anthropic's "credit balance is too low", or a 402 token together with
+ * ("Insufficient Balance (PaymentRequired)"), Anthropic's full "credit balance is too low to access the Anthropic API" sentence, or a 402 token together with
  * "payment required" / "insufficient balance" count; a 402 or the wording alone does not.
  */
 export function isBalanceFailure(failure: { status?: number; text: string }): boolean {

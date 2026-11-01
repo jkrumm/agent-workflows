@@ -9,6 +9,16 @@ import { type Env, iuTransports } from './transports/index.ts'
 
 // IU's body on an empty provider account, as it arrived 2026-10-28.
 const BALANCE_503 = 'IU request failed (503) — Insufficient Balance (PaymentRequired) on Requesty-Global'
+// Anthropic's refusal of a drained Console org (HTTP 400), padded so the sentence sits past failedResponse's 300-char cut.
+const ANTHROPIC_400_PADDED = JSON.stringify({
+  type: 'error',
+  error: {
+    type: 'invalid_request_error',
+    padding: 'x'.repeat(320),
+    message:
+      'Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.',
+  },
+})
 const USAGE = { prompt_tokens: 1_000, completion_tokens: 200, completion_tokens_details: { reasoning_tokens: 50 } }
 
 let iu: FakeIuServer
@@ -63,6 +73,11 @@ describe('provider-balance fallback', () => {
   for (const [name, failure] of [
     ['402', () => new Response('{"error":"payment required"}', { status: 402 })],
     ['503 Insufficient Balance', () => new Response(BALANCE_503, { status: 503 })],
+    // failedResponse cuts the body to 300 chars: the marker, not the sentence, carries the 400 through isBalanceError.
+    [
+      '400 Anthropic credit balance (sentence past char 300)',
+      () => new Response(ANTHROPIC_400_PADDED, { status: 400 }),
+    ],
   ] as const) {
     test(`${name} on the primary: one fallback call, no retry of the primary, priced, model recorded`, async () => {
       iu.on('chat', (request) =>
@@ -92,6 +107,16 @@ describe('provider-balance fallback', () => {
       ])
     })
   }
+
+  test('a 400 without the Anthropic sentence gets no fallback', async () => {
+    iu.on(
+      'chat',
+      () => new Response('{"error":{"type":"invalid_request_error","message":"max_tokens: bad"}}', { status: 400 }),
+    )
+    const error = await caught(call('llm.classify', classify))
+    expect(error).toMatchObject({ code: 'UPSTREAM_ERROR', data: { status: 400 } })
+    expect(iu.requests.map((r) => r.body.model)).toEqual([primary.model])
+  })
 
   test('a cost IU reports on the fallback wins over the rate', async () => {
     iu.on('chat', (request) =>
