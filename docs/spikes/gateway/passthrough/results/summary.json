@@ -1,0 +1,215 @@
+{
+  "model": "claude-haiku-5-5",
+  "run": "mvy49cx9",
+  "pairs": {
+    "json": [
+      {
+        "usage": {
+          "input_tokens": 88,
+          "cache_creation_input_tokens": 7680,
+          "cache_read_input_tokens": 0,
+          "output_tokens": 4
+        },
+        "usageRaw": {
+          "input_tokens": 88,
+          "cache_creation_input_tokens": 7680,
+          "cache_read_input_tokens": 0,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 0,
+            "ephemeral_1h_input_tokens": 7680
+          },
+          "output_tokens": 4,
+          "output_tokens_details": {
+            "thinking_tokens": 0
+          },
+          "service_tier": "standard",
+          "inference_geo": "global",
+          "speed": "standard"
+        },
+        "bytes": 22216
+      },
+      {
+        "usage": {
+          "input_tokens": 88,
+          "cache_creation_input_tokens": 0,
+          "cache_read_input_tokens": 7680,
+          "output_tokens": 4
+        },
+        "usageRaw": {
+          "input_tokens": 88,
+          "cache_creation_input_tokens": 0,
+          "cache_read_input_tokens": 7680,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 0,
+            "ephemeral_1h_input_tokens": 0
+          },
+          "output_tokens": 4,
+          "output_tokens_details": {
+            "thinking_tokens": 0
+          },
+          "service_tier": "standard",
+          "inference_geo": "global",
+          "speed": "standard"
+        },
+        "bytes": 22216
+      }
+    ],
+    "sse": [
+      {
+        "usage": {
+          "input_tokens": 88,
+          "cache_creation_input_tokens": 7681,
+          "cache_read_input_tokens": 0,
+          "output_tokens": 4
+        },
+        "usageRaw": {
+          "input_tokens": 88,
+          "cache_creation_input_tokens": 7681,
+          "cache_read_input_tokens": 0,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 0,
+            "ephemeral_1h_input_tokens": 7681
+          },
+          "output_tokens": 4,
+          "service_tier": "standard",
+          "inference_geo": "global",
+          "speed": "standard"
+        },
+        "bytes": 22214
+      },
+      {
+        "usage": {
+          "input_tokens": 88,
+          "cache_creation_input_tokens": 0,
+          "cache_read_input_tokens": 7681,
+          "output_tokens": 4
+        },
+        "usageRaw": {
+          "input_tokens": 88,
+          "cache_creation_input_tokens": 0,
+          "cache_read_input_tokens": 7681,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 0,
+            "ephemeral_1h_input_tokens": 0
+          },
+          "output_tokens": 4,
+          "service_tier": "standard",
+          "inference_geo": "global",
+          "speed": "standard"
+        },
+        "bytes": 22214
+      }
+    ]
+  },
+  "ttft": [
+    {
+      "t": "direct",
+      "headers": {
+        "median": 744.5567909999991,
+        "min": 693.4617909999997,
+        "max": 883.9967079999988,
+        "sd": 71.68651486634813,
+        "all": [
+          766,
+          884,
+          745,
+          693,
+          736
+        ]
+      },
+      "firstByte": {
+        "median": 744.5900829999991,
+        "min": 693.4951249999995,
+        "max": 884.0412500000002,
+        "sd": 71.69119054342154,
+        "all": [
+          766,
+          884,
+          745,
+          693,
+          736
+        ]
+      },
+      "firstDelta": {
+        "median": 744.5964999999997,
+        "min": 693.501166,
+        "max": 884.0490829999999,
+        "sd": 71.69155998315861,
+        "all": [
+          766,
+          884,
+          745,
+          694,
+          736
+        ]
+      }
+    },
+    {
+      "t": "proxy",
+      "headers": {
+        "median": 732.8099579999998,
+        "min": 678.6067500000008,
+        "max": 766.1997080000001,
+        "sd": 32.73859848870651,
+        "all": [
+          766,
+          745,
+          719,
+          733,
+          679
+        ]
+      },
+      "firstByte": {
+        "median": 732.837458,
+        "min": 678.6250830000008,
+        "max": 766.2339169999996,
+        "sd": 32.74607676714296,
+        "all": [
+          766,
+          745,
+          719,
+          733,
+          679
+        ]
+      },
+      "firstDelta": {
+        "median": 732.8499579999989,
+        "min": 678.631875000001,
+        "max": 766.2398750000002,
+        "sd": 32.745848278515965,
+        "all": [
+          766,
+          745,
+          719,
+          733,
+          679
+        ]
+      }
+    }
+  ],
+  "probes": [
+    {
+      "beta": "claude-code-20250219",
+      "status": 400,
+      "body": "{\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_<id>\"}"
+    },
+    {
+      "beta": "claude-code-20250219 + oauth-2025-04-20",
+      "status": 400,
+      "body": "{\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_<id>\"}"
+    }
+  ],
+  "identityProbes": [
+    {
+      "signal": "system prefix \"You are Claude Code, Anthropic's official CLI for Claude.\"",
+      "status": 400,
+      "body": "{\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_<id>\"}"
+    },
+    {
+      "signal": "user-agent claude-cli/2.1 + x-app: cli",
+      "status": 400,
+      "body": "{\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_<id>\"}"
+    }
+  ],
+  "failures": []
+}
