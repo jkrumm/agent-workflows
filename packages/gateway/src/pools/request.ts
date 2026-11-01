@@ -26,21 +26,22 @@ export function sessionId(headers: Headers, body: unknown): string | null {
 
   if (!Array.isArray(body.messages)) return null
   const first: unknown = body.messages.find((message: unknown) => isRecord(message) && message.role === 'user')
-  if (!isRecord(first) || first.content === undefined) return null
+  if (!isRecord(first) || first.content === undefined || first.content === null) return null
   return createHash('sha256').update(JSON.stringify(first.content)).digest('hex').slice(0, 32)
 }
 
-function firstSystemText(body: unknown): string | null {
-  if (!isRecord(body)) return null
-  if (typeof body.system === 'string') return body.system
-  if (!Array.isArray(body.system)) return null
-  const block: unknown = body.system[0]
-  return isRecord(block) && typeof block.text === 'string' ? block.text : null
+function systemTexts(body: unknown): string[] {
+  if (!isRecord(body)) return []
+  if (typeof body.system === 'string') return [body.system]
+  if (!Array.isArray(body.system)) return []
+  return body.system.flatMap((block: unknown) =>
+    isRecord(block) && typeof block.text === 'string' ? [block.text] : [],
+  )
 }
 
 /**
  * True when a request carries any Claude Code signal (a funded credit org refuses those with the balance 400): an
- * `anthropic-beta` token starting `claude-code-`, a first system block starting `You are Claude Code`, a `user-agent`
+ * `anthropic-beta` token starting `claude-code-`, any system block starting `You are Claude Code`, a `user-agent`
  * starting `claude-cli/`, or `x-app: cli`. Read-only; the body is never edited.
  */
 export function isClaudeCodeShaped(headers: Headers, body: unknown): boolean {
@@ -48,5 +49,5 @@ export function isClaudeCodeShaped(headers: Headers, body: unknown): boolean {
   if (betas.some((token) => token.trim().toLowerCase().startsWith('claude-code-'))) return true
   if (headers.get('user-agent')?.trim().toLowerCase().startsWith('claude-cli/')) return true
   if (headers.get('x-app')?.trim().toLowerCase() === 'cli') return true
-  return firstSystemText(body)?.trimStart().startsWith(CLAUDE_CODE_SYSTEM_PREFIX) ?? false
+  return systemTexts(body).some((text) => text.trimStart().startsWith(CLAUDE_CODE_SYSTEM_PREFIX))
 }
