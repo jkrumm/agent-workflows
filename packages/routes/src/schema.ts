@@ -29,7 +29,7 @@ export const rateSchema = z
     cacheReadPerM: z.number().nonnegative().optional(),
     /** Writes of a prompt-cache entry (Anthropic: the 5-minute entry). */
     cacheWritePerM: z.number().nonnegative().optional(),
-    /** Writes of a 1-hour prompt-cache entry (Anthropic: 2x input); `cacheWritePerM` prices them where this is absent. */
+    /** Writes of a 1-hour prompt-cache entry (Anthropic: 2x input). A call with 1-hour writes against a rate without it is priced `unknown`. */
     cacheWrite1hPerM: z.number().nonnegative().optional(),
     /**
      * The long-prompt tier. A rate without `longPrompt` has no tier and is priced flat at any size. With it, a request
