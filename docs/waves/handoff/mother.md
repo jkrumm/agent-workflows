@@ -119,7 +119,8 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
 
 ## Next action
 - Wait for the Wave 2 close-out in `docs/waves/handoff/lead.md`; judge it, tick PLAN, retro entry, Wave 3 lead.
-- Owner items from Wave 1: billing days (`cycleDay`) for iu/me/me2; payment method on any org?; me2 keys ~11-02;
+- Owner answered (37f53be, 32ccf7f): cycleDay = credit expiry, iu 21, me 27, me2 unknown; no payment method, spend limit
+  = credit on all three orgs. Relayed to the lead for Wave 2. Still owed: me2 keys ~11-02;
   Admin keys in the mini's shared secrets cache (security-policy call; matters before Wave 4's reconciler).
 - Wake-loop: the factory re-fires `workers done: <lead> idle` every few seconds while the lead idles on background
   shells. Answer with a blocking 9.5-min poll on lead.md / PR state, not a bare re-declare. Owner-side open items: MacWhisper key paste; OCR and Hermes morning briefing re-enable.
