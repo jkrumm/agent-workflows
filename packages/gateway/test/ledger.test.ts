@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { Database } from 'bun:sqlite'
-import { chmodSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { Ledger } from '../src/ledger.ts'
 import { Outbox, type UsageSink } from '../src/outbox.ts'
@@ -136,15 +136,29 @@ describe('ledger', () => {
   })
 
   test('a ledger the disk refuses stays degraded', () => {
-    const file = join(dir.path, 'readonly.sqlite')
-    const seeded = new Ledger(file)
-    seeded.close()
-    chmodSync(file, 0o400)
-    chmodSync(`${file}-wal`, 0o400)
-    const readonly = new Ledger(file)
-    expect(() => readonly.writeRecord(recordRow('a'))).toThrow()
-    expect(readonly.degraded()).not.toBeNull()
-    readonly.close()
+    const folder = join(dir.path, 'readonly')
+    mkdirSync(folder)
+    const file = join(folder, 'ledger.sqlite')
+    new Ledger(file).close()
+    // Linux deletes -wal and -shm with the last connection, macOS keeps them. Held open, they exist on both, and a
+    // read-only open of a WAL database needs them.
+    const holder = new Database(file)
+    holder.run('select count(*) from records')
+    const walFiles = [`${file}-wal`, `${file}-shm`].filter((path) => existsSync(path))
+    try {
+      chmodSync(file, 0o400)
+      for (const path of walFiles) chmodSync(path, 0o400)
+      chmodSync(folder, 0o500)
+      const readonly = new Ledger(file)
+      expect(() => readonly.writeRecord(recordRow('a'))).toThrow()
+      expect(readonly.degraded()).not.toBeNull()
+      readonly.close()
+    } finally {
+      chmodSync(folder, 0o700)
+      chmodSync(file, 0o600)
+      for (const path of walFiles) chmodSync(path, 0o600)
+      holder.close()
+    }
   })
 })
 
