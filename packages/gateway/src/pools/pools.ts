@@ -29,7 +29,9 @@ export interface PoolStatus {
   enabled: boolean
   keyResolved: boolean
   disabledReason?: string
+  /** ISO instant of the previous credit expiry (00:00 UTC on `cycleDay`); for an unknown expiry, `now − 31 d`. */
   cycleStart: string
+  /** ISO instant the current credit expires (the next `cycleDay`); null when the expiry day is unknown. */
   cycleEnd: string | null
   creditUsd: number
   meterUsd: number

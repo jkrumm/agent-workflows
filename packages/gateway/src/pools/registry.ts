@@ -4,7 +4,10 @@ import { z } from 'zod'
 export interface RegistryPool {
   id: string
   creditUsd: number
-  /** Day of month the credit expires and renews (Console Billing page); null = unknown. */
+  /**
+   * The credit's expiry day of month, as the Console's Billing page shows it; the credit renews on the same day. Not the
+   * subscription's payment day (`iu` pays on the 18th, its credit expires on the 21st). null = unknown.
+   */
   cycleDay: number | null
   headroomUsd: number
   enabled: boolean

@@ -7,15 +7,16 @@ const iso = (cycle: { start: Date; end: Date | null }) => ({
   end: cycle.end?.toISOString() ?? null,
 })
 
+// cycleDay is the credit's expiry day: a cycle runs from the previous expiry to the next one.
 describe('cycleOf', () => {
-  test('mid-month, after the cycle day', () => {
+  test("mid-month, after this month's expiry day", () => {
     expect(iso(cycleOf(14, new Date('2026-11-20T10:00:00Z')))).toEqual({
       start: '2026-11-14T00:00:00.000Z',
       end: '2026-12-14T00:00:00.000Z',
     })
   })
 
-  test('mid-month, before the cycle day, across a year boundary', () => {
+  test("mid-month, before this month's expiry day, across a year boundary", () => {
     expect(iso(cycleOf(21, new Date('2026-01-05T10:00:00Z')))).toEqual({
       start: '2025-12-21T00:00:00.000Z',
       end: '2026-01-21T00:00:00.000Z',
@@ -47,7 +48,7 @@ describe('cycleOf', () => {
     })
   })
 
-  test('exactly at the boundary the new cycle starts; a millisecond before, the old one runs', () => {
+  test('at the expiry instant the new cycle starts; a millisecond before, the old one runs', () => {
     expect(iso(cycleOf(14, new Date('2026-11-14T00:00:00.000Z')))).toEqual({
       start: '2026-11-14T00:00:00.000Z',
       end: '2026-12-14T00:00:00.000Z',
@@ -58,7 +59,7 @@ describe('cycleOf', () => {
     })
   })
 
-  test('null is a rolling 31-day window with no end', () => {
+  test('null (expiry unknown) is a rolling 31-day window with no end', () => {
     expect(iso(cycleOf(null, new Date('2026-11-01T12:00:00Z')))).toEqual({
       start: '2026-10-01T12:00:00.000Z',
       end: null,
