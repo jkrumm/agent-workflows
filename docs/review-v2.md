@@ -168,7 +168,7 @@ case. The 138 legacy review cases are retired from decisions.
 |-|-|
 | v1 (today's pipeline) | baseline, scored once on the new set before v2 replaces it |
 | v2 variants | finder count (1, 3, 5), K (1 or 3), voters as agent steps or as single calls with a code excerpt (the cost lever), seats per stage on GPT or Claude |
-| native `/code-review high` | owner decision 3. One interactive Claude Code session per case in a herdr-core terminal (`hc run`, no `claude -p`), a throwaway worktree at the introducing sha, findings written to a JSON file and imported with `agw eval import`, judged like every arm. Max quota, so no USD |
+| native `/code-review high` | owner decision 3. One interactive Claude Code session per case, a software-factory spawn (role `worker`, key per case and arm, so admission meters the Max quota; never a bare `hc run` and no `claude -p`), a throwaway worktree at the introducing sha, findings written to a JSON file and imported with `agw eval import`, judged like every arm. Max quota, so no USD |
 
 **Per-arm overrides without a restart.** An arm is `{ routes?: patch, params?: {...} }`, passed with `agw eval run
 --arm <file>`. The runtime layers it over the route table for that run and its children only, and records it in the run
