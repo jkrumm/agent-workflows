@@ -17,6 +17,7 @@ import {
   spawnGateway,
   tempDir,
   writeJson,
+  recordRow,
 } from './support.ts'
 
 let dir: ReturnType<typeof tempDir>
@@ -220,6 +221,19 @@ describe('process', () => {
     })
     proc.kill('SIGTERM')
     expect(await proc.exited).toBe(0)
+  })
+
+  test('a start requeues what an earlier life quarantined, and /health counts it', async () => {
+    mkdirSync(join(dir.path, 'state'))
+    const seeded = new Ledger(join(dir.path, 'state', 'ledger.sqlite'))
+    seeded.writeRecord(recordRow('refused'))
+    seeded.settle(seeded.pending(1), { records: new Map([[1, '23514 check']]), picks: new Map() })
+    seeded.close()
+    const proc = spawn({ ...baseEnv(), AGW_GATEWAY_PORT: '0' })
+    const port = await listening(proc)
+    expect(await (await fetch(`http://127.0.0.1:${port}/health`)).json()).toMatchObject({
+      ledger: { unsynced: 1, quarantined: 0, requeuedAtStart: 1 },
+    })
   })
 
   test('a pool whose key is a REPLACE placeholder is disabled, the gateway still starts', async () => {

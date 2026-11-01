@@ -73,7 +73,9 @@ after an upstream 2xx.
 - **Delivery.** At least once: a row is marked only after its transaction commits, and the upserts on `(source, source_id)`
   and `(request_id, picked)` absorb a repeat.
 - **Quarantine.** A row Postgres refuses (SQLSTATE class 22 or 23) keeps its error in the ledger, counts on `/health` and
-  is never retried; the batch around it lands. Any other failure leaves everything unsynced.
+  is not retried while the process lives; the batch around it lands. Each process start requeues quarantined rows once
+  (`ledger.requeuedAtStart`), since a migration or a deploy may have fixed them. Any other failure leaves everything
+  unsynced.
 - **Prune.** Synced rows older than 62 days go. Unsynced and quarantined rows stay.
 - **Meter.** `spentSince` reads the ledger, synced or not.
 - **SQLite.** WAL with `synchronous=NORMAL`: durable across a process crash, the failure the outbox guards. A deploy never

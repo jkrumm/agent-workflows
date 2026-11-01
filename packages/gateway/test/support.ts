@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { Ledger } from '../src/ledger.ts'
+import { Ledger, type PickRow, type RecordRow } from '../src/ledger.ts'
 import { Outbox, pgUsageSink } from '../src/outbox.ts'
 import type { Logger } from '../src/log.ts'
 import { createPools, type Pools, type RegistryPool } from '../src/pools/index.ts'
@@ -199,6 +199,44 @@ export const sse = (events: unknown[]): string =>
 
 export const sseResponse = (text: string, headers: Record<string, string> = {}): Response =>
   new Response(text, { headers: { 'content-type': 'text/event-stream', ...headers } })
+
+export const recordRow = (id: string, over: Partial<RecordRow> = {}): RecordRow => ({
+  source: 'gateway',
+  source_id: id,
+  grain: 'message',
+  ts: '2026-11-01T10:00:00.000Z',
+  model_raw: 'priced-model',
+  model: 'priced-model',
+  billing: 'api_credit',
+  account: 'iu',
+  api_key: null,
+  machine: 'test-machine',
+  outcome: 'ok',
+  lane: 'other',
+  lane_detail: { caller: 'oc', pool: 'iu' },
+  run_id: null,
+  input_tokens: 10,
+  output_tokens: 20,
+  cache_read_tokens: 0,
+  cache_write_5m_tokens: 0,
+  cache_write_1h_tokens: 0,
+  reasoning_tokens: 0,
+  duration_ms: 5,
+  cost_reported_usd: 1,
+  raw: {},
+  ...over,
+})
+
+export const pickRow = (id: string, picked = 'iu', over: Partial<PickRow> = {}): PickRow => ({
+  ts: '2026-11-01T10:00:00.000Z',
+  caller: 'oc',
+  session: 's',
+  picked,
+  reason: 'soonest-expiry',
+  machine: 'test-machine',
+  request_id: id,
+  ...over,
+})
 
 export const BALANCE_REFUSAL = {
   type: 'error',

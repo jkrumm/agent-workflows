@@ -195,6 +195,16 @@ export class Ledger implements MeterSource {
     })()
   }
 
+  /**
+   * Puts quarantined rows back into the outbox; returns the count. Called once per process start: a migration or a
+   * deploy may have fixed what Postgres refused, and a row that still fails is quarantined again until the next start.
+   */
+  requeueQuarantined(): number {
+    const requeue = (table: 'records' | 'picks') =>
+      this.db.run(`update ${table} set quarantine_error = null where quarantine_error is not null`).changes
+    return this.db.transaction(() => requeue('records') + requeue('picks'))()
+  }
+
   /** Drops synced rows older than the retention; unsynced and quarantined rows stay. Returns the count. */
   prune(): number {
     const before = this.now() - RETENTION_MS

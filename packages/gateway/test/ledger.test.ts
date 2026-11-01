@@ -2,47 +2,9 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { Database } from 'bun:sqlite'
 import { chmodSync } from 'node:fs'
 import { join } from 'node:path'
-import { Ledger, type PickRow, type RecordRow } from '../src/ledger.ts'
+import { Ledger } from '../src/ledger.ts'
 import { Outbox, type UsageSink } from '../src/outbox.ts'
-import { silentLogger, tempDir } from './support.ts'
-
-export const recordRow = (id: string, over: Partial<RecordRow> = {}): RecordRow => ({
-  source: 'gateway',
-  source_id: id,
-  grain: 'message',
-  ts: '2026-11-01T10:00:00.000Z',
-  model_raw: 'priced-model',
-  model: 'priced-model',
-  billing: 'api_credit',
-  account: 'iu',
-  api_key: null,
-  machine: 'test-machine',
-  outcome: 'ok',
-  lane: 'other',
-  lane_detail: { caller: 'oc', pool: 'iu' },
-  run_id: null,
-  input_tokens: 10,
-  output_tokens: 20,
-  cache_read_tokens: 0,
-  cache_write_5m_tokens: 0,
-  cache_write_1h_tokens: 0,
-  reasoning_tokens: 0,
-  duration_ms: 5,
-  cost_reported_usd: 1,
-  raw: {},
-  ...over,
-})
-
-export const pickRow = (id: string, picked = 'iu', over: Partial<PickRow> = {}): PickRow => ({
-  ts: '2026-11-01T10:00:00.000Z',
-  caller: 'oc',
-  session: 's',
-  picked,
-  reason: 'soonest-expiry',
-  machine: 'test-machine',
-  request_id: id,
-  ...over,
-})
+import { pickRow, recordRow, silentLogger, tempDir } from './support.ts'
 
 const DAY = 86_400_000
 const none = () => ({ records: new Map<number, string>(), picks: new Map<number, string>() })
@@ -120,6 +82,26 @@ describe('ledger', () => {
     ledger.settle(batch, { records: new Map([[batch.records[0]?.id ?? 0, 'refused']]), picks: new Map() })
     expect(ledger.stats()).toEqual({ unsynced: 0, quarantined: 1, oldestUnsyncedAt: null })
     expect(ledger.pending(10)).toEqual({ records: [], picks: [] })
+  })
+
+  test('a quarantined row goes back once per requeue; what still fails waits for the next one', () => {
+    ledger.writeRecord(recordRow('a'))
+    ledger.writePick(pickRow('a'))
+    const batch = ledger.pending(10)
+    ledger.settle(batch, {
+      records: new Map([[batch.records[0]?.id ?? 0, '23514 check']]),
+      picks: new Map([[batch.picks[0]?.id ?? 0, '22007 time']]),
+    })
+    expect(ledger.requeueQuarantined()).toBe(2)
+    expect(ledger.stats()).toMatchObject({ unsynced: 2, quarantined: 0 })
+    expect(ledger.requeueQuarantined()).toBe(0)
+  })
+
+  test('requeue leaves synced rows alone', () => {
+    ledger.writeRecord(recordRow('a'))
+    ledger.settle(ledger.pending(10), none())
+    expect(ledger.requeueQuarantined()).toBe(0)
+    expect(ledger.stats()).toMatchObject({ unsynced: 0, quarantined: 0 })
   })
 
   test('prune drops synced rows past 62 days, never unsynced or quarantined ones', () => {
