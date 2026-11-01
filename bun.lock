@@ -60,7 +60,18 @@
       "name": "@agent-workflows/gateway",
       "version": "0.0.0",
       "dependencies": {
+        "@agent-workflows/host": "workspace:*",
+        "@agent-workflows/routes": "workspace:*",
+        "@opentelemetry/api": "1.10.0",
+        "@opentelemetry/core": "3.0.0",
+        "@opentelemetry/exporter-trace-otlp-proto": "0.300.0",
+        "@opentelemetry/resources": "3.0.0",
+        "@opentelemetry/sdk-trace": "3.0.0",
+        "pg": "8.23.1",
         "zod": "4.6.7",
+      },
+      "devDependencies": {
+        "@types/pg": "8.23.1",
       },
     },
     "packages/host": {
