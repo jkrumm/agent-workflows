@@ -92,6 +92,19 @@ describe('claudeRate', () => {
     expect(claudeRate(HAIKU)?.inputPerM).toBe(0.1)
   })
 
+  test('the type is deeply readonly', () => {
+    const rate = claudeRate(HAIKU)
+    if (!rate?.longPrompt) throw new Error('haiku has a long-prompt tier')
+    expect(() => {
+      // @ts-expect-error inputPerM is readonly
+      rate.inputPerM = 1
+    }).toThrow()
+    expect(() => {
+      // @ts-expect-error longPrompt fields are readonly
+      rate.longPrompt.inputMultiplier = 1
+    }).toThrow()
+  })
+
   test('a dated snapshot or the [1m] flag of these models is the same rate; nothing else is', () => {
     for (const [id, alias] of [
       [HAIKU, 'haiku'],
@@ -102,10 +115,14 @@ describe('claudeRate', () => {
       expect(claudeRate(`${id}[1m]`)).toBe(claudeRate(alias))
       expect(claudeRate(`${id}-20261001[1m]`)).toBe(claudeRate(alias))
     }
+    expect(claudeRate('claude-sonnet-5-5[1m]')).toBeDefined()
+    expect(claudeRate('claude-sonnet-5-5-20261001')).toBeDefined()
     for (const model of [
       'claude-sonnet-5-5-2026',
       'claude-sonnet-5-5-20261001-x',
       'claude-sonnet-5-5-latest',
+      'claude-sonnet-5-5[garbage]',
+      'claude-sonnet-5-5[1M]',
       'claude-sonnet-5-20261001',
       'claude-sonnet-4-6',
       'claude-fable-5-1',
@@ -310,5 +327,20 @@ describe('1h cache writes', () => {
     })
     expect(cost(split(0, 1_000_000), only1h)).toEqual({ usd: 2, source: 'rate' })
     expect(cost(split(1, 1_000_000), only1h)).toEqual({ usd: null, source: 'unknown' })
+  })
+
+  test('a present cache-write total that is negative or not finite is unknown, never free; absent prices as before', () => {
+    for (const bad of [-1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(cost({ input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: bad })).toEqual({
+        usd: null,
+        source: 'unknown',
+      })
+    }
+    for (const absent of [null, undefined]) {
+      expect(cost({ input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: absent })).toEqual({
+        usd: 0,
+        source: 'rate',
+      })
+    }
   })
 })

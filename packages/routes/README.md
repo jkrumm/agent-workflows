@@ -174,7 +174,7 @@ the alias a client sends and prices each Anthropic response.
 import { claudeRate, CLAUDE_MODELS, costFromUsage, resolveModelAlias } from '@agent-workflows/routes'
 
 resolveModelAlias('sonnet') // the Sonnet id; anything else (an id, 'Sonnet', 'gpt-x') comes back untouched
-claudeRate('opus') // Rate | undefined, by id or alias; a copy
+claudeRate('opus') // Rate | undefined, by id or alias; the shared, deeply frozen rate (not a copy)
 costFromUsage('iu-anthropic', usage, claudeRate(model)) // usage as Anthropic returns it
 ```
 

@@ -33,7 +33,7 @@ function count(...values: (number | undefined)[]): number | null {
   return null
 }
 
-/** A split count: absent (`null`/`undefined`), a valid count, or `'bad'` (negative or non-finite). */
+/** A cache-write count: absent (`null`/`undefined`), a valid count, or `'bad'` (negative or non-finite). */
 function splitCount(value: number | null | undefined): number | undefined | 'bad' {
   if (value === null || value === undefined) return undefined
   return Number.isFinite(value) && value >= 0 ? value : 'bad'
@@ -43,15 +43,15 @@ function splitCount(value: number | null | undefined): number | undefined | 'bad
  * Cache writes split by lifetime. `cache_creation_input_tokens` is the total; `cache_creation.ephemeral_1h_input_tokens`
  * is the part written to the 1-hour cache, and the rest counts as 5-minute, as it did before the split existed. Without
  * the total, the split's own two counts are the writes. `null` (the cost is unknown) for a block that contradicts
- * itself: a present split count that is negative or not finite, or a split (5m plus 1h) that is larger than the total.
+ * itself: a present total or split count that is negative or not finite, or a split (5m plus 1h) that is larger than the total.
  */
 function cacheWrites(usage: ProviderUsage): { write5m: number; write1h: number } | null {
-  const total = count(usage.cache_creation_input_tokens ?? undefined)
+  const total = splitCount(usage.cache_creation_input_tokens)
   const m5 = splitCount(usage.cache_creation?.ephemeral_5m_input_tokens)
   const h1 = splitCount(usage.cache_creation?.ephemeral_1h_input_tokens)
-  if (m5 === 'bad' || h1 === 'bad') return null
+  if (total === 'bad' || m5 === 'bad' || h1 === 'bad') return null
   const write1h = h1 ?? 0
-  if (total === null) return { write5m: m5 ?? 0, write1h }
+  if (total === undefined) return { write5m: m5 ?? 0, write1h }
   if ((m5 ?? 0) + write1h > total) return null
   return { write5m: total - write1h, write1h }
 }
