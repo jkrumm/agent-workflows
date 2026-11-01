@@ -109,9 +109,10 @@ export class Ledger implements MeterSource {
     this.now = options.now ?? Date.now
     this.db = new Database(path, { create: true, strict: true })
     this.db.run('pragma journal_mode = wal')
-    // FULL: a written row survives power loss too, at one fsync per request beside an LLM call.
-    this.db.run('pragma synchronous = full')
-    // A deploy's old and new process overlap for a moment.
+    // NORMAL in WAL mode: durable across a process crash, the failure the outbox guards; a power cut may lose the last
+    // rows, and the hourly reconcile restores the meter from the cost report.
+    this.db.run('pragma synchronous = normal')
+    // A second connection (sqlite3 on the file, a checkpoint) must wait, not fail a write. Never a second gateway.
     this.db.run('pragma busy_timeout = 5000')
     this.db.run(SCHEMA)
   }
@@ -235,6 +236,11 @@ export class Ledger implements MeterSource {
       // `writing` kept the error.
     }
     return this.lastWriteError
+  }
+
+  /** One integer pragma of this connection; `synchronous` is per connection, so only this one can tell. */
+  pragma(name: 'synchronous'): number | undefined {
+    return this.db.query<Record<string, number>, []>(`pragma ${name}`).get()?.[name]
   }
 
   close(): void {

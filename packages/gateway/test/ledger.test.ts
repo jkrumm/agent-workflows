@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { Database } from 'bun:sqlite'
 import { chmodSync } from 'node:fs'
 import { join } from 'node:path'
 import { Ledger, type PickRow, type RecordRow } from '../src/ledger.ts'
@@ -85,6 +86,15 @@ describe('ledger', () => {
     ledger.close()
     ledger = new Ledger(join(dir.path, 'ledger.sqlite'), { now: () => clock })
     expect(ledger.spentSince('iu', new Date(0))).toBe(4)
+  })
+
+  test('WAL with synchronous NORMAL: durable across a process crash', () => {
+    const db = new Database(join(dir.path, 'ledger.sqlite'), { readonly: true })
+    expect(db.query('pragma journal_mode').get()).toEqual({ journal_mode: 'wal' })
+    db.close()
+    const probe = new Ledger(join(dir.path, 'probe.sqlite'))
+    expect(probe.pragma('synchronous')).toBe(1)
+    probe.close()
   })
 
   test('writeRecord returns the instant the meter charges with', () => {
