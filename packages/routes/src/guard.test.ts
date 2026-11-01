@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
-import { DEFAULT_ROUTES, routeIds } from './index.ts'
+import { CLAUDE_MODELS, DEFAULT_ROUTES, routeIds } from './index.ts'
 
 // The home-of-model-ids rule: no source outside `packages/routes/src/table/` names a model that the table names. The
 // routes package's own test files may (they pin what the table says): exactly the files `bun test` runs, by its
@@ -102,7 +102,10 @@ test('the guard matches whole tokens: a model id inside a longer word is not a h
 
 function modelIds(): string[] {
   return [
-    ...new Set(Object.values(DEFAULT_ROUTES).flatMap((r) => [r.model, ...(r.fallback ? [r.fallback.model] : [])])),
+    ...new Set([
+      ...Object.values(DEFAULT_ROUTES).flatMap((r) => [r.model, ...(r.fallback ? [r.fallback.model] : [])]),
+      ...CLAUDE_MODELS,
+    ]),
   ]
 }
 
