@@ -18,13 +18,14 @@ from the subscriptions' API credit before IU, and records every request. Design 
 | `/decisions/v1/*` | IU origin + the same path | `authorization: Bearer <IU key>` |
 | `GET /health` | the gateway, no auth | none |
 
-Callers send a door token as `authorization: Bearer <t>` or `x-api-key: <t>`; the API secret authenticates as `agw`.
+Callers send a door token as `authorization: Bearer <t>`, `x-api-key`, `x-goog-api-key`, `api-key` or a `key` query
+parameter; the API secret authenticates as `agw`.
 Every proxied response carries `x-agw-request-id` (the ledger `source_id`) and `x-agw-pool` (a pool id, `iu-api`, or
 `refused` on a 402).
 
 **Forwarded:** the body's bytes, except on the `/anthropic` paths an exact alias (`haiku`, `sonnet`, `opus`) in `model`,
-which is re-serialised with the concrete id. **Not forwarded:** the caller's `authorization` and `x-api-key`, `host`, `content-length`
-(recomputed), hop-by-hop headers and every `x-agw-*` header.
+which is re-serialised with the concrete id. **Not forwarded:** every credential carrier above, `host`,
+`content-length` (recomputed), hop-by-hop headers and every `x-agw-*` header.
 
 ## Env
 

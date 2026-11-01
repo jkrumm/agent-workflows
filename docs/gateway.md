@@ -106,8 +106,8 @@ with an admin key, at boot (before listening, 30 s at most) and hourly:
 ## Callers and attribution
 
 Callers authenticate with a door token (`data/door-tokens`, one line per caller: `agw`, `hermes`, `oc`, `modelpick`, …)
-as `authorization: Bearer <t>` or `x-api-key: <t>` (the Anthropic SDK sends the latter). The caller name comes from the
-credential, never a header; a door token never opens the API. Optional headers: `x-agw-run-id`, `x-agw-workflow`, `x-agw-step`, `x-agw-purpose`,
+as `authorization: Bearer <t>`, `x-api-key`, `x-goog-api-key`, `api-key` or a `key` query parameter (whichever the
+caller's SDK sends). None of them goes upstream. The caller name comes from the credential, never a header; a door token never opens the API. Optional headers: `x-agw-run-id`, `x-agw-workflow`, `x-agw-step`, `x-agw-purpose`,
 `traceparent`.
 
 **The gateway is the only writer of inference usage rows.** agw keeps tokens and cost in its run record and spans, but

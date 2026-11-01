@@ -321,6 +321,50 @@ describe('door auth', () => {
     expect(records.map(({ row }) => row.lane)).toEqual(['other', 'hermes', 'agw_workflow'])
   })
 
+  test.each([
+    ['x-goog-api-key', { 'x-goog-api-key': DOOR_TOKEN }, '/gemini/v1beta/models/m:generateContent?alt=sse'],
+    ['api-key', { 'api-key': DOOR_TOKEN }, '/openai/v1/chat/completions?alt=sse'],
+    ['x-api-key', { 'x-api-key': DOOR_TOKEN }, '/openai/v1/chat/completions?alt=sse'],
+    ['authorization', { authorization: `Bearer ${DOOR_TOKEN}` }, '/openai/v1/chat/completions?alt=sse'],
+    ['the key parameter', {}, `/gemini/v1beta/models/m:generateContent?alt=sse&key=${DOOR_TOKEN}`],
+    ['an encoded key parameter', {}, `/gemini/v1beta/models/m:generateContent?%6Bey=${DOOR_TOKEN}&alt=sse`],
+  ])('a door token in %s authenticates and never reaches the upstream', async (_name, headers, path) => {
+    const gw = start()
+    const response = await fetch(`${gw.url}${path}`, {
+      method: 'POST',
+      body: '{}',
+      headers: { 'content-type': 'application/json', ...headers },
+    })
+    expect(response.status).toBe(200)
+    await response.text()
+    const seen = iu.seen[0]
+    expect(seen?.path).toEndWith('?alt=sse')
+    expect(JSON.stringify([seen?.path, [...(seen?.headers ?? [])]])).not.toContain(DOOR_TOKEN)
+    expect(seen?.headers.get('authorization')).toBe(`Bearer ${IU_KEY}`)
+    expect(gw.rows().records[0]?.row.lane_detail.caller).toBe('oc')
+  })
+
+  test('carriers beside the one that authenticated are stripped too; other parameters keep their bytes', async () => {
+    const gw = start()
+    const init = jsonBody({})
+    await (
+      await gw.call('/openai/v1/x?key=other&mykey=1&q=a%20b', {
+        ...init,
+        headers: { ...init.headers, 'x-goog-api-key': 'other', 'api-key': 'other' },
+      })
+    ).text()
+    expect(iu.seen[0]?.path).toBe('/prefix/openai/v1/x?mykey=1&q=a%20b')
+    expect(iu.seen[0]?.headers.get('x-goog-api-key')).toBeNull()
+    expect(iu.seen[0]?.headers.get('api-key')).toBeNull()
+  })
+
+  test('a bad token in a key parameter is 401', async () => {
+    const gw = start()
+    const response = await fetch(`${gw.url}/gemini/v1beta/models/m:generateContent?key=${'x'.repeat(40)}`, jsonBody({}))
+    expect(response.status).toBe(401)
+    expect(iu.seen).toHaveLength(0)
+  })
+
   test('a bad token is 401 and nothing goes upstream', async () => {
     const gw = start()
     const response = await gw.call(MESSAGES, { ...jsonBody(request()), token: 'x'.repeat(40) })
