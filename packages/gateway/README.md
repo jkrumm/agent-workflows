@@ -69,6 +69,8 @@ after an upstream 2xx.
 - **Cost.** `cost_reported_usd` is the provider's own `usage.cost` if it states one, else a complete usage block at the
   Claude rates, else null (Postgres then prices the token columns). On a credit pool an estimate stands in for the meter only (`lane_detail.costEstimatedUsd`,
   `costEstimated: true`): the rules are in `docs/gateway.md` §Meter, the code in `src/charge.ts`.
+- **Tee limits.** A held or decoded copy stops at 64 MiB and one pending SSE event at 1 MiB. Past either the usage is
+  incomplete and the estimate applies; the caller's bytes go through untouched.
 - **Flush.** Every 30 s and 1 s after a write, one flush at a time, 200 rows a transaction. After a failed flush only the
   30 s tick retries, so an outage is not hammered per request.
 - **Delivery.** At least once: a row is marked only after its transaction commits, and the upserts on `(source, source_id)`

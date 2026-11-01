@@ -190,6 +190,43 @@ describe('tee', () => {
     expect(result).toMatchObject({ usage: null, complete: false, bytesReceived: bomb.byteLength })
   })
 
+  describe('one SSE event past 1 MiB', () => {
+    const start = `data: ${JSON.stringify({ type: 'message_start', message: { model: 'm', usage: { input_tokens: 5 } } })}\n\n`
+    const final = `data: ${JSON.stringify({ type: 'message_delta', usage: { output_tokens: 7 } })}\n\n`
+    const encode = (text: string) => new TextEncoder().encode(text)
+    const huge = (size: number) => `data: ${'x'.repeat(size)}`
+
+    test('with no delimiter yet: parsing stops, what came before stands, the block is not complete', () => {
+      const tee = new UsageTee({ contentType: 'text/event-stream', contentEncoding: null })
+      tee.push(encode(start))
+      tee.push(encode(huge(512 * 1024)))
+      tee.push(encode('x'.repeat(600 * 1024)))
+      tee.push(encode(`\n\n${final}`))
+      const result = tee.finish()
+      expect(result.tokens).toMatchObject({ input: 5, output: 0 })
+      expect(result.complete).toBe(false)
+      expect(result.bytesReceived).toBeGreaterThan(1024 * 1024)
+    })
+
+    test('complete in one chunk: the same', () => {
+      const tee = new UsageTee({ contentType: 'text/event-stream', contentEncoding: null })
+      tee.push(encode(`${start}${huge(2 * 1024 * 1024)}\n\n${final}`))
+      expect(tee.finish()).toMatchObject({ complete: false, tokens: { input: 5, output: 0 } })
+    })
+
+    test('in an encoded stream: the same', () => {
+      const tee = new UsageTee({ contentType: 'text/event-stream', contentEncoding: 'gzip' })
+      tee.push(gzipSync(`${start}${huge(2 * 1024 * 1024)}\n\n${final}`))
+      expect(tee.finish()).toMatchObject({ complete: false, tokens: { input: 5, output: 0 } })
+    })
+
+    test('under it nothing changes', () => {
+      const tee = new UsageTee({ contentType: 'text/event-stream', contentEncoding: null })
+      tee.push(encode(`${start}${huge(1024 * 1024 - 16)}\n\n${final}`))
+      expect(tee.finish()).toMatchObject({ complete: true, tokens: { input: 5, output: 7 } })
+    })
+  })
+
   test('a body under the limit still decodes', () => {
     const text = 'x'.repeat(1024 * 1024)
     expect(decodeBody(gzipSync(text), 'gzip').byteLength).toBe(text.length)
