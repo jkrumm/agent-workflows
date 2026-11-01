@@ -1,4 +1,4 @@
-import { claudeRate, costFromUsage } from '@agent-workflows/routes/pricing'
+import { claudeRate, costFromUsage, type ProviderUsage } from '@agent-workflows/routes/pricing'
 import { isRecord } from './json.ts'
 import type { ReportedUsage, TeeResult } from './tee.ts'
 
@@ -40,16 +40,28 @@ export interface Charge {
   estimateUsd: number | null
 }
 
-/** Tokens seen or, failing that, inferred from the bytes both ways. */
-function estimatedTokens(tee: TeeResult, request: RequestShape): { input_tokens: number; output_tokens: number } {
+/**
+ * The usage to price when none is complete. What the stream reported keeps its category, a cache read or a 1 h write at
+ * its own rate; only what it never said is inferred from the bytes, as plain input or output.
+ */
+function estimatedUsage(tee: TeeResult, request: RequestShape): ProviderUsage {
   const seen = tee.tokens
-  const seenInput = seen === null ? 0 : seen.input + seen.cacheRead + seen.cacheWrite5m + seen.cacheWrite1h
+  const seenPrompt = seen === null ? 0 : seen.input + seen.cacheRead + seen.cacheWrite5m + seen.cacheWrite1h
   const seenOutput = seen === null ? 0 : seen.output + seen.reasoning
-  const input = seenInput > 0 ? seenInput : Math.ceil(request.bytes / BYTES_PER_TOKEN)
-  if (tee.bytesReceived === 0 && !request.streamed) {
-    return { input_tokens: input, output_tokens: Math.min(request.maxTokens ?? CUT_OUTPUT_TOKENS, CUT_OUTPUT_TOKENS) }
-  }
-  return { input_tokens: input, output_tokens: Math.max(seenOutput, Math.ceil(tee.bytesReceived / BYTES_PER_TOKEN)) }
+  const prompt: ProviderUsage =
+    seen !== null && seenPrompt > 0
+      ? {
+          input_tokens: seen.input,
+          cache_read_input_tokens: seen.cacheRead,
+          cache_creation_input_tokens: seen.cacheWrite5m + seen.cacheWrite1h,
+          cache_creation: { ephemeral_1h_input_tokens: seen.cacheWrite1h },
+        }
+      : { input_tokens: Math.ceil(request.bytes / BYTES_PER_TOKEN) }
+  const cutBeforeAnyByte = tee.bytesReceived === 0 && !request.streamed
+  const output = cutBeforeAnyByte
+    ? Math.min(request.maxTokens ?? CUT_OUTPUT_TOKENS, CUT_OUTPUT_TOKENS)
+    : Math.max(seenOutput, Math.ceil(tee.bytesReceived / BYTES_PER_TOKEN))
+  return { ...prompt, output_tokens: output }
 }
 
 /**
@@ -77,6 +89,6 @@ export function chargeOf(input: {
   if (!creditPool || !billable) return { reportedUsd: null, estimateUsd: null }
   const atTop = tee.complete ? costFromUsage('iu-anthropic', tee.usage, top).usd : null
   if (atTop !== null) return { reportedUsd: null, estimateUsd: withTools(atTop) }
-  const tokens = estimatedTokens(tee, request)
-  return { reportedUsd: null, estimateUsd: withTools(costFromUsage('iu-anthropic', tokens, rate ?? top).usd) }
+  const usage = estimatedUsage(tee, request)
+  return { reportedUsd: null, estimateUsd: withTools(costFromUsage('iu-anthropic', usage, rate ?? top).usd) }
 }

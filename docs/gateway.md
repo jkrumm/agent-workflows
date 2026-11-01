@@ -97,9 +97,9 @@ never to the row's cost:
 - **Server tools:** a credit pool's figure, reported or estimated, also carries web searches at $10 per 1,000
   (`usage.server_tool_use`). Web fetch and code execution have no per-use price.
 - **No rate for the model:** the usage at the most expensive Claude rate.
-- **No complete usage** (a client abort, the hang guard, a fetch error, a 2xx nobody can read): input is the
-  `message_start` input and cache tokens if seen, else request bytes / 3; output is the larger of the tokens seen and
-  response bytes / 3. A non-streamed request cut before any byte takes the smaller of its `max_tokens` and 8192. Priced
+- **No complete usage** (a client abort, the hang guard, a fetch error, a 2xx nobody can read): the `message_start`
+  input and cache tokens if seen, each at its own rate, else request bytes / 3 as input; output is the larger of the
+  tokens seen and response bytes / 3. A non-streamed request cut before any byte takes the smaller of its `max_tokens` and 8192. Priced
   at the model's rate, else the top one.
 
 Spend made outside the gateway counts against the credit (`iu` spent $56.11 on 2026-10-31, before any gateway). No API

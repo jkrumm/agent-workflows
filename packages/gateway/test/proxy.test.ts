@@ -874,6 +874,7 @@ describe('a credit request without a complete usage block', () => {
   const price = (input: number, output: number, alias = 'haiku') =>
     costFromUsage('iu-anthropic', { input_tokens: input, output_tokens: output }, claudeRate(alias)).usd as number
   const bodyBytes = (body: unknown) => new TextEncoder().encode(JSON.stringify(body)).byteLength
+  const costOfUsage = (usage: typeof USAGE) => costFromUsage('iu-anthropic', usage, claudeRate('haiku')).usd as number
 
   const expectEstimate = (gw: Harness, usd: number) => {
     const row = gw.rows().records[0]?.row
@@ -884,7 +885,7 @@ describe('a credit request without a complete usage block', () => {
     expect(gw.ledger.spentSince('iu', new Date(0))).toBeCloseTo(usd, 12)
   }
 
-  test('a client abort mid-stream: input and cache seen, output from the bytes', async () => {
+  test('a client abort mid-stream: seen input and cache keep their categories, output from the bytes', async () => {
     const text = sse([{ type: 'message_start', message: { model: haikuId, usage: { ...USAGE, output_tokens: 1 } } }])
     anthropic.reply(
       () =>
@@ -903,7 +904,10 @@ describe('a credit request without a complete usage block', () => {
     await response.body?.getReader().read()
     abort.abort()
     for (let i = 0; i < 100 && gw.rows().records.length === 0; i++) await Bun.sleep(5)
-    expectEstimate(gw, price(3400, Math.ceil(new TextEncoder().encode(text).byteLength / 3)))
+    expectEstimate(
+      gw,
+      costOfUsage({ ...USAGE, output_tokens: Math.ceil(new TextEncoder().encode(text).byteLength / 3) }),
+    )
     // The tokens stay on the row: Postgres prices what was reported.
     expect(gw.rows().records[0]?.row).toMatchObject({ input_tokens: 1000, cache_read_tokens: 2000 })
   })
@@ -913,7 +917,10 @@ describe('a credit request without a complete usage block', () => {
     anthropic.reply(() => sseResponse(text))
     const gw = start({ registry: [pool('iu')] })
     await (await gw.call(MESSAGES, jsonBody(request({ stream: true })))).text()
-    expectEstimate(gw, price(3400, Math.ceil(new TextEncoder().encode(text).byteLength / 3)))
+    expectEstimate(
+      gw,
+      costOfUsage({ ...USAGE, output_tokens: Math.ceil(new TextEncoder().encode(text).byteLength / 3) }),
+    )
   })
 
   test.each([
