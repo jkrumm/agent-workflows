@@ -17,9 +17,10 @@ Research run `01a1980b-d977-7796-a377-14349c813714` (2026-11-01).
 | Ultra $200 (`iu`), Max $100 (`me`, `me2`) a month, granted to one linked Console organization per subscription | three credit pools, one API key each |
 | Expires at the end of each subscription's billing cycle, no rollover; the three cycles differ | spend the soonest-expiring pool first |
 | Pays for API keys of the linked org only (Messages, Batches, Agent SDK); never interactive Claude Code | Claude Code stays on the subscriptions, outside the gateway |
-| No API returns the remaining balance; `analytics/cost` and `cost_report` return spend **before credits**, 5 min to 24 h late | the gateway meters itself and reconciles against the cost API |
+| No API returns the remaining balance; `analytics/cost` (beta) returns spend at list price **before credits**, in cents, hourly snapshots typically hours late (docs: up to 24 h); legacy `cost_report` has no row for the current UTC day and cannot group by key (Wave 1 spike) | the gateway meters itself and reconciles against `analytics/cost` |
 | Prompt caches are isolated per organization | a session that changes org loses its cache |
-| With no payment method on file, a drained org refuses: "Your credit balance is too low…" | overspend is impossible; the headroom only avoids a mid-session refusal |
+| With no payment method on file, a drained org refuses: HTTP 400 "Your credit balance is too low…" | overspend is impossible; the headroom only avoids a mid-session refusal |
+| A **funded** credit org answers a Claude-Code-shaped request with the same 400 (the `claude-code-20250219` beta, the "You are Claude Code" system prefix, a `claude-cli` user-agent; Wave 1 spike) | such a request never goes to a credit pool, and its refusal never marks a pool drained |
 | Linked orgs sit at least at the Start tier (4,000 RPM on Opus) | rate limits are not a concern |
 
 ## Shape
@@ -36,9 +37,12 @@ changed, so streams are not cut by unrelated deploys.
 | `/anthropic/v1/messages` (+ `count_tokens`) | a credit org, else IU `/anthropic` (same protocol, same models) |
 | `/openai/v1/*`, `/gemini/v1beta/*`, `/decisions/v1/*`, `/replicate/v1/*` | IU, with the `personal` key |
 
-**Passthrough is byte-exact.** Request bytes and headers (`anthropic-beta`, `anthropic-version`) go upstream unchanged;
-only the auth header is swapped. The response streams through unbuffered while a tee parses the `usage` block of
-`message_start` / `message_delta` (or the OpenAI final chunk). No body rewriting, no format translation: the cache
+**Passthrough is byte-exact.** Request bytes and end-to-end headers (`anthropic-beta`, `anthropic-version`) go upstream
+unchanged; the auth header is swapped, `content-length` recomputed, hop-by-hop headers (`connection`, `keep-alive`,
+`transfer-encoding`, …) dropped. The response streams through unbuffered while a tee parses the `usage` block of
+`message_start` / `message_delta` (or the OpenAI final chunk). Bun's `fetch` must run with `decompress: false`: by
+default it decodes the body but keeps `content-encoding: gzip`, and Anthropic compresses; only the tee's copy is
+decoded. Upstream timeouts follow the agent-limits rule (a hang guard of 30 min or more), not a short request timeout. No body rewriting, no format translation: the cache
 traps CLIProxyAPI falls into (`system` reshaped, `cache_control` injected, JSON re-marshalled) cannot happen.
 
 **Model aliases.** `sonnet`, `haiku`, `opus` resolve to the current concrete id from `packages/routes`, the one place
@@ -55,20 +59,26 @@ Registry: `dotfiles/config/claude-accounts.json`, the picker's single source, ge
               "adminKeyRef": "op://mini/claude-platform/ADMIN_KEY_IU" }
 ```
 
-`cycleDay` is the subscription's billing day (owner fills it from claude.ai Settings → Billing). Keys resolve through
-`secrets-run` at start. A ref that does not resolve disables that pool and logs why; the gateway still starts.
+`cycleDay` is the subscription's billing day (owner fills it from claude.ai Settings → Billing). `null` means unknown:
+the meter then sums the pool's rows over a rolling 31 days, which never under-counts the real cycle, and the pool stays
+usable. Keys resolve through `secrets-run` at start. A ref that does not resolve disables that pool and logs why; the gateway still starts.
 
 Per request, in order:
 
-1. **Session binding.** The session id is the first of `x-agw-session` (agw sends its run id), `x-claude-code-session-id`,
-   `metadata.user_id`, a hash of the first user message. A bound session stays on its pool while that pool is eligible.
+0. **Claude-Code-shaped requests go to IU.** A request carrying any of the signals above (read-only check, no body edit)
+   skips the credit pools.
+1. **Session binding.** The key is `(caller, session)`, the caller from the door token. The session id is the first of
+   `x-agw-session` (agw sends its run id; OpenCode steps through the host's plugin; Hermes through
+   `session_affinity_header`), `x-claude-code-session-id`, `x-session-affinity` (OpenCode's root session, so sub-agents
+   share their parent's pool), `metadata.user_id`, a hash of the first user message. A bound session stays on its pool while that pool is eligible.
    Bindings are written only when a request is served, TTL 1 h refreshed per request, in memory.
 2. **New session.** The eligible pool whose cycle ends soonest. Eligible: enabled, key resolved, and
    `meter + headroom < credit`.
 3. **No pool eligible.** IU `/anthropic`, unless the caller sent `x-agw-fallback: none`. Then the gateway answers 402
    with the balance marker, and the caller's own route fallback (agw: GPT on IU) takes over.
-4. **Refused for balance anyway** (meter drift): `isBalanceFailure` learns Anthropic's "credit balance is too low"; the
-   pool is marked drained for the cycle and the request runs once on the next step. One cache miss, accepted.
+4. **Refused for balance anyway** (meter drift): `isBalanceFailure` knows Anthropic's 400 "credit balance is too low";
+   the pool is marked drained for the cycle and the request runs once on the next step. One cache miss, accepted. Step 0
+   keeps a funded pool from being drain-marked by a Claude Code refusal.
 
 **Meter.** Per pool and cycle: at boot the sum of the gateway's own rows since the cycle start, then the running sum
 from each response priced with the route rates. Each hour the reconciled figure (below) replaces it if higher.
@@ -80,9 +90,15 @@ a door token never opens the API. Optional headers: `x-agw-run-id`, `x-agw-workf
 `traceparent`.
 
 **The gateway is the only writer of inference usage rows.** agw keeps tokens and cost in its run record and spans, but
-stops writing `usage.records` for calls that go through the gateway, so nothing is counted twice. Whether OpenCode can
-carry per-session headers decides how OpenCode steps are attributed (Wave 1 spike); without them the join is by
-`opencode.session.id` on the step span.
+stops writing `usage.records` for calls that go through the gateway, so nothing is counted twice.
+
+**OpenCode** (pinned build) sends the session id on every request with no configuration (`x-opencode-session-id`, and
+`x-session-affinity` with the root session's id). The host adds `x-agw-session` (the run id), `x-agw-run-id` and
+`x-agw-step` through a small plugin on the `model.request` hook, reading `runId` / `stepId` from the session's
+`metadata.agw`; the plugin is a directory in the server config's `plugins`. The join by `opencode.session.id` on the step
+span stays as the fallback. **Hermes** sets `session_affinity_header: x-agw-session` on its gateway provider entry (an
+`anthropic_messages` entry); static `extra_headers` are not relied on (auxiliary calls drop them). Neither uses
+`metadata.user_id`. Evidence: `docs/spikes/gateway/headers.md`.
 
 ## Usage and telemetry
 
@@ -93,7 +109,9 @@ Schema changes in usage-tracker (`migrations/pg`, it owns the `usage` schema):
 - `usage.credit_cycles` (account, cycle start/end, grant, metered, reconciled, unspent at close).
 - `usage.gateway_picks` (ts, caller, session, picked pool or `iu`, reason), modelled on `account_picks`.
 - `usage.platform_cost` (account, day, model, api_key_id, cost_usd), filled by a usage-tracker pass from
-  `GET /v1/organizations/analytics/cost` (or `cost_report`) with each org's admin key, like `iu_portal_cost`. A missing
+  `GET /v1/organizations/analytics/cost` (beta header `analytics-usage-cost-2026-08-24`, `group_by[]=api_key_id` and
+  `model`, `cost_usd = amount / 100`; request shapes in `docs/spikes/gateway/admin-api.md`) with each org's admin key, like
+  `iu_portal_cost`. Not legacy `cost_report`: it cannot group by key. A missing
   admin key skips that org.
 
 One span per request (`gen_ai.*` attributes, pool, cache read/write tokens, TTFT), parented by `traceparent`.
@@ -114,5 +132,6 @@ cycle, projected unspent credit, picks and fallbacks, and cache-hit rate per cal
 
 ## Open
 
-- Admin API on a one-person org is undocumented; the reconciler is optional per org until it is proven.
+- The Admin API works on a one-person org (Wave 1, `iu` and `me`); units and credit basis are proven on `iu` only, `me`
+  had no spend yet.
 - Whether the personal IU key's $500 is enforced by IU or only a portal figure. While credit lasts it barely matters.
