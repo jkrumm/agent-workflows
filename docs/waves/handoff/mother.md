@@ -19,6 +19,9 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
   Rotation policy: a fresh lead per wave unless the last one closed under ~30% context.
 
 ## Decisions taken
+- 2026-11-01 ~22:50: old mother r2 and lead r3 were resumed beside r4/r5. Settled: r4 mother, r5 lead (r2 stepped down, owner: "w1-r4 owns the fleet");
+  r3 hands r5 its review verdicts, then idles and gets closed. Accepted departures from gateway.md (r2): no bootProcess; SQLite ledger to usage.records,
+  at-least-once with idempotent keys and quarantine; build-hash restart. Close-out must state them for concept v3.14.
 - 2026-11-01 owner: Admin keys in the mini's secrets cache are authorized (the owner asked for them to be wired, for the
   Wave 4 reconciler). Personal one-person orgs, no payment method; accepted risk, not a stop.
 - 2026-11-01: mother and lead (`w1-r2`, `w1-r3`) ended ~19:46 mid-Wave 2 (the `iu` session window at 98 %); a fresh
