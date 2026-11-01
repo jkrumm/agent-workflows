@@ -42,6 +42,11 @@ describe('sessionId', () => {
     expect(id).toMatch(/^[0-9a-f]{32}$/)
   })
 
+  test('a null or undefined first user content is null', () => {
+    expect(sessionId(new Headers(), { messages: [{ role: 'user', content: null }] })).toBeNull()
+    expect(sessionId(new Headers(), { messages: [{ role: 'user' }] })).toBeNull()
+  })
+
   test('null without a user message', () => {
     expect(sessionId(new Headers(), { messages: [{ role: 'assistant', content: 'hi' }] })).toBeNull()
     expect(sessionId(new Headers(), {})).toBeNull()
@@ -65,14 +70,19 @@ describe('isClaudeCodeShaped', () => {
     expect(isClaudeCodeShaped(new Headers(), { system: "You are Claude Code, Anthropic's official CLI" })).toBe(true)
   })
 
-  test('the first system block starting You are Claude Code; a later block does not count', () => {
+  test('any system block starting You are Claude Code counts', () => {
     expect(isClaudeCodeShaped(new Headers(), { system: [{ type: 'text', text: 'You are Claude Code.' }] })).toBe(true)
     expect(
       isClaudeCodeShaped(new Headers(), {
         system: [
-          { type: 'text', text: 'Other.' },
-          { type: 'text', text: 'You are Claude Code.' },
+          { type: 'text', text: 'x-billing-header: 1' },
+          { type: 'text', text: '  You are Claude Code.' },
         ],
+      }),
+    ).toBe(true)
+    expect(
+      isClaudeCodeShaped(new Headers(), {
+        system: [{ type: 'text', text: 'Other.' }, { type: 'image' }, 'You are Claude Code.'],
       }),
     ).toBe(false)
   })

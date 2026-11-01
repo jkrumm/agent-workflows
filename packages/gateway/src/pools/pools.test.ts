@@ -132,7 +132,7 @@ describe('order for a new session', () => {
     expect(picked(pools)).toBe('b:soonest-expiry')
   })
 
-  test('disabled and unresolved pools are skipped and never read from the ledger after creation', () => {
+  test('disabled and unresolved pools are skipped and never read from the ledger', () => {
     const { pools, ledger, clock } = setup([pool('off', { enabled: false }), pool('nokey'), pool('ok')], {
       keys: { nokey: undefined },
     })
@@ -140,8 +140,8 @@ describe('order for a new session', () => {
     clock.advance(5 * MINUTE)
     pools.pick(req())
     pools.status()
-    expect(ledger.readsOf('off')).toBe(1)
-    expect(ledger.readsOf('nokey')).toBe(1)
+    expect(ledger.readsOf('off')).toBe(0)
+    expect(ledger.readsOf('nokey')).toBe(0)
     expect(ledger.readsOf('ok')).toBe(2)
   })
 })
@@ -246,7 +246,7 @@ describe('eligibility and the meter', () => {
 })
 
 describe('reconcile', () => {
-  test('always replaces the floor; the meter stays max(base + charges, floor + charges since)', () => {
+  test('on a known cycle only a higher floor is accepted; the meter stays max(base + charges, floor + charges since)', () => {
     const { pools, clock } = setup([pool('a', { cycleDay: 1 })], {
       ledger: fakeLedger([{ pool: 'a', at: '2026-11-02T00:00:00Z', usd: 30 }]),
     })
@@ -256,10 +256,12 @@ describe('reconcile', () => {
     clock.advance(1000)
     pools.charge('a', 5, clock.now())
     expect(meterOf(pools, 'a')).toBe(45)
+    pools.reconcile('a', 45, cycle)
     pools.reconcile('a', 38, cycle)
-    expect(meterOf(pools, 'a')).toBe(38)
     pools.reconcile('a', 20, cycle)
-    expect(meterOf(pools, 'a')).toBe(35)
+    expect(meterOf(pools, 'a')).toBe(45)
+    pools.reconcile('a', 46, cycle)
+    expect(meterOf(pools, 'a')).toBe(46)
   })
 
   test('a charge whose row is older than the reconcile is in the floor already', () => {
@@ -273,18 +275,16 @@ describe('reconcile', () => {
     expect(meterOf(pools, 'a')).toBe(52)
   })
 
-  test('on an unknown cycle a $99 floor stops counting after 2 h', () => {
+  test('on an unknown cycle the floor never expires by time and a lower reconcile replaces it', () => {
     const { pools, clock } = setup([pool('a')], {
       ledger: fakeLedger([{ pool: 'a', at: '2026-11-01T00:00:00Z', usd: 10 }]),
     })
     pools.reconcile('a', 99, 'any')
-    expect(meterOf(pools, 'a')).toBe(99)
     expect(picked(pools)).toBe('iu-api:no-pool')
-    clock.advance(2 * HOUR - 1)
+    clock.advance(30 * HOUR)
     expect(meterOf(pools, 'a')).toBe(99)
-    clock.advance(1)
-    expect(meterOf(pools, 'a')).toBe(10)
-    expect(picked(pools)).toBe('a:soonest-expiry')
+    pools.reconcile('a', 20, 'any')
+    expect(meterOf(pools, 'a')).toBe(20)
   })
 
   test('a negative or non-finite amount throws', () => {
@@ -536,5 +536,104 @@ describe('status', () => {
         unpricedCharges: 0,
       },
     ])
+  })
+})
+
+describe('ledger failures fail closed', () => {
+  function flaky(usd = 5) {
+    const src = {
+      failing: false,
+      reads: 0,
+      spentSince(): number {
+        src.reads++
+        if (src.failing) throw new Error('database is locked')
+        return usd
+      },
+    }
+    return src
+  }
+  const build = (src: MeterSource, registry = [pool('a', { cycleDay: 1 })]) => {
+    const clock = fakeClock('2026-11-10T12:00:00Z')
+    const keys = new Map(registry.map((p) => [p.id, 'sk']))
+    return { clock, pools: createPools({ registry, keys, meter: src, now: clock.now }) }
+  }
+
+  test('a first read failing at creation starts ineligible, retries once a minute, and recovers', () => {
+    const src = flaky()
+    src.failing = true
+    const { pools, clock } = build(src)
+    expect(pools.status()[0]).toMatchObject({ eligible: false, meterError: 'database is locked' })
+    expect(picked(pools)).toBe('iu-api:no-pool')
+    expect(src.reads).toBe(1)
+    clock.advance(MINUTE - 1)
+    pools.status()
+    expect(src.reads).toBe(1)
+    clock.advance(1)
+    pools.status()
+    expect(src.reads).toBe(2)
+    src.failing = false
+    clock.advance(MINUTE)
+    expect(pools.status()[0]).toMatchObject({ eligible: true, meterUsd: 5 })
+    expect(pools.status()[0]?.meterError).toBeUndefined()
+  })
+
+  test('a failing rollover read keeps the old meter, sets meterError, and nothing throws', () => {
+    const src = flaky()
+    const { pools, clock } = build(src, [pool('a', { cycleDay: 14 })])
+    src.failing = true
+    clock.set('2026-11-14T00:00:00Z')
+    expect(() => {
+      pools.pick(req())
+      pools.served('agw', 's1', 'a')
+      pools.charge('a', 1, clock.now())
+      pools.drained('a', '2026-11-14T00:00:00.000Z')
+      pools.reconcile('a', 1, '2026-11-14T00:00:00.000Z')
+      pools.status()
+    }).not.toThrow()
+    expect(pools.status()[0]).toMatchObject({ eligible: false, meterError: 'database is locked' })
+  })
+
+  test('a failing rolling re-read keeps the meter and makes the pool ineligible until it succeeds', () => {
+    const src = flaky()
+    const { pools, clock } = build(src, [pool('a')])
+    src.failing = true
+    clock.advance(MINUTE)
+    expect(pools.status()[0]).toMatchObject({ eligible: false, meterUsd: 5, meterError: 'database is locked' })
+    src.failing = false
+    clock.advance(MINUTE)
+    expect(pools.status()[0]).toMatchObject({ eligible: true })
+  })
+})
+
+describe('unusable pools', () => {
+  test('are never read; status shows meterUsd 0', () => {
+    const ledger = fakeLedger([{ pool: 'a', at: '2026-11-09T00:00:00Z', usd: 50 }])
+    const { pools, clock } = setup([pool('a', { enabled: false }), pool('b')], {
+      ledger,
+      keys: { b: undefined },
+    })
+    clock.advance(2 * MINUTE)
+    expect(pools.status().map((s) => s.meterUsd)).toEqual([0, 0])
+    expect(ledger.readsOf('a')).toBe(0)
+    expect(ledger.readsOf('b')).toBe(0)
+  })
+})
+
+describe('charge with an invalid rowAt', () => {
+  test('counts as now', () => {
+    const { pools } = setup([pool('a')])
+    pools.charge('a', 3, new Date(Number.NaN))
+    expect(meterOf(pools, 'a')).toBe(3)
+  })
+})
+
+describe('soonest-expiry ties', () => {
+  test('equal and unknown expiries keep registry order', () => {
+    const { pools } = setup([pool('a'), pool('b'), pool('c', { cycleDay: 20 }), pool('d', { cycleDay: 20 })])
+    expect(picked(pools)).toBe('c:soonest-expiry')
+    expect(picked(pools, { exclude: ['c'] })).toBe('d:soonest-expiry')
+    expect(picked(pools, { exclude: ['c', 'd'] })).toBe(
+      'a:drained-retry'.replace('a:drained-retry', 'a:soonest-expiry'),
+    )
   })
 })
