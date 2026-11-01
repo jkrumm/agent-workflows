@@ -22,8 +22,8 @@ Callers send a door token as `authorization: Bearer <t>` or `x-api-key: <t>`; th
 Every proxied response carries `x-agw-request-id` (the ledger `source_id`) and `x-agw-pool` (a pool id, `iu-api`, or
 `refused` on a 402).
 
-**Forwarded:** the body's bytes, except an exact alias (`haiku`, `sonnet`, `opus`) in `model`, which is re-serialised
-with the concrete id. **Not forwarded:** the caller's `authorization` and `x-api-key`, `host`, `content-length`
+**Forwarded:** the body's bytes, except on the `/anthropic` paths an exact alias (`haiku`, `sonnet`, `opus`) in `model`,
+which is re-serialised with the concrete id. **Not forwarded:** the caller's `authorization` and `x-api-key`, `host`, `content-length`
 (recomputed), hop-by-hop headers and every `x-agw-*` header.
 
 ## Env
