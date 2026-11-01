@@ -60,8 +60,10 @@ export interface Pools {
    */
   charge(pool: string, usd: number, rowAt: Date): void
   /**
-   * A balance refusal on a non-Claude-Code request: the pool is ineligible until its credit expires (24 h if the expiry
-   * is unknown). Ignored when `cycleStart` (from the `Pick`) is not the pool's current cycle.
+   * A balance refusal on a non-Claude-Code request: the pool is ineligible for 1 h, never past its credit's expiry. A
+   * Claude Code request `isClaudeCodeShaped` misses draws the same 400 from a funded org, so the mark must not take such
+   * a pool out for a month; a really drained pool costs one refused request an hour, retried elsewhere. Ignored when
+   * `cycleStart` (from the `Pick`) is not the pool's current cycle.
    */
   drained(pool: string, cycleStart: string): void
   /**
@@ -92,8 +94,8 @@ const DEFAULT_BINDING_TTL_MS = HOUR_MS
 const SWEEP_INTERVAL_MS = MINUTE_MS
 /** How often an unknown (rolling) cycle re-reads its meter from the source, since the window moves. */
 const ROLLING_RESYNC_MS = MINUTE_MS
-/** How long a drained pool with an unknown expiry stays out. */
-const UNKNOWN_CYCLE_DRAIN_MS = 24 * HOUR_MS
+/** How long a drain mark holds, on every cycle kind; the credit's expiry ends it sooner. */
+const DRAIN_MS = HOUR_MS
 /** How often a failed ledger read is retried. */
 const LEDGER_RETRY_MS = MINUTE_MS
 
@@ -336,7 +338,8 @@ export function createPools(opts: PoolsOptions): Pools {
       const at = now()
       const cycle = sync(state, at)
       if (!isCurrentCycle(state, cycle, cycleStart)) return
-      state.drainedUntilMs = cycle.end === null ? at.getTime() + UNKNOWN_CYCLE_DRAIN_MS : cycle.end.getTime()
+      const untilMs = at.getTime() + DRAIN_MS
+      state.drainedUntilMs = cycle.end === null ? untilMs : Math.min(untilMs, cycle.end.getTime())
     },
 
     reconcile(pool, usd, cycleStart) {
