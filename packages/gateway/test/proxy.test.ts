@@ -755,6 +755,24 @@ describe('usage row', () => {
     expect(gw.ledger.spentSince('iu', new Date(0))).toBeCloseTo(estimate, 12)
   })
 
+  test('a non-Claude IU response keeps the cost the provider states, on JSON and in the final chunk', async () => {
+    const usage = { prompt_tokens: 10, completion_tokens: 5, cost: 0.0123 }
+    iu.reply(() => Response.json({ model: 'gpt-x', usage }))
+    const gw = start()
+    await (await gw.call('/openai/v1/chat/completions', jsonBody({ model: 'gpt-x' }))).text()
+    iu.reply(() => sseResponse(sse([{ model: 'gpt-x', usage: { ...usage, cost: 0.5 } }])))
+    await (await gw.call('/openai/v1/chat/completions', jsonBody({ model: 'gpt-x', stream: true }))).text()
+    expect(gw.rows().records.map(({ row }) => row.cost_reported_usd)).toEqual([0.0123, 0.5])
+    expect(gw.rows().records[0]?.row.lane_detail.costEstimated).toBeUndefined()
+  })
+
+  test('without a stated cost a non-Claude row stays null', async () => {
+    iu.reply(() => Response.json({ model: 'gpt-x', usage: { prompt_tokens: 10, completion_tokens: 5 } }))
+    const gw = start()
+    await (await gw.call('/openai/v1/chat/completions', jsonBody({ model: 'gpt-x' }))).text()
+    expect(gw.rows().records[0]?.row.cost_reported_usd).toBeNull()
+  })
+
   test('the same unknown model on IU stays unpriced: IU is not the meter', async () => {
     iu.reply(() => Response.json({ model: 'claude-unknown-9', usage: USAGE }))
     const gw = start()

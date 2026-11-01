@@ -1,6 +1,6 @@
 import { BEARER_CHALLENGE } from '@agent-workflows/host/auth'
 import { callerAuth } from '@agent-workflows/host/door-tokens'
-import { BALANCE_MARKER, claudeRate, isBalanceFailure, resolveModelAlias } from '@agent-workflows/routes/pricing'
+import { BALANCE_MARKER, isBalanceFailure, resolveModelAlias } from '@agent-workflows/routes/pricing'
 import { chargeOf, type RequestShape } from './charge.ts'
 import type { IuUpstream } from './config.ts'
 import { isRecord } from './json.ts'
@@ -258,10 +258,9 @@ export function createProxy(options: ProxyOptions): GatewayProxy {
     const { status, answered, pick, tee, ended } = input
     const creditPool = pick.pool !== IU_API
     const model = tee.model ?? x.model
-    const claude = x.path.startsWith('/anthropic/') || (model !== null && claudeRate(model) !== undefined)
     const ok = status >= 200 && status < 300
     const billable = ok || !answered
-    const cost = chargeOf({ tee, model, claude, creditPool, billable, request: x.shape })
+    const cost = chargeOf({ tee, model, creditPool, billable, request: x.shape })
     const chargeUsd = cost.reportedUsd ?? cost.estimateUsd
     const tokens = tee.tokens
     const durationMs = Date.now() - x.startedAtMs

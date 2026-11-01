@@ -41,15 +41,15 @@ function estimatedTokens(tee: TeeResult, request: RequestShape): { input_tokens:
 export function chargeOf(input: {
   tee: TeeResult
   model: string | null
-  claude: boolean
   creditPool: boolean
   billable: boolean
   request: RequestShape
 }): Charge {
-  const { tee, model, claude, creditPool, billable, request } = input
+  const { tee, model, creditPool, billable, request } = input
   const rate = model === null ? undefined : claudeRate(model)
   const top = claudeRate('opus')
-  const reported = tee.complete && (claude || creditPool) ? costFromUsage('iu-anthropic', tee.usage, rate).usd : null
+  // The provider's own `usage.cost` wins on any wire (IU states it); without one or a Claude rate there is no figure.
+  const reported = tee.complete ? costFromUsage('iu-anthropic', tee.usage, rate).usd : null
   if (reported !== null) return { reportedUsd: reported, estimateUsd: null }
   if (!creditPool || !billable) return { reportedUsd: null, estimateUsd: null }
   const atTop = tee.complete ? costFromUsage('iu-anthropic', tee.usage, top).usd : null
