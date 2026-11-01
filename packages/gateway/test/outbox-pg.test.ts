@@ -4,7 +4,6 @@ import { join, resolve } from 'node:path'
 import { Pool } from 'pg'
 import { Ledger } from '../src/ledger.ts'
 import { Outbox, pgUsageSink } from '../src/outbox.ts'
-import { pickRow, recordRow } from './ledger.test.ts'
 import {
   API_SECRET,
   DOOR_TOKEN,
@@ -17,6 +16,8 @@ import {
   silentLogger,
   spawnGateway,
   tempDir,
+  pickRow,
+  recordRow,
 } from './support.ts'
 
 // The outbox guarantees against the real `usage` schema: a scratch database with usage-tracker's migrations applied as
@@ -199,6 +200,28 @@ describePg(suite, () => {
     expect(JSON.stringify(quarantined[0]?.fields)).toContain('23514')
     await s.outbox.flush()
     expect(s.logger.lines.filter((line) => line.message.includes('quarantined'))).toHaveLength(2)
+    await s.close()
+  })
+
+  test('a requeued row that still fails is quarantined again, once, and a fixed one lands', async () => {
+    const s = scene()
+    const [fixed, broken] = [fresh('fixed'), fresh('broken')]
+    s.ledger.writeRecord(recordRow(fixed, { lane: 'later-allowed' as 'other' }))
+    s.ledger.writeRecord(recordRow(broken, { lane: 'never-allowed' as 'other' }))
+    await s.outbox.flush()
+    expect(s.ledger.stats()).toMatchObject({ quarantined: 2 })
+    // A migration widens the check.
+    await scratch.query(
+      `alter table usage.records drop constraint records_lane_check, add constraint records_lane_check
+       check (lane in ('interactive', 'wave_mother', 'lead', 'worker', 'fan_worker', 'subagent', 'hermes', 'iris',
+         'agw_workflow', 'other', 'later-allowed'))`,
+    )
+    expect(s.ledger.requeueQuarantined()).toBe(2)
+    await s.outbox.flush()
+    expect(await record(fixed)).toBeDefined()
+    expect(s.ledger.stats()).toMatchObject({ unsynced: 0, quarantined: 1 })
+    await s.outbox.flush()
+    expect(s.logger.lines.filter((line) => line.message.includes('quarantined'))).toHaveLength(3)
     await s.close()
   })
 

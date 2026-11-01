@@ -59,6 +59,9 @@ const reconciler = new Reconciler({
 await Promise.race([reconciler.runAll(), Bun.sleep(FIRST_RECONCILE_MS)])
 reconciler.start()
 
+const requeuedAtStart = ledger.requeueQuarantined()
+if (requeuedAtStart > 0) logger.info('quarantined rows requeued', { rows: requeuedAtStart })
+
 const outbox =
   config.usagePgUrl === null
     ? null
@@ -91,6 +94,7 @@ const server = startGateway({
   logger,
   version: config.version,
   build: config.build,
+  requeuedAtStart,
 })
 logger.info('listening', { port: server.port, version: config.version, build: config.build })
 

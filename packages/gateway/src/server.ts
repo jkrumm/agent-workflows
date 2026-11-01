@@ -30,6 +30,8 @@ export interface GatewayServerOptions {
   logger: Logger
   version: string
   build: string
+  /** Quarantined rows this process put back at start. */
+  requeuedAtStart?: number
   drainMs?: number
 }
 
@@ -70,6 +72,7 @@ export function startGateway(options: GatewayServerOptions): GatewayServer {
       pools: pools.status().map((pool) => ({ ...pool, ...reconciler.status(pool.id) })),
       ledger: {
         ...stats,
+        requeuedAtStart: options.requeuedAtStart ?? 0,
         flush: outbox === null ? 'off' : 'on',
         ...(outbox?.lastError() ? { flushError: outbox.lastError() } : {}),
         ...(writeError === null ? {} : { writeError }),
