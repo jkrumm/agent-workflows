@@ -16,8 +16,9 @@ Context (2026-11-01):
   endpoints don't matter.
 - **Gateway keys** (2026-11-01): `op://mini/claude-platform/{API,ADMIN}_KEY_{IU,ME,ME2}` are seeded on the mini. IU and
   ME resolve to real keys; ME2 holds a `REPLACE` placeholder until its 7-day claim window opens (~2026-11-02), so the
-  `me2` pool stays disabled. Still owed by the owner: each subscription's billing day and whether the orgs carry a
-  payment method. Not blocking: Waves 1–3 run on the `iu` pool alone.
+  `me2` pool stays disabled. Credit cycles (owner, from the Console Billing pages): `iu` credit expires 2026-11-21
+  (`cycleDay` 21; payment day 18), `me` 2026-11-27 (`cycleDay` 27; payment day 24), `me2` unknown until claimed
+  (payment day 27). The credit cycle is not the payment cycle: read it from the expiry shown in Billing.
 - The 2026-10-31 eval (`docs/evals/2026-10-31-review-claude-direct.md`) settled cost, wall time and failure modes per
   arm, but **cannot rank models**: its reference is a retired gateway's outcome. Lessons: `docs/evals/README.md`.
 - Owner framing: greenfield, solo developer, optimal over compatible; the review pipeline may be reset.

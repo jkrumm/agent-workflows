@@ -59,7 +59,8 @@ Registry: `dotfiles/config/claude-accounts.json`, the picker's single source, ge
               "adminKeyRef": "op://mini/claude-platform/ADMIN_KEY_IU" }
 ```
 
-`cycleDay` is the subscription's billing day (owner fills it from claude.ai Settings → Billing). `null` means unknown:
+`cycleDay` is the day the credit expires and renews, as the Console's Billing page shows it. It is not the
+subscription's payment day: `iu` pays on the 18th, its credit turns over on the 21st. `null` means unknown:
 the meter then sums the pool's rows over a rolling 31 days, which never under-counts the real cycle, and the pool stays
 usable. Keys resolve through `secrets-run` at start. A ref that does not resolve disables that pool and logs why; the gateway still starts.
 
