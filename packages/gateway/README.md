@@ -76,6 +76,9 @@ after an upstream 2xx.
   is never retried; the batch around it lands. Any other failure leaves everything unsynced.
 - **Prune.** Synced rows older than 62 days go. Unsynced and quarantined rows stay.
 - **Meter.** `spentSince` reads the ledger, synced or not.
+- **SQLite.** WAL with `synchronous=NORMAL`: durable across a process crash, the failure the outbox guards. A deploy never
+  overlaps two gateways, because it waits for the unload before it loads the new one; `busy_timeout` is for a second
+  connection such as `sqlite3` on the file.
 
 ## /health
 
