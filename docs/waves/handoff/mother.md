@@ -14,7 +14,8 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
   tailscale drift). Not ours; gates are judged on our rows only.
 
 ## Lead
-- Lead `agent-workflows-w1-r3` (pane t3t, account me): Wave 1 closed at 28% context, kept for Wave 2 (brief via rd say).
+- Mother `agent-workflows-w1-r4` (pane t4f, account me2) spawned lead `agent-workflows-w1-r5` (pane t4g, account iu) 2026-11-01 ~22:50
+  for Wave 2, from PRs #81 and #82; briefs `~/.local/state/agent-workflows/briefs/gw2/`. PR #83 (shop) is another session's.
   Rotation policy: a fresh lead per wave unless the last one closed under ~30% context.
 
 ## Decisions taken
@@ -67,10 +68,8 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
 - none
 
 ## Overnight
-- `dotfiles/scripts/fleet-keepalive.sh agent-workflows-mother <repo> 300` runs detached (pid file and
-  log in `~/.local/state/fleet-keepalive/`). It nudges the mother when idle, waits out usage-limit
-  banners, respawns her if the pane vanishes. A real stop: write `docs/waves/handoff/STOP` (first line =
-  reason) and commit; the keepalive then exits. Restart it after a reboot with the nohup line in its header.
+- `fleet-keepalive.sh` is retired (dotfiles b0c835d); the factory's wake note keeps the mother going. A real stop: write
+  `docs/waves/handoff/STOP` (first line = reason) and commit.
 
 ## Obstacles noted
 - 2026-10-27: agent-gateway MCP timed out at the mother's session start; the lead checks the `/review`
