@@ -1,0 +1,39 @@
+<!doctype html><html lang="de-de"><head><title>Amazon.de : xqzvbnmkqw7731zzv</title></head><body>
+<div class="s-main-slot s-result-list s-search-results sg-row">
+<div data-asin="" class="a-section a-spacing-none s-result-item s-flex-full-width s-border-bottom-none s-widget s-widget-spacing-large"><div class="s-widget-container s-spacing-medium s-widget-container-height-medium celwidget slot=MAIN template=MESSAGING widgetId=messaging-messages-no-results">
+<div class="a-section a-spacing-none">
+<div class="s-no-outline">
+<div class="a-row">
+<h2>
+<span class="a-size-medium a-color-base a-text-normal">Keine Ergebnisse für deine Suchanfrage. </span>
+</h2>
+</div>
+<div class="a-row a-size-base a-color-base">
+<span>Überprüfe die Rechtschreibung oder verwende allgemeinere Begriffe</span>
+</div>
+</div>
+</div>
+</div></div>
+<div data-asin="" class="a-section a-spacing-none s-result-item s-flex-full-width s-border-bottom-none s-widget s-widget-spacing-large"><div class="s-widget-container s-spacing-mini s-widget-container-height-mini celwidget slot=MAIN template=MESSAGING widgetId=messaging-messages-legal-disclaimer-and-ranking-disclosure-builder">
+<div class="a-section a-spacing-none">
+<div class="s-no-outline">
+<div class="a-row a-size-base">
+<a class="a-size-base a-link-normal s-underline-text s-underline-link-text s-link-style s-legal-disclaimer-link" href="/gp/help/customer/display.html">Erfahre mehr über diese Ergebnisse.</a>
+</div>
+</div>
+</div>
+</div></div>
+<div data-asin="" class="a-section a-spacing-none s-result-item s-flex-full-width s-widget s-widget-spacing-large"><div class="s-widget-container s-spacing-medium s-widget-container-height-medium celwidget slot=MAIN template=FEEDBACK widgetId=feedback">
+<div class="a-section a-spacing-medium a-spacing-top-medium">
+<div class="sg-row">
+<div class="sg-col-10-of-12 sg-col-10-of-20 sg-col-0-of-4 sg-col sg-col-0-of-8 sg-col-10-of-16 sg-col-10-of-24"><div class="sg-col-inner">
+<div class="a-section a-spacing-small"><div class="a-section a-spacing-none a-text-bold"><h2 class="a-size-medium-plus a-color-base">Benötigst du Hilfe?</h2></div></div>
+<div class="a-row a-spacing-base a-size-base">
+<a class="a-size-base a-color-base a-link-normal s-underline-text s-underline-link-text s-link-style" href="/gp/help/customer/display.html">Besuche die Hilfeseite</a><span class="a-size-base a-color-base"> oder </span><a class="a-size-base a-color-base a-link-normal s-underline-text s-underline-link-text s-link-style" href="/gp/help/customer/contact-us">kontaktiere uns</a>
+</div>
+</div></div>
+</div>
+</div>
+</div></div>
+</div>
+</body></html>

@@ -7,11 +7,12 @@ import { createWebCapabilities, type WebDeps } from '../web/index.ts'
 import { createEvalJudge } from './eval-judge.ts'
 import { createEvalLabel } from './eval-label.ts'
 import { createLlmCapabilities } from './llm.ts'
+import { createShopCapabilities, type ShopDeps } from './shop-capabilities.ts'
 import { createWebRead } from './web-read.ts'
 
 /**
- * The model-backed capabilities, the research tools, the HyperDX API, the vault tools and the image tools: one line per group, each
- * group in its own file. `deps`, `web`, `hdx`, `brain` and `image` default to production on `process.env`. Not discovered from
+ * The model-backed capabilities, the research tools, the HyperDX API, the vault tools, the image tools and the amazon.de shop doors with `image.read`: one line per group, each
+ * group in its own file. `deps`, `web`, `hdx`, `brain`, `image` and `shop` default to production on `process.env`. Not discovered from
  * a directory: the returned tuple is what types `Registry<ReturnType<typeof createCapabilities>>` (every caller's
  * `registry.call(id, input)` is checked against it), and a runtime scan has no static type to give it.
  */
@@ -21,6 +22,7 @@ export function createCapabilities(
   hdx: HdxDeps = {},
   brain: BrainDeps = {},
   image: ImageDeps = {},
+  shop: ShopDeps = {},
 ) {
   const webCapabilities = createWebCapabilities(web)
   return [
@@ -33,5 +35,6 @@ export function createCapabilities(
     ...createHdxCapabilities(hdx),
     ...createBrainCapabilities(brain),
     ...createImageCapabilities(image, deps),
+    ...createShopCapabilities(deps, web, shop),
   ] as const
 }

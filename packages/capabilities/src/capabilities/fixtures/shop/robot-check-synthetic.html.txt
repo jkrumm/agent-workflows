@@ -1,0 +1,9 @@
+<!-- synthetic: written from the documented shape of Amazon's robot check, not captured from a block (none was served) -->
+<!doctype html><html lang="de"><head><title>Amazon.de</title></head><body>
+<div class="a-container a-padding-double-large">
+<div class="a-box a-spacing-extra-large"><div class="a-box-inner">
+<h4>Geben Sie die angezeigten Zeichen im Bild ein</h4>
+<form method="get" action="/errors/validateCaptcha" name=""><input type="text" name="field-keywords" placeholder="Zeichen eingeben"/></form>
+<p>Wir entschuldigen uns für die Unannehmlichkeiten. Um zu bestätigen, dass Sie kein Roboter sind, geben Sie bitte die Zeichen ein.</p>
+</div></div></div>
+</body></html>
