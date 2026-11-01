@@ -40,7 +40,7 @@ state="$HOME/launchd"
 mkdir -p "$state"
 case "$1" in
   bootstrap) label=$(basename "$3" .plist); cp "$3" "$state/$label.plist" ;;
-  bootout) rm -f "$state/$(basename "$2").plist" ;;
+  bootout) [ -f "$HOME/stuck/$(basename "$2")" ] || rm -f "$state/$(basename "$2").plist" ;;
   print) [ -f "$state/$(basename "$2").plist" ] ;;
 esac
 `
@@ -79,7 +79,8 @@ function setup() {
   }
   stub('launchctl', FAKE_LAUNCHCTL)
   stub('curl', FAKE_CURL)
-  stub('plutil', '#!/bin/sh\n[ "$1" = "-extract" ] && echo 120\nexit 0\n')
+  // ExitTimeOut: 120 unless a test writes $HOME/exit-timeout (a stuck unload then costs seconds, not minutes).
+  stub('plutil', '#!/bin/sh\n[ "$1" = "-extract" ] && { cat "$HOME/exit-timeout" 2>/dev/null || echo 120; }\nexit 0\n')
   stub('secrets-run', '#!/bin/sh\necho test-secret\n')
   const aw = join(home, '.agent-workflows')
   const release = (sha: string, gatewayMarker: string) => {
@@ -292,6 +293,27 @@ describe('deploy.sh gateway: rollback', () => {
     expect(u.loadedPlist(HOST)).toContain(`<string>${PREV}</string>`)
     expect(u.data('gateway-build')).toBeNull()
   }, 60_000)
+
+  test('a process stuck loaded after the bootout wait: the ones that unloaded come back from their plists, the deploy names both', () => {
+    const t = liveThenNew('v1', 'v2')
+    mkdirSync(join(t.home, 'stuck'), { recursive: true })
+    writeFileSync(join(t.home, 'stuck', GATEWAY), '')
+    writeFileSync(join(t.home, 'exit-timeout'), '-8') // unload wait: -8 + 10 = 2 s
+    const result = t.deploy(NEW)
+    expect(result.code).toBe(1)
+    expect(result.err).toContain('still loaded after 2s: com.jkrumm.agent-workflows-gateway')
+    expect(result.err).toContain(
+      'restored from their plists: up host audio; did not come back healthy none; stuck loaded gateway',
+    )
+    expect(result.err).toContain('a process is still loaded')
+    // Host and audio run the live release again, from the plists the first deploy rendered; nothing new was rendered.
+    expect(t.loadedPlist(HOST)).toContain(`<string>${PREV}</string>`)
+    expect(t.loadedPlist(AUDIO)).toContain(`<string>${PREV}</string>`)
+    expect(touches(t.launchctlLog(), HOST, 'bootstrap')).toBe(1)
+    expect(touches(t.launchctlLog(), GATEWAY, 'bootstrap')).toBe(0)
+    expect(t.data('deployed-sha')).toBe(PREV)
+    expect(t.data('gateway-build')).toBe(t.oldBuild)
+  }, 60_000)
 })
 
 /** Runs build_gateway / prune_gateway_builds from the real script, with the stand-ins on PATH. */
@@ -301,6 +323,16 @@ function functions(t: Setup, body: string) {
   const proc = Bun.spawnSync([ZSH, '-c', `${fns}\n${body}`], { env: { PATH: process.env.PATH ?? '', HOME: t.home } })
   return { code: proc.exitCode, out: proc.stdout.toString(), err: proc.stderr.toString() }
 }
+
+describe('deploy.sh gateway: bookkeeping', () => {
+  test('the gateway build is recorded before deployed-sha', () => {
+    const script = readFileSync(join(ROOT, 'scripts', 'deploy.sh'), 'utf8')
+    const main = script.slice(script.indexOf('\nmain() {'))
+    expect(main.indexOf('write_atomic "$GW_BUILD_FILE"')).toBeGreaterThan(0)
+    expect(main.indexOf('write_atomic "$GW_BUILD_FILE"')).toBeLessThan(main.indexOf('write_atomic "$SHA_FILE"'))
+    expect(main.indexOf('write_atomic "$GW_PREV_FILE"')).toBeLessThan(main.indexOf('write_atomic "$SHA_FILE"'))
+  })
+})
 
 describe('deploy.sh gateway: the build directory', () => {
   test('the bundle is deterministic: two builds of one release, and of the same source in another release path', () => {

@@ -366,6 +366,26 @@ gateway_back() {  # $1 failed sha, $2 sha for AGW_VERSION
   return 1
 }
 
+# stop_all failed: some processes unloaded, some are stuck. The unloaded ones go back up from their plists (still the live
+# ones: nothing was rendered yet, they point at the live release and gateway build) and are awaited, so a stuck process
+# does not leave the platform half down. Prints what is up, what is stuck and what did not come back.
+restore_unloaded() {  # $1 live sha ("" = none: nothing was live, nothing to restore)
+  local p back=() stuck=() up=() down=()
+  for p in $PROCESSES; do
+    if loaded "$p"; then stuck+=("$p"); continue; fi
+    [[ -n "$1" && -f "$(plist_of "$p")" ]] || continue
+    launchctl bootstrap "gui/$(id -u)" "$(plist_of "$p")" 2>/dev/null && back+=("$p")
+  done
+  if (( ${#back} )); then
+    GW_EXPECT="$GW_OLD_BUILD"
+    wait_healthy "$1" "${back[@]}" >/dev/null 2>&1
+    for p in $back; do
+      if is_healthy "$1" "$p"; then up+=("$p"); else down+=("$p"); fi
+    done
+  fi
+  print -u2 "[deploy] restored from their plists: up ${up[*]:-none}; did not come back healthy ${down[*]:-none}; stuck loaded ${stuck[*]:-none}"
+}
+
 # The new build never became healthy: say so with the log tails, then put the previous release back, every process
 # together (one sha live, never a mix).
 roll_back() {  # $1 failed sha, $2 previous sha ("" = none), $3 unload wait, $4 live sha ("" = none)
@@ -603,7 +623,10 @@ main() {
 
   # --- switch
   log "deploying ${sha[1,12]} (live: ${old:-none}), stopping ${PROCESSES[*]}"
-  stop_all "$unload_secs" || die "a process is still loaded ${unload_secs}s after bootout (ExitTimeOut + 10); not bootstrapping over it. It may still be shutting down: retry the deploy."
+  if ! stop_all "$unload_secs"; then
+    restore_unloaded "$old"
+    die "a process is still loaded ${unload_secs}s after bootout (ExitTimeOut + 10); not bootstrapping over it. It may still be shutting down: retry the deploy. deployed-sha unchanged."
+  fi
   for p in $PROCESSES; do
     if [[ "$p" == gateway ]]; then
       start_process gateway "$GW_DIR" "$sha" "$GW_BUILD"
@@ -625,13 +648,14 @@ main() {
   # --- healthy: current, the CLI, then the marker ("deployed" means the CLI is usable too)
   ln -sfn "$release" "$CURRENT" || die "updating $CURRENT failed"
   [[ -n "$old" && "$old" != "$sha" ]] && write_atomic "$PREV_FILE" "$old"
-  write_env_file "$env_content"
-  ln -sf "$CURRENT/packages/cli/bin/agw.ts" "$CLI_LINK" || die "linking $CLI_LINK failed"
-  write_atomic "$SHA_FILE" "$sha" || die "writing $SHA_FILE failed"
+  # The gateway's recorded build goes before deployed-sha: an interruption never leaves the sha newer than the build it runs.
   if (( ${PROCESSES[(Ie)gateway]} )); then
     [[ -n "$GW_OLD_BUILD" && "$GW_OLD_BUILD" != "$GW_BUILD" ]] && write_atomic "$GW_PREV_FILE" "$GW_OLD_BUILD"
     write_atomic "$GW_BUILD_FILE" "$GW_BUILD" || die "writing $GW_BUILD_FILE failed"
   fi
+  write_env_file "$env_content"
+  ln -sf "$CURRENT/packages/cli/bin/agw.ts" "$CLI_LINK" || die "linking $CLI_LINK failed"
+  write_atomic "$SHA_FILE" "$sha" || die "writing $SHA_FILE failed"
   prune_releases "$sha" "$(read_sha "$PREV_FILE")"
   prune_gateway_builds "$GW_BUILD" "$(read_sha "$GW_PREV_FILE")"
   log "deploy OK: ${sha[1,12]} healthy (${PROCESSES[*]}); gateway build $GW_BUILD ${gw_state}; agw -> $CLI_LINK, credentials in $ENV_FILE"
