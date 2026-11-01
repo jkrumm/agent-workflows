@@ -40,6 +40,16 @@ describe('isBalanceFailure', () => {
     expect(isBalanceFailure({ status: 400, text: '' })).toBe(false)
   })
 
+  test('a 400 carrying the marker is balance: the transport message re-classified with its status', () => {
+    expect(isBalanceFailure({ status: 400, text: `iu-openai ${BALANCE_MARKER} (400): {"type":"error"}` })).toBe(true)
+    // Round trip: failedResponse truncates the body to 300 chars, so the phrase may be cut; the marker survives.
+    const body = `${' '.repeat(300)}${ANTHROPIC_MESSAGE}`
+    expect(isBalanceFailure({ status: 400, text: body })).toBe(true)
+    const message = `anthropic ${BALANCE_MARKER} (400): ${body.slice(0, 300)}`
+    expect(message).not.toMatch(/credit balance is too low/i)
+    expect(isBalanceFailure({ status: 400, text: message })).toBe(true)
+  })
+
   test('the Anthropic phrase counts only on a 400 or without a status', () => {
     expect(isBalanceFailure({ text: ANTHROPIC_MESSAGE })).toBe(true)
     expect(isBalanceFailure({ text: `opencode session ses_x failed: ${ANTHROPIC_400}` })).toBe(true)

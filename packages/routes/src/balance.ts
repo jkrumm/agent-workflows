@@ -17,7 +17,8 @@ const CREDIT_BALANCE_LOW = /credit balance is too low/i
 /**
  * The one provider-balance classifier. With a status: 402, 503 whose body says "Insufficient Balance" /
  * "PaymentRequired" (or carries `BALANCE_MARKER`), or 400 whose body says "credit balance is too low" (Anthropic's
- * drained-org refusal; any other 400 is not balance); any other status is not balance. Without one (an OpenCode turn
+ * drained-org refusal) or carries `BALANCE_MARKER` (the transports' own message, re-classified with its status; any
+ * other 400 is not balance); any other status is not balance. Without one (an OpenCode turn
  * error, a step's failure reason, a CLI's stderr) the transports' `BALANCE_MARKER`, IU's body shape
  * ("Insufficient Balance (PaymentRequired)"), Anthropic's "credit balance is too low", or a 402 token together with
  * "payment required" / "insufficient balance" count; a 402 or the wording alone does not.
@@ -25,7 +26,7 @@ const CREDIT_BALANCE_LOW = /credit balance is too low/i
 export function isBalanceFailure(failure: { status?: number; text: string }): boolean {
   if (failure.status === 402) return true
   if (failure.status === 503) return BALANCE_WORDING.test(failure.text) || failure.text.includes(BALANCE_MARKER)
-  if (failure.status === 400) return CREDIT_BALANCE_LOW.test(failure.text)
+  if (failure.status === 400) return CREDIT_BALANCE_LOW.test(failure.text) || failure.text.includes(BALANCE_MARKER)
   if (failure.status !== undefined) return false
   const { text } = failure
   return (
