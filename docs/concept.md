@@ -4,6 +4,7 @@
 
 **Where to look:** workflow shape §3, middleware §4, porting a skill or a Hermes path §10, phase order §11.
 
+> **v3.13, 2026-11-01:** an inference gateway (`docs/gateway.md`), a third process: every LLM call from the mini goes through it, Claude calls spend the subscriptions' monthly API credit first (one Console org per subscription, soonest-expiring first, then IU), and the gateway is the only writer of inference usage rows. agw's seats move to Claude to spend the credit. Owner decision, 2026-11-01; built in `docs/waves/PLAN.md` Waves 1–4. No decision reversed.
 > **v3.12, 2026-10-30:** toolchain: oxfmt formats and `oxlint` (`.oxlintrc.json`) lints, no second linter or formatter (§Stack); owner decision, no decision reversed.
 > **v3.11, 2026-10-30:** §5 usage projection as built for the shared usage schema: the outbox writes `usage.records` / `usage.sessions` in Postgres (`USAGE_PG_URL`) instead of posting to Argo's HTTP `POST /usage/records`; the outbox, claim and quarantine machinery are unchanged, the sink is the seam. No decision reversed (N6 holds: the platform is still the system of record, Argo just no longer receives usage).
 > **v3.10, 2026-10-29:** capabilities may be `internal`: callable by workflows in-process, not exposed over HTTP or the CLI (first: `overview.classify`).
@@ -479,3 +480,13 @@ One entry per phase: what we learned, what changed on this page, and why.
   hit existing code stay `warn` and never fail `make check`; the rest are `error`.
 - **Changed.** v3.12: Stack line names oxfmt and oxlint only; no other page content moved.
 - **Does the page hold?** Yes, as v3.12.
+
+### v3.13 — inference gateway planned, 2026-11-01
+
+- **Learned.** The monthly Claude API credit (Ultra $200, Max $100, per linked Console org) has no balance API, expires
+  per billing cycle and isolates prompt caches per org. So the router meters itself, spends the soonest-expiring pool
+  first and binds sessions to a pool. Off-the-shelf routers miss either the budget (CLIProxyAPI, Bifrost at key level)
+  or byte-exact passthrough and our usage schema (LiteLLM, CLIProxyAPI); what agw already has covers most of it.
+- **Changed.** v3.13; PLAN Waves 1–4 ahead of review v2; the direct `anthropic` wire of the eval foundations becomes
+  the gateway's `/anthropic`.
+- **Does the page hold?** Yes, as v3.13.

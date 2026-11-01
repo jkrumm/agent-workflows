@@ -1,25 +1,89 @@
-# Review v2, its eval, then central tiers and the maturity pass
+# Inference gateway, then review v2, its eval, central tiers and the maturity pass
 
-**Goal:** the review is more effective while cheaper and faster, measured by an eval that ranks models and pipeline
-variants on ground truth. The tier choices rest on that data, and the gaps the 2026-10-31 audit found in accounting,
-telemetry, tests and docs are closed. Design: `docs/review-v2.md`.
+**Goal:** every LLM call from the mini goes through one gateway that spends the Claude subscriptions' monthly API
+credit first and records every request (Waves 1–4, design `docs/gateway.md`). Then the review is more effective while
+cheaper and faster, measured by an eval that ranks models and pipeline variants on ground truth. The tier choices rest
+on that data, and the gaps the 2026-10-31 audit found in accounting, telemetry, tests and docs are closed. Design:
+`docs/review-v2.md`.
 **Gate:** `make check`, `/review` on non-doc changes, `make deploy` + `make verify` after each wave, a live call per
-changed route. Own-repo pushes and deploys are routine.
+changed route. Cross-repo changes pass that repo's own check. Own-repo pushes and deploys are routine.
 
 Context (2026-11-01):
 
+- **Gateway first** (owner, 2026-11-01): ~$400 a month of Claude API credit expires unspent, while agw's IU spend is
+  over the personal key's $500 cap and runs on the Athena team key, which belongs to Athena Teamchat only. agw's seats
+  move to Claude to spend the credit (Wave 3); the eval sweeps of Waves 7 and 9 then run mostly on credit. EU
+  endpoints don't matter.
+- **Owner actions for the gateway** (not blocking Wave 1): link `me` and `me2` to their own Console orgs; no payment
+  method on any of the three orgs; one API key and one Admin key per org into `op://common/claude-platform/`
+  (`API_KEY_{IU,ME,ME2}`, `ADMIN_KEY_{IU,ME,ME2}`); each subscription's billing day. A pool whose refs are missing
+  stays disabled; Waves 1–3 run on the `iu` pool alone.
 - The 2026-10-31 eval (`docs/evals/2026-10-31-review-claude-direct.md`) settled cost, wall time and failure modes per
   arm, but **cannot rank models**: its reference is a retired gateway's outcome. Lessons: `docs/evals/README.md`.
 - Owner framing: greenfield, solo developer, optimal over compatible; the review pipeline may be reset.
-- Tiers (owner, 2026-10-31): `FAST`, `EASY`, `HARD`, `DECIDE`. The provisional picks below (Wave 6) stay provisional
-  until Wave 5 measures the review. Other jobs keep provisional picks until their own evals exist.
+- Tiers (owner, 2026-10-31): `FAST`, `EASY`, `HARD`, `DECIDE`. The picks Wave 3 sets and Wave 10 formalises stay
+  provisional until Wave 9 measures the review. Other jobs keep provisional picks until their own evals exist.
 - Audit (private numbers, outside the repo: `~/SourceRoot/agw-maturity-audit.md`). Findings carried below.
 
 **Why the rework goes before the tiers.** A tier wave first would only relabel unmeasured picks, and the review is the
 largest `HARD` consumer, so it would be redone after the sweep. The parts of the old tier and maturity waves that the
-eval needs move into Wave 1. The rest waits.
+eval needs move into Wave 5. The rest waits.
 
-## Wave 1 — Eval foundations            <!-- status: pending -->
+## Wave 1 — Gateway spike and registry            <!-- status: active -->
+
+- [ ] **Passthrough spike** (`docs/spikes/gateway/`, excluded from tools): a minimal Bun proxy for `/anthropic/v1/messages`
+  on the `iu` org's key (`op://common/claude-platform/API_KEY_IU`). Replay a Claude-Code-shaped request (several
+  `system` blocks, tools, `cache_control` with `ttl: 1h`, an `anthropic-beta` list) twice: the upstream bytes hash
+  equal to the inbound bytes, the second call reports `cache_read_input_tokens` > 0, and the SSE tee parses `usage`
+  from `message_start` / `message_delta` with no measurable TTFT cost. Streamed and non-streamed. Haiku only.
+- [ ] **Header probes.** Can an OpenCode provider (pinned build) send a per-session header, or does a step's session id
+  reach the request any other way? Can Hermes' custom providers send extra headers? The answers decide OpenCode
+  attribution (`docs/gateway.md` §Callers).
+- [ ] **Admin API probe** on the `iu` org if `ADMIN_KEY_IU` resolves: `analytics/cost` and `cost_report` for this month,
+  grouped by API key; record whether a one-person org gets the Admin API, the lag, and the units. Missing key: say so.
+- [ ] **Registry.** The `platform` block (`docs/gateway.md` §Picking a pool) in `dotfiles/config/claude-accounts.json`,
+  `iu` enabled, `me`/`me2` disabled until their refs exist; `docs/claude-accounts.md` documents it. Find out how
+  `make secrets-seed` treats a ref that does not exist yet before adding refs to `dotfiles-private/headless.refs`.
+- [ ] `isBalanceFailure` (`packages/routes/src/balance.ts`) learns Anthropic's "credit balance is too low" refusal, with tests.
+- [ ] `docs/spikes/gateway/REPORT.md` with the verdicts; anything that contradicts `docs/gateway.md` is fixed there.
+
+## Wave 2 — Gateway            <!-- status: pending -->
+
+- [ ] `packages/gateway` as `docs/gateway.md` describes: IU's path layout, byte-exact passthrough with the usage tee,
+  model aliases from `packages/routes`, pools with the meter, session binding and expiry-first order, the IU fallback
+  and `x-agw-fallback: none`, door-token callers, one span per request, usage rows through the outbox
+  (`source='gateway'`).
+- [ ] usage-tracker migration: `billing` `api_credit`, `credit_cycles`, `gateway_picks`; its writer and readers accept them.
+- [ ] Deploy: a third LaunchAgent `com.jkrumm.agent-workflows-gateway` on 7793, health and rollback with the other two;
+  a release that does not change the gateway does not restart it. `make verify`: gateway `/health`, a Haiku call through
+  the `iu` pool lands an `api_credit` row with priced cost, a repeat call reads the cache, and an IU passthrough call
+  lands an `api_key` row.
+- [ ] `packages/gateway/README.md`; AGENTS.md (processes, Validate/Deploy rows, gotchas) in the same commits.
+
+## Wave 3 — Callers move, seats onto Claude            <!-- status: pending -->
+
+- [ ] agw: every transport and OpenCode provider on the gateway with the `agw` door token and attribution headers.
+  `iu-anthropic` becomes the `anthropic` wire (the gateway decides credit or IU). agw stops writing `usage.records` for
+  gateway calls. `IU_KEY_ID`, `~/.config/agw/iu.env` and `athena-iu.env` leave agw: the gateway holds the `personal` key.
+- [ ] Seats onto Claude (owner, 2026-11-01), provisional until Waves 9–10: `TRIVIAL`/`EASY` → Haiku 5.5, `STRONG` →
+  Sonnet 5.5, each with `x-agw-fallback: none` and a GPT-on-IU route fallback, so credit runs out into GPT, not into
+  IU's Claude. A live call per changed route.
+- [ ] Hermes, dotfiles `oc` and modelpick on the gateway, each with its own door token; the `-eu` model ids go; Hermes
+  vision moves to `anthropic_messages`.
+- [ ] Concept version note and retro entry for the gateway as built.
+
+## Wave 4 — Reconcile and Argo            <!-- status: pending -->
+
+- [ ] usage-tracker pass: `usage.platform_cost` from each org's cost API (admin key; a missing key skips that org), and
+  `credit_cycles` closed per cycle with metered, reconciled and unspent. The gateway's meter takes the reconciled
+  figure when higher.
+- [ ] Argo: payers `iu-credit`, `me-credit`, `me2-credit`; a Credits tab (burn-down per pool against its cycle,
+  projected unspent, picks and fallbacks, cache-hit rate per caller); `accounts.ts` says `iu` is Ultra.
+- [ ] Docs to the new shape: dotfiles `docs/architecture.md`, `docs/agent-platform.md`, `docs/claude-accounts.md` (`me2`
+  is live), `config/global.CLAUDE.md` (the IU-tokens line names the gateway), brain `wiki/engineering/model-routing.md`
+  (the gateway; the retired `ca`/`cap`).
+
+## Wave 5 — Eval foundations            <!-- status: pending -->
 
 Disjoint changes, one fan-out batch:
 
@@ -30,14 +94,12 @@ Disjoint changes, one fan-out batch:
 - **Eval cost rolls up.** Case replays become children of `eval.run`, so its `cost` is their sum (today null).
 - **Structured agent output.** Agent steps return JSON through a tool call or a structured final turn, not through
   `parseStructured` on free text.
-- **Direct `anthropic` single-call wire** (sibling of `iu-anthropic`) with `output_config.format` json_schema from the
-  capability's zod type via `z.toJSONSchema`; zod parse stays as the last check. The OpenAI wire moves from
-  `json_object` to `json_schema` where IU supports it. Sonnet guard: effort `none` on a Sonnet route is a config error.
-  Spend on the direct key: its own key label on usage rows, priced from route rates (Console limit $200 a month,
-  owner 2026-10-31).
+- **Schema output on the `anthropic` wire** (Wave 3): `output_config.format` json_schema from the capability's zod type
+  via `z.toJSONSchema`; zod parse stays as the last check. The OpenAI wire moves from `json_object` to `json_schema`
+  where IU supports it. Sonnet guard: effort `none` on a Sonnet route is a config error. Spend is the gateway's rows.
 - **One model id per model** (normalise provider-echoed ids) and the route id on every step, so reports group by route.
 
-## Wave 2 — Ground truth            <!-- status: pending -->
+## Wave 6 — Ground truth            <!-- status: pending -->
 
 - `agw eval mine review`: SZZ over `~/SourceRoot` with the filters in `docs/review-v2.md` §Ground truth, two
   cross-vendor labeler calls per candidate, clean controls, the `dev`/`test` split. Cases go only under `$AGW_EVAL_DIR`.
@@ -47,22 +109,22 @@ Disjoint changes, one fan-out batch:
   right, judge κ ≥ 0.8. Below either, tighten the filters or add a second judge.
 - Target 200 bug cases and 100 controls. Seeded defects only below 150.
 
-## Wave 3 — Baseline            <!-- status: pending -->
+## Wave 7 — Baseline            <!-- status: pending -->
 
 - Today's pipeline (v1) on the full `test` set and the controls, on its live seats: the first real numbers.
 - Native `/code-review high` on 60 `test` cases through herdr-core sessions (owner decision 3).
 - Committed report `docs/evals/<date>-review-baseline.md`. It sets how much headroom v2 has to beat.
 
-## Wave 4 — Review v2            <!-- status: pending -->
+## Wave 8 — Review v2            <!-- status: pending -->
 
 - The pipeline in `docs/review-v2.md`: prepare, finders, group, verify vote, assemble, ledger. Levels
   `quick|standard|deep`, `REVIEW.md` loading, REVIEW_OUTPUT v3, re-review diff-only, `stepBack` from round 3,
   `agw review dispose`.
-- Built beside v1 as workflow `review-v2`, so Wave 5 can compare both. Prompts iterate on `dev` only.
+- Built beside v1 as workflow `review-v2`, so Wave 9 can compare both. Prompts iterate on `dev` only.
 - The `/review` skill rewritten for v3: the fix loop, dispositions, `stepBack`. Every other caller moves to v3 here.
 - The stale lines in `docs/review-v2.md` §Docs to fix are fixed.
 
-## Wave 5 — Arm sweep and cutover            <!-- status: pending -->
+## Wave 9 — Arm sweep and cutover            <!-- status: pending -->
 
 - v2 variants on `test` with run-scoped arms: finders 1, 3 or 5; K 1 or 3; voters as agent steps or single calls; seats
   on GPT or Claude per stage. The decision rule is in `docs/review-v2.md` §Metrics.
@@ -72,10 +134,11 @@ Disjoint changes, one fan-out batch:
   `/review` stays only if the native arm beat v2's `deep` on recall beyond the CI.
 - `REVIEW.md` seeded in the five busiest repos.
 
-## Wave 6 — Central tiers            <!-- status: pending -->
+## Wave 10 — Central tiers            <!-- status: pending -->
 
-Provisional picks (2026-10-31, from cost, wall time, failure modes and the AA index). Wave 5 replaces `HARD` and
-`EASY` with measured ones:
+Provisional picks (2026-10-31, from cost, wall time, failure modes and the AA index). Wave 9 replaces `HARD` and
+`EASY` with measured ones. Since 2026-11-01 Claude seats run on credit while a pool has it
+(Wave 3), so a Claude pick costs nothing up to ~$400 a month: the sweep weighs that, not list price:
 
 | Tier | Primary | Fallback (other vendor) | Why |
 |-|-|-|-|
@@ -92,13 +155,13 @@ Provisional picks (2026-10-31, from cost, wall time, failure modes and the AA in
 - Picks recorded in `modelpick/docs/decisions/agw-text-seats.md`; a live call per tier after deploy.
 - Research's 28 cases get a golden-answer check.
 
-## Wave 7 — Accounting and telemetry            <!-- status: pending -->
+## Wave 11 — Accounting and telemetry            <!-- status: pending -->
 
 - Failed agent steps keep their tokens and cost (lost today, mostly on compaction overflow).
 - `cost` null means unknown only; free steps record 0. Door errors (`door.speech` HTTP 400/503) are run failures, not
   `done`.
 
-## Wave 8 — Harness robustness            <!-- status: pending -->
+## Wave 12 — Harness robustness            <!-- status: pending -->
 
 - Compaction overflow: an output limit for the compaction summary, or a context budget per agent step, so a long
   exploration ends with a result instead of a failed step.
@@ -107,7 +170,7 @@ Provisional picks (2026-10-31, from cost, wall time, failure modes and the AA in
 - Review convergence sub-eval: a fix loop over 20 `test` cases (review, fix, diff-only re-review) measuring
   rounds-to-pass and the share of late findings on old code, next to rounds-to-pass from real dispositions.
 
-## Wave 9 — Coverage and debt            <!-- status: pending -->
+## Wave 13 — Coverage and debt            <!-- status: pending -->
 
 - Eval cases and a scorer for the uncovered workflows (narrative, overview, prose-polish, image-icon, retrospective,
   podcast) and scorers for speech and transcriptions.

@@ -4,21 +4,22 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
 `docs/waves/PLAN.md` and this file, then continues from **Next action**.
 
 ## State
-- **Plan finished 2026-10-30.** All eleven waves done; final retro in concept.md; STOP written.
+- **New plan 2026-11-01:** inference gateway (Waves 1–4, `docs/gateway.md`), then review v2 and the maturity pass
+  (Waves 5–13). Wave 1 active. The 2026-10-30 plan is finished (concept.md Final retro); STOP removed.
+- Owner actions pending (PLAN context): `me`/`me2` Console orgs linked, API and Admin keys under
+  `op://common/claude-platform/`, billing days. Not blocking: Waves 1–3 run on the `iu` pool alone.
 - Lead's close-out channel: `docs/waves/handoff/lead.md` (the mother owns PLAN.md and the retro log;
   the lead writes per-step verdicts, Left behind, gate evidence and retro notes there, then idles).
-- dotfiles is free: P0 done (owner, 2026-10-27).
-- dotfiles `make doctor` / architecture-check is red outside this fleet (com.iu.athena-postgres,
-  com.iu.teamchat-*, collie pin, tailscale drift). Not ours; gates are judged on our rows only.
-  `com.jkrumm.vps-pg-backup` is ours: P0b maps it in dotfiles `docs/architecture.md`. Relayed to the lead.
+- dotfiles `make doctor` / architecture-check may be red outside this fleet (Athena, teamchat, collie pin,
+  tailscale drift). Not ours; gates are judged on our rows only.
 
 ## Lead
-- `agent-workflows-w1` (pane w40:p2K), Opus/high, spawned 2026-10-29 ~23:05: the second Wave 11 lead
-  (state in `handoff/lead.md` at `4d0ccc8`).
+- None live. Spawn a fresh lead for Wave 1 (`RD_ORCHESTRATED=1 rd wave --role lead`).
   Rotation policy: a fresh lead per wave unless the last one closed under ~30% context.
-- The mother is agent `agent-workflows-mother` (pane w40:p1).
 
 ## Decisions taken
+- 2026-11-01 owner: build the inference gateway in agw (no adoption); agw's seats move to Claude to spend the
+  credit; EU endpoints don't matter; the Athena team key is Athena Teamchat's only. Headroom default $2 per pool.
 - 2026-10-29: Sonnet review angles for `--deep` only, Haiku default (recall 0.017 → 0.13 at 9.4× cost;
   IU constrained). Revisit when the IU budget relaxes.
 
