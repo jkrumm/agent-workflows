@@ -94,6 +94,8 @@ route rates. A row's `cost_reported_usd` carries only a figure priced from a com
 on a credit pool is an estimate, which goes to the meter and to `lane_detail.costEstimatedUsd` (`costEstimated: true`),
 never to the row's cost:
 
+- **Server tools:** a credit pool's figure, reported or estimated, also carries web searches at $10 per 1,000
+  (`usage.server_tool_use`). Web fetch and code execution have no per-use price.
 - **No rate for the model:** the usage at the most expensive Claude rate.
 - **No complete usage** (a client abort, the hang guard, a fetch error, a 2xx nobody can read): input is the
   `message_start` input and cache tokens if seen, else request bytes / 3; output is the larger of the tokens seen and

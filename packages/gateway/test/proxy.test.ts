@@ -755,6 +755,44 @@ describe('usage row', () => {
     expect(gw.ledger.spentSince('iu', new Date(0))).toBeCloseTo(estimate, 12)
   })
 
+  test('web searches add their per-use price to the row and the meter, JSON and streamed', async () => {
+    const searched = { ...USAGE, server_tool_use: { web_search_requests: 3, web_fetch_requests: 2 } }
+    anthropic.reply(() => Response.json({ model: haikuId, usage: searched }))
+    const gw = start({ registry: [pool('iu')] })
+    await (await gw.call(MESSAGES, jsonBody(request()))).text()
+    const usd = costOf(USAGE, 'haiku') + 0.03
+    expect(gw.rows().records[0]?.row.cost_reported_usd).toBeCloseTo(usd, 12)
+    expect(gw.pools.status()[0]?.meterUsd).toBeCloseTo(usd, 12)
+    anthropic.reply(() =>
+      sseResponse(
+        sse([
+          { type: 'message_start', message: { model: haikuId, usage: USAGE } },
+          { type: 'message_delta', usage: { output_tokens: 50, server_tool_use: { web_search_requests: 1 } } },
+        ]),
+      ),
+    )
+    await (await gw.call(MESSAGES, jsonBody(request({ stream: true })))).text()
+    expect(gw.rows().records[1]?.row.cost_reported_usd).toBeCloseTo(costOf(USAGE, 'haiku') + 0.01, 12)
+  })
+
+  test('web searches count on an estimate too', async () => {
+    const usage = { ...USAGE, server_tool_use: { web_search_requests: 2 } }
+    anthropic.reply(() => Response.json({ model: 'claude-unknown-9', usage }))
+    const gw = start({ registry: [pool('iu')] })
+    await (await gw.call(MESSAGES, jsonBody(request()))).text()
+    const estimate = costOf(USAGE, 'opus') + 0.02
+    expect(gw.rows().records[0]?.row.cost_reported_usd).toBeNull()
+    expect(gw.pools.status()[0]?.meterUsd).toBeCloseTo(estimate, 12)
+  })
+
+  test('on IU a server tool is not added: the credit meter is what this guards', async () => {
+    const usage = { ...USAGE, server_tool_use: { web_search_requests: 3 } }
+    iu.reply(() => Response.json({ model: haikuId, usage }))
+    const gw = start()
+    await (await gw.call(MESSAGES, jsonBody(request()))).text()
+    expect(gw.rows().records[0]?.row.cost_reported_usd).toBeCloseTo(costOf(USAGE, 'haiku'), 12)
+  })
+
   test('a non-Claude IU response keeps the cost the provider states, on JSON and in the final chunk', async () => {
     const usage = { prompt_tokens: 10, completion_tokens: 5, cost: 0.0123 }
     iu.reply(() => Response.json({ model: 'gpt-x', usage }))
