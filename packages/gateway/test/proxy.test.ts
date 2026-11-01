@@ -95,6 +95,16 @@ describe('passthrough', () => {
     expect(iu.seen[0]?.path).toBe('/prefix/anthropic/v1/messages?beta=true')
   })
 
+  test('an alias on an IU passthrough path keeps its bytes', async () => {
+    iu.reply(() => Response.json({ ok: true }))
+    const gw = start()
+    const bytes = '{  "model" : "sonnet", "input": [] }'
+    const init = { method: 'POST', body: bytes, headers: { 'content-type': 'application/json' } }
+    await (await gw.call('/openai/v1/chat/completions', init)).text()
+    expect(new TextDecoder().decode(iu.seen[0]?.body)).toBe(bytes)
+    expect(gw.rows().records[0]?.row.model).toBe('sonnet')
+  })
+
   test('headers: credentials swapped, x-agw-* and hop-by-hop dropped, end-to-end kept', async () => {
     const gw = start({ registry: [pool('iu')] })
     const init = jsonBody(request())

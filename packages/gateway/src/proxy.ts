@@ -144,13 +144,15 @@ function parseBody(bytes: Uint8Array, contentType: string | null, always: boolea
   }
 }
 
-/** The doc's one body edit: an exact alias becomes the concrete id; anything else keeps its bytes. */
+/** The doc's one body edit, on the Anthropic paths only: an exact alias becomes the concrete id. Else the bytes stay. */
 function rewriteAlias(
   bytes: Bytes,
   parsed: Record<string, unknown> | null,
+  anthropic: boolean,
 ): { body: Bytes; requested: string | null; model: string | null } {
   const requested = typeof parsed?.model === 'string' ? parsed.model : null
   if (requested === null) return { body: bytes, requested, model: null }
+  if (!anthropic) return { body: bytes, requested, model: requested }
   const model = resolveModelAlias(requested)
   if (model === requested) return { body: bytes, requested, model }
   return { body: new TextEncoder().encode(JSON.stringify({ ...parsed, model })), requested, model }
@@ -569,9 +571,14 @@ export function createProxy(options: ProxyOptions): GatewayProxy {
     return x
   }
 
-  const prepare = (x: Exchange, bytes: Bytes | undefined, parsed: Record<string, unknown> | null): void => {
+  const prepare = (
+    x: Exchange,
+    bytes: Bytes | undefined,
+    parsed: Record<string, unknown> | null,
+    anthropic: boolean,
+  ): void => {
     if (bytes !== undefined) {
-      const { body, requested, model } = rewriteAlias(bytes, parsed)
+      const { body, requested, model } = rewriteAlias(bytes, parsed, anthropic)
       x.body = body
       x.requestedModel = requested
       x.model = model
@@ -611,7 +618,7 @@ export function createProxy(options: ProxyOptions): GatewayProxy {
       const x = open(request, url, caller, anthropic ? 'anthropic' : route.system)
       const onLeave = () => x.abort.abort()
       request.signal.addEventListener('abort', onLeave, { once: true })
-      prepare(x, bytes, parsed)
+      prepare(x, bytes, parsed, anthropic)
       if (route.kind === 'iu') return servePassthrough(x, route.url)
       const picking = {
         claudeCodeShaped: isClaudeCodeShaped(request.headers, parsed),
