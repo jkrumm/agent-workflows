@@ -1,9 +1,5 @@
 import { BEARER_CHALLENGE } from '@agent-workflows/host/auth'
 import { callerAuth } from '@agent-workflows/host/door-tokens'
-import type { IuUpstream } from './config.ts'
-import type { Ledger, RecordRow } from './ledger.ts'
-import { errorMessage, type Logger } from './log.ts'
-import { isClaudeCodeShaped, type Pick, type Pools, sessionId } from './pools/index.ts'
 import {
   BALANCE_MARKER,
   claudeRate,
@@ -11,7 +7,12 @@ import {
   isBalanceFailure,
   type ProviderUsage,
   resolveModelAlias,
-} from './routes.ts'
+} from '@agent-workflows/routes/pricing'
+import type { IuUpstream } from './config.ts'
+import { isRecord } from './json.ts'
+import type { Ledger, RecordRow } from './ledger.ts'
+import { errorMessage, type Logger } from './log.ts'
+import { isClaudeCodeShaped, type Pick, type Pools, sessionId } from './pools/index.ts'
 import { decodeBody, type TeeResult, UsageTee } from './tee.ts'
 import type { RequestSpan, Telemetry } from './telemetry.ts'
 
@@ -109,9 +110,6 @@ type Bytes = Uint8Array<ArrayBuffer>
 
 /** How a request ended. */
 type Ended = 'complete' | 'aborted' | 'failed'
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value)
 
 const errorResponse = (status: number, type: string, message: string, headers?: Record<string, string>): Response =>
   Response.json({ type: 'error', error: { type, message } }, { status, ...(headers ? { headers } : {}) })

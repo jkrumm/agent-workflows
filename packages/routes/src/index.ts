@@ -2,9 +2,7 @@ import { createHash } from 'node:crypto'
 import { applyPatch, OVERRIDES_ENV, RouteOverrideError, readOverrides } from './overrides.ts'
 import { DEFAULT_ROUTES } from './registry.ts'
 import type { ResolvedRoute, RouteEntry, RouteId } from './schema.ts'
-import { CLAUDE_ALIASES, CLAUDE_RATES, CLAUDE_SNAPSHOT_ID, type ClaudeRate } from './table/claude.ts'
 
-export { BALANCE_MARKER, isBalanceFailure } from './balance.ts'
 export {
   type Price,
   type PriceUsage,
@@ -15,7 +13,17 @@ export {
   type UnitPrice,
   type UnitsUsed,
 } from './price.ts'
-export { type Cost, costFromUsage, type ProviderUsage } from './cost.ts'
+export type { Cost } from './cost.ts'
+export {
+  BALANCE_MARKER,
+  CLAUDE_MODELS,
+  type ClaudeRate,
+  claudeRate,
+  costFromUsage,
+  isBalanceFailure,
+  type ProviderUsage,
+  resolveModelAlias,
+} from './pricing.ts'
 export { OVERRIDES_ENV, RouteOverrideError } from './overrides.ts'
 export { DEFAULT_ROUTES, discoverRoutes } from './registry.ts'
 export {
@@ -30,7 +38,6 @@ export {
   WIRES,
   type Wire,
 } from './schema.ts'
-export type { ClaudeRate } from './table/claude.ts'
 export type { RouteId }
 
 type Env = Record<string, string | undefined>
@@ -109,25 +116,4 @@ export function routeFingerprint(id: RouteId, env: Env = process.env): string {
   return createHash('sha256')
     .update(canonical(resolveRoute(id, env)))
     .digest('hex')
-}
-
-/** Every Claude model id the table prices (read-only). */
-export const CLAUDE_MODELS: readonly string[] = Object.freeze(Object.keys(CLAUDE_RATES))
-
-/**
- * An alias (`haiku`, `sonnet`, `opus`: exact, case-sensitive) to the id of the current model of that tier; anything
- * else, including a concrete id, comes back untouched.
- */
-export function resolveModelAlias(model: string): string {
-  return (Object.hasOwn(CLAUDE_ALIASES, model) ? CLAUDE_ALIASES[model] : undefined) ?? model
-}
-
-/**
- * The rate of a Claude model by alias, concrete id, or dated snapshot / `[1m]` form of one (`CLAUDE_SNAPSHOT_ID`);
- * `undefined` for any other model. The shared, deeply frozen object: do not mutate it. The gateway prices an
- * Anthropic response with `costFromUsage('iu-anthropic', usage, claudeRate(model))`.
- */
-export function claudeRate(model: string): ClaudeRate | undefined {
-  const id = resolveModelAlias(model).replace(CLAUDE_SNAPSHOT_ID, '$1')
-  return Object.hasOwn(CLAUDE_RATES, id) ? CLAUDE_RATES[id] : undefined
 }

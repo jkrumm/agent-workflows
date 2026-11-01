@@ -5,8 +5,8 @@ from the subscriptions' API credit before IU, and records every request. Design 
 
 - **Lean by design.** No journal Postgres, workflow runtime or OpenCode. It runs as one bundled file:
   `bun build packages/gateway/src/main.ts --target=bun --outfile gateway.js`, then `bun gateway.js`.
-- **Bundle rule.** `src/routes.ts` imports the leaf modules of `packages/routes` by relative path, because that package's
-  index reads `src/table/` from disk at import. `test/start.test.ts` boots the bundle from an empty directory.
+- **Bundle rule.** Only the leaf `@agent-workflows/routes/pricing`, never the package's index, which reads `src/table/`
+  from disk at import. `test/start.test.ts` boots the bundle from an empty directory.
 
 ## Paths
 
