@@ -1,6 +1,6 @@
 const DAY_MS = 86_400_000
 /** An unknown cycle meters a rolling window this long: never shorter than a real cycle, so it never under-counts. */
-export const ROLLING_WINDOW_MS = 31 * DAY_MS
+const ROLLING_WINDOW_MS = 31 * DAY_MS
 
 /** 00:00 UTC on day `day` of the month `month` (may overflow into a neighbouring year), clamped to the month's last day. */
 function anchor(year: number, month: number, day: number): Date {

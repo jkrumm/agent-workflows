@@ -1,20 +1,21 @@
 import { describe, expect, test } from 'bun:test'
 
 import { createPools } from './pools.ts'
-import type { MeterSource, PickInput } from './pools.ts'
+import type { MeterSource, PickInput, Pools } from './pools.ts'
 import type { RegistryPool } from './registry.ts'
 
 const MINUTE = 60_000
 const HOUR = 60 * MINUTE
 const DAY = 24 * HOUR
 
-/** A ledger of `{ pool, at, usd }` rows; counts its reads. */
+/** A ledger of `{ pool, at, usd }` rows; counts its reads per pool. */
 function fakeLedger(rows: { pool: string; at: string; usd: number }[] = []) {
   const ledger = {
     rows,
-    reads: 0,
+    reads: new Map<string, number>(),
+    readsOf: (pool: string) => ledger.reads.get(pool) ?? 0,
     spentSince(pool: string, since: Date) {
-      ledger.reads++
+      ledger.reads.set(pool, ledger.readsOf(pool) + 1)
       return ledger.rows
         .filter((row) => row.pool === pool && new Date(row.at).getTime() >= since.getTime())
         .reduce((sum, row) => sum + row.usd, 0)
@@ -67,6 +68,15 @@ const req = (over: Partial<PickInput> = {}): PickInput => ({
   ...over,
 })
 
+/** A pick as `<pool>:<reason>`, `iu-api:<reason>` or `refuse:<reason>`. */
+function picked(pools: Pools, input: Partial<PickInput> = {}): string {
+  const pick = pools.pick(req(input))
+  if (pick.kind === 'pool') return `${pick.pool}:${pick.reason}`
+  return `${pick.kind === 'iu' ? 'iu-api' : 'refuse'}:${pick.reason}`
+}
+
+const meterOf = (pools: Pools, id: string) => pools.status().find((s) => s.id === id)?.meterUsd
+
 describe('order for a new session', () => {
   test('the real registry on 2026-11-01: iu (credit expires 11-21) before me (expires 11-27); me2 is disabled', () => {
     const { pools } = setup(
@@ -77,8 +87,18 @@ describe('order for a new session', () => {
       ],
       { at: '2026-11-01T09:00:00Z' },
     )
-    expect(pools.pick(req())).toEqual({ kind: 'pool', pool: 'iu', reason: 'soonest-expiry' })
-    expect(pools.pick(req({ exclude: ['iu'] }))).toEqual({ kind: 'pool', pool: 'me', reason: 'soonest-expiry' })
+    expect(pools.pick(req())).toEqual({
+      kind: 'pool',
+      pool: 'iu',
+      reason: 'soonest-expiry',
+      cycleStart: '2026-10-21T00:00:00.000Z',
+    })
+    expect(pools.pick(req({ exclude: ['iu'] }))).toEqual({
+      kind: 'pool',
+      pool: 'me',
+      reason: 'soonest-expiry',
+      cycleStart: '2026-10-27T00:00:00.000Z',
+    })
     expect(pools.pick(req({ exclude: ['iu', 'me'] }))).toEqual({ kind: 'iu', reason: 'drained-retry' })
     expect(pools.status().map(({ id, cycleStart, cycleEnd }) => ({ id, cycleStart, cycleEnd }))).toEqual([
       { id: 'iu', cycleStart: '2026-10-21T00:00:00.000Z', cycleEnd: '2026-11-21T00:00:00.000Z' },
@@ -87,7 +107,7 @@ describe('order for a new session', () => {
     ])
   })
 
-  test('soonest cycle end first, unknown ends after known ones, ties by registry order', () => {
+  test('soonest expiry first, unknown expiries after known ones, ties by registry order', () => {
     // At 2026-11-10 the credits expire: day 12 on 11-12, day 14 on 11-14, day 21 on 11-21.
     const registry = [
       pool('unknown-a'),
@@ -98,61 +118,62 @@ describe('order for a new session', () => {
     ]
     const { pools } = setup(registry)
     const order: string[] = []
-    const exclude: string[] = []
     for (;;) {
-      const pick = pools.pick(req({ exclude: [...exclude] }))
+      const pick = pools.pick(req({ exclude: [...order] }))
       if (pick.kind !== 'pool') break
       expect(pick.reason).toBe('soonest-expiry')
       order.push(pick.pool)
-      exclude.push(pick.pool)
     }
     expect(order).toEqual(['d12', 'd14', 'd21', 'unknown-a', 'unknown-b'])
   })
 
-  test('two known pools ending on the same instant keep registry order', () => {
+  test('two pools expiring on the same instant keep registry order', () => {
     const { pools } = setup([pool('b', { cycleDay: 14 }), pool('a', { cycleDay: 14 })])
-    expect(pools.pick(req())).toEqual({ kind: 'pool', pool: 'b', reason: 'soonest-expiry' })
+    expect(picked(pools)).toBe('b:soonest-expiry')
   })
 
-  test('disabled and unresolved pools are skipped', () => {
-    const { pools } = setup(
-      [pool('off', { enabled: false, cycleDay: 11 }), pool('nokey', { cycleDay: 12 }), pool('ok')],
-      {
-        keys: { nokey: undefined },
-      },
-    )
-    expect(pools.pick(req())).toEqual({ kind: 'pool', pool: 'ok', reason: 'soonest-expiry' })
+  test('disabled and unresolved pools are skipped and never read from the ledger after creation', () => {
+    const { pools, ledger, clock } = setup([pool('off', { enabled: false }), pool('nokey'), pool('ok')], {
+      keys: { nokey: undefined },
+    })
+    expect(picked(pools)).toBe('ok:soonest-expiry')
+    clock.advance(5 * MINUTE)
+    pools.pick(req())
+    pools.status()
+    expect(ledger.readsOf('off')).toBe(1)
+    expect(ledger.readsOf('nokey')).toBe(1)
+    expect(ledger.readsOf('ok')).toBe(2)
   })
 })
 
 describe('eligibility and the meter', () => {
   test('meter + headroom == credit is not eligible; just below is', () => {
     const ledger = fakeLedger([{ pool: 'a', at: '2026-11-01T00:00:00Z', usd: 97.5 }])
-    const { pools } = setup([pool('a')], { ledger })
-    expect(pools.pick(req()).kind).toBe('pool')
-    pools.charge('a', 0.5) // 98 + 2 == 100
-    expect(pools.pick(req())).toEqual({ kind: 'iu', reason: 'no-pool' })
+    const { pools, clock } = setup([pool('a')], { ledger })
+    expect(picked(pools)).toBe('a:soonest-expiry')
+    pools.charge('a', 0.5, clock.now()) // 98 + 2 == 100
+    expect(picked(pools)).toBe('iu-api:no-pool')
     expect(pools.status()[0]?.eligible).toBe(false)
   })
 
   test('the meter starts at the ledger since the cycle start and then runs on charges', () => {
     const ledger = fakeLedger([
-      { pool: 'a', at: '2026-10-20T00:00:00Z', usd: 50 }, // previous cycle (day 21)
+      { pool: 'a', at: '2026-10-20T00:00:00Z', usd: 50 }, // previous cycle (expiry day 21)
       { pool: 'a', at: '2026-10-22T00:00:00Z', usd: 10 },
       { pool: 'b', at: '2026-10-22T00:00:00Z', usd: 7 },
     ])
-    const { pools } = setup([pool('a', { cycleDay: 21 })], { ledger })
-    expect(ledger.reads).toBe(1)
-    pools.charge('a', 1.25)
-    ledger.rows.push({ pool: 'a', at: '2026-11-10T12:00:00Z', usd: 1.25 })
-    expect(pools.status()[0]?.meterUsd).toBe(11.25)
-    expect(ledger.reads).toBe(1)
+    const { pools, clock } = setup([pool('a', { cycleDay: 21 })], { ledger })
+    clock.advance(1000)
+    ledger.rows.push({ pool: 'a', at: clock.now().toISOString(), usd: 1.25 })
+    pools.charge('a', 1.25, clock.now())
+    expect(meterOf(pools, 'a')).toBe(11.25)
+    expect(ledger.readsOf('a')).toBe(1)
   })
 
   test('a known cycle rolls over: the meter restarts from the ledger and a drain mark lapses', () => {
     const ledger = fakeLedger([{ pool: 'a', at: '2026-11-01T00:00:00Z', usd: 99 }])
     const { pools, clock } = setup([pool('a', { cycleDay: 14 })], { ledger })
-    pools.drained('a')
+    pools.drained('a', '2026-10-14T00:00:00.000Z')
     expect(pools.status()[0]?.drainedUntil).toBe('2026-11-14T00:00:00.000Z')
     clock.set('2026-11-14T00:00:00Z')
     const [status] = pools.status()
@@ -161,59 +182,62 @@ describe('eligibility and the meter', () => {
     expect(status?.eligible).toBe(true)
   })
 
+  test('rollover: a charge whose row the rollover read already counted is not added again', () => {
+    const ledger = fakeLedger()
+    const { pools, clock } = setup([pool('a', { cycleDay: 14 })], { ledger, at: '2026-11-13T23:59:00Z' })
+    // The server writes the row just after the rollover, the rollover read happens, then its charge arrives.
+    ledger.rows.push({ pool: 'a', at: '2026-11-14T00:00:01Z', usd: 3 })
+    clock.set('2026-11-14T00:00:05Z')
+    expect(meterOf(pools, 'a')).toBe(3)
+    pools.charge('a', 3, new Date('2026-11-14T00:00:01Z'))
+    expect(meterOf(pools, 'a')).toBe(3)
+    // A charge from the previous cycle arriving late is not added either.
+    pools.charge('a', 4, new Date('2026-11-13T23:59:59Z'))
+    expect(meterOf(pools, 'a')).toBe(3)
+    pools.charge('a', 2, new Date('2026-11-14T00:00:06Z'))
+    expect(meterOf(pools, 'a')).toBe(5)
+  })
+
   test('an unknown cycle re-reads the ledger at most once a minute, charges count in between', () => {
     const ledger = fakeLedger([{ pool: 'a', at: '2026-10-11T00:00:00Z', usd: 20 }])
     const { pools, clock } = setup([pool('a')], { ledger })
-    expect(pools.status()[0]?.meterUsd).toBe(20)
+    expect(meterOf(pools, 'a')).toBe(20)
 
-    pools.charge('a', 3)
-    ledger.rows.push({ pool: 'a', at: '2026-11-10T12:00:00Z', usd: 3 })
+    ledger.rows.push({ pool: 'a', at: clock.now().toISOString(), usd: 3 })
+    pools.charge('a', 3, clock.now())
     clock.advance(59_000)
-    expect(pools.status()[0]?.meterUsd).toBe(23)
-    expect(ledger.reads).toBe(1)
+    expect(meterOf(pools, 'a')).toBe(23)
+    expect(ledger.readsOf('a')).toBe(1)
 
     clock.advance(1_000)
-    expect(pools.status()[0]?.meterUsd).toBe(23)
-    expect(ledger.reads).toBe(2)
+    expect(meterOf(pools, 'a')).toBe(23)
+    expect(ledger.readsOf('a')).toBe(2)
 
     // The 10-11 00:00 row is inside the window through 11-11 00:00 and out a moment later.
     clock.set('2026-11-11T00:00:00Z')
-    expect(pools.status()[0]?.meterUsd).toBe(23)
+    expect(meterOf(pools, 'a')).toBe(23)
     clock.advance(MINUTE)
-    expect(pools.status()[0]?.meterUsd).toBe(3)
+    expect(meterOf(pools, 'a')).toBe(3)
   })
 
-  test('reconcile replaces the meter only when higher; later charges add to it', () => {
-    const { pools } = setup([pool('a', { cycleDay: 1 })], {
-      ledger: fakeLedger([{ pool: 'a', at: '2026-11-02T00:00:00Z', usd: 30 }]),
-    })
-    pools.reconcile('a', 25)
-    expect(pools.status()[0]?.meterUsd).toBe(30)
-    pools.reconcile('a', 40)
-    expect(pools.status()[0]?.meterUsd).toBe(40)
-    pools.charge('a', 5)
-    expect(pools.status()[0]?.meterUsd).toBe(45)
-    pools.reconcile('a', 44)
-    expect(pools.status()[0]?.meterUsd).toBe(45)
+  test('rolling re-read: a charge whose row the re-read already counted is not added again', () => {
+    const ledger = fakeLedger()
+    const { pools, clock } = setup([pool('a')], { ledger })
+    clock.advance(MINUTE)
+    const rowAt = clock.now()
+    ledger.rows.push({ pool: 'a', at: rowAt.toISOString(), usd: 4 })
+    clock.advance(1)
+    expect(meterOf(pools, 'a')).toBe(4) // the re-read counted the row
+    pools.charge('a', 4, rowAt) // its charge arrives after the re-read
+    expect(meterOf(pools, 'a')).toBe(4)
+    pools.charge('a', 1, clock.now())
+    expect(meterOf(pools, 'a')).toBe(5)
   })
 
-  test('a reconciled floor survives the minute re-reads of an unknown cycle', () => {
-    const { pools, clock } = setup([pool('a')], {
-      ledger: fakeLedger([{ pool: 'a', at: '2026-11-01T00:00:00Z', usd: 10 }]),
-    })
-    pools.reconcile('a', 60)
-    clock.advance(5 * MINUTE)
-    expect(pools.status()[0]?.meterUsd).toBe(60)
-  })
-
-  test('unknown pools and bad amounts throw', () => {
-    const { pools } = setup([pool('a')])
-    expect(() => pools.charge('nope', 1)).toThrow(/unknown pool "nope"/)
-    expect(() => pools.drained('nope')).toThrow(/unknown pool/)
-    expect(() => pools.reconcile('nope', 1)).toThrow(/unknown pool/)
-    expect(() => pools.served('agw', 's1', 'nope')).toThrow(/unknown pool/)
-    expect(() => pools.charge('a', -1)).toThrow(RangeError)
-    expect(() => pools.charge('a', Number.NaN)).toThrow(RangeError)
+  test('the pool id iu is an ordinary pool', () => {
+    const { pools } = setup([pool('iu', { cycleDay: 21 }), pool('me', { cycleDay: 12 })])
+    pools.served('agw', 's1', 'iu')
+    expect(picked(pools)).toBe('iu:bound')
   })
 
   test('duplicate pool ids throw', () => {
@@ -221,12 +245,107 @@ describe('eligibility and the meter', () => {
   })
 })
 
+describe('reconcile', () => {
+  test('always replaces the floor; the meter stays max(base + charges, floor + charges since)', () => {
+    const { pools, clock } = setup([pool('a', { cycleDay: 1 })], {
+      ledger: fakeLedger([{ pool: 'a', at: '2026-11-02T00:00:00Z', usd: 30 }]),
+    })
+    const cycle = '2026-11-01T00:00:00.000Z'
+    pools.reconcile('a', 40, cycle)
+    expect(meterOf(pools, 'a')).toBe(40)
+    clock.advance(1000)
+    pools.charge('a', 5, clock.now())
+    expect(meterOf(pools, 'a')).toBe(45)
+    pools.reconcile('a', 38, cycle)
+    expect(meterOf(pools, 'a')).toBe(38)
+    pools.reconcile('a', 20, cycle)
+    expect(meterOf(pools, 'a')).toBe(35)
+  })
+
+  test('a charge whose row is older than the reconcile is in the floor already', () => {
+    const { pools, clock } = setup([pool('a', { cycleDay: 1 })])
+    const before = clock.now()
+    clock.advance(1000)
+    pools.reconcile('a', 50, '2026-11-01T00:00:00.000Z')
+    pools.charge('a', 2, before)
+    expect(meterOf(pools, 'a')).toBe(50)
+    pools.charge('a', 2, clock.now())
+    expect(meterOf(pools, 'a')).toBe(52)
+  })
+
+  test('on an unknown cycle a $99 floor stops counting after 2 h', () => {
+    const { pools, clock } = setup([pool('a')], {
+      ledger: fakeLedger([{ pool: 'a', at: '2026-11-01T00:00:00Z', usd: 10 }]),
+    })
+    pools.reconcile('a', 99, 'any')
+    expect(meterOf(pools, 'a')).toBe(99)
+    expect(picked(pools)).toBe('iu-api:no-pool')
+    clock.advance(2 * HOUR - 1)
+    expect(meterOf(pools, 'a')).toBe(99)
+    clock.advance(1)
+    expect(meterOf(pools, 'a')).toBe(10)
+    expect(picked(pools)).toBe('a:soonest-expiry')
+  })
+
+  test('a negative or non-finite amount throws', () => {
+    const { pools } = setup([pool('a')])
+    expect(() => pools.reconcile('a', -1, 'any')).toThrow(RangeError)
+    expect(() => pools.reconcile('a', Number.NaN, 'any')).toThrow(RangeError)
+  })
+})
+
+describe('stale results across a rollover', () => {
+  test('drained and reconcile with the previous cycleStart are ignored; the current one applies', () => {
+    const { pools, clock } = setup([pool('a', { cycleDay: 14 })], { at: '2026-11-13T23:59:00Z' })
+    const pick = pools.pick(req())
+    expect(pick).toMatchObject({ kind: 'pool', cycleStart: '2026-10-14T00:00:00.000Z' })
+    const stale = pick.kind === 'pool' ? pick.cycleStart : ''
+
+    clock.set('2026-11-14T00:00:01Z')
+    pools.drained('a', stale)
+    pools.reconcile('a', 99, stale)
+    expect(pools.status()[0]).toMatchObject({ drainedUntil: null, meterUsd: 0, eligible: true })
+
+    const current = pools.pick(req())
+    expect(current).toMatchObject({ kind: 'pool', cycleStart: '2026-11-14T00:00:00.000Z' })
+    pools.drained('a', current.kind === 'pool' ? current.cycleStart : '')
+    expect(pools.status()[0]?.drainedUntil).toBe('2026-12-14T00:00:00.000Z')
+  })
+
+  test('an unknown cycle has no rollover: any cycleStart applies', () => {
+    const { pools } = setup([pool('a')])
+    pools.drained('a', '1970-01-01T00:00:00.000Z')
+    expect(pools.status()[0]?.drainedUntil).toBe('2026-11-11T12:00:00.000Z')
+  })
+})
+
+describe('never throws on the request path', () => {
+  test('a negative or non-finite charge is ignored and counted', () => {
+    const { pools, clock } = setup([pool('a')])
+    pools.charge('a', -1, clock.now())
+    pools.charge('a', Number.NaN, clock.now())
+    pools.charge('a', Number.POSITIVE_INFINITY, clock.now())
+    expect(pools.status()[0]).toMatchObject({ meterUsd: 0, unpricedCharges: 3 })
+  })
+
+  test('an unknown pool id is ignored and counted, also with a null session', () => {
+    const { pools, clock } = setup([pool('a')])
+    pools.served('agw', 's1', 'nope')
+    pools.served('agw', null, 'nope')
+    pools.charge('nope', 1, clock.now())
+    pools.drained('nope', 'any')
+    pools.reconcile('nope', 1, 'any')
+    expect(pools.unknownPoolCalls()).toBe(5)
+    expect(picked(pools)).toBe('a:soonest-expiry')
+  })
+})
+
 describe('session binding', () => {
-  test('a bound session stays on its pool even when another ends sooner', () => {
+  test('a bound session stays on its pool even when another expires sooner', () => {
     const { pools } = setup([pool('late', { cycleDay: 21 }), pool('soon', { cycleDay: 12 })])
     pools.served('agw', 's1', 'late')
-    expect(pools.pick(req())).toEqual({ kind: 'pool', pool: 'late', reason: 'bound' })
-    expect(pools.pick(req({ session: 's2' }))).toEqual({ kind: 'pool', pool: 'soon', reason: 'soonest-expiry' })
+    expect(picked(pools)).toBe('late:bound')
+    expect(picked(pools, { session: 's2' })).toBe('soon:soonest-expiry')
   })
 
   test('picking alone never binds', () => {
@@ -234,7 +353,7 @@ describe('session binding', () => {
     pools.pick(req())
     pools.served('agw', 's1', 'late')
     pools.pick(req({ exclude: ['late'] }))
-    expect(pools.pick(req())).toEqual({ kind: 'pool', pool: 'late', reason: 'bound' })
+    expect(picked(pools)).toBe('late:bound')
   })
 
   test('a binding expires after the TTL; each served refreshes it', () => {
@@ -243,12 +362,12 @@ describe('session binding', () => {
     clock.advance(50 * MINUTE)
     pools.served('agw', 's1', 'late')
     clock.advance(50 * MINUTE)
-    expect(pools.pick(req()).reason).toBe('bound')
+    expect(picked(pools)).toBe('late:bound')
     clock.advance(10 * MINUTE)
-    expect(pools.pick(req())).toEqual({ kind: 'pool', pool: 'soon', reason: 'soonest-expiry' })
+    expect(picked(pools)).toBe('soon:soonest-expiry')
   })
 
-  test('the TTL is configurable', () => {
+  test('an expired binding is not used before the next sweep', () => {
     const clock = fakeClock('2026-11-10T12:00:00Z')
     const pools = createPools({
       registry: [pool('late', { cycleDay: 21 }), pool('soon', { cycleDay: 12 })],
@@ -258,57 +377,57 @@ describe('session binding', () => {
       ]),
       meter: fakeLedger(),
       now: clock.now,
-      bindingTtlMs: MINUTE,
+      bindingTtlMs: 10_000,
     })
-    pools.served('agw', 's1', 'late')
-    clock.advance(MINUTE)
-    expect(pools.pick(req()).reason).toBe('soonest-expiry')
+    pools.served('agw', 's1', 'late') // sweeps at t0
+    clock.advance(10_000) // expired; the next sweep is 50 s away
+    expect(picked(pools)).toBe('soon:soonest-expiry')
   })
 
   test('the bound pool drains: the request retries elsewhere and served rebinds', () => {
     const { pools } = setup([pool('late', { cycleDay: 21 }), pool('soon', { cycleDay: 12 })])
     pools.served('agw', 's1', 'late')
-    pools.drained('late')
-    const retry = pools.pick(req({ exclude: ['late'] }))
-    expect(retry).toEqual({ kind: 'pool', pool: 'soon', reason: 'soonest-expiry' })
+    pools.drained('late', '2026-10-21T00:00:00.000Z')
+    expect(picked(pools, { exclude: ['late'] })).toBe('soon:soonest-expiry')
     pools.served('agw', 's1', 'soon')
-    expect(pools.pick(req())).toEqual({ kind: 'pool', pool: 'soon', reason: 'bound' })
+    expect(picked(pools)).toBe('soon:bound')
   })
 
   test('a bound pool in exclude is re-picked even while still eligible', () => {
     const { pools } = setup([pool('a', { cycleDay: 21 }), pool('b', { cycleDay: 12 })])
     pools.served('agw', 's1', 'a')
-    expect(pools.pick(req({ exclude: ['a'] }))).toEqual({ kind: 'pool', pool: 'b', reason: 'soonest-expiry' })
+    expect(picked(pools, { exclude: ['a'] })).toBe('b:soonest-expiry')
   })
 
   test('a bound pool that runs out of credit is left', () => {
-    const { pools } = setup([pool('a', { cycleDay: 21 }), pool('b', { cycleDay: 12 })])
+    const { pools, clock } = setup([pool('a', { cycleDay: 21 }), pool('b', { cycleDay: 12 })])
     pools.served('agw', 's1', 'a')
-    pools.charge('a', 98)
-    expect(pools.pick(req())).toEqual({ kind: 'pool', pool: 'b', reason: 'soonest-expiry' })
+    pools.charge('a', 98, clock.now())
+    expect(picked(pools)).toBe('b:soonest-expiry')
   })
 
-  test('serving from IU clears the binding', () => {
+  test('serving through the IU passthrough (null) clears the binding', () => {
     const { pools } = setup([pool('a', { cycleDay: 21 }), pool('b', { cycleDay: 12 })])
     pools.served('agw', 's1', 'a')
-    pools.served('agw', 's1', 'iu')
-    expect(pools.pick(req())).toEqual({ kind: 'pool', pool: 'b', reason: 'soonest-expiry' })
+    pools.served('agw', 's1', null)
+    expect(picked(pools)).toBe('b:soonest-expiry')
+    expect(pools.unknownPoolCalls()).toBe(0)
   })
 
   test('the same session id under two callers binds independently', () => {
     const { pools } = setup([pool('a', { cycleDay: 21 }), pool('b', { cycleDay: 12 })])
     pools.served('agw', 's1', 'a')
-    expect(pools.pick(req({ caller: 'agw' }))).toEqual({ kind: 'pool', pool: 'a', reason: 'bound' })
-    expect(pools.pick(req({ caller: 'hermes' }))).toEqual({ kind: 'pool', pool: 'b', reason: 'soonest-expiry' })
+    expect(picked(pools, { caller: 'agw' })).toBe('a:bound')
+    expect(picked(pools, { caller: 'hermes' })).toBe('b:soonest-expiry')
     pools.served('hermes', 's1', 'b')
-    expect(pools.pick(req({ caller: 'agw' }))).toEqual({ kind: 'pool', pool: 'a', reason: 'bound' })
-    expect(pools.pick(req({ caller: 'hermes' }))).toEqual({ kind: 'pool', pool: 'b', reason: 'bound' })
+    expect(picked(pools, { caller: 'agw' })).toBe('a:bound')
+    expect(picked(pools, { caller: 'hermes' })).toBe('b:bound')
   })
 
   test('a null session never binds', () => {
     const { pools } = setup([pool('a', { cycleDay: 21 }), pool('b', { cycleDay: 12 })])
     pools.served('agw', null, 'a')
-    expect(pools.pick(req({ session: null }))).toEqual({ kind: 'pool', pool: 'b', reason: 'soonest-expiry' })
+    expect(picked(pools, { session: null })).toBe('b:soonest-expiry')
   })
 })
 
@@ -329,38 +448,38 @@ describe('step 0: Claude-Code-shaped requests', () => {
 })
 
 describe('no pool and drained', () => {
-  test('no eligible pool goes to IU, or refuses with fallbackNone', () => {
+  test('no eligible pool goes to the IU passthrough, or refuses no-pool with fallbackNone', () => {
     const { pools } = setup([pool('a', { enabled: false })])
     expect(pools.pick(req())).toEqual({ kind: 'iu', reason: 'no-pool' })
     expect(pools.pick(req({ fallbackNone: true }))).toEqual({ kind: 'refuse', reason: 'no-pool' })
-    expect(setup([]).pools.pick(req())).toEqual({ kind: 'iu', reason: 'no-pool' })
+    expect(picked(setup([]).pools)).toBe('iu-api:no-pool')
   })
 
-  test('a retry with nothing left is drained-retry to IU, or refuses no-pool with fallbackNone', () => {
+  test('a retry with nothing left is drained-retry to the IU passthrough, or refused drained-retry', () => {
     const { pools } = setup([pool('a')])
-    pools.drained('a')
+    pools.drained('a', 'any')
     expect(pools.pick(req({ exclude: ['a'] }))).toEqual({ kind: 'iu', reason: 'drained-retry' })
-    expect(pools.pick(req({ exclude: ['a'], fallbackNone: true }))).toEqual({ kind: 'refuse', reason: 'no-pool' })
+    expect(pools.pick(req({ exclude: ['a'], fallbackNone: true }))).toEqual({ kind: 'refuse', reason: 'drained-retry' })
   })
 
-  test('drained on a known cycle lasts until the cycle ends', () => {
+  test('drained on a known cycle lasts until the credit expires', () => {
     const { pools, clock } = setup([pool('a', { cycleDay: 21 })])
-    pools.drained('a')
+    pools.drained('a', '2026-10-21T00:00:00.000Z')
     expect(pools.status()[0]?.drainedUntil).toBe('2026-11-21T00:00:00.000Z')
     clock.set('2026-11-20T23:59:59Z')
-    expect(pools.pick(req())).toEqual({ kind: 'iu', reason: 'no-pool' })
+    expect(picked(pools)).toBe('iu-api:no-pool')
     clock.set('2026-11-21T00:00:00Z')
-    expect(pools.pick(req())).toEqual({ kind: 'pool', pool: 'a', reason: 'soonest-expiry' })
+    expect(picked(pools)).toBe('a:soonest-expiry')
   })
 
   test('drained on an unknown cycle lasts 24 h', () => {
     const { pools, clock } = setup([pool('a')])
-    pools.drained('a')
+    pools.drained('a', 'any')
     expect(pools.status()[0]?.drainedUntil).toBe('2026-11-11T12:00:00.000Z')
     clock.advance(DAY - 1)
-    expect(pools.pick(req()).kind).toBe('iu')
+    expect(picked(pools)).toBe('iu-api:no-pool')
     clock.advance(1)
-    expect(pools.pick(req()).kind).toBe('pool')
+    expect(picked(pools)).toBe('a:soonest-expiry')
   })
 })
 
@@ -388,6 +507,7 @@ describe('status', () => {
         meterUsd: 12.5,
         drainedUntil: null,
         eligible: true,
+        unpricedCharges: 0,
       },
       {
         id: 'me',
@@ -400,6 +520,7 @@ describe('status', () => {
         meterUsd: 0,
         drainedUntil: null,
         eligible: false,
+        unpricedCharges: 0,
       },
       {
         id: 'me2',
@@ -412,6 +533,7 @@ describe('status', () => {
         meterUsd: 0,
         drainedUntil: null,
         eligible: false,
+        unpricedCharges: 0,
       },
     ])
   })
