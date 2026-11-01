@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto'
 import { applyPatch, OVERRIDES_ENV, RouteOverrideError, readOverrides } from './overrides.ts'
 import { DEFAULT_ROUTES } from './registry.ts'
-import type { Rate, ResolvedRoute, RouteEntry, RouteId } from './schema.ts'
-import { CLAUDE_ALIASES, CLAUDE_RATES, CLAUDE_SNAPSHOT_ID } from './table/claude.ts'
+import type { ResolvedRoute, RouteEntry, RouteId } from './schema.ts'
+import { CLAUDE_ALIASES, CLAUDE_RATES, CLAUDE_SNAPSHOT_ID, type ClaudeRate } from './table/claude.ts'
 
 export { BALANCE_MARKER, isBalanceFailure } from './balance.ts'
 export {
@@ -30,6 +30,7 @@ export {
   WIRES,
   type Wire,
 } from './schema.ts'
+export type { ClaudeRate } from './table/claude.ts'
 export type { RouteId }
 
 type Env = Record<string, string | undefined>
@@ -118,7 +119,7 @@ export const CLAUDE_MODELS: readonly string[] = Object.freeze(Object.keys(CLAUDE
  * else, including a concrete id, comes back untouched.
  */
 export function resolveModelAlias(model: string): string {
-  return Object.hasOwn(CLAUDE_ALIASES, model) ? (CLAUDE_ALIASES[model] as string) : model
+  return (Object.hasOwn(CLAUDE_ALIASES, model) ? CLAUDE_ALIASES[model] : undefined) ?? model
 }
 
 /**
@@ -126,7 +127,7 @@ export function resolveModelAlias(model: string): string {
  * `undefined` for any other model. The shared, deeply frozen object: do not mutate it. The gateway prices an
  * Anthropic response with `costFromUsage('iu-anthropic', usage, claudeRate(model))`.
  */
-export function claudeRate(model: string): Readonly<Rate> | undefined {
+export function claudeRate(model: string): ClaudeRate | undefined {
   const id = resolveModelAlias(model).replace(CLAUDE_SNAPSHOT_ID, '$1')
   return Object.hasOwn(CLAUDE_RATES, id) ? CLAUDE_RATES[id] : undefined
 }

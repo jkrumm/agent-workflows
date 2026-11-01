@@ -17,7 +17,7 @@ import type { Rate, RouteEntry } from '../schema.ts'
 // 200k-1M instead; the pricing page's 100,000 is used here (2026-11-01), so a Haiku request between 100k and 200k
 // prompt tokens is priced at the tier though the cost report may file it under the lower bucket. Re-check when the
 // reconciled spend drifts on Haiku.
-export const CLAUDE_HAIKU_RATE = {
+const CLAUDE_HAIKU_RATE = {
   inputPerM: 0.1,
   outputPerM: 0.5,
   cacheReadPerM: 0.01,
@@ -27,7 +27,7 @@ export const CLAUDE_HAIKU_RATE = {
   longPrompt: { inputMultiplier: 5, outputMultiplier: 5 },
 } satisfies Rate
 
-export const CLAUDE_SONNET_RATE = {
+const CLAUDE_SONNET_RATE = {
   inputPerM: 2,
   outputPerM: 10,
   cacheReadPerM: 0.1,
@@ -35,7 +35,7 @@ export const CLAUDE_SONNET_RATE = {
   cacheWrite1hPerM: 4,
 } satisfies Rate
 
-export const CLAUDE_OPUS_RATE = {
+const CLAUDE_OPUS_RATE = {
   inputPerM: 4,
   outputPerM: 20,
   cacheReadPerM: 0.2,
@@ -43,13 +43,20 @@ export const CLAUDE_OPUS_RATE = {
   cacheWrite1hPerM: 8,
 } satisfies Rate
 
-const frozen = (rate: Rate): Readonly<Rate> => {
-  if (rate.longPrompt) Object.freeze(rate.longPrompt)
-  return Object.freeze(rate)
+/** A `Rate` with every level readonly, the type of the shared frozen rates. */
+export type ClaudeRate = Readonly<Omit<Rate, 'longPrompt'>> & {
+  readonly longPrompt?: Readonly<NonNullable<Rate['longPrompt']>>
+}
+
+/** A deeply frozen copy; the argument is left as it is. */
+const frozen = (rate: Rate): ClaudeRate => {
+  const copy = structuredClone(rate)
+  if (copy.longPrompt) Object.freeze(copy.longPrompt)
+  return Object.freeze(copy)
 }
 
 /** Concrete id to its rate, deeply frozen. The key set is the one list of Claude models. */
-export const CLAUDE_RATES: Readonly<Record<string, Readonly<Rate>>> = Object.freeze({
+export const CLAUDE_RATES: Readonly<Record<string, ClaudeRate>> = Object.freeze({
   'claude-haiku-5-5': frozen(CLAUDE_HAIKU_RATE),
   'claude-sonnet-5-5': frozen(CLAUDE_SONNET_RATE),
   'claude-opus-5-5': frozen(CLAUDE_OPUS_RATE),
@@ -59,7 +66,7 @@ export const CLAUDE_RATES: Readonly<Record<string, Readonly<Rate>>> = Object.fre
  * A dated snapshot (`claude-sonnet-5-5-20261001`) or the context-window flag Claude Code appends (`[1m]`, same schedule:
  * usage-tracker's price aliases) is the same model at the same rate. The match is on these models only.
  */
-export const CLAUDE_SNAPSHOT_ID = /^(claude-(?:haiku|sonnet|opus)-5-5)(?:-[0-9]{8})?(?:\[[^\]]*\])?$/
+export const CLAUDE_SNAPSHOT_ID = /^(claude-(?:haiku|sonnet|opus)-5-5)(?:-[0-9]{8})?(?:\[1m\])?$/
 
 /** The short names a caller may send instead of an id: `haiku | sonnet | opus` to the current model of that tier. */
 export const CLAUDE_ALIASES: Readonly<Record<string, string>> = Object.freeze({
