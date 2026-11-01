@@ -22,6 +22,11 @@ Context (2026-11-01):
   limit equal to the credit (owner, 2026-11-01), so a drained pool refuses instead of billing.
 - The 2026-10-31 eval (`docs/evals/2026-10-31-review-claude-direct.md`) settled cost, wall time and failure modes per
   arm, but **cannot rank models**: its reference is a retired gateway's outcome. Lessons: `docs/evals/README.md`.
+- **Review eval, owner answers (2026-11-01 19:30, via the software-factory program lead, on `docs/review-v2.md`):**
+  (8) IU repos stay out of the eval cases. (9) The owner gives the two hours of labelling when Wave 6 reaches its owner
+  session. (10) The native `/code-review` arm runs on Max as factory spawns; early is fine. Keep API spend on the
+  review eval low: iterate on the Max subscriptions first, and start the API-priced sweeps of Waves 7 and 9 on a small
+  `dev` slice before the full `test` set.
 - Owner framing: greenfield, solo developer, optimal over compatible; the review pipeline may be reset.
 - Tiers (owner, 2026-10-31): `FAST`, `EASY`, `HARD`, `DECIDE`. The picks Wave 3 sets and Wave 10 formalises stay
   provisional until Wave 9 measures the review. Other jobs keep provisional picks until their own evals exist.
