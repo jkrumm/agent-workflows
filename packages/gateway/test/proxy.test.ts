@@ -1006,6 +1006,23 @@ describe('a credit request without a complete usage block', () => {
     expectEstimate(gw, price(Math.ceil(bodyBytes(body) / 3), Math.ceil('{not json at all'.length / 3)))
   })
 
+  test('a 2xx that inflates past the limit reaches the caller untouched and charges by its bytes', async () => {
+    const bomb = gzipSync(JSON.stringify({ usage: USAGE, pad: 'x'.repeat(65 * 1024 * 1024) }))
+    anthropic.reply(
+      () => new Response(bomb, { headers: { 'content-type': 'application/json', 'content-encoding': 'gzip' } }),
+    )
+    const gw = start({ registry: [pool('iu')] })
+    const body = request()
+    const init = jsonBody(body)
+    const response = await fetch(`${gw.url}${MESSAGES}`, {
+      ...init,
+      headers: { ...init.headers, 'x-api-key': DOOR_TOKEN },
+      decompress: false,
+    } as RequestInit)
+    expect(Buffer.compare(new Uint8Array(await response.arrayBuffer()), bomb)).toBe(0)
+    expectEstimate(gw, price(Math.ceil(bodyBytes(body) / 3), Math.ceil(bomb.byteLength / 3)))
+  })
+
   test('an unknown encoding on a 2xx charges by its bytes', async () => {
     const bytes = 'x'.repeat(30)
     anthropic.reply(

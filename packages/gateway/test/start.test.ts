@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { chmodSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
-import { gzipSync } from 'node:zlib'
+import { brotliCompressSync, deflateSync, gzipSync, zstdCompressSync } from 'node:zlib'
 import { ConfigError, loadConfig } from '../src/config.ts'
 import { Ledger } from '../src/ledger.ts'
 import { resolveKeys, secretsRunReader } from '../src/secrets.ts'
@@ -173,6 +173,26 @@ describe('tee', () => {
     const size = 65 * 1024 * 1024
     tee.push(new Uint8Array(size))
     expect(tee.finish()).toMatchObject({ usage: null, complete: false, bytesReceived: size })
+  })
+
+  test.each([
+    ['gzip', gzipSync],
+    ['deflate', deflateSync],
+    ['br', brotliCompressSync],
+    ['zstd', zstdCompressSync],
+  ] as const)('a %s body that inflates past the limit is refused, not inflated', (encoding, compress) => {
+    const pad = 'x'.repeat(65 * 1024 * 1024)
+    const bomb = compress(new TextEncoder().encode(`{"usage":{"input_tokens":1,"output_tokens":1},"pad":"${pad}"}`))
+    expect(() => decodeBody(bomb, encoding)).toThrow()
+    const tee = new UsageTee({ contentType: 'application/json', contentEncoding: encoding })
+    tee.push(bomb)
+    const result = tee.finish()
+    expect(result).toMatchObject({ usage: null, complete: false, bytesReceived: bomb.byteLength })
+  })
+
+  test('a body under the limit still decodes', () => {
+    const text = 'x'.repeat(1024 * 1024)
+    expect(decodeBody(gzipSync(text), 'gzip').byteLength).toBe(text.length)
   })
 
   test('an undecodable copy is no usage, never an error', () => {

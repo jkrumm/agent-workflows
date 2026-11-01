@@ -2,7 +2,7 @@ import { brotliDecompressSync, constants, gunzipSync, inflateSync, zstdDecompres
 import type { ProviderUsage } from '@agent-workflows/routes/pricing'
 import { isRecord } from './json.ts'
 
-/** A buffered copy of a response stops here and the usage is given up: no JSON or SSE response comes close. */
+/** A held copy, and what it decodes to, stops here and the usage is given up: no JSON or SSE response comes close. */
 const MAX_BUFFERED_BYTES = 64 * 1024 * 1024
 
 /** The token columns of `usage.records`: additive, `input` without cache, `output` without reasoning. */
@@ -39,7 +39,10 @@ const nested = (block: Record<string, unknown>, key: string, field: string): num
   return isRecord(inner) ? count(inner[field]) : null
 }
 
-/** Decodes a copy; a truncated body (an aborted stream) yields what it holds. */
+/**
+ * Decodes a copy; a truncated body (an aborted stream) yields what it holds. Throws past `MAX_BUFFERED_BYTES` of output:
+ * a small compressed body must not inflate without bound on the event loop.
+ */
 export function decodeBody(bytes: Uint8Array, encoding: string | null): Uint8Array {
   switch ((encoding ?? '').trim().toLowerCase()) {
     case '':
@@ -47,13 +50,16 @@ export function decodeBody(bytes: Uint8Array, encoding: string | null): Uint8Arr
       return bytes
     case 'gzip':
     case 'x-gzip':
-      return gunzipSync(bytes, { finishFlush: constants.Z_SYNC_FLUSH })
+      return gunzipSync(bytes, { finishFlush: constants.Z_SYNC_FLUSH, maxOutputLength: MAX_BUFFERED_BYTES })
     case 'deflate':
-      return inflateSync(bytes, { finishFlush: constants.Z_SYNC_FLUSH })
+      return inflateSync(bytes, { finishFlush: constants.Z_SYNC_FLUSH, maxOutputLength: MAX_BUFFERED_BYTES })
     case 'br':
-      return brotliDecompressSync(bytes, { finishFlush: constants.BROTLI_OPERATION_FLUSH })
+      return brotliDecompressSync(bytes, {
+        finishFlush: constants.BROTLI_OPERATION_FLUSH,
+        maxOutputLength: MAX_BUFFERED_BYTES,
+      })
     case 'zstd':
-      return zstdDecompressSync(bytes)
+      return zstdDecompressSync(bytes, { maxOutputLength: MAX_BUFFERED_BYTES })
     default:
       throw new Error(`unsupported content-encoding ${encoding}`)
   }
