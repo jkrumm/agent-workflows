@@ -12,14 +12,12 @@ import {
   gitProject,
   parseSessionAccounts,
   pickClaudeAgents,
-  pickHerdrAgents,
-  pickHerdrWorkspaces,
   type RunCommand,
   readHumanQueue,
   runCommand,
   sessionAccountResolver,
 } from '../src/fleet/collect.ts'
-import { EMPTY_TAIL, mergeAgents, parseTranscriptTail } from '../src/fleet/derive.ts'
+import { EMPTY_TAIL, type HcTerminalRaw, mergeAgents, parseTranscriptTail } from '../src/fleet/derive.ts'
 import { AGENT } from '../src/fleet/schema.ts'
 
 const NOW = Date.parse('2026-10-29T12:00:00.000Z')
@@ -27,10 +25,35 @@ const HOUR = 3_600_000
 
 const ok = <T>(items: T[]): CollectorResult<T> => ({ items, warning: null })
 
+/** A live hc terminal reporting `state`; `session` is the resume label, `space` files it into a space of the doc. */
+function term(
+  session: string | null,
+  state: string,
+  over: Partial<HcTerminalRaw> & { space?: string } = {},
+): HcTerminalRaw {
+  const { space, ...rest } = over
+  return {
+    address: `t-${session ?? 'bare'}`,
+    state: 'live',
+    labels: {
+      ...(session ? { 'jk.claude.session': session } : {}),
+      ...(space ? { 'herdr.space': space } : {}),
+    },
+    status: { app: 'claude-code', state },
+    ...rest,
+  }
+}
+
+const hcOf =
+  (terminals: HcTerminalRaw[], spaces: { id: string; name: string }[] = []) =>
+  async () => ({
+    terminals,
+    spaces,
+    warning: null,
+  })
+
 function collectors(over: Partial<Collectors> = {}): Collectors {
   return {
-    herdrAgents: async () => ok([]),
-    herdrWorkspaces: async () => ok([]),
     hc: async () => ({ terminals: [], spaces: [], warning: null }),
     claudeAgents: async () => ok([]),
     humanQueue: async () => ok([]),
@@ -45,26 +68,13 @@ describe('buildSnapshot (fake collectors)', () => {
   test('merges the sources, joins accounts and transcripts, sorts urgent first and sums the states', async () => {
     const snapshot = await buildSnapshot(
       collectors({
-        herdrAgents: async () =>
-          ok([
-            {
-              agent_session: { value: 's1' },
-              agent_status: 'blocked',
-              cwd: '/work/alpha',
-              pane_id: 'w:p1',
-              workspace_id: 'w',
-              terminal_title_stripped: 'fix the build',
-            },
-            {
-              agent_session: { value: 's2' },
-              agent_status: 'working',
-              cwd: '/work/beta',
-              pane_id: 'w:p2',
-              workspace_id: 'w2',
-              terminal_title_stripped: '',
-            },
-          ]),
-        herdrWorkspaces: async () => ok([{ workspace_id: 'w', label: 'alpha-ws' }]),
+        hc: hcOf(
+          [
+            term('s1', 'blocked', { cwd: '/work/alpha', title: 'fix the build', space: 'w' }),
+            term('s2', 'working', { cwd: '/work/beta', title: '', space: 'w2' }),
+          ],
+          [{ id: 'w', name: 'alpha-ws' }],
+        ),
         claudeAgents: async () => ok([{ cwd: '/work/gamma', sessionId: 's3', startedAt: 5, status: 'idle' }]),
         transcriptTail: async (_cwd, sessionId) => ({
           ...EMPTY_TAIL,
@@ -92,7 +102,7 @@ describe('buildSnapshot (fake collectors)', () => {
   test('a failing collector is a warning, never a failure', async () => {
     const snapshot = await buildSnapshot(
       collectors({
-        herdrAgents: async () => ({ items: [], warning: 'herdr agent list failed or timed out' }),
+        hc: async () => ({ terminals: [], spaces: [], warning: 'hc connect failed or timed out' }),
         claudeAgents: async () => ok([{ cwd: '/w/x', sessionId: 's', startedAt: 1, status: 'busy' }]),
         git: async () => {
           throw new Error('git blew up')
@@ -100,28 +110,15 @@ describe('buildSnapshot (fake collectors)', () => {
       }),
       { now: NOW, staleAfterHours: 24 },
     )
-    expect(snapshot.warnings).toEqual([
-      'herdr agent list failed or timed out',
-      'git status failed for x: Error: git blew up',
-    ])
+    expect(snapshot.warnings).toEqual(['hc connect failed or timed out', 'git status failed for x: Error: git blew up'])
     expect(snapshot.projects[0]?.git).toBeNull()
   })
 
-  test('reads a transcript once per session even when herdr and the registry both list it', async () => {
+  test('reads a transcript once per session even when hc and the registry both list it', async () => {
     const reads: string[] = []
     await buildSnapshot(
       collectors({
-        herdrAgents: async () =>
-          ok([
-            {
-              agent_session: { value: 's1' },
-              agent_status: 'idle',
-              cwd: '/w/x',
-              pane_id: 'p',
-              workspace_id: 'w',
-              terminal_title_stripped: 't',
-            },
-          ]),
+        hc: hcOf([term('s1', 'idle', { cwd: '/w/x' })]),
         claudeAgents: async () => ok([{ cwd: '/w/x', sessionId: 's1', startedAt: 1, status: 'idle' }]),
         transcriptTail: async (_cwd, id) => {
           reads.push(id)
@@ -133,19 +130,12 @@ describe('buildSnapshot (fake collectors)', () => {
     expect(reads).toEqual(['s1'])
   })
 
-  test('the stale threshold is the caller’s: 48 h keeps a day-old idle pane idle', async () => {
-    const pane = {
-      agent_session: { value: 's1' },
-      agent_status: 'idle',
-      cwd: '/w/x',
-      pane_id: 'p',
-      workspace_id: 'w',
-      terminal_title_stripped: 't',
-    }
+  test('the stale threshold is the caller’s: 48 h keeps a day-old idle terminal idle', async () => {
+    const pane = term('s1', 'idle', { cwd: '/w/x' })
     const build = (hours: number) =>
       buildSnapshot(
         collectors({
-          herdrAgents: async () => ok([pane]),
+          hc: hcOf([pane]),
           transcriptTail: async () => ({ ...EMPTY_TAIL, lastActivityAt: NOW - 30 * HOUR }),
         }),
         { now: NOW, staleAfterHours: hours },
@@ -276,9 +266,9 @@ describe('fleetConfig', () => {
     const home = mkdtempSync(join(tmpdir(), 'home-'))
     try {
       mkdirSync(join(home, '.local', 'bin'), { recursive: true })
-      writeFileSync(join(home, '.local', 'bin', 'herdr'), '')
+      writeFileSync(join(home, '.local', 'bin', 'hc'), '')
       const config = fleetConfig({}, home)
-      expect(config.herdrBin).toBe(join(home, '.local', 'bin', 'herdr'))
+      expect(config.hcBin).toBe(join(home, '.local', 'bin', 'hc'))
       expect(config.claudeBin).toBe('claude') // not installed there: found on PATH
       expect(config.humanQueueDir).toBe(join(home, '.local', 'state', 'human-queue'))
       expect(config.claudeLogDir).toBe(join(home, '.claude', 'logs'))
@@ -286,7 +276,7 @@ describe('fleetConfig', () => {
 
       const custom = fleetConfig(
         {
-          AGW_HERDR_BIN: '/opt/herdr',
+          AGW_HC_BIN: '/opt/hc',
           XDG_STATE_HOME: '/state',
           AGW_CLAUDE_LOG_DIR: '/logs',
           AGW_AGENT_STALE_HOURS: '48',
@@ -294,7 +284,7 @@ describe('fleetConfig', () => {
         home,
       )
       expect(custom).toMatchObject({
-        herdrBin: '/opt/herdr',
+        hcBin: '/opt/hc',
         humanQueueDir: '/state/human-queue',
         claudeLogDir: '/logs',
         staleAfterHours: 48,
@@ -361,59 +351,7 @@ describe('children get a minimal environment', () => {
 })
 
 describe('collector output is shape-validated', () => {
-  test('herdr rows: wrong types and null or scalar elements are dropped and counted, never thrown', () => {
-    const picked = pickHerdrAgents({
-      result: {
-        agents: [
-          { agent_session: { value: 's1' }, agent_status: 'idle', cwd: '/w' },
-          null,
-          'x',
-          7,
-          { cwd: 5 },
-          { agent_session: { value: 9 } },
-          { agent_session: 'nope' },
-          { pane_id: null, cwd: null },
-        ],
-      },
-    })
-    expect(picked.items).toHaveLength(2)
-    expect(picked.dropped).toBe(6)
-    expect(pickHerdrAgents({ result: {} })).toEqual({ items: [], dropped: 0 })
-    expect(pickHerdrAgents(null)).toEqual({ items: [], dropped: 0 })
-    expect(() => pickHerdrAgents({ result: { agents: 'not a list' } })).toThrow()
-  })
-
-  test('a pane without a session (`{}`, `{ value: null }`, null) is a valid row, and an agent of its own', () => {
-    const picked = pickHerdrAgents({
-      result: {
-        agents: [
-          { agent_session: {}, pane_id: 'w:p1', cwd: '/w/a', agent_status: 'idle' },
-          { agent_session: { value: null }, pane_id: 'w:p2', cwd: '/w/b', agent_status: 'blocked' },
-          { agent_session: null, pane_id: 'w:p3', cwd: '/w/c', agent_status: 'working' },
-        ],
-      },
-    })
-    expect(picked).toMatchObject({ dropped: 0 })
-    expect(picked.items).toHaveLength(3)
-    const agents = mergeAgents({
-      herdrAgents: picked.items,
-      herdrWorkspaces: [],
-      claudeAgents: [],
-      transcripts: new Map(),
-      now: 10,
-      staleAfterMs: 1000,
-    }).flatMap((p) => p.agents)
-    expect(agents.map((a) => [a.id, a.sessionId]).toSorted()).toEqual([
-      ['w:p1', null],
-      ['w:p2', null],
-      ['w:p3', null],
-    ])
-  })
-
-  test('workspaces and registry rows', () => {
-    expect(
-      pickHerdrWorkspaces({ result: { workspaces: [{ workspace_id: 'w', label: 'l' }, { workspace_id: 'w' }, null] } }),
-    ).toMatchObject({ dropped: 2, items: [{ workspace_id: 'w', label: 'l' }] })
+  test('registry rows', () => {
     expect(
       pickClaudeAgents([
         { sessionId: 's', startedAt: 1 },
@@ -426,21 +364,16 @@ describe('collector output is shape-validated', () => {
   })
 
   test('a collector with malformed rows answers a warning and the good rows', async () => {
-    const run: RunCommand = async (cmd) =>
-      cmd.includes('agent')
-        ? JSON.stringify({ result: { agents: [null, { agent_session: { value: 's' } }] } })
-        : '{"result":'
-    const c = defaultCollectors(fleetConfig({}, '/nonexistent'), run)
-    const agents = await c.herdrAgents()
+    const run: RunCommand = async () => JSON.stringify([null, { sessionId: 's', startedAt: 1 }])
+    const agents = await defaultCollectors(fleetConfig({}, '/nonexistent'), run).claudeAgents()
     expect(agents.items).toHaveLength(1)
-    expect(agents.warning).toBe('herdr agent list: 1 malformed row(s) dropped')
-    expect((await c.herdrWorkspaces()).warning).toBe('herdr workspace list returned unparseable JSON')
+    expect(agents.warning).toBe('claude agents --json: 1 malformed row(s) dropped')
   })
 
   test('the snapshot is stamped after the transcript tails, so no tail line is newer than it', async () => {
     const snapshot = await buildSnapshot(
       collectors({
-        herdrAgents: async () => ok([{ agent_session: { value: 's1' }, agent_status: 'idle', cwd: '/work/x' }]),
+        hc: hcOf([term('s1', 'idle', { cwd: '/work/x' })]),
         transcriptTail: async () => {
           await new Promise((resolve) => setTimeout(resolve, 15))
           return { ...EMPTY_TAIL, lastActivityAt: Date.now() } // the agent moved while its tail was being read
@@ -456,11 +389,7 @@ describe('collector output is shape-validated', () => {
     const gits: string[] = []
     await buildSnapshot(
       collectors({
-        herdrAgents: async () =>
-          ok([
-            { agent_session: { value: 'a' }, agent_status: 'idle', cwd: '/work/two  spaces' },
-            { agent_session: { value: 'b' }, agent_status: 'idle', cwd: '/work/new\nline' },
-          ]),
+        hc: hcOf([term('a', 'idle', { cwd: '/work/two  spaces' }), term('b', 'idle', { cwd: '/work/new\nline' })]),
         git: async (cwd) => {
           gits.push(cwd)
           return null
@@ -476,7 +405,7 @@ describe('collector output is shape-validated', () => {
     const gits: string[] = []
     const snapshot = await buildSnapshot(
       collectors({
-        herdrAgents: async () => ok([{ agent_session: { value: 's1' }, agent_status: 'idle' }]),
+        hc: hcOf([term('s1', 'idle')]),
         transcriptTail: async (cwd) => {
           reads.push(cwd)
           return EMPTY_TAIL
@@ -505,14 +434,7 @@ describe('collector output is shape-validated', () => {
     }
     await buildSnapshot(
       collectors({
-        herdrAgents: async () =>
-          ok(
-            Array.from({ length: 30 }, (_, i) => ({
-              agent_session: { value: `s${i}` },
-              agent_status: 'idle',
-              cwd: `/work/p${i}`,
-            })),
-          ),
+        hc: hcOf(Array.from({ length: 30 }, (_, i) => term(`s${i}`, 'idle', { cwd: `/work/p${i}` }))),
         transcriptTail: (_cwd, _id) => slow(EMPTY_TAIL),
         git: () => slow(null),
       }),
@@ -601,17 +523,8 @@ describe('text from outside', () => {
     expect([tail.lastPrompt, tail.aiTitle, tail.lastReply].join('')).not.toContain(ESC)
 
     const merged = mergeAgents({
-      herdrAgents: [
-        {
-          agent_session: { value: 's1' },
-          agent_status: 'idle',
-          cwd: `/w/dir${ESC}x`,
-          pane_id: 'p',
-          workspace_id: 'w',
-          terminal_title_stripped: `ti${ESC}tle`,
-        },
-      ],
-      herdrWorkspaces: [{ workspace_id: 'w', label: `la${ESC}bel` }],
+      hcTerminals: [term('s1', 'idle', { cwd: `/w/dir${ESC}x`, address: 'p', title: `ti${ESC}tle`, space: 'w' })],
+      hcSpaces: [{ id: 'w', name: `la${ESC}bel` }],
       claudeAgents: [{ cwd: '/w/c', sessionId: 's2', startedAt: 1, status: 'waiting', waitingFor: `dia${ESC}log` }],
       transcripts: new Map(),
       now: 10,
@@ -623,21 +536,16 @@ describe('text from outside', () => {
   test('display fields are one line free of C0 and C1 controls; an id cleaning would change is no id', () => {
     const c1 = String.fromCharCode(0x9b)
     const merged = mergeAgents({
-      herdrAgents: [
-        {
-          agent_session: { value: 's1' },
-          agent_status: 'idle',
-          cwd: '/w/a',
-          pane_id: 'p1',
-          workspace_id: 'w',
-          terminal_title_stripped: `ti\ntle${c1}`,
-        },
+      hcTerminals: [
+        term('s1', 'idle', { cwd: '/w/a', address: 'p1', title: `ti\ntle${c1}`, space: 'w' }),
         // a session id that carries a line break is not a key: the row is dropped, not renamed
-        { agent_session: { value: `s9\r\n- agent id: forged` }, agent_status: 'idle', cwd: '/w/b', pane_id: 'p9' },
-        // a pane id that cleaning would change is not an identity either, but the session still is
-        { agent_session: { value: 's3' }, agent_status: 'idle', cwd: '/w/c', pane_id: 'p\nq', workspace_id: 'w\nx' },
+        term('s9\r\n- agent id: forged', 'idle', { cwd: '/w/b', address: 'p9' }),
+        // an address that cleaning would change is not an identity either: the row is dropped
+        term('s4', 'idle', { cwd: '/w/d', address: 'p\nq' }),
+        // a space id that cleaning would change names no space, but the terminal and its session still count
+        term('s3', 'idle', { cwd: '/w/c', address: 'p3', space: 'w\nx' }),
       ],
-      herdrWorkspaces: [{ workspace_id: 'w', label: 'la\nbel' }],
+      hcSpaces: [{ id: 'w', name: 'la\nbel' }],
       claudeAgents: [
         { cwd: '/w/c', sessionId: 's2', status: 'waiting', waitingFor: `dia\nlog${c1}` },
         { cwd: '/w/d', sessionId: 's2\n', status: 'idle' },
@@ -652,21 +560,20 @@ describe('text from outside', () => {
     const fields = agents.flatMap((a) => [a.id, a.sessionId, a.paneId, a.workspaceId, a.title, a.waitingFor, a.account])
     for (const value of fields) expect(value ?? '').not.toMatch(/[\r\n\u0080-\u009f]/)
     expect(agents.find((a) => a.id === 's1')).toMatchObject({ title: 'ti tle', workspaceId: 'w' })
-    expect(agents.find((a) => a.id === 's3')).toMatchObject({ paneId: null, workspaceId: null })
+    expect(agents.find((a) => a.id === 's3')).toMatchObject({ paneId: 'p3', workspaceId: null })
     expect(agents.find((a) => a.source === 'claude')).toMatchObject({ waitingFor: 'dia log', account: 'me x' })
-    // the project is named from the workspace label, found by the raw workspace id
+    // the project is named from the space name, found by the raw space id
     expect(merged.map((p) => p.name)).toContain('la bel')
   })
 
   test('git runs in the raw cwd, never the display one; a cwd with a control byte or a line break gets no git', () => {
     const merged = mergeAgents({
-      herdrAgents: [
-        { agent_session: { value: 'a' }, agent_status: 'idle', cwd: '/work/two  spaces' },
-        { agent_session: { value: 'b' }, agent_status: 'idle', cwd: '/work/new\nline' },
-        { agent_session: { value: 'c' }, agent_status: 'idle', cwd: `/work/esc${String.fromCharCode(0x1b)}` },
-        { agent_session: { value: 'd' }, agent_status: 'idle', cwd: '' },
+      hcTerminals: [
+        term('a', 'idle', { cwd: '/work/two  spaces' }),
+        term('b', 'idle', { cwd: '/work/new\nline' }),
+        term('c', 'idle', { cwd: `/work/esc${String.fromCharCode(0x1b)}` }),
+        term('d', 'idle', { cwd: '' }),
       ],
-      herdrWorkspaces: [],
       claudeAgents: [],
       transcripts: new Map(),
       now: 10,
@@ -679,17 +586,16 @@ describe('text from outside', () => {
     expect(byId('d')?.gitCwd).toBeNull()
   })
 
-  test('a sparse herdr or registry row is null-filled and still passes the strict agent schema', () => {
+  test('a sparse hc or registry row is null-filled and still passes the strict agent schema', () => {
     const merged = mergeAgents({
-      herdrAgents: [{ agent_session: { value: 's1' } }, { pane_id: 'only-pane' }, {}],
-      herdrWorkspaces: [],
+      hcTerminals: [term('s1', 'idle'), term(null, 'idle', { address: 'only-addr' })],
       claudeAgents: [{ sessionId: 's2' }, { cwd: '/w/nosession' }, {}],
       transcripts: new Map(),
       now: 10,
       staleAfterMs: 1000,
     })
     const agents = merged.flatMap((p) => p.agents)
-    expect(agents.map((a) => a.id).toSorted()).toEqual(['only-pane', 's1', 's2'])
+    expect(agents.map((a) => a.id).toSorted()).toEqual(['only-addr', 's1', 's2'])
     for (const agent of agents) expect(AGENT.strict().safeParse(agent).success).toBe(true)
     expect(agents.find((a) => a.id === 's2')).toMatchObject({ startedAt: null, paneId: null })
   })

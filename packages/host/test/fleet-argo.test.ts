@@ -96,7 +96,7 @@ describe('Argo push', () => {
   test('a payload that cannot be built is skipped, nothing is sent', async () => {
     const t = setup({
       build: async () => {
-        throw new Error('herdr exploded')
+        throw new Error('collector exploded')
       },
     })
     expect(await t.push.push('timer')).toBe('build-error')

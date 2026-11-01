@@ -3,7 +3,7 @@ import { chatStream, startFakeIu } from '@agent-workflows/capabilities/testing'
 import { resolveRoute } from '@agent-workflows/routes'
 import { createArgoPush } from '../src/fleet/argo.ts'
 import type { CollectorResult, Collectors } from '../src/fleet/collect.ts'
-import { EMPTY_TAIL, type HerdrAgentRaw } from '../src/fleet/derive.ts'
+import { EMPTY_TAIL, type HcTerminalRaw } from '../src/fleet/derive.ts'
 import { createFleet } from '../src/fleet/index.ts'
 import { fleetOperations } from '../src/fleet/operations.ts'
 import { createQuota } from '../src/fleet/quota.ts'
@@ -12,13 +12,13 @@ import { pgLatestOverview, pgRunPurpose } from '../src/workflows/overview/latest
 import { type Body, startTestHost, type TestHost } from './support.ts'
 
 const ok = <T>(items: T[]): CollectorResult<T> => ({ items, warning: null })
-const pane = (id: string, status: string): HerdrAgentRaw => ({
-  agent_session: { value: id },
-  agent_status: status,
+const pane = (id: string, state: string): HcTerminalRaw => ({
+  address: `t-${id}`,
   cwd: '/work/proj',
-  pane_id: `w:${id}`,
-  workspace_id: 'w',
-  terminal_title_stripped: `task ${id}`,
+  state: 'live',
+  title: `task ${id}`,
+  labels: { 'herdr.space': 'w', 'jk.claude.session': id },
+  status: { app: 'claude-code', state },
 })
 const verdict = (id: string, recommendation: string) => ({
   id,
@@ -28,14 +28,12 @@ const verdict = (id: string, recommendation: string) => ({
   confidence: 'high',
 })
 
-let panes: HerdrAgentRaw[] = []
+let panes: HcTerminalRaw[] = []
 let activityAt = () => Date.now() - 3_600_000
 let purposeLookup: (runId: string) => Promise<string | null> = async () => null
 let answer: () => Response
 const collectors: Collectors = {
-  herdrAgents: async () => ok(panes),
-  herdrWorkspaces: async () => ok([]),
-  hc: async () => ({ terminals: [], spaces: [], warning: null }),
+  hc: async () => ({ terminals: panes, spaces: [], warning: null }),
   claudeAgents: async () => ok([]),
   humanQueue: async () => ok([{ id: 'q1', askedAt: null, question: 'sign it', cmd: 'rm -rf /precious' }]),
   // activity well before any run, so a verdict is never marked stale

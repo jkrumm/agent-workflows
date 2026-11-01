@@ -35,15 +35,14 @@ not Requesty.
 - **No agent, no call.** An empty fleet is a run with an empty `agents` list and no model call.
 - **The push carries the run itself.** The `push` step posts the payload merged with the run that is just ending: its
   output is not in the journal until the run ends, so reading "the newest run" there would push the previous one.
-- **Two terminal worlds until classic herdr retires.** Beside `herdr agent list` the collector reads herdr-core
-  (`source: hc`): one `hc connect` session answers `terminal.list` (labels, parent, 7501 status; linked machines arrive as
-  `machine/tN`) and `doc.get herdr-app` (space names). A live terminal that reported a status is an agent, its session id
-  is the `jk.claude.session` label, its project the `herdr.space` space's name, its status the 7501 state
-  (`herdrStatus` stays the runner-neutral field, Argo stores it as is). A session both worlds report is the hc terminal.
-  The collector asks `launchctl print` first and calls `hc` only while the `com.jkrumm.herdr-core` job runs, since an `hc`
-  call with no core would start one outside launchd; a stopped job is one warning. `TODO(Wave 7): drop classic` in
-  `collect.ts` and `derive.ts` marks the classic path.
-- **No dispatch lane.** Dispatch retired with agent-gateway (owner, 2026-10-29): the collector reads herdr, Claude's
+- **Terminals come from herdr-core (`source: hc`).** One `hc connect` session answers `terminal.list` (labels, parent,
+  7501 status; linked machines arrive as `machine/tN`) and `doc.get herdr-app` (space names). A live terminal that
+  reported a status is an agent, its session id is the `jk.claude.session` label, its project the `herdr.space` space's
+  name, its status the 7501 state (`herdrStatus` stays the runner-neutral field, Argo stores it as is). Classic herdr
+  (`herdr agent list`) is gone: it was uninstalled in Wave 7 and its collector, `source: herdr` and `AGW_HERDR_BIN` went
+  with it. The collector asks `launchctl print` first and calls `hc` only while the `com.jkrumm.herdr-core` job runs,
+  since an `hc` call with no core would start one outside launchd; a stopped job is one warning.
+- **No dispatch lane.** Dispatch retired with agent-gateway (owner, 2026-10-29): the collector reads herdr-core, Claude's
   registry, transcripts and the human queue only. `summary.dispatch` is gone from the wire too (Argo's ingest no longer requires it). The `agent-gateway:review` and `agent-gateway:dispatch`
   quota lanes left the pick list for the same reason (only gateway workers used them).
 - **Git status is read-only except one fetch.** As in legacy each project's checkout is `git fetch --quiet --prune`d (5 s
@@ -52,7 +51,7 @@ not Requesty.
 
 ## Hardening (review r1)
 
-- **Children get the review helpers' allowlist.** `git`, `herdr` and `claude` run on `helperEnv` (`PATH`, `HOME`,
+- **Children get the review helpers' allowlist.** `git`, `hc` and `claude` run on `helperEnv` (`PATH`, `HOME`,
   `TMPDIR`, `LANG`, `LC_*`, `TERM`, `GIT_TERMINAL_PROMPT=0`, `GIT_OPTIONAL_LOCKS=0`), never the host's environment
   (`AGW_API_SECRET`, `ARGO_API_SECRET`, `IU_API_KEY`). Only `git fetch` adds `networkEnv` (`SSH_AUTH_SOCK`,
   `XDG_CONFIG_HOME`, proxy and CA variables): the one call that talks to a remote.
@@ -67,13 +66,13 @@ not Requesty.
   is the cleaned copy. A pane with no session (`{}`, `{ value: null }`) is a valid agent keyed by its pane.
 - **The snapshot is stamped after the transcript tails are read**, so no tail line is newer than `generatedAt` (and so
   than a run's `snapshotGeneratedAt`).
-- **The collectors validate shapes.** A herdr or registry row of the wrong type, a null or a scalar is dropped with one
+- **The collectors validate shapes.** An hc terminal or registry row of the wrong type, a null or a scalar is dropped with one
   warning counting them, never a throw. A row without a `cwd` gets no transcript read and no `git -C ''`.
 - **Bounded work:** transcript tails and per-project git run at most 8 at a time; the human queue reads the newest 200
   requests of at most 64 KiB each.
 - **No sync fs on the host loop:** the human queue, the pins and the session-env logs (the last 2 MB of each of the newest
   three day files) are read async (the pin's dir check included).
-- **A sparse herdr or registry row** is null-filled in `mergeAgents`, a row with no identity is skipped; `agw agents`'
+- **A sparse hc or registry row** is null-filled in `mergeAgents`, a row with no identity is skipped; `agw agents`'
   strict output never 500s on a missing field.
 - **The journal keeps** the agent ids, the minimal `known` list, a SHA-256 of the facts and the verdicts: no transcript
   excerpt, no queued command. The one `classify` step takes the fresh snapshot, builds the facts, calls the seat and
@@ -93,7 +92,7 @@ not Requesty.
 | `ARGO_URL`, `ARGO_API_SECRET` | | the push is off unless both are set; `ARGO_URL` must be https (loopback http allowed), no redirect is followed |
 | `AGW_ARGO_PUSH` | on | `0`, `off`, `false` or `no` turns the ten-minute timer off (tests); the push after a run stays |
 | `AGW_AGENT_STALE_HOURS` | 24 | the stale threshold (legacy `AGENT_GATEWAY_AGENT_STALE_HOURS`) |
-| `AGW_HERDR_BIN`, `AGW_HC_BIN`, `AGW_CLAUDE_BIN` | `~/.local/bin/<name>`, else on `PATH` | |
+| `AGW_HC_BIN`, `AGW_CLAUDE_BIN` | `~/.local/bin/<name>`, else on `PATH` | |
 | `AGW_CLAUDE_ACCOUNT_BIN` | `~/.local/bin/claude-account` | legacy `AGENT_GATEWAY_CLAUDE_ACCOUNT_BIN` |
 | `AGW_CLAUDE_LOG_DIR` | `~/.claude/logs` | the `session_env` lines (legacy `AGENT_GATEWAY_CLAUDE_LOG_DIR`) |
 | `XDG_STATE_HOME` | `~/.local/state` | `human-queue/` below it |

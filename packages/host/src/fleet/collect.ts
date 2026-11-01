@@ -11,8 +11,6 @@ import {
   HC_SESSION_LABEL,
   type HcSpaceRaw,
   type HcTerminalRaw,
-  type HerdrAgentRaw,
-  type HerdrWorkspaceRaw,
   isHcAgent,
   mergeAgents,
   parseTranscriptTail,
@@ -21,7 +19,7 @@ import {
 import type { HumanQueueEntry, ProjectGit, Snapshot, Summary } from './schema.ts'
 import { oneLine, stripControlBytes } from './text.ts'
 
-// The impure half of the snapshot: herdr and Claude's registry, transcript tails, the human queue, session accounts
+// The impure half of the snapshot: the hc core and Claude's registry, transcript tails, the human queue, session accounts
 // and git status. Every one is a port, so tests run the whole builder on fakes.
 
 const CLI_TIMEOUT_MS = 5_000
@@ -45,7 +43,7 @@ export type RunCommand = (
 ) => Promise<string | null>
 
 /**
- * The command runner on `env`. A child (git, herdr, claude) gets the review helpers' allowlist (`helperEnv`: no
+ * The command runner on `env`. A child (git, hc, claude) gets the review helpers' allowlist (`helperEnv`: no
  * credential prompts, no optional git locks) and, for a `network` call, the SSH agent, config directory and proxy/CA
  * settings (`networkEnv`); never `AGW_API_SECRET`, `ARGO_API_SECRET` or `IU_API_KEY`. `input` is written to the child's stdin.
  */
@@ -81,7 +79,6 @@ export function commandRunner(env: Record<string, string | undefined> = process.
 export const runCommand: RunCommand = commandRunner()
 
 export interface FleetConfig {
-  herdrBin: string
   /** The hc CLI (`hc connect` speaks the core's API over stdin/stdout). */
   hcBin: string
   claudeBin: string
@@ -105,7 +102,6 @@ export function fleetConfig(env: Env, home = homedir()): FleetConfig {
   }
   const hours = Number.parseInt(env.AGW_AGENT_STALE_HOURS ?? '', 10)
   return {
-    herdrBin: bin('herdr', env.AGW_HERDR_BIN),
     hcBin: bin('hc', env.AGW_HC_BIN),
     claudeBin: bin('claude', env.AGW_CLAUDE_BIN),
     humanQueueDir: join(env.XDG_STATE_HOME?.trim() || join(home, '.local', 'state'), 'human-queue'),
@@ -219,27 +215,6 @@ function pickRows<T>(list: unknown, valid: (row: Record<string, unknown>) => boo
   return { items, dropped: list.length - items.length }
 }
 
-/** `{result: {<key>: [...]}}` as herdr prints it; a missing list is an empty one. */
-const herdrList = (parsed: unknown, key: string): unknown =>
-  isRecord(parsed) && isRecord(parsed.result) ? (parsed.result[key] ?? []) : []
-
-export const pickHerdrAgents = (parsed: unknown): Picked<HerdrAgentRaw> =>
-  pickRows(herdrList(parsed, 'agents'), (row) => {
-    const session = row.agent_session
-    // A pane without a Claude session is valid: `null`, `{}` and `{ value: null }` all mean "no session".
-    const sessionOk =
-      session == null || (isRecord(session) && (session.value == null || typeof session.value === 'string'))
-    return (
-      sessionOk && typed(row, 'string', 'agent_status', 'cwd', 'pane_id', 'workspace_id', 'terminal_title_stripped')
-    )
-  })
-
-export const pickHerdrWorkspaces = (parsed: unknown): Picked<HerdrWorkspaceRaw> =>
-  pickRows(
-    herdrList(parsed, 'workspaces'),
-    (row) => typeof row.workspace_id === 'string' && typeof row.label === 'string',
-  )
-
 /** The launchd job that owns the core: `hc` starts a core of its own when none runs, so nothing calls it before this job does. */
 export const HC_LAUNCHD_LABEL = 'com.jkrumm.herdr-core'
 
@@ -319,7 +294,7 @@ export function parseHcSession(out: string): HcCollected {
 }
 
 /**
- * The hc world, beside classic herdr: one `hc connect` session answers every terminal (labels, parent and status that the
+ * The hc world: one `hc connect` session answers every terminal (labels, parent and status that the
  * compact `hc ls` leaves out; linked machines arrive as `machine/tN`) and the space names. Only when launchd runs the
  * core: an `hc` call with no core would start one outside launchd.
  */
@@ -501,8 +476,6 @@ export async function gitProject(run: RunCommand, cwd: string): Promise<ProjectG
 
 /** What `buildSnapshot` reads. Production: `defaultCollectors`; tests: fakes. */
 export interface Collectors {
-  herdrAgents(): Promise<CollectorResult<HerdrAgentRaw>>
-  herdrWorkspaces(): Promise<CollectorResult<HerdrWorkspaceRaw>>
   hc(): Promise<HcCollected>
   claudeAgents(): Promise<CollectorResult<ClaudeAgentRaw>>
   humanQueue(): Promise<CollectorResult<HumanQueueEntry>>
@@ -518,10 +491,6 @@ export function defaultCollectors(
 ): Collectors {
   const resolveAccounts = sessionAccountResolver(config)
   return {
-    // TODO(Wave 7): drop classic herdr (herdrAgents, herdrWorkspaces) once hc is the only world
-    herdrAgents: () => readJsonCommand(run, [config.herdrBin, 'agent', 'list'], 'herdr agent list', pickHerdrAgents),
-    herdrWorkspaces: () =>
-      readJsonCommand(run, [config.herdrBin, 'workspace', 'list'], 'herdr workspace list', pickHerdrWorkspaces),
     hc: () => collectHc(run, config, options.uid ?? process.getuid?.()),
     claudeAgents: () =>
       readJsonCommand(run, [config.claudeBin, 'agents', '--json'], 'claude agents --json', pickClaudeAgents),
@@ -576,27 +545,12 @@ export async function buildSnapshot(
 ): Promise<Snapshot> {
   const staleAfterMs = options.staleAfterHours * 60 * 60 * 1000
 
-  const [herdrAgents, herdrWorkspaces, hc, claudeAgents] = await Promise.all([
-    collectors.herdrAgents(),
-    collectors.herdrWorkspaces(),
-    collectors.hc(),
-    collectors.claudeAgents(),
-  ])
+  const [hc, claudeAgents] = await Promise.all([collectors.hc(), collectors.claudeAgents()])
   const humanQueue = await collectors.humanQueue()
-  const warnings = [
-    herdrAgents.warning,
-    herdrWorkspaces.warning,
-    hc.warning,
-    claudeAgents.warning,
-    humanQueue.warning,
-  ].filter((w): w is string => w != null)
+  const warnings = [hc.warning, claudeAgents.warning, humanQueue.warning].filter((w): w is string => w != null)
 
-  // Unique (session, cwd) pairs across all sources: a herdr pane, an hc terminal and the registry entry of one session share one tail read.
+  // Unique (session, cwd) pairs across all sources: an hc terminal and the registry entry of one session share one tail read.
   const cwdBySession = new Map<string, string>()
-  for (const a of herdrAgents.items) {
-    const sessionId = a.agent_session?.value
-    if (sessionId) cwdBySession.set(sessionId, a.cwd ?? '')
-  }
   for (const t of hc.terminals) {
     const sessionId = isHcAgent(t) ? t.labels?.[HC_SESSION_LABEL] : undefined
     // A linked machine's cwd is a path there, not here: no transcript read for it.
@@ -620,8 +574,6 @@ export async function buildSnapshot(
   const accounts = await collectors.sessionAccounts(cwdBySession.keys(), now)
 
   const merged = mergeAgents({
-    herdrAgents: herdrAgents.items,
-    herdrWorkspaces: herdrWorkspaces.items,
     hcTerminals: hc.terminals,
     hcSpaces: hc.spaces,
     claudeAgents: claudeAgents.items,

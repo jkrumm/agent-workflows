@@ -29,8 +29,6 @@ const terminal = (over: Partial<HcTerminalRaw> = {}): HcTerminalRaw => ({
 
 const merge = (hcTerminals: HcTerminalRaw[], extra: Partial<Parameters<typeof mergeAgents>[0]> = {}) =>
   mergeAgents({
-    herdrAgents: [],
-    herdrWorkspaces: [],
     claudeAgents: [],
     hcTerminals,
     hcSpaces: [{ id: 'sp1', name: 'agent-workflows' }],
@@ -111,24 +109,6 @@ describe('hc terminals in the merge', () => {
       expect(agents).toHaveLength(1)
       expect(agents[0]).toMatchObject({ paneId: 't2', state: 'needs_you' })
     }
-  })
-
-  test('a herdr workspace id and an hc space id that are equal stay in their own worlds', () => {
-    const projects = merge([terminal({ labels: { 'herdr.space': 'x1' } })], {
-      hcSpaces: [{ id: 'x1', name: 'hc-name' }],
-      herdrWorkspaces: [{ workspace_id: 'x1', label: 'herdr-name' }],
-      herdrAgents: [{ pane_id: 'x1:p1', workspace_id: 'x1', agent_status: 'idle', cwd: '/c' }],
-    })
-    expect(projects.map((p) => p.name).toSorted()).toEqual(['hc-name', 'herdr-name'])
-  })
-
-  test('the same session in classic herdr and in hc is one agent, the hc terminal winning', () => {
-    const projects = merge([terminal()], {
-      herdrAgents: [{ agent_session: { value: 'sess-1' }, agent_status: 'idle', pane_id: 'w:p1', cwd: '/x' }],
-    })
-    const agents = projects.flatMap((p) => p.agents)
-    expect(agents).toHaveLength(1)
-    expect(agents[0]).toMatchObject({ source: 'hc', paneId: 't7' })
   })
 
   test('control bytes in a title, an address or a space name never reach the agent', () => {
@@ -241,8 +221,6 @@ describe('buildSnapshot with hc', () => {
   test('reads the transcript of an hc session and counts it in the summary and the warnings', async () => {
     const tails: string[] = []
     const collectors: Collectors = {
-      herdrAgents: async () => ok([]),
-      herdrWorkspaces: async () => ok([]),
       hc: async () => ({
         terminals: [terminal()],
         spaces: [{ id: 'sp1', name: 'agent-workflows' }],

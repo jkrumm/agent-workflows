@@ -94,11 +94,11 @@ export interface DeriveStateInput {
 }
 
 /**
- * First match wins:
- * - needs_you: herdr `blocked`, or claude `waiting`
- * - working: herdr `working`, or claude `busy`
- * - stale: herdr `idle` / `done` and the last activity older than `staleAfterMs`
- * - idle: herdr `idle`; done: herdr `done`
+ * First match wins (`herdrStatus` is the terminal's own word, runner-neutral):
+ * - needs_you: terminal `blocked`, or claude `waiting`
+ * - working: terminal `working`, or claude `busy`
+ * - stale: terminal `idle` / `done` and the last activity older than `staleAfterMs`
+ * - idle: terminal `idle`; done: terminal `done`
  * - unknown: anything else
  */
 export function deriveState(input: DeriveStateInput): AgentState {
@@ -117,22 +117,6 @@ export function deriveState(input: DeriveStateInput): AgentState {
   if (herdrStatus === 'idle') return 'idle'
   if (herdrStatus === 'done') return 'done'
   return 'unknown'
-}
-
-/** What herdr and Claude's registry answer; a row may lack any field but the identifying one, and the merge copes. */
-export interface HerdrAgentRaw {
-  /** A pane with no Claude session reports `null`, `{}` or `{ value: null }`. */
-  agent_session?: { value?: string | null } | null
-  agent_status?: string
-  cwd?: string
-  pane_id?: string
-  workspace_id?: string
-  terminal_title_stripped?: string
-}
-
-export interface HerdrWorkspaceRaw {
-  workspace_id: string
-  label: string
 }
 
 /** One hc terminal as `terminal.list` answers it; only the fields the merge reads. */
@@ -164,8 +148,6 @@ export interface ClaudeAgentRaw {
 }
 
 export interface MergeAgentsInput {
-  herdrAgents: HerdrAgentRaw[]
-  herdrWorkspaces: HerdrWorkspaceRaw[]
   /** Absent: no hc world was collected. */
   hcTerminals?: HcTerminalRaw[]
   hcSpaces?: HcSpaceRaw[]
@@ -217,58 +199,21 @@ const STATE_RANK: Record<AgentState, number> = { needs_you: 0, working: 1, idle:
 
 /**
  * Merges the collectors into one project-grouped, urgency-sorted list. Entries are keyed by Claude session id: a
- * herdr pane and the claude registry entry of the same session collapse into one agent, herdr's status winning.
+ * hc terminal and the claude registry entry of the same session collapse into one agent, the terminal's status winning.
  */
 export function mergeAgents(input: MergeAgentsInput): MergedProject[] {
-  const { herdrAgents, herdrWorkspaces, claudeAgents, transcripts, accounts, now, staleAfterMs } = input
-  const workspaceLabels = new Map(herdrWorkspaces.map((w) => [w.workspace_id, w.label]))
+  const { claudeAgents, transcripts, accounts, now, staleAfterMs } = input
   const hcSpaceNames = new Map((input.hcSpaces ?? []).map((space) => [space.id, space.name]))
 
   interface Entry {
     agent: Agent
     workspaceId: string | null
     cwd: string
-    /** The two worlds' ids are separate namespaces: an hc space id never looks up a herdr workspace. */
-    hc?: boolean
     /** A linked machine's terminal: its cwd is a path on that machine, so nothing on this host reads it as one. */
     remote?: boolean
   }
   const entries = new Map<string, Entry>()
 
-  // TODO(Wave 7): drop classic herdr
-  for (const a of herdrAgents) {
-    // Keys and lookups use the raw value; a value that cleaning would change cannot be one (a UUID never is).
-    const rawSession = a.agent_session?.value ?? null
-    const sessionId = safeId(rawSession)
-    if (rawSession && !sessionId) continue
-    const paneId = safeId(a.pane_id)
-    const workspaceId = safeId(a.workspace_id)
-    if (!sessionId && !paneId) continue // nothing to identify the row by
-    const tail = sessionId ? (transcripts.get(sessionId) ?? EMPTY_TAIL) : EMPTY_TAIL
-    entries.set(sessionId ?? `pane:${paneId}`, {
-      workspaceId,
-      cwd: a.cwd ?? '',
-      agent: {
-        id: sessionId ?? paneId ?? '',
-        source: 'herdr',
-        sessionId,
-        paneId,
-        workspaceId,
-        title: cleanLine(a.terminal_title_stripped) || tail.aiTitle || null,
-        state: 'unknown',
-        herdrStatus: normalizeHerdrStatus(a.agent_status ?? ''),
-        claudeStatus: null,
-        waitingFor: null,
-        lastPrompt: tail.lastPrompt,
-        lastReply: tail.lastReply,
-        lastActivityAt: tail.lastActivityAt,
-        account: sessionId ? cleanLine(accounts?.get(sessionId)) || null : null,
-        startedAt: null,
-      },
-    })
-  }
-
-  // hc after classic herdr: a session both worlds report (a resumed one) is the hc terminal from here on.
   for (const t of input.hcTerminals ?? []) {
     if (!isHcAgent(t)) continue
     const address = safeId(t.address)
@@ -281,11 +226,10 @@ export function mergeAgents(input: MergeAgentsInput): MergedProject[] {
     const herdrStatus = normalizeHerdrStatus(t.status?.state ?? '')
     // One session in two live terminals: the more urgent status stands, so a blocked one is never hidden by an idle one.
     const existing = sessionId ? entries.get(sessionId) : undefined
-    if (existing?.hc && HC_STATUS_RANK[herdrStatus] >= HC_STATUS_RANK[existing.agent.herdrStatus ?? 'unknown']) continue
+    if (existing && HC_STATUS_RANK[herdrStatus] >= HC_STATUS_RANK[existing.agent.herdrStatus ?? 'unknown']) continue
     entries.set(sessionId ?? `hc:${address}`, {
       workspaceId,
       cwd: t.foreground?.cwd || t.cwd || '',
-      hc: true,
       remote: address.includes('/'),
       agent: {
         id: sessionId ?? address,
@@ -352,8 +296,7 @@ export function mergeAgents(input: MergeAgentsInput): MergedProject[] {
       now,
       staleAfterMs,
     })
-    const names = entry.hc ? hcSpaceNames : workspaceLabels
-    const label = entry.workspaceId ? names.get(entry.workspaceId) : undefined
+    const label = entry.workspaceId ? hcSpaceNames.get(entry.workspaceId) : undefined
     const projectName = cleanLine(label ?? basename(entry.cwd)) ?? ''
     const gitCwd = entry.cwd !== '' && !entry.remote && !hasControlBytes(entry.cwd) ? entry.cwd : null
     const group = groups.get(projectName)

@@ -15,8 +15,8 @@ import {
   type ClaudeAgentRaw,
   deriveState,
   encodeProjectDir,
-  type HerdrAgentRaw,
-  type HerdrWorkspaceRaw,
+  type HcSpaceRaw,
+  type HcTerminalRaw,
   mergeAgents,
   parseTranscriptTail,
   type TranscriptTail,
@@ -318,15 +318,18 @@ describe('deriveState', () => {
 
 // ── mergeAgents ──────────────────────────────────────────────────────────────────────────────
 
-function herdrAgent(overrides: Partial<HerdrAgentRaw> = {}): HerdrAgentRaw {
+function hcTerminal(
+  overrides: Partial<Omit<HcTerminalRaw, 'status'>> & { session?: string; space?: string; state?: string } = {},
+): HcTerminalRaw {
+  const { session = 'session-1', space = 'wR', state = 'working', ...rest } = overrides
   return {
-    agent_session: { value: 'session-1' },
-    agent_status: 'working',
+    address: 't4',
     cwd: '/Users/jkrumm/SourceRoot/dotfiles',
-    pane_id: 'wR:p4',
-    workspace_id: 'wR',
-    terminal_title_stripped: 'Some task',
-    ...overrides,
+    state: 'live',
+    title: 'Some task',
+    labels: { 'herdr.space': space, 'jk.claude.session': session },
+    status: { app: 'claude-code', state },
+    ...rest,
   }
 }
 
@@ -348,10 +351,10 @@ const NO_TAIL: TranscriptTail = {
 }
 
 describe('mergeAgents', () => {
-  test('a herdr pane and a claude registry entry with the same sessionId collapse into one agent, herdr status winning', () => {
+  test('an hc terminal and a claude registry entry with the same sessionId collapse into one agent, the terminal status winning', () => {
     const projects = mergeAgents({
-      herdrAgents: [herdrAgent({ agent_status: 'idle' })],
-      herdrWorkspaces: [{ workspace_id: 'wR', label: 'dotfiles' }],
+      hcTerminals: [hcTerminal({ state: 'idle' })],
+      hcSpaces: [{ id: 'wR', name: 'dotfiles' }],
       claudeAgents: [claudeAgent({ status: 'busy' })],
       transcripts: new Map(),
       now: NOW,
@@ -361,22 +364,20 @@ describe('mergeAgents', () => {
     expect(projects).toHaveLength(1)
     const agents = projects[0]?.agents ?? []
     expect(agents).toHaveLength(1)
-    // "herdr status wins" is about identity, not the derived state: the merged entry keeps
-    // source "herdr" (never flips to "claude") once a herdr pane exists for the sessionId,
+    // "terminal status wins" is about identity, not the derived state: the merged entry keeps
+    // source "hc" (never flips to "claude") once an hc terminal exists for the sessionId,
     // and both raw statuses are preserved on the merged entry rather than one overwriting
     // the other.
-    expect(agents[0]?.source).toBe('herdr')
+    expect(agents[0]?.source).toBe('hc')
     expect(agents[0]?.herdrStatus).toBe('idle')
     expect(agents[0]?.claudeStatus).toBe('busy')
-    // deriveState's own priority order (working — herdr working OR claude busy) still applies
-    // to the merged fields, so claude's "busy" here correctly outranks herdr's "idle".
+    // deriveState's own priority order (working — terminal working OR claude busy) still applies
+    // to the merged fields, so claude's "busy" here correctly outranks the terminal's "idle".
     expect(agents[0]?.state).toBe('working')
   })
 
-  test("a claude agent with no matching herdr pane becomes its own 'claude'-sourced entry", () => {
+  test("a claude agent with no matching hc terminal becomes its own 'claude'-sourced entry", () => {
     const projects = mergeAgents({
-      herdrAgents: [],
-      herdrWorkspaces: [],
       claudeAgents: [claudeAgent({ sessionId: 'bg-session', status: 'idle' })],
       transcripts: new Map(),
       now: NOW,
@@ -388,10 +389,10 @@ describe('mergeAgents', () => {
     expect(projects[0]?.agents[0]?.sessionId).toBe('bg-session')
   })
 
-  test('project name resolves via the herdr workspace label, not basename(cwd)', () => {
+  test('project name resolves via the hc space name, not basename(cwd)', () => {
     const projects = mergeAgents({
-      herdrAgents: [herdrAgent({ cwd: '/Users/jkrumm/SourceRoot/some-checkout-dir' })],
-      herdrWorkspaces: [{ workspace_id: 'wR', label: 'dotfiles' }],
+      hcTerminals: [hcTerminal({ cwd: '/Users/jkrumm/SourceRoot/some-checkout-dir' })],
+      hcSpaces: [{ id: 'wR', name: 'dotfiles' }],
       claudeAgents: [],
       transcripts: new Map(),
       now: NOW,
@@ -400,10 +401,8 @@ describe('mergeAgents', () => {
     expect(projects[0]?.name).toBe('dotfiles')
   })
 
-  test('no workspace match falls back to basename(cwd)', () => {
+  test('no space match falls back to basename(cwd)', () => {
     const projects = mergeAgents({
-      herdrAgents: [],
-      herdrWorkspaces: [],
       claudeAgents: [claudeAgent({ cwd: '/Users/jkrumm/SourceRoot/weatherorb' })],
       transcripts: new Map(),
       now: NOW,
@@ -413,31 +412,31 @@ describe('mergeAgents', () => {
   })
 
   test('projects sort most-urgent-first: needs_you > working > idle > stale > done, then by name', () => {
-    const stale = herdrAgent({
-      agent_session: { value: 's-stale' },
-      agent_status: 'idle',
+    const stale = hcTerminal({
+      session: 's-stale',
+      state: 'idle',
       cwd: '/Users/jkrumm/SourceRoot/z-project',
-      workspace_id: 'wZ',
-      pane_id: 'wZ:p1',
+      space: 'wZ',
+      address: 't1',
     })
-    const working = herdrAgent({
-      agent_session: { value: 's-working' },
-      agent_status: 'working',
+    const working = hcTerminal({
+      session: 's-working',
+      state: 'working',
       cwd: '/Users/jkrumm/SourceRoot/a-project',
-      workspace_id: 'wA',
-      pane_id: 'wA:p1',
+      space: 'wA',
+      address: 't2',
     })
-    const needsYou = herdrAgent({
-      agent_session: { value: 's-needs-you' },
-      agent_status: 'blocked',
+    const needsYou = hcTerminal({
+      session: 's-needs-you',
+      state: 'blocked',
       cwd: '/Users/jkrumm/SourceRoot/m-project',
-      workspace_id: 'wM',
-      pane_id: 'wM:p1',
+      space: 'wM',
+      address: 't3',
     })
-    const workspaces: HerdrWorkspaceRaw[] = [
-      { workspace_id: 'wZ', label: 'z-project' },
-      { workspace_id: 'wA', label: 'a-project' },
-      { workspace_id: 'wM', label: 'm-project' },
+    const spaces: HcSpaceRaw[] = [
+      { id: 'wZ', name: 'z-project' },
+      { id: 'wA', name: 'a-project' },
+      { id: 'wM', name: 'm-project' },
     ]
     const staleAfterMs = 24 * HOUR_MS
     const transcripts = new Map<string, TranscriptTail>([
@@ -445,8 +444,8 @@ describe('mergeAgents', () => {
     ])
 
     const projects = mergeAgents({
-      herdrAgents: [stale, working, needsYou],
-      herdrWorkspaces: workspaces,
+      hcTerminals: [stale, working, needsYou],
+      hcSpaces: spaces,
       claudeAgents: [],
       transcripts,
       now: NOW,
@@ -457,25 +456,13 @@ describe('mergeAgents', () => {
   })
 
   test('projects tie-break by name when urgency rank is equal', () => {
-    const b = herdrAgent({
-      agent_session: { value: 's-b' },
-      agent_status: 'working',
-      cwd: '/x/b-project',
-      workspace_id: 'wB',
-      pane_id: 'wB:p1',
-    })
-    const a = herdrAgent({
-      agent_session: { value: 's-a' },
-      agent_status: 'working',
-      cwd: '/x/a-project',
-      workspace_id: 'wA',
-      pane_id: 'wA:p1',
-    })
+    const b = hcTerminal({ session: 's-b', state: 'working', cwd: '/x/b-project', space: 'wB', address: 't1' })
+    const a = hcTerminal({ session: 's-a', state: 'working', cwd: '/x/a-project', space: 'wA', address: 't2' })
     const projects = mergeAgents({
-      herdrAgents: [b, a],
-      herdrWorkspaces: [
-        { workspace_id: 'wB', label: 'b-project' },
-        { workspace_id: 'wA', label: 'a-project' },
+      hcTerminals: [b, a],
+      hcSpaces: [
+        { id: 'wB', name: 'b-project' },
+        { id: 'wA', name: 'a-project' },
       ],
       claudeAgents: [],
       transcripts: new Map(),
@@ -513,7 +500,7 @@ describe('renderText', () => {
           agents: [
             {
               id: 's1',
-              source: 'herdr',
+              source: 'hc',
               sessionId: 's1',
               paneId: 'wR:p4',
               workspaceId: 'wR',
@@ -597,7 +584,7 @@ describe('renderText with color', () => {
           agents: [
             {
               id: 's1',
-              source: 'herdr',
+              source: 'hc',
               sessionId: 's1',
               paneId: 'wR:p4',
               workspaceId: 'wR',
@@ -665,7 +652,7 @@ describe('renderText with color', () => {
           agents: [
             {
               id: 's1',
-              source: 'herdr',
+              source: 'hc',
               sessionId: 's1',
               paneId: 'wR:p4',
               workspaceId: 'wR',
@@ -719,7 +706,7 @@ describe('renderText with cols', () => {
           agents: [
             {
               id: 'a1',
-              source: 'herdr',
+              source: 'hc',
               sessionId: 'a1',
               paneId: 'wR:p4',
               workspaceId: 'wR',

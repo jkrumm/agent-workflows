@@ -17,7 +17,7 @@ test('a booted host serves agents, quota and quota-report beside the overview wo
     HOME: home,
     XDG_STATE_HOME: home,
     AGW_ARGO_PUSH: '0',
-    AGW_HERDR_BIN: join(home, 'no-herdr'),
+    AGW_HC_BIN: join(home, 'no-hc'),
     AGW_CLAUDE_BIN: join(home, 'no-claude'),
     AGW_CLAUDE_ACCOUNT_BIN: join(home, 'no-claude-account'),
     AGW_API_SECRET: SECRET,
@@ -41,7 +41,7 @@ test('a booted host serves agents, quota and quota-report beside the overview wo
       data: { summary: Record<string, number>; warnings: string[] }
     }
     expect(agents.data.summary).toEqual({ needsYou: 0, working: 0, idle: 0, stale: 0, done: 0 })
-    expect(agents.data.warnings.some((w) => w.includes('herdr agent list failed'))).toBe(true)
+    expect(agents.data.warnings.some((w) => w.includes('claude agents --json failed'))).toBe(true)
 
     expect((await call('/quota/report', { fiveHourPct: 12, account: 'iu' })).status).toBe(200)
     const quota = (await (await call('/quota')).json()) as { data: { five_hour_pct: number } }
