@@ -51,8 +51,8 @@ Registry: `dotfiles/config/claude-accounts.json`, the picker's single source, ge
 
 ```json
 "platform": { "creditUsd": 200, "cycleDay": 14, "headroomUsd": 2, "enabled": true,
-              "apiKeyRef": "op://common/claude-platform/API_KEY_IU",
-              "adminKeyRef": "op://common/claude-platform/ADMIN_KEY_IU" }
+              "apiKeyRef": "op://mini/claude-platform/API_KEY_IU",
+              "adminKeyRef": "op://mini/claude-platform/ADMIN_KEY_IU" }
 ```
 
 `cycleDay` is the subscription's billing day (owner fills it from claude.ai Settings → Billing). Keys resolve through

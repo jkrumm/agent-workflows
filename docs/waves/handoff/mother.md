@@ -7,7 +7,7 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
 - **New plan 2026-11-01:** inference gateway (Waves 1–4, `docs/gateway.md`), then review v2 and the maturity pass
   (Waves 5–13). Wave 1 active. The 2026-10-30 plan is finished (concept.md Final retro); STOP removed.
 - Owner actions pending (PLAN context): `me`/`me2` Console orgs linked, API and Admin keys under
-  `op://common/claude-platform/`, billing days. Not blocking: Waves 1–3 run on the `iu` pool alone.
+  `op://mini/claude-platform/`, billing days. Not blocking: Waves 1–3 run on the `iu` pool alone.
 - Lead's close-out channel: `docs/waves/handoff/lead.md` (the mother owns PLAN.md and the retro log;
   the lead writes per-step verdicts, Left behind, gate evidence and retro notes there, then idles).
 - dotfiles `make doctor` / architecture-check may be red outside this fleet (Athena, teamchat, collie pin,

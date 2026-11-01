@@ -14,10 +14,10 @@ Context (2026-11-01):
   over the personal key's $500 cap and runs on the Athena team key, which belongs to Athena Teamchat only. agw's seats
   move to Claude to spend the credit (Wave 3); the eval sweeps of Waves 7 and 9 then run mostly on credit. EU
   endpoints don't matter.
-- **Owner actions for the gateway** (not blocking Wave 1): link `me` and `me2` to their own Console orgs; no payment
-  method on any of the three orgs; one API key and one Admin key per org into `op://common/claude-platform/`
-  (`API_KEY_{IU,ME,ME2}`, `ADMIN_KEY_{IU,ME,ME2}`); each subscription's billing day. A pool whose refs are missing
-  stays disabled; Waves 1–3 run on the `iu` pool alone.
+- **Gateway keys** (2026-11-01): `op://mini/claude-platform/{API,ADMIN}_KEY_{IU,ME,ME2}` are seeded on the mini. IU and
+  ME resolve to real keys; ME2 holds a `REPLACE` placeholder until its 7-day claim window opens (~2026-11-02), so the
+  `me2` pool stays disabled. Still owed by the owner: each subscription's billing day and whether the orgs carry a
+  payment method. Not blocking: Waves 1–3 run on the `iu` pool alone.
 - The 2026-10-31 eval (`docs/evals/2026-10-31-review-claude-direct.md`) settled cost, wall time and failure modes per
   arm, but **cannot rank models**: its reference is a retired gateway's outcome. Lessons: `docs/evals/README.md`.
 - Owner framing: greenfield, solo developer, optimal over compatible; the review pipeline may be reset.
@@ -32,7 +32,7 @@ eval needs move into Wave 5. The rest waits.
 ## Wave 1 — Gateway spike and registry            <!-- status: active -->
 
 - [ ] **Passthrough spike** (`docs/spikes/gateway/`, excluded from tools): a minimal Bun proxy for `/anthropic/v1/messages`
-  on the `iu` org's key (`op://common/claude-platform/API_KEY_IU`). Replay a Claude-Code-shaped request (several
+  on the `iu` org's key (`op://mini/claude-platform/API_KEY_IU`). Replay a Claude-Code-shaped request (several
   `system` blocks, tools, `cache_control` with `ttl: 1h`, an `anthropic-beta` list) twice: the upstream bytes hash
   equal to the inbound bytes, the second call reports `cache_read_input_tokens` > 0, and the SSE tee parses `usage`
   from `message_start` / `message_delta` with no measurable TTFT cost. Streamed and non-streamed. Haiku only.
