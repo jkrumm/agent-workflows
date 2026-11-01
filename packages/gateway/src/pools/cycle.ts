@@ -12,9 +12,10 @@ function anchor(year: number, month: number, day: number): Date {
 }
 
 /**
- * The credit cycle containing `now`. A known `cycleDay` starts at 00:00 UTC on the most recent occurrence of that day
- * (clamped to short months: 31 → Feb 28/29) and ends at the next; the boundary instant belongs to the new cycle.
- * `null` is a rolling 31-day window ending now, with no known end.
+ * The credit cycle containing `now`. `cycleDay` is the credit's expiry day (Console Billing), not the payment day: a
+ * cycle runs from the previous expiry, 00:00 UTC on the most recent occurrence of that day, to the next expiry (both
+ * clamped to short months: 31 → Feb 28/29). The expiry instant belongs to the new cycle. `null` (expiry unknown) is a
+ * rolling 31-day window ending now, with no known end.
  */
 export function cycleOf(cycleDay: number | null, now: Date): { start: Date; end: Date | null } {
   if (cycleDay === null) return { start: new Date(now.getTime() - ROLLING_WINDOW_MS), end: null }

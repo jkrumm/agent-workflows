@@ -68,8 +68,27 @@ const req = (over: Partial<PickInput> = {}): PickInput => ({
 })
 
 describe('order for a new session', () => {
+  test('the real registry on 2026-11-01: iu (credit expires 11-21) before me (expires 11-27); me2 is disabled', () => {
+    const { pools } = setup(
+      [
+        pool('iu', { creditUsd: 200, cycleDay: 21 }),
+        pool('me', { creditUsd: 100, cycleDay: 27 }),
+        pool('me2', { creditUsd: 100, cycleDay: null, enabled: false }),
+      ],
+      { at: '2026-11-01T09:00:00Z' },
+    )
+    expect(pools.pick(req())).toEqual({ kind: 'pool', pool: 'iu', reason: 'soonest-expiry' })
+    expect(pools.pick(req({ exclude: ['iu'] }))).toEqual({ kind: 'pool', pool: 'me', reason: 'soonest-expiry' })
+    expect(pools.pick(req({ exclude: ['iu', 'me'] }))).toEqual({ kind: 'iu', reason: 'drained-retry' })
+    expect(pools.status().map(({ id, cycleStart, cycleEnd }) => ({ id, cycleStart, cycleEnd }))).toEqual([
+      { id: 'iu', cycleStart: '2026-10-21T00:00:00.000Z', cycleEnd: '2026-11-21T00:00:00.000Z' },
+      { id: 'me', cycleStart: '2026-10-27T00:00:00.000Z', cycleEnd: '2026-11-27T00:00:00.000Z' },
+      { id: 'me2', cycleStart: '2026-10-01T09:00:00.000Z', cycleEnd: null },
+    ])
+  })
+
   test('soonest cycle end first, unknown ends after known ones, ties by registry order', () => {
-    // At 2026-11-10: day 14 ends 11-14, day 21 ends 11-21, day 12 ends 11-12.
+    // At 2026-11-10 the credits expire: day 12 on 11-12, day 14 on 11-14, day 21 on 11-21.
     const registry = [
       pool('unknown-a'),
       pool('d21', { cycleDay: 21 }),
