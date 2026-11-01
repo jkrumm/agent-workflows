@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { BEARER_CHALLENGE } from '@agent-workflows/host/auth'
 import { callerAuth } from '@agent-workflows/host/door-tokens'
 import { BALANCE_MARKER, isBalanceFailure, resolveModelAlias } from '@agent-workflows/routes/pricing'
@@ -17,6 +18,8 @@ const REFUSED = 'refused'
 const PASSTHROUGH = 'passthrough'
 /** nginx's status for a caller that left before the request was read; no upstream saw it. */
 const CALLER_LEFT = 499
+/** A session id a caller sends is unbounded; past this it is stored and bound by its hash. */
+const MAX_SESSION_CHARS = 200
 
 /** rules/agent-limits: a hang guard of 30 minutes on silence from upstream, never a cap on a long stream. */
 const HANG_GUARD_MS = 30 * 60 * 1000
@@ -179,6 +182,12 @@ function modelFromPath(path: string): string | null {
   if (gemini?.[1] !== undefined) return gemini[1]
   const replicate = /^\/replicate\/v1\/models\/(.+?)\/predictions/.exec(path)
   return replicate?.[1] ?? null
+}
+
+/** Every use of a session id (pick, binding, row, span) takes this form. */
+function boundedSession(session: string | null): string | null {
+  if (session === null || session.length <= MAX_SESSION_CHARS) return session
+  return `h:${createHash('sha256').update(session).digest('hex').slice(0, 32)}`
 }
 
 const laneOf = (caller: string): RecordRow['lane'] =>
@@ -637,7 +646,7 @@ export function createProxy(options: ProxyOptions): GatewayProxy {
     }
     x.requestedModel ??= modelFromPath(x.path)
     x.model ??= x.requestedModel
-    x.session = sessionId(x.inbound, parsed)
+    x.session = boundedSession(sessionId(x.inbound, parsed))
     x.shape = {
       bytes: bytes?.byteLength ?? 0,
       maxTokens: typeof parsed?.max_tokens === 'number' ? parsed.max_tokens : null,
