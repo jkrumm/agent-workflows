@@ -5,7 +5,7 @@ import { Ledger, type PickRow, type RecordRow } from '../src/ledger.ts'
 import { Outbox, pgUsageSink } from '../src/outbox.ts'
 import type { Logger } from '../src/log.ts'
 import { createPools, type Pools, type RegistryPool } from '../src/pools/index.ts'
-import { createProxy } from '../src/proxy.ts'
+import { createProxy, type GatewayProxy } from '../src/proxy.ts'
 import { Reconciler } from '../src/reconcile.ts'
 import { type GatewayServer, startGateway } from '../src/server.ts'
 import { createTelemetry, type Telemetry } from '../src/telemetry.ts'
@@ -85,6 +85,7 @@ export interface Harness {
   url: string
   ledger: Ledger
   pools: Pools
+  proxy: GatewayProxy
   server: GatewayServer
   logger: ReturnType<typeof silentLogger>
   call(path: string, init?: RequestInit & { token?: string }): Promise<Response>
@@ -170,6 +171,7 @@ export function harness(input: {
     url,
     ledger,
     pools,
+    proxy,
     server,
     logger,
     call(path, init = {}) {

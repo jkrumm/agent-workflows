@@ -21,6 +21,8 @@ export const IU_API = 'iu-api'
 const REFUSED = 'refused'
 /** The reason on a path with no pick: IU is the only upstream. */
 const PASSTHROUGH = 'passthrough'
+/** nginx's status for a caller that left before the request was read; no upstream saw it. */
+const CALLER_LEFT = 499
 
 /** rules/agent-limits: a hang guard of 30 minutes on silence from upstream, never a cap on a long stream. */
 const HANG_GUARD_MS = 30 * 60 * 1000
@@ -69,9 +71,9 @@ export interface ProxyOptions {
 export interface GatewayProxy {
   /** Answers a gateway path, undefined for any other. */
   handle(request: Request, server: { timeout(request: Request, seconds: number): void }): Promise<Response | undefined>
-  /** Requests still streaming: resolves when the last one is settled. */
+  /** Requests in flight, an upload in progress included: resolves when the last one is settled. */
   drained(): Promise<void>
-  /** Cuts every request in flight; each still writes its row with what it knows. */
+  /** Cuts every request in flight and finalizes it before returning: row, charge and span, with what it knows. */
   abortAll(): void
 }
 
@@ -106,7 +108,11 @@ interface Exchange {
   span: RequestSpan
   abort: AbortController
   guard: { arm(): void; disarm(): void }
-  /** The request's end: row written, span ended. */
+  /** What an abort means now: the phase the exchange is in sets it. */
+  onCut: () => void
+  /** Row written, span ended; set once by `close`. */
+  closed: boolean
+  /** Drops the exchange from the in-flight set. */
   settled: () => void
 }
 
@@ -335,20 +341,27 @@ export function createProxy(options: ProxyOptions): GatewayProxy {
     options.outbox?.poke()
   }
 
-  /** Closes the request once: the row (unless it is a `count_tokens`), the span, the in-flight entry. */
+  /** The end of an exchange, once, whichever of the stream, the abort listener or the error path gets here first. */
+  const close = (x: Exchange, status: number, failed: boolean, write?: () => void): void => {
+    if (x.closed) return
+    x.closed = true
+    try {
+      write?.()
+    } catch (error) {
+      logger.error('row not recorded', { requestId: x.requestId, error: errorMessage(error) })
+    }
+    x.span.set({ 'agw.gateway.status': status })
+    x.span.end(failed)
+    x.settled()
+  }
+
+  /** Closes the request with its row, unless it is a `count_tokens`. */
   const finisher = (x: Exchange, input: { status: number; pick: PickLabel; record: boolean }) => {
-    let done = false
     return (tee: TeeResult, ended: Ended): void => {
-      if (done) return
-      done = true
-      try {
+      const failed = input.status >= 400 || ended !== 'complete' || tee.streamError
+      close(x, input.status, failed, () => {
         if (input.record) writeRow(x, { status: input.status, pick: input.pick, tee, ended })
-      } catch (error) {
-        logger.error('row not recorded', { requestId: x.requestId, error: errorMessage(error) })
-      }
-      x.span.set({ 'agw.gateway.status': input.status })
-      x.span.end(input.status >= 400 || ended !== 'complete' || tee.streamError)
-      x.settled()
+      })
     }
   }
 
@@ -361,8 +374,18 @@ export function createProxy(options: ProxyOptions): GatewayProxy {
   ): ReadableStream<Uint8Array> => {
     const reader = body.getReader()
     let first = true
+    let stream: ReadableStreamDefaultController<Uint8Array> | undefined
+    // No pull need be pending (a stalled caller, a cut before the first one): the abort itself finishes the exchange.
+    x.onCut = () => {
+      finish(tee.finish(), 'aborted')
+      void reader.cancel().catch(() => {})
+      stream?.error(x.abort.signal.reason)
+    }
     return new ReadableStream<Uint8Array>(
       {
+        start(controller) {
+          stream = controller
+        },
         async pull(controller) {
           x.guard.arm()
           try {
@@ -418,11 +441,17 @@ export function createProxy(options: ProxyOptions): GatewayProxy {
   }
 
   const noUsage: TeeResult = { usage: null, tokens: null, model: null, streamError: false }
+  const CUT_STATUS = 504
+
+  /** Sent upstream, no response yet: an abort closes the exchange here. */
+  const awaitingUpstream = (x: Exchange, pick: PickLabel, record: boolean): void => {
+    x.onCut = () => finisher(x, { status: CUT_STATUS, pick, record })(noUsage, 'aborted')
+  }
 
   /** No response came: the caller left, the guard fired or the network failed. */
   const unreachable = (x: Exchange, pick: PickLabel, record: boolean, error: unknown): Response => {
     const aborted = x.abort.signal.aborted
-    const status = aborted ? 504 : 502
+    const status = aborted ? CUT_STATUS : 502
     if (!aborted)
       logger.warn('upstream unreachable', { requestId: x.requestId, pool: pick.pool, error: errorMessage(error) })
     finisher(x, { status, pick, record })(noUsage, aborted ? 'aborted' : 'failed')
@@ -434,9 +463,8 @@ export function createProxy(options: ProxyOptions): GatewayProxy {
 
   /** The 402 of `x-agw-fallback: none`: the caller's own route fallback takes over. */
   const refuse = (x: Exchange, reason: string): Response => {
-    x.span.set({ 'agw.gateway.pool': REFUSED, 'agw.gateway.pick_reason': reason, 'agw.gateway.status': 402 })
-    x.span.end(true)
-    x.settled()
+    x.span.set({ 'agw.gateway.pool': REFUSED, 'agw.gateway.pick_reason': reason })
+    close(x, 402, true)
     return errorResponse(402, 'balance_error', `${BALANCE_MARKER}: no credit pool eligible`, {
       'x-agw-request-id': x.requestId,
       'x-agw-pool': REFUSED,
@@ -518,6 +546,7 @@ export function createProxy(options: ProxyOptions): GatewayProxy {
       const label: PickLabel = { pool: target.label, reason: pick.reason }
       let upstream: Response
       let held: Uint8Array | null = null
+      awaitingUpstream(x, label, record)
       try {
         upstream = await send(x, target)
         if (pick.kind === 'pool') {
@@ -541,6 +570,7 @@ export function createProxy(options: ProxyOptions): GatewayProxy {
     const label: PickLabel = { pool: IU_API, reason: PASSTHROUGH }
     x.span.set({ 'agw.gateway.pool': IU_API, 'agw.gateway.pick_reason': PASSTHROUGH })
     const target: Target = { label: IU_API, url, credential: ['authorization', `Bearer ${iu.apiKey}`] }
+    awaitingUpstream(x, label, true)
     try {
       const upstream = await send(x, target)
       return answer(x, upstream, upstream.body, label, true)
@@ -572,6 +602,8 @@ export function createProxy(options: ProxyOptions): GatewayProxy {
       system,
       span,
       abort,
+      onCut: () => {},
+      closed: false,
       guard: {
         arm() {
           clearTimeout(timer)
@@ -586,6 +618,16 @@ export function createProxy(options: ProxyOptions): GatewayProxy {
       },
     }
     inflight.set(x, settledPromise)
+    // Reading the request: nothing went upstream, so an abort closes it without a row.
+    x.onCut = () => close(x, CALLER_LEFT, true)
+    abort.signal.addEventListener(
+      'abort',
+      () => {
+        if (!x.closed) x.onCut()
+      },
+      { once: true },
+    )
+    request.signal.addEventListener('abort', () => abort.abort(), { once: true })
     return x
   }
 
@@ -630,13 +672,17 @@ export function createProxy(options: ProxyOptions): GatewayProxy {
       }
       // A non-streamed call is silent for as long as the model works, so no proxied request gets an idle cut.
       server.timeout(request, 0)
-      const hasBody = request.method !== 'GET' && request.method !== 'HEAD'
-      const bytes = hasBody ? new Uint8Array(await request.arrayBuffer()) : undefined
       const anthropic = route.kind === 'messages'
-      const parsed = bytes === undefined ? null : parseBody(bytes, request.headers.get('content-type'), anthropic)
       const x = open(request, url, search, caller, anthropic ? 'anthropic' : route.system)
-      const onLeave = () => x.abort.abort()
-      request.signal.addEventListener('abort', onLeave, { once: true })
+      const hasBody = request.method !== 'GET' && request.method !== 'HEAD'
+      let bytes: Bytes | undefined
+      try {
+        bytes = hasBody ? new Uint8Array(await request.arrayBuffer()) : undefined
+      } catch {
+        close(x, CALLER_LEFT, true)
+      }
+      if (x.closed) return errorResponse(CALLER_LEFT, 'invalid_request_error', 'request not read')
+      const parsed = bytes === undefined ? null : parseBody(bytes, request.headers.get('content-type'), anthropic)
       prepare(x, bytes, parsed, anthropic)
       if (route.kind === 'iu') return servePassthrough(x, route.url)
       const picking = {
@@ -651,7 +697,7 @@ export function createProxy(options: ProxyOptions): GatewayProxy {
     },
 
     abortAll() {
-      for (const x of inflight.keys()) x.abort.abort()
+      for (const x of [...inflight.keys()]) x.abort.abort()
     },
   }
 }

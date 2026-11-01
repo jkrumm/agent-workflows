@@ -12,9 +12,8 @@ const IDLE_TIMEOUT_S = 255
 /** Above `sttMaxUploadBytes`: the transcription door's uploads pass through here too. */
 const MAX_REQUEST_BODY_BYTES = 128 * 1024 * 1024
 
-// SIGTERM to exit stays under the 60 s the deploy contract gives: drain, cut, flush, spans.
+// SIGTERM to exit stays under the 60 s the deploy contract gives: drain, flush, spans.
 const DRAIN_MS = 50_000
-const CUT_MS = 2000
 const FLUSH_MS = 5000
 const SPANS_MS = 2000
 
@@ -120,7 +119,6 @@ export function startGateway(options: GatewayServerOptions): GatewayServer {
       if (!(await within(options.drainMs ?? DRAIN_MS, proxy.drained()))) {
         logger.warn('shutdown: cutting the streams still open')
         proxy.abortAll()
-        await within(CUT_MS, proxy.drained())
       }
       if (outbox !== null) {
         await within(FLUSH_MS, outbox.flush())

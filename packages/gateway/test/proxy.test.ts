@@ -812,6 +812,128 @@ describe('span', () => {
   })
 })
 
+describe('settling', () => {
+  const NO_SERVER = { timeout() {} }
+  const firstEvent = sse([{ type: 'message_start', message: { model: haikuId, usage: USAGE } }])
+
+  /** Upstream sends one event, then stays open until cancelled. */
+  const openStream = () => {
+    const state = { cancelled: false }
+    anthropic.reply(
+      () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode(firstEvent))
+            },
+            cancel() {
+              state.cancelled = true
+            },
+          }),
+          { headers: { 'content-type': 'text/event-stream' } },
+        ),
+    )
+    return state
+  }
+
+  /** A request handed straight to the proxy; its response is never read: no pull ever runs. */
+  const direct = (gw: Harness, signal?: AbortSignal) => {
+    const init = jsonBody(request({ stream: true }))
+    return new Request(`${gw.url}${MESSAGES}`, {
+      ...init,
+      headers: { ...init.headers, 'x-api-key': DOOR_TOKEN },
+      ...(signal === undefined ? {} : { signal }),
+    })
+  }
+
+  test('a client gone before the first pull writes the row and cancels the upstream', async () => {
+    const upstream = openStream()
+    const gw = start({ registry: [pool('iu')] })
+    const leave = new AbortController()
+    const response = await gw.proxy.handle(direct(gw, leave.signal), NO_SERVER)
+    expect(response?.status).toBe(200)
+    expect(gw.rows().records).toHaveLength(0)
+    leave.abort()
+    expect(gw.rows().records[0]?.row).toMatchObject({ outcome: 'error', raw: { ended: 'aborted' } })
+    await gw.proxy.drained()
+    for (let i = 0; i < 100 && !upstream.cancelled; i++) await Bun.sleep(5)
+    expect(upstream.cancelled).toBe(true)
+  })
+
+  test('shutdown with a stalled reader writes the row before the ledger closes', async () => {
+    openStream()
+    const dir = tempDir()
+    const path = join(dir.path, 'ledger.sqlite')
+    const gw = start({ registry: [pool('iu')], drainMs: 20, ledgerPath: path })
+    await gw.proxy.handle(direct(gw), NO_SERVER)
+    await gw.close()
+    gateway = undefined
+    const reopened = new Ledger(path)
+    expect(reopened.pending(10).records[0]?.row.raw.ended).toBe('aborted')
+    reopened.close()
+    dir.remove()
+  })
+
+  test('abortAll finalizes a request still waiting for upstream headers, synchronously', async () => {
+    anthropic.reply(async () => {
+      await Bun.sleep(5000)
+      return anthropicReply()
+    })
+    const gw = start({ registry: [pool('iu')] })
+    const pending = gw.proxy.handle(direct(gw), NO_SERVER)
+    for (let i = 0; i < 100 && anthropic.seen.length === 0; i++) await Bun.sleep(5)
+    gw.proxy.abortAll()
+    expect(gw.rows().records[0]?.row).toMatchObject({ outcome: 'error', raw: { status: 504, ended: 'aborted' } })
+    expect((await pending)?.status).toBe(504)
+    await gw.proxy.drained()
+  })
+
+  test('an upload in progress is in flight: drain waits, and the request then goes through', async () => {
+    const gw = start({ registry: [pool('iu')] })
+    let upload: ReadableStreamDefaultController<Uint8Array> | undefined
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        upload = controller
+      },
+    })
+    const handled = gw.proxy.handle(
+      new Request(`${gw.url}${MESSAGES}`, {
+        method: 'POST',
+        body,
+        headers: { 'content-type': 'application/json', 'x-api-key': DOOR_TOKEN },
+      }),
+      NO_SERVER,
+    )
+    await Bun.sleep(10)
+    let drained = false
+    const draining = gw.proxy.drained().then(() => {
+      drained = true
+    })
+    await Bun.sleep(10)
+    expect(drained).toBe(false)
+    upload?.enqueue(new TextEncoder().encode(JSON.stringify(request())))
+    upload?.close()
+    await (await handled)?.text()
+    await draining
+    expect(gw.rows().records).toHaveLength(1)
+  })
+
+  test('an upload cut by shutdown closes without a row: nothing went upstream', async () => {
+    const gw = start({ registry: [pool('iu')] })
+    const body = new ReadableStream<Uint8Array>({ start() {} })
+    const handled = gw.proxy.handle(
+      new Request(`${gw.url}${MESSAGES}`, { method: 'POST', body, headers: { 'x-api-key': DOOR_TOKEN } }),
+      NO_SERVER,
+    )
+    await Bun.sleep(10)
+    gw.proxy.abortAll()
+    await gw.proxy.drained()
+    expect(gw.rows().records).toHaveLength(0)
+    expect(anthropic.seen).toHaveLength(0)
+    void handled
+  })
+})
+
 describe('health and shutdown', () => {
   test('/health needs no token and reports pools and the ledger', async () => {
     const gw = start({ registry: [pool('iu')] })
