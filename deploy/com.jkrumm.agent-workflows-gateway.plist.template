@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.jkrumm.agent-workflows-gateway</string>
+
+  <!-- The inference gateway (docs/gateway.md). It runs from a build directory (~/.agent-workflows/gateway/<build>), never
+       from a release: a release prune can not pull its code away, and a deploy restarts it only when the build changes.
+       Never a Homebrew binary directly (macOS BTM). -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/zsh</string>
+    <string>__BUILD_DIR__/launch-gateway.sh</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>__BUILD_DIR__</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>__HOME__/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>HOME</key>
+    <string>__HOME__</string>
+    <key>AGW_MACHINE</key>
+    <string>mini</string>
+    <key>AGW_GATEWAY_PORT</key>
+    <string>7793</string>
+    <!-- The sha of the deploy that started it; /health compares AGW_GATEWAY_BUILD, not this. -->
+    <key>AGW_VERSION</key>
+    <string>__SHA__</string>
+    <key>AGW_GATEWAY_BUILD</key>
+    <string>__BUILD__</string>
+    <!-- Callers: the same door-tokens file as the doors (name=token, mode 0600). -->
+    <key>AGW_DOOR_CALLERS_FILE</key>
+    <string>__DATA_DIR__/door-tokens</string>
+    <!-- The ledger (SQLite) lives here; the gateway has no journal. -->
+    <key>AGW_GATEWAY_STATE_DIR</key>
+    <string>__DATA_DIR__/gateway</string>
+    <!-- The picker's registry: edit it, then kickstart the gateway (the build does not change, so a deploy leaves it running). -->
+    <key>AGW_GATEWAY_ACCOUNTS_FILE</key>
+    <string>__HOME__/SourceRoot/dotfiles/config/claude-accounts.json</string>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <!-- A fail-closed launch (exit 78) or a refused start retries at this pace, not in a tight loop. -->
+  <key>ThrottleInterval</key>
+  <integer>30</integer>
+  <!-- The gateway exits within 60 s of SIGTERM (open streams are drained); SIGKILL only after that. -->
+  <key>ExitTimeOut</key>
+  <integer>90</integer>
+
+  <key>StandardOutPath</key>
+  <string>__HOME__/Library/Logs/agent-workflows-gateway.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>__HOME__/Library/Logs/agent-workflows-gateway.err.log</string>
+</dict>
+</plist>
