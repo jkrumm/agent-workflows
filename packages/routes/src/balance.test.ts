@@ -4,6 +4,14 @@ import { BALANCE_MARKER, isBalanceFailure } from './balance.ts'
 // IU's body on an empty provider account, as it arrived 2026-10-28.
 const IU_503 = 'IU request failed (503) — Insufficient Balance (PaymentRequired) on Requesty-Global'
 
+// Anthropic's body on a drained Console org with no payment method: HTTP 400, not 402.
+const ANTHROPIC_MESSAGE =
+  'Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.'
+const ANTHROPIC_400 = JSON.stringify({
+  type: 'error',
+  error: { type: 'invalid_request_error', message: ANTHROPIC_MESSAGE },
+})
+
 describe('isBalanceFailure', () => {
   test('402 is balance, whatever the body', () => {
     expect(isBalanceFailure({ status: 402, text: '' })).toBe(true)
@@ -19,6 +27,23 @@ describe('isBalanceFailure', () => {
 
   test('other statuses are never balance, even with the wording', () => {
     for (const status of [400, 429, 500, 502, 504]) expect(isBalanceFailure({ status, text: IU_503 })).toBe(false)
+  })
+
+  test('a 400 is balance only when it says the credit balance is too low', () => {
+    expect(isBalanceFailure({ status: 400, text: ANTHROPIC_400 })).toBe(true)
+    expect(isBalanceFailure({ status: 400, text: ANTHROPIC_MESSAGE.toUpperCase() })).toBe(true)
+    const other = JSON.stringify({
+      type: 'error',
+      error: { type: 'invalid_request_error', message: 'max_tokens: must be greater than 0' },
+    })
+    expect(isBalanceFailure({ status: 400, text: other })).toBe(false)
+    expect(isBalanceFailure({ status: 400, text: '' })).toBe(false)
+  })
+
+  test('the Anthropic phrase counts only on a 400 or without a status', () => {
+    expect(isBalanceFailure({ text: ANTHROPIC_MESSAGE })).toBe(true)
+    expect(isBalanceFailure({ text: `opencode session ses_x failed: ${ANTHROPIC_400}` })).toBe(true)
+    for (const status of [200, 429, 500]) expect(isBalanceFailure({ status, text: ANTHROPIC_400 })).toBe(false)
   })
 
   test('without a status: the marker, IU’s body shape, or a 402 token with the wording', () => {
