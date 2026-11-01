@@ -15,9 +15,12 @@ export interface TokenColumns {
   reasoning: number
 }
 
+/** The provider's block as `costFromUsage` reads it, with the per-use counts it does not price. */
+export type ReportedUsage = ProviderUsage & { server_tool_use?: unknown }
+
 export interface TeeResult {
-  /** The merged provider usage block, as `costFromUsage` reads it. */
-  usage: ProviderUsage | null
+  /** The merged provider usage block. */
+  usage: ReportedUsage | null
   tokens: TokenColumns | null
   model: string | null
   /** An SSE stream carried an `error` event after its 2xx. */
