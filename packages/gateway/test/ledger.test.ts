@@ -59,6 +59,12 @@ describe('ledger', () => {
     probe.close()
   })
 
+  test('the meter counts the charge, which an estimate may set without the row carrying it', () => {
+    ledger.writeRecord(recordRow('estimated', { cost_reported_usd: null }), 1.25)
+    expect(ledger.spentSince('iu', new Date(0))).toBe(1.25)
+    expect(ledger.pending(1).records[0]?.row.cost_reported_usd).toBeNull()
+  })
+
   test('writeRecord returns the instant the meter charges with', () => {
     expect(ledger.writeRecord(recordRow('a')).getTime()).toBe(clock)
   })

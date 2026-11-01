@@ -168,10 +168,24 @@ describe('tee', () => {
     expect(result.model).toBe('m')
   })
 
+  test('a copy past the limit is given up: no usage, the bytes still counted', () => {
+    const tee = new UsageTee({ contentType: 'application/json', contentEncoding: null })
+    const size = 65 * 1024 * 1024
+    tee.push(new Uint8Array(size))
+    expect(tee.finish()).toMatchObject({ usage: null, complete: false, bytesReceived: size })
+  })
+
   test('an undecodable copy is no usage, never an error', () => {
     const tee = new UsageTee({ contentType: 'application/json', contentEncoding: 'gzip' })
     tee.push(new TextEncoder().encode('not gzip'))
-    expect(tee.finish()).toEqual({ usage: null, tokens: null, model: null, streamError: false })
+    expect(tee.finish()).toEqual({
+      usage: null,
+      tokens: null,
+      model: null,
+      streamError: false,
+      complete: false,
+      bytesReceived: 8,
+    })
   })
 
   test('an unknown encoding throws from decodeBody; identity returns the bytes', () => {

@@ -742,15 +742,17 @@ describe('usage row', () => {
     expect(rows[2]?.raw.usageReported).toBe(false)
   })
 
-  test('a credit-pool response with no rate is charged at the top Claude rate, and says so', async () => {
+  test('a credit-pool response with no rate: the row stays unpriced, the meter gets the top Claude rate', async () => {
     anthropic.reply(() => Response.json({ model: 'claude-unknown-9', usage: USAGE }))
     const gw = start({ registry: [pool('iu')] })
     await (await gw.call(MESSAGES, jsonBody(request()))).text()
     const row = gw.rows().records[0]?.row
     const estimate = costOf(USAGE, 'opus')
+    expect(row?.cost_reported_usd).toBeNull()
     expect(row?.lane_detail.costEstimated).toBe(true)
-    expect(row?.cost_reported_usd).toBeCloseTo(estimate, 12)
+    expect(row?.lane_detail.costEstimatedUsd).toBeCloseTo(estimate, 12)
     expect(gw.pools.status()[0]?.meterUsd).toBeCloseTo(estimate, 12)
+    expect(gw.ledger.spentSince('iu', new Date(0))).toBeCloseTo(estimate, 12)
   })
 
   test('the same unknown model on IU stays unpriced: IU is not the meter', async () => {
@@ -809,6 +811,144 @@ describe('span', () => {
     expect(span?.attributes['agw.gateway.request_id']).toBe(response.headers.get('x-agw-request-id') ?? '')
     expect(span?.attributes['agw.cost.usd']).toBeGreaterThan(0)
     expect(span?.attributes['agw.gateway.ttft_ms']).toBeGreaterThanOrEqual(0)
+  })
+})
+
+describe('a credit request without a complete usage block', () => {
+  const price = (input: number, output: number, alias = 'haiku') =>
+    costFromUsage('iu-anthropic', { input_tokens: input, output_tokens: output }, claudeRate(alias)).usd as number
+  const bodyBytes = (body: unknown) => new TextEncoder().encode(JSON.stringify(body)).byteLength
+
+  const expectEstimate = (gw: Harness, usd: number) => {
+    const row = gw.rows().records[0]?.row
+    expect(row?.cost_reported_usd).toBeNull()
+    expect(row?.lane_detail.costEstimated).toBe(true)
+    expect(row?.lane_detail.costEstimatedUsd).toBeCloseTo(usd, 12)
+    expect(gw.pools.status()[0]?.meterUsd).toBeCloseTo(usd, 12)
+    expect(gw.ledger.spentSince('iu', new Date(0))).toBeCloseTo(usd, 12)
+  }
+
+  test('a client abort mid-stream: input and cache seen, output from the bytes', async () => {
+    const text = sse([{ type: 'message_start', message: { model: haikuId, usage: { ...USAGE, output_tokens: 1 } } }])
+    anthropic.reply(
+      () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode(text))
+            },
+          }),
+          { headers: { 'content-type': 'text/event-stream' } },
+        ),
+    )
+    const gw = start({ registry: [pool('iu')] })
+    const abort = new AbortController()
+    const response = await gw.call(MESSAGES, { ...jsonBody(request({ stream: true })), signal: abort.signal })
+    await response.body?.getReader().read()
+    abort.abort()
+    for (let i = 0; i < 100 && gw.rows().records.length === 0; i++) await Bun.sleep(5)
+    expectEstimate(gw, price(3400, Math.ceil(new TextEncoder().encode(text).byteLength / 3)))
+    // The tokens stay on the row: Postgres prices what was reported.
+    expect(gw.rows().records[0]?.row).toMatchObject({ input_tokens: 1000, cache_read_tokens: 2000 })
+  })
+
+  test('a stream that ends without its message_delta is not complete', async () => {
+    const text = sse([{ type: 'message_start', message: { model: haikuId, usage: { ...USAGE, output_tokens: 1 } } }])
+    anthropic.reply(() => sseResponse(text))
+    const gw = start({ registry: [pool('iu')] })
+    await (await gw.call(MESSAGES, jsonBody(request({ stream: true })))).text()
+    expectEstimate(gw, price(3400, Math.ceil(new TextEncoder().encode(text).byteLength / 3)))
+  })
+
+  test.each([
+    ['a max_tokens below the cap', 8, 8],
+    ['a max_tokens above it', 100_000, 8192],
+  ])('the hang guard before any byte of a non-streamed request: %s', async (_name, maxTokens, output) => {
+    anthropic.reply(async () => {
+      await Bun.sleep(500)
+      return anthropicReply()
+    })
+    const gw = start({ registry: [pool('iu')], hangGuardMs: 20 })
+    const body = request({ max_tokens: maxTokens })
+    expect((await gw.call(MESSAGES, jsonBody(body))).status).toBe(504)
+    expectEstimate(gw, price(Math.ceil(bodyBytes(body) / 3), output))
+  })
+
+  test('a streamed request cut before any byte charges the input only', async () => {
+    anthropic.reply(async () => {
+      await Bun.sleep(500)
+      return anthropicReply()
+    })
+    const gw = start({ registry: [pool('iu')], hangGuardMs: 20 })
+    const body = request({ stream: true })
+    await (await gw.call(MESSAGES, jsonBody(body))).text()
+    expectEstimate(gw, price(Math.ceil(bodyBytes(body) / 3), 0))
+  })
+
+  test('a fetch error: the request may have run', async () => {
+    anthropic.stop()
+    const gw = start({ registry: [pool('iu')] })
+    const body = request({ max_tokens: 100 })
+    expect((await gw.call(MESSAGES, jsonBody(body))).status).toBe(502)
+    expectEstimate(gw, price(Math.ceil(bodyBytes(body) / 3), 100))
+  })
+
+  test('an unparseable 2xx charges by its bytes', async () => {
+    anthropic.reply(() => new Response('{not json at all', { headers: { 'content-type': 'application/json' } }))
+    const gw = start({ registry: [pool('iu')] })
+    const body = request()
+    await (await gw.call(MESSAGES, jsonBody(body))).text()
+    expectEstimate(gw, price(Math.ceil(bodyBytes(body) / 3), Math.ceil('{not json at all'.length / 3)))
+  })
+
+  test('an unknown encoding on a 2xx charges by its bytes', async () => {
+    const bytes = 'x'.repeat(30)
+    anthropic.reply(
+      () => new Response(bytes, { headers: { 'content-type': 'application/json', 'content-encoding': 'snappy' } }),
+    )
+    const gw = start({ registry: [pool('iu')] })
+    const body = request()
+    await (await gw.call(MESSAGES, jsonBody(body))).text()
+    expectEstimate(gw, price(Math.ceil(bodyBytes(body) / 3), 10))
+  })
+
+  test('an unpriceable model cut before any byte takes the top rate', async () => {
+    anthropic.stop()
+    const gw = start({ registry: [pool('iu')] })
+    const body = request({ model: 'claude-unknown-9', max_tokens: 100 })
+    await (await gw.call(MESSAGES, jsonBody(body))).text()
+    expectEstimate(gw, price(Math.ceil(bodyBytes(body) / 3), 100, 'opus'))
+  })
+
+  test('a non-2xx answer with no usage costs nothing', async () => {
+    anthropic.reply(() => Response.json({ type: 'error' }, { status: 529 }))
+    const gw = start({ registry: [pool('iu')] })
+    await (await gw.call(MESSAGES, jsonBody(request()))).text()
+    expect(gw.rows().records[0]?.row.lane_detail.costEstimated).toBeUndefined()
+    expect(gw.pools.status()[0]?.meterUsd).toBe(0)
+  })
+
+  test('IU has no meter: a cut request there carries no estimate', async () => {
+    iu.stop()
+    const gw = start()
+    await (await gw.call(MESSAGES, jsonBody(request()))).text()
+    expect(gw.rows().records[0]?.row.lane_detail.costEstimated).toBeUndefined()
+    expect(gw.rows().records[0]?.row.cost_reported_usd).toBeNull()
+  })
+
+  test('the estimate survives a restart: the meter reads it from the ledger', async () => {
+    const dir = tempDir()
+    const path = join(dir.path, 'ledger.sqlite')
+    anthropic.stop()
+    const gw = start({ registry: [pool('iu')], ledgerPath: path })
+    await (await gw.call(MESSAGES, jsonBody(request()))).text()
+    const charged = gw.pools.status()[0]?.meterUsd ?? 0
+    await gw.close()
+    gateway = undefined
+    const second = start({ registry: [pool('iu')], ledgerPath: path })
+    expect(charged).toBeGreaterThan(0)
+    expect(second.pools.status()[0]?.meterUsd).toBeCloseTo(charged, 12)
+    dir.remove()
   })
 })
 
