@@ -14,7 +14,7 @@ proven live, what the factory gets for free, and what is still open.
 |-|-|-|
 | **Runtime** | own journal on Postgres (`agent_workflows`): three step kinds, replay by step id, effect keys, leases with fencing, cancel/steer, recovery tick, bounded runs; survives a redeploy mid-run | `packages/runtime`, concept §3 |
 | **Middleware** | `run/pre … run/post` on every workflow and step: run record and fingerprint, `purpose` tag, spans to ClickStack, usage outbox to Argo, runaway caps, wallet gate | `packages/middleware`, `packages/limits`, §4–§5 |
-| **Routes** | the only home of model ids; per-route effort, fallback on provider balance (402/503) | `packages/routes`, `agw routes` |
+| **Routes** | the only home of model ids; per-route effort, fallback on provider balance (402, 503 "Insufficient Balance", Anthropic's 400 "credit balance is too low") | `packages/routes`, `agw routes` |
 | **Capabilities** | one zod definition = import, HTTP and CLI; `internal` for in-process only | `packages/capabilities`, v3.10 |
 | **OpenCode host** | one pinned build (`make install-opencode`), deny-by-default sessions, a host-wide tool gate, re-attach across server restarts | `packages/opencode-host`, §8 |
 | **CLI** | `agw`, generated from the registry; `--format json\|plain`, idempotency keys, `run status\|wait\|cancel` | `packages/cli`, §9 |

@@ -490,3 +490,16 @@ One entry per phase: what we learned, what changed on this page, and why.
 - **Changed.** v3.13; PLAN Waves 1–4 ahead of review v2; the direct `anthropic` wire of the eval foundations becomes
   the gateway's `/anthropic`.
 - **Does the page hold?** Yes, as v3.13.
+
+### Gateway Wave 1 — spike and registry, 2026-11-01 (v3.13)
+
+- **Learned.** Byte-exact passthrough keeps the 1h prompt cache and costs no measurable TTFT; OpenCode and Hermes both
+  carry a per-session header, so attribution needs no join. The real find: a funded credit org refuses
+  Claude-Code-shaped requests with the drained-org 400, which would have drain-marked healthy pools; spikes that probe
+  refusal paths pay off. The cost API lags 20–70 min, not the documented 5. The Admin API works on one-person orgs.
+- **Changed.** Six corrections in `docs/gateway.md` (step 0 for Claude-Code-shaped requests, `decompress: false`,
+  `(caller, session)` binding with `x-session-affinity`, `analytics/cost` in cents, `cycleDay: null` = rolling 31 days);
+  `isBalanceFailure` knows Anthropic's 400; the `platform` registry in dotfiles.
+- **Process.** Close a worker as soon as its PR is reviewed, or the factory re-wakes its parent on every idle tick; one
+  merge train per repo (~10 min per `make check`); sequence probes that depend on another worker's traffic.
+- **Does the page hold?** Yes, as v3.13; the corrections live in `docs/gateway.md`.

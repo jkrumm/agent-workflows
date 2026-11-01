@@ -29,25 +29,28 @@ Context (2026-11-01):
 largest `HARD` consumer, so it would be redone after the sweep. The parts of the old tier and maturity waves that the
 eval needs move into Wave 5. The rest waits.
 
-## Wave 1 — Gateway spike and registry            <!-- status: active -->
+## Wave 1 — Gateway spike and registry            <!-- status: done 2026-11-01, release 767f643 -->
 
-- [ ] **Passthrough spike** (`docs/spikes/gateway/`, excluded from tools): a minimal Bun proxy for `/anthropic/v1/messages`
+- [x] **Passthrough spike** (`docs/spikes/gateway/`, excluded from tools): a minimal Bun proxy for `/anthropic/v1/messages`
   on the `iu` org's key (`op://mini/claude-platform/API_KEY_IU`). Replay a Claude-Code-shaped request (several
   `system` blocks, tools, `cache_control` with `ttl: 1h`, an `anthropic-beta` list) twice: the upstream bytes hash
   equal to the inbound bytes, the second call reports `cache_read_input_tokens` > 0, and the SSE tee parses `usage`
   from `message_start` / `message_delta` with no measurable TTFT cost. Streamed and non-streamed. Haiku only.
-- [ ] **Header probes.** Can an OpenCode provider (pinned build) send a per-session header, or does a step's session id
+- [x] **Header probes.** Can an OpenCode provider (pinned build) send a per-session header, or does a step's session id
   reach the request any other way? Can Hermes' custom providers send extra headers? The answers decide OpenCode
   attribution (`docs/gateway.md` §Callers).
-- [ ] **Admin API probe** on the `iu` org if `ADMIN_KEY_IU` resolves: `analytics/cost` and `cost_report` for this month,
+- [x] **Admin API probe** on the `iu` org if `ADMIN_KEY_IU` resolves: `analytics/cost` and `cost_report` for this month,
   grouped by API key; record whether a one-person org gets the Admin API, the lag, and the units. Missing key: say so.
-- [ ] **Registry.** The `platform` block (`docs/gateway.md` §Picking a pool) in `dotfiles/config/claude-accounts.json`,
+- [x] **Registry.** The `platform` block (`docs/gateway.md` §Picking a pool) in `dotfiles/config/claude-accounts.json`,
   `iu` enabled, `me`/`me2` disabled until their refs exist; `docs/claude-accounts.md` documents it. Find out how
   `make secrets-seed` treats a ref that does not exist yet before adding refs to `dotfiles-private/headless.refs`.
-- [ ] `isBalanceFailure` (`packages/routes/src/balance.ts`) learns Anthropic's "credit balance is too low" refusal, with tests.
-- [ ] `docs/spikes/gateway/REPORT.md` with the verdicts; anything that contradicts `docs/gateway.md` is fixed there.
+- [x] `isBalanceFailure` (`packages/routes/src/balance.ts`) learns Anthropic's "credit balance is too low" refusal, with tests.
+- [x] `docs/spikes/gateway/REPORT.md` with the verdicts; anything that contradicts `docs/gateway.md` is fixed there.
+- Close-out: `docs/waves/handoff/lead.md` at the Wave 1 commit; verdicts `docs/spikes/gateway/REPORT.md`. Wave 2 also
+  builds §Picking a pool step 0 (Claude-Code-shaped requests skip the credit pools) and the 20–70 min cost-API lag
+  rule (verify never waits on the cost API).
 
-## Wave 2 — Gateway            <!-- status: pending -->
+## Wave 2 — Gateway            <!-- status: active -->
 
 - [ ] `packages/gateway` as `docs/gateway.md` describes: IU's path layout, byte-exact passthrough with the usage tee,
   model aliases from `packages/routes`, pools with the meter, session binding and expiry-first order, the IU fallback

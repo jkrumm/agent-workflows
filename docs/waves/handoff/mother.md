@@ -5,7 +5,7 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
 
 ## State
 - **New plan 2026-11-01:** inference gateway (Waves 1–4, `docs/gateway.md`), then review v2 and the maturity pass
-  (Waves 5–13). Wave 1 active. The 2026-10-30 plan is finished (concept.md Final retro); STOP removed.
+  (Waves 5–13). Wave 1 done (release `767f643`, REPORT `docs/spikes/gateway/REPORT.md`); Wave 2 active. The 2026-10-30 plan is finished (concept.md Final retro); STOP removed.
 - Owner actions pending (PLAN context): `me`/`me2` Console orgs linked, API and Admin keys under
   `op://mini/claude-platform/`, billing days. Not blocking: Waves 1–3 run on the `iu` pool alone.
 - Lead's close-out channel: `docs/waves/handoff/lead.md` (the mother owns PLAN.md and the retro log;
@@ -14,7 +14,7 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
   tailscale drift). Not ours; gates are judged on our rows only.
 
 ## Lead
-- Wave 1 lead `agent-workflows-w1-r3` (pane t3t, account me), spawned 2026-11-01 by mother t3s.
+- Lead `agent-workflows-w1-r3` (pane t3t, account me): Wave 1 closed at 28% context, kept for Wave 2 (brief via rd say).
   Rotation policy: a fresh lead per wave unless the last one closed under ~30% context.
 
 ## Decisions taken
@@ -118,5 +118,8 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
   route avoids Requesty. For Wave 8's retro: decide's model move shifts the scorer judges' calibration.
 
 ## Next action
-- Wait for the Wave 1 close-out in `docs/waves/handoff/lead.md`; judge it, tick PLAN, write the retro entry, then spawn
-  the Wave 2 lead. Owner-side open items: MacWhisper key paste; OCR and Hermes morning briefing re-enable.
+- Wait for the Wave 2 close-out in `docs/waves/handoff/lead.md`; judge it, tick PLAN, retro entry, Wave 3 lead.
+- Owner items from Wave 1: billing days (`cycleDay`) for iu/me/me2; payment method on any org?; me2 keys ~11-02;
+  Admin keys in the mini's shared secrets cache (security-policy call; matters before Wave 4's reconciler).
+- Wake-loop: the factory re-fires `workers done: <lead> idle` every few seconds while the lead idles on background
+  shells. Answer with a blocking 9.5-min poll on lead.md / PR state, not a bare re-declare. Owner-side open items: MacWhisper key paste; OCR and Hermes morning briefing re-enable.
