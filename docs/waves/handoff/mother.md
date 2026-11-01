@@ -18,6 +18,9 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
   Rotation policy: a fresh lead per wave unless the last one closed under ~30% context.
 
 ## Decisions taken
+- 2026-11-01 owner Admin API facts: cost_report in cents with group_by description; spend_limits/balance unreadable on
+  Individual Orgs, the registry stays the source; iu spent $56.11 on 10-31 outside any gateway. Lead told: meter seeds
+  from max(ledger, cost_report) since cycle start.
 - 2026-11-01 19:30 owner (via software-factory program lead, review-v2): IU repos out of eval cases; owner labels in
   Wave 6's session; native `/code-review` arm on Max as factory spawns, early is fine; review-eval API spend low — Max
   first, Waves 7 and 9 API sweeps on a small `dev` slice before full `test`. In PLAN context; brief Waves 6/7/9 leads.
