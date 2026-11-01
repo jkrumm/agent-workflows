@@ -6,7 +6,6 @@ import type { RegistryPool } from './registry.ts'
 
 const MINUTE = 60_000
 const HOUR = 60 * MINUTE
-const DAY = 24 * HOUR
 
 /** A ledger of `{ pool, at, usd }` rows; counts its reads per pool. */
 function fakeLedger(rows: { pool: string; at: string; usd: number }[] = []) {
@@ -172,7 +171,7 @@ describe('eligibility and the meter', () => {
 
   test('a known cycle rolls over: the meter restarts from the ledger and a drain mark lapses', () => {
     const ledger = fakeLedger([{ pool: 'a', at: '2026-11-01T00:00:00Z', usd: 99 }])
-    const { pools, clock } = setup([pool('a', { cycleDay: 14 })], { ledger })
+    const { pools, clock } = setup([pool('a', { cycleDay: 14 })], { ledger, at: '2026-11-13T23:30:00Z' })
     pools.drained('a', '2026-10-14T00:00:00.000Z')
     expect(pools.status()[0]?.drainedUntil).toBe('2026-11-14T00:00:00.000Z')
     clock.set('2026-11-14T00:00:00Z')
@@ -309,13 +308,13 @@ describe('stale results across a rollover', () => {
     const current = pools.pick(req())
     expect(current).toMatchObject({ kind: 'pool', cycleStart: '2026-11-14T00:00:00.000Z' })
     pools.drained('a', current.kind === 'pool' ? current.cycleStart : '')
-    expect(pools.status()[0]?.drainedUntil).toBe('2026-12-14T00:00:00.000Z')
+    expect(pools.status()[0]?.drainedUntil).toBe('2026-11-14T01:00:01.000Z')
   })
 
   test('an unknown cycle has no rollover: any cycleStart applies', () => {
     const { pools } = setup([pool('a')])
     pools.drained('a', '1970-01-01T00:00:00.000Z')
-    expect(pools.status()[0]?.drainedUntil).toBe('2026-11-11T12:00:00.000Z')
+    expect(pools.status()[0]?.drainedUntil).toBe('2026-11-10T13:00:00.000Z')
   })
 })
 
@@ -462,21 +461,29 @@ describe('no pool and drained', () => {
     expect(pools.pick(req({ exclude: ['a'], fallbackNone: true }))).toEqual({ kind: 'refuse', reason: 'drained-retry' })
   })
 
-  test('drained on a known cycle lasts until the credit expires', () => {
+  test('drained on a known cycle lasts 1 h: a funded pool a stray refusal hit is back soon', () => {
     const { pools, clock } = setup([pool('a', { cycleDay: 21 })])
     pools.drained('a', '2026-10-21T00:00:00.000Z')
-    expect(pools.status()[0]?.drainedUntil).toBe('2026-11-21T00:00:00.000Z')
-    clock.set('2026-11-20T23:59:59Z')
+    expect(pools.status()[0]?.drainedUntil).toBe('2026-11-10T13:00:00.000Z')
+    clock.advance(HOUR - 1)
     expect(picked(pools)).toBe('iu-api:no-pool')
+    clock.advance(1)
+    expect(picked(pools)).toBe('a:soonest-expiry')
+  })
+
+  test('a drain mark never outlives the cycle', () => {
+    const { pools, clock } = setup([pool('a', { cycleDay: 21 })], { at: '2026-11-20T23:30:00Z' })
+    pools.drained('a', '2026-10-21T00:00:00.000Z')
+    expect(pools.status()[0]?.drainedUntil).toBe('2026-11-21T00:00:00.000Z')
     clock.set('2026-11-21T00:00:00Z')
     expect(picked(pools)).toBe('a:soonest-expiry')
   })
 
-  test('drained on an unknown cycle lasts 24 h', () => {
+  test('drained on an unknown cycle lasts 1 h too', () => {
     const { pools, clock } = setup([pool('a')])
     pools.drained('a', 'any')
-    expect(pools.status()[0]?.drainedUntil).toBe('2026-11-11T12:00:00.000Z')
-    clock.advance(DAY - 1)
+    expect(pools.status()[0]?.drainedUntil).toBe('2026-11-10T13:00:00.000Z')
+    clock.advance(HOUR - 1)
     expect(picked(pools)).toBe('iu-api:no-pool')
     clock.advance(1)
     expect(picked(pools)).toBe('a:soonest-expiry')
