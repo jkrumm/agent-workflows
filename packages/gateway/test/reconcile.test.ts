@@ -142,73 +142,115 @@ describe('reconcile', () => {
 
   describe('the stored figure across a restart', () => {
     const iu = pool('iu', { cycleDay: 15 })
+    const KEY = '2026-11-15T00:00:00.000Z'
+    /** A start: the stored figure first, then the live reconcile. */
+    const start = async ({ reconciler }: ReturnType<typeof scene>) => {
+      reconciler.restoreFloors()
+      await reconciler.runAll()
+    }
     /** One life: a good reconcile at $56.11, then spend the ledger sees. */
     const firstLife = async () => {
       admin.reply(() => page([bucket('5611')]))
-      await scene([iu]).reconciler.boot()
+      await start(scene([iu]))
       clockMs += 60_000
       ledger.writeRecord(recordRow('after', { cost_reported_usd: 1 }))
       clockMs += 60_000
     }
 
-    test('the live reconcile failing at boot restores it plus the ledger since it', async () => {
+    test('the stored figure applies synchronously, before any live call', async () => {
       await firstLife()
-      admin.reply(() => new Response('down', { status: 503 }))
-      const { reconciler, meter, logger } = scene([iu])
+      const seen = admin.seen.length
+      const { reconciler, meter } = scene([iu])
       expect(meter()).toBe(1)
-      await reconciler.boot()
+      reconciler.restoreFloors()
       expect(meter()).toBeCloseTo(57.11, 6)
-      expect(reconciler.status('iu').reconcileError).toBe('http-503')
-      expect(logger.lines.some((line) => line.message.includes('restored'))).toBe(true)
+      expect(admin.seen).toHaveLength(seen)
     })
 
-    test('no admin key at boot restores it too', async () => {
+    test('the live reconcile failing at the next start keeps it plus the ledger since it', async () => {
       await firstLife()
-      const { reconciler, meter } = scene([iu], new Map())
-      await reconciler.boot()
-      expect(meter()).toBeCloseTo(57.11, 6)
-      expect(reconciler.status('iu').reconcileError).toBe('admin-key-missing')
+      admin.reply(() => new Response('down', { status: 503 }))
+      const next = scene([iu])
+      await start(next)
+      expect(next.meter()).toBeCloseTo(57.11, 6)
+      expect(next.reconciler.status('iu').reconcileError).toBe('http-503')
+      expect(next.logger.lines.some((line) => line.message.includes('restored'))).toBe(true)
+    })
+
+    test('no admin key at the next start keeps it too', async () => {
+      await firstLife()
+      const next = scene([iu], new Map())
+      await start(next)
+      expect(next.meter()).toBeCloseTo(57.11, 6)
+      expect(next.reconciler.status('iu').reconcileError).toBe('admin-key-missing')
     })
 
     test('a figure of another cycle stays out', async () => {
       await firstLife()
       clockMs = Date.parse('2026-12-16T10:00:00Z')
       admin.reply(() => new Response('down', { status: 503 }))
-      const { reconciler, meter } = scene([iu])
-      await reconciler.boot()
-      expect(meter()).toBe(0)
+      const next = scene([iu])
+      await start(next)
+      expect(next.meter()).toBe(0)
     })
 
-    test('a live reconcile at boot wins, and writes the new figure', async () => {
+    test('a live figure above it wins, and is stored', async () => {
       await firstLife()
       admin.reply(() => page([bucket('8000')]))
-      const { reconciler, meter } = scene([iu])
-      await reconciler.boot()
+      const next = scene([iu])
+      await start(next)
       // $80 from the report plus today's ledger row.
-      expect(meter()).toBe(81)
-      expect(ledger.floorOf('iu', '2026-11-15T00:00:00.000Z')?.usd).toBe(81)
+      expect(next.meter()).toBe(81)
+      expect(ledger.floorOf('iu', KEY)?.usd).toBe(81)
+    })
+
+    test('a lagging report never lowers what is stored, in that life or the next', async () => {
+      await firstLife()
+      admin.reply(() => page([bucket('1000')]))
+      const lagging = scene([iu])
+      await start(lagging)
+      expect(lagging.meter()).toBeCloseTo(57.11, 6)
+      expect(ledger.floorOf('iu', KEY)?.usd).toBeCloseTo(57.11, 6)
+      admin.reply(() => new Response('down', { status: 503 }))
+      const next = scene([iu])
+      await start(next)
+      expect(next.meter()).toBeCloseTo(57.11, 6)
+    })
+
+    test('spend after a stored figure is counted once across two saves', async () => {
+      await firstLife()
+      admin.reply(() => page([bucket('1000')]))
+      const { reconciler } = scene([iu])
+      await reconciler.runAll()
+      clockMs += 60_000
+      await reconciler.runAll()
+      expect(ledger.floorOf('iu', KEY)?.usd).toBeCloseTo(57.11, 6)
     })
 
     test('an hourly failure never touches the meter: the floor is in memory', async () => {
       admin.reply(() => page([bucket('5611')]))
-      const { reconciler, meter } = scene([iu])
-      await reconciler.boot()
+      const one = scene([iu])
+      await start(one)
       admin.reply(() => new Response('down', { status: 503 }))
-      await reconciler.runAll()
-      expect(meter()).toBeCloseTo(56.11, 6)
+      await one.reconciler.runAll()
+      expect(one.meter()).toBeCloseTo(56.11, 6)
     })
 
-    test('an unknown cycle keeps it across restarts, up to the window it covers', async () => {
+    test('an unknown cycle stores its latest figure, up to the window it covers', async () => {
       const rolling = pool('iu', { cycleDay: null })
       admin.reply(() => page([bucket('1000')]))
-      await scene([rolling]).reconciler.boot()
+      await start(scene([rolling]))
       admin.reply(() => new Response('down', { status: 503 }))
       const again = scene([rolling])
-      await again.reconciler.boot()
+      await start(again)
       expect(again.meter()).toBe(10)
+      admin.reply(() => page([bucket('400')]))
+      await start(scene([rolling]))
+      expect(ledger.floorOf('iu', 'rolling')?.usd).toBe(4)
+      admin.reply(() => new Response('down', { status: 503 }))
       clockMs += 32 * 86_400_000
       const stale = scene([rolling])
-      await stale.reconciler.boot()
+      await start(stale)
       expect(stale.meter()).toBe(0)
     })
   })

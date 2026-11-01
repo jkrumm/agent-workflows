@@ -81,9 +81,9 @@ async function costReportUsd(input: {
 /**
  * Spend made outside the gateway counts against the credit, and no API returns a balance. At boot and hourly: reconciled
  * = the cost report over the cycle's complete UTC days + the ledger since the start of the current UTC day (the report
- * has no row for today), handed to `pools.reconcile`, which keeps it as a floor, and stored. Any failure keeps the ledger
- * meter; at boot, the stored figure of the current cycle plus the ledger since it, so a restart during an Admin API
- * outage keeps the outside spend.
+ * has no row for today), handed to `pools.reconcile`, which keeps it as a floor. Any failure keeps the ledger meter. The
+ * high-water mark of a known cycle is stored and applied first at each start, so a restart during an Admin API outage,
+ * or on a report that lags behind, keeps the outside spend.
  */
 export class Reconciler {
   private readonly state = new Map<string, ReconcileStatus>()
@@ -126,13 +126,9 @@ export class Reconciler {
     await Promise.all(this.registry.map((pool) => this.run(pool)))
   }
 
-  /** The start's run: a pool whose live reconcile fails falls back on its stored figure. Never rejects. */
-  async boot(): Promise<void> {
-    await Promise.all(
-      this.registry.map(async (pool) => {
-        if (!(await this.run(pool))) this.restoreFloor(pool)
-      }),
-    )
+  /** Applies the stored figures: local and synchronous, so it runs before listening and before any live reconcile. */
+  restoreFloors(): void {
+    for (const pool of this.registry) this.restoreFloor(pool)
   }
 
   start(): void {
@@ -145,8 +141,7 @@ export class Reconciler {
     this.timer = null
   }
 
-  /** True when the pool was reconciled. */
-  private async run(pool: RegistryPool): Promise<boolean> {
+  private async run(pool: RegistryPool): Promise<void> {
     try {
       const adminKey = this.adminKeys.get(pool.id)
       if (adminKey === undefined) throw new ReportFailure('admin-key-missing')
@@ -161,13 +156,11 @@ export class Reconciler {
       const usd = reported + this.ledger.spentSince(pool.id, today)
       const reconciledAt = this.now()
       this.pools.reconcile(pool.id, usd, cycle.start.toISOString())
-      this.store(pool, usd, reconciledAt)
+      this.store(pool, this.cycleKey(pool, cycle.start), usd, reconciledAt)
       this.state.set(pool.id, { reconciledAt: reconciledAt.toISOString(), reconcileError: null })
       this.logged.delete(pool.id)
-      return true
     } catch (error) {
       this.failed(pool.id, error)
-      return false
     }
   }
 
@@ -175,10 +168,16 @@ export class Reconciler {
     return pool.cycleDay === null ? ROLLING_KEY : start.toISOString()
   }
 
-  /** A figure not stored costs one restart's fallback, never this reconcile. */
-  private store(pool: RegistryPool, usd: number, at: Date): void {
+  /**
+   * On a known cycle the effective high-water mark: the previous figure plus the ledger since it, unless the new one
+   * beats it, so a lagging report never lowers what a restart comes back to. An unknown cycle's window moves, spend
+   * leaves it, and its figure replaces the last. A figure not stored costs one restart's floor, never this reconcile.
+   */
+  private store(pool: RegistryPool, key: string, usd: number, at: Date): void {
     try {
-      this.ledger.saveFloor(pool.id, this.cycleKey(pool, cycleOf(pool.cycleDay, at).start), { usd, at })
+      const previous = pool.cycleDay === null ? null : this.ledger.floorOf(pool.id, key)
+      const carried = previous === null ? 0 : previous.usd + this.ledger.spentSince(pool.id, previous.at)
+      this.ledger.saveFloor(pool.id, key, { usd: Math.max(carried, usd), at })
     } catch (error) {
       this.logger.warn(`reconcile ${pool.id}: the figure was not stored`, { error: errorMessage(error) })
     }
