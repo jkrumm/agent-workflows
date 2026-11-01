@@ -18,7 +18,8 @@ Context (2026-11-01):
   ME resolve to real keys; ME2 holds a `REPLACE` placeholder until its 7-day claim window opens (~2026-11-02), so the
   `me2` pool stays disabled. Credit cycles (owner, from the Console Billing pages): `iu` credit expires 2026-11-21
   (`cycleDay` 21; payment day 18), `me` 2026-11-27 (`cycleDay` 27; payment day 24), `me2` unknown until claimed
-  (payment day 27). The credit cycle is not the payment cycle: read it from the expiry shown in Billing.
+  (payment day 27). The credit cycle is not the payment cycle: read it from the expiry shown in Billing. All three orgs: no payment method, monthly spend
+  limit equal to the credit (owner, 2026-11-01), so a drained pool refuses instead of billing.
 - The 2026-10-31 eval (`docs/evals/2026-10-31-review-claude-direct.md`) settled cost, wall time and failure modes per
   arm, but **cannot rank models**: its reference is a retired gateway's outcome. Lessons: `docs/evals/README.md`.
 - Owner framing: greenfield, solo developer, optimal over compatible; the review pipeline may be reset.
