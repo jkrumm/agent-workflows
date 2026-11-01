@@ -66,8 +66,9 @@ after an upstream 2xx.
 - **Write.** One row per served request, written synchronously when the tee has the final usage (end of stream, or on an
   error or abort with what is known), before the stream closes. The charge follows the write. A 402 and a `count_tokens`
   write no record; picks go in beside the records.
-- **Cost.** `cost_reported_usd` comes from the route rates for Claude, and is null otherwise (Postgres then prices it).
-  A credit-pool response with no rate takes the top Claude rate and says `costEstimated: true`.
+- **Cost.** `cost_reported_usd` is priced from a complete usage block at the route rates, and is otherwise null (Postgres
+  then prices the token columns). On a credit pool an estimate stands in for the meter only (`lane_detail.costEstimatedUsd`,
+  `costEstimated: true`): the rules are in `docs/gateway.md` §Meter, the code in `src/charge.ts`.
 - **Flush.** Every 30 s and 1 s after a write, one flush at a time, 200 rows a transaction. After a failed flush only the
   30 s tick retries, so an outage is not hammered per request.
 - **Delivery.** At least once: a row is marked only after its transaction commits, and the upserts on `(source, source_id)`

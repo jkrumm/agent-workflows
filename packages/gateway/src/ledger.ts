@@ -30,7 +30,7 @@ export interface RecordRow {
   cache_write_1h_tokens: number
   reasoning_tokens: number
   duration_ms: number
-  /** What the meter charges for a credit pool; null when unpriced. */
+  /** Priced from a complete reported usage block; null when there is none (Postgres then prices the token columns). */
   cost_reported_usd: number | null
   raw: Record<string, unknown>
 }
@@ -70,7 +70,7 @@ const SCHEMA = `
     id integer primary key,
     request_id text not null unique,
     pool text not null,
-    usd real,
+    usd real, -- what the meter charged, an estimate included
     written_at_ms integer not null,
     row_json text not null,
     synced_at_ms integer,
@@ -136,8 +136,11 @@ export class Ledger implements MeterSource, FloorStore {
     this.db.run(SCHEMA)
   }
 
-  /** Writes one served request, synchronously; returns the row's instant. Throws when it cannot (and health degrades). */
-  writeRecord(row: RecordRow): Date {
+  /**
+   * Writes one served request, synchronously; returns the row's instant. `chargeUsd` is what the meter counts, an
+   * estimate included, which the row's own cost never carries. Throws when it cannot (and health degrades).
+   */
+  writeRecord(row: RecordRow, chargeUsd: number | null = row.cost_reported_usd): Date {
     return this.writing(() => {
       const at = this.now()
       this.db
@@ -148,7 +151,7 @@ export class Ledger implements MeterSource, FloorStore {
         .run({
           id: row.source_id,
           pool: row.lane_detail.pool,
-          usd: row.cost_reported_usd,
+          usd: chargeUsd,
           at,
           json: JSON.stringify(row),
         })

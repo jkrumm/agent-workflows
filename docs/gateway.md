@@ -89,8 +89,16 @@ Per request, in order:
    the mark lasts 1 h (never past the credit's expiry) in case a refusal gets past it: a funded pool is out for an hour,
    not a month, and a really drained one costs one refused request an hour, retried on IU.
 
-**Meter.** Per pool and cycle: at boot the ledger's rows since the cycle start, then each response priced with the route
-rates. A model with no rate is charged at the most expensive Claude rate, and its row says `costEstimated: true`.
+**Meter.** Per pool and cycle: at boot the ledger's charges since the cycle start, then each response priced with the
+route rates. A row's `cost_reported_usd` carries only a figure priced from a complete reported usage block. Anything less
+on a credit pool is an estimate, which goes to the meter and to `lane_detail.costEstimatedUsd` (`costEstimated: true`),
+never to the row's cost:
+
+- **No rate for the model:** the usage at the most expensive Claude rate.
+- **No complete usage** (a client abort, the hang guard, a fetch error, a 2xx nobody can read): input is the
+  `message_start` input and cache tokens if seen, else request bytes / 3; output is the larger of the tokens seen and
+  response bytes / 3. A non-streamed request cut before any byte takes the smaller of its `max_tokens` and 8192. Priced
+  at the model's rate, else the top one.
 
 Spend made outside the gateway counts against the credit (`iu` spent $56.11 on 2026-10-31, before any gateway). No API
 returns the grant, the balance or the cycle, so the registry's `creditUsd` and `cycleDay` stay the source. For each pool

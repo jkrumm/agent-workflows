@@ -1,13 +1,7 @@
 import { BEARER_CHALLENGE } from '@agent-workflows/host/auth'
 import { callerAuth } from '@agent-workflows/host/door-tokens'
-import {
-  BALANCE_MARKER,
-  claudeRate,
-  costFromUsage,
-  isBalanceFailure,
-  type ProviderUsage,
-  resolveModelAlias,
-} from '@agent-workflows/routes/pricing'
+import { BALANCE_MARKER, claudeRate, isBalanceFailure, resolveModelAlias } from '@agent-workflows/routes/pricing'
+import { chargeOf, type RequestShape } from './charge.ts'
 import type { IuUpstream } from './config.ts'
 import { isRecord } from './json.ts'
 import type { Ledger, RecordRow } from './ledger.ts'
@@ -104,6 +98,8 @@ interface Exchange {
   requestedModel: string | null
   /** After the alias. */
   model: string | null
+  /** What an estimate needs of the request. */
+  shape: RequestShape
   system: string
   span: RequestSpan
   abort: AbortController
@@ -189,24 +185,6 @@ const laneOf = (caller: string): RecordRow['lane'] =>
   caller === 'agw' ? 'agw_workflow' : caller === 'hermes' ? 'hermes' : 'other'
 
 /**
- * The priced cost: a Claude call at the route rates, the provider's own figure if it states one. A credit pool's
- * response with no rate for its model is charged the same usage at the most expensive Claude rate, so a new model can
- * never run the credit past the meter.
- */
-function priced(
-  usage: ProviderUsage | null,
-  model: string | null,
-  claude: boolean,
-  creditPool: boolean,
-): { usd: number | null; estimated: boolean } {
-  if (!claude && !creditPool) return { usd: null, estimated: false }
-  const cost = costFromUsage('iu-anthropic', usage, model === null ? undefined : claudeRate(model))
-  if (cost.usd !== null || !creditPool) return { usd: cost.usd, estimated: false }
-  const estimate = costFromUsage('iu-anthropic', usage, claudeRate('opus'))
-  return { usd: estimate.usd, estimated: estimate.usd !== null }
-}
-
-/**
  * The request path: door auth, the pick, the byte-exact forward, the usage tee, the ledger row, the span. A stream
  * goes through unbuffered and pull-driven, so a caller that hangs up cancels the upstream instead of paying for the rest.
  */
@@ -273,12 +251,18 @@ export function createProxy(options: ProxyOptions): GatewayProxy {
   }
 
   /** The row and the charge: row first, so the meter's `rowAt` is the row's instant. Never throws into a stream. */
-  const writeRow = (x: Exchange, input: { status: number; pick: PickLabel; tee: TeeResult; ended: Ended }): void => {
-    const { status, pick, tee, ended } = input
+  const writeRow = (
+    x: Exchange,
+    input: { status: number; answered: boolean; pick: PickLabel; tee: TeeResult; ended: Ended },
+  ): void => {
+    const { status, answered, pick, tee, ended } = input
     const creditPool = pick.pool !== IU_API
     const model = tee.model ?? x.model
     const claude = x.path.startsWith('/anthropic/') || (model !== null && claudeRate(model) !== undefined)
-    const cost = priced(tee.usage, model, claude, creditPool)
+    const ok = status >= 200 && status < 300
+    const billable = ok || !answered
+    const cost = chargeOf({ tee, model, claude, creditPool, billable, request: x.shape })
+    const chargeUsd = cost.reportedUsd ?? cost.estimateUsd
     const tokens = tee.tokens
     const durationMs = Date.now() - x.startedAtMs
     const row: RecordRow = {
@@ -292,7 +276,7 @@ export function createProxy(options: ProxyOptions): GatewayProxy {
       account: creditPool ? pick.pool : null,
       api_key: creditPool ? null : 'personal',
       machine,
-      outcome: status >= 200 && status < 300 && ended === 'complete' && !tee.streamError ? 'ok' : 'error',
+      outcome: ok && ended === 'complete' && !tee.streamError ? 'ok' : 'error',
       lane: laneOf(x.caller),
       lane_detail: {
         caller: x.caller,
@@ -303,7 +287,7 @@ export function createProxy(options: ProxyOptions): GatewayProxy {
         purpose: x.inbound.get('x-agw-purpose'),
         pool: pick.pool,
         fallback: creditPool ? null : pick.reason,
-        ...(cost.estimated ? { costEstimated: true } : {}),
+        ...(cost.estimateUsd === null ? {} : { costEstimated: true, costEstimatedUsd: cost.estimateUsd }),
       },
       run_id: x.inbound.get('x-agw-run-id'),
       input_tokens: tokens?.input ?? 0,
@@ -313,8 +297,8 @@ export function createProxy(options: ProxyOptions): GatewayProxy {
       cache_write_1h_tokens: tokens?.cacheWrite1h ?? 0,
       reasoning_tokens: tokens?.reasoning ?? 0,
       duration_ms: durationMs,
-      cost_reported_usd: cost.usd,
-      raw: { path: x.path, status, ended, usageReported: tokens !== null },
+      cost_reported_usd: cost.reportedUsd,
+      raw: { path: x.path, status, ended, usageReported: tokens !== null, usageComplete: tee.complete },
     }
     x.span.set({
       'gen_ai.usage.input_tokens': row.input_tokens,
@@ -322,22 +306,23 @@ export function createProxy(options: ProxyOptions): GatewayProxy {
       'agw.gateway.cache_read_tokens': row.cache_read_tokens,
       'agw.gateway.cache_write_tokens': row.cache_write_5m_tokens + row.cache_write_1h_tokens,
       ...(model === null ? {} : { 'gen_ai.response.model': model }),
-      ...(cost.usd === null ? {} : { 'agw.cost.usd': cost.usd }),
+      ...(chargeUsd === null ? {} : { 'agw.cost.usd': chargeUsd }),
+      ...(cost.estimateUsd === null ? {} : { 'agw.cost.estimated': true }),
     })
     let rowAt: Date
     try {
-      rowAt = ledger.writeRecord(row)
+      rowAt = ledger.writeRecord(row, chargeUsd)
     } catch (error) {
       // /health degrades; the meter still counts it for this process's life.
       logger.error('ledger write failed; the row is lost', {
         requestId: x.requestId,
         error: errorMessage(error),
         pool: pick.pool,
-        usd: cost.usd,
+        usd: chargeUsd,
       })
       rowAt = new Date()
     }
-    if (creditPool && cost.usd !== null) pools.charge(pick.pool, cost.usd, rowAt)
+    if (creditPool && chargeUsd !== null) pools.charge(pick.pool, chargeUsd, rowAt)
     options.outbox?.poke()
   }
 
@@ -356,11 +341,11 @@ export function createProxy(options: ProxyOptions): GatewayProxy {
   }
 
   /** Closes the request with its row, unless it is a `count_tokens`. */
-  const finisher = (x: Exchange, input: { status: number; pick: PickLabel; record: boolean }) => {
+  const finisher = (x: Exchange, input: { status: number; answered: boolean; pick: PickLabel; record: boolean }) => {
     return (tee: TeeResult, ended: Ended): void => {
       const failed = input.status >= 400 || ended !== 'complete' || tee.streamError
       close(x, input.status, failed, () => {
-        if (input.record) writeRow(x, { status: input.status, pick: input.pick, tee, ended })
+        if (input.record) writeRow(x, { ...input, tee, ended })
       })
     }
   }
@@ -431,7 +416,7 @@ export function createProxy(options: ProxyOptions): GatewayProxy {
       contentType: upstream.headers.get('content-type'),
       contentEncoding: upstream.headers.get('content-encoding'),
     })
-    const finish = finisher(x, { status: upstream.status, pick, record })
+    const finish = finisher(x, { status: upstream.status, answered: true, pick, record })
     if (body === null || NULL_BODY_STATUSES.has(upstream.status)) {
       finish(tee.finish(), 'complete')
       return new Response(null, { status: upstream.status, statusText: upstream.statusText, headers })
@@ -440,12 +425,19 @@ export function createProxy(options: ProxyOptions): GatewayProxy {
     return new Response(stream, { status: upstream.status, statusText: upstream.statusText, headers })
   }
 
-  const noUsage: TeeResult = { usage: null, tokens: null, model: null, streamError: false }
+  const noUsage: TeeResult = {
+    usage: null,
+    tokens: null,
+    model: null,
+    streamError: false,
+    complete: false,
+    bytesReceived: 0,
+  }
   const CUT_STATUS = 504
 
   /** Sent upstream, no response yet: an abort closes the exchange here. */
   const awaitingUpstream = (x: Exchange, pick: PickLabel, record: boolean): void => {
-    x.onCut = () => finisher(x, { status: CUT_STATUS, pick, record })(noUsage, 'aborted')
+    x.onCut = () => finisher(x, { status: CUT_STATUS, answered: false, pick, record })(noUsage, 'aborted')
   }
 
   /** No response came: the caller left, the guard fired or the network failed. */
@@ -454,7 +446,7 @@ export function createProxy(options: ProxyOptions): GatewayProxy {
     const status = aborted ? CUT_STATUS : 502
     if (!aborted)
       logger.warn('upstream unreachable', { requestId: x.requestId, pool: pick.pool, error: errorMessage(error) })
-    finisher(x, { status, pick, record })(noUsage, aborted ? 'aborted' : 'failed')
+    finisher(x, { status, answered: false, pick, record })(noUsage, aborted ? 'aborted' : 'failed')
     return errorResponse(status, 'api_error', aborted ? 'upstream cut' : 'upstream unreachable', {
       'x-agw-request-id': x.requestId,
       'x-agw-pool': pick.pool,
@@ -599,6 +591,7 @@ export function createProxy(options: ProxyOptions): GatewayProxy {
       body: undefined,
       requestedModel: null,
       model: null,
+      shape: { bytes: 0, maxTokens: null, streamed: false },
       system,
       span,
       abort,
@@ -646,6 +639,11 @@ export function createProxy(options: ProxyOptions): GatewayProxy {
     x.requestedModel ??= modelFromPath(x.path)
     x.model ??= x.requestedModel
     x.session = sessionId(x.inbound, parsed)
+    x.shape = {
+      bytes: bytes?.byteLength ?? 0,
+      maxTokens: typeof parsed?.max_tokens === 'number' ? parsed.max_tokens : null,
+      streamed: parsed?.stream === true,
+    }
     x.span.set({
       'gen_ai.system': x.system,
       'agw.gateway.caller': x.caller,

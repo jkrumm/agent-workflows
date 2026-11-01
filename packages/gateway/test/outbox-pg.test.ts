@@ -305,9 +305,10 @@ describePg(suite, () => {
       await response.text()
       const id = response.headers.get('x-agw-request-id') ?? ''
       await until(async () => (await record(id)) !== undefined && (await picksOf(id)).length === 1)
-      // No Claude rate for the model: the meter's conservative estimate is the reported cost.
+      // No Claude rate for the model: Postgres prices the row, and the estimate is only the meter's.
       const row = await record(id)
-      expect(row).toMatchObject({ billing: 'api_credit', account: 'iu', cost_source: 'reported' })
+      expect(row).toMatchObject({ billing: 'api_credit', account: 'iu', cost_source: 'prices' })
+      expect(Number(row?.cost_usd)).toBe(2)
       expect(row?.lane_detail).toMatchObject({ costEstimated: true })
       const health = (await (await fetch(`${gw.url}/health`)).json()) as { ledger: unknown }
       expect(health.ledger).toMatchObject({ flush: 'on', unsynced: 0, quarantined: 0 })

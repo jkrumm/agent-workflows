@@ -22,6 +22,10 @@ export interface TeeResult {
   model: string | null
   /** An SSE stream carried an `error` event after its 2xx. */
   streamError: boolean
+  /** The block is whole: both sides counted, and a stream's final counts arrived (or the provider stated a cost). */
+  complete: boolean
+  /** Response body bytes seen, decoded when the copy could be. */
+  bytesReceived: number
 }
 
 const count = (value: unknown): number | null =>
@@ -121,6 +125,9 @@ export class UsageTee {
   private gemini: Record<string, unknown> | null = null
   private model: string | null = null
   private streamError = false
+  private received = 0
+  /** Anthropic's `message_start` came and its `message_delta` has not. */
+  private awaitingFinal = false
 
   constructor(response: { contentType: string | null; contentEncoding: string | null }) {
     const type = (response.contentType ?? '').toLowerCase()
@@ -132,6 +139,7 @@ export class UsageTee {
   }
 
   push(chunk: Uint8Array): void {
+    this.received += chunk.byteLength
     if (this.sse && this.encoding === null) {
       this.feedSse(this.decoder.decode(chunk, { stream: true }))
       return
@@ -159,11 +167,24 @@ export class UsageTee {
       tokens: this.columns(),
       model: this.model,
       streamError: this.streamError,
+      complete: this.complete(),
+      bytesReceived: this.received,
     }
   }
 
+  private complete(): boolean {
+    if (this.gemini !== null) return geminiColumns(this.gemini) !== null
+    if (this.usage === null || this.awaitingFinal) return false
+    if (count(this.usage.cost) !== null) return true
+    const input = count(this.usage.input_tokens) ?? count(this.usage.prompt_tokens)
+    const output = count(this.usage.output_tokens) ?? count(this.usage.completion_tokens)
+    return input !== null && output !== null
+  }
+
   private readHeld(chunks: Uint8Array[]): void {
-    const text = new TextDecoder().decode(decodeBody(Buffer.concat(chunks), this.encoding))
+    const decoded = decodeBody(Buffer.concat(chunks), this.encoding)
+    this.received = Math.max(this.received, decoded.byteLength)
+    const text = new TextDecoder().decode(decoded)
     if (this.sse) {
       this.feedSse(`${text}\n\n`)
       return
@@ -209,6 +230,8 @@ export class UsageTee {
     }
     if (!isRecord(value)) return
     if (value.type === 'error') this.streamError = true
+    if (value.type === 'message_start') this.awaitingFinal = true
+    if (value.type === 'message_delta' && isRecord(value.usage)) this.awaitingFinal = false
     if (isRecord(value.message)) this.read(value.message)
     if (isRecord(value.response)) this.read(value.response)
     this.read(value)
