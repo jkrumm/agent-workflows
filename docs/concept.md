@@ -534,3 +534,15 @@ One entry per phase: what we learned, what changed on this page, and why.
   worktree root.
 - **Does the page hold?** Yes, as v3.14.
 
+### Gateway Wave 4 — Reconcile and Argo, 2026-11-02
+
+- **Learned.** The meter and the cost report agree (iu $67.58 = $56.12 reported outside the gateway + $11.44 through it).
+  Giving two repos the exact DDL let Argo build against `platform_cost` while usage-tracker was still in review. A
+  worker's targeted test run hid two whole-suite failures: tests that read deployed paths under the real `HOME`.
+- **Changed.** Release `2e7d5f2`. `usage.platform_cost` and closed `credit_cycles` in usage-tracker; Argo's credit payers
+  and Credits tab; `make verify` runs a smoke review and checks the gateway and its door; Hermes liveness checks the
+  gateway too. The gateway plan (Waves 1–4) is done; me2 waits for its keys.
+- **Process.** Never merge on a `workers done` note: a worker mid-turn reads idle between tool calls. Briefs that touch
+  scripts reading deployed paths ask for a run with `HOME` at an empty temp dir.
+- **Does the page hold?** Yes, as v3.14.
+

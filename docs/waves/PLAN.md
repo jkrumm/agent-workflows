@@ -92,18 +92,23 @@ eval needs move into Wave 5. The rest waits.
   copies the alias map; triage reasoning tokens read 0 on the `anthropic` wire; flaky hook timeouts under load. `make
   verify` gains a smoke review (the reviewer broke unseen).
 
-## Wave 4 — Reconcile and Argo            <!-- status: active -->
+## Wave 4 — Reconcile and Argo            <!-- status: done 2026-11-02, release 2e7d5f2 -->
 
-- [ ] usage-tracker pass: `usage.platform_cost` from each org's cost API (admin key; a missing key skips that org), and
+- [x] usage-tracker pass: `usage.platform_cost` from each org's cost API (admin key; a missing key skips that org), and
   `credit_cycles` closed per cycle with metered, reconciled and unspent. The gateway's meter takes the reconciled
   figure when higher.
-- [ ] Argo: payers `iu-credit`, `me-credit`, `me2-credit`; a Credits tab (burn-down per pool against its cycle,
+- [x] Argo: payers `iu-credit`, `me-credit`, `me2-credit`; a Credits tab (burn-down per pool against its cycle,
   projected unspent, picks and fallbacks, cache-hit rate per caller); `accounts.ts` says `iu` is Ultra.
-- [ ] Docs to the new shape: dotfiles `docs/architecture.md`, `docs/agent-platform.md`, `docs/claude-accounts.md` (`me2`
+- [x] Docs to the new shape: dotfiles `docs/architecture.md`, `docs/agent-platform.md`, `docs/claude-accounts.md` (`me2`
   is live), `config/global.CLAUDE.md` (the IU-tokens line names the gateway), brain `wiki/engineering/model-routing.md`
   (the gateway; the retired `ca`/`cap`).
+**Left behind:** close-out in `docs/waves/handoff/lead.md` at `e27b8d4`. me2 still disabled (placeholder keys; steps in
+  dotfiles `docs/claude-accounts.md` §Platform). Not ours: dotfiles `make check` red (homebridge unmapped, herdr-core
+  version skew). brain's tracked relative symlinks dangle in worktrees (vault-lint noise). Argo's cache-hit rate is dragged
+  by modelpick's 251 zero-token catalog rows. `agw routes --format json` lacks the alias map. The Codex lane keeps the
+  personal IU key outside the gateway (documented).
 
-## Wave 5 — Eval foundations            <!-- status: pending -->
+## Wave 5 — Eval foundations            <!-- status: active -->
 
 Disjoint changes, one fan-out batch:
 
