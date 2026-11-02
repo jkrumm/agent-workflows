@@ -75,7 +75,7 @@ function prepRequest(
   const { transports } = scope.config
   // Reasoning-capable models reject `max_tokens` on chat completions; reasoning tokens count against this one.
   const maxTokens = Math.min(32_000, Math.max(2000, opts.inputChars + 1000))
-  const effort = !opts.summarize && route.effort && route.effort !== 'none' ? route.effort : undefined
+  const effort = !opts.summarize ? route.effort : undefined
   if (route.wire === 'anthropic') {
     return {
       url: `${transports.anthropicBase}/v1/messages`,
@@ -89,7 +89,8 @@ function prepRequest(
         max_tokens: maxTokens,
         system: opts.systemPrompt,
         messages: [{ role: 'user', content: opts.userContent }],
-        ...(effort && { thinking: { type: 'adaptive' }, output_config: { effort } }),
+        // `none` is the route saying no thinking: the Messages wire omits it, where chat completions send `none`.
+        ...(effort && effort !== 'none' && { thinking: { type: 'adaptive' }, output_config: { effort } }),
       },
     }
   }
@@ -140,11 +141,14 @@ async function attemptPrep(
   const endpoint = opts.summarize ? 'speech-summary' : 'speech-prep'
   const request = prepRequest(scope, route, opts)
   const start = scope.deps.clock.now()
-  const res = await rawFetch(scope, request.url, {
-    method: 'POST',
-    headers: request.headers,
-    body: JSON.stringify(request.body),
-  })
+  const res = await rawFetch(
+    scope,
+    request.url,
+    { method: 'POST', headers: request.headers, body: JSON.stringify(request.body) },
+    undefined,
+    // A balance 503 goes to the route's fallback now, not after two more sends.
+    (reply) => isBalanceFailure({ status: reply.status, text: reply.body }),
+  )
   const latencyMs = scope.deps.clock.now() - start
   if (res.status < 200 || res.status >= 300) {
     const errorText = res.body.slice(0, 500)

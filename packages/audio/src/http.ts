@@ -127,13 +127,30 @@ const isAbort = (error: unknown): boolean => error instanceof Error && error.nam
 /**
  * fetch with backoff on 503/429 (honouring the server's hint) and on transport failures (a reset or a socket closed
  * mid-body is as transient as a 503). The last attempt's error propagates; an abort is never retried.
+ *
+ * `final` sees a 503/429 reply before it is retried: when it says so, the reply is returned at once. A 503 whose body
+ * names an exhausted balance is not transient, and sending it again three times would only delay the fallback.
  */
-export async function rawFetch(scope: AudioScope, url: string, init: RequestInit, attempts = 3): Promise<RawResponse> {
+export async function rawFetch(
+  scope: AudioScope,
+  url: string,
+  init: RequestInit,
+  attempts = 3,
+  final?: (reply: RawResponse) => boolean,
+): Promise<RawResponse> {
   const { fetch, clock } = scope.deps
   for (let attempt = 1; attempt <= attempts; attempt++) {
     try {
       const res = await fetch(url, init)
       if ((res.status === 503 || res.status === 429) && attempt < attempts) {
+        if (final) {
+          const reply = { status: res.status, body: await res.text() }
+          if (final(reply)) return reply
+          scope.retried()
+          const hint = retryHintFromHeaders(res.headers) ?? retryHintFromBody(reply.body)
+          await clock.sleep(Math.min(MAX_RETRY_DELAY_MS, Math.max(500 * attempt, hint ?? 0)))
+          continue
+        }
         scope.retried()
         await clock.sleep(await throttleDelay(res, attempt))
         continue
