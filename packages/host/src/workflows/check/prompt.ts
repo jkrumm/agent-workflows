@@ -12,14 +12,13 @@ export function agentIdleMs(stepSeconds: number, testSeconds: number): number {
   return Math.max(DEFAULT_AGENT_IDLE_MS, (Math.max(stepSeconds, testSeconds) + SESSION_MARGIN_S) * 1000)
 }
 
-/** Appended to the prompt of the one retry after a reply that was not the schema's JSON. */
+/** Appended to the prompt of the one retry after a turn that ended without a valid `submit_result` call. */
 export const JSON_ONLY_RETRY = `
 
 ────────────────────────────────────────────────────────
-RETRY: your previous response was REJECTED because it was not valid JSON matching the schema.
-Return ONLY the JSON object from the Output section. Your entire message must be a single JSON object (optionally
-wrapped in one \`\`\`json fence): no preamble, no markdown headings, no commentary before or after. Emit it as your
-final message and stop.`
+RETRY: your previous attempt was REJECTED because it ended without a valid \`submit_result\` call.
+Run the steps, then call \`submit_result\` once with the report in the Output section's shape. A report written as
+text is not read. Then stop.`
 
 /**
  * The per-run request. The stable rules are the agent's `AGENTS.md` (the cacheable prefix); this carries only what

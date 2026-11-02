@@ -20,7 +20,7 @@ list is a good answer when the sample shows nothing.
 
 ## Answer
 
-Only this JSON object, no prose, no code fence:
+Submit your answer by calling `submit_result` once. Its arguments take this shape:
 
 ```
 {

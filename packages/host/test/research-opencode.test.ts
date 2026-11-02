@@ -141,7 +141,7 @@ async function runAgent(agent: string, script: Step[], grantTools: string[]) {
       key,
       agent,
       prompt: '',
-      options: { output: 'json' },
+      // A text step, as the workflow runs it: its draft is parsed by the workflow, not the host.
       attribution: { runId, rootId: runId, workflow: 'research', step: 'research', purpose: 'verify' },
     })) as OpenCodeHandle
     await host.prompt(handle, 'What is the default port of PostgreSQL?')
@@ -198,7 +198,9 @@ test.skipIf(!binary)(
     const usage = result.usage
     expect(usage?.tokens.cacheRead).toBe(1_600)
     expect(usage?.cost).toBeGreaterThan(0)
-    expect(result.output as Record<string, unknown>).toMatchObject({ report: '## Bottom line\nPort 5432.' })
+    expect(JSON.parse(result.output as string) as Record<string, unknown>).toMatchObject({
+      report: '## Bottom line\nPort 5432.',
+    })
     // The gate's key file is the user's only.
     expect(statSync(join(stateDir, 'gate.json')).mode & 0o777).toBe(0o600)
   },

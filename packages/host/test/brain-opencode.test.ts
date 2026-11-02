@@ -130,7 +130,7 @@ async function runAgent(script: Step[]) {
       key: `${runId}:brain`,
       agent: 'brain',
       prompt: '',
-      options: { output: 'json' },
+      // A text step, as the workflow runs it: its draft is parsed by the workflow, not the host.
       attribution: { runId, rootId: runId, workflow: 'brain', step: 'brain', purpose: 'verify' },
     })) as OpenCodeHandle
     await host.prompt(handle, 'How many billing lanes are there?')
@@ -170,7 +170,10 @@ test.skipIf(!binary)(
       read: ['wiki/engineering/model-routing.md'],
       counts: { brain_search: 1, brain_read: 2 },
     })
-    expect(result.output as Record<string, unknown>).toMatchObject({ found: true, answer: 'Two billing lanes.' })
+    expect(JSON.parse(result.output as string) as Record<string, unknown>).toMatchObject({
+      found: true,
+      answer: 'Two billing lanes.',
+    })
   },
   120_000,
 )
