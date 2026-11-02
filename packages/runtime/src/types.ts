@@ -48,6 +48,23 @@ export type StepOptions = {
   idleTimeoutMs?: number | null
 }
 
+/**
+ * Who a step's outside calls are for. Capabilities send it to the gateway as `x-agw-*` headers; structurally the same
+ * `Attribution` as `@agent-workflows/capabilities`, so a step can pass its scope to `registry.call` as is.
+ */
+export type Attribution = {
+  /** The step's own run (a child run has its own id). */
+  runId: string
+  /** The root of the run tree: the gateway's session. */
+  rootId: string
+  workflow: string
+  step: string
+  purpose: string
+  project?: string
+  workspace?: string
+  traceparent?: string
+}
+
 /** Handed to every step body. */
 export type StepScope = {
   /** `${runId}:${stepId}`: the idempotency key for outside effects. */
@@ -57,6 +74,8 @@ export type StepScope = {
   /** Aborts on cancel, idle timeout, lease loss and shutdown. */
   signal: AbortSignal
   addUsage: (usage: Usage) => void
+  /** The step's run, workflow and step id, for a capability call to pass on (`registry.call(id, input, scope)`). */
+  attribution: Attribution
   /** Resets the idle timer. */
   progress: () => void
 }
@@ -189,7 +208,15 @@ export type ScoreJudge = (capability: string, input: Json) => Promise<Json>
 export type JudgeCaller = (
   capability: string,
   input: Json,
-  scope: { signal: AbortSignal; addUsage: (usage: Usage) => void; source: ScoreSource; runId: string; scorer: string },
+  scope: {
+    signal: AbortSignal
+    addUsage: (usage: Usage) => void
+    source: ScoreSource
+    runId: string
+    scorer: string
+    /** The inline gate's step; absent for regression and drift, whose calls are runs of their own. */
+    attribution?: Attribution
+  },
 ) => Promise<Json>
 
 export type ScorerContext<R> = {

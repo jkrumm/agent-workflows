@@ -84,6 +84,7 @@ export const createDecide = (deps: LlmDeps) =>
           model: route.model,
           state: truncatedChars > 0 ? state.slice(0, kept) : state,
           questions,
+          ...(ctx.attribution ? { attribution: ctx.attribution } : {}),
         },
         ctx.signal,
         (attempt) => {

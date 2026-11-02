@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { OVERRIDES_ENV, resolveRoute } from '@agent-workflows/routes'
+import { OVERRIDES_ENV, type ResolvedRoute, resolveModelAlias, resolveRoute } from '@agent-workflows/routes'
 import { createCapabilities } from './capabilities/index.ts'
 import type { Usage } from './context.ts'
 import { CapabilityCallError } from './errors.ts'
+import { complete } from './llm/model-call.ts'
 import { createRegistry } from './registry.ts'
-import { type FakeIuServer, type RecordedRequest, sse, startFakeIu } from './testing/index.ts'
-import { type Env, iuTransports } from './transports/index.ts'
+import { type FakeGateway, type RecordedRequest, sse, startFakeGateway } from './testing/index.ts'
+import { type Env, gatewayTransports } from './transports/index.ts'
 
 // IU's body on an empty provider account, as it arrived 2026-10-28.
 const BALANCE_503 = 'IU request failed (503) — Insufficient Balance (PaymentRequired) on Requesty-Global'
@@ -21,12 +22,12 @@ const ANTHROPIC_400_PADDED = JSON.stringify({
 })
 const USAGE = { prompt_tokens: 1_000, completion_tokens: 200, completion_tokens_details: { reasoning_tokens: 50 } }
 
-let iu: FakeIuServer
+let iu: FakeGateway
 let usages: Usage[]
 let warnings: { message: string; meta: Record<string, unknown> }[]
 
 beforeEach(() => {
-  iu = startFakeIu()
+  iu = startFakeGateway()
   usages = []
   warnings = []
 })
@@ -37,8 +38,8 @@ async function call(
   input: unknown,
   env: Env = {},
 ) {
-  const transports = iuTransports({
-    env: { IU_API_KEY: 'test-key', IU_BASE_URL: iu.baseUrl },
+  const transports = gatewayTransports({
+    env: { AGW_API_SECRET: 'test-key', AGW_GATEWAY_URL: iu.url },
     backoffMs: 0,
     idleTimeoutMs: 200,
   })
@@ -206,6 +207,41 @@ describe('provider-balance fallback', () => {
     iu.on('chat', () => new Response('', { status: 402 }))
     await caught(call('llm.classify', classify, env))
     expect(iu.requests).toHaveLength(1)
+  })
+})
+
+describe('provider-balance fallback: the gateway refuses the anthropic wire', () => {
+  // The gateway's answer to `x-agw-fallback: none` with no credit pool eligible (`packages/gateway/src/proxy.ts`).
+  const GATEWAY_402 = {
+    type: 'error',
+    error: { type: 'balance_error', message: 'provider balance exhausted: no credit pool eligible' },
+  }
+  // No table route is on the wire yet and an override cannot change a wire: the route is pinned (`complete`'s `start`).
+  const haiku = resolveModelAlias('haiku')
+  const onClaude: ResolvedRoute = { id: 'cheap.classify', wire: 'anthropic', model: haiku, fallback }
+
+  test('a 402 moves the call to the route fallback on GPT, never IU Claude; only the anthropic call opts out', async () => {
+    iu.on('messages', () => Response.json(GATEWAY_402, { status: 402, headers: { 'x-agw-pool': 'refused' } }))
+    iu.on('chat', (request) => answer(request, 'fine'))
+    const transports = gatewayTransports({ env: { AGW_API_SECRET: 'test-key', AGW_GATEWAY_URL: iu.url }, backoffMs: 0 })
+    const warn = (message: string, meta: Record<string, unknown>) => void warnings.push({ message, meta })
+    const ctx = { signal: new AbortController().signal, addUsage: (u: Usage) => void usages.push(u) }
+    const done = await complete(
+      { transports, env: {}, warn },
+      { routeId: 'cheap.classify', prompt: 'p', ctx },
+      onClaude,
+    )
+
+    expect(done).toMatchObject({ text: 'fine', route: { model: fallback.model, isFallback: true } })
+    expect(iu.requests.map((r) => [r.path, r.body.model])).toEqual([
+      ['/anthropic/v1/messages', haiku],
+      ['/openai/v1/chat/completions', fallback.model],
+    ])
+    expect(iu.requests[0]?.headers.get('x-agw-fallback')).toBe('none')
+    expect(iu.requests[1]?.headers.get('x-agw-fallback')).toBeNull()
+    expect(warnings.map((w) => w.message)).toEqual(['provider balance exhausted; falling back'])
+    // The refusal threw before any usage came back: only the fallback is reported.
+    expect(usages.map((u) => u.model)).toEqual([fallback.model])
   })
 })
 

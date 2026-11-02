@@ -261,10 +261,10 @@ export function iuModelPort(options: IuOptions = {}): ModelPort {
   ): Promise<ChatReply> {
     const { apiKey, anthropicBase } = iuConfig(options.env ?? process.env)
     const body = anthropicBody(call)
-    return withRetries('iu-anthropic', signal, async () => {
+    return withRetries('anthropic', signal, async () => {
       const events: string[] = []
       await stream(
-        'iu-anthropic',
+        'anthropic',
         `${anthropicBase}/v1/messages`,
         {
           authorization: `Bearer ${apiKey}`,
@@ -282,7 +282,7 @@ export function iuModelPort(options: IuOptions = {}): ModelPort {
       const { text, stopReason, usage, streamError } = parsed.value
       if (Object.keys(usage).length > 0) onUsage(anthropicUsage(usage, call.model))
       if (streamError) {
-        const message = `iu-anthropic ${streamError.type}: ${streamError.message}`.slice(0, 500)
+        const message = `anthropic ${streamError.type}: ${streamError.message}`.slice(0, 500)
         throw RETRYABLE_STREAM_ERRORS.has(streamError.type) ? new Retryable(message) : new ModelError(message)
       }
       const stop =
@@ -337,7 +337,7 @@ export function iuModelPort(options: IuOptions = {}): ModelPort {
 
   return {
     chat: (call, signal, onUsage, onSent) =>
-      call.wire === 'iu-anthropic'
+      call.wire === 'anthropic'
         ? anthropicChat(call, signal, onUsage, onSent)
         : openaiChat(call, signal, onUsage, onSent),
     round,

@@ -101,8 +101,8 @@ export interface SeenRequest {
 export type FakeHandler = (request: SeenRequest, attempt: number) => Response | Promise<Response>
 
 export interface FakeImageServer {
-  /** The value for `IU_BASE_URL`; the images API is `/openai/v1/images/*`, Replicate `/replicate/v1/*` on the same host. */
-  baseUrl: string
+  /** The value for `AGW_GATEWAY_URL` (the origin); the images API is `/openai/v1/images/*`, Replicate `/replicate/v1/*`. */
+  url: string
   seen: SeenRequest[]
   /** Requests answered so far, by path. */
   attempts: Record<string, number>
@@ -112,7 +112,7 @@ export interface FakeImageServer {
   stop(): void
 }
 
-/** An in-test HTTP server answering like the IU endpoint, on a real socket so the production adapters run over HTTP. */
+/** An in-test HTTP server answering like the gateway's IU paths, on a real socket so the production adapters run over HTTP. */
 export function startFakeImageServer(): FakeImageServer {
   const state = {
     handlers: {} as Record<string, FakeHandler>,
@@ -126,7 +126,7 @@ export function startFakeImageServer(): FakeImageServer {
     async fetch(req) {
       const path = new URL(req.url).pathname
       const handler = state.handlers[path]
-      if (!handler) return new Response(`fake IU: nothing for ${path}`, { status: 404 })
+      if (!handler) return new Response(`fake gateway: nothing for ${path}`, { status: 404 })
       const type = req.headers.get('content-type') ?? ''
       const record: SeenRequest = { path, headers: req.headers }
       if (type.startsWith('multipart/')) record.form = await req.formData()
@@ -141,7 +141,7 @@ export function startFakeImageServer(): FakeImageServer {
     },
   })
   return {
-    baseUrl: `http://127.0.0.1:${server.port}/anthropic`,
+    url: `http://127.0.0.1:${server.port}`,
     get seen() {
       return state.seen
     },

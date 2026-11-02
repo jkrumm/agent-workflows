@@ -134,7 +134,7 @@ const started = (async () => {
     ]),
     limits,
     image: {
-      env: { IU_API_KEY: 'test-key', IU_BASE_URL: 'https://iu.example.com/anthropic' },
+      env: { AGW_API_SECRET: 'test-key', AGW_GATEWAY_URL: 'http://127.0.0.1:7794' },
       fetch: fakeFetch,
       retry: { backoffMs: 0 },
     },
@@ -329,7 +329,7 @@ describe('POST /door/image/generate', () => {
     expect(body.cost.usd).toBeCloseTo(COST, 8)
 
     const sent = upstream[0]
-    expect(sent?.url).toBe('https://iu.example.com/openai/v1/images/generations')
+    expect(sent?.url).toBe('http://127.0.0.1:7794/openai/v1/images/generations')
     expect(sent?.json).toMatchObject({ prompt: 'a lighthouse at dusk', size: '1024x1024', quality: 'low', n: 1 })
     expect(sent?.json).not.toHaveProperty('stream')
     expect(sent?.headers.get('x-agw-caller')).toBeNull()
@@ -453,7 +453,7 @@ describe('POST /door/image/edit', () => {
       routing_reason: `routed to ${SUNBURST} for editing/reference precision`,
     })
     const sent = upstream[0]
-    expect(sent?.url).toBe('https://iu.example.com/openai/v1/images/edits')
+    expect(sent?.url).toBe('http://127.0.0.1:7794/openai/v1/images/edits')
     expect(sent?.form?.getAll('image')).toHaveLength(1)
     expect(sent?.form?.has('image[]')).toBe(false)
     expect((sent?.form?.get('mask') as File | null)?.name).toBe('mask.png')

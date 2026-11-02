@@ -205,7 +205,7 @@ describe('the review route must be the OpenAI chat wire, primary and fallback', 
 
   test.each([
     ['opencode', 'opencode'],
-    ['iu-anthropic', 'iu-anthropic'],
+    ['anthropic', 'anthropic'],
   ] as const)('a primary on the %s wire is refused', (_name, wire) => {
     expect(reviewRouteRefusal({ ...route, wire })).toMatch(/OpenAI chat wire/)
   })
@@ -214,7 +214,7 @@ describe('the review route must be the OpenAI chat wire, primary and fallback', 
     expect(reviewRouteRefusal({ ...route, wire: 'iu-openai', fallback: { wire: 'opencode', model: 'x-1' } })).toMatch(
       /fallback wire "opencode"/,
     )
-    expect(reviewRouteRefusal({ ...route, fallback: { wire: 'iu-anthropic', model: 'x-1' } })).toMatch(/fallback wire/)
+    expect(reviewRouteRefusal({ ...route, fallback: { wire: 'anthropic', model: 'x-1' } })).toMatch(/fallback wire/)
   })
 
   test('a whitespace-only text is refused by the capability', async () => {

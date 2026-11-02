@@ -113,7 +113,7 @@ export function createRegistry<const C extends readonly AnyCapability[]>(
       const capability = get(id)
       const { addUsage } = callOptions
       return capability.call(input, {
-        signal: callOptions.signal,
+        ...callOptions,
         addUsage: (usage) => {
           addUsage?.(usage)
           options.onUsage?.(id, usage)

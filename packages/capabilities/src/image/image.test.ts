@@ -44,7 +44,7 @@ const handlers = new Proxy<Record<string, FakeHandler>>(
   },
 )
 
-const env = () => ({ IU_API_KEY: 'test-key', IU_BASE_URL: fake.baseUrl })
+const env = () => ({ AGW_API_SECRET: 'test-key', AGW_GATEWAY_URL: fake.url })
 const registry = () =>
   createRegistry(
     createImageCapabilities({
@@ -398,14 +398,6 @@ describe('image.cutout', () => {
       expect(error.message).toContain(message)
     }
     expect(fake.seen).toEqual([])
-  })
-
-  test('the Replicate base is derived from the OpenAI one, or taken from the override', async () => {
-    const { replicateBase } = await import('./index.ts')
-    expect(replicateBase('https://iu.example/openai/v1')).toBe('https://iu.example/replicate/v1')
-    expect(replicateBase('https://iu.example/openai/v1/')).toBe('https://iu.example/replicate/v1')
-    expect(replicateBase('https://iu.example/openai/v1', 'https://r.example/v1/')).toBe('https://r.example/v1')
-    expect(() => replicateBase('https://iu.example/other')).toThrow('cannot derive')
   })
 })
 
@@ -1002,8 +994,7 @@ describe('review fixes', () => {
     expect(result.images).toHaveLength(1)
     expect(result.rejected).toEqual([{ index: 1, reason: 'over the 33554432 byte cap for one image' }])
     fake.reset()
-    handlers[POST_GEN] = () =>
-      new Response(null, { status: 302, headers: { location: `http://127.0.0.1:${fake.baseUrl}/` } })
+    handlers[POST_GEN] = () => new Response(null, { status: 302, headers: { location: `${fake.url}/` } })
     expect((await failure('image.generate', { prompt: 'x' })).error.code).toBe('UPSTREAM_ERROR')
     expect(fake.seen).toHaveLength(1)
   })
@@ -1079,5 +1070,42 @@ describe('png reading', () => {
     expect(magicBytesValid(png, 'jpeg')).toBe(false)
     expect(magicBytesValid(await webpFixture(8, 8), 'webp')).toBe(true)
     expect(magicBytesValid(await webpFixture(8, 8), 'png')).toBe(false)
+  })
+})
+
+describe('on the gateway', () => {
+  const attribution = { runId: 'run-1', rootId: 'root-1', workflow: 'image', step: 'generate', purpose: 'prod' }
+  const RECRAFT = IMAGE_ROUTES['image.cutout.recraft'].model
+  const DELIVERED = 'https://replicate.delivery/out/gateway.webp'
+
+  test('a generation says the caller writes its usage row and carries the step attribution', async () => {
+    handlers[POST_GEN] = () => Response.json({ ...images(1), usage })
+    await registry().call('image.generate', { prompt: 'x' }, { attribution })
+    const headers = fake.seen[0]?.headers
+    expect(headers?.get('authorization')).toBe('Bearer test-key')
+    expect(headers?.get('x-agw-usage')).toBe('caller')
+    expect(headers?.get('x-agw-run-id')).toBe('run-1')
+    expect(headers?.get('x-agw-session')).toBe('root-1')
+    expect(headers?.get('x-agw-fallback')).toBeNull()
+  })
+
+  test('a prediction and its polls say so too; the replicate.delivery download carries no token', async () => {
+    cdn[DELIVERED] = await webpFixture(300, 280)
+    handlers[POST_PREDICT(RECRAFT)] = () => Response.json({ id: 'g1', status: 'starting' })
+    handlers['/replicate/v1/predictions/g1'] = () => Response.json({ id: 'g1', status: 'succeeded', output: DELIVERED })
+    await registry().call(
+      'image.cutout',
+      { file: file('g.png', pngFixture(300, 280, { kind: 'rgb' })) },
+      { attribution },
+    )
+    expect(fake.seen.map((s) => s.path)).toEqual([POST_PREDICT(RECRAFT), '/replicate/v1/predictions/g1'])
+    for (const seen of fake.seen) {
+      expect(seen.headers.get('x-agw-usage')).toBe('caller')
+      expect(seen.headers.get('authorization')).toBe('Bearer test-key')
+      expect(seen.headers.get('x-agw-step')).toBe('generate')
+    }
+    expect(delivered).toHaveLength(1)
+    expect(new Headers(delivered[0]?.init.headers).get('authorization')).toBeNull()
+    expect(JSON.stringify(delivered[0]?.init)).not.toContain('test-key')
   })
 })

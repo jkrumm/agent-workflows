@@ -2,7 +2,7 @@
 // `(input, ctx)`; here it becomes an oRPC procedure so `call` and HTTP share validation and middleware.
 import { call, ORPCError, os } from '@orpc/server'
 import type { z } from 'zod'
-import type { Ctx, Usage } from './context.ts'
+import type { Attribution, Ctx, Usage } from './context.ts'
 import {
   type CallOptions,
   type Capability,
@@ -15,6 +15,8 @@ import { CapabilityCallError, CapabilityError, ERRORS } from './errors.ts'
 /** Per-request context: where billed calls are reported, tagged with the capability. */
 export interface RequestContext {
   onUsage?: (capability: string, usage: Usage) => void
+  /** The calling step (`call` from a run step); the handler's `ctx.attribution`. */
+  attribution?: Attribution
   /**
    * Runs the call in place of the handler, after input validation and before output validation: the host makes a
    * direct HTTP call a run of its own. Absent (and always on `call`), the handler runs in place.
@@ -71,7 +73,11 @@ export function buildProcedure<I extends z.ZodObject, O extends z.ZodType>(
     .output(def.output)
     .handler(({ input, context, signal }) => {
       if (context.invoke) return context.invoke(def.id, input, signal ?? neverAborted()) as never
-      const ctx: Ctx = { signal: signal ?? neverAborted(), addUsage: (usage) => context.onUsage?.(def.id, usage) }
+      const ctx: Ctx = {
+        signal: signal ?? neverAborted(),
+        addUsage: (usage) => context.onUsage?.(def.id, usage),
+        ...(context.attribution ? { attribution: context.attribution } : {}),
+      }
       return def.handler(input as z.output<I>, ctx) as never
     })
 }
@@ -94,10 +100,13 @@ export function defineCapability<I extends z.ZodObject, O extends z.ZodType, con
     ...def,
     ...resolved,
     async call(input: z.input<I>, options: CallOptions = {}) {
-      const { addUsage } = options
+      const { addUsage, attribution } = options
       try {
         return (await call(procedure, input as never, {
-          context: { onUsage: addUsage ? (_, usage) => addUsage(usage) : undefined },
+          context: {
+            onUsage: addUsage ? (_, usage) => addUsage(usage) : undefined,
+            ...(attribution ? { attribution } : {}),
+          },
           signal: options.signal,
         })) as z.output<O>
       } catch (error) {

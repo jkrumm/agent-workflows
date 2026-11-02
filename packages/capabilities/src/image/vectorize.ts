@@ -39,7 +39,7 @@ export function createVectorize(deps: ResolvedImageDeps) {
     cli: { command: ['image-vectorize'], hidden: true, defaultFormat: 'json' },
     async handler(input, ctx) {
       const route = deps.route('image.vectorize' satisfies ImageRouteId)
-      const access = replicateAccess(deps)
+      const access = replicateAccess(deps, ctx)
       const source = await readInputImage(input.file, CUTOUT_LIMITS.maxImageBytes)
       const sent = await prepareInput(source, input.file, 'vectorize')
       const started = performance.now()

@@ -84,11 +84,11 @@ export function chargeOf(input: {
   const withTools = (usd: number | null): number | null => (usd === null ? null : usd + tools)
   const top = claudeRate('opus')
   // The provider's own `usage.cost` wins on any wire (IU states it); without one or a Claude rate there is no figure.
-  const reported = tee.complete ? costFromUsage('iu-anthropic', tee.usage, rate).usd : null
+  const reported = tee.complete ? costFromUsage('anthropic', tee.usage, rate).usd : null
   if (reported !== null) return { reportedUsd: withTools(reported), estimateUsd: null }
   if (!creditPool || !billable) return { reportedUsd: null, estimateUsd: null }
-  const atTop = tee.complete ? costFromUsage('iu-anthropic', tee.usage, top).usd : null
+  const atTop = tee.complete ? costFromUsage('anthropic', tee.usage, top).usd : null
   if (atTop !== null) return { reportedUsd: null, estimateUsd: withTools(atTop) }
   const usage = estimatedUsage(tee, request)
-  return { reportedUsd: null, estimateUsd: withTools(costFromUsage('iu-anthropic', usage, rate ?? top).usd) }
+  return { reportedUsd: null, estimateUsd: withTools(costFromUsage('anthropic', usage, rate ?? top).usd) }
 }

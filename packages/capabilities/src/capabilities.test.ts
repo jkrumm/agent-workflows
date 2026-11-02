@@ -5,21 +5,21 @@ import type { Usage } from './context.ts'
 import { CapabilityCallError } from './errors.ts'
 import { complete } from './llm/model-call.ts'
 import { createRegistry } from './registry.ts'
-import { chatStream, type FakeIuServer, sse, startFakeIu } from './testing/index.ts'
-import { type Env, iuTransports } from './transports/index.ts'
+import { chatStream, type FakeGateway, sse, startFakeGateway } from './testing/index.ts'
+import { type Env, gatewayTransports } from './transports/index.ts'
 
-let iu: FakeIuServer
+let iu: FakeGateway
 let usages: Usage[]
 
 beforeEach(() => {
-  iu = startFakeIu()
+  iu = startFakeGateway()
   usages = []
 })
 afterEach(() => iu.stop())
 
 function registry(env: Env = {}) {
-  const transports = iuTransports({
-    env: { IU_API_KEY: 'test-key', IU_BASE_URL: iu.baseUrl },
+  const transports = gatewayTransports({
+    env: { AGW_API_SECRET: 'test-key', AGW_GATEWAY_URL: iu.url },
     backoffMs: 0,
     idleTimeoutMs: 200,
   })
@@ -418,15 +418,15 @@ describe('decide (iu-decision)', () => {
 
 describe('configuration', () => {
   test('missing credentials are NOT_CONFIGURED and name the variable, not a value', async () => {
-    const transports = iuTransports({ env: {} })
+    const transports = gatewayTransports({ env: {} })
     const r = createRegistry(createCapabilities({ transports, env: {} }))
     const error = await caught(r.call('llm.title', { text: 'x' }))
     expect(error).toMatchObject({ code: 'NOT_CONFIGURED', status: 503 })
-    expect(error.message).toContain('IU_API_KEY')
+    expect(error.message).toContain('AGW_GATEWAY_URL')
   })
 
-  test('a base URL that does not end in /anthropic is rejected without echoing it', async () => {
-    const transports = iuTransports({ env: { IU_API_KEY: 'k', IU_BASE_URL: 'https://secret-host.invalid/v1' } })
+  test('a gateway URL that is not an http(s) URL is rejected without echoing it', async () => {
+    const transports = gatewayTransports({ env: { AGW_API_SECRET: 'k', AGW_GATEWAY_URL: 'secret-host.invalid:7794' } })
     const r = createRegistry(createCapabilities({ transports, env: {} }))
     const error = await caught(r.call('llm.title', { text: 'x' }))
     expect(error.code).toBe('NOT_CONFIGURED')
@@ -439,7 +439,7 @@ describe('configuration', () => {
   })
 
   test('a route on a wire that is not a single call is NOT_CONFIGURED', async () => {
-    const deps = { transports: iuTransports({ env: { IU_API_KEY: 'k', IU_BASE_URL: iu.baseUrl } }), env: {} }
+    const deps = { transports: gatewayTransports({ env: { AGW_API_SECRET: 'k', AGW_GATEWAY_URL: iu.url } }), env: {} }
     const ctx = { signal: new AbortController().signal, addUsage: () => {} }
     const error = await complete(deps, { routeId: 'check', prompt: 'x', ctx }).catch((e: unknown) => e)
     expect(error).toMatchObject({ code: 'NOT_CONFIGURED' })
@@ -464,8 +464,8 @@ describe('web.read', () => {
     createRegistry(
       createCapabilities(
         {
-          transports: iuTransports({
-            env: { IU_API_KEY: 'test-key', IU_BASE_URL: iu.baseUrl },
+          transports: gatewayTransports({
+            env: { AGW_API_SECRET: 'test-key', AGW_GATEWAY_URL: iu.url },
             backoffMs: 0,
             idleTimeoutMs: 200,
           }),

@@ -66,7 +66,7 @@ export const createWebRead = (deps: LlmDeps, fetchPage: ReturnType<typeof create
     output: readOutput,
     cli: { positional: ['url'], defaultFormat: 'plain', plainField: 'extract' },
     async handler({ url, ask, maxChars, fresh }, ctx) {
-      const page = await fetchPage.call({ url, maxChars, fresh }, { addUsage: ctx.addUsage, signal: ctx.signal })
+      const page = await fetchPage.call({ url, maxChars, fresh }, ctx)
       const base = {
         url: page.url,
         finalUrl: page.finalUrl,

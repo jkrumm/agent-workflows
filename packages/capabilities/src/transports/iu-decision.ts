@@ -1,5 +1,6 @@
 import { z } from 'zod'
-import { type Env, iuConfig } from './config.ts'
+import { type Env, gatewayConfig } from './config.ts'
+import { gatewayHeaders } from './headers.ts'
 import {
   Attempt,
   DEFAULTS,
@@ -41,18 +42,22 @@ function reportUsage(usage: z.output<typeof usageSchema>, model: string, onUsage
   })
 }
 
-/** IU's decision API: typed answers with calibrated probabilities. */
+/** IU's decision API through the gateway: typed answers with calibrated probabilities. */
 export function iuDecision(options: HttpOptions & { env?: Env } = {}): DecisionPort {
   const doFetch = options.fetch ?? fetch
   return {
     decide: async (request, signal, onUsage) => {
-      const { apiKey, decisionBase } = iuConfig(options.env ?? process.env)
+      const { token, decisionBase } = gatewayConfig(options.env ?? process.env)
       return withRetries(options, signal, async () => {
         let res: Response
         try {
           res = await doFetch(`${decisionBase}/systemone`, {
             method: 'POST',
-            headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
+            headers: {
+              ...gatewayHeaders(request.attribution),
+              authorization: `Bearer ${token}`,
+              'content-type': 'application/json',
+            },
             body: JSON.stringify(body(request)),
             signal: AbortSignal.any([signal, AbortSignal.timeout(options.hangGuardMs ?? DEFAULTS.hangGuardMs)]),
           })

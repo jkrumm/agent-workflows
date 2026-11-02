@@ -2,7 +2,8 @@ import { type Cost, costFromUsage } from '@agent-workflows/routes'
 import { z } from 'zod'
 import type { Ctx } from '../context.ts'
 import { fail } from '../errors.ts'
-import { iuConfig } from '../transports/config.ts'
+import { gatewayConfig } from '../transports/config.ts'
+import { gatewayHeaders } from '../transports/headers.ts'
 import { Attempt } from '../transports/http.ts'
 import { within } from '../web/deps.ts'
 import type { ImageRouteId, ResolvedImageDeps } from './deps.ts'
@@ -389,7 +390,7 @@ async function readStream(
 }
 
 /**
- * Generate or edit images over the IU images API: the one upstream implementation behind `image.generate` and the studio
+ * Generate or edit images over the IU images API, through the gateway: the one upstream implementation behind `image.generate` and the studio
  * door. No references is `/images/generations` (JSON); one or more is `/images/edits` (multipart, `image` for one file,
  * `image[]` for several, optional `mask`). `partial_images` above 0 sends `stream: true` and reads the SSE answer, calling
  * `onPartial` per preview.
@@ -401,7 +402,7 @@ async function readStream(
  */
 export async function requestImages(
   deps: ResolvedImageDeps,
-  ctx: Pick<Ctx, 'addUsage' | 'signal'>,
+  ctx: Pick<Ctx, 'addUsage' | 'signal' | 'attribution'>,
   request: ImageRequest,
 ): Promise<ImageResult> {
   const references = request.references ?? []
@@ -418,7 +419,7 @@ export async function requestImages(
   const seat = pickRoute(model, quality, edit)
   validate(request, seat, edit)
   const route = deps.route(seat)
-  const config = iuConfig(deps.env())
+  const config = gatewayConfig(deps.env())
 
   const fields: Record<string, Field> = {
     model: route.model,
@@ -462,7 +463,13 @@ export async function requestImages(
         if (streaming) arm()
         return deps.fetch(url, {
           method: 'POST',
-          headers: { authorization: `Bearer ${config.apiKey}`, ...headers },
+          // Priced per image here, so the gateway writes no usage row for it (`x-agw-usage: caller`).
+          headers: {
+            ...gatewayHeaders(ctx.attribution),
+            authorization: `Bearer ${config.token}`,
+            'x-agw-usage': 'caller',
+            ...headers,
+          },
           body: payload,
           redirect: 'error',
           signal: streaming

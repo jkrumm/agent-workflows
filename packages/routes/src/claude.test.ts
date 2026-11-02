@@ -134,9 +134,9 @@ describe('claudeRate', () => {
   })
 })
 
-describe("pricing an Anthropic response the way the gateway does: costFromUsage('iu-anthropic', usage, claudeRate(model))", () => {
+describe("pricing an Anthropic response the way the gateway does: costFromUsage('anthropic', usage, claudeRate(model))", () => {
   const price = (model: string, usage: Parameters<typeof costFromUsage>[1]) =>
-    costFromUsage('iu-anthropic', usage, claudeRate(model))
+    costFromUsage('anthropic', usage, claudeRate(model))
 
   test('Sonnet with 5m and 1h cache writes, cache reads and output', () => {
     const cost = price('sonnet', {
@@ -198,7 +198,7 @@ describe("pricing an Anthropic response the way the gateway does: costFromUsage(
 
 describe('1h cache writes', () => {
   const rate: Rate = { inputPerM: 1, outputPerM: 1, cacheReadPerM: 0.1, cacheWritePerM: 1.25, cacheWrite1hPerM: 2 }
-  const cost = (usage: Parameters<typeof costFromUsage>[1], r = rate) => costFromUsage('iu-anthropic', usage, r)
+  const cost = (usage: Parameters<typeof costFromUsage>[1], r = rate) => costFromUsage('anthropic', usage, r)
 
   test('without the split every cache write is 5m, as before', () => {
     expect(cost({ input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 1_000_000 })).toEqual({

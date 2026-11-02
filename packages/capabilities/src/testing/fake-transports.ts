@@ -5,7 +5,7 @@ import type {
   DecisionPort,
   DecisionRequest,
   DecisionResult,
-  IuTransports,
+  GatewayTransports,
   Tokens,
 } from '../transports/port.ts'
 
@@ -15,7 +15,7 @@ type Reply<Req, Res> = Res | Error | ((request: Req) => Res | Error)
 type ChatReply = Partial<ChatResult> & { tokens?: Tokens | null; cost?: number | null }
 type DecisionReply = DecisionResult & { tokens?: { input: number; output: number } | null }
 
-export interface FakeTransports extends IuTransports {
+export interface FakeTransports extends GatewayTransports {
   chatCalls: { wire: 'openai' | 'anthropic'; request: ChatRequest }[]
   decisionCalls: DecisionRequest[]
 }

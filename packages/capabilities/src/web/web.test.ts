@@ -12,8 +12,8 @@ import { formatTranscript, videoIdOf } from './youtube.ts'
 import { isPrivateAddress } from './ssrf.ts'
 import { parseHtml } from './text.ts'
 
-const IU = { IU_API_KEY: 'iu-key', IU_BASE_URL: 'https://iu.example.com/anthropic' }
-const SONAR_URL = 'https://iu.example.com/openai/v1/chat/completions'
+const GATEWAY = { AGW_API_SECRET: 'agw-token', AGW_GATEWAY_URL: 'http://127.0.0.1:7794' }
+const SONAR_URL = 'http://127.0.0.1:7794/openai/v1/chat/completions'
 const PUBLIC_IP = '93.184.216.34'
 
 type Handler = (url: string, init: RequestInit) => Response | Promise<Response>
@@ -104,7 +104,7 @@ describe('web.search', () => {
         sonarBody([hit(1), hit(1), hit(2, { date: null, last_updated: '2026-09-01' }), hit(3, { date: null })]),
       ),
     })
-    const { call, usage } = run({ ...n.deps, env: IU })
+    const { call, usage } = run({ ...n.deps, env: GATEWAY })
     const out = await call('web.search', { query: 'bun test', maxResults: 2 })
     expect(out).toEqual({
       provider: 'sonar',
@@ -115,7 +115,7 @@ describe('web.search', () => {
     })
     const sent = JSON.parse(String(n.calls[0]!.init.body))
     expect(sent).toMatchObject({ model: 'sonar', max_tokens: 16, web_search_options: { search_context_size: 'low' } })
-    expect((n.calls[0]!.init.headers as Record<string, string>).authorization).toBe('Bearer iu-key')
+    expect((n.calls[0]!.init.headers as Record<string, string>).authorization).toBe('Bearer agw-token')
     expect(usage).toEqual([
       {
         model: 'sonar',
@@ -128,7 +128,7 @@ describe('web.search', () => {
 
   test('depth advanced asks Sonar for a medium context; defaults are 8 results and basic', async () => {
     const n = net({ [SONAR_URL]: json(sonarBody(Array.from({ length: 12 }, (_, i) => hit(i)))) })
-    const { call } = run({ ...n.deps, env: IU })
+    const { call } = run({ ...n.deps, env: GATEWAY })
     expect(((await call('web.search', { query: 'q' })) as { results: unknown[] }).results).toHaveLength(8)
     await call('web.search', { query: 'q', depth: 'advanced' })
     expect(JSON.parse(String(n.calls[1]!.init.body)).web_search_options.search_context_size).toBe('medium')
@@ -136,23 +136,23 @@ describe('web.search', () => {
 
   test('a Sonar cost that is a bare number counts, a missing one is unknown, never 0', async () => {
     const bare = net({ [SONAR_URL]: json(sonarBody([hit(1)], 0.01)) })
-    const a = run({ ...bare.deps, env: IU })
+    const a = run({ ...bare.deps, env: GATEWAY })
     await a.call('web.search', { query: 'q' })
     expect(a.usage[0]).toMatchObject({ cost: 0.01, costSource: 'provider' })
     const none = net({ [SONAR_URL]: json(sonarBody([hit(1)], null)) })
-    const b = run({ ...none.deps, env: IU })
+    const b = run({ ...none.deps, env: GATEWAY })
     await b.call('web.search', { query: 'q' })
     expect(b.usage[0]).toMatchObject({ cost: null, costSource: 'unknown' })
   })
 
   test('a 429 is retried once; a 5xx twice over falls back to Tavily, priced in credits', async () => {
     const once = net({ [SONAR_URL]: [status(429), json(sonarBody([hit(1)]))] })
-    const a = run({ ...once.deps, env: IU })
+    const a = run({ ...once.deps, env: GATEWAY })
     expect(((await a.call('web.search', { query: 'q' })) as { provider: string }).provider).toBe('sonar')
     expect(once.calls).toHaveLength(2)
 
     const down = net({ [SONAR_URL]: status(503, 'upstream'), 'https://api.tavily.com/search': json(tavilyBody(2)) })
-    const b = run({ ...down.deps, env: { ...IU, TAVILY_API_KEY: 't-key' } })
+    const b = run({ ...down.deps, env: { ...GATEWAY, TAVILY_API_KEY: 't-key' } })
     const out = (await b.call('web.search', { query: 'q' })) as {
       provider: string
       results: { url: string; publishedAt?: string }[]
@@ -177,7 +177,7 @@ describe('web.search', () => {
 
   test('Sonar with no search_results is a failure that falls back, and its call is still billed', async () => {
     const n = net({ [SONAR_URL]: json(sonarBody([])), 'https://api.tavily.com/search': json(tavilyBody(1)) })
-    const { call, usage } = run({ ...n.deps, env: { ...IU, TAVILY_API_KEY: 't' } })
+    const { call, usage } = run({ ...n.deps, env: { ...GATEWAY, TAVILY_API_KEY: 't' } })
     expect(((await call('web.search', { query: 'q' })) as { provider: string }).provider).toBe('tavily')
     expect(usage.map((u) => u.model)).toEqual(['sonar', 'tavily-search'])
   })
@@ -190,7 +190,7 @@ describe('web.search', () => {
 
   test('SEARCH_PROVIDER=tavily never calls Sonar; advanced is 2 credits; the response credits win', async () => {
     const n = net({ 'https://api.tavily.com/search': [json(tavilyBody(1, null)), json(tavilyBody(1, { credits: 5 }))] })
-    const { call, usage } = run({ ...n.deps, env: { ...IU, TAVILY_API_KEY: 't', SEARCH_PROVIDER: 'tavily' } })
+    const { call, usage } = run({ ...n.deps, env: { ...GATEWAY, TAVILY_API_KEY: 't', SEARCH_PROVIDER: 'tavily' } })
     await call('web.search', { query: 'q', depth: 'advanced' })
     await call('web.search', { query: 'q', depth: 'advanced' })
     expect(n.to(SONAR_URL)).toHaveLength(0)
@@ -213,7 +213,7 @@ describe('web.search', () => {
       [SONAR_URL]: status(500, 'sonar broke'),
       'https://api.tavily.com/search': status(500, 'tavily broke'),
     })
-    const { call } = run({ ...n.deps, env: { ...IU, TAVILY_API_KEY: 't' } })
+    const { call } = run({ ...n.deps, env: { ...GATEWAY, TAVILY_API_KEY: 't' } })
     const error = await failure(call('web.search', { query: 'q' }))
     expect(error.code).toBe('UPSTREAM_ERROR')
     expect(error.message).toContain('sonar')
@@ -231,14 +231,14 @@ describe('web.search', () => {
       },
       'https://api.tavily.com/search': json(tavilyBody(1)),
     })
-    const cap = createWebCapabilities({ ...n.deps, env: { ...IU, TAVILY_API_KEY: 't' } })[0]
+    const cap = createWebCapabilities({ ...n.deps, env: { ...GATEWAY, TAVILY_API_KEY: 't' } })[0]
     const error = await failure(cap.call({ query: 'q' }, { signal: controller.signal }))
     expect(error.code).toBe('CANCELLED')
     expect(n.to('https://api.tavily.com')).toHaveLength(0)
   })
 
   test('input bounds: maxResults 1..20, a query is required, unknown keys are refused', async () => {
-    const { call } = run({ ...net({}).deps, env: IU })
+    const { call } = run({ ...net({}).deps, env: GATEWAY })
     for (const bad of [
       { query: 'q', maxResults: 21 },
       { query: 'q', maxResults: 0 },

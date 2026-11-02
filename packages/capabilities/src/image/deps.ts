@@ -13,7 +13,7 @@ export const STREAM_MAX_MS = 30 * 60_000
 
 /** What the image capabilities are built from. Every field defaults to production; tests inject fakes. */
 export interface ImageDeps {
-  /** Where `IU_API_KEY`, `IU_BASE_URL` and the optional `REPLICATE_BASE_URL` are read, on each call. Default `process.env`. */
+  /** Where `AGW_GATEWAY_URL` and `AGW_API_SECRET` are read, on each call. Default `process.env`. */
   env?: Env
   fetch?: (url: string, init: RequestInit) => Promise<Response>
   /** Retry knobs of the package's helper (`withRetries`); tests set `backoffMs: 0`. */

@@ -432,7 +432,7 @@ describe('Llm usage', () => {
     const { llm, usages } = llmFor(
       port,
       route({
-        wire: 'iu-anthropic',
+        wire: 'anthropic',
         rate: { inputPerM: 1, outputPerM: 5, cacheReadPerM: 0.1, cacheWritePerM: 2, longPromptTokens: 2_000_000 },
       }),
     )
@@ -534,7 +534,7 @@ describe('Llm.call', () => {
   })
 
   test('the Anthropic wire returns "" on any incomplete stop, never a half-written text', async () => {
-    const anthropic = route({ wire: 'iu-anthropic' })
+    const anthropic = route({ wire: 'anthropic' })
     for (const stop of ['length', 'other'] as const) {
       const port = new FakePort([{ text: 'half a segment', stop, stopDetail: 'refusal' }])
       expect(await call(llmFor(port, anthropic).llm)).toBe('')
@@ -545,8 +545,8 @@ describe('Llm.call', () => {
 
   test('the route reaches the transport as wire, model and effort', async () => {
     const port = new FakePort([{ text: 'x', stop: 'complete' }])
-    await call(llmFor(port, route({ wire: 'iu-anthropic', model: 'fake-claude' })).llm)
-    expect(port.chats[0]).toMatchObject({ wire: 'iu-anthropic', model: 'fake-claude' })
+    await call(llmFor(port, route({ wire: 'anthropic', model: 'fake-claude' })).llm)
+    expect(port.chats[0]).toMatchObject({ wire: 'anthropic', model: 'fake-claude' })
   })
 })
 

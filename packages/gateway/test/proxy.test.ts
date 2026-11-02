@@ -618,7 +618,7 @@ describe('picking', () => {
 
 describe('usage row', () => {
   const costOf = (usage: unknown, alias: string) => {
-    const cost = costFromUsage('iu-anthropic', usage as never, claudeRate(alias))
+    const cost = costFromUsage('anthropic', usage as never, claudeRate(alias))
     return cost.usd as number
   }
 
@@ -1258,9 +1258,9 @@ describe('span', () => {
 
 describe('a credit request without a complete usage block', () => {
   const price = (input: number, output: number, alias = 'haiku') =>
-    costFromUsage('iu-anthropic', { input_tokens: input, output_tokens: output }, claudeRate(alias)).usd as number
+    costFromUsage('anthropic', { input_tokens: input, output_tokens: output }, claudeRate(alias)).usd as number
   const bodyBytes = (body: unknown) => new TextEncoder().encode(JSON.stringify(body)).byteLength
-  const costOfUsage = (usage: typeof USAGE) => costFromUsage('iu-anthropic', usage, claudeRate('haiku')).usd as number
+  const costOfUsage = (usage: typeof USAGE) => costFromUsage('anthropic', usage, claudeRate('haiku')).usd as number
 
   const expectEstimate = (gw: Harness, usd: number) => {
     const row = gw.rows().records[0]?.row

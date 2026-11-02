@@ -13,7 +13,7 @@ function door() {
     options: {
       tokens: new Map([['studio', TOKEN]]),
       image: {
-        env: { IU_API_KEY: 'test-key', IU_BASE_URL: 'https://iu.example.com/anthropic' },
+        env: { AGW_API_SECRET: 'test-key', AGW_GATEWAY_URL: 'http://127.0.0.1:7794' },
         fetch: async () => {
           calls.upstream++
           return new Response('{}', { status: 500 })

@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { chatStream, startFakeIu } from '@agent-workflows/capabilities/testing'
+import { chatStream, startFakeGateway } from '@agent-workflows/capabilities/testing'
 import { PlainCase, readCases } from '@agent-workflows/eval'
 import { createFactoryClassify } from '../src/workflows/factory-classify/index.ts'
 import { CASES_PATH } from '../src/workflows/factory-classify/module.ts'
@@ -26,7 +26,7 @@ const verdict = {
 
 let t: TestHost
 beforeAll(async () => {
-  const iu = startFakeIu({
+  const iu = startFakeGateway({
     chat: () => chatStream(JSON.stringify(verdict), { prompt_tokens: 900, completion_tokens: 60 }),
   })
   t = await startTestHost({

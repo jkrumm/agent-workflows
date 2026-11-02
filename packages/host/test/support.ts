@@ -1,6 +1,6 @@
 import { createCapabilities, createRegistry } from '@agent-workflows/capabilities'
-import { startFakeIu, chatStream, type FakeIuServer } from '@agent-workflows/capabilities/testing'
-import { iuTransports } from '@agent-workflows/capabilities'
+import { startFakeGateway, chatStream, type FakeGateway } from '@agent-workflows/capabilities/testing'
+import { gatewayTransports } from '@agent-workflows/capabilities'
 import { defineWorkflow, type Logger, type Middleware, type Runtime } from '@agent-workflows/runtime'
 import { Pool } from 'pg'
 import { z } from 'zod'
@@ -108,7 +108,7 @@ export async function startTestHost(
     extra?: HostWorkflow[]
     /** Read operations served beside the run operations (`host.reads`). */
     reads?: Record<string, HostOperation>
-    iu?: FakeIuServer
+    iu?: FakeGateway
     ping?: () => Promise<void>
     healthTimeoutMs?: number
     wrapStore?: (store: RunStore) => RunStore
@@ -125,7 +125,7 @@ export async function startTestHost(
   const { schema } = fresh
   const iu =
     options.iu ??
-    startFakeIu({
+    startFakeGateway({
       chat: () =>
         chatStream('A Smoke Title', {
           prompt_tokens: 50,
@@ -136,7 +136,7 @@ export async function startTestHost(
     })
   const registry = createRegistry(
     createCapabilities({
-      transports: iuTransports({ env: { IU_API_KEY: 'test-key', IU_BASE_URL: iu.baseUrl }, backoffMs: 0 }),
+      transports: gatewayTransports({ env: { AGW_API_SECRET: 'test-key', AGW_GATEWAY_URL: iu.url }, backoffMs: 0 }),
       env: {},
     }),
   )

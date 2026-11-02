@@ -46,7 +46,7 @@ export function createUpscale(deps: ResolvedImageDeps) {
     cli: { command: ['image-upscale'], hidden: true, defaultFormat: 'json' },
     async handler(input, ctx) {
       const route = deps.route('image.upscale' satisfies ImageRouteId)
-      const access = replicateAccess(deps)
+      const access = replicateAccess(deps, ctx)
       const source = await readInputImage(input.file, UPSCALE_LIMITS.maxImageBytes)
       // Checked on the header: nothing is decoded for a size a crafted header can inflate.
       const header = readHeader(source.bytes)

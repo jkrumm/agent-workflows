@@ -1,4 +1,5 @@
 import type { Effort } from '@agent-workflows/routes'
+import type { Attribution } from '../context.ts'
 
 /** Raw provider counts: `input` includes cache reads and writes, `output` includes reasoning tokens. */
 export interface Tokens {
@@ -7,6 +8,8 @@ export interface Tokens {
   cacheRead: number
   /** Tokens written to the prompt cache; absent on wires that report none. */
   cacheWrite?: number
+  /** The part of `cacheWrite` written with the 1 h TTL (priced at the 1 h rate); absent on wires that report none. */
+  cacheWrite1h?: number
   reasoning: number
 }
 
@@ -18,6 +21,8 @@ export interface ChatRequest {
   effort?: Effort
   /** Ask for a JSON object (JSON mode where the wire has one). Syntax only, never the schema. */
   json?: boolean
+  /** Sent to the gateway as `x-agw-*` headers (`gatewayHeaders`). */
+  attribution?: Attribution
 }
 
 export interface ChatResult {
@@ -43,7 +48,7 @@ export interface AttemptUsage {
 
 export type OnUsage = (usage: AttemptUsage) => void
 
-/** One text completion. `iu-openai` and `iu-anthropic` both implement it. Rejects, never throws synchronously. */
+/** One text completion. `iu-openai` and `anthropic` both implement it. Rejects, never throws synchronously. */
 export interface ChatPort {
   complete: (request: ChatRequest, signal: AbortSignal, onUsage?: OnUsage) => Promise<ChatResult>
 }
@@ -60,6 +65,8 @@ export interface DecisionRequest {
   model: string
   state: string
   questions: Record<string, DecisionQuestion>
+  /** Sent to the gateway as `x-agw-*` headers (`gatewayHeaders`). */
+  attribution?: Attribution
 }
 
 export interface DecisionResult {
@@ -72,7 +79,8 @@ export interface DecisionPort {
   decide: (request: DecisionRequest, signal: AbortSignal, onUsage?: OnUsage) => Promise<DecisionResult>
 }
 
-export interface IuTransports {
+/** The wires on the local gateway, which holds every provider key. */
+export interface GatewayTransports {
   openai: ChatPort
   anthropic: ChatPort
   decision: DecisionPort
