@@ -22,7 +22,7 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
 - 2026-11-02 18:20 owner signed spec v7 (argo `9fd63c7f`): decisions 1–4 as recommended, 5 deferred, plus §Insights
   (rule-based, numbers never model-written). Built beside Wave 8 as argo Wave 8, its own lead in the argo checkout.
 - 2026-11-02 18:10 owner: (1) `otel.agent` -> Haiku 5.5 high now (scores equal Sonnet; cost counts while over pace), in
-  Wave 8's next deploy (relayed to r11). (2) `research.agent` stays Sonnet medium. (3) `prose.review` stays DeepSeek
+  Wave 8's next deploy; live at `ec328a0` (otel run $0.0058, all Haiku rows on credit). (2) `research.agent` stays Sonnet medium. (3) `prose.review` stays DeepSeek
   (cross-lab, off the credit); `review.adversary` unchanged until review v2 removes it. (4) Spec v7 not yet signed: the
   owner is reviewing the mocks; Wave 7b waits. (5) Production pacing decided after 7 days of post-hotfix data (~11-09).
 - 2026-11-02 16:10 owner (hotfix ahead of Wave 6): review burns the credit (67 reviews in 2 days = $52.50, $0.78 each;
@@ -89,6 +89,8 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
   `docs/waves/handoff/STOP` (first line = reason) and commit.
 
 ## Obstacles noted
+- 2026-11-02 evening: mini load ~100 from non-agw processes (iOS simulator, VMs, weatherorb); local `make check` flakes on
+  timing tests, so Wave 8 gates merges on CI's `make check` (same command, hosted runner). For the owner, not ours.
 - 2026-10-27: agent-gateway MCP timed out at the mother's session start; the lead checks the `/review`
   door and falls back to `/code-review high` on Max if it stays down, noting it in Left behind.
 - 2026-10-27: `rd wave` numbers tabs from labelled "wave N" tabs only, not agent names; the mother was
