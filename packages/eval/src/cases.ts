@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { z } from 'zod'
@@ -129,12 +129,18 @@ export function readCases<T extends z.ZodType>(path: string, schema: T): z.infer
   return cases
 }
 
+/** The directory at 0700 whether or not it existed: `mkdirSync`'s mode does not apply to a directory that was there. */
+export function privateDir(dir: string): void {
+  mkdirSync(dir, { recursive: true, mode: 0o700 })
+  chmodSync(dir, 0o700)
+}
+
 /**
  * Writes `text` to `path` whole (mode 0600, parent 0700): to a temp file beside it, then a rename, so a reader or a
  * crash sees the old file or the new one, never half of either.
  */
 export function writeFileAtomic(path: string, text: string): void {
-  mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
+  privateDir(dirname(path))
   const temp = `${path}.${process.pid}.tmp`
   writeFileSync(temp, text, { mode: 0o600 })
   renameSync(temp, path)

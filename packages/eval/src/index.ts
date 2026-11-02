@@ -22,7 +22,7 @@ export {
   SPEND_METRICS,
   type Winner,
 } from './compare.ts'
-export { writeFileAtomic } from './cases.ts'
+export { privateDir, writeFileAtomic } from './cases.ts'
 export { aggregateCheck, aggregateReview } from './harness/aggregate.ts'
 export { type Exec, exec } from './harness/exec.ts'
 export { classifyPair, matchFindings } from './harness/match.ts'

@@ -1,4 +1,4 @@
-import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, statSync } from 'node:fs'
+import { appendFileSync, closeSync, existsSync, openSync, readFileSync, readSync, statSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 import {
   controlCase,
@@ -11,6 +11,7 @@ import {
   GtRejected,
   acceptRecord,
   gtPath,
+  privateDir,
   writeCases,
   writeFileAtomic,
 } from '@agent-workflows/eval'
@@ -93,7 +94,7 @@ const endsWithNewline = (path: string) => {
  */
 export function appendLabel(record: GtLabelRecord, env: Env): void {
   const path = gtPath('labels.jsonl', env)
-  mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
+  privateDir(dirname(path))
   const lead = existsSync(path) && !endsWithNewline(path) ? '\n' : ''
   appendFileSync(path, `${lead}${JSON.stringify(GtLabelRecord.parse(record))}\n`, { mode: 0o600 })
 }

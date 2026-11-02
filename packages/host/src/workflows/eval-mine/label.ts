@@ -9,12 +9,10 @@ import {
   type LabelOutput,
   type LabelerSeat,
 } from '@agent-workflows/eval'
+// The capability owns the version of its prompt, models and schema; the capabilities index does not export it yet.
+import { LABELER_VERSION } from '../../../../capabilities/src/capabilities/eval-label.ts'
 
-/**
- * The labeller version: bump when the labeller's prompt or model changes (the capability's, `eval.label`), so every
- * candidate is labelled again under it. A record under another version is ignored, never deleted.
- */
-export const LABELER_VERSION = '2026-11-02.1'
+export { LABELER_VERSION }
 
 /** The one capability the miner calls, once per seat; any registry that serves `eval.label` fits. */
 export interface LabelCaller {
