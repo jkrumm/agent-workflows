@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { priceSchema } from './price.ts'
+import { CLAUDE_RATES } from './table/claude.ts'
 
 /**
  * Transports. `opencode` is an agent step on the OpenCode host; the others are single calls. `iu-gemini` is IU's native
@@ -144,6 +145,10 @@ export const routeSchema = z
   .superRefine(effortRule)
   .refine((r) => r.contextLimit === undefined || r.wire === 'opencode', {
     message: 'contextLimit applies to opencode routes only (an agent session compacts; a single call has no session)',
+    path: ['contextLimit'],
+  })
+  .refine((r) => r.contextLimit === undefined || Object.hasOwn(CLAUDE_RATES, r.model), {
+    message: 'contextLimit needs a Claude model (the OpenCode server has a bounded row for those only)',
     path: ['contextLimit'],
   })
   .refine((r) => !r.fallback || (r.fallback.wire === 'opencode') === (r.wire === 'opencode'), {

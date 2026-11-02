@@ -28,8 +28,8 @@ export type OpenCodeMessage = {
  * total (OpenCode 2.0.32, `Session.Message.Compaction`). Those calls reach no assistant message, so a reader that only
  * counted assistants would leave out what they billed. A `running` compaction has no tokens yet and adds nothing.
  */
-export const carriesUsage = (message: { type?: string }): boolean =>
-  message.type === 'assistant' || message.type === 'compaction'
+export const carriesUsage = (message: { type?: string; status?: string }): boolean =>
+  message.type === 'assistant' || (message.type === 'compaction' && message.status !== 'running')
 
 const n = (value: number | null | undefined) => (typeof value === 'number' && Number.isFinite(value) ? value : 0)
 

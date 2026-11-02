@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { additiveTokens, type OpenCodeMessage, usageFromOpenCodeMessages } from '../src/index.ts'
+import { additiveTokens, carriesUsage, type OpenCodeMessage, usageFromOpenCodeMessages } from '../src/index.ts'
 import { cachedTurn, partlyPriced, toolTurns } from './fixtures/opencode-messages.ts'
 
 describe('usageFromOpenCodeMessages', () => {
@@ -106,6 +106,15 @@ describe('a compaction message carries its summary calls', () => {
     })
     expect(usage.cost).toBeCloseTo(0.005, 12)
     expect(usage.costSource).toBe('provider')
+  })
+
+  test('carriesUsage: assistant and settled compaction messages; not a running one, a user message or an idle', () => {
+    expect(carriesUsage({ type: 'assistant' })).toBe(true)
+    expect(carriesUsage({ type: 'compaction', status: 'completed' })).toBe(true)
+    expect(carriesUsage({ type: 'compaction', status: 'failed' })).toBe(true)
+    expect(carriesUsage({ type: 'compaction', status: 'running' })).toBe(false)
+    expect(carriesUsage({ type: 'user' })).toBe(false)
+    expect(carriesUsage({ type: 'idle' })).toBe(false)
   })
 
   test('a failed compaction that spent counts; a running one, or one that spent nothing, adds nothing', () => {
