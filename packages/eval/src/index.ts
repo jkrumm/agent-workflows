@@ -62,3 +62,16 @@ export {
   RejectReason,
   Sha,
 } from './gt.ts'
+export type { Confusion } from './gt-owner/stats.ts'
+export { agreement, cohenKappa, confusionTotal, wilson } from './gt-owner/stats.ts'
+export { sampleOf, samplePairs, shuffled } from './gt-owner/sample.ts'
+export { ManifestItem, PackManifest } from './gt-owner/manifest.ts'
+export { CASE_BAR, effectiveLabels, KAPPA_BAR, type SessionReport, scoreSession } from './gt-owner/score.ts'
+export {
+  type CaseItem,
+  type CodeLine,
+  type PageItem,
+  type PairItem,
+  renderSession,
+  type SessionPage,
+} from './gt-owner/page.ts'

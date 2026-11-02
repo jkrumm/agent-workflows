@@ -205,3 +205,35 @@ run (a fresh clone, a fresh session).
 `self-agreement` adds no prompt text either; it is N more cold runs of the new side per case (`--runs`, default
 2), tagged the same way, plus the judge on unsure pairs with `--judge`. Measure a set once and read the file; the
 `review` and `check` modes spend nothing extra for it.
+
+## Owner session
+
+The owner gives two hours once to check the review ground truth (`docs/review-v2.md` §Ground truth step 5,
+§Matching and judging Calibration): 70 mined cases (50 kept, 20 dropped, shown blind) and 100 judge pairs (half the
+judge called `match`, half preselected non-matches: right file, plausible, wrong defect). The pure parts live in
+`src/gt-owner/` (sampling, Wilson interval, Cohen's κ, the report, the HTML page); the workflows in
+`packages/host/src/workflows/eval-gt/`. Nothing here spends: no model call.
+
+1. **Build the pack.** After `agw eval run review --yes` has judged an arm, pass its eval run id(s):
+   `agw eval gt pack --eval-runs <runId> [--cases 50 --rejected 20 --pairs 100 --seed 1]`. It reads `cases.jsonl`,
+   `rejected.jsonl`, `labels.jsonl` and `candidates.jsonl` and the `cap.eval.judge` runs below those eval runs, and
+   writes `$AGW_EVAL_DIR/review-gt/owner/session.html` (one file, no network) and `owner/manifest.json` (the truth
+   behind each item, never in the page). When fewer judge-`match` pairs exist than half, all of them go in, non-matches
+   fill, and the output and the page say the shortfall.
+2. **Open it** (`file://`, any browser, on the laptop: copy the file over). One item at a time; `y` `n` `u` answer and
+   move on, `j`/`k` or the arrows move, `e` writes a note, "Unanswered only" filters. Answers save in the browser per
+   session; closing the tab loses nothing.
+3. **Export** downloads `owner-labels.jsonl` (`OwnerLabel` lines). It works offline and can be repeated.
+4. **Ingest.** The flag takes the file's *content*: `agw eval gt ingest --labels "$(cat owner-labels.jsonl)"`. Every line
+   is validated before anything is written; answers are appended to `owner-labels.jsonl` (a line already there is not
+   appended twice, an id answered again appends and the later line wins). The report: case precision with a Wilson 95 %
+   interval, what the filter lost (dropped candidates the owner calls real), pairs answered, agreement, κ (owner yes/no
+   against judge match/non-match, `unsure` excluded and counted), the confusion matrix, both bars, what is still
+   unanswered. Labels naming no item of the current session are counted and left out.
+
+What the bars decide:
+
+| Bar | Below it |
+|-|-|
+| kept cases ≥ 90 % right (yes / (yes + no)) | tighten the miner's filters and re-mine |
+| Cohen's κ ≥ 0.8 on the pairs | a second judge on another vendor; disagreements score as `unclear` |
