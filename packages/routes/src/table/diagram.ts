@@ -1,10 +1,10 @@
 import type { RouteEntry } from '../schema.ts'
-import { HARD } from './_shared.ts'
+import { FAST } from './_shared.ts'
 
 const routes = {
   // Diagram agent (Wave 7): one read-only session that answers the Excalidraw skeleton JSON; the host hydrates it in
-  // code. Judgment about layout and what to draw: the HARD tier (Sonnet).
-  'diagram.agent': { wire: 'opencode', ...HARD.agent },
+  // code. Wave 6 eval pick: the FAST tier (Haiku, no thinking), docs/evals/2026-11-02-claude-seats.md.
+  'diagram.agent': { wire: 'opencode', ...FAST.agent },
 } satisfies Record<string, RouteEntry>
 
 export default routes

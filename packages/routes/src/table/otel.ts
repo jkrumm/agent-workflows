@@ -1,11 +1,10 @@
 import type { RouteEntry } from '../schema.ts'
-import { DEEPSEEK_FLASH } from './_shared.ts'
+import { HARD } from './_shared.ts'
 
 const routes = {
-  // Otel agent (concept N7): one session querying HyperDX through the tool gate. Same model, wire and rate as
-  // `research.agent` (a tool loop over the same re-sent context); agent-gateway ran it as Sonnet on Max. The eval
-  // rule (docs/research/2026-10-29-wave7-ports.md) arms the HARD tier's Sonnet through a route override if this fails.
-  'otel.agent': { wire: 'opencode', ...DEEPSEEK_FLASH.agent, maxOutputTokens: 16_000 },
+  // Otel agent (concept N7): one session querying HyperDX through the tool gate. Moved from DeepSeek flash to the HARD
+  // tier (Sonnet) in Wave 6 (docs/evals/2026-11-02-claude-seats.md).
+  'otel.agent': { wire: 'opencode', ...HARD.agent },
 } satisfies Record<string, RouteEntry>
 
 export default routes

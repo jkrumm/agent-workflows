@@ -1,12 +1,10 @@
 import type { RouteEntry } from '../schema.ts'
-import { DEEPSEEK_FLASH } from './_shared.ts'
+import { HARD } from './_shared.ts'
 
 const routes = {
-  // Research agent (concept P3): research-gateway's lead and worker model, DeepSeek flash, which stays a cross-lab seat
-  // until the eval picks move it. Single calls on this model are priced by IU's `usage.cost`; an OpenCode session never
-  // sees that field and prices each message with the config's cost rows, so the route carries the rate IU's
-  // `usage.cost` was measured at (DEEPSEEK_FLASH_RATE, `_shared.ts`).
-  'research.agent': { wire: 'opencode', ...DEEPSEEK_FLASH.agent, maxOutputTokens: 16_000 },
+  // Research agent (concept P3): a long-read session. Moved from DeepSeek flash to the HARD tier (Sonnet) in Wave 6
+  // (docs/evals/2026-11-02-claude-seats.md).
+  'research.agent': { wire: 'opencode', ...HARD.agent },
 } satisfies Record<string, RouteEntry>
 
 export default routes

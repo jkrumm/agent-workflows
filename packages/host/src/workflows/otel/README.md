@@ -9,7 +9,7 @@ now (`30m`, `2h`, `3d`) or an absolute `<from>/<to>` of strict ISO-8601 instants
 dates alone, local times, impossible days and a reversed range are refused); without it the agent chooses (the run's journaled
 start time is in its prompt, since the agent has no clock).
 
-- **The agent** (`agents/otel`, route `otel.agent`: deepseek on OpenCode, `AGENT_FALLBACK`) holds three tools through the
+- **The agent** (`agents/otel`, route `otel.agent`: the HARD tier (Sonnet, effort medium) on OpenCode, `AGENT_FALLBACK`) holds three tools through the
   tool gate (`packages/host/README.md` §Tool gate): `hdx_tools`, `hdx_guide`, `hdx_query`, mapped to `hdx.tools|guide|query` (`otelGrant`). No
   shell, no `query.py`, and no SQL: `clickstack_sql` is outside `AGENT_READ_TOOLS` (CLI-only, see the capabilities
   README), so the builder tools are the whole path (legacy's "SQL last" step is gone, deliberately). `hdx.link` is not
@@ -51,4 +51,4 @@ Model and rate: `packages/routes/src/table/otel.ts` (the only home of model ids)
 
 | Route | Source seat | Wire |
 |-|-|-|
-| `otel.agent` | `otel` (Sonnet on Max; none on IU) | opencode |
+| `otel.agent` | `otel` (Sonnet on Max; none on IU); DeepSeek flash until Wave 6, then the HARD tier (docs/evals/2026-11-02-claude-seats.md) | opencode |

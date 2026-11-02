@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import { PROVIDER_ECHO, TABLE_MODELS } from './models.ts'
+import { CLAUDE_MODELS } from './pricing.ts'
 import { z } from 'zod'
 import { applyPatch, type PatchInput, parsePatch, RouteOverrideError, routesPatchSchema } from './overrides.ts'
 import { DEFAULT_ROUTES } from './registry.ts'
@@ -69,15 +70,16 @@ let servedOpencodeModels: ReadonlySet<string> | undefined
 
 /**
  * The models the OpenCode server's config serves: every model a route or fallback on the `opencode` wire names in the
- * table. The server is configured from the table once per spawn (`buildServerConfig`), so a patch can move an agent
- * route only among these.
+ * table, and every Claude model (`CLAUDE_MODELS`), so an arm can move an agent route to any of them. The server is
+ * configured from the table once per spawn (`buildServerConfig`), so a patch can move an agent route only among these.
  */
 export function opencodeModels(): ReadonlySet<string> {
-  servedOpencodeModels ??= new Set(
-    Object.values(DEFAULT_ROUTES).flatMap((route) =>
+  servedOpencodeModels ??= new Set([
+    ...Object.values(DEFAULT_ROUTES).flatMap((route) =>
       route.wire === 'opencode' ? [route.model, ...(route.fallback ? [route.fallback.model] : [])] : [],
     ),
-  )
+    ...CLAUDE_MODELS,
+  ])
   return servedOpencodeModels
 }
 
@@ -85,7 +87,7 @@ export function opencodeModels(): ReadonlySet<string> {
  * A patch moves a route only to a model the table names (`TABLE_MODELS`: the routes', the fallbacks', the Claude
  * models), on every wire: the gateway's records (`gatewayRecords`) and the price come from the table, so a new model goes
  * into the table first. On the `opencode` wire the model must also be one the OpenCode server serves (its opencode-wire
- * models), and `rate`, `maxOutputTokens` and `price` cannot be patched: the server's config, built from the table,
+ * models and the Claude models), and `rate`, `maxOutputTokens` and `price` cannot be patched: the server's config, built from the table,
  * prices and limits a model, not a route, so a patched one would not reach OpenCode.
  */
 function checkModels(id: string, patch: RoutePatch, base: RouteEntry) {
@@ -112,7 +114,7 @@ function checkModels(id: string, patch: RoutePatch, base: RouteEntry) {
     }
     if (part.model !== undefined && !opencodeModels().has(part.model)) {
       throw new RouteOverrideError(
-        `route "${id}"${where}: model "${part.model}" is not served by the OpenCode server (it serves the opencode-wire models of the route table)`,
+        `route "${id}"${where}: model "${part.model}" is not served by the OpenCode server (it serves the opencode-wire models of the route table and every Claude model)`,
       )
     }
   }

@@ -113,10 +113,17 @@ describe('podcast workflow', () => {
       expect(steps).not.toContain('revise:1')
       expect(room.count('review')).toBe(6)
 
-      // The research loop echoed the assistant message unchanged, provider fields included.
-      const second = room.rounds.find((m) => m.some((x) => x.role === 'tool'))
-      expect(second?.[2]).toMatchObject({ role: 'assistant', reasoning_content: 'opaque provider state' })
-      expect(second?.[3]).toMatchObject({ role: 'tool', tool_call_id: 'c1' })
+      // The research loop (Messages wire) echoed the assistant turn unchanged, thinking block included, and answered
+      // its tool use with a tool_result in the next user turn.
+      const second = room.rounds.find((m) => m.some((x) => x.role === 'assistant'))
+      expect(second?.[1]).toMatchObject({
+        role: 'assistant',
+        content: [
+          { type: 'thinking', thinking: 'opaque provider state' },
+          { type: 'tool_use', id: 'c1' },
+        ],
+      })
+      expect(second?.[2]).toMatchObject({ role: 'user', content: [{ type: 'tool_result', tool_use_id: 'c1' }] })
 
       // The editor's load-bearing fact ran at standard depth and closed its open question.
       expect(research.queries).toEqual(['standard:What is OKR?'])

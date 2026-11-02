@@ -1,5 +1,7 @@
 import { fileURLToPath } from 'node:url'
 import {
+  CLAUDE_MODELS,
+  claudeRate,
   EFFORTS,
   fallbackRoute,
   type PatchInput,
@@ -55,7 +57,8 @@ export function gatewayFromEnv(env: Env = process.env): { url: string; token: st
 
 /**
  * The `opencode`-wire routes of the table, each followed by its fallback when it has one: the models the server config
- * serves (`opencodeModels` in `@agent-workflows/routes` is the same set, which an arm's patch is checked against).
+ * serves besides the Claude models, which it serves all of (`opencodeModels` in `@agent-workflows/routes` is the whole
+ * set, which an arm's patch is checked against).
  */
 export function opencodeRoutes(): ResolvedRoute[] {
   return routeIds()
@@ -108,8 +111,11 @@ function refFor(route: ResolvedRoute): ModelRef {
   return model
 }
 
-function modelRow(route: ResolvedRoute, provider: string) {
-  const rate = rateFor(route)
+/** What a model row is built from: a route's, or a bare Claude model with its table rate. */
+type RowSource = Pick<ResolvedRoute, 'model' | 'maxOutputTokens'> & { rate?: Rate | null }
+
+function modelRow(route: RowSource, provider: string) {
+  const rate = route.rate ?? null
   return {
     name: route.model,
     // The gateway may serve this from IU, which answered the `thinking-binding-controls` beta with a 503 for EU Haiku
@@ -150,10 +156,11 @@ function variantSettings(effort: string, provider: string): Record<string, unkno
 }
 
 /**
- * `OPENCODE_CONFIG_CONTENT`: the three providers with every `opencode`-wire route's model and its fallback's, each with
- * every effort variant it can run (`EFFORTS`; a Sonnet has no `none`), so a run whose arm moves an agent route to
- * another of these models or effort opens its session on the running server, without a restart. Each model's row takes
- * the rate and output limit of the first route naming it (the table names one rate per model). The
+ * `OPENCODE_CONFIG_CONTENT`: the three providers with every `opencode`-wire route's model and its fallback's, and every
+ * Claude model (`CLAUDE_MODELS`, priced with `claudeRate`, Opus included though no route runs it), each with every
+ * effort variant it can run (`EFFORTS`; a Sonnet has no `none`), so a run whose arm moves an agent route to another of
+ * these models or effort opens its session on the running server, without a restart. Each model's row takes the rate
+ * and output limit of the first route naming it (the table names one rate per model). The
  * attribution plugin (`options.plugin`, an absolute directory), no updates, no share. The only credential is the door
  * token, by reference to the server's env.
  * The Anthropic leg sends `x-agw-fallback: none`: with no credit pool left the gateway answers a 402 and the route's own
@@ -174,6 +181,10 @@ export function buildServerConfig(options: { plugin?: string } = {}): Record<str
     const provider = providerFor(route.model)
     const rows = models[provider] as Record<string, unknown>
     rows[route.model] ??= modelRow(route, provider)
+  }
+  for (const model of CLAUDE_MODELS) {
+    const rows = models[PROVIDER_ANTHROPIC] as Record<string, unknown>
+    rows[model] ??= modelRow({ model, rate: claudeRate(model) }, PROVIDER_ANTHROPIC)
   }
   return {
     update: 'disable',

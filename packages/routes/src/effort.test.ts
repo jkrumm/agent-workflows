@@ -75,11 +75,11 @@ describe('Sonnet at effort none is a configuration error', () => {
   })
 
   test('an arm putting a DeepSeek route on an alias effort is refused at admission, naming the route, the family and the levels', () => {
-    const arm = { routes: { 'research.agent': { effort: 'medium' } } }
+    const arm = { routes: { 'prose.review': { effort: 'medium' } } }
     expect(() => validateArm(arm)).toThrow(RouteOverrideError)
     expect(() => validateArm(arm)).toThrow(
-      /research\.agent.*a DeepSeek model cannot run at effort medium: use none, low, high or max/s,
+      /prose\.review.*a DeepSeek model cannot run at effort medium: use none, low, high or max/s,
     )
-    expect(validateArm({ routes: { 'research.agent': { effort: 'max' } } })).toBeDefined()
+    expect(validateArm({ routes: { 'prose.review': { effort: 'max' } } })).toBeDefined()
   })
 })

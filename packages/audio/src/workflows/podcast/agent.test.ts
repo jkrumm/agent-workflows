@@ -378,17 +378,24 @@ describe('segment agent', () => {
     ).toContain('out of range')
   })
 
-  test('the write route (GPT-6.1 family) runs the agent loop on the Responses API, a DeepSeek route on chat completions', async () => {
+  test('the write route (Claude, Messages wire) runs the loop on Messages, a GPT route on Responses, another model on chat completions', async () => {
+    const messages = new ScriptedPort([plainReply('kein Tool')])
+    expect((await rejected(draftWith(messages, undefined, { resolve: resolvePodcastRoute }))).message).toMatch(
+      /without a measured draft/,
+    )
+    expect(messages.rounds[0]?.api).toBe('messages')
+
+    // podcast.review.b is a GPT route on the chat wire: the same loop, pinned to it, goes over the Responses API.
     const responses = new ScriptedPort([plainReply('kein Tool')])
-    expect((await rejected(draftWith(responses, undefined, { resolve: resolvePodcastRoute }))).message).toMatch(
+    const onGpt = () => resolvePodcastRoute('podcast.review.b')
+    expect((await rejected(draftWith(responses, undefined, { resolve: onGpt }))).message).toMatch(
       /without a measured draft/,
     )
     expect(responses.rounds[0]?.api).toBe('responses')
 
-    // podcast.research is a DeepSeek route: the same loop, pinned to it, goes over chat completions.
+    // A model that is neither Claude nor GPT goes over chat completions.
     const chat = new ScriptedPort([plainReply('kein Tool')])
-    const onDeepSeek = () => resolvePodcastRoute('podcast.research')
-    expect((await rejected(draftWith(chat, undefined, { resolve: onDeepSeek }))).message).toMatch(
+    expect((await rejected(draftWith(chat, undefined, { resolve: chatRoute }))).message).toMatch(
       /without a measured draft/,
     )
     expect(chat.rounds[0]?.api).toBe('chat')
