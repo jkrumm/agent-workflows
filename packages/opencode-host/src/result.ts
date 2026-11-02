@@ -2,8 +2,10 @@
 // format, so a JSON step's location gets one plugin tool, `submit_result`, whose input schema is the step's JSON Schema:
 // OpenCode validates every call against it and hands a failed one back to the model, and the step's output is the
 // input of the turn's last completed call.
+import { createHash } from 'node:crypto'
 import { type Json, WorkflowError } from '@agent-workflows/runtime'
 import type { AgentDefinition } from './locations.ts'
+import { canonicalInput } from './session.ts'
 
 export const RESULT_TOOL = 'submit_result'
 /** The plugin's file under the location's `.opencode/plugins/`. */
@@ -13,8 +15,12 @@ export const WRAP_KEY = 'result'
 
 type JsonObject = { [key: string]: Json }
 
-/** What a JSON step's tool takes: the schema it offers, and whether the step's value sits under `result` in it. */
-export type ResultTool = { schema: JsonObject; wrapped: boolean }
+/**
+ * What a JSON step's tool takes: the schema it offers, whether the step's value sits under `result` in it, and the
+ * schema's digest (sha256 of its canonical JSON, 16 hex), which the handle carries as the marker of a session that has
+ * the tool.
+ */
+export type ResultTool = { schema: JsonObject; wrapped: boolean; digest: string }
 
 const isObject = (value: unknown): value is JsonObject =>
   value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -22,43 +28,62 @@ const isObject = (value: unknown): value is JsonObject =>
 /** A root a tool's arguments can be: an object type, and no union or composition at the top (Anthropic and OpenAI). */
 const ROOT_COMBINATORS = ['anyOf', 'oneOf', 'allOf', 'not', 'if', 'enum', 'const'] as const
 
-/** A `$ref` to the document root (`#`): the schema recurses into itself, and moving it under `result` would break it. */
-function refersToRoot(value: Json): boolean {
-  if (Array.isArray(value)) return value.some(refersToRoot)
-  if (!isObject(value)) return false
-  return Object.entries(value).some(([k, v]) => (k === '$ref' && v === '#') || refersToRoot(v))
+/** Local refs that still resolve once the schema sits under `result`: the definitions move up with it. */
+const MOVABLE_REF = /^#\/(\$defs|definitions)\//
+
+/**
+ * The first local `$ref` that would break under `result`: `#` (the schema recurses into itself) or a pointer into the
+ * schema's own tree (`#/properties/…`, `#/items`). Refs into `$defs` or `definitions` stay valid; remote refs are not
+ * touched.
+ */
+function brokenRef(value: Json): string | undefined {
+  if (Array.isArray(value)) return value.map(brokenRef).find((r) => r !== undefined)
+  if (!isObject(value)) return undefined
+  for (const [key, v] of Object.entries(value)) {
+    if (key === '$ref' && typeof v === 'string' && v.startsWith('#') && !MOVABLE_REF.test(v)) return v
+    const inner = brokenRef(v)
+    if (inner !== undefined) return inner
+  }
+  return undefined
 }
+
+const digestOf = (schema: JsonObject) => createHash('sha256').update(canonicalInput(schema)).digest('hex').slice(0, 16)
 
 /**
  * The step's JSON Schema as the tool's input. An object root is offered as it is (without `$schema`); any other root
  * (an array, a string, a union) is wrapped as `{ result: <schema> }` with its `$defs` moved up, and `wait` unwraps it.
- * Refused, naming the agent and why: no schema, a schema that is not an object, a non-object root that refers to
- * itself.
+ * Refused, naming the agent and why: no schema (with the runtime's conversion error when it has one), a schema that is
+ * not an object, a non-object root with a local `$ref` that would not resolve under `result`.
  */
-export function resultTool(agent: string, schema: Json | undefined): ResultTool {
+export function resultTool(agent: string, spec: { schema?: Json; schemaError?: string }): ResultTool {
   const refuse = (why: string) =>
     new WorkflowError('error', `agent "${agent}": a JSON step cannot return its output through ${RESULT_TOOL}: ${why}`)
+  const { schema, schemaError } = spec
   if (schema === undefined) {
-    throw refuse('the step has no output schema, or it cannot be expressed as JSON Schema')
+    throw refuse(
+      schemaError === undefined
+        ? 'the step has no output schema'
+        : `its output schema cannot be expressed as JSON Schema (${schemaError})`,
+    )
   }
   if (!isObject(schema)) throw refuse('the output schema is not a JSON Schema object')
   const { $schema: _meta, ...rest } = schema
   const objectRoot = rest.type === 'object' && !ROOT_COMBINATORS.some((k) => k in rest)
-  if (objectRoot) return { schema: rest, wrapped: false }
-  if (refersToRoot(rest))
-    throw refuse('its root is not an object and refers to itself ($ref "#"), so it cannot be wrapped')
-  const { $defs, definitions, ...inner } = rest
-  return {
-    schema: {
-      type: 'object',
-      properties: { [WRAP_KEY]: inner },
-      required: [WRAP_KEY],
-      additionalProperties: false,
-      ...($defs === undefined ? {} : { $defs }),
-      ...(definitions === undefined ? {} : { definitions }),
-    },
-    wrapped: true,
+  if (objectRoot) return { schema: rest, wrapped: false, digest: digestOf(rest) }
+  const ref = brokenRef(rest)
+  if (ref !== undefined) {
+    throw refuse(`its root is not an object, and its $ref ${JSON.stringify(ref)} would not resolve once wrapped`)
   }
+  const { $defs, definitions, ...inner } = rest
+  const wrapped: JsonObject = {
+    type: 'object',
+    properties: { [WRAP_KEY]: inner },
+    required: [WRAP_KEY],
+    additionalProperties: false,
+    ...($defs === undefined ? {} : { $defs }),
+    ...(definitions === undefined ? {} : { definitions }),
+  }
+  return { schema: wrapped, wrapped: true, digest: digestOf(wrapped) }
 }
 
 const DESCRIPTION =
@@ -109,7 +134,12 @@ export function withResultTool(def: AgentDefinition, tool: ResultTool): AgentDef
   }
 }
 
-/** The step's output from the tool's input: unwrapped when the schema was wrapped. */
-export function resultValue(input: JsonObject, wrapped: boolean): Json {
-  return wrapped ? (input[WRAP_KEY] ?? null) : input
+/** The step's output from the tool's input: unwrapped when the schema was wrapped, which needs the `result` key. */
+export function resultValue(agent: string, input: JsonObject, wrapped: boolean): Json {
+  if (!wrapped) return input
+  const value = input[WRAP_KEY]
+  if (value === undefined) {
+    throw new WorkflowError('invalid_output', `agent "${agent}": its ${RESULT_TOOL} call has no "${WRAP_KEY}" key`)
+  }
+  return value
 }

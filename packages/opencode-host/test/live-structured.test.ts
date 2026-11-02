@@ -94,6 +94,7 @@ test.skipIf(!live)(
         key: 'live:again',
         attempt: 1,
         attribution: attributionOf('live', 'again'),
+        schema: SCHEMA, // a continue answers with the opened step's schema
       })
       await host.prompt(next, 'Now submit an empty findings list through submit_result.')
       const second = await host.wait(next, wait)

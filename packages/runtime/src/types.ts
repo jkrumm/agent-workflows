@@ -117,6 +117,8 @@ export type AgentOpenSpec = {
    * that returns structured output offers it to the agent; the runtime's zod parse of the result stays the last check.
    */
   schema?: Json
+  /** Why the conversion of `output` to `schema` failed, when it did: a host that needs the schema names it. */
+  schemaError?: string
   /** Who the step's model calls are for: the host hands it to the gateway with them. */
   attribution: Attribution
 }
@@ -171,6 +173,10 @@ export type AgentFollowUpSpec = {
   attempt: number
   /** The continuing step's, not the step that opened the session. */
   attribution: Attribution
+  /** The continuing step's output schema, as `AgentOpenSpec.schema`: a host checks it against the session's. */
+  schema?: Json
+  /** As `AgentOpenSpec.schemaError`. */
+  schemaError?: string
 }
 
 export type Ctx = {
