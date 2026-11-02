@@ -316,7 +316,7 @@ runs_sql="select run_id, source, lane, billing, coalesce(account, ''), coalesce(
 # The outbox's view of one run: its ended steps with usage, how many are not synced yet, how many failed to sync.
 synced_sql="select count(*), count(*) filter (where argo_synced_at is null and argo_error is null), count(*) filter (where argo_error is not null)
   from \"$SCHEMA\".steps where run_id = :'id' and status in ('done', 'failed', 'cancelled')
-  and (tokens_input > 0 or tokens_output > 0 or tokens_cache_read > 0 or tokens_cache_write > 0 or tokens_reasoning > 0 or cost is not null)"
+  and (tokens_input > 0 or tokens_output > 0 or tokens_cache_read > 0 or tokens_cache_write > 0 or tokens_reasoning > 0 or cost > 0)"
 # The first problem of one gateway row, or nothing.
 row_problem() {  # $1 lane, $2 billing, $3 account, $4 api_key, $5 workflow, $6 step, $7 cost
   [[ "$1" == "agw_workflow" ]] || { print -r -- "lane '$1', expected agw_workflow"; return; }

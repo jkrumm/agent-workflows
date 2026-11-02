@@ -3,7 +3,7 @@ import type { Ctx, Usage } from '../context.ts'
 
 /**
  * What a call cost, in agent-gateway's `usage` field names (iris reads `usage.costUsd`). `costUsd` is `null` when any
- * billed attempt has no price, never a partial sum; it is also `null` when the provider returned no usage at all.
+ * billed attempt has no price, never a partial sum; a call with no billed attempt at all is free: `0`.
  */
 export const callUsageSchema = z.object({
   inputTokens: z.int().nonnegative(),
@@ -36,7 +36,7 @@ export function trackUsage(ctx: Ctx): { ctx: Ctx; total: () => CallUsage } {
         reasoningTokens: sum((u) => u.tokens.reasoning),
         totalTokens: inputTokens + outputTokens,
         cacheReadTokens: sum((u) => u.tokens.cacheRead),
-        costUsd: calls.length > 0 && calls.every((u) => u.cost !== null) ? sum((u) => u.cost ?? 0) : null,
+        costUsd: calls.every((u) => u.cost !== null) ? sum((u) => u.cost ?? 0) : null,
       }
     },
   }
