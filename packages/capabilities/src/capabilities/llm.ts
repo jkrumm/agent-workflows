@@ -1,6 +1,7 @@
 import type { LlmDeps } from '../llm/model-call.ts'
 import { createClassify } from './classify.ts'
 import { createDecide } from './decide.ts'
+import { createDigest } from './digest.ts'
 import { createFactoryClassify } from './factory-classify.ts'
 import { createNarrativeCompose } from './narrative-compose.ts'
 import { createOverviewClassify } from './overview-classify.ts'
@@ -27,5 +28,6 @@ export function createLlmCapabilities(deps: LlmDeps) {
     createNarrativeCompose(deps),
     createOverviewClassify(deps),
     createFactoryClassify(deps),
+    createDigest(deps),
   ] as const
 }

@@ -65,7 +65,7 @@ A text model is chosen once per role, in `src/table/_shared.ts`, and a route spr
 
 | Seat | Model today | Routes |
 |-|-|-|
-| `TRIVIAL` | Haiku 5.5, effort none | `cheap.classify`, `cheap.title`, `factory.classify`, `audio.tts.prep` (the prep follows the route's wire), the image enhance planner (effort high) |
+| `TRIVIAL` | Haiku 5.5, effort none | `cheap.classify`, `cheap.title`, `factory.classify`, `digest.items`, `audio.tts.prep` (the prep follows the route's wire), the image enhance planner (effort high) |
 | `EASY` | Haiku 5.5, effort high | `cheap.summarize`, `cheap.extract`, `overview.classify`, `triage`, `review.router`, `review.ocr`, `check`, `brain.agent` |
 | `STRONG` | Sonnet 5.5, effort medium | `review.angle`, `review.angle.deep`, `review.synthesis`, `prose.write`, `narrative`, the diagram and retro agents |
 | `CHEAP` | DeepSeek flash | research, otel, the podcast stages, prose review |

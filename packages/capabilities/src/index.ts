@@ -10,6 +10,23 @@ export {
   MAX_OVERVIEW_FACTS_CHARS,
   RECOMMENDATIONS,
 } from './capabilities/overview-classify.ts'
+// The `digest` workflow shares the digest seat's item and answer schemas.
+export {
+  buildDigestPrompt,
+  checkAnswers,
+  DIGEST_ANSWERS,
+  DIGEST_KINDS,
+  DIGEST_TEXT_LIMITS,
+  digestInput,
+  digestOutput,
+  MAX_DIGEST_ITEMS,
+  REPLY_KINDS,
+  type DigestInput,
+  type DigestItem,
+  type DigestKind,
+  type DigestOutput,
+  type DigestResult,
+} from './capabilities/digest.ts'
 // The `factory-classify` workflow shares the classify seat's vocabulary and input limits.
 export {
   CLASSES,
