@@ -76,8 +76,8 @@ export interface SmokeRouteDeps {
 
 /**
  * `smoke.route`: one live call on one route, so a changed route is proved by the row it leaves
- * (`scripts/live-routes.sh`). A single-call route gets one completion on its own wire with no fallback (a balance failure
- * fails the run: the row must be the route's model); an agent route gets one agent step. The prompt is fixed.
+ * (`scripts/live-routes.sh`). A single-call route gets one completion on its own wire with no fallback and no retry (the probe is one billed call; a balance failure,
+ * empty text or a stop that is not complete fails the run: the row must be the route's model); an agent route gets one agent step. The prompt is fixed.
  */
 export function createSmokeRoute(deps: SmokeRouteDeps): HostWorkflow {
   const workflow = defineWorkflow({
@@ -101,22 +101,34 @@ export function createSmokeRoute(deps: SmokeRouteDeps): HostWorkflow {
         return { route: id, model: route.model, wire: route.wire, text }
       }
       const port = route.wire === 'iu-openai' ? deps.transports.openai : deps.transports.anthropic
-      const { text } = await ctx.step('complete', async ({ addUsage, signal, attribution }) => {
-        const effort = route.effort
-        const result = await port.complete(
-          {
-            model: route.model,
-            prompt: COMPLETE_PROMPT,
-            effort,
-            maxOutputTokens:
-              route.maxOutputTokens ?? (effort && effort !== 'none' ? MAX_OUTPUT_WITH_EFFORT : MAX_OUTPUT),
-            ...(attribution ? { attribution } : {}),
-          },
-          signal,
-          (attempt) => addUsage(usageOf(route, attempt)),
-        )
-        return { text: result.text }
-      })
+      const { text, stop, stopDetail } = await ctx.step(
+        'complete',
+        async ({ addUsage, signal, attribution }) => {
+          const effort = route.effort
+          const result = await port.complete(
+            {
+              model: route.model,
+              prompt: COMPLETE_PROMPT,
+              effort,
+              maxOutputTokens:
+                route.maxOutputTokens ?? (effort && effort !== 'none' ? MAX_OUTPUT_WITH_EFFORT : MAX_OUTPUT),
+              ...(attribution ? { attribution } : {}),
+            },
+            signal,
+            (attempt) => addUsage(usageOf(route, attempt)),
+          )
+          return {
+            text: result.text,
+            stop: result.stop,
+            ...(result.stopDetail ? { stopDetail: result.stopDetail } : {}),
+          }
+        },
+        { retry: { attempts: 1 } },
+      )
+      if (stop !== 'complete') {
+        throw new WorkflowError('invalid_output', `${id} did not finish its answer: stop "${stopDetail ?? stop}"`)
+      }
+      if (text.trim() === '') throw new WorkflowError('invalid_output', `${id} answered with empty text`)
       return { route: id, model: route.model, wire: route.wire, text }
     },
   })

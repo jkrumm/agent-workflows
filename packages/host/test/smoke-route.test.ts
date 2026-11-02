@@ -50,6 +50,31 @@ describe('smoke.route over HTTP', () => {
     expect(Number(rows[0].cost)).toBeGreaterThan(0)
   })
 
+  test('empty text, a truncated answer and a refusal fail the run, with one transport call each', async () => {
+    const tokens = { input: 20, output: 4, cacheRead: 0, reasoning: 0 }
+    for (const reply of [
+      { text: '   ' },
+      { text: 'half a sent', stop: 'length' as const },
+      { text: 'no', stop: 'other' as const, stopDetail: 'refusal' },
+    ]) {
+      const bad = fakeTransports({ openai: [{ ...reply, tokens, cost: null }] })
+      const host = await startTestHost({ prefix: 'smokeroutebad', extra: [createSmokeRoute({ transports: bad })] })
+      try {
+        const res = host.json(
+          await host.call('/workflows/smoke/route', {
+            body: { route: openai.id },
+            headers: { prefer: 'wait=20' },
+          }),
+        )
+        const { body } = await res
+        expect(body).toMatchObject({ status: 'failed' })
+        expect(bad.chatCalls).toHaveLength(1)
+      } finally {
+        await host.close()
+      }
+    }
+  })
+
   test('unknown routes and media routes are a 400 that names where they are covered', async () => {
     const unknown = await run('no.such.route')
     expect(unknown.status).toBe(400)

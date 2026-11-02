@@ -48,3 +48,15 @@ describe('loadAgentDefinitions', () => {
     expect(() => loadAgentDefinitions(agentsDir({ 'a/AGENTS.md': 'x', 'a/agent.json': '{"model":"x"}' }))).toThrow()
   })
 })
+
+describe('the smoke agent', () => {
+  test('loads through the real loader with no tools: the read-only allows are denied again', () => {
+    const smoke = loadAgentDefinitions(join(import.meta.dir, '../../../agents')).find((d) => d.name === 'smoke')
+    expect(smoke).toBeDefined()
+    expect(smoke?.agentsMd).toContain('no tools')
+    expect(smoke?.permissions?.shell).toBeUndefined()
+    const rules = smoke?.permissions?.rules ?? []
+    expect(rules.every((rule) => rule.effect === 'deny')).toBe(true)
+    expect(rules.map((rule) => rule.action).sort()).toEqual(['glob', 'grep', 'read', 'skill'])
+  })
+})

@@ -7,7 +7,8 @@
 # No arguments: every route on the `anthropic` or `opencode` wire, plus every `iu-openai` text route (no `price`), read
 # from `agw routes`. Media and decision routes are `make verify`'s and their capabilities'. Each route runs as
 # `AGW_PURPOSE=verify agw smoke route <id>`, four at a time. Then, within LIVE_ROUTES_POLL_SECS (120), for each run:
-#   - usage.records has a source='gateway' row of the run with the route's model, cost_usd not null, lane 'agw_workflow';
+#   - usage.records has a source='gateway' row of the run with outcome 'ok', the route's concrete model as the served
+#     `model` (a Claude alias resolves to its id), cost_usd not null, lane 'agw_workflow';
 #   - the run's agw.runs row is 'done' with a cost.
 # Prints route | model | billing | account | input | cache read | output | cost | run id, and exits 1 naming each route
 # that failed. It costs cents (DeepSeek routes included) and never prints a key.
@@ -56,14 +57,22 @@ if (( $# == 0 )); then
 else
   allowed=("${(@f)$(print -r -- "$table" | jq -r "$probe_filter")}")
   ids=("$@")
+  typeset -A given
   for id in $ids; do
+    [[ -z "${given[$id]:-}" ]] || die "$id is given more than once"
+    given[$id]=1
     (( ${allowed[(Ie)$id]} )) || die "$id is not a probeable route (known: ${(j: :)allowed})"
   done
 fi
 ids=(${ids:#})
 (( ${#ids} > 0 )) || die "no routes to probe"
-typeset -A model_of
-for id in $ids; do model_of[$id]=$(print -r -- "$table" | jq -r --arg id "$id" '.routes[$id].model'); done
+# The route's concrete model: a Claude alias resolves to its id (CLAUDE_ALIASES in packages/routes/src/table/claude.ts),
+# because the gateway row's `model` is the served model.
+typeset -A model_of alias_of=(haiku claude-haiku-5-5 sonnet claude-sonnet-5-5 opus claude-opus-5-5)
+for id in $ids; do
+  m=$(print -r -- "$table" | jq -r --arg id "$id" '.routes[$id].model')
+  model_of[$id]=${alias_of[$m]:-$m}
+done
 
 work=$(mktemp -d "${TMPDIR:-/tmp}/agw-live-routes.XXXXXX") || die "cannot create a temp dir"
 trap 'rm -rf "$work"' EXIT
@@ -91,6 +100,9 @@ password=$(secrets-run read "$PG_PASSWORD_REF" 2>/dev/null)
 usage_password=$(secrets-run read "$USAGE_PG_PASSWORD_REF" 2>/dev/null)
 [[ -n "$usage_password" ]] || die "cannot read $USAGE_PG_PASSWORD_REF through secrets-run"
 psql_err="$work/psql.err"
+# Each psql call is bounded under the polling deadline: a connect and a statement timeout of at most 10s (POLL_SECS if less).
+bound=$(( POLL_SECS < 10 ? POLL_SECS : 10 )); (( bound >= 1 )) || bound=1
+export PGCONNECT_TIMEOUT=$bound PGOPTIONS="-c statement_timeout=$(( bound * 1000 ))"
 journal() {  # SQL on stdin; -v bindings as arguments
   local sql=$1; shift
   PGPASSWORD="$password" psql -h 127.0.0.1 -U agent_workflows -d agent_workflows -AtF '|' -v ON_ERROR_STOP=1 "$@" \
@@ -106,7 +118,7 @@ gateway_sql="select count(*), coalesce(string_agg(distinct billing, ','), ''),
     coalesce(string_agg(distinct coalesce(nullif(account, ''), api_key, ''), ','), ''),
     coalesce(sum(input_tokens), 0), coalesce(sum(cache_read_tokens), 0), coalesce(sum(output_tokens), 0), coalesce(sum(cost_usd)::text, '')
   from usage.records
-  where source = 'gateway' and run_id = :'run' and lane = 'agw_workflow' and cost_usd is not null and (model = :'model' or model_raw = :'model')"
+  where source = 'gateway' and run_id = :'run' and lane = 'agw_workflow' and cost_usd is not null and outcome = 'ok' and model = :'model'"
 seen_sql="select coalesce(string_agg(coalesce(model, '?') || ' lane=' || coalesce(lane, '?') || ' cost=' || coalesce(cost_usd::text, 'null'), '; '), '')
   from usage.records where source = 'gateway' and run_id = :'run'"
 run_sql="select status, coalesce(cost::text, '') from \"$SCHEMA\".runs where id = :'run'"
@@ -133,7 +145,7 @@ while :; do
     reasons=()
     if (( ! gateway_ok )); then
       seen=$(usage "$seen_sql" -v "run=$run") || exit 1
-      reasons+=("no source='gateway' row with model $model, cost_usd and lane agw_workflow (saw: ${seen:-none})")
+      reasons+=("no source='gateway' row with outcome ok, model $model, cost_usd and lane agw_workflow (saw: ${seen:-none})")
     fi
     (( journal_ok )) || reasons+=("run is '${r_status:-missing}' with cost '${r_cost:-null}' in $SCHEMA.runs")
     why[$id]="${(j:; :)reasons}"
