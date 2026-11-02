@@ -194,6 +194,30 @@ function modelFromPath(path: string): string | null {
   return replicate?.[1] ?? null
 }
 
+/** A provider prefix IU puts before a model in its echo (`openai.`, `deepseek/`, `vertex_ai_eu/`): one segment. */
+const PROVIDER_PREFIX = /^[A-Za-z0-9_-]+$/
+
+/**
+ * The row's `model` and `model_raw`. IU echoes some models behind a provider prefix (`openai.<model>`); when the
+ * echo is the requested concrete model after `<prefix>/` or `<prefix>.`, the row names the requested id and `model_raw`
+ * keeps the echo. Otherwise `model` is the echo, else the request, and `model_raw` the name the caller sent.
+ */
+function rowModel(
+  echo: string | null,
+  x: { requestedModel: string | null; model: string | null },
+): { model: string | null; model_raw: string | null } {
+  const requested = x.model
+  if (echo !== null && requested !== null && echo.length > requested.length + 1 && echo.endsWith(requested)) {
+    const prefix = echo.slice(0, echo.length - requested.length)
+    const separator = prefix.at(-1)
+    if ((separator === '/' || separator === '.') && PROVIDER_PREFIX.test(prefix.slice(0, -1))) {
+      return { model: requested, model_raw: echo }
+    }
+  }
+  const model = echo ?? requested
+  return { model, model_raw: x.requestedModel ?? model }
+}
+
 /** Every use of a session id (pick, binding, row, span) takes this form. */
 function boundedSession(session: string | null): string | null {
   if (session === null || session.length <= MAX_CALLER_VALUE_CHARS) return session
@@ -319,10 +343,11 @@ export function createProxy(options: ProxyOptions): GatewayProxy {
   ): void => {
     const { status, answered, pick, tee, ended } = input
     const creditPool = pick.pool !== IU_API
-    const model = tee.model ?? x.model
+    const { model, model_raw } = rowModel(tee.model, x)
     const ok = status >= 200 && status < 300
     const billable = ok || !answered
-    const cost = chargeOf({ tee, model, creditPool, billable, request: x.shape })
+    const routedModel = x.path.startsWith('/anthropic/') ? null : x.model
+    const cost = chargeOf({ tee, model, routedModel, creditPool, billable, request: x.shape })
     const chargeUsd = cost.reportedUsd ?? cost.estimateUsd
     const tokens = tee.tokens
     const durationMs = Date.now() - x.startedAtMs
@@ -332,7 +357,7 @@ export function createProxy(options: ProxyOptions): GatewayProxy {
       source_id: x.requestId,
       grain: 'message',
       ts: new Date(x.startedAtMs).toISOString(),
-      model_raw: x.requestedModel ?? model,
+      model_raw,
       model,
       ...attributionOf(x.inbound),
       billing: creditPool ? 'api_credit' : 'api_key',

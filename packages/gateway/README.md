@@ -5,8 +5,9 @@ from the subscriptions' API credit before IU, and records every request. Design 
 
 - **Lean by design.** No journal Postgres, workflow runtime or OpenCode. It runs as one bundled file:
   `bun build packages/gateway/src/main.ts --target=bun --outfile gateway.js`, then `bun gateway.js`.
-- **Bundle rule.** Only the leaf `@agent-workflows/routes/pricing`, never the package's index, which reads `src/table/`
-  from disk at import. `test/start.test.ts` boots the bundle from an empty directory.
+- **Bundle rule.** Only the leaves `@agent-workflows/routes/pricing` and `@agent-workflows/routes/rates` (the route
+  table's rates, its group files imported statically), never the package's index, which reads `src/table/` from disk at
+  import. `test/start.test.ts` boots the bundle from an empty directory.
 
 ## Paths
 
@@ -23,6 +24,9 @@ Callers send a door token as `authorization: Bearer <t>`, `x-api-key`, `x-goog-a
 parameter; the API secret authenticates as `agw`.
 Every proxied response carries `x-agw-request-id` (the ledger `source_id`) and `x-agw-pool` (a pool id, `iu-api`, or
 `refused` on a 402).
+
+**Model.** A response that echoes the requested model behind a provider prefix (`openai.<id>`, `deepseek/<id>`) is
+recorded under the requested id, the echo in `model_raw`; any other echo is the row's `model` as it came.
 
 **Forwarded:** the body's bytes, except on the `/anthropic` paths an exact alias (`haiku`, `sonnet`, `opus`) in `model`,
 which is re-serialised with the concrete id. **Not forwarded:** every credential carrier above, `host`,
@@ -84,7 +88,8 @@ after an upstream 2xx.
 - **Attribution.** `repo`, `project_raw` and `workspace` live in `row_json` like the rest of the row. A row an older build
   wrote lacks them and flushes as null.
 - **Cost.** `cost_reported_usd` is the provider's own `usage.cost` if it states one, else a complete usage block at the
-  Claude rates, else null (Postgres then prices the token columns). On a credit pool an estimate stands in for the meter only (`lane_detail.costEstimatedUsd`,
+  Claude rates, or off `/anthropic` at the rate of the route naming the requested model (`routeRate`), else null
+  (Postgres then prices the token columns). On a credit pool an estimate stands in for the meter only (`lane_detail.costEstimatedUsd`,
   `costEstimated: true`): the rules are in `docs/gateway.md` §Meter, the code in `src/charge.ts`.
 - **Tee limits.** A held or decoded copy stops at 64 MiB and one pending SSE event at 1 MiB. Past either the usage is
   incomplete and the estimate applies; the caller's bytes go through untouched.

@@ -5,7 +5,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./pricing": "./src/pricing.ts"
+    "./pricing": "./src/pricing.ts",
+    "./rates": "./src/rates.ts"
   },
   "scripts": {
     "test": "bun test --isolate"
