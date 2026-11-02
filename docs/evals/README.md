@@ -31,3 +31,9 @@ Learned on 2026-10-29 to 10-31 (`2026-10-31-review-claude-direct.md`):
   Wait on the eval run id (`agw run wait`) until it is terminal; the CLI's wait budget expiring is not the end of the
   run, and a pending result prints two JSON documents. The eval run's `cost` is its whole tree: the case runs and the
   judge's calls.
+- **Arms run on the credit, under the pacing reserve** (Wave 6, `2026-11-02-claude-seats.md`): every eval call carries
+  purpose `eval`, draws only on a pool's credit above production's pro-rata reserve and is refused (403), never sent to
+  IU, when none has any. Read `evalAvailableUsd` on the gateway's `/health` before a sweep and size the slices to it.
+- **Sonnet's effort barely reaches agent steps.** At `low` and `medium` Sonnet 5.5 spent 0 to 28 reasoning tokens per
+  case in OpenCode sessions (adaptive thinking decides), while Haiku `high` spent hundreds: two Sonnet effort arms are
+  close to one arm. Check reasoning tokens per arm, as above, before reading an effort difference into a score.
