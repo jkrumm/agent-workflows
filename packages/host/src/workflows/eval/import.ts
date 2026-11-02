@@ -172,7 +172,7 @@ export function createEvalImport(
       }
       if (!input.yes) return { ...planned, ran: false, cases: [], summary: summarize([]) }
 
-      const results: CaseResult[] = await ctx.step('cases', ({ signal }) => {
+      const results: CaseResult[] = await ctx.step('cases', async ({ signal }) => {
         const references = new Map(readSuite(suites, input.workflow, env).map((c) => [c.id, c.reference]))
         // No tree: the findings are the input, and the scorer reads the commit's diff from the owner's checkout.
         const cases: EvalCase[] = plan.ids.map((id) => ({
