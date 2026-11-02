@@ -1,5 +1,6 @@
-# The inference gateway (scripts/launch-gateway.sh, packages/gateway): only what it needs. The refs are the same as
-# .env.tpl's, so every one is already in the mini's secrets cache; add none here that .env.tpl does not hold.
+# The inference gateway (scripts/launch-gateway.sh, packages/gateway): only what it needs. Every ref is already in the
+# mini's secrets cache: the IU pair (the only process that holds it since Wave 3) and refs .env.tpl holds too. A new ref
+# must be seeded before the deploy that needs it (AGENTS.md, the secrets-cache gotcha).
 # The personal IU key (IU_KEY_ID=personal is set by the launcher). The Athena team key never reaches this process.
 IU_API_KEY=op://common/anthropic/API_KEY
 IU_BASE_URL=op://common/anthropic/BASE_URL
