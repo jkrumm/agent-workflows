@@ -10,6 +10,19 @@ export {
   MAX_OVERVIEW_FACTS_CHARS,
   RECOMMENDATIONS,
 } from './capabilities/overview-classify.ts'
+// The `factory-classify` workflow shares the classify seat's vocabulary and input limits.
+export {
+  CLASSES,
+  EFFORTS,
+  factoryClassifyInput,
+  floorIncident,
+  factoryClassifyOutput,
+  KINDS,
+  SIZES,
+  TIERS,
+  type FactoryClassifyInput,
+  type FactoryClassifyOutput,
+} from './capabilities/factory-classify.ts'
 // `prose` shares its prompt vocabulary and fence with the host's writer brief instead of keeping copies.
 export {
   briefBlock,

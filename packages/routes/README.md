@@ -65,7 +65,7 @@ A text model is chosen once per role, in `src/table/_shared.ts`, and a route spr
 
 | Seat | Model today | Routes |
 |-|-|-|
-| `TRIVIAL` | Luna, effort low | `cheap.classify`, `cheap.title`, the TTS prep, the image enhance planner (effort high) |
+| `TRIVIAL` | Luna, effort low | `cheap.classify`, `cheap.title`, `factory.classify`, the TTS prep, the image enhance planner (effort high) |
 | `EASY` | Terra, effort low | `cheap.summarize`, `cheap.extract`, `overview.classify`, `triage`, `review.router`, `review.ocr`, `check`, `brain.agent` |
 | `STRONG` | Terra, effort medium | `review.angle`, `review.angle.deep`, `review.synthesis`, `review.adversary`, `prose.write`, `narrative`, `podcast.write` (effort high), the diagram and retro agents |
 | `CHEAP` | DeepSeek flash | research, otel, the podcast stages, prose review; the balance fallback of the GPT routes |
