@@ -8,6 +8,54 @@ import { dataBlock } from './review-prompts.ts'
 /** What one diff may cost the prompt; the rest is cut and the prompt says how much. */
 export const EVAL_DIFF_CHARS = 60_000
 
+const HUNK = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/
+const LINE_NO_WIDTH = 5
+
+/**
+ * The diff with every hunk line numbered, because models miscount from hunk headers and the ground truth accepts a
+ * location only within a few lines of the other labeller's. A `+` or context line carries its new-side (post-image) line
+ * number, a `-` line its old-side number: `   42 + code`, `   41   code`, `   37 - code`. File headers, hunk headers and
+ * `\ No newline` markers pass through unchanged. Hunk lengths from the headers say where a hunk ends, so a removed line
+ * that reads `-- a/x` is a line, not a file header.
+ */
+export function numberDiff(diff: string): string {
+  let oldLeft = 0
+  let newLeft = 0
+  let oldNo = 0
+  let newNo = 0
+  const row = (no: number, sign: string, text: string) => `${String(no).padStart(LINE_NO_WIDTH)} ${sign} ${text}`
+  return diff
+    .split('\n')
+    .map((line) => {
+      const hunk = HUNK.exec(line)
+      if (hunk) {
+        oldNo = Number(hunk[1])
+        oldLeft = hunk[2] === undefined ? 1 : Number(hunk[2])
+        newNo = Number(hunk[3])
+        newLeft = hunk[4] === undefined ? 1 : Number(hunk[4])
+        return line
+      }
+      if (oldLeft === 0 && newLeft === 0) return line
+      const sign = line[0] ?? ' '
+      if (sign === '+' && newLeft > 0) {
+        newLeft--
+        return row(newNo++, '+', line.slice(1))
+      }
+      if (sign === '-' && oldLeft > 0) {
+        oldLeft--
+        return row(oldNo++, '-', line.slice(1))
+      }
+      if (sign === ' ' && oldLeft > 0 && newLeft > 0) {
+        oldLeft--
+        oldNo++
+        newLeft--
+        return row(newNo++, ' ', line.slice(1))
+      }
+      return line
+    })
+    .join('\n')
+}
+
 /**
  * The diff up to `EVAL_DIFF_CHARS`: whole file sections from the top, in order, stopping at the first that does not fit
  * (a later small file never jumps the queue). A first section that alone exceeds the cap is cut mid-file.
@@ -56,7 +104,8 @@ export const LABEL_TEMPLATE = `Decide whether the INTRODUCING commit created a d
 A defect is a behaviour bug: the code does the wrong thing for some input or state. It is NOT a feature change, a changed requirement, a refactor, a style or naming preference, a dependency bump or a test-only change. A fix that only finishes, extends or renames what the introducing commit started is not a repair of a defect.
 
 If it is a defect, give:
-- location: the place in the introducing commit's post-image (the file as that commit left it). "file" is the path as it appears in the diff; startLine and endLine are 1-based and come from the "+" side of the hunk headers (@@ -a,b +c,d @@) and the "+" and context lines below them.
+- location: the place in the introducing commit's post-image (the file as that commit left it). "file" is the path as it appears in the diff; startLine and endLine are 1-based post-image line numbers, read from the numbers printed in the diff (see below).
+Every hunk line in both diffs is prefixed with its line number, and the numbers are exact: use them as given and never count lines yourself or compute them from the hunk headers. A "+" line and a context line (no sign) carry their post-image number; a "-" line carries its pre-image number and has no post-image line, so it never anchors a location.
 - description: one paragraph: what is wrong, the input or state that triggers it, and the wrong result.
 - bugClass and severity (critical: data loss, security or a crash on a common path; major: wrong behaviour on a normal path; minor: wrong behaviour on a rare path).
 - reason: one sentence on why this is a defect of the introducing commit.
@@ -64,37 +113,41 @@ If it is not a defect: defect=false, location=null, the reason (one sentence), a
 
 The lines the blame tool attributed to the introducing commit are only a hint for where to look; the defect may sit elsewhere in the post-image.
 
-Introducing commit {{introSubject}}
-{{introBody}}
-Blamed lines (hint): {{blamed}}
+Introducing commit message:
+{{introMessage}}
+Blamed lines (hint, post-image): {{blamed}}
+Introducing commit diff:
 {{introDiff}}
 
-Fix commit {{fixSubject}}
-{{fixBody}}
+Fix commit message:
+{{fixMessage}}
+Fix commit diff:
 {{fixDiff}}`
 
 /** Recorded from `pinnedVersion('eval-label', `${LABEL_SYSTEM}\n${LABEL_TEMPLATE}`, ['eval.label.a', 'eval.label.b'])`; the test recomputes it. */
-export const LABELER_VERSION = 'eval-label-7f9d60dbc2c7'
+export const LABELER_VERSION = 'eval-label-538443ac6ca6'
 
 /** The model answers `GtLabel`; a defect needs a place and a non-defect has none, else it is re-asked. */
 const answer = GtLabel.refine((l) => l.defect === (l.location !== null), {
   message: 'location must be set when defect is true and null when defect is false',
 })
 
-const block = (label: string, body: string) => {
-  const cut = cutDiff(body)
+/** A diff as the prompt carries it: numbered, then cut (so the numbers survive a cut), fenced as data. */
+export const diffBlock = (label: string, diff: string) => {
+  const cut = cutDiff(numberDiff(diff))
   return dataBlock(label, cut.text) + (cut.notice ? `${cut.notice}\n` : '')
 }
 
+const message = (label: string, subject: string, body: string) =>
+  dataBlock(label, body.trim() ? `${subject}\n\n${body.trim()}` : subject)
+
 export function labelPrompt(input: LabelInput): string {
   const fill: Record<string, string> = {
-    introSubject: input.introSubject,
-    introBody: input.introBody.trim() ? `\n${input.introBody.trim()}\n` : '',
+    introMessage: message('INTRO_MESSAGE', input.introSubject, input.introBody),
     blamed: input.blamed.map((b) => `${b.file}:${b.line}`).join(', '),
-    introDiff: block('INTRO_DIFF', input.introDiff),
-    fixSubject: input.fixSubject,
-    fixBody: input.fixBody.trim() ? `\n${input.fixBody.trim()}\n` : '',
-    fixDiff: block('FIX_DIFF', input.fixDiff),
+    introDiff: diffBlock('INTRO_DIFF', input.introDiff),
+    fixMessage: message('FIX_MESSAGE', input.fixSubject, input.fixBody),
+    fixDiff: diffBlock('FIX_DIFF', input.fixDiff),
   }
   // A function replacer: `$&` and friends in a diff are literal text.
   return LABEL_TEMPLATE.replace(/\{\{(\w+)\}\}/g, (_, key: string) => fill[key] ?? '')

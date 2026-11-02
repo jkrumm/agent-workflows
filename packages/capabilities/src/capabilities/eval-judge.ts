@@ -2,7 +2,7 @@ import { JudgeClass, JudgeInput, JudgeOutput } from '@agent-workflows/eval'
 import { z } from 'zod'
 import { completeJson, type LlmDeps } from '../llm/model-call.ts'
 import { defineCapability } from '../procedure.ts'
-import { cutDiff } from './eval-label.ts'
+import { diffBlock } from './eval-label.ts'
 import { dataBlock } from './review-prompts.ts'
 
 export const JUDGE_SYSTEM =
@@ -24,11 +24,11 @@ Give each finding one class and a one-sentence reason. Return exactly one entry 
 Findings:
 {{findings}}
 
-The reviewed commit's diff:
+The reviewed commit's diff. Every hunk line is prefixed with its line number, and the numbers are exact: use them as given and never count lines yourself or compute them from the hunk headers. A "+" line and a context line (no sign) carry their post-image number, a "-" line its pre-image number. Compare a finding's line range and the known bug's range with these numbers.
 {{diff}}`
 
 /** Recorded from `pinnedVersion('eval-judge', `${JUDGE_SYSTEM}\n${JUDGE_TEMPLATE}`, ['eval.judge'])`; the test recomputes it. */
-export const JUDGE_VERSION = 'eval-judge-3b1999970056'
+export const JUDGE_VERSION = 'eval-judge-25ac7305c9a3'
 
 const MATCH_TASK =
   'The review is of a commit that is known to contain one bug (below). Only the findings listed as preselected may be classed "match"; any other finding gets one of the four other classes.'
@@ -57,9 +57,8 @@ export function answerSchema(input: JudgeInput) {
 }
 
 export function judgePrompt(input: JudgeInput): string {
-  const cut = cutDiff(input.diff)
   const bug = input.bug
-    ? `\nKnown bug at ${input.bug.location.file}:${input.bug.location.startLine}-${input.bug.location.endLine}:\n${input.bug.description}\nPreselected finding ids (the only ones that may be "match"): ${input.preselected.length ? input.preselected.join(', ') : '(none)'}\n`
+    ? `\nKnown bug at ${input.bug.location.file}:${input.bug.location.startLine}-${input.bug.location.endLine} (post-image lines):${dataBlock('KNOWN_BUG', input.bug.description)}Preselected finding ids (the only ones that may be "match"): ${input.preselected.length ? input.preselected.join(', ') : '(none)'}\n`
     : ''
   const findings = input.findings
     .map((f) => {
@@ -71,7 +70,7 @@ export function judgePrompt(input: JudgeInput): string {
     task: input.bug ? MATCH_TASK : CONTROL_TASK,
     bug,
     findings: dataBlock('FINDINGS', findings),
-    diff: dataBlock('DIFF', cut.text) + (cut.notice ? `${cut.notice}\n` : ''),
+    diff: diffBlock('DIFF', input.diff),
   }
   return JUDGE_TEMPLATE.replace(/\{\{(\w+)\}\}/g, (_, key: string) => fill[key] ?? '')
 }
