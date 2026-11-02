@@ -199,7 +199,8 @@ not interactive factory sessions. Runs after Wave 16, before Wave 8 resumes; it 
 - [ ] **Design** `docs/review-v3.md`: a review agent as a factory-spawned Claude Code session on Max (no `claude -p`),
   the same REVIEW_OUTPUT contract and callers (`agw review`, the `/review` skill, the fleets' leads), queueing and quota
   guards against the dev sessions (`rd` pause rules, both accounts' weekly windows), API credit only as a fallback.
-  What of `docs/review-v2.md` survives (finders, verify vote, dispositions) and what goes.
+  What of `docs/review-v2.md` survives (finders, verify vote, dispositions) and what goes. Owner, 2026-11-03: mature and
+  integrable, callable like agw itself; the design names its interfaces, failure modes and the migration of every caller.
 - [ ] Waves 9–11 rewritten to measure and build it: the Wave 9 native arm becomes the candidate; Wave 10 builds v3 if
   the design holds; Wave 11 sweeps arms of it. The owner's sign-off is one short read of the design's summary.
 
