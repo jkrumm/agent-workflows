@@ -19,6 +19,9 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
   Rotation policy: a fresh lead per wave unless the last one closed under ~30% context.
 
 ## Decisions taken
+- 2026-11-03 owner: `research.agent` -> Haiku 5.5 high now (reverses 11-02 18:10 (2)); act on pacing now (not after
+  7 days); review should end up off API credit, on a subscription-based Claude Code review agent (interactive factory
+  sessions, not `claude -p`): Wave 17 researches and designs it before Wave 8 resumes. Relayed the hotfix to r12.
 - 2026-11-02 21:00 owner: no labelling session ("I will not answer 155 questions"). Ground truth is validated by a
   third labeller and a second judge on other vendors (PLAN Wave 8); reports state the LLM-consensus limit. Rule for every
   wave: never plan owner work beyond a few minutes; a human check is a ≤ 10-item sample, asked only when the automated
@@ -158,7 +161,7 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
 
 ## Next action
 - Wait for the Wave 16 close-out (lead.md) and argo-w1's rd say (argo PLAN Wave 8); judge, tick PLANs, retro entries.
-- After Wave 16: Wave 8 resumes with a fresh lead: third labeller and second judge, the bars, then mining on credit
+- After Wave 16: Wave 17 (review on the subscriptions, design), then Wave 8 resumes with a fresh lead: third labeller and second judge, the bars, then mining on credit
   only, sized to `evalAvailableUsd`; IU eval spend stays under ~$20 per wave without asking.
 - If Wave 16 closes before the owner session: Wave 14 items that need no review data (compaction overflow) may be pulled
   forward the same way; Wave 9+ need the ground truth.

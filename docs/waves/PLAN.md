@@ -184,6 +184,22 @@ Pulled forward 2026-11-02 while the owner labels (former Wave 13, plus Wave 8's 
   `done`.
 - [ ] `eval.mine`'s cost-history port wired in `boot.ts` (its label estimate prints `unknown`).
 
+## Wave 17 — Review on the subscriptions (design)            <!-- status: pending -->
+
+Owner, 2026-11-03: review should not run on API credit in the end; build a mature review agent on the Claude Code
+subscriptions instead. This supersedes the 2026-10-29 "all review off Max" rule for the design: it banned `claude -p`,
+not interactive factory sessions. Runs after Wave 16, before Wave 8 resumes; it reshapes Waves 10–11.
+
+- [ ] **Research** (`/research`, cited): how the Claude Code team reviews code (the article behind `docs/review-v2.md`,
+  `/code-review`, its subagent fan-out and verification), published practice on agentic review at scale, and what a
+  review costs in Max quota (measured: 5 real PRs through a factory-spawned interactive session, quota before/after).
+- [ ] **Design** `docs/review-v3.md`: a review agent as a factory-spawned Claude Code session on Max (no `claude -p`),
+  the same REVIEW_OUTPUT contract and callers (`agw review`, the `/review` skill, the fleets' leads), queueing and quota
+  guards against the dev sessions (`rd` pause rules, both accounts' weekly windows), API credit only as a fallback.
+  What of `docs/review-v2.md` survives (finders, verify vote, dispositions) and what goes.
+- [ ] Waves 9–11 rewritten to measure and build it: the Wave 9 native arm becomes the candidate; Wave 10 builds v3 if
+  the design holds; Wave 11 sweeps arms of it. The owner's sign-off is one short read of the design's summary.
+
 ## Wave 8 — Ground truth            <!-- status: pending -->
 
 - [x] **Double usage rows (from Wave 7):** agw stops writing `usage.records` for agent steps the gateway recorded;
