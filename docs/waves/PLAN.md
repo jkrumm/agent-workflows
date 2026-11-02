@@ -148,6 +148,10 @@ review's own seats.
   production), so an eval sweep cannot push production onto the over-cap IU key. The fallback order is documented.
 - [ ] Committed report `docs/evals/<date>-claude-seats.md`; picks recorded in `modelpick/docs/decisions/agw-text-seats.md`;
   a live call per changed route.
+**Left behind:** owner decision 2026-11-02 16:10, a hotfix ahead of this wave's arms: review burned the credit (67 reviews
+  in 2 days = $52.50, $0.78 each; `review.angle` on Sonnet $46.29). `review.angle` back to Haiku 5.5 high (the v3.5
+  split), `review.angle.deep` and synthesis stay Sonnet; target ~$0.13 per review. This wave's arms leave `review.*`
+  alone: Wave 11 decides the review seats, with Wave 9's native `/code-review` arm on Max as the subscription candidate.
 
 ## Wave 7 — Usage view v7 (Argo)            <!-- status: pending -->
 

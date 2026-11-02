@@ -18,6 +18,10 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
   Rotation policy: a fresh lead per wave unless the last one closed under ~30% context.
 
 ## Decisions taken
+- 2026-11-02 16:10 owner (hotfix ahead of Wave 6): review burns the credit (67 reviews in 2 days = $52.50, $0.78 each;
+  `review.angle` on Sonnet $46.29). Restore the v3.5 split: `review.angle` -> Haiku 5.5 high (EASY), `review.angle.deep` and
+  synthesis stay Sonnet; deploy and verify today, target ~$0.13 per review. Review seats are final only in Wave 11; the
+  Wave 9 native `/code-review` arm on Max is the candidate for moving review onto subscription quota. Relayed to r9.
 - 2026-11-02 owner: two waves inserted after Wave 5, the rest renumbered +2. Wave 6 moves every text and agent seat
   onto measured Claude choices (pulls the tier structure forward, adds credit pacing for evals); Wave 7 is a new
   usage-view concept in Argo (spec v7, owner sign-off on the spec is a stop, then build).
