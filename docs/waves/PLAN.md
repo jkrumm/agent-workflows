@@ -64,7 +64,7 @@ eval needs move into Wave 5. The rest waits.
   and `x-agw-fallback: none`, door-token callers, one span per request, usage rows through the outbox
   (`source='gateway'`).
 - [ ] usage-tracker migration: `billing` `api_credit`, `credit_cycles`, `gateway_picks`; its writer and readers accept them.
-- [ ] Deploy: a third LaunchAgent `com.jkrumm.agent-workflows-gateway` on 7793, health and rollback with the other two;
+- [ ] Deploy: a third LaunchAgent `com.jkrumm.agent-workflows-gateway` on 7794, health and rollback with the other two;
   a release that does not change the gateway does not restart it. `make verify`: gateway `/health`, a Haiku call through
   the `iu` pool lands an `api_credit` row with priced cost, a repeat call reads the cache, and an IU passthrough call
   lands an `api_key` row.
