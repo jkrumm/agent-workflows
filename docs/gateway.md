@@ -202,6 +202,24 @@ cycle, projected unspent credit, picks and fallbacks, and cache-hit rate per cal
 | email-gateway (VPS), Karakeep (homelab) | IU | later, over Tailscale, once the gateway has run clean for two weeks |
 | Claude Code, Athena Teamchat | subscription, Athena relay | never |
 
+## Seats
+
+Owner, 2026-11-02 (Wave 6): agw runs on Claude with a deliberate model and effort per seat, measured where an eval
+suite exists. The table and its tiers are `packages/routes` (README §Seats); the picks and their evidence are
+`modelpick/docs/decisions/agw-text-seats.md`.
+
+- **Claude is primary for every text and agent seat**, on the credit while a pool has it. Each Claude route falls back
+  onto GPT on IU, never onto IU's Claude (`x-agw-fallback: none`).
+- **A reviewer of Claude-written output stays on another lab:** `prose.review`, `podcast.review.a`/`.b` and
+  `review.adversary` judge what a Claude writer (a Claude Code session or a Claude seat) produced, and a critic of the
+  same lab shares its blind spots. Their capabilities refuse a Claude model.
+- **Speech, transcription, image and `decide` stay on IU.** The credit pays only for Anthropic's Messages API; those
+  models are not Claude's. `decide` is also the eval judge, on its own pinned route.
+- **Opus only where an arm shows it beats Sonnet beyond the CI** on the seat's own suite. Without that evidence the
+  seat stays on Sonnet or Haiku.
+- **Pick order per seat:** score first, then wall time. Cost counts only past the credit pacing line (§Credit pacing):
+  below it the credit is spent anyway.
+
 ## Open
 
 - The Admin API works on a one-person org (Wave 1, `iu` and `me`); units and credit basis are proven on `iu` only, `me`
