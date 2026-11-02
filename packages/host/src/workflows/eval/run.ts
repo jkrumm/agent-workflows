@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { exec as bunExec, type Exec, materialize } from '@agent-workflows/eval'
 import { RouteOverrideError, validateArm } from '@agent-workflows/routes'
 import {
+  type AnyWorkflow,
   Cancelled,
   defineWorkflow,
   type FinalScore,
@@ -22,11 +23,11 @@ import { type EvalCase, readSuite, type Suites, suiteIds } from './suites.ts'
 export const EVAL_RUN_ID = 'eval.run'
 /** Estimates read the latest this many done runs of the workflow. */
 const ESTIMATE_HISTORY = 50
-const DEFAULT_CONCURRENCY = 2
+export const DEFAULT_CONCURRENCY = 2
 /** How often a case run is polled: for its end, then for its record. */
 const CASE_POLL_MS = 500
 /** How long an ended case run's record may take before its last-read cost is reported as a lower bound. */
-const RECORD_SETTLE_MS = 120_000
+export const RECORD_SETTLE_MS = 120_000
 
 export interface EvalRunOptions {
   env?: Record<string, string | undefined>
@@ -39,7 +40,7 @@ export interface EvalRunOptions {
   recordSettleMs?: number
 }
 
-const consoleLogger: Logger = {
+export const consoleLogger: Logger = {
   warn: (message, meta) => console.warn(`[agw-eval] ${message}`, meta ?? ''),
   error: (message, meta) => console.error(`[agw-eval] ${message}`, meta ?? ''),
 }
@@ -98,7 +99,7 @@ export const evalRunInput = (ids: [string, ...string[]]) =>
     })
     .strict()
 
-const CaseResult = z.object({
+export const CaseResult = z.object({
   caseId: z.string(),
   status: z.enum(['scored', 'skipped', 'error']),
   runId: z.string().optional(),
@@ -114,7 +115,22 @@ const CaseResult = z.object({
   unpricedCalls: z.number().int().optional().describe('Calls the cost misses: a lower bound while above 0'),
   reason: z.string().optional(),
 })
-type CaseResult = z.infer<typeof CaseResult>
+export type CaseResult = z.infer<typeof CaseResult>
+
+export const RunSummary = z.object({
+  scored: z.number().int(),
+  skipped: z.number().int(),
+  errors: z.number().int(),
+  passRate: z.number().nullable(),
+  means: z.record(z.string(), z.number()).describe('Each score averaged over the scored cases that have it'),
+  costUsd: z
+    .number()
+    .nullable()
+    .describe(
+      "The case runs' recorded costs summed; null when none was priced. This run's own `cost` adds the judge calls",
+    ),
+  unpricedCalls: z.number().int().describe('Calls no case cost includes: the total is a lower bound while above 0'),
+})
 
 export const evalRunOutput = (ids: [string, ...string[]]) =>
   z.object({
@@ -133,25 +149,12 @@ export const evalRunOutput = (ids: [string, ...string[]]) =>
       .array(z.string())
       .describe('The fingerprints the replayed runs ran on (one, unless a deploy crossed)'),
     cases: z.array(CaseResult),
-    summary: z.object({
-      scored: z.number().int(),
-      skipped: z.number().int(),
-      errors: z.number().int(),
-      passRate: z.number().nullable(),
-      means: z.record(z.string(), z.number()).describe('Each score averaged over the scored cases that have it'),
-      costUsd: z
-        .number()
-        .nullable()
-        .describe(
-          "The case runs' recorded costs summed; null when none was priced. This run's own `cost` adds the judge calls",
-        ),
-      unpricedCalls: z.number().int().describe('Calls no case cost includes: the total is a lower bound while above 0'),
-    }),
+    summary: RunSummary,
   })
 
-const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error))
+export const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error))
 
-function select(cases: EvalCase[], ids: string | undefined, limit: number | undefined): EvalCase[] {
+export function select(cases: EvalCase[], ids: string | undefined, limit: number | undefined): EvalCase[] {
   let selected = cases
   if (ids) {
     const wanted = [
@@ -170,7 +173,7 @@ function select(cases: EvalCase[], ids: string | undefined, limit: number | unde
   return limit === undefined ? selected : selected.slice(0, limit)
 }
 
-function summarize(cases: CaseResult[]) {
+export function summarize(cases: CaseResult[]) {
   const scored = cases.filter((c) => c.status === 'scored')
   const priced = cases.flatMap((c) => (typeof c.costUsd === 'number' ? [c.costUsd] : []))
   const sums = new Map<string, { sum: number; n: number }>()
@@ -250,9 +253,7 @@ export function createEvalRun(slot: EvalSlot, suites: Suites, options: EvalRunOp
         replay(
           {
             slot,
-            suites,
             exec,
-            env,
             home,
             tmpRoot: options.tmpRoot,
             logger: options.logger ?? consoleLogger,
@@ -260,7 +261,8 @@ export function createEvalRun(slot: EvalSlot, suites: Suites, options: EvalRunOp
           },
           {
             evalRunId: ctx.runId,
-            workflow: input.workflow,
+            target: slot.target(input.workflow),
+            cases: readSuite(suites, input.workflow, env),
             ids: plan.ids,
             args,
             concurrency: input.concurrency ?? DEFAULT_CONCURRENCY,
@@ -281,9 +283,7 @@ export function createEvalRun(slot: EvalSlot, suites: Suites, options: EvalRunOp
 
 type ReplayDeps = {
   slot: EvalSlot
-  suites: Suites
   exec: Exec
-  env: Record<string, string | undefined>
   home: string
   tmpRoot: string | undefined
   logger: Logger
@@ -292,7 +292,10 @@ type ReplayDeps = {
 
 type Job = {
   evalRunId: string
-  workflow: string
+  /** The workflow each case runs and is scored by. */
+  target: AnyWorkflow
+  /** The replayable cases; `ids` selects and orders among them. */
+  cases: EvalCase[]
   ids: string[]
   args: Record<string, Json>
   concurrency: number
@@ -322,10 +325,10 @@ async function boundedPool<T>(items: T[], limit: number, fn: (item: T, index: nu
 
 const caseKey = (evalRunId: string, caseId: string) => `eval:${evalRunId}:${caseId}`
 
-async function replay(deps: ReplayDeps, job: Job): Promise<CaseResult[]> {
+export async function replay(deps: ReplayDeps, job: Job): Promise<CaseResult[]> {
   const runtime = deps.slot.get()
-  const target = deps.slot.target(job.workflow)
-  const byId = new Map(readSuite(deps.suites, job.workflow, deps.env).map((c) => [c.id, c]))
+  const { target } = job
+  const byId = new Map(job.cases.map((c) => [c.id, c]))
   const results: CaseResult[] = []
   const started = new Set<string>()
   // A cancelled eval run cancels its cases; a shutdown leaves them running for the next process to adopt.
@@ -520,7 +523,7 @@ export async function sweepCaseTrees(options: {
 
 async function replayCase(deps: ReplayDeps, job: Job, c: EvalCase, started: Set<string>): Promise<CaseResult> {
   const runtime = deps.slot.get()
-  const target = deps.slot.target(job.workflow)
+  const { target } = job
   const key = caseKey(job.evalRunId, c.id)
   const dir = caseTreeDir(deps.tmpRoot, key)
   const score = (runId: string) => () =>
