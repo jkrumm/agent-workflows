@@ -309,6 +309,72 @@ describe('the prep call on the route wire', () => {
     expect(gateway.requests.map((r) => r.route)).toEqual(['messages'])
   })
 
+  /** An `iu-openai` prep route with a fallback on the same wire, the shape of every text route without credit. */
+  function openaiScope(effort: string | undefined, fallback: boolean) {
+    const deps = testDeps(gateway)
+    const scope = createAudioScope(deps, { requestId: 'r1', caller: 'test' })
+    const prep = scope.route('audio.tts.prep')
+    const { effort: _drop, ...rest } = prep
+    scope.deps.routes = {
+      ...scope.deps.routes,
+      'audio.tts.prep': {
+        ...rest,
+        wire: 'iu-openai',
+        model: 'primary-model',
+        ...(effort && { effort }),
+        rate: { inputPerM: 1, outputPerM: 5 },
+        ...(fallback && {
+          fallback: { wire: 'iu-openai', model: 'fallback-model', rate: { inputPerM: 0.1, outputPerM: 0.5 } },
+        }),
+      },
+    }
+    return { scope, deps }
+  }
+  const BALANCE_503 = '{"error":{"code":"PaymentRequired","message":"Insufficient Balance"}}'
+
+  test('a 503 whose body names the balance goes to the fallback at once: one send, not three', async () => {
+    gateway = startFakeGateway({
+      chat: (r) =>
+        r.json?.model === 'primary-model' ? new Response(BALANCE_503, { status: 503 }) : prepAnswer(JSON.parse(PREP)),
+    })
+    const { scope, deps } = openaiScope('low', true)
+    await callPrepLlm(scope, input)
+    expect(gateway.requests.map((r) => r.json?.model)).toEqual(['primary-model', 'fallback-model'])
+    expect(scope.meta.retries).toBe(0)
+    expect(calls(deps)).toMatchObject([
+      { model: 'primary-model', status: 503, costSource: 'not-billed' },
+      { model: 'fallback-model', status: 200 },
+    ])
+  })
+
+  test('a 503 that is not a balance failure is still retried, then thrown with no fallback', async () => {
+    gateway = startFakeGateway({ chat: () => new Response('Service Unavailable', { status: 503 }) })
+    const { scope } = openaiScope('low', true)
+    expect((await caught(callPrepLlm(scope, input))).message).toMatch(/HTTP 503/)
+    expect(gateway.requests).toHaveLength(3)
+    expect(scope.meta.retries).toBe(2)
+  })
+
+  test("a route effort of 'none' is sent on chat completions, and means no thinking on the Messages wire", async () => {
+    gateway = startFakeGateway({
+      chat: () => prepAnswer(JSON.parse(PREP)),
+      messages: () => messageAnswer(PREP),
+    })
+    await callPrepLlm(openaiScope('none', false).scope, input)
+    expect(gateway.requests[0]?.json).toMatchObject({ reasoning_effort: 'none' })
+    await callPrepLlm(openaiScope(undefined, false).scope, input)
+    expect(gateway.requests[1]?.json).not.toHaveProperty('reasoning_effort')
+    const seats = seatsScope(false)
+    seats.scope.deps.routes = {
+      ...seats.scope.deps.routes,
+      'audio.tts.prep': { ...seats.scope.route('audio.tts.prep'), effort: 'none' },
+    }
+    await callPrepLlm(seats.scope, input)
+    const messages = gateway.requests.find((r) => r.route === 'messages')
+    expect(messages?.json).not.toHaveProperty('thinking')
+    expect(messages?.json).not.toHaveProperty('output_config')
+  })
+
   test('the summary route dispatches on its wire too, with no effort', async () => {
     gateway = startFakeGateway({ messages: () => messageAnswer(PREP) })
     const { scope } = seatsScope(false)
