@@ -40,6 +40,7 @@ not cut streams.
 | Path | Upstream |
 |-|-|
 | `/anthropic/v1/messages` (+ `count_tokens`) | a credit org, else IU `/anthropic` (same protocol, same models) |
+| `GET /anthropic/v1/models`, `GET /anthropic/v1/models/*` | IU `/anthropic`, with the `personal` key: door auth, no pick, no row, the way modelpick reads the catalog |
 | `/openai/v1/*`, `/gemini/v1beta/*`, `/decisions/v1/*`, `/replicate/v1/*` | IU, with the `personal` key |
 
 **Passthrough is byte-exact.** Request bytes and end-to-end headers (`anthropic-beta`, `anthropic-version`) go upstream
@@ -72,7 +73,11 @@ usable. Keys resolve through `secrets-run` at start. A ref that does not resolve
 
 Per request, in order:
 
-0. **Claude-Code-shaped requests go to IU.** A request carrying any of the signals above (read-only check, no body edit)
+0. **A forced request goes to IU.** `x-agw-upstream: iu` on an `/anthropic` path skips the credit pools (read-only check,
+   no body edit), reason `forced`: modelpick's probes measure IU itself, so a probe must not land on a credit org. It
+   beats a bound session, leaves the binding as it found it, and `x-agw-fallback: none` does not refuse it, since the
+   caller asked for IU.
+   **Claude-Code-shaped requests go to IU.** A request carrying any of the signals above (read-only check, no body edit)
    skips the credit pools.
 1. **Session binding.** The key is `(caller, session)`, the caller from the door token. The session id is the first of
    `x-agw-session` (agw sends its run id; OpenCode steps through the host's plugin; Hermes through
@@ -125,7 +130,7 @@ Callers authenticate with a door token (`data/door-tokens`, one line per caller:
 server), `oc`, `modelpick`, …; the API secret is `agw`)
 as `authorization: Bearer <t>`, `x-api-key`, `x-goog-api-key`, `api-key` or a `key` query parameter (whichever the
 caller's SDK sends). None of them goes upstream. The caller name comes from the credential, never a header; a door token never opens the API. Optional headers: `x-agw-run-id`, `x-agw-workflow`, `x-agw-step`, `x-agw-purpose`,
-`x-agw-project`, `x-agw-workspace`, `x-agw-usage`, `traceparent`.
+`x-agw-project`, `x-agw-workspace`, `x-agw-usage`, `x-agw-upstream`, `traceparent`.
 
 The caller sets the lane: `agw` and `agw-opencode` are `agw_workflow`, `hermes` is `hermes`, any other is `other` with the
 caller's name in `lane_detail.raw`, the key Argo labels an `other` row from. `x-agw-project` is the row's `project_raw`
@@ -155,7 +160,7 @@ Schema changes in usage-tracker (`migrations/pg`, it owns the `usage` schema):
 - `usage.credit_cycles` (account, cycle start/end, grant, metered, reconciled, unspent at close).
 - `usage.gateway_picks` (ts, caller, session, picked, reason, machine, request_id), modelled on `account_picks`, one row
   per routing decision: `picked` is a pool id, `iu-api` (the IU passthrough, because a pool is itself named `iu`) or
-  `refused`. A drained retry writes two rows; `count_tokens` writes none.
+  `refused`. A drained retry writes two rows; `count_tokens` and a model catalog read write none.
 - `usage.platform_cost` (account, day, model, api_key_id, cost_usd), filled by a usage-tracker pass from
   `GET /v1/organizations/analytics/cost` (beta header `analytics-usage-cost-2026-08-24`, `group_by[]=api_key_id` and
   `model`, `cost_usd = amount / 100`; request shapes in `docs/spikes/gateway/admin-api.md`) with each org's admin key, like
@@ -165,7 +170,7 @@ Schema changes in usage-tracker (`migrations/pg`, it owns the `usage` schema):
 **Rows without a gateway row.** A request with `x-agw-usage: caller` on a non-`/anthropic` path writes no `records` row
 and no ledger row; its span still goes out. These are agw's media calls, priced per minute, per character or per image:
 only agw can price them, so agw writes their row itself. On `/anthropic` paths the header is ignored, because a Claude
-call must always hit the meter. The other requests without a row are a `count_tokens` and a 402.
+call must always hit the meter. The other requests without a row are a `count_tokens`, a model catalog read and a 402.
 
 One span per request, service `agw-gateway` (`gen_ai.*` attributes, pool, cache read/write tokens, time to the first
 body byte), parented by `traceparent`. Every response carries `x-agw-request-id`, the row's `source_id`, and `x-agw-pool`.

@@ -14,6 +14,7 @@ from the subscriptions' API credit before IU, and records every request. Design 
 |-|-|-|
 | `POST /anthropic/v1/messages` | a credit pool, else IU `/anthropic` | `x-api-key: <pool key>`, else `authorization: Bearer <IU key>` |
 | `POST /anthropic/v1/messages/count_tokens` | the same pick; no ledger row, no binding | same |
+| `GET /anthropic/v1/models`, `GET /anthropic/v1/models/*` | IU `/anthropic`, no pick; no ledger row, no `gateway_picks` row | `authorization: Bearer <IU key>` |
 | `/openai/v1/*`, `/gemini/v1beta/*`, `/replicate/v1/*` | IU root + the same path | `authorization: Bearer <IU key>` |
 | `/decisions/v1/*` | IU origin + the same path | `authorization: Bearer <IU key>` |
 | `GET /health` | the gateway, no auth | none |
@@ -34,9 +35,10 @@ which is re-serialised with the concrete id. **Not forwarded:** every credential
 | `x-agw-workspace` | `workspace`, when it is `work` or `private` |
 | `x-agw-fallback: none` | a 402 instead of the IU fallback (`/anthropic` paths) |
 | `x-agw-usage: caller` | no ledger row off `/anthropic`; the header is ignored on `/anthropic` paths |
+| `x-agw-upstream: iu` | an `/anthropic` path skips the credit pools, reason `forced`; no effect elsewhere |
 
-Project and workspace values over 200 characters are dropped. `x-agw-fallback` and `x-agw-usage` compare
-case-insensitively; `x-agw-workspace` is exact, as the `usage.records` check is.
+Project and workspace values over 200 characters are dropped. `x-agw-fallback`, `x-agw-usage` and
+`x-agw-upstream` compare case-insensitively; `x-agw-workspace` is exact, as the `usage.records` check is.
 
 ## Env
 
@@ -61,12 +63,14 @@ pool's refs are not read. The process never reads `iu.env` or `athena-iu.env`.
 
 `src/pools/` owns the decision; `src/proxy.ts` acts on it.
 
-1. A Claude-Code-shaped request skips the credit pools.
-2. A bound session stays on its pool while that pool is eligible.
-3. A new session takes the eligible pool that expires soonest.
-4. With no pool eligible the request goes to IU, unless the caller sent `x-agw-fallback: none`: then a 402 with the
+1. `x-agw-upstream: iu` goes to IU, reason `forced`. It beats a bound session, writes and clears no binding, and
+   `x-agw-fallback: none` does not refuse it.
+2. A Claude-Code-shaped request skips the credit pools.
+3. A bound session stays on its pool while that pool is eligible.
+4. A new session takes the eligible pool that expires soonest.
+5. With no pool eligible the request goes to IU, unless the caller sent `x-agw-fallback: none`: then a 402 with the
    balance marker.
-5. A pool's balance refusal marks it drained and picks again without it, pool by pool, until the pick is no pool: IU,
+6. A pool's balance refusal marks it drained and picks again without it, pool by pool, until the pick is no pool: IU,
    or the 402.
 
 The label of the IU passthrough is `iu-api` everywhere, because a credit pool is named `iu`. Bindings are written only
@@ -75,8 +79,8 @@ after an upstream 2xx.
 ## Ledger and outbox
 
 - **Write.** One row per served request, written synchronously when the tee has the final usage (end of stream, or on an
-  error or abort with what is known), before the stream closes. The charge follows the write. A 402, a `count_tokens` and
-  an IU-path request with `x-agw-usage: caller` write no record; picks go in beside the records.
+  error or abort with what is known), before the stream closes. The charge follows the write. A 402, a `count_tokens`, a
+  model catalog read and an IU-path request with `x-agw-usage: caller` write no record; picks go in beside the records.
 - **Migration.** Every open adds what `records` lacks (`repo`, `project_raw`, `workspace`, nullable), so a ledger from an
   older build keeps its rows and an older build can still write to a migrated file. The outbox reads these three from the
   columns: a row written before them flushes as null.

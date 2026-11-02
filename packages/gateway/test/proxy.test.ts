@@ -293,7 +293,7 @@ describe('passthrough', () => {
 
   test('an unknown path is 404, a GET on messages 405', async () => {
     const gw = start()
-    expect((await gw.call('/anthropic/v1/models')).status).toBe(404)
+    expect((await gw.call('/anthropic/v1/files')).status).toBe(404)
     expect((await gw.call(MESSAGES)).status).toBe(405)
     expect(iu.seen).toHaveLength(0)
   })
@@ -1025,6 +1025,142 @@ describe('x-agw-usage: caller', () => {
     expect(records.map(({ row }) => row.lane_detail.pool)).toEqual([label])
     expect(picks).toHaveLength(1)
     expect(gw.ledger.spentSince('iu', new Date(0)) > 0).toBe(registry.length > 0)
+  })
+})
+
+describe('x-agw-upstream: iu', () => {
+  const forced = (value = 'iu', extra: Record<string, string> = {}): RequestInit => {
+    const init = jsonBody(request())
+    return { ...init, headers: { ...init.headers, 'x-agw-upstream': value, ...extra } }
+  }
+
+  test.each(['iu', 'IU', ' Iu '])('%j skips an eligible pool, the body untouched', async (value) => {
+    const gw = start({ registry: [pool('iu')] })
+    const init = forced(value)
+    const response = await gw.call(MESSAGES, init)
+    await response.text()
+    expect(response.headers.get('x-agw-pool')).toBe('iu-api')
+    expect(anthropic.seen).toHaveLength(0)
+    expect(iu.seen).toHaveLength(1)
+    expect(new TextDecoder().decode(iu.seen[0]?.body)).toBe(init.body as string)
+    expect([...(iu.seen[0]?.headers.keys() ?? [])].filter((name) => name.startsWith('x-agw-'))).toEqual([])
+    const { records, picks } = gw.rows()
+    expect(picks.map(({ row }) => [row.picked, row.reason])).toEqual([['iu-api', 'forced']])
+    expect(records[0]?.row).toMatchObject({ billing: 'api_key', api_key: 'personal', account: null })
+    expect(records[0]?.row.lane_detail).toMatchObject({ pool: 'iu-api', fallback: 'forced' })
+  })
+
+  test('any other value picks as usual', async () => {
+    const gw = start({ registry: [pool('iu')] })
+    const response = await gw.call(MESSAGES, forced('anthropic'))
+    await response.text()
+    expect(response.headers.get('x-agw-pool')).toBe('iu')
+    expect(iu.seen).toHaveLength(0)
+  })
+
+  test('beats a bound session, and leaves the binding as it found it', async () => {
+    const session = { 'x-agw-session': 'sess' }
+    const gw = start({ registry: [pool('first', { cycleDay: 15 }), pool('late', { cycleDay: 14 })] })
+    const fresh = await gw.call(MESSAGES, jsonBody(request({ metadata: { user_id: 'other' } })))
+    await fresh.text()
+    const notSoonest = fresh.headers.get('x-agw-pool') === 'first' ? 'late' : 'first'
+    gw.pools.served('oc', 'sess', notSoonest)
+    const probe = await gw.call(MESSAGES, forced('iu', session))
+    await probe.text()
+    expect(probe.headers.get('x-agw-pool')).toBe('iu-api')
+    const init = jsonBody(request())
+    const back = await gw.call(MESSAGES, { ...init, headers: { ...init.headers, ...session } })
+    await back.text()
+    expect(back.headers.get('x-agw-pool')).toBe(notSoonest)
+  })
+
+  test('x-agw-fallback: none does not refuse it, with no pool eligible too', async () => {
+    const gw = start({ registry: [] })
+    const response = await gw.call(MESSAGES, forced('iu', { 'x-agw-fallback': 'none' }))
+    await response.text()
+    expect(response.status).toBe(200)
+    expect(response.headers.get('x-agw-pool')).toBe('iu-api')
+    expect(gw.rows().picks.map(({ row }) => row.reason)).toEqual(['forced'])
+  })
+
+  test('count_tokens goes to IU, with no row and no pick', async () => {
+    const gw = start({ registry: [pool('iu')] })
+    const response = await gw.call(`${MESSAGES}/count_tokens`, forced())
+    await response.text()
+    expect(response.headers.get('x-agw-pool')).toBe('iu-api')
+    expect(anthropic.seen).toHaveLength(0)
+    expect(gw.rows()).toEqual({ records: [], picks: [] })
+  })
+
+  test('off /anthropic it means nothing', async () => {
+    const gw = start({ registry: [pool('iu')] })
+    await (await gw.call('/openai/v1/chat/completions', forced())).text()
+    expect(gw.rows().records[0]?.row.lane_detail).toMatchObject({ pool: 'iu-api', fallback: 'passthrough' })
+    expect(iu.seen[0]?.headers.get('x-agw-upstream')).toBeNull()
+  })
+})
+
+describe('the model catalog', () => {
+  const catalog = { data: [{ id: haikuId, type: 'model' }], has_more: false }
+
+  test.each([
+    ['/anthropic/v1/models?limit=100', '/prefix/anthropic/v1/models?limit=100'],
+    [`/anthropic/v1/models/${haikuId}`, `/prefix/anthropic/v1/models/${haikuId}`],
+  ])('GET %s is IU with the personal key: no pick, no pool, no row', async (path, upstreamPath) => {
+    iu.reply(() => Response.json(catalog))
+    const gw = start({ registry: [pool('iu')] })
+    const response = await gw.call(path, { headers: { 'anthropic-version': '2023-06-01' } })
+    expect(await response.json()).toEqual(catalog)
+    expect(response.headers.get('x-agw-pool')).toBe('iu-api')
+    expect(anthropic.seen).toHaveLength(0)
+    const seen = iu.seen[0]
+    expect(seen?.method).toBe('GET')
+    expect(seen?.path).toBe(upstreamPath)
+    expect(seen?.headers.get('authorization')).toBe(`Bearer ${IU_KEY}`)
+    expect(seen?.headers.get('x-api-key')).toBeNull()
+    expect(seen?.headers.get('anthropic-version')).toBe('2023-06-01')
+    expect(gw.rows()).toEqual({ records: [], picks: [] })
+    expect(gw.ledger.spentSince('iu', new Date(0))).toBe(0)
+  })
+
+  test('needs a door token', async () => {
+    const gw = start()
+    expect((await fetch(`${gw.url}/anthropic/v1/models`)).status).toBe(401)
+    expect(iu.seen).toHaveLength(0)
+  })
+
+  test('the key parameter is stripped before IU sees the query', async () => {
+    const gw = start()
+    await (await fetch(`${gw.url}/anthropic/v1/models?key=${DOOR_TOKEN}&limit=1`)).text()
+    expect(iu.seen[0]?.path).toBe('/prefix/anthropic/v1/models?limit=1')
+  })
+
+  test('an upstream refusal comes back as it is, without a row', async () => {
+    iu.reply(() => Response.json({ type: 'error' }, { status: 503 }))
+    const gw = start()
+    expect((await gw.call('/anthropic/v1/models')).status).toBe(503)
+    expect(gw.rows().records).toEqual([])
+  })
+
+  test('an unreachable upstream is a 502 without a row', async () => {
+    iu.stop()
+    const gw = start()
+    expect((await gw.call('/anthropic/v1/models')).status).toBe(502)
+    expect(gw.rows().records).toEqual([])
+  })
+
+  test('only GET', async () => {
+    const gw = start()
+    expect((await gw.call('/anthropic/v1/models', { method: 'POST', body: '{}' })).status).toBe(405)
+    expect(iu.seen).toHaveLength(0)
+  })
+
+  test('a neighbouring path is not the catalog, and a path cannot climb out of it', async () => {
+    const gw = start()
+    expect((await gw.call('/anthropic/v1/modelsx')).status).toBe(404)
+    expect((await gw.call('/anthropic/v1/models/../../admin')).status).toBe(404)
+    expect((await gw.call('/anthropic/v1/models/%2e%2e/%2e%2e/admin')).status).toBe(404)
+    expect(iu.seen).toHaveLength(0)
   })
 })
 

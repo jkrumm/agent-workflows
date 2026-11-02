@@ -27,6 +27,7 @@ const REPO_SLUG = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 const HANG_GUARD_MS = 30 * 60 * 1000
 const MESSAGES_PATH = '/anthropic/v1/messages'
 const COUNT_TOKENS_PATH = '/anthropic/v1/messages/count_tokens'
+const MODELS_PATH = '/anthropic/v1/models'
 /** Statuses a credit org's balance refusal can carry; only these are read before they are answered. */
 const REFUSAL_STATUSES: ReadonlySet<number> = new Set([400, 402, 503])
 /** A `Response` refuses a body on these. */
@@ -76,8 +77,11 @@ export interface GatewayProxy {
   abortAll(): void
 }
 
-/** Where a path goes: a credit-eligible Anthropic call, or IU by path. */
-type Route = { kind: 'messages'; countTokens: boolean } | { kind: 'iu'; url: string; system: string }
+/** Where a path goes: a credit-eligible Anthropic call, IU's model catalog, or IU by path. */
+type Route =
+  | { kind: 'messages'; countTokens: boolean }
+  | { kind: 'models'; url: string }
+  | { kind: 'iu'; url: string; system: string }
 
 /** Who answers one attempt. `label` is the pool id or `iu-api`. */
 interface Target {
@@ -215,6 +219,9 @@ function attributionOf(inbound: Headers): Attribution {
 /** The caller writes this request's row itself, because only it can price it. Honoured off `/anthropic` only. */
 const callerWritesUsage = (inbound: Headers): boolean => inbound.get('x-agw-usage')?.trim().toLowerCase() === 'caller'
 
+/** The caller asked for IU itself; the credit pools are skipped as for a Claude-Code-shaped request. */
+const callerForcesIu = (inbound: Headers): boolean => inbound.get('x-agw-upstream')?.trim().toLowerCase() === 'iu'
+
 /**
  * The request path: door auth, the pick, the byte-exact forward, the usage tee, the ledger row, the span. A stream
  * goes through unbuffered and pull-driven, so a caller that hangs up cancels the upstream instead of paying for the rest.
@@ -239,6 +246,9 @@ export function createProxy(options: ProxyOptions): GatewayProxy {
   const routeOf = (pathname: string, search: string): Route | null => {
     if (pathname === MESSAGES_PATH) return { kind: 'messages', countTokens: false }
     if (pathname === COUNT_TOKENS_PATH) return { kind: 'messages', countTokens: true }
+    if (pathname === MODELS_PATH || pathname.startsWith(`${MODELS_PATH}/`)) {
+      return { kind: 'models', url: `${iu.anthropicBase}${pathname.slice('/anthropic'.length)}${search}` }
+    }
     const iuRoutes: [prefix: string, base: string, system: string][] = [
       ['/openai/v1/', iu.root, 'openai'],
       ['/gemini/v1beta/', iu.root, 'gcp.gemini'],
@@ -558,7 +568,7 @@ export function createProxy(options: ProxyOptions): GatewayProxy {
    */
   const serveMessages = async (
     x: Exchange,
-    picking: { claudeCodeShaped: boolean; fallbackNone: boolean },
+    picking: { forceIu: boolean; claudeCodeShaped: boolean; fallbackNone: boolean },
     countTokens: boolean,
   ): Promise<Response> => {
     const record = !countTokens
@@ -588,13 +598,15 @@ export function createProxy(options: ProxyOptions): GatewayProxy {
       } catch (error) {
         return unreachable(x, label, record, error)
       }
-      if (upstream.ok && record) pools.served(x.caller, x.session, pick.kind === 'pool' ? pick.pool : null)
+      // `served` with no pool clears the binding, and a forced request must leave the session's pool as it found it.
+      if (upstream.ok && record && !picking.forceIu) {
+        pools.served(x.caller, x.session, pick.kind === 'pool' ? pick.pool : null)
+      }
       return answer(x, upstream, held === null ? upstream.body : heldBody(held), label, record)
     }
   }
 
-  const servePassthrough = async (x: Exchange, url: string): Promise<Response> => {
-    const record = !callerWritesUsage(x.inbound)
+  const servePassthrough = async (x: Exchange, url: string, record: boolean): Promise<Response> => {
     const label: PickLabel = { pool: IU_API, reason: PASSTHROUGH }
     x.span.set({ 'agw.gateway.pool': IU_API, 'agw.gateway.pick_reason': PASSTHROUGH })
     const target: Target = { label: IU_API, url, credential: ['authorization', `Bearer ${iu.apiKey}`] }
@@ -704,10 +716,13 @@ export function createProxy(options: ProxyOptions): GatewayProxy {
       if (route.kind === 'messages' && request.method !== 'POST') {
         return errorResponse(405, 'invalid_request_error', 'POST only')
       }
+      if (route.kind === 'models' && request.method !== 'GET') {
+        return errorResponse(405, 'invalid_request_error', 'GET only')
+      }
       // A non-streamed call is silent for as long as the model works, so no proxied request gets an idle cut.
       server.timeout(request, 0)
       const anthropic = route.kind === 'messages'
-      const x = open(request, url, search, caller, anthropic ? 'anthropic' : route.system)
+      const x = open(request, url, search, caller, route.kind === 'iu' ? route.system : 'anthropic')
       const hasBody = request.method !== 'GET' && request.method !== 'HEAD'
       let bytes: Bytes | undefined
       try {
@@ -718,8 +733,10 @@ export function createProxy(options: ProxyOptions): GatewayProxy {
       if (x.closed) return errorResponse(CALLER_LEFT, 'invalid_request_error', 'request not read')
       const parsed = bytes === undefined ? null : parseBody(bytes, request.headers.get('content-type'), anthropic)
       prepare(x, bytes, parsed, anthropic)
-      if (route.kind === 'iu') return servePassthrough(x, route.url)
+      if (route.kind === 'models') return servePassthrough(x, route.url, false)
+      if (route.kind === 'iu') return servePassthrough(x, route.url, !callerWritesUsage(x.inbound))
       const picking = {
+        forceIu: callerForcesIu(request.headers),
         claudeCodeShaped: isClaudeCodeShaped(request.headers, parsed),
         fallbackNone: request.headers.get('x-agw-fallback')?.trim().toLowerCase() === 'none',
       }

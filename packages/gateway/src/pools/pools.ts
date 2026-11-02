@@ -6,13 +6,13 @@ export interface MeterSource {
   spentSince(pool: string, since: Date): number
 }
 
-export type PickReason = 'bound' | 'soonest-expiry' | 'claude-code' | 'no-pool' | 'drained-retry'
+export type PickReason = 'bound' | 'soonest-expiry' | 'forced' | 'claude-code' | 'no-pool' | 'drained-retry'
 
 export type Pick =
   /** `cycleStart` (ISO) is handed back to `drained` / `reconcile`, so a result from before a rollover is ignored. */
   | { kind: 'pool'; pool: string; reason: 'bound' | 'soonest-expiry'; cycleStart: string }
   /** The IU passthrough (`iu-api`). */
-  | { kind: 'iu'; reason: 'claude-code' | 'no-pool' | 'drained-retry' }
+  | { kind: 'iu'; reason: 'forced' | 'claude-code' | 'no-pool' | 'drained-retry' }
   /** The caller sent `x-agw-fallback: none`: the server answers 402 with the balance marker. */
   | { kind: 'refuse'; reason: 'no-pool' | 'claude-code' | 'drained-retry' }
 
@@ -20,6 +20,8 @@ export interface PickInput {
   /** The door-token caller; bindings are namespaced by it. */
   caller: string
   session: string | null
+  /** The caller asked for IU: it beats a bound session and `fallbackNone`, whose refusal guards against an IU it did not want. */
+  forceIu: boolean
   claudeCodeShaped: boolean
   fallbackNone: boolean
   /** Pools that already refused this request. */
@@ -269,6 +271,7 @@ export function createPools(opts: PoolsOptions): Pools {
 
   return {
     pick(input) {
+      if (input.forceIu) return { kind: 'iu', reason: 'forced' }
       if (input.claudeCodeShaped) return fallback(input, 'claude-code')
 
       const at = now()

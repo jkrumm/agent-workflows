@@ -394,6 +394,31 @@ describePg(suite, () => {
       iu.stop()
     })
 
+    test('a forced request lands its row and its pick with reason forced', async () => {
+      const anthropic = fakeUpstream()
+      const iu = fakeUpstream(() => Response.json(usage))
+      const gw = harness({
+        anthropic,
+        iu,
+        registry: [pool('iu')],
+        usage: { connectionString: scratchUrl, debounceMs: 5 },
+      })
+      const init = jsonBody({ model: 'priced-model', messages: [] })
+      const response = await gw.call('/anthropic/v1/messages', {
+        ...init,
+        headers: { ...init.headers, 'x-agw-upstream': 'iu' },
+      })
+      await response.text()
+      const id = response.headers.get('x-agw-request-id') ?? ''
+      await until(async () => (await record(id)) !== undefined && (await picksOf(id)).length === 1)
+      expect(await picksOf(id)).toMatchObject([{ picked: 'iu-api', reason: 'forced' }])
+      expect(await record(id)).toMatchObject({ billing: 'api_key', lane_detail: { fallback: 'forced' } })
+      expect(gw.ledger.stats()).toMatchObject({ quarantined: 0 })
+      await gw.close()
+      anthropic.stop()
+      iu.stop()
+    })
+
     test('shutdown flushes what the debounce still holds', async () => {
       const anthropic = fakeUpstream()
       const iu = fakeUpstream(() => Response.json(usage))
