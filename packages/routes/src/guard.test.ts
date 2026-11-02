@@ -305,3 +305,18 @@ test('every route on a Claude model spreads a tier', () => {
     expect({ id, spreadsATier: spreads }).toEqual({ id, spreadsATier: true })
   }
 })
+
+test('the review split (concept v3.5, restored 2026-11-02): default angles on EASY, deep angles and the synthesis on HARD', () => {
+  const step = (id: 'review.angle' | 'review.angle.deep' | 'review.synthesis') => {
+    const { model, effort, fallback } = resolveRoute(id)
+    return { model, effort, fallback: fallback?.model }
+  }
+  const agentOf = (tier: typeof EASY | typeof HARD) => ({
+    model: tier.agent.model,
+    effort: tier.agent.effort,
+    fallback: tier.agent.fallback.model,
+  })
+  expect(step('review.angle')).toEqual(agentOf(EASY))
+  expect(step('review.angle.deep')).toEqual(agentOf(HARD))
+  expect(step('review.synthesis')).toEqual(agentOf(HARD))
+})
