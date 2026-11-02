@@ -1,17 +1,20 @@
 // `agw eval run <workflow> --arm <file>`: the arm is in eval.run's input and fingerprint, refused at admission when
 // bad, and applies to every run below the eval run (the case runs and their fan-out children) while a run outside it
-// resolves the plain table.
+// resolves the plain table. The judge, inline or regression, grades on the plain table even inside the eval.
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { defineCapability } from '@agent-workflows/capabilities'
 import { casesPath, PlainCase, writeCases } from '@agent-workflows/eval'
-import { type RouteId, resolveRoute } from '@agent-workflows/routes'
-import { type Arm, defineWorkflow, type Runtime, WorkflowError } from '@agent-workflows/runtime'
+import { type PatchInput, type RouteId, resolveRoute } from '@agent-workflows/routes'
+import { defineWorkflow, type Runtime, type ScoreJudge, WorkflowError } from '@agent-workflows/runtime'
 import { FakeAgentHost } from '@agent-workflows/runtime/testing'
 import { z } from 'zod'
 import { testPlatform } from '../../middleware/test/support.ts'
 import { freshSchema, inspector, testRuntime } from '../../runtime/test/support/pg.ts'
+import { createCapabilityWorkflows } from '../src/capability-runs.ts'
+import { scorerJudge } from '../src/judge.ts'
 import type { HostWorkflow } from '../src/operations.ts'
 import { createEvalWorkflows, wireEval } from '../src/workflows/eval/index.ts'
 
@@ -26,7 +29,7 @@ const ARM = { routes: { check: { model: SONNET, effort: 'max' }, 'cheap.classify
 
 const Seen = z.object({ model: z.string(), effort: z.string().nullable() })
 type Seen = z.infer<typeof Seen>
-const seen = (id: RouteId, patch: Arm['routes']): Seen => {
+const seen = (id: RouteId, patch: PatchInput): Seen => {
   const route = resolveRoute(id, patch)
   return { model: route.model, effort: route.effort ?? null }
 }
@@ -43,15 +46,34 @@ const leaf = defineWorkflow({
   run: (ctx) => ctx.step('resolve', (scope) => seen('cheap.classify', scope.arm?.routes)),
 })
 
-/** The replayed workflow: an agent step, a route resolved outside any step, and a fan-out child. */
+/** A judge capability: answers with the route its call resolved (with the arm the call carries, if any). */
+const probe = defineCapability({
+  id: 'llm.armprobe',
+  summary: 'the route a judge call resolves',
+  input: z.object({}),
+  output: Seen,
+  handler: (_input, ctx) => seen('cheap.classify', ctx.arm?.routes),
+})
+const capWorkflows = createCapabilityWorkflows({ served: [probe] })
+
+/** 1 when the judge resolved the plain table. */
+const judgedOnTable = async (judge: ScoreJudge | undefined) =>
+  judge && JSON.stringify(await judge('llm.armprobe', {})) === JSON.stringify(seen('cheap.classify', undefined)) ? 1 : 0
+
+/** The replayed workflow: an agent step, an inline gate, a route resolved outside any step, and a fan-out child. */
 const target = defineWorkflow({
   id: 'armcase',
   version: 'v1',
   input: z.object({ n: z.number() }),
   output: z.object({ agent: Seen, outside: Seen, child: Seen }),
-  scorer: { version: 's1', score: () => ({ scores: { ok: 1 }, pass: true }) },
+  scorer: {
+    version: 's1',
+    judgeInline: true,
+    score: async (_input, _output, ctx) => ({ scores: { judgeOnTable: await judgedOnTable(ctx.judge) }, pass: true }),
+  },
   async run(ctx) {
     const agent = Seen.parse(await ctx.agent('ask', { agent: 'checker', prompt: 'x' }))
+    await ctx.score('gate', null)
     const [child] = await ctx.workflow('fan', leaf, [{}])
     return { agent, outside: seen('cheap.classify', ctx.arm?.routes), child: Seen.parse(child) }
   },
@@ -73,9 +95,14 @@ beforeAll(async () => {
   platform = testPlatform(db.schema)
   rt = testRuntime({
     schema: db.schema,
-    workflows: workflows.map((w) => w.workflow),
+    workflows: [...workflows.map((w) => w.workflow), ...capWorkflows.values()],
     host,
     middleware: platform.middleware,
+    judge: scorerJudge({
+      registry: { call: (_id: never, input: never, options: never) => probe.call(input, options) },
+      workflows: capWorkflows,
+      runtime: () => rt,
+    }),
   })
   wiring = wireEval({ runtime: rt, workflows, env })
   await rt.open()
@@ -125,6 +152,19 @@ describe('agw eval run --arm', () => {
       expect(rows.map((r) => r.arm)).toEqual([ARM]) // the grandchild carries it too
     }
     expect(production.end.output).toEqual({ agent: table.agent, outside: table.outside, child: table.outside })
+
+    // The judge grades on the plain table: the inline gate in each armed case, and the regression scoring, whose calls
+    // are children of the eval run (its cost) that do not inherit its arm.
+    for (const c of output.cases) {
+      const row = await sql.run(c.runId)
+      expect(row?.scores).toMatchObject({ gates: { gate: { scores: { judgeOnTable: 1 } } } })
+      expect(c.scores).toEqual({ judgeOnTable: 1 })
+    }
+    const { rows: judged } = await sql.pool.query(
+      `select parent_id, arm from "${db.schema}".runs where workflow = 'cap.llm.armprobe' and purpose = 'eval'`,
+    )
+    expect(judged.length).toBeGreaterThan(0)
+    for (const r of judged) expect(r).toEqual({ parent_id: runId, arm: null })
     expect((await sql.run(production.runId))?.arm).toBeNull()
   })
 
@@ -152,8 +192,15 @@ describe('agw eval run --arm', () => {
       /invalid_input: .*unknown route "no\.such"/s,
     )
     expect(await refused({ routes: { 'review.angle': { effort: 'none' } } })).toMatch(/"review\.angle".*Sonnet/s)
-    expect(await refused({ routes: { check: { model: 'not-served' } } })).toContain(
-      'route "check": model "not-served" is not served by the OpenCode server',
+    expect(await refused({ routes: { check: { model: 'not-in-table' } } })).toContain(
+      'route "check": model "not-in-table" is not in the route table (add it to the table first)',
+    )
+    const callOnly = resolveRoute('cheap.classify').fallback?.model as string
+    expect(await refused({ routes: { check: { model: callOnly } } })).toContain(
+      `route "check": model "${callOnly}" is not served by the OpenCode server`,
+    )
+    expect(await refused({ routes: { 'research.agent': { effort: 'xhigh' } } })).toMatch(
+      /"research\.agent".*a DeepSeek model cannot run at effort xhigh/s,
     )
     expect(await refused({ routes: { check: { effort: 'leakysecret' } } })).not.toContain('leakysecret')
     expect(await refused({ params: {}, extra: true })).toContain('invalid_input')

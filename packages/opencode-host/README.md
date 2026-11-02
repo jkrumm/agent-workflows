@@ -152,8 +152,8 @@ turn's tokens; the gateway's usage rows do.
   mini `.env.tpl` sets the URL and `scripts/launch.sh` reads the token from the `agw-opencode` line of `data/door-tokens`), and
   `OTEL_EXPORTER_OTLP_*` when set. Nothing else: no provider key, no `AGW_API_SECRET`, no `CLAUDE_*`, no database URL.
 - **Config** (`buildServerConfig`, built once per server spawn from the route table): three providers with a model row
-  for every `opencode`-wire route and its fallback, each row carrying every effort variant the model can run (`EFFORTS`; a
-  Sonnet has no `none`), so a step whose run's arm moves its route to another of these models or effort opens on the
+  for every `opencode`-wire route and its fallback, each row carrying exactly the efforts the model's provider takes
+  (`effortsOf` in `@agent-workflows/routes`: a Sonnet no `none`, DeepSeek `none`/`low`/`high`/`max`), so a step whose run's arm moves its route to another of these models or effort opens on the
   running server without a restart (`open` resolves the route with `AgentOpenSpec.arm`, and the handle keeps the
   route's patch for the fallback and the pricing). An arm naming a model outside the config is refused at admission
   (`validateArm`), never served by a silent fallback to the table. Cost rows come from the rate of the first route naming

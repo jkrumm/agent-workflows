@@ -29,6 +29,7 @@ import type {
   StepPreArgs,
   StepScope,
   ToolEvent,
+  Usage,
   Verdict,
   Widen,
   Workflow,
@@ -267,13 +268,17 @@ export class RunScope {
       timer = setTimeout(() => idle.abort(new StepTimeout(stepId, idleMs)), idleMs)
     }
     progress()
+    const addUsage = (u: Usage) => usage.add(u)
+    const attribution = this.attribution(stepId)
+    const arm = this.run.arm ? { arm: this.run.arm } : {}
     const scope: StepScope = {
       key: `${this.run.id}:${stepId}`,
       attempt,
       signal,
-      addUsage: (u) => usage.add(u),
-      attribution: this.attribution(stepId),
-      ...(this.run.arm ? { arm: this.run.arm } : {}),
+      addUsage,
+      attribution,
+      ...arm,
+      callContext: { signal, addUsage, attribution, ...arm },
       progress,
     }
     try {
@@ -352,7 +357,6 @@ export class RunScope {
                   signal: scope.signal,
                   addUsage: scope.addUsage,
                   attribution: scope.attribution,
-                  ...(scope.arm ? { arm: scope.arm } : {}),
                   source: 'inline',
                   runId: this.run.id,
                   scorer: scorer.version,

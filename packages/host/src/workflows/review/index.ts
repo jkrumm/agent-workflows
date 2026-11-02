@@ -178,11 +178,11 @@ export function createReviewWorkflows(deps: WorkflowDeps, options: ReviewOptions
     const adversary: Promise<AngleResult> | null = p.adversary
       ? track(
           settle(
-            ctx.step('adversary', async ({ addUsage, signal, attribution }): Promise<AngleResult> => {
+            ctx.step('adversary', async ({ callContext }): Promise<AngleResult> => {
               const out = await registry.call(
                 'review.adversary',
                 { diff, ...(context ? { context } : {}) },
-                { addUsage, signal, attribution },
+                callContext,
               )
               return { angle: 'adversary', findings: normalize(out.findings), failureReason: null }
             }),
@@ -194,8 +194,8 @@ export function createReviewWorkflows(deps: WorkflowDeps, options: ReviewOptions
     const routed = explicit
       ? null
       : await settle(
-          ctx.step('route', async ({ addUsage, signal, attribution }) => {
-            const out = await registry.call('review.route', { diff }, { addUsage, signal, attribution })
+          ctx.step('route', async ({ callContext }) => {
+            const out = await registry.call('review.route', { diff }, callContext)
             return { angles: out.angles, depth: out.depth ?? null, depthReason: out.depthReason ?? null }
           }),
         )

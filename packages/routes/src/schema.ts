@@ -67,33 +67,61 @@ const decisionRule = [
 ] as const
 
 /**
- * A Sonnet is `claude-sonnet-<version>` (or the `sonnet` alias): the family is read from the id's prefix, so no concrete
- * id is named outside `table/`. Anthropic's effort levels for Sonnet 5.5 are low to max; "thinking off" is not one of
- * them (the lowest setting is `thinking: between_tools`, which `none` does not send), so `none` on a Sonnet is a
- * configuration error, caught at the table import and on every override. The caller names the route.
+ * The efforts a model's provider takes, by family, read from the id's prefix (no concrete table id is named outside
+ * `table/`). A family not listed takes every effort. One source for the table import, every arm patch and the efforts the
+ * OpenCode server registers as variants (`packages/opencode-host` config).
+ * - Sonnet (`claude-sonnet-<version>` or the `sonnet` alias): Anthropic's levels are low to max; "thinking off" is not
+ *   one of them (the lowest is `thinking: between_tools`, which `none` does not send).
+ * - GPT-6 Astra and GPT-6.1 Sol: no `none` (HTTP 400); the rest of the GPT-6 family takes all six (OpenAI's GPT-6 guide
+ *   and model pages, developers.openai.com/api/docs/guides/latest-model, read 2026-11-02).
+ * - DeepSeek: `none`, `low`, `high`, `max` are its levels; `medium` and `xhigh` are only accepted as aliases of `high`
+ *   (api-docs.deepseek.com/api/create-chat-completion, read 2026-11-02), so an arm at them would measure `high`.
  */
-const SONNET = /^(?:claude-)?sonnet(?:-|$)/
-/** Whether a model can run at an effort: every effort but `none` on a Sonnet (the rule below). */
-export function takesEffort(model: string, effort: Effort): boolean {
-  return !(SONNET.test(model) && effort === 'none')
+const EFFORT_FAMILIES: readonly { name: string; match: RegExp; efforts: readonly Effort[] }[] = [
+  { name: 'a Sonnet model', match: /^(?:claude-)?sonnet(?:-|$)/, efforts: ['low', 'medium', 'high', 'xhigh', 'max'] },
+  {
+    name: 'a GPT-6 Astra or GPT-6.1 Sol model',
+    match: /^gpt-6(?:-astra|\.1-sol)(?:-|$)/,
+    efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+  },
+  { name: 'a DeepSeek model', match: /^deepseek-/i, efforts: ['none', 'low', 'high', 'max'] },
+]
+
+/** The efforts a model can run at (`EFFORTS` unless its family takes fewer). */
+export function effortsOf(model: string): readonly Effort[] {
+  return EFFORT_FAMILIES.find((f) => f.match.test(model))?.efforts ?? EFFORTS
 }
 
-const sonnetRule: [(r: { model: string; effort?: Effort }) => boolean, { message: string; path: string[] }] = [
-  (r) => r.effort === undefined || takesEffort(r.model, r.effort),
-  { message: 'a Sonnet model cannot run at effort none: use low, medium, high, xhigh or max', path: ['effort'] },
-]
+/** Whether a model's provider takes an effort. */
+export function takesEffort(model: string, effort: Effort): boolean {
+  return effortsOf(model).includes(effort)
+}
+
+const list = (items: readonly string[]) =>
+  items.length > 1 ? `${items.slice(0, -1).join(', ')} or ${items.at(-1)}` : (items[0] ?? '')
+
+/** Refuses an effort the model's provider does not take, naming the family and the efforts it does. The caller names the route. */
+function effortRule(r: { model: string; effort?: Effort }, ctx: z.RefinementCtx) {
+  if (r.effort === undefined || takesEffort(r.model, r.effort)) return
+  const family = EFFORT_FAMILIES.find((f) => f.match.test(r.model))
+  ctx.addIssue({
+    code: 'custom',
+    path: ['effort'],
+    message: `${family?.name ?? 'the model'} cannot run at effort ${r.effort}: use ${list(effortsOf(r.model))}`,
+  })
+}
 
 /** The route a call moves to once when the primary fails on provider balance (HTTP 402, or 503 "Insufficient Balance"). */
 export const fallbackSchema = z
   .strictObject(routeFields)
   .refine(...decisionRule)
-  .refine(...sonnetRule)
+  .superRefine(effortRule)
 export type FallbackEntry = z.infer<typeof fallbackSchema>
 
 export const routeSchema = z
   .strictObject({ ...routeFields, fallback: fallbackSchema.optional() })
   .refine(...decisionRule)
-  .refine(...sonnetRule)
+  .superRefine(effortRule)
   .refine((r) => !r.fallback || (r.fallback.wire === 'opencode') === (r.wire === 'opencode'), {
     message:
       'a fallback runs the same kind of step: an opencode route falls back to opencode, a single call to a single call',

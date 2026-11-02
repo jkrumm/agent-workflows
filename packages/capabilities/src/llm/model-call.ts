@@ -37,7 +37,7 @@ const MAX_ATTEMPTS = 2
  * The route the call runs on: the table with the calling run's arm applied (`ctx.arm.routes`), the plain table outside
  * an armed run. A bad patch is `NOT_CONFIGURED` (admission validated it, so only an untyped caller gets here).
  */
-export function resolve(_deps: LlmDeps, routeId: RouteId, ctx?: Pick<Ctx, 'arm'>): ResolvedRoute {
+export function resolve(routeId: RouteId, ctx?: Pick<Ctx, 'arm'>): ResolvedRoute {
   try {
     return resolveRoute(routeId, ctx?.arm?.routes)
   } catch (error) {
@@ -131,7 +131,7 @@ export type Completion = Pick<ChatResult, 'text' | 'model' | 'stop' | 'stopDetai
  * `start` pins the route to call (a re-ask stays on the route that answered); a fallback route has no fallback.
  */
 export async function complete(deps: LlmDeps, args: CompleteArgs, start?: ResolvedRoute): Promise<Completion> {
-  const route = start ?? resolve(deps, args.routeId, args.ctx)
+  const route = start ?? resolve(args.routeId, args.ctx)
   try {
     return await completeOn(deps, route, args)
   } catch (error) {

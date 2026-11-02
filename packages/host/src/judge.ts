@@ -5,6 +5,18 @@ import { canonicalJson } from './canonical.ts'
 import { type CapabilityWorkflows, journaledError } from './capability-runs.ts'
 import { type KeyAttempt, withAttemptKeys } from './attempt-keys.ts'
 
+/**
+ * The inline judge's call context: the gate step's usage, signal and attribution, and deliberately no arm. The judge
+ * always grades on the plain route table, so an arm that patches its routes never changes the grader.
+ */
+function plainTable(scope: Parameters<JudgeCaller>[2]) {
+  return {
+    addUsage: scope.addUsage,
+    signal: scope.signal,
+    ...(scope.attribution ? { attribution: scope.attribution } : {}),
+  }
+}
+
 /** What a scorer may judge with: reads and model answers, never a workflow or an effect. */
 export const JUDGE_CAPABILITIES = ['web.fetch', 'web.package', 'decide'] as const
 export const judgeAllowed = (id: string) =>
@@ -60,12 +72,7 @@ export function scorerJudge(options: {
     if (scope.source === 'inline') {
       // The same contract as below: only an answer (the source said no) comes back; an outage throws.
       try {
-        return await call(capability, input, {
-          addUsage: scope.addUsage,
-          signal: scope.signal,
-          ...(scope.attribution ? { attribution: scope.attribution } : {}),
-          ...(scope.arm ? { arm: scope.arm } : {}),
-        })
+        return await call(capability, input, plainTable(scope))
       } catch (error) {
         const answer = error instanceof CapabilityCallError ? answerOf(error) : null
         if (answer) return answer
@@ -94,7 +101,11 @@ export function scorerJudge(options: {
         return answer ? { value: answer } : { failedBefore: true }
       }
       scope.signal.throwIfAborted()
-      const parent = scope.source === 'regression' && scope.evalRunId !== undefined ? { parentId: scope.evalRunId } : {}
+      // A child of the eval run (its cost rolls up there) that grades on the plain table, never the eval's arm.
+      const parent =
+        scope.source === 'regression' && scope.evalRunId !== undefined
+          ? { parentId: scope.evalRunId, unarmed: true as const }
+          : {}
       const { runId } = await runtime.start(workflow, input, { purpose, idempotencyKey: key, ...parent })
       // The scoring was aborted (cancel, shutdown): the call it started goes with it, also when that came first.
       const onAbort = () => void runtime.cancel(runId).catch(() => {})

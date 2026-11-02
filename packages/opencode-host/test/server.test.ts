@@ -12,7 +12,7 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { isAbsolute, join } from 'node:path'
-import { EFFORTS, opencodeModels, resolveRoute } from '@agent-workflows/routes'
+import { effortsOf, opencodeModels, resolveRoute } from '@agent-workflows/routes'
 import type { AgentWaitOptions } from '@agent-workflows/runtime'
 import {
   buildServerConfig,
@@ -584,11 +584,10 @@ describe('buildServerConfig: every effort variant of every served model', () => 
   type Rows = Record<string, { models: Record<string, { variants?: { id: string; settings: unknown }[] }> }>
   const providers = () => (buildServerConfig() as { providers: Rows }).providers
 
-  test('each model row carries every effort it can run, a Sonnet all but none', () => {
+  test('each model row carries exactly the efforts its provider takes (a Sonnet no none, DeepSeek its four levels)', () => {
     for (const route of opencodeRoutes()) {
       const row = Object.values(providers()).find((p) => route.model in p.models)?.models[route.model]
-      const expected = EFFORTS.filter((e) => !(route.model.startsWith('claude-sonnet') && e === 'none'))
-      expect(row?.variants?.map((v) => v.id)).toEqual([...expected])
+      expect(row?.variants?.map((v) => v.id)).toEqual([...effortsOf(route.model)])
     }
   })
 
@@ -609,8 +608,7 @@ describe('buildServerConfig: every effort variant of every served model', () => 
   test("an arm's effort or model move resolves to a variant the running config registers", () => {
     const rows = providers()
     for (const model of opencodeModels()) {
-      for (const effort of EFFORTS) {
-        if (model.startsWith('claude-sonnet') && effort === 'none') continue
+      for (const effort of effortsOf(model)) {
         const { model: ref } = modelRef('check', { check: { model, effort } })
         const row = rows[ref.providerID]?.models[ref.id]
         expect(row?.variants?.some((v) => v.id === ref.variant)).toBe(true)

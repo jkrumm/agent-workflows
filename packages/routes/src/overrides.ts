@@ -42,11 +42,11 @@ export function parsePatch(raw: PatchInput | unknown): RoutesPatch {
 
 /**
  * Merge a patch over a table entry and validate the result like a table entry. `null` clears an optional field. A new
- * model takes the patch's `rate` (or `price`), else the table's for that model (`routeRate`, `claudeRate`): a stale
- * rate would price the new model wrongly, and a dropped one would leave an armed run unpriced. A model the table
- * prices nowhere needs the patch to carry its price (`rate: null` unprices it on purpose). A `fallback` patch is merged
- * over the entry's fallback by the same rules; `fallback: null` removes it, and a route without a fallback cannot gain
- * one here (its wire is code).
+ * model (one the table names: the caller checks) takes the table's `rate` and `price` for that model (`routeRate`,
+ * `claudeRate`) unless the patch sets them: a stale rate would price the new model wrongly, and a dropped one would leave
+ * an armed run unpriced, so a priced route cannot move to a model the table prices no such way. A `fallback` patch is
+ * merged over the entry's fallback by the same rules; `fallback: null` removes it, and a route without a fallback cannot
+ * gain one here (its wire is code).
  */
 export function applyPatch(id: string, base: RouteEntry, patch: RoutePatch): RouteEntry {
   const { fallback, ...own } = patch
@@ -85,7 +85,7 @@ function merge(label: string, base: Omit<RouteEntry, 'fallback'>, patch: Fallbac
 
 const unpriced = (label: string, field: 'rate' | 'price') =>
   new RouteOverrideError(
-    `${label}: the patched model has no ${field} in the route table; the patch must carry one (\`${field}\`)`,
+    `${label}: the route table has no ${field} for the patched model, and this route is priced by one`,
   )
 
 /** The text-token rate the table gives a model: a route's or fallback's, else Claude's list rate (aliases too). */

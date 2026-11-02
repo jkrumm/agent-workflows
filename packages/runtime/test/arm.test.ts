@@ -147,11 +147,70 @@ describe('an arm', () => {
       ] as const) {
         expect(await refused({ purpose: 'eval', arm: arm as unknown as Arm })).toContain(why)
       }
-      // An empty arm is none.
-      const empty = await rt.start(wf, {}, { purpose: 'eval', arm: {} })
-      expect((await sql.run(empty.runId))?.arm).toBeNull()
+      // An arm whose routes and params are both empty is none: the unarmed baseline.
+      for (const arm of [{}, { routes: {} }, { params: {} }, { routes: {}, params: {} }]) {
+        const empty = await rt.start(wf, {}, { purpose: 'eval', arm })
+        expect((await sql.run(empty.runId))?.arm).toBeNull()
+        await rt.wait(empty.runId)
+      }
       await rt.wait(parent.runId)
-      await rt.wait(empty.runId)
+    } finally {
+      await rt.close()
+    }
+  })
+})
+
+describe('an unarmed parented start', () => {
+  test('stays a child of an armed parent but takes no arm, and passes none on', async () => {
+    const seen: (Arm | undefined)[] = []
+    const leaf = defineWorkflow({
+      id: 'unarmed.leaf',
+      version: 'v1',
+      input: z.object({}),
+      output: z.object({}),
+      run: async (ctx) => {
+        await ctx.step('see', (scope) => {
+          seen.push(scope.arm)
+          return null
+        })
+        return {}
+      },
+    })
+    const judge = defineWorkflow({
+      id: 'unarmed.judge',
+      version: 'v1',
+      input: z.object({}),
+      output: z.object({}),
+      run: async (ctx) => {
+        await ctx.step('see', (scope) => {
+          seen.push(scope.arm)
+          return null
+        })
+        await ctx.workflow('fan', leaf, [{}])
+        return {}
+      },
+    })
+    const parent = defineWorkflow({
+      id: 'unarmed.parent',
+      version: 'v1',
+      input: z.object({}),
+      output: z.object({}),
+      run: async () => ({}),
+    })
+    const rt = testRuntime({ schema: db.schema, workflows: [parent, judge, leaf] })
+    await rt.open()
+    try {
+      const p = await rt.start(parent, {}, { purpose: 'eval', arm: ARM })
+      const j = await rt.start(judge, {}, { purpose: 'eval', parentId: p.runId, unarmed: true })
+      expect((await rt.wait(j.runId)).status).toBe('done')
+      expect(await sql.run(j.runId)).toMatchObject({ parent_id: p.runId, arm: null })
+      expect(seen).toEqual([undefined, undefined])
+      const refused = await rt.start(judge, {}, { purpose: 'eval', arm: ARM, unarmed: true }).then(
+        () => 'started',
+        (error: unknown) => String(error),
+      )
+      expect(refused).toContain('start: unarmed excludes an arm')
+      await rt.wait(p.runId)
     } finally {
       await rt.close()
     }

@@ -177,14 +177,14 @@ describe('provider-balance fallback', () => {
     expect(usages).toEqual([expect.objectContaining({ model: summarize.fallback?.model })])
   })
 
-  test('an arm patches the fallback: its model, effort and rate are what runs', async () => {
-    const rate = { inputPerM: 1, outputPerM: 5 }
-    const routes = { 'cheap.classify': { fallback: { model: 'other', effort: 'low', rate } } }
+  test('an arm patches the fallback: its model and effort are what runs, priced at the table rate of that model', async () => {
+    const terra = resolveRoute('review.angle').fallback?.model as string
+    const routes = { 'cheap.classify': { fallback: { model: terra, effort: 'xhigh' } } }
     iu.on('messages', () => new Response('', { status: 402 }))
     iu.on('chat', (request) => answer(request, '{"label":"bug","reason":"r"}'))
     await call('llm.classify', classify, routes)
-    expect(iu.requests[1]?.body).toMatchObject({ model: 'other', reasoning_effort: 'low' })
-    expect(usages).toEqual([expect.objectContaining({ model: 'other', costSource: 'rate' })])
+    expect(iu.requests[1]?.body).toMatchObject({ model: terra, reasoning_effort: 'xhigh' })
+    expect(usages).toEqual([expect.objectContaining({ model: terra, costSource: 'rate' })])
   })
 
   test('an arm with fallback: null turns the fallback off', async () => {

@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test'
+import type { PatchInput } from '@agent-workflows/routes'
 import { AudioConfigError, audioConfig, audioTransports } from './config.ts'
 import { type AudioRouteId, audioRoutes } from './routes.ts'
+import { createAudioScope } from './scope.ts'
 
 const ROUTES = audioRoutes()
 import { measureFromOpenAiUsage, priceCall } from './usage.ts'
@@ -127,11 +129,30 @@ describe('config', () => {
     }
   })
 
-  test('legacy env names and defaults; prep models default to the routes flagged prep', () => {
+  test("legacy env names and defaults; prep models default to the scope's routes flagged prep, an arm's patch applied", () => {
     const env = { AGW_API_SECRET: 'k', AGW_GATEWAY_URL: 'https://gateway.example.com' }
     const config = audioConfig(env)
-    expect(config.ttsGeminiPrepModels).toEqual([ROUTES['audio.tts.gemini-flash'].model])
-    expect(config.ttsReplicatePrepModels).toEqual([ROUTES['audio.tts.elevenlabs-v3'].model])
+    expect(config.ttsGeminiPrepModels).toBeUndefined()
+    const scope = (routes?: PatchInput) =>
+      createAudioScope(
+        { config, usage: {} as never, ...(routes ? { routes } : {}) },
+        {
+          requestId: 'r',
+          caller: 't',
+        },
+      )
+    expect(scope().prepModels('gemini')).toEqual([ROUTES['audio.tts.gemini-flash'].model])
+    expect(scope().prepModels('replicate')).toEqual([ROUTES['audio.tts.elevenlabs-v3'].model])
+    const lite = ROUTES['audio.tts.gemini-flash-lite'].model
+    expect(scope({ 'audio.tts.gemini-flash': { model: lite } }).prepModels('gemini')).toEqual([lite])
+    const listed = createAudioScope(
+      { config: audioConfig({ ...env, TTS_GEMINI_PREP_MODELS: 'a' }), usage: {} as never },
+      {
+        requestId: 'r',
+        caller: 't',
+      },
+    )
+    expect(listed.prepModels('gemini')).toEqual(['a'])
     expect(config.sttMaxChunkSeconds).toBe(240)
     const tuned = audioConfig({ ...env, STT_PROMPT: 'p', TTS_CONCURRENCY: '20', TTS_GEMINI_PREP_MODELS: 'a, b' })
     expect(tuned).toMatchObject({ sttPrompt: 'p', ttsConcurrency: 8, ttsGeminiPrepModels: ['a', 'b'] })

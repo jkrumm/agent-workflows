@@ -79,6 +79,18 @@ export type Attribution = {
  */
 export type Arm = { routes?: { [routeId: string]: { [key: string]: Json } }; params?: { [name: string]: Json } }
 
+/**
+ * What a capability call inside a step takes (`registry.call(id, input, scope.callContext)`): the step's usage sink,
+ * signal, attribution and its run's arm. One object, so no call can drop a part of it (the arm above all: a call that
+ * forgets it resolves the table inside an armed run).
+ */
+export type CallContext = {
+  signal: AbortSignal
+  addUsage: (usage: Usage) => void
+  attribution: Attribution
+  arm?: Arm
+}
+
 /** Handed to every step body. */
 export type StepScope = {
   /** `${runId}:${stepId}`: the idempotency key for outside effects. */
@@ -95,6 +107,8 @@ export type StepScope = {
    * (`resolveRoute(id, scope.arm?.routes)`), and `registry.call(id, input, scope)` hands it to the capability.
    */
   arm?: Arm
+  /** The capability-call context of this step: pass it to every `registry.call` as is (spread it to wrap `addUsage`). */
+  callContext: CallContext
   /** Resets the idle timer. */
   progress: () => void
 }
@@ -271,8 +285,6 @@ export type JudgeCaller = (
     scorer: string
     /** The inline gate's step; absent for regression and drift, whose calls are runs of their own. */
     attribution?: Attribution
-    /** The inline gate's run's arm, absent without one; regression and drift calls take theirs from their own run. */
-    arm?: Arm
     /** Regression inside `agw eval run`: the eval run, which the host starts the judge's calls under (`parentId`). */
     evalRunId?: string
   },
@@ -444,9 +456,15 @@ export type StartOptions = {
    * workspace and trace come from the parent row (so those options are refused next to it). It stays its own root
    * (`root_id` = its id): leased, recovered and redelivered on its own by the process that serves its workflow, not
    * driven inside the parent like a fan-out child. `agw eval run` starts its case runs so. The child inherits the
-   * parent's arm too, so `arm` is refused next to it.
+   * parent's arm too (unless `unarmed`), so `arm` is refused next to it.
    */
   parentId?: string
+  /**
+   * The run resolves the plain route table even under an armed parent: it neither takes nor passes on an arm. The
+   * regression judge's calls start so: they stay children of the eval run (its cost) but grade with the table, so an arm
+   * that patches the judge's routes never changes the grader.
+   */
+  unarmed?: true
   /**
    * The run's arm (`Arm`), copied to every descendant run. Without it a run takes its workflow's `arm(input)` or none.
    * Only shape-checked here: a caller validates the route patches first (`validateArm`).

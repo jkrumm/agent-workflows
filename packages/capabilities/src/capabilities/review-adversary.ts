@@ -41,7 +41,7 @@ export const createReviewAdversary = (deps: LlmDeps) =>
     // Not `agw review route`: the host refuses a command that is a prefix of another, and `agw review` is the workflow.
     cli: { command: ['review-adversary'], stdin: 'diff', defaultFormat: 'json' },
     async handler({ diff, context }, ctx) {
-      const route = resolve(deps, 'review.adversary', ctx)
+      const route = resolve('review.adversary', ctx)
       if (route.wire !== 'iu-openai') {
         throw new CapabilityError(
           'NOT_CONFIGURED',

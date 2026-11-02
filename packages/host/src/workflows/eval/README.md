@@ -20,12 +20,16 @@
   mixed scorer versions and fewer than 10 paired cases are reported as `warnings`.
 - **`--arm <file>`: route patches and params for this eval only.** The file is an arm, `{ routes?: { <route id>:
   <patch> }, params?: { <name>: <json> } }` (routes README §Arms); the CLI sends its content, never the path. It is
-  validated at admission (an unknown route, a bad patch, a Sonnet at effort `none`, an agent model the OpenCode server
-  does not serve: refused before any run exists, naming the route), kept in this run's input and on its row
-  (`runs.arm`), and copied to every run below it: case runs, their fan-out children, the regression judge's calls.
+  validated at admission (an unknown route, a bad patch, a model the table does not name, an effort the model's
+  provider does not take, an agent model the OpenCode server does not serve: refused before any run exists, naming the
+  route), kept in this run's input and on its row (`runs.arm`), and copied to every run below it: case runs and their
+  fan-out children. The judge is not armed: the regression judge's calls are children of the eval run (`unarmed`, so
+  they count in its cost) and the inline gate's judge passes no arm, so an arm patching `cheap.*` never changes the
+  grader. An arm whose `routes` and `params` are both empty is no arm (the baseline).
   Each of those resolves every route with the patch; any other run, concurrent or not, resolves the table, so an arm
   needs no restart and never moves production. The arm is part of the fingerprint of the eval run and of each case
-  run, so `compare` tells arms apart by fingerprint alone. Workflows read `params` with a default (`ctx.param`).
+  run, so `compare` tells arms apart by fingerprint alone. Workflows read `params` with a default (`ctx.param`). A
+  release before migration 0015 ignores `runs.arm`: drain armed eval runs before rolling back past it.
 - **Resume and cancel.** Each case run is keyed `eval:<evalRunId>:<caseId>`, and its clone lives in a directory
   derived from that key (`agw_eval_case_<sha256[:16]>` in the temp dir). A resumed `eval.run` looks the key up before
   anything else: a case scored by this eval run is reported as recorded (no clone, no install, no second score); one

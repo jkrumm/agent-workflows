@@ -36,7 +36,7 @@ module augmentation, and `RouteId = keyof RouteTable`, so a typo in a caller is 
 every group to that shape (`export default routes` plus the augmentation over `keyof typeof routes`, so the typed key
 set is the exported one by construction; a type cannot be listed at runtime to compare) and to importing only
 `../schema.ts` and `./_shared.ts`, so the table's top-level await can never wait on an import cycle. It also checks that
-every route literal in a route position under `packages/*/src` (`route:`, `routeId:`, `resolve(deps, …)`,
+every route literal in a route position under `packages/*/src` (`route:`, `routeId:`, `resolve(…)`,
 `resolveRoute(…)`, `*_ROUTE[: RouteId] = …`) is a route the table serves: that covers call-time routes such as a step's untyped
 `options.route`. The host also checks at
 boot that every agent a workflow lists runs on a route the table has (`packages/host/README.md` §Adding a workflow).
@@ -123,8 +123,9 @@ Owner direction 2026-10-28: a route that fails because the provider account is e
 
 An arm is the one way to run a route other than the table's: `{ routes?: { <route id>: <patch> }, params?: { <name>: <json> } }`,
 passed with `agw eval run <workflow> --arm <file>` (`packages/host/src/workflows/eval/README.md`). It applies to that eval
-run and every run below it, never to production: a run without an arm resolves the plain table. There is no environment
-variable and no config file.
+run and every run below it (the regression judge's calls excepted: the grader stays on the table), never to production: a
+run without an arm resolves the plain table. An arm whose `routes` and `params` are both empty is no arm, the unarmed
+baseline. There is no environment variable and no config file.
 
 ```json
 {
@@ -135,9 +136,11 @@ variable and no config file.
 
 - A patch may set `model`, `effort`, `maxOutputTokens` (at most 200000), `rate`, `price` and `fallback` (a patch of the same fields, or `null`); `null` clears an optional field. It is merged over the table entry and the result is validated like a table entry.
 - **`wire` cannot be patched** (`RouteOverrideError`): a route's transport is code.
-- **A new model keeps a price.** Without its own `rate` (or `price`) the patch takes the table's for that model (`routeRate`, `claudeRate`); a model the table prices nowhere is refused unless the patch carries one. `rate: null` unprices it on purpose.
-- **Agent routes** (`opencode` wire) move only among the models the OpenCode server serves (`opencodeModels()`: every opencode-wire model of the table and its fallbacks), at any effort; the server registers every effort variant of each (`packages/opencode-host` README). `rate`, `maxOutputTokens` and `price` cannot be patched there: the server's config prices and limits a model, not a route.
-- `validateArm(arm)` checks the arm whole at admission: its shape, every patch (an unknown route id, a bad entry, a Sonnet at effort `none`, an unserved agent model). A message names the route id and the problem, and the model for an unserved one; never a parser message or another value.
+- **Only models the table names** (`TABLE_MODELS`: routes, fallbacks, the Claude models), on every wire: the gateway's records (`gatewayRecords`) and the prices come from the table, so a new model goes into the table first.
+- **A new model keeps a price.** Unless the patch sets them, it takes the table's `rate` and `price` for that model (`routeRate`, `claudeRate`); a priced route never moves to a model the table prices no such way.
+- **Efforts per provider** (`effortsOf`, `src/schema.ts`): a Sonnet takes no `none`, GPT-6 Astra and GPT-6.1 Sol take no `none`, DeepSeek takes `none`, `low`, `high`, `max` (its `medium`/`xhigh` are only aliases of `high`); every other model all six. The table import and every patch are held to it.
+- **Agent routes** (`opencode` wire) move only among the models the OpenCode server serves (`opencodeModels()`: every opencode-wire model of the table and its fallbacks), at any effort its provider takes; the server registers exactly those variants of each (`packages/opencode-host` README). `rate`, `maxOutputTokens` and `price` cannot be patched there: the server's config prices and limits a model, not a route.
+- `validateArm(arm)` checks the arm whole at admission: its shape, every patch (an unknown route id, a bad entry, a model the table does not name, an effort the provider does not take, an unserved agent model). A message names the route id and the problem, and the model for an unknown or unserved one; never a parser message or another value.
 - `resolveRoute(id, patch)` validates every patch on every call, not only the requested route. The run fingerprint includes the arm (`packages/middleware` fingerprint), so an armed run never shares a fingerprint with a production run.
 
 ## Cost
@@ -190,7 +193,7 @@ rows as before.
 
 A route flip changes what the next run costs and how well it caches:
 
-- **Model change on a route with a rate** (`decide`): tokens are priced at the patch's rate, else the table's rate for the new model; a model the table never prices is refused unless the patch carries a rate.
+- **Model change on a route with a rate** (`decide`): tokens are priced at the table's rate for the new model (a model the table names); one the table prices no such way is refused.
 - **Model change in general:** the provider prompt cache is per model, so the first run after a flip pays full input price. Claude reports cache reads and writes; DeepSeek on `iu-openai` reports `cached_tokens`; cost from `usage.cost` already reflects both.
 - **Effort up** (`high`, `max`): more reasoning tokens, billed as output, counted against `maxOutputTokens`. Raise the ceiling with it or the answer starves.
 - **Wire change** (for example `iu-openai` → `anthropic`): different usage keys and cache semantics. `costFromUsage` accepts both shapes, but the cache hit rate starts from zero.

@@ -239,6 +239,7 @@ export class Runtime {
     }
     const inputHash = hashJson(value)
     const arm = checkArm(options.arm ?? workflow.arm?.(parsed.data))
+    if (arm && options.unarmed) throw new WorkflowError('invalid_input', 'start: unarmed excludes an arm')
     const origin =
       options.parentId === undefined ? originOf(options, arm) : await this.parentOrigin(options.parentId, options, arm)
     const runId = await this.journal.insertRun({
@@ -282,7 +283,7 @@ export class Runtime {
       project: parent.project,
       workspace: parent.workspace,
       traceparent: parent.traceparent ?? derivedTraceparent(parent),
-      arm: parent.arm,
+      arm: options.unarmed ? null : parent.arm,
     }
   }
 
@@ -1052,7 +1053,8 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
 /**
- * The arm's shape (`{ routes?: {...}, params?: {...} }`, JSON throughout); an empty arm is none. The route patches are
+ * The arm's shape (`{ routes?: {...}, params?: {...} }`, JSON throughout). An arm whose routes and params are both
+ * empty is none (null): `{ routes: {} }` is the unarmed baseline, on the row and in the fingerprint. The route patches are
  * the routes package's to validate (`validateArm`), which this package cannot import: the caller checks them first.
  */
 function checkArm(arm: Arm | undefined): Arm | null {
@@ -1066,7 +1068,8 @@ function checkArm(arm: Arm | undefined): Arm | null {
   }
   const violation = jsonViolation(arm, 'arm')
   if (violation) throw new WorkflowError('invalid_input', `start: ${violation}`)
-  return Object.keys(arm).length ? arm : null
+  const empty = (part: object | undefined) => part === undefined || Object.keys(part).length === 0
+  return empty(arm.routes) && empty(arm.params) ? null : arm
 }
 
 const sha256 = (text: string) => new Bun.CryptoHasher('sha256').update(text).digest('hex')

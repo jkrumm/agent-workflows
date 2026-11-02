@@ -67,7 +67,12 @@ const result = await runtime.wait(runId)
   every step, `ctx.arm` outside them, `AgentOpenSpec.arm` for every agent session, the inline judge, and `RunInfo.arm`
   for the middleware (the fingerprint includes it). This package only shape-checks it (an object of `routes` and
   `params`, JSON throughout; an empty arm is none): the route patches are `@agent-workflows/routes`' to validate
-  (`validateArm`), which the caller runs first. Resolve a route inside a run with `resolveRoute(id, scope.arm?.routes)`.
+  (`validateArm`), which the caller runs first. Resolve a route inside a run with `resolveRoute(id, scope.arm?.routes)`;
+  hand a capability call `scope.callContext` (usage, signal, attribution, arm), never parts of the scope
+  (`test/call-context.test.ts` fails on a hand-built one). `start({ parentId, unarmed: true })` keeps a child out of the
+  arm (the regression judge grades on the plain table). An arm whose `routes` and `params` are both empty is none.
+  **Rollback:** a release before migration 0015 ignores `runs.arm`, so an armed eval run it resumes runs on the plain
+  table: drain armed eval runs before rolling back past it.
 - **Retry** per step: `{ attempts, backoffMs, factor, maxBackoffMs }`, default one attempt (agent steps too).
 - **Idle timeout** per step: no `progress()` (or host progress event) for `idleTimeoutMs` fails the attempt as
   `timeout`. Agent steps default to 5 minutes; code steps have none. It is never a wall-clock cap
