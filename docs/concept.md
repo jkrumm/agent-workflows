@@ -517,3 +517,20 @@ One entry per phase: what we learned, what changed on this page, and why.
   `lsof` first. Shell and SQLite tests want a Linux run before the train (GNU `mktemp`, SQLite `-wal`). The process table,
   not an agent's report, says what runs: two leads were resumed side by side and one believed in trains that were gone.
 - **Does the page hold?** Yes; v3.14 records the shape as built.
+
+### Gateway Wave 3 — Callers move, seats onto Claude, 2026-11-02
+
+- **Learned.** Live checks on the stored rows found what every test and review passed: IU's GPT and Gemini rows unpriced
+  with provider-prefixed model ids, 247 zero-token catalog rows, and a double count between the gateway and agw's outbox
+  that only a join of both writers by `run_id` showed. The dogfooded reviewer itself was broken by a react-doctor schema
+  change until a real PR hit it.
+- **Changed.** Release `3e6026e`. v3.14: the gateway writes token-priced inference only; media priced per minute,
+  character or image stays on agw's outbox (`x-agw-usage: caller`). Seats on Claude with a GPT-on-IU fallback per route;
+  `review.adversary` and `podcast.write` stay on GPT by design, `prose.review` on DeepSeek. Hermes, `oc` and modelpick
+  call the gateway with their own door tokens.
+- **Process.** A declared wait is not enough: a lost wake cost 3 h, so a lead follows its wait with a bounded poll on the
+  thing it waits for. Each role commits only its own paths (`git commit -- <paths>`): a shared-checkout commit swept the
+  lead's uncommitted concept edit. Formatters skip paths under `.claude/worktrees/`, so a worker runs them on `.` from the
+  worktree root.
+- **Does the page hold?** Yes, as v3.14.
+

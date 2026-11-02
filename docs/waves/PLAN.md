@@ -74,19 +74,25 @@ eval needs move into Wave 5. The rest waits.
   (departures, port 7794) and the stale "402/503" at `docs/concept.md:337` and `docs/factory-input.md:17`. Wave 4: `stats
   --by account` mixes Max and `api_credit`. Flaky `packages/middleware/test/platform.test.ts` "concurrent runs" failed once on CI.
 
-## Wave 3 — Callers move, seats onto Claude            <!-- status: active -->
+## Wave 3 — Callers move, seats onto Claude            <!-- status: done 2026-11-02, release 3e6026e -->
 
-- [ ] agw: every transport and OpenCode provider on the gateway with the `agw` door token and attribution headers.
+- [x] agw: every transport and OpenCode provider on the gateway with the `agw` door token and attribution headers.
   `iu-anthropic` becomes the `anthropic` wire (the gateway decides credit or IU). agw stops writing `usage.records` for
   gateway calls. `IU_KEY_ID`, `~/.config/agw/iu.env` and `athena-iu.env` leave agw: the gateway holds the `personal` key.
-- [ ] Seats onto Claude (owner, 2026-11-01), provisional until Waves 9–10: `TRIVIAL`/`EASY` → Haiku 5.5, `STRONG` →
+- [x] Seats onto Claude (owner, 2026-11-01), provisional until Waves 9–10: `TRIVIAL`/`EASY` → Haiku 5.5, `STRONG` →
   Sonnet 5.5, each with `x-agw-fallback: none` and a GPT-on-IU route fallback, so credit runs out into GPT, not into
   IU's Claude. A live call per changed route.
-- [ ] Hermes, dotfiles `oc` and modelpick on the gateway, each with its own door token; the `-eu` model ids go; Hermes
+- [x] Hermes, dotfiles `oc` and modelpick on the gateway, each with its own door token; the `-eu` model ids go; Hermes
   vision moves to `anthropic_messages`.
-- [ ] Concept version note and retro entry for the gateway as built.
+- [x] Concept version note and retro entry for the gateway as built.
+**Left behind:** close-out in `docs/waves/handoff/lead.md` at `9897cd9`. For the owner, not deleted: 34 duplicate
+  `source='agent-workflows'` rows ($0.19, query in the close-out); `~/.config/agw/iu.env` and `athena-iu.env` on the mini
+  (a pre-Wave-3 rollback reads `iu.env`); ≈ $9.3 team-key review spend before the deploy; Hermes now has no lane outside
+  the gateway. Wave 4 inherits: Hermes liveness and `make verify` do not check the gateway door; `scripts/live-routes.sh`
+  copies the alias map; triage reasoning tokens read 0 on the `anthropic` wire; flaky hook timeouts under load. `make
+  verify` gains a smoke review (the reviewer broke unseen).
 
-## Wave 4 — Reconcile and Argo            <!-- status: pending -->
+## Wave 4 — Reconcile and Argo            <!-- status: active -->
 
 - [ ] usage-tracker pass: `usage.platform_cost` from each org's cost API (admin key; a missing key skips that org), and
   `credit_cycles` closed per cycle with metered, reconciled and unspent. The gateway's meter takes the reconciled
