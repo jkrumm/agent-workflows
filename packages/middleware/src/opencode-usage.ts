@@ -7,6 +7,8 @@ import type { Usage } from '@agent-workflows/runtime'
  */
 export type OpenCodeMessage = {
   type?: string
+  /** A `compaction` message's outcome: `running` carries no usage yet, `completed` and `failed` carry their calls'. */
+  status?: string
   /** Additive, as OpenCode stores it: `input` excludes cache reads and writes, `output` excludes reasoning. */
   tokens?: {
     input?: number | null
@@ -20,6 +22,15 @@ export type OpenCodeMessage = {
   model?: string | { id?: string | null } | null
 }
 
+/**
+ * Whether a message carries a model call's spend: an assistant message, and a `compaction` message, which holds the
+ * usage of the summary call(s) of one compaction (completed or failed; the nudge retry of a summary included), as one
+ * total (OpenCode 2.0.32, `Session.Message.Compaction`). Those calls reach no assistant message, so a reader that only
+ * counted assistants would leave out what they billed. A `running` compaction has no tokens yet and adds nothing.
+ */
+export const carriesUsage = (message: { type?: string }): boolean =>
+  message.type === 'assistant' || message.type === 'compaction'
+
 const n = (value: number | null | undefined) => (typeof value === 'number' && Number.isFinite(value) ? value : 0)
 
 function modelOf(message: OpenCodeMessage): string | null {
@@ -29,7 +40,8 @@ function modelOf(message: OpenCodeMessage): string | null {
 
 /**
  * One agent step's usage from its session's messages: the source of truth for tokens, cost and tool calls
- * (S2: OpenCode emits no model or token spans). Converts OpenCode's additive counts to the runtime's raw provider
+ * (S2: OpenCode emits no model or token spans). Every call counts once: each assistant message, and each compaction
+ * message for its summary call(s) (`carriesUsage`). Converts OpenCode's additive counts to the runtime's raw provider
  * counts (`input` includes cache reads and writes, `output` includes reasoning, each also in its own bucket); the
  * usage projection subtracts them again.
  *
@@ -49,7 +61,7 @@ export function usageFromOpenCodeMessages(
   let toolCalls = 0
   let model = options.model ?? null
   for (const message of messages) {
-    if (message.type !== 'assistant') continue
+    if (!carriesUsage(message)) continue
     toolCalls += (message.content ?? []).filter((block) => block.type === 'tool').length
     model ??= modelOf(message)
     const t = message.tokens

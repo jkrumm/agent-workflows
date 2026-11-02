@@ -136,3 +136,24 @@ describe('usage and pricing stay on the real model', () => {
     expect(usage.costSource).toBe('provider')
   })
 })
+
+describe('a compaction message is priced like an assistant one', () => {
+  const rate = claudeRate('claude-haiku-5-5') ?? null
+  const tokens = { input: 900, output: 300, reasoning: 0, cache: { read: 5000, write: 100 } }
+  const compaction = (cost: number) => ({ type: 'compaction', status: 'completed', cost, tokens }) as never
+  const assistant = (cost: number) => ({ type: 'assistant', cost, tokens }) as never
+
+  test("OpenCode's cost counts, and a cost of 0 is priced by the rate", () => {
+    expect(priceOpenCodeMessages([compaction(0.004), assistant(0.001)], rate)).toEqual({ cost: 0.005, byRate: false })
+    const same = priceOpenCodeMessages([assistant(0)], rate)
+    expect(priceOpenCodeMessages([compaction(0)], rate)).toEqual(same)
+    expect(same?.byRate).toBe(true)
+  })
+
+  test('a running compaction (no tokens) adds nothing', () => {
+    expect(priceOpenCodeMessages([{ type: 'compaction', status: 'running' } as never], rate)).toEqual({
+      cost: 0,
+      byRate: false,
+    })
+  })
+})

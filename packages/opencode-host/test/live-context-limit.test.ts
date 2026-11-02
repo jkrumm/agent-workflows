@@ -2,7 +2,8 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { Attribution } from '@agent-workflows/runtime'
+import { claudeRate } from '@agent-workflows/routes'
+import type { AgentResult, Attribution } from '@agent-workflows/runtime'
 import { OpenCodeHost, OpenCodeServer } from '../src/index.ts'
 import { contextAlias, windowFor } from '../src/config.ts'
 
@@ -19,8 +20,20 @@ type Seen = { path: string; body: { model?: string; max_tokens?: number; message
 const sse = (events: [string, unknown][]) =>
   events.map(([name, data]) => `event: ${name}\ndata: ${JSON.stringify(data)}\n\n`).join('')
 
-const text = (model: string, out: string) =>
-  new Response(
+type CallUsage = { input: number; output: number; cacheRead: number; cacheWrite: number }
+const DEFAULT_USAGE: CallUsage = { input: 10, output: 1, cacheRead: 0, cacheWrite: 0 }
+
+/** One streamed Anthropic reply: `out` as text, or a tool call, with the usage the stand-in reports for the call. */
+const reply = (model: string, out: string | { tool: string; input: unknown }, u: CallUsage = DEFAULT_USAGE) => {
+  const block =
+    typeof out === 'string'
+      ? { type: 'text', text: '' }
+      : { type: 'tool_use', id: 'toolu_cl', name: out.tool, input: {} }
+  const delta =
+    typeof out === 'string'
+      ? { type: 'text_delta', text: out }
+      : { type: 'input_json_delta', partial_json: JSON.stringify(out.input) }
+  return new Response(
     sse([
       [
         'message_start',
@@ -34,21 +47,32 @@ const text = (model: string, out: string) =>
             content: [],
             stop_reason: null,
             stop_sequence: null,
-            usage: { input_tokens: 10, output_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
+            usage: {
+              input_tokens: u.input,
+              output_tokens: u.output,
+              cache_creation_input_tokens: u.cacheWrite,
+              cache_read_input_tokens: u.cacheRead,
+              cache_creation: { ephemeral_5m_input_tokens: u.cacheWrite, ephemeral_1h_input_tokens: 0 },
+            },
           },
         },
       ],
-      ['content_block_start', { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } }],
-      ['content_block_delta', { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: out } }],
+      ['content_block_start', { type: 'content_block_start', index: 0, content_block: block }],
+      ['content_block_delta', { type: 'content_block_delta', index: 0, delta }],
       ['content_block_stop', { type: 'content_block_stop', index: 0 }],
       [
         'message_delta',
-        { type: 'message_delta', delta: { stop_reason: 'end_turn', stop_sequence: null }, usage: { output_tokens: 1 } },
+        {
+          type: 'message_delta',
+          delta: { stop_reason: typeof out === 'string' ? 'end_turn' : 'tool_use', stop_sequence: null },
+          usage: { output_tokens: u.output },
+        },
       ],
       ['message_stop', { type: 'message_stop' }],
     ]),
     { headers: { 'content-type': 'text/event-stream' } },
   )
+}
 
 const SUMMARY = '## Objective\n- probe\n\n## Next Move\n1. (none)\n'
 const isSummaryCall = (r: Seen) => JSON.stringify(r.body.messages).includes('structured summary')
@@ -64,6 +88,8 @@ const prompt = (tokens: number) => {
 
 describe.skipIf(!live)('live: a bounded route on the pinned build (a loopback stand-in, no LLM)', () => {
   const seen: Seen[] = []
+  /** What the stand-in answers request number n with (1-based) and the usage it reports; unset: PONG or a summary. */
+  let script: ((r: Seen, n: number) => { out: string | { tool: string; input: unknown }; usage: CallUsage }) | undefined
   const stateDir = mkdtempSync(join(tmpdir(), 'och-live-ctx-'))
   const gateway = Bun.serve({
     hostname: '127.0.0.1',
@@ -73,7 +99,9 @@ describe.skipIf(!live)('live: a bounded route on the pinned build (a loopback st
       if (req.method !== 'POST' || url.pathname !== '/anthropic/v1/messages') return new Response('{}', { status: 404 })
       const r: Seen = { path: url.pathname, body: (await req.json()) as Seen['body'] }
       seen.push(r)
-      return text(String(r.body.model), isSummaryCall(r) ? SUMMARY : 'PONG')
+      const scripted = script?.(r, seen.length)
+      if (scripted) return reply(String(r.body.model), scripted.out, scripted.usage)
+      return reply(String(r.body.model), isSummaryCall(r) ? SUMMARY : 'PONG')
     },
   })
   const server = new OpenCodeServer({
@@ -119,6 +147,7 @@ describe.skipIf(!live)('live: a bounded route on the pinned build (a loopback st
     workspace: 'private',
   })
 
+  let last: { result: AgentResult; handle: { sessionId: string; route: string }; tools: string[] } | undefined
   const run = async (runId: string, limit: number | null, tokens: number) => {
     seen.length = 0
     const arm = limit === null ? undefined : { routes: { 'review.angle': { contextLimit: limit } } }
@@ -134,7 +163,15 @@ describe.skipIf(!live)('live: a bounded route on the pinned build (a loopback st
     })
     const body = prompt(tokens)
     await host.prompt(handle, body)
-    await host.wait(handle, { signal: AbortSignal.timeout(90_000), onProgress: () => {}, onTool: async () => {} })
+    const tools: string[] = []
+    const result = await host.wait(handle, {
+      signal: AbortSignal.timeout(90_000),
+      onProgress: () => {},
+      onTool: async (event) => {
+        tools.push(`${event.phase}:${event.tool}`)
+      },
+    })
+    last = { result, handle: handle as { sessionId: string; route: string }, tools }
     return [...seen]
   }
 
@@ -174,5 +211,63 @@ describe.skipIf(!live)('live: a bounded route on the pinned build (a loopback st
     const plain = await run('run-unbounded', null, ceiling + 3_000)
     expect(plain.map(isSummaryCall)).toEqual([false])
     expect(contextAlias('claude-haiku-5-5', 80_000)).toBe('claude-haiku-5-5~ctx80000')
+  }, 180_000)
+  test('one compaction after a tool call: the step usage is the sum of every call the gateway got, once', async () => {
+    const calls: CallUsage[] = [
+      // The call that grows the session past the 64k ceiling (measured prompt 73k), asking for a tool.
+      { input: 3_000, output: 40, cacheRead: 40_000, cacheWrite: 30_000 },
+      // The summary call, then the call that answers from the summary.
+      { input: 2_500, output: 120, cacheRead: 0, cacheWrite: 0 },
+      { input: 800, output: 5, cacheRead: 0, cacheWrite: 0 },
+    ]
+    script = (_r, n) => ({
+      out: n === 1 ? { tool: 'glob', input: { pattern: '*.md' } } : n === 2 ? SUMMARY : 'PONG',
+      usage: calls[n - 1] as CallUsage,
+    })
+    const got = await run('run-usage', 80_000, 1_000)
+    script = undefined
+    console.log(
+      'calls:',
+      got.map((r) => (isSummaryCall(r) ? 'summary' : 'call')),
+      'tools:',
+      last?.tools,
+    )
+    expect(got.map(isSummaryCall)).toEqual([false, true, false])
+    const { result, handle, tools } = last as NonNullable<typeof last>
+    // One session, no fallback: one usage entry.
+    const usage = Array.isArray(result.usage)
+      ? (result.usage as unknown[]).length === 1
+        ? result.usage[0]
+        : undefined
+      : result.usage
+    expect(usage).toBeDefined()
+    const sum = (key: keyof CallUsage) => calls.reduce((total, c) => total + c[key], 0)
+    // The runtime's raw counts: input includes the cache, output includes reasoning.
+    expect(usage?.tokens).toEqual({
+      input: sum('input') + sum('cacheRead') + sum('cacheWrite'),
+      output: sum('output'),
+      cacheRead: sum('cacheRead'),
+      cacheWrite: sum('cacheWrite'),
+      reasoning: 0,
+    })
+    const rate = claudeRate('claude-haiku-5-5')
+    if (!rate) throw new Error('test setup: no Haiku rate')
+    const usd = calls.reduce(
+      (total, c) =>
+        total +
+        (c.input * rate.inputPerM +
+          c.output * rate.outputPerM +
+          c.cacheRead * (rate.cacheReadPerM ?? 0) +
+          c.cacheWrite * (rate.cacheWritePerM ?? 0)) /
+          1e6,
+      0,
+    )
+    expect(usage?.cost).toBeCloseTo(usd, 9)
+    // The route, the real model and the tool call stay right after the compaction.
+    expect(usage).toMatchObject({ route: 'review.angle', model: 'claude-haiku-5-5', toolCalls: 1 })
+    expect(handle.route).toBe('review.angle')
+    expect(tools).toEqual(['pre:glob', 'post:glob'])
+    expect(result.output).toBe('PONG')
+    for (const r of got) expect(r.body.model).toBe('claude-haiku-5-5')
   }, 180_000)
 })

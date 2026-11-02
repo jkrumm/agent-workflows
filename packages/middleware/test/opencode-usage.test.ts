@@ -76,3 +76,60 @@ describe('usageFromOpenCodeMessages', () => {
     })
   })
 })
+
+describe('a compaction message carries its summary calls', () => {
+  // OpenCode 2.0.32: `type: 'compaction'` with the usage of the compaction request(s) as one total, measured live.
+  const compaction = (over: Partial<OpenCodeMessage> = {}): OpenCodeMessage => ({
+    type: 'compaction',
+    status: 'completed',
+    model: { id: 'claude-haiku-5-5~ctx80000' },
+    cost: 0.004,
+    tokens: { input: 900, output: 300, reasoning: 0, cache: { read: 5000, write: 100 } },
+    ...over,
+  })
+  const answer: OpenCodeMessage = {
+    type: 'assistant',
+    model: { id: 'claude-haiku-5-5~ctx80000' },
+    cost: 0.001,
+    tokens: { input: 50, output: 20, reasoning: 0, cache: { read: 400, write: 0 } },
+    content: [{ type: 'text' }],
+  }
+
+  test('its tokens and cost count once, beside the assistant messages', () => {
+    const usage = usageFromOpenCodeMessages([{ type: 'user' }, compaction(), answer, { type: 'idle' }])
+    expect(usage.tokens).toEqual({
+      input: 900 + 5000 + 100 + 50 + 400,
+      output: 300 + 20,
+      cacheRead: 5400,
+      cacheWrite: 100,
+      reasoning: 0,
+    })
+    expect(usage.cost).toBeCloseTo(0.005, 12)
+    expect(usage.costSource).toBe('provider')
+  })
+
+  test('a failed compaction that spent counts; a running one, or one that spent nothing, adds nothing', () => {
+    expect(usageFromOpenCodeMessages([compaction({ status: 'failed' })]).tokens.input).toBe(6000)
+    const idle = [
+      compaction({ status: 'running', tokens: undefined, cost: undefined }),
+      compaction({ status: 'failed', tokens: undefined, cost: undefined }),
+    ]
+    expect(usageFromOpenCodeMessages(idle)).toMatchObject({
+      tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0 },
+      cost: 0,
+      toolCalls: 0,
+    })
+  })
+
+  test('the real model is the options one, not the alias a message names; tool calls stay the assistants', () => {
+    const calls: OpenCodeMessage = { ...answer, content: [{ type: 'tool' }, { type: 'tool' }, { type: 'text' }] }
+    const usage = usageFromOpenCodeMessages([compaction(), calls], { model: 'claude-haiku-5-5', route: 'review.angle' })
+    expect(usage).toMatchObject({ model: 'claude-haiku-5-5', route: 'review.angle', toolCalls: 2 })
+  })
+
+  test('a compaction call without a cost makes the step unpriced, as an assistant message would', () => {
+    const usage = usageFromOpenCodeMessages([compaction({ cost: undefined }), answer])
+    expect(usage.cost).toBeNull()
+    expect(usage.costSource).toBe('unknown')
+  })
+})
