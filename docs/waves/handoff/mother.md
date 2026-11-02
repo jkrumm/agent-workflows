@@ -14,7 +14,7 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
   tailscale drift). Not ours; gates are judged on our rows only.
 
 ## Lead
-- Mother `agent-workflows-w1-r4` (pane t4f, account me2); Wave 5 lead `agent-workflows-w1-r8` (pane t73, account me2), spawned 2026-11-02.
+- Mother `agent-workflows-w1-r4` (pane t4f, account me2); Wave 6 lead `agent-workflows-w1-r9` (pane t7r, account me2), spawned 2026-11-02.
   Rotation policy: a fresh lead per wave unless the last one closed under ~30% context.
 
 ## Decisions taken
@@ -142,5 +142,7 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
 - Still owed by the owner: me2 keys and expiry day. Until then me2 stays disabled. MacWhisper is done (its door token works, `stt.done` in the audio log). OCR stays off until the Wave 9 OCR arm measures it. The Hermes morning briefing is retired; the owner rebuilds it differently, not ours.
 - Wake-loop: the factory re-fires `workers done: <lead> idle` while the lead idles on background shells. Answer with a blocking
   ~9.5-min poll on lead.md (bash loop with perl select, foreground timeout 590 s; `rd read` under `timeout 15`), not a bare re-declare.
+- `rd wave`'s gate needs `- [x]` steps in a done wave: Waves 8+ use bare `- **` bullets; turn them into checkboxes when activating.
+- Wave 6 lead told: credit pacing first; stop and message the mother before > ~$20 IU eval spend. Wave 7 halts for owner sign-off of the spec.
 - Commit only own paths (`git commit -- <paths>`): a shared-checkout commit swept a lead edit in Wave 3.
 - Shell: never put double quotes inside a double-quoted `factory session note`; use a text file (a pipe in it ran `make`).
