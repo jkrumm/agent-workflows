@@ -9,6 +9,7 @@ import {
   type FinalScore,
   IdempotencyConflict,
   type Json,
+  type Logger,
   type RunSnapshot,
   WorkflowError,
 } from '@agent-workflows/runtime'
@@ -21,12 +22,25 @@ export const EVAL_RUN_ID = 'eval.run'
 /** Estimates read the latest this many done runs of the workflow. */
 const ESTIMATE_HISTORY = 50
 const DEFAULT_CONCURRENCY = 2
+/** How often a case run is polled: for its end, then for its record. */
+const CASE_POLL_MS = 500
+/** How long an ended case run's record may take before its last-read cost is reported as a lower bound. */
+const RECORD_SETTLE_MS = 120_000
 
 export interface EvalRunOptions {
   env?: Record<string, string | undefined>
   exec?: Exec
   /** Where materialized clones go. Default: the OS temp dir. */
   tmpRoot?: string
+  /** Warnings about a case cost that is only a lower bound. Default: the console. */
+  logger?: Logger
+  /** Overrides {@link RECORD_SETTLE_MS} (tests). */
+  recordSettleMs?: number
+}
+
+const consoleLogger: Logger = {
+  warn: (message, meta) => console.warn(`[agw-eval] ${message}`, meta ?? ''),
+  error: (message, meta) => console.error(`[agw-eval] ${message}`, meta ?? ''),
 }
 
 /** Plain JSON from the wire; the runtime refuses anything else on the run input. */
@@ -204,7 +218,16 @@ export function createEvalRun(slot: EvalSlot, suites: Suites, options: EvalRunOp
 
       const results = await ctx.step('cases', ({ signal }) =>
         replay(
-          { slot, suites, exec, env, home, tmpRoot: options.tmpRoot },
+          {
+            slot,
+            suites,
+            exec,
+            env,
+            home,
+            tmpRoot: options.tmpRoot,
+            logger: options.logger ?? consoleLogger,
+            recordSettleMs: options.recordSettleMs ?? RECORD_SETTLE_MS,
+          },
           {
             evalRunId: ctx.runId,
             workflow: input.workflow,
@@ -233,6 +256,8 @@ type ReplayDeps = {
   env: Record<string, string | undefined>
   home: string
   tmpRoot: string | undefined
+  logger: Logger
+  recordSettleMs: number
 }
 
 type Job = {
@@ -326,16 +351,52 @@ function scoredResult(
 }
 
 /**
- * The ended case run's record, once its `runPost` was delivered (or given up on): read before this run ends, so this
- * run's record, which sums its children's, finds every case's cost in place.
+ * The ended case run's cost from its record, once its `runPost` was delivered. A record given up on
+ * (`postHooksFailed`), or one still missing `recordSettleMs` after the run ended, is reported as last read and counted
+ * unpriced (at least one call), so the case cost reads as a lower bound; either is logged. (The eval run's own `cost`
+ * sums its descendants' step rows, so it never depends on this read.)
  */
-async function recorded(runtime: EvalRuntime, runId: string, signal: AbortSignal): Promise<Spent> {
+async function recorded(deps: ReplayDeps, runId: string, signal: AbortSignal): Promise<Spent> {
+  const runtime = deps.slot.get()
+  const deadline = Date.now() + deps.recordSettleMs
   for (;;) {
     const run = await runtime.getRun(runId)
     if (!run) throw new Error(`case run ${runId} vanished`)
-    if (run.postHooksDone) return { cost: run.cost, unpricedCalls: run.unpricedCalls }
+    if (run.postHooksDone && !run.postHooksFailed) return { cost: run.cost, unpricedCalls: run.unpricedCalls }
+    if (run.postHooksFailed || Date.now() >= deadline) {
+      const why = run.postHooksFailed
+        ? 'its record was given up on'
+        : `its record was not written within ${deps.recordSettleMs / 1000} s`
+      deps.logger.warn(`eval case run ${runId}: ${why}; its cost is reported as a lower bound`, { cost: run.cost })
+      return { cost: run.cost, unpricedCalls: Math.max(1, run.unpricedCalls) }
+    }
     signal.throwIfAborted()
-    await Bun.sleep(100)
+    await Bun.sleep(CASE_POLL_MS)
+  }
+}
+
+/**
+ * An adopted or a freshly started case run to its result, one path for both: wait for its end (an adopted run whose
+ * verdict stands has ended), read its cost, then score it (unless the verdict stands). A failure after the cost was
+ * read, such as the scoring, keeps the cost on the error result.
+ */
+async function settleCase(
+  deps: ReplayDeps,
+  job: Job,
+  caseId: string,
+  runId: string,
+  score: () => Promise<FinalScore | null>,
+  standing: { end: { status: string; error: { message: string } | null }; final: FinalScore } | null,
+): Promise<CaseResult> {
+  const runtime = deps.slot.get()
+  const end = standing?.end ?? (await runtime.wait(runId, { pollMs: CASE_POLL_MS, signal: job.signal }))
+  const spent = await recorded(deps, runId, job.signal)
+  try {
+    return scoredResult(caseId, runId, end, standing ? standing.final : await score(), spent)
+  } catch (error) {
+    if (job.signal.aborted) throw job.signal.reason
+    const base = { caseId, runId, runStatus: end.status, costUsd: spent.cost, unpricedCalls: spent.unpricedCalls }
+    return { ...base, status: 'error', reason: errorText(error) }
   }
 }
 
@@ -432,7 +493,7 @@ async function replayCase(deps: ReplayDeps, job: Job, c: EvalCase, started: Set<
   const target = deps.slot.target(job.workflow)
   const key = caseKey(job.evalRunId, c.id)
   const dir = caseTreeDir(deps.tmpRoot, key)
-  const score = (runId: string) =>
+  const score = (runId: string) => () =>
     runtime.scoreRun(runId, {
       source: 'regression',
       reference: c.reference,
@@ -450,16 +511,9 @@ async function replayCase(deps: ReplayDeps, job: Job, c: EvalCase, started: Set<
       runId = existing.runId
       started.add(runId)
       // A recorded verdict stands; a recorded scorer error is scored again.
-      if (
-        existing.final?.source === 'regression' &&
-        existing.final.evalRunId === job.evalRunId &&
-        existing.final.error === undefined
-      ) {
-        return scoredResult(c.id, runId, existing, existing.final, await recorded(runtime, runId, job.signal))
-      }
-      const end = await runtime.wait(runId, { pollMs: 500, signal: job.signal })
-      const spent = await recorded(runtime, runId, job.signal)
-      return scoredResult(c.id, runId, end, await score(runId), spent)
+      const { final } = existing
+      const stands = final?.source === 'regression' && final.evalRunId === job.evalRunId && final.error === undefined
+      return await settleCase(deps, job, c.id, runId, score(runId), stands ? { end: existing, final } : null)
     }
 
     neverStarted = true
@@ -488,9 +542,7 @@ async function replayCase(deps: ReplayDeps, job: Job, c: EvalCase, started: Set<
     started.add(runId)
     // Started after the abort fired (the abort handler never saw it): `releaseTree` cancels it.
     job.signal.throwIfAborted()
-    const end = await runtime.wait(runId, { pollMs: 500, signal: job.signal })
-    const spent = await recorded(runtime, runId, job.signal)
-    return scoredResult(c.id, runId, end, await score(runId), spent)
+    return await settleCase(deps, job, c.id, runId, score(runId), null)
   } catch (error) {
     if (job.signal.aborted) throw job.signal.reason
     return { caseId: c.id, status: 'error', ...(runId ? { runId } : {}), reason: errorText(error) }

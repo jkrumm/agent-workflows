@@ -147,9 +147,9 @@ export function runawayCap(options: RunawayCapOptions): RunawayCap {
 
   /**
    * The latest `window` done runs are picked first, then joined: tree spend over the runs that are their own root
-   * (`id = root_id`: top-level runs and eval case runs; fan-out children by `root_id`), summed from the step rows, never
-   * `runs.cost` (a run's record already includes its children's), step counts over all runs of the workflow. Wants an index on `runs (workflow, finished_at desc)
-   * where status = 'done'` (runtime follow-up).
+   * (`id = root_id`: top-level runs and eval case runs; fan-out children by `root_id`), summed from the step rows,
+   * never `runs.cost` (a run's record already includes its descendants'), step counts over all runs of the workflow.
+   * Wants an index on `runs (workflow, finished_at desc) where status = 'done'` (runtime follow-up).
    */
   async function readHistory(workflowId: string): Promise<Caps> {
     const { rows } = await query<{
@@ -252,8 +252,9 @@ export function runawayCap(options: RunawayCapOptions): RunawayCap {
 
   /**
    * What the run and its root tree spent so far according to the journal: a resumed run counts its earlier steps,
-   * and the tree its children's, summed from the step rows (each spend once; `runs.cost` rolls children up). Concurrent callers share one read. False when the read failed: nothing is cached,
-   * so the meter is never reset and the next step tries again.
+   * and the tree its children's, summed from the step rows (each spend once; `runs.cost` rolls descendants up).
+   * Concurrent callers share one read. False when the read failed: nothing is cached, so the meter is never reset and
+   * the next step tries again.
    */
   function load(runId: string, force: boolean): Promise<boolean> {
     const pending = loading.get(runId)

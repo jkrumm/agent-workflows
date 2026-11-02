@@ -3,12 +3,13 @@ import { mkdirSync, mkdtempSync, readdirSync, rmSync, utimesSync, writeFileSync 
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { CheckCase, casesPath, type Exec, exec, writeCases } from '@agent-workflows/eval'
-import type { Runtime } from '@agent-workflows/runtime'
+import type { Logger, Middleware, Runtime } from '@agent-workflows/runtime'
 import { FakeAgentHost } from '@agent-workflows/runtime/testing'
 import { createCheckWorkflows } from '../src/workflows/check/index.ts'
 import { createEvalWorkflows, sweepCaseTrees, wireEval } from '../src/workflows/eval/index.ts'
 import { hostModules, suitesOf } from '../src/workflows/index.ts'
-import { freshSchema, inspector, testRuntime, until } from '../../runtime/test/support/pg.ts'
+import { testPlatform } from '../../middleware/test/support.ts'
+import { captureLogger, freshSchema, inspector, testRuntime, until } from '../../runtime/test/support/pg.ts'
 
 const HOST_SUITES = suitesOf(await hostModules())
 
@@ -84,14 +85,34 @@ function heldHost() {
 
 type Overrides = Partial<Pick<Runtime, 'runByKey' | 'scoreRun' | 'cancel' | 'wait'>>
 
+type BootOptions = {
+  middleware?: Middleware[]
+  maxPostHookAttempts?: number
+  recordSettleMs?: number
+  logger?: Logger
+}
+
 /** A runtime with the eval workflows wired to it, through `overrides` where a test breaks or slows a call. */
 function boot(
   host: FakeAgentHost,
   overrides: (rt: Runtime) => Overrides = () => ({}),
+  options: BootOptions = {},
 ): { rt: Runtime; evalRun: ReturnType<typeof createEvalWorkflows>[0]['workflow'] } {
   const check = createCheckWorkflows()
-  const evals = createEvalWorkflows(HOST_SUITES, { env, tmpRoot, exec: counting })
-  const rt = testRuntime({ schema: db.schema, workflows: [...check, ...evals].map((e) => e.workflow), host })
+  const evals = createEvalWorkflows(HOST_SUITES, {
+    env,
+    tmpRoot,
+    exec: counting,
+    ...(options.recordSettleMs === undefined ? {} : { recordSettleMs: options.recordSettleMs }),
+    ...(options.logger ? { logger: options.logger } : {}),
+  })
+  const rt = testRuntime({
+    schema: db.schema,
+    workflows: [...check, ...evals].map((e) => e.workflow),
+    host,
+    middleware: options.middleware ?? [],
+    ...(options.maxPostHookAttempts === undefined ? {} : { maxPostHookAttempts: options.maxPostHookAttempts }),
+  })
   const view = {
     start: rt.start.bind(rt),
     wait: rt.wait.bind(rt),
@@ -390,5 +411,94 @@ describe('eval.run resume and cancel', () => {
       release()
       rmSync(root, { recursive: true, force: true })
     }
+  })
+
+  describe("a case's cost", () => {
+    const priced = () =>
+      new FakeAgentHost(async () => ({
+        output: { passed: true, steps: [{ name: 'test', passed: true }], summary: 'ok' },
+        usage: { model: 'm', tokens: { input: 1, output: 1, cacheRead: 0, reasoning: 0 }, cost: 0.02 },
+      }))
+    /** The run record (the platform's), and after it a hook that fails every check run's `runPost`. */
+    const failingPost = (platform: ReturnType<typeof testPlatform>): Middleware[] => [
+      ...platform.middleware,
+      {
+        name: 'post-down',
+        runPost: (args) => {
+          if (args.workflowId === 'check') throw new Error('post hook down')
+        },
+      },
+    ]
+    type CaseOut = { caseId: string; status: string; costUsd?: number | null; unpricedCalls?: number; reason?: string }
+    async function evalOf(rt: Runtime, evalRun: ReturnType<typeof boot>['evalRun']): Promise<CaseOut[]> {
+      await rt.open()
+      try {
+        const { runId } = await rt.start(evalRun, { workflow: 'check', ids: 'r1', yes: true }, { purpose: 'prod' })
+        const end = await rt.wait(runId)
+        expect(end.status).toBe('done')
+        return (end.output as { cases: CaseOut[] }).cases
+      } finally {
+        await rt.close()
+      }
+    }
+
+    test('a scoring that throws after the cost was read keeps the cost on the error result', async () => {
+      const platform = testPlatform(db.schema)
+      try {
+        const { rt, evalRun } = boot(
+          priced(),
+          () => ({
+            scoreRun: async () => {
+              throw new Error('scorer exploded')
+            },
+          }),
+          { middleware: platform.middleware },
+        )
+        const [r1] = await evalOf(rt, evalRun)
+        expect(r1).toMatchObject({ caseId: 'r1', status: 'error', reason: 'scorer exploded', unpricedCalls: 0 })
+        expect(r1?.costUsd).toBeCloseTo(0.02, 12)
+      } finally {
+        await platform.close()
+      }
+    })
+
+    test('a record given up on counts as unpriced, and is logged', async () => {
+      const platform = testPlatform(db.schema)
+      const logger = captureLogger()
+      try {
+        const { rt, evalRun } = boot(priced(), undefined, {
+          middleware: failingPost(platform),
+          maxPostHookAttempts: 1,
+          logger,
+        })
+        const [r1] = await evalOf(rt, evalRun)
+        expect(r1).toMatchObject({ caseId: 'r1', status: 'scored', unpricedCalls: 1 })
+        expect(r1?.costUsd).toBeCloseTo(0.02, 12)
+        expect(logger.lines.map((l) => l.message)).toContainEqual(expect.stringContaining('record was given up on'))
+      } finally {
+        await platform.close()
+      }
+    })
+
+    test('a record still missing after the settle bound: the last-read cost, as a lower bound, logged', async () => {
+      const platform = testPlatform(db.schema)
+      const logger = captureLogger()
+      try {
+        const { rt, evalRun } = boot(priced(), undefined, {
+          middleware: failingPost(platform),
+          maxPostHookAttempts: 1000,
+          recordSettleMs: 300,
+          logger,
+        })
+        const [r1] = await evalOf(rt, evalRun)
+        expect(r1).toMatchObject({ caseId: 'r1', status: 'scored', unpricedCalls: 1 })
+        expect(r1?.costUsd).toBeCloseTo(0.02, 12) // the record hook ran before the failing one: its cost is there
+        expect(logger.lines.map((l) => l.message)).toContainEqual(
+          expect.stringContaining('record was not written within 0.3 s'),
+        )
+      } finally {
+        await platform.close()
+      }
+    })
   })
 })

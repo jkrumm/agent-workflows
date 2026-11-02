@@ -4,6 +4,13 @@
 -- `root_id` = itself, so it keeps its own lease and is redelivered to the process that serves its workflow). For
 -- every row written before this migration the two predicates are equivalent: a top-level run had `parent_id is null`
 -- and `root_id = id`, a fan-out child a parent and its root's id. The partial indexes are re-keyed to match.
+--
+-- Cutover. `runs.cost` written before this release is the run's own steps only; from this release on the run record
+-- sums the steps of the run and all its descendants, so a parent's cost covers its tree. Rows recorded before are not
+-- recomputed: a sum across the deploy mixes the two meanings. A rollback to a release before this one keeps
+-- `parent_id is null` as its claim predicate: it never claims a parented case run (pending or orphaned), which waits
+-- for a redeploy of this release or a later one; its queries also no longer match these partial indexes (correct,
+-- only slower).
 drop index {{schema}}.runs_claimable;
 create index runs_claimable on {{schema}}.runs (created_at)
   where id = root_id and status in ('pending', 'running');

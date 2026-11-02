@@ -93,7 +93,7 @@ export function scorerJudge(options: {
         return answer ? { value: answer } : { failedBefore: true }
       }
       scope.signal.throwIfAborted()
-      const parent = scope.source === 'regression' && scope.evalRunId ? { parentId: scope.evalRunId } : {}
+      const parent = scope.source === 'regression' && scope.evalRunId !== undefined ? { parentId: scope.evalRunId } : {}
       const { runId } = await runtime.start(workflow, input, { purpose, idempotencyKey: key, ...parent })
       // The scoring was aborted (cancel, shutdown): the call it started goes with it, also when that came first.
       const onAbort = () => void runtime.cancel(runId).catch(() => {})

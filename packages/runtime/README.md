@@ -140,8 +140,12 @@ defineWorkflow({ id: 'research.report', scorer: draftScorer, async run(ctx, inpu
   `runtime.runByKey(workflow, idempotencyKey)` (a resumed eval adopts a case run with its status and score) and
   `runtime.recentCost(workflow)` (the eval estimate; eval case runs count).
 - **Run cost.** `getRun(runId).cost` is the run record's: the steps of the run and of every descendant run (by
-  `parent_id`: fan-out children and parented starts alike), so a root carries its tree's total. A tree sum over `runs.cost` therefore
-  counts the root alone; sums over a tree's runs read the steps.
+  `parent_id`: fan-out children and parented starts alike), so a root carries its tree's total. A tree sum over
+  `runs.cost` therefore counts the root alone; sums over a tree's runs read the steps.
+- **Cutover (migration 0014).** `runs.cost` recorded before that release is the run's own steps only, after it the
+  run's tree; older rows are not recomputed, so a sum across the deploy mixes the two. A rollback to an earlier
+  release claims by `parent_id is null` again: it never drives a parented case run, which waits (pending or orphaned)
+  for a redeploy. Cancelling a run cancels every descendant by `parent_id`, parented starts included.
 
 ## Durability
 

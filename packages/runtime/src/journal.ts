@@ -426,8 +426,8 @@ export class Journal {
   }
 
   /**
-   * Drivable runs (`id = root_id`) this process may drive, oldest first: pending runs of workflows below their concurrency limit,
-   * then running ones. Runs whose lease is visibly held (pg_locks) and the caller's `exclude` list are filtered in
+   * Drivable runs (`id = root_id`) this process may drive, oldest first: pending runs of workflows below their
+   * concurrency limit, then running ones. Runs whose lease is visibly held (pg_locks) and the caller's `exclude` list are filtered in
    * SQL, so every page holds only claimable runs and orphans beyond the first page are reached.
    */
   async claimable(workflows: string[], saturated: string[], exclude: string[], limit: number): Promise<string[]> {
@@ -458,9 +458,11 @@ export class Journal {
   }
 
   /**
-   * Cancels the run and every run below it that has not ended: a pending run ends `cancelled` at once; a running
-   * one gets `cancel_requested_at`, and the process driving it (or the next one to claim it) aborts the running
-   * step, aborts agent sessions and finalizes it. Returns the ids that changed.
+   * Cancels the run and every run below it that has not ended, by `parent_id` all the way down: fan-out children and
+   * parented starts (an eval's case runs and judge calls, each its own root under its own lease) alike, so a crash of
+   * the parent's process after the request leaves none of them running. A pending run ends `cancelled` at once; a
+   * running one gets `cancel_requested_at`, and the process driving it (or the next one to claim it) aborts the
+   * running step, aborts agent sessions and finalizes it. Returns the ids that changed.
    */
   async cancel(id: string): Promise<string[]> {
     const { rows } = await this.query<{ id: string }>(
@@ -471,7 +473,13 @@ export class Journal {
          finished_at = case when status = 'pending' then now() else finished_at end,
          cancel_requested_at = coalesce(cancel_requested_at, now()),
          updated_at = now()
-       where ${this.subtree(1)} and status in ('pending', 'running')
+       where id in (
+         with recursive tree as (
+           select id from ${this.runs} where id = $1
+           union all
+           select c.id from ${this.runs} c join tree on c.parent_id = tree.id
+         ) select id from tree)
+         and status in ('pending', 'running')
        returning id`,
       [id],
     )

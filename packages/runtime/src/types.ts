@@ -243,7 +243,7 @@ export type JudgeCaller = (
     scorer: string
     /** The inline gate's step; absent for regression and drift, whose calls are runs of their own. */
     attribution?: Attribution
-    /** Regression inside `agw eval run`: the eval run, which the host starts the judge's call runs under (`parentId`). */
+    /** Regression inside `agw eval run`: the eval run, which the host starts the judge's calls under (`parentId`). */
     evalRunId?: string
   },
 ) => Promise<Json>
@@ -306,7 +306,10 @@ export type RunSnapshot = {
   status: RunStatus
   output: Json | null
   error: RunError | null
-  /** Sum of the priced usage of the run and its descendant runs; null when nothing was priced. A lower bound while `unpricedCalls > 0`. */
+  /**
+   * Sum of the priced usage of the run and its descendant runs; null when nothing was priced. A lower bound while
+   * `unpricedCalls > 0`.
+   */
   cost: number | null
   unpricedCalls: number
   postHooksDone: boolean
