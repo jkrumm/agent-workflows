@@ -9,6 +9,7 @@ import {
   type FinalScore,
   IdempotencyConflict,
   type Json,
+  type RunSnapshot,
   WorkflowError,
 } from '@agent-workflows/runtime'
 import { z } from 'zod'
@@ -63,6 +64,12 @@ const CaseResult = z.object({
   fingerprint: z.string().nullable().optional(),
   pass: z.boolean().optional(),
   scores: z.record(z.string(), z.number()).optional(),
+  costUsd: z
+    .number()
+    .nullable()
+    .optional()
+    .describe("The case run's recorded cost (with its child runs'); null when nothing was priced"),
+  unpricedCalls: z.number().int().optional().describe('Calls the cost misses: a lower bound while above 0'),
   reason: z.string().optional(),
 })
 type CaseResult = z.infer<typeof CaseResult>
@@ -90,6 +97,11 @@ export const evalRunOutput = (ids: [string, ...string[]]) =>
       errors: z.number().int(),
       passRate: z.number().nullable(),
       means: z.record(z.string(), z.number()).describe('Each score averaged over the scored cases that have it'),
+      costUsd: z
+        .number()
+        .nullable()
+        .describe("The case runs' recorded costs summed (this run's own `cost`); null when none was priced"),
+      unpricedCalls: z.number().int().describe('Calls no case cost includes: the total is a lower bound while above 0'),
     }),
   })
 
@@ -116,6 +128,7 @@ function select(cases: EvalCase[], ids: string | undefined, limit: number | unde
 
 function summarize(cases: CaseResult[]) {
   const scored = cases.filter((c) => c.status === 'scored')
+  const priced = cases.flatMap((c) => (typeof c.costUsd === 'number' ? [c.costUsd] : []))
   const sums = new Map<string, { sum: number; n: number }>()
   for (const c of scored) {
     for (const [name, value] of Object.entries(c.scores ?? {})) {
@@ -129,15 +142,19 @@ function summarize(cases: CaseResult[]) {
     errors: cases.filter((c) => c.status === 'error').length,
     passRate: scored.length ? scored.filter((c) => c.pass).length / scored.length : null,
     means: Object.fromEntries([...sums].map(([name, c]) => [name, c.sum / c.n])),
+    costUsd: priced.length ? priced.reduce((a, b) => a + b, 0) : null,
+    unpricedCalls: cases.reduce((n, c) => n + (c.unpricedCalls ?? 0), 0),
   }
 }
 
 /**
  * `agw eval run <workflow>` (concept §6, regression): replays the recorded cases on the current fingerprint. Each case
- * is materialized (the harness's `materialize`), run as its own top-level run with purpose `eval` (keyed by this run
- * and the case, so a resume adopts the runs already started instead of paying twice), scored against the case's
- * reference and recorded on that run (`scores.final`, `source: regression`). Without `--yes` it answers the plan and an
- * estimate and spends nothing.
+ * is materialized (the harness's `materialize`), run as a child of this run (`parent_id`, its own root: leased and
+ * redelivered on its own, by the process that serves the workflow) with purpose `eval` (keyed by this run and the case,
+ * so a resume adopts the runs already started instead of paying twice), scored against the case's reference and
+ * recorded on that run (`scores.final`, `source: regression`). Each case's cost is read once its run record is
+ * written, so this run's `cost` (its children's summed by the record) is the eval's spend. Without `--yes` it answers
+ * the plan and an estimate and spends nothing.
  */
 export function createEvalRun(slot: EvalSlot, suites: Suites, options: EvalRunOptions = {}): HostWorkflow {
   const ids = suiteIds(suites)
@@ -148,7 +165,7 @@ export function createEvalRun(slot: EvalSlot, suites: Suites, options: EvalRunOp
 
   const workflow = defineWorkflow({
     id: EVAL_RUN_ID,
-    version: '2026-10-28.1',
+    version: '2026-11-02.1',
     input: evalRunInput(ids),
     output: evalRunOutput(ids),
     async run(ctx, input) {
@@ -282,25 +299,41 @@ async function replay(deps: ReplayDeps, job: Job): Promise<CaseResult[]> {
   )
 }
 
+type Spent = Pick<RunSnapshot, 'cost' | 'unpricedCalls'>
+
 /** A case's result from its run and its regression score; a scorer error is an error result, never a verdict. */
 function scoredResult(
   caseId: string,
   runId: string,
   end: { status: string; error: { message: string } | null },
   final: FinalScore | null,
+  spent: Spent,
 ): CaseResult {
-  if (!final) return { caseId, status: 'error', runId, runStatus: end.status, reason: `run ${end.status}` }
+  const base = { caseId, runId, runStatus: end.status, costUsd: spent.cost, unpricedCalls: spent.unpricedCalls }
+  if (!final) return { ...base, status: 'error', reason: `run ${end.status}` }
   if (final.error !== undefined || final.pass === null) {
-    return { caseId, status: 'error', runId, runStatus: end.status, reason: `scorer: ${final.error ?? 'no verdict'}` }
+    return { ...base, status: 'error', reason: `scorer: ${final.error ?? 'no verdict'}` }
   }
   return {
-    caseId,
+    ...base,
     status: 'scored',
-    runId,
-    runStatus: end.status,
     pass: final.pass,
     scores: final.scores,
     ...(end.error ? { reason: end.error.message } : {}),
+  }
+}
+
+/**
+ * The ended case run's record, once its `runPost` was delivered (or given up on): read before this run ends, so this
+ * run's record, which sums its children's, finds every case's cost in place.
+ */
+async function recorded(runtime: EvalRuntime, runId: string, signal: AbortSignal): Promise<Spent> {
+  for (;;) {
+    const run = await runtime.getRun(runId)
+    if (!run) throw new Error(`case run ${runId} vanished`)
+    if (run.postHooksDone) return { cost: run.cost, unpricedCalls: run.unpricedCalls }
+    signal.throwIfAborted()
+    await Bun.sleep(100)
   }
 }
 
@@ -420,10 +453,11 @@ async function replayCase(deps: ReplayDeps, job: Job, c: EvalCase, started: Set<
         existing.final.evalRunId === job.evalRunId &&
         existing.final.error === undefined
       ) {
-        return scoredResult(c.id, runId, existing, existing.final)
+        return scoredResult(c.id, runId, existing, existing.final, await recorded(runtime, runId, job.signal))
       }
       const end = await runtime.wait(runId, { pollMs: 500, signal: job.signal })
-      return scoredResult(c.id, runId, end, await score(runId))
+      const spent = await recorded(runtime, runId, job.signal)
+      return scoredResult(c.id, runId, end, await score(runId), spent)
     }
 
     neverStarted = true
@@ -439,7 +473,11 @@ async function replayCase(deps: ReplayDeps, job: Job, c: EvalCase, started: Set<
     job.signal.throwIfAborted()
     neverStarted = false // from here a run may exist even if start throws
     try {
-      ;({ runId } = await runtime.start(target, c.input(tree.dir, job.args), { purpose: 'eval', idempotencyKey: key }))
+      ;({ runId } = await runtime.start(target, c.input(tree.dir, job.args), {
+        purpose: 'eval',
+        idempotencyKey: key,
+        parentId: job.evalRunId,
+      }))
     } catch (error) {
       // Another drive of this eval run started the case in between; that run stands.
       if (!(error instanceof IdempotencyConflict)) throw error
@@ -449,7 +487,8 @@ async function replayCase(deps: ReplayDeps, job: Job, c: EvalCase, started: Set<
     // Started after the abort fired (the abort handler never saw it): `releaseTree` cancels it.
     job.signal.throwIfAborted()
     const end = await runtime.wait(runId, { pollMs: 500, signal: job.signal })
-    return scoredResult(c.id, runId, end, await score(runId))
+    const spent = await recorded(runtime, runId, job.signal)
+    return scoredResult(c.id, runId, end, await score(runId), spent)
   } catch (error) {
     if (job.signal.aborted) throw job.signal.reason
     return { caseId: c.id, status: 'error', ...(runId ? { runId } : {}), reason: errorText(error) }

@@ -53,6 +53,12 @@ const result = await runtime.wait(runId)
 - **Idempotency key.** `start({ idempotencyKey })` returns the same run for the same workflow, key and input; the same key with a
   different input throws `IdempotencyConflict` (the first run stands). `getRun(runId)` reads a run's state; `ping(timeoutMs)`
   is a bounded health probe: it rejects at the bound and a stalled query's connection is destroyed, not parked on the pool.
+- **Parented start.** `start({ parentId })` records the run as a child of `parentId` (`parent_id`), taking caller,
+  project, workspace and trace from the parent row (naming them too is refused; with no caller trace, a traceparent
+  under the parent's derived trace and admission span). Unlike a fan-out child it stays its own root (`root_id` = its
+  id): its own lease, recovery and post-hook redelivery, by whichever process serves its workflow. The run record
+  rolls its cost into the parent's. `agw eval run` starts its case runs so. A run is **drivable on its own** when
+  `id = root_id` (migration 0014); recovery, concurrency slots, drift sampling and `recentCost` use that predicate.
 - **Retry** per step: `{ attempts, backoffMs, factor, maxBackoffMs }`, default one attempt (agent steps too).
 - **Idle timeout** per step: no `progress()` (or host progress event) for `idleTimeoutMs` fails the attempt as
   `timeout`. Agent steps default to 5 minutes; code steps have none. It is never a wall-clock cap
@@ -124,15 +130,18 @@ defineWorkflow({ id: 'research.report', scorer: draftScorer, async run(ctx, inpu
   reselected every tick. Workflows without a scorer are never in that branch. A shutdown is rethrown uncounted. `onlyUnscored` makes the write first-writer-wins. The write also clears `argo_synced_at` (and a
   claim in flight) on the run's steps, so the usage rows are re-written with the scores in `raw`.
 - **Drift's sample.** `runtime.driftCandidates({ rate, since, limit, purposes? = ['prod'], workflows? })`: done,
-  unscored top-level runs whose persisted sample position `runs.drift_sample` (a generated column: the first 32 bits
+  unscored drivable runs (`id = root_id`) whose persisted sample position `runs.drift_sample` (a generated column: the first 32 bits
   of md5(id)) is below rate × 2^32. Deterministic per run: the same in every tick and process, and a smaller rate is a
-  subset of a larger one. The partial index `runs_drift` holds only unscored done top-level runs, by sample position,
+  subset of a larger one. The partial index `runs_drift` holds only unscored done drivable runs, by sample position,
   so a tick reads the sampled range and never rescans the unsampled 90 %.
 - **Reads for eval**, narrowed in SQL: `runtime.scoredRuns({ workflow, source, runIds?, fingerprintPrefix?, args? })`
   (the prefix is a byte-order range on `fingerprint collate "C"`, which the `runs_scored` index serves)
   (`args` by jsonb equality, `{}` for runs that recorded none; only the record columns compare uses),
   `runtime.runByKey(workflow, idempotencyKey)` (a resumed eval adopts a case run with its status and score) and
-  `runtime.recentCost(workflow)` (the eval estimate).
+  `runtime.recentCost(workflow)` (the eval estimate; eval case runs count).
+- **Run cost.** `getRun(runId).cost` is the run record's: its own steps plus its direct child runs' records, so a
+  root carries its tree's total (fan-out children and parented starts alike). A tree sum over `runs.cost` therefore
+  counts the root alone; sums over a tree's runs read the steps.
 
 ## Durability
 
@@ -141,7 +150,7 @@ defineWorkflow({ id: 'research.report', scorer: draftScorer, async run(ctx, inpu
   run-record columns (fingerprint, tokens, cost, `unpriced_calls`, `tool_calls`, friction, `scores`) and the usage outbox
   columns on steps (`argo_synced_at`, `argo_claim`, `argo_claimed_until`, `argo_error`, migration 0002; `route`, migration 0013) exist for
   the middleware to fill. A merged migration is never edited; changes take the next number.
-- **Lease:** one `pg_try_advisory_lock` per top-level run (64-bit key from sha256), held on a dedicated
+- **Lease:** one `pg_try_advisory_lock` per drivable run, its tree's root (64-bit key from sha256), held on a dedicated
   connection budget sized `maxConcurrentRuns` (plus one reserved for `runPost` re-delivery), never the journal
   pool. Beyond the budget runs stay pending. Recovery skips runs whose lock is visibly held (`pg_locks` against
   `runs.lock_key`), so every page it reads is claimable.
@@ -167,7 +176,7 @@ defineWorkflow({ id: 'research.report', scorer: draftScorer, async run(ctx, inpu
   the next process re-attaches and continues on the new code. `version_started` / `version_finished` show runs
   that crossed a deploy.
 - Recovery ticks every `recoveryIntervalMs`, backing off on failure, and claims pending and orphaned runs whose
-  lease is free. Per-workflow `concurrency` keeps excess top-level runs pending.
+  lease is free. Per-workflow `concurrency` keeps excess drivable runs pending.
 - Journal and lease connections carry connect, query and statement timeouts, so a hung database call fails as an
   infra error instead of stalling a tick.
 

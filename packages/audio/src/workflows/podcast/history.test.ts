@@ -167,4 +167,21 @@ describe('postgresJournal', () => {
       produce: { usd: 0, unpriced: 0 },
     })
   })
+
+  test('the produce tree is summed from its steps: a grandchild once, the rolled-up run costs never', async () => {
+    await run('ep-9', 'podcast', 'ep-9', null)
+    await step('ep-9', 'segment:0', 0.5, 0)
+    await run('ep-9/produce/0', 'podcast.produce', 'ep-9', null)
+    await step('ep-9/produce/0', 'synth', 1, 0)
+    await run('ep-9/produce/0/units/0', 'podcast.produce.unit', 'ep-9', null)
+    await step('ep-9/produce/0/units/0', 'tts', 0.25, 1)
+    // What the run record writes since a run's cost includes its children's.
+    await sql.pool.query(
+      `update "${db.schema}".runs set cost = case id when 'ep-9' then 1.75 when 'ep-9/produce/0' then 1.25 else 0.25 end
+        where root_id = 'ep-9'`,
+    )
+    const cost = await postgresJournal(pool, db.schema).episodeCost('ep-9')
+    expect(cost.script).toEqual({ usd: 0.5, unpriced: 0 })
+    expect(cost.produce).toEqual({ usd: 1.25, unpriced: 1 })
+  })
 })

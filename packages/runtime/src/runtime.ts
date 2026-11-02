@@ -212,7 +212,9 @@ export class Runtime {
 
   /**
    * Validates the input and records a pending run; this process starts driving it at once when it has a free
-   * lease, else the next recovery tick (here or in another process) picks it up.
+   * lease, else the next recovery tick (here or in another process) picks it up. With `parentId` the run is a child of
+   * that run (its cost rolls up into the parent's) yet stays its own root: own lease, own recovery, driven by whichever
+   * process serves its workflow.
    */
   async start<I extends z.ZodType, O extends z.ZodType>(
     workflow: Workflow<I, O>,
@@ -235,20 +237,18 @@ export class Runtime {
         throw new WorkflowError('invalid_input', 'start: runId and idempotencyKey exclude each other')
     }
     const inputHash = hashJson(value)
+    const origin = options.parentId ? await this.parentOrigin(options) : originOf(options)
     const runId = await this.journal.insertRun({
       id,
       workflow: workflow.id,
-      parentId: null,
+      parentId: options.parentId ?? null,
       rootId: id,
       purpose: options.purpose,
-      caller: options.caller ?? null,
-      project: options.project ?? null,
-      workspace: options.workspace ?? null,
+      ...origin,
       input: value,
       inputHash,
       idempotencyKey: options.idempotencyKey ?? null,
-      traceparent: options.traceparent ?? null,
-      traceId: traceIdOf(options.traceparent),
+      traceId: traceIdOf(origin.traceparent ?? undefined),
       version: workflow.version,
       chosenId: options.runId !== undefined,
     })
@@ -258,6 +258,24 @@ export class Runtime {
     }
     if (this.opened && !this.closing) this.kick(runId)
     return { runId }
+  }
+
+  /**
+   * A parented start inherits caller, project, workspace and trace from the parent row, as a fan-out child does. The
+   * trace: the parent's `traceparent`, else one naming the parent's derived trace and admission span (the telemetry
+   * middleware's derivation), so the child's span lands under the parent's in the same trace although its root differs.
+   */
+  private async parentOrigin(options: StartOptions): Promise<Origin> {
+    const own = (['caller', 'project', 'workspace', 'traceparent'] as const).filter((k) => options[k] !== undefined)
+    if (own.length) throw new WorkflowError('invalid_input', `start: parentId excludes ${own.join(', ')}`)
+    const parent = await this.journal.getRun(options.parentId as string)
+    if (!parent) throw new WorkflowError('invalid_input', `start: parent run ${options.parentId} not found`)
+    return {
+      caller: parent.caller,
+      project: parent.project,
+      workspace: parent.workspace,
+      traceparent: parent.traceparent ?? derivedTraceparent(parent),
+    }
   }
 
   /** Polls until the run is done, failed or cancelled. */
@@ -567,7 +585,8 @@ export class Runtime {
 
   private async driveRoot(runId: string, lease: Lease, inflight: Set<Promise<unknown>>) {
     const run = await this.journal.getRun(runId)
-    if (!run || run.parent_id !== null || TERMINAL.has(run.status)) return
+    // Only a run that is its own root is driven here; a fan-out child is driven inside its parent's step.
+    if (!run || run.id !== run.root_id || TERMINAL.has(run.status)) return
     const workflow = this.registry.get(run.workflow)
     if (!workflow) return
     const token = crypto.randomUUID()
@@ -613,7 +632,7 @@ export class Runtime {
     const { run, workflow } = scope
     if (run.status === 'pending') {
       const limit =
-        run.parent_id === null && workflow.concurrency ? { workflow: workflow.id, max: workflow.concurrency } : null
+        run.id === run.root_id && workflow.concurrency ? { workflow: workflow.id, max: workflow.concurrency } : null
       const startedAt = await scope.j(() => this.journal.markRunning(run.id, scope.fence, limit))
       if (!startedAt) return false
       scope.run = { ...run, status: 'running', started_at: startedAt }
@@ -1004,6 +1023,27 @@ function runResult(run: RunRow): RunResult {
 
 function hashJson(value: Json): string {
   return new Bun.CryptoHasher('sha256').update(JSON.stringify(value)).digest('hex')
+}
+
+type Origin = Pick<RunRow, 'caller' | 'project' | 'workspace' | 'traceparent'>
+
+function originOf(options: StartOptions): Origin {
+  return {
+    caller: options.caller ?? null,
+    project: options.project ?? null,
+    workspace: options.workspace ?? null,
+    traceparent: options.traceparent ?? null,
+  }
+}
+
+const sha256 = (text: string) => new Bun.CryptoHasher('sha256').update(text).digest('hex')
+
+/**
+ * The parent's trace and admission span as a traceparent: the derivation of `traceIdForRun` and `admissionSpanId`
+ * (packages/middleware/src/ids.ts), which this package cannot import.
+ */
+function derivedTraceparent(parent: RunRow): string {
+  return `00-${sha256(`agw-trace:${parent.root_id}`).slice(0, 32)}-${sha256(`agw-run-span:${parent.id}`).slice(0, 16)}-01`
 }
 
 /** `00-<trace-id>-<parent-id>-<flags>` → trace id. */

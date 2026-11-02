@@ -116,6 +116,16 @@ const caseRuns = async (evalRunId: string) =>
     )
   ).rows as { key: string; status: string; scored_at: Date | null }[]
 
+/** The eval run's child runs: every case run, adopted or started, is one; each is its own root. */
+const children = async (evalRunId: string) =>
+  (
+    await sql.pool.query(
+      `select id, root_id, idempotency_key as key, status from "${db.schema}".runs where parent_id = $1
+        order by idempotency_key`,
+      [evalRunId],
+    )
+  ).rows as { id: string; root_id: string; key: string; status: string }[]
+
 describe('eval.run resume and cancel', () => {
   test('a resumed eval run adopts its case runs: no new clone, no second score of a finished case', async () => {
     const held = heldHost()
@@ -158,6 +168,11 @@ describe('eval.run resume and cancel', () => {
         { status: 'scored', pass: true },
         { status: 'scored', pass: true },
       ])
+      // The adopted case runs are the eval run's children, each its own root (the second process drove the one
+      // left running under its own lease).
+      const kids = await children(runId)
+      expect(kids.map((k) => k.key)).toEqual([`eval:${runId}:r1`, `eval:${runId}:r2`])
+      expect(kids.every((k) => k.root_id === k.id && k.status === 'done')).toBe(true)
     } finally {
       await second.rt.close()
       for (const dir of readdirSync(tmpRoot)) rmSync(join(tmpRoot, dir), { recursive: true, force: true })
@@ -190,6 +205,8 @@ describe('eval.run resume and cancel', () => {
         ['r1', 'done'],
         ['r2', 'cancelled'],
       ])
+      // No child of the cancelled eval run is left pending or running.
+      expect((await children(runId)).map((k) => k.status)).toEqual(['done', 'cancelled'])
     } finally {
       held.release()
       await rt.close()

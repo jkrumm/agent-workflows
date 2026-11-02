@@ -163,7 +163,11 @@ describe('platform middleware through a real runtime', () => {
             trace_id: traceIdForRun({ rootId: String(row.id), traceparent: null }),
           })
         }
-        if (row.workflow === 'p.fan') expect(row).toMatchObject({ tokens_input: '0', cost: null })
+        // A fan-out parent: no tokens of its own, its cost its three children's (0.001 each), rolled up.
+        if (row.workflow === 'p.fan') {
+          expect(row).toMatchObject({ tokens_input: '0', unpriced_calls: 0 })
+          expect(Number(row.cost)).toBeCloseTo(0.003, 12)
+        }
       }
       const kid = await settled(`${starts[2]?.runId}/kids/0`)
       expect(kid).toMatchObject({ tokens_input: '10', fingerprint, trace_id: rows[2]?.trace_id })

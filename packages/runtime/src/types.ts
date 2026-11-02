@@ -293,8 +293,8 @@ export type RunError = { kind: ErrorKind; message: string }
 
 /**
  * A run as the outside world sees it (`Runtime.getRun`): output only once `done`, error only once ended badly.
- * `cost` and `unpricedCalls` are the run record's sums over the run's own steps (a fan-out child carries its own record,
- * its parent's sums do not include it). `runPost` writes them after the terminal status commits: `postHooksDone`
+ * `cost` and `unpricedCalls` are the run record's: its own steps plus its direct child runs' records (a child's already
+ * holds its descendants', so a root carries its tree's total). `runPost` writes them after the terminal status commits: `postHooksDone`
  * says the hooks were delivered or given up on, and `postHooksFailed` that it was the give-up, so the record may be
  * missing. Before `postHooksDone` the sums are not to be read as final.
  */
@@ -304,7 +304,7 @@ export type RunSnapshot = {
   status: RunStatus
   output: Json | null
   error: RunError | null
-  /** Sum of the priced usage; null when nothing was priced. A lower bound while `unpricedCalls > 0`. */
+  /** Sum of the priced usage of the run and its child runs; null when nothing was priced. A lower bound while `unpricedCalls > 0`. */
   cost: number | null
   unpricedCalls: number
   postHooksDone: boolean
@@ -397,6 +397,13 @@ export type StartOptions = {
    * in the journal is refused.
    */
   runId?: string
+  /**
+   * Starts the run as a child of this run (`parent_id`): its cost rolls up into the parent's, and caller, project,
+   * workspace and trace come from the parent row (so those options are refused next to it). It stays its own root
+   * (`root_id` = its id): leased, recovered and redelivered on its own by the process that serves its workflow, not
+   * driven inside the parent like a fan-out child. `agw eval run` starts its case runs so.
+   */
+  parentId?: string
 }
 
 export type RunResult = {

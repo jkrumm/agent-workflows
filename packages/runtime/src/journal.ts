@@ -134,8 +134,14 @@ type ScoredRow = {
   finished_at: Date | null
 }
 
-/** Top-level runs holding a concurrency slot. One definition for the count and the per-workflow split. */
-const RUNNING_TOP = `parent_id is null and status = 'running'`
+/**
+ * A run drivable on its own: the root of its own lease tree (a top-level run, or an eval case run whose parent is the
+ * eval run). Fan-out children share their root's lease and are driven inside its step, never claimed.
+ */
+const DRIVABLE = 'id = root_id'
+
+/** Drivable runs holding a concurrency slot. One definition for the count and the per-workflow split. */
+const RUNNING_TOP = `${DRIVABLE} and status = 'running'`
 
 /** Advisory keys currently held in this database, as the 64-bit key `pg_try_advisory_lock(bigint)` took. */
 const HELD_KEYS = `select (l.classid::int8 << 32) | l.objid::int8 as k from pg_locks l
@@ -420,7 +426,7 @@ export class Journal {
   }
 
   /**
-   * Top-level runs this process may drive, oldest first: pending runs of workflows below their concurrency limit,
+   * Drivable runs (`id = root_id`) this process may drive, oldest first: pending runs of workflows below their concurrency limit,
    * then running ones. Runs whose lease is visibly held (pg_locks) and the caller's `exclude` list are filtered in
    * SQL, so every page holds only claimable runs and orphans beyond the first page are reached.
    */
@@ -428,7 +434,7 @@ export class Journal {
     const { rows } = await this.query<{ id: string }>(
       `with held as (${HELD_KEYS})
        (select id from ${this.runs} r
-        where parent_id is null and status = 'pending' and workflow = any($1) and not (workflow = any($2))
+        where ${DRIVABLE} and status = 'pending' and workflow = any($1) and not (workflow = any($2))
           and not (id = any($3)) and not exists (select 1 from held where held.k = r.lock_key)
         order by created_at limit $4)
        union all
@@ -599,7 +605,7 @@ export class Journal {
   }
 
   /**
-   * Done top-level runs of `workflows` with one of `purposes`, finished since `since`, not scored yet, whose
+   * Done drivable runs of `workflows` with one of `purposes`, finished since `since`, not scored yet, whose
    * persisted sample position (`drift_sample`, the first 32 bits of md5(id)) is below `rate` × 2^32 (the `runs_drift`
    * index reads only that range), plus drift-scored runs whose scorer error came from another scorer version than the
    * workflow's current one (`versions`, by index). Runs with failed attempts come last, so a persistent failure never
@@ -620,7 +626,7 @@ export class Journal {
     const { rows } = await this.query<{ id: string }>(
       `select id from (
          (select id, score_attempts, finished_at from ${this.runs}
-          where workflow = any($1) and status = 'done' and parent_id is null and scored_at is null
+          where workflow = any($1) and status = 'done' and ${DRIVABLE} and scored_at is null
             and drift_sample < floor($4::float8 * 4294967296) and finished_at >= $3 and purpose = any($2)
             and (score_attempts = 0
               or last_score_attempt_at < now() - make_interval(secs => $8::float8 / 1000 * 2 ^ (score_attempts - 1))))
@@ -712,12 +718,12 @@ export class Journal {
     }
   }
 
-  /** Mean recorded cost of the latest `limit` done top-level runs of a workflow (the eval estimate). */
+  /** Mean recorded cost of the latest `limit` done drivable runs of a workflow, eval cases included (the estimate). */
   async recentCost(workflow: string, limit: number): Promise<{ runs: number; meanCost: number | null }> {
     const { rows } = await this.query<{ n: number; mean: string | null }>(
       `select count(*)::int as n, avg(cost)::text as mean from (
          select cost from ${this.runs}
-         where workflow = $1 and status = 'done' and parent_id is null and cost is not null
+         where workflow = $1 and status = 'done' and ${DRIVABLE} and cost is not null
          order by finished_at desc limit $2) recent`,
       [workflow, limit],
     )
