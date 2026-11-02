@@ -1,7 +1,6 @@
 import type { Logger, Middleware } from '@agent-workflows/runtime'
 import { JournalDb } from './db.ts'
 import { type FrictionSource, frictionMiddleware } from './friction.ts'
-import { type IuKeyId, iuKeyMiddleware } from './iu-key.ts'
 import { type FingerprintSource, fingerprintMiddleware } from './fingerprint.ts'
 import { purposeMiddleware } from './purpose.ts'
 import { recordMiddleware } from './record.ts'
@@ -16,8 +15,6 @@ export type PlatformOptions = {
   fingerprint: FingerprintSource
   /** Where an agent step's session counters come from (the agent host); without one only step outcomes are counted. */
   friction?: FrictionSource
-  /** The label of the IU key this process holds (`parseIuKeyId(IU_KEY_ID)`), stamped on every run it admits. Required: no silent default. */
-  iuKey: IuKeyId
   telemetry?: Omit<TelemetryOptions, 'logger' | 'sessionIdOf'>
   /**
    * Where usage rows go. Default: the `usage` schema behind `USAGE_PG_URL` (`usageTransportFromEnv`), whose pool this
@@ -46,7 +43,7 @@ const consoleLogger: Logger = {
 }
 
 /**
- * The platform layer every workflow runs inside: purpose, IU key label, fingerprint, run record, telemetry (list order: friction
+ * The platform layer every workflow runs inside: purpose, fingerprint, run record, telemetry (list order: friction
  * writes the counters the record reads; the record annotates the run span before telemetry ends it), plus the usage outbox the host flushes.
  */
 export function platformMiddleware(options: PlatformOptions): Platform {
@@ -64,7 +61,6 @@ export function platformMiddleware(options: PlatformOptions): Platform {
   return {
     middleware: [
       purposeMiddleware(),
-      iuKeyMiddleware({ db, logger, iuKey: options.iuKey }),
       fingerprintMiddleware({
         db,
         source: options.fingerprint,

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { applyPatch, OVERRIDES_ENV, RouteOverrideError, readOverrides } from './overrides.ts'
 import { DEFAULT_ROUTES } from './registry.ts'
-import type { ResolvedRoute, RouteEntry, RouteId } from './schema.ts'
+import type { ResolvedRoute, RouteEntry, RouteId, Wire } from './schema.ts'
 
 export {
   type Price,
@@ -94,6 +94,28 @@ export function resolveRoute(id: RouteId, env: Env = process.env): ResolvedRoute
 export function fallbackRoute(route: ResolvedRoute): ResolvedRoute | undefined {
   if (!route.fallback) return undefined
   return { id: route.id, ...structuredClone(route.fallback), isFallback: true }
+}
+
+/** Wires whose calls agw prices itself whatever the route's `price`: IU's Gemini TTS and Replicate predictions. */
+const CALLER_PRICED_WIRES: ReadonlySet<Wire> = new Set<Wire>(['iu-gemini', 'iu-replicate'])
+
+let callerPriced: ReadonlySet<string> | undefined
+
+/**
+ * True for a model whose usage the gateway cannot price, so agw writes its `usage.records` row itself: a model on a
+ * route (or a route's fallback) with a `price` (per image, character, second, call, or an audio/image token split), or
+ * on the `iu-gemini` / `iu-replicate` wires. Every other model's calls pass the gateway, which writes their rows.
+ * Computed from the table once, on the first call; `AGW_ROUTES` overrides are not read (an override that moves a
+ * route to another model leaves that model text-priced).
+ */
+export function isCallerPriced(model: string): boolean {
+  callerPriced ??= new Set(
+    Object.values(DEFAULT_ROUTES)
+      .flatMap((route) => [route, ...(route.fallback ? [route.fallback] : [])])
+      .filter((entry) => entry.price !== undefined || CALLER_PRICED_WIRES.has(entry.wire))
+      .map((entry) => entry.model),
+  )
+  return callerPriced.has(model)
 }
 
 function isRouteId(id: string): id is RouteId {

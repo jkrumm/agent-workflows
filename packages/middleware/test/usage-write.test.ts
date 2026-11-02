@@ -29,7 +29,7 @@ function rowOf(runId: string, stepId: string): UsageRow {
       runId,
       stepId,
       status: 'done',
-      model: 'm1',
+      model: 'whisper',
       tokens: { input: 10, output: 2, cacheRead: 0, cacheWrite: 0, reasoning: 0 },
       cost: 0.001,
       toolCalls: 0,
@@ -42,7 +42,6 @@ function rowOf(runId: string, stepId: string): UsageRow {
         workflowId: 'w',
         rootId: runId,
         purpose: 'build',
-        iuKey: 'personal',
         traceparent: null,
         traceId: null,
         fingerprint: null,
@@ -69,9 +68,9 @@ describe('writeBatch', () => {
     const { client, calls } = fakeClient()
     await writeBatch(client, rows, noop)
     expect(sessionsWritten(calls)).toEqual(['run_a', 'run_b', 'run_c'])
-    expect(recordsWritten(calls)).toEqual(['run_a:a:m1', 'run_a:z:m1', 'run_b:a:m1', 'run_c:b:m1'])
+    expect(recordsWritten(calls)).toEqual(['run_a:a:whisper', 'run_a:z:whisper', 'run_b:a:whisper', 'run_c:b:whisper'])
     // The caller's array is not reordered.
-    expect(rows.map((r) => r.source_id)[0]).toBe('run_c:b:m1')
+    expect(rows.map((r) => r.source_id)[0]).toBe('run_c:b:whisper')
   })
 
   test('begins first and sets the transaction deadlines inside it, before any write', async () => {

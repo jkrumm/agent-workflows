@@ -43,13 +43,9 @@ describe('loadConfig', () => {
       '/x/tokens',
     )
   })
-  test('IU_KEY_ID: unset or empty is personal, a known id is kept, an unknown one refuses without echoing it', () => {
-    expect(loadConfig(base).iuKey).toBe('personal')
-    expect(loadConfig({ ...base, IU_KEY_ID: '' }).iuKey).toBe('personal')
-    expect(loadConfig({ ...base, IU_KEY_ID: 'athena-team' }).iuKey).toBe('athena-team')
-    const attempt = () => loadConfig({ ...base, IU_KEY_ID: 'sk-not-an-id' })
-    expect(attempt).toThrow('IU_KEY_ID')
-    expect(attempt).not.toThrow('sk-not-an-id')
+  test('IU_KEY_ID is not read: any value starts, and the config holds no key label', () => {
+    for (const value of [undefined, '', 'athena-team', 'sk-not-an-id'])
+      expect(loadConfig({ ...base, IU_KEY_ID: value })).not.toHaveProperty('iuKey')
   })
   test('a secret with whitespace is named, not echoed', () => {
     const attempt = () => loadConfig({ ...base, AGW_API_SECRET: `${SECRET}\n` })

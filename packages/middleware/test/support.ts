@@ -94,7 +94,6 @@ export function testPlatform(
     schema,
     logger,
     fingerprint: fakeFingerprint(),
-    iuKey: 'personal',
     telemetry: { exporter: spans, scheduledDelayMillis: 50 },
     usage: { transport: null },
     ...options,

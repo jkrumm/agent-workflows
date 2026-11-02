@@ -333,7 +333,6 @@ export async function bootProcess(
         }),
         learnings,
       ),
-      iuKey: config.iuKey,
       friction: frictionSource,
       telemetry: { exporter: exporterFor(env), serviceName: definition.serviceName },
       usage: { machine: config.machine },

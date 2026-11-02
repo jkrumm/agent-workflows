@@ -18,7 +18,7 @@ await runtime.open()
 setInterval(() => void platform.outbox?.flush(), 30_000) // the host's tick (Wave 3)
 ```
 
-`platform.middleware` is the ordered list `purpose → iu-key → fingerprint → friction → record → telemetry`. The friction
+`platform.middleware` is the ordered list `purpose → fingerprint → friction → record → telemetry`. The friction
 counters are final before the record reads them, and the record runs before telemetry so its totals land on the run
 span before telemetry ends it. `platform.close()` comes after
 `runtime.close()`: it ends open spans, flushes and closes the pool.
@@ -171,6 +171,16 @@ explicitly.
 `USAGE_PG_URL` (never logged). usage-tracker owns that schema (`migrations/pg/`, `docs/usage-schema.md`); this package
 never creates or alters it. Argo no longer receives usage rows.
 
+**Only what the gateway cannot price.** Every LLM call passes the inference gateway (`docs/gateway.md` §Callers), which
+writes one `usage.records` row per request with the run's attribution (`run_id`, workflow, step, purpose, repo,
+`project_raw`, workspace): it is the only writer of inference rows. The outbox therefore writes a row only for a model
+agw prices itself, per minute, per character or per image: `isCallerPriced(model)` (`@agent-workflows/routes`), a model
+on a route with a `price` or on the `iu-gemini` / `iu-replicate` wires. Those calls go to the gateway with
+`x-agw-usage: caller` and it writes no row for them. A row here for a text model would count its calls twice. So a step
+mixing a prep call and TTS writes the TTS row only, and a text-only run writes no record and no session. Steps with
+text usage are still claimed and marked synced (no row, nothing written), so they never stay pending. The run record,
+spans and cost roll-ups keep every call; only the `usage.records` projection is filtered.
+
 - **After the record.** Only steps of runs whose `runPost` was delivered (`post_hooks_at`), so `raw` carries the
   run's wall time, trace id and friction.
 - **No journal transaction spans a write.** A batch is claimed in one statement (`for update skip locked`, a random
@@ -208,18 +218,17 @@ never creates or alters it. Argo no longer receives usage rows.
 - **Close.** `outbox.close()` refuses new flushes and waits for the one in flight; `platform.close()` calls it
   before closing the pools, and closes the usage pool it created from `USAGE_PG_URL`.
 - **Crash after the write.** The rows are written again; the upsert absorbs it.
-- **No usage, no row.** Only steps with tokens or a cost are outbox candidates (the `steps_argo_outbox` index).
+- **No usage, no row.** Only steps with tokens or a cost are outbox candidates (the `steps_argo_outbox` index); of
+  those, only caller-priced models become rows (above).
 - **Scores ride in `raw.scores`** (`runs.scores`: the inline gate verdicts, and `final` once the run is scored),
   never as top-level fields. `raw.scorePass` and `raw.scoreError` make the final score explicit: a scorer error is
   `scorePass: null` with `scoreError: { kind: 'scorer' | 'infra', message }`, never a fail.
 - **Machine id.** `AGW_MACHINE`; unset, the host name with a logged warning. It is an attribute of the row, not part of
   its key: a changed name does not duplicate a row.
-- **IU key label.** `billing` = `api_key` and `api_key` = the label of the IU key that paid (`personal` |
-  `athena-team`). Nothing in a model call says which key paid, so the label is stamped from the non-secret host env
-  `IU_KEY_ID` (`parseIuKeyId`: unset or empty is `personal`; an unknown value is `personal` plus one warning) and never
-  from key material. It belongs to the run: `iuKeyMiddleware` writes it to `runs.iu_key` at admission
-  (`resume: false`), so an outbox that flushes after a restart with another key still writes the label the run started
-  with; a run stored before the column reads `personal`. It is never in `raw`.
+- **IU key label.** `billing` = `api_key` and `api_key` = `personal`, a constant: every caller-priced call goes
+  through the gateway, which holds only the personal IU key. agw reads no `IU_KEY_ID`. The journal's `runs.iu_key`
+  column stays, unwritten and unread (no migration), so a rollback to a release that stamps it still works. It is never
+  in `raw`.
 - **A required deploy secret.** `scripts/launch.sh` builds `USAGE_PG_URL` from the `USAGE_PG_PASSWORD` ref in `.env.tpl`
   and exits 78 when it does not resolve, like every other ref there: a deployed host never runs without the outbox. Seed
   the ref (`dotfiles-private/headless.refs`, `make secrets-seed`) before the deploy that needs it; it is seeded on the
@@ -233,6 +242,9 @@ the sink behind them changed from Argo's HTTP endpoint to `usage.records`. What 
 
 - **Stop the previous host before the new one flushes.** Two releases flushing at once would write through two different
   sinks. `make deploy` already stops and then starts; do not run a second host by hand beside it.
+- **Steps pending across the switch to caller-priced rows only.** A step still pending when this rule shipped follows it:
+  its text-model rows are not written (the gateway did not see those calls, so they have no row anywhere). The outbox
+  drains within seconds of a run finishing, so none was expected at the deploy.
 - **No replay to Argo on rollback.** Rows written to `usage.records` after this release are marked synced in the journal.
   A rollback to a release that posts to Argo will not send them there; they stay in `usage.records` only.
 - **Before this release.** Steps marked synced earlier reached `usage.records` only through usage-tracker's Argo backfill
@@ -245,7 +257,7 @@ the sink behind them changed from Argo's HTTP endpoint to `usage.records`. What 
 | Run record / step | `usage.records` | Note |
 |-|-|-|
 | — | `source` = `agent-workflows`, `grain` = `session` | a step is a whole agent loop of many requests, never one message; session grain also keeps price tiers off (they apply to a single request) |
-| run id, step id, model | `source_id` = `<runId>:<stepId>:<model>` | one row per step and model (`usage_by_model`); usage reported without a model is the remainder, as `unknown` |
+| run id, step id, model | `source_id` = `<runId>:<stepId>:<model>` | one row per step and caller-priced model (`usage_by_model`, `isCallerPriced`); usage reported without a model is the remainder, `unknown`, which is never caller-priced and so never a row |
 | model | `model_raw` = `model` | agw ids are already normalized |
 | step start (`steps.started_at`) | `ts` | |
 | step finish − start | `duration_ms` | a step longer than an `integer` of milliseconds (about 24.8 days) is refused and quarantined |
@@ -254,7 +266,7 @@ the sink behind them changed from Argo's HTTP endpoint to `usage.records`. What 
 | — | `cost_usd`, `cost_source`, `price_id` | from `usage.compute_cost(...)` in the same `INSERT`: the reported cost wins, else the price tables, else NULL / `none` for an unknown model. Pricing is never reimplemented here |
 | step failed/cancelled, or run `invalid_output` | `outcome` = `error` (else `ok`) | |
 | project, workspace | `project_raw` (verbatim), `repo`, `workspace` | `repo` is the project only when it is a plain SourceRoot directory slug and the run is not declared `work` (work projects live under IuRoot, whose `iu/<dir>` namespace is usage-tracker's); else NULL. `workspace` only as declared |
-| — | `billing` = `api_key`, `api_key` = IU key label, `account` = NULL | |
+| — | `billing` = `api_key`, `api_key` = `personal`, `account` = NULL | the gateway holds only the personal key |
 | — | `lane` = `agw_workflow`, `lane_detail` = `{ workflow, step, caller, purpose }` | the run has no route of its own, so none is named |
 | run id | `run_id`, and `session_id` of the run's `usage.sessions` row | |
 | — | `machine` = `AGW_MACHINE` (else the host name, warned) | an attribute, not part of the key |
@@ -302,7 +314,7 @@ Follow-up: a dedicated CREATEDB-only test role, so no admin credential reaches t
 | `friction.test.ts` | the document on every run, session sums and the highest repeat, every session of a step, a lost document rebuilt, `runPost` as a true recompute (stale events and steps gone, re-delivery changes nothing), `invalid_output` and re-ask steps, wallet refusal and runaway-cap failure, a failing or partial probe (incomplete, earlier entries kept, redelivered and completed), bounded probe concurrency |
 | `telemetry.test.ts` | steps ended without `stepPost`, session id from the handle, redaction, the diag sink |
 | `flush.test.ts` | subprocess with a fake OTLP receiver: SIGTERM and SIGINT re-raised after flush, crash exit 1, export failure and dropped spans logged |
-| `fingerprint.test.ts`, `opencode-usage.test.ts`, `usage-rows.test.ts`, `usage-caller.test.ts` | pure: stability, each input changes the hash, the OpenCode conversion, the additive projection and the row mapping (incl. no reported cost for a row with unpriced calls) |
+| `fingerprint.test.ts`, `opencode-usage.test.ts`, `usage-rows.test.ts`, `usage-caller.test.ts` | pure: stability, each input changes the hash, the OpenCode conversion, the additive projection and the row mapping (incl. no reported cost for a row with unpriced calls; caller-priced models only: a prep-plus-TTS step writes the TTS row, a text-only step none) |
 
 The OpenCode message fixtures are shaped from the measured sources S2 points at, not from S2 itself. Every S2
 prompt wedged, so it captured no session. The sources are usage-tracker's live-schema message and agent-gateway's

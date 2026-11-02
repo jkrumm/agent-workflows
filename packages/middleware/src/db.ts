@@ -13,6 +13,11 @@ export type DbOptions = {
 /** The run and step tables of the runtime's journal, on a small pool of the middleware's own. */
 export class JournalDb {
   readonly pool: Pool
+  /**
+   * `runs.iu_key` (runtime migration 0003) is a dead column: the label of the IU key that paid, stamped by releases
+   * before the gateway held the only key. Nothing writes or reads it now; it stays (default `personal`) so a rollback
+   * to such a release still writes it.
+   */
   readonly runs: string
   readonly steps: string
 
