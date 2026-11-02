@@ -61,7 +61,7 @@ const problemsOf = (env: Record<string, string | undefined>): string[] => {
 describe('config', () => {
   test('defaults and derived IU bases', () => {
     const config = loadConfig({ ...baseEnv(), IU_BASE_URL: 'https://iu.example/gw/anthropic/' })
-    expect(config.port).toBe(7793)
+    expect(config.port).toBe(7794)
     expect(config.ledgerPath).toBe(join(dir.path, 'state', 'ledger.sqlite'))
     expect(config.iu).toEqual({
       apiKey: 'fake-iu-key',

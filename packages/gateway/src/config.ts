@@ -6,7 +6,7 @@ import { readDoorTokens } from '@agent-workflows/host/door-tokens'
 import { z } from 'zod'
 import { parseRegistry, type RegistryPool } from './pools/index.ts'
 
-export const DEFAULT_PORT = 7793
+export const DEFAULT_PORT = 7794
 
 /** IU, every wire derived from `IU_BASE_URL` (ends in `/anthropic`), as `packages/capabilities` and `packages/audio` do. */
 export interface IuUpstream {

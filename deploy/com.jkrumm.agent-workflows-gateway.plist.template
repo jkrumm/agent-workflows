@@ -26,7 +26,7 @@
     <key>AGW_MACHINE</key>
     <string>mini</string>
     <key>AGW_GATEWAY_PORT</key>
-    <string>7793</string>
+    <string>7794</string>
     <!-- The sha of the deploy that started it; /health compares AGW_GATEWAY_BUILD, not this. -->
     <key>AGW_VERSION</key>
     <string>__SHA__</string>

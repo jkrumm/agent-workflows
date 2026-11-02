@@ -25,7 +25,7 @@ Research run `01a1980b-d977-7796-a377-14349c813714` (2026-11-01).
 
 ## Shape
 
-A third agw process, `packages/gateway`, its own LaunchAgent on `127.0.0.1:7793`. **It is a lean process, not a
+A third agw process, `packages/gateway`, its own LaunchAgent on `127.0.0.1:7794` (7793 is the software-factory server's). **It is a lean process, not a
 `bootProcess` one** (owner, 2026-11-01): every LLM call from the mini goes through it, so it must not depend on the
 journal Postgres, the workflow runtime or OpenCode, and its import closure stays small so most releases leave its build
 unchanged. It runs as one bundled file. **A local SQLite ledger in its state dir is the outbox:** each served request

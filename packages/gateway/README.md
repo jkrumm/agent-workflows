@@ -1,6 +1,6 @@
 # @agent-workflows/gateway
 
-The local inference gateway on `127.0.0.1:7793`. It forwards native LLM requests byte for byte, pays for Claude calls
+The local inference gateway on `127.0.0.1:7794`. It forwards native LLM requests byte for byte, pays for Claude calls
 from the subscriptions' API credit before IU, and records every request. Design and rationale: `docs/gateway.md`.
 
 - **Lean by design.** No journal Postgres, workflow runtime or OpenCode. It runs as one bundled file:
@@ -37,7 +37,7 @@ which is re-serialised with the concrete id. **Not forwarded:** every credential
 | `IU_API_KEY`, `IU_BASE_URL` | yes | the personal IU key; the URL ends in `/anthropic` |
 | `IU_KEY_ID` | no | unset or `personal`; anything else exits 78 |
 | `AGW_DOOR_CALLERS_FILE` | no | door tokens, mode 0600; default `~/.agent-workflows/data/door-tokens` |
-| `AGW_GATEWAY_PORT` | no | default 7793 |
+| `AGW_GATEWAY_PORT` | no | default 7794 |
 | `USAGE_PG_URL` | no | unset turns the flush loop off; rows stay in the ledger and `/health` says so |
 | `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS` | no | span export; off without an endpoint |
 | `AGW_MACHINE`, `AGW_VERSION`, `AGW_GATEWAY_BUILD` | no | row and `/health` labels; the last two default to `dev` |

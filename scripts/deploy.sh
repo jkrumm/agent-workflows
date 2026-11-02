@@ -39,7 +39,7 @@ RELEASE_PROCESSES=(host audio)
 PROCESSES=(host audio)
 typeset -A LABELS PORTS
 LABELS=(host com.jkrumm.agent-workflows-host audio com.jkrumm.agent-workflows-audio gateway com.jkrumm.agent-workflows-gateway)
-PORTS=(host 7791 audio 7792 gateway 7793)
+PORTS=(host 7791 audio 7792 gateway 7794)
 # The sha each process's plist was last rendered for by this deploy: a rollback removes only what this deploy wrote.
 typeset -A RENDERED_SHA
 ROOT="${AGW_ROOT:-$HOME/.agent-workflows}"
@@ -114,7 +114,7 @@ tail_logs() {
   local p f
   for p in $PROCESSES; do
     for f in "$HOME/Library/Logs/agent-workflows-$p.err.log" "$HOME/Library/Logs/agent-workflows-$p.out.log"; do
-      [[ -f "$f" ]] && { print -u2 "--- tail -n 40 $f"; tail -n 40 "$f" >&2; }
+      [[ -f "$f" ]] && { print -u2 -r -- "--- tail -n 40 $f"; tail -n 40 "$f" >&2; }
     done
   done
 }

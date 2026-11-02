@@ -51,13 +51,13 @@ url=""
 for arg in "$@"; do url="$arg"; done
 port=$(echo "$url" | sed -n 's|.*127.0.0.1:\\([0-9]*\\)/health|\\1|p')
 [ -n "$port" ] || exit 22
-case "$port" in 7791) label=${HOST} ;; 7792) label=${AUDIO} ;; 7793) label=${GATEWAY} ;; *) exit 22 ;; esac
+case "$port" in 7791) label=${HOST} ;; 7792) label=${AUDIO} ;; 7794) label=${GATEWAY} ;; *) exit 22 ;; esac
 plist="$HOME/launchd/$label.plist"
 [ -f "$plist" ] || exit 7
 [ ! -f "$HOME/down/$port" ] || exit 22
 val() { awk -v k="$1" '$0 ~ "<key>" k "</key>" { getline; gsub(/<[^>]*>|[ \\t]/, ""); print }' "$plist"; }
 build=$(val AGW_GATEWAY_BUILD)
-if [ "$port" = 7793 ]; then
+if [ "$port" = 7794 ]; then
   [ -f "$HOME/bad-build" ] && [ "$build" = "$(cat "$HOME/bad-build")" ] && exit 22
   printf '{"status":"ok","version":"%s","build":"%s"}' "$(val AGW_VERSION)" "$build"
 else
@@ -165,7 +165,7 @@ describe('deploy.sh gateway: the restart rule', () => {
     expect(rendered).toContain(`${dir}/launch-gateway.sh`)
     expect(rendered).not.toContain(join(t.aw, 'releases'))
     for (const expected of [
-      '<key>AGW_GATEWAY_PORT</key>\n    <string>7793</string>',
+      '<key>AGW_GATEWAY_PORT</key>\n    <string>7794</string>',
       `<key>AGW_GATEWAY_BUILD</key>\n    <string>${build}</string>`,
       `<key>AGW_VERSION</key>\n    <string>${PREV}</string>`,
       `<string>${join(t.aw, 'data', 'door-tokens')}</string>`,
@@ -181,7 +181,7 @@ describe('deploy.sh gateway: the restart rule', () => {
     expect(readFileSync(join(t.home, '.config', 'agw', 'env'), 'utf8')).toContain(
       'AGW_PROCESSES=audio=http://127.0.0.1:7792\n',
     )
-    expect(readFileSync(join(t.home, '.config', 'agw', 'env'), 'utf8')).not.toContain('7793')
+    expect(readFileSync(join(t.home, '.config', 'agw', 'env'), 'utf8')).not.toContain('7794')
   })
 
   test('an unchanged build, loaded and healthy: the gateway is never booted out, host and audio restart', () => {
@@ -224,7 +224,7 @@ describe('deploy.sh gateway: the restart rule', () => {
     expect(touches(notLoaded.launchctlLog(), GATEWAY, 'bootstrap')).toBe(1)
 
     const unhealthy = liveThenNew('v1', 'v1')
-    unhealthy.markDown(7793)
+    unhealthy.markDown(7794)
     // The gateway never answers, so the deploy fails: what matters is that it was restarted rather than trusted.
     const result = unhealthy.deploy(NEW)
     expect(touches(unhealthy.launchctlLog(), GATEWAY, 'bootout')).toBeGreaterThanOrEqual(1)
@@ -284,7 +284,7 @@ describe('deploy.sh gateway: rollback', () => {
     mkdirSync(join(u.aw, 'data'), { recursive: true })
     writeFileSync(join(u.aw, 'data', 'deployed-sha'), PREV)
     u.release(NEW, 'v1')
-    u.markDown(7793)
+    u.markDown(7794)
     const result = u.deploy(NEW)
     expect(result.code).toBe(1)
     expect(result.err).toContain('no previous gateway build')
