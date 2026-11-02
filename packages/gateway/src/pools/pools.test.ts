@@ -62,6 +62,7 @@ function setup(
 const req = (over: Partial<PickInput> = {}): PickInput => ({
   caller: 'agw',
   session: 's1',
+  forceIu: false,
   claudeCodeShaped: false,
   fallbackNone: false,
   ...over,
@@ -435,6 +436,11 @@ describe('step 0: Claude-Code-shaped requests', () => {
     const { pools } = setup([pool('a')])
     pools.served('agw', 's1', 'a')
     expect(pools.pick(req({ claudeCodeShaped: true }))).toEqual({ kind: 'iu', reason: 'claude-code' })
+    expect(pools.pick(req({ forceIu: true }))).toEqual({ kind: 'iu', reason: 'forced' })
+    expect(pools.pick(req({ forceIu: true, claudeCodeShaped: true, fallbackNone: true }))).toEqual({
+      kind: 'iu',
+      reason: 'forced',
+    })
   })
 
   test('refused with fallbackNone', () => {
