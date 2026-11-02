@@ -25,7 +25,8 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
   7 days); review should end up off API credit, on a subscription-based Claude Code review agent (interactive factory
   sessions, not `claude -p`): Wave 17 researches and designs it before Wave 8 resumes. Relayed the hotfix to r12.
   Live `7a58222`. Prod credit last 48 h $67.27, ~97 % review; pace since the angle hotfix ~$50/day vs ~$10/day the
-  credit sustains. Next lever (r12): cap angle prompts under Haiku's 100k long-prompt tier. Owner: synthesis to Haiku too (relayed, folded into the cap hotfix).
+  credit sustains. Next lever (r12): cap angle prompts under Haiku's 100k long-prompt tier. Owner: synthesis to Haiku too. Live `f889a72` (#121 contextLimit, #122): live standard review $0.117 (was $0.144 standard,
+  $0.28 router mean); GT dev 4 cases recall 0.75 -> 0.50 (one flip, n=4, noise or synthesis seat: Wave 9/11 measure it).
 - 2026-11-02 21:00 owner: no labelling session ("I will not answer 155 questions"). Ground truth is validated by a
   third labeller and a second judge on other vendors (PLAN Wave 8); reports state the LLM-consensus limit. Rule for every
   wave: never plan owner work beyond a few minutes; a human check is a ≤ 10-item sample, asked only when the automated

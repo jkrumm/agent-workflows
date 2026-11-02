@@ -186,6 +186,10 @@ Pulled forward 2026-11-02 while the owner labels (former Wave 13, plus Wave 8's 
 **Left behind:** close-out in `docs/waves/handoff/lead.md` at `f960d26`. Abort-driven agent failures (timeout, cancel)
   still record null instead of their tokens (Wave 14); a run's roll-up does not flag a null step as a lower bound; no
   backfill of old runs. CI was the gate (local `make check` timed out under load).
+  Owner hotfixes after close, 2026-11-03: `research.agent` and `review.synthesis` on Haiku high; `review.angle` prompts
+  capped at 100k (route `contextLimit`, compaction counted in step usage), release `f889a72`. A standard review $0.117;
+  GT dev slice (4 cases) recall 0.75 -> 0.50, one flip, too few cases to tell (Waves 9 and 11 measure it). An arm moving
+  `review.angle` off Claude must set `contextLimit: null`.
 
 ## Wave 17 — Review on the subscriptions (design)            <!-- status: active -->
 
