@@ -30,6 +30,8 @@ const COUNT_TOKENS_PATH = '/anthropic/v1/messages/count_tokens'
 const MODELS_PATH = '/anthropic/v1/models'
 /** One path segment: the personal key must not carry an encoded slash to IU. */
 const MODEL_ID = /^[A-Za-z0-9._:-]+$/
+/** An IU catalog read when it is a GET: a path ending in `/models` or `/models/<one segment>`. */
+const IU_CATALOG = /\/models(?:\/[A-Za-z0-9._:-]+)?$/
 /** The media agw prices itself, per minute, per character or per image. */
 const CALLER_PRICED_PREFIXES = ['/openai/v1/images/', '/openai/v1/audio/', '/gemini/v1beta/', '/replicate/v1/'] as const
 /** Statuses a credit org's balance refusal can carry; only these are read before they are answered. */
@@ -85,7 +87,7 @@ export interface GatewayProxy {
 type Route =
   | { kind: 'messages'; countTokens: boolean }
   | { kind: 'models'; url: string }
-  | { kind: 'iu'; url: string; system: string }
+  | { kind: 'iu'; url: string; system: string; catalog: boolean }
 
 /** Who answers one attempt. `label` is the pool id or `iu-api`. */
 interface Target {
@@ -288,7 +290,9 @@ export function createProxy(options: ProxyOptions): GatewayProxy {
       ['/decisions/v1/', iu.origin, 'iu.decisions'],
     ]
     for (const [prefix, base, system] of iuRoutes) {
-      if (pathname.startsWith(prefix)) return { kind: 'iu', url: `${base}${pathname}${search}`, system }
+      if (pathname.startsWith(prefix)) {
+        return { kind: 'iu', url: `${base}${pathname}${search}`, system, catalog: IU_CATALOG.test(pathname) }
+      }
     }
     return null
   }
@@ -777,7 +781,9 @@ export function createProxy(options: ProxyOptions): GatewayProxy {
       const parsed = bytes === undefined ? null : parseBody(bytes, request.headers.get('content-type'), anthropic)
       prepare(x, bytes, parsed, anthropic)
       if (route.kind === 'models') return servePassthrough(x, route.url, false)
-      if (route.kind === 'iu') return servePassthrough(x, route.url, !callerWritesUsage(x))
+      // A catalog read is a GET like `/anthropic/v1/models`: no row. A POST to `models/<id>:generateContent` is a call.
+      const catalogRead = route.kind === 'iu' && route.catalog && request.method === 'GET'
+      if (route.kind === 'iu') return servePassthrough(x, route.url, !catalogRead && !callerWritesUsage(x))
       const picking = {
         forceIu: callerForcesIu(request.headers),
         claudeCodeShaped: isClaudeCodeShaped(request.headers, parsed),
