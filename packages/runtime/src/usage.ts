@@ -20,10 +20,12 @@ function addInto(target: ModelUsage, usage: Usage) {
 /** Sums every `addUsage` of one step execution. */
 export class UsageTotals {
   private total = emptyModelUsage()
+  private reports = 0
   private byModel: Record<string, ModelUsage> = {}
   private routes = new Set<string>()
 
   add(usage: Usage) {
+    this.reports++
     addInto(this.total, usage)
     if (usage.route) this.routes.add(usage.route)
     if (!usage.model) return
@@ -42,7 +44,12 @@ export class UsageTotals {
     return this.routes.size === 1 ? ([...this.routes][0] ?? null) : null
   }
 
+  /**
+   * A step that reported nothing is free (cost 0, known); null is only a step whose every report was unpriced.
+   * A model's own entry always has a report, so its null stays "unpriced".
+   */
   snapshot(): StepUsage {
-    return structuredClone({ ...this.total, byModel: this.byModel, route: this.route() })
+    const cost = this.reports === 0 ? 0 : this.total.cost
+    return structuredClone({ ...this.total, cost, byModel: this.byModel, route: this.route() })
   }
 }

@@ -52,7 +52,7 @@ const RunStateSchema = z.object({
     .nullable()
     .optional()
     .describe(
-      "An ended run whose post hooks delivered: the USD cost of the run's own steps (null: nothing priced). A child run of a fan-out carries its own record, so a parent's cost does not include it",
+      "An ended run whose post hooks delivered: the USD cost of the run's own steps (0: every step free; null: unknown, a call nobody priced and no known cost). A child run of a fan-out carries its own record, so a parent's cost does not include it",
     ),
   unpricedCalls: z
     .number()

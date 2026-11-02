@@ -79,7 +79,7 @@ describe('fencing', () => {
         model: null,
         usage: {
           tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0 },
-          cost: null,
+          cost: 0,
           toolCalls: 0,
           unpricedCalls: 0,
           byModel: {},

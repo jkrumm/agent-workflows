@@ -219,6 +219,45 @@ describe('usage', () => {
     }
   })
 
+  test('a step with no usage records cost 0 (free); only unpriced reports record null; a mix sums the priced', async () => {
+    const tokens = { input: 10, output: 2, cacheRead: 0, reasoning: 0 }
+    const wf = defineWorkflow({
+      id: 'steps.cost-known',
+      version: 'v1',
+      input: empty,
+      output: empty,
+      async run(ctx) {
+        await ctx.step('free', () => null)
+        await ctx.step('unknown', ({ addUsage }) => {
+          addUsage({ model: 'm-a', tokens })
+          return null
+        })
+        await ctx.step('mixed', ({ addUsage }) => {
+          addUsage({ model: 'm-a', tokens, cost: 0.5 })
+          addUsage({ model: 'm-a', tokens, cost: null })
+          return null
+        })
+        await ctx.step('priced-zero', ({ addUsage }) => {
+          addUsage({ model: 'm-a', tokens, cost: 0 })
+          return null
+        })
+        return {}
+      },
+    })
+    const rt = testRuntime({ schema: db.schema, workflows: [wf] })
+    await rt.open()
+    try {
+      const { runId } = await rt.start(wf, {}, { purpose: 'build' })
+      await rt.wait(runId)
+      expect(await sql.step(runId, 'free')).toMatchObject({ cost: '0', unpriced_calls: 0 })
+      expect(await sql.step(runId, 'unknown')).toMatchObject({ cost: null, unpriced_calls: 1 })
+      expect(await sql.step(runId, 'mixed')).toMatchObject({ cost: '0.5', unpriced_calls: 1 })
+      expect(await sql.step(runId, 'priced-zero')).toMatchObject({ cost: '0', unpriced_calls: 0 })
+    } finally {
+      await rt.close()
+    }
+  })
+
   test('addUsage is summed per step and persisted on the step row, split by model', async () => {
     const tokens = { input: 100, output: 20, cacheRead: 50, reasoning: 5 }
     const wf = defineWorkflow({
