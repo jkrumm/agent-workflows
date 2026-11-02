@@ -524,6 +524,13 @@ export function hostProcess(config: HostConfig, door?: ImageDoorOptions): Proces
         retro: { journal, learnings, gh, tracked },
         fleet: { fleet: fleet.fleet, argo: fleet.argo, purposeOf: pgRunPurpose(readPool, base.schema) },
         research: { ledger: pgToolLedger(ledgerPool, base.schema) },
+        // The runtime is built after the workflows: read it when an estimate runs, like the image door below.
+        costHistory: {
+          recentCost: (workflow, limit) => {
+            if (!runtime) throw new Error('the host runtime is not built yet')
+            return runtime.recentCost(workflow, limit)
+          },
+        },
       })
       if (!door) return workflows
       imageDoor = createImageDoor({
