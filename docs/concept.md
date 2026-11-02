@@ -558,3 +558,18 @@ One entry per phase: what we learned, what changed on this page, and why.
   sha needs `gh run rerun --failed` before the train runs again. `agw review` cost scales with the diff ($1.77 on +1449).
 - **Does the page hold?** Yes, as v3.14.
 
+### Gateway Wave 6 — Claude seats, measured, 2026-11-02
+
+- **Learned.** Credit pacing built before any arm kept the whole sweep at ~$7 of credit and off `iu`. No Opus arm beat
+  Sonnet beyond the CI. Sonnet at low or medium effort spends almost no reasoning tokens in OpenCode agent steps, so its
+  effort arms are nearly one arm. Review was the credit sink ($0.78 a review, $46 of it Sonnet angles); the owner's
+  hotfix put `review.angle` back on Haiku ($0.077 of angles per review).
+- **Changed.** Releases `61b7687` (hotfix) and `9cf9625`. Tiers `FAST`/`EASY`/`HARD`/`DECIDE` in `_shared.ts` with a guard
+  that fails a route naming a model; research and otel on Sonnet medium, diagram on Haiku none, the podcast stages on
+  Claude (`podcast.review.b` on Terra); eval runs keep a reserve per pool and never fall to IU. Report
+  `docs/evals/2026-11-02-claude-seats.md`.
+- **Process.** Start every sweep with a 3-case slice to measure the cost before planning the budget. A picks brief owns
+  the tests that pin the moved routes (`git grep` the route ids first). A refactor proven by identical fingerprints
+  needs only a light review.
+- **Does the page hold?** Yes, as v3.14.
+

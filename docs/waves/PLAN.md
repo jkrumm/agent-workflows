@@ -128,32 +128,35 @@ Disjoint changes, one fan-out batch:
   status line stops at Wave 3. Flaky `platform.test.ts` "concurrent runs" again. Carried: me2 placeholder keys, `agw
   routes` without the alias map, Codex lane IU key.
 
-## Wave 6 — Claude seats, measured            <!-- status: active -->
+## Wave 6 — Claude seats, measured            <!-- status: done 2026-11-02, release 9cf9625 -->
 
 Owner, 2026-11-02: agw runs on Claude with deliberate model and effort choices everywhere, not only where Wave 3
 swapped them. This wave pulls the structural half of Wave 12 (tiers) forward; Wave 11's review sweep still sets the
 review's own seats.
 
-- [ ] **Principles in `docs/gateway.md` §Seats:** Claude primary for every text and agent seat; a reviewer of
+- [x] **Principles in `docs/gateway.md` §Seats:** Claude primary for every text and agent seat; a reviewer of
   Claude-written output stays on another lab (`prose.review`, `podcast.review.a`/`.b`, `review.adversary`); speech,
   transcription, image and `decide` stay on IU. Opus only where an arm shows it beats Sonnet beyond the CI.
-- [ ] **Arms on the existing suites** (`$AGW_EVAL_DIR`: research, otel, brain, check, diagram, prose) with Wave 5's
+- [x] **Arms on the existing suites** (`$AGW_EVAL_DIR`: research, otel, brain, check, diagram, prose) with Wave 5's
   `--arm`: Haiku 5.5 (`none`/`high`), Sonnet 5.5 (`low`/`medium`), Opus 5.5 where Sonnet leads, and today's seat as the
   baseline. Pick per workflow on score, then wall time; cost counts only past the credit pacing line. The DeepSeek
   seats go (`research.agent`, `otel.agent`, the podcast pipeline), `podcast.write` leaves Terra.
-- [ ] **Tiers** in `packages/routes/src/table/_shared.ts` (`FAST`, `EASY`, `HARD`, `DECIDE` with Claude primaries and
+- [x] **Tiers** in `packages/routes/src/table/_shared.ts` (`FAST`, `EASY`, `HARD`, `DECIDE` with Claude primaries and
   GPT-on-IU fallbacks); routes spread a tier, a guard test fails a route that names a model (the eval judge excepted).
-- [ ] **Credit pacing.** The gateway exposes runway per pool (credit left against days left). Runs with
+- [x] **Credit pacing.** The gateway exposes runway per pool (credit left against days left). Runs with
   `purpose=eval` stop drawing credit below a reserve (default: the pro-rata share of the remaining days for
   production), so an eval sweep cannot push production onto the over-cap IU key. The fallback order is documented.
-- [ ] Committed report `docs/evals/<date>-claude-seats.md`; picks recorded in `modelpick/docs/decisions/agw-text-seats.md`;
+- [x] Committed report `docs/evals/<date>-claude-seats.md`; picks recorded in `modelpick/docs/decisions/agw-text-seats.md`;
   a live call per changed route.
 **Left behind:** owner decision 2026-11-02 16:10, a hotfix ahead of this wave's arms: review burned the credit (67 reviews
   in 2 days = $52.50, $0.78 each; `review.angle` on Sonnet $46.29). `review.angle` back to Haiku 5.5 high (the v3.5
   split), `review.angle.deep` and synthesis stay Sonnet; target ~$0.13 per review. This wave's arms leave `review.*`
   alone: Wave 11 decides the review seats, with Wave 9's native `/code-review` arm on Max as the subscription candidate.
+  Close-out in `docs/waves/handoff/lead.md` at `15a9d91`; evals $6.91 credit + $0.36 IU. PR #83 (shop, another track)
+  must spread a tier in its `vision.ts` before it merges (the new guard fails a `model:` literal). modelpick rows
+  `claude-code/interactive-iu` and `hermes/stt` fail `verify-deployments`. Flaky: prose writer-fence test, `platform.test.ts`.
 
-## Wave 7 — Usage view v7 (Argo)            <!-- status: pending -->
+## Wave 7 — Usage view v7 (Argo)            <!-- status: active -->
 
 Owner, 2026-11-02: the usage page needs a new UX concept for the gateway era, not a fifth tab. Spec first, build
 after the owner signs the spec (the one stop of this wave).
