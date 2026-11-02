@@ -4,6 +4,8 @@ import { createImageCapabilities, type ImageDeps } from '../image/index.ts'
 import type { LlmDeps } from '../llm/model-call.ts'
 import { gatewayTransports } from '../transports/index.ts'
 import { createWebCapabilities, type WebDeps } from '../web/index.ts'
+import { createEvalJudge } from './eval-judge.ts'
+import { createEvalLabel } from './eval-label.ts'
 import { createLlmCapabilities } from './llm.ts'
 import { createWebRead } from './web-read.ts'
 
@@ -23,6 +25,8 @@ export function createCapabilities(
   const webCapabilities = createWebCapabilities(web)
   return [
     ...createLlmCapabilities(deps),
+    createEvalLabel(deps),
+    createEvalJudge(deps),
     ...webCapabilities,
     // The page extraction shares the fetch capability, and so its read cache, with `web.fetch`.
     createWebRead(deps, webCapabilities[1]),

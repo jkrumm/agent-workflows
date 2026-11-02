@@ -111,6 +111,16 @@ Constants in `_shared.ts`, spread like a tier (`{ wire: 'iu-openai', ...DEEPSEEK
 
 `review.adversary` is the cross-family critic: its capability refuses any wire but the OpenAI chat wire, and a Claude critic of a Claude writer defeats it. The podcast writers' room moved to Claude in Wave 6 (the single calls and the writer's tool loop speak the Messages wire); its reviewers stay on other labs. `prose.review` is a cross-lab reviewer of a Claude writer: its capability refuses a Claude model or any wire but `iu-openai`. `agw routes` shows `default` in the effort column where no effort is sent (the vendor's own level), and `none` where thinking is off.
 
+### Eval seats
+
+The review eval's ground truth (`docs/review-v2.md` §The eval) runs on three pinned seats in `src/table/eval.ts`, built from `LABELER_CLAUDE`, `LABELER_GPT` and `JUDGE` in `_shared.ts`. They are not tiers and have **no fallback**: a fallback would silently change a labeller or the grader, so a drained credit fails the call and never moves it. A change to a seat or to its capability's prompt bumps `LABELER_VERSION` / `JUDGE_VERSION` (`packages/capabilities`, pinned by a test that recomputes them).
+
+| Route | Wire | Model | Effort | Output ceiling |
+|-|-|-|-|-|
+| `eval.label.a` | `anthropic` | Sonnet 5.5 | medium | 16000 |
+| `eval.label.b` | `iu-openai` | Terra (the GPT stack's rate) | medium | 16000 |
+| `eval.judge` | `anthropic` | Sonnet 5.5 | medium | 16000 |
+
 ### Guard
 
 `guard.test.ts` holds the shape:

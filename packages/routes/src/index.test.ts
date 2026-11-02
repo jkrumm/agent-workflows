@@ -419,6 +419,8 @@ describe('fallback', () => {
       expect(route.fallback === undefined).toBe(
         route.wire === 'iu-decision' ||
           (id.startsWith('audio.') && id !== 'audio.tts.prep') ||
+          // the pinned eval seats: a fallback would silently change a labeller or the grader
+          id.startsWith('eval.') ||
           route.price !== undefined,
       )
     }

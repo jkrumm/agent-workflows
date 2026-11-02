@@ -113,3 +113,20 @@ export const GEMINI_FLASH_LITE = {
 export const CRITIC = {
   call: { ...TERRA_MEDIUM, fallback: callFallback({ ...LUNA, effort: 'medium' as const }) },
 } as const
+
+// ---- Eval seats: pinned, never tiers; a change here bumps the labeller or judge version (`LABELER_VERSION`,
+// `JUDGE_VERSION` in packages/capabilities). They carry no fallback on purpose: a fallback would silently change a
+// labeller or the grader, so a drained credit fails the call and never moves it. Each seat is its own constant so a tier
+// edit never reaches the ground truth.
+/** Ground-truth labeller `a`: Sonnet 5.5 medium on the native Messages wire (`eval.label.a`). */
+export const LABELER_CLAUDE = {
+  call: { ...SONNET, effort: 'medium', maxOutputTokens: 16_000 },
+} as const
+/** Ground-truth labeller `b`, the other vendor: Terra medium on the chat wire (`eval.label.b`). */
+export const LABELER_GPT = {
+  call: { ...TERRA_MEDIUM, maxOutputTokens: 16_000 },
+} as const
+/** The review eval's grader: Sonnet 5.5 medium (`eval.judge`). Reasoning counts against the ceiling. */
+export const JUDGE = {
+  call: { ...SONNET, effort: 'medium', maxOutputTokens: 16_000 },
+} as const

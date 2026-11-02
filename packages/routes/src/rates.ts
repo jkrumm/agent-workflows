@@ -11,6 +11,7 @@ import claude from './table/claude.ts'
 import decide from './table/decide.ts'
 import diagram from './table/diagram.ts'
 import digest from './table/digest.ts'
+import evalSeats from './table/eval.ts'
 import factory from './table/factory.ts'
 import image from './table/image.ts'
 import narrative from './table/narrative.ts'
@@ -33,6 +34,7 @@ export const ROUTE_GROUPS: Readonly<Record<string, Readonly<Record<string, Route
   decide,
   diagram,
   digest,
+  eval: evalSeats,
   factory,
   image,
   narrative,
