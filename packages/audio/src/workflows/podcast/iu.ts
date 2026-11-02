@@ -12,7 +12,7 @@ import type {
   WireMessage,
   WireUsage,
 } from './llm.ts'
-import { ModelError } from './llm.ts'
+import { ANTHROPIC_MIN_MAX_TOKENS, ModelError } from './llm.ts'
 
 // The production `ModelPort`: the gateway's OpenAI chat completions and responses, and its native Anthropic Messages route.
 // The platform transports (capabilities `transports/`) are single-call text wires without tools, cache blocks or a
@@ -23,8 +23,6 @@ import { ModelError } from './llm.ts'
 // provider-balance failures marked for the route's fallback.
 
 const ANTHROPIC_VERSION = '2023-06-01'
-/** Reasoning tokens count against `max_tokens` on the Messages wire: a thinking writer needs room. */
-export const ANTHROPIC_MIN_MAX_TOKENS = 32_000
 const ATTEMPTS = 3
 const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504])
 /** SSE `error` event types that are transient. */
@@ -412,10 +410,30 @@ export function anthropicBody(call: ChatCall) {
   }
 }
 
+/** Block types a cache breakpoint cannot sit on. */
+const UNCACHEABLE_BLOCKS = new Set(['thinking', 'redacted_thinking'])
+
+/**
+ * The transcript with an ephemeral breakpoint on the last content block of the last message, so the next round reads
+ * this one's whole transcript from the prompt cache. Copies the touched message and block; the caller's transcript
+ * (whose assistant blocks are echoed verbatim) is never mutated. A last message without a cacheable block is left alone.
+ */
+function withTailBreakpoint(messages: WireMessage[]): WireMessage[] {
+  const last = messages.at(-1)
+  const blocks = last && Array.isArray(last.content) ? last.content : undefined
+  const tail = blocks?.at(-1)
+  if (!last || !blocks || !tail || UNCACHEABLE_BLOCKS.has(String(rec(tail).type))) return messages
+  return [
+    ...messages.slice(0, -1),
+    { ...last, content: [...blocks.slice(0, -1), { ...rec(tail), cache_control: { type: 'ephemeral' } }] },
+  ]
+}
+
 /**
  * The Messages tool-round body: the same thinking/effort and `max_tokens` floor as a single call, `tools` before the
- * system prompt (the Messages cache order), the system prompt as one block with the ephemeral breakpoint, the transcript
- * as given. Stable: every field is a pure function of the transcript, so round N's prompt is a prefix of round N+1's.
+ * system prompt (the Messages cache order), the system prompt as one block with an ephemeral breakpoint (left out when
+ * empty), and the transcript with a second breakpoint on its tail (two of the four allowed). Every field is a pure
+ * function of the transcript, so with the markers stripped round N's prompt is a prefix of round N+1's.
  */
 export function anthropicRoundBody(call: RoundCall) {
   const thinking = call.effort !== undefined
@@ -426,8 +444,10 @@ export function anthropicRoundBody(call: RoundCall) {
     ...(call.tools.length > 0
       ? { tools: call.tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.parameters })) }
       : {}),
-    system: [{ type: 'text', text: call.system ?? '', cache_control: { type: 'ephemeral' } }],
-    messages: call.messages,
+    ...(call.system?.trim()
+      ? { system: [{ type: 'text', text: call.system, cache_control: { type: 'ephemeral' } }] }
+      : {}),
+    messages: withTailBreakpoint(call.messages),
     stream: true,
   }
 }

@@ -56,7 +56,7 @@ export interface NativeTurn {
  */
 export interface WireMessage {
   role?: string
-  content?: string | null
+  content?: string | null | unknown[]
   tool_calls?: ToolCallRequest[]
   tool_call_id?: string
   native?: NativeTurn
@@ -127,6 +127,20 @@ export interface FallbackPin {
 
 /** IU serves function tools for the GPT-6.1 family only on `/v1/responses` (chat/completions 503s; probed 2026-10-26). */
 export const usesResponsesApi = (model: string): boolean => /^gpt-6\.1/.test(model)
+
+/** Reasoning tokens count against `max_tokens` on the Messages wire: a thinking writer needs room. */
+export const ANTHROPIC_MIN_MAX_TOKENS = 32_000
+/** The ceiling a Messages round's retry doubles up to. */
+const ANTHROPIC_MAX_OUTPUT_TOKENS = 64_000
+
+/**
+ * A Messages round's wire `max_tokens`: the budget floored at 32k; the retry doubles THAT (so it differs from the first
+ * try whatever the caller asked for), up to 64k.
+ */
+function messagesBudget(maxTokens: number, retry: boolean): number {
+  const first = Math.max(ANTHROPIC_MIN_MAX_TOKENS, maxTokens)
+  return retry ? Math.max(first, Math.min(ANTHROPIC_MAX_OUTPUT_TOKENS, first * 2)) : first
+}
 
 /**
  * The model calls of ONE step, bound to its `addUsage` and signal. What they cost lives in the journal only (the
@@ -284,14 +298,14 @@ export class Llm {
    * One tool-loop round on the route: Messages on an `anthropic` route, IU's OpenAI dialect otherwise (chat, or
    * responses for the GPT-6.1 family). `transcript` is chat-shaped and rendered for the wire that answers this round.
    * `pin` is the loop's fallback state: a balance failure moves the round to the route's fallback and the rest of the
-   * loop stays there.
+   * loop stays there. `retry` is the doubled-budget second try of a cut round.
    */
   round(
     id: PodcastRouteId,
     transcript: WireMessage[],
     tools: ToolSchema[],
     maxTokens: number,
-    pin?: FallbackPin,
+    { pin, retry = false }: { pin?: FallbackPin; retry?: boolean } = {},
   ): Promise<RoundReply> {
     return this.onRoute(
       id,
@@ -306,15 +320,15 @@ export class Llm {
           model: route.model,
           ...(route.effort && route.effort !== 'none' ? { effort: route.effort } : {}),
           tools,
-          maxTokens,
           ...this.attribution(),
         }
+        const budget = retry ? maxTokens * 2 : maxTokens
         const call: RoundCall =
           route.wire === 'anthropic'
-            ? { api: 'messages', ...base, ...renderMessages(transcript) }
+            ? { api: 'messages', ...base, maxTokens: messagesBudget(maxTokens, retry), ...renderMessages(transcript) }
             : usesResponsesApi(route.model)
-              ? { api: 'responses', ...base, messages: renderResponses(transcript) }
-              : { api: 'chat', ...base, messages: renderChat(transcript) }
+              ? { api: 'responses', ...base, maxTokens: budget, messages: renderResponses(transcript) }
+              : { api: 'chat', ...base, maxTokens: budget, messages: renderChat(transcript) }
         return this.port.round(call, this.scope.signal, onUsage, onSent)
       },
       pin,
@@ -405,7 +419,10 @@ export function renderResponses(transcript: WireMessage[]): WireMessage[] {
   })
 }
 
-/** Messages: the system prompt apart, an assistant turn as content blocks, consecutive results as ONE user turn. */
+/**
+ * Messages: the system prompt apart, an assistant turn as content blocks, consecutive results as ONE user turn. Every
+ * message is a block array, so the transcript is the same bytes from one round to the next.
+ */
 export function renderMessages(transcript: WireMessage[]): { system: string; messages: WireMessage[] } {
   const system: string[] = []
   const messages: WireMessage[] = []
@@ -416,7 +433,7 @@ export function renderMessages(transcript: WireMessage[]): { system: string; mes
       if (results) results.push(result)
       else {
         results = [result]
-        messages.push({ role: 'user', content: results as never })
+        messages.push({ role: 'user', content: results })
       }
       continue
     }
@@ -436,8 +453,12 @@ export function renderMessages(transcript: WireMessage[]): { system: string; mes
                 input: parseArguments(c.function.arguments),
               })),
             ]
-      messages.push({ role: 'assistant', content: blocks as never })
-    } else messages.push({ role: 'user', content: m.content ?? '' })
+      messages.push({ role: 'assistant', content: blocks })
+    } else {
+      // Always blocks: a string and a text block are the same prompt, but the cache breakpoint needs a block to sit on.
+      const text = typeof m.content === 'string' ? [{ type: 'text', text: m.content }] : (m.content ?? [])
+      messages.push({ role: 'user', content: text })
+    }
   }
   return { system: system.join('\n\n'), messages }
 }
@@ -495,22 +516,27 @@ async function runTool(tool: ToolDef, call: ToolCallRequest): Promise<{ content:
 
 const hasToolCalls = (reply: RoundReply) => Boolean(reply.message.tool_calls && reply.message.tool_calls.length > 0)
 
-/**
- * A Messages reply is usable only when the model finished its turn (`stop`) or asked for tools (`tool_calls`): a
- * `max_tokens` stop is a half-written answer or a cut tool call, a refusal or a pause is no answer. Chat and responses
- * replies are judged by their content alone (their `length` stop is retried below, a partial answer is kept).
- */
-const finished = (reply: RoundReply) =>
-  reply.message.native?.api !== 'anthropic' || reply.finishReason === 'stop' || reply.finishReason === 'tool_calls'
+const textContent = (reply: RoundReply) => (typeof reply.message.content === 'string' ? reply.message.content : '')
 
-const usable = (reply: RoundReply) =>
-  (hasToolCalls(reply) || (reply.message.content ?? '').trim() !== '') && finished(reply)
+const isMessages = (reply: RoundReply) => reply.message.native?.api === 'anthropic'
+
+/**
+ * A Messages stop other than `end_turn`/`stop_sequence`, `tool_use` and `max_tokens` (a `refusal`, a `pause_turn`,
+ * anything new) is no answer and no budget problem: retrying it repeats it, so it fails at once, naming the reason.
+ */
+function assertKnownStop(reply: RoundReply, params: ToolLoopParams, round: number) {
+  if (!isMessages(reply)) return
+  const stop = reply.finishReason ?? 'none'
+  if (stop === 'stop' || stop === 'tool_calls' || stop === 'length') return
+  throw new ModelError(`Podcast ${params.stage} tool loop round ${round}: the model stopped with stop_reason=${stop}`)
+}
 
 /**
  * One round, repeated once with a doubled budget when it was cut for budget reasons: a terminal reply with empty
  * content, or ANY round whose `finish_reason` is `length` (a tool call can be cut mid-`arguments` too). Throws when the
- * retry is still empty with no tool call, instead of parsing "" downstream. A Messages reply that did not finish is
- * never taken as it is: it is retried, and the retry throws if it still has not.
+ * retry is still empty with no tool call, instead of parsing "" downstream. A Messages reply cut at `max_tokens` is
+ * never taken as it is (a half-written answer): retried, and a retry that is cut again throws. The doubled Messages
+ * budget is the wire's (`messagesBudget`).
  */
 async function roundWithRetry(
   llm: Llm,
@@ -520,15 +546,18 @@ async function roundWithRetry(
   pin: FallbackPin,
 ) {
   const schemas = params.tools.map(({ name, description, parameters }) => ({ name, description, parameters }))
-  const first = await llm.round(params.route, messages, schemas, params.maxCompletionTokens, pin)
-  if (first.finishReason !== 'length' && usable(first)) return first
+  const first = await llm.round(params.route, messages, schemas, params.maxCompletionTokens, { pin })
+  assertKnownStop(first, params, round)
+  if (first.finishReason !== 'length' && (hasToolCalls(first) || textContent(first).trim())) return first
   log.warn('podcast tool loop round truncated or empty, retrying with doubled budget', {
     stage: params.stage,
     round,
     finishReason: first.finishReason ?? null,
   })
-  const retried = await llm.round(params.route, messages, schemas, params.maxCompletionTokens * 2, pin)
-  if (usable(retried)) return retried
+  const retried = await llm.round(params.route, messages, schemas, params.maxCompletionTokens, { pin, retry: true })
+  assertKnownStop(retried, params, round)
+  const cutAgain = isMessages(retried) && retried.finishReason === 'length'
+  if (!cutAgain && (hasToolCalls(retried) || textContent(retried).trim())) return retried
   throw new Error(
     `Podcast ${params.stage} tool loop round ${round} returned empty content (finish_reason=${retried.finishReason ?? 'unknown'}) after retry with doubled budget`,
   )
@@ -556,7 +585,9 @@ export async function runToolLoop(llm: Llm, params: ToolLoopParams): Promise<Too
   for (let round = 1; ; round++) {
     const { message, raw } = await roundWithRetry(llm, params, messages, round, pin)
     const toolCalls = message.tool_calls ?? []
-    if (toolCalls.length === 0) return { content: message.content ?? '', calls, rounds: round }
+    if (toolCalls.length === 0) {
+      return { content: typeof message.content === 'string' ? message.content : '', calls, rounds: round }
+    }
     messages.push(raw ? { ...message, native: { api: 'responses', items: raw } } : message)
     for (const call of toolCalls) {
       const tool = toolsByName.get(call.function.name)
