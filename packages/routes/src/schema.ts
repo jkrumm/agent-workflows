@@ -17,6 +17,18 @@ export const MAX_OUTPUT_TOKENS = 200_000
 const maxOutputTokens = z.int().positive().max(MAX_OUTPUT_TOKENS)
 
 /**
+ * The prompt-token bounds an `opencode` route may ask for (`contextLimit`): no request of the session, the compaction
+ * summary included, is meant to exceed one. A small fixed set, because the OpenCode server registers one alias row per
+ * Claude model and bound (`packages/opencode-host` config) and serves every one without a restart; an arm cannot name
+ * another value.
+ */
+export const CONTEXT_LIMITS = [60_000, 80_000, 100_000] as const
+export type ContextLimit = (typeof CONTEXT_LIMITS)[number]
+const contextLimit = z.int().refine((n): n is ContextLimit => (CONTEXT_LIMITS as readonly number[]).includes(n), {
+  message: `contextLimit must be one of ${CONTEXT_LIMITS.join(', ')} (prompt tokens)`,
+})
+
+/**
  * USD per million tokens, for wires whose provider reports no cost. Zod 4 numbers are finite.
  * The cache rates are optional: a model that never reports cache tokens needs neither, and a call
  * that does report them against a rate without the matching cache rate is priced `unknown`.
@@ -119,9 +131,21 @@ export const fallbackSchema = z
 export type FallbackEntry = z.infer<typeof fallbackSchema>
 
 export const routeSchema = z
-  .strictObject({ ...routeFields, fallback: fallbackSchema.optional() })
+  .strictObject({
+    ...routeFields,
+    /**
+     * Keeps every call of an agent step under this many prompt tokens (input plus cache reads and writes), by having the
+     * OpenCode session compact before it grows past it. Own field of the route, never of the fallback. Off when unset.
+     */
+    contextLimit: contextLimit.optional(),
+    fallback: fallbackSchema.optional(),
+  })
   .refine(...decisionRule)
   .superRefine(effortRule)
+  .refine((r) => r.contextLimit === undefined || r.wire === 'opencode', {
+    message: 'contextLimit applies to opencode routes only (an agent session compacts; a single call has no session)',
+    path: ['contextLimit'],
+  })
   .refine((r) => !r.fallback || (r.fallback.wire === 'opencode') === (r.wire === 'opencode'), {
     message:
       'a fallback runs the same kind of step: an opencode route falls back to opencode, a single call to a single call',
@@ -148,7 +172,11 @@ export type FallbackPatch = z.infer<typeof fallbackPatchSchema>
  * A partial entry from an arm's `routes`; merged over the table entry, then validated whole.
  * There is no `wire`: a route's transport is code, patches are for model, effort, limit and rate experiments.
  */
-export const routePatchSchema = z.strictObject({ ...patchFields, fallback: fallbackPatchSchema.nullable().optional() })
+export const routePatchSchema = z.strictObject({
+  ...patchFields,
+  contextLimit: contextLimit.nullable().optional(),
+  fallback: fallbackPatchSchema.nullable().optional(),
+})
 export type RoutePatch = z.infer<typeof routePatchSchema>
 
 /**

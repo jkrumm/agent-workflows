@@ -31,6 +31,8 @@ export { canonicalModel } from './models.ts'
 export { type PatchInput, RouteOverrideError, type RoutesPatch, routesPatchSchema } from './overrides.ts'
 export { DEFAULT_ROUTES, discoverRoutes } from './registry.ts'
 export {
+  CONTEXT_LIMITS,
+  type ContextLimit,
   EFFORTS,
   type Effort,
   effortsOf,
@@ -103,6 +105,11 @@ function checkModels(id: string, patch: RoutePatch, base: RouteEntry) {
       )
     }
   }
+  if (patch.contextLimit != null && base.wire !== 'opencode') {
+    throw new RouteOverrideError(
+      `route "${id}": contextLimit applies to opencode routes only (this route is on the ${base.wire} wire)`,
+    )
+  }
   if (base.wire !== 'opencode') return
   for (const [where, part] of parts) {
     for (const key of ['rate', 'maxOutputTokens', 'price'] as const) {
@@ -127,14 +134,22 @@ function patchedEntries(raw: unknown): Map<string, RouteEntry> {
     const base = isRouteId(patchId) ? DEFAULT_ROUTES[patchId] : undefined
     if (!base) throw new RouteOverrideError(`unknown route "${patchId}" (known: ${routeIds().join(', ')})`)
     checkModels(patchId, patch, base)
-    resolved.set(patchId, applyPatch(patchId, base, patch))
+    const entry = applyPatch(patchId, base, patch)
+    // The server registers a bounded alias row for each Claude model only, so another model has none to run on.
+    if (entry.contextLimit !== undefined && !CLAUDE_MODELS.includes(entry.model)) {
+      throw new RouteOverrideError(
+        `route "${patchId}": contextLimit needs a Claude model (the OpenCode server has a bounded row for those only), not "${entry.model}"`,
+      )
+    }
+    resolved.set(patchId, entry)
   }
   return resolved
 }
 
 /**
  * Check an arm whole: its shape, every route patch (including one for an id that is not in the table) valid over its
- * table entry, every patched model one the table names, an agent route only on a model the OpenCode server serves.
+ * table entry, every patched model one the table names, an agent route only on a model the OpenCode server serves, a
+ * `contextLimit` only on an opencode route running a Claude model and only one of `CONTEXT_LIMITS`.
  * Returns the parsed arm. A failure is a
  * `RouteOverrideError` naming the route id and the problem; shape errors carry zod's message, which names keys, never
  * a value.

@@ -139,6 +139,7 @@ The review eval's ground truth (`docs/review-v2.md` §The eval) runs on three pi
 | `effort` | `none\|low\|medium\|high\|xhigh\|max`. Absent when the model exposes none. A Sonnet model at `none` is a configuration error (table import and every arm patch fail, naming the route): Sonnet 5.5 has no effort level that switches thinking off |
 | `maxOutputTokens` | output ceiling; reasoning tokens count against it |
 | `rate` | `{ inputPerM, outputPerM, cacheReadPerM?, cacheWritePerM?, longPromptTokens? }` USD per million; the provider's `usage.cost` wins where it sends one |
+| `contextLimit` | `opencode` routes on a Claude model only, one of `CONTEXT_LIMITS` (60000, 80000, 100000 prompt tokens); off when absent, and no route of the table sets it. The route's own, never its fallback's. Keeps every call of the agent step under that many prompt tokens (input plus cache reads and writes) by having OpenCode compact the session in time; why the Haiku long-prompt tier matters, how the bound is met and what it costs: `packages/opencode-host` README §Bounded context |
 | `fallback` | a full route spec (`wire`, `model`, `effort?`, `maxOutputTokens?`, `rate?`) the call moves to once on a provider-balance failure (below) |
 
 `iu-decision` entries take neither `effort` nor `maxOutputTokens`. A fallback runs the same kind of step: an `opencode` route falls back to `opencode`, a single call to a single call (its wire may differ: `anthropic` routes fall back over `iu-openai`, the rule for every Claude tier).
@@ -168,11 +169,12 @@ baseline. There is no environment variable and no config file.
 }
 ```
 
-- A patch may set `model`, `effort`, `maxOutputTokens` (at most 200000), `rate`, `price` and `fallback` (a patch of the same fields, or `null`); `null` clears an optional field. It is merged over the table entry and the result is validated like a table entry.
+- A patch may set `model`, `effort`, `maxOutputTokens` (at most 200000), `rate`, `price`, `contextLimit` and `fallback` (a patch of the same fields, or `null`); `null` clears an optional field. It is merged over the table entry and the result is validated like a table entry.
 - **`wire` cannot be patched** (`RouteOverrideError`): a route's transport is code.
 - **Only models the table names** (`TABLE_MODELS`: routes, fallbacks, the Claude models), on every wire: agw's own usage rows (`callerRecords`) and the prices come from the table, so a new model goes into the table first.
 - **A new model keeps a price.** Unless the patch sets them, it takes the table's `rate` and `price` for that model (`routeRate`, `claudeRate`); a priced route never moves to a model the table prices no such way.
 - **Efforts per provider** (`effortsOf`, `src/schema.ts`): a Sonnet takes no `none`, GPT-6 Astra and GPT-6.1 Sol take no `none`, DeepSeek takes `none`, `low`, `high`, `max` (its `medium`/`xhigh` are only aliases of `high`); every other model all six. The table import and every patch are held to it.
+- **`contextLimit`** (one of `CONTEXT_LIMITS`, `null` clears it) is accepted on an `opencode` route running a Claude model, and nowhere else: another value, a route on another wire, or a move to a non-Claude model is refused at admission. It is part of the resolved route, so it moves the run fingerprint. The fallback has none.
 - **Agent routes** (`opencode` wire) move only among the models the OpenCode server serves (`opencodeModels()`: every opencode-wire model of the table and its fallbacks, and every Claude model, Opus included), at any effort its provider takes; the server registers exactly those variants of each (`packages/opencode-host` README). `rate`, `maxOutputTokens` and `price` cannot be patched there: the server's config prices and limits a model, not a route.
 - `validateArm(arm)` checks the arm whole at admission: its shape, every patch (an unknown route id, a bad entry, a model the table does not name, an effort the provider does not take, an unserved agent model). A message names the route id and the problem, and the model for an unknown or unserved one; never a parser message or another value.
 - `resolveRoute(id, patch)` validates every patch on every call, not only the requested route. The run fingerprint includes the arm (`packages/middleware` fingerprint), so an armed run never shares a fingerprint with a production run.

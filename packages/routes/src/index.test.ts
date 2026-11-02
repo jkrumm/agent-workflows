@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import {
+  CONTEXT_LIMITS,
   costFromUsage,
   DEFAULT_ROUTES,
   fallbackRoute,
@@ -797,5 +798,67 @@ describe('validateArm', () => {
       expect(message).not.toBe('')
       expect(message).not.toContain('leakysecret')
     }
+  })
+})
+
+describe('contextLimit', () => {
+  const arm = (contextLimit: unknown, id = 'review.angle') => ({ routes: { [id]: { contextLimit } } })
+
+  test('no route of the table sets it: the mechanism is off until an arm or a table edit turns it on', () => {
+    for (const id of routeIds()) {
+      expect(entry(id).contextLimit).toBeUndefined()
+      expect(entry(id).fallback).not.toHaveProperty('contextLimit')
+    }
+  })
+
+  test('an arm sets any allowed bound on an agent route; the resolved route carries it, the fallback does not', () => {
+    for (const limit of CONTEXT_LIMITS) {
+      expect(validateArm(arm(limit))).toEqual(arm(limit) as never)
+      const route = resolveRoute('review.angle', arm(limit).routes)
+      expect(route.contextLimit).toBe(limit)
+      expect(fallbackRoute(route)).not.toHaveProperty('contextLimit')
+    }
+  })
+
+  test('null clears it', () => {
+    expect(resolveRoute('review.angle', arm(null).routes).contextLimit).toBeUndefined()
+  })
+
+  test('another value is refused before anything runs, with the allowed ones in the message and not the value', () => {
+    for (const bad of [12345, 0, 100_001, -80_000, 80_000.5, '80000', true]) {
+      expect(() => validateArm(arm(bad))).toThrow(RouteOverrideError)
+    }
+    expect(() => validateArm(arm(12345))).toThrow(/60000, 80000, 100000/)
+    expect(() => validateArm(arm(12345))).not.toThrow(/12345/)
+  })
+
+  test('a route that is not on the opencode wire refuses it, whatever the value', () => {
+    const single = routeIds().find((id) => entry(id).wire === 'anthropic')
+    if (!single) throw new Error('test setup: no anthropic route')
+    expect(() => validateArm(arm(80_000, single))).toThrow(/opencode routes only/)
+    expect(() => resolveRoute(single, arm(80_000, single).routes)).toThrow(RouteOverrideError)
+    expect(() => routeSchema.parse({ ...entry(single), contextLimit: 80_000 })).toThrow(/opencode/)
+  })
+
+  test('only on a Claude model: an agent route moved to another model refuses it', () => {
+    const other = [...opencodeModels()].find((m) => !m.startsWith('claude-'))
+    if (!other) throw new Error('test setup: no non-Claude opencode model')
+    expect(() =>
+      validateArm({ routes: { 'review.angle': { model: other, contextLimit: 80_000, fallback: null } } }),
+    ).toThrow(/Claude model/)
+  })
+
+  test('the fallback has no bound of its own to patch', () => {
+    expect(() => validateArm({ routes: { 'review.angle': { fallback: { contextLimit: 80_000 } } } })).toThrow(
+      RouteOverrideError,
+    )
+  })
+
+  test('the bound is part of the resolved route, so it moves the fingerprint, and a different bound moves it again', () => {
+    const none = routeFingerprint('review.angle', {})
+    const a = routeFingerprint('review.angle', arm(80_000).routes)
+    const b = routeFingerprint('review.angle', arm(100_000).routes)
+    expect(new Set([none, a, b]).size).toBe(3)
+    expect(routeFingerprint('review.angle', arm(null).routes)).toBe(none)
   })
 })

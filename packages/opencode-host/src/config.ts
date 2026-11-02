@@ -2,6 +2,7 @@ import { fileURLToPath } from 'node:url'
 import {
   CLAUDE_MODELS,
   claudeRate,
+  CONTEXT_LIMITS,
   EFFORTS,
   fallbackRoute,
   type PatchInput,
@@ -106,9 +107,48 @@ export function fallbackModelRef(
 }
 
 function refFor(route: ResolvedRoute): ModelRef {
-  const model: ModelRef = { providerID: providerFor(route.model), id: route.model }
+  const id = route.contextLimit === undefined ? route.model : contextAlias(route.model, route.contextLimit)
+  const model: ModelRef = { providerID: providerFor(route.model), id }
   if (route.effort) model.variant = route.effort
   return model
+}
+
+/**
+ * Why a bounded route gets its own model row (`contextLimit`), and how the row's window is chosen. Read from OpenCode
+ * 2.0.32 (sst/opencode, tag v2.0.32, `packages/core/src/session/compaction.ts` and `runner/llm.ts`):
+ *
+ * - Before every model call of a step the runner asks for an `auto` compaction. It runs when `estimate >= ceiling`,
+ *   with `ceiling = window - max(floor(window / 10), 16_000)` for a window of 32k or more (`calculateCeiling`, no
+ *   `compaction.buffer` set; `window` is the model row's `limit.context`). So for a window under 160k the ceiling is
+ *   `window - 16_000`.
+ * - `estimate` is the last response's measured `input + cache.read + cache.write + output + reasoning`, plus a
+ *   chars/4 estimate of what came after it (the tool results). With no response yet (the first call) all of the request
+ *   is estimated by chars/4. A request goes out only when its estimate is under the ceiling.
+ * - The summary call is the history (as is when its chars/4 estimate is within `ceiling - ~1k`, else flattened to that
+ *   size with tool output cut to 1,250 characters) plus the summary prompt.
+ * - A window also clamps `max_tokens` to `window - prompt`, which the ceiling keeps at 16k or more.
+ *
+ * So no prompt can pass `ceiling * (1 + e)`, where `e` is how far chars/4 undercounts the real tokens (the first
+ * call and the summary call are estimated whole; a call after tool results is off only by the results' share, which is
+ * smaller). A bound `B` therefore takes `ceiling = B / (1 + e)`. `e` is ASSUMED at 25% (OpenCode itself assumes 15%
+ * for its output sizing; code and JSON tokenize denser than 4 chars), not measured: the headroom is `B - ceiling` =
+ * 12k, 16k and 20k for 60k, 80k and 100k. A first prompt over the ceiling is summarised before it runs (lossy), so a
+ * route's bound has to sit well above its first prompt. `windowFor` is the `limit.context` that gives that ceiling.
+ */
+const COMPACTION_RESERVE = 16_000
+const ESTIMATE_UNDERCOUNT = 0.25
+
+/** The `limit.context` whose compaction ceiling is `limit / (1 + ESTIMATE_UNDERCOUNT)`: 96k, 80k and 64k. */
+export function windowFor(limit: number): number {
+  return Math.floor(limit / (1 + ESTIMATE_UNDERCOUNT)) + COMPACTION_RESERVE
+}
+
+/**
+ * The key of a model's bounded row: the same model under a name that carries the bound. The row sends the real model
+ * to the provider (`modelID`), so the gateway, usage and pricing only ever see `model`.
+ */
+export function contextAlias(model: string, limit: number): string {
+  return `${model}~ctx${limit}`
 }
 
 /** What a model row is built from: a route's, or a bare Claude model with its table rate. */
@@ -163,6 +203,8 @@ function variantSettings(effort: string, provider: string): Record<string, unkno
  * and output limit of the first route naming it (the table names one rate per model). The
  * attribution plugin (`options.plugin`, an absolute directory), no updates, no share. The only credential is the door
  * token, by reference to the server's env.
+ * Each Claude model also has one bounded row per `CONTEXT_LIMITS` value, `<model>~ctx<limit>` (`contextAlias`), for a
+ * route with a `contextLimit`.
  * The Anthropic leg sends `x-agw-fallback: none`: with no credit pool left the gateway answers a 402 and the route's own
  * fallback takes over, rather than paying for Claude on IU.
  * The server policy is deny by default as the sessions' are (`basePolicy`: catch-all deny, then the read-only tools), so
@@ -185,6 +227,20 @@ export function buildServerConfig(options: { plugin?: string } = {}): Record<str
   for (const model of CLAUDE_MODELS) {
     const rows = models[PROVIDER_ANTHROPIC] as Record<string, unknown>
     rows[model] ??= modelRow({ model, rate: claudeRate(model) }, PROVIDER_ANTHROPIC)
+  }
+  // A bounded copy of every Claude row for each allowed bound (`contextLimit`): same cost, variants and compatibility,
+  // a window that makes the session compact in time, and `modelID` so the provider is still called with the real model.
+  // (OpenCode 2.0.32 reads `modelID` in its config; a key named `id` is dropped silently, not an alias.)
+  const claude = models[PROVIDER_ANTHROPIC] as Record<string, Record<string, unknown>>
+  for (const model of CLAUDE_MODELS) {
+    const base = claude[model] as Record<string, unknown>
+    for (const limit of CONTEXT_LIMITS) {
+      claude[contextAlias(model, limit)] = {
+        ...structuredClone(base),
+        modelID: model,
+        limit: { ...(base.limit as object | undefined), context: windowFor(limit) },
+      }
+    }
   }
   return {
     update: 'disable',
