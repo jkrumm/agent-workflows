@@ -32,7 +32,7 @@ const child = defineWorkflow({
   output: n,
   async run(ctx, { n }) {
     await ctx.step('work', ({ addUsage }) => {
-      addUsage({ model: 'm1', tokens: { input: 10, output: 2, cacheRead: 0, reasoning: 0 }, cost: 0.001 })
+      addUsage({ model: 'whisper', tokens: { input: 10, output: 2, cacheRead: 0, reasoning: 0 }, cost: 0.001 })
       return n
     })
     return { n }
@@ -48,8 +48,8 @@ const busy = defineWorkflow({
     await ctx.step('prep', () => n) // no usage: marked, never posted
     await ctx.step('two-models', async ({ addUsage }) => {
       await Bun.sleep(Math.random() * 30)
-      addUsage({ model: 'm1', tokens: { input: 100, output: 30, cacheRead: 20, reasoning: 10 }, cost: 0.01 })
-      addUsage({ model: 'm2', tokens: { input: 50, output: 5, cacheRead: 0, reasoning: 0 }, cost: null })
+      addUsage({ model: 'whisper', tokens: { input: 100, output: 30, cacheRead: 20, reasoning: 10 }, cost: 0.01 })
+      addUsage({ model: 'gpt-transcribe', tokens: { input: 50, output: 5, cacheRead: 0, reasoning: 0 }, cost: null })
       return 1
     })
     await ctx.agent('ask', { agent: 'brain', prompt: `q${n}` })
@@ -63,15 +63,17 @@ const host = new FakeAgentHost(async (s) => {
   return { output: { ok: true }, usage: usageFromOpenCodeMessages(toolTurns, { model: 'deepseek-v4.1-flash' }) }
 })
 
-/** Rows each run must produce: 2 (two-models) + 1 (ask) on the run, 1 per child. */
+/**
+ * Rows each run must produce: 2 (two-models) on the run, 1 per child. The `ask` step's text model is no row: the
+ * gateway wrote its calls; the step is still marked synced.
+ */
 function expectedSourceIds(runIds: string[]): string[] {
   return runIds
     .flatMap((id) => [
-      `${id}:two-models:m1`,
-      `${id}:two-models:m2`,
-      `${id}:ask:deepseek-v4.1-flash`,
-      `${id}/kids/0:work:m1`,
-      `${id}/kids/1:work:m1`,
+      `${id}:two-models:whisper`,
+      `${id}:two-models:gpt-transcribe`,
+      `${id}/kids/0:work:whisper`,
+      `${id}/kids/1:work:whisper`,
     ])
     .sort()
 }
@@ -162,7 +164,7 @@ describe('usage outbox', () => {
 
       expect([...usage.accepted.keys()].sort()).toEqual(expected)
       expect([...usage.accepted.values()].every((count) => count === 1)).toBe(true)
-      const m1 = [...usage.stored.values()].find((r) => r.source_id === `${runIds[0]}:two-models:m1`)
+      const m1 = [...usage.stored.values()].find((r) => r.source_id === `${runIds[0]}:two-models:whisper`)
       expect(m1).toMatchObject({
         input_tokens: 80,
         output_tokens: 20,
@@ -173,7 +175,7 @@ describe('usage outbox', () => {
         raw: { purpose: 'build', unpricedCalls: 0 },
       })
       expect(typeof (m1?.raw as { fingerprint?: unknown } | undefined)?.fingerprint).toBe('string')
-      const m2 = [...usage.stored.values()].find((r) => r.source_id === `${runIds[0]}:two-models:m2`)
+      const m2 = [...usage.stored.values()].find((r) => r.source_id === `${runIds[0]}:two-models:gpt-transcribe`)
       expect(m2).toMatchObject({ cost_reported_usd: null, raw: { unpricedCalls: 1 } })
       expect(logger.lines.some((l) => l.message.startsWith('usage outbox: flush failed'))).toBe(true)
 
@@ -218,7 +220,7 @@ describe('usage outbox', () => {
       now += 50
       usage.down = false
       expect(await outbox.flush()).toMatchObject({ skipped: null, error: null })
-      expect(usage.accepted.get(`${runId}:work:m1`)).toBe(1)
+      expect(usage.accepted.get(`${runId}:work:whisper`)).toBe(1)
     } finally {
       await rt.close()
       await platform.close()
@@ -237,10 +239,10 @@ describe('usage outbox', () => {
       const [runId = ''] = await finishedChildren(platform, 1)
       await sql.pool.query(`update "${db.schema}".runs set post_hooks_at = null where id = $1`, [runId])
       await outbox.flush()
-      expect(usage.accepted.has(`${runId}:work:m1`)).toBe(false)
+      expect(usage.accepted.has(`${runId}:work:whisper`)).toBe(false)
       await sql.pool.query(`update "${db.schema}".runs set post_hooks_at = now() where id = $1`, [runId])
       await outbox.flush()
-      const row = [...usage.stored.values()].find((r) => r.source_id === `${runId}:work:m1`)
+      const row = [...usage.stored.values()].find((r) => r.source_id === `${runId}:work:whisper`)
       expect((row?.raw as { runWallMs?: unknown } | undefined)?.runWallMs).toEqual(expect.any(Number))
     } finally {
       await platform.close()
@@ -271,7 +273,7 @@ describe('usage outbox', () => {
       usage.refuse = (r) => r.source_id.startsWith(`${refused}:`)
       const result = await outbox.flush()
       expect(result).toMatchObject({ quarantined: 2, error: null, skipped: null })
-      for (const id of good) expect(usage.accepted.get(`${id}:work:m1`)).toBe(1)
+      for (const id of good) expect(usage.accepted.get(`${id}:work:whisper`)).toBe(1)
       const bad = await Promise.all([unbuildable, refused].map((id) => sql.step(id, 'work')))
       expect(bad.map((s) => [s?.argo_synced_at, s?.argo_claim])).toEqual([
         [null, null],
@@ -285,7 +287,7 @@ describe('usage outbox', () => {
       usage.refuse = () => false
       expect(await outbox.requeue({ runId: refused })).toBe(1)
       expect(await outbox.flush()).toMatchObject({ posted: 1, quarantined: 0 })
-      expect(usage.accepted.get(`${refused}:work:m1`)).toBe(1)
+      expect(usage.accepted.get(`${refused}:work:whisper`)).toBe(1)
       expect((await sql.step(refused, 'work'))?.argo_error).toBeNull()
       expect((await sql.step(unbuildable, 'work'))?.argo_error).not.toBeNull()
     } finally {
@@ -390,7 +392,7 @@ describe('usage outbox', () => {
       usage.failWith = null
       await Bun.sleep(5)
       await outbox.flush()
-      for (const id of ids) expect(usage.accepted.get(`${id}:work:m1`)).toBe(1)
+      for (const id of ids) expect(usage.accepted.get(`${id}:work:whisper`)).toBe(1)
     } finally {
       await platform.close()
       await journal.close()

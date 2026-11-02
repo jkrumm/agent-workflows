@@ -33,7 +33,7 @@ const scored = defineWorkflow({
   async run(ctx, { n }) {
     await ctx.score('gate', { n })
     await ctx.step('work', ({ addUsage }) => {
-      addUsage({ model: 'm1', tokens: { input: 10, output: 2, cacheRead: 0, reasoning: 0 }, cost: 0.001 })
+      addUsage({ model: 'whisper', tokens: { input: 10, output: 2, cacheRead: 0, reasoning: 0 }, cost: 0.001 })
       return n
     })
     return { n }
@@ -62,7 +62,7 @@ function setup() {
       return runId
     },
     rawScores: (runId: string) =>
-      usage.stored.get(`agent-workflows|${runId}:work:m1`)?.raw as { scores: Json } | undefined,
+      usage.stored.get(`agent-workflows|${runId}:work:whisper`)?.raw as { scores: Json } | undefined,
     async close() {
       await outbox.close()
       await rt.close()
@@ -91,9 +91,9 @@ describe('scores in the run record and in the usage rows raw', () => {
       expect((await sql.step(runId, 'gate'))?.argo_synced_at).toBeNull() // no usage: never in the outbox
       await t.outbox.flush()
       expect(t.rawScores(runId)?.scores).toEqual({ gates: { gate }, final })
-      expect(t.usage.accepted.get(`${runId}:work:m1`)).toBe(2)
+      expect(t.usage.accepted.get(`${runId}:work:whisper`)).toBe(2)
       // Top level never carries the scores.
-      const row = t.usage.stored.get(`agent-workflows|${runId}:work:m1`) as Record<string, unknown>
+      const row = t.usage.stored.get(`agent-workflows|${runId}:work:whisper`) as Record<string, unknown>
       expect(Object.keys(row)).not.toContain('scores')
     } finally {
       await t.close()

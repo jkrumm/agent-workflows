@@ -1,12 +1,11 @@
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { IU_KEY_IDS, type IuKeyId, isIuKeyId, parseIuKeyId } from '@agent-workflows/middleware'
 import { secretProblem } from './auth.ts'
 import { type FrictionSettings, frictionSettings } from './friction/settings.ts'
 
 export type Env = Record<string, string | undefined>
 
-/** What every platform process boots from (`bootProcess`): the API, the journal, the IU key label, the agents. */
+/** What every platform process boots from (`bootProcess`): the API, the journal, the agents. */
 export interface ProcessConfig {
   secret: string
   port: number
@@ -16,8 +15,6 @@ export interface ProcessConfig {
   version: string
   agentsDir: string | undefined
   opencodeBin: string | undefined
-  /** The label of the IU key this host holds (`IU_KEY_ID`, unset is `personal`); the key itself is never read here. */
-  iuKey: IuKeyId
 }
 
 /** The host process: a `ProcessConfig` plus the jobs only the host runs (the retrospective, the friction job). */
@@ -64,9 +61,6 @@ export function readProcessConfig(env: Env, port: PortSetting, problems: string[
     problems.push(`${port.name} must be an integer from 0 to 65535`)
   const schema = env.AGW_PG_SCHEMA?.trim() || 'agw'
   if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(schema)) problems.push('AGW_PG_SCHEMA is not a valid schema name')
-  // Set but unknown is a config problem (an unknown id never becomes a key); unset or empty is `personal`.
-  const rawKeyId = env.IU_KEY_ID?.trim()
-  if (rawKeyId && !isIuKeyId(rawKeyId)) problems.push(`IU_KEY_ID must be one of ${IU_KEY_IDS.join(', ')}`)
   return {
     secret,
     port: portNumber,
@@ -76,7 +70,6 @@ export function readProcessConfig(env: Env, port: PortSetting, problems: string[
     version: env.AGW_VERSION?.trim() || 'dev',
     agentsDir: env.AGW_AGENTS_DIR?.trim() || undefined,
     opencodeBin: env.AGW_OPENCODE_BIN?.trim() || undefined,
-    iuKey: parseIuKeyId(rawKeyId && isIuKeyId(rawKeyId) ? rawKeyId : undefined),
   }
 }
 

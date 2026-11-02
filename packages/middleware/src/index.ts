@@ -26,7 +26,6 @@ export {
   totalsOf,
   WALLET_REFUSAL_PREFIX,
 } from './friction.ts'
-export { IU_KEY_IDS, type IuKeyId, isIuKeyId, iuKeyMiddleware, parseIuKeyId } from './iu-key.ts'
 export { admissionSpanId, traceIdForRun } from './ids.ts'
 export { type OpenCodeMessage, usageFromOpenCodeMessages } from './opencode-usage.ts'
 export { type Platform, type PlatformOptions, platformMiddleware } from './platform.ts'

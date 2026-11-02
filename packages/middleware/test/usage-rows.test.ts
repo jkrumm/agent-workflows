@@ -1,6 +1,14 @@
 import { describe, expect, test } from 'bun:test'
 import type { ModelUsage } from '@agent-workflows/runtime'
+import { isCallerPriced } from '@agent-workflows/routes'
 import { additiveTokens, type OutboxStep, repoOf, sessionsOf, traceIdForRun, usageRowsForStep } from '../src/index.ts'
+
+// Caller-priced models of the route table (`isCallerPriced`): only these get a row from agw; the gateway writes the rest.
+const TTS = 'gemini-3.8-flash-tts'
+const TTS_LITE = 'gemini-3.8-flash-lite-tts'
+const ELEVEN = 'elevenlabs/v3'
+const STT = 'voxtral-mini-transcribe-3-0'
+const TEXT = 'deepseek-v4.1-flash'
 
 const startedAt = new Date('2026-10-27T10:00:00.000Z')
 
@@ -9,13 +17,13 @@ function step(overrides: Partial<OutboxStep> = {}, run: Partial<OutboxStep['run'
     runId: 'run_1',
     stepId: 'ask',
     status: 'done',
-    model: 'deepseek-v4.1-flash',
+    model: TTS,
     tokens: { input: 2000, output: 340, cacheRead: 800, cacheWrite: 0, reasoning: 300 },
     cost: 0.0021,
     toolCalls: 2,
     unpricedCalls: 0,
     byModel: {
-      'deepseek-v4.1-flash': {
+      [TTS]: {
         tokens: { input: 2000, output: 340, cacheRead: 800, cacheWrite: 0, reasoning: 300 },
         cost: 0.0021,
         toolCalls: 2,
@@ -30,7 +38,6 @@ function step(overrides: Partial<OutboxStep> = {}, run: Partial<OutboxStep['run'
       workflowId: 'research.report',
       rootId: 'run_1',
       purpose: 'build',
-      iuKey: 'personal',
       traceparent: null,
       traceId: null,
       fingerprint: 'fp1',
@@ -53,11 +60,11 @@ describe('usage rows', () => {
     expect(rows).toHaveLength(1)
     expect(rows[0]).toMatchObject({
       source: 'agent-workflows',
-      source_id: 'run_1:ask:deepseek-v4.1-flash',
+      source_id: `run_1:ask:${TTS}`,
       grain: 'session',
       ts: startedAt.toISOString(),
-      model_raw: 'deepseek-v4.1-flash',
-      model: 'deepseek-v4.1-flash',
+      model_raw: TTS,
+      model: TTS,
       machine: 'test-machine',
       billing: 'api_key',
       api_key: 'personal',
@@ -107,7 +114,7 @@ describe('usage rows', () => {
   test('cost_reported_usd is what agw measured; null when it could not price the usage, never 0', () => {
     const unpriced = { tokens: { ...none, input: 5, output: 1 }, cost: null, toolCalls: 0, unpricedCalls: 1 }
     const [row] = usageRowsForStep(
-      step({ cost: null, unpricedCalls: 1, tokens: unpriced.tokens, byModel: { m: unpriced } }),
+      step({ cost: null, unpricedCalls: 1, tokens: unpriced.tokens, byModel: { [ELEVEN]: unpriced } }),
       opts,
     )
     expect(row?.cost_reported_usd).toBeNull()
@@ -116,7 +123,7 @@ describe('usage rows', () => {
     expect(free?.cost_reported_usd).toBe(0) // a measured zero stays measured
   })
 
-  test('a step with several models: one row each, unmodelled usage as the "unknown" remainder', () => {
+  test('a step with several caller-priced models: one row each; unmodelled usage is no row (not caller-priced)', () => {
     const rows = usageRowsForStep(
       step({
         model: null,
@@ -124,13 +131,13 @@ describe('usage rows', () => {
         cost: 0.03,
         toolCalls: 1,
         byModel: {
-          a: {
+          [ELEVEN]: {
             tokens: { input: 100, output: 20, cacheRead: 0, cacheWrite: 0, reasoning: 0 },
             cost: 0.01,
             toolCalls: 0,
             unpricedCalls: 0,
           },
-          b: {
+          [TTS_LITE]: {
             tokens: { input: 150, output: 30, cacheRead: 0, cacheWrite: 0, reasoning: 10 },
             cost: 0.02,
             toolCalls: 1,
@@ -143,9 +150,8 @@ describe('usage rows', () => {
     expect(
       rows.map((r) => [r.source_id, r.model_raw, r.model, r.input_tokens, r.output_tokens, r.cost_reported_usd]),
     ).toEqual([
-      ['run_1:ask:a', 'a', 'a', 100, 20, 0.01],
-      ['run_1:ask:b', 'b', 'b', 150, 20, 0.02],
-      ['run_1:ask:unknown', 'unknown', 'unknown', 50, 10, null],
+      [`run_1:ask:${ELEVEN}`, ELEVEN, ELEVEN, 100, 20, 0.01],
+      [`run_1:ask:${TTS_LITE}`, TTS_LITE, TTS_LITE, 150, 20, 0.02],
     ])
   })
 
@@ -165,7 +171,7 @@ describe('usage rows', () => {
     expect(() => usageRowsForStep(step({}, { purpose: '' }), opts)).toThrow(/purpose/)
   })
 
-  test('remainder: clamped per bucket, dropped without positive tokens, cost tolerance relative', () => {
+  test('remainder: an unsplit share is never a row, whatever its tokens or cost', () => {
     const big = 123456.789
     const rows = usageRowsForStep(
       step({
@@ -174,7 +180,7 @@ describe('usage rows', () => {
         tokens: { input: 100, output: 10, cacheRead: 0, cacheWrite: 0, reasoning: 0 },
         cost: big,
         byModel: {
-          a: {
+          [ELEVEN]: {
             tokens: { input: 100, output: 12, cacheRead: 0, cacheWrite: 0, reasoning: 0 },
             cost: big - 1e-7, // float noise relative to the total, not a real remainder
             toolCalls: 0,
@@ -184,14 +190,14 @@ describe('usage rows', () => {
       }),
       opts,
     )
-    expect(rows.map((r) => r.source_id)).toEqual(['run_1:ask:a'])
+    expect(rows.map((r) => r.source_id)).toEqual([`run_1:ask:${ELEVEN}`])
     const withRest = usageRowsForStep(
       step({
         model: null,
         tokens: { input: 150, output: 10, cacheRead: 0, cacheWrite: 0, reasoning: 0 },
         cost: 0.03,
         byModel: {
-          a: {
+          [ELEVEN]: {
             tokens: { input: 100, output: 12, cacheRead: 0, cacheWrite: 0, reasoning: 0 },
             cost: 0.01,
             toolCalls: 0,
@@ -201,11 +207,10 @@ describe('usage rows', () => {
       }),
       opts,
     )
+    // 50 input tokens and 0.02 USD without a model: `unknown` is no caller-priced model, so the gateway's to count.
     expect(withRest.map((r) => [r.source_id, r.input_tokens, r.output_tokens])).toEqual([
-      ['run_1:ask:a', 100, 12],
-      ['run_1:ask:unknown', 50, 0],
+      [`run_1:ask:${ELEVEN}`, 100, 12],
     ])
-    expect(withRest[1]?.cost_reported_usd).toBeCloseTo(0.02, 12)
   })
 
   test('a model with an unpriced call posts no reported cost: the priced sum is only a lower bound', () => {
@@ -216,13 +221,13 @@ describe('usage rows', () => {
         cost: 0.03,
         unpricedCalls: 2,
         byModel: {
-          priced: {
+          [ELEVEN]: {
             tokens: { input: 100, output: 20, cacheRead: 0, cacheWrite: 0, reasoning: 0 },
             cost: 0.01,
             toolCalls: 0,
             unpricedCalls: 0,
           },
-          partial: {
+          [TTS_LITE]: {
             tokens: { input: 200, output: 40, cacheRead: 0, cacheWrite: 0, reasoning: 0 },
             cost: 0.02, // the one priced call of two
             toolCalls: 0,
@@ -233,14 +238,14 @@ describe('usage rows', () => {
       opts,
     )
     expect(rows.map((r) => [r.model, r.cost_reported_usd, r.raw.unpricedCalls])).toEqual([
-      ['priced', 0.01, 0],
-      ['partial', null, 2],
+      [ELEVEN, 0.01, 0],
+      [TTS_LITE, null, 2],
     ])
   })
 
   test('an unsplit remainder with unpriced calls posts no reported cost either', () => {
-    const noModel = usageRowsForStep(step({ model: 'sonar', cost: 0.005, unpricedCalls: 1, byModel: null }), opts)
-    expect(noModel.map((r) => [r.model, r.cost_reported_usd, r.raw.unpricedCalls])).toEqual([['sonar', null, 1]])
+    const noModel = usageRowsForStep(step({ model: STT, cost: 0.005, unpricedCalls: 1, byModel: null }), opts)
+    expect(noModel.map((r) => [r.model, r.cost_reported_usd, r.raw.unpricedCalls])).toEqual([[STT, null, 1]])
     const withRest = usageRowsForStep(
       step({
         model: null,
@@ -248,7 +253,7 @@ describe('usage rows', () => {
         cost: 0.03,
         unpricedCalls: 1,
         byModel: {
-          a: {
+          [ELEVEN]: {
             tokens: { input: 100, output: 12, cacheRead: 0, cacheWrite: 0, reasoning: 0 },
             cost: 0.01,
             toolCalls: 0,
@@ -258,33 +263,78 @@ describe('usage rows', () => {
       }),
       opts,
     )
-    // The model-less call is the unpriced one: only the remainder loses its reported cost.
-    expect(withRest.map((r) => [r.model, r.cost_reported_usd, r.raw.unpricedCalls])).toEqual([
-      ['a', 0.01, 0],
-      ['unknown', null, 1],
-    ])
+    // The model-less call is the unpriced one: the split model keeps its reported cost, the remainder is no row.
+    expect(withRest.map((r) => [r.model, r.cost_reported_usd, r.raw.unpricedCalls])).toEqual([[ELEVEN, 0.01, 0]])
   })
 
   test('a split stored without per-model unpricedCalls reads the step figure (conservative)', () => {
     const legacy = { tokens: { ...none, input: 5, output: 1 }, cost: 0.002, toolCalls: 0 } as unknown as ModelUsage
     const [row] = usageRowsForStep(
-      step({ cost: 0.002, unpricedCalls: 1, tokens: legacy.tokens, byModel: { m: legacy } }),
+      step({ cost: 0.002, unpricedCalls: 1, tokens: legacy.tokens, byModel: { [ELEVEN]: legacy } }),
       opts,
     )
     expect(row?.cost_reported_usd).toBeNull()
   })
 
   test('a cost-only step (zero tokens, a price) keeps its row', () => {
-    const rows = usageRowsForStep(step({ model: 'sonar', tokens: none, cost: 0.005, byModel: null }), opts)
-    expect(rows.map((r) => [r.source_id, r.input_tokens, r.cost_reported_usd])).toEqual([['run_1:ask:sonar', 0, 0.005]])
+    const rows = usageRowsForStep(step({ model: ELEVEN, tokens: none, cost: 0.005, byModel: null }), opts)
+    expect(rows.map((r) => [r.source_id, r.input_tokens, r.cost_reported_usd])).toEqual([
+      [`run_1:ask:${ELEVEN}`, 0, 0.005],
+    ])
+  })
+})
+
+describe('usage rows: only what the gateway cannot price', () => {
+  const textUsage = {
+    tokens: { input: 900, output: 120, cacheRead: 0, cacheWrite: 0, reasoning: 40 },
+    cost: 0.0004,
+    toolCalls: 0,
+    unpricedCalls: 0,
+  }
+  const ttsUsage = {
+    tokens: { input: 300, output: 5000, cacheRead: 0, cacheWrite: 0, reasoning: 0 },
+    cost: 0.045,
+    toolCalls: 0,
+    unpricedCalls: 0,
+  }
+
+  test('isCallerPriced: priced routes and the iu-gemini / iu-replicate wires; text models and "unknown" are not', () => {
+    for (const model of [TTS, TTS_LITE, ELEVEN, STT, 'gpt-image-2.5-flare', 'bria/remove-background'])
+      expect(isCallerPriced(model)).toBe(true)
+    for (const model of [TEXT, 'gemini-3.5-flash-lite', 'unknown', 'not-a-model'])
+      expect(isCallerPriced(model)).toBe(false)
+  })
+
+  test('a step mixing a prep call and TTS writes the TTS row only', () => {
+    const rows = usageRowsForStep(
+      step({
+        model: null,
+        tokens: { input: 1200, output: 5120, cacheRead: 0, cacheWrite: 0, reasoning: 40 },
+        cost: 0.0454,
+        byModel: { [TEXT]: textUsage, [TTS]: ttsUsage },
+      }),
+      opts,
+    )
+    expect(rows.map((r) => [r.model, r.output_tokens, r.cost_reported_usd])).toEqual([[TTS, 5000, 0.045]])
+    expect(sessionsOf(rows).map((s) => s.model)).toEqual([TTS])
+  })
+
+  test('a text-only step writes no row, so its run has no session row', () => {
+    const rows = usageRowsForStep(
+      step({ model: TEXT, tokens: textUsage.tokens, cost: textUsage.cost, byModel: { [TEXT]: textUsage } }),
+      opts,
+    )
+    expect(rows).toEqual([])
+    expect(sessionsOf(rows)).toEqual([])
+    expect(usageRowsForStep(step({ model: TEXT, byModel: null }), opts)).toEqual([])
   })
 })
 
 describe('usage rows: who paid and where', () => {
-  test('billing is api_key and api_key the IU key label; never inside raw', () => {
-    const [row] = usageRowsForStep(step({}, { iuKey: 'athena-team' }), opts)
-    expect(row).toMatchObject({ billing: 'api_key', api_key: 'athena-team' })
-    expect(JSON.stringify(row?.raw)).not.toMatch(/iu_?key|athena/i)
+  test('billing is api_key and api_key always personal (the only key the gateway holds); never inside raw', () => {
+    const [row] = usageRowsForStep(step(), opts)
+    expect(row).toMatchObject({ billing: 'api_key', api_key: 'personal' })
+    expect(JSON.stringify(row?.raw)).not.toMatch(/iu_?key|api_?key/i)
   })
 
   test('repo is the project only when it is a plain SourceRoot slug of a non-work run; project_raw stays verbatim', () => {
@@ -324,7 +374,7 @@ describe('usage sessions', () => {
       lane_detail: { workflow: 'research.report', caller: 'host', purpose: 'build' },
       api_key: 'personal',
       machine: 'test-machine',
-      model: 'deepseek-v4.1-flash',
+      model: TTS,
       first_ts: startedAt.toISOString(),
       last_ts: new Date(startedAt.getTime() + 60_000).toISOString(),
     })

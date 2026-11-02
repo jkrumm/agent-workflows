@@ -71,7 +71,7 @@ beforeAll(async () => {
   }
   // The scratch price tables start empty; one catalog price: $1 per 1M input, $2 per 1M output.
   await scratch.query(
-    `insert into usage.prices (model_key, valid_from, input, output, source) values ('priced-model', '2026-01-01', 1, 2, 'seed-git')`,
+    `insert into usage.prices (model_key, valid_from, input, output, source) values ('gemini-3.8-flash-tts', '2026-01-01', 1, 2, 'seed-git')`,
   )
 })
 
@@ -94,9 +94,9 @@ function usageWorkflow(id: string, model: string, cost: number | null) {
   })
 }
 
-const reported = usageWorkflow('u.reported', 'm1', 0.001)
-const priced = usageWorkflow('u.priced', 'priced-model', null)
-const mystery = usageWorkflow('u.mystery', 'mystery-model', null)
+const reported = usageWorkflow('u.reported', 'whisper', 0.001)
+const priced = usageWorkflow('u.priced', 'gemini-3.8-flash-tts', null)
+const mystery = usageWorkflow('u.mystery', 'gpt-4o-transcribe', null)
 
 /** Finished runs of one workflow, their runPost delivered (what the outbox waits for). */
 async function finished(workflow: typeof reported, count: number, project?: string): Promise<string[]> {
@@ -141,12 +141,12 @@ describePg(suite, () => {
     const { outbox, close } = outboxFor(transport)
     try {
       expect(await outbox.flush()).toMatchObject({ posted: expect.any(Number), error: null, quarantined: 0 })
-      const row = await record(`${runId}:work:m1`)
+      const row = await record(`${runId}:work:whisper`)
       expect(row).toMatchObject({
         source: 'agent-workflows',
         grain: 'session',
-        model_raw: 'm1',
-        model: 'm1',
+        model_raw: 'whisper',
+        model: 'whisper',
         repo: 'argo',
         project_raw: 'argo',
         billing: 'api_key',
@@ -179,7 +179,7 @@ describePg(suite, () => {
         billing: 'api_key',
         api_key: 'personal',
         machine: 'test-machine',
-        model: 'm1',
+        model: 'whisper',
         repo: 'argo',
         run_id: runId,
       })
@@ -202,7 +202,7 @@ describePg(suite, () => {
       const before = await scratch.query(
         `select r.id, r.xmin::text as rx, s.xmin::text as sx from usage.records r join usage.sessions s on s.id = r.session_id
          where r.source_id = $1`,
-        [`${runId}:work:m1`],
+        [`${runId}:work:whisper`],
       )
       // The same step claimed and written again (a crash between write and mark, or a lost claim).
       await sql.pool.query(
@@ -213,7 +213,7 @@ describePg(suite, () => {
       const after = await scratch.query(
         `select r.id, r.xmin::text as rx, s.xmin::text as sx from usage.records r join usage.sessions s on s.id = r.session_id
          where r.source_id = $1`,
-        [`${runId}:work:m1`],
+        [`${runId}:work:whisper`],
       )
       expect(after.rows).toEqual(before.rows)
       const { rows: counts } = await scratch.query(
@@ -234,7 +234,7 @@ describePg(suite, () => {
     const { outbox, close } = outboxFor(transport)
     try {
       await outbox.flush()
-      const before = await record(`${runId}:work:m1`)
+      const before = await record(`${runId}:work:whisper`)
       expect(before?.raw).toMatchObject({ scorePass: null })
       await sql.pool.query(`update "${journal.schema}".runs set scores = $2::jsonb where id = $1`, [
         runId,
@@ -245,7 +245,7 @@ describePg(suite, () => {
         [runId],
       )
       await outbox.flush()
-      const after = await record(`${runId}:work:m1`)
+      const after = await record(`${runId}:work:whisper`)
       expect(after?.raw).toMatchObject({ scorePass: true })
       expect(after?.id).toBe(before?.id)
       expect(after?.ingested_at).toEqual(before?.ingested_at as Date)
@@ -264,9 +264,9 @@ describePg(suite, () => {
     const { outbox, close } = outboxFor(transport)
     try {
       await outbox.flush()
-      const unknown = await record(`${mysteryId}:work:mystery-model`)
+      const unknown = await record(`${mysteryId}:work:gpt-4o-transcribe`)
       expect(unknown).toMatchObject({ cost_reported_usd: null, cost_usd: null, cost_source: 'none', price_id: null })
-      const byPrices = await record(`${pricedId}:work:priced-model`)
+      const byPrices = await record(`${pricedId}:work:gemini-3.8-flash-tts`)
       expect(byPrices).toMatchObject({ cost_reported_usd: null, cost_source: 'prices' })
       expect(Number(byPrices?.cost_usd)).toBeCloseTo(2, 9) // 1M input at $1 + 0.5M output at $2
       expect(byPrices?.price_id).not.toBeNull()
@@ -290,9 +290,9 @@ describePg(suite, () => {
       const step = await sql.step(bad, 'work')
       expect(String(step?.argo_error)).toContain('22003')
       expect([step?.argo_synced_at, step?.argo_claim]).toEqual([null, null])
-      expect(await record(`${bad}:work:m1`)).toBeUndefined()
+      expect(await record(`${bad}:work:whisper`)).toBeUndefined()
       expect((await scratch.query('select 1 from usage.sessions where source_session_id = $1', [bad])).rowCount).toBe(0) // the refused transaction rolled its session back too
-      for (const id of good) expect(await record(`${id}:work:m1`)).toBeDefined()
+      for (const id of good) expect(await record(`${id}:work:whisper`)).toBeDefined()
       // Quarantined steps are not claimed again.
       expect(await outbox.flush()).toMatchObject({ posted: 0, quarantined: 0 })
     } finally {
@@ -321,7 +321,7 @@ describePg(suite, () => {
       up = true
       now += 100
       expect(await outbox.flush()).toMatchObject({ posted: 3, marked: 3, error: null, skipped: null })
-      for (const id of ids) expect(await record(`${id}:work:m1`)).toBeDefined()
+      for (const id of ids) expect(await record(`${id}:work:whisper`)).toBeDefined()
       // The connection string (a password in production) is in no log line.
       expect(JSON.stringify(logger.lines)).not.toContain('unused')
     } finally {
@@ -368,12 +368,12 @@ describePg(suite, () => {
       await holder.query('rollback')
       // Had the transaction outlived its caller it would commit now that the lock is free.
       await Bun.sleep(600)
-      expect(await record(`${runId}:b:m1`)).toBeUndefined()
+      expect(await record(`${runId}:b:whisper`)).toBeUndefined()
       const { rows } = await scratch.query('select last_ts from usage.sessions where source_session_id = $1', [runId])
       expect(rows[0]?.last_ts).toEqual(new Date('2026-10-27T10:00:00.000Z'))
       // The same connection pool still writes.
       await transport.write(later)
-      expect(await record(`${runId}:b:m1`)).toBeDefined()
+      expect(await record(`${runId}:b:whisper`)).toBeDefined()
     } finally {
       holder.release()
       await transport.close?.()
@@ -404,7 +404,7 @@ describePg(suite, () => {
       await holder.query('rollback')
       // Pool of one: a dead connection returned as healthy would fail this write.
       await transport.write(second)
-      expect(await record(`${runId}:b:m1`)).toBeDefined()
+      expect(await record(`${runId}:b:whisper`)).toBeDefined()
     } finally {
       holder.release()
       await transport.close?.()
@@ -417,7 +417,7 @@ function stepAt(runId: string, stepId: string, startedAt: Date) {
     runId,
     stepId,
     status: 'done',
-    model: 'm1',
+    model: 'whisper',
     tokens: { input: 10, output: 2, cacheRead: 0, cacheWrite: 0, reasoning: 0 },
     cost: 0.001,
     toolCalls: 0,
@@ -430,7 +430,6 @@ function stepAt(runId: string, stepId: string, startedAt: Date) {
       workflowId: 'u.reported',
       rootId: runId,
       purpose: 'build',
-      iuKey: 'personal' as const,
       traceparent: null,
       traceId: null,
       fingerprint: null,

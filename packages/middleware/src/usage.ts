@@ -1,16 +1,15 @@
 import { hostname } from 'node:os'
+import { isCallerPriced } from '@agent-workflows/routes'
 import type { Logger, ModelUsage, RunScores, TokenCounts } from '@agent-workflows/runtime'
 import { DatabaseError, Pool, type PoolClient } from 'pg'
 import { errorMessage, type JournalDb } from './db.ts'
 import { traceIdForRun } from './ids.ts'
-import type { IuKeyId } from './iu-key.ts'
-import { isIuKeyId } from './iu-key.ts'
 import { hasPurpose } from './purpose.ts'
 
 /**
  * One row of `usage.records` (usage-tracker `migrations/pg/0002_sessions_records.sql`, `docs/usage-schema.md`) as the
- * platform writes it: one per finished step and model, grain `session` (a step is a whole agent loop of many requests,
- * never one message). `cost_usd`, `cost_source`, `price_id`, `session_id` and `ingested_at` are not here: the database
+ * platform writes it: one per finished step and caller-priced model (`isCallerPriced`: the gateway writes every other
+ * model's rows, one per request), grain `session` (a step is a whole agent loop of many requests, never one message). `cost_usd`, `cost_source`, `price_id`, `session_id` and `ingested_at` are not here: the database
  * derives them (`usage.compute_cost`, the run's session row, the column default).
  */
 export type UsageRow = {
@@ -26,8 +25,8 @@ export type UsageRow = {
   project_raw: string | null
   workspace: 'work' | 'private' | null
   billing: 'api_key'
-  /** The label of the IU key that paid (`personal`, `athena-team`). */
-  api_key: IuKeyId
+  /** The label of the IU key that paid: always `personal`, the only key the gateway holds. */
+  api_key: 'personal'
   machine: string
   outcome: 'ok' | 'error'
   lane: 'agw_workflow'
@@ -49,7 +48,7 @@ export type UsageRow = {
 export type UsageSession = {
   source_session_id: string
   lane_detail: { workflow: string; caller: string; purpose: string }
-  api_key: IuKeyId
+  api_key: 'personal'
   machine: string
   model: string
   repo: string | null
@@ -362,8 +361,6 @@ export type OutboxStep = {
     project?: string | null
     /** `work` or `private` as the caller declared it; null when it did not. */
     workspace?: string | null
-    /** The label of the IU key the host that admitted the run held; rows stored before it read `personal`. */
-    iuKey: IuKeyId
     traceparent: string | null
     traceId: string | null
     fingerprint: string | null
@@ -469,56 +466,63 @@ export function repoOf(project: string | null | undefined, workspace: string | n
   return REPO_SLUG.test(project) ? project : null
 }
 
-/** One `usage.records` row per step and model (concept §5); none for a step that spent nothing. */
+/**
+ * One `usage.records` row per step and caller-priced model (concept §5): a model agw prices per minute, per character
+ * or per image (`isCallerPriced`). Every other call passed the gateway, which wrote its own row per request with the
+ * run's attribution; a second row here would count it twice. None for a step that spent nothing or only on text, so a
+ * step mixing a prep call and TTS writes the TTS row only. The run record, spans and roll-ups keep every call.
+ */
 export function usageRowsForStep(step: OutboxStep, options: UsageRowOptions): UsageRow[] {
   const { run } = step
   if (!hasPurpose(run.purpose)) throw new Error(`run ${step.runId}: a run without a purpose cannot exist`)
   const outcome = step.status !== 'done' || run.errorKind === 'invalid_output' ? 'error' : 'ok'
   const durationMs = step.finishedAt ? Math.max(0, step.finishedAt.getTime() - step.startedAt.getTime()) : null
   const caller = callerOf(run)
-  return perModel(step).map(({ model, ...usage }) => ({
-    source: SOURCE,
-    source_id: `${step.runId}:${step.stepId}:${model}`,
-    grain: 'session',
-    ts: step.startedAt.toISOString(),
-    // agw model ids are already normalized: the raw and the normalized string are one.
-    model_raw: model,
-    model,
-    repo: repoOf(run.project, run.workspace),
-    project_raw: run.project ?? null,
-    workspace: run.workspace === 'work' || run.workspace === 'private' ? run.workspace : null,
-    // Every platform route is IU API; `api_key` names the key that paid, never the key.
-    billing: 'api_key',
-    api_key: run.iuKey,
-    machine: options.machine,
-    outcome,
-    lane: 'agw_workflow',
-    // The run has no route of its own to name (routes belong to agents); `caller` is who asked, `purpose` why.
-    lane_detail: { workflow: run.workflowId, step: step.stepId, caller, purpose: run.purpose },
-    run_id: step.runId,
-    ...additiveTokens(usage.tokens),
-    duration_ms: durationMs,
-    // The priced calls' sum is only a lower bound while any call was unpriced: NULL lets `usage.compute_cost` price the tokens.
-    cost_reported_usd: usage.unpricedCalls > 0 ? null : usage.cost,
-    raw: {
-      runId: step.runId,
-      stepId: step.stepId,
-      rootId: run.rootId,
-      purpose: run.purpose,
-      caller,
-      fingerprint: run.fingerprint,
-      traceId: run.traceId ?? traceIdForRun(run),
-      sessionId: step.sessionId,
-      toolCalls: usage.toolCalls,
-      unpricedCalls: usage.unpricedCalls,
-      runOutcome: run.errorKind ?? run.status,
-      runWallMs: run.wallMs,
-      scores: run.scores ?? null,
-      // The after-the-fact score, explicit: `scorePass` null with a `scoreError` is no verdict (never a fail).
-      ...finalScoreFields(run.scores),
-      friction: run.friction ?? null,
-    },
-  }))
+  return perModel(step)
+    .filter(({ model }) => isCallerPriced(model))
+    .map(({ model, ...usage }) => ({
+      source: SOURCE,
+      source_id: `${step.runId}:${step.stepId}:${model}`,
+      grain: 'session',
+      ts: step.startedAt.toISOString(),
+      // agw model ids are already normalized: the raw and the normalized string are one.
+      model_raw: model,
+      model,
+      repo: repoOf(run.project, run.workspace),
+      project_raw: run.project ?? null,
+      workspace: run.workspace === 'work' || run.workspace === 'private' ? run.workspace : null,
+      // Every caller-priced route is IU API on the personal key; `api_key` names the key that paid, never the key.
+      billing: 'api_key',
+      api_key: 'personal',
+      machine: options.machine,
+      outcome,
+      lane: 'agw_workflow',
+      // The run has no route of its own to name (routes belong to agents); `caller` is who asked, `purpose` why.
+      lane_detail: { workflow: run.workflowId, step: step.stepId, caller, purpose: run.purpose },
+      run_id: step.runId,
+      ...additiveTokens(usage.tokens),
+      duration_ms: durationMs,
+      // The priced calls' sum is only a lower bound while any call was unpriced: NULL lets `usage.compute_cost` price the tokens.
+      cost_reported_usd: usage.unpricedCalls > 0 ? null : usage.cost,
+      raw: {
+        runId: step.runId,
+        stepId: step.stepId,
+        rootId: run.rootId,
+        purpose: run.purpose,
+        caller,
+        fingerprint: run.fingerprint,
+        traceId: run.traceId ?? traceIdForRun(run),
+        sessionId: step.sessionId,
+        toolCalls: usage.toolCalls,
+        unpricedCalls: usage.unpricedCalls,
+        runOutcome: run.errorKind ?? run.status,
+        runWallMs: run.wallMs,
+        scores: run.scores ?? null,
+        // The after-the-fact score, explicit: `scorePass` null with a `scoreError` is no verdict (never a fail).
+        ...finalScoreFields(run.scores),
+        friction: run.friction ?? null,
+      },
+    }))
 }
 
 /** `raw.scorePass` and `raw.scoreError` from `runs.scores.final`; both null before the run is scored. */
@@ -557,7 +561,6 @@ type OutboxRow = {
   caller: string | null
   project: string | null
   workspace: string | null
-  iu_key: string
   traceparent: string | null
   trace_id: string | null
   fingerprint: string | null
@@ -595,7 +598,6 @@ function toOutboxStep(row: OutboxRow): OutboxStep {
       caller: row.caller,
       project: row.project,
       workspace: row.workspace,
-      iuKey: isIuKeyId(row.iu_key) ? row.iu_key : 'personal',
       traceparent: row.traceparent,
       traceId: row.trace_id,
       fingerprint: row.fingerprint,
@@ -650,8 +652,9 @@ const STEP_COLUMNS = `run_id, step_id, status, model, tokens_input, tokens_outpu
   tokens_cache_write, tokens_reasoning, cost, tool_calls, unpriced_calls, usage_by_model, started_at, finished_at`
 
 /**
- * Writes the usage of finished steps into `usage.records` once their run's record is written (`runPost` delivered). No
- * transaction of the journal spans a write:
+ * Writes the usage of finished steps into `usage.records` once their run's record is written (`runPost` delivered). A
+ * step whose usage is all text (no caller-priced model, see {@link usageRowsForStep}) writes no row and is marked synced
+ * all the same, so it never stays pending. No transaction of the journal spans a write:
  * 1. claim a batch in one statement (`for update skip locked`, a random `argo_claim` token and an expiry), commit;
  * 2. build the rows, write them outside any journal transaction;
  * 3. mark the batch synced where the token still matches, in a second short statement.
@@ -778,7 +781,7 @@ export class UsageOutbox {
          returning s.*
        )
        select ${STEP_COLUMNS.replaceAll(/(\w+)/g, 'c.$1')}, c.handle->'handle'->>'sessionId' as session_id,
-         r.workflow, r.root_id, r.purpose, r.caller, r.project, r.workspace, r.iu_key, r.traceparent, r.trace_id, r.fingerprint, r.friction, r.scores,
+         r.workflow, r.root_id, r.purpose, r.caller, r.project, r.workspace, r.traceparent, r.trace_id, r.fingerprint, r.friction, r.scores,
          r.status as run_status, r.error_kind as run_error_kind, r.wall_ms
        from claimed c join ${db.runs} r on r.id = c.run_id
        order by c.finished_at, c.run_id, c.step_id`,
