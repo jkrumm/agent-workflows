@@ -7,7 +7,6 @@ import {
   type AgentResult,
   type AgentWaitOptions,
   type Attribution,
-  Cancelled,
   type Json,
   type Logger,
   type Usage,
@@ -676,15 +675,12 @@ export class OpenCodeHost implements AgentHost {
 
   /**
    * Hands a failing wait's spend to the step: a `WorkflowError` carries the usage of `messages` (the assistant
-   * messages read so far) unless it already carries one. A session that is gone is unreadable and carries none; an
-   * infra error is retried by re-attaching, which reads the whole session again. A `Cancelled` is the run's one
-   * instance, shared by every step waiting at once: it cannot carry one step's spend.
+   * messages read so far, billed whether or not the session can still be read) unless it already carries one. An infra
+   * error is retried by re-attaching, which reads the whole session again.
    */
   private spent(err: unknown, h: OpenCodeHandle, messages: readonly Message[]): unknown {
-    if (!(err instanceof WorkflowError) || err instanceof Cancelled || err.usage) return err
-    if (err.cause instanceof OpenCodeHttpError && err.cause.status === 404) return err
-    if (!spentTokens(messages)) return err
-    err.usage = this.usage(h, messages)
+    if (!(err instanceof WorkflowError) || err.usage || !spentTokens(messages)) return err
+    err.carryUsage(this.usage(h, messages))
     return err
   }
 
@@ -882,7 +878,7 @@ export class OpenCodeHost implements AgentHost {
       const result = await this.wait(next, options)
       return primary ? { ...result, usage: sumUsage(primary, result.usage) } : result
     } catch (err) {
-      if (primary && err instanceof WorkflowError) err.usage = sumUsage(primary, err.usage)
+      if (primary && err instanceof WorkflowError) err.carryUsage(sumUsage(primary, err.usage))
       throw err
     }
   }
@@ -1218,7 +1214,7 @@ export class OpenCodeHost implements AgentHost {
     try {
       return read()
     } catch (err) {
-      if (err instanceof WorkflowError && !err.usage) err.usage = usage
+      if (err instanceof WorkflowError && !err.usage) err.carryUsage(usage)
       throw err
     }
   }
