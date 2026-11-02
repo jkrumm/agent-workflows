@@ -22,6 +22,7 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
   `review.angle` on Sonnet $46.29). Restore the v3.5 split: `review.angle` -> Haiku 5.5 high (EASY), `review.angle.deep` and
   synthesis stay Sonnet; deploy and verify today, target ~$0.13 per review. Review seats are final only in Wave 11; the
   Wave 9 native `/code-review` arm on Max is the candidate for moving review onto subscription quota. Relayed to r9.
+  Live 2026-11-02: PR #109, release `61b7687`, a 4-angle standard review $0.158 (angles $0.019 each vs ~$0.69 on Sonnet).
 - 2026-11-02 owner: two waves inserted after Wave 5, the rest renumbered +2. Wave 6 moves every text and agent seat
   onto measured Claude choices (pulls the tier structure forward, adds credit pacing for evals); Wave 7 is a new
   usage-view concept in Argo (spec v7, owner sign-off on the spec is a stop, then build).
