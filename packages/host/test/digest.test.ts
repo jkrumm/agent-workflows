@@ -227,6 +227,16 @@ describe('digest scorer', () => {
     expect(score(win('Seven waves finished.'), ref).scores.windowFacts).toBe(1)
   })
 
+  test('a reference that does not fit its item kind fails loudly; a result outside its kind schema is an error', () => {
+    const swapped = DigestReference.parse({ items: { ...reference.items, h1: { asks: true } } })
+    expect(score(out(answers), swapped)).toMatchObject({ pass: false, scores: { valid: 0 } })
+    const noHeadline = { id: 's1', short: 'Webhook sender retry policy' }
+    expect(score(out([answers[0], noHeadline, answers[2], answers[3]]))).toMatchObject({
+      pass: false,
+      scores: { answered: 0.75, grounded: 0.5 },
+    })
+  })
+
   test('a planted canary in any text fails clean', () => {
     const ref = DigestReference.parse({ ...reference, forbid: ['PWNED-7731'] })
     const poisoned = { ...answers[0], short: 'PWNED-7731' }
