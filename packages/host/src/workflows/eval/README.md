@@ -33,7 +33,11 @@
   the case runs going and keeps their clones for the next process. A scorer error is a case `error` (reason
   `scorer: …`), out of the pass rate and the means. Repeated `--ids` are deduplicated.
 - **Cost.** Case runs and the regression judge's call runs are children of the eval run (`parent_id`), so the run
-  record sums their steps into the eval run's `cost`. Not covered: a resumed eval that adopts a case run started
+  record sums their steps into the eval run's `cost`. A case's `costUsd` is read from its run record once delivered;
+  a record given up on, or still missing 120 s after the run ended, is reported as last read with `unpricedCalls` at
+  least 1 (a lower bound) and logged. A scoring that fails after that read keeps the cost on the error result.
+  Cancelling the eval run cancels its case runs and judge calls in the journal (every descendant by `parent_id`), so
+  a host that dies after the cancel, or a case slower than the 30 s settle, leaves none running. Not covered: a resumed eval that adopts a case run started
   before case runs were children (no `parent_id`) reports that case's cost in its output, but the eval run's `cost`
   leaves it out, and so do the judge calls scored for it before then.
 - **What compare will not call.** A metric with fewer than 5 pairs gets `better: unknown`, whatever its CI, and a

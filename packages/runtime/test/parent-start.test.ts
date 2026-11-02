@@ -136,3 +136,82 @@ describe('a parented start', () => {
     }
   })
 })
+
+describe('cancelling a run with parented starts', () => {
+  /** A body that only ends by its abort. */
+  const hold = ({ signal }: { signal: AbortSignal }) =>
+    new Promise<null>((_resolve, reject) => signal.addEventListener('abort', () => reject(signal.reason)))
+  const parent = defineWorkflow({
+    id: 'ps.cx.parent',
+    version: 'v1',
+    input: empty,
+    output: empty,
+    async run(ctx) {
+      await ctx.step('hold', hold)
+      return {}
+    },
+  })
+  const caseWf = defineWorkflow({
+    id: 'ps.cx.case',
+    version: 'v1',
+    input: z.object({ i: z.number() }),
+    output: empty,
+    async run(ctx) {
+      await ctx.step('hold', hold)
+      return {}
+    },
+  })
+  /** Served by no runtime here: a grandchild that stays pending. */
+  const unserved = defineWorkflow({
+    id: 'ps.cx.later',
+    version: 'v1',
+    input: empty,
+    output: empty,
+    run: async () => ({}),
+  })
+  const running = (id: string) => until(async () => (await sql.run(id))?.status === 'running', `${id} running`)
+
+  test("a cancel requested while the parent's process is down still ends every descendant", async () => {
+    const first = testRuntime({ schema: db.schema, workflows: [parent, caseWf] })
+    const writer = testRuntime({ schema: db.schema, workflows: [] })
+    let second: ReturnType<typeof testRuntime> | undefined
+    let firstClosed = false
+    await first.open()
+    try {
+      const p = await first.start(parent, {}, { purpose: 'prod' })
+      const c = await first.start(caseWf, { i: 0 }, { purpose: 'eval', parentId: p.runId })
+      const g = await writer.start(unserved, {}, { purpose: 'eval', parentId: c.runId })
+      await running(p.runId)
+      await running(c.runId)
+      firstClosed = true
+      await first.close() // the parent's process goes down: both rows stay running, nobody aborted the case
+
+      expect(await writer.cancel(p.runId)).toBe(true)
+      expect(await sql.run(g.runId)).toMatchObject({ status: 'cancelled' }) // pending: ended at once
+      second = testRuntime({ schema: db.schema, workflows: [parent, caseWf] })
+      await second.open()
+      expect((await second.wait(p.runId, { pollMs: 20 })).status).toBe('cancelled')
+      expect((await second.wait(c.runId, { pollMs: 20 })).status).toBe('cancelled')
+    } finally {
+      await Promise.all([firstClosed ? null : first.close(), writer.close(), second?.close()])
+    }
+  })
+
+  test('a live cancel reaches a parented start driven by another process', async () => {
+    const host = testRuntime({ schema: db.schema, workflows: [parent] })
+    const audio = testRuntime({ schema: db.schema, workflows: [caseWf] })
+    await host.open()
+    await audio.open()
+    try {
+      const p = await host.start(parent, {}, { purpose: 'prod' })
+      const c = await audio.start(caseWf, { i: 1 }, { purpose: 'eval', parentId: p.runId })
+      await running(p.runId)
+      await running(c.runId)
+      await host.cancel(p.runId)
+      expect((await host.wait(p.runId, { pollMs: 20 })).status).toBe('cancelled')
+      expect((await audio.wait(c.runId, { pollMs: 20 })).status).toBe('cancelled')
+    } finally {
+      await Promise.all([host.close(), audio.close()])
+    }
+  })
+})

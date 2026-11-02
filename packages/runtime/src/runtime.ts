@@ -237,7 +237,8 @@ export class Runtime {
         throw new WorkflowError('invalid_input', 'start: runId and idempotencyKey exclude each other')
     }
     const inputHash = hashJson(value)
-    const origin = options.parentId ? await this.parentOrigin(options) : originOf(options)
+    const origin =
+      options.parentId === undefined ? originOf(options) : await this.parentOrigin(options.parentId, options)
     const runId = await this.journal.insertRun({
       id,
       workflow: workflow.id,
@@ -265,11 +266,11 @@ export class Runtime {
    * trace: the parent's `traceparent`, else one naming the parent's derived trace and admission span (the telemetry
    * middleware's derivation), so the child's span lands under the parent's in the same trace although its root differs.
    */
-  private async parentOrigin(options: StartOptions): Promise<Origin> {
+  private async parentOrigin(parentId: string, options: StartOptions): Promise<Origin> {
     const own = (['caller', 'project', 'workspace', 'traceparent'] as const).filter((k) => options[k] !== undefined)
     if (own.length) throw new WorkflowError('invalid_input', `start: parentId excludes ${own.join(', ')}`)
-    const parent = await this.journal.getRun(options.parentId as string)
-    if (!parent) throw new WorkflowError('invalid_input', `start: parent run ${options.parentId} not found`)
+    const parent = await this.journal.getRun(parentId)
+    if (!parent) throw new WorkflowError('invalid_input', `start: parent run ${parentId} not found`)
     return {
       caller: parent.caller,
       project: parent.project,
@@ -328,9 +329,9 @@ export class Runtime {
   }
 
   /**
-   * Cancels the run and its children from any process. Pending runs end at once; for running ones the process
-   * holding the lease (or, for an orphan, the next one to claim it) aborts the running step, aborts the agent
-   * sessions, ends the run `cancelled` and calls `runPost`.
+   * Cancels the run and its descendants (parented starts included) from any process. Pending runs end at once; for
+   * running ones the process holding the lease (or, for an orphan, the next one to claim it) aborts the running step,
+   * aborts the agent sessions, ends the run `cancelled` and calls `runPost`.
    */
   async cancel(runId: string): Promise<boolean> {
     const changed = await this.journal.cancel(runId)
@@ -1044,7 +1045,8 @@ const sha256 = (text: string) => new Bun.CryptoHasher('sha256').update(text).dig
  * (packages/middleware/src/ids.ts), which this package cannot import.
  */
 function derivedTraceparent(parent: RunRow): string {
-  return `00-${sha256(`agw-trace:${parent.root_id}`).slice(0, 32)}-${sha256(`agw-run-span:${parent.id}`).slice(0, 16)}-01`
+  const traceId = sha256(`agw-trace:${parent.root_id}`).slice(0, 32)
+  return `00-${traceId}-${sha256(`agw-run-span:${parent.id}`).slice(0, 16)}-01`
 }
 
 /** `00-<trace-id>-<parent-id>-<flags>` → trace id. */

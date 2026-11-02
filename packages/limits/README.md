@@ -25,8 +25,9 @@ await cap.close()
   keeps headroom.
 - **Per root run tree**: cost, tokens and wall time add up over the whole tree, fan-out children
   (`ctx.workflow`) included. Every run in the tree is checked against the **root** workflow's caps, which are
-  learned from its top-level runs, each summed over its tree. **Step count stays per run**, checked against the run's
-  own workflow, which learns it from all its runs, each counted on its own.
+  learned from its runs that are their own root (`id = root_id`: top-level runs and eval case runs), each summed
+  over its tree from the step rows. **Step count stays per run**, checked against the run's own workflow, which
+  learns it from all its runs, each counted on its own.
 - **Below the sample minimum** a static ceiling applies: the per-workflow `ceilings[id]` merged over
   `defaultCeiling`.
 - **The hooks never wait on the journal.** Caps are cached per workflow for `ttlMs`. A stale entry is served at once
