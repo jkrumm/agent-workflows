@@ -216,6 +216,10 @@ not interactive factory sessions. Runs after Wave 16, before Wave 8 resumes; it 
 
 ## Wave 8 — Ground truth            <!-- status: pending -->
 
+- [ ] **`agw agents` reads the factory's fleet view** (mother, 2026-11-03, asked by the software-factory lead): its
+  collectors go; it reads `factory fleet --format json` (under `secrets-run`; shape `software-factory/packages/contract/src/fleet.ts`)
+  and keeps only what it adds (recommendations, Max quota) for Hermes, brain and Argo. The factory is the one producer of
+  agent state: agw's and dotfiles' AGENTS.md (and `dotfiles/docs/herdr-core.md`) say so in the same change.
 - [x] **Double usage rows (from Wave 7):** agw stops writing `usage.records` for agent steps the gateway recorded;
   proven on stored rows of both writers after deploy. The 11-02 duplicates stay (owner's call, like Wave 3's 34).
 - [x] `agw eval mine review`: SZZ over `~/SourceRoot` with the filters in `docs/review-v2.md` §Ground truth, two
