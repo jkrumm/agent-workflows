@@ -42,6 +42,13 @@ afterwards; #120 used `RD_CI_GRACE=90`. One CI flake rerun: `usage outbox > 24 c
 Spend: $0.77 on 8 production review runs (5 PR reviews, 1 re-review, 2 cancel probes); eval credit $0; no
 `agw eval gt pack`.
 
+## After the close-out: owner hotfix 2026-11-03
+
+`research.agent` onto Haiku 5.5 high (`EASY.agent`, `7a58222`; modelpick `64cb58e`), release `7a58222`, `make verify`
+PASS; live research run `01a19e3d-885a`: agent step and both gateway rows on `claude-haiku-5-5`, `api_credit` iu. The
+48 h production credit table (top 10 consumers and their Haiku estimates) went to the mother; review is ~97 % of the
+current pace, and Haiku angles mostly bill at the 5x long-prompt tier (prompts over 100k tokens).
+
 ## Left behind
 
 - **Abort-driven agent failures** (idle timeout, cancel, tool refusal): `raceAbort` settles the attempt before
