@@ -104,7 +104,7 @@ export function createUnitWorkflow(deps: {
               scope.addUsage(usage)
             }),
           },
-          { requestId: scope.key, caller: 'podcast.produce' },
+          { requestId: scope.key, caller: 'podcast.produce', attribution: scope.attribution },
         )
         // The speakers lead the list so the request's labels are the script's; the unit's turns follow them.
         const out = await synthesizeUnit(audio, lane, [...speakers, ...turns], {

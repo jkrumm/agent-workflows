@@ -1,4 +1,11 @@
-import { type Price, type Rate, type RouteId, resolveRoute, type Wire } from '@agent-workflows/routes'
+import {
+  type FallbackEntry,
+  type Price,
+  type Rate,
+  type RouteId,
+  resolveRoute,
+  type Wire,
+} from '@agent-workflows/routes'
 
 // The audio routes. Model, wire, effort and token rates live in the route table (`packages/routes/src/table/audio.ts`)
 // and honour `AGW_ROUTES` overrides; this file adds what only the audio lanes read, keyed by route id, and names no
@@ -86,6 +93,16 @@ export interface AudioRoute extends LaneSpec {
   effort?: string
   rate?: Rate
   price?: Price
+  /** Where a call moves once on a provider-balance failure (the table's, overrides applied). */
+  fallback?: FallbackEntry
+}
+
+/** The route's balance fallback as a route of its own (same id and lane, its own wire, model, effort and rate). */
+export function fallbackOf(route: AudioRoute): AudioRoute | undefined {
+  if (!route.fallback) return undefined
+  const { wire, model, effort, rate, price } = route.fallback
+  const { fallback: _own, effort: _effort, rate: _rate, price: _price, ...rest } = route
+  return { ...rest, wire, model, ...(effort && { effort }), ...(rate && { rate }), ...(price && { price }) }
 }
 
 type Env = Record<string, string | undefined>
@@ -94,8 +111,17 @@ type Env = Record<string, string | undefined>
 export function audioRoutes(env: Env = process.env): Readonly<Record<AudioRouteId, AudioRoute>> {
   const out = {} as Record<AudioRouteId, AudioRoute>
   for (const [id, lane] of Object.entries(AUDIO_LANES) as [AudioRouteId, LaneSpec][]) {
-    const { wire, model, effort, rate, price } = resolveRoute(id, env)
-    out[id] = { ...lane, id, wire, model, ...(effort && { effort }), ...(rate && { rate }), ...(price && { price }) }
+    const { wire, model, effort, rate, price, fallback } = resolveRoute(id, env)
+    out[id] = {
+      ...lane,
+      id,
+      wire,
+      model,
+      ...(effort && { effort }),
+      ...(rate && { rate }),
+      ...(price && { price }),
+      ...(fallback && { fallback }),
+    }
   }
   return Object.freeze(out)
 }

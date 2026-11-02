@@ -1,7 +1,8 @@
-import { errorMessage, iuHeaders, rawFetch } from '../http.ts'
-import { AUDIO_DEFAULT_ROUTES } from '../routes.ts'
+import { errorMessage, gatewayTextHeaders, rawFetch } from '../http.ts'
+import { isBalanceFailure } from '@agent-workflows/routes'
+import { AUDIO_DEFAULT_ROUTES, type AudioRoute, fallbackOf } from '../routes.ts'
 import type { AudioScope } from '../scope.ts'
-import { measureFromOpenAiUsage } from '../usage.ts'
+import { type Measure, measureFromAnthropicUsage, measureFromOpenAiUsage } from '../usage.ts'
 import { DELIVERY_KEYS, DELIVERY_STYLES, type PrepResult, parsePrepResponse, SPEECH_TAGS } from './core.ts'
 
 /**
@@ -53,31 +54,96 @@ export function fallbackTitle(input: string, de: boolean): string {
   return trimmed || (de ? 'Sprachnachricht' : 'Voice memo')
 }
 
+const ANTHROPIC_VERSION = '2023-06-01'
+
+interface PrepRequest {
+  url: string
+  headers: Record<string, string>
+  body: unknown
+}
+
 /**
- * One prep or summary call (OpenAI dialect, chat completions) on its route, priced and recorded before any throw
- * (a failed call is visible too). `summarize` swaps the system prompt and the route; only prep gets an effort.
+ * The request for the route's wire. The seats decide the wire (`audio.tts.prep` is on `anthropic` where the credit
+ * is spent, `iu-openai` otherwise), so the call dispatches on it. The Messages wire sends `x-agw-fallback: none`: with
+ * no credit left the gateway answers 402 and the route's own fallback takes over, never IU's Claude.
  */
-export async function callPrepLlm(
+function prepRequest(
   scope: AudioScope,
+  route: AudioRoute,
   opts: { systemPrompt: string; userContent: string; inputChars: number; summarize: boolean },
-): Promise<PrepResult> {
-  const routeId = opts.summarize ? AUDIO_DEFAULT_ROUTES.summary : AUDIO_DEFAULT_ROUTES.prep
-  const route = scope.route(routeId)
+): PrepRequest {
+  const { transports } = scope.config
+  // Reasoning-capable models reject `max_tokens` on chat completions; reasoning tokens count against this one.
+  const maxTokens = Math.min(32_000, Math.max(2000, opts.inputChars + 1000))
+  const effort = !opts.summarize && route.effort && route.effort !== 'none' ? route.effort : undefined
+  if (route.wire === 'anthropic') {
+    return {
+      url: `${transports.anthropicBase}/v1/messages`,
+      headers: gatewayTextHeaders(scope, {
+        'anthropic-version': ANTHROPIC_VERSION,
+        'content-type': 'application/json',
+        'x-agw-fallback': 'none',
+      }),
+      body: {
+        model: route.model,
+        max_tokens: maxTokens,
+        system: opts.systemPrompt,
+        messages: [{ role: 'user', content: opts.userContent }],
+        ...(effort && { thinking: { type: 'adaptive' }, output_config: { effort } }),
+      },
+    }
+  }
+  if (route.wire === 'iu-openai') {
+    return {
+      url: `${transports.openaiBase}/chat/completions`,
+      headers: gatewayTextHeaders(scope, { 'content-type': 'application/json' }),
+      body: {
+        model: route.model,
+        messages: [
+          { role: 'system', content: opts.systemPrompt },
+          { role: 'user', content: opts.userContent },
+        ],
+        max_completion_tokens: maxTokens,
+        ...(effort && { reasoning_effort: effort }),
+      },
+    }
+  }
+  throw new Error(`audio route "${route.id}" is on the ${route.wire} wire, which a text call does not speak`)
+}
+
+/** The model's text and usage out of a 2xx body on the route's wire. */
+function readPrepReply(route: AudioRoute, body: string): { text: string; measure: Measure } {
+  const json = JSON.parse(body) as {
+    choices?: Array<{ message?: { content?: string } }>
+    content?: Array<{ type?: string; text?: string }>
+    usage?: unknown
+  }
+  if (route.wire === 'anthropic') {
+    const text = (json.content ?? [])
+      .filter((block) => block.type === 'text')
+      .map((block) => block.text ?? '')
+      .join('')
+    return { text, measure: measureFromAnthropicUsage(json.usage) }
+  }
+  return { text: json.choices?.[0]?.message?.content ?? '', measure: measureFromOpenAiUsage(json.usage) }
+}
+
+type Attempt = { ok: true; prep: PrepResult } | { ok: false; error: Error; balance: boolean }
+
+/** One prep or summary call on one route, priced and recorded before any failure is returned (a failed call is visible too). */
+async function attemptPrep(
+  scope: AudioScope,
+  routeId: string,
+  route: AudioRoute,
+  opts: { systemPrompt: string; userContent: string; inputChars: number; summarize: boolean },
+): Promise<Attempt> {
   const endpoint = opts.summarize ? 'speech-summary' : 'speech-prep'
+  const request = prepRequest(scope, route, opts)
   const start = scope.deps.clock.now()
-  const res = await rawFetch(scope, `${scope.config.transports.openaiBase}/chat/completions`, {
+  const res = await rawFetch(scope, request.url, {
     method: 'POST',
-    headers: iuHeaders(scope, { 'content-type': 'application/json' }),
-    body: JSON.stringify({
-      model: route.model,
-      messages: [
-        { role: 'system', content: opts.systemPrompt },
-        { role: 'user', content: opts.userContent },
-      ],
-      // Reasoning-capable models reject `max_tokens`; reasoning tokens count against this one.
-      max_completion_tokens: Math.min(32_000, Math.max(2000, opts.inputChars + 1000)),
-      ...(!opts.summarize && route.effort && { reasoning_effort: route.effort }),
-    }),
+    headers: request.headers,
+    body: JSON.stringify(request.body),
   })
   const latencyMs = scope.deps.clock.now() - start
   if (res.status < 200 || res.status >= 300) {
@@ -86,29 +152,64 @@ export async function callPrepLlm(
     scope.call({
       endpoint,
       routeId,
+      route,
       model: route.model,
       status: res.status,
       latencyMs,
       inputChars: opts.inputChars,
       errorText,
     })
-    throw new Error(`TTS prep failed: HTTP ${res.status} ${res.body.slice(0, 300)}`)
+    return {
+      ok: false,
+      error: new Error(`TTS prep failed: HTTP ${res.status} ${res.body.slice(0, 300)}`),
+      balance: isBalanceFailure({ status: res.status, text: res.body }),
+    }
   }
-  let json: { choices?: Array<{ message?: { content?: string } }>; usage?: unknown }
+  let reply: { text: string; measure: Measure }
   try {
-    json = JSON.parse(res.body) as typeof json
+    reply = readPrepReply(route, res.body)
   } catch (error) {
-    scope.call({ endpoint, routeId, model: route.model, status: res.status, latencyMs, errorText: errorMessage(error) })
-    throw new Error(`TTS prep answered no JSON: ${res.body.slice(0, 200)}`)
+    scope.call({
+      endpoint,
+      routeId,
+      route,
+      model: route.model,
+      status: res.status,
+      latencyMs,
+      errorText: errorMessage(error),
+    })
+    return { ok: false, error: new Error(`TTS prep answered no JSON: ${res.body.slice(0, 200)}`), balance: false }
   }
   scope.call({
     endpoint,
     routeId,
+    route,
     model: route.model,
     status: res.status,
     latencyMs,
-    ...measureFromOpenAiUsage(json.usage),
+    ...reply.measure,
     inputChars: opts.inputChars,
   })
-  return parsePrepResponse(json.choices?.[0]?.message?.content ?? '')
+  return { ok: true, prep: parsePrepResponse(reply.text) }
+}
+
+/**
+ * One prep or summary call on its route's wire (chat completions or Messages). A provider-balance failure moves it
+ * once to the route's fallback, which may be on the other wire. `summarize` swaps the system prompt and the route; only
+ * prep gets an effort.
+ */
+export async function callPrepLlm(
+  scope: AudioScope,
+  opts: { systemPrompt: string; userContent: string; inputChars: number; summarize: boolean },
+): Promise<PrepResult> {
+  const routeId = opts.summarize ? AUDIO_DEFAULT_ROUTES.summary : AUDIO_DEFAULT_ROUTES.prep
+  const primary = scope.route(routeId)
+  const first = await attemptPrep(scope, routeId, primary, opts)
+  if (first.ok) return first.prep
+  const fallback = fallbackOf(primary)
+  if (!first.balance || !fallback) throw first.error
+  scope.log.warn('tts prep provider balance exhausted; falling back', { route: routeId, to: fallback.model })
+  const second = await attemptPrep(scope, routeId, fallback, opts)
+  if (second.ok) return second.prep
+  throw second.error
 }

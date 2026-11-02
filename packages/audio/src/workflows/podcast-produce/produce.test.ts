@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { freshSchema, inspector, testRuntime, until } from '../../../../runtime/test/support/pg.ts'
-import { geminiAudio, instantClock, silentLog, startFakeIu, testConfig } from '../../testing/index.ts'
+import { geminiAudio, instantClock, silentLog, startFakeGateway, testConfig } from '../../testing/index.ts'
 import type { ProduceConfig } from './config.ts'
 import { createProduceWorkflow, laneFor, type ProduceDeps, type ProduceResult, planSynthesis } from './index.ts'
 import { episodeToken } from './abs.ts'
@@ -13,7 +13,7 @@ import { measureLoudnessLufs } from './mux.ts'
 import { createPublishWorkflow } from './publish.ts'
 import { episodeInput, fakeAudiobookshelf, tonePcm } from './testing.ts'
 
-// Production on a real runtime (Postgres), the TTS lane over the fake IU, real ffmpeg for mastering, a fake
+// Production on a real runtime (Postgres), the TTS lane over the fake gateway, real ffmpeg for mastering, a fake
 // Audiobookshelf and a temp git vault: the full pass, resume after a kill mid-synth (done units never synthesized
 // again), the store-level reuse of audio an interrupted step left behind, publish idempotence on resume, the
 // best-effort publish, and the `podcast-publish` follow-up.
@@ -77,18 +77,20 @@ if (png.exitCode !== 0) throw new Error('ffmpeg could not render the test cover'
 const COVER_B64 = Buffer.from(png.stdout).toString('base64')
 
 const coverCalls: string[] = []
+const coverAttributions: unknown[] = []
 const cover: NonNullable<ProduceDeps['cover']> = {
-  async call(input, { addUsage }) {
+  async call(input, { addUsage, attribution }) {
     coverCalls.push(input.prompt)
+    coverAttributions.push(attribution)
     addUsage({ model: 'image-test', tokens: { input: 10, output: 100, cacheRead: 0, reasoning: 0 }, cost: 0.04 })
     return { images: [{ b64: COVER_B64 }] }
   },
 }
 
-/** The fake IU's Gemini route: a tone per request; `hold` may park a request (a process killed mid-request). */
+/** The fake gateway's Gemini route: a tone per request; `hold` may park a request (a process killed mid-request). */
 function fakeTts(hold?: (text: string, attempt: number) => Promise<void> | undefined) {
   const texts: string[] = []
-  const iu = startFakeIu({
+  const iu = startFakeGateway({
     async gemini(request) {
       const parts = (request.json?.contents as { parts: { text: string }[] }[] | undefined)?.[0]?.parts ?? []
       const text = parts.map((p) => p.text).join(' | ')
@@ -117,7 +119,7 @@ function produceWith(
     journal: opts.journal ?? journal,
     ...(opts.notifyFetch ? { notifyFetch: opts.notifyFetch } : {}),
     audio: {
-      config: testConfig(tts.iu.baseUrl, { ttsConcurrency: opts.concurrency ?? 2 }),
+      config: testConfig(tts.iu.url, { ttsConcurrency: opts.concurrency ?? 2 }),
       fetch: tts.iu.fetch,
       clock: instantClock,
       log: silentLog,
@@ -136,7 +138,7 @@ function produceWith(
 /** The units the plan packs `input` into, with each unit's request text as the fake TTS sees it. */
 function unitTexts(input = episodeInput()): string[] {
   const lane = laneFor({ ttsRouteId: 'audio.tts.gemini-flash', hostStyles: ['a', 'b'] } as ProduceConfig, {
-    config: testConfig('https://iu.example.com/anthropic'),
+    config: testConfig('https://gateway.example.com'),
     env: {},
   })
   const plan = planSynthesis(input, lane, {
@@ -216,6 +218,19 @@ describe('podcast.produce', () => {
 
         // One TTS request per unit; the segmentation lint over the same units.
         expect(tts.total()).toBe(units.length)
+        // Every synth call and the cover call carry their own step's attribution, so the gateway attributes the
+        // run tree; the media calls are marked as priced by agw.
+        const synthed = tts.iu.requests.filter((r) => r.route === 'gemini')
+        expect(synthed).toHaveLength(units.length)
+        for (const request of synthed) {
+          expect(request.headers.get('authorization')).toBe('Bearer test-secret')
+          expect(request.headers.get('x-agw-usage')).toBe('caller')
+          expect(request.headers.get('x-agw-session')).toBe(runId)
+          expect(request.headers.get('x-agw-workflow')).toBe('podcast.produce.unit')
+          expect(request.headers.get('x-agw-step')).toBe('synth')
+          expect(request.headers.get('x-agw-purpose')).toBe('build')
+        }
+        expect(coverAttributions.at(-1)).toMatchObject({ rootId: runId, workflow: 'podcast.produce', step: 'cover' })
         expect(out.segmentation?.units).toBe(units.length)
         expect(out.turns).toBe(6)
 

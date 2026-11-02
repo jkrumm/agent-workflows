@@ -1,4 +1,5 @@
 import type { AudioConfig } from './config.ts'
+import type { Attribution } from './gateway.ts'
 import { ffmpegMedia, type MediaPort } from './media/audio.ts'
 import { type AudioLane, type AudioRoute, type AudioRouteId, audioRoutes } from './routes.ts'
 import {
@@ -41,6 +42,8 @@ export interface AudioDeps {
   requestId?: (req: Request) => string
   /** Who called, when the `x-audio-source` header is absent (e.g. from a mapped bearer token). Default `unknown`. */
   caller?: (req: Request) => string | undefined
+  /** Who a request's model calls are for, sent to the gateway as `x-agw-*` headers. Default: none. */
+  attribution?: (req: Request) => Attribution | undefined
 }
 
 export const REAL_CLOCK: Clock = { now: () => Date.now(), sleep: (ms) => Bun.sleep(ms) }
@@ -95,6 +98,8 @@ export interface RequestMeta {
 export interface CallInput extends Measure {
   endpoint: CallEndpoint
   routeId: string | null
+  /** The route that served when it is not the table's (a balance fallback): its rate prices the call. */
+  route?: AudioRoute
   model: string
   status: number
   latencyMs: number
@@ -130,6 +135,8 @@ export class AudioScope {
     readonly deps: Resolved,
     readonly requestId: string,
     readonly caller: string,
+    /** The run step the calls belong to; the gateway puts it on its usage row and span. */
+    readonly attribution?: Attribution,
   ) {}
 
   get config() {
@@ -161,13 +168,14 @@ export class AudioScope {
 
   /** Price and record one billed upstream call. Never blocks on the port. */
   call(input: CallInput): CallEvent {
-    const route = input.routeId ? this.deps.routes[input.routeId as AudioRouteId] : undefined
+    const { route: served, ...fields } = input
+    const route = served ?? (input.routeId ? this.deps.routes[input.routeId as AudioRouteId] : undefined)
     const priced = priceCall(route, input.status, input)
     const event: CallEvent = {
       kind: 'call',
       requestId: this.requestId,
       caller: this.caller,
-      ...input,
+      ...fields,
       ...priced,
       bytesOut: input.bytesOut ?? null,
       errorText: input.errorText ?? null,
@@ -220,6 +228,9 @@ export class AudioScope {
 }
 
 /** A scope for in-process callers (the podcast's production stage): their calls are priced and recorded the same way. */
-export function createAudioScope(deps: AudioDeps, opts: { requestId: string; caller: string }): AudioScope {
-  return new AudioScope(resolveDeps(deps), opts.requestId, opts.caller)
+export function createAudioScope(
+  deps: AudioDeps,
+  opts: { requestId: string; caller: string; attribution?: Attribution },
+): AudioScope {
+  return new AudioScope(resolveDeps(deps), opts.requestId, opts.caller, opts.attribution)
 }

@@ -9,7 +9,7 @@ function scopeWith(replies: Array<() => Response>) {
   let calls = 0
   const scope = createAudioScope(
     {
-      config: testConfig('http://127.0.0.1:1/anthropic'),
+      config: testConfig('http://127.0.0.1:1'),
       usage: recordingUsage(),
       log: silentLog,
       clock: { now: () => Date.now(), sleep: async (ms) => void sleeps.push(ms) },

@@ -6,11 +6,11 @@ const ROUTES = audioRoutes()
 import { createAudioScope } from '../scope.ts'
 import {
   caught,
-  type FakeIu,
+  type FakeGateway,
   hasFfmpeg,
   realMedia,
   prepAnswer,
-  startFakeIu,
+  startFakeGateway,
   testDeps,
   toneFile,
 } from '../testing/index.ts'
@@ -26,14 +26,14 @@ beforeAll(async () => {
   if (hasFfmpeg) mp3 = await toneFile(0.5, { format: 'mp3' })
 })
 
-let iu: FakeIu
+let iu: FakeGateway
 afterEach(() => iu?.stop())
 
 const succeeded = (id = 'p1') =>
   Response.json({ id, status: 'succeeded', output: DELIVERY_URL, metrics: { predict_time: 1 } })
 
-function setup(handlers: Parameters<typeof startFakeIu>[0] = {}, config = {}) {
-  iu = startFakeIu({
+function setup(handlers: Parameters<typeof startFakeGateway>[0] = {}, config = {}) {
+  iu = startFakeGateway({
     replicateCreate: () => succeeded(),
     delivery: () => new Response(mp3),
     ...handlers,

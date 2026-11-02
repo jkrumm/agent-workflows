@@ -1,4 +1,4 @@
-import { errorMessage, iuHeaders, rawFetch } from '../http.ts'
+import { errorMessage, gatewayMediaHeaders, rawFetch } from '../http.ts'
 import { type AudioOutputFormat, type ChunkAudio, concatPcm, SAMPLE_RATE_DEFAULT } from '../media/audio.ts'
 import type { AudioScope } from '../scope.ts'
 import {
@@ -150,7 +150,7 @@ async function createPrediction(
   const [owner, name] = model.split('/')
   const res = await rawFetch(scope, `${scope.config.transports.replicateBase}/models/${owner}/${name}/predictions`, {
     method: 'POST',
-    headers: iuHeaders(scope, { 'content-type': 'application/json', Prefer: 'wait' }),
+    headers: gatewayMediaHeaders(scope, { 'content-type': 'application/json', Prefer: 'wait' }),
     body: JSON.stringify({ input }),
   })
   if (res.status < 200 || res.status >= 300) {
@@ -181,7 +181,7 @@ async function pollPrediction(scope: AudioScope, id: string): Promise<ReplicateP
       `${scope.config.transports.replicateBase}/predictions/${encodeURIComponent(id)}`,
       {
         method: 'GET',
-        headers: iuHeaders(scope),
+        headers: gatewayMediaHeaders(scope),
       },
     )
     if (res.status < 200 || res.status >= 300) {

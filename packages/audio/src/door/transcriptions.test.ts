@@ -4,7 +4,14 @@ import { ffmpegMedia, type MediaPort } from '../media/audio.ts'
 import { audioRoutes } from '../routes.ts'
 
 const ROUTES = audioRoutes()
-import { type FakeIu, type FakeRequest, hasFfmpeg, startFakeIu, testDeps, toneFile } from '../testing/index.ts'
+import {
+  type FakeGateway,
+  type FakeRequest,
+  hasFfmpeg,
+  startFakeGateway,
+  testDeps,
+  toneFile,
+} from '../testing/index.ts'
 import type { CallEvent, RequestEvent, UsageEvent } from '../usage.ts'
 import { createTranscriptionsHandler } from './transcriptions.ts'
 
@@ -22,7 +29,7 @@ beforeAll(async () => {
   twoSeconds = await toneFile(2)
 })
 
-let iu: FakeIu
+let iu: FakeGateway
 afterEach(() => iu?.stop())
 
 const media = ffmpegMedia({ mp3BitrateKbps: 48, opusBitrateKbps: 32 })
@@ -31,7 +38,7 @@ function setup(
   transcriptions: (r: FakeRequest, attempt: number) => Response | Promise<Response>,
   opts: { config?: Partial<AudioConfig>; media?: MediaPort } = {},
 ) {
-  iu = startFakeIu({ transcriptions })
+  iu = startFakeGateway({ transcriptions })
   const deps = testDeps(iu, { media: opts.media ?? media, ...(opts.config && { config: opts.config }) })
   return { deps, transcribe: createTranscriptionsHandler(deps) }
 }

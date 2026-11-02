@@ -28,7 +28,7 @@ const handlers: DoorHandlers = {
 describe('door tokens are not API credentials', () => {
   test('the door accepts the token and records its caller; every other path answers 401', async () => {
     const running = await bootAudio({
-      audio: { config: testConfig('https://iu.example.com/anthropic'), env: {} },
+      audio: { config: testConfig('https://gateway.example.com'), env: {} },
       config: loadAudioProcessConfig({
         HOME: tmpdir(),
         AGW_API_SECRET: SECRET,

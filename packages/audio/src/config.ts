@@ -2,9 +2,15 @@ import { type AudioLane, audioRoutes } from './routes.ts'
 
 export type Env = Record<string, string | undefined>
 
-/** Upstream bases and key. Every base is derived from `IU_BASE_URL` (ends in `/anthropic`), like `packages/capabilities`. */
+/**
+ * The local inference gateway: its bearer (the host's API secret, which the gateway accepts as the caller `agw`) and
+ * every wire's base, derived from `AGW_GATEWAY_URL` the way `gatewayConfig` of `packages/capabilities` does. That
+ * function has no Gemini base and the package is not a dependency of audio, so the rule is repeated here.
+ */
 export interface AudioTransports {
-  apiKey: string
+  token: string
+  /** `<origin>/anthropic`: the Messages route (the prep call on an `anthropic` route). */
+  anthropicBase: string
   /** `<root>/openai/v1`: chat completions, `/audio/speech`, `/audio/transcriptions`. */
   openaiBase: string
   /** `<root>/gemini/v1beta`: native `generateContent`. */
@@ -99,25 +105,35 @@ export const AUDIO_TUNING_DEFAULTS: Readonly<Omit<AudioTuning, 'ttsGeminiPrepMod
     sttChunkConcurrency: 4,
   })
 
-/** IU credentials from `IU_API_KEY` and `IU_BASE_URL` only. Messages never echo a value. */
-export function audioTransports(env: Env): AudioTransports {
-  const apiKey = env.IU_API_KEY?.trim()
-  const base = env.IU_BASE_URL?.trim().replace(/\/+$/, '')
-  if (!apiKey) throw new AudioConfigError('IU_API_KEY is not set')
-  if (!base) throw new AudioConfigError('IU_BASE_URL is not set')
-  if (!base.endsWith('/anthropic')) throw new AudioConfigError('IU_BASE_URL must end in /anthropic')
+/** Every wire's base on the gateway from `AGW_GATEWAY_URL`: an http(s) origin, required. Messages never echo a value. */
+export function gatewayBases(env: Env): Omit<AudioTransports, 'token'> {
+  const raw = env.AGW_GATEWAY_URL?.trim()
+  if (!raw) throw new AudioConfigError('AGW_GATEWAY_URL is not set')
+  let url: URL
   try {
-    new URL(base)
+    url = new URL(raw)
   } catch {
-    throw new AudioConfigError('IU_BASE_URL is not a URL')
+    throw new AudioConfigError('AGW_GATEWAY_URL is not a URL')
   }
-  const root = base.slice(0, -'/anthropic'.length)
+  // An origin only: a path (an old IU base ending in `/anthropic`) would double every wire's prefix.
+  if ((url.protocol !== 'http:' && url.protocol !== 'https:') || url.pathname !== '/' || url.search || url.hash) {
+    throw new AudioConfigError('AGW_GATEWAY_URL must be an http(s) origin, without a path')
+  }
+  const origin = url.origin
   return {
-    apiKey,
-    openaiBase: `${root}/openai/v1`,
-    geminiBase: `${root}/gemini/v1beta`,
-    replicateBase: `${root}/replicate/v1`,
+    anthropicBase: `${origin}/anthropic`,
+    openaiBase: `${origin}/openai/v1`,
+    geminiBase: `${origin}/gemini/v1beta`,
+    replicateBase: `${origin}/replicate/v1`,
   }
+}
+
+/** The gateway from `AGW_GATEWAY_URL` and `AGW_API_SECRET` only. Messages never echo a value. */
+export function audioTransports(env: Env): AudioTransports {
+  const bases = gatewayBases(env)
+  const token = env.AGW_API_SECRET?.trim()
+  if (!token) throw new AudioConfigError('AGW_API_SECRET is not set')
+  return { token, ...bases }
 }
 
 /** A worker count: an integer in [1, 8]. 0 or a negative would never start a window, a fraction misaligns them. */

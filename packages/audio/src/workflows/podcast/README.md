@@ -65,7 +65,7 @@ flash writer at effort high (GPT-6.1 Sol until 2026-10-30, owner direction: Deep
 **Decision: an own model port (`llm.ts`, `iu.ts`) instead of the platform transports.** The capabilities transports are
 single-call text wires; the room needs function tools on both OpenAI APIs (chat completions, and `/v1/responses`,
 which IU requires for the GPT-6.1 family's tools), and on the Anthropic wire a cached system block and a response
-schema. The port keeps the platform's conventions: IU credentials from `IU_API_KEY` / `IU_BASE_URL`, every call priced
+schema. The port keeps the platform's conventions: the gateway from `AGW_GATEWAY_URL` / `AGW_API_SECRET` (the step's attribution on every call, `x-agw-fallback: none` on the Anthropic wire, no `x-agw-usage`: the gateway writes these rows), every call priced
 against its route (`costFromUsage`: IU's `usage.cost` first, else the route's rate) and reported to the step's
 `addUsage`, so the run record carries every call, failed ones included; a provider-balance failure moves the call once
 to the route's fallback (concept v3.3); streaming with an idle watchdog for single answers, a 30-minute hang guard on a

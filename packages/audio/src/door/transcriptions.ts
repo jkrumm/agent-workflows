@@ -47,7 +47,7 @@ interface AttemptResult {
 export function createTranscriptionsHandler(deps: AudioDeps): (req: Request) => Promise<Response> {
   const resolved = resolveDeps(deps)
   return async (req) => {
-    const scope = new AudioScope(resolved, requestIdOf(deps, req), callerOf(deps, req))
+    const scope = new AudioScope(resolved, requestIdOf(deps, req), callerOf(deps, req), deps.attribution?.(req))
     try {
       return await dispatchTranscription(scope, req)
     } catch (error) {

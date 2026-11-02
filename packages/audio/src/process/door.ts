@@ -6,7 +6,7 @@
 // the handler's work is over (its promise settled and its body ended). Recording never delays the audio and a
 // recording failure never fails the request (logged).
 import { BEARER_CHALLENGE, type HostWorkflow, RUN_ID_HEADER, startRun } from '@agent-workflows/host'
-import { defineWorkflow, type Logger, type Runtime, type Usage } from '@agent-workflows/runtime'
+import { type Attribution, defineWorkflow, type Logger, type Runtime, type Usage } from '@agent-workflows/runtime'
 import { z } from 'zod'
 import type { CallerAuth } from './callers.ts'
 
@@ -41,6 +41,8 @@ export interface DoorHandlerDeps {
   usage: { record(event: DoorEvent): void }
   requestId(req: Request): string
   caller(req: Request): string | undefined
+  /** The request's run step as the gateway's attribution: its upstream calls land on that run's usage rows. */
+  attribution(req: Request): Attribution | undefined
   fetch: Fetch
 }
 
@@ -148,6 +150,20 @@ const DoorOutput = z.object({
   /** Why the record ended: `done` (the handler finished), `client-gone` (the client went away), `bound` (one hour). */
   ended: z.enum(['done', 'client-gone', 'bound']),
 })
+
+/** The door run's step `request`, as the run row will carry it: a root run, so its own id is the gateway's session. */
+function attributionOf(endpoint: DoorEndpoint, request: Request, runId: string): Attribution {
+  const header = (name: string) => request.headers.get(name)?.trim() || undefined
+  const traceparent = header('traceparent')
+  return {
+    runId,
+    rootId: runId,
+    workflow: DOOR_WORKFLOW_IDS[endpoint],
+    step: 'request',
+    purpose: header('x-agw-purpose') ?? 'prod',
+    ...(traceparent ? { traceparent } : {}),
+  }
+}
 
 const raceAbort = <T>(promise: Promise<T>, signal: AbortSignal): Promise<T> =>
   new Promise<T>((resolve, reject) => {
@@ -294,7 +310,13 @@ export function createDoor(options: DoorOptions): Door {
     let response: Response
     try {
       // Built per request: the request's id, caller and fetch go in explicitly.
-      const handler = options.handlers[endpoint]({ usage, requestId: () => runId, caller: () => caller, fetch })
+      const handler = options.handlers[endpoint]({
+        usage,
+        requestId: () => runId,
+        caller: () => caller,
+        attribution: () => attributionOf(endpoint, request, runId),
+        fetch,
+      })
       response = await handler(request)
     } catch (error) {
       // The handlers answer their own failures; a throw past them (or from building one) is answered as legacy's

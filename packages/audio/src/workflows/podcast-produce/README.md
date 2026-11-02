@@ -114,7 +114,7 @@ multi-speaker TTS, legacy's `PODCAST_TTS_MODEL` default); the cover is `image.ge
 
 ## Tests
 
-`produce.test.ts` runs the workflow (and its unit children) on a real runtime (Postgres), the TTS lane over the fake IU, real ffmpeg, a fake
+`produce.test.ts` runs the workflow (and its unit children) on a real runtime (Postgres), the TTS lane over the fake gateway, real ffmpeg, a fake
 Audiobookshelf (`testing.ts`) and temp git vaults: the full pass, resume after a kill mid-synth (TTS calls counted per
 unit), the store-level reuse, publish idempotence on resume, a failing and an unconfigured Audiobookshelf, and
 `podcast-publish`. The stage ports have their own (`synth`, `mux`, `abs`, `brain-note`, `notify`).

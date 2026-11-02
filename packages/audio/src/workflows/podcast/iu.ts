@@ -1,4 +1,6 @@
 import { BALANCE_MARKER, isBalanceFailure } from '../../../../routes/src/index.ts'
+import { audioTransports } from '../../config.ts'
+import { type Attribution, gatewayHeaders } from '../../gateway.ts'
 import type {
   ChatCall,
   ChatReply,
@@ -12,11 +14,11 @@ import type {
 } from './llm.ts'
 import { ModelError } from './llm.ts'
 
-// The production `ModelPort`: IU's OpenAI chat completions and responses, and its native Anthropic Messages route.
+// The production `ModelPort`: the gateway's OpenAI chat completions and responses, and its native Anthropic Messages route.
 // The platform transports (capabilities `transports/`) are single-call text wires without tools, cache blocks or a
 // response schema; the room needs all three, so this adapter ports audio-gateway's wire code (`llm-tools.ts`,
-// `anthropic-messages.ts`, `callPodcastLlm`) onto the platform's conventions: credentials from `IU_API_KEY` and
-// `IU_BASE_URL` (ending in `/anthropic`, as the platform's `iuConfig`), streaming with an idle watchdog where the answer
+// `anthropic-messages.ts`, `callPodcastLlm`) onto the platform's conventions: the local gateway from `AGW_GATEWAY_URL`
+// and `AGW_API_SECRET`, the step's attribution on every call, streaming with an idle watchdog where the answer
 // is a single text, a 30-minute hang guard on a non-streamed tool round (never a budget, rules/agent-limits.md), and
 // provider-balance failures marked for the route's fallback.
 
@@ -49,13 +51,21 @@ function ssePayload(raw: string): string | null {
   return payload && payload !== '[DONE]' ? payload : null
 }
 
-function iuConfig(env: Record<string, string | undefined>) {
-  const apiKey = env.IU_API_KEY?.trim()
-  const base = env.IU_BASE_URL?.trim().replace(/\/+$/, '')
-  if (!apiKey) throw new ModelError('IU_API_KEY is not set')
-  if (!base?.endsWith('/anthropic')) throw new ModelError('IU_BASE_URL must be set and end in /anthropic')
-  return { apiKey, anthropicBase: base, openaiBase: `${base.slice(0, -'/anthropic'.length)}/openai/v1` }
+/** The gateway's bearer and bases (`audioTransports`); a misconfiguration is a `ModelError`, never echoing a value. */
+function gateway(env: Record<string, string | undefined>) {
+  try {
+    return audioTransports(env)
+  } catch (error) {
+    throw new ModelError(error instanceof Error ? error.message : String(error))
+  }
 }
+
+/** Headers of a text call: the bearer and the step's attribution. The gateway writes the usage row of these calls. */
+const callHeaders = (token: string, attribution: Attribution | undefined, extra: Record<string, string> = {}) => ({
+  ...gatewayHeaders(attribution),
+  ...extra,
+  authorization: `Bearer ${token}`,
+})
 
 const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : 0)
 const rec = (v: unknown): Record<string, unknown> =>
@@ -203,7 +213,7 @@ export function iuModelPort(options: IuOptions = {}): ModelPort {
     onUsage: OnWireUsage,
     onSent: () => void,
   ): Promise<ChatReply> {
-    const { apiKey, openaiBase } = iuConfig(options.env ?? process.env)
+    const { token, openaiBase } = gateway(options.env ?? process.env)
     return withRetries('iu-openai', signal, async () => {
       let text = ''
       let finish: string | undefined
@@ -213,7 +223,7 @@ export function iuModelPort(options: IuOptions = {}): ModelPort {
         await stream(
           'iu-openai',
           `${openaiBase}/chat/completions`,
-          { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
+          callHeaders(token, call.attribution, { 'content-type': 'application/json' }),
           {
             model: call.model,
             messages: [
@@ -259,18 +269,20 @@ export function iuModelPort(options: IuOptions = {}): ModelPort {
     onUsage: OnWireUsage,
     onSent: () => void,
   ): Promise<ChatReply> {
-    const { apiKey, anthropicBase } = iuConfig(options.env ?? process.env)
+    const { token, anthropicBase } = gateway(options.env ?? process.env)
     const body = anthropicBody(call)
     return withRetries('anthropic', signal, async () => {
       const events: string[] = []
       await stream(
         'anthropic',
         `${anthropicBase}/v1/messages`,
-        {
-          authorization: `Bearer ${apiKey}`,
+        // `x-agw-fallback: none`: with no credit left the gateway answers 402 (balance) and the route's own fallback
+        // takes the call, never IU's Claude.
+        callHeaders(token, call.attribution, {
           'anthropic-version': ANTHROPIC_VERSION,
           'content-type': 'application/json',
-        },
+          'x-agw-fallback': 'none',
+        }),
         body,
         signal,
         // The whole body: SSE events, or a plain JSON message or error envelope from a proxy that ignores `stream`.
@@ -301,7 +313,7 @@ export function iuModelPort(options: IuOptions = {}): ModelPort {
     onUsage: OnWireUsage,
     onSent: () => void,
   ): Promise<RoundReply> {
-    const { apiKey, openaiBase } = iuConfig(options.env ?? process.env)
+    const { token, openaiBase } = gateway(options.env ?? process.env)
     const responses = call.api === 'responses'
     const wire = responses ? 'iu-responses' : 'iu-openai'
     return withRetries(wire, signal, async () => {
@@ -310,7 +322,7 @@ export function iuModelPort(options: IuOptions = {}): ModelPort {
         onSent()
         res = await doFetch(`${openaiBase}${responses ? '/responses' : '/chat/completions'}`, {
           method: 'POST',
-          headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
+          headers: callHeaders(token, call.attribution, { 'content-type': 'application/json' }),
           body: JSON.stringify(roundBody(call)),
           signal: AbortSignal.any([signal, AbortSignal.timeout(hangMs)]),
         })

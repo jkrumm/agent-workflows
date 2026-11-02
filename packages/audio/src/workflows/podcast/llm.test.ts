@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import type { ResolvedRoute } from '../../../../routes/src/index.ts'
-import type { Usage } from '../../../../runtime/src/index.ts'
+import type { Attribution, Usage } from '../../../../runtime/src/index.ts'
 import {
   callAndParse,
   type ChatCall,
@@ -75,11 +75,21 @@ const route =
   (id: PodcastRouteId) =>
     ({ id, wire: 'iu-openai', model: 'fake-model', effort: 'high', ...over }) as ResolvedRoute
 
-function llmFor(port: ModelPort, resolve: (id: PodcastRouteId) => ResolvedRoute = route(), signal?: AbortSignal) {
+function llmFor(
+  port: ModelPort,
+  resolve: (id: PodcastRouteId) => ResolvedRoute = route(),
+  signal?: AbortSignal,
+  attribution?: Attribution,
+) {
   const usages: Usage[] = []
   const llm = new Llm(
     port,
-    { addUsage: (u) => usages.push(u), signal: signal ?? new AbortController().signal, progress: () => {} },
+    {
+      addUsage: (u) => usages.push(u),
+      signal: signal ?? new AbortController().signal,
+      progress: () => {},
+      ...(attribution ? { attribution } : {}),
+    },
     resolve,
   )
   return { llm, usages }
@@ -613,5 +623,43 @@ describe('writerBudget', () => {
     expect(writerBudget(4000, 1)).toBe(20_000)
     expect(writerBudget(4000, 2)).toBe(40_000)
     expect(writerBudget(30_000, 2)).toBe(64_000)
+  })
+})
+
+describe('Llm and the gateway', () => {
+  const attribution: Attribution = { runId: 'r', rootId: 'root', workflow: 'podcast', step: 'write', purpose: 'prod' }
+
+  test("every chat and round call carries the step's attribution to the port; none without a step", async () => {
+    const port = new FakePort(
+      [
+        { text: 'x', stop: 'complete' },
+        { text: 'y', stop: 'complete' },
+      ],
+      [text('done')],
+    )
+    const { llm } = llmFor(port, route(), undefined, attribution)
+    await llm.call({ route: 'podcast.write', systemPrompt: 's', userContent: 'u', maxCompletionTokens: 10, stage: 't' })
+    await llm.round('podcast.research', [{ role: 'user', content: 'go' }], [], 10)
+    expect(port.chats[0]?.attribution).toEqual(attribution)
+    expect(port.rounds[0]?.attribution).toEqual(attribution)
+    await llmFor(port).llm.call({
+      route: 'podcast.write',
+      systemPrompt: 's',
+      userContent: 'u',
+      maxCompletionTokens: 10,
+      stage: 't',
+    })
+    expect(port.chats[1]).not.toHaveProperty('attribution')
+  })
+
+  test('a chat call follows the route wire; a tool round on a wire other than iu-openai fails before it is sent', async () => {
+    const port = new FakePort([{ text: 'x', stop: 'complete' }])
+    const { llm } = llmFor(port, route({ wire: 'anthropic' }))
+    await llm.call({ route: 'podcast.write', systemPrompt: 's', userContent: 'u', maxCompletionTokens: 10, stage: 't' })
+    expect(port.chats[0]?.wire).toBe('anthropic')
+    const error = await rejected(llm.round('podcast.research', [{ role: 'user', content: 'go' }], [], 10))
+    expect(error).toBeInstanceOf(ModelError)
+    expect(error.message).toContain('anthropic wire')
+    expect(port.rounds).toHaveLength(0)
   })
 })
