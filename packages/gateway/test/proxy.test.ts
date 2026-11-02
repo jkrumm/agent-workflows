@@ -1233,8 +1233,6 @@ describe('credit pacing: purpose=eval', () => {
       error: { type: 'permission_error', message: expect.stringContaining('eval reserve') },
     })
     expect(text).toContain('evalAvailableUsd')
-    expect(text).toContain('iu $0.00')
-    expect(text).toContain('me $0.00')
     expect(iu.seen).toHaveLength(0)
     expect(anthropic.seen).toHaveLength(0)
     expect(gw.rows().records).toHaveLength(0)
@@ -1275,16 +1273,30 @@ describe('credit pacing: purpose=eval', () => {
     expect(response.status).toBe(403)
     expect(iu.seen).toHaveLength(0)
     expect(anthropic.seen).toHaveLength(0)
-    expect(gw.rows().picks.map(({ row }) => [row.picked, row.reason])).toEqual([['refused', 'eval-reserve']])
+    expect(response.headers.get('x-agw-pick-reason')).toBe('eval-claude-code')
+    expect(gw.rows().picks.map(({ row }) => [row.picked, row.reason])).toEqual([['refused', 'eval-claude-code']])
+    const text = await response.text()
+    expect(text).not.toContain('reserve')
+    expect(isBalanceFailure({ status: 403, text })).toBe(false)
   })
 
-  test('a forced eval request stays forced: IU, no refusal', async () => {
-    const gw = start({ registry: [underReserve('iu')] })
+  test('eval beats forced: x-agw-upstream: iu on an eval request is refused, never IU', async () => {
+    const gw = start({ registry: [aboveReserve('me')] })
     const response = await gw.call(MESSAGES, as('eval', { 'x-agw-upstream': 'iu' }))
-    await response.text()
-    expect(response.status).toBe(200)
-    expect(response.headers.get('x-agw-pool')).toBe('iu-api')
-    expect(gw.rows().picks.map(({ row }) => [row.picked, row.reason])).toEqual([['iu-api', 'forced']])
+    expect(response.status).toBe(403)
+    expect(response.headers.get('x-agw-pool')).toBe('refused')
+    expect(response.headers.get('x-agw-pick-reason')).toBe('eval-forced')
+    const text = await response.text()
+    expect(text).not.toContain('reserve')
+    expect(isBalanceFailure({ status: 403, text })).toBe(false)
+    expect(iu.seen).toHaveLength(0)
+    expect(anthropic.seen).toHaveLength(0)
+    expect(gw.rows().records).toHaveLength(0)
+    expect(gw.rows().picks.map(({ row }) => [row.picked, row.reason])).toEqual([['refused', 'eval-forced']])
+    // Not an eval: forced stays forced.
+    const forced = await gw.call(MESSAGES, as('prod', { 'x-agw-upstream': 'iu' }))
+    await forced.text()
+    expect(forced.headers.get('x-agw-pool')).toBe('iu-api')
   })
 
   test('a bound eval session moves off a pool that fell under its reserve; production keeps the binding', async () => {

@@ -14,6 +14,8 @@ export type PickReason =
   | 'no-pool'
   | 'drained-retry'
   | 'eval-reserve'
+  | 'eval-forced'
+  | 'eval-claude-code'
 
 export type Pick =
   /** `cycleStart` (ISO) is handed back to `drained` / `reconcile`, so a result from before a rollover is ignored. */
@@ -22,8 +24,11 @@ export type Pick =
   | { kind: 'iu'; reason: 'forced' | 'claude-code' | 'no-pool' | 'drained-retry' }
   /** The caller sent `x-agw-fallback: none`: the server answers 402 with the balance marker. */
   | { kind: 'refuse'; reason: 'no-pool' | 'claude-code' | 'drained-retry' }
-  /** An `eval` request with no pool above its reserve: the server answers 403, never IU and never a 402. */
-  | { kind: 'refuse'; reason: 'eval-reserve' }
+  /**
+   * An `eval` request never reaches IU: no pool above its reserve, `x-agw-upstream: iu`, or a Claude-Code-shaped request
+   * (which could only go there). The server answers 403, never a 402; the reason says which.
+   */
+  | { kind: 'refuse'; reason: 'eval-reserve' | 'eval-forced' | 'eval-claude-code' }
 
 export interface PickInput {
   /** The door-token caller; bindings are namespaced by it. */
@@ -52,7 +57,7 @@ export interface Pacing {
   runwayUsdPerDay: number | null
   /** What production keeps: the registry's `evalReserveUsd`, else `creditUsd × daysLeft / cycleLengthDays`, else (unknown cycle) `creditUsd`. */
   evalReserveUsd: number
-  /** `max(0, creditLeftUsd − evalReserveUsd)`; 0 for an unusable pool. */
+  /** `max(0, creditLeftUsd − evalReserveUsd)`; 0 for a pool that is not `eligible` (unusable, drained, meter error, spent). */
   evalAvailableUsd: number
   /** `eligible` and `evalAvailableUsd > 0`: an `eval` request may use this pool. */
   evalEligible: boolean
@@ -286,7 +291,7 @@ export function createPools(opts: PoolsOptions): Pools {
     state.drainedUntilMs === null &&
     meterUsd(state.meter) + state.pool.headroomUsd < state.pool.creditUsd
 
-  /** §Credit pacing for one pool: an unusable pool has no credit to spend, so no runway and no eval draw. */
+  /** §Credit pacing for one pool: an unusable pool has no credit to spend; a pool requests cannot use has no eval draw. */
   const pacing = (state: PoolState, cycle: { start: Date; end: Date | null }, at: Date): Pacing => {
     const { creditUsd, headroomUsd } = state.pool
     const creditLeftUsd = state.usable ? Math.max(0, creditUsd - meterUsd(state.meter) - headroomUsd) : 0
@@ -295,14 +300,14 @@ export function createPools(opts: PoolsOptions): Pools {
     const cycleDays = cycle.end === null ? null : (cycle.end.getTime() - cycle.start.getTime()) / DAY_MS
     const proRata = daysLeft === null || cycleDays === null ? creditUsd : (creditUsd * daysLeft) / cycleDays
     const evalReserveUsd = state.pool.evalReserveUsd ?? proRata
-    const evalAvailableUsd = Math.max(0, creditLeftUsd - evalReserveUsd)
+    const evalAvailableUsd = isEligible(state) ? Math.max(0, creditLeftUsd - evalReserveUsd) : 0
     return {
       creditLeftUsd,
       daysLeft,
       runwayUsdPerDay,
       evalReserveUsd,
       evalAvailableUsd,
-      evalEligible: isEligible(state) && evalAvailableUsd > 0,
+      evalEligible: evalAvailableUsd > 0,
     }
   }
 
@@ -322,11 +327,12 @@ export function createPools(opts: PoolsOptions): Pools {
 
   return {
     pick(input) {
-      if (input.forceIu) return { kind: 'iu', reason: 'forced' }
+      // An eval request is never sent to IU, forced or Claude-Code-shaped included: it beats both.
       const evalOnly = input.evalOnly === true
-      // An eval request has no IU to fall back on, a Claude-Code-shaped one included: it could only go there.
-      if (input.claudeCodeShaped)
-        return evalOnly ? { kind: 'refuse', reason: 'eval-reserve' } : fallback(input, 'claude-code')
+      if (input.forceIu) return evalOnly ? { kind: 'refuse', reason: 'eval-forced' } : { kind: 'iu', reason: 'forced' }
+      if (input.claudeCodeShaped) {
+        return evalOnly ? { kind: 'refuse', reason: 'eval-claude-code' } : fallback(input, 'claude-code')
+      }
 
       const at = now()
       sweep(at.getTime())

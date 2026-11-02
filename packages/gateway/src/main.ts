@@ -5,7 +5,7 @@ import { ConfigError, type GatewayConfig, loadConfig } from './config.ts'
 import { Ledger } from './ledger.ts'
 import { errorMessage, stderrLogger as logger } from './log.ts'
 import { Outbox, pgUsageSink } from './outbox.ts'
-import { createPools } from './pools/index.ts'
+import { createPools, reserveAboveCredit } from './pools/index.ts'
 import { createProxy } from './proxy.ts'
 import { Reconciler } from './reconcile.ts'
 import { resolveKeys, secretsRunReader } from './secrets.ts'
@@ -45,6 +45,13 @@ function openLedger(config: GatewayConfig): Ledger {
 const config = readConfig()
 const ledger = openLedger(config)
 const { keys, adminKeys } = await resolveKeys({ registry: config.registry, read: secretsRunReader(), logger })
+for (const pool of reserveAboveCredit(config.registry)) {
+  logger.warn('evalReserveUsd is above creditUsd: no eval request can use this pool', {
+    pool: pool.id,
+    evalReserveUsd: pool.evalReserveUsd,
+    creditUsd: pool.creditUsd,
+  })
+}
 const pools = createPools({ registry: config.registry, keys, meter: ledger })
 const telemetry = createTelemetry({ env: process.env, logger })
 

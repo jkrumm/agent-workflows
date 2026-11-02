@@ -1,6 +1,6 @@
 export { cycleOf } from './cycle.ts'
 export { createPools } from './pools.ts'
 export type { MeterSource, Pick, PickInput, PickReason, Pools, PoolsOptions, PoolStatus } from './pools.ts'
-export { parseRegistry } from './registry.ts'
+export { parseRegistry, reserveAboveCredit } from './registry.ts'
 export type { RegistryPool } from './registry.ts'
 export { isClaudeCodeShaped, sessionId } from './request.ts'

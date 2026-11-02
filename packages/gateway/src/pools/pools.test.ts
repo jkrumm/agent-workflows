@@ -746,13 +746,31 @@ describe('credit pacing: runway and the eval reserve', () => {
     }
   })
 
-  test('an ineligible pool is never eval-eligible, whatever its surplus', () => {
+  test('an ineligible pool shows no eval surplus, whatever its credit: drained, meter error, spent, unusable', () => {
     const { pools } = setup([pool('iu', { cycleDay: 21 }), pool('me', { cycleDay: 27, enabled: false })], {
       at: '2026-11-05T12:00:00Z',
     })
-    expect(statusOf(pools, 'me').evalEligible).toBe(false)
+    expect(statusOf(pools, 'iu').evalAvailableUsd).toBeGreaterThan(0)
+    expect(statusOf(pools, 'me')).toMatchObject({ evalAvailableUsd: 0, evalEligible: false })
     pools.drained('iu', '2026-10-21T00:00:00.000Z')
-    expect(statusOf(pools, 'iu').evalEligible).toBe(false)
+    expect(statusOf(pools, 'iu')).toMatchObject({ eligible: false, evalAvailableUsd: 0, evalEligible: false })
+    expect(statusOf(pools, 'iu').creditLeftUsd).toBeGreaterThan(0)
+  })
+
+  test('a pool whose ledger read failed shows no eval surplus until a read succeeds', () => {
+    const failing = {
+      spentSince(): number {
+        throw new Error('disk gone')
+      },
+    }
+    const clock = fakeClock('2026-11-05T12:00:00Z')
+    const pools = createPools({
+      registry: [pool('iu', { cycleDay: 21 })],
+      keys: new Map([['iu', 'sk']]),
+      meter: failing,
+      now: clock.now,
+    })
+    expect(statusOf(pools, 'iu')).toMatchObject({ meterError: 'disk gone', evalAvailableUsd: 0, evalEligible: false })
   })
 })
 
@@ -824,10 +842,13 @@ describe('credit pacing: the pick for purpose=eval', () => {
     expect(picked(pools, { evalOnly: true })).toBe('refuse:eval-reserve')
   })
 
-  test('a Claude-Code-shaped eval request is refused; a forced one stays forced', () => {
+  test('an eval request never reaches IU: forced and Claude-Code-shaped ones are refused with their own reason', () => {
     const { pools } = live()
-    expect(picked(pools, { evalOnly: true, claudeCodeShaped: true })).toBe('refuse:eval-reserve')
-    expect(picked(pools, { evalOnly: true, forceIu: true })).toBe('iu-api:forced')
-    expect(picked(pools, { evalOnly: true, forceIu: true, claudeCodeShaped: true })).toBe('iu-api:forced')
+    expect(picked(pools, { evalOnly: true, claudeCodeShaped: true })).toBe('refuse:eval-claude-code')
+    expect(picked(pools, { evalOnly: true, forceIu: true })).toBe('refuse:eval-forced')
+    expect(picked(pools, { evalOnly: true, forceIu: true, claudeCodeShaped: true })).toBe('refuse:eval-forced')
+    // Not an eval: forced stays forced.
+    expect(picked(pools, { forceIu: true })).toBe('iu-api:forced')
+    expect(picked(pools, { evalOnly: false, forceIu: true })).toBe('iu-api:forced')
   })
 })

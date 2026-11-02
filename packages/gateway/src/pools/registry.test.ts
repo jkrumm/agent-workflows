@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { parseRegistry } from './registry.ts'
+import { parseRegistry, reserveAboveCredit } from './registry.ts'
 
 const platform = {
   creditUsd: 200,
@@ -46,6 +46,17 @@ describe('parseRegistry', () => {
     expect(() => parseRegistry({ accounts: { iu: { platform: { ...platform, evalReserveUsd: -1 } } } })).toThrow(
       /account "iu" platform\.evalReserveUsd/,
     )
+  })
+
+  test('reserveAboveCredit names the pools no eval can ever draw on', () => {
+    const pools = parseRegistry({
+      accounts: {
+        iu: { platform: { ...platform, evalReserveUsd: 250 } },
+        me: { platform: { ...platform, evalReserveUsd: 200 } },
+        me2: { platform },
+      },
+    })
+    expect(reserveAboveCredit(pools).map((pool) => pool.id)).toEqual(['iu'])
   })
 
   test('a malformed platform block throws naming the account and the field', () => {
