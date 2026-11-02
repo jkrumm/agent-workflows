@@ -36,6 +36,7 @@ const messageSchema = z.object({
  * The native Messages route on the gateway, which pays it from a Claude credit pool or IU. One non-streamed request
  * under a hang guard (the agent-limits fallback for a client that cannot stream), never a budget. Thinking is
  * `adaptive` with the route's effort, and only when the route has one; models without effort get a plain request.
+ * A request with a `schema` adds `output_config.format` (`json_schema`), next to the effort when there is one.
  * Every request carries `x-agw-fallback: none`: with no credit left the gateway answers 402 (balance), so the call
  * moves to the route's own fallback, never onto IU's Claude.
  */
@@ -77,7 +78,15 @@ function body(request: ChatRequest) {
     max_tokens: request.maxOutputTokens,
     messages: [{ role: 'user', content: request.prompt }],
     ...(request.system ? { system: request.system } : {}),
-    ...(thinking ? { thinking: { type: 'adaptive' }, output_config: { effort: request.effort } } : {}),
+    ...(thinking ? { thinking: { type: 'adaptive' } } : {}),
+    ...(thinking || request.schema
+      ? {
+          output_config: {
+            ...(thinking ? { effort: request.effort } : {}),
+            ...(request.schema ? { format: { type: 'json_schema', schema: request.schema } } : {}),
+          },
+        }
+      : {}),
   }
 }
 

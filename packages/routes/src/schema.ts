@@ -66,13 +66,29 @@ const decisionRule = [
   { message: 'iu-decision routes take neither effort nor maxOutputTokens' },
 ] as const
 
+/**
+ * A Sonnet is `claude-sonnet-<version>` (or the `sonnet` alias): the family is read from the id's prefix, so no concrete
+ * id is named outside `table/`. Anthropic's effort levels for Sonnet 5.5 are low to max; "thinking off" is not one of
+ * them (the lowest setting is `thinking: between_tools`, which `none` does not send), so `none` on a Sonnet is a
+ * configuration error, caught at the table import and on every override. The caller names the route.
+ */
+const SONNET = /^(?:claude-)?sonnet(?:-|$)/
+const sonnetRule: [(r: { model: string; effort?: Effort }) => boolean, { message: string; path: string[] }] = [
+  (r) => !(SONNET.test(r.model) && r.effort === 'none'),
+  { message: 'a Sonnet model cannot run at effort none: use low, medium, high, xhigh or max', path: ['effort'] },
+]
+
 /** The route a call moves to once when the primary fails on provider balance (HTTP 402, or 503 "Insufficient Balance"). */
-export const fallbackSchema = z.strictObject(routeFields).refine(...decisionRule)
+export const fallbackSchema = z
+  .strictObject(routeFields)
+  .refine(...decisionRule)
+  .refine(...sonnetRule)
 export type FallbackEntry = z.infer<typeof fallbackSchema>
 
 export const routeSchema = z
   .strictObject({ ...routeFields, fallback: fallbackSchema.optional() })
   .refine(...decisionRule)
+  .refine(...sonnetRule)
   .refine((r) => !r.fallback || (r.fallback.wire === 'opencode') === (r.wire === 'opencode'), {
     message:
       'a fallback runs the same kind of step: an opencode route falls back to opencode, a single call to a single call',

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { CapabilityError } from './errors.ts'
 import { chatStream, type FakeGateway, messageResponse, sse, startFakeGateway } from './testing/index.ts'
-import { anthropicWire, iuDecision, iuOpenai } from './transports/index.ts'
+import { anthropicWire, iuDecision, iuOpenai, type JsonSchema } from './transports/index.ts'
 
 let iu: FakeGateway
 beforeEach(() => {
@@ -11,6 +11,12 @@ afterEach(() => iu.stop())
 
 const env = () => ({ AGW_API_SECRET: 'test-key', AGW_GATEWAY_URL: iu.url })
 const chatRequest = { model: 'm', prompt: 'p', maxOutputTokens: 100 }
+const schema: JsonSchema = {
+  type: 'object',
+  properties: { label: { type: 'string', enum: ['bug', 'feature'] } },
+  required: ['label'],
+  additionalProperties: false,
+}
 const never = () => new AbortController().signal
 
 async function failure(promise: Promise<unknown>): Promise<CapabilityError> {
@@ -161,6 +167,31 @@ describe('openai wire details', () => {
     expect(iu.requests[1]?.body.response_format).toBeUndefined()
   })
 
+  test('a schema goes as a strict json_schema on a GPT model, and wins over json', async () => {
+    iu.on('chat', () => chatStream('ok', null))
+    await iuOpenai({ env: env() }).complete({ ...chatRequest, model: 'gpt-x', schema, json: true }, never())
+    expect(iu.requests[0]?.body.response_format).toEqual({
+      type: 'json_schema',
+      json_schema: { name: 'response', strict: true, schema },
+    })
+  })
+
+  test('a schema falls back to JSON mode where json_schema is not taken: a non-GPT model, an optional property', async () => {
+    iu.on('chat', () => chatStream('ok', null))
+    const port = iuOpenai({ env: env() })
+    await port.complete({ ...chatRequest, model: 'deepseek-x', schema }, never())
+    const optional = { ...schema, properties: { ...(schema.properties as object), note: { type: 'string' } } }
+    await port.complete({ ...chatRequest, model: 'gpt-x', schema: optional }, never())
+    expect(iu.requests[0]?.body.response_format).toEqual({ type: 'json_object' })
+    expect(iu.requests[1]?.body.response_format).toEqual({ type: 'json_object' })
+  })
+
+  test('no schema and no json sends no response_format', async () => {
+    iu.on('chat', () => chatStream('ok', null))
+    await iuOpenai({ env: env() }).complete({ ...chatRequest, model: 'gpt-x' }, never())
+    expect(iu.requests[0]?.body.response_format).toBeUndefined()
+  })
+
   test('no usage chunk reports nothing; a usage chunk reports raw counts once', async () => {
     const reported: unknown[] = []
     iu.on('chat', () => chatStream('ok', null))
@@ -217,6 +248,24 @@ describe('messages wire details', () => {
     expect(iu.requests[1]?.body.thinking).toBeUndefined()
     expect(iu.requests[1]?.body.output_config).toBeUndefined()
     expect(iu.requests[1]?.body.max_tokens).toBe(100)
+  })
+
+  test('a schema rides in output_config.format, merged with the effort; absent for a text call', async () => {
+    iu.on('messages', () => messageResponse('{"label":"bug"}', null))
+    const port = anthropicWire({ env: env() })
+    await port.complete({ ...chatRequest, effort: 'high', schema, json: true }, never())
+    await port.complete({ ...chatRequest, schema }, never())
+    await port.complete({ ...chatRequest, effort: 'none', schema }, never())
+    await port.complete({ ...chatRequest, effort: 'high' }, never())
+    const format = { type: 'json_schema', schema }
+    expect(iu.requests[0]?.body).toMatchObject({
+      thinking: { type: 'adaptive' },
+      output_config: { effort: 'high', format },
+    })
+    expect(iu.requests[1]?.body.output_config).toEqual({ format })
+    expect(iu.requests[1]?.body.thinking).toBeUndefined()
+    expect(iu.requests[2]?.body.output_config).toEqual({ format })
+    expect(iu.requests[3]?.body.output_config).toEqual({ effort: 'high' })
   })
 
   test('stop reasons: max_tokens is length (empty or cut), end_turn complete, anything else carries its detail', async () => {

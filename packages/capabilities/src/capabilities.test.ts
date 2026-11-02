@@ -247,6 +247,29 @@ describe('llm.classify (anthropic)', () => {
     expect(usages).toHaveLength(2)
   })
 
+  test('the schema goes on the wire from the zod type, on the first ask and on the re-ask', async () => {
+    iu.on('messages', (_, attempt) =>
+      attempt === 0
+        ? messageResponse('{"label":"bug"}', classifyUsage)
+        : messageResponse('{"label":"bug","reason":"r"}', classifyUsage),
+    )
+    expect(await call('llm.classify', { text: 'x', labels })).toEqual({ label: 'bug', reason: 'r' })
+    expect(iu.requests).toHaveLength(2)
+    for (const request of iu.requests) {
+      expect(request.body.output_config).toMatchObject({
+        format: {
+          type: 'json_schema',
+          schema: {
+            type: 'object',
+            properties: { label: { type: 'string', enum: Object.keys(labels) } },
+            required: ['label', 'reason'],
+            additionalProperties: false,
+          },
+        },
+      })
+    }
+  })
+
   test('a long reason is not a reason to throw the label away', async () => {
     iu.on('messages', () => messageResponse(JSON.stringify({ label: 'bug', reason: 'r'.repeat(900) }), classifyUsage))
     expect(await call('llm.classify', { text: 'x', labels })).toMatchObject({ label: 'bug' })

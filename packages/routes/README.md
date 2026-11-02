@@ -100,7 +100,7 @@ Moving every route of a role to another model, rate or effort is one edit to the
 |-|-|
 | `wire` | `iu-openai` (IU OpenAI dialect: chat completions, `/audio/transcriptions`), `anthropic` (native Messages on the gateway, which pays from a Claude credit pool or IU), `iu-decision` (IU decision API), `opencode` (agent step on the OpenCode host), `iu-gemini` (native Gemini TTS), `iu-replicate` (Replicate predictions) |
 | `model` | the provider's model id |
-| `effort` | `none\|low\|medium\|high\|xhigh\|max`. Absent when the model exposes none |
+| `effort` | `none\|low\|medium\|high\|xhigh\|max`. Absent when the model exposes none. A Sonnet model at `none` is a configuration error (table import and every `AGW_ROUTES` override fail, naming the route): Sonnet 5.5 has no effort level that switches thinking off |
 | `maxOutputTokens` | output ceiling; reasoning tokens count against it |
 | `rate` | `{ inputPerM, outputPerM, cacheReadPerM?, cacheWritePerM?, longPromptTokens? }` USD per million; the provider's `usage.cost` wins where it sends one |
 | `fallback` | a full route spec (`wire`, `model`, `effort?`, `maxOutputTokens?`, `rate?`) the call moves to once on a provider-balance failure (below) |

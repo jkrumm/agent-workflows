@@ -12,6 +12,7 @@ export { gatewayHeaders } from './headers.ts'
 export { type HttpOptions, isBalanceError } from './http.ts'
 export { iuDecision } from './iu-decision.ts'
 export { iuOpenai } from './iu-openai.ts'
+export { isStrictCompatible, type JsonSchema, toJsonSchema } from './json-schema.ts'
 export type * from './port.ts'
 
 /** The production adapters, all on the gateway. Its config is read from `env` on each call, so building this never fails. */
