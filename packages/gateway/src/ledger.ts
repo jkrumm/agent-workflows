@@ -13,6 +13,11 @@ export interface RecordRow {
   ts: string
   model_raw: string | null
   model: string | null
+  /** From `x-agw-project`, and only a plain slug outside `work`; usage-tracker names the `iu/<dir>` namespace. */
+  repo: string | null
+  /** The caller's `x-agw-project`, verbatim. */
+  project_raw: string | null
+  workspace: 'work' | 'private' | null
   billing: 'api_credit' | 'api_key'
   /** The credit pool, for `api_credit`. */
   account: string | null
@@ -112,6 +117,10 @@ export interface FloorStore {
 }
 
 type Stored = { id: number; row_json: string }
+export type Attribution = Pick<RecordRow, 'repo' | 'project_raw' | 'workspace'>
+type StoredRecord = Stored & Attribution
+
+const ATTRIBUTION_COLUMNS = ['repo', 'project_raw', 'workspace'] as const satisfies readonly (keyof Attribution)[]
 
 /**
  * The gateway's durable record of what it served, on local disk: the outbox (a synchronous write per row, flushed to
@@ -134,6 +143,7 @@ export class Ledger implements MeterSource, FloorStore {
     // A second connection (sqlite3 on the file, a checkpoint) must wait, not fail a write. Never a second gateway.
     this.db.run('pragma busy_timeout = 5000')
     this.db.run(SCHEMA)
+    this.addAttributionColumns()
   }
 
   /**
@@ -145,8 +155,8 @@ export class Ledger implements MeterSource, FloorStore {
       const at = this.now()
       this.db
         .query(
-          `insert into records (request_id, pool, usd, written_at_ms, row_json)
-           values ($id, $pool, $usd, $at, $json)`,
+          `insert into records (request_id, pool, usd, written_at_ms, row_json, repo, project_raw, workspace)
+           values ($id, $pool, $usd, $at, $json, $repo, $project, $workspace)`,
         )
         .run({
           id: row.source_id,
@@ -154,6 +164,9 @@ export class Ledger implements MeterSource, FloorStore {
           usd: chargeUsd,
           at,
           json: JSON.stringify(row),
+          repo: row.repo,
+          project: row.project_raw,
+          workspace: row.workspace,
         })
       return new Date(at)
     })
@@ -199,18 +212,28 @@ export class Ledger implements MeterSource, FloorStore {
     return row === null ? null : { usd: row.usd, at: new Date(row.at_ms) }
   }
 
-  /** The oldest rows the outbox still owes, up to `limit` per table. */
+  /**
+   * The oldest rows the outbox still owes, up to `limit` per table. The attribution comes from the columns: a row written
+   * before they existed has none in its JSON, and reads as null.
+   */
   pending(limit: number): PendingBatch {
-    const read = (table: 'records' | 'picks') =>
+    const read = <T extends Stored>(table: 'records' | 'picks', columns: string) =>
       this.db
-        .query<Stored, { limit: number }>(
-          `select id, row_json from ${table} where synced_at_ms is null and quarantine_error is null
+        .query<T, { limit: number }>(
+          `select ${columns} from ${table} where synced_at_ms is null and quarantine_error is null
            order by id limit $limit`,
         )
         .all({ limit })
+    const records = read<StoredRecord>('records', `id, row_json, ${ATTRIBUTION_COLUMNS.join(', ')}`)
     return {
-      records: read('records').map(({ id, row_json }) => ({ id, row: JSON.parse(row_json) as RecordRow })),
-      picks: read('picks').map(({ id, row_json }) => ({ id, row: JSON.parse(row_json) as PickRow })),
+      records: records.map(({ id, row_json, ...attribution }) => ({
+        id,
+        row: { ...(JSON.parse(row_json) as RecordRow), ...attribution },
+      })),
+      picks: read<Stored>('picks', 'id, row_json').map(({ id, row_json }) => ({
+        id,
+        row: JSON.parse(row_json) as PickRow,
+      })),
     }
   }
 
@@ -295,6 +318,19 @@ export class Ledger implements MeterSource, FloorStore {
 
   close(): void {
     this.db.close()
+  }
+
+  /** Additive and on every open, a new file included: one path, so a ledger the old schema made cannot behave differently. */
+  private addAttributionColumns(): void {
+    const present = new Set(
+      this.db
+        .query<{ name: string }, []>('pragma table_info(records)')
+        .all()
+        .map(({ name }) => name),
+    )
+    for (const column of ATTRIBUTION_COLUMNS) {
+      if (!present.has(column)) this.db.run(`alter table records add column ${column} text`)
+    }
   }
 
   private writing<T>(write: () => T): T {

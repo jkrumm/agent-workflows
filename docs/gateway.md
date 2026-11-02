@@ -121,13 +121,21 @@ with an admin key, at boot (before listening, 30 s at most) and hourly:
 
 ## Callers and attribution
 
-Callers authenticate with a door token (`data/door-tokens`, one line per caller: `agw`, `hermes`, `oc`, `modelpick`, …)
+Callers authenticate with a door token (`data/door-tokens`, one line per caller: `hermes`, `agw-opencode` (the OpenCode
+server), `oc`, `modelpick`, …; the API secret is `agw`)
 as `authorization: Bearer <t>`, `x-api-key`, `x-goog-api-key`, `api-key` or a `key` query parameter (whichever the
 caller's SDK sends). None of them goes upstream. The caller name comes from the credential, never a header; a door token never opens the API. Optional headers: `x-agw-run-id`, `x-agw-workflow`, `x-agw-step`, `x-agw-purpose`,
-`traceparent`.
+`x-agw-project`, `x-agw-workspace`, `x-agw-usage`, `traceparent`.
 
-**The gateway is the only writer of inference usage rows.** agw keeps tokens and cost in its run record and spans, but
-stops writing `usage.records` for calls that go through the gateway, so nothing is counted twice.
+The caller sets the lane: `agw` and `agw-opencode` are `agw_workflow`, `hermes` is `hermes`, any other is `other` with the
+caller's name in `lane_detail.raw`, the key Argo labels an `other` row from. `x-agw-project` is the row's `project_raw`
+and, as a plain slug outside workspace `work`, its `repo`; `x-agw-workspace` is `workspace` when it says `work` or
+`private`. The same rule as agw's own rows (`repoOf`, `packages/middleware/src/usage.ts`), copied because the gateway may
+not import middleware. A value over 200 characters is dropped.
+
+**The gateway is the only writer of inference usage rows, with one exception (§Usage and telemetry).** agw keeps tokens
+and cost in its run record and spans, but stops writing `usage.records` for calls that go through the gateway, so nothing
+is counted twice.
 
 **OpenCode** (pinned build) sends the session id on every request with no configuration (`x-opencode-session-id`, and
 `x-session-affinity` with the root session's id). The host adds `x-agw-session` (the run id), `x-agw-run-id` and
@@ -142,7 +150,8 @@ span stays as the fallback. **Hermes** sets `session_affinity_header: x-agw-sess
 Schema changes in usage-tracker (`migrations/pg`, it owns the `usage` schema):
 
 - `records.billing` gains `api_credit`; `account` (`iu|me|me2`) is set on those rows. Gateway rows: `source='gateway'`,
-  `lane_detail {caller, session, run_id, workflow, step, pool, fallback}`.
+  `repo`, `project_raw`, `workspace` from the caller's headers, `lane_detail {caller, raw, session, run_id, workflow, step,
+  pool, fallback}` (`raw` on lane `other` only).
 - `usage.credit_cycles` (account, cycle start/end, grant, metered, reconciled, unspent at close).
 - `usage.gateway_picks` (ts, caller, session, picked, reason, machine, request_id), modelled on `account_picks`, one row
   per routing decision: `picked` is a pool id, `iu-api` (the IU passthrough, because a pool is itself named `iu`) or
@@ -152,6 +161,11 @@ Schema changes in usage-tracker (`migrations/pg`, it owns the `usage` schema):
   `model`, `cost_usd = amount / 100`; request shapes in `docs/spikes/gateway/admin-api.md`) with each org's admin key, like
   `iu_portal_cost`. Not legacy `cost_report`: it cannot group by key. A missing
   admin key skips that org.
+
+**Rows without a gateway row.** A request with `x-agw-usage: caller` on a non-`/anthropic` path writes no `records` row
+and no ledger row; its span still goes out. These are agw's media calls, priced per minute, per character or per image:
+only agw can price them, so agw writes their row itself. On `/anthropic` paths the header is ignored, because a Claude
+call must always hit the meter. The other requests without a row are a `count_tokens` and a 402.
 
 One span per request, service `agw-gateway` (`gen_ai.*` attributes, pool, cache read/write tokens, time to the first
 body byte), parented by `traceparent`. Every response carries `x-agw-request-id`, the row's `source_id`, and `x-agw-pool`.

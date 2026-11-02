@@ -50,6 +50,66 @@ describe('ledger', () => {
     expect(ledger.spentSince('iu', new Date(0))).toBe(4)
   })
 
+  describe('a file the old schema made', () => {
+    const OLD_RECORDS = `create table records (
+      id integer primary key,
+      request_id text not null unique,
+      pool text not null,
+      usd real,
+      written_at_ms integer not null,
+      row_json text not null,
+      synced_at_ms integer,
+      quarantine_error text
+    )`
+    const oldFile = (): string => {
+      const path = join(dir.path, 'old.sqlite')
+      const db = new Database(path, { create: true })
+      db.run(OLD_RECORDS)
+      const { repo: _repo, project_raw: _project, workspace: _workspace, ...oldRow } = recordRow('old')
+      db.query(
+        `insert into records (request_id, pool, usd, written_at_ms, row_json, synced_at_ms)
+         values ('synced', 'iu', 1, 0, '{}', 1), ('old', 'iu', 2, 1, ?, null)`,
+      ).run(JSON.stringify(oldRow))
+      db.close()
+      return path
+    }
+    const columns = (path: string): string[] => {
+      const db = new Database(path, { readonly: true })
+      const names = db
+        .query<{ name: string }, []>('pragma table_info(records)')
+        .all()
+        .map(({ name }) => name)
+      db.close()
+      return names
+    }
+
+    test('opens, keeps its rows, and an unsynced one reads as unattributed', () => {
+      const path = oldFile()
+      const migrated = new Ledger(path, { now: () => clock })
+      expect(columns(path)).toEqual(expect.arrayContaining(['repo', 'project_raw', 'workspace']))
+      expect(migrated.spentSince('iu', new Date(0))).toBe(3)
+      expect(migrated.stats().unsynced).toBe(1)
+      const { row } = migrated.pending(10).records[0] ?? {}
+      expect(row).toMatchObject({ source_id: 'old', repo: null, project_raw: null, workspace: null })
+      migrated.close()
+    })
+
+    test('takes attributed rows, and a second open changes nothing', () => {
+      const path = oldFile()
+      const migrated = new Ledger(path, { now: () => clock })
+      migrated.writeRecord(recordRow('new', { repo: 'r', project_raw: 'r', workspace: 'private' }))
+      migrated.close()
+      const before = columns(path)
+      const reopened = new Ledger(path, { now: () => clock })
+      expect(columns(path)).toEqual(before)
+      expect(reopened.pending(10).records.map(({ row }) => [row.source_id, row.repo, row.workspace])).toEqual([
+        ['old', null, null],
+        ['new', 'r', 'private'],
+      ])
+      reopened.close()
+    })
+  })
+
   test('WAL with synchronous NORMAL: durable across a process crash', () => {
     const db = new Database(join(dir.path, 'ledger.sqlite'), { readonly: true })
     expect(db.query('pragma journal_mode').get()).toEqual({ journal_mode: 'wal' })

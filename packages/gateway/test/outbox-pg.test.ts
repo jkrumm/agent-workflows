@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
+import { Database } from 'bun:sqlite'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { Pool } from 'pg'
@@ -126,6 +127,53 @@ describePg(suite, () => {
     expect(Number((await record(id))?.cost_usd)).toBe(0.25)
     expect((await picksOf(id)).map((row) => row.picked)).toEqual(['iu', 'iu-api'])
     expect(s.ledger.stats().unsynced).toBe(0)
+    await s.close()
+  })
+
+  test('the attribution columns land, and a re-flush updates them', async () => {
+    const s = scene()
+    const id = fresh('attributed')
+    s.ledger.writeRecord(
+      recordRow(id, { repo: 'agent-workflows', project_raw: 'agent-workflows', workspace: 'private' }),
+    )
+    const first = s.ledger.pending(1)
+    await s.sink.write(first)
+    expect(await record(id)).toMatchObject({
+      repo: 'agent-workflows',
+      project_raw: 'agent-workflows',
+      workspace: 'private',
+    })
+    const row = first.records[0]?.row
+    if (row === undefined) throw new Error('no row')
+    await s.sink.write({ records: [{ id: 1, row: { ...row, repo: null, workspace: 'work' } }], picks: [] })
+    expect(await record(id)).toMatchObject({ repo: null, project_raw: 'agent-workflows', workspace: 'work' })
+    await s.close()
+  })
+
+  test('a row an old ledger still owes flushes unattributed', async () => {
+    const s = scene()
+    const id = fresh('old-row')
+    const { repo: _repo, project_raw: _project, workspace: _workspace, ...oldRow } = recordRow(id)
+    const dir = tempDir()
+    const path = join(dir.path, 'old.sqlite')
+    const db = new Database(path, { create: true })
+    db.run(`create table records (
+      id integer primary key, request_id text not null unique, pool text not null, usd real,
+      written_at_ms integer not null, row_json text not null, synced_at_ms integer, quarantine_error text
+    )`)
+    db.query(`insert into records (request_id, pool, usd, written_at_ms, row_json) values (?, 'iu', 1, 1, ?)`).run(
+      id,
+      JSON.stringify(oldRow),
+    )
+    db.close()
+    const ledger = new Ledger(path)
+    const outbox = new Outbox({ ledger, sink: s.sink, logger: s.logger })
+    await outbox.flush()
+    expect(outbox.lastError()).toBeNull()
+    expect(ledger.stats()).toMatchObject({ unsynced: 0, quarantined: 0 })
+    expect(await record(id)).toMatchObject({ repo: null, project_raw: null, workspace: null })
+    ledger.close()
+    dir.remove()
     await s.close()
   })
 
@@ -310,8 +358,37 @@ describePg(suite, () => {
       expect(row).toMatchObject({ billing: 'api_credit', account: 'iu', cost_source: 'prices' })
       expect(Number(row?.cost_usd)).toBe(2)
       expect(row?.lane_detail).toMatchObject({ costEstimated: true })
+      expect(row).toMatchObject({ repo: null, project_raw: null, workspace: null })
       const health = (await (await fetch(`${gw.url}/health`)).json()) as { ledger: unknown }
       expect(health.ledger).toMatchObject({ flush: 'on', unsynced: 0, quarantined: 0 })
+      await gw.close()
+      anthropic.stop()
+      iu.stop()
+    })
+
+    test('the attribution headers land in usage.records; a caller-written request lands nothing', async () => {
+      const anthropic = fakeUpstream()
+      const iu = fakeUpstream(() => Response.json(usage))
+      const gw = harness({ anthropic, iu, usage: { connectionString: scratchUrl, debounceMs: 5 } })
+      const init = jsonBody({ model: 'priced-model', messages: [] })
+      const headers = { ...init.headers, 'x-agw-project': 'agent-workflows', 'x-agw-workspace': 'private' }
+      const skipped = await gw.call('/openai/v1/images/generations', {
+        ...init,
+        headers: { ...headers, 'x-agw-usage': 'caller' },
+      })
+      await skipped.text()
+      const served = await gw.call('/openai/v1/chat/completions', { ...init, headers })
+      await served.text()
+      const id = served.headers.get('x-agw-request-id') ?? ''
+      await until(async () => (await record(id)) !== undefined)
+      expect(await record(id)).toMatchObject({
+        repo: 'agent-workflows',
+        project_raw: 'agent-workflows',
+        workspace: 'private',
+        lane: 'other',
+        lane_detail: { raw: 'oc' },
+      })
+      expect(await record(skipped.headers.get('x-agw-request-id') ?? '')).toBeUndefined()
       await gw.close()
       anthropic.stop()
       iu.stop()

@@ -5,7 +5,7 @@ import { BALANCE_MARKER, isBalanceFailure, resolveModelAlias } from '@agent-work
 import { chargeOf, type RequestShape } from './charge.ts'
 import type { IuUpstream } from './config.ts'
 import { isRecord } from './json.ts'
-import type { Ledger, RecordRow } from './ledger.ts'
+import type { Attribution, Ledger, RecordRow } from './ledger.ts'
 import { errorMessage, type Logger } from './log.ts'
 import { isClaudeCodeShaped, type Pick, type Pools, sessionId } from './pools/index.ts'
 import { decodeBody, type TeeResult, UsageTee } from './tee.ts'
@@ -18,8 +18,10 @@ const REFUSED = 'refused'
 const PASSTHROUGH = 'passthrough'
 /** nginx's status for a caller that left before the request was read; no upstream saw it. */
 const CALLER_LEFT = 499
-/** A session id a caller sends is unbounded; past this it is stored and bound by its hash. */
-const MAX_SESSION_CHARS = 200
+/** What a caller sends is unbounded: past this a session id is stored and bound by its hash, an attribution is dropped. */
+const MAX_CALLER_VALUE_CHARS = 200
+/** `repoOf` of packages/middleware/src/usage.ts; the bundle rule keeps middleware out of this process. */
+const REPO_SLUG = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 
 /** rules/agent-limits: a hang guard of 30 minutes on silence from upstream, never a cap on a long stream. */
 const HANG_GUARD_MS = 30 * 60 * 1000
@@ -186,12 +188,32 @@ function modelFromPath(path: string): string | null {
 
 /** Every use of a session id (pick, binding, row, span) takes this form. */
 function boundedSession(session: string | null): string | null {
-  if (session === null || session.length <= MAX_SESSION_CHARS) return session
+  if (session === null || session.length <= MAX_CALLER_VALUE_CHARS) return session
   return `h:${createHash('sha256').update(session).digest('hex').slice(0, 32)}`
 }
 
+/** `agw-opencode` is the OpenCode server's token: agw's workflows, through OpenCode. */
 const laneOf = (caller: string): RecordRow['lane'] =>
-  caller === 'agw' ? 'agw_workflow' : caller === 'hermes' ? 'hermes' : 'other'
+  caller === 'agw' || caller === 'agw-opencode' ? 'agw_workflow' : caller === 'hermes' ? 'hermes' : 'other'
+
+/** `x-agw-project` and `x-agw-workspace` as `usage.records` takes them; an empty or an overlong value is no value. */
+function attributionOf(inbound: Headers): Attribution {
+  const bounded = (name: string): string | null => {
+    const value = inbound.get(name)
+    return value === null || value === '' || value.length > MAX_CALLER_VALUE_CHARS ? null : value
+  }
+  const project = bounded('x-agw-project')
+  const declared = bounded('x-agw-workspace')
+  const workspace = declared === 'work' || declared === 'private' ? declared : null
+  return {
+    repo: project !== null && workspace !== 'work' && REPO_SLUG.test(project) ? project : null,
+    project_raw: project,
+    workspace,
+  }
+}
+
+/** The caller writes this request's row itself, because only it can price it. Honoured off `/anthropic` only. */
+const callerWritesUsage = (inbound: Headers): boolean => inbound.get('x-agw-usage')?.trim().toLowerCase() === 'caller'
 
 /**
  * The request path: door auth, the pick, the byte-exact forward, the usage tee, the ledger row, the span. A stream
@@ -273,6 +295,7 @@ export function createProxy(options: ProxyOptions): GatewayProxy {
     const chargeUsd = cost.reportedUsd ?? cost.estimateUsd
     const tokens = tee.tokens
     const durationMs = Date.now() - x.startedAtMs
+    const lane = laneOf(x.caller)
     const row: RecordRow = {
       source: 'gateway',
       source_id: x.requestId,
@@ -280,14 +303,17 @@ export function createProxy(options: ProxyOptions): GatewayProxy {
       ts: new Date(x.startedAtMs).toISOString(),
       model_raw: x.requestedModel ?? model,
       model,
+      ...attributionOf(x.inbound),
       billing: creditPool ? 'api_credit' : 'api_key',
       account: creditPool ? pick.pool : null,
       api_key: creditPool ? null : 'personal',
       machine,
       outcome: ok && ended === 'complete' && !tee.streamError ? 'ok' : 'error',
-      lane: laneOf(x.caller),
+      lane,
       lane_detail: {
         caller: x.caller,
+        // Argo labels an `other` row from this key.
+        ...(lane === 'other' ? { raw: x.caller } : {}),
         session: x.session,
         run_id: x.inbound.get('x-agw-run-id'),
         workflow: x.inbound.get('x-agw-workflow'),
@@ -568,15 +594,16 @@ export function createProxy(options: ProxyOptions): GatewayProxy {
   }
 
   const servePassthrough = async (x: Exchange, url: string): Promise<Response> => {
+    const record = !callerWritesUsage(x.inbound)
     const label: PickLabel = { pool: IU_API, reason: PASSTHROUGH }
     x.span.set({ 'agw.gateway.pool': IU_API, 'agw.gateway.pick_reason': PASSTHROUGH })
     const target: Target = { label: IU_API, url, credential: ['authorization', `Bearer ${iu.apiKey}`] }
-    awaitingUpstream(x, label, true)
+    awaitingUpstream(x, label, record)
     try {
       const upstream = await send(x, target)
-      return answer(x, upstream, upstream.body, label, true)
+      return answer(x, upstream, upstream.body, label, record)
     } catch (error) {
-      return unreachable(x, label, true, error)
+      return unreachable(x, label, record, error)
     }
   }
 

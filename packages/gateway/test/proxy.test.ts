@@ -16,6 +16,7 @@ import {
   HERMES_TOKEN,
   IU_KEY,
   jsonBody,
+  OPENCODE_TOKEN,
   pool,
   POOL_KEY,
   refusalResponse,
@@ -320,6 +321,20 @@ describe('door auth', () => {
     const records = gw.rows().records
     expect(records.map(({ row }) => row.lane_detail.caller)).toEqual(['oc', 'hermes', 'agw'])
     expect(records.map(({ row }) => row.lane)).toEqual(['other', 'hermes', 'agw_workflow'])
+  })
+
+  test('agw-opencode is the agw_workflow lane; only an other row names its caller in raw', async () => {
+    const gw = start()
+    for (const token of [OPENCODE_TOKEN, API_SECRET, HERMES_TOKEN, DOOR_TOKEN]) {
+      await (await gw.call(MESSAGES, { ...jsonBody(request()), token })).text()
+    }
+    const rows = gw.rows().records.map(({ row }) => [row.lane_detail.caller, row.lane, row.lane_detail.raw])
+    expect(rows).toEqual([
+      ['agw-opencode', 'agw_workflow', undefined],
+      ['agw', 'agw_workflow', undefined],
+      ['hermes', 'hermes', undefined],
+      ['oc', 'other', 'oc'],
+    ])
   })
 
   test.each([
@@ -871,6 +886,145 @@ describe('usage row', () => {
     expect(gw.rows().records[0]?.row.cost_reported_usd).toBeGreaterThan(0)
     expect(gw.ledger.spentSince('iu', new Date(0))).toBe(0)
     expect(gw.ledger.spentSince('iu-api', new Date(0))).toBeGreaterThan(0)
+  })
+})
+
+describe('attribution', () => {
+  const OPENAI = '/openai/v1/chat/completions'
+  const rowOf = async (headers: Record<string, string>) => {
+    const gw = start()
+    const init = jsonBody(request())
+    await (await gw.call(MESSAGES, { ...init, headers: { ...init.headers, ...headers } })).text()
+    const { repo, project_raw, workspace } = gw.rows().records[0]?.row ?? {}
+    return { repo, project_raw, workspace }
+  }
+  const long = 'p'.repeat(201)
+
+  type Case = [
+    name: string,
+    headers: Record<string, string>,
+    repo: string | null,
+    raw: string | null,
+    ws: string | null,
+  ]
+  test.each<Case>([
+    ['none', {}, null, null, null],
+    [
+      'a slug, private',
+      { 'x-agw-project': 'agent-workflows', 'x-agw-workspace': 'private' },
+      'agent-workflows',
+      'agent-workflows',
+      'private',
+    ],
+    ['a slug, no workspace', { 'x-agw-project': 'a.b_c-1' }, 'a.b_c-1', 'a.b_c-1', null],
+    ['a slug, work', { 'x-agw-project': 'athena', 'x-agw-workspace': 'work' }, null, 'athena', 'work'],
+    ['a path', { 'x-agw-project': '/Users/x/repo', 'x-agw-workspace': 'private' }, null, '/Users/x/repo', 'private'],
+    ['a leading dot', { 'x-agw-project': '.hidden' }, null, '.hidden', null],
+    ['an unknown workspace', { 'x-agw-project': 'repo', 'x-agw-workspace': 'WORK' }, 'repo', 'repo', null],
+    ['an empty project', { 'x-agw-project': '', 'x-agw-workspace': 'private' }, null, null, 'private'],
+    ['a project at the bound', { 'x-agw-project': 'p'.repeat(200) }, 'p'.repeat(200), 'p'.repeat(200), null],
+    ['a project past the bound', { 'x-agw-project': long, 'x-agw-workspace': 'private' }, null, null, 'private'],
+    ['a workspace past the bound', { 'x-agw-project': 'repo', 'x-agw-workspace': long }, 'repo', 'repo', null],
+  ])('%s', async (_name, headers, repo, project_raw, workspace) => {
+    expect(await rowOf(headers)).toEqual({ repo, project_raw, workspace } as Awaited<ReturnType<typeof rowOf>>)
+  })
+
+  test('an IU path carries it too, and neither header goes upstream', async () => {
+    const gw = start()
+    const init = jsonBody({ model: 'gpt-x' })
+    const headers = { ...init.headers, 'x-agw-project': 'repo', 'x-agw-workspace': 'private' }
+    await (await gw.call(OPENAI, { ...init, headers })).text()
+    expect(gw.rows().records[0]?.row).toMatchObject({ repo: 'repo', project_raw: 'repo', workspace: 'private' })
+    expect([...(iu.seen[0]?.headers.keys() ?? [])].filter((name) => name.startsWith('x-agw-'))).toEqual([])
+  })
+})
+
+describe('x-agw-usage: caller', () => {
+  const IMAGE = '/openai/v1/images/generations'
+  const callerInit = (value = 'caller'): RequestInit => {
+    const init = jsonBody({ model: 'gpt-image' })
+    return { ...init, headers: { ...init.headers, 'x-agw-usage': value } }
+  }
+
+  test.each(['caller', 'CALLER', ' Caller '])('%j on an IU path: no row, the span still goes out', async (value) => {
+    const exporter = new InMemorySpanExporter()
+    const telemetry = createTelemetry({ env: {}, logger: silentLogger(), exporter, scheduledDelayMillis: 1 })
+    const gw = start({ telemetry })
+    const response = await gw.call(IMAGE, callerInit(value))
+    expect(await response.json()).toEqual(message)
+    expect(response.headers.get('x-agw-pool')).toBe('iu-api')
+    expect(gw.rows()).toEqual({ records: [], picks: [] })
+    expect(gw.ledger.stats()).toEqual({ unsynced: 0, quarantined: 0, oldestUnsyncedAt: null })
+    expect([...(iu.seen[0]?.headers.keys() ?? [])].filter((name) => name.startsWith('x-agw-'))).toEqual([])
+    for (let i = 0; i < 100 && exporter.getFinishedSpans().length === 0; i++) await Bun.sleep(5)
+    const spans = exporter.getFinishedSpans()
+    expect(spans).toHaveLength(1)
+    expect(spans[0]?.attributes).toMatchObject({
+      'agw.gateway.caller': 'oc',
+      'agw.gateway.pool': 'iu-api',
+      'agw.gateway.status': 200,
+    })
+    expect(spans[0]?.attributes['agw.gateway.request_id']).toBe(response.headers.get('x-agw-request-id') ?? '')
+  })
+
+  test('every IU prefix honours it', async () => {
+    const gw = start()
+    for (const path of ['/gemini/v1beta/models/m:generateContent', '/replicate/v1/predictions', '/decisions/v1/x']) {
+      await (await gw.call(path, callerInit())).text()
+    }
+    expect(iu.seen).toHaveLength(3)
+    expect(gw.rows().records).toEqual([])
+  })
+
+  test('an unreachable upstream writes no row either', async () => {
+    iu.stop()
+    const gw = start()
+    const response = await gw.call(IMAGE, callerInit())
+    expect(response.status).toBe(502)
+    expect(gw.rows().records).toEqual([])
+  })
+
+  test('a caller that hangs up mid-stream writes no row either', async () => {
+    iu.reply(
+      () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode('data: {}\n\n'))
+            },
+          }),
+          { headers: { 'content-type': 'text/event-stream' } },
+        ),
+    )
+    const gw = start()
+    const response = await gw.call(IMAGE, callerInit())
+    const reader = response.body?.getReader()
+    await reader?.read()
+    await reader?.cancel()
+    await gw.proxy.drained()
+    expect(gw.rows().records).toEqual([])
+  })
+
+  test('any other value keeps the gateway row', async () => {
+    const gw = start()
+    await (await gw.call(IMAGE, callerInit('gateway'))).text()
+    expect(gw.rows().records).toHaveLength(1)
+  })
+
+  test.each([
+    ['a credit pool', [pool('iu')], 'iu'],
+    ['IU', [], 'iu-api'],
+  ])('ignored on /anthropic through %s: a Claude call always hits the meter', async (_name, registry, label) => {
+    const gw = start({ registry })
+    const init = jsonBody(request())
+    const headers = { ...init.headers, 'x-agw-usage': 'caller' }
+    const response = await gw.call(MESSAGES, { ...init, headers })
+    await response.text()
+    expect(response.headers.get('x-agw-pool')).toBe(label)
+    const { records, picks } = gw.rows()
+    expect(records.map(({ row }) => row.lane_detail.pool)).toEqual([label])
+    expect(picks).toHaveLength(1)
+    expect(gw.ledger.spentSince('iu', new Date(0)) > 0).toBe(registry.length > 0)
   })
 })
 
