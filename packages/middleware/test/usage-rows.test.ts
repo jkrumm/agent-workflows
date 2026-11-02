@@ -306,6 +306,15 @@ describe('usage rows: none for what the gateway records', () => {
       expect(gatewayRecords(model)).toBe(false)
   })
 
+  // The echoes IU sent on 2026-11-02 (make live-routes): the transports report them as the model, and the gateway wrote
+  // these calls' rows, so agw must not write them again.
+  test('gatewayRecords: an IU provider echo of a gateway model is the same model; a media echo is not', () => {
+    for (const model of ['deepseek/deepseek-v4.1-flash', 'openai.gpt-6.1-terra', 'vertex_ai_eu/gemini-3.8-flash'])
+      expect(gatewayRecords(model)).toBe(true)
+    for (const model of ['openai.gpt-image-2.5-flare', 'prefix/tavily-search', 'a/b/deepseek-v4.1-flash'])
+      expect(gatewayRecords(model)).toBe(false)
+  })
+
   test('usage billed outside the gateway keeps its row: tavily-search beside a text call', () => {
     const tavily = { tokens: none, cost: 0.016, toolCalls: 0, unpricedCalls: 0 }
     const rows = usageRowsForStep(

@@ -115,8 +115,15 @@ export function gatewayRecords(model: string): boolean {
       .filter((entry) => entry.price === undefined && GATEWAY_WIRES.has(entry.wire))
       .map((entry) => entry.model),
   )
-  return gatewayModels.has(model)
+  if (gatewayModels.has(model)) return true
+  // IU echoes some models behind a one-segment provider prefix (`<provider>/<model>`, `<provider>.<model>`), and the
+  // transports report the echo: it is still a call the gateway recorded.
+  const echo = PROVIDER_ECHO.exec(model)
+  return echo?.[1] !== undefined && gatewayModels.has(echo[1])
 }
+
+/** `<provider>/<model>` or `<provider>.<model>`, the provider one segment; the gateway's `rowModel` reads it the same way. */
+const PROVIDER_ECHO = /^[A-Za-z0-9_-]+[/.](.+)$/
 
 function isRouteId(id: string): id is RouteId {
   return Object.hasOwn(DEFAULT_ROUTES, id)
