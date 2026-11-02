@@ -23,7 +23,7 @@ const COST = (100 * 5 + 1000 * 30) / 1e6
 
 const deps = (streamIdleMs?: number, streamMaxMs?: number) =>
   resolveImageDeps({
-    env: { IU_API_KEY: 'test-key', IU_BASE_URL: fake.baseUrl },
+    env: { AGW_API_SECRET: 'test-key', AGW_GATEWAY_URL: fake.url },
     retry: { backoffMs: 0 },
     ...(streamIdleMs ? { streamIdleMs } : {}),
     ...(streamMaxMs ? { streamMaxMs } : {}),
@@ -506,7 +506,7 @@ describe('requestImages: streaming', () => {
   })
 
   test('a failure below the vendor (no answer, a cut body) is marked transport; a vendor status line is not', async () => {
-    const env = { IU_API_KEY: 'test-key', IU_BASE_URL: fake.baseUrl }
+    const env = { AGW_API_SECRET: 'test-key', AGW_GATEWAY_URL: fake.url }
     const reset = resolveImageDeps({
       env,
       retry: { backoffMs: 0 },

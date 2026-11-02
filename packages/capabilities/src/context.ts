@@ -16,10 +16,30 @@ export const usageSchema = z.object({
 })
 export type Usage = z.infer<typeof usageSchema>
 
-/** What a handler sees. Structurally the same `addUsage` the runtime's step context carries. */
+/**
+ * Who a model call is for: the run step that makes it. The transports send it to the gateway as `x-agw-*` headers
+ * (`gatewayHeaders`), which land on the gateway's usage row and span. Structurally the same `attribution` the
+ * runtime's step context carries.
+ */
+export interface Attribution {
+  /** The run the step belongs to. */
+  runId: string
+  /** The root of its run tree: the gateway's session, so a run tree stays on one credit pool. */
+  rootId: string
+  workflow: string
+  step: string
+  purpose: string
+  project?: string
+  workspace?: string
+  traceparent?: string
+}
+
+/** What a handler sees. Structurally the same `addUsage` and `attribution` the runtime's step context carries. */
 export interface Ctx {
   signal: AbortSignal
   /** Report one billed model call. A re-ask after a rejected answer reports each attempt; the transport's own
    * retries of failed requests (429, 5xx, dropped connections) report nothing, because no usage came back. */
   addUsage: (usage: Usage) => void
+  /** The calling step; absent outside a run (a test, a call with no step). */
+  attribution?: Attribution
 }

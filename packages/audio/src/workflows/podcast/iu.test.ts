@@ -123,7 +123,7 @@ describe('buildSystem — prompt-cache prefix', () => {
 })
 
 describe('anthropicBody', () => {
-  const call: ChatCall = { wire: 'iu-anthropic', model: 'fake-model', system: 'sys', user: 'user', maxTokens: 1000 }
+  const call: ChatCall = { wire: 'anthropic', model: 'fake-model', system: 'sys', user: 'user', maxTokens: 1000 }
 
   test('without effort there is no thinking and no output_config; the max_tokens floor lifts a small budget', () => {
     const body = anthropicBody(call)
@@ -253,7 +253,7 @@ describe('parseChatReply / parseResponsesReply', () => {
 
 describe('iuModelPort', () => {
   const chatCall: ChatCall = { wire: 'iu-openai', model: 'fake-model', system: 's', user: 'u', maxTokens: 100 }
-  const anthropicCall: ChatCall = { ...chatCall, wire: 'iu-anthropic' }
+  const anthropicCall: ChatCall = { ...chatCall, wire: 'anthropic' }
   const roundCall: RoundCall = {
     api: 'chat',
     model: 'fake-model',

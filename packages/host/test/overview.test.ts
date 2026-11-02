@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
-import { chatStream, startFakeIu } from '@agent-workflows/capabilities/testing'
+import { chatStream, startFakeGateway } from '@agent-workflows/capabilities/testing'
 import { resolveRoute } from '@agent-workflows/routes'
 import { createArgoPush } from '../src/fleet/argo.ts'
 import type { CollectorResult, Collectors } from '../src/fleet/collect.ts'
@@ -83,7 +83,7 @@ beforeAll(async () => {
       return new Response('{}', { status: argoStatus })
     }) as unknown as typeof fetch,
   })
-  const iu = startFakeIu({ chat: () => answer() })
+  const iu = startFakeGateway({ chat: () => answer() })
   t = await startTestHost({
     prefix: 'overview',
     iu,

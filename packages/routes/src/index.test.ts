@@ -36,7 +36,7 @@ describe('table', () => {
     for (const id of needed) expect(routeIds()).toContain(id)
   })
 
-  // `iu-anthropic` is still a wire (the schema accepts it, the transport has its own tests) but no route in the table uses it.
+  // `anthropic` is still a wire (the schema accepts it, the transport has its own tests) but no route in the table uses it.
   test('every wire the table uses is represented', () => {
     const wires = new Set(routeIds().map((id) => DEFAULT_ROUTES[id]?.wire))
     expect([...wires].sort()).toEqual(['iu-decision', 'iu-gemini', 'iu-openai', 'iu-replicate', 'opencode'])
@@ -234,9 +234,7 @@ describe('costFromUsage', () => {
     } as const
     expect(costFromUsage('iu-decision', { inputTokens: 1000, outputTokens: 500 }, rate)).toEqual(expected)
     expect(costFromUsage('iu-decision', { prompt_tokens: 1000, completion_tokens: 500 }, rate)).toEqual(expected)
-    expect(costFromUsage('iu-anthropic', { input_tokens: 1000, output_tokens: 500, cost: null }, rate)).toEqual(
-      expected,
-    )
+    expect(costFromUsage('anthropic', { input_tokens: 1000, output_tokens: 500, cost: null }, rate)).toEqual(expected)
   })
 
   test('a free decision model is a rate cost of 0, not unknown', () => {
@@ -287,7 +285,7 @@ describe('costFromUsage', () => {
         cache_read_input_tokens: 4000,
         cache_creation_input_tokens: 500,
       }
-      expect(costFromUsage('iu-anthropic', usage, cached)).toEqual(usd(1000 * 1 + 4000 * 0.1 + 500 * 1.25 + 200 * 5))
+      expect(costFromUsage('anthropic', usage, cached)).toEqual(usd(1000 * 1 + 4000 * 0.1 + 500 * 1.25 + 200 * 5))
     })
 
     test('OpenAI: prompt_tokens includes cached_tokens, which are priced at the read rate instead', () => {
@@ -302,14 +300,14 @@ describe('costFromUsage', () => {
     test('a missing cache rate with cache tokens present is unknown, never free', () => {
       const noCache = { inputPerM: 1, outputPerM: 5 }
       expect(
-        costFromUsage('iu-anthropic', { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 5 }, noCache),
+        costFromUsage('anthropic', { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 5 }, noCache),
       ).toEqual({
         usd: null,
         source: 'unknown',
       })
       expect(
         costFromUsage(
-          'iu-anthropic',
+          'anthropic',
           { input_tokens: 1, output_tokens: 1, cache_creation_input_tokens: 5 },
           {
             ...noCache,
@@ -326,7 +324,7 @@ describe('costFromUsage', () => {
         cache_read_input_tokens: 0,
         cache_creation_input_tokens: null,
       }
-      expect(costFromUsage('iu-anthropic', usage, { inputPerM: 1, outputPerM: 5 })).toEqual(usd(10 * 1 + 1 * 5))
+      expect(costFromUsage('anthropic', usage, { inputPerM: 1, outputPerM: 5 })).toEqual(usd(10 * 1 + 1 * 5))
     })
 
     test('cache counts above the cache-inclusive prompt total are unknown, not clamped to zero input', () => {
@@ -347,7 +345,7 @@ describe('costFromUsage', () => {
         output_tokens: 5,
         cache_read_input_tokens: 99_000,
       }
-      expect(costFromUsage('iu-anthropic', long, cached)).toEqual(usd(1001 * 1 + 99_000 * 0.1 + 5 * 5))
+      expect(costFromUsage('anthropic', long, cached)).toEqual(usd(1001 * 1 + 99_000 * 0.1 + 5 * 5))
       expect(costFromUsage('iu-openai', { prompt_tokens: 5_000_001, completion_tokens: 5 }, cached)).toEqual(
         usd(5_000_001 * 1 + 5 * 5),
       )
@@ -360,11 +358,11 @@ describe('costFromUsage', () => {
         output_tokens: 1,
         cache_read_input_tokens: 5,
       }
-      expect(costFromUsage('iu-anthropic', usage, cached)).toEqual({
+      expect(costFromUsage('anthropic', usage, cached)).toEqual({
         usd: 0.5,
         source: 'provider',
       })
-      expect(costFromUsage('iu-anthropic', { ...usage, input_tokens: 200_000 }, cached)).toEqual({
+      expect(costFromUsage('anthropic', { ...usage, input_tokens: 200_000 }, cached)).toEqual({
         usd: 0.5,
         source: 'provider',
       })
@@ -556,7 +554,7 @@ describe('fallback', () => {
     expect(
       routeSchema.safeParse({
         ...base,
-        fallback: { wire: 'iu-anthropic', model: 'f' },
+        fallback: { wire: 'anthropic', model: 'f' },
       }).success,
     ).toBe(true)
   })
@@ -597,7 +595,7 @@ describe('the long-prompt tier of Terra (>272K prompt tokens bill 2x input and c
   const terra = resolveRoute('brain.agent', {}).rate
   const at = (inputTokens: number, cacheRead = 0, cacheWrite = 0) =>
     costFromUsage(
-      'iu-anthropic',
+      'anthropic',
       {
         input_tokens: inputTokens,
         output_tokens: 1_000,
@@ -632,7 +630,7 @@ describe('the long-prompt tier of Terra (>272K prompt tokens bill 2x input and c
   })
 
   test('a provider-reported cost still wins above the threshold', () => {
-    expect(costFromUsage('iu-anthropic', { cost: 0.5, input_tokens: 500_000, output_tokens: 1 }, terra)).toEqual({
+    expect(costFromUsage('anthropic', { cost: 0.5, input_tokens: 500_000, output_tokens: 1 }, terra)).toEqual({
       usd: 0.5,
       source: 'provider',
     })

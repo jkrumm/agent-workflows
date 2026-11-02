@@ -1233,7 +1233,7 @@ describe('writeSegment', () => {
         reply('{"turns":[{"speaker":"A","text":"ganz"}]}'),
       ),
     )
-    const written = await writeSegment(llmFor(port, chatRoute({ 'podcast.write': { wire: 'iu-anthropic' } })), {
+    const written = await writeSegment(llmFor(port, chatRoute({ 'podcast.write': { wire: 'anthropic' } })), {
       req: BASE_REQUEST,
       outline: THREE_SEGMENT_OUTLINE,
       index: 0,
@@ -1242,7 +1242,7 @@ describe('writeSegment', () => {
     })
     expect(written.turns).toEqual([{ speaker: 'A', text: 'ganz' }])
     expect(port.chats).toHaveLength(2)
-    expect(port.chats.every((c) => c.wire === 'iu-anthropic')).toBe(true)
+    expect(port.chats.every((c) => c.wire === 'anthropic')).toBe(true)
     expect(port.chats[1]?.maxTokens).toBeGreaterThan(port.chats[0]?.maxTokens ?? 0)
   })
 

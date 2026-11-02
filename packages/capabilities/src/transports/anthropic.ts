@@ -1,5 +1,6 @@
 import { z } from 'zod'
-import { type Env, iuConfig } from './config.ts'
+import { type Env, gatewayConfig } from './config.ts'
+import { gatewayHeaders } from './headers.ts'
 import {
   Attempt,
   DEFAULTS,
@@ -20,6 +21,8 @@ const usageSchema = z.object({
   output_tokens: count,
   cache_read_input_tokens: count,
   cache_creation_input_tokens: count,
+  /** The split of `cache_creation_input_tokens` by TTL; the 1 h part is priced at its own rate. */
+  cache_creation: z.object({ ephemeral_1h_input_tokens: count }).nullish(),
   cost: count,
 })
 const messageSchema = z.object({
@@ -30,24 +33,28 @@ const messageSchema = z.object({
 })
 
 /**
- * IU's native Messages route, one non-streamed request under a hang guard (the agent-limits fallback
- * for a client that cannot stream), never a budget. Thinking is `adaptive` with the route's effort,
- * and only when the route has one; models without effort get a plain request.
+ * The native Messages route on the gateway, which pays it from a Claude credit pool or IU. One non-streamed request
+ * under a hang guard (the agent-limits fallback for a client that cannot stream), never a budget. Thinking is
+ * `adaptive` with the route's effort, and only when the route has one; models without effort get a plain request.
+ * Every request carries `x-agw-fallback: none`: with no credit left the gateway answers 402 (balance), so the call
+ * moves to the route's own fallback, never onto IU's Claude.
  */
-export function iuAnthropic(options: HttpOptions & { env?: Env } = {}): ChatPort {
+export function anthropicWire(options: HttpOptions & { env?: Env } = {}): ChatPort {
   const doFetch = options.fetch ?? fetch
   return {
     complete: async (request, signal, onUsage) => {
-      const { apiKey, anthropicBase } = iuConfig(options.env ?? process.env)
+      const { token, anthropicBase } = gatewayConfig(options.env ?? process.env)
       return withRetries(options, signal, async () => {
         let res: Response
         try {
           res = await doFetch(`${anthropicBase}/v1/messages`, {
             method: 'POST',
             headers: {
-              authorization: `Bearer ${apiKey}`,
+              ...gatewayHeaders(request.attribution),
+              authorization: `Bearer ${token}`,
               'anthropic-version': ANTHROPIC_VERSION,
               'content-type': 'application/json',
+              'x-agw-fallback': 'none',
             },
             body: JSON.stringify(body(request)),
             signal: AbortSignal.any([signal, AbortSignal.timeout(options.hangGuardMs ?? DEFAULTS.hangGuardMs)]),
@@ -56,8 +63,8 @@ export function iuAnthropic(options: HttpOptions & { env?: Env } = {}): ChatPort
           if (error instanceof Attempt) throw error
           throw new Attempt(describe(error), !isAbort(error))
         }
-        if (!res.ok) throw await failedResponse(res, 'iu-anthropic')
-        return readMessage(await readJson(res, 'iu-anthropic'), request.model, onUsage)
+        if (!res.ok) throw await failedResponse(res, 'anthropic')
+        return readMessage(await readJson(res, 'anthropic'), request.model, onUsage)
       })
     },
   }
@@ -77,6 +84,7 @@ function body(request: ChatRequest) {
 function toUsage(usage: z.output<typeof usageSchema>, model: string): AttemptUsage {
   const cacheRead = usage.cache_read_input_tokens ?? 0
   const cacheWrite = usage.cache_creation_input_tokens ?? 0
+  const cacheWrite1h = Math.min(usage.cache_creation?.ephemeral_1h_input_tokens ?? 0, cacheWrite)
   return {
     model,
     // Thinking tokens are inside `output_tokens` on this wire and not reported separately.
@@ -85,6 +93,7 @@ function toUsage(usage: z.output<typeof usageSchema>, model: string): AttemptUsa
       output: usage.output_tokens ?? 0,
       cacheRead,
       cacheWrite,
+      ...(cacheWrite1h > 0 ? { cacheWrite1h } : {}),
       reasoning: 0,
     },
     cost: typeof usage.cost === 'number' && usage.cost >= 0 ? usage.cost : null,
@@ -97,7 +106,7 @@ function readMessage(json: unknown, requested: string, onUsage: OnUsage | undefi
     // A 200 whose body does not fit still billed whatever its `usage` says.
     const usage = usageSchema.safeParse((json as { usage?: unknown } | null)?.usage)
     if (usage.success) onUsage?.(toUsage(usage.data, requested))
-    throw new Attempt('iu-anthropic returned an unreadable Messages body', false)
+    throw new Attempt('anthropic returned an unreadable Messages body', false)
   }
   const { content, usage, stop_reason: stopReason } = parsed.data
   const model = parsed.data.model ?? requested

@@ -313,11 +313,11 @@ describe('process entry', () => {
   test('SIGTERM stops the process with exit 0 and leaves a running run running', async () => {
     const fresh = freshSchema('main')
     const { schema } = fresh
-    // An IU that never answers keeps the smoke run's only step open, so the run is mid-flight at SIGTERM.
+    // A gateway that never answers keeps the smoke run's only step open, so the run is mid-flight at SIGTERM.
     const hang = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: () => new Promise<Response>(() => {}) })
     const pool = new Pool({ connectionString: PG_URL, max: 1 })
     try {
-      const child = start(valid(schema, { IU_BASE_URL: `http://127.0.0.1:${hang.port}/anthropic` }))
+      const child = start(valid(schema, { AGW_GATEWAY_URL: `http://127.0.0.1:${hang.port}` }))
       const port = await listening(child)
       const base = `http://127.0.0.1:${port}`
       const auth = { authorization: `Bearer ${SECRET}` }
@@ -370,7 +370,7 @@ describe('process entry', () => {
     })
     const pool = new Pool({ connectionString: PG_URL, max: 1 })
     try {
-      const env = valid(schema, { IU_BASE_URL: `http://127.0.0.1:${iu.port}/anthropic` })
+      const env = valid(schema, { AGW_GATEWAY_URL: `http://127.0.0.1:${iu.port}` })
       const first = start(env)
       const base1 = `http://127.0.0.1:${await listening(first)}`
       const started = await fetch(`${base1}/workflows/smoke/ping`, {

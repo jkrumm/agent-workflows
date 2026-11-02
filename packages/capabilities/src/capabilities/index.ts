@@ -2,7 +2,7 @@ import { type BrainDeps, createBrainCapabilities } from '../brain/index.ts'
 import { createHdxCapabilities, type HdxDeps } from '../hdx/index.ts'
 import { createImageCapabilities, type ImageDeps } from '../image/index.ts'
 import type { LlmDeps } from '../llm/model-call.ts'
-import { iuTransports } from '../transports/index.ts'
+import { gatewayTransports } from '../transports/index.ts'
 import { createWebCapabilities, type WebDeps } from '../web/index.ts'
 import { createLlmCapabilities } from './llm.ts'
 import { createWebRead } from './web-read.ts'
@@ -14,7 +14,7 @@ import { createWebRead } from './web-read.ts'
  * `registry.call(id, input)` is checked against it), and a runtime scan has no static type to give it.
  */
 export function createCapabilities(
-  deps: LlmDeps = { transports: iuTransports() },
+  deps: LlmDeps = { transports: gatewayTransports() },
   web: WebDeps = {},
   hdx: HdxDeps = {},
   brain: BrainDeps = {},

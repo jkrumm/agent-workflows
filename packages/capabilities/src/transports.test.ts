@@ -1,15 +1,15 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { CapabilityError } from './errors.ts'
-import { chatStream, type FakeIuServer, messageResponse, sse, startFakeIu } from './testing/index.ts'
-import { iuAnthropic, iuDecision, iuOpenai } from './transports/index.ts'
+import { chatStream, type FakeGateway, messageResponse, sse, startFakeGateway } from './testing/index.ts'
+import { anthropicWire, iuDecision, iuOpenai } from './transports/index.ts'
 
-let iu: FakeIuServer
+let iu: FakeGateway
 beforeEach(() => {
-  iu = startFakeIu()
+  iu = startFakeGateway()
 })
 afterEach(() => iu.stop())
 
-const env = () => ({ IU_API_KEY: 'test-key', IU_BASE_URL: iu.baseUrl })
+const env = () => ({ AGW_API_SECRET: 'test-key', AGW_GATEWAY_URL: iu.url })
 const chatRequest = { model: 'm', prompt: 'p', maxOutputTokens: 100 }
 const never = () => new AbortController().signal
 
@@ -29,7 +29,7 @@ describe('retries', () => {
         ? new Response('busy', { status: 503 })
         : messageResponse('ok', { input_tokens: 1, output_tokens: 1 }),
     )
-    const port = iuAnthropic({ env: env(), backoffMs: 1 })
+    const port = anthropicWire({ env: env(), backoffMs: 1 })
     expect((await port.complete(chatRequest, never())).text).toBe('ok')
     expect(iu.requests).toHaveLength(3)
   })
@@ -50,7 +50,7 @@ describe('retries', () => {
     expect(iu.requests).toHaveLength(1)
 
     iu.on('messages', () => new Response('gone', { status: 410 }))
-    const gone = await failure(iuAnthropic({ env: env(), backoffMs: 0 }).complete(chatRequest, never()))
+    const gone = await failure(anthropicWire({ env: env(), backoffMs: 0 }).complete(chatRequest, never()))
     expect(gone.message).toContain('model deprecated (410)')
     expect(iu.requests).toHaveLength(2)
   })
@@ -84,7 +84,7 @@ describe('cancel and idle', () => {
       controller.abort()
       return new Response('busy', { status: 503 })
     })
-    const error = await failure(iuAnthropic({ env: env(), backoffMs: 0 }).complete(chatRequest, controller.signal))
+    const error = await failure(anthropicWire({ env: env(), backoffMs: 0 }).complete(chatRequest, controller.signal))
     expect(error.code).toBe('CANCELLED')
     expect(iu.requests).toHaveLength(1)
   })
@@ -96,7 +96,9 @@ describe('cancel and idle', () => {
       return new Response('busy', { status: 503 })
     })
     const started = performance.now()
-    const error = await failure(iuAnthropic({ env: env(), backoffMs: 5_000 }).complete(chatRequest, controller.signal))
+    const error = await failure(
+      anthropicWire({ env: env(), backoffMs: 5_000 }).complete(chatRequest, controller.signal),
+    )
     expect(error.code).toBe('CANCELLED')
     expect(performance.now() - started).toBeLessThan(1_000)
   })
@@ -178,7 +180,7 @@ describe('openai wire details', () => {
     iu.on('chat', () => chatStream('ok', null))
     iu.on('messages', () => messageResponse('ok', null))
     await iuOpenai({ env: env() }).complete({ ...chatRequest, effort: 'none' }, never())
-    await iuAnthropic({ env: env() }).complete({ ...chatRequest, effort: 'none' }, never())
+    await anthropicWire({ env: env() }).complete({ ...chatRequest, effort: 'none' }, never())
     expect(iu.requests[0]?.body.reasoning_effort).toBeUndefined()
     expect(iu.requests[1]?.body.thinking).toBeUndefined()
   })
@@ -201,7 +203,7 @@ describe('openai wire details', () => {
 describe('messages wire details', () => {
   test('effort turns adaptive thinking on and rides in output_config; max_tokens is the request ceiling', async () => {
     iu.on('messages', () => messageResponse('ok', null))
-    const port = iuAnthropic({ env: env() })
+    const port = anthropicWire({ env: env() })
     await port.complete({ ...chatRequest, system: 'be brief', effort: 'high', maxOutputTokens: 32_000 }, never())
     await port.complete(chatRequest, never())
     expect(iu.requests[0]?.path).toBe('/anthropic/v1/messages')
@@ -218,7 +220,7 @@ describe('messages wire details', () => {
   })
 
   test('stop reasons: max_tokens is length (empty or cut), end_turn complete, anything else carries its detail', async () => {
-    const port = iuAnthropic({ env: env() })
+    const port = anthropicWire({ env: env() })
     iu.on('messages', () => messageResponse('', null, 'max_tokens'))
     expect(await port.complete(chatRequest, never())).toMatchObject({ text: '', stop: 'length' })
     iu.on('messages', () => messageResponse('half an ans', null, 'max_tokens'))
@@ -240,7 +242,7 @@ describe('messages wire details', () => {
         cost: 0.0042,
       }),
     )
-    const port = iuAnthropic({ env: env() })
+    const port = anthropicWire({ env: env() })
     const result = await port.complete(chatRequest, never(), (u) => reported.push(u))
     expect(result.text).toBe('The gist.')
     expect(reported).toEqual([
@@ -261,7 +263,7 @@ describe('ports reject, they never throw synchronously', () => {
   const request = { model: 'm', state: 's', questions: { q: { type: 'boolean', instructions: 'i' } } } as const
   const calls = {
     'iu-openai': (e: Record<string, string>) => iuOpenai({ env: e }).complete(chatRequest, never()),
-    'iu-anthropic': (e: Record<string, string>) => iuAnthropic({ env: e }).complete(chatRequest, never()),
+    anthropic: (e: Record<string, string>) => anthropicWire({ env: e }).complete(chatRequest, never()),
     'iu-decision': (e: Record<string, string>) => iuDecision({ env: e }).decide(request, never()),
   }
   for (const [name, call] of Object.entries(calls)) {
@@ -292,7 +294,7 @@ describe('billing on failure paths', () => {
   test('a 200 Messages body that does not fit still reports the usage it carries, and is not retried', async () => {
     iu.on('messages', () => Response.json({ content: 'not an array', usage: { input_tokens: 9, output_tokens: 2 } }))
     const reported: unknown[] = []
-    await failure(iuAnthropic({ env: env(), backoffMs: 0 }).complete(chatRequest, never(), (u) => reported.push(u)))
+    await failure(anthropicWire({ env: env(), backoffMs: 0 }).complete(chatRequest, never(), (u) => reported.push(u)))
     expect(reported).toEqual([
       { model: 'm', tokens: { input: 9, output: 2, cacheRead: 0, cacheWrite: 0, reasoning: 0 }, cost: null },
     ])
@@ -328,7 +330,7 @@ describe('body-read failures', () => {
       return resetBody()
     }
     const anthropic = await failure(
-      iuAnthropic({ env: env(), backoffMs: 0, fetch: fetcher }).complete(chatRequest, never()),
+      anthropicWire({ env: env(), backoffMs: 0, fetch: fetcher }).complete(chatRequest, never()),
     )
     expect(anthropic.message).toContain('could not be read')
     expect(calls).toBe(3)
@@ -341,7 +343,7 @@ describe('body-read failures', () => {
     iu.on('messages', (_, attempt) =>
       attempt === 0 ? new Response('{"content":[{"type":"te') : messageResponse('ok', null),
     )
-    const result = await iuAnthropic({ env: env(), backoffMs: 0 }).complete(chatRequest, never())
+    const result = await anthropicWire({ env: env(), backoffMs: 0 }).complete(chatRequest, never())
     expect(result.text).toBe('ok')
     expect(iu.requests).toHaveLength(2)
   })

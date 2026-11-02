@@ -102,7 +102,14 @@ test('a slow chatty make check outlives its idle window and passes', async () =>
 })
 
 test('credentials of the host never reach make check or the make -p -q probe', async () => {
-  const names = ['AGW_API_SECRET', 'AGW_PG_URL', 'IU_API_KEY', 'OTEL_EXPORTER_OTLP_HEADERS', 'GH_TOKEN']
+  const names = [
+    'AGW_API_SECRET',
+    'AGW_GATEWAY_URL',
+    'AGW_PG_URL',
+    'IU_API_KEY',
+    'OTEL_EXPORTER_OTLP_HEADERS',
+    'GH_TOKEN',
+  ]
   const saved = names.map((name) => [name, process.env[name]] as const)
   for (const name of names) process.env[name] = `leak-${name}`
   try {

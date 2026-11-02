@@ -1,5 +1,6 @@
 import { z } from 'zod'
-import { type Env, iuConfig } from './config.ts'
+import { type Env, gatewayConfig } from './config.ts'
+import { gatewayHeaders } from './headers.ts'
 import { Attempt, DEFAULTS, describe, failedResponse, type HttpOptions, isAbort, withRetries } from './http.ts'
 import type { AttemptUsage, ChatPort, ChatRequest, ChatResult, OnUsage, Tokens } from './port.ts'
 
@@ -33,7 +34,7 @@ function readUsage(raw: unknown): { tokens: Tokens; cost: number | null } | unde
 }
 
 /**
- * IU's OpenAI-compatible chat completions, streamed with `include_usage`. Idle watchdog only: the call
+ * IU's OpenAI-compatible chat completions through the gateway, streamed with `include_usage`. Idle watchdog only: the call
  * is aborted after `idleTimeoutMs` without a chunk, never for taking long. `reasoning_effort` is sent
  * only when the route has an effort other than `none`; no `temperature` is ever sent (reasoning models
  * reject it and IU relays that as a retryable 503).
@@ -42,7 +43,7 @@ export function iuOpenai(options: HttpOptions & { env?: Env } = {}): ChatPort {
   const doFetch = options.fetch ?? fetch
   return {
     complete: async (request, signal, onUsage) => {
-      const { apiKey, openaiBase } = iuConfig(options.env ?? process.env)
+      const { token, openaiBase } = gatewayConfig(options.env ?? process.env)
       return withRetries(options, signal, async () => {
         const idle = new AbortController()
         let timer: ReturnType<typeof setTimeout> | undefined
@@ -54,7 +55,11 @@ export function iuOpenai(options: HttpOptions & { env?: Env } = {}): ChatPort {
           arm()
           const res = await doFetch(`${openaiBase}/chat/completions`, {
             method: 'POST',
-            headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
+            headers: {
+              ...gatewayHeaders(request.attribution),
+              authorization: `Bearer ${token}`,
+              'content-type': 'application/json',
+            },
             body: JSON.stringify(body(request)),
             signal: AbortSignal.any([signal, idle.signal]),
           })

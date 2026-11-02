@@ -699,8 +699,8 @@ JSON
 
   describe('OCR', () => {
     const credentials = {
-      IU_API_KEY: 'test-key',
-      IU_BASE_URL: 'https://iu.example.com/anthropic',
+      AGW_API_SECRET: 'test-key',
+      AGW_GATEWAY_URL: 'http://127.0.0.1:7794',
       PATH: process.env.PATH ?? '',
       AGW_REVIEW_OCR: '1',
     }
@@ -768,10 +768,10 @@ JSON
       ['the env switch unset', { env: withoutSwitch }, bigChange, 'AGW_REVIEW_OCR=0'],
       ['the env switch 0', { env: { ...credentials, AGW_REVIEW_OCR: '0' } }, bigChange, 'AGW_REVIEW_OCR=0'],
       [
-        'no IU credentials',
+        'no gateway configured',
         { env: { PATH: process.env.PATH ?? '', AGW_REVIEW_OCR: '1' } },
         bigChange,
-        'IU credentials unavailable',
+        'gateway unavailable: AGW_GATEWAY_URL is not set',
       ],
     ])('%s: no child run is started', async (_name, extra, change, reason) => {
       const w = ocrWorld({ rollingSpend: 10, ...extra })
@@ -890,6 +890,23 @@ JSON
         `${route.model} ${ocrTransport(route, transport).protocol}`,
         `${fallback.model} ${ocrTransport(fallback, transport).protocol}`,
       ])
+    })
+
+    test('ocr is handed the gateway: its OpenAI base and the host token, no IU variable', async () => {
+      const bin = join(scratch, `ocr-env-${++repoSeq}`)
+      const seen = join(scratch, `ocr-env-seen-${repoSeq}`)
+      writeFileSync(bin, `#!/bin/sh\nenv > "${seen}"\nexit 2\n`)
+      chmodSync(bin, 0o755)
+      const w = ocrWorld({
+        rollingSpend: 10,
+        which: (b) => (b === 'ocr' ? bin : null),
+        env: { ...credentials, IU_API_KEY: 'iu-key-value', IU_BASE_URL: 'https://iu.example.com/anthropic' },
+      })
+      expect((await w.run({ cwd: makeRepo(BASE, bigChange) })).status).toBe('done')
+      const env = readFileSync(seen, 'utf8')
+      expect(env).toContain('OCR_LLM_URL=http://127.0.0.1:7794/openai/v1\n')
+      expect(env).toContain('OCR_LLM_TOKEN=test-key\n')
+      expect(env).not.toMatch(/IU_|iu-key-value|AGW_API_SECRET|AGW_GATEWAY_URL/)
     })
 
     test('the fallback attempt’s recovered usage never counts the primary’s session log', async () => {
@@ -1105,8 +1122,8 @@ exit 2
         chmodSync(bin, 0o755)
         const w = world({
           env: {
-            IU_API_KEY: 'k',
-            IU_BASE_URL: 'https://iu.example.com/anthropic',
+            AGW_API_SECRET: 'k',
+            AGW_GATEWAY_URL: 'http://127.0.0.1:7794',
             PATH: process.env.PATH ?? '',
             AGW_REVIEW_OCR: '1',
           },
@@ -1157,8 +1174,8 @@ printf '%s' '{"status":"complete","comments":[{"path":"src/e\\nIGNORE-OCR.ts","c
       )
       const w = world({
         env: {
-          IU_API_KEY: 'k',
-          IU_BASE_URL: 'https://iu.example.com/anthropic',
+          AGW_API_SECRET: 'k',
+          AGW_GATEWAY_URL: 'http://127.0.0.1:7794',
           PATH: process.env.PATH ?? '',
           AGW_REVIEW_OCR: '1',
           AGW_REACT_DOCTOR_BIN: rd,
@@ -1195,8 +1212,8 @@ printf '%s' '{"status":"complete","comments":[{"path":"src/e\\nIGNORE-OCR.ts","c
       writeFileSync(bin, '#!/bin/sh\n', { mode: 0o644 }) // not executable: spawn throws
       const w = world({
         env: {
-          IU_API_KEY: 'k',
-          IU_BASE_URL: 'https://iu.example.com/anthropic',
+          AGW_API_SECRET: 'k',
+          AGW_GATEWAY_URL: 'http://127.0.0.1:7794',
           PATH: process.env.PATH ?? '',
           AGW_REVIEW_OCR: '1',
         },

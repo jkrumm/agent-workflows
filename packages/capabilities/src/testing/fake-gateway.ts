@@ -1,4 +1,4 @@
-// A fake IU endpoint on a real socket, so the production adapters are tested over HTTP.
+// A fake gateway on a real socket, so the production adapters are tested over HTTP. Same paths as the gateway (IU's layout).
 export interface RecordedRequest {
   path: string
   headers: Headers
@@ -7,9 +7,9 @@ export interface RecordedRequest {
 
 type Handler = (request: RecordedRequest, attempt: number) => Response | Promise<Response>
 
-export interface FakeIuServer {
-  /** The value for `IU_BASE_URL`. */
-  baseUrl: string
+export interface FakeGateway {
+  /** The value for `AGW_GATEWAY_URL`: the origin. */
+  url: string
   requests: RecordedRequest[]
   /** Replace the handler for `chat` (`/openai/v1/chat/completions`), `messages` (`/anthropic/v1/messages`) or `decide` (`/decisions/v1/systemone`). */
   on(route: 'chat' | 'messages' | 'decide', handler: Handler): void
@@ -51,7 +51,7 @@ export function messageResponse(
   })
 }
 
-export function startFakeIu(handlers: Partial<Record<'chat' | 'messages' | 'decide', Handler>> = {}): FakeIuServer {
+export function startFakeGateway(handlers: Partial<Record<'chat' | 'messages' | 'decide', Handler>> = {}): FakeGateway {
   const table = { ...handlers }
   const attempts = { chat: 0, messages: 0, decide: 0 }
   const requests: RecordedRequest[] = []
@@ -64,7 +64,7 @@ export function startFakeIu(handlers: Partial<Record<'chat' | 'messages' | 'deci
       const path = new URL(req.url).pathname
       const route = ROUTES[path as keyof typeof ROUTES]
       const handler = route && table[route]
-      if (!route || !handler) return new Response(`fake IU: nothing for ${path}`, { status: 404 })
+      if (!route || !handler) return new Response(`fake gateway: nothing for ${path}`, { status: 404 })
       const recorded: RecordedRequest = {
         path,
         headers: req.headers,
@@ -79,7 +79,7 @@ export function startFakeIu(handlers: Partial<Record<'chat' | 'messages' | 'deci
     },
   })
   return {
-    baseUrl: `http://127.0.0.1:${server.port}/anthropic`,
+    url: `http://127.0.0.1:${server.port}`,
     requests,
     on: (route, handler) => {
       table[route] = handler

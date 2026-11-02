@@ -228,7 +228,7 @@ export class Llm {
       log.warn('podcast writer returned no content', { stage: params.stage, stop: reply.stopDetail ?? reply.stop })
       return ''
     }
-    const anthropic = this.route(params.route).wire === 'iu-anthropic'
+    const anthropic = this.route(params.route).wire === 'anthropic'
     if (reply.stop !== 'complete' && (anthropic || (params.retryOnTruncation && reply.stop === 'length'))) {
       log.warn('podcast writer did not finish, forcing retry', {
         stage: params.stage,

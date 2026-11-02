@@ -13,11 +13,11 @@ import type { Ctx, Usage } from '../context.ts'
 import { CapabilityError, fail } from '../errors.ts'
 import type { Env } from '../transports/config.ts'
 import { isBalanceError } from '../transports/http.ts'
-import type { AttemptUsage, ChatResult, IuTransports } from '../transports/port.ts'
+import type { AttemptUsage, ChatResult, GatewayTransports, Tokens } from '../transports/port.ts'
 
-/** What the model-backed capabilities are built from. Handlers close over it; `ctx` stays `{ signal, addUsage }`. */
+/** What the model-backed capabilities are built from. Handlers close over it; `ctx` stays `{ signal, addUsage, attribution? }`. */
 export interface LlmDeps {
-  transports: IuTransports
+  transports: GatewayTransports
   /** Where `AGW_ROUTES` is read from. Default `process.env`. */
   env?: Env
   /** Where a fallback is reported. Default `console.warn`. */
@@ -44,7 +44,8 @@ export function resolve(deps: LlmDeps, routeId: RouteId): ResolvedRoute {
 
 /** A reported attempt as a `Usage`; `undefined` stands for a call the provider returned no usage for. */
 export function toUsage(route: ResolvedRoute, model: string, attempt: AttemptUsage | undefined): Usage {
-  const tokens = attempt?.tokens ?? { input: 0, output: 0, cacheRead: 0, reasoning: 0 }
+  const none: Tokens = { input: 0, output: 0, cacheRead: 0, reasoning: 0 }
+  const { cacheWrite1h, ...tokens } = attempt?.tokens ?? none
   const cost = costFromUsage(
     route.wire,
     attempt
@@ -55,10 +56,13 @@ export function toUsage(route: ResolvedRoute, model: string, attempt: AttemptUsa
           completion_tokens: tokens.output,
           cache_read_input_tokens: tokens.cacheRead,
           cache_creation_input_tokens: tokens.cacheWrite ?? 0,
+          // The 1 h part of the writes, priced at the 1 h rate; the rest stays 5 m.
+          ...(cacheWrite1h ? { cache_creation: { ephemeral_1h_input_tokens: cacheWrite1h } } : {}),
         }
       : null,
     route.rate,
   )
+  // `cacheWrite1h` only prices the call: a usage row's `cacheWrite` is the total, as the run record sums it.
   return { model: attempt?.model ?? model, tokens, cost: cost.usd, costSource: cost.source }
 }
 
@@ -135,7 +139,7 @@ async function completeOn(deps: LlmDeps, route: ResolvedRoute, args: CompleteArg
   const port =
     route.wire === 'iu-openai'
       ? deps.transports.openai
-      : route.wire === 'iu-anthropic'
+      : route.wire === 'anthropic'
         ? deps.transports.anthropic
         : undefined
   if (!port) {
@@ -153,6 +157,7 @@ async function completeOn(deps: LlmDeps, route: ResolvedRoute, args: CompleteArg
       prompt: args.prompt,
       json: args.json,
       effort,
+      ...(args.ctx.attribution ? { attribution: args.ctx.attribution } : {}),
       maxOutputTokens:
         route.maxOutputTokens ?? (effort && effort !== 'none' ? DEFAULT_MAX_OUTPUT_WITH_EFFORT : DEFAULT_MAX_OUTPUT),
     },

@@ -5,14 +5,14 @@ import { createCapabilities } from './capabilities/index.ts'
 import type { Usage } from './context.ts'
 import { CapabilityCallError } from './errors.ts'
 import { createRegistry } from './registry.ts'
-import { chatStream, type FakeIuServer, startFakeIu } from './testing/index.ts'
-import { iuTransports } from './transports/index.ts'
+import { chatStream, type FakeGateway, startFakeGateway } from './testing/index.ts'
+import { gatewayTransports } from './transports/index.ts'
 
-let iu: FakeIuServer
+let iu: FakeGateway
 let usages: Usage[]
 
 beforeEach(() => {
-  iu = startFakeIu()
+  iu = startFakeGateway()
   usages = []
 })
 afterEach(() => iu.stop())
@@ -20,7 +20,7 @@ afterEach(() => iu.stop())
 const registry = () =>
   createRegistry(
     createCapabilities({
-      transports: iuTransports({ env: { IU_API_KEY: 'test-key', IU_BASE_URL: iu.baseUrl }, backoffMs: 0 }),
+      transports: gatewayTransports({ env: { AGW_API_SECRET: 'test-key', AGW_GATEWAY_URL: iu.url }, backoffMs: 0 }),
       env: {},
     }),
   )

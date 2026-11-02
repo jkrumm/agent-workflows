@@ -1,5 +1,5 @@
 import type { z } from 'zod'
-import type { Ctx, Usage } from './context.ts'
+import type { Attribution, Ctx, Usage } from './context.ts'
 
 /**
  * The `x-cli` extension on each operation (concept §9). The Wave 3 generator reads it from the OpenAPI
@@ -64,9 +64,12 @@ export interface CapabilityDefinition<I extends z.ZodObject, O extends z.ZodType
   handler: (input: z.output<I>, ctx: Ctx) => Promise<z.input<O>> | z.input<O>
 }
 
+/** Structurally a runtime step's scope: a step body can pass its scope as is, and its attribution comes along. */
 export interface CallOptions {
   signal?: AbortSignal
   addUsage?: (usage: Usage) => void
+  /** The calling step, sent to the gateway on every model call the capability makes. */
+  attribution?: Attribution
 }
 
 /** A typed function defined once, exposed as import (`call`), HTTP (the registry's router) and CLI (`x-cli`). */

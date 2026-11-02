@@ -83,14 +83,14 @@ Moving every route of a role to another model, rate or effort is one edit to the
 
 | Field | Meaning |
 |-|-|
-| `wire` | `iu-openai` (IU OpenAI dialect: chat completions, `/audio/transcriptions`), `iu-anthropic` (native Messages), `iu-decision` (IU decision API), `opencode` (agent step on the OpenCode host), `iu-gemini` (native Gemini TTS), `iu-replicate` (Replicate predictions) |
+| `wire` | `iu-openai` (IU OpenAI dialect: chat completions, `/audio/transcriptions`), `anthropic` (native Messages on the gateway, which pays from a Claude credit pool or IU), `iu-decision` (IU decision API), `opencode` (agent step on the OpenCode host), `iu-gemini` (native Gemini TTS), `iu-replicate` (Replicate predictions) |
 | `model` | the provider's model id |
 | `effort` | `none\|low\|medium\|high\|xhigh\|max`. Absent when the model exposes none |
 | `maxOutputTokens` | output ceiling; reasoning tokens count against it |
 | `rate` | `{ inputPerM, outputPerM, cacheReadPerM?, cacheWritePerM?, longPromptTokens? }` USD per million; the provider's `usage.cost` wins where it sends one |
 | `fallback` | a full route spec (`wire`, `model`, `effort?`, `maxOutputTokens?`, `rate?`) the call moves to once on a provider-balance failure (below) |
 
-`iu-decision` entries take neither `effort` nor `maxOutputTokens`. A fallback runs the same kind of step: an `opencode` route falls back to `opencode`, a single call to a single call (its wire may differ: `iu-anthropic` routes fall back over `iu-openai`).
+`iu-decision` entries take neither `effort` nor `maxOutputTokens`. A fallback runs the same kind of step: an `opencode` route falls back to `opencode`, a single call to a single call (its wire may differ: `anthropic` routes fall back over `iu-openai`).
 
 ## Fallback on provider balance
 
@@ -135,10 +135,10 @@ The capability seats (`src/table/cheap.ts`, `decide.ts`); a workflow's seats are
 | Route | agent-gateway seat | Model | Wire |
 |-|-|-|-|
 | `cheap.classify` | `triage` (SINGLE_SHOT) | claude-haiku-5-5 | iu-openai |
-| `cheap.summarize` | `overview` (CLASSIFY) | claude-haiku-5-5 | iu-anthropic |
-| `cheap.title` | `narrative` (CLASSIFY) | claude-haiku-5-5 | iu-anthropic |
+| `cheap.summarize` | `overview` (CLASSIFY) | claude-haiku-5-5 | anthropic |
+| `cheap.title` | `narrative` (CLASSIFY) | claude-haiku-5-5 | anthropic |
 | `decide` | `DEFAULT_DECISION_MODEL` | decision-1 | iu-decision |
-| `triage` | `triage` (SINGLE_SHOT) | claude-haiku-5-5 | iu-anthropic |
+| `triage` | `triage` (SINGLE_SHOT) | claude-haiku-5-5 | anthropic |
 
 Deliberate differences from the gateway:
 
@@ -158,7 +158,7 @@ A route flip changes what the next run costs and how well it caches:
 - **Model change on a route with a rate** (`decide`): tokens are priced at the new rate, or `unknown` if the override supplies none.
 - **Model change in general:** the provider prompt cache is per model, so the first run after a flip pays full input price. Haiku 5.5 reports cache reads; DeepSeek on `iu-openai` reports `cached_tokens`; cost from `usage.cost` already reflects both.
 - **Effort up** (`high`, `max`): more reasoning tokens, billed as output, counted against `maxOutputTokens`. Raise the ceiling with it or the answer starves.
-- **Wire change** (for example `iu-openai` → `iu-anthropic`): different usage keys and cache semantics. `costFromUsage` accepts both shapes, but the cache hit rate starts from zero.
+- **Wire change** (for example `iu-openai` → `anthropic`): different usage keys and cache semantics. `costFromUsage` accepts both shapes, but the cache hit rate starts from zero.
 - **A fallback** runs on another model: its first call pays full input price (the cache is per model), at Terra's rate, which is 10x Haiku 5.5's input and output. It only runs while the primary's provider is out of balance.
 - **Haiku 5.5** bills 5x above 100K prompt tokens per request; a long agent episode costs more than the list rate suggests. `costFromUsage` prices a single call over that size at the tier; OpenCode's own per-message cost knows only the base card, so the OpenCode host re-prices a message over the threshold with the rate (`priceOpenCodeMessages`).
 - The fingerprint changes on any of these, so runs before and after a flip never share a group.
@@ -175,7 +175,7 @@ import { claudeRate, CLAUDE_MODELS, costFromUsage, resolveModelAlias } from '@ag
 
 resolveModelAlias('sonnet') // the Sonnet id; anything else (an id, 'Sonnet', 'gpt-x') comes back untouched
 claudeRate('opus') // Rate | undefined, by id or alias; the shared, deeply frozen rate (not a copy)
-costFromUsage('iu-anthropic', usage, claudeRate(model)) // usage as Anthropic returns it
+costFromUsage('anthropic', usage, claudeRate(model)) // usage as Anthropic returns it
 ```
 
 `claudeRate` takes an alias, a concrete id, or a dated snapshot / `[1m]` form of one (`claude-sonnet-5-5-20261001`); it returns the
@@ -187,6 +187,7 @@ call has 1h writes against a rate without `cacheWrite1hPerM`. Haiku 5.5 carries 
 whole request; the pricing page's threshold, which overstates against the Admin API's 200k label, the safe side for the meter); Sonnet and
 Opus 5.5 bill the full 1M context flat. Sources and dates are in the file.
 
-**Known gap:** the 1h split is priced only where the caller passes `cache_creation` through (the gateway). Capabilities' `toUsage`,
-`iu-anthropic` and the OpenCode pricing still pass only `cache_creation_input_tokens`, so their 1h writes price as 5m (under-stated).
-Wave 3 moves the Claude callers; those packages are unchanged here.
+The gateway passes `cache_creation` through, and so does capabilities' `toUsage`: the `anthropic` wire reads
+`ephemeral_1h_input_tokens` into `Tokens.cacheWrite1h` and prices it at the 1h rate. **Known gap:** the OpenCode pricing
+still passes only `cache_creation_input_tokens`, so an agent step's 1h writes price as 5m (under-stated); that half is
+a separate Wave 3 branch.

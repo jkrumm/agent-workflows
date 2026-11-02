@@ -28,7 +28,7 @@ const planner = fakeTransports({ openai: [{ text: '' }] })
 const registry = createRegistry(
   createImageCapabilities(
     {
-      env: { IU_API_KEY: 'test-key', IU_BASE_URL: fake.baseUrl },
+      env: { AGW_API_SECRET: 'test-key', AGW_GATEWAY_URL: fake.url },
       retry: { backoffMs: 0 },
       pollMs: 1,
       fetch: (url, init) => {
@@ -196,7 +196,7 @@ describe('image end to end', () => {
     handlers[GEN] = () => Response.json({ data: [{ b64_json: b64(png) }, { b64_json: b64(png) }], usage })
     const enhanced = createRegistry(
       createImageCapabilities(
-        { env: { IU_API_KEY: 'test-key', IU_BASE_URL: fake.baseUrl }, retry: { backoffMs: 0 } },
+        { env: { AGW_API_SECRET: 'test-key', AGW_GATEWAY_URL: fake.url }, retry: { backoffMs: 0 } },
         {
           transports: fakeTransports({
             openai: [{ text: JSON.stringify(plan), tokens: { input: 1000, output: 2000, cacheRead: 0, reasoning: 0 } }],
@@ -249,7 +249,7 @@ describe('image end to end', () => {
     handlers[GEN] = () => Response.json({ data: [], usage })
     const enhanced = createRegistry(
       createImageCapabilities(
-        { env: { IU_API_KEY: 'test-key', IU_BASE_URL: fake.baseUrl }, retry: { backoffMs: 0 } },
+        { env: { AGW_API_SECRET: 'test-key', AGW_GATEWAY_URL: fake.url }, retry: { backoffMs: 0 } },
         { transports: fakeTransports({ openai: [{ text: JSON.stringify(plan) }] }), env: {} },
       ),
     )

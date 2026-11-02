@@ -21,7 +21,7 @@ export function resolveModelAlias(model: string): string {
 /**
  * The rate of a Claude model by alias, concrete id, or dated snapshot / `[1m]` form of one (`CLAUDE_SNAPSHOT_ID`);
  * `undefined` for any other model. The shared, deeply frozen object: do not mutate it. The gateway prices an
- * Anthropic response with `costFromUsage('iu-anthropic', usage, claudeRate(model))`.
+ * Anthropic response with `costFromUsage('anthropic', usage, claudeRate(model))`.
  */
 export function claudeRate(model: string): ClaudeRate | undefined {
   const id = resolveModelAlias(model).replace(CLAUDE_SNAPSHOT_ID, '$1')

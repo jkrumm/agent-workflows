@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync } from 'node:fs'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { gatewayConfig } from '@agent-workflows/capabilities'
 import type { Exec } from './exec.ts'
 import { networkEnv, tail } from './exec.ts'
 import { mapLimit } from './util.ts'
@@ -51,7 +52,7 @@ export type Prepared = {
   adversary: boolean
   ocrEnabled: boolean
   ocrMinLines: number
-  /** Why OCR cannot run on this machine (no `ocr`, no IU credentials), or null. */
+  /** Why OCR cannot run on this machine (no `ocr`, no gateway configured), or null. */
   ocrBlocker: string | null
 }
 
@@ -468,14 +469,14 @@ function switches(env: Env) {
   }
 }
 
-/** OCR needs the `ocr` binary and the IU credentials its child process is handed. */
+/** OCR needs the `ocr` binary and the gateway's base and token, which its child process is handed. */
 function ocrBlocker(ports: ReviewPorts): string | null {
   if (!ports.which('ocr')) return 'ocr not found on PATH'
-  const key = ports.env.IU_API_KEY?.trim()
-  const base = ports.env.IU_BASE_URL?.trim()
-  if (!key || !base) return 'IU credentials unavailable: IU_API_KEY and IU_BASE_URL must be set'
-  if (!base.replace(/\/+$/, '').endsWith('/anthropic'))
-    return 'IU credentials unavailable: IU_BASE_URL does not end in /anthropic'
+  try {
+    gatewayConfig(ports.env)
+  } catch (error) {
+    return `gateway unavailable: ${error instanceof Error ? error.message : String(error)}`
+  }
   return null
 }
 

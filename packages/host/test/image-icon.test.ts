@@ -21,7 +21,7 @@ let cdn: Record<string, Uint8Array<ArrayBuffer>> = {}
 const registry = createRegistry(
   createImageCapabilities(
     {
-      env: { IU_API_KEY: 'test-key', IU_BASE_URL: fake.baseUrl },
+      env: { AGW_API_SECRET: 'test-key', AGW_GATEWAY_URL: fake.url },
       retry: { backoffMs: 0 },
       pollMs: 1,
       fetch: (url, init) => {

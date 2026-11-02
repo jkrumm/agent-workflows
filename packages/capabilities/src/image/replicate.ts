@@ -2,7 +2,8 @@ import { type Cost, costFromUsage, type ResolvedRoute } from '@agent-workflows/r
 import { z } from 'zod'
 import type { Ctx } from '../context.ts'
 import { fail } from '../errors.ts'
-import { iuConfig } from '../transports/config.ts'
+import { gatewayConfig } from '../transports/config.ts'
+import { gatewayHeaders } from '../transports/headers.ts'
 import { within } from '../web/deps.ts'
 import type { ResolvedImageDeps } from './deps.ts'
 import { readHeader } from './header.ts'
@@ -38,28 +39,15 @@ function isReplicateDeliveryUrl(raw: string): boolean {
 }
 
 /**
- * The Replicate base: an explicit override wins, otherwise IU's OpenAI base with its trailing `/openai/v1` swapped for
- * `/replicate/v1`. Refuses to guess when the base has no such suffix.
+ * Where and as whom Replicate is called, read from the env on each call: the gateway's `/replicate/v1`. agw prices
+ * these calls per image, so they say `x-agw-usage: caller` (the gateway writes no usage row for them) and carry the
+ * calling step's attribution. Throws `NOT_CONFIGURED` before anything else is done.
  */
-export function replicateBase(openaiBase: string, override?: string): string {
-  if (override?.trim()) return override.trim().replace(/\/+$/, '')
-  const suffix = /\/openai\/v1\/?$/
-  if (!suffix.test(openaiBase)) {
-    throw fail(
-      'NOT_CONFIGURED',
-      'image: cannot derive the Replicate base from IU_BASE_URL and REPLICATE_BASE_URL is unset',
-    )
-  }
-  return openaiBase.replace(suffix, '/replicate/v1')
-}
-
-/** Where and as whom Replicate is called, read from the env on each call. Throws `NOT_CONFIGURED` before anything else is done. */
-export function replicateAccess(deps: ResolvedImageDeps) {
-  const env = deps.env()
-  const config = iuConfig(env)
+export function replicateAccess(deps: ResolvedImageDeps, ctx: Pick<Ctx, 'attribution'>) {
+  const { token, replicateBase } = gatewayConfig(deps.env())
   return {
-    base: replicateBase(config.openaiBase, env.REPLICATE_BASE_URL),
-    headers: { authorization: `Bearer ${config.apiKey}` },
+    base: replicateBase,
+    headers: { ...gatewayHeaders(ctx.attribution), authorization: `Bearer ${token}`, 'x-agw-usage': 'caller' },
   }
 }
 export type ReplicateAccess = ReturnType<typeof replicateAccess>

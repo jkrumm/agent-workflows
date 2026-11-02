@@ -1,7 +1,7 @@
 import { chmodSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { iuFromEnv } from '@agent-workflows/opencode-host'
+import { type GatewayConfig, gatewayConfig } from '@agent-workflows/capabilities'
 import { fallbackRoute, isBalanceFailure, type ResolvedRoute, resolveRoute } from '@agent-workflows/routes'
 import { defineWorkflow, type StepScope, type Usage } from '@agent-workflows/runtime'
 import { z } from 'zod'
@@ -70,14 +70,14 @@ export function modeArgs(input: OcrInputValue): string[] {
 /**
  * `ocr`'s protocol and base URL for a route, decided together so the pairing cannot drift. OpenAI's own models (`gpt-`)
  * keep reasoning items across `ocr`'s tool loop only over Responses (agent-gateway, probed 2026-09-24); the
- * `iu-anthropic` wire speaks Messages; anything else chat completions.
+ * `anthropic` wire speaks Messages; anything else chat completions.
  */
 export function ocrTransport(
   route: ResolvedRoute,
-  iu: { anthropicBase: string; openaiBase: string },
+  gateway: Pick<GatewayConfig, 'anthropicBase' | 'openaiBase'>,
 ): { protocol: 'anthropic' | 'openai' | 'openai-responses'; url: string } {
-  if (route.wire === 'iu-anthropic') return { protocol: 'anthropic', url: iu.anthropicBase }
-  return { protocol: route.model.startsWith('gpt-') ? 'openai-responses' : 'openai', url: iu.openaiBase }
+  if (route.wire === 'anthropic') return { protocol: 'anthropic', url: gateway.anthropicBase }
+  return { protocol: route.model.startsWith('gpt-') ? 'openai-responses' : 'openai', url: gateway.openaiBase }
 }
 
 /** The `ocr review` argv after the binary. */
@@ -223,12 +223,13 @@ export async function runOcr(
   if (!ocrSwitchOn(ports.env)) return { block: skipped('AGW_REVIEW_OCR=0'), ran: false }
   const bin = ports.which('ocr')
   if (!bin) return { block: skipped('ocr not found on PATH'), ran: false }
-  let iu: ReturnType<typeof iuFromEnv>
+  // `ocr` talks to the gateway with the host's token: its calls land on the gateway's usage rows.
+  let gateway: GatewayConfig
   try {
-    iu = iuFromEnv(ports.env)
+    gateway = gatewayConfig(ports.env)
   } catch (error) {
     return {
-      block: skipped(`IU credentials unavailable: ${error instanceof Error ? error.message : String(error)}`),
+      block: skipped(`gateway unavailable: ${error instanceof Error ? error.message : String(error)}`),
       ran: false,
     }
   }
@@ -261,14 +262,14 @@ export async function runOcr(
     let refused: string | null = null
     for (const route of fallback ? [primary, fallback] : [primary]) {
       const attemptStart = Date.now()
-      const { protocol, url } = ocrTransport(route, iu)
+      const { protocol, url } = ocrTransport(route, gateway)
       // Minimal env, not a copy of ours: a spawned CLI has no reason to hold whatever else this process carries.
       const env: Record<string, string> = {
         PATH: ports.env.PATH ?? '',
         HOME: home,
         TMPDIR: ports.env.TMPDIR ?? tmpdir(),
         OCR_LLM_URL: url,
-        OCR_LLM_TOKEN: iu.key,
+        OCR_LLM_TOKEN: gateway.token,
         OCR_LLM_PROTOCOL: protocol,
         OCR_LLM_MODEL: route.model,
         OCR_ENABLE_TELEMETRY: '0',
@@ -286,7 +287,7 @@ export async function runOcr(
       } catch (error) {
         return {
           block: failed(
-            `could not start ocr: ${redact(error instanceof Error ? error.message : String(error), iu.key)}`,
+            `could not start ocr: ${redact(error instanceof Error ? error.message : String(error), gateway.token)}`,
           ),
           ran: refused !== null,
         }
@@ -310,11 +311,11 @@ export async function runOcr(
       await Promise.all([
         drain(started.stderr, (chunk) => {
           // Redact before cutting, so a key straddling the cut cannot survive half-masked.
-          stderrTail = redact(stderrTail + chunk, iu.key).slice(-STDERR_TAIL_CHARS)
+          stderrTail = redact(stderrTail + chunk, gateway.token).slice(-STDERR_TAIL_CHARS)
           pending += chunk
           const lines = pending.split('\n')
           pending = lines.pop() ?? ''
-          for (const line of lines) if (line.trim()) lastLine = redact(line.trim(), iu.key)
+          for (const line of lines) if (line.trim()) lastLine = redact(line.trim(), gateway.token)
         }),
         drain(started.stdout),
       ])
@@ -355,7 +356,7 @@ export async function runOcr(
         }),
       )
       // Its comments quote repo content and model output: redact there too.
-      return { block: redact(renderOcrBlock(parsed), iu.key), ran: true }
+      return { block: redact(renderOcrBlock(parsed), gateway.token), ran: true }
     }
     return { block: refused ?? failed('no route ran'), ran: true }
   } finally {

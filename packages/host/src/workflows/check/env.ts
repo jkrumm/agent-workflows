@@ -4,9 +4,12 @@
  * Makefile of any repo), plus the host's own secrets by name.
  */
 const CREDENTIAL = /(TOKEN|SECRET|PASSWORD|PASSWD|_KEY|APIKEY|API_KEY|CREDENTIAL|BEARER|SESSION_ID|AUTHORIZATION)/i
-/** The host's database and export configuration, and the IU gateway's variables (`IU_API_KEY`, `IU_BASE_URL`). */
+/**
+ * The host's database and export configuration, the inference gateway's address (`AGW_GATEWAY_URL`; its token,
+ * `AGW_API_SECRET`, is a credential by name) and any IU variable left in the environment.
+ */
 const HOST_OWN =
-  /^(AGW_PG_URL|AGW_TEST_PG_URL|USAGE_PG_URL|USAGE_TEST_PG_URL|DATABASE_URL|IU_.*|OTEL_EXPORTER_OTLP_(.*_)?HEADERS)$/i
+  /^(AGW_PG_URL|AGW_TEST_PG_URL|USAGE_PG_URL|USAGE_TEST_PG_URL|DATABASE_URL|AGW_GATEWAY_URL|IU_.*|OTEL_EXPORTER_OTLP_(.*_)?HEADERS)$/i
 const CLAUDE_TOKEN = 'CLAUDE_CODE_OAUTH_TOKEN'
 /**
  * Make's own recursion state: `-j`/`-k`/`-n`, the jobserver fds, command-line overrides and the level counter. A

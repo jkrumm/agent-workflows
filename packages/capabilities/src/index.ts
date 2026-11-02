@@ -69,7 +69,7 @@ export {
   writerInstructions,
 } from './capabilities/prose-write.ts'
 export { MAX_PROSE_BRIEF_CHARS, MAX_PROSE_CONTEXT_CHARS, MAX_PROSE_TEXT_CHARS } from './capabilities/prose-review.ts'
-export type { Ctx, Usage } from './context.ts'
+export type { Attribution, Ctx, Usage } from './context.ts'
 export { usageSchema } from './context.ts'
 export type {
   CallOptions,
@@ -93,8 +93,8 @@ export {
   type RouterNode,
 } from './registry.ts'
 export type { RequestContext } from './procedure.ts'
-export { iuTransports } from './transports/index.ts'
-export type { IuTransports } from './transports/port.ts'
+export { type GatewayConfig, gatewayConfig, gatewayHeaders, gatewayTransports } from './transports/index.ts'
+export type { GatewayTransports } from './transports/port.ts'
 // The image capabilities and the vocabulary the `image` workflow's input is built from.
 export {
   type AlphaStats,

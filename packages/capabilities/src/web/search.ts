@@ -1,8 +1,9 @@
 import { z } from 'zod'
-import type { Usage } from '../context.ts'
+import type { Ctx } from '../context.ts'
 import { fail } from '../errors.ts'
 import { defineCapability } from '../procedure.ts'
-import { iuConfig } from '../transports/config.ts'
+import { gatewayConfig } from '../transports/config.ts'
+import { gatewayHeaders } from '../transports/headers.ts'
 import { describe, failedResponse, readJson, withRetries } from '../transports/http.ts'
 import { keyOf, type ResolvedWebDeps, requireKey, webUsage, within } from './deps.ts'
 
@@ -79,26 +80,25 @@ const dedupe = (hits: Hit[], max: number): Hit[] => {
   return out
 }
 
-type Backend = (
-  input: z.output<typeof searchInput>,
-  deps: ResolvedWebDeps,
-  signal: AbortSignal,
-  addUsage: (usage: Usage) => void,
-) => Promise<Hit[]>
+type Backend = (input: z.output<typeof searchInput>, deps: ResolvedWebDeps, ctx: Ctx) => Promise<Hit[]>
 
 /**
- * Perplexity Sonar over IU's OpenAI-compatible endpoint, as a pure search backend: the answer is dropped, the
+ * Perplexity Sonar over IU's OpenAI-compatible endpoint (through the gateway), as a pure search backend: the answer is dropped, the
  * `search_results` are the output. A 429 is retried once (two attempts), then the caller falls back to Tavily.
  * Billed by IU: `usage.cost.total_cost` is the vendor's own figure (`costSource: 'provider'`).
  */
-const sonar: Backend = async (input, deps, signal, addUsage) => {
+const sonar: Backend = async (input, deps, { signal, addUsage, attribution }) => {
   const env = deps.env()
-  const config = iuConfig(env)
+  const config = gatewayConfig(env)
   const model = keyOf(env, 'SONAR_MODEL') ?? DEFAULT_SONAR_MODEL
   const json = await withRetries({ ...deps.retry, attempts: 2 }, signal, async () => {
     const res = await deps.fetch(`${config.openaiBase}/chat/completions`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${config.apiKey}` },
+      headers: {
+        ...gatewayHeaders(attribution),
+        'content-type': 'application/json',
+        authorization: `Bearer ${config.token}`,
+      },
       body: JSON.stringify({
         model,
         messages: [{ role: 'user', content: input.query }],
@@ -135,7 +135,7 @@ const sonar: Backend = async (input, deps, signal, addUsage) => {
 }
 
 /** Tavily Search. Billed in credits, priced at the list rate; the response's `usage.credits` wins over the documented count. */
-const tavily: Backend = async (input, deps, signal, addUsage) => {
+const tavily: Backend = async (input, deps, { signal, addUsage }) => {
   const key = requireKey(deps.env(), 'TAVILY_API_KEY', 'web.search')
   const json = await withRetries(deps.retry, signal, async () => {
     const res = await deps.fetch('https://api.tavily.com/search', {
@@ -185,7 +185,7 @@ export const createSearch = (deps: ResolvedWebDeps) =>
       let first: unknown
       for (const provider of order) {
         try {
-          const results = await backends[provider](input, deps, ctx.signal, ctx.addUsage)
+          const results = await backends[provider](input, deps, ctx)
           return { results, provider }
         } catch (error) {
           // A cancelled call is not a provider failure: no fallback, no second bill.

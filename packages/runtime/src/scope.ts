@@ -18,6 +18,7 @@ import type {
   AgentHost,
   AgentSpec,
   AnyWorkflow,
+  Attribution,
   ContinueOptions,
   Ctx,
   JudgeCaller,
@@ -254,6 +255,7 @@ export class RunScope {
       attempt,
       signal,
       addUsage: (u) => usage.add(u),
+      attribution: this.attribution(stepId),
       progress,
     }
     try {
@@ -273,6 +275,21 @@ export class RunScope {
       finished = true
       clearTimeout(timer)
       this.refusers.delete(stepId)
+    }
+  }
+
+  /** The step's attribution, from the run row: absent project, workspace and trace stay absent. */
+  private attribution(stepId: string): Attribution {
+    const run = this.run
+    return {
+      runId: run.id,
+      rootId: run.root_id,
+      workflow: this.workflow.id,
+      step: stepId,
+      purpose: run.purpose,
+      ...(run.project ? { project: run.project } : {}),
+      ...(run.workspace ? { workspace: run.workspace } : {}),
+      ...(run.traceparent ? { traceparent: run.traceparent } : {}),
     }
   }
 
@@ -313,6 +330,7 @@ export class RunScope {
                 judge(capability, input, {
                   signal: scope.signal,
                   addUsage: scope.addUsage,
+                  attribution: scope.attribution,
                   source: 'inline',
                   runId: this.run.id,
                   scorer: scorer.version,

@@ -20,7 +20,7 @@ export function trackUsage(ctx: Ctx): { ctx: Ctx; total: () => CallUsage } {
   const calls: Usage[] = []
   return {
     ctx: {
-      signal: ctx.signal,
+      ...ctx,
       addUsage: (usage) => {
         calls.push(usage)
         ctx.addUsage(usage)

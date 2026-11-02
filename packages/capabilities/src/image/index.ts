@@ -1,5 +1,5 @@
 import type { LlmDeps } from '../llm/model-call.ts'
-import { iuTransports } from '../transports/index.ts'
+import { gatewayTransports } from '../transports/index.ts'
 import { createCutout } from './cutout.ts'
 import { type ImageDeps, resolveImageDeps } from './deps.ts'
 import { createEnhance } from './enhance.ts'
@@ -32,7 +32,6 @@ export {
   routingWhy,
 } from './studio.ts'
 export { type AlphaStats, decodeAlphaStats, magicBytesValid, readPng } from './png.ts'
-export { replicateBase } from './replicate.ts'
 export { snapSize, validateSize } from './size.ts'
 export type { UpscaleOutput } from './upscale.ts'
 export { UPSCALE_LIMITS } from './upscale.ts'
@@ -43,7 +42,7 @@ export type { VectorizeOutput } from './vectorize.ts'
  * `image.cutout`, `image.upscale` and `image.vectorize`, and `image.enhance` (the planner, on the text wire). All but
  * enhance are hidden from the CLI: their answer is base64 or a whole document, for workflows.
  */
-export function createImageCapabilities(deps: ImageDeps = {}, llm: LlmDeps = { transports: iuTransports() }) {
+export function createImageCapabilities(deps: ImageDeps = {}, llm: LlmDeps = { transports: gatewayTransports() }) {
   const resolved = resolveImageDeps(deps)
   return [
     createGenerate(resolved),
