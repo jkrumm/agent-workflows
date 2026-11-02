@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, test } from 'bun:test'
 import { z } from 'zod'
-import { defineWorkflow, type Json, type Middleware, type ToolEvent, WorkflowError } from '../src/index.ts'
+import { Cancelled, defineWorkflow, type Json, type Middleware, type ToolEvent, WorkflowError } from '../src/index.ts'
 import { FakeAgentHost } from '../src/testing.ts'
 import { freshSchema, inspector, testRuntime, until } from './support/pg.ts'
 
@@ -93,6 +93,86 @@ describe('agent steps', () => {
     } finally {
       await rt.close()
     }
+  })
+
+  test('a retry after a failed wait counts each session’s spend once', async () => {
+    let n = 0
+    const host = new FakeAgentHost(async () => {
+      if (++n === 1) throw new WorkflowError('error', 'overflow', { usage })
+      return { output: { answer: 'second' }, usage: { ...usage, tokens: { ...usage.tokens, input: 7 }, cost: 0.02 } }
+    })
+    const wf = defineWorkflow({
+      id: 'agent.failed-usage-retry',
+      version: 'v1',
+      input: empty,
+      output: answer,
+      run: (ctx) =>
+        ctx.agent('ask', { agent: 'helper', prompt: 'q', output: answer, retry: { attempts: 2, backoffMs: 10 } }),
+    })
+    const rt = testRuntime({ schema: db.schema, workflows: [wf], host })
+    await rt.open()
+    try {
+      const { runId } = await rt.start(wf, {}, { purpose: 'build' })
+      expect((await rt.wait(runId)).output).toEqual({ answer: 'second' })
+      expect(host.count('open')).toBe(2) // the failed session is forgotten: the retry never re-reads it
+      expect(await sql.step(runId, 'ask')).toMatchObject({
+        status: 'done',
+        tokens_input: '17',
+        cost: '0.03',
+        unpriced_calls: 0,
+      })
+    } finally {
+      await rt.close()
+    }
+  })
+
+  test('a prompted wait that fails with no usage to report is unknown, not free', async () => {
+    const host = new FakeAgentHost(async () => {
+      throw new WorkflowError('error', 'opencode session ses_1 is gone')
+    })
+    const wf = agentWorkflow('agent.failed-unknown')
+    const rt = testRuntime({ schema: db.schema, workflows: [wf], host })
+    await rt.open()
+    try {
+      const { runId } = await rt.start(wf, {}, { purpose: 'build' })
+      expect((await rt.wait(runId)).status).toBe('failed')
+      expect(await sql.step(runId, 'ask')).toMatchObject({
+        status: 'failed',
+        error_kind: 'error',
+        cost: null,
+        unpriced_calls: 1,
+        tokens_input: '0',
+      })
+    } finally {
+      await rt.close()
+    }
+  })
+
+  test('a failure before the prompt was sent spent nothing: no report at all', async () => {
+    class NoSessions extends FakeAgentHost {
+      override async open(): Promise<Json> {
+        throw new WorkflowError('error', 'no session could be opened')
+      }
+    }
+    const wf = agentWorkflow('agent.failed-unprompted')
+    const rt = testRuntime({ schema: db.schema, workflows: [wf], host: new NoSessions() })
+    await rt.open()
+    try {
+      const { runId } = await rt.start(wf, {}, { purpose: 'build' })
+      expect((await rt.wait(runId)).status).toBe('failed')
+      expect(await sql.step(runId, 'ask')).toMatchObject({ status: 'failed', unpriced_calls: 0, tokens_input: '0' })
+    } finally {
+      await rt.close()
+    }
+  })
+
+  test('a Cancelled is shared by every waiting step: it never carries one step’s usage', () => {
+    const cancelled = new Cancelled('run-1')
+    cancelled.carryUsage(usage)
+    expect(cancelled.usage).toBeUndefined()
+    const failed = new WorkflowError('error', 'x')
+    failed.carryUsage(usage)
+    expect(failed.usage).toBe(usage)
   })
 
   test('output that fails the agent schema fails the step as invalid_output', async () => {

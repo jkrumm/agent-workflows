@@ -551,8 +551,10 @@ export class RunScope {
             },
           })
           .catch((err: unknown) => {
-            // A failed wait still spent what the host read before it failed; the step row keeps it.
-            if (err instanceof WorkflowError && err.usage) scope.addUsage(err.usage)
+            // The prompt is out, so the session spent something. Whatever the host read before it failed is the step's
+            // (every error but an infra one or a `Cancelled` ends this attempt's session, so a retry opens a fresh one
+            // and no session is counted twice); with nothing to report the spend is unknown, never free.
+            scope.addUsage((err instanceof WorkflowError ? err.usage : undefined) ?? UNKNOWN_SPEND)
             throw err
           })
         if (result.usage) scope.addUsage(result.usage)
@@ -592,6 +594,13 @@ export class RunScope {
   private async sleep(ms: number) {
     await raceAbort(Bun.sleep(ms), this.signal)
   }
+}
+
+/** A prompted session whose spend could not be read: one call, no tokens, no cost (counted in `unpricedCalls`). */
+const UNKNOWN_SPEND: Usage = {
+  tokens: { input: 0, output: 0, cacheRead: 0, reasoning: 0 },
+  cost: null,
+  costSource: 'unknown',
 }
 
 export function retryPolicy(policy: RetryPolicy | undefined): Required<RetryPolicy> {

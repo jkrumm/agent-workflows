@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { BALANCE_MARKER, fallbackRoute, isBalanceFailure, type Rate, resolveRoute } from '@agent-workflows/routes'
 import type { AgentWaitOptions, Arm, Json } from '@agent-workflows/runtime'
-import { WorkflowError } from '@agent-workflows/runtime'
+import { Cancelled, WorkflowError } from '@agent-workflows/runtime'
 import {
   type AgentDefinition,
   createClient,
@@ -1556,7 +1556,7 @@ describe('a failing wait keeps what the session spent', () => {
     expect(err.usage?.tokens).toEqual(SPENT)
   })
 
-  test('a session that is gone fails as before, with no usage', async () => {
+  test('a session that is gone fails as before and carries the spend already read', async () => {
     const t = setup({ turnMs: 400 })
     const handle = await t.host.open(spec('x'))
     await t.host.prompt(handle, '[tool:read][slow:2000] x')
@@ -1569,7 +1569,35 @@ describe('a failing wait keeps what the session spent', () => {
     delete t.fake.state.sessions[sid(handle)]
     const err = await rejected(waiting)
     expect(err.message).toContain('is gone')
+    expect(err.usage?.tokens).toEqual(SPENT)
+    expect(err.usage?.cost).toBe(0.001)
+  })
+
+  test('a session that is gone before anything was read carries no usage', async () => {
+    const t = setup({ turnMs: 400 })
+    const handle = await t.host.open(spec('x'))
+    await t.host.prompt(handle, 'x')
+    delete t.fake.state.sessions[sid(handle)]
+    const err = await rejected(t.host.wait(handle, waitOptions()))
+    expect(err.message).toContain('is gone')
     expect(err.usage).toBeUndefined()
+  })
+
+  test('a run cancel (one shared Cancelled) carries no usage, on the first session or the fallback', async () => {
+    const t = setup({ turnMs: 300 })
+    const handle = await t.host.open(spec('x'))
+    await t.host.prompt(handle, '[tool:read][slow:2000] x')
+    const controller = new AbortController()
+    const cancelled = new Cancelled('run-1')
+    const waiting = t.host.wait(handle, waitOptions({ signal: controller.signal }))
+    await until(
+      () => sessions(t)[0]?.messages.some((m) => m.type === 'assistant' && m.tokens !== undefined) === true,
+      'the first reply',
+    )
+    await Bun.sleep(100)
+    controller.abort(cancelled)
+    expect(await rejected(waiting)).toBe(cancelled)
+    expect(cancelled.usage).toBeUndefined()
   })
 
   const sessions = (t: ReturnType<typeof setup>) => Object.values(t.fake.state.sessions)
