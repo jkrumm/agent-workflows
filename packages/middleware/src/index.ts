@@ -27,7 +27,7 @@ export {
   WALLET_REFUSAL_PREFIX,
 } from './friction.ts'
 export { admissionSpanId, traceIdForRun } from './ids.ts'
-export { type OpenCodeMessage, usageFromOpenCodeMessages } from './opencode-usage.ts'
+export { carriesUsage, type OpenCodeMessage, usageFromOpenCodeMessages } from './opencode-usage.ts'
 export { type Platform, type PlatformOptions, platformMiddleware } from './platform.ts'
 export { hasPurpose, purposeMiddleware } from './purpose.ts'
 export { type RunRecord, recordMiddleware } from './record.ts'

@@ -1,4 +1,4 @@
-import { type StepSessions, usageFromOpenCodeMessages } from '@agent-workflows/middleware'
+import { carriesUsage, type StepSessions, usageFromOpenCodeMessages } from '@agent-workflows/middleware'
 import { costFromUsage, isBalanceFailure, type Rate, type RouteId } from '@agent-workflows/routes'
 import {
   type AgentFollowUpSpec,
@@ -1249,7 +1249,8 @@ export class OpenCodeHost implements AgentHost {
 }
 
 /**
- * The cost of a session's assistant messages, or `null` when one cannot be priced. Per message: OpenCode's when it is
+ * The cost of a session's assistant and compaction messages (`carriesUsage`: a compaction message holds its summary
+ * call(s)), or `null` when one cannot be priced. Per message: OpenCode's when it is
  * positive (it prices with the config's cost rows, i.e. the route's base rate); a message it reports at 0 with tokens
  * is priced with the route's rate (`costFromUsage`). The exception is a message above the rate's long-prompt threshold
  * on a rate that has a tier (`longPrompt`): OpenCode's flat rows cannot know the tier, so that message is priced by the
@@ -1263,7 +1264,7 @@ export function priceOpenCodeMessages(
   let cost = 0
   let byRate = false
   for (const m of messages) {
-    if (m.type !== 'assistant' || !m.tokens) continue
+    if (!carriesUsage(m) || !m.tokens) continue
     const t = m.tokens
     const cacheRead = t.cache?.read ?? 0
     const cacheWrite = t.cache?.write ?? 0
@@ -1293,8 +1294,8 @@ export function priceOpenCodeMessages(
   return { cost, byRate }
 }
 
-/** Some assistant message reported tokens: a turn that failed before any call has nothing to report. */
-const spentTokens = (messages: readonly Message[]) => messages.some((m) => m.type === 'assistant' && m.tokens)
+/** Some assistant or compaction message reported tokens: a turn that failed before any call has nothing to report. */
+const spentTokens = (messages: readonly Message[]) => messages.some((m) => carriesUsage(m) && m.tokens)
 
 const unpriced = (usage: Usage): Usage => ({ ...usage, cost: null, costSource: 'unknown' })
 

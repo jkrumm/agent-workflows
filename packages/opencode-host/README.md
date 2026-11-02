@@ -454,13 +454,17 @@ tokenize denser than 4 characters per token). The arm that sets a bound should r
 - `max_tokens` follows the window: `min(route limit, window - prompt)`, 128000 on the plain row, about 16000 near the ceiling.
 - The `# Your Model` block of OpenCode's system prompt names the alias key as the model id (text only; the wire carries
   the real id), so a bounded session's system prompt differs from a plain one's by that line.
-- A compaction summary call is billed by the gateway, but its tokens sit on the session's `compaction` message, which
-  `usageFromOpenCodeMessages` (assistant messages only) does not read: the step's `usage` undercounts the summary calls.
-  The gateway's usage rows are complete.
+- **A compaction's spend is in the step's usage.** The summary call(s) of one compaction (the nudge retry included) are one
+  `type: "compaction"` message in the session's messages, `status` `completed` or `failed`, with `tokens` and `cost` in the
+  assistant messages' shape (`running` has none yet; measured, `test/live-context-limit.test.ts`). `usageFromOpenCodeMessages`
+  and `priceOpenCodeMessages` count it once, beside the assistant messages (`carriesUsage` in `@agent-workflows/middleware`),
+  and so does the unspent-turn check. Its tool calls and the route are unaffected: the compaction hides no message from
+  the read (the prompt and every assistant message stay in the page), carries no tool parts, and `route` and `model`
+  come from the handle, not from a message (an assistant or compaction message names the alias key).
 
 ## Usage and cost
 
-`usage` is `usageFromOpenCodeMessages` over the whole session with the route's model (the real id: a bounded route's alias row never reaches usage or pricing, `test/context-limit.test.ts`). OpenCode asks for 5-minute cache
+`usage` is `usageFromOpenCodeMessages` over the whole session (assistant and compaction messages) with the route's model (the real id: a bounded route's alias row never reaches usage or pricing, `test/context-limit.test.ts`). OpenCode asks for 5-minute cache
 writes only (§Attribution, measured), so its one `cache.write` count and the rate's `cacheWritePerM` are the right pair.
 Cost per assistant message:
 OpenCode's when it is positive (it prices with the config's cost rows, i.e. the route's own `rate`, `costSource:
@@ -566,7 +570,7 @@ the host and as a spawned `opencode` stand-in (`test/fake-opencode-bin.ts`) for 
 | `live-permissions.test.ts` | `AGW_LIVE=1`: the deny-by-default policy: the tool list per opt-in, refused calls, an opted-in `webfetch`, Code Mode's empty catalog |
 | `plugin.test.ts` | the attribution plugin against a fake session store: parity with `gatewayHeaders`, the value filter, the walk to the root and its cache, the loud failures |
 | `context-limit.test.ts` | the bounded rows (`contextLimit`): an alias per Claude model and bound with `modelID`, the window, the base row's cost and variants; `modelRef` and the fallback; the usage and price on an alias session |
-| `live-context-limit.test.ts` | `AGW_LIVE=1`: a bounded route on the pinned build: the real model id on the wire, compaction at the ceiling and not below it; no key, no LLM |
+| `live-context-limit.test.ts` | `AGW_LIVE=1`: a bounded route on the pinned build: the real model id on the wire, compaction at the ceiling and not below it, and one compaction after a tool call: the step's tokens and cost equal the sum of every call the stand-in gateway received, tool call and route intact; no key, no LLM |
 | `live-gateway.test.ts` | `AGW_LIVE=1`: the wire of the pinned build (§Attribution); needs no key and calls no LLM |
 | `packages/host/test/attribution-opencode.test.ts` | a run's attribution end to end: the real `Runtime` and `OpenCodeHost` on the fake server, through a balance fallback and a follow-up turn, to the headers the plugin sets |
 | `live-structured.test.ts` | `AGW_LIVE=1`: a JSON step on Haiku: a planted invalid `submit_result` call rejected by OpenCode, the valid one's input as the output, a follow-up turn's result |
