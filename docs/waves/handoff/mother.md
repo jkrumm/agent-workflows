@@ -5,7 +5,7 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
 
 ## State
 - **New plan 2026-11-01:** inference gateway (Waves 1–4, `docs/gateway.md`), then review v2 and the maturity pass
-  (Waves 5–13). Wave 1 done (release `767f643`, REPORT `docs/spikes/gateway/REPORT.md`); Wave 2 done (release `b25aac5`); Wave 3 active. The 2026-10-30 plan is finished (concept.md Final retro); STOP removed.
+  (Waves 5–13). Wave 1 done (release `767f643`, REPORT `docs/spikes/gateway/REPORT.md`); Wave 2 done (release `b25aac5`); Wave 3 done (release `3e6026e`); Wave 4 active. The 2026-10-30 plan is finished (concept.md Final retro); STOP removed.
 - Owner actions done (PLAN context): orgs linked, keys seeded, cycle days, no payment method. Left: `me2` keys
   (~2026-11-02, 7-day claim window); until then the `me2` pool stays disabled.
 - Lead's close-out channel: `docs/waves/handoff/lead.md` (the mother owns PLAN.md and the retro log;
@@ -14,7 +14,7 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
   tailscale drift). Not ours; gates are judged on our rows only.
 
 ## Lead
-- Mother `agent-workflows-w1-r4` (pane t4f, account me2); Wave 3 lead `agent-workflows-w1-r6` (pane t50, account me2), spawned 2026-11-02 ~02:00.
+- Mother `agent-workflows-w1-r4` (pane t4f, account me2); Wave 4 lead `agent-workflows-w1-r7` (pane t6q, account me2), spawned 2026-11-02 ~09:50.
   Rotation policy: a fresh lead per wave unless the last one closed under ~30% context.
 
 ## Decisions taken
@@ -128,9 +128,16 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
   Wave 16 and reports when iris no longer calls the old gateways. Asked the lead to confirm decide's new
   route avoids Requesty. For Wave 8's retro: decide's model move shifts the scorer judges' calibration.
 
+## For the owner (Wave 3, not stops)
+- 34 duplicate usage rows ($0.19) and `~/.config/agw/{iu,athena-iu}.env` left undeleted (query and detail in PLAN Wave 3
+  Left behind); ≈ $9.3 team-key review spend before the Wave 3 deploy; Hermes has no lane outside the gateway now.
+- The software-factory lead asked about `agw agents` (its FV Wave 5), routed to the mother; not in this PLAN. Answer when
+  it asks again: it belongs in the factory's plan or a later agw wave, not Waves 4–13 as written.
+
 ## Next action
 - Wait for the Wave 3 close-out in `docs/waves/handoff/lead.md`; judge it, tick PLAN, retro entry, next lead per the rotation policy.
 - Still owed by the owner: me2 keys and expiry day. Until then me2 stays disabled. MacWhisper is done (its door token works, `stt.done` in the audio log). OCR stays off until the Wave 7 OCR arm measures it. The Hermes morning briefing is retired; the owner rebuilds it differently, not ours.
 - Wake-loop: the factory re-fires `workers done: <lead> idle` while the lead idles on background shells. Answer with a blocking
   ~9.5-min poll on lead.md (bash loop with perl select, foreground timeout 590 s; `rd read` under `timeout 15`), not a bare re-declare.
+- Commit only own paths (`git commit -- <paths>`): a shared-checkout commit swept a lead edit in Wave 3.
 - Shell: never put double quotes inside a double-quoted `factory session note`; use a text file (a pipe in it ran `make`).
