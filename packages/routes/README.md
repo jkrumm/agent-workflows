@@ -171,11 +171,12 @@ Deliberate differences from the gateway:
 `canonicalModel(raw)` is the one id a model is recorded under. Providers echo the same model several ways (`openai.<id>`,
 `vertex_ai_eu/<id>`, `deepseek/<id>`, a dated Claude snapshot, a `[1m]` suffix, an alias such as `sonnet`); the journal
 (`steps.model`, `usage_by_model`) and the agent steps' usage take the canonical form, and each step also records its route id
-(`steps.route`), so a report groups by route and model. A model the table names comes back as is (`<owner>/<name>` table ids
-included); otherwise a one-segment provider prefix, a trailing `-YYYY-MM-DD` snapshot date (any family), a Claude snapshot date and `[1m]` go, then an alias resolves. Anything else,
-case included, comes back untouched. The prefix is read generically, not from a list: after `/` any one segment, after `.`
-letters and underscores only (a dot also sits inside ids such as `<name>-3.8`). The gateway keeps its own `rowModel` and writes
-its rows as before.
+(`steps.route`), so a report groups by route and model. An echo collapses only onto a model the table names (routes, fallbacks, the Claude models): the raw id first (a table id is
+never cut, `<owner>/<name>` ids included), then the id with its one-segment provider prefix stripped, with a trailing
+`-YYYY-MM-DD` snapshot date stripped (any family), both, each with a Claude snapshot date and `[1m]` removed, then a Claude
+alias resolved. The first table model wins; otherwise the raw id comes back untouched, so `alice/<id>` and `bob/<id>` never
+merge. The prefix is `PROVIDER_ECHO`, the regex `gatewayRecords` already used. The gateway keeps its own `rowModel` and writes its
+rows as before.
 
 ## Token effect / cache effect
 

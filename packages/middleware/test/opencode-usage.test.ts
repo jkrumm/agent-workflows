@@ -61,6 +61,11 @@ describe('usageFromOpenCodeMessages', () => {
     expect(claude).toMatch(/^claude-sonnet-/)
   })
 
+  test('route comes from the options, next to model; without one the usage has no route key', () => {
+    expect(usageFromOpenCodeMessages(cachedTurn, { route: 'check' }).route).toBe('check')
+    expect(usageFromOpenCodeMessages(cachedTurn)).not.toHaveProperty('route')
+  })
+
   test('no assistant message: zero usage', () => {
     expect(usageFromOpenCodeMessages([{ type: 'user' }, { type: 'idle' }]).tokens).toEqual({
       input: 0,
