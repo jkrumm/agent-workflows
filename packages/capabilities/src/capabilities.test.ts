@@ -69,6 +69,7 @@ describe('llm.summarize (anthropic)', () => {
     expect(usages).toEqual([
       {
         model: 'fake',
+        route: 'cheap.summarize',
         tokens: { input: 150, output: 20, cacheRead: 40, cacheWrite: 0, reasoning: 0 },
         cost: (110 * rate.inputPerM + 40 * rate.cacheReadPerM! + 20 * rate.outputPerM) / 1_000_000,
         costSource: 'rate',
@@ -195,6 +196,7 @@ describe('llm.classify (anthropic)', () => {
     expect(usages).toEqual([
       {
         model: 'fake',
+        route: 'cheap.classify',
         tokens: { input: 200, output: 30, cacheRead: 50, cacheWrite: 0, reasoning: 0 },
         cost: 0.00031,
         costSource: 'provider',
@@ -333,6 +335,7 @@ describe('decide (iu-decision)', () => {
     expect(usages).toEqual([
       {
         model: 'fake-decider',
+        route: 'decide',
         tokens: { input: 100, output: 10, cacheRead: 0, reasoning: 0 },
         cost: (100 * (rate?.inputPerM ?? 0) + 10 * (rate?.outputPerM ?? 0)) / 1_000_000,
         costSource: 'rate',

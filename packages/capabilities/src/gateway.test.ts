@@ -198,7 +198,9 @@ describe('1 h cache writes (a real Haiku 5.5 response through the gateway, 2026-
     expect(usages[0]?.cost).toBeCloseTo(at1h, 12)
     expect(usages[0]?.cost).not.toBeCloseTo(at5m, 6)
     expect(usages[0]).toMatchObject({
-      model: fixture.model,
+      // The fixture echoes the alias; the usage carries the canonical id.
+      model: haiku,
+      route: 'cheap.title',
       costSource: 'rate',
       tokens: { input: input + written, output, cacheRead: 0, cacheWrite: written, reasoning: 0 },
     })

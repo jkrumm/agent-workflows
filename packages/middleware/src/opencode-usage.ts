@@ -1,3 +1,4 @@
+import { canonicalModel } from '@agent-workflows/routes'
 import type { Usage } from '@agent-workflows/runtime'
 
 /**
@@ -34,7 +35,8 @@ function modelOf(message: OpenCodeMessage): string | null {
  *
  * `cost` is the sum of the messages' reported cost, or null when any assistant message with tokens carries none:
  * the runtime then counts the step as unpriced instead of a silent undercount. `model` is the route's model when
- * the host knows it, else the first one a message names (v2 messages do not always carry it).
+ * the host knows it, else the first one a message names (v2 messages do not always carry it), as its canonical id
+ * (`canonicalModel`: a message may name the provider's echo).
  */
 export function usageFromOpenCodeMessages(
   messages: readonly OpenCodeMessage[],
@@ -63,7 +65,7 @@ export function usageFromOpenCodeMessages(
     else priced = false
   }
   return {
-    ...(model ? { model } : {}),
+    ...(model ? { model: canonicalModel(model) } : {}),
     tokens,
     cost: priced ? cost : null,
     costSource: priced ? 'provider' : 'unknown',

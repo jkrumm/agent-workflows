@@ -97,6 +97,7 @@ describe('provider-balance fallback', () => {
       expect(usages).toEqual([
         {
           model: fallback.model,
+          route: primary.id,
           tokens: { input: 1_000, output: 200, cacheRead: 0, reasoning: 50 },
           cost: (1_000 * fallback.rate!.inputPerM + 200 * fallback.rate!.outputPerM) / 1_000_000,
           costSource: 'rate',
@@ -244,6 +245,7 @@ describe('provider-balance fallback: the review seats', () => {
       expect(usages).toEqual([
         {
           model: adversaryFallback.model,
+          route: adversary.id,
           tokens: { input: 1_000, output: 200, cacheRead: 0, reasoning: 50 },
           cost: (1_000 * 0.1 + 200 * 0.5) / 1_000_000,
           costSource: 'rate',

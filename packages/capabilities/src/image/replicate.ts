@@ -101,6 +101,7 @@ async function createPrediction(deps: ResolvedImageDeps, ctx: Ctx, { route, acce
   if (billed(created.status)) {
     ctx.addUsage({
       model: route.model,
+      route: route.id,
       tokens: { input: 0, output: 0, cacheRead: 0, reasoning: 0 },
       cost: cost.usd,
       costSource: cost.source,

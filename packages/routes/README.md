@@ -166,6 +166,17 @@ Deliberate differences from the gateway:
 - `review.router` and `review.ocr` run Haiku 5.5 on the native Messages wire (`review/ocr.ts` speaks the `anthropic` protocol for it), fallback Terra low on the chat wire. `review.adversary` is the cross-family critic, so it stays on `gpt-6.1-terra` (medium effort, chat wire, rate carried), fallback Luna medium: a Claude critic of a Claude writer defeats it, and its capability refuses any wire but the OpenAI chat wire.
 - `research.agent`, `otel.agent`, `prose.review` and the podcast routes still run `deepseek-v4.1-flash`, which is Requesty-Global; their pre-registered port rules ran on that model, so they move by the lead's decision, not in this sweep.
 
+## Model ids
+
+`canonicalModel(raw)` is the one id a model is recorded under. Providers echo the same model several ways (`openai.<id>`,
+`vertex_ai_eu/<id>`, `deepseek/<id>`, a dated Claude snapshot, a `[1m]` suffix, an alias such as `sonnet`); the journal
+(`steps.model`, `usage_by_model`) and the agent steps' usage take the canonical form, and each step also records its route id
+(`steps.route`), so a report groups by route and model. A model the table names comes back as is (`<owner>/<name>` table ids
+included); otherwise a one-segment provider prefix, a trailing `-YYYY-MM-DD` snapshot date (any family), a Claude snapshot date and `[1m]` go, then an alias resolves. Anything else,
+case included, comes back untouched. The prefix is read generically, not from a list: after `/` any one segment, after `.`
+letters and underscores only (a dot also sits inside ids such as `<name>-3.8`). The gateway keeps its own `rowModel` and writes
+its rows as before.
+
 ## Token effect / cache effect
 
 A route flip changes what the next run costs and how well it caches:

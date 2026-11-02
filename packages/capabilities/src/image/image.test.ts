@@ -147,6 +147,7 @@ describe('image.generate', () => {
     expect(reported).toEqual([
       {
         model: FLARE,
+        route: 'image.flare',
         tokens: { input: 100, output: 1000, cacheRead: 0, reasoning: 0 },
         cost: 0.0305,
         costSource: 'rate',
@@ -329,7 +330,13 @@ describe('image.cutout', () => {
     expect(result.image).toMatchObject({ width: 300, height: 280, hasAlpha: true, bytes: out.length })
     expect(result).toMatchObject({ model: RECRAFT, cost: { usd: 0.01, source: 'rate' } })
     expect(reported).toEqual([
-      { model: RECRAFT, tokens: { input: 0, output: 0, cacheRead: 0, reasoning: 0 }, cost: 0.01, costSource: 'rate' },
+      {
+        model: RECRAFT,
+        route: 'image.cutout.recraft',
+        tokens: { input: 0, output: 0, cacheRead: 0, reasoning: 0 },
+        cost: 0.01,
+        costSource: 'rate',
+      },
     ])
   })
 
@@ -438,6 +445,7 @@ describe('image.upscale', () => {
     expect(reported).toEqual([
       {
         model: REAL_ESRGAN,
+        route: 'image.upscale',
         tokens: { input: 0, output: 0, cacheRead: 0, reasoning: 0 },
         cost: 0.002,
         costSource: 'rate',
@@ -603,6 +611,7 @@ describe('image.vectorize', () => {
     expect(reported).toEqual([
       {
         model: RECRAFT_VECTORIZE,
+        route: 'image.vectorize',
         tokens: { input: 0, output: 0, cacheRead: 0, reasoning: 0 },
         cost: 0.01,
         costSource: 'rate',

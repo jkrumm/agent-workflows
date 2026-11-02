@@ -19,3 +19,16 @@ test('a capability usage passes to addUsage as is; unpriced calls are counted, n
   expect(snapshot.unpricedCalls).toBe(1)
   expect(snapshot.byModel.m).toMatchObject({ cost: 0.5, unpricedCalls: 1 })
 })
+
+test('route: the single route when every report names the same one, else null; model-less reports count', () => {
+  const tokens = { input: 1, output: 1, cacheRead: 0, reasoning: 0 }
+  const totals = new UsageTotals()
+  expect(totals.route()).toBeNull()
+  totals.add({ model: 'm', tokens })
+  expect(totals.snapshot().route).toBeNull()
+  totals.add({ route: 'r-a', tokens })
+  totals.add({ model: 'm', route: 'r-a', tokens })
+  expect(totals.snapshot().route).toBe('r-a')
+  totals.add({ model: 'm', route: 'r-b', tokens })
+  expect(totals.snapshot().route).toBeNull()
+})

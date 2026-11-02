@@ -168,6 +168,44 @@ describe('idle timeout', () => {
 })
 
 describe('usage', () => {
+  test('steps.route: the one route a step reported, null for several routes or none', async () => {
+    const tokens = { input: 1, output: 1, cacheRead: 0, reasoning: 0 }
+    const wf = defineWorkflow({
+      id: 'steps.route',
+      version: 'v1',
+      input: empty,
+      output: empty,
+      async run(ctx) {
+        await ctx.step('single', ({ addUsage }) => {
+          addUsage({ model: 'm-a', route: 'r-a', tokens })
+          addUsage({ model: 'm-b', route: 'r-a', tokens })
+          return null
+        })
+        await ctx.step('mixed', ({ addUsage }) => {
+          addUsage({ model: 'm-a', route: 'r-a', tokens })
+          addUsage({ model: 'm-a', route: 'r-b', tokens })
+          return null
+        })
+        await ctx.step('unrouted', ({ addUsage }) => {
+          addUsage({ model: 'm-a', tokens })
+          return null
+        })
+        return {}
+      },
+    })
+    const rt = testRuntime({ schema: db.schema, workflows: [wf] })
+    await rt.open()
+    try {
+      const { runId } = await rt.start(wf, {}, { purpose: 'build' })
+      await rt.wait(runId)
+      expect((await sql.step(runId, 'single'))?.route).toBe('r-a')
+      expect((await sql.step(runId, 'mixed'))?.route).toBeNull()
+      expect((await sql.step(runId, 'unrouted'))?.route).toBeNull()
+    } finally {
+      await rt.close()
+    }
+  })
+
   test('addUsage is summed per step and persisted on the step row, split by model', async () => {
     const tokens = { input: 100, output: 20, cacheRead: 50, reasoning: 5 }
     const wf = defineWorkflow({

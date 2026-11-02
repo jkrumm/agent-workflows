@@ -1,7 +1,10 @@
 import { z } from 'zod'
 
 export const usageSchema = z.object({
+  /** The canonical model id (`canonicalModel`), not the provider's echo. */
   model: z.string(),
+  /** The route id the call was resolved from (a fallback call keeps the primary's); absent for a call with no route. */
+  route: z.string().optional(),
   /** Raw provider counts: `input` includes cache reads and writes, `output` includes reasoning. `cacheWrite` is set by wires that report it. */
   tokens: z.object({
     input: z.number().int().nonnegative(),
