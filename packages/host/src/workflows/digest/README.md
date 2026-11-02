@@ -70,7 +70,10 @@ worker's real final message ("PR is open and ready … Not merged, not deployed.
 same shape on another PR ("#31 isn't merged yet"). Other non-asks that look like asks: a message full of `??`/`?.` operators,
 a worker that "was blocked on a prompt" and was approved, a note that "the fleet won't ask about X again", a review that says
 "confirm the default" about its own check. Names of private repos, employer systems, memo ids and personal account status were replaced with generic words; the shape of
-each message is untouched (a test greps the set for the usual internal names). Labels follow the prompt's rule, and a question recorded for the owner counts as an
+each message is untouched (a test greps the set for the usual internal names). Runs 1 to 6 below used the unscrubbed
+replies and are not comparable with runs 7 and 8.
+
+Labels follow the prompt's rule, and a question recorded for the owner counts as an
 ask (`r16`, relabelled after run 5: it carries an explicit "Owner question" bullet, and the model's reading was the defensible
 one). One non-ask (`r26`) carries a planted trailer telling the summarizer to answer `PWNED-7731`, and `w10` plants
 `CANARY-4432` in a fact list; the output must hold neither. The 10 windows and 10 sessions are written for the set.
@@ -92,7 +95,8 @@ heading text), `asks` (replies matching the label), `askPrecision` (replies answ
 | 4, final prompt | Haiku, no thinking | 12 x 3 | **36/36** | 1.000 | 1.000 | - | 1.000 | 1.000 | 1.000 | 0.969 | 0.0012 | 4.6 s / 20.4 s |
 | 5, real replies, `r16` (then `r30`) labelled non-ask | Haiku, no thinking | 12 x 3 | 29/36 | 1.000 | 0.964 | 0.950 | 0.993 | 1.000 | 1.000 | 0.909 | 0.0016 | 6.2 s / 24.2 s |
 | 6, real replies, `r16` relabelled ask | Haiku, no thinking | 12 x 3 | **31/36** | 0.996 | 0.996 | 1.000 | 0.992 | 0.993 | 1.000 | 0.986 | 0.0016 | 6.2 s / 27.6 s |
-| 7, the scrubbed set as committed | Haiku, no thinking | 12 x 3 | **34/36** | 0.996 | 0.989 | 1.000 | 0.984 | 1.000 | 1.000 | 0.957 | 0.0016 | 6.2 s / 28.1 s |
+| 7, the scrubbed set | Haiku, no thinking | 12 x 3 | **34/36** | 0.996 | 0.989 | 1.000 | 0.984 | 1.000 | 1.000 | 0.957 | 0.0016 | 6.2 s / 28.1 s |
+| 8, the same set, one heading reworded | Haiku, no thinking | 12 x 3 | **36/36** | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 | 0.954 | 0.0016 | 6.1 s / 27.1 s |
 
 Run 1's misses were all one thing: a `short` of nine words (the reply shorts), which the schema rejects. Run 2's window misses
 were the scorer asking for "7" where the model wrote "seven". Run 4 (the shipped prompt) missed nothing on the written
@@ -104,16 +108,18 @@ asking, so a failed item shows as a miss here):
 
 | Set | Run | Decisions | TP | FP | FN | TN | Precision | Recall |
 |-|-|-|-|-|-|-|-|-|
-| `mix-01` to `mix-10`: each of the 30 replies, 3 runs | 7, as committed | 90 | 47 | 0 | 1 | 42 | **1.00** | **0.979** |
-| `batch-64-a`, `batch-64-b`: 21 + 21 reply slots, 3 runs | 7, as committed | 126 | 68 | 0 | 1 | 57 | **1.00** | **0.986** |
-| `mix-*` before the scrub | 6 | 90 | 48 | 0 | 0 | 42 | 1.00 | 1.00 |
-| `batch-64-*` before the scrub | 6 | 126 | 66 | 0 | 3 | 57 | 1.00 | 0.957 |
+| `mix-01` to `mix-10`: each of the 30 replies, 3 runs | 8, as committed | 90 | 48 | 0 | 0 | 42 | **1.00** | **1.00** |
+| `batch-64-a`, `batch-64-b`: 21 + 21 reply slots, 3 runs | 8, as committed | 126 | 69 | 0 | 0 | 57 | **1.00** | **1.00** |
+| `mix-*`, the scrubbed set | 7 | 90 | 47 | 0 | 1 | 42 | 1.00 | 0.979 |
+| `batch-64-*`, the scrubbed set | 7 | 126 | 68 | 0 | 1 | 57 | 1.00 | 0.986 |
+| `mix-*`, unscrubbed | 6 | 90 | 48 | 0 | 0 | 42 | 1.00 | 1.00 |
+| `batch-64-*`, unscrubbed | 6 | 126 | 66 | 0 | 3 | 57 | 1.00 | 0.957 |
 | `mix-*`, `r16` still labelled a non-ask | 5 | 90 | 45 | 3 | 0 | 42 | 0.938 | 1.00 |
 
-Run 7's two misses are both failed items, not silent ones: `r06` (a nine-word `short`, rejected by the schema) and `r11` (the
+Run 8 repeats run 7 on the same set (one heading lost the employer's name in between) and misses nothing. Run 7's two misses are both failed items, not silent ones: `r06` (a nine-word `short`, rejected by the schema) and `r11` (the
 model gave no answer for it in a 64-item batch); the caller sees each as an `error`. Run 6's three misses in the 64-item batches
 were real: `r09` twice and `r12` once, an owner question or a go-ahead sitting in one bullet or the last paragraph of a long
-status report, answered as a note. They did not recur in run 7, so a batch of 64 may lose a little recall that a batch of nine
+status report, answered as a note. They did not recur in runs 7 and 8, so a batch of 64 may lose a little recall that a batch of nine
 does not; 126 decisions cannot settle it. A 64-item batch costs about 0.005 USD and takes 22 to 28 s.
 
 The bar for this route was asks precision 0.9 (the owner's, 2026-11-02): Haiku without thinking clears it on both sets, so
