@@ -46,7 +46,7 @@ export const IMPORT_TARGETS: ReadonlySet<string> = new Set(Object.values(IMPORTE
 
 /** The suites that have an importer, sorted; empty when the host serves none. */
 export function importableSuites(suites: Suites): string[] {
-  return [...suites.keys()].filter((id) => id in IMPORTERS).sort()
+  return [...suites.keys()].filter((id) => Object.hasOwn(IMPORTERS, id)).sort()
 }
 
 /** The `agw eval import` input over the suites that have an importer. */
@@ -140,7 +140,7 @@ export function createEvalImport(
     // Each label is an arm of its own: a distinct fingerprint, inherited by every case run below.
     arm: (input) => ({ params: { external: input.label } }),
     async run(ctx, input) {
-      const importer = IMPORTERS[input.workflow] as Importer
+      const importer = IMPORTERS[input.workflow] as Importer // `workflow` is an importable suite id (the input enum)
       const plan = await ctx.step('plan', async () => {
         slot.target(importer.target) // served here, with a scorer
         let suite: EvalCase[]
@@ -154,10 +154,10 @@ export function createEvalImport(
         if (unknown.length > 0) throw new WorkflowError('invalid_input', `unknown case ids: ${unknown.join(', ')}`)
         const findings = parseFindings(importer, input.findings)
         const selected = select(suite, input.ids, undefined).map((c) => c.id)
-        const ids = selected.filter((id) => id in findings)
+        const ids = selected.filter((id) => Object.hasOwn(findings, id))
         if (ids.length === 0)
           throw new WorkflowError('invalid_input', 'the file has no findings for the selected cases')
-        return { ids, missing: selected.filter((id) => !(id in findings)), findings }
+        return { ids, missing: selected.filter((id) => !Object.hasOwn(findings, id)), findings }
       })
       const planned = {
         workflow: input.workflow,
