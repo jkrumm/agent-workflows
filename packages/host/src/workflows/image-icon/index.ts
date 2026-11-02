@@ -143,14 +143,10 @@ async function prepareStep({ input, workDir }: IconRun): Promise<PrepareResult> 
 
 async function upscaleStep(
   { registry, workDir }: IconRun,
-  { addUsage, signal, attribution, arm }: StepScope,
+  { callContext }: StepScope,
   source: { scale: number; sourcePath: string },
 ): Promise<UpscaleResult> {
-  const out = await registry.call(
-    'image.upscale',
-    { file: source.sourcePath, scale: source.scale },
-    { addUsage, signal, attribution, arm },
-  )
+  const out = await registry.call('image.upscale', { file: source.sourcePath, scale: source.scale }, callContext)
   const path = join(workDir(), 'upscaled.png')
   await afterBilled([{ step: 'upscale', usd: out.cost.usd }], () => writeFile(path, decodeBase64(out.image.b64)))
   return { path, model: out.model, cost: out.cost, latencyMs: out.latencyMs }
@@ -158,7 +154,7 @@ async function upscaleStep(
 
 async function cutoutStep(
   { registry, input, workDir }: IconRun,
-  { addUsage, signal, attribution, arm }: StepScope,
+  { callContext }: StepScope,
   imagePath: string,
   billed: Billed[],
 ): Promise<CutoutResult> {
@@ -169,11 +165,7 @@ async function cutoutStep(
   const inputPath = join(workDir(), 'cutout-input.png')
   await writeFile(inputPath, await prepareCutoutInput(bytes, { maxEdge: CUTOUT_INPUT_MAX_EDGE }))
   const out = await afterBilled(billed, () =>
-    registry.call(
-      'image.cutout',
-      { file: inputPath, model: input.cutoutModel },
-      { addUsage, signal, attribution, arm },
-    ),
+    registry.call('image.cutout', { file: inputPath, model: input.cutoutModel }, callContext),
   )
   const path = join(workDir(), 'cutout.png')
   await afterBilled([...billed, { step: 'cutout', usd: out.cost.usd }], () =>
@@ -195,7 +187,7 @@ function renderStep(run: IconRun, finalImage: string, billed: Billed[]): Promise
 
 async function vectorizeStep(
   run: IconRun,
-  { addUsage, signal, attribution, arm }: StepScope,
+  { callContext }: StepScope,
   masterPath: string,
   billed: Billed[],
 ): Promise<VectorizeResult> {
@@ -203,9 +195,7 @@ async function vectorizeStep(
   await afterBilled(billed, async () =>
     writeFile(inputPath, await vectorizeInput(Buffer.from(await Bun.file(masterPath).bytes()))),
   )
-  const out = await afterBilled(billed, () =>
-    run.registry.call('image.vectorize', { file: inputPath }, { addUsage, signal, attribution, arm }),
-  )
+  const out = await afterBilled(billed, () => run.registry.call('image.vectorize', { file: inputPath }, callContext))
   const step = { model: out.model, cost: out.cost, latencyMs: out.latencyMs }
   return afterBilled([...billed, { step: 'vectorize', usd: out.cost.usd }], async () => {
     const svg = Buffer.from(cleanVectorized(out.svg))

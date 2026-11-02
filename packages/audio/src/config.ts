@@ -1,5 +1,3 @@
-import { type AudioLane, audioRoutes } from './routes.ts'
-
 export type Env = Record<string, string | undefined>
 
 /**
@@ -21,10 +19,13 @@ export interface AudioTransports {
 
 /** Tuning knobs; env names and defaults are audio-gateway's (`src/config.ts`), so a deploy env carries over unchanged. */
 export interface AudioTuning {
-  /** Model ids (or prefixes) that run the Gemini prep LLM. Default: the routes flagged `prep`. */
-  ttsGeminiPrepModels: string[]
-  /** Model ids (or prefixes) that run the ElevenLabs prep LLM. Default: the routes flagged `prep`. */
-  ttsReplicatePrepModels: string[]
+  /**
+   * Model ids (or prefixes) that run the Gemini prep LLM (`TTS_GEMINI_PREP_MODELS`). Unset: the routes flagged `prep`,
+   * read from the scope's routes (`AudioScope.prepModels`), so an armed run's patch moves them with the route.
+   */
+  ttsGeminiPrepModels?: string[]
+  /** As `ttsGeminiPrepModels`, for the ElevenLabs lane (`TTS_REPLICATE_PREP_MODELS`). */
+  ttsReplicatePrepModels?: string[]
   /** `always`: prep every request of a prep model; `long`: only at or above `ttsChunkCharThreshold`; `off`: never. */
   ttsPrep: 'always' | 'long' | 'off'
   /** Whole-file requests on a prep-off ElevenLabs model whose text is at least this long get the spoken summary. 0 = off. */
@@ -68,12 +69,10 @@ export interface AudioConfig extends AudioTuning {
 
 export class AudioConfigError extends Error {}
 
-const prepModels = (lane: AudioLane): string[] =>
-  Object.values(audioRoutes())
-    .filter((r) => r.lane === lane && r.prep)
-    .map((r) => r.model)
+const optional = <K extends string, V>(key: K, value: V | undefined) =>
+  (value === undefined ? {} : { [key]: value }) as Partial<Record<K, V>>
 
-/** Legacy's defaults. The prep model lists default to the routes flagged `prep`, resolved with the same env. */
+/** Legacy's defaults. The prep model lists have none: unset, they are the routes flagged `prep` of the scope. */
 export const AUDIO_TUNING_DEFAULTS: Readonly<Omit<AudioTuning, 'ttsGeminiPrepModels' | 'ttsReplicatePrepModels'>> =
   Object.freeze({
     ttsPrep: 'always',
@@ -150,9 +149,9 @@ export function audioConfig(env: Env): AudioConfig {
     return parsed
   }
   const str = (name: string, fallback: string): string => env[name] ?? fallback
-  const list = (name: string, fallback: string[]): string[] => {
+  const list = (name: string): string[] | undefined => {
     const raw = env[name]
-    if (raw === undefined) return fallback
+    if (raw === undefined) return undefined
     return raw
       .split(',')
       .map((s) => s.trim())
@@ -168,8 +167,8 @@ export function audioConfig(env: Env): AudioConfig {
   }
   return {
     transports: audioTransports(env),
-    ttsGeminiPrepModels: list('TTS_GEMINI_PREP_MODELS', prepModels('gemini')),
-    ttsReplicatePrepModels: list('TTS_REPLICATE_PREP_MODELS', prepModels('replicate')),
+    ...optional('ttsGeminiPrepModels', list('TTS_GEMINI_PREP_MODELS')),
+    ...optional('ttsReplicatePrepModels', list('TTS_REPLICATE_PREP_MODELS')),
     ttsPrep: oneOf('TTS_PREP', ['always', 'long', 'off'] as const, d.ttsPrep),
     ttsAutoSummarizeMinChars: num('TTS_AUTO_SUMMARIZE_MIN_CHARS', d.ttsAutoSummarizeMinChars),
     ttsBitrateKbps: num('TTS_MP3_BITRATE', d.ttsBitrateKbps),

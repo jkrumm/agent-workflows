@@ -40,7 +40,7 @@ export interface Attribution {
 
 /**
  * The calling run's experiment arm, as the runtime's step scope carries it: every route the capability resolves applies
- * `routes` (`resolve(deps, id, ctx)`). Absent outside an armed run: the plain route table.
+ * `routes` (`resolve(id, ctx)`). Absent outside an armed run: the plain route table.
  */
 export interface CallArm {
   routes?: PatchInput

@@ -114,13 +114,18 @@ describe('resolveRoute', () => {
     expect(resolveRoute('cheap.classify', e).maxOutputTokens).toBeUndefined()
   })
 
-  test("a new model takes the patch's rate, else the table's for that model; a model the table never prices is refused", () => {
+  test("a new model takes the table's rate for that model; a priced route never moves to a model the table prices no such way", () => {
+    // A model the table does not name is refused on every wire, before any price is looked at: it goes into the table first.
     expect(() => resolveRoute('decide', { decide: { model: 'other' } })).toThrow(
-      /"decide": the patched model has no rate/,
+      'arm: route "decide": model "other" is not in the route table (add it to the table first)',
     )
-    const rate = { inputPerM: 1, outputPerM: 2 }
-    expect(resolveRoute('decide', { decide: { model: 'other', rate } }).rate).toEqual(rate)
-    expect(resolveRoute('decide', { decide: { model: 'other', rate: null } }).rate).toBeUndefined() // unpriced on purpose
+    expect(() => resolveRoute('cheap.classify', { 'cheap.classify': { fallback: { model: 'other' } } })).toThrow(
+      'route "cheap.classify" fallback: model "other" is not in the route table',
+    )
+    // A table model priced per call, not per token: the text route would lose its rate.
+    expect(() => resolveRoute('cheap.classify', { 'cheap.classify': { model: entry('image.upscale').model } })).toThrow(
+      'route "cheap.classify": the route table has no rate for the patched model, and this route is priced by one',
+    )
     expect(resolveRoute('decide', { decide: { effort: null } }).rate).toEqual(DEFAULT_ROUTES.decide?.rate)
     const sonnet = resolveRoute('cheap.classify', { 'cheap.classify': { model: 'claude-sonnet-5-5', effort: 'low' } })
     expect(sonnet.rate).toEqual(resolveRoute('review.angle.deep').rate as never)
@@ -160,14 +165,17 @@ describe('resolveRoute', () => {
   })
 
   test('an agent route moves only to a model the OpenCode server serves, naming the route and the model', () => {
-    expect(() => resolveRoute('check', { check: { model: 'not-served' } })).toThrow(
-      'arm: route "check": model "not-served" is not served by the OpenCode server',
+    // A table model that only single calls use (the cheap seat's fallback) is not one the server serves.
+    const callOnly = entry('cheap.classify').fallback?.model as string
+    expect(opencodeModels().has(callOnly)).toBe(false)
+    expect(() => resolveRoute('check', { check: { model: callOnly } })).toThrow(
+      `arm: route "check": model "${callOnly}" is not served by the OpenCode server`,
     )
-    expect(() => resolveRoute('check', { check: { fallback: { model: 'not-served', rate: null } } })).toThrow(
+    expect(() => resolveRoute('check', { check: { fallback: { effort: 'low', rate: null } } })).toThrow(
       /route "check" fallback: rate cannot be patched on the opencode wire/,
     )
-    expect(() => resolveRoute('check', { check: { fallback: { model: 'not-served' } } })).toThrow(
-      'route "check" fallback: model "not-served" is not served',
+    expect(() => resolveRoute('check', { check: { fallback: { model: callOnly } } })).toThrow(
+      `route "check" fallback: model "${callOnly}" is not served`,
     )
     for (const key of ['rate', 'maxOutputTokens']) {
       const value = key === 'rate' ? { inputPerM: 1, outputPerM: 1 } : 1000
@@ -233,8 +241,8 @@ describe('routeFingerprint', () => {
     const model = otherAgentModel('review.angle')
     expect(routeFingerprint('review.angle', { 'review.angle': { model } })).not.toBe(base)
     expect(routeFingerprint('review.synthesis', {})).not.toBe(routeFingerprint('review.angle', {}))
-    const a = routeFingerprint('decide', { decide: { model: 'm', rate: { inputPerM: 1, outputPerM: 2 } } })
-    const b = routeFingerprint('decide', { decide: { rate: { outputPerM: 2, inputPerM: 1 }, model: 'm' } })
+    const a = routeFingerprint('decide', { decide: { maxOutputTokens: null, rate: { inputPerM: 1, outputPerM: 2 } } })
+    const b = routeFingerprint('decide', { decide: { rate: { outputPerM: 2, inputPerM: 1 }, maxOutputTokens: null } })
     expect(a).toBe(b)
   })
 
@@ -597,20 +605,14 @@ describe('fallback', () => {
   })
 
   test('a patch reaches a fallback like a primary, and only the part it names', () => {
-    const rate = { inputPerM: 1, outputPerM: 2 }
-    const e = { 'cheap.classify': { fallback: { model: 'other-model', effort: 'high', rate } } }
+    // The cheap seat's fallback moves to the Terra model the table names, at an effort of its own.
+    const terra = entry('review.angle').fallback?.model as string
+    const e = { 'cheap.classify': { fallback: { model: terra, effort: 'high' } } }
     const route = resolveRoute('cheap.classify', e)
     expect(route.model).toBe(entry('cheap.classify').model)
-    expect(route.fallback).toMatchObject({
-      wire: 'iu-openai',
-      model: 'other-model',
-      effort: 'high',
-    })
-    expect(route.fallback?.rate).toEqual(rate)
-    // A new fallback model the table does not price needs a rate, as on the primary.
-    expect(() => resolveRoute('cheap.classify', { 'cheap.classify': { fallback: { model: 'other-model' } } })).toThrow(
-      'route "cheap.classify" fallback: the patched model has no rate',
-    )
+    expect(route.fallback).toMatchObject({ wire: 'iu-openai', model: terra, effort: 'high' })
+    // The table's rate for that model, as on the primary.
+    expect(route.fallback?.rate).toEqual(entry('review.angle').fallback?.rate as never)
     expect(routeFingerprint('cheap.classify', e)).not.toBe(routeFingerprint('cheap.classify', {}))
   })
 

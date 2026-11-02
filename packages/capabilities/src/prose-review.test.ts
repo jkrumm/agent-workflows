@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import { resolveRoute, routeIds } from '@agent-workflows/routes'
 import { createCapabilities } from './capabilities/index.ts'
 import { fenceNonce, neutralizeFenceMarkers } from './capabilities/prose-prompts.ts'
 import { reviewRouteRefusal } from './capabilities/prose-review.ts'
@@ -154,7 +155,6 @@ describe('the fence', () => {
 
 describe('prose.review route: the reviewer is never the writer’s lab', () => {
   const noCalls = fakeTransports({})
-  const RATE = { inputPerM: 1, outputPerM: 1 }
 
   test('the table route is not Anthropic, so the capabilities build', () => {
     expect(() => createCapabilities({ transports: noCalls, env: {} })).not.toThrow()
@@ -172,20 +172,22 @@ describe('prose.review route: the reviewer is never the writer’s lab', () => {
     expect(t.transports.chatCalls).toHaveLength(0)
   }
 
-  test.each([
-    ['claude-test-model'],
-    ['anthropic/some-model'],
-    ['vendor/claude-test-model'],
-    ['opus-test-1'],
-    ['sonnet-test-1'],
-    ['haiku-test-1'],
-    ['fable-test-1'],
-  ])("an arm moving the primary to an Anthropic model (%s) is refused on the call's resolved route", async (model) => {
-    await refusedUnder({ model, rate: RATE })
+  /** Every Anthropic model the table names (an arm moves a route only to one of those). */
+  const anthropic = [...new Set(routeIds().map((id) => resolveRoute(id).model))].filter((m) => m.startsWith('claude-'))
+
+  test('the table names Anthropic models to move the reviewer to', () => {
+    expect(anthropic.length).toBeGreaterThan(0)
   })
 
+  test.each(anthropic.map((model) => [model]))(
+    "an arm moving the primary to an Anthropic model (%s) is refused on the call's resolved route",
+    async (model) => {
+      await refusedUnder({ model, effort: 'low' })
+    },
+  )
+
   test('an Anthropic fallback model is refused too', async () => {
-    await refusedUnder({ fallback: { model: 'vendor/claude-test-model', rate: RATE } })
+    await refusedUnder({ fallback: { model: anthropic[0], effort: 'low' } })
   })
 
   test('a run without an arm, beside the armed one, still reviews on the table route', async () => {

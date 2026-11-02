@@ -97,9 +97,9 @@ const chunkLimits = (scope: AudioScope): ChunkLimits => ({
 const resolveLanguage = (scope: AudioScope, input: string): 'de' | 'en' =>
   detectLanguage(input) ?? scope.config.ttsDefaultLanguage
 
-/** Whether `model` runs the prep LLM (`TTS_REPLICATE_PREP_MODELS`, id or prefix). */
+/** Whether `model` runs the prep LLM (`AudioScope.prepModels`: `TTS_REPLICATE_PREP_MODELS`, id or prefix, or the prep routes). */
 export const replicateWantsPrep = (scope: AudioScope, model: string): boolean =>
-  listed(scope.config.ttsReplicatePrepModels, model)
+  listed(scope.prepModels('replicate'), model)
 
 /**
  * Prep for this lane. Skipped (one chunk, no LLM call, no title) unless the model is a prep model or `summarize`

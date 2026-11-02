@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { RouteOverrideError, resolveRoute, routeSchema, validateArm } from './index.ts'
+import { EFFORTS, effortsOf, RouteOverrideError, resolveRoute, routeSchema, takesEffort, validateArm } from './index.ts'
 import { discoverRoutes } from './registry.ts'
 import { join } from 'node:path'
 import { mkdtempSync, writeFileSync } from 'node:fs'
@@ -60,5 +60,24 @@ describe('Sonnet at effort none is a configuration error', () => {
   test('the same patch with a real effort is accepted', () => {
     const patch = { 'cheap.classify': { model: 'claude-sonnet-5-5', effort: 'low' } }
     expect(resolveRoute('cheap.classify', patch)).toMatchObject({ model: 'claude-sonnet-5-5', effort: 'low' })
+  })
+
+  test('the efforts each provider family takes: DeepSeek its four levels, GPT-6 Astra and 6.1 Sol no none, the rest all', () => {
+    expect(effortsOf('deepseek-v4.1-flash')).toEqual(['none', 'low', 'high', 'max'])
+    expect(takesEffort('gpt-6-astra', 'none')).toBe(false)
+    expect(takesEffort('gpt-6.1-sol', 'none')).toBe(false)
+    expect(takesEffort('gpt-6.1-sol-2026-10-01', 'low')).toBe(true)
+    expect(effortsOf('gpt-6.1-terra')).toEqual(EFFORTS)
+    expect(effortsOf('claude-haiku-5-5')).toEqual(EFFORTS)
+    expect(effortsOf('sonnet')).not.toContain('none')
+  })
+
+  test('an arm putting a DeepSeek route on an alias effort is refused at admission, naming the route, the family and the levels', () => {
+    const arm = { routes: { 'research.agent': { effort: 'medium' } } }
+    expect(() => validateArm(arm)).toThrow(RouteOverrideError)
+    expect(() => validateArm(arm)).toThrow(
+      /research\.agent.*a DeepSeek model cannot run at effort medium: use none, low, high or max/s,
+    )
+    expect(validateArm({ routes: { 'research.agent': { effort: 'max' } } })).toBeDefined()
   })
 })

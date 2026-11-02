@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { PROVIDER_ECHO } from './models.ts'
+import { PROVIDER_ECHO, TABLE_MODELS } from './models.ts'
 import { z } from 'zod'
 import { applyPatch, type PatchInput, parsePatch, RouteOverrideError, routesPatchSchema } from './overrides.ts'
 import { DEFAULT_ROUTES } from './registry.ts'
@@ -32,6 +32,7 @@ export { DEFAULT_ROUTES, discoverRoutes } from './registry.ts'
 export {
   EFFORTS,
   type Effort,
+  effortsOf,
   type FallbackEntry,
   type Rate,
   type ResolvedRoute,
@@ -81,16 +82,27 @@ export function opencodeModels(): ReadonlySet<string> {
 }
 
 /**
- * On the `opencode` wire a patch may move the model and effort (of the primary and the fallback) or drop the fallback:
- * the server's config, built from the table, prices and limits a model, not a route, so a patched rate or output limit
- * would not reach OpenCode, and a model outside the config is a session OpenCode cannot open.
+ * A patch moves a route only to a model the table names (`TABLE_MODELS`: the routes', the fallbacks', the Claude
+ * models), on every wire: the gateway's records (`gatewayRecords`) and the price come from the table, so a new model goes
+ * into the table first. On the `opencode` wire the model must also be one the OpenCode server serves (its opencode-wire
+ * models), and `rate`, `maxOutputTokens` and `price` cannot be patched: the server's config, built from the table,
+ * prices and limits a model, not a route, so a patched one would not reach OpenCode.
  */
-function checkOpencode(id: string, patch: RoutePatch, base: RouteEntry) {
-  if (base.wire !== 'opencode') return
-  for (const [where, part] of [
+function checkModels(id: string, patch: RoutePatch, base: RouteEntry) {
+  const parts = [
     ['', patch],
     [' fallback', patch.fallback ?? {}],
-  ] as const) {
+  ] as const
+  for (const [where, part] of parts) {
+    const model = part.model
+    if (model !== undefined && !TABLE_MODELS.has(model)) {
+      throw new RouteOverrideError(
+        `route "${id}"${where}: model "${model}" is not in the route table (add it to the table first)`,
+      )
+    }
+  }
+  if (base.wire !== 'opencode') return
+  for (const [where, part] of parts) {
     for (const key of ['rate', 'maxOutputTokens', 'price'] as const) {
       if (part[key] !== undefined) {
         throw new RouteOverrideError(
@@ -98,15 +110,9 @@ function checkOpencode(id: string, patch: RoutePatch, base: RouteEntry) {
         )
       }
     }
-  }
-  const served = opencodeModels()
-  for (const [where, model] of [
-    ['', patch.model],
-    [' fallback', patch.fallback?.model],
-  ] as const) {
-    if (model !== undefined && !served.has(model)) {
+    if (part.model !== undefined && !opencodeModels().has(part.model)) {
       throw new RouteOverrideError(
-        `route "${id}"${where}: model "${model}" is not served by the OpenCode server (it serves the opencode-wire models of the route table)`,
+        `route "${id}"${where}: model "${part.model}" is not served by the OpenCode server (it serves the opencode-wire models of the route table)`,
       )
     }
   }
@@ -118,7 +124,7 @@ function patchedEntries(raw: unknown): Map<string, RouteEntry> {
   for (const [patchId, patch] of Object.entries(parsePatch(raw))) {
     const base = isRouteId(patchId) ? DEFAULT_ROUTES[patchId] : undefined
     if (!base) throw new RouteOverrideError(`unknown route "${patchId}" (known: ${routeIds().join(', ')})`)
-    checkOpencode(patchId, patch, base)
+    checkModels(patchId, patch, base)
     resolved.set(patchId, applyPatch(patchId, base, patch))
   }
   return resolved
@@ -126,7 +132,8 @@ function patchedEntries(raw: unknown): Map<string, RouteEntry> {
 
 /**
  * Check an arm whole: its shape, every route patch (including one for an id that is not in the table) valid over its
- * table entry, and an agent route only on a model the OpenCode server serves. Returns the parsed arm. A failure is a
+ * table entry, every patched model one the table names, an agent route only on a model the OpenCode server serves.
+ * Returns the parsed arm. A failure is a
  * `RouteOverrideError` naming the route id and the problem; shape errors carry zod's message, which names keys, never
  * a value.
  */

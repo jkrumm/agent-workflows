@@ -159,6 +159,20 @@ export class AudioScope {
     return route
   }
 
+  /**
+   * The model ids (or prefixes) that run the prep LLM on a lane: `TTS_*_PREP_MODELS` when set, else the models of the
+   * routes flagged `prep` among this scope's routes (an armed run's patch applied).
+   */
+  prepModels(lane: 'gemini' | 'replicate'): string[] {
+    const listed = lane === 'gemini' ? this.config.ttsGeminiPrepModels : this.config.ttsReplicatePrepModels
+    return (
+      listed ??
+      Object.values(this.deps.routes)
+        .filter((route) => route.lane === lane && route.prep)
+        .map((route) => route.model)
+    )
+  }
+
   /** The route id serving `model` on one of `wires`, or null. */
   routeIdForModel(model: string, lanes: readonly AudioLane[]): AudioRouteId | null {
     if (!model) return null

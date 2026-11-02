@@ -116,7 +116,7 @@ describe('the image routes', () => {
   test("a patch that changes the model takes the patch's price, else the table's for that model, else is refused (never a stale price, never none)", () => {
     const base = IMAGE_ROUTES['image.cutout.recraft']
     expect(() => applyPatch('image.cutout.recraft', base, { model: 'other/model' })).toThrow(
-      'route "image.cutout.recraft": the patched model has no price',
+      'route "image.cutout.recraft": the route table has no price for the patched model, and this route is priced by one',
     )
     const bria = IMAGE_ROUTES['image.cutout.bria']
     expect(applyPatch('image.cutout.recraft', base, { model: bria.model }).price).toEqual(bria.price)

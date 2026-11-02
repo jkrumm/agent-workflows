@@ -1,3 +1,4 @@
+import type { PatchInput } from '../../../../routes/src/index.ts'
 import { audioRoutes } from '../../routes.ts'
 import { brainDirFromEnv } from '../podcast/config.ts'
 import type { AbsConfig } from './abs.ts'
@@ -57,9 +58,12 @@ function num(env: Env, key: string, fallback: number): number {
 
 const withHttpsScheme = (url: string): string => (url === '' || /^https?:\/\//.test(url) ? url : `https://${url}`)
 
-/** `PODCAST_TTS_MODEL` as a route id of a TTS lane: a route id as is, a model id through the table. */
-export function ttsRouteFor(value: string): string {
-  const routes = Object.values(audioRoutes()).filter((r) => r.lane === 'gemini' || r.lane === 'replicate')
+/**
+ * `PODCAST_TTS_MODEL` as a route id of a TTS lane: a route id as is, a model id through the routes, with `patch` (the
+ * run's arm's `routes`) applied; without one, the table (the boot check of the config).
+ */
+export function ttsRouteFor(value: string, patch?: PatchInput): string {
+  const routes = Object.values(audioRoutes(patch)).filter((r) => r.lane === 'gemini' || r.lane === 'replicate')
   const route = routes.find((r) => r.id === value) ?? routes.find((r) => r.model === value)
   if (!route) {
     throw new Error(`PODCAST_TTS_MODEL "${value}" is neither a TTS route id nor the model of one (audio route table)`)

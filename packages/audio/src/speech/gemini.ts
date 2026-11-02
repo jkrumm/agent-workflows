@@ -102,9 +102,8 @@ function defaultPrep(scope: AudioScope, input: string): PrepResult {
   return { lang, title: fallbackTitle(input, de), chunks: [{ style: '', text }] }
 }
 
-/** Whether `model` runs the prep LLM (`TTS_GEMINI_PREP_MODELS`, id or prefix). */
-export const geminiWantsPrep = (scope: AudioScope, model: string): boolean =>
-  listed(scope.config.ttsGeminiPrepModels, model)
+/** Whether `model` runs the prep LLM (`AudioScope.prepModels`: `TTS_GEMINI_PREP_MODELS`, id or prefix, or the prep routes). */
+export const geminiWantsPrep = (scope: AudioScope, model: string): boolean => listed(scope.prepModels('gemini'), model)
 
 /**
  * Prep for the Gemini lane: only for prep models (and then per `ttsPrep`); `summarize` always calls the summary LLM.

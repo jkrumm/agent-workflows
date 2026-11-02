@@ -55,7 +55,7 @@ when that chunk ends.
 
 - **Gemini** (wire `iu-gemini`): the chat model is one raw `generateContent` call (deterministic cleanup, allowlisted
   inline tags kept, a caller `delivery` or string `style` from the shared vocabulary, anything else a 400); prep
-  models (`TTS_GEMINI_PREP_MODELS`, default the routes flagged `prep`) run the prep LLM first (per-chunk `delivery`,
+  models (`TTS_GEMINI_PREP_MODELS`, default the routes flagged `prep` among the scope's routes, `AudioScope.prepModels`) run the prep LLM first (per-chunk `delivery`,
   tag band, title). `response_format: pcm` streams `streamGenerateContent?alt=sse`: sample-aligned passthrough, the
   400 ms join, billed from duration × 25 tokens/s. The contract: a failure before the first byte is a normal HTTP
   error, one after it errors the body (a transfer error, never a clean EOF). Request shapes and traps: modelpick

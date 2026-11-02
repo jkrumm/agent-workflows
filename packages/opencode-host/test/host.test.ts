@@ -300,9 +300,11 @@ describe('open / prompt / wait', () => {
 
   test('an armed step on a model the server does not serve is refused at open, naming the route and the model', async () => {
     const t = setup()
-    const arm: Arm = { routes: { check: { model: 'not-served' } } }
+    // A table model only single calls use (the cheap seat's fallback): named by the table, not served by OpenCode.
+    const callOnly = resolveRoute('cheap.classify').fallback?.model as string
+    const arm: Arm = { routes: { check: { model: callOnly } } }
     expect(await failure(t.host.open({ ...spec('x'), arm }))).toContain(
-      'route "check": model "not-served" is not served',
+      `route "check": model "${callOnly}" is not served`,
     )
   })
 

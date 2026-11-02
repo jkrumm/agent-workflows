@@ -1,7 +1,7 @@
 import { join } from 'node:path'
 import { z } from 'zod'
 import { artifactDir } from '../../../../host/src/artifacts.ts'
-import type { Arm, Attribution, Ctx, Json, Logger, Usage } from '../../../../runtime/src/index.ts'
+import type { CallContext, Ctx, Json, Logger, Usage } from '../../../../runtime/src/index.ts'
 import { defineWorkflow, WorkflowError } from '../../../../runtime/src/index.ts'
 import type { PatchInput } from '../../../../routes/src/index.ts'
 import { audioRoutes } from '../../routes.ts'
@@ -12,7 +12,7 @@ import { lintSegmentation, type SegmentationReport } from '../podcast/lint.ts'
 import { ProduceInput, type ProduceInputValue } from '../podcast/produce-input.ts'
 import { type AbsDeps, episodeFilename, publishToAudiobookshelf } from './abs.ts'
 import { writeEpisodeBrainNote } from './brain-note.ts'
-import { type ProduceConfig, produceConfigFromEnv } from './config.ts'
+import { type ProduceConfig, produceConfigFromEnv, ttsRouteFor } from './config.ts'
 import {
   findCover,
   readStored,
@@ -96,7 +96,7 @@ export type BrainNoteResult = z.output<typeof BrainNote>
 export interface CoverCall {
   call(
     input: { prompt: string; size: string; quality: 'medium'; n: number },
-    options: { signal: AbortSignal; addUsage: (usage: Usage) => void; attribution?: Attribution; arm?: Arm },
+    options: CallContext,
   ): Promise<{ images: { b64: string }[] }>
 }
 
@@ -178,7 +178,8 @@ export function stepUsage(addUsage: (usage: Usage) => void): UsagePort {
 
 /** The lane the configured route runs on, with the run's arm patch (`arm.routes`) applied when it has one. */
 export function laneFor(config: ProduceConfig, audio: ProduceDeps['audio'], patch?: PatchInput): TtsLane {
-  const route = audioRoutes(patch)[config.ttsRouteId as keyof ReturnType<typeof audioRoutes>]
+  // One path with the boot check (`produceConfigFromEnv`): the same lookup, here with the run's arm applied.
+  const route = audioRoutes(patch)[ttsRouteFor(config.ttsRouteId, patch) as keyof ReturnType<typeof audioRoutes>]
   if (!route) throw new Error(`audio route "${config.ttsRouteId}" is not in the route table`)
   if (route.lane === 'gemini') return { kind: 'gemini', routeId: route.id, hostStyles: config.hostStyles }
   if (route.lane === 'replicate') {
@@ -374,7 +375,7 @@ export function createProduceWorkflows(deps: ProduceDeps) {
         })),
       ),
       as<StoredFile | null>(
-        ctx.step('cover', async ({ signal, addUsage, key, attribution, arm }) => {
+        ctx.step('cover', async ({ addUsage, key, callContext }) => {
           if (!input.request.cover || !deps.cover) return null
           const request = { prompt: input.metadata.coverPrompt, size: '1024x1024', quality: 'medium' as const, n: 1 }
           const hash = unitRequestHash(request)
@@ -389,9 +390,7 @@ export function createProduceWorkflows(deps: ProduceDeps) {
           try {
             const reported: Usage[] = []
             const out = await deps.cover.call(request, {
-              signal,
-              attribution,
-              arm,
+              ...callContext,
               addUsage: (usage) => {
                 reported.push(usage)
                 addUsage(usage)
@@ -404,7 +403,7 @@ export function createProduceWorkflows(deps: ProduceDeps) {
               usage: reported,
             })
           } catch (error) {
-            return json(fallBack('cover', error, signal, null))
+            return json(fallBack('cover', error, callContext.signal, null))
           }
           // Outside the fallback: a stored, billed cover is never dropped as a failed generation.
           await deps.onStored?.(file)
