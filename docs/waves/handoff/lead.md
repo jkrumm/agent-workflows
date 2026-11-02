@@ -1,6 +1,7 @@
-> **Wave 16 in flight** (lead `agent-workflows-w1-r12`, 2026-11-02): five workers fanned: `fix/failed-step-usage`,
-> `fix/cost-null-unknown`, `fix/door-errors-fail-runs`, `fix/eval-mine-cost-history`, `feat/eval-import` (the last
-> three queued for factory capacity). The Wave 8 close-out below stands until Wave 16's replaces it.
+> **Wave 16 in flight** (lead `agent-workflows-w1-r12`, 2026-11-02 ~22:15): merged #117 eval import, #119, #116 door
+> failures, #115 cost null = unknown; release `b8986eb` deployed, `make verify` PASS, proven on stored rows. Open: #118
+> (failed agent steps keep spend, last fix round) and `fix/eval-mine-label-estimate` (#119 read a history that never
+> exists). The Wave 8 close-out below stands until Wave 16's replaces it.
 
 # Lead handoff — Wave 8 (Ground truth): CLOSE-OUT before the owner session
 
