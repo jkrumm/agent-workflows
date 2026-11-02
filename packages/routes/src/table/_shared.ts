@@ -50,7 +50,7 @@ export const STRONG = {
 
 // The GPT stack (owner direction 2026-10-30), by how much thinking the role needs. These are not seats: nothing spreads
 // them as a primary except the two routes that stay on GPT by design (`review.adversary`, the cross-family critic, and
-// `audio.tts.prep`, which calls chat completions directly) and they are what the Claude seats fall back onto.
+// `podcast.write`, whose tool loop speaks only the OpenAI dialects) and they are what the Claude seats fall back onto.
 // Artificial Analysis Intelligence Index v5.0: Terra medium 38, Terra low 29, Luna medium 18 / low 10; agw's paired review
 // eval (12 recorded cases, 2026-10-30) put Terra medium level with DeepSeek on verdict agreement (0.67 deep) and ahead of
 // Haiku (0.58 against 0.08 at standard depth).
