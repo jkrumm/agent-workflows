@@ -174,17 +174,20 @@ after the owner signs the spec (the one stop of this wave).
   owner's sign-off. Found: agw still writes its own `usage.records` for agent steps the gateway already recorded ($5.01
   on 11-02 since 08:10 UTC), so personal-key spend is overstated: fixed first in Wave 8.
 
-## Wave 16 — Accounting and eval import (runs before Wave 8 closes)            <!-- status: active -->
+## Wave 16 — Accounting and eval import (runs before Wave 8 closes)            <!-- status: done 2026-11-03, release 9c34697 -->
 
 Pulled forward 2026-11-02 while the owner labels (former Wave 13, plus Wave 8's `agw eval import`). No eval sweeps.
 
-- [ ] `agw eval import` for an external arm's findings (Wave 9's native `/code-review` arm needs it), scored by scorer v3.
-- [ ] Failed agent steps keep their tokens and cost (lost today, mostly on compaction overflow).
-- [ ] `cost` null means unknown only; free steps record 0. Door errors (`door.speech` HTTP 400/503) are run failures, not
+- [x] `agw eval import` for an external arm's findings (Wave 9's native `/code-review` arm needs it), scored by scorer v3.
+- [x] Failed agent steps keep their tokens and cost (lost today, mostly on compaction overflow).
+- [x] `cost` null means unknown only; free steps record 0. Door errors (`door.speech` HTTP 400/503) are run failures, not
   `done`.
-- [ ] `eval.mine`'s cost-history port wired in `boot.ts` (its label estimate prints `unknown`).
+- [x] `eval.mine`'s cost-history port wired in `boot.ts` (its label estimate prints `unknown`).
+**Left behind:** close-out in `docs/waves/handoff/lead.md` at `f960d26`. Abort-driven agent failures (timeout, cancel)
+  still record null instead of their tokens (Wave 14); a run's roll-up does not flag a null step as a lower bound; no
+  backfill of old runs. CI was the gate (local `make check` timed out under load).
 
-## Wave 17 — Review on the subscriptions (design)            <!-- status: pending -->
+## Wave 17 — Review on the subscriptions (design)            <!-- status: active -->
 
 Owner, 2026-11-03: review should not run on API credit in the end; build a mature review agent on the Claude Code
 subscriptions instead. This supersedes the 2026-10-29 "all review off Max" rule for the design: it banned `claude -p`,
@@ -280,9 +283,9 @@ Provisional picks (2026-10-31, from cost, wall time, failure modes and the AA in
 - Picks recorded in `modelpick/docs/decisions/agw-text-seats.md`; a live call per tier after deploy.
 - Research's 28 cases get a golden-answer check.
 
-## Wave 13 — Accounting and telemetry            <!-- status: pending -->
+## Wave 13 — Accounting and telemetry            <!-- status: done 2026-11-03 as Wave 16 -->
 
-- [ ] Moved into Wave 16 (2026-11-02); tick when Wave 16 is done.
+- [x] Moved into Wave 16 (2026-11-02), done 2026-11-03.
 
 ## Wave 14 — Harness robustness            <!-- status: pending -->
 

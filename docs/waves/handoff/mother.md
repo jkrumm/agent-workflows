@@ -5,8 +5,8 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
 
 ## State
 - **New plan 2026-11-01:** inference gateway (Waves 1–4, `docs/gateway.md`), then review v2 and the maturity pass
-  (Waves 5–13). Wave 1 done (release `767f643`, REPORT `docs/spikes/gateway/REPORT.md`); Wave 2 done (release `b25aac5`); Wave 3 done (release `3e6026e`); Wave 4 done (release `2e7d5f2`); Wave 5 done (release `bf76dc4`); Wave 6 done (release `9cf9625`); Wave 7 (spec) done, argo `84053e8`; Wave 8 resumes after Wave 16 without an owner session (automated validation); Wave 16 (accounting,
-  `agw eval import`, pulled forward from Wave 13) active; Wave 7b (build) done 11-03 (argo `6702133`). The 2026-10-30 plan is finished (concept.md Final retro); STOP removed.
+  (Waves 5–13). Wave 1 done (release `767f643`, REPORT `docs/spikes/gateway/REPORT.md`); Wave 2 done (release `b25aac5`); Wave 3 done (release `3e6026e`); Wave 4 done (release `2e7d5f2`); Wave 5 done (release `bf76dc4`); Wave 6 done (release `9cf9625`); Wave 7 (spec) done, argo `84053e8`; Wave 16 (accounting, ex-13) done `9c34697`; Wave 17 (review on the subscriptions, design) active; Wave 8 resumes
+  after it without an owner session; Wave 7b (build) done 11-03 (argo `6702133`). The 2026-10-30 plan is finished (concept.md Final retro); STOP removed.
 - Owner actions done (PLAN context): orgs linked, keys seeded, cycle days, no payment method. Left: `me2` keys
   (~2026-11-02, 7-day claim window); until then the `me2` pool stays disabled.
 - Lead's close-out channel: `docs/waves/handoff/lead.md` (the mother owns PLAN.md and the retro log;

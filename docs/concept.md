@@ -595,3 +595,12 @@ One entry per phase: what we learned, what changed on this page, and why.
   works beside a lead here when it touches this repo only through fan worktrees and asks before deploying.
 - **Does the page hold?** Yes, as v3.14.
 
+### Gateway Wave 16 — Accounting and eval import, 2026-11-03
+
+- **Learned.** Pulling a self-contained wave forward kept the fleet useful while the review track waited; one fix (#119)
+  read runs that never exist and needed a follow-up, caught only on stored rows.
+- **Changed.** Release `9c34697`: `agw eval import`, failed agent steps keep their spend, `cost` null means unknown and
+  free steps record 0 (migration 0016), door errors fail their run, `eval.mine`'s estimate from the label step cost.
+- **Process.** Under a load of 50–100 on the mini, CI's `make check` is the merge gate.
+- **Does the page hold?** Yes, as v3.14.
+
