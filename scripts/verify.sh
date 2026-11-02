@@ -381,7 +381,8 @@ done
 # change is a throwaway repo: fixtures/smoke-review/base committed, fixtures/smoke-review/change copied over it
 # uncommitted. `light` is the cheapest depth that still runs react-doctor (every depth runs it), the router, one angle
 # (senior-dev), the adversary and the synthesis; it skips only OCR and the other floor angles.
-REVIEW_FIXTURE="${0:A:h}/fixtures/smoke-review"
+# The fixture sits beside this file: %x is the sourced file, where $0 would be the shell when a test runs a cut of it.
+REVIEW_FIXTURE="${REVIEW_FIXTURE:-${${(%):-%x}:A:h}/fixtures/smoke-review}"
 REVIEW_WAIT_SECS="${REVIEW_WAIT_SECS:-300}"
 [[ -d "$REVIEW_FIXTURE/base" && -d "$REVIEW_FIXTURE/change" ]] || fail "smoke review fixture missing at $REVIEW_FIXTURE"
 review_dir=$(mktemp -d "${TMPDIR:-/tmp}/agw-verify-review.XXXXXX") || fail "cannot create a temp dir"
