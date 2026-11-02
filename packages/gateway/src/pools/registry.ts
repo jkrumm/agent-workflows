@@ -10,6 +10,11 @@ export interface RegistryPool {
    */
   cycleDay: number | null
   headroomUsd: number
+  /**
+   * What production keeps of the credit, in USD; an `eval` request draws only on credit above it. Absent: the pro-rata
+   * share of the remaining days, `creditUsd × daysLeft / cycleLengthDays` (docs/gateway.md §Credit pacing).
+   */
+  evalReserveUsd?: number
   enabled: boolean
   apiKeyRef: string
   adminKeyRef?: string
@@ -19,6 +24,7 @@ const Platform = z.object({
   creditUsd: z.number().positive(),
   cycleDay: z.number().int().min(1).max(31).nullable(),
   headroomUsd: z.number().nonnegative(),
+  evalReserveUsd: z.number().nonnegative().optional(),
   enabled: z.boolean(),
   apiKeyRef: z.string().min(1),
   adminKeyRef: z.string().min(1).optional(),

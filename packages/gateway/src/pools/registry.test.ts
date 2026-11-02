@@ -38,6 +38,16 @@ describe('parseRegistry', () => {
     expect(pools.map((pool) => pool.id)).toEqual(['iu'])
   })
 
+  test('evalReserveUsd is optional, a number from zero up', () => {
+    expect(parseRegistry({ accounts: { iu: { platform } } })[0]).not.toHaveProperty('evalReserveUsd')
+    expect(parseRegistry({ accounts: { iu: { platform: { ...platform, evalReserveUsd: 0 } } } })[0]).toMatchObject({
+      evalReserveUsd: 0,
+    })
+    expect(() => parseRegistry({ accounts: { iu: { platform: { ...platform, evalReserveUsd: -1 } } } })).toThrow(
+      /account "iu" platform\.evalReserveUsd/,
+    )
+  })
+
   test('a malformed platform block throws naming the account and the field', () => {
     expect(() => parseRegistry({ accounts: { me: { platform: { ...platform, cycleDay: 32 } } } })).toThrow(
       /account "me" platform\.cycleDay/,

@@ -509,7 +509,7 @@ describe('status', () => {
         ledger: fakeLedger([{ pool: 'iu', at: '2026-11-01T00:00:00Z', usd: 12.5 }]),
       },
     )
-    expect(pools.status()).toEqual([
+    expect(pools.status()).toMatchObject([
       {
         id: 'iu',
         enabled: true,
@@ -648,5 +648,170 @@ describe('soonest-expiry ties', () => {
     expect(picked(pools, { exclude: ['c', 'd'] })).toBe(
       'a:drained-retry'.replace('a:drained-retry', 'a:soonest-expiry'),
     )
+  })
+})
+
+const near = (actual: number | null | undefined, expected: number) => expect(actual).toBeCloseTo(expected, 6)
+const statusOf = (pools: Pools, id: string) => {
+  const found = pools.status().find((entry) => entry.id === id)
+  if (found === undefined) throw new Error(`no pool ${id}`)
+  return found
+}
+
+describe('credit pacing: runway and the eval reserve', () => {
+  const iu = pool('iu', { creditUsd: 200, cycleDay: 21, headroomUsd: 2 })
+
+  test('at the cycle start production keeps everything: no runway above the reserve', () => {
+    const { pools } = setup([iu], { at: '2026-10-21T00:00:00Z' })
+    const status = statusOf(pools, 'iu')
+    near(status.daysLeft, 31)
+    near(status.creditLeftUsd, 198)
+    near(status.runwayUsdPerDay, 198 / 31)
+    near(status.evalReserveUsd, 200)
+    expect(status.evalAvailableUsd).toBe(0)
+    expect(status.evalEligible).toBe(false)
+  })
+
+  test('mid-cycle the reserve is the pro-rata share of the remaining days', () => {
+    const { pools } = setup([iu], { at: '2026-11-05T12:00:00Z' })
+    const status = statusOf(pools, 'iu')
+    near(status.daysLeft, 15.5)
+    near(status.evalReserveUsd, 100)
+    near(status.evalAvailableUsd, 98)
+    expect(status.evalEligible).toBe(true)
+  })
+
+  test('on the last day the reserve is almost gone', () => {
+    const { pools } = setup([iu], { at: '2026-11-20T12:00:00Z' })
+    const status = statusOf(pools, 'iu')
+    near(status.daysLeft, 0.5)
+    near(status.evalReserveUsd, (200 * 0.5) / 31)
+    near(status.runwayUsdPerDay, 198 / 0.5)
+    near(status.evalAvailableUsd, 198 - (200 * 0.5) / 31)
+  })
+
+  test('the cycle length is the real one: a 28-day cycle halves at day 14', () => {
+    const { pools } = setup([pool('me', { creditUsd: 100, cycleDay: 1, headroomUsd: 0 })], {
+      at: '2027-02-15T00:00:00Z',
+    })
+    near(statusOf(pools, 'me').daysLeft, 14)
+    near(statusOf(pools, 'me').evalReserveUsd, 50)
+  })
+
+  test('spend lowers the credit left, never below zero', () => {
+    const ledger = fakeLedger([{ pool: 'iu', at: '2026-11-01T00:00:00Z', usd: 250 }])
+    const { pools } = setup([iu], { at: '2026-11-05T12:00:00Z', ledger })
+    const status = statusOf(pools, 'iu')
+    expect(status.creditLeftUsd).toBe(0)
+    expect(status.evalAvailableUsd).toBe(0)
+    expect(status.runwayUsdPerDay).toBe(0)
+  })
+
+  test('an unknown cycle has no pacing basis: the reserve is the whole credit', () => {
+    const { pools } = setup([pool('me2', { creditUsd: 100, cycleDay: null, headroomUsd: 2 })])
+    const status = statusOf(pools, 'me2')
+    expect(status.daysLeft).toBeNull()
+    expect(status.runwayUsdPerDay).toBeNull()
+    expect(status.evalReserveUsd).toBe(100)
+    expect(status.evalAvailableUsd).toBe(0)
+    expect(status.evalEligible).toBe(false)
+    expect(picked(pools, { purpose: 'eval' })).toBe('refuse:eval-reserve')
+  })
+
+  test('the registry override replaces the computed reserve, on a known cycle and an unknown one', () => {
+    const { pools } = setup(
+      [
+        pool('iu', { creditUsd: 200, cycleDay: 21, headroomUsd: 2, evalReserveUsd: 50 }),
+        pool('me2', { creditUsd: 100, cycleDay: null, headroomUsd: 2, evalReserveUsd: 0 }),
+      ],
+      { at: '2026-11-05T12:00:00Z' },
+    )
+    expect(statusOf(pools, 'iu')).toMatchObject({ evalReserveUsd: 50, evalAvailableUsd: 148, evalEligible: true })
+    expect(statusOf(pools, 'me2')).toMatchObject({ evalReserveUsd: 0, evalAvailableUsd: 98, evalEligible: true })
+  })
+
+  test('an ineligible pool is never eval-eligible, whatever its surplus', () => {
+    const { pools } = setup([pool('iu', { cycleDay: 21 }), pool('me', { cycleDay: 27, enabled: false })], {
+      at: '2026-11-05T12:00:00Z',
+    })
+    expect(statusOf(pools, 'me').evalEligible).toBe(false)
+    pools.drained('iu', '2026-10-21T00:00:00.000Z')
+    expect(statusOf(pools, 'iu').evalEligible).toBe(false)
+  })
+})
+
+describe('credit pacing: the pick for purpose=eval', () => {
+  // The registry on 2026-11-02: iu is $99.74 in, under its pro-rata reserve; me is untouched.
+  const registry = () => [
+    pool('iu', { creditUsd: 200, cycleDay: 21, headroomUsd: 2 }),
+    pool('me', { creditUsd: 100, cycleDay: 27, headroomUsd: 2 }),
+  ]
+  const live = () =>
+    setup(registry(), {
+      at: '2026-11-02T12:00:00Z',
+      ledger: fakeLedger([{ pool: 'iu', at: '2026-10-25T00:00:00Z', usd: 99.74 }]),
+    })
+
+  test('an eval request skips the pool under its reserve and takes me; production still takes iu', () => {
+    const { pools } = live()
+    expect(statusOf(pools, 'iu').evalEligible).toBe(false)
+    expect(statusOf(pools, 'me').evalEligible).toBe(true)
+    expect(picked(pools, { purpose: 'eval' })).toBe('me:soonest-expiry')
+    expect(picked(pools, { purpose: 'prod' })).toBe('iu:soonest-expiry')
+  })
+
+  test('every other purpose, and none, picks exactly as before', () => {
+    const { pools } = live()
+    for (const purpose of ['prod', 'verify', 'drift', 'EVALUATE', '', null, undefined]) {
+      expect(picked(pools, { purpose })).toBe(picked(pools))
+      expect(picked(pools, { purpose, exclude: ['iu', 'me'] })).toBe('iu-api:drained-retry')
+      expect(picked(pools, { purpose, exclude: ['iu', 'me'], fallbackNone: true })).toBe('refuse:drained-retry')
+      expect(picked(pools, { purpose, claudeCodeShaped: true })).toBe('iu-api:claude-code')
+    }
+    expect(picked(pools)).toBe('iu:soonest-expiry')
+  })
+
+  test('among eval candidates the soonest expiry still goes first', () => {
+    const { pools } = setup([pool('late', { cycleDay: 27 }), pool('soon', { cycleDay: 21 })], {
+      at: '2026-11-02T12:00:00Z',
+    })
+    expect(picked(pools, { purpose: 'eval' })).toBe('soon:soonest-expiry')
+  })
+
+  test('a bound eval session moves off a pool that fell under its reserve', () => {
+    const { pools } = setup(
+      [pool('me', { creditUsd: 100, cycleDay: 27, headroomUsd: 2 }), pool('z', { creditUsd: 100, cycleDay: 30 })],
+      { at: '2026-11-02T12:00:00Z' },
+    )
+    pools.served('agw', 's1', 'me')
+    expect(picked(pools, { purpose: 'eval' })).toBe('me:bound')
+    // me: 24.5 of 31 days left, reserve $79.03 of $98 left; $20 spent takes it under.
+    pools.charge('me', 20, new Date('2026-11-02T12:00:00Z'))
+    expect(statusOf(pools, 'me').evalEligible).toBe(false)
+    expect(picked(pools, { purpose: 'eval' })).toBe('z:soonest-expiry')
+    // Production keeps the binding: me is still eligible for it.
+    expect(picked(pools, { purpose: 'prod' })).toBe('me:bound')
+  })
+
+  test('no eval candidate: refused, never IU, whatever x-agw-fallback says', () => {
+    const { pools } = live()
+    pools.charge('me', 30, new Date('2026-11-02T12:00:00Z'))
+    expect(picked(pools, { purpose: 'eval' })).toBe('refuse:eval-reserve')
+    expect(picked(pools, { purpose: 'eval', fallbackNone: true })).toBe('refuse:eval-reserve')
+    expect(picked(pools, { purpose: 'eval', exclude: ['me'] })).toBe('refuse:eval-reserve')
+    // The same state, production: iu.
+    expect(picked(pools, { purpose: 'prod' })).toBe('iu:soonest-expiry')
+  })
+
+  test('with no pool at all an eval request is refused too', () => {
+    const { pools } = setup([])
+    expect(picked(pools, { purpose: 'eval' })).toBe('refuse:eval-reserve')
+  })
+
+  test('a Claude-Code-shaped eval request is refused; a forced one stays forced', () => {
+    const { pools } = live()
+    expect(picked(pools, { purpose: 'eval', claudeCodeShaped: true })).toBe('refuse:eval-reserve')
+    expect(picked(pools, { purpose: 'eval', forceIu: true })).toBe('iu-api:forced')
+    expect(picked(pools, { purpose: 'eval', forceIu: true, claudeCodeShaped: true })).toBe('iu-api:forced')
   })
 })
