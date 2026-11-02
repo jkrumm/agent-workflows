@@ -124,6 +124,33 @@ const free = defineWorkflow({
   },
 })
 
+/** A priced-zero call beside an unpriced one: the step costs 0 but is not known free. */
+const zeroAndUnpriced = defineWorkflow({
+  id: 'roll.zero-unpriced',
+  version: 'v1',
+  input: empty,
+  output: empty,
+  async run(ctx) {
+    await ctx.step('spend', ({ addUsage }) => {
+      addUsage(priced(0))
+      addUsage(unpricedUsage)
+      return 1
+    })
+    return {}
+  },
+})
+
+/** No step at all: nothing ran, nothing spent. */
+const noSteps = defineWorkflow({
+  id: 'roll.no-steps',
+  version: 'v1',
+  input: empty,
+  output: empty,
+  async run() {
+    return {}
+  },
+})
+
 const leaf = defineWorkflow({
   id: 'roll.leaf',
   version: 'v1',
@@ -189,15 +216,21 @@ describe('run record cost roll-up', () => {
     }
   })
 
-  test('0 when every step is free; the known costs sum; null only when nothing is positive and some cost is unknown', async () => {
+  test('0 when every step is free or none ran; the known costs sum; null when nothing is positive and any cost or call is unknown', async () => {
     const platform = testPlatform(db.schema)
-    rt = testRuntime({ schema: db.schema, workflows: [mixed, leaf, free], middleware: platform.middleware })
+    rt = testRuntime({
+      schema: db.schema,
+      workflows: [mixed, leaf, free, zeroAndUnpriced, noSteps],
+      middleware: platform.middleware,
+    })
     await rt.open()
     try {
       const allFree = await rt.start(free, {}, { purpose: 'prod' })
       const none = await rt.start(mixed, { priced: false }, { purpose: 'prod' })
       const some = await rt.start(mixed, { priced: true }, { purpose: 'prod' })
-      await Promise.all([rt.wait(allFree.runId), rt.wait(none.runId), rt.wait(some.runId)])
+      const zeroUnpriced = await rt.start(zeroAndUnpriced, {}, { purpose: 'prod' })
+      const noStep = await rt.start(noSteps, {}, { purpose: 'prod' })
+      await Promise.all([allFree, none, some, zeroUnpriced, noStep].map((started) => rt.wait(started.runId)))
       const freeRow = await recorded(allFree.runId)
       expect(Number(freeRow.cost)).toBe(0)
       expect(freeRow.cost).not.toBeNull()
@@ -206,6 +239,14 @@ describe('run record cost roll-up', () => {
       const someRow = await recorded(some.runId)
       expect(Number(someRow.cost)).toBeCloseTo(0.5, 12)
       expect(someRow.unpriced_calls).toBe(1)
+      // cost 0 on the step, yet an unpriced call: unknown, not free
+      expect(await sql.step(zeroUnpriced.runId, 'spend')).toMatchObject({ cost: '0', unpriced_calls: 1 })
+      expect(await recorded(zeroUnpriced.runId)).toMatchObject({ cost: null, unpriced_calls: 1 })
+      // a run with no step rows spent nothing: 0, not null
+      const emptyRow = await recorded(noStep.runId)
+      expect(emptyRow.cost).not.toBeNull()
+      expect(Number(emptyRow.cost)).toBe(0)
+      expect(emptyRow.unpriced_calls).toBe(0)
     } finally {
       await rt.close()
       await platform.close()
