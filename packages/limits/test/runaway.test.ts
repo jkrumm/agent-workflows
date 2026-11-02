@@ -441,6 +441,81 @@ describe('runaway cap, history, hot path and trees', () => {
     expect(after?.observed.tokens).toBe(400)
   })
 
+  test('tree spend is summed from the steps: rolled-up run costs never count a grandchild twice', async () => {
+    const leaf = defineWorkflow({
+      id: 'cap.gc.leaf',
+      version: 'v1',
+      input: z.object({ i: z.number() }),
+      output: empty,
+      async run(ctx) {
+        await ctx.step('spend', (s) => {
+          s.addUsage(costUsage(0.001, 1))
+          return 1
+        })
+        return {}
+      },
+    })
+    const mid = defineWorkflow({
+      id: 'cap.gc.mid',
+      version: 'v1',
+      input: z.object({ i: z.number() }),
+      output: empty,
+      async run(ctx) {
+        await ctx.step('spend', (s) => {
+          s.addUsage(costUsage(0.01, 10))
+          return 1
+        })
+        await ctx.workflow('leaves', leaf, [{ i: 0 }, { i: 1 }])
+        return {}
+      },
+    })
+    const top = defineWorkflow({
+      id: 'cap.gc.top',
+      version: 'v1',
+      input: empty,
+      output: empty,
+      async run(ctx) {
+        await ctx.step('spend', (s) => {
+          s.addUsage(costUsage(0.1, 100))
+          return 1
+        })
+        await ctx.workflow('mids', mid, [{ i: 0 }, { i: 1 }])
+        return {}
+      },
+    })
+    const rt = await started(testRuntime({ schema: db.schema, workflows: [top, mid, leaf] }))
+    const { runId } = await rt.start(top, {}, { purpose: 'test' })
+    expect((await rt.wait(runId)).status).toBe('done')
+    // What the run record writes (each run: its own steps plus its direct children's records), bottom up.
+    for (const depth of [2, 1, 0]) {
+      await sql.pool.query(
+        `update "${db.schema}".runs r set cost = coalesce((select sum(cost) from "${db.schema}".steps where run_id = r.id), 0)
+           + coalesce((select sum(cost) from "${db.schema}".runs c where c.parent_id = r.id), 0)
+         where r.root_id = $1 and array_length(string_to_array(r.id, '/'), 1) = $2`,
+        [runId, 1 + 2 * depth],
+      )
+    }
+    const total = 0.1 + 2 * (0.01 + 2 * 0.001)
+    expect(Number((await sql.run(runId))?.cost)).toBeCloseTo(total, 12)
+
+    const { cap, decisions } = quiet({ minSample: 1 })
+    expect((await cap.caps('cap.gc.top')).p95).toMatchObject({ cost: total, tokens: 100 + 2 * (10 + 2 * 1) })
+    // A grandchild resumed: it and its tree, read from the journal, once each.
+    const grandchildId = `${runId}/mids/1/leaves/0`
+    await cap.runPre?.({ ...runArgs(grandchildId, 'cap.gc.leaf', true), parentId: `${runId}/mids/1`, rootId: runId })
+    await cap.stepPre?.(stepArgs(grandchildId, 'again', 'cap.gc.leaf'))
+    expect(decisions[0]?.rootId).toBe(runId)
+    expect(decisions[0]?.observed.cost).toBeCloseTo(total, 12)
+    expect(decisions[0]?.observed.steps).toBe(2)
+  })
+
+  test('a parented start (an eval case run) is a tree of its own', async () => {
+    const { cap, decisions } = quiet()
+    await cap.runPre?.({ ...runArgs('case-1', 'cap.case', false), parentId: 'eval-1' })
+    await cap.stepPre?.(stepArgs('case-1', 'a', 'cap.case'))
+    expect(decisions[0]).toMatchObject({ rootId: 'case-1', observed: { cost: 0, steps: 1 } })
+  })
+
   test('unpriced usage is surfaced in the decision', async () => {
     const unpriced = defineWorkflow({
       id: 'cap.unpriced',

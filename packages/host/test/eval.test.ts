@@ -9,7 +9,7 @@ import { createCheckWorkflows } from '../src/workflows/check/index.ts'
 import { DriftJob, driftOptionsFromEnv, wireEval, createEvalWorkflows } from '../src/workflows/eval/index.ts'
 import { hostModules, suitesOf } from '../src/workflows/index.ts'
 import { testPlatform } from '../../middleware/test/support.ts'
-import { freshSchema, inspector, testRuntime } from '../../runtime/test/support/pg.ts'
+import { freshSchema, inspector, testRuntime, until } from '../../runtime/test/support/pg.ts'
 
 const HOST_SUITES = suitesOf(await hostModules())
 
@@ -97,10 +97,10 @@ afterAll(async () => {
 
 // oxlint-disable-next-line typescript/no-explicit-any -- outputs are asserted field by field
 type Out = Record<string, any>
-async function evalOnce(input: Record<string, unknown>): Promise<{ output: Out; error: string | null }> {
-  const { runId } = await rt.start(evalRun, input, { purpose: 'prod' })
+async function evalOnce(input: Record<string, unknown>): Promise<{ runId: string; output: Out; error: string | null }> {
+  const { runId } = await rt.start(evalRun, input, { purpose: 'prod', caller: 'hermes', project: 'demo' })
   const end = await rt.wait(runId)
-  return { output: end.output as Out, error: end.error?.message ?? null }
+  return { runId, output: end.output as Out, error: end.error?.message ?? null }
 }
 
 describe('agw eval run', () => {
@@ -116,7 +116,7 @@ describe('agw eval run', () => {
   })
 
   test('two cases on a fake host: purpose eval, scored against the reference, fingerprint recorded', async () => {
-    const { output, error } = await evalOnce({ workflow: 'check', yes: true, concurrency: 2 })
+    const { runId, output, error } = await evalOnce({ workflow: 'check', yes: true, concurrency: 2 })
     expect(error).toBeNull()
     expect(output.ran).toBe(true)
     expect(output.fingerprints).toHaveLength(1)
@@ -144,6 +144,26 @@ describe('agw eval run', () => {
       scores: { final: { caseId: 'case-green', source: 'regression', args: {} } },
     })
     expect(readdirSync(tmpRoot)).toEqual([]) // clones removed
+
+    // The case runs are children of the eval run, each its own root, with the eval run's caller and project.
+    for (const c of output.cases) {
+      expect(await sql.run(c.runId)).toMatchObject({
+        parent_id: runId,
+        root_id: c.runId,
+        caller: 'hermes',
+        project: 'demo',
+      })
+      expect(c.costUsd).toBeCloseTo(0.02, 12)
+      expect(c.unpricedCalls).toBe(0)
+    }
+    expect(output.summary.costUsd).toBeCloseTo(0.04, 12)
+    expect(output.summary.unpricedCalls).toBe(0)
+    // The eval run's own record: its cases' costs rolled up, equal to the summary.
+    const evalRow = await until(async () => {
+      const r = await sql.run(runId)
+      return r?.post_hooks_at ? r : null
+    }, 'eval run record')
+    expect(Number(evalRow.cost)).toBeCloseTo(output.summary.costUsd, 12)
 
     const again = await evalOnce({ workflow: 'check', ids: 'case-red' })
     expect(again.output.plan.estimate).toMatchObject({ historyRuns: 2, meanCostUsd: 0.02 })
