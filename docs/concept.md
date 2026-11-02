@@ -503,3 +503,16 @@ One entry per phase: what we learned, what changed on this page, and why.
 - **Process.** Close a worker as soon as its PR is reviewed, or the factory re-wakes its parent on every idle tick; one
   merge train per repo (~10 min per `make check`); sequence probes that depend on another worker's traffic.
 - **Does the page hold?** Yes, as v3.13; the corrections live in `docs/gateway.md`.
+
+### Gateway Wave 2 — Gateway, 2026-11-02
+
+- **Learned.** Every test and four review rounds passed a gateway whose rows held 0 cache tokens: Claude 5.5 usage carries
+  `output_tokens_details`, so the tee read it as OpenAI. Only a check against the stored row found it. On the spend path
+  `agw review --deep` and `/code-review high` found largely disjoint issues; both are worth running there.
+- **Changed.** Release `b25aac5`, gateway on 7794 (7793 is the software-factory server's). Departures from the first
+  `docs/gateway.md`, owner-accepted: a lean process instead of `bootProcess`, a SQLite ledger as the outbox, build-hash
+  restart. They reach this page as v3.14 in Wave 3's version note.
+- **Process.** Fixtures come from a real response; `make verify` checks the stored row. A brief that names a port runs
+  `lsof` first. Shell and SQLite tests want a Linux run before the train (GNU `mktemp`, SQLite `-wal`). The process table,
+  not an agent's report, says what runs: two leads were resumed side by side and one believed in trains that were gone.
+- **Does the page hold?** Yes; v3.14 records the shape as built.

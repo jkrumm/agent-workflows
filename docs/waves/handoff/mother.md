@@ -5,7 +5,7 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
 
 ## State
 - **New plan 2026-11-01:** inference gateway (Waves 1–4, `docs/gateway.md`), then review v2 and the maturity pass
-  (Waves 5–13). Wave 1 done (release `767f643`, REPORT `docs/spikes/gateway/REPORT.md`); Wave 2 active. The 2026-10-30 plan is finished (concept.md Final retro); STOP removed.
+  (Waves 5–13). Wave 1 done (release `767f643`, REPORT `docs/spikes/gateway/REPORT.md`); Wave 2 done (release `b25aac5`); Wave 3 active. The 2026-10-30 plan is finished (concept.md Final retro); STOP removed.
 - Owner actions done (PLAN context): orgs linked, keys seeded, cycle days, no payment method. Left: `me2` keys
   (~2026-11-02, 7-day claim window); until then the `me2` pool stays disabled.
 - Lead's close-out channel: `docs/waves/handoff/lead.md` (the mother owns PLAN.md and the retro log;
@@ -130,9 +130,8 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
   route avoids Requesty. For Wave 8's retro: decide's model move shifts the scorer judges' calibration.
 
 ## Next action
-- Wait for the Wave 2 close-out in `docs/waves/handoff/lead.md`; judge it, tick PLAN, retro entry, Wave 3 lead.
-- Owner answered (37f53be, 32ccf7f): cycleDay = credit expiry, iu 21, me 27, me2 unknown; no payment method, spend limit
-  = credit on all three orgs. Relayed to the lead for Wave 2. Still owed: me2 keys ~11-02;
-  Admin keys in the mini's shared secrets cache (security-policy call; matters before Wave 4's reconciler).
-- Wake-loop: the factory re-fires `workers done: <lead> idle` every few seconds while the lead idles on background
-  shells. Answer with a blocking 9.5-min poll on lead.md / PR state, not a bare re-declare. Owner-side open items: MacWhisper key paste; OCR and Hermes morning briefing re-enable.
+- Wait for the Wave 3 close-out in `docs/waves/handoff/lead.md`; judge it, tick PLAN, retro entry, next lead per the rotation policy.
+- Still owed by the owner: me2 keys and expiry day. Until then me2 stays disabled. Open owner items: MacWhisper key paste; OCR and Hermes morning briefing re-enable.
+- Wake-loop: the factory re-fires `workers done: <lead> idle` while the lead idles on background shells. Answer with a blocking
+  ~9.5-min poll on lead.md (bash loop with perl select, foreground timeout 590 s; `rd read` under `timeout 15`), not a bare re-declare.
+- Shell: never put double quotes inside a double-quoted `factory session note`; use a text file (a pipe in it ran `make`).

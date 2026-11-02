@@ -57,20 +57,24 @@ eval needs move into Wave 5. The rest waits.
   builds §Picking a pool step 0 (Claude-Code-shaped requests skip the credit pools) and the 20–70 min cost-API lag
   rule (verify never waits on the cost API).
 
-## Wave 2 — Gateway            <!-- status: active -->
+## Wave 2 — Gateway            <!-- status: done 2026-11-02, release b25aac5 -->
 
-- [ ] `packages/gateway` as `docs/gateway.md` describes: IU's path layout, byte-exact passthrough with the usage tee,
+- [x] `packages/gateway` as `docs/gateway.md` describes: IU's path layout, byte-exact passthrough with the usage tee,
   model aliases from `packages/routes`, pools with the meter, session binding and expiry-first order, the IU fallback
   and `x-agw-fallback: none`, door-token callers, one span per request, usage rows through the outbox
   (`source='gateway'`).
-- [ ] usage-tracker migration: `billing` `api_credit`, `credit_cycles`, `gateway_picks`; its writer and readers accept them.
-- [ ] Deploy: a third LaunchAgent `com.jkrumm.agent-workflows-gateway` on 7794, health and rollback with the other two;
+- [x] usage-tracker migration: `billing` `api_credit`, `credit_cycles`, `gateway_picks`; its writer and readers accept them.
+- [x] Deploy: a third LaunchAgent `com.jkrumm.agent-workflows-gateway` on 7794, health and rollback with the other two;
   a release that does not change the gateway does not restart it. `make verify`: gateway `/health`, a Haiku call through
   the `iu` pool lands an `api_credit` row with priced cost, a repeat call reads the cache, and an IU passthrough call
   lands an `api_key` row.
-- [ ] `packages/gateway/README.md`; AGENTS.md (processes, Validate/Deploy rows, gotchas) in the same commits.
+- [x] `packages/gateway/README.md`; AGENTS.md (processes, Validate/Deploy rows, gotchas) in the same commits.
+**Left behind:** close-out in `docs/waves/handoff/lead.md` at `34ee3f2`. Wave 3 inherits: the host's `ANTHROPIC_API_KEY` is the
+  iu credit key and spends outside the gateway until moved; agw's own usage prices 1 h cache writes as 5 m; concept v3.14
+  (departures, port 7794) and the stale "402/503" at `docs/concept.md:337` and `docs/factory-input.md:17`. Wave 4: `stats
+  --by account` mixes Max and `api_credit`. Flaky `packages/middleware/test/platform.test.ts` "concurrent runs" failed once on CI.
 
-## Wave 3 — Callers move, seats onto Claude            <!-- status: pending -->
+## Wave 3 — Callers move, seats onto Claude            <!-- status: active -->
 
 - [ ] agw: every transport and OpenCode provider on the gateway with the `agw` door token and attribution headers.
   `iu-anthropic` becomes the `anthropic` wire (the gateway decides credit or IU). agw stops writing `usage.records` for
