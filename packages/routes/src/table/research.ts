@@ -1,18 +1,12 @@
 import type { RouteEntry } from '../schema.ts'
-import { AGENT_FALLBACK, CHEAP } from './_shared.ts'
+import { DEEPSEEK_FLASH } from './_shared.ts'
 
 const routes = {
-  // Research agent seat (concept P3): research-gateway's lead and worker model, DeepSeek flash, which stays on CHEAP.
-  // Single calls on this model are priced by IU's `usage.cost`; an OpenCode session never sees that field and prices
-  // each message with the config's cost rows, so the route carries the rate IU's `usage.cost` was measured at:
-  // USD/M in 0.30, cache read 0.006, out 1.20 (research-gateway src/lib/cost.ts, the 2026-09-25 peak reading, its
-  // conservative row; an off-peak reading was half). No cache-write price: DeepSeek reports none.
-  'research.agent': {
-    wire: 'opencode',
-    ...CHEAP,
-    maxOutputTokens: 16_000,
-    fallback: AGENT_FALLBACK,
-  },
+  // Research agent (concept P3): research-gateway's lead and worker model, DeepSeek flash, which stays a cross-lab seat
+  // until the eval picks move it. Single calls on this model are priced by IU's `usage.cost`; an OpenCode session never
+  // sees that field and prices each message with the config's cost rows, so the route carries the rate IU's
+  // `usage.cost` was measured at (DEEPSEEK_FLASH_RATE, `_shared.ts`).
+  'research.agent': { wire: 'opencode', ...DEEPSEEK_FLASH.agent, maxOutputTokens: 16_000 },
 } satisfies Record<string, RouteEntry>
 
 export default routes

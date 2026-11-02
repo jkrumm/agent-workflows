@@ -48,8 +48,8 @@ A report is not an ask: "not merged, the lead merges it in the next train" is a 
 
 ## Route
 
-`digest.items` (`packages/routes/src/table/digest.ts`): the `TRIVIAL` seat (Haiku, no thinking) on the Messages wire, balance
-fallback to Luna low like every `TRIVIAL` route. The cheapest seat there is; it passed the eval below, so no dearer tier was
+`digest.items` (`packages/routes/src/table/digest.ts`): the `FAST` tier (Haiku, no thinking) on the Messages wire, balance
+fallback to Luna low like every `FAST` route. The cheapest tier there is; it passed the eval below, so no dearer tier was
 tried.
 
 ## Eval

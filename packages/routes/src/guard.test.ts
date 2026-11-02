@@ -2,6 +2,7 @@ import { expect, test } from 'bun:test'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
 import { CLAUDE_MODELS, DEFAULT_ROUTES, resolveRoute, routeIds } from './index.ts'
+import { EASY, FAST, HARD } from './table/_shared.ts'
 
 // The home-of-model-ids rule: no source outside `packages/routes/src/table/` names a model that the table names. The
 // routes package's own test files may (they pin what the table says): exactly the files `bun test` runs, by its
@@ -215,5 +216,91 @@ test('a Claude route has a GPT fallback; nothing on the chat wire or OpenCode fa
     if (route.wire === 'iu-openai' || route.wire === 'opencode')
       expect({ id, claude: claude.test(route.fallback?.model ?? '') }).toEqual({ id, claude: false })
     expect({ id, wire: route.fallback?.wire }).not.toEqual({ id, wire: 'anthropic' })
+  }
+})
+
+// A text route takes its model from a tier or a named constant in `_shared.ts`, never from a `model:` literal in its group
+// file. The media routes below are the only literals left: voices, transcription, image and Replicate models, which no
+// tier covers. A new entry here is a decision, not a convenience.
+const MEDIA_ROUTES = new Set([
+  'audio.tts.gemini-flash-lite', // Gemini TTS
+  'audio.tts.gemini-flash', // Gemini TTS
+  'audio.tts.elevenlabs-flash', // Replicate TTS
+  'audio.tts.elevenlabs-turbo', // Replicate TTS
+  'audio.tts.elevenlabs-v3', // Replicate TTS
+  'audio.stt.voxtral-mini', // STT
+  'audio.stt.voxtral-small', // STT
+  'audio.stt.openai', // STT
+  'audio.stt.openai-4o', // STT
+  'audio.stt.openai-4o-mini', // STT
+  'audio.stt.openai-legacy', // STT
+  'image.flare', // image generation
+  'image.sunburst', // image generation
+  'image.cutout.recraft', // Replicate
+  'image.cutout.bria', // Replicate
+  'image.upscale', // Replicate
+  'image.vectorize', // Replicate
+])
+
+/**
+ * Every `model:` literal in a group file that sits in a route outside `media`, as `file:line`. A route's entry starts at
+ * its two-space-indented key (`'audio.tts.prep': ...` or `decide: ...`); a literal belongs to the entry above it.
+ */
+export function textModelLiterals(file: string, text: string, media: Set<string>): string[] {
+  const hits: string[] = []
+  let route = ''
+  text.split('\n').forEach((line, i) => {
+    route = /^ {2}(?:'([a-z0-9.-]+)'|([a-z]+)):/.exec(line)?.slice(1).find(Boolean) ?? route
+    if (/\bmodel:\s*['"`]/.test(line) && !media.has(route))
+      hits.push(`${file}:${i + 1} names a model literal in text route "${route}": ${line.trim()}`)
+  })
+  return hits
+}
+
+test('a text route takes its model from a tier or a _shared.ts constant: no `model:` literal in its group file', () => {
+  const hits = readdirSync(TABLE)
+    .filter((f) => f !== '_shared.ts' && f !== 'claude.ts')
+    .flatMap((f) =>
+      textModelLiterals(`packages/routes/src/table/${f}`, readFileSync(join(TABLE, f), 'utf8'), MEDIA_ROUTES),
+    )
+  expect(hits).toEqual([])
+  for (const id of MEDIA_ROUTES) expect(routeIds() as string[]).toContain(id)
+})
+
+test('the literal scan catches a planted model literal in a text route with file:line, and skips a media route', () => {
+  const text =
+    "const routes = {\n  'a.media': {\n    wire: 'iu-openai',\n    model: 'm1',\n  },\n  'a.text': { wire: 'anthropic', model: 'm2' },\n}\n"
+  expect(textModelLiterals('x.ts', text, new Set(['a.media']))).toEqual([
+    `x.ts:6 names a model literal in text route "a.text": 'a.text': { wire: 'anthropic', model: 'm2' },`,
+  ])
+})
+
+// Every route on a Claude model spreads a tier: model, effort, rate and fallback are those of the tier's step kind (a
+// single call on the `anthropic` wire, an agent step on `opencode`). Overrides are the output limit, and for
+// `image.enhance` the effort, with its fallback raised to the same effort.
+const EFFORT_OVERRIDES = new Set(['image.enhance'])
+const CLAUDE_TIERS = { FAST, EASY, HARD }
+type StepShape = { model: string; effort: string; rate: object; fallback: object }
+
+test('every route on a Claude model spreads a tier', () => {
+  const claude = routeIds().filter((id) => resolveRoute(id, {}).model.startsWith('claude-'))
+  expect(claude.length).toBeGreaterThan(0)
+  for (const id of claude) {
+    const route = resolveRoute(id, {})
+    expect({ id, wire: route.wire }).toEqual({ id, wire: expect.stringMatching(/^(anthropic|opencode)$/) })
+    const kind = route.wire === 'anthropic' ? 'call' : 'agent'
+    const spreads = Object.values(CLAUDE_TIERS).some((tier) => {
+      const step = (tier as Partial<Record<string, StepShape>>)[kind]
+      if (!step) return false
+      const raised = EFFORT_OVERRIDES.has(id) && route.effort !== step.effort
+      const expected = raised
+        ? { ...step, effort: route.effort, fallback: { ...step.fallback, effort: route.effort } }
+        : step
+      return Bun.deepEquals(
+        { model: route.model, effort: route.effort, rate: route.rate, fallback: route.fallback },
+        { model: expected.model, effort: expected.effort, rate: expected.rate, fallback: expected.fallback },
+      )
+    })
+    expect({ id, spreadsATier: spreads }).toEqual({ id, spreadsATier: true })
   }
 })

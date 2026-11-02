@@ -1,7 +1,7 @@
 import type { RouteEntry } from '../schema.ts'
-import { LUNA_CALL_FALLBACK, TRIVIAL } from './_shared.ts'
+import { FAST } from './_shared.ts'
 
-// The image seats (Wave 8). The platform calls IU's OpenAI images endpoint directly (and Replicate through the same IU
+// The image routes (Wave 8). The platform calls IU's OpenAI images endpoint directly (and Replicate through the same IU
 // host), where the personal image-gateway wrapped them. Source of every figure: image-gateway `gateway/src/lib/pricing.ts`
 // and `shared/src/assets.ts`, measured against IU's own `usage` on 2026-09-23 (the 2.5 pair) and 2026-10-13 (Replicate).
 //
@@ -38,20 +38,19 @@ const routes = {
     model: 'recraft-ai/recraft-vectorize',
     price: { kind: 'unit', unit: 'call', usd: 0.01 },
   },
-  // No fallback on the image seats: a provider-balance failure on an image model has no text model to move to.
+  // No fallback on the image models: a provider-balance failure on an image model has no text model to move to.
   // The enhance planner (imgcli `gen --enhance`): one JSON plan per brief. image-gateway ran it on Luna at its
   // `ENHANCE_REASONING_EFFORT` (high). A single call through the capability transports, with no wire assumption, so it
-  // takes the TRIVIAL seat (Haiku) on the native Messages wire at effort high, and falls back to Luna at high effort on the
-  // chat wire (gateway `pricing.ts` TEXT_RATES: in 0.10, cached in 0.01, out 0.50 USD/M, the OpenAI price page, not measured
-  // on IU). Reasoning tokens count against the ceiling, so it is 32k where the gateway sent 16k and retried once with
+  // takes the FAST tier (Haiku) on the native Messages wire at effort high, and falls back to Luna at high effort on the
+  // chat wire (the tier's fallback, effort raised too). Reasoning tokens count against the ceiling, so it is 32k where the gateway sent 16k and retried once with
   // double on a truncated answer.
   'image.enhance': {
     wire: 'anthropic',
-    ...TRIVIAL,
+    ...FAST.call,
     effort: 'high',
     maxOutputTokens: 32_000,
     // A text call like every text route: the provider-balance fallback applies (owner direction 2026-10-28).
-    fallback: { ...LUNA_CALL_FALLBACK, effort: 'high' },
+    fallback: { ...FAST.call.fallback, effort: 'high' },
   },
 } satisfies Record<string, RouteEntry>
 

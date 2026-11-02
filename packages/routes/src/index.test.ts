@@ -36,7 +36,7 @@ describe('table', () => {
     }
   })
 
-  test('covers the seats Waves 2-4 need', () => {
+  test('covers the routes Waves 2-4 need', () => {
     const needed: RouteId[] = ['cheap.summarize', 'cheap.title', 'cheap.classify', 'decide', 'review.angle', 'check']
     for (const id of needed) expect(routeIds()).toContain(id)
   })
@@ -79,7 +79,7 @@ describe('resolveRoute', () => {
       expect(resolveRoute('check', patch)).toEqual({ id: 'check', ...entry('check') })
   })
 
-  test('the deep angle route is its own seat: Sonnet medium, priced, overridden independently of review.angle', () => {
+  test('the deep angle route is its own route: Sonnet medium, priced, overridden independently of review.angle', () => {
     const deep = resolveRoute('review.angle.deep', {})
     expect(deep).toMatchObject({
       wire: 'opencode',
@@ -165,7 +165,7 @@ describe('resolveRoute', () => {
   })
 
   test('an agent route moves only to a model the OpenCode server serves, naming the route and the model', () => {
-    // A table model that only single calls use (the cheap seat's fallback) is not one the server serves.
+    // A table model that only single calls use (the FAST tier's fallback) is not one the server serves.
     const callOnly = entry('cheap.classify').fallback?.model as string
     expect(opencodeModels().has(callOnly)).toBe(false)
     expect(() => resolveRoute('check', { check: { model: callOnly } })).toThrow(
@@ -415,7 +415,7 @@ describe('fallback', () => {
   test('every text route has one; decide, audio.* (but the prep) and the image/Replicate models have none', () => {
     for (const id of routeIds()) {
       const route = resolveRoute(id, {})
-      // an audio seat has none; an image or Replicate model (`price`) has no text model to move to
+      // an audio route has none; an image or Replicate model (`price`) has no text model to move to
       expect(route.fallback === undefined).toBe(
         route.wire === 'iu-decision' ||
           (id.startsWith('audio.') && id !== 'audio.tts.prep') ||
@@ -434,9 +434,9 @@ describe('fallback', () => {
   }
   const lunaRate = { inputPerM: 0.1, outputPerM: 0.5, cacheReadPerM: 0.01 }
 
-  // The Claude seats (owner decision 2026-11-01): a single call speaks the anthropic wire, an agent step stays on
-  // OpenCode; a drained credit is a 402 and the fallback is GPT on IU by seat.
-  test('a Claude seat falls back to GPT by seat: TRIVIAL to Luna low, EASY to Terra low, STRONG to Terra medium', () => {
+  // The Claude tiers (owner decision 2026-11-01): a single call speaks the anthropic wire, an agent step stays on
+  // OpenCode; a drained credit is a 402 and the fallback is GPT on IU by tier.
+  test('a Claude tier falls back to GPT by tier: FAST to Luna low, EASY to Terra low, HARD to Terra medium', () => {
     const luna = { wire: 'iu-openai', model: 'gpt-6-luna', effort: 'low', maxOutputTokens: 32_000, rate: lunaRate }
     const terraLow = {
       wire: 'iu-openai',
@@ -450,7 +450,7 @@ describe('fallback', () => {
       expect(resolveRoute(id, {})).toMatchObject({ wire: 'anthropic', model: 'claude-haiku-5-5', effort: 'none' })
       expect(resolveRoute(id, {}).fallback).toMatchObject(luna)
     }
-    // image.enhance is TRIVIAL with effort high (the planner's own setting), its fallback Luna at high
+    // image.enhance is FAST with effort high (the planner's own setting), its fallback Luna at high
     expect(resolveRoute('image.enhance', {})).toMatchObject({
       wire: 'anthropic',
       model: 'claude-haiku-5-5',
@@ -489,8 +489,8 @@ describe('fallback', () => {
     }
   })
 
-  // Seats that stay on GPT by design: the adversary and the podcast writer are pinned to Terra medium, not to STRONG.
-  test('review.adversary and podcast.write (Llm.round) stay on GPT on the chat wire; audio.tts.prep is the TRIVIAL seat', () => {
+  // Cross-lab seats that stay on GPT by design: the adversary and the podcast writer are Terra medium, not the HARD tier.
+  test('review.adversary and podcast.write (Llm.round) stay on GPT on the chat wire; audio.tts.prep is the FAST tier', () => {
     expect(resolveRoute('podcast.write', {})).toMatchObject({
       wire: 'iu-openai',
       model: 'gpt-6.1-terra',
@@ -605,7 +605,7 @@ describe('fallback', () => {
   })
 
   test('a patch reaches a fallback like a primary, and only the part it names', () => {
-    // The cheap seat's fallback moves to the Terra model the table names, at an effort of its own.
+    // The FAST tier's fallback moves to the Terra model the table names, at an effort of its own.
     const terra = entry('review.angle').fallback?.model as string
     const e = { 'cheap.classify': { fallback: { model: terra, effort: 'high' } } }
     const route = resolveRoute('cheap.classify', e)
