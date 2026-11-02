@@ -13,6 +13,7 @@ import { createTelemetry, type Telemetry } from '../src/telemetry.ts'
 export const API_SECRET = 'a'.repeat(32)
 export const DOOR_TOKEN = 'b'.repeat(32)
 export const HERMES_TOKEN = 'c'.repeat(32)
+export const OPENCODE_TOKEN = 'd'.repeat(32)
 export const IU_KEY = 'fake-iu-key'
 export const POOL_KEY = 'fake-pool-key'
 
@@ -132,6 +133,7 @@ export function harness(input: {
     doorTokens: new Map([
       ['oc', DOOR_TOKEN],
       ['hermes', HERMES_TOKEN],
+      ['agw-opencode', OPENCODE_TOKEN],
     ]),
     apiSecret: API_SECRET,
     iu: {
@@ -209,6 +211,9 @@ export const recordRow = (id: string, over: Partial<RecordRow> = {}): RecordRow 
   ts: '2026-11-01T10:00:00.000Z',
   model_raw: 'priced-model',
   model: 'priced-model',
+  repo: null,
+  project_raw: null,
+  workspace: null,
   billing: 'api_credit',
   account: 'iu',
   api_key: null,

@@ -25,7 +25,18 @@ Every proxied response carries `x-agw-request-id` (the ledger `source_id`) and `
 
 **Forwarded:** the body's bytes, except on the `/anthropic` paths an exact alias (`haiku`, `sonnet`, `opus`) in `model`,
 which is re-serialised with the concrete id. **Not forwarded:** every credential carrier above, `host`,
-`content-length` (recomputed), hop-by-hop headers and every `x-agw-*` header.
+`content-length` (recomputed), hop-by-hop headers and every `x-agw-*` header. The gateway reads these itself:
+
+| Header | Effect |
+|-|-|
+| `x-agw-session`, `x-agw-run-id`, `x-agw-workflow`, `x-agw-step`, `x-agw-purpose` | the session binding, `lane_detail`, `run_id` |
+| `x-agw-project` | `project_raw`, and `repo` when it is a plain slug and the workspace is not `work` |
+| `x-agw-workspace` | `workspace`, when it is `work` or `private` |
+| `x-agw-fallback: none` | a 402 instead of the IU fallback (`/anthropic` paths) |
+| `x-agw-usage: caller` | no ledger row off `/anthropic`; the header is ignored on `/anthropic` paths |
+
+Project and workspace values over 200 characters are dropped. `x-agw-fallback` and `x-agw-usage` compare
+case-insensitively; `x-agw-workspace` is exact, as the `usage.records` check is.
 
 ## Env
 
@@ -64,8 +75,11 @@ after an upstream 2xx.
 ## Ledger and outbox
 
 - **Write.** One row per served request, written synchronously when the tee has the final usage (end of stream, or on an
-  error or abort with what is known), before the stream closes. The charge follows the write. A 402 and a `count_tokens`
-  write no record; picks go in beside the records.
+  error or abort with what is known), before the stream closes. The charge follows the write. A 402, a `count_tokens` and
+  an IU-path request with `x-agw-usage: caller` write no record; picks go in beside the records.
+- **Migration.** Every open adds what `records` lacks (`repo`, `project_raw`, `workspace`, nullable), so a ledger from an
+  older build keeps its rows and an older build can still write to a migrated file. The outbox reads these three from the
+  columns: a row written before them flushes as null.
 - **Cost.** `cost_reported_usd` is the provider's own `usage.cost` if it states one, else a complete usage block at the
   Claude rates, else null (Postgres then prices the token columns). On a credit pool an estimate stands in for the meter only (`lane_detail.costEstimatedUsd`,
   `costEstimated: true`): the rules are in `docs/gateway.md` §Meter, the code in `src/charge.ts`.
