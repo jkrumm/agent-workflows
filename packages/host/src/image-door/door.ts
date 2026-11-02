@@ -24,6 +24,7 @@ import {
 import { z } from 'zod'
 import { BEARER_CHALLENGE } from '../auth.ts'
 import { RUN_ID_HEADER } from '../capability-runs.ts'
+import { errorKindOfStatus } from '../door-status.ts'
 import { type CallerAuth, doorCallerAuth } from '../door-tokens.ts'
 import { type HostWorkflow, purposeOf, startRun } from '../operations.ts'
 import {
@@ -283,27 +284,28 @@ export function createImageDoor(deps: ImageDoorDeps): ImageDoor {
           const prepared = job.prepared
           job.prepared = undefined
           if (job.abandoned || !prepared) {
-            if (job.gone) return summary(GONE_STATUS, 'client-gone', null, null, job)
+            if (job.gone) return summary(GONE_STATUS, 'client-gone', null, 0, job)
             throw new Error('the request was given up before its run started')
           }
           job.claimed = true
 
           // The step's own usage sink, summed: the summary's cost is complete only when every call was priced.
           let cost = 0
-          let calls = 0
           let unpriced = false
           const metered = (usage: Usage) => {
             addUsage(usage)
-            calls++
             if (typeof usage.cost !== 'number') unpriced = true
             else cost += usage.cost
           }
-          // No call at all is known free: 0, null only for a call nobody priced.
+          // Known free is 0: the work ended and every call it made was priced (none at all is 0). A work that was cut
+          // short may have a call in flight that nobody priced: unknown, never 0.
           const costUsd = () => (unpriced ? null : cost)
 
           const signal = AbortSignal.any([stepSignal, job.controller.signal])
+          let workStarted = false
           try {
             if (signal.aborted) throw new Error('cancelled before it started')
+            workStarted = true
             const done = await prepared.work({ addUsage: metered, signal, attribution }, (event) => job.emit(event))
             job.settle({ ok: true, response: done.response })
             return summary(job.gone ? GONE_STATUS : 200, job.gone ? 'client-gone' : 'done', done, costUsd(), job)
@@ -311,7 +313,7 @@ export function createImageDoor(deps: ImageDoorDeps): ImageDoor {
             // The client going away is its own end, whatever the call threw when it was aborted.
             if (job.gone) {
               job.settle({ ok: false, failure: doorFailure(GONE_STATUS, 'the client went away', 'proxy_error') })
-              return summary(GONE_STATUS, 'client-gone', null, costUsd(), job)
+              return summary(GONE_STATUS, 'client-gone', null, workStarted ? null : 0, job)
             }
             const failure = failureOf(error)
             // What the client is not told (an unexpected error, a transport failure's text) is logged with the run id.
@@ -320,7 +322,7 @@ export function createImageDoor(deps: ImageDoorDeps): ImageDoor {
             job.settle({ ok: false, failure })
             // The step ends `failed` with its usage kept; the caller's bad request (400/413/422) is `invalid_input`.
             throw new WorkflowError(
-              failure.status === 400 || failure.status === 413 || failure.status === 422 ? 'invalid_input' : 'error',
+              errorKindOfStatus(failure.status),
               `${failure.status} ${failure.body.error.type}: ${failure.body.error.message}`,
               { cause: error },
             )

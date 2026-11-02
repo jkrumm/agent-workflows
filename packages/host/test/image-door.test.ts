@@ -687,7 +687,7 @@ describe('streaming', () => {
       const found = await sql.run(runId)
       return found?.status === 'done' ? found : undefined
     }, 'the run ended')
-    expect(row.output).toMatchObject({ status: 499, ended: 'client-gone', images: 0, costUsd: 0, partials: 1 })
+    expect(row.output).toMatchObject({ status: 499, ended: 'client-gone', images: 0, costUsd: null, partials: 1 })
     const step = await sql.step(runId, 'serve')
     expect(Number(step?.tokens_input)).toBe(0)
     expect(step?.cost === null || Number(step?.cost) === 0).toBe(true)

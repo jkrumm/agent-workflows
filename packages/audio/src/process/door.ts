@@ -5,7 +5,7 @@
 // front of it, and only observes: the handler's usage events land in an in-memory sink the run's one step reads once
 // the handler's work is over (its promise settled and its body ended). Recording never delays the audio and a
 // recording failure never fails the request (logged).
-import { BEARER_CHALLENGE, type HostWorkflow, RUN_ID_HEADER, startRun } from '@agent-workflows/host'
+import { BEARER_CHALLENGE, errorKindOfStatus, type HostWorkflow, RUN_ID_HEADER, startRun } from '@agent-workflows/host'
 import {
   type Attribution,
   defineWorkflow,
@@ -94,6 +94,8 @@ class Sink {
   answered: { status: number; errorText: Promise<string | null> } | undefined
   ended: DoorEnd | undefined
   closed = false
+  /** Upstream calls that threw or were aborted; more of them than recorded calls means one may have been billed unseen. */
+  lost = 0
   /** Its run never started (logged once, with the id): later events have nowhere to go and are not warned about. */
   unrecorded = false
   readonly settled: Promise<void>
@@ -147,7 +149,17 @@ class Sink {
 /** How much of an error answer the run's error message carries. */
 const ERROR_TEXT_MAX = 300
 /** The wait for an error body's text: a small envelope, so a body that does not end in time is recorded without it. */
-const ERROR_TEXT_WAIT_MS = SUMMARY_GRACE_MS
+const ERROR_TEXT_WAIT_MS = 2000
+
+/** `promise`'s value, or `null` once `ms` passed; the timer is cleared as soon as the promise wins. */
+async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([promise, new Promise<null>((resolve) => (timer = setTimeout(resolve, ms, null)))])
+  } finally {
+    clearTimeout(timer)
+  }
+}
 
 /** The OpenAI envelope's message when the body is one, else the body's start. */
 function errorTextOf(body: string): string | null {
@@ -163,10 +175,6 @@ function errorTextOf(body: string): string | null {
   }
   return message.slice(0, ERROR_TEXT_MAX)
 }
-
-/** The caller's bad request ends its run `invalid_input`; any other error answer is an `error`. */
-const failureKind = (status: number) =>
-  status === 400 || status === 413 || status === 422 ? ('invalid_input' as const) : ('error' as const)
 
 const DoorInput = z.object({
   /** The authenticated caller (its door token's name, `agw` for the API secret). */
@@ -270,17 +278,18 @@ export function createDoor(options: DoorOptions): Door {
           const summary = sink.request
           const costs = sink.calls.map((call) => usageOf(call).cost ?? null)
           // A request is priced only when every call is: a partial sum would read as the whole cost.
-          // No call at all is known free: 0, not unknown.
-          const costUsd = costs.every((c): c is number => c !== null) ? costs.reduce((a, c) => a + c, 0) : null
+          // No call at all is known free: 0. A call that threw or was aborted without the lane recording it may have
+          // been billed: unknown.
+          const costUsd =
+            sink.lost <= sink.calls.length && costs.every((c): c is number => c !== null)
+              ? costs.reduce((a, c) => a + c, 0)
+              : null
           // The status the caller got, else the summary's (a stream that failed after its 200 records a 500 there).
           const answered = sink.answered?.status ?? null
           const status = answered !== null && answered >= 400 ? answered : (summary?.status ?? answered)
           const errorText =
             status !== null && status >= 400 && sink.ended !== 'client-gone'
-              ? await Promise.race([
-                  sink.answered?.errorText ?? null,
-                  new Promise<null>((resolve) => setTimeout(resolve, ERROR_TEXT_WAIT_MS, null).unref()),
-                ])
+              ? await withTimeout(sink.answered?.errorText ?? Promise.resolve(null), ERROR_TEXT_WAIT_MS)
               : null
           return {
             status,
@@ -299,7 +308,7 @@ export function createDoor(options: DoorOptions): Door {
         const { errorText, ...output } = request
         if (output.status !== null && output.status >= 400 && output.ended !== 'client-gone') {
           throw new WorkflowError(
-            failureKind(output.status),
+            errorKindOfStatus(output.status),
             `door answered ${output.status}${errorText ? `: ${errorText}` : ''}`,
           )
         }
@@ -352,6 +361,7 @@ export function createDoor(options: DoorOptions): Door {
     const fetch: Fetch = (url, init) =>
       baseFetch(url, { ...init, signal: init?.signal ? AbortSignal.any([init.signal, signal]) : signal }).catch(
         (error: unknown) => {
+          sink.lost++
           if (signal.aborted && !(error instanceof Error && error.name === 'AbortError'))
             throw new DOMException('the client went away', 'AbortError')
           throw error
