@@ -1,4 +1,5 @@
 import { claudeRate, costFromUsage, type ProviderUsage } from '@agent-workflows/routes/pricing'
+import { routeRate } from '@agent-workflows/routes/rates'
 import { isRecord } from './json.ts'
 import type { ReportedUsage, TeeResult } from './tee.ts'
 
@@ -65,26 +66,55 @@ function estimatedUsage(tee: TeeResult, request: RequestShape): ProviderUsage {
 }
 
 /**
- * What a finished request costs. A complete usage block at the model's rate is real. On a credit pool anything less is
- * estimated, so the meter never trails what the org billed: an unknown model is the same usage at the top Claude rate;
- * a request that ended without a complete block (a cut, a fetch error, a 2xx nobody can read) is the tokens seen or
- * inferred, at the model's rate or else the top one. A non-2xx answer without usage cost nothing (`billable` false).
- * Server tools are billed per use beside the tokens, so a credit pool's figure carries them either way.
+ * An OpenAI Responses block in the chat shape `costFromUsage` prices: its `input_tokens` includes the cached reads, as
+ * `prompt_tokens` does, where an Anthropic `input_tokens` excludes them. Any other block is returned as it is.
+ */
+function chatShaped(usage: ReportedUsage | null): ProviderUsage | null {
+  const details: unknown = usage?.input_tokens_details
+  if (usage === null || !isRecord(details) || usage.prompt_tokens !== undefined) return usage
+  const cached = details.cached_tokens
+  return {
+    ...(usage.cost === undefined ? {} : { cost: usage.cost }),
+    ...(usage.input_tokens === undefined ? {} : { prompt_tokens: usage.input_tokens }),
+    ...(usage.output_tokens === undefined ? {} : { completion_tokens: usage.output_tokens }),
+    ...(typeof cached === 'number' ? { prompt_tokens_details: { cached_tokens: cached } } : {}),
+  }
+}
+
+/** The provider's own cost, else a complete block at the rate: Claude's on `/anthropic`, else the route's agw priced it at. */
+function reportedUsd(input: { tee: TeeResult; rate: ReturnType<typeof claudeRate>; requestedModel: string | null }) {
+  const { tee, rate, requestedModel } = input
+  if (!tee.complete) return null
+  if (rate !== undefined || requestedModel === null) return costFromUsage('anthropic', tee.usage, rate).usd
+  return costFromUsage('iu-openai', chatShaped(tee.usage), routeRate(requestedModel) ?? undefined).usd
+}
+
+/**
+ * What a finished request costs. A complete usage block at the model's rate is real: a Claude model's on any path, and
+ * off `/anthropic` the rate of the route that names the requested model (`routeRate`), as agw's own transports priced
+ * it. On a credit pool anything less is estimated, so the meter never trails what the org billed: an unknown model is
+ * the same usage at the top Claude rate; a request that ended without a complete block (a cut, a fetch error, a 2xx
+ * nobody can read) is the tokens seen or inferred, at the model's rate or else the top one. A non-2xx answer without
+ * usage cost nothing (`billable` false). Server tools are billed per use beside the tokens, so a credit pool's figure
+ * carries them either way.
  */
 export function chargeOf(input: {
   tee: TeeResult
+  /** The model the row names; a Claude model is priced by it. */
   model: string | null
+  /** The concrete model the caller asked for on a non-`/anthropic` path, which a route rate is looked up by; else null. */
+  routedModel: string | null
   creditPool: boolean
   billable: boolean
   request: RequestShape
 }): Charge {
-  const { tee, model, creditPool, billable, request } = input
+  const { tee, model, routedModel, creditPool, billable, request } = input
   const rate = model === null ? undefined : claudeRate(model)
   const tools = creditPool ? serverToolUsd(tee.usage) : 0
   const withTools = (usd: number | null): number | null => (usd === null ? null : usd + tools)
   const top = claudeRate('opus')
-  // The provider's own `usage.cost` wins on any wire (IU states it); without one or a Claude rate there is no figure.
-  const reported = tee.complete ? costFromUsage('anthropic', tee.usage, rate).usd : null
+  // The provider's own `usage.cost` wins on any wire (IU states it); without one or a rate there is no figure.
+  const reported = reportedUsd({ tee, rate, requestedModel: routedModel })
   if (reported !== null) return { reportedUsd: withTools(reported), estimateUsd: null }
   if (!creditPool || !billable) return { reportedUsd: null, estimateUsd: null }
   const atTop = tee.complete ? costFromUsage('anthropic', tee.usage, top).usd : null

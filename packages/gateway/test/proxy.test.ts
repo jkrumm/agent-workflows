@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import { gzipSync } from 'node:zlib'
 import { BALANCE_MARKER, claudeRate, costFromUsage, resolveModelAlias } from '@agent-workflows/routes'
+import { routeRate } from '@agent-workflows/routes/rates'
 import { InMemorySpanExporter } from '@opentelemetry/sdk-trace'
 import { Ledger } from '../src/ledger.ts'
 import { createTelemetry } from '../src/telemetry.ts'
@@ -866,6 +867,72 @@ describe('usage row', () => {
     const gw = start()
     await (await gw.call('/openai/v1/chat/completions', jsonBody({ model: 'gpt-x' }))).text()
     expect(gw.rows().records[0]?.row.cost_reported_usd).toBeNull()
+  })
+
+  describe('IU text models: the route rate, and one model id behind the provider prefix', () => {
+    const chat = { prompt_tokens: 1000, completion_tokens: 200, prompt_tokens_details: { cached_tokens: 400 } }
+    // The Gemini route rate has no cache-read rate, so a block with cached reads is unknown there, as it was in agw.
+    const uncached = { prompt_tokens: 1000, completion_tokens: 200 }
+    const atRoute = (model: string, usage: object) => {
+      const rate = routeRate(model)
+      const usd = rate === null ? null : costFromUsage('iu-openai', usage, rate).usd
+      if (usd === null) throw new Error(`test setup: no route price for ${model}`)
+      return usd
+    }
+
+    test('GPT Terra and Gemini flash without usage.cost: priced, named as requested, the echo kept raw', async () => {
+      iu.reply(() => Response.json({ model: 'openai.gpt-6.1-terra', usage: chat }))
+      const gw = start()
+      await (await gw.call('/openai/v1/chat/completions', jsonBody({ model: 'gpt-6.1-terra' }))).text()
+      iu.reply(() =>
+        sseResponse(
+          `${sse([{ model: 'vertex_ai_eu/gemini-3.8-flash', choices: [], usage: uncached }])}data: [DONE]\n\n`,
+        ),
+      )
+      await (await gw.call('/openai/v1/chat/completions', jsonBody({ model: 'gemini-3.8-flash', stream: true }))).text()
+      const rows = gw.rows().records.map(({ row }) => row)
+      expect(rows[0]).toMatchObject({ model: 'gpt-6.1-terra', model_raw: 'openai.gpt-6.1-terra', billing: 'api_key' })
+      expect(rows[0]?.cost_reported_usd).toBeCloseTo(atRoute('gpt-6.1-terra', chat), 12)
+      expect(rows[0]?.lane_detail.costEstimated).toBeUndefined()
+      expect(rows[1]).toMatchObject({ model: 'gemini-3.8-flash', model_raw: 'vertex_ai_eu/gemini-3.8-flash' })
+      expect(rows[1]?.cost_reported_usd).toBeCloseTo(atRoute('gemini-3.8-flash', uncached), 12)
+      expect(atRoute('gemini-3.8-flash', uncached)).not.toBeCloseTo(atRoute('gpt-6.1-terra', uncached), 12)
+    })
+
+    test('DeepSeek keeps the cost IU states, under the requested id', async () => {
+      iu.reply(() => Response.json({ model: 'deepseek/deepseek-v4.1-flash', usage: { ...chat, cost: 0.0042 } }))
+      const gw = start()
+      await (await gw.call('/openai/v1/chat/completions', jsonBody({ model: 'deepseek-v4.1-flash' }))).text()
+      expect(gw.rows().records[0]?.row).toMatchObject({
+        model: 'deepseek-v4.1-flash',
+        model_raw: 'deepseek/deepseek-v4.1-flash',
+        cost_reported_usd: 0.0042,
+      })
+    })
+
+    test('an echo that is not the requested model behind one prefix segment is the model, as before', async () => {
+      const gw = start()
+      const cases: [requested: string, echo: string][] = [
+        ['gpt-6.1-terra', 'openai.gpt-6.1-terra-2026'],
+        ['1-terra', 'openai.gpt-6.1-terra'],
+        ['gpt-6.1-terra', 'a.b/gpt-6.1-terra'],
+        ['gpt-6.1-terra', 'openai:gpt-6.1-terra'],
+        ['gpt-6.1-terra', '/gpt-6.1-terra'],
+      ]
+      for (const [requested, echo] of cases) {
+        iu.reply(() => Response.json({ model: echo, usage: chat }))
+        await (await gw.call('/openai/v1/chat/completions', jsonBody({ model: requested }))).text()
+      }
+      const rows = gw.rows().records.map(({ row }) => ({ model: row.model, model_raw: row.model_raw }))
+      expect(rows).toEqual(cases.map(([requested, echo]) => ({ model: echo, model_raw: requested })))
+    })
+
+    test('on /anthropic a non-Claude model gets no route rate', async () => {
+      iu.reply(() => Response.json({ model: 'gpt-6.1-terra', usage: { input_tokens: 10, output_tokens: 5 } }))
+      const gw = start()
+      await (await gw.call(MESSAGES, jsonBody(request({ model: 'gpt-6.1-terra' })))).text()
+      expect(gw.rows().records[0]?.row).toMatchObject({ model: 'gpt-6.1-terra', cost_reported_usd: null })
+    })
   })
 
   test('the same unknown model on IU stays unpriced: IU is not the meter', async () => {

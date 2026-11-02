@@ -108,6 +108,14 @@ never to the row's cost:
   tokens seen and response bytes / 3. A non-streamed request cut before any byte takes the smaller of its `max_tokens` and 8192. Priced
   at the model's rate, else the top one.
 
+Off `/anthropic` (IU's OpenAI, Gemini, Replicate and decision paths) nothing is metered, but a row is still priced: the
+provider's `usage.cost` if IU states one (DeepSeek), else a complete usage block at the `rate` of the route that names the
+requested model (`routeRate`, `@agent-workflows/routes/rates`), the figure agw's own transports wrote before the gateway
+(GPT Terra, Gemini flash). A Responses-API block is priced as its chat equivalent, its `input_tokens` holding the cached
+reads. No route rate, or a cache count the rate has no price for, leaves the cost null. When IU echoes the requested model
+behind a provider prefix (`openai.<id>`, `vertex_ai_eu/<id>`), the row's `model` is the requested id and `model_raw` the
+echo.
+
 Spend made outside the gateway counts against the credit (`iu` spent $56.11 on 2026-10-31, before any gateway). No API
 returns the grant, the balance or the cycle, so the registry's `creditUsd` and `cycleDay` stay the source. For each pool
 with an admin key, at boot (before listening, 30 s at most) and hourly:
