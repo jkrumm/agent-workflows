@@ -127,6 +127,10 @@ Disjoint changes, one fan-out batch:
 
 - Today's pipeline (v1) on the full `test` set and the controls, on its live seats: the first real numbers.
 - Native `/code-review high` on 60 `test` cases through herdr-core sessions (owner decision 3).
+- **OCR arm** (owner, 2026-11-02: OCR stays off until measured). `alibaba/open-code-review` (pinned v1.13.3) on the
+  `test` set and the controls, on Haiku 5.5 and Sonnet 5.5 through the gateway (its own door token, so its spend is
+  priced for the first time) and on Terra: recall, false alarms, cost and wall per arm. Wave 9 keeps OCR only as an
+  arm that beats v2 on recall beyond the CI at a cost the owner accepts; otherwise its deletion stands.
 - Committed report `docs/evals/<date>-review-baseline.md`. It sets how much headroom v2 has to beat.
 
 ## Wave 8 — Review v2            <!-- status: pending -->

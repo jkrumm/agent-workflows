@@ -130,7 +130,7 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
 
 ## Next action
 - Wait for the Wave 3 close-out in `docs/waves/handoff/lead.md`; judge it, tick PLAN, retro entry, next lead per the rotation policy.
-- Still owed by the owner: me2 keys and expiry day. Until then me2 stays disabled. Open owner items: MacWhisper key paste; OCR and Hermes morning briefing re-enable.
+- Still owed by the owner: me2 keys and expiry day. Until then me2 stays disabled. MacWhisper is done (its door token works, `stt.done` in the audio log). OCR stays off until the Wave 7 OCR arm measures it. The Hermes morning briefing is retired; the owner rebuilds it differently, not ours.
 - Wake-loop: the factory re-fires `workers done: <lead> idle` while the lead idles on background shells. Answer with a blocking
   ~9.5-min poll on lead.md (bash loop with perl select, foreground timeout 590 s; `rd read` under `timeout 15`), not a bare re-declare.
 - Shell: never put double quotes inside a double-quoted `factory session note`; use a text file (a pipe in it ran `make`).
