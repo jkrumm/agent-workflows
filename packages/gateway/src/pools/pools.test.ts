@@ -715,7 +715,7 @@ describe('credit pacing: runway and the eval reserve', () => {
     expect(status.evalReserveUsd).toBe(100)
     expect(status.evalAvailableUsd).toBe(0)
     expect(status.evalEligible).toBe(false)
-    expect(picked(pools, { purpose: 'eval' })).toBe('refuse:eval-reserve')
+    expect(picked(pools, { evalOnly: true })).toBe('refuse:eval-reserve')
   })
 
   test('the registry override replaces the computed reserve, on a known cycle and an unknown one', () => {
@@ -728,6 +728,22 @@ describe('credit pacing: runway and the eval reserve', () => {
     )
     expect(statusOf(pools, 'iu')).toMatchObject({ evalReserveUsd: 50, evalAvailableUsd: 148, evalEligible: true })
     expect(statusOf(pools, 'me2')).toMatchObject({ evalReserveUsd: 0, evalAvailableUsd: 98, evalEligible: true })
+  })
+
+  test('an unusable pool has no credit, no runway and no eval draw', () => {
+    const { pools } = setup([pool('off', { cycleDay: 21, enabled: false }), pool('nokey', { cycleDay: 21 })], {
+      at: '2026-11-05T12:00:00Z',
+      keys: { nokey: undefined },
+    })
+    for (const id of ['off', 'nokey']) {
+      expect(statusOf(pools, id)).toMatchObject({
+        creditLeftUsd: 0,
+        runwayUsdPerDay: 0,
+        evalAvailableUsd: 0,
+        evalEligible: false,
+      })
+      near(statusOf(pools, id).daysLeft, 15.5)
+    }
   })
 
   test('an ineligible pool is never eval-eligible, whatever its surplus', () => {
@@ -756,17 +772,17 @@ describe('credit pacing: the pick for purpose=eval', () => {
     const { pools } = live()
     expect(statusOf(pools, 'iu').evalEligible).toBe(false)
     expect(statusOf(pools, 'me').evalEligible).toBe(true)
-    expect(picked(pools, { purpose: 'eval' })).toBe('me:soonest-expiry')
-    expect(picked(pools, { purpose: 'prod' })).toBe('iu:soonest-expiry')
+    expect(picked(pools, { evalOnly: true })).toBe('me:soonest-expiry')
+    expect(picked(pools, { evalOnly: false })).toBe('iu:soonest-expiry')
   })
 
-  test('every other purpose, and none, picks exactly as before', () => {
+  test('a request that is not an eval picks exactly as before', () => {
     const { pools } = live()
-    for (const purpose of ['prod', 'verify', 'drift', 'EVALUATE', '', null, undefined]) {
-      expect(picked(pools, { purpose })).toBe(picked(pools))
-      expect(picked(pools, { purpose, exclude: ['iu', 'me'] })).toBe('iu-api:drained-retry')
-      expect(picked(pools, { purpose, exclude: ['iu', 'me'], fallbackNone: true })).toBe('refuse:drained-retry')
-      expect(picked(pools, { purpose, claudeCodeShaped: true })).toBe('iu-api:claude-code')
+    for (const evalOnly of [false, undefined]) {
+      expect(picked(pools, { evalOnly })).toBe(picked(pools))
+      expect(picked(pools, { evalOnly, exclude: ['iu', 'me'] })).toBe('iu-api:drained-retry')
+      expect(picked(pools, { evalOnly, exclude: ['iu', 'me'], fallbackNone: true })).toBe('refuse:drained-retry')
+      expect(picked(pools, { evalOnly, claudeCodeShaped: true })).toBe('iu-api:claude-code')
     }
     expect(picked(pools)).toBe('iu:soonest-expiry')
   })
@@ -775,7 +791,7 @@ describe('credit pacing: the pick for purpose=eval', () => {
     const { pools } = setup([pool('late', { cycleDay: 27 }), pool('soon', { cycleDay: 21 })], {
       at: '2026-11-02T12:00:00Z',
     })
-    expect(picked(pools, { purpose: 'eval' })).toBe('soon:soonest-expiry')
+    expect(picked(pools, { evalOnly: true })).toBe('soon:soonest-expiry')
   })
 
   test('a bound eval session moves off a pool that fell under its reserve', () => {
@@ -784,34 +800,34 @@ describe('credit pacing: the pick for purpose=eval', () => {
       { at: '2026-11-02T12:00:00Z' },
     )
     pools.served('agw', 's1', 'me')
-    expect(picked(pools, { purpose: 'eval' })).toBe('me:bound')
+    expect(picked(pools, { evalOnly: true })).toBe('me:bound')
     // me: 24.5 of 31 days left, reserve $79.03 of $98 left; $20 spent takes it under.
     pools.charge('me', 20, new Date('2026-11-02T12:00:00Z'))
     expect(statusOf(pools, 'me').evalEligible).toBe(false)
-    expect(picked(pools, { purpose: 'eval' })).toBe('z:soonest-expiry')
+    expect(picked(pools, { evalOnly: true })).toBe('z:soonest-expiry')
     // Production keeps the binding: me is still eligible for it.
-    expect(picked(pools, { purpose: 'prod' })).toBe('me:bound')
+    expect(picked(pools, { evalOnly: false })).toBe('me:bound')
   })
 
   test('no eval candidate: refused, never IU, whatever x-agw-fallback says', () => {
     const { pools } = live()
     pools.charge('me', 30, new Date('2026-11-02T12:00:00Z'))
-    expect(picked(pools, { purpose: 'eval' })).toBe('refuse:eval-reserve')
-    expect(picked(pools, { purpose: 'eval', fallbackNone: true })).toBe('refuse:eval-reserve')
-    expect(picked(pools, { purpose: 'eval', exclude: ['me'] })).toBe('refuse:eval-reserve')
+    expect(picked(pools, { evalOnly: true })).toBe('refuse:eval-reserve')
+    expect(picked(pools, { evalOnly: true, fallbackNone: true })).toBe('refuse:eval-reserve')
+    expect(picked(pools, { evalOnly: true, exclude: ['me'] })).toBe('refuse:eval-reserve')
     // The same state, production: iu.
-    expect(picked(pools, { purpose: 'prod' })).toBe('iu:soonest-expiry')
+    expect(picked(pools, { evalOnly: false })).toBe('iu:soonest-expiry')
   })
 
   test('with no pool at all an eval request is refused too', () => {
     const { pools } = setup([])
-    expect(picked(pools, { purpose: 'eval' })).toBe('refuse:eval-reserve')
+    expect(picked(pools, { evalOnly: true })).toBe('refuse:eval-reserve')
   })
 
   test('a Claude-Code-shaped eval request is refused; a forced one stays forced', () => {
     const { pools } = live()
-    expect(picked(pools, { purpose: 'eval', claudeCodeShaped: true })).toBe('refuse:eval-reserve')
-    expect(picked(pools, { purpose: 'eval', forceIu: true })).toBe('iu-api:forced')
-    expect(picked(pools, { purpose: 'eval', forceIu: true, claudeCodeShaped: true })).toBe('iu-api:forced')
+    expect(picked(pools, { evalOnly: true, claudeCodeShaped: true })).toBe('refuse:eval-reserve')
+    expect(picked(pools, { evalOnly: true, forceIu: true })).toBe('iu-api:forced')
+    expect(picked(pools, { evalOnly: true, forceIu: true, claudeCodeShaped: true })).toBe('iu-api:forced')
   })
 })

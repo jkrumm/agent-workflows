@@ -34,15 +34,31 @@ export interface PickInput {
   claudeCodeShaped: boolean
   fallbackNone: boolean
   /**
-   * `x-agw-purpose`, trimmed and lower-cased. `eval` draws only on credit above a pool's production reserve and is never
-   * sent to IU (§Credit pacing); any other value, or null, picks as before.
+   * The request is an eval (`x-agw-purpose: eval`, normalised by the proxy). It draws only on credit above a pool's
+   * production reserve and is never sent to IU (§Credit pacing). Absent or false: picks as before.
    */
-  purpose?: string | null
+  evalOnly?: boolean
   /** Pools that already refused this request. */
   exclude?: string[]
 }
 
-export interface PoolStatus {
+/** A pool's runway and eval reserve at an instant (§Credit pacing); the same figures feed `pick` and `status`. */
+export interface Pacing {
+  /** Credit still spendable: `max(0, creditUsd − meterUsd − headroomUsd)`; 0 for an unusable pool. */
+  creditLeftUsd: number
+  /** Fractional days to `cycleEnd`; null on an unknown cycle. */
+  daysLeft: number | null
+  /** `creditLeftUsd / daysLeft`; null when `daysLeft` is null or 0. */
+  runwayUsdPerDay: number | null
+  /** What production keeps: the registry's `evalReserveUsd`, else `creditUsd × daysLeft / cycleLengthDays`, else (unknown cycle) `creditUsd`. */
+  evalReserveUsd: number
+  /** `max(0, creditLeftUsd − evalReserveUsd)`; 0 for an unusable pool. */
+  evalAvailableUsd: number
+  /** `eligible` and `evalAvailableUsd > 0`: an `eval` request may use this pool. */
+  evalEligible: boolean
+}
+
+export interface PoolStatus extends Pacing {
   id: string
   enabled: boolean
   keyResolved: boolean
@@ -55,18 +71,6 @@ export interface PoolStatus {
   meterUsd: number
   drainedUntil: string | null
   eligible: boolean
-  /** Credit still spendable: `max(0, creditUsd − meterUsd − headroomUsd)`. */
-  creditLeftUsd: number
-  /** Fractional days to `cycleEnd`; null on an unknown cycle. */
-  daysLeft: number | null
-  /** `creditLeftUsd / daysLeft`; null when `daysLeft` is null or 0. */
-  runwayUsdPerDay: number | null
-  /** What production keeps: the registry's `evalReserveUsd`, else `creditUsd × daysLeft / cycleLengthDays`, else (unknown cycle) `creditUsd`. */
-  evalReserveUsd: number
-  /** `max(0, creditLeftUsd − evalReserveUsd)`. */
-  evalAvailableUsd: number
-  /** `eligible` and `evalAvailableUsd > 0`: an `eval` request may use this pool. */
-  evalEligible: boolean
   /** `charge` calls ignored for a negative or non-finite amount, since start. */
   unpricedCharges: number
   /** The last ledger read failed (message); the pool is ineligible until a read succeeds. */
@@ -282,18 +286,24 @@ export function createPools(opts: PoolsOptions): Pools {
     state.drainedUntilMs === null &&
     meterUsd(state.meter) + state.pool.headroomUsd < state.pool.creditUsd
 
-  /** §Credit pacing: what the pool has left and how much of it production keeps. */
-  const pacing = (state: PoolState, cycle: { start: Date; end: Date | null }, at: Date) => {
-    const used = state.usable ? meterUsd(state.meter) : 0
-    const creditLeftUsd = Math.max(0, state.pool.creditUsd - used - state.pool.headroomUsd)
+  /** §Credit pacing for one pool: an unusable pool has no credit to spend, so no runway and no eval draw. */
+  const pacing = (state: PoolState, cycle: { start: Date; end: Date | null }, at: Date): Pacing => {
+    const { creditUsd, headroomUsd } = state.pool
+    const creditLeftUsd = state.usable ? Math.max(0, creditUsd - meterUsd(state.meter) - headroomUsd) : 0
     const daysLeft = cycle.end === null ? null : Math.max(0, (cycle.end.getTime() - at.getTime()) / DAY_MS)
     const runwayUsdPerDay = daysLeft === null || daysLeft === 0 ? null : creditLeftUsd / daysLeft
     const cycleDays = cycle.end === null ? null : (cycle.end.getTime() - cycle.start.getTime()) / DAY_MS
-    const proRata =
-      daysLeft === null || cycleDays === null ? state.pool.creditUsd : (state.pool.creditUsd * daysLeft) / cycleDays
+    const proRata = daysLeft === null || cycleDays === null ? creditUsd : (creditUsd * daysLeft) / cycleDays
     const evalReserveUsd = state.pool.evalReserveUsd ?? proRata
     const evalAvailableUsd = Math.max(0, creditLeftUsd - evalReserveUsd)
-    return { creditLeftUsd, daysLeft, runwayUsdPerDay, evalReserveUsd, evalAvailableUsd }
+    return {
+      creditLeftUsd,
+      daysLeft,
+      runwayUsdPerDay,
+      evalReserveUsd,
+      evalAvailableUsd,
+      evalEligible: isEligible(state) && evalAvailableUsd > 0,
+    }
   }
 
   const sweep = (atMs: number): void => {
@@ -313,7 +323,7 @@ export function createPools(opts: PoolsOptions): Pools {
   return {
     pick(input) {
       if (input.forceIu) return { kind: 'iu', reason: 'forced' }
-      const evalOnly = input.purpose === 'eval'
+      const evalOnly = input.evalOnly === true
       // An eval request has no IU to fall back on, a Claude-Code-shaped one included: it could only go there.
       if (input.claudeCodeShaped)
         return evalOnly ? { kind: 'refuse', reason: 'eval-reserve' } : fallback(input, 'claude-code')
@@ -326,7 +336,7 @@ export function createPools(opts: PoolsOptions): Pools {
         if (!state.usable || exclude.has(state.pool.id)) continue
         const cycle = sync(state, at)
         if (!isEligible(state)) continue
-        if (evalOnly && pacing(state, cycle, at).evalAvailableUsd <= 0) continue
+        if (evalOnly && !pacing(state, cycle, at).evalEligible) continue
         candidates.push({ id: state.pool.id, ...cycle })
       }
 
@@ -412,8 +422,6 @@ export function createPools(opts: PoolsOptions): Pools {
         // Unusable pools are never synced; their cycle is computed for display only.
         const cycle = state.usable ? sync(state, at) : cycleOf(state.pool.cycleDay, at)
         const reason = disabledReason(state)
-        const pace = pacing(state, cycle, at)
-        const eligible = isEligible(state)
         return {
           id: state.pool.id,
           enabled: state.pool.enabled,
@@ -424,9 +432,8 @@ export function createPools(opts: PoolsOptions): Pools {
           creditUsd: state.pool.creditUsd,
           meterUsd: state.usable ? meterUsd(state.meter) : 0,
           drainedUntil: state.drainedUntilMs === null ? null : new Date(state.drainedUntilMs).toISOString(),
-          eligible,
-          ...pace,
-          evalEligible: eligible && pace.evalAvailableUsd > 0,
+          eligible: isEligible(state),
+          ...pacing(state, cycle, at),
           unpricedCharges: state.unpricedCharges,
           ...(state.meterError === null ? {} : { meterError: state.meterError }),
         }

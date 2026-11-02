@@ -14,7 +14,8 @@ import type { RequestSpan, Telemetry } from './telemetry.ts'
 /** The label of the IU passthrough everywhere: a credit pool is itself named `iu`. */
 export const IU_API = 'iu-api'
 const REFUSED = 'refused'
-/** An `eval` request with no pool above its reserve; see `refuseEval`. */
+type RefuseReason = Extract<Pick, { kind: 'refuse' }>['reason']
+/** An `eval` request with no pool above its reserve; see `refusalFor`. */
 const EVAL_REFUSAL_STATUS = 403
 /** The reason on a path with no pick: IU is the only upstream. */
 const PASSTHROUGH = 'passthrough'
@@ -548,33 +549,46 @@ export function createProxy(options: ProxyOptions): GatewayProxy {
   }
 
   /**
-   * An `eval` request no pool can serve above its reserve: a 403 `permission_error`. Not a 402 (`isBalanceFailure`: the
-   * agw route would fall back onto GPT and spend IU, corrupting the arm), not 408/409/429/5xx (the transports and the
-   * Anthropic, OpenAI and AI SDKs retry those): nothing classifies or retries a 403.
+   * Every refusal the pick can end in. The 402 of `x-agw-fallback: none` hands the caller's own route fallback the
+   * word. The 403 of an `eval` request no pool can serve above its reserve is a `permission_error`: not a 402
+   * (`isBalanceFailure`: the agw route would fall back onto GPT and spend IU, corrupting the arm), not 408/409/429/5xx
+   * (the transports and the Anthropic, OpenAI and AI SDKs retry those): nothing classifies or retries a 403.
    */
-  const refuseEval = (x: Exchange): Response => {
-    x.span.set({ 'agw.gateway.pool': REFUSED, 'agw.gateway.pick_reason': 'eval-reserve' })
-    close(x, EVAL_REFUSAL_STATUS, true)
-    const available = pools
-      .status()
-      .filter((pool) => pool.enabled && pool.keyResolved)
-      .map((pool) => `${pool.id} $${pool.evalAvailableUsd.toFixed(2)}`)
-    return errorResponse(
-      EVAL_REFUSAL_STATUS,
-      'permission_error',
-      `eval reserve: no credit pool has credit above its production reserve (evalAvailableUsd: ${available.join(', ') || 'no pool'})`,
-      { 'x-agw-request-id': x.requestId, 'x-agw-pool': REFUSED },
-    )
+  const refusalFor = (
+    reason: RefuseReason,
+  ): { status: number; type: string; message: string; headers: Record<string, string> } => {
+    switch (reason) {
+      case 'eval-reserve': {
+        const available = pools
+          .status()
+          .filter((pool) => pool.enabled && pool.keyResolved)
+          .map((pool) => `${pool.id} $${pool.evalAvailableUsd.toFixed(2)}`)
+        return {
+          status: EVAL_REFUSAL_STATUS,
+          type: 'permission_error',
+          message: `eval reserve: no credit pool has credit above its production reserve (evalAvailableUsd: ${available.join(', ') || 'no pool'})`,
+          headers: { 'x-agw-pick-reason': reason },
+        }
+      }
+      case 'no-pool':
+      case 'claude-code':
+      case 'drained-retry':
+        return {
+          status: 402,
+          type: 'balance_error',
+          message: `${BALANCE_MARKER}: no credit pool eligible`,
+          headers: {},
+        }
+      default:
+        return reason satisfies never
+    }
   }
 
-  /** The 402 of `x-agw-fallback: none`: the caller's own route fallback takes over. */
-  const refuse = (x: Exchange, reason: string): Response => {
+  const refuse = (x: Exchange, reason: RefuseReason): Response => {
+    const { status, type, message, headers } = refusalFor(reason)
     x.span.set({ 'agw.gateway.pool': REFUSED, 'agw.gateway.pick_reason': reason })
-    close(x, 402, true)
-    return errorResponse(402, 'balance_error', `${BALANCE_MARKER}: no credit pool eligible`, {
-      'x-agw-request-id': x.requestId,
-      'x-agw-pool': REFUSED,
-    })
+    close(x, status, true)
+    return errorResponse(status, type, message, { ...headers, 'x-agw-request-id': x.requestId, 'x-agw-pool': REFUSED })
   }
 
   /** Reads a possible refusal: the body is held so it can still be answered byte for byte. */
@@ -637,7 +651,7 @@ export function createProxy(options: ProxyOptions): GatewayProxy {
    */
   const serveMessages = async (
     x: Exchange,
-    picking: { forceIu: boolean; claudeCodeShaped: boolean; fallbackNone: boolean; purpose: string | null },
+    picking: { forceIu: boolean; claudeCodeShaped: boolean; fallbackNone: boolean; evalOnly: boolean },
     countTokens: boolean,
   ): Promise<Response> => {
     const record = !countTokens
@@ -646,7 +660,7 @@ export function createProxy(options: ProxyOptions): GatewayProxy {
     for (;;) {
       const pick = pools.pick({ ...input, exclude })
       recordPick(x, pick, record)
-      if (pick.kind === 'refuse') return pick.reason === 'eval-reserve' ? refuseEval(x) : refuse(x, pick.reason)
+      if (pick.kind === 'refuse') return refuse(x, pick.reason)
       servesPick(x, pick)
       const target = targetOf(pick, x)
       const label: PickLabel = { pool: target.label, reason: pick.reason }
@@ -810,7 +824,7 @@ export function createProxy(options: ProxyOptions): GatewayProxy {
         forceIu: callerForcesIu(request.headers),
         claudeCodeShaped: isClaudeCodeShaped(request.headers, parsed),
         fallbackNone: request.headers.get('x-agw-fallback')?.trim().toLowerCase() === 'none',
-        purpose: request.headers.get('x-agw-purpose')?.trim().toLowerCase() ?? null,
+        evalOnly: request.headers.get('x-agw-purpose')?.trim().toLowerCase() === 'eval',
       }
       return serveMessages(x, picking, route.countTokens)
     },
