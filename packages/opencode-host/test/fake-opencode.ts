@@ -312,8 +312,12 @@ export function startFake(options: FakeOptions) {
       }
       if (tail === '' && req.method === 'PATCH') {
         if (failPatch) return json({ message: 'boom' }, 500)
-        if (body.permissions !== undefined) s.permissions = body.permissions as unknown[]
-        s.permissionUpdates = (s.permissionUpdates ?? 0) + 1
+        if (body.permissions !== undefined) {
+          s.permissions = body.permissions as unknown[]
+          s.permissionUpdates = (s.permissionUpdates ?? 0) + 1
+        }
+        // As the real server: `metadata` replaces the stored value whole.
+        if (body.metadata !== undefined) s.metadata = body.metadata as Record<string, unknown>
         save()
         return new Response(null, { status: 204 })
       }

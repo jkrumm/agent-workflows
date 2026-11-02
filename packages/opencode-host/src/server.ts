@@ -10,14 +10,14 @@ import {
   readFileSync,
   realpathSync,
   renameSync,
+  rmSync,
   writeFileSync,
 } from 'node:fs'
 import { createServer } from 'node:net'
 import { delimiter, isAbsolute, join } from 'node:path'
-import { parseIuKeyId } from '@agent-workflows/middleware'
 import type { Logger } from '@agent-workflows/runtime'
 import { createClient, type Endpoint } from './client.ts'
-import { buildServerConfig, iuFromEnv, PROVIDER_ANTHROPIC } from './config.ts'
+import { ATTRIBUTION_PLUGIN, buildServerConfig, gatewayFromEnv } from './config.ts'
 import { DEFAULT_STATE_DIR } from './locations.ts'
 
 type Env = Record<string, string | undefined>
@@ -35,9 +35,9 @@ export type ServerOptions = {
   command?: string[]
   /** Loopback port. Default: the persisted one, else a free one picked at the first start and kept. */
   port?: number
-  /** Where IU credentials, `AGW_ROUTES` and `OTEL_EXPORTER_OTLP_*` are read from. Default `process.env`. */
+  /** Where the gateway's address and door token, `AGW_ROUTES` and `OTEL_EXPORTER_OTLP_*` are read from. Default `process.env`. */
   env?: Env
-  /** `OPENCODE_CONFIG_CONTENT`. Default `buildServerConfig(env)`. */
+  /** `OPENCODE_CONFIG_CONTENT`. Default `buildServerConfig(env)` with the plugin from `installPlugin`. */
   config?: Record<string, unknown>
   /** Liveness tick. Default 5 s. */
   livenessIntervalMs?: number
@@ -76,25 +76,40 @@ const consoleLogger: Logger = {
 }
 
 /**
- * The server's complete environment, an explicit allow-list: the process basics, the server's own state roots,
- * the IU leg the routes need, `ANTHROPIC_API_KEY` when set (required when a claude model row exists), and `OTEL_EXPORTER_OTLP_*` when set. Nothing else from the host's env (tokens,
- * `CLAUDE_*`, database URLs) reaches the server or a tool shell. `OTEL_EXPORTER_OTLP_HEADERS` is one of those
- * variables: on the mini it carries the ClickStack ingest key, so that key is in the server's env and in a
- * shell-capable agent's reach, like the IU key (README, "Accepted risk"). `HOME` is the server's own (`<root>/home`), so
- * no `~/.claude` or `~/.agents` file reaches an agent and a tool shell starts there; the binary is spawned by
- * absolute path, so no shim needs the user's home.
+ * The attribution plugin, copied into the server's root under a name taken from its content, and that copy's directory.
+ * A release lives in a directory named by its sha: pointing the config there would change the launch fingerprint on every
+ * deploy, restarting the server under its running sessions, and an adopted server would keep a path that pruning removes.
+ * The copy moves only when the plugin does. Idempotent, built beside it and renamed into place.
+ */
+export function installPlugin(root: string): string {
+  const files = ['package.json', 'server.js'].map((name) => ({
+    name,
+    content: readFileSync(join(ATTRIBUTION_PLUGIN, name)),
+  }))
+  const hash = createHash('sha256')
+  for (const { name, content } of files) hash.update(name).update(content)
+  const dir = join(root, 'plugins', `agw-attribution-${hash.digest('hex').slice(0, 16)}`)
+  if (existsSync(dir)) return dir
+  const tmp = `${dir}.tmp-${process.pid}`
+  rmSync(tmp, { recursive: true, force: true })
+  mkdirSync(tmp, { recursive: true })
+  for (const { name, content } of files) writeFileSync(join(tmp, name), content)
+  renameSync(tmp, dir)
+  return dir
+}
+
+/**
+ * The server's complete environment, an explicit allow-list: the process basics, the server's own state roots, the
+ * gateway's address and door token, and `OTEL_EXPORTER_OTLP_*` when set. Nothing else from the host's env (provider keys,
+ * `AGW_API_SECRET`, `CLAUDE_*`, database URLs) reaches the server or a tool shell. The door token opens the gateway only.
+ * `OTEL_EXPORTER_OTLP_HEADERS` is one of those variables: on the mini it carries the ClickStack ingest key, so that key is
+ * in a shell-capable agent's reach, like the door token (README, "Accepted risk"). `HOME` is the server's own
+ * (`<root>/home`), so no `~/.claude` or `~/.agents` file reaches an agent and a tool shell starts there; the binary is
+ * spawned by absolute path, so no shim needs the user's home.
  */
 export function serverEnv(input: { root: string; password: string; config: Record<string, unknown>; env?: Env }) {
   const env = input.env ?? process.env
-  const iu = iuFromEnv(env)
-  const anthropicKey = env.ANTHROPIC_API_KEY?.trim()
-  const providers = input.config.providers as Record<string, { models?: Record<string, unknown> }> | undefined
-  const hasClaudeRows = Object.keys(providers?.[PROVIDER_ANTHROPIC]?.models ?? {}).length > 0
-  if (hasClaudeRows && !anthropicKey) {
-    throw new Error(
-      'ANTHROPIC_API_KEY is not set, but an opencode-wire route uses a claude- model (direct Anthropic API)',
-    )
-  }
+  const gateway = gatewayFromEnv(env)
   const out: Record<string, string> = {
     PATH: env.PATH ?? '/usr/bin:/bin',
     HOME: join(input.root, 'home'),
@@ -112,14 +127,9 @@ export function serverEnv(input: { root: string; password: string; config: Recor
     OPENCODE_DISABLE_AUTOUPDATE: '1',
     OPENCODE_SERVER_PASSWORD: input.password,
     OPENCODE_CONFIG_CONTENT: JSON.stringify(input.config),
-    IU_KEY: iu.key,
-    IU_ANTHROPIC_BASE: iu.anthropicBase,
-    IU_OPENAI_BASE: iu.openaiBase,
-    // The label travels with the key this server holds. Nothing in this repo reads it here: rows are stamped at
-    // admission by the host. It is forwarded so the label and the key never drift apart in a server's env.
-    IU_KEY_ID: parseIuKeyId(env.IU_KEY_ID),
+    AGW_GATEWAY_URL: gateway.url,
+    AGW_GATEWAY_TOOL_TOKEN: gateway.token,
   }
-  if (anthropicKey) out.ANTHROPIC_API_KEY = anthropicKey
   for (const [name, value] of Object.entries(env)) {
     if (name.startsWith('OTEL_EXPORTER_OTLP_') && value) out[name] = value
   }
@@ -318,7 +328,7 @@ export class OpenCodeServer {
   private launch(): { command: string[]; env: Record<string, string>; fingerprint: string } {
     const persisted = this.persisted as Persisted
     this.command ??= [resolveOpencodeBinary(this.env)]
-    this.config ??= buildServerConfig(this.env)
+    this.config ??= buildServerConfig(this.env, { plugin: installPlugin(this.root) })
     const env = serverEnv({ root: this.root, password: persisted.password, config: this.config, env: this.env })
     const sorted = Object.entries(env).sort(([a], [b]) => (a < b ? -1 : 1))
     const fingerprint = createHash('sha256')

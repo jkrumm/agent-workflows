@@ -24,7 +24,7 @@ A step picks the route with `options.route` (else the agent's `route`) and asks 
 
 | Call | Does |
 |-|-|
-| `open(spec)` | Compiles the agent's location (idempotent), warms it, creates the session with the route's model (effort as a variant), the agent's permissions, title `agw <runId>:<stepId>` and `metadata.agw` (key, agent, route, location hash). The session id is derived from `spec.key` (`ses_agw<sha256(key, generation)>`): a re-open after a crash between create and journal finds the same unprompted session; a retry whose earlier session still runs (or holds input) re-attaches to it, because its wait failed while the turn went on and a sibling session would run the same task on the same files; only a retry after a turn that ended gets the next generation. The directory the session lives in (an older hash directory on a re-attach) is pinned from `open` until its `wait` takes the use over (a pin nobody claims lapses after 30 min), and its marker is renewed |
+| `open(spec)` | Compiles the agent's location (idempotent), warms it, creates the session with the route's model (effort as a variant), the agent's permissions, title `agw <runId>:<stepId>` and `metadata.agw` (key, agent, route, location hash, the step's attribution: §Attribution). The session id is derived from `spec.key` (`ses_agw<sha256(key, generation)>`): a re-open after a crash between create and journal finds the same unprompted session; a retry whose earlier session still runs (or holds input) re-attaches to it, because its wait failed while the turn went on and a sibling session would run the same task on the same files; only a retry after a turn that ended gets the next generation. The directory the session lives in (an older hash directory on a re-attach) is pinned from `open` until its `wait` takes the use over (a pin nobody claims lapses after 30 min), and its marker is renewed |
 | `prompt(handle, text)` | Reads the session's messages and inbox; sends only when the prompt is not there. The prompt carries a deterministic id (`msg_agwp_…`) and `metadata.agw.kind = 'prompt'`, so the check is exact, and the server dedupes a second post of the same id as well |
 | `wait(handle, opts)` | Polls the session (`pollIntervalMs`, 1 s): `onProgress` on every new or grown message or part, and while a running shell tool prints; `onTool` `pre` when a tool part first appears, `post` when it completes or fails (recorded per `wait` call: a second wait reports again, at least once). Returns at the session's `idle` with the final assistant text (or its JSON) and `usage` |
 | `steer(handle, text, { signalId })` | Appends a user message with `delivery: steer`, id keyed by the runtime's signal row: a re-delivered row is a no-op, two identical steers stay two. Without a `signalId`, a nonce per call (never the text alone). History is never rewritten |
@@ -96,12 +96,18 @@ key, a shell-capable agent reads what the user can): the repo is the owner's, an
 - **Env is an allow-list** (`serverEnv`): `PATH`, `TMPDIR`, `LANG`, `HOME` = `<root>/home` (the server's own), the
   `XDG_*` roots, `OPENCODE_DB`, `OPENCODE_DISABLE_FILEWATCHER=1`, `OPENCODE_DISABLE_CLAUDE_CODE=1`,
   `OPENCODE_DISABLE_MODELS_FETCH=1`, `OPENCODE_DISABLE_AUTOUPDATE=1`, the server password, the generated config,
-  `IU_KEY` / `IU_ANTHROPIC_BASE` / `IU_OPENAI_BASE` (from `IU_API_KEY` and `IU_BASE_URL`), `ANTHROPIC_API_KEY` (when set; required if a route uses a `claude-` model), `IU_KEY_ID` (the parsed label of that key, always set, never the key; nothing here reads it, the host stamps rows at admission), and
-  `OTEL_EXPORTER_OTLP_*` when set. Nothing else (tokens, `CLAUDE_*`, database URLs).
-- **Config** (`buildServerConfig`): three providers (`anthropic-direct`, `iu-chat`, `iu-responses`) with a model row
-  for every `opencode`-wire route and its fallback, cost rows from each route's own `rate`. OpenAI's own models
-  (`gpt-`) go on `iu-responses` (`@ai-sdk/openai`): they call tools only over the Responses API. Routes sharing a
-  model and effort share one variant. `claude-` models go direct to api.anthropic.com (`anthropic-direct`, `@ai-sdk/anthropic`, `ANTHROPIC_API_KEY`), not through IU; their variants set `effort` plus adaptive `thinking` (effort `none`: thinking disabled), since the Anthropic protocol ignores `reasoningEffort`. Model ids come only from `@agent-workflows/routes`.
+  `AGW_GATEWAY_URL` and `AGW_GATEWAY_TOOL_TOKEN` (`gatewayFromEnv`, both required, the start fails naming the variable), and
+  `OTEL_EXPORTER_OTLP_*` when set. Nothing else: no provider key, no `AGW_API_SECRET`, no `CLAUDE_*`, no database URL.
+- **Config** (`buildServerConfig`): three providers with a model row for every `opencode`-wire route and its fallback,
+  cost rows from each route's own `rate`, all on the inference gateway (`docs/gateway.md`) with the door token of the caller
+  `agw-opencode`. The key in the config is the reference `{env:AGW_GATEWAY_TOOL_TOKEN}`; the token opens the gateway only,
+  never the API, and it is the only credential in the server's env and its tool shells. `anthropic` (`@ai-sdk/anthropic`,
+  `<AGW_GATEWAY_URL>/anthropic/v1`) serves the `claude-` models, which the gateway pays from a credit pool or IU; its
+  variants set `effort` plus adaptive `thinking` (effort `none`: thinking disabled), since the Anthropic protocol ignores
+  `reasoningEffort`. It sends a static `x-agw-fallback: none`, so credit that runs out becomes a 402 and the route's own
+  fallback, never Claude on IU. `iu-chat` (`@ai-sdk/openai-compatible`) and `iu-responses` (`@ai-sdk/openai`) keep their
+  ids on `<AGW_GATEWAY_URL>/openai/v1`. OpenAI's own models (`gpt-`) go on `iu-responses`: they call tools only over the
+  Responses API. Routes sharing a model and effort share one variant. Model ids come only from `@agent-workflows/routes`.
 - **Detached.** The server is its own process group. A host restart (deploy) leaves it and its running sessions
   alone; the next `start()` adopts it after an authenticated `GET /api/info` with the pinned version
   (`OPENCODE_VERSION`, `2.0.32`; another version is refused) **and** the same launch fingerprint (sha256 of command
@@ -128,23 +134,68 @@ the hosts file reached the session (`test/live.test.ts`, "cannot read, search or
 So `external_directory: deny` (server config) confines `read`, `glob`, `grep` and `write`/`edit` to the location;
 no extra path rules are needed.
 
-### Accepted risk: one server, one key, shell reach
+### Accepted risk: one server, one door token, shell reach
 
 **The `check` agent's boundary is its shell.** It runs with `permissions.shell: true`; the `edit` and `write` tools are
 refused, but a shell can still write any file the user can (`echo > file`, `git checkout`, …). Nothing in the policy
 confines it; the boundary is the agent's prompt and the throwaway tree it is pointed at.
 
-One server and one IU key serve every agent; the server's env holds the key and the server password, as
-agent-gateway's shared server does today. A shell-capable agent can read anything the user can (the password file,
-the key in the server's env through `ps`, the user's files by absolute path). Mitigations: the shell tool is denied
-unless an agent opts in, the server's `HOME` is its own (no `~/.claude`, `~/.agents` or dotfiles at `~`), the env is
-an allow-list, the server listens on loopback with a password. This is carried from agent-gateway, decided by the
-lead on that evidence, not an isolation boundary.
+One server and one door token serve every agent; the server's env holds no provider key, only the token of the caller
+`agw-opencode` and the server password. A shell-capable agent can read anything the user can (the password file, the
+token in the server's env through `ps`, the user's files by absolute path) and so can call the gateway as
+`agw-opencode`: spend on the owner's pools and IU, on rows that lane `agw_workflow`, with any `x-agw-*` value it likes.
+The gateway's other paths (`/gemini`, `/replicate`, `/decisions`) are open to the token too. It cannot read an IU or
+Claude key and it cannot open the API; rotating the token is one line in `data/door-tokens`
+and a restart (`AGENTS.md`, "The doors' callers"). The user's own files stay in reach, so `.env` files and a secrets cache
+a shell can read are outside this boundary. Mitigations: the shell tool is denied unless an agent opts in, the server's
+`HOME` is its own (no `~/.claude`, `~/.agents` or dotfiles at `~`), the env is an allow-list, the server listens on
+loopback with a password. Decided by the lead on that evidence, not an isolation boundary.
 
 The allow-list forwards `OTEL_EXPORTER_OTLP_*`, and on the mini the deploy sets `OTEL_EXPORTER_OTLP_HEADERS`
 (`authorization=<ClickStack ingest key>`). That key therefore sits in the server's env and in the env of its tool
-shells, readable by a shell-capable agent exactly like the IU key. Accepted by the lead for the same reason: the shell
+shells, readable by a shell-capable agent exactly like the door token. Accepted by the lead for the same reason: the shell
 tool is denied unless an agent opts in, and the key is an ingest key.
+
+## Attribution
+
+Every model request carries who it is for, so the gateway's usage row and pool binding land on the step. Evidence and the
+pinned source: `docs/spikes/gateway/headers.md`.
+
+`metadata.agw` of a step's session holds the step's `Attribution` (`runId`, `rootId`, `workflow`, `step`, `purpose`,
+`project`, `workspace`, `traceparent`, the names of the runtime's `ctx.attribution`) at both create calls, primary and
+fallback. `AgentOpenSpec` carries only the run and step ids, so the host asks `OpenCodeHostOptions.attribution`, which
+`bootProcess` answers from the run's row (`runAttribution`). Without the option a session carries `runId` and `step`. A
+session the host finds already there, and the session of a follow-up turn, get the current values by `PATCH` (one read,
+a write only when they differ; `PATCH` replaces `metadata` whole, so the rest is sent back), so a `ctx.continue` turn is
+attributed to the continuing step.
+
+`plugin/agw-attribution/` (a `package.json` and a plain `server.js`, no build: a release is exported from git) hooks
+`model.request` and sets `x-agw-session` (`rootId`), `x-agw-run-id`, `x-agw-step`, `x-agw-workflow`, `x-agw-purpose`,
+`x-agw-project`, `x-agw-workspace` and `traceparent`, with the value filter of `gatewayHeaders` (printable ASCII, no space at
+either end, up to 200 characters). `ctx.session.get` takes `{ sessionID }`, not the bare id. A child session (OpenCode's
+`subagent`) has no metadata of its own: the plugin walks `parentID` to the root, at most 32 hops, and caches the walk, not
+the metadata. A read that fails, or a root without `metadata.agw`, logs `agw-attribution: session <id> sent unattributed:
+<why>` to `server.log` and the request goes out without the headers: the gateway then binds on `x-session-affinity`.
+
+The server loads a copy, `<root>/plugins/agw-attribution-<hash16>` (`installPlugin`). A release's directory is named by its
+sha: pointing the config there would drift the launch fingerprint on every deploy, restarting the server under its running
+sessions. The copy changes only with the plugin.
+
+**Measured on 2.0.32** (`test/live-gateway.test.ts`, `AGW_LIVE=1`, the real binary and host against a loopback stand-in, no
+LLM, no key, about 10 s):
+
+| Question | Result |
+|-|-|
+| All three legs | the base and the key arrive as configured (`x-api-key` on `/anthropic/v1/messages?beta=true`, `authorization: Bearer` on `/openai/v1/*`); the seven `x-agw-*` headers on each. The provider id `anthropic` is what adds `?beta=true`; the gateway routes on the path and passes the query on |
+| `x-agw-fallback: none` | on the Anthropic leg, not on the other two |
+| A child session | a real `subagent` call: the child's request carries the root's run and step, and `x-opencode-parent-session-id` |
+| A follow-up turn | `x-agw-step` is the continuing step |
+| `traceparent` | **does not land.** OpenCode's HTTP client writes its own (with `b3`) at send time, after `model.request` and after `http.request` too (probed). The `traceparent` the host sends with its API calls does not reach it either. So the gateway's span sits in OpenCode's trace, not under the step; the join is `x-agw-run-id` and `x-agw-step`. The plugin still sets the header; the test fails the day a pin lets it through |
+| Claude Code signals (`isClaudeCodeShaped`, the gateway's step 0) | none, with and without thinking: `anthropic-beta: interleaved-thinking-2025-05-14` and nothing else, `user-agent: opencode/latest/2.0.32/cli`, no `x-app`, the system starts "You are an AI agent running in OpenCode". No provider config was needed to keep it so. `supportsThinkingBlockBinding: false` keeps the binding beta off |
+| A gateway 402 | not retried; the session's error is `{ type: 'provider.quota', message: 'provider balance exhausted: no credit pool eligible', status: 402, response: { body } }`. `isBalanceFailure({ text })` takes the message (the marker), the step moves to the route's fallback |
+| Cache writes | every `cache_control` is `{ "type": "ephemeral" }`, on `system`, `tools` and the last message: 5 minutes, no `ttl`. `tokens.cache.write` is priced at `cacheWritePerM`, which is right |
+
+Re-run it on a pin bump, with `docs/spikes/gateway/headers/probe.ts`.
 
 ## Pinned build
 
@@ -303,7 +354,9 @@ models the queued one for that race).
 
 ## Usage and cost
 
-`usage` is `usageFromOpenCodeMessages` over the whole session with the route's model. Cost per assistant message:
+`usage` is `usageFromOpenCodeMessages` over the whole session with the route's model. OpenCode asks for 5-minute cache
+writes only (§Attribution, measured), so its one `cache.write` count and the rate's `cacheWritePerM` are the right pair.
+Cost per assistant message:
 OpenCode's when it is positive (it prices with the config's cost rows, i.e. the route's own `rate`, `costSource:
 provider`); a message reported at cost 0 with tokens is priced with the route's rate through `costFromUsage`
 (`costSource: rate`). The step is unpriced (`cost: null`, `costSource: unknown`) when that has no rate, when cache
@@ -402,10 +455,12 @@ the host and as a spawned `opencode` stand-in (`test/fake-opencode-bin.ts`) for 
 | File | Covers |
 |-|-|
 | `host.test.ts` | a turn's output and usage; prompt idempotency (twice, and across a restart); open idempotency per key, the retry generation, a retry re-attaching a still-running session; JSON output; a failed turn; an outcome-less idle; cost 0 priced by rate, unpriced without one; permissions; a pending prompt is running, a missing one fails after the grace; incremental reads; a wait surviving a kill and restart with one resume and no second prompt; a finished session read, not resumed; the provider-balance fallback (one reopen, re-attach without a second prompt, no fallback after a turn that ran, none for other failures or with `fallback: null`, abort reaching it); steer dedupe by signal; abort twice; tool events per wait; shell output as progress; warm, evict, hash directories and pruning |
-| `server.test.ts` | the env allow-list, the server's own HOME and the file-watcher flag; a wedged server SIGTERMed, SIGKILLed and restarted on the same port; a crash restarted; adoption by the next process; drift restart; a foreign pid neither adopted nor signalled; corrupt `server.json`; a version mismatch refused; shim resolution; a wait in flight across a liveness kill; the config |
+| `server.test.ts` | the env allow-list (no provider key, no API secret), `gatewayFromEnv`, `installPlugin`, the server's own HOME and the file-watcher flag; a wedged server SIGTERMed, SIGKILLed and restarted on the same port; a crash restarted; adoption by the next process; drift restart; a foreign pid neither adopted nor signalled; corrupt `server.json`; a version mismatch refused; shim resolution; a wait in flight across a liveness kill; the config |
 | `locations.test.ts` | compile, hash directories, the hash, ancestor leaks, path escapes, pruning, the temp sweep; the warm cache under concurrency: single-flight, failed warm, failed evict, shrink re-check, use during evict, reset, changed content |
 | `live-permissions.test.ts` | `AGW_LIVE=1`: the deny-by-default policy: the tool list per opt-in, refused calls, an opted-in `webfetch`, Code Mode's empty catalog |
+| `plugin.test.ts` | the attribution plugin against a fake session store: parity with `gatewayHeaders`, the value filter, the walk to the root and its cache, the loud failures |
+| `live-gateway.test.ts` | `AGW_LIVE=1`: the wire of the pinned build (§Attribution); needs no key and calls no LLM |
 | `live.test.ts` | `AGW_LIVE=1`: the real binary, SIGKILL mid-turn, restart, re-attach, one prompt; AGENTS.md and a skill reach the model, the user's skills and the shell tool do not; a non-shell agent's read, glob, grep and write outside its location are refused; tokens and cost |
 
 Live: `AGW_LIVE=1 secrets-run run --env-file=.env.tpl -- timeout 600 bun test packages/opencode-host`
-(about $0.002).
+(about $0.002). The env needs `AGW_GATEWAY_URL` and `AGW_GATEWAY_TOOL_TOKEN`: the sessions run through the gateway.

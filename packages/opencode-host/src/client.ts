@@ -46,6 +46,14 @@ export type SessionCreate = {
   metadata?: Record<string, unknown>
 }
 
+/** What `GET /api/session/{id}` answers, as far as the host reads it. */
+export type StoredSession = {
+  id: string
+  location: { directory: string }
+  permissions?: PermissionRule[]
+  metadata?: Record<string, unknown>
+}
+
 export type InputBody = {
   id: string
   text: string
@@ -139,28 +147,20 @@ export function createClient(endpoint: () => Endpoint, options: ClientOptions = 
     /** `PATCH /api/session/{id}`: replaces the session's permissions (measured on 2.0.32, `test/live-permissions.test.ts`). */
     async updateSession(
       id: string,
-      body: { permissions: PermissionRule[] },
+      body: { permissions?: PermissionRule[]; metadata?: Record<string, unknown> },
       headers?: Record<string, string>,
     ): Promise<void> {
       await ok(await call('PATCH', session(id), { body, headers }), 'PATCH /api/session/{id}')
     },
 
     /** The session, or null when the server does not know it (404). */
-    async getSession(
-      id: string,
-      headers?: Record<string, string>,
-    ): Promise<{ id: string; location: { directory: string }; permissions?: PermissionRule[] } | null> {
+    async getSession(id: string, headers?: Record<string, string>): Promise<StoredSession | null> {
       const res = await call('GET', session(id), { headers })
       if (res.status === 404) {
         await res.body?.cancel()
         return null
       }
-      return (
-        await json<{ data: { id: string; location: { directory: string }; permissions?: PermissionRule[] } }>(
-          res,
-          'GET /api/session/{id}',
-        )
-      ).data
+      return (await json<{ data: StoredSession }>(res, 'GET /api/session/{id}')).data
     },
 
     /** The newest `limit` messages, newest first: one request, the incremental read. */

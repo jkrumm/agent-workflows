@@ -2,7 +2,8 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import { existsSync, mkdtempSync, rmSync, statSync, utimesSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { AgentWaitOptions, Json } from '@agent-workflows/runtime'
+import { BALANCE_MARKER, isBalanceFailure } from '@agent-workflows/routes'
+import type { AgentWaitOptions, Attribution, Json } from '@agent-workflows/runtime'
 import { WorkflowError } from '@agent-workflows/runtime'
 import {
   type AgentDefinition,
@@ -12,7 +13,7 @@ import {
   type PermissionRule,
   type ServerPort,
 } from '../src/index.ts'
-import { sessionPermissions } from '../src/host.ts'
+import { runAttribution, sessionPermissions } from '../src/host.ts'
 import { sessionState } from '../src/session.ts'
 import { type FakeServer, startFake } from './fake-opencode.ts'
 
@@ -59,7 +60,15 @@ const pinnedCheck = (patch: Record<string, unknown> = {}) =>
     },
   })
 
-function setup(options: { env?: Record<string, string>; turnMs?: number; agents?: AgentDefinition[] } = {}) {
+function setup(
+  options: {
+    env?: Record<string, string>
+    turnMs?: number
+    agents?: AgentDefinition[]
+    attribution?: (runId: string, stepId: string) => Promise<Attribution | undefined>
+    traceparent?: (runId: string, stepId: string) => string | undefined
+  } = {},
+) {
   const dir = mkdtempSync(join(tmpdir(), 'och-host-'))
   const statePath = join(dir, 'fake.json')
   let fake: FakeServer = startFake({ password: 'pw', statePath, defaultTurnMs: options.turnMs })
@@ -79,6 +88,8 @@ function setup(options: { env?: Record<string, string>; turnMs?: number; agents?
       pollIntervalMs: 20,
       cutoffGraceMs: 150,
       env: options.env ?? { AGW_ROUTES: pinnedCheck() },
+      ...(options.attribution ? { attribution: options.attribution } : {}),
+      ...(options.traceparent ? { traceparent: options.traceparent } : {}),
       locations: { evictAfterMs: 0, tickMs: 60_000, retentionMs: 0, ...locations },
     })
   const host = makeHost()
@@ -328,6 +339,143 @@ describe('open / prompt / wait', () => {
       { action: 'shell', resource: '*', effect: 'allow' },
       { action: 'edit', resource: '*', effect: 'deny' },
     ])
+  })
+})
+
+describe('attribution in metadata.agw', () => {
+  const row = {
+    id: 'run-1',
+    root_id: 'root-1',
+    workflow: 'review',
+    purpose: 'user',
+    project: 'agent-workflows',
+    workspace: 'private',
+    traceparent: '00-11111111111111111111111111111111-2222222222222222-01',
+  }
+  const stored = (t: ReturnType<typeof setup>, sessionId: string) =>
+    t.fake.state.sessions[sessionId]?.metadata?.agw as Record<string, unknown> | undefined
+  const attribution = async (runId: string, stepId: string) => runAttribution({ ...row, id: runId }, stepId)
+
+  test('runAttribution: the same shape as the runtime gives a step; absent stays absent', () => {
+    expect(runAttribution(row, 'agent')).toEqual({
+      runId: 'run-1',
+      rootId: 'root-1',
+      workflow: 'review',
+      step: 'agent',
+      purpose: 'user',
+      project: 'agent-workflows',
+      workspace: 'private',
+      traceparent: row.traceparent,
+    })
+    expect(runAttribution({ ...row, project: null, workspace: null, traceparent: null }, 's')).toEqual({
+      runId: 'run-1',
+      rootId: 'root-1',
+      workflow: 'review',
+      step: 's',
+      purpose: 'user',
+    })
+  })
+
+  test("open writes the fields beside the host's own", async () => {
+    const t = setup({ attribution })
+    const handle = await t.host.open(spec('x'))
+    expect(stored(t, sid(handle))).toMatchObject({
+      agent: 'tester',
+      route: 'check',
+      runId: 'run-1',
+      rootId: 'root-1',
+      step: 'agent',
+      workflow: 'review',
+      purpose: 'user',
+      project: 'agent-workflows',
+      workspace: 'private',
+      traceparent: row.traceparent,
+    })
+  })
+
+  test('without the option a session still carries its run and step', async () => {
+    const t = setup()
+    const handle = await t.host.open(spec('x'))
+    expect(stored(t, sid(handle))).toMatchObject({ runId: 'run-1', step: 'agent' })
+    expect(stored(t, sid(handle))?.rootId).toBeUndefined()
+  })
+
+  test("the step span's traceparent wins over the run's", async () => {
+    const t = setup({ attribution, traceparent: () => '00-33333333333333333333333333333333-4444444444444444-01' })
+    const handle = await t.host.open(spec('x'))
+    expect(stored(t, sid(handle))?.traceparent).toBe('00-33333333333333333333333333333333-4444444444444444-01')
+  })
+
+  test('a provider-balance fallback session carries them too', async () => {
+    const t = setup({ attribution })
+    const handle = await t.host.open(spec('x'))
+    await t.host.prompt(handle, '[balance] review this')
+    await t.host.wait(handle, waitOptions())
+    const fallback = Object.keys(t.fake.state.sessions).find((id) => id !== sid(handle)) as string
+    expect(stored(t, fallback)).toMatchObject({
+      fallbackOf: sid(handle),
+      runId: 'run-1',
+      rootId: 'root-1',
+      step: 'agent',
+    })
+  })
+
+  test('a follow-up turn moves the session to the continuing step, keeps the rest, and costs one write', async () => {
+    const t = setup({ attribution })
+    const first = await t.host.open(spec('draft'))
+    await t.host.prompt(first, 'draft it')
+    await t.host.wait(first, waitOptions())
+    const turn = { runId: 'run-1', stepId: 'reask', key: 'run-1:reask', attempt: 1 }
+    await t.host.followUp(first, turn)
+    expect(stored(t, sid(first))).toMatchObject({ step: 'reask', rootId: 'root-1', agent: 'tester', route: 'check' })
+    expect(t.fake.state.sessions[sid(first)]?.permissionUpdates).toBeUndefined()
+    const patches = t.fake.state.sessions[sid(first)]?.metadata
+    await t.host.followUp(first, { ...turn, attempt: 2 })
+    expect(t.fake.state.sessions[sid(first)]?.metadata).toEqual(patches as Record<string, unknown>)
+  })
+
+  test('an unprompted session from before the deploy gets them on open', async () => {
+    const t = setup({ attribution })
+    const handle = await t.host.open(spec('x'))
+    const session = t.fake.state.sessions[sid(handle)] as { metadata?: Record<string, unknown> }
+    session.metadata = { agw: { key: 'kept', agent: 'tester' } }
+    await t.host.open(spec('x'))
+    expect(stored(t, sid(handle))).toMatchObject({ key: 'kept', agent: 'tester', rootId: 'root-1', step: 'agent' })
+  })
+
+  test('a failed lookup fails the open before any location is taken', async () => {
+    const t = setup({
+      attribution: async () => {
+        throw new Error('journal down')
+      },
+    })
+    expect(await failure(t.host.open(spec('x')))).toBe('journal down')
+    expect(Object.keys(t.fake.state.sessions)).toEqual([])
+  })
+})
+
+describe("the gateway's refusal, as a session reports it", () => {
+  // Captured from the pinned 2.0.32 serving `x-agw-fallback: none`'s 402 (`test/live-gateway.test.ts`).
+  const CAPTURED = {
+    type: 'provider.quota',
+    message: 'provider balance exhausted: no credit pool eligible',
+    status: 402,
+    response: {
+      body: '{"type":"error","error":{"type":"balance_error","message":"provider balance exhausted: no credit pool eligible"}}',
+    },
+  }
+
+  test("the turn error OpenCode keeps is the classifier's input", () => {
+    expect(CAPTURED.message).toStartWith(BALANCE_MARKER)
+    const state = sessionState(
+      [
+        { id: 'p', type: 'user', metadata: { agw: { kind: 'prompt' } } },
+        { id: 'i', type: 'idle', outcome: 'failed', error: CAPTURED },
+      ],
+      { promptId: 'p', active: false, pending: false },
+    )
+    expect(state).toMatchObject({ kind: 'done', outcome: 'failed', error: CAPTURED.message })
+    expect(isBalanceFailure({ text: (state as { error: string }).error })).toBe(true)
   })
 })
 
