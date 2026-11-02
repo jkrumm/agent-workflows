@@ -504,6 +504,67 @@ describe('Llm balance fallback', () => {
   })
 })
 
+describe('Llm balance fallback names the refusal it replaces', () => {
+  const research = resolvePodcastRoute('podcast.research')
+  const REFUSED_ID = '0197a5e0-1c2d-7abc-8def-0123456789ab'
+  const attribution: Attribution = {
+    runId: 'run-1',
+    rootId: 'run-1',
+    workflow: 'podcast.produce',
+    step: 'write',
+    purpose: 'prod',
+  }
+  const refused = () => new ModelError('provider balance exhausted (402)', true, REFUSED_ID)
+
+  test('a single-shot fallback call carries the refused request id; the primary does not', async () => {
+    const port = new FakePort([refused(), { text: 'ok', stop: 'complete' }])
+    const { llm } = llmFor(port, resolvePodcastRoute, undefined, attribution)
+    await llm.call({
+      route: 'podcast.research',
+      systemPrompt: 's',
+      userContent: 'u',
+      maxCompletionTokens: 10,
+      stage: 't',
+    })
+    expect(port.chats.map((c) => c.model)).toEqual([research.model, research.fallback?.model ?? ''])
+    expect(port.chats[0]?.attribution).toEqual(attribution)
+    expect(port.chats[1]?.attribution).toEqual({ ...attribution, routeFallback: REFUSED_ID })
+  })
+
+  test('a tool loop that moved to the fallback names the refusal on every round after it', async () => {
+    const port = new FakePort([], [refused(), wantsTool(), text('done')])
+    const { llm } = llmFor(port, resolvePodcastRoute, undefined, attribution)
+    const result = await runToolLoop(llm, params({ tools: [noopTool] }))
+    expect(result.content).toBe('done')
+    expect(port.rounds.map((r) => r.attribution?.routeFallback)).toEqual([undefined, REFUSED_ID, REFUSED_ID])
+  })
+
+  test('a refusal with no request id, or a step with no attribution, sends no marker', async () => {
+    const noId = new FakePort([
+      new ModelError('provider balance exhausted (402)', true),
+      { text: 'ok', stop: 'complete' },
+    ])
+    await llmFor(noId, resolvePodcastRoute, undefined, attribution).llm.call({
+      route: 'podcast.research',
+      systemPrompt: 's',
+      userContent: 'u',
+      maxCompletionTokens: 10,
+      stage: 't',
+    })
+    expect(noId.chats[1]?.attribution).toEqual(attribution)
+
+    const bare = new FakePort([refused(), { text: 'ok', stop: 'complete' }])
+    await llmFor(bare, resolvePodcastRoute).llm.call({
+      route: 'podcast.research',
+      systemPrompt: 's',
+      userContent: 'u',
+      maxCompletionTokens: 10,
+      stage: 't',
+    })
+    expect(bare.chats[1]).not.toHaveProperty('attribution')
+  })
+})
+
 describe('Llm.call', () => {
   const call = (llm: Llm, extra: Record<string, unknown> = {}) =>
     llm.call({

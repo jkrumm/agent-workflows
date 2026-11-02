@@ -18,6 +18,7 @@ const NAMES = {
   workspace: 'x-agw-workspace',
   traceparent: 'traceparent',
   origin: 'x-agw-origin',
+  routeFallback: 'x-agw-route-fallback',
 } as const satisfies Record<keyof Attribution, string>
 
 /**

@@ -397,6 +397,22 @@ describe('iuModelPort', () => {
     expect(seen).toHaveLength(1)
   })
 
+  test('the refusing response’s x-agw-request-id rides on the ModelError, for the route fallback to name', async () => {
+    const id = '0197a5e0-1c2d-7abc-8def-0123456789ab'
+    const { fetch } = scripted([
+      () => new Response('Insufficient Balance', { status: 402, headers: { 'x-agw-request-id': id } }),
+      () => new Response('Insufficient Balance', { status: 402 }),
+    ])
+    const refused = await port(fetch)
+      .chat(chatCall, SIGNAL, () => {}, NOT_SENT)
+      .catch((e: unknown) => e)
+    expect((refused as ModelError).requestId).toBe(id)
+    const bare = await port(fetch)
+      .chat(chatCall, SIGNAL, () => {}, NOT_SENT)
+      .catch((e: unknown) => e)
+    expect((bare as ModelError).requestId).toBeUndefined()
+  })
+
   test('a 503 whose body names the balance is a balance failure too', async () => {
     const { fetch } = scripted([
       () => new Response('Insufficient Balance (PaymentRequired) on provider', { status: 503 }),

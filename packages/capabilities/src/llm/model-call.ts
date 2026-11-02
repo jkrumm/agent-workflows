@@ -13,7 +13,7 @@ import type { z } from 'zod'
 import type { Ctx, Usage } from '../context.ts'
 import { CapabilityError, fail } from '../errors.ts'
 import type { Env } from '../transports/config.ts'
-import { isBalanceError } from '../transports/http.ts'
+import { isBalanceError, refusedRequestId } from '../transports/http.ts'
 import { type JsonSchema, toJsonSchema } from '../transports/json-schema.ts'
 import type { AttemptUsage, ChatResult, GatewayTransports, Tokens } from '../transports/port.ts'
 
@@ -140,7 +140,7 @@ export async function complete(deps: LlmDeps, args: CompleteArgs, start?: Resolv
     const warn = deps.warn ?? ((message, meta) => console.warn(message, meta))
     warn('provider balance exhausted; falling back', { route: route.id, from: route.model, to: fallback.model })
     try {
-      return await completeOn(deps, fallback, args)
+      return await completeOn(deps, fallback, args, refusedRequestId(error))
     } catch (fallbackError) {
       warn('fallback failed; the primary error stands', {
         route: route.id,
@@ -152,7 +152,16 @@ export async function complete(deps: LlmDeps, args: CompleteArgs, start?: Resolv
   }
 }
 
-async function completeOn(deps: LlmDeps, route: ResolvedRoute, args: CompleteArgs): Promise<Completion> {
+/**
+ * `refused`: set on the fallback call, the gateway's request id of the primary's balance refusal. The call then carries it
+ * as `x-agw-route-fallback`, so its row joins the refusal; a call with no attribution (outside a run) or no id sends none.
+ */
+async function completeOn(
+  deps: LlmDeps,
+  route: ResolvedRoute,
+  args: CompleteArgs,
+  refused?: string,
+): Promise<Completion> {
   const port =
     route.wire === 'iu-openai'
       ? deps.transports.openai
@@ -175,7 +184,9 @@ async function completeOn(deps: LlmDeps, route: ResolvedRoute, args: CompleteArg
       json: args.json,
       ...(args.jsonSchema ? { jsonSchema: args.jsonSchema } : {}),
       effort,
-      ...(args.ctx.attribution ? { attribution: args.ctx.attribution } : {}),
+      ...(args.ctx.attribution
+        ? { attribution: refused ? { ...args.ctx.attribution, routeFallback: refused } : args.ctx.attribution }
+        : {}),
       maxOutputTokens:
         route.maxOutputTokens ?? (effort && effort !== 'none' ? DEFAULT_MAX_OUTPUT_WITH_EFFORT : DEFAULT_MAX_OUTPUT),
     },

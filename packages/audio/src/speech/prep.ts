@@ -71,6 +71,7 @@ function prepRequest(
   scope: AudioScope,
   route: AudioRoute,
   opts: { systemPrompt: string; userContent: string; inputChars: number; summarize: boolean },
+  refused?: string,
 ): PrepRequest {
   const { transports } = scope.config
   // Reasoning-capable models reject `max_tokens` on chat completions; reasoning tokens count against this one.
@@ -79,11 +80,15 @@ function prepRequest(
   if (route.wire === 'anthropic') {
     return {
       url: `${transports.anthropicBase}/v1/messages`,
-      headers: gatewayTextHeaders(scope, {
-        'anthropic-version': ANTHROPIC_VERSION,
-        'content-type': 'application/json',
-        'x-agw-fallback': 'none',
-      }),
+      headers: gatewayTextHeaders(
+        scope,
+        {
+          'anthropic-version': ANTHROPIC_VERSION,
+          'content-type': 'application/json',
+          'x-agw-fallback': 'none',
+        },
+        refused,
+      ),
       body: {
         model: route.model,
         max_tokens: maxTokens,
@@ -97,7 +102,7 @@ function prepRequest(
   if (route.wire === 'iu-openai') {
     return {
       url: `${transports.openaiBase}/chat/completions`,
-      headers: gatewayTextHeaders(scope, { 'content-type': 'application/json' }),
+      headers: gatewayTextHeaders(scope, { 'content-type': 'application/json' }, refused),
       body: {
         model: route.model,
         messages: [
@@ -129,7 +134,7 @@ function readPrepReply(route: AudioRoute, body: string): { text: string; measure
   return { text: json.choices?.[0]?.message?.content ?? '', measure: measureFromOpenAiUsage(json.usage) }
 }
 
-type Attempt = { ok: true; prep: PrepResult } | { ok: false; error: Error; balance: boolean }
+type Attempt = { ok: true; prep: PrepResult } | { ok: false; error: Error; balance: boolean; requestId?: string }
 
 /** One prep or summary call on one route, priced and recorded before any failure is returned (a failed call is visible too). */
 async function attemptPrep(
@@ -137,9 +142,11 @@ async function attemptPrep(
   routeId: string,
   route: AudioRoute,
   opts: { systemPrompt: string; userContent: string; inputChars: number; summarize: boolean },
+  /** On the fallback attempt: the request id of the balance refusal it replaces. */
+  refused?: string,
 ): Promise<Attempt> {
   const endpoint = opts.summarize ? 'speech-summary' : 'speech-prep'
-  const request = prepRequest(scope, route, opts)
+  const request = prepRequest(scope, route, opts, refused)
   const start = scope.deps.clock.now()
   const res = await rawFetch(
     scope,
@@ -167,6 +174,7 @@ async function attemptPrep(
       ok: false,
       error: new Error(`TTS prep failed: HTTP ${res.status} ${res.body.slice(0, 300)}`),
       balance: isBalanceFailure({ status: res.status, text: res.body }),
+      ...(res.requestId ? { requestId: res.requestId } : {}),
     }
   }
   let reply: { text: string; measure: Measure }
@@ -213,7 +221,7 @@ export async function callPrepLlm(
   const fallback = fallbackOf(primary)
   if (!first.balance || !fallback) throw first.error
   scope.log.warn('tts prep provider balance exhausted; falling back', { route: routeId, to: fallback.model })
-  const second = await attemptPrep(scope, routeId, fallback, opts)
+  const second = await attemptPrep(scope, routeId, fallback, opts, first.requestId)
   if (second.ok) return second.prep
   throw second.error
 }
