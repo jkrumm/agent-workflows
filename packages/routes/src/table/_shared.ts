@@ -80,7 +80,7 @@ export const EASY = {
   call: { ...HAIKU, effort: 'high', fallback: callFallback(TERRA_LOW) },
   agent: { ...HAIKU, effort: 'high', fallback: agentFallback(TERRA_LOW) },
 } as const
-/** Anything that judges, reads code or writes prose: review angles and synthesis, the prose writer, the narrative, the retro agent, the podcast writers' room. Sonnet medium, falls back to Terra medium. */
+/** Anything that judges, reads code or writes prose: deep review angles, the prose writer, the narrative, the retro agent, the podcast writers' room. Sonnet medium, falls back to Terra medium. */
 export const HARD = {
   call: { ...SONNET, effort: 'medium', fallback: callFallback(TERRA_MEDIUM) },
   agent: { ...SONNET, effort: 'medium', fallback: agentFallback(TERRA_MEDIUM) },

@@ -70,7 +70,8 @@ describe('resolveRoute', () => {
 
   test('a patch changes model and effort, leaves the table alone', () => {
     const model = otherAgentModel('review.angle')
-    const e = { 'review.angle': { model, effort: 'high' } }
+    // A bounded route moved to a model without a bounded row clears the bound with it.
+    const e = { 'review.angle': { model, effort: 'high', contextLimit: null } }
     expect(resolveRoute('review.angle', e)).toMatchObject({ model, effort: 'high', wire: 'opencode' })
     expect(resolveRoute('review.angle').model).toBe(entry('review.angle').model)
   })
@@ -240,7 +241,7 @@ describe('routeFingerprint', () => {
     const flipped = routeFingerprint('review.angle', { 'review.angle': { effort: 'max' } })
     expect(flipped).not.toBe(base)
     const model = otherAgentModel('review.angle')
-    expect(routeFingerprint('review.angle', { 'review.angle': { model } })).not.toBe(base)
+    expect(routeFingerprint('review.angle', { 'review.angle': { model, contextLimit: null } })).not.toBe(base)
     expect(routeFingerprint('review.synthesis', {})).not.toBe(routeFingerprint('review.angle', {}))
     const a = routeFingerprint('decide', { decide: { maxOutputTokens: null, rate: { inputPerM: 1, outputPerM: 2 } } })
     const b = routeFingerprint('decide', { decide: { rate: { outputPerM: 2, inputPerM: 1 }, maxOutputTokens: null } })
@@ -483,11 +484,18 @@ describe('fallback', () => {
       expect(resolveRoute(id, {}).fallback).toMatchObject(terraMedium)
     }
     expect(resolveRoute('prose.write', {}).effort).toBe('medium')
-    for (const id of ['review.angle.deep', 'review.synthesis', 'retro.analyze'] as const) {
+    for (const id of ['review.angle.deep', 'retro.analyze'] as const) {
       expect(resolveRoute(id, {})).toMatchObject({ wire: 'opencode', model: 'claude-sonnet-5-5', effort: 'medium' })
       expect(resolveRoute(id, {}).fallback).toMatchObject({ ...terraMedium, wire: 'opencode', rate: terraRate })
     }
-    for (const id of ['check', 'brain.agent', 'review.angle', 'otel.agent', 'research.agent'] as const) {
+    for (const id of [
+      'check',
+      'brain.agent',
+      'review.angle',
+      'review.synthesis',
+      'otel.agent',
+      'research.agent',
+    ] as const) {
       expect(resolveRoute(id, {})).toMatchObject({ wire: 'opencode', model: 'claude-haiku-5-5', effort: 'high' })
       expect(resolveRoute(id, {}).fallback).toMatchObject({ ...terraLow, wire: 'opencode', rate: terraRate })
     }
@@ -617,7 +625,9 @@ describe('fallback', () => {
   })
 
   test('a primary patch leaves the fallback alone; null removes the fallback', () => {
-    const patched = resolveRoute('review.angle', { 'review.angle': { model: otherAgentModel('review.angle') } })
+    const patched = resolveRoute('review.angle', {
+      'review.angle': { model: otherAgentModel('review.angle'), contextLimit: null },
+    })
     expect(patched.fallback).toEqual(entry('review.angle').fallback as never)
     expect(resolveRoute('review.angle', { 'review.angle': { fallback: null } }).fallback).toBeUndefined()
   })
@@ -769,8 +779,8 @@ describe('validateArm', () => {
     const bad = () => validateArm({ routes: { 'cheap.classify': { effort: 'low' }, decide: { effort: 'high' } } })
     expect(bad).toThrow(RouteOverrideError)
     expect(bad).toThrow('"decide"')
-    expect(() => validateArm({ routes: { 'review.synthesis': { effort: 'none' } } })).toThrow(
-      /review\.synthesis.*Sonnet/s,
+    expect(() => validateArm({ routes: { 'review.angle.deep': { effort: 'none' } } })).toThrow(
+      /review\.angle\.deep.*Sonnet/s,
     )
   })
 
@@ -804,9 +814,9 @@ describe('validateArm', () => {
 describe('contextLimit', () => {
   const arm = (contextLimit: unknown, id = 'review.angle') => ({ routes: { [id]: { contextLimit } } })
 
-  test('no route of the table sets it: the mechanism is off until an arm or a table edit turns it on', () => {
+  test('only review.angle sets it in the table (owner, 2026-11-03: under Haiku 5.5 long-prompt tier); no fallback does', () => {
     for (const id of routeIds()) {
-      expect(entry(id).contextLimit).toBeUndefined()
+      expect(entry(id).contextLimit).toBe(id === 'review.angle' ? 100_000 : undefined)
       expect(entry(id).fallback).not.toHaveProperty('contextLimit')
     }
   })
@@ -859,10 +869,10 @@ describe('contextLimit', () => {
   })
 
   test('the bound is part of the resolved route, so it moves the fingerprint, and a different bound moves it again', () => {
-    const none = routeFingerprint('review.angle', {})
+    const none = routeFingerprint('review.angle', arm(null).routes)
     const a = routeFingerprint('review.angle', arm(80_000).routes)
-    const b = routeFingerprint('review.angle', arm(100_000).routes)
+    const b = routeFingerprint('review.angle', arm(60_000).routes)
     expect(new Set([none, a, b]).size).toBe(3)
-    expect(routeFingerprint('review.angle', arm(null).routes)).toBe(none)
+    expect(routeFingerprint('review.angle', {})).toBe(routeFingerprint('review.angle', arm(100_000).routes))
   })
 })

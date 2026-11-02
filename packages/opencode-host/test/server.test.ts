@@ -539,14 +539,14 @@ describe('buildServerConfig: the provider follows the model family, whatever oth
       wire: 'anthropic',
       model: 'claude-haiku-5-5',
     })
-    for (const id of ['review.angle.deep', 'review.synthesis', 'retro.analyze'] as const) {
+    for (const id of ['review.angle.deep', 'retro.analyze'] as const) {
       expect(modelRef(id, {}).model).toMatchObject({ providerID: PROVIDER_ANTHROPIC, id: 'claude-sonnet-5-5' })
       expect(fallbackModelRef(id, {})?.model).toMatchObject({ providerID: PROVIDER_RESPONSES, id: 'gpt-6.1-terra' })
     }
     for (const id of [
       'check',
       'brain.agent',
-      'review.angle',
+      'review.synthesis',
       'diagram.agent',
       'otel.agent',
       'research.agent',
@@ -554,6 +554,15 @@ describe('buildServerConfig: the provider follows the model family, whatever oth
       expect(modelRef(id, {}).model).toMatchObject({ providerID: PROVIDER_ANTHROPIC, id: 'claude-haiku-5-5' })
       expect(fallbackModelRef(id, {})?.model).toMatchObject({ providerID: PROVIDER_RESPONSES, id: 'gpt-6.1-terra' })
     }
+    // review.angle runs Haiku through its 100k-bounded row (owner, 2026-11-03); its fallback is unbounded
+    expect(modelRef('review.angle', {}).model).toMatchObject({
+      providerID: PROVIDER_ANTHROPIC,
+      id: 'claude-haiku-5-5~ctx100000',
+    })
+    expect(fallbackModelRef('review.angle', {})?.model).toMatchObject({
+      providerID: PROVIDER_RESPONSES,
+      id: 'gpt-6.1-terra',
+    })
     expect(modelRef('brain.agent', claudePatch).model).toMatchObject({
       providerID: PROVIDER_ANTHROPIC,
       id: 'claude-haiku-5-5',
