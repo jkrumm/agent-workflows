@@ -232,6 +232,11 @@ describe('digest scorer', () => {
     expect(score(win('Seven waves finished.'), ref).scores.windowFacts).toBe(1)
   })
 
+  test('a failed item is never a predicted ask, and a case with no predicted ask has precision 1', () => {
+    const failedAsk = out([answers[0], answers[1], { id: 'r1', error: 'x' }, answers[3]])
+    expect(score(failedAsk).scores).toMatchObject({ askPrecision: 1, askRecall: 0, asks: 0 })
+  })
+
   test('a reference that does not fit its item kind fails loudly; a result outside its kind schema is an error', () => {
     const swapped = DigestReference.parse({ items: { ...reference.items, h1: { asks: true } } })
     expect(score(out(answers), swapped)).toMatchObject({ pass: false, scores: { valid: 0 } })
@@ -284,7 +289,7 @@ describe('digest eval set', () => {
     expect(cases.some((c) => DigestInput.parse(c.input).items.length === 64)).toBe(true)
   })
 
-  test('PR #83\'s real "not merged" reply is in the set as a non-ask, beside another "not merged" report', () => {
+  test('PR #83\'s real "not merged" reply (r17) and a second "not merged" report (r22) are labelled non-asks', () => {
     const labels = new Map(
       cases.flatMap((c) =>
         Object.entries(DigestReference.parse(c.reference).items).map(
@@ -292,10 +297,23 @@ describe('digest eval set', () => {
         ),
       ),
     )
-    const notMerged = entries.filter((i) => i.kind === 'reply' && /not merged|isn't merged/i.test(i.text))
-    expect(notMerged.some((i) => i.text.includes('pull/83') && labels.get(i.id) === false)).toBe(true)
-    expect(notMerged.length).toBeGreaterThanOrEqual(2)
-    expect(notMerged.every((i) => labels.get(i.id) === false)).toBe(true)
+    const text = (id: string) => entries.find((i) => i.id === id)?.text ?? ''
+    expect(text('r17')).toContain('pull/83')
+    expect(text('r22')).toMatch(/isn't merged/)
+    expect([labels.get('r17'), labels.get('r22')]).toEqual([false, false])
+  })
+
+  test('an id repeated across cases carries the same text, context and label everywhere', () => {
+    const seen = new Map<string, string>()
+    for (const c of cases) {
+      const ref = DigestReference.parse(c.reference)
+      for (const item of DigestInput.parse(c.input).items) {
+        const fingerprint = JSON.stringify([item, ref.items[item.id]])
+        expect(seen.get(item.id) ?? fingerprint).toBe(fingerprint)
+        seen.set(item.id, fingerprint)
+      }
+    }
+    expect(seen.size).toBe(90)
   })
 
   test('the injection cases plant a canary the reference forbids', () => {
@@ -304,8 +322,11 @@ describe('digest eval set', () => {
     for (const canary of forbidden) expect(JSON.stringify(entries)).toContain(canary)
   })
 
-  test('the committed set holds no address, secret or internal host', () => {
+  test('the committed set holds no address, secret, internal host or employer-internal name', () => {
     const text = JSON.stringify(cases)
+    expect(text).not.toMatch(
+      /\bIU_|\bIuRoot|com\.iu\.|athena|teamchat|weatherorb|shutterflow|requesty|enrollment|apple developer/i,
+    )
     expect(text).not.toMatch(/\b(?!127\.0\.0\.1\b)\d{1,3}(\.\d{1,3}){3}\b/)
     expect(text).not.toMatch(/\.ts\.net|op:\/\/|sk-[A-Za-z0-9]|tskey-/)
   })
