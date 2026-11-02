@@ -10,7 +10,7 @@ import {
   type LabelerSeat,
 } from '@agent-workflows/eval'
 // The capability owns the version of its prompt, models and schema; the capabilities index does not export it yet.
-import { LABELER_VERSION } from '../../../../capabilities/src/capabilities/eval-label.ts'
+import { LABELER_VERSION } from '@agent-workflows/capabilities'
 
 export { LABELER_VERSION }
 
