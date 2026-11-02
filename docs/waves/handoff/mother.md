@@ -14,7 +14,7 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
   tailscale drift). Not ours; gates are judged on our rows only.
 
 ## Lead
-- Mother `agent-workflows-w1-r4` (pane t4f, account me2); Wave 6 lead `agent-workflows-w1-r9` (pane t7r, account me2), spawned 2026-11-02.
+- Mother `agent-workflows-w1-r4` (pane t4f, account me2); Wave 7 spec lead `agent-workflows-w1-r10` (pane t85, account me2), spawned 2026-11-02.
   Rotation policy: a fresh lead per wave unless the last one closed under ~30% context.
 
 ## Decisions taken
@@ -136,7 +136,8 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
   Wave 16 and reports when iris no longer calls the old gateways. Asked the lead to confirm decide's new
   route avoids Requesty. For Wave 8's retro: decide's model move shifts the scorer judges' calibration.
 
-## For the owner (Wave 3, not stops)
+## For the owner (not stops)
+- PR #83 (shop, another session) must spread a tier in `vision.ts`: Wave 6's guard fails a `model:` literal.
 - 34 duplicate usage rows ($0.19) and `~/.config/agw/{iu,athena-iu}.env` left undeleted (query and detail in PLAN Wave 3
   Left behind); ≈ $9.3 team-key review spend before the Wave 3 deploy; Hermes has no lane outside the gateway now.
 - The software-factory lead asked about `agw agents` (its FV Wave 5), routed to the mother; not in this PLAN. Answer when
@@ -148,6 +149,7 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
 - Wake-loop: the factory re-fires `workers done: <lead> idle` while the lead idles on background shells. Answer with a blocking
   ~9.5-min poll on lead.md (bash loop with perl select, foreground timeout 590 s; `rd read` under `timeout 15`), not a bare re-declare.
 - `rd wave`'s gate needs `- [x]` steps in a done wave: Waves 8+ use bare `- **` bullets; turn them into checkboxes when activating.
-- Wave 6 lead told: credit pacing first; stop and message the mother before > ~$20 IU eval spend. Wave 7 halts for owner sign-off of the spec.
+- Wave 7: spec only, then the planned owner sign-off. While it waits, Wave 8 (agw, ground truth) may run: argo and agw are
+  separate checkouts; Wave 7's build resumes after the sign-off. Wave 8 has its own owner session (labelling).
 - Commit only own paths (`git commit -- <paths>`): a shared-checkout commit swept a lead edit in Wave 3.
 - Shell: never put double quotes inside a double-quoted `factory session note`; use a text file (a pipe in it ran `make`).
