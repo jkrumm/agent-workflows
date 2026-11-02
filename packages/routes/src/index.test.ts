@@ -480,17 +480,11 @@ describe('fallback', () => {
       expect(resolveRoute(id, {}).fallback).toMatchObject(terraMedium)
     }
     expect(resolveRoute('prose.write', {}).effort).toBe('medium')
-    for (const id of [
-      'review.angle.deep',
-      'review.synthesis',
-      'research.agent',
-      'otel.agent',
-      'retro.analyze',
-    ] as const) {
+    for (const id of ['review.angle.deep', 'review.synthesis', 'research.agent', 'retro.analyze'] as const) {
       expect(resolveRoute(id, {})).toMatchObject({ wire: 'opencode', model: 'claude-sonnet-5-5', effort: 'medium' })
       expect(resolveRoute(id, {}).fallback).toMatchObject({ ...terraMedium, wire: 'opencode', rate: terraRate })
     }
-    for (const id of ['check', 'brain.agent', 'review.angle'] as const) {
+    for (const id of ['check', 'brain.agent', 'review.angle', 'otel.agent'] as const) {
       expect(resolveRoute(id, {})).toMatchObject({ wire: 'opencode', model: 'claude-haiku-5-5', effort: 'high' })
       expect(resolveRoute(id, {}).fallback).toMatchObject({ ...terraLow, wire: 'opencode', rate: terraRate })
     }

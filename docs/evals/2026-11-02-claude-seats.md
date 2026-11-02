@@ -10,7 +10,7 @@ while production stayed on `iu`, and no eval request was refused or sent to IU.
 | Route | Before | Pick | Why |
 |-|-|-|-|
 | `research.agent` | DeepSeek flash | **Sonnet 5.5 medium** (`HARD.agent`) | ties DeepSeek on every score over 20 paired cases and is 6 s faster (CI excludes 0); beats Haiku high on `supported` beyond the CI; Opus is no better beyond the CI, 3x the cost and 6 s slower |
-| `otel.agent` | DeepSeek flash | **Sonnet 5.5 medium** (`HARD.agent`) | ties DeepSeek and Haiku high on every score (8 cases, two reruns); faster than both beyond the CI; Opus no better beyond the CI, 4.5x the cost and 23 s slower |
+| `otel.agent` | DeepSeek flash | **Haiku 5.5 high** (`EASY.agent`), owner override 2026-11-02 18:10; measured pick was Sonnet 5.5 medium | ties DeepSeek and Sonnet medium on every score (8 cases, two reruns); Sonnet was 13 s faster beyond the CI, Haiku high $0.039 cheaper per run [0.030, 0.042]; Opus no better beyond the CI, 4.5x the cost and 23 s slower |
 | `diagram.agent` | Sonnet 5.5 medium | **Haiku 5.5 none** (`FAST.agent`) | ties Sonnet on every score (6 cases, two reruns; pass 1.00 against 0.92) and is 3.9 s faster per diagram (CI excludes 0) |
 | `brain.agent` | Haiku 5.5 high | unchanged | Sonnet adds +0.05 facts on 10 cases, inside the noise, at 20x the cost and slower |
 | `check` | Haiku 5.5 high | unchanged | every arm scores the same (0.86); Haiku high has the lowest p50 wall |
@@ -97,6 +97,12 @@ one, otel Sonnet medium (`invalid_output`: the agent ended without submitting th
 
 otel is the closest call: Sonnet medium and Haiku high tie on score, Sonnet is faster beyond the CI (the rule's
 tie-breaker), and Sonnet's one `invalid_output` is the failure mode to watch on the next otel eval.
+
+**Owner override (2026-11-02 18:10): `otel.agent` runs Haiku 5.5 high (`EASY.agent`).** The rule above weighs cost only
+past the credit pacing line, and production is now past it (Wave 7: iu dry around 3 Nov at the first day's rate). On
+that footing the tie on score goes to the cheaper arm: Haiku high costs $0.0063 a run against Sonnet's $0.0408, and the
+13 s it gives up is not worth credit an over-pace month does not have. `research.agent` stays Sonnet medium (it beat
+Haiku high on `supported` beyond the CI), `prose.review` stays DeepSeek flash, `review.adversary` is unchanged.
 
 ## Spend
 
