@@ -172,6 +172,7 @@ candidates the order is the usual one, soonest expiry first. **No candidate: the
 `x-agw-fallback` or not, a Claude-Code-shaped one included. The refusal is recorded in `gateway_picks` as `picked =
 refused`, `reason = eval-reserve`, with no ledger row and no upstream call. A forced request (`x-agw-upstream: iu`) stays forced,
 for modelpick's probes; an eval arm must not set it. Every other purpose picks, orders and falls back exactly as before.
+Concurrent eval requests can overshoot the reserve by their in-flight cost, since the meter only counts a response once it ends; the headroom covers that, as it does for any request.
 
 **Why the refusal is a 403 and not a 402.** `isBalanceFailure` counts a 402 as an empty provider balance, so the agw route would
 fall back onto GPT: that spends IU and replaces the arm's model with another, which corrupts the measurement. A

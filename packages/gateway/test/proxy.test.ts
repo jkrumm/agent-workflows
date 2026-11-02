@@ -1226,6 +1226,7 @@ describe('credit pacing: purpose=eval', () => {
     const response = await gw.call(MESSAGES, as('eval'))
     expect(response.status).toBe(403)
     expect(response.headers.get('x-agw-pool')).toBe('refused')
+    expect(response.headers.get('x-agw-pick-reason')).toBe('eval-reserve')
     const text = await response.text()
     expect(JSON.parse(text)).toMatchObject({
       type: 'error',
@@ -1251,6 +1252,14 @@ describe('credit pacing: purpose=eval', () => {
     expect([402, 408, 409, 429]).not.toContain(response.status)
     expect(response.status).toBeLessThan(500)
     expect(iu.seen).toHaveLength(0)
+  })
+
+  test('the purpose is read trimmed and case-insensitively; a look-alike is not an eval', async () => {
+    const gw = start({ registry: [underReserve('iu')] })
+    expect((await gw.call(MESSAGES, as(' Eval '))).status).toBe(403)
+    const evalish = await gw.call(MESSAGES, as('evaluate'))
+    await evalish.text()
+    expect(evalish.headers.get('x-agw-pool')).toBe('iu')
   })
 
   test('x-agw-fallback: iu does not send an eval request to IU either', async () => {
