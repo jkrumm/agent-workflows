@@ -22,9 +22,11 @@ const routes = {
   // Gateway: ANGLE_OC (review_angle_senior_dev|typescript|frontend|qa all resolve to the same entry) and `review`
   // (synthesis), on the OpenCode harness. The EASY tier (Haiku high), the concept v3.5 split restored (owner, 2026-11-02):
   // on Sonnet the angles were $46.29 of the $52.50 that 67 production reviews spent in two days ($0.78 a review, 14.8M
-  // 5-minute cache-write tokens). Deep angles and the synthesis stay on Sonnet. The review's seats are decided by the
-  // Wave 11 sweep; on a drained credit the step reopens on Terra low over Responses.
-  'review.angle': { wire: 'opencode', ...EASY.agent },
+  // 5-minute cache-write tokens). Deep angles stay on Sonnet. The review's seats are decided by the Wave 11 sweep; on a
+  // drained credit the step reopens on Terra low over Responses. `contextLimit` (owner, 2026-11-03): Haiku bills a prompt
+  // over 100k tokens at 5x, and 12 % of angle calls crossed it (42 % of the angles' spend) as sessions grew over tool
+  // turns; the bound compacts a session before any call reaches 100k (packages/opencode-host README §contextLimit).
+  'review.angle': { wire: 'opencode', ...EASY.agent, contextLimit: 100_000 },
   // Angles of a review the caller asked to run `depth: deep` (mother decision, 2026-10-29). Opt-in: a router-chosen deep
   // keeps `review.angle`; the review workflow names this route in the angle steps' `options.route`. History, paired eval
   // 2026-10-30 (12 recorded cases, `depth: deep`, same cases and scorer per arm): Terra medium and DeepSeek flash tie on
@@ -33,7 +35,9 @@ const routes = {
   // (0.13, $0.54) was off while the team key paid and is the HARD tier now that the credit pays: the angles of a caller's
   // `depth: deep` run on Sonnet, the default angles on Haiku (`review.angle`).
   'review.angle.deep': { wire: 'opencode', ...HARD.agent },
-  'review.synthesis': { wire: 'opencode', ...HARD.agent },
+  // Synthesis (owner, 2026-11-03): the EASY tier (Haiku high) for cost while the credit runs dry. Its prompt stays far
+  // under Haiku's 100k long-prompt tier (p95 28k, max 39k over 400 calls), so it needs no bound.
+  'review.synthesis': { wire: 'opencode', ...EASY.agent },
 } satisfies Record<string, RouteEntry>
 
 export default routes

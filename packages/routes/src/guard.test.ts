@@ -312,7 +312,7 @@ test('every route on a Claude model spreads a tier', () => {
   }
 })
 
-test('the review split (concept v3.5, restored 2026-11-02): default angles on EASY, deep angles and the synthesis on HARD', () => {
+test('the review split (owner, 2026-11-03): default angles and the synthesis on EASY, deep angles on HARD', () => {
   const step = (id: 'review.angle' | 'review.angle.deep' | 'review.synthesis') => {
     const { model, effort, fallback } = resolveRoute(id)
     return { model, effort, fallback: fallback?.model }
@@ -324,7 +324,9 @@ test('the review split (concept v3.5, restored 2026-11-02): default angles on EA
   })
   expect(step('review.angle')).toEqual(agentOf(EASY))
   expect(step('review.angle.deep')).toEqual(agentOf(HARD))
-  expect(step('review.synthesis')).toEqual(agentOf(HARD))
+  expect(step('review.synthesis')).toEqual(agentOf(EASY))
+  expect(resolveRoute('review.angle').contextLimit).toBe(100_000)
+  expect(resolveRoute('review.synthesis').contextLimit).toBeUndefined()
 })
 
 test('the eval seats are pinned: no fallback, the chosen model and effort, a 16000 ceiling and the model rate', () => {

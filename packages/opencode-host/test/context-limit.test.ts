@@ -93,7 +93,7 @@ describe('modelRef with a contextLimit', () => {
   })
 
   test('without a bound the model is the plain id, as before', () => {
-    expect(modelRef('review.angle').model.id).toBe('claude-haiku-5-5')
+    expect(modelRef('check').model.id).toBe('claude-haiku-5-5')
     expect(modelRef('review.angle', { 'review.angle': { contextLimit: null } }).model.id).toBe('claude-haiku-5-5')
   })
 
