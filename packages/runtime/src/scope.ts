@@ -306,6 +306,7 @@ export class RunScope {
           agent: spec.agent,
           prompt,
           options: spec.options,
+          attribution: scope.attribution,
         })
       },
     })
@@ -380,7 +381,13 @@ export class RunScope {
         if (row?.status !== 'done' || !row.handle) {
           throw new WorkflowError('error', `continue step "${stepId}": step "${parentId}" holds no finished session`)
         }
-        return host.followUp(row.handle.handle, { runId: this.run.id, stepId, key: scope.key, attempt: scope.attempt })
+        return host.followUp(row.handle.handle, {
+          runId: this.run.id,
+          stepId,
+          key: scope.key,
+          attempt: scope.attempt,
+          attribution: scope.attribution,
+        })
       },
     })
   }

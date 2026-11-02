@@ -79,11 +79,6 @@ export type OpenCodeHostOptions = {
   }
   /** W3C `traceparent` of the step span (`Telemetry.traceparent`), sent on every request of the step. */
   traceparent?: (runId: string, stepId: string) => string | undefined
-  /**
-   * The step's `Attribution`, written into `metadata.agw` of its session, where the plugin reads it for the gateway's
-   * headers. Without it a session carries only `runId` and `step`.
-   */
-  attribution?: (runId: string, stepId: string) => Promise<Attribution | undefined> | Attribution | undefined
   /** Route resolution (`AGW_ROUTES`). Default `process.env`. */
   env?: Env
   requestTimeoutMs?: number
@@ -109,34 +104,11 @@ export type OpenCodeHandle = {
   fallback?: true
   /** A follow-up turn (`followUp`): its input is keyed by this, and `wait` reads only what came after it. */
   turn?: string
+  /** The step's attribution, kept so a provider-balance fallback session carries it too. */
+  attribution?: Attribution
 }
 
-/** The run row's columns `runAttribution` reads. */
-export type AttributionRow = {
-  id: string
-  root_id: string
-  workflow: string
-  purpose: string
-  project: string | null
-  workspace: string | null
-  traceparent: string | null
-}
-
-/** The `Attribution` of a step from its run's row: absent project, workspace and trace stay absent. */
-export function runAttribution(run: AttributionRow, step: string): Attribution {
-  return {
-    runId: run.id,
-    rootId: run.root_id,
-    workflow: run.workflow,
-    step,
-    purpose: run.purpose,
-    ...(run.project ? { project: run.project } : {}),
-    ...(run.workspace ? { workspace: run.workspace } : {}),
-    ...(run.traceparent ? { traceparent: run.traceparent } : {}),
-  }
-}
-
-/** `metadata.agw`'s attribution fields: `runId` and `step` always, the rest when the run is known. */
+/** `metadata.agw`'s attribution fields. A handle journaled before a deploy holds no `Attribution`, only its run and step. */
 type StepAttribution = Pick<Attribution, 'runId' | 'step'> & Partial<Attribution>
 
 type Snapshot = { messages: Message[]; active: boolean; pending: boolean }
@@ -178,7 +150,8 @@ function asHandle(handle: Json): OpenCodeHandle {
     (h.output !== 'json' && h.output !== 'text') ||
     (h.allow !== undefined && (!Array.isArray(h.allow) || h.allow.some((d) => typeof d !== 'string'))) ||
     (h.fallback !== undefined && h.fallback !== true) ||
-    (h.turn !== undefined && typeof h.turn !== 'string')
+    (h.turn !== undefined && typeof h.turn !== 'string') ||
+    (h.attribution !== undefined && (typeof h.attribution !== 'object' || h.attribution === null))
   ) {
     throw new WorkflowError('error', 'not an OpenCode host handle')
   }
@@ -360,7 +333,7 @@ export class OpenCodeHost implements AgentHost {
     const routeId = options.route ?? def.route
     if (!routeId) throw new WorkflowError('error', `agent "${spec.agent}" has no route and the step names none`)
     const { route, model } = modelRef(routeId, this.env)
-    const attribution = await this.attribution(spec.runId, spec.stepId)
+    const attribution = this.attribution(spec.attribution)
     const location = compileLocation(def, { stateDir: this.options.stateDir })
     this.current.set(def.name, location.directory)
     touchLocation(location.directory)
@@ -419,6 +392,7 @@ export class OpenCodeHost implements AgentHost {
       output: options.output === 'json' ? 'json' : 'text',
       runId: spec.runId,
       stepId: spec.stepId,
+      attribution,
       ...(allowDirectories.length > 0 ? { allow: allowDirectories } : {}),
     }
     return handle
@@ -457,16 +431,13 @@ export class OpenCodeHost implements AgentHost {
     // belongs to the continuing step, so its model calls carry that step's attribution, not the first step's.
     const def = this.agents.get(base.agent)
     if (!def) throw new WorkflowError('error', `unknown agent "${base.agent}"; cannot apply its permissions`)
-    await this.applySession(
-      base.sessionId,
-      sessionPermissions(def, base.allow ?? []),
-      await this.attribution(spec.runId, spec.stepId),
-      headers,
-    )
+    const attribution = this.attribution(spec.attribution)
+    await this.applySession(base.sessionId, sessionPermissions(def, base.allow ?? []), attribution, headers)
     const next: OpenCodeHandle = {
       ...base,
       runId: spec.runId,
       stepId: spec.stepId,
+      attribution,
       turn: `${spec.key}#${spec.attempt}`,
     }
     return next
@@ -740,7 +711,7 @@ export class OpenCodeHost implements AgentHost {
       to: fallback.route.model,
     })
     const permissions = sessionPermissions(def, h.allow ?? [])
-    const attribution = await this.attribution(h.runId, h.stepId)
+    const attribution: StepAttribution = h.attribution ?? { runId: h.runId, step: h.stepId }
     await this.client.createSession(
       {
         id: sessionId,
@@ -760,13 +731,12 @@ export class OpenCodeHost implements AgentHost {
   }
 
   /**
-   * What `metadata.agw` carries for the gateway. The trace is the step span's when there is one, else the run's
-   * (2.0.32 overwrites it on the wire: README §Attribution).
+   * What `metadata.agw` carries for the gateway: the runtime's attribution, with the trace of the step span when there
+   * is one (2.0.32 overwrites it on the wire: README §Attribution).
    */
-  private async attribution(runId: string, stepId: string): Promise<StepAttribution> {
-    const known = await this.options.attribution?.(runId, stepId)
-    const traceparent = this.options.traceparent?.(runId, stepId) ?? known?.traceparent
-    return { ...known, runId, step: stepId, ...(traceparent ? { traceparent } : {}) }
+  private attribution(attribution: Attribution): Attribution {
+    const traceparent = this.options.traceparent?.(attribution.runId, attribution.step) ?? attribution.traceparent
+    return { ...attribution, ...(traceparent ? { traceparent } : {}) }
   }
 
   private headers(runId: string, stepId: string): Record<string, string> | undefined {

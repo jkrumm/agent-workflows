@@ -105,6 +105,8 @@ export type AgentOpenSpec = {
   agent: string
   prompt: string
   options?: Json
+  /** Who the step's model calls are for: the host hands it to the gateway with them. */
+  attribution: Attribution
 }
 
 export type ToolEvent = {
@@ -150,7 +152,14 @@ export type AgentHost = {
 }
 
 /** `attempt` keys the turn: a retried continue step sends a new turn instead of re-reading the failed one. */
-export type AgentFollowUpSpec = { runId: string; stepId: string; key: string; attempt: number }
+export type AgentFollowUpSpec = {
+  runId: string
+  stepId: string
+  key: string
+  attempt: number
+  /** The continuing step's, not the step that opened the session. */
+  attribution: Attribution
+}
 
 export type Ctx = {
   readonly runId: string

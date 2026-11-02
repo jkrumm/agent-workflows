@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { AgentDefinition, PermissionRule } from '../src/index.ts'
 import { createClient, type OpenCodeHandle, OpenCodeHost, OpenCodeServer, sessionPermissions } from '../src/index.ts'
+import { attributionOf } from './attribution.ts'
 
 // Measures, on the real `opencode` 2.0.32 on the cheapest route, what the deny-by-default session policy
 // (`sessionPermissions`) lets through: read, glob, grep and skill work; webfetch, websearch, subagent, edit, write,
@@ -67,6 +68,7 @@ async function run(
     const handle = (await host.open({
       runId: 'live',
       stepId: agent.name,
+      attribution: attributionOf('live', agent.name),
       key: `live:${agent.name}`,
       agent: agent.name,
       prompt: '',
@@ -266,6 +268,7 @@ test.skipIf(!live)(
       const handle = (await host.open({
         runId: 'live',
         stepId: 'patched',
+        attribution: attributionOf('live', 'patched'),
         key: 'live:patched',
         agent: 'patched',
         prompt: '',

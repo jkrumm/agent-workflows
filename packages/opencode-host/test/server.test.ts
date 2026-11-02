@@ -35,6 +35,7 @@ import {
   PROVIDER_CHAT,
   PROVIDER_RESPONSES,
 } from '../src/config.ts'
+import { attributionOf } from './attribution.ts'
 
 // The supervisor against a real child process: `fake-opencode-bin.ts` stands in for `opencode serve`.
 const BIN = ['bun', join(import.meta.dir, 'fake-opencode-bin.ts')]
@@ -284,6 +285,7 @@ describe('OpenCodeServer', () => {
       const handle = await host.open({
         runId: 'r',
         stepId: 's',
+        attribution: attributionOf('r', 's'),
         key: 'r:s',
         agent: 'tester',
         prompt: 'p',

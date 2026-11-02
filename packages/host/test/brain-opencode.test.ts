@@ -111,8 +111,8 @@ async function runAgent(script: Step[]) {
   const model = fakeModel(script)
   const env = {
     ...process.env,
-    IU_API_KEY: 'fake',
-    IU_BASE_URL: `http://127.0.0.1:${model.server.port}/anthropic`,
+    AGW_GATEWAY_TOOL_TOKEN: 'fake',
+    AGW_GATEWAY_URL: `http://127.0.0.1:${model.server.port}`,
     AGW_ROUTES: JSON.stringify({ 'brain.agent': { model: 'deepseek-v4.1-flash' } }),
   }
   const server = new OpenCodeServer({ stateDir, env, livenessIntervalMs: 1_000 })
@@ -131,6 +131,7 @@ async function runAgent(script: Step[]) {
       agent: 'brain',
       prompt: '',
       options: { output: 'json' },
+      attribution: { runId, rootId: runId, workflow: 'brain', step: 'brain', purpose: 'verify' },
     })) as OpenCodeHandle
     await host.prompt(handle, 'How many billing lanes are there?')
     const result = await host.wait(handle, {

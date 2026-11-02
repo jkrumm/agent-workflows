@@ -30,7 +30,7 @@ A step picks the route with `options.route` (else the agent's `route`) and asks 
 | `steer(handle, text, { signalId })` | Appends a user message with `delivery: steer`, id keyed by the runtime's signal row: a re-delivered row is a no-op, two identical steers stay two. Without a `signalId`, a nonce per call (never the text alone). History is never rewritten |
 | `abort(handle)` | `POST /interrupt`. Idempotent: an idle session answers `interrupted: false`, a gone one 404, both fine |
 
-The handle is plain JSON: `{ v, sessionId, directory, agent, route, model, output, runId, stepId }`.
+The handle is plain JSON: `{ v, sessionId, directory, agent, route, model, output, runId, stepId, attribution }`.
 
 **Permissions: deny by default** (as agent-gateway's `OPENCODE_READONLY_PERMISSIONS`). Every session gets, in this
 order, the last match winning: `{ *, *, deny }`; `allow` for exactly `read`, `glob`, `grep` and `skill`;
@@ -163,11 +163,11 @@ pinned source: `docs/spikes/gateway/headers.md`.
 
 `metadata.agw` of a step's session holds the step's `Attribution` (`runId`, `rootId`, `workflow`, `step`, `purpose`,
 `project`, `workspace`, `traceparent`, the names of the runtime's `ctx.attribution`) at both create calls, primary and
-fallback. `AgentOpenSpec` carries only the run and step ids, so the host asks `OpenCodeHostOptions.attribution`, which
-`bootProcess` answers from the run's row (`runAttribution`). Without the option a session carries `runId` and `step`. A
-session the host finds already there, and the session of a follow-up turn, get the current values by `PATCH` (one read,
-a write only when they differ; `PATCH` replaces `metadata` whole, so the rest is sent back), so a `ctx.continue` turn is
-attributed to the continuing step.
+fallback. The runtime hands it over in `spec.attribution` of `open` and `followUp`, so opening a step reads nothing, and
+the handle keeps it for the fallback session (a handle journaled before a deploy holds no attribution: its fallback
+session carries `runId` and `step` only). A session the host finds already there, and the session of a follow-up turn, get
+the current values by `PATCH` (one read, a write only when they differ; `PATCH` replaces `metadata` whole, so the rest is
+sent back), so a `ctx.continue` turn is attributed to the continuing step.
 
 `plugin/agw-attribution/` (a `package.json` and a plain `server.js`, no build: a release is exported from git) hooks
 `model.request` and sets `x-agw-session` (`rootId`), `x-agw-run-id`, `x-agw-step`, `x-agw-workflow`, `x-agw-purpose`,
@@ -460,6 +460,7 @@ the host and as a spawned `opencode` stand-in (`test/fake-opencode-bin.ts`) for 
 | `live-permissions.test.ts` | `AGW_LIVE=1`: the deny-by-default policy: the tool list per opt-in, refused calls, an opted-in `webfetch`, Code Mode's empty catalog |
 | `plugin.test.ts` | the attribution plugin against a fake session store: parity with `gatewayHeaders`, the value filter, the walk to the root and its cache, the loud failures |
 | `live-gateway.test.ts` | `AGW_LIVE=1`: the wire of the pinned build (§Attribution); needs no key and calls no LLM |
+| `packages/host/test/attribution-opencode.test.ts` | a run's attribution end to end: the real `Runtime` and `OpenCodeHost` on the fake server, through a balance fallback and a follow-up turn, to the headers the plugin sets |
 | `live.test.ts` | `AGW_LIVE=1`: the real binary, SIGKILL mid-turn, restart, re-attach, one prompt; AGENTS.md and a skill reach the model, the user's skills and the shell tool do not; a non-shell agent's read, glob, grep and write outside its location are refused; tokens and cost |
 
 Live: `AGW_LIVE=1 secrets-run run --env-file=.env.tpl -- timeout 600 bun test packages/opencode-host`

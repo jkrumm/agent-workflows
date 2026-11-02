@@ -22,6 +22,7 @@ import {
   type ToolPart,
 } from '../src/session.ts'
 import { type FakeServer, startFake } from './fake-opencode.ts'
+import { attributionOf } from './attribution.ts'
 
 const AGENT: AgentDefinition = { name: 'tester', agentsMd: '# tester\n', route: 'check' }
 const cleanups: (() => void)[] = []
@@ -289,6 +290,7 @@ async function held(t: ReturnType<typeof setup>, prompt = '[hold] work') {
     key: 'run-1:agent',
     agent: 'tester',
     prompt,
+    attribution: attributionOf('run-1', 'agent'),
   })
   await t.host.prompt(handle, prompt)
   const sessionId = (handle as OpenCodeHandle).sessionId
