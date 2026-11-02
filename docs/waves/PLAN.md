@@ -156,31 +156,41 @@ review's own seats.
   must spread a tier in its `vision.ts` before it merges (the new guard fails a `model:` literal). modelpick rows
   `claude-code/interactive-iu` and `hermes/stt` fail `verify-deployments`. Flaky: prose writer-fence test, `platform.test.ts`.
 
-## Wave 7 — Usage view v7 (Argo)            <!-- status: active -->
+## Wave 7 — Usage view v7 spec (Argo)            <!-- status: done 2026-11-02, spec argo 84053e8 -->
 
 Owner, 2026-11-02: the usage page needs a new UX concept for the gateway era, not a fifth tab. Spec first, build
 after the owner signs the spec (the one stop of this wave).
 
-- [ ] **Spec v7** in `argo/docs/design/usage-tracking.md`, superseding v6 and the Credits tab bolted on in Wave 4. The
+- [x] **Spec v7** in `argo/docs/design/usage-tracking.md`, superseding v6 and the Credits tab bolted on in Wave 4. The
   mental model to test: **supply** (subscription windows, credit pools with expiry, IU keys with caps) → **router**
   (the gateway's picks, fallbacks, cache) → **demand** (callers and workflows: Claude Code lanes, agw workflows,
   Hermes, Iris, MacWhisper). Athena Teamchat is shown apart, never mixed in. One headline: are we on pace to use
   every credit dollar before it expires without touching the over-cap IU key?
-- [ ] The spec names each question the page answers, the view that answers it, and the endpoint behind it. The
+- [x] The spec names each question the page answers, the view that answers it, and the endpoint behind it. The
   frontend rules (`rules/frontend-routing.md`) and basalt-ui apply. Mock screens in the spec. **Stop for the owner's
   sign-off.**
+**Left behind:** close-out in `docs/waves/handoff/lead.md` at `fdeea26`. Spec `argo/docs/design/usage-tracking.md` v7 and mocks
+  `argo/docs/design/usage-v7/`; five owner decisions at the top of the spec. The build moved to Wave 7b, after the
+  owner's sign-off. Found: agw still writes its own `usage.records` for agent steps the gateway already recorded ($5.01
+  on 11-02 since 08:10 UTC), so personal-key spend is overstated: fixed first in Wave 8.
+
+## Wave 8 — Ground truth            <!-- status: active -->
+
+- [ ] **Double usage rows (from Wave 7):** agw stops writing `usage.records` for agent steps the gateway recorded;
+  proven on stored rows of both writers after deploy. The 11-02 duplicates stay (owner's call, like Wave 3's 34).
+- [ ] `agw eval mine review`: SZZ over `~/SourceRoot` with the filters in `docs/review-v2.md` §Ground truth, two
+  cross-vendor labeler calls per candidate, clean controls, the `dev`/`test` split. Cases go only under `$AGW_EVAL_DIR`.
+- [ ] `eval.judge` on its own pinned route, scorer v3 (recall, false alarms, noise, severity calibration), and `agw eval
+  import` for an external arm's findings. The token-overlap matcher only preselects pairs.
+- [ ] **Owner session (owner decision 2):** confirm 70 mined cases and label 100 judge pairs. Bars: accepted cases ≥ 90 %
+  right, judge κ ≥ 0.8. Below either, tighten the filters or add a second judge.
+- [ ] Target 200 bug cases and 100 controls. Seeded defects only below 150.
+
+## Wave 7b — Usage view v7 build (Argo)            <!-- status: pending, waits for the owner's sign-off of spec v7 -->
+
 - [ ] Build v7 in argo: endpoints on `usage.*` (gateway rows, picks, credit cycles, platform cost, quota samples),
   the views, tests; v6 views it supersedes are deleted, not hidden. Screenshots light and dark through `@verifier`.
-
-## Wave 8 — Ground truth            <!-- status: pending -->
-
-- `agw eval mine review`: SZZ over `~/SourceRoot` with the filters in `docs/review-v2.md` §Ground truth, two
-  cross-vendor labeler calls per candidate, clean controls, the `dev`/`test` split. Cases go only under `$AGW_EVAL_DIR`.
-- `eval.judge` on its own pinned route, scorer v3 (recall, false alarms, noise, severity calibration), and `agw eval
-  import` for an external arm's findings. The token-overlap matcher only preselects pairs.
-- **Owner session (owner decision 2):** confirm 70 mined cases and label 100 judge pairs. Bars: accepted cases ≥ 90 %
-  right, judge κ ≥ 0.8. Below either, tighten the filters or add a second judge.
-- Target 200 bug cases and 100 controls. Seeded defects only below 150.
+  The owner's answers to the spec's five decisions shape it.
 
 ## Wave 9 — Baseline            <!-- status: pending -->
 

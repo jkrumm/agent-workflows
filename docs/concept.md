@@ -573,3 +573,14 @@ One entry per phase: what we learned, what changed on this page, and why.
   needs only a light review.
 - **Does the page hold?** Yes, as v3.14.
 
+### Gateway Wave 7 — Usage view v7 spec, 2026-11-02
+
+- **Learned.** Checking the live page against the rows showed the v6 view wrong in the ways that matter: credit left
+  read from the lagging cost report ($100 shown, $88 real), pools projected alone although the gateway drains `iu` first,
+  and agw still writing its own rows for agent steps the gateway records ($5 a day of phantom personal-key spend).
+- **Changed.** Spec v7 in argo (`docs/design/usage-tracking.md`): supply, router, demand; 12 questions each with view and
+  endpoint; mocks. The build waits for the owner (Wave 7b); the double rows are fixed in Wave 8.
+- **Process.** A spec wave stays in one session (editorial work); grounding each number in a read-only query is what
+  found the double rows.
+- **Does the page hold?** Yes; the double rows contradict v3.14's writer rule and are a bug, not a design change.
+
