@@ -6,7 +6,7 @@
 
 A module's suite reads its cases from `$AGW_EVAL_DIR/<workflow>/cases.jsonl` unless it declares `path(env)`: review's
 reads the ground truth, `$AGW_EVAL_DIR/review-gt/cases.jsonl`, and its `tree` carries `isolate: true`, which
-`materialize` turns into a clone with no refs and no reflog, so a later commit is unreachable from a shell.
+`materialize` turns into a clone with no refs, no reflog and no shared object store, so a later commit is unreachable from a shell.
 
 | Command | Does |
 |-|-|

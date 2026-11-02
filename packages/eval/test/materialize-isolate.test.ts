@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { exec } from '../src/harness/exec.ts'
@@ -39,6 +39,12 @@ describe('materialize isolate', () => {
     expect(git(tree.dir, 'for-each-ref')).toBe('')
     expect(git(tree.dir, 'reflog', '--all')).toBe('')
     expect(git(tree.dir, 'show', `${fx.baseSha}:app.ts`)).toContain('b = 2')
+    // the shared object store is cut: the later commit is not an object of the clone at all
+    expect(Bun.spawnSync(['git', 'cat-file', '-e', later], { cwd: tree.dir }).exitCode).not.toBe(0)
+    expect(Bun.spawnSync(['git', 'show', later], { cwd: tree.dir }).exitCode).not.toBe(0)
+    expect(git(tree.dir, 'cat-file', '--batch-all-objects', '--batch-check')).not.toContain(later)
+    expect(existsSync(join(tree.dir, '.git', 'objects', 'info', 'alternates'))).toBe(false)
+    expect(git(tree.dir, 'fsck', '--no-dangling')).not.toContain('missing')
 
     cleanup(open.dir)
     cleanup(tree.dir)

@@ -1,13 +1,13 @@
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import {
-  classifyPair,
   exec,
   GtCase,
   type GtFinding,
   type JudgeClass,
   type JudgeInput,
   JudgeOutput,
+  normalizePath,
 } from '@agent-workflows/eval'
 import type { Scorer, Verdict } from '@agent-workflows/runtime'
 import { type ReviewInputValue, ReviewOutput, type ReviewResult } from './schema.ts'
@@ -52,19 +52,19 @@ function toFindings(review: ReviewResult): GtFinding[] {
     }))
 }
 
+type GtBug = Extract<GtCase, { kind: 'bug' }>['bug']
 const basename = (file: string) => file.slice(file.lastIndexOf('/') + 1)
 
 /**
  * The ids the judge may call a `match`. Cheap and deterministic: the matcher only preselects, never decides. A finding
- * passes when it sits in the bug's file (`classifyPair` on line-less, message-less sides is `none` exactly when the
- * normalized paths differ, so it is the one path normalizer; any pair in the same file is `not none`, so a message
- * or line test on top would never narrow it) or its message names that file.
+ * passes when it sits in the bug's file (paths normalized) or its message names that file's basename.
  */
-function preselect(bug: Extract<GtCase, { kind: 'bug' }>['bug'], findings: GtFinding[]): string[] {
+function preselect(bug: GtBug, findings: GtFinding[]): string[] {
   const { file } = bug.location
   const name = basename(file)
-  const sameFile = (other: string) => classifyPair({ file: other, message: '' }, { file, message: '' }).kind !== 'none'
-  return findings.filter((f) => sameFile(f.file) || f.message.includes(name)).map((f) => f.id)
+  return findings
+    .filter((f) => normalizePath(f.file) === normalizePath(file) || f.message.includes(name))
+    .map((f) => f.id)
 }
 
 /** The reviewed commit's diff, read from the owner's checkout: the case tree may be gone when scoring runs. */
@@ -81,7 +81,7 @@ async function judgeFindings(
   reference: GtCase,
   findings: GtFinding[],
   judge: NonNullable<Parameters<Scorer['score']>[2]['judge']>,
-): Promise<Map<string, { class: JudgeClass; reason: string }>> {
+): Promise<Judged> {
   const input: JudgeInput = {
     caseId: reference.id,
     bug: reference.kind === 'bug' ? { location: reference.bug.location, description: reference.bug.description } : null,
@@ -93,7 +93,38 @@ async function judgeFindings(
   return new Map(output.findings.map((f) => [f.id, { class: f.class, reason: f.reason }]))
 }
 
+type Judged = Map<string, { class: JudgeClass; reason: string }>
+type Outcome = { scores: Record<string, number>; correct: boolean; feedback: string }
+
 const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? '' : 's'}`
+
+/** A bug case: `recall` needs an important finding judged `match`; a match that is only a nit is `detected`. */
+function scoreBug(bug: GtBug, findings: GtFinding[], judged: Judged): Outcome {
+  const matched = findings.filter((f) => judged.get(f.id)?.class === 'match')
+  const hit = matched.find((f) => f.tag === 'important')
+  const shown = hit ?? matched[0]
+  return {
+    scores: {
+      recall: hit ? 1 : 0,
+      detected: shown ? 1 : 0,
+      ...(shown ? { severityCalibration: hit ? 1 : 0 } : {}),
+    },
+    correct: hit !== undefined,
+    feedback: shown
+      ? `matched finding ${shown.id}${hit ? '' : ' (only as a nit)'}: ${judged.get(shown.id)?.reason}`
+      : `missed: ${bug.bugClass} at ${bug.location.file}:${bug.location.startLine}`,
+  }
+}
+
+/** A control: every important finding is a false alarm. */
+function scoreControl(important: GtFinding[]): Outcome {
+  const clean = important.length === 0
+  return {
+    scores: { falseAlarms: important.length, clean: clean ? 1 : 0 },
+    correct: clean,
+    feedback: clean ? '' : `false alarms: ${count(important.length, 'important finding')}`,
+  }
+}
 
 /**
  * The `review` scorer (`docs/review-v2.md` §Metrics). Every score is in [0, 1] or a count; all are recorded only
@@ -135,40 +166,23 @@ export const reviewScorer: Scorer<ReviewInputValue, GtCase> = {
 
     const findings = toFindings(review)
     const important = findings.filter((f) => f.tag === 'important')
-    const judged = new Map<string, { class: JudgeClass; reason: string }>()
+    const judged: Judged = new Map()
     if (findings.length > 0) {
       if (!ctx.judge) throw new Error('the review scorer needs a judge with a reference')
       for (const [id, verdict] of await judgeFindings(reference, findings, ctx.judge)) judged.set(id, verdict)
     }
     const classOf = (f: GtFinding) => judged.get(f.id)?.class ?? 'unclear'
-    const matched = findings.filter((f) => classOf(f) === 'match')
-    const notABug = findings.filter((f) => classOf(f) === 'not-a-bug')
-
-    scores.findings = findings.length
-    scores.important = important.length
-    scores.realOther = findings.filter((f) => classOf(f) === 'real').length
-    if (findings.length > 0) scores.noise = notABug.length / findings.length
-
-    let correct: boolean
-    if (reference.kind === 'bug') {
-      const hit = matched.find((f) => f.tag === 'important')
-      scores.recall = hit ? 1 : 0
-      scores.detected = matched.length > 0 ? 1 : 0
-      if (matched.length > 0) scores.severityCalibration = hit ? 1 : 0
-      correct = hit !== undefined
-      const shown = hit ?? matched[0]
-      const { location, bugClass } = reference.bug
-      problems.push(
-        shown
-          ? `matched finding ${shown.id}${shown.tag === 'nit' ? ' (only as a nit)' : ''}: ${judged.get(shown.id)?.reason}`
-          : `missed: ${bugClass} at ${location.file}:${location.startLine}`,
-      )
-    } else {
-      scores.falseAlarms = important.length
-      scores.clean = important.length === 0 ? 1 : 0
-      correct = important.length === 0
-      if (!correct) problems.push(`false alarms: ${count(important.length, 'important finding')}`)
-    }
+    const noisy = findings.filter((f) => classOf(f) === 'not-a-bug').length
+    Object.assign(scores, {
+      findings: findings.length,
+      important: important.length,
+      realOther: findings.filter((f) => classOf(f) === 'real').length,
+      ...(findings.length > 0 ? { noise: noisy / findings.length } : {}),
+    })
+    const outcome = reference.kind === 'bug' ? scoreBug(reference.bug, findings, judged) : scoreControl(important)
+    Object.assign(scores, outcome.scores)
+    if (outcome.feedback) problems.push(outcome.feedback)
+    const correct = outcome.correct
     const pass = complete === 1 && correct
     return { scores, pass, ...(problems.length ? { feedback: problems.join('; ') } : {}) }
   },

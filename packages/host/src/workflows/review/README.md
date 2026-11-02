@@ -154,8 +154,8 @@ with their routes.
 
 `scorer.ts` (version `2026-11-02.v3+<judge version>`) scores a run against a ground-truth case (`GtCase`,
 `docs/review-v2.md` §The eval); `agw eval run review` reads those cases from `$AGW_EVAL_DIR/review-gt/cases.jsonl`
-(the module's `suite.path`), checks each commit out in an isolated clone (`materialize` `isolate`: no ref, so no later
-fix is reachable) and reviews it as `scope: 'head'` at the review's own depth unless the arm's `args` set one. The
+(the module's `suite.path`), checks each commit out in an isolated clone (`materialize` `isolate`: no ref and no shared
+object store, so no later fix is reachable) and reviews it as `scope: 'head'` at the review's own depth unless the arm's `args` set one. The
 138 legacy cases are not read.
 
 - Findings map to the judge's `GtFinding`: `blocking` is `important`, `improvements` and `discussions` are `nit`,
