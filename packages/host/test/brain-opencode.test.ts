@@ -17,9 +17,8 @@ import { BRAIN_TOOLS, brainGrant, evidence } from '../src/workflows/brain/tools.
 
 // The brain agent on the real `opencode` against a scripted fake model (no spend): the plugin in their location reaches
 // the tool gate with the session id, the real brain capabilities run on a temp vault, and the agent's own file tools
-// cannot reach the vault around the gate. The route is overridden to the OpenAI-compatible fake (the production route is
-// Terra on the Responses wire, which the review and check agents already exercise); the agent, its plugin and its
-// permissions are the production ones. Skipped where no opencode is installed (CI runners).
+// cannot reach the vault around the gate. The fake speaks the Anthropic Messages wire, the leg of the production route
+// (`brain.agent` is Haiku, no override); the agent, its plugin and its permissions are the production ones. Skipped where no opencode is installed (CI runners).
 let binary: string | null = null
 try {
   binary = resolveOpencodeBinary()
@@ -30,47 +29,75 @@ try {
 type Step = { tool: string; args: Record<string, unknown> } | { text: string }
 type Seen = { tools: string[]; messages: Record<string, unknown>[] }
 
-/** An OpenAI-compatible streaming endpoint that plays `script` turn by turn and records every request. */
+/**
+ * A scripted endpoint on the Anthropic Messages wire (the gateway's `/anthropic/v1/messages`, what Claude routes use): it
+ * plays `script` turn by turn and records every request, normalised to the shape the assertions read (`tools` names,
+ * and `messages` where a tool result is a `{ role: 'tool', content }` entry). Each turn opens with a thinking block
+ * (`REASONING-n`) so the replay of provider reasoning is observable; usage carries 800 cache-read tokens.
+ */
 function fakeModel(script: Step[]) {
   const seen: Seen[] = []
   const server = Bun.serve({
     port: 0,
     hostname: '127.0.0.1',
     async fetch(req) {
-      const body = (await req.json()) as {
-        tools?: { function: { name: string } }[]
-        messages: Record<string, unknown>[]
-      }
-      seen.push({ tools: (body.tools ?? []).map((t) => t.function.name).sort(), messages: body.messages })
+      const body = (await req.json()) as { tools?: { name: string }[]; messages: Record<string, unknown>[] }
+      seen.push({ tools: (body.tools ?? []).map((t) => t.name).sort(), messages: normalise(body.messages) })
       const step = script[Math.min(seen.length - 1, script.length - 1)] as Step
-      const chunk = (delta: unknown, finish: string | null = null) =>
-        `data: ${JSON.stringify({ id: 'c', object: 'chat.completion.chunk', created: 1, model: 'm', choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`
-      const reasoning = `REASONING-${seen.length}`
-      let out = chunk({ role: 'assistant', reasoning_content: reasoning })
+      const event = (type: string, data: unknown) =>
+        `event: ${type}\ndata: ${JSON.stringify({ type, ...(data as object) })}\n\n`
+      const block = (index: number, start: unknown, ...deltas: unknown[]) =>
+        event('content_block_start', { index, content_block: start }) +
+        deltas.map((delta) => event('content_block_delta', { index, delta })).join('') +
+        event('content_block_stop', { index })
+      let out = event('message_start', {
+        message: {
+          id: `msg_${seen.length}`,
+          type: 'message',
+          role: 'assistant',
+          model: 'claude-fake',
+          content: [],
+          stop_reason: null,
+          stop_sequence: null,
+          usage: { input_tokens: 200, output_tokens: 1, cache_read_input_tokens: 800, cache_creation_input_tokens: 0 },
+        },
+      })
+      out += block(
+        0,
+        { type: 'thinking', thinking: '' },
+        { type: 'thinking_delta', thinking: `REASONING-${seen.length}` },
+        { type: 'signature_delta', signature: `sig-${seen.length}` },
+      )
       out +=
         'tool' in step
-          ? chunk({
-              tool_calls: [
-                {
-                  index: 0,
-                  id: `call_${seen.length}`,
-                  type: 'function',
-                  function: { name: step.tool, arguments: JSON.stringify(step.args) },
-                },
-              ],
-            }) + chunk({}, 'tool_calls')
-          : chunk({ content: step.text }) + chunk({}, 'stop')
-      const usage = {
-        prompt_tokens: 1_000,
-        completion_tokens: 100,
-        total_tokens: 1_100,
-        prompt_tokens_details: { cached_tokens: 800 },
-      }
-      out += `data: ${JSON.stringify({ id: 'c', object: 'chat.completion.chunk', created: 1, model: 'm', choices: [], usage })}\n\ndata: [DONE]\n\n`
+          ? block(
+              1,
+              { type: 'tool_use', id: `toolu_${seen.length}`, name: step.tool, input: {} },
+              { type: 'input_json_delta', partial_json: JSON.stringify(step.args) },
+            )
+          : block(1, { type: 'text', text: '' }, { type: 'text_delta', text: step.text })
+      out += event('message_delta', {
+        delta: { stop_reason: 'tool' in step ? 'tool_use' : 'end_turn', stop_sequence: null },
+        usage: { output_tokens: 100 },
+      })
+      out += event('message_stop', {})
       return new Response(out, { headers: { 'content-type': 'text/event-stream' } })
     },
   })
   return { server, seen }
+}
+
+/** Messages turns as the assertions read them: a user turn of tool results becomes one `tool` entry per result. */
+function normalise(messages: Record<string, unknown>[]): Record<string, unknown>[] {
+  return messages.flatMap((m) => {
+    if (m.role !== 'user' || !Array.isArray(m.content)) return [m]
+    const results = (m.content as { type: string; content?: unknown }[]).filter((b) => b.type === 'tool_result')
+    if (results.length === 0) return [m]
+    return results.map((b) => ({
+      role: 'tool',
+      content: Array.isArray(b.content) ? b.content.map((c: { text?: string }) => c.text ?? '').join('') : b.content,
+    }))
+  })
 }
 
 const ANSWER = JSON.stringify({
@@ -131,8 +158,6 @@ async function runAgent(script: Step[]) {
       prompt: '',
       // A text step, as the workflow runs it: its draft is parsed by the workflow, not the host.
       attribution: { runId, rootId: runId, workflow: 'brain', step: 'brain', purpose: 'verify' },
-      // The fake model speaks the chat leg: an arm moves the route onto a chat-leg model the server serves.
-      arm: { routes: { 'brain.agent': { model: 'deepseek-v4.1-flash' } } },
     })) as OpenCodeHandle
     await host.prompt(handle, 'How many billing lanes are there?')
     const result = await host.wait(handle, {
