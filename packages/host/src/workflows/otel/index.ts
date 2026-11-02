@@ -120,9 +120,9 @@ export function createOtelWorkflows(deps: HostDeps, options: OtelOptions = {}): 
       // for hdx, but the middleware still records it), and its output is the run's calls, journaled so a replay grounds
       // the same way. Calls made before a host restart are lost (the resumed attempt numbers its queries apart, `q2.1`): the
       // earlier ids match nothing, so findings resting on them end up flagged, never dropped.
-      const tools = ctx.step('tools', async ({ addUsage, signal, attempt }) => {
+      const tools = ctx.step('tools', async ({ addUsage, signal, attempt, attribution }) => {
         calls.begin(attempt)
-        const unbind = toolGate.bindUsage(runId, STEP, addUsage)
+        const unbind = toolGate.bindUsage(runId, STEP, addUsage, attribution)
         toolsBound()
         try {
           await untilAborted(ended, signal)

@@ -1,5 +1,5 @@
 import { parseJsonLoose } from '@agent-workflows/capabilities'
-import { type Ctx, defineWorkflow, type Logger, type Usage, WorkflowError } from '@agent-workflows/runtime'
+import { type Ctx, defineWorkflow, type Logger, type StepScope, WorkflowError } from '@agent-workflows/runtime'
 import { z } from 'zod'
 import type { HostWorkflow } from '../../operations.ts'
 import type { HostDeps } from '../index.ts'
@@ -84,7 +84,7 @@ async function untilAborted(done: Promise<void>, signal: AbortSignal): Promise<v
 }
 
 /** What a step body is given by `ctx.step`: the part of its scope the tools step uses. */
-type ToolsBody = (scope: { addUsage: (usage: Usage) => void; signal: AbortSignal }) => Promise<Evidence>
+type ToolsBody = (scope: Pick<StepScope, 'addUsage' | 'signal' | 'attribution'>) => Promise<Evidence>
 
 /**
  * One try of the agent, as its own agent step with its own grant and evidence: `stepId` is the agent step's id, the
@@ -139,8 +139,8 @@ export function createBrainWorkflows(deps: HostDeps, options: BrainOptions = {})
       // The tools step lives as long as the agent's turns: every gate call books its usage here as it is reported, so
       // a cancelled or failed attempt keeps its spend. Its output is the evidence from the ledger, read once the agent
       // has ended and every call in flight is served.
-      const tools = attempt.tools(async ({ addUsage, signal }) => {
-        const unbind = toolGate.bindUsage(runId, stepId, addUsage)
+      const tools = attempt.tools(async ({ addUsage, signal, attribution }) => {
+        const unbind = toolGate.bindUsage(runId, stepId, addUsage, attribution)
         toolsBound()
         try {
           await untilAborted(ended, signal)

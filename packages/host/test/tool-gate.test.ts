@@ -293,6 +293,24 @@ describe('usage', () => {
   })
 })
 
+describe('attribution', () => {
+  test("a call carries the bound step's attribution to the capability; none before the bind", async () => {
+    const seen: unknown[] = []
+    capability = async (id, input, scope) => {
+      seen.push(scope.attribution)
+      return echo(id, input, scope)
+    }
+    const close = gate.open({ runId: 'a', stepId: 's', tools: { find: 'cap.find' } })
+    const attribution = { runId: 'a', rootId: 'root', workflow: 'research', step: 'tools', purpose: 'prod' }
+    await post('find', 'a:s')
+    const unbind = gate.bindUsage('a', 's', () => {}, attribution)
+    await post('find', 'a:s')
+    expect(seen).toEqual([undefined, attribution])
+    unbind()
+    await close()
+  })
+})
+
 describe('usage no step took', () => {
   test('usage booked on a grant that was never bound is logged with run, step and amount when the grant ends', async () => {
     const close = gate.open({ runId: 'a', stepId: 's', tools: { find: 'cap.find' } })
