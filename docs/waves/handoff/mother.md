@@ -22,6 +22,8 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
 - 2026-11-03 owner: `research.agent` -> Haiku 5.5 high now (reverses 11-02 18:10 (2)); act on pacing now (not after
   7 days); review should end up off API credit, on a subscription-based Claude Code review agent (interactive factory
   sessions, not `claude -p`): Wave 17 researches and designs it before Wave 8 resumes. Relayed the hotfix to r12.
+  Live `7a58222`. Prod credit last 48 h $67.27, ~97 % review; pace since the angle hotfix ~$50/day vs ~$10/day the
+  credit sustains. Next lever (r12): cap angle prompts under Haiku's 100k long-prompt tier. Asked the owner: synthesis to Haiku?
 - 2026-11-02 21:00 owner: no labelling session ("I will not answer 155 questions"). Ground truth is validated by a
   third labeller and a second judge on other vendors (PLAN Wave 8); reports state the LLM-consensus limit. Rule for every
   wave: never plan owner work beyond a few minutes; a human check is a ≤ 10-item sample, asked only when the automated
