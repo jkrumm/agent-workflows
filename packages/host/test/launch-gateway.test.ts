@@ -106,7 +106,7 @@ describe('launch-gateway.sh', () => {
   // Every ref must already be in the mini's secrets cache. The IU pair left .env.tpl in Wave 3 (agw holds no provider
   // key) and stays seeded for the gateway alone; any other ref must be one .env.tpl holds.
   const GATEWAY_ONLY_REFS = ['IU_API_KEY=op://common/anthropic/API_KEY', 'IU_BASE_URL=op://common/anthropic/BASE_URL']
-  test('the template holds only refs already seeded: .env.tpl\'s, plus the IU pair', () => {
+  test("the template holds only refs already seeded: .env.tpl's, plus the IU pair", () => {
     const main = readFileSync(join(ROOT, '.env.tpl'), 'utf8')
     for (const line of TPL.split('\n')) {
       if (!line.includes('=op://') || GATEWAY_ONLY_REFS.includes(line)) continue
