@@ -3,14 +3,14 @@ import { chmodSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync }
 import { dirname, join } from 'node:path'
 import { AGENT_SAFE_HDX } from '@agent-workflows/capabilities'
 import { isStepSession } from '@agent-workflows/opencode-host'
-import type { Attribution, Json, Logger, Usage } from '@agent-workflows/runtime'
+import type { Arm, Attribution, Json, Logger, Usage } from '@agent-workflows/runtime'
 import { z } from 'zod'
 
 /** How the gate runs a capability: the host's registry, in process. */
 export type CapabilityCall = (
   id: string,
   input: Json,
-  options: { addUsage: (usage: Usage) => void; signal: AbortSignal; attribution?: Attribution },
+  options: { addUsage: (usage: Usage) => void; signal: AbortSignal; attribution?: Attribution; arm?: Arm },
 ) => Promise<Json>
 
 /** What a workflow's hook is told about each call it granted: the arguments and how the capability answered. */
@@ -65,6 +65,8 @@ type Grant = {
   sink: ((usage: Usage) => void) | null
   /** The step's attribution, once it is bound: the gateway attributes a tool call's model calls to the agent step. */
   attribution: Attribution | null
+  /** The step's run's arm, once it is bound: a tool call's capability resolves its routes with it. */
+  arm: Arm | null
   held: Usage[]
   dropped: boolean
 }
@@ -223,6 +225,7 @@ export class ToolGate {
       inflight: new Set(),
       sink: null,
       attribution: null,
+      arm: null,
       held: [],
       dropped: false,
     }
@@ -232,13 +235,21 @@ export class ToolGate {
 
   /**
    * Books the step's call usage into `addUsage` from now on (and what was held until now); returns the unbind. With the
-   * step's `attribution`, every later call carries it to the capability (and on to the gateway).
+   * step's `attribution`, every later call carries it to the capability (and on to the gateway); with the run's `arm`,
+   * every later call resolves its routes with it.
    */
-  bindUsage(runId: string, stepId: string, addUsage: (usage: Usage) => void, attribution?: Attribution): () => void {
+  bindUsage(
+    runId: string,
+    stepId: string,
+    addUsage: (usage: Usage) => void,
+    attribution?: Attribution,
+    arm?: Arm,
+  ): () => void {
     const grant = this.grants.get(`${runId}:${stepId}`)
     if (!grant) return () => {}
     grant.sink = addUsage
     if (attribution) grant.attribution = attribution
+    if (arm) grant.arm = arm
     for (const usage of grant.held.splice(0)) addUsage(usage)
     return () => {
       if (grant.sink === addUsage) grant.sink = null
@@ -386,6 +397,7 @@ export class ToolGate {
         addUsage: (usage) => this.book(grant, usage),
         signal: grant.controller.signal,
         ...(grant.attribution ? { attribution: grant.attribution } : {}),
+        ...(grant.arm ? { arm: grant.arm } : {}),
       })
       outcome = { ok: true, result }
     } catch (error) {

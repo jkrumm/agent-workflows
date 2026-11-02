@@ -22,15 +22,6 @@ afterEach(async () => {
 
 const TRACEPARENT = '00-0123456789abcdef0123456789abcdef-0123456789abcdef-01'
 const AGENT: AgentDefinition = { name: 'tester', agentsMd: '# tester\n', route: 'check' }
-const ENV = {
-  AGW_ROUTES: JSON.stringify({
-    check: {
-      model: 'claude-haiku-5-5',
-      effort: null,
-      fallback: { model: 'gpt-6.1-terra', effort: 'medium', maxOutputTokens: 32_000 },
-    },
-  }),
-}
 
 /** What the plugin sets on a request of this session. */
 async function pluginHeaders(session: (id: string) => Promise<unknown>, sessionID: string) {
@@ -61,7 +52,6 @@ function start() {
     stateDir: dir,
     pollIntervalMs: 20,
     cutoffGraceMs: 150,
-    env: ENV,
     logger: { warn: () => {}, error: () => {} },
   })
   const client = createClient(endpoint)

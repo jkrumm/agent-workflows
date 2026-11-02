@@ -104,55 +104,6 @@ exec "$SECRETS_RUN" run --env-file="$TPL" -- /bin/sh -c '
     export AGW_GATEWAY_TOOL_TOKEN
   fi
   # <<< gateway-tool-token
-  # >>> routes-override
-  # An untracked route override (which model and spend every run gets, e.g. an eval of another model):
-  # $HOME/.config/agw/routes.json, one JSON object of route id -> partial route spec, exported as AGW_ROUTES. It must be
-  # a regular file (no symlink) owned by this user and not group- or world-writable. It is read ONCE into a variable,
-  # that string is validated with the routes package own validator (the same one the host runs at boot), and exactly that
-  # string is exported. A file that fails is refused with 78 and the validator message, which names the file, the route
-  # id and the problem, never a value or the parser text. 78 retries at the plist ThrottleInterval, not in a tight loop,
-  # but a deploy whose new release refuses the file is rolled back to the previous release, which does not read it:
-  # fix the file before the deploy. The file wins over an AGW_ROUTES already in the environment. Only the validated
-  # route ids are logged. Absent file = no override, the environment untouched.
-  ROUTES_OVERRIDE="$HOME/.config/agw/routes.json"
-  if [ -e "$ROUTES_OVERRIDE" ] || [ -L "$ROUTES_OVERRIDE" ]; then
-    routes_mode=$(/bin/ls -ld "$ROUTES_OVERRIDE" | /usr/bin/cut -c1-10)
-    case "$routes_mode" in
-      -?????????) ;;
-      *) echo "agent-workflows-host: $ROUTES_OVERRIDE must be a regular file, not a symlink or directory; refusing to start." >&2; exit 78 ;;
-    esac
-    [ -O "$ROUTES_OVERRIDE" ] || { echo "agent-workflows-host: $ROUTES_OVERRIDE must be owned by the user running the host; refusing to start." >&2; exit 78; }
-    routes_gw=$(printf "%s" "$routes_mode" | /usr/bin/cut -c6)
-    routes_ow=$(printf "%s" "$routes_mode" | /usr/bin/cut -c9)
-    if [ "$routes_gw" = "w" ] || [ "$routes_ow" = "w" ]; then
-      echo "agent-workflows-host: $ROUTES_OVERRIDE must not be group- or world-writable (it steers the model and spend of every run); refusing to start." >&2
-      exit 78
-    fi
-    routes_json=$(/bin/cat "$ROUTES_OVERRIDE")
-    case "$routes_json" in
-      *[![:space:]]*) ;;
-      *) echo "agent-workflows-host: $ROUTES_OVERRIDE is empty; refusing to start." >&2; exit 78 ;;
-    esac
-    # Run from packages/host: with the isolated install, only a package own node_modules links the workspace packages.
-    # The validator answers on stdout (the ids, or its own message with exit 3); stderr is dropped, so bun warnings or a
-    # failed import never pass for ids or for a message about the file.
-    routes_ids=$(cd packages/host && AGW_ROUTES="$routes_json" bun -e "
-      const { validateOverrides } = await import(\"@agent-workflows/routes\")
-      try {
-        process.stdout.write(validateOverrides(process.env).join(\",\"))
-      } catch (error) {
-        process.stdout.write(error instanceof Error ? error.message : \"invalid override\")
-        process.exit(3)
-      }
-    " 2>/dev/null) || {
-      echo "agent-workflows-host: $ROUTES_OVERRIDE is invalid: ${routes_ids:-the route validator did not run (is the release bun install complete?)}; refusing to start." >&2
-      exit 78
-    }
-    AGW_ROUTES="$routes_json"
-    export AGW_ROUTES
-    echo "agent-workflows-host: route override active from $ROUTES_OVERRIDE (routes: ${routes_ids:-none})" >&2
-  fi
-  # <<< routes-override
   for key in "$@"; do
     eval "value=\${$key-}"
     [ -n "$value" ] || { echo "agent-workflows-host: $key resolved to an empty value; refusing to start." >&2; exit 78; }

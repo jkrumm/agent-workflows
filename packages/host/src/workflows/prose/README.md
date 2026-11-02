@@ -29,8 +29,8 @@ calling Claude Code session on Max, so the platform does the two parts that need
   is kept out with the original's).
 - **Cross-lab refusal.** The writer is always the calling session (Anthropic). `prose.critique` refuses a `prose.review`
   route whose primary or fallback is not on the OpenAI chat wire (an agent harness, an Anthropic wire) or whose model names an Anthropic family (`claude`, `anthropic`, `opus`, `sonnet`, `haiku`,
-  `fable`, vendor prefix included): at boot (`createCapabilities`, after `AGW_ROUTES`) and again on the route each call
-  resolves. A malformed `AGW_ROUTES` stays the first call's `NOT_CONFIGURED`, as for every other capability.
+  `fable`, vendor prefix included): at boot on the table (`createCapabilities`) and again on the route each call
+  resolves, the run's arm applied: an arm moving the seat to the writer's lab is that call's `NOT_CONFIGURED`.
 - **Capability.** `prose.critique` (route `prose.review`, `agw prose-critique`) takes the review fields (non-blank text, medium,
   register, language, `draftFormat`, verdictFirst, brief, context), never a prompt: it builds the fenced reviewer prompt
   itself, so no free prompt on the paid seat is reachable over HTTP or the CLI. A `verdictFirst: false` draft gets no

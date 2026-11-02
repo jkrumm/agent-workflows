@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { OVERRIDES_ENV, resolveRoute } from '@agent-workflows/routes'
+import { type PatchInput, resolveRoute } from '@agent-workflows/routes'
 import { createCapabilities } from './capabilities/index.ts'
 import type { Usage } from './context.ts'
 import { CapabilityCallError } from './errors.ts'
 import { createRegistry } from './registry.ts'
 import { type FakeGateway, type RecordedRequest, sse, startFakeGateway } from './testing/index.ts'
-import { type Env, gatewayTransports } from './transports/index.ts'
+import { gatewayTransports } from './transports/index.ts'
 
 // IU's body on an empty provider account, as it arrived 2026-10-28.
 const BALANCE_503 = 'IU request failed (503) — Insufficient Balance (PaymentRequired) on Requesty-Global'
@@ -35,7 +35,7 @@ afterEach(() => iu.stop())
 async function call(
   id: 'llm.classify' | 'llm.summarize' | 'review.adversary' | 'review.route',
   input: unknown,
-  env: Env = {},
+  routes?: PatchInput,
 ) {
   const transports = gatewayTransports({
     env: { AGW_API_SECRET: 'test-key', AGW_GATEWAY_URL: iu.url },
@@ -43,8 +43,8 @@ async function call(
     idleTimeoutMs: 200,
   })
   const warn = (message: string, meta: Record<string, unknown>) => void warnings.push({ message, meta })
-  const registry = createRegistry(createCapabilities({ transports, env, warn }))
-  return registry.call(id, input as never, { addUsage: (u) => usages.push(u) })
+  const registry = createRegistry(createCapabilities({ transports, env: {}, warn }))
+  return registry.call(id, input as never, { addUsage: (u) => usages.push(u), ...(routes ? { arm: { routes } } : {}) })
 }
 
 /** A chat stream that names the model it was asked for, as IU does. */
@@ -177,22 +177,19 @@ describe('provider-balance fallback', () => {
     expect(usages).toEqual([expect.objectContaining({ model: summarize.fallback?.model })])
   })
 
-  test('AGW_ROUTES overrides the fallback: its model and effort are what runs', async () => {
-    const env = {
-      [OVERRIDES_ENV]: JSON.stringify({ 'cheap.classify': { fallback: { model: 'other', effort: 'low' } } }),
-    }
+  test('an arm patches the fallback: its model, effort and rate are what runs', async () => {
+    const rate = { inputPerM: 1, outputPerM: 5 }
+    const routes = { 'cheap.classify': { fallback: { model: 'other', effort: 'low', rate } } }
     iu.on('messages', () => new Response('', { status: 402 }))
     iu.on('chat', (request) => answer(request, '{"label":"bug","reason":"r"}'))
-    await call('llm.classify', classify, env)
+    await call('llm.classify', classify, routes)
     expect(iu.requests[1]?.body).toMatchObject({ model: 'other', reasoning_effort: 'low' })
-    // A new fallback model without a new rate drops the rate: unknown, never a stale price.
-    expect(usages).toEqual([expect.objectContaining({ model: 'other', cost: null, costSource: 'unknown' })])
+    expect(usages).toEqual([expect.objectContaining({ model: 'other', costSource: 'rate' })])
   })
 
-  test('AGW_ROUTES fallback: null turns the fallback off', async () => {
-    const env = { [OVERRIDES_ENV]: JSON.stringify({ 'cheap.classify': { fallback: null } }) }
+  test('an arm with fallback: null turns the fallback off', async () => {
     iu.on('messages', () => new Response('', { status: 402 }))
-    await caught(call('llm.classify', classify, env))
+    await caught(call('llm.classify', classify, { 'cheap.classify': { fallback: null } }))
     expect(iu.requests).toHaveLength(1)
   })
 })
@@ -258,13 +255,13 @@ describe('provider-balance fallback: the review seats', () => {
   }
 
   test('review.adversary: the fallback runs at its own effort, its empty-answer re-ask too', async () => {
-    const env = { [OVERRIDES_ENV]: JSON.stringify({ 'review.adversary': { fallback: { effort: 'low' } } }) }
+    const routes = { 'review.adversary': { fallback: { effort: 'low' } } }
     let answers = 0
     iu.on('chat', (request) => {
       if (request.body.model === adversary.model) return new Response(BALANCE_503, { status: 503 })
       return answer(request, answers++ === 0 ? '' : '{"findings":[]}')
     })
-    await call('review.adversary', { diff: '+x' }, env)
+    await call('review.adversary', { diff: '+x' }, routes)
     // medium is the adversary's effort for its primary; the fallback keeps its route's (overridden to low).
     expect(iu.requests.map((r) => [r.body.model, r.body.reasoning_effort])).toEqual([
       [adversary.model, 'medium'],

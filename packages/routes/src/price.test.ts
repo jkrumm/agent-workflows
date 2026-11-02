@@ -102,20 +102,24 @@ describe('the image routes', () => {
     expect(IMAGE_ROUTES['image.vectorize'].price).toEqual({ kind: 'unit', unit: 'call', usd: 0.01 })
   })
 
-  test('a resolved route is a copy, and AGW_ROUTES overrides it like any route', () => {
+  test('a resolved route is a copy, and a patch reaches it like any route', () => {
     const route = resolveRoute('image.flare', {})
     expect(route.id).toBe('image.flare')
     route.model = 'changed'
     expect(IMAGE_ROUTES['image.flare'].model).not.toBe('changed')
     const patched = resolveRoute('image.cutout.recraft', {
-      AGW_ROUTES: JSON.stringify({ 'image.cutout.recraft': { price: { kind: 'unit', unit: 'call', usd: 0.5 } } }),
+      'image.cutout.recraft': { price: { kind: 'unit', unit: 'call', usd: 0.5 } },
     })
     expect(patched.price).toEqual({ kind: 'unit', unit: 'call', usd: 0.5 })
   })
 
-  test('an override that changes the model drops the price (a stale price would price the new model wrongly), one that names a price keeps it', () => {
+  test("a patch that changes the model takes the patch's price, else the table's for that model, else is refused (never a stale price, never none)", () => {
     const base = IMAGE_ROUTES['image.cutout.recraft']
-    expect(applyPatch('image.cutout.recraft', base, { model: 'other/model' }).price).toBeUndefined()
+    expect(() => applyPatch('image.cutout.recraft', base, { model: 'other/model' })).toThrow(
+      'route "image.cutout.recraft": the patched model has no price',
+    )
+    const bria = IMAGE_ROUTES['image.cutout.bria']
+    expect(applyPatch('image.cutout.recraft', base, { model: bria.model }).price).toEqual(bria.price)
     expect(
       applyPatch('image.cutout.recraft', base, {
         model: 'other/model',

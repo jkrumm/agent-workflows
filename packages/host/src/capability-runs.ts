@@ -87,9 +87,9 @@ export function createCapabilityWorkflows(registry: { served: readonly Capabilit
       input: capability.input,
       output: capability.output,
       async run(ctx, input) {
-        return ctx.step('call', async ({ addUsage, signal, attribution }) => {
+        return ctx.step('call', async ({ addUsage, signal, attribution, arm }) => {
           try {
-            return (await capability.call(input, { addUsage, signal, attribution })) as Json
+            return (await capability.call(input, { addUsage, signal, attribution, arm })) as Json
           } catch (error) {
             if (!(error instanceof CapabilityCallError)) throw error
             throw new Error(journaled(error), { cause: error })

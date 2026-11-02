@@ -2,8 +2,8 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { BALANCE_MARKER, isBalanceFailure } from '@agent-workflows/routes'
-import type { AgentWaitOptions, Json } from '@agent-workflows/runtime'
+import { BALANCE_MARKER, fallbackRoute, isBalanceFailure, type Rate, resolveRoute } from '@agent-workflows/routes'
+import type { AgentWaitOptions, Arm, Json } from '@agent-workflows/runtime'
 import { WorkflowError } from '@agent-workflows/runtime'
 import {
   type AgentDefinition,
@@ -13,7 +13,7 @@ import {
   type PermissionRule,
   type ServerPort,
 } from '../src/index.ts'
-import { sessionPermissions } from '../src/host.ts'
+import { priceOpenCodeMessages, sessionPermissions } from '../src/host.ts'
 import { sessionState } from '../src/session.ts'
 import { type FakeServer, startFake } from './fake-opencode.ts'
 import { attributionOf } from './attribution.ts'
@@ -34,36 +34,13 @@ async function failure(promise: Promise<unknown>): Promise<string> {
   return outcome.message
 }
 
-/**
- * The host tests are about the harness (pricing tiers, balance fallback), not about which model a route runs today. They
- * pin `check` to the shape they assert: a Haiku 5.5 primary with its long-prompt tier, and a Terra fallback.
- */
-const pinnedCheck = (patch: Record<string, unknown> = {}) =>
-  JSON.stringify({
-    check: {
-      model: 'claude-haiku-5-5',
-      effort: null,
-      rate: {
-        inputPerM: 0.1,
-        outputPerM: 0.5,
-        cacheReadPerM: 0.01,
-        cacheWritePerM: 0.125,
-        longPromptTokens: 100_000,
-        longPrompt: { inputMultiplier: 5, outputMultiplier: 5 },
-      },
-      fallback: {
-        model: 'gpt-6.1-terra',
-        effort: 'medium',
-        maxOutputTokens: 32_000,
-        rate: { inputPerM: 1, outputPerM: 5, cacheReadPerM: 0.05, cacheWritePerM: 1.25 },
-      },
-      ...patch,
-    },
-  })
+/** `check` as the table has it: the host tests price with its rate (Haiku 5.5, a long-prompt tier) and its fallback. */
+const CHECK = resolveRoute('check')
+const RATE = CHECK.rate as Rate
+const TIER = RATE.longPrompt as { inputMultiplier: number; outputMultiplier: number }
 
 function setup(
   options: {
-    env?: Record<string, string>
     turnMs?: number
     agents?: AgentDefinition[]
     traceparent?: (runId: string, stepId: string) => string | undefined
@@ -87,7 +64,6 @@ function setup(
       stateDir: dir,
       pollIntervalMs: 20,
       cutoffGraceMs: 150,
-      env: options.env ?? { AGW_ROUTES: pinnedCheck() },
       ...(options.traceparent ? { traceparent: options.traceparent } : {}),
       locations: { evictAfterMs: 0, tickMs: 60_000, retentionMs: 0, ...locations },
     })
@@ -241,12 +217,20 @@ describe('open / prompt / wait', () => {
     await t.host.prompt(handle, '[free] x')
     const { usage } = await t.host.wait(handle, waitOptions())
     expect(usage?.costSource).toBe('rate')
-    // 10 input, 100 cache read, 20 cache write, 6 output at the Haiku 5.5 rate.
-    expect(usage?.cost).toBeCloseTo((10 * 0.1 + 100 * 0.01 + 20 * 0.125 + 6 * 0.5) / 1e6, 12)
+    // 10 input, 100 cache read, 20 cache write, 6 output at the route's rate.
+    const { inputPerM, outputPerM, cacheReadPerM = 0, cacheWritePerM = 0 } = RATE
+    expect(usage?.cost).toBeCloseTo(
+      (10 * inputPerM + 100 * cacheReadPerM + 20 * cacheWritePerM + 6 * outputPerM) / 1e6,
+      12,
+    )
   })
 
   // Haiku 5.5: 5x on every column for a prompt over 100K tokens; the tier is per message, not per step.
-  const HAIKU_LONG = (150_000 * 0.5 + 100 * 0.05 + 20 * 0.625 + 6 * 2.5) / 1e6
+  const HAIKU_LONG =
+    ((150_000 * RATE.inputPerM + 100 * (RATE.cacheReadPerM ?? 0) + 20 * (RATE.cacheWritePerM ?? 0)) *
+      TIER.inputMultiplier +
+      6 * RATE.outputPerM * TIER.outputMultiplier) /
+    1e6
 
   test('a message above the long-prompt tier is priced at the tier, not at the cost OpenCode reported', async () => {
     const t = setup()
@@ -273,35 +257,53 @@ describe('open / prompt / wait', () => {
     expect((await t.host.wait(handle, waitOptions())).usage?.cost).toBeCloseTo(HAIKU_LONG, 12)
   })
 
+  // A rate without a tier, priced directly: no opencode route of the table has one, and an arm cannot patch a rate there.
   const FLAT = { inputPerM: 0.1, outputPerM: 0.5, cacheReadPerM: 0.01, cacheWritePerM: 0.125 }
-  const flat = () => setup({ env: { AGW_ROUTES: JSON.stringify({ check: { rate: FLAT } }) } })
+  const longMessage = (cost: number) =>
+    ({
+      type: 'assistant',
+      tokens: { input: 150_000, output: 6, reasoning: 0, cache: { read: 100, write: 20 } },
+      cost,
+    }) as never
 
-  test('a long message on a rate without a tier keeps the cost OpenCode reported', async () => {
-    const t = flat()
-    const handle = await t.host.open(spec('x'))
-    await t.host.prompt(handle, '[long] x')
-    const { usage } = await t.host.wait(handle, waitOptions())
-    expect(usage?.costSource).toBe('provider')
-    expect(usage?.cost).toBeCloseTo(0.001, 12)
+  test('a long message on a rate without a tier keeps the cost OpenCode reported', () => {
+    expect(priceOpenCodeMessages([longMessage(0.001)], FLAT)).toEqual({ cost: 0.001, byRate: false })
   })
 
-  test('a long message on a rate without a tier that OpenCode reported at 0 is priced flat, at any size', async () => {
-    const t = flat()
-    const handle = await t.host.open(spec('x'))
-    await t.host.prompt(handle, '[free] [long] x')
-    const { usage } = await t.host.wait(handle, waitOptions())
-    expect(usage?.costSource).toBe('rate')
-    expect(usage?.cost).toBeCloseTo((150_000 * 0.1 + 100 * 0.01 + 20 * 0.125 + 6 * 0.5) / 1e6, 12)
+  test('a long message on a rate without a tier that OpenCode reported at 0 is priced flat, at any size', () => {
+    const priced = priceOpenCodeMessages([longMessage(0)], FLAT)
+    expect(priced?.byRate).toBe(true)
+    expect(priced?.cost).toBeCloseTo((150_000 * 0.1 + 100 * 0.01 + 20 * 0.125 + 6 * 0.5) / 1e6, 12)
   })
 
-  test('cost 0 on a route without a rate is unpriced, never 0', async () => {
-    const t = setup({ env: { AGW_ROUTES: JSON.stringify({ check: { model: 'some-unpriced-model' } }) } })
-    const handle = await t.host.open(spec('x'))
-    await t.host.prompt(handle, '[free] x')
-    const { usage } = await t.host.wait(handle, waitOptions())
-    expect(usage?.model).toBe('some-unpriced-model')
-    expect(usage?.cost).toBeNull()
-    expect(usage?.costSource).toBe('unknown')
+  test('cost 0 without a rate is unpriced, never 0', () => {
+    expect(priceOpenCodeMessages([longMessage(0)], null)).toBeNull()
+  })
+
+  test("an armed step opens its session on the arm's effort and model, and its handle keeps the patch", async () => {
+    const t = setup()
+    const arm: Arm = { routes: { check: { effort: 'low' } } }
+    const handle = await t.host.open({ ...spec('x'), arm })
+    expect((handle as OpenCodeHandle).patch).toEqual({ effort: 'low' })
+    const unarmed = await t.host.open(spec('y', undefined, 'run-1:other'))
+    const [armed, plain] = Object.values(t.fake.state.sessions)
+    expect(armed?.model).toMatchObject({ id: CHECK.model, variant: 'low' })
+    expect(plain?.model).toMatchObject({ id: CHECK.model, variant: CHECK.effort as string })
+    expect((unarmed as OpenCodeHandle).patch).toBeUndefined()
+    const sonnet = resolveRoute('review.angle.deep').model
+    await t.host.open({
+      ...spec('z', undefined, 'run-1:sonnet'),
+      arm: { routes: { check: { model: sonnet, effort: 'max' } } },
+    })
+    expect(Object.values(t.fake.state.sessions)[2]?.model).toMatchObject({ id: sonnet, variant: 'max' })
+  })
+
+  test('an armed step on a model the server does not serve is refused at open, naming the route and the model', async () => {
+    const t = setup()
+    const arm: Arm = { routes: { check: { model: 'not-served' } } }
+    expect(await failure(t.host.open({ ...spec('x'), arm }))).toContain(
+      'route "check": model "not-served" is not served',
+    )
   })
 
   test('the shell tool is refused unless the agent opts in; agent rules come after', async () => {
@@ -1208,7 +1210,10 @@ describe('provider-balance fallback', () => {
 
     const [primary, fallback] = sessions(t)
     expect(primary?.model.providerID).not.toBe('iu-responses')
-    expect(fallback?.model).toMatchObject({ providerID: 'iu-responses', variant: 'medium' })
+    expect(fallback?.model).toMatchObject({
+      providerID: 'iu-responses',
+      variant: fallbackRoute(CHECK)?.effort as string,
+    })
     expect(fallback?.directory).toBe(primary?.directory)
     // The same permissions, the step's directories included.
     expect(fallback?.permissions).toEqual(primary?.permissions)
@@ -1262,9 +1267,19 @@ describe('provider-balance fallback', () => {
     expect(sessions(t)).toHaveLength(1)
   })
 
-  test('AGW_ROUTES without a fallback for the route: the balance error fails the step', async () => {
-    const t = setup({ env: { AGW_ROUTES: pinnedCheck({ fallback: null }) } })
-    const handle = await t.host.open(spec('x'))
+  test("an armed step's fallback runs on the arm's fallback patch: the handle keeps it", async () => {
+    const t = setup()
+    const effort = fallbackRoute(CHECK)?.effort === 'high' ? 'xhigh' : 'high'
+    const handle = await t.host.open({ ...spec('x'), arm: { routes: { check: { fallback: { effort } } } } })
+    await t.host.prompt(handle, '[balance] x')
+    await t.host.wait(handle, waitOptions())
+    const [, fallback] = sessions(t)
+    expect(fallback?.model).toMatchObject({ providerID: 'iu-responses', variant: effort })
+  })
+
+  test('an arm without a fallback for the route: the balance error fails the step', async () => {
+    const t = setup()
+    const handle = await t.host.open({ ...spec('x'), arm: { routes: { check: { fallback: null } } } })
     await t.host.prompt(handle, '[balance] x')
     expect(await failure(t.host.wait(handle, waitOptions()))).toContain('Insufficient Balance')
     expect(sessions(t)).toHaveLength(1)

@@ -1342,7 +1342,9 @@ describe('reviewDraft', () => {
 
   test('returns the reviewer label, targeted notes and the verdict, on the review route', async () => {
     const port = new FakePort(sequence(notesReply))
-    const result = await reviewDraft(llmFor(port), params)
+    // The label names the model the review call resolved: the step's route (an armed run's patch included).
+    const reviewed = chatRoute({ 'podcast.review.a': { model: resolvePodcastRoute('podcast.review.a').model } })
+    const result = await reviewDraft(llmFor(port, reviewed), params)
     expect(result).toEqual({
       reviewer: `dramaturge@${resolvePodcastRoute('podcast.review.a').model}`,
       notes: [

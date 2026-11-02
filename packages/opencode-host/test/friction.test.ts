@@ -287,7 +287,6 @@ function setup() {
       stateDir: dir,
       pollIntervalMs: 20,
       cutoffGraceMs: 150,
-      env: {},
       locations: { evictAfterMs: 0, tickMs: 60_000, retentionMs: 0 },
     })
   const host = makeHost()

@@ -2,7 +2,7 @@
 // `(input, ctx)`; here it becomes an oRPC procedure so `call` and HTTP share validation and middleware.
 import { call, ORPCError, os } from '@orpc/server'
 import type { z } from 'zod'
-import type { Attribution, Ctx, Usage } from './context.ts'
+import type { Attribution, CallArm, Ctx, Usage } from './context.ts'
 import {
   type CallOptions,
   type Capability,
@@ -17,6 +17,8 @@ export interface RequestContext {
   onUsage?: (capability: string, usage: Usage) => void
   /** The calling step (`call` from a run step); the handler's `ctx.attribution`. */
   attribution?: Attribution
+  /** The calling run's arm (`call` from an armed run's step); the handler's `ctx.arm`. Never set from HTTP. */
+  arm?: CallArm
   /**
    * Runs the call in place of the handler, after input validation and before output validation: the host makes a
    * direct HTTP call a run of its own. Absent (and always on `call`), the handler runs in place.
@@ -77,6 +79,7 @@ export function buildProcedure<I extends z.ZodObject, O extends z.ZodType>(
         signal: signal ?? neverAborted(),
         addUsage: (usage) => context.onUsage?.(def.id, usage),
         ...(context.attribution ? { attribution: context.attribution } : {}),
+        ...(context.arm ? { arm: context.arm } : {}),
       }
       return def.handler(input as z.output<I>, ctx) as never
     })
@@ -100,12 +103,13 @@ export function defineCapability<I extends z.ZodObject, O extends z.ZodType, con
     ...def,
     ...resolved,
     async call(input: z.input<I>, options: CallOptions = {}) {
-      const { addUsage, attribution } = options
+      const { addUsage, attribution, arm } = options
       try {
         return (await call(procedure, input as never, {
           context: {
             onUsage: addUsage ? (_, usage) => addUsage(usage) : undefined,
             ...(attribution ? { attribution } : {}),
+            ...(arm ? { arm } : {}),
           },
           signal: options.signal,
         })) as z.output<O>

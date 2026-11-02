@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { OVERRIDES_ENV, RouteOverrideError, resolveRoute, routeSchema, validateOverrides } from './index.ts'
+import { RouteOverrideError, resolveRoute, routeSchema, validateArm } from './index.ts'
 import { discoverRoutes } from './registry.ts'
 import { join } from 'node:path'
 import { mkdtempSync, writeFileSync } from 'node:fs'
@@ -49,17 +49,16 @@ describe('Sonnet at effort none is a configuration error', () => {
     expect(String(error)).toMatch(/"x\.sonnet" is invalid.*Sonnet.*effort none/s)
   })
 
-  test('an override naming a Sonnet model or effort none is refused, naming the route', () => {
-    const onHaikuRoute = { [OVERRIDES_ENV]: JSON.stringify({ 'cheap.classify': { model: 'claude-sonnet-5-5' } }) }
+  test('a patch naming a Sonnet model or effort none is refused, naming the route', () => {
+    const onHaikuRoute = { 'cheap.classify': { model: 'claude-sonnet-5-5' } }
     // cheap.classify runs Haiku at effort none: moving it to a Sonnet without raising the effort is the error.
-    expect(() => validateOverrides(onHaikuRoute)).toThrow(RouteOverrideError)
+    expect(() => validateArm({ routes: onHaikuRoute })).toThrow(RouteOverrideError)
     expect(() => resolveRoute('cheap.classify', onHaikuRoute)).toThrow(/cheap\.classify.*Sonnet.*effort none/s)
-    const none = { [OVERRIDES_ENV]: JSON.stringify({ 'review.angle': { effort: 'none' } }) }
-    expect(() => resolveRoute('review.angle', none)).toThrow(/review\.angle.*Sonnet/s)
+    expect(() => resolveRoute('review.angle', { 'review.angle': { effort: 'none' } })).toThrow(/review\.angle.*Sonnet/s)
   })
 
-  test('the same override with a real effort is accepted', () => {
-    const env = { [OVERRIDES_ENV]: JSON.stringify({ 'cheap.classify': { model: 'claude-sonnet-5-5', effort: 'low' } }) }
-    expect(resolveRoute('cheap.classify', env)).toMatchObject({ model: 'claude-sonnet-5-5', effort: 'low' })
+  test('the same patch with a real effort is accepted', () => {
+    const patch = { 'cheap.classify': { model: 'claude-sonnet-5-5', effort: 'low' } }
+    expect(resolveRoute('cheap.classify', patch)).toMatchObject({ model: 'claude-sonnet-5-5', effort: 'low' })
   })
 })

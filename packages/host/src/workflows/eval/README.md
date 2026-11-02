@@ -6,7 +6,7 @@
 
 | Command | Does |
 |-|-|
-| `agw eval run <review\|check\|research> [--ids a,b] [--limit N] [--concurrency N] [--args '{…}'] [--yes]` | Without `--yes`: the plan (selected case ids) and an estimate (mean cost of the workflow's latest 50 done runs × cases), nothing runs. With `--yes`: each case materialized like the harness does (`materialize` from `@agent-workflows/eval`; a plain case, research's, needs no tree and runs its recorded input), run as a child of the eval run (`parent_id`; its own root, so it is leased and redelivered on its own by the process that serves the workflow) with purpose `eval`, scored against the case's reference, the verdict and the arm's `args` recorded on that run (`scores.final`); the output lists per-case scores and cost (`costUsd`, `unpricedCalls`, read once the case run's record is written), the fingerprints, the means and the case runs' total (`summary.costUsd`). The eval run's own `cost` in the journal is the whole spend: its case runs and the regression judge calls, all its descendants |
+| `agw eval run <review\|check\|research> [--ids a,b] [--limit N] [--concurrency N] [--args '{…}'] [--arm <file>] [--yes]` | Without `--yes`: the plan (selected case ids) and an estimate (mean cost of the workflow's latest 50 done runs × cases), nothing runs. With `--yes`: each case materialized like the harness does (`materialize` from `@agent-workflows/eval`; a plain case, research's, needs no tree and runs its recorded input), run as a child of the eval run (`parent_id`; its own root, so it is leased and redelivered on its own by the process that serves the workflow) with purpose `eval`, scored against the case's reference, the verdict and the arm's `args` recorded on that run (`scores.final`); the output lists per-case scores and cost (`costUsd`, `unpricedCalls`, read once the case run's record is written), the fingerprints, the means and the case runs' total (`summary.costUsd`). The eval run's own `cost` in the journal is the whole spend: its case runs and the regression judge calls, all its descendants |
 | `agw eval compare <review\|check> --a <fp> --b <fp> [--a-args '{…}'] [--b-args '{…}'] [--seed N]` | Two arms paired by case id: per metric the means, the mean and median delta (B − A) with seeded bootstrap 95% CIs (harness `stats.ts`), and which arm the CI favours. Scores are higher-is-better; `costUsd`, `wallMs`, `tokens`, `toolCalls` lower-is-better. Reads only |
 | drift (no command) | every `AGW_DRIFT_INTERVAL_S`, up to 20 sampled, unscored production runs of a workflow with a scorer are scored (`source: drift`); the sample is a hash of the run id, the write first-writer-wins, so several hosts never score a run twice. A tick counts verdicts and recorded scorer errors apart (and warns on errors) |
 
@@ -18,6 +18,14 @@
   identical arms are refused. A fingerprint may be given as a unique prefix (8+ characters). Reruns of a case in one
   arm are averaged before pairing; a run with unpriced calls leaves its cost out instead of comparing a lower bound;
   mixed scorer versions and fewer than 10 paired cases are reported as `warnings`.
+- **`--arm <file>`: route patches and params for this eval only.** The file is an arm, `{ routes?: { <route id>:
+  <patch> }, params?: { <name>: <json> } }` (routes README §Arms); the CLI sends its content, never the path. It is
+  validated at admission (an unknown route, a bad patch, a Sonnet at effort `none`, an agent model the OpenCode server
+  does not serve: refused before any run exists, naming the route), kept in this run's input and on its row
+  (`runs.arm`), and copied to every run below it: case runs, their fan-out children, the regression judge's calls.
+  Each of those resolves every route with the patch; any other run, concurrent or not, resolves the table, so an arm
+  needs no restart and never moves production. The arm is part of the fingerprint of the eval run and of each case
+  run, so `compare` tells arms apart by fingerprint alone. Workflows read `params` with a default (`ctx.param`).
 - **Resume and cancel.** Each case run is keyed `eval:<evalRunId>:<caseId>`, and its clone lives in a directory
   derived from that key (`agw_eval_case_<sha256[:16]>` in the temp dir). A resumed `eval.run` looks the key up before
   anything else: a case scored by this eval run is reported as recorded (no clone, no install, no second score); one

@@ -217,8 +217,8 @@ export function createResearchWorkflows(deps: HostDeps, options: ResearchOptions
       // The tools step lives as long as the agent's turns: every gate call books its usage here as it is reported, so
       // a cancelled or failed run keeps its spend (the step records its usage whatever its end). Its output is the
       // evidence from the ledger, read once the agent has ended and every call in flight is served.
-      const tools = ctx.step('tools', async ({ addUsage, signal, attribution }) => {
-        const unbind = toolGate.bindUsage(runId, 'research', addUsage, attribution)
+      const tools = ctx.step('tools', async ({ addUsage, signal, attribution, arm }) => {
+        const unbind = toolGate.bindUsage(runId, 'research', addUsage, attribution, arm)
         toolsBound()
         try {
           await untilAborted(ended, signal)

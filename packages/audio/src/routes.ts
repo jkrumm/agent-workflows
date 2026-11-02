@@ -1,5 +1,6 @@
 import {
   type FallbackEntry,
+  type PatchInput,
   type Price,
   type Rate,
   type RouteId,
@@ -8,7 +9,7 @@ import {
 } from '@agent-workflows/routes'
 
 // The audio routes. Model, wire, effort and token rates live in the route table (`packages/routes/src/table/audio.ts`)
-// and honour `AGW_ROUTES` overrides; this file adds what only the audio lanes read, keyed by route id, and names no
+// and take a run's arm patch (`audioRoutes(patch)`); this file adds what only the audio lanes read, keyed by route id, and names no
 // model and no price: every price (token `rate`, or `price` per 1k characters, per minute, audio-token split) is the
 // table's, read by `priceCall` in `usage.ts`. The one price fact the table has no field for, an invoice-verified stamp,
 // is `priceVerified` here (audio-gateway `src/usage.ts` RATES at 568c281: only `audio.stt.openai-4o-mini`).
@@ -105,13 +106,11 @@ export function fallbackOf(route: AudioRoute): AudioRoute | undefined {
   return { ...rest, wire, model, ...(effort && { effort }), ...(rate && { rate }), ...(price && { price }) }
 }
 
-type Env = Record<string, string | undefined>
-
-/** Every audio route resolved once, overrides applied (`resolveRoute` fails on a bad `AGW_ROUTES`). */
-export function audioRoutes(env: Env = process.env): Readonly<Record<AudioRouteId, AudioRoute>> {
+/** Every audio route resolved once, with `patch` (a run's arm's `routes`) applied; without one, the table. */
+export function audioRoutes(patch?: PatchInput): Readonly<Record<AudioRouteId, AudioRoute>> {
   const out = {} as Record<AudioRouteId, AudioRoute>
   for (const [id, lane] of Object.entries(AUDIO_LANES) as [AudioRouteId, LaneSpec][]) {
-    const { wire, model, effort, rate, price, fallback } = resolveRoute(id, env)
+    const { wire, model, effort, rate, price, fallback } = resolveRoute(id, patch)
     out[id] = {
       ...lane,
       id,

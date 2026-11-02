@@ -135,7 +135,7 @@ test('every route group exports `routes` and adds exactly its keys to RouteId, i
 // Calls that name a route by literal outside a typed `RouteId` slot (a step's untyped `options.route`) would only fail
 // when the call runs. Every literal in a route position under packages/*/src must be a route the table serves.
 const ROUTE_LITERAL =
-  /\b(?:route|routeId): '([a-z0-9.]+)'(?!\s*\|)|\bresolve\(deps, '([a-z0-9.]+)'\)|\bresolveRoute\('([a-z0-9.]+)'|_ROUTE(?:: RouteId)? = '([a-z0-9.]+)'/g
+  /\b(?:route|routeId): '([a-z0-9.]+)'(?!\s*\|)|\bresolve\(deps, '([a-z0-9.]+)'(?:, \w+)?\)|\bresolveRoute\('([a-z0-9.]+)'|_ROUTE(?:: RouteId)? = '([a-z0-9.]+)'/g
 
 export function unknownRouteLiterals(files: Map<string, string>, known: Set<string>): string[] {
   const hits: string[] = []

@@ -12,7 +12,7 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { isAbsolute, join } from 'node:path'
-import { resolveRoute } from '@agent-workflows/routes'
+import { EFFORTS, opencodeModels, resolveRoute } from '@agent-workflows/routes'
 import type { AgentWaitOptions } from '@agent-workflows/runtime'
 import {
   buildServerConfig,
@@ -278,7 +278,6 @@ describe('OpenCodeServer', () => {
       stateDir: dir,
       pollIntervalMs: 30,
       cutoffGraceMs: 150,
-      env: {},
       logger: { warn: () => {}, error: () => {} },
     })
     try {
@@ -426,7 +425,7 @@ describe('resolveOpencodeBinary', () => {
 
 describe('buildServerConfig', () => {
   test('every opencode route has a model row on a gateway provider, priced from the table, the door token by reference', () => {
-    const config = buildServerConfig({}) as {
+    const config = buildServerConfig() as {
       providers: Record<
         string,
         {
@@ -467,30 +466,32 @@ describe('buildServerConfig: the gateway', () => {
     AGW_GATEWAY_URL: 'http://sekret.example.com',
   }
 
-  test('the config holds no credential and no address, and names no IU variable', () => {
-    const text = JSON.stringify(buildServerConfig(secrets))
+  test('the config holds no credential and no address, and names no IU variable, whatever the environment holds', () => {
+    Object.assign(process.env, secrets)
+    const text = JSON.stringify(buildServerConfig())
     expect(text).not.toContain('sekret')
     expect(text).not.toMatch(/IU_|ANTHROPIC_API_KEY|AGW_API_SECRET|api\.anthropic\.com/)
     expect(text.match(/\{env:[A-Z_]+\}/g)?.every((v) => /AGW_GATEWAY_(URL|TOOL_TOKEN)/.test(v))).toBe(true)
+    for (const key of Object.keys(secrets)) delete process.env[key]
   })
 
   test('only the Anthropic leg sends x-agw-fallback: none, as a static header', () => {
-    const { providers } = buildServerConfig({}) as { providers: Record<string, { headers?: unknown }> }
+    const { providers } = buildServerConfig() as { providers: Record<string, { headers?: unknown }> }
     expect(providers[PROVIDER_ANTHROPIC]?.headers).toEqual({ 'x-agw-fallback': 'none' })
     expect(providers[PROVIDER_CHAT]?.headers).toBeUndefined()
     expect(providers[PROVIDER_RESPONSES]?.headers).toBeUndefined()
   })
 
   test("the plugin is one absolute directory, the package's by default", () => {
-    expect((buildServerConfig({}) as { plugins: string[] }).plugins).toEqual([ATTRIBUTION_PLUGIN])
+    expect((buildServerConfig() as { plugins: string[] }).plugins).toEqual([ATTRIBUTION_PLUGIN])
     expect(isAbsolute(ATTRIBUTION_PLUGIN)).toBe(true)
-    expect((buildServerConfig({}, { plugin: '/state/p' }) as { plugins: string[] }).plugins).toEqual(['/state/p'])
+    expect((buildServerConfig({ plugin: '/state/p' }) as { plugins: string[] }).plugins).toEqual(['/state/p'])
   })
 })
 
 describe('buildServerConfig: review.angle.deep', () => {
   test('the deep angle row is Sonnet on the native Anthropic provider, and the route’s fallback is Terra on Responses with its cost rows', () => {
-    const config = buildServerConfig({}) as {
+    const config = buildServerConfig() as {
       providers: Record<string, { models: Record<string, { cost?: unknown }> }>
     }
     expect(modelRef('review.angle.deep', {}).model).toMatchObject({
@@ -511,24 +512,16 @@ describe('buildServerConfig: review.angle.deep', () => {
 })
 
 describe('buildServerConfig: the provider follows the model family, whatever other routes share the id', () => {
-  // The Claude seats run on the native Anthropic provider; this override pins a Claude model onto `brain.agent` with no effort and no fallback.
-  const claudeEnv = {
-    AGW_ROUTES: JSON.stringify({
-      'brain.agent': {
-        model: 'claude-haiku-5-5',
-        effort: null,
-        fallback: null,
-      },
-    }),
-  }
+  // The Claude seats run on the native Anthropic provider; this patch pins a Claude model onto `brain.agent` with no effort and no fallback.
+  const claudePatch = { 'brain.agent': { model: 'claude-haiku-5-5', effort: null, fallback: null } }
   const providerOf = (model: string) =>
     model.startsWith('gpt-') ? PROVIDER_RESPONSES : model.startsWith('claude-') ? PROVIDER_ANTHROPIC : PROVIDER_CHAT
 
   test('every opencode-wire route and fallback sits on the provider of its family: Claude native, gpt Responses, the rest chat', () => {
-    const config = buildServerConfig(claudeEnv) as {
+    const config = buildServerConfig() as {
       providers: Record<string, { models: Record<string, unknown> }>
     }
-    const routes = opencodeRoutes(claudeEnv)
+    const routes = opencodeRoutes()
     expect(routes.length).toBeGreaterThan(0)
     for (const route of routes) {
       const home = Object.entries(config.providers)
@@ -554,11 +547,11 @@ describe('buildServerConfig: the provider follows the model family, whatever oth
       expect(modelRef(id, {}).model).toMatchObject({ providerID: PROVIDER_ANTHROPIC, id: 'claude-haiku-5-5' })
       expect(fallbackModelRef(id, {})?.model).toMatchObject({ providerID: PROVIDER_RESPONSES, id: 'gpt-6.1-terra' })
     }
-    expect(modelRef('brain.agent', claudeEnv).model).toMatchObject({
+    expect(modelRef('brain.agent', claudePatch).model).toMatchObject({
       providerID: PROVIDER_ANTHROPIC,
       id: 'claude-haiku-5-5',
     })
-    const config = buildServerConfig(claudeEnv) as {
+    const config = buildServerConfig() as {
       providers: Record<string, { models: Record<string, { compatibility?: unknown }> }>
     }
     expect(config.providers[PROVIDER_ANTHROPIC]?.models['claude-haiku-5-5']?.compatibility).toEqual({
@@ -587,49 +580,50 @@ describe('buildServerConfig: the provider follows the model family, whatever oth
   })
 })
 
-describe('buildServerConfig: claude variants use the Anthropic options, not reasoningEffort', () => {
-  const variantsOf = (effort: string | null, fallbackEffort?: string) => {
-    // `check` and `brain.agent` both run Haiku (the EASY seat): pin both so only the effort under test is left
-    const pinned = {
-      model: 'claude-haiku-5-5',
-      effort,
-      fallback: fallbackEffort ? { model: 'claude-haiku-5-5', effort: fallbackEffort } : null,
-    }
-    const env = { AGW_ROUTES: JSON.stringify({ 'brain.agent': pinned, check: pinned }) }
-    const config = buildServerConfig(env) as {
-      providers: Record<string, { models: Record<string, { variants?: { id: string; settings: unknown }[] }> }>
-    }
-    return config.providers[PROVIDER_ANTHROPIC]?.models['claude-haiku-5-5']?.variants
-  }
+describe('buildServerConfig: every effort variant of every served model', () => {
+  type Rows = Record<string, { models: Record<string, { variants?: { id: string; settings: unknown }[] }> }>
+  const providers = () => (buildServerConfig() as { providers: Rows }).providers
 
-  test('effort none disables thinking', () => {
-    expect(variantsOf('none')).toEqual([{ id: 'none', settings: { thinking: { type: 'disabled' } } }])
+  test('each model row carries every effort it can run, a Sonnet all but none', () => {
+    for (const route of opencodeRoutes()) {
+      const row = Object.values(providers()).find((p) => route.model in p.models)?.models[route.model]
+      const expected = EFFORTS.filter((e) => !(route.model.startsWith('claude-sonnet') && e === 'none'))
+      expect(row?.variants?.map((v) => v.id)).toEqual([...expected])
+    }
   })
 
-  test('any other effort sets effort and adaptive thinking', () => {
-    expect(variantsOf('high')).toEqual([{ id: 'high', settings: { effort: 'high', thinking: { type: 'adaptive' } } }])
+  test('Claude variants use the Anthropic options, not reasoningEffort: none disables thinking, the rest are adaptive', () => {
+    const haiku = providers()[PROVIDER_ANTHROPIC]?.models['claude-haiku-5-5']?.variants
+    expect(haiku?.find((v) => v.id === 'none')).toEqual({ id: 'none', settings: { thinking: { type: 'disabled' } } })
+    expect(haiku?.find((v) => v.id === 'high')).toEqual({
+      id: 'high',
+      settings: { effort: 'high', thinking: { type: 'adaptive' } },
+    })
   })
 
-  test('routes sharing the model merge their variants', () => {
-    expect(variantsOf('high', 'none')?.map((v) => v.id)).toEqual(['high', 'none'])
+  test('the other providers take reasoningEffort', () => {
+    const terra = providers()[PROVIDER_RESPONSES]?.models['gpt-6.1-terra']?.variants
+    expect(terra?.find((v) => v.id === 'xhigh')).toEqual({ id: 'xhigh', settings: { reasoningEffort: 'xhigh' } })
+  })
+
+  test("an arm's effort or model move resolves to a variant the running config registers", () => {
+    const rows = providers()
+    for (const model of opencodeModels()) {
+      for (const effort of EFFORTS) {
+        if (model.startsWith('claude-sonnet') && effort === 'none') continue
+        const { model: ref } = modelRef('check', { check: { model, effort } })
+        const row = rows[ref.providerID]?.models[ref.id]
+        expect(row?.variants?.some((v) => v.id === ref.variant)).toBe(true)
+      }
+    }
   })
 })
 
 describe('buildServerConfig: fallbacks', () => {
-  test('the Responses provider has one Terra row with one variant per effort the routes and fallbacks use', () => {
-    const config = buildServerConfig({}) as {
-      providers: Record<
-        string,
-        {
-          package: string
-          models: Record<string, { variants?: { id: string }[] }>
-        }
-      >
-    }
-    const responses = config.providers['iu-responses']
+  test('the Responses provider has one Terra row: the agent fallbacks share it', () => {
+    const responses = (buildServerConfig() as { providers: Record<string, { package: string; models: object }> })
+      .providers['iu-responses']
     expect(responses?.package).toBe('aisdk:@ai-sdk/openai')
-    const rows = Object.values(responses?.models ?? {})
-    expect(rows).toHaveLength(1)
-    expect(rows[0]?.variants?.map((v) => v.id)).toEqual(['low', 'medium'])
+    expect(Object.keys(responses?.models ?? {})).toEqual(['gpt-6.1-terra'])
   })
 })

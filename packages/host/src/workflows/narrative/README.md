@@ -13,7 +13,7 @@ business terms. Port of agent-gateway's `narrative` job (`server/jobs/handlers/n
 | `polish` | a child run (`narrative-polish`, internal) of `prose-polish`'s steps on the body (medium `vault`, `verdictFirst: false`, the headings listed as the brief), frontmatter kept verbatim |
 
 Input: `cwd` (at most 1000 chars), `project`, `previousPage` (default null), `since` (an ISO datetime, default null: an unparseable one would silently drop every session), `polish` (default true). The free `model`
-override is gone (the model is the `narrative` route's; `AGW_ROUTES` overrides it). Output is agent-gateway's, field for field,
+override is gone (the model is the `narrative` route's; an eval run's arm patches it). Output is agent-gateway's, field for field,
 minus `backend` (the platform has one): `project`, `changed`, `reason`, `summary`, `page`, `sections`, `inputs`, `model`,
 `prose{status, kept, keptReason, costUsd}`.
 

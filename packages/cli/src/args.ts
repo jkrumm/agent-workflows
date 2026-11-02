@@ -1,3 +1,4 @@
+import { readFileSync, statSync } from 'node:fs'
 import { usage } from './exit.ts'
 import type { Command, Field, Schema } from './spec.ts'
 
@@ -84,18 +85,40 @@ export function coerce(field: Field, raw: string, label = `--${field.flag}`): un
       if (match === undefined) throw bad(`must be one of ${typeLabel(field)}`)
       return match
     }
-    case 'json':
+    case 'json': {
       try {
         return JSON.parse(raw)
       } catch {
-        throw bad('must be JSON')
+        const file = jsonFile(label, raw)
+        if (file.found) return file.value
+        throw bad('must be JSON or a JSON file')
       }
+    }
     case 'any':
       try {
         return JSON.parse(raw)
       } catch {
         return raw
       }
+  }
+}
+
+/**
+ * A JSON flag's value that is not JSON but names a file: the file's JSON (`agw eval run review --arm arm.json` sends the
+ * arm, never the path). Not found when no such file exists; a file that is not JSON is a usage error naming the flag.
+ */
+function jsonFile(label: string, path: string): { found: true; value: unknown } | { found: false } {
+  let text: string
+  try {
+    if (!statSync(path).isFile()) return { found: false }
+    text = readFileSync(path, 'utf8')
+  } catch {
+    return { found: false }
+  }
+  try {
+    return { found: true, value: JSON.parse(text) }
+  } catch {
+    throw usage(`${label}: ${path} is not a JSON file`)
   }
 }
 

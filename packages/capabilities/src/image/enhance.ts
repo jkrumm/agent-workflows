@@ -368,7 +368,7 @@ export function createEnhance(deps: ResolvedImageDeps, llm: LlmDeps) {
     // `agw image` is the workflow, and the host refuses a command that is the prefix of another: one hyphenated word.
     cli: { command: ['image-enhance'], positional: ['brief'], defaultFormat: 'json' },
     async handler(input, ctx: Ctx) {
-      const route = deps.route('image.enhance')
+      const route = deps.route('image.enhance', ctx)
       // The text the gate and the verbatim check read: what this round adds (the brief, or an iteration's delta).
       const source = input.brief ?? input.delta ?? ''
       const applied = modeApplied(input.mode, source)
@@ -410,7 +410,7 @@ export function createEnhance(deps: ResolvedImageDeps, llm: LlmDeps) {
       if (applied === 'off' && input.delta !== undefined) {
         notes.push('delta not applied: mode off (passthrough) keeps the current prompt unchanged')
       }
-      const price = deps.route(settings.model === 'flare' ? 'image.flare' : 'image.sunburst').price
+      const price = deps.route(settings.model === 'flare' ? 'image.flare' : 'image.sunburst', ctx).price
       return {
         intent: input.intent === 'auto' ? plan.intent : { detected: input.intent, confidence: plan.intent.confidence },
         prompt: finalPrompt,

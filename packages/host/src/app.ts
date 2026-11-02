@@ -54,11 +54,10 @@ export interface HostOptions {
    */
   friction?: FrictionStatus
   /**
-   * Serves `agw routes`, built once from this snapshot of the `AGW_ROUTES` `boot` validated (a bad one throws here).
-   * Set by the process that serves capabilities only: the CLI refuses a command two processes declare, so the audio
-   * process leaves it out.
+   * Serves `agw routes`, the plain route table. Set by the process that serves capabilities only: the CLI refuses a
+   * command two processes declare, so the audio process leaves it out.
    */
-  routesEnv?: { AGW_ROUTES?: string | undefined }
+  serveRoutes?: boolean
   /** Upper bound of the Postgres probe behind `/health`. Default 2 s. */
   healthTimeoutMs?: number
   logger?: Logger
@@ -123,7 +122,7 @@ export function createHost(options: HostOptions): Host {
     .filter((entry) => !entry.internal)
     .map((entry) => ({ entry, op: workflowOperation(entry, deps) }))
   const runs = runOperations(deps)
-  const routes = options.routesEnv ? routesOperation(options.routesEnv) : undefined
+  const routes = options.serveRoutes ? routesOperation() : undefined
   const reads = options.reads ?? {}
   // A direct capability call over HTTP is a one-step run; `boot` registers the same workflows with the runtime.
   const invoke = capabilityRuns(options.capabilityWorkflows, { ...deps, isOpen })

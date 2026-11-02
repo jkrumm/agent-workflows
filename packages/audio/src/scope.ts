@@ -1,6 +1,7 @@
 import type { AudioConfig } from './config.ts'
 import type { Attribution } from './gateway.ts'
 import { ffmpegMedia, type MediaPort } from './media/audio.ts'
+import type { PatchInput } from '@agent-workflows/routes'
 import { type AudioLane, type AudioRoute, type AudioRouteId, audioRoutes } from './routes.ts'
 import {
   type CallEndpoint,
@@ -35,7 +36,12 @@ export interface AudioDeps {
   fetch?: Fetch
   /** The ffmpeg/ffprobe boundary; default spawns the host binaries. */
   media?: MediaPort
-  /** The env `AGW_ROUTES` overrides are read from, once, when a handler or scope is built. Default `process.env`. */
+  /**
+   * The calling run's arm patch (`arm.routes`), applied once when a scope is built: an in-process scope of an armed run
+   * (the podcast's production stage) resolves its routes with it. Absent (every door request): the table.
+   */
+  routes?: PatchInput
+  /** The env the podcast's production stage reads its configuration from (`PODCAST_*`, `ABS_*`). Default `process.env`. */
   env?: Record<string, string | undefined>
   log?: AudioLog
   /** The request id stamped on every usage event of one request. Default: a fresh UUID. */
@@ -73,7 +79,7 @@ export function resolveDeps(deps: AudioDeps): Resolved {
     media:
       deps.media ??
       ffmpegMedia({ mp3BitrateKbps: deps.config.ttsBitrateKbps, opusBitrateKbps: deps.config.ttsOpusBitrateKbps }),
-    routes: audioRoutes(deps.env),
+    routes: audioRoutes(deps.routes),
     log: deps.log ?? CONSOLE_LOG,
   }
 }

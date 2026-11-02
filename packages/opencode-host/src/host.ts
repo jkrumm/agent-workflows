@@ -55,8 +55,6 @@ import {
 } from './session.ts'
 import { RESULT_TOOL, resultTool, resultValue, withResultTool } from './result.ts'
 
-type Env = Record<string, string | undefined>
-
 /** What the host needs from a server: `OpenCodeServer`, or a fixed endpoint in tests. */
 export type ServerPort = {
   endpoint(): Endpoint
@@ -80,8 +78,6 @@ export type OpenCodeHostOptions = {
   }
   /** W3C `traceparent` of the step span (`Telemetry.traceparent`), sent on every request of the step. */
   traceparent?: (runId: string, stepId: string) => string | undefined
-  /** Route resolution (`AGW_ROUTES`). Default `process.env`. */
-  env?: Env
   requestTimeoutMs?: number
   /** A pin taken at `open` and never claimed by a `wait` lapses after this long. Default 30 min. */
   pinTtlMs?: number
@@ -107,6 +103,11 @@ export type OpenCodeHandle = {
   turn?: string
   /** The step's attribution, kept so a provider-balance fallback session carries it too. */
   attribution?: StepAttribution
+  /**
+   * The run's arm patch of this step's route (`arm.routes[route]`), kept so the fallback and the pricing resolve the
+   * route the session was opened on. Absent: the table's route.
+   */
+  patch?: { [key: string]: Json }
   /**
    * Set on every JSON step this build opened (README §Structured output): the digest of its result tool's schema, and
    * `wrapped` when that schema holds the step's under `result` (`wait` unwraps it). A JSON handle without it was opened
@@ -186,11 +187,17 @@ function asHandle(handle: Json): OpenCodeHandle {
     (h.fallback !== undefined && h.fallback !== true) ||
     (h.turn !== undefined && typeof h.turn !== 'string') ||
     (h.result !== undefined && !validResultMarker(h.result)) ||
-    (h.attribution !== undefined && (typeof h.attribution !== 'object' || h.attribution === null))
+    (h.attribution !== undefined && (typeof h.attribution !== 'object' || h.attribution === null)) ||
+    (h.patch !== undefined && (typeof h.patch !== 'object' || h.patch === null || Array.isArray(h.patch)))
   ) {
     throw new WorkflowError('error', 'not an OpenCode host handle')
   }
   return h as OpenCodeHandle
+}
+
+/** The handle's route patch as `resolveRoute` takes it. */
+function patchOf(h: OpenCodeHandle): { [routeId: string]: object } | undefined {
+  return h.patch ? { [h.route]: h.patch } : undefined
 }
 
 function validResultMarker(marker: unknown): boolean {
@@ -314,7 +321,6 @@ export class OpenCodeHost implements AgentHost {
   private readonly cache: WarmCache
   private readonly pollMs: number
   private readonly cutoffGraceMs: number
-  private readonly env: Env
   private readonly logger: Logger
   private readonly timer: ReturnType<typeof setInterval>
   /** Hash directory per agent compiled by this process: always kept by pruning. */
@@ -327,7 +333,6 @@ export class OpenCodeHost implements AgentHost {
     this.agents = new Map(options.agents.map((a) => [a.name, a]))
     this.pollMs = options.pollIntervalMs ?? 1_000
     this.cutoffGraceMs = options.cutoffGraceMs ?? 3_000
-    this.env = options.env ?? process.env
     this.logger = options.logger ?? consoleLogger
     this.cache = new WarmCache(
       { warm: (dir) => this.client.location(dir), evict: (dir) => this.client.evictLocation(dir) },
@@ -389,7 +394,9 @@ export class OpenCodeHost implements AgentHost {
     const allowDirectories = allowedDirectories(def.name, options.allowDirectories)
     const routeId = options.route ?? def.route
     if (!routeId) throw new WorkflowError('error', `agent "${spec.agent}" has no route and the step names none`)
-    const { route, model } = modelRef(routeId, this.env)
+    // The run's arm moves the route's model or effort (admission checked that the server serves it); without one, the table.
+    const { route, model } = modelRef(routeId, spec.arm?.routes)
+    const patch = spec.arm?.routes?.[routeId]
     const attribution = sessionAttribution(spec.attribution)
     // A JSON step's location holds its result tool; a schema the tool cannot take is refused before anything exists.
     const json = options.output === 'json'
@@ -453,6 +460,7 @@ export class OpenCodeHost implements AgentHost {
       runId: spec.runId,
       stepId: spec.stepId,
       attribution,
+      ...(patch ? { patch } : {}),
       ...(allowDirectories.length > 0 ? { allow: allowDirectories } : {}),
       ...(tool ? { result: { digest: tool.digest, ...(tool.wrapped ? { wrapped: true as const } : {}) } } : {}),
     }
@@ -767,7 +775,7 @@ export class OpenCodeHost implements AgentHost {
 
   private fallbackOf(h: OpenCodeHandle) {
     try {
-      return fallbackModelRef(h.route, this.env)
+      return fallbackModelRef(h.route, patchOf(h))
     } catch {
       return undefined
     }
@@ -1158,7 +1166,7 @@ export class OpenCodeHost implements AgentHost {
 
   private routeRate(h: OpenCodeHandle): Rate | null {
     try {
-      const route = h.fallback ? this.fallbackOf(h)?.route : modelRef(h.route, this.env).route
+      const route = h.fallback ? this.fallbackOf(h)?.route : modelRef(h.route, patchOf(h)).route
       return route ? rateFor(route) : null
     } catch {
       return null

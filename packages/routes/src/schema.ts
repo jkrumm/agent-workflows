@@ -73,8 +73,13 @@ const decisionRule = [
  * configuration error, caught at the table import and on every override. The caller names the route.
  */
 const SONNET = /^(?:claude-)?sonnet(?:-|$)/
+/** Whether a model can run at an effort: every effort but `none` on a Sonnet (the rule below). */
+export function takesEffort(model: string, effort: Effort): boolean {
+  return !(SONNET.test(model) && effort === 'none')
+}
+
 const sonnetRule: [(r: { model: string; effort?: Effort }) => boolean, { message: string; path: string[] }] = [
-  (r) => !(SONNET.test(r.model) && r.effort === 'none'),
+  (r) => r.effort === undefined || takesEffort(r.model, r.effort),
   { message: 'a Sonnet model cannot run at effort none: use low, medium, high, xhigh or max', path: ['effort'] },
 ]
 
@@ -112,13 +117,11 @@ export const fallbackPatchSchema = z.strictObject(patchFields)
 export type FallbackPatch = z.infer<typeof fallbackPatchSchema>
 
 /**
- * A partial entry from the override variable; merged over the table entry, then validated whole.
- * There is no `wire`: a route's transport is code, overrides are for model, effort, limit and rate experiments.
+ * A partial entry from an arm's `routes`; merged over the table entry, then validated whole.
+ * There is no `wire`: a route's transport is code, patches are for model, effort, limit and rate experiments.
  */
 export const routePatchSchema = z.strictObject({ ...patchFields, fallback: fallbackPatchSchema.nullable().optional() })
 export type RoutePatch = z.infer<typeof routePatchSchema>
-
-export const overridesSchema = z.record(z.string(), routePatchSchema)
 
 /**
  * Every route id, one key per route: each `table/<group>.ts` adds its own by module augmentation, so the ids stay

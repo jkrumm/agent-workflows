@@ -2,6 +2,7 @@ import { afterAll, describe, expect, test } from 'bun:test'
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import type { Arm } from '@agent-workflows/runtime'
 import { computeFingerprint, type FingerprintInputs, fsFingerprintSource } from '../src/index.ts'
 
 const base: FingerprintInputs = {
@@ -45,6 +46,19 @@ describe('computeFingerprint', () => {
     expect(a).not.toBe(fp)
     expect(computeFingerprint('v1', { ...base, hostPolicy: 'p2' })).not.toBe(a)
   })
+
+  test('an arm moves it, whatever its key order; two arms never share one', () => {
+    const fp = computeFingerprint('v1', base)
+    const arm = { routes: { check: { effort: 'low', model: 'm' } }, params: { finders: 3 } }
+    const armed = computeFingerprint('v1', { ...base, arm })
+    expect(armed).not.toBe(fp)
+    const reordered = { params: { finders: 3 }, routes: { check: { model: 'm', effort: 'low' } } }
+    expect(computeFingerprint('v1', { ...base, arm: reordered })).toBe(armed)
+    expect(computeFingerprint('v1', { ...base, arm: { ...arm, params: { finders: 5 } } })).not.toBe(armed)
+    // An arm on a workflow without agents moves it too (`eval.run` has none).
+    const plain = { agents: [], opencodeVersion: null }
+    expect(computeFingerprint('v1', { ...plain, arm })).not.toBe(computeFingerprint('v1', plain))
+  })
 })
 
 describe('fsFingerprintSource', () => {
@@ -60,12 +74,11 @@ describe('fsFingerprintSource', () => {
   writeFileSync(bin, `#!/bin/sh\necho x >> "${calls}"\necho "2.0.32"\n`)
   chmodSync(bin, 0o755)
 
-  const source = (env: Record<string, string | undefined> = {}) =>
+  const source = () =>
     fsFingerprintSource({
       agentsDir: agents,
       workflows: { 'research.report': [{ agent: 'brain', route: 'cheap.classify' }] },
       opencodeBin: bin,
-      env,
     })
 
   test('reads AGENTS.md, skills and the OpenCode version once per process', async () => {
@@ -81,12 +94,22 @@ describe('fsFingerprintSource', () => {
     expect(await source().inputs({ id: 'plain', version: 'v1' })).toEqual({ agents: [], opencodeVersion: null })
   })
 
-  test('a route override or an AGENTS.md edit changes the fingerprint; a new process sees the edit', async () => {
-    const fp = async (env: Record<string, string | undefined> = {}) =>
-      computeFingerprint('v1', await source(env).inputs({ id: 'research.report', version: 'v1' }))
+  test("an arm's route patch or an AGENTS.md edit changes the fingerprint; a new process sees the edit", async () => {
+    const fp = async (arm?: Arm) =>
+      computeFingerprint('v1', await source().inputs({ id: 'research.report', version: 'v1', ...(arm ? { arm } : {}) }))
     const before = await fp()
     expect(await fp()).toBe(before)
-    expect(await fp({ AGW_ROUTES: JSON.stringify({ 'cheap.classify': { model: 'other-model' } }) })).not.toBe(before)
+    const patched = await source().inputs({
+      id: 'research.report',
+      version: 'v1',
+      arm: { routes: { 'cheap.classify': { effort: 'high' } } },
+    })
+    // The agent's route fingerprint is the patched route's, and the arm itself is an input.
+    expect(patched.agents[0]?.route).not.toBe(
+      (await source().inputs({ id: 'research.report', version: 'v1' })).agents[0]?.route,
+    )
+    expect(await fp({ routes: { 'cheap.classify': { effort: 'high' } } })).not.toBe(before)
+    expect(await fp({ params: { finders: 3 } })).not.toBe(before)
     writeFileSync(join(agents, 'brain', 'AGENTS.md'), '# brain v2')
     expect(await fp()).not.toBe(before)
   })
@@ -100,7 +123,6 @@ describe('fsFingerprintSource', () => {
         agentsDir: agents,
         workflows: { 'research.report': [{ agent: 'brain', route: 'cheap.classify' }] },
         opencodeBin: bin,
-        env: {},
         ...(hostPolicy ? { hostPolicy } : {}),
       })
 

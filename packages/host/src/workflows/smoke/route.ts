@@ -1,5 +1,12 @@
 import type { GatewayTransports, Usage } from '@agent-workflows/capabilities'
-import { costFromUsage, type ResolvedRoute, resolveRoute, type RouteId, routeIds } from '@agent-workflows/routes'
+import {
+  costFromUsage,
+  type PatchInput,
+  type ResolvedRoute,
+  resolveRoute,
+  type RouteId,
+  routeIds,
+} from '@agent-workflows/routes'
 import { defineWorkflow, WorkflowError } from '@agent-workflows/runtime'
 import { z } from 'zod'
 import type { HostWorkflow } from '../../operations.ts'
@@ -16,9 +23,10 @@ const MAX_OUTPUT_WITH_EFFORT = 32_000
 /** Wires `make verify` or a capability covers: they bill per image, second or character, not per text token. */
 const MEDIA_WIRES: readonly string[] = ['iu-gemini', 'iu-replicate', 'iu-decision']
 
-const resolved = (id: string): ResolvedRoute | null => {
+/** The route with `patch` (the run's arm's `routes`) applied; the table at input validation and in a run without one. */
+const resolved = (id: string, patch?: PatchInput): ResolvedRoute | null => {
   try {
-    return (routeIds() as string[]).includes(id) ? resolveRoute(id as RouteId, process.env) : null
+    return (routeIds() as string[]).includes(id) ? resolveRoute(id as RouteId, patch) : null
   } catch {
     return null
   }
@@ -86,7 +94,7 @@ export function createSmokeRoute(deps: SmokeRouteDeps): HostWorkflow {
     input,
     output,
     async run(ctx, { route: id }) {
-      const route = resolved(id)
+      const route = resolved(id, ctx.arm?.routes)
       if (!route) throw new WorkflowError('invalid_input', `unknown route "${id}"`)
       const refused = refusal(route)
       if (refused) throw new WorkflowError('invalid_input', refused)

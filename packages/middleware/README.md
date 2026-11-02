@@ -42,7 +42,9 @@ span before telemetry ends it. `platform.close()` comes after
 - **Fingerprint.** sha256 over the workflow version, each referenced agent's `AGENTS.md`, `agent.json` (its route and
   permissions; absent is fine), `skills/**` and `plugins/**` (no other file in the directory), the host's session policy (`hostPolicy`,
   a digest the host supplies; only for a workflow with agents; unset it is left out) and each
-  agent's `routeFingerprint` (`@agent-workflows/routes`, overrides included) and `opencode --version`. Inputs come
+  agent's `routeFingerprint` (`@agent-workflows/routes`, with the run's arm patch) and `opencode --version`, and the
+  run's arm itself when it has one (canonical, key order ignored; `RunInfo.arm`), so an armed run never shares a
+  fingerprint with a production run, a workflow without agents included. Inputs come
   through the `FingerprintSource` port. `fsFingerprintSource` re-reads an agent's files only when a size or mtime
   changed (a directory walk and a `stat` per file per admission), so an edited `AGENTS.md` changes the fingerprint
   without a restart. It runs `opencode --version` once per process (a failed run is retried) and never for a
@@ -180,8 +182,8 @@ which writes one `usage.records` row per request with the run's attribution (`ru
 `iu-openai`, `opencode` or `iu-decision` wire without a `price`, and the model-less `unknown` remainder. A row here for
 those would count their calls twice. Every other label keeps its row as before: models agw prices per minute, per
 character or per image (they reach the gateway with `x-agw-usage: caller`, which writes no row), Tavily
-(`tavily-search`, `tavily-extract`, billed outside the gateway), and any model outside the table, an `AGW_ROUTES`
-override included. The rule is a deny-list on purpose: a label nobody listed keeps its row rather than vanishing. So a
+(`tavily-search`, `tavily-extract`, billed outside the gateway), and any model outside the table, one an arm's
+patch names included. The rule is a deny-list on purpose: a label nobody listed keeps its row rather than vanishing. So a
 step mixing a prep call and TTS writes the TTS row only, and a text-only run writes no record and no session. Skipped
 steps are still claimed and marked synced, so none stays pending. The run record, spans and cost roll-ups keep every
 call; only the `usage.records` projection is filtered.

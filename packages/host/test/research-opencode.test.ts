@@ -120,11 +120,10 @@ async function runAgent(agent: string, script: Step[], grantTools: string[]) {
     ...process.env,
     AGW_GATEWAY_TOOL_TOKEN: 'fake',
     AGW_GATEWAY_URL: `http://127.0.0.1:${model.server.port}`,
-    AGW_ROUTES: '',
   }
   const server = new OpenCodeServer({ stateDir, env, livenessIntervalMs: 1_000 })
   const agents = loadAgentDefinitions(join(import.meta.dir, '..', '..', '..', 'agents')).filter((a) => a.name === agent)
-  const host = new OpenCodeHost({ server, stateDir, env, agents })
+  const host = new OpenCodeHost({ server, stateDir, agents })
   const runId = `r${Math.random().toString(36).slice(2)}`
   const key = `${runId}:research`
   const close = gate.open({

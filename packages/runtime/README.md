@@ -29,11 +29,12 @@ const result = await runtime.wait(runId)
 
 | Call | Kind | Notes |
 |-|-|-|
-| `ctx.step(id, fn, opts?)` | code | `fn({ key, attempt, signal, addUsage, attribution, progress })`; `attribution` (run, root, workflow, step, purpose, project, workspace, traceparent) is what a capability call passes on to the gateway: hand the scope to `registry.call` as is |
+| `ctx.step(id, fn, opts?)` | code | `fn({ key, attempt, signal, addUsage, attribution, arm?, progress })`; `attribution` (run, root, workflow, step, purpose, project, workspace, traceparent) is what a capability call passes on to the gateway, `arm` the run's arm (below): hand the scope to `registry.call` as is |
 | `ctx.effect(id, fn(key, scope), opts?)` | effect | `key = ${runId}:${stepId}`; pass it to the outside API, the only thing that makes a re-run after an in-doubt kill a no-op |
 | `ctx.agent(id, spec)` | agent | through the `AgentHost` port; output validated against `spec.output` |
 | `ctx.score(id, value)` | code | the workflow's `scorer` on `value` (`source: inline`); the verdict is also kept on the run (`runs.scores.gates[id]`). A resume returns the journaled verdict, never scores again |
 | `ctx.continue(id, from, prompt, opts?)` | agent | a follow-up turn in the SAME session as an earlier agent step (`from`: its output object, or its step id); output validated against `opts.output`, else that step's schema |
+| `ctx.param(name, default)` | none | a knob of the run's arm (`arm.params[name]`), else `default`; typed as the default (`ctx.param('finders', 3)` is a `number`). A value of another JSON type fails the run as `invalid_input`, naming the param |
 | `ctx.workflow(id, wf, inputs)` | workflow | fan-out; returns `(O \| null)[]`, a failing child yields `null`; children run as `${runId}/${id}/${i}` under the parent's lease, never by recovery |
 
 - **Step ids are string literals** and unique per run (a duplicate fails the run). `test/step-id-literal.test.ts`
@@ -59,6 +60,14 @@ const result = await runtime.wait(runId)
   id): its own lease, recovery and post-hook redelivery, by whichever process serves its workflow. The run record
   rolls its cost into the parent's. `agw eval run` starts its case runs so. A run is **drivable on its own** when
   `id = root_id` (migration 0014); recovery, concurrency slots, drift sampling and `recentCost` use that predicate.
+- **Arm.** `{ routes?: { <route id>: <patch> }, params?: { <name>: <json> } }`, an experiment layered over one run tree
+  (`agw eval run --arm`). A run gets it from `start({ arm })` or from its workflow's `arm(input)` (`eval.run` reads its
+  own input); it is stored on the row (`runs.arm`, migration 0015, null without one) and copied to every descendant: a
+  parented start and a fan-out child take the parent's (`arm` next to `parentId` is refused). It reaches `scope.arm` in
+  every step, `ctx.arm` outside them, `AgentOpenSpec.arm` for every agent session, the inline judge, and `RunInfo.arm`
+  for the middleware (the fingerprint includes it). This package only shape-checks it (an object of `routes` and
+  `params`, JSON throughout; an empty arm is none): the route patches are `@agent-workflows/routes`' to validate
+  (`validateArm`), which the caller runs first. Resolve a route inside a run with `resolveRoute(id, scope.arm?.routes)`.
 - **Retry** per step: `{ attempts, backoffMs, factor, maxBackoffMs }`, default one attempt (agent steps too).
 - **Idle timeout** per step: no `progress()` (or host progress event) for `idleTimeoutMs` fails the attempt as
   `timeout`. Agent steps default to 5 minutes; code steps have none. It is never a wall-clock cap

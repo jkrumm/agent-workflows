@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { resolveRoute } from '@agent-workflows/routes'
+import { type PatchInput, resolveRoute } from '@agent-workflows/routes'
 import { createCapabilities } from './capabilities/index.ts'
 import type { Usage } from './context.ts'
 import { CapabilityCallError } from './errors.ts'
 import { complete } from './llm/model-call.ts'
 import { createRegistry } from './registry.ts'
 import { messageResponse, type FakeGateway, startFakeGateway } from './testing/index.ts'
-import { type Env, gatewayTransports } from './transports/index.ts'
+import { gatewayTransports } from './transports/index.ts'
 
 let iu: FakeGateway
 let usages: Usage[]
@@ -17,19 +17,20 @@ beforeEach(() => {
 })
 afterEach(() => iu.stop())
 
-function registry(env: Env = {}) {
+function registry() {
   const transports = gatewayTransports({
     env: { AGW_API_SECRET: 'test-key', AGW_GATEWAY_URL: iu.url },
     backoffMs: 0,
     idleTimeoutMs: 200,
   })
-  return createRegistry(createCapabilities({ transports, env }))
+  return createRegistry(createCapabilities({ transports, env: {} }))
 }
+/** One call, as a step of a run whose arm carries `routes` would make it (`routes` absent: a production call). */
 const call = <Id extends 'llm.summarize' | 'llm.title' | 'llm.classify' | 'decide'>(
   id: Id,
   input: Parameters<ReturnType<typeof registry>['call']>[1],
-  env?: Env,
-) => registry(env).call(id, input as never, { addUsage: (u) => usages.push(u) })
+  routes?: PatchInput,
+) => registry().call(id, input as never, { addUsage: (u) => usages.push(u), ...(routes ? { arm: { routes } } : {}) })
 
 const caught = async (promise: Promise<unknown>) => {
   const error = await promise.then(
@@ -81,10 +82,8 @@ describe('llm.summarize (anthropic)', () => {
     iu.on('messages', () =>
       messageResponse('x', { input_tokens: 1000, output_tokens: 200, cache_read_input_tokens: 4000 }),
     )
-    const env = {
-      AGW_ROUTES: '{"cheap.summarize":{"rate":{"inputPerM":1,"outputPerM":5,"cacheReadPerM":0.1}}}',
-    }
-    await call('llm.summarize', { text: 'x' }, env)
+    const routes = { 'cheap.summarize': { rate: { inputPerM: 1, outputPerM: 5, cacheReadPerM: 0.1 } } }
+    await call('llm.summarize', { text: 'x' }, routes)
     const expected = (1000 * 1 + 4000 * 0.1 + 200 * 5) / 1_000_000
     expect(usages[0]?.costSource).toBe('rate')
     expect(usages[0]?.cost).toBeCloseTo(expected, 12)
@@ -94,8 +93,7 @@ describe('llm.summarize (anthropic)', () => {
     iu.on('messages', () =>
       messageResponse('x', { input_tokens: 1000, output_tokens: 200, cache_read_input_tokens: 4000 }),
     )
-    const env = { AGW_ROUTES: '{"cheap.summarize":{"rate":{"inputPerM":1,"outputPerM":5}}}' }
-    await call('llm.summarize', { text: 'x' }, env)
+    await call('llm.summarize', { text: 'x' }, { 'cheap.summarize': { rate: { inputPerM: 1, outputPerM: 5 } } })
     expect(usages[0]).toMatchObject({ cost: null, costSource: 'unknown' })
   })
 
@@ -107,14 +105,13 @@ describe('llm.summarize (anthropic)', () => {
 
   test('a route rate prices the call when the provider reports none', async () => {
     iu.on('messages', () => messageResponse('x', { input_tokens: 1000, output_tokens: 200 }))
-    const env = { AGW_ROUTES: '{"cheap.summarize":{"rate":{"inputPerM":1,"outputPerM":5}}}' }
-    await call('llm.summarize', { text: 'x' }, env)
+    await call('llm.summarize', { text: 'x' }, { 'cheap.summarize': { rate: { inputPerM: 1, outputPerM: 5 } } })
     expect(usages[0]).toMatchObject({ cost: (1000 * 1 + 200 * 5) / 1_000_000, costSource: 'rate' })
   })
 
   test('a route with effort sends it and gets room to think; a call with no usage bills as unknown', async () => {
     iu.on('messages', () => messageResponse('x', null))
-    await call('llm.summarize', { text: 'x' }, { AGW_ROUTES: '{"cheap.summarize":{"effort":"low"}}' })
+    await call('llm.summarize', { text: 'x' }, { 'cheap.summarize': { effort: 'low' } })
     expect(iu.requests[0]?.body).toMatchObject({
       thinking: { type: 'adaptive' },
       output_config: { effort: 'low' },
@@ -125,7 +122,7 @@ describe('llm.summarize (anthropic)', () => {
 
   test('a route with no effort sends no thinking and gets the plain ceiling', async () => {
     iu.on('messages', () => messageResponse('x', null))
-    await call('llm.summarize', { text: 'x' }, { AGW_ROUTES: '{"cheap.summarize":{"effort":"none"}}' })
+    await call('llm.summarize', { text: 'x' }, { 'cheap.summarize': { effort: 'none' } })
     expect(iu.requests[0]?.body.thinking).toBeUndefined()
     expect(iu.requests[0]?.body.output_config).toBeUndefined()
     expect(iu.requests[0]?.body.max_tokens).toBe(8_192)
@@ -217,11 +214,7 @@ describe('llm.classify (anthropic)', () => {
 
   test('cost is unknown, not 0, when the provider omits it and the route has no rate', async () => {
     iu.on('messages', () => messageResponse('{"label":"bug","reason":"r"}', classifyUsage))
-    await call(
-      'llm.classify',
-      { text: 'x', labels },
-      { AGW_ROUTES: JSON.stringify({ 'cheap.classify': { rate: null } }) },
-    )
+    await call('llm.classify', { text: 'x', labels }, { 'cheap.classify': { rate: null } })
     expect(usages[0]).toMatchObject({ cost: null, costSource: 'unknown' })
   })
 
@@ -368,7 +361,7 @@ describe('decide (iu-decision)', () => {
 
   test('without a rate the decision cost is unknown', async () => {
     iu.on('decide', () => Response.json(WIRE))
-    await call('decide', { state: 's', questions }, { AGW_ROUTES: '{"decide":{"rate":null}}' })
+    await call('decide', { state: 's', questions }, { decide: { rate: null } })
     expect(usages[0]).toMatchObject({ cost: null, costSource: 'unknown' })
   })
 
@@ -452,8 +445,8 @@ describe('configuration', () => {
     expect(error.message).not.toContain('secret-host')
   })
 
-  test('a bad route override is NOT_CONFIGURED', async () => {
-    const error = await caught(call('llm.title', { text: 'x' }, { AGW_ROUTES: '{nope' }))
+  test('a bad route patch is NOT_CONFIGURED', async () => {
+    const error = await caught(call('llm.title', { text: 'x' }, { 'no.such': { model: 'x' } }))
     expect(error).toMatchObject({ code: 'NOT_CONFIGURED' })
   })
 

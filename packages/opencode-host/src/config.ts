@@ -1,11 +1,14 @@
 import { fileURLToPath } from 'node:url'
 import {
+  EFFORTS,
   fallbackRoute,
+  type PatchInput,
   type Rate,
   type ResolvedRoute,
   type RouteId,
   resolveRoute,
   routeIds,
+  takesEffort,
 } from '@agent-workflows/routes'
 import type { ModelRef } from './client.ts'
 import { basePolicy } from './locations.ts'
@@ -50,10 +53,13 @@ export function gatewayFromEnv(env: Env = process.env): { url: string; token: st
   return { url: url.origin, token }
 }
 
-/** The `opencode`-wire routes, resolved with `AGW_ROUTES` applied, each followed by its fallback when it has one. */
-export function opencodeRoutes(env: Env = process.env): ResolvedRoute[] {
+/**
+ * The `opencode`-wire routes of the table, each followed by its fallback when it has one: the models the server config
+ * serves (`opencodeModels` in `@agent-workflows/routes` is the same set, which an arm's patch is checked against).
+ */
+export function opencodeRoutes(): ResolvedRoute[] {
   return routeIds()
-    .map((id) => resolveRoute(id, env))
+    .map((id) => resolveRoute(id))
     .filter((route) => route.wire === 'opencode')
     .flatMap((route) => {
       const fallback = fallbackRoute(route)
@@ -77,9 +83,12 @@ export function rateFor(route: ResolvedRoute): Rate | null {
   return route.rate ?? null
 }
 
-/** The session's model for a route: provider, model and effort (as a variant) all from the route table. */
-export function modelRef(routeId: RouteId, env: Env = process.env): { route: ResolvedRoute; model: ModelRef } {
-  const route = resolveRoute(routeId, env)
+/**
+ * The session's model for a route: provider, model and effort (as a variant) from the route table with `patch` (the
+ * run's arm's `routes`) applied. The server serves every effort variant of every model a patch may name.
+ */
+export function modelRef(routeId: RouteId, patch?: PatchInput): { route: ResolvedRoute; model: ModelRef } {
+  const route = resolveRoute(routeId, patch)
   if (route.wire !== 'opencode') throw new Error(`route "${routeId}" is on the ${route.wire} wire, not opencode`)
   return { route, model: refFor(route) }
 }
@@ -87,9 +96,9 @@ export function modelRef(routeId: RouteId, env: Env = process.env): { route: Res
 /** The session's model for a route's provider-balance fallback, or `undefined` when the route has none. */
 export function fallbackModelRef(
   routeId: RouteId,
-  env: Env = process.env,
+  patch?: PatchInput,
 ): { route: ResolvedRoute; model: ModelRef } | undefined {
-  const route = fallbackRoute(modelRef(routeId, env).route)
+  const route = fallbackRoute(modelRef(routeId, patch).route)
   return route ? { route, model: refFor(route) } : undefined
 }
 
@@ -123,7 +132,10 @@ function modelRow(route: ResolvedRoute, provider: string) {
           },
         }
       : {}),
-    ...(route.effort ? { variants: [{ id: route.effort, settings: variantSettings(route.effort, provider) }] } : {}),
+    variants: EFFORTS.filter((effort) => takesEffort(route.model, effort)).map((effort) => ({
+      id: effort,
+      settings: variantSettings(effort, provider),
+    })),
   }
 }
 
@@ -138,7 +150,10 @@ function variantSettings(effort: string, provider: string): Record<string, unkno
 }
 
 /**
- * `OPENCODE_CONFIG_CONTENT`: the three providers with every `opencode`-wire route's model and its fallback's, the
+ * `OPENCODE_CONFIG_CONTENT`: the three providers with every `opencode`-wire route's model and its fallback's, each with
+ * every effort variant it can run (`EFFORTS`; a Sonnet has no `none`), so a run whose arm moves an agent route to
+ * another of these models or effort opens its session on the running server, without a restart. Each model's row takes
+ * the rate and output limit of the first route naming it (the table names one rate per model). The
  * attribution plugin (`options.plugin`, an absolute directory), no updates, no share. The only credential is the door
  * token, by reference to the server's env.
  * The Anthropic leg sends `x-agw-fallback: none`: with no credit pool left the gateway answers a 402 and the route's own
@@ -149,22 +164,16 @@ function variantSettings(effort: string, provider: string): Record<string, unkno
  * question: `question` is denied and so is `external_directory` (its base policy is `ask`). An agent's own rules go in
  * its location's `opencode.json` (`AgentDefinition.config`).
  */
-export function buildServerConfig(env: Env = process.env, options: { plugin?: string } = {}): Record<string, unknown> {
+export function buildServerConfig(options: { plugin?: string } = {}): Record<string, unknown> {
   const models: Record<string, Record<string, unknown>> = {
     [PROVIDER_ANTHROPIC]: {},
     [PROVIDER_CHAT]: {},
     [PROVIDER_RESPONSES]: {},
   }
-  for (const route of opencodeRoutes(env)) {
+  for (const route of opencodeRoutes()) {
     const provider = providerFor(route.model)
     const rows = models[provider] as Record<string, unknown>
-    const row = modelRow(route, provider)
-    const existing = rows[route.model] as { variants?: { id: string }[] } | undefined
-    if (existing && row.variants) {
-      // Routes sharing a model and effort (the fallbacks) share one variant.
-      const known = new Set((existing.variants ?? []).map((v) => v.id))
-      existing.variants = [...(existing.variants ?? []), ...row.variants.filter((v) => !known.has(v.id))]
-    } else if (!existing) rows[route.model] = row
+    rows[route.model] ??= modelRow(route, provider)
   }
   return {
     update: 'disable',

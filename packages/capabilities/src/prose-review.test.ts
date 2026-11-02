@@ -3,7 +3,7 @@ import { createCapabilities } from './capabilities/index.ts'
 import { fenceNonce, neutralizeFenceMarkers } from './capabilities/prose-prompts.ts'
 import { reviewRouteRefusal } from './capabilities/prose-review.ts'
 import type { Usage } from './context.ts'
-import { CapabilityCallError, CapabilityError } from './errors.ts'
+import { CapabilityCallError } from './errors.ts'
 import { createRegistry } from './registry.ts'
 import { fakeTransports } from './testing/index.ts'
 
@@ -154,12 +154,23 @@ describe('the fence', () => {
 
 describe('prose.review route: the reviewer is never the writer’s lab', () => {
   const noCalls = fakeTransports({})
-  const build = (routes: object) => () =>
-    createCapabilities({ transports: noCalls, env: { AGW_ROUTES: JSON.stringify(routes) } })
+  const RATE = { inputPerM: 1, outputPerM: 1 }
 
-  test('the default route is not Anthropic, so the capabilities build', () => {
+  test('the table route is not Anthropic, so the capabilities build', () => {
     expect(() => createCapabilities({ transports: noCalls, env: {} })).not.toThrow()
   })
+
+  /** One call under an arm moving `prose.review`: refused before any model call, naming the cross-lab rule. */
+  async function refusedUnder(patch: Record<string, unknown>) {
+    const t = setup({ openai: [{ text: '{}' }] })
+    const error = await rejected(
+      t.registry.call('prose.critique', INPUT, { ...t.options, arm: { routes: { 'prose.review': patch } } }),
+    )
+    expect(error).toBeInstanceOf(CapabilityCallError)
+    expect((error as CapabilityCallError).code).toBe('NOT_CONFIGURED')
+    expect((error as CapabilityCallError).message).toMatch(/writer's lab/)
+    expect(t.transports.chatCalls).toHaveLength(0)
+  }
 
   test.each([
     ['claude-test-model'],
@@ -169,30 +180,18 @@ describe('prose.review route: the reviewer is never the writer’s lab', () => {
     ['sonnet-test-1'],
     ['haiku-test-1'],
     ['fable-test-1'],
-  ])('an Anthropic primary model (%s) is refused at definition time', (model) => {
-    expect(build({ 'prose.review': { model } })).toThrow(CapabilityError)
-    expect(build({ 'prose.review': { model } })).toThrow(/writer's lab/)
+  ])("an arm moving the primary to an Anthropic model (%s) is refused on the call's resolved route", async (model) => {
+    await refusedUnder({ model, rate: RATE })
   })
 
-  test('an Anthropic fallback model is refused too', () => {
-    expect(build({ 'prose.review': { fallback: { model: 'haiku-test-1' } } })).toThrow(/writer's lab/)
+  test('an Anthropic fallback model is refused too', async () => {
+    await refusedUnder({ fallback: { model: 'vendor/claude-test-model', rate: RATE } })
   })
 
-  test('a malformed override is not this check’s to report: the capabilities still build', () => {
-    expect(() => createCapabilities({ transports: noCalls, env: { AGW_ROUTES: '{nope' } })).not.toThrow()
-  })
-
-  test('at call time, on the resolved route after overrides: primary and fallback, no model call', async () => {
-    for (const routes of [{ model: 'sonnet-test-1' }, { fallback: { model: 'vendor/claude-test-model' } }]) {
-      const t = setup({ openai: [{ text: '{}' }] })
-      // The environment changes after the registry was built: the check is on the route each call resolves.
-      t.env.AGW_ROUTES = JSON.stringify({ 'prose.review': routes })
-      const error = await rejected(t.registry.call('prose.critique', INPUT, t.options))
-      expect(error).toBeInstanceOf(CapabilityCallError)
-      expect((error as CapabilityCallError).code).toBe('NOT_CONFIGURED')
-      expect((error as CapabilityCallError).message).toMatch(/writer's lab/)
-      expect(t.transports.chatCalls).toHaveLength(0)
-    }
+  test('a run without an arm, beside the armed one, still reviews on the table route', async () => {
+    const t = setup({ openai: [{ text: JSON.stringify({ scores: SCORES, notes: [], visualSuggestions: [] }) }] })
+    await t.registry.call('prose.critique', INPUT, t.options)
+    expect(t.transports.chatCalls).toHaveLength(1)
   })
 })
 

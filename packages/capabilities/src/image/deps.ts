@@ -1,4 +1,5 @@
 import { type ResolvedRoute, type RouteId, resolveRoute } from '@agent-workflows/routes'
+import type { Ctx } from '../context.ts'
 import type { Env } from '../transports/config.ts'
 import { DEFAULTS, type HttpOptions } from '../transports/http.ts'
 
@@ -18,8 +19,8 @@ export interface ImageDeps {
   fetch?: (url: string, init: RequestInit) => Promise<Response>
   /** Retry knobs of the package's helper (`withRetries`); tests set `backoffMs: 0`. */
   retry?: Pick<HttpOptions, 'attempts' | 'backoffMs'>
-  /** The route of an image seat. Default: the route table with `AGW_ROUTES` applied, read from `env`. */
-  route?: (id: ImageRouteId) => ResolvedRoute
+  /** The route of an image seat. Default: the route table with the calling run's arm (`ctx.arm.routes`) applied. */
+  route?: ImageRoute
   /** Wait between Replicate polls. Default 1 s. */
   pollMs?: number
   /** A streamed image request is aborted after this long without a byte from the endpoint (a hang guard, never a budget). Default 30 minutes. */
@@ -28,11 +29,14 @@ export interface ImageDeps {
   streamMaxMs?: number
 }
 
+/** An image seat's route, with the calling run's arm applied when `ctx` carries one. */
+export type ImageRoute = (id: ImageRouteId, ctx?: Pick<Ctx, 'arm'>) => ResolvedRoute
+
 export interface ResolvedImageDeps {
   env: () => Env
   fetch: (url: string, init: RequestInit) => Promise<Response>
   retry: Pick<HttpOptions, 'attempts' | 'backoffMs'>
-  route: (id: ImageRouteId) => ResolvedRoute
+  route: ImageRoute
   pollMs: number
   streamIdleMs: number
   streamMaxMs: number
@@ -43,7 +47,7 @@ export function resolveImageDeps(deps: ImageDeps = {}): ResolvedImageDeps {
     env: () => deps.env ?? process.env,
     fetch: deps.fetch ?? ((url, init) => fetch(url, init)),
     retry: deps.retry ?? {},
-    route: deps.route ?? ((id) => resolveRoute(id, deps.env ?? process.env)),
+    route: deps.route ?? ((id, ctx) => resolveRoute(id, ctx?.arm?.routes)),
     pollMs: deps.pollMs ?? 1_000,
     streamIdleMs: deps.streamIdleMs ?? DEFAULTS.hangGuardMs,
     streamMaxMs: deps.streamMaxMs ?? STREAM_MAX_MS,

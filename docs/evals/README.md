@@ -25,7 +25,9 @@ Learned on 2026-10-29 to 10-31 (`2026-10-31-review-claude-direct.md`):
   review and Haiku max 31 min.
 - **Failure modes are results.** Haiku max failed 23 steps on compaction overflow; one Sonnet step failed because agent
   JSON is parsed from free text (`parseStructured`). Count failed steps per arm and name the causes.
-- **Mechanics:** arms run through `~/.config/agw/routes.json` plus a deliberate host restart, which moves production
-  traffic on those routes too, so keep sweeps short and remove the file afterwards. Wait on the eval run id
-  (`agw run wait`) until it is terminal; the CLI's wait budget expiring is not the end of the run, and a pending result
-  prints two JSON documents. `eval.run` records no cost of its own today: sum the case runs.
+- **Mechanics:** one arm is one file, `agw eval run <workflow> --arm <arm.json> --yes` (route patches and params,
+  routes README §Arms). It applies to that eval run and every run below it, needs no restart and never moves
+  production; a bad arm is refused before anything runs. Its fingerprint tells the arm apart in `agw eval compare`.
+  Wait on the eval run id (`agw run wait`) until it is terminal; the CLI's wait budget expiring is not the end of the
+  run, and a pending result prints two JSON documents. The eval run's `cost` is its whole tree: the case runs and the
+  judge's calls.

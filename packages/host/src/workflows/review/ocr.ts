@@ -234,7 +234,7 @@ export async function runOcr(
     }
   }
   // The route, then its fallback once when `ocr` exits on a provider-balance refusal.
-  const primary = resolveRoute(OCR_ROUTE, ports.env)
+  const primary = resolveRoute(OCR_ROUTE, scope.arm?.routes)
   const fallback = fallbackRoute(primary)
   // `ocr` gets this HOME, so its session logs live under it.
   const home = ports.env.HOME ?? homedir()

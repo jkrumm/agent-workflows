@@ -38,7 +38,7 @@ export function createVectorize(deps: ResolvedImageDeps) {
     // Hidden from the CLI like `image.cutout`: it is a model step for workflows (`agw image`).
     cli: { command: ['image-vectorize'], hidden: true, defaultFormat: 'json' },
     async handler(input, ctx) {
-      const route = deps.route('image.vectorize' satisfies ImageRouteId)
+      const route = deps.route('image.vectorize' satisfies ImageRouteId, ctx)
       const access = replicateAccess(deps, ctx)
       const source = await readInputImage(input.file, CUTOUT_LIMITS.maxImageBytes)
       const sent = await prepareInput(source, input.file, 'vectorize')

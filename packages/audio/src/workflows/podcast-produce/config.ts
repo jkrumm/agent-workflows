@@ -58,8 +58,8 @@ function num(env: Env, key: string, fallback: number): number {
 const withHttpsScheme = (url: string): string => (url === '' || /^https?:\/\//.test(url) ? url : `https://${url}`)
 
 /** `PODCAST_TTS_MODEL` as a route id of a TTS lane: a route id as is, a model id through the table. */
-export function ttsRouteFor(value: string, env: Env = process.env): string {
-  const routes = Object.values(audioRoutes(env)).filter((r) => r.lane === 'gemini' || r.lane === 'replicate')
+export function ttsRouteFor(value: string): string {
+  const routes = Object.values(audioRoutes()).filter((r) => r.lane === 'gemini' || r.lane === 'replicate')
   const route = routes.find((r) => r.id === value) ?? routes.find((r) => r.model === value)
   if (!route) {
     throw new Error(`PODCAST_TTS_MODEL "${value}" is neither a TTS route id nor the model of one (audio route table)`)
@@ -71,7 +71,7 @@ export function produceConfigFromEnv(env: Env = process.env): ProduceConfig {
   const absUrl = withHttpsScheme((env.ABS_URL ?? '').trim().replace(/\/+$/, ''))
   const absApiKey = (env.ABS_API_KEY ?? '').trim()
   return {
-    ttsRouteId: ttsRouteFor(env.PODCAST_TTS_MODEL?.trim() || DEFAULT_TTS_ROUTE, env),
+    ttsRouteId: ttsRouteFor(env.PODCAST_TTS_MODEL?.trim() || DEFAULT_TTS_ROUTE),
     hostStyles: [
       env.PODCAST_HOST_STYLE_A ?? 'warm, conversational',
       env.PODCAST_HOST_STYLE_B ?? 'warm, conversational',

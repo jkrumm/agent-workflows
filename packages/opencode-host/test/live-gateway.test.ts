@@ -225,10 +225,13 @@ describe.skipIf(!live)('live: the pinned build on the gateway (a loopback stand-
     PATH: '/usr/bin:/bin',
     AGW_GATEWAY_URL: `http://127.0.0.1:${gateway.port}`,
     AGW_GATEWAY_TOOL_TOKEN: TOKEN,
-    AGW_ROUTES: JSON.stringify({
+  }
+  // Every step runs under this arm, as a step of an armed run does: the running server serves both moves.
+  const arm = {
+    routes: {
       'brain.agent': { model: 'claude-haiku-5-5', effort: null },
       'review.angle': { model: 'claude-sonnet-5-5', effort: 'low', fallback: null },
-    }),
+    },
   }
   const server = new OpenCodeServer({
     stateDir,
@@ -245,7 +248,6 @@ describe.skipIf(!live)('live: the pinned build on the gateway (a loopback stand-
   const host = new OpenCodeHost({
     server,
     stateDir,
-    env,
     agents: [
       {
         name: 'probe',
@@ -292,6 +294,7 @@ describe.skipIf(!live)('live: the pinned build on the gateway (a loopback stand-
       prompt,
       options,
       attribution: attribution(runId, stepId),
+      arm,
     })
     await host.prompt(handle, prompt)
     const result = await host.wait(handle, {

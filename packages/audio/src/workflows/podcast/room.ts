@@ -2,7 +2,6 @@ import { type AgentRun, createSegmentAgent } from './agent.ts'
 import { callAndParse, type Llm, writerBudget } from './llm.ts'
 import { log } from './log.ts'
 import type { BrainPort } from './ports.ts'
-import { resolvePodcastRoute } from './routes.ts'
 import {
   baseSystemPrompt,
   buildOutlineUserContent,
@@ -184,7 +183,7 @@ export async function reviewDraft(
   },
 ): Promise<{ reviewer: string; notes: ReviewNote[]; verdict: string } | null> {
   const { req, outline, segments, role, route, house, lintReport } = params
-  const reviewer = `${role}@${resolvePodcastRoute(route).model}`
+  const reviewer = `${role}@${llm.route(route).model}`
   try {
     const result = await callAndParse(
       `review ${reviewer}`,

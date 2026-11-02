@@ -1,8 +1,9 @@
 import { join } from 'node:path'
 import { z } from 'zod'
 import { artifactDir } from '../../../../host/src/artifacts.ts'
-import type { Attribution, Ctx, Json, Logger, Usage } from '../../../../runtime/src/index.ts'
+import type { Arm, Attribution, Ctx, Json, Logger, Usage } from '../../../../runtime/src/index.ts'
 import { defineWorkflow, WorkflowError } from '../../../../runtime/src/index.ts'
+import type { PatchInput } from '../../../../routes/src/index.ts'
 import { audioRoutes } from '../../routes.ts'
 import type { AudioDeps } from '../../scope.ts'
 import type { UsagePort } from '../../usage.ts'
@@ -95,7 +96,7 @@ export type BrainNoteResult = z.output<typeof BrainNote>
 export interface CoverCall {
   call(
     input: { prompt: string; size: string; quality: 'medium'; n: number },
-    options: { signal: AbortSignal; addUsage: (usage: Usage) => void; attribution?: Attribution },
+    options: { signal: AbortSignal; addUsage: (usage: Usage) => void; attribution?: Attribution; arm?: Arm },
   ): Promise<{ images: { b64: string }[] }>
 }
 
@@ -175,9 +176,9 @@ export function stepUsage(addUsage: (usage: Usage) => void): UsagePort {
   }
 }
 
-/** The lane the configured route runs on. */
-export function laneFor(config: ProduceConfig, audio: ProduceDeps['audio']): TtsLane {
-  const route = audioRoutes(audio.env)[config.ttsRouteId as keyof ReturnType<typeof audioRoutes>]
+/** The lane the configured route runs on, with the run's arm patch (`arm.routes`) applied when it has one. */
+export function laneFor(config: ProduceConfig, audio: ProduceDeps['audio'], patch?: PatchInput): TtsLane {
+  const route = audioRoutes(patch)[config.ttsRouteId as keyof ReturnType<typeof audioRoutes>]
   if (!route) throw new Error(`audio route "${config.ttsRouteId}" is not in the route table`)
   if (route.lane === 'gemini') return { kind: 'gemini', routeId: route.id, hostStyles: config.hostStyles }
   if (route.lane === 'replicate') {
@@ -342,8 +343,8 @@ export function createProduceWorkflows(deps: ProduceDeps) {
 
     // 1. The plan: turns, units, track and date, fixed for the run.
     const plan = await as<Plan>(
-      ctx.step('plan', async () => {
-        const lane = laneFor(config, deps.audio)
+      ctx.step('plan', async (scope) => {
+        const lane = laneFor(config, deps.audio, scope.arm?.routes)
         const planned = planSynthesis(input, lane, config)
         if (planned.segmentation)
           log.info('podcast segmentation', { episode: input.episode.id, ...planned.segmentation })
@@ -373,7 +374,7 @@ export function createProduceWorkflows(deps: ProduceDeps) {
         })),
       ),
       as<StoredFile | null>(
-        ctx.step('cover', async ({ signal, addUsage, key, attribution }) => {
+        ctx.step('cover', async ({ signal, addUsage, key, attribution, arm }) => {
           if (!input.request.cover || !deps.cover) return null
           const request = { prompt: input.metadata.coverPrompt, size: '1024x1024', quality: 'medium' as const, n: 1 }
           const hash = unitRequestHash(request)
@@ -390,6 +391,7 @@ export function createProduceWorkflows(deps: ProduceDeps) {
             const out = await deps.cover.call(request, {
               signal,
               attribution,
+              arm,
               addUsage: (usage) => {
                 reported.push(usage)
                 addUsage(usage)

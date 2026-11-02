@@ -393,7 +393,7 @@ describe("the ledger hook is research's guarded one", () => {
 })
 
 describe('the route', () => {
-  test('brain.agent is Haiku (high) on opencode with a Terra low fallback, and an override patches the fallback like any route', () => {
+  test('brain.agent is Haiku (high) on opencode with a Terra low fallback, and an arm patches the fallback like any route', () => {
     const route = resolveRoute('brain.agent', {})
     expect(route).toMatchObject({ wire: 'opencode', model: 'claude-haiku-5-5', effort: 'high' })
     expect(route.fallback).toMatchObject({
@@ -403,10 +403,11 @@ describe('the route', () => {
       maxOutputTokens: 32_000,
     })
     expect(fallbackRoute(route)).toMatchObject({ model: 'gpt-6.1-terra' })
-    const patched = { AGW_ROUTES: JSON.stringify({ 'brain.agent': { fallback: { model: 'other-model' } } }) }
+    const patched = { 'brain.agent': { fallback: { model: 'claude-haiku-5-5', effort: 'none' } } }
     expect(fallbackRoute(resolveRoute('brain.agent', patched))).toMatchObject({
       wire: 'opencode',
-      model: 'other-model',
+      model: 'claude-haiku-5-5',
+      effort: 'none',
     })
   })
 })

@@ -24,8 +24,8 @@ export function createFactoryClassify(deps: { registry: ClassifyCaller }): HostW
     output: FactoryClassifyOutput,
     scorer: factoryClassifyScorer,
     async run(ctx, { issue }) {
-      const verdict = await ctx.step('classify', ({ addUsage, signal, attribution }) =>
-        deps.registry.call('factory.classify', issue, { addUsage, signal, attribution }),
+      const verdict = await ctx.step('classify', ({ addUsage, signal, attribution, arm }) =>
+        deps.registry.call('factory.classify', issue, { addUsage, signal, attribution, arm }),
       )
       // Outside the step: a verdict journaled before the floor existed is floored on replay too.
       return floorIncident(verdict)

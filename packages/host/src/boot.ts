@@ -9,7 +9,6 @@ import {
   platformMiddleware,
 } from '@agent-workflows/middleware'
 import { basePolicyDigest, DEFAULT_STATE_DIR, OpenCodeHost, OpenCodeServer } from '@agent-workflows/opencode-host'
-import { validateOverrides } from '@agent-workflows/routes'
 import { type AgentHost, type Json, type Logger, Runtime } from '@agent-workflows/runtime'
 import { resolve } from 'node:path'
 import { Pool } from 'pg'
@@ -154,7 +153,7 @@ export function lazyOpenCodeHost(
         await server.close()
         throw new Error('opencode host is closed')
       }
-      return { server, host: new OpenCodeHost({ server, agents, env, traceparent, stateDir }) }
+      return { server, host: new OpenCodeHost({ server, agents, traceparent, stateDir }) }
     })().catch((error: unknown) => {
       built = undefined
       throw error
@@ -250,11 +249,6 @@ export async function bootProcess(
   const { name } = definition
   const logger = processLogger(name)
   const tag = `[agw-${name}]`
-  // `AGW_ROUTES` is otherwise read at first use (a run's fingerprint, a model call, the first agent session), so a typo
-  // would surface as a failed run. Validating it here refuses the start instead, before anything is opened; the error
-  // names the route id and the problem, never the override JSON.
-  validateOverrides(env)
-
   // Every resource registers its closer as it is created; a failure at any point runs the same teardown as a
   // signal does, in reverse order, so a half-started process never keeps pools, timers or leases.
   const closers: (() => Promise<void>)[] = []
@@ -388,7 +382,7 @@ export async function bootProcess(
       version: config.version,
       isOpen: () => open,
       logger,
-      ...(definition.serveCapabilities ? { routesEnv: { AGW_ROUTES: env.AGW_ROUTES } } : {}),
+      ...(definition.serveCapabilities ? { serveRoutes: true } : {}),
       ...(definition.friction ? { friction: { enabled: frictionState.enabled, state: frictionState.state } } : {}),
     })
     await host.openapi() // a broken contract fails the start, not the first request

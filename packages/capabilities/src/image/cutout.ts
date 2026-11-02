@@ -110,7 +110,7 @@ export function createCutout(deps: ResolvedImageDeps) {
     // commands are single hyphenated words.
     cli: { command: ['image-cutout'], hidden: true, defaultFormat: 'json' },
     async handler(input, ctx) {
-      const route = deps.route(`image.cutout.${input.model}` satisfies ImageRouteId)
+      const route = deps.route(`image.cutout.${input.model}` satisfies ImageRouteId, ctx)
       const access = replicateAccess(deps, ctx)
       const source = await readInputImage(input.file, CUTOUT_LIMITS.maxImageBytes)
       const sent = await prepareInput(source, input.file)
