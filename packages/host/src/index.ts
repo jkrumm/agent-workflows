@@ -8,6 +8,7 @@ export {
   MIN_SECRET_LENGTH,
 } from './auth.ts'
 export { canonicalJson, contractSha } from './canonical.ts'
+export { errorKindOfStatus } from './door-status.ts'
 export { createHost, type Host, type HostOptions } from './app.ts'
 export { DEFAULT_PURPOSE, type HostWorkflow, IDLE_TIMEOUT_S, MAX_WAIT_S, preferWait } from './operations.ts'
 export { isTerminal, type RunState, type RunStatus, type RunStore, runtimeRunStore } from './store.ts'

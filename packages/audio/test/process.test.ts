@@ -560,6 +560,25 @@ describe('the audio process', () => {
     }
   })
 
+  test('an upstream call that threw before reporting usage leaves the cost unknown, never 0', async () => {
+    const handlers = stubHandlers()
+    handlers.speech = (deps) => async () => {
+      await deps.fetch('http://upstream.invalid/tts').catch(() => undefined)
+      return Response.json({ error: { message: 'upstream unreachable', type: 'upstream_error' } }, { status: 502 })
+    }
+    const audio = await start(handlers, async () => {
+      throw new TypeError('connection reset')
+    })
+    try {
+      const res = await fetch(`${audio.url}/v1/audio/speech`, { method: 'POST', body: '{}', headers: bearer(HERMES) })
+      expect(res.status).toBe(502)
+      const { step } = await failedRun(res.headers.get('agw-run-id') as string)
+      expect(step?.output).toMatchObject({ status: 502, calls: 0, costUsd: null })
+    } finally {
+      await audio.shutdown()
+    }
+  })
+
   test('an error body that is not an envelope is recorded truncated', async () => {
     const handlers = stubHandlers()
     handlers.speech = () => async () => new Response('x'.repeat(5000), { status: 422 })
