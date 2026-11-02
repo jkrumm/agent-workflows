@@ -5,7 +5,7 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
 
 ## State
 - **New plan 2026-11-01:** inference gateway (Waves 1–4, `docs/gateway.md`), then review v2 and the maturity pass
-  (Waves 5–13). Wave 1 done (release `767f643`, REPORT `docs/spikes/gateway/REPORT.md`); Wave 2 done (release `b25aac5`); Wave 3 done (release `3e6026e`); Wave 4 done (release `2e7d5f2`); Wave 5 done (release `bf76dc4`); Wave 6 done (release `9cf9625`); Wave 7 (spec) done, argo `84053e8`; Wave 8 active; Wave 7b (build) waits for the owner's sign-off of spec v7 and its five decisions. The 2026-10-30 plan is finished (concept.md Final retro); STOP removed.
+  (Waves 5–13). Wave 1 done (release `767f643`, REPORT `docs/spikes/gateway/REPORT.md`); Wave 2 done (release `b25aac5`); Wave 3 done (release `3e6026e`); Wave 4 done (release `2e7d5f2`); Wave 5 done (release `bf76dc4`); Wave 6 done (release `9cf9625`); Wave 7 (spec) done, argo `84053e8`; Wave 8 active; Wave 7b (build) runs beside it as argo PLAN Wave 8 (spec signed 18:20, `9fd63c7f`). The 2026-10-30 plan is finished (concept.md Final retro); STOP removed.
 - Owner actions done (PLAN context): orgs linked, keys seeded, cycle days, no payment method. Left: `me2` keys
   (~2026-11-02, 7-day claim window); until then the `me2` pool stays disabled.
 - Lead's close-out channel: `docs/waves/handoff/lead.md` (the mother owns PLAN.md and the retro log;
@@ -18,6 +18,8 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
   Rotation policy: a fresh lead per wave unless the last one closed under ~30% context.
 
 ## Decisions taken
+- 2026-11-02 18:20 owner signed spec v7 (argo `9fd63c7f`): decisions 1–4 as recommended, 5 deferred, plus §Insights
+  (rule-based, numbers never model-written). Built beside Wave 8 as argo Wave 8, its own lead in the argo checkout.
 - 2026-11-02 18:10 owner: (1) `otel.agent` -> Haiku 5.5 high now (scores equal Sonnet; cost counts while over pace), in
   Wave 8's next deploy (relayed to r11). (2) `research.agent` stays Sonnet medium. (3) `prose.review` stays DeepSeek
   (cross-lab, off the credit); `review.adversary` unchanged until review v2 removes it. (4) Spec v7 not yet signed: the

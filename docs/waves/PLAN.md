@@ -186,11 +186,12 @@ after the owner signs the spec (the one stop of this wave).
   right, judge κ ≥ 0.8. Below either, tighten the filters or add a second judge.
 - [ ] Target 200 bug cases and 100 controls. Seeded defects only below 150.
 
-## Wave 7b — Usage view v7 build (Argo)            <!-- status: pending, waits for the owner's sign-off of spec v7 -->
+## Wave 7b — Usage view v7 build (Argo)            <!-- status: running beside Wave 8 as argo PLAN Wave 8 -->
 
 - [ ] Build v7 in argo: endpoints on `usage.*` (gateway rows, picks, credit cycles, platform cost, quota samples),
   the views, tests; v6 views it supersedes are deleted, not hidden. Screenshots light and dark through `@verifier`.
-  The owner's answers to the spec's five decisions shape it.
+  Spec signed 2026-11-02 18:20 (argo `9fd63c7f`): decisions 1–4 as recommended, 5 deferred, plus §Insights. Runs as
+  argo `docs/waves/PLAN.md` Wave 8 in the argo checkout, beside this repo's Wave 8.
 
 ## Wave 9 — Baseline            <!-- status: pending -->
 
