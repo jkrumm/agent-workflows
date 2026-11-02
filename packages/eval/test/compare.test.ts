@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { type ArmRun, bootstrapMeanCI, compareArms, MIN_PAIRS } from '../src/compare.ts'
+import { type ArmRun, bootstrapMeanCI, compareArms, LOWER_IS_BETTER, MIN_PAIRS, SPEND_METRICS } from '../src/compare.ts'
 
 const run = (caseId: string, over: Partial<ArmRun> = {}): ArmRun => ({
   caseId,
@@ -95,5 +95,26 @@ describe('compareArms', () => {
     const values = [0.1, -0.2, 0.3, 0.05, 0.4, -0.1]
     expect(bootstrapMeanCI(values, { seed: 7 })).toEqual(bootstrapMeanCI(values, { seed: 7 }))
     expect(bootstrapMeanCI([1], { seed: 7 })).toBeNull()
+  })
+
+  test('false alarms, noise, findings and important are lower-is-better; spend stays last', () => {
+    const ids = Array.from({ length: 8 }, (_, i) => `c${i}`)
+    const scores = (falseAlarms: number) => ({
+      recall: 1,
+      falseAlarms,
+      noise: falseAlarms / 4,
+      findings: 4 + falseAlarms,
+    })
+    const a = ids.map((id) => run(id, { scores: scores(2) }))
+    const b = ids.map((id, i) => run(id, { scores: scores(i % 2) }))
+    const result = compareArms(a, b, { seed: 1 })
+    const direction = (metric: string) => result.metrics.find((m) => m.metric === metric)
+    expect(direction('falseAlarms')).toMatchObject({ direction: 'lower', better: 'b' })
+    expect(direction('noise')).toMatchObject({ direction: 'lower', better: 'b' })
+    expect(direction('findings')).toMatchObject({ direction: 'lower', better: 'b' })
+    expect(direction('recall')).toMatchObject({ direction: 'higher', better: 'tie' })
+    expect(result.bBetter).toContain('falseAlarms')
+    expect(result.metrics.slice(-SPEND_METRICS.length).map((m) => m.metric)).toEqual([...SPEND_METRICS])
+    expect(LOWER_IS_BETTER).toEqual(expect.arrayContaining([...SPEND_METRICS, 'important']))
   })
 })

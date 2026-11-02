@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import type { Json, ScorerContext } from '@agent-workflows/runtime'
 import { type CheckReference, checkReference, checkScorer } from '../src/workflows/check/scorer.ts'
-import { type ReviewReference, reviewReference, reviewScorer } from '../src/workflows/review/scorer.ts'
+import { reviewScorer } from '../src/workflows/review/scorer.ts'
 import {
   allFailedVerdict,
   applyVerdictRules,
@@ -34,18 +34,18 @@ const review = (failed: { angle: string; failureReason: string }[] = []) => ({
 })
 
 describe('review scorer', () => {
-  test('structure without a reference: valid, complete, all angles, decided, located share', async () => {
+  test('structure without a reference (drift): valid, complete, all angles; no judge call', async () => {
     const verdict = await reviewScorer.score(reviewInput, review(), ctx())
     expect(verdict).toEqual({
-      scores: { valid: 1, complete: 1, angleSuccess: 1, decided: 1, located: 2 / 3 },
+      scores: { valid: 1, complete: 1, angleSuccess: 1 },
       pass: true,
     })
   })
 
   test('failed angles, salvage, provider balance and invalid output', async () => {
     const partial = await reviewScorer.score(reviewInput, review([{ angle: 'qa', failureReason: 'idle' }]), ctx())
-    expect(partial.scores).toMatchObject({ angleSuccess: 1 - 1 / 6, decided: 0, complete: 1 })
-    expect(partial).toMatchObject({ pass: false, feedback: 'reviewers failed' })
+    expect(partial.scores).toMatchObject({ angleSuccess: 1 - 1 / 6, complete: 1 })
+    expect(partial).toMatchObject({ pass: true, feedback: 'reviewers failed' })
 
     const all = await reviewScorer.score(reviewInput, allFailedVerdict([{ angle: 'qa', failureReason: 'x' }], 6), ctx())
     expect(all.scores.angleSuccess).toBe(0)
@@ -59,48 +59,10 @@ describe('review scorer', () => {
 
     const invalid = await reviewScorer.score(reviewInput, { nope: true }, ctx())
     expect(invalid).toEqual({
-      scores: { valid: 0, complete: 0, angleSuccess: 0, decided: 0, located: 0 },
+      scores: { valid: 0, complete: 0, angleSuccess: 0 },
       pass: false,
       feedback: 'the output is not REVIEW_OUTPUT v2',
     })
-  })
-
-  test('with a reference: recall and precision through the harness matcher, outcome agreement', async () => {
-    const reference: ReviewReference = {
-      outcome: 'actionable',
-      blocking: [
-        { file: 'src/a.ts', line: 12, message: 'Empty user list causes a null dereference' },
-        { file: 'src/z.ts', line: 1, message: 'Missing migration rollback' },
-      ],
-    }
-    const verdict = await reviewScorer.score(reviewInput, review(), ctx(reference))
-    expect(verdict.scores).toMatchObject({ outcomeAgreement: 1, recall: 0.5, precision: 0.5 })
-    expect(verdict.pass).toBe(true)
-
-    const clean = await reviewScorer.score(reviewInput, review(), ctx({ outcome: 'clean' as const, blocking: [] }))
-    expect(clean.scores).toMatchObject({ outcomeAgreement: 0, precision: 0 })
-    expect(clean.scores.recall).toBeUndefined()
-    expect(clean).toMatchObject({ pass: false, feedback: 'outcome actionable, expected clean' })
-
-    const failedRun = await reviewScorer.score(reviewInput, null, ctx(reference))
-    expect(failedRun).toMatchObject({
-      scores: { outcomeAgreement: 0, recall: 0 },
-      pass: false,
-      feedback: 'the run failed',
-    })
-  })
-
-  test('the reference of a recorded case keeps blocking findings only', () => {
-    expect(
-      reviewReference({
-        outcome: 'actionable',
-        findings: [
-          { severity: 'blocking', file: 'a.ts', line: 1, message: 'm', angle: 'qa' } as never,
-          { severity: 'improvement', file: 'b.ts', message: 'n' },
-        ],
-      }),
-    ).toEqual({ outcome: 'actionable', blocking: [{ file: 'a.ts', line: 1, message: 'm' }] })
-    expect(reviewScorer.reference?.safeParse(reviewReference({ outcome: 'clean', findings: [] })).success).toBe(true)
   })
 })
 

@@ -3,6 +3,8 @@ export { createCapabilities } from './capabilities/index.ts'
 export { capDiff, dataBlock, MAX_DIFF_CHARS } from './capabilities/review-prompts.ts'
 export { ROUTER_ANGLES } from './capabilities/review-route.ts'
 export { parseJsonLoose } from './llm/model-call.ts'
+// Review's scorer records the judge's version in its own.
+export { JUDGE_VERSION } from './capabilities/eval-judge.ts'
 // The `overview` workflow validates a merged answer against the same vocabulary the classify seat answers in.
 export {
   CONFIDENCES,

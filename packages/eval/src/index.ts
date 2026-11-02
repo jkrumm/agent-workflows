@@ -24,7 +24,7 @@ export {
 } from './compare.ts'
 export { aggregateCheck, aggregateReview } from './harness/aggregate.ts'
 export { type Exec, exec } from './harness/exec.ts'
-export { classifyPair, matchFindings } from './harness/match.ts'
+export { classifyPair, matchFindings, normalizePath } from './harness/match.ts'
 export { cleanup, type Materialized, type MaterializeInput, materialize } from './harness/materialize.ts'
 export type { CheckRunner, Judge, Located, ReviewRunner, RunJournal } from './harness/ports.ts'
 export { pool, runCheck, runReview } from './harness/run.ts'

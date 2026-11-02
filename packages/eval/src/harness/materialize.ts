@@ -1,12 +1,12 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { brief, type Exec } from './exec.ts'
+import { brief, type Exec, type ExecResult } from './exec.ts'
 
 const GIT_TIMEOUT_MS = 120_000
 const SETUP_TIMEOUT_MS = 600_000
 
-export type SkipReason = 'repo_missing' | 'checkout_failed' | 'apply_failed' | 'setup_failed'
+export type SkipReason = 'repo_missing' | 'checkout_failed' | 'apply_failed' | 'setup_failed' | 'isolate_failed'
 
 export type Materialized = { ok: true; dir: string } | { ok: false; reason: SkipReason; detail: string; dir?: string }
 
@@ -15,6 +15,12 @@ export interface MaterializeInput {
   baseSha: string
   /** The review case's `diff` or the check case's `patch`; applied as uncommitted changes. */
   patch?: string
+  /**
+   * Leave nothing in the clone but the history up to `baseSha`: every ref is deleted, the reflog expired and the
+   * reachable objects copied in before the `--shared` alternates are cut, so neither `git log --all` nor
+   * `git show <sha>` reaches a later commit (a fix the reviewed commit's bug has must not be findable from a shell).
+   */
+  isolate?: boolean
 }
 
 export interface MaterializeOptions {
@@ -49,6 +55,11 @@ export async function materialize(input: MaterializeInput, options: MaterializeO
   const checkout = await git(['checkout', '--quiet', '--detach', input.baseSha])
   if (checkout.code !== 0) return { ok: false, reason: 'checkout_failed', detail: brief(checkout.stderr), dir }
 
+  if (input.isolate) {
+    const isolated = await isolateHistory(git, dir)
+    if (isolated) return { ok: false, reason: 'isolate_failed', detail: isolated, dir }
+  }
+
   if (input.patch?.trim()) {
     const patch = input.patch.endsWith('\n') ? input.patch : `${input.patch}\n`
     // Intent-to-add: files the patch creates show in `git diff HEAD`, which a scope of uncommitted changes may read.
@@ -63,6 +74,32 @@ export async function materialize(input: MaterializeInput, options: MaterializeO
     }
   }
   return { ok: true, dir }
+}
+
+/**
+ * Drops the remote and every ref (branches, tags, stash, packed), expires the reflogs, copies the objects reachable
+ * from HEAD out of the shared store (`repack -a`, no `-l`), cuts the alternates and prunes. Returns a failure's detail.
+ */
+async function isolateHistory(
+  git: (args: string[], stdin?: string) => Promise<ExecResult>,
+  dir: string,
+): Promise<string | null> {
+  const remote = await git(['remote', 'remove', 'origin'])
+  if (remote.code !== 0) return brief(remote.stderr)
+  const refs = await git(['for-each-ref', '--format=%(refname)'])
+  if (refs.code !== 0) return brief(refs.stderr)
+  const names = refs.stdout.split('\n').filter(Boolean)
+  if (names.length) {
+    const deleted = await git(['update-ref', '--stdin'], `${names.map((n) => `delete ${n}`).join('\n')}\n`)
+    if (deleted.code !== 0) return brief(deleted.stderr)
+  }
+  const expired = await git(['reflog', 'expire', '--expire=now', '--all'])
+  if (expired.code !== 0) return brief(expired.stderr)
+  const repacked = await git(['repack', '-a', '-d', '--quiet'])
+  if (repacked.code !== 0) return brief(repacked.stderr)
+  rmSync(join(dir, '.git', 'objects', 'info', 'alternates'), { force: true })
+  const pruned = await git(['prune', '--expire=now'])
+  return pruned.code === 0 ? null : brief(pruned.stderr)
 }
 
 export interface SetupStep {

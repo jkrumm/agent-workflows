@@ -15,8 +15,10 @@ export interface EvalCase {
   reference: Json
 }
 
-/** A module's own case reader: the recorded `cases.jsonl` at `path` as replayable cases. */
+/** A module's own case reader: the cases file at `path` as replayable cases. */
 export interface Suite {
+  /** Where the cases live; default `$AGW_EVAL_DIR/<workflow>/cases.jsonl`. */
+  path?(env: Record<string, string | undefined>): string
   read(path: string): EvalCase[]
 }
 

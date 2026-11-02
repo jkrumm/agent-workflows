@@ -87,7 +87,10 @@ itself, which is not legacy's noise.
 1. **Materialize.** `git clone --shared --no-checkout $HOME/<repo>` into a temp dir, `git checkout --detach
    <baseSha>`, `git apply --intent-to-add` the case's `diff` (review) or `patch` (check) as uncommitted changes (files the patch
    creates are intent-to-add, so a `git diff HEAD` scope sees them on both sides). The owner's
-   checkout is only read. A diff that does not apply, a missing repo or an unknown sha makes the case `skipped`
+   checkout is only read. With `isolate` (the ground-truth review suite) every ref, the remote, `packed-refs`, the
+   stash and the reflogs are deleted after the checkout, the reachable objects are repacked into the clone and the
+   `--shared` alternates are cut, so neither `git log --all` nor `git show <sha>` reaches anything after `baseSha`
+   (a failure is `isolate_failed`). A diff that does not apply, a missing repo or an unknown sha makes the case `skipped`
    with its reason; skipped cases are counted in every report, never dropped. A check case runs
    `bun install --frozen-lockfile` first only when the repo has a bun lockfile and its Makefile `check` target does
    not install itself.

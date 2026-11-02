@@ -21,9 +21,12 @@ export interface ArmRun {
 /** Below this many pairs a metric gets no verdict (`unknown`): a bootstrap over fewer cases decides nothing. */
 export const MIN_PAIRS = 5
 
-/** Scorer metrics are higher-is-better (the scorer contract); spend metrics are lower-is-better. */
+/** Spend metrics: lower is better, ordered last. */
 export const SPEND_METRICS = ['costUsd', 'wallMs', 'tokens', 'toolCalls'] as const
 type SpendMetric = (typeof SPEND_METRICS)[number]
+
+/** Scorer metrics are higher-is-better (the scorer contract) except these and the spend metrics. */
+export const LOWER_IS_BETTER: readonly string[] = ['falseAlarms', 'noise', 'findings', 'important', ...SPEND_METRICS]
 
 export type Winner = 'a' | 'b' | 'tie' | 'unknown'
 
@@ -140,7 +143,7 @@ export function compareArms(a: ArmRun[], b: ArmRun[], options: { seed: number })
     ...SPEND_METRICS.filter((m) => names.has(m)),
   ]
   const metrics = ordered.map((metric): MetricComparison => {
-    const direction = SPEND_METRICS.includes(metric as SpendMetric) ? 'lower' : 'higher'
+    const direction = LOWER_IS_BETTER.includes(metric) ? 'lower' : 'higher'
     const pairs = paired.flatMap((id) => {
       const x = caseA.get(id)?.get(metric)
       const y = caseB.get(id)?.get(metric)

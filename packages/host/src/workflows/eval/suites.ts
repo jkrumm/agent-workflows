@@ -17,5 +17,6 @@ export function suiteIds(suites: Suites): [string, ...string[]] {
 export function readSuite(suites: Suites, workflow: string, env: Record<string, string | undefined>): EvalCase[] {
   const suite = suites.get(workflow)
   if (!suite) throw new Error(`no eval suite for "${workflow}"`)
-  return (suite === 'plain' ? plainSuite : suite).read(casesPath(workflow, env))
+  const reader = suite === 'plain' ? plainSuite : suite
+  return reader.read(reader.path?.(env) ?? casesPath(workflow, env))
 }
