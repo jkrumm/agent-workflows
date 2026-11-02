@@ -319,7 +319,8 @@ export async function waitFor(options: WaitOptions): Promise<RunState | null> {
 /**
  * The wire body of a stored run. An ended run says one thing about its record: the sums once the post hooks delivered,
  * `costPending` before that, `recordFailed` when the runtime gave up. Never a cost of `null` for a record that is not
- * there: `null` means the run priced nothing.
+ * there: `null` means the cost is unknown (a call nobody priced, no positive known cost); `0` that every step was
+ * free, or that no step ran.
  */
 export function toRunState(run: StoredRun): RunState {
   const { cost, unpricedCalls, postHooksDone, postHooksFailed, ...state } = run
