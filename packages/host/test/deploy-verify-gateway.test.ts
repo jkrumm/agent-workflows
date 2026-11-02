@@ -61,7 +61,9 @@ async function verify(options: Options = {}) {
     options.rows ??
     ['req-1|api_credit|iu|0.0001', 'req-2|api_credit|iu|0.00002', 'req-3|api_key|personal|0.0001'].map((row) => {
       const [id, billing, who, cost] = row.split('|')
-      return billing === 'api_credit' ? `${id}|${billing}|${who}||${cost}` : `${id}|${billing}||${who}|${cost}`
+      return billing === 'api_credit'
+        ? `${id}|${billing}|${who}||${cost}|${id === 'req-2' ? 120 : 0}|${id === 'req-1' ? 120 : 0}`
+        : `${id}|${billing}||${who}|${cost}|0|0`
     })
   const bin = join(home, '.local', 'bin')
   mkdirSync(bin, { recursive: true })
@@ -168,7 +170,7 @@ describe('verify.sh gateway section', () => {
   })
 
   test('a missing usage row names the request id', async () => {
-    const r = await verify({ rows: ['req-1|api_credit|iu||0.0001', 'req-3|api_key||personal|0.0001'] })
+    const r = await verify({ rows: ['req-1|api_credit|iu||0.0001|0|120', 'req-3|api_key||personal|0.0001|0|0'] })
     expect(r.code).toBe(1)
     expect(r.err).toContain('no usage.records row')
     expect(r.err).toContain('req-2')
@@ -177,19 +179,56 @@ describe('verify.sh gateway section', () => {
   test('wrong billing, account, cost or key are each named', async () => {
     const cases: Array<[string[], string]> = [
       [
-        ['req-1|api_key||personal|0.1', 'req-2|api_credit|iu||0.1', 'req-3|api_key||personal|0.1'],
+        ['req-1|api_key||personal|0.1|0|120', 'req-2|api_credit|iu||0.1|120|0', 'req-3|api_key||personal|0.1|0|0'],
         'expected api_credit',
       ],
-      [['req-1|api_credit|me||0.1', 'req-2|api_credit|iu||0.1', 'req-3|api_key||personal|0.1'], 'expected the pool iu'],
-      [['req-1|api_credit|iu||0', 'req-2|api_credit|iu||0.1', 'req-3|api_key||personal|0.1'], 'expected > 0'],
-      [['req-1|api_credit|iu||0.1', 'req-2|api_credit|iu||0.1', 'req-3|api_credit|iu||0.1'], 'expected api_key'],
-      [['req-1|api_credit|iu||0.1', 'req-2|api_credit|iu||0.1', 'req-3|api_key||athena-team|0.1'], 'expected personal'],
+      [
+        ['req-1|api_credit|me||0.1|0|120', 'req-2|api_credit|iu||0.1|120|0', 'req-3|api_key||personal|0.1|0|0'],
+        'expected the pool iu',
+      ],
+      [
+        ['req-1|api_credit|iu||0|0|120', 'req-2|api_credit|iu||0.1|120|0', 'req-3|api_key||personal|0.1|0|0'],
+        'expected > 0',
+      ],
+      [
+        ['req-1|api_credit|iu||0.1|0|120', 'req-2|api_credit|iu||0.1|120|0', 'req-3|api_credit|iu||0.1|0|0'],
+        'expected api_key',
+      ],
+      [
+        ['req-1|api_credit|iu||0.1|0|120', 'req-2|api_credit|iu||0.1|120|0', 'req-3|api_key||athena-team|0.1|0|0'],
+        'expected personal',
+      ],
     ]
     for (const [rows, message] of cases) {
       const r = await verify({ rows })
       expect(r.code).toBe(1)
       expect(r.err).toContain(message)
     }
+  })
+
+  test('cache columns of 0 fail naming the request id', async () => {
+    const cases: Array<[string[], string]> = [
+      [
+        ['req-1|api_credit|iu||0.1|0|0', 'req-2|api_credit|iu||0.1|120|0', 'req-3|api_key||personal|0.1|0|0'],
+        'request req-1: cache_write_5m_tokens',
+      ],
+      [
+        ['req-1|api_credit|iu||0.1|0|120', 'req-2|api_credit|iu||0.1|0|120', 'req-3|api_key||personal|0.1|0|0'],
+        'request req-2: cache_read_tokens',
+      ],
+    ]
+    for (const [rows, message] of cases) {
+      const r = await verify({ rows })
+      expect(r.code).toBe(1)
+      expect(r.err).toContain(message)
+    }
+  })
+
+  test('call 1 that hit an existing cache passes', async () => {
+    const r = await verify({
+      rows: ['req-1|api_credit|iu||0.1|120|0', 'req-2|api_credit|iu||0.1|120|0', 'req-3|api_key||personal|0.1|0|0'],
+    })
+    expect(r.code).toBe(0)
   })
 
   test('a missing gateway_picks row fails', async () => {

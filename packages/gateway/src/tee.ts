@@ -17,6 +17,9 @@ export interface TokenColumns {
   reasoning: number
 }
 
+/** The provider API a response came from, named by the gateway path. */
+export type Wire = 'anthropic' | 'openai'
+
 /** The provider's block as `costFromUsage` reads it, with the per-use counts it does not price. */
 export type ReportedUsage = ProviderUsage & { server_tool_use?: unknown }
 
@@ -75,14 +78,25 @@ function anthropicColumns(usage: Record<string, unknown>): TokenColumns | null {
   const split5m = nested(usage, 'cache_creation', 'ephemeral_5m_input_tokens')
   const cacheWrite1h = nested(usage, 'cache_creation', 'ephemeral_1h_input_tokens') ?? 0
   if (input === null && output === null && cacheRead === null && total === null) return null
+  // `output_tokens` includes thinking; the columns are additive, so thinking moves to `reasoning`.
+  const thinking = Math.min(nested(usage, 'output_tokens_details', 'thinking_tokens') ?? 0, output ?? 0)
   return {
     input: input ?? 0,
-    output: output ?? 0,
+    output: (output ?? 0) - thinking,
     cacheRead: cacheRead ?? 0,
     cacheWrite5m: total === null ? (split5m ?? 0) : Math.max(0, total - cacheWrite1h),
     cacheWrite1h,
-    reasoning: 0,
+    reasoning: thinking,
   }
+}
+
+/** Anthropic's own fields: the cache counts exist on no other wire (`output_tokens_details` alone is no signal). */
+function hasAnthropicSignal(usage: Record<string, unknown>): boolean {
+  return (
+    usage.cache_read_input_tokens !== undefined ||
+    usage.cache_creation_input_tokens !== undefined ||
+    usage.cache_creation !== undefined
+  )
 }
 
 /** OpenAI chat (`prompt_tokens`) and Responses (`input_tokens` + `*_details`): input and output both include their subset. */
@@ -125,6 +139,7 @@ function geminiColumns(usage: Record<string, unknown>): TokenColumns | null {
  * (the caller's bytes stay untouched, only this copy is decoded). Other content types are not read: tokens null.
  */
 export class UsageTee {
+  private readonly wire: Wire | null
   private readonly encoding: string | null
   private readonly sse: boolean
   private readonly held: Uint8Array[] | null
@@ -142,7 +157,9 @@ export class UsageTee {
   /** An event outgrew the cap: what came before stands, the block is not complete. */
   private abandoned = false
 
-  constructor(response: { contentType: string | null; contentEncoding: string | null }) {
+  /** `wire` is the path the response came from; without it the usage's own fields decide. */
+  constructor(response: { contentType: string | null; contentEncoding: string | null; wire?: Wire | null }) {
+    this.wire = response.wire ?? null
     const type = (response.contentType ?? '').toLowerCase()
     const encoding = (response.contentEncoding ?? '').trim().toLowerCase()
     this.encoding = encoding === '' || encoding === 'identity' ? null : encoding
@@ -209,6 +226,9 @@ export class UsageTee {
   private columns(): TokenColumns | null {
     if (this.gemini !== null) return geminiColumns(this.gemini)
     if (this.usage === null) return null
+    if (this.wire === 'anthropic') return anthropicColumns(this.usage)
+    if (this.wire === 'openai') return openAiColumns(this.usage) ?? anthropicColumns(this.usage)
+    if (hasAnthropicSignal(this.usage)) return anthropicColumns(this.usage)
     return openAiColumns(this.usage) ?? anthropicColumns(this.usage)
   }
 

@@ -423,6 +423,7 @@ export function createProxy(options: ProxyOptions): GatewayProxy {
     const tee = new UsageTee({
       contentType: upstream.headers.get('content-type'),
       contentEncoding: upstream.headers.get('content-encoding'),
+      wire: x.system === 'anthropic' || x.system === 'openai' ? x.system : null,
     })
     const finish = finisher(x, { status: upstream.status, answered: true, pick, record })
     if (body === null || NULL_BODY_STATUSES.has(upstream.status)) {

@@ -237,7 +237,7 @@ usage_q() {
   PGPASSWORD="$usage_password" psql -h 127.0.0.1 -U usage -d shared -AtF '|' -v ON_ERROR_STOP=1 -v "ids=$id1,$id2,$id3" \
     2>"$psql_err" <<< "$1" || fail "usage query failed: $(<"$psql_err")"
 }
-rows_sql="select source_id, billing, coalesce(account, ''), coalesce(api_key, ''), coalesce(cost_usd::text, '') from usage.records
+rows_sql="select source_id, billing, coalesce(account, ''), coalesce(api_key, ''), coalesce(cost_usd::text, ''), cache_read_tokens, cache_write_5m_tokens from usage.records
   where source = 'gateway' and source_id = any(string_to_array(:'ids', ',')) order by source_id"
 picks_sql="select count(distinct request_id) from usage.gateway_picks where request_id = any(string_to_array(:'ids', ','))"
 rows=""; picks=0
@@ -253,14 +253,19 @@ for id in $id1 $id2 $id3; do
 done
 (( ${picks:-0} == 3 )) || fail "usage.gateway_picks has ${picks:-0} of 3 request ids within ${GATEWAY_POLL_SECS}s"
 for id in $id1 $id2; do
-  IFS='|' read -r _ g_billing g_account g_key g_cost <<< "$(row_of "$id")"
+  IFS='|' read -r _ g_billing g_account g_key g_cost g_read g_write <<< "$(row_of "$id")"
   [[ "$g_billing" == "api_credit" ]] || fail "request $id: billing '$g_billing', expected api_credit"
   [[ "$g_account" == "$pool" ]] || fail "request $id: account '$g_account', expected the pool $pool"
   [[ -n "$g_cost" ]] && (( g_cost > 0 )) || fail "request $id: cost_usd '${g_cost:-null}', expected > 0"
+  if [[ "$id" == "$id2" ]]; then
+    (( ${g_read:-0} > 0 )) || fail "request $id: cache_read_tokens '${g_read:-null}', expected > 0 (the repeat reads the cache)"
+  else
+    (( ${g_write:-0} + ${g_read:-0} > 0 )) || fail "request $id: cache_write_5m_tokens '${g_write:-null}' + cache_read_tokens '${g_read:-null}', expected > 0"
+  fi
 done
 IFS='|' read -r _ g_billing g_account g_key g_cost <<< "$(row_of "$id3")"
 [[ "$g_billing" == "api_key" ]] || fail "request $id3: billing '$g_billing', expected api_key"
 [[ "$g_key" == "personal" ]] || fail "request $id3: api_key '$g_key', expected personal"
-ok "gateway usage: $id1 and $id2 api_credit on $pool (priced), $id3 api_key personal; 3 gateway_picks rows"
+ok "gateway usage: $id1 and $id2 api_credit on $pool (priced, cache columns set), $id3 api_key personal; 3 gateway_picks rows"
 
 print "verify: PASS run $run_id, cap run $cap_id, audio run $audio_run, gateway pool $pool requests $id1 $id2 $id3"

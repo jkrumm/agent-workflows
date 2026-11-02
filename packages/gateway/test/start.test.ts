@@ -156,6 +156,84 @@ describe('keys', () => {
   })
 })
 
+describe('tee: Anthropic usage on a Claude 5.5 response', () => {
+  const REAL = {
+    input_tokens: 13,
+    cache_creation_input_tokens: 0,
+    cache_read_input_tokens: 0,
+    cache_creation: { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 0 },
+    output_tokens: 4,
+    output_tokens_details: { thinking_tokens: 0 },
+    service_tier: 'standard',
+    inference_geo: 'global',
+    speed: 'standard',
+  }
+  const CACHED = {
+    ...REAL,
+    cache_creation_input_tokens: 1983,
+    cache_read_input_tokens: 1983,
+    cache_creation: { ephemeral_5m_input_tokens: 1983, ephemeral_1h_input_tokens: 0 },
+    output_tokens_details: { thinking_tokens: 2 },
+  }
+  const json = (usage: object, wire?: 'anthropic' | 'openai') => {
+    const tee = new UsageTee({ contentType: 'application/json', contentEncoding: null, wire })
+    tee.push(new TextEncoder().encode(JSON.stringify({ type: 'message', model: 'm', usage })))
+    return tee.finish().tokens
+  }
+  const stream = (usage: Record<string, unknown>, wire?: 'anthropic' | 'openai') => {
+    const { output_tokens, output_tokens_details, ...start } = usage
+    const events = [
+      { type: 'message_start', message: { model: 'm', usage: { ...start, output_tokens: 1 } } },
+      { type: 'message_delta', usage: { output_tokens, output_tokens_details } },
+    ]
+    const tee = new UsageTee({ contentType: 'text/event-stream', contentEncoding: null, wire })
+    tee.push(new TextEncoder().encode(events.map((e) => `data: ${JSON.stringify(e)}\n\n`).join('')))
+    return tee.finish().tokens
+  }
+  const plain = {
+    input: 13,
+    output: 4,
+    cacheRead: 0,
+    cacheWrite5m: 0,
+    cacheWrite1h: 0,
+    reasoning: 0,
+  }
+  const cached = {
+    input: 13,
+    output: 2,
+    cacheRead: 1983,
+    cacheWrite5m: 1983,
+    cacheWrite1h: 0,
+    reasoning: 2,
+  }
+
+  test('the real block: JSON and SSE, with the wire and without', () => {
+    for (const wire of [undefined, 'anthropic'] as const) {
+      expect(json(REAL, wire)).toEqual(plain)
+      expect(stream(REAL, wire)).toEqual(plain)
+    }
+  })
+
+  test('cache and thinking: columns are additive, output without thinking', () => {
+    for (const wire of [undefined, 'anthropic'] as const) {
+      expect(json(CACHED, wire)).toEqual(cached)
+      expect(stream(CACHED, wire)).toEqual(cached)
+    }
+  })
+
+  test('an OpenAI Responses block still reads as OpenAI', () => {
+    const usage = {
+      input_tokens: 10,
+      input_tokens_details: { cached_tokens: 4 },
+      output_tokens: 8,
+      output_tokens_details: { reasoning_tokens: 3 },
+    }
+    const expected = { input: 6, output: 5, cacheRead: 4, cacheWrite5m: 0, cacheWrite1h: 0, reasoning: 3 }
+    expect(json(usage)).toEqual(expected)
+    expect(json(usage, 'openai')).toEqual(expected)
+  })
+})
+
 describe('tee', () => {
   test('a gzip stream cut mid-way still yields the usage it held', () => {
     const text = `data: ${JSON.stringify({ type: 'message_start', message: { model: 'm', usage: { input_tokens: 5 } } })}\n\n`
