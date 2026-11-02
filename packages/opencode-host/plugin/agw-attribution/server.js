@@ -14,6 +14,8 @@ const HEADERS = {
   purpose: 'x-agw-purpose',
   project: 'x-agw-project',
   workspace: 'x-agw-workspace',
+  origin: 'x-agw-origin',
+  routeFallback: 'x-agw-route-fallback',
 }
 
 /** Printable ASCII, 1 to 200 characters, no space at either end: the same filter as `gatewayHeaders`. */

@@ -36,6 +36,17 @@ export interface Attribution {
   project?: string
   workspace?: string
   traceparent?: string
+  /**
+   * Who asked agw for the run tree: the root run's caller (`claude-code`, `hermes`, `cli`, or `eval` / `host` for a run
+   * the host started itself). The gateway stores it as `lane_detail.origin`; attribution only, it never changes a pick.
+   */
+  origin?: string
+  /**
+   * Set on a call that runs because the route's primary was refused for balance: the refused response's
+   * `x-agw-request-id` (`refusedRequestId`), or `unknown` where the caller cannot see it. The gateway stores it as
+   * `lane_detail.routeFallback`. Per call, never run-scoped: only the fallback call carries it.
+   */
+  routeFallback?: string
 }
 
 /**

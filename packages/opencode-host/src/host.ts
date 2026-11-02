@@ -117,8 +117,9 @@ export type OpenCodeHandle = {
 }
 
 /**
- * The `Attribution` fields `metadata.agw` holds. Not `traceparent`: OpenCode's HTTP client writes its own on the wire
- * (README §Attribution), and one per step span would only cost a `PATCH`.
+ * The `Attribution` fields `metadata.agw` holds, and `routeFallback`, which only a fallback session carries. Not
+ * `traceparent`: OpenCode's HTTP client writes its own on the wire (README §Attribution), and one per step span would
+ * only cost a `PATCH`.
  */
 const SESSION_ATTRIBUTION = [
   'runId',
@@ -128,11 +129,24 @@ const SESSION_ATTRIBUTION = [
   'purpose',
   'project',
   'workspace',
-] as const satisfies readonly (keyof Attribution)[]
+  'origin',
+  'routeFallback',
+] as const satisfies readonly (keyof Attribution | 'routeFallback')[]
 
-/** A handle journaled before a deploy holds no attribution, only its run and step. */
+/**
+ * A handle journaled before a deploy holds no attribution, only its run and step. `routeFallback` is the plugin's
+ * `x-agw-route-fallback`: a fallback session's calls are the route's fallback for a balance refusal.
+ */
 type StepAttribution = Pick<Attribution, 'runId' | 'step'> &
-  Partial<Pick<Attribution, (typeof SESSION_ATTRIBUTION)[number]>>
+  Partial<Pick<Attribution, Exclude<(typeof SESSION_ATTRIBUTION)[number], 'routeFallback'>>> & {
+    routeFallback?: string
+  }
+
+/**
+ * The refused request is unknown here: OpenCode ends the turn with the error's text, not the response's headers, so the
+ * gateway's `x-agw-request-id` of the 402 never reaches the host.
+ */
+const UNKNOWN_REFUSAL = 'unknown'
 
 /** `agw` with its attribution fields replaced by `attribution`, the host's own fields kept. */
 function withAttribution(agw: Record<string, unknown>, attribution: StepAttribution): Record<string, unknown> {
@@ -501,7 +515,10 @@ export class OpenCodeHost implements AgentHost {
     const def = this.agents.get(base.agent)
     if (!def) throw new WorkflowError('error', `unknown agent "${base.agent}"; cannot apply its permissions`)
     this.assertContinuable(base, spec)
-    const attribution = sessionAttribution(spec.attribution)
+    const attribution: StepAttribution = {
+      ...sessionAttribution(spec.attribution),
+      ...(base.fallback ? { routeFallback: UNKNOWN_REFUSAL } : {}),
+    }
     await this.applySession(
       base.sessionId,
       sessionPermissions(def, { allowDirectories: base.allow ?? [], resultTool: base.output === 'json' }),
@@ -810,7 +827,10 @@ export class OpenCodeHost implements AgentHost {
       to: fallback.route.model,
     })
     const permissions = sessionPermissions(def, { allowDirectories: h.allow ?? [], resultTool: h.output === 'json' })
-    const attribution: StepAttribution = h.attribution ?? { runId: h.runId, step: h.stepId }
+    const attribution: StepAttribution = {
+      ...(h.attribution ?? { runId: h.runId, step: h.stepId }),
+      routeFallback: UNKNOWN_REFUSAL,
+    }
     await this.client.createSession(
       {
         id: sessionId,
@@ -824,7 +844,8 @@ export class OpenCodeHost implements AgentHost {
     )
     // A fallback session that survived a redeploy keeps its old rules; a fresh one already has the current ones.
     await this.applySession(sessionId, permissions, attribution, headers)
-    const next: OpenCodeHandle = { ...h, sessionId, model: fallback.route.model, fallback: true }
+    // The handle keeps the marker, so a follow-up turn of the fallback session carries it too.
+    const next: OpenCodeHandle = { ...h, sessionId, model: fallback.route.model, fallback: true, attribution }
     await this.prompt(next, prompt)
     return await this.wait(next, options)
   }

@@ -17,6 +17,7 @@ const NAMES = {
   project: 'x-agw-project',
   workspace: 'x-agw-workspace',
   traceparent: 'traceparent',
+  origin: 'x-agw-origin',
 } as const satisfies Record<keyof Attribution, string>
 
 /**

@@ -38,6 +38,8 @@ which is re-serialised with the concrete id. **Not forwarded:** every credential
 | `x-agw-session`, `x-agw-run-id`, `x-agw-workflow`, `x-agw-step`, `x-agw-purpose` | the session binding, `lane_detail`, `run_id` |
 | `x-agw-project` | `project_raw`, and `repo` when it is a plain slug and the workspace is not `work` |
 | `x-agw-workspace` | `workspace`, when it is `work` or `private` |
+| `x-agw-origin` | `lane_detail.origin`, when it matches the caller pattern `[a-z][a-z0-9-]{0,31}`; else dropped. Who asked agw (the root run's caller), not the door caller. Attribution only |
+| `x-agw-route-fallback` | `lane_detail.routeFallback`, when it is a request id as the gateway mints them (a UUIDv7) or `unknown`; else dropped. Set by the caller on the route-fallback call after a balance refusal: the id is the 402's `x-agw-request-id`, the `request_id` of its `refused` row in `gateway_picks`. Attribution only |
 | `x-agw-fallback: none` | a 402 instead of the IU fallback (`/anthropic` paths). Does not touch an `eval` request: that is refused either way |
 | `x-agw-purpose: eval` | draws only on credit above a pool's eval reserve; with none, the 403 below, never IU (`/anthropic` paths). Any other purpose is attribution only |
 | `x-agw-usage: caller` | from caller `agw` on `/openai/v1/images/`, `/openai/v1/audio/`, `/gemini/v1beta/` or `/replicate/v1/`: no ledger row. Ignored from any other caller or on any other path |

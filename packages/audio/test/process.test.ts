@@ -297,6 +297,8 @@ describe('the audio process', () => {
       expect(upstream?.get('x-agw-workflow')).toBe('door.speech')
       expect(upstream?.get('x-agw-step')).toBe('request')
       expect(upstream?.get('x-agw-purpose')).toBe('door-test')
+      // Who asked is the credential's caller; a client header cannot change it.
+      expect(upstream?.get('x-agw-origin')).toBe('hermes')
       expect(upstream?.get('x-agw-usage')).toBe('caller')
       expect(upstream?.get('authorization')).toBe('Bearer test-secret')
       expect((await pcm.arrayBuffer()).byteLength).toBe(9600)

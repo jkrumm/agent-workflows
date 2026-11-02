@@ -220,8 +220,9 @@ Every model request carries who it is for, so the gateway's usage row and pool b
 pinned source: `docs/spikes/gateway/headers.md`.
 
 `metadata.agw` of a step's session holds the step's `Attribution` (`runId`, `rootId`, `workflow`, `step`, `purpose`,
-`project`, `workspace`, the names of the runtime's `ctx.attribution`, without `traceparent`, which cannot land) at both create calls, primary and
-fallback. The runtime hands it over in `spec.attribution` of `open` and `followUp`, so opening a step reads nothing, and
+`project`, `workspace`, `origin`, the names of the runtime's `ctx.attribution`, without `traceparent`, which cannot land) at both create calls, primary and
+fallback. The fallback session also holds `routeFallback: "unknown"`, on its follow-up turns too: OpenCode ends a turn with
+the error's text, not the 402's headers, so the refused request's id is out of reach. The runtime hands it over in `spec.attribution` of `open` and `followUp`, so opening a step reads nothing, and
 the handle keeps it for the fallback session (a handle journaled before a deploy holds no attribution: its fallback
 session carries `runId` and `step` only). A session the host finds already there, and the session of a follow-up turn, get
 the current values by `PATCH` (one read, a write only when they differ; `PATCH` replaces `metadata` whole, so the rest is
@@ -229,7 +230,8 @@ sent back, and the attribution fields are replaced as a set, so a project the ne
 
 `plugin/agw-attribution/` (a `package.json` and a plain `server.js`, no build: a release is exported from git) hooks
 `model.request` and sets `x-agw-session` (`rootId`), `x-agw-run-id`, `x-agw-step`, `x-agw-workflow`, `x-agw-purpose`,
-`x-agw-project` and `x-agw-workspace`, with the value filter of `gatewayHeaders` (printable ASCII, no space at
+`x-agw-project`, `x-agw-workspace`, `x-agw-origin` (who asked agw) and, on a fallback session, `x-agw-route-fallback: unknown`
+(the gateway's `lane_detail.routeFallback`), with the value filter of `gatewayHeaders` (printable ASCII, no space at
 either end, up to 200 characters). `ctx.session.get` takes `{ sessionID }`, not the bare id. A child session (OpenCode's
 `subagent`) has no metadata of its own: the plugin walks `parentID` to the root, at most 32 hops, and caches the walk, not
 the metadata. A read that fails, or a root whose `metadata.agw` has no `runId`, logs `agw-attribution: session <id> sent unattributed:

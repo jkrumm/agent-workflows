@@ -69,6 +69,15 @@ type Opener = {
   hook: boolean
 }
 
+/**
+ * Who asked agw for the run tree, for the gateway's `lane_detail.origin`. Every child run (a fan-out child, a parented
+ * start) copies `runs.caller` from its parent, so a run's own caller is the root's. A run no door admitted was started in the host
+ * itself: the eval harness (`eval`, `drift`) or the host's own jobs. The rule of `callerOf` in
+ * `packages/middleware/src/usage.ts`, copied because the runtime may not import middleware.
+ */
+const originOf = (run: Pick<RunRow, 'caller' | 'purpose'>): string =>
+  run.caller ?? (run.purpose === 'eval' || run.purpose === 'drift' ? 'eval' : 'host')
+
 /** One drive of one run in this process: its abort controller, the infra latch and the step-id set. */
 export class RunScope {
   readonly controller = new AbortController()
@@ -310,6 +319,7 @@ export class RunScope {
       workflow: this.workflow.id,
       step: stepId,
       purpose: run.purpose,
+      origin: originOf(run),
       ...(run.project ? { project: run.project } : {}),
       ...(run.workspace ? { workspace: run.workspace } : {}),
       ...(run.traceparent ? { traceparent: run.traceparent } : {}),
