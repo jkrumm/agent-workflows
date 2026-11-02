@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { BALANCE_MARKER, isBalanceFailure } from '@agent-workflows/routes'
-import type { AgentResult, Json } from '@agent-workflows/runtime'
+import type { AgentResult, Attribution, Json } from '@agent-workflows/runtime'
 import { isClaudeCodeShaped } from '../../gateway/src/pools/request.ts'
 import { createClient, type Message, OpenCodeHost, OpenCodeServer } from '../src/index.ts'
 
@@ -255,16 +255,6 @@ describe.skipIf(!live)('live: the pinned build on the gateway (a loopback stand-
         permissions: { rules: [{ action: 'subagent', resource: '*', effect: 'allow' }] },
       },
     ],
-    attribution: (runId, step) => ({
-      runId,
-      rootId: 'root-of-the-tree',
-      workflow: 'probe-workflow',
-      step,
-      purpose: 'verify',
-      project: 'agent-workflows',
-      workspace: 'private',
-      traceparent: TRACEPARENT,
-    }),
   })
 
   beforeAll(async () => {
@@ -277,6 +267,17 @@ describe.skipIf(!live)('live: the pinned build on the gateway (a loopback stand-
     process.kill(pid, 'SIGKILL')
     await gateway.stop(true)
     rmSync(stateDir, { recursive: true, force: true })
+  })
+
+  const attribution = (runId: string, step: string): Attribution => ({
+    runId,
+    rootId: 'root-of-the-tree',
+    workflow: 'probe-workflow',
+    step,
+    purpose: 'verify',
+    project: 'agent-workflows',
+    workspace: 'private',
+    traceparent: TRACEPARENT,
   })
 
   const step = async (
@@ -292,6 +293,7 @@ describe.skipIf(!live)('live: the pinned build on the gateway (a loopback stand-
       agent: 'probe',
       prompt,
       options,
+      attribution: attribution(runId, stepId),
     })
     await host.prompt(handle, prompt)
     const result = await host.wait(handle, {
@@ -344,7 +346,13 @@ describe.skipIf(!live)('live: the pinned build on the gateway (a loopback stand-
     seen.length = 0
     answer = (_, r) => anthropicText(String(r.body.model), 'PONG')
     const { handle } = await step('run-f', 'first', { route: 'brain.agent' })
-    const next = await host.followUp(handle, { runId: 'run-f', stepId: 'second', key: 'run-f:second', attempt: 1 })
+    const next = await host.followUp(handle, {
+      runId: 'run-f',
+      stepId: 'second',
+      key: 'run-f:second',
+      attempt: 1,
+      attribution: attribution('run-f', 'second'),
+    })
     await host.prompt(next, 'again')
     await host.wait(next, { signal: AbortSignal.timeout(60_000), onProgress: () => {}, onTool: async () => {} })
     print('follow-up', seen)

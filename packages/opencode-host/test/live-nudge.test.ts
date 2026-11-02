@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createClient, type Message, type OpenCodeHandle, OpenCodeHost, OpenCodeServer } from '../src/index.ts'
 import { inputId } from '../src/session.ts'
+import { attributionOf } from './attribution.ts'
 
 // Measures, on the real `opencode` 2.0.32 on the cheapest route, what a synthetic input posted WHILE a turn runs does:
 // is it read within the running turn (it lands between that turn's tool calls, before the turn's idle), or queued as a
@@ -45,6 +46,7 @@ test.skipIf(!live)(
       const handle = (await host.open({
         runId: 'live',
         stepId: 'loop',
+        attribution: attributionOf('live', 'loop'),
         key: 'live:loop',
         agent: 'looper',
         prompt: '',

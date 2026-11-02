@@ -118,8 +118,8 @@ async function runAgent(agent: string, script: Step[], grantTools: string[]) {
   const model = fakeModel(script)
   const env = {
     ...process.env,
-    IU_API_KEY: 'fake',
-    IU_BASE_URL: `http://127.0.0.1:${model.server.port}/anthropic`,
+    AGW_GATEWAY_TOOL_TOKEN: 'fake',
+    AGW_GATEWAY_URL: `http://127.0.0.1:${model.server.port}`,
     AGW_ROUTES: '',
   }
   const server = new OpenCodeServer({ stateDir, env, livenessIntervalMs: 1_000 })
@@ -142,6 +142,7 @@ async function runAgent(agent: string, script: Step[], grantTools: string[]) {
       agent,
       prompt: '',
       options: { output: 'json' },
+      attribution: { runId, rootId: runId, workflow: 'research', step: 'research', purpose: 'verify' },
     })) as OpenCodeHandle
     await host.prompt(handle, 'What is the default port of PostgreSQL?')
     const result = await host.wait(handle, {

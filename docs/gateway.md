@@ -80,7 +80,7 @@ Per request, in order:
    **Claude-Code-shaped requests go to IU.** A request carrying any of the signals above (read-only check, no body edit)
    skips the credit pools.
 1. **Session binding.** The key is `(caller, session)`, the caller from the door token. The session id is the first of
-   `x-agw-session` (agw sends its run id; OpenCode steps through the host's plugin; Hermes through
+   `x-agw-session` (agw sends its root run's id; OpenCode steps too, through the host's plugin; Hermes through
    `session_affinity_header`), `x-claude-code-session-id`, `x-session-affinity` (OpenCode's root session, so sub-agents
    share their parent's pool), `metadata.user_id`, a hash of the first user message. A bound session stays on its pool while that pool is eligible.
    Bindings are written only when a request is served, TTL 1 h refreshed per request, in memory.
@@ -143,10 +143,12 @@ and cost in its run record and spans, but stops writing `usage.records` for call
 is counted twice.
 
 **OpenCode** (pinned build) sends the session id on every request with no configuration (`x-opencode-session-id`, and
-`x-session-affinity` with the root session's id). The host adds `x-agw-session` (the run id), `x-agw-run-id` and
-`x-agw-step` through a small plugin on the `model.request` hook, reading `runId` / `stepId` from the session's
-`metadata.agw`; the plugin is a directory in the server config's `plugins`. The join by `opencode.session.id` on the step
-span stays as the fallback. **Hermes** sets `session_affinity_header: x-agw-session` on its gateway provider entry (an
+`x-session-affinity` with the root session's id). The host adds the attribution headers (`x-agw-session`, the root run's
+id, from `rootId`; `x-agw-run-id`, `x-agw-step`, `x-agw-workflow`, `x-agw-purpose`, `x-agw-project`, `x-agw-workspace`)
+through a small plugin on the `model.request` hook, reading the step's `Attribution` (`runId`, `rootId`, `workflow`, `step`,
+`purpose`, `project`, `workspace`) from the session's `metadata.agw`; the plugin is a directory in the server config's
+`plugins`. `traceparent` does not land: OpenCode's HTTP client writes its own at send time. The join by
+`opencode.session.id` on the step span stays as the fallback. **Hermes** sets `session_affinity_header: x-agw-session` on its gateway provider entry (an
 `anthropic_messages` entry); static `extra_headers` are not relied on (auxiliary calls drop them). Neither uses
 `metadata.user_id`. Evidence: `docs/spikes/gateway/headers.md`.
 

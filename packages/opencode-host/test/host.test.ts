@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, rmSync, statSync, utimesSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { BALANCE_MARKER, isBalanceFailure } from '@agent-workflows/routes'
-import type { AgentWaitOptions, Attribution, Json } from '@agent-workflows/runtime'
+import type { AgentWaitOptions, Json } from '@agent-workflows/runtime'
 import { WorkflowError } from '@agent-workflows/runtime'
 import {
   type AgentDefinition,
@@ -13,9 +13,10 @@ import {
   type PermissionRule,
   type ServerPort,
 } from '../src/index.ts'
-import { runAttribution, sessionPermissions } from '../src/host.ts'
+import { sessionPermissions } from '../src/host.ts'
 import { sessionState } from '../src/session.ts'
 import { type FakeServer, startFake } from './fake-opencode.ts'
+import { attributionOf } from './attribution.ts'
 
 const AGENT: AgentDefinition = { name: 'tester', agentsMd: '# tester\n', route: 'check' }
 const cleanups: (() => void)[] = []
@@ -65,7 +66,6 @@ function setup(
     env?: Record<string, string>
     turnMs?: number
     agents?: AgentDefinition[]
-    attribution?: (runId: string, stepId: string) => Promise<Attribution | undefined>
     traceparent?: (runId: string, stepId: string) => string | undefined
   } = {},
 ) {
@@ -88,7 +88,6 @@ function setup(
       pollIntervalMs: 20,
       cutoffGraceMs: 150,
       env: options.env ?? { AGW_ROUTES: pinnedCheck() },
-      ...(options.attribution ? { attribution: options.attribution } : {}),
       ...(options.traceparent ? { traceparent: options.traceparent } : {}),
       locations: { evictAfterMs: 0, tickMs: 60_000, retentionMs: 0, ...locations },
     })
@@ -123,6 +122,7 @@ const spec = (prompt: string, options?: Json, key = 'run-1:agent') => ({
   key,
   agent: 'tester',
   prompt,
+  attribution: attributionOf('run-1', 'agent'),
   ...(options === undefined ? {} : { options }),
 })
 
@@ -343,114 +343,64 @@ describe('open / prompt / wait', () => {
 })
 
 describe('attribution in metadata.agw', () => {
-  const row = {
-    id: 'run-1',
-    root_id: 'root-1',
-    workflow: 'review',
-    purpose: 'user',
-    project: 'agent-workflows',
-    workspace: 'private',
-    traceparent: '00-11111111111111111111111111111111-2222222222222222-01',
-  }
   const stored = (t: ReturnType<typeof setup>, sessionId: string) =>
     t.fake.state.sessions[sessionId]?.metadata?.agw as Record<string, unknown> | undefined
-  const attribution = async (runId: string, stepId: string) => runAttribution({ ...row, id: runId }, stepId)
+  const ATTRIBUTION = attributionOf('run-1', 'agent')
 
-  test('runAttribution: the same shape as the runtime gives a step; absent stays absent', () => {
-    expect(runAttribution(row, 'agent')).toEqual({
-      runId: 'run-1',
-      rootId: 'root-1',
-      workflow: 'review',
-      step: 'agent',
-      purpose: 'user',
-      project: 'agent-workflows',
-      workspace: 'private',
-      traceparent: row.traceparent,
-    })
-    expect(runAttribution({ ...row, project: null, workspace: null, traceparent: null }, 's')).toEqual({
-      runId: 'run-1',
-      rootId: 'root-1',
-      workflow: 'review',
-      step: 's',
-      purpose: 'user',
-    })
-  })
-
-  test("open writes the fields beside the host's own", async () => {
-    const t = setup({ attribution })
-    const handle = await t.host.open(spec('x'))
-    expect(stored(t, sid(handle))).toMatchObject({
-      agent: 'tester',
-      route: 'check',
-      runId: 'run-1',
-      rootId: 'root-1',
-      step: 'agent',
-      workflow: 'review',
-      purpose: 'user',
-      project: 'agent-workflows',
-      workspace: 'private',
-      traceparent: row.traceparent,
-    })
-  })
-
-  test('without the option a session still carries its run and step', async () => {
+  test("open writes the step's attribution beside the host's own fields, under its own names", async () => {
     const t = setup()
     const handle = await t.host.open(spec('x'))
-    expect(stored(t, sid(handle))).toMatchObject({ runId: 'run-1', step: 'agent' })
-    expect(stored(t, sid(handle))?.rootId).toBeUndefined()
+    expect(stored(t, sid(handle))).toMatchObject({ agent: 'tester', route: 'check', ...ATTRIBUTION })
   })
 
   test("the step span's traceparent wins over the run's", async () => {
-    const t = setup({ attribution, traceparent: () => '00-33333333333333333333333333333333-4444444444444444-01' })
+    const t = setup({ traceparent: () => '00-33333333333333333333333333333333-4444444444444444-01' })
     const handle = await t.host.open(spec('x'))
     expect(stored(t, sid(handle))?.traceparent).toBe('00-33333333333333333333333333333333-4444444444444444-01')
   })
 
-  test('a provider-balance fallback session carries them too', async () => {
-    const t = setup({ attribution })
-    const handle = await t.host.open(spec('x'))
+  test('a provider-balance fallback session carries it too, from the journaled handle', async () => {
+    const t = setup()
+    const handle = JSON.parse(JSON.stringify(await t.host.open(spec('x')))) as Json
     await t.host.prompt(handle, '[balance] review this')
     await t.host.wait(handle, waitOptions())
     const fallback = Object.keys(t.fake.state.sessions).find((id) => id !== sid(handle)) as string
-    expect(stored(t, fallback)).toMatchObject({
-      fallbackOf: sid(handle),
-      runId: 'run-1',
-      rootId: 'root-1',
-      step: 'agent',
-    })
+    expect(stored(t, fallback)).toMatchObject({ fallbackOf: sid(handle), ...ATTRIBUTION })
+  })
+
+  test('a handle from before the deploy holds none: its fallback session carries the run and step', async () => {
+    const t = setup()
+    const { attribution: _, ...old } = (await t.host.open(spec('x'))) as OpenCodeHandle
+    await t.host.prompt(old, '[balance] review this')
+    await t.host.wait(old, waitOptions())
+    const fallback = Object.keys(t.fake.state.sessions).find((id) => id !== old.sessionId) as string
+    expect(stored(t, fallback)).toMatchObject({ runId: 'run-1', step: 'agent' })
+    expect(stored(t, fallback)?.rootId).toBeUndefined()
   })
 
   test('a follow-up turn moves the session to the continuing step, keeps the rest, and costs one write', async () => {
-    const t = setup({ attribution })
+    const t = setup()
     const first = await t.host.open(spec('draft'))
     await t.host.prompt(first, 'draft it')
     await t.host.wait(first, waitOptions())
-    const turn = { runId: 'run-1', stepId: 'reask', key: 'run-1:reask', attempt: 1 }
-    await t.host.followUp(first, turn)
-    expect(stored(t, sid(first))).toMatchObject({ step: 'reask', rootId: 'root-1', agent: 'tester', route: 'check' })
+    const attribution = attributionOf('run-1', 'reask')
+    const turn = { runId: 'run-1', stepId: 'reask', key: 'run-1:reask', attempt: 1, attribution }
+    const next = (await t.host.followUp(first, turn)) as OpenCodeHandle
+    expect(next.attribution).toEqual(attribution)
+    expect(stored(t, sid(first))).toMatchObject({ agent: 'tester', route: 'check', ...attribution })
     expect(t.fake.state.sessions[sid(first)]?.permissionUpdates).toBeUndefined()
-    const patches = t.fake.state.sessions[sid(first)]?.metadata
+    const patched = t.fake.state.sessions[sid(first)]?.metadata
     await t.host.followUp(first, { ...turn, attempt: 2 })
-    expect(t.fake.state.sessions[sid(first)]?.metadata).toEqual(patches as Record<string, unknown>)
+    expect(t.fake.state.sessions[sid(first)]?.metadata).toEqual(patched as Record<string, unknown>)
   })
 
-  test('an unprompted session from before the deploy gets them on open', async () => {
-    const t = setup({ attribution })
+  test('an unprompted session from before the deploy gets it on open', async () => {
+    const t = setup()
     const handle = await t.host.open(spec('x'))
     const session = t.fake.state.sessions[sid(handle)] as { metadata?: Record<string, unknown> }
     session.metadata = { agw: { key: 'kept', agent: 'tester' } }
     await t.host.open(spec('x'))
-    expect(stored(t, sid(handle))).toMatchObject({ key: 'kept', agent: 'tester', rootId: 'root-1', step: 'agent' })
-  })
-
-  test('a failed lookup fails the open before any location is taken', async () => {
-    const t = setup({
-      attribution: async () => {
-        throw new Error('journal down')
-      },
-    })
-    expect(await failure(t.host.open(spec('x')))).toBe('journal down')
-    expect(Object.keys(t.fake.state.sessions)).toEqual([])
+    expect(stored(t, sid(handle))).toMatchObject({ key: 'kept', agent: 'tester', ...ATTRIBUTION })
   })
 })
 
@@ -537,7 +487,13 @@ describe('re-attach applies the current policy', () => {
   })
 
   describe('a follow-up turn', () => {
-    const turn = { runId: 'run-1', stepId: 'agent:reask', key: 'run-1:agent:reask', attempt: 1 }
+    const turn = {
+      runId: 'run-1',
+      stepId: 'agent:reask',
+      key: 'run-1:agent:reask',
+      attempt: 1,
+      attribution: attributionOf('run-1', 'agent:reask'),
+    }
 
     test('sets the current policy on the session it continues, once', async () => {
       const t = setup()
@@ -1152,7 +1108,13 @@ describe('provider-balance fallback', () => {
 })
 
 describe('followUp (ctx.continue)', () => {
-  const turn = (key = 'run-1:agent:reask', attempt = 1) => ({ runId: 'run-1', stepId: 'agent:reask', key, attempt })
+  const turn = (key = 'run-1:agent:reask', attempt = 1) => ({
+    runId: 'run-1',
+    stepId: 'agent:reask',
+    key,
+    attempt,
+    attribution: attributionOf('run-1', 'agent:reask'),
+  })
 
   test('a follow-up turn runs in the same session; wait answers with that turn only', async () => {
     const t = setup()

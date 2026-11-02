@@ -13,6 +13,7 @@ import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Usage } from '@agent-workflows/runtime'
 import { createClient, type OpenCodeHandle, OpenCodeHost, OpenCodeServer } from '../src/index.ts'
+import { attributionOf } from './attribution.ts'
 
 // The real `opencode` 2.0.32 on the cheapest opencode-wire route, one session, well under $0.05. Run with:
 //   AGW_LIVE=1 secrets-run run --env-file=.env.tpl -- timeout 600 bun test packages/opencode-host
@@ -49,6 +50,7 @@ test.skipIf(!live)(
       const handle = (await host.open({
         runId: 'live',
         stepId: 'probe',
+        attribution: attributionOf('live', 'probe'),
         key: 'live:probe',
         agent: 'live-probe',
         prompt: '',
@@ -140,6 +142,7 @@ test.skipIf(!live)(
       const handle = (await host.open({
         runId: 'live',
         stepId: 'guard',
+        attribution: attributionOf('live', 'guard'),
         key: 'live:guard',
         agent: 'reader',
         prompt: '',
@@ -228,6 +231,7 @@ test.skipIf(!live)(
       const handle = (await host.open({
         runId: 'live',
         stepId: 'allow',
+        attribution: attributionOf('live', 'allow'),
         key: 'live:allow',
         agent: 'repo-reader',
         prompt: '',
@@ -330,6 +334,7 @@ test.skipIf(!live)(
       const handle = (await host.open({
         runId: 'live',
         stepId: 'link',
+        attribution: attributionOf('live', 'link'),
         key: 'live:link',
         agent: 'link-reader',
         prompt: '',

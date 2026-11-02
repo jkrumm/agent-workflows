@@ -10,12 +10,10 @@ export {
 } from './client.ts'
 export { buildServerConfig, gatewayFromEnv, modelRef, opencodeRoutes, rateFor } from './config.ts'
 export {
-  type AttributionRow,
   isStepSession,
   type OpenCodeHandle,
   OpenCodeHost,
   type OpenCodeHostOptions,
-  runAttribution,
   type ServerPort,
   sessionPermissions,
 } from './host.ts'

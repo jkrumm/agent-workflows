@@ -8,14 +8,7 @@ import {
   JournalDb,
   platformMiddleware,
 } from '@agent-workflows/middleware'
-import {
-  type AttributionRow,
-  basePolicyDigest,
-  DEFAULT_STATE_DIR,
-  OpenCodeHost,
-  OpenCodeServer,
-  runAttribution,
-} from '@agent-workflows/opencode-host'
+import { basePolicyDigest, DEFAULT_STATE_DIR, OpenCodeHost, OpenCodeServer } from '@agent-workflows/opencode-host'
 import { validateOverrides } from '@agent-workflows/routes'
 import { type AgentHost, type Json, type Logger, Runtime } from '@agent-workflows/runtime'
 import { resolve } from 'node:path'
@@ -135,8 +128,6 @@ export interface LazyOpenCodeOptions {
   closeWaitMs?: number
   /** The agents the host serves (`agents/<name>/`). Default: none. */
   agents?: AgentDefinitions
-  /** The step's attribution for the gateway (`OpenCodeHostOptions.attribution`). */
-  attribution?: ConstructorParameters<typeof OpenCodeHost>[0]['attribution']
 }
 
 /**
@@ -149,7 +140,7 @@ export function lazyOpenCodeHost(
   traceparent: OpenCodeTraceparent,
   options: LazyOpenCodeOptions = {},
 ): LazyAgentHost {
-  const { stateDir, closeWaitMs = 5000, agents = [], attribution } = options
+  const { stateDir, closeWaitMs = 5000, agents = [] } = options
   const createServer = options.createServer ?? (() => new OpenCodeServer({ env, stateDir }))
   let built: Promise<{ server: LazyServer; host: OpenCodeHost }> | undefined
   let closed = false
@@ -163,7 +154,7 @@ export function lazyOpenCodeHost(
         await server.close()
         throw new Error('opencode host is closed')
       }
-      return { server, host: new OpenCodeHost({ server, agents, env, traceparent, attribution, stateDir }) }
+      return { server, host: new OpenCodeHost({ server, agents, env, traceparent, stateDir }) }
     })().catch((error: unknown) => {
       built = undefined
       throw error
@@ -353,15 +344,6 @@ export async function bootProcess(
       : lazyOpenCodeHost(env, (runId, stepId) => platform.telemetry.traceparent(runId, stepId) ?? undefined, {
           agents,
           stateDir,
-          // `AgentOpenSpec` carries the run and step ids only, so the rest comes from the run's row.
-          attribution: async (runId, stepId) => {
-            const { rows } = await readPool.query<AttributionRow>(
-              `select id, root_id, workflow, purpose, project, workspace, traceparent
-                 from "${config.schema}".runs where id = $1`,
-              [runId],
-            )
-            return rows[0] ? runAttribution(rows[0], stepId) : undefined
-          },
         })
     const agentHost = options.agentHost ?? owned
     const lazy = owned
