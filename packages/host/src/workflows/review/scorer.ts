@@ -1,5 +1,6 @@
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { JUDGE_VERSION } from '@agent-workflows/capabilities'
 import {
   exec,
   GtCase,
@@ -11,9 +12,6 @@ import {
 } from '@agent-workflows/eval'
 import type { Scorer, Verdict } from '@agent-workflows/runtime'
 import { type ReviewInputValue, ReviewOutput, type ReviewResult } from './schema.ts'
-
-// replaced at merge: import from eval-judge.ts
-const JUDGE_VERSION = 'pending'
 
 /** Bump on any change to what a score means: compare refuses to mix scorer versions silently. */
 export const REVIEW_SCORER_VERSION = `2026-11-02.v3+${JUDGE_VERSION}`
