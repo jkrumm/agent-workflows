@@ -4,11 +4,11 @@ import { audioRoutes } from '../routes.ts'
 const ROUTES = audioRoutes()
 import {
   audioEvent,
-  type FakeIu,
+  type FakeGateway,
   geminiAudio,
   hasFfmpeg,
   realMedia,
-  startFakeIu,
+  startFakeGateway,
   streamBody,
   testDeps,
   toneFile,
@@ -20,7 +20,7 @@ import { createTranscriptionsHandler } from './transcriptions.ts'
 const LITE = ROUTES['audio.tts.gemini-flash-lite'].model
 const VOXTRAL = ROUTES['audio.stt.voxtral-mini'].model
 
-let iu: FakeIu
+let iu: FakeGateway
 let door: ReturnType<typeof Bun.serve> | undefined
 afterEach(() => {
   iu?.stop()
@@ -50,7 +50,7 @@ const sdkHeaders = { authorization: 'Bearer sk-hermes', 'user-agent': 'OpenAI/Py
 
 describe.skipIf(!hasFfmpeg)('both handlers mounted on Bun.serve (acceptance)', () => {
   test('an OpenAI SDK-shaped client gets mp3, a pcm stream and a verbose_json transcript from the fakes', async () => {
-    iu = startFakeIu({
+    iu = startFakeGateway({
       gemini: () => geminiAudio(new Uint8Array(24_000)),
       geminiStream: () => streamBody(audioEvent(new Uint8Array(4800)), audioEvent(new Uint8Array(4800))),
       transcriptions: () => Response.json({ text: 'Hallo Welt', language: null, usage: { prompt_audio_seconds: 2 } }),
@@ -117,7 +117,7 @@ describe('door contract', () => {
     new Request('http://door/v1/audio/speech', { method: 'POST', headers, body })
 
   test('a body that is not JSON is a 400 with no usage event', async () => {
-    iu = startFakeIu()
+    iu = startFakeGateway()
     const deps = testDeps(iu)
     const res = await createSpeechHandler(deps)(post('model=x'))
     expect(res.status).toBe(400)
@@ -128,7 +128,7 @@ describe('door contract', () => {
   })
 
   test('an unknown response_format is a 400 before dispatch', async () => {
-    iu = startFakeIu()
+    iu = startFakeGateway()
     const res = await createSpeechHandler(testDeps(iu))(post(JSON.stringify({ input: 'x', response_format: 'flac' })))
     expect(res.status).toBe(400)
     expect(((await res.json()) as { error: { message: string } }).error.message).toBe(
@@ -138,14 +138,14 @@ describe('door contract', () => {
   })
 
   test('empty input is a 400 from the lane', async () => {
-    iu = startFakeIu()
+    iu = startFakeGateway()
     const res = await createSpeechHandler(testDeps(iu))(post(JSON.stringify({ input: '  ' })))
     expect(res.status).toBe(400)
     expect(((await res.json()) as { error: { message: string } }).error.message).toBe('input is required')
   })
 
   test('a wrong model lands on the default route; caller and request id stamp every event', async () => {
-    iu = startFakeIu({ gemini: () => geminiAudio(Uint8Array.from([1, 0])) })
+    iu = startFakeGateway({ gemini: () => geminiAudio(Uint8Array.from([1, 0])) })
     const deps = {
       ...testDeps(iu),
       caller: () => 'hermes',
@@ -168,7 +168,7 @@ describe('door contract', () => {
   })
 
   test('a usage port that throws or rejects never breaks the response', async () => {
-    iu = startFakeIu({ gemini: () => geminiAudio(Uint8Array.from([1, 0])) })
+    iu = startFakeGateway({ gemini: () => geminiAudio(Uint8Array.from([1, 0])) })
     const warnings: string[] = []
     const deps = {
       ...testDeps(iu),
@@ -186,7 +186,7 @@ describe('door contract', () => {
   })
 
   test('a TTS id the route table does not serve (a retired Gemini preview, any owner/name) lands on the default', async () => {
-    iu = startFakeIu({ gemini: () => geminiAudio(Uint8Array.from([1, 0])) })
+    iu = startFakeGateway({ gemini: () => geminiAudio(Uint8Array.from([1, 0])) })
     const deps = testDeps(iu)
     const speak = createSpeechHandler(deps)
     await speak(post(JSON.stringify({ model: 'gemini-3.1-flash-tts-preview', input: 'Hallo.' })))

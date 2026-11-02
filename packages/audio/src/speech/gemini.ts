@@ -1,4 +1,4 @@
-import { iuHeaders, rawFetch, throttleDelay } from '../http.ts'
+import { gatewayMediaHeaders, rawFetch, throttleDelay } from '../http.ts'
 import { type AudioOutputFormat, type ChunkAudio, concatPcm, SAMPLE_RATE_DEFAULT, silencePcm } from '../media/audio.ts'
 import type { AudioScope } from '../scope.ts'
 import {
@@ -197,7 +197,7 @@ async function postSynth(scope: AudioScope, routeId: string, body: Record<string
   const start = scope.deps.clock.now()
   const res = await rawFetch(scope, geminiUrl(scope, model, 'generateContent'), {
     method: 'POST',
-    headers: iuHeaders(scope, { 'content-type': 'application/json' }),
+    headers: gatewayMediaHeaders(scope, { 'content-type': 'application/json' }),
     body: JSON.stringify(body),
   })
   const latencyMs = scope.deps.clock.now() - start
@@ -356,7 +356,7 @@ async function openStream(
     try {
       res = await scope.deps.fetch(`${geminiUrl(scope, model, 'streamGenerateContent')}?alt=sse`, {
         method: 'POST',
-        headers: iuHeaders(scope, { 'content-type': 'application/json' }),
+        headers: gatewayMediaHeaders(scope, { 'content-type': 'application/json' }),
         body: JSON.stringify(synthBody(voiceName, chunk, { rawPcm: false })),
         signal,
       })

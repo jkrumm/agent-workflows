@@ -1,5 +1,5 @@
 import { costFromUsage, fallbackRoute, type ResolvedRoute } from '../../../../routes/src/index.ts'
-import type { StepScope, Usage } from '../../../../runtime/src/index.ts'
+import type { Attribution, StepScope, Usage } from '../../../../runtime/src/index.ts'
 import { log } from './log.ts'
 import { type PodcastRouteId, resolvePodcastRoute } from './routes.ts'
 import type { ToolCallRecord } from './types.ts'
@@ -29,6 +29,8 @@ export interface ChatCall {
   maxTokens: number
   cacheablePrefix?: string
   jsonSchema?: Record<string, unknown>
+  /** The calling step: the gateway puts it on its usage row. */
+  attribution?: Attribution
 }
 
 export interface ChatReply {
@@ -67,6 +69,7 @@ export interface RoundCall {
   messages: WireMessage[]
   tools: ToolSchema[]
   maxTokens: number
+  attribution?: Attribution
 }
 
 /** A round's reply normalised across both APIs; `raw` (responses only) is what goes back into the transcript. */
@@ -106,7 +109,7 @@ export const usesResponsesApi = (model: string): boolean => /^gpt-6\.1/.test(mod
 export class Llm {
   constructor(
     private readonly port: ModelPort,
-    private readonly scope: Pick<StepScope, 'addUsage' | 'signal' | 'progress'>,
+    private readonly scope: Pick<StepScope, 'addUsage' | 'signal' | 'progress'> & { attribution?: Attribution },
     private readonly resolve: (id: PodcastRouteId) => ResolvedRoute = resolvePodcastRoute,
   ) {}
 
@@ -122,6 +125,10 @@ export class Llm {
   /** Resets the step's idle timer (a tool waiting on a long research run). */
   progress() {
     this.scope.progress()
+  }
+
+  private attribution(): { attribution?: Attribution } {
+    return this.scope.attribution ? { attribution: this.scope.attribution } : {}
   }
 
   route(id: PodcastRouteId): ResolvedRoute {
@@ -218,6 +225,7 @@ export class Llm {
           maxTokens: params.maxCompletionTokens,
           ...(params.cacheableSystemPrefix ? { cacheablePrefix: params.cacheableSystemPrefix } : {}),
           ...(params.jsonSchema ? { jsonSchema: params.jsonSchema } : {}),
+          ...this.attribution(),
         },
         this.scope.signal,
         onUsage,
@@ -241,8 +249,13 @@ export class Llm {
 
   /** One tool-loop round on the route, IU's OpenAI dialect (chat, or responses for the GPT-6.1 family). */
   round(id: PodcastRouteId, messages: WireMessage[], tools: ToolSchema[], maxTokens: number): Promise<RoundReply> {
-    return this.onRoute(id, (route, onUsage, onSent) =>
-      this.port.round(
+    return this.onRoute(id, (route, onUsage, onSent) => {
+      // The tool loop speaks the OpenAI dialects (chat, responses); a Messages tool loop is not built, so a route on
+      // another wire fails here, loudly, instead of sending Claude a body it cannot read.
+      if (route.wire !== 'iu-openai') {
+        throw new ModelError(`route ${id} is on the ${route.wire} wire; the tool loop speaks only iu-openai`)
+      }
+      return this.port.round(
         {
           api: usesResponsesApi(route.model) ? 'responses' : 'chat',
           model: route.model,
@@ -250,12 +263,13 @@ export class Llm {
           messages,
           tools,
           maxTokens,
+          ...this.attribution(),
         },
         this.scope.signal,
         onUsage,
         onSent,
-      ),
-    )
+      )
+    })
   }
 }
 

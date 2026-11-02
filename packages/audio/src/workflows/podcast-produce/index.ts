@@ -1,7 +1,7 @@
 import { join } from 'node:path'
 import { z } from 'zod'
 import { artifactDir } from '../../../../host/src/artifacts.ts'
-import type { Ctx, Json, Logger, Usage } from '../../../../runtime/src/index.ts'
+import type { Attribution, Ctx, Json, Logger, Usage } from '../../../../runtime/src/index.ts'
 import { defineWorkflow, WorkflowError } from '../../../../runtime/src/index.ts'
 import { audioRoutes } from '../../routes.ts'
 import type { AudioDeps } from '../../scope.ts'
@@ -95,7 +95,7 @@ export type BrainNoteResult = z.output<typeof BrainNote>
 export interface CoverCall {
   call(
     input: { prompt: string; size: string; quality: 'medium'; n: number },
-    options: { signal: AbortSignal; addUsage: (usage: Usage) => void },
+    options: { signal: AbortSignal; addUsage: (usage: Usage) => void; attribution?: Attribution },
   ): Promise<{ images: { b64: string }[] }>
 }
 
@@ -373,7 +373,7 @@ export function createProduceWorkflows(deps: ProduceDeps) {
         })),
       ),
       as<StoredFile | null>(
-        ctx.step('cover', async ({ signal, addUsage, key }) => {
+        ctx.step('cover', async ({ signal, addUsage, key, attribution }) => {
           if (!input.request.cover || !deps.cover) return null
           const request = { prompt: input.metadata.coverPrompt, size: '1024x1024', quality: 'medium' as const, n: 1 }
           const hash = unitRequestHash(request)
@@ -389,6 +389,7 @@ export function createProduceWorkflows(deps: ProduceDeps) {
             const reported: Usage[] = []
             const out = await deps.cover.call(request, {
               signal,
+              attribution,
               addUsage: (usage) => {
                 reported.push(usage)
                 addUsage(usage)

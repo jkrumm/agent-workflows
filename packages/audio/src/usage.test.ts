@@ -98,21 +98,41 @@ describe('prices come from the route table', () => {
 })
 
 describe('config', () => {
-  test('every base derives from IU_BASE_URL; the key and a /anthropic base are required', () => {
-    expect(audioTransports({ IU_API_KEY: 'k', IU_BASE_URL: 'https://iu.example.com/x/anthropic/' })).toEqual({
-      apiKey: 'k',
-      openaiBase: 'https://iu.example.com/x/openai/v1',
-      geminiBase: 'https://iu.example.com/x/gemini/v1beta',
-      replicateBase: 'https://iu.example.com/x/replicate/v1',
+  test('every base derives from the gateway origin; the secret and an origin without a path are required', () => {
+    expect(audioTransports({ AGW_API_SECRET: 'k', AGW_GATEWAY_URL: 'http://127.0.0.1:7794/' })).toEqual({
+      token: 'k',
+      anthropicBase: 'http://127.0.0.1:7794/anthropic',
+      openaiBase: 'http://127.0.0.1:7794/openai/v1',
+      geminiBase: 'http://127.0.0.1:7794/gemini/v1beta',
+      replicateBase: 'http://127.0.0.1:7794/replicate/v1',
     })
-    expect(() => audioTransports({ IU_BASE_URL: 'https://iu.example.com/anthropic' })).toThrow(AudioConfigError)
-    expect(() => audioTransports({ IU_API_KEY: 'k', IU_BASE_URL: 'https://iu.example.com/openai/v1' })).toThrow(
-      /must end in \/anthropic/,
+    expect(() => audioTransports({ AGW_GATEWAY_URL: 'http://127.0.0.1:7794' })).toThrow(/AGW_API_SECRET is not set/)
+    expect(() => audioTransports({ AGW_API_SECRET: 'k' })).toThrow(/AGW_GATEWAY_URL is not set/)
+    expect(() => audioTransports({ AGW_API_SECRET: 'k', AGW_GATEWAY_URL: 'not a url' })).toThrow(/is not a URL/)
+    for (const bad of ['http://127.0.0.1:7794/anthropic', 'ftp://127.0.0.1:7794', 'http://127.0.0.1:7794/?a=b']) {
+      expect(() => audioTransports({ AGW_API_SECRET: 'k', AGW_GATEWAY_URL: bad })).toThrow(AudioConfigError)
+    }
+  })
+
+  test('the old IU variables are gone with no fallback, and no message echoes a value', () => {
+    expect(() => audioTransports({ IU_API_KEY: 'k', IU_BASE_URL: 'https://iu.example.com/anthropic' })).toThrow(
+      /AGW_GATEWAY_URL is not set/,
     )
+    for (const gateway of ['https://secret-host.example.com/private', 'secret-host']) {
+      let message = ''
+      try {
+        audioTransports({ AGW_API_SECRET: 'secret-token', AGW_GATEWAY_URL: gateway })
+      } catch (error) {
+        message = (error as Error).message
+      }
+      expect(message).not.toBe('')
+      expect(message).not.toContain('secret-host')
+      expect(message).not.toContain('secret-token')
+    }
   })
 
   test('legacy env names and defaults; prep models default to the routes flagged prep', () => {
-    const env = { IU_API_KEY: 'k', IU_BASE_URL: 'https://iu.example.com/anthropic' }
+    const env = { AGW_API_SECRET: 'k', AGW_GATEWAY_URL: 'https://gateway.example.com' }
     const config = audioConfig(env)
     expect(config.ttsGeminiPrepModels).toEqual([ROUTES['audio.tts.gemini-flash'].model])
     expect(config.ttsReplicatePrepModels).toEqual([ROUTES['audio.tts.elevenlabs-v3'].model])

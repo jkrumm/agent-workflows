@@ -21,7 +21,7 @@ describe('podcast-produce module', () => {
       registry,
       toolGate,
       journal,
-      audio: { config: testConfig('https://iu.example.com/anthropic'), env: {} },
+      audio: { config: testConfig('https://gateway.example.com'), env: {} },
     }
     const built = buildWorkflows(modules, deps, () => true)
     const byId = new Map(built.map((entry) => [entry.workflow.id, entry]))

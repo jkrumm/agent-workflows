@@ -1,4 +1,4 @@
-import { iuHeaders } from '../http.ts'
+import { gatewayMediaHeaders } from '../http.ts'
 import type { AudioScope } from '../scope.ts'
 import { synthConcurrent } from '../speech/core.ts'
 import { measureFromOpenAiUsage } from '../usage.ts'
@@ -68,7 +68,7 @@ export async function postTranscription(scope: AudioScope, form: FormData): Prom
   const start = scope.deps.clock.now()
   const res = await scope.deps.fetch(`${scope.config.transports.openaiBase}/audio/transcriptions`, {
     method: 'POST',
-    headers: iuHeaders(scope),
+    headers: gatewayMediaHeaders(scope),
     body: form,
   })
   const body = await res.text()

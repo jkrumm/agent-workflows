@@ -6,7 +6,7 @@ import { bootAudio, type DoorHandlers, loadAudioProcessConfig, readDoorTokens } 
 const logger = processLogger('audio')
 
 /**
- * The lanes' deps on one config and one media port (`audioConfig` from `IU_API_KEY` and `IU_BASE_URL`; a bad value
+ * The lanes' deps on one config and one media port (`audioConfig` from `AGW_GATEWAY_URL` and `AGW_API_SECRET`; a bad value
  * refuses the start): the door builds one handler per request with that request's deps, the podcast's production
  * synthesizes on the same.
  */

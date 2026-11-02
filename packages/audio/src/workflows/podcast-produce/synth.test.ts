@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import { createAudioScope } from '../../scope.ts'
 import { DELIVERY_STYLES } from '../../speech/core.ts'
 import { ReplicateSynthError } from '../../speech/replicate.ts'
-import { caught, type FakeIu, geminiAudio, startFakeIu, testDeps } from '../../testing/index.ts'
+import { caught, type FakeGateway, geminiAudio, startFakeGateway, testDeps } from '../../testing/index.ts'
 import type { CallEvent, UsageEvent } from '../../usage.ts'
 import type { HostValue } from '../podcast/schema.ts'
 import { setProduceLogger } from './log.ts'
@@ -271,19 +271,19 @@ describe('multiSpeakerVoices', () => {
 })
 
 // ---------------------------------------------------------------------------
-// synthesizeUnit over the fake IU
+// synthesizeUnit over the fake gateway
 // ---------------------------------------------------------------------------
 
 // The retry paths log a warning; keep the test output clean.
 setProduceLogger({ warn: () => {}, error: () => {} })
 
-let iu: FakeIu
+let iu: FakeGateway
 afterEach(() => iu?.stop())
 
 const calls = (events: UsageEvent[]) => events.filter((e): e is CallEvent => e.kind === 'call')
 
-function scopeOf(handlers: Parameters<typeof startFakeIu>[0]) {
-  iu = startFakeIu(handlers)
+function scopeOf(handlers: Parameters<typeof startFakeGateway>[0]) {
+  iu = startFakeGateway(handlers)
   const deps = testDeps(iu)
   return { deps, scope: createAudioScope(deps, { requestId: 'job-1', caller: 'podcast' }) }
 }

@@ -24,7 +24,7 @@ routing by path, `/health` and `/models` are the process's.
 
 | Field | Meaning |
 |-|-|
-| `config` | `audioConfig(env)`: transports from `IU_API_KEY` and `IU_BASE_URL` (`…/anthropic`; OpenAI, Gemini and Replicate bases derived from the same root), tuning knobs under legacy's env names |
+| `config` | `audioConfig(env)`: the gateway from `AGW_GATEWAY_URL` (an http(s) origin) and `AGW_API_SECRET`; the Anthropic, OpenAI, Gemini and Replicate bases derive from the origin; tuning knobs under legacy's env names |
 | `usage` | the usage port: `record(event)`, may be async or throw; never awaited, failures logged |
 | `clock?` | `{ now, sleep }`; tests pass an instant one |
 | `fetch?` | the upstream transport |
@@ -33,6 +33,7 @@ routing by path, `/health` and `/models` are the process's.
 | `log?` | `{ info, warn, error }(message, fields)`; default JSON lines on the console |
 | `requestId?(req)` | the id stamped on every event of one request; default a UUID |
 | `caller?(req)` | the caller when `x-audio-source` is absent (e.g. a mapped bearer token); default `unknown` |
+| `attribution?(req)` | the run step the request's model calls are for (`Attribution` of the runtime); sent to the gateway as `x-agw-*` headers. Default none |
 
 ### Usage port
 
@@ -70,7 +71,7 @@ when that chunk ends.
 ## For the podcast's production stage
 
 ```ts
-const scope = createAudioScope(deps, { requestId: runId, caller: 'podcast' })
+const scope = createAudioScope(deps, { requestId: runId, caller: 'podcast', attribution: step.attribution })
 await synthMultiSpeaker(scope, { routeId: 'audio.tts.gemini-flash', voices, parts }) // { pcm, sampleRate }
 await synthReplicateChunk(scope, { routeId: 'audio.tts.elevenlabs-v3', text, voice, languageCode, stability, style, similarityBoost, previousText?, nextText?, speed? })
 ```
@@ -78,11 +79,43 @@ await synthReplicateChunk(scope, { routeId: 'audio.tts.elevenlabs-v3', text, voi
 Each call is priced and recorded on `scope` like a door call; `ReplicateSynthError` marks an ElevenLabs failure.
 `DELIVERY_STYLES`, `SPEECH_TAGS`, `endsOnQuestion`, `synthConcurrent` and `concatPcm` are exported for the stage.
 
+## The gateway
+
+Every upstream call goes to the local inference gateway (`docs/gateway.md`), never to IU: `audioTransports(env)` reads
+`AGW_GATEWAY_URL` (an origin with no path, required) and `AGW_API_SECRET` (required, the gateway's caller `agw`) and
+derives `<origin>/anthropic`, `/openai/v1`, `/gemini/v1beta` and `/replicate/v1`. A message names the variable, never a
+value. `IU_API_KEY` and `IU_BASE_URL` are gone with no fallback. The rules are those of `gatewayConfig` in
+`packages/capabilities`, repeated here (`config.ts`, `gateway.ts`): capabilities is not a dependency of this package,
+and its bases have no Gemini one.
+
+| Call | Headers |
+|-|-|
+| Gemini TTS (unary, streamed), Replicate prediction create and poll, `/audio/transcriptions` | `authorization: Bearer <secret>`, the attribution, `x-agw-usage: caller` |
+| Text calls: the prep and summary LLMs, the podcast's writers and tool rounds | `authorization: Bearer <secret>`, the attribution; the gateway writes their usage rows |
+| The ElevenLabs delivery fetch (`replicate.delivery`) | none: it never touches the gateway |
+
+`x-agw-usage: caller` marks the calls priced per minute, per character or per image: agw writes their row, from the run
+record, as before. The gateway honours it only for caller `agw` on `/openai/v1/images/`, `/openai/v1/audio/`,
+`/gemini/v1beta/` and `/replicate/v1/`, so no text call sends it. The attribution (`gatewayHeaders`: session = the root
+run, run, workflow, step, purpose, project, workspace, `traceparent`) comes from the step that makes the call: the door's
+own run (`door.speech` / `door.transcriptions`, step `request`, a root run), the synth unit step, the cover step, the
+podcast step through `Llm`.
+
+`@agent-workflows/audio/testing` is the fake gateway (`startFakeGateway`, env `AGW_GATEWAY_URL` / `AGW_API_SECRET`): a real socket
+that answers the four path families and records every request with its headers.
+
+**Text calls dispatch on the route's wire.** `callPrepLlm` (the prep and summary LLMs) speaks `iu-openai` (chat
+completions) or `anthropic` (Messages: adaptive thinking with the route's effort, `x-agw-fallback: none`). The seats
+put `audio.tts.prep` on the `anthropic` wire; with no credit left the gateway answers 402, and the call moves once to the
+route's `fallback` (the table's, overrides applied), priced at the fallback's rate, the failed attempt recorded as
+`not-billed`. The same rule serves a balance 503 on `iu-openai`. Podcast's `iuModelPort.chat` does the same per
+`ChatCall.wire`; its tool rounds (`Llm.round`) speak only the OpenAI dialects and fail loudly on a route of another wire.
+
 ## Routes and prices
 
 The routes are a group of the route table, `packages/routes/src/table/audio.ts`: one per model the door accepts, plus
 the prep (`audio.tts.prep`, effort `low`) and summary (`audio.tts.summary`) LLMs, with wire (`iu-gemini`,
-`iu-replicate`, `iu-openai`), model and price: a token `rate` (Gemini TTS, prep, summary), or a `price` from
+`iu-replicate`, `iu-openai`, and `anthropic` for a text route), model and price: a token `rate` (Gemini TTS, prep, summary), or a `price` from
 `packages/routes/src/price.ts` (ElevenLabs per 1k characters, STT per minute as `second` units with `per: 60`, the 4o
 transcribe models as `audio-tokens`). `AGW_ROUTES` overrides any of it. `src/routes.ts` adds, keyed by route id and
 naming no model or price, what only the lanes read (lane, prep, continuity, STT fallback chain, envelope synthesis,
@@ -113,6 +146,8 @@ routes guard matches model ids as tokens.
 - **A client that leaves a pcm stream aborts the upstream read**, so Gemini stops generating.
 - **The ElevenLabs delivery fetch** refuses redirects (the `replicate.delivery` allowlist cannot be left), has a 2-minute
   hang guard and a 50 MiB cap; the prediction id is URL-encoded.
+- **The usage door prices as before.** Run-record costs come from the same events with the same rates; the gateway's
+  rows for text calls are the gateway's, and nothing here changes what a run record says.
 - **The prep LLM's own `usage.cost` wins** over the rate when IU sends one (the platform rule in `packages/routes`).
 - **A sliced part without a duration in its reply is priced from its cut length**, where legacy left it unpriced.
 - **No spans.** Legacy's OTel spans become the run record the process books from the usage port.
@@ -171,8 +206,8 @@ run in the host only.
 
 ### Env
 
-`.env.tpl` is shared by both processes (each fail-closed on all of it). The audio process reads `IU_API_KEY` and
-`IU_BASE_URL` (the lanes derive the OpenAI, Gemini and Replicate bases from it), `STT_PROMPT` (a plain value, as
+`.env.tpl` is shared by both processes (each fail-closed on all of it). The audio process reads `AGW_GATEWAY_URL` and
+`AGW_API_SECRET` (the lanes derive every wire's base from the origin; §The gateway), `STT_PROMPT` (a plain value, as
 audio-gateway set it) and `ABS_URL` / `ABS_API_KEY` (Audiobookshelf, the podcast's publish stage).
 
 ## The door on the process

@@ -33,7 +33,7 @@ test('the reads are declared by the host only: no command is served by both proc
   const host = await boot(loadConfig(hostEnv), { env: hostEnv })
   const audio = await bootAudio(
     {
-      audio: { config: testConfig('https://iu.example.com/anthropic'), env: {} },
+      audio: { config: testConfig('https://gateway.example.com'), env: {} },
       config: loadAudioProcessConfig({
         HOME: home,
         AGW_API_SECRET: SECRET,

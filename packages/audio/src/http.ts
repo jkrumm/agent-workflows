@@ -1,3 +1,4 @@
+import { CALLER_USAGE, gatewayHeaders } from './gateway.ts'
 import type { AudioScope } from './scope.ts'
 
 export interface RawResponse {
@@ -147,10 +148,23 @@ export async function rawFetch(scope: AudioScope, url: string, init: RequestInit
   throw new Error('unreachable')
 }
 
-/** Upstream headers carrying the IU bearer token. */
-export const iuHeaders = (scope: AudioScope, extra: Record<string, string> = {}): Record<string, string> => ({
-  Authorization: `Bearer ${scope.config.transports.apiKey}`,
+/**
+ * Headers for a text call on the gateway: the bearer and the step's attribution. The gateway writes the usage row of
+ * these calls itself.
+ */
+export const gatewayTextHeaders = (scope: AudioScope, extra: Record<string, string> = {}): Record<string, string> => ({
+  ...gatewayHeaders(scope.attribution),
   ...extra,
+  authorization: `Bearer ${scope.config.transports.token}`,
+})
+
+/**
+ * Headers for a media call (TTS, ElevenLabs predictions and polls, transcriptions): the same, plus `x-agw-usage:
+ * caller`, since these are priced per minute, per character or per image and only agw can price them.
+ */
+export const gatewayMediaHeaders = (scope: AudioScope, extra: Record<string, string> = {}): Record<string, string> => ({
+  ...gatewayTextHeaders(scope, extra),
+  ...CALLER_USAGE,
 })
 
 export const errorMessage = (error: unknown): string => (error instanceof Error ? error.message : String(error))

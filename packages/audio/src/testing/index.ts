@@ -1,4 +1,4 @@
-// Test support: a fake IU on a real socket answering like its OpenAI, Gemini and Replicate routes, plus deps with an
+// Test support: a fake gateway on a real socket answering like its OpenAI, Anthropic, Gemini and Replicate paths, plus deps with an
 // instant clock and a recording usage port, so the production lanes are exercised over HTTP.
 import { type AudioConfig, audioConfig } from '../config.ts'
 import { ffmpegMedia, type MediaPort } from '../media/audio.ts'
@@ -7,6 +7,7 @@ import type { RequestEvent, UsageEvent, UsagePort } from '../usage.ts'
 
 export type FakeRoute =
   | 'chat'
+  | 'messages'
   | 'speech'
   | 'transcriptions'
   | 'gemini'
@@ -29,9 +30,9 @@ export interface FakeRequest {
 
 type Handler = (request: FakeRequest, attempt: number) => Response | Promise<Response>
 
-export interface FakeIu {
-  /** The value for `IU_BASE_URL`. */
-  baseUrl: string
+export interface FakeGateway {
+  /** The value for `AGW_GATEWAY_URL`: an origin. */
+  url: string
   requests: FakeRequest[]
   on(route: FakeRoute, handler: Handler): void
   /** fetch that sends `https://*.replicate.delivery/...` to this server's `delivery` route, everything else as is. */
@@ -41,6 +42,7 @@ export interface FakeIu {
 
 function routeOf(path: string): FakeRoute | null {
   if (path === '/openai/v1/chat/completions') return 'chat'
+  if (path === '/anthropic/v1/messages') return 'messages'
   if (path === '/openai/v1/audio/speech') return 'speech'
   if (path === '/openai/v1/audio/transcriptions') return 'transcriptions'
   if (/^\/gemini\/v1beta\/models\/[^/]+:generateContent$/.test(path)) return 'gemini'
@@ -51,7 +53,7 @@ function routeOf(path: string): FakeRoute | null {
   return null
 }
 
-export function startFakeIu(handlers: Partial<Record<FakeRoute, Handler>> = {}): FakeIu {
+export function startFakeGateway(handlers: Partial<Record<FakeRoute, Handler>> = {}): FakeGateway {
   const table: Partial<Record<FakeRoute, Handler>> = { ...handlers }
   const attempts = new Map<FakeRoute, number>()
   const requests: FakeRequest[] = []
@@ -81,7 +83,7 @@ export function startFakeIu(handlers: Partial<Record<FakeRoute, Handler>> = {}):
   })
   const origin = `http://127.0.0.1:${server.port}`
   return {
-    baseUrl: `${origin}/anthropic`,
+    url: origin,
     requests,
     on(route, handler) {
       table[route] = handler
@@ -141,6 +143,20 @@ export function chatAnswer(
   return Response.json({ choices: [{ message: { content } }], usage })
 }
 
+/** A Messages answer carrying `text` (a prep JSON, usually). */
+export function messageAnswer(
+  text: string,
+  usage: Record<string, unknown> = { input_tokens: 100, output_tokens: 50 },
+): Response {
+  return Response.json({
+    type: 'message',
+    role: 'assistant',
+    content: [{ type: 'text', text }],
+    stop_reason: 'end_turn',
+    usage,
+  })
+}
+
 export function prepAnswer(prep: { lang: string; title?: string; chunks: Array<Record<string, string>> }): Response {
   return chatAnswer(JSON.stringify(prep))
 }
@@ -190,13 +206,22 @@ export function recordingUsage(): RecordingUsage {
   }
 }
 
-/** A config from the defaults, on the fake's base, with overrides. */
-export function testConfig(baseUrl: string, overrides: Partial<AudioConfig> = {}): AudioConfig {
-  return { ...audioConfig({ IU_API_KEY: 'test-key', IU_BASE_URL: baseUrl }), ...overrides }
+/** The token every fake-gateway test sends; the fake never checks it, tests assert the header. */
+export const TEST_TOKEN = 'test-secret'
+
+/** The env that points the lanes at the gateway at `url`. */
+export const gatewayEnv = (url: string): Record<string, string> => ({
+  AGW_GATEWAY_URL: url,
+  AGW_API_SECRET: TEST_TOKEN,
+})
+
+/** A config from the defaults, on the fake's origin, with overrides. */
+export function testConfig(url: string, overrides: Partial<AudioConfig> = {}): AudioConfig {
+  return { ...audioConfig(gatewayEnv(url)), ...overrides }
 }
 
 export function testDeps(
-  iu: FakeIu,
+  iu: FakeGateway,
   overrides: Partial<Omit<AudioDeps, 'config' | 'usage'>> & { config?: Partial<AudioConfig> } = {},
 ): AudioDeps & { usage: RecordingUsage } {
   const { config, ...rest } = overrides
@@ -206,7 +231,7 @@ export function testDeps(
     fetch: iu.fetch,
     media: fakeMedia,
     ...rest,
-    config: testConfig(iu.baseUrl, config),
+    config: testConfig(iu.url, config),
     usage: recordingUsage(),
   }
 }

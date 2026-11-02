@@ -7,10 +7,10 @@ import { createAudioScope } from '../scope.ts'
 import {
   audioEvent,
   caught,
-  type FakeIu,
+  type FakeGateway,
   geminiAudio,
   prepAnswer,
-  startFakeIu,
+  startFakeGateway,
   streamBody,
   testDeps,
 } from '../testing/index.ts'
@@ -22,11 +22,11 @@ import { PREP_STYLE } from './prep.ts'
 const LITE = ROUTES['audio.tts.gemini-flash-lite'].model
 const FLASH = ROUTES['audio.tts.gemini-flash'].model
 
-let iu: FakeIu
+let iu: FakeGateway
 afterEach(() => iu?.stop())
 
-function setup(handlers: Parameters<typeof startFakeIu>[0] = {}, config = {}) {
-  iu = startFakeIu(handlers)
+function setup(handlers: Parameters<typeof startFakeGateway>[0] = {}, config = {}) {
+  iu = startFakeGateway(handlers)
   const deps = testDeps(iu, { config })
   return { deps, speak: createSpeechHandler(deps) }
 }
@@ -139,7 +139,7 @@ describe('multi-speaker (podcast production stage)', () => {
   })
 
   test('synthMultiSpeaker posts one generateContent call, returns the PCM and records one priced call', async () => {
-    iu = startFakeIu({
+    iu = startFakeGateway({
       gemini: () => geminiAudio(new Uint8Array(4800), { promptTokenCount: 20, candidatesTokenCount: 25 }),
     })
     const deps = testDeps(iu)
@@ -372,7 +372,7 @@ describe('pcm streaming', () => {
     const gate = new Promise<void>((resolve) => {
       release = resolve
     })
-    iu = startFakeIu({ geminiStream: () => streamBody(audioEvent([9, 0])) })
+    iu = startFakeGateway({ geminiStream: () => streamBody(audioEvent([9, 0])) })
     const recorded: UsageEvent[] = []
     const deps = {
       ...testDeps(iu),

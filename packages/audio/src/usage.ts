@@ -148,6 +148,24 @@ export function priceCall(route: AudioRoute | undefined, status: number, m: Meas
   return { units, quantity, costUsd: cost.usd, costSource: cost.source, priceVerified }
 }
 
+/**
+ * Messages usage read into a `Measure`. `input_tokens` excludes cache reads and writes, so they are added back: a
+ * `Measure`'s input includes the cached part, as OpenAI's does.
+ */
+export function measureFromAnthropicUsage(usage: unknown): Measure {
+  const u = (usage ?? {}) as Record<string, unknown>
+  const n = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null)
+  const input = n(u.input_tokens)
+  const cacheRead = n(u.cache_read_input_tokens)
+  const cacheWrite = n(u.cache_creation_input_tokens)
+  return {
+    inputTokens: input === null ? null : input + (cacheRead ?? 0) + (cacheWrite ?? 0),
+    outputTokens: n(u.output_tokens),
+    cachedTokens: cacheRead,
+    providerCostUsd: n(u.cost),
+  }
+}
+
 /** OpenAI-shaped usage (chat completions, STT) read into a `Measure`; legacy `tokens()`. */
 export function measureFromOpenAiUsage(usage: unknown): Measure {
   const u = (usage ?? {}) as Record<string, unknown>

@@ -20,7 +20,14 @@ async function rejected(promise: Promise<unknown>): Promise<Error> {
   return error
 }
 
-const ENV = { IU_API_KEY: 'k', IU_BASE_URL: 'https://iu.example.com/anthropic' }
+const ENV = { AGW_GATEWAY_URL: 'https://gateway.example.com', AGW_API_SECRET: 'k' }
+const ATTRIBUTION = {
+  runId: 'run-1',
+  rootId: 'root-1',
+  workflow: 'podcast',
+  step: 'write',
+  purpose: 'prod',
+}
 const SIGNAL = new AbortController().signal
 /** The tests that do not count sends. */
 const NOT_SENT = () => {}
@@ -303,7 +310,12 @@ describe('iuModelPort', () => {
   test('chat on the OpenAI wire streams the text, reports usage and posts to the derived openai base', async () => {
     const { seen, fetch } = scripted([() => new Response(OPENAI_STREAM)])
     const { usages, onUsage } = usageSink()
-    const reply = await port(fetch).chat({ ...chatCall, effort: 'high' }, SIGNAL, onUsage, NOT_SENT)
+    const reply = await port(fetch).chat(
+      { ...chatCall, effort: 'high', attribution: ATTRIBUTION },
+      SIGNAL,
+      onUsage,
+      NOT_SENT,
+    )
     expect(reply).toEqual({ text: 'Hallo', stop: 'complete' })
     expect(usages).toEqual([
       {
@@ -312,7 +324,7 @@ describe('iuModelPort', () => {
         cost: 0.002,
       },
     ])
-    expect(seen[0]?.url).toBe('https://iu.example.com/openai/v1/chat/completions')
+    expect(seen[0]?.url).toBe('https://gateway.example.com/openai/v1/chat/completions')
     const body = JSON.parse(String(seen[0]?.init.body))
     expect(body).toMatchObject({
       model: 'fake-model',
@@ -320,7 +332,16 @@ describe('iuModelPort', () => {
       reasoning_effort: 'high',
       stream: true,
     })
-    expect(new Headers(seen[0]?.init.headers).get('authorization')).toBe('Bearer k')
+    const headers = new Headers(seen[0]?.init.headers)
+    expect(headers.get('authorization')).toBe('Bearer k')
+    expect(headers.get('x-agw-session')).toBe('root-1')
+    expect(headers.get('x-agw-run-id')).toBe('run-1')
+    expect(headers.get('x-agw-workflow')).toBe('podcast')
+    expect(headers.get('x-agw-step')).toBe('write')
+    expect(headers.get('x-agw-purpose')).toBe('prod')
+    // A text call: the gateway writes its row, and there is nothing to fall back from.
+    expect(headers.get('x-agw-usage')).toBeNull()
+    expect(headers.get('x-agw-fallback')).toBeNull()
   })
 
   test('a length stop and an unknown stop are named', async () => {
@@ -404,7 +425,7 @@ describe('iuModelPort', () => {
     ].join('\n')
     const { seen, fetch } = scripted([() => new Response(stream)])
     const { usages, onUsage } = usageSink()
-    const reply = await port(fetch).chat(anthropicCall, SIGNAL, onUsage, NOT_SENT)
+    const reply = await port(fetch).chat({ ...anthropicCall, attribution: ATTRIBUTION }, SIGNAL, onUsage, NOT_SENT)
     expect(reply).toEqual({ text: 'Hallo', stop: 'complete' })
     expect(usages).toEqual([
       {
@@ -413,8 +434,13 @@ describe('iuModelPort', () => {
         cost: null,
       },
     ])
-    expect(seen[0]?.url).toBe('https://iu.example.com/anthropic/v1/messages')
-    expect(new Headers(seen[0]?.init.headers).get('anthropic-version')).toBe('2023-06-01')
+    expect(seen[0]?.url).toBe('https://gateway.example.com/anthropic/v1/messages')
+    const headers = new Headers(seen[0]?.init.headers)
+    expect(headers.get('anthropic-version')).toBe('2023-06-01')
+    expect(headers.get('authorization')).toBe('Bearer k')
+    expect(headers.get('x-agw-fallback')).toBe('none')
+    expect(headers.get('x-agw-session')).toBe('root-1')
+    expect(headers.get('x-agw-usage')).toBeNull()
     expect(JSON.parse(String(seen[0]?.init.body))).toMatchObject({ max_tokens: 32_000, stream: true })
   })
 
@@ -509,27 +535,19 @@ describe('iuModelPort', () => {
     expect(calls).toBe(1)
   })
 
-  test('a missing key or a base URL not ending in /anthropic is a ModelError', async () => {
+  test('a missing secret, a missing URL or a URL with a path is a ModelError that echoes no value', async () => {
     const { fetch } = scripted([])
-    expect(
-      (
-        await rejected(
-          iuModelPort({ env: { IU_BASE_URL: ENV.IU_BASE_URL }, fetch }).chat(chatCall, SIGNAL, () => {}, NOT_SENT),
-        )
-      ).message,
-    ).toContain('IU_API_KEY')
-    expect(
-      (
-        await rejected(
-          iuModelPort({ env: { IU_API_KEY: 'k', IU_BASE_URL: 'https://iu.example.com' }, fetch }).chat(
-            chatCall,
-            SIGNAL,
-            () => {},
-            NOT_SENT,
-          ),
-        )
-      ).message,
-    ).toContain('/anthropic')
+    const failure = async (env: Record<string, string>) =>
+      (await rejected(iuModelPort({ env, fetch }).chat(chatCall, SIGNAL, () => {}, NOT_SENT))).message
+    expect(await failure({ AGW_GATEWAY_URL: ENV.AGW_GATEWAY_URL })).toContain('AGW_API_SECRET')
+    expect(await failure({ AGW_API_SECRET: 'k' })).toContain('AGW_GATEWAY_URL')
+    const withPath = await failure({ AGW_API_SECRET: 'k', AGW_GATEWAY_URL: 'https://gateway.example.com/anthropic' })
+    expect(withPath).toContain('origin')
+    expect(withPath).not.toContain('gateway.example.com')
+    // The old IU names are gone, with no fallback.
+    expect(await failure({ IU_API_KEY: 'k', IU_BASE_URL: 'https://iu.example.com/anthropic' })).toContain(
+      'AGW_GATEWAY_URL',
+    )
   })
 
   test('a round on chat completions returns the message untouched with its finish reason and reports usage', async () => {
@@ -544,13 +562,17 @@ describe('iuModelPort', () => {
     }
     const { seen, fetch } = scripted([() => Response.json(json)])
     const { usages, onUsage } = usageSink()
-    const reply = await port(fetch).round(roundCall, SIGNAL, onUsage, NOT_SENT)
+    const reply = await port(fetch).round({ ...roundCall, attribution: ATTRIBUTION }, SIGNAL, onUsage, NOT_SENT)
     expect(reply.message).toEqual(message)
     expect(reply.finishReason).toBe('tool_calls')
     expect(usages).toEqual([
       { model: 'fake-model', tokens: { input: 10, output: 2, cacheRead: 0, reasoning: 0 }, cost: 0.001 },
     ])
-    expect(seen[0]?.url).toBe('https://iu.example.com/openai/v1/chat/completions')
+    expect(seen[0]?.url).toBe('https://gateway.example.com/openai/v1/chat/completions')
+    const headers = new Headers(seen[0]?.init.headers)
+    expect(headers.get('authorization')).toBe('Bearer k')
+    expect(headers.get('x-agw-step')).toBe('write')
+    expect(headers.get('x-agw-usage')).toBeNull()
   })
 
   test('a round on the responses API posts to /responses and parses function calls', async () => {
@@ -562,7 +584,7 @@ describe('iuModelPort', () => {
     const { seen, fetch } = scripted([() => Response.json(json)])
     const { usages, onUsage } = usageSink()
     const reply = await port(fetch).round({ ...roundCall, api: 'responses' }, SIGNAL, onUsage, NOT_SENT)
-    expect(seen[0]?.url).toBe('https://iu.example.com/openai/v1/responses')
+    expect(seen[0]?.url).toBe('https://gateway.example.com/openai/v1/responses')
     expect(reply.message.tool_calls?.[0]?.id).toBe('c1')
     expect(reply.raw).toEqual(json.output)
     expect(usages[0]?.tokens).toEqual({ input: 20, output: 5, cacheRead: 8, reasoning: 0 })

@@ -15,7 +15,7 @@ import {
   fakeMedia,
   instantClock,
   silentLog,
-  startFakeIu,
+  startFakeGateway,
   streamBody,
   testConfig,
 } from '../src/testing/index.ts'
@@ -31,7 +31,7 @@ import {
 } from '../src/process/index.ts'
 
 /** The lanes' deps the workflows are built with (no request reaches IU in these tests). */
-const AUDIO = { config: testConfig('https://iu.example.com/anthropic'), env: {} }
+const AUDIO = { config: testConfig('https://gateway.example.com'), env: {} }
 const SECRET = 'test-secret-0123456789abcdef-0123456789'
 const HERMES = 'hermes-token-0123456789abcdef-0123456789'
 const db = freshSchema('audio')
@@ -255,11 +255,11 @@ describe('the audio process', () => {
   })
 
   test("the lanes' real door handlers, mounted: a pcm stream and a bad body, each one recorded run", async () => {
-    const iu = startFakeIu({
+    const iu = startFakeGateway({
       geminiStream: () => streamBody(audioEvent(new Uint8Array(4800)), audioEvent(new Uint8Array(4800))),
     })
     const lanes = {
-      config: testConfig(iu.baseUrl),
+      config: testConfig(iu.url),
       media: fakeMedia,
       clock: instantClock,
       log: silentLog,
@@ -274,11 +274,20 @@ describe('the audio process', () => {
     try {
       const pcm = await fetch(`${audio.url}/v1/audio/speech`, {
         method: 'POST',
-        headers: { ...bearer(HERMES), 'content-type': 'application/json' },
+        headers: { ...bearer(HERMES), 'content-type': 'application/json', 'x-agw-purpose': 'door-test' },
         body: JSON.stringify({ model: LITE, input: 'Hallo.', voice: 'Charon', response_format: 'pcm' }),
       })
       expect(pcm.status).toBe(200)
       const pcmRun = pcm.headers.get('agw-run-id') as string
+      // The upstream call is attributed to the door's own run: a root run, step `request`, the caller's purpose.
+      const upstream = iu.requests.find((r) => r.route === 'geminiStream')?.headers
+      expect(upstream?.get('x-agw-run-id')).toBe(pcmRun)
+      expect(upstream?.get('x-agw-session')).toBe(pcmRun)
+      expect(upstream?.get('x-agw-workflow')).toBe('door.speech')
+      expect(upstream?.get('x-agw-step')).toBe('request')
+      expect(upstream?.get('x-agw-purpose')).toBe('door-test')
+      expect(upstream?.get('x-agw-usage')).toBe('caller')
+      expect(upstream?.get('authorization')).toBe('Bearer test-secret')
       expect((await pcm.arrayBuffer()).byteLength).toBe(9600)
       const bad = await fetch(`${audio.url}/v1/audio/speech`, {
         method: 'POST',

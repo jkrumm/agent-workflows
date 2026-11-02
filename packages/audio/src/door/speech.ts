@@ -78,7 +78,7 @@ function parseSpeechBody(json: Record<string, unknown>): SpeechBody {
 export function createSpeechHandler(deps: AudioDeps): (req: Request) => Promise<Response> {
   const resolved = resolveDeps(deps)
   return async (req) => {
-    const scope = new AudioScope(resolved, requestIdOf(deps, req), callerOf(deps, req))
+    const scope = new AudioScope(resolved, requestIdOf(deps, req), callerOf(deps, req), deps.attribution?.(req))
     try {
       return await dispatchSpeech(scope, req)
     } catch (error) {
