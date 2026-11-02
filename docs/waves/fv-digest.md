@@ -6,6 +6,11 @@ items, not sessions or Issues.
 **Gate:** `make check` green, `/review` with findings fixed, the eval green on Max first (decision of 2026-11-01: iterate on Max,
 keep API spend low), `make deploy` and `make verify` live, `agw digest` answered on the mini by a real batch.
 
+**Runs as** one fan worker spawned by software-factory's lead, after agw's own Wave 3 deploy (agw's lead r6, 2026-11-02): branch from
+origin/master, `make check`, merged through a PR. agw holds no provider key: every model call goes through the gateway on 7794
+(the anthropic wire, `x-agw-fallback: none`, seats on Claude): read `docs/gateway.md` and `packages/routes/README.md` first.
+Whether `agw agents` becomes a `/fleet` client or retires is the mother's (`agent-workflows-w1-r4`), asked in FV Wave 5.
+
 ## Wave 1 — `agw digest`            <!-- status: pending -->
 - [ ] `agw digest --items <json|-> [--format json]`: items `{ id, kind: heading|session|reply|window, text, context? }`, at most
   64 per call, text cut per item. Answer per id, schema-checked: `short` (at most 8 words), `headline` (sessions), for `reply`
