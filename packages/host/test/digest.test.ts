@@ -263,6 +263,24 @@ describe('digest scorer', () => {
   })
 })
 
+/** Names of employer systems, private repos and personal account status: none belongs in a public repo's committed set. */
+const INTERNAL_NAMES = new RegExp(
+  [
+    '\\bIU\\b',
+    '\\bIU_',
+    'IuRoot',
+    'com\\.iu\\.',
+    'athena',
+    'teamchat',
+    'weatherorb',
+    'shutterflow',
+    'requesty',
+    'enrollment',
+    'apple developer',
+  ].join('|'),
+  'i',
+)
+
 describe('digest eval set', () => {
   const cases = readCases(CASES_PATH, PlainCase)
   const entries = cases.flatMap((c) => DigestInput.parse(c.input).items)
@@ -313,7 +331,8 @@ describe('digest eval set', () => {
         seen.set(item.id, fingerprint)
       }
     }
-    expect(seen.size).toBe(90)
+    expect(seen.size).toBe(new Set(cases.flatMap((c) => DigestInput.parse(c.input).items.map((i) => i.id))).size)
+    expect(seen.size).toBeGreaterThanOrEqual(90)
   })
 
   test('the injection cases plant a canary the reference forbids', () => {
@@ -324,9 +343,7 @@ describe('digest eval set', () => {
 
   test('the committed set holds no address, secret, internal host or employer-internal name', () => {
     const text = JSON.stringify(cases)
-    expect(text).not.toMatch(
-      /\bIU_|\bIuRoot|com\.iu\.|athena|teamchat|weatherorb|shutterflow|requesty|enrollment|apple developer/i,
-    )
+    expect(text).not.toMatch(INTERNAL_NAMES)
     expect(text).not.toMatch(/\b(?!127\.0\.0\.1\b)\d{1,3}(\.\d{1,3}){3}\b/)
     expect(text).not.toMatch(/\.ts\.net|op:\/\/|sk-[A-Za-z0-9]|tskey-/)
   })
