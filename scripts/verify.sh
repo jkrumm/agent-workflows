@@ -9,7 +9,11 @@
 # The gateway must be healthy at the recorded build (data/gateway-build), and three real Haiku calls through it must behave
 # and be recorded: a credit-pool call, the same call again that reads the cache, and a Claude-Code-shaped one that goes to
 # IU; their `usage.records` rows (billing api_credit, api_credit, api_key/personal) and `usage.gateway_picks` rows must
-# appear within 120 s. It never waits on the Anthropic cost API (it lags 20-70 min).
+# appear within 120 s. A fourth Haiku call with the `agw-opencode` door token (the token the host hands OpenCode and `ocr`)
+# must land lane agw_workflow. agw holds no provider key, so the smoke run's and the cap.llm.title run's model calls are
+# the gateway's: each run needs a `source='gateway'` row (lane agw_workflow, workflow and step in lane_detail, a priced
+# cost, billing api_credit on a pool /health names or api_key personal, never api_credit with no eligible pool) and no
+# `source='agent-workflows'` row, within the same 120 s. It never waits on the Anthropic cost API (it lags 20-70 min).
 # Prints the run ids and the gateway's request ids.
 
 set -u
@@ -25,6 +29,7 @@ PG_PASSWORD_REF="op://mini/vps-dev/AGENT_WORKFLOWS_DB_PASSWORD"
 SCHEMA="${AGW_PG_SCHEMA:-agw}"
 GATEWAY_URL="${AGW_GATEWAY_URL:-http://127.0.0.1:7794}"
 GATEWAY_BUILD_FILE="$ROOT/data/gateway-build"
+DOOR_TOKENS_FILE="$ROOT/data/door-tokens"
 AGW_ENV_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/agw/env"
 USAGE_PG_PASSWORD_REF="op://mini/vps-dev/SHARED_USAGE_DB_PASSWORD"
 GATEWAY_POLL_SECS="${GATEWAY_POLL_SECS:-120}"
@@ -181,6 +186,12 @@ ok "gateway /health ok (build $gw_build)"
 
 gw_secret=$(sed -n 's/^AGW_API_SECRET=//p' "$AGW_ENV_FILE" 2>/dev/null | head -n 1)
 [[ -n "$gw_secret" ]] || fail "AGW_API_SECRET not found in $AGW_ENV_FILE (make deploy writes it)"
+# The OpenCode caller's door token (the line launch.sh hands the host as AGW_GATEWAY_TOOL_TOKEN), never printed.
+oc_token=$(awk '{ sub(/\r$/, ""); eq = index($0, "="); if (eq == 0) next
+  name = substr($0, 1, eq - 1); gsub(/^[ \t]+|[ \t]+$/, "", name); if (name != "agw-opencode") next
+  token = substr($0, eq + 1); gsub(/^[ \t]+|[ \t]+$/, "", token); print token; exit }' "$DOOR_TOKENS_FILE" 2>/dev/null)
+[[ -n "$oc_token" ]] || fail "no agw-opencode token in $DOOR_TOKENS_FILE (make deploy adds it)"
+gw_key=$gw_secret
 
 # A constant system block of well over the 512 tokens Haiku caches from, so the second call can read the cache.
 gw_system=""
@@ -197,9 +208,10 @@ gw_head=$(mktemp "${TMPDIR:-/tmp}/agw-verify.XXXXXX") || fail "cannot create a t
 gw_resp=$(mktemp "${TMPDIR:-/tmp}/agw-verify.XXXXXX") || fail "cannot create a temp file"
 trap 'rm -f "$psql_err" "$agw_err" "$door_body" "$gw_head" "$gw_resp"' EXIT
 
-# One POST through the gateway; the key goes to curl on stdin, never the command line. Sets gw_status, gw_id, gw_pool.
+# One POST through the gateway as the caller whose key is $gw_key; the key goes to curl on stdin, never the command line.
+# Sets gw_status, gw_id, gw_pool.
 gateway_call() {  # $@ extra curl args (headers)
-  gw_status=$(print -r -- "header = \"x-api-key: $gw_secret\"" | curl -sS --max-time 120 -K - -D "$gw_head" -o "$gw_resp" \
+  gw_status=$(print -r -- "header = \"x-api-key: $gw_key\"" | curl -sS --max-time 120 -K - -D "$gw_head" -o "$gw_resp" \
     -w '%{http_code}' -X POST -H 'content-type: application/json' -H 'anthropic-version: 2023-06-01' \
     -H 'x-agw-purpose: verify' -H "x-agw-session: $gw_session" "$@" --data "$gw_body" "$GATEWAY_URL/anthropic/v1/messages") \
     || fail "no answer from the gateway's /anthropic/v1/messages"
@@ -230,30 +242,42 @@ id3=$gw_id
 [[ "$gw_pool" == "iu-api" ]] || fail "gateway call 3 (Claude-Code-shaped) went to '${gw_pool:-missing}', not iu-api"
 ok "gateway call 3: 200, pool iu-api, request $id3"
 
+# The OpenCode caller: its own session, the agw-opencode token instead of the API secret.
+gw_key=$oc_token
+gw_session="verify-oc-$(date +%s)"
+gateway_call
+gw_key=$gw_secret
+[[ "$gw_status" == "200" ]] || fail "gateway call 4 (agw-opencode) got $gw_status: $(head -c 400 "$gw_resp")"
+[[ -n "$gw_id" ]] || fail "gateway call 4 answered without x-agw-request-id"
+id4=$gw_id
+ok "gateway call 4: 200 as agw-opencode, pool ${gw_pool:-none}, request $id4"
+
 usage_password=$(secrets-run read "$USAGE_PG_PASSWORD_REF" 2>/dev/null)
 [[ -n "$usage_password" ]] || fail "cannot read $USAGE_PG_PASSWORD_REF through secrets-run"
-# One usage query (role usage, database shared); the SQL on stdin, the ids bound as one comma-separated variable.
-usage_q() {
-  PGPASSWORD="$usage_password" psql -h 127.0.0.1 -U usage -d shared -AtF '|' -v ON_ERROR_STOP=1 -v "ids=$id1,$id2,$id3" \
-    2>"$psql_err" <<< "$1" || fail "usage query failed: $(<"$psql_err")"
+# One usage query (role usage, database shared); the SQL on stdin, the ids bound as comma-separated -v variables.
+usage_q() {  # $1 sql, $@ psql -v bindings
+  local sql=$1; shift
+  PGPASSWORD="$usage_password" psql -h 127.0.0.1 -U usage -d shared -AtF '|' -v ON_ERROR_STOP=1 "$@" \
+    2>"$psql_err" <<< "$sql" || fail "usage query failed: $(<"$psql_err")"
 }
-rows_sql="select source_id, billing, coalesce(account, ''), coalesce(api_key, ''), coalesce(cost_usd::text, ''), cache_read_tokens, cache_write_5m_tokens from usage.records
+gw_ids="ids=$id1,$id2,$id3,$id4"
+rows_sql="select source_id, billing, coalesce(account, ''), coalesce(api_key, ''), coalesce(cost_usd::text, ''), cache_read_tokens, cache_write_5m_tokens, lane, coalesce(lane_detail->>'caller', '') from usage.records
   where source = 'gateway' and source_id = any(string_to_array(:'ids', ',')) order by source_id"
 picks_sql="select count(distinct request_id) from usage.gateway_picks where request_id = any(string_to_array(:'ids', ','))"
 rows=""; picks=0
 for (( waited = 0; waited <= GATEWAY_POLL_SECS; waited += 5 )); do
-  rows=$(usage_q "$rows_sql") || exit 1
-  picks=$(usage_q "$picks_sql") || exit 1
-  (( $(print -r -- "$rows" | grep -c .) == 3 && ${picks:-0} == 3 )) && break
+  rows=$(usage_q "$rows_sql" -v "$gw_ids") || exit 1
+  picks=$(usage_q "$picks_sql" -v "$gw_ids") || exit 1
+  (( $(print -r -- "$rows" | grep -c .) == 4 && ${picks:-0} == 4 )) && break
   (( waited < GATEWAY_POLL_SECS )) && sleep 5
 done
 row_of() { print -r -- "$rows" | awk -F'|' -v id="$1" '$1 == id'; }
-for id in $id1 $id2 $id3; do
+for id in $id1 $id2 $id3 $id4; do
   [[ -n "$(row_of "$id")" ]] || fail "no usage.records row (source 'gateway') for request $id within ${GATEWAY_POLL_SECS}s"
 done
-(( ${picks:-0} == 3 )) || fail "usage.gateway_picks has ${picks:-0} of 3 request ids within ${GATEWAY_POLL_SECS}s"
+(( ${picks:-0} == 4 )) || fail "usage.gateway_picks has ${picks:-0} of 4 request ids within ${GATEWAY_POLL_SECS}s"
 for id in $id1 $id2; do
-  IFS='|' read -r _ g_billing g_account g_key g_cost g_read g_write <<< "$(row_of "$id")"
+  IFS='|' read -r _ g_billing g_account g_key g_cost g_read g_write _ <<< "$(row_of "$id")"
   [[ "$g_billing" == "api_credit" ]] || fail "request $id: billing '$g_billing', expected api_credit"
   [[ "$g_account" == "$pool" ]] || fail "request $id: account '$g_account', expected the pool $pool"
   [[ -n "$g_cost" ]] && (( g_cost > 0 )) || fail "request $id: cost_usd '${g_cost:-null}', expected > 0"
@@ -263,9 +287,69 @@ for id in $id1 $id2; do
     (( ${g_write:-0} + ${g_read:-0} > 0 )) || fail "request $id: cache_write_5m_tokens '${g_write:-null}' + cache_read_tokens '${g_read:-null}', expected > 0"
   fi
 done
-IFS='|' read -r _ g_billing g_account g_key g_cost <<< "$(row_of "$id3")"
+IFS='|' read -r _ g_billing g_account g_key g_cost _ <<< "$(row_of "$id3")"
 [[ "$g_billing" == "api_key" ]] || fail "request $id3: billing '$g_billing', expected api_key"
 [[ "$g_key" == "personal" ]] || fail "request $id3: api_key '$g_key', expected personal"
-ok "gateway usage: $id1 and $id2 api_credit on $pool (priced, cache columns set), $id3 api_key personal; 3 gateway_picks rows"
+IFS='|' read -r _ _ _ _ _ _ _ g_lane g_caller _ <<< "$(row_of "$id4")"
+[[ "$g_lane" == "agw_workflow" ]] || fail "request $id4 (agw-opencode): lane '$g_lane', expected agw_workflow"
+[[ "$g_caller" == "agw-opencode" ]] || fail "request $id4: lane_detail.caller '$g_caller', expected agw-opencode"
+ok "gateway usage: $id1 and $id2 api_credit on $pool (priced, cache columns set), $id3 api_key personal, $id4 agw_workflow as agw-opencode; 4 gateway_picks rows"
 
-print "verify: PASS run $run_id, cap run $cap_id, audio run $audio_run, gateway pool $pool requests $id1 $id2 $id3"
+# 9. the runs' own model calls went through the gateway: agw holds no provider key, so the smoke run and the
+# cap.llm.title run each have a gateway row, and agw recorded none of its own for them. The billing depends on the wire
+# (only /anthropic messages draw on a credit pool; cheap.title is an OpenAI-wire route): api_credit must name a pool
+# /health lists and needs an eligible one, api_key must be the personal key.
+eligible=$(print -r -- "$gw_health" | jq -r '[.pools[]? | select(.eligible == true) | .id] | join(",")')
+pool_ids=$(print -r -- "$gw_health" | jq -r '[.pools[]?.id] | join(",")')
+runs_sql="select run_id, source, lane, billing, coalesce(account, ''), coalesce(api_key, ''), coalesce(lane_detail->>'workflow', ''), coalesce(lane_detail->>'step', ''), coalesce(cost_usd::text, '') from usage.records
+  where run_id = any(string_to_array(:'runs', ',')) and source in ('gateway', 'agent-workflows') order by run_id, source_id"
+# The first problem of one gateway row, or nothing.
+row_problem() {  # $1 lane, $2 billing, $3 account, $4 api_key, $5 workflow, $6 step, $7 cost
+  [[ "$1" == "agw_workflow" ]] || { print -r -- "lane '$1', expected agw_workflow"; return; }
+  case "$2" in
+    api_credit)
+      [[ -n "$eligible" ]] || { print -r -- "billing api_credit (account '$3'), but /health names no eligible pool"; return; }
+      [[ ",$pool_ids," == *",$3,"* ]] || { print -r -- "billing api_credit on account '$3', not a pool /health lists (${pool_ids:-none})"; return; }
+      ;;
+    api_key) [[ "$4" == "personal" ]] || { print -r -- "billing api_key with api_key '$4', expected personal"; return; } ;;
+    *) print -r -- "billing '$2', expected api_credit or api_key"; return ;;
+  esac
+  [[ -n "$5" ]] || { print -r -- "lane_detail.workflow is not set"; return; }
+  [[ -n "$6" ]] || { print -r -- "lane_detail.step is not set"; return; }
+  [[ -n "$7" ]] && (( $7 > 0 )) || print -r -- "cost_usd '${7:-null}', expected > 0"
+}
+# Sets run_state (good / agw-row / pending) and run_why for one run from $run_rows.
+check_run() {  # $1 run id
+  local r_run r_source r_lane r_billing r_account r_key r_workflow r_step r_cost problem
+  run_state=pending; run_why="no usage.records row (source 'gateway') for run $1"
+  while IFS='|' read -r r_run r_source r_lane r_billing r_account r_key r_workflow r_step r_cost; do
+    [[ "$r_run" == "$1" ]] || continue
+    if [[ "$r_source" == "agent-workflows" ]]; then
+      run_state=agw-row; run_why="run $1 has a source 'agent-workflows' row: agw recorded a model call the gateway records"
+      return
+    fi
+    [[ "$run_state" == good ]] && continue
+    problem=$(row_problem "$r_lane" "$r_billing" "$r_account" "$r_key" "$r_workflow" "$r_step" "$r_cost")
+    if [[ -z "$problem" ]]; then
+      run_state=good; run_why="$r_billing${r_account:+ on $r_account}${r_key:+ $r_key}, $r_workflow/$r_step, cost $r_cost"
+    else
+      run_why="run $1: no gateway row qualifies; one has $problem"
+    fi
+  done <<< "$run_rows"
+}
+run_rows=""
+for (( waited = 0; waited <= GATEWAY_POLL_SECS; waited += 5 )); do
+  run_rows=$(usage_q "$runs_sql" -v "runs=$run_id,$cap_id") || exit 1
+  check_run "$run_id"; smoke_state=$run_state
+  check_run "$cap_id"
+  [[ "$smoke_state" == good && "$run_state" == good ]] && break
+  [[ "$smoke_state" == agw-row || "$run_state" == agw-row ]] && break
+  (( waited < GATEWAY_POLL_SECS )) && sleep 5
+done
+for rid in $run_id $cap_id; do
+  check_run "$rid"
+  [[ "$run_state" == good ]] || fail "$run_why (within ${GATEWAY_POLL_SECS}s)"
+  ok "run $rid: gateway row, agw_workflow, $run_why; no agent-workflows row"
+done
+
+print "verify: PASS run $run_id, cap run $cap_id, audio run $audio_run, gateway pool $pool requests $id1 $id2 $id3, agw-opencode request $id4"

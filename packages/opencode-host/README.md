@@ -96,7 +96,8 @@ key, a shell-capable agent reads what the user can): the repo is the owner's, an
 - **Env is an allow-list** (`serverEnv`): `PATH`, `TMPDIR`, `LANG`, `HOME` = `<root>/home` (the server's own), the
   `XDG_*` roots, `OPENCODE_DB`, `OPENCODE_DISABLE_FILEWATCHER=1`, `OPENCODE_DISABLE_CLAUDE_CODE=1`,
   `OPENCODE_DISABLE_MODELS_FETCH=1`, `OPENCODE_DISABLE_AUTOUPDATE=1`, the server password, the generated config,
-  `AGW_GATEWAY_URL` and `AGW_GATEWAY_TOOL_TOKEN` (`gatewayFromEnv`, both required, the start fails naming the variable), and
+  `AGW_GATEWAY_URL` and `AGW_GATEWAY_TOOL_TOKEN` (`gatewayFromEnv`, both required, the start fails naming the variable; on the
+  mini `.env.tpl` sets the URL and `scripts/launch.sh` reads the token from the `agw-opencode` line of `data/door-tokens`), and
   `OTEL_EXPORTER_OTLP_*` when set. Nothing else: no provider key, no `AGW_API_SECRET`, no `CLAUDE_*`, no database URL.
 - **Config** (`buildServerConfig`): three providers with a model row for every `opencode`-wire route and its fallback,
   cost rows from each route's own `rate`, all on the inference gateway (`docs/gateway.md`) with the door token of the caller
@@ -207,7 +208,7 @@ a running host and broke every run. A Homebrew copy ahead of the pin on `PATH` (
 |-|-|
 | the build | `~/.local/share/agent-workflows/opencode-bin/<version>/`, `current` links the pinned one |
 | the shim | `scripts/opencode`, linked as `~/.local/bin/opencode`: execs `current`. The host (`resolveOpencodeBinary`), interactive `oc`, `rd wave\|fan --kind opencode` and herdr panes all resolve `opencode` through it |
-| the probe wrapper | `scripts/opencode-safe`, linked as `~/.local/bin/opencode-safe`: refuses to start `opencode` when the IU endpoint is down (exit 75) instead of retrying forever |
+| the probe wrapper | `scripts/opencode-safe`, linked as `~/.local/bin/opencode-safe`: refuses to start `opencode` when the model endpoint is down (exit 75) instead of retrying forever; it probes `<AGW_GATEWAY_URL>/openai/v1` first (the mini), then `IU_OPENAI_BASE`, `IU_BASE_URL` and the Keychain (the MacBook) |
 | react-doctor (the `review` workflow) | `~/.local/share/agent-workflows/react-doctor/<version>/`, `REACT_DOCTOR_VERSION` in `packages/host/src/workflows/review/react-doctor.ts` |
 
 `make install-opencode` (from the main checkout, never a linked worktree: the links point at its `scripts/`) installs the

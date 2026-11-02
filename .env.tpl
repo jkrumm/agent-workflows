@@ -1,7 +1,8 @@
-IU_API_KEY=op://common/anthropic/API_KEY
-IU_BASE_URL=op://common/anthropic/BASE_URL
-# Direct Anthropic API key for claude models on the opencode wire (not required while no opencode route uses one).
-ANTHROPIC_API_KEY=op://mini/claude-platform/API_KEY_IU
+# The inference gateway (packages/gateway, its own LaunchAgent): every model call of the host, the audio process and the
+# OpenCode server goes through it. Plain loopback value, not a secret; agw holds no provider key. The host and the audio
+# process authenticate with AGW_API_SECRET, OpenCode's providers and `ocr` with the `agw-opencode` door token, which
+# launch.sh reads from data/door-tokens into AGW_GATEWAY_TOOL_TOKEN for the host only.
+AGW_GATEWAY_URL=http://127.0.0.1:7794
 # web.* capabilities: Tavily search fallback and Extract (shared common item), Context7 docs (this platform's own item).
 TAVILY_API_KEY=op://common/tavily/API_KEY
 CONTEXT7_API_KEY=op://mini/agent-workflows/CONTEXT7_API_KEY
@@ -28,7 +29,7 @@ AGW_BROWSER_CDP_URL=http://127.0.0.1:9222
 # Where the friction job files issues (plain value, not a secret: passes through secrets-run as is).
 AGW_FRICTION_REPO=jkrumm/agent-workflows
 # Audio process (packages/audio): the STT language steer the door's transcriptions send when a client sets none (plain
-# value, as audio-gateway sets it). Its IU lanes derive the OpenAI, Gemini and Replicate bases from IU_BASE_URL.
+# value, as audio-gateway sets it). Its lanes derive the OpenAI, Gemini and Replicate bases from AGW_GATEWAY_URL.
 STT_PROMPT=Die Aufnahme ist auf Deutsch oder Englisch.
 # The podcast's Slack notice goes to this channel via Argo (ARGO_URL, ARGO_API_SECRET above); a constant, as audio-gateway's
 # mini instance set it. Unset = no notice.

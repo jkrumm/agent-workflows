@@ -19,9 +19,10 @@
 # one file and installed to ~/.agent-workflows/gateway/<build> (gateway.js, launch-gateway.sh, .env.gateway.tpl, the plist
 # template, a `.complete` marker; immutable once complete). The build id is 16 hex of a sha256 over the bundle, the launcher,
 # the env template, the plist template and `bun --version`. A deploy restarts the gateway only when its build changed (or
-# it is not loaded, or not healthy at its recorded build), so streams are not cut by unrelated deploys; when it does, it
-# is stopped, started, awaited (its /health `build`, not `version`) and rolled back with the others, to the previous
-# build's directory. A host or audio failure on a deploy that left the gateway running leaves it alone. data/gateway-build
+# it is not loaded, or not healthy at its recorded build, or the deploy added a caller to door-tokens, which the gateway
+# reads only at start), so streams are not cut by unrelated deploys; when it does, it is stopped after host and audio,
+# started first and awaited (its /health `build`, not `version`) before they start, and rolled back with the others, to
+# the previous build's directory. A host or audio failure on a deploy that left the gateway running leaves it alone. data/gateway-build
 # and data/gateway-previous-build record the live and the previous build.
 #
 # DRY_RUN=1 prints the plan and every rendered plist and touches nothing (no fetch, no launchd, no ~/.local/bin).
@@ -34,7 +35,7 @@ set -u
 
 # The processes, in start order. Each: a LaunchAgent label, a port, `deploy/<label>.plist.template` and its logs.
 # RELEASE_PROCESSES run from the release; PROCESSES is what this deploy stops, starts and awaits: those two, plus the
-# gateway when its build changed (main appends it).
+# gateway when it restarts (main appends it: stopped last, started first).
 RELEASE_PROCESSES=(host audio)
 PROCESSES=(host audio)
 typeset -A LABELS PORTS
@@ -60,6 +61,7 @@ GW_BUILD=""      # the build this deploy would run (set by build_gateway)
 GW_DIR=""        # its directory
 GW_OLD_BUILD=""  # the build live before this deploy ("" = none): the gateway's rollback target
 GW_EXPECT=""     # the build the gateway's /health must report
+DRY_GW_RESTART="" # DRY_RUN: the build the plan restarts the gateway on ("" = left running)
 PORT="${PORTS[host]}"
 DOOR_TOKENS="$DATA_DIR/door-tokens"
 BIN_DIR="$HOME/.local/bin"
@@ -189,34 +191,56 @@ wait_healthy() {  # $1 sha, $2... processes
   return 1
 }
 
-# The doors' caller tokens (`name=token`, mode 0600), read by the audio process's door and the host's image door:
-# created once with a hermes and a studio token, never overwritten, never printed. Both processes refuse to start
-# without the file (or with a wider mode). A file that exists already gains a studio line when it has no studio caller
-# (the host's image door serves the MacBook studio app under that name); its other lines are never touched.
+# The doors' caller tokens (`name=token`, mode 0600), read by the gateway, the audio process's door and the host's image
+# door (the host also hands the agw-opencode token to OpenCode and `ocr`, scripts/launch.sh). A new file gets one token
+# per caller in DOOR_CALLERS; a file that exists gains a line for each caller in DOOR_CALLERS_ADDED it lacks (hermes is
+# never re-added: a deleted hermes line is a revocation). Existing lines are never touched, no token is ever printed,
+# the mode stays 0600. The names added are kept in DOOR_TOKENS_ADDED: the gateway reads the file only at start.
+DOOR_CALLERS=(hermes studio agw-opencode oc modelpick)
+DOOR_CALLERS_ADDED=(studio agw-opencode oc modelpick)
+DOOR_TOKENS_ADDED=()
+
+# The callers of DOOR_CALLERS_ADDED the file has no line for (a commented line does not count).
+missing_door_callers() {
+  local name
+  for name in $DOOR_CALLERS_ADDED; do
+    /usr/bin/grep -Eq "^[[:space:]]*${name}[[:space:]]*=" "$DOOR_TOKENS" || print -r -- "$name"
+  done
+}
+
 ensure_door_tokens() {
   if [[ ! -e "$DOOR_TOKENS" ]]; then
     (
       umask 077
-      hermes=$(openssl rand -hex 32) && [[ ${#hermes} -eq 64 ]] || exit 1
-      studio=$(openssl rand -hex 32) && [[ ${#studio} -eq 64 ]] || exit 1
       tmp="$DOOR_TOKENS.tmp.$$"
-      print -r -- "hermes=$hermes" > "$tmp" && print -r -- "studio=$studio" >> "$tmp" && chmod 600 "$tmp" && mv -f "$tmp" "$DOOR_TOKENS"
-    ) || die "creating $DOOR_TOKENS failed"
-    log "created $DOOR_TOKENS (a hermes and a studio token, mode 0600)"
+      : > "$tmp" || exit 1
+      for name in $DOOR_CALLERS; do
+        token=$(openssl rand -hex 32) && [[ ${#token} -eq 64 ]] || exit 1
+        print -r -- "$name=$token" >> "$tmp" || exit 1
+      done
+      chmod 600 "$tmp" && mv -f "$tmp" "$DOOR_TOKENS"
+    ) || { rm -f "$DOOR_TOKENS.tmp.$$"; die "creating $DOOR_TOKENS failed"; }
+    DOOR_TOKENS_ADDED=($DOOR_CALLERS)
+    log "created $DOOR_TOKENS (${DOOR_CALLERS[*]}, mode 0600)"
     return 0
   fi
   # Only a regular file at 0600 is extended: anything else is left for check_door_tokens to refuse.
   [[ -f "$DOOR_TOKENS" && ! -L "$DOOR_TOKENS" && -n "$(/usr/bin/find "$DOOR_TOKENS" -maxdepth 0 -perm 600)" ]] || return 0
-  /usr/bin/grep -Eq '^[[:space:]]*studio[[:space:]]*=' "$DOOR_TOKENS" && return 0
+  local missing=( ${(f)"$(missing_door_callers)"} )
+  (( ${#missing} )) || return 0
   (
     umask 077
-    studio=$(openssl rand -hex 32) && [[ ${#studio} -eq 64 ]] || exit 1
     tmp="$DOOR_TOKENS.tmp.$$"
     last=$(/usr/bin/tail -c 1 "$DOOR_TOKENS")  # empty when the file ends in a newline (or is empty)
-    { /bin/cat "$DOOR_TOKENS"; [[ -z "$last" ]] || print; print -r -- "studio=$studio"; } > "$tmp" \
-      && chmod 600 "$tmp" && mv -f "$tmp" "$DOOR_TOKENS"
-  ) || die "adding the studio token to $DOOR_TOKENS failed"
-  log "added a studio token to $DOOR_TOKENS (the other lines are untouched)"
+    { /bin/cat "$DOOR_TOKENS"; [[ -z "$last" ]] || print; } > "$tmp" || exit 1
+    for name in $missing; do
+      token=$(openssl rand -hex 32) && [[ ${#token} -eq 64 ]] || exit 1
+      print -r -- "$name=$token" >> "$tmp" || exit 1
+    done
+    chmod 600 "$tmp" && mv -f "$tmp" "$DOOR_TOKENS"
+  ) || { rm -f "$DOOR_TOKENS.tmp.$$"; die "adding ${missing[*]} to $DOOR_TOKENS failed"; }
+  DOOR_TOKENS_ADDED=($missing)
+  log "added ${missing[*]} to $DOOR_TOKENS (the other lines are untouched)"
 }
 
 # The door tokens read with the release's own parser (mode, owner, every line), the one both processes start with (the
@@ -483,14 +507,17 @@ dry_run_gateway() {  # $1 repo root, $2 sha
     log "gateway: build $build (live ${live:-none}), computed by bundling this checkout; the deploy bundles the release"
   fi
   if [[ -n "$build" ]] && gateway_unchanged "$build"; then
-    log "gateway unchanged (build $build), not restarted"
-    return 0
+    if (( ${#DOOR_TOKENS_ADDED} == 0 )); then
+      log "gateway unchanged (build $build), not restarted"
+      return 0
+    fi
+    log "gateway build $build unchanged, restarted anyway: door-tokens gains ${DOOR_TOKENS_ADDED[*]} (the gateway reads it only at start)"
   fi
+  DRY_GW_RESTART="${build:-<build>}"
   dir="$GATEWAY_ROOT/${build:-<build>}"
   act "install $GATEWAY_ROOT/${build:-<build>}/ (gateway.js, launch-gateway.sh, .env.gateway.tpl, plist.template, .complete; an existing complete directory is reused)"
   log "rendered $(plist_of gateway) (points at the build directory, never at a release):"
   render_plist "$root/deploy/${LABELS[gateway]}.plist.template" "$dir" "$sha" "${build:-<build>}"
-  act "gateway restart: bootout ${LABELS[gateway]} with the others, bootstrap, wait up to ${HEALTH_WAIT_SECS}s for $(health_url gateway) = ok, build ${build:-<build>}"
   act "on failure: the gateway goes back with the others, to build ${live:-none} (none: its plist is removed); after success write $GW_BUILD_FILE (${build:-<build>}) and $GW_PREV_FILE (${live:-none}), keep the newest $KEEP_GATEWAY_BUILDS builds plus both"
 }
 
@@ -532,23 +559,25 @@ main() {
     act "re-exec $release/scripts/deploy.sh once, pinned to $sha"
     if [[ -e "$DOOR_TOKENS" ]]; then
       log "$DOOR_TOKENS exists: existing lines are never rewritten"
+      [[ -f "$DOOR_TOKENS" && -r "$DOOR_TOKENS" ]] && DOOR_TOKENS_ADDED=( ${(f)"$(missing_door_callers)"} )
+      (( ${#DOOR_TOKENS_ADDED} )) \
+        && act "append ${DOOR_TOKENS_ADDED[*]} (each <name>=<64 hex from openssl rand>) to $DOOR_TOKENS (mode stays 0600, the other lines are untouched, never printed)"
     else
-      act "create $DOOR_TOKENS (mode 0600, two lines hermes=<64 hex from openssl rand> and studio=<64 hex>, never printed)"
-    fi
-    if [[ -e "$DOOR_TOKENS" ]] && ! /usr/bin/grep -Eq '^[[:space:]]*studio[[:space:]]*=' "$DOOR_TOKENS"; then
-      act "append studio=<64 hex from openssl rand> to $DOOR_TOKENS (mode stays 0600, the other lines are untouched, never printed)"
+      DOOR_TOKENS_ADDED=($DOOR_CALLERS)
+      act "create $DOOR_TOKENS (mode 0600, one line <name>=<64 hex from openssl rand> for each of ${DOOR_CALLERS[*]}, never printed)"
     fi
     act "check $DOOR_TOKENS with the release's readDoorTokens (mode, owner, every line) before stopping anything"
     for p in $PROCESSES; do
       log "rendered $(plist_of "$p") (points at the release, not at current):"
       render_plist "$(template_of "$repo_root" "$p")" "$release" "$sha"
     done
-    act "launchctl bootout every process (${LABELS[host]} ${LABELS[audio]}), waiting up to $(unload_wait_secs "$(template_of "$repo_root" host)")s for each unload (ExitTimeOut + 10)"
+    dry_run_gateway "$repo_root" "$sha"
+    act "launchctl bootout ${LABELS[host]} ${LABELS[audio]}${DRY_GW_RESTART:+ then ${LABELS[gateway]}}, waiting up to $(unload_wait_secs "$(template_of "$repo_root" host)")s for each unload (ExitTimeOut + 10)"
+    [[ -n "$DRY_GW_RESTART" ]] && act "start the gateway first: bootstrap ${LABELS[gateway]}, wait up to ${HEALTH_WAIT_SECS}s for $(health_url gateway) = ok, build ${DRY_GW_RESTART}; only then host and audio"
     for p in $PROCESSES; do act launchctl bootstrap "gui/$(id -u)" "$(plist_of "$p")"; done
     local urls=()
     for p in $PROCESSES; do urls+=("$(health_url "$p")"); done
     act "wait up to ${HEALTH_WAIT_SECS}s for every /health (${urls[*]}) = ok, version $sha"
-    dry_run_gateway "$repo_root" "$sha"
     if [[ -n "$prev" ]]; then
       act "on failure: print every log tail, bootout every process, re-render each process ${prev[1,12]} has a template for, bootstrap, wait for its version; remove the plist this deploy rendered for each it has none for; exit 1"
     elif [[ -n "$old" && "$old" == "$sha" ]]; then
@@ -605,13 +634,19 @@ main() {
   ensure_door_tokens
   check_door_tokens "$release"
 
-  # The gateway: bundled and installed beside the live build; restarted only if its build changed.
+  # The gateway: bundled and installed beside the live build; restarted only if its build changed or door-tokens gained a caller.
   GW_OLD_BUILD=$(read_sha "$GW_BUILD_FILE")
   build_gateway "$release"
-  if gateway_unchanged "$GW_BUILD"; then
-    log "gateway unchanged (build $GW_BUILD), not restarted"
-  else
+  if ! gateway_unchanged "$GW_BUILD"; then
     PROCESSES+=(gateway)
+  elif (( ${#DOOR_TOKENS_ADDED} )); then
+    # Same build, but the gateway reads door-tokens only at start: the callers just added would get 401 until a restart.
+    log "gateway build $GW_BUILD unchanged, restarted anyway: door-tokens gained ${DOOR_TOKENS_ADDED[*]}"
+    PROCESSES+=(gateway)
+  else
+    log "gateway unchanged (build $GW_BUILD), not restarted"
+  fi
+  if (( ${PROCESSES[(Ie)gateway]} )); then
     GW_EXPECT="$GW_BUILD"
     gw_note="; the gateway on build $GW_BUILD"
     gw_state="restarted"
@@ -627,13 +662,22 @@ main() {
     restore_unloaded "$old"
     die "a process is still loaded ${unload_secs}s after bootout (ExitTimeOut + 10); not bootstrapping over it. It may still be shutting down: retry the deploy. deployed-sha unchanged."
   fi
-  for p in $PROCESSES; do
-    if [[ "$p" == gateway ]]; then
-      start_process gateway "$GW_DIR" "$sha" "$GW_BUILD"
-    else
-      start_process "$p" "$release" "$sha"
+  # A restarted gateway goes first and must be healthy before the host and audio start serving: their model calls go
+  # through it. Stopped last (above), started first; a gateway that never turns healthy rolls everything back.
+  if (( ${PROCESSES[(Ie)gateway]} )); then
+    if ! start_process gateway "$GW_DIR" "$sha" "$GW_BUILD"; then
+      print -u2 "[deploy] ERROR: launchctl bootstrap failed for gateway at build $GW_BUILD"
+      roll_back "$sha" "$prev" "$unload_secs" "$old"
+      return 1
     fi
-    if (( $? != 0 )); then
+    log "waiting up to ${HEALTH_WAIT_SECS}s for the gateway's /health (build $GW_BUILD) before host and audio start"
+    if ! wait_healthy "$sha" gateway; then
+      roll_back "$sha" "$prev" "$unload_secs" "$old"
+      return 1
+    fi
+  fi
+  for p in $RELEASE_PROCESSES; do
+    if ! start_process "$p" "$release" "$sha"; then
       print -u2 "[deploy] ERROR: launchctl bootstrap failed for $p at ${sha[1,12]}"
       roll_back "$sha" "$prev" "$unload_secs" "$old"
       return 1

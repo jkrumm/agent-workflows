@@ -1,5 +1,6 @@
-// scripts/deploy.sh's door-tokens handling, run by the real zsh: the file is created with a hermes and a studio token, a
-// file that exists gains a studio line only when it has none (its other lines untouched, mode 0600, no token printed),
+// scripts/deploy.sh's door-tokens handling, run by the real zsh: the file is created with a token per caller (hermes,
+// studio, agw-opencode, oc, modelpick), a file that exists gains a line for each of studio, agw-opencode, oc and modelpick
+// it lacks (its other lines untouched, mode 0600, no token printed, the names added recorded for the gateway restart),
 // and the release's own parser refuses a bad file before anything is stopped.
 import { afterEach, describe, expect, test } from 'bun:test'
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
@@ -10,6 +11,9 @@ import { readDoorTokens } from '../src/door-tokens.ts'
 const ROOT = join(import.meta.dir, '../../..')
 const ZSH = Bun.which('zsh')
 const HERMES = 'hermes-token-0123456789abcdef-0123456789'
+const ALL = ['hermes', 'studio', 'agw-opencode', 'oc', 'modelpick']
+const ADDED = ['studio', 'agw-opencode', 'oc', 'modelpick']
+const ADDED_OUT = 'print -r -- "ADDED:$DOOR_TOKENS_ADDED"' // zsh joins an array in quotes with spaces
 
 const dirs: string[] = []
 afterEach(() => {
@@ -41,45 +45,63 @@ function setup(content?: string, mode = 0o600) {
 const mode = (file: string) => statSync(file).mode & 0o777
 
 describe('ensure_door_tokens', () => {
-  test('no file: created at 0600 with a hermes and a studio token, distinct, valid, never printed', () => {
+  test('no file: created at 0600 with a token per caller, distinct, valid, never printed', () => {
     const t = setup()
-    const result = t.run('ensure_door_tokens')
+    const result = t.run(`ensure_door_tokens; ${ADDED_OUT}`)
     expect(result.code).toBe(0)
     expect(mode(t.file)).toBe(0o600)
     const tokens = readDoorTokens(t.file)
-    expect([...tokens.keys()]).toEqual(['hermes', 'studio'])
-    expect(new Set(tokens.values()).size).toBe(2)
+    expect([...tokens.keys()]).toEqual(ALL)
+    expect(new Set(tokens.values()).size).toBe(ALL.length)
     for (const token of tokens.values()) {
       expect(token).toMatch(/^[0-9a-f]{64}$/)
       expect(result.out + result.err).not.toContain(token)
     }
+    expect(result.out).toContain(`ADDED:${ALL.join(' ')}`)
   })
 
-  test('a file with only hermes gains a studio line: the existing bytes are kept, even without a trailing newline', () => {
+  test('a file with only hermes gains every other caller: the existing bytes are kept, even without a trailing newline', () => {
     for (const existing of [`hermes=${HERMES}\n`, `hermes=${HERMES}`, `# callers\nhermes=${HERMES}\n\n`]) {
       const t = setup(existing)
-      const result = t.run('ensure_door_tokens')
+      const result = t.run(`ensure_door_tokens; ${ADDED_OUT}`)
       expect(result.code).toBe(0)
       const after = readFileSync(t.file, 'utf8')
       expect(after.startsWith(existing)).toBe(true)
       expect(mode(t.file)).toBe(0o600)
       const tokens = readDoorTokens(t.file)
       expect(tokens.get('hermes')).toBe(HERMES)
-      expect(tokens.get('studio')).toMatch(/^[0-9a-f]{64}$/)
-      expect(result.out + result.err).not.toContain(tokens.get('studio') as string)
+      for (const name of ADDED) {
+        expect(tokens.get(name)).toMatch(/^[0-9a-f]{64}$/)
+        expect(result.out + result.err).not.toContain(tokens.get(name) as string)
+      }
+      expect(result.out).toContain(`ADDED:${ADDED.join(' ')}`)
+      expect(result.out).toContain(`added ${ADDED.join(' ')} to ${t.file}`)
     }
   })
 
-  test('a studio caller that exists is never replaced, however it is spelled; a commented one does not count', () => {
+  test('only the missing callers are added; hermes is never re-added', () => {
     const studio = 'studio-token-0123456789abcdef-0123456789'
-    for (const existing of [`hermes=${HERMES}\nstudio=${studio}\n`, `studio = ${studio}\n`]) {
+    const t = setup(`studio=${studio}\noc=oc-token-0123456789abcdef-0123456789abc\n`)
+    const result = t.run(`ensure_door_tokens; ${ADDED_OUT}`)
+    expect(result.code).toBe(0)
+    expect(result.out).toContain('ADDED:agw-opencode modelpick')
+    const tokens = readDoorTokens(t.file)
+    expect([...tokens.keys()]).toEqual(['studio', 'oc', 'agw-opencode', 'modelpick'])
+    expect(tokens.get('studio')).toBe(studio)
+  })
+
+  test('a caller that exists is never replaced, however it is spelled; a commented one does not count', () => {
+    const lines = ADDED.map((name, i) => `${name}${i % 2 ? ' = ' : '='}${name}-token-0123456789abcdef-0123456789`)
+    for (const existing of [`hermes=${HERMES}\n${lines.join('\n')}\n`, `${lines.join('\n')}\n`]) {
       const t = setup(existing)
-      expect(t.run('ensure_door_tokens').code).toBe(0)
+      const result = t.run(`ensure_door_tokens; ${ADDED_OUT}`)
+      expect(result.code).toBe(0)
+      expect(result.out).toContain('ADDED:\n')
       expect(readFileSync(t.file, 'utf8')).toBe(existing)
     }
-    const commented = setup(`hermes=${HERMES}\n# studio=${studio}\n`)
+    const commented = setup(`hermes=${HERMES}\n# agw-opencode=agw-opencode-token-0123456789abcdef-01\n`)
     expect(commented.run('ensure_door_tokens').code).toBe(0)
-    expect(readDoorTokens(commented.file).get('studio')).toMatch(/^[0-9a-f]{64}$/)
+    expect(readDoorTokens(commented.file).get('agw-opencode')).toMatch(/^[0-9a-f]{64}$/)
   })
 
   test('a file that is not at 0600 is left exactly as it is, for the check to refuse', () => {
