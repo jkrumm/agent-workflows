@@ -2,6 +2,7 @@ import type { Pool, QueryResult, QueryResultRow } from 'pg'
 import { type ErrorKind, errorMessage, InfraError, LeaseLost, WorkflowError } from './errors.ts'
 import type { Json } from './json.ts'
 import { lockKey } from './lease.ts'
+import { recordedCost } from './usage.ts'
 import type {
   Arm,
   FinalScore,
@@ -421,7 +422,7 @@ export class Journal {
         usage.tokens.output,
         usage.tokens.cacheRead,
         usage.tokens.reasoning,
-        usage.cost,
+        recordedCost(end.status, usage),
         usage.toolCalls,
         Object.keys(usage.byModel).length ? JSON.stringify(usage.byModel) : null,
         usage.unpricedCalls,

@@ -366,7 +366,8 @@ export type RunSnapshot = {
   /**
    * Sum of the priced usage of the run and its descendant runs. When no step has a positive known cost: null if some
    * step's cost is unknown or any call was unpriced, else 0 (every step free; also a run with no step, which spent
-   * nothing). A lower bound while `unpricedCalls > 0`. A record written before cost 0 meant "free" reads null for a free run: history cannot tell.
+   * nothing). A lower bound while `unpricedCalls > 0`. A record written before cost 0 meant "free" reads null for a
+   * free run: history cannot tell.
    */
   cost: number | null
   unpricedCalls: number

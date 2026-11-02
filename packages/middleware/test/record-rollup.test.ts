@@ -140,6 +140,23 @@ const zeroAndUnpriced = defineWorkflow({
   },
 })
 
+/** A free done step beside a failed step that reported nothing (a billed call may have been lost): unknown. */
+const freeAndFailed = defineWorkflow({
+  id: 'roll.free-failed',
+  version: 'v1',
+  input: empty,
+  output: empty,
+  async run(ctx) {
+    await ctx.step('free', () => 1)
+    await ctx
+      .step('lost', () => {
+        throw new Error('no usage came back')
+      })
+      .catch(() => null)
+    return {}
+  },
+})
+
 /** No step at all: nothing ran, nothing spent. */
 const noSteps = defineWorkflow({
   id: 'roll.no-steps',
@@ -220,7 +237,7 @@ describe('run record cost roll-up', () => {
     const platform = testPlatform(db.schema)
     rt = testRuntime({
       schema: db.schema,
-      workflows: [mixed, leaf, free, zeroAndUnpriced, noSteps],
+      workflows: [mixed, leaf, free, zeroAndUnpriced, freeAndFailed, noSteps],
       middleware: platform.middleware,
     })
     await rt.open()
@@ -230,7 +247,10 @@ describe('run record cost roll-up', () => {
       const some = await rt.start(mixed, { priced: true }, { purpose: 'prod' })
       const zeroUnpriced = await rt.start(zeroAndUnpriced, {}, { purpose: 'prod' })
       const noStep = await rt.start(noSteps, {}, { purpose: 'prod' })
-      await Promise.all([allFree, none, some, zeroUnpriced, noStep].map((started) => rt.wait(started.runId)))
+      const failedFree = await rt.start(freeAndFailed, {}, { purpose: 'prod' })
+      await Promise.all(
+        [allFree, none, some, zeroUnpriced, noStep, failedFree].map((started) => rt.wait(started.runId)),
+      )
       const freeRow = await recorded(allFree.runId)
       expect(Number(freeRow.cost)).toBe(0)
       expect(freeRow.cost).not.toBeNull()
@@ -242,6 +262,8 @@ describe('run record cost roll-up', () => {
       // cost 0 on the step, yet an unpriced call: unknown, not free
       expect(await sql.step(zeroUnpriced.runId, 'spend')).toMatchObject({ cost: '0', unpriced_calls: 1 })
       expect(await recorded(zeroUnpriced.runId)).toMatchObject({ cost: null, unpriced_calls: 1 })
+      // a free done step plus a failed step that reported nothing: the failed one may have spent, so unknown
+      expect(await recorded(failedFree.runId)).toMatchObject({ cost: null, unpriced_calls: 0 })
       // a run with no step rows spent nothing: 0, not null
       const emptyRow = await recorded(noStep.runId)
       expect(emptyRow.cost).not.toBeNull()
