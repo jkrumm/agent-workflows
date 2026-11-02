@@ -152,20 +152,25 @@ describe('digest prompt', () => {
   })
 
   test('a duplicate or missing answer never shifts the others', () => {
-    const out = checkAnswers(parsed, [answers[3] as never, answers[0] as never, answers[0] as never])
+    const out = checkAnswers(parsed, [answers[3], answers[0], answers[0]])
+    expect(out.map((r) => ('error' in r ? 'error' : 'ok'))).toEqual(['ok', 'error', 'error', 'ok'])
+  })
+
+  test('an answer with no id costs only its own item', () => {
+    const out = checkAnswers(parsed, [answers[0], { short: 'no id' }, null, 'text', answers[3]])
     expect(out.map((r) => ('error' in r ? 'error' : 'ok'))).toEqual(['ok', 'error', 'error', 'ok'])
   })
 
   test('limits: short at most 8 words, paragraph at most 60, a note never asks', () => {
     const [heading, , replyItem, win] = parsed as [DigestItem, DigestItem, DigestItem, DigestItem]
     const wordy = (n: number) => Array.from({ length: n }, () => 'w').join(' ')
-    expect(checkAnswers([heading], [{ id: 'h1', short: wordy(8) } as never])[0]).toEqual({ id: 'h1', short: wordy(8) })
-    expect(checkAnswers([heading], [{ id: 'h1', short: wordy(9) } as never])[0]).toHaveProperty('error')
-    expect(checkAnswers([win], [{ id: 'w1', paragraph: wordy(60) } as never])[0]).toHaveProperty('paragraph')
-    expect(checkAnswers([win], [{ id: 'w1', paragraph: wordy(61) } as never])[0]).toHaveProperty('error')
+    expect(checkAnswers([heading], [{ id: 'h1', short: wordy(8) }])[0]).toEqual({ id: 'h1', short: wordy(8) })
+    expect(checkAnswers([heading], [{ id: 'h1', short: wordy(9) }])[0]).toHaveProperty('error')
+    expect(checkAnswers([win], [{ id: 'w1', paragraph: wordy(60) }])[0]).toHaveProperty('paragraph')
+    expect(checkAnswers([win], [{ id: 'w1', paragraph: wordy(61) }])[0]).toHaveProperty('error')
     const note = { id: 'r1', asks: false, kind: 'note', short: 'Reports a state', confidence: 'low' }
-    expect(checkAnswers([replyItem], [note as never])[0]).toEqual(note)
-    expect(checkAnswers([replyItem], [{ ...note, asks: true } as never])[0]).toHaveProperty('error')
+    expect(checkAnswers([replyItem], [note])[0]).toEqual(note)
+    expect(checkAnswers([replyItem], [{ ...note, asks: true }])[0]).toHaveProperty('error')
   })
 })
 
@@ -212,6 +217,14 @@ describe('digest scorer', () => {
     expect(
       score(out([answers[0], answers[1], answers[2], { id: 'w1', paragraph: 'Six sessions finished.' }])),
     ).toMatchObject({ pass: false, scores: { windowFacts: 0 } })
+  })
+
+  test('a fact is a whole token: "17 waves" does not carry 7, "seven" does', () => {
+    const ref = DigestReference.parse({ ...reference, items: { ...reference.items, w1: { mustMention: ['7|seven'] } } })
+    const win = (paragraph: string) => out([answers[0], answers[1], answers[2], { id: 'w1', paragraph }])
+    expect(score(win('17 waves finished.'), ref).scores.windowFacts).toBe(0)
+    expect(score(win('7 waves finished.'), ref).scores.windowFacts).toBe(1)
+    expect(score(win('Seven waves finished.'), ref).scores.windowFacts).toBe(1)
   })
 
   test('a planted canary in any text fails clean', () => {
