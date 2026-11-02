@@ -18,6 +18,10 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
   Rotation policy: a fresh lead per wave unless the last one closed under ~30% context.
 
 ## Decisions taken
+- 2026-11-02 18:10 owner: (1) `otel.agent` -> Haiku 5.5 high now (scores equal Sonnet; cost counts while over pace), in
+  Wave 8's next deploy (relayed to r11). (2) `research.agent` stays Sonnet medium. (3) `prose.review` stays DeepSeek
+  (cross-lab, off the credit); `review.adversary` unchanged until review v2 removes it. (4) Spec v7 not yet signed: the
+  owner is reviewing the mocks; Wave 7b waits. (5) Production pacing decided after 7 days of post-hotfix data (~11-09).
 - 2026-11-02 16:10 owner (hotfix ahead of Wave 6): review burns the credit (67 reviews in 2 days = $52.50, $0.78 each;
   `review.angle` on Sonnet $46.29). Restore the v3.5 split: `review.angle` -> Haiku 5.5 high (EASY), `review.angle.deep` and
   synthesis stay Sonnet; deploy and verify today, target ~$0.13 per review. Review seats are final only in Wave 11; the
