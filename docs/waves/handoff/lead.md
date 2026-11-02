@@ -59,37 +59,5 @@ Spend: $0.77 on 8 production review runs (5 PR reviews, 1 re-review, 2 cancel pr
   per case in the file. The importer mapping lives in the eval layer, not on the review suite.
 - The audio door's "started but unreported call" check compares counts (lost vs recorded calls), not call identities.
 - Local `make check` unreliable under the mini's load; CI is the gate.
-- **Owner session dropped** (owner, 21:00, PLAN Wave 8): the two sections below are kept verbatim for the history;
-  Wave 8 now validates ground truth with a third labeller and a second judge, and the owner pack and
-  `agw eval gt pack|ingest` go.
-
-## How to start the owner session (about two hours)
-
-1. On the MacBook, open `~/Downloads/agw-owner-session/session.html` in a browser (a copy of
-   `$AGW_EVAL_DIR/review-gt/owner/session.html` on the mini; self-contained, works from `file://`, no network).
-2. 155 items, one at a time, ~40 s each. Keys: `y` / `n` / `u` answer and move on, `j` / `k` move, `e` writes a note.
-   - **Commit items (55):** "Is this a real defect that this commit created, at about this place?" `no` for a feature
-     change, refactor, preference, an older bug or a different problem.
-   - **Finding items (100):** "Does this finding describe this bug?" `yes` only for the same defect (other words are
-     fine); `no` for a different issue, even a plausible one in the same file.
-   - Answers save in the browser as you go; the page is blind (it never says which cases the labellers accepted or what
-     the judge answered).
-3. Click **Export** at the end (repeatable): it downloads `owner-labels.jsonl` to `~/Downloads`.
-4. Tell the lead/mother it is done. The next session ingests it on the mini:
-   ```sh
-   scp iumac:Downloads/owner-labels.jsonl /tmp/owner-labels.jsonl
-   agw eval gt ingest --commit --labels "$(cat /tmp/owner-labels.jsonl)"
-   ```
-   It reports case precision (Wilson CI), what the filter drops, Cohen's κ owner vs judge, and the bars.
-   **Do not run `agw eval gt pack` again before ingesting**: a new pack rewrites `owner/manifest.json` and the answers
-   no longer match it (session id `24b43b759558ca7f`).
-
-## After the owner session (next lead, not done)
-
-1. Ingest (above). Bars: accepted ≥ 90 % right; κ ≥ 0.8. Below the case bar: tighten the filters (`MINER_VERSION`
-   bump) and re-mine. Below κ: a second judge on another vendor, disagreements scored `unclear` (`docs/review-v2.md`).
-2. Toward 200 bug cases and 100 controls: ~165 more accepted ≈ 720 labelled candidates ≈ $49 (≈ $37 credit + $13 IU,
-   over the ~$20 IU stop: ask the mother first). Label in batches ≤ 60 (`eval.mine` hits the runaway cap's static $5
-   ceiling until it has 20 done runs; a 147-candidate run was stopped in its rebuild step at $10.12, labels kept).
-   Size each batch to `evalAvailableUsd` on the gateway's `/health` (≈ +$3.7/day on `me`; me2's +$100 needs its claim).
-   Seeded defects only if fewer than 150 cases survive.
+- **Owner session dropped** (owner, 21:00, PLAN Wave 8): the owner-session sections are gone from this file (history
+  in `e637fcc`). The owner pack files stay untouched; Wave 8 deletes them and `agw eval gt pack|ingest` when it resumes.
