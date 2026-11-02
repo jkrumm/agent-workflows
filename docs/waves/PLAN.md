@@ -112,17 +112,17 @@ eval needs move into Wave 5. The rest waits.
 
 Disjoint changes, one fan-out batch:
 
-- **Run-scoped overrides.** `agw eval run --arm <file>`, where an arm is `{ routes?: patch, params?: {...} }`. It is
+- [x] **Run-scoped overrides.** `agw eval run --arm <file>`, where an arm is `{ routes?: patch, params?: {...} }`. It is
   layered over the table for that run and its children only, and recorded in the input and the fingerprint. Workflows
   read params with a default. Removed: `AGW_ROUTES`, `~/.config/agw/routes.json` and their handling in
   `scripts/launch.sh`.
-- **Eval cost rolls up.** Case replays become children of `eval.run`, so its `cost` is their sum (today null).
-- **Structured agent output.** Agent steps return JSON through a tool call or a structured final turn, not through
+- [x] **Eval cost rolls up.** Case replays become children of `eval.run`, so its `cost` is their sum (today null).
+- [x] **Structured agent output.** Agent steps return JSON through a tool call or a structured final turn, not through
   `parseStructured` on free text.
-- **Schema output on the `anthropic` wire** (Wave 3): `output_config.format` json_schema from the capability's zod type
+- [x] **Schema output on the `anthropic` wire** (Wave 3): `output_config.format` json_schema from the capability's zod type
   via `z.toJSONSchema`; zod parse stays as the last check. The OpenAI wire moves from `json_object` to `json_schema`
   where IU supports it. Sonnet guard: effort `none` on a Sonnet route is a config error. Spend is the gateway's rows.
-- **One model id per model** (normalise provider-echoed ids) and the route id on every step, so reports group by route.
+- [x] **One model id per model** (normalise provider-echoed ids) and the route id on every step, so reports group by route.
 **Left behind:** close-out in `docs/waves/handoff/lead.md` at `88cea3b`. A rollback past migration 0015 ignores `runs.arm`
   (drain armed evals first). `docs/review-v2.md:175` and `scripts/launch-gateway.sh:7` still name `AGW_ROUTES`. AGENTS.md's
   status line stops at Wave 3. Flaky `platform.test.ts` "concurrent runs" again. Carried: me2 placeholder keys, `agw
