@@ -22,6 +22,7 @@ export {
   SPEND_METRICS,
   type Winner,
 } from './compare.ts'
+export { privateDir, writeFileAtomic } from './cases.ts'
 export { aggregateCheck, aggregateReview } from './harness/aggregate.ts'
 export { type Exec, exec } from './harness/exec.ts'
 export { classifyPair, matchFindings, normalizePath } from './harness/match.ts'
@@ -75,3 +76,25 @@ export {
   renderSession,
   type SessionPage,
 } from './gt-owner/page.ts'
+export {
+  type Acceptance,
+  acceptRecord,
+  controlCase,
+  DEFAULT_CONTROLS,
+  discoverRepos,
+  EXCLUDED_REPOS,
+  type Git,
+  gitIn,
+  locationsOverlap,
+  MAX_CHANGED_LINES,
+  MAX_INTRO_AGE_DAYS,
+  MINER_VERSION,
+  type MineControl,
+  type MineFunnel,
+  type MineOptions,
+  type MineRepo,
+  type MineResult,
+  mine,
+  seededShuffle,
+  splitOf,
+} from './mine/index.ts'
