@@ -14,8 +14,7 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
   tailscale drift). Not ours; gates are judged on our rows only.
 
 ## Lead
-- Mother `agent-workflows-w1-r4` (pane t4f, account me2) spawned lead `agent-workflows-w1-r5` (pane t4g, account iu) 2026-11-01 ~22:50
-  for Wave 2, from PRs #81 and #82; briefs `~/.local/state/agent-workflows/briefs/gw2/`. PR #83 (shop) is another session's.
+- Mother `agent-workflows-w1-r4` (pane t4f, account me2); Wave 3 lead `agent-workflows-w1-r6` (pane t50, account me2), spawned 2026-11-02 ~02:00.
   Rotation policy: a fresh lead per wave unless the last one closed under ~30% context.
 
 ## Decisions taken
