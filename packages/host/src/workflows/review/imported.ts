@@ -1,4 +1,5 @@
-import { defineWorkflow } from '@agent-workflows/runtime'
+import type { GtCase } from '@agent-workflows/eval'
+import { defineWorkflow, type Scorer } from '@agent-workflows/runtime'
 import { z } from 'zod'
 import type { HostWorkflow } from '../../operations.ts'
 import { type ReviewResult, REVIEW_SCHEMA_VERSION, ReviewOutput } from './schema.ts'
@@ -60,6 +61,15 @@ export function importedReview(input: z.output<typeof ImportedReviewInput>): Rev
 }
 
 /**
+ * The review scorer on this workflow's input: it reads the output and the reference only (`_input` is unused), so it
+ * gets a valid placeholder review input.
+ */
+const importedScorer: Scorer<z.output<typeof ImportedReviewInput>, GtCase> = {
+  ...reviewScorer,
+  score: (_input, output, ctx) => reviewScorer.score({ cwd: '/' }, output, ctx),
+}
+
+/**
  * `review.imported`: no model call. It turns a finding list that an external reviewer wrote for one ground-truth case
  * into a review output, so `agw eval import` scores it with the review scorer (same version, same judge) like every
  * arm. Internal: only `eval.import` starts it.
@@ -70,8 +80,7 @@ export function createImportedReviewWorkflow(): HostWorkflow {
     version: IMPORTED_REVIEW_VERSION,
     input: ImportedReviewInput,
     output: ReviewOutput,
-    // The scorer reads the output and the reference only; its input type is the review's, this workflow's is its own.
-    scorer: reviewScorer as never,
+    scorer: importedScorer,
     async run(ctx, input) {
       return await ctx.step('build', () => importedReview(input))
     },

@@ -111,7 +111,9 @@ export const CaseResult = z.object({
     .number()
     .nullable()
     .optional()
-    .describe("The case run's recorded cost (with its child runs'); null when nothing was priced"),
+    .describe(
+      "The case run's recorded cost (with its child runs'): 0 when every step was free, null when unknown (a call nobody priced)",
+    ),
   unpricedCalls: z.number().int().optional().describe('Calls the cost misses: a lower bound while above 0'),
   reason: z.string().optional(),
 })
@@ -127,7 +129,7 @@ export const RunSummary = z.object({
     .number()
     .nullable()
     .describe(
-      "The case runs' recorded costs summed; null when none was priced. This run's own `cost` adds the judge calls",
+      "The case runs' recorded costs summed (0: every step free); null when no case cost is known. This run's own `cost` adds the judge calls",
     ),
   unpricedCalls: z.number().int().describe('Calls no case cost includes: the total is a lower bound while above 0'),
 })

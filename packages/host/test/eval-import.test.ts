@@ -110,6 +110,7 @@ beforeAll(async () => {
     gt('bug-missing', sha, 'bug'),
     gt('control-alarm', sha, 'control'),
     gt('control-quiet', sha, 'control'),
+    gt('toString', sha, 'control'), // an Object.prototype key is a case id like any other
   ])
   platform = testPlatform(db.schema)
   rt = testRuntime({
@@ -158,7 +159,7 @@ describe('agw eval import review', () => {
       label: 'native-high',
       plan: {
         ids: ['bug-hit', 'bug-nit', 'control-alarm'],
-        missing: ['bug-missing', 'control-quiet'],
+        missing: ['bug-missing', 'control-quiet', 'toString'],
         findings: 4,
         judgeCalls: 3,
       },
