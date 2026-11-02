@@ -159,7 +159,7 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
 - After the owner says labelling is done: reactivate Wave 8 (flip Wave 16 done first), fresh lead: ingest, bars, then the
   re-mine. The ~165 more cases cost ≈ $49 incl. ≈ $13 IU: within the owner's "low" eval spend? Ask the owner in the same
   report as the bars (one question), meanwhile mine on credit only, sized to `evalAvailableUsd`.
-- If 8a closes before the owner session: Wave 14 items that need no review data (compaction overflow) may be pulled
+- If Wave 16 closes before the owner session: Wave 14 items that need no review data (compaction overflow) may be pulled
   forward the same way; Wave 9+ need the ground truth.
 - Still owed by the owner: me2 keys and expiry day (+$100 a cycle; eval credit is the bottleneck now).
 - Wake-loop: the factory re-fires `workers done` while the lead idles on shells. Answer with a blocking ~9.5-min poll on
