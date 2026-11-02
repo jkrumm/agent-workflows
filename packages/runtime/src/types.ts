@@ -35,8 +35,8 @@ export type Usage = {
 export type ModelUsage = { tokens: TokenCounts; cost: number | null; toolCalls: number; unpricedCalls: number }
 
 /**
- * The per-step sum of every `addUsage`, with a per-model split for the usage projection. `route` is the one route id the
- * step's calls named, null when none or more than one did (set by `UsageTotals.snapshot`).
+ * The per-step sum of every `addUsage`, with a per-model split for the usage projection. `route` is the one route named by the reports
+ * that name one, null when they name several or none (a report without a route names none; set by `UsageTotals.snapshot`).
  */
 export type StepUsage = ModelUsage & { byModel: Record<string, ModelUsage>; route?: string | null }
 

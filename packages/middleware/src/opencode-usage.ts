@@ -36,11 +36,12 @@ function modelOf(message: OpenCodeMessage): string | null {
  * `cost` is the sum of the messages' reported cost, or null when any assistant message with tokens carries none:
  * the runtime then counts the step as unpriced instead of a silent undercount. `model` is the route's model when
  * the host knows it, else the first one a message names (v2 messages do not always carry it), as its canonical id
- * (`canonicalModel`: a message may name the provider's echo).
+ * (`canonicalModel`: a message may name the provider's echo). `route` is the route id the host resolved the step
+ * from, carried onto the usage as is.
  */
 export function usageFromOpenCodeMessages(
   messages: readonly OpenCodeMessage[],
-  options: { model?: string } = {},
+  options: { model?: string; route?: string } = {},
 ): Usage {
   const tokens = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0 }
   let cost = 0
@@ -66,6 +67,7 @@ export function usageFromOpenCodeMessages(
   }
   return {
     ...(model ? { model: canonicalModel(model) } : {}),
+    ...(options.route ? { route: options.route } : {}),
     tokens,
     cost: priced ? cost : null,
     costSource: priced ? 'provider' : 'unknown',

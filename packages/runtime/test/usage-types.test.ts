@@ -31,4 +31,14 @@ test('route: the single route when every report names the same one, else null; m
   expect(totals.snapshot().route).toBe('r-a')
   totals.add({ model: 'm', route: 'r-b', tokens })
   expect(totals.snapshot().route).toBeNull()
+
+  // Routed and unrouted reports, either order: the routed one is the step's route.
+  for (const reports of [
+    [{ route: 'r-a' }, {}],
+    [{}, { route: 'r-a' }],
+  ]) {
+    const mixed = new UsageTotals()
+    for (const report of reports) mixed.add({ model: 'm', tokens, ...report })
+    expect(mixed.snapshot().route).toBe('r-a')
+  }
 })

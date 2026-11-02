@@ -47,8 +47,8 @@ const result = await runtime.wait(runId)
   optional on a report (absent means 0) and always present on the sums (`tokens_cache_write`).
   `model` is the canonical id (`canonicalModel` in `@agent-workflows/routes`: no provider prefix, snapshot date or `[1m]`),
   so `steps.model` and the `usage_by_model` keys name one model one way. `route` is the route id a call was resolved
-  from (a fallback call keeps the primary's); `steps.route` (migration 0013) holds it when every report of the step names
-  the same one, null for a step with several routes or none. **Cut-over:** steps finished before this release keep their
+  from (a fallback call keeps the primary's); `steps.route` (migration 0013) holds the one route named by the reports that
+  name one (a report without a route names none), null when they name several or none. **Cut-over:** steps finished before this release keep their
   raw model ids and a null `route`; there is no backfill, so group by route only over steps after it.
 - **Idempotency key.** `start({ idempotencyKey })` returns the same run for the same workflow, key and input; the same key with a
   different input throws `IdempotencyConflict` (the first run stands). `getRun(runId)` reads a run's state; `ping(timeoutMs)`

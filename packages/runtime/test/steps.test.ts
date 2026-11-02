@@ -168,7 +168,7 @@ describe('idle timeout', () => {
 })
 
 describe('usage', () => {
-  test('steps.route: the one route a step reported, null for several routes or none', async () => {
+  test('steps.route: the one route named by the reports that name one, null for several or none', async () => {
     const tokens = { input: 1, output: 1, cacheRead: 0, reasoning: 0 }
     const wf = defineWorkflow({
       id: 'steps.route',
@@ -190,6 +190,17 @@ describe('usage', () => {
           addUsage({ model: 'm-a', tokens })
           return null
         })
+        // A report without a route names none: the routed one decides, whichever came first.
+        await ctx.step('routed-first', ({ addUsage }) => {
+          addUsage({ model: 'm-a', route: 'r-a', tokens })
+          addUsage({ model: 'm-b', tokens })
+          return null
+        })
+        await ctx.step('unrouted-first', ({ addUsage }) => {
+          addUsage({ model: 'm-b', tokens })
+          addUsage({ model: 'm-a', route: 'r-a', tokens })
+          return null
+        })
         return {}
       },
     })
@@ -201,6 +212,8 @@ describe('usage', () => {
       expect((await sql.step(runId, 'single'))?.route).toBe('r-a')
       expect((await sql.step(runId, 'mixed'))?.route).toBeNull()
       expect((await sql.step(runId, 'unrouted'))?.route).toBeNull()
+      expect((await sql.step(runId, 'routed-first'))?.route).toBe('r-a')
+      expect((await sql.step(runId, 'unrouted-first'))?.route).toBe('r-a')
     } finally {
       await rt.close()
     }

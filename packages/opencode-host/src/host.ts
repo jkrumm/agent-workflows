@@ -1069,7 +1069,7 @@ export class OpenCodeHost implements AgentHost {
   /** Tokens from the messages (`usageFromOpenCodeMessages`), cost per message by `priceOpenCodeMessages`. */
   private usage(h: OpenCodeHandle, messages: Message[]): Usage {
     // `h.route` is the route the step was resolved from; a fallback session keeps the primary's id.
-    const usage = { ...usageFromOpenCodeMessages(messages, { model: h.model }), route: h.route }
+    const usage = usageFromOpenCodeMessages(messages, { model: h.model, route: h.route })
     const priced = priceOpenCodeMessages(messages, this.routeRate(h))
     return priced === null
       ? unpriced(usage)
