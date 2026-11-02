@@ -1,8 +1,9 @@
 import { JudgeClass, JudgeInput, JudgeOutput } from '@agent-workflows/eval'
 import { z } from 'zod'
+import { fail } from '../errors.ts'
 import { completeJson, type LlmDeps } from '../llm/model-call.ts'
 import { defineCapability } from '../procedure.ts'
-import { diffBlock } from './eval-label.ts'
+import { diffBlock, fill, fixtureDiff, pinnedVersion } from './eval-prompt.ts'
 import { dataBlock } from './review-prompts.ts'
 
 export const JUDGE_SYSTEM =
@@ -27,22 +28,21 @@ Findings:
 The reviewed commit's diff. Every hunk line is prefixed with its line number, and the numbers are exact: use them as given and never count lines yourself or compute them from the hunk headers. A "+" line and a context line (no sign) carry their post-image number, a "-" line its pre-image number. Compare a finding's line range and the known bug's range with these numbers.
 {{diff}}`
 
-/** Recorded from `pinnedVersion('eval-judge', `${JUDGE_SYSTEM}\n${JUDGE_TEMPLATE}`, ['eval.judge'])`; the test recomputes it. */
-export const JUDGE_VERSION = 'eval-judge-25ac7305c9a3'
-
 const MATCH_TASK =
   'The review is of a commit that is known to contain one bug (below). Only the findings listed as preselected may be classed "match"; any other finding gets one of the four other classes.'
 const CONTROL_TASK =
   'The review is of a clean control commit with no known bug. No finding can be a match: use real, not-a-bug, nit or unclear.'
 
+const NON_MATCH = JudgeClass.exclude(['match'])
+
 /** The reply the model gives for this input: one entry per finding id, `match` only where the case has a bug. */
 export function answerSchema(input: JudgeInput) {
-  const classes: typeof JudgeClass = input.bug
-    ? JudgeClass
-    : (JudgeClass.exclude(['match']) as unknown as typeof JudgeClass)
+  const entry: z.ZodType<JudgeOutput['findings'][number]> = z
+    .object({ id: z.string(), class: input.bug ? JudgeClass : NON_MATCH, reason: z.string() })
+    .strict()
   const ids = input.findings.map((f) => f.id)
   return z
-    .object({ findings: z.array(z.object({ id: z.string(), class: classes, reason: z.string() }).strict()) })
+    .object({ findings: z.array(entry) })
     .strict()
     .superRefine((value, ctx) => {
       const seen = new Set<string>()
@@ -66,14 +66,44 @@ export function judgePrompt(input: JudgeInput): string {
       return `- id ${JSON.stringify(f.id)} [${f.tag}] ${at}: ${f.message}`
     })
     .join('\n')
-  const fill: Record<string, string> = {
+  return fill(JUDGE_TEMPLATE, {
     task: input.bug ? MATCH_TASK : CONTROL_TASK,
     bug,
     findings: dataBlock('FINDINGS', findings),
     diff: diffBlock('DIFF', input.diff),
-  }
-  return JUDGE_TEMPLATE.replace(/\{\{(\w+)\}\}/g, (_, key: string) => fill[key] ?? '')
+  })
 }
+
+const FIXTURE_FINDINGS: JudgeInput['findings'] = [
+  { id: '0', tag: 'important', file: 'src/new.ts', line: 4, endLine: 5, message: 'The end is dropped.' },
+  { id: '1', tag: 'nit', file: 'src/new.ts', message: 'Rename the variable.' },
+]
+const FIXTURE_BUG: JudgeInput = {
+  caseId: 'fixture',
+  bug: {
+    location: { file: 'src/new.ts', startLine: 4, endLine: 5 },
+    description: 'The last element of the range is dropped.',
+  },
+  findings: FIXTURE_FINDINGS,
+  preselected: ['0'],
+  diff: fixtureDiff(),
+}
+const FIXTURE_CONTROL: JudgeInput = { ...FIXTURE_BUG, bug: null, preselected: [] }
+
+/**
+ * The version of the judge: bumped by any change to the system text, either rendered prompt (bug case and control), the
+ * diff rendering and cap, the answer schemas or the seat's wire, model, effort or output ceiling. The constant below is
+ * this value written down.
+ */
+export const judgeVersion = () =>
+  pinnedVersion('eval-judge', {
+    system: JUDGE_SYSTEM,
+    prompts: [judgePrompt(FIXTURE_BUG), judgePrompt(FIXTURE_CONTROL)],
+    routes: ['eval.judge'],
+    schemas: [answerSchema(FIXTURE_BUG), answerSchema(FIXTURE_CONTROL)],
+  })
+
+export const JUDGE_VERSION = 'eval-judge-ced286944fd4'
 
 export const createEvalJudge = (deps: LlmDeps) =>
   defineCapability({
@@ -96,7 +126,12 @@ export const createEvalJudge = (deps: LlmDeps) =>
       const byId = new Map(data.findings.map((f) => [f.id, f]))
       // Only a preselected finding may be a match: another one is "unclear", with the refusal in its reason.
       const findings = input.findings.map(({ id }) => {
-        const entry = byId.get(id) as (typeof data.findings)[number]
+        const entry = byId.get(id)
+        if (!entry)
+          throw fail('INVALID_OUTPUT', `eval.judge: no entry for finding "${id}"`, {
+            attempts: 1,
+            reason: 'missing id',
+          })
         if (entry.class !== 'match' || preselected.has(id)) return entry
         return {
           ...entry,

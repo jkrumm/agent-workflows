@@ -1,98 +1,8 @@
-import { createHash } from 'node:crypto'
 import { GtLabel, LabelInput, LabelOutput } from '@agent-workflows/eval'
-import { resolveRoute } from '@agent-workflows/routes'
 import { completeJson, type LlmDeps } from '../llm/model-call.ts'
 import { defineCapability } from '../procedure.ts'
+import { diffBlock, fill, fixtureDiff, pinnedVersion } from './eval-prompt.ts'
 import { dataBlock } from './review-prompts.ts'
-
-/** What one diff may cost the prompt; the rest is cut and the prompt says how much. */
-export const EVAL_DIFF_CHARS = 60_000
-
-const HUNK = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/
-const LINE_NO_WIDTH = 5
-
-/**
- * The diff with every hunk line numbered, because models miscount from hunk headers and the ground truth accepts a
- * location only within a few lines of the other labeller's. A `+` or context line carries its new-side (post-image) line
- * number, a `-` line its old-side number: `   42 + code`, `   41   code`, `   37 - code`. File headers, hunk headers and
- * `\ No newline` markers pass through unchanged. Hunk lengths from the headers say where a hunk ends, so a removed line
- * that reads `-- a/x` is a line, not a file header.
- */
-export function numberDiff(diff: string): string {
-  let oldLeft = 0
-  let newLeft = 0
-  let oldNo = 0
-  let newNo = 0
-  const row = (no: number, sign: string, text: string) => `${String(no).padStart(LINE_NO_WIDTH)} ${sign} ${text}`
-  return diff
-    .split('\n')
-    .map((line) => {
-      const hunk = HUNK.exec(line)
-      if (hunk) {
-        oldNo = Number(hunk[1])
-        oldLeft = hunk[2] === undefined ? 1 : Number(hunk[2])
-        newNo = Number(hunk[3])
-        newLeft = hunk[4] === undefined ? 1 : Number(hunk[4])
-        return line
-      }
-      if (oldLeft === 0 && newLeft === 0) return line
-      const sign = line[0] ?? ' '
-      if (sign === '+' && newLeft > 0) {
-        newLeft--
-        return row(newNo++, '+', line.slice(1))
-      }
-      if (sign === '-' && oldLeft > 0) {
-        oldLeft--
-        return row(oldNo++, '-', line.slice(1))
-      }
-      if (sign === ' ' && oldLeft > 0 && newLeft > 0) {
-        oldLeft--
-        oldNo++
-        newLeft--
-        return row(newNo++, ' ', line.slice(1))
-      }
-      return line
-    })
-    .join('\n')
-}
-
-/**
- * The diff up to `EVAL_DIFF_CHARS`: whole file sections from the top, in order, stopping at the first that does not fit
- * (a later small file never jumps the queue). A first section that alone exceeds the cap is cut mid-file.
- */
-export function cutDiff(diff: string): { text: string; notice: string } {
-  if (diff.length <= EVAL_DIFF_CHARS) return { text: diff, notice: '' }
-  const sections = diff.split(/(?=^diff --git )/m)
-  let text = ''
-  let kept = 0
-  for (const section of sections) {
-    if (text.length + section.length > EVAL_DIFF_CHARS) break
-    text += section
-    kept++
-  }
-  if (kept === 0) text = diff.slice(0, EVAL_DIFF_CHARS)
-  const where = kept === 0 ? 'the first file is cut mid-way' : `${kept} of ${sections.length} file sections kept whole`
-  return { text, notice: `[diff cut: ${diff.length - text.length} of ${diff.length} characters omitted, ${where}]` }
-}
-
-/**
- * `<prefix>-<12 hex>`: a sha256 over the prompt text and the pinned seats' model and effort. A prompt or seat change moves
- * it; the constant each capability records is this value written down, and its test recomputes it.
- */
-export function pinnedVersion(
-  prefix: string,
-  prompt: string,
-  routeIds: readonly ('eval.label.a' | 'eval.label.b' | 'eval.judge')[],
-) {
-  const seats = routeIds.map((id) => {
-    const { model, effort } = resolveRoute(id)
-    return `${id}=${model}@${effort}`
-  })
-  const hash = createHash('sha256')
-    .update([prompt, ...seats].join('\n---\n'))
-    .digest('hex')
-  return `${prefix}-${hash.slice(0, 12)}`
-}
 
 export const LABEL_SYSTEM =
   'You label bugs for a code-review benchmark. You read two git diffs and say whether the first one created a defect that the second one repairs. ' +
@@ -124,34 +34,49 @@ Fix commit message:
 Fix commit diff:
 {{fixDiff}}`
 
-/** Recorded from `pinnedVersion('eval-label', `${LABEL_SYSTEM}\n${LABEL_TEMPLATE}`, ['eval.label.a', 'eval.label.b'])`; the test recomputes it. */
-export const LABELER_VERSION = 'eval-label-538443ac6ca6'
-
 /** The model answers `GtLabel`; a defect needs a place and a non-defect has none, else it is re-asked. */
 const answer = GtLabel.refine((l) => l.defect === (l.location !== null), {
   message: 'location must be set when defect is true and null when defect is false',
 })
 
-/** A diff as the prompt carries it: numbered, then cut (so the numbers survive a cut), fenced as data. */
-export const diffBlock = (label: string, diff: string) => {
-  const cut = cutDiff(numberDiff(diff))
-  return dataBlock(label, cut.text) + (cut.notice ? `${cut.notice}\n` : '')
-}
-
 const message = (label: string, subject: string, body: string) =>
   dataBlock(label, body.trim() ? `${subject}\n\n${body.trim()}` : subject)
 
 export function labelPrompt(input: LabelInput): string {
-  const fill: Record<string, string> = {
+  return fill(LABEL_TEMPLATE, {
     introMessage: message('INTRO_MESSAGE', input.introSubject, input.introBody),
     blamed: input.blamed.map((b) => `${b.file}:${b.line}`).join(', '),
     introDiff: diffBlock('INTRO_DIFF', input.introDiff),
     fixMessage: message('FIX_MESSAGE', input.fixSubject, input.fixBody),
     fixDiff: diffBlock('FIX_DIFF', input.fixDiff),
-  }
-  // A function replacer: `$&` and friends in a diff are literal text.
-  return LABEL_TEMPLATE.replace(/\{\{(\w+)\}\}/g, (_, key: string) => fill[key] ?? '')
+  })
 }
+
+const FIXTURE: LabelInput = {
+  seat: 'a',
+  candidateId: 'fixture',
+  introSubject: 'feat: add a range parser',
+  introBody: 'Parses a-b into a list.',
+  introDiff: fixtureDiff(),
+  fixSubject: 'fix: the end is inclusive',
+  fixBody: '',
+  fixDiff: fixtureDiff(),
+  blamed: [{ file: 'src/new.ts', line: 4 }],
+}
+
+/**
+ * The version of the labeller: bumped by any change to the system text, the rendered prompt, the diff rendering and cap,
+ * the answer schema or either seat's wire, model, effort or output ceiling. The constant below is this value written down.
+ */
+export const labelerVersion = () =>
+  pinnedVersion('eval-label', {
+    system: LABEL_SYSTEM,
+    prompts: [labelPrompt(FIXTURE)],
+    routes: ['eval.label.a', 'eval.label.b'],
+    schemas: [answer],
+  })
+
+export const LABELER_VERSION = 'eval-label-5d14aed19b3e'
 
 export const createEvalLabel = (deps: LlmDeps) =>
   defineCapability({

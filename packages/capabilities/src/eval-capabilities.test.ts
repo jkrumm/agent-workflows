@@ -1,16 +1,10 @@
 import { describe, expect, test } from 'bun:test'
 import type { JudgeInput, LabelInput } from '@agent-workflows/eval'
+import { z } from 'zod'
 import { createCapabilities } from './capabilities/index.ts'
-import { JUDGE_SYSTEM, JUDGE_TEMPLATE, JUDGE_VERSION } from './capabilities/eval-judge.ts'
-import {
-  cutDiff,
-  EVAL_DIFF_CHARS,
-  LABEL_SYSTEM,
-  LABEL_TEMPLATE,
-  LABELER_VERSION,
-  numberDiff,
-  pinnedVersion,
-} from './capabilities/eval-label.ts'
+import { JUDGE_VERSION, judgeVersion } from './capabilities/eval-judge.ts'
+import { LABELER_VERSION, labelerVersion, labelPrompt } from './capabilities/eval-label.ts'
+import { cutDiff, EVAL_DIFF_CHARS, fill, fixtureDiff, numberDiff, pinnedVersion } from './capabilities/eval-prompt.ts'
 import type { Usage } from './context.ts'
 import { CapabilityCallError } from './errors.ts'
 import { createRegistry } from './registry.ts'
@@ -146,10 +140,8 @@ describe('eval.label', () => {
     expect(fix?.[1]).toBe('fix: off by one\n\nthe end was exclusive')
   })
 
-  test('LABELER_VERSION is the pinned hash of the prompt, the system text and both seats’ model and effort', () => {
-    expect(LABELER_VERSION).toBe(
-      pinnedVersion('eval-label', `${LABEL_SYSTEM}\n${LABEL_TEMPLATE}`, ['eval.label.a', 'eval.label.b']),
-    )
+  test('LABELER_VERSION is the recorded value of the computed version (prompt, diff rendering, schema, both seats)', () => {
+    expect(LABELER_VERSION).toBe(labelerVersion())
   })
 })
 
@@ -268,8 +260,45 @@ describe('eval.judge', () => {
     expect(prompt).toMatch(/<<<KNOWN_BUG_[0-9a-f]{12}_BEGIN>>>\nThe last element is dropped\./)
   })
 
-  test('JUDGE_VERSION is the pinned hash of the prompt, the system text and the judge seat’s model and effort', () => {
-    expect(JUDGE_VERSION).toBe(pinnedVersion('eval-judge', `${JUDGE_SYSTEM}\n${JUDGE_TEMPLATE}`, ['eval.judge']))
+  test('JUDGE_VERSION is the recorded value of the computed version (both prompts, diff rendering, schemas, the seat)', () => {
+    expect(JUDGE_VERSION).toBe(judgeVersion())
+  })
+})
+
+describe('pinnedVersion', () => {
+  const base = {
+    system: 's',
+    prompts: ['p'],
+    routes: ['eval.judge'] as ('eval.judge' | 'eval.label.a')[],
+    schemas: [z.object({ a: z.string() })],
+  }
+  const version = (over: Partial<typeof base> = {}) => pinnedVersion('v', { ...base, ...over })
+
+  test('is stable, and moves with the system text, a prompt, the seats or a schema', () => {
+    expect(version()).toBe(version())
+    expect(version()).toMatch(/^v-[0-9a-f]{12}$/)
+    const others = [
+      version({ system: 't' }),
+      version({ prompts: ['q'] }),
+      version({ routes: ['eval.label.a'] }),
+      version({ schemas: [z.object({ a: z.string(), b: z.string() })] }),
+    ]
+    expect(new Set([version(), ...others]).size).toBe(5)
+  })
+
+  test('the fixture prompts render the cut notice, so the cap is part of what the versions hash', () => {
+    const rendered = labelPrompt({ ...labelInput(), introDiff: fixtureDiff(), fixDiff: fixtureDiff() })
+    expect(rendered).toContain(`characters omitted, 1 of 2 file sections kept whole]`)
+    expect(rendered).toContain('rename to src/new.ts')
+    expect(rendered).toContain('   21   ctx')
+    expect(EVAL_DIFF_CHARS).toBe(60_000)
+  })
+})
+
+describe('fill', () => {
+  test('replaces placeholders literally and throws on one without a value', () => {
+    expect(fill('a {{x}} b {{x}}', { x: '$& {{y}}' })).toBe('a $& {{y}} b $& {{y}}')
+    expect(() => fill('a {{x}} {{y}}', { x: '1' })).toThrow('{{y}}')
   })
 })
 
