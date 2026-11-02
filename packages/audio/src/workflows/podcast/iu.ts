@@ -67,6 +67,17 @@ const callHeaders = (token: string, attribution: Attribution | undefined, extra:
   authorization: `Bearer ${token}`,
 })
 
+/**
+ * Headers of a Messages call. `x-agw-fallback: none`: with no credit left the gateway answers 402 (balance) and the
+ * route's own fallback takes the call, never IU's Claude.
+ */
+const anthropicHeaders = (token: string, attribution: Attribution | undefined) =>
+  callHeaders(token, attribution, {
+    'anthropic-version': ANTHROPIC_VERSION,
+    'content-type': 'application/json',
+    'x-agw-fallback': 'none',
+  })
+
 const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : 0)
 const rec = (v: unknown): Record<string, unknown> =>
   v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {}
@@ -276,13 +287,7 @@ export function iuModelPort(options: IuOptions = {}): ModelPort {
       await stream(
         'anthropic',
         `${anthropicBase}/v1/messages`,
-        // `x-agw-fallback: none`: with no credit left the gateway answers 402 (balance) and the route's own fallback
-        // takes the call, never IU's Claude.
-        callHeaders(token, call.attribution, {
-          'anthropic-version': ANTHROPIC_VERSION,
-          'content-type': 'application/json',
-          'x-agw-fallback': 'none',
-        }),
+        anthropicHeaders(token, call.attribution),
         body,
         signal,
         // The whole body: SSE events, or a plain JSON message or error envelope from a proxy that ignores `stream`.
@@ -307,12 +312,45 @@ export function iuModelPort(options: IuOptions = {}): ModelPort {
     })
   }
 
+  /** A Messages tool round: streamed under the idle watchdog, the content blocks rebuilt, the reply normalised. */
+  async function anthropicRound(
+    call: RoundCall,
+    signal: AbortSignal,
+    onUsage: OnWireUsage,
+    onSent: () => void,
+  ): Promise<RoundReply> {
+    const { token, anthropicBase } = gateway(options.env ?? process.env)
+    const body = anthropicRoundBody(call)
+    return withRetries('anthropic', signal, async () => {
+      const events: string[] = []
+      await stream(
+        'anthropic',
+        `${anthropicBase}/v1/messages`,
+        anthropicHeaders(token, call.attribution),
+        body,
+        signal,
+        (raw) => events.push(raw),
+        onSent,
+      )
+      const parsed = parseAnthropicMessage(events.join('\n'))
+      if (!parsed.ok) throw new Retryable(`unreadable response: ${parsed.reason}`)
+      const { blocks, stopReason, usage, streamError } = parsed.value
+      if (Object.keys(usage).length > 0) onUsage(anthropicUsage(usage, call.model))
+      if (streamError) {
+        const message = `anthropic ${streamError.type}: ${streamError.message}`.slice(0, 500)
+        throw RETRYABLE_STREAM_ERRORS.has(streamError.type) ? new Retryable(message) : new ModelError(message)
+      }
+      return anthropicReply(blocks, stopReason)
+    })
+  }
+
   async function round(
     call: RoundCall,
     signal: AbortSignal,
     onUsage: OnWireUsage,
     onSent: () => void,
   ): Promise<RoundReply> {
+    if (call.api === 'messages') return anthropicRound(call, signal, onUsage, onSent)
     const { token, openaiBase } = gateway(options.env ?? process.env)
     const responses = call.api === 'responses'
     const wire = responses ? 'iu-responses' : 'iu-openai'
@@ -370,6 +408,26 @@ export function anthropicBody(call: ChatCall) {
     ...(Object.keys(outputConfig).length > 0 ? { output_config: outputConfig } : {}),
     system: buildSystem(call.system, call.cacheablePrefix),
     messages: [{ role: 'user', content: call.user }],
+    stream: true,
+  }
+}
+
+/**
+ * The Messages tool-round body: the same thinking/effort and `max_tokens` floor as a single call, `tools` before the
+ * system prompt (the Messages cache order), the system prompt as one block with the ephemeral breakpoint, the transcript
+ * as given. Stable: every field is a pure function of the transcript, so round N's prompt is a prefix of round N+1's.
+ */
+export function anthropicRoundBody(call: RoundCall) {
+  const thinking = call.effort !== undefined
+  return {
+    model: call.model,
+    max_tokens: Math.max(ANTHROPIC_MIN_MAX_TOKENS, call.maxTokens),
+    ...(thinking ? { thinking: { type: 'adaptive' }, output_config: { effort: call.effort } } : {}),
+    ...(call.tools.length > 0
+      ? { tools: call.tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.parameters })) }
+      : {}),
+    system: [{ type: 'text', text: call.system ?? '', cache_control: { type: 'ephemeral' } }],
+    messages: call.messages,
     stream: true,
   }
 }
@@ -464,6 +522,45 @@ export function parseResponsesReply(json: Record<string, unknown>): RoundReply {
     message: { role: 'assistant', content: text, ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}) },
     ...(finishReason ? { finishReason } : {}),
     raw: output,
+  }
+}
+
+const FINISH_REASONS: Record<string, string> = {
+  end_turn: 'stop',
+  stop_sequence: 'stop',
+  tool_use: 'tool_calls',
+  max_tokens: 'length',
+}
+
+/**
+ * A Messages reply as a round: the text blocks joined, `tool_use` blocks as chat-style tool calls (the `input` object
+ * re-serialised), the finish reason in chat vocabulary, the content blocks kept verbatim as `native` for the next request.
+ * A `max_tokens` stop carries NO tool calls: a cut `tool_use` is never run.
+ */
+export function anthropicReply(blocks: Array<Record<string, unknown>>, stopReason: string | null): RoundReply {
+  const text = blocks
+    .filter((b) => b.type === 'text')
+    .map((b) => (typeof b.text === 'string' ? b.text : ''))
+    .join('')
+  const toolCalls: ToolCallRequest[] =
+    stopReason === 'max_tokens'
+      ? []
+      : blocks
+          .filter((b) => b.type === 'tool_use')
+          .map((b) => ({
+            id: String(b.id ?? ''),
+            type: 'function' as const,
+            function: { name: String(b.name ?? ''), arguments: JSON.stringify(b.input ?? {}) },
+          }))
+  const finishReason = stopReason ? (FINISH_REASONS[stopReason] ?? stopReason) : undefined
+  return {
+    message: {
+      role: 'assistant',
+      content: text,
+      ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
+      native: { api: 'anthropic', items: blocks },
+    },
+    ...(finishReason ? { finishReason } : {}),
   }
 }
 
@@ -588,4 +685,106 @@ export function parseAnthropicStream(
   }
   if (!sawEvent) return { ok: false, reason: 'SSE body carried no valid events' }
   return { ok: true, value: { text, stopReason, usage, ...(streamError ? { streamError } : {}) } }
+}
+
+export interface AnthropicBlocksResult {
+  /** The content blocks as the provider sent them: thinking (signature included), redacted thinking, text, tool use. */
+  blocks: Array<Record<string, unknown>>
+  stopReason: string | null
+  usage: AnthropicUsage
+  streamError?: { type: string; message: string }
+}
+
+/**
+ * A Messages response (SSE stream, or a plain JSON message or `{"type":"error"}` envelope from a proxy that ignores
+ * `stream`) into its content blocks, rebuilt from the deltas, with the stop reason and usage. Never throws; `{ ok: false }`
+ * (retryable) for an unreadable body, a stream cut before its stop reason, or a `tool_use` whose input JSON is garbled
+ * on a stop that was not `max_tokens` (a cut one is dropped by `anthropicReply`).
+ */
+export function parseAnthropicMessage(
+  body: string,
+): { ok: true; value: AnthropicBlocksResult } | { ok: false; reason: string } {
+  const trimmed = body.trimStart()
+  if (!trimmed.startsWith('data:') && !trimmed.startsWith('event:') && !trimmed.startsWith(':')) {
+    const json = tryParse(body)
+    if (!json || typeof json !== 'object' || Array.isArray(json)) {
+      return { ok: false, reason: body.trim() === '' ? 'empty body' : 'body is not a JSON object' }
+    }
+    const message = rec(json)
+    if (message.type === 'error') {
+      return { ok: true, value: { blocks: [], stopReason: null, usage: {}, streamError: toStreamError(message.error) } }
+    }
+    if (!Array.isArray(message.content)) return { ok: false, reason: 'JSON body has no content array' }
+    const usage: AnthropicUsage = {}
+    mergeUsage(usage, message.usage)
+    const stopReason = typeof message.stop_reason === 'string' ? message.stop_reason : null
+    return { ok: true, value: { blocks: (message.content as unknown[]).map(rec), stopReason, usage } }
+  }
+  const blocks = new Map<number, Record<string, unknown>>()
+  const inputJson = new Map<number, string>()
+  let stopReason: string | null = null
+  const usage: AnthropicUsage = {}
+  let streamError: AnthropicBlocksResult['streamError']
+  let sawEvent = false
+  const append = (block: Record<string, unknown>, key: string, piece: unknown) => {
+    block[key] = `${typeof block[key] === 'string' ? block[key] : ''}${typeof piece === 'string' ? piece : ''}`
+  }
+  for (const line of body.split('\n')) {
+    if (!line.startsWith('data:')) continue
+    const payload = line.slice('data:'.length).trim()
+    if (!payload || payload === '[DONE]') continue
+    const event = tryParse(payload)
+    if (!event || typeof event !== 'object') continue
+    sawEvent = true
+    const e = rec(event)
+    const index = typeof e.index === 'number' ? e.index : undefined
+    const delta = rec(e.delta)
+    switch (e.type) {
+      case 'message_start':
+        mergeUsage(usage, rec(e.message).usage)
+        break
+      case 'content_block_start':
+        if (index !== undefined) blocks.set(index, { ...rec(e.content_block) })
+        break
+      case 'content_block_delta': {
+        const block = index === undefined ? undefined : blocks.get(index)
+        if (!block || index === undefined) break
+        if (delta.type === 'text_delta') append(block, 'text', delta.text)
+        else if (delta.type === 'thinking_delta') append(block, 'thinking', delta.thinking)
+        else if (delta.type === 'signature_delta') append(block, 'signature', delta.signature)
+        else if (delta.type === 'input_json_delta') {
+          inputJson.set(
+            index,
+            `${inputJson.get(index) ?? ''}${typeof delta.partial_json === 'string' ? delta.partial_json : ''}`,
+          )
+        }
+        break
+      }
+      case 'message_delta':
+        if (typeof delta.stop_reason === 'string') stopReason = delta.stop_reason
+        mergeUsage(usage, e.usage)
+        break
+      case 'error':
+        streamError = toStreamError(e.error)
+        break
+    }
+  }
+  if (!sawEvent) return { ok: false, reason: 'SSE body carried no valid events' }
+  if (streamError) return { ok: true, value: { blocks: [], stopReason, usage, streamError } }
+  if (stopReason === null) return { ok: false, reason: 'stream ended without a stop reason' }
+  const ordered = [...blocks.entries()].sort(([a], [b]) => a - b)
+  for (const [index, block] of ordered) {
+    if (block.type !== 'tool_use') continue
+    const raw = inputJson.get(index)
+    if (raw === undefined || raw.trim() === '') {
+      block.input = rec(block.input)
+      continue
+    }
+    const parsed = tryParse(raw)
+    if (parsed === undefined && stopReason !== 'max_tokens') {
+      return { ok: false, reason: `tool_use input is not valid JSON (${raw.length} chars)` }
+    }
+    block.input = rec(parsed)
+  }
+  return { ok: true, value: { blocks: ordered.map(([, block]) => block), stopReason, usage } }
 }
