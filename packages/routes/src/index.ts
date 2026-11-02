@@ -96,26 +96,26 @@ export function fallbackRoute(route: ResolvedRoute): ResolvedRoute | undefined {
   return { id: route.id, ...structuredClone(route.fallback), isFallback: true }
 }
 
-/** Wires whose calls agw prices itself whatever the route's `price`: IU's Gemini TTS and Replicate predictions. */
-const CALLER_PRICED_WIRES: ReadonlySet<Wire> = new Set<Wire>(['iu-gemini', 'iu-replicate'])
+/** Wires whose text calls pass the gateway, which writes their `usage.records` rows (a route with a `price` aside). */
+const GATEWAY_WIRES: ReadonlySet<Wire> = new Set<Wire>(['anthropic', 'iu-openai', 'opencode', 'iu-decision'])
 
-let callerPriced: ReadonlySet<string> | undefined
+let gatewayModels: ReadonlySet<string> | undefined
 
 /**
- * True for a model whose usage the gateway cannot price, so agw writes its `usage.records` row itself: a model on a
- * route (or a route's fallback) with a `price` (per image, character, second, call, or an audio/image token split), or
- * on the `iu-gemini` / `iu-replicate` wires. Every other model's calls pass the gateway, which writes their rows.
- * Computed from the table once, on the first call; `AGW_ROUTES` overrides are not read (an override that moves a
- * route to another model leaves that model text-priced).
+ * True for a model whose `usage.records` rows the gateway writes, one per request: a model on a route (or a route's
+ * fallback) on the `anthropic`, `iu-openai`, `opencode` or `iu-decision` wire without a `price`. agw writes no row for
+ * those. Every other label keeps agw's row: priced media models, the `iu-gemini` / `iu-replicate` wires, usage billed
+ * outside the gateway (`tavily-search`, `tavily-extract`), and any model not in the table (an `AGW_ROUTES` override
+ * included). Computed from the table once, on the first call; overrides are not read.
  */
-export function isCallerPriced(model: string): boolean {
-  callerPriced ??= new Set(
+export function gatewayRecords(model: string): boolean {
+  gatewayModels ??= new Set(
     Object.values(DEFAULT_ROUTES)
       .flatMap((route) => [route, ...(route.fallback ? [route.fallback] : [])])
-      .filter((entry) => entry.price !== undefined || CALLER_PRICED_WIRES.has(entry.wire))
+      .filter((entry) => entry.price === undefined && GATEWAY_WIRES.has(entry.wire))
       .map((entry) => entry.model),
   )
-  return callerPriced.has(model)
+  return gatewayModels.has(model)
 }
 
 function isRouteId(id: string): id is RouteId {

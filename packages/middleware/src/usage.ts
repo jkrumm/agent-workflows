@@ -1,5 +1,5 @@
 import { hostname } from 'node:os'
-import { isCallerPriced } from '@agent-workflows/routes'
+import { gatewayRecords } from '@agent-workflows/routes'
 import type { Logger, ModelUsage, RunScores, TokenCounts } from '@agent-workflows/runtime'
 import { DatabaseError, Pool, type PoolClient } from 'pg'
 import { errorMessage, type JournalDb } from './db.ts'
@@ -8,8 +8,8 @@ import { hasPurpose } from './purpose.ts'
 
 /**
  * One row of `usage.records` (usage-tracker `migrations/pg/0002_sessions_records.sql`, `docs/usage-schema.md`) as the
- * platform writes it: one per finished step and caller-priced model (`isCallerPriced`: the gateway writes every other
- * model's rows, one per request), grain `session` (a step is a whole agent loop of many requests, never one message). `cost_usd`, `cost_source`, `price_id`, `session_id` and `ingested_at` are not here: the database
+ * platform writes it: one per finished step and model the gateway does not record (`gatewayRecords`: the gateway
+ * writes those models' rows, one per request), grain `session` (a step is a whole agent loop of many requests, never one message). `cost_usd`, `cost_source`, `price_id`, `session_id` and `ingested_at` are not here: the database
  * derives them (`usage.compute_cost`, the run's session row, the column default).
  */
 export type UsageRow = {
@@ -413,6 +413,9 @@ const counts = (t: Partial<TokenCounts>): TokenCounts => ({
   reasoning: t.reasoning ?? 0,
 })
 
+/** Usage reported without a model: the step total minus the per-model split. Its calls are not told apart. */
+const REMAINDER = 'unknown'
+
 type ModelRow = {
   model: string
   tokens: TokenCounts
@@ -443,7 +446,7 @@ function perModel(step: OutboxStep): ModelRow[] {
   const restCost =
     step.cost === null || Math.abs(step.cost - splitCost) <= 1e-9 * Math.abs(step.cost) ? null : step.cost - splitCost
   const rest: ModelRow = {
-    model: rows.length === 0 ? (step.model ?? 'unknown') : 'unknown',
+    model: rows.length === 0 ? (step.model ?? REMAINDER) : REMAINDER,
     tokens,
     cost: rows.length === 0 ? step.cost : restCost !== null && restCost > 0 ? restCost : null,
     toolCalls: Math.max(0, step.toolCalls - rows.reduce((sum, r) => sum + r.toolCalls, 0)),
@@ -467,10 +470,11 @@ export function repoOf(project: string | null | undefined, workspace: string | n
 }
 
 /**
- * One `usage.records` row per step and caller-priced model (concept §5): a model agw prices per minute, per character
- * or per image (`isCallerPriced`). Every other call passed the gateway, which wrote its own row per request with the
- * run's attribution; a second row here would count it twice. None for a step that spent nothing or only on text, so a
- * step mixing a prep call and TTS writes the TTS row only. The run record, spans and roll-ups keep every call.
+ * One `usage.records` row per step and model (concept §5), except the models the gateway records (`gatewayRecords`:
+ * a text model on a gateway wire without a `price`) and the model-less `unknown` remainder. The gateway wrote a row per
+ * request for those calls with the run's attribution; a second row here would count them twice. Every other label keeps
+ * its row: priced media models, Tavily (`tavily-search`, `tavily-extract`), a model outside the table. So a step mixing
+ * a prep call and TTS writes the TTS row only, and a text-only step none. The run record, spans and roll-ups keep every call.
  */
 export function usageRowsForStep(step: OutboxStep, options: UsageRowOptions): UsageRow[] {
   const { run } = step
@@ -479,7 +483,7 @@ export function usageRowsForStep(step: OutboxStep, options: UsageRowOptions): Us
   const durationMs = step.finishedAt ? Math.max(0, step.finishedAt.getTime() - step.startedAt.getTime()) : null
   const caller = callerOf(run)
   return perModel(step)
-    .filter(({ model }) => isCallerPriced(model))
+    .filter(({ model }) => model !== REMAINDER && !gatewayRecords(model))
     .map(({ model, ...usage }) => ({
       source: SOURCE,
       source_id: `${step.runId}:${step.stepId}:${model}`,
@@ -491,7 +495,7 @@ export function usageRowsForStep(step: OutboxStep, options: UsageRowOptions): Us
       repo: repoOf(run.project, run.workspace),
       project_raw: run.project ?? null,
       workspace: run.workspace === 'work' || run.workspace === 'private' ? run.workspace : null,
-      // Every caller-priced route is IU API on the personal key; `api_key` names the key that paid, never the key.
+      // `api_key` is the IU key label, never the key: `personal`, the only key the gateway holds.
       billing: 'api_key',
       api_key: 'personal',
       machine: options.machine,
@@ -653,7 +657,7 @@ const STEP_COLUMNS = `run_id, step_id, status, model, tokens_input, tokens_outpu
 
 /**
  * Writes the usage of finished steps into `usage.records` once their run's record is written (`runPost` delivered). A
- * step whose usage is all text (no caller-priced model, see {@link usageRowsForStep}) writes no row and is marked synced
+ * step whose usage is all text (only models the gateway records, see {@link usageRowsForStep}) writes no row and is marked synced
  * all the same, so it never stays pending. No transaction of the journal spans a write:
  * 1. claim a batch in one statement (`for update skip locked`, a random `argo_claim` token and an expiry), commit;
  * 2. build the rows, write them outside any journal transaction;

@@ -1,9 +1,9 @@
 import { describe, expect, test } from 'bun:test'
 import type { ModelUsage } from '@agent-workflows/runtime'
-import { isCallerPriced } from '@agent-workflows/routes'
+import { gatewayRecords } from '@agent-workflows/routes'
 import { additiveTokens, type OutboxStep, repoOf, sessionsOf, traceIdForRun, usageRowsForStep } from '../src/index.ts'
 
-// Caller-priced models of the route table (`isCallerPriced`): only these get a row from agw; the gateway writes the rest.
+// Models whose rows agw writes (the gateway does not record them: `gatewayRecords` false), and one it does (TEXT).
 const TTS = 'gemini-3.8-flash-tts'
 const TTS_LITE = 'gemini-3.8-flash-lite-tts'
 const ELEVEN = 'elevenlabs/v3'
@@ -123,7 +123,7 @@ describe('usage rows', () => {
     expect(free?.cost_reported_usd).toBe(0) // a measured zero stays measured
   })
 
-  test('a step with several caller-priced models: one row each; unmodelled usage is no row (not caller-priced)', () => {
+  test('a step with several models agw records: one row each; the unmodelled remainder is no row', () => {
     const rows = usageRowsForStep(
       step({
         model: null,
@@ -207,7 +207,7 @@ describe('usage rows', () => {
       }),
       opts,
     )
-    // 50 input tokens and 0.02 USD without a model: `unknown` is no caller-priced model, so the gateway's to count.
+    // 50 input tokens and 0.02 USD without a model: the `unknown` remainder is never a row.
     expect(withRest.map((r) => [r.source_id, r.input_tokens, r.output_tokens])).toEqual([
       [`run_1:ask:${ELEVEN}`, 100, 12],
     ])
@@ -284,7 +284,7 @@ describe('usage rows', () => {
   })
 })
 
-describe('usage rows: only what the gateway cannot price', () => {
+describe('usage rows: none for what the gateway records', () => {
   const textUsage = {
     tokens: { input: 900, output: 120, cacheRead: 0, cacheWrite: 0, reasoning: 40 },
     cost: 0.0004,
@@ -298,11 +298,31 @@ describe('usage rows: only what the gateway cannot price', () => {
     unpricedCalls: 0,
   }
 
-  test('isCallerPriced: priced routes and the iu-gemini / iu-replicate wires; text models and "unknown" are not', () => {
+  test('gatewayRecords: a text model on a gateway wire without a price; media, Tavily and unknown models are not', () => {
+    for (const model of [TEXT, 'gemini-3.5-flash-lite']) expect(gatewayRecords(model)).toBe(true)
     for (const model of [TTS, TTS_LITE, ELEVEN, STT, 'gpt-image-2.5-flare', 'bria/remove-background'])
-      expect(isCallerPriced(model)).toBe(true)
-    for (const model of [TEXT, 'gemini-3.5-flash-lite', 'unknown', 'not-a-model'])
-      expect(isCallerPriced(model)).toBe(false)
+      expect(gatewayRecords(model)).toBe(false)
+    for (const model of ['tavily-search', 'tavily-extract', 'not-in-the-table'])
+      expect(gatewayRecords(model)).toBe(false)
+  })
+
+  test('usage billed outside the gateway keeps its row: tavily-search beside a text call', () => {
+    const tavily = { tokens: none, cost: 0.016, toolCalls: 0, unpricedCalls: 0 }
+    const rows = usageRowsForStep(
+      step({
+        model: null,
+        tokens: textUsage.tokens,
+        cost: 0.0164,
+        byModel: { [TEXT]: textUsage, 'tavily-search': tavily },
+      }),
+      opts,
+    )
+    expect(rows.map((r) => [r.source_id, r.cost_reported_usd])).toEqual([['run_1:ask:tavily-search', 0.016]])
+  })
+
+  test('a model outside the table (an overridden image route) keeps its row', () => {
+    const rows = usageRowsForStep(step({ model: 'gpt-image-9-override', byModel: null }), opts)
+    expect(rows.map((r) => r.model)).toEqual(['gpt-image-9-override'])
   })
 
   test('a step mixing a prep call and TTS writes the TTS row only', () => {
