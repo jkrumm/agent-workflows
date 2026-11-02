@@ -111,6 +111,12 @@ export type AgentOpenSpec = {
   agent: string
   prompt: string
   options?: Json
+  /**
+   * The JSON Schema of the step's `output` (`z.toJSONSchema`, `io: 'input'`: what the agent has to produce; a part
+   * JSON Schema cannot express is left open), absent when the step has no `output` or the conversion failed. A host
+   * that returns structured output offers it to the agent; the runtime's zod parse of the result stays the last check.
+   */
+  schema?: Json
   /** Who the step's model calls are for: the host hands it to the gateway with them. */
   attribution: Attribution
 }

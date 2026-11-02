@@ -19,6 +19,7 @@ import {
   nudgeThreshold,
   repeatCounts,
   sessionCounters,
+  submittedResult,
   type ToolPart,
 } from '../src/session.ts'
 import { type FakeServer, startFake } from './fake-opencode.ts'
@@ -92,6 +93,29 @@ describe('the answer of a step never comes from a nudge turn', () => {
       { id: 'i', type: 'idle' },
     ]
     expect(finalText(messages, prompt)).toBe('{"ok":true}')
+  })
+
+  test("a JSON step's result is read in the same window: the call before the nudge turn, the last completed one", () => {
+    const call = (id: string, status: string, input: Record<string, unknown>): Message => ({
+      id,
+      type: 'assistant',
+      finish: 'tool-calls',
+      content: [{ type: 'tool', id: `c${id}`, name: 'submit_result', state: { status, input } }],
+    })
+    const messages = [
+      ...base,
+      call('a1', 'error', { n: 0 }),
+      call('a2', 'completed', { n: 1 }),
+      call('a3', 'completed', { n: 2 }),
+      reply('a4', 'Done.'),
+      { id: 'i1', type: 'idle' },
+      nudge,
+      call('a5', 'completed', { n: 3 }),
+      { id: 'i2', type: 'idle' },
+    ]
+    expect(submittedResult(messages, prompt, 'submit_result')).toEqual({ n: 2 })
+    expect(submittedResult(messages, prompt, 'other_tool')).toBeUndefined()
+    expect(submittedResult(messages.slice(0, 2), prompt, 'submit_result')).toBeUndefined() // only the rejected call
   })
 
   test('queued as a turn of its own after the idle: its reply is ignored', () => {

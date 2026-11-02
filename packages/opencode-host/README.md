@@ -21,16 +21,18 @@ const runtime = new Runtime({ connectionString, workflows, host, middleware })
 
 A step picks the route with `options.route` (else the agent's `route`) and asks for JSON with
 `options.output: 'json'`: `ctx.agent('review', { agent: 'reviewer', prompt, output: Verdict, options: { output: 'json' } })`.
+A JSON step answers through its result tool, never in text (§Structured output).
 
 | Call | Does |
 |-|-|
 | `open(spec)` | Compiles the agent's location (idempotent), warms it, creates the session with the route's model (effort as a variant), the agent's permissions, title `agw <runId>:<stepId>` and `metadata.agw` (key, agent, route, location hash, the step's attribution: §Attribution). The session id is derived from `spec.key` (`ses_agw<sha256(key, generation)>`): a re-open after a crash between create and journal finds the same unprompted session; a retry whose earlier session still runs (or holds input) re-attaches to it, because its wait failed while the turn went on and a sibling session would run the same task on the same files; only a retry after a turn that ended gets the next generation. The directory the session lives in (an older hash directory on a re-attach) is pinned from `open` until its `wait` takes the use over (a pin nobody claims lapses after 30 min), and its marker is renewed |
 | `prompt(handle, text)` | Reads the session's messages and inbox; sends only when the prompt is not there. The prompt carries a deterministic id (`msg_agwp_…`) and `metadata.agw.kind = 'prompt'`, so the check is exact, and the server dedupes a second post of the same id as well |
-| `wait(handle, opts)` | Polls the session (`pollIntervalMs`, 1 s): `onProgress` on every new or grown message or part, and while a running shell tool prints; `onTool` `pre` when a tool part first appears, `post` when it completes or fails (recorded per `wait` call: a second wait reports again, at least once). Returns at the session's `idle` with the final assistant text (or its JSON) and `usage` |
+| `wait(handle, opts)` | Polls the session (`pollIntervalMs`, 1 s): `onProgress` on every new or grown message or part, and while a running shell tool prints; `onTool` `pre` when a tool part first appears, `post` when it completes or fails (recorded per `wait` call: a second wait reports again, at least once). Returns at the session's `idle` with the final assistant text, or a JSON step's result-tool input (§Structured output), and `usage` |
 | `steer(handle, text, { signalId })` | Appends a user message with `delivery: steer`, id keyed by the runtime's signal row: a re-delivered row is a no-op, two identical steers stay two. Without a `signalId`, a nonce per call (never the text alone). History is never rewritten |
 | `abort(handle)` | `POST /interrupt`. Idempotent: an idle session answers `interrupted: false`, a gone one 404, both fine |
 
-The handle is plain JSON: `{ v, sessionId, directory, agent, route, model, output, runId, stepId, attribution }`.
+The handle is plain JSON: `{ v, sessionId, directory, agent, route, model, output, runId, stepId, attribution }`, and
+`wrapped: true` on a JSON step whose schema the result tool holds under `result`.
 
 **Permissions: deny by default** (as agent-gateway's `OPENCODE_READONLY_PERMISSIONS`). Every session gets, in this
 order, the last match winning: `{ *, *, deny }`; `allow` for exactly `read`, `glob`, `grep` and `skill`;
@@ -84,6 +86,47 @@ Callers must: a throwaway clone (the review's `pr`/`branch` mode) has every syml
 right after checkout; the caller's own live checkout (review of `uncommitted`, `check`) is never edited, so **a symlink in
 a work tree the caller hands an agent is an accepted risk**, the same trust as the rest of this section (one server, one
 key, a shell-capable agent reads what the user can): the repo is the owner's, and a read-only reader cannot write the link.
+
+## Structured output
+
+**Probe (2.0.32, 2026-11-02).** The binary carries `SessionV1.OutputFormat` (`{ type: "json_schema", schema,
+retryCount }`), `StructuredOutputError` and a `structured` field on the assistant message, but only in the v1 data model:
+the server serves no v1 route, and the v2 `POST /api/session/{id}/prompt` the host uses takes `id`, `text`, `files`,
+`agents`, `skills`, `metadata`, `delivery`, `resume` only. A prompt sent with `format` and `outputFormat` was answered
+200 and both were dropped: the stored user message had neither and the assistant message no `structured`.
+`/api/session/{id}/generate` returns text only. The "Root JSON Schema must have type object and must not use anyOf"
+string belongs to Effect's `OpenAiStructuredOutput`, not to anything the host can reach. What does work: a plugin
+tool's `input` may be a plain JSON Schema object. OpenCode offers it to the model as the tool's input schema as it is,
+validates every call against it, and ends an invalid call as a tool part `status: error` with `Invalid arguments for
+tool "…": - <path>: Expected <type> … Update the arguments and call the tool again.`; the model retries in the same
+turn. A valid call ends `completed` with `state.input` the arguments. A tool without an `output` schema must return
+no `output` key (`Tool result declared output without an output schema`), and `execute` must return a promise.
+
+**How a JSON step answers.** The runtime hands the step's schema to `open` as `spec.schema`
+(`z.toJSONSchema(output, { io: 'input', unrepresentable: 'any' })`: what the agent produces before transforms; a
+part JSON Schema cannot express is left open, and the zod parse after `wait` stays the last check). `open` of a
+`output: 'json'` step compiles the agent's location with two additions, so a schema is its own hash directory:
+`.opencode/plugins/agw-result.js` (`src/result.ts`, plain JS with the schema inlined: one tool, `submit_result`, input =
+the schema without `$schema`, `codemode: false`) and a `## Result` section in `AGENTS.md` that names the tool. The
+session's permissions allow `submit_result` (`sessionPermissions(def, dirs, true)`; a follow-up turn and a balance
+fallback session keep the rule). `wait` returns the input of the answer's last completed `submit_result` call, read in
+the same window as a text answer (a nudge turn after the turn ended is not the answer); a rejected call does not count.
+A turn that ends without one fails the step `invalid_output`, with the start of its last text in the message: its text
+is never parsed as JSON, and the workflows' one retry re-asks.
+
+**Schemas.** A root that is an object (no `anyOf`, `oneOf`, `allOf`, `not`, `if`, `enum`, `const` at the top) is
+offered as it is. Any other root (an array, a string, a union) is wrapped as `{ result: <schema> }` (its `$defs` moved up)
+and unwrapped by `wait` (`handle.wrapped`). Refused at `open`, before a session exists, naming the agent and why: no
+schema, a schema that is not an object, a non-object root that refers to itself (`$ref: "#"`). The review angles',
+`check`'s and `retrospective`'s schemas are object roots and convert as they are (the review synthesis is a text step:
+the workflow parses its answer).
+
+**Follow-up turns** (`ctx.continue`) run in the same session and location, so they answer through the same tool and
+schema as the step that opened it. A continue step with a different `output` gets the opened step's tool; its zod parse
+decides.
+
+**Usage.** A turn without a result throws, like every host-side failure, so the step's run row does not carry that
+turn's tokens; the gateway's usage rows do.
 
 ## Server supervisor
 
@@ -455,13 +498,14 @@ the host and as a spawned `opencode` stand-in (`test/fake-opencode-bin.ts`) for 
 
 | File | Covers |
 |-|-|
-| `host.test.ts` | a turn's output and usage; prompt idempotency (twice, and across a restart); open idempotency per key, the retry generation, a retry re-attaching a still-running session; JSON output; a failed turn; an outcome-less idle; cost 0 priced by rate, unpriced without one; permissions; a pending prompt is running, a missing one fails after the grace; incremental reads; a wait surviving a kill and restart with one resume and no second prompt; a finished session read, not resumed; the provider-balance fallback (one reopen, re-attach without a second prompt, no fallback after a turn that ran, none for other failures or with `fallback: null`, abort reaching it); steer dedupe by signal; abort twice; tool events per wait; shell output as progress; warm, evict, hash directories and pruning |
+| `host.test.ts` | a turn's output and usage; structured output: the schema in the location's result plugin, `AGENTS.md` and permissions, the value returned, a follow-up turn, a fenced-JSON text answer and a rejected call failing `invalid_output`, a wrapped root, refusals at open, the fallback session's rule; prompt idempotency (twice, and across a restart); open idempotency per key, the retry generation, a retry re-attaching a still-running session; a failed turn; an outcome-less idle; cost 0 priced by rate, unpriced without one; permissions; a pending prompt is running, a missing one fails after the grace; incremental reads; a wait surviving a kill and restart with one resume and no second prompt; a finished session read, not resumed; the provider-balance fallback (one reopen, re-attach without a second prompt, no fallback after a turn that ran, none for other failures or with `fallback: null`, abort reaching it); steer dedupe by signal; abort twice; tool events per wait; shell output as progress; warm, evict, hash directories and pruning |
 | `server.test.ts` | the env allow-list (no provider key, no API secret), `gatewayFromEnv`, `installPlugin`, the server's own HOME and the file-watcher flag; a wedged server SIGTERMed, SIGKILLed and restarted on the same port; a crash restarted; adoption by the next process; drift restart; a foreign pid neither adopted nor signalled; corrupt `server.json`; a version mismatch refused; shim resolution; a wait in flight across a liveness kill; the config |
 | `locations.test.ts` | compile, hash directories, the hash, ancestor leaks, path escapes, pruning, the temp sweep; the warm cache under concurrency: single-flight, failed warm, failed evict, shrink re-check, use during evict, reset, changed content |
 | `live-permissions.test.ts` | `AGW_LIVE=1`: the deny-by-default policy: the tool list per opt-in, refused calls, an opted-in `webfetch`, Code Mode's empty catalog |
 | `plugin.test.ts` | the attribution plugin against a fake session store: parity with `gatewayHeaders`, the value filter, the walk to the root and its cache, the loud failures |
 | `live-gateway.test.ts` | `AGW_LIVE=1`: the wire of the pinned build (§Attribution); needs no key and calls no LLM |
 | `packages/host/test/attribution-opencode.test.ts` | a run's attribution end to end: the real `Runtime` and `OpenCodeHost` on the fake server, through a balance fallback and a follow-up turn, to the headers the plugin sets |
+| `live-structured.test.ts` | `AGW_LIVE=1`: a JSON step on Haiku: a planted invalid `submit_result` call rejected by OpenCode, the valid one's input as the output, a follow-up turn's result |
 | `live.test.ts` | `AGW_LIVE=1`: the real binary, SIGKILL mid-turn, restart, re-attach, one prompt; AGENTS.md and a skill reach the model, the user's skills and the shell tool do not; a non-shell agent's read, glob, grep and write outside its location are refused; tokens and cost |
 
 Live: `AGW_LIVE=1 secrets-run run --env-file=.env.tpl -- timeout 600 bun test packages/opencode-host`

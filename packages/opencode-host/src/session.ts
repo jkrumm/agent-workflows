@@ -95,14 +95,13 @@ function finishedTurn(m: Message): boolean {
 }
 
 /**
- * The last non-empty assistant text after the prompt: the answer. A nudge posted mid-turn is read in the running turn
- * (measured on 2.0.32: it lands after a message that finished `tool-calls`, and the reply after it ends the turn). One
- * that lands after the turn ended, after an `idle` or after a message that finished with anything but `tool-calls`
- * (`stop`), runs as a turn of its own; its reply answers the nudge, never the step, so the text stops before it, at
- * the last non-empty text there (a final `stop` message without text does not blank the answer). A message with no
+ * The assistant messages that answer the prompt. A nudge posted mid-turn is read in the running turn (measured on
+ * 2.0.32: it lands after a message that finished `tool-calls`, and the reply after it ends the turn). One that lands
+ * after the turn ended, after an `idle` or after a message that finished with anything but `tool-calls` (`stop`), runs
+ * as a turn of its own; its reply answers the nudge, never the step, so the answer stops before it. A message with no
  * `finish` counts as ended only when an `idle` follows it before the nudge.
  */
-export function finalText(messages: readonly Message[], promptId: string): string {
+function answerMessages(messages: readonly Message[], promptId: string): Message[] {
   const from = Math.max(0, promptIndex(messages, promptId))
   let end = messages.length
   let turnEnded = false
@@ -117,23 +116,37 @@ export function finalText(messages: readonly Message[], promptId: string): strin
       }
     } else if (isInput(m)) turnEnded = false // a steer or a resume starts or continues a turn
   }
-  for (const m of messages.slice(from + 1, end).reverse()) {
-    if (m.type !== 'assistant') continue
+  return messages.slice(from + 1, end).filter((m) => m.type === 'assistant')
+}
+
+/**
+ * The last non-empty assistant text of the answer (`answerMessages`): a text step's output. A final `stop` message
+ * without text does not blank it.
+ */
+export function finalText(messages: readonly Message[], promptId: string): string {
+  for (const m of answerMessages(messages, promptId).reverse()) {
     const text = textOf(m).trim()
     if (text) return text
   }
   return ''
 }
 
-/** A JSON answer, bare or in one fenced block; anything unparsable stays text and fails the runtime's schema. */
-export function parseStructured(text: string): Json {
-  const fenced = /```(?:json)?\s*\n([\s\S]*?)\n?```/.exec(text)
-  const body = (fenced?.[1] ?? text).trim()
-  try {
-    return JSON.parse(body) as Json
-  } catch {
-    return text
-  }
+/**
+ * A JSON step's output: the input of the answer's last completed call of `tool` (OpenCode validated it against the
+ * tool's schema before it ran; a rejected call ends `error` and does not count). Undefined when there is none.
+ */
+export function submittedResult(
+  messages: readonly Message[],
+  promptId: string,
+  tool: string,
+): Record<string, Json> | undefined {
+  const calls = answerMessages(messages, promptId).flatMap((m) =>
+    (m.content ?? []).filter((p) => p.type === 'tool' && p.name === tool && p.state?.status === 'completed'),
+  )
+  const input = calls.at(-1)?.state?.input
+  return input !== undefined && input !== null && typeof input === 'object' && !Array.isArray(input)
+    ? (input as Record<string, Json>)
+    : undefined
 }
 
 export type ToolPart = ContentPart & { type: 'tool'; id: string; name: string }

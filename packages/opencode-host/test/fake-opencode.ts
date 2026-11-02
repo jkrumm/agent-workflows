@@ -9,7 +9,10 @@
 // `[hold]` the first turn stays open until the test calls `release` (tool parts are added by `addTool`),
 // `[free]` an answer reported at cost 0, `[long]` an answer whose prompt is 150K input tokens (a call above the
 // long-prompt tier), `[balance]` a turn IU refuses for provider balance unless the session runs on
-// the Responses provider (the fallback), `[balance-all]` the same refusal on every provider.
+// the Responses provider (the fallback), `[balance-all]` the same refusal on every provider. `[result]` answers through
+// a completed `submit_result` call (input `{ ok: true, inputs: <user messages> }`) and a closing text, `[result-wrapped]`
+// the same with input `{ result: ['a', <user messages>] }`, `[result-rejected]` with a call that failed validation
+// only; a session whose permissions do not allow `submit_result` gets the real server's "No tool named" error instead.
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 
 type Part = {
@@ -212,6 +215,11 @@ export function startFake(options: FakeOptions) {
           save()
           return
         }
+        const result = /\[result(-wrapped|-rejected)?\]/.exec(prompt)
+        if (result) {
+          answerWithResult(s, reply, result[1] ?? '', tokens)
+          return
+        }
         const resumed = last.type === 'synthetic' && last.metadata ? 'resumed: ' : ''
         const text = /\[json\]/.test(prompt)
           ? `Here it is:\n\`\`\`json\n${JSON.stringify({ ok: true, inputs: s.messages.filter((m) => m.type === 'user').length })}\n\`\`\``
@@ -225,6 +233,38 @@ export function startFake(options: FakeOptions) {
       },
       ms,
     )
+  }
+
+  /** A turn that ends on a `submit_result` call (`[result…]`): the call's message, then a closing text message. */
+  function answerWithResult(s: Session, reply: Msg, kind: string, tokens: NonNullable<Msg['tokens']>) {
+    const inputs = s.messages.filter((m) => m.type === 'user').length
+    const input =
+      kind === '-wrapped' ? { result: ['a', inputs] } : kind === '-rejected' ? { ok: 'yes' } : { ok: true, inputs }
+    const allowed = (s.permissions as { action?: string; effect?: string }[] | undefined)?.some(
+      (r) => r.action === 'submit_result' && r.effect === 'allow',
+    )
+    const error = !allowed
+      ? 'No tool named "submit_result" is currently available'
+      : kind === '-rejected'
+        ? 'Invalid arguments for tool "submit_result":\n- ok: Expected boolean'
+        : null
+    const state = error
+      ? { status: 'error', input, error: { message: error } }
+      : { status: 'completed', input, content: [{ type: 'text', text: 'Result recorded.' }] }
+    reply.content = [{ type: 'tool', id: id('call'), name: 'submit_result', state }]
+    Object.assign(reply, { finish: 'tool-calls', tokens, cost: 0.001, time: { ...reply.time, completed: now() } })
+    s.messages.push({
+      id: id('msg'),
+      type: 'assistant',
+      time: { created: now(), completed: now() },
+      model: s.model,
+      content: [{ type: 'text', text: error ? 'I could not submit the result.' : 'Done.' }],
+      finish: 'stop',
+      tokens,
+      cost: 0.001,
+    })
+    save()
+    running.get(s.id)?.finish()
   }
 
   function interrupt(s: Session): boolean {
