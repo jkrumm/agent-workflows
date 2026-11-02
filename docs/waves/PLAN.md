@@ -198,7 +198,10 @@ not interactive factory sessions. Runs after Wave 16, before Wave 8 resumes; it 
   review costs in Max quota (measured: 5 real PRs through a factory-spawned interactive session, quota before/after).
 - [ ] **Constraint and spikes.** No `claude -p` and no Agent SDK on a subscription (owner, 2026-11-03; read
   anthropics/claude-code issue 97074, comment 6585881480, and pingdotgg/t3code PR 25597 for the current policy and the
-  workarounds, and judge whether any is sound). Spike the transport on the mini: a reviewer as an interactive Claude
+  workarounds, and judge whether any is sound). Candidates, compared on findings, Max quota per review, wall time and
+  what Anthropic documents and recommends: (a) in-session, a review subagent of the caller's own Claude Code session
+  (`.claude/agents/` like `implementer`/`Explore`, or the native `/code-review` skill): no transport at all, only callers
+  that are Claude Code sessions; (b) a standing reviewer session for callers that are not. Spike the transport on the mini: a reviewer as an interactive Claude
   Code session in a herdr-core terminal (factory spawn), how a caller hands it a job and gets REVIEW_OUTPUT back (`hc`
   send/read/wait, factory notes, files, agw's journal), concurrency, quota readings, crash and timeout behaviour. Each
   spike ends in a verdict with evidence under `docs/spikes/review-v3/`.
