@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { existsSync, mkdtempSync, rmSync, statSync, utimesSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { BALANCE_MARKER, isBalanceFailure } from '@agent-workflows/routes'
@@ -206,13 +206,6 @@ describe('open / prompt / wait', () => {
     expect((await t.host.wait(retry, waitOptions())).output).toBe('echo: [tool:read] the task')
     expect(Object.keys(t.fake.state.sessions)).toEqual([sid(first)])
     expect(await userMessages(t, retry)).toHaveLength(1)
-  })
-
-  test('structured output is parsed from a fenced block', async () => {
-    const t = setup()
-    const handle = await t.host.open(spec('[json]', { output: 'json' }))
-    await t.host.prompt(handle, '[json] give me data')
-    expect((await t.host.wait(handle, waitOptions())).output).toEqual({ ok: true, inputs: 1 })
   })
 
   test('a failed turn fails the step', async () => {
@@ -570,7 +563,147 @@ describe('step options', () => {
 
   test('the known options are accepted', async () => {
     const t = setup()
-    await t.host.open(spec('x', { route: 'check', output: 'json', allowDirectories: ['/tmp/repo'] }))
+    await t.host.open({
+      ...spec('x', { route: 'check', output: 'json', allowDirectories: ['/tmp/repo'] }),
+      schema: SCHEMA,
+    })
+  })
+})
+
+/** What `z.toJSONSchema(z.object({ ok: z.boolean(), inputs: z.number() }), { io: 'input' })` gives. */
+const SCHEMA = {
+  $schema: 'https://json-schema.org/draft/2020-12/schema',
+  type: 'object',
+  properties: { ok: { type: 'boolean' }, inputs: { type: 'number' } },
+  required: ['ok', 'inputs'],
+} satisfies Json
+
+describe('structured output (submit_result)', () => {
+  /** `schema: null` opens the step without one. */
+  const jsonSpec = (prompt: string, schema: Json = SCHEMA) => ({
+    ...spec(prompt, { output: 'json' }),
+    ...(schema === null ? {} : { schema }),
+  })
+  const location = (handle: Json) => (handle as OpenCodeHandle).directory
+  const plugin = (handle: Json) => join(location(handle), '.opencode', 'plugins', 'agw-result.js')
+  const RESULT_RULE: PermissionRule = { action: 'submit_result', resource: '*', effect: 'allow' }
+
+  test("the step's schema is the result tool's input: a plugin in the location, named in AGENTS.md, allowed", async () => {
+    const t = setup()
+    const handle = await t.host.open(jsonSpec('x'))
+    const source = readFileSync(plugin(handle), 'utf8')
+    const { $schema: _, ...offered } = SCHEMA
+    expect(source).toContain(`const INPUT = ${JSON.stringify(offered)}\n`)
+    expect(source).toContain('name: "submit_result"')
+    expect(source).not.toContain('$schema')
+    expect(readFileSync(join(location(handle), 'AGENTS.md'), 'utf8')).toContain('calling the `submit_result` tool')
+    expect(t.fake.state.sessions[sid(handle)]?.permissions).toEqual(sessionPermissions(AGENT, [], true))
+    expect(sessionPermissions(AGENT, [], true)).toContainEqual(RESULT_RULE)
+    expect((handle as OpenCodeHandle).wrapped).toBeUndefined()
+  })
+
+  test("a text step's location has no result tool and its session no rule for it", async () => {
+    const t = setup()
+    const text = await t.host.open(spec('x'))
+    expect(existsSync(plugin(text))).toBe(false)
+    expect(JSON.stringify(t.fake.state.sessions[sid(text)]?.permissions)).not.toContain('submit_result')
+  })
+
+  test('the output is the input of the completed submit_result call, not the text after it', async () => {
+    const t = setup()
+    const handle = await t.host.open(jsonSpec('x'))
+    await t.host.prompt(handle, '[result] give me data')
+    const result = await t.host.wait(handle, waitOptions())
+    expect(result.output).toEqual({ ok: true, inputs: 1 })
+    expect(result.usage?.cost).toBeCloseTo(0.002, 6) // both messages of the turn
+  })
+
+  test('a follow-up turn answers through the same tool, read from its own turn only', async () => {
+    const t = setup()
+    const first = await t.host.open(jsonSpec('x'))
+    await t.host.prompt(first, '[result] draft')
+    expect((await t.host.wait(first, waitOptions())).output).toEqual({ ok: true, inputs: 1 })
+    const attribution = attributionOf('run-1', 'reask')
+    const next = await t.host.followUp(first, {
+      runId: 'run-1',
+      stepId: 'reask',
+      key: 'run-1:reask',
+      attempt: 1,
+      attribution,
+    })
+    expect(t.fake.state.sessions[sid(first)]?.permissions).toContainEqual(RESULT_RULE)
+    await t.host.prompt(next, '[result] again')
+    expect((await t.host.wait(next, waitOptions())).output).toEqual({ ok: true, inputs: 2 })
+
+    // A turn that ends without a call does not fall back to the earlier turn's result.
+    const third = await t.host.followUp(first, {
+      runId: 'run-1',
+      stepId: 'reask',
+      key: 'run-1:reask',
+      attempt: 2,
+      attribution,
+    })
+    await t.host.prompt(third, 'no tool this time')
+    const err = await t.host.wait(third, waitOptions()).catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(WorkflowError)
+    expect((err as WorkflowError).kind).toBe('invalid_output')
+  })
+
+  test('a JSON step that ends without a completed call fails as invalid_output; its JSON text is never parsed', async () => {
+    const t = setup()
+    const fenced = await t.host.open(jsonSpec('x'))
+    await t.host.prompt(fenced, '[json] give me data') // a fenced JSON answer in text, the old way
+    const err = await t.host.wait(fenced, waitOptions()).catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(WorkflowError)
+    expect((err as WorkflowError).kind).toBe('invalid_output')
+    expect((err as Error).message).toContain('agent "tester"')
+    expect((err as Error).message).toContain('without a completed submit_result call')
+    expect((err as Error).message).toContain('Here it is')
+  })
+
+  test('a call that failed validation does not count', async () => {
+    const t = setup()
+    const handle = await t.host.open({ ...jsonSpec('x'), key: 'run-1:rejected' })
+    await t.host.prompt(handle, '[result-rejected] give me data')
+    expect(await failure(t.host.wait(handle, waitOptions()))).toContain('without a completed submit_result call')
+  })
+
+  test('a non-object root is wrapped under `result` and unwrapped on the way back', async () => {
+    const t = setup()
+    const array = { $schema: 'x', type: 'array', items: { type: 'string' }, $defs: { s: { type: 'string' } } }
+    const handle = await t.host.open(jsonSpec('x', array))
+    expect((handle as OpenCodeHandle).wrapped).toBe(true)
+    const wrapped = {
+      type: 'object',
+      properties: { result: { type: 'array', items: { type: 'string' } } },
+      required: ['result'],
+      additionalProperties: false,
+      $defs: { s: { type: 'string' } },
+    }
+    expect(readFileSync(plugin(handle), 'utf8')).toContain(`const INPUT = ${JSON.stringify(wrapped)}\n`)
+    await t.host.prompt(handle, '[result-wrapped] list')
+    expect((await t.host.wait(handle, waitOptions())).output).toEqual(['a', 1])
+  })
+
+  test.each([
+    ['no schema', null, 'the step has no output schema'],
+    ['a schema that is not an object', true, 'not a JSON Schema object'],
+    ['a non-object root that refers to itself', { type: 'array', items: { $ref: '#' } }, 'refers to itself'],
+  ])('%s is refused at open, naming the agent, before a session exists', async (_name, schema, why) => {
+    const t = setup()
+    const message = await failure(t.host.open(jsonSpec('x', schema)))
+    expect(message).toContain('agent "tester"')
+    expect(message).toContain(why)
+    expect(Object.keys(t.fake.state.sessions)).toEqual([])
+  })
+
+  test('a provider-balance fallback session gets the tool too', async () => {
+    const t = setup()
+    const handle = await t.host.open(jsonSpec('x'))
+    await t.host.prompt(handle, '[balance] [result] review this')
+    expect((await t.host.wait(handle, waitOptions())).output).toEqual({ ok: true, inputs: 1 })
+    const fallback = Object.keys(t.fake.state.sessions).find((id) => id !== sid(handle)) as string
+    expect(t.fake.state.sessions[fallback]?.permissions).toContainEqual(RESULT_RULE)
   })
 })
 

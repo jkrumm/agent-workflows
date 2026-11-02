@@ -1,4 +1,4 @@
-import type { z } from 'zod'
+import { z } from 'zod'
 import {
   Cancelled,
   type ErrorKind,
@@ -306,6 +306,7 @@ export class RunScope {
           agent: spec.agent,
           prompt,
           options: spec.options,
+          ...(spec.output ? outputSchema(spec.output) : {}),
           attribution: scope.attribution,
         })
       },
@@ -589,4 +590,17 @@ export function raceAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<
 
 export function toRunError(err: unknown): { kind: ErrorKind; message: string } {
   return { kind: errorKind(err), message: errorMessage(err) }
+}
+
+/**
+ * `AgentOpenSpec.schema` of an agent step's `output`: the input side (what the agent produces before transforms and
+ * defaults), a part JSON Schema cannot express left open (`{}`). A conversion that still throws leaves the schema out;
+ * a host that needs one refuses the step at open, and the zod parse checks the result either way.
+ */
+function outputSchema(output: z.ZodType): { schema?: Json } {
+  try {
+    return { schema: z.toJSONSchema(output, { io: 'input', unrepresentable: 'any' }) as Json }
+  } catch {
+    return {}
+  }
 }

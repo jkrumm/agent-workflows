@@ -82,6 +82,46 @@ describe('agent steps', () => {
     }
   })
 
+  test("open hands the host the JSON Schema of the step's output: its input side, unrepresentable parts open", async () => {
+    const schemas = new Map<string, Json | undefined>()
+    const host = new FakeAgentHost(async (s) => {
+      schemas.set(s.spec.stepId, s.spec.schema)
+      return { output: s.spec.stepId === 'plain' ? 'text' : { answer: 'a', count: '2', at: 'now' } }
+    })
+    const shaped = z.object({
+      answer: z.string(),
+      count: z.string().transform(Number), // the agent produces the string; the step returns the number
+      at: z.custom<string>((v) => typeof v === 'string'), // JSON Schema cannot say this: left open
+      note: z.string().optional(),
+    })
+    const wf = defineWorkflow({
+      id: 'agent.schema',
+      version: 'v1',
+      input: empty,
+      output: z.object({ count: z.number() }),
+      async run(ctx) {
+        await ctx.agent('plain', { agent: 'helper', prompt: 'no output schema' })
+        const { count } = await ctx.agent('shaped', { agent: 'helper', prompt: 'shaped', output: shaped })
+        return { count }
+      },
+    })
+    const rt = testRuntime({ schema: db.schema, workflows: [wf], host })
+    await rt.open()
+    try {
+      const { runId } = await rt.start(wf, {}, { purpose: 'build' })
+      expect((await rt.wait(runId)).output).toEqual({ count: 2 })
+      expect(schemas.get('plain')).toBeUndefined()
+      expect(schemas.get('shaped')).toEqual({
+        $schema: 'https://json-schema.org/draft/2020-12/schema',
+        type: 'object',
+        properties: { answer: { type: 'string' }, count: { type: 'string' }, at: {}, note: { type: 'string' } },
+        required: ['answer', 'count', 'at'],
+      })
+    } finally {
+      await rt.close()
+    }
+  })
+
   test('resume with a prompted handle re-attaches: one session, one prompt', async () => {
     const host = new FakeAgentHost(async (s) => {
       await s.sleep(400)

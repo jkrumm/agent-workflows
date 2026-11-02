@@ -41,7 +41,6 @@ import {
   type Outcome,
   Persisting,
   type SessionState,
-  parseStructured,
   promptIndex,
   repeatCounts,
   SessionReader,
@@ -50,9 +49,11 @@ import {
   sessionIdFor,
   sessionState,
   steerId,
+  submittedResult,
   type ToolPart,
   toolParts,
 } from './session.ts'
+import { RESULT_TOOL, resultTool, resultValue, withResultTool } from './result.ts'
 
 type Env = Record<string, string | undefined>
 
@@ -106,6 +107,8 @@ export type OpenCodeHandle = {
   turn?: string
   /** The step's attribution, kept so a provider-balance fallback session carries it too. */
   attribution?: StepAttribution
+  /** A JSON step whose schema the result tool holds under `result` (README §Structured output): `wait` unwraps it. */
+  wrapped?: true
 }
 
 /**
@@ -178,6 +181,7 @@ function asHandle(handle: Json): OpenCodeHandle {
     (h.allow !== undefined && (!Array.isArray(h.allow) || h.allow.some((d) => typeof d !== 'string'))) ||
     (h.fallback !== undefined && h.fallback !== true) ||
     (h.turn !== undefined && typeof h.turn !== 'string') ||
+    (h.wrapped !== undefined && h.wrapped !== true) ||
     (h.attribution !== undefined && (typeof h.attribution !== 'object' || h.attribution === null))
   ) {
     throw new WorkflowError('error', 'not an OpenCode host handle')
@@ -210,12 +214,18 @@ function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
  * `webfetch`, `websearch`, `subagent` or `edit` is an `allow` there and wins), the step's `allowDirectories` last: last
  * match wins. The server config denies `external_directory` everywhere; a directory a step names is opened for reads
  * again by an `allow` on `<dir>/*` (measured on 2.0.32: `<dir>/*` and `<dir>/**` match the path as given, a deeper file
- * included; `<dir>` alone and the symlink-resolved path do not).
+ * included; `<dir>` alone and the symlink-resolved path do not). A JSON step (`result`) is allowed its result
+ * tool (README §Structured output) without the agent naming it.
  */
-export function sessionPermissions(def: AgentDefinition, allowDirectories: readonly string[] = []): PermissionRule[] {
+export function sessionPermissions(
+  def: AgentDefinition,
+  allowDirectories: readonly string[] = [],
+  result = false,
+): PermissionRule[] {
   return [
     ...basePolicy(),
     ...(def.permissions?.shell ? [{ action: 'shell', resource: '*', effect: 'allow' } satisfies PermissionRule] : []),
+    ...(result ? [{ action: RESULT_TOOL, resource: '*', effect: 'allow' } satisfies PermissionRule] : []),
     ...(def.permissions?.rules ?? []),
     ...allowDirectories.map((dir): PermissionRule => ({
       action: 'external_directory',
@@ -361,7 +371,10 @@ export class OpenCodeHost implements AgentHost {
     if (!routeId) throw new WorkflowError('error', `agent "${spec.agent}" has no route and the step names none`)
     const { route, model } = modelRef(routeId, this.env)
     const attribution = sessionAttribution(spec.attribution)
-    const location = compileLocation(def, { stateDir: this.options.stateDir })
+    // A JSON step's location holds its result tool; a schema the tool cannot take is refused before anything exists.
+    const json = options.output === 'json'
+    const tool = json ? resultTool(def.name, spec.schema) : null
+    const location = compileLocation(tool ? withResultTool(def, tool) : def, { stateDir: this.options.stateDir })
     this.current.set(def.name, location.directory)
     touchLocation(location.directory)
     await this.options.server.ready()
@@ -385,7 +398,7 @@ export class OpenCodeHost implements AgentHost {
       throw err
     }
     // A second create with the same id returns the first session (measured), so a crash right here is harmless.
-    const permissions = sessionPermissions(def, allowDirectories)
+    const permissions = sessionPermissions(def, allowDirectories, json)
     try {
       await this.client.createSession(
         {
@@ -416,11 +429,12 @@ export class OpenCodeHost implements AgentHost {
       agent: def.name,
       route: routeId,
       model: route.model,
-      output: options.output === 'json' ? 'json' : 'text',
+      output: json ? 'json' : 'text',
       runId: spec.runId,
       stepId: spec.stepId,
       attribution,
       ...(allowDirectories.length > 0 ? { allow: allowDirectories } : {}),
+      ...(tool?.wrapped ? { wrapped: true } : {}),
     }
     return handle
   }
@@ -459,7 +473,12 @@ export class OpenCodeHost implements AgentHost {
     const def = this.agents.get(base.agent)
     if (!def) throw new WorkflowError('error', `unknown agent "${base.agent}"; cannot apply its permissions`)
     const attribution = sessionAttribution(spec.attribution)
-    await this.applySession(base.sessionId, sessionPermissions(def, base.allow ?? []), attribution, headers)
+    await this.applySession(
+      base.sessionId,
+      sessionPermissions(def, base.allow ?? [], base.output === 'json'),
+      attribution,
+      headers,
+    )
     const next: OpenCodeHandle = {
       ...base,
       runId: spec.runId,
@@ -632,8 +651,7 @@ export class OpenCodeHost implements AgentHost {
             reader.invalidate()
             const all = await reader.read()
             const answer = all.slice(turnIndex(all, id, turn) + 1)
-            const text = finalText([TURN_ANCHOR, ...answer], TURN_ANCHOR.id)
-            return { output: h.output === 'json' ? parseStructured(text) : text, usage: this.usage(h, answer) }
+            return { output: this.output(h, [TURN_ANCHOR, ...answer], TURN_ANCHOR.id), usage: this.usage(h, answer) }
           }
           if (state.kind === 'cutoff' && cutoff.check(true, this.cutoffGraceMs)) {
             await this.resume(h, state.lastId)
@@ -738,7 +756,7 @@ export class OpenCodeHost implements AgentHost {
       from: h.model,
       to: fallback.route.model,
     })
-    const permissions = sessionPermissions(def, h.allow ?? [])
+    const permissions = sessionPermissions(def, h.allow ?? [], h.output === 'json')
     const attribution: StepAttribution = h.attribution ?? { runId: h.runId, step: h.stepId }
     await this.client.createSession(
       {
@@ -1062,8 +1080,24 @@ export class OpenCodeHost implements AgentHost {
     }
     reader.invalidate()
     const messages = await reader.read()
-    const text = finalText(messages, promptId)
-    return { output: h.output === 'json' ? parseStructured(text) : text, usage: this.usage(h, messages) }
+    return { output: this.output(h, messages, promptId), usage: this.usage(h, messages) }
+  }
+
+  /**
+   * The step's output from the answer to `promptId`: a text step's last text; a JSON step's last completed result-tool
+   * call, which OpenCode validated against the step's schema. A JSON step that ended without one fails as
+   * `invalid_output` (a workflow's retry re-asks it); its text is never parsed instead.
+   */
+  private output(h: OpenCodeHandle, messages: readonly Message[], promptId: string): Json {
+    if (h.output === 'text') return finalText(messages, promptId)
+    const input = submittedResult(messages, promptId, RESULT_TOOL)
+    if (input !== undefined) return resultValue(input, h.wrapped === true)
+    const said = finalText(messages, promptId)
+    const text = said ? `its last text began: ${JSON.stringify(said.slice(0, 160))}` : 'it wrote no text either'
+    throw new WorkflowError(
+      'invalid_output',
+      `agent "${h.agent}" (session ${h.sessionId}) ended its turn without a completed ${RESULT_TOOL} call; ${text}`,
+    )
   }
 
   /** Tokens from the messages (`usageFromOpenCodeMessages`), cost per message by `priceOpenCodeMessages`. */
