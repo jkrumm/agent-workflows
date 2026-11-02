@@ -66,7 +66,7 @@ Model and rate: `packages/routes/src/table/research.ts` (the only home of model 
 
 | Route | Source seat | Wire |
 |-|-|-|
-| `research.agent` | research-gateway's `IU_LEAD_MODEL` / `IU_WORKER_MODEL` (not agent-gateway); DeepSeek flash until Wave 6, then the HARD tier (docs/evals/2026-11-02-claude-seats.md) | opencode |
+| `research.agent` | research-gateway's `IU_LEAD_MODEL` / `IU_WORKER_MODEL` (not agent-gateway); DeepSeek flash until Wave 6, then the HARD tier, the EASY tier (Haiku high) since the owner override of 2026-11-03 (docs/evals/2026-11-02-claude-seats.md) | opencode |
 
 ## Token effect / cache effect
 

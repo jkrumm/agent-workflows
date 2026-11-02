@@ -104,6 +104,12 @@ that footing the tie on score goes to the cheaper arm: Haiku high costs $0.0063 
 13 s it gives up is not worth credit an over-pace month does not have. `research.agent` stays Sonnet medium (it beat
 Haiku high on `supported` beyond the CI), `prose.review` stays DeepSeek flash, `review.adversary` is unchanged.
 
+**Owner override (2026-11-03): `research.agent` runs Haiku 5.5 high (`EASY.agent`)**, reversing "stays Sonnet medium"
+above. The credit runs dry around 3 Nov (iu) and 4 Nov (me) at production's pace, and research is a steady consumer.
+The measured cost of the switch: `supported` 0.79 against Sonnet's 0.88 (−0.08, CI [−0.18, −0.01]) at $0.0045 a case
+against $0.0161, wall a tie. The owner takes the quality gap for the credit; a later research eval decides whether it
+moves back.
+
 ## Spend
 
 | Where | Amount |
