@@ -191,7 +191,9 @@ describe('agw eval run --arm', () => {
     expect(await refused({ routes: { 'no.such': { effort: 'low' } } })).toMatch(
       /invalid_input: .*unknown route "no\.such"/s,
     )
-    expect(await refused({ routes: { 'review.angle': { effort: 'none' } } })).toMatch(/"review\.angle".*Sonnet/s)
+    expect(await refused({ routes: { 'review.synthesis': { effort: 'none' } } })).toMatch(
+      /"review\.synthesis".*Sonnet/s,
+    )
     expect(await refused({ routes: { check: { model: 'not-in-table' } } })).toContain(
       'route "check": model "not-in-table" is not in the route table (add it to the table first)',
     )
