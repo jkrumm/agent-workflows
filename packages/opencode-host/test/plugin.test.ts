@@ -18,7 +18,6 @@ const ATTRIBUTION = {
   purpose: 'user',
   project: 'agent-workflows',
   workspace: 'private',
-  traceparent: '00-11111111111111111111111111111111-2222222222222222-01',
 }
 
 /** The plugin against a store of sessions: the hook it registers, and every `get` it made. */
@@ -73,6 +72,12 @@ describe('the attribution plugin', () => {
     expect(await fire('s')).toEqual(gatewayHeaders(ATTRIBUTION))
   })
 
+  test('a traceparent is never set: it could not land', async () => {
+    const agw = { ...ATTRIBUTION, traceparent: '00-11111111111111111111111111111111-2222222222222222-01' }
+    const { fire } = await load([{ id: 's', metadata: { agw } }])
+    expect(await fire('s')).toEqual(gatewayHeaders(ATTRIBUTION))
+  })
+
   test('the same value filter as gatewayHeaders', async () => {
     const bad = [' edge', 'edge ', '   ', '', 'ümlaut', 'tab\there', 'x'.repeat(201)]
     const good = ['x'.repeat(200), 'in side', 'a/b:c']
@@ -115,11 +120,14 @@ describe('the attribution plugin', () => {
     expect(spy).toHaveBeenCalledWith('agw-attribution: session gone sent unattributed: Session not found')
   })
 
-  test('a root without metadata.agw is said out loud too', async () => {
-    const spy = errors()
-    const { fire } = await load([{ id: 's' }])
-    expect(await fire('s')).toEqual({})
-    expect(spy).toHaveBeenCalledWith('agw-attribution: session s sent unattributed: root session has no metadata.agw')
+  test('a root without metadata.agw, or without a runId in it, is said out loud too', async () => {
+    const message = 'agw-attribution: session s sent unattributed: root session has no metadata.agw.runId'
+    for (const session of [{ id: 's' }, { id: 's', metadata: { agw: { key: 'k', step: 'agent' } } }]) {
+      const spy = errors()
+      const { fire } = await load([session])
+      expect(await fire('s')).toEqual({})
+      expect(spy).toHaveBeenCalledWith(message)
+    }
   })
 
   test('a parent cycle ends: the walk is bounded and logged', async () => {

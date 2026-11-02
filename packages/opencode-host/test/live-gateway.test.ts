@@ -20,7 +20,6 @@ const GATEWAY_402 = {
   type: 'error',
   error: { type: 'balance_error', message: `${BALANCE_MARKER}: no credit pool eligible` },
 }
-const TRACEPARENT = '00-0123456789abcdef0123456789abcdef-0123456789abcdef-01'
 const NOISE = new Set(['accept', 'accept-encoding', 'accept-language', 'connection', 'content-length', 'host'])
 
 type Seen = {
@@ -277,7 +276,6 @@ describe.skipIf(!live)('live: the pinned build on the gateway (a loopback stand-
     purpose: 'verify',
     project: 'agent-workflows',
     workspace: 'private',
-    traceparent: TRACEPARENT,
   })
 
   const step = async (
@@ -312,10 +310,6 @@ describe.skipIf(!live)('live: the pinned build on the gateway (a loopback stand-
     expect(r.headers['x-agw-purpose']).toBe('verify')
     expect(r.headers['x-agw-project']).toBe('agent-workflows')
     expect(r.headers['x-agw-workspace']).toBe('private')
-    // Measured on 2.0.32: OpenCode's HTTP client writes its own `traceparent` after every plugin hook, so ours never lands
-    // (README §Attribution). A pin that lets it through fails here, and the join by run and step can then be revisited.
-    expect(r.headers.traceparent).toMatch(/^00-[0-9a-f]{32}-[0-9a-f]{16}-01$/)
-    expect(r.headers.traceparent).not.toBe(TRACEPARENT)
   }
 
   test('the Anthropic leg: attribution, no Claude Code signal, the ask for cache writes, their price', async () => {

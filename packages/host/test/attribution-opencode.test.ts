@@ -104,7 +104,9 @@ test('an agent step, its balance fallback and a follow-up turn each reach the pl
 
   const [primary, fallback] = Object.values(fake.state.sessions)
   expect(fallback).toBeDefined()
-  const of = (step: string): Attribution => ({ ...(seen[0] as Attribution), step })
+  expect(seen[0]?.traceparent).toBe(TRACEPARENT)
+  const { traceparent: _, ...rest } = seen[0] as Attribution
+  const of = (step: string): Attribution => ({ ...rest, step })
   expect(of('draft')).toEqual({
     runId,
     rootId: runId,
@@ -113,10 +115,10 @@ test('an agent step, its balance fallback and a follow-up turn each reach the pl
     purpose: 'verify',
     project: 'agent-workflows',
     workspace: 'private',
-    traceparent: TRACEPARENT,
   })
   // Under the names of `Attribution`, and the headers `gatewayHeaders` writes for the same step.
   expect(primary?.metadata?.agw).toMatchObject(of('draft'))
+  expect(primary?.metadata?.agw).not.toHaveProperty('traceparent')
   expect(await pluginHeaders(session, primary?.id as string)).toEqual(gatewayHeaders(of('draft')))
   // The step fell back, so the follow-up turn ran there and moved that session on to its own step.
   expect(fallback?.metadata?.agw).toMatchObject(of('reask'))
