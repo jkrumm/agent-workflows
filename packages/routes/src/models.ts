@@ -4,7 +4,7 @@ import { CLAUDE_RATES, CLAUDE_SNAPSHOT_ID } from './table/claude.ts'
 
 /**
  * `<provider>/<model>` or `<provider>.<model>`, the provider one segment; group 1 is the model. The one prefix regex of
- * this package: `gatewayRecords` and `canonicalModel` both read an echo with it, and the gateway's own `rowModel` reads
+ * this package: `callerRecords` and `canonicalModel` both read an echo with it, and the gateway's own `rowModel` reads
  * the same shape. It matches inside ids too (`<name>-3.8` splits at the dot), so a remainder counts only when it is a
  * table model.
  */

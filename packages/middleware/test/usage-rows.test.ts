@@ -1,9 +1,9 @@
 import { describe, expect, test } from 'bun:test'
 import type { ModelUsage } from '@agent-workflows/runtime'
-import { gatewayRecords } from '@agent-workflows/routes'
+import { callerRecords } from '@agent-workflows/routes'
 import { additiveTokens, type OutboxStep, repoOf, sessionsOf, traceIdForRun, usageRowsForStep } from '../src/index.ts'
 
-// Models whose rows agw writes (the gateway does not record them: `gatewayRecords` false), and one it does (TEXT).
+// Models whose rows agw writes (`callerRecords` true), and one the gateway records (TEXT).
 const TTS = 'gemini-3.8-flash-tts'
 const TTS_LITE = 'gemini-3.8-flash-lite-tts'
 const ELEVEN = 'elevenlabs/v3'
@@ -298,21 +298,54 @@ describe('usage rows: none for what the gateway records', () => {
     unpricedCalls: 0,
   }
 
-  test('gatewayRecords: a text model on a gateway wire without a price; media, Tavily and unknown models are not', () => {
-    for (const model of [TEXT, 'gemini-3.5-flash-lite']) expect(gatewayRecords(model)).toBe(true)
+  test("callerRecords: caller-priced media and Tavily; text models, unlisted and unknown labels are the gateway's", () => {
     for (const model of [TTS, TTS_LITE, ELEVEN, STT, 'gpt-image-2.5-flare', 'bria/remove-background'])
-      expect(gatewayRecords(model)).toBe(false)
-    for (const model of ['tavily-search', 'tavily-extract', 'not-in-the-table'])
-      expect(gatewayRecords(model)).toBe(false)
+      expect(callerRecords(model)).toBe(true)
+    for (const model of ['tavily-search', 'tavily-extract']) expect(callerRecords(model)).toBe(true)
+    for (const model of [
+      TEXT,
+      'gemini-3.5-flash-lite',
+      'claude-opus-5-5',
+      'sonar',
+      'not-in-the-table',
+      'direct',
+      'cache',
+    ])
+      expect(callerRecords(model)).toBe(false)
   })
 
-  // The echoes IU sent on 2026-11-02 (make live-routes): the transports report them as the model, and the gateway wrote
-  // these calls' rows, so agw must not write them again.
-  test('gatewayRecords: an IU provider echo of a gateway model is the same model; a media echo is not', () => {
-    for (const model of ['deepseek/deepseek-v4.1-flash', 'openai.gpt-6.1-terra', 'vertex_ai_eu/gemini-3.8-flash'])
-      expect(gatewayRecords(model)).toBe(true)
-    for (const model of ['openai.gpt-image-2.5-flare', 'prefix/tavily-search', 'a/b/deepseek-v4.1-flash'])
-      expect(gatewayRecords(model)).toBe(false)
+  // The echoes IU sent on 2026-11-02 (make live-routes): the gateway wrote these calls' rows, so agw must not.
+  test('callerRecords: a media echo is the same model; a text echo of any shape is not', () => {
+    expect(callerRecords('openai.gpt-image-2.5-flare')).toBe(true)
+    for (const model of [
+      'deepseek/deepseek-v4.1-flash',
+      'openai.gpt-6.1-terra',
+      'vertex_ai_eu/gemini-3.8-flash',
+      'microsoft-decision-1',
+      'prefix/tavily-search',
+      'a/b/deepseek-v4.1-flash',
+    ])
+      expect(callerRecords(model)).toBe(false)
+  })
+
+  test.each([
+    ['claude-opus-5-5', false],
+    ['microsoft-decision-1', false],
+    ['sonar', false],
+    ['openai.gpt-6.1-terra', false],
+    [STT, true],
+    [TTS_LITE, true],
+    [ELEVEN, true],
+    ['tavily-extract', true],
+  ])('a step with %s writes a row: %p', (model, row) => {
+    const usage = { tokens: none, cost: 0.01, toolCalls: 0, unpricedCalls: 0 }
+    const rows = usageRowsForStep(step({ model: null, byModel: { [model]: usage } }), opts)
+    expect(rows.map((r) => r.model)).toEqual(row ? [model] : [])
+  })
+
+  test('a free label (direct, cost 0) writes no row', () => {
+    const usage = { tokens: none, cost: 0, toolCalls: 0, unpricedCalls: 0 }
+    expect(usageRowsForStep(step({ model: null, byModel: { direct: usage } }), opts)).toEqual([])
   })
 
   test('usage billed outside the gateway keeps its row: tavily-search beside a text call', () => {
@@ -327,11 +360,6 @@ describe('usage rows: none for what the gateway records', () => {
       opts,
     )
     expect(rows.map((r) => [r.source_id, r.cost_reported_usd])).toEqual([['run_1:ask:tavily-search', 0.016]])
-  })
-
-  test('a model outside the table (an overridden image route) keeps its row', () => {
-    const rows = usageRowsForStep(step({ model: 'gpt-image-9-override', byModel: null }), opts)
-    expect(rows.map((r) => r.model)).toEqual(['gpt-image-9-override'])
   })
 
   test('a step mixing a prep call and TTS writes the TTS row only', () => {

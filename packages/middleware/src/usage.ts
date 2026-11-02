@@ -1,5 +1,5 @@
 import { hostname } from 'node:os'
-import { gatewayRecords } from '@agent-workflows/routes'
+import { callerRecords } from '@agent-workflows/routes'
 import type { Logger, ModelUsage, RunScores, TokenCounts } from '@agent-workflows/runtime'
 import { DatabaseError, Pool, type PoolClient } from 'pg'
 import { errorMessage, type JournalDb } from './db.ts'
@@ -8,8 +8,8 @@ import { hasPurpose } from './purpose.ts'
 
 /**
  * One row of `usage.records` (usage-tracker `migrations/pg/0002_sessions_records.sql`, `docs/usage-schema.md`) as the
- * platform writes it: one per finished step and model the gateway does not record (`gatewayRecords`: the gateway
- * writes those models' rows, one per request), grain `session` (a step is a whole agent loop of many requests, never one message). `cost_usd`, `cost_source`, `price_id`, `session_id` and `ingested_at` are not here: the database
+ * platform writes it: one per finished step and model the gateway cannot price (`callerRecords`: caller-priced media and
+ * Tavily; the gateway writes every other model's rows, one per request), grain `session` (a step is a whole agent loop of many requests, never one message). `cost_usd`, `cost_source`, `price_id`, `session_id` and `ingested_at` are not here: the database
  * derives them (`usage.compute_cost`, the run's session row, the column default).
  */
 export type UsageRow = {
@@ -470,11 +470,12 @@ export function repoOf(project: string | null | undefined, workspace: string | n
 }
 
 /**
- * One `usage.records` row per step and model (concept §5), except the models the gateway records (`gatewayRecords`:
- * a text model on a gateway wire without a `price`) and the model-less `unknown` remainder. The gateway wrote a row per
- * request for those calls with the run's attribution; a second row here would count them twice. Every other label keeps
- * its row: priced media models, Tavily (`tavily-search`, `tavily-extract`), a model outside the table. So a step mixing
- * a prep call and TTS writes the TTS row only, and a text-only step none. The run record, spans and roll-ups keep every call.
+ * One `usage.records` row per step and model (concept §5), only for what the gateway cannot price (`callerRecords`:
+ * priced media models called with `x-agw-usage: caller`, and Tavily's `tavily-search` / `tavily-extract`). The gateway
+ * is the only writer of token-priced inference rows and wrote a row per request for every other model (a text model in
+ * or outside the table, an arm-patched one, a provider echo, `sonar`) with the run's attribution; a second row here
+ * would count them twice. Free labels (`direct`, `cache`, ...) and the model-less `unknown` remainder write no row. So a
+ * step mixing a prep call and TTS writes the TTS row only, and a text-only step none. The run record, spans and roll-ups keep every call.
  */
 export function usageRowsForStep(step: OutboxStep, options: UsageRowOptions): UsageRow[] {
   const { run } = step
@@ -483,7 +484,7 @@ export function usageRowsForStep(step: OutboxStep, options: UsageRowOptions): Us
   const durationMs = step.finishedAt ? Math.max(0, step.finishedAt.getTime() - step.startedAt.getTime()) : null
   const caller = callerOf(run)
   return perModel(step)
-    .filter(({ model }) => model !== REMAINDER && !gatewayRecords(model))
+    .filter(({ model }) => model !== REMAINDER && callerRecords(model))
     .map(({ model, ...usage }) => ({
       source: SOURCE,
       source_id: `${step.runId}:${step.stepId}:${model}`,
@@ -658,7 +659,7 @@ const STEP_COLUMNS = `run_id, step_id, status, model, tokens_input, tokens_outpu
 
 /**
  * Writes the usage of finished steps into `usage.records` once their run's record is written (`runPost` delivered). A
- * step whose usage is all text (only models the gateway records, see {@link usageRowsForStep}) writes no row and is marked synced
+ * step whose usage is all text (only models the gateway records or free labels, see {@link usageRowsForStep}) writes no row and is marked synced
  * all the same, so it never stays pending. No transaction of the journal spans a write:
  * 1. claim a batch in one statement (`for update skip locked`, a random `argo_claim` token and an expiry), commit;
  * 2. build the rows, write them outside any journal transaction;

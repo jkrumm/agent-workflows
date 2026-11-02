@@ -10,7 +10,7 @@ afterAll(async () => {
   await t.close()
 })
 
-test('smoke.ping end to end: llm.title through the registry, usage on the step, the row reaches Argo', async () => {
+test('smoke.ping end to end: llm.title through the registry, usage on the step, the run record reaches Argo, the gateway owns the usage row', async () => {
   const { status, body } = await t.json(
     await t.call('/workflows/smoke/ping', { method: 'POST', headers: { prefer: 'wait=20' } }),
   )
@@ -44,14 +44,8 @@ test('smoke.ping end to end: llm.title through the registry, usage on the step, 
   )
   await t.platform?.outbox?.flush()
   const stored = [...t.usage.stored.values()].filter((r) => r.source_id.startsWith(`${body.runId}:title`))
-  expect(stored).toHaveLength(1)
-  expect(stored[0]).toMatchObject({
-    lane_detail: { workflow: 'smoke.ping' },
-    machine: 'test-machine',
-    input_tokens: 40,
-    output_tokens: 6,
-    cache_read_tokens: 10,
-  })
+  // llm.title is a text call: the gateway writes its usage row, agw writes none
+  expect(stored).toHaveLength(0)
 })
 
 test('a given text is what gets titled; an empty one is a 400', async () => {

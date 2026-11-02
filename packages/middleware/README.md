@@ -177,13 +177,14 @@ never creates or alters it. Argo no longer receives usage rows.
 
 **No row for what the gateway records.** Every LLM call passes the inference gateway (`docs/gateway.md` §Callers),
 which writes one `usage.records` row per request with the run's attribution (`run_id`, workflow, step, purpose, repo,
-`project_raw`, workspace): it is the only writer of inference rows. The outbox therefore skips a model when
-`gatewayRecords(model)` (`@agent-workflows/routes`) holds, a model on a route or fallback on the `anthropic`,
-`iu-openai`, `opencode` or `iu-decision` wire without a `price`, and the model-less `unknown` remainder. A row here for
-those would count their calls twice. Every other label keeps its row as before: models agw prices per minute, per
-character or per image (they reach the gateway with `x-agw-usage: caller`, which writes no row), Tavily
-(`tavily-search`, `tavily-extract`, billed outside the gateway), and any model outside the table, one an arm's
-patch names included. The rule is a deny-list on purpose: a label nobody listed keeps its row rather than vanishing. So a
+`project_raw`, workspace): it is the only writer of token-priced inference rows. The outbox therefore writes a row only
+when `callerRecords(model)` (`@agent-workflows/routes`) holds: a table model the gateway cannot price (priced per
+minute, per character or per image, or on a wire outside the gateway's text wires; they reach the gateway with
+`x-agw-usage: caller`, which writes no row), or a charge that never passes the gateway (`tavily-search`,
+`tavily-extract`). Every other label is the gateway's and writes no row: text models in or outside the table, models an
+arm's patch names, provider echoes of any shape, `sonar`, free zero-cost labels (`direct`, `cache`, `context7`, ...), and
+the model-less `unknown` remainder. The rule is an allow-list on purpose: a label nobody listed is the gateway's rather
+than counted twice. So a
 step mixing a prep call and TTS writes the TTS row only, and a text-only run writes no record and no session. Skipped
 steps are still claimed and marked synced, so none stays pending. The run record, spans and cost roll-ups keep every
 call; only the `usage.records` projection is filtered.
@@ -264,7 +265,7 @@ the sink behind them changed from Argo's HTTP endpoint to `usage.records`. What 
 | Run record / step | `usage.records` | Note |
 |-|-|-|
 | — | `source` = `agent-workflows`, `grain` = `session` | a step is a whole agent loop of many requests, never one message; session grain also keeps price tiers off (they apply to a single request) |
-| run id, step id, model | `source_id` = `<runId>:<stepId>:<model>` | one row per step and model (`usage_by_model`) unless `gatewayRecords(model)`; usage reported without a model is the remainder, `unknown`, never a row |
+| run id, step id, model | `source_id` = `<runId>:<stepId>:<model>` | one row per step and model (`usage_by_model`) only if `callerRecords(model)`; usage reported without a model is the remainder, `unknown`, never a row |
 | model | `model_raw` = `model` | agw ids are already normalized |
 | step start (`steps.started_at`) | `ts` | |
 | step finish − start | `duration_ms` | a step longer than an `integer` of milliseconds (about 24.8 days) is refused and quarantined |

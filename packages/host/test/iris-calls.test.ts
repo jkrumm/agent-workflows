@@ -31,7 +31,7 @@ const recorded = (runId: string) =>
   }, 'run record')
 
 describe('a call that identifies as iris', () => {
-  test('triage answers the summary with usage and cost, and the run and its Argo row carry purpose iris', async () => {
+  test('triage answers the summary with usage and cost, and the run carries purpose iris and agw writes no usage row', async () => {
     t.iu.on('messages', () =>
       messageResponse(JSON.stringify(SUMMARY), { input_tokens: 100, output_tokens: 20, cost: 0.0004 }),
     )
@@ -47,12 +47,7 @@ describe('a call that identifies as iris', () => {
     expect(await recorded(runId)).toMatchObject({ workflow: 'cap.triage', status: 'done', purpose: 'iris' })
     await t.platform?.outbox?.flush()
     const rows = [...t.usage.stored.values()].filter((r) => r.source_id.startsWith(`${runId}:call:`))
-    expect(rows).toHaveLength(1)
-    expect(rows[0]).toMatchObject({
-      lane_detail: { workflow: 'cap.triage' },
-      cost_reported_usd: 0.0004,
-      raw: { purpose: 'iris' },
-    })
+    expect(rows).toHaveLength(0) // a text call: the gateway writes its usage row, agw writes none
   })
 
   test('decide answers with usage and cost, and the run carries purpose iris', async () => {

@@ -57,7 +57,7 @@ test('a direct call is attributed at the gateway as its own one-step run', async
   })
 })
 
-test('a direct llm.title call answers as before and leaves a done cap.llm.title run that reaches Argo', async () => {
+test('a direct llm.title call answers as before and leaves a done cap.llm.title run, and no agw usage row (the gateway owns it)', async () => {
   const response = await t.call('/llm/title', {
     body: { text: 'Quarterly numbers' },
     headers: { 'x-agw-purpose': 'test' },
@@ -82,12 +82,7 @@ test('a direct llm.title call answers as before and leaves a done cap.llm.title 
 
   await t.platform?.outbox?.flush()
   const stored = [...t.usage.stored.values()].filter((r) => r.source_id.startsWith(`${runId}:call:`))
-  expect(stored).toHaveLength(1)
-  expect(stored[0]).toMatchObject({
-    lane_detail: { workflow: 'cap.llm.title' },
-    machine: 'test-machine',
-    input_tokens: 40,
-  })
+  expect(stored).toHaveLength(0) // a text call: the gateway writes its usage row, agw writes none
 })
 
 test('an upstream failure answers with the same error and leaves the run failed', async () => {

@@ -79,13 +79,13 @@ describe('caller attribution at the host door', () => {
     expect((await t.pool.query(`select count(*)::int as n from "${t.schema}".runs`)).rows[0].n).toBe(before)
   })
 
-  test('the usage row gets project and caller: the declared repo, and the caller in lane_detail', async () => {
+  test('the run carries the declared project and caller; the text call writes no agw usage row (the gateway owns it)', async () => {
     const ping = async (headers: Record<string, string>) => {
       const response = await t.call('/workflows/smoke/ping', {
         method: 'POST',
         headers: { prefer: 'wait=20', ...headers },
       })
-      const { runId } = (await runRow(response)) as { runId: string }
+      const { runId, row } = await runRow(response)
       await until(
         async () =>
           (await t.pool.query(`select post_hooks_at from "${t.schema}".runs where id = $1`, [runId])).rows[0]
@@ -93,19 +93,13 @@ describe('caller attribution at the host door', () => {
         'run record',
       )
       await t.platform?.outbox?.flush()
-      return [...t.usage.stored.values()].find((r) => r.source_id.startsWith(`${runId}:title`))
+      expect([...t.usage.stored.values()].filter((r) => r.source_id.startsWith(`${runId}:title`))).toEqual([])
+      return row
     }
     expect(await ping({ 'x-agw-caller': 'claude-code', 'x-agw-project': 'agent-workflows' })).toMatchObject({
-      project_raw: 'agent-workflows',
-      repo: 'agent-workflows',
-      lane_detail: { caller: 'claude-code' },
-      raw: { caller: 'claude-code' },
+      project: 'agent-workflows',
+      caller: 'claude-code',
     })
-    expect(await ping({})).toMatchObject({
-      project_raw: null,
-      repo: null,
-      lane_detail: { caller: 'agw' },
-      raw: { caller: 'agw' },
-    })
+    expect(await ping({})).toMatchObject({ project: null, caller: 'agw' })
   })
 })

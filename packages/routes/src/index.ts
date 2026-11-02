@@ -85,7 +85,7 @@ export function opencodeModels(): ReadonlySet<string> {
 
 /**
  * A patch moves a route only to a model the table names (`TABLE_MODELS`: the routes', the fallbacks', the Claude
- * models), on every wire: the gateway's records (`gatewayRecords`) and the price come from the table, so a new model goes
+ * models), on every wire: the caller's records (`callerRecords`) and the price come from the table, so a new model goes
  * into the table first. On the `opencode` wire the model must also be one the OpenCode server serves (its opencode-wire
  * models and the Claude models), and `rate`, `maxOutputTokens` and `price` cannot be patched: the server's config, built from the table,
  * prices and limits a model, not a route, so a patched one would not reach OpenCode.
@@ -170,27 +170,35 @@ export function fallbackRoute(route: ResolvedRoute): ResolvedRoute | undefined {
 /** Wires whose text calls pass the gateway, which writes their `usage.records` rows (a route with a `price` aside). */
 const GATEWAY_WIRES: ReadonlySet<Wire> = new Set<Wire>(['anthropic', 'iu-openai', 'opencode', 'iu-decision'])
 
-let gatewayModels: ReadonlySet<string> | undefined
+/** Charges that never pass the gateway, so agw writes their `usage.records` rows itself. */
+export const CALLER_CHARGES: ReadonlySet<string> = new Set(['tavily-search', 'tavily-extract'])
+
+let callerModels: ReadonlySet<string> | undefined
 
 /**
- * True for a model whose `usage.records` rows the gateway writes, one per request: a model on a route (or a route's
- * fallback) on the `anthropic`, `iu-openai`, `opencode` or `iu-decision` wire without a `price`. agw writes no row for
- * those. Every other label keeps agw's row: priced media models, the `iu-gemini` / `iu-replicate` wires, usage billed
- * outside the gateway (`tavily-search`, `tavily-extract`), and any model not in the table (one an arm's patch names
- * included). Computed from the table once, on the first call; patches are not read.
+ * True for a model whose `usage.records` row agw writes: the gateway is the only writer of token-priced inference
+ * rows, so agw writes only what the gateway cannot price. That is a model on a route (or a route's fallback) in the
+ * default table that carries a `price` or sits on a wire outside the gateway's text wires (`iu-gemini` TTS,
+ * `iu-replicate`, the priced `iu-openai` media, image and STT models; they reach the gateway with `x-agw-usage:
+ * caller`), matched raw or through the provider-prefix echo; and the {@link CALLER_CHARGES}. Everything else is the
+ * gateway's and gets no row: text models in or outside the table, models an arm's patch names, provider echoes of any
+ * shape, `sonar`, the model-less `unknown` remainder. Free zero-cost web labels (`direct`, `cache`, `context7`,
+ * `brain-vault`, `youtube`, registry names, `browser`) carry no charge and write no row either. Computed from the
+ * table once, on the first call; patches are not read.
  */
-export function gatewayRecords(model: string): boolean {
-  gatewayModels ??= new Set(
+export function callerRecords(model: string): boolean {
+  if (CALLER_CHARGES.has(model)) return true
+  callerModels ??= new Set(
     Object.values(DEFAULT_ROUTES)
       .flatMap((route) => [route, ...(route.fallback ? [route.fallback] : [])])
-      .filter((entry) => entry.price === undefined && GATEWAY_WIRES.has(entry.wire))
+      .filter((entry) => entry.price !== undefined || !GATEWAY_WIRES.has(entry.wire))
       .map((entry) => entry.model),
   )
-  if (gatewayModels.has(model)) return true
+  if (callerModels.has(model)) return true
   // IU echoes some models behind a one-segment provider prefix (`<provider>/<model>`, `<provider>.<model>`), and the
-  // transports report the echo: it is still a call the gateway recorded.
+  // transports report the echo: it is the same model.
   const echo = PROVIDER_ECHO.exec(model)
-  return echo?.[1] !== undefined && gatewayModels.has(echo[1])
+  return echo?.[1] !== undefined && callerModels.has(echo[1])
 }
 
 function isRouteId(id: string): id is RouteId {

@@ -160,7 +160,7 @@ baseline. There is no environment variable and no config file.
 
 - A patch may set `model`, `effort`, `maxOutputTokens` (at most 200000), `rate`, `price` and `fallback` (a patch of the same fields, or `null`); `null` clears an optional field. It is merged over the table entry and the result is validated like a table entry.
 - **`wire` cannot be patched** (`RouteOverrideError`): a route's transport is code.
-- **Only models the table names** (`TABLE_MODELS`: routes, fallbacks, the Claude models), on every wire: the gateway's records (`gatewayRecords`) and the prices come from the table, so a new model goes into the table first.
+- **Only models the table names** (`TABLE_MODELS`: routes, fallbacks, the Claude models), on every wire: agw's own usage rows (`callerRecords`) and the prices come from the table, so a new model goes into the table first.
 - **A new model keeps a price.** Unless the patch sets them, it takes the table's `rate` and `price` for that model (`routeRate`, `claudeRate`); a priced route never moves to a model the table prices no such way.
 - **Efforts per provider** (`effortsOf`, `src/schema.ts`): a Sonnet takes no `none`, GPT-6 Astra and GPT-6.1 Sol take no `none`, DeepSeek takes `none`, `low`, `high`, `max` (its `medium`/`xhigh` are only aliases of `high`); every other model all six. The table import and every patch are held to it.
 - **Agent routes** (`opencode` wire) move only among the models the OpenCode server serves (`opencodeModels()`: every opencode-wire model of the table and its fallbacks, and every Claude model, Opus included), at any effort its provider takes; the server registers exactly those variants of each (`packages/opencode-host` README). `rate`, `maxOutputTokens` and `price` cannot be patched there: the server's config prices and limits a model, not a route.
@@ -210,7 +210,7 @@ Deliberate differences from the gateway:
 never cut, `<owner>/<name>` ids included), then the id with its one-segment provider prefix stripped, with a trailing
 `-YYYY-MM-DD` snapshot date stripped (any family), both, each with a Claude snapshot date and `[1m]` removed, then a Claude
 alias resolved. The first table model wins; otherwise the raw id comes back untouched, so `alice/<id>` and `bob/<id>` never
-merge. The prefix is `PROVIDER_ECHO`, the regex `gatewayRecords` already used. The gateway keeps its own `rowModel` and writes its
+merge. The prefix is `PROVIDER_ECHO`, the regex `callerRecords` already used. The gateway keeps its own `rowModel` and writes its
 rows as before.
 
 ## Token effect / cache effect
