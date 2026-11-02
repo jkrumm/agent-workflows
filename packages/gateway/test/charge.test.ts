@@ -62,7 +62,7 @@ describe('off /anthropic a complete block is priced at the route rate of the req
   const charge = (usage: object, routedModel: string | null, model: string | null = routedModel) =>
     chargeOf({
       tee: {
-        usage: usage as TeeResult['usage'],
+        usage,
         tokens: null,
         model,
         streamError: false,
