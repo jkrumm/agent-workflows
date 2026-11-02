@@ -12,7 +12,7 @@ import {
 import type { Runtime } from '@agent-workflows/runtime'
 import type { Pool } from 'pg'
 import type { AudioDeps } from '../scope.ts'
-import { callerAuth } from './callers.ts'
+import { doorCallerAuth } from './callers.ts'
 import type { AudioProcessConfig } from './config.ts'
 import { createDoor, type Door, type DoorHandlers, type Fetch } from './door.ts'
 
@@ -77,7 +77,7 @@ export function audioProcess(options: AudioProcessOptions): ProcessDefinition {
       const modules = options.modules ?? (await discoverWorkflowModules(AUDIO_MODULES_DIR))
       door = createDoor({
         handlers: options.handlers,
-        auth: callerAuth({ tokens: options.tokens, secret: config.secret }),
+        auth: doorCallerAuth({ tokens: options.tokens, secret: config.secret }),
         runtime: () => {
           if (!runtime) throw new Error('the audio runtime is not built yet')
           return runtime

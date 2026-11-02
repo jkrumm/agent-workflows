@@ -10,6 +10,13 @@ export { PLATFORM_CALLER }
 const MIN_TOKEN_LENGTH = 32
 
 /**
+ * Callers that reach the inference gateway only (OpenCode and `ocr` on the host, dotfiles `oc`, modelpick): their lines
+ * live in the one file, but a door (the audio process's, the host's image door) never accepts them (`doorCallerAuth`);
+ * the gateway accepts every line (`callerAuth`). `scripts/deploy.sh` writes the same names.
+ */
+export const GATEWAY_ONLY_CALLERS: ReadonlySet<string> = new Set(['agw-opencode', 'oc', 'modelpick'])
+
+/**
  * The file's tokens by caller name. Fails naming the file and the line, never a value: a malformed line, a bad or
  * duplicate name, the reserved `agw`, a token shorter than 32 characters or one used twice.
  */
@@ -62,4 +69,10 @@ export type CallerAuth = (authorization: string | null) => string | null
 export function callerAuth(options: { tokens: ReadonlyMap<string, string>; secret: string }): CallerAuth {
   const keys = bearerKeys(new Map([[PLATFORM_CALLER, options.secret], ...options.tokens]))
   return (authorization) => bearerCaller(authorization, keys)
+}
+
+/** A door's caller auth: `callerAuth` over the file's tokens without the gateway-only callers. */
+export function doorCallerAuth(options: { tokens: ReadonlyMap<string, string>; secret: string }): CallerAuth {
+  const tokens = new Map([...options.tokens].filter(([name]) => !GATEWAY_ONLY_CALLERS.has(name)))
+  return callerAuth({ tokens, secret: options.secret })
 }

@@ -17,7 +17,7 @@ import { type Attribution, defineWorkflow, type Logger, type Runtime, type Usage
 import { z } from 'zod'
 import { BEARER_CHALLENGE } from '../auth.ts'
 import { RUN_ID_HEADER } from '../capability-runs.ts'
-import { type CallerAuth, callerAuth } from '../door-tokens.ts'
+import { type CallerAuth, doorCallerAuth } from '../door-tokens.ts'
 import { type HostWorkflow, purposeOf, startRun } from '../operations.ts'
 import {
   MAX_JSON_BYTES,
@@ -253,7 +253,8 @@ const decodedBytes = (b64: string) => Buffer.byteLength(b64, 'base64')
 
 export function createImageDoor(deps: ImageDoorDeps): ImageDoor {
   const { options, logger } = deps
-  const auth: CallerAuth = callerAuth({ tokens: options.tokens, secret: deps.secret })
+  // The gateway-only callers (GATEWAY_ONLY_CALLERS) are in the file but never open this door.
+  const auth: CallerAuth = doorCallerAuth({ tokens: options.tokens, secret: deps.secret })
   const images = resolveImageDeps({ env: deps.env, ...options.image })
   const enhance: Enhance = options.enhance ?? deps.enhance
   // By run id: the run's step finds its request's job under its own id.

@@ -29,6 +29,7 @@ type Options = {
   picks?: number
   runRows?: string[] // section 9: psql rows for the runs' usage.records (run_id|source|lane|billing|account|key|workflow|step|cost)
   healthPools?: Array<{ id: string; eligible: boolean }> // /health pools (section 9)
+  synced?: Record<string, string> // section 9: the outbox query's answer per run id (steps|unsynced|errored), default 1|0|0
   doorTokens?: string
   only?: 'gateway' | 'runs'
 }
@@ -83,6 +84,8 @@ function writeHome(home: string, root: string, options: Options) {
   writeFileSync(join(home, '.config', 'agw', 'env'), 'AGW_URL=http://127.0.0.1:7791\nAGW_API_SECRET=the-secret\n')
   writeFileSync(join(home, 'rows'), lines(options.rows ?? DEFAULT_ROWS))
   writeFileSync(join(home, 'run-rows'), lines(options.runRows ?? DEFAULT_RUN_ROWS))
+  for (const run of ['run-1', 'run-2'])
+    writeFileSync(join(home, `synced-${run}`), `${options.synced?.[run] ?? '1|0|0'}\n`)
   const bin = join(home, '.local', 'bin')
   mkdirSync(bin, { recursive: true })
   const stub = (name: string, body: string) => {
@@ -94,13 +97,14 @@ function writeHome(home: string, root: string, options: Options) {
   // records query the rows; the -v bindings are logged.
   stub(
     'psql',
-    `#!/bin/sh\necho "$*" >> "$HOME/psql-args"\nsql=$(cat)\ncase "$sql" in *gateway_picks*) echo ${options.picks ?? 4} ;; *":'runs'"*) cat "$HOME/run-rows" ;; *) cat "$HOME/rows" ;; esac\n`,
+    `#!/bin/sh\necho "$*" >> "$HOME/psql-args"\nsql=$(cat)\nid=$(printf '%s\\n' "$@" | sed -n 's/^id=//p')\ncase "$sql" in *gateway_picks*) echo ${options.picks ?? 4} ;; *argo_synced_at*) cat "$HOME/synced-$id" ;; *":'runs'"*) cat "$HOME/run-rows" ;; *) cat "$HOME/rows" ;; esac\n`,
   )
 }
 
 // Section 9 alone needs what section 8 leaves behind: the gateway's /health and the usage query.
 const RUNS_PRELUDE = `gw_health=$(curl -fsS "$GATEWAY_URL/health"); usage_password=p
 usage_q() { local sql=$1; shift; PGPASSWORD=p psql "$@" <<< "$sql" || fail "usage query failed"; }
+journal() { local sql=$1; shift; psql "$@" <<< "$sql" || fail "journal query failed"; }
 `
 
 async function verify(options: Options = {}) {
@@ -359,8 +363,10 @@ describe('verify.sh runs section', () => {
     const r = await runs()
     expect(r.err).toBe('')
     expect(r.code).toBe(0)
-    expect(r.out).toContain('run run-1: gateway row, agw_workflow, api_key personal, smoke/title')
-    expect(r.out).toContain('run run-2: gateway row, agw_workflow, api_credit on iu, cap.llm.title/call')
+    expect(r.out).toContain('run run-1: steps synced, 1 gateway row(s), all qualify (api_key personal, smoke/title')
+    expect(r.out).toContain(
+      'run run-2: steps synced, 1 gateway row(s), all qualify (api_credit on iu, cap.llm.title/call',
+    )
     expect(readFileSync(join(r.home, 'psql-args'), 'utf8')).toContain('runs=run-1,run-2')
   })
 
@@ -401,19 +407,33 @@ describe('verify.sh runs section', () => {
     for (const [row, message, healthPools] of cases) {
       const r = await runs({ runRows: [row, good], healthPools })
       expect(r.code).toBe(1)
-      expect(r.err).toContain('run run-1: no gateway row qualifies')
+      expect(r.err).toContain('run run-1: a gateway row does not qualify')
       expect(r.err).toContain(message)
     }
   })
 
-  test('one qualifying gateway row among others is enough', async () => {
+  test('every gateway row must qualify: one good row beside a bad one fails', async () => {
     const r = await runs({
       runRows: [
-        'run-1|gateway|agw_workflow|api_key||personal|smoke||0.1',
         'run-1|gateway|agw_workflow|api_key||personal|smoke|title|0.1',
+        'run-1|gateway|agw_workflow|api_key||personal|smoke||0.1',
         'run-2|gateway|agw_workflow|api_key||personal|cap.llm.title|call|0.1',
       ],
     })
-    expect(r.code).toBe(0)
+    expect(r.code).toBe(1)
+    expect(r.err).toContain('run run-1: a gateway row does not qualify: lane_detail.step is not set')
+  })
+
+  test('"no agent-workflows row" is judged only after the outbox synced the run: unsynced steps fail, never pass', async () => {
+    const unsynced = await runs({ synced: { 'run-2': '2|1|0' } })
+    expect(unsynced.code).toBe(1)
+    expect(unsynced.err).toContain('run run-2: 1 of 2 usage step(s) not synced by the host outbox (within 0s)')
+    const errored = await runs({ synced: { 'run-1': '1|0|1' } })
+    expect(errored.code).toBe(1)
+    expect(errored.err).toContain('run run-1: 1 usage step(s) failed to sync')
+    const none = await runs({ synced: { 'run-1': '0|0|0' } })
+    expect(none.code).toBe(1)
+    expect(none.err).toContain('run run-1 has no ended step with usage')
+    expect(readFileSync(join(unsynced.home, 'psql-args'), 'utf8')).toContain('id=run-2')
   })
 })
