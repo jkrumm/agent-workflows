@@ -18,7 +18,7 @@ import { CapabilityError, createCapabilities, createRegistry } from '@agent-work
 import { type FakeTransports, fakeTransports } from '@agent-workflows/capabilities/testing'
 import { walletGate } from '@agent-workflows/limits'
 import { fallbackRoute, resolveRoute } from '@agent-workflows/routes'
-import type { AgentResult, Json, Middleware, Runtime } from '@agent-workflows/runtime'
+import { type AgentResult, type Json, type Middleware, type Runtime, WorkflowError } from '@agent-workflows/runtime'
 import { FakeAgentHost, type FakeSession } from '@agent-workflows/runtime/testing'
 import type { HostWorkflow } from '../src/operations.ts'
 import { ocrTransport } from '../src/workflows/review/ocr.ts'
@@ -81,16 +81,22 @@ const BASE = { 'src/a.ts': 'export const a = 1\n', 'package.json': '{"name":"x"}
 const CHANGE = { 'src/a.ts': 'export const a = 2\nexport const b = 3\n' }
 const simpleRepo = () => makeRepo(BASE, CHANGE)
 
-const synthesis = (over: Record<string, Json> = {}) =>
-  JSON.stringify({
-    outcome: 'clean',
-    blocking: [],
-    improvements: [],
-    discussions: [],
-    testGaps: [],
-    summary: 'Approved.',
-    ...over,
-  })
+/** The synthesis's verdict, as its `submit_result` call delivers it. */
+const synthesis = (over: Record<string, Json> = {}): Json => ({
+  outcome: 'clean',
+  blocking: [],
+  improvements: [],
+  discussions: [],
+  testGaps: [],
+  summary: 'Approved.',
+  ...over,
+})
+/** What the OpenCode host throws for a JSON step whose turn ended without a valid `submit_result` call. */
+const noResult = (text: string) =>
+  new WorkflowError(
+    'invalid_output',
+    `agent "review-synthesis" (session s) ended its turn without a completed submit_result call; its last text: ${JSON.stringify(text)}`,
+  )
 const found = (angle: string, over: Record<string, Json> = {}) => ({
   file: 'src/a.ts',
   line: 1,
@@ -241,7 +247,7 @@ describe('review workflow', () => {
     )
     expect(session?.spec.options).toEqual({ output: 'json', allowDirectories: [dir], route: 'review.angle' })
     const [synthesisSession] = w.sessionsOf('review-synthesis')
-    expect(synthesisSession?.spec.options).toEqual({ output: 'text', allowDirectories: [dir] })
+    expect(synthesisSession?.spec.options).toEqual({ output: 'json', allowDirectories: [dir] })
   })
 
   describe('depth gating', () => {
@@ -567,41 +573,44 @@ describe('review workflow', () => {
   })
 
   describe('synthesis', () => {
-    test('invalid JSON once: one retry with the JSON-only suffix, then the verdict', async () => {
+    test('no result once: one retry with the submit_result directive, then the verdict', async () => {
       let calls = 0
       const w = world({
-        script: (s) =>
-          s.spec.agent === 'review-synthesis'
-            ? Promise.resolve({
-                output: ++calls === 1 ? 'Here is my verdict: all good.' : synthesis({ summary: 'Second try.' }),
-              })
-            : undefined,
+        script: (s) => {
+          if (s.spec.agent !== 'review-synthesis') return undefined
+          if (++calls === 1) throw noResult('Here is my verdict: all good.')
+          return Promise.resolve({ output: synthesis({ summary: 'Second try.' }) })
+        },
       })
       const out = await w.run({ cwd: simpleRepo() })
       expect(out.output).toMatchObject({ outcome: 'clean', summary: 'Second try.' })
       const sessions = w.sessionsOf('review-synthesis')
       expect(sessions).toHaveLength(2)
-      expect(sessions[0]?.spec.prompt).not.toContain('RETRY — your previous response was REJECTED')
-      expect(sessions[1]?.spec.prompt).toContain('RETRY — your previous response was REJECTED')
+      expect(sessions[0]?.spec.prompt).not.toContain('RETRY — your previous attempt was REJECTED')
+      expect(sessions[1]?.spec.prompt).toContain('RETRY — your previous attempt was REJECTED')
+      expect(sessions[1]?.spec.prompt).toContain('`submit_result`')
     })
 
-    test('a fenced JSON answer is accepted', async () => {
+    test('a verdict that fails the schema is an invalid output like a missing one: retried, never parsed from text', async () => {
+      let calls = 0
       const w = world({
-        script: (s) =>
-          s.spec.agent === 'review-synthesis'
-            ? Promise.resolve({ output: `Done.\n\`\`\`json\n${synthesis({ summary: 'Fenced.' })}\n\`\`\`` })
-            : undefined,
+        script: (s) => {
+          if (s.spec.agent !== 'review-synthesis') return undefined
+          // A fenced JSON string was the old way to answer; as a JSON step's output it is not a verdict.
+          const fenced = `Done.\n\`\`\`json\n${JSON.stringify(synthesis({ summary: 'Fenced.' }))}\n\`\`\``
+          return Promise.resolve({ output: ++calls === 1 ? fenced : synthesis({ summary: 'Structured.' }) })
+        },
       })
-      expect(((await w.run({ cwd: simpleRepo() })).output as { summary: string }).summary).toBe('Fenced.')
-      expect(w.sessionsOf('review-synthesis')).toHaveLength(1)
+      expect(((await w.run({ cwd: simpleRepo() })).output as { summary: string }).summary).toBe('Structured.')
+      expect(w.sessionsOf('review-synthesis')).toHaveLength(2)
     })
 
-    test('invalid twice: the salvaged needs-human / blocker verdict keeps the raw text', async () => {
+    test('no result twice: the salvaged needs-human / blocker verdict keeps the text the failure carries', async () => {
       const w = world({
-        script: (s) =>
-          s.spec.agent === 'review-synthesis'
-            ? Promise.resolve({ output: 'I refuse to emit JSON, but the diff is fine.' })
-            : undefined,
+        script: (s) => {
+          if (s.spec.agent === 'review-synthesis') throw noResult('I refuse to call the tool, but the diff is fine.')
+          return undefined
+        },
       })
       const out = await w.run({ cwd: simpleRepo() })
       expect(out.status).toBe('done')
@@ -614,7 +623,7 @@ describe('review workflow', () => {
       expect(verdict).toMatchObject({ outcome: 'needs-human', escalationCategory: 'blocker', schemaVersion: 2 })
       expect(verdict.discussions).toHaveLength(1)
       expect(verdict.discussions[0]).toMatchObject({ file: '(review pipeline)', angle: 'synthesis' })
-      expect(verdict.discussions[0]?.message).toContain('I refuse to emit JSON, but the diff is fine.')
+      expect(verdict.discussions[0]?.message).toContain('I refuse to call the tool, but the diff is fine.')
       expect(verdict.summary).toContain('Review ran 4 reviewers')
       expect(w.sessionsOf('review-synthesis')).toHaveLength(2)
     })
@@ -1016,7 +1025,7 @@ exit 2
         expect(clone).not.toBe(cwd)
         expect(architect?.spec.prompt).toContain(`Repository root: ${clone}`)
         expect(architect?.spec.prompt).toContain('+a2')
-        expect(w.sessionsOf('review-synthesis')[0]?.spec.options).toEqual({ output: 'text', allowDirectories: [clone] })
+        expect(w.sessionsOf('review-synthesis')[0]?.spec.options).toEqual({ output: 'json', allowDirectories: [clone] })
         expect(existsSync(clone)).toBe(false)
         expect(readdirSync(join(w.stateDir, 'review-clones'))).toEqual([])
         expect(await sql.step(out.runId, 'cleanup')).toMatchObject({ kind: 'effect', status: 'done' })
@@ -1108,13 +1117,17 @@ exit 2
       expect(w2.host.events).toEqual([])
     })
 
-    test('the synthesis salvage keeps the first non-empty raw text when the retry returns none', async () => {
+    test('the synthesis salvage keeps the first answer when the retry wrote no text', async () => {
       let calls = 0
       const w = world({
-        script: (s) =>
-          s.spec.agent === 'review-synthesis'
-            ? Promise.resolve({ output: ++calls === 1 ? 'first raw answer, not JSON' : '' })
-            : undefined,
+        script: (s) => {
+          if (s.spec.agent !== 'review-synthesis') return undefined
+          if (++calls === 1) throw noResult('first raw answer, not JSON')
+          throw new WorkflowError(
+            'invalid_output',
+            'agent "review-synthesis" ended its turn without a completed submit_result call; it wrote no text either',
+          )
+        },
       })
       const out = await w.run({ cwd: simpleRepo() })
       const verdict = out.output as { discussions: { message: string }[] }
@@ -1527,6 +1540,26 @@ describe('provider balance degrade', () => {
     expect(synthesisNote).toContain('qa saw this')
     expect(synthesisNote).toContain('adversary saw this')
     expect(verdict.discussions).toContainEqual(DEGRADED.discussions[0] as { angle: string; message: string })
+  })
+
+  test('no result, then a balance refusal on the retry: the answered text is salvaged, not the degrade', async () => {
+    let calls = 0
+    const w = world({
+      script: (s) => {
+        if (s.spec.agent !== 'review-synthesis') return undefined
+        if (++calls === 1) throw noResult('The verdict, written as prose.')
+        throw balanceSession()
+      },
+    })
+    const verdict = (await w.run({ cwd: simpleRepo() })).output as {
+      escalationCategory: string
+      discussions: { angle: string; message: string }[]
+    }
+    expect(verdict.escalationCategory).toBe('blocker')
+    expect(verdict).not.toHaveProperty('degraded')
+    expect(verdict.discussions.find((d) => d.angle === 'synthesis')?.message).toContain(
+      'The verdict, written as prose.',
+    )
   })
 
   test('salvaged findings past the cap say they were cut', async () => {

@@ -6,14 +6,13 @@ const MAX_LISTED_FILES = 200
 
 export const FALLOW_FAILED_PREFIX = 'fallow failed'
 
-/** Appended to the synthesis task on its one retry, after a first answer that was not the schema JSON. */
-export const SYNTHESIS_JSON_ONLY_RETRY = `
+/** Appended to the synthesis task on its one retry, after a first attempt that ended without a valid result call. */
+export const SYNTHESIS_SUBMIT_RESULT_RETRY = `
 
 ────────────────────────────────────────────────────────
-RETRY — your previous response was REJECTED because it was not valid JSON. Return ONLY the
-JSON object specified above. Your entire message must be a single JSON object (optionally
-wrapped in one \`\`\`json fence) — no preamble such as "Here's the verdict", no markdown
-headings, no commentary before or after. Emit it as your final message and stop.`
+RETRY — your previous attempt was REJECTED because it ended without a valid \`submit_result\` call.
+Call \`submit_result\` once with the verdict in the Output section's shape. A verdict written as text is
+discarded. Then stop.`
 
 export function contextBlock(context: string | undefined): string {
   return context

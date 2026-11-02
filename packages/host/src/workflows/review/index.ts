@@ -1,4 +1,4 @@
-import { capDiff, parseJsonLoose } from '@agent-workflows/capabilities'
+import { capDiff } from '@agent-workflows/capabilities'
 import { DEFAULT_STATE_DIR } from '@agent-workflows/opencode-host'
 import { isBalanceFailure, type RouteId } from '@agent-workflows/routes'
 import { type AgentSpec, type Ctx, defineWorkflow, StepFailed, WorkflowError } from '@agent-workflows/runtime'
@@ -8,7 +8,13 @@ import { gatedAngles, requestedAngles, resolveDepth, routerPicks, selectFloor } 
 import { createExec } from './exec.ts'
 import { type Prepared, prepare, type ReviewPorts, removeClone, restoreClone } from './git.ts'
 import { createOcrWorkflow, OCR_WORKFLOW_ID } from './ocr.ts'
-import { renderAngleBlock, renderFallowBlock, SYNTHESIS_JSON_ONLY_RETRY, angleTask, synthesisTask } from './prompts.ts'
+import {
+  renderAngleBlock,
+  renderFallowBlock,
+  SYNTHESIS_SUBMIT_RESULT_RETRY,
+  angleTask,
+  synthesisTask,
+} from './prompts.ts'
 import { renderReactDoctorBlock, type ReactDoctorRaw, runReactDoctor } from './react-doctor.ts'
 import {
   ALL_ANGLES,
@@ -45,14 +51,14 @@ export type ReviewOptions = Partial<ReviewPorts> & {
   angleBackoffMs?: number
 }
 
-type Settled<T> = { ok: true; value: T } | { ok: false; reason: string }
+type Settled<T> = { ok: true; value: T } | { ok: false; reason: string; kind: string }
 
 /** A failed step as a value, so the pipeline can go on without it; every other error (cancel, shutdown) still unwinds. */
 async function settle<T>(step: Promise<T>): Promise<Settled<T>> {
   try {
     return { ok: true, value: await step }
   } catch (error) {
-    if (error instanceof StepFailed) return { ok: false, reason: error.reason }
+    if (error instanceof StepFailed) return { ok: false, reason: error.reason, kind: error.stepKind }
     throw error
   }
 }
@@ -116,11 +122,6 @@ function dropNullLines(raw: unknown): unknown {
     })
   }
   return out
-}
-
-function parseSynthesis(text: string) {
-  const parsed = parseJsonLoose(text)
-  return parsed === null ? null : SynthesisSchema.safeParse(parsed)
 }
 
 /** A step's failure reason that is a provider-balance refusal (the transports' and the OpenCode host's wording). */
@@ -286,36 +287,39 @@ export function createReviewWorkflows(deps: WorkflowDeps, options: ReviewOptions
       diffTruncated: capDiff(diff).truncatedChars > 0,
     })
 
-    // The synthesis answers as text and is parsed here, so a refusal to return JSON keeps the raw text for the salvage.
-    const synthesisSpec = (text: string): AgentSpec<z.ZodString> => ({
+    // The synthesis is a JSON step: it answers through the host's result tool, validated against the schema. A turn that
+    // ended without a valid call fails `invalid_output` and its reason carries the agent's last text, which the salvage
+    // keeps for triage.
+    const synthesisSpec = (text: string): AgentSpec<typeof SynthesisSchema> => ({
       agent: 'review-synthesis',
       prompt: text,
-      output: z.string(),
-      options: { output: 'text', allowDirectories: [repo] },
+      output: SynthesisSchema,
+      options: { output: 'json', allowDirectories: [repo] },
     })
-    const attempt = (answer: Settled<string>) =>
-      answer.ok
-        ? { text: answer.value, reason: null, parsed: parseSynthesis(answer.value) }
-        : { text: null, reason: answer.reason, parsed: null }
-    const first = attempt(await settle(ctx.agent('synthesis', synthesisSpec(prompt))))
+    const first = await settle(ctx.agent('synthesis', synthesisSpec(prompt)))
     let synthesis = first
     // A synthesis refused on provider balance (its fallback included) is not re-asked: the retry is for a bad answer.
-    if (!first.parsed?.success && !(first.text === null && onBalance(first.reason))) {
-      synthesis = attempt(await settle(ctx.agent('synthesis-retry', synthesisSpec(prompt + SYNTHESIS_JSON_ONLY_RETRY))))
+    if (!first.ok && !onBalance(first.reason)) {
+      synthesis = await settle(ctx.agent('synthesis-retry', synthesisSpec(prompt + SYNTHESIS_SUBMIT_RESULT_RETRY)))
     }
-    // No synthesis text at all and the last refusal was balance: the reviewers ran (an all-failed run ended above), so
-    // their findings are salvaged with the degrade.
-    if (!first.text && !synthesis.text && onBalance(synthesis.reason)) {
-      return balanceSalvagedVerdict(renderAngleBlock(results), failed, total)
-    }
-    if (!synthesis.parsed?.success) {
-      // The raw text of the last attempt that produced any; a session that died says why only when none did.
-      const raw = [synthesis.text, first.text].find((t) => t?.trim()) ?? synthesis.reason ?? first.reason ?? ''
+    if (!synthesis.ok) {
+      // The attempts that answered, only not through the tool: each failure carries that attempt's text. The retry's
+      // first, the first attempt's after it, so a retry that wrote nothing does not hide the first answer.
+      const answered = [...new Set([synthesis, first])].flatMap((s) =>
+        !s.ok && s.kind === 'invalid_output' ? [s.reason] : [],
+      )
+      // No answer at all and the last refusal was balance: the reviewers ran (an all-failed run ended above), so their
+      // findings are salvaged with the degrade.
+      if (answered.length === 0 && onBalance(synthesis.reason)) {
+        return balanceSalvagedVerdict(renderAngleBlock(results), failed, total)
+      }
+      // A session that died says why only when no attempt answered.
+      const raw = answered.length > 0 ? answered.join('\n\n') : synthesis.reason
       return salvagedVerdict(raw, failed, total)
     }
 
     // The outcome is derived from the lists here, never trusted from the model.
-    const { verdict } = applyVerdictRules(synthesis.parsed.data, failed, total)
+    const { verdict } = applyVerdictRules(synthesis.value, failed, total)
     return { ...verdict, schemaVersion: 2 }
   }
 

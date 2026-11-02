@@ -68,7 +68,7 @@ Analyze every changed file from these angles:
 
 ## Output
 
-Submit your findings by calling `submit_result` once, when the review is done. Its arguments take this shape:
+Your findings, submitted once when the review is done, take this shape:
 
 ```json
 {

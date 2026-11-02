@@ -39,7 +39,7 @@ export function renderSample(runs: SampledRun[], maxChars = MAX_DATA_CHARS): str
   return cut(text, maxChars)
 }
 
-export const JSON_ONLY_RETRY =
+export const SUBMIT_RESULT_RETRY =
   '\n\nYour previous answer ended without a valid `submit_result` call. Answer again by calling `submit_result` once with the object described above; text is not read.'
 
 /** The task message. The role, criteria and output contract live in the agent's `AGENTS.md`; this carries the data. */

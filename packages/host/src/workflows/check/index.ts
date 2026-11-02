@@ -14,7 +14,7 @@ import type { HostWorkflow } from '../../operations.ts'
 import type { WorkflowDeps } from '../index.ts'
 import { bunExec, type Exec, type ExecResult } from './exec.ts'
 import { hasMakeCheckTarget } from './make.ts'
-import { agentIdleMs, agentPrompt, JSON_ONLY_RETRY } from './prompt.ts'
+import { agentIdleMs, agentPrompt, SUBMIT_RESULT_RETRY } from './prompt.ts'
 import { CHECK_INPUT, CHECK_OUTPUT, type CheckInput, type CheckOutput } from './schema.ts'
 import { checkScorer } from './scorer.ts'
 
@@ -181,7 +181,7 @@ async function agentCheck(ctx: Ctx, input: CheckInput, stepSeconds: number, test
     if (!isInvalidOutput(error)) throw error
   }
   try {
-    return await ctx.agent('agent-retry', { ...spec, prompt: prompt + JSON_ONLY_RETRY })
+    return await ctx.agent('agent-retry', { ...spec, prompt: prompt + SUBMIT_RESULT_RETRY })
   } catch (error) {
     if (!isInvalidOutput(error)) throw error
     return {
