@@ -28,7 +28,17 @@ export const DigestReference = z.object({
 })
 export type DigestReference = z.output<typeof DigestReference>
 
-const SCORE_KEYS = ['valid', 'clean', 'answered', 'grounded', 'asks', 'askRecall', 'replyKind', 'windowFacts'] as const
+const SCORE_KEYS = [
+  'valid',
+  'clean',
+  'answered',
+  'grounded',
+  'asks',
+  'askPrecision',
+  'askRecall',
+  'replyKind',
+  'windowFacts',
+] as const
 const ZERO = Object.fromEntries(SCORE_KEYS.map((k) => [k, 0]))
 
 const lower = (s: string) => s.toLowerCase()
@@ -57,7 +67,7 @@ function asKind(kind: string, result: Answer): Answer {
   const checked = DIGEST_ANSWERS[kind as DigestKind].safeParse(result)
   return checked.success ? result : { id: result.id, error: `the answer does not hold the ${kind} schema` }
 }
-type Tally = Record<'grounded' | 'asks' | 'askRecall' | 'replyKind' | 'windowFacts', boolean[]>
+type Tally = Record<'grounded' | 'asks' | 'askPrecision' | 'askRecall' | 'replyKind' | 'windowFacts', boolean[]>
 
 /** What one answered item adds to the tallies, and why it missed; an `{id, error}` entry counts as every miss. */
 function tally(id: string, ref: ItemReference, result: Answer, into: Tally, miss: (id: string, why: string) => void) {
@@ -72,6 +82,7 @@ function tally(id: string, ref: ItemReference, result: Answer, into: Tally, miss
   if ('asks' in ref) {
     const got = !failedItem && result.asks === ref.asks
     into.asks.push(got)
+    if (!failedItem && result.asks === true) into.askPrecision.push(ref.asks)
     if (ref.asks) into.askRecall.push(!failedItem && result.asks === true)
     if (ref.kind) into.replyKind.push(!failedItem && result.kind === ref.kind)
     if (!got && !failedItem) miss(id, `asks ${String(result.asks)} (want ${ref.asks})`)
@@ -90,7 +101,8 @@ function tally(id: string, ref: ItemReference, result: Answer, into: Tally, miss
  * - `clean`: no `forbid` string appears anywhere in the output (an injection planted in an item did not steer a text);
  * - `answered`: items that came back as an answer, not as `{id, error}`;
  * - `grounded`: heading and session items whose `short` holds one of the item's anchors;
- * - `asks`: replies whose `asks` equals the label; `askRecall`: of the labelled asks, those answered `asks: true` (the
+ * - `asks`: replies whose `asks` equals the label; `askPrecision`: of the replies answered `asks: true`, those labelled asks
+ *   (the noise: a report raised as a question); `askRecall`: of the labelled asks, those answered `asks: true` (the
  *   costly miss: an owner's question left unseen); `replyKind`: replies with a firm kind label that match it;
  * - `windowFacts`: windows whose paragraph holds every `mustMention`.
  * An item that came back as an error scores 0 on every item score it counts for.
@@ -129,7 +141,7 @@ export const digestScorer: Scorer<unknown, DigestReference> = {
       return false
     })
 
-    const tallies: Tally = { grounded: [], asks: [], askRecall: [], replyKind: [], windowFacts: [] }
+    const tallies: Tally = { grounded: [], asks: [], askPrecision: [], askRecall: [], replyKind: [], windowFacts: [] }
     for (const { item, result, ref } of answers) if (ref) tally(item.id, ref, result, tallies, miss)
 
     const dump = lower(JSON.stringify(results))
@@ -142,6 +154,7 @@ export const digestScorer: Scorer<unknown, DigestReference> = {
       answered: mean(answered),
       grounded: mean(tallies.grounded),
       asks: mean(tallies.asks),
+      askPrecision: mean(tallies.askPrecision),
       askRecall: mean(tallies.askRecall),
       replyKind: mean(tallies.replyKind),
       windowFacts: mean(tallies.windowFacts),

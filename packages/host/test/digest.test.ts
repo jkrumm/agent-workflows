@@ -198,7 +198,12 @@ describe('digest scorer', () => {
     expect(Object.values(v.scores).every((s) => s === 1)).toBe(true)
   })
 
-  test('a missed ask fails askRecall, a false ask fails asks, a wrong kind only lowers replyKind', () => {
+  test('a false ask lowers askPrecision, a missed ask lowers askRecall, a wrong kind only lowers replyKind', () => {
+    const falseAsk = DigestReference.parse({
+      ...reference,
+      items: { ...reference.items, r1: { asks: false, kind: 'note' } },
+    })
+    expect(score(out(answers), falseAsk)).toMatchObject({ pass: false, scores: { askPrecision: 0, asks: 0 } })
     const note = { ...answers[2], asks: false, kind: 'note' }
     expect(score(out([answers[0], answers[1], note, answers[3]]))).toMatchObject({
       pass: false,
@@ -266,7 +271,7 @@ describe('digest eval set', () => {
     }
   })
 
-  test('holds 40 headings, 30 replies (15 asks), 10 windows and 10 sessions across the ten mixed cases', () => {
+  test('holds 40 headings, 30 replies (16 asks), 10 windows and 10 sessions across the ten mixed cases', () => {
     const mixed = cases.filter((c) => c.id.startsWith('mix-'))
     expect(mixed).toHaveLength(10)
     const count = (kind: string) =>
@@ -275,21 +280,22 @@ describe('digest eval set', () => {
     const asks = mixed
       .flatMap((c) => Object.values(DigestReference.parse(c.reference).items))
       .filter((r) => 'asks' in r && r.asks)
-    expect(asks).toHaveLength(15)
+    expect(asks).toHaveLength(16)
     expect(cases.some((c) => DigestInput.parse(c.input).items.length === 64)).toBe(true)
   })
 
-  test('PR #83 "not merged" is in the set both as an ask and as a plain report', () => {
-    const notMerged = entries.filter((i) => i.kind === 'reply' && /#83|not merged/i.test(i.text))
-    const labels = cases.flatMap((c) =>
-      Object.entries(DigestReference.parse(c.reference).items).map(
-        ([id, r]) => [id, 'asks' in r ? r.asks : null] as const,
+  test('PR #83\'s real "not merged" reply is in the set as a non-ask, beside another "not merged" report', () => {
+    const labels = new Map(
+      cases.flatMap((c) =>
+        Object.entries(DigestReference.parse(c.reference).items).map(
+          ([id, r]) => [id, 'asks' in r ? r.asks : null] as const,
+        ),
       ),
     )
-    const byId = (id: string) => labels.find(([i]) => i === id)?.[1]
+    const notMerged = entries.filter((i) => i.kind === 'reply' && /not merged|isn't merged/i.test(i.text))
+    expect(notMerged.some((i) => i.text.includes('pull/83') && labels.get(i.id) === false)).toBe(true)
     expect(notMerged.length).toBeGreaterThanOrEqual(2)
-    expect(byId('r01')).toBe(true)
-    expect(byId('r16')).toBe(false)
+    expect(notMerged.every((i) => labels.get(i.id) === false)).toBe(true)
   })
 
   test('the injection cases plant a canary the reference forbids', () => {
