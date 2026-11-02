@@ -551,10 +551,13 @@ export class RunScope {
             },
           })
           .catch((err: unknown) => {
-            // The prompt is out, so the session spent something. Whatever the host read before it failed is the step's
-            // (every error but an infra one or a `Cancelled` ends this attempt's session, so a retry opens a fresh one
-            // and no session is counted twice); with nothing to report the spend is unknown, never free.
-            scope.addUsage((err instanceof WorkflowError ? err.usage : undefined) ?? UNKNOWN_SPEND)
+            // An infra error is not this attempt's end: the session lives on and is re-attached, and its success
+            // reports the whole session. Anything else ends the session (a retry opens a fresh one, so none is
+            // counted twice): the prompt is out, so whatever the host read before it failed is the step's, and with
+            // nothing to report the spend is unknown, never free.
+            if (!(err instanceof InfraError)) {
+              scope.addUsage((err instanceof WorkflowError ? err.usage : undefined) ?? UNKNOWN_SPEND)
+            }
             throw err
           })
         if (result.usage) scope.addUsage(result.usage)

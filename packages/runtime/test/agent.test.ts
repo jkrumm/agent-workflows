@@ -1,6 +1,15 @@
 import { afterAll, describe, expect, test } from 'bun:test'
 import { z } from 'zod'
-import { Cancelled, defineWorkflow, type Json, type Middleware, type ToolEvent, WorkflowError } from '../src/index.ts'
+import {
+  type AgentWaitOptions,
+  Cancelled,
+  defineWorkflow,
+  InfraError,
+  type Json,
+  type Middleware,
+  type ToolEvent,
+  WorkflowError,
+} from '../src/index.ts'
 import { FakeAgentHost } from '../src/testing.ts'
 import { freshSchema, inspector, testRuntime, until } from './support/pg.ts'
 
@@ -142,6 +151,35 @@ describe('agent steps', () => {
         cost: null,
         unpriced_calls: 1,
         tokens_input: '0',
+      })
+    } finally {
+      await rt.close()
+    }
+  })
+
+  test('an infra error mid-wait is not the attempt’s end: the re-attach counts the session once, nothing unknown', async () => {
+    class DownOnce extends FakeAgentHost {
+      waits = 0
+      override async wait(handle: Json, options: AgentWaitOptions) {
+        if (++this.waits === 1) throw new InfraError('journal down')
+        return super.wait(handle, options)
+      }
+    }
+    const host = new DownOnce(async () => ({ output: { answer: 'back' }, usage }))
+    const wf = agentWorkflow('agent.infra-mid-wait')
+    const rt = testRuntime({ schema: db.schema, workflows: [wf], host })
+    await rt.open()
+    try {
+      const { runId } = await rt.start(wf, {}, { purpose: 'build' })
+      expect((await rt.wait(runId)).output).toEqual({ answer: 'back' })
+      expect(host.waits).toBe(2)
+      expect(host.count('open')).toBe(1) // the same session, re-attached
+      expect(host.count('prompt', 'sent')).toBe(1)
+      expect(await sql.step(runId, 'ask')).toMatchObject({
+        status: 'done',
+        tokens_input: '10',
+        cost: '0.01',
+        unpriced_calls: 0,
       })
     } finally {
       await rt.close()
