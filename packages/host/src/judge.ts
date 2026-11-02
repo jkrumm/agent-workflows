@@ -18,7 +18,7 @@ function plainTable(scope: Parameters<JudgeCaller>[2]) {
 }
 
 /** What a scorer may judge with: reads and model answers, never a workflow or an effect. */
-export const JUDGE_CAPABILITIES = ['web.fetch', 'web.package', 'decide'] as const
+export const JUDGE_CAPABILITIES = ['web.fetch', 'web.package', 'decide', 'eval.judge'] as const
 export const judgeAllowed = (id: string) =>
   (JUDGE_CAPABILITIES as readonly string[]).includes(id) || id.startsWith('llm.')
 

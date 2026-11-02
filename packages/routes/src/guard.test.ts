@@ -196,12 +196,17 @@ test('the cross-lab reviewers are never on a Claude model or the anthropic wire,
   }
 })
 
+// The eval seats are pinned, never tiers, and carry no fallback on purpose (`_shared.ts` §Eval seats): a fallback would
+// silently change a labeller or the grader, so a drained credit fails the call.
+const EVAL_SEATS = ['eval.label.a', 'eval.label.b', 'eval.judge'] as const
+const isEvalSeat = (id: string) => (EVAL_SEATS as readonly string[]).includes(id)
+
 // The gateway refuses a Claude route with 402 when the credit is gone, so a fallback is the only way the call survives,
 // and it must never land on a Claude model: IU's Claude is exactly what a drained credit must not reach.
 test('a Claude route has a GPT fallback; nothing on the chat wire or OpenCode falls back onto Claude', () => {
   const claude = /^claude-/
   const gpt = expect.stringMatching(/^gpt-/)
-  for (const id of routeIds()) {
+  for (const id of routeIds().filter((id) => !isEvalSeat(id))) {
     const route = resolveRoute(id, {})
     // a native Messages call is a Claude model with a GPT fallback on another wire
     if (route.wire === 'anthropic') {
@@ -285,7 +290,7 @@ const CLAUDE_TIERS = { FAST, EASY, HARD }
 type StepShape = { model: string; effort: string; rate: object; fallback: object }
 
 test('every route on a Claude model spreads a tier', () => {
-  const claude = routeIds().filter((id) => resolveRoute(id, {}).model.startsWith('claude-'))
+  const claude = routeIds().filter((id) => !isEvalSeat(id) && resolveRoute(id, {}).model.startsWith('claude-'))
   expect(claude.length).toBeGreaterThan(0)
   for (const id of claude) {
     const route = resolveRoute(id, {})
@@ -320,4 +325,25 @@ test('the review split (concept v3.5, restored 2026-11-02): default angles on EA
   expect(step('review.angle')).toEqual(agentOf(EASY))
   expect(step('review.angle.deep')).toEqual(agentOf(HARD))
   expect(step('review.synthesis')).toEqual(agentOf(HARD))
+})
+
+test('the eval seats are pinned: no fallback, the chosen model and effort, a 16000 ceiling and the model rate', () => {
+  const sonnet = resolveRoute('eval.judge', {})
+  expect(sonnet).toMatchObject({ wire: 'anthropic', model: HARD.call.model, effort: 'medium', maxOutputTokens: 16_000 })
+  expect(resolveRoute('eval.label.a', {})).toMatchObject({
+    wire: 'anthropic',
+    model: HARD.call.model,
+    effort: 'medium',
+    rate: HARD.call.rate,
+    maxOutputTokens: 16_000,
+  })
+  expect(resolveRoute('eval.label.b', {})).toMatchObject({
+    wire: 'iu-openai',
+    model: 'gpt-6.1-terra',
+    effort: 'medium',
+    rate: { inputPerM: 1, outputPerM: 5, cacheReadPerM: 0.05, cacheWritePerM: 1.25 },
+    maxOutputTokens: 16_000,
+  })
+  for (const id of EVAL_SEATS)
+    expect({ id, fallback: resolveRoute(id, {}).fallback }).toEqual({ id, fallback: undefined })
 })

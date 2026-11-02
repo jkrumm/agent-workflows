@@ -11,6 +11,7 @@
     "test": "bun test --isolate"
   },
   "dependencies": {
+    "@agent-workflows/eval": "workspace:*",
     "@agent-workflows/routes": "workspace:*",
     "@orpc/openapi": "1.16.1",
     "@orpc/server": "1.16.1",
