@@ -20,13 +20,13 @@ export interface ChatRequest {
   prompt: string
   maxOutputTokens: number
   effort?: Effort
-  /** Ask for a JSON object (JSON mode where the wire has one). Syntax only; `schema` is the stronger ask and wins. */
+  /** Ask for a JSON object (JSON mode where the wire has one). Syntax only; `jsonSchema` is the stronger ask and wins. */
   json?: boolean
   /**
    * The answer's JSON Schema (`toJsonSchema`): `anthropic` sends it as `output_config.format`, `iu-openai` as a strict
    * `response_format` where the model and the schema allow it, else as JSON mode. The zod parse stays the last check.
    */
-  schema?: JsonSchema
+  jsonSchema?: JsonSchema
   /** Sent to the gateway as `x-agw-*` headers (`gatewayHeaders`). */
   attribution?: Attribution
 }

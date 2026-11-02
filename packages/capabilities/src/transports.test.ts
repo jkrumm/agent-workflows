@@ -169,7 +169,7 @@ describe('openai wire details', () => {
 
   test('a schema goes as a strict json_schema on a GPT model, and wins over json', async () => {
     iu.on('chat', () => chatStream('ok', null))
-    await iuOpenai({ env: env() }).complete({ ...chatRequest, model: 'gpt-x', schema, json: true }, never())
+    await iuOpenai({ env: env() }).complete({ ...chatRequest, model: 'gpt-x', jsonSchema: schema, json: true }, never())
     expect(iu.requests[0]?.body.response_format).toEqual({
       type: 'json_schema',
       json_schema: { name: 'response', strict: true, schema },
@@ -179,9 +179,9 @@ describe('openai wire details', () => {
   test('a schema falls back to JSON mode where json_schema is not taken: a non-GPT model, an optional property', async () => {
     iu.on('chat', () => chatStream('ok', null))
     const port = iuOpenai({ env: env() })
-    await port.complete({ ...chatRequest, model: 'deepseek-x', schema }, never())
+    await port.complete({ ...chatRequest, model: 'deepseek-x', jsonSchema: schema }, never())
     const optional = { ...schema, properties: { ...(schema.properties as object), note: { type: 'string' } } }
-    await port.complete({ ...chatRequest, model: 'gpt-x', schema: optional }, never())
+    await port.complete({ ...chatRequest, model: 'gpt-x', jsonSchema: optional }, never())
     expect(iu.requests[0]?.body.response_format).toEqual({ type: 'json_object' })
     expect(iu.requests[1]?.body.response_format).toEqual({ type: 'json_object' })
   })
@@ -253,9 +253,9 @@ describe('messages wire details', () => {
   test('a schema rides in output_config.format, merged with the effort; absent for a text call', async () => {
     iu.on('messages', () => messageResponse('{"label":"bug"}', null))
     const port = anthropicWire({ env: env() })
-    await port.complete({ ...chatRequest, effort: 'high', schema, json: true }, never())
-    await port.complete({ ...chatRequest, schema }, never())
-    await port.complete({ ...chatRequest, effort: 'none', schema }, never())
+    await port.complete({ ...chatRequest, effort: 'high', jsonSchema: schema, json: true }, never())
+    await port.complete({ ...chatRequest, jsonSchema: schema }, never())
+    await port.complete({ ...chatRequest, effort: 'none', jsonSchema: schema }, never())
     await port.complete({ ...chatRequest, effort: 'high' }, never())
     const format = { type: 'json_schema', schema }
     expect(iu.requests[0]?.body).toMatchObject({
