@@ -16,4 +16,16 @@ two batches, each brief owning named functions in the shared files:
 | 1 | `gw5/model-route-ids` | `canonicalModel`, `steps.route` (migration 0013) | Sonnet, t77 |
 | 2 | `gw5/run-arms` | run-scoped arms (`runs.arm`, migration 0014), `AGW_ROUTES`/`routes.json` removed | Opus, after batch 1 lands (needs child case runs) |
 
+**Batch 1 landed and live** (release `ca6181c`, `make verify` PASS, smoke review `01a19c0e-146a-…` $0.0861): #100 model/route
+ids, #99 json_schema wire, #101 agent JSON via `submit_result`, #102 eval children + tree cost. Live: a 2-case
+`factory-classify` eval `01a19c0f-0a41-…` costs $0.000640 = its two child case runs ($0.000320 each, gateway rows
+`api_credit` iu at the same figures); review steps carry `route` and canonical models. Batch 2 (`gw5/run-arms`) spawned on
+`ca6181c`, pane t7k.
+
 No `~/.config/agw/routes.json` on the mini at start; `AGW_ROUTES` unset in the host's env.
+
+## Outside Wave 5, in this train
+
+- `fv-agw-digest` (software-factory lead's worker, track FV, new files under `packages/host/src/workflows/digest/`, plan
+  `docs/waves/fv-digest.md`): the factory lead reviews it and tells this lead; this lead reads the diff, merges and deploys
+  it. It rebases onto Wave 5 as landed (route resolution changes with `gw5/run-arms`).
