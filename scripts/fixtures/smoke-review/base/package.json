@@ -1,0 +1,8 @@
+{
+  "name": "smoke-review-fixture",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "react": "^19.0.0"
+  }
+}

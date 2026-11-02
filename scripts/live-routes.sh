@@ -8,7 +8,8 @@
 # from `agw routes`. Media and decision routes are `make verify`'s and their capabilities'. Each route runs as
 # `AGW_PURPOSE=verify agw smoke route <id>`, four at a time. Then, within LIVE_ROUTES_POLL_SECS (120), for each run:
 #   - usage.records has a source='gateway' row of the run with outcome 'ok', the route's concrete model as the served
-#     `model` (a Claude alias resolves to its id), cost_usd not null, lane 'agw_workflow';
+#     `model` (a Claude alias resolves to its id through CLAUDE_ALIASES of the deployed release, read from its source),
+#     cost_usd not null, lane 'agw_workflow';
 #   - the run's agw.runs row is 'done' with a cost.
 # Prints route | model | billing | account | input | cache read | output | cost | run id, and exits 1 naming each route
 # that failed. It costs cents (DeepSeek routes included) and never prints a key.
@@ -22,7 +23,7 @@ USAGE_PG_PASSWORD_REF="op://mini/vps-dev/SHARED_USAGE_DB_PASSWORD"
 POLL_SECS="${LIVE_ROUTES_POLL_SECS:-120}"
 PARALLEL=4
 
-export PATH="$PATH:$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin"
+export PATH="$PATH:$HOME/.local/bin:$HOME/.bun/bin:/opt/homebrew/bin:/usr/local/bin"
 
 # Worker mode (`--worker <dir> <route>`, started by xargs below): one call, its answer in <dir>/<route>.{out,err,rc}.
 # Exit 10 (pending) is resumed with `agw run wait`, which prints the same answer.
@@ -42,7 +43,7 @@ fi
 
 die() { print -u2 "live-routes: $*"; exit 1; }
 
-for tool in jq psql secrets-run agw xargs; do
+for tool in jq psql secrets-run agw xargs bun; do
   command -v "$tool" >/dev/null 2>&1 || die "$tool not found on PATH"
 done
 
@@ -66,12 +67,19 @@ else
 fi
 ids=(${ids:#})
 (( ${#ids} > 0 )) || die "no routes to probe"
-# The route's concrete model: a Claude alias resolves to its id (CLAUDE_ALIASES in packages/routes/src/table/claude.ts),
-# because the gateway row's `model` is the served model.
-typeset -A model_of alias_of=(haiku claude-haiku-5-5 sonnet claude-sonnet-5-5 opus claude-opus-5-5)
+# The route's concrete model: a Claude alias resolves to its id, because the gateway row's `model` is the served model.
+# The alias map is CLAUDE_ALIASES of the release being tested (neither `agw routes` nor a copy here carries it), read from
+# its source; a missing or malformed map fails loudly, a route is never silently compared against its alias.
+alias_src="$ROOT/current/packages/routes/src/table/claude.ts"
+[[ -f "$alias_src" ]] || die "the alias map source $alias_src is missing (CLAUDE_ALIASES of the deployed release)"
+alias_json=$(bun -e 'const m = await import(process.argv[1]); if (typeof m.CLAUDE_ALIASES !== "object" || m.CLAUDE_ALIASES === null) throw new Error("CLAUDE_ALIASES is not exported"); console.log(JSON.stringify(m.CLAUDE_ALIASES))' "$alias_src" 2>&1) \
+  || die "cannot read CLAUDE_ALIASES from $alias_src: $alias_json"
+print -r -- "$alias_json" | jq -e 'type == "object" and length > 0 and all(.[]; type == "string")' >/dev/null 2>&1 \
+  || die "CLAUDE_ALIASES from $alias_src is not a non-empty map of strings: $alias_json"
+typeset -A model_of
 for id in $ids; do
   m=$(print -r -- "$table" | jq -r --arg id "$id" '.routes[$id].model')
-  model_of[$id]=${alias_of[$m]:-$m}
+  model_of[$id]=$(print -r -- "$alias_json" | jq -r --arg m "$m" '.[$m] // $m')
 done
 
 work=$(mktemp -d "${TMPDIR:-/tmp}/agw-live-routes.XXXXXX") || die "cannot create a temp dir"

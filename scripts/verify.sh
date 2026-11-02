@@ -15,7 +15,12 @@
 # lane_detail, a priced cost, billing api_credit on a pool /health names or api_key personal, never api_credit with no
 # eligible pool), and, once the host outbox synced the run's usage steps, no `source='agent-workflows'` row, within the
 # same 120 s. It never waits on the Anthropic cost API (it lags 20-70 min).
-# Prints the run ids and the gateway's request ids.
+# Last, a smoke review: `agw review --depth light` on a throwaway git repo built from scripts/fixtures/smoke-review (one
+# planted bug in a .tsx component, so react-doctor reports a diagnostic as on a real frontend diff, and one in a .ts file),
+# waited on for up to 300 s. The run must be done, its react-doctor step, at least one angle step and its synthesis step
+# done, the verdict parse (schema v2, not degraded) with a finding from a real reviewer, and its agw.runs row carry a cost.
+# A failure names the stage. (PR #89: react-doctor 0.9.18 reported `message`, every review with a finding died at synthesis.)
+# Prints the run ids, the gateway's request ids and the review's run id and cost.
 
 set -u
 
@@ -69,7 +74,8 @@ password=$(secrets-run read "$PG_PASSWORD_REF" 2>/dev/null)
 [[ -n "$password" ]] || fail "cannot read $PG_PASSWORD_REF through secrets-run"
 psql_err=$(mktemp "${TMPDIR:-/tmp}/agw-verify.XXXXXX") || fail "cannot create a temp file"
 agw_err=$(mktemp "${TMPDIR:-/tmp}/agw-verify.XXXXXX") || fail "cannot create a temp file"
-trap 'rm -f "$psql_err" "$agw_err"' EXIT
+review_dir=""
+trap 'rm -f "$psql_err" "$agw_err"; [[ -z "$review_dir" ]] || rm -rf "$review_dir"' EXIT
 # One journal query; the SQL goes on stdin (psql interpolates :'var' there, not in -c), extra args are -v bindings.
 journal() {
   local sql=$1; shift
@@ -371,4 +377,80 @@ for rid in $run_id $cap_id; do
   ok "run $rid: steps synced, $run_why; no agent-workflows row"
 done
 
-print "verify: PASS run $run_id, cap run $cap_id, audio run $audio_run, gateway pool $pool requests $id1 $id2 $id3, agw-opencode request $id4"
+# 10. a smoke review, so a review pipeline that breaks on a real diff is caught here and not by a paid PR review. The
+# change is a throwaway repo: fixtures/smoke-review/base committed, fixtures/smoke-review/change copied over it
+# uncommitted. `light` is the cheapest depth that still runs react-doctor (every depth runs it), the router, one angle
+# (senior-dev), the adversary and the synthesis; it skips only OCR and the other floor angles.
+REVIEW_FIXTURE="${0:A:h}/fixtures/smoke-review"
+REVIEW_WAIT_SECS="${REVIEW_WAIT_SECS:-300}"
+[[ -d "$REVIEW_FIXTURE/base" && -d "$REVIEW_FIXTURE/change" ]] || fail "smoke review fixture missing at $REVIEW_FIXTURE"
+review_dir=$(mktemp -d "${TMPDIR:-/tmp}/agw-verify-review.XXXXXX") || fail "cannot create a temp dir"
+review_dir=${review_dir:A}
+git_fixture() { git -C "$review_dir" -c user.name=verify -c user.email=verify@example.invalid -c commit.gpgsign=false "$@"; }
+git -C "$review_dir" init -q -b main 2>"$agw_err" || fail "smoke review: git init failed: $(<"$agw_err")"
+cp -R "$REVIEW_FIXTURE/base/." "$review_dir/" || fail "smoke review: cannot copy the fixture base"
+git_fixture add -A && git_fixture commit -q -m "base" 2>"$agw_err" || fail "smoke review: cannot commit the fixture base: $(<"$agw_err")"
+cp -R "$REVIEW_FIXTURE/change/." "$review_dir/" || fail "smoke review: cannot copy the fixture change"
+
+# The stages of a review run that are not done, for a failure message ("none" when every step is done).
+review_stages() {  # $1 run id
+  local rows
+  rows=$(journal "select step_id || ' ' || status || coalesce(': ' || left(error, 300), '') from \"$SCHEMA\".steps where run_id = :'id' and status <> 'done' order by started_at" -v "id=$1") || exit 1
+  print -r -- "${${rows//$'\n'/; }:-none}"
+}
+# One `agw review` / `agw run wait` call bounded by what is left of REVIEW_WAIT_SECS; sets out and rc.
+review_started=$SECONDS
+review_call() {
+  local left=$(( REVIEW_WAIT_SECS - (SECONDS - review_started) ))
+  (( left >= 1 )) || return 1
+  (( left > 110 )) && left=110
+  out=$(AGW_WAIT_BUDGET_S=$left AGW_PURPOSE=verify agw "$@" --format json 2>"$agw_err")
+  rc=$?
+  return 0
+}
+review_run=""
+review_call review --cwd "$review_dir" --depth light
+while (( rc == 10 )); do
+  review_run=$(print -r -- "$out" | jq -r '.runId // empty' 2>/dev/null)
+  [[ -n "$review_run" ]] || fail "smoke review: exit 10 (pending) without a runId: $out"
+  review_call run wait "$review_run" || fail "smoke review: run $review_run not done after ${REVIEW_WAIT_SECS}s (resume: agw run wait $review_run)"
+done
+[[ -n "$review_run" ]] || review_run=$(print -r -- "$out" | jq -r '.runId // empty' 2>/dev/null)
+if (( rc != 0 )); then
+  stages=""
+  [[ -z "$review_run" ]] || stages=" (stages not done: $(review_stages "$review_run"))"
+  fail "smoke review: agw review exited $rc${review_run:+ (run $review_run)}$stages: ${out:-$(<"$agw_err")}"
+fi
+print -r -- "$out" | jq -e . >/dev/null 2>&1 || fail "smoke review: agw review printed output that is not JSON: $out $(<"$agw_err")"
+[[ -n "$review_run" ]] || fail "smoke review: agw review printed no runId: $out"
+# the cost lands with the run record: ask again while the answer says it is pending (as the smoke ping does)
+for _ in {1..4}; do
+  [[ "$(print -r -- "$out" | jq -r '.costPending // false')" == "true" ]] || break
+  sleep 2
+  review_call run wait "$review_run" || break
+  (( rc == 0 )) || fail "smoke review: agw run wait $review_run exited $rc: ${out:-$(<"$agw_err")}"
+done
+stages=$(review_stages "$review_run")
+[[ "$(print -r -- "$out" | jq -r '.status // "done"')" == "done" ]] || fail "smoke review: run $review_run is not done (stages not done: $stages): $out"
+review_steps=$(journal "select step_id from \"$SCHEMA\".steps where run_id = :'id' and status = 'done'" -v "id=$review_run") || exit 1
+review_steps=(${(f)review_steps})
+(( ${review_steps[(Ie)react-doctor]} )) || fail "smoke review: stage react-doctor did not finish (stages not done: $stages)"
+review_angles=(${(M)review_steps:#angle:*})
+(( ${#review_angles} > 0 )) || fail "smoke review: no angle stage finished (stages not done: $stages)"
+(( ${review_steps[(Ie)synthesis]} )) || fail "smoke review: stage synthesis did not finish (stages not done: $stages)"
+verdict=$(print -r -- "$out" | jq -c '.output // empty' 2>/dev/null)
+[[ -n "$verdict" ]] || fail "smoke review: run $review_run answered without a result: $out"
+print -r -- "$verdict" | jq -e '.schemaVersion == 2 and (.blocking | type == "array") and (.improvements | type == "array") and (.discussions | type == "array")' >/dev/null 2>&1 \
+  || fail "smoke review: the result does not parse as a review verdict (schema v2): $verdict"
+[[ "$(print -r -- "$verdict" | jq -r '.degraded // empty')" == "" ]] || fail "smoke review: the review was degraded ($(print -r -- "$verdict" | jq -r '.degraded')): $(print -r -- "$verdict" | jq -r '.summary')"
+# A synthesis that could not serialize, or reviewers that all failed, still print findings (angles 'synthesis' and
+# 'pipeline', or the failed reviewer's own name); those are failures, not findings.
+review_findings=$(print -r -- "$verdict" | jq -r '[.blocking[], .improvements[], .discussions[]] | map(select(.angle != "synthesis" and .angle != "pipeline")) | length')
+(( ${review_findings:-0} >= 1 )) || fail "smoke review: no finding from a real reviewer on a planted bug (summary: $(print -r -- "$verdict" | jq -r '.summary'))"
+review_row=$(journal "select status, coalesce(cost::text, '') from \"$SCHEMA\".runs where id = :'id'" -v "id=$review_run") || exit 1
+IFS='|' read -r review_status review_cost <<< "$review_row"
+[[ "${review_status:-}" == "done" ]] || fail "smoke review: run $review_run is '${review_status:-missing}' in $SCHEMA.runs, not done"
+[[ -n "${review_cost:-}" ]] && (( review_cost > 0 )) || fail "smoke review: run $review_run has no cost in $SCHEMA.runs (cost '${review_cost:-null}')"
+ok "agw review (depth light): run $review_run done in $(( SECONDS - review_started )) s, $review_findings finding(s) from real reviewers, stages ${(j:, :)review_steps}, cost $(printf '%.4f' "$review_cost")"
+
+print "verify: PASS run $run_id, cap run $cap_id, audio run $audio_run, gateway pool $pool requests $id1 $id2 $id3, agw-opencode request $id4, review run $review_run (cost $(printf '%.4f' "$review_cost"))"
