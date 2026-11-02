@@ -4,7 +4,7 @@
 # Fail-closed exactly like launch.sh: exit 78 unless every ref in .env.gateway.tpl resolves through `secrets-run` (the
 # offline cache) to a non-empty value; refs are named, values never printed.
 #
-# It reads only .env.gateway.tpl. It never reads ~/.config/agw/iu.env, athena-iu.env or routes.json: iu.env on the mini
+# It reads only .env.gateway.tpl. It never reads ~/.config/agw/iu.env or athena-iu.env: iu.env on the mini
 # sets the Athena team key, which belongs to Athena Teamchat only; the gateway holds the personal key (IU_KEY_ID=personal).
 
 set -u

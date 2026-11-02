@@ -8,7 +8,7 @@ evaluated); every workflow runs inside the same middleware; Claude Code and Herm
 through one generated `agw` CLI. It replaces agent-gateway, research-gateway and audio-gateway by a
 hard rewrite. **`docs/concept.md` is the design and wins on any difference with this file.**
 
-**Status:** Wave 2 landed the core: `runtime`, `middleware`, `limits`, `routes`, `capabilities` (`packages/*`). Wave 3 landed the CLI (`agw`), the host process, the OpenCode host and the deploy (LaunchAgent on the mini, `make deploy|verify`). The inference gateway (`packages/gateway`) holds every provider key: agw holds none, and the host, the audio process and the OpenCode server reach every model through it (`AGW_GATEWAY_URL`).
+**Status:** Wave 2 landed the core: `runtime`, `middleware`, `limits`, `routes`, `capabilities` (`packages/*`). Wave 3 landed the CLI (`agw`), the host process, the OpenCode host and the deploy (LaunchAgent on the mini, `make deploy|verify`). The inference gateway (`packages/gateway`) holds every provider key: agw holds none, and the host, the audio process and the OpenCode server reach every model through it (`AGW_GATEWAY_URL`). Wave 4 reconciled the credit pools against each org's cost API and gave Argo the gateway's payers; Wave 5 laid the eval foundations (run-scoped arms, eval cost roll-up, structured agent output, schema output on the wire, one model id per model). Plan and status per wave: `docs/waves/PLAN.md`.
 
 ## Principles (concept §0)
 

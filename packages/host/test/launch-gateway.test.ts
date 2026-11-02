@@ -84,7 +84,6 @@ function run(options: { refs?: Record<string, string>; iuEnv?: string } = {}) {
     const file = join(home, '.config', 'agw', 'iu.env')
     writeFileSync(file, options.iuEnv)
     chmodSync(file, 0o600)
-    writeFileSync(join(home, '.config', 'agw', 'routes.json'), '{"nonsense": true}')
   }
   const proc = Bun.spawnSync([ZSH, join(build, 'launch-gateway.sh')], {
     env: { PATH: process.env.PATH ?? '', HOME: home },
@@ -140,7 +139,6 @@ describe('launch-gateway.sh', () => {
     expect(r.code).toBe(0)
     expect(r.env.get('IU_API_KEY')).toBe('personal-key-VALUE')
     expect(r.env.get('IU_KEY_ID')).toBe('personal')
-    expect(r.env.has('AGW_ROUTES')).toBe(false)
     expect([...r.env.values()].some((value) => value.includes('athena-team'))).toBe(false)
     expect(r.err).not.toContain('iu.env')
   })
@@ -170,6 +168,6 @@ describe('launch-gateway.sh', () => {
       .split('\n')
       .filter((line) => !line.trimStart().startsWith('#'))
       .join('\n')
-    for (const forbidden of ['iu.env', 'athena-iu', 'routes.json']) expect(code).not.toContain(forbidden)
+    for (const forbidden of ['iu.env', 'athena-iu']) expect(code).not.toContain(forbidden)
   })
 })

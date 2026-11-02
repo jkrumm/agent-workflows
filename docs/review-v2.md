@@ -172,8 +172,8 @@ case. The 138 legacy review cases are retired from decisions.
 
 **Per-arm overrides without a restart.** An arm is `{ routes?: patch, params?: {...} }`, passed with `agw eval run
 --arm <file>`. The runtime layers it over the route table for that run and its children only, and records it in the run
-input and the fingerprint. Production traffic never sees it. The `AGW_ROUTES` env override and `~/.config/agw/routes.json`
-go: an untracked one moved production review to another model unnoticed until the 2026-10-31 audit found it. Pipeline knobs (`finders`, `voters`,
+input and the fingerprint. Production traffic never sees it. The process-wide env override and the routes config file it replaced
+are gone (Wave 5): an untracked one moved production review to another model unnoticed until the 2026-10-31 audit found it. Pipeline knobs (`finders`, `voters`,
 `voterMode`) are params a workflow reads with a default, so callers never see them.
 
 ## What the rework needs from the current plan
