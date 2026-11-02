@@ -75,7 +75,26 @@ tool calls per tool, fell back), never the tool arguments (whole segment drafts)
 
 Ported specifics: the tool loop echoes the assistant message exactly as received (provider state such as reasoning
 or Gemini's `thought_signature` must round-trip), appends tool results and never rewrites the head; a round cut at its
-budget or empty retries once at double; no round cap. On the Anthropic wire: adaptive thinking with
+budget or empty retries once at double; no round cap.
+
+The tool loop speaks three dialects: `chat` and `responses` on `iu-openai` (the GPT-6.1 family on responses), and
+Anthropic Messages on `anthropic` (`POST <gateway>/anthropic/v1/messages`, streamed under the idle watchdog,
+`x-agw-fallback: none`). A Messages round sends `tools` (`input_schema`), the system prompt as one `cache_control`
+block, the same thinking/effort and `max_tokens` floor as a single call; the reply's `tool_use` blocks become tool calls
+(`stop_reason` `end_turn`→`stop`, `tool_use`→`tool_calls`, `max_tokens`→`length`) and usage goes through
+`anthropicUsage` as for single calls. A `max_tokens` stop carries no tool calls (a cut `tool_use` is never run) and is
+retried at double the budget; a still-incomplete Messages reply fails the round rather than being used as an answer.
+
+**The transcript is chat-shaped and `Llm.round` renders it per round for the wire that answers.** An assistant turn
+carries what its provider sent as `native` (Responses output items, or the Messages content blocks: `thinking` with
+signatures, `redacted_thinking`, `text`, `tool_use`) and goes back verbatim to its own dialect, so a thinking Claude
+round-trips byte-stable (the prompt prefix of round N is a prefix of round N+1; the cache breakpoint is the system
+block). Consecutive tool results become ONE user turn of `tool_result` blocks.
+
+**Fallback mid-loop (one rule):** a balance failure on any round moves that round to the route's fallback, and the loop
+**stays on the fallback** for its remaining rounds. The transcript is not restarted: the earlier turns are re-rendered
+for the fallback's dialect from their chat fields (`tool_use` → `tool_calls` / `function_call`, results →
+`tool` / `function_call_output`), thinking blocks dropped, so no tool runs twice. It stays because the Claude route would otherwise be sent assistant turns it never wrote, without the thinking blocks and signatures Messages wants echoed back with tools; a fallback round is not retried on the primary. On the Anthropic wire: adaptive thinking with
 `output_config.effort`, `max_tokens` floored at 32k (thinking counts against it), the segment schema as
 `output_config.format`, and the episode-constant system prefix as an ephemeral cache block.
 

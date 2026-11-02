@@ -40,12 +40,26 @@ export interface ChatReply {
   stopDetail?: string
 }
 
-/** A message as it round-trips through a tool loop: loose on purpose, so provider fields survive untouched. */
+/**
+ * What a provider sent for one assistant turn, kept to echo it back verbatim to the SAME dialect: the `/v1/responses`
+ * output items, or the Messages content blocks (thinking blocks and their signatures included). Another dialect ignores it.
+ */
+export interface NativeTurn {
+  api: 'responses' | 'anthropic'
+  items: unknown[]
+}
+
+/**
+ * A message as it round-trips through a tool loop: loose on purpose, so provider fields survive untouched. The
+ * transcript is chat-shaped (`assistant` with `tool_calls`, `tool` results) whatever wire answered; `native` rides on an
+ * assistant turn whose dialect is not chat, and `Llm.round` renders the transcript per route.
+ */
 export interface WireMessage {
   role?: string
   content?: string | null
   tool_calls?: ToolCallRequest[]
   tool_call_id?: string
+  native?: NativeTurn
   [key: string]: unknown
 }
 
@@ -61,18 +75,25 @@ export interface ToolSchema {
   parameters: Record<string, unknown>
 }
 
-/** One tool-loop round. `api: 'responses'` is IU's `/v1/responses`; `chat` is `/chat/completions`. */
+/**
+ * One tool-loop round. `api: 'responses'` is IU's `/v1/responses`; `chat` is `/chat/completions`; `messages` is the
+ * gateway's Anthropic Messages (`system` is the system prompt, `messages` are Messages turns).
+ */
 export interface RoundCall {
-  api: 'chat' | 'responses'
+  api: 'chat' | 'responses' | 'messages'
   model: string
   effort?: string
+  system?: string
   messages: WireMessage[]
   tools: ToolSchema[]
   maxTokens: number
   attribution?: Attribution
 }
 
-/** A round's reply normalised across both APIs; `raw` (responses only) is what goes back into the transcript. */
+/**
+ * A round's reply normalised across the APIs: the assistant message in chat shape. `raw` (responses) or
+ * `message.native` (Messages) is what goes back into the transcript for its own dialect; chat's `message` is native.
+ */
 export interface RoundReply {
   message: WireMessage
   finishReason?: string
@@ -97,6 +118,11 @@ export class ModelError extends Error {
   ) {
     super(message)
   }
+}
+
+/** A tool loop's fallback state, shared by its rounds: set when a balance failure moved a round to the fallback. */
+export interface FallbackPin {
+  onFallback: boolean
 }
 
 /** IU serves function tools for the GPT-6.1 family only on `/v1/responses` (chat/completions 503s; probed 2026-10-26). */
@@ -171,6 +197,7 @@ export class Llm {
   private async onRoute<T>(
     id: PodcastRouteId,
     call: (route: ResolvedRoute, onUsage: OnWireUsage, onSent: () => void) => Promise<T>,
+    pin?: FallbackPin,
   ) {
     const primary = this.route(id)
     const attempt = async (route: ResolvedRoute) => {
@@ -191,12 +218,16 @@ export class Llm {
         if (reported === 0 && sent > 0) this.reportUnknown(route.model)
       }
     }
+    // A loop that already moved to the fallback stays there: its transcript carries the fallback's turns.
+    const pinned = pin?.onFallback ? fallbackRoute(primary) : undefined
+    if (pinned) return attempt(pinned)
     try {
       return await attempt(primary)
     } catch (error) {
       const fallback = fallbackRoute(primary)
       if (!fallback || !(error instanceof ModelError) || !error.balance) throw error
       log.warn('podcast provider balance exhausted; falling back', { route: id, to: fallback.model })
+      if (pin) pin.onFallback = true
       return attempt(fallback)
     }
   }
@@ -249,29 +280,45 @@ export class Llm {
     return reply.text
   }
 
-  /** One tool-loop round on the route, IU's OpenAI dialect (chat, or responses for the GPT-6.1 family). */
-  round(id: PodcastRouteId, messages: WireMessage[], tools: ToolSchema[], maxTokens: number): Promise<RoundReply> {
-    return this.onRoute(id, (route, onUsage, onSent) => {
-      // The tool loop speaks the OpenAI dialects (chat, responses); a Messages tool loop is not built, so a route on
-      // another wire fails here, loudly, instead of sending Claude a body it cannot read.
-      if (route.wire !== 'iu-openai') {
-        throw new ModelError(`route ${id} is on the ${route.wire} wire; the tool loop speaks only iu-openai`)
-      }
-      return this.port.round(
-        {
-          api: usesResponsesApi(route.model) ? 'responses' : 'chat',
+  /**
+   * One tool-loop round on the route: Messages on an `anthropic` route, IU's OpenAI dialect otherwise (chat, or
+   * responses for the GPT-6.1 family). `transcript` is chat-shaped and rendered for the wire that answers this round.
+   * `pin` is the loop's fallback state: a balance failure moves the round to the route's fallback and the rest of the
+   * loop stays there.
+   */
+  round(
+    id: PodcastRouteId,
+    transcript: WireMessage[],
+    tools: ToolSchema[],
+    maxTokens: number,
+    pin?: FallbackPin,
+  ): Promise<RoundReply> {
+    return this.onRoute(
+      id,
+      (route, onUsage, onSent) => {
+        // A route on another wire fails here, loudly, instead of sending a provider a body it cannot read.
+        if (route.wire !== 'iu-openai' && route.wire !== 'anthropic') {
+          throw new ModelError(
+            `route ${id} is on the ${route.wire} wire; the tool loop speaks only iu-openai and anthropic`,
+          )
+        }
+        const base = {
           model: route.model,
           ...(route.effort && route.effort !== 'none' ? { effort: route.effort } : {}),
-          messages,
           tools,
           maxTokens,
           ...this.attribution(),
-        },
-        this.scope.signal,
-        onUsage,
-        onSent,
-      )
-    })
+        }
+        const call: RoundCall =
+          route.wire === 'anthropic'
+            ? { api: 'messages', ...base, ...renderMessages(transcript) }
+            : usesResponsesApi(route.model)
+              ? { api: 'responses', ...base, messages: renderResponses(transcript) }
+              : { api: 'chat', ...base, messages: renderChat(transcript) }
+        return this.port.round(call, this.scope.signal, onUsage, onSent)
+      },
+      pin,
+    )
   }
 }
 
@@ -311,6 +358,88 @@ export async function callAndParse<T>(
 export function writerBudget(visibleTokens: number, attempt: number): number {
   const reasoningHeadroom = 16000
   return Math.min(64000, (visibleTokens + reasoningHeadroom) * attempt)
+}
+
+// ---------------------------------------------------------------------------
+// Transcript rendering
+// ---------------------------------------------------------------------------
+// The loop's transcript is chat-shaped and append-only. Each round renders it for the wire that answers: an assistant
+// turn that came from the same dialect goes back verbatim (`native`), anything else is rebuilt from its chat fields, so a
+// loop that moves to the route's fallback mid-run continues on the other dialect (thinking blocks are dropped there).
+
+const textOf = (m: WireMessage) => (typeof m.content === 'string' ? m.content : '')
+
+function parseArguments(raw: string): unknown {
+  try {
+    return raw ? JSON.parse(raw) : {}
+  } catch {
+    return {}
+  }
+}
+
+/** Chat completions: `native` is dropped; a chat reply is its own native form and passes untouched. */
+export function renderChat(transcript: WireMessage[]): WireMessage[] {
+  return transcript.map((m) => {
+    if (!m.native) return m
+    const { native: _native, ...message } = m
+    return message
+  })
+}
+
+/** Responses: the system message stays (the body lifts it into `instructions`), tool results become `function_call_output`. */
+export function renderResponses(transcript: WireMessage[]): WireMessage[] {
+  return transcript.flatMap((m): WireMessage[] => {
+    if (m.role === 'tool') return [{ type: 'function_call_output', call_id: m.tool_call_id, output: m.content ?? '' }]
+    if (m.role !== 'assistant') return [m]
+    if (m.native?.api === 'responses') return m.native.items as WireMessage[]
+    const text = textOf(m)
+    return [
+      ...(text ? [{ role: 'assistant', content: text }] : []),
+      ...(m.tool_calls ?? []).map((c) => ({
+        type: 'function_call',
+        call_id: c.id,
+        name: c.function.name,
+        arguments: c.function.arguments,
+      })),
+    ]
+  })
+}
+
+/** Messages: the system prompt apart, an assistant turn as content blocks, consecutive results as ONE user turn. */
+export function renderMessages(transcript: WireMessage[]): { system: string; messages: WireMessage[] } {
+  const system: string[] = []
+  const messages: WireMessage[] = []
+  let results: unknown[] | undefined
+  for (const m of transcript) {
+    if (m.role === 'tool') {
+      const result = { type: 'tool_result', tool_use_id: m.tool_call_id, content: m.content ?? '' }
+      if (results) results.push(result)
+      else {
+        results = [result]
+        messages.push({ role: 'user', content: results as never })
+      }
+      continue
+    }
+    results = undefined
+    if (m.role === 'system') system.push(textOf(m))
+    else if (m.role === 'assistant') {
+      const text = textOf(m)
+      const blocks =
+        m.native?.api === 'anthropic'
+          ? m.native.items
+          : [
+              ...(text ? [{ type: 'text', text }] : []),
+              ...(m.tool_calls ?? []).map((c) => ({
+                type: 'tool_use',
+                id: c.id,
+                name: c.function.name,
+                input: parseArguments(c.function.arguments),
+              })),
+            ]
+      messages.push({ role: 'assistant', content: blocks as never })
+    } else messages.push({ role: 'user', content: m.content ?? '' })
+  }
+  return { system: system.join('\n\n'), messages }
 }
 
 // ---------------------------------------------------------------------------
@@ -367,21 +496,39 @@ async function runTool(tool: ToolDef, call: ToolCallRequest): Promise<{ content:
 const hasToolCalls = (reply: RoundReply) => Boolean(reply.message.tool_calls && reply.message.tool_calls.length > 0)
 
 /**
+ * A Messages reply is usable only when the model finished its turn (`stop`) or asked for tools (`tool_calls`): a
+ * `max_tokens` stop is a half-written answer or a cut tool call, a refusal or a pause is no answer. Chat and responses
+ * replies are judged by their content alone (their `length` stop is retried below, a partial answer is kept).
+ */
+const finished = (reply: RoundReply) =>
+  reply.message.native?.api !== 'anthropic' || reply.finishReason === 'stop' || reply.finishReason === 'tool_calls'
+
+const usable = (reply: RoundReply) =>
+  (hasToolCalls(reply) || (reply.message.content ?? '').trim() !== '') && finished(reply)
+
+/**
  * One round, repeated once with a doubled budget when it was cut for budget reasons: a terminal reply with empty
  * content, or ANY round whose `finish_reason` is `length` (a tool call can be cut mid-`arguments` too). Throws when the
- * retry is still empty with no tool call, instead of parsing "" downstream.
+ * retry is still empty with no tool call, instead of parsing "" downstream. A Messages reply that did not finish is
+ * never taken as it is: it is retried, and the retry throws if it still has not.
  */
-async function roundWithRetry(llm: Llm, params: ToolLoopParams, messages: WireMessage[], round: number) {
+async function roundWithRetry(
+  llm: Llm,
+  params: ToolLoopParams,
+  messages: WireMessage[],
+  round: number,
+  pin: FallbackPin,
+) {
   const schemas = params.tools.map(({ name, description, parameters }) => ({ name, description, parameters }))
-  const first = await llm.round(params.route, messages, schemas, params.maxCompletionTokens)
-  if (first.finishReason !== 'length' && (hasToolCalls(first) || (first.message.content ?? '').trim())) return first
+  const first = await llm.round(params.route, messages, schemas, params.maxCompletionTokens, pin)
+  if (first.finishReason !== 'length' && usable(first)) return first
   log.warn('podcast tool loop round truncated or empty, retrying with doubled budget', {
     stage: params.stage,
     round,
     finishReason: first.finishReason ?? null,
   })
-  const retried = await llm.round(params.route, messages, schemas, params.maxCompletionTokens * 2)
-  if (hasToolCalls(retried) || (retried.message.content ?? '').trim()) return retried
+  const retried = await llm.round(params.route, messages, schemas, params.maxCompletionTokens * 2, pin)
+  if (usable(retried)) return retried
   throw new Error(
     `Podcast ${params.stage} tool loop round ${round} returned empty content (finish_reason=${retried.finishReason ?? 'unknown'}) after retry with doubled budget`,
   )
@@ -392,8 +539,11 @@ async function roundWithRetry(llm: Llm, params: ToolLoopParams, messages: WireMe
  * cap (rules/agent-limits.md). The assistant message is echoed back EXACTLY as received, never rebuilt from parsed
  * fields: a provider that carries state in opaque fields (Gemini's `thought_signature`, DeepSeek's reasoning) fails
  * the next request when it does not round-trip, and an edited history breaks the prompt cache. Tool results are
- * appended, the head is never rewritten. On `/v1/responses` the output items are echoed and results go back as
- * `function_call_output`.
+ * appended, the head is never rewritten. The transcript stays chat-shaped; on `/v1/responses` the output items and on
+ * Messages the content blocks (thinking signatures included) ride along as `native` and are echoed verbatim to their own
+ * dialect (`Llm.round` renders per wire). A balance failure mid-loop moves that round to the route's fallback and the
+ * loop STAYS on it: the transcript keeps going, rendered for the fallback's dialect with the Claude thinking blocks
+ * dropped, no tool is run twice, and a Claude route is not asked again with turns it never wrote.
  */
 export async function runToolLoop(llm: Llm, params: ToolLoopParams): Promise<ToolLoopResult> {
   const toolsByName = new Map(params.tools.map((t) => [t.name, t] as const))
@@ -402,12 +552,12 @@ export async function runToolLoop(llm: Llm, params: ToolLoopParams): Promise<Too
     { role: 'user', content: params.userContent },
   ]
   const calls: ToolCallRecord[] = []
+  const pin: FallbackPin = { onFallback: false }
   for (let round = 1; ; round++) {
-    const { message, raw } = await roundWithRetry(llm, params, messages, round)
+    const { message, raw } = await roundWithRetry(llm, params, messages, round, pin)
     const toolCalls = message.tool_calls ?? []
     if (toolCalls.length === 0) return { content: message.content ?? '', calls, rounds: round }
-    if (raw) messages.push(...raw)
-    else messages.push(message)
+    messages.push(raw ? { ...message, native: { api: 'responses', items: raw } } : message)
     for (const call of toolCalls) {
       const tool = toolsByName.get(call.function.name)
       const result = tool
@@ -417,11 +567,7 @@ export async function runToolLoop(llm: Llm, params: ToolLoopParams): Promise<Too
             record: { tool: call.function.name, args: call.function.arguments, ok: false, ms: 0 },
           }
       calls.push(result.record)
-      messages.push(
-        raw
-          ? { type: 'function_call_output', call_id: call.id, output: result.content }
-          : { role: 'tool', tool_call_id: call.id, content: result.content },
-      )
+      messages.push({ role: 'tool', tool_call_id: call.id, content: result.content })
     }
     if (params.shouldStop?.()) return { content: '', calls, rounds: round }
   }

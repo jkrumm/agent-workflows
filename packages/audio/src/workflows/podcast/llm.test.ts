@@ -652,14 +652,15 @@ describe('Llm and the gateway', () => {
     expect(port.chats[1]).not.toHaveProperty('attribution')
   })
 
-  test('a chat call follows the route wire; a tool round on a wire other than iu-openai fails before it is sent', async () => {
+  test('a chat call follows the route wire; a tool round on a wire other than iu-openai or anthropic fails before it is sent', async () => {
     const port = new FakePort([{ text: 'x', stop: 'complete' }])
     const { llm } = llmFor(port, route({ wire: 'anthropic' }))
     await llm.call({ route: 'podcast.write', systemPrompt: 's', userContent: 'u', maxCompletionTokens: 10, stage: 't' })
     expect(port.chats[0]?.wire).toBe('anthropic')
-    const error = await rejected(llm.round('podcast.research', [{ role: 'user', content: 'go' }], [], 10))
+    const other = llmFor(port, route({ wire: 'opencode' })).llm
+    const error = await rejected(other.round('podcast.research', [{ role: 'user', content: 'go' }], [], 10))
     expect(error).toBeInstanceOf(ModelError)
-    expect(error.message).toContain('anthropic wire')
+    expect(error.message).toContain('opencode wire')
     expect(port.rounds).toHaveLength(0)
   })
 })
