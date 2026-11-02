@@ -171,6 +171,7 @@ describePg(suite, () => {
     await outbox.flush()
     expect(outbox.lastError()).toBeNull()
     expect(ledger.stats()).toMatchObject({ unsynced: 0, quarantined: 0 })
+    expect(s.logger.lines.filter((line) => line.level !== 'info')).toEqual([])
     expect(await record(id)).toMatchObject({ repo: null, project_raw: null, workspace: null })
     ledger.close()
     dir.remove()
@@ -374,6 +375,7 @@ describePg(suite, () => {
       const headers = { ...init.headers, 'x-agw-project': 'agent-workflows', 'x-agw-workspace': 'private' }
       const skipped = await gw.call('/openai/v1/images/generations', {
         ...init,
+        token: API_SECRET,
         headers: { ...headers, 'x-agw-usage': 'caller' },
       })
       await skipped.text()
@@ -412,7 +414,7 @@ describePg(suite, () => {
       const id = response.headers.get('x-agw-request-id') ?? ''
       await until(async () => (await record(id)) !== undefined && (await picksOf(id)).length === 1)
       expect(await picksOf(id)).toMatchObject([{ picked: 'iu-api', reason: 'forced' }])
-      expect(await record(id)).toMatchObject({ billing: 'api_key', lane_detail: { fallback: 'forced' } })
+      expect(await record(id)).toMatchObject({ billing: 'api_key', lane_detail: { fallback: null } })
       expect(gw.ledger.stats()).toMatchObject({ quarantined: 0 })
       await gw.close()
       anthropic.stop()

@@ -87,9 +87,9 @@ const recordParams = (r: RecordRow): unknown[] => [
   r.duration_ms,
   r.cost_reported_usd,
   JSON.stringify(r.raw),
-  r.repo,
-  r.project_raw,
-  r.workspace,
+  r.repo ?? null,
+  r.project_raw ?? null,
+  r.workspace ?? null,
 ]
 
 const pickParams = (p: PickRow): unknown[] => [p.ts, p.caller, p.session, p.picked, p.reason, p.machine, p.request_id]

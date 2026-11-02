@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { BEARER_CHALLENGE } from '@agent-workflows/host/auth'
-import { callerAuth } from '@agent-workflows/host/door-tokens'
+import { callerAuth, PLATFORM_CALLER } from '@agent-workflows/host/door-tokens'
 import { BALANCE_MARKER, isBalanceFailure, resolveModelAlias } from '@agent-workflows/routes/pricing'
 import { chargeOf, type RequestShape } from './charge.ts'
 import type { IuUpstream } from './config.ts'
@@ -28,6 +28,10 @@ const HANG_GUARD_MS = 30 * 60 * 1000
 const MESSAGES_PATH = '/anthropic/v1/messages'
 const COUNT_TOKENS_PATH = '/anthropic/v1/messages/count_tokens'
 const MODELS_PATH = '/anthropic/v1/models'
+/** One path segment: the personal key must not carry an encoded slash to IU. */
+const MODEL_ID = /^[A-Za-z0-9._:-]+$/
+/** The media agw prices itself, per minute, per character or per image. */
+const CALLER_PRICED_PREFIXES = ['/openai/v1/images/', '/openai/v1/audio/', '/gemini/v1beta/', '/replicate/v1/'] as const
 /** Statuses a credit org's balance refusal can carry; only these are read before they are answered. */
 const REFUSAL_STATUSES: ReadonlySet<number> = new Set([400, 402, 503])
 /** A `Response` refuses a body on these. */
@@ -216,8 +220,11 @@ function attributionOf(inbound: Headers): Attribution {
   }
 }
 
-/** The caller writes this request's row itself, because only it can price it. Honoured off `/anthropic` only. */
-const callerWritesUsage = (inbound: Headers): boolean => inbound.get('x-agw-usage')?.trim().toLowerCase() === 'caller'
+/** agw writes this request's row itself, because only it can price it. Any other caller or path keeps the gateway's row. */
+const callerWritesUsage = (x: Exchange): boolean =>
+  x.caller === PLATFORM_CALLER &&
+  CALLER_PRICED_PREFIXES.some((prefix) => x.path.startsWith(prefix)) &&
+  x.inbound.get('x-agw-usage')?.trim().toLowerCase() === 'caller'
 
 /** The caller asked for IU itself; the credit pools are skipped as for a Claude-Code-shaped request. */
 const callerForcesIu = (inbound: Headers): boolean => inbound.get('x-agw-upstream')?.trim().toLowerCase() === 'iu'
@@ -246,7 +253,8 @@ export function createProxy(options: ProxyOptions): GatewayProxy {
   const routeOf = (pathname: string, search: string): Route | null => {
     if (pathname === MESSAGES_PATH) return { kind: 'messages', countTokens: false }
     if (pathname === COUNT_TOKENS_PATH) return { kind: 'messages', countTokens: true }
-    if (pathname === MODELS_PATH || pathname.startsWith(`${MODELS_PATH}/`)) {
+    const modelId = pathname.startsWith(`${MODELS_PATH}/`) ? pathname.slice(MODELS_PATH.length + 1) : null
+    if (pathname === MODELS_PATH || (modelId !== null && MODEL_ID.test(modelId))) {
       return { kind: 'models', url: `${iu.anthropicBase}${pathname.slice('/anthropic'.length)}${search}` }
     }
     const iuRoutes: [prefix: string, base: string, system: string][] = [
@@ -291,6 +299,19 @@ export function createProxy(options: ProxyOptions): GatewayProxy {
     return fetch(target.url, init).finally(() => x.guard.disarm())
   }
 
+  /** What the response reported, with a row or without one. Cost stays with the row: it is what the meter counted. */
+  const spanUsage = (x: Exchange, tee: TeeResult): void => {
+    const tokens = tee.tokens
+    const model = tee.model ?? x.model
+    x.span.set({
+      'gen_ai.usage.input_tokens': tokens?.input ?? 0,
+      'gen_ai.usage.output_tokens': tokens?.output ?? 0,
+      'agw.gateway.cache_read_tokens': tokens?.cacheRead ?? 0,
+      'agw.gateway.cache_write_tokens': (tokens?.cacheWrite5m ?? 0) + (tokens?.cacheWrite1h ?? 0),
+      ...(model === null ? {} : { 'gen_ai.response.model': model }),
+    })
+  }
+
   /** The row and the charge: row first, so the meter's `rowAt` is the row's instant. Never throws into a stream. */
   const writeRow = (
     x: Exchange,
@@ -330,7 +351,8 @@ export function createProxy(options: ProxyOptions): GatewayProxy {
         step: x.inbound.get('x-agw-step'),
         purpose: x.inbound.get('x-agw-purpose'),
         pool: pick.pool,
-        fallback: creditPool ? null : pick.reason,
+        // `forced` is the caller's choice, not a fallback; `gateway_picks` keeps the reason.
+        fallback: creditPool || pick.reason === 'forced' ? null : pick.reason,
         ...(cost.estimateUsd === null ? {} : { costEstimated: true, costEstimatedUsd: cost.estimateUsd }),
       },
       run_id: x.inbound.get('x-agw-run-id'),
@@ -345,11 +367,6 @@ export function createProxy(options: ProxyOptions): GatewayProxy {
       raw: { path: x.path, status, ended, usageReported: tokens !== null, usageComplete: tee.complete },
     }
     x.span.set({
-      'gen_ai.usage.input_tokens': row.input_tokens,
-      'gen_ai.usage.output_tokens': row.output_tokens,
-      'agw.gateway.cache_read_tokens': row.cache_read_tokens,
-      'agw.gateway.cache_write_tokens': row.cache_write_5m_tokens + row.cache_write_1h_tokens,
-      ...(model === null ? {} : { 'gen_ai.response.model': model }),
       ...(chargeUsd === null ? {} : { 'agw.cost.usd': chargeUsd }),
       ...(cost.estimateUsd === null ? {} : { 'agw.cost.estimated': true }),
     })
@@ -389,6 +406,7 @@ export function createProxy(options: ProxyOptions): GatewayProxy {
     return (tee: TeeResult, ended: Ended): void => {
       const failed = input.status >= 400 || ended !== 'complete' || tee.streamError
       close(x, input.status, failed, () => {
+        spanUsage(x, tee)
         if (input.record) writeRow(x, { ...input, tee, ended })
       })
     }
@@ -734,7 +752,7 @@ export function createProxy(options: ProxyOptions): GatewayProxy {
       const parsed = bytes === undefined ? null : parseBody(bytes, request.headers.get('content-type'), anthropic)
       prepare(x, bytes, parsed, anthropic)
       if (route.kind === 'models') return servePassthrough(x, route.url, false)
-      if (route.kind === 'iu') return servePassthrough(x, route.url, !callerWritesUsage(x.inbound))
+      if (route.kind === 'iu') return servePassthrough(x, route.url, !callerWritesUsage(x))
       const picking = {
         forceIu: callerForcesIu(request.headers),
         claudeCodeShaped: isClaudeCodeShaped(request.headers, parsed),
