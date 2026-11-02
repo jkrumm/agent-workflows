@@ -253,6 +253,12 @@ agw eval mine review --label 20 --yes          # label the next 20 candidates (2
 agw eval mine review --label 50 --yes --relabel-errors
 ```
 
+Measured 2026-11-02 on 150 candidates: $0.068 a candidate ($0.051 Sonnet on the credit, $0.018 Terra on the IU key),
+23 % accepted (35 of 150; rejected: both no 76, `b` no 28, no overlap 8, `a` no 3). **Label in batches of at most 60**
+until `eval.mine` has 20 done runs: below that the runaway cap applies its static $5 ceiling per run, and a 147-candidate
+run was stopped in its final `cases` step at $10.12 (every label was already appended; a mine-only run rebuilt the
+cases). Size a batch to the gateway's `evalAvailableUsd` first.
+
 | Flag | Default | Does |
 |-|-|-|
 | `--label N` | 0 | Label the next N unlabelled candidates, taken from a seeded shuffle, so the owner sample is random |
