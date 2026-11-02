@@ -10,7 +10,9 @@ export type RunRecord = {
   tokens: TokenCounts
   /**
    * The priced usage of the run's steps and of every descendant run's steps (by `parent_id`, each step once), so a
-   * root carries its tree's total; null only when no step was priced. A lower bound while `unpricedCalls > 0`.
+   * root carries its tree's total. 0 when every step is free, the sum of the known costs when any step has a
+   * positive one, null when none does and some step's cost is unknown (null: a call nobody priced). A lower bound
+   * while `unpricedCalls > 0`.
    */
   cost: number | null
   /** Unpriced calls of the run's steps and its descendants'. */
@@ -69,7 +71,11 @@ export function recordMiddleware(options: {
              union all
              select c.id from ${db.runs} c join tree on c.parent_id = tree.id
            ), t as (
-             select sum(st.cost) as cost, coalesce(sum(st.unpriced_calls), 0) as unpriced_calls
+             select case
+                 when coalesce(sum(st.cost), 0) > 0 then sum(st.cost)
+                 when count(*) filter (where st.cost is null) > 0 then null
+                 else 0 end as cost,
+               coalesce(sum(st.unpriced_calls), 0) as unpriced_calls
              from ${db.steps} st join tree on st.run_id = tree.id
            )
            update ${db.runs} r set trace_id = $2,

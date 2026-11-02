@@ -18,7 +18,7 @@ export type TokenCounts = Required<Tokens>
 /**
  * What a step body or agent host reports; summed per step and persisted on the step row. A capability's usage
  * (`@agent-workflows/capabilities`) is assignable as is. `cost` null or absent means unpriced: counted in
- * `unpricedCalls`, never summed as 0.
+ * `unpricedCalls`, never summed as 0. A step that reports no usage at all is free, not unknown: its cost is 0.
  */
 export type Usage = {
   /** The canonical model id (`canonicalModel` in `@agent-workflows/routes`), not the provider's echo. */
@@ -31,7 +31,10 @@ export type Usage = {
   toolCalls?: number
 }
 
-/** `cost` sums the priced reports only; `unpricedCalls > 0` marks it as a lower bound. */
+/**
+ * `cost` sums the priced reports only; `unpricedCalls > 0` marks it as a lower bound. null: unknown (every report
+ * was a call nobody priced); a step with no report at all is 0 (known free).
+ */
 export type ModelUsage = { tokens: TokenCounts; cost: number | null; toolCalls: number; unpricedCalls: number }
 
 /**
@@ -361,8 +364,9 @@ export type RunSnapshot = {
   output: Json | null
   error: RunError | null
   /**
-   * Sum of the priced usage of the run and its descendant runs; null when nothing was priced. A lower bound while
-   * `unpricedCalls > 0`.
+   * Sum of the priced usage of the run and its descendant runs: 0 when every step was free, null when no step has
+   * a positive known cost and some step's cost is unknown (a call nobody priced). A lower bound while
+   * `unpricedCalls > 0`. A record written before cost 0 meant "free" reads null for a free run: history cannot tell.
    */
   cost: number | null
   unpricedCalls: number

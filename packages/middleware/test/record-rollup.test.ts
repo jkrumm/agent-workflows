@@ -111,6 +111,19 @@ const mixed = defineWorkflow({
   },
 })
 
+/** Only free steps (no usage reported): known free. */
+const free = defineWorkflow({
+  id: 'roll.free',
+  version: 'v1',
+  input: empty,
+  output: empty,
+  async run(ctx) {
+    await ctx.step('a', () => 1)
+    await ctx.step('b', () => 2)
+    return {}
+  },
+})
+
 const leaf = defineWorkflow({
   id: 'roll.leaf',
   version: 'v1',
@@ -176,14 +189,19 @@ describe('run record cost roll-up', () => {
     }
   })
 
-  test('null only when no part is priced; otherwise the known parts sum, unpriced calls rolled up', async () => {
+  test('0 when every step is free; the known costs sum; null only when nothing is positive and some cost is unknown', async () => {
     const platform = testPlatform(db.schema)
-    rt = testRuntime({ schema: db.schema, workflows: [mixed, leaf], middleware: platform.middleware })
+    rt = testRuntime({ schema: db.schema, workflows: [mixed, leaf, free], middleware: platform.middleware })
     await rt.open()
     try {
+      const allFree = await rt.start(free, {}, { purpose: 'prod' })
       const none = await rt.start(mixed, { priced: false }, { purpose: 'prod' })
       const some = await rt.start(mixed, { priced: true }, { purpose: 'prod' })
-      await Promise.all([rt.wait(none.runId), rt.wait(some.runId)])
+      await Promise.all([rt.wait(allFree.runId), rt.wait(none.runId), rt.wait(some.runId)])
+      const freeRow = await recorded(allFree.runId)
+      expect(Number(freeRow.cost)).toBe(0)
+      expect(freeRow.cost).not.toBeNull()
+      expect(freeRow.unpriced_calls).toBe(0)
       expect(await recorded(none.runId)).toMatchObject({ cost: null, unpriced_calls: 1 })
       const someRow = await recorded(some.runId)
       expect(Number(someRow.cost)).toBeCloseTo(0.5, 12)

@@ -144,7 +144,7 @@ describe('usage outbox', () => {
       expect(usage.stored.size).toBe(0)
       const { rows: marked } = await sql.pool.query(
         `select count(*)::int as n from "${db.schema}".steps
-         where argo_synced_at is not null and (tokens_input > 0 or cost is not null)`,
+         where argo_synced_at is not null and (tokens_input > 0 or cost > 0)`,
       )
       expect(marked[0]?.n).toBe(0)
 
@@ -155,7 +155,7 @@ describe('usage outbox', () => {
       await until(async () => {
         const { rows } = await sql.pool.query(
           `select count(*)::int as n from "${db.schema}".steps
-           where argo_synced_at is null and (tokens_input > 0 or cost is not null)`,
+           where argo_synced_at is null and (tokens_input > 0 or cost > 0)`,
         )
         return rows[0]?.n === 0
       }, 'every step with usage marked')

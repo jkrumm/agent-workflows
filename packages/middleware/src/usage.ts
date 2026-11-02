@@ -775,7 +775,7 @@ export class UsageOutbox {
          select s.run_id, s.step_id from ${db.steps} s join ${db.runs} r on r.id = s.run_id
          where s.argo_synced_at is null and s.argo_error is null and s.status in ('done', 'failed', 'cancelled')
            and (s.tokens_input > 0 or s.tokens_output > 0 or s.tokens_cache_read > 0 or s.tokens_cache_write > 0
-             or s.tokens_reasoning > 0 or s.cost is not null)
+             or s.tokens_reasoning > 0 or s.cost > 0)
            and (s.argo_claimed_until is null or s.argo_claimed_until < now())
            and r.status in ('done', 'failed', 'cancelled') and r.post_hooks_at is not null
          order by s.finished_at, s.run_id, s.step_id

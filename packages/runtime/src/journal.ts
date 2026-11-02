@@ -732,7 +732,10 @@ export class Journal {
     }
   }
 
-  /** Mean recorded cost of the latest `limit` done drivable runs of a workflow, eval cases included (the estimate). */
+  /**
+   * Mean recorded cost of the latest `limit` done drivable runs of a workflow, eval cases included (the estimate).
+   * A run with an unknown cost (null) is left out; a free run (0) counts.
+   */
   async recentCost(workflow: string, limit: number): Promise<{ runs: number; meanCost: number | null }> {
     const { rows } = await this.query<{ n: number; mean: string | null }>(
       `select count(*)::int as n, avg(cost)::text as mean from (

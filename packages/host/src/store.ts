@@ -27,7 +27,10 @@ export type StoredRun = {
   status: RunStatus
   output?: unknown
   error?: { kind: string; message: string }
-  /** The run record's sums over the run's own steps; meaningful once `postHooksDone && !postHooksFailed`. */
+  /**
+   * The run record's sums over the run's own steps; meaningful once `postHooksDone && !postHooksFailed`. `cost` 0:
+   * every step free; null: unknown (a call nobody priced, no positive known cost).
+   */
   cost: number | null
   unpricedCalls: number
   /** The post hooks (the run record among them) were delivered or given up on. */

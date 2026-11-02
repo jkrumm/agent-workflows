@@ -477,7 +477,10 @@ export class Runtime {
     return this.journal.runByKey(workflow, idempotencyKey)
   }
 
-  /** The mean cost of the latest `limit` done runs of a workflow: the base of an eval estimate. */
+  /**
+   * The mean cost of the latest `limit` done runs of a workflow: the base of an eval estimate. A run whose cost is
+   * unknown (null) is left out; a free run (0) counts.
+   */
   recentCost(workflow: string, limit = 50): Promise<{ runs: number; meanCost: number | null }> {
     return this.journal.recentCost(workflow, limit)
   }
