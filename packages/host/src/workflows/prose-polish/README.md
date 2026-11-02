@@ -31,5 +31,5 @@ together (legacy's sum: an unpriced call counts 0 unless neither was priced, the
   answer keeps the original with `reason` (`writer returned empty text`, `writer failed: …`), as legacy's `keptReason`; a
   failed call, an unreadable voice guide or a failed review fails the run, as legacy threw.
 - **Route.** `prose.write` (`packages/routes/src/table/prose.ts`): `iu-openai`, DeepSeek flash, effort high,
-  32k output (legacy's `prose_write` was Opus 5.5 on `iu-anthropic`; DeepSeek only since 2026-10-30, owner direction). The shared balance fallback applies.
+  32k output (legacy's `prose_write` was Opus 5.5 on Messages, the wire now named `anthropic`; DeepSeek only since 2026-10-30, owner direction). The shared balance fallback applies.
 - No agent definitions: no agent step runs.

@@ -1,13 +1,13 @@
 import { chmodSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { type GatewayConfig, gatewayConfig } from '@agent-workflows/capabilities'
+import type { GatewayBases } from '@agent-workflows/capabilities'
 import { fallbackRoute, isBalanceFailure, type ResolvedRoute, resolveRoute } from '@agent-workflows/routes'
 import { defineWorkflow, type StepScope, type Usage } from '@agent-workflows/runtime'
 import { z } from 'zod'
 import type { HostWorkflow } from '../../operations.ts'
 import { killTree } from './exec.ts'
-import { ocrSwitchOn, type ReviewPorts } from './git.ts'
+import { ocrGateway, ocrSwitchOn, type ReviewPorts } from './git.ts'
 import { escapeName } from './util.ts'
 
 // OpenCodeReview (`ocr`, alibaba/open-code-review): one more review input, never a gate. Cross-file consistency,
@@ -74,7 +74,7 @@ export function modeArgs(input: OcrInputValue): string[] {
  */
 export function ocrTransport(
   route: ResolvedRoute,
-  gateway: Pick<GatewayConfig, 'anthropicBase' | 'openaiBase'>,
+  gateway: Pick<GatewayBases, 'anthropicBase' | 'openaiBase'>,
 ): { protocol: 'anthropic' | 'openai' | 'openai-responses'; url: string } {
   if (route.wire === 'anthropic') return { protocol: 'anthropic', url: gateway.anthropicBase }
   return { protocol: route.model.startsWith('gpt-') ? 'openai-responses' : 'openai', url: gateway.openaiBase }
@@ -223,10 +223,10 @@ export async function runOcr(
   if (!ocrSwitchOn(ports.env)) return { block: skipped('AGW_REVIEW_OCR=0'), ran: false }
   const bin = ports.which('ocr')
   if (!bin) return { block: skipped('ocr not found on PATH'), ran: false }
-  // `ocr` talks to the gateway with the host's token: its calls land on the gateway's usage rows.
-  let gateway: GatewayConfig
+  // `ocr` talks to the gateway with its own door token (`AGW_GATEWAY_TOOL_TOKEN`), never the host's API secret.
+  let gateway: ReturnType<typeof ocrGateway>
   try {
-    gateway = gatewayConfig(ports.env)
+    gateway = ocrGateway(ports.env)
   } catch (error) {
     return {
       block: skipped(`gateway unavailable: ${error instanceof Error ? error.message : String(error)}`),

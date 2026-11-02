@@ -49,9 +49,15 @@ describe('factory-classify workflow', () => {
     expect(status).toBe(200)
     expect(body.status).toBe('done')
     expect(body.output).toEqual(verdict)
-    expect(
-      t.iu.requests.filter((r) => String((r.body.messages as Body[])[0]?.content).includes('argo health')),
-    ).toHaveLength(1)
+    const sent = t.iu.requests.filter((r) => String((r.body.messages as Body[])[0]?.content).includes('argo health'))
+    expect(sent).toHaveLength(1)
+    // The workflow step's scope reached the wire as attribution.
+    expect(Object.fromEntries(sent[0]?.headers ?? [])).toMatchObject({
+      'x-agw-run-id': body.runId,
+      'x-agw-session': body.runId,
+      'x-agw-workflow': 'factory-classify',
+      'x-agw-step': 'classify',
+    })
   })
 
   test('the CLI reads the Issue JSON from stdin as the one `issue` property', async () => {

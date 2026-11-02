@@ -42,6 +42,25 @@ const plain = (body: unknown) =>
     }),
   )
 
+test('a direct call is attributed at the gateway as its own one-step run', async () => {
+  const before = t.iu.requests.length
+  const response = await t.call('/llm/title', {
+    body: { text: 'Attributed numbers' },
+    headers: { 'x-agw-purpose': 'test' },
+  })
+  expect(response.status).toBe(200)
+  const runId = response.headers.get(RUN_ID_HEADER) as string
+  const sent = t.iu.requests.slice(before)
+  expect(sent).toHaveLength(1)
+  expect(Object.fromEntries(sent[0]?.headers ?? [])).toMatchObject({
+    'x-agw-session': runId,
+    'x-agw-run-id': runId,
+    'x-agw-workflow': 'cap.llm.title',
+    'x-agw-step': 'call',
+    'x-agw-purpose': 'test',
+  })
+})
+
 test('a direct llm.title call answers as before and leaves a done cap.llm.title run that reaches Argo', async () => {
   const response = await t.call('/llm/title', {
     body: { text: 'Quarterly numbers' },

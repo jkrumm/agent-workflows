@@ -29,7 +29,7 @@ const result = await runtime.wait(runId)
 
 | Call | Kind | Notes |
 |-|-|-|
-| `ctx.step(id, fn, opts?)` | code | `fn({ key, attempt, signal, addUsage, progress })` |
+| `ctx.step(id, fn, opts?)` | code | `fn({ key, attempt, signal, addUsage, attribution, progress })`; `attribution` (run, root, workflow, step, purpose, project, workspace, traceparent) is what a capability call passes on to the gateway: hand the scope to `registry.call` as is |
 | `ctx.effect(id, fn(key, scope), opts?)` | effect | `key = ${runId}:${stepId}`; pass it to the outside API, the only thing that makes a re-run after an in-doubt kill a no-op |
 | `ctx.agent(id, spec)` | agent | through the `AgentHost` port; output validated against `spec.output` |
 | `ctx.score(id, value)` | code | the workflow's `scorer` on `value` (`source: inline`); the verdict is also kept on the run (`runs.scores.gates[id]`). A resume returns the journaled verdict, never scores again |

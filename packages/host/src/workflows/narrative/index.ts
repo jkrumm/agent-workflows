@@ -121,7 +121,7 @@ export function createNarrative(deps: NarrativeDeps): HostWorkflow[] {
         return unchanged('no new commits or sessions', resolveRoute('narrative', env).model)
       }
 
-      const composed = await ctx.step('compose', ({ addUsage, signal }) =>
+      const composed = await ctx.step('compose', ({ addUsage, signal, attribution }) =>
         registry.call(
           'narrative.compose',
           {
@@ -135,7 +135,7 @@ export function createNarrative(deps: NarrativeDeps): HostWorkflow[] {
             sessionsText: sessions.text,
             sessionCount: sessions.count,
           },
-          { addUsage, signal },
+          { addUsage, signal, attribution },
         ),
       )
       if (!composed.changed || !composed.sections) {

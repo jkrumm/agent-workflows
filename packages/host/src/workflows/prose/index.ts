@@ -83,7 +83,7 @@ export function createProseWorkflows(deps: ProseDeps): HostWorkflow[] {
       // A missing voice guide fails before any spend: the caller would have nothing to write in.
       const voicePath = await ctx.step('voice', () => checkVoiceGuide(env))
       const register = input.register ?? DEFAULT_REGISTER[input.medium]
-      const { model, ...reviewed } = await ctx.step('review', ({ addUsage, signal }) =>
+      const { model, ...reviewed } = await ctx.step('review', ({ addUsage, signal, attribution }) =>
         registry.call(
           'prose.critique',
           {
@@ -96,7 +96,7 @@ export function createProseWorkflows(deps: ProseDeps): HostWorkflow[] {
             ...(input.brief ? { brief: input.brief } : {}),
             ...(input.context ? { context: input.context } : {}),
           },
-          { addUsage, signal },
+          { addUsage, signal, attribution },
         ),
       )
       // The brief is a journaled step: its fence token is random, so a resumed run must read it back, not rebuild it.

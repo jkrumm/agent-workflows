@@ -59,4 +59,4 @@ Model and rate: `packages/routes/src/table/prose.ts` (the only home of model ids
 | Route | Source seat | Wire |
 |-|-|-|
 | `prose.review` | `prose_review` (SINGLE_SHOT); the capability `prose.review` calls it and refuses an Anthropic route | iu-openai |
-| `prose.write` | `prose_write` (iu-openai, DeepSeek flash, effort high, 32k output); used by `prose-polish` only, never by this workflow | iu-anthropic |
+| `prose.write` | `prose_write` (iu-openai, DeepSeek flash, effort high, 32k output); used by `prose-polish` only, never by this workflow | iu-openai |
