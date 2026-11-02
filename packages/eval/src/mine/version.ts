@@ -1,7 +1,6 @@
 /** Bump on any filter change: a candidate or case names the miner that produced it. */
 export const MINER_VERSION = '2026-11-02.1'
 
-export const DEFAULT_OWNER_EMAILS = ['jkrumm@pm.me', 'jokrumm@gmail.com', 'jkrumm@users.noreply.github.com']
 /** Repos under the root that are not code the owner reviews. Names starting with `.` are skipped as well. */
 export const EXCLUDED_REPOS = ['dispatch-scratch', 'brain', 'dotfiles-private']
 

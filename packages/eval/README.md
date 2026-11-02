@@ -240,7 +240,8 @@ What the bars decide:
 ## Ground truth miner
 
 `agw eval mine review` builds the review ground truth from the owner's own fix history (`docs/review-v2.md` §Ground
-truth). Mining spends nothing; labelling spends eval credit and needs `--yes`. Run it with `AGW_PURPOSE=eval`.
+truth). Mining spends nothing; labelling spends eval credit and needs `--yes`. Run it with `AGW_PURPOSE=eval`. The command
+is `mutating` (off a TTY it needs `--commit`), and one run at a time (`concurrency: 1`): two would race on the files.
 
 ```
 agw eval mine review                           # mine: candidates, controls, report
@@ -266,13 +267,17 @@ agw eval mine review --label 50 --yes --relabel-errors
 | `labels.jsonl` | appended as each candidate finishes | both seats' answers (`GtLabelRecord`); the resume point |
 | `cases.jsonl` | rebuilt by every run | accepted bugs and clean controls (`GtCase`), what `agw eval run review` reads |
 | `rejected.jsonl` | rebuilt by every run | candidates the labelers did not accept, with the reason |
-| `report.json` | by every run | the funnel and the acceptance and rejection counts; no code |
+| `report.json` | by every run | the funnel and the acceptance and rejection counts; no code. After an incomplete mine: `incomplete: true` and the repos that failed, with their errors |
+| `owner.json` | by the owner, read only | `{ "emails": [...] }`: the author emails that count as the owner's |
+
+Every file is written to a temp file and renamed, so a reader or a crash sees the old file or the new one.
 
 **Mining** (`packages/eval/src/mine/`, pure over an injected `Exec`; bump `MINER_VERSION` on any filter change):
 
 - **Repos:** every direct child of `$HOME/SourceRoot` with a `.git` directory, minus `dispatch-scratch`, `brain`,
   `dotfiles-private` and dot names. Linked worktrees and nested repos are not walked. History is `HEAD`'s.
-- **Owner:** commits whose author email is in the owner set; merges never count.
+- **Owner:** commits whose author email is in the owner set; merges never count. The set is private, so it is not in
+  the source: `AGW_EVAL_OWNER_EMAILS` (comma separated) over `owner.json`. Mining refuses, naming both, without one.
 - **Fix commits:** the owner's `fix`, `revert` and `Revert ` subjects, minus any whose scope or subject names deps, ci,
   docs, release, style, lint, typo, format or fmt.
 - **SZZ:** the removed and changed lines of each fix (`git show -U0`), minus blank lines, comment-only lines,
@@ -282,8 +287,8 @@ agw eval mine review --label 50 --yes --relabel-errors
 - **Kept introducing commits:** the owner's, not a merge, at most 182 days before the fix by author date, at most 1,500
   changed lines. One candidate per (fix, introducing commit).
 - **Controls:** owner commits at least 84 days old that change a code file, have at most 1,500 changed lines, and that
-  no fix commit's blame landed on at all (the blame is taken before the owner, age and size filters). At most 15 % have
-  a docs, test, refactor or chore subject. Only the owner's fixes count as fix commits, so a later fix by someone else
+  no fix commit's blame landed on at all (the blame is taken before the owner, age and size filters). Docs, test,
+  refactor and chore commits are at most 15 % of the picked sample, also when logic commits run short. Only the owner's fixes count as fix commits, so a later fix by someone else
   does not disqualify a control.
 - **Split:** `dev` when the first 8 hex of `sha256(id) / 2^32` is below `DEV_SHARE`, else `test`; bugs and controls alike.
 - **Acceptance:** both seats say defect and place it in the same file within `LOCATION_SLACK` lines of each other.
@@ -295,10 +300,16 @@ Published SZZ studies put these near 17 % of fixes. The report states the loss; 
 on bugs whose fix removed or changed code. Precision is the other limit: SZZ alone is about 50 % right, which is why
 every candidate is labelled twice before it becomes a case.
 
-**Resume and stops.** A candidate with a record under the current `LABELER_VERSION` is never labelled again, and a
+**An incomplete mine stops.** A repo whose history cannot be read, or a root with no repos at all, would shrink the
+ground truth without a word. The run fails instead, naming the repos; `report.json` holds their errors, and
+`candidates.jsonl` and `cases.jsonl` stay as they were.
+
+**Resume and stops.** A line of `labels.jsonl` that is not JSON (a torn write) is skipped with a warning naming
+`file:line`; the next record starts a line of its own. A candidate with a record under the current `LABELER_VERSION` is never labelled again, and a
 resumed run counts the records it already wrote against `--label`. A seat that fails with an answer (unusable or
-truncated output, a refused input, a vendor refusal) is recorded as that seat's `{error}`. Any other error, such as the
-gateway's 403 "no eval credit" or an outage, stops labelling: the run reports it, keeps what it wrote and records
+truncated output, a refused input, a vendor refusal) is recorded as that seat's `{error}`, and so is a commit that is gone from the checkout (both seats). Any other error, such as the
+gateway's 403 "no eval credit", an outage or a git failure other than a missing commit (a lock, a missing checkout),
+stops labelling: the run reports it, keeps what it wrote and records
 nothing for the candidate in flight. The journal keeps counts only; subjects, shas and diffs stay in the files.
 
 **Costs.** Mining is git only: a read of every repo's history plus one `git show` and a few `git blame` calls per fix

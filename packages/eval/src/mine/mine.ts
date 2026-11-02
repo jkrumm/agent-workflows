@@ -11,7 +11,6 @@ import { discoverRepos, type MineRepo } from './repos.ts'
 import { isBugFixSubject, isFixSubject, isReformatSubject } from './subjects.ts'
 import {
   DEFAULT_CONTROLS,
-  DEFAULT_OWNER_EMAILS,
   EXCLUDED_REPOS,
   MAX_CHANGED_LINES,
   MAX_INTRO_AGE_DAYS,
@@ -59,7 +58,8 @@ export interface MineOptions {
   now: Date
   seed: number
   controls?: number
-  ownerEmails?: readonly string[]
+  /** The owner's author emails (case-insensitive). No default: they are private and come from the caller. */
+  ownerEmails: readonly string[]
   excludedRepos?: readonly string[]
   /** Where the ignore-revs files go (removed afterwards). Default: the OS temp dir. */
   tmpRoot?: string
@@ -69,6 +69,8 @@ export interface MineResult {
   candidates: GtCandidate[]
   controls: MineControl[]
   funnel: MineFunnel
+  /** Repos whose history could not be mined, with the error. Any entry makes the result incomplete: do not store it. */
+  skipped: { repo: string; error: string }[]
 }
 
 const emptyFunnel = (): MineFunnel => ({
@@ -223,20 +225,22 @@ async function mineRepo(
  * directory it removes.
  */
 export async function mine(options: MineOptions): Promise<MineResult> {
-  const owners = new Set((options.ownerEmails ?? DEFAULT_OWNER_EMAILS).map((e) => e.toLowerCase()))
+  const owners = new Set(options.ownerEmails.map((e) => e.toLowerCase()))
   const repos = discoverRepos(options.root, options.excludedRepos ?? EXCLUDED_REPOS)
   const funnel = emptyFunnel()
   funnel.repos = repos.length
   const tmpDir = mkdtempSync(join(options.tmpRoot ?? tmpdir(), 'agw-mine-'))
   const candidates: GtCandidate[] = []
   const eligible: MineControl[] = []
+  const skipped: MineResult['skipped'] = []
   try {
     for (const repo of repos) {
       let mined: RepoMined
       try {
         mined = await mineRepo(repo, { exec: options.exec, now: options.now, owners, tmpDir })
-      } catch {
+      } catch (error) {
         funnel.reposSkipped++
+        skipped.push({ repo: repo.name, error: (error instanceof Error ? error.message : String(error)).slice(0, 500) })
         continue
       }
       candidates.push(...mined.candidates)
@@ -254,5 +258,5 @@ export async function mine(options: MineOptions): Promise<MineResult> {
   const controls = pickControls(eligible, { count: options.controls ?? DEFAULT_CONTROLS, seed: options.seed })
   funnel.controlsEligible = eligible.length
   funnel.controls = controls.length
-  return { candidates, controls, funnel }
+  return { candidates, controls, funnel, skipped }
 }

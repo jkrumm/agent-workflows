@@ -4,16 +4,16 @@ import {
   type GtCandidate,
   type GtLabelRecord,
   type GtLocation,
-  type GtRejected,
+  type GtRejected as GtRejectedSchema,
   LOCATION_SLACK,
-  type RejectReason,
+  type RejectReason as RejectReasonSchema,
 } from '../gt.ts'
 import { splitOf } from './split.ts'
 
-type GtRejected = z.infer<typeof GtRejected>
-type RejectReason = z.infer<typeof RejectReason>
+type Rejected = z.infer<typeof GtRejectedSchema>
+type Reason = z.infer<typeof RejectReasonSchema>
 
-export type Acceptance = { accepted: true; case: GtBugCase } | { accepted: false; rejected: GtRejected }
+export type Acceptance = { accepted: true; case: GtBugCase } | { accepted: false; rejected: Rejected }
 
 const normalPath = (path: string) =>
   path
@@ -35,7 +35,7 @@ export function locationsOverlap(a: GtLocation, b: GtLocation): boolean {
  * takes seat `a`'s location, description, class and severity. Anything else is a rejection with its reason.
  */
 export function acceptRecord(record: GtLabelRecord, candidate: GtCandidate): Acceptance {
-  const reject = (reason: RejectReason): Acceptance => ({
+  const reject = (reason: Reason): Acceptance => ({
     accepted: false,
     rejected: { candidateId: record.candidateId, reason, labelerVersion: record.labelerVersion },
   })

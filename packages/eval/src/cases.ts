@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { z } from 'zod'
@@ -129,11 +129,21 @@ export function readCases<T extends z.ZodType>(path: string, schema: T): z.infer
   return cases
 }
 
-/** Validates every case, then writes the file whole (mode 0600: the cases hold private code). */
+/**
+ * Writes `text` to `path` whole (mode 0600, parent 0700): to a temp file beside it, then a rename, so a reader or a
+ * crash sees the old file or the new one, never half of either.
+ */
+export function writeFileAtomic(path: string, text: string): void {
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
+  const temp = `${path}.${process.pid}.tmp`
+  writeFileSync(temp, text, { mode: 0o600 })
+  renameSync(temp, path)
+}
+
+/** Validates every case, then writes the file whole and atomically (mode 0600: the cases hold private code). */
 export function writeCases<T extends z.ZodType>(path: string, schema: T, cases: unknown[]): void {
   const lines = cases.map((c) => JSON.stringify(schema.parse(c)))
-  mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
-  writeFileSync(path, lines.length ? `${lines.join('\n')}\n` : '', { mode: 0o600 })
+  writeFileAtomic(path, lines.length ? `${lines.join('\n')}\n` : '')
 }
 
 /**

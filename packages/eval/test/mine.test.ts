@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import {
@@ -13,6 +13,7 @@ import {
   mine,
   discoverRepos,
   splitOf,
+  writeFileAtomic,
 } from '../src/index.ts'
 import { controlCase, type MineControl, pickControls } from '../src/mine/controls.ts'
 import { removedLines } from '../src/mine/patch.ts'
@@ -298,6 +299,37 @@ describe('mine', () => {
   })
 })
 
+describe('an incomplete mine says so', () => {
+  test('a checkout git cannot read is reported, not dropped silently', async () => {
+    const bad = join(sandbox, 'bad-root')
+    mkdirSync(join(bad, 'broken', '.git'), { recursive: true })
+    const result = await mine({ root: bad, exec: isolated, now: NOW, seed: 1, ownerEmails: [OWNER] })
+    expect(result.funnel).toMatchObject({ repos: 1, reposSkipped: 1, candidates: 0 })
+    expect(result.skipped).toEqual([{ repo: 'SourceRoot/broken', error: expect.stringContaining('git') }])
+  })
+
+  test('no repos and no skips: nothing found', async () => {
+    const empty = join(sandbox, 'empty-root')
+    mkdirSync(empty)
+    const result = await mine({ root: empty, exec: isolated, now: NOW, seed: 1, ownerEmails: [OWNER] })
+    expect(result.funnel.repos).toBe(0)
+    expect(result.skipped).toEqual([])
+  })
+})
+
+describe('writeFileAtomic', () => {
+  test('replaces the file whole, mode 0600, leaving no temp file', () => {
+    const dir = join(sandbox, 'atomic')
+    const path = join(dir, 'x.json')
+    writeFileAtomic(path, 'one\n')
+    writeFileAtomic(path, 'two\n')
+    expect(readFileSync(path, 'utf8')).toBe('two\n')
+    expect(statSync(path).mode & 0o777).toBe(0o600)
+    expect(statSync(dir).mode & 0o777).toBe(0o700)
+    expect(readdirSync(dir)).toEqual(['x.json'])
+  })
+})
+
 describe('split', () => {
   test('deterministic by id, and near DEV_SHARE', () => {
     const ids = Array.from({ length: 2000 }, (_, i) => `alpha-${i}`)
@@ -330,18 +362,29 @@ describe('pickControls', () => {
       subject: `${subject} ${i}`,
     }))
 
-  test('at most 15 % with a docs, test, refactor or chore type', () => {
+  const weakShare = (picked: MineControl[]) =>
+    picked.filter((c) => isWeakSubject(c.subject)).length / Math.max(1, picked.length)
+
+  test('at most 15 % of the sample is a docs, test, refactor or chore commit', () => {
     const eligible = [...make(30, 'test: more'), ...make(30, 'refactor: split'), ...make(30, 'feat: logic')]
+    for (const seed of [1, 2, 3, 7, 8]) {
+      const picked = pickControls(eligible, { count: 20, seed })
+      expect(picked).toHaveLength(20)
+      expect(weakShare(picked)).toBeLessThanOrEqual(0.15)
+    }
     const picked = pickControls(eligible, { count: 20, seed: 7 })
-    expect(picked).toHaveLength(20)
-    expect(picked.filter((c) => isWeakSubject(c.subject))).toHaveLength(3)
     expect(pickControls(eligible, { count: 20, seed: 7 })).toEqual(picked)
     expect(pickControls(eligible, { count: 20, seed: 8 })).not.toEqual(picked)
   })
 
-  test('takes fewer when too few strong ones exist', () => {
-    const picked = pickControls([...make(10, 'chore: x'), ...make(2, 'fix: y')], { count: 20, seed: 1 })
-    expect(picked).toHaveLength(2 + Math.floor(20 * 0.15))
+  test('the share holds for the sample as returned when logic commits run short', () => {
+    const eligible = [...make(40, 'chore: x'), ...make(4, 'fix: y')]
+    for (const seed of [1, 2, 3]) {
+      const picked = pickControls(eligible, { count: 20, seed })
+      expect(picked.length).toBeLessThan(20)
+      expect(weakShare(picked)).toBeLessThanOrEqual(0.15)
+    }
+    expect(pickControls(make(10, 'chore: x'), { count: 5, seed: 1 })).toEqual([])
   })
 })
 

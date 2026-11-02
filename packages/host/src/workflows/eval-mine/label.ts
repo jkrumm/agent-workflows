@@ -40,6 +40,9 @@ export function seatAnswer(error: unknown): string | null {
   return answered ? `${String(code)}: ${error.message}`.slice(0, 500) : null
 }
 
+/** git's words for a commit that is not in the repository (rewritten history, a pruned object). */
+const MISSING_OBJECT = /bad object|bad revision|unknown revision|not a valid object name|invalid object name/i
+
 export type Labelled = { record: GtLabelRecord } | { stop: string }
 
 /**
@@ -87,7 +90,9 @@ export async function labelCandidate(options: {
       blamed: candidate.blamed,
     }
   } catch (error) {
-    // The commits are gone from the checkout: the same on every retry, so both seats are recorded as failed.
+    // Only a commit that is gone from the checkout is about the candidate: it is the same on every retry, so both
+    // seats are recorded as failed. Any other git failure (a lock, a timeout, a missing checkout) is the host's: stop.
+    if (!MISSING_OBJECT.test(errorText(error))) return { stop: errorText(error) }
     const failed = { error: `git: ${errorText(error)}`.slice(0, 500) }
     return record(failed, failed)
   }

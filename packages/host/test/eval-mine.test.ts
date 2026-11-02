@@ -1,5 +1,15 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { CapabilityCallError } from '@agent-workflows/capabilities'
@@ -25,13 +35,19 @@ let isolatedHome: string
 /** Mutable: each test points the workflow at its own eval dir. */
 const env: Record<string, string | undefined> = {}
 let t: TestHost
+const warnings: string[] = []
+let mineEntry: ReturnType<typeof createEvalMine>
 
-/** The labeller reads message bodies with `show -s`: while set, those reads fail as if the commits were gone. */
-let goneCommits = false
+/** The labeller reads message bodies with `show -s`: while set, those reads fail, as the commits being gone or git being locked. */
+let gitFailure: 'gone' | 'locked' | null = null
+const GIT_FAILURES = {
+  gone: 'fatal: bad object 0123456789abcdef',
+  locked: 'fatal: Unable to create index.lock: File exists.',
+}
 
 const isolated: Exec = (cmd, args, options = {}) =>
-  goneCommits && args.includes('-s')
-    ? Promise.resolve({ code: 128, stdout: '', stderr: 'fatal: bad object' })
+  gitFailure && args.includes('-s')
+    ? Promise.resolve({ code: 128, stdout: '', stderr: GIT_FAILURES[gitFailure] })
     : exec(cmd, args, {
         ...options,
         env: { ...options.env, HOME: isolatedHome, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' },
@@ -129,19 +145,15 @@ beforeAll(async () => {
   mkdirSync(isolatedHome)
   buildRepo(join(home, 'SourceRoot', 'alpha'))
   env.AGW_EVAL_HOME = home
-  t = await startTestHost({
-    prefix: 'evalmine',
-    extra: [
-      createEvalMine({
-        registry,
-        env,
-        exec: isolated,
-        now: () => NOW,
-        ownerEmails: [OWNER],
-        history: { recentCost: async () => history },
-      }),
-    ],
+  mineEntry = createEvalMine({
+    registry,
+    env,
+    exec: isolated,
+    now: () => NOW,
+    logger: { warn: (message) => warnings.push(message) },
+    history: { recentCost: async () => history },
   })
+  t = await startTestHost({ prefix: 'evalmine', extra: [mineEntry] })
 })
 afterAll(async () => {
   await t.close()
@@ -149,23 +161,37 @@ afterAll(async () => {
 })
 
 let n = 0
+const writeOwner = (emails: string[]) => {
+  const path = join(dirname(gtPath('report.json', env)), 'owner.json')
+  mkdirSync(dirname(path), { recursive: true })
+  writeFileSync(path, JSON.stringify({ emails }))
+  return path
+}
+
 beforeEach(() => {
   env.AGW_EVAL_DIR = join(sandbox, `eval-${n++}`)
+  env.AGW_EVAL_OWNER_EMAILS = undefined
+  writeOwner([OWNER.toUpperCase()])
+  warnings.length = 0
   calls.length = 0
-  goneCommits = false
+  gitFailure = null
   answer = verdicts
   history = { runs: 0, meanCost: null }
 })
 
-async function mineRun(input: Record<string, unknown>) {
-  const { status, body } = await t.json(
+async function startRun(input: Record<string, unknown>) {
+  const { body } = await t.json(
     await t.call('/workflows/eval/mine', {
       method: 'POST',
       body: { suite: 'review', ...input },
       headers: { prefer: 'wait=60' },
     }),
   )
-  expect(status).toBe(200)
+  return body
+}
+
+async function mineRun(input: Record<string, unknown>) {
+  const body = await startRun(input)
   expect(body.status).toBe('done')
   return body.output as Body
 }
@@ -199,6 +225,7 @@ describe('eval.mine: mining', () => {
       expect(statSync(gtPath(file, env)).mode & 0o777).toBe(0o600)
     }
     expect(statSync(dirname(gtPath('report.json', env))).mode & 0o777).toBe(0o700)
+    expect(readdirSync(dirname(gtPath('report.json', env))).filter((f) => f.endsWith('.tmp'))).toEqual([])
   })
 
   test('the journal holds counts, not subjects or shas', async () => {
@@ -213,7 +240,8 @@ describe('eval.mine: mining', () => {
     const { commands, skipped } = buildCommands(await t.host.openapi())
     expect(skipped).toEqual([])
     const command = commands.find((c) => c.words.join(' ') === 'eval mine')
-    expect(command?.x).toMatchObject({ kind: 'workflow', positional: ['suite'], mutating: false })
+    expect(command?.x).toMatchObject({ kind: 'workflow', positional: ['suite'], mutating: true })
+    expect(mineEntry.workflow.concurrency).toBe(1)
     expect(command?.fields.map((f) => f.flag).sort()).toEqual([
       'concurrency',
       'controls',
@@ -223,6 +251,72 @@ describe('eval.mine: mining', () => {
       'suite',
       'yes',
     ])
+  })
+})
+
+describe('eval.mine: owner emails', () => {
+  const ownerFile = () => join(dirname(gtPath('report.json', env)), 'owner.json')
+
+  test('mining refuses, naming both sources, when there is neither', async () => {
+    rmSync(ownerFile())
+    const body = await startRun({})
+    expect(body.status).toBe('failed')
+    expect(JSON.stringify(body)).toContain('no owner emails')
+    expect(JSON.stringify(body)).toContain('AGW_EVAL_OWNER_EMAILS')
+    expect(existsSync(gtPath('candidates.jsonl', env))).toBe(false)
+  })
+
+  test('AGW_EVAL_OWNER_EMAILS wins over owner.json', async () => {
+    writeOwner(['nobody@example.com'])
+    expect((await mineRun({})).funnel.candidates).toBe(0)
+    env.AGW_EVAL_OWNER_EMAILS = ` ${OWNER} , other@example.com`
+    expect((await mineRun({})).funnel.candidates).toBe(4)
+  })
+
+  test('an owner file without emails is refused', async () => {
+    writeFileSync(ownerFile(), JSON.stringify({ emails: [] }))
+    const body = await startRun({})
+    expect(body.status).toBe('failed')
+    expect(JSON.stringify(body)).toContain('owner.json')
+  })
+})
+
+describe('eval.mine: an incomplete mine never shrinks the ground truth', () => {
+  test('a repo that cannot be mined stops the run, records it in the report and leaves the files', async () => {
+    await mineRun({ controls: 3 })
+    const files = ['candidates.jsonl', 'cases.jsonl'] as const
+    const before = files.map((f) => readFileSync(gtPath(f, env), 'utf8'))
+    const broken = join(home, 'SourceRoot', 'broken')
+    mkdirSync(join(broken, '.git'), { recursive: true })
+    try {
+      const body = await startRun({ controls: 3 })
+      expect(body.status).toBe('failed')
+      expect(JSON.stringify(body)).toContain('SourceRoot/broken')
+    } finally {
+      rmSync(broken, { recursive: true, force: true })
+    }
+    expect(files.map((f) => readFileSync(gtPath(f, env), 'utf8'))).toEqual(before)
+    expect(JSON.parse(readFileSync(gtPath('report.json', env), 'utf8'))).toMatchObject({
+      incomplete: true,
+      skippedRepos: [{ repo: 'SourceRoot/broken', error: expect.any(String) }],
+      funnel: { repos: 2, reposSkipped: 1 },
+    })
+  })
+
+  test('no repositories at all stops the run too', async () => {
+    await mineRun({ controls: 3 })
+    const before = readFileSync(gtPath('candidates.jsonl', env), 'utf8')
+    const empty = join(sandbox, 'empty-root')
+    mkdirSync(empty)
+    env.AGW_EVAL_HOME = empty
+    try {
+      const body = await startRun({})
+      expect(body.status).toBe('failed')
+      expect(JSON.stringify(body)).toContain('no repositories')
+    } finally {
+      env.AGW_EVAL_HOME = home
+    }
+    expect(readFileSync(gtPath('candidates.jsonl', env), 'utf8')).toBe(before)
   })
 })
 
@@ -321,8 +415,46 @@ describe('eval.mine: labelling', () => {
     expect(out.summary.labelled).toBe(1)
   })
 
+  test('a torn trailing line in labels.jsonl is skipped with a warning; the next record starts a line of its own', async () => {
+    await mineRun({ label: 1, yes: true })
+    appendFileSync(gtPath('labels.jsonl', env), '{"candidateId":"alpha-tor')
+    const out = await mineRun({ label: 2, yes: true })
+    expect(out.labelledThisRun).toBe(2)
+    expect(warnings.some((w) => w.includes('labels.jsonl:2'))).toBe(true)
+    const raw = readFileSync(gtPath('labels.jsonl', env), 'utf8').split('\n')
+    expect(raw[1]).toBe('{"candidateId":"alpha-tor')
+    const valid = raw.filter((l) => l && l !== raw[1]).map((l) => GtLabelRecord.parse(JSON.parse(l)))
+    expect(valid).toHaveLength(3)
+    expect(out.summary.labelled).toBe(3)
+  })
+
+  test('a stop lets the candidate in flight finish and keep its record', async () => {
+    let first: string | undefined
+    answer = async (input) => {
+      first ??= input.candidateId
+      if (input.candidateId === first) {
+        throw new CapabilityCallError('UPSTREAM_ERROR', 502, 'no eval credit', true, { status: 403 })
+      }
+      await Bun.sleep(150)
+      return verdicts(input)
+    }
+    const out = await mineRun({ label: 2, yes: true, concurrency: 2 })
+    expect(out.stopped).toContain('no eval credit')
+    expect(out.labelledThisRun).toBe(1)
+    expect(lines('labels.jsonl')).toHaveLength(1)
+  })
+
+  test('a git failure that is not a missing commit stops labelling and leaves the candidate unlabelled', async () => {
+    gitFailure = 'locked'
+    const out = await mineRun({ label: 2, yes: true })
+    expect(out.stopped).toContain('index.lock')
+    expect(out.labelledThisRun).toBe(0)
+    expect(calls).toHaveLength(0)
+    expect(existsSync(gtPath('labels.jsonl', env))).toBe(false)
+  })
+
   test('a candidate whose commits left the checkout is recorded as a labeler error, without a model call', async () => {
-    goneCommits = true
+    gitFailure = 'gone'
     const out = await mineRun({ label: 1, yes: true })
     expect(out.labelledThisRun).toBe(1)
     expect(calls).toHaveLength(0)

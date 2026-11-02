@@ -51,19 +51,22 @@ export function eligibleControls(options: {
     }))
 }
 
-/** Up to `count` controls by a seeded shuffle, at most 15 % with a docs, test, refactor or chore subject. */
+/**
+ * Up to `count` controls by a seeded shuffle. A docs, test, refactor or chore control joins only while it keeps that
+ * kind at most 15 % of the sample picked so far, so the share holds for the sample as returned, also when logic
+ * commits run short.
+ */
 export function pickControls(
   eligible: readonly MineControl[],
   options: { count: number; seed: number },
 ): MineControl[] {
   const ordered = [...eligible].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
-  const maxWeak = Math.floor(options.count * MAX_WEAK_CONTROL_SHARE)
   const picked: MineControl[] = []
   let weak = 0
   for (const control of seededShuffle(ordered, options.seed)) {
     if (picked.length >= options.count) break
     if (isWeakSubject(control.subject)) {
-      if (weak >= maxWeak) continue
+      if ((weak + 1) / (picked.length + 1) > MAX_WEAK_CONTROL_SHARE) continue
       weak++
     }
     picked.push(control)
