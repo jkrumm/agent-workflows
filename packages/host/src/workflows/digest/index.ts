@@ -24,9 +24,7 @@ export function createDigest(deps: { registry: DigestCaller }): HostWorkflow {
     output: DigestOutput,
     scorer: digestScorer,
     async run(ctx, input) {
-      return ctx.step('digest', ({ addUsage, signal, attribution }) =>
-        deps.registry.call('digest.items', input, { addUsage, signal, attribution }),
-      )
+      return ctx.step('digest', ({ callContext }) => deps.registry.call('digest.items', input, callContext))
     },
   })
   return {
