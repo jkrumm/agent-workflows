@@ -6,7 +6,7 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
 ## State
 - **New plan 2026-11-01:** inference gateway (Waves 1–4, `docs/gateway.md`), then review v2 and the maturity pass
   (Waves 5–13). Wave 1 done (release `767f643`, REPORT `docs/spikes/gateway/REPORT.md`); Wave 2 done (release `b25aac5`); Wave 3 done (release `3e6026e`); Wave 4 done (release `2e7d5f2`); Wave 5 done (release `bf76dc4`); Wave 6 done (release `9cf9625`); Wave 7 (spec) done, argo `84053e8`; Wave 8 waits for the owner session (labelling, pack on the MacBook,
-  `~/Downloads/agw-owner-session/session.html`; ingest steps in lead.md `e637fcc` / git history); Wave 8a (accounting,
+  `~/Downloads/agw-owner-session/session.html`; ingest steps in lead.md `e637fcc` / git history); Wave 16 (accounting,
   `agw eval import`, pulled forward from Wave 13) active; Wave 7b (build) runs beside it as argo PLAN Wave 8 (spec signed 18:20, `9fd63c7f`). The 2026-10-30 plan is finished (concept.md Final retro); STOP removed.
 - Owner actions done (PLAN context): orgs linked, keys seeded, cycle days, no payment method. Left: `me2` keys
   (~2026-11-02, 7-day claim window); until then the `me2` pool stays disabled.
@@ -155,8 +155,8 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
   it asks again: it belongs in the factory's plan or a later agw wave, not Waves 4–13 as written.
 
 ## Next action
-- Wait for the Wave 8a close-out (lead.md) and argo-w1's rd say (argo PLAN Wave 8); judge, tick PLANs, retro entries.
-- After the owner says labelling is done: reactivate Wave 8 (flip 8a done first), fresh lead: ingest, bars, then the
+- Wait for the Wave 16 close-out (lead.md) and argo-w1's rd say (argo PLAN Wave 8); judge, tick PLANs, retro entries.
+- After the owner says labelling is done: reactivate Wave 8 (flip Wave 16 done first), fresh lead: ingest, bars, then the
   re-mine. The ~165 more cases cost ≈ $49 incl. ≈ $13 IU: within the owner's "low" eval spend? Ask the owner in the same
   report as the bars (one question), meanwhile mine on credit only, sized to `evalAvailableUsd`.
 - If 8a closes before the owner session: Wave 14 items that need no review data (compaction overflow) may be pulled

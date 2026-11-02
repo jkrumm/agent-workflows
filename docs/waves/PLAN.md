@@ -174,7 +174,7 @@ after the owner signs the spec (the one stop of this wave).
   owner's sign-off. Found: agw still writes its own `usage.records` for agent steps the gateway already recorded ($5.01
   on 11-02 since 08:10 UTC), so personal-key spend is overstated: fixed first in Wave 8.
 
-## Wave 8a — Accounting and eval import            <!-- status: active -->
+## Wave 16 — Accounting and eval import (runs before Wave 8 closes)            <!-- status: active -->
 
 Pulled forward 2026-11-02 while the owner labels (former Wave 13, plus Wave 8's `agw eval import`). No eval sweeps.
 
@@ -190,7 +190,7 @@ Pulled forward 2026-11-02 while the owner labels (former Wave 13, plus Wave 8's 
   proven on stored rows of both writers after deploy. The 11-02 duplicates stay (owner's call, like Wave 3's 34).
 - [x] `agw eval mine review`: SZZ over `~/SourceRoot` with the filters in `docs/review-v2.md` §Ground truth, two
   cross-vendor labeler calls per candidate, clean controls, the `dev`/`test` split. Cases go only under `$AGW_EVAL_DIR`.
-- [ ] `eval.judge` on its own pinned route (judge, scorer v3 done; `agw eval import` moved to Wave 8a), scorer v3 (recall, false alarms, noise, severity calibration), and `agw eval
+- [ ] `eval.judge` on its own pinned route (judge, scorer v3 done; `agw eval import` moved to Wave 16), scorer v3 (recall, false alarms, noise, severity calibration), and `agw eval
   import` for an external arm's findings. The token-overlap matcher only preselects pairs.
 - [ ] **Owner session (owner decision 2):** confirm 70 mined cases and label 100 judge pairs. Bars: accepted cases ≥ 90 %
   right, judge κ ≥ 0.8. Below either, tighten the filters or add a second judge.
@@ -258,7 +258,7 @@ Provisional picks (2026-10-31, from cost, wall time, failure modes and the AA in
 
 ## Wave 13 — Accounting and telemetry            <!-- status: pending -->
 
-- [ ] Moved into Wave 8a (2026-11-02); tick when 8a is done.
+- [ ] Moved into Wave 16 (2026-11-02); tick when Wave 16 is done.
 
 ## Wave 14 — Harness robustness            <!-- status: pending -->
 
