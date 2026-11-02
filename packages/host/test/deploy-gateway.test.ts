@@ -217,6 +217,54 @@ describe('deploy.sh gateway: the restart rule', () => {
     expect(result.out).not.toContain('gateway unchanged')
   })
 
+  test('a restarted gateway is stopped after host and audio and started (and healthy) before them', () => {
+    const t = liveThenNew('v1', 'v2')
+    expect(t.deploy(NEW).code).toBe(0)
+    const lines = t.launchctlLog().split('\n')
+    const at = (verb: string, label: string) => lines.findIndex((l) => l.startsWith(`${verb} `) && l.includes(label))
+    expect(at('bootout', GATEWAY)).toBeGreaterThan(at('bootout', HOST))
+    expect(at('bootout', GATEWAY)).toBeGreaterThan(at('bootout', AUDIO))
+    expect(at('bootstrap', GATEWAY)).toBeLessThan(at('bootstrap', HOST))
+    expect(at('bootstrap', GATEWAY)).toBeLessThan(at('bootstrap', AUDIO))
+  })
+
+  test('a gateway that never becomes healthy stops the deploy before host and audio are started on the new release', () => {
+    const t = liveThenNew('v1', 'v2')
+    t.markDown(7794)
+    const result = t.deploy(NEW)
+    expect(result.code).toBe(1)
+    const bootstraps = t
+      .launchctlLog()
+      .split('\n')
+      .filter((l) => l.startsWith('bootstrap '))
+    // The first bootstrap is the new gateway; host and audio were never started on NEW: only the gateway was awaited.
+    expect(bootstraps[0]).toContain(GATEWAY)
+    expect(result.err).toContain(`not healthy at ${NEW.slice(0, 12)}: gateway\n`)
+    expect(result.err).toContain('rolling back to')
+  }, 60_000)
+
+  test('an unchanged build restarts anyway when the deploy added a caller to door-tokens, and says so', () => {
+    const t = liveThenNew('v1', 'v1')
+    const file = join(t.aw, 'data', 'door-tokens')
+    const kept = readFileSync(file, 'utf8')
+      .split('\n')
+      .filter((line) => !line.startsWith('modelpick='))
+      .join('\n')
+    writeFileSync(file, kept)
+    const result = t.deploy(NEW)
+    expect(result.code).toBe(0)
+    expect(result.out).toContain(
+      `gateway build ${t.oldBuild} unchanged, restarted anyway: door-tokens gained modelpick`,
+    )
+    expect(result.out).not.toContain('not restarted')
+    const log = t.launchctlLog()
+    expect(touches(log, GATEWAY, 'bootout')).toBe(1)
+    expect(touches(log, GATEWAY, 'bootstrap')).toBe(1)
+    expect(t.data('gateway-build')).toBe(t.oldBuild)
+    expect(t.data('gateway-previous-build')).toBeNull()
+    expect(readFileSync(file, 'utf8')).toMatch(/\nmodelpick=[0-9a-f]{64}\n$/)
+  })
+
   test('the same build but not loaded, or not healthy, is restarted', () => {
     const notLoaded = liveThenNew('v1', 'v1')
     rmSync(join(notLoaded.home, 'launchd', `${GATEWAY}.plist`))

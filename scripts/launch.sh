@@ -18,8 +18,9 @@ case "$PROCESS" in
   *) print -u2 "agent-workflows-host: unknown process '$PROCESS' (host or audio)"; exit 78 ;;
 esac
 [[ -f "$DIR/$AGW_LAUNCH_ENTRY" ]] || { print -u2 "agent-workflows-$PROCESS: $AGW_LAUNCH_ENTRY missing"; exit 78; }
-# Read by the secrets-run child below: the one value that differs between the processes.
-export AGW_LAUNCH_ENTRY
+# Read by the secrets-run child below: the values that differ between the processes.
+AGW_LAUNCH_PROCESS="$PROCESS"
+export AGW_LAUNCH_ENTRY AGW_LAUNCH_PROCESS
 
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 
@@ -65,57 +66,44 @@ KEYS=( ${(f)"$(/usr/bin/grep -hoE '^[A-Za-z_][A-Za-z0-9_]*=' "$TPL" | /usr/bin/t
 # deploy that needs it). The raw AGW_PG_PASSWORD, USAGE_PG_PASSWORD and OTEL_EXPORTER_OTLP_AUTHORIZATION are dropped before the host
 # starts. The built OTEL_EXPORTER_OTLP_HEADERS (`authorization=<ClickStack ingest key>`)
 # stays: it is what the exporter reads, and the OpenCode server's env allow-list forwards every OTEL_EXPORTER_OTLP_*
-# variable, so the ingest key is also in that server's env and its tool shells, like the IU key (accepted risk:
-# packages/opencode-host/README.md, "Accepted risk").
+# variable, so the ingest key is also in that server's env and its tool shells, like the agw-opencode door token
+# (accepted risk: packages/opencode-host/README.md, "Accepted risk"). The host holds no provider key: every model call
+# goes through the gateway (AGW_GATEWAY_URL).
 exec "$SECRETS_RUN" run --env-file="$TPL" -- /bin/sh -c '
-  # >>> iu-override
-  # An untracked IU key override (a team key for interim evals): $HOME/.config/agw/iu.env, mode 0600, may set
-  # IU_API_KEY and IU_KEY_ID, which replace the .env.tpl values; the label goes with the key, so both are required.
-  # Both are validated here (a non-empty key, an exact label), before the empty-value check below. Any other line is
-  # ignored with a warning that names the variable, never a value. Absent file = no override.
-  IU_OVERRIDE="$HOME/.config/agw/iu.env"
-  if [ -e "$IU_OVERRIDE" ] || [ -L "$IU_OVERRIDE" ]; then
-    if [ "$(/bin/ls -ld "$IU_OVERRIDE" | /usr/bin/cut -c1-10)" != "-rw-------" ]; then
-      echo "agent-workflows-host: $IU_OVERRIDE must be a regular file with mode 0600 (it holds a key); refusing to start." >&2
+  # >>> gateway-tool-token
+  # The host only (the OpenCode providers and `ocr` call the gateway as the caller agw-opencode): the agw-opencode line of
+  # the door-tokens file ($AGW_DOOR_CALLERS_FILE, which the plist sets) becomes AGW_GATEWAY_TOOL_TOKEN. Parsed the way the
+  # door-token parser reads a line (name=token, whitespace around both trimmed, CR dropped, # comments skipped). A missing
+  # file, a missing line or an empty token refuses with 78, naming the file and the caller, never a value. `make deploy`
+  # adds the line before it starts anything. The audio process never gets the token.
+  if [ "$AGW_LAUNCH_PROCESS" = host ]; then
+    TOOL_TOKENS="${AGW_DOOR_CALLERS_FILE:-$HOME/.agent-workflows/data/door-tokens}"
+    [ -f "$TOOL_TOKENS" ] && [ -r "$TOOL_TOKENS" ] || {
+      echo "agent-workflows-host: $TOOL_TOKENS is missing or unreadable (it must hold the caller agw-opencode; make deploy writes it); refusing to start." >&2
       exit 78
-    fi
-    iu_seen=""
-    iu_cr=$(printf "\\r")
-    iu_sq=$(printf "\\047")
-    while IFS= read -r iu_line || [ -n "$iu_line" ]; do
-      iu_line="${iu_line%"$iu_cr"}"
-      iu_line="${iu_line#"${iu_line%%[![:space:]]*}"}"
-      case "$iu_line" in ""|"#"*) continue ;; esac
-      iu_line="${iu_line#export }"
-      case "$iu_line" in *=*) ;; *) echo "agent-workflows-host: $IU_OVERRIDE: a line without = was ignored" >&2; continue ;; esac
-      iu_name="${iu_line%%=*}"
-      iu_value="${iu_line#*=}"
-      case "$iu_value" in
-        \"*\") iu_value="${iu_value#\"}"; iu_value="${iu_value%\"}" ;;
-        "$iu_sq"*"$iu_sq") iu_value="${iu_value#"$iu_sq"}"; iu_value="${iu_value%"$iu_sq"}" ;;
-      esac
-      case "$iu_name" in
-        IU_API_KEY) IU_API_KEY="$iu_value"; iu_seen="$iu_seen key" ;;
-        IU_KEY_ID) IU_KEY_ID="$iu_value"; iu_seen="$iu_seen id" ;;
-        ""|[0-9]*|*[!A-Za-z0-9_]*) echo "agent-workflows-host: $IU_OVERRIDE: a malformed line was ignored" >&2 ;;
-        *) echo "agent-workflows-host: $IU_OVERRIDE: ignoring $iu_name (only IU_API_KEY and IU_KEY_ID are read)" >&2 ;;
-      esac
-    done < "$IU_OVERRIDE"
-    case "$iu_seen" in
-      *key*id* | *id*key*) ;;
-      *)
-        echo "agent-workflows-host: $IU_OVERRIDE must set both IU_API_KEY and IU_KEY_ID (the label goes with the key); refusing to start." >&2
-        exit 78
-        ;;
-    esac
-    [ -n "$IU_API_KEY" ] || { echo "agent-workflows-host: $IU_OVERRIDE: IU_API_KEY is empty; refusing to start." >&2; exit 78; }
-    case "$IU_KEY_ID" in
-      personal | athena-team) ;;
-      *) echo "agent-workflows-host: $IU_OVERRIDE: IU_KEY_ID must be exactly personal or athena-team; refusing to start." >&2; exit 78 ;;
-    esac
-    export IU_API_KEY IU_KEY_ID
+    }
+    AGW_GATEWAY_TOOL_TOKEN=""
+    tt_cr=$(printf "\\r")
+    while IFS= read -r tt_line || [ -n "$tt_line" ]; do
+      tt_line="${tt_line%"$tt_cr"}"
+      case "$tt_line" in *=*) ;; *) continue ;; esac
+      tt_name="${tt_line%%=*}"
+      tt_name="${tt_name#"${tt_name%%[![:space:]]*}"}"
+      tt_name="${tt_name%"${tt_name##*[![:space:]]}"}"
+      [ "$tt_name" = agw-opencode ] || continue
+      tt_token="${tt_line#*=}"
+      tt_token="${tt_token#"${tt_token%%[![:space:]]*}"}"
+      tt_token="${tt_token%"${tt_token##*[![:space:]]}"}"
+      AGW_GATEWAY_TOOL_TOKEN="$tt_token"
+      break
+    done < "$TOOL_TOKENS"
+    [ -n "$AGW_GATEWAY_TOOL_TOKEN" ] || {
+      echo "agent-workflows-host: $TOOL_TOKENS has no token for the caller agw-opencode (make deploy adds it); refusing to start." >&2
+      exit 78
+    }
+    export AGW_GATEWAY_TOOL_TOKEN
   fi
-  # <<< iu-override
+  # <<< gateway-tool-token
   # >>> routes-override
   # An untracked route override (which model and spend every run gets, e.g. an eval of another model):
   # $HOME/.config/agw/routes.json, one JSON object of route id -> partial route spec, exported as AGW_ROUTES. It must be
