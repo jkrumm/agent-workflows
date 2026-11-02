@@ -40,7 +40,7 @@ export function renderSample(runs: SampledRun[], maxChars = MAX_DATA_CHARS): str
 }
 
 export const JSON_ONLY_RETRY =
-  '\n\nYour previous answer was not the JSON object described above. Answer again with only that object: no prose, no code fence.'
+  '\n\nYour previous answer ended without a valid `submit_result` call. Answer again by calling `submit_result` once with the object described above; text is not read.'
 
 /** The task message. The role, criteria and output contract live in the agent's `AGENTS.md`; this carries the data. */
 export function retroPrompt(args: {

@@ -69,7 +69,7 @@ If tests were changed along with the code:
 
 ## Output
 
-Return ONLY a JSON object:
+Submit your findings by calling `submit_result` once, when the review is done. Its arguments take this shape:
 
 ```json
 {
