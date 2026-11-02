@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help check fmt deploy verify install-opencode research-chrome
+.PHONY: help check fmt deploy verify live-routes install-opencode research-chrome
 
 help:
 	@echo "make check   oxfmt check, oxlint type-aware, tsc, bun test (the merge gate)"
@@ -7,6 +7,7 @@ help:
 	@echo "make deploy  deploy origin/master on the mini: release, LaunchAgents host and audio, the gateway as a third (restarted only when its build changed), health, agw on PATH (DRY_RUN=1 prints the plan)"
 	@echo "make install-opencode  install the pinned OpenCode build and react-doctor, link opencode and opencode-safe into ~/.local/bin from the main checkout (never restarts the host)"
 	@echo "make research-chrome  install and start the headed Chrome (LaunchAgent, DevTools on loopback) web.fetch reads bot-walled pages with"
+	@echo "make live-routes  one real call per route (anthropic, opencode, iu-openai text; ROUTES='a b' narrows), proved by its gateway usage row and run row; costs cents"
 	@echo "make verify  prove the deployment: the pinned OpenCode and react-doctor present, the healths at the sha (the gateway at its build), agw smoke ping and audio ping with their journal rows, the door's auth, three real Haiku calls through the gateway with their usage rows"
 
 # docs/spikes/** is excluded from every tool (see .oxfmtrc.json, .oxlintrc.json, tsconfig.json, bunfig.toml).
@@ -47,6 +48,10 @@ deploy:
 
 verify:
 	@/bin/zsh scripts/verify.sh
+
+# A live call per route through `agw smoke route`, each proved by its usage.records and agw.runs rows (scripts/live-routes.sh).
+live-routes:
+	@/bin/zsh scripts/live-routes.sh $(ROUTES)
 
 # The machine's one OpenCode build and the pinned react-doctor (packages/opencode-host/README.md §Pinned build). Run from
 # the main checkout: ~/.local/bin/opencode and opencode-safe link to this checkout's scripts, so a linked worktree is
