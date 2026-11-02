@@ -33,7 +33,7 @@ A report is not an ask: "not merged, the lead merges it in the next train" is a 
 ## Decisions
 
 - **One call, per-item checks.** The capability `digest.items` (`packages/capabilities/src/capabilities/digest.ts`) builds the
-  prompt, so nothing reachable over HTTP is a free prompt on the seat; it is `internal`. The batch as a whole must parse as
+  prompt, so nothing reachable over HTTP is a free prompt on the route; it is `internal`. The batch as a whole must parse as
   `{answers: […]}` (a bad document is re-asked once, as everywhere); each answer is then checked against its kind's schema on
   its own. There is no per-item retry: a second call would break "one call per invocation", and the caller already holds the
   last good text of an item that came back as an error.

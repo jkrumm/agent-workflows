@@ -5,7 +5,7 @@ const routes = {
   // Review routes (owner decision 2026-11-01: onto Claude, provisional until Waves 9-10). Nothing routes via Requesty
   // (owner direction 2026-10-29), no region is pinned. The router picks angles and a depth as a small JSON object: an easy
   // call, the EASY tier (Haiku high) on the native Messages wire; a drained credit (402) moves it to Terra low on the chat
-  // wire. History (2026-10-30): the first Haiku seat there agreed with the review verdict on 0.17 of the paired eval's
+  // wire. History (2026-10-30): the first Haiku route there agreed with the review verdict on 0.17 of the paired eval's
   // cases against Terra's 0.67, which is why the angles and the adversary were Terra medium. The 2026-10-31 eval put
   // Haiku at effort high at the Haiku knee.
   'review.router': { wire: 'anthropic', ...EASY.call },
