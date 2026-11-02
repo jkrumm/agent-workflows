@@ -3,8 +3,8 @@ import { resolveRoute, routeIds } from '@agent-workflows/routes'
 import { createCapabilities } from './capabilities/index.ts'
 import { fenceNonce, neutralizeFenceMarkers } from './capabilities/prose-prompts.ts'
 import { reviewRouteRefusal } from './capabilities/prose-review.ts'
-import type { Usage } from './context.ts'
-import { CapabilityCallError } from './errors.ts'
+import type { Attribution, Usage } from './context.ts'
+import { CapabilityCallError, CapabilityError } from './errors.ts'
 import { createRegistry } from './registry.ts'
 import { fakeTransports } from './testing/index.ts'
 
@@ -58,6 +58,29 @@ describe('prose.critique', () => {
     expect(t.transports.chatCalls).toHaveLength(1)
     expect(t.transports.chatCalls[0]?.wire).toBe('openai')
     expect(t.usages).toHaveLength(1)
+  })
+
+  test('a balance refusal moves the review to its fallback, which carries the refused request id as the marker', async () => {
+    const REFUSED_ID = '0197a5e0-1c2d-7abc-8def-0123456789ab'
+    const refused = new CapabilityError(
+      'UPSTREAM_ERROR',
+      'iu-openai provider balance exhausted (503): IU request failed (503) — Insufficient Balance (PaymentRequired)',
+      { status: 503, requestId: REFUSED_ID },
+    )
+    const review = { scores: SCORES, notes: [], visualSuggestions: [] }
+    const t = setup({ openai: [refused, { text: JSON.stringify(review) }] })
+    const attribution: Attribution = {
+      runId: 'run-1',
+      rootId: 'run-1',
+      workflow: 'prose.review',
+      step: 'critique',
+      purpose: 'prod',
+    }
+    const out = await t.registry.call('prose.critique', INPUT, { ...t.options, attribution })
+    expect(out.scores).toEqual(SCORES)
+    expect(t.transports.chatCalls).toHaveLength(2)
+    expect(t.transports.chatCalls[0]?.request.attribution).toEqual(attribution)
+    expect(t.transports.chatCalls[1]?.request.attribution).toEqual({ ...attribution, routeFallback: REFUSED_ID })
   })
 
   test('verdictFirst false: the verdict score and its notes are dropped by code, whatever the reviewer sent', async () => {

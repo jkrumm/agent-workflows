@@ -109,20 +109,29 @@ export interface ModelPort {
   round(call: RoundCall, signal: AbortSignal, onUsage: OnWireUsage, onSent: () => void): Promise<RoundReply>
 }
 
-/** A failed model call. `balance`: the provider refused for account balance; the route's fallback answers it. */
+/**
+ * A failed model call. `balance`: the provider refused for account balance; the route's fallback answers it.
+ * `requestId`: the gateway's `x-agw-request-id` of the refusing response, which the fallback call names as
+ * `x-agw-route-fallback`.
+ */
 export class ModelError extends Error {
   override name = 'ModelError'
   constructor(
     message: string,
     readonly balance = false,
+    readonly requestId?: string,
   ) {
     super(message)
   }
 }
 
-/** A tool loop's fallback state, shared by its rounds: set when a balance failure moved a round to the fallback. */
+/**
+ * A tool loop's fallback state, shared by its rounds: set when a balance failure moved a round to the fallback.
+ * `refused` is that refusal's request id, which every later round on the fallback names too.
+ */
 export interface FallbackPin {
   onFallback: boolean
+  refused?: string
 }
 
 /** IU serves function tools for the GPT-6.1 family only on `/v1/responses` (chat/completions 503s; probed 2026-10-26). */
@@ -169,8 +178,11 @@ export class Llm {
     this.scope.progress()
   }
 
-  private attribution(): { attribution?: Attribution } {
-    return this.scope.attribution ? { attribution: this.scope.attribution } : {}
+  /** The step's attribution; on a fallback call, with the refused request's id as `routeFallback`. */
+  private attribution(refused?: string): { attribution?: Attribution } {
+    const attribution = this.scope.attribution
+    if (!attribution) return {}
+    return { attribution: refused ? { ...attribution, routeFallback: refused } : attribution }
   }
 
   route(id: PodcastRouteId): ResolvedRoute {
@@ -210,11 +222,12 @@ export class Llm {
    */
   private async onRoute<T>(
     id: PodcastRouteId,
-    call: (route: ResolvedRoute, onUsage: OnWireUsage, onSent: () => void) => Promise<T>,
+    call: (route: ResolvedRoute, onUsage: OnWireUsage, onSent: () => void, refused?: string) => Promise<T>,
     pin?: FallbackPin,
   ) {
     const primary = this.route(id)
-    const attempt = async (route: ResolvedRoute) => {
+    /** `refused`: set on a fallback attempt, the request id of the balance refusal it replaces. */
+    const attempt = async (route: ResolvedRoute, refused?: string) => {
       let reported = 0
       let sent = 0
       try {
@@ -225,6 +238,7 @@ export class Llm {
             this.report(route, usage)
           },
           () => sent++,
+          refused,
         )
       } finally {
         // A request left and no usage came back: it may have billed. Nothing sent (a pre-flight error, an abort before
@@ -234,15 +248,18 @@ export class Llm {
     }
     // A loop that already moved to the fallback stays there: its transcript carries the fallback's turns.
     const pinned = pin?.onFallback ? fallbackRoute(primary) : undefined
-    if (pinned) return attempt(pinned)
+    if (pinned) return attempt(pinned, pin?.refused)
     try {
       return await attempt(primary)
     } catch (error) {
       const fallback = fallbackRoute(primary)
       if (!fallback || !(error instanceof ModelError) || !error.balance) throw error
       log.warn('podcast provider balance exhausted; falling back', { route: id, to: fallback.model })
-      if (pin) pin.onFallback = true
-      return attempt(fallback)
+      if (pin) {
+        pin.onFallback = true
+        pin.refused = error.requestId
+      }
+      return attempt(fallback, error.requestId)
     }
   }
 
@@ -261,7 +278,7 @@ export class Llm {
     cacheableSystemPrefix?: string
     jsonSchema?: Record<string, unknown>
   }): Promise<string> {
-    const reply = await this.onRoute(params.route, (route, onUsage, onSent) =>
+    const reply = await this.onRoute(params.route, (route, onUsage, onSent, refused) =>
       this.port.chat(
         {
           wire: route.wire,
@@ -272,7 +289,7 @@ export class Llm {
           maxTokens: params.maxCompletionTokens,
           ...(params.cacheableSystemPrefix ? { cacheablePrefix: params.cacheableSystemPrefix } : {}),
           ...(params.jsonSchema ? { jsonSchema: params.jsonSchema } : {}),
-          ...this.attribution(),
+          ...this.attribution(refused),
         },
         this.scope.signal,
         onUsage,
@@ -309,7 +326,7 @@ export class Llm {
   ): Promise<RoundReply> {
     return this.onRoute(
       id,
-      (route, onUsage, onSent) => {
+      (route, onUsage, onSent, refused) => {
         // A route on another wire fails here, loudly, instead of sending a provider a body it cannot read.
         if (route.wire !== 'iu-openai' && route.wire !== 'anthropic') {
           throw new ModelError(
@@ -320,7 +337,7 @@ export class Llm {
           model: route.model,
           ...(route.effort && route.effort !== 'none' ? { effort: route.effort } : {}),
           tools,
-          ...this.attribution(),
+          ...this.attribution(refused),
         }
         const budget = retry ? maxTokens * 2 : maxTokens
         const call: RoundCall =

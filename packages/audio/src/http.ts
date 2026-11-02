@@ -4,6 +4,13 @@ import type { AudioScope } from './scope.ts'
 export interface RawResponse {
   status: number
   body: string
+  /** The gateway's `x-agw-request-id` of this response; a balance refusal's names the call a route fallback replaces. */
+  requestId?: string
+}
+
+const requestIdOf = (res: Response): { requestId?: string } => {
+  const requestId = res.headers.get('x-agw-request-id')
+  return requestId ? { requestId } : {}
 }
 
 /** Upper bound on a server-requested retry delay, so a bogus hint cannot stall a caller. */
@@ -144,7 +151,7 @@ export async function rawFetch(
       const res = await fetch(url, init)
       if ((res.status === 503 || res.status === 429) && attempt < attempts) {
         if (final) {
-          const reply = { status: res.status, body: await res.text() }
+          const reply = { status: res.status, body: await res.text(), ...requestIdOf(res) }
           if (final(reply)) return reply
           scope.retried()
           const hint = retryHintFromHeaders(res.headers) ?? retryHintFromBody(reply.body)
@@ -155,7 +162,7 @@ export async function rawFetch(
         await clock.sleep(await throttleDelay(res, attempt))
         continue
       }
-      return { status: res.status, body: await res.text() }
+      return { status: res.status, body: await res.text(), ...requestIdOf(res) }
     } catch (error) {
       if (attempt >= attempts || init.signal?.aborted || isAbort(error)) throw error
       scope.retried()
@@ -167,10 +174,17 @@ export async function rawFetch(
 
 /**
  * Headers for a text call on the gateway: the bearer and the step's attribution. The gateway writes the usage row of
- * these calls itself.
+ * these calls itself. `refused`: on a route-fallback call, the request id of the balance refusal it replaces
+ * (`x-agw-route-fallback`).
  */
-export const gatewayTextHeaders = (scope: AudioScope, extra: Record<string, string> = {}): Record<string, string> => ({
-  ...gatewayHeaders(scope.attribution),
+export const gatewayTextHeaders = (
+  scope: AudioScope,
+  extra: Record<string, string> = {},
+  refused?: string,
+): Record<string, string> => ({
+  ...gatewayHeaders(
+    refused && scope.attribution ? { ...scope.attribution, routeFallback: refused } : scope.attribution,
+  ),
   ...extra,
   authorization: `Bearer ${scope.config.transports.token}`,
 })

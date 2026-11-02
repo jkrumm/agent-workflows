@@ -61,6 +61,8 @@ describe('gatewayHeaders', () => {
     expect(gatewayHeaders({ ...ATTRIBUTION, origin: 'claude-code' })['x-agw-origin']).toBe('claude-code')
     expect(gatewayHeaders(ATTRIBUTION)).not.toHaveProperty('x-agw-origin')
     expect(gatewayHeaders({ ...ATTRIBUTION, origin: ' cli' })).not.toHaveProperty('x-agw-origin')
+    expect(gatewayHeaders({ ...ATTRIBUTION, routeFallback: 'unknown' })['x-agw-route-fallback']).toBe('unknown')
+    expect(gatewayHeaders(ATTRIBUTION)).not.toHaveProperty('x-agw-route-fallback')
   })
 
   test('a value that is not printable ASCII up to 200 characters, or has a space at either end, is left out', () => {
@@ -295,6 +297,31 @@ describe('the prep call on the route wire', () => {
     ])
     // chat usage is prompt_tokens 100 / completion_tokens 50 at the fallback's rate, not the seat's
     expect(events[1]?.costUsd).toBeCloseTo((100 * 0.1 + 50 * 0.5) / 1e6, 10)
+  })
+
+  test('the fallback call names the refused response’s request id as x-agw-route-fallback; the primary sends none', async () => {
+    const REFUSED_ID = '0197a5e0-1c2d-7abc-8def-0123456789ab'
+    gateway = startFakeGateway({
+      messages: () =>
+        new Response('{"type":"error","error":{"type":"billing_error"}}', {
+          status: 402,
+          headers: { 'x-agw-request-id': REFUSED_ID },
+        }),
+      chat: () => prepAnswer(JSON.parse(PREP)),
+    })
+    const { scope } = seatsScope(true)
+    await callPrepLlm(scope, input)
+    expect(gateway.requests.map((r) => r.route)).toEqual(['messages', 'chat'])
+    expect(gateway.requests[0]?.headers.get('x-agw-route-fallback')).toBeNull()
+    expect(gateway.requests[1]?.headers.get('x-agw-route-fallback')).toBe(REFUSED_ID)
+    // The attribution is the same on both calls.
+    expect(gateway.requests[1]?.headers.get('x-agw-run-id')).toBe('run-1')
+
+    // A refusal that came back with no request id (not through the gateway) sends none.
+    gateway.on('messages', () => new Response('', { status: 402 }))
+    gateway.requests.length = 0
+    await callPrepLlm(seatsScope(true).scope, input)
+    expect(gateway.requests[1]?.headers.get('x-agw-route-fallback')).toBeNull()
   })
 
   test('a failure that is not a balance failure, or a balance failure with no fallback, is thrown', async () => {

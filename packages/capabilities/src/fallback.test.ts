@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { type PatchInput, resolveRoute } from '@agent-workflows/routes'
 import { createCapabilities } from './capabilities/index.ts'
-import type { Usage } from './context.ts'
+import type { Attribution, Usage } from './context.ts'
 import { CapabilityCallError } from './errors.ts'
 import { createRegistry } from './registry.ts'
 import { type FakeGateway, type RecordedRequest, sse, startFakeGateway } from './testing/index.ts'
@@ -36,6 +36,7 @@ async function call(
   id: 'llm.classify' | 'llm.summarize' | 'review.adversary' | 'review.route',
   input: unknown,
   routes?: PatchInput,
+  attribution?: Attribution,
 ) {
   const transports = gatewayTransports({
     env: { AGW_API_SECRET: 'test-key', AGW_GATEWAY_URL: iu.url },
@@ -44,7 +45,11 @@ async function call(
   })
   const warn = (message: string, meta: Record<string, unknown>) => void warnings.push({ message, meta })
   const registry = createRegistry(createCapabilities({ transports, env: {}, warn }))
-  return registry.call(id, input as never, { addUsage: (u) => usages.push(u), ...(routes ? { arm: { routes } } : {}) })
+  return registry.call(id, input as never, {
+    addUsage: (u) => usages.push(u),
+    ...(routes ? { arm: { routes } } : {}),
+    ...(attribution ? { attribution } : {}),
+  })
 }
 
 /** A chat stream that names the model it was asked for, as IU does. */
@@ -216,6 +221,42 @@ describe('provider-balance fallback: the gateway refuses the Claude credit', () 
     expect(warnings.map((w) => w.message)).toEqual(['provider balance exhausted; falling back'])
     // The refusal threw before any usage came back: only the fallback is reported.
     expect(usages.map((u) => u.model)).toEqual([fallback.model])
+  })
+
+  const REFUSED_ID = '0197a5e0-1c2d-7abc-8def-0123456789ab'
+  const ATTRIBUTION: Attribution = {
+    runId: 'run-1',
+    rootId: 'run-1',
+    workflow: 'fallback.test',
+    step: 'classify',
+    purpose: 'prod',
+    origin: 'claude-code',
+  }
+  const refusal = (headers: Record<string, string> = {}) =>
+    Response.json(GATEWAY_402, { status: 402, headers: { 'x-agw-pool': 'refused', ...headers } })
+
+  test('the GPT fallback call carries x-agw-route-fallback = the refused response’s request id; the primary does not', async () => {
+    iu.on('messages', () => refusal({ 'x-agw-request-id': REFUSED_ID }))
+    iu.on('chat', (request) => answer(request, '{"label":"bug","reason":"fine"}'))
+    await call('llm.classify', classify, undefined, ATTRIBUTION)
+
+    expect(iu.requests).toHaveLength(2)
+    expect(iu.requests[0]?.headers.get('x-agw-route-fallback')).toBeNull()
+    expect(iu.requests[1]?.headers.get('x-agw-route-fallback')).toBe(REFUSED_ID)
+    // The rest of the attribution rides along on both calls.
+    for (const request of iu.requests) expect(request.headers.get('x-agw-origin')).toBe('claude-code')
+  })
+
+  test('no attribution (outside a run) or a refusal with no request id sends no marker', async () => {
+    iu.on('messages', () => refusal({ 'x-agw-request-id': REFUSED_ID }))
+    iu.on('chat', (request) => answer(request, '{"label":"bug","reason":"fine"}'))
+    await call('llm.classify', classify)
+    expect(iu.requests[1]?.headers.get('x-agw-route-fallback')).toBeNull()
+
+    iu.requests.length = 0
+    iu.on('messages', () => refusal())
+    await call('llm.classify', classify, undefined, ATTRIBUTION)
+    expect(iu.requests[1]?.headers.get('x-agw-route-fallback')).toBeNull()
   })
 })
 

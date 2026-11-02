@@ -158,7 +158,11 @@ export function iuModelPort(options: IuOptions = {}): ModelPort {
     const body = await res.text().catch(() => '')
     const detail = body.slice(0, 300)
     if (isBalanceFailure({ status: res.status, text: body })) {
-      return new ModelError(`${wire} ${BALANCE_MARKER} (${res.status}): ${detail}`, true)
+      return new ModelError(
+        `${wire} ${BALANCE_MARKER} (${res.status}): ${detail}`,
+        true,
+        res.headers.get('x-agw-request-id') ?? undefined,
+      )
     }
     const message = `${wire} request failed (${res.status}): ${detail}`
     return RETRYABLE_STATUS.has(res.status) && !detail.includes('invalid_request_error')

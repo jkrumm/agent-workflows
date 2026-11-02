@@ -71,6 +71,11 @@ export type Attribution = {
   traceparent?: string
   /** Who asked agw for the tree (the root run's `runs.caller`; `eval` / `host` for a run the host started itself). */
   origin?: string
+  /**
+   * Never set on a step's scope. A call that replaces a balance-refused one (a route fallback) adds the refused
+   * response's request id, or `unknown`; structurally the capabilities' `Attribution.routeFallback`.
+   */
+  routeFallback?: string
 }
 
 /**
