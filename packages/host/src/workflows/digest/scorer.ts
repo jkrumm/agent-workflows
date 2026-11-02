@@ -1,4 +1,4 @@
-import { REPLY_KINDS } from '@agent-workflows/capabilities'
+import { DIGEST_ANSWERS, type DigestKind, REPLY_KINDS } from '@agent-workflows/capabilities'
 import type { Scorer, Verdict } from '@agent-workflows/runtime'
 import { z } from 'zod'
 import { DigestOutput } from './schema.ts'
@@ -41,6 +41,22 @@ const mentions = (text: string, fact: string) =>
   fact.split('|').some((alt) => new RegExp(`(?<![a-z0-9])${escapeRegExp(lower(alt))}(?![a-z0-9])`).test(lower(text)))
 
 type Answer = Record<string, unknown>
+
+/** The reference shape each kind is scored by: a mislabelled reference fails the case loudly instead of scoring as another kind. */
+const REFERENCE_KEY: Record<DigestKind, string> = {
+  heading: 'anchors',
+  session: 'anchors',
+  reply: 'asks',
+  window: 'mustMention',
+}
+const fitsKind = (kind: string, ref: ItemReference) => kind in REFERENCE_KEY && REFERENCE_KEY[kind as DigestKind] in ref
+
+/** An answer that is not an error entry must hold its kind's schema; one that does not is scored as an error. */
+function asKind(kind: string, result: Answer): Answer {
+  if ('error' in result || !(kind in DIGEST_ANSWERS)) return result
+  const checked = DIGEST_ANSWERS[kind as DigestKind].safeParse(result)
+  return checked.success ? result : { id: result.id, error: `the answer does not hold the ${kind} schema` }
+}
 type Tally = Record<'grounded' | 'asks' | 'askRecall' | 'replyKind' | 'windowFacts', boolean[]>
 
 /** What one answered item adds to the tallies, and why it missed; an `{id, error}` entry counts as every miss. */
@@ -96,9 +112,14 @@ export const digestScorer: Scorer<unknown, DigestReference> = {
 
     const feedback: string[] = []
     const miss = (id: string, why: string) => feedback.push(`${id}: ${why}`)
+    const unfit = items.find((item) => {
+      const ref = want.items[item.id]
+      return ref !== undefined && !fitsKind(item.kind, ref)
+    })
+    if (unfit) return failed(`the reference of ${unfit.id} does not fit its kind ${unfit.kind}`)
     const answers = items.map((item, i) => ({
       item,
-      result: results[i] as Answer,
+      result: asKind(item.kind, results[i] as Answer),
       ref: want.items[item.id],
     }))
 
