@@ -87,7 +87,7 @@ and the error names them with their total ("already billed: upscale $0.002, cuto
 - **The poll deadline is per capability.** Replicate predictions are polled for 60 s by default; `image.upscale` waits
   up to 180 s because real-esrgan 4x/8x can run longer than a cutout.
 - **The Replicate models are routes** in the route table (`image.upscale`, `image.vectorize`, `image.cutout.*`;
-  `packages/routes/src/table/image.ts`), priced per call and overridable by `AGW_ROUTES` like any route.
+  `packages/routes/src/table/image.ts`), priced per call and patched by an eval run's arm like any route.
 - **No eval suite.** The outputs are deterministic image processing, covered by the golden and pipeline tests; the three
   model steps are tested against the fake Replicate server (`image-icon.test.ts`).
 

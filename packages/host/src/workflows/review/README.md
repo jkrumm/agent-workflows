@@ -131,7 +131,7 @@ with their routes.
 
 - `uncommitted` is `git diff HEAD` (staged and unstaged together) for every reviewer. Legacy showed the router, the
   adversary and the file list the staged changes only when any were staged, and the angles `git diff HEAD`.
-- No `model` input (route overrides go through `AGW_ROUTES`), no Max fallback, no research-gateway block in the angle prompts.
+- No `model` input (an eval arm patches the routes: `agw eval run --arm`), no Max fallback, no research-gateway block in the angle prompts.
 - OCR speaks the OpenAI chat protocol for the primary (route `review.ocr` is on the `iu-openai` wire) and Responses for a `gpt-` fallback, as legacy does for GPT ids.
 - react-doctor reads the pinned install under `~/.local/share/agent-workflows/react-doctor/<version>/` (`make install-opencode`; `AGW_REACT_DOCTOR_BIN` overrides it).
 - Helpers run as argv, not `bash -c`: a scope can no longer reach a shell, and a fallow timeout is reported as `fallow failed`.

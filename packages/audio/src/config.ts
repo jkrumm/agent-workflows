@@ -68,8 +68,8 @@ export interface AudioConfig extends AudioTuning {
 
 export class AudioConfigError extends Error {}
 
-const prepModels = (lane: AudioLane, env: Env): string[] =>
-  Object.values(audioRoutes(env))
+const prepModels = (lane: AudioLane): string[] =>
+  Object.values(audioRoutes())
     .filter((r) => r.lane === lane && r.prep)
     .map((r) => r.model)
 
@@ -168,8 +168,8 @@ export function audioConfig(env: Env): AudioConfig {
   }
   return {
     transports: audioTransports(env),
-    ttsGeminiPrepModels: list('TTS_GEMINI_PREP_MODELS', prepModels('gemini', env)),
-    ttsReplicatePrepModels: list('TTS_REPLICATE_PREP_MODELS', prepModels('replicate', env)),
+    ttsGeminiPrepModels: list('TTS_GEMINI_PREP_MODELS', prepModels('gemini')),
+    ttsReplicatePrepModels: list('TTS_REPLICATE_PREP_MODELS', prepModels('replicate')),
     ttsPrep: oneOf('TTS_PREP', ['always', 'long', 'off'] as const, d.ttsPrep),
     ttsAutoSummarizeMinChars: num('TTS_AUTO_SUMMARIZE_MIN_CHARS', d.ttsAutoSummarizeMinChars),
     ttsBitrateKbps: num('TTS_MP3_BITRATE', d.ttsBitrateKbps),

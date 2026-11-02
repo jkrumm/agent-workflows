@@ -8,7 +8,7 @@ import { z } from 'zod'
 /**
  * The models the studio generates with, by the ids it knows: the route table's own
  * default ids for the two image seats (model ids live in the table and nowhere else, `packages/routes/src/guard.test.ts`).
- * The door answers with one of these for the seat that served the request, whatever `AGW_ROUTES` maps the seat to; the
+ * The door answers with one of these for the seat that served the request, whatever model the seat's route resolves to; the
  * contract test pins the two ids to the studio's, so a table change that would break the app's enum fails there.
  */
 export const IMAGE_MODELS = [DEFAULT_ROUTES['image.flare'].model, DEFAULT_ROUTES['image.sunburst'].model] as const

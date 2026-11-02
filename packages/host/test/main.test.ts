@@ -2,7 +2,6 @@ import { afterAll, afterEach, describe, expect, test } from 'bun:test'
 import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { resolveRoute } from '@agent-workflows/routes'
 import { boot, lazyOpenCodeHost } from '../src/boot.ts'
 import { loadConfig } from '../src/config.ts'
 import { Pool } from 'pg'
@@ -131,7 +130,6 @@ describe('lazyOpenCodeHost', () => {
 })
 
 describe('boot', () => {
-  const ROUTE = 'review.angle' // an opencode route: its table entry has a rate and a fallback
   test('a taken port fails the start before the runtime opens: no schema, no claimed run, nothing left open', async () => {
     const fresh = freshSchema('boot')
     const squatter = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => new Response('taken') })
@@ -147,51 +145,6 @@ describe('boot', () => {
     } finally {
       await squatter.stop(true)
       await pool.end()
-      await fresh.drop()
-    }
-  })
-
-  test('a bad AGW_ROUTES refuses the start, naming the route id or the problem and never the override content', async () => {
-    const fresh = freshSchema('bootroutes')
-    const pool = new Pool({ connectionString: PG_URL, max: 1 })
-    try {
-      const config = loadConfig(valid(fresh.schema))
-      const refused = (AGW_ROUTES: string) => rejection(boot(config, { env: { AGW_ROUTES } }))
-      const unknown = await refused(JSON.stringify({ 'no.such.route': { model: 'leaky-model-name' } }))
-      expect(unknown).toContain('AGW_ROUTES')
-      expect(unknown).toContain('no.such.route')
-      expect(unknown).not.toContain('leaky-model-name')
-      const bad = await refused(JSON.stringify({ [ROUTE]: { effort: 'leaky-effort' } }))
-      expect(bad).toContain('AGW_ROUTES')
-      expect(bad).toContain(`"${ROUTE}"`)
-      expect(bad).not.toContain('leaky-effort')
-      // the parser quotes what it chokes on; the error must not
-      const malformed = await refused('{"check": leakysecret}')
-      expect(malformed).toContain('AGW_ROUTES: not valid JSON')
-      expect(malformed).not.toContain('leakysecret')
-      // nothing was opened: the schema was never migrated
-      const { rowCount } = await pool.query('select 1 from information_schema.schemata where schema_name = $1', [
-        fresh.schema,
-      ])
-      expect(rowCount).toBe(0)
-    } finally {
-      await pool.end()
-      await fresh.drop()
-    }
-  })
-
-  test('a valid AGW_ROUTES boots, and no AGW_ROUTES boots as before', async () => {
-    const fresh = freshSchema('bootroutes2')
-    try {
-      // A patch built from the resolved route that really changes it, on a field with no ceiling to trip over.
-      // That boot reads this env at all is shown by the refusals above: the same channel carries the bad ones.
-      const route = resolveRoute(ROUTE, {})
-      const patch = { [ROUTE]: { effort: route.effort === 'low' ? 'high' : 'low' } }
-      for (const env of [{ AGW_ROUTES: JSON.stringify(patch) }, {}]) {
-        const running = await boot(loadConfig(valid(fresh.schema)), { env })
-        await running.shutdown()
-      }
-    } finally {
       await fresh.drop()
     }
   })

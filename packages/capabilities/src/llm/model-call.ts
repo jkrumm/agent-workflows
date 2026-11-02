@@ -20,7 +20,7 @@ import type { AttemptUsage, ChatResult, GatewayTransports, Tokens } from '../tra
 /** What the model-backed capabilities are built from. Handlers close over it; `ctx` stays `{ signal, addUsage, attribution? }`. */
 export interface LlmDeps {
   transports: GatewayTransports
-  /** Where `AGW_ROUTES` is read from. Default `process.env`. */
+  /** Where `AGW_VOICE_PATH` is read from. Default `process.env`. */
   env?: Env
   /** Where a fallback is reported. Default `console.warn`. */
   warn?: (message: string, meta: Record<string, unknown>) => void
@@ -33,9 +33,13 @@ const DEFAULT_MAX_OUTPUT_WITH_EFFORT = 32_000
 const RETRY_ECHO_CHARS = 4_000
 const MAX_ATTEMPTS = 2
 
-export function resolve(deps: LlmDeps, routeId: RouteId): ResolvedRoute {
+/**
+ * The route the call runs on: the table with the calling run's arm applied (`ctx.arm.routes`), the plain table outside
+ * an armed run. A bad patch is `NOT_CONFIGURED` (admission validated it, so only an untyped caller gets here).
+ */
+export function resolve(_deps: LlmDeps, routeId: RouteId, ctx?: Pick<Ctx, 'arm'>): ResolvedRoute {
   try {
-    return resolveRoute(routeId, deps.env ?? process.env)
+    return resolveRoute(routeId, ctx?.arm?.routes)
   } catch (error) {
     if (error instanceof UnknownRouteError || error instanceof RouteOverrideError) {
       throw new CapabilityError('NOT_CONFIGURED', error.message, undefined, { cause: error })
@@ -127,7 +131,7 @@ export type Completion = Pick<ChatResult, 'text' | 'model' | 'stop' | 'stopDetai
  * `start` pins the route to call (a re-ask stays on the route that answered); a fallback route has no fallback.
  */
 export async function complete(deps: LlmDeps, args: CompleteArgs, start?: ResolvedRoute): Promise<Completion> {
-  const route = start ?? resolve(deps, args.routeId)
+  const route = start ?? resolve(deps, args.routeId, args.ctx)
   try {
     return await completeOn(deps, route, args)
   } catch (error) {

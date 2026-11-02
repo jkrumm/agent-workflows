@@ -58,5 +58,5 @@ fix in the factory or agw `risky`; it was dropped. Two references were corrected
 files live (`rd` and the `/wave` skill are dotfiles), and one Issue is an outage report (an incident, not a bug). The ten
 held-out cases were written after run 1 and not used to tune the prompt. What run 2 cannot say: 45 cases is a small set
 (one case is 2.2 points), the references are one reader's judgment, and size and effort edges (s against m) are noisy
-for every route; the tier gate prices them. Measured live on 2026-11-02 on a scratch host (`AGW_ROUTES` selects the arm);
+for every route; the tier gate prices them. Measured live on 2026-11-02 on a scratch host (a process-wide route override selected the arm then; `--arm` does now);
 the production journal holds no eval run until a release carries the workflow.

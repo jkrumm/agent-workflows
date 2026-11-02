@@ -12,13 +12,15 @@ import { resolveRoute, routeFingerprint, costFromUsage } from '@agent-workflows/
 const route = resolveRoute('cheap.classify') // { id, wire, model, effort?, maxOutputTokens?, rate?, fallback? }
 fallbackRoute(route) // the fallback as a route of the same id (isFallback: true), or undefined
 isBalanceFailure({ status: 503, text: body }) // the provider-balance classifier
-routeFingerprint('cheap.classify') // sha256 hex of the resolved entry, overrides included
+routeFingerprint('cheap.classify') // sha256 hex of the resolved entry
+resolveRoute('check', scope.arm?.routes) // inside a run: the table with the run's arm applied
+validateArm(arm) // the whole arm checked at admission (`agw eval run --arm`)
 costFromUsage(route.wire, usage, route.rate) // { usd, source: 'provider' | 'rate' | 'unknown' }
 ```
 
-`resolveRoute` and `routeFingerprint` take a `RouteId` (the table's keys, typed: see §Table); `resolveRoute` returns a copy, so mutating it changes nothing shared. An unknown id from an untyped caller throws `UnknownRouteError`; a bad override throws `RouteOverrideError`.
+`resolveRoute` and `routeFingerprint` take a `RouteId` (the table's keys, typed: see §Table) and an optional patch (a run's arm's `routes`, §Arms); `resolveRoute` returns a copy, so mutating it changes nothing shared. An unknown id from an untyped caller throws `UnknownRouteError`; a bad patch throws `RouteOverrideError`.
 
-The host serves the resolved table (`AGW_ROUTES` applied) as `agw routes` (`GET /routes`, unjournaled): per route id the wire, model, effort, fallback, rate and price; `--format plain` is a compact table.
+The host serves the plain table as `agw routes` (`GET /routes`, unjournaled): per route id the wire, model, effort, fallback, rate and price; `--format plain` is a compact table.
 
 ## Table
 
@@ -92,7 +94,7 @@ Two routes stay on GPT by design. `review.adversary` is pinned to `TERRA_MEDIUM`
 'research.agent': { wire: 'opencode', ...CHEAP, maxOutputTokens: 16_000, fallback: AGENT_FALLBACK },
 ```
 
-Moving every route of a role to another model, rate or effort is one edit to the seat. Effort and output limit after the spread override the seat for one route. The wire is the route's own (a transport is code, `AGW_ROUTES` cannot change it), so a seat that moves to another provider family also needs its routes' `wire` changed where the family speaks another dialect (the Claude seats did: single calls moved from `iu-openai` to `anthropic`). Specialist models stay in their group file: the TTS and STT voices, the image models, `decide`, the Gemini reviewer seat. Model ids stay under `src/table/` only (`guard.test.ts`).
+Moving every route of a role to another model, rate or effort is one edit to the seat. Effort and output limit after the spread override the seat for one route. The wire is the route's own (a transport is code, an arm cannot change it), so a seat that moves to another provider family also needs its routes' `wire` changed where the family speaks another dialect (the Claude seats did: single calls moved from `iu-openai` to `anthropic`). Specialist models stay in their group file: the TTS and STT voices, the image models, `decide`, the Gemini reviewer seat. Model ids stay under `src/table/` only (`guard.test.ts`).
 
 ## Entry
 
@@ -100,7 +102,7 @@ Moving every route of a role to another model, rate or effort is one edit to the
 |-|-|
 | `wire` | `iu-openai` (IU OpenAI dialect: chat completions, `/audio/transcriptions`), `anthropic` (native Messages on the gateway, which pays from a Claude credit pool or IU), `iu-decision` (IU decision API), `opencode` (agent step on the OpenCode host), `iu-gemini` (native Gemini TTS), `iu-replicate` (Replicate predictions) |
 | `model` | the provider's model id |
-| `effort` | `none\|low\|medium\|high\|xhigh\|max`. Absent when the model exposes none. A Sonnet model at `none` is a configuration error (table import and every `AGW_ROUTES` override fail, naming the route): Sonnet 5.5 has no effort level that switches thinking off |
+| `effort` | `none\|low\|medium\|high\|xhigh\|max`. Absent when the model exposes none. A Sonnet model at `none` is a configuration error (table import and every arm patch fail, naming the route): Sonnet 5.5 has no effort level that switches thinking off |
 | `maxOutputTokens` | output ceiling; reasoning tokens count against it |
 | `rate` | `{ inputPerM, outputPerM, cacheReadPerM?, cacheWritePerM?, longPromptTokens? }` USD per million; the provider's `usage.cost` wins where it sends one |
 | `fallback` | a full route spec (`wire`, `model`, `effort?`, `maxOutputTokens?`, `rate?`) the call moves to once on a provider-balance failure (below) |
@@ -114,23 +116,29 @@ Owner direction 2026-10-28: a route that fails because the provider account is e
 - **Trigger:** `isBalanceFailure` (`src/balance.ts`), the one classifier: HTTP 402; 503 whose body says "Insufficient Balance" or "PaymentRequired" (IU today: `IU request failed (503) — Insufficient Balance (PaymentRequired) on <provider>`); or 400 whose body says "credit balance is too low to access the Anthropic API" (Anthropic's refusal of a drained Console org, a 400 `invalid_request_error`, not a 402), or which carries `BALANCE_MARKER` (the transports' own message, re-classified with its status; the body is cut to 300 chars, so the marker is what survives). Any other 400 is not balance. Without a status (an OpenCode turn error, a step's failure reason, `ocr`'s stderr) `BALANCE_MARKER` (`provider balance exhausted`, written by the transports), IU's body shape `Insufficient Balance (PaymentRequired)`, Anthropic's full sentence above, or a `402` token together with "payment required" / "insufficient balance" count; a 402 or the wording alone does not. The classifier is never fed diff text: review's failure reasons carry none (zod schema messages hold no values, OpenCode turn errors are the provider's). Any other error keeps its usual handling.
 - **Once:** the capability transports fail fast on it (no retry loop on the primary) and the call runs once on `fallbackRoute(route)`; the OpenCode host reopens a step whose turn was refused before it did anything on the fallback route, once (`packages/opencode-host` README); review's OCR child reruns `ocr` once. A failing fallback answers the primary's error. The usage records the model that actually ran.
 - **Default:** a Claude route falls back to GPT on IU by seat (Luna low, Terra low, Terra medium; §Seats), a DeepSeek route to GPT-6.1 Terra at effort medium, `review.adversary` to Luna medium, `decide` and the audio and image-model routes to nothing. Every fallback has `maxOutputTokens` 32000 (see §Seats). Claude routes lean on this: with the credit gone the gateway answers 402, so a Claude route without a fallback is a failed call.
-- **Overrides:** `AGW_ROUTES` patches a fallback like a primary: `{"cheap.classify": {"fallback": {"model": "<model-id>", "effort": "high"}}}` (merged over the table's fallback; a new model without a rate drops the rate) and `{"cheap.classify": {"fallback": null}}` removes it. A route without a fallback cannot gain one through the variable, and a fallback's `wire` cannot be overridden.
+- **Arms:** an arm patches a fallback like a primary: `{"cheap.classify": {"fallback": {"model": "<model-id>", "effort": "high"}}}` (merged over the table's fallback; a new model takes the table's rate for it, as on the primary) and `{"cheap.classify": {"fallback": null}}` removes it. A route without a fallback cannot gain one through an arm, and a fallback's `wire` cannot be patched.
 - **Price:** the fallback carries its own rate (below); `usage.cost`, when IU sends it, wins as on any route.
 
-## Overrides
+## Arms
 
-One variable, `AGW_ROUTES`, holds a JSON object of per-route patches:
+An arm is the one way to run a route other than the table's: `{ routes?: { <route id>: <patch> }, params?: { <name>: <json> } }`,
+passed with `agw eval run <workflow> --arm <file>` (`packages/host/src/workflows/eval/README.md`). It applies to that eval
+run and every run below it, never to production: a run without an arm resolves the plain table. There is no environment
+variable and no config file.
 
-```sh
-AGW_ROUTES='{"review.angle":{"model":"<model-id>","effort":"high"},"cheap.classify":{"maxOutputTokens":null}}'
+```json
+{
+  "routes": { "review.angle": { "effort": "high" }, "cheap.classify": { "model": "<model-id>", "effort": "low" } },
+  "params": { "finders": 3 }
+}
 ```
 
-- A patch may set `model`, `effort`, `maxOutputTokens` (at most 200000), `rate` and `fallback` (a patch of the same fields, or `null`); `null` clears an optional field. It is merged over the table entry and the result is validated like a table entry.
-- **`wire` cannot be overridden** (`RouteOverrideError`): a route's transport is code, overrides are for model, effort, limit and rate experiments.
-- Every patch is checked on every `resolveRoute`, not only the requested route. A route id that is not in the table, malformed JSON or an invalid result is a `RouteOverrideError`.
-- Changing `model` without supplying a new `rate` drops the old rate, so cost reads `unknown` instead of a stale number.
-- The variable is parsed on every call; `resolveRoute(id, env)` takes an explicit env for tests.
-- Overrides never touch the table and are part of the fingerprint.
+- A patch may set `model`, `effort`, `maxOutputTokens` (at most 200000), `rate`, `price` and `fallback` (a patch of the same fields, or `null`); `null` clears an optional field. It is merged over the table entry and the result is validated like a table entry.
+- **`wire` cannot be patched** (`RouteOverrideError`): a route's transport is code.
+- **A new model keeps a price.** Without its own `rate` (or `price`) the patch takes the table's for that model (`routeRate`, `claudeRate`); a model the table prices nowhere is refused unless the patch carries one. `rate: null` unprices it on purpose.
+- **Agent routes** (`opencode` wire) move only among the models the OpenCode server serves (`opencodeModels()`: every opencode-wire model of the table and its fallbacks), at any effort; the server registers every effort variant of each (`packages/opencode-host` README). `rate`, `maxOutputTokens` and `price` cannot be patched there: the server's config prices and limits a model, not a route.
+- `validateArm(arm)` checks the arm whole at admission: its shape, every patch (an unknown route id, a bad entry, a Sonnet at effort `none`, an unserved agent model). A message names the route id and the problem, and the model for an unserved one; never a parser message or another value.
+- `resolveRoute(id, patch)` validates every patch on every call, not only the requested route. The run fingerprint includes the arm (`packages/middleware` fingerprint), so an armed run never shares a fingerprint with a production run.
 
 ## Cost
 
@@ -182,7 +190,7 @@ rows as before.
 
 A route flip changes what the next run costs and how well it caches:
 
-- **Model change on a route with a rate** (`decide`): tokens are priced at the new rate, or `unknown` if the override supplies none.
+- **Model change on a route with a rate** (`decide`): tokens are priced at the patch's rate, else the table's rate for the new model; a model the table never prices is refused unless the patch carries a rate.
 - **Model change in general:** the provider prompt cache is per model, so the first run after a flip pays full input price. Claude reports cache reads and writes; DeepSeek on `iu-openai` reports `cached_tokens`; cost from `usage.cost` already reflects both.
 - **Effort up** (`high`, `max`): more reasoning tokens, billed as output, counted against `maxOutputTokens`. Raise the ceiling with it or the answer starves.
 - **Wire change** (for example `iu-openai` → `anthropic`): different usage keys and cache semantics. `costFromUsage` accepts both shapes, but the cache hit rate starts from zero.

@@ -25,7 +25,7 @@ describe('agw eval in the generated CLI', () => {
     }
     const run = flags('eval run')
     expect(run.x).toMatchObject({ kind: 'workflow', positional: ['workflow'], mutating: false })
-    expect(run.flags).toEqual(['args', 'concurrency', 'ids', 'limit', 'workflow', 'yes'])
+    expect(run.flags).toEqual(['args', 'arm', 'concurrency', 'ids', 'limit', 'workflow', 'yes'])
     const compare = flags('eval compare')
     expect(compare.x).toMatchObject({ kind: 'workflow', positional: ['workflow'] })
     expect(compare.flags).toEqual(['a', 'a-args', 'b', 'b-args', 'seed', 'workflow'])

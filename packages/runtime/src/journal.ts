@@ -3,6 +3,7 @@ import { type ErrorKind, errorMessage, InfraError, LeaseLost, WorkflowError } fr
 import type { Json } from './json.ts'
 import { lockKey } from './lease.ts'
 import type {
+  Arm,
   FinalScore,
   KeyedRun,
   RunStatus,
@@ -47,11 +48,13 @@ export type RunRow = {
   project: string | null
   /** `work` or `private`, declared by the caller; null when the caller did not say. */
   workspace: string | null
+  /** The run tree's experiment arm, copied from the parent; null for a run without one (production). */
+  arm: Arm | null
 }
 
 const RUN_COLUMNS = `id, workflow, parent_id, root_id, status, purpose, input, output, error, error_kind, traceparent,
   version_started, version_finished, started_at, finished_at, cancel_requested_at, admitted_at, post_hooks_at,
-  post_hooks_failed_at, cost, unpriced_calls, caller, project, workspace`
+  post_hooks_failed_at, cost, unpriced_calls, caller, project, workspace, arm`
 
 export type CancelledStep = { run_id: string; step_id: string; kind: StepKind; handle: AgentHandleState | null }
 
@@ -90,6 +93,8 @@ export type NewRun = {
   caller?: string | null
   project?: string | null
   workspace?: string | null
+  /** The run's arm; a child inherits its parent's. Absent: null. */
+  arm?: Arm | null
 }
 
 export type RunEnd = {
@@ -188,13 +193,13 @@ export class Journal {
    * inserted under its root's fence.
    */
   async insertRun(run: NewRun, fence: Fence | null = null): Promise<string> {
-    const guard = fence ? `where ${this.fence(19, 20)}` : ''
+    const guard = fence ? `where ${this.fence(20, 21)}` : ''
     const { rows } = await this.query<{ id: string }>(
       `insert into ${this.runs} (id, workflow, parent_id, root_id, purpose, input, input_hash, idempotency_key,
          traceparent, trace_id, version_started, status, error, error_kind, finished_at, lock_key, caller, project,
-         workspace)
+         workspace, arm)
        select $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
-         case when $12 = 'failed' then now() end, $15::bigint, $16, $17, $18 ${guard}
+         case when $12 = 'failed' then now() end, $15::bigint, $16, $17, $18, $19 ${guard}
        ${run.chosenId ? 'on conflict (id) do nothing' : 'on conflict do nothing'} returning id`,
       [
         run.id,
@@ -215,6 +220,7 @@ export class Journal {
         run.caller ?? null,
         run.project ?? null,
         run.workspace ?? null,
+        run.arm ? JSON.stringify(run.arm) : null,
         ...(fence ? [fence.rootId, fence.token] : []),
       ],
     )

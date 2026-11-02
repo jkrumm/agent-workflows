@@ -78,13 +78,9 @@ describe('prices come from the route table', () => {
     expect(split.costUsd).toBeCloseTo((200 * 2.5 + 800 * 6 + 50 * 10) / 1e6, 12)
   })
 
-  test('an AGW_ROUTES override of a price reaches the door', () => {
-    const env = {
-      AGW_ROUTES: JSON.stringify({
-        'audio.stt.voxtral-mini': { price: { kind: 'unit', unit: 'second', usd: 0.006, per: 60 } },
-      }),
-    }
-    const overridden = audioRoutes(env)['audio.stt.voxtral-mini']
+  test("an arm's price patch reaches the route the scope prices with", () => {
+    const patch = { 'audio.stt.voxtral-mini': { price: { kind: 'unit', unit: 'second', usd: 0.006, per: 60 } } }
+    const overridden = audioRoutes(patch)['audio.stt.voxtral-mini']
     expect(priceCall(overridden, 200, { audioSeconds: 60 }).costUsd).toBeCloseTo(0.006, 12)
   })
 

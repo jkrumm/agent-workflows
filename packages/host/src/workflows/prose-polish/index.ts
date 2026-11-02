@@ -83,7 +83,7 @@ export async function polishDraft(
     ...(input.context ? { context: input.context } : {}),
   }
 
-  const reviewed = await ctx.step('review', async ({ addUsage, signal, attribution }) => {
+  const reviewed = await ctx.step('review', async ({ addUsage, signal, attribution, arm }) => {
     const tally = costTally()
     const review = await registry.call('prose.critique', draft, {
       addUsage: (usage) => {
@@ -92,11 +92,12 @@ export async function polishDraft(
       },
       signal,
       attribution,
+      arm,
     })
     return { ...review, cost: tally.total }
   })
 
-  const written = await ctx.step('write', async ({ addUsage, signal, attribution }) => {
+  const written = await ctx.step('write', async ({ addUsage, signal, attribution, arm }) => {
     const tally = costTally()
     // The writer's prompt lists the first MAX_BRIEF_* findings and notes and counts the rest: send exactly that, so a long
     // bad draft (more findings than the capability accepts) is never a failed run.
@@ -116,6 +117,7 @@ export async function polishDraft(
         },
         signal,
         attribution,
+        arm,
       },
     )
     return { ...out, cost: tally.total }

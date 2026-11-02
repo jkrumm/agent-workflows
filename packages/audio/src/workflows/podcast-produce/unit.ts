@@ -99,6 +99,7 @@ export function createUnitWorkflow(deps: {
         const audio = createAudioScope(
           {
             ...deps.audio,
+            ...(scope.arm?.routes ? { routes: scope.arm.routes } : {}),
             usage: deps.usage((usage) => {
               reported.push(usage)
               scope.addUsage(usage)

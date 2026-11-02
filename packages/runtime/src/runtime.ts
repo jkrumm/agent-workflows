@@ -17,6 +17,7 @@ import { checkVerdict } from './score.ts'
 import { type Refusal, RunScope, raceAbort, type ScopeHost, toRunError } from './scope.ts'
 import type {
   AgentHost,
+  Arm,
   AnyWorkflow,
   FinalScore,
   JudgeCaller,
@@ -237,8 +238,9 @@ export class Runtime {
         throw new WorkflowError('invalid_input', 'start: runId and idempotencyKey exclude each other')
     }
     const inputHash = hashJson(value)
+    const arm = checkArm(options.arm ?? workflow.arm?.(parsed.data))
     const origin =
-      options.parentId === undefined ? originOf(options) : await this.parentOrigin(options.parentId, options)
+      options.parentId === undefined ? originOf(options, arm) : await this.parentOrigin(options.parentId, options, arm)
     const runId = await this.journal.insertRun({
       id,
       workflow: workflow.id,
@@ -265,9 +267,13 @@ export class Runtime {
    * A parented start inherits caller, project, workspace and trace from the parent row, as a fan-out child does. The
    * trace: the parent's `traceparent`, else one naming the parent's derived trace and admission span (the telemetry
    * middleware's derivation), so the child's span lands under the parent's in the same trace although its root differs.
+   * The arm is the parent's: a child never runs on another arm than its tree.
    */
-  private async parentOrigin(parentId: string, options: StartOptions): Promise<Origin> {
-    const own = (['caller', 'project', 'workspace', 'traceparent'] as const).filter((k) => options[k] !== undefined)
+  private async parentOrigin(parentId: string, options: StartOptions, arm: Arm | null): Promise<Origin> {
+    const own: string[] = (['caller', 'project', 'workspace', 'traceparent'] as const).filter(
+      (k) => options[k] !== undefined,
+    )
+    if (arm) own.push('arm')
     if (own.length) throw new WorkflowError('invalid_input', `start: parentId excludes ${own.join(', ')}`)
     const parent = await this.journal.getRun(parentId)
     if (!parent) throw new WorkflowError('invalid_input', `start: parent run ${parentId} not found`)
@@ -276,6 +282,7 @@ export class Runtime {
       project: parent.project,
       workspace: parent.workspace,
       traceparent: parent.traceparent ?? derivedTraceparent(parent),
+      arm: parent.arm,
     }
   }
 
@@ -793,6 +800,7 @@ export class Runtime {
           caller: root.caller,
           project: root.project,
           workspace: root.workspace,
+          arm: root.arm,
           input: invalid ? null : value,
           inputHash: hashJson(invalid ? null : value),
           idempotencyKey: null,
@@ -990,6 +998,7 @@ function runInfo(run: RunRow, workflow: { id: string; version: string }): RunInf
     rootId: run.root_id,
     input: run.input,
     traceparent: run.traceparent,
+    ...(run.arm ? { arm: run.arm } : {}),
   }
 }
 
@@ -1027,15 +1036,37 @@ function hashJson(value: Json): string {
   return new Bun.CryptoHasher('sha256').update(JSON.stringify(value)).digest('hex')
 }
 
-type Origin = Pick<RunRow, 'caller' | 'project' | 'workspace' | 'traceparent'>
+type Origin = Pick<RunRow, 'caller' | 'project' | 'workspace' | 'traceparent' | 'arm'>
 
-function originOf(options: StartOptions): Origin {
+function originOf(options: StartOptions, arm: Arm | null): Origin {
   return {
     caller: options.caller ?? null,
     project: options.project ?? null,
     workspace: options.workspace ?? null,
     traceparent: options.traceparent ?? null,
+    arm,
   }
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+/**
+ * The arm's shape (`{ routes?: {...}, params?: {...} }`, JSON throughout); an empty arm is none. The route patches are
+ * the routes package's to validate (`validateArm`), which this package cannot import: the caller checks them first.
+ */
+function checkArm(arm: Arm | undefined): Arm | null {
+  if (arm === undefined) return null
+  const bad = (why: string) => new WorkflowError('invalid_input', `start: arm ${why}`)
+  if (!isRecord(arm)) throw bad('is not an object')
+  const extra = Object.keys(arm).filter((k) => k !== 'routes' && k !== 'params')
+  if (extra.length) throw bad(`has unknown keys: ${extra.join(', ')}`)
+  for (const key of ['routes', 'params'] as const) {
+    if (arm[key] !== undefined && !isRecord(arm[key])) throw bad(`${key} is not an object`)
+  }
+  const violation = jsonViolation(arm, 'arm')
+  if (violation) throw new WorkflowError('invalid_input', `start: ${violation}`)
+  return Object.keys(arm).length ? arm : null
 }
 
 const sha256 = (text: string) => new Bun.CryptoHasher('sha256').update(text).digest('hex')

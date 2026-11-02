@@ -57,7 +57,7 @@ Declared on every operation (they land in the OpenAPI document), keyed by `code`
 
 | Code | Status | Meaning |
 |-|-|-|
-| `NOT_CONFIGURED` | 503 | `AGW_GATEWAY_URL` or `AGW_API_SECRET` missing or malformed, a bad `AGW_ROUTES`, or a route on a wire that is not a single call. Nothing was sent. Messages name the variable, never a value |
+| `NOT_CONFIGURED` | 503 | `AGW_GATEWAY_URL` or `AGW_API_SECRET` missing or malformed, a bad route patch in the calling run's arm, or a route on a wire that is not a single call. Nothing was sent. Messages name the variable, never a value |
 | `UPSTREAM_ERROR` | 502 | the provider was unreachable or answered with an error status after retries; `data.status` when there was one. Also an empty or refused answer |
 | `INVALID_OUTPUT` | 502 | the answer failed the schema after one re-ask; `data: { attempts, reason }` |
 | `OUTPUT_TRUNCATED` | 502 | the output ceiling ended the answer; `data.reason` is `starved` (reasoning ate it, no text) or `truncated` |
@@ -119,7 +119,7 @@ one spread line (and its deps parameter); a new model-backed capability is one l
 
 ## Capabilities
 
-All four are `POST` with a JSON body. The model comes from the route; override with `AGW_ROUTES` (see the routes README).
+All four are `POST` with a JSON body. The model comes from the route; an eval run's arm patches it for the calls of its runs (`ctx.arm`, routes README §Arms), every other call resolves the table.
 
 ### `llm.summarize` — route `cheap.summarize` (`anthropic`)
 
@@ -143,7 +143,7 @@ All four are `POST` with a JSON body. The model comes from the route; override w
 
 `agw decide --questions '{"q":{"type":"choice","instructions":"…","options":{"a":"…","b":"…"}}}'`, state from stdin; JSON output. Input `{ state, questions }` where each question is `choice` (`options`: id → description, 2 to 255) or `boolean`. Output `{ answers, model, truncatedChars, latencyMs, usage }` (`usage`: see `triage`): a choice answers `{ choice, confidence, probabilities }`, a boolean `{ value, confidence, probability }` (`probability` is P(true), `value` is `probability >= 0.5`). The API rounds probabilities to two decimals. The model cannot search or read anything: `state` is its whole world. State beyond 60 000 characters is cut and reported in `truncatedChars`.
 
-**Token effect / cache effect.** There is no generated text, so output is a few tokens and cost is the input at the route's rate (`costSource: 'rate'`, because the decision API drops IU's own cost). More questions in one call share one state, which is the cheap way to ask: the state is paid for once. No cache effect is reported on this wire. Changing the model through `AGW_ROUTES` drops the rate, so cost reads `unknown` until a new rate is supplied.
+**Token effect / cache effect.** There is no generated text, so output is a few tokens and cost is the input at the route's rate (`costSource: 'rate'`, because the decision API drops IU's own cost). More questions in one call share one state, which is the cheap way to ask: the state is paid for once. No cache effect is reported on this wire. An arm moving `decide` to another model needs a rate in its patch: the table prices no other decision model, so the arm is refused without one.
 
 ### `triage` — route `triage` (`iu-openai`, Terra, effort low)
 
@@ -250,7 +250,7 @@ untrusted data: a note may say anything.
 - `capabilities.test.ts`: each capability against a fake gateway through the production adapters: request wire, usage and cost via `ctx.addUsage`, `rate` when the provider omits cost (cache tokens priced per bucket), `unknown` when a cache rate is missing, schema-failure re-ask.
 - `transports.test.ts`: retries, fail-fast statuses, cancel, idle watchdog.
 - `gateway.test.ts`: `gatewayConfig` (required, no IU fallback, no echo), `gatewayHeaders` (a non-ASCII or over-long value dropped), the headers each wire sends (`x-agw-fallback: none` on `anthropic` only), and a real Haiku 5.5 response with 1 h cache writes (`src/fixtures/anthropic-1h-cache-write.json`, id redacted) priced at the 1 h rate.
-- `fallback.test.ts`: the gateway's own 402 on the `anthropic` wire moves the call to the route's GPT fallback; 402, the 503 balance body and Anthropic's 400 credit-balance body (its sentence past the 300-char cut) each make one fallback call (priced, its model recorded); a 503 without the text is retried on the primary only; a 400 without Anthropic's sentence gets no fallback; a failing fallback answers the primary's error; a re-ask stays on the fallback; an `anthropic` route falls back over chat; `AGW_ROUTES` patches or removes the fallback; `review.adversary` (402 and 503 balance, the fallback at its own effort, its re-ask too, no fallback on a plain 503) and `review.route`.
+- `fallback.test.ts`: the gateway's own 402 on the `anthropic` wire moves the call to the route's GPT fallback; 402, the 503 balance body and Anthropic's 400 credit-balance body (its sentence past the 300-char cut) each make one fallback call (priced, its model recorded); a 503 without the text is retried on the primary only; a 400 without Anthropic's sentence gets no fallback; a failing fallback answers the primary's error; a re-ask stays on the fallback; an `anthropic` route falls back over chat; an arm's patch moves or removes the fallback; `review.adversary` (402 and 503 balance, the fallback at its own effort, its re-ask too, no fallback on a plain 503) and `review.route`.
 - `web/web.test.ts`: the web capabilities against a fake network: Sonar mapping, cost and the fallback rule, Tavily credit pricing, the SSRF refusals (schemes, loopback, private, tailnet, metadata, IPv6 forms, a name that resolves privately, a redirect to a private IP, a second hop), DNS rebinding (a resolver that turns private after the guard is never asked again and the request is pinned per hop), the pinned transport against a local server, hostile 2 MB bodies, `parseHtml` edge cases (entities, separators), the streamed read cap, pinned-transport hardening (undecodable and stacked encodings, a failing gzip body), an unresolvable host, the byte-cap flag, charsets, empty and binary reads, truncation, the Extract chain, the typed errors, registry and OpenAPI shape, `fakeWeb`.
 - `brain/brain.test.ts`: both capabilities on a temp vault with a secret outside it: search (scope, ranking, caps, snippets, priced `$0`), read (path, wikilink forms, ambiguity, frontmatter edge cases, truncation), and 27 refused reads (`..`, absolute, symlinks out of the vault and into `Inbox/`, `Inbox/`, dotdirs, `node_modules`, `docs/`, `log.md`, encoded names, backslash, NUL, wikilink escapes), `NOT_CONFIGURED`.
 - `live.test.ts`: one real call per capability, **skipped unless `AGW_LIVE=1`** (the skipped names say so). It costs well under $0.001:

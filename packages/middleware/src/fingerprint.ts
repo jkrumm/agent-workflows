@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { readdir, readFile, stat } from 'node:fs/promises'
 import { join, relative } from 'node:path'
 import { type RouteId, routeFingerprint } from '@agent-workflows/routes'
-import type { Middleware } from '@agent-workflows/runtime'
+import type { Arm, Middleware } from '@agent-workflows/runtime'
 import { type JournalDb, withRetry } from './db.ts'
 
 /** One agent a workflow references: its definition files and the fingerprint of the route it runs on. */
@@ -10,7 +10,7 @@ export type AgentInputs = {
   name: string
   /** Path relative to the agent's directory (`AGENTS.md`, `skills/…`) → content. */
   files: Record<string, string>
-  /** `routeFingerprint` of the agent's route (model, effort, overrides). */
+  /** `routeFingerprint` of the agent's route (model, effort, the run's arm patch). */
   route: string
 }
 
@@ -22,14 +22,23 @@ export type FingerprintInputs = {
    * a digest the host supplies. Left out of the hash when unset, so a source without one keeps its fingerprints.
    */
   hostPolicy?: string | null
+  /**
+   * The run's arm (route patches and params), absent for a run without one: an armed run never shares a fingerprint
+   * with a production run, and two arms never share one.
+   */
+  arm?: Arm
 }
 
 /** Where the behaviour-changing inputs of a workflow come from. Production reads disk; tests pass a fake. */
 export type FingerprintSource = {
-  inputs(workflow: { id: string; version: string }): Promise<FingerprintInputs>
+  /** `arm`: the run's, absent for a run without one; each agent's route is resolved with its `routes` patch. */
+  inputs(workflow: { id: string; version: string; arm?: Arm }): Promise<FingerprintInputs>
 }
 
-/** sha256 over the workflow version, each agent's files and route, and the OpenCode version (concept §5). */
+/**
+ * sha256 over the workflow version, each agent's files and route, the OpenCode version and the run's arm (concept §5).
+ * The arm is hashed in canonical form (keys sorted), so key order in an arm file changes nothing.
+ */
 export function computeFingerprint(version: string, inputs: FingerprintInputs): string {
   const agents = inputs.agents
     .map((a) => ({
@@ -47,7 +56,19 @@ export function computeFingerprint(version: string, inputs: FingerprintInputs): 
       agents,
       opencode: inputs.opencodeVersion,
       ...(inputs.hostPolicy ? { hostPolicy: inputs.hostPolicy } : {}),
+      ...(inputs.arm ? { arm: canonical(inputs.arm) } : {}),
     }),
+  )
+}
+
+/** The value with every object's keys sorted, recursively: one serialization per arm whatever its key order. */
+function canonical(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonical)
+  if (value === null || typeof value !== 'object') return value
+  return Object.fromEntries(
+    Object.keys(value)
+      .sort()
+      .map((key) => [key, canonical((value as Record<string, unknown>)[key])]),
   )
 }
 
@@ -62,8 +83,6 @@ export type FsFingerprintOptions = {
   opencodeBin?: string
   /** The host's session policy (a digest or version): part of every fingerprint of a workflow with agents. */
   hostPolicy?: string
-  /** Route overrides are read from here. Default `process.env`. */
-  env?: Record<string, string | undefined>
 }
 
 /**
@@ -98,18 +117,19 @@ export function fsFingerprintSource(options: FsFingerprintOptions): FingerprintS
   }
 
   return {
-    async inputs({ id }) {
+    async inputs({ id, arm }) {
       const refs = options.workflows[id] ?? []
-      if (refs.length === 0) return { agents: [], opencodeVersion: null }
+      if (refs.length === 0) return { agents: [], opencodeVersion: null, ...(arm ? { arm } : {}) }
       const [version, ...files] = await Promise.all([opencodeVersion(), ...refs.map((r) => filesOf(r.agent))])
       return {
         agents: refs.map((r, i) => ({
           name: r.agent,
           files: files[i] ?? {},
-          route: routeFingerprint(r.route, options.env ?? process.env),
+          route: routeFingerprint(r.route, arm?.routes),
         })),
         opencodeVersion: version ?? null,
         ...(options.hostPolicy ? { hostPolicy: options.hostPolicy } : {}),
+        ...(arm ? { arm } : {}),
       }
     },
   }
@@ -169,7 +189,7 @@ export function fingerprintMiddleware(options: {
   const { db, source } = options
   return {
     name: 'fingerprint',
-    async runPre({ runId, workflowId, version, resume }) {
+    async runPre({ runId, workflowId, version, resume, arm }) {
       if (resume) {
         const { rows } = await withRetry(() =>
           db.pool.query<{ fingerprint: string | null }>(`select fingerprint from ${db.runs} where id = $1`, [runId]),
@@ -178,8 +198,9 @@ export function fingerprintMiddleware(options: {
         if (stored) options.onFingerprint?.(runId, stored)
         return
       }
-      const inputs = await withRetry(() => source.inputs({ id: workflowId, version }))
-      const fingerprint = computeFingerprint(version, inputs)
+      const inputs = await withRetry(() => source.inputs({ id: workflowId, version, ...(arm ? { arm } : {}) }))
+      // The arm counts whatever the source does with it: a fake or custom source cannot drop it from the hash.
+      const fingerprint = computeFingerprint(version, arm ? { ...inputs, arm } : inputs)
       const { rows } = await withRetry(() =>
         db.pool.query<{ fingerprint: string }>(
           `update ${db.runs} set fingerprint = coalesce(fingerprint, $2), updated_at = now() where id = $1

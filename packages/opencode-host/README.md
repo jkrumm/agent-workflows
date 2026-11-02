@@ -151,8 +151,13 @@ turn's tokens; the gateway's usage rows do.
   `AGW_GATEWAY_URL` and `AGW_GATEWAY_TOOL_TOKEN` (`gatewayFromEnv`, both required, the start fails naming the variable; on the
   mini `.env.tpl` sets the URL and `scripts/launch.sh` reads the token from the `agw-opencode` line of `data/door-tokens`), and
   `OTEL_EXPORTER_OTLP_*` when set. Nothing else: no provider key, no `AGW_API_SECRET`, no `CLAUDE_*`, no database URL.
-- **Config** (`buildServerConfig`): three providers with a model row for every `opencode`-wire route and its fallback,
-  cost rows from each route's own `rate`, all on the inference gateway (`docs/gateway.md`) with the door token of the caller
+- **Config** (`buildServerConfig`, built once per server spawn from the route table): three providers with a model row
+  for every `opencode`-wire route and its fallback, each row carrying every effort variant the model can run (`EFFORTS`; a
+  Sonnet has no `none`), so a step whose run's arm moves its route to another of these models or effort opens on the
+  running server without a restart (`open` resolves the route with `AgentOpenSpec.arm`, and the handle keeps the
+  route's patch for the fallback and the pricing). An arm naming a model outside the config is refused at admission
+  (`validateArm`), never served by a silent fallback to the table. Cost rows come from the rate of the first route naming
+  the model (the table names one rate per model), all on the inference gateway (`docs/gateway.md`) with the door token of the caller
   `agw-opencode`. The key in the config is the reference `{env:AGW_GATEWAY_TOOL_TOKEN}`; the token opens the gateway only,
   never the API, and it is the only credential in the server's env and its tool shells. `anthropic` (`@ai-sdk/anthropic`,
   `<AGW_GATEWAY_URL>/anthropic/v1`) serves the `claude-` models, which the gateway pays from a credit pool or IU; its
@@ -160,7 +165,7 @@ turn's tokens; the gateway's usage rows do.
   `reasoningEffort`. It sends a static `x-agw-fallback: none`, so credit that runs out becomes a 402 and the route's own
   fallback, never Claude on IU. `iu-chat` (`@ai-sdk/openai-compatible`) and `iu-responses` (`@ai-sdk/openai`) keep their
   ids on `<AGW_GATEWAY_URL>/openai/v1`. OpenAI's own models (`gpt-`) go on `iu-responses`: they call tools only over the
-  Responses API. Routes sharing a model and effort share one variant. Model ids come only from `@agent-workflows/routes`.
+  Responses API. Model ids come only from `@agent-workflows/routes`.
 - **Detached.** The server is its own process group. A host restart (deploy) leaves it and its running sessions
   alone; the next `start()` adopts it after an authenticated `GET /api/info` with the pinned version
   (`OPENCODE_VERSION`, `2.0.32`; another version is refused) **and** the same launch fingerprint (sha256 of command
@@ -429,8 +434,8 @@ A turn that ends `failed` with a provider-balance error (`isBalanceFailure` from
   same location, with the same permissions (the handle keeps the step's `allowDirectories` as `allow`). A wait after
   a crash reads the failed primary again and lands on the same fallback session: its create returns the existing one
   and `prompt` sends nothing when the prompt is there.
-- The fallback session never falls back again; its failure fails the step. `AGW_ROUTES` `{"<route>": {"fallback": null}}`
-  turns it off.
+- The fallback session never falls back again; its failure fails the step. An arm's `{"routes": {"<route>": {"fallback": null}}}`
+  turns it off for the runs of that eval.
 - A retry of the step (`open` again with the same key) while the fallback session still runs re-attaches through the
   primary's handle, as for a primary that still runs: no new session, no second prompt.
 - `abort` interrupts the fallback session too (every session is tried, errors are raised after) and `steer` goes to

@@ -64,6 +64,7 @@ export function scorerJudge(options: {
           addUsage: scope.addUsage,
           signal: scope.signal,
           ...(scope.attribution ? { attribution: scope.attribution } : {}),
+          ...(scope.arm ? { arm: scope.arm } : {}),
         })
       } catch (error) {
         const answer = error instanceof CapabilityCallError ? answerOf(error) : null

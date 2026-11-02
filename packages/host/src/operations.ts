@@ -8,14 +8,7 @@ import {
   withCli,
 } from '@agent-workflows/capabilities'
 import type { AgentRef } from '@agent-workflows/middleware'
-import {
-  type Price,
-  type RouteEntry,
-  RouteOverrideError,
-  resolveRoute,
-  routeIds,
-  routeSchema,
-} from '@agent-workflows/routes'
+import { type Price, type RouteEntry, resolveRoute, routeIds, routeSchema } from '@agent-workflows/routes'
 import type { AnyWorkflow, Logger, Runtime } from '@agent-workflows/runtime'
 import { IdempotencyConflict, WorkflowError } from '@agent-workflows/runtime'
 import { ORPCError, os } from '@orpc/server'
@@ -656,12 +649,11 @@ export function routesTable(routes: Record<string, RouteEntry>): string {
 }
 
 /**
- * `agw routes`: the route table with the `AGW_ROUTES` its boot validated (`overrides`: a snapshot, never the live
- * process environment). Built once, here: the table cannot change while the host runs, and `boot` has already refused
- * a bad override, so a bad one here throws at creation. An unjournaled read like `run status`: no run, no LLM. The
- * entries carry model ids and prices only; routes hold no key or base URL.
+ * `agw routes`: the route table, as every run without an arm resolves it (an arm patches it for one eval run tree only,
+ * never here). Built once, here: the table cannot change while the host runs. An unjournaled read like `run status`: no
+ * run, no LLM. The entries carry model ids and prices only; routes hold no key or base URL.
  */
-export function routesOperation(overrides: { AGW_ROUTES?: string | undefined }): HostOperation {
+export function routesOperation(): HostOperation {
   const operationId = operationIdOf('routes')
   const cli: ResolvedCliSpec = {
     command: ['routes'],
@@ -673,7 +665,7 @@ export function routesOperation(overrides: { AGW_ROUTES?: string | undefined }):
   }
   const routes: Record<string, RouteEntry> = {}
   for (const id of routeIds()) {
-    const { id: _id, ...entry } = resolveRoute(id, overrides)
+    const { id: _id, ...entry } = resolveRoute(id)
     routes[id] = entry
   }
   const answer = { routes, table: routesTable(routes) }

@@ -123,10 +123,8 @@ function refuseUnfitRoute(route: ResolvedRoute) {
 }
 
 /**
- * Refuses an unfit review route (the writer's lab, another wire), at definition time (a boot with `AGW_ROUTES` pointing `prose.review`
- * at an Anthropic model fails here, not on the first call): a reviewer from the writer's own lab is the same-lab
- * review the cross-lab rule exists to prevent. A malformed override is not this check's to report: it stays the
- * `NOT_CONFIGURED` of the first call, as for every other capability.
+ * Refuses an unfit review route (the writer's lab, another wire) of the table, at definition time: a reviewer from the
+ * writer's own lab is the same-lab review the cross-lab rule exists to prevent. An arm's patch is checked on each call.
  */
 export function assertCrossLab(deps: LlmDeps) {
   let route: ResolvedRoute
@@ -150,8 +148,8 @@ export const createProseReview = (deps: LlmDeps) => {
     // Not `agw prose critique`: `agw prose` is the review workflow.
     cli: { command: ['prose-critique'], stdin: 'text', defaultFormat: 'json' },
     async handler({ text, medium, register, language, draftFormat, verdictFirst, brief, context }, ctx) {
-      // On the resolved route, overrides applied, primary and fallback: a route changed since boot is refused too.
-      refuseUnfitRoute(resolve(deps, 'prose.review'))
+      // On the resolved route, the run's arm applied, primary and fallback: an arm moving the seat is refused too.
+      refuseUnfitRoute(resolve(deps, 'prose.review', ctx))
       const prompt = buildReviewPrompt({
         text,
         medium,

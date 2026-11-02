@@ -30,6 +30,7 @@ import type {
   StepScope,
   ToolEvent,
   Verdict,
+  Widen,
   Workflow,
 } from './types.ts'
 
@@ -104,6 +105,7 @@ export class RunScope {
     return {
       runId: this.run.id,
       workflowId: this.workflow.id,
+      ...(this.run.arm ? { arm: this.run.arm } : {}),
       signal: this.signal,
       step: (id, fn, options) => this.journaled(id, 'code', options ?? {}, (scope) => fn(scope)),
       effect: (id, fn, options) =>
@@ -116,8 +118,23 @@ export class RunScope {
       agent: (id, spec) => this.agent(id, spec),
       score: (id, value) => this.score(id, value),
       continue: (id, from, prompt, options) => this.continueAgent(id, from, prompt, options),
+      param: (name, fallback) => this.param(name, fallback),
       workflow: (id, workflow, inputs) => this.fanOut(id, workflow, inputs),
     }
+  }
+
+  /** `ctx.param`: the arm's value when it has the fallback's JSON type, the fallback when the arm has none. */
+  private param<T extends Json>(name: string, fallback: T): Widen<T> {
+    const params = this.run.arm?.params
+    if (!params || !Object.hasOwn(params, name)) return fallback as Widen<T>
+    const value = params[name] as Json
+    if (jsonType(value) !== jsonType(fallback)) {
+      throw new WorkflowError(
+        'invalid_input',
+        `arm param "${name}" must be ${jsonType(fallback)} (the default's type), got ${jsonType(value)}`,
+      )
+    }
+    return value as Widen<T>
   }
 
   /** Journal calls go through here so a failure latches `infra`. */
@@ -256,6 +273,7 @@ export class RunScope {
       signal,
       addUsage: (u) => usage.add(u),
       attribution: this.attribution(stepId),
+      ...(this.run.arm ? { arm: this.run.arm } : {}),
       progress,
     }
     try {
@@ -308,6 +326,7 @@ export class RunScope {
           options: spec.options,
           ...(spec.output ? outputSchema(spec.output) : {}),
           attribution: scope.attribution,
+          ...(scope.arm ? { arm: scope.arm } : {}),
         })
       },
     })
@@ -333,6 +352,7 @@ export class RunScope {
                   signal: scope.signal,
                   addUsage: scope.addUsage,
                   attribution: scope.attribution,
+                  ...(scope.arm ? { arm: scope.arm } : {}),
                   source: 'inline',
                   runId: this.run.id,
                   scorer: scorer.version,
@@ -605,4 +625,10 @@ function outputSchema(output: z.ZodType): { schema: Json } | { schemaError: stri
   } catch (error) {
     return { schemaError: errorMessage(error) }
   }
+}
+
+/** A JSON value's type for `ctx.param`'s check: `array` and `null` apart from `object`. */
+function jsonType(value: Json): string {
+  if (value === null) return 'null'
+  return Array.isArray(value) ? 'array' : typeof value
 }

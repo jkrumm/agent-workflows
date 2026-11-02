@@ -402,7 +402,7 @@ async function readStream(
  */
 export async function requestImages(
   deps: ResolvedImageDeps,
-  ctx: Pick<Ctx, 'addUsage' | 'signal' | 'attribution'>,
+  ctx: Pick<Ctx, 'addUsage' | 'signal' | 'attribution' | 'arm'>,
   request: ImageRequest,
 ): Promise<ImageResult> {
   const references = request.references ?? []
@@ -418,7 +418,7 @@ export async function requestImages(
 
   const seat = pickRoute(model, quality, edit)
   validate(request, seat, edit)
-  const route = deps.route(seat)
+  const route = deps.route(seat, ctx)
   const config = gatewayConfig(deps.env())
 
   const fields: Record<string, Field> = {

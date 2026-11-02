@@ -3,7 +3,7 @@ import {
   costFromUsage,
   DEFAULT_ROUTES,
   fallbackRoute,
-  OVERRIDES_ENV,
+  opencodeModels,
   type RouteId,
   RouteOverrideError,
   resolveRoute,
@@ -11,7 +11,7 @@ import {
   routeIds,
   routeSchema,
   UnknownRouteError,
-  validateOverrides,
+  validateArm,
 } from './index.ts'
 import { ROUTE_ID, rateSchema } from './schema.ts'
 
@@ -21,7 +21,12 @@ function entry(id: RouteId) {
   return e
 }
 
-const env = (routes?: unknown) => (routes === undefined ? {} : { [OVERRIDES_ENV]: JSON.stringify(routes) })
+/** An opencode model the table serves that `id` does not already run: where an arm may move an agent route. */
+function otherAgentModel(id: RouteId): string {
+  const model = [...opencodeModels()].find((m) => m !== entry(id).model)
+  if (!model) throw new Error(`test setup: no other opencode model than ${id}'s`)
+  return model
+}
 
 describe('table', () => {
   test('every entry is valid and every id well-formed', () => {
@@ -62,14 +67,16 @@ describe('resolveRoute', () => {
     expect(() => resolveRoute('constructor' as RouteId, {})).toThrow(UnknownRouteError)
   })
 
-  test('override changes model and effort, leaves the table alone', () => {
-    const e = env({ 'review.angle': { model: 'some-model', effort: 'high' } })
-    expect(resolveRoute('review.angle', e)).toMatchObject({
-      model: 'some-model',
-      effort: 'high',
-      wire: 'opencode',
-    })
-    expect(resolveRoute('review.angle', {}).model).toBe(entry('review.angle').model)
+  test('a patch changes model and effort, leaves the table alone', () => {
+    const model = otherAgentModel('review.angle')
+    const e = { 'review.angle': { model, effort: 'high' } }
+    expect(resolveRoute('review.angle', e)).toMatchObject({ model, effort: 'high', wire: 'opencode' })
+    expect(resolveRoute('review.angle').model).toBe(entry('review.angle').model)
+  })
+
+  test('without a patch, or with an empty one, the table', () => {
+    for (const patch of [undefined, null, {}])
+      expect(resolveRoute('check', patch)).toEqual({ id: 'check', ...entry('check') })
   })
 
   test('the deep angle route is its own seat: Sonnet medium, priced, overridden independently of review.angle', () => {
@@ -91,26 +98,32 @@ describe('resolveRoute', () => {
       usd: (1_500_000 * 1 * 2 + 1_000 * 5 * 1.5) / 1e6,
       source: 'rate',
     })
-    const e = env({ 'review.angle.deep': { model: 'some-model' } })
-    expect(resolveRoute('review.angle.deep', e)).toMatchObject({
-      model: 'some-model',
-    })
-    expect(resolveRoute('review.angle.deep', e).rate).toBeUndefined() // a new model drops the old rate
+    const model = otherAgentModel('review.angle.deep')
+    const e = { 'review.angle.deep': { model } }
+    expect(resolveRoute('review.angle.deep', e)).toMatchObject({ model })
+    // a new model takes the table's rate for that model, never the old one, never none
+    expect(resolveRoute('review.angle.deep', e).rate).toBeDefined()
+    expect(resolveRoute('review.angle.deep', e).rate).not.toEqual(deep.rate)
     expect(resolveRoute('review.angle', e).model).toBe(entry('review.angle').model)
     expect(routeFingerprint('review.angle.deep', e)).not.toBe(routeFingerprint('review.angle.deep', {}))
     expect(routeFingerprint('review.angle', e)).toBe(routeFingerprint('review.angle', {}))
   })
 
   test('null clears an optional field', () => {
-    const e = env({ 'cheap.classify': { maxOutputTokens: null } })
+    const e = { 'cheap.classify': { maxOutputTokens: null } }
     expect(resolveRoute('cheap.classify', e).maxOutputTokens).toBeUndefined()
   })
 
-  test('a new model drops the old rate unless a new one comes with it', () => {
-    expect(resolveRoute('decide', env({ decide: { model: 'other' } })).rate).toBeUndefined()
+  test("a new model takes the patch's rate, else the table's for that model; a model the table never prices is refused", () => {
+    expect(() => resolveRoute('decide', { decide: { model: 'other' } })).toThrow(
+      /"decide": the patched model has no rate/,
+    )
     const rate = { inputPerM: 1, outputPerM: 2 }
-    expect(resolveRoute('decide', env({ decide: { model: 'other', rate } })).rate).toEqual(rate)
-    expect(resolveRoute('decide', env({ decide: { effort: null } })).rate).toEqual(DEFAULT_ROUTES.decide?.rate)
+    expect(resolveRoute('decide', { decide: { model: 'other', rate } }).rate).toEqual(rate)
+    expect(resolveRoute('decide', { decide: { model: 'other', rate: null } }).rate).toBeUndefined() // unpriced on purpose
+    expect(resolveRoute('decide', { decide: { effort: null } }).rate).toEqual(DEFAULT_ROUTES.decide?.rate)
+    const sonnet = resolveRoute('cheap.classify', { 'cheap.classify': { model: 'claude-sonnet-5-5', effort: 'low' } })
+    expect(sonnet.rate).toEqual(resolveRoute('review.angle.deep').rate as never)
   })
 
   test('an override is validated like the table', () => {
@@ -125,23 +138,45 @@ describe('resolveRoute', () => {
       { decide: { effort: 'high' } },
       { nope: { model: 'x' } },
     ]) {
-      expect(() => resolveRoute('check', env(bad))).toThrow(RouteOverrideError)
+      expect(() => resolveRoute('check', bad as never)).toThrow(RouteOverrideError)
     }
   })
 
   test('overriding wire says why', () => {
-    expect(() => resolveRoute('check', env({ check: { wire: 'iu-openai' } }))).toThrow(/wire cannot be overridden/)
+    expect(() => resolveRoute('check', { check: { wire: 'iu-openai' } })).toThrow(/wire cannot be overridden/)
   })
 
-  test('a non-finite rate in the variable is rejected', () => {
-    const raw = '{"decide":{"rate":{"inputPerM":1e999,"outputPerM":1}}}'
-    expect(() => resolveRoute('decide', { [OVERRIDES_ENV]: raw })).toThrow(RouteOverrideError)
+  test('a non-finite rate is rejected', () => {
+    expect(() => resolveRoute('decide', { decide: { rate: { inputPerM: Infinity, outputPerM: 1 } } })).toThrow(
+      RouteOverrideError,
+    )
   })
 
-  test('the variable is parsed per call, not cached', () => {
-    expect(resolveRoute('check', env({ check: { model: 'a' } })).model).toBe('a')
-    expect(resolveRoute('check', env({ check: { model: 'b' } })).model).toBe('b')
-    expect(resolveRoute('check', {}).model).toBe(entry('check').model)
+  test('each call resolves the patch it is given, nothing is cached', () => {
+    const [a, b] = [...opencodeModels()].filter((m) => m !== entry('check').model)
+    expect(resolveRoute('check', { check: { model: a } }).model).toBe(a as string)
+    expect(resolveRoute('check', { check: { model: b } }).model).toBe(b as string)
+    expect(resolveRoute('check').model).toBe(entry('check').model)
+  })
+
+  test('an agent route moves only to a model the OpenCode server serves, naming the route and the model', () => {
+    expect(() => resolveRoute('check', { check: { model: 'not-served' } })).toThrow(
+      'arm: route "check": model "not-served" is not served by the OpenCode server',
+    )
+    expect(() => resolveRoute('check', { check: { fallback: { model: 'not-served', rate: null } } })).toThrow(
+      /route "check" fallback: rate cannot be patched on the opencode wire/,
+    )
+    expect(() => resolveRoute('check', { check: { fallback: { model: 'not-served' } } })).toThrow(
+      'route "check" fallback: model "not-served" is not served',
+    )
+    for (const key of ['rate', 'maxOutputTokens']) {
+      const value = key === 'rate' ? { inputPerM: 1, outputPerM: 1 } : 1000
+      expect(() => resolveRoute('check', { check: { [key]: value } })).toThrow(
+        `route "check": ${key} cannot be patched`,
+      )
+    }
+    // effort moves freely: the server registers every effort variant of each model
+    expect(resolveRoute('check', { check: { effort: 'max' } }).effort).toBe('max')
   })
 
   test('mutating a resolved route changes neither the table nor the fingerprint', () => {
@@ -170,26 +205,18 @@ describe('resolveRoute', () => {
     }
   })
 
-  test('malformed JSON is a typed error for every route', () => {
-    expect(() => resolveRoute('check', { [OVERRIDES_ENV]: '{nope' })).toThrow(RouteOverrideError)
-    expect(() => resolveRoute('check', { [OVERRIDES_ENV]: '[]' })).toThrow(RouteOverrideError)
-  })
-
-  test('a malformed variable never puts input text in the error, from resolveRoute either', () => {
-    for (const raw of ['{nope', '{"check": leakysecret}', 'leakysecret', '{"check":{"model":"leakysecret"']) {
+  test('a patch that is not an object of patches is a typed error for every route, carrying none of its values', () => {
+    for (const raw of ['leakysecret', ['leakysecret'], { check: 'leakysecret' }, 42]) {
       let message = ''
       try {
-        resolveRoute('check', { [OVERRIDES_ENV]: raw })
+        resolveRoute('check', raw as never)
       } catch (error) {
         expect(error).toBeInstanceOf(RouteOverrideError)
         message = (error as Error).message
       }
-      expect(message).toBe('AGW_ROUTES: not valid JSON')
+      expect(message).toStartWith('arm: ')
+      expect(message).not.toContain('leakysecret')
     }
-  })
-
-  test('blank variable means no overrides', () => {
-    expect(resolveRoute('check', { [OVERRIDES_ENV]: '  ' }).id).toBe('check')
   })
 })
 
@@ -201,17 +228,18 @@ describe('routeFingerprint', () => {
 
   test('changes with model, effort and id; ignores key order in the override', () => {
     const base = routeFingerprint('review.angle', {})
-    const flipped = routeFingerprint('review.angle', env({ 'review.angle': { effort: 'max' } }))
+    const flipped = routeFingerprint('review.angle', { 'review.angle': { effort: 'max' } })
     expect(flipped).not.toBe(base)
-    expect(routeFingerprint('review.angle', env({ 'review.angle': { model: 'm' } }))).not.toBe(base)
+    const model = otherAgentModel('review.angle')
+    expect(routeFingerprint('review.angle', { 'review.angle': { model } })).not.toBe(base)
     expect(routeFingerprint('review.synthesis', {})).not.toBe(routeFingerprint('review.angle', {}))
-    const a = routeFingerprint('decide', env({ decide: { model: 'm', rate: { inputPerM: 1, outputPerM: 2 } } }))
-    const b = routeFingerprint('decide', env({ decide: { rate: { outputPerM: 2, inputPerM: 1 }, model: 'm' } }))
+    const a = routeFingerprint('decide', { decide: { model: 'm', rate: { inputPerM: 1, outputPerM: 2 } } })
+    const b = routeFingerprint('decide', { decide: { rate: { outputPerM: 2, inputPerM: 1 }, model: 'm' } })
     expect(a).toBe(b)
   })
 
   test('an override that restates the table does not change it', () => {
-    const e = env({ 'review.angle': { model: entry('review.angle').model } })
+    const e = { 'review.angle': { model: entry('review.angle').model } }
     expect(routeFingerprint('review.angle', e)).toBe(routeFingerprint('review.angle', {}))
   })
 })
@@ -568,10 +596,9 @@ describe('fallback', () => {
     expect(fallbackRoute(resolveRoute('decide', {}))).toBeUndefined()
   })
 
-  test('AGW_ROUTES patches a fallback like a primary, and only the part it names', () => {
-    const e = env({
-      'cheap.classify': { fallback: { model: 'other-model', effort: 'high' } },
-    })
+  test('a patch reaches a fallback like a primary, and only the part it names', () => {
+    const rate = { inputPerM: 1, outputPerM: 2 }
+    const e = { 'cheap.classify': { fallback: { model: 'other-model', effort: 'high', rate } } }
     const route = resolveRoute('cheap.classify', e)
     expect(route.model).toBe(entry('cheap.classify').model)
     expect(route.fallback).toMatchObject({
@@ -579,15 +606,18 @@ describe('fallback', () => {
       model: 'other-model',
       effort: 'high',
     })
-    // A new fallback model without a rate drops the old rate, as on the primary.
-    expect(route.fallback?.rate).toBeUndefined()
+    expect(route.fallback?.rate).toEqual(rate)
+    // A new fallback model the table does not price needs a rate, as on the primary.
+    expect(() => resolveRoute('cheap.classify', { 'cheap.classify': { fallback: { model: 'other-model' } } })).toThrow(
+      'route "cheap.classify" fallback: the patched model has no rate',
+    )
     expect(routeFingerprint('cheap.classify', e)).not.toBe(routeFingerprint('cheap.classify', {}))
   })
 
   test('a primary patch leaves the fallback alone; null removes the fallback', () => {
-    const patched = resolveRoute('review.angle', env({ 'review.angle': { model: 'some-model' } }))
+    const patched = resolveRoute('review.angle', { 'review.angle': { model: otherAgentModel('review.angle') } })
     expect(patched.fallback).toEqual(entry('review.angle').fallback as never)
-    expect(resolveRoute('review.angle', env({ 'review.angle': { fallback: null } })).fallback).toBeUndefined()
+    expect(resolveRoute('review.angle', { 'review.angle': { fallback: null } }).fallback).toBeUndefined()
   })
 
   test('a fallback override is validated like the table', () => {
@@ -597,7 +627,7 @@ describe('fallback', () => {
       { 'cheap.classify': { fallback: { fallback: { model: 'x' } } } },
       { decide: { fallback: { model: 'x' } } },
     ]) {
-      expect(() => resolveRoute('cheap.classify', env(bad))).toThrow(RouteOverrideError)
+      expect(() => resolveRoute('cheap.classify', bad as never)).toThrow(RouteOverrideError)
     }
   })
 
@@ -720,43 +750,33 @@ describe('rate schema', () => {
   })
 })
 
-describe('validateOverrides', () => {
-  test('unset, blank and {} touch nothing', () => {
-    expect(validateOverrides({})).toEqual([])
-    expect(validateOverrides({ [OVERRIDES_ENV]: '  ' })).toEqual([])
-    expect(validateOverrides(env({}))).toEqual([])
-  })
-
-  test('returns the route ids the override touches, a fallback patch included', () => {
-    expect(validateOverrides(env({ check: { effort: 'low' }, 'cheap.classify': { model: 'm' } }))).toEqual([
-      'check',
-      'cheap.classify',
-    ])
+describe('validateArm', () => {
+  test('an empty arm, routes or params alone, and both are accepted and returned parsed', () => {
+    expect(validateArm({})).toEqual({})
+    expect(validateArm({ params: { finders: 3, voterMode: 'single' } })).toEqual({
+      params: { finders: 3, voterMode: 'single' },
+    })
+    const arm = { routes: { check: { effort: 'low' } }, params: { finders: 5 } }
+    expect(validateArm(arm)).toEqual(arm as never)
   })
 
   test('checks every patch, not only the first: an unknown id and a bad spec each throw, naming the id', () => {
-    const unknown = () => validateOverrides(env({ check: { effort: 'low' }, 'no.such': { model: 'x' } }))
+    const unknown = () => validateArm({ routes: { check: { effort: 'low' }, 'no.such': { model: 'x' } } })
     expect(unknown).toThrow(RouteOverrideError)
     expect(unknown).toThrow('"no.such"')
-    const bad = () => validateOverrides(env({ check: { model: 'x' }, decide: { effort: 'high' } }))
+    const bad = () => validateArm({ routes: { 'cheap.classify': { effort: 'low' }, decide: { effort: 'high' } } })
     expect(bad).toThrow(RouteOverrideError)
     expect(bad).toThrow('"decide"')
+    expect(() => validateArm({ routes: { 'review.angle': { effort: 'none' } } })).toThrow(/review\.angle.*Sonnet/s)
   })
 
-  test('malformed JSON names the problem and never the parser message or any of the input', () => {
-    for (const raw of ['{nope', '{"check": leakysecret}', 'leakysecret', '{"check":{"model":"leakysecret"']) {
-      let message = ''
-      try {
-        validateOverrides({ [OVERRIDES_ENV]: raw })
-      } catch (error) {
-        expect(error).toBeInstanceOf(RouteOverrideError)
-        message = (error as Error).message
-      }
-      expect(message).toBe('AGW_ROUTES: not valid JSON')
-    }
+  test('an arm with another key, or params that are not JSON, is refused', () => {
+    expect(() => validateArm({ route: {} })).toThrow(RouteOverrideError)
+    expect(() => validateArm({ params: { at: new Date() } })).toThrow(RouteOverrideError)
+    expect(() => validateArm(null)).toThrow(RouteOverrideError)
   })
 
-  test('a shape or value error carries no override value', () => {
+  test('a shape or value error carries no patch value', () => {
     for (const bad of [
       { check: { effort: 'leakysecret' } },
       { check: { colour: 'leakysecret' } },
@@ -766,7 +786,7 @@ describe('validateOverrides', () => {
     ]) {
       let message = ''
       try {
-        validateOverrides(env(bad))
+        validateArm({ routes: bad })
       } catch (error) {
         expect(error).toBeInstanceOf(RouteOverrideError)
         message = (error as Error).message

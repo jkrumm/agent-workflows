@@ -1,23 +1,18 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { OVERRIDES_ENV, type RouteEntry, resolveRoute, routeIds } from '@agent-workflows/routes'
+import { type RouteEntry, resolveRoute, routeIds } from '@agent-workflows/routes'
 import { createHost } from '../src/app.ts'
 import { routesTable } from '../src/operations.ts'
 import { type Body, SECRET, startTestHost, type TestHost } from './support.ts'
 
-const OVERRIDE = { 'cheap.classify': { model: 'override-model', effort: 'low' } }
-const env = (value: unknown) => ({ [OVERRIDES_ENV]: typeof value === 'string' ? value : JSON.stringify(value) })
-
 let t: TestHost
-let overridden: TestHost
 beforeAll(async () => {
   t = await startTestHost({ prefix: 'routes' })
-  overridden = await startTestHost({ prefix: 'routesov', routesEnv: env(OVERRIDE) })
 })
 afterAll(async () => {
-  await Promise.all([t.close(), overridden.close()])
+  await t.close()
 })
 
-/** The audio process's shape: no capabilities served, and no `routesEnv`. */
+/** The audio process's shape: no capabilities served, and no `serveRoutes`. */
 const hostOptions = () => ({
   runtime: t.runtime,
   registry: { served: [], router: {}, requestContext: t.registry.requestContext },
@@ -36,25 +31,11 @@ describe('GET /routes', () => {
     expect(status).toBe(200)
     expect(Object.keys(body.routes).sort()).toEqual([...routeIds()].sort())
     for (const id of routeIds()) {
-      const { id: _id, ...entry } = resolveRoute(id, {})
+      const { id: _id, ...entry } = resolveRoute(id)
       expect(body.routes[id]).toEqual(JSON.parse(JSON.stringify(entry)))
       expect(body.table).toContain(id)
     }
     expect(await count()).toBe(before)
-  })
-
-  test('resolves with the injected env, not the process environment', async () => {
-    const { body } = await overridden.json(await overridden.call('/routes'))
-    expect(body.routes['cheap.classify']).toMatchObject({ model: 'override-model', effort: 'low' })
-    expect(body.routes['cheap.classify'].rate).toBeUndefined() // a new model drops the stale rate
-    expect(body.table).toContain('override-model')
-    const plain = await t.json(await t.call('/routes'))
-    expect(plain.body.routes['cheap.classify'].model).not.toBe('override-model')
-  })
-
-  test('the table is built once, at creation: a malformed override throws there, never the override text', () => {
-    const attempt = () => createHost({ ...hostOptions(), routesEnv: { [OVERRIDES_ENV]: '{not json' } })
-    expect(attempt).toThrow(`${OVERRIDES_ENV}: not valid JSON`)
   })
 
   test('the plain table has a header, one line per route, and a price for price-based routes; no URL or key', async () => {
@@ -112,7 +93,7 @@ describe('one process declares routes', () => {
     )
   const second = () => createHost(hostOptions())
 
-  test('a host given no routesEnv (the audio process) has no routes path and no command', async () => {
+  test('a host not serving routes (the audio process) has no routes path and no command', async () => {
     const other = second()
     expect(Object.keys((await other.openapi()).paths as object)).not.toContain('/routes')
     expect(await commandsOf(other)).not.toContain('routes')

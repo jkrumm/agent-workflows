@@ -109,8 +109,10 @@ export const usesResponsesApi = (model: string): boolean => /^gpt-6\.1/.test(mod
 export class Llm {
   constructor(
     private readonly port: ModelPort,
-    private readonly scope: Pick<StepScope, 'addUsage' | 'signal' | 'progress'> & { attribution?: Attribution },
-    private readonly resolve: (id: PodcastRouteId) => ResolvedRoute = resolvePodcastRoute,
+    private readonly scope: Pick<StepScope, 'addUsage' | 'signal' | 'progress' | 'arm'> & { attribution?: Attribution },
+    // The step's run's arm patches the room's routes; a run without one resolves the table.
+    private readonly resolve: (id: PodcastRouteId) => ResolvedRoute = (id) =>
+      resolvePodcastRoute(id, scope.arm?.routes),
   ) {}
 
   /** The step was cancelled, lost its lease or is shutting down: a best-effort stage rethrows instead of falling back. */

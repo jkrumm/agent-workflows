@@ -29,7 +29,8 @@ routing by path, `/health` and `/models` are the process's.
 | `clock?` | `{ now, sleep }`; tests pass an instant one |
 | `fetch?` | the upstream transport |
 | `media?` | the ffmpeg/ffprobe boundary (`MediaPort`); default spawns the host binaries |
-| `env?` | where `AGW_ROUTES` overrides are read, once per handler or scope; default `process.env` |
+| `routes?` | the calling run's arm patch (`arm.routes`), applied once when a scope is built: an in-process scope of an armed run (the podcast's production stage) resolves its routes with it; a door request has none (the table) |
+| `env?` | where the podcast's production stage reads its configuration (`PODCAST_*`, `ABS_*`); default `process.env` |
 | `log?` | `{ info, warn, error }(message, fields)`; default JSON lines on the console |
 | `requestId?(req)` | the id stamped on every event of one request; default a UUID |
 | `caller?(req)` | the caller when `x-audio-source` is absent (e.g. a mapped bearer token); default `unknown` |
@@ -117,7 +118,7 @@ The routes are a group of the route table, `packages/routes/src/table/audio.ts`:
 the prep (`audio.tts.prep`, effort `low`) and summary (`audio.tts.summary`) LLMs, with wire (`iu-gemini`,
 `iu-replicate`, `iu-openai`, and `anthropic` for a text route), model and price: a token `rate` (Gemini TTS, prep, summary), or a `price` from
 `packages/routes/src/price.ts` (ElevenLabs per 1k characters, STT per minute as `second` units with `per: 60`, the 4o
-transcribe models as `audio-tokens`). `AGW_ROUTES` overrides any of it. `src/routes.ts` adds, keyed by route id and
+transcribe models as `audio-tokens`). An eval run's arm patches any of it (routes README §Arms). `src/routes.ts` adds, keyed by route id and
 naming no model or price, what only the lanes read (lane, prep, continuity, STT fallback chain, envelope synthesis,
 `context_bias`) and `priceVerified`, the one stamp the table has no field for. `priceCall` (`src/usage.ts`) feeds each
 call's measure to the table's pricing. STT route ids name the provider, not the model (`audio.stt.openai`, ...): the

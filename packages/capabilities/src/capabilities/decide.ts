@@ -71,7 +71,7 @@ export const createDecide = (deps: LlmDeps) =>
     async handler({ state, questions }, base) {
       const started = performance.now()
       const { ctx, total } = trackUsage(base)
-      const route = resolve(deps, 'decide')
+      const route = resolve(deps, 'decide', ctx)
       if (route.wire !== 'iu-decision') {
         throw new CapabilityError('NOT_CONFIGURED', `decide: wire "${route.wire}" is not the decision wire`)
       }

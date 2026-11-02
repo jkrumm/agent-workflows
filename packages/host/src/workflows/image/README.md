@@ -90,8 +90,8 @@ Exactly one of `prompt` and `file`. The run answers with the files it made:
 ## Route
 
 Group file `packages/routes/src/table/image.ts`, image-gateway's seats, all on IU's OpenAI paths through the inference
-gateway (`iu-openai`; Replicate is its `/replicate/v1` route). Overridable by `AGW_ROUTES` like
-any route, `price` included (a model override without a price drops the old one).
+gateway (`iu-openai`; Replicate is its `/replicate/v1` route). An eval run's arm patches them like
+any route, `price` included (a new model takes the table's price for it, or the patch's).
 
 |Route|Seat in image-gateway|Price|
 |-|-|-|

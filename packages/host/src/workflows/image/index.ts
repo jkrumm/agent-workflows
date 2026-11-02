@@ -76,8 +76,8 @@ export function createImageWorkflows(
         const file = input.file
         const model = input.model === 'bria' ? 'bria' : 'recraft'
         return ImageOutput.parse(
-          await ctx.step('cutout', async ({ addUsage, signal, attribution }: StepScope): Promise<Json> => {
-            const out = await registry.call('image.cutout', { file, model }, { addUsage, signal, attribution })
+          await ctx.step('cutout', async ({ addUsage, signal, attribution, arm }: StepScope): Promise<Json> => {
+            const out = await registry.call('image.cutout', { file, model }, { addUsage, signal, attribution, arm })
             const files = await store(dir, [out.image], describeCost(out.cost))
             return {
               kind: 'cutout',
@@ -98,11 +98,11 @@ export function createImageWorkflows(
       let prompt = input.prompt ?? ''
       let plan: EnhanceOutput | undefined
       if (input.enhance) {
-        plan = await ctx.step('enhance', ({ addUsage, signal, attribution }: StepScope) =>
+        plan = await ctx.step('enhance', ({ addUsage, signal, attribution, arm }: StepScope) =>
           registry.call(
             'image.enhance',
             { brief: prompt, hasReferences: input.images.length > 0 },
-            { addUsage, signal, attribution },
+            { addUsage, signal, attribution, arm },
           ),
         )
         const hard = plan.warnings.filter((w) => w.severity === 'hard')
@@ -133,8 +133,8 @@ export function createImageWorkflows(
         enhanceModel: plan.enhanceModel,
       }
       return ImageOutput.parse(
-        await ctx.step('generate', async ({ addUsage, signal, attribution }: StepScope): Promise<Json> => {
-          const out = await registry.call('image.generate', request, { addUsage, signal, attribution })
+        await ctx.step('generate', async ({ addUsage, signal, attribution, arm }: StepScope): Promise<Json> => {
+          const out = await registry.call('image.generate', request, { addUsage, signal, attribution, arm })
           const files = await store(dir, out.images, describeCost(out.cost))
           return {
             kind: out.edit ? 'edit' : 'generate',

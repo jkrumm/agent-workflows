@@ -38,7 +38,7 @@ export interface NarrativeDeps {
   now?: () => Date
   /** Where a failed polish's detail goes (it carries paths and upstream text the page's `keptReason` must not). */
   logger?: Logger
-  /** Where `AGW_ROUTES` and `AGW_VOICE_PATH` are read from. Default `process.env`. */
+  /** Where `AGW_VOICE_PATH` is read from. Default `process.env`. */
   env?: Record<string, string | undefined>
 }
 
@@ -118,10 +118,10 @@ export function createNarrative(deps: NarrativeDeps): HostWorkflow[] {
       })
 
       if (commits.count === 0 && sessions.count === 0) {
-        return unchanged('no new commits or sessions', resolveRoute('narrative', env).model)
+        return unchanged('no new commits or sessions', resolveRoute('narrative', ctx.arm?.routes).model)
       }
 
-      const composed = await ctx.step('compose', ({ addUsage, signal, attribution }) =>
+      const composed = await ctx.step('compose', ({ addUsage, signal, attribution, arm }) =>
         registry.call(
           'narrative.compose',
           {
@@ -135,7 +135,7 @@ export function createNarrative(deps: NarrativeDeps): HostWorkflow[] {
             sessionsText: sessions.text,
             sessionCount: sessions.count,
           },
-          { addUsage, signal, attribution },
+          { addUsage, signal, attribution, arm },
         ),
       )
       if (!composed.changed || !composed.sections) {

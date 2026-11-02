@@ -35,9 +35,9 @@ export type ServerOptions = {
   command?: string[]
   /** Loopback port. Default: the persisted one, else a free one picked at the first start and kept. */
   port?: number
-  /** Where the gateway's address and door token, `AGW_ROUTES` and `OTEL_EXPORTER_OTLP_*` are read from. Default `process.env`. */
+  /** Where the gateway's address and door token and `OTEL_EXPORTER_OTLP_*` are read from. Default `process.env`. */
   env?: Env
-  /** `OPENCODE_CONFIG_CONTENT`. Default `buildServerConfig(env)` with the plugin from `installPlugin`. */
+  /** `OPENCODE_CONFIG_CONTENT`. Default `buildServerConfig()` with the plugin from `installPlugin`. */
   config?: Record<string, unknown>
   /** Liveness tick. Default 5 s. */
   livenessIntervalMs?: number
@@ -334,7 +334,7 @@ export class OpenCodeServer {
   private launch(): { command: string[]; env: Record<string, string>; fingerprint: string } {
     const persisted = this.persisted as Persisted
     this.command ??= [resolveOpencodeBinary(this.env)]
-    this.config ??= buildServerConfig(this.env, { plugin: installPlugin(this.root) })
+    this.config ??= buildServerConfig({ plugin: installPlugin(this.root) })
     const env = serverEnv({ root: this.root, password: persisted.password, config: this.config, env: this.env })
     const sorted = Object.entries(env).sort(([a], [b]) => (a < b ? -1 : 1))
     const fingerprint = createHash('sha256')

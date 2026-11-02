@@ -55,12 +55,12 @@ describe('produceConfigFromEnv', () => {
 
 describe('ttsRouteFor', () => {
   test('a route id as is, a model id through the table, both lanes', () => {
-    expect(ttsRouteFor('audio.tts.elevenlabs-v3', {})).toBe('audio.tts.elevenlabs-v3')
-    expect(ttsRouteFor(audioRoutes({})['audio.tts.elevenlabs-v3'].model, {})).toBe('audio.tts.elevenlabs-v3')
+    expect(ttsRouteFor('audio.tts.elevenlabs-v3')).toBe('audio.tts.elevenlabs-v3')
+    expect(ttsRouteFor(audioRoutes()['audio.tts.elevenlabs-v3'].model)).toBe('audio.tts.elevenlabs-v3')
   })
 
   test('anything else, or a route that is not a TTS lane, is refused', () => {
-    expect(() => ttsRouteFor('no-such-model', {})).toThrow('PODCAST_TTS_MODEL')
-    expect(() => ttsRouteFor('audio.tts.prep', {})).toThrow('PODCAST_TTS_MODEL')
+    expect(() => ttsRouteFor('no-such-model')).toThrow('PODCAST_TTS_MODEL')
+    expect(() => ttsRouteFor('audio.tts.prep')).toThrow('PODCAST_TTS_MODEL')
   })
 })

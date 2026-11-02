@@ -71,6 +71,14 @@ export type Attribution = {
   traceparent?: string
 }
 
+/**
+ * A run tree's experiment arm (`agw eval run --arm <file>`), stored on the run row and copied to every descendant run.
+ * `routes` patches the route table for every resolution inside the tree (validated by `@agent-workflows/routes`'
+ * `validateArm` at admission; this package only carries it); `params` are the knobs a workflow reads with
+ * `ctx.param`. A run without one resolves the plain table.
+ */
+export type Arm = { routes?: { [routeId: string]: { [key: string]: Json } }; params?: { [name: string]: Json } }
+
 /** Handed to every step body. */
 export type StepScope = {
   /** `${runId}:${stepId}`: the idempotency key for outside effects. */
@@ -82,6 +90,11 @@ export type StepScope = {
   addUsage: (usage: Usage) => void
   /** The step's run, workflow and step id, for a capability call to pass on (`registry.call(id, input, scope)`). */
   attribution: Attribution
+  /**
+   * The run's arm, absent for a run without one: a route resolution inside the step applies `arm.routes`
+   * (`resolveRoute(id, scope.arm?.routes)`), and `registry.call(id, input, scope)` hands it to the capability.
+   */
+  arm?: Arm
   /** Resets the idle timer. */
   progress: () => void
 }
@@ -121,6 +134,8 @@ export type AgentOpenSpec = {
   schemaError?: string
   /** Who the step's model calls are for: the host hands it to the gateway with them. */
   attribution: Attribution
+  /** The run's arm, absent for a run without one: the host resolves the step's route with `arm.routes`. */
+  arm?: Arm
 }
 
 export type ToolEvent = {
@@ -182,6 +197,11 @@ export type AgentFollowUpSpec = {
 export type Ctx = {
   readonly runId: string
   readonly workflowId: string
+  /**
+   * The run's arm, absent for a run without one (production). Resolve a route outside a step with
+   * `resolveRoute(id, ctx.arm?.routes)`; a step body has the same on `scope.arm`.
+   */
+  readonly arm?: Arm
   /** Aborts on cancel, lease loss and shutdown. */
   readonly signal: AbortSignal
   step<T extends Json>(id: string, fn: (scope: StepScope) => T | Promise<T>, options?: StepOptions): Promise<T>
@@ -207,6 +227,11 @@ export type Ctx = {
     prompt: string,
     options?: ContinueOptions<S>,
   ): Promise<z.output<S>>
+  /**
+   * A knob of this run's arm (`arm.params[name]`), else `fallback`. The value must have the fallback's JSON type
+   * (number, string, boolean, array, object or null): another type fails the run as `invalid_input`, naming the param.
+   */
+  param<T extends Json>(name: string, fallback: T): Widen<T>
   /** Fan-out: one child run per input, driven by this step. A failing child yields `null`. */
   workflow<I extends z.ZodType, O extends z.ZodType>(
     id: string,
@@ -214,6 +239,9 @@ export type Ctx = {
     inputs: z.input<I>[],
   ): Promise<(z.output<O> | null)[]>
 }
+
+/** A literal's base type: `ctx.param('finders', 3)` is a `number`, not `3`. */
+export type Widen<T> = T extends string ? string : T extends number ? number : T extends boolean ? boolean : T
 
 export type ContinueOptions<S extends z.ZodType> = Pick<AgentSpec<S>, 'output' | 'retry' | 'idleTimeoutMs'>
 
@@ -243,6 +271,8 @@ export type JudgeCaller = (
     scorer: string
     /** The inline gate's step; absent for regression and drift, whose calls are runs of their own. */
     attribution?: Attribution
+    /** The inline gate's run's arm, absent without one; regression and drift calls take theirs from their own run. */
+    arm?: Arm
     /** Regression inside `agw eval run`: the eval run, which the host starts the judge's calls under (`parentId`). */
     evalRunId?: string
   },
@@ -284,6 +314,11 @@ export type WorkflowDefinition<I extends z.ZodType, O extends z.ZodType> = {
   // oxlint-disable-next-line typescript/no-explicit-any -- a scorer's reference type is its own business
   scorer?: Scorer<z.output<I>, any>
   run(ctx: Ctx, input: z.output<I>): Promise<z.input<O>>
+  /**
+   * The arm a run of this workflow applies to itself and its descendants, read from its own validated input at
+   * `start` (`eval.run`'s `arm`). Absent: only `StartOptions.arm` (or a parent's) sets one.
+   */
+  arm?: (input: z.output<I>) => Arm | undefined
 }
 
 export type Workflow<I extends z.ZodType, O extends z.ZodType> = Readonly<WorkflowDefinition<I, O>>
@@ -325,6 +360,8 @@ export type RunInfo = {
   rootId: string
   input: Json
   traceparent: string | null
+  /** The run's arm (its own or inherited), absent when it has none: part of the fingerprint. */
+  arm?: Arm
 }
 
 export type RunPreArgs = RunInfo & { resume: boolean }
@@ -406,9 +443,15 @@ export type StartOptions = {
    * Starts the run as a child of this run (`parent_id`): its cost rolls up into the parent's, and caller, project,
    * workspace and trace come from the parent row (so those options are refused next to it). It stays its own root
    * (`root_id` = its id): leased, recovered and redelivered on its own by the process that serves its workflow, not
-   * driven inside the parent like a fan-out child. `agw eval run` starts its case runs so.
+   * driven inside the parent like a fan-out child. `agw eval run` starts its case runs so. The child inherits the
+   * parent's arm too, so `arm` is refused next to it.
    */
   parentId?: string
+  /**
+   * The run's arm (`Arm`), copied to every descendant run. Without it a run takes its workflow's `arm(input)` or none.
+   * Only shape-checked here: a caller validates the route patches first (`validateArm`).
+   */
+  arm?: Arm
 }
 
 export type RunResult = {

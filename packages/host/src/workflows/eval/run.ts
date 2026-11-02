@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, wri
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { exec as bunExec, type Exec, materialize } from '@agent-workflows/eval'
+import { RouteOverrideError, validateArm } from '@agent-workflows/routes'
 import {
   Cancelled,
   defineWorkflow,
@@ -46,6 +47,32 @@ const consoleLogger: Logger = {
 /** Plain JSON from the wire; the runtime refuses anything else on the run input. */
 export const JsonRecord = z.record(z.string(), z.unknown()) as unknown as z.ZodType<Record<string, Json>>
 
+/**
+ * An arm: route patches over the table and workflow params, for this eval run and every run below it (its case runs,
+ * their children, its judge calls); production never sees it. Validated whole at admission (`validateArm`: an unknown
+ * route, a bad patch, a Sonnet at effort none, an agent model the OpenCode server does not serve are each refused,
+ * naming the route). The CLI reads `--arm <file>` and sends the file's JSON, never the path.
+ */
+export const ArmInput = z
+  .strictObject({
+    routes: z
+      .record(z.string(), JsonRecord)
+      .optional()
+      .describe('Route id → patch over its table entry: model, effort, maxOutputTokens, rate, price, fallback'),
+    params: JsonRecord.optional().describe('Workflow knobs by name, read with a default (`ctx.param`)'),
+  })
+  .superRefine((arm, ctx) => {
+    try {
+      validateArm(arm)
+    } catch (error) {
+      if (!(error instanceof RouteOverrideError)) throw error
+      ctx.addIssue({ code: 'custom', message: error.message })
+    }
+  })
+  .describe(
+    'An arm file (JSON): route patches and params for this eval run and every run below it; kept in its input and fingerprint',
+  )
+
 /** The `agw eval run` input over the discovered suites' ids. */
 export const evalRunInput = (ids: [string, ...string[]]) =>
   z
@@ -63,6 +90,7 @@ export const evalRunInput = (ids: [string, ...string[]]) =>
       args: JsonRecord.optional().describe(
         'Extra workflow input for every case, the experiment arm, e.g. {"depth":"deep"}; kept with each score for `agw eval compare --a-args/--b-args`',
       ),
+      arm: ArmInput.optional(),
       yes: z
         .boolean()
         .optional()
@@ -181,9 +209,11 @@ export function createEvalRun(slot: EvalSlot, suites: Suites, options: EvalRunOp
 
   const workflow = defineWorkflow({
     id: EVAL_RUN_ID,
-    version: '2026-11-02.1',
+    version: '2026-11-02.2',
     input: evalRunInput(ids),
     output: evalRunOutput(ids),
+    // The arm goes on this run's row; every case run (a child), its children and the judge's calls inherit it.
+    arm: (input) => input.arm,
     async run(ctx, input) {
       const args = input.args ?? {}
       const plan = await ctx.step('plan', async () => {

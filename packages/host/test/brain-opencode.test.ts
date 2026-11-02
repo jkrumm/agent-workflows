@@ -113,13 +113,12 @@ async function runAgent(script: Step[]) {
     ...process.env,
     AGW_GATEWAY_TOOL_TOKEN: 'fake',
     AGW_GATEWAY_URL: `http://127.0.0.1:${model.server.port}`,
-    AGW_ROUTES: JSON.stringify({ 'brain.agent': { model: 'deepseek-v4.1-flash' } }),
   }
   const server = new OpenCodeServer({ stateDir, env, livenessIntervalMs: 1_000 })
   const agents = loadAgentDefinitions(join(import.meta.dir, '..', '..', '..', 'agents')).filter(
     (a) => a.name === 'brain',
   )
-  const host = new OpenCodeHost({ server, stateDir, env, agents })
+  const host = new OpenCodeHost({ server, stateDir, agents })
   const runId = `r${Math.random().toString(36).slice(2)}`
   const close = gate.open({ runId, stepId: 'brain', ...brainGrant(ledger), tools: BRAIN_TOOLS })
   try {
@@ -132,6 +131,8 @@ async function runAgent(script: Step[]) {
       prompt: '',
       // A text step, as the workflow runs it: its draft is parsed by the workflow, not the host.
       attribution: { runId, rootId: runId, workflow: 'brain', step: 'brain', purpose: 'verify' },
+      // The fake model speaks the chat leg: an arm moves the route onto a chat-leg model the server serves.
+      arm: { routes: { 'brain.agent': { model: 'deepseek-v4.1-flash' } } },
     })) as OpenCodeHandle
     await host.prompt(handle, 'How many billing lanes are there?')
     const result = await host.wait(handle, {

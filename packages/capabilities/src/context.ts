@@ -1,3 +1,4 @@
+import type { PatchInput } from '@agent-workflows/routes'
 import { z } from 'zod'
 
 export const usageSchema = z.object({
@@ -37,7 +38,15 @@ export interface Attribution {
   traceparent?: string
 }
 
-/** What a handler sees. Structurally the same `addUsage` and `attribution` the runtime's step context carries. */
+/**
+ * The calling run's experiment arm, as the runtime's step scope carries it: every route the capability resolves applies
+ * `routes` (`resolve(deps, id, ctx)`). Absent outside an armed run: the plain route table.
+ */
+export interface CallArm {
+  routes?: PatchInput
+}
+
+/** What a handler sees. Structurally the same `addUsage`, `attribution` and `arm` the runtime's step context carries. */
 export interface Ctx {
   signal: AbortSignal
   /** Report one billed model call. A re-ask after a rejected answer reports each attempt; the transport's own
@@ -45,4 +54,6 @@ export interface Ctx {
   addUsage: (usage: Usage) => void
   /** The calling step; absent outside a run (a test, a call with no step). */
   attribution?: Attribution
+  /** The calling run's arm; absent outside an armed run. */
+  arm?: CallArm
 }

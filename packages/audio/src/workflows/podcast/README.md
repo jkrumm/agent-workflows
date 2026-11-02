@@ -56,8 +56,8 @@ are never re-run (`podcast.test.ts`). A change to a step's meaning or output sha
 
 ## Models and wires
 
-Every model id is in the route table (`packages/routes/src/table/podcast.ts`; `AGW_ROUTES` applies, resolved per
-call): `podcast.research`, `podcast.editorial`, `podcast.outline`,
+Every model id is in the route table (`packages/routes/src/table/podcast.ts`; resolved per call, with the run's arm
+patch when an eval run carries one): `podcast.research`, `podcast.editorial`, `podcast.outline`,
 `podcast.write`, `podcast.review.a`, `podcast.review.b`, `podcast.metadata`. Defaults are legacy's: the cheap seat at
 effort high for research, editorial, outline and metadata; Gemini flash and the cheap seat as reviewers; the DeepSeek
 flash writer at effort high (GPT-6.1 Sol until 2026-10-30, owner direction: DeepSeek only while the team key pays). Effort is the route's: a route without one sends none (the Gemini reviewer).
