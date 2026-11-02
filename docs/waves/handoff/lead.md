@@ -1,113 +1,83 @@
-# Lead handoff — Wave 3 (Callers move, seats onto Claude): CLOSE-OUT
+# Lead handoff — Wave 4 (Reconcile and Argo): CLOSE-OUT
 
-Lead `agent-workflows-w1-r6` (pane t50), 2026-11-02 ~01:45 → ~09:50 local. Briefs on the mini (not in git):
-`~/.local/state/agent-workflows/briefs/gw3/` (gateway, transports, opencode, audio, usage, seats, deploy, live, rates, hermes,
-oc, modelpick).
+Lead `agent-workflows-w1-r7` (pane t6q), 2026-11-02 ~09:45 → ~10:50 local. Briefs on the mini (not in git):
+`~/.local/state/agent-workflows/briefs/gw4/` (usage, argo, agw, hermes, dotfiles, brain). Branch prefix `gw4/` (old `w4/*`
+heads exist on agent-workflows' origin from an earlier plan).
 
 ## Live state
 
-agent-workflows release `3e6026e` (host, audio), gateway build `6123d4041b283b0e` (from `55d89e6`) on `127.0.0.1:7794`,
-`make deploy` OK, `make verify` PASS at both (`3e6026e`: smoke `01a19b6b-4f2a-…`, cap `01a19b6b-544e-…`, audio
-`01a19b6b-582d-…`; `55d89e6`: gateway requests `01a19b60-8e6a-…`, `01a19b60-947f-…`, `01a19b60-9ad4-…`, agw-opencode
-`01a19b60-a0d4-…`). agw holds no provider key:
-`.env.tpl` has no IU or Anthropic ref, the host and audio call the gateway with the API secret (caller `agw`), the OpenCode
-server and `ocr` with the `agw-opencode` door token (a gateway-only caller, refused by the audio and image doors).
-`data/door-tokens` gained `agw-opencode`, `oc`, `modelpick`. hermes-agent master `5f74d3d` deployed (`make deploy` verified,
-patches re-applied to `~/.hermes/hermes-agent`), dotfiles master `a46ce79` (`oc`), modelpick master `b476704` (web
-restarted). Every fan worktree and worker of this wave closed. Not ours, left alone: `feat-shop-amazon*`, PR #83.
+agent-workflows release `2e7d5f2` (host, audio), gateway build `6123d4041b283b0e` unchanged and not restarted, `make deploy`
+OK, `make verify` PASS (smoke `01a19ba5-2d4d-…`, cap `01a19ba5-3282-…`, audio `01a19ba5-3675-…`, gateway requests
+`01a19ba5-37c3-…`, `-3d7f-…`, `-4257-…`, agw-opencode `01a19ba5-49c0-…`, smoke review `01a19ba5-916d-…` $0.0543, 22 s).
+usage-tracker master `a14f452`, migration 0015 applied, LaunchAgent reinstalled. argo master `614b5972` deployed (`make
+verify` PASS). hermes-agent master `27c79af` (liveness and verify scripts run from the main checkout, so the pull is the
+deploy). dotfiles #59 merged at `7eaf164` (checkout pulled; global CLAUDE.md live), brain master `f7f81eb`. Every fan worktree and worker of
+this wave closed. `me2` keys still a `REPLACE` placeholder at close: the pool stays disabled (not enabled, no owner input).
 
 ## Per-step verdicts
 
 | Step | Verdict | PRs / commits | Review |
 |-|-|-|-|
-| agw on the gateway | **PASS.** Every transport (capabilities, image, audio, OpenCode, `ocr`) on `AGW_GATEWAY_URL`; `iu-anthropic` is the `anthropic` wire with `x-agw-fallback: none`; attribution headers from the step (`ctx.attribution`, `AgentOpenSpec`, an OpenCode `model.request` plugin walking child sessions to the root); 1 h cache writes priced at the 1 h rate (OpenCode asks 5 m only, captured); the outbox writes only what the gateway cannot price; `IU_KEY_ID`, `iu.env`, `athena-iu.env` handling, `ANTHROPIC_API_KEY` gone | #87, #88, #90, #91, #92, #95, #96, #97 | each: agw review (deep on #87, #88, #91, #92, #95) + `/code-review high` on #87, #88, #91, #92, #95; fixes landed, round 2 agw review on #87 |
-| Seats onto Claude | **PASS.** `TRIVIAL` Haiku none, `EASY` Haiku high, `STRONG` Sonnet medium, single calls on `anthropic`, agents on OpenCode; every Claude route falls back to GPT on IU (Luna low / Terra low / Terra medium), guard tests. Live: 20 Claude routes `api_credit` on `iu`; a scratch gateway with every pool disabled answered 402 and `cheap.title` moved to Luna (`refused/no-pool` pick, Luna `iu-api` row) | #93, #94 | agw review each; #94's findings fixed |
-| Hermes, `oc`, modelpick | **PASS.** Each with its own door token; `-eu` ids gone; Hermes vision on `anthropic_messages` (Sonnet), approvals Haiku, `session_affinity_header: x-agw-session`, four IU-host patches extended to the gateway; modelpick probes force IU (`x-agw-upstream: iu`), catalog on `GET /anthropic/v1/models`. Live: a Hermes turn (`hermes` lane, DeepSeek priced, session bound), `oc run` Haiku `api_credit`, a modelpick forced probe on `iu-api` | hermes-agent #14, dotfiles #58, modelpick #4 | agw review each (Hermes deep: `needs-human` on failure independence, below) |
-| Concept note | **PASS.** v3.14 (the gateway as built, the narrowed writer rule, two GPT seats by design); the stale "402/503" fixed at `docs/concept.md:337`; `docs/factory-input.md:17` already named Anthropic's 400 | landed in `93e3d2e` (the mother's commit swept the lead's uncommitted edit from the shared checkout) | lead |
-| Review crash | react-doctor 0.9.18 reports `message`, not `title`: every review with a finding died at synthesis | #89 | lead diff read, make check (no agw review: it was the broken tool) |
+| usage-tracker pass | **PASS.** Migration 0015 `usage.platform_cost` (account, day, model, api_key_id, cost_usd, refreshed_at; unique on the coalesced key); a credit pass in `ingest` (hourly throttle in `collector_state` row `credit`, 120 s deadline per org, `credit` CLI unthrottled) reads `analytics/cost` per org with its admin key (placeholder/missing skips the org), all-or-nothing per org, strict parsing, `redirect: error`; `credit_cycles` current + previous per account with `metered` from gateway `api_credit` rows (estimates included), closed when the provider snapshot passes the cycle end (reconciled, unspent, `grant_usd` frozen once closed). usage-tracker is the only writer of `credit_cycles`. `stats --by account` splits `iu (max)` / `iu (api_credit)` / `iu (<billing>)`. Live: 6 `platform_cost` rows (iu $56.11 on 10-31 outside the gateway, 11-01/02 lagging), 4 cycles (previous iu/me closed at $0 reconciled, $200/$100 unspent; current open, iu metered $11.44). The gateway's meter already took the reconciled figure (Wave 2 build): iu `meterUsd` $67.58 = $56.12 reported + $11.44 gateway rows; hourly reconcile live (09:29Z) | usage-tracker #17 | agw review (clean, 5 improvements) + `/code-review high` (8 findings); all fixed in two rounds |
+| Argo | **PASS.** Payers `iu-credit`/`me-credit`/`me2-credit` (no `api_credit` row falls to `unknown`), `iu` is Ultra ($200, "IU Ultra"), DESIGN.md and `BillingEnum` follow; Credits tab with per-pool burn-down (metered beside reported, balance from cycle start, awaiting-reconcile for an expired open cycle), projected unspent, previous cycle's reconciled/unspent, picks × reason with fallbacks, cache-hit per caller; `GET /usage/credits/{pools,picks,cache}`, tables guarded. Live: pools iu open cycle, picks 377 (6 fallbacks = `claude-code`), cache agw-opencode 0.65, agw 0.01, hermes 0.12; `/usage/split` shows `iu-credit` | argo #211 | agw review (clean, 5 improvements); all fixed; 97 integration tests on the real migration, CI green |
+| Docs | **PASS.** dotfiles `architecture.md` (gateway row, Secrets flow, monitoring), `agent-platform.md` (where API tokens are spent), `claude-accounts.md` (platform block, pool states, the `me2` enable steps incl. the gateway kickstart), `global.CLAUDE.md` (the gateway holds IU and Claude API tokens for agw/OpenCode/Hermes/`oc`/modelpick; the Codex lane keeps IU in its launcher). brain `wiki/engineering/model-routing.md` rewritten (three billing lanes, seats, gateway pick order, launchers, usage lanes, Hermes; agent-gateway, `ca`/`cap` gone) | dotfiles #59, brain #3 | lead read (docs only); two fact fixes sent back on #59 (Codex lane holds IU; Hermes liveness now watches the gateway), escaped pipes on #3 |
+| `make verify` smoke review | **PASS.** A throwaway repo from `scripts/fixtures/smoke-review` (unkeyed `.tsx` list + an off-by-one `.ts`), `agw review --depth light`, bounded 300 s (a run past it is cancelled with `--commit`); passes only with react-doctor/angle/synthesis steps done, ≥ 1 react-doctor diagnostic, a schema-v2 non-degraded verdict with a real reviewer's finding, a priced run row. $0.04–0.07, 22–30 s. Its usage: 9 `api_credit` + 1 `api_key` gateway rows ($0.0542), no `agent-workflows` row | agent-workflows #98 | agw review (clean); 4 fixes; the train then caught a `$0` path bug and CI caught non-hermetic live-routes tests (both fixed) |
+| live-routes alias map | **PASS.** `CLAUDE_ALIASES` read from the deployed release's `claude.ts` (`bun -e`), loud failure on a missing/malformed map; tests run on a stub release. Live: `ROUTES='cheap.title'` PASS (`api_credit` on iu) | #98 | as above |
+| Hermes liveness + verify | **PASS.** `scripts/inference-gateway-check.sh` (gateway `/health` ok, then the `hermes` token on `GET /anthropic/v1/models`: 2xx/429/5xx accept, 401/403/other 4xx/no answer fail; token from the file via curl `-K -`, never in argv; malformed line refused); liveness withholds the heartbeat after 3 attempts 8 s apart; `make verify` and `make status` share it. Live: `make verify` all ✓, a liveness tick pinged, a wrong tokens file fails by name | hermes-agent #15 | agw review ×2 (clean); fixes in two rounds |
 
 ## Gate evidence
 
-- `make check` in the train after every rebase, CI green on each merged head; flakes (a 5 s hook timeout, one unnamed
-  fail) passed on rerun, see Left behind.
-- `make deploy` + `make verify` PASS at `55d89e6` (ids above): the smoke and `agw llm title` runs each have one
-  `source='gateway'` row (`api_credit` on `iu`, `smoke.ping/title`, `cap.llm.title/call`, priced) and no
-  `agent-workflows` row after the outbox synced; the `agw-opencode` token lands `agw_workflow`.
-- `make live-routes`: a live call per route, proved by its stored gateway row (model, `outcome ok`, priced, lane
-  `agw_workflow`): 32 routes PASS on `55d89e6` (20 Claude on credit, 12 IU incl. DeepSeek, Terra, Gemini); after #97 four
-  IU routes again on `3e6026e`, their runs hold gateway rows only.
-- `@verifier`: `agw-gateway` spans in ClickStack prod with pool, pick reason, caller, model, tokens, cost (no run
-  attributes on spans: those live in the rows); every agw gateway row carries `run_id`, workflow and step; no key
-  material in the gateway or host logs. It found the duplicate rows #97 fixed.
-- Gateway `/health`: ledger unsynced 0, quarantined 0; `iu` meter $57.70 (seed $56.11), `me` $0, `me2` disabled.
-- Fallback live: see the seats row. OpenCode's 402 path: the pinned 2.0.32 surfaces the marker and the step moves
-  (captured against a loopback stand-in; no drained real org exists to test against).
+- `make check` in each repo's train after rebase; agent-workflows 3607 pass / 0 fail and CI green on `0134268f`; usage-tracker
+  482 pass / 0 skip; argo CI green, `bun test:api src/routes/usage*` 97/0/0.
+- dotfiles' train ran the check minus `architecture-check` and `herdr-core-guard-test`: both red on master for reasons outside
+  this wave (below). brain's train ran `vault-lint` accepting only the dangling-symlink errors (below); master lints 0 errors.
+- `make deploy` + `make verify` PASS at `2e7d5f2` (ids above); argo `make verify` PASS at `614b5972`; Hermes `make verify` PASS.
+- Rows read from both writers: the review smoke run has gateway rows only; `usage.platform_cost` (provider) against gateway
+  `api_credit` rows (ours) against the gateway's `/health` meter agree ($56.12 + $11.44 ≈ $67.58).
+- Gateway `/health`: ledger unsynced 0, quarantined 0; iu $69.66 at 09:45Z, me $0, me2 disabled.
 
 ## Departures and lead decisions (for the mother)
 
-- **The gateway writes token-priced inference only.** Media agw prices per minute, character or image (TTS, STT, images,
-  Replicate) sends `x-agw-usage: caller` (honoured for caller `agw` on media paths only) and agw's outbox keeps those rows,
-  plus anything billed outside the gateway (Tavily). In concept v3.14.
-- **Gateway additions**: `x-agw-project`/`x-agw-workspace` → `repo`/`project_raw`/`workspace`; lane `agw_workflow` for
-  `agw-opencode`, `lane_detail.raw` = caller for `other`; `GET …/models` passthrough without a row (Anthropic and IU);
-  `x-agw-upstream: iu` forces IU (reason `forced`, no binding); IU text calls without `usage.cost` priced at the route rate
-  (`@agent-workflows/routes/rates`), the row's `model` is the concrete id when IU echoes it behind a provider prefix
-  (`openai.gpt-6.1-terra` → `gpt-6.1-terra`, echo in `model_raw`).
-- **Two seats stay on GPT**: `review.adversary` (cross-family critic, the capability needs the chat wire), `podcast.write`
-  (`Llm.round`, the writer's tool loop, speaks only the OpenAI dialects). `prose.review` stays DeepSeek (refuses Anthropic).
-- **STRONG = Sonnet effort medium** (unmeasured; the 2026-10-31 eval had Sonnet low only).
-- **Door scope**: `agw-opencode`, `oc`, `modelpick` open the gateway only.
-- Hermes review asked an owner question (all Hermes lanes, fallback included, now share the gateway as one point of
-  failure). The PLAN's owner decision moves Hermes onto the gateway, so not a stop; listed for the owner below.
+- **The gateway part of step 1 was already built in Wave 2** (reconcile from legacy `cost_report` + today's ledger, high-water
+  mark, the meter keeps the higher). Wave 4 verified it live and did not change the gateway (build unchanged).
+- **The credit pass runs inside usage-tracker's ingest**, hourly-throttled, not as its own LaunchAgent: no new launchd row.
+- **Credit left in Argo = grant − max(metered, reported) from the cycle start**; a cycle whose end is unknown draws 31 days
+  labelled "cycle unknown" with no projection.
+- **Fallbacks in Argo** = picks leaving the pools for any reason other than `forced`; today all 6 are `claude-code`
+  (Claude-Code-shaped requests, by design), so the count reads as fallbacks though no pool was short.
+- `stats --by account` labels changed (`iu` → `iu (max)` / `iu (api_credit)`): asked for by Wave 2's left-behind.
 
 ## Left behind
 
-- 34 duplicate `source='agent-workflows'` rows ($0.186, 2026-11-02 08:09–08:32 UTC) for IU text calls the gateway also
-  recorded (IU's provider-prefixed echo slipped the outbox filter until #97). Not deleted (irreversible; owner's call):
-  `select … from usage.records r where source='agent-workflows' and ts between '2026-11-02 08:09Z' and '2026-11-02 08:33Z'
-  and exists (select 1 from usage.records g where g.source='gateway' and g.run_id=r.run_id)`.
-- `~/.config/agw/iu.env` and `athena-iu.env` (team key copies, mode 0600) still exist on the mini; nothing in agw reads
-  them now. A rollback to a pre-Wave-3 release would read `iu.env` again. Not deleted: the owner's call.
-- Team-key spend: the Wave 3 reviews before the deploy ran on the old host, whose `iu.env` set the Athena team key:
-  ≈ $9.3 (10 `agw review` runs, one crashed at $1.10). After the deploy reviews run on credit/personal.
-- Hermes: a gateway outage takes every Hermes lane (no direct-IU lane left); `make verify`/`hermes-liveness.sh` do not
-  check the gateway or the door token (only `make status`); `/openai/v1/props` (501) writes a zero-token error row per
-  process TTL; a Luna aux stream logged as error; a "too large" error without a token count is retried, not compressed
-  (loopback counts as local); vision not exercised live; a `make deploy` rollback reports `ROLLBACK ALSO FAILED` because
-  `patch-check` reads the new patches as drift. Hermes' `scripts/model-release-watch.py` (untracked, not ours) was moved
-  aside for its deploy and put back. Stale: Hermes `SOUL.md`, `README.md`, `.claude/skills/hermes-update`.
-- modelpick: the bench stays on IU direct (Keychain); deployment rows' rationale text for vision/approval is stale;
-  two Replicate calls lack `x-agw-upstream: iu` (zero-cost catalog reads now write no row).
-- `oc`: an unreadable door-tokens file falls back to IU direct silently.
-- agw: in-flight runs across the deploy and OpenCode sessions created before it have no attribution (unbound rows);
-  `traceparent` never reaches the gateway from OpenCode (2.0.32 overwrites it), the join is `x-agw-run-id`; OCR (off)
-  sends no attribution; an `AGW_ROUTES` override that changes a model may double-count or drop its row (Wave 5 removes
-  `AGW_ROUTES`); a gateway 402 on a podcast call is recorded as unknown usage; triage's reasoning tokens read 0 on the
-  `anthropic` wire; a Claude route without a fallback would fail on a 402 (guard test forbids it in the table).
-- `scripts/live-routes.sh` copies the Claude alias map (drift risk with `table/claude.ts`).
-- Flaky under load: a 5 s `afterEach` hook timeout (one train), one unnamed fail (another); both green on rerun.
-- The `agw agents` question (FV Wave 5) and the `agw digest` track came from the software-factory lead; I said the factory
-  spawns the digest worker itself after this wave and routed `agw agents` to the mother.
+- `me2`: keys still placeholders at close; enabling stays out (registry `cycleDay` from the owner, a live call). Steps in
+  dotfiles `docs/claude-accounts.md` §Platform.
+- Not ours, untouched: 34 duplicate `source='agent-workflows'` rows and `~/.config/agw/iu.env` / `athena-iu.env` (owner's call,
+  Wave 3 close-out has the query).
+- dotfiles `make check` red on master outside the fleet: `architecture-check` (`com.jkrumm.homebridge` loaded but unmapped) and
+  `herdr-core-guard-test` (core 0.1.15 here, 0.1.16 on the other machine; the daily update converges them).
+- brain: `wiki/engineering/agent-platform.md` and `dotfiles-architecture.md` are tracked relative symlinks that dangle in any
+  worktree under `.claude/worktrees/`, so `vault-lint` there reports ~25 dead links; a fan worker or train in brain must
+  filter them (or the links become absolute/the notes real files).
+- The gateway's reconcile lags a complete UTC day the cost report has not yet caught up on: spend made outside the gateway on a
+  day the report still misses is not in the meter until the report shows it (today nothing is spent outside it).
+- Argo `credits/cache`: modelpick's 251 zero-token catalog rows from Wave 3 drag its hit rate to 0 in a 7-day range.
+- `agw routes --format json` carries no alias map; live-routes imports it from the release source (couples the script to
+  `packages/routes` layout; a `claudeAliases` field in `agw routes` would be cleaner).
+- Codex lane (`cx`/`cxa`/`astra`) still holds the personal IU key outside the gateway (now documented, not moved).
+- Hermes `scripts/model-release-watch.py` (untracked, not ours) still in its checkout.
+- Stale from Wave 3, unchanged: Hermes `SOUL.md`/README/skill text, modelpick rationale rows, triage reasoning tokens 0 on the
+  `anthropic` wire, flaky hook timeouts under load (none seen this wave).
 
 ## Retro notes for the mother
 
-- **A lost wake cost 3 h.** From ~05:00 to 08:20 the lead sat on a declared wait while every worker was idle; no
-  `workers done` note came (an hc core restart happened in that window). A lead must not rely on one wake: after declaring,
-  a bounded foreground poll on the thing it waits for (a branch head, a PR, `pgrep merge-train`) is what actually worked
-  for the rest of the wave.
-- `rd say` refused workers whose factory status read `none` though they sat at a prompt; `hc send <pane>` delivered.
-  Watchdog pings ("waited on a confirmation") were false for a worker mid-command.
-- The live checks paid off a third and fourth time: every test and review passed while IU's GPT and Gemini rows landed
-  unpriced and with prefixed model ids, and 247 zero-token catalog rows appeared from modelpick. Only `make live-routes`
-  reading the stored rows showed it (#96), and only `@verifier` joining the two sources by `run_id` showed the double
-  count (#97). Read the stored rows from both writers, not one.
-- The review tool itself was broken (react-doctor schema change): a dogfooded reviewer needs a smoke review in
-  `make verify`, or the first real PR finds it at $1.10.
-- Branch names collide across waves (`feat/gateway-deploy` existed from Wave 2); the merge train needs a worktree holding
-  the branch, and a doc conflict in AGENTS.md's Validate table recurred twice in one rebase (both branches add rows).
-- oxfmt and oxlint skip per-file paths under `.claude/worktrees/`: a worker's "format clean" there means nothing unless it
-  ran on `.` from the worktree root. Two train rounds were lost to it.
-- One checkout, two committers: the mother's `git commit -a`-style commit took the lead's uncommitted concept edit. Each
-  role should commit only its own paths (`git commit -- <paths>`).
-- Delegated reviews found disjoint things again: `/code-review high` the persisted restart trigger and rollback order,
-  `agw review` the door scope and the Tavily rows.
+- **"workers done" fired early three times** while every worker was mid-turn on a `rd say` fix (the factory reads a worker
+  at a prompt between tool calls as idle). Re-declaring and a bounded foreground poll on the PR head or the train's exit
+  line was what worked; never merge on the note.
+- **A worker's targeted test run hid two whole-suite failures**: the train's `make check` caught a `$0`-relative fixture path
+  the verify.sh tests exercise, and CI (not the mini) caught tests reading the real `~/.agent-workflows/current`. The mini
+  is not hermetic: briefs that touch scripts reading deployed paths should ask for a run with `HOME` at an empty temp dir.
+- `rd say` to an idle worker answered "held while it works" and was delivered at its next prompt in every case this wave.
+- Two delegated reviews again found disjoint things on #17: agw review the throttle, redirect and malformed-page deletion;
+  `/code-review high` the billing label, the per-row upsert and the frozen grant.
+- Cross-repo schema in flight: giving both briefs the exact DDL let Argo build against `platform_cost` in parallel with a
+  test-setup fallback, removed once usage-tracker merged.
