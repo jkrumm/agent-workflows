@@ -9,11 +9,11 @@ export type RunRecord = {
   wallMs: number | null
   tokens: TokenCounts
   /**
-   * The run's own priced usage plus its direct child runs' `cost` (each already holding its descendants', so a root
-   * carries its tree's total); null only when no part was priced. A lower bound while `unpricedCalls > 0`.
+   * The priced usage of the run's steps and of every descendant run's steps (by `parent_id`, each step once), so a
+   * root carries its tree's total; null only when no step was priced. A lower bound while `unpricedCalls > 0`.
    */
   cost: number | null
-  /** Unpriced calls of the run's own steps and of its direct child runs' records. */
+  /** Unpriced calls of the run's steps and its descendants'. */
   unpricedCalls: number
   toolCalls: number
   traceId: string
@@ -39,12 +39,12 @@ type Sums = {
 
 /**
  * At `runPost`: wall time (from the run row's `started_at`/`finished_at`, so every delivery computes the same; null
- * for a run that never started), the run's own steps summed, unpriced and tool calls, and the trace id. `cost` and
- * `unpricedCalls` also add the direct child runs' records (fan-out children and parented starts such as eval case
- * runs end before their parent's `runPost`, and a child's record already includes its own children's), so the root of
- * a tree carries the tree's spend: a tree sum over `runs.cost` counts the root alone, or the steps. Tokens and tool
- * calls stay the run's own. Recomputed from the step and child rows and overwritten each time, so a re-delivered
- * `runPost` writes the same record.
+ * for a run that never started), the run's own steps summed (tokens, tool calls), and the trace id. `cost` and
+ * `unpricedCalls` are summed over the step rows of the run and every descendant (fan-out children, parented starts
+ * such as eval case runs and their judge calls, recursively by `parent_id`), each step once: they never wait on a
+ * child's own record, so a child whose `runPost` lands late still counts. A root therefore carries its tree's spend;
+ * a tree sum over `runs.cost` counts the root alone, or the steps. Recomputed from the step rows and overwritten each
+ * time, so a re-delivered `runPost` writes the same record (and picks up a step a late child wrote since).
  */
 export function recordMiddleware(options: {
   db: JournalDb
@@ -58,16 +58,19 @@ export function recordMiddleware(options: {
       const traceId = traceIdForRun(args)
       const sums = await withRetry(async () => {
         const { rows } = await db.pool.query<Sums>(
-          `with s as (
+          `with recursive s as (
              select coalesce(sum(tokens_input), 0) as tokens_input, coalesce(sum(tokens_output), 0) as tokens_output,
                coalesce(sum(tokens_cache_read), 0) as tokens_cache_read,
                coalesce(sum(tokens_cache_write), 0) as tokens_cache_write,
-               coalesce(sum(tokens_reasoning), 0) as tokens_reasoning, sum(cost) as cost,
-               coalesce(sum(unpriced_calls), 0) as unpriced_calls, coalesce(sum(tool_calls), 0) as tool_calls
+               coalesce(sum(tokens_reasoning), 0) as tokens_reasoning, coalesce(sum(tool_calls), 0) as tool_calls
              from ${db.steps} where run_id = $1
-           ), c as (
-             select sum(cost) as cost, coalesce(sum(unpriced_calls), 0) as unpriced_calls
-             from ${db.runs} where parent_id = $1
+           ), tree as (
+             select id from ${db.runs} where id = $1
+             union all
+             select c.id from ${db.runs} c join tree on c.parent_id = tree.id
+           ), t as (
+             select sum(st.cost) as cost, coalesce(sum(st.unpriced_calls), 0) as unpriced_calls
+             from ${db.steps} st join tree on st.run_id = tree.id
            )
            update ${db.runs} r set trace_id = $2,
              wall_ms = case when r.started_at is null or r.finished_at is null then null
@@ -75,10 +78,9 @@ export function recordMiddleware(options: {
              tokens_input = s.tokens_input, tokens_output = s.tokens_output,
              tokens_cache_read = s.tokens_cache_read, tokens_cache_write = s.tokens_cache_write,
              tokens_reasoning = s.tokens_reasoning,
-             cost = case when s.cost is null and c.cost is null then null else coalesce(s.cost, 0) + coalesce(c.cost, 0) end,
-             unpriced_calls = s.unpriced_calls + c.unpriced_calls, tool_calls = s.tool_calls,
+             cost = t.cost, unpriced_calls = t.unpriced_calls, tool_calls = s.tool_calls,
              updated_at = now()
-           from s, c where r.id = $1
+           from s, t where r.id = $1
            returning s.tokens_input, s.tokens_output, s.tokens_cache_read, s.tokens_cache_write, s.tokens_reasoning,
              r.cost, r.unpriced_calls, s.tool_calls, r.wall_ms, r.scores, r.friction`,
           [args.runId, traceId],

@@ -6,7 +6,7 @@
 
 | Command | Does |
 |-|-|
-| `agw eval run <review\|check\|research> [--ids a,b] [--limit N] [--concurrency N] [--args '{…}'] [--yes]` | Without `--yes`: the plan (selected case ids) and an estimate (mean cost of the workflow's latest 50 done runs × cases), nothing runs. With `--yes`: each case materialized like the harness does (`materialize` from `@agent-workflows/eval`; a plain case, research's, needs no tree and runs its recorded input), run as a child of the eval run (`parent_id`; its own root, so it is leased and redelivered on its own by the process that serves the workflow) with purpose `eval`, scored against the case's reference, the verdict and the arm's `args` recorded on that run (`scores.final`); the output lists per-case scores and cost (`costUsd`, `unpricedCalls`, read once the case run's record is written), the fingerprints, the means and the total cost (`summary.costUsd`), which is also the eval run's own `cost` in the journal |
+| `agw eval run <review\|check\|research> [--ids a,b] [--limit N] [--concurrency N] [--args '{…}'] [--yes]` | Without `--yes`: the plan (selected case ids) and an estimate (mean cost of the workflow's latest 50 done runs × cases), nothing runs. With `--yes`: each case materialized like the harness does (`materialize` from `@agent-workflows/eval`; a plain case, research's, needs no tree and runs its recorded input), run as a child of the eval run (`parent_id`; its own root, so it is leased and redelivered on its own by the process that serves the workflow) with purpose `eval`, scored against the case's reference, the verdict and the arm's `args` recorded on that run (`scores.final`); the output lists per-case scores and cost (`costUsd`, `unpricedCalls`, read once the case run's record is written), the fingerprints, the means and the case runs' total (`summary.costUsd`). The eval run's own `cost` in the journal is the whole spend: its case runs and the regression judge calls, all its descendants |
 | `agw eval compare <review\|check> --a <fp> --b <fp> [--a-args '{…}'] [--b-args '{…}'] [--seed N]` | Two arms paired by case id: per metric the means, the mean and median delta (B − A) with seeded bootstrap 95% CIs (harness `stats.ts`), and which arm the CI favours. Scores are higher-is-better; `costUsd`, `wallMs`, `tokens`, `toolCalls` lower-is-better. Reads only |
 | drift (no command) | every `AGW_DRIFT_INTERVAL_S`, up to 20 sampled, unscored production runs of a workflow with a scorer are scored (`source: drift`); the sample is a hash of the run id, the write first-writer-wins, so several hosts never score a run twice. A tick counts verdicts and recorded scorer errors apart (and warns on errors) |
 
@@ -32,6 +32,10 @@
   a directory without its marker is never deleted, only logged. A sweep never overlaps itself, and close waits for it. On resume, a case whose recorded score is a scorer error is scored again. A shutdown or a lost lease leaves
   the case runs going and keeps their clones for the next process. A scorer error is a case `error` (reason
   `scorer: …`), out of the pass rate and the means. Repeated `--ids` are deduplicated.
+- **Cost.** Case runs and the regression judge's call runs are children of the eval run (`parent_id`), so the run
+  record sums their steps into the eval run's `cost`. Not covered: a resumed eval that adopts a case run started
+  before case runs were children (no `parent_id`) reports that case's cost in its output, but the eval run's `cost`
+  leaves it out, and so do the judge calls scored for it before then.
 - **What compare will not call.** A metric with fewer than 5 pairs gets `better: unknown`, whatever its CI, and a
   warning says the verdict is withheld (for every metric when fewer than 5 cases pair at all). A case with any
   unpriced rerun leaves `costUsd` on that side (`cases.unpricedCost`), never averaged over its priced reruns; a case
@@ -43,7 +47,7 @@
   eval run at once) and owns the drift job's timer. The runtime's `judge` (`src/judge.ts`) lets a scorer call only
   `web.fetch`, `web.package`, `decide` and `llm.*` (never a workflow or an effect). For regression and drift each call
   is a `cap.<id>` run of its own, recorded and priced like a direct capability call, with purpose `eval` (regression)
-  or `drift`, keyed by the score source (drift also by its pass, the UTC day), the scorer version, the scored run, the capability and its input under the
+  or `drift` (a regression call inside `agw eval run` is a child of the eval run, so the eval's cost includes judging), keyed by the score source (drift also by its pass, the UTC day), the scorer version, the scored run, the capability and its input under the
   shared attempt rule (a retried scoring adopts a finished call and re-runs a failed one; a drift re-score under a new
   scorer fetches fresh; an aborted scoring cancels the call it started); an inline gate (none judges today) calls in process on its step. Only a failure that is an
   answer comes back (`answerOf`: a 4xx from the source, such as a page gone, forbidden or rate-limited, or a package

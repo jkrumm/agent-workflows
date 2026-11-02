@@ -389,6 +389,7 @@ export class Runtime {
                 source: options.source,
                 runId,
                 scorer: scorer.version,
+                ...(options.evalRunId === undefined ? {} : { evalRunId: options.evalRunId }),
               })
             } catch (err) {
               judgeFailure = err

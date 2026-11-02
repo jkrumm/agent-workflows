@@ -139,8 +139,8 @@ defineWorkflow({ id: 'research.report', scorer: draftScorer, async run(ctx, inpu
   (`args` by jsonb equality, `{}` for runs that recorded none; only the record columns compare uses),
   `runtime.runByKey(workflow, idempotencyKey)` (a resumed eval adopts a case run with its status and score) and
   `runtime.recentCost(workflow)` (the eval estimate; eval case runs count).
-- **Run cost.** `getRun(runId).cost` is the run record's: its own steps plus its direct child runs' records, so a
-  root carries its tree's total (fan-out children and parented starts alike). A tree sum over `runs.cost` therefore
+- **Run cost.** `getRun(runId).cost` is the run record's: the steps of the run and of every descendant run (by
+  `parent_id`: fan-out children and parented starts alike), so a root carries its tree's total. A tree sum over `runs.cost` therefore
   counts the root alone; sums over a tree's runs read the steps.
 
 ## Durability

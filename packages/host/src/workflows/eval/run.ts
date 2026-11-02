@@ -100,7 +100,9 @@ export const evalRunOutput = (ids: [string, ...string[]]) =>
       costUsd: z
         .number()
         .nullable()
-        .describe("The case runs' recorded costs summed (this run's own `cost`); null when none was priced"),
+        .describe(
+          "The case runs' recorded costs summed; null when none was priced. This run's own `cost` adds the judge calls",
+        ),
       unpricedCalls: z.number().int().describe('Calls no case cost includes: the total is a lower bound while above 0'),
     }),
   })
