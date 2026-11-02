@@ -40,7 +40,7 @@ not cut streams.
 | Path | Upstream |
 |-|-|
 | `/anthropic/v1/messages` (+ `count_tokens`) | a credit org, else IU `/anthropic` (same protocol, same models) |
-| `GET /anthropic/v1/models`, `GET /anthropic/v1/models/*` | IU `/anthropic`, with the `personal` key: door auth, no pick, no row, the way modelpick reads the catalog |
+| `GET /anthropic/v1/models`, `GET /anthropic/v1/models/<id>` (one segment of model-id characters, else 404) | IU `/anthropic`, with the `personal` key: door auth, no pick, no row, the way modelpick reads the catalog |
 | `/openai/v1/*`, `/gemini/v1beta/*`, `/decisions/v1/*`, `/replicate/v1/*` | IU, with the `personal` key |
 
 **Passthrough is byte-exact.** Request bytes and end-to-end headers (`anthropic-beta`, `anthropic-version`) go upstream
@@ -74,7 +74,7 @@ usable. Keys resolve through `secrets-run` at start. A ref that does not resolve
 Per request, in order:
 
 0. **A forced request goes to IU.** `x-agw-upstream: iu` on an `/anthropic` path skips the credit pools (read-only check,
-   no body edit), reason `forced`: modelpick's probes measure IU itself, so a probe must not land on a credit org. It
+   no body edit), reason `forced` in `gateway_picks` and `lane_detail.fallback` null, since it is a choice and not a fallback: modelpick's probes measure IU itself, so a probe must not land on a credit org. It
    beats a bound session, leaves the binding as it found it, and `x-agw-fallback: none` does not refuse it, since the
    caller asked for IU.
    **Claude-Code-shaped requests go to IU.** A request carrying any of the signals above (read-only check, no body edit)
@@ -167,10 +167,13 @@ Schema changes in usage-tracker (`migrations/pg`, it owns the `usage` schema):
   `iu_portal_cost`. Not legacy `cost_report`: it cannot group by key. A missing
   admin key skips that org.
 
-**Rows without a gateway row.** A request with `x-agw-usage: caller` on a non-`/anthropic` path writes no `records` row
-and no ledger row; its span still goes out. These are agw's media calls, priced per minute, per character or per image:
-only agw can price them, so agw writes their row itself. On `/anthropic` paths the header is ignored, because a Claude
-call must always hit the meter. The other requests without a row are a `count_tokens`, a model catalog read and a 402.
+**Rows without a gateway row.** A request from caller `agw` with `x-agw-usage: caller` on `/openai/v1/images/`,
+`/openai/v1/audio/`, `/gemini/v1beta/` or `/replicate/v1/` writes no `records` row and no ledger row. These are agw's media
+calls, priced per minute, per character or per image: only agw can price them, so agw writes their row itself. From any
+other caller or on any other path the header is ignored and the row is written, so a Claude call always hits the meter
+and no other token can opt out. The other requests without a row are a `count_tokens`, a model catalog read and a 402.
+Every one of them but the 402 still sets the span's response model and usage attributes; `agw.cost.usd` comes only with a
+row.
 
 One span per request, service `agw-gateway` (`gen_ai.*` attributes, pool, cache read/write tokens, time to the first
 body byte), parented by `traceparent`. Every response carries `x-agw-request-id`, the row's `source_id`, and `x-agw-pool`.

@@ -941,17 +941,18 @@ describe('attribution', () => {
 
 describe('x-agw-usage: caller', () => {
   const IMAGE = '/openai/v1/images/generations'
-  const callerInit = (value = 'caller'): RequestInit => {
+  const callerInit = (value = 'caller', token = API_SECRET) => {
     const init = jsonBody({ model: 'gpt-image' })
-    return { ...init, headers: { ...init.headers, 'x-agw-usage': value } }
+    return { ...init, token, headers: { ...init.headers, 'x-agw-usage': value } }
   }
 
-  test.each(['caller', 'CALLER', ' Caller '])('%j on an IU path: no row, the span still goes out', async (value) => {
+  test.each(['caller', 'CALLER', ' Caller '])('%j from agw: no row, the span still reports', async (value) => {
     const exporter = new InMemorySpanExporter()
     const telemetry = createTelemetry({ env: {}, logger: silentLogger(), exporter, scheduledDelayMillis: 1 })
+    iu.reply(() => Response.json({ model: 'gpt-image-served', usage: { input_tokens: 7, output_tokens: 3 } }))
     const gw = start({ telemetry })
     const response = await gw.call(IMAGE, callerInit(value))
-    expect(await response.json()).toEqual(message)
+    await response.text()
     expect(response.headers.get('x-agw-pool')).toBe('iu-api')
     expect(gw.rows()).toEqual({ records: [], picks: [] })
     expect(gw.ledger.stats()).toEqual({ unsynced: 0, quarantined: 0, oldestUnsyncedAt: null })
@@ -960,20 +961,50 @@ describe('x-agw-usage: caller', () => {
     const spans = exporter.getFinishedSpans()
     expect(spans).toHaveLength(1)
     expect(spans[0]?.attributes).toMatchObject({
-      'agw.gateway.caller': 'oc',
+      'agw.gateway.caller': 'agw',
       'agw.gateway.pool': 'iu-api',
       'agw.gateway.status': 200,
+      'gen_ai.response.model': 'gpt-image-served',
+      'gen_ai.usage.input_tokens': 7,
+      'gen_ai.usage.output_tokens': 3,
     })
+    expect(spans[0]?.attributes['agw.cost.usd']).toBeUndefined()
     expect(spans[0]?.attributes['agw.gateway.request_id']).toBe(response.headers.get('x-agw-request-id') ?? '')
   })
 
-  test('every IU prefix honours it', async () => {
+  test.each([
+    '/openai/v1/images/edits',
+    '/openai/v1/audio/speech',
+    '/gemini/v1beta/models/m:generateContent',
+    '/replicate/v1/predictions',
+  ])('%s is a path agw prices', async (path) => {
     const gw = start()
-    for (const path of ['/gemini/v1beta/models/m:generateContent', '/replicate/v1/predictions', '/decisions/v1/x']) {
-      await (await gw.call(path, callerInit())).text()
-    }
-    expect(iu.seen).toHaveLength(3)
+    await (await gw.call(path, callerInit())).text()
+    expect(iu.seen).toHaveLength(1)
     expect(gw.rows().records).toEqual([])
+  })
+
+  test.each([
+    '/openai/v1/chat/completions',
+    '/openai/v1/responses',
+    '/openai/v1/embeddings',
+    '/openai/v1/images',
+    '/decisions/v1/x',
+  ])('%s is not: agw keeps the gateway row', async (path) => {
+    const gw = start()
+    await (await gw.call(path, callerInit())).text()
+    expect(iu.seen).toHaveLength(1)
+    expect(gw.rows().records).toHaveLength(1)
+  })
+
+  test.each([
+    ['a door token', DOOR_TOKEN, 'oc'],
+    ['agw-opencode', OPENCODE_TOKEN, 'agw-opencode'],
+    ['hermes', HERMES_TOKEN, 'hermes'],
+  ])('%s cannot opt out of the row', async (_name, token, caller) => {
+    const gw = start()
+    await (await gw.call(IMAGE, callerInit('caller', token))).text()
+    expect(gw.rows().records.map(({ row }) => row.lane_detail.caller)).toEqual([caller])
   })
 
   test('an unreachable upstream writes no row either', async () => {
@@ -1018,7 +1049,7 @@ describe('x-agw-usage: caller', () => {
     const gw = start({ registry })
     const init = jsonBody(request())
     const headers = { ...init.headers, 'x-agw-usage': 'caller' }
-    const response = await gw.call(MESSAGES, { ...init, headers })
+    const response = await gw.call(MESSAGES, { ...init, token: API_SECRET, headers })
     await response.text()
     expect(response.headers.get('x-agw-pool')).toBe(label)
     const { records, picks } = gw.rows()
@@ -1047,7 +1078,7 @@ describe('x-agw-upstream: iu', () => {
     const { records, picks } = gw.rows()
     expect(picks.map(({ row }) => [row.picked, row.reason])).toEqual([['iu-api', 'forced']])
     expect(records[0]?.row).toMatchObject({ billing: 'api_key', api_key: 'personal', account: null })
-    expect(records[0]?.row.lane_detail).toMatchObject({ pool: 'iu-api', fallback: 'forced' })
+    expect(records[0]?.row.lane_detail).toMatchObject({ pool: 'iu-api', fallback: null })
   })
 
   test('any other value picks as usual', async () => {
@@ -1149,10 +1180,33 @@ describe('the model catalog', () => {
     expect(gw.rows().records).toEqual([])
   })
 
+  test('a span reports the served model without a row', async () => {
+    const exporter = new InMemorySpanExporter()
+    const telemetry = createTelemetry({ env: {}, logger: silentLogger(), exporter, scheduledDelayMillis: 1 })
+    iu.reply(() => Response.json({ ...catalog, model: haikuId }))
+    const gw = start({ telemetry })
+    await (await gw.call('/anthropic/v1/models')).text()
+    for (let i = 0; i < 100 && exporter.getFinishedSpans().length === 0; i++) await Bun.sleep(5)
+    expect(exporter.getFinishedSpans()[0]?.attributes).toMatchObject({
+      'gen_ai.response.model': haikuId,
+      'gen_ai.usage.input_tokens': 0,
+    })
+  })
+
   test('only GET', async () => {
     const gw = start()
     expect((await gw.call('/anthropic/v1/models', { method: 'POST', body: '{}' })).status).toBe(405)
     expect(iu.seen).toHaveLength(0)
+  })
+
+  test('the remainder is one segment of model-id characters; an encoded slash never reaches IU', async () => {
+    const gw = start()
+    await (await gw.call('/anthropic/v1/models/claude-x.1:beta_2')).text()
+    expect(iu.seen).toHaveLength(1)
+    for (const path of ['a/b', 'a%2fb', 'a%2Fb', '..%2f..%2fadmin', 'a%20b', 'a b', '', 'a/']) {
+      expect((await gw.call(`/anthropic/v1/models/${path}`)).status).toBe(404)
+    }
+    expect(iu.seen).toHaveLength(1)
   })
 
   test('a neighbouring path is not the catalog, and a path cannot climb out of it', async () => {
