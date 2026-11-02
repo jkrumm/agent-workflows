@@ -1,7 +1,7 @@
 # Inference gateway, then review v2, its eval, central tiers and the maturity pass
 
 **Goal:** every LLM call from the mini goes through one gateway that spends the Claude subscriptions' monthly API
-credit first and records every request (Waves 1–4, design `docs/gateway.md`). Then the review is more effective while
+credit first and records every request (Waves 1–4, design `docs/gateway.md`). agw then runs on measured Claude seats and Argo shows the new money flow (Waves 6–7). Then the review is more effective while
 cheaper and faster, measured by an eval that ranks models and pipeline variants on ground truth. The tier choices rest
 on that data, and the gaps the 2026-10-31 audit found in accounting, telemetry, tests and docs are closed. Design:
 `docs/review-v2.md`.
@@ -23,13 +23,13 @@ Context (2026-11-01):
 - The 2026-10-31 eval (`docs/evals/2026-10-31-review-claude-direct.md`) settled cost, wall time and failure modes per
   arm, but **cannot rank models**: its reference is a retired gateway's outcome. Lessons: `docs/evals/README.md`.
 - **Review eval, owner answers (2026-11-01 19:30, via the software-factory program lead, on `docs/review-v2.md`):**
-  (8) IU repos stay out of the eval cases. (9) The owner gives the two hours of labelling when Wave 6 reaches its owner
+  (8) IU repos stay out of the eval cases. (9) The owner gives the two hours of labelling when Wave 8 reaches its owner
   session. (10) The native `/code-review` arm runs on Max as factory spawns; early is fine. Keep API spend on the
   review eval low: iterate on the Max subscriptions first, and start the API-priced sweeps of Waves 7 and 9 on a small
   `dev` slice before the full `test` set.
 - Owner framing: greenfield, solo developer, optimal over compatible; the review pipeline may be reset.
-- Tiers (owner, 2026-10-31): `FAST`, `EASY`, `HARD`, `DECIDE`. The picks Wave 3 sets and Wave 10 formalises stay
-  provisional until Wave 9 measures the review. Other jobs keep provisional picks until their own evals exist.
+- Tiers (owner, 2026-10-31): `FAST`, `EASY`, `HARD`, `DECIDE`. The picks Wave 3 sets and Wave 12 formalises stay
+  provisional until Wave 11 measures the review. Other jobs keep provisional picks until their own evals exist.
 - Audit (private numbers, outside the repo: `~/SourceRoot/agw-maturity-audit.md`). Findings carried below.
 
 **Why the rework goes before the tiers.** A tier wave first would only relabel unmeasured picks, and the review is the
@@ -79,7 +79,7 @@ eval needs move into Wave 5. The rest waits.
 - [x] agw: every transport and OpenCode provider on the gateway with the `agw` door token and attribution headers.
   `iu-anthropic` becomes the `anthropic` wire (the gateway decides credit or IU). agw stops writing `usage.records` for
   gateway calls. `IU_KEY_ID`, `~/.config/agw/iu.env` and `athena-iu.env` leave agw: the gateway holds the `personal` key.
-- [x] Seats onto Claude (owner, 2026-11-01), provisional until Waves 9–10: `TRIVIAL`/`EASY` → Haiku 5.5, `STRONG` →
+- [x] Seats onto Claude (owner, 2026-11-01), provisional until Waves 11–12: `TRIVIAL`/`EASY` → Haiku 5.5, `STRONG` →
   Sonnet 5.5, each with `x-agw-fallback: none` and a GPT-on-IU route fallback, so credit runs out into GPT, not into
   IU's Claude. A live call per changed route.
 - [x] Hermes, dotfiles `oc` and modelpick on the gateway, each with its own door token; the `-eu` model ids go; Hermes
@@ -124,7 +124,44 @@ Disjoint changes, one fan-out batch:
   where IU supports it. Sonnet guard: effort `none` on a Sonnet route is a config error. Spend is the gateway's rows.
 - **One model id per model** (normalise provider-echoed ids) and the route id on every step, so reports group by route.
 
-## Wave 6 — Ground truth            <!-- status: pending -->
+## Wave 6 — Claude seats, measured            <!-- status: pending -->
+
+Owner, 2026-11-02: agw runs on Claude with deliberate model and effort choices everywhere, not only where Wave 3
+swapped them. This wave pulls the structural half of Wave 12 (tiers) forward; Wave 11's review sweep still sets the
+review's own seats.
+
+- [ ] **Principles in `docs/gateway.md` §Seats:** Claude primary for every text and agent seat; a reviewer of
+  Claude-written output stays on another lab (`prose.review`, `podcast.review.a`/`.b`, `review.adversary`); speech,
+  transcription, image and `decide` stay on IU. Opus only where an arm shows it beats Sonnet beyond the CI.
+- [ ] **Arms on the existing suites** (`$AGW_EVAL_DIR`: research, otel, brain, check, diagram, prose) with Wave 5's
+  `--arm`: Haiku 5.5 (`none`/`high`), Sonnet 5.5 (`low`/`medium`), Opus 5.5 where Sonnet leads, and today's seat as the
+  baseline. Pick per workflow on score, then wall time; cost counts only past the credit pacing line. The DeepSeek
+  seats go (`research.agent`, `otel.agent`, the podcast pipeline), `podcast.write` leaves Terra.
+- [ ] **Tiers** in `packages/routes/src/table/_shared.ts` (`FAST`, `EASY`, `HARD`, `DECIDE` with Claude primaries and
+  GPT-on-IU fallbacks); routes spread a tier, a guard test fails a route that names a model (the eval judge excepted).
+- [ ] **Credit pacing.** The gateway exposes runway per pool (credit left against days left). Runs with
+  `purpose=eval` stop drawing credit below a reserve (default: the pro-rata share of the remaining days for
+  production), so an eval sweep cannot push production onto the over-cap IU key. The fallback order is documented.
+- [ ] Committed report `docs/evals/<date>-claude-seats.md`; picks recorded in `modelpick/docs/decisions/agw-text-seats.md`;
+  a live call per changed route.
+
+## Wave 7 — Usage view v7 (Argo)            <!-- status: pending -->
+
+Owner, 2026-11-02: the usage page needs a new UX concept for the gateway era, not a fifth tab. Spec first, build
+after the owner signs the spec (the one stop of this wave).
+
+- [ ] **Spec v7** in `argo/docs/design/usage-tracking.md`, superseding v6 and the Credits tab bolted on in Wave 4. The
+  mental model to test: **supply** (subscription windows, credit pools with expiry, IU keys with caps) → **router**
+  (the gateway's picks, fallbacks, cache) → **demand** (callers and workflows: Claude Code lanes, agw workflows,
+  Hermes, Iris, MacWhisper). Athena Teamchat is shown apart, never mixed in. One headline: are we on pace to use
+  every credit dollar before it expires without touching the over-cap IU key?
+- [ ] The spec names each question the page answers, the view that answers it, and the endpoint behind it. The
+  frontend rules (`rules/frontend-routing.md`) and basalt-ui apply. Mock screens in the spec. **Stop for the owner's
+  sign-off.**
+- [ ] Build v7 in argo: endpoints on `usage.*` (gateway rows, picks, credit cycles, platform cost, quota samples),
+  the views, tests; v6 views it supersedes are deleted, not hidden. Screenshots light and dark through `@verifier`.
+
+## Wave 8 — Ground truth            <!-- status: pending -->
 
 - `agw eval mine review`: SZZ over `~/SourceRoot` with the filters in `docs/review-v2.md` §Ground truth, two
   cross-vendor labeler calls per candidate, clean controls, the `dev`/`test` split. Cases go only under `$AGW_EVAL_DIR`.
@@ -134,26 +171,26 @@ Disjoint changes, one fan-out batch:
   right, judge κ ≥ 0.8. Below either, tighten the filters or add a second judge.
 - Target 200 bug cases and 100 controls. Seeded defects only below 150.
 
-## Wave 7 — Baseline            <!-- status: pending -->
+## Wave 9 — Baseline            <!-- status: pending -->
 
 - Today's pipeline (v1) on the full `test` set and the controls, on its live seats: the first real numbers.
 - Native `/code-review high` on 60 `test` cases through herdr-core sessions (owner decision 3).
 - **OCR arm** (owner, 2026-11-02: OCR stays off until measured). `alibaba/open-code-review` (pinned v1.13.3) on the
   `test` set and the controls, on Haiku 5.5 and Sonnet 5.5 through the gateway (its own door token, so its spend is
-  priced for the first time) and on Terra: recall, false alarms, cost and wall per arm. Wave 9 keeps OCR only as an
+  priced for the first time) and on Terra: recall, false alarms, cost and wall per arm. Wave 11 keeps OCR only as an
   arm that beats v2 on recall beyond the CI at a cost the owner accepts; otherwise its deletion stands.
 - Committed report `docs/evals/<date>-review-baseline.md`. It sets how much headroom v2 has to beat.
 
-## Wave 8 — Review v2            <!-- status: pending -->
+## Wave 10 — Review v2            <!-- status: pending -->
 
 - The pipeline in `docs/review-v2.md`: prepare, finders, group, verify vote, assemble, ledger. Levels
   `quick|standard|deep`, `REVIEW.md` loading, REVIEW_OUTPUT v3, re-review diff-only, `stepBack` from round 3,
   `agw review dispose`.
-- Built beside v1 as workflow `review-v2`, so Wave 9 can compare both. Prompts iterate on `dev` only.
+- Built beside v1 as workflow `review-v2`, so Wave 11 can compare both. Prompts iterate on `dev` only.
 - The `/review` skill rewritten for v3: the fix loop, dispositions, `stepBack`. Every other caller moves to v3 here.
 - The stale lines in `docs/review-v2.md` §Docs to fix are fixed.
 
-## Wave 9 — Arm sweep and cutover            <!-- status: pending -->
+## Wave 11 — Arm sweep and cutover            <!-- status: pending -->
 
 - v2 variants on `test` with run-scoped arms: finders 1, 3 or 5; K 1 or 3; voters as agent steps or single calls; seats
   on GPT or Claude per stage. The decision rule is in `docs/review-v2.md` §Metrics.
@@ -163,9 +200,9 @@ Disjoint changes, one fan-out batch:
   `/review` stays only if the native arm beat v2's `deep` on recall beyond the CI.
 - `REVIEW.md` seeded in the five busiest repos.
 
-## Wave 10 — Central tiers            <!-- status: pending -->
+## Wave 12 — Central tiers            <!-- status: pending -->
 
-Provisional picks (2026-10-31, from cost, wall time, failure modes and the AA index). Wave 9 replaces `HARD` and
+Provisional picks (2026-10-31, from cost, wall time, failure modes and the AA index). Wave 11 replaces `HARD` and
 `EASY` with measured ones. Since 2026-11-01 Claude seats run on credit while a pool has it
 (Wave 3), so a Claude pick costs nothing up to ~$400 a month: the sweep weighs that, not list price:
 
@@ -184,13 +221,13 @@ Provisional picks (2026-10-31, from cost, wall time, failure modes and the AA in
 - Picks recorded in `modelpick/docs/decisions/agw-text-seats.md`; a live call per tier after deploy.
 - Research's 28 cases get a golden-answer check.
 
-## Wave 11 — Accounting and telemetry            <!-- status: pending -->
+## Wave 13 — Accounting and telemetry            <!-- status: pending -->
 
 - Failed agent steps keep their tokens and cost (lost today, mostly on compaction overflow).
 - `cost` null means unknown only; free steps record 0. Door errors (`door.speech` HTTP 400/503) are run failures, not
   `done`.
 
-## Wave 12 — Harness robustness            <!-- status: pending -->
+## Wave 14 — Harness robustness            <!-- status: pending -->
 
 - Compaction overflow: an output limit for the compaction summary, or a context budget per agent step, so a long
   exploration ends with a result instead of a failed step.
@@ -199,7 +236,7 @@ Provisional picks (2026-10-31, from cost, wall time, failure modes and the AA in
 - Review convergence sub-eval: a fix loop over 20 `test` cases (review, fix, diff-only re-review) measuring
   rounds-to-pass and the share of late findings on old code, next to rounds-to-pass from real dispositions.
 
-## Wave 13 — Coverage and debt            <!-- status: pending -->
+## Wave 15 — Coverage and debt            <!-- status: pending -->
 
 - Eval cases and a scorer for the uncovered workflows (narrative, overview, prose-polish, image-icon, retrospective,
   podcast) and scorers for speech and transcriptions.

@@ -18,6 +18,9 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
   Rotation policy: a fresh lead per wave unless the last one closed under ~30% context.
 
 ## Decisions taken
+- 2026-11-02 owner: two waves inserted after Wave 5, the rest renumbered +2. Wave 6 moves every text and agent seat
+  onto measured Claude choices (pulls the tier structure forward, adds credit pacing for evals); Wave 7 is a new
+  usage-view concept in Argo (spec v7, owner sign-off on the spec is a stop, then build).
 - 2026-11-01 ~22:50: old mother r2 and lead r3 were resumed beside r4/r5. Settled: r4 mother, r5 lead (r2 stepped down, owner: "w1-r4 owns the fleet");
   r3 hands r5 its review verdicts, then idles and gets closed. Accepted departures from gateway.md (r2): no bootProcess; SQLite ledger to usage.records,
   at-least-once with idempotent keys and quarantine; build-hash restart. Close-out must state them for concept v3.14.
@@ -29,8 +32,8 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
   Individual Orgs, the registry stays the source; iu spent $56.11 on 10-31 outside any gateway. Lead told: meter seeds
   from max(ledger, cost_report) since cycle start.
 - 2026-11-01 19:30 owner (via software-factory program lead, review-v2): IU repos out of eval cases; owner labels in
-  Wave 6's session; native `/code-review` arm on Max as factory spawns, early is fine; review-eval API spend low — Max
-  first, Waves 7 and 9 API sweeps on a small `dev` slice before full `test`. In PLAN context; brief Waves 6/7/9 leads.
+  Wave 8's session; native `/code-review` arm on Max as factory spawns, early is fine; review-eval API spend low — Max
+  first, Waves 9 and 11 API sweeps on a small `dev` slice before full `test`. In PLAN context; brief Waves 8/9/11 leads (renumbered 2026-11-02).
 - 2026-11-01 owner: build the inference gateway in agw (no adoption); agw's seats move to Claude to spend the
   credit; EU endpoints don't matter; the Athena team key is Athena Teamchat's only. Headroom default $2 per pool.
 - 2026-10-29: Sonnet review angles for `--deep` only, Haiku default (recall 0.017 → 0.13 at 9.4× cost;
@@ -136,7 +139,7 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
 
 ## Next action
 - Wait for the Wave 3 close-out in `docs/waves/handoff/lead.md`; judge it, tick PLAN, retro entry, next lead per the rotation policy.
-- Still owed by the owner: me2 keys and expiry day. Until then me2 stays disabled. MacWhisper is done (its door token works, `stt.done` in the audio log). OCR stays off until the Wave 7 OCR arm measures it. The Hermes morning briefing is retired; the owner rebuilds it differently, not ours.
+- Still owed by the owner: me2 keys and expiry day. Until then me2 stays disabled. MacWhisper is done (its door token works, `stt.done` in the audio log). OCR stays off until the Wave 9 OCR arm measures it. The Hermes morning briefing is retired; the owner rebuilds it differently, not ours.
 - Wake-loop: the factory re-fires `workers done: <lead> idle` while the lead idles on background shells. Answer with a blocking
   ~9.5-min poll on lead.md (bash loop with perl select, foreground timeout 590 s; `rd read` under `timeout 15`), not a bare re-declare.
 - Commit only own paths (`git commit -- <paths>`): a shared-checkout commit swept a lead edit in Wave 3.
