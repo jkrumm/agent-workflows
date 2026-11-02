@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { chatStream, startFakeGateway } from '@agent-workflows/capabilities/testing'
+import { messageResponse, startFakeGateway } from '@agent-workflows/capabilities/testing'
 import { PlainCase, readCases } from '@agent-workflows/eval'
 import { createFactoryClassify } from '../src/workflows/factory-classify/index.ts'
 import { CASES_PATH } from '../src/workflows/factory-classify/module.ts'
@@ -27,7 +27,7 @@ const verdict = {
 let t: TestHost
 beforeAll(async () => {
   const iu = startFakeGateway({
-    chat: () => chatStream(JSON.stringify(verdict), { prompt_tokens: 900, completion_tokens: 60 }),
+    messages: () => messageResponse(JSON.stringify(verdict), { input_tokens: 900, output_tokens: 60 }),
   })
   t = await startTestHost({
     prefix: 'factoryclassify',
@@ -82,7 +82,7 @@ describe('factory-classify workflow', () => {
 describe('incident floor', () => {
   test('an incident answered routine leaves the workflow risky, other kinds are untouched', async () => {
     const run = async (answer: object) => {
-      t.iu.on('chat', () => chatStream(JSON.stringify(answer), { prompt_tokens: 900, completion_tokens: 60 }))
+      t.iu.on('messages', () => messageResponse(JSON.stringify(answer), { input_tokens: 900, output_tokens: 60 }))
       return t.json(
         await t.call('/workflows/factory-classify', {
           method: 'POST',
@@ -93,7 +93,7 @@ describe('incident floor', () => {
     }
     expect((await run({ ...verdict, class: 'routine' })).body.output.class).toBe('risky')
     expect((await run({ ...verdict, kind: 'bug', class: 'routine' })).body.output.class).toBe('routine')
-    t.iu.on('chat', () => chatStream(JSON.stringify(verdict), { prompt_tokens: 900, completion_tokens: 60 }))
+    t.iu.on('messages', () => messageResponse(JSON.stringify(verdict), { input_tokens: 900, output_tokens: 60 }))
   })
 })
 

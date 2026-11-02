@@ -489,22 +489,29 @@ describe('buildServerConfig: the gateway', () => {
 })
 
 describe('buildServerConfig: review.angle.deep', () => {
-  test('the deep angle row sits on the Responses provider with its cost rows, and the route’s fallback is the other lab on chat', () => {
+  test('the deep angle row is Sonnet on the native Anthropic provider, and the route’s fallback is Terra on Responses with its cost rows', () => {
     const config = buildServerConfig({}) as {
       providers: Record<string, { models: Record<string, { cost?: unknown }> }>
     }
-    expect(config.providers[PROVIDER_RESPONSES]?.models['gpt-6.1-terra']?.cost).toMatchObject({ input: 1, output: 5 })
+    expect(modelRef('review.angle.deep', {}).model).toMatchObject({
+      providerID: PROVIDER_ANTHROPIC,
+      id: 'claude-sonnet-5-5',
+    })
+    expect(config.providers[PROVIDER_ANTHROPIC]?.models['claude-sonnet-5-5']).toBeDefined()
     const fallback = fallbackModelRef('review.angle.deep', {})
     expect(fallback?.model).toMatchObject({
-      providerID: PROVIDER_CHAT,
-      id: 'deepseek-v4.1-flash',
+      providerID: PROVIDER_RESPONSES,
+      id: 'gpt-6.1-terra',
     })
-    expect(config.providers[PROVIDER_CHAT]?.models[fallback?.model.id ?? '']).toBeDefined()
+    expect(config.providers[PROVIDER_RESPONSES]?.models[fallback?.model.id ?? '']?.cost).toMatchObject({
+      input: 1,
+      output: 5,
+    })
   })
 })
 
 describe('buildServerConfig: the provider follows the model family, whatever other routes share the id', () => {
-  // No table route runs a Claude model, so the native Anthropic provider is covered through an override of `brain.agent`.
+  // The Claude seats run on the native Anthropic provider; this override pins a Claude model onto `brain.agent` with no effort and no fallback.
   const claudeEnv = {
     AGW_ROUTES: JSON.stringify({
       'brain.agent': {
@@ -534,21 +541,19 @@ describe('buildServerConfig: the provider follows the model family, whatever oth
     for (const route of claude) expect(config.providers[PROVIDER_ANTHROPIC]?.models[route.model]).toBeDefined()
   })
 
-  test('the agent routes run Terra on Responses; a Claude model (pinned onto brain.agent) goes to the native Anthropic provider', () => {
+  test('the agent routes run Claude on the native Anthropic provider and fall back to Terra on Responses', () => {
     expect(resolveRoute('cheap.classify', {})).toMatchObject({
-      wire: 'iu-openai',
-      model: 'gpt-6-luna',
+      wire: 'anthropic',
+      model: 'claude-haiku-5-5',
     })
-    for (const id of ['check', 'review.angle', 'review.synthesis', 'diagram.agent', 'retro.analyze'] as const) {
-      expect(modelRef(id, {}).model).toMatchObject({
-        providerID: PROVIDER_RESPONSES,
-        id: 'gpt-6.1-terra',
-      })
+    for (const id of ['review.angle', 'review.synthesis', 'diagram.agent', 'retro.analyze'] as const) {
+      expect(modelRef(id, {}).model).toMatchObject({ providerID: PROVIDER_ANTHROPIC, id: 'claude-sonnet-5-5' })
+      expect(fallbackModelRef(id, {})?.model).toMatchObject({ providerID: PROVIDER_RESPONSES, id: 'gpt-6.1-terra' })
     }
-    expect(modelRef('brain.agent', {}).model).toMatchObject({
-      providerID: PROVIDER_RESPONSES,
-      id: 'gpt-6.1-terra',
-    })
+    for (const id of ['check', 'brain.agent'] as const) {
+      expect(modelRef(id, {}).model).toMatchObject({ providerID: PROVIDER_ANTHROPIC, id: 'claude-haiku-5-5' })
+      expect(fallbackModelRef(id, {})?.model).toMatchObject({ providerID: PROVIDER_RESPONSES, id: 'gpt-6.1-terra' })
+    }
     expect(modelRef('brain.agent', claudeEnv).model).toMatchObject({
       providerID: PROVIDER_ANTHROPIC,
       id: 'claude-haiku-5-5',
@@ -570,29 +575,27 @@ describe('buildServerConfig: the provider follows the model family, whatever oth
       name: 'Anthropic through the gateway',
       settings: { baseURL: '{env:AGW_GATEWAY_URL}/anthropic/v1', apiKey: '{env:AGW_GATEWAY_TOOL_TOKEN}' },
     })
-    // a single-call model never lands in the agent providers
+    // a single-call model never lands in the agent providers: Luna is only a single-call fallback and the TTS prep
     expect(config.providers[PROVIDER_RESPONSES]?.models['gpt-6-luna']).toBeUndefined()
   })
 
-  test('the deepseek routes stay on chat, their Terra fallbacks on Responses, and the Terra routes fall back to chat', () => {
+  test('the deepseek routes stay on chat and their Terra fallbacks sit on Responses', () => {
     expect(modelRef('research.agent', {}).model.providerID).toBe(PROVIDER_CHAT)
     expect(modelRef('otel.agent', {}).model.providerID).toBe(PROVIDER_CHAT)
     expect(fallbackModelRef('research.agent', {})?.model.providerID).toBe(PROVIDER_RESPONSES)
-    expect(fallbackModelRef('check', {})?.model.providerID).toBe(PROVIDER_CHAT)
+    expect(fallbackModelRef('otel.agent', {})?.model.providerID).toBe(PROVIDER_RESPONSES)
   })
 })
 
 describe('buildServerConfig: claude variants use the Anthropic options, not reasoningEffort', () => {
   const variantsOf = (effort: string | null, fallbackEffort?: string) => {
-    const env = {
-      AGW_ROUTES: JSON.stringify({
-        'brain.agent': {
-          model: 'claude-haiku-5-5',
-          effort,
-          fallback: fallbackEffort ? { model: 'claude-haiku-5-5', effort: fallbackEffort } : null,
-        },
-      }),
+    // `check` and `brain.agent` both run Haiku (the EASY seat): pin both so only the effort under test is left
+    const pinned = {
+      model: 'claude-haiku-5-5',
+      effort,
+      fallback: fallbackEffort ? { model: 'claude-haiku-5-5', effort: fallbackEffort } : null,
     }
+    const env = { AGW_ROUTES: JSON.stringify({ 'brain.agent': pinned, check: pinned }) }
     const config = buildServerConfig(env) as {
       providers: Record<string, { models: Record<string, { variants?: { id: string; settings: unknown }[] }> }>
     }

@@ -5,7 +5,7 @@ import { createCapabilities } from './capabilities/index.ts'
 import type { Usage } from './context.ts'
 import { CapabilityCallError } from './errors.ts'
 import { createRegistry } from './registry.ts'
-import { chatStream, type FakeGateway, startFakeGateway } from './testing/index.ts'
+import { messageResponse, chatStream, type FakeGateway, startFakeGateway } from './testing/index.ts'
 import { gatewayTransports } from './transports/index.ts'
 
 let iu: FakeGateway
@@ -43,7 +43,7 @@ const caught = async (promise: Promise<unknown>) => {
 }
 
 const GOOD = { headline: 'Deploy geprüft', detail: 'Der Deploy ist grün.', spoken: 'Der Deploy ist grün. Alles läuft.' }
-const tokens = { prompt_tokens: 100, completion_tokens: 20 }
+const tokens = { input_tokens: 100, output_tokens: 20 }
 const sentPrompt = (index: number) => {
   const messages = iu.requests[index]?.body.messages as { content: string }[] | undefined
   return messages?.[0]?.content ?? ''
@@ -51,7 +51,7 @@ const sentPrompt = (index: number) => {
 
 describe('triage', () => {
   test('answers the validated summary with model, attempts and the call’s usage in legacy’s field names', async () => {
-    iu.on('chat', () => chatStream(JSON.stringify(GOOD), tokens))
+    iu.on('messages', () => messageResponse(JSON.stringify(GOOD), tokens))
     const out = await call()
 
     const route = resolveRoute('triage', {})
@@ -66,25 +66,30 @@ describe('triage', () => {
         reasoningTokens: 0,
         totalTokens: 120,
         cacheReadTokens: 0,
-        // Terra rate: 100 in at 1.00, 20 out at 5.00 (USD/M).
-        costUsd: (100 * 1 + 20 * 5) / 1_000_000,
+        // The route rate (Haiku, USD/M), as the table has it.
+        costUsd: (100 * route.rate!.inputPerM + 20 * route.rate!.outputPerM) / 1_000_000,
       },
     })
     expect(usages).toHaveLength(1)
   })
 
-  test('runs on the iu-openai chat wire (low effort), with no balance fallback', async () => {
+  test('runs on the anthropic wire (effort high) and falls back to Terra low on the chat wire', async () => {
     const route = resolveRoute('triage', {})
-    expect(route).toMatchObject({ wire: 'iu-openai', effort: 'low' })
-    expect(fallbackRoute(route)).toBeUndefined()
-    iu.on('chat', () => chatStream(JSON.stringify(GOOD), tokens))
+    expect(route).toMatchObject({ wire: 'anthropic', effort: 'high' })
+    expect(fallbackRoute(route)).toMatchObject({ wire: 'iu-openai', effort: 'low' })
+    iu.on('messages', () => messageResponse(JSON.stringify(GOOD), tokens))
     await call()
-    expect(iu.requests.map((r) => r.path)).toEqual(['/openai/v1/chat/completions'])
-    expect(iu.requests[0]?.body).toMatchObject({ model: route.model, reasoning_effort: 'low' })
+    expect(iu.requests.map((r) => r.path)).toEqual(['/anthropic/v1/messages'])
+    expect(iu.requests[0]?.headers.get('x-agw-fallback')).toBe('none')
+    expect(iu.requests[0]?.body).toMatchObject({
+      model: route.model,
+      thinking: { type: 'adaptive' },
+      output_config: { effort: 'high' },
+    })
   })
 
   test('the prompt labels the sections, marks them as data and puts the output contract after them', async () => {
-    iu.on('chat', () => chatStream(JSON.stringify(GOOD), tokens))
+    iu.on('messages', () => messageResponse(JSON.stringify(GOOD), tokens))
     await call()
     const sent = sentPrompt(0)
     expect(sent).toContain('## Route\nterminal: agent-gateway')
@@ -120,13 +125,13 @@ describe('triage', () => {
   })
 
   test('a fenced answer is accepted', async () => {
-    iu.on('chat', () => chatStream(`\`\`\`json\n${JSON.stringify(GOOD)}\n\`\`\``, tokens))
+    iu.on('messages', () => messageResponse(`\`\`\`json\n${JSON.stringify(GOOD)}\n\`\`\``, tokens))
     expect((await call()).headline).toBe(GOOD.headline)
   })
 
   test('an over-long headline is re-asked once; attempts is 2 and the usage covers both calls', async () => {
     const answers = [{ ...GOOD, headline: 'h'.repeat(61) }, GOOD]
-    iu.on('chat', () => chatStream(JSON.stringify(answers.shift()), tokens))
+    iu.on('messages', () => messageResponse(JSON.stringify(answers.shift()), tokens))
     const out = await call()
     expect(out).toMatchObject({ ...GOOD, attempts: 2 })
     expect(out.usage).toMatchObject({ inputTokens: 200, outputTokens: 40, totalTokens: 240 })
@@ -138,25 +143,43 @@ describe('triage', () => {
 
   test('a missing field or text that is no JSON is re-asked once, then fails INVALID_OUTPUT', async () => {
     const answers = ['not json at all', JSON.stringify({ headline: 'only this' })]
-    iu.on('chat', () => chatStream(answers.shift() ?? '', tokens))
+    iu.on('messages', () => messageResponse(answers.shift() ?? '', tokens))
     expect(await caught(call())).toMatchObject({ code: 'INVALID_OUTPUT' })
     expect(iu.requests).toHaveLength(2)
   })
 
   test('an over-long detail twice fails INVALID_OUTPUT', async () => {
-    iu.on('chat', () => chatStream(JSON.stringify({ ...GOOD, detail: 'd'.repeat(241) }), tokens))
+    iu.on('messages', () => messageResponse(JSON.stringify({ ...GOOD, detail: 'd'.repeat(241) }), tokens))
     expect(await caught(call())).toMatchObject({ code: 'INVALID_OUTPUT' })
   })
 
-  test('a provider balance failure is not moved to another route', async () => {
+  test('a drained credit (402 on the anthropic wire) moves once to the Terra low fallback on the chat wire', async () => {
     const route = resolveRoute('triage', {})
+    const fallback = fallbackRoute(route)!
+    iu.on('messages', () => new Response('credit balance is too low', { status: 402 }))
+    iu.on('chat', () => chatStream(JSON.stringify(GOOD), { prompt_tokens: 100, completion_tokens: 20 }))
+    const out = await call()
+    expect(out.model).toBe(fallback.model)
+    expect(iu.requests.map((r) => [r.path, r.body.model])).toEqual([
+      ['/anthropic/v1/messages', route.model],
+      ['/openai/v1/chat/completions', fallback.model],
+    ])
+    expect(iu.requests[1]?.body).toMatchObject({ reasoning_effort: fallback.effort })
+    expect(out.usage.costUsd).toBeCloseTo(
+      (100 * fallback.rate!.inputPerM + 20 * fallback.rate!.outputPerM) / 1_000_000,
+      12,
+    )
+  })
+
+  test('the fallback failing too answers the primary’s typed error', async () => {
+    iu.on('messages', () => new Response('credit balance is too low', { status: 402 }))
     iu.on('chat', () => new Response('Insufficient Balance (PaymentRequired)', { status: 402 }))
     expect(await caught(call())).toMatchObject({ code: 'UPSTREAM_ERROR' })
-    expect(iu.requests.map((r) => [r.path, r.body.model])).toEqual([['/openai/v1/chat/completions', route.model]])
+    expect(iu.requests).toHaveLength(2)
   })
 
   test('without usage in the answer the cost is unknown, not 0', async () => {
-    iu.on('chat', () => chatStream(JSON.stringify(GOOD), null))
+    iu.on('messages', () => messageResponse(JSON.stringify(GOOD), null))
     expect((await call()).usage.costUsd).toBeNull()
   })
 
@@ -168,7 +191,7 @@ describe('triage', () => {
 
   test('cancelling ends a call that is waiting on a slow provider', async () => {
     const arrived = Promise.withResolvers<void>()
-    iu.on('chat', () => {
+    iu.on('messages', () => {
       arrived.resolve()
       return new Promise<Response>(() => {})
     })

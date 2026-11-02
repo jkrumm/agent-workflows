@@ -10,6 +10,7 @@ import {
   type FakeGateway,
   geminiAudio,
   prepAnswer,
+  prepMessage,
   startFakeGateway,
   streamBody,
   testDeps,
@@ -209,8 +210,8 @@ describe('chat lane (no prep)', () => {
 describe('briefing lane (prep)', () => {
   test('prep runs for the prep model: delivery keys map to styles, the rest keep the baseline, invented tags go', async () => {
     const { deps, speak } = setup({
-      chat: () =>
-        prepAnswer({
+      messages: () =>
+        prepMessage({
           lang: 'de',
           title: 'Wetter morgen',
           chunks: [{ delivery: 'serious', text: 'Morgen <short pause> Sturm.' }, { text: 'Danach <excited> Sonne.' }],
@@ -220,9 +221,9 @@ describe('briefing lane (prep)', () => {
     const res = await speak(post({ model: FLASH, input: 'Morgen Sturm, danach Sonne.' }))
     expect(res.status).toBe(200)
     expect(decodeURIComponent(res.headers.get('x-audio-title') ?? '')).toBe('Wetter morgen')
-    const chat = iu.requests.find((r) => r.route === 'chat')
-    expect(chat?.json?.model).toBe(ROUTES['audio.tts.prep'].model)
-    expect(chat?.json?.reasoning_effort).toBe('low')
+    const prep = iu.requests.find((r) => r.route === 'messages')
+    expect(prep?.json?.model).toBe(ROUTES['audio.tts.prep'].model)
+    expect(prep?.json?.thinking).toBeUndefined() // effort none: the Messages wire sends no thinking
     const synths = iu.requests.filter((r) => r.route === 'gemini').map(sentText)
     expect(synths.map((p) => p?.speechMetadata?.style).sort()).toEqual([DELIVERY_STYLES.serious, PREP_STYLE].sort())
     expect(synths.map((p) => p?.text)).toContain('Danach Sonne.')
@@ -233,7 +234,7 @@ describe('briefing lane (prep)', () => {
 
   test('a caller delivery overrides what prep chose', async () => {
     const { speak } = setup({
-      chat: () => prepAnswer({ lang: 'de', title: 'T', chunks: [{ delivery: 'serious', text: 'Satz.' }] }),
+      messages: () => prepMessage({ lang: 'de', title: 'T', chunks: [{ delivery: 'serious', text: 'Satz.' }] }),
       gemini: () => geminiAudio(Uint8Array.from([1, 0])),
     })
     await speak(post({ model: FLASH, input: 'Satz.', delivery: 'warm' }))
@@ -263,7 +264,7 @@ describe('briefing lane (prep)', () => {
   })
 
   test('a prep failure is recorded, then the request answers 500 proxy_error with a summary', async () => {
-    const { deps, speak } = setup({ chat: () => new Response('nope', { status: 400 }) })
+    const { deps, speak } = setup({ messages: () => new Response('nope', { status: 400 }) })
     const res = await speak(post({ model: FLASH, input: 'Hallo.' }))
     expect(res.status).toBe(500)
     expect(((await res.json()) as { error: { type: string } }).error.type).toBe('proxy_error')

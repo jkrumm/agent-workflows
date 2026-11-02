@@ -161,6 +161,11 @@ export function prepAnswer(prep: { lang: string; title?: string; chunks: Array<R
   return chatAnswer(JSON.stringify(prep))
 }
 
+/** The same prep JSON as a Messages answer: `audio.tts.prep` is the TRIVIAL seat on the `anthropic` wire. */
+export function prepMessage(prep: { lang: string; title?: string; chunks: Array<Record<string, string>> }): Response {
+  return messageAnswer(JSON.stringify(prep))
+}
+
 /**
  * The default media port of `testDeps`: in-process, no ffmpeg. `transcode` hands the input back labelled with the asked
  * format, `duration` is unknown (0). A test that exercises the real boundary passes `ffmpegMedia(...)` and skips on

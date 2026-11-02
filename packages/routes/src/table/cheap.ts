@@ -1,14 +1,15 @@
 import type { RouteEntry } from '../schema.ts'
-import { CALL_FALLBACK, EASY, OPENAI_CALL_FALLBACK, TRIVIAL } from './_shared.ts'
+import { EASY, LUNA_CALL_FALLBACK, TERRA_LOW_CALL_FALLBACK, TRIVIAL } from './_shared.ts'
 
 const routes = {
-  // Single-call seats on the GPT stack. Nothing routes via Requesty (owner direction 2026-10-29); Luna and Terra answer
-  // on IU's OpenAI chat wire. A label needs no judgment (Luna low); a summary or an extraction needs a clear read (Terra
-  // low). `title` shares the label seat. IU reports no `usage.cost` for these, so the routes carry the rate.
-  'cheap.classify': { wire: 'iu-openai', ...TRIVIAL, fallback: CALL_FALLBACK },
-  'cheap.summarize': { wire: 'iu-openai', ...EASY, fallback: OPENAI_CALL_FALLBACK },
-  'cheap.extract': { wire: 'iu-openai', ...EASY, fallback: OPENAI_CALL_FALLBACK },
-  'cheap.title': { wire: 'iu-openai', ...TRIVIAL, fallback: OPENAI_CALL_FALLBACK },
+  // Single-call seats on Claude (owner decision 2026-11-01): the native Messages wire on the gateway, which pays from the
+  // credit. A label needs no judgment (TRIVIAL, Haiku without thinking); a summary or an extraction needs a clear read
+  // (EASY, Haiku high). `title` shares the label seat. A drained credit is a 402 and the call moves to GPT on IU's chat
+  // wire: Luna low for a label, Terra low for a summary or an extraction. The routes carry the rate.
+  'cheap.classify': { wire: 'anthropic', ...TRIVIAL, fallback: LUNA_CALL_FALLBACK },
+  'cheap.summarize': { wire: 'anthropic', ...EASY, fallback: TERRA_LOW_CALL_FALLBACK },
+  'cheap.extract': { wire: 'anthropic', ...EASY, fallback: TERRA_LOW_CALL_FALLBACK },
+  'cheap.title': { wire: 'anthropic', ...TRIVIAL, fallback: LUNA_CALL_FALLBACK },
 } satisfies Record<string, RouteEntry>
 
 export default routes

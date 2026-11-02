@@ -26,7 +26,7 @@ const caught = async (promise: Promise<unknown>) => {
 describe('review.route', () => {
   test('keeps the known router angles once, in order, with the depth; the diff is fenced as data', async () => {
     const t = setup({
-      openai: [
+      anthropic: [
         {
           text: JSON.stringify({
             angles: ['resilience', 'architect', 'security', 'resilience', 'made-up'],
@@ -46,7 +46,7 @@ describe('review.route', () => {
       truncatedChars: 0,
     })
     const [call] = t.transports.chatCalls
-    expect(call?.wire).toBe('openai')
+    expect(call?.wire).toBe('anthropic')
     expect(call?.request.prompt).not.toContain('[GIT_DIFF_COMMAND]')
     expect(call?.request.prompt).toMatch(
       /<<<DIFF_[0-9a-f]{12}_BEGIN>>>\ndiff --git a\/x b\/x\n\+x\n<<<DIFF_[0-9a-f]{12}_END>>>/,
@@ -55,12 +55,12 @@ describe('review.route', () => {
   })
 
   test('a missing or unknown depth is absent, not an error', async () => {
-    const t = setup({ openai: [{ text: '{"angles":[],"depth":"extreme"}' }] })
+    const t = setup({ anthropic: [{ text: '{"angles":[],"depth":"extreme"}' }] })
     expect(await t.registry.call('review.route', { diff: '+x' }, t.options)).toEqual({ angles: [], truncatedChars: 0 })
   })
 
   test('the same diff renders the same prompt (a replayed step re-sends what it sent)', async () => {
-    const t = setup({ openai: [{ text: '{"angles":[]}' }] })
+    const t = setup({ anthropic: [{ text: '{"angles":[]}' }] })
     await t.registry.call('review.route', { diff: '+same' }, t.options)
     await t.registry.call('review.route', { diff: '+same' }, t.options)
     const [first, second] = t.transports.chatCalls
@@ -68,14 +68,14 @@ describe('review.route', () => {
   })
 
   test('a diff past the cap is cut and says so', async () => {
-    const t = setup({ openai: [{ text: '{"angles":[]}' }] })
+    const t = setup({ anthropic: [{ text: '{"angles":[]}' }] })
     const out = await t.registry.call('review.route', { diff: 'x'.repeat(MAX_DIFF_CHARS + 50) }, t.options)
     expect(out.truncatedChars).toBe(50)
     expect(t.transports.chatCalls[0]?.request.prompt).toContain(`[diff truncated at ${MAX_DIFF_CHARS} chars]`)
   })
 
   test('prose twice is INVALID_OUTPUT after one re-ask', async () => {
-    const t = setup({ openai: [{ text: 'Here you go' }] })
+    const t = setup({ anthropic: [{ text: 'Here you go' }] })
     const error = await caught(t.registry.call('review.route', { diff: '+x' }, t.options))
     expect(error.code).toBe('INVALID_OUTPUT')
     expect(t.transports.chatCalls).toHaveLength(2)

@@ -1,5 +1,5 @@
 import type { RouteEntry } from '../schema.ts'
-import { TRIVIAL } from './_shared.ts'
+import { LUNA_CALL_FALLBACK, TRIVIAL } from './_shared.ts'
 
 // The audio door's seats (Wave 8, concept §8/§10): one route per TTS/STT model the door accepts, plus the prep and
 // spoken-summary LLMs. Ported from audio-gateway (`src/config.ts` defaults, `src/usage.ts` RATES at 568c281); the
@@ -36,11 +36,10 @@ const routes = {
   'audio.tts.elevenlabs-turbo': { wire: 'iu-replicate', model: 'elevenlabs/turbo-v2.5', price: PER_1K_CHARS(0.05) },
   'audio.tts.elevenlabs-v3': { wire: 'iu-replicate', model: 'elevenlabs/v3', price: PER_1K_CHARS(0.1) },
 
-  // Prep: OpenAI list price, short-context tier, 2026-09-23. Effort `low`: this call dominates briefing latency.
-  'audio.tts.prep': {
-    wire: 'iu-openai',
-    ...TRIVIAL,
-  },
+  // Prep: the TRIVIAL seat (Haiku, no thinking: this call dominates briefing latency) on the Messages wire. The prep call
+  // follows the route's wire (`packages/audio/src/speech/prep.ts`), so it spends the credit like every seat; a drained
+  // credit (402) falls back to Luna low on IU's chat wire. It had Luna on `iu-openai` with no fallback before the seats moved.
+  'audio.tts.prep': { wire: 'anthropic', ...TRIVIAL, fallback: LUNA_CALL_FALLBACK },
   // Spoken summary: ai.google.dev pricing, read 2026-09-02. Measured 0.8–1.0 s (legacy config, 2026-08-27).
   'audio.tts.summary': { wire: 'iu-openai', model: 'gemini-3.5-flash-lite', rate: { inputPerM: 0.3, outputPerM: 2.5 } },
 

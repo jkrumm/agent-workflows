@@ -24,7 +24,7 @@ const reply = (value: unknown) => ({
 })
 
 function enhance(replies: ReturnType<typeof reply>[], input: Record<string, unknown>) {
-  const transports = fakeTransports({ openai: replies })
+  const transports = fakeTransports({ anthropic: replies })
   const registry = createRegistry(createImageCapabilities({ env: {} }, { transports, env: {} }))
   const usage: Usage[] = []
   const run = () => registry.call('image.enhance', input, { addUsage: (u) => usage.push(u) })
@@ -40,7 +40,8 @@ describe('image.enhance', () => {
     const wire = first?.wire
     // oxlint-disable-next-line typescript/no-explicit-any -- the request is asserted field by field
     const request = first?.request as Record<string, any>
-    expect(wire).toBe('openai')
+    expect(wire).toBe('anthropic')
+    expect(route).toMatchObject({ wire: 'anthropic', fallback: { wire: 'iu-openai', effort: 'high' } })
     expect(request).toMatchObject({ model: route.model, effort: 'high', maxOutputTokens: 32_000, json: true })
     expect(request.system).toStartWith(composePlaybook('auto'))
     expect(request.system).toContain('SINGLE JSON object')

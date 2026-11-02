@@ -1,5 +1,5 @@
 import type { RouteEntry } from '../schema.ts'
-import { CALL_FALLBACK, CHEAP, OPENAI_CALL_FALLBACK, STRONG } from './_shared.ts'
+import { CALL_FALLBACK, CHEAP, TERRA_MEDIUM } from './_shared.ts'
 
 // The podcast writers' room (audio `workflows/podcast`), one route per stage. Defaults are audio-gateway's
 // (`src/config.ts`, 2026-10-29): research, editorial, outline and metadata on DeepSeek flash at effort high; the reviewer
@@ -20,9 +20,16 @@ const routes = {
   'podcast.research': cheapSeat,
   'podcast.editorial': cheapSeat,
   'podcast.outline': cheapSeat,
-  // The voice owner: every segment draft, revision and tightening pass. The shared balance fallback (concept v3.3, every
-  // IU route has one) applies only when IU refuses for provider balance.
-  'podcast.write': { wire: 'iu-openai', ...STRONG, effort: 'high', fallback: OPENAI_CALL_FALLBACK },
+  // The voice owner: every segment draft, revision and tightening pass. It stays on GPT, pinned to TERRA_MEDIUM at effort
+  // high and not to the STRONG seat (Sonnet): `Llm.round`, the writer's tool loop, speaks only the OpenAI dialects
+  // (`packages/audio/src/workflows/podcast/iu.ts`), so any route used through it must sit on `iu-openai`. On a
+  // provider-balance failure it falls back to DeepSeek flash, the other lab, as it did before the seats moved.
+  'podcast.write': {
+    wire: 'iu-openai',
+    ...TERRA_MEDIUM,
+    effort: 'high',
+    fallback: { wire: 'iu-openai', ...CHEAP, effort: 'high', maxOutputTokens: 32_000 },
+  },
   // No effort on the Gemini seat: its OpenAI-compatible leg rejects `reasoning_effort`.
   'podcast.review.a': {
     wire: 'iu-openai',

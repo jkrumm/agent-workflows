@@ -5,14 +5,14 @@ import {
   createRegistry,
   gatewayTransports,
 } from '@agent-workflows/capabilities'
-import { chatStream, type FakeGateway, startFakeGateway } from '@agent-workflows/capabilities/testing'
+import { type FakeGateway, messageResponse, startFakeGateway } from '@agent-workflows/capabilities/testing'
 import { z } from 'zod'
 import { type Attribution, defineWorkflow, type StepScope } from '../src/index.ts'
 import { freshSchema, testRuntime } from './support/pg.ts'
 
 const db = freshSchema('attribution')
 const gateway: FakeGateway = startFakeGateway({
-  chat: () => chatStream('A title', { prompt_tokens: 10, completion_tokens: 2 }),
+  messages: () => messageResponse('A title', { input_tokens: 10, output_tokens: 2 }),
 })
 beforeEach(() => {
   gateway.requests.length = 0

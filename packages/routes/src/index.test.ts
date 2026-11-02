@@ -36,10 +36,16 @@ describe('table', () => {
     for (const id of needed) expect(routeIds()).toContain(id)
   })
 
-  // `anthropic` is still a wire (the schema accepts it, the transport has its own tests) but no route in the table uses it.
   test('every wire the table uses is represented', () => {
     const wires = new Set(routeIds().map((id) => DEFAULT_ROUTES[id]?.wire))
-    expect([...wires].sort()).toEqual(['iu-decision', 'iu-gemini', 'iu-openai', 'iu-replicate', 'opencode'])
+    expect([...wires].sort()).toEqual([
+      'anthropic',
+      'iu-decision',
+      'iu-gemini',
+      'iu-openai',
+      'iu-replicate',
+      'opencode',
+    ])
   })
 })
 
@@ -66,25 +72,22 @@ describe('resolveRoute', () => {
     expect(resolveRoute('review.angle', {}).model).toBe(entry('review.angle').model)
   })
 
-  test('the deep angle route is its own seat: Terra medium, priced, overridden independently of review.angle', () => {
+  test('the deep angle route is its own seat: Sonnet medium, priced, overridden independently of review.angle', () => {
     const deep = resolveRoute('review.angle.deep', {})
     expect(deep).toMatchObject({
+      wire: 'opencode',
+      model: 'claude-sonnet-5-5',
+      effort: 'medium',
+    })
+    expect(deep.rate).toMatchObject({ inputPerM: 2, outputPerM: 10, cacheReadPerM: 0.1 })
+    // the fallback is GPT on IU, runs the same kind of step, and carries Terra's tiered card
+    expect(deep.fallback).toMatchObject({
       wire: 'opencode',
       model: 'gpt-6.1-terra',
       effort: 'medium',
     })
-    expect(deep.rate).toMatchObject({
-      inputPerM: 1,
-      outputPerM: 5,
-      cacheReadPerM: 0.05,
-    })
-    // the fallback is not the primary's own model, and runs the same kind of step
-    expect(deep.fallback).toMatchObject({
-      wire: 'opencode',
-      model: 'deepseek-v4.1-flash',
-    })
     // the long-prompt tier applies above 272K prompt tokens: the whole request bills 2x input, 1.5x output
-    expect(costFromUsage('opencode', { input_tokens: 1_500_000, output_tokens: 1_000 }, deep.rate)).toEqual({
+    expect(costFromUsage('opencode', { input_tokens: 1_500_000, output_tokens: 1_000 }, deep.fallback?.rate)).toEqual({
       usd: (1_500_000 * 1 * 2 + 1_000 * 5 * 1.5) / 1e6,
       source: 'rate',
     })
@@ -371,97 +374,152 @@ describe('costFromUsage', () => {
 })
 
 describe('fallback', () => {
-  const singleCall: RouteId[] = [
-    'cheap.classify',
-    'cheap.summarize',
-    'cheap.title',
-    'review.router',
-    'review.adversary',
-  ]
-  const agentSteps: RouteId[] = ['review.angle', 'review.synthesis', 'check']
-
   // The audio door's routes have no fallback: STT has its own model chain, and TTS, prep and summary keep audio-gateway's
   // behaviour (no balance fallback; packages/audio calls IU directly, not through the capability transports).
-  test('every iu-openai and opencode text route has one; decide, triage and audio.* have none', () => {
+  test('every text route has one; decide, audio.* (but the prep) and the image/Replicate models have none', () => {
     for (const id of routeIds()) {
       const route = resolveRoute(id, {})
       // an audio seat has none; an image or Replicate model (`price`) has no text model to move to
       expect(route.fallback === undefined).toBe(
-        route.wire === 'iu-decision' || id === 'triage' || id.startsWith('audio.') || route.price !== undefined,
+        route.wire === 'iu-decision' ||
+          (id.startsWith('audio.') && id !== 'audio.tts.prep') ||
+          route.price !== undefined,
       )
     }
   })
 
-  test('a Terra or Luna route falls back to DeepSeek flash (chat call or agent step), a DeepSeek route to Terra', () => {
-    const deepseekRate = {
-      inputPerM: 0.3,
-      outputPerM: 1.2,
-      cacheReadPerM: 0.006,
-    }
-    const terraRate = {
-      inputPerM: 1,
-      outputPerM: 5,
-      cacheReadPerM: 0.05,
-      longPromptTokens: 272_000,
-      longPrompt: { inputMultiplier: 2, outputMultiplier: 1.5 },
-    }
-    const singleFallbacks: RouteId[] = [
-      'cheap.summarize',
-      'cheap.extract',
-      'cheap.title',
-      'overview.classify',
-      'factory.classify',
-      'narrative',
-      'prose.write',
-    ]
-    for (const id of singleFallbacks) {
-      expect(resolveRoute(id, {}).fallback).toMatchObject({
-        wire: 'iu-openai',
-        model: 'deepseek-v4.1-flash',
-        effort: 'high',
-        maxOutputTokens: 32_000,
-        rate: deepseekRate,
-      })
-    }
-    // the four owner-directed off Requesty fall back across the two GPT models on the chat wire
-    expect(resolveRoute('cheap.classify', {}).fallback).toMatchObject({
+  const deepseekRate = { inputPerM: 0.3, outputPerM: 1.2, cacheReadPerM: 0.006 }
+  const terraRate = {
+    inputPerM: 1,
+    outputPerM: 5,
+    cacheReadPerM: 0.05,
+    longPromptTokens: 272_000,
+    longPrompt: { inputMultiplier: 2, outputMultiplier: 1.5 },
+  }
+  const lunaRate = { inputPerM: 0.1, outputPerM: 0.5, cacheReadPerM: 0.01 }
+
+  // The Claude seats (owner decision 2026-11-01): a single call speaks the anthropic wire, an agent step stays on
+  // OpenCode; a drained credit is a 402 and the fallback is GPT on IU by seat.
+  test('a Claude seat falls back to GPT by seat: TRIVIAL to Luna low, EASY to Terra low, STRONG to Terra medium', () => {
+    const luna = { wire: 'iu-openai', model: 'gpt-6-luna', effort: 'low', maxOutputTokens: 32_000, rate: lunaRate }
+    const terraLow = {
       wire: 'iu-openai',
       model: 'gpt-6.1-terra',
+      effort: 'low',
+      maxOutputTokens: 32_000,
+      rate: terraRate,
+    }
+    const terraMedium = { ...terraLow, effort: 'medium' }
+    for (const id of ['cheap.classify', 'cheap.title', 'factory.classify'] as const) {
+      expect(resolveRoute(id, {})).toMatchObject({ wire: 'anthropic', model: 'claude-haiku-5-5', effort: 'none' })
+      expect(resolveRoute(id, {}).fallback).toMatchObject(luna)
+    }
+    // image.enhance is TRIVIAL with effort high (the planner's own setting), its fallback Luna at high
+    expect(resolveRoute('image.enhance', {})).toMatchObject({
+      wire: 'anthropic',
+      model: 'claude-haiku-5-5',
+      effort: 'high',
+    })
+    expect(resolveRoute('image.enhance', {}).fallback).toMatchObject({ ...luna, effort: 'high' })
+    for (const id of [
+      'cheap.summarize',
+      'cheap.extract',
+      'overview.classify',
+      'triage',
+      'review.router',
+      'review.ocr',
+    ] as const) {
+      expect(resolveRoute(id, {})).toMatchObject({ wire: 'anthropic', model: 'claude-haiku-5-5', effort: 'high' })
+      expect(resolveRoute(id, {}).fallback).toMatchObject(terraLow)
+    }
+    for (const id of ['narrative', 'prose.write'] as const) {
+      expect(resolveRoute(id, {})).toMatchObject({ wire: 'anthropic', model: 'claude-sonnet-5-5' })
+      expect(resolveRoute(id, {}).fallback).toMatchObject(terraMedium)
+    }
+    expect(resolveRoute('prose.write', {}).effort).toBe('medium')
+    for (const id of [
+      'review.angle',
+      'review.angle.deep',
+      'review.synthesis',
+      'diagram.agent',
+      'retro.analyze',
+    ] as const) {
+      expect(resolveRoute(id, {})).toMatchObject({ wire: 'opencode', model: 'claude-sonnet-5-5', effort: 'medium' })
+      expect(resolveRoute(id, {}).fallback).toMatchObject({ ...terraMedium, wire: 'opencode', rate: terraRate })
+    }
+    for (const id of ['check', 'brain.agent'] as const) {
+      expect(resolveRoute(id, {})).toMatchObject({ wire: 'opencode', model: 'claude-haiku-5-5', effort: 'high' })
+      expect(resolveRoute(id, {}).fallback).toMatchObject({ ...terraLow, wire: 'opencode', rate: terraRate })
+    }
+  })
+
+  // Seats that stay on GPT by design: the adversary and the podcast writer are pinned to Terra medium, not to STRONG.
+  test('review.adversary and podcast.write (Llm.round) stay on GPT on the chat wire; audio.tts.prep is the TRIVIAL seat', () => {
+    expect(resolveRoute('podcast.write', {})).toMatchObject({
+      wire: 'iu-openai',
+      model: 'gpt-6.1-terra',
+      effort: 'high',
+    })
+    expect(resolveRoute('podcast.write', {}).fallback).toMatchObject({
+      wire: 'iu-openai',
+      model: 'deepseek-v4.1-flash',
       maxOutputTokens: 32_000,
     })
-    for (const id of ['review.router', 'review.ocr', 'review.adversary'] as const) {
-      expect(resolveRoute(id, {}).fallback).toMatchObject({
-        wire: 'iu-openai',
-        model: 'gpt-6-luna',
-        effort: 'medium',
-        maxOutputTokens: 32_000,
-      })
-    }
-    for (const id of agentSteps) {
-      expect(resolveRoute(id, {}).fallback).toMatchObject({
-        wire: 'opencode',
-        model: 'deepseek-v4.1-flash',
-        maxOutputTokens: 32_000,
-        rate: deepseekRate,
-      })
-    }
-    for (const id of ['prose.review', 'podcast.outline'] as const) {
+    expect(resolveRoute('review.adversary', {})).toMatchObject({
+      wire: 'iu-openai',
+      model: 'gpt-6.1-terra',
+      effort: 'medium',
+      maxOutputTokens: 16_000,
+    })
+    expect(resolveRoute('review.adversary', {}).fallback).toMatchObject({
+      wire: 'iu-openai',
+      model: 'gpt-6-luna',
+      effort: 'medium',
+      maxOutputTokens: 32_000,
+    })
+    expect(resolveRoute('audio.tts.prep', {})).toMatchObject({
+      wire: 'anthropic',
+      model: 'claude-haiku-5-5',
+      effort: 'none',
+    })
+    expect(resolveRoute('audio.tts.prep', {}).fallback).toMatchObject({
+      wire: 'iu-openai',
+      model: 'gpt-6-luna',
+      effort: 'low',
+    })
+  })
+
+  test('a DeepSeek route falls back to Terra medium (chat call or agent step)', () => {
+    for (const id of [
+      'prose.review',
+      'podcast.outline',
+      'podcast.research',
+      'podcast.review.b',
+      'podcast.metadata',
+    ] as const) {
       expect(resolveRoute(id, {}).fallback).toMatchObject({
         wire: 'iu-openai',
         model: 'gpt-6.1-terra',
         effort: 'medium',
+        maxOutputTokens: 32_000,
         rate: terraRate,
       })
     }
     for (const id of ['research.agent', 'otel.agent'] as const) {
+      expect(resolveRoute(id, {})).toMatchObject({ model: 'deepseek-v4.1-flash', rate: deepseekRate })
       expect(resolveRoute(id, {}).fallback).toMatchObject({
         wire: 'opencode',
         model: 'gpt-6.1-terra',
+        effort: 'medium',
         rate: terraRate,
       })
     }
-    for (const id of [...singleFallbacks, ...agentSteps, 'prose.review', 'research.agent', 'review.router'] as const) {
-      expect(resolveRoute(id, {}).fallback?.model).not.toBe(resolveRoute(id, {}).model)
+  })
+
+  test("a fallback never has the primary's own model", () => {
+    for (const id of routeIds()) {
+      const route = resolveRoute(id, {})
+      if (route.fallback) expect({ id, same: route.fallback.model === route.model }).toEqual({ id, same: false })
     }
   })
 
@@ -482,13 +540,13 @@ describe('fallback', () => {
     for (const id of ['review.router', 'review.adversary', 'review.ocr', 'cheap.classify'] as const) {
       const route = resolveRoute(id, {})
       expect(route.model).not.toMatch(requesty)
-      // the two GPT models fall back to each other, on the chat wire
+      // the fallback is a GPT model on the chat wire
       expect(route.fallback?.wire).toBe('iu-openai')
       expect(route.fallback?.model).not.toBe(route.model)
       expect(route.fallback?.model).not.toMatch(requesty)
     }
-    // triage is owner-directed off Requesty too, and the only fallback that is not OpenAI's balance is a Requesty model
-    expect(resolveRoute('triage', {}).fallback).toBeUndefined()
+    // triage is owner-directed off Requesty too; on Claude it falls back to Terra low on the chat wire
+    expect(resolveRoute('triage', {}).fallback).toMatchObject({ wire: 'iu-openai', model: 'gpt-6.1-terra' })
   })
 
   test('the adversary fallback keeps the 32k output ceiling', () => {
@@ -560,7 +618,7 @@ describe('fallback', () => {
   })
 
   test('the long-prompt tier of a rate is where the price steps up', () => {
-    const rate = resolveRoute('cheap.summarize', {}).rate
+    const rate = resolveRoute('cheap.summarize', {}).fallback?.rate
     const usage = (prompt: number) => ({
       prompt_tokens: prompt,
       completion_tokens: 1_000,
@@ -592,7 +650,7 @@ describe('fallback', () => {
 })
 
 describe('the long-prompt tier of Terra (>272K prompt tokens bill 2x input and cache, 1.5x output)', () => {
-  const terra = resolveRoute('brain.agent', {}).rate
+  const terra = resolveRoute('brain.agent', {}).fallback?.rate
   const at = (inputTokens: number, cacheRead = 0, cacheWrite = 0) =>
     costFromUsage(
       'anthropic',
@@ -639,8 +697,9 @@ describe('the long-prompt tier of Terra (>272K prompt tokens bill 2x input and c
   test('every Terra route carries the same tiered card', () => {
     for (const id of routeIds()) {
       const route = resolveRoute(id, {})
-      if (route.model !== 'gpt-6.1-terra') continue
-      expect(route.rate).toEqual(terra)
+      for (const r of [route, route.fallback]) {
+        if (r?.model === 'gpt-6.1-terra') expect(r.rate).toEqual(terra)
+      }
     }
   })
 })

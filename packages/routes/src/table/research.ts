@@ -2,7 +2,7 @@ import type { RouteEntry } from '../schema.ts'
 import { AGENT_FALLBACK, CHEAP } from './_shared.ts'
 
 const routes = {
-  // Research agent seat (concept P3): research-gateway's lead and worker model, the same model as `review.adversary`.
+  // Research agent seat (concept P3): research-gateway's lead and worker model, DeepSeek flash, which stays on CHEAP.
   // Single calls on this model are priced by IU's `usage.cost`; an OpenCode session never sees that field and prices
   // each message with the config's cost rows, so the route carries the rate IU's `usage.cost` was measured at:
   // USD/M in 0.30, cache read 0.006, out 1.20 (research-gateway src/lib/cost.ts, the 2026-09-25 peak reading, its

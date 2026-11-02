@@ -1,3 +1,5 @@
+import { CLAUDE_RATES } from './claude.ts'
+
 // The models and fallbacks every route group shares. Model ids live only under this directory (guard.test.ts), and a text
 // model that serves a role is chosen once, in the SEATS below: a route spreads a seat (`...EASY`) instead of naming the
 // model, so moving every route of a role to another model, rate or effort is one edit here. A route that needs another
@@ -23,37 +25,49 @@ export const LUNA_RATE = { inputPerM: 0.1, outputPerM: 0.5, cacheReadPerM: 0.01 
 // off-peak reading was half, so off-peak runs are over-priced, never under-priced).
 export const DEEPSEEK_FLASH_RATE = { inputPerM: 0.3, outputPerM: 1.2, cacheReadPerM: 0.006 }
 
-// The GPT stack (owner direction 2026-10-30), by how much thinking the role needs. Artificial Analysis Intelligence Index
-// v5.0: Terra medium 38, Terra low 29, Luna medium 18 / low 10; agw's paired review eval (12 recorded cases, 2026-10-30)
-// put Terra medium level with DeepSeek on verdict agreement (0.67 deep) and ahead of Haiku (0.58 against 0.08 at standard depth).
-/** Straight-up single calls that need almost no judgment: labelling, titles, the TTS prep, the image enhance planner. */
-export const TRIVIAL = { model: 'gpt-6-luna', effort: 'low', rate: LUNA_RATE } as const
+// Seats on Claude (owner decision 2026-11-01, provisional until Waves 9-10): the monthly credit is spent on Claude, so the
+// three role seats are Claude models and a single call speaks the `anthropic` wire (an agent step stays on `opencode`).
+// Both wires send `x-agw-fallback: none`, so a drained credit is a 402 and the route's own fallback runs: every Claude
+// route falls back onto GPT on IU, never onto IU's Claude (guard in index.test.ts). The rate is `CLAUDE_RATES`
+// (claude.ts), the one source.
+// Evidence, the 2026-10-31 eval (docs/evals/2026-10-31-review-claude-direct.md): Haiku at effort high is the Haiku knee;
+// Haiku at max is unusable for agent steps. Sonnet at medium was NOT measured, and STRONG was Terra medium until then.
+const claudeSeatRate = (id: string) => {
+  const rate = CLAUDE_RATES[id]
+  if (!rate) throw new Error(`no Claude rate for ${id}`)
+  return rate
+}
+/** Straight-up single calls that need almost no judgment: labelling, titles, the factory classify. Haiku without thinking. */
+export const TRIVIAL = { model: 'claude-haiku-5-5', effort: 'none', rate: claudeSeatRate('claude-haiku-5-5') } as const
 /** Easy calls with a clear shape: summarize, extract, classify a batch, triage, route a review, run the checks. */
-export const EASY = { model: 'gpt-6.1-terra', effort: 'low', rate: TERRA_RATE } as const
-/** Anything that judges, reads code or writes prose: review angles, synthesis and adversary, the prose and podcast writers, the narrative, diagram and retro agents. */
-export const STRONG = { model: 'gpt-6.1-terra', effort: 'medium', rate: TERRA_RATE } as const
-/** The second lab: cross-lab reviewers, the long-read agents the benchmarks favour it on (research, otel), and the balance fallback of the GPT-stack routes, since OpenAI's balance is not DeepSeek's. */
-export const CHEAP = { model: 'deepseek-v4.1-flash', rate: DEEPSEEK_FLASH_RATE } as const
-// The provider-balance fallback (owner, 2026-10-28): a call that fails with HTTP 402, or 503 "Insufficient Balance", runs
-// once more on this route instead of failing. A route on the GPT stack falls back to the other lab; a route on DeepSeek
-// falls back to Terra. Single calls go over IU's OpenAI chat wire; agent steps run on OpenCode, whose host speaks the
-// Responses API to Terra (tool calling needs Responses on that model).
-const OUTPUT_CEILING = 32_000
-export const OPENAI_CALL_FALLBACK = {
-  wire: 'iu-openai',
-  ...CHEAP,
-  effort: 'high',
-  maxOutputTokens: OUTPUT_CEILING,
-} as const
-export const OPENAI_AGENT_FALLBACK = { wire: 'opencode', ...CHEAP, maxOutputTokens: OUTPUT_CEILING } as const
-// The four routes owner-directed off Requesty (cheap.classify, review.router, review.ocr, review.adversary) fall back
-// across the two GPT models instead: DeepSeek flash is a Requesty-hosted model. On the chat wire Luna answers from Azure
-// Sweden Central and Terra from AWS us-east-1 (probed 2026-10-30), so one backend's balance failure leaves the other.
-export const LUNA_CALL_FALLBACK = {
-  wire: 'iu-openai',
-  ...TRIVIAL,
+export const EASY = { model: 'claude-haiku-5-5', effort: 'high', rate: claudeSeatRate('claude-haiku-5-5') } as const
+/** Anything that judges, reads code or writes prose: review angles and synthesis, the prose and podcast writers, the narrative, diagram and retro agents. */
+export const STRONG = {
+  model: 'claude-sonnet-5-5',
   effort: 'medium',
-  maxOutputTokens: OUTPUT_CEILING,
+  rate: claudeSeatRate('claude-sonnet-5-5'),
 } as const
-export const CALL_FALLBACK = { wire: 'iu-openai', ...STRONG, maxOutputTokens: OUTPUT_CEILING } as const
-export const AGENT_FALLBACK = { wire: 'opencode', ...STRONG, maxOutputTokens: OUTPUT_CEILING } as const
+
+// The GPT stack (owner direction 2026-10-30), by how much thinking the role needs. These are not seats: nothing spreads
+// them as a primary except the two routes that stay on GPT by design (`review.adversary`, the cross-family critic, and
+// `audio.tts.prep`, which calls chat completions directly) and they are what the Claude seats fall back onto.
+// Artificial Analysis Intelligence Index v5.0: Terra medium 38, Terra low 29, Luna medium 18 / low 10; agw's paired review
+// eval (12 recorded cases, 2026-10-30) put Terra medium level with DeepSeek on verdict agreement (0.67 deep) and ahead of
+// Haiku (0.58 against 0.08 at standard depth).
+export const LUNA = { model: 'gpt-6-luna', effort: 'low', rate: LUNA_RATE } as const
+export const TERRA_LOW = { model: 'gpt-6.1-terra', effort: 'low', rate: TERRA_RATE } as const
+export const TERRA_MEDIUM = { model: 'gpt-6.1-terra', effort: 'medium', rate: TERRA_RATE } as const
+/** The second lab: the long-read agents the benchmarks favour it on (research, otel), the podcast stages, the prose reviewer (a cross-lab reviewer of a Claude writer). */
+export const CHEAP = { model: 'deepseek-v4.1-flash', rate: DEEPSEEK_FLASH_RATE } as const
+
+// The provider-balance fallback (owner, 2026-10-28; Claude seats 2026-11-01): a call that fails with HTTP 402, or 503
+// "Insufficient Balance", runs once more on this route instead of failing. A Claude seat's credit running out is a 402
+// from the gateway (`x-agw-fallback: none`), and the fallback is GPT on IU by seat: TRIVIAL -> Luna low, EASY -> Terra
+// low, STRONG -> Terra medium. A DeepSeek route falls back to Terra medium. Single calls go over IU's OpenAI chat wire;
+// agent steps run on OpenCode, whose host speaks the Responses API to Terra (tool calling needs Responses on that model).
+const OUTPUT_CEILING = 32_000
+export const LUNA_CALL_FALLBACK = { wire: 'iu-openai', ...LUNA, maxOutputTokens: OUTPUT_CEILING } as const
+export const TERRA_LOW_CALL_FALLBACK = { wire: 'iu-openai', ...TERRA_LOW, maxOutputTokens: OUTPUT_CEILING } as const
+export const TERRA_LOW_AGENT_FALLBACK = { wire: 'opencode', ...TERRA_LOW, maxOutputTokens: OUTPUT_CEILING } as const
+export const CALL_FALLBACK = { wire: 'iu-openai', ...TERRA_MEDIUM, maxOutputTokens: OUTPUT_CEILING } as const
+export const AGENT_FALLBACK = { wire: 'opencode', ...TERRA_MEDIUM, maxOutputTokens: OUTPUT_CEILING } as const

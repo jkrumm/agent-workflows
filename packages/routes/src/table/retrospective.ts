@@ -1,9 +1,9 @@
 import type { RouteEntry } from '../schema.ts'
-import { OPENAI_AGENT_FALLBACK, STRONG } from './_shared.ts'
+import { AGENT_FALLBACK, STRONG } from './_shared.ts'
 
 const routes = {
-  // Retrospective seat (concept §7): one agent step over sampled run records, JSON out. It finds patterns: Terra medium.
-  'retro.analyze': { wire: 'opencode', ...STRONG, fallback: OPENAI_AGENT_FALLBACK },
+  // Retrospective seat (concept §7): one agent step over sampled run records, JSON out. It finds patterns: the STRONG seat (Sonnet).
+  'retro.analyze': { wire: 'opencode', ...STRONG, fallback: AGENT_FALLBACK },
 } satisfies Record<string, RouteEntry>
 
 export default routes

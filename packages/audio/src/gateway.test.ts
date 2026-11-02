@@ -14,6 +14,7 @@ import {
   hasFfmpeg,
   messageAnswer,
   prepAnswer,
+  prepMessage,
   realMedia,
   startFakeGateway,
   streamBody,
@@ -164,21 +165,22 @@ describe('headers per lane', () => {
 
   test('the prep call is a text call: attributed, and no x-agw-usage; the synth it feeds is media', async () => {
     const { speak } = setup({
-      chat: () => prepAnswer({ lang: 'de', title: 'T', chunks: [{ text: 'Hallo.' }] }),
+      messages: () => prepMessage({ lang: 'de', title: 'T', chunks: [{ text: 'Hallo.' }] }),
       gemini: () => geminiAudio(new Uint8Array(4800)),
     })
     const model = ROUTES['audio.tts.gemini-flash'].model
     expect((await speak(speech({ model, input: 'Hallo.', voice: 'Charon', response_format: 'wav' }))).status).toBe(200)
-    const [chat] = headersOf('chat')
-    expectAttributed([chat as Headers])
-    expect(chat?.get('x-agw-usage')).toBeNull()
-    expect(chat?.get('x-agw-fallback')).toBeNull()
+    // the prep seat is on the Messages wire: it opts out of IU's Claude, and is a text call (no x-agw-usage)
+    const [prep] = headersOf('messages')
+    expectAttributed([prep as Headers])
+    expect(prep?.get('x-agw-usage')).toBeNull()
+    expect(prep?.get('x-agw-fallback')).toBe('none')
     expect(headersOf('gemini')[0]?.get('x-agw-usage')).toBe('caller')
   })
 
   test('x-agw-usage: caller is on exactly the media calls of a whole request', async () => {
     const { speak } = setup({
-      chat: () => prepAnswer({ lang: 'de', title: 'T', chunks: [{ text: 'Hallo.' }] }),
+      messages: () => prepMessage({ lang: 'de', title: 'T', chunks: [{ text: 'Hallo.' }] }),
       gemini: () => geminiAudio(new Uint8Array(4800)),
     })
     const model = ROUTES['audio.tts.gemini-flash'].model
@@ -222,14 +224,10 @@ describe('the prep call on the route wire', () => {
         model: 'seat-model',
         effort: 'low',
         rate: { inputPerM: 1, outputPerM: 5 },
-        ...(fallback && {
-          fallback: {
-            wire: 'iu-openai',
-            model: 'fallback-model',
-            effort: 'low',
-            rate: { inputPerM: 0.1, outputPerM: 0.5 },
-          },
-        }),
+        // the table's own prep fallback (Luna) is replaced either way: this scope tests the wire, not the table
+        fallback: fallback
+          ? { wire: 'iu-openai', model: 'fallback-model', effort: 'low', rate: { inputPerM: 0.1, outputPerM: 0.5 } }
+          : undefined,
       },
     }
     return { scope, deps }

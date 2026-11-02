@@ -256,7 +256,7 @@ const polishedBody = (prompt: string) => {
 }
 
 type Replies = NonNullable<Parameters<typeof fakeTransports>[0]['openai']>
-/** `openai` scripts the reviewer and the polish writer; `compose` scripts the composer. All three are calls on the same wire. */
+/** `openai` scripts the reviewer and the polish writer (replies are consumed in call order across wires); `compose` scripts the composer. */
 type Script = { openai?: Replies; compose?: Replies }
 /** The composer's prompt fences the gathered facts under the NARRATIVE label; no other caller's does. */
 const isCompose = (request: { prompt: string }) => /<<<NARRATIVE_[0-9a-f]+_BEGIN>>>/.test(request.prompt)
@@ -271,7 +271,10 @@ function setup(
   } = {},
 ) {
   const env = options.env ?? { AGW_VOICE_PATH: VOICE }
-  // The composer, the reviewer and the polish writer all answer over the chat wire: two scripted fakes, split by prompt.
+  // The composer and the polish writer (the narrative and prose.write seats) speak the Messages wire, the reviewer
+  // (prose.review, a different lab) the chat wire. Two scripted fakes split by prompt; both wires draw from the same
+  // reply order, and `wires` records which wire each call took.
+  const wires: { wire: 'openai' | 'anthropic'; kind: 'compose' | 'write' | 'review' }[] = []
   const composer = fakeTransports({
     openai: options.script?.compose ?? [{ text: JSON.stringify(CHANGED), cost: 0.001 }],
   })
@@ -280,12 +283,16 @@ function setup(
       (request) => (isWrite(request) ? { text: polishedBody(request.prompt), cost: 0.05 } : REVIEW_REPLY),
     ],
   })
+  const via =
+    (wire: 'openai' | 'anthropic') =>
+    (...args: Parameters<typeof rest.openai.complete>) => {
+      wires.push({ wire, kind: isCompose(args[0]) ? 'compose' : isWrite(args[0]) ? 'write' : 'review' })
+      return (isCompose(args[0]) ? composer : rest).openai.complete(...args)
+    }
   const transports = {
     ...rest,
-    openai: {
-      complete: (...args: Parameters<typeof rest.openai.complete>) =>
-        (isCompose(args[0]) ? composer : rest).openai.complete(...args),
-    },
+    openai: { complete: via('openai') },
+    anthropic: { complete: via('anthropic') },
     get chatCalls() {
       return [...composer.chatCalls, ...rest.chatCalls]
     },
@@ -321,7 +328,7 @@ function setup(
   const composed = () => composer.chatCalls
   const writes = () => rest.chatCalls.filter((c) => isWrite(c.request))
   const reviews = () => rest.chatCalls.filter((c) => !isWrite(c.request))
-  return { transports, narrative, polish, composed, writes, reviews, warnings }
+  return { transports, narrative, polish, composed, writes, reviews, warnings, wires }
 }
 
 const db = freshSchema('narrative')
@@ -407,6 +414,16 @@ describe('narrative', () => {
       model: resolveRoute('narrative', {}).model,
     })
     expect(w.transports.chatCalls).toHaveLength(0)
+  })
+
+  test('the composer and the polish writer take the Messages wire, the cross-lab reviewer the chat wire', async () => {
+    const w = setup()
+    await run(w, INPUT)
+    expect(w.wires).toEqual([
+      { wire: 'anthropic', kind: 'compose' },
+      { wire: 'openai', kind: 'review' },
+      { wire: 'anthropic', kind: 'write' },
+    ])
   })
 
   test('a changed page: gathered facts, clamped and link-free sections, the polished body under the verbatim frontmatter', async () => {
