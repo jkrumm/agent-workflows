@@ -1221,6 +1221,45 @@ describe('the model catalog', () => {
     expect(gw.ledger.spentSince('iu', new Date(0))).toBe(0)
   })
 
+  test.each([
+    ['/replicate/v1/models?cursor=abc', '/prefix/replicate/v1/models?cursor=abc'],
+    ['/openai/v1/models', '/prefix/openai/v1/models'],
+    ['/openai/v1/models/gpt-x', '/prefix/openai/v1/models/gpt-x'],
+    ['/gemini/v1beta/models', '/prefix/gemini/v1beta/models'],
+    ['/gemini/v1beta/models/gem-1', '/prefix/gemini/v1beta/models/gem-1'],
+    ['/decisions/v1/models', '/decisions/v1/models'],
+  ])('GET %s is an IU catalog read: passed through, no row, no pick', async (path, upstreamPath) => {
+    iu.reply(() => Response.json({ data: [], usage: { prompt_tokens: 0, completion_tokens: 0 } }))
+    const gw = start({ registry: [pool('iu')] })
+    const response = await gw.call(path)
+    expect(await response.json()).toEqual({ data: [], usage: { prompt_tokens: 0, completion_tokens: 0 } })
+    expect(response.headers.get('x-agw-pool')).toBe('iu-api')
+    expect(iu.seen[0]?.method).toBe('GET')
+    expect(iu.seen[0]?.path).toBe(upstreamPath)
+    expect(iu.seen[0]?.headers.get('authorization')).toBe(`Bearer ${IU_KEY}`)
+    expect(gw.rows()).toEqual({ records: [], picks: [] })
+  })
+
+  test('an IU catalog read needs a door token', async () => {
+    const gw = start()
+    expect((await fetch(`${gw.url}/replicate/v1/models`)).status).toBe(401)
+    expect(iu.seen).toHaveLength(0)
+  })
+
+  test('off the catalog an IU request keeps its row: a POST to models/<id>, a GET deeper than one segment', async () => {
+    const gw = start()
+    await (await gw.call('/gemini/v1beta/models/gem-1:generateContent', jsonBody({}))).text()
+    await (await gw.call('/openai/v1/models', jsonBody({}))).text()
+    await (await gw.call('/replicate/v1/models/o/n')).text()
+    await (await gw.call('/openai/v1/models/gpt-x/extra')).text()
+    expect(gw.rows().records.map(({ row }) => row.raw.path)).toEqual([
+      '/gemini/v1beta/models/gem-1:generateContent',
+      '/openai/v1/models',
+      '/replicate/v1/models/o/n',
+      '/openai/v1/models/gpt-x/extra',
+    ])
+  })
+
   test('needs a door token', async () => {
     const gw = start()
     expect((await fetch(`${gw.url}/anthropic/v1/models`)).status).toBe(401)

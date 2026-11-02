@@ -17,6 +17,7 @@ from the subscriptions' API credit before IU, and records every request. Design 
 | `POST /anthropic/v1/messages/count_tokens` | the same pick; no ledger row, no binding | same |
 | `GET /anthropic/v1/models`, `GET /anthropic/v1/models/<id>` (one segment of `[A-Za-z0-9._:-]`) | IU `/anthropic`, no pick; no ledger row, no `gateway_picks` row | `authorization: Bearer <IU key>` |
 | `/openai/v1/*`, `/gemini/v1beta/*`, `/replicate/v1/*` | IU root + the same path | `authorization: Bearer <IU key>` |
+| `GET` on one of these paths or `/decisions/v1/*` ending in `/models` or `/models/<one segment>` | IU, the same path; a catalog read: no ledger row, no `gateway_picks` row | `authorization: Bearer <IU key>` |
 | `/decisions/v1/*` | IU origin + the same path | `authorization: Bearer <IU key>` |
 | `GET /health` | the gateway, no auth | none |
 
@@ -84,7 +85,7 @@ after an upstream 2xx.
 
 - **Write.** One row per served request, written synchronously when the tee has the final usage (end of stream, or on an
   error or abort with what is known), before the stream closes. The charge follows the write. A 402, a `count_tokens`, a
-  model catalog read and an honoured `x-agw-usage: caller` write no record; picks go in beside the records.
+  model catalog read (any path's) and an honoured `x-agw-usage: caller` write no record; picks go in beside the records.
 - **Attribution.** `repo`, `project_raw` and `workspace` live in `row_json` like the rest of the row. A row an older build
   wrote lacks them and flushes as null.
 - **Cost.** `cost_reported_usd` is the provider's own `usage.cost` if it states one, else a complete usage block at the
