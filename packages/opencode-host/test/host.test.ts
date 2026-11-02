@@ -1243,10 +1243,44 @@ describe('provider-balance fallback', () => {
     // The same permissions, the step's directories included.
     expect(fallback?.permissions).toEqual(primary?.permissions)
     expect(fallback?.messages.filter((m) => m.type === 'user')).toHaveLength(1)
+    // The refused primary turn spent nothing here: the usage is the fallback's alone.
     expect(result.usage?.model).toBe(fallback?.model.id)
     // A fallback session is the same route: it keeps the primary's id.
     expect(result.usage?.route).toBe('check')
     expect(t.warnings).toContain('opencode turn failed on provider balance; falling back')
+  })
+
+  test('a primary that spent before the balance refusal keeps its spend: usage is primary + fallback, once', async () => {
+    const t = setup({ turnMs: 300 })
+    const handle = await t.host.open(spec('x'))
+    await t.host.prompt(handle, '[balance] review this')
+    // The fake's refused turn reports no tokens; give the primary's message the spend a real one carries.
+    await until(() => sessions(t)[0]?.messages.some((m) => m.type === 'assistant') === true, 'the primary reply')
+    const spent = sessions(t)[0]?.messages.find((m) => m.type === 'assistant')
+    Object.assign(spent ?? {}, {
+      tokens: { input: 40, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+      cost: 0.5,
+    })
+    const result = await t.host.wait(handle, waitOptions())
+    expect(result.usage?.tokens).toMatchObject({ input: 170, output: 6, reasoning: 1, cacheRead: 100, cacheWrite: 20 })
+    expect(result.usage?.cost).toBeCloseTo(0.501, 6) // 0.5 (primary) + 0.001 (fallback), not twice
+    expect(result.usage?.route).toBe('check')
+  })
+
+  test('the fallback failing too keeps both sessions’ spend on the error', async () => {
+    const t = setup({ turnMs: 300 })
+    const handle = await t.host.open(spec('x'))
+    await t.host.prompt(handle, '[balance-all] x')
+    await until(() => sessions(t)[0]?.messages.some((m) => m.type === 'assistant') === true, 'the primary reply')
+    const spent = sessions(t)[0]?.messages.find((m) => m.type === 'assistant')
+    Object.assign(spent ?? {}, {
+      tokens: { input: 40, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+      cost: 0.5,
+    })
+    const err = await t.host.wait(handle, waitOptions()).catch((e: unknown) => e)
+    expect((err as WorkflowError).message).toContain('Insufficient Balance')
+    expect((err as WorkflowError).usage?.tokens).toMatchObject({ input: 40, output: 0 })
+    expect((err as WorkflowError).usage?.cost).toBe(0.5)
   })
 
   test('re-attach after a crash finds the fallback session: no second session, no second prompt', async () => {
@@ -1442,4 +1476,101 @@ describe('followUp (ctx.continue)', () => {
     const handle = { ...((await t.host.open(spec('x'))) as OpenCodeHandle), sessionId: 'ses_agw_missing' }
     expect(await failure(t.host.followUp(handle, turn()))).toContain('is gone')
   })
+})
+
+describe('a failing wait keeps what the session spent', () => {
+  const turn = (key = 'run-1:agent:reask') => ({
+    runId: 'run-1',
+    stepId: 'agent:reask',
+    key,
+    attempt: 1,
+    attribution: attributionOf('run-1', 'agent:reask'),
+  })
+  /** The message and error kind of a rejection, with the usage it carries. */
+  async function rejected(promise: Promise<unknown>): Promise<WorkflowError> {
+    const err = await promise.catch((e: unknown) => e)
+    if (!(err instanceof WorkflowError)) throw new Error('expected a WorkflowError')
+    return err
+  }
+  // The tool-call message of `[tool:read]` reports 10 + 100 + 20 input, 5 output, 1 reasoning, cost 0.001.
+  const SPENT = { input: 130, output: 6, cacheRead: 100, cacheWrite: 20, reasoning: 1 }
+
+  test('a session that ends failed after a priced message: the error carries its tokens and cost', async () => {
+    const t = setup()
+    const handle = await t.host.open(spec('x'))
+    await t.host.prompt(handle, '[tool:read][fail] x')
+    const err = await rejected(t.host.wait(handle, waitOptions()))
+    expect(err.kind).toBe('error')
+    expect(err.message).toContain('provider said no')
+    expect(err.usage?.tokens).toEqual(SPENT)
+    expect(err.usage?.cost).toBe(0.001)
+    expect(err.usage?.route).toBe('check')
+  })
+
+  test('a failure before any assistant message spent nothing: no usage on the error', async () => {
+    const t = setup()
+    const handle = await t.host.open(spec('x'))
+    await t.host.prompt(handle, '[fail]')
+    expect((await rejected(t.host.wait(handle, waitOptions()))).usage).toBeUndefined()
+  })
+
+  test('an output that fails validation keeps the usage of the answer', async () => {
+    const t = setup()
+    const handle = await t.host.open({ ...spec('x', { output: 'json' }), schema: SCHEMA })
+    await t.host.prompt(handle, '[json] give me data')
+    const err = await rejected(t.host.wait(handle, waitOptions()))
+    expect(err.kind).toBe('invalid_output')
+    expect(err.usage?.tokens).toEqual({ input: 130, output: 6, cacheRead: 100, cacheWrite: 20, reasoning: 1 })
+    expect(err.usage?.cost).toBe(0.001)
+  })
+
+  test('a failed follow-up turn keeps its own spend, not the first turn’s', async () => {
+    const t = setup()
+    const first = await t.host.open(spec('draft'))
+    await t.host.prompt(first, 'draft it')
+    await t.host.wait(first, waitOptions())
+    const next = await t.host.followUp(first, turn())
+    await t.host.prompt(next, '[tool:read][fail] fix it')
+    const err = await rejected(t.host.wait(next, waitOptions()))
+    expect(err.message).toContain('turn failed')
+    expect(err.usage?.tokens).toEqual(SPENT)
+    expect(err.usage?.cost).toBe(0.001)
+  })
+
+  test('an abort mid-turn (idle timeout, refused tool) carries what the session had spent', async () => {
+    const t = setup({ turnMs: 400 })
+    const handle = await t.host.open(spec('x'))
+    await t.host.prompt(handle, '[tool:read][slow:1500] x')
+    const controller = new AbortController()
+    const reason = new WorkflowError('timeout', 'step idle')
+    // The first reply is a tool call that completes after 400 ms, with its tokens; abort once it is in.
+    const waiting = t.host.wait(handle, waitOptions({ signal: controller.signal }))
+    await until(
+      () => sessions(t)[0]?.messages.some((m) => m.type === 'assistant' && m.tokens !== undefined) === true,
+      'the first reply',
+    )
+    await Bun.sleep(100) // one poll sees it
+    controller.abort(reason)
+    const err = await rejected(waiting)
+    expect(err).toBe(reason)
+    expect(err.usage?.tokens).toEqual(SPENT)
+  })
+
+  test('a session that is gone fails as before, with no usage', async () => {
+    const t = setup({ turnMs: 400 })
+    const handle = await t.host.open(spec('x'))
+    await t.host.prompt(handle, '[tool:read][slow:2000] x')
+    const waiting = t.host.wait(handle, waitOptions())
+    await until(
+      () => sessions(t)[0]?.messages.some((m) => m.type === 'assistant' && m.tokens !== undefined) === true,
+      'the first reply',
+    )
+    await Bun.sleep(100)
+    delete t.fake.state.sessions[sid(handle)]
+    const err = await rejected(waiting)
+    expect(err.message).toContain('is gone')
+    expect(err.usage).toBeUndefined()
+  })
+
+  const sessions = (t: ReturnType<typeof setup>) => Object.values(t.fake.state.sessions)
 })

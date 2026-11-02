@@ -538,17 +538,23 @@ export class RunScope {
         }
         checkpoint()
         scope.progress()
-        const result = await host.wait(current.handle, {
-          signal: scope.signal,
-          onProgress: scope.progress,
-          onTool: async ({ phase, ...event }) => {
-            const refusal = await this.rt.tool(phase, { ...event, runId, stepId })
-            if (!refusal) return
-            const reason = new ToolRefused(refusal.refused)
-            this.refusers.get(stepId)?.(reason)
-            throw reason
-          },
-        })
+        const result = await host
+          .wait(current.handle, {
+            signal: scope.signal,
+            onProgress: scope.progress,
+            onTool: async ({ phase, ...event }) => {
+              const refusal = await this.rt.tool(phase, { ...event, runId, stepId })
+              if (!refusal) return
+              const reason = new ToolRefused(refusal.refused)
+              this.refusers.get(stepId)?.(reason)
+              throw reason
+            },
+          })
+          .catch((err: unknown) => {
+            // A failed wait still spent what the host read before it failed; the step row keeps it.
+            if (err instanceof WorkflowError && err.usage) scope.addUsage(err.usage)
+            throw err
+          })
         if (result.usage) scope.addUsage(result.usage)
         if (!spec.output) return result.output
         const parsed = spec.output.safeParse(result.output)

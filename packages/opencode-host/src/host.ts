@@ -7,6 +7,7 @@ import {
   type AgentResult,
   type AgentWaitOptions,
   type Attribution,
+  Cancelled,
   type Json,
   type Logger,
   type Usage,
@@ -624,6 +625,8 @@ export class OpenCodeHost implements AgentHost {
     // The pin `open` took (same process), else a fresh use; retried on every poll while there is none.
     let release: (() => void) | null = this.claimPin(h.sessionId)
     let fingerprint: string | null = null
+    /** Every message of the last read: what the session had spent when the wait fails. */
+    let seen: Message[] = []
     touchLocation(h.directory)
     try {
       for (;;) {
@@ -639,6 +642,7 @@ export class OpenCodeHost implements AgentHost {
         })
         const snap = await this.read(h, reader, headers, signal)
         if (snap) {
+          seen = snap.messages
           const next = activityFingerprint(snap.messages)
           if (fingerprint !== null && next !== fingerprint) options.onProgress()
           fingerprint = next
@@ -663,9 +667,25 @@ export class OpenCodeHost implements AgentHost {
         }
         await abortableSleep(this.pollMs, signal)
       }
+    } catch (err) {
+      throw this.spent(err, h, seen)
     } finally {
       release?.()
     }
+  }
+
+  /**
+   * Hands a failing wait's spend to the step: a `WorkflowError` carries the usage of `messages` (the assistant
+   * messages read so far) unless it already carries one. A session that is gone is unreadable and carries none; an
+   * infra error is retried by re-attaching, which reads the whole session again. A `Cancelled` is the run's one
+   * instance, shared by every step waiting at once: it cannot carry one step's spend.
+   */
+  private spent(err: unknown, h: OpenCodeHandle, messages: readonly Message[]): unknown {
+    if (!(err instanceof WorkflowError) || err instanceof Cancelled || err.usage) return err
+    if (err.cause instanceof OpenCodeHttpError && err.cause.status === 404) return err
+    if (!spentTokens(messages)) return err
+    err.usage = this.usage(h, messages)
+    return err
   }
 
   /**
@@ -686,6 +706,8 @@ export class OpenCodeHost implements AgentHost {
     const unprompted = new Persisting()
     let release: (() => void) | null = null
     let fingerprint: string | null = null
+    /** The turn's messages of the last read: what the turn had spent when the wait fails. */
+    let seen: Message[] = []
     touchLocation(h.directory)
     try {
       for (;;) {
@@ -699,6 +721,7 @@ export class OpenCodeHost implements AgentHost {
         if (snap) {
           const from = turnIndex(snap.messages, id, turn)
           const after = from < 0 ? [] : snap.messages.slice(from + 1)
+          seen = after
           const next = activityFingerprint(after)
           if (fingerprint !== null && next !== fingerprint) options.onProgress()
           fingerprint = next
@@ -721,7 +744,11 @@ export class OpenCodeHost implements AgentHost {
             reader.invalidate()
             const all = await reader.read()
             const answer = all.slice(turnIndex(all, id, turn) + 1)
-            return { output: this.output(h, [TURN_ANCHOR, ...answer], TURN_ANCHOR.id), usage: this.usage(h, answer) }
+            const usage = this.usage(h, answer)
+            return {
+              output: this.withUsage(usage, () => this.output(h, [TURN_ANCHOR, ...answer], TURN_ANCHOR.id)),
+              usage,
+            }
           }
           if (state.kind === 'cutoff' && cutoff.check(true, this.cutoffGraceMs)) {
             await this.resume(h, state.lastId)
@@ -732,6 +759,8 @@ export class OpenCodeHost implements AgentHost {
         }
         await abortableSleep(this.pollMs, signal)
       }
+    } catch (err) {
+      throw this.spent(err, h, seen)
     } finally {
       release?.()
     }
@@ -847,7 +876,15 @@ export class OpenCodeHost implements AgentHost {
     // The handle keeps the marker, so a follow-up turn of the fallback session carries it too.
     const next: OpenCodeHandle = { ...h, sessionId, model: fallback.route.model, fallback: true, attribution }
     await this.prompt(next, prompt)
-    return await this.wait(next, options)
+    // The step spent on both sessions: the primary's messages are the failed turn, the fallback's are the answer.
+    const primary = spentTokens(messages) ? this.usage(h, messages) : undefined
+    try {
+      const result = await this.wait(next, options)
+      return primary ? { ...result, usage: sumUsage(primary, result.usage) } : result
+    } catch (err) {
+      if (primary && err instanceof WorkflowError) err.usage = sumUsage(primary, err.usage)
+      throw err
+    }
   }
 
   private headers(runId: string, stepId: string): Record<string, string> | undefined {
@@ -1154,7 +1191,8 @@ export class OpenCodeHost implements AgentHost {
     }
     reader.invalidate()
     const messages = await reader.read()
-    return { output: this.output(h, messages, promptId), usage: this.usage(h, messages) }
+    const usage = this.usage(h, messages)
+    return { output: this.withUsage(usage, () => this.output(h, messages, promptId)), usage }
   }
 
   /**
@@ -1175,8 +1213,18 @@ export class OpenCodeHost implements AgentHost {
     )
   }
 
+  /** `read()` with the step's already-known `usage` on the `WorkflowError` it throws (an `invalid_output`). */
+  private withUsage<T>(usage: Usage, read: () => T): T {
+    try {
+      return read()
+    } catch (err) {
+      if (err instanceof WorkflowError && !err.usage) err.usage = usage
+      throw err
+    }
+  }
+
   /** Tokens from the messages (`usageFromOpenCodeMessages`), cost per message by `priceOpenCodeMessages`. */
-  private usage(h: OpenCodeHandle, messages: Message[]): Usage {
+  private usage(h: OpenCodeHandle, messages: readonly Message[]): Usage {
     // `h.route` is the route the step was resolved from; a fallback session keeps the primary's id.
     const usage = usageFromOpenCodeMessages(messages, { model: h.model, route: h.route })
     const priced = priceOpenCodeMessages(messages, this.routeRate(h))
@@ -1238,6 +1286,33 @@ export function priceOpenCodeMessages(
     byRate = true
   }
   return { cost, byRate }
+}
+
+/** Some assistant message reported tokens: a turn that failed before any call has nothing to report. */
+const spentTokens = (messages: readonly Message[]) => messages.some((m) => m.type === 'assistant' && m.tokens)
+
+/**
+ * The sum of two reports for one step: tokens add, a cost needs both priced. The model and route stay when they agree
+ * (a fallback session keeps the primary's route id); otherwise the sum names none and the step's per-model split is
+ * lost, so the caller adds the reports separately where it can.
+ */
+function sumUsage(a: Usage, b: Usage | undefined): Usage {
+  if (!b) return a
+  const sum = (x = 0, y = 0) => x + y
+  return {
+    ...(a.model !== undefined && a.model === b.model ? { model: a.model } : {}),
+    ...(a.route !== undefined && a.route === b.route ? { route: a.route } : {}),
+    tokens: {
+      input: sum(a.tokens.input, b.tokens.input),
+      output: sum(a.tokens.output, b.tokens.output),
+      cacheRead: sum(a.tokens.cacheRead, b.tokens.cacheRead),
+      reasoning: sum(a.tokens.reasoning, b.tokens.reasoning),
+      cacheWrite: sum(a.tokens.cacheWrite, b.tokens.cacheWrite),
+    },
+    cost: a.cost == null || b.cost == null ? null : a.cost + b.cost,
+    costSource: a.costSource === b.costSource ? a.costSource : 'unknown',
+    toolCalls: sum(a.toolCalls, b.toolCalls),
+  }
 }
 
 const unpriced = (usage: Usage): Usage => ({ ...usage, cost: null, costSource: 'unknown' })

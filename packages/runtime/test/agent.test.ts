@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, test } from 'bun:test'
 import { z } from 'zod'
-import { defineWorkflow, type Json, type Middleware, type ToolEvent } from '../src/index.ts'
+import { defineWorkflow, type Json, type Middleware, type ToolEvent, WorkflowError } from '../src/index.ts'
 import { FakeAgentHost } from '../src/testing.ts'
 import { freshSchema, inspector, testRuntime, until } from './support/pg.ts'
 
@@ -63,6 +63,33 @@ describe('agent steps', () => {
         'pre:read:ask',
         'post:read:ask',
       ])
+    } finally {
+      await rt.close()
+    }
+  })
+
+  test('a wait that fails keeps the usage it carries: the step row, and so the run roll-up, include it', async () => {
+    const host = new FakeAgentHost(async () => {
+      throw new WorkflowError('error', 'opencode session ses_1 failed: context overflow', { usage })
+    })
+    const wf = agentWorkflow('agent.failed-usage')
+    const rt = testRuntime({ schema: db.schema, workflows: [wf], host })
+    await rt.open()
+    try {
+      const { runId } = await rt.start(wf, {}, { purpose: 'build' })
+      expect((await rt.wait(runId)).status).toBe('failed')
+      // The failure itself is unchanged: same kind, same message.
+      expect(await sql.step(runId, 'ask')).toMatchObject({
+        status: 'failed',
+        error_kind: 'error',
+        error: 'opencode session ses_1 failed: context overflow',
+        model: 'fake-1',
+        tokens_input: '10',
+        tokens_output: '5',
+        tool_calls: 1,
+        cost: '0.01',
+      })
+      // The run record (`middleware/record.ts`) sums the step rows whatever their status.
     } finally {
       await rt.close()
     }

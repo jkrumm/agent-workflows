@@ -1,3 +1,5 @@
+import type { Usage } from './types.ts'
+
 /** Why a run or step ended without output. Persisted in `error_kind`. */
 export type ErrorKind =
   | 'error'
@@ -28,15 +30,20 @@ export class IdempotencyConflict extends Error {
   }
 }
 
-/** A failure that belongs to the workflow: it ends the step or run as `failed` (or `cancelled`). */
+/**
+ * A failure that belongs to the workflow: it ends the step or run as `failed` (or `cancelled`). `usage` is what an
+ * agent host had already spent when its wait failed; an agent step adds it to the step before rethrowing.
+ */
 export class WorkflowError extends Error {
   override name = 'WorkflowError'
+  usage?: Usage
   constructor(
     readonly kind: ErrorKind,
     message: string,
-    options?: { cause?: unknown },
+    options?: { cause?: unknown; usage?: Usage },
   ) {
-    super(message, options)
+    super(message, options?.cause === undefined ? undefined : { cause: options.cause })
+    if (options?.usage) this.usage = options.usage
   }
 }
 
