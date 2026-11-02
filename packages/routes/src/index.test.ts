@@ -412,6 +412,7 @@ describe('fallback', () => {
       'cheap.extract',
       'cheap.title',
       'overview.classify',
+      'factory.classify',
       'narrative',
       'prose.write',
     ]
