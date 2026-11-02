@@ -249,7 +249,7 @@ export function createEvalRun(slot: EvalSlot, suites: Suites, options: EvalRunOp
       const planned = { workflow: input.workflow, args, plan, fingerprints: [] }
       if (!input.yes) return { ...planned, ran: false, cases: [], summary: summarize([]) }
 
-      const results = await ctx.step('cases', ({ signal }) =>
+      const results = await ctx.step('cases', async ({ signal }) =>
         replay(
           {
             slot,

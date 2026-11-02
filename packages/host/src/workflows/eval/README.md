@@ -44,6 +44,8 @@ reads the ground truth, `$AGW_EVAL_DIR/review-gt/cases.jsonl`, and its `tree` ca
   never scored as 0. `--label` is the arm (`params.external`): each label has its own fingerprint, stable for the same
   label, so import a changed file under a new label. Re-sending the same import with the same `--idempotency-key`
   returns the first run, so no case is run or judged twice; a resumed import adopts its case runs as `eval run` does.
+  The case runs make no model call, so `summary.costUsd` is the case runs only; the judge calls are children of the
+  eval run, and its own `cost` is the import's whole spend.
   Compare it against a `review` arm by case id: `agw eval compare review --a <review fp> --b <imported fp>
   --b-workflow review.imported` (`--a-workflow` likewise). An imported side has no cost, wall time, tokens or tool
   calls here: compare reports them as `null` (`n: 0`, `better: unknown`), never as 0, and warns `imported arm: cost and
