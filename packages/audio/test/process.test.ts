@@ -121,6 +121,15 @@ async function start(handlers: DoorHandlers, fetch?: Fetch): Promise<RunningHost
 
 const bearer = (token: string) => ({ authorization: `Bearer ${token}` })
 
+/** The run once it ended `failed`: its row, and the `request` step's row (its usage stays there). */
+async function failedRun(runId: string) {
+  const row = await until(async () => {
+    const found = await sql.run(runId)
+    return found?.status === 'failed' ? found : undefined
+  }, `run ${runId} failed`)
+  return { row, step: await sql.step(runId, 'request') }
+}
+
 describe('the audio process', () => {
   test('health, a contract of its own workflows only, and agw audio ping recorded end to end', async () => {
     const audio = await start(stubHandlers())
@@ -211,12 +220,13 @@ describe('the audio process', () => {
       expect(Number(step?.cost)).toBeCloseTo(0.002, 6)
       expect(Number(step?.tokens_input)).toBe(100)
 
-      const badDone = await until(async () => {
-        const row = await sql.run(badRun as string)
-        return row?.status === 'done' ? row : undefined
-      }, 'the bad-body run')
-      expect(badDone.input).toMatchObject({ caller: PLATFORM })
-      expect(badDone.output).toMatchObject({ calls: 0, complete: false, costUsd: null })
+      // The caller's 400 above is the run's failure: `invalid_input`, the status and the envelope's message in it.
+      const { row: badRow, step: badStep } = await failedRun(badRun as string)
+      expect(badRow.input).toMatchObject({ caller: PLATFORM })
+      expect(badRow.error_kind).toBe('invalid_input')
+      expect(String(badRow.error)).toBe('door answered 400: input is required')
+      expect(badStep?.status).toBe('done')
+      expect(badStep?.output).toMatchObject({ status: 400, calls: 0, complete: false, costUsd: 0 })
     } finally {
       await audio.shutdown()
     }
@@ -322,7 +332,9 @@ describe('the audio process', () => {
       expect(pcmRow.input).toMatchObject({ caller: 'hermes' })
       expect(pcmRow.output).toMatchObject({ status: 200, complete: true })
       expect((pcmRow.output as { calls: number }).calls).toBeGreaterThan(0)
-      expect((await done(badRun)).output).toMatchObject({ calls: 0 })
+      const bad400 = await failedRun(badRun)
+      expect(bad400.row.error_kind).toBe('invalid_input')
+      expect(bad400.step?.output).toMatchObject({ status: 400, calls: 0 })
     } finally {
       await audio.shutdown()
       iu.stop()
@@ -512,11 +524,52 @@ describe('the audio process', () => {
       expect(res.status).toBe(500)
       expect(await res.json()).toEqual({ error: { message: 'lane misconfigured', type: 'proxy_error' } })
       const runId = res.headers.get('agw-run-id') as string
-      const done = await until(async () => {
-        const row = await sql.run(runId)
-        return row?.status === 'done' ? row : undefined
-      }, 'the failed-build run')
-      expect(done.output).toMatchObject({ calls: 0, complete: false, ended: 'done' })
+      const { row, step } = await failedRun(runId)
+      expect(row.error_kind).toBe('error')
+      expect(String(row.error)).toBe('door answered 500: lane misconfigured')
+      expect(step?.output).toMatchObject({ status: 500, calls: 0, complete: false, ended: 'done', costUsd: 0 })
+    } finally {
+      await audio.shutdown()
+    }
+  })
+
+  test('an upstream 503 answer: the caller gets it unchanged, the run fails `error` with the call recorded', async () => {
+    const handlers = stubHandlers()
+    handlers.speech = (deps) => async (req) => {
+      deps.usage.record(call(deps, req, { status: 503, costUsd: 0.003 }))
+      return new Response('{"error":{"message":"upstream overloaded","type":"upstream_error"}}', {
+        status: 503,
+        headers: { 'content-type': 'application/json', 'x-upstream': 'kept' },
+      })
+    }
+    const audio = await start(handlers)
+    try {
+      const res = await fetch(`${audio.url}/v1/audio/speech`, { method: 'POST', body: '{}', headers: bearer(HERMES) })
+      expect(res.status).toBe(503)
+      expect(res.headers.get('x-upstream')).toBe('kept')
+      expect(await res.json()).toEqual({ error: { message: 'upstream overloaded', type: 'upstream_error' } })
+      const { row, step } = await failedRun(res.headers.get('agw-run-id') as string)
+      expect(row.error_kind).toBe('error')
+      expect(String(row.error)).toBe('door answered 503: upstream overloaded')
+      expect(step?.status).toBe('done')
+      expect(step?.output).toMatchObject({ status: 503, calls: 1, costUsd: 0.003 })
+      expect(Number(step?.cost)).toBeCloseTo(0.003, 6)
+      expect(Number(step?.tokens_input)).toBe(100)
+    } finally {
+      await audio.shutdown()
+    }
+  })
+
+  test('an error body that is not an envelope is recorded truncated', async () => {
+    const handlers = stubHandlers()
+    handlers.speech = () => async () => new Response('x'.repeat(5000), { status: 422 })
+    const audio = await start(handlers)
+    try {
+      const res = await fetch(`${audio.url}/v1/audio/speech`, { method: 'POST', body: '{}', headers: bearer(HERMES) })
+      expect((await res.text()).length).toBe(5000)
+      const { row } = await failedRun(res.headers.get('agw-run-id') as string)
+      expect(row.error_kind).toBe('invalid_input')
+      expect(String(row.error)).toBe(`door answered 422: ${'x'.repeat(300)}`)
     } finally {
       await audio.shutdown()
     }
@@ -538,7 +591,7 @@ describe('the audio process', () => {
         const row = await sql.run(runId)
         return row?.status === 'done' ? row : undefined
       }, 'the run')
-      expect(done.output).toMatchObject({ calls: 0, complete: true, costUsd: null })
+      expect(done.output).toMatchObject({ calls: 0, complete: true, costUsd: 0 })
     } finally {
       await audio.shutdown()
     }
