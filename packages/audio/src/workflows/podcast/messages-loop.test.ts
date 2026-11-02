@@ -129,6 +129,12 @@ function harness(route: Partial<ResolvedRoute>, responses: Array<() => Response>
 const sse = (blocks: Block[], stop: string, usage?: Record<string, unknown>) => () =>
   new Response(messageSse(blocks, stop, usage))
 
+const EPHEMERAL = { type: 'ephemeral' }
+/** The prompt with every cache_control marker removed: what the cache keys on. */
+const stripMarkers = (value: unknown): unknown =>
+  JSON.parse(JSON.stringify(value, (k, v) => (k === 'cache_control' ? undefined : v)))
+const markers = (value: unknown) => (JSON.stringify(value).match(/"cache_control"/g) ?? []).length
+
 let executed: unknown[] = []
 const addTool: ToolDef = {
   name: 'add',
@@ -183,13 +189,16 @@ describe('tool loop on the Messages wire', () => {
         },
       ],
       system: [{ type: 'text', text: 'You are a calculator.', cache_control: { type: 'ephemeral' } }],
-      messages: [{ role: 'user', content: 'What is 2+3?' }],
+      messages: [{ role: 'user', content: [{ type: 'text', text: 'What is 2+3?', cache_control: EPHEMERAL }] }],
       stream: true,
     })
     expect(seen[1]?.body.messages).toEqual([
-      { role: 'user', content: 'What is 2+3?' },
+      { role: 'user', content: [{ type: 'text', text: 'What is 2+3?' }] },
       { role: 'assistant', content: [THINKING, toolUse('toolu_1', { a: 2, b: 3 })] },
-      { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: '5' }] },
+      {
+        role: 'user',
+        content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: '5', cache_control: EPHEMERAL }],
+      },
     ])
   })
 
@@ -209,7 +218,7 @@ describe('tool loop on the Messages wire', () => {
       role: 'user',
       content: [
         { type: 'tool_result', tool_use_id: 't1', content: '2' },
-        { type: 'tool_result', tool_use_id: 't2', content: '4' },
+        { type: 'tool_result', tool_use_id: 't2', content: '4', cache_control: EPHEMERAL },
       ],
     })
   })
@@ -228,7 +237,7 @@ describe('tool loop on the Messages wire', () => {
     })
   })
 
-  test('the prompt prefix is byte-stable: each round is a prefix-extension of the next', async () => {
+  test('the prompt prefix is byte-stable and the breakpoint moves: markers stripped, round N is a prefix of round N+1', async () => {
     const { llm, seen } = harness({}, [
       sse([THINKING, toolUse('t1', { a: 2, b: 3 })], 'tool_use'),
       sse([{ ...THINKING, signature: 'sig-2' }, toolUse('t2', { a: 5, b: 5 })], 'tool_use'),
@@ -244,11 +253,20 @@ describe('tool loop on the Messages wire', () => {
       const [x, y] = [seen[a]?.body, seen[b]?.body]
       expect(JSON.stringify(x?.tools)).toBe(JSON.stringify(y?.tools))
       expect(JSON.stringify(x?.system)).toBe(JSON.stringify(y?.system))
-      const earlier = JSON.stringify(x?.messages ?? [])
-      const later = JSON.stringify(y?.messages ?? [])
+      const earlier = JSON.stringify(stripMarkers(x?.messages ?? []))
+      const later = JSON.stringify(stripMarkers(y?.messages ?? []))
       expect(later.startsWith(earlier.slice(0, -1))).toBe(true)
       expect(later.length).toBeGreaterThan(earlier.length)
     }
+    // Two breakpoints a request (system + transcript tail, at most 4), the tail one on the LAST block of the LAST message.
+    for (const request of seen) {
+      const messages = (request.body.messages ?? []) as Array<{ content: Block[] }>
+      expect(markers(request.body)).toBe(2)
+      expect(markers(messages)).toBe(1)
+      expect(messages.at(-1)?.content.at(-1)?.cache_control).toEqual(EPHEMERAL)
+    }
+    // The echoed thinking blocks carry no marker, and the transcript the loop holds was not mutated by it.
+    expect(JSON.stringify(seen[1]?.body.messages)).not.toContain('"thinking","signature":"sig-abc==","cache_control"')
   })
 
   test('usage: cache read/write split, input incl. cache, priced at the route rate, one record per round', async () => {
@@ -296,7 +314,33 @@ describe('tool loop on the Messages wire', () => {
     const result = await runToolLoop(llm, params({ maxCompletionTokens: 40_000 }))
     expect(result).toMatchObject({ content: 'five', rounds: 2 })
     expect(executed).toEqual([{ a: 2, b: 3 }])
-    expect(seen.map((s) => s.body.max_tokens)).toEqual([40_000, 80_000, 40_000])
+    // The retry's wire budget doubles the first try's, capped at 64k.
+    expect(seen.map((s) => s.body.max_tokens)).toEqual([40_000, 64_000, 40_000])
+  })
+
+  test('the retry really raises the wire budget below the 32k floor: 100 asked → 32k then 64k', async () => {
+    const cut = sse([{ type: 'text', text: 'half' }], 'max_tokens')
+    const { llm, seen } = harness({}, [cut, sse([{ type: 'text', text: 'whole' }], 'end_turn')])
+    expect((await runToolLoop(llm, params({ maxCompletionTokens: 100 }))).content).toBe('whole')
+    expect(seen.map((s) => s.body.max_tokens)).toEqual([32_000, 64_000])
+  })
+
+  test.each(['refusal', 'pause_turn', 'something_new'])(
+    'a %s stop fails at once, naming the stop reason, without a retry',
+    async (stop) => {
+      const { llm, seen } = harness({}, [sse([{ type: 'text', text: 'no' }], stop)])
+      const error = await rejected(runToolLoop(llm, params()))
+      expect(error.message).toContain(`stop_reason=${stop}`)
+      expect(seen).toHaveLength(1)
+    },
+  )
+
+  test('empty content on end_turn is retried; an empty system prompt is left out of the body', async () => {
+    const { llm, seen } = harness({}, [sse([], 'end_turn'), sse([{ type: 'text', text: 'hi' }], 'end_turn')])
+    expect((await runToolLoop(llm, params({ systemPrompt: '  ' }))).content).toBe('hi')
+    expect(seen).toHaveLength(2)
+    expect(seen[0]?.body).not.toHaveProperty('system')
+    expect(markers(seen[0]?.body)).toBe(1)
   })
 
   test('a truncated text answer is retried, and still truncated it fails instead of returning half an answer', async () => {

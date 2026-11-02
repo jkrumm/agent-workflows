@@ -79,17 +79,24 @@ budget or empty retries once at double; no round cap.
 
 The tool loop speaks three dialects: `chat` and `responses` on `iu-openai` (the GPT-6.1 family on responses), and
 Anthropic Messages on `anthropic` (`POST <gateway>/anthropic/v1/messages`, streamed under the idle watchdog,
-`x-agw-fallback: none`). A Messages round sends `tools` (`input_schema`), the system prompt as one `cache_control`
-block, the same thinking/effort and `max_tokens` floor as a single call; the reply's `tool_use` blocks become tool calls
-(`stop_reason` `end_turn`→`stop`, `tool_use`→`tool_calls`, `max_tokens`→`length`) and usage goes through
-`anthropicUsage` as for single calls. A `max_tokens` stop carries no tool calls (a cut `tool_use` is never run) and is
-retried at double the budget; a still-incomplete Messages reply fails the round rather than being used as an answer.
+`x-agw-fallback: none`). A Messages round sends `tools` (`input_schema`), the system prompt as one `cache_control` block (left out when
+empty), the same thinking/effort as a single call, and `max_tokens` floored at 32k. The reply's `tool_use` blocks become
+tool calls (`stop_reason` `end_turn`→`stop`, `tool_use`→`tool_calls`, `max_tokens`→`length`) and usage goes through
+`anthropicUsage` as for single calls.
+
+Stops: a `max_tokens` stop carries no tool calls (a cut `tool_use` is never run) and is retried once at DOUBLE THE WIRE
+budget (the floored 32k, so 64k, the cap), and a retry cut again fails the round. Empty content on `end_turn` is retried
+the same way. A `refusal`, `pause_turn` or any other stop reason fails at once, naming it: retrying repeats it.
 
 **The transcript is chat-shaped and `Llm.round` renders it per round for the wire that answers.** An assistant turn
 carries what its provider sent as `native` (Responses output items, or the Messages content blocks: `thinking` with
 signatures, `redacted_thinking`, `text`, `tool_use`) and goes back verbatim to its own dialect, so a thinking Claude
-round-trips byte-stable (the prompt prefix of round N is a prefix of round N+1; the cache breakpoint is the system
-block). Consecutive tool results become ONE user turn of `tool_result` blocks.
+round-trips byte-stable. Consecutive tool results become ONE user turn of `tool_result` blocks, and every message is a
+block array.
+
+**Cache:** two breakpoints a request (of four): the system block, and the last content block of the last message, moved
+every round (on a copy; the stored transcript and its verbatim thinking blocks are never touched). With the markers
+stripped, round N's prompt is a prefix of round N+1's, so round N+1 reads round N's whole transcript from the cache.
 
 **Fallback mid-loop (one rule):** a balance failure on any round moves that round to the route's fallback, and the loop
 **stays on the fallback** for its remaining rounds. The transcript is not restarted: the earlier turns are re-rendered
