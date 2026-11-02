@@ -47,6 +47,7 @@ describe('workflow discovery', () => {
       'diagram',
       'digest',
       'eval-gt',
+      'eval-mine',
       'eval',
       'factory-classify',
       'image-icon',

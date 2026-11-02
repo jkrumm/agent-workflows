@@ -237,3 +237,71 @@ What the bars decide:
 |-|-|
 | kept cases ≥ 90 % right (yes / (yes + no)) | tighten the miner's filters and re-mine |
 | Cohen's κ ≥ 0.8 on the pairs | a second judge on another vendor; disagreements score as `unclear` |
+## Ground truth miner
+
+`agw eval mine review` builds the review ground truth from the owner's own fix history (`docs/review-v2.md` §Ground
+truth). Mining spends nothing; labelling spends eval credit and needs `--yes`. Run it with `AGW_PURPOSE=eval`.
+
+```
+agw eval mine review                           # mine: candidates, controls, report
+agw eval mine review --label 20                # plus the labelling plan and an estimate; spends nothing
+agw eval mine review --label 20 --yes          # label the next 20 candidates (2 paid calls each)
+agw eval mine review --label 50 --yes --relabel-errors
+```
+
+| Flag | Default | Does |
+|-|-|-|
+| `--label N` | 0 | Label the next N unlabelled candidates, taken from a seeded shuffle, so the owner sample is random |
+| `--seed N` | 1 | Seed of the label order and of the control pick |
+| `--controls N` | 100 | Clean controls to pick |
+| `--concurrency N` | 2 | Candidates in flight (each is two parallel calls) |
+| `--relabel-errors` | off | Label again candidates whose last record has a seat error; they are never retried otherwise |
+| `--yes` | off | Spend. Without it `--label` prints the plan: candidates, and 2 calls × the mean cost of the last 20 `cap.eval.label` runs (or `unknown`) |
+
+**Files**, all under `$AGW_EVAL_DIR/review-gt/` (dirs 0700, files 0600; cases name private repos):
+
+| File | Written | Holds |
+|-|-|-|
+| `candidates.jsonl` | whole, by every mine | SZZ candidates (`GtCandidate`) |
+| `labels.jsonl` | appended as each candidate finishes | both seats' answers (`GtLabelRecord`); the resume point |
+| `cases.jsonl` | rebuilt by every run | accepted bugs and clean controls (`GtCase`), what `agw eval run review` reads |
+| `rejected.jsonl` | rebuilt by every run | candidates the labelers did not accept, with the reason |
+| `report.json` | by every run | the funnel and the acceptance and rejection counts; no code |
+
+**Mining** (`packages/eval/src/mine/`, pure over an injected `Exec`; bump `MINER_VERSION` on any filter change):
+
+- **Repos:** every direct child of `$HOME/SourceRoot` with a `.git` directory, minus `dispatch-scratch`, `brain`,
+  `dotfiles-private` and dot names. Linked worktrees and nested repos are not walked. History is `HEAD`'s.
+- **Owner:** commits whose author email is in the owner set; merges never count.
+- **Fix commits:** the owner's `fix`, `revert` and `Revert ` subjects, minus any whose scope or subject names deps, ci,
+  docs, release, style, lint, typo, format or fmt.
+- **SZZ:** the removed and changed lines of each fix (`git show -U0`), minus blank lines, comment-only lines,
+  whitespace-only changes and non-code files, are blamed at the fix's parent with `git blame -w -M -C`. Mass reformats
+  (a style or chore subject naming a formatter, or 20 or more files with 80 % or more whitespace-only changed lines)
+  go into an ignore-revs file, so blame looks past them.
+- **Kept introducing commits:** the owner's, not a merge, at most 182 days before the fix by author date, at most 1,500
+  changed lines. One candidate per (fix, introducing commit).
+- **Controls:** owner commits at least 84 days old that change a code file, have at most 1,500 changed lines, and that
+  no fix commit's blame landed on at all (the blame is taken before the owner, age and size filters). At most 15 % have
+  a docs, test, refactor or chore subject. Only the owner's fixes count as fix commits, so a later fix by someone else
+  does not disqualify a control.
+- **Split:** `dev` when the first 8 hex of `sha256(id) / 2^32` is below `DEV_SHARE`, else `test`; bugs and controls alike.
+- **Acceptance:** both seats say defect and place it in the same file within `LOCATION_SLACK` lines of each other.
+  Otherwise the reason is `a-no`, `b-no`, `both-no`, `no-overlap` or `labeler-error`. The case takes seat `a`'s
+  location, description, class and severity.
+
+**Bias.** An additions-only fix (a missing guard, a new check) has no removed line to blame, so it yields no candidate.
+Published SZZ studies put these near 17 % of fixes. The report states the loss; the eval's recall numbers read as recall
+on bugs whose fix removed or changed code. Precision is the other limit: SZZ alone is about 50 % right, which is why
+every candidate is labelled twice before it becomes a case.
+
+**Resume and stops.** A candidate with a record under the current `LABELER_VERSION` is never labelled again, and a
+resumed run counts the records it already wrote against `--label`. A seat that fails with an answer (unusable or
+truncated output, a refused input, a vendor refusal) is recorded as that seat's `{error}`. Any other error, such as the
+gateway's 403 "no eval credit" or an outage, stops labelling: the run reports it, keeps what it wrote and records
+nothing for the candidate in flight. The journal keeps counts only; subjects, shas and diffs stay in the files.
+
+**Costs.** Mining is git only: a read of every repo's history plus one `git show` and a few `git blame` calls per fix
+(about two minutes of wall time on the owner's checkouts). Labelling is two calls per candidate, one per vendor, each
+sent both diffs; `--label` without `--yes` prices that from the last 20 `cap.eval.label` runs once the host passes the
+journal's cost history to the workflow, and prints `unknown` until then.
