@@ -117,7 +117,7 @@ function harness(route: Partial<ResolvedRoute>, responses: Array<() => Response>
     (id: PodcastRouteId) => ({
       id,
       wire: 'anthropic',
-      model: 'claude-haiku-5-5',
+      model: 'fake-messages-model',
       effort: 'high',
       rate: { inputPerM: 1, outputPerM: 5, cacheReadPerM: 0.1, cacheWritePerM: 1.25 },
       ...route,
@@ -177,7 +177,7 @@ describe('tool loop on the Messages wire', () => {
     expect(headers?.get('x-agw-run-id')).toBe('run-1')
 
     expect(seen[0]?.body).toEqual({
-      model: 'claude-haiku-5-5',
+      model: 'fake-messages-model',
       max_tokens: 40_000,
       thinking: { type: 'adaptive' },
       output_config: { effort: 'high' },
@@ -281,7 +281,7 @@ describe('tool loop on the Messages wire', () => {
     await runToolLoop(llm, params())
     expect(usages).toHaveLength(2)
     expect(usages[0]).toMatchObject({
-      model: 'claude-haiku-5-5',
+      model: 'fake-messages-model',
       tokens: { input: 2600, output: 20, cacheRead: 2000, cacheWrite: 500 },
     })
     // (100*1 + 2000*0.1 + 500*1.25 + 20*5) / 1e6
