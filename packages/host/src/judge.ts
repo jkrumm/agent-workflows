@@ -59,7 +59,11 @@ export function scorerJudge(options: {
     if (scope.source === 'inline') {
       // The same contract as below: only an answer (the source said no) comes back; an outage throws.
       try {
-        return await call(capability, input, { addUsage: scope.addUsage, signal: scope.signal })
+        return await call(capability, input, {
+          addUsage: scope.addUsage,
+          signal: scope.signal,
+          ...(scope.attribution ? { attribution: scope.attribution } : {}),
+        })
       } catch (error) {
         const answer = error instanceof CapabilityCallError ? answerOf(error) : null
         if (answer) return answer

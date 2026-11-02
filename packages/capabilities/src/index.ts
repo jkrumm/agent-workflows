@@ -93,7 +93,14 @@ export {
   type RouterNode,
 } from './registry.ts'
 export type { RequestContext } from './procedure.ts'
-export { type GatewayConfig, gatewayConfig, gatewayHeaders, gatewayTransports } from './transports/index.ts'
+export {
+  type GatewayBases,
+  type GatewayConfig,
+  gatewayBases,
+  gatewayConfig,
+  gatewayHeaders,
+  gatewayTransports,
+} from './transports/index.ts'
 export type { GatewayTransports } from './transports/port.ts'
 // The image capabilities and the vocabulary the `image` workflow's input is built from.
 export {

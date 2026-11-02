@@ -50,7 +50,7 @@ export function createOverview(deps: OverviewDeps): HostWorkflow {
     // One run at a time is plenty: the fleet changes slower than a run takes, and the call is the only spend.
     concurrency: 1,
     async run(ctx, input) {
-      const classified = await ctx.step('classify', async ({ addUsage, signal }) => {
+      const classified = await ctx.step('classify', async ({ addUsage, signal, attribution }) => {
         const prepared = classifyInput(
           await deps.fleet.snapshot({ fresh: true, staleAfterHours: input.staleAfterHours }),
           {
@@ -65,7 +65,7 @@ export function createOverview(deps: OverviewDeps): HostWorkflow {
             : await deps.registry.call(
                 'overview.classify',
                 { facts: prepared.facts, agentIds: prepared.agentIds },
-                { addUsage, signal },
+                { addUsage, signal, attribution },
               )
         return {
           snapshotGeneratedAt: prepared.generatedAt,

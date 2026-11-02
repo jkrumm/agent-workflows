@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { claudeRate, type ResolvedRoute, resolveModelAlias } from '@agent-workflows/routes'
 import type { Attribution, Usage } from './context.ts'
+import type { AttemptUsage } from './transports/port.ts'
 import { CapabilityError } from './errors.ts'
 import fixture from './fixtures/anthropic-1h-cache-write.json'
 import { complete } from './llm/model-call.ts'
@@ -108,6 +109,10 @@ describe('gatewayHeaders', () => {
     expect(bad).not.toHaveProperty('x-agw-workspace')
     expect(bad).not.toHaveProperty('x-agw-step')
     expect(gatewayHeaders({ ...attribution, project: 'a\nb' })).not.toHaveProperty('x-agw-project')
+    for (const project of [' agw', 'agw ', '   ']) {
+      expect(gatewayHeaders({ ...attribution, project })).not.toHaveProperty('x-agw-project')
+    }
+    expect(gatewayHeaders({ ...attribution, project: 'agent workflows' })['x-agw-project']).toBe('agent workflows')
     expect(gatewayHeaders({ ...attribution, step: 's'.repeat(200) })['x-agw-step']).toHaveLength(200)
   })
 })
@@ -199,6 +204,16 @@ describe('1 h cache writes (a real Haiku 5.5 response through the gateway, 2026-
     })
     expect(usages[0]?.tokens).not.toHaveProperty('cacheWrite1h')
     expect(headersOf()).toMatchObject({ 'x-agw-run-id': 'run-1' })
+  })
+
+  test('without cache_creation_input_tokens the split is the writes, the 1 h part kept', async () => {
+    const { cache_creation_input_tokens: _, ...usage } = fixture.usage
+    gateway.on('messages', () => Response.json({ ...fixture, usage }))
+    const reported: AttemptUsage[] = []
+    await anthropicWire({ env: env() }).complete({ model: haiku, prompt: 'p', maxOutputTokens: 8 }, never(), (u) =>
+      reported.push(u),
+    )
+    expect(reported[0]?.tokens).toMatchObject({ cacheWrite: written, cacheWrite1h: written, input: input + written })
   })
 
   const headersOf = () => Object.fromEntries(gateway.requests[0]?.headers ?? [])

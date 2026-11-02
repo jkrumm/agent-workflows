@@ -22,7 +22,7 @@ const usageSchema = z.object({
   cache_read_input_tokens: count,
   cache_creation_input_tokens: count,
   /** The split of `cache_creation_input_tokens` by TTL; the 1 h part is priced at its own rate. */
-  cache_creation: z.object({ ephemeral_1h_input_tokens: count }).nullish(),
+  cache_creation: z.object({ ephemeral_5m_input_tokens: count, ephemeral_1h_input_tokens: count }).nullish(),
   cost: count,
 })
 const messageSchema = z.object({
@@ -83,8 +83,11 @@ function body(request: ChatRequest) {
 
 function toUsage(usage: z.output<typeof usageSchema>, model: string): AttemptUsage {
   const cacheRead = usage.cache_read_input_tokens ?? 0
-  const cacheWrite = usage.cache_creation_input_tokens ?? 0
-  const cacheWrite1h = Math.min(usage.cache_creation?.ephemeral_1h_input_tokens ?? 0, cacheWrite)
+  const split1h = usage.cache_creation?.ephemeral_1h_input_tokens ?? 0
+  // Without the total, the split is the writes (as `costFromUsage` reads it); a 1 h part never exceeds a total.
+  const cacheWrite =
+    usage.cache_creation_input_tokens ?? split1h + (usage.cache_creation?.ephemeral_5m_input_tokens ?? 0)
+  const cacheWrite1h = Math.min(split1h, cacheWrite)
   return {
     model,
     // Thinking tokens are inside `output_tokens` on this wire and not reported separately.

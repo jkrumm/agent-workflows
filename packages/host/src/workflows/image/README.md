@@ -2,7 +2,7 @@
 
 Generate or edit images from a prompt, or cut a background out of a file. Port of the agent lane of the image stack:
 `imgcli gen` and `imgcli cutout` through image-gateway to the IU endpoint, now one platform workflow whose capabilities
-call the IU endpoint directly.
+call IU through the local inference gateway (`docs/gateway.md`).
 
 ```
 agw image "a lighthouse at dusk, blog header" --size 1536x1024 --quality low --n 2
@@ -55,8 +55,8 @@ Exactly one of `prompt` and `file`. The run answers with the files it made:
   × 3^i), 410 (a retired model) fails fast, and a 503 that wraps a 400, in either of its two shapes (the `user_error`
   body, the `StatusCode: BadRequest` body), is never retried and carries the vendor's message, moderation stage and
   categories included. A body that is not a PNG by its first bytes fails the run; the call was billed, so its usage is on the run.
-- **Cutout (Replicate through the same IU host).** The base is IU's OpenAI base with `/openai/v1` swapped for
-  `/replicate/v1` (`REPLICATE_BASE_URL` overrides). `Prefer: wait`, then poll the flat `/predictions/{id}` while it runs
+- **Cutout (Replicate through the gateway).** The base is the gateway's `/replicate/v1` (`AGW_GATEWAY_URL`), every
+  request with `x-agw-usage: caller` (agw prices it per image) and the step's attribution. `Prefer: wait`, then poll the flat `/predictions/{id}` while it runs
   (a transient poll failure is retried); the output URL must be on `replicate.delivery`, is fetched without following
   redirects and read within a byte bound. recraft delivers WebP, bria PNG: both come back PNG (`Bun.Image`, no `sharp`).
   recraft's input limits (5 MB, sides 256–4096 px, 16 MP) are checked on the file's **header** before anything decodes,
@@ -89,8 +89,8 @@ Exactly one of `prompt` and `file`. The run answers with the files it made:
 
 ## Route
 
-Group file `packages/routes/src/table/image.ts`, image-gateway's seats called directly (no gateway in between), all on
-IU's OpenAI base (`iu-openai`; Replicate is the `/replicate/v1` route of the same host). Overridable by `AGW_ROUTES` like
+Group file `packages/routes/src/table/image.ts`, image-gateway's seats, all on IU's OpenAI paths through the inference
+gateway (`iu-openai`; Replicate is its `/replicate/v1` route). Overridable by `AGW_ROUTES` like
 any route, `price` included (a model override without a price drops the old one).
 
 |Route|Seat in image-gateway|Price|

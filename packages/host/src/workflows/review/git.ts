@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync } from 'node:fs'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
-import { gatewayConfig } from '@agent-workflows/capabilities'
+import { type GatewayBases, gatewayBases } from '@agent-workflows/capabilities'
 import type { Exec } from './exec.ts'
 import { networkEnv, tail } from './exec.ts'
 import { mapLimit } from './util.ts'
@@ -469,11 +469,22 @@ function switches(env: Env) {
   }
 }
 
-/** OCR needs the `ocr` binary and the gateway's base and token, which its child process is handed. */
+/**
+ * What `ocr` is handed to reach the gateway: its bases and `AGW_GATEWAY_TOOL_TOKEN`, the door token of the caller
+ * `agw-opencode` (it opens the gateway only, never the API). Never the host's API secret. Throws naming what is missing.
+ */
+export function ocrGateway(env: Record<string, string | undefined>): GatewayBases & { token: string } {
+  const bases = gatewayBases(env)
+  const token = env.AGW_GATEWAY_TOOL_TOKEN?.trim()
+  if (!token) throw new Error('AGW_GATEWAY_TOOL_TOKEN is not set')
+  return { ...bases, token }
+}
+
+/** OCR needs the `ocr` binary and the gateway's base and tool token, which its child process is handed. */
 function ocrBlocker(ports: ReviewPorts): string | null {
   if (!ports.which('ocr')) return 'ocr not found on PATH'
   try {
-    gatewayConfig(ports.env)
+    ocrGateway(ports.env)
   } catch (error) {
     return `gateway unavailable: ${error instanceof Error ? error.message : String(error)}`
   }

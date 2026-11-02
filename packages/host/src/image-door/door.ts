@@ -13,7 +13,7 @@ import {
   requestImages,
   resolveImageDeps,
 } from '@agent-workflows/capabilities'
-import { defineWorkflow, type Logger, type Runtime, type Usage } from '@agent-workflows/runtime'
+import { type Attribution, defineWorkflow, type Logger, type Runtime, type Usage } from '@agent-workflows/runtime'
 import { z } from 'zod'
 import { BEARER_CHALLENGE } from '../auth.ts'
 import { RUN_ID_HEADER } from '../capability-runs.ts'
@@ -86,6 +86,8 @@ export type Enhance = (input: EnhanceParams, io: StepIo) => Promise<EnhanceOutpu
 export interface StepIo {
   addUsage: (usage: Usage) => void
   signal: AbortSignal
+  /** The door run's one step, sent to the gateway with every upstream call. */
+  attribution: Attribution
 }
 
 /** What `hostProcess` is given to serve the door. */
@@ -264,7 +266,7 @@ export function createImageDoor(deps: ImageDoorDeps): ImageDoor {
       input: DoorInput,
       output: DoorOutput,
       async run(ctx) {
-        return ctx.step('serve', async ({ addUsage, signal: stepSignal }) => {
+        return ctx.step('serve', async ({ addUsage, signal: stepSignal, attribution }) => {
           const job = jobs.get(ctx.runId)
           // Resumed in a process that never served the request (a restart mid-request): its bytes died with it.
           if (!job)
@@ -293,7 +295,7 @@ export function createImageDoor(deps: ImageDoorDeps): ImageDoor {
           const signal = AbortSignal.any([stepSignal, job.controller.signal])
           try {
             if (signal.aborted) throw new Error('cancelled before it started')
-            const done = await prepared.work({ addUsage: metered, signal }, (event) => job.emit(event))
+            const done = await prepared.work({ addUsage: metered, signal, attribution }, (event) => job.emit(event))
             job.settle({ ok: true, response: done.response })
             return summary(job.gone ? GONE_STATUS : 200, job.gone ? 'client-gone' : 'done', done, costUsd(), job)
           } catch (error) {

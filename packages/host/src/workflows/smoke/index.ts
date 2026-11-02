@@ -21,8 +21,8 @@ export function createSmokePing(registry: TitleCaller): HostWorkflow {
     input: z.object({ text: z.string().min(1).default(SMOKE_TEXT).describe('The text to title') }),
     output: z.object({ title: z.string() }),
     async run(ctx, { text }) {
-      const { title } = await ctx.step('title', ({ addUsage, signal }) =>
-        registry.call('llm.title', { text }, { addUsage, signal }),
+      const { title } = await ctx.step('title', ({ addUsage, signal, attribution }) =>
+        registry.call('llm.title', { text }, { addUsage, signal, attribution }),
       )
       return { title }
     },
