@@ -6,7 +6,14 @@ export interface MeterSource {
   spentSince(pool: string, since: Date): number
 }
 
-export type PickReason = 'bound' | 'soonest-expiry' | 'forced' | 'claude-code' | 'no-pool' | 'drained-retry'
+export type PickReason =
+  | 'bound'
+  | 'soonest-expiry'
+  | 'forced'
+  | 'claude-code'
+  | 'no-pool'
+  | 'drained-retry'
+  | 'eval-reserve'
 
 export type Pick =
   /** `cycleStart` (ISO) is handed back to `drained` / `reconcile`, so a result from before a rollover is ignored. */
@@ -15,6 +22,8 @@ export type Pick =
   | { kind: 'iu'; reason: 'forced' | 'claude-code' | 'no-pool' | 'drained-retry' }
   /** The caller sent `x-agw-fallback: none`: the server answers 402 with the balance marker. */
   | { kind: 'refuse'; reason: 'no-pool' | 'claude-code' | 'drained-retry' }
+  /** An `eval` request with no pool above its reserve: the server answers 403, never IU and never a 402. */
+  | { kind: 'refuse'; reason: 'eval-reserve' }
 
 export interface PickInput {
   /** The door-token caller; bindings are namespaced by it. */
@@ -24,6 +33,11 @@ export interface PickInput {
   forceIu: boolean
   claudeCodeShaped: boolean
   fallbackNone: boolean
+  /**
+   * `x-agw-purpose`, trimmed and lower-cased. `eval` draws only on credit above a pool's production reserve and is never
+   * sent to IU (§Credit pacing); any other value, or null, picks as before.
+   */
+  purpose?: string | null
   /** Pools that already refused this request. */
   exclude?: string[]
 }
@@ -41,6 +55,18 @@ export interface PoolStatus {
   meterUsd: number
   drainedUntil: string | null
   eligible: boolean
+  /** Credit still spendable: `max(0, creditUsd − meterUsd − headroomUsd)`. */
+  creditLeftUsd: number
+  /** Fractional days to `cycleEnd`; null on an unknown cycle. */
+  daysLeft: number | null
+  /** `creditLeftUsd / daysLeft`; null when `daysLeft` is null or 0. */
+  runwayUsdPerDay: number | null
+  /** What production keeps: the registry's `evalReserveUsd`, else `creditUsd × daysLeft / cycleLengthDays`, else (unknown cycle) `creditUsd`. */
+  evalReserveUsd: number
+  /** `max(0, creditLeftUsd − evalReserveUsd)`. */
+  evalAvailableUsd: number
+  /** `eligible` and `evalAvailableUsd > 0`: an `eval` request may use this pool. */
+  evalEligible: boolean
   /** `charge` calls ignored for a negative or non-finite amount, since start. */
   unpricedCharges: number
   /** The last ledger read failed (message); the pool is ineligible until a read succeeds. */
@@ -91,6 +117,7 @@ export interface PoolsOptions {
 
 const MINUTE_MS = 60_000
 const HOUR_MS = 60 * MINUTE_MS
+const DAY_MS = 24 * HOUR_MS
 const DEFAULT_BINDING_TTL_MS = HOUR_MS
 /** How often expired bindings are swept; a lookup checks expiry itself, so the sweep only bounds memory. */
 const SWEEP_INTERVAL_MS = MINUTE_MS
@@ -255,6 +282,20 @@ export function createPools(opts: PoolsOptions): Pools {
     state.drainedUntilMs === null &&
     meterUsd(state.meter) + state.pool.headroomUsd < state.pool.creditUsd
 
+  /** §Credit pacing: what the pool has left and how much of it production keeps. */
+  const pacing = (state: PoolState, cycle: { start: Date; end: Date | null }, at: Date) => {
+    const used = state.usable ? meterUsd(state.meter) : 0
+    const creditLeftUsd = Math.max(0, state.pool.creditUsd - used - state.pool.headroomUsd)
+    const daysLeft = cycle.end === null ? null : Math.max(0, (cycle.end.getTime() - at.getTime()) / DAY_MS)
+    const runwayUsdPerDay = daysLeft === null || daysLeft === 0 ? null : creditLeftUsd / daysLeft
+    const cycleDays = cycle.end === null ? null : (cycle.end.getTime() - cycle.start.getTime()) / DAY_MS
+    const proRata =
+      daysLeft === null || cycleDays === null ? state.pool.creditUsd : (state.pool.creditUsd * daysLeft) / cycleDays
+    const evalReserveUsd = state.pool.evalReserveUsd ?? proRata
+    const evalAvailableUsd = Math.max(0, creditLeftUsd - evalReserveUsd)
+    return { creditLeftUsd, daysLeft, runwayUsdPerDay, evalReserveUsd, evalAvailableUsd }
+  }
+
   const sweep = (atMs: number): void => {
     if (atMs - lastSweepMs < SWEEP_INTERVAL_MS) return
     for (const [k, binding] of bindings) if (binding.expiresAtMs <= atMs) bindings.delete(k)
@@ -272,7 +313,10 @@ export function createPools(opts: PoolsOptions): Pools {
   return {
     pick(input) {
       if (input.forceIu) return { kind: 'iu', reason: 'forced' }
-      if (input.claudeCodeShaped) return fallback(input, 'claude-code')
+      const evalOnly = input.purpose === 'eval'
+      // An eval request has no IU to fall back on, a Claude-Code-shaped one included: it could only go there.
+      if (input.claudeCodeShaped)
+        return evalOnly ? { kind: 'refuse', reason: 'eval-reserve' } : fallback(input, 'claude-code')
 
       const at = now()
       sweep(at.getTime())
@@ -281,7 +325,9 @@ export function createPools(opts: PoolsOptions): Pools {
       for (const state of states.values()) {
         if (!state.usable || exclude.has(state.pool.id)) continue
         const cycle = sync(state, at)
-        if (isEligible(state)) candidates.push({ id: state.pool.id, ...cycle })
+        if (!isEligible(state)) continue
+        if (evalOnly && pacing(state, cycle, at).evalAvailableUsd <= 0) continue
+        candidates.push({ id: state.pool.id, ...cycle })
       }
 
       const bound =
@@ -302,6 +348,7 @@ export function createPools(opts: PoolsOptions): Pools {
         return { kind: 'pool', pool: first.id, reason: 'soonest-expiry', cycleStart: first.start.toISOString() }
       }
 
+      if (evalOnly) return { kind: 'refuse', reason: 'eval-reserve' }
       return fallback(input, exclude.size > 0 ? 'drained-retry' : 'no-pool')
     },
 
@@ -365,6 +412,8 @@ export function createPools(opts: PoolsOptions): Pools {
         // Unusable pools are never synced; their cycle is computed for display only.
         const cycle = state.usable ? sync(state, at) : cycleOf(state.pool.cycleDay, at)
         const reason = disabledReason(state)
+        const pace = pacing(state, cycle, at)
+        const eligible = isEligible(state)
         return {
           id: state.pool.id,
           enabled: state.pool.enabled,
@@ -375,7 +424,9 @@ export function createPools(opts: PoolsOptions): Pools {
           creditUsd: state.pool.creditUsd,
           meterUsd: state.usable ? meterUsd(state.meter) : 0,
           drainedUntil: state.drainedUntilMs === null ? null : new Date(state.drainedUntilMs).toISOString(),
-          eligible: isEligible(state),
+          eligible,
+          ...pace,
+          evalEligible: eligible && pace.evalAvailableUsd > 0,
           unpricedCharges: state.unpricedCharges,
           ...(state.meterError === null ? {} : { meterError: state.meterError }),
         }

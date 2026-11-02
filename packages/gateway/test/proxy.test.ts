@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import { gzipSync } from 'node:zlib'
-import { BALANCE_MARKER, claudeRate, costFromUsage, resolveModelAlias } from '@agent-workflows/routes'
+import { BALANCE_MARKER, claudeRate, costFromUsage, isBalanceFailure, resolveModelAlias } from '@agent-workflows/routes'
 import { routeRate } from '@agent-workflows/routes/rates'
 import { InMemorySpanExporter } from '@opentelemetry/sdk-trace'
 import { Ledger } from '../src/ledger.ts'
@@ -1195,6 +1195,147 @@ describe('x-agw-upstream: iu', () => {
     await (await gw.call('/openai/v1/chat/completions', forced())).text()
     expect(gw.rows().records[0]?.row.lane_detail).toMatchObject({ pool: 'iu-api', fallback: 'passthrough' })
     expect(iu.seen[0]?.headers.get('x-agw-upstream')).toBeNull()
+  })
+})
+
+describe('credit pacing: purpose=eval', () => {
+  // `evalReserveUsd` pins the reserve, so the real clock does not matter: 1000 is never reached, 0 is always cleared.
+  const underReserve = (id: string) => pool(id, { evalReserveUsd: 1000 })
+  const aboveReserve = (id: string) => pool(id, { evalReserveUsd: 0 })
+  const as = (purpose: string, extra: Record<string, string> = {}): RequestInit => {
+    const init = jsonBody(request())
+    return { ...init, headers: { ...init.headers, 'x-agw-purpose': purpose, ...extra } }
+  }
+
+  test('an eval request skips the pool under its reserve; a prod request in the same state still takes it', async () => {
+    const gw = start({ registry: [underReserve('iu'), aboveReserve('me')] })
+    const evalResponse = await gw.call(MESSAGES, as('eval', { 'x-agw-session': 's-eval' }))
+    await evalResponse.text()
+    expect(evalResponse.headers.get('x-agw-pool')).toBe('me')
+    const prod = await gw.call(MESSAGES, as('prod', { 'x-agw-session': 's-prod' }))
+    await prod.text()
+    expect(prod.headers.get('x-agw-pool')).toBe('iu')
+    expect(gw.rows().picks.map(({ row }) => [row.picked, row.reason])).toEqual([
+      ['me', 'soonest-expiry'],
+      ['iu', 'soonest-expiry'],
+    ])
+  })
+
+  test('no eval candidate: 403, a refused/eval-reserve pick, no row, no upstream call, with x-agw-fallback absent', async () => {
+    const gw = start({ registry: [underReserve('iu'), underReserve('me')] })
+    const response = await gw.call(MESSAGES, as('eval'))
+    expect(response.status).toBe(403)
+    expect(response.headers.get('x-agw-pool')).toBe('refused')
+    const text = await response.text()
+    expect(JSON.parse(text)).toMatchObject({
+      type: 'error',
+      error: { type: 'permission_error', message: expect.stringContaining('eval reserve') },
+    })
+    expect(text).toContain('evalAvailableUsd')
+    expect(text).toContain('iu $0.00')
+    expect(text).toContain('me $0.00')
+    expect(iu.seen).toHaveLength(0)
+    expect(anthropic.seen).toHaveLength(0)
+    expect(gw.rows().records).toHaveLength(0)
+    expect(gw.rows().picks.map(({ row }) => [row.picked, row.reason])).toEqual([['refused', 'eval-reserve']])
+  })
+
+  test('the refusal is not a provider-balance failure and not a retried status', async () => {
+    const gw = start({ registry: [underReserve('iu')] })
+    const response = await gw.call(MESSAGES, as('eval', { 'x-agw-fallback': 'iu' }))
+    const text = await response.text()
+    expect(isBalanceFailure({ status: response.status, text })).toBe(false)
+    expect(isBalanceFailure({ text })).toBe(false)
+    expect(text).not.toContain(BALANCE_MARKER)
+    // 408/409 (SDK retries), 429 and 5xx are retried by the transports and the SDKs; 402 is a balance failure.
+    expect([402, 408, 409, 429]).not.toContain(response.status)
+    expect(response.status).toBeLessThan(500)
+    expect(iu.seen).toHaveLength(0)
+  })
+
+  test('x-agw-fallback: iu does not send an eval request to IU either', async () => {
+    const gw = start({ registry: [underReserve('iu')] })
+    const response = await gw.call(MESSAGES, as('eval', { 'x-agw-fallback': 'iu' }))
+    expect(response.status).toBe(403)
+    expect(iu.seen).toHaveLength(0)
+  })
+
+  test('a Claude-Code-shaped eval request is refused, not sent to IU', async () => {
+    const gw = start({ registry: [aboveReserve('me')] })
+    const response = await gw.call(MESSAGES, as('eval', { 'anthropic-beta': 'claude-code-20250219' }))
+    expect(response.status).toBe(403)
+    expect(iu.seen).toHaveLength(0)
+    expect(anthropic.seen).toHaveLength(0)
+    expect(gw.rows().picks.map(({ row }) => [row.picked, row.reason])).toEqual([['refused', 'eval-reserve']])
+  })
+
+  test('a forced eval request stays forced: IU, no refusal', async () => {
+    const gw = start({ registry: [underReserve('iu')] })
+    const response = await gw.call(MESSAGES, as('eval', { 'x-agw-upstream': 'iu' }))
+    await response.text()
+    expect(response.status).toBe(200)
+    expect(response.headers.get('x-agw-pool')).toBe('iu-api')
+    expect(gw.rows().picks.map(({ row }) => [row.picked, row.reason])).toEqual([['iu-api', 'forced']])
+  })
+
+  test('a bound eval session moves off a pool that fell under its reserve; production keeps the binding', async () => {
+    const gw = start({ registry: [aboveReserve('a'), pool('b', { evalReserveUsd: 50 })] })
+    gw.pools.served('oc', 's1', 'b')
+    const callAs = async (purpose: string) => {
+      const response = await gw.call(MESSAGES, as(purpose, { 'x-agw-session': 's1' }))
+      await response.text()
+      return response.headers.get('x-agw-pool')
+    }
+    expect(await callAs('eval')).toBe('b')
+    // $99 left, $50 reserved; $60 spent leaves $39, under the reserve but still eligible for production.
+    gw.pools.charge('b', 60, new Date())
+    expect(await callAs('prod')).toBe('b')
+    expect(await callAs('eval')).toBe('a')
+  })
+
+  test('other purposes and no purpose behave as without the header', async () => {
+    const gw = start({ registry: [underReserve('iu')] })
+    for (const purpose of ['prod', 'verify', 'drift']) {
+      const response = await gw.call(MESSAGES, as(purpose))
+      await response.text()
+      expect(response.headers.get('x-agw-pool')).toBe('iu')
+    }
+    const bare = await gw.call(MESSAGES, jsonBody(request()))
+    await bare.text()
+    expect(bare.headers.get('x-agw-pool')).toBe('iu')
+  })
+
+  test('other purposes with no pool eligible keep their fallback: IU, or the 402 with x-agw-fallback: none', async () => {
+    const gw = start({ registry: [] })
+    const viaIu = await gw.call(MESSAGES, as('verify'))
+    await viaIu.text()
+    expect(viaIu.headers.get('x-agw-pool')).toBe('iu-api')
+    const none = await gw.call(MESSAGES, as('prod', { 'x-agw-fallback': 'none' }))
+    expect(none.status).toBe(402)
+  })
+
+  test('/health carries the runway of each pool', async () => {
+    const gw = start({ registry: [pool('iu', { creditUsd: 200, evalReserveUsd: 50 }), pool('me', { cycleDay: null })] })
+    const health = (await (await fetch(`${gw.url}/health`)).json()) as { pools: Record<string, unknown>[] }
+    const [known, unknown] = health.pools
+    expect(known).toMatchObject({
+      id: 'iu',
+      creditLeftUsd: 199,
+      evalReserveUsd: 50,
+      evalAvailableUsd: 149,
+      evalEligible: true,
+    })
+    expect(known?.daysLeft).toBeGreaterThan(0)
+    expect(known?.runwayUsdPerDay).toBeGreaterThan(0)
+    expect(unknown).toMatchObject({
+      id: 'me',
+      creditLeftUsd: 99,
+      daysLeft: null,
+      runwayUsdPerDay: null,
+      evalReserveUsd: 100,
+      evalAvailableUsd: 0,
+      evalEligible: false,
+    })
   })
 })
 

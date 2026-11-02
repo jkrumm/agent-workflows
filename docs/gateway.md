@@ -70,6 +70,7 @@ Registry: `dotfiles/config/claude-accounts.json`, the picker's single source, ge
 subscription's payment day: `iu` pays on the 18th, its credit turns over on the 21st. `null` means unknown:
 the meter then sums the pool's rows over a rolling 31 days, which never under-counts the real cycle, and the pool stays
 usable. Keys resolve through `secrets-run` at start. A ref that does not resolve disables that pool and logs why; the gateway still starts.
+`platform.evalReserveUsd` (a number ≥ 0, never required) overrides the pool's computed eval reserve (§Credit pacing).
 
 Per request, in order:
 
@@ -86,14 +87,26 @@ Per request, in order:
    Bindings are written only when a request is served, TTL 1 h refreshed per request, in memory.
    A value over 200 characters is replaced by `h:` + its hash before any use, so picks, rows and spans stay bounded.
 2. **New session.** The eligible pool whose cycle ends soonest. Eligible: enabled, key resolved, and
-   `meter + headroom < credit`.
+   `meter + headroom < credit`. **`x-agw-purpose: eval`** narrows both this step and the binding in step 1 to pools that
+   are also above their eval reserve (§Credit pacing): a bound session whose pool is not goes through this step again.
 3. **No pool eligible.** IU `/anthropic`, unless the caller sent `x-agw-fallback: none`. Then the gateway answers 402
-   with the balance marker, and the caller's own route fallback (agw: GPT on IU) takes over.
+   with the balance marker, and the caller's own route fallback (agw: GPT on IU) takes over. **An `eval` request never
+   gets here:** with no eval-eligible pool it is refused (403, §Credit pacing), whatever `x-agw-fallback` says.
 4. **Refused for balance anyway** (meter drift): `isBalanceFailure` knows Anthropic's 400 "credit balance is too low";
    the pool is marked drained and the request is picked again without it, pool by pool, until the pick is no pool: IU,
    or the 402. One cache miss, accepted. Step 0 keeps a funded pool from being drain-marked by a Claude Code refusal, and
    the mark lasts 1 h (never past the credit's expiry) in case a refusal gets past it: a funded pool is out for an hour,
    not a month, and a really drained one costs one refused request an hour, retried on IU.
+
+**The fallback order, in one place.** The first line that applies wins:
+
+1. **Forced** (`x-agw-upstream: iu`): IU, whatever the purpose; modelpick's probes only.
+2. **Claude-Code-shaped:** IU, or the 402 with `x-agw-fallback: none`; for `eval` the 403 refusal, since IU is all it could get.
+3. **A bound pool**, while it is eligible (for `eval`: and above its reserve).
+4. **The soonest-expiry pool** (for `eval`: among the eval-eligible ones).
+5. **No pool, production** (`prod`, `verify`, `drift`, no purpose): IU, or the 402 with `x-agw-fallback: none`, after which the agw route falls
+   back onto GPT on IU.
+6. **No pool, `eval`:** the 403 refusal. Never IU, never GPT.
 
 **Meter.** Per pool and cycle: at boot the ledger's charges since the cycle start, then each response priced with the
 route rates. A row's `cost_reported_usd` carries only a figure priced from a complete reported usage block. Anything less
@@ -131,6 +144,40 @@ with an admin key, at boot (before listening, 30 s at most) and hourly:
   it and the new figure. Each start applies it first, before listening and before any live call, so a restart during an
   Admin API outage or on a lagging report keeps the outside spend. An unknown cycle stores its latest figure, since its
   window moves.
+
+## Credit pacing
+
+Wave 6 runs eval arms (`x-agw-purpose: eval`) on the Claude credit. Production must keep enough of it to last to each pool's
+expiry, so a sweep can never push production off the credit onto the IU key that is over its cap. Each pool's `/health` entry
+carries its runway, and an eval request may draw only on what production does not need.
+
+| Field | Meaning |
+|-|-|
+| `creditLeftUsd` | `max(0, creditUsd − meterUsd − headroomUsd)` |
+| `daysLeft` | fractional days to `cycleEnd`; null on an unknown cycle |
+| `runwayUsdPerDay` | `creditLeftUsd / daysLeft`; null when `daysLeft` is null or 0 |
+| `evalReserveUsd` | what production keeps (below) |
+| `evalAvailableUsd` | `max(0, creditLeftUsd − evalReserveUsd)` |
+| `evalEligible` | `eligible` and `evalAvailableUsd > 0` |
+
+**The reserve** is production's pro-rata share of the days left: `creditUsd × daysLeft / cycleLengthDays`, the cycle length
+being cycleStart → cycleEnd (31, 30 or 28 days). It starts at the whole credit and falls to nothing at expiry, so a pool
+that spends below its straight line has surplus and one above it has none. An **unknown cycle** has no pacing basis: the reserve is
+`creditUsd`, and evals never draw from it. `platform.evalReserveUsd` (number ≥ 0) replaces the computed figure for that
+pool; `0` frees the whole credit to evals.
+
+**The eval rule.** For `eval`, a pool is a candidate only if it is eligible as for any request and `creditLeftUsd −
+evalReserveUsd > 0` at the current meter; a request's own cost is not known beforehand, and the headroom covers it. Among
+candidates the order is the usual one, soonest expiry first. **No candidate: the request is refused and never reaches IU**,
+`x-agw-fallback` or not, a Claude-Code-shaped one included. The refusal is recorded in `gateway_picks` as `picked =
+refused`, `reason = eval-reserve`, with no ledger row and no upstream call. A forced request (`x-agw-upstream: iu`) stays forced,
+for modelpick's probes; an eval arm must not set it. Every other purpose picks, orders and falls back exactly as before.
+
+**Why the refusal is a 403 and not a 402.** `isBalanceFailure` counts a 402 as an empty provider balance, so the agw route would
+fall back onto GPT: that spends IU and replaces the arm's model with another, which corrupts the measurement. A
+408, 409, 429 or 5xx is retried (the transports' `RETRYABLE_STATUS`, and the Anthropic, OpenAI and AI SDKs, OpenCode's included, which also
+retry 409), so the same refusal would be asked again. A 403 is neither: a `permission_error` in Anthropic's body shape, whose message
+names `eval reserve` and each pool's `evalAvailableUsd`, so the run fails with its reason. The body carries no balance wording.
 
 ## Callers and attribution
 

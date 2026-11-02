@@ -24,7 +24,7 @@ from the subscriptions' API credit before IU, and records every request. Design 
 Callers send a door token as `authorization: Bearer <t>`, `x-api-key`, `x-goog-api-key`, `api-key` or a `key` query
 parameter; the API secret authenticates as `agw`.
 Every proxied response carries `x-agw-request-id` (the ledger `source_id`) and `x-agw-pool` (a pool id, `iu-api`, or
-`refused` on a 402).
+`refused` on a 402 or an `eval` refusal).
 
 **Model.** A response that echoes the requested model behind a provider prefix (`openai.<id>`, `deepseek/<id>`) is
 recorded under the requested id, the echo in `model_raw`; any other echo is the row's `model` as it came.
@@ -38,7 +38,8 @@ which is re-serialised with the concrete id. **Not forwarded:** every credential
 | `x-agw-session`, `x-agw-run-id`, `x-agw-workflow`, `x-agw-step`, `x-agw-purpose` | the session binding, `lane_detail`, `run_id` |
 | `x-agw-project` | `project_raw`, and `repo` when it is a plain slug and the workspace is not `work` |
 | `x-agw-workspace` | `workspace`, when it is `work` or `private` |
-| `x-agw-fallback: none` | a 402 instead of the IU fallback (`/anthropic` paths) |
+| `x-agw-fallback: none` | a 402 instead of the IU fallback (`/anthropic` paths). Does not touch an `eval` request: that is refused either way |
+| `x-agw-purpose: eval` | draws only on credit above a pool's eval reserve; with none, the 403 below, never IU (`/anthropic` paths). Any other purpose is attribution only |
 | `x-agw-usage: caller` | from caller `agw` on `/openai/v1/images/`, `/openai/v1/audio/`, `/gemini/v1beta/` or `/replicate/v1/`: no ledger row. Ignored from any other caller or on any other path |
 | `x-agw-upstream: iu` | an `/anthropic` path skips the credit pools, reason `forced` in `gateway_picks`; no effect elsewhere |
 
@@ -66,17 +67,28 @@ pool's refs are not read. The process never reads `iu.env` or `athena-iu.env`.
 
 ## Pick flow
 
-`src/pools/` owns the decision; `src/proxy.ts` acts on it.
+`src/pools/` owns the decision; `src/proxy.ts` acts on it. The first line that applies wins (the same order is in
+`docs/gateway.md` §Picking a pool):
 
 1. `x-agw-upstream: iu` goes to IU, reason `forced`, with `lane_detail.fallback` null: a choice, not a fallback. It beats a bound session, writes and clears no binding, and
-   `x-agw-fallback: none` does not refuse it.
-2. A Claude-Code-shaped request skips the credit pools.
-3. A bound session stays on its pool while that pool is eligible.
-4. A new session takes the eligible pool that expires soonest.
+   `x-agw-fallback: none` does not refuse it. An `eval` request may be forced too; that is for modelpick's probes, an eval arm must not set it.
+2. A Claude-Code-shaped request skips the credit pools: IU, or the 402 with `x-agw-fallback: none`; for `eval`, the refusal below.
+3. A bound session stays on its pool while that pool is eligible (for `eval`: and above its reserve, else it is picked anew).
+4. A new session takes the eligible pool that expires soonest (for `eval`: among the pools above their reserve).
 5. With no pool eligible the request goes to IU, unless the caller sent `x-agw-fallback: none`: then a 402 with the
-   balance marker.
+   balance marker, and the agw route falls back onto GPT on IU.
 6. A pool's balance refusal marks it drained and picks again without it, pool by pool, until the pick is no pool: IU,
    or the 402.
+7. **An `eval` request with no pool above its reserve** is refused, `picked = refused`, reason `eval-reserve`, no ledger row and no upstream call, `x-agw-fallback` or not.
+
+**The refusal is a 403**, an Anthropic-shaped `permission_error` whose message names `eval reserve` and every pool's
+`evalAvailableUsd`. It is not a 402: `isBalanceFailure` treats that as an empty balance and the agw route would fall
+back onto GPT on IU, spending IU and replacing the arm's model. It is not a 408, 409, 429 or 5xx either: the transports
+(`RETRYABLE_STATUS`) and the Anthropic, OpenAI and AI SDKs (OpenCode's included; they retry 409 too) ask again. Nothing
+retries or classifies a 403, so the run fails with the reason in its message. `test/proxy.test.ts` asserts
+`isBalanceFailure` is false on the exact body.
+
+**Pacing.** The reserve and the runway are `docs/gateway.md` §Credit pacing; `platform.evalReserveUsd` overrides a pool's reserve.
 
 The label of the IU passthrough is `iu-api` everywhere, because a credit pool is named `iu`. Bindings are written only
 after an upstream 2xx.
@@ -116,13 +128,27 @@ after an upstream 2xx.
   "status": "ok",
   "version": "<AGW_VERSION>",
   "build": "<AGW_GATEWAY_BUILD>",
-  "pools": [{ "id": "iu", "eligible": true, "meterUsd": 12.3, "reconciledAt": "…", "reconcileError": null }],
+  "pools": [
+    {
+      "id": "iu",
+      "eligible": true,
+      "meterUsd": 12.3,
+      "creditLeftUsd": 185.7,
+      "daysLeft": 18.5,
+      "runwayUsdPerDay": 10.04,
+      "evalReserveUsd": 119.35,
+      "evalAvailableUsd": 66.35,
+      "evalEligible": true,
+      "reconciledAt": "…",
+      "reconcileError": null
+    }
+  ],
   "ledger": { "unsynced": 0, "quarantined": 0, "oldestUnsyncedAt": null, "flush": "on" }
 }
 ```
 
 `status` is `degraded` only when the ledger cannot be written. `ledger.flushError` carries the last flush failure,
-`pools[].reconcileError` the last reconcile failure kind.
+`pools[].reconcileError` the last reconcile failure kind. The runway fields are `docs/gateway.md` §Credit pacing.
 
 ## Lifecycle
 
