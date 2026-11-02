@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { PROVIDER_ECHO } from './models.ts'
 import { applyPatch, OVERRIDES_ENV, RouteOverrideError, readOverrides } from './overrides.ts'
 import { DEFAULT_ROUTES } from './registry.ts'
 import type { ResolvedRoute, RouteEntry, RouteId, Wire } from './schema.ts'
@@ -24,6 +25,7 @@ export {
   type ProviderUsage,
   resolveModelAlias,
 } from './pricing.ts'
+export { canonicalModel } from './models.ts'
 export { OVERRIDES_ENV, RouteOverrideError } from './overrides.ts'
 export { DEFAULT_ROUTES, discoverRoutes } from './registry.ts'
 export {
@@ -121,9 +123,6 @@ export function gatewayRecords(model: string): boolean {
   const echo = PROVIDER_ECHO.exec(model)
   return echo?.[1] !== undefined && gatewayModels.has(echo[1])
 }
-
-/** `<provider>/<model>` or `<provider>.<model>`, the provider one segment; the gateway's `rowModel` reads it the same way. */
-const PROVIDER_ECHO = /^[A-Za-z0-9_-]+[/.](.+)$/
 
 function isRouteId(id: string): id is RouteId {
   return Object.hasOwn(DEFAULT_ROUTES, id)

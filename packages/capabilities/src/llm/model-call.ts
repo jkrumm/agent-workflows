@@ -1,4 +1,5 @@
 import {
+  canonicalModel,
   costFromUsage,
   type Effort,
   fallbackRoute,
@@ -42,7 +43,10 @@ export function resolve(deps: LlmDeps, routeId: RouteId): ResolvedRoute {
   }
 }
 
-/** A reported attempt as a `Usage`; `undefined` stands for a call the provider returned no usage for. */
+/**
+ * A reported attempt as a `Usage`; `undefined` stands for a call the provider returned no usage for. The model is the
+ * canonical id (the provider's echo may carry a prefix, a snapshot date or `[1m]`); `route` is the route it was resolved from.
+ */
 export function toUsage(route: ResolvedRoute, model: string, attempt: AttemptUsage | undefined): Usage {
   const none: Tokens = { input: 0, output: 0, cacheRead: 0, reasoning: 0 }
   const { cacheWrite1h, ...tokens } = attempt?.tokens ?? none
@@ -63,7 +67,13 @@ export function toUsage(route: ResolvedRoute, model: string, attempt: AttemptUsa
     route.rate,
   )
   // `cacheWrite1h` only prices the call: a usage row's `cacheWrite` is the total, as the run record sums it.
-  return { model: attempt?.model ?? model, tokens, cost: cost.usd, costSource: cost.source }
+  return {
+    model: canonicalModel(attempt?.model ?? model),
+    route: route.id,
+    tokens,
+    cost: cost.usd,
+    costSource: cost.source,
+  }
 }
 
 /** The error for an unusable answer, or null when `result.text` can be used. */

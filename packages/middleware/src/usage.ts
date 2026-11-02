@@ -489,7 +489,8 @@ export function usageRowsForStep(step: OutboxStep, options: UsageRowOptions): Us
       source_id: `${step.runId}:${step.stepId}:${model}`,
       grain: 'session',
       ts: step.startedAt.toISOString(),
-      // agw model ids are already normalized: the raw and the normalized string are one.
+      // The journal's model ids are canonical (`canonicalModel`: no provider prefix, snapshot date or `[1m]`), so the raw
+      // and the normalized string are one here; a provider's raw echo is kept only on the gateway's rows.
       model_raw: model,
       model,
       repo: repoOf(run.project, run.workspace),

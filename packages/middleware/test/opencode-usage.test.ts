@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { additiveTokens, usageFromOpenCodeMessages } from '../src/index.ts'
+import { additiveTokens, type OpenCodeMessage, usageFromOpenCodeMessages } from '../src/index.ts'
 import { cachedTurn, partlyPriced, toolTurns } from './fixtures/opencode-messages.ts'
 
 describe('usageFromOpenCodeMessages', () => {
@@ -16,7 +16,7 @@ describe('usageFromOpenCodeMessages', () => {
   test('sums turns, counts tool blocks, keeps cache writes in their bucket, takes the route model', () => {
     const usage = usageFromOpenCodeMessages(toolTurns, { model: 'iu/deepseek-v4.1-flash' })
     expect(usage).toEqual({
-      model: 'iu/deepseek-v4.1-flash',
+      model: 'deepseek-v4.1-flash',
       tokens: {
         input: 1200 + 800 + 64 + 150 + 2000,
         output: 40 + 300 + 25 + 60,
@@ -47,6 +47,18 @@ describe('usageFromOpenCodeMessages', () => {
     expect(usage.costSource).toBe('unknown')
     expect(usage.tokens.input).toBe(30)
     expect(usage.model).toBeUndefined()
+  })
+
+  test('the model is the canonical id: the route model or a message echo, prefix, snapshot date and [1m] stripped', () => {
+    const echoed: OpenCodeMessage[] = [{ ...(cachedTurn[1] as OpenCodeMessage), modelID: 'openai.deepseek-v4.1-flash' }]
+    expect(usageFromOpenCodeMessages(echoed).model).toBe('deepseek-v4.1-flash')
+    expect(usageFromOpenCodeMessages(echoed, { model: 'vertex_ai_eu/deepseek-v4.1-flash' }).model).toBe(
+      'deepseek-v4.1-flash',
+    )
+    const claude = usageFromOpenCodeMessages(echoed, { model: 'sonnet' }).model as string
+    expect(usageFromOpenCodeMessages(echoed, { model: `${claude}-20261001[1m]` }).model).toBe(claude)
+    expect(usageFromOpenCodeMessages(echoed, { model: 'sonnet' }).model).toBe(claude)
+    expect(claude).toMatch(/^claude-sonnet-/)
   })
 
   test('no assistant message: zero usage', () => {

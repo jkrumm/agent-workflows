@@ -100,6 +100,7 @@ describe('requestImages: the request', () => {
     expect(reported).toEqual([
       {
         model: FLARE,
+        route: 'image.flare',
         tokens: { input: 100, output: 1000, cacheRead: 0, reasoning: 0 },
         cost: COST,
         costSource: 'rate',

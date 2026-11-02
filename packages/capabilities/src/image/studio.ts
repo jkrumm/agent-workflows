@@ -524,6 +524,7 @@ export async function requestImages(
   const cost = costFromUsage(route.wire, usage, route.rate, route.price)
   ctx.addUsage({
     model: route.model,
+    route: route.id,
     tokens: { input: usage?.input_tokens ?? 0, output: usage?.output_tokens ?? 0, cacheRead: 0, reasoning: 0 },
     cost: cost.usd,
     costSource: cost.source,

@@ -21,9 +21,11 @@ function addInto(target: ModelUsage, usage: Usage) {
 export class UsageTotals {
   private total = emptyModelUsage()
   private byModel: Record<string, ModelUsage> = {}
+  private routes = new Set<string>()
 
   add(usage: Usage) {
     addInto(this.total, usage)
+    if (usage.route) this.routes.add(usage.route)
     if (!usage.model) return
     this.byModel[usage.model] ??= emptyModelUsage()
     addInto(this.byModel[usage.model] as ModelUsage, usage)
@@ -35,7 +37,12 @@ export class UsageTotals {
     return models.length === 1 ? (models[0] ?? null) : null
   }
 
+  /** The single route when exactly one reported, else null. */
+  route(): string | null {
+    return this.routes.size === 1 ? ([...this.routes][0] ?? null) : null
+  }
+
   snapshot(): StepUsage {
-    return structuredClone({ ...this.total, byModel: this.byModel })
+    return structuredClone({ ...this.total, byModel: this.byModel, route: this.route() })
   }
 }

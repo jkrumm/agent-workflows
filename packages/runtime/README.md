@@ -45,6 +45,11 @@ const result = await runtime.wait(runId)
   price count as `unpricedCalls`, so a partially priced step is visible instead of a silent undercount. Tokens
   are raw provider counts: `input` includes cache reads and writes, `output` includes reasoning; `cacheWrite` is
   optional on a report (absent means 0) and always present on the sums (`tokens_cache_write`).
+  `model` is the canonical id (`canonicalModel` in `@agent-workflows/routes`: no provider prefix, snapshot date or `[1m]`),
+  so `steps.model` and the `usage_by_model` keys name one model one way. `route` is the route id a call was resolved
+  from (a fallback call keeps the primary's); `steps.route` (migration 0013) holds it when every report of the step names
+  the same one, null for a step with several routes or none. **Cut-over:** steps finished before this release keep their
+  raw model ids and a null `route`; there is no backfill, so group by route only over steps after it.
 - **Idempotency key.** `start({ idempotencyKey })` returns the same run for the same workflow, key and input; the same key with a
   different input throws `IdempotencyConflict` (the first run stands). `getRun(runId)` reads a run's state; `ping(timeoutMs)`
   is a bounded health probe: it rejects at the bound and a stalled query's connection is destroyed, not parked on the pool.
@@ -134,7 +139,7 @@ defineWorkflow({ id: 'research.report', scorer: draftScorer, async run(ctx, inpu
 - Journal in its own schema (`schema`, default `agw`): `runs`, `steps`, `signals`, migrated from
   `src/migrations/NNNN_*.sql` in one transaction under an advisory lock, recorded in `schema_migrations`. The
   run-record columns (fingerprint, tokens, cost, `unpriced_calls`, `tool_calls`, friction, `scores`) and the usage outbox
-  columns on steps (`argo_synced_at`, `argo_claim`, `argo_claimed_until`, `argo_error`, migration 0002) exist for
+  columns on steps (`argo_synced_at`, `argo_claim`, `argo_claimed_until`, `argo_error`, migration 0002; `route`, migration 0013) exist for
   the middleware to fill. A merged migration is never edited; changes take the next number.
 - **Lease:** one `pg_try_advisory_lock` per top-level run (64-bit key from sha256), held on a dedicated
   connection budget sized `maxConcurrentRuns` (plus one reserved for `runPost` re-delivery), never the journal

@@ -391,7 +391,7 @@ export class Journal {
     return this.fenced(
       fence,
       `update ${this.steps} set status = $5, output = $6, error = $7, error_kind = $8, model = $9,
-         tokens_input = $10, tokens_output = $11, tokens_cache_read = $12, tokens_reasoning = $13,
+         route = $19, tokens_input = $10, tokens_output = $11, tokens_cache_read = $12, tokens_reasoning = $13,
          cost = $14, tool_calls = $15, usage_by_model = $16, unpriced_calls = $17, tokens_cache_write = $18,
          finished_at = now()
        where run_id = $1 and step_id = $2 and status = 'running' and ${this.fence(3, 4)}`,
@@ -414,6 +414,7 @@ export class Journal {
         Object.keys(usage.byModel).length ? JSON.stringify(usage.byModel) : null,
         usage.unpricedCalls,
         usage.tokens.cacheWrite,
+        usage.route ?? null,
       ],
     )
   }

@@ -161,6 +161,8 @@ describe('open / prompt / wait', () => {
     expect(result.usage?.tokens).toEqual({ input: 130, output: 6, cacheRead: 100, cacheWrite: 20, reasoning: 1 })
     expect(result.usage?.cost).toBe(0.001)
     expect(result.usage?.costSource).toBe('provider')
+    // The step's route id, for the journal's `steps.route`.
+    expect(result.usage?.route).toBe('check')
   })
 
   test('prompt is idempotent: a second call reads the session and sends nothing', async () => {
@@ -1020,6 +1022,8 @@ describe('provider-balance fallback', () => {
     expect(fallback?.permissions).toEqual(primary?.permissions)
     expect(fallback?.messages.filter((m) => m.type === 'user')).toHaveLength(1)
     expect(result.usage?.model).toBe(fallback?.model.id)
+    // A fallback session is the same route: it keeps the primary's id.
+    expect(result.usage?.route).toBe('check')
     expect(t.warnings).toContain('opencode turn failed on provider balance; falling back')
   })
 

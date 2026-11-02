@@ -21,7 +21,10 @@ export type TokenCounts = Required<Tokens>
  * `unpricedCalls`, never summed as 0.
  */
 export type Usage = {
+  /** The canonical model id (`canonicalModel` in `@agent-workflows/routes`), not the provider's echo. */
   model?: string
+  /** The route id the call was resolved from; a fallback call keeps the primary's. Absent for a call with no route. */
+  route?: string
   tokens: Tokens
   cost?: number | null
   costSource?: 'provider' | 'rate' | 'unknown'
@@ -31,8 +34,11 @@ export type Usage = {
 /** `cost` sums the priced reports only; `unpricedCalls > 0` marks it as a lower bound. */
 export type ModelUsage = { tokens: TokenCounts; cost: number | null; toolCalls: number; unpricedCalls: number }
 
-/** The per-step sum of every `addUsage`, with a per-model split for the usage projection. */
-export type StepUsage = ModelUsage & { byModel: Record<string, ModelUsage> }
+/**
+ * The per-step sum of every `addUsage`, with a per-model split for the usage projection. `route` is the one route id the
+ * step's calls named, null when none or more than one did (set by `UsageTotals.snapshot`).
+ */
+export type StepUsage = ModelUsage & { byModel: Record<string, ModelUsage>; route?: string | null }
 
 export type RetryPolicy = {
   /** Total attempts including the first. Default 1 (no retry); agent steps default to none as well. */
