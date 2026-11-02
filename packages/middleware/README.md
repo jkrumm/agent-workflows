@@ -33,9 +33,9 @@ span before telemetry ends it. `platform.close()` comes after
 | `record` | `runPost` | `runs.wall_ms`, `tokens_*` (incl. `tokens_cache_write`), `cost`, `unpriced_calls`, `tool_calls`, `trace_id` |
 | `telemetry` | all six | One span per run drive, one child span per step, tool calls as span events |
 
-- **Run record.** Sums the run's own step rows; `cost` and `unpriced_calls` also add the direct child runs' records
-  (fan-out children and parented starts end first, each record already holding its own children's), so a root carries
-  its tree's total. A tree sum over runs reads the steps, never `runs.cost`. `cost` stays null when no part was priced;
+- **Run record.** Sums the run's own step rows; `cost` and `unpriced_calls` sum the steps of the run and every
+  descendant run (recursively by `parent_id`: fan-out children, parented starts, an eval's judge calls), each step once
+  and never through a child's own record, so a root carries its tree's total even when a child's `runPost` lands late. A tree sum over runs reads the steps, never `runs.cost`. `cost` stays null when no part was priced;
   `unpriced_calls > 0` marks it as a lower bound. Wall time
   comes from the row's `started_at`/`finished_at`, so a re-delivered `runPost` writes the identical record; it is
   null for a run that never started (cancelled while pending), never 0.

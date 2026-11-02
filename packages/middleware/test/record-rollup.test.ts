@@ -1,10 +1,21 @@
-// The run record's cost roll-up: a run's `cost` is its own steps' plus its direct child runs' records, so the root of a
-// tree carries the tree's total, whether the children are fan-out children or parented starts (eval case runs).
+// The run record's cost roll-up: a run's `cost` sums the steps of the run and every descendant run (by `parent_id`), so
+// the root of a tree carries the tree's total, whether the children are fan-out children or parented starts (eval case
+// runs), and whenever a child's own record lands.
 import { afterAll, describe, expect, test } from 'bun:test'
 import { defineWorkflow, type Runtime } from '@agent-workflows/runtime'
 import { z } from 'zod'
-import { admissionSpanId, traceIdForRun } from '../src/index.ts'
-import { attr, freshSchema, inspector, parentOf, testPlatform, testRuntime, until } from './support.ts'
+import { admissionSpanId, JournalDb, recordMiddleware, traceIdForRun } from '../src/index.ts'
+import {
+  attr,
+  captureLogger,
+  freshSchema,
+  inspector,
+  PG_URL,
+  parentOf,
+  testPlatform,
+  testRuntime,
+  until,
+} from './support.ts'
 
 const db = freshSchema('mwroll')
 const sql = inspector(db.schema)
@@ -180,6 +191,48 @@ describe('run record cost roll-up', () => {
     } finally {
       await rt.close()
       await platform.close()
+    }
+  })
+
+  test("a child whose runPost lands after its parent's still counts in the parent's cost", async () => {
+    const logger = captureLogger()
+    const recordDb = new JournalDb({ connectionString: PG_URL, schema: db.schema }, logger)
+    const record = recordMiddleware({ db: recordDb, logger })
+    let holdChild = true
+    // The record, except for the fan-out child while held: its runPost throws and is redelivered later.
+    const lateChild: typeof record = {
+      ...record,
+      name: 'record-late-child',
+      async runPost(args) {
+        if (holdChild && args.workflowId === grandchild.id) throw new Error('child record held back')
+        await record.runPost?.(args)
+      },
+    }
+    rt = testRuntime({
+      schema: db.schema,
+      workflows: [fanOut, grandchild],
+      middleware: [lateChild],
+      maxPostHookAttempts: 1000,
+    })
+    await rt.open()
+    try {
+      const { runId } = await rt.start(fanOut, { n: 0 }, { purpose: 'prod' })
+      expect((await rt.wait(runId)).status).toBe('done')
+      const parent = await recorded(runId)
+      const kid = await sql.run(`${runId}/kids/0`)
+      // The parent's record was written while its children's were not.
+      expect(kid).toMatchObject({ post_hooks_at: null, cost: null })
+      expect(Number(parent.cost)).toBeCloseTo(0.012, 12)
+      holdChild = false
+      const late = await until(async () => {
+        const row = await sql.run(`${runId}/kids/0`)
+        return row?.post_hooks_at ? row : null
+      }, 'the redelivered child record')
+      expect(Number(late.cost)).toBeCloseTo(0.001, 12)
+      expect(Number((await sql.run(runId))?.cost)).toBeCloseTo(0.012, 12)
+    } finally {
+      await rt.close()
+      await recordDb.close()
     }
   })
 })

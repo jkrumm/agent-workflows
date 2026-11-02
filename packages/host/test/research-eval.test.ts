@@ -297,6 +297,94 @@ describe("the scorers' judge", () => {
     await until(async () => (await capRuns(url))[0] === 'cancelled', 'the call cancelled')
   })
 
+  test('a regression call inside an eval run is its child; a drift call never is', async () => {
+    const fetch = capWorkflows.get('web.fetch')
+    if (!fetch) throw new Error('no cap.web.fetch')
+    const { runId: parent } = await jrt.start(fetch, { url: 'https://example.com/parent' }, { purpose: 'prod' })
+    await jrt.wait(parent)
+    await judge()(
+      'web.fetch',
+      { url: 'https://example.com/p1' },
+      { ...scope('regression', 'scored-30'), evalRunId: parent },
+    )
+    await judge()('web.fetch', { url: 'https://example.com/p2' }, { ...scope('drift', 'scored-30'), evalRunId: parent })
+    const { rows } = await jsql.pool.query(
+      `select input->>'url' as url, parent_id, root_id = id as own_root from "${jdb.schema}".runs
+        where workflow = 'cap.web.fetch' and input->>'url' in ('https://example.com/p1', 'https://example.com/p2')
+        order by url`,
+    )
+    expect(rows).toEqual([
+      { url: 'https://example.com/p1', parent_id: parent, own_root: true },
+      { url: 'https://example.com/p2', parent_id: null, own_root: true },
+    ])
+  })
+
+  test("an eval run's cost covers its case runs and its regression judging", async () => {
+    const edb = freshSchema('evaljudge')
+    const esql = inspector(edb.schema)
+    const judged: HostWorkflow = {
+      workflow: defineWorkflow({
+        id: 'research',
+        version: 't1',
+        input: z.object({ query: z.string(), depth: z.string() }),
+        output: z.object({ answer: z.string() }),
+        scorer: {
+          version: 'sj1',
+          reference: z.object({ want: z.string() }),
+          score: async (input, _output, ctx) => {
+            await ctx.judge?.('web.fetch', { url: `https://example.com/judge/${input.query}` })
+            return { scores: { golden: 1 }, pass: true }
+          },
+        },
+        async run(ctx, input) {
+          await ctx.step('answer', ({ addUsage }) => {
+            addUsage({ model: 'm', tokens: { input: 1, output: 1, cacheRead: 0, reasoning: 0 }, cost: 0.01 })
+            return 1
+          })
+          return { answer: input.query }
+        },
+      }),
+      summary: 'fake research that judges',
+    }
+    const ownEvals = createEvalWorkflows(HOST_SUITES, { env, tmpRoot })
+    const eplatform = testPlatform(edb.schema)
+    const ert: Runtime = testRuntime({
+      schema: edb.schema,
+      workflows: [judged, ...ownEvals].map((e) => e.workflow).concat([...capWorkflows.values()]),
+      middleware: eplatform.middleware,
+      judge: scorerJudge({ registry, workflows: capWorkflows, runtime: () => ert }),
+    })
+    const ewiring = wireEval({ runtime: ert, workflows: [judged, ...ownEvals], env })
+    await ert.open()
+    try {
+      const run = ownEvals[0]?.workflow as NonNullable<(typeof ownEvals)[0]>['workflow']
+      const { runId } = await ert.start(run, { workflow: 'research', yes: true }, { purpose: 'prod' })
+      const end = await ert.wait(runId)
+      expect(end.status).toBe('done')
+      const out = end.output as { summary: { costUsd: number } }
+      expect(out.summary.costUsd).toBeCloseTo(0.02, 12) // the two case runs
+      const { rows } = await esql.pool.query(
+        `select workflow, count(*)::int as n from "${edb.schema}".runs where parent_id = $1 group by workflow order by workflow`,
+        [runId],
+      )
+      expect(rows).toEqual([
+        { workflow: 'cap.web.fetch', n: 2 },
+        { workflow: 'research', n: 2 },
+      ])
+      const row = await until(async () => {
+        const r = await esql.run(runId)
+        return r?.post_hooks_at ? r : null
+      }, 'the eval run record')
+      expect(Number(row.cost)).toBeCloseTo(2 * 0.01 + 2 * 0.002, 12)
+    } finally {
+      await ewiring.close()
+      await ert.close()
+      await eplatform.close()
+      await esql.close()
+      await edb.drop()
+    }
+  })
+
   test('the inline gate calls in process, on its own step', async () => {
     expect(await judge()('decide', { state: 's' }, scope('inline'))).toEqual({ inline: { state: 's' } })
   })

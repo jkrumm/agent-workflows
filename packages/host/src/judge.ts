@@ -31,7 +31,8 @@ export function answerOf(error: { code: string; message: string; data?: unknown 
 /**
  * The scorers' judge (`RuntimeOptions.judge`), limited to {@link JUDGE_CAPABILITIES} and `llm.*`.
  * - Regression and drift score outside any step: each call is a `cap.<id>` run of its own, recorded and priced like any
- *   direct capability call, with purpose `eval` (regression) or `drift`.
+ *   direct capability call, with purpose `eval` (regression) or `drift`. A regression call inside `agw eval run`
+ *   (`scope.evalRunId`) is started as a child of the eval run, so the eval's cost includes its judging.
  * - An inline gate calls in process; its usage lands on the gate's step, under the scored run's purpose.
  * Each call is keyed by the scored run, the score source, the scorer version, the capability and its input, under the
  * shared attempt rule (`withAttemptKeys`): a retried scoring adopts a finished call, an answer failure included
@@ -92,7 +93,8 @@ export function scorerJudge(options: {
         return answer ? { value: answer } : { failedBefore: true }
       }
       scope.signal.throwIfAborted()
-      const { runId } = await runtime.start(workflow, input, { purpose, idempotencyKey: key })
+      const parent = scope.source === 'regression' && scope.evalRunId ? { parentId: scope.evalRunId } : {}
+      const { runId } = await runtime.start(workflow, input, { purpose, idempotencyKey: key, ...parent })
       // The scoring was aborted (cancel, shutdown): the call it started goes with it, also when that came first.
       const onAbort = () => void runtime.cancel(runId).catch(() => {})
       scope.signal.addEventListener('abort', onAbort, { once: true })

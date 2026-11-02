@@ -243,6 +243,8 @@ export type JudgeCaller = (
     scorer: string
     /** The inline gate's step; absent for regression and drift, whose calls are runs of their own. */
     attribution?: Attribution
+    /** Regression inside `agw eval run`: the eval run, which the host starts the judge's call runs under (`parentId`). */
+    evalRunId?: string
   },
 ) => Promise<Json>
 
@@ -293,8 +295,8 @@ export type RunError = { kind: ErrorKind; message: string }
 
 /**
  * A run as the outside world sees it (`Runtime.getRun`): output only once `done`, error only once ended badly.
- * `cost` and `unpricedCalls` are the run record's: its own steps plus its direct child runs' records (a child's already
- * holds its descendants', so a root carries its tree's total). `runPost` writes them after the terminal status commits: `postHooksDone`
+ * `cost` and `unpricedCalls` are the run record's, over the steps of the run and every descendant run (by `parent_id`),
+ * so a root carries its tree's total. `runPost` writes them after the terminal status commits: `postHooksDone`
  * says the hooks were delivered or given up on, and `postHooksFailed` that it was the give-up, so the record may be
  * missing. Before `postHooksDone` the sums are not to be read as final.
  */
@@ -304,7 +306,7 @@ export type RunSnapshot = {
   status: RunStatus
   output: Json | null
   error: RunError | null
-  /** Sum of the priced usage of the run and its child runs; null when nothing was priced. A lower bound while `unpricedCalls > 0`. */
+  /** Sum of the priced usage of the run and its descendant runs; null when nothing was priced. A lower bound while `unpricedCalls > 0`. */
   cost: number | null
   unpricedCalls: number
   postHooksDone: boolean
