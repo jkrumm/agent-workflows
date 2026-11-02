@@ -119,7 +119,7 @@ type Diagnostic = {
   filePath: string
   rule: string
   severity: string
-  title: string
+  message: string
   line?: number
   category?: string
   id?: string
@@ -184,7 +184,7 @@ function parse(result: ReactDoctorRaw): Outcome {
       rule: d.rule,
       file: repoRelative(d),
       ...(d.line === undefined ? {} : { line: d.line }),
-      title: d.title,
+      title: d.message,
       category: d.category ?? '',
     }))
     .toSorted(

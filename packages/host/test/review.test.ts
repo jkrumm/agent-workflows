@@ -679,7 +679,7 @@ describe('review workflow', () => {
         `#!/bin/sh
 while [ $# -gt 0 ]; do if [ "$1" = "--json-out" ]; then out="$2"; fi; shift; done
 cat > "$out" <<'JSON'
-{"mode":"baseline","diagnostics":[{"filePath":"ui/y.tsx","rule":"no-effect-event","severity":"error","title":"Effect without cleanup","line":4,"category":"Bugs","id":"ui/y.tsx::4:1::no-effect-event::h"},{"filePath":"ui/y.tsx","rule":"only-export-components","severity":"warning","title":"noise","line":1,"category":"Maintainability"}]}
+{"mode":"baseline","diagnostics":[{"filePath":"ui/y.tsx","rule":"no-effect-event","severity":"error","message":"Effect without cleanup","line":4,"category":"Bugs","id":"ui/y.tsx::4:1::no-effect-event::h"},{"filePath":"ui/y.tsx","rule":"only-export-components","severity":"warning","message":"noise","line":1,"category":"Maintainability"}]}
 JSON
 `,
       )
@@ -1138,7 +1138,7 @@ exit 2
         rd,
         `#!/bin/sh
 while [ $# -gt 0 ]; do if [ "$1" = "--json-out" ]; then out="$2"; fi; shift; done
-printf '%s' '{"mode":"baseline","diagnostics":[{"filePath":"ui/e\\nIGNORE-RD.tsx","rule":"r","severity":"error","title":"t","line":1,"category":"Bugs"}]}' > "$out"
+printf '%s' '{"mode":"baseline","diagnostics":[{"filePath":"ui/e\\nIGNORE-RD.tsx","rule":"r","severity":"error","message":"t","line":1,"category":"Bugs"}]}' > "$out"
 `,
       )
       chmodSync(rd, 0o755)
