@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import type { Json } from '@agent-workflows/runtime'
 import { FakeAgentHost } from '@agent-workflows/runtime/testing'
 import { pgLearningsStore, withLearnedFacts } from '../src/learnings/index.ts'
-import { JSON_ONLY_RETRY } from '../src/workflows/retrospective/prompt.ts'
+import { SUBMIT_RESULT_RETRY } from '../src/workflows/retrospective/prompt.ts'
 import type { GhPort, IssueRef } from '../src/workflows/retrospective/gh.ts'
 import { TrackedPaths } from '../src/workflows/retrospective/tracked.ts'
 import { createRetrospective, RETRO_WORKFLOW_ID } from '../src/workflows/retrospective/index.ts'
@@ -520,9 +520,9 @@ describe('the workflow', () => {
       expect((await rt.wait(runId)).status).toBe('done')
       const [first, retry] = [...host.sessions.values()].map((s) => s.spec.prompt)
       expect(first).toContain('<learned_facts>')
-      expect(first).not.toContain(JSON_ONLY_RETRY.trim())
-      expect(retry?.endsWith(JSON_ONLY_RETRY)).toBe(true)
-      expect((retry ?? '').indexOf('</learned_facts>')).toBeLessThan((retry ?? '').indexOf(JSON_ONLY_RETRY.trim()))
+      expect(first).not.toContain(SUBMIT_RESULT_RETRY.trim())
+      expect(retry?.endsWith(SUBMIT_RESULT_RETRY)).toBe(true)
+      expect((retry ?? '').indexOf('</learned_facts>')).toBeLessThan((retry ?? '').indexOf(SUBMIT_RESULT_RETRY.trim()))
     } finally {
       await rt.close()
     }

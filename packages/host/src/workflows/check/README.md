@@ -26,9 +26,11 @@ Behaviour is ported from agent-gateway's `check`, the code is written fresh. Leg
    named `check` or a catch-all `%:` rule is not a contract.
 2. **Agent.** Otherwise one agent step (`agent`, agent `check`, route `check`): explicit `commands` run verbatim,
    without discovery; none means the discovery guide in `AGENTS.md`. The agent works in its compiled location, so the
-   step passes `options.allowDirectories: [cwd]` and the prompt names `cwd`. Invalid JSON (or a step name outside the
-   contract) fails the step as `invalid_output`; one more session (`agent-retry`) gets the same prompt plus
-   `JSON_ONLY_RETRY` (JSON-only, nothing else; it is a new session, so running the steps again is expected). A second miss ends the run `done` with `passed: false`, `steps: []` and a summary. Any other
+   step passes `options.allowDirectories: [cwd]` and the prompt names `cwd`. The step is a JSON step: the report
+   comes back through the host's `submit_result` tool (`packages/opencode-host` README §Structured output). A turn
+   without a valid call (or a step name outside the contract) fails the step as `invalid_output`; one more session
+   (`agent-retry`) gets the same prompt plus `SUBMIT_RESULT_RETRY` (submit the report through the tool; it is a new
+   session, so running the steps again is expected). A second miss ends the run `done` with `passed: false`, `steps: []` and a summary. Any other
    step failure fails the run.
 
 `plan` is a journaled step with a retry policy (3 attempts): it decides the path (and whether fallow applies), so a

@@ -6,7 +6,7 @@ Input: `workflow`, `window` (days, default 7), `sample` (runs, default 20), `fil
 | Step | Does |
 |-|-|
 | `sample` | Finished (`done`/`failed`) top-level runs of the workflow inside the window, `purpose <> 'eval'`, failed runs first, then a stable spread by id hash. Reads outcome, wall time, cost, tool calls, `friction` (null until `w5/friction` fills it; tolerated), and per step: kind, status, model, error, a 1 200-character output preview. **Never the run input** (it holds working directories and diffs) |
-| `analyze` | One agent step (`agents/retrospective/`, route `retro.analyze`, a copy of `check`'s model and wire, no tools, edit denied) over the sample rendered as text (at most 120k characters; step previews shrink 600 → 300 → 120 → none before runs are cut; absolute paths become `<path>`). One JSON-only retry on invalid output, then the run fails |
+| `analyze` | One agent step (`agents/retrospective/`, route `retro.analyze`, a copy of `check`'s model and wire, no tools, edit denied) over the sample rendered as text (at most 120k characters; step previews shrink 600 → 300 → 120 → none before runs are cut; absolute paths become `<path>`). A JSON step: the answer comes back through the host's `submit_result` tool; one retry (`SUBMIT_RESULT_RETRY`) on invalid output, then the run fails |
 | `store-learnings` | Candidate facts are stored as **`proposed`**, never active |
 | `file-issues` | Only with `fileIssues: true`. Per proposal: filter, find an issue with the same title, else create one |
 

@@ -13,7 +13,7 @@ export function agentIdleMs(stepSeconds: number, testSeconds: number): number {
 }
 
 /** Appended to the prompt of the one retry after a turn that ended without a valid `submit_result` call. */
-export const JSON_ONLY_RETRY = `
+export const SUBMIT_RESULT_RETRY = `
 
 ────────────────────────────────────────────────────────
 RETRY: your previous attempt was REJECTED because it ended without a valid \`submit_result\` call.

@@ -5,7 +5,7 @@ import type { GhPort } from './gh.ts'
 import type { TrackedPaths } from './tracked.ts'
 import { issueFor } from './issue.ts'
 import { checkAnalysis } from './normalize.ts'
-import { JSON_ONLY_RETRY, retroPrompt } from './prompt.ts'
+import { SUBMIT_RESULT_RETRY, retroPrompt } from './prompt.ts'
 import type { JournalReader, SampledRun } from './sample.ts'
 import { RETRO_ANALYSIS, RETRO_INPUT, RETRO_OUTPUT, type RetroAnalysis, type RetroOutput } from './schema.ts'
 
@@ -36,7 +36,7 @@ async function analyze(ctx: Ctx, prompt: string): Promise<RetroAnalysis> {
     if (!isInvalidOutput(error)) throw error
   }
   // `tail`: learned facts are inserted before the directive, which stays the last thing the agent reads.
-  return ctx.agent('analyze-retry', { ...spec, prompt, tail: JSON_ONLY_RETRY })
+  return ctx.agent('analyze-retry', { ...spec, prompt, tail: SUBMIT_RESULT_RETRY })
 }
 
 /**

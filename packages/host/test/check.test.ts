@@ -6,7 +6,7 @@ import { FakeAgentHost } from '@agent-workflows/runtime/testing'
 import { createCheckWorkflows } from '../src/workflows/check/index.ts'
 import type { Exec, ExecRequest, ExecResult } from '../src/workflows/check/exec.ts'
 import { makeDatabaseHasCheckTarget } from '../src/workflows/check/make.ts'
-import { JSON_ONLY_RETRY } from '../src/workflows/check/prompt.ts'
+import { SUBMIT_RESULT_RETRY } from '../src/workflows/check/prompt.ts'
 import { freshSchema, inspector, testRuntime, until } from '../../runtime/test/support/pg.ts'
 import { startTestHost } from './support.ts'
 
@@ -285,8 +285,8 @@ describe('agent path', () => {
     const { runId, result } = await run({ exec: fakeExec(() => undefined).exec, host, input: { cwd } })
     expect(result.output).toEqual(GREEN)
     const [first, second] = [host.sessions.get('ses_1'), host.sessions.get('ses_2')]
-    expect(second?.spec.prompt).toBe(first?.spec.prompt + JSON_ONLY_RETRY)
-    expect(JSON_ONLY_RETRY).not.toContain('again') // the retry is a new session: running the steps again is expected
+    expect(second?.spec.prompt).toBe(first?.spec.prompt + SUBMIT_RESULT_RETRY)
+    expect(SUBMIT_RESULT_RETRY).not.toContain('again') // the retry is a new session: running the steps again is expected
     expect((await sql.steps(runId)).map((s) => [s.step_id, s.status])).toEqual([
       ['plan', 'done'],
       ['agent', 'failed'],

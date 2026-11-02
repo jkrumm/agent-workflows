@@ -62,7 +62,7 @@ no validation steps were found.
 
 ## Output
 
-Submit the report by calling `submit_result` once. Its arguments take this shape:
+The report you submit takes this shape:
 
 ```
 { "passed": true, "steps": [{ "name": "lint", "passed": false, "errors": ["<error line>"] }], "summary": "1/3 steps failed: lint (5 errors)" }

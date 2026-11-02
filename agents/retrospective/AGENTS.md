@@ -20,7 +20,7 @@ list is a good answer when the sample shows nothing.
 
 ## Answer
 
-Submit your answer by calling `submit_result` once. Its arguments take this shape:
+The answer you submit takes this shape:
 
 ```
 {

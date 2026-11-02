@@ -39,7 +39,7 @@ If any specialist reviewer's input begins with `⚠️ SESSION FAILED`, that rev
 
 ## Output
 
-Return ONLY a JSON object:
+The verdict you submit, once and at the end, takes this shape:
 
 ```json
 {
@@ -62,11 +62,6 @@ Return ONLY a JSON object:
   "summary": "2-3 sentence assessment. State the outcome, key findings, and overall code health."
 }
 ```
-
-**Your VERY LAST message must be ONLY this JSON object** (optionally wrapped in a single
-json code fence). No preamble such as "Here's the synthesized verdict", no markdown headings,
-no commentary before or after — if you wrap the JSON in prose, the entire multi-angle review
-is discarded. Do any reasoning first, then emit the JSON as your final message and stop.
 
 ## Rules
 
