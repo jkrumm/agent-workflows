@@ -258,6 +258,41 @@ describe('usage', () => {
     }
   })
 
+  test('a step without reports is free (0) only when it ended done; failed or cancelled it is unknown (null)', async () => {
+    let cancelWhenHeld: () => void = () => {}
+    const wf = defineWorkflow({
+      id: 'steps.cost-by-status',
+      version: 'v1',
+      input: empty,
+      output: empty,
+      async run(ctx) {
+        await ctx.step('done', () => null)
+        await ctx
+          .step('failed', () => {
+            throw new Error('kaput')
+          })
+          .catch(() => null)
+        await ctx.step('cancelled', ({ signal }) => {
+          cancelWhenHeld()
+          return new Promise<never>((_, reject) => signal.addEventListener('abort', () => reject(signal.reason)))
+        })
+        return {}
+      },
+    })
+    const rt = testRuntime({ schema: db.schema, workflows: [wf] })
+    await rt.open()
+    try {
+      const { runId } = await rt.start(wf, {}, { purpose: 'build' })
+      cancelWhenHeld = () => void rt.cancel(runId)
+      await rt.wait(runId)
+      expect(await sql.step(runId, 'done')).toMatchObject({ status: 'done', cost: '0', unpriced_calls: 0 })
+      expect(await sql.step(runId, 'failed')).toMatchObject({ status: 'failed', cost: null, unpriced_calls: 0 })
+      expect(await sql.step(runId, 'cancelled')).toMatchObject({ status: 'cancelled', cost: null })
+    } finally {
+      await rt.close()
+    }
+  })
+
   test('addUsage is summed per step and persisted on the step row, split by model', async () => {
     const tokens = { input: 100, output: 20, cacheRead: 50, reasoning: 5 }
     const wf = defineWorkflow({

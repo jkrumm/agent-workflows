@@ -37,8 +37,8 @@ span before telemetry ends it. `platform.close()` comes after
   descendant run (recursively by `parent_id`: fan-out children, parented starts, an eval's judge calls), each step once
   and never through a child's own record, so a root carries its tree's total even when a child's `runPost` lands late. A tree sum over runs reads the steps, never `runs.cost`. `cost` is the sum of the known
   costs when any step has a positive one; otherwise null when some step's cost is null (a call nobody priced) or
-  `unpriced_calls > 0`, else 0 (every step free; a run with no step rows spent nothing). A step that reports no usage
-  is free (cost 0), one whose every report was unpriced is null. Rows written before this cut-over keep their NULL:
+  `unpriced_calls > 0`, else 0 (every step free; a run with no step rows spent nothing). A step that ends done without
+  reporting usage is free (cost 0); one that failed or was cancelled without a report, or whose every report was unpriced, is null. Rows written before this cut-over keep their NULL:
   history cannot tell free from unknown, no backfill. `unpriced_calls > 0` marks the cost as a lower bound. Wall time
   comes from the row's `started_at`/`finished_at`, so a re-delivered `runPost` writes the identical record; it is
   null for a run that never started (cancelled while pending), never 0.
@@ -229,7 +229,7 @@ call; only the `usage.records` projection is filtered.
 - **Close.** `outbox.close()` refuses new flushes and waits for the one in flight; `platform.close()` calls it
   before closing the pools, and closes the usage pool it created from `USAGE_PG_URL`.
 - **Crash after the write.** The rows are written again; the upsert absorbs it.
-- **No usage, no row.** Only steps with tokens or a positive cost (`cost > 0`; a free step records 0) are outbox candidates (the `steps_argo_outbox` index); of
+- **No usage, no row.** Only steps with tokens or a positive cost (`cost > 0`; a free step records 0) are outbox candidates (the `steps_usage_outbox` index); of
   those, a model the gateway records is no row (above).
 - **Scores ride in `raw.scores`** (`runs.scores`: the inline gate verdicts, and `final` once the run is scored),
   never as top-level fields. `raw.scorePass` and `raw.scoreError` make the final score explicit: a scorer error is

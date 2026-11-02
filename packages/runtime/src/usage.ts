@@ -17,6 +17,23 @@ function addInto(target: ModelUsage, usage: Usage) {
   target.toolCalls += usage.toolCalls ?? 0
 }
 
+const hasReports = (usage: StepUsage) =>
+  usage.unpricedCalls > 0 ||
+  usage.toolCalls > 0 ||
+  Object.keys(usage.byModel).length > 0 ||
+  Object.values(usage.tokens).some((count) => count > 0)
+
+/**
+ * The cost a finished step records. A step that ended `done` with no report is free (0); one that failed or was
+ * cancelled without a report may have sent a billed call whose usage never came back, so its cost is unknown (null),
+ * as for a step cancelled by `cancelRunningSteps`. "No report" is read from the totals: a priced-zero report with
+ * no tokens, calls or model is indistinguishable from none.
+ */
+export function recordedCost(status: 'done' | 'failed' | 'cancelled', usage: StepUsage): number | null {
+  if (status === 'done' || usage.cost !== 0 || hasReports(usage)) return usage.cost
+  return null
+}
+
 /** Sums every `addUsage` of one step execution. */
 export class UsageTotals {
   private total = emptyModelUsage()
@@ -45,7 +62,8 @@ export class UsageTotals {
   }
 
   /**
-   * A step that reported nothing is free (cost 0, known); null is only a step whose every report was unpriced.
+   * A step that reported nothing is free (cost 0) here; `recordedCost` makes it unknown when the step did not end
+   * done. Null is a step whose every report was unpriced.
    * A model's own entry always has a report, so its null stays "unpriced".
    */
   snapshot(): StepUsage {
