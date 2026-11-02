@@ -246,7 +246,7 @@ const MEDIA_ROUTES = new Set([
  * Every `model:` literal in a group file that sits in a route outside `media`, as `file:line`. A route's entry starts at
  * its two-space-indented key (`'audio.tts.prep': ...` or `decide: ...`); a literal belongs to the entry above it.
  */
-export function textModelLiterals(file: string, text: string, media: Set<string>): string[] {
+function textModelLiterals(file: string, text: string, media: Set<string>): string[] {
   const hits: string[] = []
   let route = ''
   text.split('\n').forEach((line, i) => {
@@ -258,8 +258,9 @@ export function textModelLiterals(file: string, text: string, media: Set<string>
 }
 
 test('a text route takes its model from a tier or a _shared.ts constant: no `model:` literal in its group file', () => {
+  // Route discovery skips `*.test.ts` too (registry.ts), so those are no group files.
   const hits = readdirSync(TABLE)
-    .filter((f) => f !== '_shared.ts' && f !== 'claude.ts')
+    .filter((f) => f !== '_shared.ts' && f !== 'claude.ts' && !f.endsWith('.test.ts'))
     .flatMap((f) =>
       textModelLiterals(`packages/routes/src/table/${f}`, readFileSync(join(TABLE, f), 'utf8'), MEDIA_ROUTES),
     )

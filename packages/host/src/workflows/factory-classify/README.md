@@ -17,7 +17,7 @@ echo '{"title":"…","facts":"…","repo":"argo","source":"kuma","projects":["ar
 ## Decisions
 
 - **The call is a capability.** `factory.classify` (`packages/capabilities/src/capabilities/factory-classify.ts`) builds the
-  prompt, so nothing reachable over HTTP is a free prompt on the seat; it is `internal` (as `overview.classify`).
+  prompt, so nothing reachable over HTTP is a free prompt on the route; it is `internal` (as `overview.classify`).
 - **Data is fenced.** Title and facts sit under a per-call random fence with fence markers made inert, rules before and a
   re-assertion after. `project` outside the list fails the schema and is re-asked once. An incident answered `routine` is raised to `risky` in code.
 - **Nothing is cut, nothing is hidden.** A title over 300 or facts over 20 000 characters are refused, so a verdict never
