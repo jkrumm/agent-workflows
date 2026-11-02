@@ -388,6 +388,7 @@ export class RunScope {
           key: scope.key,
           attempt: scope.attempt,
           attribution: scope.attribution,
+          ...(spec.output ? outputSchema(spec.output) : {}),
         })
       },
     })
@@ -594,13 +595,14 @@ export function toRunError(err: unknown): { kind: ErrorKind; message: string } {
 
 /**
  * `AgentOpenSpec.schema` of an agent step's `output`: the input side (what the agent produces before transforms and
- * defaults), a part JSON Schema cannot express left open (`{}`). A conversion that still throws leaves the schema out;
- * a host that needs one refuses the step at open, and the zod parse checks the result either way.
+ * defaults), a part JSON Schema cannot express left open (`{}`). A conversion that still throws gives its reason as
+ * `schemaError` instead; a host that needs the schema refuses the step with it, and the zod parse checks the result
+ * either way.
  */
-function outputSchema(output: z.ZodType): { schema?: Json } {
+function outputSchema(output: z.ZodType): { schema: Json } | { schemaError: string } {
   try {
     return { schema: z.toJSONSchema(output, { io: 'input', unrepresentable: 'any' }) as Json }
-  } catch {
-    return {}
+  } catch (error) {
+    return { schemaError: errorMessage(error) }
   }
 }

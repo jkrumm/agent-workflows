@@ -452,7 +452,7 @@ describe('re-attach applies the current policy', () => {
   test('a fresh session is created with the policy and never patched', async () => {
     const t = setup()
     const handle = await t.host.open(spec('x', { allowDirectories: ['/tmp/repo'] }))
-    expect(stored(t, handle)?.permissions).toEqual(sessionPermissions(AGENT, ['/tmp/repo']))
+    expect(stored(t, handle)?.permissions).toEqual(sessionPermissions(AGENT, { allowDirectories: ['/tmp/repo'] }))
     expect(stored(t, handle)?.permissionUpdates).toBeUndefined()
   })
 
@@ -462,7 +462,7 @@ describe('re-attach applies the current policy', () => {
     ;(stored(t, first) as { permissions: unknown[] }).permissions = OLD
     const again = await t.host.open(spec('x', { allowDirectories: ['/tmp/repo'] }))
     expect(sid(again)).toBe(sid(first))
-    expect(stored(t, again)?.permissions).toEqual(sessionPermissions(AGENT, ['/tmp/repo']))
+    expect(stored(t, again)?.permissions).toEqual(sessionPermissions(AGENT, { allowDirectories: ['/tmp/repo'] }))
     expect(stored(t, again)?.permissionUpdates).toBe(1)
   })
 
@@ -487,7 +487,7 @@ describe('re-attach applies the current policy', () => {
     await t.host.prompt(first, '[balance] review this')
     await t.host.wait(first, waitOptions())
     const fallback = Object.values(t.fake.state.sessions).find((s) => s.id !== sid(first))
-    expect(fallback?.permissions).toEqual(sessionPermissions(AGENT, ['/tmp/repo']))
+    expect(fallback?.permissions).toEqual(sessionPermissions(AGENT, { allowDirectories: ['/tmp/repo'] }))
     expect(fallback?.permissionUpdates).toBeUndefined()
   })
 
@@ -535,7 +535,7 @@ describe('re-attach applies the current policy', () => {
       ;(fallback as { permissions: unknown[] }).permissions = OLD
       const next = (await t.host.followUp(first, turn)) as OpenCodeHandle
       expect(next.sessionId).toBe(fallback?.id as string)
-      expect(fallback?.permissions).toEqual(sessionPermissions(AGENT, ['/tmp/repo']))
+      expect(fallback?.permissions).toEqual(sessionPermissions(AGENT, { allowDirectories: ['/tmp/repo'] }))
     })
   })
 })
@@ -597,9 +597,18 @@ describe('structured output (submit_result)', () => {
     expect(source).toContain('name: "submit_result"')
     expect(source).not.toContain('$schema')
     expect(readFileSync(join(location(handle), 'AGENTS.md'), 'utf8')).toContain('calling the `submit_result` tool')
-    expect(t.fake.state.sessions[sid(handle)]?.permissions).toEqual(sessionPermissions(AGENT, [], true))
-    expect(sessionPermissions(AGENT, [], true)).toContainEqual(RESULT_RULE)
-    expect((handle as OpenCodeHandle).wrapped).toBeUndefined()
+    expect(t.fake.state.sessions[sid(handle)]?.permissions).toEqual(sessionPermissions(AGENT, { resultTool: true }))
+    expect(sessionPermissions(AGENT, { resultTool: true })).toContainEqual(RESULT_RULE)
+    expect((handle as OpenCodeHandle).result).toEqual({ digest: expect.stringMatching(/^[0-9a-f]{16}$/) })
+  })
+
+  test('a JSON handle without the marker (opened before the deploy) fails its wait, naming why', async () => {
+    const t = setup()
+    const { result: _, ...old } = (await t.host.open(jsonSpec('x'))) as OpenCodeHandle
+    const message = await failure(t.host.wait(old, waitOptions()))
+    expect(message).toContain('a JSON step opened before the submit_result tool was deployed')
+    expect(message).toContain('agent "tester"')
+    expect(await userMessages(t, old)).toHaveLength(0) // failed before anything was read or sent
   })
 
   test("a text step's location has no result tool and its session no rule for it", async () => {
@@ -630,6 +639,7 @@ describe('structured output (submit_result)', () => {
       key: 'run-1:reask',
       attempt: 1,
       attribution,
+      schema: SCHEMA,
     })
     expect(t.fake.state.sessions[sid(first)]?.permissions).toContainEqual(RESULT_RULE)
     await t.host.prompt(next, '[result] again')
@@ -642,11 +652,34 @@ describe('structured output (submit_result)', () => {
       key: 'run-1:reask',
       attempt: 2,
       attribution,
+      schema: SCHEMA,
     })
     await t.host.prompt(third, 'no tool this time')
     const err = await t.host.wait(third, waitOptions()).catch((e: unknown) => e)
     expect(err).toBeInstanceOf(WorkflowError)
     expect((err as WorkflowError).kind).toBe('invalid_output')
+  })
+
+  test.each([
+    ['a text step (no output schema)', {}],
+    ['another schema', { schema: { type: 'object', properties: { other: { type: 'string' } } } }],
+    ['a schema that did not convert', { schemaError: 'Duplicate schema id' }],
+  ])('a continue whose output is %s is refused on a JSON session before it prompts', async (_name, output) => {
+    const t = setup()
+    const first = await t.host.open(jsonSpec('x'))
+    await t.host.prompt(first, '[result] draft')
+    await t.host.wait(first, waitOptions())
+    const turn = {
+      runId: 'run-1',
+      stepId: 'reask',
+      key: 'run-1:reask',
+      attempt: 1,
+      attribution: attributionOf('run-1', 'reask'),
+    }
+    const message = await failure(t.host.followUp(first, { ...turn, ...(output as { schema?: Json }) }))
+    expect(message).toContain('continue step "reask"')
+    expect(message).toContain('answers through submit_result')
+    expect(await userMessages(t, first)).toHaveLength(1)
   })
 
   test('a JSON step that ends without a completed call fails as invalid_output; its JSON text is never parsed', async () => {
@@ -670,12 +703,12 @@ describe('structured output (submit_result)', () => {
 
   test('a non-object root is wrapped under `result` and unwrapped on the way back', async () => {
     const t = setup()
-    const array = { $schema: 'x', type: 'array', items: { type: 'string' }, $defs: { s: { type: 'string' } } }
+    const array = { $schema: 'x', type: 'array', items: { $ref: '#/$defs/s' }, $defs: { s: { type: 'string' } } }
     const handle = await t.host.open(jsonSpec('x', array))
-    expect((handle as OpenCodeHandle).wrapped).toBe(true)
+    expect((handle as OpenCodeHandle).result?.wrapped).toBe(true)
     const wrapped = {
       type: 'object',
-      properties: { result: { type: 'array', items: { type: 'string' } } },
+      properties: { result: { type: 'array', items: { $ref: '#/$defs/s' } } },
       required: ['result'],
       additionalProperties: false,
       $defs: { s: { type: 'string' } },
@@ -683,18 +716,41 @@ describe('structured output (submit_result)', () => {
     expect(readFileSync(plugin(handle), 'utf8')).toContain(`const INPUT = ${JSON.stringify(wrapped)}\n`)
     await t.host.prompt(handle, '[result-wrapped] list')
     expect((await t.host.wait(handle, waitOptions())).output).toEqual(['a', 1])
+
+    // A call without the `result` key cannot be unwrapped: invalid output, never `null`.
+    const keyless = await t.host.open({ ...jsonSpec('x', array), key: 'run-1:keyless' })
+    await t.host.prompt(keyless, '[result] list')
+    const err = await t.host.wait(keyless, waitOptions()).catch((e: unknown) => e)
+    expect((err as WorkflowError).kind).toBe('invalid_output')
+    expect((err as Error).message).toContain('has no "result" key')
   })
 
   test.each([
     ['no schema', null, 'the step has no output schema'],
     ['a schema that is not an object', true, 'not a JSON Schema object'],
-    ['a non-object root that refers to itself', { type: 'array', items: { $ref: '#' } }, 'refers to itself'],
+    ['a non-object root that refers to itself', { type: 'array', items: { $ref: '#' } }, '$ref "#" would not resolve'],
+    [
+      'a non-object root with a ref into its own tree',
+      {
+        type: 'array',
+        items: { type: 'object', properties: { a: { type: 'string' }, b: { $ref: '#/items/properties/a' } } },
+      },
+      '$ref "#/items/properties/a" would not resolve',
+    ],
   ])('%s is refused at open, naming the agent, before a session exists', async (_name, schema, why) => {
     const t = setup()
     const message = await failure(t.host.open(jsonSpec('x', schema)))
     expect(message).toContain('agent "tester"')
     expect(message).toContain(why)
     expect(Object.keys(t.fake.state.sessions)).toEqual([])
+  })
+
+  test("a schema the runtime could not convert is refused with the conversion's reason", async () => {
+    const t = setup()
+    const { schema: _, ...noSchema } = jsonSpec('x')
+    const message = await failure(t.host.open({ ...noSchema, schemaError: 'Duplicate schema id "X" detected' }))
+    expect(message).toContain('agent "tester"')
+    expect(message).toContain('cannot be expressed as JSON Schema (Duplicate schema id "X" detected)')
   })
 
   test('a provider-balance fallback session gets the tool too', async () => {
@@ -715,7 +771,7 @@ describe('a handle persisted before repoShell was removed', () => {
     await t.host.prompt(handle, '[balance] review this')
     expect((await t.host.wait(handle, waitOptions())).output).toBe('echo: [balance] review this')
     const [primary, fallback] = Object.values(t.fake.state.sessions)
-    expect(fallback?.permissions).toEqual(sessionPermissions(AGENT, ['/tmp/repo']))
+    expect(fallback?.permissions).toEqual(sessionPermissions(AGENT, { allowDirectories: ['/tmp/repo'] }))
     expect(fallback?.permissions).toEqual(primary?.permissions)
     expect(JSON.stringify(fallback?.permissions)).not.toContain('git -C')
   })
@@ -799,7 +855,7 @@ describe('sessionPermissions', () => {
   test('the order is catch-all, read-only, shell, agent rules, external_directory', () => {
     const rules = sessionPermissions(
       { ...AGENT, permissions: { shell: true, rules: [allow('webfetch'), deny('grep')] } },
-      ['/work/repo'],
+      { allowDirectories: ['/work/repo'] },
     )
     expect(rules).toEqual([
       deny('*'),
@@ -817,7 +873,10 @@ describe('sessionPermissions', () => {
     })
     const handle = await t.host.open(spec('x', { allowDirectories: ['/tmp/repo'] }))
     expect(perms(t, handle)).toEqual(
-      sessionPermissions({ ...AGENT, permissions: { rules: [allow('webfetch')] } }, ['/tmp/repo']),
+      sessionPermissions(
+        { ...AGENT, permissions: { rules: [allow('webfetch')] } },
+        { allowDirectories: ['/tmp/repo'] },
+      ),
     )
     await t.host.prompt(handle, '[balance] review this')
     await t.host.wait(handle, waitOptions())

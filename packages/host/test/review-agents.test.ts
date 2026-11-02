@@ -19,7 +19,7 @@ describe('agents/review-*', () => {
     for (const name of [...ALL_ANGLES.map((a) => `review-${a}`), 'review-synthesis']) {
       const def = named(name)
       expect(def?.route).toBe(name === 'review-synthesis' ? 'review.synthesis' : 'review.angle')
-      const rules = sessionPermissions(def as NonNullable<typeof def>, ['/repo'])
+      const rules = sessionPermissions(def as NonNullable<typeof def>, { allowDirectories: ['/repo'] })
       expect(rules).toEqual([
         { action: '*', resource: '*', effect: 'deny' },
         ...['read', 'glob', 'grep', 'skill'].map((action) => ({ action, resource: '*', effect: 'allow' as const })),

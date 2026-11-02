@@ -122,6 +122,42 @@ describe('agent steps', () => {
     }
   })
 
+  test("a schema zod cannot convert reaches the host as the conversion's reason; a continue hands over its own", async () => {
+    const specs = new Map<string, { schema?: Json; schemaError?: string }>()
+    const host = new FakeAgentHost(async (s) => {
+      specs.set(s.spec.stepId, { schema: s.spec.schema, schemaError: s.spec.schemaError })
+      return { output: { a: 'x', b: 1, more: 'y' } }
+    })
+    const clash = z.object({ a: z.string().meta({ id: 'X' }), b: z.number().meta({ id: 'X' }) })
+    const wf = defineWorkflow({
+      id: 'agent.schema-error',
+      version: 'v1',
+      input: empty,
+      output: z.object({ more: z.string() }),
+      async run(ctx) {
+        await ctx.agent('clash', { agent: 'helper', prompt: 'p', output: clash })
+        const more = z.object({ more: z.string() })
+        return ctx.continue('more', 'clash', 'and more', { output: more })
+      },
+    })
+    const rt = testRuntime({ schema: db.schema, workflows: [wf], host })
+    await rt.open()
+    try {
+      const { runId } = await rt.start(wf, {}, { purpose: 'build' })
+      expect((await rt.wait(runId)).output).toEqual({ more: 'y' })
+      expect(specs.get('clash')?.schema).toBeUndefined()
+      expect(specs.get('clash')?.schemaError).toContain('Duplicate schema id "X"')
+      expect(specs.get('more')?.schema).toEqual({
+        $schema: 'https://json-schema.org/draft/2020-12/schema',
+        type: 'object',
+        properties: { more: { type: 'string' } },
+        required: ['more'],
+      })
+    } finally {
+      await rt.close()
+    }
+  })
+
   test('resume with a prompted handle re-attaches: one session, one prompt', async () => {
     const host = new FakeAgentHost(async (s) => {
       await s.sleep(400)
