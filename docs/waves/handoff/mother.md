@@ -5,8 +5,7 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
 
 ## State
 - **New plan 2026-11-01:** inference gateway (Waves 1–4, `docs/gateway.md`), then review v2 and the maturity pass
-  (Waves 5–13). Wave 1 done (release `767f643`, REPORT `docs/spikes/gateway/REPORT.md`); Wave 2 done (release `b25aac5`); Wave 3 done (release `3e6026e`); Wave 4 done (release `2e7d5f2`); Wave 5 done (release `bf76dc4`); Wave 6 done (release `9cf9625`); Wave 7 (spec) done, argo `84053e8`; Wave 8 waits for the owner session (labelling, pack on the MacBook,
-  `~/Downloads/agw-owner-session/session.html`; ingest steps in lead.md `e637fcc` / git history); Wave 16 (accounting,
+  (Waves 5–13). Wave 1 done (release `767f643`, REPORT `docs/spikes/gateway/REPORT.md`); Wave 2 done (release `b25aac5`); Wave 3 done (release `3e6026e`); Wave 4 done (release `2e7d5f2`); Wave 5 done (release `bf76dc4`); Wave 6 done (release `9cf9625`); Wave 7 (spec) done, argo `84053e8`; Wave 8 resumes after Wave 16 without an owner session (automated validation); Wave 16 (accounting,
   `agw eval import`, pulled forward from Wave 13) active; Wave 7b (build) runs beside it as argo PLAN Wave 8 (spec signed 18:20, `9fd63c7f`). The 2026-10-30 plan is finished (concept.md Final retro); STOP removed.
 - Owner actions done (PLAN context): orgs linked, keys seeded, cycle days, no payment method. Left: `me2` keys
   (~2026-11-02, 7-day claim window); until then the `me2` pool stays disabled.
@@ -21,6 +20,10 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
   Rotation policy: a fresh lead per wave unless the last one closed under ~30% context.
 
 ## Decisions taken
+- 2026-11-02 21:00 owner: no labelling session ("I will not answer 155 questions"). Ground truth is validated by a
+  third labeller and a second judge on other vendors (PLAN Wave 8); reports state the LLM-consensus limit. Rule for every
+  wave: never plan owner work beyond a few minutes; a human check is a ≤ 10-item sample, asked only when the automated
+  bar fails. The owner also flagged the human queue (17 open, oldest 10-15, most from other fleets); ours (CONTEXT7) resolved.
 - 2026-11-02 18:20 owner signed spec v7 (argo `9fd63c7f`): decisions 1–4 as recommended, 5 deferred, plus §Insights
   (rule-based, numbers never model-written). Built beside Wave 8 as argo Wave 8, its own lead in the argo checkout.
 - 2026-11-02 18:10 owner: (1) `otel.agent` -> Haiku 5.5 high now (scores equal Sonnet; cost counts while over pace), in
@@ -156,9 +159,8 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
 
 ## Next action
 - Wait for the Wave 16 close-out (lead.md) and argo-w1's rd say (argo PLAN Wave 8); judge, tick PLANs, retro entries.
-- After the owner says labelling is done: reactivate Wave 8 (flip Wave 16 done first), fresh lead: ingest, bars, then the
-  re-mine. The ~165 more cases cost ≈ $49 incl. ≈ $13 IU: within the owner's "low" eval spend? Ask the owner in the same
-  report as the bars (one question), meanwhile mine on credit only, sized to `evalAvailableUsd`.
+- After Wave 16: Wave 8 resumes with a fresh lead: third labeller and second judge, the bars, then mining on credit
+  only, sized to `evalAvailableUsd`; IU eval spend stays under ~$20 per wave without asking.
 - If Wave 16 closes before the owner session: Wave 14 items that need no review data (compaction overflow) may be pulled
   forward the same way; Wave 9+ need the ground truth.
 - Still owed by the owner: me2 keys and expiry day (+$100 a cycle; eval credit is the bottleneck now).

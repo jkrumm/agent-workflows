@@ -184,7 +184,7 @@ Pulled forward 2026-11-02 while the owner labels (former Wave 13, plus Wave 8's 
   `done`.
 - [ ] `eval.mine`'s cost-history port wired in `boot.ts` (its label estimate prints `unknown`).
 
-## Wave 8 — Ground truth            <!-- status: waiting for the owner session (labelling) -->
+## Wave 8 — Ground truth            <!-- status: pending -->
 
 - [x] **Double usage rows (from Wave 7):** agw stops writing `usage.records` for agent steps the gateway recorded;
   proven on stored rows of both writers after deploy. The 11-02 duplicates stay (owner's call, like Wave 3's 34).
@@ -192,8 +192,11 @@ Pulled forward 2026-11-02 while the owner labels (former Wave 13, plus Wave 8's 
   cross-vendor labeler calls per candidate, clean controls, the `dev`/`test` split. Cases go only under `$AGW_EVAL_DIR`.
 - [ ] `eval.judge` on its own pinned route (judge, scorer v3 done; `agw eval import` moved to Wave 16), scorer v3 (recall, false alarms, noise, severity calibration), and `agw eval
   import` for an external arm's findings. The token-overlap matcher only preselects pairs.
-- [ ] **Owner session (owner decision 2):** confirm 70 mined cases and label 100 judge pairs. Bars: accepted cases ≥ 90 %
-  right, judge κ ≥ 0.8. Below either, tighten the filters or add a second judge.
+- [ ] **No owner labelling (owner, 2026-11-02 21:00: 155 items is too much friction).** Ground truth is validated
+  without the owner: a third labeller on another vendor breaks the two labellers' disagreements; a second judge on
+  another vendor replaces the owner's judge labels, and judge κ is read between the two judges (bar κ ≥ 0.8, else
+  disagreements score `unclear`). Accepted cases need both labellers (or 2 of 3) to agree. The limit (LLM consensus,
+  no human check) is stated in every report. The owner pack and `agw eval gt pack|ingest` go (no shim).
 - [ ] Target 200 bug cases and 100 controls. Seeded defects only below 150.
 **Left behind (pre-session):** close-out in `docs/waves/handoff/lead.md` at `e637fcc`, release `e51fc17`. Pack: 35 accepted
   + 20 rejected cases, 100 judge pairs (27 positive): `me` eval credit ran out ($12.05 credit, $3.32 IU spent). After the
