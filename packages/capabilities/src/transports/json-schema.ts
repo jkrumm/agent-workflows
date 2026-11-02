@@ -47,9 +47,13 @@ const STRING_FORMATS = new Set([
 
 class Unsupported extends Error {}
 
+// zod throws a plain `Error` for a type JSON Schema cannot hold (a transform, a Date, a custom type: "<x> cannot be
+// represented in JSON Schema") and for a recursive one ("Cycle detected"); it has no error class to test for.
+const ZOD_CANNOT_CONVERT = /cannot be represented in JSON Schema|^Cycle detected/
+
 /**
- * The schema as structured-output parameters take it, or `null` when it cannot be expressed (a record, an
- * intersection, a tuple, a recursive type, a transform, a root that is not an object). A `null` means "ask for JSON
+ * The schema as structured-output parameters take it, or `null` when it cannot be expressed (a record, a
+ * tuple, a recursive type, a transform, a root that is not an object; an intersection of objects is merged by zod and converts). A `null` means "ask for JSON
  * syntax only": the zod parse is the last check either way. The output shape is converted (`io: 'output'`), so a field
  * with a default is required.
  *
@@ -63,9 +67,9 @@ export function toJsonSchema(schema: z.ZodType): JsonSchema | null {
     const raw = z.toJSONSchema(schema, { io: 'output', unrepresentable: 'throw', cycles: 'throw', reused: 'inline' })
     const converted = convert(raw)
     return converted.type === 'object' ? converted : null
-  } catch {
-    // `Unsupported`, or zod refusing a transform or a cycle: either way this schema has no wire form.
-    return null
+  } catch (error) {
+    if (error instanceof Unsupported || (error instanceof Error && ZOD_CANNOT_CONVERT.test(error.message))) return null
+    throw error
   }
 }
 

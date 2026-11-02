@@ -17,6 +17,19 @@ describe('Sonnet at effort none is a configuration error', () => {
     expect(routeSchema.safeParse({ ...sonnet, model: 'claude-opus-5-5' }).success).toBe(true)
   })
 
+  test('every id form of a Sonnet is refused at none: concrete, alias, dated snapshot, long-context flag', () => {
+    for (const model of ['claude-sonnet-5-5', 'sonnet', 'claude-sonnet-5-5-20261001', 'claude-sonnet-5-5[1m]']) {
+      expect(routeSchema.safeParse({ ...sonnet, model }).success, model).toBe(false)
+      expect(routeSchema.safeParse({ ...sonnet, model, effort: 'medium' }).success, model).toBe(true)
+    }
+  })
+
+  test('other families, and names that only contain sonnet, are not Sonnets', () => {
+    for (const model of ['claude-haiku-5-5', 'claude-opus-5-5', 'haiku', 'gpt-6-luna', 'my-sonnet-fork']) {
+      expect(routeSchema.safeParse({ ...sonnet, model }).success, model).toBe(true)
+    }
+  })
+
   test('a fallback is checked too', () => {
     expect(
       routeSchema.safeParse({ wire: 'anthropic', model: 'm', fallback: { ...sonnet, wire: 'iu-openai' } }).success,

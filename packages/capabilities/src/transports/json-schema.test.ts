@@ -94,6 +94,47 @@ describe('toJsonSchema', () => {
   })
 })
 
+describe('nullable fields', () => {
+  // zod 4.6.7, io 'output': a nullable object is anyOf [object, null]; a nullable string is type ['string', 'null'].
+  const schema = toJsonSchema(
+    z.object({
+      owner: z.object({ name: z.string(), age: z.number().nullable() }).nullable(),
+      note: z.string().nullable(),
+    }),
+  )
+
+  test('a nullable string keeps its null in the type array', () => {
+    expect(props(schema).note).toEqual({ type: ['string', 'null'] })
+  })
+
+  test('a nullable object keeps both anyOf branches: the object is closed, the null stays', () => {
+    const owner = props(schema).owner as { anyOf: JsonSchema[]; type?: unknown }
+    expect(owner.type).toBeUndefined()
+    expect(owner.anyOf).toEqual([
+      {
+        type: 'object',
+        properties: { name: { type: 'string' }, age: { type: ['number', 'null'] } },
+        required: ['name', 'age'],
+        additionalProperties: false,
+      },
+      { type: 'null' },
+    ])
+  })
+
+  test('both stay required, so strict mode takes them', () => {
+    expect(schema?.required).toEqual(['owner', 'note'])
+    expect(isStrictCompatible(schema ?? {})).toBe(true)
+  })
+})
+
+describe('what is not converted', () => {
+  test('a Date, a bigint and a custom type have no wire form: null, not a crash', () => {
+    expect(toJsonSchema(z.object({ d: z.date() }))).toBeNull()
+    expect(toJsonSchema(z.object({ b: z.bigint() }))).toBeNull()
+    expect(toJsonSchema(z.object({ c: z.custom<string>(() => true) }))).toBeNull()
+  })
+})
+
 describe('isStrictCompatible', () => {
   test('true when every object lists all its properties as required', () => {
     expect(isStrictCompatible(toJsonSchema(z.object({ a: z.string(), b: z.string().nullable() })) ?? {})).toBe(true)

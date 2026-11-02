@@ -89,11 +89,13 @@ export function iuOpenai(options: HttpOptions & { env?: Env } = {}): ChatPort {
  * every property is required (strict mode answers 400 to an optional one). Anything else asks for JSON syntax only.
  */
 function responseFormat(request: ChatRequest) {
-  const { schema } = request
-  if (schema && request.model.startsWith('gpt-') && isStrictCompatible(schema)) {
-    return { response_format: { type: 'json_schema', json_schema: { name: 'response', strict: true, schema } } }
+  const { jsonSchema } = request
+  if (jsonSchema && request.model.startsWith('gpt-') && isStrictCompatible(jsonSchema)) {
+    return {
+      response_format: { type: 'json_schema', json_schema: { name: 'response', strict: true, schema: jsonSchema } },
+    }
   }
-  return request.schema || request.json ? { response_format: { type: 'json_object' } } : {}
+  return jsonSchema || request.json ? { response_format: { type: 'json_object' } } : {}
 }
 
 function body(request: ChatRequest) {
