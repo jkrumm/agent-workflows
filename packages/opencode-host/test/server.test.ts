@@ -602,7 +602,10 @@ describe('buildServerConfig: the provider follows the model family, whatever oth
 
   test('the served models of the config are exactly opencodeModels()', () => {
     const config = buildServerConfig() as { providers: Record<string, { models: Record<string, unknown> }> }
-    const served = Object.values(config.providers).flatMap((p) => Object.keys(p.models))
+    // The bounded `<model>~ctx<limit>` rows of the Claude models are aliases of these (`context-limit.test.ts`).
+    const served = Object.values(config.providers).flatMap((p) =>
+      Object.keys(p.models).filter((m) => !m.includes('~ctx')),
+    )
     expect(new Set(served)).toEqual(new Set(opencodeModels()))
     expect(served.length).toBe(opencodeModels().size)
   })

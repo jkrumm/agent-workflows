@@ -412,9 +412,55 @@ models the queued one for that race).
 | System and tool changes appended, not a rewritten head | the host | the head is the location (`AGENTS.md`, skills, `opencode.json`) and the session's permissions. A hash directory never changes and a location in use is never evicted, so a running session keeps its head; a change applies to the next session. A re-attach appends a synthetic note instead of a system change |
 | Cache-read tokens recorded | both | OpenCode reports `tokens.cache.read` and `.write` per assistant message; `usageFromOpenCodeMessages` carries them into `Usage` (live run: 7 095 of 7 691 input tokens were cache reads) |
 
+## Bounded context
+
+A route with a `contextLimit` (`packages/routes`; off unless an arm or the table sets it) keeps every call of its agent
+steps under that many prompt tokens. Why: Claude Haiku 5.5 bills a request whose prompt (input, cache reads, both cache
+writes) is over 100,000 tokens at 5x on every column, and a session grows over its tool turns.
+
+**Mechanism.** The server config adds, for every Claude model and every `CONTEXT_LIMITS` value, an alias row
+`<model>~ctx<limit>` (`contextAlias`) with the base row's cost, variants and compatibility, `modelID: <model>` and its
+own `limit.context` (`windowFor`). `modelRef` returns the alias for a route with a `contextLimit` (the fallback's is the
+plain id), so OpenCode's own `auto` compaction, which runs off the model's window, fires early. No restart: the server
+serves every bound, an arm picks one. The key is `modelID`, not `id`: OpenCode 2.0.32's v2 config ignores unknown keys, so
+`id` would silently leave the alias calling the gateway with `claude-haiku-5-5~ctx80000`.
+
+**The rule** (OpenCode 2.0.32, `packages/core/src/session/compaction.ts`, `runner/llm.ts`). Before each model call the
+runner compacts when `estimate >= ceiling`, `ceiling = window - max(floor(window / 10), 16000)` (so `window - 16000` for a
+window from 32k to 160k; `compaction.buffer` is not set). `estimate` = the last response's measured `input + cache.read +
+cache.write + output + reasoning`, plus chars/4 of what came after (tool results); the first call is chars/4 of the
+whole request. The summary call is the history, as it is when its chars/4 estimate is within `ceiling - ~1k` and
+flattened to that size otherwise, plus the summary prompt. So a prompt cannot pass `ceiling * (1 + e)`, `e` being how
+far chars/4 undercounts the real tokens (a call after tool results is off only by that results' share). `windowFor(B) =
+B / 1.25 + 16000` makes `ceiling = B / 1.25`:
+
+| Bound | `limit.context` | Compaction ceiling | Headroom |
+|-|-|-|-|
+| 60000 | 64000 | 48000 | 12000 |
+| 80000 | 80000 | 64000 | 16000 |
+| 100000 | 96000 | 80000 | 20000 |
+
+`e` = 25% is an **assumption**, not a measurement (OpenCode itself assumes 15% for its output sizing; code and JSON
+tokenize denser than 4 characters per token). The arm that sets a bound should read the largest prompt it saw.
+
+**Measured on 2.0.32** (`test/live-context-limit.test.ts`, `AGW_LIVE=1`, loopback stand-in, no LLM): the provider gets
+`model: claude-haiku-5-5` for an alias session; a first prompt of `ceiling - 6k` estimated tokens is one call, one of
+`ceiling + 3k` is a summary call and then the call (the plain row: one call).
+
+**What it costs, and what to check before setting a bound**
+- A first prompt (or any prompt) over the ceiling is **summarised before the step runs**: the model works from a summary
+  of its own task, not the task. The route's largest first prompt has to be well under the ceiling (80000 for the
+  100000 bound).
+- `max_tokens` follows the window: `min(route limit, window - prompt)`, 128000 on the plain row, about 16000 near the ceiling.
+- The `# Your Model` block of OpenCode's system prompt names the alias key as the model id (text only; the wire carries
+  the real id), so a bounded session's system prompt differs from a plain one's by that line.
+- A compaction summary call is billed by the gateway, but its tokens sit on the session's `compaction` message, which
+  `usageFromOpenCodeMessages` (assistant messages only) does not read: the step's `usage` undercounts the summary calls.
+  The gateway's usage rows are complete.
+
 ## Usage and cost
 
-`usage` is `usageFromOpenCodeMessages` over the whole session with the route's model. OpenCode asks for 5-minute cache
+`usage` is `usageFromOpenCodeMessages` over the whole session with the route's model (the real id: a bounded route's alias row never reaches usage or pricing, `test/context-limit.test.ts`). OpenCode asks for 5-minute cache
 writes only (§Attribution, measured), so its one `cache.write` count and the rate's `cacheWritePerM` are the right pair.
 Cost per assistant message:
 OpenCode's when it is positive (it prices with the config's cost rows, i.e. the route's own `rate`, `costSource:
@@ -519,6 +565,8 @@ the host and as a spawned `opencode` stand-in (`test/fake-opencode-bin.ts`) for 
 | `locations.test.ts` | compile, hash directories, the hash, ancestor leaks, path escapes, pruning, the temp sweep; the warm cache under concurrency: single-flight, failed warm, failed evict, shrink re-check, use during evict, reset, changed content |
 | `live-permissions.test.ts` | `AGW_LIVE=1`: the deny-by-default policy: the tool list per opt-in, refused calls, an opted-in `webfetch`, Code Mode's empty catalog |
 | `plugin.test.ts` | the attribution plugin against a fake session store: parity with `gatewayHeaders`, the value filter, the walk to the root and its cache, the loud failures |
+| `context-limit.test.ts` | the bounded rows (`contextLimit`): an alias per Claude model and bound with `modelID`, the window, the base row's cost and variants; `modelRef` and the fallback; the usage and price on an alias session |
+| `live-context-limit.test.ts` | `AGW_LIVE=1`: a bounded route on the pinned build: the real model id on the wire, compaction at the ceiling and not below it; no key, no LLM |
 | `live-gateway.test.ts` | `AGW_LIVE=1`: the wire of the pinned build (§Attribution); needs no key and calls no LLM |
 | `packages/host/test/attribution-opencode.test.ts` | a run's attribution end to end: the real `Runtime` and `OpenCodeHost` on the fake server, through a balance fallback and a follow-up turn, to the headers the plugin sets |
 | `live-structured.test.ts` | `AGW_LIVE=1`: a JSON step on Haiku: a planted invalid `submit_result` call rejected by OpenCode, the valid one's input as the output, a follow-up turn's result |

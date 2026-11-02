@@ -11,7 +11,10 @@ import {
 } from './schema.ts'
 import { z } from 'zod'
 
-/** An arm's `routes`: `{"<route id>": {"model"?, "effort"?, "maxOutputTokens"?, "rate"?, "price"?, "fallback"?}}`. */
+/**
+ * An arm's `routes`: `{"<route id>": {"model"?, "effort"?, "maxOutputTokens"?, "rate"?, "price"?, "contextLimit"?,
+ * "fallback"?}}`. `contextLimit` (one of `CONTEXT_LIMITS`, `null` to clear) is the route's own, never the fallback's.
+ */
 export const routesPatchSchema = z.record(z.string(), routePatchSchema)
 export type RoutesPatch = z.infer<typeof routesPatchSchema>
 
@@ -61,7 +64,11 @@ export function applyPatch(id: string, base: RouteEntry, patch: RoutePatch): Rou
   return parsed.data
 }
 
-function merge(label: string, base: Omit<RouteEntry, 'fallback'>, patch: FallbackPatch): Record<string, unknown> {
+function merge(
+  label: string,
+  base: Omit<RouteEntry, 'fallback'>,
+  patch: FallbackPatch & Pick<RoutePatch, 'contextLimit'>,
+): Record<string, unknown> {
   const merged: Record<string, unknown> = { ...base }
   for (const [key, value] of Object.entries(patch)) {
     if (value === null) delete merged[key]
