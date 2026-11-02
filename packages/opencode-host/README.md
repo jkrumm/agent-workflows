@@ -162,19 +162,19 @@ Every model request carries who it is for, so the gateway's usage row and pool b
 pinned source: `docs/spikes/gateway/headers.md`.
 
 `metadata.agw` of a step's session holds the step's `Attribution` (`runId`, `rootId`, `workflow`, `step`, `purpose`,
-`project`, `workspace`, `traceparent`, the names of the runtime's `ctx.attribution`) at both create calls, primary and
+`project`, `workspace`, the names of the runtime's `ctx.attribution`, without `traceparent`, which cannot land) at both create calls, primary and
 fallback. The runtime hands it over in `spec.attribution` of `open` and `followUp`, so opening a step reads nothing, and
 the handle keeps it for the fallback session (a handle journaled before a deploy holds no attribution: its fallback
 session carries `runId` and `step` only). A session the host finds already there, and the session of a follow-up turn, get
 the current values by `PATCH` (one read, a write only when they differ; `PATCH` replaces `metadata` whole, so the rest is
-sent back), so a `ctx.continue` turn is attributed to the continuing step.
+sent back, and the attribution fields are replaced as a set, so a project the new step lacks does not stay), so a `ctx.continue` turn is attributed to the continuing step.
 
 `plugin/agw-attribution/` (a `package.json` and a plain `server.js`, no build: a release is exported from git) hooks
 `model.request` and sets `x-agw-session` (`rootId`), `x-agw-run-id`, `x-agw-step`, `x-agw-workflow`, `x-agw-purpose`,
-`x-agw-project`, `x-agw-workspace` and `traceparent`, with the value filter of `gatewayHeaders` (printable ASCII, no space at
+`x-agw-project` and `x-agw-workspace`, with the value filter of `gatewayHeaders` (printable ASCII, no space at
 either end, up to 200 characters). `ctx.session.get` takes `{ sessionID }`, not the bare id. A child session (OpenCode's
 `subagent`) has no metadata of its own: the plugin walks `parentID` to the root, at most 32 hops, and caches the walk, not
-the metadata. A read that fails, or a root without `metadata.agw`, logs `agw-attribution: session <id> sent unattributed:
+the metadata. A read that fails, or a root whose `metadata.agw` has no `runId`, logs `agw-attribution: session <id> sent unattributed:
 <why>` to `server.log` and the request goes out without the headers: the gateway then binds on `x-session-affinity`.
 
 The server loads a copy, `<root>/plugins/agw-attribution-<hash16>` (`installPlugin`). A release's directory is named by its
@@ -190,7 +190,7 @@ LLM, no key, about 10 s):
 | `x-agw-fallback: none` | on the Anthropic leg, not on the other two |
 | A child session | a real `subagent` call: the child's request carries the root's run and step, and `x-opencode-parent-session-id` |
 | A follow-up turn | `x-agw-step` is the continuing step |
-| `traceparent` | **does not land.** OpenCode's HTTP client writes its own (with `b3`) at send time, after `model.request` and after `http.request` too (probed). The `traceparent` the host sends with its API calls does not reach it either. So the gateway's span sits in OpenCode's trace, not under the step; the join is `x-agw-run-id` and `x-agw-step`. The plugin still sets the header; the test fails the day a pin lets it through |
+| `traceparent` | **does not land.** OpenCode's HTTP client writes its own (with `b3`) at send time, after `model.request` and after `http.request` too (probed). The `traceparent` the host sends with its API calls does not reach it either. So the gateway's span sits in OpenCode's trace, not under the step; the join is `x-agw-run-id` and `x-agw-step`. So the host neither stores nor sets it |
 | Claude Code signals (`isClaudeCodeShaped`, the gateway's step 0) | none, with and without thinking: `anthropic-beta: interleaved-thinking-2025-05-14` and nothing else, `user-agent: opencode/latest/2.0.32/cli`, no `x-app`, the system starts "You are an AI agent running in OpenCode". No provider config was needed to keep it so. `supportsThinkingBlockBinding: false` keeps the binding beta off |
 | A gateway 402 | not retried; the session's error is `{ type: 'provider.quota', message: 'provider balance exhausted: no credit pool eligible', status: 402, response: { body } }`. `isBalanceFailure({ text })` takes the message (the marker), the step moves to the route's fallback |
 | Cache writes | every `cache_control` is `{ "type": "ephemeral" }`, on `system`, `tools` and the last message: 5 minutes, no `ttl`. `tokens.cache.write` is priced at `cacheWritePerM`, which is right |

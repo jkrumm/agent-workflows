@@ -79,7 +79,8 @@ const consoleLogger: Logger = {
  * The attribution plugin, copied into the server's root under a name taken from its content, and that copy's directory.
  * A release lives in a directory named by its sha: pointing the config there would change the launch fingerprint on every
  * deploy, restarting the server under its running sessions, and an adopted server would keep a path that pruning removes.
- * The copy moves only when the plugin does. Idempotent, built beside it and renamed into place.
+ * The copy moves only when the plugin does. Idempotent: built beside it and renamed into place, and a rename that finds
+ * the directory there already, a concurrent start's, is fine.
  */
 export function installPlugin(root: string): string {
   const files = ['package.json', 'server.js'].map((name) => ({
@@ -89,12 +90,17 @@ export function installPlugin(root: string): string {
   const hash = createHash('sha256')
   for (const { name, content } of files) hash.update(name).update(content)
   const dir = join(root, 'plugins', `agw-attribution-${hash.digest('hex').slice(0, 16)}`)
-  if (existsSync(dir)) return dir
   const tmp = `${dir}.tmp-${process.pid}`
   rmSync(tmp, { recursive: true, force: true })
   mkdirSync(tmp, { recursive: true })
   for (const { name, content } of files) writeFileSync(join(tmp, name), content)
-  renameSync(tmp, dir)
+  try {
+    renameSync(tmp, dir)
+  } catch (err) {
+    // The copy is already there, from an earlier start or a concurrent one: same name, same content.
+    rmSync(tmp, { recursive: true, force: true })
+    if (!existsSync(dir)) throw err
+  }
   return dir
 }
 

@@ -147,7 +147,7 @@ is counted twice.
 id, from `rootId`; `x-agw-run-id`, `x-agw-step`, `x-agw-workflow`, `x-agw-purpose`, `x-agw-project`, `x-agw-workspace`)
 through a small plugin on the `model.request` hook, reading the step's `Attribution` (`runId`, `rootId`, `workflow`, `step`,
 `purpose`, `project`, `workspace`) from the session's `metadata.agw`; the plugin is a directory in the server config's
-`plugins`. `traceparent` does not land: OpenCode's HTTP client writes its own at send time. The join by
+`plugins`. `traceparent` is not among them: OpenCode's HTTP client writes its own at send time. The join by
 `opencode.session.id` on the step span stays as the fallback. **Hermes** sets `session_affinity_header: x-agw-session` on its gateway provider entry (an
 `anthropic_messages` entry); static `extra_headers` are not relied on (auxiliary calls drop them). Neither uses
 `metadata.user_id`. Evidence: `docs/spikes/gateway/headers.md`.

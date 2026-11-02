@@ -356,6 +356,7 @@ describe('gatewayFromEnv', () => {
       expect(message).not.toContain('sekret')
     }
     expect(() => of('http://user:sekret@example.com')).toThrow('must be an http(s) origin')
+    expect(() => of('http://:sekret@example.com')).toThrow('must be an http(s) origin')
   })
 })
 
@@ -368,8 +369,15 @@ describe('installPlugin', () => {
       readFileSync(join(ATTRIBUTION_PLUGIN, 'server.js'), 'utf8'),
     )
     expect(JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')).type).toBe('module')
+    // The second call's rename finds the directory there, as a concurrent start's would: no throw, no leftover.
     expect(installPlugin(root)).toBe(dir)
     expect(readdirSync(join(root, 'plugins'))).toHaveLength(1)
+  })
+
+  test('with no way to make the copy, the start fails', () => {
+    const root = scratch()
+    writeFileSync(join(root, 'plugins'), 'a file where the directory goes')
+    expect(() => installPlugin(root)).toThrow()
   })
 
   test('the plugin directory is the two tracked files, with no build step', () => {

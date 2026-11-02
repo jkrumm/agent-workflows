@@ -105,11 +105,38 @@ export type OpenCodeHandle = {
   /** A follow-up turn (`followUp`): its input is keyed by this, and `wait` reads only what came after it. */
   turn?: string
   /** The step's attribution, kept so a provider-balance fallback session carries it too. */
-  attribution?: Attribution
+  attribution?: StepAttribution
 }
 
-/** `metadata.agw`'s attribution fields. A handle journaled before a deploy holds no `Attribution`, only its run and step. */
-type StepAttribution = Pick<Attribution, 'runId' | 'step'> & Partial<Attribution>
+/**
+ * The `Attribution` fields `metadata.agw` holds. Not `traceparent`: OpenCode's HTTP client writes its own on the wire
+ * (README §Attribution), and one per step span would only cost a `PATCH`.
+ */
+const SESSION_ATTRIBUTION = [
+  'runId',
+  'rootId',
+  'workflow',
+  'step',
+  'purpose',
+  'project',
+  'workspace',
+] as const satisfies readonly (keyof Attribution)[]
+
+/** A handle journaled before a deploy holds no attribution, only its run and step. */
+type StepAttribution = Pick<Attribution, 'runId' | 'step'> &
+  Partial<Pick<Attribution, (typeof SESSION_ATTRIBUTION)[number]>>
+
+/** `agw` with its attribution fields replaced by `attribution`, the host's own fields kept. */
+function withAttribution(agw: Record<string, unknown>, attribution: StepAttribution): Record<string, unknown> {
+  const own = Object.entries(agw).filter(([field]) => !(SESSION_ATTRIBUTION as readonly string[]).includes(field))
+  return { ...Object.fromEntries(own), ...attribution }
+}
+
+function sessionAttribution(attribution: Attribution): StepAttribution {
+  const fields = { ...attribution }
+  delete fields.traceparent
+  return fields
+}
 
 type Snapshot = { messages: Message[]; active: boolean; pending: boolean }
 
@@ -333,7 +360,7 @@ export class OpenCodeHost implements AgentHost {
     const routeId = options.route ?? def.route
     if (!routeId) throw new WorkflowError('error', `agent "${spec.agent}" has no route and the step names none`)
     const { route, model } = modelRef(routeId, this.env)
-    const attribution = this.attribution(spec.attribution)
+    const attribution = sessionAttribution(spec.attribution)
     const location = compileLocation(def, { stateDir: this.options.stateDir })
     this.current.set(def.name, location.directory)
     touchLocation(location.directory)
@@ -431,7 +458,7 @@ export class OpenCodeHost implements AgentHost {
     // belongs to the continuing step, so its model calls carry that step's attribution, not the first step's.
     const def = this.agents.get(base.agent)
     if (!def) throw new WorkflowError('error', `unknown agent "${base.agent}"; cannot apply its permissions`)
-    const attribution = this.attribution(spec.attribution)
+    const attribution = sessionAttribution(spec.attribution)
     await this.applySession(base.sessionId, sessionPermissions(def, base.allow ?? []), attribution, headers)
     const next: OpenCodeHandle = {
       ...base,
@@ -446,7 +473,8 @@ export class OpenCodeHost implements AgentHost {
   /**
    * Makes the session's stored rules and attribution the given ones: one read, and a `PATCH` of what differs only (a
    * session created with the current ones, a re-attach within one release, costs no write). `PATCH` replaces `metadata`
-   * whole, so the rest of it is sent back. The rules are measured only between turns; a patch onto a session mid-turn is
+   * whole, so the rest of it is sent back; the attribution fields are replaced, so one the new step lacks does not stay.
+   * The rules are measured only between turns; a patch onto a session mid-turn is
    * unmeasured, which is why equal rules are never rewritten.
    */
   private async applySession(
@@ -459,13 +487,13 @@ export class OpenCodeHost implements AgentHost {
     const samePolicy =
       stored?.permissions !== undefined && JSON.stringify(stored.permissions) === JSON.stringify(permissions)
     const agw = (stored?.metadata?.agw ?? {}) as Record<string, unknown>
-    const sameAttribution = Object.entries(attribution).every(([field, value]) => agw[field] === value)
+    const sameAttribution = SESSION_ATTRIBUTION.every((field) => agw[field] === attribution[field])
     if (samePolicy && sameAttribution) return
     await this.client.updateSession(
       sessionId,
       {
         ...(samePolicy ? {} : { permissions }),
-        ...(sameAttribution ? {} : { metadata: { ...stored?.metadata, agw: { ...agw, ...attribution } } }),
+        ...(sameAttribution ? {} : { metadata: { ...stored?.metadata, agw: withAttribution(agw, attribution) } }),
       },
       headers,
     )
@@ -728,15 +756,6 @@ export class OpenCodeHost implements AgentHost {
     const next: OpenCodeHandle = { ...h, sessionId, model: fallback.route.model, fallback: true }
     await this.prompt(next, prompt)
     return await this.wait(next, options)
-  }
-
-  /**
-   * What `metadata.agw` carries for the gateway: the runtime's attribution, with the trace of the step span when there
-   * is one (2.0.32 overwrites it on the wire: README §Attribution).
-   */
-  private attribution(attribution: Attribution): Attribution {
-    const traceparent = this.options.traceparent?.(attribution.runId, attribution.step) ?? attribution.traceparent
-    return { ...attribution, ...(traceparent ? { traceparent } : {}) }
   }
 
   private headers(runId: string, stepId: string): Record<string, string> | undefined {

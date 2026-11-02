@@ -345,7 +345,7 @@ describe('open / prompt / wait', () => {
 describe('attribution in metadata.agw', () => {
   const stored = (t: ReturnType<typeof setup>, sessionId: string) =>
     t.fake.state.sessions[sessionId]?.metadata?.agw as Record<string, unknown> | undefined
-  const ATTRIBUTION = attributionOf('run-1', 'agent')
+  const { traceparent: _, ...ATTRIBUTION } = attributionOf('run-1', 'agent')
 
   test("open writes the step's attribution beside the host's own fields, under its own names", async () => {
     const t = setup()
@@ -353,10 +353,18 @@ describe('attribution in metadata.agw', () => {
     expect(stored(t, sid(handle))).toMatchObject({ agent: 'tester', route: 'check', ...ATTRIBUTION })
   })
 
-  test("the step span's traceparent wins over the run's", async () => {
-    const t = setup({ traceparent: () => '00-33333333333333333333333333333333-4444444444444444-01' })
+  test('no traceparent is stored, and a new one costs no PATCH', async () => {
+    const t = setup()
     const handle = await t.host.open(spec('x'))
-    expect(stored(t, sid(handle))?.traceparent).toBe('00-33333333333333333333333333333333-4444444444444444-01')
+    expect(stored(t, sid(handle))?.traceparent).toBeUndefined()
+    expect((handle as OpenCodeHandle).attribution?.step).toBe('agent')
+    expect((handle as Record<string, unknown>).attribution).not.toHaveProperty('traceparent')
+    const again = spec('x')
+    await t.host.open({
+      ...again,
+      attribution: { ...again.attribution, traceparent: '00-33333333333333333333333333333333-4444444444444444-01' },
+    })
+    expect(t.fake.urls.filter((url) => url.startsWith('PATCH'))).toEqual([])
   })
 
   test('a provider-balance fallback session carries it too, from the journaled handle', async () => {
@@ -386,12 +394,25 @@ describe('attribution in metadata.agw', () => {
     const attribution = attributionOf('run-1', 'reask')
     const turn = { runId: 'run-1', stepId: 'reask', key: 'run-1:reask', attempt: 1, attribution }
     const next = (await t.host.followUp(first, turn)) as OpenCodeHandle
-    expect(next.attribution).toEqual(attribution)
-    expect(stored(t, sid(first))).toMatchObject({ agent: 'tester', route: 'check', ...attribution })
+    expect(next.attribution).toEqual({ ...ATTRIBUTION, step: 'reask' })
+    expect(stored(t, sid(first))).toMatchObject({ agent: 'tester', route: 'check', ...ATTRIBUTION, step: 'reask' })
     expect(t.fake.state.sessions[sid(first)]?.permissionUpdates).toBeUndefined()
     const patched = t.fake.state.sessions[sid(first)]?.metadata
     await t.host.followUp(first, { ...turn, attempt: 2 })
     expect(t.fake.state.sessions[sid(first)]?.metadata).toEqual(patched as Record<string, unknown>)
+  })
+
+  test('a field the continuing step lacks does not stay from the step before', async () => {
+    const t = setup()
+    const first = await t.host.open(spec('draft'))
+    await t.host.prompt(first, 'draft it')
+    await t.host.wait(first, waitOptions())
+    const { project: _p, workspace: _w, ...attribution } = attributionOf('run-1', 'agent')
+    await t.host.followUp(first, { runId: 'run-1', stepId: 'agent', key: 'run-1:agent', attempt: 1, attribution })
+    const agw = stored(t, sid(first))
+    expect(agw).toMatchObject({ agent: 'tester', route: 'check', runId: 'run-1', step: 'agent' })
+    expect(agw).not.toHaveProperty('project')
+    expect(agw).not.toHaveProperty('workspace')
   })
 
   test('an unprompted session from before the deploy gets it on open', async () => {

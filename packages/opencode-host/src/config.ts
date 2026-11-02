@@ -38,7 +38,13 @@ export function gatewayFromEnv(env: Env = process.env): { url: string; token: st
   } catch {
     throw new Error('AGW_GATEWAY_URL is not a URL')
   }
-  if (!['http:', 'https:'].includes(url.protocol) || url.pathname !== '/' || url.search || url.username) {
+  if (
+    !['http:', 'https:'].includes(url.protocol) ||
+    url.pathname !== '/' ||
+    url.search ||
+    url.username ||
+    url.password
+  ) {
     throw new Error('AGW_GATEWAY_URL must be an http(s) origin, without a path')
   }
   return { url: url.origin, token }

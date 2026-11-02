@@ -2,7 +2,10 @@
 // the step's session. A plain tracked file with no build and no imports: a release is exported from git, and OpenCode
 // loads a directory holding this file and its `package.json` (README §Attribution).
 
-/** The `Attribution` field behind each header, as `gatewayHeaders` in `@agent-workflows/capabilities`. */
+/**
+ * The `Attribution` field behind each header, as `gatewayHeaders` in `@agent-workflows/capabilities`. No `traceparent`:
+ * OpenCode's HTTP client writes its own at send time, after every plugin hook.
+ */
 const HEADERS = {
   rootId: 'x-agw-session',
   runId: 'x-agw-run-id',
@@ -11,7 +14,6 @@ const HEADERS = {
   purpose: 'x-agw-purpose',
   project: 'x-agw-project',
   workspace: 'x-agw-workspace',
-  traceparent: 'traceparent',
 }
 
 /** Printable ASCII, 1 to 200 characters, no space at either end: the same filter as `gatewayHeaders`. */
@@ -49,7 +51,7 @@ export default {
       // Never fails the model call, and never fails quietly: without these headers the request still runs, unattributed.
       try {
         const agw = (await rootSession(event.sessionID)).metadata?.agw
-        if (!agw) throw new Error('root session has no metadata.agw')
+        if (!agw?.runId) throw new Error('root session has no metadata.agw.runId')
         for (const [field, name] of Object.entries(HEADERS)) {
           const value = agw[field]
           if (typeof value === 'string' && HEADER_VALUE.test(value)) event.headers[name] = value
