@@ -10,6 +10,7 @@ import {
   hasFfmpeg,
   realMedia,
   prepAnswer,
+  prepMessage,
   startFakeGateway,
   testDeps,
   toneFile,
@@ -88,15 +89,15 @@ describe.skipIf(!hasFfmpeg)('replicate lane', () => {
     ])
   })
 
-  test('prep runs for v3: chat completions with the prep effort, and the title header is set', async () => {
+  test('prep runs for v3: a Messages call on the prep seat, and the title header is set', async () => {
     const { speak } = setup({
-      chat: () =>
-        prepAnswer({ lang: 'de', title: 'Kurzer Gruß', chunks: [{ style: 'ruhig', text: '[sighs] Hallo.' }] }),
+      messages: () =>
+        prepMessage({ lang: 'de', title: 'Kurzer Gruß', chunks: [{ style: 'ruhig', text: '[sighs] Hallo.' }] }),
     })
     const res = await speak(post({ model: V3, input: 'Hallo.' }))
     expect(decodeURIComponent(res.headers.get('x-audio-title') ?? '')).toBe('Kurzer Gruß')
-    const chat = iu.requests.find((r) => r.route === 'chat')
-    expect(chat?.json?.reasoning_effort).toBe('low')
+    const prep = iu.requests.find((r) => r.route === 'messages')
+    expect(prep?.json?.model).toBe(ROUTES['audio.tts.prep'].model)
     expect(predictionInputs()[0]?.prompt).toBe('[sighs] Hallo.')
   })
 

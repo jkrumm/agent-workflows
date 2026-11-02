@@ -24,7 +24,7 @@ const artifacts = join(root, 'artifacts')
 let cdn: Record<string, Uint8Array<ArrayBuffer>> = {}
 
 /** The image capabilities over the fake endpoint, behind the real registry; Replicate's CDN is a map inside `fetch`. */
-const planner = fakeTransports({ openai: [{ text: '' }] })
+const planner = fakeTransports({ anthropic: [{ text: '' }] })
 const registry = createRegistry(
   createImageCapabilities(
     {
@@ -199,7 +199,9 @@ describe('image end to end', () => {
         { env: { AGW_API_SECRET: 'test-key', AGW_GATEWAY_URL: fake.url }, retry: { backoffMs: 0 } },
         {
           transports: fakeTransports({
-            openai: [{ text: JSON.stringify(plan), tokens: { input: 1000, output: 2000, cacheRead: 0, reasoning: 0 } }],
+            anthropic: [
+              { text: JSON.stringify(plan), tokens: { input: 1000, output: 2000, cacheRead: 0, reasoning: 0 } },
+            ],
           }),
           env: {},
         },
@@ -250,7 +252,7 @@ describe('image end to end', () => {
     const enhanced = createRegistry(
       createImageCapabilities(
         { env: { AGW_API_SECRET: 'test-key', AGW_GATEWAY_URL: fake.url }, retry: { backoffMs: 0 } },
-        { transports: fakeTransports({ openai: [{ text: JSON.stringify(plan) }] }), env: {} },
+        { transports: fakeTransports({ anthropic: [{ text: JSON.stringify(plan) }] }), env: {} },
       ),
     )
     const [entry] = createImageWorkflows(

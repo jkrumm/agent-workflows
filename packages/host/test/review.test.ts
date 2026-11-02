@@ -114,15 +114,13 @@ type WorldOptions = {
 }
 
 function world(options: WorldOptions = {}) {
-  const transports: FakeTransports = fakeTransports({
-    openai: [
-      (request) => {
-        const isRouter = request.prompt.includes('You are a code review router')
-        const reply = isRouter ? (options.router ?? { angles: [] }) : (options.adversary ?? { findings: [] })
-        return reply instanceof Error ? reply : { text: JSON.stringify(reply) }
-      },
-    ],
-  })
+  // The router (review.router) is on the Messages wire, the adversary on the OpenAI chat wire; both answer by prompt.
+  const answer = (request: { prompt: string }) => {
+    const isRouter = request.prompt.includes('You are a code review router')
+    const reply = isRouter ? (options.router ?? { angles: [] }) : (options.adversary ?? { findings: [] })
+    return reply instanceof Error ? reply : { text: JSON.stringify(reply) }
+  }
+  const transports: FakeTransports = fakeTransports({ anthropic: [answer], openai: [answer] })
   const registry = createRegistry(createCapabilities({ transports, env: {} }))
   const host = new FakeAgentHost(async (session) => {
     const scripted = options.script?.(session)
@@ -906,7 +904,7 @@ JSON
       ])
     })
 
-    test('ocr is handed the gateway: its OpenAI base and the tool token, never the API secret or an IU variable', async () => {
+    test('ocr is handed the gateway: its Anthropic base (review.ocr is a Messages-wire route) and the tool token, never the API secret or an IU variable', async () => {
       const bin = join(scratch, `ocr-env-${++repoSeq}`)
       const seen = join(scratch, `ocr-env-seen-${repoSeq}`)
       writeFileSync(bin, `#!/bin/sh\nenv > "${seen}"\nexit 2\n`)
@@ -918,7 +916,8 @@ JSON
       })
       expect((await w.run({ cwd: makeRepo(BASE, bigChange) })).status).toBe('done')
       const env = readFileSync(seen, 'utf8')
-      expect(env).toContain('OCR_LLM_URL=http://127.0.0.1:7794/openai/v1\n')
+      expect(env).toContain('OCR_LLM_URL=http://127.0.0.1:7794/anthropic\n')
+      expect(env).toContain('OCR_LLM_PROTOCOL=anthropic\n')
       expect(env).toContain('OCR_LLM_TOKEN=tool-token\n')
       expect(env).not.toMatch(/IU_|iu-key-value|test-key|AGW_API_SECRET|AGW_GATEWAY_URL|AGW_GATEWAY_TOOL_TOKEN/)
     })

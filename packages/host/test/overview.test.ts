@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
-import { chatStream, startFakeGateway } from '@agent-workflows/capabilities/testing'
+import { messageResponse, startFakeGateway } from '@agent-workflows/capabilities/testing'
 import { resolveRoute } from '@agent-workflows/routes'
 import { createArgoPush } from '../src/fleet/argo.ts'
 import type { CollectorResult, Collectors } from '../src/fleet/collect.ts'
@@ -83,7 +83,7 @@ beforeAll(async () => {
       return new Response('{}', { status: argoStatus })
     }) as unknown as typeof fetch,
   })
-  const iu = startFakeGateway({ chat: () => answer() })
+  const iu = startFakeGateway({ messages: () => answer() })
   t = await startTestHost({
     prefix: 'overview',
     iu,
@@ -107,9 +107,9 @@ beforeEach(() => {
   clock += 60_000
   panes = [pane('s1', 'blocked'), pane('s2', 'working')]
   answer = () =>
-    chatStream(JSON.stringify({ agents: [verdict('s1', 'answer'), verdict('s2', 'watch')] }), {
-      prompt_tokens: 200,
-      completion_tokens: 60,
+    messageResponse(JSON.stringify({ agents: [verdict('s1', 'answer'), verdict('s2', 'watch')] }), {
+      input_tokens: 200,
+      output_tokens: 60,
     })
   argoStatus = 200
   purposeLookup = pgRunPurpose(t.pool, t.schema)
@@ -182,7 +182,12 @@ describe('overview workflow', () => {
       ])
     ).rows
     expect(steps.map((s) => s.step_id)).toEqual(['classify', 'push'])
-    expect(Number(steps[0]?.cost)).toBeCloseTo((200 * 1 + 60 * 5) / 1_000_000, 10)
+    // the route's own rate prices it (the Messages wire reports no cost)
+    const rate = resolveRoute('overview.classify', {}).rate
+    expect(Number(steps[0]?.cost)).toBeCloseTo(
+      (200 * (rate?.inputPerM ?? NaN) + 60 * (rate?.outputPerM ?? NaN)) / 1_000_000,
+      10,
+    )
 
     // the run is the cache behind `agents`
     const merged = await t.json(await post('/agents'))
@@ -218,9 +223,9 @@ describe('overview workflow', () => {
 
   test('an agent the model skipped is a synthesized watch placeholder, an invented id is dropped', async () => {
     answer = () =>
-      chatStream(JSON.stringify({ agents: [verdict('s1', 'ship'), verdict('ghost', 'close')] }), {
-        prompt_tokens: 10,
-        completion_tokens: 10,
+      messageResponse(JSON.stringify({ agents: [verdict('s1', 'ship'), verdict('ghost', 'close')] }), {
+        input_tokens: 10,
+        output_tokens: 10,
       })
     const { body } = await startOverview()
     expect(body.output.agents).toHaveLength(2)

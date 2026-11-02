@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
-import { CLAUDE_MODELS, DEFAULT_ROUTES, routeIds } from './index.ts'
+import { CLAUDE_MODELS, DEFAULT_ROUTES, resolveRoute, routeIds } from './index.ts'
 
 // The home-of-model-ids rule: no source outside `packages/routes/src/table/` names a model that the table names. The
 // routes package's own test files may (they pin what the table says): exactly the files `bun test` runs, by its
@@ -177,4 +177,43 @@ test('the route literal scan catches a planted unknown route with file:line, and
   expect(unknownRouteLiterals(files, new Set(routeIds()))).toEqual([
     'packages/x/src/a.ts:2 names unknown route "review.nope"',
   ])
+})
+
+// `Llm.round`, the podcast writer's tool loop, speaks only the OpenAI dialects (packages/audio/src/workflows/podcast/iu.ts):
+// every podcast route must stay off the Messages wire.
+test('no podcast route is on the anthropic wire or a Claude model', () => {
+  const ids = routeIds().filter((id) => id.startsWith('podcast.'))
+  expect(ids.length).toBeGreaterThan(0)
+  for (const id of ids) {
+    const route = resolveRoute(id, {})
+    expect({ id, wire: route.wire, claude: route.model.startsWith('claude-') }).toEqual({
+      id,
+      wire: expect.not.stringMatching(/^anthropic$/),
+      claude: false,
+    })
+  }
+})
+
+// The gateway refuses a Claude route with 402 when the credit is gone, so a fallback is the only way the call survives,
+// and it must never land on a Claude model: IU's Claude is exactly what a drained credit must not reach.
+test('a Claude route has a GPT fallback; nothing on the chat wire or OpenCode falls back onto Claude', () => {
+  const claude = /^claude-/
+  const gpt = expect.stringMatching(/^gpt-/)
+  for (const id of routeIds()) {
+    const route = resolveRoute(id, {})
+    // a native Messages call is a Claude model with a GPT fallback on another wire
+    if (route.wire === 'anthropic') {
+      expect({ id, model: route.model }).toEqual({ id, model: expect.stringMatching(claude) })
+      expect({ id, fallback: route.fallback?.model }).toEqual({ id, fallback: gpt })
+    }
+    // an OpenCode step on Claude is refused with 402 the same way, and moves to a GPT step
+    if (route.wire === 'opencode' && claude.test(route.model)) {
+      expect({ id, fallback: route.fallback?.model }).toEqual({ id, fallback: gpt })
+    }
+    // a `claude-` single call on the chat wire would reach IU's Claude, not the credit
+    if (route.wire === 'iu-openai') expect({ id, claude: claude.test(route.model) }).toEqual({ id, claude: false })
+    if (route.wire === 'iu-openai' || route.wire === 'opencode')
+      expect({ id, claude: claude.test(route.fallback?.model ?? '') }).toEqual({ id, claude: false })
+    expect({ id, wire: route.fallback?.wire }).not.toEqual({ id, wire: 'anthropic' })
+  }
 })

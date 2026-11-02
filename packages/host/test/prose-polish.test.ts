@@ -48,10 +48,7 @@ const REWRITE = DRAFT.replace('We leverage the new cache.', 'We use the new cach
 type Script = NonNullable<Parameters<typeof fakeTransports>[0]>
 type Reply = Exclude<NonNullable<Script['openai']>[number], (...args: never[]) => unknown>
 
-/** The polish writer's user prompt closes on this line; the reviewer's does not. */
-const isWrite = (request: { prompt: string }) => request.prompt.includes('Return only the rewritten text')
-
-/** The reviewer and the writer share the OpenAI wire: `reviewer` and `writer` script each seat's replies. */
+/** The reviewer (prose.review) stays on the OpenAI chat wire, the writer (prose.write) is on the Messages wire. */
 function setup(
   script: { reviewer?: Reply; writer?: Reply } = {},
   env: Record<string, string> = { AGW_VOICE_PATH: VOICE },
@@ -59,11 +56,12 @@ function setup(
   const reviewer = script.reviewer ?? { text: JSON.stringify(REVIEW), cost: 0.002 }
   const writer = script.writer ?? { text: REWRITE, cost: 0.05 }
   const transports = fakeTransports({
-    openai: [(request) => (isWrite(request) ? writer : reviewer)],
+    openai: [reviewer],
+    anthropic: [writer],
   })
   const registry = createRegistry(createCapabilities({ transports, env }))
   const { workflow } = createProsePolish({ registry, env })
-  return { transports, workflow, writes: () => transports.chatCalls.filter((c) => isWrite(c.request)) }
+  return { transports, workflow, writes: () => transports.chatCalls.filter((c) => c.wire === 'anthropic') }
 }
 
 const db = freshSchema('prose_polish')
@@ -99,7 +97,7 @@ describe('prose-polish', () => {
     expect(out.models.reviewer).toBeTruthy()
     expect(out.models.writer).toBeTruthy()
     expect(out.cost).toBeCloseTo(0.052, 6)
-    expect(w.transports.chatCalls.map((c) => c.wire)).toEqual(['openai', 'openai'])
+    expect(w.transports.chatCalls.map((c) => c.wire)).toEqual(['openai', 'anthropic'])
   })
 
   test('the writer gets the voice guide, the lint findings and the reviewer notes, fenced', async () => {

@@ -1,5 +1,5 @@
 import { createCapabilities, createRegistry } from '@agent-workflows/capabilities'
-import { startFakeGateway, chatStream, type FakeGateway } from '@agent-workflows/capabilities/testing'
+import { startFakeGateway, chatStream, messageResponse, type FakeGateway } from '@agent-workflows/capabilities/testing'
 import { gatewayTransports } from '@agent-workflows/capabilities'
 import { defineWorkflow, type Logger, type Middleware, type Runtime } from '@agent-workflows/runtime'
 import { Pool } from 'pg'
@@ -126,6 +126,14 @@ export async function startTestHost(
   const iu =
     options.iu ??
     startFakeGateway({
+      // `llm.title` is on the Messages wire (the TRIVIAL seat); the chat wire is its balance fallback.
+      messages: () =>
+        messageResponse('A Smoke Title', {
+          input_tokens: 40,
+          output_tokens: 6,
+          cache_read_input_tokens: 10,
+          cost: 0.0007,
+        }),
       chat: () =>
         chatStream('A Smoke Title', {
           prompt_tokens: 50,

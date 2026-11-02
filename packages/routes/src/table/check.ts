@@ -1,9 +1,9 @@
 import type { RouteEntry } from '../schema.ts'
-import { EASY, OPENAI_AGENT_FALLBACK } from './_shared.ts'
+import { EASY, TERRA_LOW_AGENT_FALLBACK } from './_shared.ts'
 
 const routes = {
-  // Check seat. Gateway: `check`, CLASSIFY tier. Runs the repo's checks and reports the failures: an easy read (Terra low).
-  check: { wire: 'opencode', ...EASY, fallback: OPENAI_AGENT_FALLBACK },
+  // Check seat. Gateway: `check`, CLASSIFY tier. Runs the repo's checks and reports the failures: an easy read (the EASY seat).
+  check: { wire: 'opencode', ...EASY, fallback: TERRA_LOW_AGENT_FALLBACK },
 } satisfies Record<string, RouteEntry>
 
 export default routes
