@@ -66,12 +66,12 @@ Model and rate: `packages/routes/src/table/research.ts` (the only home of model 
 
 | Route | Source seat | Wire |
 |-|-|-|
-| `research.agent` | research-gateway's `IU_LEAD_MODEL` / `IU_WORKER_MODEL` (not agent-gateway) | opencode |
+| `research.agent` | research-gateway's `IU_LEAD_MODEL` / `IU_WORKER_MODEL` (not agent-gateway); DeepSeek flash until Wave 6, then the HARD tier (docs/evals/2026-11-02-claude-seats.md) | opencode |
 
 ## Token effect / cache effect
 
 The research agent: its `AGENTS.md` and its four tool schemas are the cached prefix (identical across runs); the
 question, depth directive, background and a follow-up's earlier report are the task message. The tool gate adds no
 model-visible text beyond each tool's JSON answer (page text up to `maxChars`, 20k by default), which is where a
-research session's tokens go; DeepSeek's prefix cache holds because the session's history is never edited (cache
+research session's tokens go; the provider's prefix cache holds because the session's history is never edited (cache
 reads recorded and priced at the route's rate).

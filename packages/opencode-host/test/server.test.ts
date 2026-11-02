@@ -12,7 +12,7 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { isAbsolute, join } from 'node:path'
-import { effortsOf, opencodeModels, resolveRoute } from '@agent-workflows/routes'
+import { CLAUDE_MODELS, claudeRate, effortsOf, opencodeModels, resolveRoute } from '@agent-workflows/routes'
 import type { AgentWaitOptions } from '@agent-workflows/runtime'
 import {
   buildServerConfig,
@@ -539,11 +539,17 @@ describe('buildServerConfig: the provider follows the model family, whatever oth
       wire: 'anthropic',
       model: 'claude-haiku-5-5',
     })
-    for (const id of ['review.angle.deep', 'review.synthesis', 'diagram.agent', 'retro.analyze'] as const) {
+    for (const id of [
+      'review.angle.deep',
+      'review.synthesis',
+      'research.agent',
+      'otel.agent',
+      'retro.analyze',
+    ] as const) {
       expect(modelRef(id, {}).model).toMatchObject({ providerID: PROVIDER_ANTHROPIC, id: 'claude-sonnet-5-5' })
       expect(fallbackModelRef(id, {})?.model).toMatchObject({ providerID: PROVIDER_RESPONSES, id: 'gpt-6.1-terra' })
     }
-    for (const id of ['check', 'brain.agent', 'review.angle'] as const) {
+    for (const id of ['check', 'brain.agent', 'review.angle', 'diagram.agent'] as const) {
       expect(modelRef(id, {}).model).toMatchObject({ providerID: PROVIDER_ANTHROPIC, id: 'claude-haiku-5-5' })
       expect(fallbackModelRef(id, {})?.model).toMatchObject({ providerID: PROVIDER_RESPONSES, id: 'gpt-6.1-terra' })
     }
@@ -572,11 +578,32 @@ describe('buildServerConfig: the provider follows the model family, whatever oth
     expect(config.providers[PROVIDER_RESPONSES]?.models['gpt-6-luna']).toBeUndefined()
   })
 
-  test('the deepseek routes stay on chat and their Terra fallbacks sit on Responses', () => {
-    expect(modelRef('research.agent', {}).model.providerID).toBe(PROVIDER_CHAT)
-    expect(modelRef('otel.agent', {}).model.providerID).toBe(PROVIDER_CHAT)
-    expect(fallbackModelRef('research.agent', {})?.model.providerID).toBe(PROVIDER_RESPONSES)
-    expect(fallbackModelRef('otel.agent', {})?.model.providerID).toBe(PROVIDER_RESPONSES)
+  test('every Claude model is served on the Anthropic provider, priced with its table rate, Opus included', () => {
+    const config = buildServerConfig() as {
+      providers: Record<string, { models: Record<string, { cost?: { input: number; output: number } }> }>
+    }
+    const rows = config.providers[PROVIDER_ANTHROPIC]?.models ?? {}
+    for (const model of CLAUDE_MODELS) {
+      expect(rows[model]?.cost).toMatchObject({
+        input: claudeRate(model)?.inputPerM,
+        output: claudeRate(model)?.outputPerM,
+      })
+    }
+    expect(Object.keys(rows)).toContain('claude-opus-5-5')
+    expect(
+      modelRef('research.agent', { 'research.agent': { model: 'claude-opus-5-5', effort: 'medium' } }).model,
+    ).toEqual({
+      providerID: PROVIDER_ANTHROPIC,
+      id: 'claude-opus-5-5',
+      variant: 'medium',
+    })
+  })
+
+  test('the served models of the config are exactly opencodeModels()', () => {
+    const config = buildServerConfig() as { providers: Record<string, { models: Record<string, unknown> }> }
+    const served = Object.values(config.providers).flatMap((p) => Object.keys(p.models))
+    expect(new Set(served)).toEqual(new Set(opencodeModels()))
+    expect(served.length).toBe(opencodeModels().size)
   })
 })
 

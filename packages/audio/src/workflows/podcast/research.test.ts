@@ -36,6 +36,8 @@ import {
   researchLoadBearingFact,
   runPodcastResearch,
 } from './research.ts'
+import type { ResolvedRoute } from '../../../../routes/src/index.ts'
+import type { PodcastRouteId } from './routes.ts'
 import type { EpisodeSummary, LoadBearingFact } from './types.ts'
 
 /** The error a promise rejects with; fails the test when it resolves. */
@@ -834,7 +836,14 @@ describe('runPodcastResearch', () => {
     }
   }
 
-  const llmFor = (port: ModelPort) => new Llm(port, { addUsage: () => {}, signal: SIGNAL, progress })
+  // Chat-API route on an invented model: these tests pin the loop's chat dialect, not the table's wire for the stage.
+  const chatRoute = (id: PodcastRouteId): ResolvedRoute => ({
+    id,
+    wire: 'iu-openai',
+    model: 'fake-model',
+    effort: 'high',
+  })
+  const llmFor = (port: ModelPort) => new Llm(port, { addUsage: () => {}, signal: SIGNAL, progress }, chatRoute)
 
   const toolCall = (id: string, name: string, args: unknown = {}): RoundReply => ({
     message: {

@@ -170,21 +170,44 @@ export function fakeRoom(options: FakeRoomOptions = {}): FakeRoom {
     },
     async round(call: RoundCall, signal: AbortSignal, onUsage: OnWireUsage, onSent: () => void): Promise<RoundReply> {
       if (!signal.aborted) onSent()
-      const system = String(call.messages[0]?.content ?? '')
+      // The Messages dialect (the stages' routes) carries the system prompt apart and the results as blocks.
+      const messagesApi = call.api === 'messages'
+      const system = messagesApi ? (call.system ?? '') : String(call.messages[0]?.content ?? '')
       const stage = stageOf(system)
       const index = segmentIndex(system)
       rounds.push(structuredClone(call.messages))
       await enter(stage, index)
       usage(call.model, onUsage)
-      const toolResults = call.messages.filter((m) => m.role === 'tool').length
+      const toolResults = messagesApi
+        ? call.messages.reduce(
+            (n, m) =>
+              n +
+              (Array.isArray(m.content)
+                ? m.content.filter((b) => (b as { type?: string }).type === 'tool_result').length
+                : 0),
+            0,
+          )
+        : call.messages.filter((m) => m.role === 'tool').length
       if (stage === 'research') {
         if (toolResults === 0) {
-          const message: WireMessage = {
-            role: 'assistant',
-            content: null,
-            reasoning_content: 'opaque provider state',
-            tool_calls: [{ id: 'c1', type: 'function', function: { name: 'past_episodes', arguments: '{"limit":3}' } }],
-          }
+          const toolCalls = [
+            { id: 'c1', type: 'function' as const, function: { name: 'past_episodes', arguments: '{"limit":3}' } },
+          ]
+          const message: WireMessage = messagesApi
+            ? {
+                role: 'assistant',
+                content: null,
+                tool_calls: toolCalls,
+                // What the provider sent, echoed back verbatim: thinking blocks and their signature included.
+                native: {
+                  api: 'anthropic',
+                  items: [
+                    { type: 'thinking', thinking: 'opaque provider state', signature: 'sig' },
+                    { type: 'tool_use', id: 'c1', name: 'past_episodes', input: { limit: 3 } },
+                  ],
+                },
+              }
+            : { role: 'assistant', content: null, reasoning_content: 'opaque provider state', tool_calls: toolCalls }
           return { message, finishReason: 'tool_calls' }
         }
         return { message: { role: 'assistant', content: answer('research', -1) }, finishReason: 'stop' }

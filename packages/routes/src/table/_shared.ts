@@ -70,16 +70,17 @@ const claudeRate = (id: string) => {
 const HAIKU = { model: 'claude-haiku-5-5', rate: claudeRate('claude-haiku-5-5') } as const
 const SONNET = { model: 'claude-sonnet-5-5', rate: claudeRate('claude-sonnet-5-5') } as const
 
-/** Straight-up single calls that need almost no judgment: labelling, titles, the factory classify. Haiku without thinking, falls back to Luna low. */
+/** Straight-up steps that need almost no judgment: labelling, titles, the factory classify (`.call`), the diagram agent (`.agent`). Haiku without thinking, falls back to Luna low (call) or Terra low (agent). */
 export const FAST = {
   call: { ...HAIKU, effort: 'none', fallback: callFallback(LUNA) },
+  agent: { ...HAIKU, effort: 'none', fallback: agentFallback(TERRA_LOW) },
 } as const
 /** Easy calls with a clear shape: summarize, extract, classify a batch, triage, route a review, run the checks. Haiku high, falls back to Terra low. */
 export const EASY = {
   call: { ...HAIKU, effort: 'high', fallback: callFallback(TERRA_LOW) },
   agent: { ...HAIKU, effort: 'high', fallback: agentFallback(TERRA_LOW) },
 } as const
-/** Anything that judges, reads code or writes prose: review angles and synthesis, the prose writer, the narrative, diagram and retro agents. Sonnet medium, falls back to Terra medium. */
+/** Anything that judges, reads code or writes prose: review angles and synthesis, the prose writer, the narrative, the retro, research and otel agents, the podcast writers' room. Sonnet medium, falls back to Terra medium. */
 export const HARD = {
   call: { ...SONNET, effort: 'medium', fallback: callFallback(TERRA_MEDIUM) },
   agent: { ...SONNET, effort: 'medium', fallback: agentFallback(TERRA_MEDIUM) },
@@ -94,13 +95,11 @@ export const DECIDE = {
   call: { model: 'decision-1', rate: DECISION_RATE },
 } as const
 
-// ---- Cross-lab seats: named constants, not tiers. They stay off Claude on purpose, or on the model they run on until the
-// eval picks move them. A route spreads one like a tier; each carries its rate and its fallback.
-const DEEPSEEK_FLASH_MODEL = { model: 'deepseek-v4.1-flash', rate: DEEPSEEK_FLASH_RATE } as const
-/** The second lab, until the eval picks move it: the long-read agents (research, otel), the podcast stages and the prose reviewer (a cross-lab reviewer of a Claude writer). No effort (the vendor's own level). Falls back to Terra medium. */
+// ---- Cross-lab seats: named constants, not tiers. They stay off Claude on purpose: a reviewer of Claude-written output sits on
+// another lab (docs/gateway.md §Seats). A route spreads one like a tier; each carries its rate and its fallback.
+/** The second lab: the prose reviewer (`prose.review`, a cross-lab reviewer of a Claude writer). No effort (the vendor's own level). Falls back to Terra medium. */
 export const DEEPSEEK_FLASH = {
-  call: { ...DEEPSEEK_FLASH_MODEL, fallback: callFallback(TERRA_MEDIUM) },
-  agent: { ...DEEPSEEK_FLASH_MODEL, fallback: agentFallback(TERRA_MEDIUM) },
+  call: { model: 'deepseek-v4.1-flash', rate: DEEPSEEK_FLASH_RATE, fallback: callFallback(TERRA_MEDIUM) },
 } as const
 /** The podcast cross-lab reviewer. No effort: Gemini's OpenAI-compatible leg rejects `reasoning_effort`. Falls back to Terra medium. */
 export const GEMINI_FLASH = {
@@ -110,15 +109,7 @@ export const GEMINI_FLASH = {
 export const GEMINI_FLASH_LITE = {
   call: { model: 'gemini-3.5-flash-lite', rate: GEMINI_FLASH_LITE_RATE },
 } as const
-/** The cross-family critic of a Claude writer (`review.adversary`): Terra medium. Its capability refuses any wire but the OpenAI chat wire. On a provider-balance failure the critique comes from Luna medium on another backend rather than not at all. */
+/** The cross-family critic of a Claude writer (`review.adversary`, `podcast.review.b`): Terra medium. Its capability refuses any wire but the OpenAI chat wire. On a provider-balance failure the critique comes from Luna medium on another backend rather than not at all. */
 export const CRITIC = {
   call: { ...TERRA_MEDIUM, fallback: callFallback({ ...LUNA, effort: 'medium' as const }) },
-} as const
-/** The podcast voice owner (`podcast.write`): Terra medium at effort high. `Llm.round`, its tool loop, speaks only the OpenAI dialects, so it stays on `iu-openai`. Falls back to DeepSeek flash, the other lab. */
-export const VOICE = {
-  call: {
-    ...TERRA_MEDIUM,
-    effort: 'high',
-    fallback: callFallback({ ...DEEPSEEK_FLASH_MODEL, effort: 'high' as const }),
-  },
 } as const

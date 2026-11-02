@@ -180,18 +180,19 @@ test('the route literal scan catches a planted unknown route with file:line, and
   ])
 })
 
-// `Llm.round`, the podcast writer's tool loop, speaks only the OpenAI dialects (packages/audio/src/workflows/podcast/iu.ts):
-// every podcast route must stay off the Messages wire.
-test('no podcast route is on the anthropic wire or a Claude model', () => {
-  const ids = routeIds().filter((id) => id.startsWith('podcast.'))
-  expect(ids.length).toBeGreaterThan(0)
-  for (const id of ids) {
+// A reviewer of Claude-written output sits on another lab (docs/gateway.md §Seats): never a Claude model or the
+// anthropic wire, primary or fallback.
+test('the cross-lab reviewers are never on a Claude model or the anthropic wire, primary or fallback', () => {
+  const reviewers = ['podcast.review.a', 'podcast.review.b', 'prose.review', 'review.adversary'] as const
+  for (const id of reviewers) {
     const route = resolveRoute(id, {})
-    expect({ id, wire: route.wire, claude: route.model.startsWith('claude-') }).toEqual({
-      id,
-      wire: expect.not.stringMatching(/^anthropic$/),
-      claude: false,
-    })
+    for (const leg of [route, route.fallback]) {
+      expect({ id, wire: leg?.wire, claude: leg?.model.startsWith('claude-') ?? false }).toEqual({
+        id,
+        wire: expect.not.stringMatching(/^anthropic$/),
+        claude: false,
+      })
+    }
   }
 })
 

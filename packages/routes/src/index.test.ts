@@ -468,12 +468,25 @@ describe('fallback', () => {
       expect(resolveRoute(id, {})).toMatchObject({ wire: 'anthropic', model: 'claude-haiku-5-5', effort: 'high' })
       expect(resolveRoute(id, {}).fallback).toMatchObject(terraLow)
     }
-    for (const id of ['narrative', 'prose.write'] as const) {
-      expect(resolveRoute(id, {})).toMatchObject({ wire: 'anthropic', model: 'claude-sonnet-5-5' })
+    for (const id of [
+      'narrative',
+      'prose.write',
+      'podcast.research',
+      'podcast.editorial',
+      'podcast.outline',
+      'podcast.write',
+    ] as const) {
+      expect(resolveRoute(id, {})).toMatchObject({ wire: 'anthropic', model: 'claude-sonnet-5-5', effort: 'medium' })
       expect(resolveRoute(id, {}).fallback).toMatchObject(terraMedium)
     }
     expect(resolveRoute('prose.write', {}).effort).toBe('medium')
-    for (const id of ['review.angle.deep', 'review.synthesis', 'diagram.agent', 'retro.analyze'] as const) {
+    for (const id of [
+      'review.angle.deep',
+      'review.synthesis',
+      'research.agent',
+      'otel.agent',
+      'retro.analyze',
+    ] as const) {
       expect(resolveRoute(id, {})).toMatchObject({ wire: 'opencode', model: 'claude-sonnet-5-5', effort: 'medium' })
       expect(resolveRoute(id, {}).fallback).toMatchObject({ ...terraMedium, wire: 'opencode', rate: terraRate })
     }
@@ -481,19 +494,32 @@ describe('fallback', () => {
       expect(resolveRoute(id, {})).toMatchObject({ wire: 'opencode', model: 'claude-haiku-5-5', effort: 'high' })
       expect(resolveRoute(id, {}).fallback).toMatchObject({ ...terraLow, wire: 'opencode', rate: terraRate })
     }
-  })
-
-  // Cross-lab seats that stay on GPT by design: the adversary and the podcast writer are Terra medium, not the HARD tier.
-  test('review.adversary and podcast.write (Llm.round) stay on GPT on the chat wire; audio.tts.prep is the FAST tier', () => {
-    expect(resolveRoute('podcast.write', {})).toMatchObject({
-      wire: 'iu-openai',
-      model: 'gpt-6.1-terra',
+    // Wave 6 seat picks: the diagram agent is FAST.agent (Haiku, no thinking), the podcast metadata EASY.call
+    expect(resolveRoute('diagram.agent', {})).toMatchObject({
+      wire: 'opencode',
+      model: 'claude-haiku-5-5',
+      effort: 'none',
+    })
+    expect(resolveRoute('diagram.agent', {}).fallback).toMatchObject({ ...terraLow, wire: 'opencode', rate: terraRate })
+    expect(resolveRoute('podcast.metadata', {})).toMatchObject({
+      wire: 'anthropic',
+      model: 'claude-haiku-5-5',
       effort: 'high',
     })
-    expect(resolveRoute('podcast.write', {}).fallback).toMatchObject({
+    expect(resolveRoute('podcast.metadata', {}).fallback).toMatchObject(terraLow)
+  })
+
+  // Cross-lab seats that stay on GPT by design: the adversary and the second podcast reviewer are the CRITIC (Terra medium).
+  test('review.adversary and podcast.review.b stay on GPT on the chat wire; audio.tts.prep is the FAST tier', () => {
+    expect(resolveRoute('podcast.review.b', {})).toMatchObject({
       wire: 'iu-openai',
-      model: 'deepseek-v4.1-flash',
-      maxOutputTokens: 32_000,
+      model: 'gpt-6.1-terra',
+      effort: 'medium',
+    })
+    expect(resolveRoute('podcast.review.b', {}).fallback).toMatchObject({
+      wire: 'iu-openai',
+      model: 'gpt-6-luna',
+      effort: 'medium',
     })
     expect(resolveRoute('review.adversary', {})).toMatchObject({
       wire: 'iu-openai',
@@ -519,31 +545,15 @@ describe('fallback', () => {
     })
   })
 
-  test('a DeepSeek route falls back to Terra medium (chat call or agent step)', () => {
-    for (const id of [
-      'prose.review',
-      'podcast.outline',
-      'podcast.research',
-      'podcast.review.b',
-      'podcast.metadata',
-    ] as const) {
-      expect(resolveRoute(id, {}).fallback).toMatchObject({
-        wire: 'iu-openai',
-        model: 'gpt-6.1-terra',
-        effort: 'medium',
-        maxOutputTokens: 32_000,
-        rate: terraRate,
-      })
-    }
-    for (const id of ['research.agent', 'otel.agent'] as const) {
-      expect(resolveRoute(id, {})).toMatchObject({ model: 'deepseek-v4.1-flash', rate: deepseekRate })
-      expect(resolveRoute(id, {}).fallback).toMatchObject({
-        wire: 'opencode',
-        model: 'gpt-6.1-terra',
-        effort: 'medium',
-        rate: terraRate,
-      })
-    }
+  test('the DeepSeek route (prose.review) falls back to Terra medium on the chat wire', () => {
+    expect(resolveRoute('prose.review', {})).toMatchObject({ model: 'deepseek-v4.1-flash', rate: deepseekRate })
+    expect(resolveRoute('prose.review', {}).fallback).toMatchObject({
+      wire: 'iu-openai',
+      model: 'gpt-6.1-terra',
+      effort: 'medium',
+      maxOutputTokens: 32_000,
+      rate: terraRate,
+    })
   })
 
   test("a fallback never has the primary's own model", () => {
@@ -562,9 +572,8 @@ describe('fallback', () => {
     }
   })
 
-  // The Requesty check covers ONLY the four routes Wave 9 moved (route and fallback). Every other `deepseek-v4.1-flash`
-  // route (research.agent, otel.agent, prose.review, podcast.*) is Requesty-Global too and stays: its pre-registered
-  // decision is the lead's, not this guard's. The four run on the GPT stack and fall back to the other GPT model.
+  // The Requesty check covers ONLY the four routes Wave 9 moved (route and fallback). The one other `deepseek-v4.1-flash`
+  // route (prose.review) is Requesty-Global too and stays: its decision is the lead's, not this guard's. The four run on the GPT stack and fall back to the other GPT model.
   test('the four routes moved off Requesty (router, adversary, ocr, classify) and their fallbacks name no Requesty model', () => {
     const requesty = /^(eu\/)?deepseek-v4\.1-flash|^DeepSeek-V4|^pplx-decider|^kimi-k3|^kimi-k2\.7/i
     for (const id of ['review.router', 'review.adversary', 'review.ocr', 'cheap.classify'] as const) {

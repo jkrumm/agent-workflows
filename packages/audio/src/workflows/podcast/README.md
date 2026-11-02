@@ -58,9 +58,10 @@ are never re-run (`podcast.test.ts`). A change to a step's meaning or output sha
 
 Every model id is in the route table (`packages/routes/src/table/podcast.ts`; resolved per call, with the run's arm
 patch when an eval run carries one): `podcast.research`, `podcast.editorial`, `podcast.outline`,
-`podcast.write`, `podcast.review.a`, `podcast.review.b`, `podcast.metadata`. Defaults are legacy's: the cheap seat at
-effort high for research, editorial, outline and metadata; Gemini flash and the cheap seat as reviewers; the DeepSeek
-flash writer at effort high (GPT-6.1 Sol until 2026-10-30, owner direction: DeepSeek only while the team key pays). Effort is the route's: a route without one sends none (the Gemini reviewer).
+`podcast.write`, `podcast.review.a`, `podcast.review.b`, `podcast.metadata`. Defaults are the Wave 6 eval picks
+(`docs/evals/2026-11-02-claude-seats.md`): research, editorial, outline and the writer on the HARD tier (Sonnet, effort
+medium, Messages wire, single calls and the writer's tool loop alike), metadata on EASY (Haiku, effort high). The
+reviewers stay on other labs: `podcast.review.a` Gemini flash, `podcast.review.b` the CRITIC (Terra medium). Effort is the route's: a route without one sends none (the Gemini reviewer).
 
 **Decision: an own model port (`llm.ts`, `iu.ts`) instead of the platform transports.** The capabilities transports are
 single-call text wires; the room needs function tools on both OpenAI APIs (chat completions, and `/v1/responses`,
