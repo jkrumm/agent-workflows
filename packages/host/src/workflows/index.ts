@@ -5,6 +5,7 @@ import type { ArgoPush, Fleet } from '../fleet/index.ts'
 import type { LearningsStore } from '../learnings/index.ts'
 import type { HostWorkflow } from '../operations.ts'
 import type { ToolGate } from '../tool-gate/index.ts'
+import type { CostHistory } from './eval-mine/index.ts'
 import { buildWorkflows, type DiscoveredModule, discoverWorkflowModules } from './registry.ts'
 import type { ToolLedger } from './research/ledger.ts'
 import type { GhPort } from './retrospective/gh.ts'
@@ -35,6 +36,8 @@ export interface WorkflowDeps {
   research?: { ledger: ToolLedger }
   /** The agents overview (collectors, quota) and its Argo push; the host process builds one, a test host may leave it out. */
   fleet?: { fleet: Fleet; argo: ArgoPush; purposeOf?: (runId: string) => Promise<string | null> }
+  /** The journal's cost history (`Runtime.recentCost`), which `eval.mine`'s label estimate reads; absent: the estimate stays unknown. */
+  costHistory?: CostHistory
   /** The host's one tool gate; see `HostDeps`. */
   toolGate?: ToolGate
   /** Where a workflow's non-fatal failures (a hook, a ledger write) are logged; default: nowhere. */
