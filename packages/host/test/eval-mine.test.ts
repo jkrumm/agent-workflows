@@ -136,7 +136,8 @@ const registry = {
     return answer(input)
   },
 }
-let history = { runs: 0, meanCost: null as number | null }
+/** The `label` step cost of each eval.mine run the journal knows; a run absent here has no priced step. */
+let stepCosts = new Map<string, number>()
 
 beforeAll(async () => {
   sandbox = mkdtempSync(join(tmpdir(), 'agw-evalmine-'))
@@ -151,7 +152,13 @@ beforeAll(async () => {
     exec: isolated,
     now: () => NOW,
     logger: { warn: (message) => warnings.push(message) },
-    history: { recentCost: async () => history },
+    history: {
+      labelStepCosts: async ({ runIds, limit }) =>
+        runIds
+          .filter((id) => stepCosts.has(id))
+          .slice(0, limit)
+          .map((runId) => ({ runId, cost: stepCosts.get(runId) as number })),
+    },
   })
   t = await startTestHost({ prefix: 'evalmine', extra: [mineEntry] })
 })
@@ -176,7 +183,7 @@ beforeEach(() => {
   calls.length = 0
   gitFailure = null
   answer = verdicts
-  history = { runs: 0, meanCost: null }
+  stepCosts = new Map()
 })
 
 async function startRun(input: Record<string, unknown>) {
@@ -322,15 +329,48 @@ describe('eval.mine: an incomplete mine never shrinks the ground truth', () => {
 
 describe('eval.mine: labelling', () => {
   test('without --yes: the plan and an estimate; nothing is spent or labelled', async () => {
-    history = { runs: 3, meanCost: 0.1 }
-    const out = await mineRun({ label: 3 })
+    await mineRun({ label: 2, yes: true, controls: 3 })
+    // Two earlier runs wrote one record each; the per-candidate cost covers both labeller calls, so it is not doubled.
+    const [first, second] = lines('labels.jsonl') as GtLabelRecord[]
+    writeFileSync(
+      gtPath('labels.jsonl', env),
+      [
+        { ...first, runId: 'old-a' },
+        { ...second, runId: 'old-b' },
+      ]
+        .map((r) => `${JSON.stringify(r)}\n`)
+        .join(''),
+    )
+    stepCosts = new Map([
+      ['old-a', 0.3],
+      ['old-b', 0.1],
+      ['no-labels', 9],
+    ])
+    calls.length = 0
+    const out = await mineRun({ label: 2 })
     expect(out.spent).toBe(false)
-    expect(out.labelPlan).toEqual({
-      candidates: 3,
-      estimate: { historyRuns: 3, meanCostUsd: 0.1, totalUsd: 0.1 * 2 * 3 },
-    })
+    expect(out.labelPlan?.candidates).toBe(2)
+    expect(out.labelPlan?.estimate.historyRuns).toBe(2)
+    expect(out.labelPlan?.estimate.meanCostUsd).toBeCloseTo(0.2, 10)
+    expect(out.labelPlan?.estimate.totalUsd).toBeCloseTo(0.4, 10)
     expect(calls).toHaveLength(0)
-    expect(existsSync(gtPath('labels.jsonl', env))).toBe(false)
+  })
+
+  test('the estimate counts only the labels of runs with a priced label step', async () => {
+    await mineRun({ label: 2, yes: true, controls: 3 })
+    const [first, second] = lines('labels.jsonl') as GtLabelRecord[]
+    writeFileSync(
+      gtPath('labels.jsonl', env),
+      [
+        { ...first, runId: 'priced' },
+        { ...second, runId: 'unpriced' },
+      ]
+        .map((r) => `${JSON.stringify(r)}\n`)
+        .join(''),
+    )
+    stepCosts = new Map([['priced', 0.3]])
+    const out = await mineRun({ label: 2 })
+    expect(out.labelPlan?.estimate).toMatchObject({ historyRuns: 1, meanCostUsd: 0.3, totalUsd: 0.6 })
   })
 
   test('the estimate is unknown without priced history, and capped at the unlabelled candidates', async () => {

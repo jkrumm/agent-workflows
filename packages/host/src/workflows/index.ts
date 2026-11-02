@@ -36,7 +36,7 @@ export interface WorkflowDeps {
   research?: { ledger: ToolLedger }
   /** The agents overview (collectors, quota) and its Argo push; the host process builds one, a test host may leave it out. */
   fleet?: { fleet: Fleet; argo: ArgoPush; purposeOf?: (runId: string) => Promise<string | null> }
-  /** The journal's cost history (`Runtime.recentCost`), which `eval.mine`'s label estimate reads; absent: the estimate stays unknown. */
+  /** The journal's `label` step costs of `eval.mine` runs (`pgLabelStepCosts`), which `eval.mine`'s label estimate reads; absent: the estimate stays unknown. */
   costHistory?: CostHistory
   /** The host's one tool gate; see `HostDeps`. */
   toolGate?: ToolGate

@@ -5,7 +5,7 @@ import {
   type Exec,
   exec as bunExec,
   GtCandidate,
-  type GtLabelRecord,
+  GtLabelRecord,
   MINER_VERSION,
   mine,
   seededShuffle,
@@ -32,14 +32,15 @@ export { LABELER_VERSION, type LabelCaller, seatAnswer } from './label.ts'
 
 export const EVAL_MINE_ID = 'eval.mine'
 const DEFAULT_CONCURRENCY = 2
-/** The estimate reads the latest this many done `cap.eval.label` runs. */
+/** The estimate reads the latest this many `eval.mine` runs that labelled and have a priced `label` step. */
 const ESTIMATE_HISTORY = 20
-const LABEL_CAPABILITY_WORKFLOW = 'cap.eval.label'
-const CALLS_PER_CANDIDATE = 2
 
-/** What the estimate reads of the journal: `Runtime.recentCost`. A host that cannot read it leaves the estimate unknown. */
+/**
+ * What the estimate reads of the journal: the cost of the `label` step of the newest `eval.mine` runs among `runIds`,
+ * newest first, unpriced steps left out. A host that cannot read it leaves the estimate unknown.
+ */
 export interface CostHistory {
-  recentCost(workflow: string, limit: number): Promise<{ runs: number; meanCost: number | null }>
+  labelStepCosts(options: { runIds: string[]; limit: number }): Promise<{ runId: string; cost: number }[]>
 }
 
 export interface EvalMineOptions {
@@ -85,9 +86,15 @@ export const evalMineInput = z
   .strict()
 
 const Estimate = z.object({
-  historyRuns: z.number().int().describe('Done `cap.eval.label` runs the mean is taken over'),
+  historyRuns: z
+    .number()
+    .int()
+    .describe('`eval.mine` runs the mean is taken over (priced `label` step, at least one label)'),
   meanCostUsd: z.number().nullable(),
-  totalUsd: z.number().nullable().describe('2 calls × the mean × candidates; null without priced history'),
+  totalUsd: z
+    .number()
+    .nullable()
+    .describe('The mean cost per labelled candidate (both labeller calls) × candidates; null without priced history'),
 })
 
 const Summary = z.object({
@@ -206,16 +213,13 @@ export function createEvalMine(options: EvalMineOptions): HostWorkflow {
               wanted,
               pending(candidates(), latestLabels(env, LABELER_VERSION, warn), { seed, relabelErrors }).length,
             )
-            const history = (await options.history?.recentCost(LABEL_CAPABILITY_WORKFLOW, ESTIMATE_HISTORY)) ?? {
-              runs: 0,
-              meanCost: null,
-            }
+            const estimate = await labelEstimate(options.history, env, warn)
             return {
               candidates: toLabel,
               estimate: {
-                historyRuns: history.runs,
-                meanCostUsd: history.meanCost,
-                totalUsd: history.meanCost === null ? null : history.meanCost * CALLS_PER_CANDIDATE * toLabel,
+                historyRuns: estimate.runs,
+                meanCostUsd: estimate.meanCost,
+                totalUsd: estimate.meanCost === null ? null : estimate.meanCost * toLabel,
               },
             }
           })
@@ -264,6 +268,28 @@ export function createEvalMine(options: EvalMineOptions): HostWorkflow {
       'Mine the review ground truth from the owner’s fix history; --label N --yes labels N candidates on two vendors (spends)',
     cli: { positional: ['suite'], defaultFormat: 'json', mutating: true },
   }
+}
+
+/**
+ * The mean cost of labelling one candidate: the `label` step cost of the latest runs that labelled, over the records
+ * they wrote to `labels.jsonl` (every record, whatever its labeler version: the step paid for it). A candidate's cost
+ * already covers both labeller calls. Unknown (null) without a history port, a priced step, or a matching record.
+ */
+async function labelEstimate(
+  history: CostHistory | undefined,
+  env: Record<string, string | undefined>,
+  warn: Warn,
+): Promise<{ runs: number; meanCost: number | null }> {
+  if (!history) return { runs: 0, meanCost: null }
+  const labelsByRun = new Map<string, number>()
+  for (const record of readRecords('labels.jsonl', GtLabelRecord, env, warn)) {
+    labelsByRun.set(record.runId, (labelsByRun.get(record.runId) ?? 0) + 1)
+  }
+  const costs = await history.labelStepCosts({ runIds: [...labelsByRun.keys()], limit: ESTIMATE_HISTORY })
+  const priced = costs.filter((step) => labelsByRun.has(step.runId))
+  const candidates = priced.reduce((sum, step) => sum + (labelsByRun.get(step.runId) ?? 0), 0)
+  if (priced.length === 0 || candidates === 0) return { runs: 0, meanCost: null }
+  return { runs: priced.length, meanCost: priced.reduce((sum, step) => sum + step.cost, 0) / candidates }
 }
 
 /** `report.json`: aggregates only, the input of the committed report. */
