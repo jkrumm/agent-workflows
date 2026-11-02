@@ -69,6 +69,8 @@ export type Attribution = {
   project?: string
   workspace?: string
   traceparent?: string
+  /** Who asked agw for the tree (the root run's `runs.caller`; `eval` / `host` for a run the host started itself). */
+  origin?: string
 }
 
 /**

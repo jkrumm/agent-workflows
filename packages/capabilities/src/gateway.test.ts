@@ -12,7 +12,9 @@ import {
   gatewayHeaders,
   gatewayTransports,
   iuDecision,
+  isBalanceError,
   iuOpenai,
+  refusedRequestId,
 } from './transports/index.ts'
 
 let gateway: FakeGateway
@@ -94,6 +96,21 @@ describe('gatewayHeaders', () => {
     expect(gatewayHeaders(attribution)).toEqual(ATTRIBUTED)
   })
 
+  test('origin and routeFallback are x-agw-origin and x-agw-route-fallback, under the same value filter', () => {
+    const REFUSED_ID = '0197a5e0-1c2d-7abc-8def-0123456789ab'
+    expect(gatewayHeaders({ ...attribution, origin: 'claude-code', routeFallback: REFUSED_ID })).toEqual({
+      ...ATTRIBUTED,
+      'x-agw-origin': 'claude-code',
+      'x-agw-route-fallback': REFUSED_ID,
+    })
+    expect(gatewayHeaders({ ...attribution, routeFallback: 'unknown' })['x-agw-route-fallback']).toBe('unknown')
+    expect(gatewayHeaders(attribution)).not.toHaveProperty('x-agw-origin')
+    expect(gatewayHeaders(attribution)).not.toHaveProperty('x-agw-route-fallback')
+    const bad = gatewayHeaders({ ...attribution, origin: ' cli', routeFallback: 'a\nb' })
+    expect(bad).not.toHaveProperty('x-agw-origin')
+    expect(bad).not.toHaveProperty('x-agw-route-fallback')
+  })
+
   test('absent and unsendable values are left out, never a failed call', () => {
     expect(gatewayHeaders(undefined)).toEqual({})
     const { project: _, workspace: __, traceparent: ___, ...bare } = attribution
@@ -139,6 +156,68 @@ describe('the wires on the gateway', () => {
     expect(gateway.requests[0]?.path).toBe('/openai/v1/chat/completions')
     expect(headersOf()).toMatchObject({ ...ATTRIBUTED, authorization: 'Bearer agw-token' })
     expect(headersOf()).not.toHaveProperty('x-agw-fallback')
+  })
+
+  test('every wire sends x-agw-origin', async () => {
+    const withOrigin = { ...chat, attribution: { ...attribution, origin: 'hermes' } }
+    gateway.on('messages', () => Response.json({ content: [{ type: 'text', text: 'ok' }], stop_reason: 'end_turn' }))
+    gateway.on('chat', () => chatStream('ok', { prompt_tokens: 1, completion_tokens: 1 }))
+    gateway.on('decide', () => Response.json({ answers: { q: { type: 'noul', noul: 0.9 } } }))
+    await anthropicWire({ env: env() }).complete(withOrigin, never())
+    await iuOpenai({ env: env() }).complete(withOrigin, never())
+    await iuDecision({ env: env() }).decide(
+      {
+        model: 'd',
+        state: 's',
+        questions: { q: { type: 'boolean', instructions: 'i' } },
+        attribution: withOrigin.attribution,
+      },
+      never(),
+    )
+    for (const index of [0, 1, 2]) expect(headersOf(index)['x-agw-origin']).toBe('hermes')
+  })
+
+  test("a balance refusal's request id comes back on the error, and the fallback call sends it as the marker", async () => {
+    const REFUSED_ID = '0197a5e0-1c2d-7abc-8def-0123456789ab'
+    gateway.on('messages', () =>
+      Response.json(
+        {
+          type: 'error',
+          error: { type: 'balance_error', message: 'provider balance exhausted: no credit pool eligible' },
+        },
+        { status: 402, headers: { 'x-agw-request-id': REFUSED_ID, 'x-agw-pool': 'refused' } },
+      ),
+    )
+    gateway.on('chat', () => chatStream('ok', { prompt_tokens: 1, completion_tokens: 1 }))
+    const refused = await anthropicWire({ env: env() })
+      .complete(chat, never())
+      .then(
+        () => undefined,
+        (error: unknown) => error,
+      )
+    expect(isBalanceError(refused)).toBe(true)
+    expect(refusedRequestId(refused)).toBe(REFUSED_ID)
+    // The 402 is not retried: one request, then the caller's route fallback.
+    expect(gateway.requests).toHaveLength(1)
+    await iuOpenai({ env: env() }).complete(
+      { ...chat, attribution: { ...attribution, routeFallback: refusedRequestId(refused) } },
+      never(),
+    )
+    expect(headersOf(0)).not.toHaveProperty('x-agw-route-fallback')
+    expect(headersOf(1)['x-agw-route-fallback']).toBe(REFUSED_ID)
+  })
+
+  test('a failure with no request id (not through the gateway) or a non-balance one names none', async () => {
+    gateway.on('messages', () => new Response('{"error":"nope"}', { status: 400 }))
+    const failure = await anthropicWire({ env: env() })
+      .complete(chat, never())
+      .then(
+        () => undefined,
+        (error: unknown) => error,
+      )
+    expect(refusedRequestId(failure)).toBeUndefined()
+    expect(refusedRequestId(new Error('x'))).toBeUndefined()
+    expect(refusedRequestId(undefined)).toBeUndefined()
   })
 
   test('iu-decision: bearer token and attribution', async () => {

@@ -273,6 +273,9 @@ export async function runOcr(
         OCR_LLM_PROTOCOL: protocol,
         OCR_LLM_MODEL: route.model,
         OCR_ENABLE_TELEMETRY: '0',
+        // The fallback attempt names the refusal it replaces. `ocr` ends with its stderr, not the 402's headers, so the
+        // refused request's id is out of reach: `unknown` (`x-agw-route-fallback`, the gateway's `lane_detail.routeFallback`).
+        ...(route === primary ? {} : { OCR_LLM_EXTRA_HEADERS: 'x-agw-route-fallback=unknown' }),
         ...(ports.env.LANG ? { LANG: ports.env.LANG } : {}),
       }
       try {

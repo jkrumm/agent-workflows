@@ -57,6 +57,12 @@ describe('gatewayHeaders', () => {
     expect(gatewayHeaders(undefined)).toEqual({})
   })
 
+  test('origin is x-agw-origin, under the same value filter', () => {
+    expect(gatewayHeaders({ ...ATTRIBUTION, origin: 'claude-code' })['x-agw-origin']).toBe('claude-code')
+    expect(gatewayHeaders(ATTRIBUTION)).not.toHaveProperty('x-agw-origin')
+    expect(gatewayHeaders({ ...ATTRIBUTION, origin: ' cli' })).not.toHaveProperty('x-agw-origin')
+  })
+
   test('a value that is not printable ASCII up to 200 characters, or has a space at either end, is left out', () => {
     const headers = gatewayHeaders({
       ...ATTRIBUTION,

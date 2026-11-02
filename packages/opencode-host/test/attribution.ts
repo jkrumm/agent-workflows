@@ -9,5 +9,6 @@ export const attributionOf = (runId: string, step: string): Attribution => ({
   purpose: 'verify',
   project: 'agent-workflows',
   workspace: 'private',
+  origin: 'claude-code',
   traceparent: '00-11111111111111111111111111111111-2222222222222222-01',
 })

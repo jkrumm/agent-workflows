@@ -96,6 +96,30 @@ describe('a step scope passed to a capability reaches the gateway as attribution
     }
   })
 
+  test('origin is the root run caller, on a child run too; a run the host started says eval or host', async () => {
+    const rt = testRuntime({ schema: db.schema, workflows: [parent, child] })
+    await rt.open()
+    try {
+      const asked = await rt.start(parent, {}, { purpose: 'prod', caller: 'claude-code' })
+      await rt.wait(asked.runId)
+      // The parent's own step and its fan-out child both name who asked for the tree.
+      expect(headers(0)['x-agw-origin']).toBe('claude-code')
+      expect(headers(1)['x-agw-origin']).toBe('claude-code')
+      expect(headers(1)['x-agw-run-id']).not.toBe(asked.runId)
+      const own = await rt.start(child, { text: 'x' }, { purpose: 'prod' })
+      await rt.wait(own.runId)
+      expect(headers(2)['x-agw-origin']).toBe('host')
+      for (const purpose of ['eval', 'drift']) {
+        const harness = await rt.start(child, { text: 'y' }, { purpose })
+        await rt.wait(harness.runId)
+      }
+      expect(headers(3)['x-agw-origin']).toBe('eval')
+      expect(headers(4)['x-agw-origin']).toBe('eval')
+    } finally {
+      await rt.close()
+    }
+  })
+
   test('an ASCII project is sent; no project, no header', async () => {
     const rt = testRuntime({ schema: db.schema, workflows: [parent, child] })
     await rt.open()

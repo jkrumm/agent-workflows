@@ -151,8 +151,11 @@ const DoorOutput = z.object({
   ended: z.enum(['done', 'client-gone', 'bound']),
 })
 
-/** The door run's step `request`, as the run row will carry it: a root run, so its own id is the gateway's session. */
-function attributionOf(endpoint: DoorEndpoint, request: Request, runId: string): Attribution {
+/**
+ * The door run's step `request`, as the run row will carry it: a root run, so its own id is the gateway's session and
+ * the credential's caller (`runs.caller`, stamped by `startRecord`) is who asked.
+ */
+function attributionOf(endpoint: DoorEndpoint, request: Request, runId: string, caller: string): Attribution {
   const header = (name: string) => request.headers.get(name)?.trim() || undefined
   const traceparent = header('traceparent')
   return {
@@ -161,6 +164,7 @@ function attributionOf(endpoint: DoorEndpoint, request: Request, runId: string):
     workflow: DOOR_WORKFLOW_IDS[endpoint],
     step: 'request',
     purpose: header('x-agw-purpose') ?? 'prod',
+    origin: caller,
     ...(traceparent ? { traceparent } : {}),
   }
 }
@@ -314,7 +318,7 @@ export function createDoor(options: DoorOptions): Door {
         usage,
         requestId: () => runId,
         caller: () => caller,
-        attribution: () => attributionOf(endpoint, request, runId),
+        attribution: () => attributionOf(endpoint, request, runId, caller),
         fetch,
       })
       response = await handler(request)

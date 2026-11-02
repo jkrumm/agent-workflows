@@ -884,10 +884,12 @@ JSON
       const bin = join(scratch, `ocr-balance-${++repoSeq}`)
       const primaryModel = resolveRoute('review.ocr', {}).model
       const calls = join(scratch, `ocr-balance-calls-${repoSeq}`)
+      const extra = join(scratch, `ocr-balance-extra-${repoSeq}`)
       writeFileSync(
         bin,
         `#!/bin/sh
 echo "$OCR_LLM_MODEL $OCR_LLM_PROTOCOL" >> "${calls}"
+echo "[$OCR_LLM_EXTRA_HEADERS]" >> "${extra}"
 if [ "$OCR_LLM_MODEL" = "${primaryModel}" ]; then
   echo "llm error: IU request failed (503) — Insufficient Balance (PaymentRequired) on Requesty-Global" >&2
   exit 2
@@ -911,6 +913,8 @@ JSON
         `${route.model} ${ocrTransport(route, transport).protocol}`,
         `${fallback.model} ${ocrTransport(fallback, transport).protocol}`,
       ])
+      // Only the fallback attempt names the refusal, and as unknown: ocr's stderr carries no request id.
+      expect(readFileSync(extra, 'utf8').trim().split('\n')).toEqual(['[]', '[x-agw-route-fallback=unknown]'])
     })
 
     test('ocr is handed the gateway: its Anthropic base (review.ocr is a Messages-wire route) and the tool token, never the API secret or an IU variable', async () => {

@@ -592,6 +592,28 @@ describe('picking', () => {
     expect(gw.rows().records).toHaveLength(0)
   })
 
+  test('the 402 carries x-agw-request-id, and the same id is the refused pick row the fallback joins', async () => {
+    anthropic.reply(refusalResponse)
+    const gw = start({ registry: [pool('iu')] })
+    const init = jsonBody(request())
+    const response = await gw.call(MESSAGES, { ...init, headers: { ...init.headers, 'x-agw-fallback': 'none' } })
+    expect(response.status).toBe(402)
+    const id = response.headers.get('x-agw-request-id') ?? ''
+    expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-7/)
+    expect(response.headers.get('x-agw-pool')).toBe('refused')
+    const refused = gw.rows().picks.find(({ row }) => row.picked === 'refused')
+    expect(refused?.row.request_id).toBe(id)
+    // The fallback call names it and the gateway stores it.
+    iu.reply(() => Response.json(message))
+    const next = await gw.call('/openai/v1/chat/completions', {
+      method: 'POST',
+      body: '{"model":"m"}',
+      headers: { 'content-type': 'application/json', 'x-agw-route-fallback': id },
+    })
+    await next.text()
+    expect(gw.rows().records[0]?.row.lane_detail.routeFallback).toBe(id)
+  })
+
   test('a plain 400 from a pool is forwarded and drains nothing', async () => {
     const body = '{"type":"error","error":{"type":"invalid_request_error","message":"nope"}}'
     anthropic.reply(() => new Response(body, { status: 400, headers: { 'content-type': 'application/json' } }))
@@ -666,6 +688,59 @@ describe('usage row', () => {
     const expected = costOf(USAGE, 'haiku')
     expect(row?.cost_reported_usd).toBeCloseTo(expected, 12)
     expect(gw.pools.status()[0]?.meterUsd).toBeCloseTo(expected, 12)
+  })
+
+  test('x-agw-origin is stored as lane_detail.origin when it is a caller name, else dropped; it is not forwarded', async () => {
+    const gw = start({ registry: [pool('iu')] })
+    const init = jsonBody(request())
+    const origins = ['claude-code', 'hermes', 'a', 'Bad Caller', '1abc', 'a'.repeat(33), '', 'x_y']
+    for (const origin of origins) {
+      await (await gw.call(MESSAGES, { ...init, headers: { ...init.headers, 'x-agw-origin': origin } })).text()
+    }
+    await (await gw.call(MESSAGES, init)).text()
+    const stored = gw.rows().records.map(({ row }) => row.lane_detail.origin)
+    expect(stored).toEqual([
+      'claude-code',
+      'hermes',
+      'a',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+    ])
+    expect(anthropic.seen.every((seen) => [...seen.headers.keys()].every((name) => !name.startsWith('x-agw-')))).toBe(
+      true,
+    )
+  })
+
+  test('x-agw-route-fallback is stored as lane_detail.routeFallback for a request id or unknown, else dropped', async () => {
+    const gw = start({ registry: [pool('iu')] })
+    const init = jsonBody(request())
+    const id = Bun.randomUUIDv7()
+    const values = [id, 'unknown', 'UNKNOWN', 'run-1', id.toUpperCase(), `${id}x`, '', 'x'.repeat(201)]
+    for (const value of values) {
+      await (await gw.call(MESSAGES, { ...init, headers: { ...init.headers, 'x-agw-route-fallback': value } })).text()
+    }
+    await (await gw.call(MESSAGES, init)).text()
+    const stored = gw.rows().records.map(({ row }) => row.lane_detail.routeFallback)
+    expect(stored).toEqual([id, 'unknown', ...Array(7).fill(undefined)])
+    expect(anthropic.seen.every((seen) => [...seen.headers.keys()].every((name) => !name.startsWith('x-agw-')))).toBe(
+      true,
+    )
+  })
+
+  test('origin and routeFallback land on a passthrough row too, and never change the pick', async () => {
+    iu.reply(() => Response.json({ ok: true }))
+    const gw = start({ registry: [pool('iu')] })
+    const headers = { 'content-type': 'application/json', 'x-agw-origin': 'iris', 'x-agw-route-fallback': 'unknown' }
+    await (await gw.call('/openai/v1/chat/completions', { method: 'POST', body: '{"model":"m"}', headers })).text()
+    expect(gw.rows().records[0]?.row.lane_detail).toMatchObject({ origin: 'iris', routeFallback: 'unknown' })
+    const init = jsonBody(request())
+    const withOrigin = await gw.call(MESSAGES, { ...init, headers: { ...init.headers, 'x-agw-origin': 'iris' } })
+    await withOrigin.text()
+    expect(withOrigin.headers.get('x-agw-pool')).toBe('iu')
   })
 
   test('a streamed response: message_start and message_delta merge', async () => {

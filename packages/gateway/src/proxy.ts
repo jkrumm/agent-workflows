@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { BEARER_CHALLENGE } from '@agent-workflows/host/auth'
+import { BEARER_CHALLENGE, CALLER_PATTERN } from '@agent-workflows/host/auth'
 import { callerAuth, PLATFORM_CALLER } from '@agent-workflows/host/door-tokens'
 import { BALANCE_MARKER, isBalanceFailure, resolveModelAlias } from '@agent-workflows/routes/pricing'
 import { chargeOf, type RequestShape } from './charge.ts'
@@ -25,6 +25,11 @@ const CALLER_LEFT = 499
 const MAX_CALLER_VALUE_CHARS = 200
 /** `repoOf` of packages/middleware/src/usage.ts; the bundle rule keeps middleware out of this process. */
 const REPO_SLUG = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
+
+/** The id `Bun.randomUUIDv7()` mints for `x-agw-request-id`: what `x-agw-route-fallback` may name. */
+const REQUEST_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+/** `x-agw-route-fallback` from a site that cannot see the refused response (OpenCode's error text, `ocr`'s stderr). */
+const FALLBACK_UNKNOWN = 'unknown'
 
 /** rules/agent-limits: a hang guard of 30 minutes on silence from upstream, never a cap on a long stream. */
 const HANG_GUARD_MS = 30 * 60 * 1000
@@ -233,6 +238,18 @@ function boundedSession(session: string | null): string | null {
 const laneOf = (caller: string): RecordRow['lane'] =>
   caller === 'agw' || caller === 'agw-opencode' ? 'agw_workflow' : caller === 'hermes' ? 'hermes' : 'other'
 
+/** Who asked agw (`x-agw-origin`): a caller name, else no value. Attribution only; it never changes a pick. */
+function originOf(inbound: Headers): string | null {
+  const value = inbound.get('x-agw-origin')
+  return value !== null && CALLER_PATTERN.test(value) ? value : null
+}
+
+/** The refused request this call replaces (`x-agw-route-fallback`): a request id as minted here, or `unknown`; else no value. */
+function routeFallbackOf(inbound: Headers): string | null {
+  const value = inbound.get('x-agw-route-fallback')
+  return value !== null && (value === FALLBACK_UNKNOWN || REQUEST_ID.test(value)) ? value : null
+}
+
 /** `x-agw-project` and `x-agw-workspace` as `usage.records` takes them; an empty or an overlong value is no value. */
 function attributionOf(inbound: Headers): Attribution {
   const bounded = (name: string): string | null => {
@@ -359,6 +376,8 @@ export function createProxy(options: ProxyOptions): GatewayProxy {
     const tokens = tee.tokens
     const durationMs = Date.now() - x.startedAtMs
     const lane = laneOf(x.caller)
+    const origin = originOf(x.inbound)
+    const routeFallback = routeFallbackOf(x.inbound)
     const row: RecordRow = {
       source: 'gateway',
       source_id: x.requestId,
@@ -382,6 +401,8 @@ export function createProxy(options: ProxyOptions): GatewayProxy {
         workflow: x.inbound.get('x-agw-workflow'),
         step: x.inbound.get('x-agw-step'),
         purpose: x.inbound.get('x-agw-purpose'),
+        ...(origin === null ? {} : { origin }),
+        ...(routeFallback === null ? {} : { routeFallback }),
         pool: pick.pool,
         // `forced` is the caller's choice, not a fallback; `gateway_picks` keeps the reason.
         fallback: creditPool || pick.reason === 'forced' ? null : pick.reason,

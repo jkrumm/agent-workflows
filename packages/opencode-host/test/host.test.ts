@@ -375,6 +375,29 @@ describe('attribution in metadata.agw', () => {
     expect(stored(t, fallback)).toMatchObject({ fallbackOf: sid(handle), ...ATTRIBUTION })
   })
 
+  test('origin rides with the run; only the fallback session names a refusal, as unknown, on its follow-up turn too', async () => {
+    const t = setup()
+    const handle = JSON.parse(JSON.stringify(await t.host.open(spec('x')))) as Json
+    expect(stored(t, sid(handle))).toMatchObject({ origin: 'claude-code' })
+    expect(stored(t, sid(handle))).not.toHaveProperty('routeFallback')
+    await t.host.prompt(handle, '[balance] review this')
+    await t.host.wait(handle, waitOptions())
+    const fallback = Object.keys(t.fake.state.sessions).find((id) => id !== sid(handle)) as string
+    expect(stored(t, sid(handle))).not.toHaveProperty('routeFallback')
+    expect(stored(t, fallback)).toMatchObject({ origin: 'claude-code', routeFallback: 'unknown' })
+    // The turn after it runs on the fallback session still: the marker is not rewritten away.
+    const turn = {
+      runId: 'run-1',
+      stepId: 'reask',
+      key: 'run-1:reask',
+      attempt: 1,
+      attribution: attributionOf('run-1', 'reask'),
+    }
+    const next = (await t.host.followUp(handle, turn)) as OpenCodeHandle
+    expect(next.sessionId).toBe(fallback)
+    expect(stored(t, fallback)).toMatchObject({ step: 'reask', origin: 'claude-code', routeFallback: 'unknown' })
+  })
+
   test('a handle from before the deploy holds none: its fallback session carries the run and step', async () => {
     const t = setup()
     const { attribution: _, ...old } = (await t.host.open(spec('x'))) as OpenCodeHandle

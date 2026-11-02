@@ -18,6 +18,7 @@ const ATTRIBUTION = {
   purpose: 'user',
   project: 'agent-workflows',
   workspace: 'private',
+  origin: 'claude-code',
 }
 
 /** The plugin against a store of sessions: the hook it registers, and every `get` it made. */
@@ -70,6 +71,17 @@ describe('the attribution plugin', () => {
   test('the headers from metadata.agw are the ones gatewayHeaders writes', async () => {
     const { fire } = await load([{ id: 's', metadata: { agw: { ...ATTRIBUTION, key: 'k', route: 'check' } } }])
     expect(await fire('s')).toEqual(gatewayHeaders(ATTRIBUTION))
+  })
+
+  test('origin and routeFallback are set under the names gatewayHeaders writes', async () => {
+    const agw = { ...ATTRIBUTION, origin: 'claude-code', routeFallback: 'unknown' }
+    const { fire } = await load([{ id: 's', metadata: { agw } }])
+    const headers = await fire('s')
+    expect(headers).toEqual(gatewayHeaders(agw))
+    expect(headers['x-agw-origin']).toBe('claude-code')
+    expect(headers['x-agw-route-fallback']).toBe('unknown')
+    const { origin: _, ...bare } = ATTRIBUTION
+    expect(await (await load([{ id: 's', metadata: { agw: bare } }])).fire('s')).not.toHaveProperty('x-agw-origin')
   })
 
   test('a traceparent is never set: it could not land', async () => {

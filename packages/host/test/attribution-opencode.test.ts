@@ -103,6 +103,8 @@ test('an agent step, its balance fallback and a follow-up turn each reach the pl
     workflow: 'attr.agent',
     step: 'draft',
     purpose: 'verify',
+    // No door admitted this run: the host started it.
+    origin: 'host',
     project: 'agent-workflows',
     workspace: 'private',
   })
@@ -111,6 +113,9 @@ test('an agent step, its balance fallback and a follow-up turn each reach the pl
   expect(primary?.metadata?.agw).not.toHaveProperty('traceparent')
   expect(await pluginHeaders(session, primary?.id as string)).toEqual(gatewayHeaders(of('draft')))
   // The step fell back, so the follow-up turn ran there and moved that session on to its own step.
-  expect(fallback?.metadata?.agw).toMatchObject(of('reask'))
-  expect(await pluginHeaders(session, fallback?.id as string)).toEqual(gatewayHeaders(of('reask')))
+  // It is the route's fallback for a balance refusal whose request id OpenCode never shows: the marker says unknown.
+  const onFallback = { ...of('reask'), routeFallback: 'unknown' }
+  expect(primary?.metadata?.agw).not.toHaveProperty('routeFallback')
+  expect(fallback?.metadata?.agw).toMatchObject(onFallback)
+  expect(await pluginHeaders(session, fallback?.id as string)).toEqual(gatewayHeaders(onFallback))
 })

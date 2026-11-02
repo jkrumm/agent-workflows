@@ -191,7 +191,18 @@ Callers authenticate with a door token (`data/door-tokens`, one line per caller:
 server), `oc`, `modelpick`, …; the API secret is `agw`)
 as `authorization: Bearer <t>`, `x-api-key`, `x-goog-api-key`, `api-key` or a `key` query parameter (whichever the
 caller's SDK sends). None of them goes upstream. The caller name comes from the credential, never a header; a door token never opens the API. Optional headers: `x-agw-run-id`, `x-agw-workflow`, `x-agw-step`, `x-agw-purpose`,
-`x-agw-project`, `x-agw-workspace`, `x-agw-usage`, `x-agw-upstream`, `traceparent`.
+`x-agw-project`, `x-agw-workspace`, `x-agw-origin`, `x-agw-route-fallback`, `x-agw-usage`, `x-agw-upstream`, `traceparent`.
+
+**Who asked, and what a call replaces.** The door caller says which door the call came through (`agw`, `agw-opencode`);
+`x-agw-origin` says who asked agw: the root run's caller (`runs.caller`: `claude-code`, `hermes`, `iris`, `cli`, …, or
+`eval` / `host` for a run the host started itself), so a child run reports who asked for its tree. It is stored as
+`lane_detail.origin` when it matches the caller pattern (`[a-z][a-z0-9-]{0,31}`), else dropped. `x-agw-route-fallback`
+marks a call that runs because the route's Claude call was refused for balance (the 402 of `x-agw-fallback: none`) and
+agw fell back onto its GPT route: it carries the refused response's `x-agw-request-id`, which is the `request_id` of that
+refusal's `refused` row in `usage.gateway_picks`, so the fallback row joins the refusal. A site that cannot see the
+response headers (OpenCode's error text, `ocr`'s stderr) sends `unknown`. It is stored as `lane_detail.routeFallback`
+when it is a request id as the gateway mints them (a UUIDv7) or `unknown`, else dropped. Both are attribution only: neither
+changes a pick.
 
 The caller sets the lane: `agw` and `agw-opencode` are `agw_workflow`, `hermes` is `hermes`, any other is `other` with the
 caller's name in `lane_detail.raw`, the key Argo labels an `other` row from. `x-agw-project` is the row's `project_raw`
@@ -205,9 +216,10 @@ is counted twice.
 
 **OpenCode** (pinned build) sends the session id on every request with no configuration (`x-opencode-session-id`, and
 `x-session-affinity` with the root session's id). The host adds the attribution headers (`x-agw-session`, the root run's
-id, from `rootId`; `x-agw-run-id`, `x-agw-step`, `x-agw-workflow`, `x-agw-purpose`, `x-agw-project`, `x-agw-workspace`)
+id, from `rootId`; `x-agw-run-id`, `x-agw-step`, `x-agw-workflow`, `x-agw-purpose`, `x-agw-project`, `x-agw-workspace`, `x-agw-origin`; on
+the session the host opens when a turn fails on provider balance, also `x-agw-route-fallback: unknown`)
 through a small plugin on the `model.request` hook, reading the step's `Attribution` (`runId`, `rootId`, `workflow`, `step`,
-`purpose`, `project`, `workspace`) from the session's `metadata.agw`; the plugin is a directory in the server config's
+`purpose`, `project`, `workspace`, `origin`, and `routeFallback` on a fallback session) from the session's `metadata.agw`; the plugin is a directory in the server config's
 `plugins`. `traceparent` is not among them: OpenCode's HTTP client writes its own at send time. The join by
 `opencode.session.id` on the step span stays as the fallback. **Hermes** sets `session_affinity_header: x-agw-session` on its gateway provider entry (an
 `anthropic_messages` entry); static `extra_headers` are not relied on (auxiliary calls drop them). Neither uses
@@ -219,7 +231,8 @@ Schema changes in usage-tracker (`migrations/pg`, it owns the `usage` schema):
 
 - `records.billing` gains `api_credit`; `account` (`iu|me|me2`) is set on those rows. Gateway rows: `source='gateway'`,
   `repo`, `project_raw`, `workspace` from the caller's headers, `lane_detail {caller, raw, session, run_id, workflow, step,
-  pool, fallback}` (`raw` on lane `other` only).
+  purpose, origin, routeFallback, pool, fallback}` (`raw` on lane `other` only; `origin` and `routeFallback` only when the
+  caller sent a valid `x-agw-origin` / `x-agw-route-fallback`).
 - `usage.credit_cycles` (account, cycle start/end, grant, metered, reconciled, unspent at close).
 - `usage.gateway_picks` (ts, caller, session, picked, reason, machine, request_id), modelled on `account_picks`, one row
   per routing decision: `picked` is a pool id, `iu-api` (the IU passthrough, because a pool is itself named `iu`) or

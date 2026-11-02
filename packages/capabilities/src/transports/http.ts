@@ -32,6 +32,8 @@ export class Attempt extends Error {
     readonly userError?: UserError,
     /** The attempt failed below the vendor's answer (no response, a cut body): the message is the client library's text. */
     readonly transport?: true,
+    /** The gateway's `x-agw-request-id` of the failed response: what a route fallback names as the call it replaces. */
+    readonly requestId?: string,
   ) {
     super(message)
   }
@@ -55,12 +57,20 @@ export interface UserError {
 export async function failedResponse(res: Response, wire: string): Promise<Attempt> {
   const body = await res.text().catch(() => '')
   const detail = body.slice(0, 300)
+  const requestId = res.headers.get('x-agw-request-id') ?? undefined
   if (isBalanceFailure({ status: res.status, text: body })) {
-    return new Attempt(`${wire} ${BALANCE_MARKER} (${res.status}): ${detail}`, false, res.status)
+    return new Attempt(
+      `${wire} ${BALANCE_MARKER} (${res.status}): ${detail}`,
+      false,
+      res.status,
+      undefined,
+      undefined,
+      requestId,
+    )
   }
   const retryable = RETRYABLE_STATUS.has(res.status) && !detail.includes('invalid_request_error')
   const prefix = res.status === 410 ? 'model deprecated (410)' : `${wire} request failed (${res.status})`
-  return new Attempt(`${prefix}: ${detail}`, retryable, res.status)
+  return new Attempt(`${prefix}: ${detail}`, retryable, res.status, undefined, undefined, requestId)
 }
 
 /** A transport failure that a route's fallback answers: the classifier over a failed call's status and message. */
@@ -68,6 +78,17 @@ export function isBalanceError(error: unknown): boolean {
   if (!(error instanceof CapabilityError) || error.code !== 'UPSTREAM_ERROR') return false
   const status = (error.data as { status?: unknown } | undefined)?.status
   return isBalanceFailure({ ...(typeof status === 'number' ? { status } : {}), text: error.message })
+}
+
+/**
+ * The gateway's request id of the response a failed call died on (`x-agw-request-id`; the 402 of a drained credit has
+ * one and a `gateway_picks` row under it). A route fallback sends it as `Attribution.routeFallback`, so the fallback
+ * row joins the refusal. Absent when the failure did not come back through the gateway.
+ */
+export function refusedRequestId(error: unknown): string | undefined {
+  if (!(error instanceof CapabilityError)) return undefined
+  const id = (error.data as { requestId?: unknown } | undefined)?.requestId
+  return typeof id === 'string' ? id : undefined
 }
 
 /**
@@ -103,6 +124,7 @@ export async function withRetries<T>(options: HttpOptions, signal: AbortSignal, 
       if (!failure.retryable || i >= attempts - 1) {
         throw fail('UPSTREAM_ERROR', failure.message, {
           ...(failure.status === undefined ? {} : { status: failure.status }),
+          ...(failure.requestId === undefined ? {} : { requestId: failure.requestId }),
           ...(failure.userError ? { userError: failure.userError } : {}),
           ...(failure.transport ? { transport: true as const } : {}),
         })
