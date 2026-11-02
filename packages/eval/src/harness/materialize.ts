@@ -1,7 +1,7 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { brief, type Exec } from './exec.ts'
+import { brief, type Exec, type ExecResult } from './exec.ts'
 
 const GIT_TIMEOUT_MS = 120_000
 const SETUP_TIMEOUT_MS = 600_000
@@ -15,6 +15,12 @@ export interface MaterializeInput {
   baseSha: string
   /** The review case's `diff` or the check case's `patch`; applied as uncommitted changes. */
   patch?: string
+  /**
+   * Leave nothing in the clone but the history up to `baseSha`: every ref is deleted and the reflog expired, so
+   * `git log --all` reaches no later commit (a fix the reviewed commit's bug has must not be findable from a shell).
+   * The `--shared` alternates stay.
+   */
+  isolate?: boolean
 }
 
 export interface MaterializeOptions {
@@ -49,6 +55,11 @@ export async function materialize(input: MaterializeInput, options: MaterializeO
   const checkout = await git(['checkout', '--quiet', '--detach', input.baseSha])
   if (checkout.code !== 0) return { ok: false, reason: 'checkout_failed', detail: brief(checkout.stderr), dir }
 
+  if (input.isolate) {
+    const isolated = await isolateHistory(git)
+    if (isolated) return { ok: false, reason: 'checkout_failed', detail: isolated, dir }
+  }
+
   if (input.patch?.trim()) {
     const patch = input.patch.endsWith('\n') ? input.patch : `${input.patch}\n`
     // Intent-to-add: files the patch creates show in `git diff HEAD`, which a scope of uncommitted changes may read.
@@ -63,6 +74,21 @@ export async function materialize(input: MaterializeInput, options: MaterializeO
     }
   }
   return { ok: true, dir }
+}
+
+/** Drops the remote and every ref (branches, tags, stash, packed), then the reflogs; returns a failure's detail. */
+async function isolateHistory(git: (args: string[], stdin?: string) => Promise<ExecResult>): Promise<string | null> {
+  const remote = await git(['remote', 'remove', 'origin'])
+  if (remote.code !== 0) return brief(remote.stderr)
+  const refs = await git(['for-each-ref', '--format=%(refname)'])
+  if (refs.code !== 0) return brief(refs.stderr)
+  const names = refs.stdout.split('\n').filter(Boolean)
+  if (names.length) {
+    const deleted = await git(['update-ref', '--stdin'], `${names.map((n) => `delete ${n}`).join('\n')}\n`)
+    if (deleted.code !== 0) return brief(deleted.stderr)
+  }
+  const expired = await git(['reflog', 'expire', '--expire=now', '--all'])
+  return expired.code === 0 ? null : brief(expired.stderr)
 }
 
 export interface SetupStep {
