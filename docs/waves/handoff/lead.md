@@ -1,14 +1,67 @@
-> **Wave 16 in flight** (lead `agent-workflows-w1-r12`, 2026-11-02 ~22:15): merged #117 eval import, #119, #116 door
-> failures, #115 cost null = unknown; release `b8986eb` deployed, `make verify` PASS, proven on stored rows. Open: #118
-> (failed agent steps keep spend, last fix round) and `fix/eval-mine-label-estimate` (#119 read a history that never
-> exists). The Wave 8 close-out below stands until Wave 16's replaces it.
+# Lead handoff — Wave 16 (Accounting and eval import): CLOSE-OUT
 
-# Lead handoff — Wave 8 (Ground truth): CLOSE-OUT before the owner session
+Lead `agent-workflows-w1-r12`, spawned by mother `agent-workflows-w1-r4`, 2026-11-02 ~20:30 → ~23:35 local. Wave 8's
+pre-session close-out is in git history (`e637fcc`).
 
-Lead `agent-workflows-w1-r11`, spawned by mother `agent-workflows-w1-r4`, 2026-11-02 ~16:30 → ~20:30 local. Wave 7's
-close-out is in git history (`fdeea26`).
+## Delivered
 
-stopped: owner session (labelling)
+| What | Where |
+|-|-|
+| `agw eval import <suite> --label <arm> --findings <file>`: an external arm's findings (case id → `{file, line?, endLine?, message, tag}`) scored by scorer v3 as internal `review.imported` case runs (no model call; judge only for cases with findings); each label its own fingerprint; `agw eval compare … --b-workflow review.imported` pairs it with a `review` arm by case id, cost and wall reported as not measured | #117 `53e4841`..`148e3dc` |
+| Failed agent steps keep their spend: `WorkflowError.carryUsage` (read-only after; `Cancelled` ignores it), OpenCode `wait`/`waitTurn` carry what they read, a failed outcome re-reads the session once, a gone session keeps what was seen, a balance fallback reports both sessions (`AgentResult.usage` is `Usage \| Usage[]`); a prompted wait that fails with nothing to report adds one unpriced report (unknown, never free); an infra error adds nothing (re-attach) | #118 `119da22`..`f20c90d` |
+| `cost` null means unknown only: a step that ended `done` with no report records 0; failed or cancelled without a report, or only unpriced reports, stays null. Run roll-up: the known sum when any step is positive, else null on a null step or an unpriced call, else 0. Outbox candidates `cost > 0` (migration 0016 builds `steps_usage_outbox` first, then drops the old index); `scripts/verify.sh` follows; `trackUsage` zero calls = 0 | #115 `08e59d0`..`b8986eb` |
+| Door errors are run failures: speech door and image door, an answer ≥ 400 ends the run `failed` (`invalid_input` for 400/413/422, else `error`) with the step's usage kept and the status plus error text in the message; the caller's response is unchanged; client-gone stays `done`; no call = cost 0, a started call without a report = null | #116 `45b6374`, `49bcb0c` |
+| `eval.mine`'s label estimate: mean cost per labelled candidate = the `label` step cost of recent `eval.mine` runs / their `labels.jsonl` records (#119 wired a port to `cap.eval.label` runs, which never exist: labelling runs in-process inside the `label` step; #120 replaced it) | #119 `164d7a8`, #120 `9c34697` |
+| Deployed | release `b8986eb` (#115-#117, #119), then `9c34697` (all); `make verify` PASS both (review runs `01a19e17-1c6c`, `01a19e2e-ba55`) |
+
+Reviews: `agw review` on every PR (#115 actionable → fixed: a run with an unpriced call no longer rolls up free;
+#118 actionable → fixed: the fallback stamped the shared `Cancelled`; #116, #117, #119, #120 clean, improvements taken
+where cheap). The lead's `/code-review high` on the core PRs: #115 (a failed or cancelled step without a report must
+not read free; index built before the drop) and #118 (per-session reports instead of a merged sum, re-read on failure,
+private carried usage), all fixed before merge. Gate: CI's `make check` on every rebased head (the train's CI gate).
+Local `make check` timed out in the train at load 24-48 (iOS simulator, other fleets); CI was the gate, as in Wave 8.
+#118's train saw no check within its 30 s grace and merged ungated: master CI on `5389d32` (which contains it) passed
+afterwards; #120 used `RD_CI_GRACE=90`. One CI flake rerun: `usage outbox > 24 concurrent runs, two flushers racing`
+(also flaky on master).
+
+## Proofs on stored rows (after deploy)
+
+- **Free = 0, unknown = null:** review code steps `prepare`/`react-doctor`/`plan` NULL before `b8986eb`, 0 after;
+  `audio.ping` run cost 0; those free runs wrote no `usage.records` row; outbox backlog 0; index `agw.steps_usage_outbox`.
+- **Door failure:** verify's bad-body request: `door.speech` run `failed`, `invalid_input`, "door answered 400: input
+  is required", cost 0; the caller still got the legacy 400 (`make verify` ok).
+- **Eval import, no spend:** run `01a19e18-57e2` (one GT case, zero findings): child `review.imported` `done`, purpose
+  `eval`, `score_source` `regression`, scorer `2026-11-02.v3+eval-judge-ced286944fd4`, recall 0, cost 0, no judge call.
+- **Cancelled agent steps:** review `01a19e30-d321` cancelled mid-angle: both `angle:*` steps `cancelled` with cost
+  null (unknown, by rule now, never 0), run cost $0.011 = the known steps.
+- **Label estimate:** journal `label` steps $0.161 (3 labels) + $10.124 (147) → $0.0686 per candidate (Wave 8 measured
+  $0.068). Not run live: `agw eval mine` re-mines and rewrites the ground-truth files.
+- **Failed agent steps with tokens:** none occurred after the deploy; proven by tests only (overflow, invalid output,
+  failed turn, gone session, fallback, retry counted once).
+
+Spend: $0.77 on 8 production review runs (5 PR reviews, 1 re-review, 2 cancel probes); eval credit $0; no
+`agw eval gt pack`.
+
+## Left behind
+
+- **Abort-driven agent failures** (idle timeout, cancel, tool refusal): `raceAbort` settles the attempt before
+  `host.wait` rejects, so the step row is written before the carried usage or the unknown report lands; `Cancelled`
+  carries none by design (one instance per run). Such steps read null (unknown), not their real tokens. Fix belongs
+  with Wave 14 (compaction/runaway): the attempt should await the host's settle, bounded.
+- **Run roll-up does not flag a null step as a lower bound:** a run with priced steps and a cancelled agent step shows
+  the known sum with `unpriced_calls` 0 (e.g. `01a19e30-d321`). Same as before this wave; a `cost_partial` flag or an
+  unpriced count per null step would say it.
+- History is not backfilled: rows before `b8986eb` keep NULL for free steps; `recentCost` mixes the two until 50 new
+  runs; a re-delivered `runPost` of an old run may re-roll its cost to null. Pending cost-0 outbox rows from before the
+  cut-over stay unsynced (never posted, harmless).
+- `prose-polish` keeps its own cost tally (null for no calls), now unlike the runtime's rule.
+- `eval import` records no wall time or tokens for the external arm; Wave 9's native arm may want the session's wall
+  per case in the file. The importer mapping lives in the eval layer, not on the review suite.
+- The audio door's "started but unreported call" check compares counts (lost vs recorded calls), not call identities.
+- Local `make check` unreliable under the mini's load; CI is the gate.
+- **Owner session dropped** (owner, 21:00, PLAN Wave 8): the two sections below are kept verbatim for the history;
+  Wave 8 now validates ground truth with a third labeller and a second judge, and the owner pack and
+  `agw eval gt pack|ingest` go.
 
 ## How to start the owner session (about two hours)
 
@@ -31,53 +84,6 @@ stopped: owner session (labelling)
    **Do not run `agw eval gt pack` again before ingesting**: a new pack rewrites `owner/manifest.json` and the answers
    no longer match it (session id `24b43b759558ca7f`).
 
-## Delivered
-
-| What | Where |
-|-|-|
-| Double usage rows fixed | `d7a0034` (`callerRecords`: agw writes `usage.records` only for caller-priced media and Tavily; the gateway owns every token-priced row). Release `2f657c0`, `make verify` PASS |
-| Ground-truth contracts | `1329364` `packages/eval/src/gt.ts` |
-| `eval.label` / `eval.judge` on pinned, no-fallback routes (`eval.label.a` Sonnet medium, `.b` Terra medium, `eval.judge` Sonnet medium); line-numbered diffs; versions hash rendered prompts + seats + schemas | #111 `b43f553` |
-| Scorer v3 (recall, detected, severity calibration, false alarms, clean, noise) on the GT suite; `materialize` `isolate` (refs, reflog and alternates cut: no later fix reachable); compare directions | #110 `96b8305` |
-| `agw eval mine review` (SZZ, controls, split, labelling, resume, atomic writes, owner emails from `review-gt/owner.json`) | #113 `0369c2b`, `e51fc17`, cost note `6831148` |
-| Owner pack and ingest (`agw eval gt pack|ingest`) | #112 `7b2e5ef` |
-| otel.agent → Haiku high (owner decision 18:10) | `ec328a0`; eval report + modelpick `2730f60` |
-| Deployed | release `e51fc17`, `make verify` PASS |
-
-Reviews: `agw review` on every PR (#110 actionable → fixed: isolate leak; #111 clean + version coverage; #112 actionable
-→ fixed: blindness; #113 actionable → fixed: emails out of source, no silent shrink, concurrency 1; one false blocker,
-TS2440, `tsc` clean). Merges on green GitHub CI: the mini's load (~30–110, iOS simulator, VMs, weatherorb) made local
-`make check` fail on timing tests unrelated to the changes (kill harness, outbox debounce, parseHtml 2 MB, image
-streaming, review hardening).
-
-## Proofs
-
-- **Double rows, both writers** (after `2f657c0`): `cap.decide` (`microsoft-decision-1`), `cap.web.search` (`sonar` ×2),
-  the verify review (Haiku, Sonnet, Terra), smoke and title: gateway rows only, zero `agent-workflows` rows. A TTS call
-  through the speech door: one `agent-workflows` row (`gemini-3.8-flash-lite-tts`, $0.000193), no gateway row. The
-  11-02 duplicates (383 rows) stay in `usage.records` (owner's call); argo's v7 `/usage/demand` drops them itself.
-- **otel on Haiku:** run `01a19d5c-4f2c`: 8 gateway rows, all `claude-haiku-5-5`, `api_credit` iu, $0.0058.
-- **GT path end to end:** eval run `01a19d9e-665a`: isolated clone, light review, judge, scorer v3.
-
-## What the data says (private detail under `$AGW_EVAL_DIR/review-gt/`)
-
-- **Mine** (miner `2026-11-02.1`): 31 repos, 12 748 owner commits, 3 636 fix commits (3 501 after the message filter),
-  8 289 SZZ candidates (2 234 dropped as too large, 192 too old, 36 093 cosmetic lines), 1 790 eligible controls, 100
-  picked (29 dev, 71 test).
-- **Labels:** 150 labelled, **35 accepted (23 %)**: 7 dev, 28 test. Rejected: both no 76, `b` no 28, no overlap 8,
-  `a` no 3. Classes: logic 16, ui 4, edge-case 4, security 3, error-handling 3, config 2, data, concurrency, other.
-- **First v1 numbers** (light depth, 35 bug cases, dev+test mixed, scorer `2026-11-02.v3+…`; not a decision set):
-  recall 0.24, detected 0.59, severity calibration 0.40, 6.3 findings per review, noise 0.09.
-- **Spend (purpose eval, since 16:30 UTC):** $12.05 on `me` credit (labels $7.62, reviews $3.20, judge $1.23), $3.32
-  on the IU personal key (Terra labeller $2.66, adversary $0.65). Per labelled candidate $0.068; per accepted bug case
-  ≈ $0.30. `me` has $1.02 eval credit left; `iu` is not eval-eligible (production over pace).
-
-## Shortfalls in the pack (the page says the totals, never which kind)
-
-- **35 of 50 accepted cases** (+ 20 rejected = 55 commit items): the credit ran out. The precision bar is read on 35.
-- **27 of 50 judge-positive pairs** (v1 matched no more on 35 light reviews); 73 negatives fill to 100, all
-  preselected (same file or naming it). κ is still computable; a skewed split widens its CI.
-
 ## After the owner session (next lead, not done)
 
 1. Ingest (above). Bars: accepted ≥ 90 % right; κ ≥ 0.8. Below the case bar: tighten the filters (`MINER_VERSION`
@@ -87,14 +93,3 @@ streaming, review hardening).
    ceiling until it has 20 done runs; a 147-candidate run was stopped in its rebuild step at $10.12, labels kept).
    Size each batch to `evalAvailableUsd` on the gateway's `/health` (≈ +$3.7/day on `me`; me2's +$100 needs its claim).
    Seeded defects only if fewer than 150 cases survive.
-
-## Left behind
-
-- `agw eval import` (PLAN Wave 8) not built: Wave 9's native `/code-review` arm needs it before it runs.
-- `eval.mine`'s label estimate prints `unknown`: its cost-history port is not wired in `boot.ts`.
-- Pack blindness, one residual tell: a rejected candidate no labeller claimed shows "Claim: the lines the fix changed"
-  instead of a description. It cannot be blinded without inventing a claim; it does not bias the accepted-precision bar.
-- Review improvements not taken: a contract test tying `callerRecords` to the `x-agw-usage: caller` call sites; a
-  labeller location check against the post-image; abstain when the diff cut drops the blamed file.
-- Local `make check` is unreliable while the mini runs the simulator/VM load; CI was the gate today.
-- Controls are not reviewed yet (false alarms need them; Wave 9's baseline runs them).
