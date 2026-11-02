@@ -14,6 +14,7 @@ import type { Ctx, Usage } from '../context.ts'
 import { CapabilityError, fail } from '../errors.ts'
 import type { Env } from '../transports/config.ts'
 import { isBalanceError } from '../transports/http.ts'
+import { type JsonSchema, toJsonSchema } from '../transports/json-schema.ts'
 import type { AttemptUsage, ChatResult, GatewayTransports, Tokens } from '../transports/port.ts'
 
 /** What the model-backed capabilities are built from. Handlers close over it; `ctx` stays `{ signal, addUsage, attribution? }`. */
@@ -108,6 +109,8 @@ export interface CompleteArgs {
   system?: string
   prompt: string
   json?: boolean
+  /** The answer's JSON Schema (`toJsonSchema`); goes to the wire as structured output. `completeJson` sets it. */
+  schema?: JsonSchema
   ctx: Ctx
   /** The call's effort, over the primary route's. A fallback always runs at its own route's effort. */
   effort?: Effort
@@ -166,6 +169,7 @@ async function completeOn(deps: LlmDeps, route: ResolvedRoute, args: CompleteArg
       system: args.system,
       prompt: args.prompt,
       json: args.json,
+      ...(args.schema ? { schema: args.schema } : {}),
       effort,
       ...(args.ctx.attribution ? { attribution: args.ctx.attribution } : {}),
       maxOutputTokens:
@@ -216,13 +220,19 @@ function retryPrompt(prompt: string, rejected: string, reason: string): string {
  */
 export async function completeJson<S extends z.ZodType>(
   deps: LlmDeps,
-  args: Omit<CompleteArgs, 'json' | 'raw'> & { schema: S },
+  args: Omit<CompleteArgs, 'json' | 'raw' | 'schema'> & { schema: S },
 ): Promise<{ data: z.output<S>; route: ResolvedRoute; attempts: number }> {
   let prompt = args.prompt
   let reason = ''
+  // The wire form of the schema, or null when zod's type has none (a record, a transform): then JSON syntax only.
+  const wireSchema = toJsonSchema(args.schema)
   let answered: ResolvedRoute | undefined
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-    const { text, route } = await complete(deps, { ...args, prompt, json: true }, answered)
+    const { text, route } = await complete(
+      deps,
+      { ...args, schema: wireSchema ?? undefined, prompt, json: true },
+      answered,
+    )
     answered = route
     const parsed = parseJsonLoose(text)
     if (parsed === null) {

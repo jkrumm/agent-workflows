@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { type Env, gatewayConfig } from './config.ts'
 import { gatewayHeaders } from './headers.ts'
 import { Attempt, DEFAULTS, describe, failedResponse, type HttpOptions, isAbort, withRetries } from './http.ts'
+import { isStrictCompatible } from './json-schema.ts'
 import type { AttemptUsage, ChatPort, ChatRequest, ChatResult, OnUsage, Tokens } from './port.ts'
 
 const chunkSchema = z.object({
@@ -82,6 +83,19 @@ export function iuOpenai(options: HttpOptions & { env?: Env } = {}): ChatPort {
   }
 }
 
+/**
+ * Strict `json_schema` where IU's chat endpoint takes it: the GPT models (measured 2026-11-02: Luna and Terra
+ * enforce it, the DeepSeek model behind Requesty answers 503 "response_format type is unavailable") and a schema whose
+ * every property is required (strict mode answers 400 to an optional one). Anything else asks for JSON syntax only.
+ */
+function responseFormat(request: ChatRequest) {
+  const { schema } = request
+  if (schema && request.model.startsWith('gpt-') && isStrictCompatible(schema)) {
+    return { response_format: { type: 'json_schema', json_schema: { name: 'response', strict: true, schema } } }
+  }
+  return request.schema || request.json ? { response_format: { type: 'json_object' } } : {}
+}
+
 function body(request: ChatRequest) {
   return {
     model: request.model,
@@ -92,7 +106,7 @@ function body(request: ChatRequest) {
     // Reasoning tokens count against this ceiling.
     max_completion_tokens: request.maxOutputTokens,
     ...(request.effort && request.effort !== 'none' ? { reasoning_effort: request.effort } : {}),
-    ...(request.json ? { response_format: { type: 'json_object' } } : {}),
+    ...responseFormat(request),
     stream: true,
     stream_options: { include_usage: true },
   }
