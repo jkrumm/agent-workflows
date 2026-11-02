@@ -1,7 +1,6 @@
 import { z } from 'zod'
 import { completeJson, type LlmDeps } from '../llm/model-call.ts'
 import { defineCapability } from '../procedure.ts'
-import { CONFIDENCES } from './overview-classify.ts'
 import { endOfData, fenceNonce, fencedBlock, fencePreamble, neutralizeFenceMarkers } from './prose-prompts.ts'
 
 // The seat behind `digest`: short texts for a batch of items in one tool-free call. The items are untrusted data; the
@@ -9,6 +8,7 @@ import { endOfData, fenceNonce, fencedBlock, fencePreamble, neutralizeFenceMarke
 // on the seat. Nothing here knows who the caller is: an item is a text with a kind.
 
 export const DIGEST_KINDS = ['heading', 'session', 'reply', 'window'] as const
+const CONFIDENCES = ['high', 'medium', 'low'] as const
 export const REPLY_KINDS = ['blocker', 'question', 'permission', 'note'] as const
 export type DigestKind = (typeof DIGEST_KINDS)[number]
 
@@ -225,15 +225,19 @@ export function buildDigestPrompt(items: readonly DigestItem[], nonce: string): 
 }
 
 /** What the model must return as a whole; each answer is checked on its own after, so one bad item fails alone. */
-const modelAnswer = z.object({ answers: z.array(z.looseObject({ id: z.string() })) })
+const modelAnswer = z.object({ answers: z.array(z.unknown()) })
 
 const MAX_ERROR_CHARS = 200
 
 /** Pairs each input item with the model's answer for its id; an answer that fails its kind's schema, or is missing, is that item's `error`. */
-export function checkAnswers(items: readonly DigestItem[], answers: readonly { id: string }[]): DigestResult[] {
-  const byId = new Map<string, { id: string }>()
-  // The model's text is not trusted to introduce an id: an unknown one is dropped, a repeat keeps the first.
-  for (const answer of answers) if (!byId.has(answer.id)) byId.set(answer.id, answer)
+export function checkAnswers(items: readonly DigestItem[], answers: readonly unknown[]): DigestResult[] {
+  const byId = new Map<string, unknown>()
+  // The model's text is not trusted to introduce an id: an unknown one is dropped, a repeat keeps the first, an answer
+  // with no string id belongs to no item (and costs only the item it should have been).
+  for (const answer of answers) {
+    const id = typeof answer === 'object' && answer !== null ? (answer as { id?: unknown }).id : undefined
+    if (typeof id === 'string' && !byId.has(id)) byId.set(id, answer)
+  }
   return items.map((item): DigestResult => {
     const answer = byId.get(item.id)
     if (!answer) return { id: item.id, error: 'the model gave no answer for this item' }
