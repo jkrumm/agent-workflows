@@ -1,5 +1,6 @@
 // `opencode` stand-in for the supervisor tests: `bun fake-opencode-bin.ts serve --hostname 127.0.0.1 --port <n>`.
-// State lives in `$XDG_DATA_HOME/fake-state.json`; the env it was started with goes to `fake-env.json` (names only).
+// State lives in `$XDG_DATA_HOME/fake-state.json`; the env it was started with goes to `fake-env.json` (names only), its config to
+// `fake-config.json`.
 // `POST /__fake/hang` (no auth) wedges it: nothing answers any more and SIGTERM is ignored, like a boot stall.
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -17,6 +18,7 @@ writeFileSync(
   join(data, 'fake-env-values.json'),
   JSON.stringify({ OPENCODE_DISABLE_FILEWATCHER: process.env.OPENCODE_DISABLE_FILEWATCHER, HOME: process.env.HOME }),
 )
+writeFileSync(join(data, 'fake-config.json'), process.env.OPENCODE_CONFIG_CONTENT ?? '{}')
 const fake = startFake({
   password: process.env.OPENCODE_SERVER_PASSWORD as string,
   statePath: join(data, 'fake-state.json'),

@@ -1,12 +1,24 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { isAbsolute, join } from 'node:path'
 import { resolveRoute } from '@agent-workflows/routes'
 import type { AgentWaitOptions } from '@agent-workflows/runtime'
 import {
   buildServerConfig,
   createClient,
+  gatewayFromEnv,
+  installPlugin,
   isServeOnPort,
   OpenCodeHost,
   OpenCodeServer,
@@ -15,6 +27,7 @@ import {
   serverEnv,
 } from '../src/index.ts'
 import {
+  ATTRIBUTION_PLUGIN,
   fallbackModelRef,
   modelRef,
   opencodeRoutes,
@@ -29,12 +42,31 @@ const ENV = {
   PATH: process.env.PATH,
   HOME: process.env.HOME,
   TMPDIR: process.env.TMPDIR,
-  IU_API_KEY: 'test-key',
-  IU_BASE_URL: 'https://iu.example.com/anthropic',
+  AGW_GATEWAY_URL: 'http://127.0.0.1:7794',
+  AGW_GATEWAY_TOOL_TOKEN: 'door-token',
   OTEL_EXPORTER_OTLP_ENDPOINT: 'http://127.0.0.1:9',
   GITHUB_TOKEN: 'must-not-leak',
   AGW_TEST_PG_URL: 'must-not-leak',
+  AGW_API_SECRET: 'must-not-leak',
+  IU_API_KEY: 'must-not-leak',
+  IU_BASE_URL: 'https://iu.example.com/anthropic',
+  IU_KEY_ID: 'personal',
+  ANTHROPIC_API_KEY: 'must-not-leak',
 }
+
+/** Nothing of these reaches the server or a tool shell: the door token is its only credential. */
+const FORBIDDEN = [
+  'GITHUB_TOKEN',
+  'AGW_TEST_PG_URL',
+  'AGW_API_SECRET',
+  'IU_API_KEY',
+  'IU_BASE_URL',
+  'IU_KEY',
+  'IU_KEY_ID',
+  'IU_ANTHROPIC_BASE',
+  'IU_OPENAI_BASE',
+  'ANTHROPIC_API_KEY',
+]
 
 const servers: OpenCodeServer[] = []
 const dirs: string[] = []
@@ -108,22 +140,14 @@ describe('OpenCodeServer', () => {
       HOME: join(dir, 'opencode/home'),
     })
     expect(names).toContain('OTEL_EXPORTER_OTLP_ENDPOINT')
-    expect(names).toContain('IU_KEY')
-    expect(names).not.toContain('GITHUB_TOKEN')
-    expect(names).not.toContain('AGW_TEST_PG_URL')
-    expect(names).not.toContain('IU_API_KEY')
+    expect(names).toContain('AGW_GATEWAY_URL')
+    expect(names).toContain('AGW_GATEWAY_TOOL_TOKEN')
+    for (const name of FORBIDDEN) expect(names).not.toContain(name)
     const allowed = new Set([
       ...['PATH', 'HOME', 'TMPDIR', 'LANG', 'XDG_DATA_HOME', 'XDG_CONFIG_HOME', 'XDG_STATE_HOME', 'XDG_CACHE_HOME'],
       ...['OPENCODE_DB', 'OPENCODE_DISABLE_FILEWATCHER', 'OPENCODE_DISABLE_CLAUDE_CODE'],
       ...['OPENCODE_DISABLE_MODELS_FETCH', 'OPENCODE_DISABLE_AUTOUPDATE', 'OPENCODE_SERVER_PASSWORD'],
-      ...[
-        'OPENCODE_CONFIG_CONTENT',
-        'IU_KEY',
-        'IU_ANTHROPIC_BASE',
-        'IU_OPENAI_BASE',
-        'IU_KEY_ID',
-        'OTEL_EXPORTER_OTLP_ENDPOINT',
-      ],
+      ...['OPENCODE_CONFIG_CONTENT', 'AGW_GATEWAY_URL', 'AGW_GATEWAY_TOOL_TOKEN', 'OTEL_EXPORTER_OTLP_ENDPOINT'],
     ])
     // Bun's own runtime adds a few to the child's view of process.env.
     expect(names.filter((n) => !allowed.has(n) && !n.startsWith('BUN_') && n !== '_')).toEqual([])
@@ -285,35 +309,79 @@ describe('OpenCodeServer', () => {
 })
 
 describe('serverEnv', () => {
-  const iu = { IU_API_KEY: 'k', IU_BASE_URL: 'https://example.com/anthropic' }
-  const envOf = (extra: Record<string, string>) =>
-    serverEnv({
-      root: '/r',
-      password: 'p',
-      config: {},
-      env: { PATH: '/bin', ...iu, ...extra },
+  const GATEWAY = { AGW_GATEWAY_URL: 'http://127.0.0.1:7794', AGW_GATEWAY_TOOL_TOKEN: ' door-token ' }
+  const envOf = (env: Record<string, string>) => serverEnv({ root: '/r', password: 'p', config: {}, env })
+
+  test('the gateway address and door token pass, trimmed; no provider key or API secret, whatever is set', () => {
+    const out = envOf({
+      PATH: '/bin',
+      ...GATEWAY,
+      AGW_API_SECRET: 'sekret-api',
+      IU_API_KEY: 'sekret-iu',
+      IU_BASE_URL: 'https://iu.example.com/anthropic',
+      IU_KEY_ID: 'personal',
+      ANTHROPIC_API_KEY: 'sekret-anthropic',
     })
-
-  test('IU_KEY_ID is the parsed label, always set; never the key', () => {
-    expect(envOf({ IU_KEY_ID: 'athena-team' }).IU_KEY_ID).toBe('athena-team')
-    expect(envOf({ IU_KEY_ID: 'personal' }).IU_KEY_ID).toBe('personal')
-    expect(envOf({}).IU_KEY_ID).toBe('personal')
-    expect(envOf({ IU_KEY_ID: 'junk' }).IU_KEY_ID).toBe('personal')
+    expect(out.AGW_GATEWAY_URL).toBe('http://127.0.0.1:7794')
+    expect(out.AGW_GATEWAY_TOOL_TOKEN).toBe('door-token')
+    for (const name of FORBIDDEN) expect(name in out).toBe(false)
+    expect(JSON.stringify(out)).not.toContain('sekret')
   })
 
-  const claudeConfig = { providers: { [PROVIDER_ANTHROPIC]: { models: { 'claude-haiku-5-5': {} } } } }
-  const envWith = (config: Record<string, unknown>, extra: Record<string, string>) =>
-    serverEnv({ root: '/r', password: 'p', config, env: { PATH: '/bin', ...iu, ...extra } })
+  test('both gateway variables are required; the message names the variable, never a value', () => {
+    expect(() => envOf({ AGW_GATEWAY_TOOL_TOKEN: 'sekret' })).toThrow('AGW_GATEWAY_URL is not set')
+    expect(() => envOf({ AGW_GATEWAY_URL: 'http://127.0.0.1:7794' })).toThrow('AGW_GATEWAY_TOOL_TOKEN is not set')
+    expect(() => envOf({ ...GATEWAY, AGW_GATEWAY_TOOL_TOKEN: '  ' })).toThrow('AGW_GATEWAY_TOOL_TOKEN is not set')
+  })
+})
 
-  test('ANTHROPIC_API_KEY passes through when set, and is absent when not', () => {
-    expect(envWith(claudeConfig, { ANTHROPIC_API_KEY: ' sk-direct ' }).ANTHROPIC_API_KEY).toBe('sk-direct')
-    expect('ANTHROPIC_API_KEY' in envOf({})).toBe(false)
+describe('gatewayFromEnv', () => {
+  const of = (url: string) => gatewayFromEnv({ AGW_GATEWAY_URL: url, AGW_GATEWAY_TOOL_TOKEN: 't' })
+
+  test('the origin, without a trailing slash', () => {
+    expect(of('http://127.0.0.1:7794/')).toEqual({ url: 'http://127.0.0.1:7794', token: 't' })
   })
 
-  test('a claude model row without ANTHROPIC_API_KEY fails early; no claude rows need no key', () => {
-    expect(() => envWith(claudeConfig, {})).toThrow('ANTHROPIC_API_KEY is not set')
-    expect(() => envWith(claudeConfig, { ANTHROPIC_API_KEY: '  ' })).toThrow('ANTHROPIC_API_KEY is not set')
-    expect(() => envWith(buildServerConfig({}), {})).not.toThrow()
+  test('anything but an http(s) origin is refused, and the value stays out of the message', () => {
+    for (const url of ['not a url', 'ftp://sekret.example.com', 'http://sekret.example.com/anthropic']) {
+      let message = ''
+      try {
+        of(url)
+      } catch (err) {
+        message = (err as Error).message
+      }
+      expect(message).toStartWith('AGW_GATEWAY_URL')
+      expect(message).not.toContain('sekret')
+    }
+    expect(() => of('http://user:sekret@example.com')).toThrow('must be an http(s) origin')
+  })
+})
+
+describe('installPlugin', () => {
+  test('a copy under the root, named by its content: the same path on every start, whatever the release', () => {
+    const root = scratch()
+    const dir = installPlugin(root)
+    expect(dir.startsWith(join(root, 'plugins/agw-attribution-'))).toBe(true)
+    expect(readFileSync(join(dir, 'server.js'), 'utf8')).toBe(
+      readFileSync(join(ATTRIBUTION_PLUGIN, 'server.js'), 'utf8'),
+    )
+    expect(JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')).type).toBe('module')
+    expect(installPlugin(root)).toBe(dir)
+    expect(readdirSync(join(root, 'plugins'))).toHaveLength(1)
+  })
+
+  test('the plugin directory is the two tracked files, with no build step', () => {
+    expect(readdirSync(ATTRIBUTION_PLUGIN).sort()).toEqual(['package.json', 'server.js'])
+  })
+
+  test('a server loads the installed copy, not the release path', async () => {
+    const dir = scratch()
+    const { s } = server(dir, { config: undefined })
+    await s.start()
+    const config = JSON.parse(readFileSync(join(dir, 'opencode/data/fake-config.json'), 'utf8')) as {
+      plugins: string[]
+    }
+    expect(config.plugins).toEqual([installPlugin(join(dir, 'opencode'))])
   })
 })
 
@@ -347,12 +415,12 @@ describe('resolveOpencodeBinary', () => {
 })
 
 describe('buildServerConfig', () => {
-  test('every opencode route has a model row on an IU provider, priced from the table, no literal key', () => {
+  test('every opencode route has a model row on a gateway provider, priced from the table, the door token by reference', () => {
     const config = buildServerConfig({}) as {
       providers: Record<
         string,
         {
-          settings: { apiKey: string }
+          settings: { apiKey: string; baseURL: string }
           models: Record<string, { cost?: unknown }>
         }
       >
@@ -362,7 +430,10 @@ describe('buildServerConfig', () => {
     expect(rows.length).toBeGreaterThan(0)
     for (const row of rows) expect(row.cost).toBeDefined()
     for (const [id, p] of Object.entries(config.providers)) {
-      expect(p.settings.apiKey).toBe(id === PROVIDER_ANTHROPIC ? '{env:ANTHROPIC_API_KEY}' : '{env:IU_KEY}')
+      expect(p.settings.apiKey).toBe('{env:AGW_GATEWAY_TOOL_TOKEN}')
+      expect(p.settings.baseURL).toBe(
+        id === PROVIDER_ANTHROPIC ? '{env:AGW_GATEWAY_URL}/anthropic/v1' : '{env:AGW_GATEWAY_URL}/openai/v1',
+      )
     }
     expect(config.permissions.map((r) => `${r.action}:${r.effect}`)).toEqual([
       '*:deny',
@@ -373,6 +444,37 @@ describe('buildServerConfig', () => {
       'question:deny',
       'external_directory:deny',
     ])
+  })
+})
+
+describe('buildServerConfig: the gateway', () => {
+  const secrets = {
+    AGW_API_SECRET: 'sekret-api',
+    IU_API_KEY: 'sekret-iu',
+    IU_BASE_URL: 'https://sekret.example.com/anthropic',
+    ANTHROPIC_API_KEY: 'sekret-anthropic',
+    AGW_GATEWAY_TOOL_TOKEN: 'sekret-door',
+    AGW_GATEWAY_URL: 'http://sekret.example.com',
+  }
+
+  test('the config holds no credential and no address, and names no IU variable', () => {
+    const text = JSON.stringify(buildServerConfig(secrets))
+    expect(text).not.toContain('sekret')
+    expect(text).not.toMatch(/IU_|ANTHROPIC_API_KEY|AGW_API_SECRET|api\.anthropic\.com/)
+    expect(text.match(/\{env:[A-Z_]+\}/g)?.every((v) => /AGW_GATEWAY_(URL|TOOL_TOKEN)/.test(v))).toBe(true)
+  })
+
+  test('only the Anthropic leg sends x-agw-fallback: none, as a static header', () => {
+    const { providers } = buildServerConfig({}) as { providers: Record<string, { headers?: unknown }> }
+    expect(providers[PROVIDER_ANTHROPIC]?.headers).toEqual({ 'x-agw-fallback': 'none' })
+    expect(providers[PROVIDER_CHAT]?.headers).toBeUndefined()
+    expect(providers[PROVIDER_RESPONSES]?.headers).toBeUndefined()
+  })
+
+  test("the plugin is one absolute directory, the package's by default", () => {
+    expect((buildServerConfig({}) as { plugins: string[] }).plugins).toEqual([ATTRIBUTION_PLUGIN])
+    expect(isAbsolute(ATTRIBUTION_PLUGIN)).toBe(true)
+    expect((buildServerConfig({}, { plugin: '/state/p' }) as { plugins: string[] }).plugins).toEqual(['/state/p'])
   })
 })
 
@@ -452,11 +554,11 @@ describe('buildServerConfig: the provider follows the model family, whatever oth
       name?: string
       settings?: unknown
     }
-    expect(PROVIDER_ANTHROPIC).toBe('anthropic-direct')
+    expect(PROVIDER_ANTHROPIC).toBe('anthropic')
     expect(provider).toMatchObject({
       package: 'aisdk:@ai-sdk/anthropic',
-      name: 'Anthropic API (direct key)',
-      settings: { baseURL: 'https://api.anthropic.com/v1', apiKey: '{env:ANTHROPIC_API_KEY}' },
+      name: 'Anthropic through the gateway',
+      settings: { baseURL: '{env:AGW_GATEWAY_URL}/anthropic/v1', apiKey: '{env:AGW_GATEWAY_TOOL_TOKEN}' },
     })
     // a single-call model never lands in the agent providers
     expect(config.providers[PROVIDER_RESPONSES]?.models['gpt-6-luna']).toBeUndefined()

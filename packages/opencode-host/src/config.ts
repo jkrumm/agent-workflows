@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url'
 import {
   fallbackRoute,
   type Rate,
@@ -12,21 +13,35 @@ import { basePolicy } from './locations.ts'
 type Env = Record<string, string | undefined>
 
 /**
- * OpenCode provider ids the server config defines. The chat and Responses legs go through IU with the IU key; the
- * `claude-` leg goes straight to api.anthropic.com with a direct key (`ANTHROPIC_API_KEY`). Keys never leave the server env.
+ * OpenCode provider ids the server config defines. Every leg goes through the inference gateway with the door token of
+ * the caller `agw-opencode`: it opens the gateway only, and the server holds no provider key.
  */
-export const PROVIDER_ANTHROPIC = 'anthropic-direct'
+export const PROVIDER_ANTHROPIC = 'anthropic'
 export const PROVIDER_CHAT = 'iu-chat'
-/** IU's OpenAI endpoint over the Responses API: OpenAI's own models call tools only there (IU, 2026-10-28). */
+/** The gateway's OpenAI path over the Responses API: OpenAI's own models call tools only there (IU, 2026-10-28). */
 export const PROVIDER_RESPONSES = 'iu-responses'
 
-/** IU endpoints from `IU_API_KEY` and `IU_BASE_URL` (the base ends in `/anthropic`, as for the capabilities). */
-export function iuFromEnv(env: Env = process.env): { key: string; anthropicBase: string; openaiBase: string } {
-  const key = env.IU_API_KEY?.trim()
-  const base = env.IU_BASE_URL?.trim().replace(/\/+$/, '')
-  if (!key) throw new Error('IU_API_KEY is not set')
-  if (!base?.endsWith('/anthropic')) throw new Error('IU_BASE_URL is not set or does not end in /anthropic')
-  return { key, anthropicBase: `${base}/v1`, openaiBase: `${base.slice(0, -'/anthropic'.length)}/openai/v1` }
+/** The plugin that sets the gateway's attribution headers, in this package. `installPlugin` is what a server loads. */
+export const ATTRIBUTION_PLUGIN = fileURLToPath(new URL('../plugin/agw-attribution', import.meta.url))
+
+const GATEWAY_KEY = '{env:AGW_GATEWAY_TOOL_TOKEN}'
+
+/** The gateway's origin and the door token from `AGW_GATEWAY_URL` and `AGW_GATEWAY_TOOL_TOKEN`. Messages name the variable, never a value. */
+export function gatewayFromEnv(env: Env = process.env): { url: string; token: string } {
+  const raw = env.AGW_GATEWAY_URL?.trim()
+  if (!raw) throw new Error('AGW_GATEWAY_URL is not set')
+  const token = env.AGW_GATEWAY_TOOL_TOKEN?.trim()
+  if (!token) throw new Error('AGW_GATEWAY_TOOL_TOKEN is not set')
+  let url: URL
+  try {
+    url = new URL(raw)
+  } catch {
+    throw new Error('AGW_GATEWAY_URL is not a URL')
+  }
+  if (!['http:', 'https:'].includes(url.protocol) || url.pathname !== '/' || url.search || url.username) {
+    throw new Error('AGW_GATEWAY_URL must be an http(s) origin, without a path')
+  }
+  return { url: url.origin, token }
 }
 
 /** The `opencode`-wire routes, resolved with `AGW_ROUTES` applied, each followed by its fallback when it has one. */
@@ -43,7 +58,7 @@ export function opencodeRoutes(env: Env = process.env): ResolvedRoute[] {
 /**
  * Which leg serves a model, by its family alone: no other route sharing the id can move it. OpenAI's own models
  * (`gpt-`) go the Responses way (an agent session needs tool calls, which they make only there), a `claude-` model the
- * direct Anthropic API, anything else the OpenAI-compatible chat way. A single-call route on the same model (Haiku on
+ * gateway's Anthropic path, anything else the OpenAI-compatible chat way. A single-call route on the same model (Haiku on
  * `iu-openai`, say) does not change the leg an agent session uses.
  */
 function providerFor(model: string): string {
@@ -82,8 +97,8 @@ function modelRow(route: ResolvedRoute, provider: string) {
   const rate = rateFor(route)
   return {
     name: route.model,
-    // Kept from the IU gateway leg (it answered the `thinking-binding-controls` beta with a 503 for EU Haiku ids,
-    // agent-gateway, measured 2026-10-14); without the binding, `thinking` is omitted (the model default).
+    // The gateway may serve this from IU, which answered the `thinking-binding-controls` beta with a 503 for EU Haiku
+    // ids (agent-gateway, measured 2026-10-14); without the binding, `thinking` is omitted (the model default).
     ...(provider === PROVIDER_ANTHROPIC ? { compatibility: { supportsThinkingBlockBinding: false } } : {}),
     ...(route.maxOutputTokens ? { limit: { output: route.maxOutputTokens } } : {}),
     ...(rate
@@ -117,15 +132,18 @@ function variantSettings(effort: string, provider: string): Record<string, unkno
 }
 
 /**
- * `OPENCODE_CONFIG_CONTENT`: the three providers with every `opencode`-wire route's model and its fallback's, no
- * updates, no share.
+ * `OPENCODE_CONFIG_CONTENT`: the three providers with every `opencode`-wire route's model and its fallback's, the
+ * attribution plugin (`options.plugin`, an absolute directory), no updates, no share. The only credential is the door
+ * token, by reference to the server's env.
+ * The Anthropic leg sends `x-agw-fallback: none`: with no credit pool left the gateway answers a 402 and the route's own
+ * fallback takes over, rather than paying for Claude on IU.
  * The server policy is deny by default as the sessions' are (`basePolicy`: catch-all deny, then the read-only tools), so
  * a session created without rules, or by something other than the host, is not allow-all. A session's own rules come
  * after it and win (measured on 2.0.32, `test/live-permissions.test.ts`). Unattended sessions must never block on a
  * question: `question` is denied and so is `external_directory` (its base policy is `ask`). An agent's own rules go in
  * its location's `opencode.json` (`AgentDefinition.config`).
  */
-export function buildServerConfig(env: Env = process.env): Record<string, unknown> {
+export function buildServerConfig(env: Env = process.env, options: { plugin?: string } = {}): Record<string, unknown> {
   const models: Record<string, Record<string, unknown>> = {
     [PROVIDER_ANTHROPIC]: {},
     [PROVIDER_CHAT]: {},
@@ -145,6 +163,7 @@ export function buildServerConfig(env: Env = process.env): Record<string, unknow
   return {
     update: 'disable',
     share: 'disabled',
+    plugins: [options.plugin ?? ATTRIBUTION_PLUGIN],
     permissions: [
       ...basePolicy(),
       { action: 'question', resource: '*', effect: 'deny' },
@@ -153,20 +172,21 @@ export function buildServerConfig(env: Env = process.env): Record<string, unknow
     providers: {
       [PROVIDER_ANTHROPIC]: {
         package: 'aisdk:@ai-sdk/anthropic',
-        name: 'Anthropic API (direct key)',
-        settings: { baseURL: 'https://api.anthropic.com/v1', apiKey: '{env:ANTHROPIC_API_KEY}' },
+        name: 'Anthropic through the gateway',
+        settings: { baseURL: '{env:AGW_GATEWAY_URL}/anthropic/v1', apiKey: GATEWAY_KEY },
+        headers: { 'x-agw-fallback': 'none' },
         models: models[PROVIDER_ANTHROPIC],
       },
       [PROVIDER_CHAT]: {
         package: 'aisdk:@ai-sdk/openai-compatible',
-        name: 'IU (OpenAI route, chat completions)',
-        settings: { baseURL: '{env:IU_OPENAI_BASE}', apiKey: '{env:IU_KEY}' },
+        name: 'The gateway, OpenAI path (chat completions)',
+        settings: { baseURL: '{env:AGW_GATEWAY_URL}/openai/v1', apiKey: GATEWAY_KEY },
         models: models[PROVIDER_CHAT],
       },
       [PROVIDER_RESPONSES]: {
         package: 'aisdk:@ai-sdk/openai',
-        name: 'IU (OpenAI route, Responses)',
-        settings: { baseURL: '{env:IU_OPENAI_BASE}', apiKey: '{env:IU_KEY}' },
+        name: 'The gateway, OpenAI path (Responses)',
+        settings: { baseURL: '{env:AGW_GATEWAY_URL}/openai/v1', apiKey: GATEWAY_KEY },
         models: models[PROVIDER_RESPONSES],
       },
     },

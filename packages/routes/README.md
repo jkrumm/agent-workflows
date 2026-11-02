@@ -188,6 +188,7 @@ whole request; the pricing page's threshold, which overstates against the Admin 
 Opus 5.5 bill the full 1M context flat. Sources and dates are in the file.
 
 The gateway passes `cache_creation` through, and so does capabilities' `toUsage`: the `anthropic` wire reads
-`ephemeral_1h_input_tokens` into `Tokens.cacheWrite1h` and prices it at the 1h rate. **Known gap:** the OpenCode pricing
-still passes only `cache_creation_input_tokens`, so an agent step's 1h writes price as 5m (under-stated); that half is
-a separate Wave 3 branch.
+`ephemeral_1h_input_tokens` into `Tokens.cacheWrite1h` and prices it at the 1h rate. The OpenCode pricing passes only
+`cache_creation_input_tokens`, which is right as it stands: the pinned build asks for 5m writes only (plain
+`{ "type": "ephemeral" }`, measured in `packages/opencode-host/test/live-gateway.test.ts`), so an agent step's writes
+price at `cacheWritePerM`.
