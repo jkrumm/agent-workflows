@@ -395,7 +395,7 @@ cp -R "$REVIEW_FIXTURE/change/." "$review_dir/" || fail "smoke review: cannot co
 # The stages of a review run that are not done, for a failure message ("none" when every step is done).
 review_stages() {  # $1 run id
   local rows
-  rows=$(journal "select step_id || ' ' || status || coalesce(': ' || left(error, 300), '') from \"$SCHEMA\".steps where run_id = :'id' and status <> 'done' order by started_at" -v "id=$1") || exit 1
+  rows=$(journal "select step_id || ' ' || status || coalesce(': ' || left(error, 300), '') from \"$SCHEMA\".steps where run_id = :'id' and status <> 'done' order by started_at" -v "id=$1") || return 1
   print -r -- "${${rows//$'\n'/; }:-none}"
 }
 # One `agw review` / `agw run wait` call bounded by what is left of REVIEW_WAIT_SECS; sets out and rc.
@@ -413,12 +413,19 @@ review_call review --cwd "$review_dir" --depth light
 while (( rc == 10 )); do
   review_run=$(print -r -- "$out" | jq -r '.runId // empty' 2>/dev/null)
   [[ -n "$review_run" ]] || fail "smoke review: exit 10 (pending) without a runId: $out"
-  review_call run wait "$review_run" || fail "smoke review: run $review_run not done after ${REVIEW_WAIT_SECS}s (resume: agw run wait $review_run)"
+  if ! review_call run wait "$review_run"; then
+    # The bound is spent: the run is cancelled, not left paying for angles nobody will read, before the trap removes the fixture.
+    cancelled=$(AGW_PURPOSE=verify agw run cancel "$review_run" --commit --format json 2>&1) && cancelled="cancelled" || cancelled="cancel failed: $cancelled"
+    fail "smoke review: run $review_run not done after ${REVIEW_WAIT_SECS}s; the run was $cancelled"
+  fi
 done
 [[ -n "$review_run" ]] || review_run=$(print -r -- "$out" | jq -r '.runId // empty' 2>/dev/null)
 if (( rc != 0 )); then
   stages=""
-  [[ -z "$review_run" ]] || stages=" (stages not done: $(review_stages "$review_run"))"
+  if [[ -n "$review_run" ]]; then
+    stages=$(review_stages "$review_run") || exit 1
+    stages=" (stages not done: $stages)"
+  fi
   fail "smoke review: agw review exited $rc${review_run:+ (run $review_run)}$stages: ${out:-$(<"$agw_err")}"
 fi
 print -r -- "$out" | jq -e . >/dev/null 2>&1 || fail "smoke review: agw review printed output that is not JSON: $out $(<"$agw_err")"
@@ -430,11 +437,16 @@ for _ in {1..4}; do
   review_call run wait "$review_run" || break
   (( rc == 0 )) || fail "smoke review: agw run wait $review_run exited $rc: ${out:-$(<"$agw_err")}"
 done
-stages=$(review_stages "$review_run")
-[[ "$(print -r -- "$out" | jq -r '.status // "done"')" == "done" ]] || fail "smoke review: run $review_run is not done (stages not done: $stages): $out"
+stages=$(review_stages "$review_run") || exit 1
+[[ "$(print -r -- "$out" | jq -r '.status // empty')" == "done" ]] || fail "smoke review: run $review_run is not done (stages not done: $stages): $out"
 review_steps=$(journal "select step_id from \"$SCHEMA\".steps where run_id = :'id' and status = 'done'" -v "id=$review_run") || exit 1
 review_steps=(${(f)review_steps})
 (( ${review_steps[(Ie)react-doctor]} )) || fail "smoke review: stage react-doctor did not finish (stages not done: $stages)"
+# The point of the fixture (PR #89): a react-doctor diagnostic was in the report that reached the synthesis. The step's
+# output holds the report as `stdout`; a "react-doctor failed …" line or an empty report is not a diagnostic.
+rd_count=$(journal "select coalesce(output->>'stdout', '') from \"$SCHEMA\".steps where run_id = :'id' and step_id = 'react-doctor'" -v "id=$review_run") || exit 1
+rd_count=$(print -r -- "$rd_count" | jq -r '.diagnostics | length' 2>/dev/null)
+(( ${rd_count:-0} >= 1 )) || fail "smoke review: stage react-doctor reported no diagnostic for the planted .tsx bug, so the path that crashed in PR #89 was not exercised (report diagnostics: '${rd_count:-unparseable}')"
 review_angles=(${(M)review_steps:#angle:*})
 (( ${#review_angles} > 0 )) || fail "smoke review: no angle stage finished (stages not done: $stages)"
 (( ${review_steps[(Ie)synthesis]} )) || fail "smoke review: stage synthesis did not finish (stages not done: $stages)"
@@ -445,12 +457,12 @@ print -r -- "$verdict" | jq -e '.schemaVersion == 2 and (.blocking | type == "ar
 [[ "$(print -r -- "$verdict" | jq -r '.degraded // empty')" == "" ]] || fail "smoke review: the review was degraded ($(print -r -- "$verdict" | jq -r '.degraded')): $(print -r -- "$verdict" | jq -r '.summary')"
 # A synthesis that could not serialize, or reviewers that all failed, still print findings (angles 'synthesis' and
 # 'pipeline', or the failed reviewer's own name); those are failures, not findings.
-review_findings=$(print -r -- "$verdict" | jq -r '[.blocking[], .improvements[], .discussions[]] | map(select(.angle != "synthesis" and .angle != "pipeline")) | length')
+review_findings=$(print -r -- "$verdict" | jq -r '[.blocking[], .improvements[], .discussions[]] | map(select((.angle // "") != "" and .angle != "synthesis" and .angle != "pipeline")) | length')
 (( ${review_findings:-0} >= 1 )) || fail "smoke review: no finding from a real reviewer on a planted bug (summary: $(print -r -- "$verdict" | jq -r '.summary'))"
 review_row=$(journal "select status, coalesce(cost::text, '') from \"$SCHEMA\".runs where id = :'id'" -v "id=$review_run") || exit 1
 IFS='|' read -r review_status review_cost <<< "$review_row"
 [[ "${review_status:-}" == "done" ]] || fail "smoke review: run $review_run is '${review_status:-missing}' in $SCHEMA.runs, not done"
 [[ -n "${review_cost:-}" ]] && (( review_cost > 0 )) || fail "smoke review: run $review_run has no cost in $SCHEMA.runs (cost '${review_cost:-null}')"
-ok "agw review (depth light): run $review_run done in $(( SECONDS - review_started )) s, $review_findings finding(s) from real reviewers, stages ${(j:, :)review_steps}, cost $(printf '%.4f' "$review_cost")"
+ok "agw review (depth light): run $review_run done in $(( SECONDS - review_started )) s, $review_findings finding(s) from real reviewers, $rd_count react-doctor diagnostic(s), stages ${(j:, :)review_steps}, cost $(printf '%.4f' "$review_cost")"
 
 print "verify: PASS run $run_id, cap run $cap_id, audio run $audio_run, gateway pool $pool requests $id1 $id2 $id3, agw-opencode request $id4, review run $review_run (cost $(printf '%.4f' "$review_cost"))"
