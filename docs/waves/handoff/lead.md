@@ -1,3 +1,7 @@
+> **Wave 16 in flight** (lead `agent-workflows-w1-r12`, 2026-11-02): five workers fanned: `fix/failed-step-usage`,
+> `fix/cost-null-unknown`, `fix/door-errors-fail-runs`, `fix/eval-mine-cost-history`, `feat/eval-import` (the last
+> three queued for factory capacity). The Wave 8 close-out below stands until Wave 16's replaces it.
+
 # Lead handoff — Wave 8 (Ground truth): CLOSE-OUT before the owner session
 
 Lead `agent-workflows-w1-r11`, spawned by mother `agent-workflows-w1-r4`, 2026-11-02 ~16:30 → ~20:30 local. Wave 7's
