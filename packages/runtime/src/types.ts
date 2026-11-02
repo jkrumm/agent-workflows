@@ -179,7 +179,11 @@ export type AgentWaitOptions = {
   onTool: (event: { phase: 'pre' | 'post' } & Omit<ToolEvent, 'runId' | 'stepId'>) => Promise<void>
 }
 
-export type AgentResult = { output: Json; usage?: Usage }
+/**
+ * `usage` is one report or several (a step that moved between sessions reports each one's spend, so the per-model
+ * split and a priced half survive); the step adds each.
+ */
+export type AgentResult = { output: Json; usage?: Usage | Usage[] }
 
 /**
  * The port agent steps go through (OpenCode adapter in Wave 3). The runtime journals the handle between

@@ -556,11 +556,12 @@ export class RunScope {
             // counted twice): the prompt is out, so whatever the host read before it failed is the step's, and with
             // nothing to report the spend is unknown, never free.
             if (!(err instanceof InfraError)) {
-              scope.addUsage((err instanceof WorkflowError ? err.usage : undefined) ?? UNKNOWN_SPEND)
+              const carried = reports(err instanceof WorkflowError ? err.usage : undefined)
+              for (const usage of carried.length > 0 ? carried : [UNKNOWN_SPEND]) scope.addUsage(usage)
             }
             throw err
           })
-        if (result.usage) scope.addUsage(result.usage)
+        for (const usage of reports(result.usage)) scope.addUsage(usage)
         if (!spec.output) return result.output
         const parsed = spec.output.safeParse(result.output)
         if (!parsed.success) {
@@ -598,6 +599,9 @@ export class RunScope {
     await raceAbort(Bun.sleep(ms), this.signal)
   }
 }
+
+const reports = (usage: Usage | Usage[] | undefined): Usage[] =>
+  usage === undefined ? [] : Array.isArray(usage) ? usage : [usage]
 
 /** A prompted session whose spend could not be read: one call, no tokens, no cost (counted in `unpricedCalls`). */
 const UNKNOWN_SPEND: Usage = {
