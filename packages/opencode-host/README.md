@@ -208,7 +208,7 @@ a running host and broke every run. A Homebrew copy ahead of the pin on `PATH` (
 |-|-|
 | the build | `~/.local/share/agent-workflows/opencode-bin/<version>/`, `current` links the pinned one |
 | the shim | `scripts/opencode`, linked as `~/.local/bin/opencode`: execs `current`. The host (`resolveOpencodeBinary`), interactive `oc`, `rd wave\|fan --kind opencode` and herdr panes all resolve `opencode` through it |
-| the probe wrapper | `scripts/opencode-safe`, linked as `~/.local/bin/opencode-safe`: refuses to start `opencode` when the model endpoint is down (exit 75) instead of retrying forever; it probes `<AGW_GATEWAY_URL>/openai/v1` first (the mini), then `IU_OPENAI_BASE`, `IU_BASE_URL` and the Keychain (the MacBook) |
+| the probe wrapper | `scripts/opencode-safe`, linked as `~/.local/bin/opencode-safe`: refuses to start `opencode` when the model endpoint is down (exit 75) instead of retrying forever; an explicit `IU_OPENAI_BASE` wins, then `AGW_GATEWAY_URL` (the mini: its `/health` must say status ok), then `IU_BASE_URL` and the Keychain (the MacBook) |
 | react-doctor (the `review` workflow) | `~/.local/share/agent-workflows/react-doctor/<version>/`, `REACT_DOCTOR_VERSION` in `packages/host/src/workflows/review/react-doctor.ts` |
 
 `make install-opencode` (from the main checkout, never a linked worktree: the links point at its `scripts/`) installs the

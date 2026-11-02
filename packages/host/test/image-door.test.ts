@@ -20,6 +20,7 @@ import { freshSchema, inspector, PG_URL, SECRET, until } from './support.ts'
 
 const STUDIO = 'studio-token-0123456789abcdef-0123456789'
 const OTHER = 'other-token-0123456789abcdef-0123456789a'
+const OC = 'oc-token-0123456789abcdef-0123456789abcd'
 const FLARE = 'gpt-image-2.5-flare'
 const SUNBURST = 'gpt-image-2.5-sunburst'
 
@@ -131,6 +132,7 @@ const started = (async () => {
     tokens: new Map([
       ['studio', STUDIO],
       ['other', OTHER],
+      ['oc', OC], // gateway-only: in the file, never a door caller
     ]),
     limits,
     image: {
@@ -217,7 +219,12 @@ const edit = (form: FormData | BodyInit, token = STUDIO) =>
 
 describe('auth', () => {
   test('no credential, a wrong one and a malformed header are 401 with the challenge and the studio envelope', async () => {
-    for (const headers of [{}, bearer('wrong-token-0123456789abcdef-0123456789'), { authorization: STUDIO }]) {
+    for (const headers of [
+      {},
+      bearer('wrong-token-0123456789abcdef-0123456789'),
+      { authorization: STUDIO },
+      bearer(OC), // a gateway-only caller (GATEWAY_ONLY_CALLERS)
+    ]) {
       const res = await fetch(`${base}/door/image/generate`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', ...headers },

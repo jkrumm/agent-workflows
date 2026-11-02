@@ -2,7 +2,14 @@ import { describe, expect, test } from 'bun:test'
 import { chmodSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { callerAuth, PLATFORM_CALLER, parseDoorTokens, readDoorTokens } from '../src/process/callers.ts'
+import {
+  callerAuth,
+  doorCallerAuth,
+  GATEWAY_ONLY_CALLERS,
+  PLATFORM_CALLER,
+  parseDoorTokens,
+  readDoorTokens,
+} from '../src/process/callers.ts'
 
 const TOKEN = 'hermes-token-0123456789abcdef-0123456789'
 const OTHER = 'other-token-0123456789abcdef-01234567890'
@@ -81,5 +88,27 @@ describe('callerAuth', () => {
 
   test('an empty bearer never matches an empty secret slot', () => {
     expect(callerAuth({ tokens: new Map(), secret: '' })('Bearer ')).toBeNull()
+  })
+})
+
+describe('doorCallerAuth', () => {
+  const gatewayOnly = [...GATEWAY_ONLY_CALLERS].map(
+    (name, i) => [name, `${name}-token-0123456789abcdef-${i}`.padEnd(40, 'x')] as const,
+  )
+  const tokens = new Map<string, string>([['hermes', TOKEN], ...gatewayOnly])
+
+  test('the gateway-only callers are agw-opencode, oc and modelpick', () => {
+    expect([...GATEWAY_ONLY_CALLERS].sort()).toEqual(['agw-opencode', 'modelpick', 'oc'])
+  })
+
+  test('a door refuses every gateway-only token; the gateway (callerAuth) accepts every line', () => {
+    const door = doorCallerAuth({ tokens, secret: SECRET })
+    const gateway = callerAuth({ tokens, secret: SECRET })
+    expect(door(`Bearer ${TOKEN}`)).toBe('hermes')
+    expect(door(`Bearer ${SECRET}`)).toBe(PLATFORM_CALLER)
+    for (const [name, token] of gatewayOnly) {
+      expect(door(`Bearer ${token}`)).toBeNull()
+      expect(gateway(`Bearer ${token}`)).toBe(name)
+    }
   })
 })

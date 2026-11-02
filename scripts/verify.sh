@@ -11,9 +11,10 @@
 # IU; their `usage.records` rows (billing api_credit, api_credit, api_key/personal) and `usage.gateway_picks` rows must
 # appear within 120 s. A fourth Haiku call with the `agw-opencode` door token (the token the host hands OpenCode and `ocr`)
 # must land lane agw_workflow. agw holds no provider key, so the smoke run's and the cap.llm.title run's model calls are
-# the gateway's: each run needs a `source='gateway'` row (lane agw_workflow, workflow and step in lane_detail, a priced
-# cost, billing api_credit on a pool /health names or api_key personal, never api_credit with no eligible pool) and no
-# `source='agent-workflows'` row, within the same 120 s. It never waits on the Anthropic cost API (it lags 20-70 min).
+# the gateway's: each run needs `source='gateway'` rows, every one qualifying (lane agw_workflow, workflow and step in
+# lane_detail, a priced cost, billing api_credit on a pool /health names or api_key personal, never api_credit with no
+# eligible pool), and, once the host outbox synced the run's usage steps, no `source='agent-workflows'` row, within the
+# same 120 s. It never waits on the Anthropic cost API (it lags 20-70 min).
 # Prints the run ids and the gateway's request ids.
 
 set -u
@@ -296,13 +297,20 @@ IFS='|' read -r _ _ _ _ _ _ _ g_lane g_caller _ <<< "$(row_of "$id4")"
 ok "gateway usage: $id1 and $id2 api_credit on $pool (priced, cache columns set), $id3 api_key personal, $id4 agw_workflow as agw-opencode; 4 gateway_picks rows"
 
 # 9. the runs' own model calls went through the gateway: agw holds no provider key, so the smoke run and the
-# cap.llm.title run each have a gateway row, and agw recorded none of its own for them. The billing depends on the wire
-# (only /anthropic messages draw on a credit pool; cheap.title is an OpenAI-wire route): api_credit must name a pool
+# cap.llm.title run each have gateway rows, every one of them qualifying, and agw recorded none of its own for them. The
+# absence is judged only once the host outbox has synced the run's usage steps (`argo_synced_at` on every ended step
+# with usage, the steps it would write a row for), so it cannot pass before agw would have written one. The billing
+# depends on the wire and the pools: cheap.title is an anthropic-wire route, paid from a credit pool while one is
+# eligible; a drained pool answers 402 (no row) and the route's GPT fallback goes to IU. So api_credit must name a pool
 # /health lists and needs an eligible one, api_key must be the personal key.
 eligible=$(print -r -- "$gw_health" | jq -r '[.pools[]? | select(.eligible == true) | .id] | join(",")')
 pool_ids=$(print -r -- "$gw_health" | jq -r '[.pools[]?.id] | join(",")')
 runs_sql="select run_id, source, lane, billing, coalesce(account, ''), coalesce(api_key, ''), coalesce(lane_detail->>'workflow', ''), coalesce(lane_detail->>'step', ''), coalesce(cost_usd::text, '') from usage.records
   where run_id = any(string_to_array(:'runs', ',')) and source in ('gateway', 'agent-workflows') order by run_id, source_id"
+# The outbox's view of one run: its ended steps with usage, how many are not synced yet, how many failed to sync.
+synced_sql="select count(*), count(*) filter (where argo_synced_at is null and argo_error is null), count(*) filter (where argo_error is not null)
+  from \"$SCHEMA\".steps where run_id = :'id' and status in ('done', 'failed', 'cancelled')
+  and (tokens_input > 0 or tokens_output > 0 or tokens_cache_read > 0 or tokens_cache_write > 0 or tokens_reasoning > 0 or cost is not null)"
 # The first problem of one gateway row, or nothing.
 row_problem() {  # $1 lane, $2 billing, $3 account, $4 api_key, $5 workflow, $6 step, $7 cost
   [[ "$1" == "agw_workflow" ]] || { print -r -- "lane '$1', expected agw_workflow"; return; }
@@ -318,38 +326,49 @@ row_problem() {  # $1 lane, $2 billing, $3 account, $4 api_key, $5 workflow, $6 
   [[ -n "$6" ]] || { print -r -- "lane_detail.step is not set"; return; }
   [[ -n "$7" ]] && (( $7 > 0 )) || print -r -- "cost_usd '${7:-null}', expected > 0"
 }
-# Sets run_state (good / agw-row / pending) and run_why for one run from $run_rows.
+# Sets run_state and run_why for one run from $run_rows and its outbox state: good (synced, gateway rows, all qualify),
+# agw-row or bad-row (final), pending (not synced yet, or no gateway row yet).
 check_run() {  # $1 run id
-  local r_run r_source r_lane r_billing r_account r_key r_workflow r_step r_cost problem
-  run_state=pending; run_why="no usage.records row (source 'gateway') for run $1"
+  local r_run r_source r_lane r_billing r_account r_key r_workflow r_step r_cost problem rows=0 summary=""
+  local steps unsynced errored
   while IFS='|' read -r r_run r_source r_lane r_billing r_account r_key r_workflow r_step r_cost; do
     [[ "$r_run" == "$1" ]] || continue
     if [[ "$r_source" == "agent-workflows" ]]; then
       run_state=agw-row; run_why="run $1 has a source 'agent-workflows' row: agw recorded a model call the gateway records"
       return
     fi
-    [[ "$run_state" == good ]] && continue
     problem=$(row_problem "$r_lane" "$r_billing" "$r_account" "$r_key" "$r_workflow" "$r_step" "$r_cost")
-    if [[ -z "$problem" ]]; then
-      run_state=good; run_why="$r_billing${r_account:+ on $r_account}${r_key:+ $r_key}, $r_workflow/$r_step, cost $r_cost"
-    else
-      run_why="run $1: no gateway row qualifies; one has $problem"
+    if [[ -n "$problem" ]]; then
+      run_state=bad-row; run_why="run $1: a gateway row does not qualify: $problem"
+      return
     fi
+    rows=$(( rows + 1 ))
+    [[ -n "$summary" ]] || summary="$r_billing${r_account:+ on $r_account}${r_key:+ $r_key}, $r_workflow/$r_step, cost $r_cost"
   done <<< "$run_rows"
+  IFS='|' read -r steps unsynced errored <<< "$(journal "$synced_sql" -v "id=$1")"
+  if (( ${errored:-0} > 0 )); then
+    run_state=bad-row; run_why="run $1: $errored usage step(s) failed to sync (argo_error in $SCHEMA.steps)"
+    return
+  fi
+  run_state=pending
+  if (( ${steps:-0} == 0 )); then run_why="run $1 has no ended step with usage in $SCHEMA.steps"; return; fi
+  if (( ${unsynced:-0} > 0 )); then run_why="run $1: $unsynced of $steps usage step(s) not synced by the host outbox"; return; fi
+  if (( rows == 0 )); then run_why="no usage.records row (source 'gateway') for run $1"; return; fi
+  run_state=good; run_why="$rows gateway row(s), all qualify ($summary)"
 }
 run_rows=""
 for (( waited = 0; waited <= GATEWAY_POLL_SECS; waited += 5 )); do
   run_rows=$(usage_q "$runs_sql" -v "runs=$run_id,$cap_id") || exit 1
   check_run "$run_id"; smoke_state=$run_state
   check_run "$cap_id"
-  [[ "$smoke_state" == good && "$run_state" == good ]] && break
-  [[ "$smoke_state" == agw-row || "$run_state" == agw-row ]] && break
+  [[ "$smoke_state" != pending && "$run_state" != pending ]] && break
   (( waited < GATEWAY_POLL_SECS )) && sleep 5
 done
 for rid in $run_id $cap_id; do
   check_run "$rid"
-  [[ "$run_state" == good ]] || fail "$run_why (within ${GATEWAY_POLL_SECS}s)"
-  ok "run $rid: gateway row, agw_workflow, $run_why; no agent-workflows row"
+  [[ "$run_state" == pending ]] && fail "$run_why (within ${GATEWAY_POLL_SECS}s)"
+  [[ "$run_state" == good ]] || fail "$run_why"
+  ok "run $rid: steps synced, $run_why; no agent-workflows row"
 done
 
 print "verify: PASS run $run_id, cap run $cap_id, audio run $audio_run, gateway pool $pool requests $id1 $id2 $id3, agw-opencode request $id4"

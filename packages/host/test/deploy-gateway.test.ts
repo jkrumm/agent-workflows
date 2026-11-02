@@ -59,6 +59,7 @@ val() { awk -v k="$1" '$0 ~ "<key>" k "</key>" { getline; gsub(/<[^>]*>|[ \\t]/,
 build=$(val AGW_GATEWAY_BUILD)
 if [ "$port" = 7794 ]; then
   [ -f "$HOME/bad-build" ] && [ "$build" = "$(cat "$HOME/bad-build")" ] && exit 22
+  echo "health 7794 ok" >> "$HOME/launchctl.log"
   printf '{"status":"ok","version":"%s","build":"%s"}' "$(val AGW_VERSION)" "$build"
 else
   printf '{"status":"ok","version":"%s"}' "$(val AGW_VERSION)"
@@ -149,6 +150,22 @@ function liveThenNew(old: string, fresh: string): Setup & { oldBuild: string } {
 const touches = (log: string, label: string, verb: string) =>
   log.split('\n').filter((line) => line.startsWith(`${verb} `) && line.includes(label)).length
 
+/**
+ * Host and audio bootstraps that came after a gateway bootstrap with no healthy gateway probe in between (the stand-in
+ * curl logs `health 7794 ok`). Empty means the gateway was always healthy before host and audio started.
+ */
+function startedBeforeGateway(log: string): string[] {
+  let gatewayPending = false
+  const early: string[] = []
+  for (const line of log.split('\n')) {
+    if (line.startsWith('bootstrap ') && line.includes(GATEWAY)) gatewayPending = true
+    else if (line === 'health 7794 ok') gatewayPending = false
+    else if (gatewayPending && line.startsWith('bootstrap ')) early.push(line)
+  }
+  return early
+}
+const sha256 = (file: string) => new Bun.CryptoHasher('sha256').update(readFileSync(file)).digest('hex')
+
 describe('deploy.sh gateway: the restart rule', () => {
   test('the first deploy builds, installs and starts the gateway beside host and audio', () => {
     const t = setup()
@@ -228,22 +245,71 @@ describe('deploy.sh gateway: the restart rule', () => {
     expect(at('bootstrap', GATEWAY)).toBeLessThan(at('bootstrap', AUDIO))
   })
 
-  test('a gateway that never becomes healthy stops the deploy before host and audio are started on the new release', () => {
+  test('a gateway that never becomes healthy: host and audio are never bootstrapped, forward or in the rollback', () => {
     const t = liveThenNew('v1', 'v2')
-    t.markDown(7794)
+    t.markDown(7794) // the previous build cannot answer either
     const result = t.deploy(NEW)
     expect(result.code).toBe(1)
     const bootstraps = t
       .launchctlLog()
       .split('\n')
       .filter((l) => l.startsWith('bootstrap '))
-    // The first bootstrap is the new gateway; host and audio were never started on NEW: only the gateway was awaited.
-    expect(bootstraps[0]).toContain(GATEWAY)
+    // The new gateway, then the previous build in the rollback; host and audio never, on either release.
+    expect(bootstraps).toHaveLength(2)
+    for (const line of bootstraps) expect(line).toContain(GATEWAY)
     expect(result.err).toContain(`not healthy at ${NEW.slice(0, 12)}: gateway\n`)
-    expect(result.err).toContain('rolling back to')
+    expect(result.err).toContain(`gateway back to build ${t.oldBuild}`)
+    expect(result.err).toContain('ROLLBACK FAILED: the gateway')
+    expect(result.err).toContain('host and audio were not started')
   }, 60_000)
 
-  test('an unchanged build restarts anyway when the deploy added a caller to door-tokens, and says so', () => {
+  test('forward path and rollback: host and audio are bootstrapped only after the gateway answered healthy', () => {
+    const forward = liveThenNew('v1', 'v2')
+    expect(forward.deploy(NEW).code).toBe(0)
+    expect(touches(forward.launchctlLog(), GATEWAY, 'bootstrap')).toBe(1)
+    expect(startedBeforeGateway(forward.launchctlLog())).toEqual([])
+
+    // The new host never answers: the rollback puts the previous gateway build back first, then host and audio.
+    const t = liveThenNew('v1', 'v2')
+    t.stub(
+      'curl',
+      `#!/bin/sh\nfor a in "$@"; do url="$a"; done\nif echo "$url" | grep -q ':7791/'; then grep -q '<string>${NEW}</string>' "$HOME/launchd/${HOST}.plist" 2>/dev/null && exit 22; fi\nexec ${join(t.home, '.local', 'bin', 'curl.real')} "$@"\n`,
+    )
+    writeFileSync(join(t.home, '.local', 'bin', 'curl.real'), FAKE_CURL)
+    chmodSync(join(t.home, '.local', 'bin', 'curl.real'), 0o755)
+    const result = t.deploy(NEW)
+    expect(result.code).toBe(1)
+    expect(result.err).toContain('rollback OK')
+    const log = t.launchctlLog()
+    expect(touches(log, GATEWAY, 'bootstrap')).toBe(2)
+    expect(touches(log, HOST, 'bootstrap')).toBe(2)
+    expect(startedBeforeGateway(log)).toEqual([])
+    expect(t.loadedPlist(GATEWAY)).toContain(join(t.aw, 'gateway', t.oldBuild))
+    expect(t.loadedPlist(HOST)).toContain(`<string>${PREV}</string>`)
+  }, 60_000)
+
+  test('a redeploy of the live sha that fails starts the gateway first again, and host and audio only after it is healthy', () => {
+    const t = setup()
+    t.release(PREV, 'v1')
+    expect(t.deploy(PREV).code).toBe(0)
+    // Same sha again with a changed door-tokens file (the gateway restarts); the host never answers this time.
+    writeFileSync(
+      join(t.aw, 'data', 'door-tokens'),
+      `${readFileSync(join(t.aw, 'data', 'door-tokens'), 'utf8')}extra=${'e'.repeat(64)}\n`,
+    )
+    writeFileSync(join(t.home, 'launchctl.log'), '')
+    t.markDown(7791)
+    const result = t.deploy(PREV)
+    expect(result.code).toBe(1)
+    expect(result.err).toContain('starting every process again from its plist')
+    const log = t.launchctlLog()
+    expect(touches(log, GATEWAY, 'bootstrap')).toBe(2)
+    expect(touches(log, HOST, 'bootstrap')).toBe(2)
+    expect(startedBeforeGateway(log)).toEqual([])
+    expect(result.err).toContain('up again: audio gateway; down: host')
+  }, 60_000)
+
+  test('an unchanged build restarts anyway when the deploy added a caller to door-tokens; the digest is recorded', () => {
     const t = liveThenNew('v1', 'v1')
     const file = join(t.aw, 'data', 'door-tokens')
     const kept = readFileSync(file, 'utf8')
@@ -253,9 +319,8 @@ describe('deploy.sh gateway: the restart rule', () => {
     writeFileSync(file, kept)
     const result = t.deploy(NEW)
     expect(result.code).toBe(0)
-    expect(result.out).toContain(
-      `gateway build ${t.oldBuild} unchanged, restarted anyway: door-tokens gained modelpick`,
-    )
+    expect(result.out).toContain(`gateway build ${t.oldBuild} unchanged, restarted anyway: ${file} differs`)
+    expect(result.out).toContain('(added modelpick)')
     expect(result.out).not.toContain('not restarted')
     const log = t.launchctlLog()
     expect(touches(log, GATEWAY, 'bootout')).toBe(1)
@@ -263,6 +328,33 @@ describe('deploy.sh gateway: the restart rule', () => {
     expect(t.data('gateway-build')).toBe(t.oldBuild)
     expect(t.data('gateway-previous-build')).toBeNull()
     expect(readFileSync(file, 'utf8')).toMatch(/\nmodelpick=[0-9a-f]{64}\n$/)
+    expect(t.data('gateway-door-tokens')).toBe(sha256(file))
+    // The next deploy with the same file and build leaves it running.
+    writeFileSync(join(t.home, 'launchctl.log'), '')
+    expect(t.deploy(NEW).out).toContain(`gateway unchanged (build ${t.oldBuild}), not restarted`)
+    expect(touches(t.launchctlLog(), GATEWAY, 'bootstrap')).toBe(0)
+  })
+
+  test('a deploy that died after appending (or a hand rotation) still restarts the gateway on the next deploy', () => {
+    const t = liveThenNew('v1', 'v1')
+    const file = join(t.aw, 'data', 'door-tokens')
+    expect(t.data('gateway-door-tokens')).toBe(sha256(file))
+    // The lines are already there, nothing is added by this deploy: only the record says the gateway never read them.
+    const rotated = readFileSync(file, 'utf8').replace(/^oc=.*$/m, `oc=${'f'.repeat(64)}`)
+    writeFileSync(file, rotated)
+    const result = t.deploy(NEW)
+    expect(result.code).toBe(0)
+    expect(result.out).toContain(`gateway build ${t.oldBuild} unchanged, restarted anyway: ${file} differs`)
+    expect(result.out).not.toContain('(added')
+    expect(touches(t.launchctlLog(), GATEWAY, 'bootstrap')).toBe(1)
+    expect(t.data('gateway-door-tokens')).toBe(sha256(file))
+  })
+
+  test('no record yet (the first deploy with it) restarts an unchanged gateway once', () => {
+    const t = liveThenNew('v1', 'v1')
+    rmSync(join(t.aw, 'data', 'gateway-door-tokens'))
+    expect(t.deploy(NEW).out).toContain('restarted anyway')
+    expect(touches(t.launchctlLog(), GATEWAY, 'bootstrap')).toBe(1)
   })
 
   test('the same build but not loaded, or not healthy, is restarted', () => {

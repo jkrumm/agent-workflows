@@ -1,5 +1,6 @@
-// scripts/opencode-safe: which base it probes. A stand-in endpoint (Bun.serve) records the probed path; a stand-in
-// `opencode` on PATH prints its arguments, so a run that passes the probe is visible.
+// scripts/opencode-safe: which base it probes and what counts as up. A stand-in endpoint (Bun.serve) records the probed
+// path and answers /health with `health`; a stand-in `opencode` on PATH prints its arguments, so a run that passes the
+// probe is visible.
 import { afterEach, describe, expect, test } from 'bun:test'
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -11,13 +12,18 @@ afterEach(() => {
   for (const cleanup of cleanups.splice(0)) cleanup()
 })
 
-async function run(env: Record<string, string>, status = 404) {
+type Answer = { status?: number; health?: { status: number; body: unknown } }
+
+async function run(env: Record<string, string>, answer: Answer = {}) {
   const probed: string[] = []
+  const health = answer.health ?? { status: 200, body: { status: 'ok', version: 'x', build: 'b' } }
   const server = Bun.serve({
     port: 0,
     fetch(request) {
-      probed.push(new URL(request.url).pathname)
-      return new Response('', { status })
+      const path = new URL(request.url).pathname
+      probed.push(path)
+      if (path === '/health') return Response.json(health.body, { status: health.status })
+      return new Response('', { status: answer.status ?? 404 })
     },
   })
   const bin = mkdtempSync(join(tmpdir(), 'agw-opencode-safe-'))
@@ -46,23 +52,40 @@ async function run(env: Record<string, string>, status = 404) {
 }
 
 describe('opencode-safe', () => {
-  test('AGW_GATEWAY_URL wins: the gateway origin is probed at /openai/v1, then opencode runs', async () => {
-    const r = await run({ AGW_GATEWAY_URL: '<origin>/', IU_OPENAI_BASE: 'http://127.0.0.1:1/openai/v1' })
-    expect(r.probed).toEqual(['/openai/v1'])
+  test('AGW_GATEWAY_URL: the gateway is probed at /health, status ok runs opencode', async () => {
+    const r = await run({ AGW_GATEWAY_URL: '<origin>/', IU_BASE_URL: 'http://127.0.0.1:1/anthropic' })
+    expect(r.probed).toEqual(['/health'])
     expect(r).toMatchObject({ code: 0, out: 'opencode run hi\n' })
   })
 
-  test('without it, the present chain: IU_OPENAI_BASE, then IU_BASE_URL rewritten to /openai/v1', async () => {
-    expect((await run({ IU_OPENAI_BASE: '<origin>/openai/v1' })).probed).toEqual(['/openai/v1'])
-    const derived = await run({ IU_BASE_URL: '<origin>/anthropic' })
-    expect(derived.probed).toEqual(['/openai/v1'])
-    expect(derived.code).toBe(0)
+  test('an explicit IU_OPENAI_BASE wins over AGW_GATEWAY_URL and is probed as an OpenAI base', async () => {
+    const r = await run({ IU_OPENAI_BASE: '<origin>/openai/v1', AGW_GATEWAY_URL: 'http://127.0.0.1:1' })
+    expect(r.probed).toEqual(['/openai/v1'])
+    expect(r.code).toBe(0)
   })
 
-  test('a 5xx from the gateway refuses with 75; nothing set and no Keychain item refuses with 78', async () => {
-    const down = await run({ AGW_GATEWAY_URL: '<origin>' }, 503)
+  test('IU_BASE_URL is rewritten to /openai/v1 when nothing else is set; any sub-500 counts there', async () => {
+    const r = await run({ IU_BASE_URL: '<origin>/anthropic' }, { status: 401 })
+    expect(r.probed).toEqual(['/openai/v1'])
+    expect(r.code).toBe(0)
+  })
+
+  test('the gateway needs status ok: degraded, a 5xx or a sub-500 that is not ok refuses with 75', async () => {
+    for (const health of [
+      { status: 200, body: { status: 'degraded', version: 'x' } },
+      { status: 503, body: { status: 'ok' } },
+      { status: 404, body: { error: 'not found' } },
+    ]) {
+      const r = await run({ AGW_GATEWAY_URL: '<origin>' }, { health })
+      expect(r.code).toBe(75)
+      expect(r.out).toBe('')
+      expect(r.err).toContain("the gateway's /health is not ok")
+    }
+  })
+
+  test('a 5xx on an IU base refuses with 75; nothing set and no Keychain item refuses with 78', async () => {
+    const down = await run({ IU_OPENAI_BASE: '<origin>/openai/v1' }, { status: 503 })
     expect(down.code).toBe(75)
-    expect(down.out).toBe('')
     const none = await run({})
     expect(none.code).toBe(78)
     expect(none.err).toContain('AGW_GATEWAY_URL')

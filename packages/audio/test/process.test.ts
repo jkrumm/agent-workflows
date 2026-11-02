@@ -34,6 +34,7 @@ import {
 const AUDIO = { config: testConfig('https://gateway.example.com'), env: {} }
 const SECRET = 'test-secret-0123456789abcdef-0123456789'
 const HERMES = 'hermes-token-0123456789abcdef-0123456789'
+const GATEWAY_ONLY = 'agw-opencode-token-0123456789abcdef-0123'
 const db = freshSchema('audio')
 const sql = inspector(db.schema)
 const stateDir = mkdtempSync(join(tmpdir(), 'agw-audio-state-'))
@@ -108,7 +109,11 @@ async function start(handlers: DoorHandlers, fetch?: Fetch): Promise<RunningHost
     audio: AUDIO,
     config: config(),
     handlers,
-    tokens: new Map([['hermes', HERMES]]),
+    // agw-opencode is in the file but gateway-only: the door must refuse it.
+    tokens: new Map([
+      ['hermes', HERMES],
+      ['agw-opencode', GATEWAY_ONLY],
+    ]),
     ...(fetch ? { fetch } : {}),
   })
   return { ...running, url: `http://127.0.0.1:${running.port}` }
@@ -163,6 +168,12 @@ describe('the audio process', () => {
       expect(refused.headers.get('www-authenticate')).toBe('Bearer')
       const wrong = await fetch(`${audio.url}/v1/audio/speech`, { method: 'POST', body, headers: bearer(`${HERMES}x`) })
       expect(wrong.status).toBe(401)
+      const gatewayOnly = await fetch(`${audio.url}/v1/audio/speech`, {
+        method: 'POST',
+        body,
+        headers: bearer(GATEWAY_ONLY),
+      })
+      expect(gatewayOnly.status).toBe(401)
       expect(handlers.seen).toEqual([])
 
       const bad = await fetch(`${audio.url}/v1/audio/speech`, { method: 'POST', body: '{}', headers: bearer(SECRET) })

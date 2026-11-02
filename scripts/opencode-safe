@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
 # opencode-safe — `opencode` that cannot hang on a dead model endpoint.
 #
-# `opencode run` retries connect errors and 5xx forever. This wrapper probes the OpenAI base
-# (the gateway's on the mini, IU's elsewhere) with `curl --max-time 5` first. Any HTTP response below 500 (401/404 included) counts
-# as reachable; a connect error, the 5 s timeout or a 5xx does not.
+# `opencode run` retries connect errors and 5xx forever. This wrapper probes the model endpoint
+# with `curl --max-time 5` first. The gateway (the mini) counts as reachable only when its
+# `/health` answers 2xx with status ok (a degraded gateway does not). An IU OpenAI base counts
+# on any HTTP response below 500 (401/404 included); a connect error, the 5 s timeout or a
+# 5xx does not.
 # It puts NO wall-clock ceiling on opencode itself (an agentic run killed mid-work reads as a
 # model failure); a probe that needs one sets OPENCODE_SAFE_TIMEOUT.
 #
 # Reads (first hit wins):
-#   AGW_GATEWAY_URL   the inference gateway's origin (the mini) — probed at <url>/openai/v1
-#   IU_OPENAI_BASE    an OpenAI base (…/openai/v1)
+#   IU_OPENAI_BASE    an explicit OpenAI base (…/openai/v1)
+#   AGW_GATEWAY_URL   the inference gateway's origin (the mini) — probed at <url>/health
 #   IU_BASE_URL       the Anthropic base (…/anthropic) — rewritten to …/openai/v1
 #   Keychain item     `claude-sdk-base-url` (macOS `security`), same rewrite
 # Tunables:
@@ -36,11 +38,12 @@ derive_openai_base() {
   fi
 }
 
-base=""
-if [[ -n "${AGW_GATEWAY_URL:-}" ]]; then
-  base="${AGW_GATEWAY_URL%/}/openai/v1"
+base="${IU_OPENAI_BASE:-}"
+gateway=""
+if [[ -z "$base" && -n "${AGW_GATEWAY_URL:-}" ]]; then
+  gateway="${AGW_GATEWAY_URL%/}"
+  base="$gateway/health"
 fi
-[[ -n "$base" ]] || base="${IU_OPENAI_BASE:-}"
 if [[ -z "$base" && -n "${IU_BASE_URL:-}" ]]; then
   base="$(derive_openai_base "$IU_BASE_URL")"
 fi
@@ -48,12 +51,19 @@ if [[ -z "$base" ]] && command -v security >/dev/null 2>&1; then
   raw="$(security find-generic-password -s claude-sdk-base-url -w 2>/dev/null || true)"
   [[ -n "$raw" ]] && base="$(derive_openai_base "$raw")"
 fi
-[[ -n "$base" ]] || fail "model base URL not resolvable (set AGW_GATEWAY_URL, IU_OPENAI_BASE or IU_BASE_URL) — not running opencode" 78
+[[ -n "$base" ]] || fail "model base URL not resolvable (set IU_OPENAI_BASE, AGW_GATEWAY_URL or IU_BASE_URL) — not running opencode" 78
 
 command -v curl >/dev/null 2>&1 || fail "curl not found on PATH — cannot probe the model endpoint" 78
-code=$(curl --silent --output /dev/null --max-time 5 --write-out '%{http_code}' "$base" || true)
-[[ $code =~ ^[1-4][0-9][0-9]$ ]] ||
-  fail "model endpoint unreachable or failing (HTTP ${code:-none}) — not running opencode"
+if [[ -n "$gateway" ]]; then
+  # /health is a compact JSON object; `"status":"ok"` is its healthy form (`degraded` otherwise).
+  health=$(curl --silent --fail --max-time 5 "$base" || true)
+  [[ "$health" == *'"status":"ok"'* ]] ||
+    fail "the gateway's /health is not ok ($(printf '%.200s' "${health:-no answer}")) — not running opencode"
+else
+  code=$(curl --silent --output /dev/null --max-time 5 --write-out '%{http_code}' "$base" || true)
+  [[ $code =~ ^[1-4][0-9][0-9]$ ]] ||
+    fail "model endpoint unreachable or failing (HTTP ${code:-none}) — not running opencode"
+fi
 
 if [[ -z "${OPENCODE_SAFE_TIMEOUT:-}" ]]; then
   exec opencode "$@"

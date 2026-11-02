@@ -19,8 +19,8 @@
 # one file and installed to ~/.agent-workflows/gateway/<build> (gateway.js, launch-gateway.sh, .env.gateway.tpl, the plist
 # template, a `.complete` marker; immutable once complete). The build id is 16 hex of a sha256 over the bundle, the launcher,
 # the env template, the plist template and `bun --version`. A deploy restarts the gateway only when its build changed (or
-# it is not loaded, or not healthy at its recorded build, or the deploy added a caller to door-tokens, which the gateway
-# reads only at start), so streams are not cut by unrelated deploys; when it does, it is stopped after host and audio,
+# it is not loaded, or not healthy at its recorded build, or data/door-tokens differs from the one it last started on,
+# recorded in data/gateway-door-tokens: it reads the file only at start), so streams are not cut by unrelated deploys; when it does, it is stopped after host and audio,
 # started first and awaited (its /health `build`, not `version`) before they start, and rolled back with the others, to
 # the previous build's directory. A host or audio failure on a deploy that left the gateway running leaves it alone. data/gateway-build
 # and data/gateway-previous-build record the live and the previous build.
@@ -56,12 +56,17 @@ GATEWAY_ROOT="$ROOT/gateway"
 GATEWAY_ENTRY="packages/gateway/src/main.ts"
 GW_BUILD_FILE="$DATA_DIR/gateway-build"
 GW_PREV_FILE="$DATA_DIR/gateway-previous-build"
+# sha256 of data/door-tokens as the gateway last started healthy on it (a deploy wrote it): the gateway reads the file
+# only at start, so a file that differs from this record restarts it, whatever changed it (a deploy that appended lines
+# and then died, a hand rotation).
+GW_TOKENS_FILE="$DATA_DIR/gateway-door-tokens"
 KEEP_GATEWAY_BUILDS=3
 GW_BUILD=""      # the build this deploy would run (set by build_gateway)
 GW_DIR=""        # its directory
 GW_OLD_BUILD=""  # the build live before this deploy ("" = none): the gateway's rollback target
 GW_EXPECT=""     # the build the gateway's /health must report
 DRY_GW_RESTART="" # DRY_RUN: the build the plan restarts the gateway on ("" = left running)
+TOKENS_DIGEST="" # sha256 of data/door-tokens after ensure_door_tokens (what a restarted gateway starts on)
 PORT="${PORTS[host]}"
 DOOR_TOKENS="$DATA_DIR/door-tokens"
 BIN_DIR="$HOME/.local/bin"
@@ -195,7 +200,8 @@ wait_healthy() {  # $1 sha, $2... processes
 # door (the host also hands the agw-opencode token to OpenCode and `ocr`, scripts/launch.sh). A new file gets one token
 # per caller in DOOR_CALLERS; a file that exists gains a line for each caller in DOOR_CALLERS_ADDED it lacks (hermes is
 # never re-added: a deleted hermes line is a revocation). Existing lines are never touched, no token is ever printed,
-# the mode stays 0600. The names added are kept in DOOR_TOKENS_ADDED: the gateway reads the file only at start.
+# the mode stays 0600. The names added are kept in DOOR_TOKENS_ADDED for the log; the gateway's restart is decided on the
+# file's digest against data/gateway-door-tokens (door_tokens_changed), so it survives a deploy that died after appending.
 DOOR_CALLERS=(hermes studio agw-opencode oc modelpick)
 DOOR_CALLERS_ADDED=(studio agw-opencode oc modelpick)
 DOOR_TOKENS_ADDED=()
@@ -206,6 +212,13 @@ missing_door_callers() {
   for name in $DOOR_CALLERS_ADDED; do
     /usr/bin/grep -Eq "^[[:space:]]*${name}[[:space:]]*=" "$DOOR_TOKENS" || print -r -- "$name"
   done
+}
+
+door_tokens_digest() { shasum -a 256 "$DOOR_TOKENS" 2>/dev/null | awk '{print $1}'; }
+
+# The file differs from the one the gateway last started healthy on (no record counts as differing).
+door_tokens_changed() {  # $1 the file's digest now
+  [[ -z "$1" || "$(read_sha "$GW_TOKENS_FILE")" != "$1" ]]
 }
 
 ensure_door_tokens() {
@@ -410,10 +423,21 @@ restore_unloaded() {  # $1 live sha ("" = none: nothing was live, nothing to res
   print -u2 "[deploy] restored from their plists: up ${up[*]:-none}; did not come back healthy ${down[*]:-none}; stuck loaded ${stuck[*]:-none}"
 }
 
+# A rollback that restarted the gateway puts it back first, the forward path's order: host and audio are never
+# bootstrapped before it is healthy. 0: go on with host and audio (the gateway healthy, or no previous build to start:
+# its plist removed, it stays down and leaves PROCESSES); 1: it did not come back, start nothing else.
+gateway_first() {  # $1 failed sha, $2 sha for AGW_VERSION
+  local grc
+  gateway_back "$1" "$2"; grc=$?
+  if (( grc == 1 )); then PROCESSES=("${(@)PROCESSES:#gateway}"); return 0; fi
+  (( grc == 0 )) || { print -u2 "[deploy] the gateway's bootstrap failed"; return 1; }
+  wait_healthy "$2" gateway
+}
+
 # The new build never became healthy: say so with the log tails, then put the previous release back, every process
-# together (one sha live, never a mix).
+# together (one sha live, never a mix), the gateway first.
 roll_back() {  # $1 failed sha, $2 previous sha ("" = none), $3 unload wait, $4 live sha ("" = none)
-  local p gw=0 grc=1
+  local p gw=0
   print -u2 "[deploy] ERROR: ${1[1,12]} did not become healthy within ${HEALTH_WAIT_SECS}s"
   tail_logs
   # The gateway is part of the rollback only if this deploy restarted it; otherwise it is still running, untouched.
@@ -422,18 +446,18 @@ roll_back() {  # $1 failed sha, $2 previous sha ("" = none), $3 unload wait, $4 
     stop_all "$3" || print -u2 "[deploy] WARNING: could not unload every process"
     if [[ -n "$4" && "$4" == "$1" ]]; then
       # A redeploy of the live sha (a transient health failure): same sha, same release, so its plists are the live
-      # ones. They are kept and bootstrapped once more; the deploy still exits 1, naming what is up.
-      local up=() down=()
+      # ones. They are kept and bootstrapped once more, the gateway first; the deploy still exits 1, naming what is up.
+      local up=() down=() go=1
       print -u2 "[deploy] redeploy of the live sha ${1[1,12]}: starting every process again from its plist"
-      for p in $PROCESSES; do
-        [[ "$p" == gateway ]] && continue
-        [[ -f "$(plist_of "$p")" ]] && launchctl bootstrap "gui/$(id -u)" "$(plist_of "$p")" 2>/dev/null
-      done
-      if (( gw )); then
-        gateway_back "$1" "$1"; grc=$?
-        (( grc == 1 )) && PROCESSES=("${(@)PROCESSES:#gateway}")
+      if (( gw )); then gateway_first "$1" "$1" || go=0; fi
+      if (( go )); then
+        for p in $RELEASE_PROCESSES; do
+          [[ -f "$(plist_of "$p")" ]] && launchctl bootstrap "gui/$(id -u)" "$(plist_of "$p")" 2>/dev/null
+        done
+        wait_healthy "$1" "${PROCESSES[@]}" >/dev/null 2>&1
+      else
+        print -u2 "[deploy] the gateway did not come back healthy: host and audio not started"
       fi
-      wait_healthy "$1" "${PROCESSES[@]}" >/dev/null 2>&1
       for p in $PROCESSES; do
         if is_healthy "$1" "$p"; then up+=("$p"); else down+=("$p"); fi
       done
@@ -450,6 +474,11 @@ roll_back() {  # $1 failed sha, $2 previous sha ("" = none), $3 unload wait, $4 
     print -u2 "[deploy] ROLLBACK FAILED: not every process unloaded within ${3}s"
     return 0
   fi
+  if (( gw )) && ! gateway_first "$1" "$2"; then
+    stop_all "$3"
+    print -u2 "[deploy] ROLLBACK FAILED: the gateway (build ${GW_OLD_BUILD:-none}) did not become healthy; host and audio were not started, every process left booted out."
+    return 0
+  fi
   local back=() started=()
   back=( ${(f)"$(processes_of "$RELEASES/$2")"} )
   for p in $RELEASE_PROCESSES; do
@@ -458,12 +487,8 @@ roll_back() {  # $1 failed sha, $2 previous sha ("" = none), $3 unload wait, $4 
     remove_failed_plist "$p" "$1"
   done
   for p in $back; do start_process "$p" "$RELEASES/$2" "$2" && started+=("$p"); done
-  if (( gw )); then
-    gateway_back "$1" "$2"; grc=$?
-    (( grc == 0 )) && { back+=(gateway); started+=(gateway); }
-    (( grc == 3 )) && back+=(gateway)
-  fi
   if (( ${#started} == ${#back} )) && wait_healthy "$2" "${back[@]}"; then
+    (( ${PROCESSES[(Ie)gateway]} )) && back=(gateway $back)
     print -u2 "[deploy] rollback OK: ${2[1,12]} is healthy again (${back[*]}). deployed-sha unchanged."
   else
     stop_all "$3"
@@ -507,18 +532,18 @@ dry_run_gateway() {  # $1 repo root, $2 sha
     log "gateway: build $build (live ${live:-none}), computed by bundling this checkout; the deploy bundles the release"
   fi
   if [[ -n "$build" ]] && gateway_unchanged "$build"; then
-    if (( ${#DOOR_TOKENS_ADDED} == 0 )); then
+    if (( ${#DOOR_TOKENS_ADDED} == 0 )) && ! door_tokens_changed "$(door_tokens_digest)"; then
       log "gateway unchanged (build $build), not restarted"
       return 0
     fi
-    log "gateway build $build unchanged, restarted anyway: door-tokens gains ${DOOR_TOKENS_ADDED[*]} (the gateway reads it only at start)"
+    log "gateway build $build unchanged, restarted anyway: $DOOR_TOKENS differs from the one it started on (recorded in $GW_TOKENS_FILE)${DOOR_TOKENS_ADDED:+; it gains ${DOOR_TOKENS_ADDED[*]}}"
   fi
   DRY_GW_RESTART="${build:-<build>}"
   dir="$GATEWAY_ROOT/${build:-<build>}"
   act "install $GATEWAY_ROOT/${build:-<build>}/ (gateway.js, launch-gateway.sh, .env.gateway.tpl, plist.template, .complete; an existing complete directory is reused)"
   log "rendered $(plist_of gateway) (points at the build directory, never at a release):"
   render_plist "$root/deploy/${LABELS[gateway]}.plist.template" "$dir" "$sha" "${build:-<build>}"
-  act "on failure: the gateway goes back with the others, to build ${live:-none} (none: its plist is removed); after success write $GW_BUILD_FILE (${build:-<build>}) and $GW_PREV_FILE (${live:-none}), keep the newest $KEEP_GATEWAY_BUILDS builds plus both"
+  act "on failure: the gateway goes back with the others, to build ${live:-none} (none: its plist is removed); after success write $GW_BUILD_FILE (${build:-<build>}), $GW_PREV_FILE (${live:-none}) and $GW_TOKENS_FILE (the door-tokens digest it started on), keep the newest $KEEP_GATEWAY_BUILDS builds plus both"
 }
 
 main() {
@@ -637,11 +662,14 @@ main() {
   # The gateway: bundled and installed beside the live build; restarted only if its build changed or door-tokens gained a caller.
   GW_OLD_BUILD=$(read_sha "$GW_BUILD_FILE")
   build_gateway "$release"
+  TOKENS_DIGEST=$(door_tokens_digest)
+  [[ -n "$TOKENS_DIGEST" ]] || die "cannot hash $DOOR_TOKENS; nothing was stopped"
   if ! gateway_unchanged "$GW_BUILD"; then
     PROCESSES+=(gateway)
-  elif (( ${#DOOR_TOKENS_ADDED} )); then
-    # Same build, but the gateway reads door-tokens only at start: the callers just added would get 401 until a restart.
-    log "gateway build $GW_BUILD unchanged, restarted anyway: door-tokens gained ${DOOR_TOKENS_ADDED[*]}"
+  elif door_tokens_changed "$TOKENS_DIGEST"; then
+    # Same build, but the gateway reads door-tokens only at start: a caller added (now or by a deploy that died after
+    # appending) or a rotated token would get 401 until a restart.
+    log "gateway build $GW_BUILD unchanged, restarted anyway: $DOOR_TOKENS differs from the one it started on${DOOR_TOKENS_ADDED:+ (added ${DOOR_TOKENS_ADDED[*]})}"
     PROCESSES+=(gateway)
   else
     log "gateway unchanged (build $GW_BUILD), not restarted"
@@ -696,6 +724,7 @@ main() {
   if (( ${PROCESSES[(Ie)gateway]} )); then
     [[ -n "$GW_OLD_BUILD" && "$GW_OLD_BUILD" != "$GW_BUILD" ]] && write_atomic "$GW_PREV_FILE" "$GW_OLD_BUILD"
     write_atomic "$GW_BUILD_FILE" "$GW_BUILD" || die "writing $GW_BUILD_FILE failed"
+    write_atomic "$GW_TOKENS_FILE" "$TOKENS_DIGEST" || die "writing $GW_TOKENS_FILE failed"
   fi
   write_env_file "$env_content"
   ln -sf "$CURRENT/packages/cli/bin/agw.ts" "$CLI_LINK" || die "linking $CLI_LINK failed"
