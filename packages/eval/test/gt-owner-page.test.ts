@@ -30,7 +30,11 @@ const dataOf = (html: string) => {
 }
 
 describe('renderSession', () => {
-  const html = renderSession({ sessionId: 's1', items, notes: ['Finding items: 3 judge-positive pairs exist.'] })
+  const html = renderSession({
+    sessionId: 's1',
+    items,
+    notes: ['Finding items: 4 of 10 requested exist; all are shown.'],
+  })
 
   test('is one self-contained file: nothing is fetched from anywhere', () => {
     expect(html).not.toMatch(/https?:\/\//)
@@ -55,6 +59,16 @@ describe('renderSession', () => {
     expect(html).toContain('Unanswered only')
     expect(html).toContain('prefers-color-scheme:dark')
     expect(html).toContain('localStorage')
-    expect(html).toContain('Finding items: 3 judge-positive pairs exist.')
+    expect(html).toContain('Finding items: 4 of 10 requested exist; all are shown.')
+  })
+
+  test('cannot reach anything: a CSP allows inline script and style only', () => {
+    expect(html).toContain(`content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'"`)
+  })
+
+  test('says so when the browser will not store answers, and tags every export line with its session', () => {
+    expect(html).toMatch(/id="warn"[^>]*hidden/)
+    expect(html).toContain('answers are not saved')
+    expect(html).toContain('sessionId: DATA.sessionId')
   })
 })

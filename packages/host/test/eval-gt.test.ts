@@ -226,14 +226,20 @@ describe('buildPack', () => {
     expect(pair.finding.where).toBe('src/a.ts:20')
   })
 
-  test('a dropped candidate shows seat a, else seat b, else the blamed lines and says nobody claimed a defect', async () => {
+  test('a dropped candidate shows seat a, else seat b, else the changed lines, in the same form as every item', async () => {
     const result = await buildPack(deps(RUNS), { evalRuns: ['eval-1'], cases: 0, rejected: 2, pairs: 0, seed: 1 })
     const items = page(readFileSync(result.html, 'utf8')).items
     const seatB = items.find((i: { id: string }) => i.id === 'cand-no-a')
     expect(seatB.claim).toBe('seat claims an off-by-one')
     expect(seatB.where).toBe('src/a.ts:25-26')
     const none = items.find((i: { id: string }) => i.id === 'cand-no-both')
-    expect(none.claim).toContain('No labeller claimed a defect')
+    expect(none.claim).toBe('Claim: the lines the fix changed (src/a.ts:30-31)')
+    expect(readFileSync(result.html, 'utf8')).not.toMatch(/no labeller|claimed a defect/i)
+    const manifest = JSON.parse(readFileSync(result.manifest, 'utf8'))
+    const claimedBy = Object.fromEntries(
+      manifest.items.map((i: { id: string; claimedBy: string }) => [i.id, i.claimedBy]),
+    )
+    expect(claimedBy).toEqual({ 'cand-no-a': 'b', 'cand-no-both': 'none' })
     expect(none.where).toBe('src/a.ts:30-31')
     expect(none.code.filter((l: { mark: boolean }) => l.mark).map((l: { n: number }) => l.n)).toEqual([30, 31])
   })
@@ -243,13 +249,19 @@ describe('buildPack', () => {
     expect(result.counts).toMatchObject({ pairsJudgePositive: 2, pairsJudgeNegative: 2, pairs: 4 })
     expect(result.notes.join('\n')).toContain('2 judge-positive pairs exist for a quota of 5')
     expect(result.notes.join('\n')).toContain('only 4 of 10 requested pairs exist')
-    expect(readFileSync(result.html, 'utf8')).toContain('2 judge-positive pairs exist for a quota of 5')
+    // The page says it holds fewer items than asked, and nothing about which kind is missing.
+    const html = readFileSync(result.html, 'utf8')
+    expect(html).toContain('Finding items: 4 of 10 requested exist; all are shown.')
+    expect(html).not.toMatch(/judge-positive|judge-negative|quota/)
   })
 
   test('fewer cases than asked: all are shown and it says so', async () => {
     const result = await buildPack(deps(RUNS), { evalRuns: ['eval-1'], cases: 50, rejected: 20, pairs: 0, seed: 1 })
     expect(result.counts).toMatchObject({ cases: 3, rejected: 2 })
     expect(result.notes).toHaveLength(2)
+    const html = readFileSync(result.html, 'utf8')
+    expect(html).toContain('Commit items: 5 of 70 requested exist; all are shown.')
+    expect(html).not.toMatch(/dropped|mined/)
   })
 
   test('the same seed builds the same session', async () => {
@@ -278,10 +290,12 @@ describe('buildPack', () => {
 
 describe('ingest', () => {
   const at = '2026-11-02T11:00:00.000Z'
-  const line = (o: object) => JSON.stringify({ at, ...o })
+  let sid = ''
+  const line = (o: object, sessionId = sid) => JSON.stringify({ sessionId, at, ...o })
+  let exported = ''
 
   test('appends, reports case precision and kappa against the manifest, counts the unanswered', async () => {
-    await buildPack(deps(RUNS), { evalRuns: ['eval-1'], cases: 2, rejected: 2, pairs: 4, seed: 1 })
+    sid = (await buildPack(deps(RUNS), { evalRuns: ['eval-1'], cases: 2, rejected: 2, pairs: 4, seed: 1 })).sessionId
     const labelsPath = join(env.AGW_EVAL_DIR as string, 'review-gt', 'owner-labels.jsonl')
     rmSync(labelsPath, { force: true })
     const manifest = JSON.parse(
@@ -293,10 +307,14 @@ describe('ingest', () => {
           return line({ kind: 'case', candidateId: i.id, verdict: i.truth === 'accepted' ? 'yes' : 'no' })
         return line({ kind: 'pair', pairId: i.id, verdict: i.judgeClass === 'match' ? 'yes' : 'no', note: 'ok' })
       })
-      .concat([line({ kind: 'case', candidateId: 'not-in-session', verdict: 'yes' })])
+      .concat([
+        line({ kind: 'case', candidateId: 'not-in-session', verdict: 'yes' }),
+        line({ kind: 'case', candidateId: 'cand-ok-1', verdict: 'no' }, 'an-older-session'),
+      ])
       .join('\n')
-    const result = ingestLabels(env, `${text}\n`)
-    expect(result).toMatchObject({ appended: 8, duplicates: 0, unknown: 1 })
+    exported = `${text}\n`
+    const result = ingestLabels(env, exported)
+    expect(result).toMatchObject({ appended: 8, duplicates: 0, unknown: 1, otherSession: 1 })
     expect(result.report.cases.accepted).toMatchObject({ shown: 2, yes: 2, precision: 1 })
     expect(result.report.cases.rejected).toMatchObject({ shown: 2, no: 2, lost: 0 })
     expect(result.report.pairs.kappa).toBe(1)
@@ -308,8 +326,8 @@ describe('ingest', () => {
 
   test('ingesting the same export again appends nothing; a changed answer appends and wins', () => {
     const labelsPath = join(env.AGW_EVAL_DIR as string, 'review-gt', 'owner-labels.jsonl')
-    const first = readFileSync(labelsPath, 'utf8')
-    expect(ingestLabels(env, first)).toMatchObject({ appended: 0, duplicates: 8 })
+    expect(readFileSync(labelsPath, 'utf8')).not.toContain('sessionId')
+    expect(ingestLabels(env, exported)).toMatchObject({ appended: 0, duplicates: 8, unknown: 1, otherSession: 1 })
     const changed = line({ kind: 'case', candidateId: 'cand-ok-1', verdict: 'no', at: '2026-11-02T12:00:00.000Z' })
     const result = ingestLabels(env, changed)
     expect(result.appended).toBe(1)
@@ -321,7 +339,10 @@ describe('ingest', () => {
     const labelsPath = join(env.AGW_EVAL_DIR as string, 'review-gt', 'owner-labels.jsonl')
     const before = readFileSync(labelsPath, 'utf8')
     const text = `${line({ kind: 'case', candidateId: 'cand-ok-2', verdict: 'maybe' })}\nnot json\n`
-    expect(() => ingestLabels(env, text)).toThrow(/line 1: .*\n?.*line 2: not JSON|line 1/)
+    expect(() =>
+      ingestLabels(env, line({ kind: 'case', candidateId: 'cand-ok-2', verdict: 'yes' }).replace(sid, '')),
+    ).toThrow('no sessionId')
+    expect(() => ingestLabels(env, text)).toThrow(/line 1: .*; line 2: not JSON$/)
     expect(readFileSync(labelsPath, 'utf8')).toBe(before)
   })
 
@@ -332,10 +353,11 @@ describe('ingest', () => {
   })
 
   test('parseLabels reads what the page exports', () => {
-    const exported = [
+    const rows = [
       { kind: 'case', candidateId: 'c', verdict: 'unsure', at, note: 'hmm' },
       { kind: 'pair', pairId: 'p', verdict: 'yes', at },
     ]
-    expect(parseLabels(`${exported.map((e) => JSON.stringify(e)).join('\n')}\n`)).toEqual(exported as never)
+    const text = `${rows.map((e) => JSON.stringify({ sessionId: 's', ...e })).join('\n')}\n`
+    expect(parseLabels(text)).toEqual(rows.map((label) => ({ sessionId: 's', label })) as never)
   })
 })

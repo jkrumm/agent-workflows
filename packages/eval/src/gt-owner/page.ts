@@ -59,6 +59,7 @@ pre.code{margin:0;background:var(--code);border:1px solid var(--line);border-rad
 .claim{white-space:pre-wrap}.answers{display:flex;gap:8px;margin-top:16px;align-items:center;flex-wrap:wrap}
 kbd{border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;padding:0 5px;font:12px ui-monospace,monospace}
 textarea{width:100%;margin-top:8px;font:inherit;padding:8px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--fg);min-height:56px}
+.warn{background:var(--del);border:1px solid var(--line);border-radius:6px;padding:8px 12px}
 .tag{font:12px ui-monospace,monospace;border:1px solid var(--line);border-radius:4px;padding:1px 6px}`
 
 const INSTRUCTIONS = `
@@ -72,15 +73,20 @@ const INSTRUCTIONS = `
 Export downloads <code>owner-labels.jsonl</code>; it works offline and can be repeated.</p></details>`
 
 const SCRIPT = `
+const $ = (id) => document.getElementById(id)
 const DATA = JSON.parse(document.getElementById('data').textContent)
 const items = DATA.items
 const KEY = 'agw-owner-session:' + DATA.sessionId
 let saved = {}
-try { saved = JSON.parse(localStorage.getItem(KEY) || '{}') } catch (e) { saved = {} }
+let storageOk = true
+try {
+  saved = JSON.parse(localStorage.getItem(KEY) || '{}')
+  localStorage.setItem(KEY + ':probe', '1'); localStorage.removeItem(KEY + ':probe')
+} catch (e) { storageOk = false }
+const showStorage = () => { $('warn').hidden = storageOk }
 let cur = 0
 let onlyOpen = false
-const $ = (id) => document.getElementById(id)
-const persist = () => { try { localStorage.setItem(KEY, JSON.stringify(saved)) } catch (e) {} }
+const persist = () => { try { localStorage.setItem(KEY, JSON.stringify(saved)) } catch (e) { storageOk = false; showStorage() } }
 const answered = (i) => !!saved[items[i].id]?.verdict
 function h(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e }
 function section(parent, title) { parent.append(h('h3', '', title)) }
@@ -150,7 +156,7 @@ function exportLabels() {
     const a = saved[item.id]
     if (!a || !a.verdict) continue
     const label = item.kind === 'case' ? { kind: 'case', candidateId: item.id } : { kind: 'pair', pairId: item.id }
-    Object.assign(label, { verdict: a.verdict, at: a.at })
+    Object.assign(label, { sessionId: DATA.sessionId, verdict: a.verdict, at: a.at })
     if (a.note && a.note.trim()) label.note = a.note.trim()
     lines.push(JSON.stringify(label))
   }
@@ -173,6 +179,7 @@ document.addEventListener('keydown', (e) => {
 })
 $('open').onclick = () => { onlyOpen = !onlyOpen; render() }
 $('export').onclick = exportLabels
+showStorage()
 render()`
 
 /** The owner session as one self-contained HTML file: no network, no external fonts or scripts. */
@@ -182,10 +189,12 @@ export function renderSession(page: SessionPage): string {
     : ''
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'">
 <title>Owner session</title><style>${STYLE}</style></head>
 <body><main>
 <header class="top"><b>Owner session</b><span id="progress" class="muted"></span><span class="grow"></span>
 <button id="open" type="button">Unanswered only</button><button id="export" type="button">Export</button><span id="exported" class="muted"></span></header>
+<p id="warn" class="warn" hidden>This browser blocks storage for this file: answers are not saved. Export before you close the tab, and do not reload.</p>
 ${INSTRUCTIONS}${notes}
 <div id="item"></div>
 </main>

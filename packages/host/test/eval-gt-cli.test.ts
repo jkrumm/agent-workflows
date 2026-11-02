@@ -24,7 +24,9 @@ describe('agw eval gt', () => {
     const pack = flags('eval gt pack')
     expect(pack.x).toMatchObject({ kind: 'workflow', mutating: false })
     expect(pack.flags).toEqual(['cases', 'eval-runs', 'pairs', 'rejected', 'seed'])
-    expect(flags('eval gt ingest').flags).toEqual(['labels'])
+    const ingest = flags('eval gt ingest')
+    expect(ingest.flags).toEqual(['labels'])
+    expect(ingest.x).toMatchObject({ mutating: true })
   })
 
   test('the host serves them as a discovered module', async () => {

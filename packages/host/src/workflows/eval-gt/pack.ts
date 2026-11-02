@@ -50,24 +50,35 @@ const PAIR_RADIUS = 10
 
 const sessionDir = (env: PackDeps['env']) => join(evalDir(env), GT_DIR, 'owner')
 
+/** The caller's input is wrong (a ground-truth file missing, malformed or empty): not an outage, not worth a retry. */
+export class PackInputError extends Error {}
+
 function readFile<T extends z.ZodType>(env: PackDeps['env'], file: string, schema: T): z.infer<T>[] {
   const path = join(evalDir(env), GT_DIR, file)
-  return existsSync(path) ? readCases(path, schema) : []
+  if (!existsSync(path)) return []
+  try {
+    return readCases(path, schema)
+  } catch (error) {
+    throw new PackInputError(`${file}: ${error instanceof Error ? error.message : String(error)}`)
+  }
 }
 
 const lineRange = (start: number, end: number) => (start === end ? `${start}` : `${start}-${end}`)
 
 /** A candidate's claim: seat `a`'s when it found a defect, else seat `b`'s, else none (the blamed lines are the only lead). */
 function claimOf(record: z.infer<typeof GtLabelRecord> | undefined) {
-  for (const seat of [record?.a, record?.b]) {
+  for (const [name, seat] of [
+    ['a', record?.a],
+    ['b', record?.b],
+  ] as const) {
     if (seat && 'defect' in seat && seat.defect && seat.location) {
-      return { location: seat.location, description: seat.description }
+      return { seat: name, location: seat.location, description: seat.description }
     }
   }
   return null
 }
 
-async function caseItems(deps: PackDeps, request: PackRequest, notes: string[], pageNotes: string[]) {
+async function caseItems(deps: PackDeps, request: PackRequest, notes: string[]) {
   const cases = readFile(deps.env, 'cases.jsonl', GtCase).filter((c): c is GtBugCase => c.kind === 'bug')
   const rejected = readFile(deps.env, 'rejected.jsonl', GtRejected)
   const candidates = new Map(readFile(deps.env, 'candidates.jsonl', GtCandidate).map((c) => [c.id, c]))
@@ -79,12 +90,10 @@ async function caseItems(deps: PackDeps, request: PackRequest, notes: string[], 
   if (pickedCases.length < request.cases) {
     const text = `${pickedCases.length} of ${request.cases} requested mined bug cases exist; all are shown`
     notes.push(`cases: ${text}`)
-    pageNotes.push(`Commit items: ${text}.`)
   }
   if (pickedRejected.length < request.rejected) {
     const text = `${pickedRejected.length} of ${request.rejected} requested dropped candidates exist; all are shown`
     notes.push(`rejected: ${text}`)
-    pageNotes.push(`Commit items: ${text}.`)
   }
 
   const items: { page: CaseItem; manifest: ManifestItem }[] = []
@@ -92,7 +101,7 @@ async function caseItems(deps: PackDeps, request: PackRequest, notes: string[], 
     const git = gitReader(deps.exec, join(deps.home, c.repo))
     const { location, description } = c.bug
     items.push({
-      manifest: { kind: 'case', id: c.candidateId, truth: 'accepted' },
+      manifest: { kind: 'case', id: c.candidateId, truth: 'accepted', claimedBy: 'a' },
       page: {
         kind: 'case',
         id: c.candidateId,
@@ -128,16 +137,21 @@ async function caseItems(deps: PackDeps, request: PackRequest, notes: string[], 
     const start = lines ? Math.min(...lines) : place.startLine
     const end = lines ? Math.max(...lines) : place.endLine
     items.push({
-      manifest: { kind: 'case', id: r.candidateId, truth: 'rejected', reason: r.reason },
+      manifest: {
+        kind: 'case',
+        id: r.candidateId,
+        truth: 'rejected',
+        reason: r.reason,
+        claimedBy: claim?.seat ?? 'none',
+      },
       page: {
         kind: 'case',
         id: r.candidateId,
         repo: candidate.repo,
         introSubject: candidate.introSubject,
         where: `${place.file}:${lineRange(start, end)}`,
-        claim: claim
-          ? claim.description
-          : `No labeller claimed a defect. The lines the fix changed trace back to this commit at ${place.file}:${lineRange(start, end)}.`,
+        // One form for every item: the page never says whether anyone claimed a defect (the manifest does).
+        claim: claim ? claim.description : `Claim: the lines the fix changed (${place.file}:${lineRange(start, end)})`,
         fixSubject: candidate.fixSubject,
         code: await git.postImage({ sha: candidate.introSha, file: place.file, start, end, radius: CASE_RADIUS }),
         fixDiff: await git.fixDiff(candidate.fixSha, place.file),
@@ -147,7 +161,7 @@ async function caseItems(deps: PackDeps, request: PackRequest, notes: string[], 
   return items
 }
 
-async function pairItems(deps: PackDeps, request: PackRequest, notes: string[], pageNotes: string[]) {
+async function pairItems(deps: PackDeps, request: PackRequest, notes: string[]) {
   const cases = new Map(
     readFile(deps.env, 'cases.jsonl', GtCase).flatMap((c) => (c.kind === 'bug' ? [[c.id, c] as const] : [])),
   )
@@ -209,12 +223,10 @@ async function pairItems(deps: PackDeps, request: PackRequest, notes: string[], 
   if (sample.shortfall.positives > 0) {
     const text = `${positives.length} judge-positive pairs exist for a quota of ${Math.floor(request.pairs / 2)}; all are shown and judge-negative pairs fill the rest`
     notes.push(`pairs: ${text}`)
-    pageNotes.push(`Finding items: ${text}.`)
   }
   if (sample.shortfall.negatives > 0) {
     const text = `only ${sample.positives.length + sample.negatives.length} of ${request.pairs} requested pairs exist`
     notes.push(`pairs: ${text}`)
-    pageNotes.push(`Finding items: ${text}.`)
   }
 
   const out: { page: PageItem; manifest: ManifestItem }[] = []
@@ -230,6 +242,16 @@ async function pairItems(deps: PackDeps, request: PackRequest, notes: string[], 
     })
     out.push({ page: pair.item, manifest: pair.manifest })
   }
+  return out
+}
+
+/** Totals only: the page may say it holds fewer items than asked, never which kind of item is missing. */
+function pageNotesOf(request: PackRequest, commitItems: number, findingItems: number): string[] {
+  const out: string[] = []
+  const commits = request.cases + request.rejected
+  if (commitItems < commits) out.push(`Commit items: ${commitItems} of ${commits} requested exist; all are shown.`)
+  if (findingItems < request.pairs)
+    out.push(`Finding items: ${findingItems} of ${request.pairs} requested exist; all are shown.`)
   return out
 }
 
@@ -259,12 +281,11 @@ function write(path: string, content: string) {
 /** Builds the owner session (`session.html` and `manifest.json` under `review-gt/owner/`); no model call, no spend. */
 export async function buildPack(deps: PackDeps, request: PackRequest): Promise<PackResult> {
   const notes: string[] = []
-  const pageNotes: string[] = []
-  const cases = await caseItems(deps, request, notes, pageNotes)
-  const pairs = await pairItems(deps, request, notes, pageNotes)
+  const cases = await caseItems(deps, request, notes)
+  const pairs = await pairItems(deps, request, notes)
   const all = [...cases, ...pairs]
   if (all.length === 0)
-    throw new Error(
+    throw new PackInputError(
       `nothing to show: no cases, rejected candidates or judge pairs${notes.length ? ` (${notes.join('; ')})` : ''}`,
     )
 
@@ -282,7 +303,11 @@ export async function buildPack(deps: PackDeps, request: PackRequest): Promise<P
     items: ordered.map((i) => i.manifest),
   }
   const dir = sessionDir(deps.env)
-  const html = renderSession({ sessionId, items: ordered.map((i) => i.page), notes: pageNotes })
+  const html = renderSession({
+    sessionId,
+    items: ordered.map((i) => i.page),
+    notes: pageNotesOf(request, cases.length, pairs.length),
+  })
   write(join(dir, 'session.html'), html)
   write(join(dir, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`)
   const judge = (c: string) =>

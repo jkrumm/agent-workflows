@@ -13,6 +13,8 @@ export const ManifestItem = z.discriminatedUnion('kind', [
       truth: z.enum(['accepted', 'rejected']),
       /** Why a rejected candidate was dropped. */
       reason: RejectReason.optional(),
+      /** Whose claim the page shows: a labeller's seat, or none (the page then names the lines the fix changed). */
+      claimedBy: z.enum(['a', 'b', 'none']).optional(),
     })
     .strict(),
   z

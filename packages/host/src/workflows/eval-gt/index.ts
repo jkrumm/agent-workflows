@@ -6,7 +6,7 @@ import { z } from 'zod'
 import type { HostWorkflow } from '../../operations.ts'
 import { IngestError, ingestLabels } from './ingest.ts'
 import { type JudgeRunReader, pgJudgeRuns } from './judge-runs.ts'
-import { buildPack } from './pack.ts'
+import { buildPack, PackInputError } from './pack.ts'
 
 export const EVAL_GT_PACK_ID = 'eval.gt.pack'
 export const EVAL_GT_INGEST_ID = 'eval.gt.ingest'
@@ -51,10 +51,11 @@ export function createEvalGtWorkflows(options: EvalGtOptions = {}): HostWorkflow
       .object({
         evalRuns: z
           .array(z.string().min(1))
+          .min(1)
           .describe('Run ids of `agw eval run review` whose judge calls supply the pairs'),
-        cases: z.number().int().nonnegative().optional().describe('Mined bug cases to show, default 50'),
-        rejected: z.number().int().nonnegative().optional().describe('Dropped candidates to show, default 20'),
-        pairs: z.number().int().nonnegative().optional().describe('Judge pairs to show, default 100'),
+        cases: z.number().int().nonnegative().max(500).optional().describe('Mined bug cases to show, default 50'),
+        rejected: z.number().int().nonnegative().max(500).optional().describe('Dropped candidates to show, default 20'),
+        pairs: z.number().int().nonnegative().max(500).optional().describe('Judge pairs to show, default 100'),
         seed: z.number().int().optional().describe('Sampling seed, default 1'),
       })
       .strict(),
@@ -87,8 +88,9 @@ export function createEvalGtWorkflows(options: EvalGtOptions = {}): HostWorkflow
           )
           return { sessionId, html, manifest, counts, notes }
         } catch (error) {
-          // The ground truth files are the caller's to fix (mine and label first); not an outage to retry.
-          throw new WorkflowError('invalid_input', error instanceof Error ? error.message : String(error))
+          // Only the ground-truth files are the caller's to fix (mine and label first); a database or git failure is not.
+          if (error instanceof PackInputError) throw new WorkflowError('invalid_input', error.message)
+          throw error
         }
       })
     },
@@ -105,7 +107,8 @@ export function createEvalGtWorkflows(options: EvalGtOptions = {}): HostWorkflow
     output: z.object({
       appended: z.number().int(),
       duplicates: z.number().int().describe('Lines already in owner-labels.jsonl, not appended again'),
-      unknown: z.number().int().describe('Lines naming no item of the current session, left out'),
+      otherSession: z.number().int().describe('Lines exported by another session’s page, left out'),
+      unknown: z.number().int().describe('Lines of this session naming none of its items, left out'),
       report: z.object({
         cases: z.object({
           accepted: z.object({
@@ -159,6 +162,7 @@ export function createEvalGtWorkflows(options: EvalGtOptions = {}): HostWorkflow
     {
       workflow: ingest,
       summary: 'Ingest the owner’s exported answers and report case precision, Cohen’s κ and the bars',
+      cli: { mutating: true },
     },
   ]
 }

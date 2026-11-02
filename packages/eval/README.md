@@ -223,13 +223,13 @@ judge called `match`, half preselected non-matches: right file, plausible, wrong
 2. **Open it** (`file://`, any browser, on the laptop: copy the file over). One item at a time; `y` `n` `u` answer and
    move on, `j`/`k` or the arrows move, `e` writes a note, "Unanswered only" filters. Answers save in the browser per
    session; closing the tab loses nothing.
-3. **Export** downloads `owner-labels.jsonl` (`OwnerLabel` lines). It works offline and can be repeated.
-4. **Ingest.** The flag takes the file's *content*: `agw eval gt ingest --labels "$(cat owner-labels.jsonl)"`. Every line
+3. **Export** downloads `owner-labels.jsonl` (`OwnerLabel` lines, each tagged with the page's `sessionId`). It works offline and can be repeated.
+4. **Ingest.** The flag takes the file's *content*: `agw eval gt ingest --commit --labels "$(cat owner-labels.jsonl)"` (it writes, so it is a mutating command). Every line
    is validated before anything is written; answers are appended to `owner-labels.jsonl` (a line already there is not
    appended twice, an id answered again appends and the later line wins). The report: case precision with a Wilson 95 %
    interval, what the filter lost (dropped candidates the owner calls real), pairs answered, agreement, κ (owner yes/no
    against judge match/non-match, `unsure` excluded and counted), the confusion matrix, both bars, what is still
-   unanswered. Labels naming no item of the current session are counted and left out.
+   unanswered. Lines tagged with another session's id (a page built earlier) and lines naming no item of this session are counted and left out; the tag is dropped on append, so the file holds plain `OwnerLabel` lines.
 
 What the bars decide:
 
