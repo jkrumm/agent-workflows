@@ -13,7 +13,14 @@ import {
   requestImages,
   resolveImageDeps,
 } from '@agent-workflows/capabilities'
-import { type Attribution, defineWorkflow, type Logger, type Runtime, type Usage } from '@agent-workflows/runtime'
+import {
+  type Attribution,
+  defineWorkflow,
+  type Logger,
+  type Runtime,
+  type Usage,
+  WorkflowError,
+} from '@agent-workflows/runtime'
 import { z } from 'zod'
 import { BEARER_CHALLENGE } from '../auth.ts'
 import { RUN_ID_HEADER } from '../capability-runs.ts'
@@ -263,7 +270,7 @@ export function createImageDoor(deps: ImageDoorDeps): ImageDoor {
   const workflowOf = (endpoint: ImageEndpoint) =>
     defineWorkflow({
       id: IMAGE_DOOR_WORKFLOW_IDS[endpoint],
-      version: '2026-10-30.1',
+      version: '2026-11-02.1',
       input: DoorInput,
       output: DoorOutput,
       async run(ctx) {
@@ -291,7 +298,8 @@ export function createImageDoor(deps: ImageDoorDeps): ImageDoor {
             if (typeof usage.cost !== 'number') unpriced = true
             else cost += usage.cost
           }
-          const costUsd = () => (calls > 0 && !unpriced ? cost : null)
+          // No call at all is known free: 0, null only for a call nobody priced.
+          const costUsd = () => (unpriced ? null : cost)
 
           const signal = AbortSignal.any([stepSignal, job.controller.signal])
           try {
@@ -310,9 +318,12 @@ export function createImageDoor(deps: ImageDoorDeps): ImageDoor {
             if (failure.status === 500 || failure.detail)
               logger.error('image door request failed', { runId: ctx.runId, error: failure.detail ?? messageOf(error) })
             job.settle({ ok: false, failure })
-            throw new Error(`${failure.status} ${failure.body.error.type}: ${failure.body.error.message}`, {
-              cause: error,
-            })
+            // The step ends `failed` with its usage kept; the caller's bad request (400/413/422) is `invalid_input`.
+            throw new WorkflowError(
+              failure.status === 400 || failure.status === 413 || failure.status === 422 ? 'invalid_input' : 'error',
+              `${failure.status} ${failure.body.error.type}: ${failure.body.error.message}`,
+              { cause: error },
+            )
           }
         })
       },

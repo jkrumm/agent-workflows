@@ -6,7 +6,14 @@
 // the handler's work is over (its promise settled and its body ended). Recording never delays the audio and a
 // recording failure never fails the request (logged).
 import { BEARER_CHALLENGE, type HostWorkflow, RUN_ID_HEADER, startRun } from '@agent-workflows/host'
-import { type Attribution, defineWorkflow, type Logger, type Runtime, type Usage } from '@agent-workflows/runtime'
+import {
+  type Attribution,
+  defineWorkflow,
+  type Logger,
+  type Runtime,
+  type Usage,
+  WorkflowError,
+} from '@agent-workflows/runtime'
 import { z } from 'zod'
 import type { CallerAuth } from './callers.ts'
 
@@ -83,6 +90,8 @@ const doorError = (status: number, message: string, type: string, headers?: Reco
 class Sink {
   readonly calls: DoorEvent[] = []
   request: DoorEvent | undefined
+  /** The status the caller was answered with, and the error text of an answer >= 400 (read from a clone of the body). */
+  answered: { status: number; errorText: Promise<string | null> } | undefined
   ended: DoorEnd | undefined
   closed = false
   /** Its run never started (logged once, with the id): later events have nowhere to go and are not warned about. */
@@ -107,6 +116,11 @@ class Sink {
     if (this.ended && this.request) this.settle()
   }
 
+  /** The status the caller was answered with, and the body of an error answer (read from a clone, never the caller's). */
+  answer(status: number, body: Promise<string>) {
+    this.answered = { status, errorText: body.then(errorTextOf, () => null) }
+  }
+
   /** The handler's work is over (or the bound hit). Idempotent: the first reason stands. */
   finish(reason: DoorEnd) {
     if (this.ended) return
@@ -129,6 +143,30 @@ class Sink {
     this.drop()
   }
 }
+
+/** How much of an error answer the run's error message carries. */
+const ERROR_TEXT_MAX = 300
+/** The wait for an error body's text: a small envelope, so a body that does not end in time is recorded without it. */
+const ERROR_TEXT_WAIT_MS = SUMMARY_GRACE_MS
+
+/** The OpenAI envelope's message when the body is one, else the body's start. */
+function errorTextOf(body: string): string | null {
+  const text = body.trim()
+  if (!text) return null
+  let message = text
+  try {
+    const parsed = JSON.parse(text) as { error?: { message?: unknown } | string }
+    const found = typeof parsed.error === 'string' ? parsed.error : parsed.error?.message
+    if (typeof found === 'string' && found.trim()) message = found.trim()
+  } catch {
+    // Not JSON: the text itself.
+  }
+  return message.slice(0, ERROR_TEXT_MAX)
+}
+
+/** The caller's bad request ends its run `invalid_input`; any other error answer is an `error`. */
+const failureKind = (status: number) =>
+  status === 400 || status === 413 || status === 422 ? ('invalid_input' as const) : ('error' as const)
 
 const DoorInput = z.object({
   /** The authenticated caller (its door token's name, `agw` for the API secret). */
@@ -218,11 +256,11 @@ export function createDoor(options: DoorOptions): Door {
   const workflowOf = (endpoint: DoorEndpoint) =>
     defineWorkflow({
       id: DOOR_WORKFLOW_IDS[endpoint],
-      version: '2026-10-29.3',
+      version: '2026-11-02.1',
       input: DoorInput,
       output: DoorOutput,
       async run(ctx) {
-        return ctx.step('request', async ({ addUsage, signal }) => {
+        const request = await ctx.step('request', async ({ addUsage, signal }) => {
           const sink = sinks.get(ctx.runId)
           // Resumed in a process that never served the request (a restart mid-request): its events died with it.
           if (!sink) throw new Error('the request was served by a process that has stopped; its usage is lost')
@@ -232,10 +270,21 @@ export function createDoor(options: DoorOptions): Door {
           const summary = sink.request
           const costs = sink.calls.map((call) => usageOf(call).cost ?? null)
           // A request is priced only when every call is: a partial sum would read as the whole cost.
-          const costUsd =
-            costs.length > 0 && costs.every((c): c is number => c !== null) ? costs.reduce((a, c) => a + c, 0) : null
+          // No call at all is known free: 0, not unknown.
+          const costUsd = costs.every((c): c is number => c !== null) ? costs.reduce((a, c) => a + c, 0) : null
+          // The status the caller got, else the summary's (a stream that failed after its 200 records a 500 there).
+          const answered = sink.answered?.status ?? null
+          const status = answered !== null && answered >= 400 ? answered : (summary?.status ?? answered)
+          const errorText =
+            status !== null && status >= 400 && sink.ended !== 'client-gone'
+              ? await Promise.race([
+                  sink.answered?.errorText ?? null,
+                  new Promise<null>((resolve) => setTimeout(resolve, ERROR_TEXT_WAIT_MS, null).unref()),
+                ])
+              : null
           return {
-            status: summary?.status ?? null,
+            status,
+            errorText,
             route: summary?.routeId ?? sink.calls.at(-1)?.routeId ?? null,
             model: summary?.model ?? sink.calls.at(-1)?.model ?? null,
             requestedModel: summary?.requestedModel ?? null,
@@ -245,6 +294,16 @@ export function createDoor(options: DoorOptions): Door {
             ended: sink.ended ?? 'bound',
           }
         })
+        // Failed after the step is journaled, so its usage and status stay in the step row. A client that went away
+        // never saw the answer: that run stays `done` with `ended: 'client-gone'`.
+        const { errorText, ...output } = request
+        if (output.status !== null && output.status >= 400 && output.ended !== 'client-gone') {
+          throw new WorkflowError(
+            failureKind(output.status),
+            `door answered ${output.status}${errorText ? `: ${errorText}` : ''}`,
+          )
+        }
+        return output
       },
     })
 
@@ -325,12 +384,14 @@ export function createDoor(options: DoorOptions): Door {
     } catch (error) {
       // The handlers answer their own failures; a throw past them (or from building one) is answered as legacy's
       // top-level catch did.
-      finish()
       const message = error instanceof Error ? error.message : 'internal error'
+      sink.answer(500, Promise.resolve(message))
+      finish()
       logger.error('door handler threw', { runId, error: message })
       return doorError(500, message, 'proxy_error', { [RUN_ID_HEADER]: runId })
     }
     // A cancelled body is the client going away, whether or not Bun has fired the abort by then.
+    sink.answer(response.status, response.status >= 400 ? response.clone().text() : Promise.resolve(''))
     const body = response.body ? onEnd(response.body, finish, () => sink.finish('client-gone')) : null
     if (!body) finish()
     const answer = new Response(body, response)

@@ -2,7 +2,7 @@
 // auth, the path restriction, the studio wire (JSON, multipart, SSE), the failure mapping and the one run per request.
 import { afterAll, beforeEach, describe, expect, spyOn, test } from 'bun:test'
 import { tmpdir } from 'node:os'
-import type { EnhanceOutput } from '@agent-workflows/capabilities'
+import { CapabilityError, type EnhanceOutput } from '@agent-workflows/capabilities'
 import { b64, pngFixture } from '../../capabilities/src/image/testing.ts'
 import type { Runtime } from '@agent-workflows/runtime'
 import { bootProcess, type RunningHost } from '../src/boot.ts'
@@ -429,6 +429,42 @@ describe('POST /door/image/generate', () => {
     expect(String(row.error)).toContain('502 upstream_error')
   })
 
+  test("a refused request inside the run is the caller's 400 and the run failed `invalid_input`, its usage kept", async () => {
+    plan = () => {
+      throw new CapabilityError('INVALID_INPUT', 'the brief is not usable')
+    }
+    const res = await post('/door/image/enhance', { brief: 'x' })
+    expect(res.status).toBe(400)
+    expect(errorResponseSchema.parse(await res.json()).error.message).toBe('the brief is not usable')
+    const { runId, row } = await runOf(res, 'failed')
+    const step = await sql.step(runId, 'serve')
+    expect(step).toMatchObject({ status: 'failed', error_kind: 'invalid_input' })
+    expect(String(row.error)).toContain('400 invalid_request_error: the brief is not usable')
+    expect(Number(step?.cost)).toBeCloseTo(0.001, 8) // the planner's call was priced before it failed
+  })
+
+  test("an upstream 503 (not configured) is the caller's 503 and the run failed `error`", async () => {
+    plan = () => {
+      throw new CapabilityError('NOT_CONFIGURED', 'no key')
+    }
+    const res = await post('/door/image/enhance', { brief: 'x' })
+    expect(res.status).toBe(503)
+    expect(errorResponseSchema.parse(await res.json()).error.type).toBe('proxy_error')
+    const { runId } = await runOf(res, 'failed')
+    expect(await sql.step(runId, 'serve')).toMatchObject({ status: 'failed', error_kind: 'error' })
+  })
+
+  test('a handler that throws something unexpected is a 500 and the run failed', async () => {
+    plan = () => {
+      throw new Error('boom')
+    }
+    const res = await post('/door/image/enhance', { brief: 'x' })
+    expect(res.status).toBe(500)
+    const { runId, row } = await runOf(res, 'failed')
+    expect(await sql.step(runId, 'serve')).toMatchObject({ status: 'failed', error_kind: 'error' })
+    expect(String(row.error)).toContain('500 proxy_error')
+  })
+
   test('a moderation block is a 502 whose body carries the code and the stage and categories', async () => {
     handler = () => new Response(WRAPPED_MODERATION, { status: 503 })
     const res = await generate({ prompt: 'x' })
@@ -651,7 +687,7 @@ describe('streaming', () => {
       const found = await sql.run(runId)
       return found?.status === 'done' ? found : undefined
     }, 'the run ended')
-    expect(row.output).toMatchObject({ status: 499, ended: 'client-gone', images: 0, costUsd: null, partials: 1 })
+    expect(row.output).toMatchObject({ status: 499, ended: 'client-gone', images: 0, costUsd: 0, partials: 1 })
     const step = await sql.step(runId, 'serve')
     expect(Number(step?.tokens_input)).toBe(0)
     expect(step?.cost === null || Number(step?.cost) === 0).toBe(true)
