@@ -54,7 +54,9 @@ describe('Sonnet at effort none is a configuration error', () => {
     // cheap.classify runs Haiku at effort none: moving it to a Sonnet without raising the effort is the error.
     expect(() => validateArm({ routes: onHaikuRoute })).toThrow(RouteOverrideError)
     expect(() => resolveRoute('cheap.classify', onHaikuRoute)).toThrow(/cheap\.classify.*Sonnet.*effort none/s)
-    expect(() => resolveRoute('review.angle', { 'review.angle': { effort: 'none' } })).toThrow(/review\.angle.*Sonnet/s)
+    expect(() => resolveRoute('review.synthesis', { 'review.synthesis': { effort: 'none' } })).toThrow(
+      /review\.synthesis.*Sonnet/s,
+    )
   })
 
   test('the same patch with a real effort is accepted', () => {

@@ -68,8 +68,8 @@ A text model is chosen once, in `src/table/_shared.ts`, as one of four **tiers**
 | Tier | Primary today | Routes |
 |-|-|-|
 | `FAST` | Haiku 5.5, effort none | `cheap.classify`, `cheap.title`, `factory.classify`, `digest.items`, `audio.tts.prep` (the prep follows the route's wire), the image enhance planner (effort high) |
-| `EASY` | Haiku 5.5, effort high | `cheap.summarize`, `cheap.extract`, `overview.classify`, `triage`, `review.router`, `review.ocr`, `check`, `brain.agent` |
-| `HARD` | Sonnet 5.5, effort medium | `review.angle`, `review.angle.deep`, `review.synthesis`, `prose.write`, `narrative`, the diagram and retro agents |
+| `EASY` | Haiku 5.5, effort high | `cheap.summarize`, `cheap.extract`, `overview.classify`, `triage`, `review.router`, `review.ocr`, `review.angle`, `check`, `brain.agent` |
+| `HARD` | Sonnet 5.5, effort medium | `review.angle.deep`, `review.synthesis`, `prose.write`, `narrative`, the diagram and retro agents |
 | `DECIDE` | `decision-1` (IU decision API), input-priced, no fallback | `decide` |
 
 A tier holds one entry per step kind, `.call` (a single call) and `.agent` (an OpenCode step), each `{ model, effort, rate, fallback }`; the route picks the kind and owns the wire:

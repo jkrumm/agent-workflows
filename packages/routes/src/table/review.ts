@@ -20,16 +20,18 @@ const routes = {
   // the cost is unknown to the platform. Switched off by default (AGW_REVIEW_OCR); no live `ocr` run on this model yet.
   'review.ocr': { wire: 'anthropic', ...EASY.call },
   // Gateway: ANGLE_OC (review_angle_senior_dev|typescript|frontend|qa all resolve to the same entry) and `review`
-  // (synthesis), on the OpenCode harness. Reading code and finding what is wrong is the job of the review: the HARD tier
-  // (Sonnet); on a drained credit the step reopens on Terra medium over Responses.
-  'review.angle': { wire: 'opencode', ...HARD.agent },
+  // (synthesis), on the OpenCode harness. The EASY tier (Haiku high), the concept v3.5 split restored (owner, 2026-11-02):
+  // on Sonnet the angles were $46.29 of the $52.50 that 67 production reviews spent in two days ($0.78 a review, 14.8M
+  // 5-minute cache-write tokens). Deep angles and the synthesis stay on Sonnet. The review's seats are decided by the
+  // Wave 11 sweep; on a drained credit the step reopens on Terra low over Responses.
+  'review.angle': { wire: 'opencode', ...EASY.agent },
   // Angles of a review the caller asked to run `depth: deep` (mother decision, 2026-10-29). Opt-in: a router-chosen deep
   // keeps `review.angle`; the review workflow names this route in the angle steps' `options.route`. History, paired eval
   // 2026-10-30 (12 recorded cases, `depth: deep`, same cases and scorer per arm): Terra medium and DeepSeek flash tie on
   // every quality metric (verdict agreement 0.67 both), Terra costs $0.43 a review against $0.51 and uses 13x fewer input
   // tokens; Haiku costs $0.04 but agreed with the verdict on 0.17. Recall is 0.05 or below on all three; Sonnet
-  // (0.13, $0.54) was off while the team key paid and is the HARD tier now that the credit pays. Today the same tier as
-  // `review.angle`, kept as its own route so a deeper setting is one edit.
+  // (0.13, $0.54) was off while the team key paid and is the HARD tier now that the credit pays: the angles of a caller's
+  // `depth: deep` run on Sonnet, the default angles on Haiku (`review.angle`).
   'review.angle.deep': { wire: 'opencode', ...HARD.agent },
   'review.synthesis': { wire: 'opencode', ...HARD.agent },
 } satisfies Record<string, RouteEntry>

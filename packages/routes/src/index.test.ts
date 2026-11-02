@@ -473,17 +473,11 @@ describe('fallback', () => {
       expect(resolveRoute(id, {}).fallback).toMatchObject(terraMedium)
     }
     expect(resolveRoute('prose.write', {}).effort).toBe('medium')
-    for (const id of [
-      'review.angle',
-      'review.angle.deep',
-      'review.synthesis',
-      'diagram.agent',
-      'retro.analyze',
-    ] as const) {
+    for (const id of ['review.angle.deep', 'review.synthesis', 'diagram.agent', 'retro.analyze'] as const) {
       expect(resolveRoute(id, {})).toMatchObject({ wire: 'opencode', model: 'claude-sonnet-5-5', effort: 'medium' })
       expect(resolveRoute(id, {}).fallback).toMatchObject({ ...terraMedium, wire: 'opencode', rate: terraRate })
     }
-    for (const id of ['check', 'brain.agent'] as const) {
+    for (const id of ['check', 'brain.agent', 'review.angle'] as const) {
       expect(resolveRoute(id, {})).toMatchObject({ wire: 'opencode', model: 'claude-haiku-5-5', effort: 'high' })
       expect(resolveRoute(id, {}).fallback).toMatchObject({ ...terraLow, wire: 'opencode', rate: terraRate })
     }
@@ -769,7 +763,9 @@ describe('validateArm', () => {
     const bad = () => validateArm({ routes: { 'cheap.classify': { effort: 'low' }, decide: { effort: 'high' } } })
     expect(bad).toThrow(RouteOverrideError)
     expect(bad).toThrow('"decide"')
-    expect(() => validateArm({ routes: { 'review.angle': { effort: 'none' } } })).toThrow(/review\.angle.*Sonnet/s)
+    expect(() => validateArm({ routes: { 'review.synthesis': { effort: 'none' } } })).toThrow(
+      /review\.synthesis.*Sonnet/s,
+    )
   })
 
   test('an arm with another key, or params that are not JSON, is refused', () => {
