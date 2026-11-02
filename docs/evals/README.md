@@ -30,7 +30,10 @@ Learned on 2026-10-29 to 10-31 (`2026-10-31-review-claude-direct.md`):
   production; a bad arm is refused before anything runs. Its fingerprint tells the arm apart in `agw eval compare`.
   Wait on the eval run id (`agw run wait`) until it is terminal; the CLI's wait budget expiring is not the end of the
   run, and a pending result prints two JSON documents. The eval run's `cost` is its whole tree: the case runs and the
-  judge's calls.
+  judge's calls. An external arm (the native `/code-review`, Wave 9) is scored with `agw eval import review --label
+  <name> --findings <file> --yes` (case id → findings, judged by the same scorer) and compared with
+  `agw eval compare review --a <fp> --b <fp> --b-workflow review.imported`; its cost and wall read `null`
+  (`packages/host/src/workflows/eval/README.md`).
 - **Arms run on the credit, under the pacing reserve** (Wave 6, `2026-11-02-claude-seats.md`): every eval call carries
   purpose `eval`, draws only on a pool's credit above production's pro-rata reserve and is refused (403), never sent to
   IU, when none has any. Read `evalAvailableUsd` on the gateway's `/health` before a sweep and size the slices to it.

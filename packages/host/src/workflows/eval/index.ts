@@ -2,11 +2,13 @@ import type { AnyWorkflow, Logger, Runtime } from '@agent-workflows/runtime'
 import type { HostWorkflow } from '../../operations.ts'
 import { createEvalCompare } from './compare.ts'
 import { DriftJob, driftOptionsFromEnv } from './drift.ts'
+import { createEvalImport, importableSuites } from './import.ts'
 import { createEvalRun, type EvalRunOptions, sweepCaseTrees } from './run.ts'
 import { type EvalRuntime, EvalSlot } from './slot.ts'
 import type { Suites } from './suites.ts'
 
 export { EVAL_COMPARE_ID } from './compare.ts'
+export { EVAL_IMPORT_ID } from './import.ts'
 export { DEFAULT_DRIFT, DriftJob, type DriftOptions, type DriftTick, driftOptionsFromEnv } from './drift.ts'
 export { caseTreeDir, EVAL_RUN_ID, sweepCaseTrees } from './run.ts'
 
@@ -17,10 +19,12 @@ const SWEEP_INTERVAL_MS = 3_600_000
 /** Which slot an eval workflow reads: set by `createEvalWorkflows`, found again by `wireEval`. */
 const slots = new WeakMap<AnyWorkflow, EvalSlot>()
 
-/** `agw eval run` and `agw eval compare` (concept §6). They need the runtime, which exists after them: `wireEval`. */
+/** `agw eval run`, `agw eval compare` and `agw eval import` (concept §6). They need the runtime, which exists after them: `wireEval`. */
 export function createEvalWorkflows(suites: Suites, options: EvalRunOptions = {}): HostWorkflow[] {
   const slot = new EvalSlot()
   const entries = [createEvalRun(slot, suites, options), createEvalCompare(slot, suites)]
+  const [first, ...rest] = importableSuites(suites)
+  if (first) entries.push(createEvalImport(slot, suites, [first, ...rest], options))
   for (const entry of entries) slots.set(entry.workflow, slot)
   return entries
 }

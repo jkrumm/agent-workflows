@@ -15,7 +15,7 @@ afterAll(async () => {
 })
 
 describe('agw eval in the generated CLI', () => {
-  test('eval run and eval compare are commands with their flags; nothing skipped', async () => {
+  test('eval run, eval compare and eval import are commands with their flags; nothing skipped', async () => {
     const { commands, skipped } = buildCommands(await t.host.openapi())
     expect(skipped).toEqual([])
     const flags = (words: string) => {
@@ -28,6 +28,11 @@ describe('agw eval in the generated CLI', () => {
     expect(run.flags).toEqual(['args', 'arm', 'concurrency', 'ids', 'limit', 'workflow', 'yes'])
     const compare = flags('eval compare')
     expect(compare.x).toMatchObject({ kind: 'workflow', positional: ['workflow'] })
-    expect(compare.flags).toEqual(['a', 'a-args', 'b', 'b-args', 'seed', 'workflow'])
+    expect(compare.flags).toEqual(['a', 'a-args', 'a-workflow', 'b', 'b-args', 'b-workflow', 'seed', 'workflow'])
+    const imported = flags('eval import')
+    expect(imported.x).toMatchObject({ kind: 'workflow', positional: ['workflow'] })
+    expect(imported.flags).toEqual(['concurrency', 'findings', 'ids', 'label', 'workflow', 'yes'])
+    // The importer's own workflow is internal: no command of its own.
+    expect(commands.find((c) => c.words.join(' ') === 'review imported')).toBeUndefined()
   })
 })
