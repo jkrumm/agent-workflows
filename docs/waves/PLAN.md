@@ -174,17 +174,30 @@ after the owner signs the spec (the one stop of this wave).
   owner's sign-off. Found: agw still writes its own `usage.records` for agent steps the gateway already recorded ($5.01
   on 11-02 since 08:10 UTC), so personal-key spend is overstated: fixed first in Wave 8.
 
-## Wave 8 — Ground truth            <!-- status: active -->
+## Wave 8a — Accounting and eval import            <!-- status: active -->
 
-- [ ] **Double usage rows (from Wave 7):** agw stops writing `usage.records` for agent steps the gateway recorded;
+Pulled forward 2026-11-02 while the owner labels (former Wave 13, plus Wave 8's `agw eval import`). No eval sweeps.
+
+- [ ] `agw eval import` for an external arm's findings (Wave 9's native `/code-review` arm needs it), scored by scorer v3.
+- [ ] Failed agent steps keep their tokens and cost (lost today, mostly on compaction overflow).
+- [ ] `cost` null means unknown only; free steps record 0. Door errors (`door.speech` HTTP 400/503) are run failures, not
+  `done`.
+- [ ] `eval.mine`'s cost-history port wired in `boot.ts` (its label estimate prints `unknown`).
+
+## Wave 8 — Ground truth            <!-- status: waiting for the owner session (labelling) -->
+
+- [x] **Double usage rows (from Wave 7):** agw stops writing `usage.records` for agent steps the gateway recorded;
   proven on stored rows of both writers after deploy. The 11-02 duplicates stay (owner's call, like Wave 3's 34).
-- [ ] `agw eval mine review`: SZZ over `~/SourceRoot` with the filters in `docs/review-v2.md` §Ground truth, two
+- [x] `agw eval mine review`: SZZ over `~/SourceRoot` with the filters in `docs/review-v2.md` §Ground truth, two
   cross-vendor labeler calls per candidate, clean controls, the `dev`/`test` split. Cases go only under `$AGW_EVAL_DIR`.
-- [ ] `eval.judge` on its own pinned route, scorer v3 (recall, false alarms, noise, severity calibration), and `agw eval
+- [ ] `eval.judge` on its own pinned route (judge, scorer v3 done; `agw eval import` moved to Wave 8a), scorer v3 (recall, false alarms, noise, severity calibration), and `agw eval
   import` for an external arm's findings. The token-overlap matcher only preselects pairs.
 - [ ] **Owner session (owner decision 2):** confirm 70 mined cases and label 100 judge pairs. Bars: accepted cases ≥ 90 %
   right, judge κ ≥ 0.8. Below either, tighten the filters or add a second judge.
 - [ ] Target 200 bug cases and 100 controls. Seeded defects only below 150.
+**Left behind (pre-session):** close-out in `docs/waves/handoff/lead.md` at `e637fcc`, release `e51fc17`. Pack: 35 accepted
+  + 20 rejected cases, 100 judge pairs (27 positive): `me` eval credit ran out ($12.05 credit, $3.32 IU spent). After the
+  session: ingest, the bars, then ~165 more accepted cases ≈ $49 ($13 IU, over the $20 IU line: the mother decides).
 
 ## Wave 7b — Usage view v7 build (Argo)            <!-- status: running beside Wave 8 as argo PLAN Wave 8 -->
 
@@ -245,9 +258,7 @@ Provisional picks (2026-10-31, from cost, wall time, failure modes and the AA in
 
 ## Wave 13 — Accounting and telemetry            <!-- status: pending -->
 
-- Failed agent steps keep their tokens and cost (lost today, mostly on compaction overflow).
-- `cost` null means unknown only; free steps record 0. Door errors (`door.speech` HTTP 400/503) are run failures, not
-  `done`.
+- [ ] Moved into Wave 8a (2026-11-02); tick when 8a is done.
 
 ## Wave 14 — Harness robustness            <!-- status: pending -->
 

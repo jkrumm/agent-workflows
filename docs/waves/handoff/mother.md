@@ -5,7 +5,9 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
 
 ## State
 - **New plan 2026-11-01:** inference gateway (Waves 1–4, `docs/gateway.md`), then review v2 and the maturity pass
-  (Waves 5–13). Wave 1 done (release `767f643`, REPORT `docs/spikes/gateway/REPORT.md`); Wave 2 done (release `b25aac5`); Wave 3 done (release `3e6026e`); Wave 4 done (release `2e7d5f2`); Wave 5 done (release `bf76dc4`); Wave 6 done (release `9cf9625`); Wave 7 (spec) done, argo `84053e8`; Wave 8 active; Wave 7b (build) runs beside it as argo PLAN Wave 8 (spec signed 18:20, `9fd63c7f`). The 2026-10-30 plan is finished (concept.md Final retro); STOP removed.
+  (Waves 5–13). Wave 1 done (release `767f643`, REPORT `docs/spikes/gateway/REPORT.md`); Wave 2 done (release `b25aac5`); Wave 3 done (release `3e6026e`); Wave 4 done (release `2e7d5f2`); Wave 5 done (release `bf76dc4`); Wave 6 done (release `9cf9625`); Wave 7 (spec) done, argo `84053e8`; Wave 8 waits for the owner session (labelling, pack on the MacBook,
+  `~/Downloads/agw-owner-session/session.html`; ingest steps in lead.md `e637fcc` / git history); Wave 8a (accounting,
+  `agw eval import`, pulled forward from Wave 13) active; Wave 7b (build) runs beside it as argo PLAN Wave 8 (spec signed 18:20, `9fd63c7f`). The 2026-10-30 plan is finished (concept.md Final retro); STOP removed.
 - Owner actions done (PLAN context): orgs linked, keys seeded, cycle days, no payment method. Left: `me2` keys
   (~2026-11-02, 7-day claim window); until then the `me2` pool stays disabled.
 - Lead's close-out channel: `docs/waves/handoff/lead.md` (the mother owns PLAN.md and the retro log;
@@ -153,12 +155,15 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
   it asks again: it belongs in the factory's plan or a later agw wave, not Waves 4–13 as written.
 
 ## Next action
-- Wait for the Wave 3 close-out in `docs/waves/handoff/lead.md`; judge it, tick PLAN, retro entry, next lead per the rotation policy.
-- Still owed by the owner: me2 keys and expiry day. Until then me2 stays disabled. MacWhisper is done (its door token works, `stt.done` in the audio log). OCR stays off until the Wave 9 OCR arm measures it. The Hermes morning briefing is retired; the owner rebuilds it differently, not ours.
-- Wake-loop: the factory re-fires `workers done: <lead> idle` while the lead idles on background shells. Answer with a blocking
-  ~9.5-min poll on lead.md (bash loop with perl select, foreground timeout 590 s; `rd read` under `timeout 15`), not a bare re-declare.
-- `rd wave`'s gate needs `- [x]` steps in a done wave: Waves 8+ use bare `- **` bullets; turn them into checkboxes when activating.
-- Wave 7: spec only, then the planned owner sign-off. While it waits, Wave 8 (agw, ground truth) may run: argo and agw are
-  separate checkouts; Wave 7's build resumes after the sign-off. Wave 8 has its own owner session (labelling).
-- Commit only own paths (`git commit -- <paths>`): a shared-checkout commit swept a lead edit in Wave 3.
-- Shell: never put double quotes inside a double-quoted `factory session note`; use a text file (a pipe in it ran `make`).
+- Wait for the Wave 8a close-out (lead.md) and argo-w1's rd say (argo PLAN Wave 8); judge, tick PLANs, retro entries.
+- After the owner says labelling is done: reactivate Wave 8 (flip 8a done first), fresh lead: ingest, bars, then the
+  re-mine. The ~165 more cases cost ≈ $49 incl. ≈ $13 IU: within the owner's "low" eval spend? Ask the owner in the same
+  report as the bars (one question), meanwhile mine on credit only, sized to `evalAvailableUsd`.
+- If 8a closes before the owner session: Wave 14 items that need no review data (compaction overflow) may be pulled
+  forward the same way; Wave 9+ need the ground truth.
+- Still owed by the owner: me2 keys and expiry day (+$100 a cycle; eval credit is the bottleneck now).
+- Wake-loop: the factory re-fires `workers done` while the lead idles on shells. Answer with a blocking ~9.5-min poll on
+  lead.md (bash loop with perl select, foreground timeout 590 s; `rd read` under `timeout 15`), not a bare re-declare.
+- `rd wave`'s gate checks only the predecessor in file order and needs `- [x]` steps there; waiting waves get a non-`active`
+  status, pulled-forward waves sit before the waiting one.
+- Commit only own paths (`git commit -- <paths>`). Shell: never nest double quotes in a `factory session note`; use a file.
