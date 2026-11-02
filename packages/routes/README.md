@@ -26,7 +26,7 @@ The host serves the plain table as `agw routes` (`GET /routes`, unjournaled): pe
 
 `src/table/<group>.ts`, one file per workflow or capability group (`review.ts`, `check.ts`, `cheap.ts`, ...), each
 default-exporting its entries; `src/table/_shared.ts` holds the rates and fallbacks several groups use
-(`TERRA_RATE`, `LUNA_RATE`, `DEEPSEEK_FLASH_RATE`, the seats, `CALL_FALLBACK`, `AGENT_FALLBACK`). `discoverRoutes(dir)` imports every
+(the rates, the tiers `FAST`/`EASY`/`HARD`/`DECIDE`, the cross-lab seats; §Tiers). `discoverRoutes(dir)` imports every
 `*.ts` there in sorted order (only `_shared.ts` and `*.test.ts` skipped; any other file is a group) once per process; `DEFAULT_ROUTES` is the result,
 validated and deeply frozen. An empty directory, a default export that is not an object, an invalid id or entry, or a
 route id a second file declares fails the import, naming the file.
@@ -59,42 +59,67 @@ declare module '../schema.ts' {
 ```
 
 `_shared.ts` is imported, never edited by a port: a rate only one group uses lives in that group's file. A group's
-seat provenance (which legacy seat it copies, and why) is its file's comments and its workflow's README.
+provenance (which legacy seat it copies, and why) is its file's comments and its workflow's README.
 
-## Seats
+## Tiers
 
-A text model is chosen once per role, in `src/table/_shared.ts`, and a route spreads the seat instead of naming the model. **The seats are Claude** (owner decision 2026-11-01, provisional until Waves 9–10) so the monthly credit is spent; the rate of each is `CLAUDE_RATES` (`claude.ts`, the one source):
+A text model is chosen once, in `src/table/_shared.ts`, as one of four **tiers** (owner, 2026-10-31) or a named cross-lab constant. A route spreads it and nothing else names a model. **The tiers are Claude** (owner decision 2026-11-01, provisional until Waves 9–10) so the monthly credit is spent, except `DECIDE`; the rate of each Claude tier is `CLAUDE_RATES` (`claude.ts`, the one source):
 
-| Seat | Model today | Routes |
+| Tier | Primary today | Routes |
 |-|-|-|
-| `TRIVIAL` | Haiku 5.5, effort none | `cheap.classify`, `cheap.title`, `factory.classify`, `digest.items`, `audio.tts.prep` (the prep follows the route's wire), the image enhance planner (effort high) |
+| `FAST` | Haiku 5.5, effort none | `cheap.classify`, `cheap.title`, `factory.classify`, `digest.items`, `audio.tts.prep` (the prep follows the route's wire), the image enhance planner (effort high) |
 | `EASY` | Haiku 5.5, effort high | `cheap.summarize`, `cheap.extract`, `overview.classify`, `triage`, `review.router`, `review.ocr`, `check`, `brain.agent` |
-| `STRONG` | Sonnet 5.5, effort medium | `review.angle`, `review.angle.deep`, `review.synthesis`, `prose.write`, `narrative`, the diagram and retro agents |
-| `CHEAP` | DeepSeek flash | research, otel, the podcast stages, prose review |
+| `HARD` | Sonnet 5.5, effort medium | `review.angle`, `review.angle.deep`, `review.synthesis`, `prose.write`, `narrative`, the diagram and retro agents |
+| `DECIDE` | `decision-1` (IU decision API), input-priced, no fallback | `decide` |
 
-Evidence (agw's 2026-10-31 eval, `docs/evals/2026-10-31-review-claude-direct.md`): Haiku at effort high is the Haiku knee, Haiku at max is unusable for agent steps. Sonnet at medium was not measured; `STRONG` was Terra medium until this change.
-
-A single-call route on a Claude seat takes `wire: 'anthropic'` (native Messages on the gateway, which pays from the credit); an agent route stays on `opencode`. Both wires send `x-agw-fallback: none`, so a drained credit is a 402 (never a silent move onto IU's Claude) and the route's fallback runs. **The fallback is GPT on IU, by seat:**
-
-| Primary | Fallback | Constant |
-|-|-|-|
-| `TRIVIAL` single call | Luna low on `iu-openai` | `LUNA_CALL_FALLBACK` |
-| `EASY` single call | Terra low on `iu-openai` | `TERRA_LOW_CALL_FALLBACK` |
-| `EASY` agent | Terra low on `opencode` (Responses API) | `TERRA_LOW_AGENT_FALLBACK` |
-| `STRONG` single call | Terra medium on `iu-openai` | `CALL_FALLBACK` |
-| `STRONG` agent | Terra medium on `opencode` | `AGENT_FALLBACK` |
-| `CHEAP` (DeepSeek) call or agent | Terra medium, as the two above | `CALL_FALLBACK`, `AGENT_FALLBACK` |
-
-The GPT models are named constants (`LUNA`, `TERRA_LOW`, `TERRA_MEDIUM`), not seats: a fallback spreads one, a route spreads a seat. `guard.test.ts` holds the shape: every route on `anthropic`, and every `opencode` route on a Claude model, has a fallback on a GPT model; no route on `iu-openai` or `opencode` falls back onto Claude; no `claude-` single call sits on `iu-openai`.
-
-Two routes stay on GPT by design. `review.adversary` is pinned to `TERRA_MEDIUM`, not to `STRONG`: it is the cross-family critic and its capability refuses any wire but the OpenAI chat wire (a Claude critic of a Claude writer defeats it; fallback Luna medium). `podcast.write` is `TERRA_MEDIUM` at effort high, not `STRONG`, because `Llm.round`, the writer's tool loop, speaks only the OpenAI dialects (`packages/audio/src/workflows/podcast/iu.ts`); any route used through it stays on `iu-openai` (guarded), its fallback is DeepSeek flash. `prose.review` stays on `CHEAP` (its capability refuses a Claude model or any wire but `iu-openai`; fallback Terra medium). `agw routes` shows `default` in the effort column where no effort is sent (the vendor's own level), and `none` where thinking is off.
+A tier holds one entry per step kind, `.call` (a single call) and `.agent` (an OpenCode step), each `{ model, effort, rate, fallback }`; the route picks the kind and owns the wire:
 
 ```ts
-'cheap.title': { wire: 'anthropic', ...TRIVIAL, fallback: LUNA_CALL_FALLBACK },
-'research.agent': { wire: 'opencode', ...CHEAP, maxOutputTokens: 16_000, fallback: AGENT_FALLBACK },
+'cheap.title': { wire: 'anthropic', ...FAST.call },
+'review.angle': { wire: 'opencode', ...HARD.agent },
+'digest.items': { wire: 'anthropic', ...FAST.call, maxOutputTokens: 16_000 },
 ```
 
-Moving every route of a role to another model, rate or effort is one edit to the seat. Effort and output limit after the spread override the seat for one route. The wire is the route's own (a transport is code, an arm cannot change it), so a seat that moves to another provider family also needs its routes' `wire` changed where the family speaks another dialect (the Claude seats did: single calls moved from `iu-openai` to `anthropic`). Specialist models stay in their group file: the TTS and STT voices, the image models, `decide`, the Gemini reviewer seat. Model ids stay under `src/table/` only (`guard.test.ts`).
+Only the kinds in use exist: `FAST` and `DECIDE` have `.call`, `EASY` and `HARD` have both. Effort and output limit after the spread override the tier for one route (`image.enhance` raises the effort and its fallback with it). Moving every route of a tier to another model, rate or effort is one edit to the tier. The wire is the route's own (a transport is code, an arm cannot change it), so a tier that moves to another provider family also needs its routes' `wire` changed where the family speaks another dialect (the Claude tiers did: single calls moved from `iu-openai` to `anthropic`).
+
+Evidence (agw's 2026-10-31 eval, `docs/evals/2026-10-31-review-claude-direct.md`): Haiku at effort high is the Haiku knee, Haiku at max is unusable for agent steps. Sonnet at medium was not measured; `HARD` was Terra medium until this change.
+
+### Fallback
+
+A single-call route on a Claude tier takes `wire: 'anthropic'` (native Messages on the gateway, which pays from the credit); an agent route stays on `opencode`. Both wires send `x-agw-fallback: none`, so a drained credit is a 402 (never a silent move onto IU's Claude) and the route's fallback runs. **The fallback is GPT on IU, per tier and step kind, and travels with the tier:**
+
+| Tier and kind | Fallback |
+|-|-|
+| `FAST.call` | Luna low on `iu-openai` |
+| `EASY.call` | Terra low on `iu-openai` |
+| `EASY.agent` | Terra low on `opencode` (Responses API) |
+| `HARD.call` | Terra medium on `iu-openai` |
+| `HARD.agent` | Terra medium on `opencode` |
+
+Every fallback has `maxOutputTokens` 32000. The GPT models are constants (`LUNA`, `TERRA_LOW`, `TERRA_MEDIUM`), not tiers: a tier's fallback is built from one.
+
+### Cross-lab seats
+
+Constants in `_shared.ts`, spread like a tier (`{ wire: 'iu-openai', ...DEEPSEEK_FLASH.call }`), each with its rate and fallback. Not tiers: they stay off Claude by principle, or on the model they ran on until the eval picks move them.
+
+| Constant | Model | Routes | Fallback |
+|-|-|-|-|
+| `CRITIC` | Terra medium | `review.adversary` | Luna medium |
+| `VOICE` | Terra medium, effort high | `podcast.write` | DeepSeek flash high |
+| `DEEPSEEK_FLASH` (`.call`, `.agent`) | DeepSeek flash, vendor effort | `research.agent`, `otel.agent`, `prose.review`, the other podcast stages (effort high) | Terra medium |
+| `GEMINI_FLASH` | Gemini flash, no effort (its OpenAI-compatible leg rejects `reasoning_effort`) | `podcast.review.a` | Terra medium |
+| `GEMINI_FLASH_LITE` | Gemini flash-lite | `audio.tts.summary` | none |
+
+`review.adversary` is the cross-family critic: its capability refuses any wire but the OpenAI chat wire, and a Claude critic of a Claude writer defeats it. `podcast.write` is Terra because `Llm.round`, the writer's tool loop, speaks only the OpenAI dialects (`packages/audio/src/workflows/podcast/iu.ts`); any route used through it stays on `iu-openai` (guarded). `prose.review` is a cross-lab reviewer of a Claude writer: its capability refuses a Claude model or any wire but `iu-openai`. `agw routes` shows `default` in the effort column where no effort is sent (the vendor's own level), and `none` where thinking is off.
+
+### Guard
+
+`guard.test.ts` holds the shape:
+
+- A text route's group file has no `model:` literal (failing with `file:line`); its model comes from a tier or a `_shared.ts` constant. The media routes (TTS, STT, image and Replicate models) are exempt by the explicit, commented list in the test. Model ids stay under `src/table/` only.
+- Every route on a Claude model deep-equals a tier's `.call` or `.agent` (model, effort, rate, fallback), overrides aside.
+- Every route on `anthropic`, and every `opencode` route on a Claude model, has a fallback on a GPT model; no route on `iu-openai` or `opencode` falls back onto Claude; no `claude-` single call sits on `iu-openai`.
+- No podcast route is on the `anthropic` wire or a Claude model.
 
 ## Entry
 
@@ -107,7 +132,7 @@ Moving every route of a role to another model, rate or effort is one edit to the
 | `rate` | `{ inputPerM, outputPerM, cacheReadPerM?, cacheWritePerM?, longPromptTokens? }` USD per million; the provider's `usage.cost` wins where it sends one |
 | `fallback` | a full route spec (`wire`, `model`, `effort?`, `maxOutputTokens?`, `rate?`) the call moves to once on a provider-balance failure (below) |
 
-`iu-decision` entries take neither `effort` nor `maxOutputTokens`. A fallback runs the same kind of step: an `opencode` route falls back to `opencode`, a single call to a single call (its wire may differ: `anthropic` routes fall back over `iu-openai`, the rule for every Claude seat).
+`iu-decision` entries take neither `effort` nor `maxOutputTokens`. A fallback runs the same kind of step: an `opencode` route falls back to `opencode`, a single call to a single call (its wire may differ: `anthropic` routes fall back over `iu-openai`, the rule for every Claude tier).
 
 ## Fallback on provider balance
 
@@ -115,7 +140,7 @@ Owner direction 2026-10-28: a route that fails because the provider account is e
 
 - **Trigger:** `isBalanceFailure` (`src/balance.ts`), the one classifier: HTTP 402; 503 whose body says "Insufficient Balance" or "PaymentRequired" (IU today: `IU request failed (503) — Insufficient Balance (PaymentRequired) on <provider>`); or 400 whose body says "credit balance is too low to access the Anthropic API" (Anthropic's refusal of a drained Console org, a 400 `invalid_request_error`, not a 402), or which carries `BALANCE_MARKER` (the transports' own message, re-classified with its status; the body is cut to 300 chars, so the marker is what survives). Any other 400 is not balance. Without a status (an OpenCode turn error, a step's failure reason, `ocr`'s stderr) `BALANCE_MARKER` (`provider balance exhausted`, written by the transports), IU's body shape `Insufficient Balance (PaymentRequired)`, Anthropic's full sentence above, or a `402` token together with "payment required" / "insufficient balance" count; a 402 or the wording alone does not. The classifier is never fed diff text: review's failure reasons carry none (zod schema messages hold no values, OpenCode turn errors are the provider's). Any other error keeps its usual handling.
 - **Once:** the capability transports fail fast on it (no retry loop on the primary) and the call runs once on `fallbackRoute(route)`; the OpenCode host reopens a step whose turn was refused before it did anything on the fallback route, once (`packages/opencode-host` README); review's OCR child reruns `ocr` once. A failing fallback answers the primary's error. The usage records the model that actually ran.
-- **Default:** a Claude route falls back to GPT on IU by seat (Luna low, Terra low, Terra medium; §Seats), a DeepSeek route to GPT-6.1 Terra at effort medium, `review.adversary` to Luna medium, `decide` and the audio and image-model routes to nothing. Every fallback has `maxOutputTokens` 32000 (see §Seats). Claude routes lean on this: with the credit gone the gateway answers 402, so a Claude route without a fallback is a failed call.
+- **Default:** a Claude route falls back to GPT on IU by tier (Luna low, Terra low, Terra medium; §Tiers), a DeepSeek route to GPT-6.1 Terra at effort medium, `review.adversary` to Luna medium, `decide` and the audio and image-model routes to nothing. Every fallback has `maxOutputTokens` 32000 (see §Tiers). Claude routes lean on this: with the credit gone the gateway answers 402, so a Claude route without a fallback is a failed call.
 - **Arms:** an arm patches a fallback like a primary: `{"cheap.classify": {"fallback": {"model": "<model-id>", "effort": "high"}}}` (merged over the table's fallback; a new model takes the table's rate for it, as on the primary) and `{"cheap.classify": {"fallback": null}}` removes it. A route without a fallback cannot gain one through an arm, and a fallback's `wire` cannot be patched.
 - **Price:** the fallback carries its own rate (below); `usage.cost`, when IU sends it, wins as on any route.
 
@@ -149,14 +174,14 @@ baseline. There is no environment variable and no config file.
 
 Cache counts above the cache-inclusive prompt total return `unknown`. One rule for size: a rate without `longPrompt` has no tier and is priced flat at any size; a rate with `longPrompt: { inputMultiplier, outputMultiplier }` (and the `longPromptTokens` it starts above, required with it) prices a request whose prompt (input including cache, per request) is above that size at the tier: the whole request, input, cache read and cache write at `inputMultiplier` times their rate, output at `outputMultiplier` times. Haiku 5.5 is `5 / 5` over 100K (Anthropic pricing page, read 2026-10-29: "a request over the threshold pays the higher prices even when part of its prompt is a cache hit"), Terra `2 / 1.5` over 272K. The threshold is exclusive: exactly 100K is the base card.
 
-Rates are carried by every text route whose wire reports no cost, from the seats in `src/table/_shared.ts`: `decide` (the decision API drops IU's cost; UE price list in agent-gateway's `decision.ts`), Terra ($1.00 in, $5.00 out, $0.05 cache read, $1.25 cache write per million, 2x input and 1.5x output above 272K prompt tokens: OpenAI price page via `/research` and a probe of the IU OpenAI endpoint, 2026-10-28), Luna ($0.10 in, $0.50 out, $0.01 cache read), and the Claude seats from `CLAUDE_RATES` (Haiku 5.5 and Sonnet 5.5; Haiku was dropped from the table on 2026-10-30 and came back as `TRIVIAL`/`EASY` on 2026-11-01, owner decision). On the `opencode` wire the OpenCode host writes the rate into the server config's cost rows, so OpenCode prices each message with it; a message OpenCode reports at cost 0 with tokens is priced with the rate by the host (`costFromUsage`), else `unknown`. IU bills DeepSeek at the list peak rate at every hour, off-peak included (billed over list 1.00 at 00:00-02:00 UTC, checked on 10 days of steps, 2026-10-30), so the rate below is what a call costs. `research.agent` runs deepseek on `opencode`, where IU's `usage.cost` never reaches the host, so it carries the rate that cost was measured at: $0.30 in, $0.006 cache read, $1.20 out per million (research-gateway `src/lib/cost.ts`, the 2026-09-25 peak reading; an off-peak reading was half, so off-peak runs are over-priced, never under-priced).
+Rates are carried by every text route whose wire reports no cost, from the tiers and constants in `src/table/_shared.ts`: `decide` (the decision API drops IU's cost; UE price list in agent-gateway's `decision.ts`), Terra ($1.00 in, $5.00 out, $0.05 cache read, $1.25 cache write per million, 2x input and 1.5x output above 272K prompt tokens: OpenAI price page via `/research` and a probe of the IU OpenAI endpoint, 2026-10-28), Luna ($0.10 in, $0.50 out, $0.01 cache read), and the Claude tiers from `CLAUDE_RATES` (Haiku 5.5 and Sonnet 5.5; Haiku was dropped from the table on 2026-10-30 and came back as `FAST`/`EASY` on 2026-11-01, owner decision). On the `opencode` wire the OpenCode host writes the rate into the server config's cost rows, so OpenCode prices each message with it; a message OpenCode reports at cost 0 with tokens is priced with the rate by the host (`costFromUsage`), else `unknown`. IU bills DeepSeek at the list peak rate at every hour, off-peak included (billed over list 1.00 at 00:00-02:00 UTC, checked on 10 days of steps, 2026-10-30), so the rate below is what a call costs. `research.agent` runs deepseek on `opencode`, where IU's `usage.cost` never reaches the host, so it carries the rate that cost was measured at: $0.30 in, $0.006 cache read, $1.20 out per million (research-gateway `src/lib/cost.ts`, the 2026-09-25 peak reading; an off-peak reading was half, so off-peak runs are over-priced, never under-priced).
 
 The Terra fallbacks (and the DeepSeek routes' fallback) carry a rate on every route: $1.00 in, $0.05 cached in, $5.00 out, $1.25 cache write (30-min) per million, Standard tier, and a `longPrompt` tier over 272K input tokens: the whole request bills 2x input/cache and 1.5x output. Context 1,050,000, max output 128,000, effort `none|low|medium|high|xhigh|max`. Source: developers.openai.com (via /research) and a probe of IU's OpenAI endpoint (listed in `/models`, chat completions with `reasoning_effort: medium` answered 200, served as `openai.gpt-6.1-terra`), 2026-10-28.
 
 ## Source seats (agent-gateway `GET /api/routing`, 2026-10-27, wires and models as of 2026-11-01)
 
 The capability seats (`src/table/cheap.ts`, `decide.ts`); a workflow's seats are in its README's §Route
-(`packages/host/src/workflows/<id>/README.md`). The agent-gateway column is where the seat came from; Model and Wire are the table today (the seats are Claude, §Seats), with the effort the seat sets (`TRIVIAL` none, `EASY` high).
+(`packages/host/src/workflows/<id>/README.md`). The agent-gateway column is where the seat came from; Model and Wire are the table today (the tiers are Claude, §Tiers), with the effort the tier sets (`FAST` none, `EASY` high).
 
 | Route | agent-gateway seat | Model | Wire |
 |-|-|-|-|
@@ -172,7 +197,7 @@ Deliberate differences from the gateway:
 - `maxOutputTokens: 16000` is the floor `single-shot.ts` sends for reasoning models.
 - Not ported: the Max-lane fallback (`fallback: sonnet` on Max), `prose_*`, `read_image`, `review_ocr` and dispatch seats (`otel` is `otel.agent`). They belong to the Claude runtime or to later waves.
 - The `decide` rate is the UE price list from `decision.ts`. The gateway's default `pplx-decider-v1-27b` is served by IU's "Requesty decision compatibility API" (`x-middleware-forwarded-server`, probed 2026-10-29), so `decide` runs `decision-1` (Microsoft; header "Global Sink Sweden Decisions API"): same wire, request shape and 60k-character cap, input-only rate $0.042/M. Its confidences are calibrated by another model; a caller that thresholds on them re-checks the threshold.
-- No route is region-pinned and none goes via Requesty (owner direction, 2026-10-29). A route is judged by the response header `x-middleware-forwarded-server`, not by its id: `deepseek-v4.1-flash`, `DeepSeek-V4-Flash` and `pplx-decider-v1-27b` all answer from Requesty-Global, and the one non-Requesty DeepSeek id the model list shows (`deepseek-ai/DeepSeek-V3.2`, Nebius) answers "model does not exist". The retired `-eu` Claude ids are no longer listed. The Claude seats go to the gateway's `anthropic` wire, which pays from a credit pool; IU's `claude-haiku-5-5` and `claude-sonnet-5-5` (LiteLLM on the chat wire, AWS Bedrock on Messages) are never a fallback: `x-agw-fallback: none` turns a drained credit into a 402 and the route's GPT fallback runs.
+- No route is region-pinned and none goes via Requesty (owner direction, 2026-10-29). A route is judged by the response header `x-middleware-forwarded-server`, not by its id: `deepseek-v4.1-flash`, `DeepSeek-V4-Flash` and `pplx-decider-v1-27b` all answer from Requesty-Global, and the one non-Requesty DeepSeek id the model list shows (`deepseek-ai/DeepSeek-V3.2`, Nebius) answers "model does not exist". The retired `-eu` Claude ids are no longer listed. The Claude tiers go to the gateway's `anthropic` wire, which pays from a credit pool; IU's `claude-haiku-5-5` and `claude-sonnet-5-5` (LiteLLM on the chat wire, AWS Bedrock on Messages) are never a fallback: `x-agw-fallback: none` turns a drained credit into a 402 and the route's GPT fallback runs.
 - `triage` and `cheap.classify` run Haiku 5.5 on the native Messages wire (the route carries the rate). `triage` gained a fallback, Terra low on the chat wire (it had none while a Requesty model was the only candidate); `decide` has none.
 - `review.router` and `review.ocr` run Haiku 5.5 on the native Messages wire (`review/ocr.ts` speaks the `anthropic` protocol for it), fallback Terra low on the chat wire. `review.adversary` is the cross-family critic, so it stays on `gpt-6.1-terra` (medium effort, chat wire, rate carried), fallback Luna medium: a Claude critic of a Claude writer defeats it, and its capability refuses any wire but the OpenAI chat wire.
 - `research.agent`, `otel.agent`, `prose.review` and the podcast routes still run `deepseek-v4.1-flash`, which is Requesty-Global; their pre-registered port rules ran on that model, so they move by the lead's decision, not in this sweep.
@@ -205,7 +230,7 @@ A route flip changes what the next run costs and how well it caches:
 
 `src/table/claude.ts` holds the three current Claude models (`claude-haiku-5-5`, `claude-sonnet-5-5`, `claude-opus-5-5`), their
 list rates and the alias map `haiku | sonnet | opus`. It is a route group with no routes: the route table reaches Claude through the
-seats in `_shared.ts`, which read their rates from `CLAUDE_RATES` here. The other user is the inference gateway (`docs/gateway.md`
+tiers in `_shared.ts`, which read their rates from `CLAUDE_RATES` here. The other user is the inference gateway (`docs/gateway.md`
 §Model aliases, §Picking a pool), which resolves the alias a client sends and prices each Anthropic response.
 
 ```ts

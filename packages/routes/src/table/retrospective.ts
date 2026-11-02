@@ -1,9 +1,9 @@
 import type { RouteEntry } from '../schema.ts'
-import { AGENT_FALLBACK, STRONG } from './_shared.ts'
+import { HARD } from './_shared.ts'
 
 const routes = {
-  // Retrospective seat (concept §7): one agent step over sampled run records, JSON out. It finds patterns: the STRONG seat (Sonnet).
-  'retro.analyze': { wire: 'opencode', ...STRONG, fallback: AGENT_FALLBACK },
+  // Retrospective (concept §7): one agent step over sampled run records, JSON out. It finds patterns: the HARD tier (Sonnet).
+  'retro.analyze': { wire: 'opencode', ...HARD.agent },
 } satisfies Record<string, RouteEntry>
 
 export default routes

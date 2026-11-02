@@ -29,8 +29,8 @@ echo '{"title":"…","facts":"…","repo":"argo","source":"kuma","projects":["ar
 
 ## Route
 
-`factory.classify` (`packages/routes/src/table/factory.ts`): the `TRIVIAL` seat (Luna, effort low) on IU's chat wire, balance
-fallback to DeepSeek flash. The cheapest seat that passed the eval; Terra low (`EASY`) was measured against it.
+`factory.classify` (`packages/routes/src/table/factory.ts`): the `FAST` tier (Luna, effort low) on IU's chat wire, balance
+fallback to DeepSeek flash. The cheapest tier that passed the eval; Terra low (`EASY`) was measured against it.
 
 ## Eval
 
