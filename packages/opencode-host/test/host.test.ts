@@ -3,11 +3,12 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync } f
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { BALANCE_MARKER, fallbackRoute, isBalanceFailure, type Rate, resolveRoute } from '@agent-workflows/routes'
-import type { AgentWaitOptions, Arm, Json } from '@agent-workflows/runtime'
+import type { AgentWaitOptions, Arm, Json, Usage } from '@agent-workflows/runtime'
 import { Cancelled, WorkflowError } from '@agent-workflows/runtime'
 import {
   type AgentDefinition,
   createClient,
+  type Message,
   type OpenCodeHandle,
   OpenCodeHost,
   type PermissionRule,
@@ -106,6 +107,13 @@ function waitOptions(over: Partial<AgentWaitOptions> = {}): AgentWaitOptions {
   return { signal: new AbortController().signal, onProgress: () => {}, onTool: async () => {}, ...over }
 }
 
+/** The one report of a step that ran on one session; a step that moved between sessions reports several. */
+const one = (usage: Usage | Usage[] | undefined): Usage | undefined => {
+  const all = [usage ?? []].flat()
+  expect(all.length).toBeLessThanOrEqual(1)
+  return all[0]
+}
+
 const sid = (handle: Json) => (handle as OpenCodeHandle).sessionId
 const userMessages = async (t: ReturnType<typeof setup>, handle: Json) =>
   (await t.client.messages(sid(handle))).filter((m) => m.type === 'user')
@@ -134,11 +142,11 @@ describe('open / prompt / wait', () => {
     await t.host.prompt(handle, 'hello')
     const result = await t.host.wait(handle, waitOptions())
     expect(result.output).toBe('echo: hello')
-    expect(result.usage?.tokens).toEqual({ input: 130, output: 6, cacheRead: 100, cacheWrite: 20, reasoning: 1 })
-    expect(result.usage?.cost).toBe(0.001)
-    expect(result.usage?.costSource).toBe('provider')
+    expect(one(result.usage)?.tokens).toEqual({ input: 130, output: 6, cacheRead: 100, cacheWrite: 20, reasoning: 1 })
+    expect(one(result.usage)?.cost).toBe(0.001)
+    expect(one(result.usage)?.costSource).toBe('provider')
     // The step's route id, for the journal's `steps.route`.
-    expect(result.usage?.route).toBe('check')
+    expect(one(result.usage)?.route).toBe('check')
   })
 
   test('prompt is idempotent: a second call reads the session and sends nothing', async () => {
@@ -215,7 +223,7 @@ describe('open / prompt / wait', () => {
     const t = setup()
     const handle = await t.host.open(spec('x'))
     await t.host.prompt(handle, '[free] x')
-    const { usage } = await t.host.wait(handle, waitOptions())
+    const usage = one((await t.host.wait(handle, waitOptions())).usage)
     expect(usage?.costSource).toBe('rate')
     // 10 input, 100 cache read, 20 cache write, 6 output at the route's rate.
     const { inputPerM, outputPerM, cacheReadPerM = 0, cacheWritePerM = 0 } = RATE
@@ -236,7 +244,7 @@ describe('open / prompt / wait', () => {
     const t = setup()
     const handle = await t.host.open(spec('x'))
     await t.host.prompt(handle, '[long] x')
-    const { usage } = await t.host.wait(handle, waitOptions())
+    const usage = one((await t.host.wait(handle, waitOptions())).usage)
     expect(usage?.costSource).toBe('rate')
     expect(usage?.cost).toBeCloseTo(HAIKU_LONG, 12)
   })
@@ -245,7 +253,7 @@ describe('open / prompt / wait', () => {
     const t = setup()
     const handle = await t.host.open(spec('x'))
     await t.host.prompt(handle, '[tool:read] [long] x')
-    const { usage } = await t.host.wait(handle, waitOptions())
+    const usage = one((await t.host.wait(handle, waitOptions())).usage)
     expect(usage?.costSource).toBe('rate')
     expect(usage?.cost).toBeCloseTo(0.001 + HAIKU_LONG, 12)
   })
@@ -254,7 +262,7 @@ describe('open / prompt / wait', () => {
     const t = setup()
     const handle = await t.host.open(spec('x'))
     await t.host.prompt(handle, '[free] [long] x')
-    expect((await t.host.wait(handle, waitOptions())).usage?.cost).toBeCloseTo(HAIKU_LONG, 12)
+    expect(one((await t.host.wait(handle, waitOptions())).usage)?.cost).toBeCloseTo(HAIKU_LONG, 12)
   })
 
   // A rate without a tier, priced directly: no opencode route of the table has one, and an arm cannot patch a rate there.
@@ -651,7 +659,7 @@ describe('structured output (submit_result)', () => {
     await t.host.prompt(handle, '[result] give me data')
     const result = await t.host.wait(handle, waitOptions())
     expect(result.output).toEqual({ ok: true, inputs: 1 })
-    expect(result.usage?.cost).toBeCloseTo(0.002, 6) // both messages of the turn
+    expect(one(result.usage)?.cost).toBeCloseTo(0.002, 6) // both messages of the turn
   })
 
   test('a follow-up turn answers through the same tool, read from its own turn only', async () => {
@@ -1056,7 +1064,7 @@ describe('progress and tools', () => {
     }
     const result = await t.host.wait(handle, waitOptions({ onTool }))
     expect(events).toEqual(['pre:read:', 'post:read:a.txt'])
-    expect(result.usage?.toolCalls).toBe(1)
+    expect(one(result.usage)?.toolCalls).toBe(1)
     await t.host.wait(handle, waitOptions({ onTool })) // a second wait has its own record (at-least-once)
     expect(events).toHaveLength(4)
   })
@@ -1244,13 +1252,13 @@ describe('provider-balance fallback', () => {
     expect(fallback?.permissions).toEqual(primary?.permissions)
     expect(fallback?.messages.filter((m) => m.type === 'user')).toHaveLength(1)
     // The refused primary turn spent nothing here: the usage is the fallback's alone.
-    expect(result.usage?.model).toBe(fallback?.model.id)
+    expect(one(result.usage)?.model).toBe(fallback?.model.id)
     // A fallback session is the same route: it keeps the primary's id.
-    expect(result.usage?.route).toBe('check')
+    expect(one(result.usage)?.route).toBe('check')
     expect(t.warnings).toContain('opencode turn failed on provider balance; falling back')
   })
 
-  test('a primary that spent before the balance refusal keeps its spend: usage is primary + fallback, once', async () => {
+  test('a primary that spent before the balance refusal keeps its spend: one report per session, each once', async () => {
     const t = setup({ turnMs: 300 })
     const handle = await t.host.open(spec('x'))
     await t.host.prompt(handle, '[balance] review this')
@@ -1262,9 +1270,17 @@ describe('provider-balance fallback', () => {
       cost: 0.5,
     })
     const result = await t.host.wait(handle, waitOptions())
-    expect(result.usage?.tokens).toMatchObject({ input: 170, output: 6, reasoning: 1, cacheRead: 100, cacheWrite: 20 })
-    expect(result.usage?.cost).toBeCloseTo(0.501, 6) // 0.5 (primary) + 0.001 (fallback), not twice
-    expect(result.usage?.route).toBe('check')
+    const [primary, fallback, ...rest] = [result.usage ?? []].flat()
+    expect(rest).toEqual([])
+    // Not summed: each session keeps its own model, so the step's per-model split and a priced half survive.
+    expect(primary?.model).toBe(sessions(t)[0]?.model.id)
+    expect(primary?.tokens).toMatchObject({ input: 40, output: 0 })
+    expect(primary?.cost).toBe(0.5)
+    expect(fallback?.model).toBe(sessions(t)[1]?.model.id)
+    expect(fallback?.tokens).toMatchObject({ input: 130, output: 6, reasoning: 1, cacheRead: 100, cacheWrite: 20 })
+    expect(fallback?.cost).toBe(0.001)
+    expect(primary?.route).toBe('check')
+    expect(fallback?.route).toBe('check')
   })
 
   test('the fallback failing too keeps both sessions’ spend on the error', async () => {
@@ -1279,8 +1295,8 @@ describe('provider-balance fallback', () => {
     })
     const err = await t.host.wait(handle, waitOptions()).catch((e: unknown) => e)
     expect((err as WorkflowError).message).toContain('Insufficient Balance')
-    expect((err as WorkflowError).usage?.tokens).toMatchObject({ input: 40, output: 0 })
-    expect((err as WorkflowError).usage?.cost).toBe(0.5)
+    expect(one((err as WorkflowError).usage)?.tokens).toMatchObject({ input: 40, output: 0 })
+    expect(one((err as WorkflowError).usage)?.cost).toBe(0.5)
   })
 
   test('re-attach after a crash finds the fallback session: no second session, no second prompt', async () => {
@@ -1421,8 +1437,8 @@ describe('followUp (ctx.continue)', () => {
     const result = await t.host.wait(next, waitOptions())
     expect(result.output).toBe('echo: fix the title')
     // Only the turn's assistant message is counted, not the first turn's.
-    expect(result.usage?.tokens).toEqual({ input: 130, output: 6, cacheRead: 100, cacheWrite: 20, reasoning: 1 })
-    expect(result.usage?.cost).toBe(0.001)
+    expect(one(result.usage)?.tokens).toEqual({ input: 130, output: 6, cacheRead: 100, cacheWrite: 20, reasoning: 1 })
+    expect(one(result.usage)?.cost).toBe(0.001)
     expect(Object.keys(t.fake.state.sessions)).toEqual([sid(first)])
     const users = await userMessages(t, first)
     expect(users.map((m) => m.metadata?.agw?.kind)).toEqual(['prompt', 'followup'])
@@ -1495,6 +1511,21 @@ describe('a failing wait keeps what the session spent', () => {
   // The tool-call message of `[tool:read]` reports 10 + 100 + 20 input, 5 output, 1 reasoning, cost 0.001.
   const SPENT = { input: 130, output: 6, cacheRead: 100, cacheWrite: 20, reasoning: 1 }
 
+  test('a failed turn re-reads the whole session: a message the polled view lacks still counts', async () => {
+    const t = setup()
+    const client = (t.host as unknown as { client: { recentMessages: (...args: never[]) => Promise<Message[]> } })
+      .client
+    const recent = client.recentMessages.bind(client)
+    // The incremental page shows the assistant messages without their tokens; only a full walk has them.
+    client.recentMessages = async (...args) =>
+      (await recent(...args)).map((m) => (m.type === 'assistant' ? { ...m, tokens: undefined, cost: undefined } : m))
+    const handle = await t.host.open(spec('x'))
+    await t.host.prompt(handle, '[tool:read][fail] x')
+    const err = await rejected(t.host.wait(handle, waitOptions()))
+    expect(one(err.usage)?.tokens).toEqual(SPENT)
+    expect(one(err.usage)?.cost).toBe(0.001)
+  })
+
   test('a session that ends failed after a priced message: the error carries its tokens and cost', async () => {
     const t = setup()
     const handle = await t.host.open(spec('x'))
@@ -1502,9 +1533,9 @@ describe('a failing wait keeps what the session spent', () => {
     const err = await rejected(t.host.wait(handle, waitOptions()))
     expect(err.kind).toBe('error')
     expect(err.message).toContain('provider said no')
-    expect(err.usage?.tokens).toEqual(SPENT)
-    expect(err.usage?.cost).toBe(0.001)
-    expect(err.usage?.route).toBe('check')
+    expect(one(err.usage)?.tokens).toEqual(SPENT)
+    expect(one(err.usage)?.cost).toBe(0.001)
+    expect(one(err.usage)?.route).toBe('check')
   })
 
   test('a failure before any assistant message spent nothing: no usage on the error', async () => {
@@ -1520,8 +1551,8 @@ describe('a failing wait keeps what the session spent', () => {
     await t.host.prompt(handle, '[json] give me data')
     const err = await rejected(t.host.wait(handle, waitOptions()))
     expect(err.kind).toBe('invalid_output')
-    expect(err.usage?.tokens).toEqual({ input: 130, output: 6, cacheRead: 100, cacheWrite: 20, reasoning: 1 })
-    expect(err.usage?.cost).toBe(0.001)
+    expect(one(err.usage)?.tokens).toEqual({ input: 130, output: 6, cacheRead: 100, cacheWrite: 20, reasoning: 1 })
+    expect(one(err.usage)?.cost).toBe(0.001)
   })
 
   test('a failed follow-up turn keeps its own spend, not the first turn’s', async () => {
@@ -1533,8 +1564,8 @@ describe('a failing wait keeps what the session spent', () => {
     await t.host.prompt(next, '[tool:read][fail] fix it')
     const err = await rejected(t.host.wait(next, waitOptions()))
     expect(err.message).toContain('turn failed')
-    expect(err.usage?.tokens).toEqual(SPENT)
-    expect(err.usage?.cost).toBe(0.001)
+    expect(one(err.usage)?.tokens).toEqual(SPENT)
+    expect(one(err.usage)?.cost).toBe(0.001)
   })
 
   test('an abort mid-turn (idle timeout, refused tool) carries what the session had spent', async () => {
@@ -1553,7 +1584,7 @@ describe('a failing wait keeps what the session spent', () => {
     controller.abort(reason)
     const err = await rejected(waiting)
     expect(err).toBe(reason)
-    expect(err.usage?.tokens).toEqual(SPENT)
+    expect(one(err.usage)?.tokens).toEqual(SPENT)
   })
 
   test('a session that is gone fails as before and carries the spend already read', async () => {
@@ -1569,8 +1600,8 @@ describe('a failing wait keeps what the session spent', () => {
     delete t.fake.state.sessions[sid(handle)]
     const err = await rejected(waiting)
     expect(err.message).toContain('is gone')
-    expect(err.usage?.tokens).toEqual(SPENT)
-    expect(err.usage?.cost).toBe(0.001)
+    expect(one(err.usage)?.tokens).toEqual(SPENT)
+    expect(one(err.usage)?.cost).toBe(0.001)
   })
 
   test('a session that is gone before anything was read carries no usage', async () => {

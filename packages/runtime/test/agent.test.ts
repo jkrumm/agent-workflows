@@ -79,7 +79,9 @@ describe('agent steps', () => {
 
   test('a wait that fails keeps the usage it carries: the step row, and so the run roll-up, include it', async () => {
     const host = new FakeAgentHost(async () => {
-      throw new WorkflowError('error', 'opencode session ses_1 failed: context overflow', { usage })
+      const failed = new WorkflowError('error', 'opencode session ses_1 failed: context overflow')
+      failed.carryUsage(usage)
+      throw failed
     })
     const wf = agentWorkflow('agent.failed-usage')
     const rt = testRuntime({ schema: db.schema, workflows: [wf], host })
@@ -104,10 +106,41 @@ describe('agent steps', () => {
     }
   })
 
+  test('a result or a failure may report several sessions: each is added, the model split and a priced half survive', async () => {
+    const fallback = { ...usage, model: 'fake-2', cost: null }
+    const ok = new FakeAgentHost(async () => ({ output: { answer: 'moved' }, usage: [usage, fallback] }))
+    const bad = new FakeAgentHost(async () => {
+      const failed = new WorkflowError('error', 'overflow')
+      failed.carryUsage([usage, fallback])
+      throw failed
+    })
+    for (const [id, host, status] of [
+      ['agent.multi-ok', ok, 'done'],
+      ['agent.multi-failed', bad, 'failed'],
+    ] as const) {
+      const wf = agentWorkflow(id)
+      const rt = testRuntime({ schema: db.schema, workflows: [wf], host })
+      await rt.open()
+      try {
+        const { runId } = await rt.start(wf, {}, { purpose: 'build' })
+        expect((await rt.wait(runId)).status).toBe(status)
+        const step = await sql.step(runId, 'ask')
+        expect(step).toMatchObject({ tokens_input: '20', cost: '0.01', unpriced_calls: 1 })
+        expect(Object.keys(step?.usage_by_model as object).sort()).toEqual(['fake-1', 'fake-2'])
+      } finally {
+        await rt.close()
+      }
+    }
+  })
+
   test('a retry after a failed wait counts each session’s spend once', async () => {
     let n = 0
     const host = new FakeAgentHost(async () => {
-      if (++n === 1) throw new WorkflowError('error', 'overflow', { usage })
+      if (++n === 1) {
+        const failed = new WorkflowError('error', 'overflow')
+        failed.carryUsage(usage)
+        throw failed
+      }
       return { output: { answer: 'second' }, usage: { ...usage, tokens: { ...usage.tokens, input: 7 }, cost: 0.02 } }
     })
     const wf = defineWorkflow({

@@ -32,27 +32,30 @@ export class IdempotencyConflict extends Error {
 
 /**
  * A failure that belongs to the workflow: it ends the step or run as `failed` (or `cancelled`). `usage` is what an
- * agent host had already spent when its wait failed; an agent step adds it to the step before rethrowing. A host sets
- * it with `carryUsage`, never directly.
+ * agent host had already spent when its wait failed (one report, or one per session); an agent step adds it to the
+ * step before rethrowing. A host sets it with `carryUsage`, the only way in.
  */
 export class WorkflowError extends Error {
   override name = 'WorkflowError'
-  usage?: Usage
+  #usage?: Usage | Usage[]
   constructor(
     readonly kind: ErrorKind,
     message: string,
-    options?: { cause?: unknown; usage?: Usage },
+    options?: { cause?: unknown },
   ) {
-    super(message, options?.cause === undefined ? undefined : { cause: options.cause })
-    if (options?.usage) this.usage = options.usage
+    super(message, options)
+  }
+
+  get usage(): Usage | Usage[] | undefined {
+    return this.#usage
   }
 
   /**
    * Records the spend of the step whose wait failed with this error (replacing an earlier one). An error that is shared
    * by several steps cannot carry one step's spend: `Cancelled` ignores it.
    */
-  carryUsage(usage: Usage): void {
-    this.usage = usage
+  carryUsage(usage: Usage | Usage[]): void {
+    this.#usage = usage
   }
 }
 
@@ -83,7 +86,7 @@ export class Cancelled extends WorkflowError {
   }
 
   /** The run's one instance reaches every step waiting at once: it would charge one step's spend to the others. */
-  override carryUsage(_usage: Usage): void {}
+  override carryUsage(_usage: Usage | Usage[]): void {}
 }
 
 /**

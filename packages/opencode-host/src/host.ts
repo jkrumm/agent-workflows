@@ -873,12 +873,12 @@ export class OpenCodeHost implements AgentHost {
     const next: OpenCodeHandle = { ...h, sessionId, model: fallback.route.model, fallback: true, attribution }
     await this.prompt(next, prompt)
     // The step spent on both sessions: the primary's messages are the failed turn, the fallback's are the answer.
-    const primary = spentTokens(messages) ? this.usage(h, messages) : undefined
+    const primary = spentTokens(messages) ? [this.usage(h, messages)] : []
     try {
       const result = await this.wait(next, options)
-      return primary ? { ...result, usage: sumUsage(primary, result.usage) } : result
+      return primary.length > 0 ? { ...result, usage: [...primary, ...[result.usage ?? []].flat()] } : result
     } catch (err) {
-      if (primary && err instanceof WorkflowError) err.carryUsage(sumUsage(primary, err.usage))
+      if (primary.length > 0 && err instanceof WorkflowError) err.carryUsage([...primary, ...[err.usage ?? []].flat()])
       throw err
     }
   }
@@ -1180,10 +1180,19 @@ export class OpenCodeHost implements AgentHost {
   ): Promise<AgentResult> {
     if (state.outcome === 'interrupted' && signal.aborted) throw signal.reason
     if (state.outcome !== 'succeeded') {
-      throw new WorkflowError(
+      const failed = new WorkflowError(
         'error',
         `opencode session ${h.sessionId} ${state.outcome}: ${state.error ?? 'no detail'}`,
       )
+      // The message that ended the turn may not be in the polled view yet: read the whole session once, as success does.
+      try {
+        reader.invalidate()
+        const messages = await reader.read()
+        if (spentTokens(messages)) failed.carryUsage(this.usage(h, messages))
+      } catch {
+        // The polled messages stand (`spent` reads them).
+      }
+      throw failed
     }
     reader.invalidate()
     const messages = await reader.read()
@@ -1286,30 +1295,6 @@ export function priceOpenCodeMessages(
 
 /** Some assistant message reported tokens: a turn that failed before any call has nothing to report. */
 const spentTokens = (messages: readonly Message[]) => messages.some((m) => m.type === 'assistant' && m.tokens)
-
-/**
- * The sum of two reports for one step: tokens add, a cost needs both priced. The model and route stay when they agree
- * (a fallback session keeps the primary's route id); otherwise the sum names none and the step's per-model split is
- * lost, so the caller adds the reports separately where it can.
- */
-function sumUsage(a: Usage, b: Usage | undefined): Usage {
-  if (!b) return a
-  const sum = (x = 0, y = 0) => x + y
-  return {
-    ...(a.model !== undefined && a.model === b.model ? { model: a.model } : {}),
-    ...(a.route !== undefined && a.route === b.route ? { route: a.route } : {}),
-    tokens: {
-      input: sum(a.tokens.input, b.tokens.input),
-      output: sum(a.tokens.output, b.tokens.output),
-      cacheRead: sum(a.tokens.cacheRead, b.tokens.cacheRead),
-      reasoning: sum(a.tokens.reasoning, b.tokens.reasoning),
-      cacheWrite: sum(a.tokens.cacheWrite, b.tokens.cacheWrite),
-    },
-    cost: a.cost == null || b.cost == null ? null : a.cost + b.cost,
-    costSource: a.costSource === b.costSource ? a.costSource : 'unknown',
-    toolCalls: sum(a.toolCalls, b.toolCalls),
-  }
-}
 
 const unpriced = (usage: Usage): Usage => ({ ...usage, cost: null, costSource: 'unknown' })
 

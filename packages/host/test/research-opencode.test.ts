@@ -223,7 +223,7 @@ test.skipIf(!binary)(
     expect(JSON.stringify(assistant)).toContain('REASONING-1')
     expect(JSON.stringify(assistant)).toContain('sig-1')
     // Cache reads are recorded and priced with the route's rate.
-    const usage = result.usage
+    const usage = [result.usage ?? []].flat()[0]
     expect(usage?.tokens.cacheRead).toBe(1_600)
     expect(usage?.cost).toBeGreaterThan(0)
     expect(JSON.parse(result.output as string) as Record<string, unknown>).toMatchObject({
