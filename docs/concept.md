@@ -584,3 +584,14 @@ One entry per phase: what we learned, what changed on this page, and why.
   found the double rows.
 - **Does the page hold?** Yes; the double rows contradict v3.14's writer rule and are a bug, not a design change.
 
+### Gateway Wave 7b — Usage view v7 build (argo), 2026-11-03
+
+- **Learned.** The new view answered its headline on day one, and the answer is no: at today's burn `iu` runs dry about
+  11-03 and `me` about 11-04, so most of each cycle spills to the GPT fallbacks. Seam stubs let two frontend workers run in
+  parallel; under a load of 50–100 argo's merge gate needed 30 s unit timeouts and a de-flaked fetch test.
+- **Changed.** argo `6702133`: Flow and Explore replace the v6 tabs and `/usage/credits`; pace checked against the
+  gateway's `/health`; Athena shown apart; rule-based insights. agw `f5b3df1`: fallbacks marked, the caller of agw recorded.
+- **Process.** Give one worker the route-registration lines a parallel batch shares. A lead in another repo's checkout
+  works beside a lead here when it touches this repo only through fan worktrees and asks before deploying.
+- **Does the page hold?** Yes, as v3.14.
+

@@ -6,7 +6,7 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
 ## State
 - **New plan 2026-11-01:** inference gateway (Waves 1–4, `docs/gateway.md`), then review v2 and the maturity pass
   (Waves 5–13). Wave 1 done (release `767f643`, REPORT `docs/spikes/gateway/REPORT.md`); Wave 2 done (release `b25aac5`); Wave 3 done (release `3e6026e`); Wave 4 done (release `2e7d5f2`); Wave 5 done (release `bf76dc4`); Wave 6 done (release `9cf9625`); Wave 7 (spec) done, argo `84053e8`; Wave 8 resumes after Wave 16 without an owner session (automated validation); Wave 16 (accounting,
-  `agw eval import`, pulled forward from Wave 13) active; Wave 7b (build) runs beside it as argo PLAN Wave 8 (spec signed 18:20, `9fd63c7f`). The 2026-10-30 plan is finished (concept.md Final retro); STOP removed.
+  `agw eval import`, pulled forward from Wave 13) active; Wave 7b (build) done 11-03 (argo `6702133`). The 2026-10-30 plan is finished (concept.md Final retro); STOP removed.
 - Owner actions done (PLAN context): orgs linked, keys seeded, cycle days, no payment method. Left: `me2` keys
   (~2026-11-02, 7-day claim window); until then the `me2` pool stays disabled.
 - Lead's close-out channel: `docs/waves/handoff/lead.md` (the mother owns PLAN.md and the retro log;
@@ -15,8 +15,7 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
   tailscale drift). Not ours; gates are judged on our rows only.
 
 ## Lead
-- Mother `agent-workflows-w1-r4` (pane t4f, account me2); Wave 16 lead `agent-workflows-w1-r12` (pane t91, account me2), spawned 2026-11-02 ~20:45; argo lead `argo-w1` (pane t8j) runs argo Wave 8 beside it,
-  close-out in argo's PLAN plus an rd say to the mother.
+- Mother `agent-workflows-w1-r4` (pane t4f, account me2); Wave 16 lead `agent-workflows-w1-r12` (pane t91, account me2), spawned 2026-11-02 ~20:45.
   Rotation policy: a fresh lead per wave unless the last one closed under ~30% context.
 
 ## Decisions taken

@@ -202,12 +202,17 @@ Pulled forward 2026-11-02 while the owner labels (former Wave 13, plus Wave 8's 
   + 20 rejected cases, 100 judge pairs (27 positive): `me` eval credit ran out ($12.05 credit, $3.32 IU spent). After the
   session: ingest, the bars, then ~165 more accepted cases ≈ $49 ($13 IU, over the $20 IU line: the mother decides).
 
-## Wave 7b — Usage view v7 build (Argo)            <!-- status: running beside Wave 8 as argo PLAN Wave 8 -->
+## Wave 7b — Usage view v7 build (Argo)            <!-- status: done 2026-11-03, argo 6702133, agw f5b3df1 -->
 
-- [ ] Build v7 in argo: endpoints on `usage.*` (gateway rows, picks, credit cycles, platform cost, quota samples),
+- [x] Build v7 in argo: endpoints on `usage.*` (gateway rows, picks, credit cycles, platform cost, quota samples),
   the views, tests; v6 views it supersedes are deleted, not hidden. Screenshots light and dark through `@verifier`.
   Spec signed 2026-11-02 18:20 (argo `9fd63c7f`): decisions 1–4 as recommended, 5 deferred, plus §Insights. Runs as
   argo `docs/waves/PLAN.md` Wave 8 in the argo checkout, beside this repo's Wave 8.
+**Left behind:** close-out in argo `docs/waves/PLAN.md` Wave 8 (`056ab961`). Live verdict at close: over pace, `iu` dry
+  ~11-03, `me` ~11-04, then ~16 days spill (~$1,239 at Claude list) onto the GPT-on-IU fallbacks. Open: the 11-02 agw
+  duplicates still count upstream (only `/usage/demand` drops them); route fallback reads `unknown` from OpenCode and
+  ocr; insights are template-only, the period detectors start on 11-09; decision 5 (production pacing) and me2 are the
+  owner's.
 
 ## Wave 9 — Baseline            <!-- status: pending -->
 
