@@ -15,8 +15,8 @@ import { GATE_TOOLS, RESEARCH_TOOLS, researchGrant } from '../src/workflows/rese
 import { memoryToolLedger } from '../src/workflows/research/ledger.ts'
 
 // The research agent on the real `opencode` 2.0.32 against a scripted fake model (no spend): the plugin in their
-// location reaches the tool gate with the session id, the gate refuses an ungranted tool, and the DeepSeek route keeps
-// the wire rules (reasoning passed back verbatim, cache reads recorded and priced). Skipped where no opencode is
+// location reaches the tool gate with the session id, the gate refuses an ungranted tool, and the route (the HARD tier, Sonnet on the
+// Anthropic leg) keeps the wire rules (thinking blocks passed back verbatim, cache reads recorded and priced). Skipped where no opencode is
 // installed (CI runners).
 let binary: string | null = null
 try {
@@ -28,47 +28,75 @@ try {
 type Step = { tool: string; args: Record<string, unknown> } | { text: string }
 type Seen = { tools: string[]; messages: Record<string, unknown>[] }
 
-/** An OpenAI-compatible streaming endpoint that plays `script` turn by turn and records every request. */
+/**
+ * A scripted endpoint on the Anthropic Messages wire (the gateway's `/anthropic/v1/messages`, what Claude routes use): it
+ * plays `script` turn by turn and records every request, normalised to the shape the assertions read (`tools` names,
+ * and `messages` where a tool result is a `{ role: 'tool', content }` entry). Each turn opens with a thinking block
+ * (`REASONING-n`) so the replay of provider reasoning is observable; usage carries 800 cache-read tokens.
+ */
 function fakeModel(script: Step[]) {
   const seen: Seen[] = []
   const server = Bun.serve({
     port: 0,
     hostname: '127.0.0.1',
     async fetch(req) {
-      const body = (await req.json()) as {
-        tools?: { function: { name: string } }[]
-        messages: Record<string, unknown>[]
-      }
-      seen.push({ tools: (body.tools ?? []).map((t) => t.function.name).sort(), messages: body.messages })
+      const body = (await req.json()) as { tools?: { name: string }[]; messages: Record<string, unknown>[] }
+      seen.push({ tools: (body.tools ?? []).map((t) => t.name).sort(), messages: normalise(body.messages) })
       const step = script[Math.min(seen.length - 1, script.length - 1)] as Step
-      const chunk = (delta: unknown, finish: string | null = null) =>
-        `data: ${JSON.stringify({ id: 'c', object: 'chat.completion.chunk', created: 1, model: 'm', choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`
-      const reasoning = `REASONING-${seen.length}`
-      let out = chunk({ role: 'assistant', reasoning_content: reasoning })
+      const event = (type: string, data: unknown) =>
+        `event: ${type}\ndata: ${JSON.stringify({ type, ...(data as object) })}\n\n`
+      const block = (index: number, start: unknown, ...deltas: unknown[]) =>
+        event('content_block_start', { index, content_block: start }) +
+        deltas.map((delta) => event('content_block_delta', { index, delta })).join('') +
+        event('content_block_stop', { index })
+      let out = event('message_start', {
+        message: {
+          id: `msg_${seen.length}`,
+          type: 'message',
+          role: 'assistant',
+          model: 'claude-fake',
+          content: [],
+          stop_reason: null,
+          stop_sequence: null,
+          usage: { input_tokens: 200, output_tokens: 1, cache_read_input_tokens: 800, cache_creation_input_tokens: 0 },
+        },
+      })
+      out += block(
+        0,
+        { type: 'thinking', thinking: '' },
+        { type: 'thinking_delta', thinking: `REASONING-${seen.length}` },
+        { type: 'signature_delta', signature: `sig-${seen.length}` },
+      )
       out +=
         'tool' in step
-          ? chunk({
-              tool_calls: [
-                {
-                  index: 0,
-                  id: `call_${seen.length}`,
-                  type: 'function',
-                  function: { name: step.tool, arguments: JSON.stringify(step.args) },
-                },
-              ],
-            }) + chunk({}, 'tool_calls')
-          : chunk({ content: step.text }) + chunk({}, 'stop')
-      const usage = {
-        prompt_tokens: 1_000,
-        completion_tokens: 100,
-        total_tokens: 1_100,
-        prompt_tokens_details: { cached_tokens: 800 },
-      }
-      out += `data: ${JSON.stringify({ id: 'c', object: 'chat.completion.chunk', created: 1, model: 'm', choices: [], usage })}\n\ndata: [DONE]\n\n`
+          ? block(
+              1,
+              { type: 'tool_use', id: `toolu_${seen.length}`, name: step.tool, input: {} },
+              { type: 'input_json_delta', partial_json: JSON.stringify(step.args) },
+            )
+          : block(1, { type: 'text', text: '' }, { type: 'text_delta', text: step.text })
+      out += event('message_delta', {
+        delta: { stop_reason: 'tool' in step ? 'tool_use' : 'end_turn', stop_sequence: null },
+        usage: { output_tokens: 100 },
+      })
+      out += event('message_stop', {})
       return new Response(out, { headers: { 'content-type': 'text/event-stream' } })
     },
   })
   return { server, seen }
+}
+
+/** Messages turns as the assertions read them: a user turn of tool results becomes one `tool` entry per result. */
+function normalise(messages: Record<string, unknown>[]): Record<string, unknown>[] {
+  return messages.flatMap((m) => {
+    if (m.role !== 'user' || !Array.isArray(m.content)) return [m]
+    const results = (m.content as { type: string; content?: unknown }[]).filter((b) => b.type === 'tool_result')
+    if (results.length === 0) return [m]
+    return results.map((b) => ({
+      role: 'tool',
+      content: Array.isArray(b.content) ? b.content.map((c: { text?: string }) => c.text ?? '').join('') : b.content,
+    }))
+  })
 }
 
 const REPORT = JSON.stringify({
@@ -159,7 +187,7 @@ async function runAgent(agent: string, script: Step[], grantTools: string[]) {
 }
 
 test.skipIf(!binary)(
-  'a research agent calls the platform web tools through the gate; the DeepSeek wire rules hold',
+  'a research agent calls the platform web tools through the gate; the Claude wire rules hold',
   async () => {
     const { result, seen, entries } = await runAgent(
       'research',
@@ -190,9 +218,10 @@ test.skipIf(!binary)(
     // The tool result reached the model as its content.
     const toolMessage = seen[1]?.messages.find((m) => m.role === 'tool')
     expect(String(toolMessage?.content)).toContain('runtime-config-connection')
-    // DeepSeek wire rules (concept §8): the first turn's reasoning goes back verbatim with its tool call.
+    // Claude wire rules: the first turn's thinking block goes back verbatim, signature included, with its tool call.
     const assistant = seen[1]?.messages.find((m) => m.role === 'assistant')
     expect(JSON.stringify(assistant)).toContain('REASONING-1')
+    expect(JSON.stringify(assistant)).toContain('sig-1')
     // Cache reads are recorded and priced with the route's rate.
     const usage = result.usage
     expect(usage?.tokens.cacheRead).toBe(1_600)
