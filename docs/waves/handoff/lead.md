@@ -49,6 +49,17 @@ PASS; live research run `01a19e3d-885a`: agent step and both gateway rows on `cl
 48 h production credit table (top 10 consumers and their Haiku estimates) went to the mother; review is ~97 % of the
 current pace, and Haiku angles mostly bill at the 5x long-prompt tier (prompts over 100k tokens).
 
+## After the close-out: review pacing hotfix 2026-11-03
+
+#121 (`d9a8582`): an agent route's `contextLimit` (60k/80k/100k) runs on a bounded OpenCode row (`modelID` = the real
+model) that compacts at bound/1.25; compaction summary calls now count in the step's usage and price. #122 (`f889a72`):
+`review.angle` `contextLimit: 100_000`, `review.synthesis` onto Haiku high (owner); `angle.deep` stays Sonnet. Release
+`f889a72`, `make verify` PASS. Eval (GT dev, 4 bug cases, standard; `01a19e41` vs arm `01a19e7a`): recall 0.75 -> 0.50
+(one case, basalt-ui: same mechanism named on another instance), noise 0.13 -> 0.03, $0.186 -> $0.105 per review; eval
+spend $1.48. Live standard review `01a19e8c-cb80`: synthesis on Haiku, 24 angle calls, max prompt 66k, $0.117.
+Left behind: n=4 cannot separate the synthesis seat from run noise (Wave 9's baseline on `test` can); an arm moving
+`review.angle` off Claude must clear `contextLimit` (`null`); `live-gateway.test.ts` builds resources at collection time.
+
 ## Left behind
 
 - **Abort-driven agent failures** (idle timeout, cancel, tool refusal): `raceAbort` settles the attempt before
