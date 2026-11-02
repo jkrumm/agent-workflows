@@ -75,7 +75,7 @@ usable. Keys resolve through `secrets-run` at start. A ref that does not resolve
 Per request, in order:
 
 0. **A forced request goes to IU.** `x-agw-upstream: iu` on an `/anthropic` path skips the credit pools (read-only check,
-   no body edit), reason `forced` in `gateway_picks` and `lane_detail.fallback` null, since it is a choice and not a fallback: modelpick's probes measure IU itself, so a probe must not land on a credit org. It
+   no body edit; an `eval` request is refused instead, §Credit pacing), reason `forced` in `gateway_picks` and `lane_detail.fallback` null, since it is a choice and not a fallback: modelpick's probes measure IU itself, so a probe must not land on a credit org. It
    beats a bound session, leaves the binding as it found it, and `x-agw-fallback: none` does not refuse it, since the
    caller asked for IU.
    **Claude-Code-shaped requests go to IU.** A request carrying any of the signals above (read-only check, no body edit)
@@ -100,13 +100,14 @@ Per request, in order:
 
 **The fallback order, in one place.** The first line that applies wins:
 
-1. **Forced** (`x-agw-upstream: iu`): IU, whatever the purpose; modelpick's probes only.
-2. **Claude-Code-shaped:** IU, or the 402 with `x-agw-fallback: none`; for `eval` the 403 refusal, since IU is all it could get.
-3. **A bound pool**, while it is eligible (for `eval`: and above its reserve).
-4. **The soonest-expiry pool** (for `eval`: among the eval-eligible ones).
-5. **No pool, production** (`prod`, `verify`, `drift`, no purpose): IU, or the 402 with `x-agw-fallback: none`, after which the agw route falls
+1. **An `eval` request that is forced or Claude-Code-shaped:** the 403 refusal, reason `eval-forced` / `eval-claude-code`. An eval request never reaches IU, so this comes first.
+2. **Forced** (`x-agw-upstream: iu`): IU, whatever the other purposes; modelpick's probes only.
+3. **Claude-Code-shaped:** IU, or the 402 with `x-agw-fallback: none`.
+4. **A bound pool**, while it is eligible (for `eval`: and above its reserve).
+5. **The soonest-expiry pool** (for `eval`: among the eval-eligible ones).
+6. **No pool, production** (`prod`, `verify`, `drift`, no purpose): IU, or the 402 with `x-agw-fallback: none`, after which the agw route falls
    back onto GPT on IU.
-6. **No pool, `eval`:** the 403 refusal. Never IU, never GPT.
+7. **No pool, `eval`:** the 403 refusal, reason `eval-reserve`. Never IU, never GPT.
 
 **Meter.** Per pool and cycle: at boot the ledger's charges since the cycle start, then each response priced with the
 route rates. A row's `cost_reported_usd` carries only a figure priced from a complete reported usage block. Anything less
@@ -157,28 +158,32 @@ carries its runway, and an eval request may draw only on what production does no
 | `daysLeft` | fractional days to `cycleEnd`; null on an unknown cycle |
 | `runwayUsdPerDay` | `creditLeftUsd / daysLeft`; null when `daysLeft` is null or 0 |
 | `evalReserveUsd` | what production keeps (below) |
-| `evalAvailableUsd` | `max(0, creditLeftUsd − evalReserveUsd)` |
-| `evalEligible` | `eligible` and `evalAvailableUsd > 0` |
+| `evalAvailableUsd` | `max(0, creditLeftUsd − evalReserveUsd)`; 0 for a pool that is not `eligible` (unusable, drained, meter error, spent) |
+| `evalEligible` | `evalAvailableUsd > 0` |
 
 **The reserve** is production's pro-rata share of the days left: `creditUsd × daysLeft / cycleLengthDays`, the cycle length
 being cycleStart → cycleEnd (31, 30 or 28 days). It starts at the whole credit and falls to nothing at expiry, so a pool
 that spends below its straight line has surplus and one above it has none. An **unknown cycle** has no pacing basis: the reserve is
-`creditUsd`, and evals never draw from it. `platform.evalReserveUsd` (number ≥ 0) replaces the computed figure for that
-pool; `0` frees the whole credit to evals.
+`creditUsd`, and evals never draw from it unless `evalReserveUsd` is set. `platform.evalReserveUsd` (number ≥ 0) replaces the computed figure for that
+pool; `0` frees the whole credit to evals. A reserve above `creditUsd` leaves the pool no eval draw; the gateway logs a warning at start.
 
 **The eval rule.** For `eval`, a pool is a candidate only if it is eligible as for any request and `creditLeftUsd −
-evalReserveUsd > 0` at the current meter; a request's own cost is not known beforehand, and the headroom covers it. Among
-candidates the order is the usual one, soonest expiry first. **No candidate: the request is refused and never reaches IU**,
-`x-agw-fallback` or not, a Claude-Code-shaped one included. The refusal is recorded in `gateway_picks` as `picked =
-refused`, `reason = eval-reserve`, with no ledger row and no upstream call. A forced request (`x-agw-upstream: iu`) stays forced,
-for modelpick's probes; an eval arm must not set it. Every other purpose picks, orders and falls back exactly as before.
-Concurrent eval requests can overshoot the reserve by their in-flight cost, since the meter only counts a response once it ends; the headroom covers that, as it does for any request.
+evalReserveUsd > 0` at the current meter; a request's own cost is not known beforehand. Among candidates the order is the
+usual one, soonest expiry first. **An eval request never reaches IU.** With no candidate it is refused, `x-agw-fallback`
+or not. So it is when it is Claude-Code-shaped (it could only go to IU) or **forced** (`x-agw-upstream: iu`): eval beats
+forced, and a probe that needs IU must not carry `x-agw-purpose: eval`. The refusal is recorded in `gateway_picks` as
+`picked = refused`, `reason = eval-reserve`, `eval-claude-code` or `eval-forced`, with no ledger row and no upstream call. Every other
+purpose picks, orders and falls back exactly as before.
+
+**The overshoot.** The meter counts a response once it ends, so concurrent eval requests overshoot the reserve by up to their
+in-flight cost (eval concurrency × per-call cost). That is accepted: the reserve is a pacing line, not a cap, and production
+still has the headroom beneath it.
 
 **Why the refusal is a 403 and not a 402.** `isBalanceFailure` counts a 402 as an empty provider balance, so the agw route would
 fall back onto GPT: that spends IU and replaces the arm's model with another, which corrupts the measurement. A
 408, 409, 429 or 5xx is retried (the transports' `RETRYABLE_STATUS`, and the Anthropic, OpenAI and AI SDKs, OpenCode's included, which also
 retry 409), so the same refusal would be asked again. A 403 is neither: a `permission_error` in Anthropic's body shape, whose message
-names `eval reserve` and each pool's `evalAvailableUsd`, so the run fails with its reason. The body carries no balance wording.
+is fixed text that names the reason (`eval reserve`, or why an eval request is refused) and points at each pool's `evalAvailableUsd` on `/health`; building it reads no pool state, so the refusal path does no ledger read. `x-agw-pick-reason` says which. The body carries no balance wording.
 
 ## Callers and attribution
 

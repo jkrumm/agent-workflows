@@ -550,26 +550,31 @@ export function createProxy(options: ProxyOptions): GatewayProxy {
 
   /**
    * Every refusal the pick can end in. The 402 of `x-agw-fallback: none` hands the caller's own route fallback the
-   * word. The 403 of an `eval` request no pool can serve above its reserve is a `permission_error`: not a 402
+   * word. An `eval` request never reaches IU, so it is refused with a 403 `permission_error`: not a 402
    * (`isBalanceFailure`: the agw route would fall back onto GPT and spend IU, corrupting the arm), not 408/409/429/5xx
-   * (the transports and the Anthropic, OpenAI and AI SDKs retry those): nothing classifies or retries a 403.
+   * (the transports and the Anthropic, OpenAI and AI SDKs retry those): nothing classifies or retries a 403. The body is
+   * fixed text: the refusal path reads no pool state, so it costs no ledger read.
    */
   const refusalFor = (
     reason: RefuseReason,
   ): { status: number; type: string; message: string; headers: Record<string, string> } => {
+    const evalRefusal = (message: string) => ({
+      status: EVAL_REFUSAL_STATUS,
+      type: 'permission_error',
+      message,
+      headers: { 'x-agw-pick-reason': reason },
+    })
     switch (reason) {
-      case 'eval-reserve': {
-        const available = pools
-          .status()
-          .filter((pool) => pool.enabled && pool.keyResolved)
-          .map((pool) => `${pool.id} $${pool.evalAvailableUsd.toFixed(2)}`)
-        return {
-          status: EVAL_REFUSAL_STATUS,
-          type: 'permission_error',
-          message: `eval reserve: no credit pool has credit above its production reserve (evalAvailableUsd: ${available.join(', ') || 'no pool'})`,
-          headers: { 'x-agw-pick-reason': reason },
-        }
-      }
+      case 'eval-reserve':
+        return evalRefusal(
+          'eval reserve: no credit pool has credit above its production reserve; see evalAvailableUsd of each pool on the gateway /health',
+        )
+      case 'eval-forced':
+        return evalRefusal('eval refused: an eval request is never sent to IU, and x-agw-upstream: iu asks for IU')
+      case 'eval-claude-code':
+        return evalRefusal(
+          'eval refused: a Claude-Code-shaped request cannot use a credit pool, and an eval request is never sent to IU',
+        )
       case 'no-pool':
       case 'claude-code':
       case 'drained-retry':

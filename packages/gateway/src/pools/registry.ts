@@ -55,3 +55,7 @@ export function parseRegistry(json: unknown): RegistryPool[] {
   }
   return pools
 }
+
+/** Pools whose `evalReserveUsd` exceeds their `creditUsd`: no eval request can ever draw on them. Logged at start. */
+export const reserveAboveCredit = (registry: readonly RegistryPool[]): RegistryPool[] =>
+  registry.filter((pool) => pool.evalReserveUsd !== undefined && pool.evalReserveUsd > pool.creditUsd)

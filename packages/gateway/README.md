@@ -41,7 +41,7 @@ which is re-serialised with the concrete id. **Not forwarded:** every credential
 | `x-agw-fallback: none` | a 402 instead of the IU fallback (`/anthropic` paths). Does not touch an `eval` request: that is refused either way |
 | `x-agw-purpose: eval` | draws only on credit above a pool's eval reserve; with none, the 403 below, never IU (`/anthropic` paths). Any other purpose is attribution only |
 | `x-agw-usage: caller` | from caller `agw` on `/openai/v1/images/`, `/openai/v1/audio/`, `/gemini/v1beta/` or `/replicate/v1/`: no ledger row. Ignored from any other caller or on any other path |
-| `x-agw-upstream: iu` | an `/anthropic` path skips the credit pools, reason `forced` in `gateway_picks`; no effect elsewhere |
+| `x-agw-upstream: iu` | an `/anthropic` path skips the credit pools, reason `forced` in `gateway_picks`; no effect elsewhere. An `eval` request with it is refused (403) |
 
 Project and workspace values over 200 characters are dropped. `x-agw-fallback`, `x-agw-usage` and
 `x-agw-upstream` compare case-insensitively; `x-agw-workspace` is exact, as the `usage.records` check is.
@@ -71,24 +71,24 @@ pool's refs are not read. The process never reads `iu.env` or `athena-iu.env`.
 `docs/gateway.md` §Picking a pool):
 
 1. `x-agw-upstream: iu` goes to IU, reason `forced`, with `lane_detail.fallback` null: a choice, not a fallback. It beats a bound session, writes and clears no binding, and
-   `x-agw-fallback: none` does not refuse it. An `eval` request may be forced too; that is for modelpick's probes, an eval arm must not set it.
-2. A Claude-Code-shaped request skips the credit pools: IU, or the 402 with `x-agw-fallback: none`; for `eval`, the refusal below.
+   `x-agw-fallback: none` does not refuse it. **Not for `eval`:** an eval request that is forced is refused (`eval-forced`), never IU; a probe that needs IU must not carry `x-agw-purpose: eval`.
+2. A Claude-Code-shaped request skips the credit pools: IU, or the 402 with `x-agw-fallback: none`; for `eval`, the refusal below (`eval-claude-code`).
 3. A bound session stays on its pool while that pool is eligible (for `eval`: and above its reserve, else it is picked anew).
 4. A new session takes the eligible pool that expires soonest (for `eval`: among the pools above their reserve).
 5. With no pool eligible the request goes to IU, unless the caller sent `x-agw-fallback: none`: then a 402 with the
    balance marker, and the agw route falls back onto GPT on IU.
 6. A pool's balance refusal marks it drained and picks again without it, pool by pool, until the pick is no pool: IU,
    or the 402.
-7. **An `eval` request with no pool above its reserve** is refused, `picked = refused`, reason `eval-reserve`, no ledger row and no upstream call, `x-agw-fallback` or not.
+7. **An `eval` request with no pool above its reserve** is refused, `picked = refused`, reason `eval-reserve`, no ledger row and no upstream call, `x-agw-fallback` or not. The 403 carries `x-agw-pick-reason` (`eval-reserve`, `eval-forced` or `eval-claude-code`).
 
-**The refusal is a 403**, an Anthropic-shaped `permission_error` whose message names `eval reserve` and every pool's
-`evalAvailableUsd`. It is not a 402: `isBalanceFailure` treats that as an empty balance and the agw route would fall
+**The refusal is a 403**, an Anthropic-shaped `permission_error` with a fixed message that names the reason and points at
+each pool's `evalAvailableUsd` on `/health` (it reads no pool state, so no ledger read). It is not a 402: `isBalanceFailure` treats that as an empty balance and the agw route would fall
 back onto GPT on IU, spending IU and replacing the arm's model. It is not a 408, 409, 429 or 5xx either: the transports
 (`RETRYABLE_STATUS`) and the Anthropic, OpenAI and AI SDKs (OpenCode's included; they retry 409 too) ask again. Nothing
 retries or classifies a 403, so the run fails with the reason in its message. `test/proxy.test.ts` asserts
 `isBalanceFailure` is false on the exact body.
 
-**Pacing.** The reserve and the runway are `docs/gateway.md` §Credit pacing; `platform.evalReserveUsd` overrides a pool's reserve.
+**Pacing.** The reserve and the runway are `docs/gateway.md` §Credit pacing; `platform.evalReserveUsd` overrides a pool's reserve (a value above `creditUsd` logs a warning at start). An unknown cycle never serves evals unless it is set.
 
 The label of the IU passthrough is `iu-api` everywhere, because a credit pool is named `iu`. Bindings are written only
 after an upstream 2xx.
