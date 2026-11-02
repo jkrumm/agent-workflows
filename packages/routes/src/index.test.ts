@@ -846,6 +846,10 @@ describe('contextLimit', () => {
     expect(() =>
       validateArm({ routes: { 'review.angle': { model: other, contextLimit: 80_000, fallback: null } } }),
     ).toThrow(/Claude model/)
+    // The table is held to it too, not only an arm: an entry with a bound on another model does not parse.
+    expect(() => routeSchema.parse({ ...entry('review.angle'), model: other, contextLimit: 80_000 })).toThrow(
+      /Claude model/,
+    )
   })
 
   test('the fallback has no bound of its own to patch', () => {

@@ -90,51 +90,60 @@ describe.skipIf(!live)('live: a bounded route on the pinned build (a loopback st
   const seen: Seen[] = []
   /** What the stand-in answers request number n with (1-based) and the usage it reports; unset: PONG or a summary. */
   let script: ((r: Seen, n: number) => { out: string | { tool: string; input: unknown }; usage: CallUsage }) | undefined
-  const stateDir = mkdtempSync(join(tmpdir(), 'och-live-ctx-'))
-  const gateway = Bun.serve({
-    hostname: '127.0.0.1',
-    port: 0,
-    async fetch(req) {
-      const url = new URL(req.url)
-      if (req.method !== 'POST' || url.pathname !== '/anthropic/v1/messages') return new Response('{}', { status: 404 })
-      const r: Seen = { path: url.pathname, body: (await req.json()) as Seen['body'] }
-      seen.push(r)
-      const scripted = script?.(r, seen.length)
-      if (scripted) return reply(String(r.body.model), scripted.out, scripted.usage)
-      return reply(String(r.body.model), isSummaryCall(r) ? SUMMARY : 'PONG')
-    },
-  })
-  const server = new OpenCodeServer({
-    stateDir,
-    env: {
-      PATH: '/usr/bin:/bin',
-      AGW_GATEWAY_URL: `http://127.0.0.1:${gateway.port}`,
-      AGW_GATEWAY_TOOL_TOKEN: 'dummy-door-token',
-    },
-    command: [
-      '/usr/bin/env',
-      'HTTP_PROXY=http://127.0.0.1:9',
-      'HTTPS_PROXY=http://127.0.0.1:9',
-      'NO_PROXY=127.0.0.1,localhost',
-      BIN,
-    ],
-  })
-  const host = new OpenCodeHost({
-    server,
-    stateDir,
-    agents: [{ name: 'probe', route: 'review.angle', agentsMd: '# Rules\n\nAnswer in one word.\n' }],
-  })
+  // Nothing below starts at collection time: `describe.skipIf` still runs this body, so every resource is made in
+  // `beforeAll`, which a skipped block never runs.
+  let stateDir: string
+  let gateway: ReturnType<typeof Bun.serve>
+  let server: OpenCodeServer
+  let host: OpenCodeHost
 
   beforeAll(async () => {
+    stateDir = mkdtempSync(join(tmpdir(), 'och-live-ctx-'))
+    gateway = Bun.serve({
+      hostname: '127.0.0.1',
+      port: 0,
+      async fetch(req) {
+        const url = new URL(req.url)
+        if (req.method !== 'POST' || url.pathname !== '/anthropic/v1/messages')
+          return new Response('{}', { status: 404 })
+        const r: Seen = { path: url.pathname, body: (await req.json()) as Seen['body'] }
+        seen.push(r)
+        const scripted = script?.(r, seen.length)
+        if (scripted) return reply(String(r.body.model), scripted.out, scripted.usage)
+        return reply(String(r.body.model), isSummaryCall(r) ? SUMMARY : 'PONG')
+      },
+    })
+    server = new OpenCodeServer({
+      stateDir,
+      env: {
+        PATH: '/usr/bin:/bin',
+        AGW_GATEWAY_URL: `http://127.0.0.1:${gateway.port}`,
+        AGW_GATEWAY_TOOL_TOKEN: 'dummy-door-token',
+      },
+      command: [
+        '/usr/bin/env',
+        'HTTP_PROXY=http://127.0.0.1:9',
+        'HTTPS_PROXY=http://127.0.0.1:9',
+        'NO_PROXY=127.0.0.1,localhost',
+        BIN,
+      ],
+    })
+    host = new OpenCodeHost({
+      server,
+      stateDir,
+      agents: [{ name: 'probe', route: 'review.angle', agentsMd: '# Rules\n\nAnswer in one word.\n' }],
+    })
     await server.start()
   }, 90_000)
   afterAll(async () => {
-    host.close()
-    await server.close()
-    const pid = (JSON.parse(readFileSync(join(server.root, 'server.json'), 'utf8')) as { pid: number }).pid
-    process.kill(pid, 'SIGKILL')
-    await gateway.stop(true)
-    rmSync(stateDir, { recursive: true, force: true })
+    host?.close()
+    await server?.close()
+    if (server) {
+      const pid = (JSON.parse(readFileSync(join(server.root, 'server.json'), 'utf8')) as { pid: number }).pid
+      process.kill(pid, 'SIGKILL')
+    }
+    await gateway?.stop(true)
+    if (stateDir) rmSync(stateDir, { recursive: true, force: true })
   })
 
   const attribution = (runId: string): Attribution => ({

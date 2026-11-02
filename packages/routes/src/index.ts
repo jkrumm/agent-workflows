@@ -134,14 +134,7 @@ function patchedEntries(raw: unknown): Map<string, RouteEntry> {
     const base = isRouteId(patchId) ? DEFAULT_ROUTES[patchId] : undefined
     if (!base) throw new RouteOverrideError(`unknown route "${patchId}" (known: ${routeIds().join(', ')})`)
     checkModels(patchId, patch, base)
-    const entry = applyPatch(patchId, base, patch)
-    // The server registers a bounded alias row for each Claude model only, so another model has none to run on.
-    if (entry.contextLimit !== undefined && !CLAUDE_MODELS.includes(entry.model)) {
-      throw new RouteOverrideError(
-        `route "${patchId}": contextLimit needs a Claude model (the OpenCode server has a bounded row for those only), not "${entry.model}"`,
-      )
-    }
-    resolved.set(patchId, entry)
+    resolved.set(patchId, applyPatch(patchId, base, patch))
   }
   return resolved
 }
