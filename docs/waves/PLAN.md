@@ -108,7 +108,7 @@ eval needs move into Wave 5. The rest waits.
   by modelpick's 251 zero-token catalog rows. `agw routes --format json` lacks the alias map. The Codex lane keeps the
   personal IU key outside the gateway (documented).
 
-## Wave 5 — Eval foundations            <!-- status: active -->
+## Wave 5 — Eval foundations            <!-- status: done 2026-11-02, release bf76dc4 -->
 
 Disjoint changes, one fan-out batch:
 
@@ -123,8 +123,12 @@ Disjoint changes, one fan-out batch:
   via `z.toJSONSchema`; zod parse stays as the last check. The OpenAI wire moves from `json_object` to `json_schema`
   where IU supports it. Sonnet guard: effort `none` on a Sonnet route is a config error. Spend is the gateway's rows.
 - **One model id per model** (normalise provider-echoed ids) and the route id on every step, so reports group by route.
+**Left behind:** close-out in `docs/waves/handoff/lead.md` at `88cea3b`. A rollback past migration 0015 ignores `runs.arm`
+  (drain armed evals first). `docs/review-v2.md:175` and `scripts/launch-gateway.sh:7` still name `AGW_ROUTES`. AGENTS.md's
+  status line stops at Wave 3. Flaky `platform.test.ts` "concurrent runs" again. Carried: me2 placeholder keys, `agw
+  routes` without the alias map, Codex lane IU key.
 
-## Wave 6 — Claude seats, measured            <!-- status: pending -->
+## Wave 6 — Claude seats, measured            <!-- status: active -->
 
 Owner, 2026-11-02: agw runs on Claude with deliberate model and effort choices everywhere, not only where Wave 3
 swapped them. This wave pulls the structural half of Wave 12 (tiers) forward; Wave 11's review sweep still sets the

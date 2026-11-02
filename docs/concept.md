@@ -546,3 +546,15 @@ One entry per phase: what we learned, what changed on this page, and why.
   scripts reading deployed paths ask for a run with `HOME` at an empty temp dir.
 - **Does the page hold?** Yes, as v3.14.
 
+### Gateway Wave 5 — Eval foundations, 2026-11-02
+
+- **Learned.** "Disjoint changes" was not true at the file level; naming the owned functions inside shared files let four
+  workers run at once without a conflict. The two reviewers again found disjoint defects; the native review found the
+  two call sites that silently dropped the arm, the one defect that would have corrupted the review sweep.
+- **Changed.** Release `bf76dc4`. Run-scoped arms (`agw eval run --arm`; `AGW_ROUTES` and `routes.json` gone), case
+  replays as children of `eval.run` with tree cost, agent JSON through `submit_result`, `json_schema` on the wires, one
+  model id per model and the route id on every step.
+- **Process.** A worker that stops to ask about a wrong brief beats one that routes around it. A CI flake on the train's
+  sha needs `gh run rerun --failed` before the train runs again. `agw review` cost scales with the diff ($1.77 on +1449).
+- **Does the page hold?** Yes, as v3.14.
+
