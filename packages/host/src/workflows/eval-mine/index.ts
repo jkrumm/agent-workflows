@@ -4,6 +4,7 @@ import {
   DEFAULT_CONTROLS,
   type Exec,
   exec as bunExec,
+  GT_LIMIT,
   GtCandidate,
   GtLabelRecord,
   MINER_VERSION,
@@ -15,6 +16,7 @@ import { z } from 'zod'
 import type { HostWorkflow } from '../../operations.ts'
 import {
   appendLabel,
+  awaitsThirdSeat,
   type CaseSummary,
   controlCases,
   hasSeatError,
@@ -22,13 +24,17 @@ import {
   readOwnerEmails,
   readRecords,
   rebuildCases,
+  replaceLabel,
+  type Versions,
   type Warn,
   writeCandidates,
   writeReport,
 } from './files.ts'
-import { LABELER_VERSION, type LabelCaller, labelCandidate } from './label.ts'
+import { LABELER_C_VERSION, LABELER_VERSION, type LabelCaller, labelCandidate, labelThirdSeat } from './label.ts'
 
-export { LABELER_VERSION, type LabelCaller, seatAnswer } from './label.ts'
+export { LABELER_C_VERSION, LABELER_VERSION, type LabelCaller, seatAnswer } from './label.ts'
+
+const VERSIONS: Versions = { labelerVersion: LABELER_VERSION, cVersion: LABELER_C_VERSION }
 
 export const EVAL_MINE_ID = 'eval.mine'
 const DEFAULT_CONCURRENCY = 2
@@ -61,7 +67,9 @@ export const evalMineInput = z
       .int()
       .min(0)
       .optional()
-      .describe('Candidates to label this run (two paid calls each), default 0: mine only'),
+      .describe(
+        'New candidates to label this run (two paid calls each, a third when the first two disagree), default: mine only. Given (0 included) with --yes, it first asks the third labeller of every record that lacks it',
+      ),
     seed: z.number().int().optional().describe('Seed of the label order and the control pick, default 1'),
     controls: z
       .number()
@@ -100,6 +108,13 @@ const Estimate = z.object({
 const Summary = z.object({
   labelled: z.number().int().describe('Candidates with a label record under the current labeler version'),
   accepted: z.number().int(),
+  acceptPaths: z.object({ 'a+b': z.number().int(), 'a+c': z.number().int(), 'b+c': z.number().int() }),
+  pendingThirdSeat: z
+    .number()
+    .int()
+    .describe(
+      'Records where a and b disagree and c has not answered; counted under their two-seat reason until it does',
+    ),
   rejected: z.object({ total: z.number().int(), byReason: z.record(z.string(), z.number().int()) }),
   bugClasses: z.record(z.string(), z.number().int()),
   cases: z.object({
@@ -112,13 +127,20 @@ export const evalMineOutput = z.object({
   suite: z.enum(['review']),
   minerVersion: z.string(),
   labelerVersion: z.string(),
+  labelerCVersion: z.string(),
+  limit: z.string().describe('What no one checked: every report of this ground truth states it'),
   funnel: z.record(z.string(), z.number().int()),
   labelPlan: z
-    .object({ candidates: z.number().int().describe('Unlabelled candidates this run would label'), estimate: Estimate })
+    .object({
+      candidates: z.number().int().describe('Unlabelled candidates this run would label'),
+      thirdSeat: z.number().int().describe('Records of labelled candidates that wait for the third labeller'),
+      estimate: Estimate,
+    })
     .nullable()
     .describe('Null without --label'),
   spent: z.boolean().describe('False: no label call was made (no --label, or no --yes)'),
   labelledThisRun: z.number().int(),
+  thirdSeatThisRun: z.number().int().describe('Records that gained the third labeller this run'),
   stopped: z
     .string()
     .nullable()
@@ -127,7 +149,7 @@ export const evalMineOutput = z.object({
   runId: z.string(),
 })
 
-/** The unlabelled candidates in the seeded order (the owner sample is random, and the order survives growing labels). */
+/** The unlabelled candidates in the seeded order (the order survives growing labels). */
 function pending(
   candidates: GtCandidate[],
   labels: Map<string, GtLabelRecord>,
@@ -140,11 +162,27 @@ function pending(
   })
 }
 
+/** Records waiting for the third labeller, by candidate id (candidates that left `candidates.jsonl` are not asked). */
+function awaiting(
+  candidates: GtCandidate[],
+  labels: Map<string, GtLabelRecord>,
+  relabelErrors: boolean,
+): { candidate: GtCandidate; record: GtLabelRecord }[] {
+  return [...candidates]
+    .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+    .flatMap((candidate) => {
+      const record = labels.get(candidate.id)
+      return record && awaitsThirdSeat(record, relabelErrors) ? [{ candidate, record }] : []
+    })
+}
+
 /**
  * `agw eval mine review`: the ground-truth miner (`docs/review-v2.md` §Ground truth). It mines SZZ candidates and clean
  * controls from the owner's history (`candidates.jsonl`, `report.json`), and with `--label N --yes` labels the next N
- * unlabelled candidates on two vendors (`labels.jsonl`, one record as each finishes), then rebuilds `cases.jsonl` and
- * `rejected.jsonl` from every record. Everything is under `$AGW_EVAL_DIR/review-gt/`; the journal holds counts only.
+ * unlabelled candidates on two vendors, plus a third when the two disagree (`labels.jsonl`, one record as each
+ * finishes), after adding the third labeller to every record that lacks it, then rebuilds `cases.jsonl` and
+ * `rejected.jsonl` from every record (2 of 3 labellers accept). Everything is under `$AGW_EVAL_DIR/review-gt/`; the
+ * journal holds counts only. Every report states `GT_LIMIT`.
  */
 export function createEvalMine(options: EvalMineOptions): HostWorkflow {
   const env = options.env ?? process.env
@@ -164,6 +202,7 @@ export function createEvalMine(options: EvalMineOptions): HostWorkflow {
     async run(ctx, input) {
       const seed = input.seed ?? 1
       const wanted = input.label ?? 0
+      const labelling = input.label !== undefined
       const relabelErrors = input.relabelErrors ?? false
 
       const mined = await ctx.step('mine', async () => {
@@ -181,6 +220,7 @@ export function createEvalMine(options: EvalMineOptions): HostWorkflow {
             {
               at: now().toISOString(),
               minerVersion: MINER_VERSION,
+              limit: GT_LIMIT,
               incomplete: true,
               skippedRepos: result.skipped,
               funnel: result.funnel,
@@ -199,7 +239,7 @@ export function createEvalMine(options: EvalMineOptions): HostWorkflow {
         const summary = rebuildCases({
           env,
           warn,
-          labelerVersion: LABELER_VERSION,
+          versions: VERSIONS,
           controls: controlCases(result.controls),
         })
         writeReport(report(result.funnel, summary, now()), env)
@@ -207,15 +247,14 @@ export function createEvalMine(options: EvalMineOptions): HostWorkflow {
       })
 
       const candidates = () => readRecords('candidates.jsonl', GtCandidate, env, warn)
-      const plan = wanted
+      const plan = labelling
         ? await ctx.step('plan', async () => {
-            const toLabel = Math.min(
-              wanted,
-              pending(candidates(), latestLabels(env, LABELER_VERSION, warn), { seed, relabelErrors }).length,
-            )
+            const labels = latestLabels(env, VERSIONS, warn)
+            const toLabel = Math.min(wanted, pending(candidates(), labels, { seed, relabelErrors }).length)
             const estimate = await labelEstimate(options.history, env, warn)
             return {
               candidates: toLabel,
+              thirdSeat: awaiting(candidates(), labels, relabelErrors).length,
               estimate: {
                 historyRuns: estimate.runs,
                 meanCostUsd: estimate.meanCost,
@@ -228,12 +267,14 @@ export function createEvalMine(options: EvalMineOptions): HostWorkflow {
         suite: input.suite,
         minerVersion: MINER_VERSION,
         labelerVersion: LABELER_VERSION,
+        labelerCVersion: LABELER_C_VERSION,
+        limit: GT_LIMIT,
         funnel: mined.funnel,
         labelPlan: plan,
         runId: ctx.runId,
       }
       if (!plan || !input.yes) {
-        return { ...base, spent: false, labelledThisRun: 0, stopped: null, summary: mined.summary }
+        return { ...base, spent: false, labelledThisRun: 0, thirdSeatThisRun: 0, stopped: null, summary: mined.summary }
       }
 
       const labelled = await ctx.step('label', ({ callContext, signal, progress }) =>
@@ -255,17 +296,24 @@ export function createEvalMine(options: EvalMineOptions): HostWorkflow {
         }),
       )
       const summary = await ctx.step('cases', () => {
-        const rebuilt = rebuildCases({ env, warn, labelerVersion: LABELER_VERSION })
+        const rebuilt = rebuildCases({ env, warn, versions: VERSIONS })
         writeReport(report(mined.funnel, rebuilt, now()), env)
         return rebuilt
       })
-      return { ...base, spent: true, labelledThisRun: labelled.labelled, stopped: labelled.stopped, summary }
+      return {
+        ...base,
+        spent: true,
+        labelledThisRun: labelled.labelled,
+        thirdSeatThisRun: labelled.thirdSeat,
+        stopped: labelled.stopped,
+        summary,
+      }
     },
   })
   return {
     workflow,
     summary:
-      'Mine the review ground truth from the owner’s fix history; --label N --yes labels N candidates on two vendors (spends)',
+      'Mine the review ground truth from the owner’s fix history; --label N --yes labels N candidates on two vendors, a third when they disagree, and adds the third to records that lack it (spends)',
     cli: { positional: ['suite'], defaultFormat: 'json', mutating: true },
   }
 }
@@ -298,10 +346,14 @@ function report(funnel: Record<string, number>, summary: CaseSummary, at: Date) 
     at: at.toISOString(),
     minerVersion: MINER_VERSION,
     labelerVersion: LABELER_VERSION,
+    labelerCVersion: LABELER_C_VERSION,
+    limit: GT_LIMIT,
     funnel,
     labelled: summary.labelled,
     accepted: summary.accepted,
     acceptanceRate: summary.labelled ? summary.accepted / summary.labelled : null,
+    acceptPaths: summary.acceptPaths,
+    pendingThirdSeat: summary.pendingThirdSeat,
     rejected: summary.rejected,
     bugClasses: summary.bugClasses,
     cases: summary.cases,
@@ -326,44 +378,63 @@ type Labelling = {
 }
 
 /**
- * Labels the next unlabelled candidates, `concurrency` at a time, each record appended as its candidate finishes. A
- * resumed run counts the records it already wrote (by run id) against `wanted`. Stops taking candidates at the first
- * failure that is not a seat answer. Those in flight always finish and keep their records, an abort or a failed write
- * included, before the failure is rethrown.
+ * First adds the third labeller to every record that lacks it (in place, `replaceLabel`), then labels the next
+ * unlabelled candidates, `concurrency` at a time, each record appended as its candidate finishes (a candidate whose two
+ * labellers disagree gets the third in the same record). A resumed run counts the records it already wrote (by run id)
+ * against `wanted`. Stops taking work at the first failure that is not a seat answer. Those in flight always finish
+ * and keep their records, an abort or a failed write included, before the failure is rethrown.
  */
-async function runLabelling(job: Labelling): Promise<{ labelled: number; stopped: string | null }> {
-  const labels = latestLabels(job.env, LABELER_VERSION, job.warn)
+async function runLabelling(job: Labelling): Promise<{ labelled: number; thirdSeat: number; stopped: string | null }> {
+  const labels = latestLabels(job.env, VERSIONS, job.warn)
+  const candidates = readRecords('candidates.jsonl', GtCandidate, job.env, job.warn)
   const done = [...labels.values()].filter((r) => r.runId === job.runId).length
-  const queue = pending(readRecords('candidates.jsonl', GtCandidate, job.env, job.warn), labels, job).slice(
-    0,
-    Math.max(0, job.wanted - done),
-  )
+  type Task = { candidate: GtCandidate; record?: GtLabelRecord }
+  const queue: Task[] = [
+    ...awaiting(candidates, labels, job.relabelErrors),
+    ...pending(candidates, labels, job)
+      .slice(0, Math.max(0, job.wanted - done))
+      .map((candidate) => ({ candidate })),
+  ]
   let next = 0
   let labelled = done
+  let thirdSeat = 0
   let stopped: string | null = null
   /** An abort or a failed write: no worker takes another candidate, those in flight finish, then it is rethrown. */
   let failure: { error: unknown } | null = null
   const worker = async () => {
     while (stopped === null && failure === null && next < queue.length) {
-      const candidate = queue[next++] as GtCandidate
+      const task = queue[next++] as Task
       try {
         job.signal.throwIfAborted()
-        const outcome = await labelCandidate({
-          candidate,
+        const call = {
+          candidate: task.candidate,
           home: job.home,
           exec: job.exec,
           registry: job.registry,
           callContext: job.callContext,
           runId: job.runId,
           now: job.now,
-        })
-        if ('stop' in outcome) {
+        }
+        const outcome = task.record
+          ? await labelThirdSeat({ ...call, record: task.record })
+          : await labelCandidate(call)
+        if ('record' in outcome) {
+          if (task.record) {
+            // A third seat that stopped leaves the record as it was: nothing to write.
+            if (outcome.record !== task.record) {
+              replaceLabel(outcome.record, job.env, job.warn)
+              thirdSeat++
+            }
+          } else {
+            appendLabel(outcome.record, job.env)
+            labelled++
+          }
+          job.progress()
+        }
+        if (outcome.stop !== undefined) {
           stopped ??= outcome.stop
           return
         }
-        appendLabel(outcome.record, job.env)
-        labelled++
-        job.progress()
       } catch (error) {
         if (job.signal.aborted) failure ??= { error: job.signal.reason ?? error }
         else failure ??= { error }
@@ -372,5 +443,5 @@ async function runLabelling(job: Labelling): Promise<{ labelled: number; stopped
   }
   await Promise.all(Array.from({ length: Math.max(1, Math.min(job.concurrency, queue.length)) }, worker))
   if (failure) throw (failure as { error: unknown }).error
-  return { labelled, stopped }
+  return { labelled, thirdSeat, stopped }
 }

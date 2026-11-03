@@ -92,23 +92,25 @@ const FIXTURE_CONTROL: JudgeInput = { ...FIXTURE_BUG, bug: null, preselected: []
 
 /**
  * The version of the judge: bumped by any change to the system text, either rendered prompt (bug case and control), the
- * diff rendering and cap, the answer schemas or the seat's wire, model, effort or output ceiling. The constant below is
- * this value written down.
+ * diff rendering and cap, the answer schemas or either seat's (`a`, `b`) wire, model, effort or output ceiling. The
+ * constant below is this value written down. One version covers both seats: the κ between them is only meaningful for
+ * the pair.
  */
 export const judgeVersion = () =>
   pinnedVersion('eval-judge', {
     system: JUDGE_SYSTEM,
     prompts: [judgePrompt(FIXTURE_BUG), judgePrompt(FIXTURE_CONTROL)],
-    routes: ['eval.judge'],
+    routes: ['eval.judge', 'eval.judge.b'],
     schemas: [answerSchema(FIXTURE_BUG), answerSchema(FIXTURE_CONTROL)],
   })
 
-export const JUDGE_VERSION = 'eval-judge-ced286944fd4'
+export const JUDGE_VERSION = 'eval-judge-54c2faf372e9'
 
 export const createEvalJudge = (deps: LlmDeps) =>
   defineCapability({
     id: 'eval.judge',
-    summary: 'Classify a review’s findings against a known bug on the pinned judge seat (eval.judge)',
+    summary:
+      'Classify a review’s findings against a known bug on a pinned judge seat (a: eval.judge, Claude; b: eval.judge.b, GPT)',
     input: JudgeInput,
     output: JudgeOutput,
     // Not `agw eval …`: a command that is a prefix of another is refused, and `agw eval` is the harness.
@@ -116,7 +118,7 @@ export const createEvalJudge = (deps: LlmDeps) =>
     async handler(input, ctx) {
       if (input.findings.length === 0) return { findings: [], model: '' }
       const { data, route } = await completeJson(deps, {
-        routeId: 'eval.judge',
+        routeId: input.seat === 'b' ? 'eval.judge.b' : 'eval.judge',
         system: JUDGE_SYSTEM,
         prompt: judgePrompt(input),
         schema: answerSchema(input),

@@ -1,20 +1,28 @@
-import { homedir } from 'node:os'
-import { exec as bunExec, type Exec } from '@agent-workflows/eval'
+import { writeFileAtomic, gtPath, GT_LIMIT, JudgeCalibration } from '@agent-workflows/eval'
 import { defineWorkflow, WorkflowError } from '@agent-workflows/runtime'
 import { Pool } from 'pg'
 import { z } from 'zod'
 import type { HostWorkflow } from '../../operations.ts'
-import { IngestError, ingestLabels } from './ingest.ts'
+import {
+  CalibrateInputError,
+  type CalibrationPlan,
+  estimateCost,
+  type JudgeCaller,
+  planCalibration,
+  runCalibration,
+} from './calibrate.ts'
 import { type JudgeRunReader, pgJudgeRuns } from './judge-runs.ts'
-import { buildPack, PackInputError } from './pack.ts'
 
-export const EVAL_GT_PACK_ID = 'eval.gt.pack'
-export const EVAL_GT_INGEST_ID = 'eval.gt.ingest'
+export const EVAL_GT_CALIBRATE_ID = 'eval.gt.calibrate'
+const DEFAULT_PAIRS = 100
+const DEFAULT_CONCURRENCY = 4
 
 export interface EvalGtOptions {
+  /** Judge `b`'s caller: any registry that serves `eval.judge`. */
+  registry: JudgeCaller
   env?: Record<string, string | undefined>
-  exec?: Exec
-  /** Default: the journal in Postgres (`AGW_PG_URL`, `AGW_PG_SCHEMA`), one short-lived connection per pack. */
+  now?: () => Date
+  /** Default: the journal in Postgres (`AGW_PG_URL`, `AGW_PG_SCHEMA`), one short-lived connection per calibration. */
   judgeRuns?: JudgeRunReader
 }
 
@@ -22,8 +30,8 @@ function envJudgeRuns(env: Record<string, string | undefined>): JudgeRunReader {
   return {
     async judgeRuns(evalRunIds) {
       const url = env.AGW_PG_URL?.trim()
-      if (!url) throw new Error('AGW_PG_URL is not set: the pack reads the judge calls from the journal')
-      const pool = new Pool({ connectionString: url, max: 1, application_name: 'agw-eval-gt-pack' })
+      if (!url) throw new Error('AGW_PG_URL is not set: the calibration reads the judge calls from the journal')
+      const pool = new Pool({ connectionString: url, max: 1, application_name: 'agw-eval-gt-calibrate' })
       pool.on('error', () => {})
       try {
         return await pgJudgeRuns(pool, env.AGW_PG_SCHEMA?.trim() || 'agw').judgeRuns(evalRunIds)
@@ -34,135 +42,131 @@ function envJudgeRuns(env: Record<string, string | undefined>): JudgeRunReader {
   }
 }
 
-const Interval = z.object({ p: z.number(), lo: z.number(), hi: z.number() }).nullable()
-const Bar = z.object({ threshold: z.number(), value: z.number().nullable(), met: z.boolean().nullable() })
-const Tally = { answered: z.number().int(), yes: z.number().int(), no: z.number().int(), unsure: z.number().int() }
+const Plan = z.object({
+  pairs: z.number().int(),
+  judgePositive: z.number().int(),
+  judgeNegative: z.number().int(),
+  judgeBCalls: z.number().int().describe('One call per judge-a run holding a sampled pair'),
+  estimateUsd: z.number().nullable().describe('Prompt size at the judge-b route’s rate; a rough figure'),
+})
 
-export function createEvalGtWorkflows(options: EvalGtOptions = {}): HostWorkflow[] {
+export const evalGtCalibrateOutput = z.object({
+  limit: z.string().describe('What no one checked: every report of this ground truth states it'),
+  plan: Plan,
+  spent: z.boolean().describe('False: no judge call was made (no --yes)'),
+  notes: z.array(z.string()).describe('Shortfalls and skipped runs'),
+  calibration: z
+    .custom<JudgeCalibration>((value) => JudgeCalibration.safeParse(value).success)
+    .nullable()
+    .describe('What was written to judge-calibration.json; null without --yes'),
+  written: z.string().nullable().describe('The file, null without --yes'),
+  scorer: z
+    .string()
+    .nullable()
+    .describe('What review’s scorer does with it from the next host start: one judge, or both'),
+})
+
+const planOf = (plan: CalibrationPlan) => ({
+  pairs: plan.pairs.length,
+  judgePositive: plan.positives,
+  judgeNegative: plan.negatives,
+  judgeBCalls: plan.runs.size,
+  estimateUsd: estimateCost(plan),
+})
+
+/**
+ * `agw eval gt calibrate`: how far two judges on different vendors agree (`docs/review-v2.md` §Matching and judging).
+ * It takes the pairs (a finding and the case's bug) out of the judge-a calls of the given eval runs, half judge-positive
+ * and half judge-negative, re-asks judge `b` on exactly those inputs, and writes Cohen's κ with its interval, the
+ * agreement, the confusion table and the agreement on the unmatched classes to `review-gt/judge-calibration.json`.
+ * Without `--yes` it prints the plan and spends nothing. No human checks it: the output states `GT_LIMIT`.
+ */
+export function createEvalGtWorkflows(options: EvalGtOptions): HostWorkflow[] {
   const env = options.env ?? process.env
-  const exec = options.exec ?? bunExec
-  const home = env.AGW_EVAL_HOME?.trim() || homedir()
+  const now = options.now ?? (() => new Date())
   const judgeRuns = options.judgeRuns ?? envJudgeRuns(env)
+  const deps = { env, judgeRuns, judge: options.registry }
 
-  const pack = defineWorkflow({
-    id: EVAL_GT_PACK_ID,
-    version: '2026-11-02.1',
+  const calibrate = defineWorkflow({
+    id: EVAL_GT_CALIBRATE_ID,
+    version: '2026-11-03.1',
+    concurrency: 1,
     input: z
       .object({
         evalRuns: z
           .array(z.string().min(1))
           .min(1)
           .describe('Run ids of `agw eval run review` whose judge calls supply the pairs'),
-        cases: z.number().int().nonnegative().max(500).optional().describe('Mined bug cases to show, default 50'),
-        rejected: z.number().int().nonnegative().max(500).optional().describe('Dropped candidates to show, default 20'),
-        pairs: z.number().int().nonnegative().max(500).optional().describe('Judge pairs to show, default 100'),
+        pairs: z
+          .number()
+          .int()
+          .positive()
+          .max(500)
+          .optional()
+          .describe(`Pair budget, half judge-positive and half judge-negative, default ${DEFAULT_PAIRS}`),
         seed: z.number().int().optional().describe('Sampling seed, default 1'),
+        yes: z.boolean().optional().describe('Spends: judge b is called. Without it, the plan only'),
       })
       .strict(),
-    output: z.object({
-      sessionId: z.string(),
-      html: z.string().describe('The self-contained page: open it in a browser, from file://'),
-      manifest: z.string().describe('The truth behind each item; never opened by the page'),
-      counts: z.object({
-        cases: z.number().int(),
-        rejected: z.number().int(),
-        pairs: z.number().int(),
-        pairsJudgePositive: z.number().int(),
-        pairsJudgeNegative: z.number().int(),
-        total: z.number().int(),
-      }),
-      notes: z.array(z.string()).describe('Shortfalls and skipped items'),
-    }),
+    output: evalGtCalibrateOutput,
     async run(ctx, input) {
-      return ctx.step('pack', async () => {
+      const request = { evalRuns: input.evalRuns, pairs: input.pairs ?? DEFAULT_PAIRS, seed: input.seed ?? 1 }
+      const planned = await ctx.step('plan', async () => {
         try {
-          const { sessionId, html, manifest, counts, notes } = await buildPack(
-            { env, exec, home, judgeRuns },
-            {
-              evalRuns: input.evalRuns,
-              cases: input.cases ?? 50,
-              rejected: input.rejected ?? 20,
-              pairs: input.pairs ?? 100,
-              seed: input.seed ?? 1,
-            },
-          )
-          return { sessionId, html, manifest, counts, notes }
+          const plan = await planCalibration(deps, request)
+          return { plan: planOf(plan), notes: plan.notes }
         } catch (error) {
-          // Only the ground-truth files are the caller's to fix (mine and label first); a database or git failure is not.
-          if (error instanceof PackInputError) throw new WorkflowError('invalid_input', error.message)
+          // Only the ground-truth files and the eval runs are the caller's to fix; a database failure is not.
+          if (error instanceof CalibrateInputError) throw new WorkflowError('invalid_input', error.message)
           throw error
         }
       })
-    },
-  })
-
-  const ingest = defineWorkflow({
-    id: EVAL_GT_INGEST_ID,
-    version: '2026-11-02.1',
-    input: z
-      .object({
-        labels: z.string().min(1).describe('The content of owner-labels.jsonl exported from the session page'),
-      })
-      .strict(),
-    output: z.object({
-      appended: z.number().int(),
-      duplicates: z.number().int().describe('Lines already in owner-labels.jsonl, not appended again'),
-      otherSession: z.number().int().describe('Lines exported by another session’s page, left out'),
-      unknown: z.number().int().describe('Lines of this session naming none of its items, left out'),
-      report: z.object({
-        cases: z.object({
-          accepted: z.object({
-            ...Tally,
-            shown: z.number().int(),
-            precision: z.number().nullable(),
-            ci95: Interval,
-          }),
-          rejected: z.object({
-            ...Tally,
-            shown: z.number().int(),
-            lost: z.number().nullable().describe('Share of answered dropped candidates the owner calls real bugs'),
-            ci95: Interval,
-          }),
-        }),
-        pairs: z.object({
-          shown: z.number().int(),
-          n: z.number().int().describe('Pairs answered yes or no'),
-          unsure: z.number().int(),
-          agreement: z.number().nullable(),
-          kappa: z.number().nullable(),
-          confusion: z.object({
-            yy: z.number().int(),
-            yn: z.number().int(),
-            ny: z.number().int(),
-            nn: z.number().int(),
-          }),
-        }),
-        bars: z.object({ cases: Bar, kappa: Bar }),
-        unanswered: z.object({ cases: z.number().int(), pairs: z.number().int() }),
-      }),
-    }),
-    async run(ctx, input) {
-      return ctx.step('ingest', () => {
-        try {
-          return ingestLabels(env, input.labels)
-        } catch (error) {
-          if (error instanceof IngestError) throw new WorkflowError('invalid_input', error.message)
-          throw error
+      if (!input.yes) {
+        return {
+          limit: GT_LIMIT,
+          plan: planned.plan,
+          spent: false,
+          notes: planned.notes,
+          calibration: null,
+          written: null,
+          scorer: null,
         }
+      }
+      const done = await ctx.step('judge', async ({ callContext, signal, progress }) => {
+        // The plan is rebuilt from the journal in this step: a step result holds counts, never the cases' content.
+        const plan = await planCalibration(deps, request)
+        return runCalibration(deps, plan, {
+          callContext,
+          signal,
+          progress,
+          now,
+          concurrency: DEFAULT_CONCURRENCY,
+          evalRuns: input.evalRuns,
+        })
       })
+      const written = gtPath('judge-calibration.json', env)
+      writeFileAtomic(written, `${JSON.stringify(JudgeCalibration.parse(done.calibration), null, 2)}\n`)
+      const { kappa, met } = done.calibration
+      return {
+        limit: GT_LIMIT,
+        plan: planned.plan,
+        spent: true,
+        notes: done.notes,
+        calibration: done.calibration,
+        written,
+        scorer: met
+          ? `κ ${kappa?.toFixed(3)} clears the bar: one judge (a)`
+          : `κ ${kappa === null ? 'undefined' : kappa.toFixed(3)} is below the bar: both judges, a disagreement is unclear`,
+      }
     },
   })
 
   return [
     {
-      workflow: pack,
+      workflow: calibrate,
       summary:
-        'Build the owner session page (case check, judge calibration) from the mined ground truth; spends nothing',
-    },
-    {
-      workflow: ingest,
-      summary: 'Ingest the owner’s exported answers and report case precision, Cohen’s κ and the bars',
-      cli: { mutating: true },
+        'Re-ask the second judge on recorded judge-a inputs and report Cohen’s κ, agreement and the confusion table (--yes spends)',
+      cli: { defaultFormat: 'json', mutating: true },
     },
   ]
 }

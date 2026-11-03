@@ -1,9 +1,16 @@
 import { describe, expect, test } from 'bun:test'
 import type { JudgeInput, LabelInput } from '@agent-workflows/eval'
+import { resolveRoute } from '@agent-workflows/routes'
 import { z } from 'zod'
 import { createCapabilities } from './capabilities/index.ts'
 import { JUDGE_VERSION, judgeVersion } from './capabilities/eval-judge.ts'
-import { LABELER_VERSION, labelerVersion, labelPrompt } from './capabilities/eval-label.ts'
+import {
+  LABELER_C_VERSION,
+  LABELER_VERSION,
+  labelerCVersion,
+  labelerVersion,
+  labelPrompt,
+} from './capabilities/eval-label.ts'
 import { cutDiff, EVAL_DIFF_CHARS, fill, fixtureDiff, numberDiff, pinnedVersion } from './capabilities/eval-prompt.ts'
 import type { Usage } from './context.ts'
 import { CapabilityCallError } from './errors.ts'
@@ -140,8 +147,27 @@ describe('eval.label', () => {
     expect(fix?.[1]).toBe('fix: off by one\n\nthe end was exclusive')
   })
 
-  test('LABELER_VERSION is the recorded value of the computed version (prompt, diff rendering, schema, both seats)', () => {
+  test('seat c runs on the chat wire with no effort (Gemini’s OpenAI leg rejects it) and has no fallback', async () => {
+    const t = setup({ openai: [{ text: JSON.stringify(DEFECT) }, new Error('boom')] })
+    const c = await t.registry.call('eval.label', labelInput({ seat: 'c' }), t.options)
+    const request = t.transports.chatCalls[0]?.request
+    expect(t.transports.chatCalls[0]?.wire).toBe('openai')
+    expect(request?.model).toBe(resolveRoute('eval.label.c').model)
+    expect(request?.effort).toBeUndefined()
+    expect(request?.maxOutputTokens).toBe(16_000)
+    expect(c.model).toBe(resolveRoute('eval.label.c').model)
+    await caught(t.registry.call('eval.label', labelInput({ seat: 'c' }), t.options))
+    expect(t.transports.chatCalls.map((x) => x.wire)).toEqual(['openai', 'openai'])
+  })
+
+  test('LABELER_VERSION is the recorded value of the computed version (prompt, diff rendering, schema, seats a and b)', () => {
     expect(LABELER_VERSION).toBe(labelerVersion())
+  })
+
+  test('seat c has its own version, so adding it left LABELER_VERSION (and every a/b record) as it was', () => {
+    expect(LABELER_C_VERSION).toBe(labelerCVersion())
+    expect(LABELER_C_VERSION).not.toBe(LABELER_VERSION)
+    expect(LABELER_VERSION).toBe('eval-label-5d14aed19b3e')
   })
 })
 
@@ -260,7 +286,25 @@ describe('eval.judge', () => {
     expect(prompt).toMatch(/<<<KNOWN_BUG_[0-9a-f]{12}_BEGIN>>>\nThe last element is dropped\./)
   })
 
-  test('JUDGE_VERSION is the recorded value of the computed version (both prompts, diff rendering, schemas, the seat)', () => {
+  test('seat b runs on the chat wire (Terra medium); no seat or seat a runs on the anthropic wire', async () => {
+    const t = setup({
+      openai: [{ text: verdicts(['0', 'match'], ['1', 'real']) }],
+      anthropic: [{ text: verdicts(['0', 'match'], ['1', 'nit']) }],
+    })
+    const b = await t.registry.call('eval.judge', judgeInput({ seat: 'b' }), t.options)
+    const a = await t.registry.call('eval.judge', judgeInput({ seat: 'a' }), t.options)
+    expect(t.transports.chatCalls.map((c) => c.wire)).toEqual(['openai', 'anthropic'])
+    expect(t.transports.chatCalls[0]?.request).toMatchObject({
+      model: resolveRoute('eval.judge.b').model,
+      effort: 'medium',
+      maxOutputTokens: 16_000,
+    })
+    expect(b.findings.map((f) => f.class)).toEqual(['match', 'real'])
+    expect(a.findings.map((f) => f.class)).toEqual(['match', 'nit'])
+    expect(a.model).not.toBe(b.model)
+  })
+
+  test('JUDGE_VERSION is the recorded value of the computed version (both prompts, diff rendering, schemas, both seats)', () => {
     expect(JUDGE_VERSION).toBe(judgeVersion())
   })
 })

@@ -6,7 +6,8 @@ fingerprint and args.
 
 A report carries: the change, the case set (ids or hash), the scorer version, per arm the quality metrics with CIs,
 cost per run, wall time p50 and max, input / cache-read / output / reasoning tokens, failed steps with their causes, the
-fingerprints, and a verdict that says what the numbers can and cannot decide.
+fingerprints, and a verdict that says what the numbers can and cannot decide. Every report that rests on the review ground
+truth states its limit: `LLM consensus (labellers a/b/c, judges a/b), no human check`.
 
 ## Lessons for the next eval (the review rework owns it)
 

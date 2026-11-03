@@ -32,10 +32,12 @@ export { pool, runCheck, runReview } from './harness/run.ts'
 export { bootstrapMedianCI, median, seededRandom } from './harness/stats.ts'
 export { checkVerdict, DEFAULT_THRESHOLDS, reviewVerdict } from './harness/verdict.ts'
 export {
+  AcceptPath,
   BugClass,
   BugSeverity,
   DEV_SHARE,
   GT_DIR,
+  GT_LIMIT,
   GtBugCase,
   GtCandidate,
   GtCase,
@@ -50,32 +52,21 @@ export {
   GtRepo,
   GtSplit,
   gtPath,
+  JudgeCalibration,
   JudgeClass,
   JudgeInput,
   JudgeOutput,
+  JudgeSeat,
   LabelerSeat,
   LabelInput,
   LabelOutput,
   LOCATION_SLACK,
-  OwnerCaseLabel,
-  OwnerLabel,
-  OwnerPairLabel,
   RejectReason,
   Sha,
 } from './gt.ts'
-export type { Confusion } from './gt-owner/stats.ts'
-export { agreement, cohenKappa, confusionTotal, wilson } from './gt-owner/stats.ts'
-export { sampleOf, samplePairs, shuffled } from './gt-owner/sample.ts'
-export { ManifestItem, PackManifest } from './gt-owner/manifest.ts'
-export { CASE_BAR, effectiveLabels, KAPPA_BAR, type SessionReport, scoreSession } from './gt-owner/score.ts'
-export {
-  type CaseItem,
-  type CodeLine,
-  type PageItem,
-  type PairItem,
-  renderSession,
-  type SessionPage,
-} from './gt-owner/page.ts'
+export type { Confusion } from './gt-stats.ts'
+export { agreement, cohenKappa, confusionTotal, KAPPA_BAR, kappaCI, wilson } from './gt-stats.ts'
+export { sampleOf, samplePairs, shuffled } from './gt-sample.ts'
 export {
   type Acceptance,
   acceptRecord,
@@ -86,6 +77,7 @@ export {
   type Git,
   gitIn,
   locationsOverlap,
+  needsThirdSeat,
   MAX_CHANGED_LINES,
   MAX_INTRO_AGE_DAYS,
   MINER_VERSION,

@@ -1,12 +1,15 @@
 import type { RouteEntry } from '../schema.ts'
-import { JUDGE, LABELER_CLAUDE, LABELER_GPT } from './_shared.ts'
+import { JUDGE, JUDGE_GPT, LABELER_CLAUDE, LABELER_GEMINI, LABELER_GPT } from './_shared.ts'
 
 const routes = {
-  // The review eval's ground truth (docs/review-v2.md §The eval): two labellers on different vendors confirm each mined
-  // bug, one judge grades every finding against it. Pinned seats with no fallback (`_shared.ts` §Eval seats).
+  // The review eval's ground truth (docs/review-v2.md §The eval): two labellers on different vendors label each mined
+  // bug, a third (on a third vendor) decides when they disagree; two judges on different vendors grade every finding
+  // against it. Pinned seats with no fallback (`_shared.ts` §Eval seats).
   'eval.label.a': { wire: 'anthropic', ...LABELER_CLAUDE.call },
   'eval.label.b': { wire: 'iu-openai', ...LABELER_GPT.call },
+  'eval.label.c': { wire: 'iu-openai', ...LABELER_GEMINI.call },
   'eval.judge': { wire: 'anthropic', ...JUDGE.call },
+  'eval.judge.b': { wire: 'iu-openai', ...JUDGE_GPT.call },
 } satisfies Record<string, RouteEntry>
 
 export default routes

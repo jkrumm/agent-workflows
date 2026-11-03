@@ -209,37 +209,34 @@ run (a fresh clone, a fresh session).
 2), tagged the same way, plus the judge on unsure pairs with `--judge`. Measure a set once and read the file; the
 `review` and `check` modes spend nothing extra for it.
 
-## Owner session
+## Judge calibration
 
-The owner gives two hours once to check the review ground truth (`docs/review-v2.md` §Ground truth step 5,
-§Matching and judging Calibration): 70 mined cases (50 kept, 20 dropped, shown blind) and 100 judge pairs (half the
-judge called `match`, half preselected non-matches: right file, plausible, wrong defect). The pure parts live in
-`src/gt-owner/` (sampling, Wilson interval, Cohen's κ, the report, the HTML page); the workflows in
-`packages/host/src/workflows/eval-gt/`. Nothing here spends: no model call.
+No human checks the review ground truth (owner decision, 2026-11-02; `docs/review-v2.md` §Ground truth step 5,
+§Matching and judging Calibration). The labels are validated by 2-of-3 labeller consensus (below), and the judge by a
+second judge on another vendor. Every report that rests on it states `limit: "LLM consensus (labellers a/b/c, judges
+a/b), no human check"` (`GT_LIMIT`): the mine's `report.json` and output, the calibration's output and file, and the
+review scorer's notes. The pure parts live in `src/gt-stats.ts` (Wilson interval, Cohen's κ with its 95 % interval,
+`KAPPA_BAR`) and `src/gt-sample.ts` (seeded sampling); the workflow in `packages/host/src/workflows/eval-gt/`.
 
-1. **Build the pack.** After `agw eval run review --yes` has judged an arm, pass its eval run id(s):
-   `agw eval gt pack --eval-runs <runId> [--cases 50 --rejected 20 --pairs 100 --seed 1]`. It reads `cases.jsonl`,
-   `rejected.jsonl`, `labels.jsonl` and `candidates.jsonl` and the `cap.eval.judge` runs below those eval runs, and
-   writes `$AGW_EVAL_DIR/review-gt/owner/session.html` (one file, no network) and `owner/manifest.json` (the truth
-   behind each item, never in the page). When fewer judge-`match` pairs exist than half, all of them go in, non-matches
-   fill, and the output and the page say the shortfall.
-2. **Open it** (`file://`, any browser, on the laptop: copy the file over). One item at a time; `y` `n` `u` answer and
-   move on, `j`/`k` or the arrows move, `e` writes a note, "Unanswered only" filters. Answers save in the browser per
-   session; closing the tab loses nothing.
-3. **Export** downloads `owner-labels.jsonl` (`OwnerLabel` lines, each tagged with the page's `sessionId`). It works offline and can be repeated.
-4. **Ingest.** The flag takes the file's *content*: `agw eval gt ingest --commit --labels "$(cat owner-labels.jsonl)"` (it writes, so it is a mutating command). Every line
-   is validated before anything is written; answers are appended to `owner-labels.jsonl` (a line already there is not
-   appended twice, an id answered again appends and the later line wins). The report: case precision with a Wilson 95 %
-   interval, what the filter lost (dropped candidates the owner calls real), pairs answered, agreement, κ (owner yes/no
-   against judge match/non-match, `unsure` excluded and counted), the confusion matrix, both bars, what is still
-   unanswered. Lines tagged with another session's id (a page built earlier) and lines naming no item of this session are counted and left out; the tag is dropped on append, so the file holds plain `OwnerLabel` lines.
+`agw eval gt calibrate --eval-runs <runId> [--pairs 100 --seed 1] [--yes]` (mutating: off a TTY it needs `--commit`).
+After `agw eval run review --yes` has judged an arm, pass its eval run id(s):
 
-What the bars decide:
+- It reads the `cap.eval.judge` runs below those eval runs and `cases.jsonl`, and builds the pairs (a finding and the
+  case's bug): half judge-`a`-positive (`match`), half preselected non-matches (right file, plausible, wrong defect). When
+  fewer positives exist than half, all go in, non-matches fill, and the output says the shortfall.
+- **Without `--yes`** it prints the plan: pairs, judge-`b` calls (one per judge-`a` run that holds a sampled pair), and an
+  estimate (prompt size at the route's rate, a rough figure). Nothing is spent.
+- **With `--yes`** it re-asks judge `b` (`eval.judge.b`, GPT) on exactly the recorded judge-`a` inputs, compares per pair
+  (match or not), and writes `$AGW_EVAL_DIR/review-gt/judge-calibration.json` (0600, aggregates only): κ with a 95 %
+  interval, raw agreement, the confusion table (`yy` both match, `yn` a match and b not, `ny`, `nn`), the agreement on
+  the classes of the findings neither judge matched (`real`, `not-a-bug`, `nit`, `unclear`, as a table), `n`, the judge
+  version (it covers both seats), both judges' models, the eval runs and `at`. A judge-`b` answer that is unusable skips
+  its run (counted); any other failure (no credit, an outage) stops the calibration.
+- **The bar is κ ≥ 0.8.** The review scorer reads the file when the host starts: at or above the bar for the current
+  judge version it asks judge `a` alone; otherwise (below, missing, another judge version) it asks both and a finding
+  they classify differently is `unclear`. The mode is in the scorer version, so `compare` refuses to mix modes; restart the
+  host after a calibration for the scorer to pick it up. The eval runs should be made under the current judge version.
 
-| Bar | Below it |
-|-|-|
-| kept cases ≥ 90 % right (yes / (yes + no)) | tighten the miner's filters and re-mine |
-| Cohen's κ ≥ 0.8 on the pairs | a second judge on another vendor; disagreements score as `unclear` |
 ## Ground truth miner
 
 `agw eval mine review` builds the review ground truth from the owner's own fix history (`docs/review-v2.md` §Ground
@@ -249,7 +246,8 @@ is `mutating` (off a TTY it needs `--commit`), and one run at a time (`concurren
 ```
 agw eval mine review                           # mine: candidates, controls, report
 agw eval mine review --label 20                # plus the labelling plan and an estimate; spends nothing
-agw eval mine review --label 20 --yes          # label the next 20 candidates (2 paid calls each)
+agw eval mine review --label 20 --yes          # label the next 20 candidates (2 paid calls each, a third when they disagree)
+agw eval mine review --label 0 --yes           # only ask seat c of the records that lack it (IU key, no credit)
 agw eval mine review --label 50 --yes --relabel-errors
 ```
 
@@ -261,22 +259,23 @@ cases). Size a batch to the gateway's `evalAvailableUsd` first.
 
 | Flag | Default | Does |
 |-|-|-|
-| `--label N` | 0 | Label the next N unlabelled candidates, taken from a seeded shuffle, so the owner sample is random |
+| `--label N` | off | Label the next N unlabelled candidates, taken from a seeded shuffle, after adding seat `c` to every record that needs it and lacks it (given with `--yes`, `0` included). Without the flag: mine only |
 | `--seed N` | 1 | Seed of the label order and of the control pick |
 | `--controls N` | 100 | Clean controls to pick |
 | `--concurrency N` | 2 | Candidates in flight (each is two parallel calls) |
-| `--relabel-errors` | off | Label again candidates whose last record has a seat error; they are never retried otherwise |
-| `--yes` | off | Spend. Without it `--label` prints the plan: candidates, and 2 calls × the mean cost of the last 20 `cap.eval.label` runs (or `unknown`) |
+| `--relabel-errors` | off | Label again candidates whose last record has an `a` or `b` error, and ask `c` again where it failed; they are never retried otherwise |
+| `--yes` | off | Spend. Without it `--label` prints the plan: candidates, records waiting for seat `c`, and 2 calls × the mean cost of the last 20 `cap.eval.label` runs (or `unknown`) |
 
 **Files**, all under `$AGW_EVAL_DIR/review-gt/` (dirs 0700, files 0600; cases name private repos):
 
 | File | Written | Holds |
 |-|-|-|
 | `candidates.jsonl` | whole, by every mine | SZZ candidates (`GtCandidate`) |
-| `labels.jsonl` | appended as each candidate finishes | both seats' answers (`GtLabelRecord`); the resume point |
+| `labels.jsonl` | appended as each candidate finishes; a record gains seat `c` in place (whole file, atomically) | each seat's answer (`GtLabelRecord`: `a`, `b` under `labelerVersion`; `c` under its own `cVersion`, with `cRunId`); the resume point |
 | `cases.jsonl` | rebuilt by every run | accepted bugs and clean controls (`GtCase`), what `agw eval run review` reads |
 | `rejected.jsonl` | rebuilt by every run | candidates the labelers did not accept, with the reason |
-| `report.json` | by every run | the funnel and the acceptance and rejection counts; no code. After an incomplete mine: `incomplete: true` and the repos that failed, with their errors |
+| `report.json` | by every run | the funnel, the accepted count per pair of seats (`a+b`, `a+c`, `b+c`), the rejected count per reason, the `limit`; no code. After an incomplete mine: `incomplete: true` and the repos that failed, with their errors |
+| `judge-calibration.json` | by `agw eval gt calibrate` | the judges' κ and agreement (see Judge calibration); aggregates only |
 | `owner.json` | by the owner, read only | `{ "emails": [...] }`: the author emails that count as the owner's |
 
 Every file is written to a temp file and renamed, so a reader or a crash sees the old file or the new one.
@@ -300,22 +299,31 @@ Every file is written to a temp file and renamed, so a reader or a crash sees th
   refactor and chore commits are at most 15 % of the picked sample, also when logic commits run short. Only the owner's fixes count as fix commits, so a later fix by someone else
   does not disqualify a control.
 - **Split:** `dev` when the first 8 hex of `sha256(id) / 2^32` is below `DEV_SHARE`, else `test`; bugs and controls alike.
-- **Acceptance:** both seats say defect and place it in the same file within `LOCATION_SLACK` lines of each other.
-  Otherwise the reason is `a-no`, `b-no`, `both-no`, `no-overlap` or `labeler-error`. The case takes seat `a`'s
-  location, description, class and severity.
+- **Labellers:** `a` (Claude), `b` (GPT) and `c` (Gemini, a third vendor). `c` is asked only when `a` and `b` disagree:
+  one says defect and the other not (`a-no`, `b-no`), or both say defect at locations that do not overlap (`no-overlap`).
+  Not on `both-no`, not when both accept, not on a seat error.
+- **Acceptance (2 of 3):** at least two seats say defect and the locations of two of those name the same file within
+  `LOCATION_SLACK` lines of each other. The case takes the location, description, class and severity of seat `a` when
+  `a` is in the agreeing pair, else of the pair's first seat (`b` in `b+c`). Otherwise the reason is `a-no`, `b-no`,
+  `both-no`, `no-overlap` or `labeler-error` for a record without `c`, and with `c`: `c-no` (it says no), `c-no-overlap`
+  (it says defect, but its location overlaps neither) or `c-error` (it failed with an answer).
+- **Seat `c` and the versions.** `LABELER_VERSION` covers `a` and `b` only; `c` has `LABELER_C_VERSION`, stored on the
+  record as `cVersion`, so adding `c` never invalidates a record's `a` and `b`. A `c` under another version is treated
+  as not asked. Resume asks `c` alone of the disagreeing records that lack it (each record is replaced in place,
+  atomically) and never asks `a` or `b` again; it costs the IU key only, no credit.
 
 **Bias.** An additions-only fix (a missing guard, a new check) has no removed line to blame, so it yields no candidate.
 Published SZZ studies put these near 17 % of fixes. The report states the loss; the eval's recall numbers read as recall
 on bugs whose fix removed or changed code. Precision is the other limit: SZZ alone is about 50 % right, which is why
-every candidate is labelled twice before it becomes a case.
+every candidate is labelled twice, and a third time when the first two disagree, before it becomes a case. No human checks the result; the report states `limit: "LLM consensus (labellers a/b/c, judges a/b), no human check"`.
 
 **An incomplete mine stops.** A repo whose history cannot be read, or a root with no repos at all, would shrink the
 ground truth without a word. The run fails instead, naming the repos; `report.json` holds their errors, and
 `candidates.jsonl` and `cases.jsonl` stay as they were.
 
 **Resume and stops.** A line of `labels.jsonl` that is not JSON (a torn write) is skipped with a warning naming
-`file:line`; the next record starts a line of its own. A candidate with a record under the current `LABELER_VERSION` is never labelled again, and a
-resumed run counts the records it already wrote against `--label`. A seat that fails with an answer (unusable or
+`file:line`; the next record starts a line of its own. A candidate with a record under the current `LABELER_VERSION` is never labelled again (only its seat `c` can be added), and a
+resumed run counts the records it already wrote against `--label`. A stop on seat `c` keeps the record of `a` and `b`. A seat that fails with an answer (unusable or
 truncated output, a refused input, a vendor refusal) is recorded as that seat's `{error}`, and so is a commit that is gone from the checkout (both seats). Any other error, such as the
 gateway's 403 "no eval credit", an outage or a git failure other than a missing commit (a lock, a missing checkout),
 stops labelling: the run reports it, keeps what it wrote and records
