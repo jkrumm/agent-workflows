@@ -94,3 +94,33 @@ test('a failed episode posts legacy failure line once; without the Slack env not
     await quiet.close()
   }
 }, 60_000)
+
+test('a failed eval episode posts nothing; the same failure under another purpose posts', async () => {
+  const posts: string[] = []
+  const fetchImpl = (async (_url: string | URL | Request, init?: RequestInit) => {
+    posts.push((JSON.parse(String(init?.body)) as { text: string }).text)
+    return Response.json({ ok: true })
+  }) as unknown as typeof fetch
+  const workflow = createPodcastWorkflow({
+    journal,
+    history: fakeHistory(),
+    models: fakeRoom(),
+    produce: failingProduce,
+    config,
+    notify: { config: NOTIFY, fetch: fetchImpl },
+  })
+  const rt = testRuntime({ schema: db.schema, workflows: [workflow] })
+  await rt.open()
+  try {
+    const input = { source: 'Notizen.', research: false }
+    const evalRun = await rt.start(workflow, input, { purpose: 'eval' })
+    expect((await rt.wait(evalRun.runId)).status).toBe('failed')
+    expect(posts).toHaveLength(0)
+    const prod = await rt.start(workflow, input, { purpose: 'prod' })
+    expect((await rt.wait(prod.runId)).status).toBe('failed')
+    expect(posts).toHaveLength(1)
+    expect(posts[0]).toStartWith(`Podcast-Job ${episodeToken(prod.runId)} ist fehlgeschlagen: `)
+  } finally {
+    await rt.close()
+  }
+}, 60_000)

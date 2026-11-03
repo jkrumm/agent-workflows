@@ -24,7 +24,7 @@ holds their TTS requests to `TTS_CONCURRENCY`, as legacy's `synthConcurrent` did
 | `cover` | code | best-effort | `image.generate` in-process, 1024², medium quality; runs beside the synth fan-out. Null without the capability, when not requested, or on failure |
 | `master` | code | fatal | per-host loudness to −20 LUFS (a multi-speaker unit levels as one `AB` group), gapped concat (380 ms, 160 ms before a ≤ 6-word interjection), one chapter per segment, `loudnorm I=-16:TP=-1.5:LRA=11`, ID3v2.3 with the cover, 44.1 kHz mono MP3 |
 | `publish` | effect | best-effort | Audiobookshelf upload → scan → poll → patch. Never fails the run: `publish {requested, ok, error}`, `abs` null on failure |
-| `notify` | effect | best-effort | the Slack line via Argo, only with `PODCAST_NOTIFY_CHANNEL` set |
+| `notify` | effect | best-effort | the Slack line via Argo, only with `PODCAST_NOTIFY_CHANNEL` set and never for purpose `eval` |
 | `brain-note` | effect | best-effort | `Areas/Podcasts/<date> <title>.md` and the regenerated `Podcasts.md`, `git add`/`commit`/`push` in `AGW_BRAIN_DIR` under the brain-sync lock |
 | `cost` | code | fatal | this run's spend (its steps and its unit children's) as the journal recorded it |
 

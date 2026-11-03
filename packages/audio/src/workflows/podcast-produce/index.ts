@@ -479,9 +479,10 @@ export function createProduceWorkflows(deps: ProduceDeps) {
       }),
     )
 
-    // 5. The Slack notice, only where legacy's env is set; best-effort.
-    await ctx.effect('notify', async (_key, { signal }) => {
-      if (!config.notify) return null
+    // 5. The Slack notice, only where legacy's env is set and never for an eval run (its attribution carries the root's
+    // purpose); best-effort.
+    await ctx.effect('notify', async (_key, { signal, attribution }) => {
+      if (!config.notify || attribution.purpose === 'eval') return null
       try {
         const text = podcastDoneMessage({
           title: input.metadata.title,

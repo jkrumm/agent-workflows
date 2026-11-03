@@ -238,8 +238,9 @@ export function createPodcastWorkflow(deps: PodcastDeps) {
    * a run that resumes (an infra error, a shutdown, a lost lease) or one that was cancelled. Best-effort: never masks
    * the failure itself.
    */
-  async function noticeFailure(ctx: Ctx, error: unknown): Promise<void> {
-    if (!notify.config || ctx.signal.aborted || error instanceof InfraError || error instanceof Cancelled) return
+  async function noticeFailure(ctx: Ctx, error: unknown, purpose: string | undefined): Promise<void> {
+    if (!notify.config || purpose === 'eval') return
+    if (ctx.signal.aborted || error instanceof InfraError || error instanceof Cancelled) return
     const message = (error instanceof Error ? error.message : String(error)).slice(0, 500)
     // The episode token of its Audiobookshelf file name, as legacy's id8 was.
     const text = `Podcast-Job ${episodeToken(ctx.runId)} ist fehlgeschlagen: ${message}`
@@ -251,10 +252,13 @@ export function createPodcastWorkflow(deps: PodcastDeps) {
   }
 
   async function runWithNotice(ctx: Ctx, request: PodcastRequest): Promise<PodcastResult> {
+    // The run's purpose, journaled once: a context has none, and an eval run never posts to Slack.
+    let purpose: string | undefined
     try {
+      purpose = await ctx.step('purpose', ({ attribution }) => attribution.purpose)
       return await run(ctx, request)
     } catch (error) {
-      await noticeFailure(ctx, error)
+      await noticeFailure(ctx, error, purpose)
       throw error
     }
   }
