@@ -459,6 +459,13 @@ the ceiling and the next call compacts again.
 no `reserved` or `preserve_recent_tokens` in 2.0.32's schema; those strings in the binary belong to its v1 config).
 `compaction.auto` stays on and `keep` (15000 recent tokens kept verbatim beside the summary) at its default.
 
+**`compaction.buffer` is server-wide**: the setting has no per-model form, so it applies to every row of every provider
+(Claude, the chat and Responses legs), not only the bounded ones. That is fine because the buffer only moves *when* a
+session compacts, never whether, and 40000 is never short for a summary: a window of 400k or more keeps at least 40k by
+the default rule (10%), so the buffer there lets a session run up to 10% of its window further, and a smaller window
+compacts earlier than with the 16k floor (by 24k tokens under a 160k window), which costs one summary sooner. A row
+with no known window (`limit.context` unset) never compacts automatically, with or without a buffer.
+
 **Measured: the summary's room.** With the default reserve a 100000-bound row (window 96000, ceiling 80000) asked the
 summary for `max_tokens` **10,733** (the 16k reserve less the summary prompt, shared with the thinking). With
 `COMPACTION_BUFFER` = 40000 it asks for **32,000**, the most OpenCode allows (`test/live-context-limit.test.ts`,
@@ -494,7 +501,11 @@ tokenize denser than 4 characters per token). The arm that sets a bound should r
 
 **When the summary still fails.** `isCompactionFailure` (`host.ts`) recognises the four summary failures above in a failed
 turn's error. A step on a route with a fallback then moves to the fallback session once, like a balance refusal
-(`fallsBack`, `waitOnFallback`): the task starts over in a fresh session on the fallback model (Terra for the Claude
+(`fallsBack`, `waitOnFallback`), **only if every tool call the failed turn made was a read** (`onlyReadOnlyTools`: the
+tool is one of `READ_ONLY_ACTIONS`, `read`, `glob`, `grep`, `skill`; decided from the calls in the turn's messages, not from
+the agent's permissions, so an agent allowed to write that only read this time still restarts, and a tool the host does
+not know, `submit_result` included, counts as a change). A restart runs the turn's tool calls again, so a turn that
+wrote, ran a command or submitted a result fails with the compaction error instead, and the host logs why. The task starts over in a fresh session on the fallback model (Terra for the Claude
 agent routes), with the failed turn's usage kept in the step's usage; a fallback session never falls back again, so a
 second failure fails the step with the compaction error. A route without a fallback fails the step with it, and the host
 logs `opencode compaction failed; the route has no fallback`. Why a restart and not a new kind of error: the failed

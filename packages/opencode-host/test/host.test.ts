@@ -1370,6 +1370,38 @@ describe('provider-balance fallback', () => {
     expect(entries.map((u) => u.model)).toEqual([CHECK.model, fallbackRoute(CHECK)?.model])
   })
 
+  test.each(['grep', 'glob', 'skill'])('a turn that only called %s restarts on the fallback', async (tool) => {
+    const t = setup()
+    const handle = await t.host.open(spec('x'))
+    await t.host.prompt(handle, `[tool:${tool}][compaction] x`)
+    expect((await t.host.wait(handle, waitOptions())).output).toBe(`echo: [tool:${tool}][compaction] x`)
+    expect(sessions(t)).toHaveLength(2)
+  })
+
+  test('a turn with no tool call at all restarts on the fallback too', async () => {
+    const t = setup()
+    const handle = await t.host.open(spec('x'))
+    await t.host.prompt(handle, '[compaction] x')
+    expect((await t.host.wait(handle, waitOptions())).output).toBe('echo: [compaction] x')
+    expect(sessions(t)).toHaveLength(2)
+  })
+
+  test.each(['bash', 'edit', 'write', 'shell'])(
+    'a turn that called %s is not restarted: the step fails with the compaction error',
+    async (tool) => {
+      const t = setup()
+      const handle = await t.host.open(spec('x'))
+      await t.host.prompt(handle, `[tool:${tool}][compaction] x`)
+      expect(await failure(t.host.wait(handle, waitOptions()))).toContain(
+        'Compaction summary reached the output token limit',
+      )
+      expect(sessions(t)).toHaveLength(1)
+      expect(t.warnings).toContain(
+        'opencode compaction failed after a tool call that may have changed something; no fallback',
+      )
+    },
+  )
+
   test('the fallback failing on compaction too fails the step with the compaction error: once, no third session', async () => {
     const t = setup()
     const handle = await t.host.open(spec('x'))
