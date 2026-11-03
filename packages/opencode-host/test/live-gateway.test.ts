@@ -230,7 +230,7 @@ describe.skipIf(!live)('live: the pinned build on the gateway (a loopback stand-
   const arm = {
     routes: {
       'brain.agent': { model: 'claude-haiku-5-5', effort: null },
-      'review.angle': { model: 'claude-sonnet-5-5', effort: 'low', fallback: null },
+      'research.agent': { model: 'claude-sonnet-5-5', effort: 'low', fallback: null },
     },
   }
   const server = new OpenCodeServer({
@@ -319,7 +319,7 @@ describe.skipIf(!live)('live: the pinned build on the gateway (a loopback stand-
     seen.length = 0
     answer = (_, r) => anthropicText(String(r.body.model), 'PONG')
     const plain = await step('run-a', 'step-a', { route: 'brain.agent' })
-    const thinking = await step('run-a', 'step-b', { route: 'review.angle' })
+    const thinking = await step('run-a', 'step-b', { route: 'research.agent' })
     print('anthropic leg', seen)
     expect(plain.result.output).toBe('PONG')
     expect(seen.length).toBe(2)

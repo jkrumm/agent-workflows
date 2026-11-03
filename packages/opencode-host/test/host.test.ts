@@ -298,7 +298,7 @@ describe('open / prompt / wait', () => {
     expect(armed?.model).toMatchObject({ id: CHECK.model, variant: 'low' })
     expect(plain?.model).toMatchObject({ id: CHECK.model, variant: CHECK.effort as string })
     expect((unarmed as OpenCodeHandle).patch).toBeUndefined()
-    const sonnet = resolveRoute('review.angle.deep').model
+    const sonnet = resolveRoute('retro.analyze').model
     await t.host.open({
       ...spec('z', undefined, 'run-1:sonnet'),
       arm: { routes: { check: { model: sonnet, effort: 'max' } } },

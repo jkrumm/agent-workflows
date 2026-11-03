@@ -2,7 +2,6 @@ import { type ArmRun, type Comparison, compareArms, MIN_PAIRS } from '@agent-wor
 import { defineWorkflow, type Json, type ScoredRun, WorkflowError } from '@agent-workflows/runtime'
 import { z } from 'zod'
 import type { HostWorkflow } from '../../operations.ts'
-import { IMPORT_TARGETS } from './import.ts'
 import { JsonRecord } from './run.ts'
 import type { EvalSlot } from './slot.ts'
 import { type Suites, suiteIds } from './suites.ts'
@@ -18,10 +17,7 @@ export const evalCompareInput = (ids: [string, ...string[]]) =>
       b: z.string().min(8).describe('Arm B: a fingerprint or a unique prefix; may equal A when the args differ'),
       aArgs: JsonRecord.optional().describe('Arm A: the --args its eval runs used, exactly (default {})'),
       bArgs: JsonRecord.optional().describe('Arm B: the --args its eval runs used, exactly (default {})'),
-      aWorkflow: z
-        .string()
-        .optional()
-        .describe('Arm A: the workflow its runs are of, default `workflow` (an imported arm: `review.imported`)'),
+      aWorkflow: z.string().optional().describe('Arm A: the workflow its runs are of, default `workflow`'),
       bWorkflow: z.string().optional().describe('Arm B: the workflow its runs are of, default `workflow`'),
       seed: z.number().int().optional().describe('Bootstrap seed, default 1: the same seed gives the same CIs'),
     })
@@ -89,21 +85,9 @@ export function canonical(value: unknown): string {
  * A scored run as compare reads it; spend that is a lower bound (unpriced calls) is left out, never compared. A scorer
  * error is no verdict: the run is left out of the arm (and counted by `arm`).
  */
-function armRun(run: ScoredRun, imported: boolean): ArmRun | null {
+function armRun(run: ScoredRun): ArmRun | null {
   const caseId = run.final.caseId
   if (!caseId || run.final.error !== undefined || run.final.pass === null) return null
-  // An imported arm ran elsewhere: it has no cost, time, tokens or tool calls here, which is not zero.
-  if (imported) {
-    return {
-      caseId,
-      scores: run.final.scores,
-      pass: run.final.pass,
-      costUsd: null,
-      wallMs: null,
-      tokens: null,
-      toolCalls: null,
-    }
-  }
   return {
     caseId,
     scores: run.final.scores,
@@ -118,7 +102,6 @@ function armRun(run: ScoredRun, imported: boolean): ArmRun | null {
 
 /** The runs of one arm, read narrowed in SQL: a prefix that names exactly one fingerprint, and exactly these args. */
 async function arm(slot: EvalSlot, workflow: string, side: string, prefix: string, args: Record<string, Json>) {
-  const imported = IMPORT_TARGETS.has(workflow)
   const key = canonical(args)
   const matching = await slot.get().scoredRuns({ workflow, source: 'regression', fingerprintPrefix: prefix, args })
   const fingerprints = [...new Set(matching.map((r) => r.fingerprint as string))]
@@ -143,8 +126,7 @@ async function arm(slot: EvalSlot, workflow: string, side: string, prefix: strin
       scorerErrors: matching.filter((r) => r.final.error !== undefined).length,
       scorers: [...new Set(matching.map((r) => r.final.scorer))].sort(),
     },
-    runs: matching.flatMap((r) => armRun(r, imported) ?? []),
-    imported,
+    runs: matching.flatMap((r) => armRun(r) ?? []),
   }
 }
 
@@ -196,12 +178,6 @@ export function createEvalCompare(slot: EvalSlot, suites: Suites): HostWorkflow 
         }
         if (a.info.scorerErrors || b.info.scorerErrors) {
           warnings.push(`${a.info.scorerErrors} scorer errors in A / ${b.info.scorerErrors} in B, left out`)
-        }
-        for (const [side, imported] of [
-          ['A', a.imported],
-          ['B', b.imported],
-        ] as const) {
-          if (imported) warnings.push(`arm ${side} is an imported arm: cost and wall are not measured`)
         }
         const { paired, unpricedCost, noCost } = comparison.cases
         if (paired < MIN_PAIRS) {

@@ -2,7 +2,7 @@ import { GtLabel, LabelInput, LabelOutput } from '@agent-workflows/eval'
 import { completeJson, type LlmDeps } from '../llm/model-call.ts'
 import { defineCapability } from '../procedure.ts'
 import { diffBlock, fill, fixtureDiff, pinnedVersion } from './eval-prompt.ts'
-import { dataBlock } from './review-prompts.ts'
+import { dataBlock } from './data-block.ts'
 
 export const LABEL_SYSTEM =
   'You label bugs for a code-review benchmark. You read two git diffs and say whether the first one created a defect that the second one repairs. ' +

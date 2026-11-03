@@ -496,17 +496,17 @@ describe('buildServerConfig: the gateway', () => {
   })
 })
 
-describe('buildServerConfig: review.angle.deep', () => {
-  test('the deep angle row is Sonnet on the native Anthropic provider, and the route’s fallback is Terra on Responses with its cost rows', () => {
+describe('buildServerConfig: the HARD agent route', () => {
+  test('the retro agent row is Sonnet on the native Anthropic provider, and the route’s fallback is Terra on Responses with its cost rows', () => {
     const config = buildServerConfig() as {
       providers: Record<string, { models: Record<string, { cost?: unknown }> }>
     }
-    expect(modelRef('review.angle.deep', {}).model).toMatchObject({
+    expect(modelRef('retro.analyze', {}).model).toMatchObject({
       providerID: PROVIDER_ANTHROPIC,
       id: 'claude-sonnet-5-5',
     })
     expect(config.providers[PROVIDER_ANTHROPIC]?.models['claude-sonnet-5-5']).toBeDefined()
-    const fallback = fallbackModelRef('review.angle.deep', {})
+    const fallback = fallbackModelRef('retro.analyze', {})
     expect(fallback?.model).toMatchObject({
       providerID: PROVIDER_RESPONSES,
       id: 'gpt-6.1-terra',
@@ -546,27 +546,21 @@ describe('buildServerConfig: the provider follows the model family, whatever oth
       wire: 'anthropic',
       model: 'claude-haiku-5-5',
     })
-    for (const id of ['review.angle.deep', 'retro.analyze'] as const) {
+    for (const id of ['retro.analyze'] as const) {
       expect(modelRef(id, {}).model).toMatchObject({ providerID: PROVIDER_ANTHROPIC, id: 'claude-sonnet-5-5' })
       expect(fallbackModelRef(id, {})?.model).toMatchObject({ providerID: PROVIDER_RESPONSES, id: 'gpt-6.1-terra' })
     }
-    for (const id of [
-      'check',
-      'brain.agent',
-      'review.synthesis',
-      'diagram.agent',
-      'otel.agent',
-      'research.agent',
-    ] as const) {
+    for (const id of ['check', 'brain.agent', 'diagram.agent', 'otel.agent', 'research.agent'] as const) {
       expect(modelRef(id, {}).model).toMatchObject({ providerID: PROVIDER_ANTHROPIC, id: 'claude-haiku-5-5' })
       expect(fallbackModelRef(id, {})?.model).toMatchObject({ providerID: PROVIDER_RESPONSES, id: 'gpt-6.1-terra' })
     }
-    // review.angle runs Haiku through its 100k-bounded row (owner, 2026-11-03); its fallback is unbounded
-    expect(modelRef('review.angle', {}).model).toMatchObject({
+    // a route bounded at 100k runs Haiku through its bounded row; its fallback is unbounded
+    const bounded = { 'research.agent': { contextLimit: 100_000 } }
+    expect(modelRef('research.agent', bounded).model).toMatchObject({
       providerID: PROVIDER_ANTHROPIC,
       id: 'claude-haiku-5-5~ctx100000',
     })
-    expect(fallbackModelRef('review.angle', {})?.model).toMatchObject({
+    expect(fallbackModelRef('research.agent', bounded)?.model).toMatchObject({
       providerID: PROVIDER_RESPONSES,
       id: 'gpt-6.1-terra',
     })

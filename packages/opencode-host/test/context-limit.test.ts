@@ -104,10 +104,10 @@ describe('every window leaves a ceiling', () => {
 
 describe('modelRef with a contextLimit', () => {
   const bound = CONTEXT_LIMITS[0]
-  const patch = { 'review.angle': { contextLimit: bound } }
+  const patch = { 'research.agent': { contextLimit: bound } }
 
   test("the session's model is the alias, with the route's effort as the variant; the route keeps the real model", () => {
-    const { route, model } = modelRef('review.angle', patch)
+    const { route, model } = modelRef('research.agent', patch)
     expect(model.providerID).toBe(PROVIDER_ANTHROPIC)
     expect(model.id).toBe(contextAlias(route.model, bound))
     expect(model.variant).toBe(route.effort as string)
@@ -117,11 +117,11 @@ describe('modelRef with a contextLimit', () => {
 
   test('without a bound the model is the plain id, as before', () => {
     expect(modelRef('check').model.id).toBe('claude-haiku-5-5')
-    expect(modelRef('review.angle', { 'review.angle': { contextLimit: null } }).model.id).toBe('claude-haiku-5-5')
+    expect(modelRef('research.agent', { 'research.agent': { contextLimit: null } }).model.id).toBe('claude-haiku-5-5')
   })
 
   test('the fallback is not bounded: its model is its own plain id', () => {
-    const fallback = fallbackModelRef('review.angle', patch)
+    const fallback = fallbackModelRef('research.agent', patch)
     expect(fallback).toBeDefined()
     expect(fallback?.model.id).toBe(fallback?.route.model as string)
     expect(fallback?.model.id).not.toContain('~ctx')
@@ -129,7 +129,7 @@ describe('modelRef with a contextLimit', () => {
 
   test('every variant of every alias an arm can reach exists on its row', () => {
     for (const limit of CONTEXT_LIMITS) {
-      const { model } = modelRef('review.angle', { 'review.angle': { contextLimit: limit } })
+      const { model } = modelRef('research.agent', { 'research.agent': { contextLimit: limit } })
       const variants = (anthropicRows()[model.id] as Row).variants as { id: string }[]
       expect(variants.map((v) => v.id)).toContain(model.variant as string)
     }
@@ -154,7 +154,7 @@ describe('usage and pricing stay on the real model', () => {
   })
 
   test("the usage's model is the route's real one, the handle's, not the alias a message names", () => {
-    const usage = usageFromOpenCodeMessages([message(0.01)], { model: 'claude-haiku-5-5', route: 'review.angle' })
+    const usage = usageFromOpenCodeMessages([message(0.01)], { model: 'claude-haiku-5-5', route: 'research.agent' })
     expect(usage.model).toBe('claude-haiku-5-5')
     expect(usage.costSource).toBe('provider')
   })

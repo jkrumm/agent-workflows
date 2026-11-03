@@ -27,7 +27,7 @@ afterAll(async () => {
 
 const empty = z.object({})
 const optional = defineWorkflow({
-  id: 'review.ocr',
+  id: 'optional.scan',
   version: 'v1',
   input: empty,
   output: empty,
@@ -63,7 +63,7 @@ function gate(path: string, options: Partial<WalletGateOptions> = {}) {
   const decisions: LimitDecision[] = []
   const logger = captureLogger()
   const middleware = walletGate({
-    workflows: ['review.ocr'],
+    workflows: ['optional.scan'],
     spend: snapshotSpendSource({ path }),
     thresholdUsd: 400,
     pausedUntil: null,
@@ -161,7 +161,7 @@ describe('wallet gate', () => {
   test('a resumed run is admitted even when the spend crossed the threshold meanwhile', async () => {
     let block = true
     const longOcr = defineWorkflow({
-      id: 'review.ocr',
+      id: 'optional.scan',
       version: 'v1',
       input: empty,
       output: empty,

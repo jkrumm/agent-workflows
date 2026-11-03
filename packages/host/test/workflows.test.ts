@@ -4,7 +4,7 @@ import { createCapabilities, createRegistry } from '@agent-workflows/capabilitie
 import { fakeTransports } from '@agent-workflows/testing/transports'
 import { withOutputType } from '../src/operations.ts'
 import { createCheckWorkflows } from '../src/workflows/check/index.ts'
-import { createReviewWorkflows } from '../src/workflows/review/index.ts'
+import { createNarrative } from '../src/workflows/narrative/index.ts'
 import { captureLogger, startTestHost, type TestHost, until } from './support.ts'
 
 let t: TestHost
@@ -378,25 +378,25 @@ describe('run ops', () => {
 })
 
 describe('internal workflows', () => {
-  test('review.ocr is registered as the review’s child only: no HTTP route, no command, no schema entry', async () => {
+  test('narrative-polish is registered as narrative’s child only: no HTTP route, no command, no schema entry', async () => {
     const registry = createRegistry(createCapabilities({ transports: fakeTransports({}), env: {} }))
-    const review = createReviewWorkflows({ registry }, { which: () => null, env: {} })
-    expect(review.find((w) => w.workflow.id === 'review.ocr')?.internal).toBe(true)
-    const host = await startTestHost({ prefix: 'wfint', extra: review })
+    const narrative = createNarrative({ registry })
+    expect(narrative.find((w) => w.workflow.id === 'narrative-polish')?.internal).toBe(true)
+    const host = await startTestHost({ prefix: 'wfint', extra: narrative })
     try {
       // `agw schema` lists exactly the operations of this document.
       const doc = (await host.host.openapi()) as {
         paths: Record<string, Record<string, { 'x-cli'?: { command: string[] } }>>
       }
       const paths = Object.keys(doc.paths)
-      expect(paths).toContain('/workflows/review')
-      expect(paths.filter((p) => p.includes('ocr'))).toEqual([])
+      expect(paths).toContain('/workflows/narrative')
+      expect(paths.filter((p) => p.includes('polish'))).toEqual([])
       const commands = Object.values(doc.paths).flatMap((ops) =>
         Object.values(ops).map((op) => op['x-cli']?.command.join(' ')),
       )
-      expect(commands).toContain('review')
-      expect(commands.filter((c) => c?.includes('ocr'))).toEqual([])
-      const response = await host.call('/workflows/review/ocr', { body: { cwd: '/tmp', mode: 'head' } })
+      expect(commands).toContain('narrative')
+      expect(commands.filter((c) => c?.includes('polish'))).toEqual([])
+      const response = await host.call('/workflows/narrative-polish', { body: { text: 'x', medium: 'vault' } })
       expect(response.status).toBe(404)
     } finally {
       await host.close()
@@ -412,34 +412,17 @@ describe('output schema in the document', () => {
   const outputOf = (doc: Doc, path: string, status: '200' | '202') =>
     doc.paths[path]?.post.responses[status]?.content['application/json']?.schema.properties?.output
 
-  test('every workflow answers with its own output schema, review and check included (`agw schema <workflow>` prints it)', async () => {
+  test('every workflow answers with its own output schema, check included (`agw schema <workflow>` prints it)', async () => {
     const registry = createRegistry(createCapabilities({ transports: fakeTransports({}), env: {} }))
-    const extra = [
-      ...createReviewWorkflows({ registry }, { which: () => null, env: {} }),
-      ...createCheckWorkflows({ registry }),
-    ]
+    const extra = createCheckWorkflows({ registry })
     const host = await startTestHost({ prefix: 'wfout', extra })
     try {
       const doc = (await host.host.openapi()) as unknown as Doc
-      const review = outputOf(doc, '/workflows/review', '200')
-      expect(review?.type).toBe('object')
-      expect(Object.keys(review?.properties ?? {})).toEqual(
-        expect.arrayContaining([
-          'schemaVersion',
-          'outcome',
-          'blocking',
-          'improvements',
-          'discussions',
-          'testGaps',
-          'summary',
-        ]),
-      )
-      expect(review?.properties?.outcome?.enum).toEqual(['clean', 'actionable', 'needs-human'])
       const check = outputOf(doc, '/workflows/check', '200')
       expect(Object.keys(check?.properties ?? {})).toEqual(expect.arrayContaining(['passed', 'steps', 'summary']))
       expect(outputOf(doc, '/workflows/echo/say', '200')?.properties?.text).toBeDefined()
       // 202 carries the same body: the run has not ended, but the shape is the same.
-      expect(outputOf(doc, '/workflows/review', '202')).toEqual(review)
+      expect(outputOf(doc, '/workflows/check', '202')).toEqual(check)
       // The run operations serve any workflow's state, so their output stays open.
       const status = doc.paths['/runs/{runId}'] as unknown as { get: Doc['paths'][string]['post'] }
       expect(status.get.responses['200']?.content['application/json']?.schema.properties?.output?.type).toBeUndefined()

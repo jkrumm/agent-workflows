@@ -21,7 +21,6 @@ import podcast from './table/podcast.ts'
 import prose from './table/prose.ts'
 import research from './table/research.ts'
 import retrospective from './table/retrospective.ts'
-import review from './table/review.ts'
 import triage from './table/triage.ts'
 
 /** Every route group of `src/table/` by file name (`_shared.ts` holds no routes). */
@@ -44,7 +43,6 @@ export const ROUTE_GROUPS: Readonly<Record<string, Readonly<Record<string, Route
   prose,
   research,
   retrospective,
-  review,
   triage,
 })
 

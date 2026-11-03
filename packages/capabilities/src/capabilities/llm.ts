@@ -7,8 +7,6 @@ import { createNarrativeCompose } from './narrative-compose.ts'
 import { createOverviewClassify } from './overview-classify.ts'
 import { createProseReview } from './prose-review.ts'
 import { createProseWrite } from './prose-write.ts'
-import { createReviewAdversary } from './review-adversary.ts'
-import { createReviewRoute } from './review-route.ts'
 import { createSummarize } from './summarize.ts'
 import { createTitle } from './title.ts'
 import { createTriage } from './triage.ts'
@@ -21,8 +19,6 @@ export function createLlmCapabilities(deps: LlmDeps) {
     createClassify(deps),
     createDecide(deps),
     createTriage(deps),
-    createReviewRoute(deps),
-    createReviewAdversary(deps),
     createProseReview(deps),
     createProseWrite(deps),
     createNarrativeCompose(deps),

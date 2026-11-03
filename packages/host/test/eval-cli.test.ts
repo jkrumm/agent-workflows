@@ -1,8 +1,4 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { parseArgs } from '../../cli/src/args.ts'
 import { buildCommands } from '../../cli/src/spec.ts'
 import { createEvalWorkflows } from '../src/workflows/eval/index.ts'
 import { hostModules, suitesOf } from '../src/workflows/index.ts'
@@ -19,7 +15,7 @@ afterAll(async () => {
 })
 
 describe('agw eval in the generated CLI', () => {
-  test('eval run, eval compare and eval import are commands with their flags; nothing skipped', async () => {
+  test('eval run and eval compare are commands with their flags; nothing skipped', async () => {
     const { commands, skipped } = buildCommands(await t.host.openapi())
     expect(skipped).toEqual([])
     const flags = (words: string) => {
@@ -33,26 +29,5 @@ describe('agw eval in the generated CLI', () => {
     const compare = flags('eval compare')
     expect(compare.x).toMatchObject({ kind: 'workflow', positional: ['workflow'] })
     expect(compare.flags).toEqual(['a', 'a-args', 'a-workflow', 'b', 'b-args', 'b-workflow', 'seed', 'workflow'])
-    const imported = flags('eval import')
-    expect(imported.x).toMatchObject({ kind: 'workflow', positional: ['workflow'] })
-    expect(imported.flags).toEqual(['concurrency', 'findings', 'ids', 'label', 'workflow', 'yes'])
-    // The importer's own workflow is internal: no command of its own.
-    expect(commands.find((c) => c.words.join(' ') === 'review imported')).toBeUndefined()
-  })
-
-  test("eval import --findings <file> sends the file's JSON, not the path", async () => {
-    const { commands } = buildCommands(await t.host.openapi())
-    const command = commands.find((c) => c.words.join(' ') === 'eval import')
-    if (!command) throw new Error('no command eval import')
-    const dir = mkdtempSync(join(tmpdir(), 'agw-import-cli-'))
-    try {
-      const findings = { 'case-1': [{ file: 'src/a.ts', line: 3, message: 'x', tag: 'important' }], 'case-2': [] }
-      const file = join(dir, 'findings.json')
-      writeFileSync(file, JSON.stringify(findings))
-      const { values } = parseArgs(command, ['review', '--label', 'native', '--findings', file, '--yes'])
-      expect(values).toEqual({ workflow: 'review', label: 'native', findings, yes: true })
-    } finally {
-      rmSync(dir, { recursive: true, force: true })
-    }
   })
 })

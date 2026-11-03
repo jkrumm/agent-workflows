@@ -24,7 +24,7 @@ const root = mkdtempSync(join(tmpdir(), 'agw-evalarm-'))
 const env = { AGW_EVAL_DIR: join(root, 'eval'), AGW_EVAL_HOME: join(root, 'home'), AGW_DRIFT_RATE: '0' }
 
 /** The patched routes: an agent route's effort and model, a single-call route's effort. */
-const SONNET = resolveRoute('review.angle.deep').model
+const SONNET = resolveRoute('retro.analyze').model
 const ARM = { routes: { check: { model: SONNET, effort: 'max' }, 'cheap.classify': { effort: 'high' } } }
 
 const Seen = z.object({ model: z.string(), effort: z.string().nullable() })
@@ -191,9 +191,7 @@ describe('agw eval run --arm', () => {
     expect(await refused({ routes: { 'no.such': { effort: 'low' } } })).toMatch(
       /invalid_input: .*unknown route "no\.such"/s,
     )
-    expect(await refused({ routes: { 'review.angle.deep': { effort: 'none' } } })).toMatch(
-      /"review\.angle\.deep".*Sonnet/s,
-    )
+    expect(await refused({ routes: { 'retro.analyze': { effort: 'none' } } })).toMatch(/"retro\.analyze".*Sonnet/s)
     expect(await refused({ routes: { check: { model: 'not-in-table' } } })).toContain(
       'route "check": model "not-in-table" is not in the route table (add it to the table first)',
     )

@@ -134,7 +134,7 @@ describe.skipIf(!live)('live: a bounded route on the pinned build (a loopback st
     host = new OpenCodeHost({
       server,
       stateDir,
-      agents: [{ name: 'probe', route: 'review.angle', agentsMd: '# Rules\n\nAnswer in one word.\n' }],
+      agents: [{ name: 'probe', route: 'research.agent', agentsMd: '# Rules\n\nAnswer in one word.\n' }],
     })
     await server.start()
   }, 90_000)
@@ -163,14 +163,14 @@ describe.skipIf(!live)('live: a bounded route on the pinned build (a loopback st
   const run = async (runId: string, limit: number | null, tokens: number) => {
     seen.length = 0
     // `null` clears the table's bound: the plain row.
-    const arm = { routes: { 'review.angle': { contextLimit: limit } } }
+    const arm = { routes: { 'research.agent': { contextLimit: limit } } }
     const handle = await host.open({
       runId,
       stepId: 'probe',
       key: `${runId}:probe`,
       agent: 'probe',
       prompt: '',
-      options: { route: 'review.angle' },
+      options: { route: 'research.agent' },
       attribution: attribution(runId),
       arm,
     })
@@ -282,8 +282,8 @@ describe.skipIf(!live)('live: a bounded route on the pinned build (a loopback st
     )
     expect(usage?.cost).toBeCloseTo(usd, 9)
     // The route, the real model and the tool call stay right after the compaction.
-    expect(usage).toMatchObject({ route: 'review.angle', model: 'claude-haiku-5-5', toolCalls: 1 })
-    expect(handle.route).toBe('review.angle')
+    expect(usage).toMatchObject({ route: 'research.agent', model: 'claude-haiku-5-5', toolCalls: 1 })
+    expect(handle.route).toBe('research.agent')
     expect(tools).toEqual(['pre:glob', 'post:glob'])
     expect(result.output).toBe('PONG')
     for (const r of got) expect(r.body.model).toBe('claude-haiku-5-5')

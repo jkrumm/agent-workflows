@@ -132,8 +132,11 @@ describe('a compaction message carries its summary calls', () => {
 
   test('the real model is the options one, not the alias a message names; tool calls stay the assistants', () => {
     const calls: OpenCodeMessage = { ...answer, content: [{ type: 'tool' }, { type: 'tool' }, { type: 'text' }] }
-    const usage = usageFromOpenCodeMessages([compaction(), calls], { model: 'claude-haiku-5-5', route: 'review.angle' })
-    expect(usage).toMatchObject({ model: 'claude-haiku-5-5', route: 'review.angle', toolCalls: 2 })
+    const usage = usageFromOpenCodeMessages([compaction(), calls], {
+      model: 'claude-haiku-5-5',
+      route: 'research.agent',
+    })
+    expect(usage).toMatchObject({ model: 'claude-haiku-5-5', route: 'research.agent', toolCalls: 2 })
   })
 
   test('a compaction call without a cost makes the step unpriced, as an assistant message would', () => {

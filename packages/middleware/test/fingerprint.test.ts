@@ -129,19 +129,19 @@ describe('fsFingerprintSource', () => {
     test('agent.json: its route and its permissions each move it; adding or removing it too', async () => {
       rmSync(json, { force: true })
       const none = await fp(source())
-      writeFileSync(json, JSON.stringify({ route: 'review.angle' }))
+      writeFileSync(json, JSON.stringify({ route: 'research.agent' }))
       const withRoute = await fp(source())
       expect(withRoute).not.toBe(none)
-      writeFileSync(json, JSON.stringify({ route: 'review.router' }))
+      writeFileSync(json, JSON.stringify({ route: 'triage' }))
       const otherRoute = await fp(source())
       expect(otherRoute).not.toBe(withRoute)
-      writeFileSync(json, JSON.stringify({ route: 'review.router', permissions: { shell: true } }))
+      writeFileSync(json, JSON.stringify({ route: 'triage', permissions: { shell: true } }))
       const shell = await fp(source())
       expect(shell).not.toBe(otherRoute)
       writeFileSync(
         json,
         JSON.stringify({
-          route: 'review.router',
+          route: 'triage',
           permissions: { shell: true, rules: [{ action: 'webfetch', resource: '*', effect: 'allow' }] },
         }),
       )

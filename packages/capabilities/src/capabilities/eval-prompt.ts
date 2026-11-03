@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { resolveRoute, type RouteId } from '@agent-workflows/routes'
 import type { z } from 'zod'
 import { toJsonSchema } from '../transports/json-schema.ts'
-import { dataBlock } from './review-prompts.ts'
+import { dataBlock } from './data-block.ts'
 
 /** What one diff may cost the prompt; the rest is cut and the prompt says how much. */
 export const EVAL_DIFF_CHARS = 60_000

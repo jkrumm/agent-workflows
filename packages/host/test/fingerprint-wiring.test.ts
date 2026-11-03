@@ -18,7 +18,7 @@ describe('the host’s fingerprint source', () => {
   const source = () =>
     hostFingerprintSource({
       agentsDir: agents,
-      workflows: { review: [{ agent: 'angle', route: 'review.angle' }] },
+      workflows: { review: [{ agent: 'angle', route: 'research.agent' }] },
       opencodeBin: bin,
     })
   const fingerprint = async () => computeFingerprint('v1', await source().inputs({ id: 'review', version: 'v1' }))
@@ -31,15 +31,15 @@ describe('the host’s fingerprint source', () => {
     const before = await fingerprint()
     writeFileSync(join(agents, 'angle', 'README.md'), 'notes')
     expect(await fingerprint()).toBe(before)
-    writeFileSync(join(agents, 'angle', 'agent.json'), JSON.stringify({ route: 'review.angle' }))
+    writeFileSync(join(agents, 'angle', 'agent.json'), JSON.stringify({ route: 'research.agent' }))
     const routed = await fingerprint()
     expect(routed).not.toBe(before)
-    writeFileSync(join(agents, 'angle', 'agent.json'), JSON.stringify({ route: 'review.synthesis' }))
+    writeFileSync(join(agents, 'angle', 'agent.json'), JSON.stringify({ route: 'brain.agent' }))
     const moved = await fingerprint()
     expect(moved).not.toBe(routed)
     writeFileSync(
       join(agents, 'angle', 'agent.json'),
-      JSON.stringify({ route: 'review.synthesis', permissions: { shell: true } }),
+      JSON.stringify({ route: 'brain.agent', permissions: { shell: true } }),
     )
     expect(await fingerprint()).not.toBe(moved)
   })

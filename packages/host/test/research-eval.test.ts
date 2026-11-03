@@ -194,7 +194,7 @@ describe("the scorers' judge", () => {
     })
     expect(rejection(judge()('eval.run', {}, scope('regression')))).resolves.toContain('is not a judge capability')
     expect(judgeAllowed('llm.classify')).toBe(true)
-    expect(judgeAllowed('review.adversary')).toBe(false)
+    expect(judgeAllowed('prose.write')).toBe(false)
   })
 
   test('a retried scoring adopts the finished call; another scored run or scorer version runs it fresh', async () => {

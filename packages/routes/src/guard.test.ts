@@ -165,7 +165,7 @@ test('every route literal in package source is a route the table serves', () => 
   const seen = new Set(
     [...files.values()].flatMap((t) => [...t.matchAll(ROUTE_LITERAL)].map((m) => m.slice(1).find(Boolean))),
   )
-  for (const id of ['review.angle.deep', 'review.ocr', 'cheap.title', 'decide']) expect(seen.has(id)).toBe(true)
+  for (const id of ['retro.analyze', 'cheap.title', 'decide']) expect(seen.has(id)).toBe(true)
 })
 
 test('the route literal scan catches a planted unknown route with file:line, and skips type unions', () => {
@@ -183,7 +183,7 @@ test('the route literal scan catches a planted unknown route with file:line, and
 // A reviewer of Claude-written output sits on another lab (docs/gateway.md §Seats): never a Claude model or the
 // anthropic wire, primary or fallback.
 test('the cross-lab reviewers are never on a Claude model or the anthropic wire, primary or fallback', () => {
-  const reviewers = ['podcast.review.a', 'podcast.review.b', 'prose.review', 'review.adversary'] as const
+  const reviewers = ['podcast.review.a', 'podcast.review.b', 'prose.review'] as const
   for (const id of reviewers) {
     const route = resolveRoute(id, {})
     for (const leg of [route, route.fallback]) {
@@ -312,8 +312,8 @@ test('every route on a Claude model spreads a tier', () => {
   }
 })
 
-test('the review split (owner, 2026-11-03): default angles and the synthesis on EASY, deep angles on HARD', () => {
-  const step = (id: 'review.angle' | 'review.angle.deep' | 'review.synthesis') => {
+test('the agent split (owner, 2026-11-03): the default agents on EASY, the retro agent on HARD, none bounded in the table', () => {
+  const step = (id: 'research.agent' | 'retro.analyze') => {
     const { model, effort, fallback } = resolveRoute(id)
     return { model, effort, fallback: fallback?.model }
   }
@@ -322,11 +322,9 @@ test('the review split (owner, 2026-11-03): default angles and the synthesis on 
     effort: tier.agent.effort,
     fallback: tier.agent.fallback.model,
   })
-  expect(step('review.angle')).toEqual(agentOf(EASY))
-  expect(step('review.angle.deep')).toEqual(agentOf(HARD))
-  expect(step('review.synthesis')).toEqual(agentOf(EASY))
-  expect(resolveRoute('review.angle').contextLimit).toBe(100_000)
-  expect(resolveRoute('review.synthesis').contextLimit).toBeUndefined()
+  expect(step('research.agent')).toEqual(agentOf(EASY))
+  expect(step('retro.analyze')).toEqual(agentOf(HARD))
+  expect(resolveRoute('research.agent').contextLimit).toBeUndefined()
 })
 
 test('the eval seats are pinned: no fallback, the chosen model and effort, a 16000 ceiling and the model rate', () => {

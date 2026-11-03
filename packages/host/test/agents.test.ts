@@ -23,7 +23,7 @@ describe('loadAgentDefinitions', () => {
       'review-senior/AGENTS.md': '# senior',
       'review-senior/skills/review/SKILL.md': 'skill',
       'review-senior/agent.json': JSON.stringify({
-        route: 'review.angle',
+        route: 'research.agent',
         permissions: { rules: [{ action: 'edit', resource: '*', effect: 'deny' }] },
       }),
       'check/AGENTS.md': '# check',
@@ -35,7 +35,7 @@ describe('loadAgentDefinitions', () => {
         name: 'review-senior',
         agentsMd: '# senior',
         skills: { 'review/SKILL.md': 'skill' },
-        route: 'review.angle',
+        route: 'research.agent',
         permissions: { rules: [{ action: 'edit', resource: '*', effect: 'deny' }] },
       },
     ])

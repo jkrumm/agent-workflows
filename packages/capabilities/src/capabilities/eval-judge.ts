@@ -4,7 +4,7 @@ import { fail } from '../errors.ts'
 import { completeJson, type LlmDeps } from '../llm/model-call.ts'
 import { defineCapability } from '../procedure.ts'
 import { diffBlock, fill, fixtureDiff, pinnedVersion } from './eval-prompt.ts'
-import { dataBlock } from './review-prompts.ts'
+import { dataBlock } from './data-block.ts'
 
 export const JUDGE_SYSTEM =
   'You grade the findings of a code review against a known bug. Be exact: a finding is credited only for the defect it actually describes. ' +
