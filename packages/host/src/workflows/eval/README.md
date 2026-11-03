@@ -15,6 +15,16 @@ reads the ground truth, `$AGW_EVAL_DIR/review-gt/cases.jsonl`, and its `tree` ca
 | `agw eval import <review> --label <name> --findings <file> [--ids a,b] [--concurrency N] [--yes]` | Scores an external arm's findings (the native `/code-review` session per ground-truth case, `docs/review-v2.md` §Arms) with the suite's own scorer, so it is judged like every arm. Without `--yes`: the plan (cases to score, `missing` cases, finding count, judge calls) and nothing runs. With `--yes`: an eval run whose case runs are the internal workflow `review.imported` (no model call: it turns the findings into a REVIEW_OUTPUT v2, `important` → `blocking`, `nit` and `pre-existing` → `improvements`, `angle` = the label), keyed, parented, scored (`source: regression`, the review scorer's version, the very instance the `review` workflow registers: one `eval.judge` call per case with a finding when the calibration clears the bar, a call per judge otherwise) and rolled up like `eval run`'s. No clone: the scorer reads the commit's diff from the owner's checkout |
 | drift (no command) | every `AGW_DRIFT_INTERVAL_S`, up to 20 sampled, unscored production runs of a workflow with a scorer are scored (`source: drift`); the sample is a hash of the run id, the write first-writer-wins, so several hosts never score a run twice. A tick counts verdicts and recorded scorer errors apart (and warns on errors) |
 
+**Suites by workflow** (each module's `eval/cases.jsonl` is committed and synthetic unless noted; the scorers are deterministic, none calls a judge):
+
+| Workflow | Cases | Scorer measures |
+|-|-|-|
+| `digest`, `factory-classify` | committed | see their READMEs |
+| `narrative` | 6, a `fixture` of commits, `polish: false` | `changed`, shape, must-mention terms, no removed mechanism as current, no hash or canary, length band, dated entries |
+| `prose-polish` | 8 drafts with planted lint issues | lint recomputed (honest, not worse, fixed), planted phrases gone, must-keep facts, length band |
+| `overview` | 6 fleets as a `fixture` (cases and scorer committed; suite pending, see its README) | every agent once, answered, recommendation match |
+| `retrospective` | 5 `fixture` samples of runs (cases and scorer committed; suite pending, see its README) | grounded evidence, planted patterns found, restraint, no canary, URL or path |
+
 - **Spend gate: `--yes`, not `--commit`.** The CLI's `--commit` gate (mutating operations) applies only off a TTY and
   shows nothing first; an eval spends IU money (concept N8) whoever types it, so `eval.run` is not `mutating`: the
   default answer is the plan with the estimate, and only `--yes` spends.
