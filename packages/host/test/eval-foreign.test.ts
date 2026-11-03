@@ -5,16 +5,10 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { AnyWorkflow, Runtime } from '@agent-workflows/runtime'
-import { testPlatform } from '../../middleware/test/support.ts'
-import { captureLogger, freshSchema, inspector, testRuntime } from '../../runtime/test/support/pg.ts'
-import {
-  type FakeGateway,
-  fakeMedia,
-  geminiAudio,
-  silentLog,
-  startFakeGateway,
-  testDeps,
-} from '../../audio/src/testing/index.ts'
+import { type FakeGateway, geminiAudio, startFakeGateway } from '@agent-workflows/testing/gateway'
+import { captureLogger, freshSchema, inspector, testRuntime } from '@agent-workflows/testing/pg'
+import { testPlatform } from '@agent-workflows/testing/platform'
+import { fakeMedia, silentLog, testDeps } from '../../audio/test/support.ts'
 import { createSpeechRoundtrip } from '../../audio/src/workflows/speech-roundtrip/index.ts'
 import { SPEECH_SCORER_VERSION } from '../../audio/src/workflows/speech-roundtrip/scorer.ts'
 import { wireEval, createEvalWorkflows } from '../src/workflows/eval/index.ts'
