@@ -16,7 +16,7 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
   tailscale drift). Not ours; gates are judged on our rows only.
 
 ## Lead
-- Mother `agent-workflows-w1-r4` (pane t4f, account me2); Wave 15 lead `agent-workflows-w1-r15` (pane t106, account me2), spawned 2026-11-03.
+- Mother `agent-workflows-w1-r4` (pane t4f, account me2); no lead running (Wave 15 lead r15 closed 2026-11-03 07:50).
   Rotation policy: a fresh lead per wave unless the last one closed under ~30% context.
 
 ## Decisions taken
@@ -166,10 +166,10 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
   it asks again: it belongs in the factory's plan or a later agw wave, not Waves 4–13 as written.
 
 ## Next action
-- Wave 8 done (`360e5f8`, 43 cases + 100 controls). Wave 15 (coverage and debt, the daily mining job, compaction
-  overflow) pulled forward and active while the owner reads review v3.
+- Wave 15 done (`b2701de`). Every pending wave (9–12, 14) depends on review v3; the fleet idles until the owner signs.
+  First step of Wave 9 then: the credit-bound suite runs from Wave 15's Left behind.
 - On the owner's sign-off of review v3 (5 points in lead.md `d7bdc76`): rewrite Waves 9–11 from the close-out's proposal
-  (Wave 12 loses review's seats), Wave 9 waits for the sign-off (and Wave 15 to close). Cross-repo asks (dotfiles agents + `/review`, software-factory `reviewer` role) go into the waves.
+  (Wave 12 loses review's seats), then flip Wave 9 active and spawn its lead. Cross-repo asks (dotfiles agents + `/review`, software-factory `reviewer` role) go into the waves.
 - Owner changes to the five points: fold them into the rewrite; a rejected pick goes back to a short Wave 17 follow-up.
 - Still owed by the owner: me2 keys and expiry day (+$100 a cycle; eval credit is the bottleneck now).
 - Wake-loop: the factory re-fires `workers done` while the lead idles on shells. Answer with a blocking ~9.5-min poll on

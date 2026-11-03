@@ -625,6 +625,16 @@ One entry per phase: what we learned, what changed on this page, and why.
 - **Process.** Plan no owner work beyond minutes; a human check is a small sample only when an automated bar fails.
 - **Does the page hold?** Yes; the ground-truth limit (LLM consensus, no human check) is stated in every report.
 
+### Gateway Wave 15 — Coverage and debt, 2026-11-03
+
+- **Learned.** Eval credit (~$0.14 an hour) gates even small suite runs; a lead waiting hours on it stalls the fleet,
+  so credit-bound runs go to the next wave's first step. Gemini under `json_object` failed the schema on every call.
+- **Changed.** Release `b2701de`: nightly mining LaunchAgent (46/200 at its first run, IU capped under $20); compaction
+  buffer 40k with a read-only restart on the fallback; suites for seven uncovered workflows, audio scored by the host;
+  test fakes in `packages/testing`; concept v3.15.
+- **Process.** Close out on merged, verified code; never hold a close-out for credit.
+- **Does the page hold?** Yes; open: a failed eval case scores zeros instead of erroring, compaction proven by tests only.
+
 ### Docs and small debt, 2026-11-03
 
 - **Changed.** v3.15: stale sentences brought to the code (podcast seat, brain tier, OpenCode credential, Argo and `dispatch` leftovers, eval sets); no decision reversed.
