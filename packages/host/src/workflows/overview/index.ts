@@ -29,6 +29,8 @@ export interface OverviewDeps {
    * fixtures into the owner's fleet view.
    */
   purposeOf?: (runId: string) => Promise<string | null>
+  /** Where a non-fatal failure is logged (the push effect's); default: nowhere. */
+  warn?: (message: string, meta?: Record<string, unknown>) => void
   now?: () => number
 }
 
@@ -95,8 +97,9 @@ export function createOverview(deps: OverviewDeps): HostWorkflow {
           // The purpose lookup is a Postgres read: telemetry never fails the run, and neither does the gate in front of it.
           if ((await deps.purposeOf?.(ctx.runId)) !== 'prod') return null
           await deps.argo.push('run', output)
-        } catch {
-          // never fatal
+        } catch (error) {
+          // never fatal, but not silent
+          deps.warn?.('overview push effect failed', { runId: ctx.runId, error: String(error) })
         }
         return null
       })

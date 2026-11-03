@@ -57,12 +57,12 @@ not Requesty.
   - Git has no `ahead`/`behind` in the factory's view: Argo requires numbers, so they are 0, and the facts the seat reads
     say `ahead: unknown  behind: unknown`. A repo with no branch (detached) has no git.
 - **A factory that is down is a warning, never a 500.** A non-zero exit, a timeout, a missing binary, output that is not
-  JSON or the wrong shape (`repos` is required: `{}` is not an empty fleet): `agw agents` answers no projects, one
+  JSON or the wrong shape (`repos` is required: `{}` is not an empty fleet; neither is an exit-0 answer that carries `errors` and no session at all, which reads as the failure with the errors as the warning): `agw agents` answers no projects, one
   warning naming the cause (the exit code and stderr's first line; exit 3 is a missing `FACTORY_TOKEN`) and the quota.
   The failure is not cached; the next call asks again. Because an empty answer is not an empty fleet, the two writers
   act on the read's outcome (`Fleet.read`, `view().unreadable`): the Argo push is skipped with a warn-level log naming
   the cause (Argo keeps its last good snapshot instead of receiving zero agents), and the `overview` run fails its
-  `classify` step with the cause, so no verdict is reconciled against nothing.
+  `classify` step with the cause, so no verdict is reconciled against nothing. The `push` effect stays non-fatal, but a failure there is logged at warn with the run id.
 - **Dropped sessions are counted.** A session whose id cleaning would change, and one whose id was already seen, are
   skipped; each kind is one warning with its count.
 - **No dispatch lane.** Dispatch retired with agent-gateway (owner, 2026-10-29). `summary.dispatch` is gone from the wire too (Argo's ingest no longer requires it). The `agent-gateway:review` and `agent-gateway:dispatch`
@@ -72,8 +72,10 @@ not Requesty.
 
 - **The child gets the review helpers' allowlist.** `factory` runs on `helperEnv` (`PATH`, `HOME`, `TMPDIR`, `LANG`,
   `LC_*`, `TERM`) plus `FACTORY_TOKEN` and `FACTORY_URL`, never the host's environment (`AGW_API_SECRET`,
-  `ARGO_API_SECRET`, `IU_API_KEY`). It runs in its own process group, so a timeout kills a grandchild holding the pipes. Its stdout is counted per chunk
-  against a 16 MiB byte budget (the real view is about 140 KB); past it the child is killed, never buffered whole.
+  `ARGO_API_SECRET`, `IU_API_KEY`). It runs in its own process group, so a timeout kills a grandchild holding the pipes. Its stdout and stderr are counted
+  per chunk through one capped reader: 16 MiB for stdout (the real view is about 140 KB), 64 KB for stderr; past a budget
+  the child is killed, never buffered whole, and a stderr keeps its capped diagnostic. The warning's stderr line is one
+  clean line of at most 300 characters.
 - **Text from outside loses its control bytes**, C0 and C1 (U+0080 to U+009F), before it reaches a pane, Argo or a
   prompt. Fields that are one line by nature (ids, account, terminal, titles, wait reasons, project, branch and commit
   text, the model's standing and blocker) also lose CR/LF. In the facts the model reads, the headline is one line, so it

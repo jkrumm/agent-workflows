@@ -37,6 +37,7 @@ const verdict = (id: string, recommendation: string) => ({
 
 let sessions: FactorySession[] = []
 let factoryDown: string | null = null
+const warned: { message: string; meta?: Record<string, unknown> }[] = []
 let purposeLookup: (runId: string) => Promise<string | null> = async () => null
 let answer: () => Response
 const factoryFleet = (): FactoryFleet => ({
@@ -95,6 +96,7 @@ beforeAll(async () => {
         fleet,
         argo,
         purposeOf: (runId) => purposeLookup(runId),
+        warn: (message, meta) => warned.push({ message, meta }),
       }),
     ],
     reads: fleetOperations(fleet),
@@ -116,6 +118,7 @@ beforeEach(() => {
   argoStatus = 200
   purposeLookup = pgRunPurpose(t.pool, t.schema)
   pushed.length = 0
+  warned.length = 0
   t.iu.requests.length = 0
 })
 
@@ -318,6 +321,13 @@ describe('overview workflow: what is journaled and what is pushed', () => {
     const { body } = await startOverview()
     expect(body.status).toBe('done')
     expect(pushed).toHaveLength(0)
+    // not fatal, not silent: the failure is logged with the run id
+    expect(warned).toEqual([
+      {
+        message: 'overview push effect failed',
+        meta: { runId: body.runId, error: 'Error: connection terminated' },
+      },
+    ])
   })
 
   test('the cache behind `agents` and the timer is prod runs only', async () => {

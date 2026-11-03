@@ -1,6 +1,6 @@
-import type { FactoryFleet, FactorySession } from './factory.ts'
+import { type FactoryFleet, type FactorySession, MAX_WARNING_CHARS } from './factory.ts'
 import type { Agent, AgentState, HerdrAgentStatus, HumanQueueEntry, Project, Snapshot, Summary } from './schema.ts'
-import { oneLine, stripControlBytes } from './text.ts'
+import { oneLine, stripControlBytes, truncate } from './text.ts'
 
 // Pure steps of the snapshot: the factory's fleet view mapped onto the overview's shapes, and the urgency state of one agent.
 
@@ -188,7 +188,11 @@ export function mapFleet(
     summary: summarize(projects),
     projects,
     humanQueue,
-    warnings: [...(options.warnings ?? []), ...fleet.errors.map((e) => cleanLine(e) ?? ''), ...dropped],
+    warnings: [
+      ...(options.warnings ?? []),
+      ...fleet.errors.map((e) => truncate(cleanLine(e) ?? '', MAX_WARNING_CHARS)),
+      ...dropped,
+    ],
   }
 }
 

@@ -3,6 +3,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { z } from 'zod'
 import { helperEnv, killTree } from '../workflows/review/exec.ts'
+import { oneLine, truncate } from './text.ts'
 
 // The one source of agent state is the factory (software-factory): `factory fleet --format json`. This file runs that
 // CLI and parses its answer. It never throws: a factory that is down is a failure value the snapshot turns into a warning.
@@ -10,6 +11,8 @@ import { helperEnv, killTree } from '../workflows/review/exec.ts'
 const FACTORY_TIMEOUT_MS = 10_000
 const DEFAULT_STALE_HOURS = 24
 const MAX_STDOUT_BYTES = 16 * 1024 * 1024 // the real fleet view is about 140 KB
+const MAX_STDERR_BYTES = 64 * 1024 // a diagnostic, never a payload
+export const MAX_WARNING_CHARS = 300
 
 export interface CommandResult {
   stdout: string
@@ -33,6 +36,29 @@ export type RunCommand = (
   options?: { timeoutMs?: number; maxStdoutBytes?: number; extraEnv?: Record<string, string> },
 ) => Promise<CommandResult>
 
+/**
+ * Reads a child's pipe against a byte budget, counted per chunk. Past it `onOverflow` runs (the caller kills the tree)
+ * and what was read so far is kept up to the budget; the rest is never buffered.
+ */
+async function readCapped(
+  stream: ReadableStream<Uint8Array>,
+  budget: number,
+  onOverflow: () => void,
+): Promise<{ text: string; overflow: boolean }> {
+  const chunks: Uint8Array[] = []
+  let bytes = 0
+  for await (const chunk of stream) {
+    if (bytes + chunk.byteLength > budget) {
+      chunks.push(chunk.subarray(0, budget - bytes))
+      onOverflow()
+      return { text: Buffer.concat(chunks).toString('utf8'), overflow: true }
+    }
+    bytes += chunk.byteLength
+    chunks.push(chunk)
+  }
+  return { text: Buffer.concat(chunks).toString('utf8'), overflow: false }
+}
+
 export function commandRunner(env: Record<string, string | undefined> = process.env): RunCommand {
   const base = helperEnv(env)
   return async (cmd, options = {}) => {
@@ -54,29 +80,20 @@ export function commandRunner(env: Record<string, string | undefined> = process.
       killTree(proc, 'KILL')
     }, options.timeoutMs ?? FACTORY_TIMEOUT_MS)
     try {
-      // stdout is counted per chunk against the byte budget: a runaway child is killed, never buffered whole.
-      const budget = options.maxStdoutBytes ?? MAX_STDOUT_BYTES
-      let overflow = false
-      const readStdout = async (): Promise<string> => {
-        const chunks: Uint8Array[] = []
-        let bytes = 0
-        for await (const chunk of proc.stdout) {
-          bytes += chunk.byteLength
-          if (bytes > budget) {
-            overflow = true
-            killTree(proc, 'KILL')
-            return ''
-          }
-          chunks.push(chunk)
-        }
-        return Buffer.concat(chunks).toString('utf8')
-      }
-      const [stdout, stderr, exitCode] = await Promise.all([
-        readStdout(),
-        new Response(proc.stderr).text(),
+      const kill = () => killTree(proc, 'KILL')
+      const [out, err, exitCode] = await Promise.all([
+        readCapped(proc.stdout, options.maxStdoutBytes ?? MAX_STDOUT_BYTES, kill),
+        readCapped(proc.stderr, MAX_STDERR_BYTES, kill),
         proc.exited,
       ])
-      return { stdout, stderr, exitCode: timedOut || overflow ? null : exitCode, timedOut, overflow }
+      // A stdout past its budget is no answer (and is not kept); stderr past its cap keeps the capped diagnostic.
+      return {
+        stdout: out.overflow ? '' : out.text,
+        stderr: err.text,
+        exitCode: timedOut || out.overflow ? null : exitCode,
+        timedOut,
+        overflow: out.overflow,
+      }
     } catch (error) {
       return { stdout: '', stderr: '', exitCode: null, timedOut, error: String(error) }
     } finally {
@@ -149,7 +166,17 @@ export type FactoryFleet = z.infer<typeof FACTORY_FLEET>
 
 export type FactoryRead = { ok: true; fleet: FactoryFleet } | { ok: false; warning: string }
 
-const firstLine = (text: string) => text.trim().split('\n')[0]?.trim() ?? ''
+/** The first non-empty line of a child's text, as one clean line of at most {@link MAX_WARNING_CHARS} characters. */
+const firstLine = (text: string) =>
+  truncate(
+    oneLine(
+      text
+        .trim()
+        .split('\n')
+        .find((l) => l.trim() !== '') ?? '',
+    ),
+    MAX_WARNING_CHARS,
+  )
 
 /** A factory failure as one warning: the exit code and the first line of stderr, or the spawn error / timeout. */
 export function failureWarning(result: CommandResult, timeoutMs: number): string {
@@ -193,5 +220,12 @@ export async function readFactoryFleet(
     const issue = parsed.error.issues[0]
     return { ok: false, warning: `factory fleet failed: unexpected shape at ${issue?.path.join('.') || '(root)'}` }
   }
-  return { ok: true, fleet: parsed.data }
+  // A build that failed in every source answers exit 0 with only `errors`: that is no fleet, it is the factory unable to look.
+  const fleet = parsed.data
+  const anySession = fleet.unplaced.length > 0 || fleet.repos.some((r) => r.sessions.length > 0)
+  if (!anySession && fleet.errors.length > 0) {
+    const joined = truncate(oneLine(fleet.errors.join('; ')), MAX_WARNING_CHARS)
+    return { ok: false, warning: `factory fleet reported errors and no session: ${joined}` }
+  }
+  return { ok: true, fleet }
 }
