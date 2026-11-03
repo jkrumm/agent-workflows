@@ -627,6 +627,16 @@ One entry per phase: what we learned, what changed on this page, and why.
 - **Process.** Plan no owner work beyond minutes; a human check is a small sample only when an automated bar fails.
 - **Does the page hold?** Yes; the ground-truth limit (LLM consensus, no human check) is stated in every report.
 
+### Gateway Wave 12 — Central tiers, 2026-11-03
+
+- **Learned.** Most of the wave was already done by earlier waves; the plan's provisional table was stale against
+  measured seats and owner decisions, and the lead rightly did not apply it. Research on Haiku high: golden 28/28,
+  `supported` 0.78 (Sonnet medium 0.88), so golden cases do not separate arms.
+- **Changed.** agw `d781796`: tiers own the output ceiling, no route overrides its tier, guards enforce it; modelpick
+  decision record.
+- **Process.** A plan table written days earlier is a proposal, not an order; check it against decisions since.
+- **Does the page hold?** Yes.
+
 ### Gateway Wave 19 — Review v4 follow-ups, 2026-11-03
 
 - **Learned.** The watchdog holds live (a frozen reviewer killed after the idle window, a2 frozen → needs a human, no

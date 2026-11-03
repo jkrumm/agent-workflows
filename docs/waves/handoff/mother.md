@@ -171,7 +171,8 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
   it asks again: it belongs in the factory's plan or a later agw wave, not Waves 4–13 as written.
 
 ## Next action
-- Wave 19 done (agw `60a5bcd`). Wave 12 (central tiers) active; Wave 11 measurement from 2026-11-17. Quota is the constraint: me/iu ~94 % of the week, me2 carries the fleet.
+- Wave 12 done (agw `d781796`). Wave 20 (review papercuts) active; Wave 11 measurement from 2026-11-17. Quota
+  2026-11-03 15:00: me2 76 % week (resets 11-08), me and iu 95 % (iu resets 11-04 16:00, me 11-05). Quota is the constraint: me/iu ~94 % of the week, me2 carries the fleet.
 - Wave 15 done (`b2701de`). Every pending wave (9–12, 14) depends on review v3; the fleet idles until the owner signs.
   First step of Wave 9 then: the credit-bound suite runs from Wave 15's Left behind.
 - On the owner's sign-off of review v3 (5 points in lead.md `d7bdc76`): rewrite Waves 9–11 from the close-out's proposal

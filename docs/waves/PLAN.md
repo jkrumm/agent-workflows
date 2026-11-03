@@ -422,6 +422,21 @@ Provisional picks (2026-10-31, from cost, wall time, failure modes and the AA in
   recall test (`d781796`). Reviews clean, ranges `covered`. No wave flipped `active`: Wave 11 waits for 2026-11-17
   (mother's call). Nothing spawned (orchestrated).
 
+## Wave 20 — Review v4 papercuts            <!-- status: active -->
+
+Small, so the owner's daily review use is smooth before Wave 11 measures it. Inputs: the close-outs of Waves 19 and 12.
+**Repos:** dotfiles
+
+- [ ] `check-real.test.ts` fails 2 tests when the gate runs as `agw check` (host env or git context leaks in): fix, so
+  `/check` and the wave gate are green on this repo.
+- [ ] CLI and skills agree: `/review` skill text vs `agw review prepare --scope a..b`; `agw check --cwd .` resolves a
+  relative path (or the check skill says absolute).
+- [ ] Threads: `status` prints the thread key; `prepare --thread` accepts the key or the id; in-session jobs can be
+  abandoned.
+- [ ] `cancel` reads a structured state from the factory's error body, not its 409 message (factory change via the
+  software-factory fleet if one is working, else directly).
+- [ ] `gt calibrate`: delete, or give it a source; the learned runaway cap gets a per-workflow `minSample`.
+
 ## Wave 13 — Accounting and telemetry            <!-- status: done 2026-11-03 as Wave 16 -->
 
 - [x] Moved into Wave 16 (2026-11-02), done 2026-11-03.
@@ -439,6 +454,3 @@ Provisional picks (2026-10-31, from cost, wall time, failure modes and the AA in
   thresholds; the classifier on or off; the deep cap. Report `docs/evals/<date>-review-v4.md`.
 - Recall seen so far: 0/3 on `dev` bug cases at light/standard with the commit subject as intent (Wave 19, n=3,
   interaction bugs). First question: is it the tier, the missing intent, or the cases.
-- `gt calibrate`: delete or give it a source. Learned runaway cap for `eval.recall` needs a `minSample`.
-- Papercuts: `prepare --thread` takes the key (status should print it); in-session jobs need an abandon; `cancel`
-  should read a structured factory state, not a 409 message.
