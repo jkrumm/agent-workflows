@@ -219,7 +219,7 @@ function parseNumstat(out: string): FileChange[] {
     })
 }
 
-/** Reads `git diff --numstat --no-renames base..head`, the whitespace check, and REVIEW.md AT BASE (`git show <base>:REVIEW.md`, missing → defaults) */
+/** Reads `git diff --numstat --no-renames base..head`, the whitespace check, and REVIEW.md at `configAt` (default `base`; `git show <rev>:REVIEW.md`, missing → defaults) */
 export async function routeRange(input: {
   git: GitRunner
   repo: string
@@ -227,13 +227,14 @@ export async function routeRange(input: {
   head: string
   min?: Tier
   classify?: Classifier
+  configAt?: string
 }): Promise<RouteDecision & { config: ReviewConfig; changes: FileChange[]; warning?: string }> {
   const { git, repo, base, head } = input
   const range = `${base}..${head}`
   const [numstat, ignoringWhitespace, reviewMd] = await Promise.all([
     git(repo, ['diff', '--numstat', '--no-renames', range]),
     git(repo, ['diff', '--numstat', '-M', '-w', '--ignore-blank-lines', range]),
-    git(repo, ['show', `${base}:REVIEW.md`]).catch(() => null),
+    git(repo, ['show', `${input.configAt ?? base}:REVIEW.md`]).catch(() => null),
   ])
   const changes = parseNumstat(numstat)
   const { config, warning } = parseReviewMd(reviewMd)

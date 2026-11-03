@@ -357,6 +357,83 @@ describe('convergence over rounds', () => {
   })
 })
 
+describe('convergence by disposition', () => {
+  const round1 = async (s: ReturnType<typeof service>, root: string, message: string) => {
+    write(root, 'src/a.ts', `${lines(2)}export const roundOne = 1\n`)
+    const r1 = await ready(s.prepare({ cwd: root }))
+    await s.submit({
+      jobId: r1.jobId,
+      attempt: 1,
+      reply: fakeReviewer(r1.jobDir, [{ tag: 'important', file: 'src/a.ts', message }]),
+    })
+    return r1
+  }
+  const round2 = async (
+    s: ReturnType<typeof service>,
+    root: string,
+    finding: { message: string; id?: string; stillOpen?: boolean },
+  ) => {
+    write(root, 'src/a.ts', `${lines(2)}export const roundOne = 1\nexport const roundTwo = 2\n`)
+    const r2 = await ready(s.prepare({ cwd: root }))
+    const out = await s.submit({
+      jobId: r2.jobId,
+      attempt: 1,
+      reply: fakeReviewer(r2.jobDir, [{ tag: 'important', file: 'src/a.ts', ...finding }]),
+    })
+    return { r2, out }
+  }
+
+  test('a fixed finding that comes back is reopened under its id and keeps the outcome actionable', async () => {
+    const s = service()
+    const root = repo({ 'src/a.ts': lines(2) })
+    const r1 = await round1(s, root, 'Leaks a handle.')
+    const t = r1.thread
+    await s.dispose({ jobId: r1.jobId, findingId: `${t}-1`, disposition: 'fixed' })
+    const { r2, out } = await round2(s, root, { message: 'leaks a handle' })
+    expect(out.findings.map((f) => [f.id, f.stillOpen ?? false])).toEqual([[`${t}-1`, true]])
+    expect(out).toMatchObject({ outcome: 'actionable', dropped: { repeats: 0 } })
+    const rows = await findingRows(t)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ disposition: 'open', last_job_id: r2.jobId, disposed_at: null })
+  })
+
+  test('a settled finding re-reported with stillOpen is dropped as a repeat', async () => {
+    const s = service()
+    const root = repo({ 'src/a.ts': lines(2) })
+    const r1 = await round1(s, root, 'Leaks a handle.')
+    const t = r1.thread
+    await s.dispose({ jobId: r1.jobId, findingId: `${t}-1`, disposition: 'wrong', reason: 'unreachable' })
+    const { out } = await round2(s, root, { message: 'It still leaks', id: `${t}-1`, stillOpen: true })
+    expect(out.findings).toEqual([])
+    expect(out).toMatchObject({ outcome: 'clean', dropped: { repeats: 1 } })
+    expect((await findingRows(t))[0]).toMatchObject({ disposition: 'wrong' })
+  })
+
+  test('an open finding re-reported without stillOpen is kept under its id', async () => {
+    const s = service()
+    const root = repo({ 'src/a.ts': lines(2) })
+    const r1 = await round1(s, root, 'Leaks a handle.')
+    const t = r1.thread
+    const { r2, out } = await round2(s, root, { message: 'Leaks a handle' })
+    expect(out.findings.map((f) => [f.id, f.stillOpen ?? false])).toEqual([[`${t}-1`, true]])
+    expect(out.outcome).toBe('actionable')
+    expect((await findingRows(t))[0]).toMatchObject({ disposition: 'open', last_job_id: r2.jobId })
+  })
+
+  test('routing reads REVIEW.md at the thread base, not at the previous head', async () => {
+    const s = service()
+    const root = repo({ 'src/a.ts': lines(2) })
+    write(root, 'REVIEW.md', "---\nnone: ['**']\n---\n")
+    const r1 = await ready(s.prepare({ cwd: root }))
+    expect(r1.tier).not.toBe('none')
+    await s.submit({ jobId: r1.jobId, attempt: 1, reply: fakeReviewer(r1.jobDir, []) })
+    write(root, 'src/a.ts', `${lines(2)}export const roundTwo = 2\n`)
+    const r2 = await ready(s.prepare({ cwd: root }))
+    expect(r2).toMatchObject({ round: 2, diffBase: r1.head })
+    expect(r2.tier).not.toBe('none')
+  })
+})
+
 describe('covered', () => {
   test('snapshot then same-tree commit is covered; later commits are not; none needs nothing; a range job covers its commits; light does not cover deep', async () => {
     const s = service()

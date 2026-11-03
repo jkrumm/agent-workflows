@@ -271,8 +271,16 @@ export function reviewLedger(pool: ReviewPool, schema: string) {
       )
     },
 
-    async touchFinding(q: Query, id: string, jobId: string): Promise<void> {
-      await q.query(`update ${findings} set last_job_id = $2 where id = $1`, [id, jobId])
+    /** A round reported the finding again; `reopen` also puts a `fixed` one back to `open`. */
+    async touchFinding(q: Query, id: string, jobId: string, reopen = false): Promise<void> {
+      if (!reopen) {
+        await q.query(`update ${findings} set last_job_id = $2 where id = $1`, [id, jobId])
+        return
+      }
+      await q.query(
+        `update ${findings} set last_job_id = $2, disposition = 'open', reason = $3, disposed_at = null where id = $1`,
+        [id, jobId, `reopened by ${jobId}`],
+      )
     },
 
     async markSubmitted(q: Query, id: string, attempt: number, output: ReviewOutputV4Value, at: Date): Promise<void> {

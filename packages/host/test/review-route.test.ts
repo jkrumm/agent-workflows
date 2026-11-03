@@ -273,6 +273,9 @@ describe('routeRange', () => {
     expect(atBase).toMatchObject({ tier: 'deep', config: { sensitive: ['src/secret.ts'] } })
     expect(atBase.changes.map((c) => c.path).sort()).toEqual(['REVIEW.md', 'src/a.ts', 'src/b.ts', 'src/secret.ts'])
 
+    const configAt = await routeRange({ git: gitRunner, repo, base: c0, head: c3, configAt: c3 })
+    expect(configAt).toMatchObject({ tier: 'standard', config: { sensitive: [] } })
+
     write(repo, 'src/big.ts', `${body}\n${body}\n`)
     const c4 = await commit(repo, 'default case')
     let calls = 0

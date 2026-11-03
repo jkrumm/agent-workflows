@@ -23,6 +23,8 @@ CLI exits non-zero naming it.
 | `agw review route --cwd --base --head [--min]` | `routeRange` alone; no ledger (HTTP `/review/route-range`: `/review/route` is v1's capability until Wave 10) |
 | `agw review covered --cwd --range <a>..<b>` | Coverage of each first-parent commit; exit 0 either way, read `covered` |
 
+`prepare`, `submit` and `dispose` change state, so the CLI asks for `--commit` (non-TTY callers must pass it).
+
 `--cwd` is required wherever a repo is read (the CLI does not fill it, as with v1's `agw review`).
 
 ## Scopes and the snapshot
@@ -49,8 +51,8 @@ symlinks removed). The tree goes on submit; each prepare sweeps trees older than
 ## The ledger (migration 0017)
 
 `review_jobs`: one row per prepared job (`prepared → submitted | abandoned`), the route decision with its facts, the
-REVIEW.md config read at the thread base (the route itself reads REVIEW.md at `diff_base`, the same file in nearly all
-cases), the stat paths, the output. `review_findings`: stable ids `<thread>-<n>`, `job_id` (first reported),
+REVIEW.md config read at the thread base (`prepare` routes every round on that config, so a REVIEW.md the change
+edits cannot decide a later round's tier), the stat paths, the output. `review_findings`: stable ids `<thread>-<n>`, `job_id` (first reported),
 `last_job_id` (latest round that reported it), the disposition.
 
 ## Convergence
@@ -58,8 +60,11 @@ cases), the stat paths, the output. `review_findings`: stable ids `<thread>-<n>`
 Round = last submitted round of the thread + 1; a re-prepare abandons the thread's unsubmitted job (only when a new job
 is written: a held or skipped prepare leaves a running review alone). Round 4 is refused (`needs-human`). From round 2
 the diff starts at the last reviewed head when it is an ancestor of the new head or the two share the base (two
-snapshots on one base), else at the base. Submit: a `stillOpen` finding with a thread id keeps it (only `last_job_id`
-moves); a finding equal to a thread finding on file + class + normalized message is a dropped repeat; nits past
+snapshots on one base), else at the base. Submit: a reply finding matches a thread finding E by `stillOpen` with E's id,
+else by file + class + normalized message, then by E's disposition: `wrong`, `intentional` or `irrelevant` is a dropped
+repeat (counted); `open` is kept under E's id with `stillOpen` (`last_job_id` moves); `fixed` is reopened, kept under E's
+id with `stillOpen` and E back to `open` in the same transaction. Two reply findings on one E keep the first. No match is
+a new finding; a `stillOpen` with an unknown id matches by key or is new. Nits past
 REVIEW.md `nits` are dropped (counted). Code decides `outcome` (`clean` without important, `needs-human` from round 3,
 else `actionable`), `summary` (counts only), `stepBack` (the reply's, or a fixed default at round 3 with important left)
 and `tier` (the job's). The echoed `files` must equal the stat paths (the empty-diff guard); nothing is written otherwise.

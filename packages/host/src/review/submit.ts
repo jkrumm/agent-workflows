@@ -100,7 +100,7 @@ export async function submit(
     const existing = await ledger.threadFindings(job.repo, job.thread, client)
     const output = assemble(job, reply, existing)
     for (const f of output.newFindings) await ledger.insertFinding(client, f)
-    for (const id of output.stillOpen) await ledger.touchFinding(client, id, job.id)
+    for (const t of output.touched) await ledger.touchFinding(client, t.id, job.id, t.reopen)
     await ledger.markSubmitted(client, job.id, input.attempt, output.output, ctx.now())
     return { output: output.output, fresh: true }
   })
@@ -110,7 +110,9 @@ export async function submit(
 
 function assemble(job: Job, reply: ReviewerReplyValue, existing: Finding[]) {
   const byId = new Map(existing.map((f) => [f.id, f]))
-  const seen = new Set(existing.map(repeatKey))
+  const byKey = new Map<string, Finding>()
+  for (const f of existing) if (!byKey.has(repeatKey(f))) byKey.set(repeatKey(f), f)
+  const seen = new Set<string>()
   let next = existing.reduce((n, f) => {
     const m = /-(\d+)$/.exec(f.id)
     return m ? Math.max(n, Number(m[1])) : n
@@ -119,12 +121,24 @@ function assemble(job: Job, reply: ReviewerReplyValue, existing: Finding[]) {
   let nits = 0
   const cap = job.reviewConfig.nits
   const kept: OutputFindingValue[] = []
-  const stillOpen: string[] = []
+  const touched: { id: string; reopen: boolean }[] = []
+  const matched = new Set<string>()
   const fresh: OutputFindingValue[] = []
 
   for (const f of reply.findings) {
-    const prior = f.stillOpen && f.id && !stillOpen.includes(f.id) ? byId.get(f.id) : undefined
-    if (!prior && seen.has(repeatKey(f))) {
+    const key = repeatKey(f)
+    const byStillOpen = f.stillOpen && f.id ? byId.get(f.id) : undefined
+    const prior = byStillOpen ?? byKey.get(key)
+    if (prior && matched.has(prior.id)) {
+      repeats++
+      continue
+    }
+    if (!prior && seen.has(key)) {
+      repeats++
+      continue
+    }
+    if (prior && prior.disposition !== 'open' && prior.disposition !== 'fixed') {
+      matched.add(prior.id)
       repeats++
       continue
     }
@@ -147,10 +161,12 @@ function assemble(job: Job, reply: ReviewerReplyValue, existing: Finding[]) {
       ...(prior ? { stillOpen: true as const } : {}),
     }
     kept.push(out)
-    if (prior) stillOpen.push(prior.id)
-    else {
+    if (prior) {
+      matched.add(prior.id)
+      touched.push({ id: prior.id, reopen: prior.disposition === 'fixed' })
+    } else {
       fresh.push(out)
-      seen.add(repeatKey(f))
+      seen.add(key)
     }
   }
 
@@ -196,5 +212,5 @@ function assemble(job: Job, reply: ReviewerReplyValue, existing: Finding[]) {
     otherInstances: f.otherInstances ?? [],
     votes: f.votes ?? null,
   }))
-  return { output, newFindings, stillOpen }
+  return { output, newFindings, touched }
 }

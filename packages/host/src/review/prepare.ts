@@ -7,7 +7,7 @@ import { tail } from '../workflows/review/exec.ts'
 import { removeClone, removeEscapingSymlinks, sweepStaleClones } from '../workflows/review/git.ts'
 import { jobsRoot, type QuotaReading, type ReviewContext } from './context.ts'
 import { isAncestor, repoIdentity, type ResolvedScope, resolveRoot, resolveScope, threadId, tryGit } from './repo.ts'
-import { parseReviewMd, routeRange } from './route.ts'
+import { routeRange } from './route.ts'
 import type { PrepareInputValue, PrepareOutputValue } from './schema.ts'
 
 export const MAX_ROUNDS = 3
@@ -132,8 +132,8 @@ async function prepareResolved(
     (last.base === base || (await isAncestor(git, gitDir, last.head, head))) &&
     (await tryGit(git, gitDir, ['cat-file', '-e', `${last.head}^{commit}`])) !== null
   const diffBase = followsLast && last ? last.head : base
-  const decision = await routeRange({ git, repo: gitDir, base: diffBase, head, min: input.min })
-  const { config: _routeConfig, changes, warning: _warning, ...route } = decision
+  const decision = await routeRange({ git, repo: gitDir, base: diffBase, head, min: input.min, configAt: base })
+  const { config, changes, warning: _warning, ...route } = decision
   const decided = { tier: route.tier, seat: route.seat, rule: route.rule, decidedBy: route.decidedBy, diffBase }
   if (route.tier === 'none') return { status: 'skipped', ...common, ...decided }
 
@@ -159,7 +159,6 @@ async function prepareResolved(
 
   const files = changes.map((c) => c.path)
   const reviewMd = await tryGit(git, gitDir, ['show', `${base}:REVIEW.md`])
-  const { config } = parseReviewMd(reviewMd)
   mkdirSync(jobDir, { recursive: true })
   const worktree = resolved.clone ?? join(jobDir, 'tree')
   if (!resolved.clone) await makeWorktree(ctx, root, worktree, head)
