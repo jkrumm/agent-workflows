@@ -575,6 +575,27 @@ describe('acceptRecord', () => {
       expect(needsThirdSeat(withC(no, yes('a.ts', 1, 2), no))).toBe(false)
     })
 
+    const unplaced: GtLabel & { model: string } = { ...yes('a.ts', 1, 2), location: null }
+
+    test('a defect without a location asks c too, and a rejection that is only that is no-location', () => {
+      expect(needsThirdSeat(record(unplaced, yes('a.ts', 1, 2)))).toBe(true)
+      expect(needsThirdSeat(record(yes('a.ts', 1, 2), unplaced))).toBe(true)
+      expect(needsThirdSeat(record(unplaced, unplaced))).toBe(true)
+      expect(needsThirdSeat(record(unplaced, no))).toBe(true)
+      expect(needsThirdSeat(withC(unplaced, yes('a.ts', 1, 2), no))).toBe(false)
+      // without c: both said defect, but fewer than two named a place
+      expect(reason(record(unplaced, yes('a.ts', 1, 2)))).toBe('no-location')
+      expect(reason(record(unplaced, unplaced))).toBe('no-location')
+      // c settles it: the pair a+c needs both places
+      expect(accepted(withC(unplaced, yes('a.ts', 1, 2), yes('a.ts', 2, 3)))?.path).toBe('b+c')
+      expect(reason(withC(unplaced, yes('a.ts', 1, 2), unplaced))).toBe('no-location')
+      expect(reason(withC(unplaced, no, yes('a.ts', 1, 2)))).toBe('no-location')
+      expect(reason(withC(yes('a.ts', 1, 2), no, unplaced))).toBe('no-location')
+      // two placed defects that do not overlap stay c-no-overlap, c saying no stays c-no
+      expect(reason(withC(yes('a.ts', 1, 2), yes('a.ts', 50, 52), unplaced))).toBe('c-no-overlap')
+      expect(reason(withC(unplaced, yes('a.ts', 1, 2), no))).toBe('c-no')
+    })
+
     test('a+b stays the first path and ignores c', () => {
       const out = accepted(withC(yes('a.ts', 1, 2, 'from a'), yes('a.ts', 2, 3, 'from b'), no))
       expect(out).toMatchObject({ path: 'a+b', bug: { description: 'from a' } })

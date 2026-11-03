@@ -45,23 +45,29 @@ const PAIRS = [
   ['b', 'c', 'b+c'],
 ] as const
 
+/** Two seats agree when both answered `defect` with a place and the places overlap. */
+function agree(first: Seat | undefined, second: Seat | undefined): boolean {
+  const [x, y] = [claim(first), claim(second)]
+  return x !== null && y !== null && locationsOverlap(x.location, y.location)
+}
+
 /**
- * Whether the record needs seat `c`: `a` and `b` both answered and disagree, one saying defect and the other not, or
- * both saying defect with locations that do not overlap. A record that has `c` (or an error in `a` or `b`) does not.
+ * Whether the record needs seat `c`: `a` and `b` both answered, at least one says defect, and they do not agree (the one
+ * predicate of the acceptance rule: a disagreement, locations that do not overlap, or a defect without a location). A
+ * record that has `c`, an error in `a` or `b`, or two `no` answers does not.
  */
 export function needsThirdSeat(record: GtLabelRecord): boolean {
   const { a, b } = record
   if (record.c !== undefined || 'error' in a || 'error' in b) return false
-  if (a.defect !== b.defect) return true
-  const [x, y] = [claim(a), claim(b)]
-  return !x || !y ? false : !locationsOverlap(x.location, y.location)
+  return (a.defect || b.defect) && !agree(a, b)
 }
 
 /**
  * The acceptance rule (2 of 3) over one candidate's labels: at least two seats say `defect` and the locations of two of
  * those overlap. The case takes the location, description, class and severity of seat `a` when it is in the agreeing
  * pair, else of the pair's first seat; `path` names the pair. Anything else is a rejection with its reason, which for
- * a record without `c` is the two-seat reason (`a-no`, `b-no`, `both-no`, `no-overlap`, `labeler-error`).
+ * a record without `c` is the two-seat reason (`a-no`, `b-no`, `both-no`, `no-overlap`, `labeler-error`). `no-location`
+ * is a rejection whose only problem is that fewer than two defect answers name a place.
  */
 export function acceptRecord(record: GtLabelRecord, candidate: GtCandidate): Acceptance {
   const reject = (reason: Reason): Acceptance => ({
@@ -72,9 +78,8 @@ export function acceptRecord(record: GtLabelRecord, candidate: GtCandidate): Acc
   if ('error' in a || 'error' in b) return reject('labeler-error')
   const seats = { a, b, c }
   for (const [first, second, path] of PAIRS) {
-    const x = claim(seats[first])
-    const y = claim(seats[second])
-    if (!x || !y || !locationsOverlap(x.location, y.location)) continue
+    if (!agree(seats[first], seats[second])) continue
+    const x = claim(seats[first]) as Defect
     return {
       accepted: true,
       path,
@@ -99,10 +104,13 @@ export function acceptRecord(record: GtLabelRecord, candidate: GtCandidate): Acc
       },
     }
   }
+  // A defect without a place cannot form a pair: when fewer than two defect answers name one, that is the problem.
+  const unplaced = [a, b, c].filter((seat) => claim(seat) !== null).length < 2
   if (c !== undefined && (a.defect || b.defect)) {
     if ('error' in c) return reject('c-error')
-    return reject(c.defect ? 'c-no-overlap' : 'c-no')
+    if (!c.defect) return reject('c-no')
+    return reject(unplaced ? 'no-location' : 'c-no-overlap')
   }
   if (!a.defect || !b.defect) return reject(a.defect ? 'b-no' : b.defect ? 'a-no' : 'both-no')
-  return reject('no-overlap')
+  return reject(unplaced ? 'no-location' : 'no-overlap')
 }
