@@ -2,9 +2,9 @@ import { describe, expect, test } from 'bun:test'
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { exec } from '../src/harness/exec.ts'
-import { cleanup, materialize } from '../src/harness/materialize.ts'
-import { fixtureHome } from './harness-support.ts'
+import { exec } from '../src/exec.ts'
+import { cleanup, materialize } from '../src/materialize.ts'
+import { fixtureHome } from './support.ts'
 
 const git = (cwd: string, ...args: string[]) => {
   const ran = Bun.spawnSync(['git', '-c', 'user.email=eval@example.com', '-c', 'user.name=eval', ...args], { cwd })

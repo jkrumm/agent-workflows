@@ -1,4 +1,4 @@
-import { seededRandom } from './harness/stats.ts'
+import { seededRandom } from './stats.ts'
 
 /** A seeded Fisher–Yates shuffle: the same seed gives the same order. The input is not changed. */
 export function shuffled<T>(items: readonly T[], seed: number): T[] {

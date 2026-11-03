@@ -1,4 +1,4 @@
-import { bootstrapMedianCI, median, seededRandom } from './harness/stats.ts'
+import { bootstrapMedianCI, median, seededRandom } from './stats.ts'
 
 /**
  * `agw eval compare` (concept §6): two arms of scored regression runs, paired by case id, per metric. Pure: the host

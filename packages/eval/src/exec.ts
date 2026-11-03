@@ -31,24 +31,4 @@ export const exec: Exec = async (cmd, args, options = {}) => {
   return { code, stdout, stderr }
 }
 
-/** The last non-empty stdout line parsed as JSON; the `agw` CLIs print one JSON document. */
-export function lastJson(stdout: string): unknown {
-  const text = stdout.trim()
-  if (!text) return undefined
-  try {
-    return JSON.parse(text)
-  } catch {
-    const last =
-      text
-        .split('\n')
-        .filter((l) => l.trim())
-        .at(-1) ?? ''
-    try {
-      return JSON.parse(last)
-    } catch {
-      return undefined
-    }
-  }
-}
-
 export const brief = (text: string, max = 400) => (text.length > max ? `${text.slice(0, max)}…` : text).trim()

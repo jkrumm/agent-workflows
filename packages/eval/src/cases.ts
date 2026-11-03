@@ -16,73 +16,13 @@ export function casesPath(workflow: string, env: Record<string, string | undefin
   return join(evalDir(env), workflow, 'cases.jsonl')
 }
 
-export const Severity = z.enum(['blocking', 'improvement', 'discussion'])
-
-/** One finding as agent-gateway's review reports it (`REVIEW_OUTPUT` v2); `angle` names the reviewer. */
-export const Finding = z
-  .object({
-    severity: Severity,
-    file: z.string(),
-    line: z.number().int().optional(),
-    message: z.string(),
-    angle: z.string(),
-  })
-  .strict()
-export type Finding = z.infer<typeof Finding>
-
-export const ReviewOutcome = z.enum(['clean', 'actionable', 'needs-human'])
-export const Depth = z.enum(['light', 'standard', 'deep'])
-
 /** What a recorded run cost and how long it took; `null` when the record does not say. */
 const Spend = {
   costUsd: z.number().nonnegative().nullable(),
-  /** `false` when part of the cost was matched to the job by time window (router, adversary and OCR rows carry no job id). */
+  /** `false` when part of the cost was matched to the job by time window. */
   costExact: z.boolean(),
   wallMs: z.number().int().nonnegative().nullable(),
 }
-
-export const ReviewCase = z
-  .object({
-    /** The legacy job id. */
-    id: z.string().min(1),
-    source: z.enum(['corpus-2026-10-19', 'jobs-db']),
-    createdAt: z.iso.datetime(),
-    /** The repo's path relative to `$HOME` (`SourceRoot/dotfiles`), never absolute. */
-    repo: z.string().regex(/^(SourceRoot|IuRoot)\/[^/]+$/),
-    /** The legacy call's input, minus `cwd`. */
-    input: z
-      .object({
-        scope: z.string().optional(),
-        pr: z.number().int().positive().optional(),
-        branch: z.string().optional(),
-        depth: Depth.optional(),
-        context: z.string().optional(),
-        angles: z.array(z.string()).optional(),
-      })
-      .strict(),
-    /** The commit the diff applies to; the harness checks it out and applies `diff` as uncommitted changes. */
-    baseSha: z.string().regex(/^[0-9a-f]{40}$/),
-    headSha: z
-      .string()
-      .regex(/^[0-9a-f]{40}$/)
-      .optional(),
-    /** `true` when `baseSha` was inferred (the last commit before `createdAt`), not recorded. */
-    baseInferred: z.boolean(),
-    diff: z.string().min(1),
-    legacy: z
-      .object({
-        outcome: ReviewOutcome,
-        depth: Depth.nullable(),
-        findings: z.array(Finding),
-        testGaps: z.array(z.string()),
-        /** Reviewers that failed in the legacy run (`(review pipeline)` discussions). */
-        failedAngles: z.array(z.string()),
-        ...Spend,
-      })
-      .strict(),
-  })
-  .strict()
-export type ReviewCase = z.infer<typeof ReviewCase>
 
 export const CheckStepName = z.enum(['format', 'lint', 'typecheck', 'test', 'fallow', 'check'])
 

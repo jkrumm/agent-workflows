@@ -1,17 +1,4 @@
-export {
-  CheckCase,
-  CheckStepName,
-  casesPath,
-  Depth,
-  evalDir,
-  Finding,
-  PlainCase,
-  ReviewCase,
-  ReviewOutcome,
-  readCases,
-  Severity,
-  writeCases,
-} from './cases.ts'
+export { CheckCase, CheckStepName, casesPath, evalDir, PlainCase, readCases, writeCases } from './cases.ts'
 export {
   type ArmRun,
   bootstrapMeanCI,
@@ -23,14 +10,9 @@ export {
   type Winner,
 } from './compare.ts'
 export { privateDir, writeFileAtomic } from './cases.ts'
-export { aggregateCheck, aggregateReview } from './harness/aggregate.ts'
-export { type Exec, exec } from './harness/exec.ts'
-export { classifyPair, matchFindings, normalizePath } from './harness/match.ts'
-export { cleanup, type Materialized, type MaterializeInput, materialize } from './harness/materialize.ts'
-export type { CheckRunner, Judge, Located, ReviewRunner, RunJournal } from './harness/ports.ts'
-export { pool, runCheck, runReview } from './harness/run.ts'
-export { bootstrapMedianCI, median, seededRandom } from './harness/stats.ts'
-export { checkVerdict, DEFAULT_THRESHOLDS, reviewVerdict } from './harness/verdict.ts'
+export { type Exec, exec } from './exec.ts'
+export { cleanup, type Materialized, type MaterializeInput, materialize } from './materialize.ts'
+export { bootstrapMedianCI, median, seededRandom } from './stats.ts'
 export {
   AcceptPath,
   BugClass,

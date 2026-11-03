@@ -13,7 +13,7 @@ export type Materialized = { ok: true; dir: string } | { ok: false; reason: Skip
 export interface MaterializeInput {
   repo: string
   baseSha: string
-  /** The review case's `diff` or the check case's `patch`; applied as uncommitted changes. */
+  /** The check case's `patch`; applied as uncommitted changes. */
   patch?: string
   /**
    * Leave nothing in the clone but the history up to `baseSha`: every ref is deleted, the reflog expired and the
@@ -29,14 +29,14 @@ export interface MaterializeOptions {
   home: string
   /** Where the throwaway clone goes (default: the OS temp dir). */
   tmpRoot?: string
-  /** Run the repo's setup (`bun install --frozen-lockfile`) when its check needs it; off for review and dry runs. */
+  /** Run the repo's setup (`bun install --frozen-lockfile`) when its check needs it; off for dry runs. */
   setup: boolean
 }
 
 /**
  * A throwaway clone at `baseSha` with the case's diff as uncommitted changes. `--shared` borrows the owner's
  * object store read-only: nothing is written to the owner's checkout. The `agw_eval_` prefix has no dash: a random
- * suffix starting with `O` after `agw-eval-` would make `-O`, which the review's repo shell refuses in a path.
+ * suffix starting with `O` after `agw-eval-` would make `-O`, which a shell refuses in a path.
  */
 export async function materialize(input: MaterializeInput, options: MaterializeOptions): Promise<Materialized> {
   const { exec } = options

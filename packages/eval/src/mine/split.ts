@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import type { z } from 'zod'
 import { DEV_SHARE, type GtSplit as GtSplitSchema } from '../gt.ts'
-import { seededRandom } from '../harness/stats.ts'
+import { seededRandom } from '../stats.ts'
 
 type GtSplit = z.infer<typeof GtSplitSchema>
 

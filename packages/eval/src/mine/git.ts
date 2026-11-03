@@ -1,4 +1,4 @@
-import type { Exec } from '../harness/exec.ts'
+import type { Exec } from '../exec.ts'
 
 /** A helper bound: a git call that outlives it is stuck, not slow. */
 const GIT_TIMEOUT_MS = 10 * 60_000

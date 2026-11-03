@@ -36,18 +36,3 @@ export function bootstrapMedianCI(
   const hi = medians[Math.min(iterations - 1, Math.ceil(0.975 * iterations) - 1)] as number
   return [lo, hi]
 }
-
-export interface RatioSummary {
-  /** Paired cases with both values and a positive denominator. */
-  n: number
-  median: number | null
-  ci95: [number, number] | null
-}
-
-/** new/legacy per case, paired; a case missing either side, or with a zero legacy value, is left out. */
-export function ratioSummary(pairs: { a: number | null; b: number | null }[], seed: number): RatioSummary {
-  const ratios = pairs.flatMap(({ a, b }) => (a !== null && b !== null && a >= 0 && b > 0 ? [a / b] : []))
-  return { n: ratios.length, median: median(ratios), ci95: bootstrapMedianCI(ratios, { seed }) }
-}
-
-export const rate = (hits: number, total: number) => (total > 0 ? hits / total : null)
