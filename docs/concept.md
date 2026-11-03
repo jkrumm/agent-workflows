@@ -604,3 +604,13 @@ One entry per phase: what we learned, what changed on this page, and why.
 - **Process.** Under a load of 50–100 on the mini, CI's `make check` is the merge gate.
 - **Does the page hold?** Yes, as v3.14.
 
+### Gateway Wave 17 — Review on the subscriptions (design), 2026-11-03
+
+- **Learned.** The native `/code-review high` found a real bug that v1 had passed, and severity is its weak spot (2 real
+  of 20 `important`), which a verify vote corrects. A standard review costs ~0.3–0.5 % of a Max 5x five-hour window.
+  Interactive sessions are the only sound subscription path; entrypoint relabels and `claude -p` are out.
+- **Changed.** `docs/review-v3.md` and six spikes; nothing live changed. The owner signs before Waves 9–11 are rewritten.
+- **Process.** A design wave with spikes on the real host answers in hours what a desk design guesses; cap a spike's
+  extra sessions (two) on a shared mini.
+- **Does the page hold?** Pending the owner: review v3 would be a concept version note when signed.
+

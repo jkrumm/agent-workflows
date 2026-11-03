@@ -191,16 +191,16 @@ Pulled forward 2026-11-02 while the owner labels (former Wave 13, plus Wave 8's 
   GT dev slice (4 cases) recall 0.75 -> 0.50, one flip, too few cases to tell (Waves 9 and 11 measure it). An arm moving
   `review.angle` off Claude must set `contextLimit: null`.
 
-## Wave 17 — Review on the subscriptions (design)            <!-- status: active -->
+## Wave 17 — Review on the subscriptions (design)            <!-- status: done 2026-11-03, design 0ecc19a, sign-off pending -->
 
 Owner, 2026-11-03: review should not run on API credit in the end; build a mature review agent on the Claude Code
 subscriptions instead. This supersedes the 2026-10-29 "all review off Max" rule for the design: it banned `claude -p`,
 not interactive factory sessions. Runs after Wave 16, before Wave 8 resumes; it reshapes Waves 10–11.
 
-- [ ] **Research** (`/research`, cited): how the Claude Code team reviews code (the article behind `docs/review-v2.md`,
+- [x] **Research** (`/research`, cited): how the Claude Code team reviews code (the article behind `docs/review-v2.md`,
   `/code-review`, its subagent fan-out and verification), published practice on agentic review at scale, and what a
   review costs in Max quota (measured: 5 real PRs through a factory-spawned interactive session, quota before/after).
-- [ ] **Constraint and spikes.** No `claude -p` and no Agent SDK on a subscription (owner, 2026-11-03; read
+- [x] **Constraint and spikes.** No `claude -p` and no Agent SDK on a subscription (owner, 2026-11-03; read
   anthropics/claude-code issue 97074, comment 6585881480, and pingdotgg/t3code PR 25597 for the current policy and the
   workarounds, and judge whether any is sound). Candidates, compared on findings, Max quota per review, wall time and
   what Anthropic documents and recommends: (a) in-session, a review subagent of the caller's own Claude Code session
@@ -209,16 +209,21 @@ not interactive factory sessions. Runs after Wave 16, before Wave 8 resumes; it 
   Code session in a herdr-core terminal (factory spawn), how a caller hands it a job and gets REVIEW_OUTPUT back (`hc`
   send/read/wait, factory notes, files, agw's journal), concurrency, quota readings, crash and timeout behaviour. Each
   spike ends in a verdict with evidence under `docs/spikes/review-v3/`.
-- [ ] **Design** `docs/review-v3.md`: a review agent as a factory-spawned Claude Code session on Max (no `claude -p`),
+- [x] **Design** `docs/review-v3.md`: a review agent as a factory-spawned Claude Code session on Max (no `claude -p`),
   the same REVIEW_OUTPUT contract and callers (`agw review`, the `/review` skill, the fleets' leads), queueing and quota
   guards against the dev sessions (`rd` pause rules, both accounts' weekly windows), API credit only as a fallback.
   What of `docs/review-v2.md` survives (finders, verify vote, dispositions) and what goes. Owner, 2026-11-03: mature and
   integrable, callable like agw itself; the design names its interfaces, failure modes and the migration of every caller.
-- [ ] Waves 9–11 rewritten to measure and build it: the Wave 9 native arm becomes the candidate; Wave 10 builds v3 if
+- [x] Waves 9–11 rewritten to measure and build it: the Wave 9 native arm becomes the candidate; Wave 10 builds v3 if
   the design holds; Wave 11 sweeps arms of it. The owner gets a one-page summary (the options the spikes left, the
   pick, the risks) and signs it; that is the wave's only stop.
+**Left behind:** close-out in `docs/waves/handoff/lead.md` at `d7bdc76` (the owner's one page at its top), design
+  `docs/review-v3.md`, spikes `docs/spikes/review-v3/`. Pick: native `/code-review` as the finder plus our verify vote,
+  in-session `reviewer` subagent for Claude Code callers, a per-job factory spawn for every other caller, on Max under a
+  review ceiling, v1 on credit as fallback. **Waves 9–11 are rewritten only after the owner signs**; Wave 8 (ground
+  truth) runs meanwhile, it serves either outcome.
 
-## Wave 8 — Ground truth            <!-- status: pending -->
+## Wave 8 — Ground truth            <!-- status: active -->
 
 - [ ] **`agw agents` reads the factory's fleet view** (mother, 2026-11-03, asked by the software-factory lead): its
   collectors go; it reads `factory fleet --format json` (under `secrets-run`; shape `software-factory/packages/contract/src/fleet.ts`)
