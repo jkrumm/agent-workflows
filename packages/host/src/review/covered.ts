@@ -5,7 +5,7 @@ import type { Job } from './ledger.ts'
 import { isAncestor, repoIdentity, resolveRoot, tryGit } from './repo.ts'
 import { atLeast, maxTier, routeRange, type Tier } from './route.ts'
 import { type CoveredOutputValue, ReviewError } from './schema.ts'
-import { scopeProblem, splitRange } from '../workflows/review/schema.ts'
+import { scopeProblem, splitRange } from './scope.ts'
 
 const CANDIDATE_DAYS = 30
 const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904'

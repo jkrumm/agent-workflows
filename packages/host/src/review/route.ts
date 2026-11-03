@@ -1,5 +1,5 @@
 // Review v4 router: the change sets the tier, not the author. Rules and rationale: docs/spikes/review-v4/wiring.md §Routing.
-import { defaultExec } from '../workflows/review/exec.ts'
+import { defaultExec } from '../process.ts'
 
 export const TIERS = ['none', 'light', 'standard', 'deep'] as const
 export type Tier = (typeof TIERS)[number]

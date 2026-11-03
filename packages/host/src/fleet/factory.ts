@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { z } from 'zod'
-import { helperEnv, killTree } from '../workflows/review/exec.ts'
+import { helperEnv, killTree } from '../process.ts'
 import { oneLine, truncate } from './text.ts'
 
 // The one source of agent state is the factory (software-factory): `factory fleet --format json`. This file runs that

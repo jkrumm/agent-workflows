@@ -1,7 +1,7 @@
 // Review v4, agw's side: prepare | submit | dispose | status | route | covered over the review ledger. No LLM call
 // anywhere here; the reviewer agent runs in the caller's session (or, from Wave 10, a factory session). README.md.
 import { commandRunner, fleetConfig, type RunCommand } from '../fleet/factory.ts'
-import { createExec } from '../workflows/review/exec.ts'
+import { createExec } from '../process.ts'
 import type { ReviewContext, QuotaReading } from './context.ts'
 import { covered } from './covered.ts'
 import { findingRecord, type ReviewPool, reviewLedger } from './ledger.ts'
@@ -73,7 +73,7 @@ export function createReviewService(ports: ReviewServicePorts): ReviewService {
     ledger: reviewLedger(ports.pool, ports.schema),
     git: ports.git,
     exec,
-    clonePorts: { exec, which: (bin) => Bun.which(bin), env, stateDir: ports.stateDir, now: () => now().getTime() },
+    clonePorts: { exec, env, stateDir: ports.stateDir, now: () => now().getTime() },
     stateDir: ports.stateDir,
     quota: ports.quota,
     now,
