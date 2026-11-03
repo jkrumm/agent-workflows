@@ -5,12 +5,16 @@ import { join } from 'node:path'
 import { claudeRate } from '@agent-workflows/routes'
 import type { AgentResult, Attribution } from '@agent-workflows/runtime'
 import { OpenCodeHost, OpenCodeServer } from '../src/index.ts'
-import { contextAlias, windowFor } from '../src/config.ts'
+import { COMPACTION_BUFFER, contextAlias, servedLimits, windowFor } from '../src/config.ts'
+
+// The one bound the table's routes name today (`servedLimits`): the server serves no other.
+const BOUND = servedLimits()[0] as number
 
 // What the pinned OpenCode build does with a bounded route (`contextLimit`), end to end through this host: the real
 // binary, the real config, a loopback server standing in for the gateway. No LLM is called, nothing leaves loopback.
 // Proves (1) the provider is called with the real model id, never the alias key, and (2) the session compacts where
-// `windowFor` says (ceiling = window - 16k, chars/4 estimate), and not before. Run with:
+// `windowFor` says (ceiling = window - `COMPACTION_BUFFER`, chars/4 estimate), and not before, and that the summary call
+// has the room `COMPACTION_BUFFER` is for. Run with:
 //   AGW_LIVE=1 timeout 300 bun test packages/opencode-host/test/live-context-limit.test.ts
 const live = process.env.AGW_LIVE === '1'
 const BIN = join(homedir(), '.local/share/agent-workflows/opencode-bin/current/node_modules/.bin/opencode')
@@ -159,7 +163,8 @@ describe.skipIf(!live)('live: a bounded route on the pinned build (a loopback st
   let last: { result: AgentResult; handle: { sessionId: string; route: string }; tools: string[] } | undefined
   const run = async (runId: string, limit: number | null, tokens: number) => {
     seen.length = 0
-    const arm = limit === null ? undefined : { routes: { 'review.angle': { contextLimit: limit } } }
+    // `null` clears the table's bound: the plain row.
+    const arm = { routes: { 'review.angle': { contextLimit: limit } } }
     const handle = await host.open({
       runId,
       stepId: 'probe',
@@ -168,7 +173,7 @@ describe.skipIf(!live)('live: a bounded route on the pinned build (a loopback st
       prompt: '',
       options: { route: 'review.angle' },
       attribution: attribution(runId),
-      ...(arm ? { arm } : {}),
+      arm,
     })
     const body = prompt(tokens)
     await host.prompt(handle, body)
@@ -185,7 +190,7 @@ describe.skipIf(!live)('live: a bounded route on the pinned build (a loopback st
   }
 
   test('the gateway gets the real model id, never the alias key', async () => {
-    const bounded = await run('run-alias', 80_000, 1_000)
+    const bounded = await run('run-alias', BOUND, 1_000)
     console.log(
       'bounded:',
       bounded.map((r) => `${r.path} model=${r.body.model} max_tokens=${r.body.max_tokens}`),
@@ -202,29 +207,34 @@ describe.skipIf(!live)('live: a bounded route on the pinned build (a loopback st
   }, 120_000)
 
   test('a prompt under the ceiling runs as one call; over it, the session compacts first', async () => {
-    const ceiling = windowFor(80_000) - 16_000
-    const under = await run('run-under', 80_000, ceiling - 6_000)
+    const ceiling = windowFor(BOUND) - COMPACTION_BUFFER
+    const under = await run('run-under', BOUND, ceiling - 6_000)
     console.log(
       `ceiling ${ceiling}: under ->`,
       under.map((r) => (isSummaryCall(r) ? 'summary' : 'call')),
     )
     expect(under.map(isSummaryCall)).toEqual([false])
-    const over = await run('run-over', 80_000, ceiling + 3_000)
+    const over = await run('run-over', BOUND, ceiling + 3_000)
     console.log(
       `ceiling ${ceiling}: over ->`,
       over.map((r) => (isSummaryCall(r) ? 'summary' : 'call')),
     )
     expect(over.some(isSummaryCall)).toBe(true)
+    // The room for the summary (thinking included): 10,733 tokens with OpenCode's default 16k reserve, 32,000 now.
+    const summary = over.find(isSummaryCall)
+    console.log('summary max_tokens:', summary?.body.max_tokens)
+    expect(summary?.body.max_tokens).toBeGreaterThanOrEqual(30_000)
+    expect(summary?.body.max_tokens).toBeLessThanOrEqual(32_000)
     for (const r of over) expect(r.body.model).toBe('claude-haiku-5-5')
     // The same prompt on the plain row is one call: nothing bounds it.
     const plain = await run('run-unbounded', null, ceiling + 3_000)
     expect(plain.map(isSummaryCall)).toEqual([false])
-    expect(contextAlias('claude-haiku-5-5', 80_000)).toBe('claude-haiku-5-5~ctx80000')
+    expect(contextAlias('claude-haiku-5-5', BOUND)).toBe(`claude-haiku-5-5~ctx${BOUND}`)
   }, 180_000)
   test('one compaction after a tool call: the step usage is the sum of every call the gateway got, once', async () => {
     const calls: CallUsage[] = [
-      // The call that grows the session past the 64k ceiling (measured prompt 73k), asking for a tool.
-      { input: 3_000, output: 40, cacheRead: 40_000, cacheWrite: 30_000 },
+      // The call that grows the session past the 80k ceiling (measured prompt 83k), asking for a tool.
+      { input: 3_000, output: 40, cacheRead: 50_000, cacheWrite: 30_000 },
       // The summary call, then the call that answers from the summary.
       { input: 2_500, output: 120, cacheRead: 0, cacheWrite: 0 },
       { input: 800, output: 5, cacheRead: 0, cacheWrite: 0 },
@@ -233,7 +243,7 @@ describe.skipIf(!live)('live: a bounded route on the pinned build (a loopback st
       out: n === 1 ? { tool: 'glob', input: { pattern: '*.md' } } : n === 2 ? SUMMARY : 'PONG',
       usage: calls[n - 1] as CallUsage,
     })
-    const got = await run('run-usage', 80_000, 1_000)
+    const got = await run('run-usage', BOUND, 1_000)
     script = undefined
     console.log(
       'calls:',

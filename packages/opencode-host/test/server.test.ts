@@ -467,12 +467,19 @@ describe('buildServerConfig: the gateway', () => {
   }
 
   test('the config holds no credential and no address, and names no IU variable, whatever the environment holds', () => {
+    const before = Object.fromEntries(Object.keys(secrets).map((key) => [key, process.env[key]]))
     Object.assign(process.env, secrets)
-    const text = JSON.stringify(buildServerConfig())
-    expect(text).not.toContain('sekret')
-    expect(text).not.toMatch(/IU_|ANTHROPIC_API_KEY|AGW_API_SECRET|api\.anthropic\.com/)
-    expect(text.match(/\{env:[A-Z_]+\}/g)?.every((v) => /AGW_GATEWAY_(URL|TOOL_TOKEN)/.test(v))).toBe(true)
-    for (const key of Object.keys(secrets)) delete process.env[key]
+    try {
+      const text = JSON.stringify(buildServerConfig())
+      expect(text).not.toContain('sekret')
+      expect(text).not.toMatch(/IU_|ANTHROPIC_API_KEY|AGW_API_SECRET|api\.anthropic\.com/)
+      expect(text.match(/\{env:[A-Z_]+\}/g)?.every((v) => /AGW_GATEWAY_(URL|TOOL_TOKEN)/.test(v))).toBe(true)
+    } finally {
+      for (const [key, value] of Object.entries(before)) {
+        if (value === undefined) delete process.env[key]
+        else process.env[key] = value
+      }
+    }
   })
 
   test('only the Anthropic leg sends x-agw-fallback: none, as a static header', () => {

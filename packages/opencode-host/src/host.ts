@@ -652,9 +652,8 @@ export class OpenCodeHost implements AgentHost {
           if (unprompted.check(state.kind === 'unprompted', this.cutoffGraceMs)) {
             throw new WorkflowError('error', `opencode session ${h.sessionId} holds no prompt; wait before prompt`)
           }
-          if (state.kind === 'done' && this.fallsBack(h, snap.messages, promptId, state)) {
-            return await this.waitOnFallback(h, snap.messages, promptId, options)
-          }
+          const fallbackFor = state.kind === 'done' ? this.fallsBack(h, snap.messages, promptId, state) : null
+          if (fallbackFor) return await this.waitOnFallback(h, snap.messages, promptId, fallbackFor, options)
           if (state.kind === 'done') return await this.finish(h, reader, promptId, state, signal)
           if (state.kind === 'running') await this.nudge(h, snap.messages, promptId, nudged, nudgeFailures)
           if (state.kind === 'cutoff' && cutoff.check(true, this.cutoffGraceMs)) {
@@ -797,22 +796,33 @@ export class OpenCodeHost implements AgentHost {
   }
 
   /**
-   * A turn that failed on provider balance before it did anything (no tool call, no output) moves to the route's
-   * fallback: a turn that ran is never prompted a second time, and a fallback session never falls back again.
+   * Why a failed turn moves to the route's fallback, or `null` when it does not. A fallback session never falls back
+   * again, so each step moves at most once.
+   * - `balance`: the turn failed on provider balance before it did anything (no tool call, no output); a turn that ran
+   *   is never prompted a second time.
+   * - `compaction`: the session's context summary failed (`isCompactionFailure`), which only a long turn gets to, so the
+   *   turn did run; the session cannot go on (its context is over the ceiling and the next call compacts again), so the
+   *   task starts over in a fresh session on another model, the failed turn's spend kept in the step's usage.
    */
   private fallsBack(
     h: OpenCodeHandle,
     messages: readonly Message[],
     promptId: string,
     state: { outcome: Outcome; error?: string },
-  ): boolean {
-    if (h.fallback || state.outcome !== 'failed' || !state.error) return false
-    if (!isBalanceFailure({ text: state.error })) return false
-    if (turnRan(messages, promptId)) {
+  ): FallbackReason | null {
+    if (h.fallback || state.outcome !== 'failed' || !state.error) return null
+    const reason = fallbackReasonOf(state.error)
+    if (!reason) return null
+    if (reason === 'balance' && turnRan(messages, promptId)) {
       this.logger.warn('opencode turn failed on provider balance after it ran; no fallback', { sessionId: h.sessionId })
-      return false
+      return null
     }
-    return this.fallbackOf(h) !== undefined
+    if (this.fallbackOf(h) === undefined) {
+      if (reason === 'compaction')
+        this.logger.warn('opencode compaction failed; the route has no fallback', { sessionId: h.sessionId })
+      return null
+    }
+    return reason
   }
 
   private fallbackOf(h: OpenCodeHandle) {
@@ -831,6 +841,7 @@ export class OpenCodeHost implements AgentHost {
     h: OpenCodeHandle,
     messages: readonly Message[],
     promptId: string,
+    reason: FallbackReason,
     options: AgentWaitOptions,
   ): Promise<AgentResult> {
     const def = this.agents.get(h.agent)
@@ -839,12 +850,12 @@ export class OpenCodeHost implements AgentHost {
     if (!def || !fallback || prompt === null) {
       throw new WorkflowError(
         'error',
-        `opencode session ${h.sessionId} failed on provider balance; no fallback session`,
+        `opencode session ${h.sessionId} failed on ${FALLBACK_REASONS[reason]}; no fallback session`,
       )
     }
     const sessionId = fallbackSessionId(h.sessionId)
     const headers = this.headers(h.runId, h.stepId)
-    this.logger.warn('opencode turn failed on provider balance; falling back', {
+    this.logger.warn(`opencode turn failed on ${FALLBACK_REASONS[reason]}; falling back`, {
       sessionId: h.sessionId,
       fallbackSessionId: sessionId,
       route: h.route,
@@ -1312,6 +1323,32 @@ export function isStepSession(sessionId: string, key: string): boolean {
     if (sessionId === id || sessionId === fallbackSessionId(id)) return true
   }
   return false
+}
+
+/** Why a step moves to its route's fallback session (`OpenCodeHost.fallsBack`). */
+type FallbackReason = 'balance' | 'compaction'
+const FALLBACK_REASONS: Record<FallbackReason, string> = { balance: 'provider balance', compaction: 'compaction' }
+
+/**
+ * A turn that failed because OpenCode could not write the summary of its own full context. The strings are the
+ * `compaction.failed` messages of OpenCode 2.0.32 (`packages/core/src/session/compaction.ts`): the summary call hit its
+ * output limit (the route's thinking shares it) or the provider blocked it, or its reply was empty or ignored the
+ * template (even after the one nudge). Not "Nothing to compact yet" (`compaction.unavailable`): that is a session too
+ * short to compact, and a fallback would not help.
+ */
+export function isCompactionFailure(error: string): boolean {
+  return COMPACTION_FAILURES.some((marker) => error.includes(marker))
+}
+const COMPACTION_FAILURES = [
+  'Compaction summary reached the output token limit',
+  'Compaction summary was blocked by the provider',
+  'Compaction summary did not match the required template',
+  'Compaction produced no summary',
+] as const
+
+function fallbackReasonOf(error: string): FallbackReason | null {
+  if (isBalanceFailure({ text: error })) return 'balance'
+  return isCompactionFailure(error) ? 'compaction' : null
 }
 
 /** Whether the turn after the prompt did anything: a tool call, or a reply with output tokens. */

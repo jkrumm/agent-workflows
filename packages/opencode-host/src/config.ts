@@ -2,7 +2,6 @@ import { fileURLToPath } from 'node:url'
 import {
   CLAUDE_MODELS,
   claudeRate,
-  CONTEXT_LIMITS,
   EFFORTS,
   fallbackRoute,
   type PatchInput,
@@ -72,6 +71,15 @@ export function opencodeRoutes(): ResolvedRoute[] {
 }
 
 /**
+ * The `contextLimit` bounds the table's routes name, ascending: the server registers one alias row per Claude model
+ * for each of these and no other (an arm's patch may only pick among them; `refFor` refuses another).
+ */
+export function servedLimits(): number[] {
+  const limits = opencodeRoutes().flatMap((route) => (route.contextLimit === undefined ? [] : [route.contextLimit]))
+  return [...new Set(limits)].sort((a, b) => a - b)
+}
+
+/**
  * Which leg serves a model, by its family alone: no other route sharing the id can move it. OpenAI's own models
  * (`gpt-`) go the Responses way (an agent session needs tool calls, which they make only there), a `claude-` model the
  * gateway's Anthropic path, anything else the OpenAI-compatible chat way. A single-call route on the same model (Haiku on
@@ -107,6 +115,11 @@ export function fallbackModelRef(
 }
 
 function refFor(route: ResolvedRoute): ModelRef {
+  if (route.contextLimit !== undefined && !servedLimits().includes(route.contextLimit)) {
+    throw new Error(
+      `route "${route.id}": the server has no row for contextLimit ${route.contextLimit}; it serves ${servedLimits().join(', ')} (the bounds the route table names)`,
+    )
+  }
   const id = route.contextLimit === undefined ? route.model : contextAlias(route.model, route.contextLimit)
   const model: ModelRef = { providerID: providerFor(route.model), id }
   if (route.effort) model.variant = route.effort
@@ -115,18 +128,20 @@ function refFor(route: ResolvedRoute): ModelRef {
 
 /**
  * Why a bounded route gets its own model row (`contextLimit`), and how the row's window is chosen. Read from OpenCode
- * 2.0.32 (sst/opencode, tag v2.0.32, `packages/core/src/session/compaction.ts` and `runner/llm.ts`):
+ * 2.0.32 (sst/opencode, tag v2.0.32, `packages/core/src/session/compaction.ts`, `model-request.ts`, `runner/llm.ts`;
+ * README §Bounded context has the links and what was measured):
  *
  * - Before every model call of a step the runner asks for an `auto` compaction. It runs when `estimate >= ceiling`,
- *   with `ceiling = window - max(floor(window / 10), 16_000)` for a window of 32k or more (`calculateCeiling`, no
- *   `compaction.buffer` set; `window` is the model row's `limit.context`). So for a window under 160k the ceiling is
- *   `window - 16_000`.
+ *   with `ceiling = window - buffer` (`calculateCeiling`; `buffer` is the top-level `compaction.buffer`, set here to
+ *   `COMPACTION_BUFFER`; unset it is `max(floor(window / 10), 16_000)`; `window` is the model row's `limit.context`).
  * - `estimate` is the last response's measured `input + cache.read + cache.write + output + reasoning`, plus a
  *   chars/4 estimate of what came after it (the tool results). With no response yet (the first call) all of the request
  *   is estimated by chars/4. A request goes out only when its estimate is under the ceiling.
- * - The summary call is the history (as is when its chars/4 estimate is within `ceiling - ~1k`, else flattened to that
- *   size with tool output cut to 1,250 characters) plus the summary prompt.
- * - A window also clamps `max_tokens` to `window - prompt`, which the ceiling keeps at 16k or more.
+ * - The summary call is the history (as is when its chars/4 estimate is within the ceiling less the summary prompt, else
+ *   flattened to that size with tool output cut to 1,250 characters) plus the summary prompt. Its `max_tokens` is
+ *   `min(limit.output, 32_000, window - request)`, so the `buffer` is the room a summary has, and 32k is all it can
+ *   have. The route's thinking (`effort`) is sent on the summary call too and shares that `max_tokens`.
+ * - A window also clamps the `max_tokens` of every call to `window - prompt`, which the buffer keeps at `buffer` or more.
  *
  * So no prompt can pass `ceiling * (1 + e)`, where `e` is how far chars/4 undercounts the real tokens (the first
  * call and the summary call are estimated whole; a call after tool results is off only by the results' share, which is
@@ -135,12 +150,18 @@ function refFor(route: ResolvedRoute): ModelRef {
  * 12k, 16k and 20k for 60k, 80k and 100k. A first prompt over the ceiling is summarised before it runs (lossy), so a
  * route's bound has to sit well above its first prompt. `windowFor` is the `limit.context` that gives that ceiling.
  */
-const COMPACTION_RESERVE = 16_000
 const ESTIMATE_UNDERCOUNT = 0.25
 
-/** The `limit.context` whose compaction ceiling is `limit / (1 + ESTIMATE_UNDERCOUNT)`: 96k, 80k and 64k. */
+/**
+ * `compaction.buffer`: the room a compaction summary has. The summary call asks for at most 32,000 output tokens
+ * (OpenCode's `SUMMARY_OUTPUT_MAX`) and gets `window - request`, which was 10,733 with the default 16k reserve (measured
+ * on 2.0.32 for a 100k bound), thinking included. 40k is those 32k and the summary prompt's own size and slack.
+ */
+export const COMPACTION_BUFFER = 40_000
+
+/** The `limit.context` whose compaction ceiling is `limit / (1 + ESTIMATE_UNDERCOUNT)`: 88k, 104k and 120k. */
 export function windowFor(limit: number): number {
-  return Math.floor(limit / (1 + ESTIMATE_UNDERCOUNT)) + COMPACTION_RESERVE
+  return Math.floor(limit / (1 + ESTIMATE_UNDERCOUNT)) + COMPACTION_BUFFER
 }
 
 /**
@@ -203,8 +224,8 @@ function variantSettings(effort: string, provider: string): Record<string, unkno
  * and output limit of the first route naming it (the table names one rate per model). The
  * attribution plugin (`options.plugin`, an absolute directory), no updates, no share. The only credential is the door
  * token, by reference to the server's env.
- * Each Claude model also has one bounded row per `CONTEXT_LIMITS` value, `<model>~ctx<limit>` (`contextAlias`), for a
- * route with a `contextLimit`.
+ * Each Claude model also has one bounded row per bound the table's routes name (`servedLimits`), `<model>~ctx<limit>`
+ * (`contextAlias`), for a route with a `contextLimit`.
  * The Anthropic leg sends `x-agw-fallback: none`: with no credit pool left the gateway answers a 402 and the route's own
  * fallback takes over, rather than paying for Claude on IU.
  * The server policy is deny by default as the sessions' are (`basePolicy`: catch-all deny, then the read-only tools), so
@@ -228,13 +249,13 @@ export function buildServerConfig(options: { plugin?: string } = {}): Record<str
     const rows = models[PROVIDER_ANTHROPIC] as Record<string, unknown>
     rows[model] ??= modelRow({ model, rate: claudeRate(model) }, PROVIDER_ANTHROPIC)
   }
-  // A bounded copy of every Claude row for each allowed bound (`contextLimit`): same cost, variants and compatibility,
+  // A bounded copy of every Claude row for each bound the table's routes name (`servedLimits`): same cost, variants and compatibility,
   // a window that makes the session compact in time, and `modelID` so the provider is still called with the real model.
   // (OpenCode 2.0.32 reads `modelID` in its config; a key named `id` is dropped silently, not an alias.)
   const claude = models[PROVIDER_ANTHROPIC] as Record<string, Record<string, unknown>>
   for (const model of CLAUDE_MODELS) {
     const base = claude[model] as Record<string, unknown>
-    for (const limit of CONTEXT_LIMITS) {
+    for (const limit of servedLimits()) {
       claude[contextAlias(model, limit)] = {
         ...structuredClone(base),
         modelID: model,
@@ -245,6 +266,8 @@ export function buildServerConfig(options: { plugin?: string } = {}): Record<str
   return {
     update: 'disable',
     share: 'disabled',
+    // The room a summary has (`COMPACTION_BUFFER`); automatic compaction stays on (its default), and `keep` too.
+    compaction: { buffer: COMPACTION_BUFFER },
     plugins: [options.plugin ?? ATTRIBUTION_PLUGIN],
     permissions: [
       ...basePolicy(),
