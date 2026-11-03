@@ -5,11 +5,13 @@ import { join } from 'node:path'
 import { createCapabilities, createRegistry } from '@agent-workflows/capabilities'
 import { fakeTransports } from '@agent-workflows/capabilities/testing'
 import { DEFAULT_ROUTES, discoverRoutes } from '@agent-workflows/routes'
+import type { HostWorkflow } from '../src/operations.ts'
 import { ToolGate } from '../src/tool-gate/index.ts'
 import { EVAL_COMPARE_ID, EVAL_RUN_ID } from '../src/workflows/eval/index.ts'
 import {
   buildWorkflows,
   createWorkflows,
+  type DiscoveredModule,
   discoverWorkflowModules,
   hostModules,
   suitesOf,
@@ -73,9 +75,11 @@ describe('workflow discovery', () => {
       'image',
       'narrative',
       'otel',
+      'overview',
       'prose-polish',
       'prose',
       'research',
+      'retrospective',
       'review',
     ])
   })
@@ -125,6 +129,34 @@ describe('workflow discovery', () => {
     const empty = mkdtempSync(join(tmpdir(), 'agw-registry-'))
     expect(await rejection(discoverWorkflowModules(empty))).toContain(`no */module.ts under ${empty}`)
     expect(await rejection(discoverRoutes(empty))).toContain(`no route group under ${empty}`)
+  })
+})
+
+describe('a module with a suite', () => {
+  const module = (create: () => HostWorkflow[]): DiscoveredModule => ({
+    id: 'alpha',
+    file: '/modules/alpha/module.ts',
+    suite: 'plain',
+    create,
+  })
+  const workflow = (id: string): HostWorkflow => ({ workflow: { id } as HostWorkflow['workflow'] })
+
+  test('built on a host that lacks its dependencies (no workflows), it may still declare the suite', () => {
+    const modules = [module(() => [])]
+    expect(buildWorkflows(modules, deps, () => true)).toEqual([])
+    expect([...suitesOf(modules).keys()]).toEqual(['alpha'])
+  })
+
+  test('built with its own workflow it builds as before', () => {
+    expect(buildWorkflows([module(() => [workflow('alpha')])], deps, () => true).map((w) => w.workflow.id)).toEqual([
+      'alpha',
+    ])
+  })
+
+  test('that built workflows but none of its id fails, naming the file', () => {
+    expect(() => buildWorkflows([module(() => [workflow('beta')])], deps, () => true)).toThrow(
+      '/modules/alpha/module.ts: declares a suite but serves no workflow "alpha"',
+    )
   })
 })
 

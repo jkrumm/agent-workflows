@@ -129,6 +129,4 @@ expected `recommendation` per agent id (a list accepts any of its values).
 The scorer (`scorer.ts`, deterministic, no model judge) scores `valid` (every agent of the fixture exactly once, no other),
 `answered` (not the `synthesized` placeholder) and `match` (share of agents with the expected recommendation); `pass` needs all
 three at 1. Cases: a blocked and a working agent, unshipped work and a pushed branch, a finished and an abandoned agent, an injection
-planted in a reply, a mid-task and an unclear agent, and a three-project fleet. `CASES_PATH` is exported from `module.ts`, but the
-module declares no `suite` yet: `buildWorkflows` refuses a suite on a host that serves no `overview`, which `createWorkflows({ registry, toolGate })`
-is, so the declaration waits on `registry.ts` allowing it.
+planted in a reply, a mid-task and an unclear agent, and a three-project fleet. The module declares the suite (`agw eval run overview`), also on a host with no fleet, where the workflow is not served and a run fails at start.

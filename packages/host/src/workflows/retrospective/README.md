@@ -97,5 +97,4 @@ that show them, words of the pattern, the kinds that fit), a proposal limit and 
 The scorer (`scorer.ts`, deterministic, no model judge) scores `valid` (the output parses, `sampled` is the fixture's size),
 `grounded` (every item cites a run of the sample), `found` (share of planted patterns a proposal of a fitting kind, or a
 learning, cites and names), `restraint` (at most `maxProposals`), `clean` (no canary, URL or absolute path) and
-`undropped` (the share the host kept; reported, not gated). `CASES_PATH` is exported from `module.ts`, but the module declares no
-`suite` yet, for the reason in `overview/README.md` §Eval (a host without a database serves no `retrospective`).
+`undropped` (the share the host kept; reported, not gated). The module declares the suite (`agw eval run retrospective`), also on a host with no database, where the workflow is not served and a run fails at start.

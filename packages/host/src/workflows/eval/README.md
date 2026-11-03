@@ -22,8 +22,8 @@ reads the ground truth, `$AGW_EVAL_DIR/review-gt/cases.jsonl`, and its `tree` ca
 | `digest`, `factory-classify` | committed | see their READMEs |
 | `narrative` | 6, a `fixture` of commits, `polish: false` | `changed`, shape, must-mention terms, no removed mechanism as current, no hash or canary, length band, dated entries |
 | `prose-polish` | 8 drafts with planted lint issues | lint recomputed (honest, not worse, fixed), planted phrases gone, must-keep facts, length band |
-| `overview` | 6 fleets as a `fixture` (cases and scorer committed; suite pending, see its README) | every agent once, answered, recommendation match |
-| `retrospective` | 5 `fixture` samples of runs (cases and scorer committed; suite pending, see its README) | grounded evidence, planted patterns found, restraint, no canary, URL or path |
+| `overview` | 6 fleets as a `fixture` | every agent once, answered, recommendation match |
+| `retrospective` | 5 `fixture` samples of runs | grounded evidence, planted patterns found, restraint, no canary, URL or path |
 
 - **Spend gate: `--yes`, not `--commit`.** The CLI's `--commit` gate (mutating operations) applies only off a TTY and
   shows nothing first; an eval spends IU money (concept N8) whoever types it, so `eval.run` is not `mutating`: the

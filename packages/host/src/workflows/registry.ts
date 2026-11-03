@@ -14,7 +14,7 @@ export interface WorkflowContext {
 
 /** One workflow directory's registration: `<dir>/<id>/module.ts` default-exports it. */
 export interface WorkflowModule {
-  /** The directory name. A module with a `suite` serves a workflow of this id. */
+  /** The directory name. A module with a `suite` serves a workflow of this id, or none at all on a host that lacks its dependencies. */
   id: string
   /**
    * `first` (default) modules are built in sorted directory order; `last` modules after all of them, with their
@@ -69,7 +69,7 @@ export function suitesOf(modules: readonly DiscoveredModule[]): Suites {
 
 /**
  * Builds every module's workflows: `first` phase in order, then `last` with the rest as peers. Fails, naming the file,
- * on a workflow id another module already registered, a suite whose module serves no workflow of its id, or an agent
+ * on a workflow id another module already registered, a suite whose module built workflows but none of its id, or an agent
  * on a route `isRoute` does not know.
  */
 export function buildWorkflows(
@@ -93,7 +93,9 @@ export function buildWorkflows(
           )
       }
     }
-    if (module.suite && !entries.some((e) => e.workflow.id === module.id))
+    // A module that built nothing on this host (no fleet, no database) may still declare its suite: the cases are
+    // data, and running them there fails at start, not at boot. One that built other workflows only is a mistake.
+    if (module.suite && entries.length > 0 && !entries.some((e) => e.workflow.id === module.id))
       throw new Error(`workflow modules: ${module.file}: declares a suite but serves no workflow "${module.id}"`)
     built.push(...entries)
   }
