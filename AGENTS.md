@@ -58,6 +58,11 @@ Shape and roles: the `/wave` skill, fleet mode (`~/.claude/skills/wave/roles/{mo
 6. At each wave's end: deploy on the mini and `@verifier` proves the wiring live — run record in
    Postgres, spans in ClickStack, usage rows in the `usage` schema, the CLI end to end.
 
+Review v4 (signed 2026-11-03, Max only, no API review spend) has its agw side: `agw review
+prepare|submit|dispose|status|route|covered` over a Postgres ledger (`packages/host/src/review/README.md`), routed by
+`REVIEW.md`'s globs. Until Wave 10 moves `/review` and the factory onto it, a lead runs it by hand: `prepare` → the
+reviewer agent (`docs/spikes/review-v4/reviewer.md`) on the printed seat → `submit` → `dispose` every finding.
+
 ## Other repos the fleet touches
 
 One agent per checkout, always. Cross-repo edits go through a worktree or wait for the checkout to
