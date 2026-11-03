@@ -5,7 +5,8 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
 
 ## State
 - **New plan 2026-11-01:** inference gateway (Waves 1–4, `docs/gateway.md`), then review v2 and the maturity pass
-  (Waves 5–13). Wave 1 done (release `767f643`, REPORT `docs/spikes/gateway/REPORT.md`); Wave 2 done (release `b25aac5`); Wave 3 done (release `3e6026e`); Wave 4 done (release `2e7d5f2`); Wave 5 done (release `bf76dc4`); Wave 6 done (release `9cf9625`); Wave 7 (spec) done, argo `84053e8`; Wave 16 (accounting, ex-13) done `9c34697`; Wave 17 (review on the subscriptions, design) active; Wave 8 resumes
+  (Waves 5–13). Wave 1 done (release `767f643`, REPORT `docs/spikes/gateway/REPORT.md`); Wave 2 done (release `b25aac5`); Wave 3 done (release `3e6026e`); Wave 4 done (release `2e7d5f2`); Wave 5 done (release `bf76dc4`); Wave 6 done (release `9cf9625`); Wave 7 (spec) done, argo `84053e8`; Wave 16 (accounting, ex-13) done `9c34697`; Wave 17 (review on the subscriptions, design) stopped at the owner's sign-off of review v3 (close-out `d7bdc76`,
+  one page at the top of lead.md, design `docs/review-v3.md`); Wave 8 resumes
   after it without an owner session; Wave 7b (build) done 11-03 (argo `6702133`). The 2026-10-30 plan is finished (concept.md Final retro); STOP removed.
 - Owner actions done (PLAN context): orgs linked, keys seeded, cycle days, no payment method. Left: `me2` keys
   (~2026-11-02, 7-day claim window); until then the `me2` pool stays disabled.
@@ -165,11 +166,10 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
   it asks again: it belongs in the factory's plan or a later agw wave, not Waves 4–13 as written.
 
 ## Next action
-- Wait for the Wave 16 close-out (lead.md) and argo-w1's rd say (argo PLAN Wave 8); judge, tick PLANs, retro entries.
-- After Wave 16: Wave 17 (review on the subscriptions, design), then Wave 8 resumes with a fresh lead: third labeller and second judge, the bars, then mining on credit
-  only, sized to `evalAvailableUsd`; IU eval spend stays under ~$20 per wave without asking.
-- If Wave 16 closes before the owner session: Wave 14 items that need no review data (compaction overflow) may be pulled
-  forward the same way; Wave 9+ need the ground truth.
+- On the owner's sign-off of review v3 (5 points in lead.md `d7bdc76`): rewrite Waves 9–11 from the close-out's proposal
+  (Wave 12 loses review's seats), tick Wave 17, retro entry, then Wave 8 (ground truth, `agw agents` on /fleet) with a
+  fresh lead. Cross-repo asks (dotfiles agents + `/review`, software-factory `reviewer` role) go into the waves.
+- Owner changes to the five points: fold them into the rewrite; a rejected pick goes back to a short Wave 17 follow-up.
 - Still owed by the owner: me2 keys and expiry day (+$100 a cycle; eval credit is the bottleneck now).
 - Wake-loop: the factory re-fires `workers done` while the lead idles on shells. Answer with a blocking ~9.5-min poll on
   lead.md (bash loop with perl select, foreground timeout 590 s; `rd read` under `timeout 15`), not a bare re-declare.
