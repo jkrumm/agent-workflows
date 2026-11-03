@@ -53,7 +53,7 @@ if (( rc != 0 )) || [[ "$run_status" != "done" ]]; then
   fail "agw exit $rc, run ${run_id:-none} status ${run_status:-unknown}: ${reason:-no reason given}"
 fi
 
-state="$(print -r -- "$out" | jq -r '.output.auto.state // empty')"
+state="$(print -r -- "$out" | jq -r '.output.auto.state // empty')" || fail "run $run_id is done but its output cannot be read: $(print -r -- "$out" | head -c 300)"
 [[ -n "$state" ]] || fail "run $run_id is done but its output has no auto record: $(print -r -- "$out" | head -c 300)"
 
 line="$(print -r -- "$out" | jq -r '
@@ -65,7 +65,7 @@ line="$(print -r -- "$out" | jq -r '
     + "; IU eval \($a.iuSpentUsd | usd) of \($a.iuLineUsd | usd) before the run"
     + "; planned \($a.planned); state \($a.state)"
     + (if $o.stopped then "; stopped: \($o.stopped | .[0:120])" else "" end)
-    + "; run \(.runId)"')"
+    + "; run \(.runId)"')" || fail "run $run_id is done (state $state) but its log line cannot be built: $(print -r -- "$out" | head -c 300)"
 log "$line"
 
 if [[ "$state" == "target-reached" ]]; then

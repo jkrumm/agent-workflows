@@ -94,23 +94,37 @@ export function evalMineAutoPorts(options: {
         [limit],
       )
       if (runs.length === 0) return []
-      const { rows: spend } = await usage().query<{ run_id: string; credit: string | null; iu: string | null }>(
+      const { rows: spend } = await usage().query<{
+        run_id: string
+        credit: string | null
+        iu: string | null
+        unpriced: string
+      }>(
         `select run_id,
            (sum(cost_usd) filter (where billing = 'api_credit'))::text as credit,
-           (sum(cost_usd) filter (where billing = 'api_key' and api_key = 'personal'))::text as iu
+           (sum(cost_usd) filter (where billing = 'api_key' and api_key = 'personal'))::text as iu,
+           (count(*) filter (where cost_usd is null))::text as unpriced
          from "${usageSchema}".records
          where source = 'gateway' and lane_detail->>'workflow' = 'eval.mine' and run_id = any($1)
          group by run_id`,
         [runs.map((run) => run.id)],
       )
-      const byRun = new Map(spend.map((row) => [row.run_id, row]))
-      return runs.map((run) => ({
-        runId: run.id,
-        labelled: Number(run.labelled),
-        thirdSeat: Number(run.third_seat),
-        creditUsd: Number(byRun.get(run.id)?.credit ?? 0),
-        iuUsd: Number(byRun.get(run.id)?.iu ?? 0),
-      }))
+      // Unknown spend is not zero spend: a run with no usage rows at all, or with any row without a cost, says nothing
+      // about what a candidate costs, so it is left out and the fallback constants or the other runs decide.
+      const known = new Map(spend.filter((row) => Number(row.unpriced) === 0).map((row) => [row.run_id, row]))
+      return runs.flatMap((run) => {
+        const row = known.get(run.id)
+        if (!row) return []
+        return [
+          {
+            runId: run.id,
+            labelled: Number(run.labelled),
+            thirdSeat: Number(run.third_seat),
+            creditUsd: Number(row.credit ?? 0),
+            iuUsd: Number(row.iu ?? 0),
+          },
+        ]
+      })
     },
   }
 }
