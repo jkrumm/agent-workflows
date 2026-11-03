@@ -75,7 +75,12 @@ password=$(secrets-run read "$PG_PASSWORD_REF" 2>/dev/null)
 psql_err=$(mktemp "${TMPDIR:-/tmp}/agw-verify.XXXXXX") || fail "cannot create a temp file"
 agw_err=$(mktemp "${TMPDIR:-/tmp}/agw-verify.XXXXXX") || fail "cannot create a temp file"
 review_dir=""
-trap 'rm -f "$psql_err" "$agw_err"; [[ -z "$review_dir" ]] || { rm -rf "$review_dir"; rmdir "${review_dir:h}" 2>/dev/null; }' EXIT
+# one EXIT trap for every temp file and the review fixture (a later `trap … EXIT` would replace it)
+cleanup() {
+  rm -f "$psql_err" "$agw_err" "${door_body:-}" "${gw_head:-}" "${gw_resp:-}"
+  [[ -z "${review_dir:-}" ]] || { rm -rf "$review_dir"; rmdir "${review_dir:h}" 2>/dev/null; }
+}
+trap cleanup EXIT
 # One journal query; the SQL goes on stdin (psql interpolates :'var' there, not in -c), extra args are -v bindings.
 journal() {
   local sql=$1; shift
@@ -162,7 +167,6 @@ secret=$(secrets-run read "$API_SECRET_REF" 2>/dev/null)
 [[ -n "$secret" ]] || fail "cannot read $API_SECRET_REF through secrets-run"
 # The bearer goes through curl's config on stdin, never the command line (ps would show it).
 door_body=$(mktemp "${TMPDIR:-/tmp}/agw-verify.XXXXXX") || fail "cannot create a temp file"
-trap 'rm -f "$psql_err" "$agw_err" "$door_body"' EXIT
 door_status=$(print -r -- "header = \"authorization: Bearer $secret\"" | curl -sS --max-time 30 -K - -o "$door_body" \
   -w '%{http_code}' -X POST -H 'content-type: application/json' -H 'x-agw-purpose: verify' --data '{}' \
   "$AUDIO_URL/v1/audio/speech") || fail "no answer from the door"
@@ -213,7 +217,6 @@ gw_body=$(jq -n --arg system "$gw_system" '{
 gw_session="verify-$(date +%s)"
 gw_head=$(mktemp "${TMPDIR:-/tmp}/agw-verify.XXXXXX") || fail "cannot create a temp file"
 gw_resp=$(mktemp "${TMPDIR:-/tmp}/agw-verify.XXXXXX") || fail "cannot create a temp file"
-trap 'rm -f "$psql_err" "$agw_err" "$door_body" "$gw_head" "$gw_resp"' EXIT
 
 # One POST through the gateway as the caller whose key is $gw_key; the key goes to curl on stdin, never the command line.
 # Sets gw_status, gw_id, gw_pool.
