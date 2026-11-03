@@ -38,7 +38,7 @@ export const createReviewAdversary = (deps: LlmDeps) =>
       'The cross-family critic: one non-agentic call that argues against merging a diff (route review.adversary)',
     input: reviewAdversaryInput,
     output: reviewAdversaryOutput,
-    // Not `agw review route`: the host refuses a command that is a prefix of another, and `agw review` is the workflow.
+    // Hyphenated, not `agw review route`: a command may sit below `agw review` (the workflow takes no positional), but this one keeps its name.
     cli: { command: ['review-adversary'], stdin: 'diff', defaultFormat: 'json' },
     async handler({ diff, context }, ctx) {
       const route = resolve('review.adversary', ctx)

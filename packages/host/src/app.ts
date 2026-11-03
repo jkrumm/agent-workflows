@@ -95,12 +95,16 @@ function applyResponse(response: Response, { status, headers }: HostContext['res
   return new Response(response.body, { status: overrideStatus ? status : response.status, headers: merged })
 }
 
-/** Every command (capabilities, workflows, run ops) is unique, and none is the prefix of another. */
-function assertCommands(commands: { owner: string; command: string[] }[]) {
+/**
+ * Every command (capabilities, workflows, run ops) is unique, and a command sits below a shorter one only when the
+ * shorter declares no positional arguments: then a bare word after it can only be a subcommand, never its value.
+ */
+function assertCommands(commands: { owner: string; command: string[]; positional: readonly string[] }[]) {
   for (const [i, a] of commands.entries()) {
     for (const b of commands.slice(i + 1)) {
       const [short, long] = a.command.length <= b.command.length ? [a, b] : [b, a]
-      if (short.command.every((part, n) => part === long.command[n])) {
+      const below = short.command.length < long.command.length && short.positional.length === 0
+      if (!below && short.command.every((part, n) => part === long.command[n])) {
         throw new Error(
           `command collision: \`agw ${long.command.join(' ')}\` (${long.owner}) vs \`agw ${short.command.join(' ')}\` (${short.owner})`,
         )
@@ -149,7 +153,7 @@ export function createHost(options: HostOptions): Host {
     ...(routes ? [{ owner: 'routes', op: routes }] : []),
     ...Object.entries(reads).map(([name, op]) => ({ owner: `read ${name}`, op })),
   ]
-  assertCommands(operations.map(({ owner, op }) => ({ owner, command: op.cli.command })))
+  assertCommands(operations.map(({ owner, op }) => ({ owner, command: op.cli.command, positional: op.cli.positional })))
   for (const key of ['operationId', 'path'] as const) {
     const seen = new Map<string, string>()
     for (const { owner, op } of operations) {

@@ -4,6 +4,7 @@
 
 **Where to look:** workflow shape §3, middleware §4, porting a skill or a Hermes path §10, phase order §11.
 
+> **v3.16, 2026-11-03:** command rule relaxed (§Retro log): a command may sit below a shorter one when the shorter declares no positional arguments. Wave 9 (review v4) needs `agw review prepare|submit|…` under the `review` workflow. No decision reversed.
 > **v3.15, 2026-11-03:** docs brought to the code, no design change.
 > **v3.14, 2026-11-02:** the gateway as built (`docs/gateway.md`, `packages/gateway`). It is a lean process on 127.0.0.1:7794, not a `bootProcess` one: no journal Postgres, runtime or OpenCode on the path every LLM call takes, one bundled file. A local SQLite ledger is its outbox, at-least-once into `usage.records` with idempotent upserts and quarantine, so a Postgres outage loses nothing and the meter survives a restart. A deploy restarts it only when its build hash changes. Why: the process every call depends on must depend on nothing else, and an unrelated deploy must not cut streams. One departure from v3.13: the gateway is the only writer of token-priced inference rows, not of all of them. It cannot price a minute of audio, a character of speech or an image, so those calls say `x-agw-usage: caller` and agw's outbox keeps writing them, along with charges that never pass the gateway (Tavily). agw itself holds no provider key: the API secret authenticates its calls as caller `agw`, and OpenCode gets a door token that opens the gateway only. Two seats stay on GPT by design: `review.adversary` is the cross-family critic and `podcast.write`'s tool loop speaks only the OpenAI dialects. The process shape, the ledger and the build-hash restart are owner-accepted (Wave 2 close-out); the rest are Wave 3 lead decisions, named in its close-out. One decision narrowed, none reversed.
 > **v3.13, 2026-11-01:** an inference gateway (`docs/gateway.md`), a third process: every LLM call from the mini goes through it, Claude calls spend the subscriptions' monthly API credit first (one Console org per subscription, soonest-expiring first, then IU), and the gateway is the only writer of inference usage rows. agw's seats move to Claude to spend the credit. Owner decision, 2026-11-01; built in `docs/waves/PLAN.md` Waves 1–4. No decision reversed.
@@ -233,7 +234,7 @@ Facts in `docs/research/2026-10-27-setup-inventory.md`.
 | `excalidraw-diagram` | agw MCP | `agw diagram` (P3) |
 | `prose` | `agw prose`: lint → cross-lab review → Opus rewrite → keep gate, all on IU (~$0.05/call) | `agw prose` does lint + cross-lab review + keep gate; **the rewrite moves into the calling Claude Code session on Max** (P3) |
 | `podcast` | `bun run podcast` in audio-gateway | `agw podcast` (P4) |
-| `img` | `imgcli` | `agw image` (P4); icon sets are `agw image-icon` (the host refuses `agw image icon`, a command may not prefix another) |
+| `img` | `imgcli` | `agw image` (P4); icon sets are `agw image-icon` (the host refuses `agw image icon`: `agw image` takes a positional prompt, and a command with positionals may not prefix another) |
 | `implement`, `wave`, `remote-dev` | name `mcp__agent-gateway__dispatch` | dropped: `dispatch` is unused (v3.9) |
 | `browse` | chrome-devtools MCP | unchanged |
 | agw MCP server | 16 tools | deleted per tool as ported; server gone at P5 |
@@ -648,3 +649,7 @@ One entry per phase: what we learned, what changed on this page, and why.
 ### Docs and small debt, 2026-11-03
 
 - **Changed.** v3.15: stale sentences brought to the code (podcast seat, brain tier, OpenCode credential, Argo and `dispatch` leftovers, eval sets); no decision reversed.
+
+### Command rule relaxed, 2026-11-03
+
+- **Changed.** v3.16: the host refused any command that was the prefix of another. Now a command may sit below a shorter one only when the shorter declares no positional arguments (argv can then never be ambiguous; the CLI already resolves the longest match). Identical commands, and a shorter command with positionals, still collide. Why: review v4 adds `agw review prepare|submit|…` while the `review` workflow keeps `agw review`. No decision reversed.

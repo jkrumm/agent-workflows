@@ -154,7 +154,8 @@ export function usageLine(command: Command): string {
   return [BIN, ...command.words, ...positional, ...flags, ...globals].join(' ')
 }
 
-export function helpText(command: Command): string {
+/** `below`: the commands that could sit under this one; their next words are listed as its subcommands. */
+export function helpText(command: Command, below: Command[] = []): string {
   const lines = [`usage: ${usageLine(command)}`, '']
   if (command.summary) lines.push(command.summary)
   if (command.description) lines.push(command.description)
@@ -182,6 +183,15 @@ export function helpText(command: Command): string {
       ? 'waits up to AGW_WAIT_BUDGET_S (default 110 s), then exits 10 with the resume command'
       : '',
   ].filter(Boolean)
+  const n = command.words.length
+  const subcommands = [
+    ...new Set(
+      below
+        .filter((c) => c.words.length > n && command.words.every((w, i) => c.words[i] === w))
+        .map((c) => c.words[n] as string),
+    ),
+  ].sort()
+  if (subcommands.length) notes.push(`subcommands: ${subcommands.join('|')}`)
   if (notes.length) lines.push('', ...notes)
   return `${lines.join('\n')}\n`
 }

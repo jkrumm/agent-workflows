@@ -304,10 +304,31 @@ describe('command collisions throw at creation', () => {
   test.each([
     ['a workflow on a capability command', 'llm.title'],
     ['a workflow on a run op command', 'run.wait'],
-    ['a workflow below a capability command', 'decide.more'],
-    ['a workflow that is a prefix of a run op', 'run'],
   ])('%s', async (_name, id) => {
     expect(await rejection(startTestHost({ prefix: 'coll', extra: [op(id)] }))).toMatch(/command collision/)
+  })
+
+  test('a command may sit below a positional-free workflow, not below one with a positional', async () => {
+    const withPositional = (id: string) => ({
+      workflow: defineWorkflow({
+        id,
+        version: 'v1',
+        input: z.object({ q: z.string() }),
+        output: z.object({}),
+        run: async () => ({}),
+      }),
+      cli: { positional: ['q'] },
+    })
+    for (const extra of [[op('zed'), op('zed.sub')], [op('decide.more')]]) {
+      const free = await startTestHost({ prefix: 'collfree', extra })
+      await free.close()
+    }
+    // `run` has run ops below it (`run.wait`): fine without a positional, a collision with one.
+    const bare = await startTestHost({ prefix: 'collrun', extra: [op('run')] })
+    await bare.close()
+    for (const extra of [[withPositional('zed'), op('zed.sub')], [withPositional('run')]]) {
+      expect(await rejection(startTestHost({ prefix: 'collpos', extra }))).toMatch(/command collision/)
+    }
   })
 
   test('a bad workflow id or non-object input is refused', async () => {

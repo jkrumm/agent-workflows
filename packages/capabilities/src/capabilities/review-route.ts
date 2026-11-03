@@ -41,7 +41,7 @@ export const createReviewRoute = (deps: LlmDeps) =>
     summary: 'Pick the content-driven review angles and the review depth for a diff (route review.router)',
     input: reviewRouteInput,
     output: reviewRouteOutput,
-    // Not `agw review route`: the host refuses a command that is a prefix of another, and `agw review` is the workflow.
+    // Hyphenated, not `agw review route`: a command may sit below `agw review` (the workflow takes no positional), but this one keeps its name.
     cli: { command: ['review-route'], stdin: 'diff', defaultFormat: 'json' },
     async handler({ diff }, ctx) {
       const { text, truncatedChars } = capDiff(diff)

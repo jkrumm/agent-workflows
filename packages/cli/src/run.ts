@@ -118,7 +118,7 @@ class Runner {
     const call = await this.prepareFresh(argv)
     const conflict = this.platform.conflictError(call.command)
     if (call.parsed.globals.help) {
-      this.io.out(helpText(call.command))
+      this.io.out(helpText(call.command, this.platform.commands))
       const note = conflict ? `${conflict.message}; it does not run (${conflict.hint})` : this.unavailable(call.command)
       if (note) this.io.out(`\n(${note})\n`)
       return EXIT.ok
