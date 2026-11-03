@@ -625,6 +625,16 @@ One entry per phase: what we learned, what changed on this page, and why.
 - **Process.** Plan no owner work beyond minutes; a human check is a small sample only when an automated bar fails.
 - **Does the page hold?** Yes; the ground-truth limit (LLM consensus, no human check) is stated in every report.
 
+### Gateway Wave 18 — Review v4 spike, 2026-11-03
+
+- **Learned.** Asked for intent, fit and domain rules, a plain reviewer agent with context by pointer (intent, path
+  history, prior findings, REVIEW.md) reached 4 of 5 known defects at deep; v1 reached 1 of 4. Opus matched Sonnet high
+  at ~1.9x, so Opus is not a tier. Path rules over-route: the first cut sent 5 of 7 PoC PRs deep.
+- **Changed.** Nothing deployed; spike in `docs/spikes/review-v4/`, mining job paused.
+- **Process.** v3 copied the article's machinery and missed its point (intent first); start a design from the owner's
+  goal and the source's core question, not its mechanics.
+- **Does the page hold?** Pending the owner's sign-off; quota (~25-40 % of a Max 5x week) is the open cost.
+
 ### Gateway Wave 15 — Coverage and debt, 2026-11-03
 
 - **Learned.** Eval credit (~$0.14 an hour) gates even small suite runs; a lead waiting hours on it stalls the fleet,

@@ -16,7 +16,7 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
   tailscale drift). Not ours; gates are judged on our rows only.
 
 ## Lead
-- Mother `agent-workflows-w1-r4` (pane t4f, account me2); Wave 18 lead `agent-workflows-w1-r16` (pane t10n, Opus high), spawned 2026-11-03.
+- Mother `agent-workflows-w1-r4` (pane t4f, account me2); no lead running (Wave 18 lead r16 closed 2026-11-03).
   Rotation policy: a fresh lead per wave unless the last one closed under ~30% context.
 
 ## Decisions taken
@@ -169,6 +169,8 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
   it asks again: it belongs in the factory's plan or a later agw wave, not Waves 4–13 as written.
 
 ## Next action
+- Wave 18 done (review v4 spike, `3427f69`); owner signs 7 points (lead.md). On signature: rewrite Waves 9–12, 14 from
+  the close-out's proposals, flip Wave 9 active, spawn its lead. Cross-repo asks go into Wave 10.
 - Wave 15 done (`b2701de`). Every pending wave (9–12, 14) depends on review v3; the fleet idles until the owner signs.
   First step of Wave 9 then: the credit-bound suite runs from Wave 15's Left behind.
 - On the owner's sign-off of review v3 (5 points in lead.md `d7bdc76`): rewrite Waves 9–11 from the close-out's proposal
