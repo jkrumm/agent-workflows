@@ -1,0 +1,60 @@
+132 deep | sensitive path: packages/limits/package.json (+3)
+131 deep | sensitive path: packages/runtime/src/runtime.ts (+1)
+130 deep | 1087 changed non-test code lines > 800
+129 standard | default
+128 standard | default
+127 standard | default
+126 standard | default
+125 standard | default
+124 deep | 2466 changed non-test code lines > 800
+123 deep | sensitive path: .env.tpl
+122 standard | default
+121 deep | sensitive path: packages/middleware/src/index.ts (+1)
+120 standard | default
+119 standard | default
+118 deep | sensitive path: packages/runtime/src/errors.ts (+2)
+117 standard | default
+116 standard | default
+115 deep | sensitive path: packages/middleware/src/record.ts (+6)
+114 deep | sensitive path: packages/gateway/src/proxy.ts (+2)
+113 deep | 2204 changed non-test code lines > 800
+112 deep | 1158 changed non-test code lines > 800
+111 deep | 1590 changed non-test code lines > 800
+110 deep | 1865 changed non-test code lines > 800
+109 standard | default
+108 deep | 4 packages > 3: a cross-package change
+107 standard | default
+106 standard | default
+105 deep | sensitive path: packages/gateway/src/main.ts (+4)
+104 deep | sensitive path: packages/middleware/src/fingerprint.ts (+6)
+103 standard | default
+102 deep | sensitive path: packages/limits/src/runaway.ts (+5)
+101 deep | sensitive path: packages/runtime/src/scope.ts (+1)
+100 deep | sensitive path: packages/middleware/src/opencode-usage.ts (+5)
+99 standard | default
+98 standard | a manifest changed (dependencies)
+97 light | small: 18 code lines in 2 files
+96 deep | sensitive path: packages/gateway/src/charge.ts (+1)
+95 deep | sensitive path: .env.gateway.tpl (+4)
+94 standard | default
+93 deep | 7 packages > 3: a cross-package change
+92 deep | sensitive path: packages/middleware/src/db.ts (+4)
+91 deep | sensitive path: packages/runtime/src/scope.ts (+1)
+90 standard | default
+89 light | small: 8 code lines in 2 files
+88 deep | sensitive path: packages/gateway/src/charge.ts (+2)
+87 deep | sensitive path: packages/gateway/src/ledger.ts (+3)
+86 standard | default
+85 deep | sensitive path: packages/gateway/package.json (+14)
+84 deep | sensitive path: .env.gateway.tpl (+2)
+82 deep | sensitive path: packages/gateway/package.json (+5)
+81 standard | default
+80 light | docs only
+79 light | docs only
+78 light | docs only
+77 standard | default
+74 deep | 4 packages > 3: a cross-package change
+71 deep | sensitive path: packages/runtime/src/types.ts
+69 light | small: 6 code lines in 2 files
+68 deep | 3554 changed non-test code lines > 800
+67 standard | default

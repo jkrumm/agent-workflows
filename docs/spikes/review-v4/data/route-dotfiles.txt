@@ -1,0 +1,40 @@
+60 standard | default
+59 light | docs only
+58 light | small: 27 code lines in 2 files
+57 standard | default
+56 light | small: 4 code lines in 1 files
+55 light | small: 30 code lines in 1 files
+53 standard | default
+52 standard | default
+51 standard | default
+50 standard | default
+49 deep | sensitive path: config/settings.template.json
+48 standard | default
+47 standard | default
+46 light | docs only
+45 standard | default
+44 deep | sensitive path: config/settings.template.json
+43 standard | default
+42 light | small: 2 code lines in 1 files
+41 standard | default
+40 deep | sensitive path: config/settings.template.json
+39 standard | default
+38 light | docs only
+37 light | docs only
+36 light | docs only
+35 standard | default
+34 light | small: 19 code lines in 2 files
+33 standard | default
+32 light | small: 5 code lines in 1 files
+31 standard | default
+30 deep | sensitive path: hooks/iu-model-guard.ts
+29 standard | default
+28 deep | sensitive path: launchd/com.jkrumm.claude-accounts-keepalive.plist.template
+27 deep | sensitive path: hooks/session-env.ts
+26 deep | sensitive path: hooks/session-env.ts
+25 light | small: 3 code lines in 1 files
+24 none | every file matches REVIEW.md none
+23 standard | default
+22 light | docs only
+21 light | small: 2 code lines in 1 files
+20 light | small: 14 code lines in 1 files

@@ -1,0 +1,386 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script>document.documentElement.dataset.mantineColorScheme = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"</script>
+<title>Review v4: one routed reviewer on Max</title>
+<style>
+/* @generated basalt-ui — do not edit; regenerate with the command on the next line */
+/* basalt-ui 2.29.0 — `basalt-ui tokens:css` */
+:root {
+  --vx-radius-card: 10px;
+  --vx-radius-ctrl: 6px;
+  --vx-radius-tight: 5px;
+  --vx-radius-fine: 4px;
+  --vx-radius-floating: 11px;
+  --vx-radius-pill: 9999px;
+  --vx-hit: 24px;
+  --vx-space-row-inset-x: 10px;
+  --vx-space-row-inset-y: 6px;
+  --vx-space-row-line-height: 1.54;
+  --vx-space-input-height: 2.625rem;
+  --vx-space-control-height: 2.625rem;
+  --vx-space-control-height-tag: 1.25rem;
+  --vx-space-control-height-widget: 1.5rem;
+  --vx-space-control-height-ctl: 2rem;
+  --vx-space-control-height-dense: 1.75rem;
+  --vx-space-stack-xs: 4px;
+  --vx-space-stack-sm: 8px;
+  --vx-space-stack-md: 12px;
+  --vx-space-stack-lg: 16px;
+  --vx-space-stack-xl: 24px;
+  --vx-space-sticky-header-clearance: 12px;
+  --vx-space-nav-icon-gap: 10px;
+  --vx-space-sidebar-region-gap: 12px;
+  --vx-space-prose-quote-inset-y: 2px;
+  --vx-space-prose-quote-indent: 12px;
+  --vx-space-prose-inline-code-inset-y: 1.5px;
+  --vx-space-prose-inline-code-inset-x: 5px;
+  --vx-space-prose-code-block-inset-y: 10px;
+  --vx-space-prose-code-block-inset-x: 12px;
+  --vx-space-prose-heading-anchor-gap: 6px;
+  --vx-space-prose-table-cell-inset-y: 5px;
+  --vx-space-prose-table-cell-inset-x: 8px;
+  --vx-space-prose-chat-list-gap-bottom: 10px;
+  --vx-space-prose-chat-list-indent: 20px;
+  --vx-space-prose-chat-list-item-gap: 3px;
+  --vx-space-prose-chat-nested-list-gap: 2px;
+  --vx-space-prose-chat-heading-gap-top: 14px;
+  --vx-space-prose-chat-heading-gap-bottom: 6px;
+  --vx-space-prose-article-paragraph-gap: 14px;
+  --vx-space-prose-article-list-gap-top: 6px;
+  --vx-space-prose-article-list-gap-bottom: 14px;
+  --vx-space-prose-article-list-indent: 22px;
+  --vx-space-prose-article-h1-gap-top: 6px;
+  --vx-space-prose-article-h1-gap-bottom: 14px;
+  --vx-space-prose-article-heading-gap-top: 30px;
+  --vx-space-prose-article-heading-gap-bottom: 10px;
+  --vx-space-prose-article-h2-rule-gap: 6px;
+  --vx-space-prose-article-block-gap: 18px;
+  --vx-space-article-column-gap: 56px;
+  --vx-space-article-toc-rail-width: 220px;
+  --vx-space-article-header-gap: 10px;
+  --vx-space-article-header-padding-bottom: 20px;
+  --vx-space-article-header-margin-bottom: 28px;
+  --vx-space-article-meta-row-gap: 6px;
+  --vx-space-article-footer-gap: 12px;
+  --vx-space-article-footer-margin-top: 40px;
+  --vx-space-article-footer-padding-top: 20px;
+  --vx-space-article-nav-target-gap: 6px;
+  --vx-space-code-block-header-gap: 8px;
+  --vx-space-code-block-header-inset-y: 6px;
+  --vx-space-code-block-header-inset-right: 10px;
+  --vx-space-code-block-content-inset-x: 14px;
+  --vx-space-code-block-header-right-gap: 6px;
+  --vx-space-code-block-body-inset-y: 10px;
+  --vx-space-code-block-floating-copy-offset: 6px;
+  --vx-space-callout-inset-y: 10px;
+  --vx-space-callout-inset-x: 14px;
+  --vx-space-callout-title-row-gap: 8px;
+  --vx-space-toc-root-gap: 6px;
+  --vx-space-toc-link-inset-y: 4px;
+  --vx-space-toc-link-indent: 12px;
+  --vx-space-toc-sub-indent: 24px;
+  --vx-space-article-card-tags-gap: 4px;
+  --vx-space-article-card-tag-inset-y: 1px;
+  --vx-space-article-card-tag-inset-x: 6px;
+  --vx-space-article-card-meta-gap-top: 2px;
+  --vx-space-guide-body-gap-bottom: 8px;
+  --vx-space-guide-footer-gap-top: 20px;
+  --vx-space-guide-footer-inset-top: 16px;
+  --vx-space-sidebar-search-gap: 7px;
+  --vx-space-sidebar-search-trigger-height: 32px;
+  --vx-space-settings-row-inset-y: 10px;
+  --vx-space-settings-row-gap: 16px;
+  --vx-space-mermaid-container-inset: 16px;
+  --vx-space-sidebar-brand-inset-x: 7px;
+  --vx-space-sidebar-section-gap: 16px;
+  --vx-space-sidebar-account-inset-top: 9px;
+  --vx-space-sidebar-account-inset-x: 7px;
+  --vx-space-sidebar-account-inset-bottom: 2px;
+  --vx-space-sidebar-avatar-size: 28px;
+  --vx-space-sidebar-section-label-gap: 6px;
+  --vx-space-sidebar-child-list-gap-top: 2px;
+  --vx-space-sidebar-child-list-gap-bottom: 3px;
+  --vx-space-sidebar-child-list-indent: 15px;
+  --vx-space-sidebar-child-row-inset-y: 4px;
+  --vx-space-sidebar-child-row-indent: 12px;
+  --vx-space-app-shell-inset: 16px;
+  --vx-space-app-shell-inset-mobile: 8px;
+  --vx-space-app-shell-header-lead-min: 96px;
+  --vx-space-mobile-nav-tab-gap: 3px;
+  --vx-space-mobile-nav-icon-size: 24px;
+  --vx-space-mobile-nav-tab-inset-y: 2px;
+  --vx-space-mobile-nav-tab-inset-x: 12px;
+  --vx-space-mobile-nav-row-height: 44px;
+  --vx-space-agent-rail-inset-x: 10px;
+  --vx-space-agent-part-gap-top: 6px;
+  --vx-space-agent-code-inset: 8px;
+  --vx-space-agent-error-inset-y: 8px;
+  --vx-space-agent-error-inset-x: 10px;
+  --vx-space-agent-scroll-button-gap-top: 8px;
+  --vx-space-agent-message-inset-y: 10px;
+  --vx-space-agent-message-inset-x: 12px;
+  --vx-space-agent-transcript-inset: 16px;
+  --vx-space-badge-inset-y: 2px;
+  --vx-space-badge-inset-x: 7px;
+  --vx-space-stat-card-gap: 8px;
+  --vx-space-card-inset-y: 12px;
+  --vx-space-card-inset-x: 16px;
+  --vx-space-section-gap: 12px;
+  --vx-space-virtual-row-inset-y: 8px;
+  --vx-space-virtual-row-inset-x: 12px;
+  --vx-space-page-bar-row-height: 2.25rem;
+  --vx-space-section-header-height: 2.25rem;
+  --vx-space-widget-header-height: 1.75rem;
+  --vx-space-sidebar-block-row-height: 2rem;
+  --vx-space-control-gap: 6px;
+  --vx-space-sheet-row-height: 2.75rem;
+  --vx-prose-measure: 72ch;
+  --vx-fill-gray: #717176;
+  --vx-fill-red: #b7514e;
+  --vx-fill-pink: #ba4b6c;
+  --vx-fill-grape: #9e579c;
+  --vx-fill-violet: #9e579c;
+  --vx-fill-indigo: #7863bc;
+  --vx-fill-cyan: #43769a;
+  --vx-fill-teal: #3a7c74;
+  --vx-fill-green: #427e3f;
+  --vx-fill-lime: #687737;
+  --vx-fill-yellow: #8d6c2e;
+  --vx-fill-orange: #9a6632;
+  --vx-fill-hover-gray: color-mix(in srgb, var(--vx-fill-gray) 88%, #000);
+  --vx-fill-hover-red: color-mix(in srgb, var(--vx-fill-red) 88%, #000);
+  --vx-fill-hover-pink: color-mix(in srgb, var(--vx-fill-pink) 88%, #000);
+  --vx-fill-hover-grape: color-mix(in srgb, var(--vx-fill-grape) 88%, #000);
+  --vx-fill-hover-violet: color-mix(in srgb, var(--vx-fill-violet) 88%, #000);
+  --vx-fill-hover-indigo: color-mix(in srgb, var(--vx-fill-indigo) 88%, #000);
+  --vx-fill-hover-cyan: color-mix(in srgb, var(--vx-fill-cyan) 88%, #000);
+  --vx-fill-hover-teal: color-mix(in srgb, var(--vx-fill-teal) 88%, #000);
+  --vx-fill-hover-green: color-mix(in srgb, var(--vx-fill-green) 88%, #000);
+  --vx-fill-hover-lime: color-mix(in srgb, var(--vx-fill-lime) 88%, #000);
+  --vx-fill-hover-yellow: color-mix(in srgb, var(--vx-fill-yellow) 88%, #000);
+  --vx-fill-hover-orange: color-mix(in srgb, var(--vx-fill-orange) 88%, #000);
+  --vx-text-nano: 10px;
+  --vx-text-micro: 11px;
+  --vx-text-xs: 12px;
+  --vx-text-sm: 13px;
+  --vx-text-md: 15px;
+  --vx-text-lg: 16px;
+  --vx-text-xl: 18px;
+  --vx-text-h2: 21px;
+  --vx-text-kpi: 22px;
+  --vx-text-h1: 26px;
+  --vx-text-display: 30px;
+  --vx-area-top: 22%;
+  --vx-area-bottom: 1%;
+  --vx-good: color-mix(in srgb, var(--vx-good-solid) 18%, transparent);
+  --vx-good-soft: color-mix(in srgb, var(--vx-good-solid) 8%, transparent);
+  --vx-bad: color-mix(in srgb, var(--vx-bad-solid) 18%, transparent);
+  --vx-warn: color-mix(in srgb, var(--vx-warn-solid) 8%, transparent);
+  --vx-good-ref: color-mix(in srgb, var(--vx-good-solid) 60%, transparent);
+  --vx-bad-ref: color-mix(in srgb, var(--vx-bad-solid) 60%, transparent);
+  --vx-warn-ref: color-mix(in srgb, var(--vx-warn-solid) 60%, transparent);
+}
+@media (max-width: 52.49375em) {
+  :root {
+    --vx-space-card-inset-x: 12px;
+    --vx-space-section-gap: 8px;
+  }
+}
+@media (pointer: coarse) {
+  :root {
+    --vx-hit: 44px;
+  }
+}
+@media (pointer: fine) {
+  [data-basalt-dense] {
+    --vx-space-control-height-ctl: var(--vx-space-control-height-dense);
+    --button-height-ctl: calc(var(--vx-space-control-height-dense) * var(--mantine-scale));
+    --input-height-ctl: calc(var(--vx-space-control-height-dense) * var(--mantine-scale));
+    --ai-size-ctl: calc(var(--vx-space-control-height-dense) * var(--mantine-scale));
+    --badge-height-ctl: calc(var(--vx-space-control-height-dense) * var(--mantine-scale));
+  }
+}
+:root,
+html[data-mantine-color-scheme='dark'] {
+  --vx-status-excellent: #43bf4d;
+  --vx-status-good: #52c07c;
+  --vx-status-warn: #e6a53d;
+  --vx-status-bad: #fe8178;
+  --vx-status-neutral: #a1a1aa;
+  --vx-good-solid: #52c07c;
+  --vx-bad-solid: #fe8178;
+  --vx-warn-solid: #e6a53d;
+  --vx-neutral: #d4d4d8;
+  --vx-line: #e4e4e7;
+  --vx-line2: #a1a1aa;
+  --vx-axis: #a7a7aa;
+  --vx-axis-stroke: rgba(255, 255, 255, 0.12);
+  --vx-grid: rgba(255, 255, 255, 0.06);
+  --vx-crosshair: rgba(255, 255, 255, 0.42);
+  --vx-dot-stroke: #27272a;
+  --vx-tooltip-bg: rgba(39, 39, 42, 0.96);
+  --vx-tooltip-text: rgba(255, 255, 255, 0.88);
+  --vx-tooltip-muted: rgba(255, 255, 255, 0.5);
+  --vx-tooltip-border: none;
+  --vx-tooltip-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  --vx-legend-text: rgba(255, 255, 255, 0.92);
+  --vx-ink: #e5e5e9;
+  --vx-ink2: #dddde1;
+  --vx-muted: #d4d4d8;
+  --vx-faint: #a7a7aa;
+  --vx-accent: #a2c3f0;
+  --vx-accent-hover: #65a2e3;
+  --vx-accent-fill: #4374a6;
+  --vx-accent-fill-hover: #2d5b88;
+  --vx-on-accent: #ffffff;
+  --vx-divider: rgba(255, 255, 255, 0.08);
+  --vx-shadow-card: 0 1px 3px rgba(0, 0, 0, 0.4), inset 0 0 0 1px color-mix(in srgb, #ffffff 4%, transparent);
+  --vx-shadow-ctrl: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --vx-shadow-raised: 0 1px 2px rgba(0, 0, 0, 0.35), inset 0 0 0 1px color-mix(in srgb, #ffffff 8%, transparent);
+  --vx-shadow-overlay: 0 8px 24px rgba(0, 0, 0, 0.5);
+  --vx-surface-bg: #27272a;
+  --vx-surface-panel: #2b2b2e;
+  --vx-surface-panel-hover: #38383b;
+  --vx-surface-row-hover: #38383b;
+  --vx-surface-row-selected: #3c3c3f;
+  --vx-surface-elevated: #38383b;
+  --vx-surface-subtle: #323235;
+  --vx-surface-overlay: color-mix(in srgb, #3f3f46 50%, #27272a);
+  --vx-surface-field: #27272a;
+  --vx-surface-border: #444447;
+  --vx-surface-hairline: #4e4e51;
+}
+html[data-mantine-color-scheme='light'] {
+  --vx-status-excellent: #29a634;
+  --vx-status-good: #2f774b;
+  --vx-status-warn: #935f00;
+  --vx-status-bad: #b5403d;
+  --vx-status-neutral: #71717a;
+  --vx-good-solid: #2f774b;
+  --vx-bad-solid: #b5403d;
+  --vx-warn-solid: #935f00;
+  --vx-neutral: #525255;
+  --vx-line: #52525c;
+  --vx-line2: #71717a;
+  --vx-axis: #69696c;
+  --vx-axis-stroke: rgba(38, 38, 41, 0.12);
+  --vx-grid: rgba(38, 38, 41, 0.07);
+  --vx-crosshair: rgba(38, 38, 41, 0.32);
+  --vx-dot-stroke: #ffffff;
+  --vx-tooltip-bg: #ffffff;
+  --vx-tooltip-text: rgba(38, 38, 41, 0.88);
+  --vx-tooltip-muted: rgba(38, 38, 41, 0.5);
+  --vx-tooltip-border: 1px solid #e4e4e7;
+  --vx-tooltip-shadow: 0 2px 8px rgba(38, 38, 41, 0.1);
+  --vx-legend-text: rgba(38, 38, 41, 0.82);
+  --vx-ink: #262629;
+  --vx-ink2: #404043;
+  --vx-muted: #525255;
+  --vx-faint: #69696c;
+  --vx-accent: #4374a6;
+  --vx-accent-hover: #2d5b88;
+  --vx-accent-fill: #4374a6;
+  --vx-accent-fill-hover: #2d5b88;
+  --vx-on-accent: #ffffff;
+  --vx-divider: rgba(38, 38, 41, 0.09);
+  --vx-shadow-card: 0 1px 2px rgba(28, 25, 23, 0.05), 0 0 0 1px var(--vx-surface-hairline);
+  --vx-shadow-ctrl: 0 1px 2px rgba(28, 25, 23, 0.12);
+  --vx-shadow-raised: 0 1px 2px rgba(28, 25, 23, 0.1);
+  --vx-shadow-overlay: 0 8px 24px rgba(28, 25, 23, 0.1);
+  --vx-surface-bg: #f2f2f5;
+  --vx-surface-panel: #fafafd;
+  --vx-surface-panel-hover: #ffffff;
+  --vx-surface-row-hover: #efeff2;
+  --vx-surface-row-selected: #eaeaed;
+  --vx-surface-elevated: #ffffff;
+  --vx-surface-subtle: #f4f4f8;
+  --vx-surface-overlay: #ffffff;
+  --vx-surface-field: #ffffff;
+  --vx-surface-border: #e2e2e5;
+  --vx-surface-hairline: #eaeaee;
+}
+
+  :root { --bg:var(--vx-surface-bg); --fg:var(--vx-ink); --mute:var(--vx-muted); --line:var(--vx-surface-border);
+          --hit:var(--vx-good-solid); --miss:var(--vx-bad-solid); --part:var(--vx-warn-solid); --card:var(--vx-surface-panel); }
+  body { background:var(--bg); color:var(--fg); font-size:var(--vx-text-md); line-height:1.5; font-family:-apple-system, "SF Pro Text", Inter, sans-serif; margin:0; }
+  main { max-width:980px; margin:0 auto; padding:28px 22px 60px; }
+  h1 { font-size:24px; margin:0 0 4px; } h2 { font-size:17px; margin:28px 0 8px; }
+  .sub { color:var(--mute); margin:0 0 18px; }
+  .verdict { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px 18px; }
+  table { border-collapse:collapse; width:100%; font-size:13.5px; background:var(--card); }
+  th, td { border-bottom:1px solid var(--line); padding:6px 8px; text-align:left; vertical-align:top; }
+  th { color:var(--mute); font-weight:600; }
+  .hit { color:var(--hit); font-weight:600; } .miss { color:var(--miss); } .part { color:var(--part); font-weight:600; }
+  .num { font-variant-numeric:tabular-nums; text-align:right; }
+  ol.sign li { margin:6px 0; } code { font-size:12.5px; }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:14px; } @media (max-width:760px) { .grid { grid-template-columns:1fr; } }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:12px 16px; }
+  .foot { color:var(--mute); font-size:12.5px; margin-top:26px; }
+</style>
+</head>
+<body><main>
+<h1>Review v4: one routed reviewer agent on Max</h1>
+<p class="sub">Wave 18, agent-workflows, 2026-11-03. Evidence: <code>docs/spikes/review-v4/</code>. Nothing is built yet; you sign the shape below, then Waves 9–12 build it.</p>
+
+<div class="verdict">
+<p><b>Verdict.</b> One read-only <code>reviewer</code> agent, routed by the change into none / light / standard / deep, runs entirely on the Max subscriptions. It checks intent first (did the change do what its PR, brief or plan step asked), then the repo's own rules, duplication and fit, then bugs and security. On 7 real merged PRs whose later history shows the defect, <b>deep (Sonnet high + a three-verifier vote) reached 4 of the 5 known defects</b>, kept the clean PR clean, and caught a real doc lie on the other "clean" PR. Today's v1 on API credit reached 1 of the 4 it reviewed.</p>
+<p><b>The catch:</b> at today's volume (~520 reviews a week across all repos) review on Max costs about <b>25–40 % of one Max 5x week</b>. At the ceiling, review waits; it never falls back to API credit.</p>
+</div>
+
+<h2>What you sign</h2>
+<ol class="sign">
+  <li><b>The agent.</b> Order: intent → <code>REVIEW.md</code>/AGENTS.md rules → system fit &amp; duplication (search before flagging) → breakage (incl. tracing every value the change reads to its production writer) → security. Style and lint dropped. Tags Important / Nit / Pre-existing, <code>file:line</code> evidence, count first, says plainly when clean. Re-review diff-only, no repeated findings, step back after round 3.</li>
+  <li><b>Tiers and seats.</b> none (wave plans, lockfiles, spike data) · light = Sonnet low · standard = Sonnet medium · deep = Sonnet high + 3 verifiers per Important finding. <b>Opus is not a tier</b> (it matched Sonnet on 3 of 4 hard PRs at ~1.9× the cost).</li>
+  <li><b>Routing by rules, no classifier.</b> The change sets the tier: sensitive paths (runtime, middleware, gateway, limits, launchers, env templates, CI, SQL; dotfiles hooks, settings, secrets, plists) → deep; &gt; 800 non-test lines or &gt; 3 packages → deep; docs-only / tests-only / ≤ 40 lines → light. A caller can raise, never lower. Per-repo <code>REVIEW.md</code> holds the globs and "what failure looks like here".</li>
+  <li><b>Max only.</b> v1 and the review routes are deleted at cutover; no API fallback. A review starts on an account under 70 % of its 5-hour window and 90 % of its week; otherwise it waits.</li>
+  <li><b>The quota.</b> Accept ~25–40 % of one Max 5x week for review at today's volume, spread over the accounts by the factory (IU repos on the <code>iu</code> account only). Or cut volume: e.g. other fleets' PRs reviewed at light unless a sensitive path routes them deep.</li>
+  <li><b>The factory guarantees it.</b> A <code>review</code> evidence kind: <code>ship</code> is refused without a review at the required tier covering the landed head; the wave gate refuses to chain a wave whose commits are not covered. Deep cap <b>15 per account per day</b>; past it a deep review is held until the next day or your one-click allow (never downgraded).</li>
+  <li><b>Liveness, not wall caps.</b> v3's 5/10/25-minute kills go (they contradict <code>agent-limits</code>); an idle watchdog (10 min without transcript output) kills a wedged review, one retry, then needs-human.</li>
+</ol>
+
+<h2>The PoC: 7 merged PRs, each tier vs v1</h2>
+<table>
+<tr><th>PR</th><th>What later history shows</th><th>v1 (API)</th><th>light</th><th>standard</th><th>deep (Sonnet)</th><th>deep (Opus)</th></tr>
+<tr><td>agent-workflows #119</td><td>intent miss: reads runs production never writes</td><td class="miss">clean</td><td class="miss">miss</td><td class="miss">miss</td><td class="hit">hit 3/3</td><td class="hit">hit 3/3</td></tr>
+<tr><td>agent-workflows #90</td><td>duplication: a second gateway wire and fake beside capabilities'</td><td class="miss">5 other findings</td><td class="miss">doc nit</td><td class="part">dup nits</td><td class="part">header copy 3/3 + doc lie</td><td class="part">same + launcher env</td></tr>
+<tr><td>agent-workflows #92</td><td>money: spend counted twice (model-name mismatch)</td><td class="part">same class</td><td class="miss">doc</td><td class="part">same class (v2)</td><td class="hit">exact (as nit) + class</td><td class="part">same class</td></tr>
+<tr><td>agent-workflows #64</td><td>"clean"</td><td>no run</td><td colspan="4" class="hit">every tier: README documents an error code nothing produces (real; removed 4 days later)</td></tr>
+<tr><td>dotfiles #51</td><td>drift: the gate copies the factory's drain admission</td><td class="miss">miss</td><td class="miss">miss</td><td class="miss">miss, 1 wrong</td><td class="miss">miss (other real finds)</td><td class="part">miss; found a later-fixed spawn-key bug</td></tr>
+<tr><td>dotfiles #50</td><td>shell: word splitting differs in zsh over ssh</td><td>no run</td><td class="miss">miss</td><td class="part">hit (tuned)</td><td class="hit">hit 3/3</td><td>–</td></tr>
+<tr><td>dotfiles #58</td><td>clean</td><td class="hit">clean</td><td class="hit">clean</td><td class="miss">1 false alarm</td><td class="hit">clean (vote 1/3)</td><td>–</td></tr>
+</table>
+<p class="sub">Limits: n = 7, one run per arm. The data-tracing rule and a dotfiles shell line were added after standard missed #119 and #50, so those two hits are not independent; Wave 11 measures on the ledger. No seat found the two "second system's design" defects (#51, #90's fake): those need <code>REVIEW.md</code> lines, not a bigger model.</p>
+
+<div class="grid">
+<div class="card">
+<h2 style="margin-top:4px">Cost per review (API-equivalent, on Max)</h2>
+<table>
+<tr><th>Tier</th><th class="num">Mean</th><th class="num">Wall</th></tr>
+<tr><td>light</td><td class="num">$0.09</td><td class="num">18 s</td></tr>
+<tr><td>standard</td><td class="num">$0.21</td><td class="num">48 s</td></tr>
+<tr><td>deep, Sonnet + vote</td><td class="num">$1.33</td><td class="num">3 min</td></tr>
+<tr><td>deep, Opus + vote</td><td class="num">$2.51</td><td class="num">5 min</td></tr>
+<tr><td>v1 today (API credit)</td><td class="num">$0.49–1.10</td><td class="num">–</td></tr>
+</table>
+<p class="sub">Meter: ≈ $1.3–1.7 per 1 % of a Max 5x five-hour window, $8–13 per 1 % of its week. PoC total $23.31 on <code>me2</code>.</p>
+</div>
+<div class="card">
+<h2 style="margin-top:4px">What v1's findings taught</h2>
+<p>Of 80 blocking v1 findings on 22 PRs: <b>70 % fixed</b>, 4 % wrong, 26 % ignored. All three wrong ones lacked context (a stacked PR, a documented design, a deliberate trade-off): v4 hands the agent the intent, recent commits and prior findings. The ignored ones were crash and restart hardening that needed a design change, not a patch: v4 tags those Pre-existing or Nit.</p>
+<p>The nightly bug-mining job is <b>paused</b> (launchd job disabled; one command re-enables it).</p>
+</div>
+</div>
+
+<h2>Risks</h2>
+<ul>
+  <li><b>Quota.</b> The accounts already run at 90–95 % of their weeks on dev work; review will often wait. Waiting is the designed behaviour, not a failure, but waves will slow.</li>
+  <li><b>Variance.</b> One run per arm; v3's spikes saw the same reviewer miss a bug on a second run. Deep's vote cuts false alarms, not misses.</li>
+  <li><b>The native skill is gone from the design.</b> v4 owns its prompt; Claude Code updates no longer improve it for free, and the prompt is ours to maintain.</li>
+</ul>
+
+<p class="foot">Built from <code>docs/spikes/review-v4/{README.md, wiring.md, data/results.md}</code>. Wave proposals for 9–12 and 14: <code>docs/waves/handoff/lead.md</code>.</p>
+</main></body>
+</html>

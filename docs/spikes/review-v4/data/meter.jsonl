@@ -1,0 +1,5 @@
+{"label":"t0-light","t":"2026-11-03T06:28:33Z","me2":"me2 max  5h 6% ↺11-03 10:40  7d 63% ↺11-08 18:00  age 54s  auth ok"}
+{"label":"t0-light-rerun","t":"2026-11-03T06:29:35Z","me2":"me2 max  5h 6% ↺11-03 10:40  7d 63% ↺11-08 18:00  age 55s  auth ok"}
+{"label":"t-deep-running","t":"2026-11-03T06:31:49Z","me2":"me2 max  5h 10% ↺11-03 10:40  7d 64% ↺11-08 18:00  age 1s  auth ok"}
+{"label":"t-end","t":"2026-11-03T06:40:53Z","me2":"me2 max  5h 25% ↺11-03 10:40  7d 66% ↺11-08 18:00  age 20s  auth ok"}
+{"label":"t-end2","t":"2026-11-03T06:46:33Z","me2":"me2 max  5h 30% ↺11-03 10:40  7d 66% ↺11-08 18:00  age 0s  auth ok"}
