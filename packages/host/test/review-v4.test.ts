@@ -356,6 +356,7 @@ describe('convergence over rounds', () => {
       id: r3.jobId,
       state: 'submitted',
       round: 3,
+      transport: 'in-session',
       openImportant: 3,
     })
     await rejects(s.dispose({ jobId: r1.jobId, findingId: 'other-1', disposition: 'fixed' }), /not in the thread/)

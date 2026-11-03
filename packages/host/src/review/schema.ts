@@ -247,6 +247,7 @@ export const JobSummary = z.object({
   thread: z.string(),
   round: z.number().int(),
   tier: TIER,
+  transport: z.enum(['in-session', 'hidden']),
   outcome: z.enum(OUTCOMES).nullable(),
   openImportant: z.number().int().describe('Open important findings of the thread'),
   ageS: z.number().int(),

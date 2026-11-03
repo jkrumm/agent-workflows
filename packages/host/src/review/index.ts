@@ -243,6 +243,7 @@ export function createReviewService(ports: ReviewServicePorts): ReviewService {
           thread: j.thread,
           round: j.round,
           tier: j.tier,
+          transport: j.transport,
           outcome: j.output?.outcome ?? null,
           openImportant: j.openImportant,
           ageS: Math.max(0, Math.round((at - j.createdAt.getTime()) / 1000)),
