@@ -240,7 +240,9 @@ export function createReviewService(ports: ReviewServicePorts): ReviewService {
         const job = await ledger.job(input.jobId)
         if (!job) throw new ReviewError(`unknown job ${input.jobId}`)
         const findings = await ledger.threadFindings(job.repo, job.thread)
-        const hidden = job.state === 'prepared' && job.transport === 'hidden' ? await probeSpawns(job.id) : undefined
+        let hidden = job.state === 'prepared' && job.transport === 'hidden' ? await probeSpawns(job.id) : undefined
+        // The probe takes a while: a job submitted or abandoned meanwhile must not report a stale `gaveUp`.
+        if (hidden && (await ledger.job(job.id))?.state !== 'prepared') hidden = undefined
         return {
           job: {
             id: job.id,

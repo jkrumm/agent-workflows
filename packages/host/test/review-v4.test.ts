@@ -746,6 +746,25 @@ describe('hidden transport', () => {
     expect(await jobState(id)).toBe('prepared')
   })
 
+  test('a job that leaves prepared while its spawns are probed reports no stale hidden', async () => {
+    const root = small()
+    const job = await service({ env: fakeFactory().env }).request({ cwd: root, scope: 'head' })
+    const racing = createReviewService({
+      pool,
+      schema: db.schema,
+      stateDir,
+      git: gitRunner,
+      env: process.env,
+      // the reviewer submits while the factory is being asked
+      run: async () => {
+        await pool.query(`update "${db.schema}".review_jobs set state = 'abandoned' where id = $1`, [job.jobId])
+        return { exitCode: 0, stdout: '{"status":"ended"}', stderr: '', timedOut: false }
+      },
+    })
+    const out = await racing.status({ jobId: job.jobId! })
+    expect(out.job?.hidden).toBeUndefined()
+  })
+
   test('status of a submitted or in-session job does not touch the factory', async () => {
     const root = small()
     const session = await service().prepare({ cwd: root, scope: 'head', thread: 'in-session' })
