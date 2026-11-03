@@ -13,5 +13,8 @@
     "@agent-workflows/middleware": "workspace:*",
     "@agent-workflows/routes": "workspace:*",
     "@agent-workflows/runtime": "workspace:*"
+  },
+  "devDependencies": {
+    "@agent-workflows/testing": "workspace:*"
   }
 }

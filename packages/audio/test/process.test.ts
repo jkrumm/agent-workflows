@@ -10,15 +10,8 @@ import { defineWorkflow } from '@agent-workflows/runtime'
 import { z } from 'zod'
 import { freshSchema, inspector, PG_URL, until } from '../../runtime/test/support/pg.ts'
 import { audioRoutes, createSpeechHandler, createTranscriptionsHandler } from '../src/index.ts'
-import {
-  audioEvent,
-  fakeMedia,
-  instantClock,
-  silentLog,
-  startFakeGateway,
-  streamBody,
-  testConfig,
-} from '../src/testing/index.ts'
+import { audioEvent, startFakeGateway, streamBody } from '@agent-workflows/testing/gateway'
+import { fakeMedia, instantClock, silentLog, testConfig } from '../src/testing/index.ts'
 import {
   type AudioWorkflowDeps,
   bootAudio,

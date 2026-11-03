@@ -16,7 +16,7 @@ import {
 } from '../src/index.ts'
 import { isCompactionFailure, onlyReadOnlyTools, priceOpenCodeMessages, sessionPermissions } from '../src/host.ts'
 import { sessionState } from '../src/session.ts'
-import { type FakeServer, startFake } from './fake-opencode.ts'
+import { type FakeServer, startFake } from '@agent-workflows/testing/opencode'
 import { attributionOf } from './attribution.ts'
 
 const AGENT: AgentDefinition = { name: 'tester', agentsMd: '# tester\n', route: 'check' }

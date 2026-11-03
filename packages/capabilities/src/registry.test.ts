@@ -6,7 +6,7 @@ import type { Usage } from './context.ts'
 import { CapabilityCallError, fail } from './errors.ts'
 import { defineCapability } from './procedure.ts'
 import { createRegistry } from './registry.ts'
-import { fakeTransports } from './testing/index.ts'
+import { fakeTransports } from '@agent-workflows/testing/transports'
 
 const usage = { input: 12, output: 4, cacheRead: 0, reasoning: 0 }
 

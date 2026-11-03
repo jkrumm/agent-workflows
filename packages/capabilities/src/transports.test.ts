@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { resolveRoute } from '@agent-workflows/routes'
 import { CapabilityError } from './errors.ts'
-import { chatStream, type FakeGateway, messageResponse, sse, startFakeGateway } from './testing/index.ts'
+import { chatStream, type FakeGateway, messageResponse, sse, startFakeGateway } from '@agent-workflows/testing/gateway'
 import { anthropicWire, iuDecision, iuOpenai, type JsonSchema } from './transports/index.ts'
 
 let iu: FakeGateway

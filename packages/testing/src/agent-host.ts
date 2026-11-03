@@ -1,6 +1,13 @@
-import type { Json } from './json.ts'
-import { raceAbort } from './scope.ts'
-import type { AgentFollowUpSpec, AgentHost, AgentOpenSpec, AgentResult, AgentWaitOptions } from './types.ts'
+import type {
+  AgentFollowUpSpec,
+  AgentHost,
+  AgentOpenSpec,
+  AgentResult,
+  AgentWaitOptions,
+  Json,
+} from '@agent-workflows/runtime'
+// Not on the runtime's public index; the fake races its waits the way the runtime does.
+import { raceAbort } from '../../runtime/src/scope.ts'
 
 /** One fake session; the script drives it like a model would. */
 export class FakeSession {

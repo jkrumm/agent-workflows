@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { casesPath, PlainCase, readCases, writeCases } from '@agent-workflows/eval'
-import { pngFixture } from '../../capabilities/src/image/testing.ts'
+import { pngFixture } from '@agent-workflows/testing/image-server'
 import { ImageInput, type ImageInputValue, type ImageOutputValue } from '../src/workflows/image/schema.ts'
 import { imageScorer } from '../src/workflows/image/scorer.ts'
 

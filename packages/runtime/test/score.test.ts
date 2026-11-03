@@ -4,7 +4,7 @@ import { Pool } from 'pg'
 import { z } from 'zod'
 import { defineWorkflow, type Json, MAX_SCORE_ATTEMPTS, SCORE_BACKOFF_MS, type Scorer } from '../src/index.ts'
 import { migrate } from '../src/migrate.ts'
-import { FakeAgentHost } from '../src/testing.ts'
+import { FakeAgentHost } from '@agent-workflows/testing/agent-host'
 import { freshSchema, inspector, PG_URL, testRuntime, until } from './support/pg.ts'
 
 const db = freshSchema('score')

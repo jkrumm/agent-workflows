@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, test } from 'bun:test'
 import { z } from 'zod'
 import { defineWorkflow, type Middleware, type RunPostArgs, type StepPostArgs } from '../src/index.ts'
-import { FakeAgentHost } from '../src/testing.ts'
+import { FakeAgentHost } from '@agent-workflows/testing/agent-host'
 import { freshSchema, inspector, testRuntime, until } from './support/pg.ts'
 
 const db = freshSchema('ctl')

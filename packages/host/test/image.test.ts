@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createRegistry } from '@agent-workflows/capabilities'
-import { fakeTransports } from '@agent-workflows/capabilities/testing'
+import { fakeTransports } from '@agent-workflows/testing/transports'
 import { DEFAULT_ROUTES as IMAGE_ROUTES } from '@agent-workflows/routes'
 import { createImageCapabilities } from '../../capabilities/src/image/index.ts'
 import {
@@ -12,7 +12,7 @@ import {
   pngFixture,
   startFakeImageServer,
   webpFixture,
-} from '../../capabilities/src/image/testing.ts'
+} from '@agent-workflows/testing/image-server'
 import { createImageWorkflows, type ImageCaller } from '../src/workflows/image/index.ts'
 import { ImageInput } from '../src/workflows/image/schema.ts'
 import { imageScorer } from '../src/workflows/image/scorer.ts'

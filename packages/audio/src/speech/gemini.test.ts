@@ -6,15 +6,14 @@ const ROUTES = audioRoutes()
 import { createAudioScope } from '../scope.ts'
 import {
   audioEvent,
-  caught,
   type FakeGateway,
   geminiAudio,
   prepAnswer,
   prepMessage,
   startFakeGateway,
   streamBody,
-  testDeps,
-} from '../testing/index.ts'
+} from '@agent-workflows/testing/gateway'
+import { caught, testDeps } from '../testing/index.ts'
 import type { CallEvent, RequestEvent, UsageEvent } from '../usage.ts'
 import { DELIVERY_STYLES } from './core.ts'
 import { multiSpeakerBody, sseAudio, stripWavHeader, synthBody, synthMultiSpeaker } from './gemini.ts'
@@ -41,8 +40,8 @@ const post = (body: Record<string, unknown>, headers: Record<string, string> = {
 
 const calls = (events: UsageEvent[]) => events.filter((e): e is CallEvent => e.kind === 'call')
 const summaries = (events: UsageEvent[]) => events.filter((e): e is RequestEvent => e.kind === 'request')
-const sentText = (r: { json: Record<string, unknown> | null }) =>
-  (r.json as { contents: Array<{ parts: Array<{ text: string; speechMetadata?: { style?: string } }> }> }).contents[0]
+const sentText = (r: { body: Record<string, unknown> }) =>
+  (r.body as { contents: Array<{ parts: Array<{ text: string; speechMetadata?: { style?: string } }> }> }).contents[0]
     ?.parts[0]
 
 describe('synthBody: 3.8 request shape', () => {
@@ -172,7 +171,7 @@ describe('chat lane (no prep)', () => {
     expect(res.headers.get('content-type')).toBe('audio/mpeg')
     expect(decodeURIComponent(res.headers.get('x-audio-title') ?? '')).toBe('**Heute** wird es 22°C warm ☀️')
     expect(iu.requests.map((r) => r.route)).toEqual(['gemini'])
-    expect(sentText(iu.requests[0] ?? { json: null })?.text).toBe('Heute wird es 22 Grad warm')
+    expect(sentText(iu.requests[0] ?? { body: {} })?.text).toBe('Heute wird es 22 Grad warm')
     const [summary] = summaries(deps.usage.events)
     expect(summary).toMatchObject({
       mode: 'direct',
@@ -187,15 +186,15 @@ describe('chat lane (no prep)', () => {
   test('allowlisted inline tags pass through, invented ones are stripped', async () => {
     const { speak } = setup({ gemini: () => geminiAudio(Uint8Array.from([1, 0])) })
     await speak(post({ model: LITE, input: 'Na ja <sigh> das war <excited> knapp.' }))
-    expect(sentText(iu.requests[0] ?? { json: null })?.text).toBe('Na ja <sigh> das war knapp.')
+    expect(sentText(iu.requests[0] ?? { body: {} })?.text).toBe('Na ja <sigh> das war knapp.')
   })
 
   test('a caller delivery key becomes the request style; a string `style` means the same', async () => {
     const { speak } = setup({ gemini: () => geminiAudio(Uint8Array.from([1, 0])) })
     await speak(post({ model: LITE, input: 'Hallo.', delivery: 'Serious' }))
     await speak(post({ model: LITE, input: 'Hallo.', style: 'dry' }))
-    expect(sentText(iu.requests[0] ?? { json: null })?.speechMetadata?.style).toBe(DELIVERY_STYLES.serious)
-    expect(sentText(iu.requests[1] ?? { json: null })?.speechMetadata?.style).toBe(DELIVERY_STYLES.dry)
+    expect(sentText(iu.requests[0] ?? { body: {} })?.speechMetadata?.style).toBe(DELIVERY_STYLES.serious)
+    expect(sentText(iu.requests[1] ?? { body: {} })?.speechMetadata?.style).toBe(DELIVERY_STYLES.dry)
   })
 
   test('a delivery outside the vocabulary is a 400 before any upstream call', async () => {
@@ -222,8 +221,8 @@ describe('briefing lane (prep)', () => {
     expect(res.status).toBe(200)
     expect(decodeURIComponent(res.headers.get('x-audio-title') ?? '')).toBe('Wetter morgen')
     const prep = iu.requests.find((r) => r.route === 'messages')
-    expect(prep?.json?.model).toBe(ROUTES['audio.tts.prep'].model)
-    expect(prep?.json?.thinking).toBeUndefined() // effort none: the Messages wire sends no thinking
+    expect(prep?.body.model).toBe(ROUTES['audio.tts.prep'].model)
+    expect(prep?.body.thinking).toBeUndefined() // effort none: the Messages wire sends no thinking
     const synths = iu.requests.filter((r) => r.route === 'gemini').map(sentText)
     expect(synths.map((p) => p?.speechMetadata?.style).sort()).toEqual([DELIVERY_STYLES.serious, PREP_STYLE].sort())
     expect(synths.map((p) => p?.text)).toContain('Danach Sonne.')
@@ -239,7 +238,7 @@ describe('briefing lane (prep)', () => {
     })
     await speak(post({ model: FLASH, input: 'Satz.', delivery: 'warm' }))
     const synth = iu.requests.find((r) => r.route === 'gemini')
-    expect(sentText(synth ?? { json: null })?.speechMetadata?.style).toBe(DELIVERY_STYLES.warm)
+    expect(sentText(synth ?? { body: {} })?.speechMetadata?.style).toBe(DELIVERY_STYLES.warm)
   })
 
   test('summarize uses the summary route without an effort, and a prep-invented style is replaced by the baseline', async () => {
@@ -250,9 +249,9 @@ describe('briefing lane (prep)', () => {
     })
     await speak(post({ model: FLASH, input: 'Ein Satz.', summarize: true }))
     const chat = iu.requests.find((r) => r.route === 'chat')
-    expect(chat?.json?.model).toBe(ROUTES['audio.tts.summary'].model)
-    expect(chat?.json?.reasoning_effort).toBeUndefined()
-    expect(sentText(iu.requests.find((r) => r.route === 'gemini') ?? { json: null })?.speechMetadata?.style).toBe(
+    expect(chat?.body.model).toBe(ROUTES['audio.tts.summary'].model)
+    expect(chat?.body.reasoning_effort).toBeUndefined()
+    expect(sentText(iu.requests.find((r) => r.route === 'gemini') ?? { body: {} })?.speechMetadata?.style).toBe(
       PREP_STYLE,
     )
   })
@@ -339,7 +338,7 @@ describe('pcm streaming', () => {
   test('a 503 before the first byte is retried', async () => {
     const { speak } = setup({
       geminiStream: (_r, attempt) =>
-        attempt === 1 ? new Response('busy', { status: 503 }) : streamBody(audioEvent([5, 0])),
+        attempt === 0 ? new Response('busy', { status: 503 }) : streamBody(audioEvent([5, 0])),
     })
     const res = await speak(post({ model: LITE, input: 'Hallo.', response_format: 'pcm' }))
     expect([...new Uint8Array(await res.arrayBuffer())]).toEqual([5, 0])

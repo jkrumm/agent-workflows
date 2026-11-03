@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { computeFingerprint, type FingerprintSource } from '@agent-workflows/middleware'
 import { defineWorkflow } from '@agent-workflows/runtime'
-import { FakeAgentHost } from '@agent-workflows/runtime/testing'
+import { FakeAgentHost } from '@agent-workflows/testing/agent-host'
 import { z } from 'zod'
 import {
   createLearningsWorkflows,

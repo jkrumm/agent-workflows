@@ -4,11 +4,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { CheckCase, casesPath, writeCases } from '@agent-workflows/eval'
 import type { FinalScore, Runtime } from '@agent-workflows/runtime'
-import { FakeAgentHost } from '@agent-workflows/runtime/testing'
+import { FakeAgentHost } from '@agent-workflows/testing/agent-host'
 import { createCheckWorkflows } from '../src/workflows/check/index.ts'
 import { DriftJob, driftOptionsFromEnv, wireEval, createEvalWorkflows } from '../src/workflows/eval/index.ts'
 import { hostModules, suitesOf } from '../src/workflows/index.ts'
-import { testPlatform } from '../../middleware/test/support.ts'
+import { testPlatform } from '@agent-workflows/testing/platform'
 import { freshSchema, inspector, testRuntime, until } from '../../runtime/test/support/pg.ts'
 
 const HOST_SUITES = suitesOf(await hostModules())

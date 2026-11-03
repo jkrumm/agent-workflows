@@ -620,9 +620,9 @@ A turn that ends `failed` with a provider-balance error (`isBalanceFailure` from
 
 ## Tests
 
-`bun test packages/opencode-host`: a fake OpenCode server (`test/fake-opencode.ts`) with the measured behaviour
+`bun test packages/opencode-host`: a fake OpenCode server (`@agent-workflows/testing/opencode`, `packages/testing/src/fake-opencode.ts`) with the measured behaviour
 (persisted store, dedupe by id, client session ids, no self-resume, an empty idle on a re-posted id), in-process for
-the host and as a spawned `opencode` stand-in (`test/fake-opencode-bin.ts`) for the supervisor.
+the host and as a spawned `opencode` stand-in (`@agent-workflows/testing/opencode-bin`) for the supervisor.
 
 | File | Covers |
 |-|-|

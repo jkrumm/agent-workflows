@@ -74,7 +74,7 @@ Every operation carries `x-cli`, with defaults filled in: `{ command, positional
 
 ## Transports
 
-Ports and adapters: `ChatPort` (`iu-openai` and `anthropic` both implement it), `DecisionPort` (`iu-decision`). The production adapters live in `src/transports/`, in-memory fakes and a fake gateway on a real socket in `src/testing/` (exported as `@agent-workflows/capabilities/testing`).
+Ports and adapters: `ChatPort` (`iu-openai` and `anthropic` both implement it), `DecisionPort` (`iu-decision`). The production adapters live in `src/transports/`, the in-memory fakes (`fakeTransports`) and the fake gateway on a real socket live in `packages/testing` (`@agent-workflows/testing/transports`, `/gateway`).
 
 | Adapter | Wire | Behaviour ported from agent-gateway |
 |-|-|-|
@@ -196,7 +196,7 @@ research-gateway's tools as capabilities (Wave 6), behaviour ported and code rew
 
 `$0.008` is Tavily's pay-as-you-go list price per credit (docs.tavily.com/documentation/api-credits and tavily.com/pricing, read 2026-10-28). The plan price is lower, so the figure never under-prices; research-gateway carried no USD rate for Tavily at all. It is `TAVILY_USD_PER_CREDIT`.
 
-**Testing.** `fakeWeb(script?)` from `@agent-workflows/capabilities/testing` returns the four capabilities with the real ids, schemas and CLI shapes and canned results (`{ capabilities, calls }`); a per-capability reply (value, `Error`, or function of the input) scripts it, and each call reports a priced zero-cost usage unless `usage: null`.
+**Testing.** `fakeWeb(script?)` from `src/web/fake.ts` (built on the web capabilities' own schemas, so it stays here; `web.test.ts` is its only user) returns the four capabilities with the real ids, schemas and CLI shapes and canned results (`{ capabilities, calls }`); a per-capability reply (value, `Error`, or function of the input) scripts it, and each call reports a priced zero-cost usage unless `usage: null`.
 
 ## Brain capabilities (`src/brain/`)
 

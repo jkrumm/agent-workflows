@@ -5,17 +5,8 @@ import { afterAll, describe, expect, test } from 'bun:test'
 import { defineWorkflow, type Runtime } from '@agent-workflows/runtime'
 import { z } from 'zod'
 import { admissionSpanId, JournalDb, recordMiddleware, traceIdForRun } from '../src/index.ts'
-import {
-  attr,
-  captureLogger,
-  freshSchema,
-  inspector,
-  PG_URL,
-  parentOf,
-  testPlatform,
-  testRuntime,
-  until,
-} from './support.ts'
+import { testPlatform } from '@agent-workflows/testing/platform'
+import { attr, captureLogger, freshSchema, inspector, PG_URL, parentOf, testRuntime, until } from './support.ts'
 
 const db = freshSchema('mwroll')
 const sql = inspector(db.schema)

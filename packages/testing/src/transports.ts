@@ -1,13 +1,13 @@
-import type {
-  ChatPort,
-  ChatRequest,
-  ChatResult,
-  DecisionPort,
-  DecisionRequest,
-  DecisionResult,
-  GatewayTransports,
-  Tokens,
-} from '../transports/port.ts'
+import type { GatewayTransports } from '@agent-workflows/capabilities'
+
+// The port types come off `GatewayTransports`, the one transports type the capabilities package exports.
+type ChatPort = GatewayTransports['openai']
+type DecisionPort = GatewayTransports['decision']
+type ChatRequest = Parameters<ChatPort['complete']>[0]
+type ChatResult = Awaited<ReturnType<ChatPort['complete']>>
+type Tokens = Parameters<NonNullable<Parameters<ChatPort['complete']>[2]>>[0]['tokens']
+type DecisionRequest = Parameters<DecisionPort['decide']>[0]
+type DecisionResult = Awaited<ReturnType<DecisionPort['decide']>>
 
 type Reply<Req, Res> = Res | Error | ((request: Req) => Res | Error)
 

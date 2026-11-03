@@ -1,22 +1,12 @@
 import { afterAll, describe, expect, test } from 'bun:test'
 import { defineWorkflow, type Runtime } from '@agent-workflows/runtime'
-import { FakeAgentHost } from '@agent-workflows/runtime/testing'
+import { FakeAgentHost } from '@agent-workflows/testing/agent-host'
 import type { ReadableSpan } from '@opentelemetry/sdk-trace'
 import { z } from 'zod'
 import { admissionSpanId, computeFingerprint, traceIdForRun, usageFromOpenCodeMessages } from '../src/index.ts'
 import { cachedTurn } from './fixtures/opencode-messages.ts'
-import {
-  attr,
-  defaultInputs,
-  fakeFingerprint,
-  freshSchema,
-  inspector,
-  parentOf,
-  type TestPlatform,
-  testPlatform,
-  testRuntime,
-  until,
-} from './support.ts'
+import { defaultInputs, fakeFingerprint, type TestPlatform, testPlatform } from '@agent-workflows/testing/platform'
+import { attr, freshSchema, inspector, parentOf, testRuntime, until } from './support.ts'
 
 const db = freshSchema('mwp')
 const sql = inspector(db.schema)

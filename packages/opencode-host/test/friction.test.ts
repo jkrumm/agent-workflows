@@ -22,7 +22,7 @@ import {
   submittedResult,
   type ToolPart,
 } from '../src/session.ts'
-import { type FakeServer, startFake } from './fake-opencode.ts'
+import { type FakeServer, startFake } from '@agent-workflows/testing/opencode'
 import { attributionOf } from './attribution.ts'
 
 const AGENT: AgentDefinition = { name: 'tester', agentsMd: '# tester\n', route: 'check' }

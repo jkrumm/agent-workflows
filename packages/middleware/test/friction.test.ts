@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, test } from 'bun:test'
 import { AdmissionRefused, defineWorkflow, WorkflowError } from '@agent-workflows/runtime'
-import { FakeAgentHost } from '@agent-workflows/runtime/testing'
+import { FakeAgentHost } from '@agent-workflows/testing/agent-host'
 import { z } from 'zod'
 import {
   type FrictionSource,
@@ -13,7 +13,8 @@ import {
   type StepSessions,
   totalsOf,
 } from '../src/index.ts'
-import { captureLogger, freshSchema, inspector, PG_URL, testPlatform, testRuntime, until } from './support.ts'
+import { testPlatform } from '@agent-workflows/testing/platform'
+import { captureLogger, freshSchema, inspector, PG_URL, testRuntime, until } from './support.ts'
 
 const db = freshSchema('mwf')
 const sql = inspector(db.schema)

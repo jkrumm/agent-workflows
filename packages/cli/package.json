@@ -13,6 +13,7 @@
     "test": "bun test --isolate"
   },
   "devDependencies": {
-    "@agent-workflows/capabilities": "workspace:*"
+    "@agent-workflows/capabilities": "workspace:*",
+    "@agent-workflows/testing": "workspace:*"
   }
 }

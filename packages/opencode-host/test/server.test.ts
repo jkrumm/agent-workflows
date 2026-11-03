@@ -37,8 +37,8 @@ import {
 } from '../src/config.ts'
 import { attributionOf } from './attribution.ts'
 
-// The supervisor against a real child process: `fake-opencode-bin.ts` stands in for `opencode serve`.
-const BIN = ['bun', join(import.meta.dir, 'fake-opencode-bin.ts')]
+// The supervisor against a real child process: the testing package's `fake-opencode-bin.ts` stands in for `opencode serve`.
+const BIN = ['bun', Bun.fileURLToPath(import.meta.resolve('@agent-workflows/testing/opencode-bin'))]
 const ENV = {
   PATH: process.env.PATH,
   HOME: process.env.HOME,

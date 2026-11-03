@@ -10,7 +10,7 @@ import {
   type ToolEvent,
   WorkflowError,
 } from '../src/index.ts'
-import { FakeAgentHost } from '../src/testing.ts'
+import { FakeAgentHost } from '@agent-workflows/testing/agent-host'
 import { freshSchema, inspector, testRuntime, until } from './support/pg.ts'
 
 const db = freshSchema('agent')

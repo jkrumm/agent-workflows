@@ -3,7 +3,8 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { freshSchema, inspector, testRuntime, until } from '../../../../runtime/test/support/pg.ts'
-import { geminiAudio, instantClock, silentLog, startFakeGateway, testConfig } from '../../testing/index.ts'
+import { geminiAudio, startFakeGateway } from '@agent-workflows/testing/gateway'
+import { instantClock, silentLog, testConfig } from '../../testing/index.ts'
 import type { ProduceConfig } from './config.ts'
 import { createProduceWorkflow, laneFor, type ProduceDeps, type ProduceResult, planSynthesis } from './index.ts'
 import { episodeToken } from './abs.ts'
@@ -92,7 +93,7 @@ function fakeTts(hold?: (text: string, attempt: number) => Promise<void> | undef
   const texts: string[] = []
   const iu = startFakeGateway({
     async gemini(request) {
-      const parts = (request.json?.contents as { parts: { text: string }[] }[] | undefined)?.[0]?.parts ?? []
+      const parts = (request.body.contents as { parts: { text: string }[] }[] | undefined)?.[0]?.parts ?? []
       const text = parts.map((p) => p.text).join(' | ')
       texts.push(text)
       const wait = hold?.(text, texts.filter((t) => t === text).length)

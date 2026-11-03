@@ -4,8 +4,7 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts",
-    "./testing": "./src/testing/index.ts"
+    ".": "./src/index.ts"
   },
   "scripts": {
     "test": "bun test --isolate",
@@ -19,6 +18,7 @@
     "zod": "4.6.7"
   },
   "devDependencies": {
+    "@agent-workflows/testing": "workspace:*",
     "@types/pg": "8.23.1"
   }
 }

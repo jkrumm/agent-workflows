@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { join } from 'node:path'
 import { createCapabilities, createRegistry } from '../../../../capabilities/src/index.ts'
-import { fakeTransports } from '../../../../capabilities/src/testing/index.ts'
+import { fakeTransports } from '@agent-workflows/testing/transports'
 import { ToolGate } from '../../../../host/src/tool-gate/index.ts'
 import { buildWorkflows, discoverWorkflowModules } from '../../../../host/src/workflows/registry.ts'
 import { testConfig } from '../../testing/index.ts'

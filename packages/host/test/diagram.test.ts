@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { type Json, WorkflowError } from '@agent-workflows/runtime'
-import { FakeAgentHost } from '@agent-workflows/runtime/testing'
+import { FakeAgentHost } from '@agent-workflows/testing/agent-host'
 import { freshSchema, testRuntime } from '../../runtime/test/support/pg.ts'
 import { compactView, keptElements, parseExisting } from '../src/workflows/diagram/document.ts'
 import type { Hydrate } from '../src/workflows/diagram/hydrate.ts'

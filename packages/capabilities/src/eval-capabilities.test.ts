@@ -15,7 +15,7 @@ import { cutDiff, EVAL_DIFF_CHARS, fill, fixtureDiff, numberDiff, pinnedVersion 
 import type { Usage } from './context.ts'
 import { CapabilityCallError } from './errors.ts'
 import { createRegistry } from './registry.ts'
-import { type FakeTransports, fakeTransports } from './testing/index.ts'
+import { type FakeTransports, fakeTransports } from '@agent-workflows/testing/transports'
 
 function setup(script: Parameters<typeof fakeTransports>[0]) {
   const transports: FakeTransports = fakeTransports(script)

@@ -13,7 +13,7 @@ import { createEvalWorkflows, wireEval } from '../src/workflows/eval/index.ts'
 import { readSuite } from '../src/workflows/eval/suites.ts'
 import { hostModules, suitesOf } from '../src/workflows/index.ts'
 import { rejection, until } from './support.ts'
-import { testPlatform } from '../../middleware/test/support.ts'
+import { testPlatform } from '@agent-workflows/testing/platform'
 import { freshSchema, inspector, testRuntime } from '../../runtime/test/support/pg.ts'
 
 const HOST_SUITES = suitesOf(await hostModules())

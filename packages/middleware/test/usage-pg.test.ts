@@ -12,7 +12,8 @@ import {
   type UsageTransport,
   usageRowsForStep,
 } from '../src/index.ts'
-import { captureLogger, freshSchema, inspector, PG_URL, testPlatform, testRuntime, until } from './support.ts'
+import { testPlatform } from '@agent-workflows/testing/platform'
+import { captureLogger, freshSchema, inspector, PG_URL, testRuntime, until } from './support.ts'
 
 // The real `usage` schema in a scratch database: usage-tracker owns the DDL, so its migrations are applied as they are
 // (`USAGE_MIGRATIONS_DIR`, default the sibling checkout). Creating a database needs an admin connection

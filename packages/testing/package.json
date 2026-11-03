@@ -1,0 +1,25 @@
+{
+  "name": "@agent-workflows/testing",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The fakes shared across packages' tests. A devDependency only: no production code imports it.",
+  "exports": {
+    "./agent-host": "./src/agent-host.ts",
+    "./gateway": "./src/gateway.ts",
+    "./image-server": "./src/image-server.ts",
+    "./opencode": "./src/fake-opencode.ts",
+    "./opencode-bin": "./src/fake-opencode-bin.ts",
+    "./platform": "./src/platform.ts",
+    "./transports": "./src/transports.ts"
+  },
+  "scripts": {
+    "test": "bun test --isolate"
+  },
+  "dependencies": {
+    "@agent-workflows/capabilities": "workspace:*",
+    "@agent-workflows/middleware": "workspace:*",
+    "@agent-workflows/runtime": "workspace:*",
+    "@opentelemetry/sdk-trace": "3.0.0"
+  }
+}

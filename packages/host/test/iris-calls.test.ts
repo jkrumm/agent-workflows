@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { messageResponse } from '@agent-workflows/capabilities/testing'
+import { messageResponse } from '@agent-workflows/testing/gateway'
 import { RUN_ID_HEADER } from '../src/capability-runs.ts'
 import { type Body, startTestHost, type TestHost, until } from './support.ts'
 
