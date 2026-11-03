@@ -105,6 +105,9 @@ eval-mine-job:
 		if launchctl print "$$target" >/dev/null 2>&1 && cmp -s "$$tmp" "$$plist"; then \
 			rm -f "$$tmp"; echo "eval-mine-job: $$label is installed and unchanged"; exit 0; \
 		fi; \
+		if launchctl print "$$target" 2>/dev/null | grep -Eq '^[[:space:]]*pid = [0-9]+'; then \
+			rm -f "$$tmp"; echo "eval-mine-job: $$label is running a night's labelling; booting it out would kill the run. Rerun when it has finished" >&2; exit 1; \
+		fi; \
 		mv -f "$$tmp" "$$plist"; launchctl bootout "$$target" 2>/dev/null; \
 		for i in 1 2 3 4 5 6 7 8 9 10; do launchctl print "$$target" >/dev/null 2>&1 || break; sleep 1; done; \
 		launchctl bootstrap "gui/$$(id -u)" "$$plist" || exit 1; \

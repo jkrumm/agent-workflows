@@ -88,7 +88,8 @@ export function iuOpenai(options: HttpOptions & { env?: Env } = {}): ChatPort {
  * Terra enforce it) and Gemini 3.8 Flash (measured 2026-11-03: accepted, and 3 of 3 label answers matched the schema,
  * against 0 of 3 under JSON mode, which left out a required field or invented a `bugClass`). The DeepSeek model behind
  * Requesty answers 503 "response_format type is unavailable". A model is added here after a live probe, never by family.
- * The Gemini id is a pattern, not the literal: a model id lives only in the route table (the routes guard test).
+ * The Gemini id is the literal id anchored in a regex, a workaround: the routes guard test forbids the id string outside
+ * the route table. The proper home is a flag on the route entry (follow-up); until then this must be edited with the table.
  */
 const PROVEN_NON_GPT = /^gemini-3\.8-flash$/
 const takesJsonSchema = (model: string) => model.startsWith('gpt-') || PROVEN_NON_GPT.test(model)

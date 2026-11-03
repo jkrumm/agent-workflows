@@ -185,6 +185,40 @@ describe('evalMineAutoPorts', () => {
     await t.pool.query(`delete from ${usageSchema}.records where run_id = 'run-null'`)
   })
 
+  test('a run whose spend is unknown is left out of the history, never read as $0', async () => {
+    const journal = (id: string) =>
+      t.pool.query(
+        `insert into ${t.schema}.runs (id, workflow, root_id, status, purpose, input, input_hash, lock_key, version_started, output, finished_at)
+         values ($1, 'eval.mine', $1, 'done', 'test', '{}', 'h', $2, 'test', $3, '2026-11-03T06:00:00Z')`,
+        [id, Math.floor(Math.random() * 1e9), { labelledThisRun: 5, thirdSeatThisRun: 0 }],
+      )
+    const usage = (run: string, billing: string, key: string | null, cost: number | null) =>
+      t.pool.query(
+        `insert into ${usageSchema}.records (source, ts, billing, api_key, run_id, lane_detail, cost_usd)
+         values ('gateway', '2026-11-02T10:00:00Z', $1, $2, $3, '{"workflow":"eval.mine"}', $4)`,
+        [billing, key, run, cost],
+      )
+    // A NULL on the credit payer, a NULL on the IU payer, and a done run with no usage rows at all.
+    for (const id of ['run-null-credit', 'run-null-iu', 'run-no-rows']) await journal(id)
+    await usage('run-null-credit', 'api_credit', null, null)
+    await usage('run-null-credit', 'api_key', 'personal', 0.1)
+    await usage('run-null-iu', 'api_credit', null, 0.2)
+    await usage('run-null-iu', 'api_key', 'personal', null)
+    try {
+      const spend = await ports().runSpend({ limit: 10 })
+      expect(spend.map((s) => s.runId)).toEqual(['run-new', 'run-old'])
+      // With only unknown runs in range, the history is empty and the sizing falls back to its constants.
+      expect(
+        await ports()
+          .runSpend({ limit: 3 })
+          .then((s) => s.map((x) => x.runId)),
+      ).toEqual([])
+    } finally {
+      await t.pool.query(`delete from ${usageSchema}.records where run_id like 'run-null-%'`)
+      await t.pool.query(`delete from ${t.schema}.runs where id in ('run-null-credit', 'run-null-iu', 'run-no-rows')`)
+    }
+  })
+
   test('the run spend: the newest runs that wrote records, with what each payer was billed', async () => {
     const spend = await ports().runSpend({ limit: 10 })
     expect(spend.map((s) => s.runId)).toEqual(['run-new', 'run-old'])
