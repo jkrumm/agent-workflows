@@ -45,10 +45,11 @@ A new workflow's routes are a new group file, ending with the augmentation (copy
 
 ```ts
 import type { RouteEntry } from '../schema.ts'
-import { EASY, TERRA_LOW_AGENT_FALLBACK } from './_shared.ts'
+import { EASY } from './_shared.ts'
 
 const routes = {
-  'audio.agent': { wire: 'opencode', ...EASY, fallback: TERRA_LOW_AGENT_FALLBACK },
+  // `EASY.agent` carries the model, effort, rate and the Terra-low fallback; `.call` is the single-call twin.
+  'brain.agent': { wire: 'opencode', ...EASY.agent },
 } satisfies Record<string, RouteEntry>
 
 export default routes
