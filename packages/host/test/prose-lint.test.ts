@@ -146,6 +146,37 @@ describe('English lexicon rules', () => {
   })
 })
 
+describe('unslop additions', () => {
+  test.each([
+    ['The module stands as the entry point.', 'banned-stands-as'],
+    ['The tool boasts a cache.', 'banned-boasts'],
+    ['This will facilitate the rollout.', 'banned-facilitate'],
+    ['Numerous teams adopted it.', 'banned-numerous'],
+    ['We cache in order to save time.', 'filler-in-order-to'],
+    ['It failed due to the fact that the disk filled.', 'filler-due-to-the-fact'],
+    ['Retry in the event that the call fails.', 'filler-in-the-event'],
+    ['It is important to note the limit.', 'filler-important-to-note'],
+    ['The future looks bright.', 'generic-conclusion'],
+    ['Experts believe the queue is slow.', 'vague-attribution'],
+    ['Studies show the queue is slow.', 'vague-attribution'],
+    ['Postgres is the substrate for runs.', 'metaphor-noun'],
+    ['The journal is the bedrock of recovery.', 'metaphor-noun'],
+    ['The rollout finished, cementing trust.', 'significance-participle'],
+  ])('%s fires %s', (text, rule) => {
+    expect(rules(text, 'en')).toContain(rule)
+  })
+
+  test('product names, real jargon and plain wording stay silent', () => {
+    expect(rules('We call AWS Bedrock for the summary.', 'en')).not.toContain('metaphor-noun')
+    expect(rules('The API surface and the test harness are small.', 'en')).toEqual([])
+    expect(rules('To save time, cache the result. Gartner reports 12% growth.', 'en')).toEqual([])
+  })
+
+  test('German text does not read the English rules', () => {
+    expect(rules('Das Team nutzt numerous Features in order to schneller zu deployen.', 'de')).toEqual([])
+  })
+})
+
 describe('negative parallelism', () => {
   test("English 'not X, it's Y' and 'not just X but Y' are flagged", () => {
     expect(rules("It's not a bug, it's a feature.", 'en')).toContain('negative-parallelism')

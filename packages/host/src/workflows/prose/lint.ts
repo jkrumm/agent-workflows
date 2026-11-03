@@ -46,6 +46,23 @@ const EN_BANNED: readonly [rule: string, pattern: RegExp][] = [
   ['banned-worth-noting', /\bit'?s worth noting\b/i],
   ['banned-serves-as', /\bserves as\b/i],
   ['banned-in-conclusion', /\bin conclusion\b/i],
+  ['banned-stands-as', /\bstands as\b/i],
+  ['banned-boasts', /\bboasts\b/i],
+  ['banned-facilitate', /\bfacilitat(e|es|ed|ing)\b/i],
+  ['banned-numerous', /\bnumerous\b/i],
+  ['filler-in-order-to', /\bin order to\b/i],
+  ['filler-due-to-the-fact', /\bdue to the fact that\b/i],
+  ['filler-in-the-event', /\bin the event that\b/i],
+  ['filler-important-to-note', /\bit is important to (note|remember)\b/i],
+  ['generic-conclusion', /\bthe future (looks|is) bright\b/i],
+  [
+    'vague-attribution',
+    /\b(experts|critics|observers|analysts) (believe|argue|say|suggest)\b|\b(studies|industry reports) (show|suggest|indicate)\b/i,
+  ],
+  // Metaphor nouns with a plainer word. `surface`, `harness` and `primitive` are real jargon and stay
+  // out; `bedrock` is case-sensitive so a product name (AWS Bedrock) never fires.
+  ['metaphor-noun', /\b(substrate|nexus|locus|flywheel|north star|gold-plating)\b/i],
+  ['metaphor-noun', /\bbedrock\b/],
   [
     'metaphor-landscape',
     /\b(evolving|changing|competitive|modern|current|ever-changing|rapidly changing)\s+landscape\b/i,
@@ -63,7 +80,7 @@ const DE_NEGATIVE_PARALLELISM: RegExp[] = [
 ]
 
 const EN_SIGNIFICANCE_PARTICIPLE =
-  /[,—–]\s*(highlighting|underscoring|emphasizing|emphasising|showcasing|reflecting|demonstrating|illustrating)\b/i
+  /[,—–]\s*(highlighting|underscoring|emphasizing|emphasising|showcasing|reflecting|demonstrating|illustrating|cementing)\b/i
 
 const DE_PASSIVE_AUX = /\b(wird|werden|wurde|wurden|worden)\b/gi
 const DE_NOMINAL_SUFFIX = /\b\p{L}+(ung|heit|keit)(en|e|er|es|n|s)?\b/giu
