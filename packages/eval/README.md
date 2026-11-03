@@ -269,20 +269,26 @@ cases). Size a batch to the gateway's `evalAvailableUsd` first.
 | `--relabel-errors` | off | Label again candidates whose last record has an `a` or `b` error, and ask `c` again where it failed; they are never retried otherwise |
 | `--auto` | off | Exclusive with `--label`: the workflow decides N (below) and records why in the output's `auto` object. Without `--yes` it only plans |
 | `--target N` | 200 | `--auto`: bug cases (dev + test) the ground truth needs; at or above it nothing is labelled (`target-reached`) |
-| `--iu-line-usd X` / `--iu-margin-usd X` / `--iu-since T` | 20 / 0.75 / `2026-11-03T00:00:00Z` | `--auto`: the IU personal-key line, the margin kept under it, and when counting starts |
-| `--max-per-run N` | 150 | `--auto`: most candidates one run labels |
+| `--iu-line-usd X` / `--iu-margin-usd X` / `--iu-since T` | 20 / 0.75 / `2026-11-03T00:00:00Z` | `--auto`: the line on IU eval spend (the eval workflows' spend on the personal key, not the key's whole total), the margin kept under it, and when counting starts |
+| `--max-per-run N` | 150 | `--auto`: most candidates one run labels (at least 1: a plan of nothing is refused) |
 | `--yes` | off | Spend. Without it `--label` prints the plan: candidates, records waiting for seat `c`, and 2 calls × the mean cost of the last 20 `cap.eval.label` runs (or `unknown`) |
 
 **`--auto` sizing** (`packages/host/src/workflows/eval-mine/auto.ts`). Bug cases are `summary.cases.dev.bug + test.bug`
 before labelling; at the target the run labels nothing and reads nothing else. Otherwise N is the floor of the smallest of:
 90 % of the gateway's eval credit (`/health`: the sum of `evalAvailableUsd` over `evalEligible` pools) over the credit cost
-of a candidate; the IU room (`line − margin − total`, minus the records still waiting for seat `c` at the IU cost each) over
-the IU cost of a candidate; `--max-per-run`; the candidates left. The IU total is `sum(cost_usd)` of `usage.records` with
-`source='gateway'`, `billing='api_key'`, `api_key='personal'`, `lane_detail->>'workflow' like 'eval.%'` since `--iu-since`
-(by workflow, not purpose: some early eval calls were tagged `prod`). The cost of a candidate per payer is the pooled spend
-of the newest 20 `eval.mine` runs that wrote records (`usage.records` by `run_id`, over `labelledThisRun + thirdSeatThisRun`
-in the journal), or `$0.05` credit / `$0.035` IU without history. No room under the IU line is `iu-line`, none in the credit
-`no-credit`; both label nothing. A read that fails (gateway, `USAGE_PG_URL`, journal) fails the run on its `size` step with
+of a candidate; the IU room (`line − margin − IU eval spend`, minus the records still waiting for seat `c`, each at the IU
+cost) over the IU cost of a record; `--max-per-run`; the candidates left. The IU side plans with **1.25 × the measured IU
+cost per record**: the gateway refuses credit mid-run but nothing stops IU mid-run, so the estimate is the only guard. The
+line covers **IU eval spend**, the eval workflows' spend on the personal key, not the key's whole total: it is
+`sum(cost_usd)` of `usage.records` with `source='gateway'`, `billing='api_key'`, `api_key='personal'`,
+`lane_detail->>'workflow' like 'eval.%'` since `--iu-since` (by workflow, not purpose: some early eval calls were tagged
+`prod`). A personal-key eval row in range with no `cost_usd` is unknown spend, not zero: the read fails naming how many, the
+night logs it and the next night retries. The cost per payer is pooled over the newest 20 `eval.mine` runs that wrote
+records (`usage.records` by `run_id`, journal counts from the run output): credit per candidate is the credit spend over
+`labelledThisRun` (a third-seat record costs no credit); IU per record is the IU spend over `labelledThisRun +
+thirdSeatThisRun`. Without history: `$0.05` credit / `$0.035` IU. No room under the line is `iu-line`, none in the credit
+`no-credit`; both label nothing. With every candidate labelled and the target not reached the run fails (`no unlabelled
+candidates are left`); it never reads as a finished night. A read that fails (gateway, `USAGE_PG_URL`, journal) fails the run on its `size` step with
 the reason; nothing is planned from a guess. A 403 from the gateway mid-run still ends labelling cleanly (`stopped`).
 The run output's `auto`: `{ state: labelled|target-reached|no-credit|iu-line, target, bugCasesBefore, bugCasesAfter,
 creditAvailableUsd, creditPerCandidateUsd, iuSpentUsd, iuLineUsd, iuPerCandidateUsd, planned }` (`null` without `--auto`;
@@ -295,11 +301,11 @@ the credit and IU reads are `null` at the target).
 `~/Library/Logs/agent-workflows-eval-mine.log`:
 
 ```
-2026-11-04T04:41:07Z bug cases 61/200 (dev 33, test 28); labelled 40 (+2 third seat), accepted +18; credit available 3.21, run cost 2.76; IU 2.7 of 20 before the run; planned 40; state labelled; run <runId>
+2026-11-04T04:41:07Z bug cases 61/200 (dev 33, test 28); labelled 40 (+2 third seat), accepted +18; credit available 3.21, run cost 2.76; IU eval 2.7 of 20 before the run; planned 40; state labelled; run <runId>
 ```
 
 A failure logs `FAILED: <reason>` and exits non-zero. `run cost` is the run's total over both payers (the run record has no
-per-payer split); the IU total after the run is the next night's `IU … before the run`. At `target-reached` the script logs
+per-payer split); the IU eval spend after the run is the next night's `IU eval … before the run`. At `target-reached` the script logs
 it, removes its own plist and boots the label out, so it never runs again.
 
 **Files**, all under `$AGW_EVAL_DIR/review-gt/` (dirs 0700, files 0600; cases name private repos):

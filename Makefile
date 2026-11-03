@@ -7,7 +7,7 @@ help:
 	@echo "make deploy  deploy origin/master on the mini: release, LaunchAgents host and audio, the gateway as a third (restarted only when its build changed), health, agw on PATH (DRY_RUN=1 prints the plan)"
 	@echo "make install-opencode  install the pinned OpenCode build and react-doctor, link opencode and opencode-safe into ~/.local/bin from the main checkout (never restarts the host)"
 	@echo "make research-chrome  install and start the headed Chrome (LaunchAgent, DevTools on loopback) web.fetch reads bot-walled pages with"
-	@echo "make eval-mine-job  install the nightly review-ground-truth labelling job (LaunchAgent 04:30, agw eval mine review --auto; sized by the eval credit and the IU line, removes itself at 200 bug cases; not part of make deploy)"
+	@echo "make eval-mine-job  install the nightly review-ground-truth labelling job (LaunchAgent 04:30, agw eval mine review --auto; sized by the eval credit and the line on IU eval spend, removes itself at 200 bug cases; not part of make deploy)"
 	@echo "make live-routes one real call per route (anthropic, opencode, iu-openai text; ROUTES='a b' narrows), proved by its gateway usage row and run row; costs cents"
 	@echo "make verify  prove the deployment: the pinned OpenCode and react-doctor present, the healths at the sha (the gateway at its build), agw smoke ping and audio ping with their journal rows, the door's auth, three real Haiku calls through the gateway with their usage rows"
 

@@ -6,7 +6,7 @@
   <string>com.jkrumm.agent-workflows-eval-mine</string>
 
   <!-- The nightly review-ground-truth labelling job (`agw eval mine review --auto`): sized by the workflow from the eval
-       credit and the IU line, one log line per night in ~/Library/Logs/agent-workflows-eval-mine.log. It removes this
+       credit and the line on IU eval spend, one log line per night in ~/Library/Logs/agent-workflows-eval-mine.log. It removes this
        agent itself once the bug-case target is reached. Not part of a release: `make eval-mine-job` installs it. The
        program is the script of the live release (`current`), so every deploy's version is what runs. -->
   <key>ProgramArguments</key>

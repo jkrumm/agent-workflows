@@ -1,6 +1,6 @@
 #!/bin/zsh
 # The nightly review-ground-truth labelling job (LaunchAgent com.jkrumm.agent-workflows-eval-mine, `make eval-mine-job`):
-# `agw eval mine review --auto --yes` sizes the run itself (eval credit, IU line, bug-case target; packages/eval/README.md
+# `agw eval mine review --auto --yes` sizes the run itself (eval credit, line on IU eval spend, bug-case target; packages/eval/README.md
 # §Ground truth miner), this script starts it under a per-day idempotency key, waits for it, and appends one line to
 # ~/Library/Logs/agent-workflows-eval-mine.log. A second trigger on the same UTC day adopts the same run. At the target
 # (state target-reached) the job removes its own LaunchAgent, so it never runs again.
@@ -62,7 +62,7 @@ line="$(print -r -- "$out" | jq -r '
     "bug cases \($a.bugCasesAfter)/\($a.target) (dev \($o.summary.cases.dev.bug), test \($o.summary.cases.test.bug))"
     + "; labelled \($o.labelledThisRun) (+\($o.thirdSeatThisRun) third seat), accepted +\($a.bugCasesAfter - $a.bugCasesBefore)"
     + "; credit available \($a.creditAvailableUsd | usd), run cost \(.cost | usd)"
-    + "; IU \($a.iuSpentUsd | usd) of \($a.iuLineUsd | usd) before the run"
+    + "; IU eval \($a.iuSpentUsd | usd) of \($a.iuLineUsd | usd) before the run"
     + "; planned \($a.planned); state \($a.state)"
     + (if $o.stopped then "; stopped: \($o.stopped | .[0:120])" else "" end)
     + "; run \(.runId)"')"

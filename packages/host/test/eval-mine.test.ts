@@ -146,7 +146,7 @@ let stepCosts = new Map<string, number>()
 const spendReads = {
   credit: 1 as number | Error,
   iu: 0 as number | Error,
-  runs: [] as { runId: string; units: number; creditUsd: number; iuUsd: number }[],
+  runs: [] as { runId: string; labelled: number; thirdSeat: number; creditUsd: number; iuUsd: number }[],
   asked: [] as string[],
 }
 const read = async <T>(name: string, value: T | Error) => {
@@ -712,8 +712,8 @@ describe('eval.mine: --auto', () => {
   test('the per-candidate cost is measured from the newest labelling runs when there are any', async () => {
     spendReads.credit = 0.5
     spendReads.runs = [
-      { runId: 'r1', units: 10, creditUsd: 0.4, iuUsd: 0.3 },
-      { runId: 'r2', units: 10, creditUsd: 0.6, iuUsd: 0.5 },
+      { runId: 'r1', labelled: 10, thirdSeat: 0, creditUsd: 0.4, iuUsd: 0.3 },
+      { runId: 'r2', labelled: 10, thirdSeat: 0, creditUsd: 0.6, iuUsd: 0.5 },
     ]
     const out = await mineRun({ auto: true, controls: 3 })
     // 0.5 × 0.9 / 0.05 = 9 by credit, capped at the 4 unlabelled candidates.
@@ -774,8 +774,8 @@ describe('eval.mine: --auto', () => {
     const out = await mineRun({ auto: true, yes: true, controls: 3 })
     expect(out.auto).toMatchObject({ state: 'iu-line', planned: 0, iuSpentUsd: 19.24 })
     expect(calls).toHaveLength(0)
-    // Room for exactly two candidates ($0.07 of $0.075): the IU side binds before the credit.
-    spendReads.iu = 19.175
+    // $0.1 of room buys two candidates at the measured $0.035 × 1.25 = $0.04375: the IU side binds before the credit.
+    spendReads.iu = 19.15
     expect((await mineRun({ auto: true, controls: 3 })).auto).toMatchObject({ state: 'labelled', planned: 2 })
   })
 
@@ -801,7 +801,7 @@ describe('eval.mine: --auto', () => {
     )
     writeFileSync(gtPath('labels.jsonl', env), `${stripped.map((r) => JSON.stringify(r)).join('\n')}\n`)
     spendReads.credit = 100
-    spendReads.iu = 19.175 // $0.075 of room: two backlog records at $0.035 leave $0.005, no new candidate fits
+    spendReads.iu = 19.175 // $0.075 of room: two backlog records at $0.04375 leave $0.0125, no new candidate fits
     const out = await mineRun({ auto: true, controls: 3 })
     expect(out.labelPlan.thirdSeat).toBe(2)
     expect(out.auto).toMatchObject({ state: 'iu-line', planned: 0 })
@@ -818,7 +818,41 @@ describe('eval.mine: --auto', () => {
     spendReads.iu = new Error('USAGE_PG_URL is not set')
     const second = await startRun({ auto: true, yes: true, controls: 3 })
     expect(second.status).toBe('failed')
-    expect(JSON.stringify(second)).toContain('IU total: USAGE_PG_URL is not set')
+    expect(JSON.stringify(second)).toContain('IU eval spend: USAGE_PG_URL is not set')
+    expect(calls).toHaveLength(0)
+  })
+
+  test('every candidate labelled but the target not reached is a failed run, not a finished one', async () => {
+    await mineRun({ label: 4, yes: true, controls: 3 })
+    spendReads.credit = 100
+    const body = await startRun({ auto: true, yes: true, controls: 3 })
+    expect(body.status).toBe('failed')
+    expect(JSON.stringify(body)).toContain('no unlabelled candidates are left')
+  })
+
+  test('with only a third-seat backlog left it still runs: planned 0, the backlog is asked', async () => {
+    answer = (input) => label(input.seat === 'a', `src/${input.fixSubject.split(' ')[1]}.ts`, 2, 2)
+    await mineRun({ label: 4, yes: true, controls: 3 })
+    const stripped = (lines('labels.jsonl') as GtLabelRecord[]).map(
+      ({ c: _c, cVersion: _v, cRunId: _r, ...rest }) => rest,
+    )
+    writeFileSync(gtPath('labels.jsonl', env), `${stripped.map((r) => JSON.stringify(r)).join('\n')}\n`)
+    spendReads.credit = 100
+    calls.length = 0
+    const out = await mineRun({ auto: true, yes: true, controls: 3 })
+    expect(out.auto).toMatchObject({ state: 'labelled', planned: 0 })
+    expect(out.thirdSeatThisRun).toBeGreaterThan(0)
+    expect(asked('c').length).toBe(out.thirdSeatThisRun)
+  })
+
+  test('--max-per-run 0 is refused: a plan of nothing is not a night off', async () => {
+    const response = await t.call('/workflows/eval/mine', {
+      method: 'POST',
+      body: { suite: 'review', auto: true, maxPerRun: 0 },
+      headers: { prefer: 'wait=60' },
+    })
+    expect(response.status).toBeGreaterThanOrEqual(400)
+    expect(response.status).toBeLessThan(500)
     expect(calls).toHaveLength(0)
   })
 
