@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help check fmt deploy verify live-routes install-opencode research-chrome
+.PHONY: help check fmt deploy verify live-routes install-opencode research-chrome eval-mine-job
 
 help:
 	@echo "make check   oxfmt check, oxlint type-aware, tsc, bun test (the merge gate)"
@@ -7,7 +7,8 @@ help:
 	@echo "make deploy  deploy origin/master on the mini: release, LaunchAgents host and audio, the gateway as a third (restarted only when its build changed), health, agw on PATH (DRY_RUN=1 prints the plan)"
 	@echo "make install-opencode  install the pinned OpenCode build and react-doctor, link opencode and opencode-safe into ~/.local/bin from the main checkout (never restarts the host)"
 	@echo "make research-chrome  install and start the headed Chrome (LaunchAgent, DevTools on loopback) web.fetch reads bot-walled pages with"
-	@echo "make live-routes  one real call per route (anthropic, opencode, iu-openai text; ROUTES='a b' narrows), proved by its gateway usage row and run row; costs cents"
+	@echo "make eval-mine-job  install the nightly review-ground-truth labelling job (LaunchAgent 04:30, agw eval mine review --auto; sized by the eval credit and the IU line, removes itself at 200 bug cases; not part of make deploy)"
+	@echo "make live-routes one real call per route (anthropic, opencode, iu-openai text; ROUTES='a b' narrows), proved by its gateway usage row and run row; costs cents"
 	@echo "make verify  prove the deployment: the pinned OpenCode and react-doctor present, the healths at the sha (the gateway at its build), agw smoke ping and audio ping with their journal rows, the door's auth, three real Haiku calls through the gateway with their usage rows"
 
 # docs/spikes/** is excluded from every tool (see .oxfmtrc.json, .oxlintrc.json, tsconfig.json, bunfig.toml).
@@ -90,3 +91,21 @@ research-chrome:
 		fi; \
 		for i in 1 2 3 4 5 6 7 8 9 10; do probe && { echo "research-chrome: DevTools answers on 127.0.0.1:9222"; exit 0; }; sleep 1; done; \
 		echo "research-chrome: loaded, but DevTools does not answer on 127.0.0.1:9222" >&2; exit 1
+
+# The nightly labelling job of the review ground truth (scripts/eval-mine-daily.sh, packages/eval/README.md §Ground truth
+# miner). Not a release artifact and not part of `make deploy`: installed once per machine, it runs the script of whichever
+# release `current` points at, and removes itself when the bug-case target is reached. Idempotent: an unchanged, loaded
+# agent is left alone; a changed plist is the only reason to boot it out and in again.
+eval-mine-job:
+	@label="com.jkrumm.agent-workflows-eval-mine"; plist="$$HOME/Library/LaunchAgents/$$label.plist"; tmp="$$plist.tmp.$$$$"; target="gui/$$(id -u)/$$label"; \
+		[ -f "$$HOME/.agent-workflows/current/scripts/eval-mine-daily.sh" ] || { echo "eval-mine-job: the live release has no scripts/eval-mine-daily.sh; make deploy first" >&2; exit 1; }; \
+		mkdir -p "$$HOME/Library/LaunchAgents" "$$HOME/Library/Logs"; \
+		/usr/bin/sed -e "s|__HOME__|$$HOME|g" deploy/$$label.plist.template > "$$tmp" \
+			&& plutil -lint "$$tmp" >/dev/null || { rm -f "$$tmp"; echo "eval-mine-job: rendering the plist failed" >&2; exit 1; }; \
+		if launchctl print "$$target" >/dev/null 2>&1 && cmp -s "$$tmp" "$$plist"; then \
+			rm -f "$$tmp"; echo "eval-mine-job: $$label is installed and unchanged"; exit 0; \
+		fi; \
+		mv -f "$$tmp" "$$plist"; launchctl bootout "$$target" 2>/dev/null; \
+		for i in 1 2 3 4 5 6 7 8 9 10; do launchctl print "$$target" >/dev/null 2>&1 || break; sleep 1; done; \
+		launchctl bootstrap "gui/$$(id -u)" "$$plist" || exit 1; \
+		echo "eval-mine-job: $$label installed, runs daily at 04:30; log: ~/Library/Logs/agent-workflows-eval-mine.log"
