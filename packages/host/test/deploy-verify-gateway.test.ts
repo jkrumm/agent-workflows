@@ -439,99 +439,73 @@ describe('verify.sh runs section', () => {
   })
 })
 
-// Section 10 (the smoke review) with `agw` and `psql` replaced: the real fixture is built into a real git repo, the stand-in
-// `agw review` answers from files in HOME, and the stand-in psql answers the stage, report and run-row queries.
+// Section 10 (the smoke review, hidden transport) with `agw` replaced: the real fixture is built into a real git repo
+// under a temp fixture root, the stand-in `agw review request|status` answer from files in HOME.
 type ReviewOptions = {
-  output?: unknown // what `agw review` prints; default: a done run with one real finding
-  rc?: number // its exit code
-  waitOutput?: unknown // what `agw run wait` prints (default: output)
-  waitRc?: number
-  waitSleepSecs?: number
-  notDone?: string[] // steps the stage query lists as not done
-  doneSteps?: string[]
-  report?: string // the react-doctor step's stdout
-  runRow?: string // status|cost
+  request?: unknown // what `agw review request` prints
+  requestRc?: number
+  requestErr?: string
+  statuses?: unknown[] // what `agw review status` prints per call (the last repeats)
   waitSecs?: number
 }
 
-const REVIEW_VERDICT = {
-  schemaVersion: 2,
+const REVIEW_OUTPUT = {
+  schemaVersion: 4,
+  tier: 'light',
   outcome: 'actionable',
-  blocking: [],
-  improvements: [{ file: 'src/Scores.tsx', line: 10, message: 'raw html from a note', angle: 'security' }],
-  discussions: [],
-  testGaps: [],
-  summary: 'one problem',
+  findings: [{ id: 'th-1', tag: 'important', file: 'src/stats.ts', message: 'off by one' }],
 }
-const REVIEW_DONE = { runId: 'rev-1', status: 'done', output: REVIEW_VERDICT, cost: 0.04 }
-const REPORT_WITH_DIAGNOSTIC = JSON.stringify({
-  diagnostics: [{ rule: 'jsx-key', message: 'wrong data', filePath: 'src/Scores.tsx' }],
+const REQUESTED = { status: 'requested', jobId: 'rv_job', tier: 'light', spawn: { status: 'running' } }
+const submitted = (output: unknown = REVIEW_OUTPUT) => ({
+  job: { id: 'rv_job', state: 'submitted', account: 'work', output },
 })
+const preparedJob = { job: { id: 'rv_job', state: 'prepared', account: null, output: null } }
 
 async function verifyReview(options: ReviewOptions = {}) {
   if (!ZSH) throw new Error('zsh is not on PATH: scripts/verify.sh needs it (CI installs it in ci.yml)')
   const home = mkdtempSync(join(tmpdir(), 'agw-verify-review-'))
   cleanups.push(() => rmSync(home, { recursive: true, force: true }))
   const write = (name: string, content: string) => writeFileSync(join(home, name), content)
-  write('review-out', JSON.stringify(options.output ?? REVIEW_DONE))
-  write('review-rc', `${options.rc ?? 0}`)
-  write('wait-out', JSON.stringify(options.waitOutput ?? options.output ?? REVIEW_DONE))
-  write('wait-rc', `${options.waitRc ?? 0}`)
-  write('wait-sleep', `${options.waitSleepSecs ?? 0}`)
-  write('not-done', (options.notDone ?? []).map((step) => `${step} failed: boom\n`).join(''))
-  write(
-    'done-steps',
-    (options.doneSteps ?? ['prepare', 'react-doctor', 'route', 'plan', 'angle:senior-dev', 'synthesis'])
-      .map((step) => `${step}\n`)
-      .join(''),
-  )
-  write('report', options.report ?? REPORT_WITH_DIAGNOSTIC)
-  write('run-row', `${options.runRow ?? 'done|0.0385'}\n`)
+  write('request-out', JSON.stringify(options.request ?? REQUESTED))
+  write('request-rc', `${options.requestRc ?? 0}`)
+  write('request-err', options.requestErr ?? '')
+  const statuses = options.statuses ?? [submitted()]
+  statuses.forEach((status, i) => write(`status-${i}`, JSON.stringify(status)))
+  write('status-count', `${statuses.length}`)
   const bin = join(home, '.local', 'bin')
   mkdirSync(bin, { recursive: true })
-  const stub = (name: string, body: string) => {
-    writeFileSync(join(bin, name), body)
-    chmodSync(join(bin, name), 0o755)
-  }
-  // agw: `review` records its arguments and the fixture repo's status, `run wait` and `run cancel` are logged.
-  stub(
-    'agw',
+  writeFileSync(
+    join(bin, 'agw'),
     `#!/bin/sh
 echo "$*" >> "$HOME/agw-calls"
 case "$1 $2" in
-  "review --cwd")
-    git -C "$3" status --porcelain > "$HOME/fixture-status"
-    git -C "$3" log --format=%s > "$HOME/fixture-log"
-    cat "$HOME/review-out"; exit "$(cat "$HOME/review-rc")" ;;
-  "run wait") sleep "$(cat "$HOME/wait-sleep")"; cat "$HOME/wait-out"; exit "$(cat "$HOME/wait-rc")" ;;
-  "run cancel") echo '{"status":"cancelled"}'; exit 0 ;;
+  "review request")
+    git -C "$4" status --porcelain > "$HOME/fixture-status"
+    git -C "$4" log --format=%s > "$HOME/fixture-log"
+    cat "$HOME/request-err" >&2
+    cat "$HOME/request-out"; exit "$(cat "$HOME/request-rc")" ;;
+  "review status")
+    n=$(cat "$HOME/status-n" 2>/dev/null || echo 0); last=$(( $(cat "$HOME/status-count") - 1 ))
+    [ "$n" -gt "$last" ] && n=$last
+    echo $(( n + 1 )) > "$HOME/status-n"
+    cat "$HOME/status-$n"; exit 0 ;;
 esac
 echo "unexpected agw call: $*" >&2; exit 2
 `,
   )
-  stub(
-    'psql',
-    `#!/bin/sh
-sql=$(cat)
-case "$sql" in
-  *"status <> 'done'"*) cat "$HOME/not-done" ;;
-  *"status = 'done'"*) cat "$HOME/done-steps" ;;
-  *"output->>'stdout'"*) cat "$HOME/report" ;;
-  *"from "*".runs where id"*) cat "$HOME/run-row" ;;
-  *) echo "unexpected psql: $sql" >&2; exit 2 ;;
-esac
-`,
-  )
+  chmodSync(join(bin, 'agw'), 0o755)
   const prelude = `agw_err=$(mktemp); review_dir=""; trap 'rm -rf "$agw_err" "$review_dir"' EXIT
-journal() { local sql=$1; shift; psql "$@" <<< "$sql" || fail "journal query failed"; }
+agw_json() { out=$(AGW_PURPOSE=verify agw "$@" 2>"$agw_err"); rc=$?; (( rc == 0 )) || fail "agw $* exited $rc"; }
 `
-  const script = `${HEADER}\n${prelude}${SMOKE_REVIEW}\nprint "dir=$review_dir"\n`
+  const script = `${HEADER}\n${prelude}${SMOKE_REVIEW}\nprint "dir=$review_dir"\nprint "summary=\${review_summary:-none}"\n`
   const proc = Bun.spawn([ZSH, '-c', script], {
     env: {
       PATH: process.env.PATH ?? '',
       HOME: home,
       REVIEW_FIXTURE: join(ROOT, 'scripts', 'fixtures', 'smoke-review'),
-      ...(options.waitSecs === undefined ? {} : { REVIEW_WAIT_SECS: `${options.waitSecs}` }),
+      REVIEW_FIXTURE_ROOT: join(home, 'SourceRoot', '.agw-verify'),
+      REVIEW_POLL_SECS: '0',
+      REVIEW_WAIT_SECS: `${options.waitSecs ?? 30}`,
     },
     stdout: 'pipe',
     stderr: 'pipe',
@@ -552,100 +526,74 @@ journal() { local sql=$1; shift; psql "$@" <<< "$sql" || fail "journal query fai
 }
 
 describe('verify.sh smoke review section', () => {
-  test('reviews the fixture as an uncommitted change at depth light and passes, printing run id and cost', async () => {
-    const r = await verifyReview()
+  test('requests a light review of the committed fixture, polls until submitted and passes with the finding count', async () => {
+    const r = await verifyReview({ statuses: [preparedJob, preparedJob, submitted()] })
     expect(r.err).toBe('')
     expect(r.code).toBe(0)
-    expect(r.out).toContain('run rev-1 done')
-    expect(r.out).toContain('1 react-doctor diagnostic(s)')
-    expect(r.out).toContain('cost 0.0385')
-    expect(r.calls).toMatch(/^review --cwd \S+ --depth light --format json$/m)
-    expect(r.log.trim()).toBe('base')
-    expect(r.status).toContain('M src/Scores.tsx')
-    expect(r.status).toContain('M src/stats.ts')
+    expect(r.out).toContain('job rv_job submitted')
+    expect(r.out).toContain('outcome actionable, 1 finding(s)')
+    expect(r.out).toContain('summary=review job rv_job (light, hidden, account work)')
+    expect(r.calls).toMatch(
+      /^review request --cwd \S+\/\.agw-verify\/review\.\S+ --scope head --commit --format json$/m,
+    )
+    expect(r.calls.match(/^review status rv_job --format json$/gm)).toHaveLength(3)
+    expect(r.log.trim().split('\n')).toEqual(['feat: scores summary', 'base'])
+    expect(r.status).toBe('') // committed, not an uncommitted change
+    expect(r.out).toMatch(/dir=\S+\.agw-verify\/review\./) // the test's trap removes it; verify.sh's own does too
   })
 
-  test('a react-doctor report with zero diagnostics fails: the PR #89 path was not exercised', async () => {
-    const r = await verifyReview({ report: JSON.stringify({ diagnostics: [] }) })
-    expect(r.code).toBe(1)
-    expect(r.err).toContain('reported no diagnostic')
-  })
-
-  test('a react-doctor step that only recorded a failure line fails the same way', async () => {
-    const r = await verifyReview({ report: 'react-doctor failed (exit 1): boom' })
-    expect(r.code).toBe(1)
-    expect(r.err).toContain('reported no diagnostic')
-  })
-
-  test('a missing stage is named: no synthesis, no angle, no react-doctor', async () => {
-    const stages = ['prepare', 'react-doctor', 'angle:senior-dev', 'synthesis']
-    const synthesis = await verifyReview({ doneSteps: stages.filter((s) => s !== 'synthesis'), notDone: ['synthesis'] })
-    expect(synthesis.code).toBe(1)
-    expect(synthesis.err).toContain('stage synthesis did not finish (stages not done: synthesis failed: boom)')
-    const angle = await verifyReview({ doneSteps: stages.filter((s) => s !== 'angle:senior-dev') })
-    expect(angle.err).toContain('no angle stage finished')
-    const reactDoctor = await verifyReview({ doneSteps: stages.filter((s) => s !== 'react-doctor') })
-    expect(reactDoctor.err).toContain('stage react-doctor did not finish')
-  })
-
-  test('a run that failed names its stages that are not done', async () => {
+  test('a held spawn is a SKIP with the factory reason, not a failure', async () => {
     const r = await verifyReview({
-      output: { runId: 'rev-1', status: 'failed', error: { message: 'escapeName is not a function' } },
-      rc: 1,
-      notDone: ['synthesis'],
+      request: { ...REQUESTED, spawn: { status: 'queued', hold: 'ceiling: work at 72 % of its 5-hour window' } },
     })
+    expect(r.code).toBe(0)
+    expect(r.out).toContain('verify: SKIP: smoke review: the factory holds the spawn of rv_job: ceiling: work at 72 %')
+    expect(r.calls).not.toContain('review status')
+  })
+
+  test('a factory that is unreachable is a SKIP; one that refuses the fixture root is a failure', async () => {
+    const down = await verifyReview({
+      requestRc: 1,
+      requestErr: 'the factory could not start the review session review-rv_job-a1: factory unreachable',
+    })
+    expect(down.code).toBe(0)
+    expect(down.out).toContain('verify: SKIP: smoke review: the factory could not take the review')
+    const refused = await verifyReview({
+      requestRc: 1,
+      requestErr:
+        'the factory could not start the review session x: repo is outside the allowed roots (FACTORY_REPO_ROOTS)',
+    })
+    expect(refused.code).toBe(1)
+    expect(refused.err).toContain('the factory refused the fixture')
+  })
+
+  test('a tier other than light fails before any poll', async () => {
+    const r = await verifyReview({ request: { ...REQUESTED, tier: 'standard' } })
     expect(r.code).toBe(1)
-    expect(r.err).toContain('agw review exited 1')
-    expect(r.err).toContain('stages not done: synthesis failed: boom')
+    expect(r.err).toContain("routed to tier 'standard', not light")
   })
 
-  test('a status that is missing or not done fails', async () => {
-    const { status: _status, ...noStatus } = REVIEW_DONE
-    expect((await verifyReview({ output: noStatus })).err).toContain('is not done')
-    expect((await verifyReview({ output: { ...REVIEW_DONE, status: 'failed' } })).err).toContain('is not done')
+  test('a job still prepared at the bound fails naming the state', async () => {
+    const r = await verifyReview({ statuses: [preparedJob], waitSecs: 1 })
+    expect(r.code).toBe(1)
+    expect(r.err).toContain("job rv_job is 'prepared' after")
   })
 
-  test('a degraded verdict, or findings only from synthesis, pipeline or no angle, fail', async () => {
-    const degraded = await verifyReview({
-      output: { ...REVIEW_DONE, output: { ...REVIEW_VERDICT, degraded: 'provider_balance' } },
-    })
-    expect(degraded.err).toContain('the review was degraded')
-    const finding = (angle?: string) => ({ file: 'x', message: 'm', ...(angle === undefined ? {} : { angle }) })
-    for (const angle of ['synthesis', 'pipeline', '', undefined]) {
-      const r = await verifyReview({
-        output: { ...REVIEW_DONE, output: { ...REVIEW_VERDICT, improvements: [finding(angle)] } },
-      })
+  test('an output that is not REVIEW_OUTPUT v4 at tier light fails', async () => {
+    for (const output of [
+      { ...REVIEW_OUTPUT, schemaVersion: 2 },
+      { ...REVIEW_OUTPUT, tier: 'deep' },
+      { ...REVIEW_OUTPUT, outcome: 'maybe' },
+    ]) {
+      const r = await verifyReview({ statuses: [submitted(output)] })
       expect(r.code).toBe(1)
-      expect(r.err).toContain('no finding from a real reviewer')
+      expect(r.err).toContain('did not submit REVIEW_OUTPUT v4 at tier light')
     }
   })
 
-  test('a run row without a cost fails', async () => {
-    const r = await verifyReview({ runRow: 'done|' })
-    expect(r.code).toBe(1)
-    expect(r.err).toContain('has no cost')
-  })
-
-  test('exit 10 is resumed with agw run wait until the run is done', async () => {
-    const r = await verifyReview({ output: { runId: 'rev-1' }, rc: 10, waitOutput: REVIEW_DONE })
-    expect(r.err).toBe('')
+  test('a clean review with no finding passes', async () => {
+    const r = await verifyReview({ statuses: [submitted({ ...REVIEW_OUTPUT, outcome: 'clean', findings: [] })] })
     expect(r.code).toBe(0)
-    expect(r.calls).toContain('run wait rev-1')
-    expect(r.out).toContain('run rev-1 done')
-  })
-
-  test('a run still pending at the bound is cancelled, and the failure says so', async () => {
-    const r = await verifyReview({
-      output: { runId: 'rev-1' },
-      rc: 10,
-      waitOutput: { runId: 'rev-1' },
-      waitRc: 10,
-      waitSleepSecs: 1,
-      waitSecs: 1,
-    })
-    expect(r.code).toBe(1)
-    expect(r.calls).toContain('run cancel rev-1 --commit')
-    expect(r.err).toContain('not done after 1s; the run was cancelled')
-    expect(r.err).not.toContain('resume')
+    expect(r.out).toContain('outcome clean, 0 finding(s)')
   })
 })
