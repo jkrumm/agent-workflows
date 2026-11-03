@@ -1,5 +1,5 @@
 ---
-# Read by the router (route.py) and by the reviewer. Globs are repo-relative.
+# Read by the router (agw review route) and by the reviewer. Globs are repo-relative.
 none:        [docs/waves/**, docs/spikes/**/data/**, bun.lock]
 sensitive:   [packages/runtime/**, packages/middleware/**, packages/gateway/**, packages/limits/**,
               packages/cli/src/spec.ts, packages/host/src/door-tokens.ts,
