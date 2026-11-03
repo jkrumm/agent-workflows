@@ -561,7 +561,7 @@ describe('eval.mine: the third labeller', () => {
     })
   })
 
-  test('--label 0 --yes asks only seat c of the disagreeing records, in place; a and b are never asked again', async () => {
+  test('--label 0 --yes asks only seat c of the disagreeing records, appended again; a and b are never asked again', async () => {
     const before = await legacyRecords()
     const plan = await mineRun({ label: 0, controls: 3 })
     expect(plan).toMatchObject({ spent: false, labelPlan: { candidates: 0, thirdSeat: 2 } })
@@ -570,7 +570,13 @@ describe('eval.mine: the third labeller', () => {
     const out = await mineRun({ label: 0, yes: true, controls: 3 })
     expect(out).toMatchObject({ spent: true, labelledThisRun: 0, thirdSeatThisRun: 2, stopped: null })
     expect(calls.map((c) => c.seat)).toEqual(['c', 'c'])
-    const after = (lines('labels.jsonl') as GtLabelRecord[]).map((r) => GtLabelRecord.parse(r))
+    // Appended, not rewritten: the 4 old lines stay as they were and the 2 records that gained c follow them.
+    const all = (lines('labels.jsonl') as GtLabelRecord[]).map((r) => GtLabelRecord.parse(r))
+    expect(all).toHaveLength(6)
+    expect(all.slice(0, 4)).toEqual(before)
+    expect(all.slice(4).every((r) => r.c !== undefined)).toBe(true)
+    // The latest line of a candidate wins.
+    const after = [...new Map(all.map((r) => [r.candidateId, r])).values()]
     expect(after).toHaveLength(4)
     for (const record of after) {
       const old = before.find((r) => r.candidateId === record.candidateId)

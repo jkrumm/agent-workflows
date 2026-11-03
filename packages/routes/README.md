@@ -113,13 +113,15 @@ Constants in `_shared.ts`, spread like a tier (`{ wire: 'iu-openai', ...DEEPSEEK
 
 ### Eval seats
 
-The review eval's ground truth (`docs/review-v2.md` §The eval) runs on three pinned seats in `src/table/eval.ts`, built from `LABELER_CLAUDE`, `LABELER_GPT` and `JUDGE` in `_shared.ts`. They are not tiers and have **no fallback**: a fallback would silently change a labeller or the grader, so a drained credit fails the call and never moves it. A change to a seat or to its capability's prompt bumps `LABELER_VERSION` / `JUDGE_VERSION` (`packages/capabilities`, pinned by a test that recomputes them).
+The review eval's ground truth (`docs/review-v2.md` §The eval) runs on five pinned seats in `src/table/eval.ts`, built from `LABELER_CLAUDE`, `LABELER_GPT`, `LABELER_GEMINI`, `JUDGE` and `JUDGE_GPT` in `_shared.ts`. They are not tiers and have **no fallback**: a fallback would silently change a labeller or the grader, so a drained credit fails the call and never moves it. A change to a seat or to its capability's prompt bumps its version: `LABELER_VERSION` (seats `a` and `b`), `LABELER_C_VERSION` (seat `c`, asked only when `a` and `b` disagree), `JUDGE_VERSION` (judge `a`) and `JUDGE_B_VERSION` (judge `b`) in `packages/capabilities`, each pinned by a test that recomputes it. Each second seat has its own version so adding it never invalidates the records and calls of the first.
 
 | Route | Wire | Model | Effort | Output ceiling |
 |-|-|-|-|-|
 | `eval.label.a` | `anthropic` | Sonnet 5.5 | medium | 16000 |
 | `eval.label.b` | `iu-openai` | Terra (the GPT stack's rate) | medium | 16000 |
+| `eval.label.c` | `iu-openai` | Gemini 3.8 Flash (its rate) | none (Gemini's OpenAI leg rejects `reasoning_effort`) | 16000 |
 | `eval.judge` | `anthropic` | Sonnet 5.5 | medium | 16000 |
+| `eval.judge.b` | `iu-openai` | Terra (the GPT stack's rate) | medium | 16000 |
 
 ### Guard
 

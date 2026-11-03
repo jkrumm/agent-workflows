@@ -1,7 +1,15 @@
 import { capDiff } from '@agent-workflows/capabilities'
+import type { GtCase } from '@agent-workflows/eval'
 import { DEFAULT_STATE_DIR } from '@agent-workflows/opencode-host'
 import { isBalanceFailure, type RouteId } from '@agent-workflows/routes'
-import { type AgentSpec, type Ctx, defineWorkflow, StepFailed, WorkflowError } from '@agent-workflows/runtime'
+import {
+  type AgentSpec,
+  type Ctx,
+  defineWorkflow,
+  type Scorer,
+  StepFailed,
+  WorkflowError,
+} from '@agent-workflows/runtime'
 import type { HostWorkflow } from '../../operations.ts'
 import type { WorkflowDeps } from '../index.ts'
 import { gatedAngles, requestedAngles, resolveDepth, routerPicks, selectFloor } from './angles.ts'
@@ -22,6 +30,7 @@ import {
   AngleOutput,
   type AngleResult,
   ReviewInput,
+  type ReviewInputValue,
   ReviewOutput,
   type ReviewResult,
   SynthesisOutput,
@@ -49,6 +58,8 @@ const ANGLE_ATTEMPTS = 2
 export type ReviewOptions = Partial<ReviewPorts> & {
   /** Wait between an angle's two attempts. Default 1 s. */
   angleBackoffMs?: number
+  /** The scorer to register (`resolveReviewScorer` resolves its judge mode from the calibration). Default: both judges. */
+  scorer?: Scorer<ReviewInputValue, GtCase>
 }
 
 type Settled<T> = { ok: true; value: T } | { ok: false; reason: string; kind: string }
@@ -139,7 +150,7 @@ export function ocrSkipReason(p: Prepared, depth: string): string | null {
 }
 
 export function createReviewWorkflows(deps: WorkflowDeps, options: ReviewOptions = {}): HostWorkflow[] {
-  const { angleBackoffMs = 1_000, ...given } = options
+  const { angleBackoffMs = 1_000, scorer = reviewScorer, ...given } = options
   const env = given.env ?? process.env
   const ports: ReviewPorts = {
     exec: createExec(env),
@@ -328,7 +339,7 @@ export function createReviewWorkflows(deps: WorkflowDeps, options: ReviewOptions
     version: REVIEW_VERSION,
     input: ReviewInput,
     output: ReviewOutput,
-    scorer: reviewScorer,
+    scorer,
     async run(ctx, input) {
       const prepared = await ctx.step('prepare', (scope) => prepare(input, scope.key, ports))
       if (!prepared.ok) throw new WorkflowError(prepared.kind, prepared.message)

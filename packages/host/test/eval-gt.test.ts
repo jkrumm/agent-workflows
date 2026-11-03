@@ -2,10 +2,17 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } fr
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { CapabilityCallError, JUDGE_VERSION } from '@agent-workflows/capabilities'
+import {
+  CapabilityCallError,
+  createCapabilities,
+  createRegistry,
+  JUDGE_B_VERSION,
+  JUDGE_VERSION,
+} from '@agent-workflows/capabilities'
 import {
   GT_LIMIT,
   type GtBugCase,
+  JudgeBRecord,
   gtPath,
   JudgeCalibration,
   type JudgeClass,
@@ -19,6 +26,10 @@ import {
   runCalibration,
 } from '../src/workflows/eval-gt/calibrate.ts'
 import { hostModules } from '../src/workflows/index.ts'
+import { createCapabilityWorkflows } from '../src/capability-runs.ts'
+import { fakeTransports } from '../../capabilities/src/testing/index.ts'
+import { LEGACY_JUDGE_RUN_VERSIONS, judgeRunVersions } from '../src/workflows/eval-gt/versions.ts'
+import { pgJudgeRuns } from '../src/workflows/eval-gt/judge-runs.ts'
 import { createEvalGtWorkflows } from '../src/workflows/eval-gt/index.ts'
 import type { JudgeRun, JudgeRunReader } from '../src/workflows/eval-gt/judge-runs.ts'
 import { type Body, startTestHost, type TestHost } from './support.ts'
@@ -54,7 +65,17 @@ function writeCases(rows: unknown[]) {
 }
 
 /** A judge-a run on case `caseId`: finding `i` is class `classes[i]`; the preselected ones are the first `pre` ids. */
-function aRun(runId: string, caseId: string, classes: JudgeClass[], pre = classes.length): JudgeRun {
+const CURRENT = 'cap-hash-current'
+const LEGACY = 'cap-hash-legacy'
+const RUN_VERSIONS = [CURRENT, LEGACY]
+
+function aRun(
+  runId: string,
+  caseId: string,
+  classes: JudgeClass[],
+  pre = classes.length,
+  version: string | null = CURRENT,
+): JudgeRun {
   const findings = classes.map((_, i) => ({
     id: String(i),
     tag: 'important' as const,
@@ -73,7 +94,7 @@ function aRun(runId: string, caseId: string, classes: JudgeClass[], pre = classe
     findings: classes.map((c, i) => ({ id: String(i), class: c, reason: `a${i}` })),
     model: 'model-a',
   }
-  return { runId, evalRunId: 'eval-1', input, output }
+  return { runId, evalRunId: 'eval-1', input, output, version }
 }
 
 /** The error a promise rejects with (a missing rejection fails the test). */
@@ -115,7 +136,12 @@ beforeAll(async () => {
   env = { AGW_EVAL_DIR: join(root, 'eval') }
   t = await startTestHost({
     prefix: 'evalgt',
-    extra: createEvalGtWorkflows({ registry: judgeB().registry, env, judgeRuns: reader([]) }),
+    extra: createEvalGtWorkflows({
+      registry: judgeB().registry,
+      env,
+      judgeRuns: reader([]),
+      judgeRunVersions: RUN_VERSIONS,
+    }),
   })
 })
 afterAll(async () => {
@@ -134,7 +160,12 @@ describe('planCalibration', () => {
     writeCases([bugCase('c1')])
     // 0 match (positive), 1 real preselected (negative), 2 nit not preselected (no pair)
     const plan = await planCalibration(
-      { env, judgeRuns: reader([aRun('r1', 'c1', ['match', 'real', 'nit'], 2)]), judge: judgeB().registry },
+      {
+        env,
+        judgeRuns: reader([aRun('r1', 'c1', ['match', 'real', 'nit'], 2)]),
+        judge: judgeB().registry,
+        judgeRunVersions: RUN_VERSIONS,
+      },
       { evalRuns: ['eval-1'], pairs: 100, seed: 1 },
     )
     expect(plan).toMatchObject({ positives: 1, negatives: 1 })
@@ -146,7 +177,7 @@ describe('planCalibration', () => {
   test('half the budget on each side, seeded, one judge-b call per run holding a sampled pair', async () => {
     writeCases([bugCase('c1')])
     const runs = Array.from({ length: 10 }, (_, i) => aRun(`r${i}`, 'c1', ['match', 'real']))
-    const deps = { env, judgeRuns: reader(runs), judge: judgeB().registry }
+    const deps = { env, judgeRuns: reader(runs), judge: judgeB().registry, judgeRunVersions: RUN_VERSIONS }
     const plan = await planCalibration(deps, { evalRuns: ['eval-1'], pairs: 6, seed: 3 })
     expect(plan).toMatchObject({ positives: 3, negatives: 3 })
     expect(plan.runs.size).toBeLessThanOrEqual(6)
@@ -165,7 +196,7 @@ describe('planCalibration', () => {
       { ...aRun('r4', 'c1', []), input: 1 },
     ]
     const plan = await planCalibration(
-      { env, judgeRuns: reader(runs), judge: judgeB().registry },
+      { env, judgeRuns: reader(runs), judge: judgeB().registry, judgeRunVersions: RUN_VERSIONS },
       { evalRuns: ['eval-1'], pairs: 10, seed: 1 },
     )
     expect([...plan.runs.keys()]).toEqual(['r1'])
@@ -173,8 +204,49 @@ describe('planCalibration', () => {
     expect(plan.notes.join(' ')).toContain('1 judge runs skipped: their case is not in cases.jsonl')
   })
 
+  test('only judge-a runs count: a seat-b run (the scorer’s dual mode) is skipped and counted', async () => {
+    writeCases([bugCase('c1')])
+    const seatB = aRun('rb', 'c1', ['match', 'real'])
+    ;(seatB.input as JudgeInput).seat = 'b'
+    const seatA = aRun('ra', 'c1', ['match', 'real'])
+    ;(seatA.input as JudgeInput).seat = 'a'
+    const plan = await planCalibration(
+      {
+        env,
+        judgeRuns: reader([seatB, seatA, aRun('rn', 'c1', ['match'])]),
+        judge: judgeB().registry,
+        judgeRunVersions: RUN_VERSIONS,
+      },
+      { evalRuns: ['eval-1'], pairs: 100, seed: 1 },
+    )
+    expect([...plan.runs.keys()].sort()).toEqual(['ra', 'rn'])
+    expect(plan.skipped).toEqual({ unusable: 0, unknownCase: 0, otherSeat: 1, otherVersion: 0 })
+  })
+
+  test('only runs of the current capability version (or a known legacy one) count; others are skipped and counted', async () => {
+    writeCases([bugCase('c1')])
+    const runs = [
+      aRun('cur', 'c1', ['match']),
+      aRun('old', 'c1', ['match'], 1, LEGACY),
+      aRun('new', 'c1', ['match'], 1, 'cap-hash-unknown'),
+      aRun('none', 'c1', ['match'], 1, null),
+    ]
+    const plan = await planCalibration(
+      { env, judgeRuns: reader(runs), judge: judgeB().registry, judgeRunVersions: RUN_VERSIONS },
+      { evalRuns: ['eval-1'], pairs: 100, seed: 1 },
+    )
+    expect([...plan.runs.keys()].sort()).toEqual(['cur', 'old'])
+    expect(plan.skipped.otherVersion).toBe(2)
+    expect(plan.notes.join(' ')).toContain('2 judge runs skipped: made by another version')
+  })
+
   test('no mined case, or no pair, is the caller’s input to fix', async () => {
-    const deps = (runs: JudgeRun[]) => ({ env, judgeRuns: reader(runs), judge: judgeB().registry })
+    const deps = (runs: JudgeRun[]) => ({
+      env,
+      judgeRuns: reader(runs),
+      judge: judgeB().registry,
+      judgeRunVersions: RUN_VERSIONS,
+    })
     const request = { evalRuns: ['eval-1'], pairs: 10, seed: 1 }
     expect(await failure(planCalibration(deps([]), request))).toBeInstanceOf(CalibrateInputError)
     writeCases([bugCase('c1')])
@@ -195,7 +267,7 @@ describe('runCalibration', () => {
   async function plan(runs: JudgeRun[], pairs = 100) {
     writeCases([bugCase('c1'), bugCase('c2')])
     return planCalibration(
-      { env, judgeRuns: reader(runs), judge: judgeB().registry },
+      { env, judgeRuns: reader(runs), judge: judgeB().registry, judgeRunVersions: RUN_VERSIONS },
       { evalRuns: ['eval-1'], pairs, seed: 1 },
     )
   }
@@ -217,7 +289,11 @@ describe('runCalibration', () => {
         model: 'model-b',
       }
     }
-    const out = await runCalibration({ env, judgeRuns: reader(runs), judge: registry }, p, options())
+    const out = await runCalibration(
+      { env, judgeRuns: reader(runs), judge: registry, judgeRunVersions: RUN_VERSIONS },
+      p,
+      options(),
+    )
     expect(calls).toHaveLength(20)
     for (const call of calls) {
       const recorded = runs.find((r) => (r.input as JudgeInput).caseId === call.caseId)?.input as JudgeInput
@@ -226,7 +302,12 @@ describe('runCalibration', () => {
     }
     const c = out.calibration
     expect(c.confusion).toEqual({ yy: 20, yn: 0, ny: 2, nn: 18 })
-    expect(c).toMatchObject({ n: 40, limit: GT_LIMIT, judgeVersion: JUDGE_VERSION, bar: 0.8 })
+    expect(c).toMatchObject({
+      n: 40,
+      limit: GT_LIMIT,
+      judgeVersions: { a: JUDGE_VERSION, b: JUDGE_B_VERSION },
+      bar: 0.8,
+    })
     expect(c.agreement).toBeCloseTo(0.95, 10)
     expect(c.kappa).toBeCloseTo(0.9, 10)
     expect(c.ci95?.lo).toBeLessThan(0.9)
@@ -240,7 +321,11 @@ describe('runCalibration', () => {
     const runs = [aRun('r1', 'c1', ['match', 'real', 'nit', 'not-a-bug', 'unclear'])]
     const p = await plan(runs)
     const { registry } = judgeB({ c1: ['match', 'real', 'not-a-bug', 'not-a-bug', 'unclear'] })
-    const { calibration } = await runCalibration({ env, judgeRuns: reader(runs), judge: registry }, p, options())
+    const { calibration } = await runCalibration(
+      { env, judgeRuns: reader(runs), judge: registry, judgeRunVersions: RUN_VERSIONS },
+      p,
+      options(),
+    )
     expect(calibration.classes.n).toBe(4)
     expect(calibration.classes.agreement).toBe(0.75)
     expect(calibration.classes.confusion).toMatchObject({
@@ -255,7 +340,12 @@ describe('runCalibration', () => {
     const runs = [aRun('r1', 'c1', ['match', 'real'])]
     const p = await plan(runs)
     const split = await runCalibration(
-      { env, judgeRuns: reader(runs), judge: judgeB({ c1: ['real', 'match'] }).registry },
+      {
+        env,
+        judgeRuns: reader(runs),
+        judge: judgeB({ c1: ['real', 'match'] }).registry,
+        judgeRunVersions: RUN_VERSIONS,
+      },
       p,
       options(),
     )
@@ -263,11 +353,73 @@ describe('runCalibration', () => {
     const allMatch = [aRun('r2', 'c1', ['match'])]
     const q = await plan(allMatch)
     const same = await runCalibration(
-      { env, judgeRuns: reader(allMatch), judge: judgeB({ c1: ['match'] }).registry },
+      { env, judgeRuns: reader(allMatch), judge: judgeB({ c1: ['match'] }).registry, judgeRunVersions: RUN_VERSIONS },
       q,
       options(),
     )
     expect(same.calibration).toMatchObject({ kappa: null, ci95: null, met: false, agreement: 1 })
+  })
+
+  test('every judge-b answer is appended as it arrives; a stop keeps what was paid and a rerun asks only the missing', async () => {
+    const runs = Array.from({ length: 6 }, (_, i) => aRun(`r${i}`, 'c1', ['match', 'real']))
+    const p = await plan(runs)
+    let served = 0
+    const broken = judgeB({ c1: ['match', 'real'] }, () =>
+      ++served > 3
+        ? new CapabilityCallError('UPSTREAM_ERROR', 502, 'no eval credit', true, { status: 403 })
+        : undefined,
+    )
+    const deps = (judge: JudgeCaller) => ({ env, judgeRuns: reader(runs), judge, judgeRunVersions: RUN_VERSIONS })
+    const stopped = await failure(runCalibration(deps(broken.registry), p, { ...options(), concurrency: 1 }))
+    expect(stopped.message).toContain('no eval credit')
+    const kept = readFileSync(gtPath('judge-b.jsonl', env), 'utf8')
+      .trim()
+      .split('\n')
+      .map((l) => JudgeBRecord.parse(JSON.parse(l)))
+    expect(kept).toHaveLength(3)
+    expect(kept.every((r) => r.judgeBVersion === JUDGE_B_VERSION)).toBe(true)
+    expect(statSync(gtPath('judge-b.jsonl', env)).mode & 0o777).toBe(0o600)
+
+    // The plan sees them as done; the rerun asks the other three only, and compares all six.
+    const again = await planCalibration(deps(judgeB().registry), { evalRuns: ['eval-1'], pairs: 100, seed: 1 })
+    expect(again.cached.size).toBe(3)
+    const fresh = judgeB({ c1: ['match', 'real'] })
+    const done = await runCalibration(deps(fresh.registry), again, options())
+    expect(fresh.calls).toHaveLength(3)
+    expect(new Set(fresh.calls.map((c) => c.findings.length)).size).toBe(1)
+    expect(done).toMatchObject({ asked: 3, reused: 3 })
+    expect(done.calibration.n).toBe(12)
+    expect(done.calibration.judgeVersions).toEqual({ a: JUDGE_VERSION, b: JUDGE_B_VERSION })
+
+    // Nothing left: a third pass makes no call.
+    const none = judgeB()
+    await runCalibration(
+      deps(none.registry),
+      await planCalibration(deps(none.registry), { evalRuns: ['eval-1'], pairs: 100, seed: 1 }),
+      options(),
+    )
+    expect(none.calls).toHaveLength(0)
+  })
+
+  test('an answer recorded under another judge-b version is not reused', async () => {
+    const runs = [aRun('r1', 'c1', ['match', 'real'])]
+    const p = await plan(runs)
+    mkdirSync(join(env.AGW_EVAL_DIR as string, 'review-gt'), { recursive: true })
+    const record = {
+      runId: 'r1',
+      judgeBVersion: 'eval-judge-b-old',
+      at: '2026-11-03T10:00:00.000Z',
+      output: { findings: [], model: 'm' },
+    }
+    writeFileSync(gtPath('judge-b.jsonl', env), `${JSON.stringify(record)}\n`)
+    const b = judgeB({ c1: ['match', 'real'] })
+    const out = await runCalibration(
+      { env, judgeRuns: reader(runs), judge: b.registry, judgeRunVersions: RUN_VERSIONS },
+      p,
+      options(),
+    )
+    expect(b.calls).toHaveLength(1)
+    expect(out).toMatchObject({ asked: 1, reused: 0 })
   })
 
   test('judge b failing with an answer skips that run; any other failure stops the calibration', async () => {
@@ -276,7 +428,11 @@ describe('runCalibration', () => {
     const refuse = judgeB({ c2: ['match', 'real'] }, (input) =>
       input.caseId === 'c1' ? new CapabilityCallError('INVALID_OUTPUT', 502, 'Model output rejected', true) : undefined,
     )
-    const out = await runCalibration({ env, judgeRuns: reader(runs), judge: refuse.registry }, p, options())
+    const out = await runCalibration(
+      { env, judgeRuns: reader(runs), judge: refuse.registry, judgeRunVersions: RUN_VERSIONS },
+      p,
+      options(),
+    )
     expect(out.skippedRuns).toBe(1)
     expect(out.calibration.n).toBe(2)
     expect(out.notes.join(' ')).toContain('1 judge runs skipped')
@@ -286,9 +442,37 @@ describe('runCalibration', () => {
       () => new CapabilityCallError('UPSTREAM_ERROR', 502, 'no eval credit', true, { status: 403 }),
     )
     const stopped = await failure(
-      runCalibration({ env, judgeRuns: reader(runs), judge: noCredit.registry }, p, options()),
+      runCalibration(
+        { env, judgeRuns: reader(runs), judge: noCredit.registry, judgeRunVersions: RUN_VERSIONS },
+        p,
+        options(),
+      ),
     )
     expect(stopped.message).toContain('no eval credit')
+  })
+})
+
+describe('judge run versions', () => {
+  test('the current capability hash and the legacy ones count; the legacy hash is the one from before judge b', () => {
+    const registry = createRegistry(createCapabilities({ transports: fakeTransports({}), env: {} }))
+    const current = createCapabilityWorkflows(registry).get('eval.judge')?.version
+    expect(current).toMatch(/^[0-9a-f]{12}$/)
+    expect(judgeRunVersions(registry)).toEqual([current as string, ...LEGACY_JUDGE_RUN_VERSIONS])
+    expect(LEGACY_JUDGE_RUN_VERSIONS).toEqual(['8e1f56d6a647'])
+  })
+
+  test('the journal query returns the version the run started under', async () => {
+    const rows = [{ id: 'r1', eval_run: 'e1', input: {}, output: {}, version: 'abc' }]
+    const queries: string[] = []
+    const pool = {
+      query: async (text: string) => {
+        queries.push(text)
+        return { rows }
+      },
+    }
+    const runs = await pgJudgeRuns(pool as never, 'agw').judgeRuns(['e1'])
+    expect(runs).toEqual([{ runId: 'r1', evalRunId: 'e1', input: {}, output: {}, version: 'abc' }])
+    expect(queries[0]).toContain('version_started')
   })
 })
 
@@ -318,7 +502,7 @@ describe('agw eval gt calibrate', () => {
     const { registry, calls } = judgeB({ c1: ['match', 'real'] })
     const host = await startTestHost({
       prefix: 'evalgtplan',
-      extra: createEvalGtWorkflows({ registry, env, judgeRuns: reader(runs) }),
+      extra: createEvalGtWorkflows({ registry, env, judgeRuns: reader(runs), judgeRunVersions: RUN_VERSIONS }),
     })
     try {
       const { body } = await host.json(
@@ -355,6 +539,7 @@ describe('agw eval gt calibrate', () => {
         registry,
         env,
         judgeRuns: reader(runs),
+        judgeRunVersions: RUN_VERSIONS,
         now: () => new Date('2026-11-03T10:00:00Z'),
       }),
     })
@@ -368,7 +553,12 @@ describe('agw eval gt calibrate', () => {
       )
       expect(body.status).toBe('done')
       const out = body.output as Body
-      expect(out).toMatchObject({ spent: true, limit: GT_LIMIT, calibration: { kappa: 1, met: true, n: 20 } })
+      expect(out).toMatchObject({
+        spent: true,
+        limit: GT_LIMIT,
+        calibration: { kappa: 1, met: true, n: 20, judgeVersions: { a: JUDGE_VERSION, b: JUDGE_B_VERSION } },
+        judgeB: { asked: 10, reused: 0, skippedAnswers: 0 },
+      })
       expect(out.scorer).toContain('one judge (a)')
       expect(calls).toHaveLength(10)
       const path = gtPath('judge-calibration.json', env)
@@ -378,7 +568,7 @@ describe('agw eval gt calibrate', () => {
       expect(file).toMatchObject({
         at: '2026-11-03T10:00:00.000Z',
         evalRuns: ['eval-1'],
-        judgeVersion: JUDGE_VERSION,
+        judgeVersions: { a: JUDGE_VERSION, b: JUDGE_B_VERSION },
         limit: GT_LIMIT,
       })
       // aggregates only: no finding text, case id or run id

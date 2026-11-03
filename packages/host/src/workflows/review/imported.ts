@@ -2,7 +2,7 @@ import type { GtCase } from '@agent-workflows/eval'
 import { defineWorkflow, type Scorer } from '@agent-workflows/runtime'
 import { z } from 'zod'
 import type { HostWorkflow } from '../../operations.ts'
-import { type ReviewResult, REVIEW_SCHEMA_VERSION, ReviewOutput } from './schema.ts'
+import { type ReviewInputValue, type ReviewResult, REVIEW_SCHEMA_VERSION, ReviewOutput } from './schema.ts'
 import { reviewScorer } from './scorer.ts'
 
 export const IMPORTED_REVIEW_ID = 'review.imported'
@@ -62,11 +62,12 @@ export function importedReview(input: z.output<typeof ImportedReviewInput>): Rev
 
 /**
  * The review scorer on this workflow's input: it reads the output and the reference only (`_input` is unused), so it
- * gets a valid placeholder review input.
+ * gets a valid placeholder review input. The scorer is the review workflow's own instance (same mode, same version).
  */
-const importedScorer: Scorer<z.output<typeof ImportedReviewInput>, GtCase> = {
-  ...reviewScorer,
-  score: (_input, output, ctx) => reviewScorer.score({ cwd: '/' }, output, ctx),
+function importedScorerOf(
+  scorer: Scorer<ReviewInputValue, GtCase>,
+): Scorer<z.output<typeof ImportedReviewInput>, GtCase> {
+  return { ...scorer, score: (_input, output, ctx) => scorer.score({ cwd: '/' }, output, ctx) }
 }
 
 /**
@@ -74,13 +75,15 @@ const importedScorer: Scorer<z.output<typeof ImportedReviewInput>, GtCase> = {
  * into a review output, so `agw eval import` scores it with the review scorer (same version, same judge) like every
  * arm. Internal: only `eval.import` starts it.
  */
-export function createImportedReviewWorkflow(): HostWorkflow {
+export function createImportedReviewWorkflow(
+  options: { scorer?: Scorer<ReviewInputValue, GtCase> } = {},
+): HostWorkflow {
   const workflow = defineWorkflow({
     id: IMPORTED_REVIEW_ID,
     version: IMPORTED_REVIEW_VERSION,
     input: ImportedReviewInput,
     output: ReviewOutput,
-    scorer: importedScorer,
+    scorer: importedScorerOf(options.scorer ?? reviewScorer),
     async run(ctx, input) {
       return await ctx.step('build', () => importedReview(input))
     },

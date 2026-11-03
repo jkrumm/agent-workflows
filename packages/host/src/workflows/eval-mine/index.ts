@@ -24,7 +24,6 @@ import {
   readOwnerEmails,
   readRecords,
   rebuildCases,
-  replaceLabel,
   type Versions,
   type Warn,
   writeCandidates,
@@ -329,10 +328,14 @@ async function labelEstimate(
   warn: Warn,
 ): Promise<{ runs: number; meanCost: number | null }> {
   if (!history) return { runs: 0, meanCost: null }
-  const labelsByRun = new Map<string, number>()
+  // A candidate counts once per run, whatever number of lines it has: seat `c` is added by appending the record again.
+  const candidatesByRun = new Map<string, Set<string>>()
   for (const record of readRecords('labels.jsonl', GtLabelRecord, env, warn)) {
-    labelsByRun.set(record.runId, (labelsByRun.get(record.runId) ?? 0) + 1)
+    const seen = candidatesByRun.get(record.runId) ?? new Set<string>()
+    seen.add(record.candidateId)
+    candidatesByRun.set(record.runId, seen)
   }
+  const labelsByRun = new Map([...candidatesByRun].map(([runId, ids]) => [runId, ids.size]))
   const costs = await history.labelStepCosts({ runIds: [...labelsByRun.keys()], limit: ESTIMATE_HISTORY })
   const priced = costs.filter((step) => labelsByRun.has(step.runId))
   const candidates = priced.reduce((sum, step) => sum + (labelsByRun.get(step.runId) ?? 0), 0)
@@ -378,7 +381,8 @@ type Labelling = {
 }
 
 /**
- * First adds the third labeller to every record that lacks it (in place, `replaceLabel`), then labels the next
+ * First adds the third labeller to every record that lacks it (the record appended again with `c`, the latest line of a
+ * candidate wins), then labels the next
  * unlabelled candidates, `concurrency` at a time, each record appended as its candidate finishes (a candidate whose two
  * labellers disagree gets the third in the same record). A resumed run counts the records it already wrote (by run id)
  * against `wanted`. Stops taking work at the first failure that is not a seat answer. Those in flight always finish
@@ -422,7 +426,7 @@ async function runLabelling(job: Labelling): Promise<{ labelled: number; thirdSe
           if (task.record) {
             // A third seat that stopped leaves the record as it was: nothing to write.
             if (outcome.record !== task.record) {
-              replaceLabel(outcome.record, job.env, job.warn)
+              appendLabel(outcome.record, job.env)
               thirdSeat++
             }
           } else {

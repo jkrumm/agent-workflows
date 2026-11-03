@@ -52,6 +52,7 @@ export {
   GtRepo,
   GtSplit,
   gtPath,
+  JudgeBRecord,
   JudgeCalibration,
   JudgeClass,
   JudgeInput,

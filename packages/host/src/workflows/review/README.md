@@ -152,7 +152,7 @@ with their routes.
 
 ## Scorer
 
-`scorer.ts` (version `2026-11-03.v4+<judge version>+judges:single|dual`) scores a run against a ground-truth case (`GtCase`,
+`scorer.ts` (version `2026-11-03.v4+<judge a version>+judges:single`, or `…+<judge a version>+<judge b version>+judges:dual`) scores a run against a ground-truth case (`GtCase`,
 `docs/review-v2.md` §The eval); `agw eval run review` reads those cases from `$AGW_EVAL_DIR/review-gt/cases.jsonl`
 (the module's `suite.path`), checks each commit out in an isolated clone (`materialize` `isolate`: no ref and no shared
 object store, so no later fix is reachable) and reviews it as `scope: 'head'` at the review's own depth unless the arm's `args` set one. The
@@ -163,11 +163,12 @@ object store, so no later fix is reachable) and reviews it as `scope: 'head'` at
   bug's file, paths normalized, or naming its basename); the judge decides.
 - **Judges.** One `eval.judge` call (judge `a`) per scored run with at least one finding (the commit's diff from
   `$HOME/<repo>`, read-only) when the judges' calibration clears the bar: `$AGW_EVAL_DIR/review-gt/judge-calibration.json`
-  exists for the current judge version and κ ≥ 0.8 (`agw eval gt calibrate`); mode `single`. Otherwise (below the bar,
-  missing, unreadable, another judge version) mode `dual`: judge `a` and judge `b` (`seat: 'b'`, same input, in
+  exists for the current versions of both judges and κ ≥ 0.8 (`agw eval gt calibrate`); mode `single`. Otherwise (below
+  the bar, missing, unreadable, either judge changed) mode `dual`: judge `a` and judge `b` (`seat: 'b'`, same input, in
   parallel), and a finding they classify differently is `unclear`, so a split on the bug match is no match. A failing
-  second judge fails the scoring (the runtime retries it); it never falls back to one judge. The mode is read once, when
-  the host starts, and is part of the scorer version, so `compare` refuses to mix modes. The verdict's notes say which
+  second judge fails the scoring (the runtime retries it); it never falls back to one judge. The mode is resolved when the
+  host builds its scorers (`module.ts` calls `resolveReviewScorer`, which logs the mode and the reason once; nothing is
+  read at import, and `createReviewScorer({ mode })` is what tests use), so it holds for the process, and is part of the scorer version, so `compare` refuses to mix modes. The verdict's notes say which
   mode ran (and, in dual, how many findings the judges classified differently) and carry the limit of the ground truth,
   `limit: LLM consensus (labellers a/b/c, judges a/b), no human check`. No finding, or drift (no reference): no call, no note.
 - Bug case: `recall` (an important finding judged `match`), `detected` (any finding judged `match`),

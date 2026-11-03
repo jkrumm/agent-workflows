@@ -152,8 +152,10 @@ case. The 138 legacy review cases are retired from decisions.
   inputs of 100 pairs, half judge-positive and half judge-negative, **including plausible wrong findings** (judges catch
   only 21 to 38 % of those on CRJudgeBench). It reports Cohen's κ between the two judges with its 95 % interval, the raw
   agreement, the confusion table and the agreement on the classes of unmatched findings, in
-  `review-gt/judge-calibration.json` (aggregates only). The bar is κ ≥ 0.8. At or above it, for this judge version,
-  the scorer asks judge `a` alone. Below it, missing, or for another judge version, the scorer asks both judges, and
+  `review-gt/judge-calibration.json` (aggregates only, with both judges' versions). Only judge-`a` calls of the current
+  capability version are re-asked, and each judge-`b` answer is kept as it arrives, so a stopped calibration resumes
+  without paying twice. The bar is κ ≥ 0.8. At or above it, for the current versions of both judges, the scorer asks
+  judge `a` alone. Below it, missing, or after either judge changed, the scorer asks both judges, and
   a finding they classify differently is scored `unclear` (a split on the bug match is no match). The mode is part of
   the scorer version, so `compare` refuses to mix modes. The scorer reads the file when the host starts. The limit is
   the same: the judges agree with each other, no human checked either.

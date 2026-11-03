@@ -92,28 +92,19 @@ const endsWithNewline = (path: string) => {
 
 /**
  * Appends one record (mode 0600): the labels file is written as each candidate finishes, so a crash keeps the rest.
+ * A record that gains seat `c` is appended again whole; the latest line of a candidate wins (`latestLabels`).
  * A file whose last line was torn gets a line break first, so the new record is a line of its own.
  */
 export function appendLabel(record: GtLabelRecord, env: Env): void {
-  const path = gtPath('labels.jsonl', env)
-  privateDir(dirname(path))
-  const lead = existsSync(path) && !endsWithNewline(path) ? '\n' : ''
-  appendFileSync(path, `${lead}${JSON.stringify(GtLabelRecord.parse(record))}\n`, { mode: 0o600 })
+  appendRecord('labels.jsonl', GtLabelRecord, record, env)
 }
 
-/**
- * Replaces the latest record of a candidate (the same `labelerVersion`) with `record`, the whole file rewritten
- * atomically: a record gains its seat `c` in place, so a crash leaves the old file or the new one, never half. Throws
- * when there is nothing to replace.
- */
-export function replaceLabel(record: GtLabelRecord, env: Env, warn: Warn): void {
-  const all = readRecords('labels.jsonl', GtLabelRecord, env, warn)
-  const at = all.findLastIndex(
-    (r) => r.candidateId === record.candidateId && r.labelerVersion === record.labelerVersion,
-  )
-  if (at < 0) throw new Error(`labels.jsonl has no record of ${record.candidateId} to update`)
-  all[at] = GtLabelRecord.parse(record)
-  writeFileAtomic(gtPath('labels.jsonl', env), `${all.map((r) => JSON.stringify(r)).join('\n')}\n`)
+/** Appends one validated record to a `review-gt` JSONL file (mode 0600), after a line break if its last line was torn. */
+export function appendRecord<T extends z.ZodType>(file: GtFile, schema: T, record: z.input<T>, env: Env): void {
+  const path = gtPath(file, env)
+  privateDir(dirname(path))
+  const lead = existsSync(path) && !endsWithNewline(path) ? '\n' : ''
+  appendFileSync(path, `${lead}${JSON.stringify(schema.parse(record))}\n`, { mode: 0o600 })
 }
 
 /** `report.json`, atomically. */
