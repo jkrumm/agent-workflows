@@ -172,14 +172,15 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
 
 ## Next action
 - Wave 20 done (agw `4bd04cc`). No wave active: Wave 11 (review v4 measure and tune) starts 2026-11-17; flip it
-  active then and spawn its lead. Until then the fleet is idle. Quota
+  active then and spawn its lead (its first step: the me2 pool, above). Until then the fleet is idle. Quota
   2026-11-03 15:00: me2 76 % week (resets 11-08), me and iu 95 % (iu resets 11-04 16:00, me 11-05). Quota is the constraint: me/iu ~94 % of the week, me2 carries the fleet.
 - Wave 15 done (`b2701de`). Every pending wave (9–12, 14) depends on review v3; the fleet idles until the owner signs.
   First step of Wave 9 then: the credit-bound suite runs from Wave 15's Left behind.
 - On the owner's sign-off of review v3 (5 points in lead.md `d7bdc76`): rewrite Waves 9–11 from the close-out's proposal
   (Wave 12 loses review's seats), then flip Wave 9 active and spawn its lead. Cross-repo asks (dotfiles agents + `/review`, software-factory `reviewer` role) go into the waves.
 - Owner changes to the five points: fold them into the rewrite; a rejected pick goes back to a short Wave 17 follow-up.
-- Still owed by the owner: me2 keys and expiry day (+$100 a cycle; eval credit is the bottleneck now).
+- 2026-11-03 owner: me2 $100 credit granted, key in 1Password. First step of the next wave: seed it into the mini's
+  headless cache (`ask-human.sh` + `make secrets-seed`), enable the me2 pool in the gateway, live call.
 - Wake-loop: the factory re-fires `workers done` while the lead idles on shells. Answer with a blocking ~9.5-min poll on
   lead.md (bash loop with perl select, foreground timeout 590 s; `rd read` under `timeout 15`), not a bare re-declare.
 - `rd wave`'s gate checks only the predecessor in file order and needs `- [x]` steps there; waiting waves get a non-`active`
