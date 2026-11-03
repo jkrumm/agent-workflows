@@ -387,7 +387,7 @@ async function cloneForRefUnsafe(
 }
 
 /** `cloneForRefUnsafe`; whatever it throws after the clone exists removes the clone and comes back as the error. */
-async function cloneForRef(
+export async function cloneForRef(
   ports: ReviewPorts,
   cwd: string,
   key: string,

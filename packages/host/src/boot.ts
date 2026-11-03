@@ -28,6 +28,8 @@ import { type LearningsStore, pgLearningsStore, withLearnedFacts, withLearningsF
 import { argoTimerEnabled, hostFleet, startArgoSchedule } from './fleet/index.ts'
 import { fleetOperations } from './fleet/operations.ts'
 import { createImageDoor, type ImageDoor, type ImageDoorOptions, type ServerHandle } from './image-door/index.ts'
+import { createReviewService, reviewOperations } from './review/index.ts'
+import { gitRunner } from './review/route.ts'
 import { type HostOperation, type HostWorkflow, IDLE_TIMEOUT_S, MAX_REQUEST_BODY_BYTES } from './operations.ts'
 import { evalMineAutoPorts, pgLabelStepCosts } from './workflows/eval-mine/history.ts'
 import { pgLatestOverview, pgRunPurpose } from './workflows/overview/latest.ts'
@@ -494,6 +496,7 @@ export interface HostBootOptions extends BootOptions {
 export function hostProcess(config: HostConfig, door?: ImageDoorOptions): ProcessDefinition {
   let journal: ReturnType<typeof pgJournalReader> | undefined
   let fleet: ReturnType<typeof hostFleet> | undefined
+  let reviewOps: Record<string, HostOperation> = {}
   let imageDoor: ImageDoor | undefined
   let runtime: Runtime | undefined
   let open = () => false
@@ -541,6 +544,30 @@ export function hostProcess(config: HostConfig, door?: ImageDoorOptions): Proces
         : undefined
       usagePool?.on('error', (err) => console.warn('[agw-host] usage pool: idle connection error', err.message))
       if (usagePool) onClose(() => usagePool.end())
+      // Review v4's ledger (`agw review prepare|submit|…`): its own small pool, jobs beside v1's clones in the state dir.
+      const reviewPool = new Pool({
+        connectionString: base.pgUrl,
+        max: 2,
+        application_name: `agw-host:${base.schema}:review-ledger`,
+        query_timeout: 30_000,
+        statement_timeout: 30_000,
+      })
+      reviewPool.on('error', (err) => console.warn('[agw-host] review ledger pool: idle connection error', err.message))
+      onClose(() => reviewPool.end())
+      const quota = fleet.fleet.quota
+      reviewOps = reviewOperations(
+        createReviewService({
+          pool: reviewPool,
+          schema: base.schema,
+          stateDir: DEFAULT_STATE_DIR,
+          git: gitRunner,
+          env,
+          quota: async (account) => {
+            const reading = (await quota.accounts())[account]
+            return reading ? { fiveHour: reading.five_hour_pct, sevenDay: reading.seven_day_pct } : null
+          },
+        }),
+      )
       // The audio process's suites and scorers: `agw eval run|compare` replay its workflows, which it drives.
       const tree = await loadForeignTree(AUDIO_MODULES_DIR, logger)
       foreign = tree.workflows
@@ -586,7 +613,7 @@ export function hostProcess(config: HostConfig, door?: ImageDoorOptions): Proces
       return mounted ? [(request, url, server) => mounted.route(request, url, server)] : []
     },
     foreign: () => foreign,
-    reads: () => (fleet ? fleetOperations(fleet.fleet) : {}),
+    reads: () => ({ ...(fleet ? fleetOperations(fleet.fleet) : {}), ...reviewOps }),
     jobs({ runtime, workflows, env, onClose, logger }) {
       // Eval runs reach the runtime before it opens (recovery may resume one); drift scores sampled production runs.
       const evalJobs = wireEval({ runtime, workflows: [...workflows], foreign, env })
