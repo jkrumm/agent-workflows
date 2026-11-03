@@ -102,8 +102,9 @@ run, run, workflow, step, purpose, project, workspace, `traceparent`) comes from
 own run (`door.speech` / `door.transcriptions`, step `request`, a root run), the synth unit step, the cover step, the
 podcast step through `Llm`.
 
-`@agent-workflows/audio/testing` is the fake gateway (`startFakeGateway`, env `AGW_GATEWAY_URL` / `AGW_API_SECRET`): a real socket
-that answers the four path families and records every request with its headers.
+The fake gateway (`startFakeGateway`, env `AGW_GATEWAY_URL` / `AGW_API_SECRET`) lives in `@agent-workflows/testing/gateway`: a real socket
+that answers the four path families and records every request with its headers. `src/testing/index.ts` keeps what is built on the lanes' own
+ports (`testDeps`, `testConfig`, `fakeMedia`, `recordingUsage`, the instant clock) and is used by this package's tests only.
 
 **Text calls dispatch on the route's wire.** `callPrepLlm` (the prep and summary LLMs) speaks `iu-openai` (chat
 completions) or `anthropic` (Messages: adaptive thinking with the route's effort, `x-agw-fallback: none`). The seats

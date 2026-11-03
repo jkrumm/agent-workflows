@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { messageResponse, startFakeGateway } from '@agent-workflows/capabilities/testing'
+import { messageResponse, startFakeGateway } from '@agent-workflows/testing/gateway'
 import { PlainCase, readCases } from '@agent-workflows/eval'
 import { createFactoryClassify } from '../src/workflows/factory-classify/index.ts'
 import { CASES_PATH } from '../src/workflows/factory-classify/module.ts'

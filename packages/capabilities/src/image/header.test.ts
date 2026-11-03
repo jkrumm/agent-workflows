@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { displayedSize, readHeader } from './header.ts'
 import { decodeAlphaStats } from './png.ts'
-import { type PngFilter, pngFixture, webpFixture } from './testing.ts'
+import { type PngFilter, pngFixture, webpFixture } from '@agent-workflows/testing/image-server'
 
 const u16 = (n: number) => [(n >> 8) & 255, n & 255]
 

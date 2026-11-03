@@ -10,7 +10,13 @@ import { createImageCapabilities } from './index.ts'
 import { magicBytesValid, readPng } from './png.ts'
 import { SIZE_PRESETS, snapSize, validateSize } from './size.ts'
 import { pickRoute } from './generate.ts'
-import { b64, type FakeHandler, pngFixture, startFakeImageServer, webpFixture } from './testing.ts'
+import {
+  b64,
+  type FakeHandler,
+  pngFixture,
+  startFakeImageServer,
+  webpFixture,
+} from '@agent-workflows/testing/image-server'
 import { decodeAlphaStats } from './png.ts'
 
 // A fake IU endpoint on a real socket answering the images API and Replicate; Replicate's CDN is a map inside `fetch`.

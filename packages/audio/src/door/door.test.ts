@@ -6,13 +6,10 @@ import {
   audioEvent,
   type FakeGateway,
   geminiAudio,
-  hasFfmpeg,
-  realMedia,
   startFakeGateway,
   streamBody,
-  testDeps,
-  toneFile,
-} from '../testing/index.ts'
+} from '@agent-workflows/testing/gateway'
+import { hasFfmpeg, realMedia, testDeps, toneFile } from '../testing/index.ts'
 import type { RequestEvent, UsageEvent } from '../usage.ts'
 import { createSpeechHandler } from './speech.ts'
 import { createTranscriptionsHandler } from './transcriptions.ts'

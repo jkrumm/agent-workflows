@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createCapabilities, createRegistry } from '@agent-workflows/capabilities'
-import { fakeTransports } from '@agent-workflows/capabilities/testing'
+import { fakeTransports } from '@agent-workflows/testing/transports'
 import {
   type OpenCodeHandle,
   OpenCodeHost,

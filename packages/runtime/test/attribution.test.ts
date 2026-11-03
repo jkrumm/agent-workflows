@@ -5,7 +5,7 @@ import {
   createRegistry,
   gatewayTransports,
 } from '@agent-workflows/capabilities'
-import { type FakeGateway, messageResponse, startFakeGateway } from '@agent-workflows/capabilities/testing'
+import { type FakeGateway, messageResponse, startFakeGateway } from '@agent-workflows/testing/gateway'
 import { z } from 'zod'
 import { type Attribution, defineWorkflow, type StepScope } from '../src/index.ts'
 import { freshSchema, testRuntime } from './support/pg.ts'

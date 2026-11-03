@@ -1,6 +1,6 @@
 import { afterAll, afterEach, describe, expect, test } from 'bun:test'
 import { defineWorkflow, type Middleware, type Runtime } from '@agent-workflows/runtime'
-import { FakeAgentHost } from '@agent-workflows/runtime/testing'
+import { FakeAgentHost } from '@agent-workflows/testing/agent-host'
 import { z } from 'zod'
 import {
   type CapDecision,

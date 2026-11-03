@@ -5,7 +5,7 @@ import type { AttemptUsage } from './transports/port.ts'
 import { CapabilityError } from './errors.ts'
 import fixture from './fixtures/anthropic-1h-cache-write.json'
 import { complete } from './llm/model-call.ts'
-import { chatStream, type FakeGateway, startFakeGateway } from './testing/index.ts'
+import { chatStream, type FakeGateway, startFakeGateway } from '@agent-workflows/testing/gateway'
 import {
   anthropicWire,
   gatewayConfig,

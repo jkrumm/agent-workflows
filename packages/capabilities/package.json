@@ -4,8 +4,7 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts",
-    "./testing": "./src/testing/index.ts"
+    ".": "./src/index.ts"
   },
   "scripts": {
     "test": "bun test --isolate"
@@ -18,5 +17,8 @@
     "@orpc/zod": "1.16.1",
     "unpdf": "1.9.1",
     "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@agent-workflows/testing": "workspace:*"
   }
 }

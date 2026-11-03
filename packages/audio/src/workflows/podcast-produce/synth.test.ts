@@ -2,7 +2,8 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import { createAudioScope } from '../../scope.ts'
 import { DELIVERY_STYLES } from '../../speech/core.ts'
 import { ReplicateSynthError } from '../../speech/replicate.ts'
-import { caught, type FakeGateway, geminiAudio, startFakeGateway, testDeps } from '../../testing/index.ts'
+import { type FakeGateway, geminiAudio, startFakeGateway } from '@agent-workflows/testing/gateway'
+import { caught, testDeps } from '../../testing/index.ts'
 import type { CallEvent, UsageEvent } from '../../usage.ts'
 import type { HostValue } from '../podcast/schema.ts'
 import { setProduceLogger } from './log.ts'
@@ -291,7 +292,7 @@ function scopeOf(handlers: Parameters<typeof startFakeGateway>[0]) {
 interface GeminiBody {
   contents: Array<{ parts: Array<{ text: string; speechMetadata: { speaker: string; style?: string } }> }>
 }
-const geminiBodies = () => iu.requests.filter((r) => r.route === 'gemini').map((r) => r.json as unknown as GeminiBody)
+const geminiBodies = () => iu.requests.filter((r) => r.route === 'gemini').map((r) => r.body as unknown as GeminiBody)
 
 describe('synthesizeUnit: gemini lane', () => {
   const lane: Extract<TtsLane, { kind: 'gemini' }> = {
@@ -363,7 +364,7 @@ describe('synthesizeUnit: gemini lane', () => {
 
   test('a 5xx is retried once and the second answer wins', async () => {
     const { scope } = scopeOf({
-      gemini: (_request, attempt) => (attempt === 1 ? new Response('boom', { status: 500 }) : gemini()),
+      gemini: (_request, attempt) => (attempt === 0 ? new Response('boom', { status: 500 }) : gemini()),
     })
     const turns = turnsForSynthesis([{ title: 'S', turns: [{ speaker: 'A', text: 'Hallo.' }] }], HOSTS, 'de')
     const out = await synthesizeUnit(scope, lane, turns, { turnIndexes: [0] })
@@ -405,7 +406,7 @@ describe('synthesizeUnit: replicate lane', () => {
   const predictionInputs = () =>
     iu.requests
       .filter((r) => r.route === 'replicateCreate')
-      .map((r) => (r.json as { input: Record<string, unknown> }).input)
+      .map((r) => (r.body as { input: Record<string, unknown> }).input)
 
   test('one prediction per turn with its voice, speed, language and lane settings', async () => {
     const { deps, scope } = scopeOf(handlers())
@@ -480,7 +481,7 @@ describe('synthesizeUnit: replicate lane', () => {
     const { scope } = scopeOf({
       ...handlers(),
       replicateCreate: (_request, attempt) =>
-        attempt === 1 ? Response.json({ id: 'pf', status: 'failed', error: 'voice busy' }) : succeeded(),
+        attempt === 0 ? Response.json({ id: 'pf', status: 'failed', error: 'voice busy' }) : succeeded(),
     })
     const turns = turnsForSynthesis([{ title: 'S', turns: [{ speaker: 'A', text: 'Hallo.' }] }], HOSTS, 'de')
     const out = await synthesizeUnit(scope, lane, turns, { turnIndexes: [0] })

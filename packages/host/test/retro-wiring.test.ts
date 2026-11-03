@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { createCapabilities, createRegistry } from '@agent-workflows/capabilities'
 import { rejection } from './support.ts'
-import { fakeTransports } from '@agent-workflows/capabilities/testing'
+import { fakeTransports } from '@agent-workflows/testing/transports'
 import { loadConfig } from '../src/config.ts'
 import { ghCli } from '../src/workflows/retrospective/gh.ts'
 import { ToolGate } from '../src/tool-gate/index.ts'

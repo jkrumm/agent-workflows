@@ -4,7 +4,7 @@ import type { Usage } from '../context.ts'
 import { CapabilityError } from '../errors.ts'
 import { resolveImageDeps } from './deps.ts'
 import { type ImagePartial, type ImageRequest, requestImages } from './studio.ts'
-import { b64, type FakeHandler, pngFixture, startFakeImageServer } from './testing.ts'
+import { b64, type FakeHandler, pngFixture, startFakeImageServer } from '@agent-workflows/testing/image-server'
 
 const fake = startFakeImageServer()
 const POST_GEN = '/openai/v1/images/generations'

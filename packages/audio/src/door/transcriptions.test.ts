@@ -4,14 +4,8 @@ import { ffmpegMedia, type MediaPort } from '../media/audio.ts'
 import { audioRoutes } from '../routes.ts'
 
 const ROUTES = audioRoutes()
-import {
-  type FakeGateway,
-  type FakeRequest,
-  hasFfmpeg,
-  startFakeGateway,
-  testDeps,
-  toneFile,
-} from '../testing/index.ts'
+import { type FakeGateway, type RecordedRequest, startFakeGateway } from '@agent-workflows/testing/gateway'
+import { hasFfmpeg, testDeps, toneFile } from '../testing/index.ts'
 import type { CallEvent, RequestEvent, UsageEvent } from '../usage.ts'
 import { createTranscriptionsHandler } from './transcriptions.ts'
 
@@ -35,7 +29,7 @@ afterEach(() => iu?.stop())
 const media = ffmpegMedia({ mp3BitrateKbps: 48, opusBitrateKbps: 32 })
 
 function setup(
-  transcriptions: (r: FakeRequest, attempt: number) => Response | Promise<Response>,
+  transcriptions: (r: RecordedRequest, attempt: number) => Response | Promise<Response>,
   opts: { config?: Partial<AudioConfig>; media?: MediaPort } = {},
 ) {
   iu = startFakeGateway({ transcriptions })
@@ -52,7 +46,7 @@ function post(audio: Uint8Array<ArrayBuffer>, fields: Record<string, string> = {
 
 const calls = (events: UsageEvent[]) => events.filter((e): e is CallEvent => e.kind === 'call')
 const summary = (events: UsageEvent[]) => events.find((e): e is RequestEvent => e.kind === 'request')
-const fileName = (r: FakeRequest) => (r.form?.get('file') as File | null)?.name ?? ''
+const fileName = (r: RecordedRequest) => (r.form?.get('file') as File | null)?.name ?? ''
 const sentModels = () => iu.requests.map((r) => r.form?.get('model'))
 const voxtralBody = (text = 'Hallo Welt') =>
   Response.json({ model: VOXTRAL, text, language: null, segments: [], usage: { prompt_audio_seconds: 6 } })
@@ -260,7 +254,7 @@ describe.skipIf(!hasFfmpeg)('transcriptions door', () => {
       })
       const res = await transcribe(post(twoSeconds))
       expect(res.status).toBe(200)
-      expect(fileName(iu.requests[0] as FakeRequest)).toBe('clip.wav')
+      expect(fileName(iu.requests[0] as RecordedRequest)).toBe('clip.wav')
     })
 
     test('an overlong clip under the byte limit is split on duration alone, at silence-snapped cuts', async () => {

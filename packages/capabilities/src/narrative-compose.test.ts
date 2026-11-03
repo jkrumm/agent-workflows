@@ -8,7 +8,7 @@ import { buildNarrativePrompt } from './capabilities/narrative-compose.ts'
 import type { Usage } from './context.ts'
 import { CapabilityCallError } from './errors.ts'
 import { createRegistry } from './registry.ts'
-import { fakeTransports } from './testing/index.ts'
+import { fakeTransports } from '@agent-workflows/testing/transports'
 
 const dir = mkdtempSync(join(tmpdir(), 'agw-narrative-compose-'))
 afterAll(() => rmSync(dir, { recursive: true, force: true }))

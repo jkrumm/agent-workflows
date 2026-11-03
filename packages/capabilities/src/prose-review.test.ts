@@ -6,7 +6,7 @@ import { reviewRouteRefusal } from './capabilities/prose-review.ts'
 import type { Attribution, Usage } from './context.ts'
 import { CapabilityCallError, CapabilityError } from './errors.ts'
 import { createRegistry } from './registry.ts'
-import { fakeTransports } from './testing/index.ts'
+import { fakeTransports } from '@agent-workflows/testing/transports'
 
 const SCORES = {
   verdict_first: 4,

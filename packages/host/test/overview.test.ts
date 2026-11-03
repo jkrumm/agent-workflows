@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
-import { messageResponse, startFakeGateway } from '@agent-workflows/capabilities/testing'
+import { messageResponse, startFakeGateway } from '@agent-workflows/testing/gateway'
 import { resolveRoute } from '@agent-workflows/routes'
 import { createArgoPush } from '../src/fleet/argo.ts'
 import type { FactoryFleet, FactorySession } from '../src/fleet/factory.ts'

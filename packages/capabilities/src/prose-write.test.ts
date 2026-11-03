@@ -7,7 +7,7 @@ import { MAX_BRIEF_FINDINGS, MAX_BRIEF_NOTES, VOICE_MAX_BYTES, writerData } from
 import type { Usage } from './context.ts'
 import { CapabilityCallError } from './errors.ts'
 import { createRegistry } from './registry.ts'
-import { fakeTransports } from './testing/index.ts'
+import { fakeTransports } from '@agent-workflows/testing/transports'
 
 const dir = mkdtempSync(join(tmpdir(), 'agw-prose-write-'))
 afterAll(() => rmSync(dir, { recursive: true, force: true }))

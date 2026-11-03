@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { buildDigestPrompt, checkAnswers, type DigestItem } from '@agent-workflows/capabilities'
-import { messageResponse, startFakeGateway } from '@agent-workflows/capabilities/testing'
+import { messageResponse, startFakeGateway } from '@agent-workflows/testing/gateway'
 import { PlainCase, readCases } from '@agent-workflows/eval'
 import { resolveRoute } from '@agent-workflows/routes'
 import { createDigest } from '../src/workflows/digest/index.ts'

@@ -7,21 +7,16 @@ import { createAudioScope } from './scope.ts'
 import { callPrepLlm, GEMINI_PREP_SYSTEM_PROMPT } from './speech/prep.ts'
 import {
   audioEvent,
-  caught,
   type FakeGateway,
   type FakeRoute,
   geminiAudio,
-  hasFfmpeg,
   messageAnswer,
   prepAnswer,
   prepMessage,
-  realMedia,
   startFakeGateway,
   streamBody,
-  TEST_TOKEN,
-  testDeps,
-  toneFile,
-} from './testing/index.ts'
+} from '@agent-workflows/testing/gateway'
+import { caught, hasFfmpeg, realMedia, TEST_TOKEN, testDeps, toneFile } from './testing/index.ts'
 import type { CallEvent } from './usage.ts'
 
 const ROUTES = audioRoutes()
@@ -260,15 +255,15 @@ describe('the prep call on the route wire', () => {
     expect(h?.get('x-agw-usage')).toBeNull()
     expect(h?.get('x-agw-session')).toBe('root-1')
     expect(h?.get('x-agw-step')).toBe('synth')
-    expect(request?.json).toMatchObject({
+    expect(request?.body).toMatchObject({
       model: 'seat-model',
       system: GEMINI_PREP_SYSTEM_PROMPT,
       messages: [{ role: 'user', content: 'Hallo.' }],
       thinking: { type: 'adaptive' },
       output_config: { effort: 'low' },
     })
-    expect(request?.json).not.toHaveProperty('reasoning_effort')
-    expect(request?.json).not.toHaveProperty('max_completion_tokens')
+    expect(request?.body).not.toHaveProperty('reasoning_effort')
+    expect(request?.body).not.toHaveProperty('max_completion_tokens')
     // Priced from the Messages usage at the route's rate: the run record does not change.
     expect(calls(deps)).toMatchObject([
       { endpoint: 'speech-prep', model: 'seat-model', costSource: 'rate', inputTokens: 1000, outputTokens: 200 },
@@ -286,7 +281,7 @@ describe('the prep call on the route wire', () => {
     expect(prep.chunks).toHaveLength(1)
     expect(gateway.requests.map((r) => r.route)).toEqual(['messages', 'chat'])
     const fallback = gateway.requests[1]
-    expect(fallback?.json).toMatchObject({ model: 'fallback-model', reasoning_effort: 'low' })
+    expect(fallback?.body).toMatchObject({ model: 'fallback-model', reasoning_effort: 'low' })
     expect(fallback?.headers.get('x-agw-fallback')).toBeNull()
     expect(fallback?.headers.get('x-agw-usage')).toBeNull()
     expect(fallback?.headers.get('x-agw-session')).toBe('root-1')
@@ -366,11 +361,11 @@ describe('the prep call on the route wire', () => {
   test('a 503 whose body names the balance goes to the fallback at once: one send, not three', async () => {
     gateway = startFakeGateway({
       chat: (r) =>
-        r.json?.model === 'primary-model' ? new Response(BALANCE_503, { status: 503 }) : prepAnswer(JSON.parse(PREP)),
+        r.body.model === 'primary-model' ? new Response(BALANCE_503, { status: 503 }) : prepAnswer(JSON.parse(PREP)),
     })
     const { scope, deps } = openaiScope('low', true)
     await callPrepLlm(scope, input)
-    expect(gateway.requests.map((r) => r.json?.model)).toEqual(['primary-model', 'fallback-model'])
+    expect(gateway.requests.map((r) => r.body.model)).toEqual(['primary-model', 'fallback-model'])
     expect(scope.meta.retries).toBe(0)
     expect(calls(deps)).toMatchObject([
       { model: 'primary-model', status: 503, costSource: 'not-billed' },
@@ -392,9 +387,9 @@ describe('the prep call on the route wire', () => {
       messages: () => messageAnswer(PREP),
     })
     await callPrepLlm(openaiScope('none', false).scope, input)
-    expect(gateway.requests[0]?.json).toMatchObject({ reasoning_effort: 'none' })
+    expect(gateway.requests[0]?.body).toMatchObject({ reasoning_effort: 'none' })
     await callPrepLlm(openaiScope(undefined, false).scope, input)
-    expect(gateway.requests[1]?.json).not.toHaveProperty('reasoning_effort')
+    expect(gateway.requests[1]?.body).not.toHaveProperty('reasoning_effort')
     const seats = seatsScope(false)
     seats.scope.deps.routes = {
       ...seats.scope.deps.routes,
@@ -402,8 +397,8 @@ describe('the prep call on the route wire', () => {
     }
     await callPrepLlm(seats.scope, input)
     const messages = gateway.requests.find((r) => r.route === 'messages')
-    expect(messages?.json).not.toHaveProperty('thinking')
-    expect(messages?.json).not.toHaveProperty('output_config')
+    expect(messages?.body).not.toHaveProperty('thinking')
+    expect(messages?.body).not.toHaveProperty('output_config')
   })
 
   test('the summary route dispatches on its wire too, with no effort', async () => {
@@ -416,7 +411,7 @@ describe('the prep call on the route wire', () => {
     }
     await callPrepLlm(scope, { ...input, summarize: true })
     expect(gateway.requests[0]?.path).toBe('/anthropic/v1/messages')
-    expect(gateway.requests[0]?.json).not.toHaveProperty('thinking')
+    expect(gateway.requests[0]?.body).not.toHaveProperty('thinking')
   })
 
   test('a route on a wire that is not a text wire fails loudly', async () => {

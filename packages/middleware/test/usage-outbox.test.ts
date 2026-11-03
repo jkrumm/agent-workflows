@@ -1,19 +1,11 @@
 import { afterAll, describe, expect, test } from 'bun:test'
 import { defineWorkflow } from '@agent-workflows/runtime'
-import { FakeAgentHost } from '@agent-workflows/runtime/testing'
+import { FakeAgentHost } from '@agent-workflows/testing/agent-host'
 import { z } from 'zod'
 import { JournalDb, UsageOutbox, UsageWriteError, usageFromOpenCodeMessages } from '../src/index.ts'
 import { toolTurns } from './fixtures/opencode-messages.ts'
-import {
-  captureLogger,
-  FakeUsage,
-  freshSchema,
-  inspector,
-  PG_URL,
-  testPlatform,
-  testRuntime,
-  until,
-} from './support.ts'
+import { FakeUsage, testPlatform } from '@agent-workflows/testing/platform'
+import { captureLogger, freshSchema, inspector, PG_URL, testRuntime, until } from './support.ts'
 
 const db = freshSchema('mwo')
 const sql = inspector(db.schema)

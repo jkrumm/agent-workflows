@@ -2,16 +2,8 @@ import { afterAll, describe, expect, test } from 'bun:test'
 import { defineWorkflow, type Json } from '@agent-workflows/runtime'
 import { z } from 'zod'
 import { UsageOutbox, JournalDb, type RunRecord, recordMiddleware } from '../src/index.ts'
-import {
-  captureLogger,
-  FakeUsage,
-  freshSchema,
-  inspector,
-  PG_URL,
-  testPlatform,
-  testRuntime,
-  until,
-} from './support.ts'
+import { FakeUsage, testPlatform } from '@agent-workflows/testing/platform'
+import { captureLogger, freshSchema, inspector, PG_URL, testRuntime, until } from './support.ts'
 
 const db = freshSchema('mwscore')
 const sql = inspector(db.schema)

@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { fallbackRoute, resolveRoute, type RouteId } from '@agent-workflows/routes'
 import { createCapabilities } from './capabilities/index.ts'
 import { createRegistry } from './registry.ts'
-import { fakeTransports } from './testing/index.ts'
+import { fakeTransports } from '@agent-workflows/testing/transports'
 import { isStrictCompatible } from './transports/index.ts'
 
 // Every production schema passed to `completeJson`, driven through its capability so the test sees the schema the

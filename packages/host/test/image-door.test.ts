@@ -3,7 +3,7 @@
 import { afterAll, beforeEach, describe, expect, spyOn, test } from 'bun:test'
 import { tmpdir } from 'node:os'
 import { CapabilityError, type EnhanceOutput } from '@agent-workflows/capabilities'
-import { b64, pngFixture } from '../../capabilities/src/image/testing.ts'
+import { b64, pngFixture } from '@agent-workflows/testing/image-server'
 import type { Runtime } from '@agent-workflows/runtime'
 import { bootProcess, type RunningHost } from '../src/boot.ts'
 import { hostProcess } from '../src/boot.ts'

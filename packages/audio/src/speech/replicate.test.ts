@@ -4,17 +4,8 @@ import { audioRoutes } from '../routes.ts'
 
 const ROUTES = audioRoutes()
 import { createAudioScope } from '../scope.ts'
-import {
-  caught,
-  type FakeGateway,
-  hasFfmpeg,
-  realMedia,
-  prepAnswer,
-  prepMessage,
-  startFakeGateway,
-  testDeps,
-  toneFile,
-} from '../testing/index.ts'
+import { type FakeGateway, prepAnswer, prepMessage, startFakeGateway } from '@agent-workflows/testing/gateway'
+import { caught, hasFfmpeg, realMedia, testDeps, toneFile } from '../testing/index.ts'
 import type { CallEvent, RequestEvent, UsageEvent } from '../usage.ts'
 import { ReplicateSynthError, synthReplicateChunk } from './replicate.ts'
 
@@ -55,7 +46,7 @@ const summary = (events: UsageEvent[]) => events.find((e): e is RequestEvent => 
 const predictionInputs = () =>
   iu.requests
     .filter((r) => r.route === 'replicateCreate')
-    .map((r) => (r.json as { input: Record<string, unknown> }).input)
+    .map((r) => (r.body as { input: Record<string, unknown> }).input)
 
 describe.skipIf(!hasFfmpeg)('replicate lane', () => {
   test('single-chunk mp3: one prediction, one delivery fetch, the bytes as delivered, no prep, no title', async () => {
@@ -79,7 +70,7 @@ describe.skipIf(!hasFfmpeg)('replicate lane', () => {
     const { speak } = setup({
       replicateCreate: () => Response.json({ id: 'p2', status: 'processing' }),
       replicatePoll: (_r, attempt) =>
-        attempt < 2 ? Response.json({ id: 'p2', status: 'processing' }) : succeeded('p2'),
+        attempt < 1 ? Response.json({ id: 'p2', status: 'processing' }) : succeeded('p2'),
     })
     const res = await speak(post({ model: FLASH, input: 'Poll me.' }))
     expect(res.status).toBe(200)
@@ -97,7 +88,7 @@ describe.skipIf(!hasFfmpeg)('replicate lane', () => {
     const res = await speak(post({ model: V3, input: 'Hallo.' }))
     expect(decodeURIComponent(res.headers.get('x-audio-title') ?? '')).toBe('Kurzer Gruß')
     const prep = iu.requests.find((r) => r.route === 'messages')
-    expect(prep?.json?.model).toBe(ROUTES['audio.tts.prep'].model)
+    expect(prep?.body.model).toBe(ROUTES['audio.tts.prep'].model)
     expect(predictionInputs()[0]?.prompt).toBe('[sighs] Hallo.')
   })
 
@@ -143,10 +134,10 @@ describe.skipIf(!hasFfmpeg)('replicate lane', () => {
     const res = await speak(post({ model: FLASH, input: 'Ich habe das Todo angelegt.', summarize: true }))
     expect(decodeURIComponent(res.headers.get('x-audio-title') ?? '')).toBe('Todo')
     const chat = iu.requests.find((r) => r.route === 'chat')
-    expect((chat?.json as { messages: Array<{ content: string }> } | undefined)?.messages[0]?.content).toContain(
+    expect((chat?.body as { messages: Array<{ content: string }> } | undefined)?.messages[0]?.content).toContain(
       'what should be SPOKEN aloud',
     )
-    expect(chat?.json?.model).toBe(ROUTES['audio.tts.summary'].model)
+    expect(chat?.body.model).toBe(ROUTES['audio.tts.summary'].model)
     expect(predictionInputs()).toHaveLength(1)
     expect(summary(deps.usage.events)?.mode).toBe('summary')
   })

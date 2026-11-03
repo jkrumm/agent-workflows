@@ -27,7 +27,7 @@ import {
 } from '../src/workflows/eval-gt/calibrate.ts'
 import { hostModules } from '../src/workflows/index.ts'
 import { createCapabilityWorkflows } from '../src/capability-runs.ts'
-import { fakeTransports } from '../../capabilities/src/testing/index.ts'
+import { fakeTransports } from '@agent-workflows/testing/transports'
 import { LEGACY_JUDGE_RUN_VERSIONS, judgeRunVersions } from '../src/workflows/eval-gt/versions.ts'
 import { pgJudgeRuns } from '../src/workflows/eval-gt/judge-runs.ts'
 import { createEvalGtWorkflows } from '../src/workflows/eval-gt/index.ts'

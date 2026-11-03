@@ -7,7 +7,7 @@ import { type AgentDefinition, createClient, OpenCodeHost } from '@agent-workflo
 import { type Attribution, defineWorkflow } from '@agent-workflows/runtime'
 import { z } from 'zod'
 import { freshSchema, testRuntime } from '../../runtime/test/support/pg.ts'
-import { startFake } from '../../opencode-host/test/fake-opencode.ts'
+import { startFake } from '@agent-workflows/testing/opencode'
 
 // The attribution of an agent step, from the run through the runtime and the OpenCode host to what the plugin puts on a
 // model request: a real `Runtime` and `OpenCodeHost` on the fake server, the real plugin reading what the host stored.

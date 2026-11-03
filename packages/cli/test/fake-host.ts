@@ -3,7 +3,7 @@
 // ever sees HTTP, so this file is the whole of what it is checked against.
 import { createHash } from 'node:crypto'
 import { createCapabilities, createRegistry } from '@agent-workflows/capabilities'
-import { fakeTransports } from '@agent-workflows/capabilities/testing'
+import { fakeTransports } from '@agent-workflows/testing/transports'
 
 type Json = Record<string, unknown>
 type Status = 'pending' | 'running' | 'done' | 'failed' | 'cancelled'

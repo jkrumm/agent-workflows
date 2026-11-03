@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test'
 import { CapabilityCallError } from '@agent-workflows/capabilities'
 import { StepFailed } from '@agent-workflows/runtime'
-import { messageResponse } from '@agent-workflows/capabilities/testing'
+import { messageResponse } from '@agent-workflows/testing/gateway'
 import { failureOf, journaled, journaledError, RUN_ID_HEADER } from '../src/capability-runs.ts'
 import { type Body, SECRET, startTestHost, type TestHost, until } from './support.ts'
 

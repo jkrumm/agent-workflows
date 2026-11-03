@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import type { Json } from '@agent-workflows/runtime'
-import { FakeAgentHost } from '@agent-workflows/runtime/testing'
+import { FakeAgentHost } from '@agent-workflows/testing/agent-host'
 import { pgLearningsStore, withLearnedFacts } from '../src/learnings/index.ts'
 import { SUBMIT_RESULT_RETRY } from '../src/workflows/retrospective/prompt.ts'
 import type { GhPort, IssueRef } from '../src/workflows/retrospective/gh.ts'

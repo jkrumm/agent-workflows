@@ -5,7 +5,7 @@ import { createCapabilities } from './capabilities/index.ts'
 import type { Usage } from './context.ts'
 import { CapabilityCallError } from './errors.ts'
 import { createRegistry } from './registry.ts'
-import { messageResponse, type FakeGateway, startFakeGateway } from './testing/index.ts'
+import { messageResponse, type FakeGateway, startFakeGateway } from '@agent-workflows/testing/gateway'
 import { gatewayTransports } from './transports/index.ts'
 
 let iu: FakeGateway

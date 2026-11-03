@@ -3,14 +3,8 @@ import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { audioRoutes } from '../src/routes.ts'
-import {
-  type FakeGateway,
-  fakeMedia,
-  geminiAudio,
-  silentLog,
-  startFakeGateway,
-  testDeps,
-} from '../src/testing/index.ts'
+import { type FakeGateway, geminiAudio, startFakeGateway } from '@agent-workflows/testing/gateway'
+import { fakeMedia, silentLog, testDeps } from '../src/testing/index.ts'
 import { createSpeechRoundtrip } from '../src/workflows/speech-roundtrip/index.ts'
 import speechRoundtripModule, { CASES_PATH } from '../src/workflows/speech-roundtrip/module.ts'
 import { SpeechRoundtripInput, type SpeechRoundtripOutputValue } from '../src/workflows/speech-roundtrip/schema.ts'

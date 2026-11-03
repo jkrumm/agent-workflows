@@ -33,6 +33,7 @@
     "zod": "4.6.7"
   },
   "devDependencies": {
+    "@agent-workflows/testing": "workspace:*",
     "@types/pg": "8.23.1"
   }
 }

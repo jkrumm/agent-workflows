@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { z } from 'zod'
 import { createCapabilities, createRegistry } from '@agent-workflows/capabilities'
-import { fakeTransports } from '@agent-workflows/capabilities/testing'
+import { fakeTransports } from '@agent-workflows/testing/transports'
 import { withOutputType } from '../src/operations.ts'
 import { createCheckWorkflows } from '../src/workflows/check/index.ts'
 import { createReviewWorkflows } from '../src/workflows/review/index.ts'

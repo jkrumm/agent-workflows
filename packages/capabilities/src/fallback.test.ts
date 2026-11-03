@@ -4,7 +4,7 @@ import { createCapabilities } from './capabilities/index.ts'
 import type { Attribution, Usage } from './context.ts'
 import { CapabilityCallError } from './errors.ts'
 import { createRegistry } from './registry.ts'
-import { type FakeGateway, type RecordedRequest, sse, startFakeGateway } from './testing/index.ts'
+import { type FakeGateway, type RecordedRequest, sse, startFakeGateway } from '@agent-workflows/testing/gateway'
 import { gatewayTransports } from './transports/index.ts'
 
 // IU's body on an empty provider account, as it arrived 2026-10-28.
