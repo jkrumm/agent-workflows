@@ -10,7 +10,8 @@ import { z } from 'zod'
 import type { HostWorkflow } from '../../operations.ts'
 import { PROSE_POLISH_VERSION, type PolishCaller, polishDraft } from '../prose-polish/index.ts'
 import { ProsePolishInput, ProsePolishOutput } from '../prose-polish/schema.ts'
-import { defaultGatherPorts, type GatherPorts, gatherFacts } from './gather.ts'
+import { defaultGatherPorts, fixtureFacts, type GatherPorts, gatherFacts } from './gather.ts'
+import { narrativeScorer } from './scorer.ts'
 import { NarrativeInput, NarrativeOutput, type NarrativeOutputValue, type NarrativeProseValue } from './schema.ts'
 import {
   clampSections,
@@ -22,7 +23,7 @@ import {
 } from './sections.ts'
 
 export const NARRATIVE_WORKFLOW_ID = 'narrative'
-export const NARRATIVE_VERSION = '2026-10-29.2'
+export const NARRATIVE_VERSION = '2026-11-03.1'
 /** `narrative`'s polish child: `prose-polish`'s steps, reporting a failure instead of failing. */
 export const NARRATIVE_POLISH_ID = 'narrative-polish'
 
@@ -101,9 +102,14 @@ export function createNarrative(deps: NarrativeDeps): HostWorkflow[] {
     version: NARRATIVE_VERSION,
     input: NarrativeInput,
     output: NarrativeOutput,
+    scorer: narrativeScorer,
     async run(ctx, input): Promise<NarrativeOutputValue> {
-      const { cwd, project, previousPage, since } = input
-      const gathered = await ctx.step('gather', () => gatherFacts(ports, { cwd, since, now: now().getTime() }))
+      const { cwd, project, previousPage, since, fixture } = input
+      const gathered = await ctx.step('gather', () =>
+        fixture
+          ? fixtureFacts(fixture, { since, now: now().getTime() })
+          : gatherFacts(ports, { cwd, since, now: now().getTime() }),
+      )
       const { commits, sessions, sinceUsed } = gathered
       const inputs = { commits: commits.count, sessions: sessions.count, sinceUsed }
       const unchanged = (reason: string, model: string): NarrativeOutputValue => ({
