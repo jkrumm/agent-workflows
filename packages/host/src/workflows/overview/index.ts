@@ -4,6 +4,7 @@ import { z } from 'zod'
 import { type ArgoPush, classifyInput, type Fleet, reconcileKnown } from '../../fleet/index.ts'
 import { AGENT, OVERVIEW_OUTPUT, PROJECT, PROJECT_GIT } from '../../fleet/schema.ts'
 import type { HostWorkflow } from '../../operations.ts'
+import { requireEvalPurpose } from '../eval-fixture.ts'
 import type { HostRegistry } from '../index.ts'
 import { overviewScorer } from './scorer.ts'
 
@@ -83,6 +84,7 @@ export function createOverview(deps: OverviewDeps): HostWorkflow {
     concurrency: 1,
     async run(ctx, input) {
       const classified = await ctx.step('classify', async ({ callContext }) => {
+        if (input.fixture) requireEvalPurpose(callContext, OVERVIEW_WORKFLOW_ID)
         const { snapshot, unreadable } = input.fixture
           ? { snapshot: input.fixture, unreadable: null }
           : await deps.fleet.read({ fresh: true, staleAfterHours: input.staleAfterHours })

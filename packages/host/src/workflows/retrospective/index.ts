@@ -1,6 +1,7 @@
-import { type Ctx, defineWorkflow, StepFailed, WorkflowError } from '@agent-workflows/runtime'
+import { type Ctx, defineWorkflow, type Json, StepFailed, WorkflowError } from '@agent-workflows/runtime'
 import type { LearningsStore } from '../../learnings/index.ts'
 import type { HostWorkflow } from '../../operations.ts'
+import { requireEvalPurpose } from '../eval-fixture.ts'
 import type { GhPort } from './gh.ts'
 import type { TrackedPaths } from './tracked.ts'
 import { issueFor } from './issue.ts'
@@ -74,13 +75,18 @@ export function createRetrospective(deps: RetrospectiveDeps): HostWorkflow {
         dropped: [],
       }
 
-      const runs: SampledRun[] = await ctx.step('sample', async () => {
-        if (input.fixture) return input.fixture.runs
+      // The journal's records are plain data, but `SampledRun` is an interface (`friction` is unknown): the round trip makes
+      // that a fact for the step's Json result, and the type is put back on the way out.
+      const sampled = await ctx.step('sample', async ({ callContext }): Promise<Json> => {
+        if (input.fixture) {
+          requireEvalPurpose(callContext, RETRO_WORKFLOW_ID)
+          return input.fixture.runs
+        }
         const since = new Date(now().getTime() - input.window * DAY_MS)
-        return JSON.parse(
-          JSON.stringify(await deps.journal.sample({ workflow: input.workflow, since, limit: input.sample })),
-        )
+        const read = await deps.journal.sample({ workflow: input.workflow, since, limit: input.sample })
+        return JSON.parse(JSON.stringify(read)) as Json
       })
+      const runs = sampled as unknown as SampledRun[]
       if (runs.length === 0) return empty
 
       const analysis = await analyze(

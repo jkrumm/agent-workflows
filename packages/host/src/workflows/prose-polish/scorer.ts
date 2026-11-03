@@ -1,6 +1,7 @@
 import type { Scorer, Verdict } from '@agent-workflows/runtime'
 import { z } from 'zod'
 import { lintProse } from '../prose/lint.ts'
+import { lower, mentions } from '../scorer-text.ts'
 import type { ProsePolishInputValue } from './schema.ts'
 import { ProsePolishOutput } from './schema.ts'
 
@@ -24,16 +25,6 @@ export type ProsePolishReference = z.output<typeof ProsePolishReference>
 const DEFAULT_BAND: [number, number] = [0.5, 1.25]
 const SCORE_KEYS = ['valid', 'honest', 'notWorse', 'fixed', 'gone', 'facts', 'length'] as const
 const ZERO = Object.fromEntries(SCORE_KEYS.map((k) => [k, 0]))
-
-const lower = (s: string) => s.toLowerCase()
-const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-/** A fact as a whole token: `4821` is in "seed 4821" and not in "14821"; `a|b` accepts either. */
-const mentions = (text: string, fact: string) =>
-  fact
-    .split('|')
-    .some((alt) =>
-      new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(lower(alt))}(?![\\p{L}\\p{N}])`, 'u').test(lower(text)),
-    )
 
 /**
  * The `prose-polish` scorer. Deterministic, no model: the lint is code, so it is run again here on the original and on

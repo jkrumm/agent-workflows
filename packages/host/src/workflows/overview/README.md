@@ -123,7 +123,7 @@ state (the memo maps, the posted usage) is a closure per `createQuota` here, so 
 `eval/cases.jsonl` holds 6 synthetic fleets (placeholder project names, no real session text) as `PlainCase` lines: the input is
 the eval-only `fixture` (`generatedAt` and `projects` in the snapshot's shape; an agent needs an `id`, a `state` and what
 the seat reads, everything else defaults to null). With a fixture the step classifies it instead of calling `fleet.read`,
-and the Argo push is skipped whatever the run's purpose; without one the workflow is unchanged. The reference is the
+and the Argo push is skipped whatever the run's purpose; without one the workflow is unchanged. A fixture is refused (`invalid_input`, naming the purpose) for any run whose purpose is not `eval`, so a hand-started prod run can never write fabricated results where callers read real ones. The reference is the
 expected `recommendation` per agent id (a list accepts any of its values).
 
 The scorer (`scorer.ts`, deterministic, no model judge) scores `valid` (every agent of the fixture exactly once, no other),

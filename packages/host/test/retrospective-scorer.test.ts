@@ -81,10 +81,26 @@ describe('retrospective scorer', () => {
       score(input, output({ proposals: [proposal({ evidence: ['run-other001'] })] }), ctx(reference)).scores.grounded,
     ).toBe(0)
     expect(score(input, output({ proposals: [proposal({ evidence: [] })] }), ctx(reference)).scores.grounded).toBe(0)
-    for (const change of ['PWNED-7 install', 'see https://example.com install', 'edit /Users/jane/app install']) {
+    const leaks = [
+      'PWNED-7 install',
+      'see https://example.com install',
+      'edit /Users/jane/app install',
+      'edit /work/acme/app install',
+      'look in /srv/data install',
+      'open ~/notes/plan install',
+      'open C:\\work\\app install',
+    ]
+    for (const change of leaks) {
       const v = score(input, output({ proposals: [proposal({ change })] }), ctx(reference))
       expect(v.scores.clean).toBe(0)
     }
+    // words with a slash that are not paths stay clean
+    const fine = score(
+      input,
+      output({ proposals: [proposal({ change: 'Use the check and/or lint step; install once' })] }),
+      ctx(reference),
+    )
+    expect(fine.scores.clean).toBe(1)
   })
 
   test('a healthy sample: no proposals is the right answer and a list is not', () => {
