@@ -627,6 +627,17 @@ One entry per phase: what we learned, what changed on this page, and why.
 - **Process.** Plan no owner work beyond minutes; a human check is a small sample only when an automated bar fails.
 - **Does the page hold?** Yes; the ground-truth limit (LLM consensus, no human check) is stated in every report.
 
+### Gateway Wave 20 — Review v4 papercuts, 2026-11-03
+
+- **Learned.** The locale struck twice in one day: launchd starts processes without `LANG`, so git answered in German
+  and the host misread a non-repo (Wave 19: Postgres died the same way). Any parse of a tool's English text under the
+  host needs `LC_ALL=C`.
+- **Changed.** agw `4bd04cc` (`agw check` green on this repo, relative `--cwd`, thread keys, in-session cancel,
+  `gt calibrate` deleted, recall `minSamples`), factory `4bdc4b8` (structured 409), dotfiles `e7a1da0` (skills match
+  the CLI).
+- **Process.** Cross-repo claims in skill text are the lead's to check; a reviewer in one repo cannot see another.
+- **Does the page hold?** Yes.
+
 ### Gateway Wave 12 — Central tiers, 2026-11-03
 
 - **Learned.** Most of the wave was already done by earlier waves; the plan's provisional table was stale against
