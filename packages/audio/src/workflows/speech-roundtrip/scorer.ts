@@ -91,13 +91,14 @@ function numberWords(digits: string, language: Language): string[] {
 
 /**
  * The words of a text as they are compared: lowercase, apostrophes dropped (so "don't" is "dont"), hyphens and
- * punctuation as separators, and every number written out (English up to 9999, German up to 99), so "23" and
+ * punctuation as separators, and every ASCII number written out (English up to 9999, German up to 99), so "23" and
  * "twenty-three" are the same words and "7:45" is "seven forty five". Digits beyond the tables stay digits.
  */
 export function normalizeWords(text: string, language: Language): string[] {
   const plain = text.normalize('NFC').toLowerCase().replace(/['’`]/g, '')
-  const tokens = plain.match(/[\p{L}]+|\p{N}+/gu) ?? []
-  return tokens.flatMap((token) => (/^\p{N}+$/u.test(token) ? numberWords(token, language) : [token]))
+  // ASCII digit runs are numbers; any other numeral (fullwidth, superscript, fractions) is a word as written.
+  const tokens = plain.match(/\p{L}+|[0-9]+|\p{N}+/gu) ?? []
+  return tokens.flatMap((token) => (/^[0-9]+$/.test(token) ? numberWords(token, language) : [token]))
 }
 
 /** Edits (substitutions, deletions, insertions) turning `hypothesis` into `reference`, by word. */

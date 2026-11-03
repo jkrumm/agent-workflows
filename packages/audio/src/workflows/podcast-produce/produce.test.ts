@@ -585,6 +585,26 @@ describe('podcast.produce', () => {
   )
 
   test(
+    'an eval run files no brain note even when the request asks for one; another purpose files it',
+    async () => {
+      const tts = fakeTts()
+      try {
+        const workflow = produceWith(tts)
+        const input = episodeInput({ publish: false })
+        const evaluated = await runOnce(workflow, input, 'eval')
+        expect(evaluated.status).toBe('done')
+        expect((evaluated.output as ProduceResult).brainNote).toBeNull()
+        expect((await sql.step(evaluated.id, 'brain-note'))?.output).toBeNull()
+        const prod = await runOnce(workflow, input, 'prod')
+        expect((prod.output as ProduceResult).brainNote?.committed).toBe(true)
+      } finally {
+        tts.iu.stop()
+      }
+    },
+    TIMEOUT,
+  )
+
+  test(
     'podcast-publish repeats only the upload of a produced episode, then files the note with its link',
     async () => {
       const tts = fakeTts()
