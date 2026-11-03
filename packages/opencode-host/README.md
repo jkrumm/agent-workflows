@@ -418,13 +418,11 @@ A route with a `contextLimit` (`packages/routes`; off unless an arm or the table
 steps under that many prompt tokens. Why: Claude Haiku 5.5 bills a request whose prompt (input, cache reads, both cache
 writes) is over 100,000 tokens at 5x on every column, and a session grows over its tool turns.
 
-**Mechanism.** The server config adds, for every Claude model and every bound the route table names (`servedLimits`,
-derived from the table's `contextLimit`s; 100000 today), an alias row `<model>~ctx<limit>` (`contextAlias`) with the base row's cost, variants and compatibility, `modelID: <model>` and its
+**Mechanism.** The server config adds, for every Claude model and every `CONTEXT_LIMITS` value (60000, 80000, 100000), an
+alias row `<model>~ctx<limit>` (`contextAlias`) with the base row's cost, variants and compatibility, `modelID: <model>` and its
 own `limit.context` (`windowFor`). `modelRef` returns the alias for a route with a `contextLimit` (the fallback's is the
-plain id), so OpenCode's own `auto` compaction, which runs off the model's window, fires early. An arm may only pick a
-bound the table names: `routes` admits any of `CONTEXT_LIMITS` (60000, 80000, 100000), but the server registers no
-other row, so `modelRef` refuses the rest (`no row for contextLimit`) instead of sending a model the server lacks. A
-new bound in the table is served after the next server config (a restart). The key is `modelID`, not `id`: OpenCode 2.0.32's v2 config ignores unknown keys, so
+plain id), so OpenCode's own `auto` compaction, which runs off the model's window, fires early. No restart: the server
+serves every bound, an arm picks one. The key is `modelID`, not `id`: OpenCode 2.0.32's v2 config ignores unknown keys, so
 `id` would silently leave the alias calling the gateway with `claude-haiku-5-5~ctx80000`.
 
 **The rule** (OpenCode 2.0.32, read from the `v2.0.32` tag of sst/opencode: [`packages/core/src/session/compaction.ts`](https://github.com/sst/opencode/blob/v2.0.32/packages/core/src/session/compaction.ts),
@@ -444,8 +442,6 @@ COMPACTION_BUFFER` makes `ceiling = B / 1.25`:
 | 60000 | 88000 | 48000 | 12000 |
 | 80000 | 104000 | 64000 | 16000 |
 | 100000 | 120000 | 80000 | 20000 |
-
-(Only the 100000 row is built today; the others show the formula.)
 
 **What the compaction summary can output** (the same sources). The summary call's `max_tokens` is
 `outputLimit(limit, "compaction", request)` = `min(limit.output or 32000 when unset, 256000, SUMMARY_OUTPUT_MAX = 32000,

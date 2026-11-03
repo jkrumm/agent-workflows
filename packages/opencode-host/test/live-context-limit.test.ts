@@ -2,13 +2,12 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { claudeRate } from '@agent-workflows/routes'
+import { CONTEXT_LIMITS, claudeRate } from '@agent-workflows/routes'
 import type { AgentResult, Attribution } from '@agent-workflows/runtime'
 import { OpenCodeHost, OpenCodeServer } from '../src/index.ts'
-import { COMPACTION_BUFFER, contextAlias, servedLimits, windowFor } from '../src/config.ts'
+import { COMPACTION_BUFFER, contextAlias, windowFor } from '../src/config.ts'
 
-// The one bound the table's routes name today (`servedLimits`): the server serves no other.
-const BOUND = servedLimits()[0] as number
+const BOUND = Math.max(...CONTEXT_LIMITS)
 
 // What the pinned OpenCode build does with a bounded route (`contextLimit`), end to end through this host: the real
 // binary, the real config, a loopback server standing in for the gateway. No LLM is called, nothing leaves loopback.

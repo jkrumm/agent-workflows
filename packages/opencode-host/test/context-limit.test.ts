@@ -1,13 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { usageFromOpenCodeMessages } from '@agent-workflows/middleware'
-import {
-  CLAUDE_MODELS,
-  CONTEXT_LIMITS,
-  type ContextLimit,
-  claudeRate,
-  resolveRoute,
-  routeIds,
-} from '@agent-workflows/routes'
+import { CLAUDE_MODELS, CONTEXT_LIMITS, claudeRate } from '@agent-workflows/routes'
 import {
   buildServerConfig,
   COMPACTION_BUFFER,
@@ -15,7 +8,6 @@ import {
   fallbackModelRef,
   modelRef,
   PROVIDER_ANTHROPIC,
-  servedLimits,
   windowFor,
 } from '../src/config.ts'
 import { priceOpenCodeMessages } from '../src/host.ts'
@@ -37,16 +29,11 @@ const ceilingOf = (window: number, buffer: number) => window - buffer
 /** OpenCode 2.0.32 `SUMMARY_OUTPUT_MAX` (packages/core/src/session/model-request.ts): all a summary call can ask for. */
 const SUMMARY_OUTPUT_MAX = 32_000
 
-/** The bounds the route table names, read from the table here, not from `servedLimits`, the code under test. */
-const tableLimits = [...new Set(routeIds().flatMap((id) => resolveRoute(id).contextLimit ?? []))].sort((a, b) => a - b)
-
 describe('the bounded rows of the server config', () => {
-  test('every Claude model has one alias row per bound the table names, sending the real model id with its own window', () => {
+  test('every Claude model has one alias row per allowed bound, sending the real model id with its own window', () => {
     const rows = anthropicRows()
-    expect(tableLimits.length).toBeGreaterThan(0)
-    expect(servedLimits()).toEqual(tableLimits)
     for (const model of CLAUDE_MODELS) {
-      for (const limit of tableLimits) {
+      for (const limit of CONTEXT_LIMITS) {
         const row = rows[contextAlias(model, limit)]
         expect(row?.modelID).toBe(model)
         expect(row?.limit?.context).toBe(windowFor(limit))
@@ -55,12 +42,12 @@ describe('the bounded rows of the server config', () => {
     expect(contextAlias('claude-haiku-5-5', 80_000)).toBe('claude-haiku-5-5~ctx80000')
   })
 
-  test('no alias row exists for a bound no route names', () => {
+  test('there are no alias rows beyond models x allowed bounds', () => {
     const aliases = Object.keys(anthropicRows()).filter((key) => key.includes('~ctx'))
     expect(aliases.sort()).toEqual(
-      CLAUDE_MODELS.flatMap((model) => tableLimits.map((limit) => contextAlias(model, limit))).sort(),
+      CLAUDE_MODELS.flatMap((model) => CONTEXT_LIMITS.map((limit) => contextAlias(model, limit))).sort(),
     )
-    expect(aliases).toHaveLength(CLAUDE_MODELS.length * tableLimits.length)
+    expect(aliases).toHaveLength(CLAUDE_MODELS.length * CONTEXT_LIMITS.length)
   })
 
   test('an alias row prices, varies and behaves like its base row, and the base row has no window', () => {
@@ -69,14 +56,14 @@ describe('the bounded rows of the server config', () => {
       const base = rows[model] as Row
       expect(base.limit?.context).toBeUndefined()
       expect(base.modelID).toBeUndefined()
-      for (const limit of tableLimits) {
+      for (const limit of CONTEXT_LIMITS) {
         const { modelID: _id, limit: aliasLimit, ...alias } = rows[contextAlias(model, limit)] as Row
         const { limit: baseLimit, ...rest } = base
         expect(alias).toEqual(rest)
         expect(aliasLimit?.output).toBe(baseLimit?.output)
       }
     }
-    expect((rows[contextAlias('claude-haiku-5-5', tableLimits[0] as number)] as Row).cost).toBeDefined()
+    expect((rows[contextAlias('claude-haiku-5-5', CONTEXT_LIMITS[0])] as Row).cost).toBeDefined()
   })
 
   test('only the Anthropic provider has aliases, and compaction stays on with a buffer that leaves a summary its room', () => {
@@ -103,7 +90,7 @@ describe('the bounded rows of the server config', () => {
 })
 
 describe('modelRef with a contextLimit', () => {
-  const bound = tableLimits[0] as number
+  const bound = CONTEXT_LIMITS[0]
   const patch = { 'review.angle': { contextLimit: bound } }
 
   test("the session's model is the alias, with the route's effort as the variant; the route keeps the real model", () => {
@@ -127,15 +114,8 @@ describe('modelRef with a contextLimit', () => {
     expect(fallback?.model.id).not.toContain('~ctx')
   })
 
-  test('a bound the table does not name has no row: the model is refused, not a missing one sent to the server', () => {
-    const unserved = CONTEXT_LIMITS.find((limit) => !tableLimits.includes(limit)) as ContextLimit
-    expect(() => modelRef('review.angle', { 'review.angle': { contextLimit: unserved } })).toThrow(
-      /no row for contextLimit/,
-    )
-  })
-
   test('every variant of every alias an arm can reach exists on its row', () => {
-    for (const limit of tableLimits) {
+    for (const limit of CONTEXT_LIMITS) {
       const { model } = modelRef('review.angle', { 'review.angle': { contextLimit: limit } })
       const variants = (anthropicRows()[model.id] as Row).variants as { id: string }[]
       expect(variants.map((v) => v.id)).toContain(model.variant as string)
