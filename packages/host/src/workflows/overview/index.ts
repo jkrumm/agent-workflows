@@ -2,13 +2,42 @@ import { MAX_OVERVIEW_AGENTS, MAX_OVERVIEW_FACTS_CHARS } from '@agent-workflows/
 import { defineWorkflow } from '@agent-workflows/runtime'
 import { z } from 'zod'
 import { type ArgoPush, classifyInput, type Fleet, reconcileKnown } from '../../fleet/index.ts'
-import { OVERVIEW_OUTPUT } from '../../fleet/schema.ts'
+import { AGENT, OVERVIEW_OUTPUT, PROJECT, PROJECT_GIT } from '../../fleet/schema.ts'
 import type { HostWorkflow } from '../../operations.ts'
 import type { HostRegistry } from '../index.ts'
+import { overviewScorer } from './scorer.ts'
 
 export const OVERVIEW_WORKFLOW_ID = 'overview'
 
+const nullable = <T extends z.ZodType>(schema: T) => schema.nullable().default(null)
+
+/** A fixture agent: the facts the classify seat reads (`state`, titles, activity), every other field defaults to null. */
+const FIXTURE_AGENT = AGENT.extend({
+  source: AGENT.shape.source.default('factory'),
+  sessionId: nullable(z.string()),
+  paneId: nullable(z.string()),
+  workspaceId: nullable(z.string()),
+  title: nullable(z.string()),
+  herdrStatus: nullable(AGENT.shape.herdrStatus.unwrap()),
+  claudeStatus: nullable(AGENT.shape.claudeStatus.unwrap()),
+  waitingFor: nullable(z.string()),
+  lastPrompt: nullable(z.string()),
+  lastReply: nullable(z.string()),
+  lastActivityAt: nullable(z.number()),
+  startedAt: nullable(z.number()),
+})
+
+const FIXTURE_PROJECT = PROJECT.extend({
+  cwd: z.string().default(''),
+  git: nullable(PROJECT_GIT),
+  agents: z.array(FIXTURE_AGENT),
+})
+
 export const OVERVIEW_INPUT = z.object({
+  fixture: z
+    .object({ generatedAt: z.number(), projects: z.array(FIXTURE_PROJECT) })
+    .optional()
+    .describe('Eval only: classify these projects and agents instead of reading the factory, and push nothing to Argo'),
   staleAfterHours: z
     .number()
     .positive()
@@ -46,17 +75,17 @@ export function createOverview(deps: OverviewDeps): HostWorkflow {
   const now = deps.now ?? Date.now
   const workflow = defineWorkflow({
     id: OVERVIEW_WORKFLOW_ID,
-    version: '2026-11-03.1',
+    version: '2026-11-03.2',
+    scorer: overviewScorer,
     input: OVERVIEW_INPUT,
     output: OVERVIEW_OUTPUT,
     // One run at a time is plenty: the fleet changes slower than a run takes, and the call is the only spend.
     concurrency: 1,
     async run(ctx, input) {
       const classified = await ctx.step('classify', async ({ callContext }) => {
-        const { snapshot, unreadable } = await deps.fleet.read({
-          fresh: true,
-          staleAfterHours: input.staleAfterHours,
-        })
+        const { snapshot, unreadable } = input.fixture
+          ? { snapshot: input.fixture, unreadable: null }
+          : await deps.fleet.read({ fresh: true, staleAfterHours: input.staleAfterHours })
         // An unreadable factory is not an empty fleet: classifying it would reconcile every verdict against nothing.
         // The step fails with the cause, so the run is `failed` and nothing is classified or pushed.
         if (unreadable) throw new Error(`overview cannot classify: ${unreadable}`)
@@ -92,7 +121,7 @@ export function createOverview(deps: OverviewDeps): HostWorkflow {
       )
       // The run's own output stands in for the stored one, which is not written until the run ends.
       await ctx.effect('push', async () => {
-        if (!deps.argo) return null
+        if (!deps.argo || input.fixture) return null
         try {
           // The purpose lookup is a Postgres read: telemetry never fails the run, and neither does the gate in front of it.
           if ((await deps.purposeOf?.(ctx.runId)) !== 'prod') return null
