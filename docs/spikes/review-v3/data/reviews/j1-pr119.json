@@ -1,0 +1,66 @@
+{
+  "schemaVersion": "v3-spike",
+  "job": "j1-pr119",
+  "target": "PR #119",
+  "level": "high",
+  "outcome": "actionable",
+  "summary": "2 important, 5 nit.",
+  "findings": [
+    {
+      "file": "packages/host/src/boot.ts",
+      "line": 528,
+      "tag": "important",
+      "category": "correctness",
+      "summary": "The wiring reads the journal history of `cap.eval.label` root runs, but `eval.mine` never creates those runs. It calls `eval.label` in-process through `registry.call` from a step, and the repo says that stays a plain call with its usage attributed to the calling step (`capability-runs.ts` header). Only a direct HTTP call to the capability produces a `cap.eval.label` run.",
+      "failureScenario": "In production, `agw eval mine review --label N` finds no (or only stale, hand-called) `cap.eval.label` runs, so `recentCost('cap.eval.label', 20)` returns `{runs: 0, meanCost: null}`. The estimate still prints unknown, which is the bug this PR claims to fix. If someone did call `eval.label` directly with a very different input, the estimate comes from those runs and does not match the cost per candidate. The cost of the labelling is recorded under `eval.mine`'s own label step, so the root cause is the wrong source, not a missing port. The fix is to read the cost of `eval.mine`'s own done runs, or of its label steps, instead of `cap.eval.label`."
+    },
+    {
+      "file": "packages/host/src/workflows/eval-mine/index.ts",
+      "line": 209,
+      "tag": "important",
+      "category": "robustness",
+      "summary": "Now that a real reader is wired, a failure in `recentCost` fails the `plan` step and the whole mine run. The code falls back to an unknown estimate only when the port is absent, not when it throws. This includes the new 'the host runtime is not built yet' throw.",
+      "failureScenario": "A transient journal query error (statement timeout, pool error), or any path that reaches the plan before `routes()` has set `runtime`, makes `eval.mine` fail with an error from a purely informational estimate. Mining and the dry-run plan are blocked, and the failed step is journaled. The estimate should degrade to `{runs: 0, meanCost: null}` on error."
+    },
+    {
+      "file": "packages/host/test/eval-mine-wiring.test.ts",
+      "line": 107,
+      "tag": "nit",
+      "category": "test-coverage",
+      "summary": "The test seeds `cap.eval.label` root runs by hand with SQL, so it only proves the reader works when such rows exist. It does not show that a real `eval.mine` labelling run produces them.",
+      "failureScenario": "The seeded rows hide the problem described in the first finding. The test passes while production history stays empty, because real `eval.mine` runs never write `cap.eval.label` rows."
+    },
+    {
+      "file": "packages/host/test/eval-mine-wiring.test.ts",
+      "line": 50,
+      "tag": "nit",
+      "category": "test-coverage",
+      "summary": "The test is named and documented as 'the host wiring', but it re-implements the lazy `costHistory` lambda itself instead of exercising `boot.ts`'s `hostProcess`.",
+      "failureScenario": "If `boot.ts` drops the `costHistory` entry, passes the wrong argument, or reads `runtime` before `routes()` sets it, this test still passes. The original regression (no port wired in the host) can come back unnoticed."
+    },
+    {
+      "file": "packages/host/src/boot.ts",
+      "line": 529,
+      "tag": "nit",
+      "category": "simplification",
+      "summary": "The same 'if (!runtime) throw new Error(\"the host runtime is not built yet\")' guard is now written inline a second time, next to the image door's `runtime:` accessor a few lines below. The test copies it a third time.",
+      "failureScenario": "Three copies of the lazy-runtime guard can drift (message or behaviour). A single `const runtimeOrThrow = () => {...}` would serve both the image door's `runtime` option and `costHistory.recentCost`."
+    },
+    {
+      "file": "packages/host/src/workflows/index.ts",
+      "line": 40,
+      "tag": "nit",
+      "category": "design",
+      "summary": "The generic `WorkflowDeps` now carries an `eval-mine`-specific field, `costHistory`, and its type is imported from a workflow's own `index.ts`. The shared dependency interface is coupled to one module's internals, and the field is named generically although only `eval.mine` uses it.",
+      "failureScenario": "A second workflow that wants cost history has to reuse or rename this one-workflow type, and the `workflows/index.ts` to `eval-mine/index.ts` import creates a dependency cycle risk. A port defined next to `Runtime`, or in the shared workflows types, would avoid both."
+    },
+    {
+      "file": "packages/host/test/eval-mine-wiring.test.ts",
+      "line": 44,
+      "tag": "nit",
+      "category": "test-isolation",
+      "summary": "The test mutates process-global `AGW_EVAL_HOME`, `AGW_EVAL_DIR` and `AGW_EVAL_OWNER_EMAILS` in `beforeAll` and restores them in `afterAll`. It also starts a real DB-backed host and runs real `git` mining.",
+      "failureScenario": "If bun runs this file in the same process as other eval tests that read these variables, they can see the sandbox paths during the overlap, which makes them flaky. The sandbox git repo also depends on the machine's `git` and `--initial-branch` support."
+    }
+  ]
+}

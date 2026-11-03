@@ -1,0 +1,296 @@
+{
+  "runId": "01a19e92-a227-7762-8179-ffc57030f1e8",
+  "status": "done",
+  "question": null,
+  "report": "## Bottom line\n\n- **Policy (part 1):** Anthropic's help center says `claude -p` and the Agent SDK, when signed in with a plan, draw from that plan's own 5-hour and weekly limits (updates dated Oct 7 and June 15, 2026). The consumer terms still bar automated access unless it goes through an API key or Anthropic explicitly permits it. Routing a plan login through a third-party harness is the category at risk: the Claude Code legal page already forbids it, and a Usage Policy clause effective Nov 12, 2026 names it.\n- **Issue #97074 (part 2):** I found no Anthropic staff reply in the parts of the thread I could read (through Nov 2). The only Anthropic-side statement is a general X post by Boris Cherny (Oct 28) that does not mention `sdk-cli`. `CLAUDE_CODE_ENTRYPOINT` is not in the official env-var pages I could read, and no Anthropic text I read endorses or forbids overriding it. The effect is community-measured only.\n- **Mechanisms (part 3):** Channels are a research preview for Pro, Max and Ultra: an MCP server pushes events in and a reply tool sends results out. Remote Control (Pro, Max, Ultra; Team and Enterprise need an admin) is a human-driven window with no documented input API for scripts. Hooks (Stop, SubagentStop, Notification) are outbound only. Agent view and `claude --bg` are a research preview, read through `claude agents --json` and `claude logs`. Agent teams are experimental and interactive-only. `--session-id` and `--resume` are documented. `statusline` `rate_limits` is documented for Pro, Max and Ultra. `/usage` is documented but not scriptable. The OAuth usage endpoint is undocumented. The only documented same-machine way for a script to post into a running interactive session is the cross-session inbox socket.\n\n## 1. What the policy documents say\n\n### 1.1 Help center: Use the Claude Agent SDK with your Claude plan\n\nMy fetch returned only the two dated update notices, not the article body. The notices are the operative text:\n\n- **Oct 7, 2026:** Max, Ultra and Team plans include monthly API credits covering the Claude API, Managed Agents, the Agent SDK and `claude -p`, but only “when you run them with an API key from your linked Claude Console organization.” It adds: “Nothing changes for your plan: when you’re signed in with your Claude plan, the Claude Agent SDK and claude -p still draw from your subscription limits.”\n- **June 15, 2026:** “We’ve paused the previously-announced changes to Claude Agent SDK usage. For now, nothing has changed: Claude Agent SDK, claude -p, and third-party app usage still draw from your subscription’s usage limits.”\n\nRead together, these describe the mechanics: plan login means plan limits. They do not say that third-party harnesses are permitted. The June sentence is descriptive, not permissive.\n\nThe monthly-credits article adds the boundaries. Credits are $100 for Max, $200 for Ultra, and $20 or $100 per seat for Team (pooled, capped at $500). Pro is not eligible. The credits cover `claude -p` and the Agent SDK only when run with an API key from the linked Console organization. They do not cover interactive Claude Code, nor runs started by the Claude Code GitHub Action, the IDE extension or the desktop app, even with `-p`.\n\n### 1.2 Consumer Terms of Service\n\nThe copy I read is dated Oct 8, 2025. It names Anthropic Ireland as the contracting entity and says it applies to consumers resident in the EEA or Switzerland. I did not read the US version.\n\n- **Section 3:** Users may not access the Services “through automated or non-human means, whether through a bot, script, or otherwise,” except “when you are accessing our Services via an Anthropic API Key or where we otherwise explicitly permit it.”\n- **Section 11 (“Non-commercial use only”):** No “commercial or business purposes.”\n- **Section 2:** Users may not share login credentials or “make your Account available to anyone else.”\n- **Section 4:** Users are responsible for all Actions taken on their behalf.\n- **Preface:** The Commercial Terms govern API keys and the Console.\n\nReading: unattended automation through a subscription login sits outside the default permission. Anthropic's explicit permission for `claude -p` and the SDK is the help-center text plus the Legal page, not the Terms themselves. The Terms do not name `claude -p`, and “ordinary” use is not defined. Section 11 is a real constraint for business automation on a consumer plan.\n\n### 1.3 Claude Code legal and compliance page\n\n- The license split: Consumer Terms for Free, Pro, Max and Ultra; Commercial Terms for Team, Enterprise and API users.\n- “Advertised usage limits for Pro, Max, and Ultra plans assume ordinary, individual usage of Claude Code and the Agent SDK.”\n- OAuth is “intended exclusively for purchasers” of plans and “designed to support ordinary use of Claude Code and other native Anthropic applications.”\n- Developers “including those using the Agent SDK, should use API key authentication.” Anthropic “does not permit third-party developers to offer Claude.ai login into their own applications, or to route requests through Free, Pro, Max, or Ultra plan credentials on behalf of their users.” Developers “may not collect, store, or intermediate Claude.ai credentials or session tokens.”\n- Carve-out: an end user may still sign in to the unmodified Claude Code binary with their own subscription, even when a platform hosts Claude Code.\n- Products that preinstall Claude Code must not modify the binary and may not resell or intermediate usage.\n\n### 1.4 Agent SDK overview\n\n“Unless previously approved, Anthropic does not allow third party developers to offer claude.ai login or rate limits for their products, including agents built on the Claude Agent SDK.”\n\n### 1.5 Usage Policy: the new clause\n\nThe policy page is marked effective Nov 12, 2026, so it is not yet in force (today is Nov 3). Under “Do Not Abuse Our Platform” it adds: “Resell, proxy, or otherwise provide access to Claude through unauthorized means, including services that route requests through consumer subscriptions or misrepresent the product or client being used.” A third-party tracker says the policy in force until Nov 11 contained no resale or proxy wording. I did not read that in-force text directly. The policy also says Anthropic may “throttle, limit, suspend, or terminate” access on suspicion of a violation.\n\n### 1.6 What this means by route\n\n- **Interactive Claude Code on your own machine** (channels, hooks, Remote Control, agent view): plan limits apply per the docs. These are Anthropic's own surfaces, not third-party harnesses. The Section 3 automation question remains open for unattended use.\n- **`claude -p` or the SDK under your own login, for your own work:** Anthropic says it draws from plan limits. Business use conflicts with Section 11.\n- **A third-party app that uses your plan login:** the Legal page forbids routing plan credentials for users. From Nov 12 the Usage Policy names this practice. This is the highest-risk category.\n- **An API key from a linked Console organization (Max, Ultra, Team):** draws monthly credits and is governed by the Commercial Terms, not plan limits.\n\n## 2. Issue anthropics/claude-code#97074\n\n### 2.1 What the issue reports\n\nOpened Sep 25, 2026 by qvarker (Claude Code 2.1.282, Opus 5, Linux). The reporter says the same tokens use about 1.8 times the 5-hour window headless (`entrypoint: sdk-cli`) versus the interactive TUI (`cli`). Labels: bug, area:cost, has-repro, api:anthropic. The thread has no assignee.\n\nUser-run replications, none verified by Anthropic:\n\n- qvarker (Max, Opus 5): about $3.0 versus $1.6 per 1% of the window.\n- Z3l20 (Pro, claude-opus-5-5, effort low, Sep 27): `sdk-cli` used $0.68 per 1%, the TUI $1.34, about 2.0 times.\n- kler (Team, Claude Code 2.1.300, Oct 17): `sdk-ts` and `sdk-cli` drained about 2.8 to 3.0 times faster than a `claude-vscode` label. The harness set the labels, so this is a controlled but single-account result.\n- futin (passive transcript audit, desktop app versus `sdk-cli`): 1.30 to 1.49 times.\n- imnakul (Windows, uncontrolled, different tasks): headless about 22 to 24 points versus about 5 points for the CLI.\n\n### 2.2 Has Anthropic responded?\n\n- **GitHub:** In the thread I could read through Nov 2, there is no Anthropic staff comment. The page says “72 remaining items” and I could not load them. A direct request for an Anthropic answer is in the thread (imnakul, Oct 8; Ferfeit-style follow-ups through Nov 2 ask for one).\n- **X (Boris Cherny, Oct 28, 11:51 PM UTC):** “We didn’t find a single root cause or any regression in Claude Code. In most cases, users who saw faster usage against limits were traced back to one or two heavy sessions (xhigh effort, /goal, Workflows, Agent Teams, long SDK jobs).” The post does not mention `sdk-cli`, headless runs or the entrypoint. An AICoder summary calls it a post by an employee, not a formal announcement.\n- **Status as of Oct 31:** a DEV Community post says Anthropic had not confirmed the headless gap or announced a fix. That is the author's reading, and Theo of T3 Code had said he confirmed it as a bug on Anthropic's side.\n- **Docs and changelog:** The costs, headless and CLI pages I read say nothing about weighting by entrypoint. The release notes I read (v2.1.310 to v2.1.316, Oct 23 to Oct 31) contain no entrypoint or metering change. I did not read the full changelog.\n- **Feature request #99231** (Oct 3) asks for a documented read-only usage endpoint. It is open, and I saw no Anthropic reply.\n\n### 2.3 Is the CLAUDE_CODE_ENTRYPOINT override documented or discouraged?\n\n**Documented?** Not in the official env-var page as far as I could read. My read of that page stopped before the `CLAUDE_CODE_E…` entries. Two third-party references say the variable is not in the official reference (turboai.dev). A third-party mirror generated from the binary lists it as set by the program when empty (`sdk-cli` for SDK CLI, `sdk-ts` for the TypeScript SDK), with an example `CLAUDE_CODE_ENTRYPOINT=sdk-cli claude -p`. I could not confirm official status, so treat it as undocumented.\n\n**Discouraged?** No Anthropic text I read discourages it. The nearest rules are the Usage Policy's “misrepresent the product or client being used” (effective Nov 12), which speaks directly to subscription routing, and the Legal page's rule that embedded Claude Code run “as published by Anthropic.” Neither addresses label overrides. Whether relabeling falls under the clause is unknown.\n\n**Effect (community only):** The override changes the `cc_entrypoint` value sent with each request (in the `x-anthropic-billing-header` block, per the issue). T3 Code PR #25597 reports about 1.83 times more work per 1% after switching to a custom label (one Max account, Claude Code 2.1.310). A commenter on the same PR reports about 2.2 times on Windows. The PR is marked Closed on the page I read, and forks merged it. A known gap: an inherited `sdk-*` value keeps the default in place unless the override overwrites it. Anthropic has neither documented nor disavowed this.\n\n## 3. The mechanisms\n\nStatus, plans and I/O below are from the official pages unless marked otherwise. “Label” means whether the docs say which entrypoint label the session uses. That matters because #97074 weights by label.\n\n| Mechanism | Status | Plans (docs) | Message enters by | Output leaves by | Label documented? |\n|---|---|---|---|---|---|\n| Channels (MCP push) | Research preview | Pro, Max, Ultra: yes. Team and Enterprise: admin must enable. Console API key: allowed. Not on Bedrock, Vertex or Foundry | MCP server pushes notifications into the open session; sender allowlist | Two-way: reply tool calls to the chat platform; no delivery acknowledgement | No |\n| Remote Control | No preview label on the page; Trusted Devices is beta | Pro, Max, Ultra. Team and Enterprise: admin toggle. API keys not supported | Typed by the user in claude.ai/code or the Claude mobile app | Web and phone transcript, push notifications | No |\n| Hooks: Stop, SubagentStop, Notification | No preview label; agent-based hooks are experimental | All providers | Hooks cannot start prompts | Hook stdout, exit code or JSON; `type: http` POST | n/a |\n| Agent view and `claude --bg` | Research preview | Not in the feature table; no plan list found | `claude --bg \"prompt\"`, dispatch input, peek reply, `claude --resume <id> \"prompt\"` | `claude agents --json`, `claude logs <id>`, transcript | No |\n| Agent teams | Experimental, off by default | Not in the feature table | Natural language to the team lead | Lead's agent panel; teammates' final answers; files under `~/.claude/teams` | n/a |\n| `--session-id`, `--resume` | Documented, no preview label | All plans | UUID chosen at launch; resume by ID or name | Transcript JSONL; `claude -p --resume <id> --output-format json` (not for a running session) | n/a |\n| Cross-session messaging (inbox socket) | No preview label; needs v2.1.224 or later | Subscription: yes. Same-machine on Console and cloud providers | Another session's SendMessage, or a script posting to `CLAUDE_CODE_MESSAGING_SOCKET` with `CLAUDE_CODE_MESSAGING_TOKEN` | Reply via SendMessage to the sender, or transcript; same-machine traffic never goes through Anthropic servers | No |\n| `statusline` `rate_limits` | Documented, no preview label | Pro, Max, Ultra only | Nothing: JSON on stdin at each update | Script stdout; a script may write files | n/a |\n| `/usage` | Documented | Pro, Max, Ultra, Team, Enterprise (plan bars and breakdown) | Typed command; runs while Claude responds; also from Remote Control | Terminal panel; no export documented | n/a |\n| OAuth usage endpoint `/api/oauth/usage` | Undocumented | n/a | HTTP GET with a bearer token | JSON (third-party descriptions only) | n/a |\n\n### 3.1 Channels\n\n- **Research preview** (stated on the page). Requires claude.ai or Console API-key login.\n- **Inbound:** an MCP server registered in `.mcp.json` and named with `--channels plugin:<name>@<marketplace>`. Events arrive as `<channel>` tags, and queue into the next turn. Anyone who can reply through a two-way channel can approve tool use, if the server declares the permission relay capability.\n- **Outbound:** the reply tool. A notification gets no acknowledgement.\n- **Custom channels:** not on the allowlist during preview, so they need `--dangerously-load-development-channels`, which is interactive-only. Under `-p` the flag is ignored.\n- **Gating:** the org setting `channelsEnabled` and the sender allowlist apply.\n\n### 3.2 Remote Control\n\n- Requires a claude.ai login. The endpoint must be `api.anthropic.com`: a different `ANTHROPIC_BASE_URL` disables it. Zero Data Retention and HIPAA orgs cannot use it.\n- One remote session per interactive process; server mode (`claude remote-control`) runs several.\n- The session runs locally; the process must stay up. Transcripts are stored on Anthropic servers while connected.\n- The docs describe a human-driven window. I found no documented API for a script to inject messages.\n- Cross-session messaging can reach a Remote Control session on another machine, but only from a session that is itself connected to Remote Control.\n\n### 3.3 Hooks\n\n- Events include Stop, SubagentStop and Notification. The Notification matchers are permission_prompt, idle_prompt, agent_needs_input and agent_completed. The last two fire only while agent view is open.\n- Stop and PostToolUse hooks use a top-level `decision: \"block\"`. The guide has a troubleshooting entry for a Stop hook hitting its block cap.\n- Hooks are outbound: they can call a URL or run a command, but they cannot start a turn in another session.\n- Hooks are listed as available on every provider.\n\n### 3.4 Agent view and background sessions\n\n- `claude --bg \"prompt\"` starts a session that runs without a terminal, under a supervisor (`claude daemon`). Each session uses the subscription independently.\n- Inbound: a dispatch prompt in agent view starts a new session; a follow-up is a peek reply or `claude --resume <id> \"prompt\"`. The sessions doc says a piped or redirected run sends nothing and exits with status 1. So a script cannot reliably deliver a prompt this way.\n- Outbound: `claude agents --json` for state; `claude logs <id>` for recent output; transcripts on disk.\n- Sessions created with `-p` or the SDK are hidden from the picker and `--continue`, but resumable by ID.\n- The entrypoint label of background sessions is not documented in what I read.\n\n### 3.5 Agent teams\n\n- Enabled by `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`. Experimental and off by default.\n- Only the interactive lead spawns teammates; under `-p` or the SDK, Claude does not spawn them.\n- Limitations: in-process teammates are not restored on `/resume`; one team per session; no nested teams.\n- Input is natural language to the lead. There is no external entry point.\n\n### 3.6 `--session-id` and `--resume`\n\n- `--session-id <uuid>` pins the session ID at launch. `--resume` accepts an ID, a name or a transcript path.\n- Resuming a running background session attaches to it. A prompt passed on the command line is sent as its next turn, after which the terminal attaches. Under `-p` with output flags, a running session is not opened and the command exits 1.\n- This is the only documented way to re-enter a known session by ID. Whether the entrypoint of a resumed session changes is not documented.\n\n### 3.7 Statusline `rate_limits`\n\n- The JSON has `rate_limits.five_hour.used_percentage` (0 to 100) and `resets_at` (epoch seconds), and the same for `seven_day`.\n- Present only for claude.ai Pro, Max and Ultra subscribers, and only after the first API response. Either window can be absent.\n- The script runs on events, on window resets, or on `refreshInterval`. It uses no API tokens.\n- A script can write the JSON to a file, which is a documented hook point but not a documented export.\n\n### 3.8 `/usage`\n\n- Shows plan bars and a breakdown by skill, subagent, plugin and MCP server. It can say the usage endpoint is rate limited and show last-known usage for up to 60 minutes.\n- It is documented as a terminal panel. I found no documented way to script its output.\n\n### 3.9 OAuth usage endpoint\n\n- Not documented by Anthropic. Third-party sources describe `GET https://api.anthropic.com/api/oauth/usage` with a Bearer OAuth token from `~/.claude/.credentials.json` and the header `anthropic-beta: oauth-2025-04-20`. One project reports a 403 “OAuth token does not meet scope requirement user:profile” for setup-tokens.\n- Feature request #99231 says there is no supported way to read individual usage programmatically.\n- Reusing Claude Code's OAuth token in your own tool falls in the area the Legal page restricts: developers “may not collect, store, or intermediate Claude.ai credentials.” That rule is aimed at products, so applying it to a personal script is a judgement call.\n\n### 3.10 Cross-session messaging\n\n- This is the only documented same-machine inbound path into a running interactive session from a script. Each session binds a per-session Unix socket (or a named pipe on Windows), exported as `CLAUDE_CODE_MESSAGING_SOCKET`, with a token in `CLAUDE_CODE_MESSAGING_TOKEN`.\n- Delivery: the receiving Claude reads the message between tool calls, or a new turn starts when the session is idle. The message is plain text, not a command, and it cannot approve permission prompts.\n- Once delivered, it counts toward usage like a typed prompt.\n- Default inbound handling depends on permission modes: a prompting receiver accepts by default; a bypassing receiver holds messages for approval. `crossSessionInbound: \"accept\"` in `--settings` lets a `-p` worker take messages unattended.\n- Requires v2.1.224 or later (v2.1.234 on native Windows). Not reachable from Bedrock, Vertex or Foundry across machines.\n\n### 3.11 stream-json `rate_limit_event`\n\n- The Python SDK reference documents a `RateLimitEvent` emitted when status changes. The field path `rate_limit_info.unifiedWindows.five_hour.utilization` is reported by users from `-p` stream-json output and by an issue on another project. It is not in the pages I read.\n\n## 4. Options closest to the documented line\n\n- **API-key runs of `claude -p` or the SDK on Max, Ultra or Team:** monthly credits cover them, billed to the linked Console organization. Not Pro. Not interactive Claude Code.\n- **Keep work in the interactive app on your own machine:** channels, hooks and cross-session messages are documented plan features. Their entrypoint labels are not documented, so check the `entrypoint` field in the transcript.\n- **Cloud sessions and cloud scheduled tasks** are listed as available on Pro, Max, Ultra and Team. They run on Anthropic's cloud, not your machine.\n- **Measure before you rely on a route:** `statusline` `rate_limits` or the `rate_limit_event` stream gives utilization; the transcript gives the label.\n\n## 5. What stays uncertain\n\n- **Staff replies to #97074:** the 72 items I could not load may contain one.\n- **CLAUDE_CODE_ENTRYPOINT:** official status depends on the `CLAUDE_CODE_E…` entries I did not read.\n- **Whether the entrypoint label drives metering** is supported only by user measurements on one to three accounts each. No Anthropic confirmation.\n- **Labels of channels, Remote Control, background sessions and cross-session messages:** undocumented. They matter for #97074.\n- **Section 3 of the consumer terms** for US users (not read), and what “explicitly permit” covers beyond the help-center text.\n- **The Nov 12 clause:** the in-force text before Nov 12 is known only through a tracker. Whether it will reach relabeling or personal scripts is unknown.\n- **Agent view and agent teams:** I found no plan-availability list for either.\n- **Changelog:** I read only part of the release notes.\n- **Policy stability:** the June 15 pause and the Oct 7 credits show the terms have changed twice this year.\n",
+  "citations": [
+    {
+      "url": "https://support.claude.com/en/articles/15036540-use-the-claude-agent-sdk-with-your-claude-plan",
+      "claim": "Help center (Oct 7, 2026 update): Max, Ultra and Team plans include monthly API credits covering the Claude API, Managed Agents, the Agent SDK and claude -p when run with an API key from a linked Console organization; when signed in with a plan, claude -p and the Agent SDK still draw from subscription limits.",
+      "confidence": "high"
+    },
+    {
+      "url": "https://support.claude.com/en/articles/15036540-use-the-claude-agent-sdk-with-your-claude-plan",
+      "claim": "Help center (June 15, 2026 update): changes to Agent SDK usage were paused; Agent SDK, claude -p and third-party app usage still draw from subscription usage limits.",
+      "confidence": "high"
+    },
+    {
+      "url": "https://support.claude.com/en/articles/17154008-monthly-api-credits-for-max-ultra-and-team-plans",
+      "claim": "Monthly API credits: $100 Max, $200 Ultra, $20 or $100 per Team seat pooled up to $500; they cover claude -p and the SDK only with an API key from the linked Console organization; they do not cover interactive Claude Code or GitHub Action, IDE or desktop runs even with -p; Pro is not eligible.",
+      "confidence": "high"
+    },
+    {
+      "url": "https://www.anthropic.com/legal/consumer-terms",
+      "claim": "Consumer Terms section 3: users may not access the Services through automated or non-human means (bot, script or otherwise), except via an Anthropic API Key or where Anthropic otherwise explicitly permits it. The copy read is effective Oct 8, 2025 and scoped to EEA and Swiss consumers.",
+      "confidence": "high"
+    },
+    {
+      "url": "https://www.anthropic.com/legal/consumer-terms",
+      "claim": "Consumer Terms section 11: non-commercial use only; users may not use the Services for commercial or business purposes. Section 2 bars sharing account access with anyone else.",
+      "confidence": "high"
+    },
+    {
+      "url": "https://code.claude.com/docs/en/legal-and-compliance",
+      "claim": "Claude Code legal page: advertised Pro, Max and Ultra limits assume ordinary, individual usage of Claude Code and the Agent SDK; developers building products should use API keys; Anthropic does not permit routing requests through Free, Pro, Max or Ultra plan credentials on behalf of users; developers may not collect, store or intermediate Claude.ai credentials or session tokens; end users may still sign in to the unmodified binary with their own subscription.",
+      "confidence": "high"
+    },
+    {
+      "url": "https://code.claude.com/docs/en/agent-sdk/overview",
+      "claim": "Agent SDK overview: unless previously approved, Anthropic does not allow third-party developers to offer claude.ai login or rate limits for their products, including agents built on the Agent SDK.",
+      "confidence": "high"
+    },
+    {
+      "url": "https://www.anthropic.com/legal/aup",
+      "claim": "Usage Policy effective Nov 12, 2026 adds the Do Not Abuse Our Platform item: resell, proxy or otherwise provide access to Claude through unauthorized means, including services that route requests through consumer subscriptions or misrepresent the product or client being used.",
+      "confidence": "high"
+    },
+    {
+      "url": "https://tokenplans.dev/changelog/2026-11-12-claude--policy/",
+      "claim": "The policy in force until Nov 11, 2026 (effective Sept 15, 2025) had no resale or proxy clause; the clause is new in the Nov 12 version. Third-party tracker, not checked against the in-force text.",
+      "confidence": "medium"
+    },
+    {
+      "url": "https://github.com/anthropics/claude-code/issues/97074",
+      "claim": "Issue #97074 reports that headless claude -p (entrypoint sdk-cli) uses about 1.8 times more of the 5-hour window per token than the interactive cli, with an A/B test on Claude Code 2.1.282 and Opus 5; the issue is open with labels bug, area:cost and has-repro.",
+      "confidence": "medium"
+    },
+    {
+      "url": "https://github.com/anthropics/claude-code/issues/97074",
+      "claim": "Issue #97074 replications: a Pro-plan run measured sdk-cli at $0.68 per 1% versus $1.34 for the TUI (about 2.0 times); a Team-plan harness measured sdk-ts and sdk-cli about 2.8 to 3.0 times faster than a claude-vscode label. These are user-run results, not verified by Anthropic.",
+      "confidence": "medium"
+    },
+    {
+      "url": "https://github.com/anthropics/claude-code/issues/97074",
+      "claim": "In the readable part of issue #97074 (through Nov 2, 2026) there is no Anthropic staff comment; the page shows 72 remaining items it did not load.",
+      "confidence": "medium"
+    },
+    {
+      "url": "https://x.com/bcherny/status/2115592371224346734",
+      "claim": "Boris Cherny (Oct 28, 2026, X): the team found no single root cause and no regression in Claude Code; fast drain traced to heavy sessions (xhigh effort, /goal, Workflows, Agent Teams, long SDK jobs). The post does not mention sdk-cli or headless runs.",
+      "confidence": "high"
+    },
+    {
+      "url": "https://dev.to/edtrackai/claude-5-hour-limit-draining-fast-in-t3-code-or-the-agent-sdk-2ob9",
+      "claim": "Anthropic had not confirmed the headless gap or announced a fix as of Oct 31, 2026, according to a third-party post; Theo of T3 Code said he confirmed a real bug on Anthropic's side.",
+      "confidence": "medium"
+    },
+    {
+      "url": "https://aicoder.com/news/news-20261028-claude-code-usage-limits-investigation-boris-cherny-no-regression-fixes-rolling-out",
+      "claim": "The AICoder summary describes the Oct 28 Cherny post as an employee's own post on X, not a formal Anthropic announcement.",
+      "confidence": "medium"
+    },
+    {
+      "url": "https://github.com/pingdotgg/t3code/pull/25597",
+      "claim": "T3 Code PR #25597 sets CLAUDE_CODE_ENTRYPOINT to a custom label, keeps an existing value, reports about 1.83 times more work per 1% of the window (one Max account, Claude Code 2.1.310), is marked Closed on the page read, and notes an inherited sdk-* value defeats the default.",
+      "confidence": "medium"
+    },
+    {
+      "url": "https://github.com/xsyetopz/www.clawdipedia.cc/blob/main/docs/configure/env-vars/sdk-and-automation.md",
+      "claim": "CLAUDE_CODE_ENTRYPOINT is set by the program when empty (sdk-cli for SDK CLI, sdk-ts for the TypeScript SDK); the variable appears in a third-party mirror generated from the binary, not in the official env-var reference parts read.",
+      "confidence": "low"
+    },
+    {
+      "url": "https://www.turboai.dev/docs/claude-code/env-vars/CLAUDE_CODE_ENTRYPOINT",
+      "claim": "A third-party reference says CLAUDE_CODE_ENTRYPOINT is not in the official Claude Code reference.",
+      "confidence": "low"
+    },
+    {
+      "url": "https://code.claude.com/docs/en/env-vars",
+      "claim": "The env-vars reference says that with -p the ANTHROPIC_API_KEY is always used when present, overriding the subscription.",
+      "confidence": "high"
+    },
+    {
+      "url": "https://github.com/anthropics/claude-code/releases",
+      "claim": "Release notes v2.1.310 to v2.1.316 (Oct 23 to Oct 31, 2026) contain no entrypoint or metering change in the parts read.",
+      "confidence": "medium"
+    },
+    {
+      "url": "https://code.claude.com/docs/en/channels",
+      "claim": "Channels are a research preview; they require claude.ai or Console API-key authentication; Team and Enterprise must enable them; they are not available on Bedrock, Vertex or Foundry.",
+      "confidence": "high"
+    },
+    {
+      "url": "https://code.claude.com/docs/en/channels-reference",
+      "claim": "Channels: events arrive as channel tags; a server pushes notifications/claude/channel; events queue for the next turn; custom channels need --dangerously-load-development-channels during preview; the development flag is ignored under -p; the sender allowlist gates inbound messages.",
+      "confidence": "high"
+    },
+    {
+      "url": "https://code.claude.com/docs/en/feature-availability",
+      "claim": "Feature availability: channels are available to Pro, Max and Ultra; Team and Enterprise are admin-enabled; cross-session messaging is available on subscriptions; Remote Control is available to Pro, Max and Ultra with Team and Enterprise admin-enabled.",
+      "confidence": "high"
+    },
+    {
+      "url": "https://code.claude.com/docs/en/remote-control",
+      "claim": "Remote Control: requires a subscription on Pro, Max, Ultra, Team or Enterprise; API keys are not supported; ANTHROPIC_BASE_URL pointing elsewhere disables it; the session runs locally and the web and mobile apps are a window onto it.",
+      "confidence": "high"
+    },
+    {
+      "url": "https://code.claude.com/docs/en/hooks-guide",
+      "claim": "Hooks: events include Stop, SubagentStop and Notification; Notification matchers include agent_needs_input and agent_completed, which fire only while agent view is open; Stop and PostToolUse use a top-level decision of block.",
+      "confidence": "high"
+    },
+    {
+      "url": "https://code.claude.com/docs/en/agent-sdk/hooks",
+      "claim": "Agent SDK hooks: Stop ignores matchers; SubagentStop fires when a subagent finishes; a timed-out Stop callback counts as returning no decision.",
+      "confidence": "high"
+    },
+    {
+      "url": "https://code.claude.com/docs/en/agents",
+      "claim": "Agent view (claude agents) is a research preview; each dispatched session uses subscription quota independently; claude agents --json gives session state for scripts.",
+      "confidence": "high"
+    },
+    {
+      "url": "https://code.claude.com/docs/en/agent-view",
+      "claim": "Agent view: sessions run on a supervisor and keep working without a terminal; state is read with claude agents --json; new dispatched prompts start new sessions; follow-ups use the peek panel or attach.",
+      "confidence": "medium"
+    },
+    {
+      "url": "https://code.claude.com/docs/en/cli-reference",
+      "claim": "CLI reference: claude --bg starts a background session; claude agents --json lists active sessions; claude logs prints recent output; --session-id takes a valid UUID; --resume accepts an ID or name.",
+      "confidence": "high"
+    },
+    {
+      "url": "https://code.claude.com/docs/en/sessions",
+      "claim": "Resuming a running background session attaches to it; a piped or redirected run with output flags sends nothing and exits with status 1; sessions created with -p or the SDK are excluded from the picker and --continue but resumable by ID.",
+      "confidence": "high"
+    },
+    {
+      "url": "https://code.claude.com/docs/en/agent-teams",
+      "claim": "Agent teams are experimental and disabled by default, enabled with CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1; under -p or the Agent SDK, Claude does not spawn teammates; in-process teammates are not restored on resume.",
+      "confidence": "high"
+    },
+    {
+      "url": "https://code.claude.com/docs/en/cross-session-messaging",
+      "claim": "Cross-session messaging: per-session inbox socket exported as CLAUDE_CODE_MESSAGING_SOCKET, with a token in CLAUDE_CODE_MESSAGING_TOKEN; scripts and hooks can post into their own session; delivery is plain text; delivered messages count toward usage like a typed prompt; same-machine traffic does not pass through Anthropic servers.",
+      "confidence": "high"
+    },
+    {
+      "url": "https://code.claude.com/docs/en/cross-session-messaging",
+      "claim": "Cross-session messaging: crossSessionInbound controls inbound messages; a -p worker takes messages unattended when crossSessionInbound is accept in its --settings; the default depends on the receiver's permission mode.",
+      "confidence": "high"
+    },
+    {
+      "url": "https://code.claude.com/docs/en/statusline",
+      "claim": "Statusline: rate_limits.five_hour and seven_day carry used_percentage (0 to 100) and resets_at epoch seconds; present only for Pro, Max and Ultra subscribers and only after the first API response; the script receives JSON on stdin and runs on events.",
+      "confidence": "high"
+    },
+    {
+      "url": "https://code.claude.com/docs/en/costs",
+      "claim": "Costs page: /usage shows plan usage bars and a breakdown by skill, subagent, plugin and MCP server on Pro, Max, Ultra, Team and Enterprise; it can report the usage endpoint as rate limited and show last-known usage for up to 60 minutes.",
+      "confidence": "high"
+    },
+    {
+      "url": "https://code.claude.com/docs/en/commands",
+      "claim": "Commands reference: some built-in commands such as /status, /tasks and /usage run immediately while Claude is responding.",
+      "confidence": "medium"
+    },
+    {
+      "url": "https://github.com/anthropics/claude-code/issues/99231",
+      "claim": "Feature request #99231 (Oct 3, 2026) states there is no supported way to read an individual account's 5-hour and 7-day usage programmatically and asks for a documented endpoint; it is open and I saw no Anthropic reply.",
+      "confidence": "high"
+    },
+    {
+      "url": "https://glama.ai/mcp/servers/NG-Bullseye/claude-usage-mcp",
+      "claim": "Undocumented OAuth usage endpoint: GET https://api.anthropic.com/api/oauth/usage with Bearer token and anthropic-beta oauth-2025-04-20; third-party reverse engineering.",
+      "confidence": "low"
+    },
+    {
+      "url": "https://github.com/someswar177/claude-multi-accounts/blob/main/docs/FINDINGS.md",
+      "claim": "A setup-token returns HTTP 403 from /api/oauth/usage with a scope requirement of user:profile; third-party finding.",
+      "confidence": "low"
+    },
+    {
+      "url": "https://github.com/stablyai/orca/issues/35497",
+      "claim": "Headless stream-json emits a rate_limit_event carrying rate_limit_info.unifiedWindows.five_hour.utilization; reported by a third-party project, not in the docs read.",
+      "confidence": "low"
+    },
+    {
+      "url": "https://code.claude.com/docs/en/agent-sdk/python",
+      "claim": "The Python Agent SDK reference documents a RateLimitEvent emitted when rate limit status changes.",
+      "confidence": "medium"
+    },
+    {
+      "url": "https://code.claude.com/docs/en/headless",
+      "claim": "Headless docs: in bare mode Claude Code never reads OAuth credentials or the system keychain, so ANTHROPIC_API_KEY is needed; a -p run uses the API key when set.",
+      "confidence": "high"
+    },
+    {
+      "url": "https://support.claude.com/en/articles/11145838-use-claude-code-with-your-pro-max-or-ultra-plan",
+      "claim": "Pro, Max and Ultra help article: if ANTHROPIC_API_KEY is set, Claude Code uses that key instead of the subscription, which bills at API rates.",
+      "confidence": "high"
+    },
+    {
+      "url": "https://code.claude.com/docs/en/agent-teams",
+      "claim": "Agent teams: lead-driven with natural language, teammates with separate contexts; the agent-teams page lists limitations including no session resumption for in-process teammates.",
+      "confidence": "medium"
+    },
+    {
+      "url": "https://code.claude.com/docs/en/agents",
+      "claim": "Agents overview: Projects are in public beta on Pro, Max and Ultra; Projects threads can run on the user's computer through Remote Control.",
+      "confidence": "medium"
+    }
+  ],
+  "unverified": [
+    {
+      "url": "https://github.com/anthropics/claude-code/issues/97074",
+      "topic": "Whether any Anthropic staff replied in the 72 items of issue #97074 that did not load",
+      "reason": "The page shows 72 remaining items behind Load more; the page-2 request returned the same content, so the rest of the thread could not be read."
+    },
+    {
+      "url": "https://code.claude.com/docs/en/env-vars",
+      "topic": "Whether CLAUDE_CODE_ENTRYPOINT appears in the official env-var reference",
+      "reason": "The fetched page was cut off before the CLAUDE_CODE_E... entries; two third-party references say it is not in the official reference."
+    },
+    {
+      "url": "https://support.claude.com/en/articles/15036540-use-the-claude-agent-sdk-with-your-claude-plan",
+      "topic": "Full text of the Agent SDK help article, beyond the two update notices",
+      "reason": "The fetch returned only the update notices and related links; the body was not in the response."
+    },
+    {
+      "url": null,
+      "topic": "US version of the Consumer Terms (section 3 wording for US users)",
+      "reason": "Not fetched; the copy read is the EEA and Switzerland version effective Oct 8, 2025."
+    },
+    {
+      "url": "https://www.anthropic.com/legal/aup",
+      "topic": "Usage Policy text in force before Nov 12, 2026",
+      "reason": "The fetched page is the Nov 12, 2026 version; the earlier wording is known only from a third-party tracker."
+    },
+    {
+      "url": "https://code.claude.com/docs/en/agent-view",
+      "topic": "Plan eligibility for agent view and agent teams",
+      "reason": "The agent-view page was cut off in the fetch and the feature-availability table does not list agent view; no plan list was found."
+    },
+    {
+      "url": null,
+      "topic": "Entrypoint labels for channels, Remote Control, background sessions and cross-session messages",
+      "reason": "The docs read do not state which entrypoint label these sessions send; this determines whether they fall under the sdk-cli weighting reported in issue #97074."
+    },
+    {
+      "url": "https://github.com/anthropics/claude-code/issues/97074",
+      "topic": "Size of the sdk-cli weighting and whether it follows the entrypoint label",
+      "reason": "All replications are user-run, one to three accounts each, with no Anthropic verification."
+    },
+    {
+      "url": "https://glama.ai/mcp/servers/NG-Bullseye/claude-usage-mcp",
+      "topic": "Undocumented OAuth usage endpoint: behaviour, stability and scopes",
+      "reason": "Third-party reverse engineering only; Anthropic does not document the endpoint."
+    },
+    {
+      "url": "https://github.com/stablyai/orca/issues/35497",
+      "topic": "Stream-json rate_limit_event field layout (rate_limit_info.unifiedWindows.five_hour.utilization)",
+      "reason": "Reported by third-party projects; the docs read document the event type but not this field path."
+    },
+    {
+      "url": "https://code.claude.com/docs/en/hooks",
+      "topic": "Pages that returned no content on fetch: /docs/en/hooks reference, /docs/en/agent-view (full), /docs/en/agent-sdk/python (beyond 30,000 characters), /docs/en/env-vars (beyond 50,000 characters)",
+      "reason": "The fetch tool returned empty output for these, so the full reference text could not be read."
+    }
+  ],
+  "grounding": {
+    "grounded": 45,
+    "citations": 45,
+    "pagesFailed": 0,
+    "pagesRetrieved": 41
+  }
+}

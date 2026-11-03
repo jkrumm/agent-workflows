@@ -1,0 +1,191 @@
+{
+  "runId": "01a19e92-a231-7491-ad61-f8e461241bc5",
+  "status": "done",
+  "question": null,
+  "report": "## Bottom line\n\n- **What makes review low-noise:** the vendors that publish architecture describe the same shape. Several finders run in parallel over the diff and surrounding code. A separate verification or voting stage drops candidates that do not hold up. Only survivors are ranked and posted, with dedupe against earlier runs and filters for non-bug categories. Anthropic documents this as Find, Verify, Rank, Post ([code.claude.com/docs/en/code-review](https://code.claude.com/docs/en/code-review)). Cursor's Bugbot used eight randomized-order passes, majority voting and a validator model before it moved to an agentic design ([cursor.com/blog/building-bugbot](https://cursor.com/blog/building-bugbot)).\n- **Measured precision and recall:** no independent false-positive rate for AI PR review has been published. Vendor-run numbers disagree widely. Greptile reports 82% catch rate on its own 50-bug test, and its benchmark states that false positives did not affect the catch rate ([greptile.com/benchmarks](https://www.greptile.com/benchmarks)). Augment's re-run of the same five-repo set scores Greptile at 45% F1, and the best tool at 59% F1 ([aicodereview.cc](https://aicodereview.cc/blog/ai-code-review-tools-low-false-positives/), summarising Augment's published data). On CodeReviewBench, the top model reaches 44.2% recall and 43.6% precision on 30 PRs and 95 golden bugs ([codereviewbench.com/leaderboard](https://www.codereviewbench.com/leaderboard)).\n- **Cost:** Anthropic does not publish tokens per review. It states an average of $15–25 per review, scaling with PR size and complexity ([claude.com/resources/articles/code-review](https://claude.com/resources/articles/code-review)). Across models on CodeReviewBench, API cost ranges from $0.08 to $1.62 per PR.\n- **Cross-model critics:** plausible but unproven. A controlled 900-session preprint found a top-tier cross-model reviewer not significantly different from a fresh same-model session, while the two found partly different errors (Jaccard 41.2%) ([arxiv.org/html/2610.01471v2](https://arxiv.org/html/2610.01471v2)).\n- **Re-review:** Anthropic caps rounds at three, re-reviews only the new diff after the first passes, and does not repeat findings already posted. Its own analysis found about 59% of repeated flags were on code that predated the reviewer's first pass ([claude.dev/blog/solving-code-review-at-anthropic](https://claude.dev/blog/solving-code-review-at-anthropic/)).\n- **Long-lived service vs per-review:** I found no published guidance from a vendor on queueing or context reset for a reviewer service. The concrete facts I could verify are about prompt-cache lifetime and SDK session handling, which are listed below.\n\n## Finder plus verifier pipelines\n\nAnthropic's Code Review runs several agents in parallel over the diff and surrounding code. A verification step then checks candidate findings against the code and filters false positives before ranking and posting. Its Claude Code team blog adds that a separate group of agents votes on each finding and it is posted only if enough of them agree it is real. Style, diagnostic and cleanup findings are dropped, and these filters were A/B tested on internal PRs before they were kept. Each comment is tagged Important, Nit or Pre-existing, so a bug the PR did not introduce is not attributed to its author ([claude.dev](https://claude.dev/blog/solving-code-review-at-anthropic/)).\n\nCursor's account is the most detailed public history. Majority voting across parallel passes was one of its most effective early gains, since a finding seen in several passes counts as a stronger signal. The later agentic design moved the problem the other way: the agent became too cautious, so the team shifted to prompts that encourage flagging suspicious patterns. The result is that verification and aggressiveness have to be tuned together ([cursor.com/blog/building-bugbot](https://cursor.com/blog/building-bugbot)). Cursor reports its resolution rate, meaning the share of flagged bugs resolved by merge time, rising from 52% at the July 2025 launch to over 70% by January 2026, with bugs flagged per run rising from 0.4 to 0.7. Its April 2026 post says the rate is nearing 80% ([cursor.com/blog/bugbot-learning](https://cursor.com/blog/bugbot-learning)). Resolution rate is a vendor metric. It counts issues the author changed, not confirmed bugs, and it does not measure recall.\n\nGreptile's v3 replaced a fixed flowchart with an agent loop that searches the codebase and follows nested calls. Its vendor-reported results are a 70.5% higher acceptance rate and about 75% lower inference cost for self-hosted customers, reached through high cache hit rates despite about 3x more context tokens ([greptile.com/blog/greptile-v3-agentic-code-review](https://www.greptile.com/blog/greptile-v3-agentic-code-review)). The company attributes the precision gain to a higher bar for certainty.\n\n## Measured precision and recall\n\nThe picture is that vendor numbers are not comparable and independent ones are sparse:\n\n- The 2026 Augment guide defines the terms. Precision is the share of posted comments that match a golden comment. Recall is the share of golden comments produced. F1 hides which side is weaker ([augmentcode.com/guides/ai-code-review-accuracy](https://www.augmentcode.com/guides/ai-code-review-accuracy)).\n- Augment's re-run of the five-repo set, with a hand-corrected golden set, reports precision and recall together. Augment: 65% / 55% / 59% F1. Cursor Bugbot: 60% / 41% / 49%. Greptile: 45% / 45% / 45%. Codex: 68% / 29% / 41%. CodeRabbit: 36% / 43% / 39%. Claude Code: 23% / 51% / 31% ([aicodereview.cc](https://aicodereview.cc/blog/ai-code-review-tools-low-false-positives/)). Augment published data and scripts, but it is a vendor and it ranks itself first.\n- The same guide cites an Atlassian study accepted to ASE 2025, in which 18.2% of LLM reviewer comments were bug-related against 6.5% of human reviewer comments, with design comments resolved least often (28.6%). It also cites a CR-Bench result in which adding a Reflexion loop raised recall from 27.01% to 32.76% while signal-to-noise fell from 5.11 to 1.95 ([augmentcode.com](https://www.augmentcode.com/guides/ai-code-review-accuracy)). Extra thoroughness and noise rise together.\n- Tolerance thresholds from older analyzers are useful context. Google's Tricorder kept an analyzer only while its effective false-positive rate stayed below 10%. Coverity's team reported in 2010 that a false-positive rate above 30% causes people to ignore the tool (same Augment guide).\n- CodeReviewBench is run on 30 merged PRs with 95 human-flagged bugs and judged by claude-haiku-4-5. Its own figures show recall and precision are not both high in any model. Gemini 3.7 Flash has 11.6% recall and 73.9% precision ([codereviewbench.com/model/gemini-3.7-flash](https://www.codereviewbench.com/model/gemini-3.7-flash)). The benchmark's publisher is not identified in what I read, so treat it as unverified independence.\n- Google's internal experience is more modest. Its AI-assisted code review comment resolution covered more than 8% of review comments by a 2024-era account ([arxiv.org/html/2501.06972v1](https://arxiv.org/html/2501.06972v1)).\n- Graphite's own claim is that fewer than 5% of its comments are negative, with no stated method ([aicodereview.cc](https://aicodereview.cc/blog/ai-code-review-tools-low-false-positives/)). Its Graphite Diamond scored 6% catch in Greptile's test.\n\nA useful warning from the 2026 literature is that many commonly quoted false-positive figures trace to misattributed sources. One widely repeated claim of a 40–70% false-positive rate attributed to the c-CRAB benchmark does not appear in that paper. The paper's 41.5% is a pass rate for curated tests, not an error rate ([aicodereview.cc](https://aicodereview.cc/blog/ai-code-review-tools-low-false-positives/)). I did not read the c-CRAB paper myself, so I have not verified this.\n\n## Cross-model critics and independent verification\n\nThe evidence for a second model family as verifier is thin and mostly from single-author preprints:\n\n- A 900-session controlled study (30 artifacts, 150 planted errors, three reviewer models) found that a cross-model reviewer was not significantly different in F1 from same-model fresh-session review. Pairing one same-model and one cross-model review matched more planted errors than two same-model reviews (56.7% vs 42.7%), but not significantly more than two top-tier cross-model reviews. Lightweight cross-model reviewers did no better than same-model review. The author states the paper is not peer reviewed ([arxiv.org/html/2610.01471v2](https://arxiv.org/html/2610.01471v2)).\n- Refute-or-Promote is a 2026 preprint from one author. It describes adversarial kill mandates and a cross-model critic, and reports that the pipeline killed about 79% of about 171 candidate vulnerability reports over a 31-day campaign, with 83% killed in a prospective subset of 30. Its most instructive failure is that ten reviewers unanimously endorsed a non-existent OpenSSL padding oracle until one empirical test killed it. This is a retrospective, non-peer-reviewed account ([arxiv.org/html/2604.19049](https://arxiv.org/html/2604.19049)).\n- Anthropic's team says the most reliable verifier is a fresh-context agent that sees the diff, not the authoring conversation. It also recommends an empirical check where possible ([claude.dev](https://claude.dev/blog/solving-code-review-at-anthropic/)). This is practice, not measurement.\n\nReasonable reading: a verifier with fresh context and an empirical or tool-based check is well supported by practice. Cross-model verification is a hypothesis that needs measurement on your own PRs.\n\n## Re-review on incremental diffs\n\nAnthropic's team reports that its reviewer kept finding a few more old bugs each round, and that rounds were often run by default because each pass caught something new. Its response was a three-round cap, diff-only re-review after the first passes, class-level flagging so the author fixes every instance, and no repeat posts ([claude.dev](https://claude.dev/blog/solving-code-review-at-anthropic/)). The Code Review docs say that after some pushes the earlier result is kept instead of a new review, and that a review is started by a comment only from a person with write access ([code.claude.com/docs/en/code-review](https://code.claude.com/docs/en/code-review)). Cursor deduplicates against bugs posted in earlier runs ([cursor.com/blog/building-bugbot](https://cursor.com/blog/building-bugbot)). A single-author preprint reports that repeated review rounds in one session increased false positives by 62% without improving recall ([arxiv.org/html/2610.01471v2](https://arxiv.org/html/2610.01471v2)). I have not verified that result beyond the author's own citation.\n\n## What a review costs in tokens\n\n- **Anthropic:** cost per review scales with review level (Quick, Standard, Deep), change size, surrounding complexity and the number of candidate issues that need verification. Repositories can be set to review once, on every push, or on request. Every push multiplies cost, and reviews are skipped when the remaining budget is below the expected cost of one review ([code.claude.com/docs/en/code-review-costs](https://code.claude.com/docs/en/code-review-costs)). The help center gives the $15–25 average and about 20 minutes per review ([support.claude.com](https://support.claude.com/en/articles/14233555-set-up-code-review-for-claude-code)).\n- **Derived, not published:** Anthropic does not disclose tokens or the model. At the Opus 5 list prices in the pricing table ($5 per million input tokens, $25 per million output tokens), $15–25 corresponds to roughly 0.6M–5M tokens, depending on the input/output mix. This is my calculation and the model used is not disclosed.\n- **CodeReviewBench:** $0.08 to $1.62 per PR, and $0.07 to $1.25 per bug found. The most expensive model has 41.0% recall and the cheapest 39.0%. Its authors note that cost per bug is the metric that decides value, and that false-positive reading time is not in the table ([codereviewbench.com/blog/paying-more-does-not-buy-recall](https://www.codereviewbench.com/blog/paying-more-does-not-buy-recall)).\n- **Caching:** cache writes cost 1.25x base input for a 5-minute TTL and 2x for a 1-hour TTL. Cache reads cost 0.1x, with some models at 0.05x or 0.025x ([platform.claude.com/docs/en/build-with-claude/prompt-caching](https://platform.claude.com/docs/en/build-with-claude/prompt-caching)). The same page says the cache lifetime is measured from the start of the request that reads or writes it. Greptile's cache-hit result is the practical argument for stable, large prefixes.\n\n## Long-lived reviewer service vs one agent per review\n\nI found no vendor guidance that settles this directly. Verifiable pieces:\n\n- **Prompt cache reuse:** a long-lived process can reuse a prefix only while the 5-minute TTL keeps refreshing. Bursty PR traffic with gaps longer than five minutes either pays the write cost again or needs the 1-hour TTL at 2x. The docs also warn that a breakpoint on per-request content, such as a timestamp, produces no cache hits ([platform.claude.com](https://platform.claude.com/docs/en/build-with-claude/prompt-caching)).\n- **Session handling:** the Agent SDK's query() creates a new session per call by default. ClaudeSDKClient keeps one session across calls in one process. Sessions persist the conversation, not the filesystem ([code.claude.com/docs/en/agent-sdk/sessions](https://code.claude.com/docs/en/agent-sdk/sessions)). This means a per-review agent starts with no memory of earlier reviews of the same PR, and a held session accumulates context that must be reset between jobs.\n- **Process cost:** one secondary harness document says one SDK session equals one subprocess, at roughly 1 GiB RAM per session as a floor, growing with session length ([github.com/conductor-oss/conductor-agents](https://github.com/conductor-oss/conductor-agents/blob/main/coding-harness/docs/CLAUDE_AGENT_SDK.md)). I read only the search summary, so treat it as low confidence.\n- **Failure handling:** a user-filed OpenAI Codex issue describes managed reviews stuck in Running with no review submitted, and proposes durable review attempts, a watchdog and idempotent recovery ([github.com/openai/codex/issues/55890](https://github.com/openai/codex/issues/55890)). This is an observed failure mode, not a vendor design.\n- **Budget gating:** Anthropic's service skips reviews when the spend limit is near the cost of one review, and tells the developer on the PR ([code.claude.com/docs/en/code-review-costs](https://code.claude.com/docs/en/code-review-costs)).\n\nPractical reading: the cache and session facts favour a long-lived worker for bursty traffic only if it handles resets explicitly, keeps a stable prefix, and queues jobs. Per-review spawning gives clean context and simpler recovery, at the cost of cold caches. Both fit the verifier design above, which benefits from fresh context.\n\n## Unverified\n\nOpenAI's own Codex review documentation and internal metrics were not read; the Codex precision figure above comes from a secondary summary. Google's 2025–26 review system is only covered by 2024-era papers. The c-CRAB '40–70%' claim was not checked against the paper. CRBugBench numbers (opus-5 at 79.6% recall@5, $2.97 per task) come from a secondary summary, not the paper. Who publishes codereviewbench.com was not confirmed.",
+  "citations": [
+    {
+      "url": "https://code.claude.com/docs/en/code-review",
+      "claim": "Anthropic Code Review runs Find, Verify, Rank and Post stages; several agents find issues in parallel and a verification step filters false positives before findings are reported.",
+      "confidence": "high"
+    },
+    {
+      "url": "https://claude.dev/blog/solving-code-review-at-anthropic/",
+      "claim": "Anthropic's Claude Code team: findings are voted on by a separate group of agents and posted only if enough agree; style, diagnostic and cleanup findings are dropped; A/B tested; tagged Important, Nit or Pre-existing.",
+      "confidence": "high"
+    },
+    {
+      "url": "https://claude.dev/blog/solving-code-review-at-anthropic/",
+      "claim": "Anthropic's team caps review rounds at three, uses diff-only re-review after the first passes, does not repeat posted findings; about 59% of repeated flags were on code present since the first pass.",
+      "confidence": "high"
+    },
+    {
+      "url": "https://cursor.com/blog/building-bugbot",
+      "claim": "Cursor Bugbot used eight parallel passes with randomized diff order, majority voting, a validator model and dedupe; later moved to an agentic design that was initially too cautious and was then tuned to flag more aggressively.",
+      "confidence": "high"
+    },
+    {
+      "url": "https://cursor.com/blog/building-bugbot",
+      "claim": "Cursor's resolution rate rose from 52% at the July 2025 launch to over 70% by January 2026, while bugs flagged per run rose from 0.4 to 0.7.",
+      "confidence": "medium"
+    },
+    {
+      "url": "https://cursor.com/blog/bugbot-learning",
+      "claim": "Cursor's resolution rate was about 52% at the Bugbot launch in July 2025 and was nearing 80% by April 2026; the rate counts bugs resolved by merge time, a vendor-defined metric.",
+      "confidence": "medium"
+    },
+    {
+      "url": "https://www.greptile.com/benchmarks",
+      "claim": "Greptile's own benchmark on 50 bugs across five repos gives 82% catch rate for Greptile, 58% Bugbot, 54% Copilot, 44% CodeRabbit, 6% Graphite; false positives did not affect the catch rate.",
+      "confidence": "high"
+    },
+    {
+      "url": "https://www.greptile.com/blog/greptile-v3-agentic-code-review",
+      "claim": "Greptile v3 is an agent loop with codebase search; vendor-reported 70.5% higher acceptance rate, about 3x more context tokens, and about 75% lower inference cost for self-hosted customers via cache hits.",
+      "confidence": "medium"
+    },
+    {
+      "url": "https://aicodereview.cc/blog/ai-code-review-tools-low-false-positives/",
+      "claim": "Independent re-run on the same five-repo set: Augment 65% precision, 55% recall, 59% F1; Cursor Bugbot 60/41/49; Greptile 45/45/45; Codex 68/29/41; CodeRabbit 36/43/39; Claude Code 23/51/31.",
+      "confidence": "medium"
+    },
+    {
+      "url": "https://aicodereview.cc/blog/ai-code-review-tools-low-false-positives/",
+      "claim": "No independent false-positive rate for AI code review has been published; vendor-run numbers dominate the category.",
+      "confidence": "medium"
+    },
+    {
+      "url": "https://www.augmentcode.com/guides/ai-code-review-accuracy",
+      "claim": "Precision is the share of posted comments matching a golden comment; recall is the share of golden comments produced; F1 is their harmonic mean.",
+      "confidence": "high"
+    },
+    {
+      "url": "https://www.augmentcode.com/guides/ai-code-review-accuracy",
+      "claim": "Google's Tricorder kept an analyzer only while its effective false-positive rate stayed under 10%; Coverity reported in 2010 that a false-positive rate above 30% causes people to ignore the tool.",
+      "confidence": "medium"
+    },
+    {
+      "url": "https://www.augmentcode.com/guides/ai-code-review-accuracy",
+      "claim": "In CR-Bench, adding a Reflexion loop raised recall from 27.01% to 32.76% while signal-to-noise fell from 5.11 to 1.95.",
+      "confidence": "medium"
+    },
+    {
+      "url": "https://www.augmentcode.com/guides/ai-code-review-accuracy",
+      "claim": "Atlassian study (ASE 2025): 18.2% of LLM reviewer comments were bug-related vs 6.5% of human reviewer comments; design comments had the lowest resolution rate at 28.6%.",
+      "confidence": "medium"
+    },
+    {
+      "url": "https://www.codereviewbench.com/leaderboard",
+      "claim": "CodeReviewBench: 30 merged PRs, 95 golden bugs, judged by claude-haiku-4-5; top model DeepSeek V4 Pro with F1 43.9, precision 43.6%, recall 44.2%.",
+      "confidence": "medium"
+    },
+    {
+      "url": "https://www.codereviewbench.com/model/gemini-3.7-flash",
+      "claim": "Gemini 3.7 Flash on CodeReviewBench: recall 11.6%, precision 73.9%, rank 13 of 13.",
+      "confidence": "medium"
+    },
+    {
+      "url": "https://www.codereviewbench.com/blog/paying-more-does-not-buy-recall",
+      "claim": "CodeReviewBench API cost ranges from $0.08 to $1.62 per PR, and $0.07 to $1.25 per bug found; the most expensive model's recall is 41.0% and the cheapest's is 39.0%; cost excludes the human time spent reading false positives.",
+      "confidence": "medium"
+    },
+    {
+      "url": "https://claude.com/resources/articles/code-review",
+      "claim": "Anthropic Code Review averages $15–25 per review, scaling with PR size and complexity.",
+      "confidence": "medium"
+    },
+    {
+      "url": "https://code.claude.com/docs/en/code-review-costs",
+      "claim": "Anthropic Code Review cost depends on review level, change size, surrounding complexity and the number of candidate issues needing verification; every push multiplies cost; reviews are skipped when the remaining budget is less than the expected cost of one review.",
+      "confidence": "high"
+    },
+    {
+      "url": "https://support.claude.com/en/articles/14233555-set-up-code-review-for-claude-code",
+      "claim": "Average Code Review cost is $15–25 per review and reviews complete in about 20 minutes on average.",
+      "confidence": "medium"
+    },
+    {
+      "url": "https://platform.claude.com/docs/en/build-with-claude/prompt-caching",
+      "claim": "Cache writes cost 1.25x base input for a 5-minute TTL and 2x for a 1-hour TTL; cache reads cost 0.1x (with per-model exceptions); the 5-minute lifetime is measured from the start of the request that reads or writes it; a breakpoint on per-request content produces no cache hits.",
+      "confidence": "high"
+    },
+    {
+      "url": "https://code.claude.com/docs/en/agent-sdk/sessions",
+      "claim": "Agent SDK query() creates a new session by default; ClaudeSDKClient reuses the same session across calls; sessions persist the conversation, not the filesystem.",
+      "confidence": "high"
+    },
+    {
+      "url": "https://arxiv.org/html/2610.01471v2",
+      "claim": "A controlled study of 900 review sessions found a cross-model reviewer not significantly different in F1 from fresh same-model review; the two find partly different errors (Jaccard 41.2%); the paper is a single-author preprint not peer reviewed.",
+      "confidence": "low"
+    },
+    {
+      "url": "https://arxiv.org/html/2604.19049",
+      "claim": "Refute-or-Promote reports about 79% aggregate and 83% prospective kill rate for candidate defect reports with a cross-model critic; a single-author preprint.",
+      "confidence": "low"
+    },
+    {
+      "url": "https://arxiv.org/html/2610.01471v2",
+      "claim": "Repeated review rounds in one session increased false positives by 62% without improving recall (single-author preprint, cited secondhand by the cross-model study).",
+      "confidence": "low"
+    },
+    {
+      "url": "https://github.com/openai/codex/issues/55890",
+      "claim": "A user-filed Codex issue describes managed reviews stuck in Running with no review submitted and proposes durable review attempts, a watchdog and idempotent recovery.",
+      "confidence": "low"
+    },
+    {
+      "url": "https://arxiv.org/html/2501.06972v1",
+      "claim": "Google reports more than 8% of code review comments are addressed with AI-based assistance (2024-era internal deployment).",
+      "confidence": "medium"
+    }
+  ],
+  "unverified": [
+    {
+      "url": null,
+      "topic": "OpenAI Codex review: its own documentation, precision/recall or internal metrics",
+      "reason": "Not read from a primary OpenAI source; the Codex precision figure comes from a secondary summary (aicodereview.cc)."
+    },
+    {
+      "url": null,
+      "topic": "Google's current (2025-26) LLM review system and metrics",
+      "reason": "Only 2024-era papers were found; no 2025-26 primary Google account was read."
+    },
+    {
+      "url": "https://aicodereview.cc/blog/ai-code-review-tools-low-false-positives/",
+      "topic": "c-CRAB '40-70% false positive rate' claim",
+      "reason": "The claim is reported as a miscitation by a secondary site; the c-CRAB paper (arXiv 2603.23448) was not read."
+    },
+    {
+      "url": null,
+      "topic": "CRBugBench results (opus-5 79.6% recall@5, $2.97 per task)",
+      "reason": "Known only from a secondary summary; the paper (arXiv 2610.13668) was not read."
+    },
+    {
+      "url": null,
+      "topic": "Graphite's 'under 5% negative comment rate' claim",
+      "reason": "Vendor claim with no stated method, reported by a secondary site."
+    },
+    {
+      "url": "https://www.codereviewbench.com/",
+      "topic": "Operator of codereviewbench.com and whether it is vendor-funded",
+      "reason": "Not identified in the pages read; independence of the benchmark is unconfirmed."
+    },
+    {
+      "url": "https://github.com/conductor-oss/conductor-agents/blob/main/coding-harness/docs/CLAUDE_AGENT_SDK.md",
+      "topic": "Conductor doc claim of about 1 GiB RAM per SDK session",
+      "reason": "Only the search summary was read; the full document was not fetched."
+    },
+    {
+      "url": null,
+      "topic": "Long-lived reviewer service guidance (queueing, context reset between jobs)",
+      "reason": "No vendor publishes explicit guidance on this; conclusions are inferred from prompt-cache and SDK session documentation."
+    }
+  ],
+  "grounding": {
+    "grounded": 27,
+    "citations": 27,
+    "pagesFailed": 0,
+    "pagesRetrieved": 13
+  }
+}

@@ -1,0 +1,73 @@
+{
+  "schemaVersion": "v3-spike",
+  "job": "j3-pr116",
+  "target": "PR #116",
+  "level": "high",
+  "outcome": "actionable",
+  "summary": "2 important, 5 nit.",
+  "findings": [
+    {
+      "file": "packages/audio/src/process/door.ts",
+      "line": 281,
+      "tag": "important",
+      "category": "correctness",
+      "summary": "A request whose record ended `bound` (or whose summary never arrived) with no recorded call and no thrown fetch now reports `costUsd: 0`, which reads as known free. The image door treats a cut-short run as unknown.",
+      "failureScenario": "A speech request is cut off by the 1-hour RECORD_MAX_MS bound, or its handler hangs while an upstream call is in flight. The sink has `lost == 0` and `calls == 0`, so `sink.lost <= sink.calls.length` holds. The `request` step then records `costUsd: 0`, with `complete: false` and `ended: 'bound'`. That is wrong whenever the call is billed late. Before this PR, no calls gave `null`. The image door's own comment says a cut-short run must be unknown, never 0. The audio door should return `null` when `ended !== 'done'` and no summary exists.",
+      "verdict": "PLAUSIBLE"
+    },
+    {
+      "file": "packages/audio/src/process/door.ts",
+      "line": 404,
+      "tag": "important",
+      "category": "correctness",
+      "summary": "`response.clone().text()` is called outside the handler try/catch. If the clone throws, `serve()` rejects with the sink still open.",
+      "failureScenario": "If `clone()` throws (for example, a handler returned a Response whose body is already used or locked), `serve()` rejects. It rejects after `sink.answer` was never set and before `finish()` is called. The caller gets an unhandled 500 with no `agw-run-id`. The sink then lives until the 1-hour `RECORD_MAX_MS` bound, and its run is recorded late as `bound`. The 500 catch path just above handles this properly; the clone call should be guarded the same way.",
+      "verdict": "PLAUSIBLE"
+    },
+    {
+      "file": "packages/audio/src/process/door.ts",
+      "line": 281,
+      "tag": "nit",
+      "category": "correctness",
+      "summary": "The `lost` counter is only incremented in the wrapped `fetch` rejection path. A call whose usage event arrives after `sink.close()` is dropped with a warning and not counted. The cost can still be reported as complete.",
+      "failureScenario": "A late `call` event lands after `sink.close()` (a pcm stream that records just after the grace period). `record()` logs a warning and drops it, and `lost` does not move. The step reports `costUsd` as the sum of the earlier calls, or 0, even though one billed call was missed. This contradicts the new comment that says an unseen billed call makes the cost unknown.",
+      "verdict": "PLAUSIBLE"
+    },
+    {
+      "file": "packages/audio/src/process/door.ts",
+      "line": 291,
+      "tag": "nit",
+      "category": "correctness",
+      "summary": "A stream that fails after its 200 (summary status 500) makes the run fail with `door answered 500` and no cause. The error text is only read from the clone when the answered status is >= 400.",
+      "failureScenario": "A pcm speech stream is answered 200 and then dies upstream. `sink.answered.status` is 200 and `answered.errorText` resolves to `''`, which `errorTextOf` turns into null. The run error becomes `door answered 500` with no cause, and the operator cannot tell it was a mid-stream failure. The message also says 'answered 500', although the caller was answered 200. A distinct message such as 'stream failed after 200' would be accurate.",
+      "verdict": "PLAUSIBLE"
+    },
+    {
+      "file": "packages/host/src/door-status.ts",
+      "line": 4,
+      "tag": "nit",
+      "category": "correctness",
+      "summary": "`errorKindOfStatus` treats only 400/413/422 as the caller's fault. Other client-fault statuses (401, 403, 404, 405, 415, 429) become kind `error`, indistinguishable from real server failures.",
+      "failureScenario": "A studio or Hermes client posts to an unknown model (404), the wrong media type (415) or the wrong method, or hits a rate limit (429). The door run now ends `failed` with kind `error`. Failure-rate dashboards, alerts and evals count these as platform errors. A generic 4xx rule (`status >= 400 && status < 500 && status !== 408/429`) would be more consistent. The audio and image doors share this helper, so both inherit the gap.",
+      "verdict": "PLAUSIBLE"
+    },
+    {
+      "file": "packages/audio/src/process/door.ts",
+      "line": 306,
+      "tag": "nit",
+      "category": "correctness",
+      "summary": "The run now throws a `WorkflowError` after the step is journaled. The run always ends `failed` for any answered status >= 400 unless the end was `client-gone`. On a retry or resume, the throw replays on every run from the journaled output.",
+      "failureScenario": "A request that the client aborted just after the handler returned an upstream error ends as `client-gone` and stays `done`. If the client abort and `finish()` race the other way, the same request ends `failed`. The outcome of the run depends on timing, because `sink.ended` is set by whichever of `finish` or the cancel callback runs first. The test only covers the deterministic cases.",
+      "verdict": "PLAUSIBLE"
+    },
+    {
+      "file": "packages/audio/test/process.test.ts",
+      "line": 1,
+      "tag": "nit",
+      "category": "test-coverage",
+      "summary": "One test asserts the 400 failure twice: the existing `badRun` block, then the newly added `bad400` block. Both call `failedRun` on the same run, so the second repeats the first.",
+      "failureScenario": "No runtime failure. The copy-paste duplication adds dead assertions (`failedRun(badRun)` after `failedRun(badRun as string)`) and makes the test harder to maintain. The second block should be deleted.",
+      "verdict": "PLAUSIBLE"
+    }
+  ]
+}

@@ -1,0 +1,73 @@
+{
+  "schemaVersion": "v3-spike",
+  "job": "j6-pr122",
+  "target": "PR #122",
+  "level": "high",
+  "outcome": "actionable",
+  "summary": "3 important, 4 nit.",
+  "findings": [
+    {
+      "file": "packages/routes/src/table/review.ts",
+      "line": 29,
+      "tag": "important",
+      "category": "correctness",
+      "summary": "The 100k bound rests on an assumed 25% chars/4 undercount that was never measured. At the 100_000 bound the compaction ceiling is only 80k, so a call right after large tool results can still cross Haiku's 100k 5x tier.",
+      "failureScenario": "The code comment says the 25% figure is ASSUMED. An angle reads dense TS/JSON files. The next call is estimated by chars/4 plus the last measured total, and it undercounts by more than 20%. The request goes out at about 101-110k tokens and bills at 5x on every column. The PR assumes this no longer happens, and the bound was chosen because 12% of calls crossed 100k. No live run in the diff checks it against the table route. The only unbounded-versus-bounded live test uses an 80k arm.",
+      "verdict": "PLAUSIBLE"
+    },
+    {
+      "file": "packages/routes/src/table/review.ts",
+      "line": 29,
+      "tag": "nit",
+      "category": "correctness",
+      "summary": "A table-level contextLimit makes every review.angle session auto-compact at about 80k estimated tokens, with no signal in the verdict. A lossy summary call in the middle of a review can drop findings and file context.",
+      "failureScenario": "A standard review has a diff of up to 200k chars (about 50k tokens, `MAX_DIFF_CHARS`) in the first prompt. Three or four read/grep turns later the estimate passes 80k. The angle continues from a summary and never re-reads what it dropped. It reports fewer or less precise findings, and the review is still marked done and not degraded. Before this change the angle ran uncompacted. Only cost was measured, not recall.",
+      "verdict": "PLAUSIBLE"
+    },
+    {
+      "file": "packages/routes/README.md",
+      "line": 142,
+      "tag": "nit",
+      "category": "docs",
+      "summary": "The README still says no table route sets contextLimit, but this PR makes review.angle set 100_000. The doc contradicts the table and the new test.",
+      "failureScenario": "Row 142 says \"off when absent, and no route of the table sets it\". Line 71 of the same file and the new test (`entry(id).contextLimit` is 100_000 for review.angle) say otherwise. packages/opencode-host/README.md:417 says \"off unless an arm or the table sets it\", which is fine, but its §Bounded context never names review.angle as bounded by default. A reader debugging unexpected `~ctx100000` model ids in usage or OpenCode logs is misled. AGENTS.md requires docs to change in the same commit as the code.",
+      "verdict": "PLAUSIBLE"
+    },
+    {
+      "file": "packages/opencode-host/test/live-context-limit.test.ts",
+      "line": 162,
+      "tag": "important",
+      "category": "test-coverage",
+      "summary": "The live test's \"plain / unbounded\" case passes limit=null as no arm. review.angle now resolves to the table's 100k bound, so that case runs bounded and the unbounded check proves nothing.",
+      "failureScenario": "`run('run-plain', null, ...)` and `run('run-unbounded', null, ceiling + 3000)` build no arm. Before this change the route had no bound; now it gets the `~ctx100000` alias with an 80k ceiling. The 'unbounded' assertion (one call, no summary) only passes because 67k is below 80k. It would also pass if the alias mapping broke. The test should send `{contextLimit: null}` for the unbounded case. The `modelRef` unit test was fixed by switching to `check`; this live test was missed.",
+      "verdict": "PLAUSIBLE"
+    },
+    {
+      "file": "packages/routes/src/overrides.ts",
+      "line": 28,
+      "tag": "important",
+      "category": "correctness",
+      "summary": "Because the table now bounds review.angle, any eval arm that moves review.angle to a non-Claude model, such as the Terra and DeepSeek arms of the earlier review evals, is rejected unless it also says contextLimit:null. The error does not name this cause.",
+      "failureScenario": "A sweep arm `{routes:{'review.angle':{model:'gpt-6.1-terra'}}}` used to be valid. The merged entry now keeps `contextLimit:100000`, and `routeSchema` fails with 'route \"review.angle\": contextLimit needs a Claude model ...'. The arm author asked only for a model change, so the message points at a field they never set. The PR patched its own tests with `contextLimit: null`, which shows the breakage. `merge()` could drop an inherited contextLimit automatically when the patched model is not Claude and the patch does not set contextLimit.",
+      "verdict": "PLAUSIBLE"
+    },
+    {
+      "file": "packages/routes/src/table/review.ts",
+      "line": 40,
+      "tag": "nit",
+      "category": "correctness",
+      "summary": "review.synthesis, the step that dedups, ranks and decides the final verdict, moves from Sonnet medium to Haiku high. The repo has no eval backing this seat, and the fallback also drops from Terra medium to Terra low.",
+      "failureScenario": "The cited evidence covers only prompt size (p95 28k, max 39k) and cost. The 2026-10-31 eval says its scorer 'cannot tell review quality apart', and docs/evals/2026-11-02-claude-seats.md says review.* was left for Wave 11's sweep. Haiku is more likely to drop or merge findings, miscalibrate blocker versus nit, or miss the `submit_result` call. A miss triggers the `synthesis-retry` and then the salvaged 'needs-human' verdict, which adds cost on every review. When Haiku credit is drained, the step reopens on Terra low instead of medium, a second quality drop at the verdict step.",
+      "verdict": "PLAUSIBLE"
+    },
+    {
+      "file": "packages/routes/src/table/review.ts",
+      "line": 38,
+      "tag": "nit",
+      "category": "correctness",
+      "summary": "The claim that the synthesis prompt stays far below 100k is only a 400-call sample, with no guard. Its input has no cap other than the diff cap, and the session can also grow over tool turns.",
+      "failureScenario": "The synthesis prompt embeds all angle results, fallow output, react-doctor output and OCR results, and the session can read files. A large monorepo review with 12 angles plus an adversary, or a verbose fallow report, pushes a call past 100k. Haiku then bills 5x on that call, and there is no contextLimit on this route. The unbounded cost the PR tries to remove from the angles is left open here. A contextLimit 100_000 on `review.synthesis` would be a cheap safety net, but the PR asserts it is unneeded.",
+      "verdict": "PLAUSIBLE"
+    }
+  ]
+}

@@ -1,0 +1,206 @@
+{
+  "runId": "01a19e92-a229-75c3-8eb3-fafbbbf246c1",
+  "status": "done",
+  "question": null,
+  "report": "## Bottom line\n\n- **Anthropic's Claude Code team (Oct 15, 2026 post):** most line-by-line reading now happens in machines. A fresh-context subagent reviews changes before a PR exists, and every PR gets a Claude review in which parallel bug-hunting agents' findings are voted on and posted only if enough agree. A security review can block, and human approvals scale with risk tier (0, 1 or 2 people). The stated target is at most one human per PR, with no rise in reverts.\n- **Native `/code-review`:** runs in your Claude Code session at an effort level from `low` to `max`. `ultra` launches a cloud fleet whose findings are reproduced and verified. The docs describe confidence filtering only at `low`. The older plugin used four parallel agents and an 80-point confidence threshold. Anthropic's current marketplace listing describes five reviewers with the same threshold.\n- **Managed Code Review (GitHub PRs):** generally available since Oct 15, 2026 for Team and Enterprise. Several agents read each diff in parallel, a verification step filters false positives, and findings are posted as inline comments. It never approves or blocks. It is billed in usage credits with no flat per-review price. The last official average I found is $15–25 per review, from the March 2026 launch post, and the current docs do not repeat it.\n- **Anthropic's docs on review subagents and CI:** keep reviewer subagents in `.claude/agents/`, checked into git, with narrow tool lists and a description that says when to delegate. For CI, use `claude-code-action`, set up with `/install-github-app`, running `/code-review:code-review --comment` with inline-comment tools allowed. Anthropic positions the Action as the cheaper, self-configured option and managed Code Review as the deeper and more expensive one.\n\n## 1. How the Claude Code team reviews code (claude.dev, Oct 15, 2026)\n\nThe post is by Addy Osmani, Morgan Westlee Lunt and Qing Wang. Its figures are internal. From June to September, merged PRs to Claude Code more than doubled while the revert share fell by more than 40%. Changes landing per day in Anthropic's monorepo rose from about 2,500 in May to over 30,000 in September. The post says Claude writes about 90% of Claude Code's own code.\n\n**Goal and measures.** The team optimizes for the least human time that does not raise reverts or incidents. It tracks human approvals per PR (median and 95th percentile), human comments and wait time. Reverts and incidents are the guardrail.\n\n**Pipeline (seven numbered layers, with rollback underneath):**\n1. **Verify before anyone else looks.** Claude runs tests, a build or a screenshot comparison and shows the output. A subagent then reviews the diff with fresh context. Some engineers also run internal skills that hunt bugs, simplify the diff, or check behaviour end to end.\n2. **AI review on every PR.** It reads the diff against the whole repo and the PR's stated intent. Admins set each repo to Quick, Standard or Deep. The post reports that substantive review comments on internal PRs rose from 16% to 54% during the research preview.\n3. **Security review that can block.** No PR merges while an open finding from the bug or security review remains. A thread is cleared by a fix, or by closing it with a reason.\n4. **Automated checks that block.** Lint, type checks, tests on every platform, and a build.\n5. **Human approval scaled by risk.** A classifier sets the tier from the change, not the author. Low risk needs no human once automated checks are green. Medium needs one person; high needs two. Some paths always need a person, including CI workflow files. Only trusted authors get the lighter paths. An agent's approval never counts as a person's, and an approval covers one specific commit. The person who prompted an agent-written change counts as a required reviewer.\n6. **Merge queue, flags and staged releases.** The queue re-runs checks against main. New behaviour ships behind flags, with internal use first.\n7. **Fast detection and rollback.** Flags turn off without a deploy. On-call is a weekly rotation.\n\n**Fan-out and verification.** Several agents look for bugs at the same time. A separate group votes on each finding, and it is posted only if enough of them agree it is real. Surviving findings appear as inline comments sorted by severity and tagged Important, Nit or Pre-existing. The Pre-existing tag keeps a bug the PR did not introduce from looking like the author's fault. Every finding must be answered: fix it, or resolve the thread with a reason.\n\n**What was dropped after A/B tests.** Findings that are only about style, diagnostics or cleanup are dropped. The team A/B tested those filters on its own PRs before keeping them. The post does not define “diagnostics”.\n\n**The late-findings-on-old-code lesson.** When the team ran git blame on what the reviewer kept flagging, about 59% was code that had been there since the reviewer's first pass. The reviewer was rarely finding new bugs; it was finding a few more old ones each round. One CLI PR went through more than fifty rounds overnight. The team's changes:\n- A round cap: after three rounds the reviewer asks the author to reconsider the approach.\n- Diff-only re-review after the first few passes.\n- Flag the class of bug, so the author fixes every instance, not one line.\n- No repeats of findings already posted.\n- Review agents also run nightly over existing code to catch old bugs before they surface elsewhere.\n\nThe stated priority is catching real bugs first and cutting review rounds second. Every comment is also sorted by how the author responded (fixed, wrong, intentional, or didn't matter), and the reviewer is run on PRs known to be clean to count false alarms.\n\n**REVIEW.md.** Written by code owners to say what matters in their part of the code. The post says good ones are short. They state what failure looks like in that repo (for docs, “it lies”; for config, “it misroutes”), cap nits, list paths to skip, require a file and line as evidence, and ask for a summary that starts with a count and says plainly when there is nothing to fix. CLAUDE.md, by contrast, describes the project, and every review loads it.\n\n**Where humans stay in the loop:** deciding whether to build something, risky code (billing, auto-updater, CI), architecture others will copy, reading the evidence, and owning the outcome. The team admits it has no circuit breakers that tighten approval when revert or incident rates move.\n\n## 2. The native `/code-review` command and the older plugin\n\n**Native command (documented at code.claude.com).** Syntax: `/code-review [low|medium|high|xhigh|max|ultra] [--fix] [--comment] [--max-findings n|all|default] [pr#|branch|path]`. `/review` has been an alias since v2.1.223. Local behaviour:\n- It runs as a background subagent with its own context window, and findings return to the conversation when it completes.\n- Effort: at `low` it reports only the findings it is most confident in, which means fewer false positives. From `medium` through `max` it broadens coverage. The docs do not describe the internal pipeline at those levels. At higher effort, local reviews also cover reuse, simplification and efficiency cleanups, which the managed product drops.\n- Default effort follows the session. The best-practices page says `max` suits a hard problem such as hunting for a security vulnerability, and that it tends to overthink ordinary tasks. Opus 5.5, Sonnet 5.5 and Haiku 5.5 default to `medium`.\n- `--fix` applies findings through your permission mode. `--comment` posts inline comments on a GitHub PR, or a single note on a GitLab merge request.\n- It follows CLAUDE.md and does not read REVIEW.md.\n- A project or personal skill named `code-review` replaces the bundled one.\n\n**`ultra` (ultrareview).** A fleet of reviewer agents runs in a cloud sandbox. The docs say every reported finding is “independently reproduced and verified”. It reviews your branch against the default base, or a GitHub PR, and needs a claude.ai login. It is a research preview and is not available on Bedrock, Vertex or Foundry, or to organizations with Zero Data Retention or HIPAA settings; there `ultra` falls back to a local review. Pro, Max and Ultra plans get three free runs, then typically $5–25 in usage credits per review. The docs give 5–15 minutes per run. `claude ultrareview` runs it from scripts, with `--json`, `--timeout` and `--post`.\n\n**Internal structure (user-reported).** A community issue (anthropics/claude-code #70876, June 2026) quotes a generated workflow showing that at `high`, `xhigh` and `max` `/code-review` runs a workflow-backed review with finder and verifier subagents, all inheriting the session model. This is one user's reading of generated code, not Anthropic documentation.\n\n**The older code-review plugin.** Its design has changed across versions:\n- *The plugin README at an anthropics/claude-code snapshot (2025-02-22 in search metadata):* four parallel agents (two checking CLAUDE.md compliance, one bug detector, one git-blame and history analyzer). Each issue gets a 0–100 score, and issues below 80 are filtered out. Output goes to the terminal by default; `--comment` posts it to the PR.\n- *The command in anthropics/claude-plugins-official (main):* a Haiku gate skips closed, draft, trivial or already-reviewed PRs. Four parallel agents then review: two Sonnet agents for CLAUDE.md compliance and two Opus agents for bugs, told to flag only high-signal issues. Per-issue validation subagents (Opus for bugs, Sonnet for CLAUDE.md) then check each finding, and any issue they do not validate is dropped. This version has no numeric threshold.\n- *Anthropic's marketplace listing (checked Nov 2, 2026):* five reviewers covering CLAUDE.md compliance, bug detection, git history, previous PR comments and code-comment verification. Each finding is scored 0–100, and only issues at 80 or above are posted.\n\nThe plugin's path on the claude-code main branch returned 404, so it appears to have moved to claude-plugins-official. The CI doc example uses `code-review@claude-plugins-official`.\n\n## 3. Managed Code Review (GitHub PRs)\n\n**Status and availability.** Launched as a research preview on March 9, 2026 and generally available on October 15, 2026, for Team and Enterprise plans. It supports github.com and GitHub Enterprise Server, including GitHub Enterprise Cloud with data residency. It is not available to organizations with Zero Data Retention or the HIPAA configuration, it is not covered by the BAA, and it is not available with customer-managed encryption keys. Eligible Enterprise organizations can claim at least $10,000 in Code Review credits by January 15, 2027.\n\n**How a review runs.** On Anthropic infrastructure:\n1. **Find:** several agents examine the diff and surrounding code in parallel.\n2. **Verify:** candidate findings are checked against the code and false positives are filtered.\n3. **Rank:** the survivors are deduplicated and ranked by severity.\n4. **Post:** inline comments, a summary in the review body, and a check run named “Claude Code Review”.\n\nThe review is read-only, pushes no commits, and does not build or run your code. It never approves or blocks, and the check run never concludes as a failure. Anthropic does not publish how many agents run. Reviews reach the repository through the Claude GitHub App. Code Review chooses the models itself, and its admin settings offer no model choice.\n\n**Severity markers:** 🔴 Important (fix before merge), 🟡 Nit, 🟣 Pre-existing. A later review focuses on what changed since the last one, and its summary says when findings on unchanged code were left out. `@claude review` forces a full review.\n\n**Review levels and triggers.** Owners choose Quick, Standard (the default) or Deep for the organization, with per-repository overrides. Triggers are once per PR, after every push, or manual (`@claude review`, `@claude review always`, `@claude review stop`). Drafts and fork PRs are skipped automatically.\n\n**Pricing.** There is no flat per-review price. Reviews bill to usage credits, separate from plan usage. Cost scales with review level, PR size, complexity and the number of candidate issues to verify. Admins can set a monthly spend limit, and reviews are skipped when it runs out. The admin analytics show an average cost per repository. The March launch post said reviews “generally average $15–25”. The current docs do not repeat that figure, so treat it as the last official estimate.\n\n**Speed.** The March post said about 20 minutes on average. The GA post says most reviews now finish in about 6–10 minutes, roughly three times faster.\n\n**Customization.** CLAUDE.md is read as project context, and violations become findings. A `REVIEW.md` at the repository root (read from the default or base branch, never from the PR's own changes) sets what Important means, caps nits, excludes paths and adds required checks. It can include up to eight other files, and skill `SKILL.md` files, within 150,000 bytes combined.\n\n## 4. What Anthropic's docs recommend\n\n**Custom review subagents (`.claude/agents`).**\n- A subagent is a Markdown file with YAML frontmatter; `name` and `description` are required. Project subagents in `.claude/agents/` should be checked into version control so the team can share and improve them.\n- The `description` tells Claude when to delegate, so it should be specific.\n- Restrict tools. A reviewer with `tools: Read, Grep, Glob` cannot edit anything, and Claude Code enforces that rather than a prompt asking for it.\n- Use `model: haiku` for simple jobs to control cost.\n- The best-practices guide suggests a reviewer that has not seen how the code was written, asked to check the diff against a spec. It warns to keep “skip style” in the prompt, because a reviewer asked to find problems will always find something.\n- The `/code-review` docs say the local review runs as a fresh subagent that never saw your conversation.\n\n**CI with `claude-code-action`.**\n- Quick setup: run `/install-github-app` in Claude Code. It installs the GitHub App, saves a secret (`ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN`), and prepares a PR with the workflow files. Manual setup is also documented.\n- The review workflow triggers on `pull_request` events (opened, synchronize, ready_for_review, reopened) and runs `/code-review:code-review --comment` from the `code-review@claude-plugins-official` plugin. The `claude_args` input must allow the inline-comment tool `mcp__github_inline_comment__create_inline_comment`, or inline comments will not post.\n- Without `--comment`, Claude posts nothing, and findings appear only in the run log.\n- The Action skips drafts, closed PRs, PRs it judges trivial or automated, and PRs that already have a Claude comment. On public repos, GitHub withholds secrets from fork PRs, so reviews run only on same-repo branches.\n- Costs: GitHub Actions minutes plus API tokens, or subscription usage with an OAuth token. The docs recommend `--max-turns`, workflow timeouts and concurrency limits, and clear `CLAUDE.md` files.\n- Security: grant the workflow only the permissions it needs. Passing your own `github_token` changes the identity the Action posts as.\n\n**Choosing between the options (per the docs):**\n\n| Option | Where it runs | Who can use it | Cost |\n|---|---|---|---|\n| Code Review (managed) | Anthropic infrastructure, on PR events | Team and Enterprise, GitHub | usage credits, no flat price |\n| `/code-review` (local) | your session | any plan | normal usage |\n| `/code-review ultra` | cloud sandbox | claude.ai login | 3 free runs, then $5–25 |\n| claude-code-action | your own GitHub runners | API key or subscription | Actions minutes plus tokens |\n\n## Where sources disagree, and what remains uncertain\n\n- **Price:** the March launch post's $15–25 average is not repeated in the current docs. I treat it as the last official estimate, with medium confidence.\n- **Ultrareview duration:** the docs say 5–15 minutes; cubic.dev says 5–10 minutes.\n- **Plugin history:** the 2025 README, the Nov 2025 command file and the Nov 2026 marketplace listing describe three different designs. I cannot tell which is live today. The marketplace listing is the most recent Anthropic-published description.\n- **Voting vs verification:** the post describes internal voting verifiers. The product docs describe “a verification step”, and for ultrareview “independently reproduced and verified”. I have not confirmed that the managed product uses the same voting step.\n- **Blocking:** the post says internal PRs cannot merge while security or bug findings are open. The managed product's check run never fails. These describe different systems: Anthropic's internal gating and the product.\n- **Local internals:** the docs do not describe what `medium` through `max` `/code-review` runs internally beyond coverage. The workflow details rest on a user-reported issue.\n- **Secondary figures:** AICoder reports convergence numbers (one-round pass 65% to 78%, five-plus rounds 8.9% to 1.5%, mean reviews to pass 2.08 to 1.32). The primary post shows a chart for the convergence change but not these numbers, so I have not relied on them.",
+  "citations": [
+    {
+      "url": "https://claude.dev/blog/solving-code-review-at-anthropic/",
+      "claim": "Team goal: most PRs merge with at most one human in the loop, with no increase in reverts or incidents; monorepo changes per day rose from about 2,500 in May to over 30,000 in September; internal figures.",
+      "confidence": "high"
+    },
+    {
+      "url": "https://claude.dev/blog/solving-code-review-at-anthropic/",
+      "claim": "Seven-layer pipeline: pre-PR verification with fresh-context subagent review, AI review on every PR, blocking security review, blocking automated checks, risk-scaled human approval (0/1/2 people), merge queue and flags, fast rollback.",
+      "confidence": "high"
+    },
+    {
+      "url": "https://claude.dev/blog/solving-code-review-at-anthropic/",
+      "claim": "Several agents look for bugs in parallel; a separate group votes on each finding and it is posted only if enough agree; style, diagnostics and cleanup findings were dropped after A/B tests on internal PRs.",
+      "confidence": "high"
+    },
+    {
+      "url": "https://claude.dev/blog/solving-code-review-at-anthropic/",
+      "claim": "About 59% of what the reviewer kept flagging was code present since its first pass; the team added a round cap after three rounds, diff-only re-review after early passes, no repeats of posted findings, and nightly review of existing code.",
+      "confidence": "high"
+    },
+    {
+      "url": "https://claude.dev/blog/solving-code-review-at-anthropic/",
+      "claim": "REVIEW.md is written by code owners; good ones state what failure looks like in the repo, cap nits, list paths to skip, require file and line evidence, and ask for a count-first summary.",
+      "confidence": "high"
+    },
+    {
+      "url": "https://claude.dev/blog/solving-code-review-at-anthropic/",
+      "claim": "Risk tiers are set by a classifier from the change itself; an agent's approval never counts as a person's; the person who prompted an agent-written change is a required reviewer.",
+      "confidence": "high"
+    },
+    {
+      "url": "https://code.claude.com/docs/en/code-review-local.md",
+      "claim": "Local /code-review: at low it reports the findings it is most confident in; from medium through max it broadens coverage; it runs as a background subagent with its own context window.",
+      "confidence": "high"
+    },
+    {
+      "url": "https://code.claude.com/docs/en/code-review-local.md",
+      "claim": "Local /code-review follows CLAUDE.md but does not read REVIEW.md; --fix and --comment flags; at medium and above, reuse, simplification and efficiency cleanups are also covered.",
+      "confidence": "high"
+    },
+    {
+      "url": "https://code.claude.com/docs/en/commands.md",
+      "claim": "Syntax of /code-review with effort levels low, medium, high, xhigh, max, ultra; /review is an alias.",
+      "confidence": "high"
+    },
+    {
+      "url": "https://code.claude.com/docs/en/ultrareview.md",
+      "claim": "Ultrareview runs a fleet of reviewer agents in a cloud sandbox; every reported finding is independently reproduced and verified; it needs a claude.ai login and is not available on Bedrock, Vertex or Foundry or to ZDR or HIPAA organizations.",
+      "confidence": "high"
+    },
+    {
+      "url": "https://code.claude.com/docs/en/ultrareview.md",
+      "claim": "Ultrareview: three free runs on Pro, Max and Ultra; afterwards typically $5 to $25 in usage credits per review; a run typically takes 5 to 15 minutes.",
+      "confidence": "high"
+    },
+    {
+      "url": "https://github.com/anthropics/claude-code/issues/70876",
+      "claim": "A community issue reports that at high, xhigh and max effort /code-review runs a workflow-backed multi-agent review whose finder and verifier subagents inherit the session model.",
+      "confidence": "medium"
+    },
+    {
+      "url": "https://code.claude.com/docs/en/code-review.md",
+      "claim": "Managed Code Review pipeline: find (parallel agents), verify (filters false positives), rank (dedupe and severity), post; read-only; no build or run; never approves or blocks; check run never concludes as failure.",
+      "confidence": "high"
+    },
+    {
+      "url": "https://code.claude.com/docs/en/code-review.md",
+      "claim": "Managed Code Review review levels Quick, Standard (default) and Deep, set per organization with per-repository override.",
+      "confidence": "high"
+    },
+    {
+      "url": "https://claude.com/resources/articles/code-review-is-now-generally-available",
+      "claim": "Code Review is out of research preview for Team and Enterprise; most reviews now take about 6 to 10 minutes, about 3x faster than in preview; Enterprise orgs can claim at least $10,000 in Code Review credits by January 15, 2027.",
+      "confidence": "high"
+    },
+    {
+      "url": "https://code.claude.com/docs/en/code-review-costs.md",
+      "claim": "Code Review has no flat per-review price; it is billed on token usage through usage credits, separate from plan usage; cost scales with review level, change size, complexity and verification count; admins can set a monthly spend limit.",
+      "confidence": "high"
+    },
+    {
+      "url": "https://claude.com/resources/articles/code-review",
+      "claim": "At launch Code Review reviews were billed on token usage and generally averaged $15 to $25, and the March post said reviews take about 20 minutes on average; the GA docs do not repeat the figure.",
+      "confidence": "medium"
+    },
+    {
+      "url": "https://code.claude.com/docs/en/code-review-pull-requests.md",
+      "claim": "Severity markers Important, Nit and Pre-existing; check run named Claude Code Review; a later review covers only what changed and says when findings on unchanged code were left out.",
+      "confidence": "high"
+    },
+    {
+      "url": "https://code.claude.com/docs/en/code-review-customize.md",
+      "claim": "REVIEW.md at the repository root is read from the default or base branch and never from the PR's own changes; it can include up to eight files and skill files within 150,000 bytes combined; CLAUDE.md violations become findings.",
+      "confidence": "high"
+    },
+    {
+      "url": "https://code.claude.com/docs/en/code-review.md",
+      "claim": "Code Review is available to Team and Enterprise organizations with GitHub repositories; not for Zero Data Retention or HIPAA organizations, not under the BAA, not with customer-managed encryption keys.",
+      "confidence": "high"
+    },
+    {
+      "url": "https://github.com/anthropics/claude-code/tree/ef7bfdca55d906929fe6b782025b93758c325074/plugins/code-review",
+      "claim": "Earlier claude-code plugin README: four parallel agents (two CLAUDE.md compliance, one bug detector, one git-history analyzer), 0 to 100 confidence scoring, issues below 80 filtered out.",
+      "confidence": "medium"
+    },
+    {
+      "url": "https://github.com/anthropics/claude-plugins-official/blob/main/plugins/code-review/commands/code-review.md",
+      "claim": "Plugin command in claude-plugins-official: Haiku gate, four parallel review agents, per-issue validation subagents (Opus for bugs, Sonnet for CLAUDE.md), unvalidated issues dropped; no numeric threshold.",
+      "confidence": "high"
+    },
+    {
+      "url": "https://claude.com/marketplace/plugins/code-review",
+      "claim": "Anthropic's marketplace listing describes the Code Review plugin as five independent reviewers, with 0 to 100 scoring and a default threshold of 80.",
+      "confidence": "high"
+    },
+    {
+      "url": "https://code.claude.com/docs/en/sub-agents.md",
+      "claim": "Project subagents are stored in .claude/agents/ and should be checked into version control; the description field tells Claude when to delegate; tools can restrict what a subagent can use; model can be set to haiku for simple jobs.",
+      "confidence": "high"
+    },
+    {
+      "url": "https://code.claude.com/docs/en/best-practices.md",
+      "claim": "A reviewer subagent limited to tools Read, Grep and Glob cannot edit anything, enforced by Claude Code; for reviews, keep skip-style in the prompt because a reviewer asked to find problems will always find something; /code-review reviews the diff in a fresh subagent.",
+      "confidence": "high"
+    },
+    {
+      "url": "https://code.claude.com/docs/en/best-practices.md",
+      "claim": "Effort: Opus 5.5, Sonnet 5.5 and Haiku 5.5 default to medium; max suits hard problems such as security vulnerability hunting and overthinks ordinary tasks.",
+      "confidence": "high"
+    },
+    {
+      "url": "https://code.claude.com/docs/en/github-actions.md",
+      "claim": "Claude Code GitHub Actions quick setup via /install-github-app; the review workflow runs the code-review plugin with --comment and needs the inline-comment tool in claude_args; the Action skips drafts, closed and trivial PRs; fork PRs get no secrets on public repos.",
+      "confidence": "high"
+    },
+    {
+      "url": "https://claude.com/resources/articles/code-review",
+      "claim": "Managed Code Review is described as a more thorough and more expensive option than the open-source Claude Code GitHub Action.",
+      "confidence": "high"
+    },
+    {
+      "url": "https://code.claude.com/docs/en/github-actions.md",
+      "claim": "The docs list the Action's authentication options (API key or OAuth token), its billing (GitHub Actions minutes plus tokens), and recommended cost controls (--max-turns, timeouts, concurrency).",
+      "confidence": "high"
+    }
+  ],
+  "unverified": [
+    {
+      "url": "https://claude.com/resources/articles/code-review",
+      "topic": "Current per-review price for managed Code Review (the $15 to $25 average is from the March 2026 launch post and is not repeated in current docs)",
+      "reason": "Last official figure found is from March 2026; the current cost docs give no average."
+    },
+    {
+      "url": "https://aicoder.com/news/news-20261018-claude-code-team-code-review-90pct-agent-written-reverts-down-40pct",
+      "topic": "Convergence figures (one-round pass 65% to 78%, five-plus rounds 8.9% to 1.5%, mean reviews to pass 2.08 to 1.32)",
+      "reason": "Reported only by a secondary outlet; the primary post shows a chart without these numbers in the text I read."
+    },
+    {
+      "url": "https://claude.dev/blog/solving-code-review-at-anthropic/",
+      "topic": "Whether the managed Code Review uses the same voting step described internally",
+      "reason": "The product docs describe a verification step; the internal voting process is not documented as shared with the product."
+    },
+    {
+      "url": "https://github.com/anthropics/claude-code/issues/70876",
+      "topic": "Internal structure of /code-review at medium through max (reviewer and verifier subagents)",
+      "reason": "Docs do not describe it; the only source is a user-filed issue quoting generated workflow code."
+    },
+    {
+      "url": "https://github.com/anthropics/claude-code/blob/main/plugins/code-review/README.md",
+      "topic": "Current home and version of the code-review plugin (earlier claude-code path is 404 on main)",
+      "reason": "Path returned 404; the plugin appears to have moved to claude-plugins-official, but this was not confirmed on a primary page."
+    },
+    {
+      "url": "https://www.cubic.dev/blog/claude-code-review",
+      "topic": "Ultrareview run duration (docs 5 to 15 minutes; cubic.dev says 5 to 10 minutes)",
+      "reason": "Sources disagree; the Anthropic docs figure is used in the report."
+    },
+    {
+      "url": "https://code.claude.com/docs/en/code-review.md",
+      "topic": "Number of agents in managed Code Review",
+      "reason": "Not published in the docs or the launch posts."
+    },
+    {
+      "url": "https://claude.dev/blog/solving-code-review-at-anthropic/",
+      "topic": "Meaning of 'diagnostics' among dropped finding classes",
+      "reason": "The post does not define the term."
+    },
+    {
+      "url": "https://github.com/anthropics/claude-code/blob/main/plugins/code-review/README.md",
+      "topic": "The claude-code plugin path on the main branch returned HTTP 404 when read.",
+      "reason": "cited, but the page was never retrieved this run"
+    }
+  ],
+  "grounding": {
+    "grounded": 29,
+    "citations": 30,
+    "pagesFailed": 2,
+    "pagesRetrieved": 23
+  }
+}

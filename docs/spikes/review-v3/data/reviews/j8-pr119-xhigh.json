@@ -1,0 +1,91 @@
+{
+  "schemaVersion": "v3-spike",
+  "job": "j8-pr119-xhigh",
+  "target": "PR #119",
+  "level": "xhigh",
+  "outcome": "actionable",
+  "summary": "1 important, 7 nit.",
+  "findings": [
+    {
+      "file": "packages/host/src/workflows/eval-mine/index.ts",
+      "line": 209,
+      "tag": "important",
+      "category": "correctness",
+      "summary": "The wired cost history reads root runs of `cap.eval.label`, but the miner's own labelling calls `registry.call('eval.label')` in-process. That never creates a `cap.eval.label` run, so the label estimate stays `unknown` in production and the fix does not achieve its stated goal.",
+      "failureScenario": "`capability-runs.ts` documents that in-process `registry.call` from a workflow step 'stay plain calls; their usage belongs to the calling step'. `cap.<id>` runs exist only for direct HTTP calls (the hidden `agw eval-label` command). I queried the live journal read-only. There are 4 `eval.mine` runs, and one of them labelled 3 candidates at $0.16 with `estimate: {historyRuns:0, meanCostUsd:null, totalUsd:null}`. There are zero `cap.eval.label` rows among the `cap.*` workflows. After this PR, `agw eval mine review --label N` still prints `unknown`, because `recentCost('cap.eval.label', 20)` returns `{runs:0, meanCost:null}`. The estimate needs a source that exists. Options are cost per labelled candidate from the `label` step usage or from prior done `eval.mine` runs, or recording each in-process label call as a root `cap.eval.label` run.",
+      "verdict": "CONFIRMED"
+    },
+    {
+      "file": "packages/host/test/eval-mine-wiring.test.ts",
+      "line": 100,
+      "tag": "nit",
+      "category": "test-coverage",
+      "summary": "The second test inserts `cap.eval.label` root rows by raw SQL, rows production never writes. It proves the SQL aggregate works on fabricated data, not that a real mine-then-label flow produces an estimate.",
+      "failureScenario": "The suite goes green while the live estimate is still `unknown` (finding 1). A test that ran a labelling `eval.mine --yes` with a fake registry and then planned again would have exposed the missing history. The raw insert also hard-codes the runs DDL (column list, `input_hash`, `lock_key`, `version_started`). Sibling tests quote the schema (`\"${db.schema}\"`) and this one does not. A migration that adds a NOT NULL column breaks this test without any behaviour change.",
+      "verdict": "PLAUSIBLE"
+    },
+    {
+      "file": "packages/host/test/eval-mine-wiring.test.ts",
+      "line": 52,
+      "tag": "nit",
+      "category": "test-coverage",
+      "summary": "The test re-implements the `costHistory` closure from `boot.ts` by hand and passes it to `evalMine.create`. It never goes through `hostProcess`, `createWorkflows` or `buildWorkflows`, so it cannot detect the regression the PR fixes (the port missing from `boot.ts`).",
+      "failureScenario": "Someone deletes the `costHistory:` block from `boot.ts`, or renames the key in `WorkflowDeps`. Every test still passes (`eval-mine.test.ts` injects `history` directly and this file injects its own copy), and the estimate silently goes back to `unknown`. The header comment 'The module as the host builds it' overstates what is covered. A test that boots `hostProcess` or `createWorkflows` with the real `boot` wiring would guard it.",
+      "verdict": "PLAUSIBLE"
+    },
+    {
+      "file": "packages/host/test/eval-mine-wiring.test.ts",
+      "line": 107,
+      "tag": "nit",
+      "category": "test-coverage",
+      "summary": "`expect(typeof estimate.totalUsd).toBe('number')` is vacuous here. The fixture repo yields 0 candidates to label, so `totalUsd` is `mean * 2 * 0 = 0` whatever the multiplier or candidate count. `labelPlan.candidates` is never asserted.",
+      "failureScenario": "A bug in `CALLS_PER_CANDIDATE`, in the `toLabel` clamp, or a `totalUsd` that always returns 0 passes this test. Only `eval-mine.test.ts` pins the arithmetic, and it uses an injected history, not the wired one.",
+      "verdict": "PLAUSIBLE"
+    },
+    {
+      "file": "packages/host/test/eval-mine-wiring.test.ts",
+      "line": 64,
+      "tag": "nit",
+      "category": "test-hygiene",
+      "summary": "The teardown is not safe against a failed setup. If `beforeAll` throws (git failure, `startTestHost` failure), `t` is undefined, so `afterAll`'s `await t.close()` throws a TypeError. The `process.env` restore and `rmSync(sandbox)` below it never run.",
+      "failureScenario": "A machine without a usable `git`, or a Postgres outage, makes `beforeAll` fail after `AGW_EVAL_HOME`, `AGW_EVAL_DIR` and `AGW_EVAL_OWNER_EMAILS` were set on the shared `process.env`. They stay set for later files in the same bun process (a plain `bun test` without `--isolate`). The temp sandbox with a git repo is leaked, and the real failure is masked by the TypeError. Guard with `await t?.close()` and restore the env first or in a `finally`.",
+      "verdict": "PLAUSIBLE"
+    },
+    {
+      "file": "packages/host/src/workflows/eval-mine/index.ts",
+      "line": 209,
+      "tag": "nit",
+      "category": "robustness",
+      "summary": "The advisory cost estimate is now a hard dependency of the `plan` step. A rejected `recentCost` (journal InfraError, closed pool during shutdown, or the 'host runtime is not built yet' throw) fails the whole `eval.mine` run after mining has already written its files. Before the port was wired the same case simply yielded `unknown`.",
+      "failureScenario": "A transient Postgres error, or a drain/shutdown race on the runtime's pool, while an operator runs `agw eval mine review --label 50` fails the run at `plan` with a wrapped step error. No estimate and no labelling plan are returned, even though only a price hint was missing. The doc comment promises 'A host that cannot read it leaves the estimate unknown', but that holds only when the port is absent, not when it errors.",
+      "verdict": "PLAUSIBLE"
+    },
+    {
+      "file": "packages/eval/README.md",
+      "line": 326,
+      "tag": "nit",
+      "category": "docs",
+      "summary": "The README still says `--label` without `--yes` prints `unknown` until the host passes the journal's cost history. This PR wires that port, so the text is stale (and it is wrong in a different way, per finding 1). The tracking items in `docs/waves/PLAN.md:185` (unchecked box) and `docs/waves/handoff/lead.md:93` ('Left behind') are also not updated.",
+      "failureScenario": "A reader of the README or the plan is told the host does not pass the cost history when it now does. Once the history source is fixed, the README should name the real source (the last 20 `cap.eval.label` runs, or whatever replaces them). The docs ship out of step with the code they describe.",
+      "verdict": "PLAUSIBLE"
+    },
+    {
+      "file": "packages/host/src/boot.ts",
+      "line": 527,
+      "tag": "nit",
+      "category": "simplification",
+      "summary": "This adds a third hand-rolled 'lazy runtime or throw \"the host runtime is not built yet\"' accessor next to the image door's. It leans on `runtime` being assigned as a side effect of the `routes()` hook. `CostHistory` is also a hand-written copy of the `Pick<Runtime,'recentCost'>` shape that `EvalRuntime` already uses.",
+      "failureScenario": "The estimate works only because `bootProcess` happens to call `definition.routes()` before `runtime.open()`. If hook order changes, or `runtime` is assigned elsewhere, a recovered or early `eval.mine` run hits the throw in finding 6. One shared `const runtimeNow = () => { if (!runtime) throw …; return runtime }` used by both the image door and the cost history, with `CostHistory = Pick<Runtime,'recentCost'>`, would remove the duplication.",
+      "verdict": "PLAUSIBLE"
+    },
+    {
+      "file": "packages/host/src/workflows/eval-mine/index.ts",
+      "line": 216,
+      "tag": "nit",
+      "category": "correctness",
+      "summary": "The estimate takes one mean over the last 20 single-call `cap.eval.label` runs and multiplies it by 2 calls per candidate. The two seats are on different vendors (Claude and GPT) and `recentCost` has no purpose or seat filter. The mean is only right if the history has an even seat mix and a typical diff size.",
+      "failureScenario": "Once history exists (a handful of manual `agw eval-label --seat a` runs, or smoke/verify runs with the fixture diff), the mean is dominated by one seat or by tiny inputs. `totalUsd` then under- or over-states a `--label N --yes` spend, and that number is the owner's only guard before spending eval credit.",
+      "verdict": "PLAUSIBLE"
+    }
+  ]
+}

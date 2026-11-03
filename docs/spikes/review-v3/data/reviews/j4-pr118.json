@@ -1,0 +1,82 @@
+{
+  "schemaVersion": "v3-spike",
+  "job": "j4-pr118",
+  "target": "PR #118",
+  "level": "high",
+  "outcome": "actionable",
+  "summary": "5 important, 3 nit.",
+  "findings": [
+    {
+      "file": "packages/runtime/src/scope.ts",
+      "line": 552,
+      "tag": "important",
+      "category": "correctness",
+      "summary": "Spend that a failed wait carries is added to the step's usage only after the abort has already finished the step. For timeout, cancel and tool-refusal the carried spend is lost.",
+      "failureScenario": "`attempt()` runs the body through `raceAbort`, which rejects the moment the signal aborts (StepTimeout, Cancelled, ToolRefused). The retry loop then breaks and `journal.finishStep(..., usage: usage.snapshot())` is built synchronously. `host.wait` only rejects later: it may be mid `await this.read(...)`, an HTTP round trip, when the abort lands. Its `.catch` then calls `scope.addUsage(...)` on a `UsageTotals` that was already snapshotted and journaled. An idle-timed-out or cancelled agent step is the main case this PR sets out to cover, and it still records no spend, or records `null` via `recordedCost`. The new tests probably pass only because the fake host rejects within a microtask.",
+      "verdict": "PLAUSIBLE"
+    },
+    {
+      "file": "packages/runtime/src/scope.ts",
+      "line": 557,
+      "tag": "important",
+      "category": "correctness",
+      "summary": "A phantom UNKNOWN_SPEND report is added for every non-Infra failure of `host.wait`, even one that cannot have billed anything. Shared `Cancelled` instances always take this path.",
+      "failureScenario": "A `Cancelled` run (its `carryUsage` is a no-op), a plain `Error` such as a network or TypeError, or the host's 'holds no prompt; wait before prompt' error all give `err.usage === undefined`. Each adds a zero-token report with `cost: null`, so `unpricedCalls` becomes 1 on every cancelled or failed step. This distorts the `usage` projection's 'lower bound' marker. `recordedCost` already returns null for a failed step with no report, so the synthetic report adds nothing except a fake unpriced call. A non-`WorkflowError` thrown by the host's `spent` path never carries usage at all.",
+      "verdict": "PLAUSIBLE"
+    },
+    {
+      "file": "packages/opencode-host/src/host.ts",
+      "line": 726,
+      "tag": "important",
+      "category": "correctness",
+      "summary": "In `waitTurn`, `seen = after` overwrites the last good snapshot with `[]` whenever `turnIndex` returns -1 (the turn input is briefly absent from the read). A later failure then carries no spend.",
+      "failureScenario": "A poll reads a session view that does not yet include the turn input, so `from < 0` and `seen = []`. The wait then throws, for example from the abort signal or an unprompted/cutoff error. `spent(err, h, [])` sees no tokens and carries nothing, so the scope books UNKNOWN_SPEND although earlier polls had counted real tokens. The `wait` path keeps `seen = snap.messages`, which is monotonic. `waitTurn` should keep the previous `seen` when `from < 0`.",
+      "verdict": "PLAUSIBLE"
+    },
+    {
+      "file": "packages/opencode-host/src/host.ts",
+      "line": 735,
+      "tag": "important",
+      "category": "correctness",
+      "summary": "`waitTurn`'s failed-turn branch (`outcome !== 'succeeded'`) throws using only the polled `after` messages. `finish` was changed to invalidate and re-read the whole session first, but the follow-up path was not.",
+      "failureScenario": "A follow-up turn ends in error and the final assistant message, which holds the billed tokens, is not in the polled view yet. `spent` reports a partial or empty spend, so the step is booked as unknown or under-counted. A failed first turn gets the full re-read; a failed follow-up turn does not.",
+      "verdict": "PLAUSIBLE"
+    },
+    {
+      "file": "packages/opencode-host/src/host.ts",
+      "line": 875,
+      "tag": "important",
+      "category": "correctness",
+      "summary": "`waitOnFallback` only merges the primary's spend into errors that are `WorkflowError`. A non-`WorkflowError` from the nested `wait` (for example a fetch failure or TypeError) drops the primary session's already-read spend.",
+      "failureScenario": "The primary session fails on provider balance after spending tokens. `waitOnFallback` computes `primary` and starts the fallback. The fallback's wait throws a plain `Error`, for instance a network error. The catch skips it because `err instanceof WorkflowError` is false, and the outer `spent()` also ignores non-`WorkflowError`s. The runtime books only UNKNOWN_SPEND, and the primary's real, billed spend disappears.",
+      "verdict": "PLAUSIBLE"
+    },
+    {
+      "file": "packages/opencode-host/src/host.ts",
+      "line": 880,
+      "tag": "nit",
+      "category": "simplification",
+      "summary": "The `[x ?? []].flat()` normalisation of `Usage | Usage[] | undefined` is repeated in the host, and `scope.ts` has its own private `reports()` helper for the same job.",
+      "failureScenario": "The same array-or-single normalisation exists in `waitOnFallback` (twice) and in `scope.ts` `reports`, and the tests re-derive it a third time with `[result.usage ?? []].flat()[0]`. A change to the `AgentResult.usage` shape has to be made in several places. Export one helper from the runtime and use it in all of them. Alternatively, make `AgentResult.usage` always an array.",
+      "verdict": "PLAUSIBLE"
+    },
+    {
+      "file": "packages/runtime/src/errors.ts",
+      "line": 38,
+      "tag": "nit",
+      "category": "correctness",
+      "summary": "The usage field is a JS private field (`#usage`) with a public getter. `WorkflowError`s are rethrown and wrapped across the journal and step boundaries, but the usage is lost whenever the error is re-created or serialized.",
+      "failureScenario": "`StepFailed`, `toRunError` and journal replay rebuild errors from `kind` and `message` only. Carried usage is read exactly once, in the `.catch` inside `agentJournaled`. Any intermediate wrapper between `host.wait` and that `.catch` that constructs a new `WorkflowError` loses the spend. Mutating a shared error object through `carryUsage` is also fragile for any non-`Cancelled` error that is reused across steps; `Cancelled` needed a special override for exactly this reason. Passing usage through the thrown value is an implicit side channel.",
+      "verdict": "PLAUSIBLE"
+    },
+    {
+      "file": "packages/opencode-host/src/host.ts",
+      "line": 669,
+      "tag": "nit",
+      "category": "correctness",
+      "summary": "`wait`'s catch runs `spent()` for every `WorkflowError`, including those thrown for an aborted or timed-out step whose session is aborted concurrently. A late-polled `seen` can undercount the spend.",
+      "failureScenario": "On idle timeout, `abortSession` calls `host.abort` and then `forget()`, so a retry opens a fresh session. The old session may still be billing until the abort lands, but `seen` holds only the last completed poll. Spend between the last poll and the abort is not counted, and the 'never counted twice' reasoning leaves it uncounted, so the cost is under-reported with no `unknown` marker, because `carried.length > 0` suppresses UNKNOWN_SPEND.",
+      "verdict": "PLAUSIBLE"
+    }
+  ]
+}

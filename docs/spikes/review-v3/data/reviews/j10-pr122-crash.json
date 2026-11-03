@@ -1,0 +1,4 @@
+{ "schemaVersion": "v3-spike", "job": "j10-pr122-crash", "target": "PR #122", "level": "low",
+  "outcome": "clean",
+  "summary": "Nothing needs fixing.",
+  "findings": [] }
