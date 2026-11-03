@@ -1,5 +1,5 @@
 // Review v4, agw's side: prepare | submit | dispose | status | route | covered over the review ledger. No LLM call
-// anywhere here; the reviewer agent runs in the caller's session (or, from Wave 10, a factory session). README.md.
+// anywhere here; the reviewer agent runs in the caller's session (or a factory session on the hidden transport). README.md.
 import { commandRunner, fleetConfig, type RunCommand } from '../fleet/factory.ts'
 import { createExec } from '../process.ts'
 import type { ReviewContext, QuotaReading } from './context.ts'
@@ -31,7 +31,7 @@ export type { QuotaReading } from './context.ts'
 export interface ReviewServicePorts {
   pool: ReviewPool
   schema: string
-  /** Job dirs live under `<stateDir>/review-jobs/`, pr/branch clones under v1's `<stateDir>/review-clones/`. */
+  /** Job dirs live under `<stateDir>/review-jobs/`, pr/branch clones under `<stateDir>/review-clones/`. */
   stateDir: string
   git: GitRunner
   /** The account's Max quota in percent; absent or null: the ceiling is `unknown`, never held. */

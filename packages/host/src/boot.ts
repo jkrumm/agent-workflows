@@ -544,7 +544,7 @@ export function hostProcess(config: HostConfig, door?: ImageDoorOptions): Proces
         : undefined
       usagePool?.on('error', (err) => console.warn('[agw-host] usage pool: idle connection error', err.message))
       if (usagePool) onClose(() => usagePool.end())
-      // Review v4's ledger (`agw review prepare|submit|…`): its own small pool, jobs beside v1's clones in the state dir.
+      // Review v4's ledger (`agw review prepare|submit|…`): its own small pool, jobs beside the review clones in the state dir.
       const reviewPool = new Pool({
         connectionString: base.pgUrl,
         max: 2,

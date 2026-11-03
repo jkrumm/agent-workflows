@@ -1,5 +1,4 @@
-// `agw review prepare|submit|dispose|status|route|covered`: host operations like the fleet's, no journal run. They sit
-// below the v1 `agw review` workflow command, which declares no positional.
+// `agw review prepare|request|submit|dispose|status|route|covered`: host operations like the fleet's, no journal run.
 import { type ResolvedCliSpec, withCli } from '@agent-workflows/capabilities'
 import { ORPCError, os } from '@orpc/server'
 import type { z } from 'zod'
@@ -53,8 +52,7 @@ const OPERATION_IDS = {
   submit: 'reviewSubmit',
   dispose: 'reviewDispose',
   status: 'reviewStatus',
-  // `reviewRoute` and `/review/route` belong to v1's `review.route` capability until Wave 10 deletes it.
-  route: 'reviewRouteRange',
+  route: 'reviewRoute',
   covered: 'reviewCovered',
 } as const satisfies Record<Name, string>
 
@@ -65,7 +63,7 @@ export function reviewOperations(service: ReviewService): Record<(typeof OPERATI
     work: (input: z.output<I>) => Promise<z.input<O>>,
   ): HostOperation => {
     const cli = cliOf(name, spec.cli)
-    const path = `/review/${name === 'route' ? 'route-range' : name}` as const
+    const path = `/review/${name}` as const
     const operationId = OPERATION_IDS[name]
     return {
       operationId,
@@ -148,7 +146,7 @@ export function reviewOperations(service: ReviewService): Record<(typeof OPERATI
       },
       (input) => service.status(input),
     ),
-    reviewRouteRange: op(
+    reviewRoute: op(
       'route',
       {
         summary: 'The review router alone: the tier a base..head range needs (no ledger, no LLM)',

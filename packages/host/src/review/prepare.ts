@@ -42,7 +42,7 @@ function judge(account: string, reading: QuotaReading | null): { ceiling: 'ok' |
 
 const utcMidnight = (now: Date) => new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()))
 
-/** Best effort, like v1's clone sweep: job trees after 24 h, whole job dirs after 14 days, v1-style review clones. */
+/** Best effort: job trees after 24 h, whole job dirs after 14 days, stale review clones. */
 export function sweepJobs(ctx: ReviewContext): void {
   const root = jobsRoot(ctx)
   const now = ctx.now().getTime()
@@ -65,7 +65,7 @@ export function sweepJobs(ctx: ReviewContext): void {
   }
 }
 
-/** The job's checkout: under the job dir, or the review clone of a pr/branch (under the v1 clone root). */
+/** The job's checkout: under the job dir, or the review clone of a pr/branch (under the clone root). */
 export function removeWorktree(ctx: ReviewContext, jobDir: string, worktree: string): void {
   try {
     if (worktree.startsWith(`${jobDir}${sep}`)) rmSync(worktree, { recursive: true, force: true })

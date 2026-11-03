@@ -2,9 +2,9 @@
 
 One routed reviewer agent on the Max subscriptions; agw only prepares the job, ingests the agent's JSON reply and keeps
 the ledger. **No LLM call anywhere in this module.** Design: `docs/spikes/review-v4/wiring.md`; the agent:
-`docs/spikes/review-v4/reviewer.md`. v1 (`src/workflows/review/`, the `agw review` workflow) still runs beside it until
-Wave 10; this module reuses its helpers (`exec.ts`, `git.ts`: `cloneForRef`, `removeEscapingSymlinks`,
-`sweepStaleClones`) and its scope checks rather than copying them.
+`docs/spikes/review-v4/reviewer.md`. Review v1 (the LLM `agw review` workflow) is deleted; the process helpers live in
+`src/process.ts`, the clone helpers (`cloneForRef`, `removeEscapingSymlinks`, `sweepStaleClones`) in `clone.ts` and the
+scope checks in `scope.ts`.
 
 Public surface: `createReviewService(ports)` → `prepare | submit | dispose | status | route | covered`, and
 `reviewOperations(service)` → the host operations (`boot.ts` merges them into `reads`). Ports: `pool` (its own, max 2),
@@ -21,12 +21,12 @@ CLI exits non-zero naming it.
 | `agw review submit <jobId> --attempt <n> [--account <a>]` (reply on stdin) | REVIEW_OUTPUT v4. Idempotent per (job, attempt): the same attempt gets the stored output back, another attempt is refused naming the winner. `--account` sets the job's account only when it has none |
 | `agw review dispose <jobId> <findingId> fixed\|wrong\|intentional\|irrelevant\|open [--reason]` | The answer to a finding of the job's thread; idempotent |
 | `agw review status [<jobId>] [--cwd]` | A job (a running review is `prepared`) and its thread's findings, or the 10 newest jobs of the repo at `--cwd` |
-| `agw review route --cwd --base --head [--min]` | `routeRange` alone; no ledger (HTTP `/review/route-range`: `/review/route` is v1's capability until Wave 10) |
+| `agw review route --cwd --base --head [--min]` | `routeRange` alone; no ledger (HTTP `/review/route`) |
 | `agw review covered --cwd --range <a>..<b>` | Coverage of each first-parent commit; exit 0 either way, read `covered` |
 
 `prepare`, `request`, `submit` and `dispose` change state, so the CLI asks for `--commit` (non-TTY callers must pass it).
 
-`--cwd` is required wherever a repo is read (the CLI does not fill it, as with v1's `agw review`).
+`--cwd` is required wherever a repo is read (the CLI does not fill it).
 
 ## Scopes and the snapshot
 
@@ -34,7 +34,7 @@ CLI exits non-zero naming it.
 -A`, `write-tree`, `commit-tree -p HEAD` as `agw`. The caller's index, HEAD, refs and work tree are never written; the
 blobs, tree and commit **do land in the caller's object store, unreferenced** (git's gc prunes them after its expiry).
 No change against HEAD is an empty diff (tier none). `head` = HEAD~1..HEAD, `<ref>` = merge-base(ref, HEAD)..HEAD,
-`<a>..<b>` as given. `pr`/`branch` fetch into v1's throwaway clone (`cloneForRef`, under `<stateDir>/review-clones/`)
+`<a>..<b>` as given. `pr`/`branch` fetch into a throwaway clone (`cloneForRef`, under `<stateDir>/review-clones/`)
 and diff against the merge base with origin's default branch; that clone is the job's worktree. No path scopes.
 
 Repo identity: origin normalized to `host/owner/name`, else the realpath of the main worktree's toplevel, so worktrees
@@ -112,8 +112,3 @@ required (round 2+ routes only its fix diff), **and** the thread has no open `im
 open`; `nit` and `pre-existing` never block). A fixed, wrong, intentional or irrelevant finding is settled and covers
 again; a `fixed` one re-reported is reopened by submit. A commit reviewed at its tier but blocked this way is uncovered
 with `reason: 'open-important'` and the blocking `findings` ids.
-
-## Wave 10
-
-The callers (`/review` skill: prepare → Agent(reviewer) → submit → dispositions; the wave gate's `covered`), the factory's `review` evidence filed by submit,
-and the deletion of v1 with the relocation of the helpers this module borrows from `workflows/review/`.

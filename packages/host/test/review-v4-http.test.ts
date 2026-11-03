@@ -2,24 +2,12 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { mkdtempSync, realpathSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { defineWorkflow } from '@agent-workflows/runtime'
-import { z } from 'zod'
 import { assertValues, coerceStdin, parseArgs } from '../../cli/src/args.ts'
 import { buildCommands, resolveCommand } from '../../cli/src/spec.ts'
 import { createReviewService, type ReviewService, reviewOperations } from '../src/review/index.ts'
 import { gitRunner } from '../src/review/route.ts'
 import { startTestHost, type TestHost } from './support.ts'
 import { fakeReviewer, lines, makeRepo, write } from './support/review-repo.ts'
-
-// The v1 `agw review` workflow declares no positional, so `agw review prepare|submit|…` may sit below it: a stand-in
-// with the same command proves the host accepts both.
-const v1Review = defineWorkflow({
-  id: 'review',
-  version: '1',
-  input: z.object({ cwd: z.string() }),
-  output: z.object({}),
-  run: async () => ({}),
-})
 
 let t: TestHost
 let service: ReviewService
@@ -37,7 +25,7 @@ const late: ReviewService = {
 }
 
 beforeAll(async () => {
-  t = await startTestHost({ prefix: 'rv4http', extra: [{ workflow: v1Review }], reads: reviewOperations(late) })
+  t = await startTestHost({ prefix: 'rv4http', reads: reviewOperations(late) })
   service = createReviewService({ pool: t.pool, schema: t.schema, stateDir, git: gitRunner })
   root = makeRepo({ 'src/a.ts': lines(2) })
 })
@@ -60,15 +48,16 @@ async function agw(argv: string[], stdin?: string) {
 }
 
 describe('agw review prepare → submit through the host', () => {
-  test('the commands sit below `agw review` with their CLI contract', async () => {
+  test('the review commands carry their CLI contract', async () => {
     const { commands } = buildCommands(await t.host.openapi())
     const x = (words: string) => commands.find((c) => c.words.join(' ') === words)?.x
-    expect(x('review')).toMatchObject({ kind: 'workflow' })
+    expect(x('review')).toBeUndefined() // `agw review` itself is not a command: only its subcommands are
     expect(x('review prepare')).toMatchObject({ mutating: true, defaultFormat: 'json', positional: [] })
     expect(x('review submit')).toMatchObject({ mutating: true, positional: ['jobId'], stdin: 'reply' })
     expect(x('review dispose')).toMatchObject({ positional: ['jobId', 'findingId', 'disposition'] })
     expect(x('review status')).toMatchObject({ mutating: false, positional: ['jobId'] })
     expect(x('review route')).toBeDefined()
+    expect(commands.find((c) => c.words.join(' ') === 'review route')?.path).toBe('/review/route')
     expect(x('review covered')).toBeDefined()
   })
 

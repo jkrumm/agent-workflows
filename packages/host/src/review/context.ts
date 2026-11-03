@@ -12,7 +12,7 @@ export interface ReviewContext {
   git: GitRunner
   /** For the git calls that need an environment (the snapshot's temporary index, the worktree clone). */
   exec: Exec
-  /** v1's clone helpers (pr/branch) run on these. */
+  /** The clone helpers (pr/branch) run on these. */
   clonePorts: ReviewPorts
   stateDir: string
   quota?: (account: string) => Promise<QuotaReading | null>
