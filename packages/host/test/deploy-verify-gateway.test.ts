@@ -445,6 +445,7 @@ type ReviewOptions = {
   request?: unknown // what `agw review request` prints
   requestRc?: number
   requestErr?: string
+  cancelRc?: number // what `agw review cancel` exits with
   statuses?: unknown[] // what `agw review status` prints per call (the last repeats)
   waitSecs?: number
 }
@@ -469,6 +470,7 @@ async function verifyReview(options: ReviewOptions = {}) {
   write('request-out', JSON.stringify(options.request ?? REQUESTED))
   write('request-rc', `${options.requestRc ?? 0}`)
   write('request-err', options.requestErr ?? '')
+  write('cancel-rc', `${options.cancelRc ?? 0}`)
   const statuses = options.statuses ?? [submitted()]
   statuses.forEach((status, i) => write(`status-${i}`, JSON.stringify(status)))
   write('status-count', `${statuses.length}`)
@@ -484,6 +486,8 @@ case "$1 $2" in
     git -C "$4" log --format=%s > "$HOME/fixture-log"
     cat "$HOME/request-err" >&2
     cat "$HOME/request-out"; exit "$(cat "$HOME/request-rc")" ;;
+  "review cancel")
+    echo '{"status":"cancelled","jobId":"rv_job"}'; exit "$(cat "$HOME/cancel-rc")" ;;
   "review status")
     n=$(cat "$HOME/status-n" 2>/dev/null || echo 0); last=$(( $(cat "$HOME/status-count") - 1 ))
     [ "$n" -gt "$last" ] && n=$last
@@ -542,13 +546,31 @@ describe('verify.sh smoke review section', () => {
     expect(r.out).toMatch(/dir=\S+\.agw-verify\/review\./) // the test's trap removes it; verify.sh's own does too
   })
 
-  test('a held spawn is a SKIP with the factory reason, not a failure', async () => {
+  test('a waiting spawn is cancelled and a SKIP, not a failure', async () => {
+    const r = await verifyReview({ request: { ...REQUESTED, spawn: { status: 'waiting', hold: null } } })
+    expect(r.code).toBe(0)
+    expect(r.out).toContain('verify: SKIP: smoke review: the factory holds the spawn of rv_job: waiting')
+    expect(r.out).toContain('(cancel: cancelled)')
+    expect(r.calls).toMatch(/^review cancel rv_job --commit --format json$/m)
+    expect(r.calls).not.toContain('review status')
+  })
+
+  test('a spawn with a hold is cancelled and a SKIP naming the hold; a failing cancel is in the SKIP line', async () => {
     const r = await verifyReview({
-      request: { ...REQUESTED, spawn: { status: 'queued', hold: 'ceiling: work at 72 % of its 5-hour window' } },
+      request: { ...REQUESTED, spawn: { status: 'queued', hold: 'slots: 2 reviewer sessions running' } },
+      cancelRc: 1,
     })
     expect(r.code).toBe(0)
-    expect(r.out).toContain('verify: SKIP: smoke review: the factory holds the spawn of rv_job: ceiling: work at 72 %')
-    expect(r.calls).not.toContain('review status')
+    expect(r.out).toContain('the factory holds the spawn of rv_job: queued: slots: 2 reviewer sessions running')
+    expect(r.out).toContain('(cancel failed:')
+    expect(r.calls).toMatch(/^review cancel rv_job /m)
+  })
+
+  test('a started spawn is not held: no cancel, the job is polled', async () => {
+    const r = await verifyReview({ request: { ...REQUESTED, spawn: { status: 'started', hold: null } } })
+    expect(r.code).toBe(0)
+    expect(r.calls).not.toContain('review cancel')
+    expect(r.calls).toContain('review status')
   })
 
   test('a factory that is unreachable is a SKIP; one that refuses the fixture root is a failure', async () => {

@@ -416,10 +416,13 @@ else
   [[ "$(print -r -- "$out" | jq -r '.tier')" == "light" ]] || fail "smoke review: the fixture routed to tier '$(print -r -- "$out" | jq -r '.tier')', not light: $out"
   review_job=$(print -r -- "$out" | jq -r '.jobId // empty')
   [[ -n "$review_job" ]] || fail "smoke review: agw review request printed no jobId: $out"
-  # a held spawn (ceiling, slots, deep cap, drain) names its reason in the factory's spawn status
-  review_hold=$(print -r -- "$out" | jq -r '.spawn | if type == "object" then (.hold // .holdReason // .reason // empty) else empty end | if type == "string" then . else tojson end' 2>/dev/null)
+  # a held spawn: status waiting (no account under the ceiling) or a non-null hold (slots, deep cap, drain), the factory's Spawn contract
+  review_hold=$(print -r -- "$out" | jq -r '.spawn | if type == "object" and (.status == "waiting" or .hold != null) then "\(.status): \(.hold // "no account under the ceiling" | if type == "string" then . else tojson end)" else empty end' 2>/dev/null)
   if [[ -n "$review_hold" ]]; then
-    skip "smoke review: the factory holds the spawn of $review_job: $review_hold"
+    # a held review would sit in the factory's queue: cancel it so it never starts later (a failure is reported, never a FAIL)
+    cancel_out=$(AGW_PURPOSE=verify agw review cancel "$review_job" --commit --format json 2>&1)
+    if (( $? == 0 )); then cancel_note="cancel: $(print -r -- "$cancel_out" | jq -r '.status // "unknown"' 2>/dev/null)"; else cancel_note="cancel failed: ${cancel_out:0:200}"; fi
+    skip "smoke review: the factory holds the spawn of $review_job: $review_hold ($cancel_note)"
   else
     review_state=prepared
     while (( SECONDS - review_started < REVIEW_WAIT_SECS )); do
