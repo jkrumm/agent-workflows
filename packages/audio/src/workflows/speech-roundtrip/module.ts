@@ -1,9 +1,9 @@
 import { join } from 'node:path'
 import type { HostDeps } from '../../../../host/src/workflows/index.ts'
-import { defineWorkflowModule } from '../../../../host/src/workflows/registry.ts'
+import { defineWorkflowModule, foreignOf } from '../../../../host/src/workflows/registry.ts'
 import { plainSuite } from '../../../../host/src/workflows/suite.ts'
 import type { AudioDeps } from '../../scope.ts'
-import { createSpeechRoundtrip } from './index.ts'
+import { createSpeechRoundtrip, SPEECH_ROUNDTRIP_SHELL } from './index.ts'
 
 /** What the audio process adds to `HostDeps` for this module. */
 type SpeechRoundtripDeps = HostDeps & { audio?: Omit<AudioDeps, 'usage'> }
@@ -18,5 +18,6 @@ export default defineWorkflowModule({
     if (!audio) throw new Error("speech-roundtrip module: the process must pass `audio` (the lanes' deps) in its deps")
     return [createSpeechRoundtrip({ audio })]
   },
+  foreign: () => [foreignOf(SPEECH_ROUNDTRIP_SHELL)],
   suite: { path: () => CASES_PATH, read: (path) => plainSuite.read(path) },
 })

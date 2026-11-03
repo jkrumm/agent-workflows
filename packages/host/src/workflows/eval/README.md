@@ -120,19 +120,28 @@ no HTTP route, no CLI command, not on the door). It speaks a sentence on `ttsRou
 inputs, so `--args '{"sttRoute":"audio.stt.openai"}'` is an arm) and returns the transcript, the audio's length and each
 leg's route, calls and price. Speech and transcription are the audio door, not workflows, so this is where they get a score.
 
-### The audio process's suites: what is built, what is missing
+### The audio process's suites
 
-The audio modules declare their suite and scorer the way the host's do (`speech-roundtrip` and `podcast` have `suite`), and the scorer is on the workflow definition, so the process that
-runs a case also holds the code that scores it. What is **not** there is the host's side: `agw eval run|compare` is served by
-the host, which reads suites from the host's modules only (`suitesOf(hostModules)`) and starts and scores a case through its own
-`Runtime` (`runtime.start(workflow)` registers the workflow it is given and then claims and drives the run itself;
-`scoreRun` takes the scorer from the runtime's registry). The host can neither list `speech-roundtrip` among the eval
-workflows nor start it without driving it with a stand-in, in a process that has none of its deps. The smallest correct wiring
-needs a change in `packages/runtime` (a workflow the runtime knows for `start` and `scoreRun` only, never claimed, recovered
-or counted: `RuntimeOptions.foreign`), in `packages/host/src/boot.ts` (hand the audio modules' declarations to `suitesOf` and
-`wireEval`) and a way for the host to get the audio modules' suites and scorers without importing the audio package (it
-depends on the host). That is more than the 150 lines this change was allowed, and two of the files are not this change's to
-touch.
+`agw eval run|compare` is served by the host, and the audio process's workflows run in the audio process, from the one
+journal. The host reads the audio tree's suites and scorers and replays its cases without ever driving them:
+
+- **Discovery.** `boot.ts` points `discoverForeignModules` (`workflows/registry.ts`) at `packages/audio/src/workflows` by
+  path (the audio package depends on this one). It loads the modules that declare `foreign()`: the workflow as another
+  process knows it, `foreignOf(SHELL)`, which is the id, version, schemas and scorer the audio module itself exports
+  (`PODCAST_SHELL`, `SPEECH_ROUNDTRIP_SHELL`; the audio process builds its workflow from the same shell) with a body that
+  refuses to run. `create` is never called here, so the host needs none of the audio deps. A missing tree is no module.
+- **Suites.** The modules are `elsewhere`: `buildWorkflows` takes their `suite` into the context's `suites` (so the `workflow`
+  enum of `agw eval run|compare` holds `podcast` and `speech-roundtrip`) and builds nothing of theirs. An id the host also
+  serves is a boot error naming both files.
+- **Runtime.** The foreign workflows go to `RuntimeOptions.foreign` and to `wireEval({ foreign })`. The host's runtime
+  starts a case run of one (same object) and scores it with its scorer, at the scorer's version; it never claims, leases,
+  recovers, redelivers or drives it, and `driftCandidates` leaves it out. The audio runtime picks the pending run up from
+  the journal, drives it and writes its record and post hooks (`packages/runtime/test/foreign.test.ts`,
+  `packages/host/test/eval-foreign.test.ts`: both runtimes on one journal, the case executed once, by the audio runtime).
+- **Without `--yes`** `agw eval run podcast|speech-roundtrip` lists the cases and the estimate (the cost history of earlier
+  runs of that workflow) as for any suite. Both processes must be on the same release: the foreign shape is read from the
+  host's own checkout of the audio tree, the run is driven by the audio process's, and a run whose versions differ is
+  recorded under the version of the process that drove it.
 
 `podcast` sends nothing outward under an eval: with `publish: false`, `cover: false` and `brainNote: false` the only side
 effects left were the Slack notices (the done notice of `podcast.produce`, the failure notice of the room), and both are skipped for

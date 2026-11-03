@@ -225,6 +225,8 @@ A run lasts seconds to tens of minutes. There is no API to wait for days: anythi
 Issue, a human approval) is an entity state machine that *starts* workflows. This keeps the mixed-version
 window of a deploy small and keeps every run's journal short.
 
+**`foreign`** (`RuntimeOptions`, optional): workflows another process serves. The runtime can `start` a run of one (the same object) and `scoreRun` it with its scorer, and does nothing else with it: it never claims, leases, recovers, redelivers or drives the run, and `driftCandidates` skips it. The serving process drives it from the shared journal. An id in both `workflows` and `foreign` throws. The host uses it for the audio process's eval suites (`packages/host/src/workflows/eval/README.md`).
+
 **`agentPrompt`** (`RuntimeOptions`, optional): called once per attempt with `{ agent, prompt }` (the step's `prompt`, without its optional `tail`, which is appended after the hook's result so a retry directive stays last) right before a session is
 opened or prompted, and not at all when the step re-attaches to a prompted session. Its result is what the host session
 receives; the journaled step spec is unchanged. The platform host uses it to append an agent's active learned facts after

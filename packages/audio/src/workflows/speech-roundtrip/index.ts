@@ -19,6 +19,14 @@ import {
 import { speechRoundtripScorer } from './scorer.ts'
 
 export const SPEECH_ROUNDTRIP_VERSION = '2026-11-03.1'
+/** What the workflow is apart from its body: the host process holds it to start and score eval runs (`foreignOf`). */
+export const SPEECH_ROUNDTRIP_SHELL = {
+  id: 'speech-roundtrip',
+  version: SPEECH_ROUNDTRIP_VERSION,
+  input: SpeechRoundtripInput,
+  output: SpeechRoundtripOutput,
+  scorer: speechRoundtripScorer,
+} as const
 const CALLER = 'speech-roundtrip'
 const AUDIO_FILE = 'speech.mp3'
 
@@ -89,11 +97,7 @@ export function createSpeechRoundtrip(deps: { audio: Omit<AudioDeps, 'usage'>; a
     })
 
   const workflow = defineWorkflow({
-    id: 'speech-roundtrip',
-    version: SPEECH_ROUNDTRIP_VERSION,
-    input: SpeechRoundtripInput,
-    output: SpeechRoundtripOutput,
-    scorer: speechRoundtripScorer,
+    ...SPEECH_ROUNDTRIP_SHELL,
     async run(ctx, input: SpeechRoundtripInputValue): Promise<SpeechRoundtripOutputValue> {
       const dir = join(artifactDir('speech-roundtrip', ctx.runId, deps.artifactRoot ? { root: deps.artifactRoot } : {}))
 
