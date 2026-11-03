@@ -40,7 +40,7 @@ Names only; values come from 1Password through `secrets-run`, never from the rep
 | `AGW_DRIFT_RATE`, `AGW_DRIFT_INTERVAL_S` | no | drift: the share of finished production runs scored after the fact (default `0.1`, `0` turns it off) and the tick (default 300 s); a bad value refuses to start |
 | `AGW_EVAL_DIR`, `AGW_EVAL_HOME` | no | `agw eval run`: where `<workflow>/cases.jsonl` live (default `~/.local/share/agent-workflows/eval`) and the root a case's `repo` is relative to (default `$HOME`) |
 | `AGW_VOICE_PATH` | no | the voice guide `prose` checks and names in its brief; default the brain vault's `voice.md`. Unreadable or empty: `prose` fails before any model call, naming this variable |
-| `AGW_ARGO_PUSH`, `AGW_AGENT_STALE_HOURS`, `AGW_HC_BIN`, `AGW_CLAUDE_BIN`, `AGW_CLAUDE_ACCOUNT_BIN`, `AGW_CLAUDE_LOG_DIR` | no | the agents overview (§Host reads, `src/workflows/overview/README.md` §Environment): the Argo timer switch (`ARGO_URL` and `ARGO_API_SECRET` above are its target) and where the collectors read |
+| `FACTORY_TOKEN`, `AGW_FACTORY_BIN`, `AGW_ARGO_PUSH`, `AGW_AGENT_STALE_HOURS`, `AGW_CLAUDE_ACCOUNT_BIN` | no | the agents overview (§Host reads, `src/workflows/overview/README.md` §Environment): the token the `factory fleet` read needs (`.env.tpl` resolves it; without it `agw agents` answers no projects and a warning), the factory CLI (default `~/.local/bin/factory`, else `factory` on `PATH`), the Argo timer switch (`ARGO_URL` and `ARGO_API_SECRET` above are its target), the stale threshold and the `claude-account` CLI of the Max quota |
 | `AGW_BRAIN_DIR` | no | the vault the `brain.*` capabilities read (default `~/SourceRoot/brain`); a path that is no directory is `NOT_CONFIGURED` |
 
 ## Routes
@@ -129,7 +129,7 @@ processes and checks that rule. Settings reach them as closures over the process
 
 | Command | Method, path | Does |
 |-|-|-|
-| `agw agents [--text] [--cols N] [--color]` | `POST /agents` | the agents overview, `{data}` (what agent-gateway's `GET /api/overview` returned under `data`, minus the retired dispatch fields, `summary.dispatch` included) or `{text}` for `watch` (`--format plain` prints it) |
+| `agw agents [--text] [--cols N] [--color]` | `POST /agents` | the agents overview, `{data}` (the payload Argo's `/agents/overview` ingests; formerly agent-gateway's `GET /api/overview` under `data`, minus the retired dispatch fields) or `{text}` for `watch` (`--format plain` prints it). A client of the factory's fleet view (`factory fleet --format json`); agw adds the recommendations and the Max quota. A factory that is down or exits non-zero is no projects and a warning naming the exit code and stderr's first line, the quota still present |
 | `agw quota` | `GET /quota` | `{data, accounts}`: the last `iu` report and every account's quota (the CLI numbers, overridden per window by a newer report, `stale` after 6 h) |
 | `agw quota-report --five-hour-pct N [--five-hour-mins-left N] [--seven-day-pct N] [--account ID]` | `POST /quota/report` | the statusline's report, kept in memory (`account` default `iu`) |
 
