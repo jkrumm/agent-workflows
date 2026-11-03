@@ -1,12 +1,21 @@
 import { describe, expect, test } from 'bun:test'
 import { usageFromOpenCodeMessages } from '@agent-workflows/middleware'
-import { CLAUDE_MODELS, CONTEXT_LIMITS, claudeRate } from '@agent-workflows/routes'
+import {
+  CLAUDE_MODELS,
+  CONTEXT_LIMITS,
+  type ContextLimit,
+  claudeRate,
+  resolveRoute,
+  routeIds,
+} from '@agent-workflows/routes'
 import {
   buildServerConfig,
+  COMPACTION_BUFFER,
   contextAlias,
   fallbackModelRef,
   modelRef,
   PROVIDER_ANTHROPIC,
+  servedLimits,
   windowFor,
 } from '../src/config.ts'
 import { priceOpenCodeMessages } from '../src/host.ts'
@@ -23,16 +32,21 @@ const anthropicRows = () =>
   (buildServerConfig() as { providers: Record<string, { models: Record<string, Row> }> }).providers[PROVIDER_ANTHROPIC]
     ?.models as Record<string, Row>
 
-/** OpenCode 2.0.32 `calculateCeiling` (packages/core/src/session/compaction.ts) with `compaction.buffer` unset. */
-const RESERVE_MIN = 16_000
-const ceilingOf = (window: number) =>
-  window - Math.max(Math.floor(window * 0.1), window >= 2 * RESERVE_MIN ? RESERVE_MIN : 0)
+/** OpenCode 2.0.32 `calculateCeiling` (packages/core/src/session/compaction.ts) with `compaction.buffer` set. */
+const ceilingOf = (window: number, buffer: number) => window - buffer
+/** OpenCode 2.0.32 `SUMMARY_OUTPUT_MAX` (packages/core/src/session/model-request.ts): all a summary call can ask for. */
+const SUMMARY_OUTPUT_MAX = 32_000
+
+/** The bounds the route table names, read from the table here, not from `servedLimits`, the code under test. */
+const tableLimits = [...new Set(routeIds().flatMap((id) => resolveRoute(id).contextLimit ?? []))].sort((a, b) => a - b)
 
 describe('the bounded rows of the server config', () => {
-  test('every Claude model has one alias row per allowed bound, sending the real model id with its own window', () => {
+  test('every Claude model has one alias row per bound the table names, sending the real model id with its own window', () => {
     const rows = anthropicRows()
+    expect(tableLimits.length).toBeGreaterThan(0)
+    expect(servedLimits()).toEqual(tableLimits)
     for (const model of CLAUDE_MODELS) {
-      for (const limit of CONTEXT_LIMITS) {
+      for (const limit of tableLimits) {
         const row = rows[contextAlias(model, limit)]
         expect(row?.modelID).toBe(model)
         expect(row?.limit?.context).toBe(windowFor(limit))
@@ -41,52 +55,61 @@ describe('the bounded rows of the server config', () => {
     expect(contextAlias('claude-haiku-5-5', 80_000)).toBe('claude-haiku-5-5~ctx80000')
   })
 
+  test('no alias row exists for a bound no route names', () => {
+    const aliases = Object.keys(anthropicRows()).filter((key) => key.includes('~ctx'))
+    expect(aliases.sort()).toEqual(
+      CLAUDE_MODELS.flatMap((model) => tableLimits.map((limit) => contextAlias(model, limit))).sort(),
+    )
+    expect(aliases).toHaveLength(CLAUDE_MODELS.length * tableLimits.length)
+  })
+
   test('an alias row prices, varies and behaves like its base row, and the base row has no window', () => {
     const rows = anthropicRows()
     for (const model of CLAUDE_MODELS) {
       const base = rows[model] as Row
       expect(base.limit?.context).toBeUndefined()
       expect(base.modelID).toBeUndefined()
-      for (const limit of CONTEXT_LIMITS) {
+      for (const limit of tableLimits) {
         const { modelID: _id, limit: aliasLimit, ...alias } = rows[contextAlias(model, limit)] as Row
         const { limit: baseLimit, ...rest } = base
         expect(alias).toEqual(rest)
         expect(aliasLimit?.output).toBe(baseLimit?.output)
       }
     }
-    expect((rows['claude-haiku-5-5~ctx80000'] as Row).cost).toBeDefined()
+    expect((rows[contextAlias('claude-haiku-5-5', tableLimits[0] as number)] as Row).cost).toBeDefined()
   })
 
-  test('only the Anthropic provider has aliases, and the server does not turn compaction on or off itself', () => {
+  test('only the Anthropic provider has aliases, and compaction stays on with a buffer that leaves a summary its room', () => {
     const config = buildServerConfig() as { providers: Record<string, { models: Record<string, unknown> }> }
     for (const [id, p] of Object.entries(config.providers)) {
       if (id !== PROVIDER_ANTHROPIC) expect(Object.keys(p.models).some((k) => k.includes('~ctx'))).toBe(false)
     }
-    expect(config).not.toHaveProperty('compaction')
+    // Only `buffer`: no `auto: false` (the session must compact) and no `keep`.
+    expect((config as { compaction?: unknown }).compaction).toEqual({ buffer: COMPACTION_BUFFER })
+    // The summary call asks for min(32k, window - request): the buffer is the room, 32k is all it can use, the summary
+    // prompt takes a few thousand of it (10,733 of a 16k buffer, measured, `test/live-context-limit.test.ts`).
+    expect(COMPACTION_BUFFER).toBeGreaterThanOrEqual(SUMMARY_OUTPUT_MAX + 5_000)
   })
 
-  test("the window puts OpenCode's compaction ceiling at bound / 1.25, the 16k reserve below the window", () => {
-    expect(CONTEXT_LIMITS.map(windowFor)).toEqual([64_000, 80_000, 96_000])
-    expect(CONTEXT_LIMITS.map((limit) => ceilingOf(windowFor(limit)))).toEqual([48_000, 64_000, 80_000])
-    for (const limit of CONTEXT_LIMITS) {
+  test("the window puts OpenCode's compaction ceiling at bound / 1.25, the buffer below the window", () => {
+    expect(windowFor(100_000)).toBe(80_000 + COMPACTION_BUFFER)
+    for (const limit of [60_000, 80_000, 100_000]) {
       const window = windowFor(limit)
-      // The 16k rule, not the 10% one, applies in this range (the formula in the comment of `windowFor`).
-      expect(window).toBeGreaterThanOrEqual(2 * RESERVE_MIN)
-      expect(window).toBeLessThan(10 * RESERVE_MIN)
-      expect(ceilingOf(window)).toBe(window - RESERVE_MIN)
+      expect(ceilingOf(window, COMPACTION_BUFFER)).toBe(Math.floor(limit / 1.25))
       // Headroom for a chars/4 undercount of 25% of everything, up to the bound.
-      expect(Math.ceil(ceilingOf(window) * 1.25)).toBeLessThanOrEqual(limit)
+      expect(Math.ceil(ceilingOf(window, COMPACTION_BUFFER) * 1.25)).toBeLessThanOrEqual(limit)
     }
   })
 })
 
 describe('modelRef with a contextLimit', () => {
-  const patch = { 'review.angle': { contextLimit: 80_000 } }
+  const bound = tableLimits[0] as number
+  const patch = { 'review.angle': { contextLimit: bound } }
 
   test("the session's model is the alias, with the route's effort as the variant; the route keeps the real model", () => {
     const { route, model } = modelRef('review.angle', patch)
     expect(model.providerID).toBe(PROVIDER_ANTHROPIC)
-    expect(model.id).toBe(contextAlias(route.model, 80_000))
+    expect(model.id).toBe(contextAlias(route.model, bound))
     expect(model.variant).toBe(route.effort as string)
     expect(route.model).toBe('claude-haiku-5-5')
     expect(anthropicRows()[model.id]).toBeDefined()
@@ -104,8 +127,15 @@ describe('modelRef with a contextLimit', () => {
     expect(fallback?.model.id).not.toContain('~ctx')
   })
 
+  test('a bound the table does not name has no row: the model is refused, not a missing one sent to the server', () => {
+    const unserved = CONTEXT_LIMITS.find((limit) => !tableLimits.includes(limit)) as ContextLimit
+    expect(() => modelRef('review.angle', { 'review.angle': { contextLimit: unserved } })).toThrow(
+      /no row for contextLimit/,
+    )
+  })
+
   test('every variant of every alias an arm can reach exists on its row', () => {
-    for (const limit of CONTEXT_LIMITS) {
+    for (const limit of tableLimits) {
       const { model } = modelRef('review.angle', { 'review.angle': { contextLimit: limit } })
       const variants = (anthropicRows()[model.id] as Row).variants as { id: string }[]
       expect(variants.map((v) => v.id)).toContain(model.variant as string)

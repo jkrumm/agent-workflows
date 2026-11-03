@@ -418,27 +418,61 @@ A route with a `contextLimit` (`packages/routes`; off unless an arm or the table
 steps under that many prompt tokens. Why: Claude Haiku 5.5 bills a request whose prompt (input, cache reads, both cache
 writes) is over 100,000 tokens at 5x on every column, and a session grows over its tool turns.
 
-**Mechanism.** The server config adds, for every Claude model and every `CONTEXT_LIMITS` value, an alias row
-`<model>~ctx<limit>` (`contextAlias`) with the base row's cost, variants and compatibility, `modelID: <model>` and its
+**Mechanism.** The server config adds, for every Claude model and every bound the route table names (`servedLimits`,
+derived from the table's `contextLimit`s; 100000 today), an alias row `<model>~ctx<limit>` (`contextAlias`) with the base row's cost, variants and compatibility, `modelID: <model>` and its
 own `limit.context` (`windowFor`). `modelRef` returns the alias for a route with a `contextLimit` (the fallback's is the
-plain id), so OpenCode's own `auto` compaction, which runs off the model's window, fires early. No restart: the server
-serves every bound, an arm picks one. The key is `modelID`, not `id`: OpenCode 2.0.32's v2 config ignores unknown keys, so
+plain id), so OpenCode's own `auto` compaction, which runs off the model's window, fires early. An arm may only pick a
+bound the table names: `routes` admits any of `CONTEXT_LIMITS` (60000, 80000, 100000), but the server registers no
+other row, so `modelRef` refuses the rest (`no row for contextLimit`) instead of sending a model the server lacks. A
+new bound in the table is served after the next server config (a restart). The key is `modelID`, not `id`: OpenCode 2.0.32's v2 config ignores unknown keys, so
 `id` would silently leave the alias calling the gateway with `claude-haiku-5-5~ctx80000`.
 
-**The rule** (OpenCode 2.0.32, `packages/core/src/session/compaction.ts`, `runner/llm.ts`). Before each model call the
-runner compacts when `estimate >= ceiling`, `ceiling = window - max(floor(window / 10), 16000)` (so `window - 16000` for a
-window from 32k to 160k; `compaction.buffer` is not set). `estimate` = the last response's measured `input + cache.read +
-cache.write + output + reasoning`, plus chars/4 of what came after (tool results); the first call is chars/4 of the
-whole request. The summary call is the history, as it is when its chars/4 estimate is within `ceiling - ~1k` and
-flattened to that size otherwise, plus the summary prompt. So a prompt cannot pass `ceiling * (1 + e)`, `e` being how
-far chars/4 undercounts the real tokens (a call after tool results is off only by that results' share). `windowFor(B) =
-B / 1.25 + 16000` makes `ceiling = B / 1.25`:
+**The rule** (OpenCode 2.0.32, read from the `v2.0.32` tag of sst/opencode: [`packages/core/src/session/compaction.ts`](https://github.com/sst/opencode/blob/v2.0.32/packages/core/src/session/compaction.ts),
+[`model-request.ts`](https://github.com/sst/opencode/blob/v2.0.32/packages/core/src/session/model-request.ts),
+[`packages/schema/src/config/compaction.ts`](https://github.com/sst/opencode/blob/v2.0.32/packages/schema/src/config/compaction.ts)).
+Before each model call the runner compacts when `estimate >= ceiling`, `ceiling = window - buffer` (`calculateCeiling`).
+`buffer` is the top-level `compaction.buffer`, which this config sets to `COMPACTION_BUFFER` (40000); unset it is
+`max(floor(window / 10), 16000)`. `estimate` = the last response's measured `input + cache.read + cache.write + output +
+reasoning`, plus chars/4 of what came after (tool results); the first call is chars/4 of the whole request. The summary
+call is the history, as it is when its chars/4 estimate is within the ceiling less the summary prompt and flattened to
+that size otherwise, plus the summary prompt. So a prompt cannot pass `ceiling * (1 + e)`, `e` being how far chars/4
+undercounts the real tokens (a call after tool results is off only by that results' share). `windowFor(B) = B / 1.25 +
+COMPACTION_BUFFER` makes `ceiling = B / 1.25`:
 
 | Bound | `limit.context` | Compaction ceiling | Headroom |
 |-|-|-|-|
-| 60000 | 64000 | 48000 | 12000 |
-| 80000 | 80000 | 64000 | 16000 |
-| 100000 | 96000 | 80000 | 20000 |
+| 60000 | 88000 | 48000 | 12000 |
+| 80000 | 104000 | 64000 | 16000 |
+| 100000 | 120000 | 80000 | 20000 |
+
+(Only the 100000 row is built today; the others show the formula.)
+
+**What the compaction summary can output** (the same sources). The summary call's `max_tokens` is
+`outputLimit(limit, "compaction", request)` = `min(limit.output or 32000 when unset, 256000, SUMMARY_OUTPUT_MAX = 32000,
+window - request)`: at most **32,000 tokens**, whatever `limit.output` says, and never more than the room the window
+leaves, which `calculateCeiling` fixes at `buffer` (the summary request is sized to the ceiling). The summary call carries
+the route's effort and adaptive `thinking` like any other call (measured on 2.0.32, `test/live-context-limit.test.ts`:
+`thinking: adaptive`, `output_config.effort: high`), and Anthropic counts thinking against `max_tokens`. A reply that
+ends on the length limit fails the compaction with `Compaction summary reached the output token limit`
+(`finish.reason == "length"`), a content filter with `Compaction summary was blocked by the provider`, a reply that
+skips the template (after one nudge) with `Compaction summary did not match the required template` or `Compaction
+produced no summary`. The turn then ends `failed` with that message and the session cannot go on: its context is over
+the ceiling and the next call compacts again.
+
+`compaction.buffer` is the one knob: the config's `compaction` object takes `auto`, `buffer` and `keep.tokens` (there is
+no `reserved` or `preserve_recent_tokens` in 2.0.32's schema; those strings in the binary belong to its v1 config).
+`compaction.auto` stays on and `keep` (15000 recent tokens kept verbatim beside the summary) at its default.
+
+**Measured: the summary's room.** With the default reserve a 100000-bound row (window 96000, ceiling 80000) asked the
+summary for `max_tokens` **10,733** (the 16k reserve less the summary prompt, shared with the thinking). With
+`COMPACTION_BUFFER` = 40000 it asks for **32,000**, the most OpenCode allows (`test/live-context-limit.test.ts`,
+loopback stand-in, no LLM). The unbounded Claude rows have a window between 400k and 950k tokens or unknown to the config (a 950k-token
+prompt summarises, a 400k one does not), so a session there reads on for hundreds of thousands of tokens before it
+compacts, and the summary call hands the model that history and 32k to think and write in. That is the likely cause of
+the 2026-10-31 eval's failure (`docs/evals/2026-10-31-review-claude-direct.md`: Haiku at `max` effort, 23 failed steps,
+all `Compaction summary reached the output token limit`); the eval did not log the summary call, so thinking eating the
+32k is inferred, not seen. Config cannot lift the 32k (and an earlier bound is the route's `contextLimit`, not this
+package's to set for every route), so a step can still fail on it, and the host handles that (below).
 
 `e` = 25% is an **assumption**, not a measurement (OpenCode itself assumes 15% for its output sizing; code and JSON
 tokenize denser than 4 characters per token). The arm that sets a bound should read the largest prompt it saw.
@@ -451,7 +485,7 @@ tokenize denser than 4 characters per token). The arm that sets a bound should r
 - A first prompt (or any prompt) over the ceiling is **summarised before the step runs**: the model works from a summary
   of its own task, not the task. The route's largest first prompt has to be well under the ceiling (80000 for the
   100000 bound).
-- `max_tokens` follows the window: `min(route limit, window - prompt)`, 128000 on the plain row, about 16000 near the ceiling.
+- `max_tokens` follows the window: `min(route limit, window - prompt)`, 128000 on the plain row, about `COMPACTION_BUFFER` (40000) near the ceiling.
 - The `# Your Model` block of OpenCode's system prompt names the alias key as the model id (text only; the wire carries
   the real id), so a bounded session's system prompt differs from a plain one's by that line.
 - **A compaction's spend is in the step's usage.** The summary call(s) of one compaction (the nudge retry included) are one
@@ -461,6 +495,16 @@ tokenize denser than 4 characters per token). The arm that sets a bound should r
   and so does the unspent-turn check. Its tool calls and the route are unaffected: the compaction hides no message from
   the read (the prompt and every assistant message stay in the page), carries no tool parts, and `route` and `model`
   come from the handle, not from a message (an assistant or compaction message names the alias key).
+
+**When the summary still fails.** `isCompactionFailure` (`host.ts`) recognises the four summary failures above in a failed
+turn's error. A step on a route with a fallback then moves to the fallback session once, like a balance refusal
+(`fallsBack`, `waitOnFallback`): the task starts over in a fresh session on the fallback model (Terra for the Claude
+agent routes), with the failed turn's usage kept in the step's usage; a fallback session never falls back again, so a
+second failure fails the step with the compaction error. A route without a fallback fails the step with it, and the host
+logs `opencode compaction failed; the route has no fallback`. Why a restart and not a new kind of error: the failed
+session cannot take another turn (it compacts again first), the runtime's `ErrorKind` is not this package's to extend, and
+the fallback path already carries the spend, the permissions and the re-attach after a crash. The error text stays
+greppable for the friction job: `opencode session <id> turn failed: Compaction summary reached the output token limit`.
 
 ## Usage and cost
 

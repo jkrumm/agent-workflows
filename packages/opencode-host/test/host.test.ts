@@ -14,7 +14,7 @@ import {
   type PermissionRule,
   type ServerPort,
 } from '../src/index.ts'
-import { priceOpenCodeMessages, sessionPermissions } from '../src/host.ts'
+import { isCompactionFailure, priceOpenCodeMessages, sessionPermissions } from '../src/host.ts'
 import { sessionState } from '../src/session.ts'
 import { type FakeServer, startFake } from './fake-opencode.ts'
 import { attributionOf } from './attribution.ts'
@@ -477,6 +477,28 @@ describe("the gateway's refusal, as a session reports it", () => {
     )
     expect(state).toMatchObject({ kind: 'done', outcome: 'failed', error: CAPTURED.message })
     expect(isBalanceFailure({ text: (state as { error: string }).error })).toBe(true)
+  })
+})
+
+describe('isCompactionFailure', () => {
+  test('the summary failures of OpenCode 2.0.32 are compaction failures, the rest of a turn error is not', () => {
+    for (const text of [
+      'Compaction summary reached the output token limit',
+      'Compaction summary was blocked by the provider',
+      'Compaction summary did not match the required template',
+      'Compaction produced no summary',
+      'opencode session ses_1 turn failed: Compaction summary reached the output token limit',
+    ]) {
+      expect(isCompactionFailure(text)).toBe(true)
+    }
+    for (const text of [
+      'Nothing to compact yet',
+      'provider said no',
+      'provider balance exhausted: no credit pool eligible',
+      '',
+    ]) {
+      expect(isCompactionFailure(text)).toBe(false)
+    }
   })
 })
 
@@ -1332,6 +1354,41 @@ describe('provider-balance fallback', () => {
     expect(await failure(t.host.wait(handle, waitOptions()))).toContain('Insufficient Balance')
     expect(sessions(t)).toHaveLength(1)
     expect(t.warnings).toContain('opencode turn failed on provider balance after it ran; no fallback')
+  })
+
+  test('a compaction failure after the turn ran starts the task over once in the fallback session, which answers', async () => {
+    const t = setup()
+    const handle = await t.host.open(spec('x'))
+    await t.host.prompt(handle, '[tool:read][compaction] explore everything')
+    const result = await t.host.wait(handle, waitOptions())
+    expect(result.output).toBe('echo: [tool:read][compaction] explore everything')
+    expect(sessions(t)).toHaveLength(2)
+    expect(t.warnings).toContain('opencode turn failed on compaction; falling back')
+    // The failed turn's spend stays on the step: the primary's usage, then the fallback's.
+    const entries = [result.usage ?? []].flat()
+    expect(entries).toHaveLength(2)
+    expect(entries.map((u) => u.model)).toEqual([CHECK.model, fallbackRoute(CHECK)?.model])
+  })
+
+  test('the fallback failing on compaction too fails the step with the compaction error: once, no third session', async () => {
+    const t = setup()
+    const handle = await t.host.open(spec('x'))
+    await t.host.prompt(handle, '[tool:read][compaction-all] x')
+    expect(await failure(t.host.wait(handle, waitOptions()))).toContain(
+      'Compaction summary reached the output token limit',
+    )
+    expect(sessions(t)).toHaveLength(2)
+  })
+
+  test('a route without a fallback fails the step with the compaction error and says why', async () => {
+    const t = setup()
+    const handle = await t.host.open({ ...spec('x'), arm: { routes: { check: { fallback: null } } } })
+    await t.host.prompt(handle, '[tool:read][compaction] x')
+    expect(await failure(t.host.wait(handle, waitOptions()))).toContain(
+      'Compaction summary reached the output token limit',
+    )
+    expect(sessions(t)).toHaveLength(1)
+    expect(t.warnings).toContain('opencode compaction failed; the route has no fallback')
   })
 
   test('any other failure keeps today’s behaviour', async () => {
