@@ -626,6 +626,17 @@ One entry per phase: what we learned, what changed on this page, and why.
 - **Process.** Plan no owner work beyond minutes; a human check is a small sample only when an automated bar fails.
 - **Does the page hold?** Yes; the ground-truth limit (LLM consensus, no human check) is stated in every report.
 
+### Gateway Wave 9 — Review v4, agw side, 2026-11-03
+
+- **Learned.** The loop converges on its own work: round 1 deep found a real dedupe bug (3/3 votes), round 2 diff-only
+  at standard came back clean in 22 s. Reviewers that background their verifiers linger on `sleep` timers; forbidding
+  background work in the prompt stopped it. A lead that edits the reviewer's reply loses ledger fidelity.
+- **Changed.** Release `bde7659`: `agw review prepare|submit|dispose|status|route|covered`, ledger (migration 0017),
+  router with REVIEW.md frontmatter, ceiling and deep cap; REVIEW.md in five repos. No API spend.
+- **Process.** A wave on Max can be reviewed by the thing it builds; `make verify`'s paid v1 smoke now blocks the
+  no-API rule and goes in Wave 10.
+- **Does the page hold?** Yes; `covered` must also require no open important finding (Wave 10).
+
 ### Gateway Wave 18 — Review v4 spike, 2026-11-03
 
 - **Learned.** Asked for intent, fit and domain rules, a plain reviewer agent with context by pointer (intent, path

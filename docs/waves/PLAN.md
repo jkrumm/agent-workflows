@@ -337,16 +337,23 @@ first, and its cost is booked as classification, never review. Other fleets' rev
 
 ## Wave 10 — Review v4: callers, factory, cutover            <!-- status: active -->
 
-- dotfiles: `agents/reviewer.md`, `agents/review-verifier.md`, the `/review` skill (prepare → Agent with the seat →
-  submit → fix loop, dispositions, step back after round 3), lead role without the separate `/code-review high`,
-  `wave-gate.py` `covered` check.
-- Hidden transport: factory role `reviewer`, one interactive Claude Code session per job in a hidden Herdr terminal
+Inputs: Wave 9's close-out (`a0df86e`, "For Wave 10"). Mother decision: coverage means reviewed at the required tier
+**and** no open `important` finding (`covered` reads `status`); the wave gate and the factory's ship check use it.
+
+- [ ] dotfiles: `agents/reviewer.md` and `agents/review-verifier.md` (read-only tools, no background work, no `sleep`
+  timers), the `/review` skill (prepare → Agent with the seat → submit the reply verbatim → fix loop, dispositions,
+  step back after round 3; always `--cwd`, `--commit`, `--account "$(claude-account account)"`), lead role without the
+  separate `/code-review high`, `wave-gate.py` `covered` check.
+- [ ] Hidden transport: factory role `reviewer`, one interactive Claude Code session per job in a hidden Herdr terminal
   (never `claude -p`, never the Agent SDK), the idle watchdog, two sessions host-wide, the ceiling (70 % 5 h, 90 %
-  week: review waits), the deep cap (15 per account per day, then a one-click allow).
-- software-factory: evidence kind `review` derived through `agw review route`; the wave gate checks coverage.
-- `scripts/verify.sh` smoke review on the hidden path at light (`SKIP` when held).
-- Cutover: every caller on v4; v1, the angle agents, router, adversary, synthesis, OCR, react-doctor in review, the
-  review routes and the 138 legacy cases deleted; a concept version note.
+  week: review waits), the deep cap (15 per account per day) with the factory's one-click allow.
+- [ ] software-factory: evidence kind `review` derived through `agw review route`; the wave gate checks coverage. If a
+  software-factory lead is working, send it the ask (`rd say`) instead of editing its checkout.
+- [ ] `scripts/verify.sh`: the paid v1 smoke review replaced by a v4 smoke review on the hidden path at light (`SKIP`
+  when held); `make verify` runs again.
+- [ ] Cutover: every caller on v4; v1, the angle agents, router, adversary, synthesis, OCR, react-doctor in review, the
+  review routes and the 138 legacy cases deleted (v1's `exec.ts`/`git.ts` move, they do not die); `/review/route-range`
+  renamed to `/review/route`; a concept version note.
 
 ## Wave 11 — Review v4: measure and tune            <!-- status: pending -->
 
