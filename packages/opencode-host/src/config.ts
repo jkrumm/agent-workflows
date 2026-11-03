@@ -2,6 +2,7 @@ import { fileURLToPath } from 'node:url'
 import {
   CLAUDE_MODELS,
   claudeRate,
+  CONTEXT_LIMITS,
   EFFORTS,
   fallbackRoute,
   type PatchInput,
@@ -71,15 +72,6 @@ export function opencodeRoutes(): ResolvedRoute[] {
 }
 
 /**
- * The `contextLimit` bounds the table's routes name, ascending: the server registers one alias row per Claude model
- * for each of these and no other (an arm's patch may only pick among them; `refFor` refuses another).
- */
-export function servedLimits(): number[] {
-  const limits = opencodeRoutes().flatMap((route) => (route.contextLimit === undefined ? [] : [route.contextLimit]))
-  return [...new Set(limits)].sort((a, b) => a - b)
-}
-
-/**
  * Which leg serves a model, by its family alone: no other route sharing the id can move it. OpenAI's own models
  * (`gpt-`) go the Responses way (an agent session needs tool calls, which they make only there), a `claude-` model the
  * gateway's Anthropic path, anything else the OpenAI-compatible chat way. A single-call route on the same model (Haiku on
@@ -115,11 +107,6 @@ export function fallbackModelRef(
 }
 
 function refFor(route: ResolvedRoute): ModelRef {
-  if (route.contextLimit !== undefined && !servedLimits().includes(route.contextLimit)) {
-    throw new Error(
-      `route "${route.id}": the server has no row for contextLimit ${route.contextLimit}; it serves ${servedLimits().join(', ')} (the bounds the route table names)`,
-    )
-  }
   const id = route.contextLimit === undefined ? route.model : contextAlias(route.model, route.contextLimit)
   const model: ModelRef = { providerID: providerFor(route.model), id }
   if (route.effort) model.variant = route.effort
@@ -224,7 +211,7 @@ function variantSettings(effort: string, provider: string): Record<string, unkno
  * and output limit of the first route naming it (the table names one rate per model). The
  * attribution plugin (`options.plugin`, an absolute directory), no updates, no share. The only credential is the door
  * token, by reference to the server's env.
- * Each Claude model also has one bounded row per bound the table's routes name (`servedLimits`), `<model>~ctx<limit>`
+ * Each Claude model also has one bounded row per `CONTEXT_LIMITS` value, `<model>~ctx<limit>`
  * (`contextAlias`), for a route with a `contextLimit`.
  * The Anthropic leg sends `x-agw-fallback: none`: with no credit pool left the gateway answers a 402 and the route's own
  * fallback takes over, rather than paying for Claude on IU.
@@ -249,13 +236,13 @@ export function buildServerConfig(options: { plugin?: string } = {}): Record<str
     const rows = models[PROVIDER_ANTHROPIC] as Record<string, unknown>
     rows[model] ??= modelRow({ model, rate: claudeRate(model) }, PROVIDER_ANTHROPIC)
   }
-  // A bounded copy of every Claude row for each bound the table's routes name (`servedLimits`): same cost, variants and compatibility,
+  // A bounded copy of every Claude row for each allowed bound (`CONTEXT_LIMITS`, which an arm may pick without a restart): same cost, variants and compatibility,
   // a window that makes the session compact in time, and `modelID` so the provider is still called with the real model.
   // (OpenCode 2.0.32 reads `modelID` in its config; a key named `id` is dropped silently, not an alias.)
   const claude = models[PROVIDER_ANTHROPIC] as Record<string, Record<string, unknown>>
   for (const model of CLAUDE_MODELS) {
     const base = claude[model] as Record<string, unknown>
-    for (const limit of servedLimits()) {
+    for (const limit of CONTEXT_LIMITS) {
       claude[contextAlias(model, limit)] = {
         ...structuredClone(base),
         modelID: model,
