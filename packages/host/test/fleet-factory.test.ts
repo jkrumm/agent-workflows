@@ -361,7 +361,7 @@ describe('readFactoryFleet', () => {
   })
 
   test('a state the factory adds does not fail the parse', async () => {
-    const raw = fleet({ repos: [repo('p', [{ ...session(), state: 'hibernating' } as unknown as FactorySession])] })
+    const raw = fleet({ repos: [repo('p', [{ ...session(), state: 'hibernating' }])] })
     const read = await readFactoryFleet(fakeRun(result({ stdout: JSON.stringify(raw) })).run, config, {})
     expect(read.ok).toBe(true)
   })
