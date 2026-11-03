@@ -1,120 +1,78 @@
-# Lead handoff — Wave 18 (Review v4): CLOSE-OUT
+# Lead handoff — Wave 9 (Review v4, agw side): CLOSE-OUT
 
-Lead `agent-workflows-w1-r16`, spawned by mother `agent-workflows-w1-r4`, 2026-11-03, Opus high, account `me2`.
-Wave 15's close-out is in git at `ab765d9`. Nothing deployed: the wave changed no package (spike, docs, a paused
-LaunchAgent).
+Lead `agent-workflows-w1-r17`, 2026-11-03, Opus, account `me2`. Wave 18's close-out is in git at `3427f69`.
+Deployed: `bde7659` (host and audio healthy; gateway unchanged). CI green on `11b6279` and `bde7659`.
 
-## For the owner
+## What landed
 
-One page: `docs/spikes/review-v4/report.html`, copied to the MacBook at `~/Downloads/review-v4-report.html`.
-Evidence: `docs/spikes/review-v4/` (README verdict, `data/results.md`, `wiring.md`).
-
-**Verdict.** One read-only `reviewer` agent, routed by the change into none / light / standard / deep, on Max only.
-On 7 merged PRs with known later history, deep (Sonnet high, three-verifier vote) reached 4 of the 5 known defects,
-kept the clean PR clean and caught a real doc lie on the other "clean" PR; v1 on API reached 1 of the 4 it reviewed.
-Cost: ~25-40 % of one Max 5x week at today's ~520 reviews a week.
-
-**The owner signs** (the report's list):
-
-1. The agent: intent → REVIEW.md/AGENTS.md rules → system fit and duplication → breakage (with data tracing) →
-   security; style dropped; Important/Nit/Pre-existing; diff-only re-review, no repeats, step back after round 3.
-2. Tiers and seats: none · light Sonnet low · standard Sonnet medium · deep Sonnet high + 3 verifiers per Important.
-   Opus is not a tier.
-3. Routing by deterministic rules and per-repo `REVIEW.md` globs; no classifier; a caller raises, never lowers.
-4. Max only: v1 and the review routes deleted at cutover; at the ceiling (70 % of 5 h, 90 % of the week) review waits.
-5. The quota: ~25-40 % of one Max 5x week at today's volume, or cut volume (other fleets at light unless sensitive).
-6. The factory guarantees it: evidence kind `review` at the required tier; the wave gate checks coverage; deep cap 15
-   per account per day, held past it until a one-click allow, never downgraded.
-7. Liveness by idle watchdog, not v3's wall caps (`rules/agent-limits.md`).
-
-## Steps
-
-| Step | Verdict |
+| Commit | What |
 |-|-|
-| Pause the mining job | Done. `launchctl bootout` + `launchctl disable gui/<uid>/com.jkrumm.agent-workflows-eval-mine` (no run in flight; last night's run was 04:18Z). The plist stays; resume: `launchctl enable gui/$(id -u)/com.jkrumm.agent-workflows-eval-mine && make eval-mine-job` |
-| Reviewer agent | `docs/spikes/review-v4/reviewer.md` (prompt v2.1; v1 in `data/`), `review-verifier.md`, `REVIEW.agent-workflows.md`, `REVIEW.dotfiles.md`. Context by pointer: a job dir with diff, stat, intent, history, prior findings, REVIEW.md, AGENTS.md. v2 added data tracing (find the production writer of every value read), "tests are claims", a `checked` list; v2.1: claims on code outside the worktree are `nit unverified`, in-repo claims are checked, verifiers run in the foreground |
-| Routing | `route.py`, rules in `wiring.md` §Routing. Over the last merged PRs: agent-workflows 60 → 34 deep, 23 standard, 3 light; dotfiles 40 → 13 deep, 17 standard, 9 light, 1 none. Fixes from the PoC: `boot.ts` and `Makefile` are not sensitive (they routed 5 of 7 PoC PRs deep), size counts non-test lines. From dogfooding: docs are classified by extension (scripts under `docs/` are code); from the self-review: sensitive docs (`rules/security.md`, the global CLAUDE.md) now route deep, renames parse (`--no-renames`) |
-| PoC | 7 PRs × light, standard, deep (prompt v1), standard and deep (v2), Opus deep (v2) on the 4 hard ones: 36 valid reviews, $23.31 API-eq on `me2` (Max). Matrix: `data/results.md`. Seat for deep: Sonnet high (Opus matched it on 3 of 4 at ~1.9×). Quota: meter `me2` 5 h 6 % → 30 %, week 63 % → 66 % over the batch incl. this session; ≈ $1.3 per 1 % of 5 h, $8 per 1 % of the week (upper bounds; v3 measured $1.7 and $13). v1 dispositions reconstructed for 80 blocking findings on 22 PRs: 70 % fixed, 4 % wrong (all three lacked context), 26 % ignored (`data/v1-dispositions.jsonl`) |
-| Wiring | `wiring.md`: in-session (`/review` → `agw review prepare` → `Agent(reviewer, seat)` → `submit`) and hidden (a factory spawn per job, same agent); the ceiling, no API fallback; convergence; the factory's `review` evidence kind via `agw review route`, the wave gate's `covered` check, role `reviewer`, the deep cap. Cross-repo asks written (dotfiles, software-factory), not executed |
-| Report | `report.html` (basalt tokens, light/dark), on the MacBook. `rsync` to `iumac` failed (`unexpected end of file`), `scp` worked |
+| `68d58b1` | Host command rule: a command may sit below a shorter one only when the shorter declares no positionals (`agw review` takes none, so `agw review prepare` is legal). `--help` lists subcommands. Concept v3.16 |
+| `19362c4` | `REVIEW.md` for this repo (routing globs, failure classes; "one fake per port") |
+| `7949532` | `packages/host/src/review/route.ts`: TS port of `route.py`, REVIEW.md frontmatter, `--min` raises only, classifier seam. Parity with the spike: 80 of 80 commits (40 here, 40 dotfiles) |
+| `11b6279` | Migration 0017 (`review_jobs`, `review_findings`); `agw review prepare\|submit\|dispose\|status\|route\|covered` as host operations (no journal run, no LLM); REVIEW_OUTPUT v4; ceiling (70 % 5 h / 90 % week) and the deep cap (15/account/UTC day, `AGW_REVIEW_DEEP_CAP`); 16 tests on real Postgres and git through a fake reviewer. Doc: `packages/host/src/review/README.md` |
+| `bde7659` | Round-1 fixes: convergence by disposition (settled findings drop, open stay open, `fixed` reopens); REVIEW.md for routing read at the thread base in every round |
+
+REVIEW.md seeded and pushed in the other four repos: dotfiles `54e3f46` (adds "admission belongs to the factory"),
+software-factory `682ed27`, usage-tracker `5e558df`, iris `e6689cb` (through a worktree; an iris agent was working).
+Routing mix over each repo's last 30 commits (none/light/standard/deep): dotfiles 0/21/6/2, software-factory 6/6/8/10,
+usage-tracker 6/6/6/12 (migrations and the credit pass), iris 21/1/3/5 (mostly plan commits).
 
 ## Gate
 
-- `make check` (`agw check`, run `01a1a02a-4b65`): format, lint, typecheck pass; tests 4197 pass, 30 skip, **3 fail**
-  (`check-real.test.ts`: subdirectory cwd, not-a-work-tree, host credentials; `review-git.test.ts`), all in files this
-  wave did not touch. Re-run alone with the test database: 52 pass, 0 fail. Load average ~6.7 during the 460 s suite:
-  the timing flakes the mother's notes record; CI on the push is the gate of record.
-- Review: no API review spend (owner rule), so the v4 reviewer reviewed this wave's commits on Max in two rounds
-  (**Self-review** below); findings fixed in `d38eba5`.
-- No deploy, no `make verify`: no package changed.
+- `make check` (`agw check` run `01a1a080-92e5`): format, lint, typecheck pass; tests fail 4 in files this wave did not
+  touch (`check-real.test.ts` ×3, the same as Wave 18; `research-opencode.test.ts` ×1, a 12.7 s timing), all 12 pass
+  alone. Load average 15-50 during the run. CI green on the head.
+- **Live in-session review on Max, end to end** (the wave's gate, and its own review): thread `90771556bcd3`, range
+  `26f58d3..bde7659`.
+  - Round 1 `rv_ddx2xwgrsnyz7mh4rrwy`: routed **deep** (2080 prod lines; REVIEW.md did not exist at the base), seat
+    Sonnet high with the three-verifier vote. 1 important (3/3: a `fixed` finding re-reported was dropped as a repeat),
+    1 nit (route read REVIEW.md at diffBase; its other half, "four repos not seeded", was wrong: they are seeded in
+    their own repos). Both disposed `fixed` after `bde7659`.
+  - Round 2 `rv_iino4jn4zvqr32gswrpq`: diff-only from the round-1 head, routed **standard**, prior.json carried both
+    dispositions; "Nothing needs fixing." Same-attempt resubmit returned the stored output; attempt 2 was refused.
+  - `agw review covered --range 26f58d3..HEAD`: true, five commits, each at its required tier.
+- `make verify` **not run**: its step 10 is a paid v1 API smoke review (owner: no API review spend). Proof instead: the
+  deploy's health checks plus every new command exercised against the live host above.
 
-## Self-review
+## For Wave 10 (the mother edits PLAN.md)
 
-The v4 reviewer on its own spike, on Max, at the routed tier, as the design proposes:
-
-| Round | Commit | Tier (routed) | Result |
-|-|-|-|-|
-| 1 | `a9d8cb1` (the spike) | standard (after the docs-by-extension fix; before it the router said light, "docs only") | 1 important, 1 nit, both real: sensitive `.md` globs (`rules/security.md`, the global CLAUDE.md) could never match, so a security-rule change would route light; numstat rename paths parsed to `new}/file` |
-| 2 | `d38eba5` (the fix), diff-only, round 1 in `prior.json` as `fixed` | light | Nothing needs fixing; `checked` confirms both fixes and that `wiring.md`'s routed counts match `data/route-*.txt` |
-
-## Proposals for Waves 9–12 and 14 (the mother edits PLAN.md)
-
-Conditional on the owner's signature. They replace the v2/v3 plan; Wave 8's 146 ground-truth cases stay for Wave 11.
-
-- **Wave 9 — Review v4, agw side** (replaces Baseline). `agw review prepare|submit|dispose|route|covered`; the job dir
-  (worktree at the head, never the caller's tree; REVIEW.md from the base); the ledger (thread, round, findings,
-  dispositions) and REVIEW_OUTPUT v4 (v3's contract plus `tier`, `seat`, `intent`, `checked`); the router from
-  `route.py` with REVIEW.md frontmatter; `REVIEW.md` seeded in the five busiest repos (software-factory, iris,
-  agent-workflows, dotfiles, usage-tracker). Gate: unit tests through a fake reviewer, one live in-session review end
-  to end. Dropped from the old Wave 9: the v1 baseline, the native `/code-review` arm and the OCR arm (all API or no
-  longer candidates; OCR's deletion stands).
-- **Wave 10 — Review v4, callers, factory, cutover** (replaces Review v2). dotfiles: `agents/reviewer.md`,
-  `agents/review-verifier.md`, the `/review` skill (prepare → Agent with the seat → submit → fix loop, dispositions,
-  `stepBack`), lead role without the separate `/code-review high`, `wave-gate.py` `covered` check. Hidden transport: the
-  factory role `reviewer`, agw's desk step over the factory socket, the idle watchdog, two sessions host-wide, the
-  ceiling, the deep cap and its ask. software-factory: evidence kind `review` derived through `agw review route`.
-  `scripts/verify.sh` smoke review on the hidden path at light (`SKIP` when held). Cutover in the same wave, since
-  there is no API fallback by owner direction: every caller on v4; v1, the angle agents, router, adversary,
-  synthesis, OCR, react-doctor in review, the review routes and the 138 legacy cases deleted; a concept version note.
-- **Wave 11 — Measure and tune** (replaces Arm sweep). Two weeks of ledger dispositions per tier, rule and repo (fix
-  rate, wrong rate, rounds to clean, findings per review); false alarms on 10 known-clean PRs; recall on the Wave 8
-  cases (`dev` slice first) through the hidden path on Max, paced by the ceiling, never API. Arms: K 3 vs 2, verifier
-  seat Sonnet vs Haiku, Opus at deep on sensitive paths, router thresholds, the deep cap. Report
-  `docs/evals/<date>-review-v4.md`.
-- **Wave 12 — Central tiers.** Unchanged in shape, but review is no longer a route consumer: the `HARD`/`EASY` picks
-  keep Wave 6's measured seats instead of waiting on the review sweep.
-- **Wave 14 — Harness robustness.** The runaway-cap review loses its deep-review part (review is no longer an agw
-  agent step). Add: the hidden review session's idle watchdog proven by killing a wedged session; reviewers that
-  background their verifiers and linger (seen twice in the PoC, stopped by hand); the convergence sub-eval reads
-  rounds to clean from the ledger plus a 10-case fix loop on Max.
-
-## Spend (this lead)
-
-Max (`me2`): PoC $23.31 API-eq (36 valid reviews + a void first light batch $1.13), the self-review, two Explore
-sweeps, the v1-disposition agent, and this session's orchestration. API credit: none (no `agw review`, no eval run;
-`agw check` calls no model).
-
-## Left behind
-
-- **Mining job paused** (above). Wave 15's eval-credit first steps (prose-polish, the two refused retrospective
-  cases, one podcast run and its duration band) are untouched and still open.
-- **No arm found** dotfiles #51's drift (the gate copying the factory's drain admission) or #90's duplicated fake gateway:
-  both need a second system's design. Seed `REVIEW.md` lines for them in Wave 9 ("admission belongs to the factory",
-  "one fake per port, in `@agent-workflows/testing`").
-- **Tuning bias:** prompt v2's data-tracing rule and the dotfiles REVIEW.md shell line came after standard missed #119
-  and dotfiles #50; their hits there are not independent. n = 7, one run per arm.
-- **Tools:** this install has no Grep/Glob tools, so the agent searches with read-only Bash. The build must enforce
-  read-only Bash for the reviewer (a hook keyed on the agent type, or a settings allowlist for the hidden session);
-  verify with `/research` which mechanism Claude Code offers before building it.
-- **Open for the build:** whether the factory passes `--agent reviewer`; `prior.json` from a real ledger (the PoC used
-  v1 findings on the touched paths with state `unknown`); the `checked` field in REVIEW_OUTPUT; the deep cap value.
-- The `/tmp/rv4` worktrees of both repos are removed (`git worktree prune` clean).
+- **Callers must pass** `--cwd` (the CLI fills no cwd, as with v1), `--commit` on prepare/submit/dispose (they change
+  state), and `--account "$(claude-account account)"`: the host cannot see the caller's account. Without it the ceiling
+  is `unjudged` and deep reviews count in a null-account bucket.
+- **No `reviewer`/`review-verifier` agent types exist yet.** The live run gave general-purpose agents the spike prompts
+  (`docs/spikes/review-v4/{reviewer,review-verifier}.md`) on the seat's model and effort. Wave 10 ships them with
+  read-only tools.
+- **`covered` ignores outcome**: a submitted review with open `important` findings counts as coverage. Decide whether
+  the wave gate and the factory's `ship` also require no open important (I lean yes, via `status`).
+- **Names until cutover:** the route operation is HTTP `/review/route-range` (`reviewRouteRange`): v1's capability holds
+  `/review/route`. `agw review-route` (v1, LLM) and `agw review route` (v4) coexist. v1's `exec.ts`/`git.ts` must
+  move, not die: v4 and `fleet/factory.ts` import them.
+- **Deep cap has no allow override** yet (the factory's one-click allow). A held deep review in-session can only wait.
+- **Classifier:** the seam only (`decidedBy: 'default'` marks the one case no rule decides); no LLM, no route. Haiku
+  for light is a Wave 11 arm; the seat table is `SEATS` in `route.ts`.
+- **Edges, documented:** uncommitted changes become an unreferenced snapshot commit in the caller's object store
+  (never its index, HEAD or refs); a binary- or mode-only change routes `none`; a repo's first REVIEW.md does not route
+  the change that adds it (read at the base, by design); `--pr`/`--branch` reuse v1's `cloneForRef` and have no test
+  (needs a fake origin).
 
 ## Retro notes (for the mother's log)
 
-- Check a PoC agent's tool set first: the first light batch could not search (no Grep/Glob here, Bash forbidden by
-  the prompt) and was thrown away.
-- Subagents that background their own subagents linger after replying ("waiting on its own background work"); the
-  prompt now asks for foreground verifiers.
-- The model-discipline hook asks for a stated reason on an Opus subagent; the description field carries it.
-- Dogfooding the router on the wave's own commit found a rule gap (scripts under `docs/` counted as docs).
+- The deep reviewer lingered after replying on `sleep` timers it set to wait for its verifiers (the Wave 18 pattern);
+  the round-2 prompt forbade background work and it did not linger. Wave 10's agent definition should say so.
+- Round 2 at standard took 4 tool calls and 22 s on a 140-line fix diff. Probably right for that diff; Wave 11 should
+  check whether standard reads deep enough on fix rounds.
+- I shortened round 1's `checked` list in the copy I submitted, so the ledger holds a stub for it. Wave 10's skill must
+  pipe the agent's reply verbatim.
+- The model-discipline hook wants `[opus: <reason>]` in an Opus worker's description.
+- fallow's complexity audit (advisory, not in `make check`) flags the new `globToRegex`.
+
+## Spend
+
+Max only (`me2`, 5 h ~38 %, week ~68 % at the start): the lead, four implementers (one on Opus for the ledger), two
+reviewer runs with three verifiers, one Explore. API: none (`agw check` calls no model; `make verify` not run).
+
+## Left behind
+
+- Wave 10 is `active` in PLAN.md; nothing spawned (orchestrated).
+- Wave 15's eval-credit steps and the paused mining job are unchanged from Wave 18.

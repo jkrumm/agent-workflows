@@ -314,22 +314,28 @@ ledger/dispositions (what past findings were fixed, called wrong, or ignored).
   `~/Downloads/review-v4-report.html`), 7 points to sign. Mining job paused. Waves 9–12 and 14 rewritten only after
   the owner signs, from the close-out's proposals. `make check`: 3 timing flakes in untouched files, CI is the gate.
 
-## Wave 9 — Review v4, agw side            <!-- status: active -->
+## Wave 9 — Review v4, agw side            <!-- status: done 2026-11-03, deployed bde7659 -->
 
 Signed 2026-11-03 (the 7 points in Wave 18's close-out, `3427f69`; spike `docs/spikes/review-v4/`). Owner additions:
 Haiku is a candidate seat for light; a cheap API classifier (Haiku, FAST) may settle only what the rules can't, rules
 first, and its cost is booked as classification, never review. Other fleets' reviews run light unless sensitive.
 
-- [ ] `agw review prepare|submit|dispose|route|covered|status`: the job dir (worktree at the head, never the caller's
+- [x] `agw review prepare|submit|dispose|route|covered|status`: the job dir (worktree at the head, never the caller's
   tree; REVIEW.md from the base); intent, path history and prior findings by pointer.
-- [ ] Ledger (thread, round, findings, dispositions) and REVIEW_OUTPUT v4 (v3's contract plus `tier`, `seat`,
+- [x] Ledger (thread, round, findings, dispositions) and REVIEW_OUTPUT v4 (v3's contract plus `tier`, `seat`,
   `intent`, `checked`); `agw review status` lets the implementing session see and answer a running review.
-- [ ] Router from `route.py` with REVIEW.md frontmatter; a caller raises, never lowers; the classifier hook for
+- [x] Router from `route.py` with REVIEW.md frontmatter; a caller raises, never lowers; the classifier hook for
   undecided changes, off unless rules leave a case open.
-- [ ] `REVIEW.md` seeded in software-factory, iris, agent-workflows, dotfiles, usage-tracker.
+- [x] `REVIEW.md` seeded in software-factory, iris, agent-workflows, dotfiles, usage-tracker.
 - Gate: unit tests through a fake reviewer; one live in-session review end to end on Max. No API review spend.
+**Left behind:** close-out in `docs/waves/handoff/lead.md`. agw `68d58b1`..`bde7659` deployed; REVIEW.md pushed in
+  dotfiles `54e3f46`, software-factory `682ed27`, usage-tracker `5e558df`, iris `e6689cb`. Live: thread `90771556bcd3`,
+  round 1 deep (1 important 3/3 + 1 nit, both fixed in `bde7659`), round 2 standard clean, `covered` true for the
+  wave. For Wave 10: callers pass `--cwd`, `--commit`, `--account`; no reviewer agent types yet; `covered` ignores
+  open findings; HTTP `/review/route-range` until v1's `/review/route` goes. `make verify` not run (its last step is a
+  paid v1 review). `make check`: 4 flakes in untouched files, CI green.
 
-## Wave 10 — Review v4: callers, factory, cutover            <!-- status: pending -->
+## Wave 10 — Review v4: callers, factory, cutover            <!-- status: active -->
 
 - dotfiles: `agents/reviewer.md`, `agents/review-verifier.md`, the `/review` skill (prepare → Agent with the seat →
   submit → fix loop, dispositions, step back after round 3), lead role without the separate `/code-review high`,
