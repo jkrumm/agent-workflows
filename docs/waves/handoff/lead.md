@@ -1,70 +1,120 @@
-# Lead handoff — Wave 15 (Coverage and debt): CLOSE-OUT
+# Lead handoff — Wave 18 (Review v4): CLOSE-OUT
 
-Lead `agent-workflows-w1-r15`, spawned by mother `agent-workflows-w1-r4`, 2026-11-03 03:29 → 07:45 CET. Wave 8's
-close-out is in git at `0826cf4`.
+Lead `agent-workflows-w1-r16`, spawned by mother `agent-workflows-w1-r4`, 2026-11-03, Opus high, account `me2`.
+Wave 15's close-out is in git at `ab765d9`. Nothing deployed: the wave changed no package (spike, docs, a paused
+LaunchAgent).
 
-**Live:** release `b2701de`, `make verify` PASS (also PASS at `0a43be6`, `789985c`, `740cddb`). Gateway build unchanged
-(`054f2af17eb336d2`), not restarted.
+## For the owner
 
-## Delivered
+One page: `docs/spikes/review-v4/report.html`, copied to the MacBook at `~/Downloads/review-v4-report.html`.
+Evidence: `docs/spikes/review-v4/` (README verdict, `data/results.md`, `wiring.md`).
 
-| Item | PR | What |
-|-|-|-|
-| Daily mining job | #126 | `agw eval mine review --auto`: N = min(90 % of the gateway's eval credit / credit per candidate, IU headroom / (1.25 × IU per record), 150 per run); IU eval spend on the personal key since 2026-11-03T00:00Z under $20 − $0.75 margin; past runs with unpriced or missing usage rows are left out of the per-candidate history; the run record carries `output.auto` (state, target, bug cases before/after, credit, IU total, planned). `scripts/eval-mine-daily.sh` under LaunchAgent `com.jkrumm.agent-workflows-eval-mine` (04:30 daily, `make eval-mine-job`, runs the `current` release's script): per-UTC-day idempotency key (a second trigger adopts the run), bounded wait, one log line per night in `~/Library/Logs/agent-workflows-eval-mine.log`, removes itself at `target-reached`. **Installed.** |
-| Labeller c's re-asks | #126 | Gemini got `json_object` and failed the schema 3 of 3 times (one re-ask every call); now strict `json_schema` for `gemini-3.8-flash` only (an anchored regex, the routes guard forbids the literal). Live: 1 Gemini call per c ask (was 2). |
-| Compaction overflow | #128 | OpenCode 2.0.32 caps the summary at min(limit.output, 32k, window − request); `compaction.buffer` 40k (server-wide) gives bounded rows the full 32k; a compaction failure restarts once on the route's fallback only when every tool call of the turn was read-only (`read`, `glob`, `grep`, `skill`, from 2.0.32's source), otherwise fails with its usage kept; an unrecognised compaction error warns once. All `CONTEXT_LIMITS` rows stay served (arms). |
-| Eval suites, text | #129 | overview (6), narrative (6), prose-polish (8), retrospective (5): committed synthetic cases, deterministic versioned scorers, eval-only `fixture` inputs refused unless purpose is `eval`. Registry: a module that built nothing on a host may still declare its suite. |
-| Eval suites, media | #130 | image-icon (6), podcast (5), speech-roundtrip (6; a new audio eval workflow: TTS then STT, WER scorer). An eval podcast posts no Slack notice and files no brain note. |
-| Audio suites in the host's eval | #131 | `RuntimeOptions.foreign`: the host starts and scores audio workflows but never claims, leases, recovers or drives them; shared shells (`satisfies`, test that served = shell + run/concurrency); a never-claimed case errors after 10 min; version skew is a case error; a broken or missing audio tree logs and never aborts host boot. |
-| Test fakes | #132 | `@agent-workflows/testing` (private, devDependency only): one fake gateway (the two merged), transports, image server, agent host, fake OpenCode server/bin, platform, Postgres support. The `./testing` exports of capabilities, audio and runtime are gone. Same totals before and after (4153 pass, 55 skip). |
-| Dead code | #128 | `IU_ANTHROPIC_BASE` was already gone (681e942); no provably unused Claude leftovers (the Opus row stays for arms). |
-| Docs | #127 | concept.md v3.15 (eight drifted notes brought to the code, past version notes untouched) plus a retro line; routes/otel/brain READMEs. |
-| Small Wave 8 items | #127, #126 | `overview.classify` prompt rewritten to the factory's facts; labeller c (above); flaky ocr env test: a mkdtemp path spelled `test-key`, secrets now random per run. |
+**Verdict.** One read-only `reviewer` agent, routed by the change into none / light / standard / deep, on Max only.
+On 7 merged PRs with known later history, deep (Sonnet high, three-verifier vote) reached 4 of the 5 known defects,
+kept the clean PR clean and caught a real doc lie on the other "clean" PR; v1 on API reached 1 of the 4 it reviewed.
+Cost: ~25-40 % of one Max 5x week at today's ~520 reviews a week.
 
-Reviews: `agw review` on every PR, `/code-review high` (Max) on #128 and #131. Blocking findings fixed before merge:
-#126 per-payer denominators, unpriced rows read as $0 (twice); #128 a compaction restart re-running writes; #129 a
-hand-passed fixture landing in the `agw agents` cache, a weak path-leak check; #130 NaN recursion in the WER scorer;
-#131 a silently dropped suite; #132 the fake gateway's 404 before recording. Merged by the train on a local `make
-check` and green CI each.
+**The owner signs** (the report's list):
 
-## Proofs (live)
+1. The agent: intent → REVIEW.md/AGENTS.md rules → system fit and duplication → breakage (with data tracing) →
+   security; style dropped; Important/Nit/Pre-existing; diff-only re-review, no repeats, step back after round 3.
+2. Tiers and seats: none · light Sonnet low · standard Sonnet medium · deep Sonnet high + 3 verifiers per Important.
+   Opus is not a tier.
+3. Routing by deterministic rules and per-repo `REVIEW.md` globs; no classifier; a caller raises, never lowers.
+4. Max only: v1 and the review routes deleted at cutover; at the ceiling (70 % of 5 h, 90 % of the week) review waits.
+5. The quota: ~25-40 % of one Max 5x week at today's volume, or cut volume (other fleets at light unless sensitive).
+6. The factory guarantees it: evidence kind `review` at the required tier; the wave gate checks coverage; deep cap 15
+   per account per day, held past it until a one-click allow, never downgraded.
+7. Liveness by idle watchdog, not v3's wall caps (`rules/agent-limits.md`).
 
-- Mining job under launchd (`launchctl kickstart`, 05:18): `bug cases 46/200 (dev 10, test 36); labelled 6, accepted
-  +3; credit available 0.325, run cost 0.448; IU eval 2.747 of 20; state labelled` — run `01a19f9e-d1d3`, purpose
-  eval; usage rows: credit `me` $0.326 (Sonnet), IU $0.122 (Terra 6, Gemini 1).
-- Suites (purpose eval, production seats):
+## Steps
 
-| Suite | Cases | Pass | Cost | Note |
-|-|-|-|-|-|
-| overview | 6 | 6 | $0.003 | |
-| narrative | 6 | 5 | $0.101 | one narrative describes a removed mechanism as current (a real miss) |
-| retrospective | 5 | 3 | $0.061 | the 2 misses are gateway refusals (no eval credit), not answers |
-| image-icon | 6 | 6 | $0.054 | |
-| speech-roundtrip | 6 | 6 | $0.006 | WER 0; run by the audio process through the host's eval (#131 end to end) |
-| prose-polish | 8 | not run | est. $0.31 | eval credit |
-| podcast | 5 | not run | ≈ $0.9 a run (history) | eval credit |
+| Step | Verdict |
+|-|-|
+| Pause the mining job | Done. `launchctl bootout` + `launchctl disable gui/<uid>/com.jkrumm.agent-workflows-eval-mine` (no run in flight; last night's run was 04:18Z). The plist stays; resume: `launchctl enable gui/$(id -u)/com.jkrumm.agent-workflows-eval-mine && make eval-mine-job` |
+| Reviewer agent | `docs/spikes/review-v4/reviewer.md` (prompt v2.1; v1 in `data/`), `review-verifier.md`, `REVIEW.agent-workflows.md`, `REVIEW.dotfiles.md`. Context by pointer: a job dir with diff, stat, intent, history, prior findings, REVIEW.md, AGENTS.md. v2 added data tracing (find the production writer of every value read), "tests are claims", a `checked` list; v2.1: claims on code outside the worktree are `nit unverified`, in-repo claims are checked, verifiers run in the foreground |
+| Routing | `route.py`, rules in `wiring.md` §Routing. Over the last merged PRs: agent-workflows 60 → 34 deep, 23 standard, 3 light; dotfiles 40 → 13 deep, 17 standard, 9 light, 1 none. Fixes from the PoC: `boot.ts` and `Makefile` are not sensitive (they routed 5 of 7 PoC PRs deep), size counts non-test lines. From dogfooding: docs are classified by extension (scripts under `docs/` are code); from the self-review: sensitive docs (`rules/security.md`, the global CLAUDE.md) now route deep, renames parse (`--no-renames`) |
+| PoC | 7 PRs × light, standard, deep (prompt v1), standard and deep (v2), Opus deep (v2) on the 4 hard ones: 36 valid reviews, $23.31 API-eq on `me2` (Max). Matrix: `data/results.md`. Seat for deep: Sonnet high (Opus matched it on 3 of 4 at ~1.9×). Quota: meter `me2` 5 h 6 % → 30 %, week 63 % → 66 % over the batch incl. this session; ≈ $1.3 per 1 % of 5 h, $8 per 1 % of the week (upper bounds; v3 measured $1.7 and $13). v1 dispositions reconstructed for 80 blocking findings on 22 PRs: 70 % fixed, 4 % wrong (all three lacked context), 26 % ignored (`data/v1-dispositions.jsonl`) |
+| Wiring | `wiring.md`: in-session (`/review` → `agw review prepare` → `Agent(reviewer, seat)` → `submit`) and hidden (a factory spawn per job, same agent); the ceiling, no API fallback; convergence; the factory's `review` evidence kind via `agw review route`, the wave gate's `covered` check, role `reviewer`, the deep cap. Cross-repo asks written (dotfiles, software-factory), not executed |
+| Report | `report.html` (basalt tokens, light/dark), on the MacBook. `rsync` to `iumac` failed (`unexpected end of file`), `scp` worked |
+
+## Gate
+
+- `make check` (`agw check`, run `01a1a02a-4b65`): format, lint, typecheck pass; tests 4197 pass, 30 skip, **3 fail**
+  (`check-real.test.ts`: subdirectory cwd, not-a-work-tree, host credentials; `review-git.test.ts`), all in files this
+  wave did not touch. Re-run alone with the test database: 52 pass, 0 fail. Load average ~6.7 during the 460 s suite:
+  the timing flakes the mother's notes record; CI on the push is the gate of record.
+- Review: no API review spend (owner rule), so the v4 reviewer reviewed this wave's commits on Max in two rounds
+  (**Self-review** below); findings fixed in `d38eba5`.
+- No deploy, no `make verify`: no package changed.
+
+## Self-review
+
+The v4 reviewer on its own spike, on Max, at the routed tier, as the design proposes:
+
+| Round | Commit | Tier (routed) | Result |
+|-|-|-|-|
+| 1 | `a9d8cb1` (the spike) | standard (after the docs-by-extension fix; before it the router said light, "docs only") | 1 important, 1 nit, both real: sensitive `.md` globs (`rules/security.md`, the global CLAUDE.md) could never match, so a security-rule change would route light; numstat rename paths parsed to `new}/file` |
+| 2 | `d38eba5` (the fix), diff-only, round 1 in `prior.json` as `fixed` | light | Nothing needs fixing; `checked` confirms both fixes and that `wiring.md`'s routed counts match `data/route-*.txt` |
+
+## Proposals for Waves 9–12 and 14 (the mother edits PLAN.md)
+
+Conditional on the owner's signature. They replace the v2/v3 plan; Wave 8's 146 ground-truth cases stay for Wave 11.
+
+- **Wave 9 — Review v4, agw side** (replaces Baseline). `agw review prepare|submit|dispose|route|covered`; the job dir
+  (worktree at the head, never the caller's tree; REVIEW.md from the base); the ledger (thread, round, findings,
+  dispositions) and REVIEW_OUTPUT v4 (v3's contract plus `tier`, `seat`, `intent`, `checked`); the router from
+  `route.py` with REVIEW.md frontmatter; `REVIEW.md` seeded in the five busiest repos (software-factory, iris,
+  agent-workflows, dotfiles, usage-tracker). Gate: unit tests through a fake reviewer, one live in-session review end
+  to end. Dropped from the old Wave 9: the v1 baseline, the native `/code-review` arm and the OCR arm (all API or no
+  longer candidates; OCR's deletion stands).
+- **Wave 10 — Review v4, callers, factory, cutover** (replaces Review v2). dotfiles: `agents/reviewer.md`,
+  `agents/review-verifier.md`, the `/review` skill (prepare → Agent with the seat → submit → fix loop, dispositions,
+  `stepBack`), lead role without the separate `/code-review high`, `wave-gate.py` `covered` check. Hidden transport: the
+  factory role `reviewer`, agw's desk step over the factory socket, the idle watchdog, two sessions host-wide, the
+  ceiling, the deep cap and its ask. software-factory: evidence kind `review` derived through `agw review route`.
+  `scripts/verify.sh` smoke review on the hidden path at light (`SKIP` when held). Cutover in the same wave, since
+  there is no API fallback by owner direction: every caller on v4; v1, the angle agents, router, adversary,
+  synthesis, OCR, react-doctor in review, the review routes and the 138 legacy cases deleted; a concept version note.
+- **Wave 11 — Measure and tune** (replaces Arm sweep). Two weeks of ledger dispositions per tier, rule and repo (fix
+  rate, wrong rate, rounds to clean, findings per review); false alarms on 10 known-clean PRs; recall on the Wave 8
+  cases (`dev` slice first) through the hidden path on Max, paced by the ceiling, never API. Arms: K 3 vs 2, verifier
+  seat Sonnet vs Haiku, Opus at deep on sensitive paths, router thresholds, the deep cap. Report
+  `docs/evals/<date>-review-v4.md`.
+- **Wave 12 — Central tiers.** Unchanged in shape, but review is no longer a route consumer: the `HARD`/`EASY` picks
+  keep Wave 6's measured seats instead of waiting on the review sweep.
+- **Wave 14 — Harness robustness.** The runaway-cap review loses its deep-review part (review is no longer an agw
+  agent step). Add: the hidden review session's idle watchdog proven by killing a wedged session; reviewers that
+  background their verifiers and linger (seen twice in the PoC, stopped by hand); the convergence sub-eval reads
+  rounds to clean from the ledger plus a 10-case fix loop on Max.
 
 ## Spend (this lead)
 
-Eval: suites $0.23; mining proof $0.45 (credit $0.33, IU $0.12); worker's Gemini probe $0.05 IU. IU eval total on the
-line: $2.87 of $20. Reviews (production): ≈ $1.6 credit.
+Max (`me2`): PoC $23.31 API-eq (36 valid reviews + a void first light batch $1.13), the self-review, two Explore
+sweeps, the v1-disposition agent, and this session's orchestration. API credit: none (no `agw review`, no eval run;
+`agw check` calls no model).
 
 ## Left behind
 
-- **First step of the next wave, once eval credit allows** (`evalAvailableUsd` on `/health`, `me` accrues ≈ $3.2/day
-  and the 04:30 job takes 90 % of it): `agw eval run prose-polish --yes`; `agw eval run retrospective --ids <the two
-  refused> --yes` (any eval run after 05:30 CET today shows them: the case runs failed with `eval reserve`);
-  `agw eval run podcast --ids <one> --yes`. Calibrate the podcast duration band (0.6–1.5 of `minutes`, a guess) on
-  that run and bump the scorer version with it.
-- `agw eval run` scores a failed case run (here a 403 credit refusal) as zeros instead of an error: misleading pass
-  rates. Should be a case error.
-- Mining: ≈ 6 candidates a night at today's leftovers; ≈ 50–70 on a full day of accrual (≈ 10–17 cases). 154 bug
-  cases to go; `me2` (+$100) is the lever.
-- Compaction: a compaction fallback is labelled `routeFallback: unknown` like a refusal (the gateway's
-  `routeFallbackOf` in `packages/gateway/src/proxy.ts` must accept `compaction`; then one line in `waitOnFallback`).
-  Follow-up turns (`waitTurn`) get no fallback. Unbounded Claude rows are covered only by the read-only restart; no
-  live compaction failure was reproduced (tests and the real binary's request size only).
-- Labeller c's records are not split by wire format (`LABELER_C_VERSION` unchanged); the Gemini json_schema regex wants
-  a route flag instead.
-- Host boot imports the audio tree's `module.ts` graph to read suites (failures log, never abort).
-- `fakeWeb`, audio's test helpers and single-package fakes stay in their packages (typed on unexported ports).
+- **Mining job paused** (above). Wave 15's eval-credit first steps (prose-polish, the two refused retrospective
+  cases, one podcast run and its duration band) are untouched and still open.
+- **No arm found** dotfiles #51's drift (the gate copying the factory's drain admission) or #90's duplicated fake gateway:
+  both need a second system's design. Seed `REVIEW.md` lines for them in Wave 9 ("admission belongs to the factory",
+  "one fake per port, in `@agent-workflows/testing`").
+- **Tuning bias:** prompt v2's data-tracing rule and the dotfiles REVIEW.md shell line came after standard missed #119
+  and dotfiles #50; their hits there are not independent. n = 7, one run per arm.
+- **Tools:** this install has no Grep/Glob tools, so the agent searches with read-only Bash. The build must enforce
+  read-only Bash for the reviewer (a hook keyed on the agent type, or a settings allowlist for the hidden session);
+  verify with `/research` which mechanism Claude Code offers before building it.
+- **Open for the build:** whether the factory passes `--agent reviewer`; `prior.json` from a real ledger (the PoC used
+  v1 findings on the touched paths with state `unknown`); the `checked` field in REVIEW_OUTPUT; the deep cap value.
+- The `/tmp/rv4` worktrees of both repos are removed (`git worktree prune` clean).
+
+## Retro notes (for the mother's log)
+
+- Check a PoC agent's tool set first: the first light batch could not search (no Grep/Glob here, Bash forbidden by
+  the prompt) and was thrown away.
+- Subagents that background their own subagents linger after replying ("waiting on its own background work"); the
+  prompt now asks for foreground verifiers.
+- The model-discipline hook asks for a stated reason on an Opus subagent; the description field carries it.
+- Dogfooding the router on the wave's own commit found a rule gap (scripts under `docs/` counted as docs).
