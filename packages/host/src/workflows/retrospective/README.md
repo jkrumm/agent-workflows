@@ -87,7 +87,7 @@ over at most ~30k input tokens of sampled records, no tools, plus at most one JS
 `eval/cases.jsonl` holds 5 cases of made-up journal runs. The input is the eval-only `fixture` (`runs`, in the shape
 `sample.ts` reads from the journal, with what a run leaves out defaulting to null). With a fixture the sample step returns
 those runs instead of reading Postgres, no learning is stored (`learningId` is null) and no issue is filed even with
-`fileIssues`; without one the workflow is unchanged. `workflow` must still be one that runs agents (the cases use `check` and `review`).
+`fileIssues`; without one the workflow is unchanged. A fixture is refused (`invalid_input`, naming the purpose) for any run whose purpose is not `eval`, so a hand-started prod run can never write fabricated results where callers read real ones. `workflow` must still be one that runs agents (the cases use `check` and `review`).
 
 Cases: five failed runs that reinstall dependencies until the idle timeout, four reviews that pass an option the CLI lacks,
 five reviews that rebuild the same diff-parsing script, a healthy sample (the right answer is none or one proposal) and a

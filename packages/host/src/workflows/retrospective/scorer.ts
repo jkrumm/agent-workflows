@@ -1,6 +1,8 @@
 import type { Scorer, Verdict } from '@agent-workflows/runtime'
 import { z } from 'zod'
+import { lower, mentions } from '../scorer-text.ts'
 import { PROPOSAL_KINDS, RETRO_OUTPUT } from './schema.ts'
+import { scrubForPrompt } from './scrub.ts'
 
 /** Bump on any change to what a score means: compare refuses to mix scorer versions silently. */
 export const RETRO_SCORER_VERSION = '2026-11-03.1'
@@ -31,13 +33,8 @@ export type RetroReference = z.output<typeof RetroReference>
 const SCORE_KEYS = ['valid', 'grounded', 'found', 'restraint', 'clean', 'undropped'] as const
 const ZERO = Object.fromEntries(SCORE_KEYS.map((k) => [k, 0]))
 
-const lower = (s: string) => s.toLowerCase()
-const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-const mentions = (text: string, term: string) =>
-  term.split('|').some((alt) => new RegExp(`(?<![a-z0-9])${escapeRegExp(lower(alt))}(?![a-z0-9])`).test(lower(text)))
-
-/** What the prompt forbids in an answer: a URL, or an absolute path. */
-const LEAK = /:\/\/|(?<![\w.:/-])\/(?:Users|home|var|etc|tmp|opt|private|root)\//
+/** What the prompt forbids in an answer: a URL, or any absolute path (the shapes the prompt scrubber knows, `scrub.ts`). */
+const leaks = (text: string) => text.includes('://') || scrubForPrompt(text) !== text
 
 type Input = { fixture?: { runs: { runId: string }[] } } | null
 
@@ -106,7 +103,7 @@ export const retroScorer: Scorer<Input, RetroReference> = {
     if (!restraint) feedback.push(`${out.proposals.length} proposals (at most ${want.maxProposals})`)
     const leaked = items.flatMap((i) => [
       ...want.forbid.filter((f) => lower(i.text).includes(lower(f))),
-      ...(LEAK.test(i.text) ? ['a URL or path'] : []),
+      ...(leaks(i.text) ? ['a URL or path'] : []),
     ])
     if (leaked.length) feedback.push(`an item holds ${[...new Set(leaked)].join(', ')}`)
 

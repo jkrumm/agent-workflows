@@ -8,6 +8,7 @@ import { resolveRoute } from '@agent-workflows/routes'
 import { Cancelled, defineWorkflow, InfraError, type Logger, StepFailed } from '@agent-workflows/runtime'
 import { z } from 'zod'
 import type { HostWorkflow } from '../../operations.ts'
+import { requireEvalPurpose } from '../eval-fixture.ts'
 import { PROSE_POLISH_VERSION, type PolishCaller, polishDraft } from '../prose-polish/index.ts'
 import { ProsePolishInput, ProsePolishOutput } from '../prose-polish/schema.ts'
 import { defaultGatherPorts, fixtureFacts, type GatherPorts, gatherFacts } from './gather.ts'
@@ -105,11 +106,11 @@ export function createNarrative(deps: NarrativeDeps): HostWorkflow[] {
     scorer: narrativeScorer,
     async run(ctx, input): Promise<NarrativeOutputValue> {
       const { cwd, project, previousPage, since, fixture } = input
-      const gathered = await ctx.step('gather', () =>
-        fixture
-          ? fixtureFacts(fixture, { since, now: now().getTime() })
-          : gatherFacts(ports, { cwd, since, now: now().getTime() }),
-      )
+      const gathered = await ctx.step('gather', ({ callContext }) => {
+        if (!fixture) return gatherFacts(ports, { cwd, since, now: now().getTime() })
+        requireEvalPurpose(callContext, NARRATIVE_WORKFLOW_ID)
+        return fixtureFacts(fixture, { since, now: now().getTime() })
+      })
       const { commits, sessions, sinceUsed } = gathered
       const inputs = { commits: commits.count, sessions: sessions.count, sinceUsed }
       const unchanged = (reason: string, model: string): NarrativeOutputValue => ({

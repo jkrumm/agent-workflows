@@ -27,7 +27,8 @@ type Input = { fixture?: { projects: { agents: { id: string }[] }[] } } | null
  * - `valid`: the output parses, holds every agent of the input exactly once and no other (the fixture's agents; with no
  *   fixture, as a drift run, the reference's, else only that no id repeats);
  * - `answered`: agents the seat gave a verdict for, not the `synthesized` placeholder the host fills in for an omission;
- * - `match`: agents (of the reference) whose recommendation is the expected one, or one of the accepted ones.
+ * - `match`: agents (of the reference) whose recommendation is the expected one, or one of the accepted ones; a
+ *   `synthesized` placeholder (`watch` by default) never matches, whatever it was expected to be.
  * `pass`: `valid` and, with a reference, every agent answered and matched: a fleet is a handful of agents, one miss is a
  * miss. Without a reference (drift) it is `valid` alone.
  */
@@ -73,7 +74,10 @@ export const overviewScorer: Scorer<Input, OverviewReference> = {
     const byId = new Map(agents.map((a) => [a.id, a]))
     const hits = Object.entries(want).map(([id, accepted]) => {
       const got = byId.get(id)
-      const ok = got !== undefined && (Array.isArray(accepted) ? accepted : [accepted]).includes(got.recommendation)
+      const ok =
+        got !== undefined &&
+        !got.synthesized &&
+        (Array.isArray(accepted) ? accepted : [accepted]).includes(got.recommendation)
       if (!ok && got && !got.synthesized)
         feedback.push(`${id}: ${got.recommendation} (want ${Array.isArray(accepted) ? accepted.join('|') : accepted})`)
       return ok

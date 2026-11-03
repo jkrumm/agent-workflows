@@ -40,7 +40,7 @@ minus `backend` (the platform has one): `project`, `changed`, `reason`, `summary
 (`agw eval run narrative`). The input is the eval-only `fixture` (`commits`, newest first: `sha`, `date`, `subject`, `body`): with it
 `gather` builds the commits text in `git log`'s shape under the same byte cap, reads no git and no transcript and finds no
 sessions. Cases run with `polish: false`, so the score is the composer's and the spend is one call per case; without a fixture the
-workflow is unchanged.
+workflow is unchanged. A fixture is refused (`invalid_input`, naming the purpose) for any run whose purpose is not `eval`, so a hand-started prod run can never write fabricated results where callers read real ones.
 
 The scorer (`scorer.ts`, deterministic, no model judge) scores `valid`, `changed` (equals the reference), `shape` (a changed answer
 carries page, sections and summary, an unchanged one none), `mentions` (share of the reference's `a|b` terms in the sections and

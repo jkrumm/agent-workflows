@@ -1,6 +1,7 @@
 import { NARRATIVE_LIMITS } from '@agent-workflows/capabilities'
 import type { Scorer, Verdict } from '@agent-workflows/runtime'
 import { z } from 'zod'
+import { lower, mentions } from '../scorer-text.ts'
 import { NarrativeOutput } from './schema.ts'
 
 /** Bump on any change to what a score means: compare refuses to mix scorer versions silently. */
@@ -35,12 +36,6 @@ const DEFAULT_BAND: [number, number] = [150, MAX_SECTIONS_CHARS]
 
 const SCORE_KEYS = ['valid', 'changed', 'shape', 'mentions', 'current', 'clean', 'length', 'datesGrounded'] as const
 const ZERO = Object.fromEntries(SCORE_KEYS.map((k) => [k, 0]))
-
-const lower = (s: string) => s.toLowerCase()
-const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-/** A term as a whole token: `gate` is in "the gate" and not in "investigate"; `a|b` accepts either. */
-const mentions = (text: string, term: string) =>
-  term.split('|').some((alt) => new RegExp(`(?<![a-z0-9])${escapeRegExp(lower(alt))}(?![a-z0-9])`).test(lower(text)))
 
 type Input = {
   project?: string

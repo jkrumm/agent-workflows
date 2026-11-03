@@ -52,14 +52,14 @@ describe('overview scorer', () => {
     expect(v.feedback).toContain('a: continue (want answer)')
   })
 
-  test('a synthesized placeholder is not an answer and does not match', () => {
+  test('a synthesized placeholder is not an answer and never matches, even when it says what was expected', () => {
     const v = score(
       { fixture },
       output(verdict('a', 'answer'), verdict('b', 'merge'), verdict('c', 'watch', true)),
       ctx(reference),
     )
     expect(v.scores.answered).toBeCloseTo(2 / 3)
-    expect(v.scores.match).toBe(1)
+    expect(v.scores.match).toBeCloseTo(2 / 3)
     expect(v.pass).toBe(false)
   })
 

@@ -30,7 +30,7 @@ const ctx = <R>(schema: { parse(value: unknown): R }, reference: unknown) => ({
 })
 
 describe('overview fixture', () => {
-  test('classifies the fixture, reads no fleet and pushes nothing even for a prod run', async () => {
+  test('classifies the fixture, reads no fleet and pushes nothing (the purpose lookup would allow a push)', async () => {
     const c = caseOf(OVERVIEW_CASES, 'ov-blocked-and-working')
     const calls: { facts: string; agentIds: string[] }[] = []
     const pushes: unknown[] = []
@@ -60,7 +60,7 @@ describe('overview fixture', () => {
     try {
       const input = c.input('', {})
       expect(OVERVIEW_INPUT.parse(input).fixture).toBeDefined()
-      const { runId } = await rt.start(workflow, input, { purpose: 'prod' })
+      const { runId } = await rt.start(workflow, input, { purpose: 'eval' })
       const result = await rt.wait(runId)
       expect(result.status).toBe('done')
       expect(calls).toHaveLength(1)
@@ -132,7 +132,7 @@ describe('narrative fixture', () => {
     await rt.open()
     try {
       const input = c.input('', {})
-      const { runId } = await rt.start(narrative.workflow, input, { purpose: 'build' })
+      const { runId } = await rt.start(narrative.workflow, input, { purpose: 'eval' })
       const result = await rt.wait(runId)
       expect(result.status).toBe('done')
       expect(composed).toHaveLength(1)
@@ -161,7 +161,7 @@ describe('narrative fixture', () => {
     await rt.open()
     try {
       const input = c.input('', {})
-      const { runId } = await rt.start(narrative.workflow, input, { purpose: 'build' })
+      const { runId } = await rt.start(narrative.workflow, input, { purpose: 'eval' })
       const result = await rt.wait(runId)
       expect(result.output).toMatchObject({ changed: false, page: null, inputs: { commits: 0, sessions: 0 } })
       expect((narrativeScorer.score(input, result.output, ctx(NarrativeReference, c.reference)) as Verdict).pass).toBe(
@@ -216,7 +216,7 @@ describe('retrospective fixture', () => {
     await rt.open()
     try {
       const input = { ...c.input('', {}), fileIssues: true }
-      const { runId } = await rt.start(workflow, input, { purpose: 'build' })
+      const { runId } = await rt.start(workflow, input, { purpose: 'eval' })
       const result = await rt.wait(runId)
       expect(result.status).toBe('done')
       expect(result.output).toMatchObject({
@@ -232,6 +232,100 @@ describe('retrospective fixture', () => {
       expect(prompt).toContain('bun install')
       const verdict = retroScorer.score(c.input('', {}), result.output, ctx(RetroReference, c.reference)) as Verdict
       expect(verdict.pass).toBe(true)
+    } finally {
+      await rt.close()
+    }
+  })
+})
+
+describe('a fixture is refused unless the run is an eval', () => {
+  const REFUSED = /fixture is an eval-only input, refused for a run with purpose "prod"/
+
+  test('overview: no classify call, no fleet read, no push, and the failure names the cause', async () => {
+    const c = caseOf(OVERVIEW_CASES, 'ov-blocked-and-working')
+    const touched: string[] = []
+    const workflow = createOverview({
+      registry: {
+        call: async () => {
+          touched.push('classify')
+          return { agents: [], model: 'm' }
+        },
+      } as never,
+      fleet: {
+        read: async () => {
+          touched.push('fleet')
+          throw new Error('unreachable')
+        },
+      },
+      argo: { push: async () => void touched.push('push') } as never,
+      purposeOf: async () => 'prod',
+    }).workflow
+    const rt = testRuntime({ schema: db.schema, workflows: [workflow] })
+    await rt.open()
+    try {
+      const { runId } = await rt.start(workflow, c.input('', {}), { purpose: 'prod' })
+      const result = await rt.wait(runId)
+      expect(result.status).toBe('failed')
+      expect(result.error?.message).toMatch(REFUSED)
+      expect(touched).toEqual([])
+    } finally {
+      await rt.close()
+    }
+  })
+
+  test('narrative: no composer call and no gathering', async () => {
+    const c = caseOf(NARRATIVE_CASES, 'nar-bootstrap-features')
+    let called = 0
+    const [narrative, polish] = createNarrative({
+      registry: {
+        call: async () => {
+          called += 1
+          throw new Error('unreachable')
+        },
+      },
+      gather: {
+        projectsDir: '/projects',
+        git: async () => {
+          called += 1
+          return ''
+        },
+        sessionFiles: async () => [],
+        readTail: async () => '',
+      },
+    }) as [{ workflow: never }, { workflow: never }]
+    const rt = testRuntime({ schema: db.schema, workflows: [narrative.workflow, polish.workflow] })
+    await rt.open()
+    try {
+      const { runId } = await rt.start(narrative.workflow, c.input('', {}), { purpose: 'prod' })
+      const result = await rt.wait(runId)
+      expect(result.status).toBe('failed')
+      expect(result.error?.message).toMatch(REFUSED)
+      expect(called).toBe(0)
+    } finally {
+      await rt.close()
+    }
+  })
+
+  test('retrospective: no analysis step and nothing stored', async () => {
+    const c = caseOf(RETRO_CASES, 'retro-reinstall-timeouts')
+    const host = new FakeAgentHost(async () => ({ output: { proposals: [], learnings: [] } }))
+    const workflow = createRetrospective({
+      journal: { sample: async () => [], countFinished: async () => 0, weekRuns: async () => [] },
+      learnings: {
+        add: async () => {
+          throw new Error('unreachable')
+        },
+      } as never,
+      agentsOf: (id) => (id === 'check' ? ['check'] : undefined),
+    }).workflow
+    const rt = testRuntime({ schema: db.schema, workflows: [workflow], host })
+    await rt.open()
+    try {
+      const { runId } = await rt.start(workflow, c.input('', {}), { purpose: 'prod' })
+      const result = await rt.wait(runId)
+      expect(result.status).toBe('failed')
+      expect(result.error?.message).toMatch(REFUSED)
+      expect(host.count('open')).toBe(0)
     } finally {
       await rt.close()
     }
