@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { JUDGE_VERSION } from '@agent-workflows/capabilities'
+import { JUDGE_B_VERSION, JUDGE_VERSION } from '@agent-workflows/capabilities'
 import {
   exec,
   GT_LIMIT,
@@ -21,35 +21,52 @@ import { type ReviewInputValue, ReviewOutput, type ReviewResult } from './schema
 /** How findings are judged: `single`, judge `a` alone (the calibration vouches for it), or `dual`, both judges. */
 export type JudgeMode = 'single' | 'dual'
 
+/** The mode and why: the κ and the reason are what the host logs once, when it builds the scorer. */
+export type ResolvedMode = { mode: JudgeMode; kappa: number | null; reason: string }
+
 /**
- * The mode the calibration allows (`eval.gt.calibrate`): `single` when `judge-calibration.json` exists for the current
- * judge version and κ clears `KAPPA_BAR`; otherwise (missing, unreadable, below the bar, another judge version) `dual`.
- * Returns the κ that decided it, for the scorer's notes.
+ * The mode the calibration allows (`eval.gt.calibrate`): `single` when `judge-calibration.json` exists, was made for
+ * both current judge versions (`JUDGE_VERSION`, `JUDGE_B_VERSION`) and its κ clears `KAPPA_BAR`; otherwise `dual`
+ * (missing, unreadable, another version of either judge, κ below the bar or undefined). Reads the disk: call it where
+ * the host builds its scorers, never at import.
  */
-export function judgeModeOf(env: Record<string, string | undefined> = process.env): {
-  mode: JudgeMode
-  kappa: number | null
-} {
+export function judgeModeOf(env: Record<string, string | undefined> = process.env): ResolvedMode {
   const path = gtPath('judge-calibration.json', env)
+  const dual = (reason: string, kappa: number | null = null): ResolvedMode => ({ mode: 'dual', kappa, reason })
+  let raw: string
   try {
-    if (!existsSync(path)) return { mode: 'dual', kappa: null }
-    const parsed = JudgeCalibration.safeParse(JSON.parse(readFileSync(path, 'utf8')))
-    if (!parsed.success) return { mode: 'dual', kappa: null }
-    const { kappa, judgeVersion } = parsed.data
-    const single = judgeVersion === JUDGE_VERSION && kappa !== null && kappa >= KAPPA_BAR
-    return { mode: single ? 'single' : 'dual', kappa }
-  } catch {
-    return { mode: 'dual', kappa: null }
+    if (!existsSync(path)) return dual('no judge-calibration.json')
+    raw = readFileSync(path, 'utf8')
+  } catch (error) {
+    return dual(`judge-calibration.json unreadable: ${error instanceof Error ? error.message : String(error)}`)
   }
+  let json: unknown
+  try {
+    json = JSON.parse(raw)
+  } catch {
+    return dual('judge-calibration.json is not JSON')
+  }
+  const parsed = JudgeCalibration.safeParse(json)
+  if (!parsed.success) return dual('judge-calibration.json does not parse (an older format?)')
+  const { kappa, judgeVersions } = parsed.data
+  if (judgeVersions.a !== JUDGE_VERSION || judgeVersions.b !== JUDGE_B_VERSION)
+    return dual(
+      `calibrated for judges ${judgeVersions.a} + ${judgeVersions.b}, current are ${JUDGE_VERSION} + ${JUDGE_B_VERSION}`,
+      kappa,
+    )
+  if (kappa === null) return dual('κ is undefined (the judges only ever gave one answer)')
+  if (kappa < KAPPA_BAR) return dual(`κ ${kappa.toFixed(3)} is below the bar ${KAPPA_BAR}`, kappa)
+  return { mode: 'single', kappa, reason: `κ ${kappa.toFixed(3)} clears the bar ${KAPPA_BAR}` }
 }
 
-const scorerVersion = (mode: JudgeMode) => `2026-11-03.v4+${JUDGE_VERSION}+judges:${mode}`
-
 /**
- * The scorer version while no calibration vouches for one judge (both judges ask). The scorer in use carries its own
- * version, with the mode it resolved: scores of different modes are not compared (`compare` refuses to mix versions).
+ * The scorer version: judge `a`'s version always, and judge `b`'s too in dual mode (where it decides scores), with the
+ * mode, so `compare` refuses to mix modes or judges.
  */
-export const REVIEW_SCORER_VERSION = scorerVersion('dual')
+const scorerVersion = (mode: JudgeMode) =>
+  mode === 'single'
+    ? `2026-11-03.v4+${JUDGE_VERSION}+judges:single`
+    : `2026-11-03.v4+${JUDGE_VERSION}+${JUDGE_B_VERSION}+judges:dual`
 
 const PIPELINE = '(review pipeline)'
 const GIT_TIMEOUT_MS = 120_000
@@ -276,5 +293,21 @@ export function createReviewScorer(resolved: {
   }
 }
 
-/** The scorer for the calibration on disk when the host started: a mode never changes under a running process. */
-export const reviewScorer = createReviewScorer(judgeModeOf())
+/**
+ * The scorer the host registers: its mode from the calibration on disk, logged once with the reason. Called where the
+ * host builds its workflows (the review module), once per build; the mode then holds for the process, so no run's
+ * scorer version changes under it, and a new calibration takes effect at the next host start.
+ */
+export function resolveReviewScorer(options: {
+  env?: Record<string, string | undefined>
+  log?: (message: string) => void
+}): Scorer<ReviewInputValue, GtCase> {
+  const resolved = judgeModeOf(options.env)
+  const scorer = createReviewScorer(resolved)
+  const log = options.log ?? ((message: string) => console.info(message))
+  log(`[agw-review-scorer] ${scorer.version}: ${resolved.reason}`)
+  return scorer
+}
+
+/** The scorer where nothing resolved a mode: both judges, which needs no calibration and reads no file. */
+export const reviewScorer = createReviewScorer({ mode: 'dual', kappa: null })

@@ -8,7 +8,7 @@ import { FakeAgentHost } from '@agent-workflows/runtime/testing'
 import { createEvalWorkflows, wireEval } from '../src/workflows/eval/index.ts'
 import { hostModules, suitesOf } from '../src/workflows/index.ts'
 import { createImportedReviewWorkflow } from '../src/workflows/review/imported.ts'
-import { REVIEW_SCORER_VERSION, reviewScorer } from '../src/workflows/review/scorer.ts'
+import { createReviewScorer } from '../src/workflows/review/scorer.ts'
 import { applyVerdictRules } from '../src/workflows/review/verdict.ts'
 import { testPlatform } from '../../middleware/test/support.ts'
 import { freshSchema, inspector, testRuntime } from '../../runtime/test/support/pg.ts'
@@ -92,7 +92,9 @@ let rt: Runtime
 let wiring: ReturnType<typeof wireEval>
 let platform: ReturnType<typeof testPlatform>
 const evals = createEvalWorkflows(HOST_SUITES, { env, tmpRoot: join(root, 'tmp') })
-const imported = createImportedReviewWorkflow()
+// An explicit mode: the test never reads the machine's calibration file. One judge, so one judge call per case.
+const scorer = createReviewScorer({ mode: 'single', kappa: 0.9 })
+const imported = createImportedReviewWorkflow({ scorer })
 const evalImport = evals.find((e) => e.workflow.id === 'eval.import')?.workflow as (typeof evals)[0]['workflow']
 
 beforeAll(async () => {
@@ -204,7 +206,7 @@ describe('agw eval import review', () => {
     }
     for (const c of output.cases) {
       expect(c).toMatchObject({ status: 'scored', runStatus: 'done' })
-      const expected = await reviewScorer.score({} as never, asReview(FINDINGS[c.caseId] as Finding[]), {
+      const expected = await scorer.score({} as never, asReview(FINDINGS[c.caseId] as Finding[]), {
         source: 'regression',
         signal: new AbortController().signal,
         reference: GtCase.parse(gt(c.caseId, sha, c.caseId.startsWith('bug') ? 'bug' : 'control')),
@@ -227,7 +229,7 @@ describe('agw eval import review', () => {
         score_source: 'regression',
         root_id: kid.id,
         fingerprint: output.fingerprints[0],
-        scores: { final: { source: 'regression', scorer: REVIEW_SCORER_VERSION, args: {} } },
+        scores: { final: { source: 'regression', scorer: scorer.version, args: {} } },
       })
     }
     expect(kids.map((k) => k.idempotency_key)).toEqual([
@@ -313,7 +315,7 @@ describe('agw eval compare with an imported arm', () => {
         JSON.stringify({
           final: {
             source: 'regression',
-            scorer: REVIEW_SCORER_VERSION,
+            scorer: scorer.version,
             caseId,
             scores: { recall },
             pass: recall > 0.6,
@@ -338,8 +340,8 @@ describe('agw eval compare with an imported arm', () => {
     }
     expect(out.metrics.find((m: Out) => m.metric === 'recall')).toMatchObject({ n: 2, meanA: 0.5, meanB: 0.5 })
     expect(out.warnings).toContain('arm B is an imported arm: cost and wall are not measured')
-    expect(out.a.scorers).toEqual([REVIEW_SCORER_VERSION])
-    expect(out.b.scorers).toEqual([REVIEW_SCORER_VERSION])
+    expect(out.a.scorers).toEqual([scorer.version])
+    expect(out.b.scorers).toEqual([scorer.version])
   })
 
   test('without bWorkflow the imported arm is not found under review', async () => {

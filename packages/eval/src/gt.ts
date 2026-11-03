@@ -26,7 +26,8 @@ export const gtPath = (file: GtFile, env: Record<string, string | undefined> = p
  * - `cases.jsonl`: the suite `agw eval run review` reads (`GtCase`: accepted bugs and controls);
  * - `rejected.jsonl`: candidates the labelers did not accept (`GtRejected`);
  * - `report.json`: aggregates only (counts per filter, per accept path and per reject reason), the input of the committed report;
- * - `judge-calibration.json`: aggregates only, the agreement of the two judges (`eval.gt.calibrate`) the scorer reads.
+ * - `judge-calibration.json`: aggregates only, the agreement of the two judges (`eval.gt.calibrate`) the scorer reads;
+ * - `judge-b.jsonl`: judge `b`'s answers as the calibration collects them (`JudgeBRecord`), its resume point.
  */
 export type GtFile =
   | 'candidates.jsonl'
@@ -35,6 +36,7 @@ export type GtFile =
   | 'rejected.jsonl'
   | 'report.json'
   | 'judge-calibration.json'
+  | 'judge-b.jsonl'
 
 export const Sha = z.string().regex(/^[0-9a-f]{40}$/)
 /** A repo path relative to `$HOME`. `SourceRoot` only: IU repos stay out of the cases (owner decision, 2026-11-01). */
@@ -284,8 +286,8 @@ export const JudgeCalibration = z
   .object({
     at: z.iso.datetime(),
     limit: z.string(),
-    /** The version of the judge capability, which covers both seats. */
-    judgeVersion: z.string(),
+    /** The versions of the two judges; the scorer trusts the file only while both are current. */
+    judgeVersions: z.object({ a: z.string(), b: z.string() }).strict(),
     judgeModels: z.object({ a: z.array(z.string()), b: z.array(z.string()) }).strict(),
     evalRuns: z.array(z.string()),
     /** Pairs both judges answered. */
@@ -308,3 +310,12 @@ export const JudgeCalibration = z
   })
   .strict()
 export type JudgeCalibration = z.infer<typeof JudgeCalibration>
+
+/**
+ * `judge-b.jsonl`: judge `b`'s answer on one recorded judge-`a` call, keyed by that call's run id and judge `b`'s
+ * version. Appended as each answer arrives, so a stopped calibration keeps what it paid for; the latest line wins.
+ */
+export const JudgeBRecord = z
+  .object({ runId: z.string(), judgeBVersion: z.string(), at: z.iso.datetime(), output: JudgeOutput })
+  .strict()
+export type JudgeBRecord = z.infer<typeof JudgeBRecord>

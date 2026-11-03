@@ -20,6 +20,8 @@ const DEFAULT_CONCURRENCY = 4
 export interface EvalGtOptions {
   /** Judge `b`'s caller: any registry that serves `eval.judge`. */
   registry: JudgeCaller
+  /** The workflow versions of the `cap.eval.judge` runs that count as judge `a`'s (`CalibrateDeps.judgeRunVersions`). */
+  judgeRunVersions: readonly string[]
   env?: Record<string, string | undefined>
   now?: () => Date
   /** Default: the journal in Postgres (`AGW_PG_URL`, `AGW_PG_SCHEMA`), one short-lived connection per calibration. */
@@ -46,7 +48,21 @@ const Plan = z.object({
   pairs: z.number().int(),
   judgePositive: z.number().int(),
   judgeNegative: z.number().int(),
-  judgeBCalls: z.number().int().describe('One call per judge-a run holding a sampled pair'),
+  judgeBCalls: z
+    .number()
+    .int()
+    .describe('Calls still to make: one per judge-a run holding a sampled pair, less those already in judge-b.jsonl'),
+  reused: z.number().int().describe('Judge-a runs whose judge-b answer is already on file'),
+  skippedRuns: z
+    .object({
+      unusable: z.number().int(),
+      unknownCase: z.number().int(),
+      otherSeat: z.number().int(),
+      otherVersion: z.number().int(),
+    })
+    .describe(
+      'Judge runs left out: not a judge call, a case not in cases.jsonl, a judge-b run, a run of another capability version',
+    ),
   estimateUsd: z.number().nullable().describe('Prompt size at the judge-b route’s rate; a rough figure'),
 })
 
@@ -54,6 +70,13 @@ export const evalGtCalibrateOutput = z.object({
   limit: z.string().describe('What no one checked: every report of this ground truth states it'),
   plan: Plan,
   spent: z.boolean().describe('False: no judge call was made (no --yes)'),
+  judgeB: z
+    .object({
+      asked: z.number().int().describe('Judge-b calls made this run'),
+      reused: z.number().int().describe('Answers taken from judge-b.jsonl'),
+      skippedAnswers: z.number().int().describe('Runs judge b gave no usable answer for'),
+    })
+    .nullable(),
   notes: z.array(z.string()).describe('Shortfalls and skipped runs'),
   calibration: z
     .custom<JudgeCalibration>((value) => JudgeCalibration.safeParse(value).success)
@@ -70,7 +93,9 @@ const planOf = (plan: CalibrationPlan) => ({
   pairs: plan.pairs.length,
   judgePositive: plan.positives,
   judgeNegative: plan.negatives,
-  judgeBCalls: plan.runs.size,
+  judgeBCalls: plan.runs.size - plan.cached.size,
+  reused: plan.cached.size,
+  skippedRuns: plan.skipped,
   estimateUsd: estimateCost(plan),
 })
 
@@ -79,13 +104,15 @@ const planOf = (plan: CalibrationPlan) => ({
  * It takes the pairs (a finding and the case's bug) out of the judge-a calls of the given eval runs, half judge-positive
  * and half judge-negative, re-asks judge `b` on exactly those inputs, and writes Cohen's κ with its interval, the
  * agreement, the confusion table and the agreement on the unmatched classes to `review-gt/judge-calibration.json`.
+ * Only judge-`a` runs of the current judge capability version are used. Each judge-`b` answer is appended to
+ * `judge-b.jsonl` as it arrives, so a rerun asks only the missing ones and a stop keeps what was paid for.
  * Without `--yes` it prints the plan and spends nothing. No human checks it: the output states `GT_LIMIT`.
  */
 export function createEvalGtWorkflows(options: EvalGtOptions): HostWorkflow[] {
   const env = options.env ?? process.env
   const now = options.now ?? (() => new Date())
   const judgeRuns = options.judgeRuns ?? envJudgeRuns(env)
-  const deps = { env, judgeRuns, judge: options.registry }
+  const deps = { env, judgeRuns, judge: options.registry, judgeRunVersions: options.judgeRunVersions }
 
   const calibrate = defineWorkflow({
     id: EVAL_GT_CALIBRATE_ID,
@@ -127,6 +154,7 @@ export function createEvalGtWorkflows(options: EvalGtOptions): HostWorkflow[] {
           plan: planned.plan,
           spent: false,
           notes: planned.notes,
+          judgeB: null,
           calibration: null,
           written: null,
           scorer: null,
@@ -151,6 +179,7 @@ export function createEvalGtWorkflows(options: EvalGtOptions): HostWorkflow[] {
         limit: GT_LIMIT,
         plan: planned.plan,
         spent: true,
+        judgeB: { asked: done.asked, reused: done.reused, skippedAnswers: done.skippedRuns },
         notes: done.notes,
         calibration: done.calibration,
         written,

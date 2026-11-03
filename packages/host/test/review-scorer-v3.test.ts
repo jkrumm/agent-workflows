@@ -2,12 +2,17 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { JUDGE_VERSION } from '@agent-workflows/capabilities'
+import { JUDGE_B_VERSION, JUDGE_VERSION } from '@agent-workflows/capabilities'
 import { GT_LIMIT, type GtCase, gtPath, type JudgeClass, type JudgeInput } from '@agent-workflows/eval'
 import type { Json, ScorerContext } from '@agent-workflows/runtime'
 import { readSuite } from '../src/workflows/eval/suites.ts'
 import { hostModules, suitesOf } from '../src/workflows/index.ts'
-import { createReviewScorer, judgeModeOf, reviewScorer as hostScorer } from '../src/workflows/review/scorer.ts'
+import {
+  createReviewScorer,
+  judgeModeOf,
+  reviewScorer as defaultScorer,
+  resolveReviewScorer,
+} from '../src/workflows/review/scorer.ts'
 import { applyVerdictRules, balanceDegradedVerdict } from '../src/workflows/review/verdict.ts'
 
 /** The scorer in single-judge mode (a calibration that clears the bar); dual mode has its own tests below. */
@@ -253,8 +258,12 @@ describe('review scorer v3: edges', () => {
   test('the reference is validated as a ground-truth case', () => {
     expect(reviewScorer.reference?.safeParse(bugCase()).success).toBe(true)
     expect(reviewScorer.reference?.safeParse({ outcome: 'clean', blocking: [] }).success).toBe(false)
+    // Judge a's version is the one it had before judge b existed, and appears in both modes; b's only where it decides.
+    expect(JUDGE_VERSION).toBe('eval-judge-ced286944fd4')
     expect(reviewScorer.version).toBe(`2026-11-03.v4+${JUDGE_VERSION}+judges:single`)
-    expect(createReviewScorer({ mode: 'dual', kappa: null }).version).toBe(`2026-11-03.v4+${JUDGE_VERSION}+judges:dual`)
+    expect(createReviewScorer({ mode: 'dual', kappa: null }).version).toBe(
+      `2026-11-03.v4+${JUDGE_VERSION}+${JUDGE_B_VERSION}+judges:dual`,
+    )
   })
 })
 
@@ -278,7 +287,7 @@ function twoJudges(classesA: Record<string, JudgeClass>, classesB: Record<string
 }
 
 describe('review scorer v3: both judges', () => {
-  const dual = createReviewScorer({ mode: 'dual', kappa: 0.5 })
+  const dual = createReviewScorer({ mode: 'dual', kappa: null })
 
   test('asks seat a (as always) and seat b on the same input; agreement stands, the note says the mode and the limit', async () => {
     const { judge, calls } = twoJudges({ '0': 'match', '1': 'nit' }, { '0': 'match', '1': 'nit' })
@@ -334,7 +343,7 @@ describe('review scorer: the mode follows the calibration file', () => {
   const calibration = (over: Record<string, unknown> = {}) => ({
     at: '2026-11-03T10:00:00.000Z',
     limit: GT_LIMIT,
-    judgeVersion: JUDGE_VERSION,
+    judgeVersions: { a: JUDGE_VERSION, b: JUDGE_B_VERSION },
     judgeModels: { a: ['m-a'], b: ['m-b'] },
     evalRuns: ['r1'],
     n: 100,
@@ -362,22 +371,41 @@ describe('review scorer: the mode follows the calibration file', () => {
     return mode
   }
 
-  test('single judge only for a calibration of this judge version with κ at or above the bar', () => {
-    expect(modeWith(calibration())).toEqual({ mode: 'single', kappa: 0.9 })
+  test('single judge only for a calibration of both current judge versions with κ at or above the bar', () => {
+    expect(modeWith(calibration())).toEqual({ mode: 'single', kappa: 0.9, reason: expect.stringContaining('clears') })
     expect(modeWith(calibration({ kappa: 0.8 }))).toMatchObject({ mode: 'single' })
   })
 
-  test('both judges when it is missing, unreadable, below the bar, undefined or of another judge version', () => {
-    expect(modeWith(null)).toEqual({ mode: 'dual', kappa: null })
-    expect(modeWith('not json')).toEqual({ mode: 'dual', kappa: null })
-    expect(modeWith({ kappa: 0.99 })).toEqual({ mode: 'dual', kappa: null })
-    expect(modeWith(calibration({ kappa: 0.79, met: false }))).toEqual({ mode: 'dual', kappa: 0.79 })
-    expect(modeWith(calibration({ kappa: null, met: false }))).toMatchObject({ mode: 'dual' })
-    expect(modeWith(calibration({ judgeVersion: 'eval-judge-old' }))).toMatchObject({ mode: 'dual' })
+  test('both judges, with the reason: missing, not JSON, an old format, below the bar, undefined, or either judge changed', () => {
+    const dual = (content: unknown | null, reason: string, kappa: number | null = null) =>
+      expect(modeWith(content)).toEqual({ mode: 'dual', kappa, reason: expect.stringContaining(reason) })
+    dual(null, 'no judge-calibration.json')
+    dual('not json', 'not JSON')
+    dual({ kappa: 0.99 }, 'does not parse')
+    dual(calibration({ kappa: 0.79, met: false }), 'below the bar', 0.79)
+    dual(calibration({ kappa: null, met: false }), 'undefined')
+    dual(calibration({ judgeVersions: { a: 'eval-judge-old', b: JUDGE_B_VERSION } }), 'current are', 0.9)
+    dual(calibration({ judgeVersions: { a: JUDGE_VERSION, b: 'eval-judge-b-old' } }), 'current are', 0.9)
   })
 
-  test('the scorer the host runs resolves it once, with the mode in its version', () => {
-    expect(hostScorer.version).toMatch(/^2026-11-03\.v4\+eval-judge-[0-9a-f]{12}\+judges:(single|dual)$/)
+  test('the host resolves the mode when it builds the scorer, not at import, and logs it once with the reason', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agw-calibration-'))
+    const env = { AGW_EVAL_DIR: dir }
+    const logs: string[] = []
+    const none = resolveReviewScorer({ env, log: (m) => logs.push(m) })
+    expect(none.version).toBe(`2026-11-03.v4+${JUDGE_VERSION}+${JUDGE_B_VERSION}+judges:dual`)
+    mkdirSync(join(dir, 'review-gt'))
+    writeFileSync(gtPath('judge-calibration.json', env), JSON.stringify(calibration()))
+    const single = resolveReviewScorer({ env, log: (m) => logs.push(m) })
+    expect(single.version).toBe(`2026-11-03.v4+${JUDGE_VERSION}+judges:single`)
+    expect(logs).toHaveLength(2)
+    expect(logs[0]).toContain('no judge-calibration.json')
+    expect(logs[1]).toContain('clears the bar')
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  test('the default scorer reads no file: both judges', () => {
+    expect(defaultScorer.version).toBe(`2026-11-03.v4+${JUDGE_VERSION}+${JUDGE_B_VERSION}+judges:dual`)
   })
 })
 

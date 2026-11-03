@@ -91,20 +91,31 @@ const FIXTURE_BUG: JudgeInput = {
 const FIXTURE_CONTROL: JudgeInput = { ...FIXTURE_BUG, bug: null, preselected: [] }
 
 /**
- * The version of the judge: bumped by any change to the system text, either rendered prompt (bug case and control), the
- * diff rendering and cap, the answer schemas or either seat's (`a`, `b`) wire, model, effort or output ceiling. The
- * constant below is this value written down. One version covers both seats: the κ between them is only meaningful for
- * the pair.
+ * The version of judge `a`: bumped by any change to the system text, either rendered prompt (bug case and control), the
+ * diff rendering and cap, the answer schemas or seat `a`'s wire, model, effort or output ceiling. The constant below is
+ * this value written down. Judge `b` is not in it (adding the second judge must not invalidate the stored judge-`a`
+ * calls the calibration re-asks `b` on): it has `JUDGE_B_VERSION`.
  */
 export const judgeVersion = () =>
   pinnedVersion('eval-judge', {
     system: JUDGE_SYSTEM,
     prompts: [judgePrompt(FIXTURE_BUG), judgePrompt(FIXTURE_CONTROL)],
-    routes: ['eval.judge', 'eval.judge.b'],
+    routes: ['eval.judge'],
     schemas: [answerSchema(FIXTURE_BUG), answerSchema(FIXTURE_CONTROL)],
   })
 
-export const JUDGE_VERSION = 'eval-judge-54c2faf372e9'
+export const JUDGE_VERSION = 'eval-judge-ced286944fd4'
+
+/** The version of judge `b`: the same inputs as `judgeVersion` over `b`'s route, so the prompt moves both. */
+export const judgeBVersion = () =>
+  pinnedVersion('eval-judge-b', {
+    system: JUDGE_SYSTEM,
+    prompts: [judgePrompt(FIXTURE_BUG), judgePrompt(FIXTURE_CONTROL)],
+    routes: ['eval.judge.b'],
+    schemas: [answerSchema(FIXTURE_BUG), answerSchema(FIXTURE_CONTROL)],
+  })
+
+export const JUDGE_B_VERSION = 'eval-judge-b-c16f03962d57'
 
 export const createEvalJudge = (deps: LlmDeps) =>
   defineCapability({

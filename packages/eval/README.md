@@ -221,7 +221,7 @@ review scorer's notes. The pure parts live in `src/gt-stats.ts` (Wilson interval
 `agw eval gt calibrate --eval-runs <runId> [--pairs 100 --seed 1] [--yes]` (mutating: off a TTY it needs `--commit`).
 After `agw eval run review --yes` has judged an arm, pass its eval run id(s):
 
-- It reads the `cap.eval.judge` runs below those eval runs and `cases.jsonl`, and builds the pairs (a finding and the
+- It reads the `cap.eval.judge` runs below those eval runs and `cases.jsonl`, and builds the pairs from **judge-`a` runs of the current capability version only**: a run with `seat: 'b'` (the scorer's dual mode) and a run whose recorded workflow version is not the current one (or a known earlier one that asked the same judge `a`; `eval-gt/versions.ts`) are skipped and counted in the output. The journal records a hash of the capability's definition per run, not `JUDGE_VERSION`; the pairs (a finding and the
   case's bug): half judge-`a`-positive (`match`), half preselected non-matches (right file, plausible, wrong defect). When
   fewer positives exist than half, all go in, non-matches fill, and the output says the shortfall.
 - **Without `--yes`** it prints the plan: pairs, judge-`b` calls (one per judge-`a` run that holds a sampled pair), and an
@@ -230,12 +230,14 @@ After `agw eval run review --yes` has judged an arm, pass its eval run id(s):
   (match or not), and writes `$AGW_EVAL_DIR/review-gt/judge-calibration.json` (0600, aggregates only): κ with a 95 %
   interval, raw agreement, the confusion table (`yy` both match, `yn` a match and b not, `ny`, `nn`), the agreement on
   the classes of the findings neither judge matched (`real`, `not-a-bug`, `nit`, `unclear`, as a table), `n`, the judge
-  version (it covers both seats), both judges' models, the eval runs and `at`. A judge-`b` answer that is unusable skips
-  its run (counted); any other failure (no credit, an outage) stops the calibration.
+  versions of both judges (`JUDGE_VERSION`, `JUDGE_B_VERSION`), both judges' models, the eval runs and `at`. Each judge-`b`
+  answer is appended to `judge-b.jsonl` as it arrives, so a rerun asks only the missing ones; an unusable answer skips
+  its run (counted); any other failure (no credit, an outage) stops the calibration and keeps what was paid for.
 - **The bar is κ ≥ 0.8.** The review scorer reads the file when the host starts: at or above the bar for the current
-  judge version it asks judge `a` alone; otherwise (below, missing, another judge version) it asks both and a finding
+  judge versions of both judges it asks judge `a` alone; otherwise (below, missing, either judge changed) it asks both and a finding
   they classify differently is `unclear`. The mode is in the scorer version, so `compare` refuses to mix modes; restart the
-  host after a calibration for the scorer to pick it up. The eval runs should be made under the current judge version.
+  host after a calibration for the scorer to pick it up; the host logs the mode and the reason once, when it builds its
+  scorers.
 
 ## Ground truth miner
 
@@ -271,11 +273,12 @@ cases). Size a batch to the gateway's `evalAvailableUsd` first.
 | File | Written | Holds |
 |-|-|-|
 | `candidates.jsonl` | whole, by every mine | SZZ candidates (`GtCandidate`) |
-| `labels.jsonl` | appended as each candidate finishes; a record gains seat `c` in place (whole file, atomically) | each seat's answer (`GtLabelRecord`: `a`, `b` under `labelerVersion`; `c` under its own `cVersion`, with `cRunId`); the resume point |
+| `labels.jsonl` | appended as each candidate finishes; a record that gains seat `c` is appended again whole, and the latest line of a candidate wins | each seat's answer (`GtLabelRecord`: `a`, `b` under `labelerVersion`; `c` under its own `cVersion`, with `cRunId`); the resume point |
 | `cases.jsonl` | rebuilt by every run | accepted bugs and clean controls (`GtCase`), what `agw eval run review` reads |
 | `rejected.jsonl` | rebuilt by every run | candidates the labelers did not accept, with the reason |
 | `report.json` | by every run | the funnel, the accepted count per pair of seats (`a+b`, `a+c`, `b+c`), the rejected count per reason, the `limit`; no code. After an incomplete mine: `incomplete: true` and the repos that failed, with their errors |
 | `judge-calibration.json` | by `agw eval gt calibrate` | the judges' κ and agreement (see Judge calibration); aggregates only |
+| `judge-b.jsonl` | appended as each judge-`b` answer arrives | `JudgeBRecord`: judge `b`'s answer on one judge-`a` call, keyed by its run id and `JUDGE_B_VERSION`; the calibration's resume point (the answers' reasons, so private) |
 | `owner.json` | by the owner, read only | `{ "emails": [...] }`: the author emails that count as the owner's |
 
 Every file is written to a temp file and renamed, so a reader or a crash sees the old file or the new one.
@@ -309,8 +312,8 @@ Every file is written to a temp file and renamed, so a reader or a crash sees th
   (it says defect, but its location overlaps neither) or `c-error` (it failed with an answer).
 - **Seat `c` and the versions.** `LABELER_VERSION` covers `a` and `b` only; `c` has `LABELER_C_VERSION`, stored on the
   record as `cVersion`, so adding `c` never invalidates a record's `a` and `b`. A `c` under another version is treated
-  as not asked. Resume asks `c` alone of the disagreeing records that lack it (each record is replaced in place,
-  atomically) and never asks `a` or `b` again; it costs the IU key only, no credit.
+  as not asked. Resume asks `c` alone of the disagreeing records that lack it (the record is appended again with `c`;
+  `latestLabels` keeps the last line per candidate) and never asks `a` or `b` again; it costs the IU key only, no credit.
 
 **Bias.** An additions-only fix (a missing guard, a new check) has no removed line to blame, so it yields no candidate.
 Published SZZ studies put these near 17 % of fixes. The report states the loss; the eval's recall numbers read as recall

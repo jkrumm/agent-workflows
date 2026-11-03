@@ -3,7 +3,7 @@ import type { JudgeInput, LabelInput } from '@agent-workflows/eval'
 import { resolveRoute } from '@agent-workflows/routes'
 import { z } from 'zod'
 import { createCapabilities } from './capabilities/index.ts'
-import { JUDGE_VERSION, judgeVersion } from './capabilities/eval-judge.ts'
+import { JUDGE_B_VERSION, JUDGE_VERSION, judgeBVersion, judgeVersion } from './capabilities/eval-judge.ts'
 import {
   LABELER_C_VERSION,
   LABELER_VERSION,
@@ -304,8 +304,17 @@ describe('eval.judge', () => {
     expect(a.model).not.toBe(b.model)
   })
 
-  test('JUDGE_VERSION is the recorded value of the computed version (both prompts, diff rendering, schemas, both seats)', () => {
+  test('JUDGE_VERSION is the recorded value of the computed version (both prompts, diff rendering, schemas, seat a)', () => {
     expect(JUDGE_VERSION).toBe(judgeVersion())
+  })
+
+  test('judge a’s version is what it was before judge b existed: the stored judge-a calls stay valid', () => {
+    expect(JUDGE_VERSION).toBe('eval-judge-ced286944fd4')
+  })
+
+  test('judge b has its own version over its own route', () => {
+    expect(JUDGE_B_VERSION).toBe(judgeBVersion())
+    expect(JUDGE_B_VERSION).not.toBe(JUDGE_VERSION)
   })
 })
 
