@@ -32,6 +32,7 @@ const late: ReviewService = {
   dispose: (i) => service.dispose(i),
   status: (i) => service.status(i),
   route: (i) => service.route(i),
+  request: (i) => service.request(i),
   covered: (i) => service.covered(i),
 }
 

@@ -25,6 +25,7 @@ export interface Job {
   decidedBy: RouteDecision['decidedBy']
   route: Record<string, unknown>
   account: string | null
+  transport: 'in-session' | 'hidden'
   intent: string
   reviewConfig: { none: string[]; sensitive: string[]; nits: number }
   files: string[]
@@ -79,6 +80,7 @@ const toJob = (r: Row): Job => ({
   decidedBy: r.decided_by as Job['decidedBy'],
   route: r.route as Record<string, unknown>,
   account: (r.account as string | null) ?? null,
+  transport: (r.transport as Job['transport'] | undefined) ?? 'in-session',
   intent: r.intent as string,
   reviewConfig: r.review_config as Job['reviewConfig'],
   files: r.files as string[],
@@ -179,7 +181,8 @@ export function reviewLedger(pool: ReviewPool, schema: string) {
       const { rows } = await pool.query(
         `select count(*)::int as n from ${jobs}
           where account is not distinct from $1 and tier = 'deep' and created_at >= $2 and state <> 'abandoned'
-            and not (state = 'prepared' and thread = $3)`,
+            and not (state = 'prepared' and thread = $3)
+            and not (transport = 'hidden' and state = 'prepared')`,
         [account, since, exceptPreparedOf],
       )
       return rows[0].n as number
@@ -195,8 +198,8 @@ export function reviewLedger(pool: ReviewPool, schema: string) {
         )
         await client.query(
           `insert into ${jobs} (id, repo, root, thread, round, scope, base, diff_base, head, head_tree, tier, seat, rule,
-             decided_by, route, account, intent, review_config, files, job_dir, worktree)
-           values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)`,
+             decided_by, route, account, intent, review_config, files, job_dir, worktree, transport)
+           values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)`,
           [
             job.id,
             job.repo,
@@ -219,6 +222,7 @@ export function reviewLedger(pool: ReviewPool, schema: string) {
             JSON.stringify(job.files),
             job.jobDir,
             job.worktree,
+            job.transport,
           ],
         )
         return rows.map((r) => r.id as string)
@@ -283,11 +287,25 @@ export function reviewLedger(pool: ReviewPool, schema: string) {
       )
     },
 
-    async markSubmitted(q: Query, id: string, attempt: number, output: ReviewOutputV4Value, at: Date): Promise<void> {
+    /** `account` fills a job that has none (a hidden job: the factory picked it); a job's own account stays. */
+    async markSubmitted(
+      q: Query,
+      id: string,
+      attempt: number,
+      output: ReviewOutputV4Value,
+      at: Date,
+      account: string | null,
+    ): Promise<void> {
       await q.query(
-        `update ${jobs} set state = 'submitted', attempt = $2, output = $3, submitted_at = $4 where id = $1`,
-        [id, attempt, JSON.stringify(output), at],
+        `update ${jobs} set state = 'submitted', attempt = $2, output = $3, submitted_at = $4,
+           account = coalesce(account, $5) where id = $1`,
+        [id, attempt, JSON.stringify(output), at, account],
       )
+    },
+
+    /** A request whose factory spawn failed: the job never runs, so it must not block its thread. */
+    async abandon(id: string): Promise<void> {
+      await pool.query(`update ${jobs} set state = 'abandoned' where id = $1 and state = 'prepared'`, [id])
     },
 
     async finding(id: string): Promise<Finding | null> {

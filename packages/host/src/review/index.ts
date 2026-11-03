@@ -1,10 +1,11 @@
 // Review v4, agw's side: prepare | submit | dispose | status | route | covered over the review ledger. No LLM call
 // anywhere here; the reviewer agent runs in the caller's session (or, from Wave 10, a factory session). README.md.
+import { commandRunner, fleetConfig, type RunCommand } from '../fleet/factory.ts'
 import { createExec } from '../workflows/review/exec.ts'
 import type { ReviewContext, QuotaReading } from './context.ts'
 import { covered } from './covered.ts'
 import { findingRecord, type ReviewPool, reviewLedger } from './ledger.ts'
-import { prepare } from './prepare.ts'
+import { prepare, removeWorktree } from './prepare.ts'
 import { repoIdentity, resolveRoot } from './repo.ts'
 import { type GitRunner, routeRange } from './route.ts'
 import { type FindingRecordValue, ReviewError, type ReviewOutputV4Value } from './schema.ts'
@@ -15,6 +16,8 @@ import type {
   DisposeInput,
   PrepareInput,
   PrepareOutput,
+  RequestInput,
+  RequestOutput,
   RouteInput,
   RouteOutput,
   StatusInput,
@@ -36,11 +39,14 @@ export interface ReviewServicePorts {
   now?: () => Date
   /** The process environment: helper allowlist, network vars for pr/branch fetches, `AGW_REVIEW_DEEP_CAP`. */
   env?: Record<string, string | undefined>
+  /** Runs the factory CLI for `request` (tests); default: a bounded child with `FACTORY_TOKEN`/`FACTORY_URL` passed on. */
+  run?: RunCommand
 }
 
 export interface ReviewService {
   prepare(input: z.output<typeof PrepareInput>): Promise<z.output<typeof PrepareOutput>>
-  submit(input: { jobId: string; attempt: number; reply: string }): Promise<ReviewOutputV4Value>
+  request(input: z.output<typeof RequestInput>): Promise<z.output<typeof RequestOutput>>
+  submit(input: { jobId: string; attempt: number; reply: string; account?: string }): Promise<ReviewOutputV4Value>
   dispose(input: z.output<typeof DisposeInput>): Promise<FindingRecordValue>
   status(input: z.output<typeof StatusInput>): Promise<z.output<typeof StatusOutput>>
   route(input: z.output<typeof RouteInput>): Promise<z.output<typeof RouteOutput>>
@@ -48,6 +54,16 @@ export interface ReviewService {
 }
 
 const RECENT_JOBS = 10
+const SPAWN_TIMEOUT_MS = 60_000
+
+/** The factory's answer to `spawn create`: its JSON, else the first line it printed. */
+const parseSpawn = (stdout: string): unknown => {
+  try {
+    return JSON.parse(stdout)
+  } catch {
+    return stdout.trim().split('\n')[0] ?? ''
+  }
+}
 
 export function createReviewService(ports: ReviewServicePorts): ReviewService {
   const env = ports.env ?? process.env
@@ -64,9 +80,71 @@ export function createReviewService(ports: ReviewServicePorts): ReviewService {
     env,
   }
   const { ledger } = ctx
+  const run = ports.run ?? commandRunner(env)
 
   return {
     prepare: (input) => prepare(ctx, input),
+
+    async request(input) {
+      const prepared = await prepare(ctx, input, 'hidden')
+      if (prepared.status !== 'ready') return { ...prepared, status: prepared.status as 'skipped' | 'needs-human' }
+      const { jobId, tier, seat, jobDir, worktree } = prepared
+      if (!jobId || !tier || !jobDir || !worktree) throw new Error('prepare answered ready without a job')
+      const job = await ledger.job(jobId)
+      if (!job) throw new Error(`job ${jobId} vanished after prepare`)
+      const spawnKey = `review-${jobId}-a1`
+      const extraEnv: Record<string, string> = {}
+      for (const name of ['FACTORY_TOKEN', 'FACTORY_URL']) {
+        const value = env[name]
+        if (value) extraEnv[name] = value
+      }
+      const result = await run(
+        [
+          fleetConfig(env).factoryBin,
+          'spawn',
+          'create',
+          spawnKey,
+          '--repo',
+          job.root,
+          '--role',
+          'reviewer',
+          '--placement',
+          'hidden',
+          '--review-job',
+          jobId,
+          '--review-tier',
+          tier,
+          ...(seat ? ['--effort', seat.effort] : []),
+          '--prompt',
+          prepared.prompt ?? '',
+          '--format',
+          'json',
+        ],
+        { timeoutMs: SPAWN_TIMEOUT_MS, extraEnv },
+      )
+      if (result.exitCode !== 0) {
+        await ledger.abandon(jobId)
+        removeWorktree(ctx, jobDir, worktree)
+        const why = result.timedOut
+          ? `timed out after ${SPAWN_TIMEOUT_MS / 1000} s`
+          : (result.stderr.trim() || result.stdout.trim() || result.error || `exit ${result.exitCode}`).split('\n')[0]
+        throw new ReviewError(`the factory could not start the review session ${spawnKey}: ${why}`)
+      }
+      return {
+        status: 'requested',
+        jobId,
+        thread: prepared.thread,
+        round: prepared.round,
+        base: prepared.base,
+        head: prepared.head,
+        account: null,
+        tier,
+        seat,
+        ceiling: 'factory',
+        spawnKey,
+        spawn: parseSpawn(result.stdout),
+      }
+    },
     submit: (input) => submit(ctx, input),
     covered: (input) => covered(ctx, input),
 
@@ -95,11 +173,13 @@ export function createReviewService(ports: ReviewServicePorts): ReviewService {
             tier: job.tier,
             seat: job.seat,
             account: job.account,
+            transport: job.transport,
             createdAt: job.createdAt.toISOString(),
             submittedAt: job.submittedAt?.toISOString() ?? null,
             jobDir: job.jobDir,
             worktree: job.worktree,
             outcome: job.output?.outcome ?? null,
+            output: job.output,
           },
           findings: findings.map(findingRecord),
         }

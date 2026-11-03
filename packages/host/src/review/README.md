@@ -17,13 +17,14 @@ CLI exits non-zero naming it.
 | Command | What |
 |-|-|
 | `agw review prepare --cwd <dir> [--scope uncommitted\|head\|<ref>\|<a>..<b> \| --pr N \| --branch B] [--context] [--min] [--thread] [--account]` | Thread, round, route, ceiling, deep cap, job dir. `status`: `ready` (run the agent with `prompt` on `seat`), `skipped` (tier none), `held` (ceiling or deep cap; wait, the tier is never lowered), `needs-human` (a 4th round) |
-| `agw review submit <jobId> --attempt <n>` (reply on stdin) | REVIEW_OUTPUT v4. Idempotent per (job, attempt): the same attempt gets the stored output back, another attempt is refused naming the winner |
+| `agw review request --cwd <dir> [--scope \| --pr N \| --branch B] [--context] [--min] [--thread]` | `prepare` for the hidden transport (no `--account`): `skipped` and `needs-human` as `prepare`; `ready` → the factory spawn, answer `requested` (see Hidden transport) |
+| `agw review submit <jobId> --attempt <n> [--account <a>]` (reply on stdin) | REVIEW_OUTPUT v4. Idempotent per (job, attempt): the same attempt gets the stored output back, another attempt is refused naming the winner. `--account` sets the job's account only when it has none |
 | `agw review dispose <jobId> <findingId> fixed\|wrong\|intentional\|irrelevant\|open [--reason]` | The answer to a finding of the job's thread; idempotent |
 | `agw review status [<jobId>] [--cwd]` | A job (a running review is `prepared`) and its thread's findings, or the 10 newest jobs of the repo at `--cwd` |
 | `agw review route --cwd --base --head [--min]` | `routeRange` alone; no ledger (HTTP `/review/route-range`: `/review/route` is v1's capability until Wave 10) |
 | `agw review covered --cwd --range <a>..<b>` | Coverage of each first-parent commit; exit 0 either way, read `covered` |
 
-`prepare`, `submit` and `dispose` change state, so the CLI asks for `--commit` (non-TTY callers must pass it).
+`prepare`, `request`, `submit` and `dispose` change state, so the CLI asks for `--commit` (non-TTY callers must pass it).
 
 `--cwd` is required wherever a repo is read (the CLI does not fill it, as with v1's `agw review`).
 
@@ -48,11 +49,11 @@ findings of the repo on the touched paths, newest first, with `sameThread` and t
 (from base, or a note that there is none), `tree/` (a `clone --shared --no-checkout`, detached at head, escaping
 symlinks removed). The tree goes on submit; each prepare sweeps trees older than 24 h and job dirs older than 14 days.
 
-## The ledger (migration 0017)
+## The ledger (migrations 0017, 0018)
 
 `review_jobs`: one row per prepared job (`prepared → submitted | abandoned`), the route decision with its facts, the
 REVIEW.md config read at the thread base (`prepare` routes every round on that config, so a REVIEW.md the change
-edits cannot decide a later round's tier), the stat paths, the output. `review_findings`: stable ids `<thread>-<n>`, `job_id` (first reported),
+edits cannot decide a later round's tier), the stat paths, the output, the `transport` (`in-session` | `hidden`, migration 0018; `status` shows it, and a submitted job's REVIEW_OUTPUT as `output`). `review_findings`: stable ids `<thread>-<n>`, `job_id` (first reported),
 `last_job_id` (latest round that reported it), the disposition.
 
 ## Convergence
@@ -76,6 +77,32 @@ reading: the week alone; no reading: `ceiling: unknown`, not held). Without it: 
 account (no account is its own bucket) since UTC midnight, not abandoned, the thread's own unsubmitted one excluded, ≥
 `AGW_REVIEW_DEEP_CAP` (default 15) → held. Never downgraded.
 
+## Hidden transport
+
+For callers that are not a Claude Code session (scripts, `make verify`, Hermes) and in-session callers held by their own
+account's ceiling. `agw review request` prepares with transport `hidden`: `ceiling: 'factory'`, no deep cap, no account
+(agw judges neither; the factory applies the ceiling, 70 % of 5 h / 90 % of the week, and the deep cap, 15 per account
+per day with an owner one-click allow, on the account **it** picks; it also holds two reviewer sessions host-wide).
+`skipped` and `needs-human` pass through with no spawn. `ready` runs
+
+    factory spawn create review-<jobId>-a1 --repo <repo root> --role reviewer --placement hidden --review-job <jobId> \
+      --review-tier <tier> --effort <seat.effort> --prompt '<prepare's prompt line>' --format json
+
+(the factory binary as the fleet finds it: `AGW_FACTORY_BIN`, `~/.local/bin/factory`, `PATH`; `FACTORY_TOKEN` and
+`FACTORY_URL` pass through; a 60 s process timeout) and answers `{status: 'requested', jobId, tier, seat, thread, round,
+spawnKey, spawn}`, `spawn` being the factory's spawn status (a queued one names its hold reason). A failing spawn marks
+the job `abandoned` (the thread is not blocked), removes its tree and exits non-zero naming the factory's message.
+
+The factory runs one interactive Claude Code session per job with the global `reviewer` agent and, on its Stop, pipes the
+agent's last reply to `agw review submit <jobId> --attempt <n> --account <account it ran on> --commit --format json`
+(attempt 2 is the factory's own retry). The caller polls `agw review status <jobId>` until `submitted`; `job.output` is
+REVIEW_OUTPUT v4.
+
+**The deep cap is asymmetric.** In-session, agw counts deep jobs per account from the ledger. A hidden job has no account
+until submit fills it (`--account`, only when the job has none; an in-session job keeps its own), and an unsubmitted
+hidden job counts for no bucket. So agw's cap counts hidden deep jobs once submitted, while the factory's cap counts only
+hidden starts: the two never see each other's jobs on the same account, by design.
+
 ## Coverage
 
 For each first-parent commit `c` of the range: required = `routeRange(c^, c)` (none → nothing needed). Covered by a
@@ -88,6 +115,5 @@ with `reason: 'open-important'` and the blocking `findings` ids.
 
 ## Wave 10
 
-The callers (`/review` skill: prepare → Agent(reviewer) → submit → dispositions; the wave gate's `covered`; `make
-verify`), the hidden transport (a factory reviewer session per job), the factory's `review` evidence filed by submit,
+The callers (`/review` skill: prepare → Agent(reviewer) → submit → dispositions; the wave gate's `covered`), the factory's `review` evidence filed by submit,
 and the deletion of v1 with the relocation of the helpers this module borrows from `workflows/review/`.

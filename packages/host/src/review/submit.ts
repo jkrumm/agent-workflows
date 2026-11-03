@@ -80,7 +80,7 @@ function refuseState(job: Job, attempt: number): ReviewOutputV4Value | null {
 
 export async function submit(
   ctx: ReviewContext,
-  input: { jobId: string; attempt: number; reply: string },
+  input: { jobId: string; attempt: number; reply: string; account?: string },
 ): Promise<ReviewOutputV4Value> {
   const { ledger } = ctx
   const known = await ledger.job(input.jobId)
@@ -98,10 +98,11 @@ export async function submit(
     const again = refuseState(job, input.attempt)
     if (again) return { output: again, fresh: false }
     const existing = await ledger.threadFindings(job.repo, job.thread, client)
-    const output = assemble(job, reply, existing)
+    const account = job.account ?? input.account ?? null
+    const output = assemble({ ...job, account }, reply, existing)
     for (const f of output.newFindings) await ledger.insertFinding(client, f)
     for (const t of output.touched) await ledger.touchFinding(client, t.id, job.id, t.reopen)
-    await ledger.markSubmitted(client, job.id, input.attempt, output.output, ctx.now())
+    await ledger.markSubmitted(client, job.id, input.attempt, output.output, ctx.now(), account)
     return { output: output.output, fresh: true }
   })
   if (result.fresh) removeWorktree(ctx, known.jobDir, known.worktree)

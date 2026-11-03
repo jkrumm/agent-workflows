@@ -160,18 +160,36 @@ export const PrepareOutput = z.object({
   files: z.array(z.string()).optional(),
   account: z.string().nullable(),
   ceiling: z
-    .enum(['ok', 'held', 'unknown', 'unjudged'])
+    .enum(['ok', 'held', 'unknown', 'unjudged', 'factory'])
     .optional()
-    .describe('unjudged: no account given; unknown: no quota reading'),
+    .describe(
+      'unjudged: no account given; unknown: no quota reading; factory: the factory judges it (hidden transport)',
+    ),
   prompt: z.string().optional().describe('The reviewer agent prompt line'),
 })
 export type PrepareOutputValue = z.output<typeof PrepareOutput>
+
+/** `request` is `prepare` for the hidden transport: the factory picks the account, so there is none to give. */
+export const RequestInput = PrepareInput.omit({ account: true }).strict()
+export type RequestInputValue = z.output<typeof RequestInput>
+
+export const RequestOutput = PrepareOutput.extend({
+  status: z.enum(['requested', 'skipped', 'needs-human']),
+  spawnKey: z.string().optional().describe("The factory session's key: review-<jobId>-a1"),
+  spawn: z.unknown().optional().describe("The factory's spawn status, a hold reason included when it is queued"),
+})
+export type RequestOutputValue = z.output<typeof RequestOutput>
 
 export const SubmitInput = z
   .object({
     jobId: z.string().min(1).describe('The job from prepare'),
     attempt: z.number().int().positive().describe('The reviewer attempt; a submit is idempotent per (job, attempt)'),
     reply: z.string().min(1).describe("The reviewer agent's JSON reply"),
+    account: z
+      .string()
+      .regex(new RegExp(ACCOUNT_ID_PATTERN))
+      .optional()
+      .describe("The account a hidden job's session ran on; sets the job's account only when it has none"),
   })
   .strict()
 
@@ -231,11 +249,13 @@ export const StatusOutput = z.object({
       tier: TIER,
       seat: SEAT.nullable(),
       account: z.string().nullable(),
+      transport: z.enum(['in-session', 'hidden']),
       createdAt: z.string(),
       submittedAt: z.string().nullable(),
       jobDir: z.string(),
       worktree: z.string(),
       outcome: z.enum(OUTCOMES).nullable(),
+      output: ReviewOutputV4.nullable().describe('REVIEW_OUTPUT v4 once submitted'),
     })
     .optional(),
   findings: z.array(FindingRecord).optional(),

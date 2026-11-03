@@ -12,6 +12,8 @@ import {
   FindingRecord,
   PrepareInput,
   PrepareOutput,
+  RequestInput,
+  RequestOutput,
   ReviewError,
   ReviewOutputV4,
   RouteInput,
@@ -44,9 +46,10 @@ const answer =
     }
   }
 
-type Name = 'prepare' | 'submit' | 'dispose' | 'status' | 'route' | 'covered'
+type Name = 'prepare' | 'request' | 'submit' | 'dispose' | 'status' | 'route' | 'covered'
 const OPERATION_IDS = {
   prepare: 'reviewPrepare',
+  request: 'reviewRequest',
   submit: 'reviewSubmit',
   dispose: 'reviewDispose',
   status: 'reviewStatus',
@@ -99,6 +102,19 @@ export function reviewOperations(service: ReviewService): Record<(typeof OPERATI
         output: PrepareOutput,
       },
       (input) => service.prepare(input),
+    ),
+    reviewRequest: op(
+      'request',
+      {
+        summary:
+          'Prepare a job and have the software factory run the reviewer in a hidden session (no account to give)',
+        description:
+          'For callers that are not a Claude Code session, or are held by their own account. requested: the factory admits the session (ceiling and deep cap on the account it picks) and submits the reply itself; poll `agw review status <jobId>`. skipped: tier none. needs-human: three rounds. A failed spawn abandons the job and exits non-zero.',
+        cli: { mutating: true },
+        input: RequestInput,
+        output: RequestOutput,
+      },
+      (input) => service.request(input),
     ),
     reviewSubmit: op(
       'submit',
