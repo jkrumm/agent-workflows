@@ -469,13 +469,15 @@ with no known window (`limit.context` unset) never compacts automatically, with 
 **Measured: the summary's room.** With the default reserve a 100000-bound row (window 96000, ceiling 80000) asked the
 summary for `max_tokens` **10,733** (the 16k reserve less the summary prompt, shared with the thinking). With
 `COMPACTION_BUFFER` = 40000 it asks for **32,000**, the most OpenCode allows (`test/live-context-limit.test.ts`,
-loopback stand-in, no LLM). The unbounded Claude rows have a window between 400k and 950k tokens or unknown to the config (a 950k-token
-prompt summarises, a 400k one does not), so a session there reads on for hundreds of thousands of tokens before it
-compacts, and the summary call hands the model that history and 32k to think and write in. That is the likely cause of
-the 2026-10-31 eval's failure (`docs/evals/2026-10-31-review-claude-direct.md`: Haiku at `max` effort, 23 failed steps,
-all `Compaction summary reached the output token limit`); the eval did not log the summary call, so thinking eating the
-32k is inferred, not seen. Config cannot lift the 32k (and an earlier bound is the route's `contextLimit`, not this
-package's to set for every route), so a step can still fail on it, and the host handles that (below).
+loopback stand-in, no LLM). **The buffer helps the bounded rows only.** The unbounded Claude rows have a window between
+400k and 950k tokens (a 950k-token prompt summarises, a 400k one does not), where the default reserve (10% of the window)
+was already 40k or more, so they get no more room than before, and they compact only after hundreds of thousands of tokens,
+so the summary call hands the model that whole history and 32k to think and write in. That is the likely cause of the
+2026-10-31 eval's failure (`docs/evals/2026-10-31-review-claude-direct.md`: Haiku at `max` effort, 23 failed steps, all
+`Compaction summary reached the output token limit`; the eval did not log the summary call, so thinking eating the 32k is
+inferred, not seen). **That case is covered by the restart fallback below, and only when the failed turn made read-only
+calls**; config cannot lift the 32k, and an earlier bound is the route's `contextLimit`, not this package's to set for
+every route.
 
 `e` = 25% is an **assumption**, not a measurement (OpenCode itself assumes 15% for its output sizing; code and JSON
 tokenize denser than 4 characters per token). The arm that sets a bound should read the largest prompt it saw.
@@ -508,7 +510,16 @@ not know, `submit_result` included, counts as a change). A restart runs the turn
 wrote, ran a command or submitted a result fails with the compaction error instead, and the host logs why. The task starts over in a fresh session on the fallback model (Terra for the Claude
 agent routes), with the failed turn's usage kept in the step's usage; a fallback session never falls back again, so a
 second failure fails the step with the compaction error. A route without a fallback fails the step with it, and the host
-logs `opencode compaction failed; the route has no fallback`. Why a restart and not a new kind of error: the failed
+logs `opencode compaction failed; the route has no fallback`; in every failing case the failed turn's usage rides on the
+error (`test/host.test.ts`). An error that mentions compaction in words none of the four markers matches (a reworded
+message after an OpenCode bump) fails the step as before and logs `unrecognised compaction failure` once, with the text.
+**Known limits.** A follow-up turn (`waitTurn`, `ctx.continue`) gets no fallback: its session already ran on its route, so
+a compaction failure there fails the step. The restart **swaps the model of the step**, which matters for an armed step:
+the fallback session runs on the route's fallback (or the arm's `fallback` patch), not on the model the arm measures. The
+fallback session is attributed with `routeFallback: unknown`, the marker a provider-balance refusal uses; the gateway
+accepts only `unknown` or a refused request's id for that header (`routeFallbackOf` in `packages/gateway/src/proxy.ts`), so
+a compaction restart cannot yet be told from a refusal in the gateway's rows. The session's `metadata.agw.fallbackOf` and
+the host's `turn failed on compaction; falling back` warning do tell them apart. Why a restart and not a new kind of error: the failed
 session cannot take another turn (it compacts again first), the runtime's `ErrorKind` is not this package's to extend, and
 the fallback path already carries the spend, the permissions and the re-attach after a crash. The error text stays
 greppable for the friction job: `opencode session <id> turn failed: Compaction summary reached the output token limit`.

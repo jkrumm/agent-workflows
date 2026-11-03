@@ -14,7 +14,7 @@ import {
   type PermissionRule,
   type ServerPort,
 } from '../src/index.ts'
-import { isCompactionFailure, priceOpenCodeMessages, sessionPermissions } from '../src/host.ts'
+import { isCompactionFailure, onlyReadOnlyTools, priceOpenCodeMessages, sessionPermissions } from '../src/host.ts'
 import { sessionState } from '../src/session.ts'
 import { type FakeServer, startFake } from './fake-opencode.ts'
 import { attributionOf } from './attribution.ts'
@@ -477,6 +477,45 @@ describe("the gateway's refusal, as a session reports it", () => {
     )
     expect(state).toMatchObject({ kind: 'done', outcome: 'failed', error: CAPTURED.message })
     expect(isBalanceFailure({ text: (state as { error: string }).error })).toBe(true)
+  })
+})
+
+describe('onlyReadOnlyTools', () => {
+  const prompt = { id: 'p', type: 'user', metadata: { agw: { kind: 'prompt' } } }
+  const turn = (...parts: Record<string, unknown>[]) =>
+    [prompt, { id: 'a1', type: 'assistant', content: parts }] as never[]
+  const call = (name: string | undefined, id: string | null = `call-${name}`) => ({
+    type: 'tool',
+    ...(id === null ? {} : { id }),
+    ...(name === undefined ? {} : { name }),
+  })
+
+  test('the host’s read tools and no tool at all qualify', () => {
+    expect(onlyReadOnlyTools(turn(), 'p')).toBe(true)
+    expect(onlyReadOnlyTools(turn({ type: 'text', text: 'hi' }), 'p')).toBe(true)
+    expect(onlyReadOnlyTools(turn(call('read'), call('glob'), call('grep'), call('skill')), 'p')).toBe(true)
+  })
+
+  test('any other tool counts as a change', () => {
+    for (const name of ['shell', 'edit', 'write', 'webfetch', 'websearch', 'subagent', 'submit_result', 'mcp_x']) {
+      expect(onlyReadOnlyTools(turn(call('read'), call(name)), 'p')).toBe(false)
+    }
+  })
+
+  test('fails safe: a tool part without a name or an id counts as a change', () => {
+    expect(onlyReadOnlyTools(turn(call(undefined, 'call-1')), 'p')).toBe(false)
+    expect(onlyReadOnlyTools(turn(call('read', null)), 'p')).toBe(false)
+    expect(onlyReadOnlyTools(turn(call('read', '')), 'p')).toBe(false)
+    expect(onlyReadOnlyTools(turn(call('read'), call('', 'call-2')), 'p')).toBe(false)
+  })
+
+  test('fails safe: a prompt that is not in the messages decides nothing', () => {
+    expect(onlyReadOnlyTools([{ id: 'a1', type: 'assistant', content: [] }] as never[], 'p')).toBe(false)
+  })
+
+  test('only the turn after the prompt counts', () => {
+    const before = { id: 'a0', type: 'assistant', content: [call('shell')] }
+    expect(onlyReadOnlyTools([before, ...turn(call('read'))] as never[], 'p')).toBe(true)
   })
 })
 
@@ -1401,6 +1440,49 @@ describe('provider-balance fallback', () => {
       )
     },
   )
+
+  // The fake bills the tool call's reply (10 input, 5 output, 1 reasoning, 100 cache read, 20 cache write; cost 0.001):
+  // the failed turn's spend. It rides on the error whether or not a fallback could run.
+  const TOOL_REPLY = { input: 130, output: 6, cacheRead: 100, cacheWrite: 20, reasoning: 1 }
+
+  test('a route without a fallback keeps the failed turn’s spend on the error', async () => {
+    const t = setup()
+    const handle = await t.host.open({ ...spec('x'), arm: { routes: { check: { fallback: null } } } })
+    await t.host.prompt(handle, '[tool:read][compaction] x')
+    const err = (await t.host.wait(handle, waitOptions()).catch((e: unknown) => e)) as WorkflowError
+    expect(err.message).toContain('Compaction summary reached the output token limit')
+    expect(sessions(t)).toHaveLength(1)
+    expect(one(err.usage)?.tokens).toEqual(TOOL_REPLY)
+    expect(one(err.usage)?.cost).toBe(0.001)
+  })
+
+  test('a turn that called a side-effecting tool keeps its spend on the error too', async () => {
+    const t = setup()
+    const handle = await t.host.open(spec('x'))
+    await t.host.prompt(handle, '[tool:edit][compaction] x')
+    const err = (await t.host.wait(handle, waitOptions()).catch((e: unknown) => e)) as WorkflowError
+    expect(err.message).toContain('Compaction summary reached the output token limit')
+    expect(sessions(t)).toHaveLength(1)
+    expect(one(err.usage)?.tokens).toEqual(TOOL_REPLY)
+    expect(one(err.usage)?.cost).toBe(0.001)
+  })
+
+  test('an error that mentions compaction in words no marker knows is warned about, once, and fails the step', async () => {
+    const t = setup()
+    const handle = await t.host.open(spec('x'))
+    await t.host.prompt(handle, '[compaction-new] x')
+    expect(await failure(t.host.wait(handle, waitOptions()))).toContain('Compaction could not be completed')
+    expect(sessions(t)).toHaveLength(1)
+    expect(t.warnings.filter((w) => w === 'unrecognised compaction failure')).toHaveLength(1)
+  })
+
+  test('a failure that does not mention compaction raises no such warning', async () => {
+    const t = setup()
+    const handle = await t.host.open(spec('x'))
+    await t.host.prompt(handle, '[fail]')
+    await failure(t.host.wait(handle, waitOptions()))
+    expect(t.warnings).not.toContain('unrecognised compaction failure')
+  })
 
   test('the fallback failing on compaction too fails the step with the compaction error: once, no third session', async () => {
     const t = setup()

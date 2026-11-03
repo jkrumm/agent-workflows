@@ -124,11 +124,11 @@ function refFor(route: ResolvedRoute): ModelRef {
  * - `estimate` is the last response's measured `input + cache.read + cache.write + output + reasoning`, plus a
  *   chars/4 estimate of what came after it (the tool results). With no response yet (the first call) all of the request
  *   is estimated by chars/4. A request goes out only when its estimate is under the ceiling.
- * - The summary call is the history (as is when its chars/4 estimate is within the ceiling less the summary prompt, else
- *   flattened to that size with tool output cut to 1,250 characters) plus the summary prompt. Its `max_tokens` is
+ * - The summary call is the history (as is when its chars/4 estimate is within the ceiling less the summary prompt,
+ *   else flattened to that size with tool output cut to 1,250 characters) plus the summary prompt. Its `max_tokens` is
  *   `min(limit.output, 32_000, window - request)`, so the `buffer` is the room a summary has, and 32k is all it can
  *   have. The route's thinking (`effort`) is sent on the summary call too and shares that `max_tokens`.
- * - A window also clamps the `max_tokens` of every call to `window - prompt`, which the buffer keeps at `buffer` or more.
+ * - A window also clamps the `max_tokens` of every call to `window - prompt`, which the buffer keeps at `buffer`+.
  *
  * So no prompt can pass `ceiling * (1 + e)`, where `e` is how far chars/4 undercounts the real tokens (the first
  * call and the summary call are estimated whole; a call after tool results is off only by the results' share, which is
@@ -141,8 +141,8 @@ const ESTIMATE_UNDERCOUNT = 0.25
 
 /**
  * `compaction.buffer`: the room a compaction summary has. The summary call asks for at most 32,000 output tokens
- * (OpenCode's `SUMMARY_OUTPUT_MAX`) and gets `window - request`, which was 10,733 with the default 16k reserve (measured
- * on 2.0.32 for a 100k bound), thinking included. 40k is those 32k and the summary prompt's own size and slack.
+ * (OpenCode's `SUMMARY_OUTPUT_MAX`) and gets `window - request`, which was 10,733 with the default 16k reserve
+ * (measured on 2.0.32 for a 100k bound), thinking included. 40k is those 32k and the summary prompt's own size and slack.
  */
 export const COMPACTION_BUFFER = 40_000
 
@@ -211,8 +211,8 @@ function variantSettings(effort: string, provider: string): Record<string, unkno
  * and output limit of the first route naming it (the table names one rate per model). The
  * attribution plugin (`options.plugin`, an absolute directory), no updates, no share. The only credential is the door
  * token, by reference to the server's env.
- * Each Claude model also has one bounded row per `CONTEXT_LIMITS` value, `<model>~ctx<limit>`
- * (`contextAlias`), for a route with a `contextLimit`.
+ * Each Claude model also has one bounded row per `CONTEXT_LIMITS` value, `<model>~ctx<limit>` (`contextAlias`), for a
+ * route with a `contextLimit`.
  * The Anthropic leg sends `x-agw-fallback: none`: with no credit pool left the gateway answers a 402 and the route's own
  * fallback takes over, rather than paying for Claude on IU.
  * The server policy is deny by default as the sessions' are (`basePolicy`: catch-all deny, then the read-only tools), so
@@ -236,8 +236,9 @@ export function buildServerConfig(options: { plugin?: string } = {}): Record<str
     const rows = models[PROVIDER_ANTHROPIC] as Record<string, unknown>
     rows[model] ??= modelRow({ model, rate: claudeRate(model) }, PROVIDER_ANTHROPIC)
   }
-  // A bounded copy of every Claude row for each allowed bound (`CONTEXT_LIMITS`, which an arm may pick without a restart): same cost, variants and compatibility,
-  // a window that makes the session compact in time, and `modelID` so the provider is still called with the real model.
+  // A bounded copy of every Claude row for each allowed bound (`contextLimit`, one of `CONTEXT_LIMITS`: an arm may pick
+  // any without a restart): same cost, variants and compatibility, a window that makes the session compact in time, and
+  // `modelID` so the provider is still called with the real model.
   // (OpenCode 2.0.32 reads `modelID` in its config; a key named `id` is dropped silently, not an alias.)
   const claude = models[PROVIDER_ANTHROPIC] as Record<string, Record<string, unknown>>
   for (const model of CLAUDE_MODELS) {
