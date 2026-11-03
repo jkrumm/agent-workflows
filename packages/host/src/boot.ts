@@ -41,7 +41,7 @@ import { type CapabilityCall, ToolGate } from './tool-gate/index.ts'
 import { pgToolLedger } from './workflows/research/ledger.ts'
 import { wireEval } from './workflows/eval/index.ts'
 import { createWorkflows, fingerprintWorkflows, type HostRegistry, hostModules } from './workflows/index.ts'
-import { discoverForeignModules, foreignWorkflows } from './workflows/registry.ts'
+import { loadForeignTree } from './workflows/registry.ts'
 
 /**
  * The audio process's workflow tree (`AUDIO_MODULES_DIR` of `packages/audio`, which depends on this package, so it is
@@ -542,8 +542,8 @@ export function hostProcess(config: HostConfig, door?: ImageDoorOptions): Proces
       usagePool?.on('error', (err) => console.warn('[agw-host] usage pool: idle connection error', err.message))
       if (usagePool) onClose(() => usagePool.end())
       // The audio process's suites and scorers: `agw eval run|compare` replay its workflows, which it drives.
-      const elsewhere = await discoverForeignModules(AUDIO_MODULES_DIR)
-      foreign = foreignWorkflows(elsewhere)
+      const tree = await loadForeignTree(AUDIO_MODULES_DIR, logger)
+      foreign = tree.workflows
       const workflows = await createWorkflows(
         {
           registry,
@@ -562,7 +562,7 @@ export function hostProcess(config: HostConfig, door?: ImageDoorOptions): Proces
             }),
           },
         },
-        [...(await hostModules()), ...elsewhere],
+        [...(await hostModules()), ...tree.modules],
       )
       if (!door) return workflows
       imageDoor = createImageDoor({

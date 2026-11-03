@@ -11,6 +11,7 @@ import {
   DEFAULT_CONCURRENCY,
   errorText,
   type EvalRunOptions,
+  NOT_CLAIMED_MS,
   RECORD_SETTLE_MS,
   replay,
   RunSummary,
@@ -190,6 +191,7 @@ export function createEvalImport(
             tmpRoot: options.tmpRoot,
             logger: options.logger ?? consoleLogger,
             recordSettleMs: options.recordSettleMs ?? RECORD_SETTLE_MS,
+            notClaimedMs: options.notClaimedMs ?? NOT_CLAIMED_MS,
           },
           {
             evalRunId: ctx.runId,

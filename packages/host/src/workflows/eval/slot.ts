@@ -11,6 +11,8 @@ export class EvalSlot {
   /** Where case trees go (`createEvalRun`'s `tmpRoot`); the sweep reads it. Undefined: the OS temp dir. */
   tmpRoot: string | undefined = undefined
   readonly targets = new Map<string, AnyWorkflow>()
+  /** The ids among `targets` another process serves: their case runs are driven there, and may never be claimed. */
+  readonly foreign = new Set<string>()
 
   get(): EvalRuntime {
     if (!this.runtime) throw new Error('eval workflows are not bound to a runtime (wireEval)')

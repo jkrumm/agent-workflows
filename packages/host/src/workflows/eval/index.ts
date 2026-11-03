@@ -62,7 +62,11 @@ export function wireEval(options: {
     roots.add(slot.tmpRoot)
     for (const other of options.workflows)
       if (other.workflow.scorer) slot.targets.set(other.workflow.id, other.workflow)
-    for (const other of options.foreign ?? []) if (other.scorer) slot.targets.set(other.id, other)
+    for (const other of options.foreign ?? []) {
+      if (!other.scorer) continue
+      slot.targets.set(other.id, other)
+      slot.foreign.add(other.id)
+    }
   }
   const drift = new DriftJob(options.runtime, driftOptionsFromEnv(options.env ?? process.env), logger)
   // Case trees a cancel past its settle or a killed process left behind: swept at start and every hour, one sweep at

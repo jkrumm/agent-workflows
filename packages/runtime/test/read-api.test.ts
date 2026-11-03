@@ -64,6 +64,7 @@ describe('getRun and ping', () => {
       expect(await rt.getRun(done.runId)).toEqual({
         runId: done.runId,
         workflowId: 'get.ok',
+        version: 'v1',
         status: 'done',
         output: { n: 7 },
         error: null,
@@ -84,6 +85,7 @@ describe('getRun and ping', () => {
       expect(await rt.getRun(running.runId)).toEqual({
         runId: running.runId,
         workflowId: 'get.hold',
+        version: 'v1',
         status: 'running',
         output: null,
         error: null,

@@ -129,19 +129,26 @@ journal. The host reads the audio tree's suites and scorers and replays its case
   path (the audio package depends on this one). It loads the modules that declare `foreign()`: the workflow as another
   process knows it, `foreignOf(SHELL)`, which is the id, version, schemas and scorer the audio module itself exports
   (`PODCAST_SHELL`, `SPEECH_ROUNDTRIP_SHELL`; the audio process builds its workflow from the same shell) with a body that
-  refuses to run. `create` is never called here, so the host needs none of the audio deps. A missing tree is no module.
+  refuses to run (computed once per module and reused by the runtime, `wireEval` and the clash checks). `create` is never
+  called here, so the host needs none of the audio deps. A module with a suite and no `foreign()`, a foreign workflow
+  without a scorer, and an id two modules serve each fail discovery, naming the files. **Discovery never aborts the host's
+  boot** (`loadForeignTree`): a missing directory is a warning and any failure (an import error under a module, a bad
+  declaration) an error, each naming the path, and the host then has no audio suites.
 - **Suites.** The modules are `elsewhere`: `buildWorkflows` takes their `suite` into the context's `suites` (so the `workflow`
   enum of `agw eval run|compare` holds `podcast` and `speech-roundtrip`) and builds nothing of theirs. An id the host also
-  serves is a boot error naming both files.
+  serves is a boot error naming both files; a clash with a host module's id is found before any `create` runs.
 - **Runtime.** The foreign workflows go to `RuntimeOptions.foreign` and to `wireEval({ foreign })`. The host's runtime
   starts a case run of one (same object) and scores it with its scorer, at the scorer's version; it never claims, leases,
   recovers, redelivers or drives it, and `driftCandidates` leaves it out. The audio runtime picks the pending run up from
   the journal, drives it and writes its record and post hooks (`packages/runtime/test/foreign.test.ts`,
   `packages/host/test/eval-foreign.test.ts`: both runtimes on one journal, the case executed once, by the audio runtime).
+- **A case that nobody drives or that another release drove is an error, not a wait or a score.** A case run of a foreign
+  workflow still `pending` after `NOT_CLAIMED_MS` (10 min) is cancelled and reported as `not claimed: is the audio process
+  up?`; once claimed it is awaited as any run. A finished run whose version (`RunSnapshot.version`) differs from the
+  shell's is `version skew: run <v> vs scorer <v>` and is not scored.
 - **Without `--yes`** `agw eval run podcast|speech-roundtrip` lists the cases and the estimate (the cost history of earlier
-  runs of that workflow) as for any suite. Both processes must be on the same release: the foreign shape is read from the
-  host's own checkout of the audio tree, the run is driven by the audio process's, and a run whose versions differ is
-  recorded under the version of the process that drove it.
+  runs of that workflow) as for any suite. Both processes must be on the same release: the foreign shape is read from the host's own checkout of the audio tree and the
+  run is driven by the audio process's, which the version check enforces.
 
 `podcast` sends nothing outward under an eval: with `publish: false`, `cover: false` and `brainNote: false` the only side
 effects left were the Slack notices (the done notice of `podcast.produce`, the failure notice of the room), and both are skipped for
