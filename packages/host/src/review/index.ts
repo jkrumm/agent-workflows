@@ -165,6 +165,7 @@ export function createReviewService(ports: ReviewServicePorts): ReviewService {
       if (job.transport !== 'hidden')
         throw new ReviewError(`job ${job.id} is an in-session job, only a hidden one can be cancelled`)
       const spawns: unknown[] = []
+      let failedSpawn: unknown
       // a1 is the first spawn, a2 the factory's retry; a key that never existed answers not_found (exit 4)
       for (const attempt of [1, 2]) {
         const spawnKey = `review-${job.id}-a${attempt}`
@@ -174,8 +175,12 @@ export function createReviewService(ports: ReviewServicePorts): ReviewService {
         })
         const spawn = parseSpawn(result.stdout)
         if (result.exitCode === 0) spawns.push(spawn)
-        else if (result.exitCode === FACTORY_CONFLICT) return { status: 'running', jobId: job.id, spawn }
-        else if (result.exitCode !== FACTORY_NOT_FOUND) {
+        else if (result.exitCode === FACTORY_CONFLICT) {
+          // a spawn that ended `failed` (409 "spawn <key> is failed") cannot run any more; a1 failed hands over to a2
+          if (!/ is failed:/.test(`${result.stderr}\n${result.stdout}`))
+            return { status: 'running', jobId: job.id, spawn }
+          failedSpawn = spawn
+        } else if (result.exitCode !== FACTORY_NOT_FOUND) {
           const why = result.timedOut
             ? `timed out after ${SPAWN_TIMEOUT_MS / 1000} s`
             : (result.stderr.trim() || result.stdout.trim() || result.error || `exit ${result.exitCode}`).split('\n')[0]
@@ -184,6 +189,8 @@ export function createReviewService(ports: ReviewServicePorts): ReviewService {
       }
       await ledger.abandon(job.id)
       if (job.jobDir && job.worktree) removeWorktree(ctx, job.jobDir, job.worktree)
+      if (spawns.length === 0 && failedSpawn !== undefined)
+        return { status: 'failed', jobId: job.id, spawn: failedSpawn }
       return { status: 'cancelled', jobId: job.id, spawns }
     },
     submit: (input) => submit(ctx, input),

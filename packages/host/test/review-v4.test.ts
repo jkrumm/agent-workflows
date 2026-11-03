@@ -352,7 +352,12 @@ describe('convergence over rounds', () => {
       [`${t}-4`, 'open'],
     ])
     const recent = await s.status({ cwd: root })
-    expect(recent.jobs?.[0]).toMatchObject({ id: r3.jobId, state: 'submitted', round: 3, openImportant: 3 })
+    expect(recent.jobs?.[0]).toMatchObject({
+      id: r3.jobId,
+      state: 'submitted',
+      round: 3,
+      openImportant: 3,
+    })
     await rejects(s.dispose({ jobId: r1.jobId, findingId: 'other-1', disposition: 'fixed' }), /not in the thread/)
   })
 })
@@ -619,13 +624,18 @@ describe('hidden transport', () => {
   })
 
   /** A fake factory for `spawn cancel`: logs each key, answers the exit code its `-aN` suffix is given (default 0). */
-  const cancelFactory = (exits: Record<string, number>) => {
+  const cancelFactory = (exits: Record<string, number>, failed: string[] = []) => {
     const dir = realpathSync(mkdtempSync(join(tmpdir(), 'agw-rv4-cancel-')))
     repos.push(dir)
     const bin = join(dir, 'factory')
     const log = join(dir, 'calls.log')
     const cases = Object.entries(exits)
-      .map(([suffix, code]) => `  *-${suffix}) echo '{"state":"x"}'; exit ${code} ;;`)
+      .map(([suffix, code]) => {
+        const why = failed.includes(suffix)
+          ? `; echo "spawn $3 is failed: only a queued or waiting spawn can be cancelled" >&2`
+          : ''
+        return `  *-${suffix}) echo '{"state":"x"}'${why}; exit ${code} ;;`
+      })
       .join('\n')
     writeFileSync(
       bin,
@@ -660,6 +670,30 @@ describe('hidden transport', () => {
     const out = await service({ env: cancelFactory({ a1: 5 }).env }).cancel({ jobId: job.jobId! })
     expect(out).toEqual({ status: 'running', jobId: job.jobId!, spawn: { state: 'x' } })
     expect(await jobState(job.jobId!)).toBe('prepared')
+  })
+
+  test('cancel on a spawn that ended failed abandons the job and answers failed', async () => {
+    const root = small()
+    const job = await service({ env: fakeFactory().env }).request({ cwd: root, scope: 'head' })
+    const factory = cancelFactory({ a1: 5, a2: 4 }, ['a1'])
+    const out = await service({ env: factory.env }).cancel({ jobId: job.jobId! })
+    expect(out).toEqual({ status: 'failed', jobId: job.jobId!, spawn: { state: 'x' } })
+    expect(await jobState(job.jobId!)).toBe('abandoned')
+    expect(existsSync(job.worktree!)).toBe(false)
+  })
+
+  test('cancel with a1 failed hands over to the retry a2: cancelled when a2 is held, running when a2 started', async () => {
+    const root = small()
+    const held = await service({ env: fakeFactory().env }).request({ cwd: root, scope: 'head', thread: 'retry-held' })
+    const cancelled = await service({ env: cancelFactory({ a1: 5 }, ['a1']).env }).cancel({ jobId: held.jobId! })
+    expect(cancelled).toMatchObject({ status: 'cancelled', spawns: [{ status: 'cancelled' }] })
+    expect(await jobState(held.jobId!)).toBe('abandoned')
+    const started = await service({ env: fakeFactory().env }).request({ cwd: root, scope: 'head', thread: 'retry-run' })
+    const running = await service({ env: cancelFactory({ a1: 5, a2: 5 }, ['a1']).env }).cancel({
+      jobId: started.jobId!,
+    })
+    expect(running).toMatchObject({ status: 'running' })
+    expect(await jobState(started.jobId!)).toBe('prepared')
   })
 
   test('cancel refuses an in-session job and a job that is not prepared, naming the state', async () => {

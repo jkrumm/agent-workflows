@@ -185,13 +185,13 @@ export const CancelInput = z
   .strict()
 
 export const CancelOutput = z.object({
-  status: z.enum(['cancelled', 'running']),
+  status: z.enum(['cancelled', 'running', 'failed']),
   jobId: z.string(),
   spawns: z
     .array(z.unknown())
     .optional()
     .describe("cancelled: the factory's cancelled spawns (a1, a2 when it existed)"),
-  spawn: z.unknown().optional().describe("running: the factory's answer for the spawn it could not cancel"),
+  spawn: z.unknown().optional().describe("running or failed: the factory's answer for the spawn it could not cancel"),
 })
 
 export const SubmitInput = z

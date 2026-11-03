@@ -122,7 +122,7 @@ export function reviewOperations(service: ReviewService): Record<(typeof OPERATI
       {
         summary: 'Cancel a hidden review the factory has not started (a held or queued spawn) and abandon its job',
         description:
-          'Only a prepared job of the hidden transport. cancelled: the factory ended its spawn(s) before any session claimed them and the job is abandoned. running: a spawn is already claimed or started (factory not_cancellable); the job is kept and will submit.',
+          'Only a prepared job of the hidden transport. cancelled: the factory ended its spawn(s) before any session claimed them and the job is abandoned. running: a spawn is already claimed or started (factory not_cancellable); the job is kept and will submit. failed: the spawn ended failed (nothing will submit); the job is abandoned and its tree removed.',
         cli: { mutating: true, positional: ['jobId'] },
         input: CancelInput,
         output: CancelOutput,
