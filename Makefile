@@ -5,11 +5,11 @@ help:
 	@echo "make check   oxfmt check, oxlint type-aware, tsc, bun test (the merge gate)"
 	@echo "make fmt     apply formatting"
 	@echo "make deploy  deploy origin/master on the mini: release, LaunchAgents host and audio, the gateway as a third (restarted only when its build changed), health, agw on PATH (DRY_RUN=1 prints the plan)"
-	@echo "make install-opencode  install the pinned OpenCode build and react-doctor, link opencode and opencode-safe into ~/.local/bin from the main checkout (never restarts the host)"
+	@echo "make install-opencode  install the pinned OpenCode build, link opencode and opencode-safe into ~/.local/bin from the main checkout (never restarts the host)"
 	@echo "make research-chrome  install and start the headed Chrome (LaunchAgent, DevTools on loopback) web.fetch reads bot-walled pages with"
 	@echo "make eval-mine-job  install the nightly review-ground-truth labelling job (LaunchAgent 04:30, agw eval mine review --auto; sized by the eval credit and the line on IU eval spend, removes itself at 200 bug cases; not part of make deploy)"
 	@echo "make live-routes one real call per route (anthropic, opencode, iu-openai text; ROUTES='a b' narrows), proved by its gateway usage row and run row; costs cents"
-	@echo "make verify  prove the deployment: the pinned OpenCode and react-doctor present, the healths at the sha (the gateway at its build), agw smoke ping and audio ping with their journal rows, the door's auth, three real Haiku calls through the gateway with their usage rows"
+	@echo "make verify  prove the deployment: the pinned OpenCode present, the healths at the sha (the gateway at its build), agw smoke ping and audio ping with their journal rows, the door's auth, three real Haiku calls through the gateway with their usage rows"
 
 # docs/spikes/** is excluded from every tool (see .oxfmtrc.json, .oxlintrc.json, tsconfig.json, bunfig.toml).
 # Tests need Postgres via AGW_TEST_PG_URL; unset on the mini, it is built from .env.test.tpl through secrets-run, together with
@@ -54,12 +54,11 @@ verify:
 live-routes:
 	@/bin/zsh scripts/live-routes.sh $(ROUTES)
 
-# The machine's one OpenCode build and the pinned react-doctor (packages/opencode-host/README.md §Pinned build). Run from
+# The machine's one OpenCode build (packages/opencode-host/README.md §Pinned build). Run from
 # the main checkout: ~/.local/bin/opencode and opencode-safe link to this checkout's scripts, so a linked worktree is
 # refused (unless AGW_BIN_DIR redirects the links, a temp prefix for tests). Idempotent; never restarts the host, whose
-# OpenCode server picks the new binary up on its next start. Order: the OpenCode build (fatal), the links, then
-# react-doctor (a failure only warns: review runs report it as not run, `make verify` names it). AGW_OPENCODE_ROOT,
-# AGW_REACT_DOCTOR_ROOT and AGW_BIN_DIR (absolute paths) redirect the installs and the links; see scripts/pins.sh.
+# OpenCode server picks the new binary up on its next start. Order: the OpenCode build (fatal), then the links.
+# AGW_OPENCODE_ROOT and AGW_BIN_DIR (absolute paths) redirect the install and the links; see scripts/pins.sh.
 install-opencode:
 	@if [ -z "$$AGW_BIN_DIR" ] && [ "$$(git -C "$(CURDIR)" rev-parse --absolute-git-dir)" != "$$(git -C "$(CURDIR)" rev-parse --path-format=absolute --git-common-dir)" ]; then \
 		echo "install-opencode: run it from the main checkout, not a linked worktree (the machine-wide links point at this checkout)" >&2; exit 1; fi
@@ -69,7 +68,6 @@ install-opencode:
 		ln -sfn "$(CURDIR)/scripts/opencode" "$$bin/opencode"; \
 		ln -sfn "$(CURDIR)/scripts/opencode-safe" "$$bin/opencode-safe"; \
 		echo "linked $$bin/opencode and $$bin/opencode-safe -> $(CURDIR)/scripts"
-	@scripts/install-react-doctor.sh || echo "warning: react-doctor install failed; review runs report it as not run (rerun make install-opencode)" >&2
 
 # The headed Chrome behind web.fetch's browser fallback (AGW_BROWSER_CDP_URL in .env.tpl). Not a release artifact: the
 # profile and its cookies live in ~/.local/share/research-chrome, so it is installed once per machine. Idempotent; a

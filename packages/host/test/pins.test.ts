@@ -3,9 +3,8 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync }
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { OPENCODE_VERSION } from '@agent-workflows/opencode-host'
-import { REACT_DOCTOR_VERSION } from '../src/workflows/review/react-doctor.ts'
 
-// scripts/pins.sh reads the installers' versions out of the exported constants with sed: a reformatted constant must
+// scripts/pins.sh reads the installer's version out of the exported constant with sed: a reformatted constant must
 // fail here, not silently install nothing.
 const pins = join(import.meta.dir, '../../../scripts/pins.sh')
 const scratch: string[] = []
@@ -20,7 +19,6 @@ function run(args: string[], env: Record<string, string> = {}) {
 
 test('the pinned versions read from the source equal the exported constants', () => {
   expect(run(['version', 'opencode']).out).toBe(OPENCODE_VERSION)
-  expect(run(['version', 'react-doctor']).out).toBe(REACT_DOCTOR_VERSION)
 })
 
 test('a relative root override is rejected', () => {
@@ -29,17 +27,13 @@ test('a relative root override is rejected', () => {
   expect(result.err).toContain('AGW_OPENCODE_ROOT must be an absolute path')
 })
 
-test('check fails naming make install-opencode when a pinned install is missing, passes when both are present', () => {
+test('check fails naming make install-opencode when the pinned install is missing, passes when it is present', () => {
   const prefix = mkdtempSync(join(tmpdir(), 'agw-pins-'))
   scratch.push(prefix)
-  const env = {
-    AGW_OPENCODE_ROOT: join(prefix, 'opencode-bin'),
-    AGW_REACT_DOCTOR_ROOT: join(prefix, 'react-doctor'),
-  }
+  const env = { AGW_OPENCODE_ROOT: join(prefix, 'opencode-bin') }
   const missing = run(['check'], env)
   expect(missing.code).toBe(1)
   expect(missing.err).toContain(`OpenCode ${OPENCODE_VERSION} missing at`)
-  expect(missing.err).toContain(`react-doctor ${REACT_DOCTOR_VERSION} missing at`)
   expect(missing.err).toContain('make install-opencode')
 
   const exe = (path: string) => {
@@ -48,7 +42,6 @@ test('check fails naming make install-opencode when a pinned install is missing,
     chmodSync(path, 0o755)
   }
   exe(join(env.AGW_OPENCODE_ROOT, OPENCODE_VERSION, 'node_modules/.bin/opencode'))
-  exe(join(env.AGW_REACT_DOCTOR_ROOT, REACT_DOCTOR_VERSION, 'node_modules/.bin/react-doctor'))
   const unlinked = run(['check'], env)
   expect(unlinked.code).toBe(1)
   expect(unlinked.err).toContain('current does not point at the pinned OpenCode')

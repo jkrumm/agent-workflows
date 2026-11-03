@@ -5,11 +5,11 @@
 # healthy at the same sha, `agw audio ping` (routed to it by AGW_PROCESSES) must leave a done run, and its door must
 # refuse an unauthenticated request (401) and answer an authenticated one with a bad body with the legacy 400.
 # The host's image door (/door/image/generate) must do the same: 401 without a token, the studio's 400 envelope on a bad body.
-# The pinned OpenCode build and react-doctor of the deployed release must be installed (scripts/pins.sh check).
+# The pinned OpenCode build of the deployed release must be installed (scripts/pins.sh check).
 # The gateway must be healthy at the recorded build (data/gateway-build), and three real Haiku calls through it must behave
 # and be recorded: a credit-pool call, the same call again that reads the cache, and a Claude-Code-shaped one that goes to
 # IU; their `usage.records` rows (billing api_credit, api_credit, api_key/personal) and `usage.gateway_picks` rows must
-# appear within 120 s. A fourth Haiku call with the `agw-opencode` door token (the token the host hands OpenCode and `ocr`)
+# appear within 120 s. A fourth Haiku call with the `agw-opencode` door token (the token the host hands OpenCode)
 # must land lane agw_workflow. agw holds no provider key, so the smoke run's and the cap.llm.title run's model calls are
 # the gateway's: each run needs `source='gateway'` rows, every one qualifying (lane agw_workflow, workflow and step in
 # lane_detail, a priced cost, billing api_credit on a pool /health names or api_key personal, never api_credit with no
@@ -49,7 +49,7 @@ for tool in git curl jq psql secrets-run agw; do
   command -v "$tool" >/dev/null 2>&1 || fail "$tool not found on PATH"
 done
 
-# 0. the pinned builds the OpenCode host and the review workflow exec exist where they are looked for
+# 0. the pinned OpenCode build the OpenCode host execs exists where it is looked for
 pins=$("${0:A:h}/pins.sh" check "$ROOT/current" 2>&1) || fail "$pins"
 ok "$pins"
 
