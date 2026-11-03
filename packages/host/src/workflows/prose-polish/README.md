@@ -33,3 +33,16 @@ together (legacy's sum: an unpriced call counts 0 unless neither was priced, the
 - **Route.** `prose.write` (`packages/routes/src/table/prose.ts`): `iu-openai`, DeepSeek flash, effort high,
   32k output (legacy's `prose_write` was Opus 5.5 on Messages, the wire now named `anthropic`; DeepSeek only since 2026-10-30, owner direction). The shared balance fallback applies.
 - No agent definitions: no agent step runs.
+
+## Eval
+
+`eval/cases.jsonl` holds 8 short drafts written for the set (English and German; article, docs, briefing, vault and chat), each with
+planted lint issues (banned words, a negative parallelism, a significance participle, German nominal style and passive chains), one
+clean control and one with a code fence and a wikilink. Registered as the module's suite (`agw eval run prose-polish`); the reference
+holds the planted phrases (`gone`), the facts that must survive (`keep`: numbers, names, a command) and an optional length band.
+
+The scorer (`scorer.ts`, deterministic, no model judge) re-runs the lint on the draft and on the returned text and scores `valid`,
+`honest` (`lint.before`, `lint.after` and `lint.findings` are what the lint finds, and `kept: original` returns the draft exactly),
+`notWorse` (no more findings than the draft), `fixed` (fewer findings, 1 for a clean draft), `gone` (share of planted phrases
+removed), `facts` (share of must-keep facts present) and `length` (the text's length is 0.5 to 1.25 of the draft's). `pass` needs all at
+1, so a writer the keep gate refused scores 0 on `fixed` and `gone`: the original is the safe answer, not a good one.
