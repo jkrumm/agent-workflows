@@ -453,12 +453,19 @@ describe('runCalibration', () => {
 })
 
 describe('judge run versions', () => {
-  test('the current capability hash and the legacy ones count; the legacy hash is the one from before judge b', () => {
+  test('the current capability hash and the legacy ones of the current judge version count', () => {
     const registry = createRegistry(createCapabilities({ transports: fakeTransports({}), env: {} }))
     const current = createCapabilityWorkflows(registry).get('eval.judge')?.version
     expect(current).toMatch(/^[0-9a-f]{12}$/)
-    expect(judgeRunVersions(registry)).toEqual([current as string, ...LEGACY_JUDGE_RUN_VERSIONS])
-    expect(LEGACY_JUDGE_RUN_VERSIONS).toEqual(['8e1f56d6a647'])
+    expect(JUDGE_VERSION).toBe('eval-judge-ced286944fd4')
+    expect(LEGACY_JUDGE_RUN_VERSIONS[JUDGE_VERSION]).toEqual(['8e1f56d6a647'])
+    expect(judgeRunVersions(registry)).toEqual([current as string, '8e1f56d6a647'])
+  })
+
+  test('a legacy hash is cut off once the judge version is not the one it was made under', () => {
+    const registry = createRegistry(createCapabilities({ transports: fakeTransports({}), env: {} }))
+    const current = createCapabilityWorkflows(registry).get('eval.judge')?.version as string
+    expect(judgeRunVersions(registry, 'eval-judge-changed')).toEqual([current])
   })
 
   test('the journal query returns the version the run started under', async () => {

@@ -147,7 +147,8 @@ export type GtLabelRecord = z.infer<typeof GtLabelRecord>
  * The acceptance rule (2 of 3): at least two seats answered `defect` and the locations of two of those name the same
  * file and overlap within `LOCATION_SLACK` lines. Anything else is a rejection with its reason. The reasons for a
  * record without `c` are `a-no`, `b-no`, `both-no`, `no-overlap` and `labeler-error`; with `c`, a disagreement that
- * `c` did not settle is `c-no` (it says no), `c-no-overlap` (it says defect elsewhere) or `c-error`.
+ * `c` did not settle is `c-no` (it says no), `c-no-overlap` (it says defect elsewhere) or `c-error`. `no-location` is a rejection
+ * whose only problem is that fewer than two defect answers name a place (`defect: true` with `location: null`).
  */
 export const LOCATION_SLACK = 3
 export const RejectReason = z.enum([
@@ -159,6 +160,7 @@ export const RejectReason = z.enum([
   'c-no',
   'c-no-overlap',
   'c-error',
+  'no-location',
 ])
 /** The pair of seats that agreed on an accepted case. */
 export const AcceptPath = z.enum(['a+b', 'a+c', 'b+c'])

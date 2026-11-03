@@ -294,6 +294,13 @@ export function createEvalMine(options: EvalMineOptions): HostWorkflow {
           concurrency: input.concurrency ?? DEFAULT_CONCURRENCY,
         }),
       )
+      if (labelled.stopped !== null) {
+        // The run is a success (what was labelled is kept); the stop is a warning so it does not pass unseen.
+        warn(
+          `labelling stopped: ${labelled.stopped} (${labelled.labelled} candidates labelled and ${labelled.thirdSeat} given the third labeller in this run)`,
+          { runId: ctx.runId },
+        )
+      }
       const summary = await ctx.step('cases', () => {
         const rebuilt = rebuildCases({ env, warn, versions: VERSIONS })
         writeReport(report(mined.funnel, rebuilt, now()), env)

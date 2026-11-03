@@ -303,13 +303,15 @@ Every file is written to a temp file and renamed, so a reader or a crash sees th
   does not disqualify a control.
 - **Split:** `dev` when the first 8 hex of `sha256(id) / 2^32` is below `DEV_SHARE`, else `test`; bugs and controls alike.
 - **Labellers:** `a` (Claude), `b` (GPT) and `c` (Gemini, a third vendor). `c` is asked only when `a` and `b` disagree:
-  one says defect and the other not (`a-no`, `b-no`), or both say defect at locations that do not overlap (`no-overlap`).
+  one says defect and the other not (`a-no`, `b-no`), or both say defect at locations that do not overlap or are missing (`no-overlap`, `no-location`).
   Not on `both-no`, not when both accept, not on a seat error.
 - **Acceptance (2 of 3):** at least two seats say defect and the locations of two of those name the same file within
   `LOCATION_SLACK` lines of each other. The case takes the location, description, class and severity of seat `a` when
   `a` is in the agreeing pair, else of the pair's first seat (`b` in `b+c`). Otherwise the reason is `a-no`, `b-no`,
   `both-no`, `no-overlap` or `labeler-error` for a record without `c`, and with `c`: `c-no` (it says no), `c-no-overlap`
-  (it says defect, but its location overlaps neither) or `c-error` (it failed with an answer).
+  (it says defect, but its location overlaps neither), `c-error` (it failed with an answer) or `no-location` (fewer
+  than two defect answers name a place: a `defect: true` with `location: null` cannot form a pair). `c` is asked whenever
+  `a` and `b` answered, one says defect and they do not agree, a defect without a place included.
 - **Seat `c` and the versions.** `LABELER_VERSION` covers `a` and `b` only; `c` has `LABELER_C_VERSION`, stored on the
   record as `cVersion`, so adding `c` never invalidates a record's `a` and `b`. A `c` under another version is treated
   as not asked. Resume asks `c` alone of the disagreeing records that lack it (the record is appended again with `c`;

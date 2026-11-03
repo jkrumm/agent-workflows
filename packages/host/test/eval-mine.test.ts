@@ -488,6 +488,9 @@ describe('eval.mine: labelling', () => {
     expect(out.labelledThisRun).toBe(1)
     expect(lines('labels.jsonl')).toHaveLength(1)
     expect(out.summary.labelled).toBe(1)
+    // The run is a success; the stop is also a warning with the reason and the count of this run.
+    expect(warnings.filter((w) => w.startsWith('labelling stopped:') && w.includes('no eval credit'))).toHaveLength(1)
+    expect(warnings.find((w) => w.startsWith('labelling stopped:'))).toContain('(1 candidates labelled and 0 given')
   })
 
   test('a torn trailing line in labels.jsonl is skipped with a warning; the next record starts a line of its own', async () => {
@@ -617,14 +620,17 @@ describe('eval.mine: the third labeller', () => {
     }
     const out = await mineRun({ label: 4, yes: true, concurrency: 1, controls: 3 })
     expect(out.stopped).toContain('no eval credit')
+    expect(warnings.some((w) => w.startsWith('labelling stopped:'))).toBe(true)
     const stopped = (lines('labels.jsonl') as GtLabelRecord[]).map((r) => GtLabelRecord.parse(r))
     expect(stopped.length).toBeGreaterThan(0)
     expect(stopped.every((r) => r.c === undefined)).toBe(true)
 
     answer = verdicts
     calls.length = 0
+    warnings.length = 0
     const rest = await mineRun({ label: 4, yes: true, controls: 3 })
     expect(rest.stopped).toBeNull()
+    expect(warnings.some((w) => w.startsWith('labelling stopped:'))).toBe(false)
     expect(rest.summary.pendingThirdSeat).toBe(0)
     expect(asked('c')).toHaveLength(2)
     // a and b are asked once per candidate: the second run asks only the candidates the first did not record
