@@ -66,14 +66,24 @@ const finding = (id: string, tag: OutputFindingValue['tag'], file = 'src/a.ts'):
   failureScenario: 'it breaks',
 })
 
-type Fate = { kind: 'submit'; findings: OutputFindingValue[] } | { kind: 'abandon' } | { kind: 'needs-human' }
+type Fate =
+  | { kind: 'gave-up'; state: string }
+  | { kind: 'waiting' }
+  | { kind: 'submit'; findings: OutputFindingValue[] }
+  | { kind: 'abandon' }
+  | { kind: 'needs-human' }
 
 /** The review service port: jobs by clone dir, a case's fate by its subject; a job is submitted at its first poll. */
 function fakeReview(fates: Record<string, Fate>) {
   const requests: Record<string, unknown>[] = []
-  const jobs = new Map<string, { id: string; cwd: string; fate: Fate; polls: number }>()
-  const state = (job: { fate: Fate; polls: number }) =>
-    job.fate.kind === 'abandon' ? 'abandoned' : job.polls > 0 ? 'submitted' : 'prepared'
+  const cancels: string[] = []
+  const jobs = new Map<string, { id: string; cwd: string; fate: Fate; polls: number; cancelled?: boolean }>()
+  const state = (job: { fate: Fate; polls: number; cancelled?: boolean }) => {
+    if (job.fate.kind === 'abandon' || job.cancelled) return 'abandoned'
+    if (job.fate.kind === 'gave-up') return 'prepared' // the factory ended a2; nothing will ever submit
+    if (job.fate.kind === 'waiting') return job.polls > 3 ? 'submitted' : 'prepared' // held by the ceiling a while
+    return job.polls > 0 ? 'submitted' : 'prepared'
+  }
   const review = {
     async request(input: Parameters<RecallReview['request']>[0]) {
       requests.push(input)
@@ -121,12 +131,32 @@ function fakeReview(fates: Record<string, Fate>) {
           account: 'max-b',
           createdAt: '2026-11-03T10:00:00.000Z',
           submittedAt: submitted ? '2026-11-03T10:07:00.000Z' : null,
-          output: submitted && job.fate.kind === 'submit' ? { findings: job.fate.findings } : null,
+          output: submitted ? { findings: job.fate.kind === 'submit' ? job.fate.findings : [] } : null,
+          ...(state(job) === 'prepared'
+            ? {
+                hidden:
+                  job.fate.kind === 'gave-up'
+                    ? {
+                        attempts: [
+                          { key: `review-${job.id}-a1`, status: 'ended' },
+                          { key: `review-${job.id}-a2`, status: job.fate.state },
+                        ],
+                        gaveUp: true,
+                      }
+                    : { attempts: [{ key: `review-${job.id}-a1`, status: 'queued' }], gaveUp: false },
+              }
+            : {}),
         },
       }
     },
+    async cancel(input: Parameters<RecallReview['cancel']>[0]) {
+      cancels.push(input.jobId)
+      const job = jobs.get(input.jobId)
+      if (job) job.cancelled = true
+      return { status: 'failed', jobId: input.jobId }
+    },
   } as unknown as RecallReview
-  return { review, requests }
+  return { review, requests, cancels }
 }
 
 /** The judge port: `match` for finding `hit` of a bug case, `not-a-bug` for the rest. */
@@ -327,6 +357,19 @@ describe('agw eval recall', () => {
       bug: { recall: { n: 1, hits: 0 } }, // only the submitted case is in the denominator
     })
     expect(clones.removed.sort()).toEqual(['/clone/b1', '/clone/b2', '/clone/b4'])
+  })
+
+  test('a job the factory gave up on is cancelled and unscored with the factory state; a merely held one keeps polling', async () => {
+    const { body, review } = await runWith(
+      [bugCase('b1'), bugCase('b2')],
+      { 'feat: b1': { kind: 'gave-up', state: 'ended' }, 'feat: b2': { kind: 'waiting' } },
+      {},
+    )
+    expect((body.output as Body).cases.map((c: Body) => `${c.id}:${c.status}:${c.reason}`)).toEqual([
+      'b1:unscored:review gave up: ended',
+      'b2:scored:null',
+    ])
+    expect(review.cancels).toEqual(['rv_1']) // only the wedged job; the held one was never cancelled
   })
 
   test('a second run over the same clone adopts the live job and does not request again', async () => {

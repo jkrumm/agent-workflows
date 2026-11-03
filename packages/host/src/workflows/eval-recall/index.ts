@@ -15,7 +15,7 @@ export const EVAL_RECALL_CASE_ID = 'eval.recall.case'
 const POLL_MS = 60_000
 
 /** The two review operations the run uses; the host's review service fits. */
-export type RecallReview = Pick<ReviewService, 'request' | 'status'>
+export type RecallReview = Pick<ReviewService, 'request' | 'status' | 'cancel'>
 
 /** The one capability scoring calls; any registry that serves `eval.judge` fits. */
 export interface RecallJudge {
@@ -249,6 +249,14 @@ export function createEvalRecall(options: EvalRecallOptions): HostWorkflow[] {
             const { job } = await options.review.status({ jobId: requested.jobId })
             if (!job) throw new WorkflowError('error', `review job ${requested.jobId} has no status`)
             if (job.state === 'abandoned') return { state: 'unscored', reason: 'abandoned' }
+            if (job.hidden?.gaveUp) {
+              // The factory ended its retry: nothing will submit. Cancel abandons the job; a spawn that is
+              // somehow alive again answers `running` and the poll goes on.
+              const last = job.hidden.attempts.at(-1)
+              const cancelled = await options.review.cancel({ jobId: requested.jobId })
+              if (cancelled.status !== 'running')
+                return { state: 'unscored', reason: `review gave up: ${last?.status ?? 'unknown'}` }
+            }
             if (job.state === 'submitted') {
               const wallMs = Date.parse(job.submittedAt ?? '') - Date.parse(job.createdAt)
               return {

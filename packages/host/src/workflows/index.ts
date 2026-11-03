@@ -40,7 +40,7 @@ export interface WorkflowDeps {
   /** The journal's `label` step costs of `eval.mine` runs (`pgLabelStepCosts`), which `eval.mine`'s label estimate reads; absent: the estimate stays unknown. */
   costHistory?: CostHistory
   /** Review v4's service (`agw review request|status`), which `eval.recall` drives in process; absent: that workflow is not served. */
-  review?: Pick<ReviewService, 'request' | 'status'>
+  review?: Pick<ReviewService, 'request' | 'status' | 'cancel'>
   /** The host's one tool gate; see `HostDeps`. */
   toolGate?: ToolGate
   /** Where a workflow's non-fatal failures (a hook, a ledger write) are logged; default: nowhere. */

@@ -28,7 +28,7 @@ their first step. A child that fails (a judge outage, a missing credit) leaves i
   step looks the clone's live (not abandoned) job up first and adopts it, so a case is never requested twice. The
   factory spawns one reviewer session on Max, paced by its quota ceiling.
 - **Wait.** Polls `review.status` every 60 s until the job is `submitted` or `abandoned`; no wall-clock ceiling (a job
-  the ceiling holds may wait hours). A `needs-human` or `skipped` request, an abandoned job, a failed clone and a judge
+  the ceiling holds may wait hours). A job whose factory retry (a2) ended without a submit (`status` shows `hidden.gaveUp`) is cancelled, which abandons it, and recorded `unscored` as `review gave up: <factory state>`; a job merely waiting or queued (the ceiling) keeps polling. A `needs-human` or `skipped` request, an abandoned job, a failed clone and a judge
   answer that is unusable are `unscored` with the reason, never a miss and never in a denominator.
 - **Score.** The restored scorer v3 on REVIEW_OUTPUT v4 (`scorer.ts`): the token-overlap preselection, one `eval.judge`
   call (judge `a`, pinned route, purpose `eval`; both judges when `judge-calibration.json` does not clear `KAPPA_BAR`
