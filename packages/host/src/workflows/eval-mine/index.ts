@@ -88,7 +88,9 @@ export const evalMineInput = z
       .number()
       .positive()
       .optional()
-      .describe(`--auto: the IU personal-key line in USD, default ${AUTO_DEFAULTS.iuLineUsd}`),
+      .describe(
+        `--auto: the line on IU eval spend (the personal key's eval workflows, not its whole total) in USD, default ${AUTO_DEFAULTS.iuLineUsd}`,
+      ),
     iuMarginUsd: z
       .number()
       .min(0)
@@ -97,11 +99,11 @@ export const evalMineInput = z
     iuSince: z.iso
       .datetime()
       .optional()
-      .describe(`--auto: IU spend counts from this instant, default ${AUTO_DEFAULTS.iuSince}`),
+      .describe(`--auto: IU eval spend counts from this instant, default ${AUTO_DEFAULTS.iuSince}`),
     maxPerRun: z
       .number()
       .int()
-      .min(0)
+      .min(1)
       .optional()
       .describe(`--auto: most candidates one run labels, default ${AUTO_DEFAULTS.maxPerRun}`),
     seed: z.number().int().optional().describe('Seed of the label order and the control pick, default 1'),
@@ -429,7 +431,9 @@ async function sizeAuto(args: {
     }
   }
   const creditAvailableUsd = await read('eval credit', () => ports.creditAvailableUsd())
-  const iuSpentUsd = await read('IU total', () => ports.iuSpentUsd({ since: input.iuSince ?? AUTO_DEFAULTS.iuSince }))
+  const iuSpentUsd = await read('IU eval spend', () =>
+    ports.iuSpentUsd({ since: input.iuSince ?? AUTO_DEFAULTS.iuSince }),
+  )
   const history = await read('per-candidate cost history', () => ports.runSpend({ limit: ESTIMATE_HISTORY }))
   const perCandidate = perCandidateCosts(history)
 
@@ -447,11 +451,21 @@ async function sizeAuto(args: {
     unlabelled,
     maxPerRun: input.maxPerRun ?? AUTO_DEFAULTS.maxPerRun,
   })
-  if (sized.state === 'labelled' && sized.planned === 0 && thirdSeatBacklog === 0) {
-    throw new WorkflowError(
-      'error',
-      `no unlabelled candidates are left and ${bugCasesBefore} bug cases of ${target} is all the history yields`,
-    )
+  if (sized.state === 'labelled' && sized.planned === 0) {
+    // A plan of nothing is never a finished job. With candidates left it is a sizing bug: say so instead of logging a quiet night.
+    if (unlabelled > 0) {
+      throw new WorkflowError(
+        'error',
+        `--auto planned 0 candidates with ${unlabelled} unlabelled left; it must label or say why not`,
+      )
+    }
+    // Every candidate is labelled and the target is not reached: the history cannot yield it. Only a backlog of third-seat records is left to do.
+    if (thirdSeatBacklog === 0) {
+      throw new WorkflowError(
+        'error',
+        `no unlabelled candidates are left and ${bugCasesBefore} bug cases of ${target} is all the history yields`,
+      )
+    }
   }
   return {
     ...record,

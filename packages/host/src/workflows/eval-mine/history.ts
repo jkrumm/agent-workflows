@@ -68,18 +68,25 @@ export function evalMineAutoPorts(options: {
     },
 
     async iuSpentUsd({ since }) {
-      const { rows } = await usage().query<{ total: string | null }>(
-        `select sum(cost_usd)::text as total from "${usageSchema}".records
+      const { rows } = await usage().query<{ total: string | null; unpriced: string }>(
+        `select sum(cost_usd)::text as total, count(*) filter (where cost_usd is null)::text as unpriced
+         from "${usageSchema}".records
          where source = 'gateway' and billing = 'api_key' and api_key = 'personal'
            and lane_detail->>'workflow' like 'eval.%' and ts >= $1::timestamptz`,
         [since],
       )
+      // A row without a cost is spend nobody knows: counting it as 0 would plan against a total that is too low.
+      const unpriced = Number(rows[0]?.unpriced ?? 0)
+      if (unpriced > 0) {
+        throw new Error(`${unpriced} IU eval rows since ${since} have no cost_usd, so the IU eval spend is unknown`)
+      }
       return Number(rows[0]?.total ?? 0)
     },
 
     async runSpend({ limit }) {
-      const { rows: runs } = await options.journal.query<{ id: string; units: number }>(
-        `select r.id, (coalesce((r.output->>'labelledThisRun')::int, 0) + coalesce((r.output->>'thirdSeatThisRun')::int, 0)) as units
+      const { rows: runs } = await options.journal.query<{ id: string; labelled: number; third_seat: number }>(
+        `select r.id, coalesce((r.output->>'labelledThisRun')::int, 0) as labelled,
+           coalesce((r.output->>'thirdSeatThisRun')::int, 0) as third_seat
          from "${journalSchema}".runs r
          where r.workflow = 'eval.mine' and r.id = r.root_id and r.status = 'done' and r.output is not null
            and coalesce((r.output->>'labelledThisRun')::int, 0) + coalesce((r.output->>'thirdSeatThisRun')::int, 0) > 0
@@ -99,7 +106,8 @@ export function evalMineAutoPorts(options: {
       const byRun = new Map(spend.map((row) => [row.run_id, row]))
       return runs.map((run) => ({
         runId: run.id,
-        units: Number(run.units),
+        labelled: Number(run.labelled),
+        thirdSeat: Number(run.third_seat),
         creditUsd: Number(byRun.get(run.id)?.credit ?? 0),
         iuUsd: Number(byRun.get(run.id)?.iu ?? 0),
       }))
