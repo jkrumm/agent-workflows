@@ -37,7 +37,7 @@ export interface OverviewDeps {
  * builds the facts from it and makes the one `overview.classify` call; the verdicts are merged onto the snapshot's own
  * ids. `agw agents` serves the newest completed prod run beside a fresh snapshot, so the run's output is the cache.
  *
- * The facts (transcript excerpts, queued commands) are built and used inside the step and never leave it: the journal
+ * The facts (the factory's titles and headlines) are built and used inside the step and never leave it: the journal
  * keeps the agent ids, a hash of the facts and the verdicts. A completed step is read back on resume, never re-run.
  */
 export function createOverview(deps: OverviewDeps): HostWorkflow {

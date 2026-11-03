@@ -12,6 +12,9 @@ HYPERDX_PROD_ACCESS_KEY=op://vps/clickstack/AGENT_ACCESS_KEY
 HYPERDX_DOMAIN=op://vps/config/DOMAIN
 # Argo bearer (the agents overview push, the podcast's Slack notice). ARGO_URL is deployment config.
 ARGO_API_SECRET=op://common/api/SECRET
+# The factory (software-factory) is the one producer of agent state: `agw agents` runs `factory fleet --format json`, which
+# needs this token in its environment (exit 3 without it).
+FACTORY_TOKEN=op://mini/software-factory/FACTORY_TOKEN
 # Host (scripts/launch.sh). The API secret is also what `make deploy` writes into the CLI's env file.
 AGW_API_SECRET=op://mini/agent-workflows/API_SECRET
 ARGO_URL=op://mini/agent-workflows/ARGO_URL

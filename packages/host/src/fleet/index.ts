@@ -1,13 +1,7 @@
 import type { Logger } from '@agent-workflows/runtime'
 import { createArgoPush } from './argo.ts'
-import {
-  buildSnapshot,
-  type Collectors,
-  commandRunner,
-  defaultCollectors,
-  type FleetConfig,
-  fleetConfig,
-} from './collect.ts'
+import { emptySnapshot, mapFleet } from './derive.ts'
+import { commandRunner, type FactoryRead, type FleetConfig, fleetConfig, readFactoryFleet } from './factory.ts'
 import { enrichmentOf, mergeOverviewIntoSnapshot, parseStoredOverview } from './overview.ts'
 import { claudeAccountCli, createQuota, type Quota } from './quota.ts'
 import { type AgentEnrichment, parseCols, renderText } from './render.ts'
@@ -15,20 +9,21 @@ import type { AccountQuota, OverviewOutput, OverviewPayload, Snapshot } from './
 
 export { buildAgentFacts, type ClassifyInput, classifyInput, reconcileKnown, reconcileOverview } from './overview.ts'
 export { startArgoSchedule } from './argo.ts'
-export { fleetConfig } from './collect.ts'
+export { fleetConfig } from './factory.ts'
 export type { ArgoPush } from './argo.ts'
 export type { Quota } from './quota.ts'
 
 /**
  * The snapshot cache: a herdr pane, Hermes and the Argo push all read within seconds of each other, and one snapshot
- * costs three CLI calls, a transcript tail per agent and a git status per project. Consumers poll about every 31 s
- * (measured on the legacy gateway: 20 s missed the window on nearly every request), so 45 s shares one build and still
- * stays under the ten-minute push. The promise is cached, so concurrent first callers share one build.
+ * is one `factory fleet` call. Consumers poll about every 31 s (measured on the legacy gateway: 20 s missed the window
+ * on nearly every request), so 45 s shares one build and still stays under the ten-minute push. The promise is cached,
+ * so concurrent first callers share one build.
  */
 const SNAPSHOT_CACHE_MS = 45_000
 
 export interface FleetDeps {
-  collectors: Collectors
+  /** One read of the factory's fleet view (production: `factory fleet --format json`); a failure is a value, never a throw. */
+  factory: () => Promise<FactoryRead>
   quota: Quota
   /** The newest completed `overview` run's output, or null when none exists. */
   latestOverview: () => Promise<unknown>
@@ -53,21 +48,33 @@ export interface Fleet {
 
 export function createFleet(deps: FleetDeps): Fleet {
   const now = deps.now ?? Date.now
-  let cached: { at: number; promise: Promise<Snapshot> } | null = null
+  let cached: { at: number; promise: Promise<{ snapshot: Snapshot; ok: boolean }> } | null = null
 
-  const snapshot: Fleet['snapshot'] = (options = {}) => {
+  /** The read, mapped. The clock is taken after the read unless the caller sets one (the cache): no activity is newer than the snapshot. */
+  const build = async (staleAfterHours: number, at?: number) => {
+    const read = await deps.factory()
+    const time = at ?? Date.now()
+    if (!read.ok) return { snapshot: emptySnapshot({ now: time, staleAfterHours, warning: read.warning }), ok: false }
+    return { snapshot: mapFleet(read.fleet, { now: time, staleAfterHours }), ok: true }
+  }
+
+  const snapshot: Fleet['snapshot'] = async (options = {}) => {
     const hours = options.staleAfterHours ?? deps.config.staleAfterHours
-    if (options.fresh || options.staleAfterHours !== undefined)
-      return buildSnapshot(deps.collectors, { staleAfterHours: hours })
+    if (options.fresh || options.staleAfterHours !== undefined) return (await build(hours)).snapshot
     const at = now()
-    if (cached && at - cached.at < SNAPSHOT_CACHE_MS) return cached.promise
-    const promise = buildSnapshot(deps.collectors, { now: at, staleAfterHours: hours })
+    if (cached && at - cached.at < SNAPSHOT_CACHE_MS) return (await cached.promise).snapshot
+    const promise = build(hours, at)
     cached = { at, promise }
-    // A failed build is not served from the cache: the next caller rebuilds.
-    promise.catch(() => {
-      if (cached?.promise === promise) cached = null
-    })
-    return promise
+    // A failed read is not served from the cache: the next caller asks the factory again.
+    void promise.then(
+      (built) => {
+        if (!built.ok && cached?.promise === promise) cached = null
+      },
+      () => {
+        if (cached?.promise === promise) cached = null
+      },
+    )
+    return (await promise).snapshot
   }
 
   return {
@@ -114,8 +121,9 @@ export interface HostFleetOptions {
 export function hostFleet(options: HostFleetOptions) {
   const config = fleetConfig(options.env)
   const warn = (message: string, meta?: Record<string, unknown>) => options.logger.warn(message, meta)
+  const run = commandRunner(options.env)
   const fleet = createFleet({
-    collectors: defaultCollectors(config, commandRunner(options.env), { warn }),
+    factory: () => readFactoryFleet(run, config, options.env),
     quota: createQuota({ cli: claudeAccountCli({ env: options.env }), warn: (message) => warn(message) }),
     latestOverview: options.latestOverview,
     config,

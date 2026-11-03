@@ -495,7 +495,7 @@ export function hostProcess(config: HostConfig, door?: ImageDoorOptions): Proces
     friction: { settings: config.friction },
     async workflows({ config: base, env, registry, toolGate, logger, readPool, learnings, onClose }) {
       journal = pgJournalReader(readPool, base.schema)
-      // The agents overview: its collectors and quota are shared by `agw agents`, the `overview` workflow and the push.
+      // The agents overview: its factory reader and quota are shared by `agw agents`, the `overview` workflow and the push.
       fleet = hostFleet({ env, logger, machine: base.machine, latestOverview: pgLatestOverview(readPool, base.schema) })
       const gh = config.retroFileIssues && config.retroIssueRepo ? ghCli({ repo: config.retroIssueRepo }) : undefined
       // Issues may name only paths this repo tracks; a release is a `git archive` of the commit (see tracked.ts).

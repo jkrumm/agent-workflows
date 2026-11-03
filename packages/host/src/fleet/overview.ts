@@ -18,9 +18,10 @@ const MAX_LAST_REPLY_CHARS = 800
 function projectLines(project: Project, generatedAt: number): string[] {
   const lines: string[] = [`## Project: ${project.name}`]
   if (project.git) {
-    const { branch, dirty, ahead, behind, lastCommit } = project.git
+    const { branch, dirty, lastCommit } = project.git
+    // The factory's git has no upstream counts: say so, so a missing "ahead" is never read as "not ahead".
     lines.push(
-      `branch: ${branch}${dirty ? ' (dirty — uncommitted changes)' : ' (clean)'}  ahead: ${ahead}  behind: ${behind}`,
+      `branch: ${branch}${dirty ? ' (dirty — uncommitted changes)' : ' (clean)'}  ahead: unknown  behind: unknown`,
     )
     lines.push(
       lastCommit
@@ -28,7 +29,7 @@ function projectLines(project: Project, generatedAt: number): string[] {
         : 'last commit: none',
     )
   } else {
-    lines.push('branch: unknown (not a git repo, or git status failed)')
+    lines.push('branch: unknown (no git status for this project)')
   }
   return lines
 }
@@ -39,11 +40,14 @@ function agentLines(agent: Agent, generatedAt: number): string[] {
   if (agent.herdrStatus) lines.push(`  herdrStatus: ${agent.herdrStatus}`)
   if (agent.claudeStatus) lines.push(`  claudeStatus: ${agent.claudeStatus}`)
   if (agent.waitingFor) lines.push(`  waitingFor: ${agent.waitingFor}`)
-  // One line each: a multi-line prompt must not open a line of its own, least of all a forged `- agent id:`.
+  if (agent.plan) lines.push(`  plan: ${agent.plan}${agent.wave != null ? `  wave: ${agent.wave}` : ''}`)
+  // One line each: a text from outside must not open a line of its own, least of all a forged `- agent id:`.
+  // `lastReply` is the factory digest's headline (the seat's prompt knows the label); the factory has no `lastPrompt`.
   const prompt = agent.lastPrompt && oneLine(agent.lastPrompt)
   const reply = agent.lastReply && oneLine(agent.lastReply)
   if (prompt) lines.push(`  lastPrompt: ${truncate(prompt, MAX_LAST_PROMPT_CHARS)}`)
   if (reply) lines.push(`  lastReply: ${truncate(reply, MAX_LAST_REPLY_CHARS)}`)
+  if (agent.startedAt != null) lines.push(`  started: ${relativeAge(agent.startedAt, generatedAt)} ago`)
   lines.push(`  lastActivity: ${relativeAge(agent.lastActivityAt, generatedAt)} ago`)
   return lines
 }

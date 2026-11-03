@@ -1,477 +1,13 @@
-// Bounds of the read-only agent overview (server/lib/agents.ts): the transcript directory
-// encoding, tail parsing over synthetic transcript lines, state derivation for every branch
-// (including the stale-threshold boundary), merge dedup by sessionId, project sort order, the
-// plain-text renderer's line-length cap and trailing newline, and the transcript-tail reader's
-// progressive retry (and that it never falls back to file mtime).
-//
-// No subprocess, no mocks — the one file-touching suite (readTranscriptTailFile) writes a real
-// temp file rather than stubbing fs/Bun.file, per repo convention.
+// The plain-text renderer of the agent overview: the line-length cap and trailing newline, colour, narrow terminals,
+// the human-queue block and the header suffix. No subprocess, no mocks.
 
-import { mkdtempSync, rmSync, utimesSync, writeFileSync } from 'fs'
-import { tmpdir } from 'os'
-import { join } from 'path'
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import {
-  type ClaudeAgentRaw,
-  deriveState,
-  encodeProjectDir,
-  type HcSpaceRaw,
-  type HcTerminalRaw,
-  mergeAgents,
-  parseTranscriptTail,
-  type TranscriptTail,
-} from '../src/fleet/derive.ts'
-import { parseHumanQueueRequest, readHumanQueue, readTranscriptTailFile } from '../src/fleet/collect.ts'
+import { describe, expect, test } from 'bun:test'
 import { type AgentEnrichment, fitHeader, type RenderTextOptions, renderText } from '../src/fleet/render.ts'
 import type { Agent, HumanQueueEntry, Snapshot as AgentsSnapshot } from '../src/fleet/schema.ts'
 import { stripAnsi } from '../src/fleet/text.ts'
 
-// ── encodeProjectDir ─────────────────────────────────────────────────────────────────────────
-
-describe('encodeProjectDir', () => {
-  test('replaces every non-alphanumeric character with a dash', () => {
-    expect(encodeProjectDir('/Users/jkrumm/SourceRoot/dotfiles')).toBe('-Users-jkrumm-SourceRoot-dotfiles')
-  })
-
-  test('encodes dots (repo names with a dot, e.g. IuRoot checkouts)', () => {
-    expect(encodeProjectDir('/Users/jkrumm/IuRoot/epos_fe.booking')).toBe('-Users-jkrumm-IuRoot-epos-fe-booking')
-  })
-
-  test('encodes underscores identically to dots and slashes', () => {
-    expect(encodeProjectDir('a_b.c/d')).toBe('a-b-c-d')
-  })
-
-  test('leaves alphanumerics untouched', () => {
-    expect(encodeProjectDir('abcXYZ019')).toBe('abcXYZ019')
-  })
-})
-
-// ── parseTranscriptTail ──────────────────────────────────────────────────────────────────────
-
-function assistantLine(text: string, timestamp: string): string {
-  return JSON.stringify({
-    type: 'assistant',
-    timestamp,
-    cwd: '/Users/jkrumm/SourceRoot/dotfiles',
-    gitBranch: 'master',
-    version: '2.1.261',
-    message: { content: [{ type: 'text', text }] },
-  })
-}
-
-describe('parseTranscriptTail', () => {
-  const fixture = [
-    '{"type":"partial-line-should-be-dropped-by-caller-not-us"', // simulates a partial first line
-    JSON.stringify({ type: 'last-prompt', lastPrompt: 'first prompt', sessionId: 's1' }),
-    JSON.stringify({ type: 'ai-title', aiTitle: 'first title', sessionId: 's1' }),
-    assistantLine('first reply', '2026-09-01T00:00:00.000Z'),
-    'not json at all — garbage line',
-    JSON.stringify({
-      type: 'user',
-      timestamp: '2026-09-02T00:00:00.000Z',
-      message: { content: [{ tool_use_id: 't1', type: 'tool_result', content: 'ok' }] },
-    }),
-    assistantLine('', '2026-09-03T00:00:00.000Z'), // empty text block — ignored for lastReply
-    JSON.stringify({ type: 'last-prompt', lastPrompt: 'second prompt', sessionId: 's1' }),
-    JSON.stringify({ type: 'ai-title', aiTitle: 'second title', sessionId: 's1' }),
-    assistantLine('second reply', '2026-09-04T00:00:00.000Z'),
-  ].join('\n')
-
-  test('picks the LAST last-prompt / ai-title line, ignoring garbage and unparseable lines', () => {
-    const tail = parseTranscriptTail(fixture)
-    expect(tail.lastPrompt).toBe('second prompt')
-    expect(tail.aiTitle).toBe('second title')
-  })
-
-  test('lastReply is the last non-empty assistant text block', () => {
-    const tail = parseTranscriptTail(fixture)
-    expect(tail.lastReply).toBe('second reply')
-  })
-
-  test('lastActivityAt is the last assistant/user timestamp seen, not necessarily an assistant line', () => {
-    const tail = parseTranscriptTail(fixture)
-    expect(tail.lastActivityAt).toBe(Date.parse('2026-09-04T00:00:00.000Z'))
-  })
-
-  test('a garbage-only / empty transcript yields all nulls, never throws', () => {
-    const tail = parseTranscriptTail('not json\n\n{broken')
-    expect(tail).toEqual({
-      lastPrompt: null,
-      aiTitle: null,
-      lastReply: null,
-      lastActivityAt: null,
-    })
-  })
-
-  test('lastReply is capped at 800 chars', () => {
-    const long = 'x'.repeat(900)
-    const tail = parseTranscriptTail(assistantLine(long, '2026-09-01T00:00:00.000Z'))
-    expect(tail.lastReply?.length).toBe(800)
-  })
-
-  test('a multi-block assistant message picks the last non-empty text block within it', () => {
-    const line = JSON.stringify({
-      type: 'assistant',
-      timestamp: '2026-09-01T00:00:00.000Z',
-      message: {
-        content: [
-          { type: 'text', text: 'first block' },
-          { type: 'tool_use', name: 'Read', input: {} },
-          { type: 'text', text: 'last block' },
-        ],
-      },
-    })
-    expect(parseTranscriptTail(line).lastReply).toBe('last block')
-  })
-})
-
-// ── readTranscriptTailFile (progressive tail, no mtime) ─────────────────────────────────────
-
-describe('readTranscriptTailFile', () => {
-  let dir: string
-
-  beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), 'agent-gateway-agents-test-'))
-  })
-
-  afterEach(() => {
-    rmSync(dir, { recursive: true, force: true })
-  })
-
-  test('a first-pass 512 KB window landing inside an oversized trailing line retries wider and finds the earlier timestamp', async () => {
-    const path = join(dir, 'session.jsonl')
-    const oldTimestamp = '2020-01-01T00:00:00.000Z'
-    const oldLine = assistantLine('an old reply', oldTimestamp)
-    // A 700 KB single line with no trailing newline: bigger than the first-pass 512 KB window,
-    // so that pass lands entirely inside it (no complete line, no timestamp) and must retry at
-    // 4x (2 MB), which comfortably covers the whole file and reaches `oldLine`.
-    const oversizedTrailingLine = 'x'.repeat(700 * 1024)
-    writeFileSync(path, `${oldLine}\n${oversizedTrailingLine}`)
-
-    const tail = await readTranscriptTailFile(path)
-    expect(tail.lastActivityAt).toBe(Date.parse(oldTimestamp))
-  })
-
-  test('file mtime is never consulted — a bumped mtime does not override the parsed timestamp', async () => {
-    const path = join(dir, 'session.jsonl')
-    const oldTimestamp = '2026-09-04T06:26:00.000Z'
-    writeFileSync(path, `${assistantLine('still here', oldTimestamp)}\n`)
-    const future = new Date()
-    utimesSync(path, future, future) // bump mtime to "now", well after oldTimestamp
-
-    const tail = await readTranscriptTailFile(path)
-    expect(tail.lastActivityAt).toBe(Date.parse(oldTimestamp))
-  })
-
-  test('a missing file yields the all-null tail, never throws', async () => {
-    const tail = await readTranscriptTailFile(join(dir, 'does-not-exist.jsonl'))
-    expect(tail).toEqual({
-      lastPrompt: null,
-      aiTitle: null,
-      lastReply: null,
-      lastActivityAt: null,
-    })
-  })
-})
-
-// ── deriveState ──────────────────────────────────────────────────────────────────────────────
-
 const HOUR_MS = 60 * 60 * 1000
 const NOW = Date.parse('2026-09-06T12:00:00.000Z')
-
-describe('deriveState', () => {
-  test('herdr blocked → needs_you, regardless of anything else', () => {
-    expect(
-      deriveState({
-        herdrStatus: 'blocked',
-        claudeStatus: 'busy',
-        lastActivityAt: null,
-        now: NOW,
-        staleAfterMs: 24 * HOUR_MS,
-      }),
-    ).toBe('needs_you')
-  })
-
-  test('claude waiting → needs_you', () => {
-    expect(
-      deriveState({
-        herdrStatus: null,
-        claudeStatus: 'waiting',
-        lastActivityAt: null,
-        now: NOW,
-        staleAfterMs: 24 * HOUR_MS,
-      }),
-    ).toBe('needs_you')
-  })
-
-  test('herdr working → working', () => {
-    expect(
-      deriveState({
-        herdrStatus: 'working',
-        claudeStatus: null,
-        lastActivityAt: null,
-        now: NOW,
-        staleAfterMs: 24 * HOUR_MS,
-      }),
-    ).toBe('working')
-  })
-
-  test('claude busy → working', () => {
-    expect(
-      deriveState({
-        herdrStatus: null,
-        claudeStatus: 'busy',
-        lastActivityAt: null,
-        now: NOW,
-        staleAfterMs: 24 * HOUR_MS,
-      }),
-    ).toBe('working')
-  })
-
-  test('herdr idle, activity exactly at the stale threshold → NOT stale (boundary is exclusive)', () => {
-    const staleAfterMs = 24 * HOUR_MS
-    expect(
-      deriveState({
-        herdrStatus: 'idle',
-        claudeStatus: null,
-        lastActivityAt: NOW - staleAfterMs,
-        now: NOW,
-        staleAfterMs,
-      }),
-    ).toBe('idle')
-  })
-
-  test('herdr idle, activity 1ms past the stale threshold → stale', () => {
-    const staleAfterMs = 24 * HOUR_MS
-    expect(
-      deriveState({
-        herdrStatus: 'idle',
-        claudeStatus: null,
-        lastActivityAt: NOW - staleAfterMs - 1,
-        now: NOW,
-        staleAfterMs,
-      }),
-    ).toBe('stale')
-  })
-
-  test('herdr done, stale-old → stale (done is stale-eligible too)', () => {
-    const staleAfterMs = 24 * HOUR_MS
-    expect(
-      deriveState({
-        herdrStatus: 'done',
-        claudeStatus: null,
-        lastActivityAt: NOW - staleAfterMs - HOUR_MS,
-        now: NOW,
-        staleAfterMs,
-      }),
-    ).toBe('stale')
-  })
-
-  test('herdr idle, recent activity → idle', () => {
-    expect(
-      deriveState({
-        herdrStatus: 'idle',
-        claudeStatus: null,
-        lastActivityAt: NOW - HOUR_MS,
-        now: NOW,
-        staleAfterMs: 24 * HOUR_MS,
-      }),
-    ).toBe('idle')
-  })
-
-  test('herdr idle, no lastActivityAt at all → idle, never stale (nothing to compare)', () => {
-    expect(
-      deriveState({
-        herdrStatus: 'idle',
-        claudeStatus: null,
-        lastActivityAt: null,
-        now: NOW,
-        staleAfterMs: 24 * HOUR_MS,
-      }),
-    ).toBe('idle')
-  })
-
-  test('herdr done, recent activity → done', () => {
-    expect(
-      deriveState({
-        herdrStatus: 'done',
-        claudeStatus: null,
-        lastActivityAt: NOW - HOUR_MS,
-        now: NOW,
-        staleAfterMs: 24 * HOUR_MS,
-      }),
-    ).toBe('done')
-  })
-
-  test('nothing matches any branch → unknown', () => {
-    expect(
-      deriveState({
-        herdrStatus: 'unknown',
-        claudeStatus: null,
-        lastActivityAt: null,
-        now: NOW,
-        staleAfterMs: 24 * HOUR_MS,
-      }),
-    ).toBe('unknown')
-  })
-})
-
-// ── mergeAgents ──────────────────────────────────────────────────────────────────────────────
-
-function hcTerminal(
-  overrides: Partial<Omit<HcTerminalRaw, 'status'>> & { session?: string; space?: string; state?: string } = {},
-): HcTerminalRaw {
-  const { session = 'session-1', space = 'wR', state = 'working', ...rest } = overrides
-  return {
-    address: 't4',
-    cwd: '/Users/jkrumm/SourceRoot/dotfiles',
-    state: 'live',
-    title: 'Some task',
-    labels: { 'herdr.space': space, 'jk.claude.session': session },
-    status: { app: 'claude-code', state },
-    ...rest,
-  }
-}
-
-function claudeAgent(overrides: Partial<ClaudeAgentRaw> = {}): ClaudeAgentRaw {
-  return {
-    cwd: '/Users/jkrumm/SourceRoot/dotfiles',
-    sessionId: 'session-1',
-    startedAt: 1000,
-    status: 'busy',
-    ...overrides,
-  }
-}
-
-const NO_TAIL: TranscriptTail = {
-  lastPrompt: null,
-  aiTitle: null,
-  lastReply: null,
-  lastActivityAt: null,
-}
-
-describe('mergeAgents', () => {
-  test('an hc terminal and a claude registry entry with the same sessionId collapse into one agent, the terminal status winning', () => {
-    const projects = mergeAgents({
-      hcTerminals: [hcTerminal({ state: 'idle' })],
-      hcSpaces: [{ id: 'wR', name: 'dotfiles' }],
-      claudeAgents: [claudeAgent({ status: 'busy' })],
-      transcripts: new Map(),
-      now: NOW,
-      staleAfterMs: 24 * HOUR_MS,
-    })
-
-    expect(projects).toHaveLength(1)
-    const agents = projects[0]?.agents ?? []
-    expect(agents).toHaveLength(1)
-    // "terminal status wins" is about identity, not the derived state: the merged entry keeps
-    // source "hc" (never flips to "claude") once an hc terminal exists for the sessionId,
-    // and both raw statuses are preserved on the merged entry rather than one overwriting
-    // the other.
-    expect(agents[0]?.source).toBe('hc')
-    expect(agents[0]?.herdrStatus).toBe('idle')
-    expect(agents[0]?.claudeStatus).toBe('busy')
-    // deriveState's own priority order (working — terminal working OR claude busy) still applies
-    // to the merged fields, so claude's "busy" here correctly outranks the terminal's "idle".
-    expect(agents[0]?.state).toBe('working')
-  })
-
-  test("a claude agent with no matching hc terminal becomes its own 'claude'-sourced entry", () => {
-    const projects = mergeAgents({
-      claudeAgents: [claudeAgent({ sessionId: 'bg-session', status: 'idle' })],
-      transcripts: new Map(),
-      now: NOW,
-      staleAfterMs: 24 * HOUR_MS,
-    })
-
-    expect(projects).toHaveLength(1)
-    expect(projects[0]?.agents[0]?.source).toBe('claude')
-    expect(projects[0]?.agents[0]?.sessionId).toBe('bg-session')
-  })
-
-  test('project name resolves via the hc space name, not basename(cwd)', () => {
-    const projects = mergeAgents({
-      hcTerminals: [hcTerminal({ cwd: '/Users/jkrumm/SourceRoot/some-checkout-dir' })],
-      hcSpaces: [{ id: 'wR', name: 'dotfiles' }],
-      claudeAgents: [],
-      transcripts: new Map(),
-      now: NOW,
-      staleAfterMs: 24 * HOUR_MS,
-    })
-    expect(projects[0]?.name).toBe('dotfiles')
-  })
-
-  test('no space match falls back to basename(cwd)', () => {
-    const projects = mergeAgents({
-      claudeAgents: [claudeAgent({ cwd: '/Users/jkrumm/SourceRoot/weatherorb' })],
-      transcripts: new Map(),
-      now: NOW,
-      staleAfterMs: 24 * HOUR_MS,
-    })
-    expect(projects[0]?.name).toBe('weatherorb')
-  })
-
-  test('projects sort most-urgent-first: needs_you > working > idle > stale > done, then by name', () => {
-    const stale = hcTerminal({
-      session: 's-stale',
-      state: 'idle',
-      cwd: '/Users/jkrumm/SourceRoot/z-project',
-      space: 'wZ',
-      address: 't1',
-    })
-    const working = hcTerminal({
-      session: 's-working',
-      state: 'working',
-      cwd: '/Users/jkrumm/SourceRoot/a-project',
-      space: 'wA',
-      address: 't2',
-    })
-    const needsYou = hcTerminal({
-      session: 's-needs-you',
-      state: 'blocked',
-      cwd: '/Users/jkrumm/SourceRoot/m-project',
-      space: 'wM',
-      address: 't3',
-    })
-    const spaces: HcSpaceRaw[] = [
-      { id: 'wZ', name: 'z-project' },
-      { id: 'wA', name: 'a-project' },
-      { id: 'wM', name: 'm-project' },
-    ]
-    const staleAfterMs = 24 * HOUR_MS
-    const transcripts = new Map<string, TranscriptTail>([
-      ['s-stale', { ...NO_TAIL, lastActivityAt: NOW - staleAfterMs - HOUR_MS }],
-    ])
-
-    const projects = mergeAgents({
-      hcTerminals: [stale, working, needsYou],
-      hcSpaces: spaces,
-      claudeAgents: [],
-      transcripts,
-      now: NOW,
-      staleAfterMs,
-    })
-
-    expect(projects.map((p) => p.name)).toEqual(['m-project', 'a-project', 'z-project'])
-  })
-
-  test('projects tie-break by name when urgency rank is equal', () => {
-    const b = hcTerminal({ session: 's-b', state: 'working', cwd: '/x/b-project', space: 'wB', address: 't1' })
-    const a = hcTerminal({ session: 's-a', state: 'working', cwd: '/x/a-project', space: 'wA', address: 't2' })
-    const projects = mergeAgents({
-      hcTerminals: [b, a],
-      hcSpaces: [
-        { id: 'wB', name: 'b-project' },
-        { id: 'wA', name: 'a-project' },
-      ],
-      claudeAgents: [],
-      transcripts: new Map(),
-      now: NOW,
-      staleAfterMs: 24 * HOUR_MS,
-    })
-    expect(projects.map((p) => p.name)).toEqual(['a-project', 'b-project'])
-  })
-})
 
 // ── renderText ───────────────────────────────────────────────────────────────────────────────
 
@@ -500,7 +36,7 @@ describe('renderText', () => {
           agents: [
             {
               id: 's1',
-              source: 'hc',
+              source: 'factory',
               sessionId: 's1',
               paneId: 'wR:p4',
               workspaceId: 'wR',
@@ -535,7 +71,7 @@ describe('renderText', () => {
           agents: [
             {
               id: 's1',
-              source: 'claude',
+              source: 'factory',
               sessionId: 's1',
               paneId: null,
               workspaceId: null,
@@ -584,7 +120,7 @@ describe('renderText with color', () => {
           agents: [
             {
               id: 's1',
-              source: 'hc',
+              source: 'factory',
               sessionId: 's1',
               paneId: 'wR:p4',
               workspaceId: 'wR',
@@ -652,7 +188,7 @@ describe('renderText with color', () => {
           agents: [
             {
               id: 's1',
-              source: 'hc',
+              source: 'factory',
               sessionId: 's1',
               paneId: 'wR:p4',
               workspaceId: 'wR',
@@ -706,7 +242,7 @@ describe('renderText with cols', () => {
           agents: [
             {
               id: 'a1',
-              source: 'hc',
+              source: 'factory',
               sessionId: 'a1',
               paneId: 'wR:p4',
               workspaceId: 'wR',
@@ -722,7 +258,7 @@ describe('renderText with cols', () => {
             },
             {
               id: 'a2',
-              source: 'claude',
+              source: 'factory',
               sessionId: 'a2',
               paneId: null,
               workspaceId: null,
@@ -837,82 +373,6 @@ describe('renderText with cols', () => {
     for (const line of lines.slice(1)) {
       expect(line.length).toBeLessThanOrEqual(110)
     }
-  })
-})
-
-// ── Human queue (ask-human.sh requests surfaced in the snapshot) ────────────────────────────
-
-describe('parseHumanQueueRequest', () => {
-  test("maps the queue's own request shape onto {id, askedAt, question, cmd}", () => {
-    const body =
-      '{"id":"20260907T101553-13011","created":"2026-09-07T08:15:53Z","host":"mini",' +
-      '"cwd":"/Users/x/audio-gateway","text":"reseed the cache","cmd":"make secrets-seed"}'
-    expect(parseHumanQueueRequest(body, 'fallback')).toEqual({
-      id: '20260907T101553-13011',
-      askedAt: '2026-09-07T08:15:53Z',
-      question: 'reseed the cache',
-      cmd: 'make secrets-seed',
-    })
-  })
-
-  test('a null cmd stays null; a missing id falls back to the filename id', () => {
-    const body = '{"created":"2026-09-07T08:15:53Z","text":"do a thing","cmd":null}'
-    expect(parseHumanQueueRequest(body, 'from-file')).toEqual({
-      id: 'from-file',
-      askedAt: '2026-09-07T08:15:53Z',
-      question: 'do a thing',
-      cmd: null,
-    })
-  })
-
-  test('control bytes are stripped from text and cmd — the line lands in a watch pane and in Hermes', () => {
-    const body = JSON.stringify({
-      created: '2026-09-07T08:15:53Z',
-      text: 'reseed\u001b[31m the\u0000 cache\tnow\n',
-      cmd: 'make\u0007 secrets-seed',
-    })
-    expect(parseHumanQueueRequest(body, 'x')).toEqual({
-      id: 'x',
-      askedAt: '2026-09-07T08:15:53Z',
-      question: 'reseed[31m the cache\tnow\n',
-      cmd: 'make secrets-seed',
-    })
-  })
-
-  test('malformed JSON or a body without text is dropped, never thrown', () => {
-    expect(parseHumanQueueRequest('{not json', 'x')).toBeNull()
-    expect(parseHumanQueueRequest('{"id":"a"}', 'x')).toBeNull()
-    expect(parseHumanQueueRequest('[]', 'x')).toBeNull()
-  })
-})
-
-describe('readHumanQueue', () => {
-  let dir: string
-  beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), 'agent-gateway-hq-'))
-  })
-  afterEach(() => {
-    rmSync(dir, { recursive: true, force: true })
-  })
-
-  function req(id: string, text: string): void {
-    writeFileSync(join(dir, `${id}.req`), JSON.stringify({ id, created: '2026-09-07T08:00:00Z', text, cmd: null }))
-  }
-
-  test('a missing directory is an empty queue with no warning', async () => {
-    expect(await readHumanQueue(join(dir, 'nope'))).toEqual({ items: [], warning: null })
-  })
-
-  test('only .req files WITHOUT a matching .res are pending, newest id first', async () => {
-    req('20260901T000000-1', 'old, answered')
-    writeFileSync(join(dir, '20260901T000000-1.res'), '{"status":"done"}')
-    req('20260905T000000-2', 'older pending')
-    req('20260907T000000-3', 'newest pending')
-    writeFileSync(join(dir, '.20260907T000000-9.req.tmp'), '{}') // ask-human's temp file
-    writeFileSync(join(dir, '20260907T000000-4.req'), 'garbage')
-    const { items, warning } = await readHumanQueue(dir)
-    expect(warning).toBeNull()
-    expect(items.map((i: HumanQueueEntry) => i.id)).toEqual(['20260907T000000-3', '20260905T000000-2'])
   })
 })
 

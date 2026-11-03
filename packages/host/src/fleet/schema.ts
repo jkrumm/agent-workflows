@@ -3,8 +3,9 @@ import { z } from 'zod'
 
 // The shapes of the agents overview. They are the payload `agw agents` answers and the Argo push posts, field for field
 // what agent-gateway's `GET /api/overview` returned under `data` (minus the retired dispatch fields, `summary.dispatch` included).
+// The agents and the human queue are the factory's fleet view (`factory fleet --format json`) mapped on these shapes.
 
-export const AGENT_SOURCE = z.enum(['hc', 'claude'])
+export const AGENT_SOURCE = z.enum(['factory'])
 export type AgentSource = z.infer<typeof AGENT_SOURCE>
 
 export const AGENT_STATE = z.enum(['needs_you', 'working', 'idle', 'stale', 'done', 'unknown'])
@@ -35,27 +36,35 @@ export const RECOMMENDATION_ICON: Record<Recommendation, string> = {
 }
 
 export const AGENT = z.object({
-  id: z.string().describe('The Claude session id, or the pane id / terminal address when the terminal has no session'),
-  source: AGENT_SOURCE.describe("Which collector produced it: an hc terminal or Claude's own registry"),
+  id: z.string().describe("The factory's session id: the Claude session id, or the terminal's name when it has none"),
+  source: AGENT_SOURCE.describe(
+    "Which producer reported it: the factory's fleet view (Argo's ingest takes the source as an open string)",
+  ),
   sessionId: z.string().nullable(),
   paneId: z.string().nullable().describe("hc terminal address (e.g. 't7', 'mini/t7')"),
   workspaceId: z.string().nullable().describe('The hc space id (`herdr.space` label)'),
-  title: z
-    .string()
-    .nullable()
-    .describe("The terminal's stripped title (hc: the program's own title first), else the transcript's ai-title"),
+  title: z.string().nullable().describe("Claude's tab title, without its leading symbols"),
   state: AGENT_STATE.describe('The one derived urgency state'),
   herdrStatus: HERDR_STATUS.nullable(),
   claudeStatus: CLAUDE_STATUS.nullable(),
-  waitingFor: z.string().nullable().describe("Claude's waitingFor reason; set only when claudeStatus is 'waiting'"),
+  waitingFor: z
+    .string()
+    .nullable()
+    .describe("What the session waits on, the factory's `wait` (`owner`, `workers`, `deploy`)"),
   lastPrompt: z.string().nullable(),
-  lastReply: z.string().nullable().describe('The last assistant text of the transcript tail, at most 800 characters'),
-  lastActivityAt: z.number().nullable().describe('Epoch ms of the last parsed transcript line (never the file mtime)'),
+  lastReply: z
+    .string()
+    .nullable()
+    .describe("The factory digest's one-line headline of where the work stands; null until it has answered"),
+  lastActivityAt: z.number().nullable().describe("Epoch ms of the session's last activity"),
   account: z.string().nullable().optional().describe('The Claude Max account the agent runs on (`iu`, `me`)'),
   startedAt: z.number().nullable().describe('Epoch ms the process started'),
+  plan: z.string().nullable().optional().describe("The plan file the session works (the factory's view)"),
+  wave: z.number().nullable().optional().describe('The wave of that plan the session works'),
 })
 export type Agent = z.infer<typeof AGENT>
 
+/** The factory has no upstream counts: `ahead` and `behind` are 0 (Argo's ingest requires numbers). */
 export const PROJECT_GIT = z.object({
   branch: z.string(),
   dirty: z.boolean(),
@@ -66,7 +75,7 @@ export const PROJECT_GIT = z.object({
 export type ProjectGit = z.infer<typeof PROJECT_GIT>
 
 export const PROJECT = z.object({
-  name: z.string().describe('The hc space name when a terminal resolves it, else the cwd basename'),
+  name: z.string().describe("The factory's repo name; `unplaced` for sessions it could not file under a repo"),
   cwd: z.string(),
   git: PROJECT_GIT.nullable(),
   agents: z.array(AGENT),
@@ -82,7 +91,7 @@ export const SUMMARY = z.object({
 })
 export type Summary = z.infer<typeof SUMMARY>
 
-/** One pending request of the human queue (`ask-human.sh`): a `.req` file with no `.res` yet. Never fed to the model. */
+/** One open `human` ask of the factory's fleet view. `cmd` is always null now. Never fed to the model. */
 export const HUMAN_QUEUE_ENTRY = z.object({
   id: z.string(),
   askedAt: z.string().nullable(),
@@ -96,8 +105,8 @@ export const SNAPSHOT = z.object({
   staleAfterHours: z.number(),
   summary: SUMMARY,
   projects: z.array(PROJECT).describe('Most urgent first: needs_you, working, idle, stale, done, then by name'),
-  humanQueue: z.array(HUMAN_QUEUE_ENTRY).describe('Pending ask-human requests, newest first'),
-  warnings: z.array(z.string()).describe('Non-fatal collector failures'),
+  humanQueue: z.array(HUMAN_QUEUE_ENTRY).describe('Open human asks, newest first'),
+  warnings: z.array(z.string()).describe("Non-fatal: the factory's own `errors` and a failed factory read"),
 })
 export type Snapshot = z.infer<typeof SNAPSHOT>
 
