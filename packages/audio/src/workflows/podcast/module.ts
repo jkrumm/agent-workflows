@@ -1,5 +1,7 @@
+import { join } from 'node:path'
 import type { HostDeps } from '../../../../host/src/workflows/index.ts'
 import { defineWorkflowModule } from '../../../../host/src/workflows/registry.ts'
+import { plainSuite, type Suite } from '../../../../host/src/workflows/suite.ts'
 import { brainCapabilities, brainPort } from './brain.ts'
 import { postgresJournal, postgresHistory, type Queryable } from './history.ts'
 import { createPodcastWorkflow, type PodcastDeps } from './index.ts'
@@ -12,6 +14,16 @@ import { researchClient, researchClientFromEnv } from './research-client.ts'
 // Beyond `HostDeps` the room reads the journal (the show's memory, the episode's recorded cost): the audio process
 // passes its journal pool and schema as `journal`. `last` phase: the room picks up `podcast.produce` from the modules
 // built before it, when one is registered, so neither module imports the other.
+
+/** Five short synthetic briefs (`PlainCase` lines): 3 minutes, no research, no cover, no brain note, `publish: false`. */
+export const CASES_PATH = join(import.meta.dir, 'eval', 'cases.jsonl')
+
+/**
+ * The suite is built but not declared on the module (`suite` below stays unset) on purpose: the produce stage's Slack
+ * notice (`PODCAST_NOTIFY_CHANNEL`) goes out for every finished episode whatever `publish` says, so an eval run would post
+ * to the channel. Declare it (`suite: podcastSuite`) once the notice is skipped for the `eval` purpose.
+ */
+export const podcastSuite: Suite = { path: () => CASES_PATH, read: (path) => plainSuite.read(path) }
 
 /** What the audio process adds to `HostDeps` for this module. */
 export type PodcastModuleDeps = HostDeps & { journal?: { db: Queryable; schema: string } }
