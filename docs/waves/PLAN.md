@@ -387,7 +387,7 @@ wave builds what it needs and closes the gaps.
   wallet gate's opt-in). All three ranges `covered`. No next wave flipped `active`: Wave 11 waits for 2026-11-17 and Wave 12
   rests on it (mother's call).
 
-## Wave 12 — Central tiers            <!-- status: active -->
+## Wave 12 — Central tiers            <!-- status: done 2026-11-03, agw d781796, modelpick 341571a -->
 
 Review is no longer a route consumer (review v4 runs on Max): `HARD`/`EASY` keep Wave 6's measured seats.
 
@@ -402,14 +402,25 @@ Provisional picks (2026-10-31, from cost, wall time, failure modes and the AA in
 | `HARD` | Terra medium (IU) | Sonnet 5.5 low (direct) | decisive, $0.43 and 83 s per deep review; Sonnet low is as fast and cheap as DeepSeek |
 | `DECIDE` | `decision-1` (IU decision API) | none | unchanged |
 
-- `packages/routes/src/table/_shared.ts`: the four tiers with their fallbacks. Routes spread a tier and nothing else;
+- [x] `packages/routes/src/table/_shared.ts`: the four tiers with their fallbacks. Routes spread a tier and nothing else;
   the per-route effort and output-limit overrides (podcast.write, image.enhance, the agents' `maxOutputTokens`)
   become tier properties or go. A guard test fails a route that names a model. The eval judge is the one exception:
   its own pinned route, by design.
-- DeepSeek flash leaves the primaries; Haiku `max` and `low` are out for agent steps. Research, otel and `review.synthesis`-era seats follow the owner
+- [x] DeepSeek flash leaves the primaries; Haiku `max` and `low` are out for agent steps. Research, otel and `review.synthesis`-era seats follow the owner
   decisions of 2026-11-03: `research.agent` and `otel.agent` on `EASY` (Haiku high); prose stays DeepSeek.
-- Picks recorded in `modelpick/docs/decisions/agw-text-seats.md`; a live call per tier after deploy.
-- Research's 28 cases get a golden-answer check.
+- [x] Picks recorded in `modelpick/docs/decisions/agw-text-seats.md`; a live call per tier after deploy.
+- [x] Research's 28 cases get a golden-answer check.
+**Repos:** modelpick
+**Left behind:** close-out in `docs/waves/handoff/lead.md`. The tier owns the output ceiling (`FAST.call` 16k, `EASY`/`HARD`
+  `.call` 32k, `DEEPSEEK_FLASH` 16k); `digest.items`, `prose.write`, `prose.review` and `image.enhance` lost their
+  overrides (`image.enhance` is plain `EASY`: its drained-credit fallback is Terra low, was Luna high). Guards: a Claude
+  route equals its tier step except `wire`, a constant's route equals the constant, no agent step runs Haiku at low or
+  max. Most of the rest had landed in Waves 3, 6 and 15 (tiers, model-literal guard, research/otel on `EASY`). The
+  provisional table above (HARD on Terra medium) was not adopted: Wave 6's seats stand until Wave 11. Research on Haiku
+  high, all 28 golden cases (8 never run before): golden 28/28, `supported` 0.78, $0.52 (eval run `01a1a176`). Deployed
+  `d781796`, `make verify` PASS, live calls on all four tiers. Gate `make check` 4091/0 after fixing a flaky Wave 19
+  recall test (`d781796`). Reviews clean, ranges `covered`. No wave flipped `active`: Wave 11 waits for 2026-11-17
+  (mother's call). Nothing spawned (orchestrated).
 
 ## Wave 13 — Accounting and telemetry            <!-- status: done 2026-11-03 as Wave 16 -->
 
