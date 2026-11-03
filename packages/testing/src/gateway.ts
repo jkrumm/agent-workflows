@@ -14,11 +14,14 @@ export type FakeRoute =
   | 'delivery'
 
 export interface RecordedRequest {
-  route: FakeRoute
+  /** The route the path belongs to; null for a path the fake does not know. */
+  route: FakeRoute | null
   path: string
   headers: Headers
-  /** The parsed JSON body; `{}` for a multipart or empty body. */
+  /** The parsed JSON body when it is a plain object; `{}` for a multipart, empty, malformed or non-object body (see `text`). */
   body: Record<string, unknown>
+  /** The raw body text; empty for multipart. */
+  text: string
   /** The parsed multipart body (transcriptions); null for a JSON body. */
   form: FormData | null
   /** Aborts when the client drops the request. */
@@ -53,6 +56,19 @@ function routeOf(path: string): FakeRoute | null {
   return null
 }
 
+/** The JSON object in `text`; `{}` for anything else (empty, malformed, an array, a scalar). */
+function plainObject(text: string): Record<string, unknown> {
+  if (!text) return {}
+  try {
+    const parsed: unknown = JSON.parse(text)
+    return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {}
+  } catch {
+    return {}
+  }
+}
+
 export function startFakeGateway(handlers: Partial<Record<FakeRoute, Handler>> = {}): FakeGateway {
   const table: Partial<Record<FakeRoute, Handler>> = { ...handlers }
   const attempts = new Map<FakeRoute, number>()
@@ -65,24 +81,27 @@ export function startFakeGateway(handlers: Partial<Record<FakeRoute, Handler>> =
     async fetch(req) {
       const url = new URL(req.url)
       const route = routeOf(url.pathname)
-      const handler = route && table[route]
-      if (!route || !handler) return new Response(`fake gateway: nothing for ${url.pathname}`, { status: 404 })
       let body: Record<string, unknown> = {}
       let form: FormData | null = null
+      let text = ''
       if ((req.headers.get('content-type') ?? '').includes('multipart/form-data')) form = await req.formData()
       else {
-        const text = await req.text()
-        if (text) body = JSON.parse(text) as Record<string, unknown>
+        text = await req.text()
+        body = plainObject(text)
       }
+      // Recorded before any refusal, so an assertion that nothing was called cannot pass on an unexpected call.
       const recorded: RecordedRequest = {
         route,
         path: url.pathname,
         headers: req.headers,
         body,
+        text,
         form,
         signal: req.signal,
       }
       requests.push(recorded)
+      const handler = route && table[route]
+      if (!route || !handler) return new Response(`fake gateway: nothing for ${url.pathname}`, { status: 404 })
       const attempt = attempts.get(route) ?? 0
       attempts.set(route, attempt + 1)
       // Never keep-alive: a later fake server can be given this port, and a pooled socket to the stopped one would fail its first request.

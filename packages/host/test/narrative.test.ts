@@ -22,7 +22,7 @@ import {
 import { createNarrative } from '../src/workflows/narrative/index.ts'
 import { NarrativeInput, NarrativeOutput } from '../src/workflows/narrative/schema.ts'
 import type { HostWorkflow } from '../src/operations.ts'
-import { freshSchema, testRuntime } from '../../runtime/test/support/pg.ts'
+import { freshSchema, testRuntime } from '@agent-workflows/testing/pg'
 
 const dir = mkdtempSync(join(tmpdir(), 'agw-narrative-'))
 afterAll(() => rmSync(dir, { recursive: true, force: true }))

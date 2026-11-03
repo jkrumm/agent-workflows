@@ -1,10 +1,10 @@
 // Audio's own test support: deps with an instant clock, a silent log, an in-process media port and a recording usage port,
 // built on the lanes' ports, so the production lanes run against the fake gateway (@agent-workflows/testing/gateway) over HTTP.
 import type { FakeGateway } from '@agent-workflows/testing/gateway'
-import { type AudioConfig, audioConfig } from '../config.ts'
-import { ffmpegMedia, type MediaPort } from '../media/audio.ts'
-import type { AudioDeps, AudioLog, Clock, Fetch } from '../scope.ts'
-import type { RequestEvent, UsageEvent, UsagePort } from '../usage.ts'
+import { type AudioConfig, audioConfig } from '../src/config.ts'
+import { ffmpegMedia, type MediaPort } from '../src/media/audio.ts'
+import type { AudioDeps, AudioLog, Clock, Fetch } from '../src/scope.ts'
+import type { RequestEvent, UsageEvent, UsagePort } from '../src/usage.ts'
 
 /**
  * The default media port of `testDeps`: in-process, no ffmpeg. `transcode` hands the input back labelled with the asked

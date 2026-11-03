@@ -10,6 +10,7 @@
     "./image-server": "./src/image-server.ts",
     "./opencode": "./src/fake-opencode.ts",
     "./opencode-bin": "./src/fake-opencode-bin.ts",
+    "./pg": "./src/pg.ts",
     "./platform": "./src/platform.ts",
     "./transports": "./src/transports.ts"
   },
@@ -20,6 +21,10 @@
     "@agent-workflows/capabilities": "workspace:*",
     "@agent-workflows/middleware": "workspace:*",
     "@agent-workflows/runtime": "workspace:*",
-    "@opentelemetry/sdk-trace": "3.0.0"
+    "@opentelemetry/sdk-trace": "3.0.0",
+    "pg": "8.23.1"
+  },
+  "devDependencies": {
+    "@types/pg": "8.23.1"
   }
 }

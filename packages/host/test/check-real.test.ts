@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { FakeAgentHost } from '@agent-workflows/testing/agent-host'
 import { createCheckWorkflows } from '../src/workflows/check/index.ts'
-import { freshSchema, testRuntime } from '../../runtime/test/support/pg.ts'
+import { freshSchema, testRuntime } from '@agent-workflows/testing/pg'
 
 // No fakes except the agent host: real `git`, real `make`, the default `Bun.spawn` exec port.
 const db = freshSchema('checkreal')

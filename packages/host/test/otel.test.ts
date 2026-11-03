@@ -12,7 +12,7 @@ import { assemble, createOtelWorkflows, OTEL_VERSION } from '../src/workflows/ot
 import { windowLine } from '../src/workflows/otel/prompts.ts'
 import { Draft, OtelInput, OtelOutput, type OtelResult, type Query, UNTRUSTED } from '../src/workflows/otel/schema.ts'
 import { isGrounded, OTEL_TOOLS, recordOf, returnedRows, rowsOf, runCalls } from '../src/workflows/otel/tools.ts'
-import { freshSchema, inspector, testRuntime } from '../../runtime/test/support/pg.ts'
+import { freshSchema, inspector, testRuntime } from '@agent-workflows/testing/pg'
 
 const db = freshSchema('otel')
 const sql = inspector(db.schema)

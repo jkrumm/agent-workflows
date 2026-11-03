@@ -11,7 +11,7 @@ import { createImportedReviewWorkflow } from '../src/workflows/review/imported.t
 import { createReviewScorer } from '../src/workflows/review/scorer.ts'
 import { applyVerdictRules } from '../src/workflows/review/verdict.ts'
 import { testPlatform } from '@agent-workflows/testing/platform'
-import { freshSchema, inspector, testRuntime } from '../../runtime/test/support/pg.ts'
+import { freshSchema, inspector, testRuntime } from '@agent-workflows/testing/pg'
 
 const HOST_SUITES = suitesOf(await hostModules())
 

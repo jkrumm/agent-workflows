@@ -3,7 +3,7 @@ import { fakeTransports } from '@agent-workflows/testing/transports'
 import { resolveRoute, type RouteId, routeIds } from '@agent-workflows/routes'
 import { FakeAgentHost } from '@agent-workflows/testing/agent-host'
 import { AGENT_PROMPT, COMPLETE_PROMPT, createSmokeRoute, SMOKE_AGENT } from '../src/workflows/smoke/route.ts'
-import { freshSchema, testRuntime } from '../../runtime/test/support/pg.ts'
+import { freshSchema, testRuntime } from '@agent-workflows/testing/pg'
 import { startTestHost, type TestHost } from './support.ts'
 
 const routes = routeIds().map((id) => resolveRoute(id, {}))

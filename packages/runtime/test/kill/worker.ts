@@ -1,7 +1,7 @@
 // One worker process of the kill harness. It drives every run in its schema and may kill itself at KILL_AT.
 import { Pool } from 'pg'
 import { Runtime } from '../../src/index.ts'
-import { testPgUrl } from '../support/pg.ts'
+import { testPgUrl } from '@agent-workflows/testing/pg'
 import { killWorkflows } from './workflows.ts'
 import { parseKillAt, World } from './world.ts'
 

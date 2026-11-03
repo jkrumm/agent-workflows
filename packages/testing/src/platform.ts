@@ -10,7 +10,7 @@ import {
   UsageWriteError,
 } from '@agent-workflows/middleware'
 // The shared Postgres test support lives with the runtime's tests.
-import { captureLogger, PG_URL } from '../../runtime/test/support/pg.ts'
+import { captureLogger, PG_URL } from '@agent-workflows/testing/pg'
 
 /** The usage database in memory: upserts on (source, source_id), can be down, can refuse rows, can hang. */
 export class FakeUsage implements UsageTransport {
@@ -93,9 +93,10 @@ export function testPlatform(
     schema,
     logger,
     fingerprint: fakeFingerprint(),
-    telemetry: { exporter: spans, scheduledDelayMillis: 50 },
     usage: { transport: null },
     ...options,
+    // The caller's telemetry options merge in; the exporter stays the in-memory one so `spans` sees every span.
+    telemetry: { scheduledDelayMillis: 50, ...options.telemetry, exporter: spans },
   })
   return { ...platform, spans, logger }
 }

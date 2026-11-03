@@ -6,7 +6,7 @@ import { gatewayHeaders } from '@agent-workflows/capabilities'
 import { type AgentDefinition, createClient, OpenCodeHost } from '@agent-workflows/opencode-host'
 import { type Attribution, defineWorkflow } from '@agent-workflows/runtime'
 import { z } from 'zod'
-import { freshSchema, testRuntime } from '../../runtime/test/support/pg.ts'
+import { freshSchema, testRuntime } from '@agent-workflows/testing/pg'
 import { startFake } from '@agent-workflows/testing/opencode'
 
 // The attribution of an agent step, from the run through the runtime and the OpenCode host to what the plugin puts on a

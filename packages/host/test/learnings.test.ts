@@ -16,7 +16,7 @@ import {
   withLearnedFacts,
   withLearningsFingerprint,
 } from '../src/learnings/index.ts'
-import { freshSchema, inspector, testRuntime } from '../../runtime/test/support/pg.ts'
+import { freshSchema, inspector, testRuntime } from '@agent-workflows/testing/pg'
 import { startTestHost, type TestHost } from './support.ts'
 
 let t: TestHost

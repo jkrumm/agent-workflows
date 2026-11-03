@@ -13,7 +13,7 @@ import {
   startFakeGateway,
   streamBody,
 } from '@agent-workflows/testing/gateway'
-import { caught, testDeps } from '../testing/index.ts'
+import { caught, testDeps } from '../../test/support.ts'
 import type { CallEvent, RequestEvent, UsageEvent } from '../usage.ts'
 import { DELIVERY_STYLES } from './core.ts'
 import { multiSpeakerBody, sseAudio, stripWavHeader, synthBody, synthMultiSpeaker } from './gemini.ts'

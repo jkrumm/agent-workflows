@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { audioRoutes } from '../src/routes.ts'
 import { type FakeGateway, geminiAudio, startFakeGateway } from '@agent-workflows/testing/gateway'
-import { fakeMedia, silentLog, testDeps } from '../src/testing/index.ts'
+import { fakeMedia, silentLog, testDeps } from './support.ts'
 import { createSpeechRoundtrip } from '../src/workflows/speech-roundtrip/index.ts'
 import speechRoundtripModule, { CASES_PATH } from '../src/workflows/speech-roundtrip/module.ts'
 import { SpeechRoundtripInput, type SpeechRoundtripOutputValue } from '../src/workflows/speech-roundtrip/schema.ts'
@@ -17,7 +17,7 @@ import {
   wordErrorRate,
 } from '../src/workflows/speech-roundtrip/scorer.ts'
 import { plainSuite } from '../../host/src/workflows/suite.ts'
-import { freshSchema, inspector, testRuntime } from '../../runtime/test/support/pg.ts'
+import { freshSchema, inspector, testRuntime } from '@agent-workflows/testing/pg'
 
 const SENTENCE = 'The quick brown fox jumps over the lazy dog near the old stone bridge.'
 

@@ -8,10 +8,10 @@ import { join } from 'node:path'
 import { defineWorkflowModule, type RunningHost } from '@agent-workflows/host'
 import { defineWorkflow } from '@agent-workflows/runtime'
 import { z } from 'zod'
-import { freshSchema, inspector, PG_URL, until } from '../../runtime/test/support/pg.ts'
+import { freshSchema, inspector, PG_URL, until } from '@agent-workflows/testing/pg'
 import { audioRoutes, createSpeechHandler, createTranscriptionsHandler } from '../src/index.ts'
 import { audioEvent, startFakeGateway, streamBody } from '@agent-workflows/testing/gateway'
-import { fakeMedia, instantClock, silentLog, testConfig } from '../src/testing/index.ts'
+import { fakeMedia, instantClock, silentLog, testConfig } from './support.ts'
 import {
   type AudioWorkflowDeps,
   bootAudio,

@@ -12,7 +12,7 @@ import { memoryToolLedger, pgToolLedger } from '../src/workflows/research/ledger
 import { ResearchInput, ResearchOutput, type ResearchResult } from '../src/workflows/research/schema.ts'
 import { researchScorer } from '../src/workflows/research/scorer.ts'
 import { evidence, researchGrant } from '../src/workflows/research/tools.ts'
-import { freshSchema, inspector, testRuntime } from '../../runtime/test/support/pg.ts'
+import { freshSchema, inspector, testRuntime } from '@agent-workflows/testing/pg'
 
 const db = freshSchema('research')
 const sql = inspector(db.schema)

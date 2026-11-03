@@ -5,7 +5,7 @@ import { audioRoutes } from '../routes.ts'
 
 const ROUTES = audioRoutes()
 import { type FakeGateway, type RecordedRequest, startFakeGateway } from '@agent-workflows/testing/gateway'
-import { hasFfmpeg, testDeps, toneFile } from '../testing/index.ts'
+import { hasFfmpeg, testDeps, toneFile } from '../../test/support.ts'
 import type { CallEvent, RequestEvent, UsageEvent } from '../usage.ts'
 import { createTranscriptionsHandler } from './transcriptions.ts'
 

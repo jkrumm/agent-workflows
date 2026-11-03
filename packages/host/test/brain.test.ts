@@ -17,7 +17,7 @@ import { brainScorer } from '../src/workflows/brain/scorer.ts'
 import { BRAIN_TOOLS, brainGrant, evidence } from '../src/workflows/brain/tools.ts'
 import { readSuite } from '../src/workflows/eval/suites.ts'
 import { type HostRegistry, hostModules, suitesOf } from '../src/workflows/index.ts'
-import { freshSchema, inspector, testRuntime } from '../../runtime/test/support/pg.ts'
+import { freshSchema, inspector, testRuntime } from '@agent-workflows/testing/pg'
 import { memoryToolLedger, pgToolLedger } from '../src/workflows/research/ledger.ts'
 
 const HOST_SUITES = suitesOf(await hostModules())

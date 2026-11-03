@@ -1,7 +1,7 @@
 import type { Pool } from 'pg'
 import type { Metrics } from '../src/index.ts'
 
-export { captureLogger, freshSchema, inspector, PG_URL, testRuntime, until } from '../../runtime/test/support/pg.ts'
+export { captureLogger, freshSchema, inspector, PG_URL, testRuntime, until } from '@agent-workflows/testing/pg'
 
 /** Inserts finished runs of `workflow` straight into the journal (two statements): usage on each run's first step. */
 export async function seedRuns(

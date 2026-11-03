@@ -3,7 +3,7 @@ import { afterAll, expect, test } from 'bun:test'
 import { resolve } from 'node:path'
 import { Pool } from 'pg'
 import { Runtime } from '../../src/index.ts'
-import { freshSchema, PG_URL } from '../support/pg.ts'
+import { freshSchema, PG_URL } from '@agent-workflows/testing/pg'
 import { poison } from './crash-worker.ts'
 
 const db = freshSchema('crash')

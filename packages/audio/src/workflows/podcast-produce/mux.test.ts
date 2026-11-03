@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { caught } from '../../testing/index.ts'
+import { caught } from '../../../test/support.ts'
 import {
   applyGainDb,
   buildFfmetadata,

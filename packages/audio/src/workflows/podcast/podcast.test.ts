@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { z } from 'zod'
 import { defineWorkflow } from '../../../../runtime/src/index.ts'
-import { freshSchema, inspector, testRuntime, until } from '../../../../runtime/test/support/pg.ts'
+import { freshSchema, inspector, testRuntime, until } from '@agent-workflows/testing/pg'
 import { type PodcastDeps, createPodcastWorkflow, PodcastInput } from './index.ts'
 import { ProduceInput, type ProduceInputValue } from './produce-input.ts'
 import { MAX_MINUTES, MIN_MINUTES } from './schema.ts'

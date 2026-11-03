@@ -8,7 +8,7 @@ import {
 import { type FakeGateway, messageResponse, startFakeGateway } from '@agent-workflows/testing/gateway'
 import { z } from 'zod'
 import { type Attribution, defineWorkflow, type StepScope } from '../src/index.ts'
-import { freshSchema, testRuntime } from './support/pg.ts'
+import { freshSchema, testRuntime } from '@agent-workflows/testing/pg'
 
 const db = freshSchema('attribution')
 const gateway: FakeGateway = startFakeGateway({

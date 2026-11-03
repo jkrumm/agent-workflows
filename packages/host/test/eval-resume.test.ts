@@ -9,7 +9,7 @@ import { createCheckWorkflows } from '../src/workflows/check/index.ts'
 import { createEvalWorkflows, sweepCaseTrees, wireEval } from '../src/workflows/eval/index.ts'
 import { hostModules, suitesOf } from '../src/workflows/index.ts'
 import { testPlatform } from '@agent-workflows/testing/platform'
-import { captureLogger, freshSchema, inspector, testRuntime, until } from '../../runtime/test/support/pg.ts'
+import { captureLogger, freshSchema, inspector, testRuntime, until } from '@agent-workflows/testing/pg'
 
 const HOST_SUITES = suitesOf(await hostModules())
 
