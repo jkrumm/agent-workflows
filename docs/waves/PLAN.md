@@ -283,6 +283,34 @@ Pulled forward 2026-11-03 while the owner reads review v3 (Waves 9–11 wait for
   credit-refused retrospective cases and one podcast case (calibrate its duration band). Eval scores a failed case run
   as zeros (should be an error). Compaction fallback labelled `unknown` at the gateway; follow-up turns get no fallback.
 
+## Wave 17b — Review v4: one routed reviewer agent on Max            <!-- status: active -->
+
+Owner direction 2026-11-03, supersedes the v3 pick (finder = native `/code-review`) and its sign-off. Opus high lead.
+Goal: review checks intent, system fit and domain rules (duplication, clean architecture), not only bugs; it runs on
+the Max subscriptions only (no IU/API credit, no `claude -p`, no Agent SDK); it is routed by risk; the software
+factory can guarantee every wave was reviewed and cap expensive reviews. Sources: the claude.dev article "How the
+Claude Code team does code review" (2026-10-15), `docs/review-v3.md`, `docs/spikes/review-v3/`, this repo's review
+ledger/dispositions (what past findings were fixed, called wrong, or ignored).
+
+- [ ] Pause the nightly mining job (`com.jkrumm.agent-workflows-eval-mine`); bug-recall cases are no longer the target.
+- [ ] Reviewer agent (draft in this repo, `docs/spikes/review-v4/`; the dotfiles copy is the cross-repo ask): one agent
+  definition, read/search only. Context by pointer, not dump: the diff, the intent (PR body, brief, wave PLAN step),
+  recent commits and prior findings on the touched paths, AGENTS.md, a short per-repo `REVIEW.md` (what failure
+  looks like here). Order: intent and domain rules, system fit and duplication (search before flagging), breakage,
+  security. Style/lint dropped. Evidence file:line, tags Important/Nit/Pre-existing, count first, says plainly when
+  clean. Convergence: diff-only re-review, no repeated findings, three-round cap.
+- [ ] Routing: the change sets the tier, not the author. Deterministic rules first (paths, size, docs-only,
+  sensitive paths) into none / light (Sonnet low) / standard (Sonnet medium) / deep (Sonnet or Opus high + a vote on
+  Important findings). No API classifier unless rules provably fail.
+- [ ] PoC on 6–8 real merged PRs from this repo and dotfiles, including at least one intent miss, one duplication or
+  architecture drift and one clean PR: each tier vs v1's output; quota per review read from the account meter.
+- [ ] Wiring proposal: in-session (subagent from `/review`), hidden (factory spawns one interactive session per job,
+  same agent), the review ceiling (Max quota; at the ceiling review waits, it never falls back to API), and the
+  software-factory side: a review field per wave/close-out the factory enforces at the required tier, a daily cap on
+  deep reviews. Cross-repo asks written, not executed.
+- [ ] One-page HTML report for the owner (rsync to the MacBook, `iumac`), with a short list of what the owner signs.
+  Then rewrite proposals for Waves 9–12 and 14 in `docs/waves/handoff/lead.md`; the mother edits PLAN.md.
+
 ## Wave 9 — Baseline            <!-- status: pending -->
 
 - Today's pipeline (v1) on the full `test` set and the controls, on its live seats: the first real numbers.
