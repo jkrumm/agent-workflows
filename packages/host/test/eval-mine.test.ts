@@ -142,6 +142,18 @@ const registry = {
 }
 /** The `label` step cost of each eval.mine run the journal knows; a run absent here has no priced step. */
 let stepCosts = new Map<string, number>()
+/** What `--auto` reads: the gateway's eval credit, the IU total, past runs' spend. A read set to throw fails the run. */
+const spendReads = {
+  credit: 1 as number | Error,
+  iu: 0 as number | Error,
+  runs: [] as { runId: string; units: number; creditUsd: number; iuUsd: number }[],
+  asked: [] as string[],
+}
+const read = async <T>(name: string, value: T | Error) => {
+  spendReads.asked.push(name)
+  if (value instanceof Error) throw value
+  return value
+}
 
 beforeAll(async () => {
   sandbox = mkdtempSync(join(tmpdir(), 'agw-evalmine-'))
@@ -157,6 +169,11 @@ beforeAll(async () => {
     now: () => NOW,
     logger: { warn: (message) => warnings.push(message) },
     history: {
+      auto: {
+        creditAvailableUsd: () => read('credit', spendReads.credit),
+        iuSpentUsd: () => read('iu', spendReads.iu),
+        runSpend: () => read('runs', spendReads.runs),
+      },
       labelStepCosts: async ({ runIds, limit }) =>
         runIds
           .filter((id) => stepCosts.has(id))
@@ -188,6 +205,10 @@ beforeEach(() => {
   gitFailure = null
   answer = verdicts
   stepCosts = new Map()
+  spendReads.credit = 1
+  spendReads.iu = 0
+  spendReads.runs = []
+  spendReads.asked.length = 0
 })
 
 async function startRun(input: Record<string, unknown>) {
@@ -260,12 +281,18 @@ describe('eval.mine: mining', () => {
     expect(command?.x).toMatchObject({ kind: 'workflow', positional: ['suite'], mutating: true })
     expect(mineEntry.workflow.concurrency).toBe(1)
     expect(command?.fields.map((f) => f.flag).sort()).toEqual([
+      'auto',
       'concurrency',
       'controls',
+      'iu-line-usd',
+      'iu-margin-usd',
+      'iu-since',
       'label',
+      'max-per-run',
       'relabel-errors',
       'seed',
       'suite',
+      'target',
       'yes',
     ])
   })
@@ -654,6 +681,160 @@ describe('eval.mine: the third labeller', () => {
     const again = await mineRun({ label: 0, yes: true, relabelErrors: true })
     expect(again.thirdSeatThisRun).toBe(2)
     expect(again.summary).toMatchObject({ accepted: 2, rejected: { byReason: { 'c-no': 1, 'labeler-error': 1 } } })
+  })
+})
+
+describe('eval.mine: --auto', () => {
+  const bugCases = (out: Body) => out.summary.cases.dev.bug + out.summary.cases.test.bug
+
+  test('sizes the run from the credit: 90 % of it over the fallback cost per candidate, and records why', async () => {
+    // $0.12 × 0.9 = $0.108 → 2 candidates at the $0.05 fallback; IU $20 − $0.75 − $2.70 is room for far more.
+    spendReads.credit = 0.12
+    spendReads.iu = 2.7
+    const out = await mineRun({ auto: true, yes: true, controls: 3 })
+    expect(out).toMatchObject({ spent: true, labelledThisRun: 2, stopped: null })
+    expect(out.auto).toEqual({
+      state: 'labelled',
+      target: 200,
+      bugCasesBefore: 0,
+      bugCasesAfter: bugCases(out),
+      creditAvailableUsd: 0.12,
+      creditPerCandidateUsd: 0.05,
+      iuSpentUsd: 2.7,
+      iuLineUsd: 20,
+      iuPerCandidateUsd: 0.035,
+      planned: 2,
+    })
+    expect(asked()).toHaveLength(4)
+    expect(out.labelPlan.candidates).toBe(2)
+  })
+
+  test('the per-candidate cost is measured from the newest labelling runs when there are any', async () => {
+    spendReads.credit = 0.5
+    spendReads.runs = [
+      { runId: 'r1', units: 10, creditUsd: 0.4, iuUsd: 0.3 },
+      { runId: 'r2', units: 10, creditUsd: 0.6, iuUsd: 0.5 },
+    ]
+    const out = await mineRun({ auto: true, controls: 3 })
+    // 0.5 × 0.9 / 0.05 = 9 by credit, capped at the 4 unlabelled candidates.
+    expect(out.auto).toMatchObject({ creditPerCandidateUsd: 0.05, iuPerCandidateUsd: 0.04, planned: 4 })
+  })
+
+  test('without --yes it plans and labels nothing', async () => {
+    spendReads.credit = 0.12
+    const out = await mineRun({ auto: true, controls: 3 })
+    expect(out).toMatchObject({ spent: false, labelledThisRun: 0 })
+    expect(out.auto).toMatchObject({ state: 'labelled', planned: 2, bugCasesAfter: bugCases(out) })
+    expect(out.labelPlan.candidates).toBe(2)
+    expect(calls).toHaveLength(0)
+  })
+
+  test('the per-run cap and the candidates left bound the plan', async () => {
+    spendReads.credit = 100
+    expect((await mineRun({ auto: true, controls: 3, maxPerRun: 3 })).auto.planned).toBe(3)
+    expect((await mineRun({ auto: true, controls: 3 })).auto.planned).toBe(4)
+  })
+
+  test('at the target nothing is read and nothing is labelled', async () => {
+    await mineRun({ label: 4, yes: true, controls: 3 })
+    const before = bugCases(await mineRun({ controls: 3 }))
+    expect(before).toBeGreaterThan(0)
+    calls.length = 0
+    spendReads.asked.length = 0
+    const out = await mineRun({ auto: true, yes: true, controls: 3, target: before })
+    expect(out).toMatchObject({ spent: false, labelledThisRun: 0 })
+    expect(out.auto).toEqual({
+      state: 'target-reached',
+      target: before,
+      bugCasesBefore: before,
+      bugCasesAfter: before,
+      creditAvailableUsd: null,
+      creditPerCandidateUsd: null,
+      iuSpentUsd: null,
+      iuLineUsd: 20,
+      iuPerCandidateUsd: null,
+      planned: 0,
+    })
+    expect(spendReads.asked).toEqual([])
+    expect(calls).toHaveLength(0)
+  })
+
+  test('no credit left labels nothing, even with --yes', async () => {
+    spendReads.credit = 0.04 // 90 % is $0.036, less than one candidate
+    const out = await mineRun({ auto: true, yes: true, controls: 3 })
+    expect(out).toMatchObject({ spent: false, labelledThisRun: 0 })
+    expect(out.auto).toMatchObject({ state: 'no-credit', planned: 0, creditAvailableUsd: 0.04 })
+    expect(calls).toHaveLength(0)
+    expect(existsSync(gtPath('labels.jsonl', env))).toBe(false)
+  })
+
+  test('the IU line stops the run: total + planned never passes line − margin', async () => {
+    spendReads.credit = 100
+    spendReads.iu = 19.24 // $0.01 of room under $19.25, less than one candidate ($0.035)
+    const out = await mineRun({ auto: true, yes: true, controls: 3 })
+    expect(out.auto).toMatchObject({ state: 'iu-line', planned: 0, iuSpentUsd: 19.24 })
+    expect(calls).toHaveLength(0)
+    // Room for exactly two candidates ($0.07 of $0.075): the IU side binds before the credit.
+    spendReads.iu = 19.175
+    expect((await mineRun({ auto: true, controls: 3 })).auto).toMatchObject({ state: 'labelled', planned: 2 })
+  })
+
+  test('the line, margin and since are inputs', async () => {
+    spendReads.credit = 100
+    const out = await mineRun({
+      auto: true,
+      controls: 3,
+      iuLineUsd: 1,
+      iuMarginUsd: 0.5,
+      iuSince: '2026-01-01T00:00:00Z',
+    })
+    // $0.5 of room at $0.035 → 14, capped at the 4 candidates; the line is reported as given.
+    expect(out.auto).toMatchObject({ iuLineUsd: 1, planned: 4 })
+  })
+
+  test('a third-seat backlog is paid from the IU room first', async () => {
+    // Two-seat records that disagree, written before seat c existed: the next labelling run asks c for them.
+    answer = (input) => label(input.seat === 'a', `src/${input.fixSubject.split(' ')[1]}.ts`, 2, 2)
+    await mineRun({ label: 2, yes: true, controls: 3 })
+    const stripped = (lines('labels.jsonl') as GtLabelRecord[]).map(
+      ({ c: _c, cVersion: _v, cRunId: _r, ...rest }) => rest,
+    )
+    writeFileSync(gtPath('labels.jsonl', env), `${stripped.map((r) => JSON.stringify(r)).join('\n')}\n`)
+    spendReads.credit = 100
+    spendReads.iu = 19.175 // $0.075 of room: two backlog records at $0.035 leave $0.005, no new candidate fits
+    const out = await mineRun({ auto: true, controls: 3 })
+    expect(out.labelPlan.thirdSeat).toBe(2)
+    expect(out.auto).toMatchObject({ state: 'iu-line', planned: 0 })
+  })
+
+  test('a read that fails fails the run with its reason, and nothing is labelled', async () => {
+    spendReads.credit = new Error('gateway /health unreadable: HTTP 503')
+    const body = await startRun({ auto: true, yes: true, controls: 3 })
+    expect(body.status).toBe('failed')
+    expect(JSON.stringify(body)).toContain(
+      '--auto cannot size the run: eval credit: gateway /health unreadable: HTTP 503',
+    )
+    spendReads.credit = 1
+    spendReads.iu = new Error('USAGE_PG_URL is not set')
+    const second = await startRun({ auto: true, yes: true, controls: 3 })
+    expect(second.status).toBe('failed')
+    expect(JSON.stringify(second)).toContain('IU total: USAGE_PG_URL is not set')
+    expect(calls).toHaveLength(0)
+  })
+
+  test('--auto and --label are exclusive', async () => {
+    const response = await t.call('/workflows/eval/mine', {
+      method: 'POST',
+      body: { suite: 'review', auto: true, label: 5 },
+      headers: { prefer: 'wait=60' },
+    })
+    expect(response.status).toBeGreaterThanOrEqual(400)
+    expect(response.status).toBeLessThan(500)
+    expect(calls).toHaveLength(0)
+  })
+
+  test('a run without --auto reports auto: null', async () => {
+    expect((await mineRun({ controls: 3 })).auto).toBeNull()
   })
 })
 

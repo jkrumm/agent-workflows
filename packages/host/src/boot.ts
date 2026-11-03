@@ -29,7 +29,7 @@ import { argoTimerEnabled, hostFleet, startArgoSchedule } from './fleet/index.ts
 import { fleetOperations } from './fleet/operations.ts'
 import { createImageDoor, type ImageDoor, type ImageDoorOptions, type ServerHandle } from './image-door/index.ts'
 import { type HostOperation, type HostWorkflow, IDLE_TIMEOUT_S, MAX_REQUEST_BODY_BYTES } from './operations.ts'
-import { pgLabelStepCosts } from './workflows/eval-mine/history.ts'
+import { evalMineAutoPorts, pgLabelStepCosts } from './workflows/eval-mine/history.ts'
 import { pgLatestOverview, pgRunPurpose } from './workflows/overview/latest.ts'
 import { ghCli } from './workflows/retrospective/gh.ts'
 import { RETRO_WORKFLOW_ID } from './workflows/retrospective/index.ts'
@@ -518,6 +518,19 @@ export function hostProcess(config: HostConfig, door?: ImageDoorOptions): Proces
         console.warn('[agw-host] research ledger pool: idle connection error', err.message),
       )
       onClose(() => ledgerPool.end())
+      // `--auto` of eval.mine reads usage.records (the IU total, past runs' spend) and the gateway /health (eval credit).
+      const usageUrl = env.USAGE_PG_URL?.trim()
+      const usagePool = usageUrl
+        ? new Pool({
+            connectionString: usageUrl,
+            max: 2,
+            application_name: `agw-host:${base.schema}:eval-mine-usage`,
+            query_timeout: 30_000,
+            statement_timeout: 30_000,
+          })
+        : undefined
+      usagePool?.on('error', (err) => console.warn('[agw-host] usage pool: idle connection error', err.message))
+      if (usagePool) onClose(() => usagePool.end())
       const workflows = await createWorkflows({
         registry,
         toolGate,
@@ -525,7 +538,15 @@ export function hostProcess(config: HostConfig, door?: ImageDoorOptions): Proces
         retro: { journal, learnings, gh, tracked },
         fleet: { fleet: fleet.fleet, argo: fleet.argo, purposeOf: pgRunPurpose(readPool, base.schema) },
         research: { ledger: pgToolLedger(ledgerPool, base.schema) },
-        costHistory: { labelStepCosts: pgLabelStepCosts(readPool, base.schema) },
+        costHistory: {
+          labelStepCosts: pgLabelStepCosts(readPool, base.schema),
+          auto: evalMineAutoPorts({
+            journal: readPool,
+            schema: base.schema,
+            usage: usagePool,
+            gatewayUrl: env.AGW_GATEWAY_URL,
+          }),
+        },
       })
       if (!door) return workflows
       imageDoor = createImageDoor({
