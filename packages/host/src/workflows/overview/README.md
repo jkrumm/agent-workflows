@@ -117,3 +117,18 @@ not Requesty.
 Claude's registry, transcripts, git, the human queue) and `deriveState`/`mergeAgents` of that port are gone: the
 factory is the producer, `test/fleet-factory.test.ts` covers the reader, the mapping and the Argo shape. Legacy module
 state (the memo maps, the posted usage) is a closure per `createQuota` here, so tests need no reset hooks.
+
+## Eval
+
+`eval/cases.jsonl` holds 6 synthetic fleets (placeholder project names, no real session text) as `PlainCase` lines: the input is
+the eval-only `fixture` (`generatedAt` and `projects` in the snapshot's shape; an agent needs an `id`, a `state` and what
+the seat reads, everything else defaults to null). With a fixture the step classifies it instead of calling `fleet.read`,
+and the Argo push is skipped whatever the run's purpose; without one the workflow is unchanged. The reference is the
+expected `recommendation` per agent id (a list accepts any of its values).
+
+The scorer (`scorer.ts`, deterministic, no model judge) scores `valid` (every agent of the fixture exactly once, no other),
+`answered` (not the `synthesized` placeholder) and `match` (share of agents with the expected recommendation); `pass` needs all
+three at 1. Cases: a blocked and a working agent, unshipped work and a pushed branch, a finished and an abandoned agent, an injection
+planted in a reply, a mid-task and an unclear agent, and a three-project fleet. `CASES_PATH` is exported from `module.ts`, but the
+module declares no `suite` yet: `buildWorkflows` refuses a suite on a host that serves no `overview`, which `createWorkflows({ registry, toolGate })`
+is, so the declaration waits on `registry.ts` allowing it.
