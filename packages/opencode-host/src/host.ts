@@ -801,8 +801,8 @@ export class OpenCodeHost implements AgentHost {
    * again, so each step moves at most once.
    * - `balance`: the turn failed on provider balance before it did anything (no tool call, no output); a turn that ran
    *   is never prompted a second time.
-   * - `compaction`: the session's context summary failed (`isCompactionFailure`), which only a long turn gets to, so the
-   *   turn did run; the session cannot go on (its context is over the ceiling and the next call compacts again), so the
+   * - `compaction`: the session's context summary failed (`isCompactionFailure`), which only a long turn gets to, so
+   *   the turn did run; the session cannot go on (its context is over the ceiling and the next call compacts again), so the
    *   task starts over in a fresh session on another model, the failed turn's spend kept in the step's usage. A restart
    *   runs the turn's tool calls again, so it only happens when every call the turn made was a read
    *   (`onlyReadOnlyTools`); a turn that wrote, ran a command or submitted a result fails as it did.
@@ -815,7 +815,14 @@ export class OpenCodeHost implements AgentHost {
   ): FallbackReason | null {
     if (h.fallback || state.outcome !== 'failed' || !state.error) return null
     const reason = fallbackReasonOf(state.error)
-    if (!reason) return null
+    if (!reason) {
+      // An OpenCode bump may reword its summary failures: say so once per failed turn, with the text, instead of
+      // failing the step with no trace of why the fallback did not run.
+      if (/compaction/i.test(state.error)) {
+        this.logger.warn('unrecognised compaction failure', { sessionId: h.sessionId, text: state.error.slice(0, 500) })
+      }
+      return null
+    }
     if (reason === 'balance' && turnRan(messages, promptId)) {
       this.logger.warn('opencode turn failed on provider balance after it ran; no fallback', { sessionId: h.sessionId })
       return null
@@ -1361,14 +1368,28 @@ function fallbackReasonOf(error: string): FallbackReason | null {
 }
 
 /**
- * Every tool call of the turn after the prompt is one of the host's read-only tools (`READ_ONLY_ACTIONS`, named alike as
- * tool and as permission), so running the turn again changes nothing the first run did not. Decided from the calls the
- * turn made, not the agent's permissions: an agent that may write but only read this time restarts safely, and a tool
- * the host does not know (`submit_result`, a plugin's) counts as a change. A turn with no tool call qualifies.
+ * Every tool call of the turn after the prompt is one of the host's read-only tools (`READ_ONLY_ACTIONS`), so running
+ * the turn again changes nothing the first run did not. Decided from the calls the turn made, not the agent's
+ * permissions: an agent that may write but only read this time restarts safely. Fails safe: a tool part without a name
+ * or an id, a name outside the set (`submit_result`, a plugin's, `shell`, `edit`, `write`, and also `webfetch`,
+ * `websearch` and `subagent`, which a request or a child session can make matter) and a turn whose prompt is not in the
+ * messages all count as a change. A turn with no tool call qualifies.
+ *
+ * The names are OpenCode 2.0.32's own: each tool's `name` constant in `packages/core/src/tool/plugin/{read,glob,grep,
+ * skill}.ts` is `"read"`, `"glob"`, `"grep"`, `"skill"` (sst/opencode, tag v2.0.32), and a tool part in a session's
+ * messages carries that name (`test/live-context-limit.test.ts` sees `glob`; README, Permissions: deny by default: the
+ * action is the tool name). 2.0.32 has no `list` tool: a directory is read with `read`.
  */
-function onlyReadOnlyTools(messages: readonly Message[], promptId: string): boolean {
+export function onlyReadOnlyTools(messages: readonly Message[], promptId: string): boolean {
+  const from = promptIndex(messages, promptId)
+  if (from < 0) return false
   const readOnly: readonly string[] = READ_ONLY_ACTIONS
-  return toolParts(messages, promptId).every((part) => readOnly.includes(part.name))
+  return messages
+    .slice(from + 1)
+    .filter((m) => m.type === 'assistant')
+    .flatMap((m) => m.content ?? [])
+    .filter((part) => part.type === 'tool')
+    .every((part) => !!part.id && !!part.name && readOnly.includes(part.name))
 }
 
 /** Whether the turn after the prompt did anything: a tool call, or a reply with output tokens. */

@@ -11,7 +11,8 @@
 // long-prompt tier), `[balance]` a turn IU refuses for provider balance unless the session runs on
 // the Responses provider (the fallback), `[balance-all]` the same refusal on every provider. `[compaction]` a turn that
 // fails the way OpenCode's does when its context summary hits the output limit (the Responses provider answers it),
-// `[compaction-all]` the same on every provider. `[result]` answers through
+// `[compaction-all]` the same on every provider, `[compaction-new]` a failure that mentions compaction in words no
+// marker knows. `[result]` answers through
 // a completed `submit_result` call (input `{ ok: true, inputs: <user messages> }`) and a closing text, `[result-wrapped]`
 // the same with input `{ result: ['a', <user messages>] }`, `[result-rejected]` with a call that failed validation
 // only; a session whose permissions do not allow `submit_result` gets the real server's "No tool named" error instead.
@@ -202,7 +203,8 @@ export function startFake(options: FakeOptions) {
           /\[balance-all\]/.test(prompt) || (/\[balance\]/.test(prompt) && s.model.providerID !== 'iu-responses')
         const compaction =
           /\[compaction-all\]/.test(prompt) || (/\[compaction\]/.test(prompt) && s.model.providerID !== 'iu-responses')
-        if (/\[fail\]/.test(prompt) || balance || compaction) {
+        const unknown = /\[compaction-new\]/.test(prompt)
+        if (/\[fail\]/.test(prompt) || balance || compaction || unknown) {
           Object.assign(reply, { finish: 'error', time: { ...reply.time, completed: now() } })
           s.messages.push({
             id: id('msg'),
@@ -214,7 +216,9 @@ export function startFake(options: FakeOptions) {
                 ? 'IU request failed (503) — Insufficient Balance (PaymentRequired) on Requesty-Global'
                 : compaction
                   ? 'Compaction summary reached the output token limit'
-                  : 'provider said no',
+                  : unknown
+                    ? 'Compaction could not be completed'
+                    : 'provider said no',
             },
           })
           running.delete(s.id)

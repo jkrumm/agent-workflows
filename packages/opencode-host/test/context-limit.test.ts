@@ -89,6 +89,19 @@ describe('the bounded rows of the server config', () => {
   })
 })
 
+describe('every window leaves a ceiling', () => {
+  test('a row with a limit.context has a window above twice the buffer, so no ceiling is zero or negative', () => {
+    const providers = (buildServerConfig() as { providers: Record<string, { models: Record<string, Row> }> }).providers
+    const windows = Object.entries(providers).flatMap(([provider, { models }]) =>
+      Object.entries(models).flatMap(([id, row]) => (row.limit?.context === undefined ? [] : [{ provider, id, row }])),
+    )
+    expect(windows.length).toBe(CLAUDE_MODELS.length * CONTEXT_LIMITS.length)
+    for (const { id, row } of windows) {
+      expect({ id, ok: (row.limit?.context as number) > 2 * COMPACTION_BUFFER }).toEqual({ id, ok: true })
+    }
+  })
+})
+
 describe('modelRef with a contextLimit', () => {
   const bound = CONTEXT_LIMITS[0]
   const patch = { 'review.angle': { contextLimit: bound } }
