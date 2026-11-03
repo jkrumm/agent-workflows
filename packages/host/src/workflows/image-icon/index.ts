@@ -21,6 +21,7 @@ import {
   upscaleScale,
   vectorizeInput,
 } from './pipeline.ts'
+import { imageIconScorer } from './scorer.ts'
 import {
   type IconFileValue,
   ImageIconInput,
@@ -30,7 +31,7 @@ import {
   MAX_SOURCE_BYTES,
 } from './schema.ts'
 
-const IMAGE_ICON_VERSION = '2026-10-30.1'
+const IMAGE_ICON_VERSION = '2026-11-03.1'
 
 /** The registry the workflow calls: the host's, typed by the image capabilities it holds. */
 export type ImageIconCaller = Pick<HostRegistry, 'call'>
@@ -289,6 +290,7 @@ export function createImageIconWorkflows(
     version: IMAGE_ICON_VERSION,
     input: ImageIconInput,
     output: ImageIconOutput,
+    scorer: imageIconScorer,
     async run(ctx, input: ImageIconInputValue): Promise<ImageIconOutputValue> {
       const started = Date.now()
       const dir = () => artifactDir('image-icon', ctx.runId, options.artifacts)

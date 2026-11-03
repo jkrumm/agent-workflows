@@ -88,8 +88,31 @@ and the error names them with their total ("already billed: upscale $0.002, cuto
   up to 180 s because real-esrgan 4x/8x can run longer than a cutout.
 - **The Replicate models are routes** in the route table (`image.upscale`, `image.vectorize`, `image.cutout.*`;
   `packages/routes/src/table/image.ts`), priced per call and patched by an eval run's arm like any route.
-- **No eval suite.** The outputs are deterministic image processing, covered by the golden and pipeline tests; the three
-  model steps are tested against the fake Replicate server (`image-icon.test.ts`).
+## Eval
+
+`agw eval run image-icon` replays six cases (`eval/cases.jsonl`, `PlainCase` lines) on synthetic master images
+(`eval/disc-*.png`: a disc on an opaque or transparent ground, 64 to 512 px, drawn by `eval/generate.ts` from arithmetic,
+nothing else; a test checks the committed PNGs against the generator). The case's `file` is a name in `eval/`; the suite's
+reader makes it the absolute path the workflow wants, so a release finds it wherever it lives. The model steps cost
+about $0.01 to $0.02 for the cases that run them; cases 05 and 06 run none and are free.
+
+|Case|Input|Model steps|
+|-|-|-|
+|01|opaque 64 px, defaults|upscale (8x), cutout, vectorize|
+|02|opaque 256 px, `cutout always`, `upscale never`, `svg never`|cutout|
+|03|transparent 128 px, defaults|upscale (4x), vectorize|
+|04|transparent 512 px, defaults|vectorize|
+|05|opaque 512 px, `cutout never`, `upscale never`, `svg never`|none (the ground stays)|
+|06|transparent 512 px, background `#0b1020`, everything `never`|none|
+
+The scorer (`scorer.ts`, deterministic, reads the listed files) scores 0 or 1 each: `valid`, `files` (the spec's set in
+order, on disk, size and mime), `dimensions` (48, 192, 512, 512, 180, 1024 from the listing and the PNG headers, ICO/ICNS/SVG
+magic), `manifest` (its icons name listed PNGs of the stated size and type; `manifest.webmanifest` and `head.html` match;
+the svg link only with a `favicon.svg`), `svg` (`never` leaves no file, reason or call; `auto` called vectorize and has the
+file or the reason, not both), `background` (`apple-touch-icon.png` flattened on the input colour) and `cost` (known, the
+sum of the steps). With a case's reference also `steps` (the model steps that ran, in order) and `alpha` (is the ground gone
+at the content corner of `icon-512.png`: the cutout worked, or the source had none). The scorer also runs on drift for
+production runs, without a reference, while their artifacts still exist.
 
 ## Retention
 
