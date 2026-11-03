@@ -928,11 +928,22 @@ JSON
         env: { ...credentials, IU_API_KEY: 'iu-key-value', IU_BASE_URL: 'https://iu.example.com/anthropic' },
       })
       expect((await w.run({ cwd: makeRepo(BASE, bigChange) })).status).toBe('done')
-      const env = readFileSync(seen, 'utf8')
-      expect(env).toContain('OCR_LLM_URL=http://127.0.0.1:7794/anthropic\n')
-      expect(env).toContain('OCR_LLM_PROTOCOL=anthropic\n')
-      expect(env).toContain('OCR_LLM_TOKEN=tool-token\n')
-      expect(env).not.toMatch(/IU_|iu-key-value|test-key|AGW_API_SECRET|AGW_GATEWAY_URL|AGW_GATEWAY_TOOL_TOKEN/)
+      // Compared as variables, never as a text search of the dump: `PWD` carries the scratch directory's random mkdtemp
+      // suffix, which once spelled `test-key` (CI, attempt 1 of run 41559609217) and failed a substring match.
+      const vars = Object.fromEntries(
+        readFileSync(seen, 'utf8')
+          .split('\n')
+          .filter((line) => line.includes('='))
+          .map((line) => [line.slice(0, line.indexOf('=')), line.slice(line.indexOf('=') + 1)]),
+      )
+      expect(vars).toMatchObject({
+        OCR_LLM_URL: 'http://127.0.0.1:7794/anthropic',
+        OCR_LLM_PROTOCOL: 'anthropic',
+        OCR_LLM_TOKEN: 'tool-token',
+      })
+      expect(Object.keys(vars).filter((name) => /^(IU_|AGW_)/.test(name))).toEqual([])
+      expect(Object.values(vars)).not.toContain('iu-key-value')
+      expect(Object.values(vars)).not.toContain('test-key')
     })
 
     test('the fallback attempt’s recovered usage never counts the primary’s session log', async () => {
