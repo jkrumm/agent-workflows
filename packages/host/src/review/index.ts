@@ -61,6 +61,8 @@ const SPAWN_TIMEOUT_MS = 60_000
 /** The factory CLI's exit codes: 4 not_found, 5 conflict (`spawn cancel` on a claimed or started spawn). */
 const FACTORY_NOT_FOUND = 4
 const FACTORY_CONFLICT = 5
+/** A spawn in one of these states will never run again. */
+const TERMINAL_SPAWN = new Set(['ended', 'failed', 'cancelled'])
 
 /** The factory's answer to `spawn create`: its JSON, else the first line it printed. */
 const parseSpawn = (stdout: string): unknown => {
@@ -97,6 +99,33 @@ export function createReviewService(ports: ReviewServicePorts): ReviewService {
   }
   const { ledger } = ctx
   const run = ports.run ?? commandRunner(env)
+
+  /**
+   * One read-only look at a hidden job's factory spawns (`spawn get`, a1 and the retry a2). `gaveUp`: a2 exists and is
+   * terminal while the job is unsubmitted; a terminal a1 alone is not, the factory may still create a2. A factory that
+   * cannot be asked leaves the attempts out (undefined), never fails the status.
+   */
+  async function probeSpawns(
+    jobId: string,
+  ): Promise<{ attempts: { key: string; status: string }[]; gaveUp: boolean } | undefined> {
+    const attempts: { key: string; status: string }[] = []
+    for (const attempt of [1, 2]) {
+      const key = `review-${jobId}-a${attempt}`
+      const result = await run([fleetConfig(env).factoryBin, 'spawn', 'get', key, '--format', 'json'], {
+        timeoutMs: SPAWN_TIMEOUT_MS,
+        extraEnv: factoryEnv(env),
+      })
+      if (result.exitCode === FACTORY_NOT_FOUND) continue
+      if (result.exitCode !== 0) return undefined
+      const status = parseSpawn(result.stdout) as { status?: unknown } | string
+      attempts.push({
+        key,
+        status: typeof status === 'object' && typeof status.status === 'string' ? status.status : 'unknown',
+      })
+    }
+    const second = attempts.find((a) => a.key.endsWith('-a2'))
+    return { attempts, gaveUp: second !== undefined && TERMINAL_SPAWN.has(second.status) }
+  }
 
   return {
     prepare: (input) => prepare(ctx, input),
@@ -176,9 +205,9 @@ export function createReviewService(ports: ReviewServicePorts): ReviewService {
         const spawn = parseSpawn(result.stdout)
         if (result.exitCode === 0) spawns.push(spawn)
         else if (result.exitCode === FACTORY_CONFLICT) {
-          // a spawn that ended `failed` (409 "spawn <key> is failed") cannot run any more; a1 failed hands over to a2
-          if (!/ is failed:/.test(`${result.stderr}\n${result.stdout}`))
-            return { status: 'running', jobId: job.id, spawn }
+          // a spawn in a terminal state (409 "spawn <key> is <state>: ...") cannot run any more; a1 hands over to a2
+          const state = / is (\w+):/.exec(`${result.stderr}\n${result.stdout}`)?.[1]
+          if (!state || !TERMINAL_SPAWN.has(state)) return { status: 'running', jobId: job.id, spawn }
           failedSpawn = spawn
         } else if (result.exitCode !== FACTORY_NOT_FOUND) {
           const why = result.timedOut
@@ -211,6 +240,7 @@ export function createReviewService(ports: ReviewServicePorts): ReviewService {
         const job = await ledger.job(input.jobId)
         if (!job) throw new ReviewError(`unknown job ${input.jobId}`)
         const findings = await ledger.threadFindings(job.repo, job.thread)
+        const hidden = job.state === 'prepared' && job.transport === 'hidden' ? await probeSpawns(job.id) : undefined
         return {
           job: {
             id: job.id,
@@ -228,6 +258,7 @@ export function createReviewService(ports: ReviewServicePorts): ReviewService {
             worktree: job.worktree,
             outcome: job.output?.outcome ?? null,
             output: job.output,
+            ...(hidden ? { hidden } : {}),
           },
           findings: findings.map(findingRecord),
         }

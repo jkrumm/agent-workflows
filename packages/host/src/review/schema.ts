@@ -271,6 +271,17 @@ export const StatusOutput = z.object({
       worktree: z.string(),
       outcome: z.enum(OUTCOMES).nullable(),
       output: ReviewOutputV4.nullable().describe('REVIEW_OUTPUT v4 once submitted'),
+      hidden: z
+        .object({
+          attempts: z.array(z.object({ key: z.string(), status: z.string() })),
+          gaveUp: z
+            .boolean()
+            .describe('The retry a2 exists and is terminal (ended, failed, cancelled) and the job is not submitted'),
+        })
+        .optional()
+        .describe(
+          "A prepared hidden job: the factory's spawns for it, read-only (absent when the factory cannot be asked)",
+        ),
     })
     .optional(),
   findings: z.array(FindingRecord).optional(),
