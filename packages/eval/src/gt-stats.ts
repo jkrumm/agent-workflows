@@ -9,7 +9,7 @@ export function wilson(successes: number, n: number, z = 1.959964): { p: number;
   return { p, lo: Math.max(0, center - half), hi: Math.min(1, center + half) }
 }
 
-/** Owner (rows) against judge (columns): `yy` both positive, `yn` owner yes and judge no, and so on. */
+/** Judge `a` (rows) against judge `b` (columns): `yy` both positive, `yn` a yes and b no, and so on. */
 export type Confusion = {
   yy: number
   yn: number
@@ -33,3 +33,20 @@ export function cohenKappa(c: Confusion): number | null {
   const pe = ((c.yy + c.yn) * (c.yy + c.ny) + (c.ny + c.nn) * (c.yn + c.nn)) / (n * n)
   return pe === 1 ? null : (po - pe) / (1 - pe)
 }
+
+/**
+ * The 95 % interval of κ, large-sample (the standard error of Cohen's κ under the null of no agreement beyond the
+ * observed one: √(po (1 − po) / (n (1 − pe)²))). Null where κ is.
+ */
+export function kappaCI(c: Confusion, z = 1.959964): { kappa: number; lo: number; hi: number } | null {
+  const kappa = cohenKappa(c)
+  const n = confusionTotal(c)
+  if (kappa === null) return null
+  const po = (c.yy + c.nn) / n
+  const pe = ((c.yy + c.yn) * (c.yy + c.ny) + (c.ny + c.nn) * (c.yn + c.nn)) / (n * n)
+  const se = Math.sqrt((po * (1 - po)) / (n * (1 - pe) ** 2))
+  return { kappa, lo: Math.max(-1, kappa - z * se), hi: Math.min(1, kappa + z * se) }
+}
+
+/** The bar for the judges: below it the scorer asks both and calls a disagreement `unclear`. */
+export const KAPPA_BAR = 0.8

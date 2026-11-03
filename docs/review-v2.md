@@ -113,16 +113,22 @@ dispose`. A lead's evidence is the review's run id and outcome. The factory gets
 
    Additions-only fixes (about 17 % of fixes in published SZZ studies) are out, a recall bias the report states.
 4. **Labelling**: published SZZ precision is about 0.5 unverified, so every candidate is checked. Two labeler calls
-   on different vendors each see the introducing diff, the fix diff and its message. Each answers: is this a defect
-   the introducing commit created (not a feature change or a preference)? Where is it in the introducing commit's
-   post-image (file, lines)? One-paragraph description, bug class, severity. A case is accepted when both say yes and
-   their locations overlap; anything else is dropped. The rejection rate goes in the report.
-5. **Owner check**: 50 accepted and 20 rejected, at random. If fewer than 90 % of the accepted are right, the filters
-   tighten and the mine reruns.
+   (`a` on Claude, `b` on GPT) each see the introducing diff, the fix diff and its message. Each answers: is this a
+   defect the introducing commit created (not a feature change or a preference)? Where is it in the introducing
+   commit's post-image (file, lines)? One-paragraph description, bug class, severity. When `a` and `b` disagree (one
+   says defect and the other not, or both say defect at locations that do not overlap), a third labeler `c` on a third
+   vendor (Gemini) decides. **A case is accepted when at least two of the three say defect and the locations of two
+   of those overlap**; anything else is dropped. The case takes `a`'s location, description, class and severity when `a`
+   is in the agreeing pair, else the pair's first seat. The report counts accepted cases per pair (`a+b`, `a+c`, `b+c`)
+   and drops per reason (`a-no`, `b-no`, `both-no`, `no-overlap`, `c-no`, `c-no-overlap`, `labeler-error`, `c-error`).
+5. **No owner check.** No human reads the cases (owner decision, 2026-11-02): the ground truth is validated by the
+   consensus above and nothing else. The limit is stated in every report that rests on it: `limit: "LLM consensus
+   (labellers a/b/c, judges a/b), no human check"`. Seat `c` is recorded beside `a` and `b` under its own version, so
+   adding it never invalidates their labels.
 
 **Clean controls**: commits whose changed code lines no later fix touched within 12 weeks and that no SZZ candidate
 blames. Mostly logic commits, with a few refactor, test and docs commits. "Clean" is probable, not proven: an important
-finding on a control that the owner confirms as real becomes a new bug case instead of counting as a false alarm.
+finding on a control that both judges confirm as real counts as a real finding, not a false alarm.
 
 **Size**: 200 bug cases (40 `dev`, 160 `test`) and 100 controls. At n = 30 a ten-point F1 gap sits inside the CI
 (CodeReviewBench), and 160 paired cases resolve a recall difference of about 0.08. Prompts iterate on `dev` only; arms
@@ -137,14 +143,20 @@ case. The 138 legacy review cases are retired from decisions.
 
 ### Matching and judging
 
-- `eval.judge`: a single call with structured output. It gets one known bug and the findings in the same file (or
+- `eval.judge`: a single call with structured output, on judge seat `a` (Claude) or `b` (GPT, `eval.judge.b`). It gets one known bug and the findings in the same file (or
   naming it), and decides "does this finding describe this bug". It also classifies every unmatched finding: `real`
   (another real bug), `not-a-bug`, `nit` or `unclear`.
 - The judge's model is pinned on its own route, never a tier: a moving judge invalidates every comparison. A judge
   model or prompt change bumps the scorer version, and `compare` already refuses to mix versions.
-- **Calibration**: the owner labels 100 pairs, half judge-positive and half judge-negative, **including plausible
-  wrong findings** (judges catch only 21 to 38 % of those on CRJudgeBench). The bar is Cohen's κ ≥ 0.8. Below it,
-  two judges on different vendors must agree, and disagreements are scored as `unclear`.
+- **Calibration** (`agw eval gt calibrate`): no owner labels. Judge `b` is re-asked on exactly the recorded judge-`a`
+  inputs of 100 pairs, half judge-positive and half judge-negative, **including plausible wrong findings** (judges catch
+  only 21 to 38 % of those on CRJudgeBench). It reports Cohen's κ between the two judges with its 95 % interval, the raw
+  agreement, the confusion table and the agreement on the classes of unmatched findings, in
+  `review-gt/judge-calibration.json` (aggregates only). The bar is κ ≥ 0.8. At or above it, for this judge version,
+  the scorer asks judge `a` alone. Below it, missing, or for another judge version, the scorer asks both judges, and
+  a finding they classify differently is scored `unclear` (a split on the bug match is no match). The mode is part of
+  the scorer version, so `compare` refuses to mix modes. The scorer reads the file when the host starts. The limit is
+  the same: the judges agree with each other, no human checked either.
 - The token-overlap matcher (`harness/match.ts`) only preselects candidate pairs and never decides.
 
 ### Metrics: a Pareto table, no single score
@@ -152,7 +164,7 @@ case. The 138 legacy review cases are retired from decisions.
 | Metric | Definition | Role |
 |-|-|-|
 | **recall** | bug cases with a matched `important` finding / bug cases (`test`) | primary |
-| **false alarms** | `important` findings per clean control, minus owner-confirmed real ones | primary |
+| **false alarms** | `important` findings per clean control, minus those both judges confirm as real | primary |
 | noise | posted findings the judge calls `not-a-bug` / posted findings. Judges are weak here, so it is a trend line; the dispositions are the real measure | secondary |
 | severity calibration | matched bugs tagged `important` / matched bugs | secondary |
 | cost, wall | USD per review, wall p50 and p95, failed steps with causes | primary |

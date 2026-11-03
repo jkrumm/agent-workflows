@@ -126,7 +126,15 @@ export const LABELER_CLAUDE = {
 export const LABELER_GPT = {
   call: { ...TERRA_MEDIUM, maxOutputTokens: 16_000 },
 } as const
+/** Ground-truth labeller `c`, a third vendor, asked only when `a` and `b` disagree (`eval.label.c`). No effort: Gemini's OpenAI leg rejects `reasoning_effort`. */
+export const LABELER_GEMINI = {
+  call: { model: GEMINI_FLASH.call.model, rate: GEMINI_FLASH.call.rate, maxOutputTokens: 16_000 },
+} as const
 /** The review eval's grader: Sonnet 5.5 medium (`eval.judge`). Reasoning counts against the ceiling. */
 export const JUDGE = {
   call: { ...SONNET, effort: 'medium', maxOutputTokens: 16_000 },
+} as const
+/** The second grader, the other vendor: Terra medium on the chat wire (`eval.judge.b`). Its agreement with `JUDGE` is the κ the scorer reads. */
+export const JUDGE_GPT = {
+  call: { ...TERRA_MEDIUM, maxOutputTokens: 16_000 },
 } as const

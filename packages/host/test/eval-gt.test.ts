@@ -1,363 +1,400 @@
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { CapabilityCallError, JUDGE_VERSION } from '@agent-workflows/capabilities'
 import {
-  type Exec,
-  exec as bunExec,
+  GT_LIMIT,
   type GtBugCase,
-  type GtCandidate,
+  gtPath,
+  JudgeCalibration,
+  type JudgeClass,
   type JudgeInput,
   type JudgeOutput,
 } from '@agent-workflows/eval'
-import { ingestLabels, parseLabels } from '../src/workflows/eval-gt/ingest.ts'
+import {
+  CalibrateInputError,
+  type JudgeCaller,
+  planCalibration,
+  runCalibration,
+} from '../src/workflows/eval-gt/calibrate.ts'
+import { hostModules } from '../src/workflows/index.ts'
+import { createEvalGtWorkflows } from '../src/workflows/eval-gt/index.ts'
 import type { JudgeRun, JudgeRunReader } from '../src/workflows/eval-gt/judge-runs.ts'
-import { buildPack, type PackDeps } from '../src/workflows/eval-gt/pack.ts'
+import { type Body, startTestHost, type TestHost } from './support.ts'
 
+const ZEROS = '0'.repeat(40)
 let root: string
 let env: Record<string, string | undefined>
-let home: string
-const sha: Record<string, string> = {}
+let t: TestHost
 
-/** Git with no global or system config: the test never reads the real HOME. */
-const gitEnv = (dir: string) => ({
-  HOME: dir,
-  GIT_CONFIG_GLOBAL: '/dev/null',
-  GIT_CONFIG_SYSTEM: '/dev/null',
-  GIT_AUTHOR_NAME: 't',
-  GIT_AUTHOR_EMAIL: 't@example.com',
-  GIT_COMMITTER_NAME: 't',
-  GIT_COMMITTER_EMAIL: 't@example.com',
-})
-const exec: Exec = (cmd, args, options) => bunExec(cmd, args, { ...options, env: { ...options?.env, ...gitEnv(root) } })
-const git = (dir: string, ...args: string[]) => {
-  const r = Bun.spawnSync(['git', '-C', dir, ...args], { env: { ...process.env, ...gitEnv(root) } })
-  if (r.exitCode !== 0) throw new Error(`git ${args.join(' ')}: ${r.stderr.toString()}`)
-  return r.stdout.toString().trim()
-}
-
-const lines = (n: number, patch: Record<number, string> = {}) =>
-  `${Array.from({ length: n }, (_, i) => patch[i + 1] ?? `line ${i + 1}`).join('\n')}\n`
-
-const label = (defect: boolean, startLine = 20) => ({
-  defect,
-  location: defect ? { file: 'src/a.ts', startLine, endLine: startLine + 1 } : null,
-  description: defect ? 'seat claims an off-by-one' : '',
-  bugClass: 'logic' as const,
-  severity: 'major' as const,
-  reason: 'r',
-  model: 'm',
-})
-
-function jsonl(file: string, rows: unknown[]) {
-  const path = join(env.AGW_EVAL_DIR as string, 'review-gt', file)
-  mkdirSync(join(env.AGW_EVAL_DIR as string, 'review-gt'), { recursive: true })
-  writeFileSync(path, `${rows.map((r) => JSON.stringify(r)).join('\n')}\n`)
-}
-
-const bugCase = (n: number): GtBugCase => ({
-  id: `case-${n}`,
+const bugCase = (id: string): GtBugCase => ({
+  id,
+  kind: 'bug',
   split: 'test',
   repo: 'SourceRoot/demo',
-  sha: sha.intro as string,
-  parent: sha.base as string,
-  subject: 'feat: add the loop',
+  sha: ZEROS,
+  parent: ZEROS,
+  subject: 'feat: demo',
   minerVersion: 'm1',
-  kind: 'bug',
+  candidateId: id,
   bug: {
-    location: { file: 'src/a.ts', startLine: 20, endLine: 21 },
-    description: `Case ${n}: the loop runs once too often`,
+    location: { file: 'src/a.ts', startLine: 2, endLine: 3 },
+    description: 'The loop runs once too often.',
     bugClass: 'logic',
     severity: 'major',
-    fixSha: sha.fix as string,
-    fixSubject: 'fix: loop bound',
+    fixSha: ZEROS,
+    fixSubject: 'fix: bound',
   },
-  candidateId: `cand-ok-${n}`,
 })
 
-const candidate = (id: string, blamed = [{ file: 'src/a.ts', line: 22 }]): GtCandidate => ({
-  id,
-  repo: 'SourceRoot/demo',
-  fixSha: sha.fix as string,
-  fixSubject: 'fix: loop bound',
-  fixDate: '2026-10-01T00:00:00+00:00',
-  introSha: sha.intro as string,
-  introParent: sha.base as string,
-  introSubject: 'feat: add the loop',
-  introDate: '2026-09-01T00:00:00+00:00',
-  blamed,
-  introChangedLines: 40,
-  minerVersion: 'm1',
-})
+function writeCases(rows: unknown[]) {
+  mkdirSync(join(env.AGW_EVAL_DIR as string, 'review-gt'), { recursive: true })
+  writeFileSync(gtPath('cases.jsonl', env), `${rows.map((r) => JSON.stringify(r)).join('\n')}\n`)
+}
 
-const finding = (id: string, message: string) => ({
-  id,
-  tag: 'important' as const,
-  file: 'src/a.ts',
-  line: 20,
-  message,
-})
-const judgeRun = (
-  n: number,
-  caseId: string,
-  classes: Record<string, JudgeOutput['findings'][number]['class']>,
-  preselected: string[],
-): JudgeRun => {
+/** A judge-a run on case `caseId`: finding `i` is class `classes[i]`; the preselected ones are the first `pre` ids. */
+function aRun(runId: string, caseId: string, classes: JudgeClass[], pre = classes.length): JudgeRun {
+  const findings = classes.map((_, i) => ({
+    id: String(i),
+    tag: 'important' as const,
+    file: 'src/a.ts',
+    line: 2,
+    message: `finding ${i}`,
+  }))
   const input: JudgeInput = {
     caseId,
-    bug: { location: { file: 'src/a.ts', startLine: 20, endLine: 20 }, description: 'the loop runs once too often' },
-    findings: Object.keys(classes).map((id) => finding(id, `message of ${id}`)),
-    preselected,
-    diff: 'diff',
+    bug: { location: { file: 'src/a.ts', startLine: 2, endLine: 3 }, description: 'The loop runs once too often.' },
+    findings,
+    preselected: findings.slice(0, pre).map((f) => f.id),
+    diff: 'diff --git a/src/a.ts b/src/a.ts\n',
   }
   const output: JudgeOutput = {
-    findings: Object.entries(classes).map(([id, c]) => ({ id, class: c, reason: 'r' })),
-    model: 'm',
+    findings: classes.map((c, i) => ({ id: String(i), class: c, reason: `a${i}` })),
+    model: 'model-a',
   }
-  return { runId: `judge-${n}`, evalRunId: 'eval-1', input, output }
+  return { runId, evalRunId: 'eval-1', input, output }
 }
-const reader = (runs: JudgeRun[]): JudgeRunReader => ({ judgeRuns: async () => runs })
 
-beforeAll(() => {
-  root = mkdtempSync(join(tmpdir(), 'agw-eval-gt-'))
-  home = join(root, 'home')
-  const repo = join(home, 'SourceRoot', 'demo')
-  mkdirSync(join(repo, 'src'), { recursive: true })
-  git(repo, 'init', '-q', '-b', 'main')
-  writeFileSync(join(repo, 'README.md'), 'demo\n')
-  git(repo, 'add', '.')
-  git(repo, 'commit', '-q', '-m', 'init')
-  sha.base = git(repo, 'rev-parse', 'HEAD')
-  writeFileSync(join(repo, 'src', 'a.ts'), lines(40))
-  git(repo, 'add', '.')
-  git(repo, 'commit', '-q', '-m', 'feat: add the loop')
-  sha.intro = git(repo, 'rev-parse', 'HEAD')
-  writeFileSync(join(repo, 'src', 'a.ts'), lines(40, { 20: 'line 20 fixed' }))
-  git(repo, 'commit', '-q', '-am', 'fix: loop bound')
-  sha.fix = git(repo, 'rev-parse', 'HEAD')
+/** The error a promise rejects with (a missing rejection fails the test). */
+const failure = async (promise: Promise<unknown>): Promise<Error> => {
+  const outcome = await promise.then(
+    () => null,
+    (error: unknown) => error as Error,
+  )
+  if (outcome === null) throw new Error('expected a rejection')
+  return outcome
+}
 
+const reader = (runs: JudgeRun[]): JudgeRunReader => ({
+  async judgeRuns(ids) {
+    return runs.filter((r) => ids.includes(r.evalRunId))
+  },
+})
+
+/** Judge `b`: answers per run id from `byRun` (default: what `a` said), records every call. */
+function judgeB(byRun: Record<string, JudgeClass[]> = {}, fail?: (input: JudgeInput) => unknown) {
+  const calls: JudgeInput[] = []
+  const registry: JudgeCaller = {
+    async call(_id, input) {
+      calls.push(input)
+      const thrown = fail?.(input)
+      if (thrown) throw thrown
+      const classes = byRun[input.caseId] ?? []
+      return {
+        findings: input.findings.map((f, i) => ({ id: f.id, class: classes[i] ?? 'unclear', reason: `b${f.id}` })),
+        model: 'model-b',
+      }
+    },
+  }
+  return { registry, calls }
+}
+
+beforeAll(async () => {
+  root = mkdtempSync(join(tmpdir(), 'agw-evalgt-'))
   env = { AGW_EVAL_DIR: join(root, 'eval') }
-  jsonl('cases.jsonl', [bugCase(1), bugCase(2), bugCase(3)])
-  jsonl('candidates.jsonl', [
-    candidate('cand-no-a'),
-    candidate('cand-no-both', [
-      { file: 'src/a.ts', line: 30 },
-      { file: 'src/a.ts', line: 31 },
-    ]),
-  ])
-  jsonl('rejected.jsonl', [
-    { candidateId: 'cand-no-a', reason: 'a-no', labelerVersion: 'l1' },
-    { candidateId: 'cand-no-both', reason: 'both-no', labelerVersion: 'l1' },
-  ])
-  jsonl('labels.jsonl', [
-    {
-      candidateId: 'cand-no-a',
-      labelerVersion: 'l1',
-      at: '2026-11-01T00:00:00.000Z',
-      a: label(false),
-      b: label(true, 25),
-      runId: 'r',
-    },
-    {
-      candidateId: 'cand-no-both',
-      labelerVersion: 'l1',
-      at: '2026-11-01T00:00:00.000Z',
-      a: label(false),
-      b: label(false),
-      runId: 'r',
-    },
-  ])
-})
-afterAll(() => rmSync(root, { recursive: true, force: true }))
-
-const deps = (runs: JudgeRun[]): PackDeps => ({
-  env,
-  exec,
-  home,
-  judgeRuns: reader(runs),
-  now: () => new Date('2026-11-02T10:00:00Z'),
-})
-const RUNS = [
-  judgeRun(1, 'case-1', { '0': 'match', '1': 'real', '2': 'nit' }, ['0', '1']),
-  judgeRun(2, 'case-2', { '0': 'match', '1': 'not-a-bug' }, ['0', '1']),
-]
-const page = (html: string) => JSON.parse(/id="data">(.*?)<\/script>/s.exec(html)?.[1] ?? 'null')
-
-describe('buildPack', () => {
-  test('counts: cases, dropped candidates and half-and-half pairs; files private; the preselection rule holds', async () => {
-    const result = await buildPack(deps(RUNS), { evalRuns: ['eval-1'], cases: 2, rejected: 2, pairs: 4, seed: 1 })
-    expect(result.counts).toEqual({
-      cases: 2,
-      rejected: 2,
-      pairs: 4,
-      pairsJudgePositive: 2,
-      pairsJudgeNegative: 2,
-      total: 8,
-    })
-    expect(result.notes).toEqual([])
-    expect(statSync(result.html).mode & 0o777).toBe(0o600)
-    expect(statSync(result.dir).mode & 0o777).toBe(0o700)
-    const manifest = JSON.parse(readFileSync(result.manifest, 'utf8'))
-    const pairs = manifest.items.filter((i: { kind: string }) => i.kind === 'pair')
-    // The nit that was not preselected is never a negative.
-    expect(pairs.map((p: { id: string }) => p.id).sort()).toEqual([
-      'case-1:judge-1:0',
-      'case-1:judge-1:1',
-      'case-2:judge-2:0',
-      'case-2:judge-2:1',
-    ])
-    expect(pairs.find((p: { id: string }) => p.id === 'case-2:judge-2:1').judgeClass).toBe('not-a-bug')
-  })
-
-  test('the page is blind and carries the code: marked lines, ±15 and ±10, the fix diff', async () => {
-    const result = await buildPack(deps(RUNS), { evalRuns: ['eval-1'], cases: 2, rejected: 2, pairs: 4, seed: 1 })
-    const html = readFileSync(result.html, 'utf8')
-    expect(html).not.toMatch(/accepted|rejected|not-a-bug|judgeClass/i)
-    const data = page(html)
-    expect(data.items).toHaveLength(8)
-    const okCase = data.items.find((i: { id: string }) => i.id === 'cand-ok-1')
-    expect(okCase.code[0].n).toBe(5)
-    expect(okCase.code.at(-1).n).toBe(36)
-    expect(okCase.code.filter((l: { mark: boolean }) => l.mark).map((l: { n: number }) => l.n)).toEqual([20, 21])
-    expect(okCase.fixDiff).toContain('+line 20 fixed')
-    expect(okCase.where).toBe('src/a.ts:20-21')
-    const pair = data.items.find((i: { id: string }) => i.id === 'case-1:judge-1:0')
-    expect(pair.bug.code.map((l: { n: number }) => l.n)).toEqual(Array.from({ length: 21 }, (_, i) => i + 10))
-    expect(pair.finding.where).toBe('src/a.ts:20')
-  })
-
-  test('a dropped candidate shows seat a, else seat b, else the changed lines, in the same form as every item', async () => {
-    const result = await buildPack(deps(RUNS), { evalRuns: ['eval-1'], cases: 0, rejected: 2, pairs: 0, seed: 1 })
-    const items = page(readFileSync(result.html, 'utf8')).items
-    const seatB = items.find((i: { id: string }) => i.id === 'cand-no-a')
-    expect(seatB.claim).toBe('seat claims an off-by-one')
-    expect(seatB.where).toBe('src/a.ts:25-26')
-    const none = items.find((i: { id: string }) => i.id === 'cand-no-both')
-    expect(none.claim).toBe('Claim: the lines the fix changed (src/a.ts:30-31)')
-    expect(readFileSync(result.html, 'utf8')).not.toMatch(/no labeller|claimed a defect/i)
-    const manifest = JSON.parse(readFileSync(result.manifest, 'utf8'))
-    const claimedBy = Object.fromEntries(
-      manifest.items.map((i: { id: string; claimedBy: string }) => [i.id, i.claimedBy]),
-    )
-    expect(claimedBy).toEqual({ 'cand-no-a': 'b', 'cand-no-both': 'none' })
-    expect(none.where).toBe('src/a.ts:30-31')
-    expect(none.code.filter((l: { mark: boolean }) => l.mark).map((l: { n: number }) => l.n)).toEqual([30, 31])
-  })
-
-  test('fewer judge-positive pairs than half: all of them, negatives fill, the shortfall is said in the output and on the page', async () => {
-    const result = await buildPack(deps(RUNS), { evalRuns: ['eval-1'], cases: 0, rejected: 0, pairs: 10, seed: 1 })
-    expect(result.counts).toMatchObject({ pairsJudgePositive: 2, pairsJudgeNegative: 2, pairs: 4 })
-    expect(result.notes.join('\n')).toContain('2 judge-positive pairs exist for a quota of 5')
-    expect(result.notes.join('\n')).toContain('only 4 of 10 requested pairs exist')
-    // The page says it holds fewer items than asked, and nothing about which kind is missing.
-    const html = readFileSync(result.html, 'utf8')
-    expect(html).toContain('Finding items: 4 of 10 requested exist; all are shown.')
-    expect(html).not.toMatch(/judge-positive|judge-negative|quota/)
-  })
-
-  test('fewer cases than asked: all are shown and it says so', async () => {
-    const result = await buildPack(deps(RUNS), { evalRuns: ['eval-1'], cases: 50, rejected: 20, pairs: 0, seed: 1 })
-    expect(result.counts).toMatchObject({ cases: 3, rejected: 2 })
-    expect(result.notes).toHaveLength(2)
-    const html = readFileSync(result.html, 'utf8')
-    expect(html).toContain('Commit items: 5 of 70 requested exist; all are shown.')
-    expect(html).not.toMatch(/dropped|mined/)
-  })
-
-  test('the same seed builds the same session', async () => {
-    const a = await buildPack(deps(RUNS), { evalRuns: ['eval-1'], cases: 2, rejected: 1, pairs: 4, seed: 7 })
-    const b = await buildPack(deps(RUNS), { evalRuns: ['eval-1'], cases: 2, rejected: 1, pairs: 4, seed: 7 })
-    expect(b.sessionId).toBe(a.sessionId)
-  })
-
-  test('code that cannot be read does not stop the pack', async () => {
-    const broken: Exec = async () => ({ code: 128, stdout: '', stderr: 'fatal: not a git repository\n' })
-    const result = await buildPack(
-      { ...deps(RUNS), exec: broken },
-      { evalRuns: ['eval-1'], cases: 1, rejected: 0, pairs: 0, seed: 1 },
-    )
-    expect(page(readFileSync(result.html, 'utf8')).items[0].code).toContain('code unavailable')
-  })
-
-  test('nothing to show is an error that names why', async () => {
-    const error = await buildPack(deps([]), { evalRuns: ['eval-1'], cases: 0, rejected: 0, pairs: 10, seed: 1 }).then(
-      () => undefined,
-      (e: unknown) => e,
-    )
-    expect((error as Error).message).toContain('nothing to show')
+  t = await startTestHost({
+    prefix: 'evalgt',
+    extra: createEvalGtWorkflows({ registry: judgeB().registry, env, judgeRuns: reader([]) }),
   })
 })
+afterAll(async () => {
+  await t.close()
+  rmSync(root, { recursive: true, force: true })
+})
+beforeEach(() => {
+  env.AGW_EVAL_DIR = join(root, `eval-${Math.random().toString(36).slice(2)}`)
+})
+afterEach(() => {
+  rmSync(env.AGW_EVAL_DIR as string, { recursive: true, force: true })
+})
 
-describe('ingest', () => {
-  const at = '2026-11-02T11:00:00.000Z'
-  let sid = ''
-  const line = (o: object, sessionId = sid) => JSON.stringify({ sessionId, at, ...o })
-  let exported = ''
-
-  test('appends, reports case precision and kappa against the manifest, counts the unanswered', async () => {
-    sid = (await buildPack(deps(RUNS), { evalRuns: ['eval-1'], cases: 2, rejected: 2, pairs: 4, seed: 1 })).sessionId
-    const labelsPath = join(env.AGW_EVAL_DIR as string, 'review-gt', 'owner-labels.jsonl')
-    rmSync(labelsPath, { force: true })
-    const manifest = JSON.parse(
-      readFileSync(join(env.AGW_EVAL_DIR as string, 'review-gt', 'owner', 'manifest.json'), 'utf8'),
+describe('planCalibration', () => {
+  test('pairs are judge-positive matches and preselected non-matches; the rest of a run is not a pair', async () => {
+    writeCases([bugCase('c1')])
+    // 0 match (positive), 1 real preselected (negative), 2 nit not preselected (no pair)
+    const plan = await planCalibration(
+      { env, judgeRuns: reader([aRun('r1', 'c1', ['match', 'real', 'nit'], 2)]), judge: judgeB().registry },
+      { evalRuns: ['eval-1'], pairs: 100, seed: 1 },
     )
-    const text = manifest.items
-      .map((i: { kind: string; id: string; truth?: string; judgeClass?: string }) => {
-        if (i.kind === 'case')
-          return line({ kind: 'case', candidateId: i.id, verdict: i.truth === 'accepted' ? 'yes' : 'no' })
-        return line({ kind: 'pair', pairId: i.id, verdict: i.judgeClass === 'match' ? 'yes' : 'no', note: 'ok' })
-      })
-      .concat([
-        line({ kind: 'case', candidateId: 'not-in-session', verdict: 'yes' }),
-        line({ kind: 'case', candidateId: 'cand-ok-1', verdict: 'no' }, 'an-older-session'),
-      ])
-      .join('\n')
-    exported = `${text}\n`
-    const result = ingestLabels(env, exported)
-    expect(result).toMatchObject({ appended: 8, duplicates: 0, unknown: 1, otherSession: 1 })
-    expect(result.report.cases.accepted).toMatchObject({ shown: 2, yes: 2, precision: 1 })
-    expect(result.report.cases.rejected).toMatchObject({ shown: 2, no: 2, lost: 0 })
-    expect(result.report.pairs.kappa).toBe(1)
-    expect(result.report.bars).toMatchObject({ cases: { met: true }, kappa: { met: true } })
-    expect(result.report.unanswered).toEqual({ cases: 0, pairs: 0 })
-    expect(statSync(labelsPath).mode & 0o777).toBe(0o600)
-    expect(readFileSync(labelsPath, 'utf8').trim().split('\n')).toHaveLength(8)
+    expect(plan).toMatchObject({ positives: 1, negatives: 1 })
+    expect(plan.pairs.map((p) => `${p.findingId}:${p.aMatch}`).sort()).toEqual(['0:true', '1:false'])
+    expect([...plan.runs.keys()]).toEqual(['r1'])
+    expect(plan.notes.join(' ')).toContain('judge-positive pairs exist for a quota of 50')
   })
 
-  test('ingesting the same export again appends nothing; a changed answer appends and wins', () => {
-    const labelsPath = join(env.AGW_EVAL_DIR as string, 'review-gt', 'owner-labels.jsonl')
-    expect(readFileSync(labelsPath, 'utf8')).not.toContain('sessionId')
-    expect(ingestLabels(env, exported)).toMatchObject({ appended: 0, duplicates: 8, unknown: 1, otherSession: 1 })
-    const changed = line({ kind: 'case', candidateId: 'cand-ok-1', verdict: 'no', at: '2026-11-02T12:00:00.000Z' })
-    const result = ingestLabels(env, changed)
-    expect(result.appended).toBe(1)
-    expect(result.report.cases.accepted).toMatchObject({ yes: 1, no: 1, precision: 0.5 })
-    expect(result.report.bars.cases.met).toBe(false)
+  test('half the budget on each side, seeded, one judge-b call per run holding a sampled pair', async () => {
+    writeCases([bugCase('c1')])
+    const runs = Array.from({ length: 10 }, (_, i) => aRun(`r${i}`, 'c1', ['match', 'real']))
+    const deps = { env, judgeRuns: reader(runs), judge: judgeB().registry }
+    const plan = await planCalibration(deps, { evalRuns: ['eval-1'], pairs: 6, seed: 3 })
+    expect(plan).toMatchObject({ positives: 3, negatives: 3 })
+    expect(plan.runs.size).toBeLessThanOrEqual(6)
+    const again = await planCalibration(deps, { evalRuns: ['eval-1'], pairs: 6, seed: 3 })
+    expect(again.pairs).toEqual(plan.pairs)
   })
 
-  test('one bad line refuses the file and appends nothing', () => {
-    const labelsPath = join(env.AGW_EVAL_DIR as string, 'review-gt', 'owner-labels.jsonl')
-    const before = readFileSync(labelsPath, 'utf8')
-    const text = `${line({ kind: 'case', candidateId: 'cand-ok-2', verdict: 'maybe' })}\nnot json\n`
-    expect(() =>
-      ingestLabels(env, line({ kind: 'case', candidateId: 'cand-ok-2', verdict: 'yes' }).replace(sid, '')),
-    ).toThrow('no sessionId')
-    expect(() => ingestLabels(env, text)).toThrow(/line 1: .*; line 2: not JSON$/)
-    expect(readFileSync(labelsPath, 'utf8')).toBe(before)
-  })
-
-  test('without a session there is nothing to ingest into', () => {
-    expect(() =>
-      ingestLabels({ AGW_EVAL_DIR: join(root, 'empty') }, line({ kind: 'case', candidateId: 'x', verdict: 'yes' })),
-    ).toThrow('no owner session')
-  })
-
-  test('parseLabels reads what the page exports', () => {
-    const rows = [
-      { kind: 'case', candidateId: 'c', verdict: 'unsure', at, note: 'hmm' },
-      { kind: 'pair', pairId: 'p', verdict: 'yes', at },
+  test('judge runs of an unknown case, a control or an unusable shape are skipped, with a note', async () => {
+    writeCases([bugCase('c1')])
+    const control = aRun('rc', 'c1', ['nit'])
+    ;(control.input as JudgeInput).bug = null
+    const runs = [
+      aRun('r1', 'c1', ['match']),
+      aRun('r2', 'other', ['match']),
+      control,
+      { ...aRun('r4', 'c1', []), input: 1 },
     ]
-    const text = `${rows.map((e) => JSON.stringify({ sessionId: 's', ...e })).join('\n')}\n`
-    expect(parseLabels(text)).toEqual(rows.map((label) => ({ sessionId: 's', label })) as never)
+    const plan = await planCalibration(
+      { env, judgeRuns: reader(runs), judge: judgeB().registry },
+      { evalRuns: ['eval-1'], pairs: 10, seed: 1 },
+    )
+    expect([...plan.runs.keys()]).toEqual(['r1'])
+    expect(plan.notes.join(' ')).toContain('2 judge runs skipped: no known bug')
+    expect(plan.notes.join(' ')).toContain('1 judge runs skipped: their case is not in cases.jsonl')
+  })
+
+  test('no mined case, or no pair, is the caller’s input to fix', async () => {
+    const deps = (runs: JudgeRun[]) => ({ env, judgeRuns: reader(runs), judge: judgeB().registry })
+    const request = { evalRuns: ['eval-1'], pairs: 10, seed: 1 }
+    expect(await failure(planCalibration(deps([]), request))).toBeInstanceOf(CalibrateInputError)
+    writeCases([bugCase('c1')])
+    expect((await failure(planCalibration(deps([]), request))).message).toContain('no judge pair')
+  })
+})
+
+describe('runCalibration', () => {
+  const options = (evalRuns = ['eval-1']) => ({
+    callContext: {} as never,
+    signal: new AbortController().signal,
+    progress: () => {},
+    now: () => new Date('2026-11-03T10:00:00Z'),
+    concurrency: 2,
+    evalRuns,
+  })
+
+  async function plan(runs: JudgeRun[], pairs = 100) {
+    writeCases([bugCase('c1'), bugCase('c2')])
+    return planCalibration(
+      { env, judgeRuns: reader(runs), judge: judgeB().registry },
+      { evalRuns: ['eval-1'], pairs, seed: 1 },
+    )
+  }
+
+  test('re-asks seat b on exactly the judge-a input and compares per pair: κ, CI, agreement, confusion', async () => {
+    // 20 runs of case c1: findings [match, real]; b agrees on all matches and on 18 of the 20 non-matches
+    const runs = Array.from({ length: 20 }, (_, i) => aRun(`r${i}`, 'c1', ['match', 'real']))
+    const p = await plan(runs)
+    let seen = 0
+    const { registry, calls } = judgeB({}, () => undefined)
+    registry.call = async (_id, input) => {
+      calls.push(input)
+      const flip = seen++ < 2
+      return {
+        findings: [
+          { id: '0', class: 'match', reason: 'b0' },
+          { id: '1', class: flip ? 'match' : 'not-a-bug', reason: 'b1' },
+        ],
+        model: 'model-b',
+      }
+    }
+    const out = await runCalibration({ env, judgeRuns: reader(runs), judge: registry }, p, options())
+    expect(calls).toHaveLength(20)
+    for (const call of calls) {
+      const recorded = runs.find((r) => (r.input as JudgeInput).caseId === call.caseId)?.input as JudgeInput
+      expect({ ...call, seat: undefined }).toEqual({ ...recorded, seat: undefined })
+      expect(call.seat).toBe('b')
+    }
+    const c = out.calibration
+    expect(c.confusion).toEqual({ yy: 20, yn: 0, ny: 2, nn: 18 })
+    expect(c).toMatchObject({ n: 40, limit: GT_LIMIT, judgeVersion: JUDGE_VERSION, bar: 0.8 })
+    expect(c.agreement).toBeCloseTo(0.95, 10)
+    expect(c.kappa).toBeCloseTo(0.9, 10)
+    expect(c.ci95?.lo).toBeLessThan(0.9)
+    expect(c.ci95?.hi).toBeGreaterThan(0.9)
+    expect(c.met).toBe(true)
+    expect(c.judgeModels).toEqual({ a: ['model-a'], b: ['model-b'] })
+    expect(JudgeCalibration.safeParse(c).success).toBe(true)
+  })
+
+  test('agreement on the findings neither judge matched, by class', async () => {
+    const runs = [aRun('r1', 'c1', ['match', 'real', 'nit', 'not-a-bug', 'unclear'])]
+    const p = await plan(runs)
+    const { registry } = judgeB({ c1: ['match', 'real', 'not-a-bug', 'not-a-bug', 'unclear'] })
+    const { calibration } = await runCalibration({ env, judgeRuns: reader(runs), judge: registry }, p, options())
+    expect(calibration.classes.n).toBe(4)
+    expect(calibration.classes.agreement).toBe(0.75)
+    expect(calibration.classes.confusion).toMatchObject({
+      real: { real: 1 },
+      nit: { 'not-a-bug': 1 },
+      'not-a-bug': { 'not-a-bug': 1 },
+      unclear: { unclear: 1 },
+    })
+  })
+
+  test('below the bar: met is false; an undefined κ is null and not met', async () => {
+    const runs = [aRun('r1', 'c1', ['match', 'real'])]
+    const p = await plan(runs)
+    const split = await runCalibration(
+      { env, judgeRuns: reader(runs), judge: judgeB({ c1: ['real', 'match'] }).registry },
+      p,
+      options(),
+    )
+    expect(split.calibration).toMatchObject({ kappa: -1, met: false, confusion: { yy: 0, yn: 1, ny: 1, nn: 0 } })
+    const allMatch = [aRun('r2', 'c1', ['match'])]
+    const q = await plan(allMatch)
+    const same = await runCalibration(
+      { env, judgeRuns: reader(allMatch), judge: judgeB({ c1: ['match'] }).registry },
+      q,
+      options(),
+    )
+    expect(same.calibration).toMatchObject({ kappa: null, ci95: null, met: false, agreement: 1 })
+  })
+
+  test('judge b failing with an answer skips that run; any other failure stops the calibration', async () => {
+    const runs = [aRun('r1', 'c1', ['match', 'real']), aRun('r2', 'c2', ['match', 'real'])]
+    const p = await plan(runs)
+    const refuse = judgeB({ c2: ['match', 'real'] }, (input) =>
+      input.caseId === 'c1' ? new CapabilityCallError('INVALID_OUTPUT', 502, 'Model output rejected', true) : undefined,
+    )
+    const out = await runCalibration({ env, judgeRuns: reader(runs), judge: refuse.registry }, p, options())
+    expect(out.skippedRuns).toBe(1)
+    expect(out.calibration.n).toBe(2)
+    expect(out.notes.join(' ')).toContain('1 judge runs skipped')
+
+    const noCredit = judgeB(
+      {},
+      () => new CapabilityCallError('UPSTREAM_ERROR', 502, 'no eval credit', true, { status: 403 }),
+    )
+    const stopped = await failure(
+      runCalibration({ env, judgeRuns: reader(runs), judge: noCredit.registry }, p, options()),
+    )
+    expect(stopped.message).toContain('no eval credit')
+  })
+})
+
+describe('agw eval gt calibrate', () => {
+  async function start(input: Record<string, unknown>) {
+    const { body } = await t.json(
+      await t.call('/workflows/eval/gt/calibrate', { method: 'POST', body: input, headers: { prefer: 'wait=60' } }),
+    )
+    return body
+  }
+
+  test('is the one gt command, with its flags; the owner pack and ingest are gone', async () => {
+    const { buildCommands } = await import('../../cli/src/spec.ts')
+    const { commands, skipped } = buildCommands(await t.host.openapi())
+    expect(skipped).toEqual([])
+    expect(commands.filter((c) => c.words[0] === 'eval' && c.words[1] === 'gt').map((c) => c.words.join(' '))).toEqual([
+      'eval gt calibrate',
+    ])
+    const command = commands.find((c) => c.words.join(' ') === 'eval gt calibrate')
+    expect(command?.x).toMatchObject({ kind: 'workflow', mutating: true })
+    expect(command?.fields.map((f) => f.flag).sort()).toEqual(['eval-runs', 'pairs', 'seed', 'yes'])
+  })
+
+  test('without --yes: the plan and an estimate, no call and no file', async () => {
+    writeCases([bugCase('c1')])
+    const runs = [aRun('r1', 'c1', ['match', 'real'])]
+    const { registry, calls } = judgeB({ c1: ['match', 'real'] })
+    const host = await startTestHost({
+      prefix: 'evalgtplan',
+      extra: createEvalGtWorkflows({ registry, env, judgeRuns: reader(runs) }),
+    })
+    try {
+      const { body } = await host.json(
+        await host.call('/workflows/eval/gt/calibrate', {
+          method: 'POST',
+          body: { evalRuns: ['eval-1'] },
+          headers: { prefer: 'wait=60' },
+        }),
+      )
+      expect(body.status).toBe('done')
+      const out = body.output as Body
+      expect(out).toMatchObject({
+        limit: GT_LIMIT,
+        spent: false,
+        calibration: null,
+        written: null,
+        plan: { pairs: 2, judgePositive: 1, judgeNegative: 1, judgeBCalls: 1 },
+      })
+      expect(out.plan.estimateUsd).toBeGreaterThan(0)
+      expect(calls).toHaveLength(0)
+      expect(existsSync(gtPath('judge-calibration.json', env))).toBe(false)
+    } finally {
+      await host.close()
+    }
+  })
+
+  test('--yes calls judge b, writes judge-calibration.json (aggregates, mode 0600) and says what the scorer does', async () => {
+    writeCases([bugCase('c1')])
+    const runs = Array.from({ length: 10 }, (_, i) => aRun(`r${i}`, 'c1', ['match', 'real']))
+    const { registry, calls } = judgeB({ c1: ['match', 'not-a-bug'] })
+    const host = await startTestHost({
+      prefix: 'evalgtyes',
+      extra: createEvalGtWorkflows({
+        registry,
+        env,
+        judgeRuns: reader(runs),
+        now: () => new Date('2026-11-03T10:00:00Z'),
+      }),
+    })
+    try {
+      const { body } = await host.json(
+        await host.call('/workflows/eval/gt/calibrate', {
+          method: 'POST',
+          body: { evalRuns: ['eval-1'], yes: true, pairs: 20 },
+          headers: { prefer: 'wait=60' },
+        }),
+      )
+      expect(body.status).toBe('done')
+      const out = body.output as Body
+      expect(out).toMatchObject({ spent: true, limit: GT_LIMIT, calibration: { kappa: 1, met: true, n: 20 } })
+      expect(out.scorer).toContain('one judge (a)')
+      expect(calls).toHaveLength(10)
+      const path = gtPath('judge-calibration.json', env)
+      expect(out.written).toBe(path)
+      expect(statSync(path).mode & 0o777).toBe(0o600)
+      const file = JudgeCalibration.parse(JSON.parse(readFileSync(path, 'utf8')))
+      expect(file).toMatchObject({
+        at: '2026-11-03T10:00:00.000Z',
+        evalRuns: ['eval-1'],
+        judgeVersion: JUDGE_VERSION,
+        limit: GT_LIMIT,
+      })
+      // aggregates only: no finding text, case id or run id
+      expect(readFileSync(path, 'utf8')).not.toMatch(/finding \d|"c1"|"r\d"/)
+    } finally {
+      await host.close()
+    }
+  })
+
+  test('the host serves it as a discovered module', async () => {
+    expect((await hostModules()).map((m) => m.id)).toContain('eval-gt')
+  })
+
+  test('no mined case is an invalid input', async () => {
+    const body = await start({ evalRuns: ['eval-1'] })
+    expect(body.status).toBe('failed')
+    expect(JSON.stringify(body)).toContain('no mined bug case')
   })
 })

@@ -4,11 +4,15 @@ import { evalDir } from './cases.ts'
 
 /**
  * The review ground truth (`docs/review-v2.md` §Ground truth): bugs mined from the owner's fix history with SZZ, each
- * confirmed by two labelers on different vendors, plus clean controls. The contract between the miner (`eval.mine`),
- * the labelers (`eval.label`), the judge (`eval.judge`), review's scorer v3 and the owner session. Every file lives
- * under `$AGW_EVAL_DIR/review-gt/` (mode 0600): cases name private repos, so none of it enters this public repo.
+ * confirmed by two of three labelers on different vendors, plus clean controls. The contract between the miner
+ * (`eval.mine`), the labelers (`eval.label`), the judges (`eval.judge`), review's scorer and the judge calibration.
+ * Every file lives under `$AGW_EVAL_DIR/review-gt/` (mode 0600): cases name private repos, so none of it enters this
+ * public repo. No human checks any of it: every report states `GT_LIMIT`.
  */
 export const GT_DIR = 'review-gt'
+
+/** The limit of this ground truth, carried by every report that rests on it (mine, calibration, the scorer's notes). */
+export const GT_LIMIT = 'LLM consensus (labellers a/b/c, judges a/b), no human check'
 
 /** `$AGW_EVAL_DIR/review-gt/<file>`. */
 export const gtPath = (file: GtFile, env: Record<string, string | undefined> = process.env) =>
@@ -18,19 +22,19 @@ export const gtPath = (file: GtFile, env: Record<string, string | undefined> = p
  * The files of the ground truth, all JSONL but `report.json`:
  * - `candidates.jsonl`: SZZ output (`GtCandidate`), rewritten whole by each mine;
  * - `labels.jsonl`: one `GtLabelRecord` per labelled candidate, appended; the miner's resume point (a candidate with a
- *   record is never labelled again under the same `labelerVersion`);
+ *   record is never labelled again under the same `labelerVersion`; seat `c` is added to its record later, in place);
  * - `cases.jsonl`: the suite `agw eval run review` reads (`GtCase`: accepted bugs and controls);
- * - `rejected.jsonl`: candidates the labelers did not accept (`GtRejected`), the owner check's other half;
- * - `owner-labels.jsonl`: the owner session's answers (`OwnerCaseLabel`, `OwnerPairLabel`);
- * - `report.json`: aggregates only (counts per filter, acceptance and rejection rates), the input of the committed report.
+ * - `rejected.jsonl`: candidates the labelers did not accept (`GtRejected`);
+ * - `report.json`: aggregates only (counts per filter, per accept path and per reject reason), the input of the committed report;
+ * - `judge-calibration.json`: aggregates only, the agreement of the two judges (`eval.gt.calibrate`) the scorer reads.
  */
 export type GtFile =
   | 'candidates.jsonl'
   | 'labels.jsonl'
   | 'cases.jsonl'
   | 'rejected.jsonl'
-  | 'owner-labels.jsonl'
   | 'report.json'
+  | 'judge-calibration.json'
 
 export const Sha = z.string().regex(/^[0-9a-f]{40}$/)
 /** A repo path relative to `$HOME`. `SourceRoot` only: IU repos stay out of the cases (owner decision, 2026-11-01). */
@@ -107,8 +111,8 @@ export const GtLabel = z
   .strict()
 export type GtLabel = z.infer<typeof GtLabel>
 
-/** The two labelers: `a` on Claude, `b` on GPT (cross-vendor by design). */
-export const LabelerSeat = z.enum(['a', 'b'])
+/** The labelers: `a` on Claude, `b` on GPT, `c` on Gemini (cross-vendor by design); `c` is asked only when `a` and `b` disagree. */
+export const LabelerSeat = z.enum(['a', 'b', 'c'])
 export type LabelerSeat = z.infer<typeof LabelerSeat>
 
 export const GtLabelResult = z.union([
@@ -116,7 +120,11 @@ export const GtLabelResult = z.union([
   z.object({ error: z.string() }).strict(),
 ])
 
-/** `labels.jsonl`: both seats' answers for one candidate, or the error of a seat that failed. */
+/**
+ * `labels.jsonl`: each seat's answer for one candidate, or the error of a seat that failed. `a` and `b` are checked
+ * against `labelerVersion`. `c` is added later and only when they disagree; it carries its own version (`cVersion`),
+ * so adding it never invalidates `a` and `b`, and the run that paid for it (`cRunId`).
+ */
 export const GtLabelRecord = z
   .object({
     candidateId: z.string(),
@@ -124,18 +132,35 @@ export const GtLabelRecord = z
     at: z.iso.datetime(),
     a: GtLabelResult,
     b: GtLabelResult,
-    /** The eval run that paid for the calls (its `cost` is their sum). */
+    c: GtLabelResult.optional(),
+    cVersion: z.string().optional(),
+    cRunId: z.string().optional(),
+    /** The eval run that paid for the calls of `a` and `b` (its `cost` is their sum). */
     runId: z.string(),
   })
   .strict()
 export type GtLabelRecord = z.infer<typeof GtLabelRecord>
 
 /**
- * The acceptance rule: both seats answered `defect` and their locations name the same file and overlap within
- * `LOCATION_SLACK` lines. Anything else is a rejection with its reason.
+ * The acceptance rule (2 of 3): at least two seats answered `defect` and the locations of two of those name the same
+ * file and overlap within `LOCATION_SLACK` lines. Anything else is a rejection with its reason. The reasons for a
+ * record without `c` are `a-no`, `b-no`, `both-no`, `no-overlap` and `labeler-error`; with `c`, a disagreement that
+ * `c` did not settle is `c-no` (it says no), `c-no-overlap` (it says defect elsewhere) or `c-error`.
  */
 export const LOCATION_SLACK = 3
-export const RejectReason = z.enum(['a-no', 'b-no', 'both-no', 'no-overlap', 'labeler-error'])
+export const RejectReason = z.enum([
+  'a-no',
+  'b-no',
+  'both-no',
+  'no-overlap',
+  'labeler-error',
+  'c-no',
+  'c-no-overlap',
+  'c-error',
+])
+/** The pair of seats that agreed on an accepted case. */
+export const AcceptPath = z.enum(['a+b', 'a+c', 'b+c'])
+export type AcceptPath = z.infer<typeof AcceptPath>
 
 const caseBase = {
   id: z.string().min(1),
@@ -148,7 +173,7 @@ const caseBase = {
   minerVersion: z.string(),
 }
 
-/** An accepted bug case: the introducing commit and the bug it created. The location is labeler `a`'s. */
+/** An accepted bug case: the introducing commit and the bug it created. The location is labeler `a`'s, else the agreeing pair's first seat. */
 export const GtBugCase = z
   .object({
     ...caseBase,
@@ -197,32 +222,6 @@ export type GtFinding = z.infer<typeof GtFinding>
 export const JudgeClass = z.enum(['match', 'real', 'not-a-bug', 'nit', 'unclear'])
 export type JudgeClass = z.infer<typeof JudgeClass>
 
-/** The owner's answer about one mined case (50 accepted, 20 rejected, shown blind: the owner does not see which). */
-export const OwnerCaseLabel = z
-  .object({
-    kind: z.literal('case'),
-    candidateId: z.string(),
-    /** `yes`: a real defect the introducing commit created, at roughly the stated place. */
-    verdict: z.enum(['yes', 'no', 'unsure']),
-    note: z.string().optional(),
-    at: z.iso.datetime(),
-  })
-  .strict()
-
-/** The owner's answer about one judge pair: does this finding describe this bug? Shown blind to the judge's answer. */
-export const OwnerPairLabel = z
-  .object({
-    kind: z.literal('pair'),
-    pairId: z.string(),
-    verdict: z.enum(['yes', 'no', 'unsure']),
-    note: z.string().optional(),
-    at: z.iso.datetime(),
-  })
-  .strict()
-
-export const OwnerLabel = z.discriminatedUnion('kind', [OwnerCaseLabel, OwnerPairLabel])
-export type OwnerLabel = z.infer<typeof OwnerLabel>
-
 /** `eval.label`'s input: one seat's look at one candidate. Diffs are cut by the capability, never by the caller. */
 export const LabelInput = z
   .object({
@@ -245,6 +244,10 @@ export type LabelInput = z.infer<typeof LabelInput>
 export const LabelOutput = GtLabel.extend({ model: z.string() }).strict()
 export type LabelOutput = z.infer<typeof LabelOutput>
 
+/** The judges: `a` on Claude, `b` on GPT. The same capability and prompt, two vendors; their agreement is the κ. */
+export const JudgeSeat = z.enum(['a', 'b'])
+export type JudgeSeat = z.infer<typeof JudgeSeat>
+
 /**
  * `eval.judge`'s input: one case's review. For a bug case, `bug` is the known bug and `preselected` the ids of the
  * findings the token-overlap matcher let through (same file, or naming it); only those may be judged `match`. For a
@@ -258,6 +261,8 @@ export const JudgeInput = z
     preselected: z.array(z.string()),
     /** The reviewed commit's diff (`git show --format= <sha>`), cut by the capability. */
     diff: z.string(),
+    /** The judge seat, default `a`. */
+    seat: JudgeSeat.optional(),
   })
   .strict()
 export type JudgeInput = z.infer<typeof JudgeInput>
@@ -269,3 +274,37 @@ export const JudgeOutput = z
   })
   .strict()
 export type JudgeOutput = z.infer<typeof JudgeOutput>
+
+/**
+ * `judge-calibration.json` (`eval.gt.calibrate`): how far the two judges agree on whether a finding describes the
+ * case's bug. Aggregates only. The review scorer reads it: one judge when `kappa` clears the bar for this judge version,
+ * else both. `confusion` is judge `a` (rows) against judge `b`: `yy` both match, `yn` a match and b not, and so on.
+ */
+export const JudgeCalibration = z
+  .object({
+    at: z.iso.datetime(),
+    limit: z.string(),
+    /** The version of the judge capability, which covers both seats. */
+    judgeVersion: z.string(),
+    judgeModels: z.object({ a: z.array(z.string()), b: z.array(z.string()) }).strict(),
+    evalRuns: z.array(z.string()),
+    /** Pairs both judges answered. */
+    n: z.int().nonnegative(),
+    agreement: z.number().nullable(),
+    kappa: z.number().nullable(),
+    ci95: z.object({ lo: z.number(), hi: z.number() }).strict().nullable(),
+    bar: z.number(),
+    met: z.boolean(),
+    confusion: z.object({ yy: z.int(), yn: z.int(), ny: z.int(), nn: z.int() }).strict(),
+    /** Findings neither judge called a match: how often they give the same class. */
+    classes: z
+      .object({
+        n: z.int().nonnegative(),
+        agreement: z.number().nullable(),
+        /** judge `a`'s class → judge `b`'s class → findings. */
+        confusion: z.record(z.string(), z.record(z.string(), z.int())),
+      })
+      .strict(),
+  })
+  .strict()
+export type JudgeCalibration = z.infer<typeof JudgeCalibration>
