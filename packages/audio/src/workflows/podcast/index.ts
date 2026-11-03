@@ -59,12 +59,13 @@ import {
   WORDS_PER_MINUTE,
   writeEpisodeMetadata,
 } from './script.ts'
+import { podcastScorer } from './scorer.ts'
 import { type SourceReader, vaultSourceReader } from './source.ts'
 import type { Dossier, EpisodeBrief, EpisodeProfile, EpisodeSummary } from './types.ts'
 import { EMPTY_DOSSIER } from './types.ts'
 import { mapConcurrent } from './vocab.ts'
 
-export const PODCAST_VERSION = '2026-10-29.2'
+export const PODCAST_VERSION = '2026-11-03.1'
 export { ProduceInput, type ProduceInputValue } from './produce-input.ts'
 export { PodcastInput, PodcastOutput } from './schema.ts'
 
@@ -613,6 +614,7 @@ export function createPodcastWorkflow(deps: PodcastDeps) {
     version: PODCAST_VERSION,
     input: PodcastInput,
     output: PodcastOutput,
+    scorer: podcastScorer,
     // Legacy ran one episode at a time (one queue); the produce stage's synth and mastering are the heavy part.
     concurrency: 1,
     run: runWithNotice,
