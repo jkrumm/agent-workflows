@@ -64,6 +64,7 @@ await cap.close()
 |-|-|
 | `factor` | 10 |
 | `minSample` | 20 done runs |
+| `minSamples` | none; `{ [workflowId]: n }` replaces `minSample` for that workflow (the host sets `eval.recall` to 100, so one long held run after twenty short ones is not killed by a learned cap) |
 | `window` | the 200 most recent done runs |
 | `ttlMs` | 10 min (stale caps are served while a refresh runs) |
 | `queryTimeoutMs` | 5 s (connect, query and statement timeout of the rule's pool) |

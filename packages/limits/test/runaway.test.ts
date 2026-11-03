@@ -129,6 +129,25 @@ describe('runaway cap', () => {
     expect((await cheaper.caps('cap.learned')).values.cost).toBeCloseTo(3 * p95(history.map((h) => h.cost)), 6)
   })
 
+  test('minSamples raises the sample minimum of one workflow: below it the static ceiling holds', async () => {
+    await started(testRuntime({ schema: db.schema, workflows: [learned] }))
+    await seedRuns(sql.pool, db.schema, 'cap.learned', history)
+    const override = runawayCap({
+      connectionString: PG_URL,
+      schema: db.schema,
+      minSamples: { 'cap.learned': 100 },
+      logger: captureLogger(),
+    })
+    open.push(override)
+    expect((await override.caps('cap.learned')).basis.tree).toMatchObject({
+      kind: 'static',
+      reason: 'below_sample_minimum',
+    })
+    // another workflow keeps the default minimum of 20
+    await seedRuns(sql.pool, db.schema, 'cap.other', history)
+    expect((await override.caps('cap.other')).basis.tree).toMatchObject({ kind: 'learned' })
+  })
+
   test('a run past the cap stops at the next step with RunawayCapExceeded; a normal run passes', async () => {
     const { cap, spied, decisions, thrown, logger } = capWithSpy()
     const rt = await started(testRuntime({ schema: db.schema, workflows: [learned], middleware: [spied] }))

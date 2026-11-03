@@ -61,6 +61,8 @@ const STATIC_CEILINGS = {
   'eval.mine': { cost: 30 },
   'eval.recall': { cost: 30, wallMs: 30 * 24 * 3_600_000 },
 }
+/** A learned cap needs more done runs here: recall runs differ by hours (a held job), so twenty short ones say little. */
+const MIN_SAMPLES = { 'eval.recall': 100 }
 const SHUTDOWN_GRACE_MS = 5000
 
 /** A process's logger: its console, every line tagged `[agw-<name>]`. */
@@ -366,6 +368,7 @@ export async function bootProcess(
       connectionString: config.pgUrl,
       schema: config.schema,
       ceilings: STATIC_CEILINGS,
+      minSamples: MIN_SAMPLES,
     })
     closers.push(() => cap.close())
     // Optional expensive work is its own workflow, refused at admission by the wallet gate (concept §4).

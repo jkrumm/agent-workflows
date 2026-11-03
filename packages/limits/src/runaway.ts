@@ -62,6 +62,8 @@ export type RunawayCapOptions = {
   factor?: number
   /** Done runs needed before the learned cap applies; below it the static ceiling does. Default 20. */
   minSample?: number
+  /** Per workflow id, over `minSample`: a workflow whose runs differ widely in length (a held eval run) needs more. */
+  minSamples?: Record<string, number>
   /** How many of the most recent done runs the p95 is taken over. Default 200. */
   window?: number
   /** How long a workflow's caps are fresh; stale caps are served while a refresh runs. Default 10 minutes. */
@@ -106,7 +108,7 @@ export function runawayCap(options: RunawayCapOptions): RunawayCap {
   const schema = options.schema ?? 'agw'
   if (!SCHEMA_NAME.test(schema)) throw new Error(`invalid journal schema name "${schema}"`)
   const factor = options.factor ?? 10
-  const minSample = options.minSample ?? 20
+  const defaultMinSample = options.minSample ?? 20
   const window = options.window ?? 200
   const ttlMs = options.ttlMs ?? 10 * 60 * 1000
   const timeoutMs = options.queryTimeoutMs ?? 5000
@@ -199,6 +201,7 @@ export function runawayCap(options: RunawayCapOptions): RunawayCap {
     const fallback = ceiling(workflowId)
     const values = { ...fallback }
     const p95: Partial<Metrics> = {}
+    const minSample = options.minSamples?.[workflowId] ?? defaultMinSample
     const group = (sample: number, metrics: readonly Metric[], read: (m: Metric) => number): CapBasis => {
       if (sample < minSample) return { kind: 'static', sample, reason: 'below_sample_minimum' }
       for (const m of metrics) {
