@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.jkrumm.agent-workflows-eval-mine</string>
+
+  <!-- The nightly review-ground-truth labelling job (`agw eval mine review --auto`): sized by the workflow from the eval
+       credit and the IU line, one log line per night in ~/Library/Logs/agent-workflows-eval-mine.log. It removes this
+       agent itself once the bug-case target is reached. Not part of a release: `make eval-mine-job` installs it. The
+       program is the script of the live release (`current`), so every deploy's version is what runs. -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/zsh</string>
+    <string>__HOME__/.agent-workflows/current/scripts/eval-mine-daily.sh</string>
+  </array>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>__HOME__/.local/bin:__HOME__/.bun/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>HOME</key>
+    <string>__HOME__</string>
+  </dict>
+
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>4</integer>
+    <key>Minute</key>
+    <integer>30</integer>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>__HOME__/Library/Logs/agent-workflows-eval-mine.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>__HOME__/Library/Logs/agent-workflows-eval-mine.err.log</string>
+</dict>
+</plist>
