@@ -3,7 +3,7 @@ import { consoleLogger, type DecisionSink, isolatedSink, type WalletDecision } f
 import { defaultSnapshotPath, type SpendSource, snapshotSpendSource } from './spend.ts'
 
 export const WALLET_THRESHOLD_USD_DEFAULT = 400
-/** Owner decision 2026-10-26: no OCR while the IU API is over its rolling cap. */
+/** Owner decision 2026-10-26: no optional expensive work while the IU API is over its rolling cap. */
 export const WALLET_PAUSED_UNTIL_DEFAULT = '2026-11-02T00:00:00Z'
 
 export type WalletGateOptions = {

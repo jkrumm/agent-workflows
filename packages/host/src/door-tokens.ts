@@ -10,7 +10,7 @@ export { PLATFORM_CALLER }
 const MIN_TOKEN_LENGTH = 32
 
 /**
- * Callers that reach the inference gateway only (OpenCode and `ocr` on the host, dotfiles `oc`, modelpick): their lines
+ * Callers that reach the inference gateway only (OpenCode on the host, dotfiles `oc`, modelpick): their lines
  * live in the one file, but a door (the audio process's, the host's image door) never accepts them (`doorCallerAuth`);
  * the gateway accepts every line (`callerAuth`). `scripts/deploy.sh` writes the same names.
  */

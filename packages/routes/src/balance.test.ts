@@ -64,7 +64,7 @@ describe('isBalanceFailure', () => {
     expect(isBalanceFailure({ text: IU_503 })).toBe(true)
     expect(isBalanceFailure({ text: `opencode session ses_x failed: ${IU_503}` })).toBe(true)
     expect(isBalanceFailure({ text: `iu-openai ${BALANCE_MARKER} (503): x` })).toBe(true)
-    // A text-only 402 from OpenCode or the ocr CLI.
+    // A text-only 402 from OpenCode.
     expect(isBalanceFailure({ text: 'APICallError: HTTP 402 Payment Required' })).toBe(true)
     expect(isBalanceFailure({ text: 'llm error: status 402: insufficient balance' })).toBe(true)
     for (const text of [
@@ -82,7 +82,7 @@ describe('isBalanceFailure', () => {
   })
 
   test('a quoted 402 with the wording counts: the classifier is never fed diff text', () => {
-    // The status-less callers are step failure reasons and ocr's stderr. Review's failure reasons carry no diff text:
+    // The status-less callers are step failure reasons. Failure reasons carry no diff text:
     // an agent step's schema failure is zod's message (no values), the synthesis output is a plain string, the
     // adversary's errors name no answer text, and an OpenCode turn error is the provider's. A diff that quotes the
     // refusal would read as one, so it must never be classified.

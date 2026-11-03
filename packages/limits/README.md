@@ -8,7 +8,7 @@ expensive work **at admission, never mid-run**.
 import { runawayCap, walletGate } from '@agent-workflows/limits'
 
 const cap = runawayCap({ connectionString, schema: 'agw', onDecision })
-const wallet = walletGate({ workflows: ['review.ocr'], onDecision })
+const wallet = walletGate({ workflows: ['optional.scan'], onDecision })
 const runtime = new Runtime({ connectionString, workflows, middleware: [wallet, cap] })
 // on shutdown, after runtime.close():
 await cap.close()
@@ -95,7 +95,7 @@ message (review p95 71, max 314 messages), so 500 steps leaves a wide margin.
 ## Wallet gate
 
 `walletGate(options)` → `Middleware`. Applies to the workflow ids in `workflows` (declared optional-expensive;
-OCR in review first, Wave 4); every other workflow passes untouched.
+OCR in review was the first, no workflow declares one now); every other workflow passes untouched.
 
 - **Only in `runPre` with `resume: false`**: refuses with `AdmissionRefused` (the run fails as
   `admission_refused` before its body runs) while `now < pausedUntil`, or when the IU rolling-30-day spend is at

@@ -56,7 +56,7 @@ skills, Hermes, iris, Argo (overview, usage), usage-tracker (runtimes outside th
 - **Promote-after-gate for OpenCode upgrades** (#67 review): today `install-opencode` switches `current`
   before `make verify` has seen the new build.
 - **Review rework** (owner: later, outside this plan): recall is low on the paired set (Haiku angles
-  0.017, Sonnet 0.13 at 9.4× cost); OCR paused until the owner re-enables it.
+  0.017, Sonnet 0.13 at 9.4× cost).
 - **IU constraint**: the DeepSeek provider balance; routes fall back, the gateway `/review` is off for
   the fleet until lifted.
 - **One shared OpenCode server and IU key** for every agent stays an accepted risk (v3.2).

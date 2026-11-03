@@ -1,6 +1,6 @@
 # The inference gateway (packages/gateway, its own LaunchAgent): every model call of the host, the audio process and the
 # OpenCode server goes through it. Plain loopback value, not a secret; agw holds no provider key. The host and the audio
-# process authenticate with AGW_API_SECRET, OpenCode's providers and `ocr` with the `agw-opencode` door token, which
+# process authenticate with AGW_API_SECRET, OpenCode's providers with the `agw-opencode` door token, which
 # launch.sh reads from data/door-tokens into AGW_GATEWAY_TOOL_TOKEN for the host only.
 AGW_GATEWAY_URL=http://127.0.0.1:7794
 # web.* capabilities: Tavily search fallback and Extract (shared common item), Context7 docs (this platform's own item).

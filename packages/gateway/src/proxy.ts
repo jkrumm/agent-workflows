@@ -28,7 +28,7 @@ const REPO_SLUG = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 
 /** The id `Bun.randomUUIDv7()` mints for `x-agw-request-id`: what `x-agw-route-fallback` may name. */
 const REQUEST_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
-/** `x-agw-route-fallback` from a site that cannot see the refused response (OpenCode's error text, `ocr`'s stderr). */
+/** `x-agw-route-fallback` from a site that cannot see the refused response (OpenCode's error text). */
 const FALLBACK_UNKNOWN = 'unknown'
 
 /** rules/agent-limits: a hang guard of 30 minutes on silence from upstream, never a cap on a long stream. */

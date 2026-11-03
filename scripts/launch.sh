@@ -71,7 +71,7 @@ KEYS=( ${(f)"$(/usr/bin/grep -hoE '^[A-Za-z_][A-Za-z0-9_]*=' "$TPL" | /usr/bin/t
 # goes through the gateway (AGW_GATEWAY_URL).
 exec "$SECRETS_RUN" run --env-file="$TPL" -- /bin/sh -c '
   # >>> gateway-tool-token
-  # The host only (the OpenCode providers and `ocr` call the gateway as the caller agw-opencode): the agw-opencode line of
+  # The host only (the OpenCode providers call the gateway as the caller agw-opencode): the agw-opencode line of
   # the door-tokens file ($AGW_DOOR_CALLERS_FILE, which the plist sets) becomes AGW_GATEWAY_TOOL_TOKEN. Parsed the way the
   # door-token parser reads a line (name=token, whitespace around both trimmed, CR dropped, # comments skipped). A missing
   # file, a missing line or an empty token refuses with 78, naming the file and the caller, never a value. `make deploy`

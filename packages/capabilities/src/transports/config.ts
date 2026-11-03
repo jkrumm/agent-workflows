@@ -17,7 +17,7 @@ export interface GatewayConfig extends GatewayBases {
 
 /**
  * The local inference gateway from the environment only (`AGW_GATEWAY_URL`, an origin, and `AGW_API_SECRET`): the
- * host's own transports. A child process (`ocr`) gets `gatewayBases` and a door token of its own, never this token.
+ * host's own transports. A child process gets a door token of its own, never this token.
  * Messages never echo a value.
  */
 export function gatewayConfig(env: Env): GatewayConfig {

@@ -8,7 +8,7 @@ export const BALANCE_MARKER = 'provider balance exhausted'
 const BALANCE_WORDING = /insufficient balance|paymentrequired/i
 /** Without a status only IU's own body shape counts: both words together, never a lone "payment required". */
 const IU_BODY = /insufficient balance\s*\(paymentrequired\)/i
-/** A text-only 402 (OpenCode's turn error, `ocr`'s stderr): the status token and the wording, together. */
+/** A text-only 402 (OpenCode's turn error): the status token and the wording, together. */
 const STATUS_402 = /\b402\b/
 const PAYMENT_WORDING = /payment required|insufficient balance/i
 /** Anthropic's refusal of a drained Console org: a 400 `invalid_request_error` whose message is "Your credit balance is too low to access the Anthropic API. …". */

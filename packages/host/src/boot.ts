@@ -354,7 +354,7 @@ export async function bootProcess(
     if (lazy) closers.push(() => lazy.close())
     const cap = runawayCap({ connectionString: config.pgUrl, schema: config.schema })
     closers.push(() => cap.close())
-    // Optional expensive work (OCR) is its own workflow, refused at admission by the wallet gate (concept §4).
+    // Optional expensive work is its own workflow, refused at admission by the wallet gate (concept §4).
     const wallet = walletGate({
       workflows: workflows.filter((entry) => entry.optionalExpensive).map((entry) => entry.workflow.id),
     })

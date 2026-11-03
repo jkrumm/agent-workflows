@@ -105,7 +105,7 @@ The table lives in `src/exit.ts`. `agw schema --exit-codes` prints it, and chang
 It works offline with the host down, as long as the cache exists. With no cache, it fetches one.
 
 - `agw schema` lists the commands with the contract sha, and `skipped` (operation, command, reason) when the document has operations the CLI could not use.
-- `agw schema <command…>` prints the input schema, with `x-flag` or `x-positional` on each property, plus the output schema and `x-cli`. For a workflow the output schema is the run state with the workflow's own `output` typed (the host writes it into the document; `agw schema review` shows `REVIEW_OUTPUT`); `run status|wait|cancel` keep `output` open.
+- `agw schema <command…>` prints the input schema, with `x-flag` or `x-positional` on each property, plus the output schema and `x-cli`. For a workflow the output schema is the run state with the workflow's own `output` typed (the host writes it into the document; `agw schema check` shows the check output); `run status|wait|cancel` keep `output` open.
 - `agw schema --exit-codes` needs neither a cache nor a host.
 
 ## Conformance suite

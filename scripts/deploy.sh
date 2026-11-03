@@ -197,7 +197,7 @@ wait_healthy() {  # $1 sha, $2... processes
 }
 
 # The doors' caller tokens (`name=token`, mode 0600), read by the gateway, the audio process's door and the host's image
-# door (the host also hands the agw-opencode token to OpenCode and `ocr`, scripts/launch.sh). A new file gets one token
+# door (the host also hands the agw-opencode token to OpenCode, scripts/launch.sh). A new file gets one token
 # per caller in DOOR_CALLERS; a file that exists gains a line for each caller in DOOR_CALLERS_ADDED it lacks (hermes is
 # never re-added: a deleted hermes line is a revocation). Existing lines are never touched, no token is ever printed,
 # the mode stays 0600. The names added are kept in DOOR_TOKENS_ADDED for the log; the gateway's restart is decided on the

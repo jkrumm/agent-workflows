@@ -12,7 +12,7 @@ const server = new OpenCodeServer() // stateDir ~/.local/state/agent-workflows, 
 await server.start() // adopts a running server with the same env and config, else spawns one
 const host = new OpenCodeHost({
   server,
-  agents: [{ name: 'reviewer', agentsMd, skills: { 'diff/SKILL.md': skill }, route: 'review.angle' }],
+  agents: [{ name: 'reviewer', agentsMd, skills: { 'diff/SKILL.md': skill }, route: 'research.agent' }],
   traceparent: (runId, stepId) => platform.telemetry.traceparent(runId, stepId),
 })
 const runtime = new Runtime({ connectionString, workflows, host, middleware })
@@ -72,7 +72,7 @@ which is why `subagent` is off unless an agent opts in; so is `execute` (Code Mo
 | Code Mode (`execute`) | its catalog holds MCP, browser and OpenCode session/worktree tools, never the built-in ones: with everything allowed (`* allow`) a `read` from `execute` is not found either. Under this policy, even with `execute` opted in, the catalog is empty ("No Code Mode tools are available") and nothing denied is reachable. Same result as agent-gateway's on 2.0.25. MCP servers: none configured; one would be refused by the catch-all until an agent allows it |
 
 `allowDirectories: string[]` is how a step lets its agent read a repository the agent's own location is not in
-(review angles, check). Each entry must be an absolute directory without wildcards or `..` (never `/`); anything else
+(`check`). Each entry must be an absolute directory without wildcards or `..` (never `/`); anything else
 fails the step before a session exists. It appends `{ external_directory, <dir>/*, allow }`. The option opens
 `external_directory` only: it grants no edit, which the catch-all refuses unless the agent opts in. Measured on 2.0.32 (`test/live.test.ts`, "allowDirectories"): the pattern matches
 the path as the agent gives it, so hand the agent the same string you allowed (a symlink-resolved spelling such as
@@ -82,8 +82,8 @@ the path as the agent gives it, so hand the agent the same string you allowed (a
 **Symlinks inside an allowed directory are an escape** (measured on 2.0.32, `test/live.test.ts`, "symlink inside an
 allowed directory"): the grant is matched against the path the agent names, not where a link leads, so `repo/link -> ~`
 is read, globbed and grepped like any file below `repo`, and its content reaches the session. The host cannot close this.
-Callers must: a throwaway clone (the review's `pr`/`branch` mode) has every symlink whose realpath leaves the clone deleted
-right after checkout; the caller's own live checkout (review of `uncommitted`, `check`) is never edited, so **a symlink in
+Callers must: a throwaway clone (review v4's `pr`/`branch` mode) has every symlink whose realpath leaves the clone deleted
+right after checkout; the caller's own live checkout (`check`) is never edited, so **a symlink in
 a work tree the caller hands an agent is an accepted risk**, the same trust as the rest of this section (one server, one
 key, a shell-capable agent reads what the user can): the repo is the owner's, and a read-only reader cannot write the link.
 
@@ -115,15 +115,14 @@ fallback session keep the rule). The handle carries `result: { digest }`, the sh
 `wait` returns the input of the answer's last completed `submit_result` call, read in the same window as a text answer
 (a nudge turn after the turn ended is not the answer); a rejected call does not count. A turn that ends without one
 fails the step `invalid_output`, the message carrying up to 4,000 characters of its last text: the text is never
-parsed as JSON, and the workflows' one retry re-asks (the review synthesis keeps that text in its salvaged verdict).
+parsed as JSON, and the workflows' one retry re-asks.
 
 **Schemas.** A root that is an object (no `anyOf`, `oneOf`, `allOf`, `not`, `if`, `enum`, `const` at the top) is
 offered as it is. Any other root (an array, a string, a union) is wrapped as `{ result: <schema> }` (its `$defs` and
 `definitions` moved up) and unwrapped by `wait` (`result.wrapped`); a call without the `result` key fails
 `invalid_output`. Refused at `open`, before a session exists, naming the agent and why: no schema (with the conversion's
 reason when there is one), a schema that is not an object, a non-object root with a local `$ref` other than
-`#/$defs/…` or `#/definitions/…` (`#`, `#/items/…`: it would not resolve once wrapped). The review angles', the review
-synthesis's, `check`'s and `retrospective`'s schemas are object roots and convert as they are.
+`#/$defs/…` or `#/definitions/…` (`#`, `#/items/…`: it would not resolve once wrapped). `check`'s and `retrospective`'s schemas are object roots and convert as they are.
 
 **Follow-up turns** (`ctx.continue`) run in the same session and location, so they answer through the same tool. The
 runtime hands `followUp` the continuing step's schema too, and on a JSON session it must give the same tool schema
@@ -268,10 +267,9 @@ a running host and broke every run. A Homebrew copy ahead of the pin on `PATH` (
 | the build | `~/.local/share/agent-workflows/opencode-bin/<version>/`, `current` links the pinned one |
 | the shim | `scripts/opencode`, linked as `~/.local/bin/opencode`: execs `current`. The host (`resolveOpencodeBinary`), interactive `oc`, `rd wave\|fan --kind opencode` and herdr panes all resolve `opencode` through it |
 | the probe wrapper | `scripts/opencode-safe`, linked as `~/.local/bin/opencode-safe`: refuses to start `opencode` when the model endpoint is down (exit 75) instead of retrying forever; an explicit `IU_OPENAI_BASE` wins, then `AGW_GATEWAY_URL` (the mini: its `/health` must say status ok), then `IU_BASE_URL` and the Keychain (the MacBook) |
-| react-doctor (the `review` workflow) | `~/.local/share/agent-workflows/react-doctor/<version>/`, `REACT_DOCTOR_VERSION` in `packages/host/src/workflows/review/react-doctor.ts` |
 
 `make install-opencode` (from the main checkout, never a linked worktree: the links point at its `scripts/`) installs the
-OpenCode pin, links the two scripts, then installs react-doctor (a react-doctor failure only warns). Idempotent: a version
+OpenCode pin, links the two scripts. Idempotent: a version
 that is present is not downloaded again; an install is built in a temp directory and renamed into place, and `current` is
 repointed atomically, so an interrupted run leaves nothing half-installed. It never restarts the host. The host's OpenCode
 server runs the new binary on its next start: the binary path is part of the launch fingerprint, so the first `start()`

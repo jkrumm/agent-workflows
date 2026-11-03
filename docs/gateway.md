@@ -200,7 +200,7 @@ caller's SDK sends). None of them goes upstream. The caller name comes from the 
 marks a call that runs because the route's Claude call was refused for balance (the 402 of `x-agw-fallback: none`) and
 agw fell back onto its GPT route: it carries the refused response's `x-agw-request-id`, which is the `request_id` of that
 refusal's `refused` row in `usage.gateway_picks`, so the fallback row joins the refusal. A site that cannot see the
-response headers (OpenCode's error text, `ocr`'s stderr) sends `unknown`. It is stored as `lane_detail.routeFallback`
+response headers (OpenCode's error text) sends `unknown`. It is stored as `lane_detail.routeFallback`
 when it is a request id as the gateway mints them (a UUIDv7) or `unknown`, else dropped. Both are attribution only: neither
 changes a pick.
 
@@ -262,7 +262,7 @@ cycle, projected unspent credit, picks and fallbacks, and cache-hit rate per cal
 | Caller | Today | Change |
 |-|-|-|
 | agw transports (`iu-*`, the direct `anthropic` wire) | **done:** the gateway (`AGW_GATEWAY_URL`, the API secret as caller `agw`); `.env.tpl` holds no provider key, `iu.env` and `IU_KEY_ID` are gone | — |
-| agw OpenCode providers, `ocr` | **done:** the gateway with the `agw-opencode` door token (`AGW_GATEWAY_TOOL_TOKEN`, read by `scripts/launch.sh`) | — |
+| agw OpenCode providers | **done:** the gateway with the `agw-opencode` door token (`AGW_GATEWAY_TOOL_TOKEN`, read by `scripts/launch.sh`) | — |
 | Hermes | IU via `OPENAI_BASE_URL` / `ANTHROPIC_BASE_URL` | the gateway; vision moves to `anthropic_messages`, approvals off `-eu` |
 | dotfiles `oc`, modelpick | IU | the gateway; their door tokens (`oc`, `modelpick`) are in `data/door-tokens` since the deploy that made agw keyless |
 | email-gateway (VPS), Karakeep (homelab) | IU | later, over Tailscale, once the gateway has run clean for two weeks |
@@ -276,8 +276,7 @@ suite exists. The table and its tiers are `packages/routes` (README §Seats); th
 
 - **Claude is primary for every text and agent seat**, on the credit while a pool has it. Each Claude route falls back
   onto GPT on IU, never onto IU's Claude (`x-agw-fallback: none`).
-- **A reviewer of Claude-written output stays on another lab:** `prose.review`, `podcast.review.a`/`.b` and
-  `review.adversary` judge what a Claude writer (a Claude Code session or a Claude seat) produced, and a critic of the
+- **A reviewer of Claude-written output stays on another lab:** `prose.review` and `podcast.review.a`/`.b` judge what a Claude writer (a Claude Code session or a Claude seat) produced, and a critic of the
   same lab shares its blind spots. Their capabilities refuse a Claude model.
 - **Speech, transcription, image and `decide` stay on IU.** The credit pays only for Anthropic's Messages API; those
   models are not Claude's. `decide` is also the eval judge, on its own pinned route.

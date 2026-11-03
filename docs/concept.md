@@ -4,6 +4,7 @@
 
 **Where to look:** workflow shape §3, middleware §4, porting a skill or a Hermes path §10, phase order §11.
 
+> **v3.17, 2026-11-03:** review v1 deleted (§Retro log). Review is the v4 host operations (`agw review prepare|request|submit|dispose|status|route|covered`, no LLM in agw): the `review` workflow, its angle agents, router, adversary and synthesis, OCR, react-doctor, the `review.*` routes, the legacy eval harness and `agw eval import` are gone. The v3.16 command rule stays: it is the CLI contract, argv-safe and tested, and a future parent command without positionals needs it; reverting it would be churn for no gain. No decision reversed.
 > **v3.16, 2026-11-03:** command rule relaxed (§Retro log): a command may sit below a shorter one when the shorter declares no positional arguments. Wave 9 (review v4) needs `agw review prepare|submit|…` under the `review` workflow. No decision reversed.
 > **v3.15, 2026-11-03:** docs brought to the code, no design change.
 > **v3.14, 2026-11-02:** the gateway as built (`docs/gateway.md`, `packages/gateway`). It is a lean process on 127.0.0.1:7794, not a `bootProcess` one: no journal Postgres, runtime or OpenCode on the path every LLM call takes, one bundled file. A local SQLite ledger is its outbox, at-least-once into `usage.records` with idempotent upserts and quarantine, so a Postgres outage loses nothing and the meter survives a restart. A deploy restarts it only when its build hash changes. Why: the process every call depends on must depend on nothing else, and an unrelated deploy must not cut streams. One departure from v3.13: the gateway is the only writer of token-priced inference rows, not of all of them. It cannot price a minute of audio, a character of speech or an image, so those calls say `x-agw-usage: caller` and agw's outbox keeps writing them, along with charges that never pass the gateway (Tavily). agw itself holds no provider key: the API secret authenticates its calls as caller `agw`, and OpenCode gets a door token that opens the gateway only. Two seats stay on GPT by design: `review.adversary` is the cross-family critic and `podcast.write`'s tool loop speaks only the OpenAI dialects. The process shape, the ledger and the build-hash restart are owner-accepted (Wave 2 close-out); the rest are Wave 3 lead decisions, named in its close-out. One decision narrowed, none reversed.
@@ -120,11 +121,11 @@ The workflow author writes `run`. Everything below belongs to the platform and i
 | Durability | journal, resume, re-attach | step result stored, effect keys |
 | Record | run record with fingerprint (§5) | step timing, tokens, cost, tool calls |
 | Telemetry | one OTel span per run, `traceparent` accepted | child span per step |
-| Money | budget report; **runaway cap** (far above the workflow's normal, e.g. 10× its p95); **wallet gate** for optional expensive work (OCR) at admission, never mid-run | cost from `usage.cost` |
+| Money | budget report; **runaway cap** (far above the workflow's normal, e.g. 10× its p95); **wallet gate** for optional expensive work at admission, never mid-run | cost from `usage.cost` |
 | Control | cancel, steer, concurrency limit per workflow | step timeout, retry policy |
 | Quality | scorer sampling on production runs | friction counters (§7) |
 
-Interception points follow DeepSeek Harness's taxonomy, before and after each run, step and tool call: `run/pre`, `step/pre`, `tool/pre`, `tool/post`, `step/post`, `run/post`. The OCR spend gate that is hand-built in review today becomes one middleware rule that protects every workflow.
+Interception points follow DeepSeek Harness's taxonomy, before and after each run, step and tool call: `run/pre`, `step/pre`, `tool/pre`, `tool/post`, `step/post`, `run/post`. The spend gate that review once hand-built is one middleware rule that protects every workflow.
 
 **Telemetry, as proven by S2** (`docs/spikes/s2-telemetry/REPORT.md`):
 
@@ -664,3 +665,7 @@ One entry per phase: what we learned, what changed on this page, and why.
 ### Command rule relaxed, 2026-11-03
 
 - **Changed.** v3.16: the host refused any command that was the prefix of another. Now a command may sit below a shorter one only when the shorter declares no positional arguments (argv can then never be ambiguous; the CLI already resolves the longest match). Identical commands, and a shorter command with positionals, still collide. Why: review v4 adds `agw review prepare|submit|…` while the `review` workflow keeps `agw review`. No decision reversed.
+
+### Review v1 deleted, 2026-11-03
+
+- **Changed.** v3.17: Wave 10's last step. Every caller (the `/review` skill, the wave gate, the factory's evidence, `scripts/verify.sh` §10 as a hidden smoke review) is on review v4, so the v1 `agw review` workflow went with its 15 angle agents, the router and adversary capabilities (`/review/route` is now v4's route operation, `reviewRoute`), the `review.*` route group, OCR, react-doctor (pin, installer, Makefile targets), the legacy eval harness and `ReviewCase` reader, and the `agw eval import` arm. Kept and moved: the process helpers to `packages/host/src/process.ts` (the factory fleet uses them too), clone and scope helpers into `src/review/`. The v3.16 command rule is kept. `contextLimit` (the 100k Haiku bound) stays as an arm override; no table route sets it any more.
