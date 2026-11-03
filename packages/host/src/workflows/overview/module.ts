@@ -12,6 +12,7 @@ export default defineWorkflowModule({
             fleet: deps.fleet.fleet,
             argo: deps.fleet.argo,
             purposeOf: deps.fleet.purposeOf,
+            warn: (message, meta) => deps.logger?.warn(message, meta),
           }),
         ]
       : [],
