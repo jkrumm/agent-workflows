@@ -387,7 +387,7 @@ wave builds what it needs and closes the gaps.
   wallet gate's opt-in). All three ranges `covered`. No next wave flipped `active`: Wave 11 waits for 2026-11-17 and Wave 12
   rests on it (mother's call).
 
-## Wave 12 — Central tiers            <!-- status: pending -->
+## Wave 12 — Central tiers            <!-- status: active -->
 
 Review is no longer a route consumer (review v4 runs on Max): `HARD`/`EASY` keep Wave 6's measured seats.
 
@@ -406,7 +406,8 @@ Provisional picks (2026-10-31, from cost, wall time, failure modes and the AA in
   the per-route effort and output-limit overrides (podcast.write, image.enhance, the agents' `maxOutputTokens`)
   become tier properties or go. A guard test fails a route that names a model. The eval judge is the one exception:
   its own pinned route, by design.
-- DeepSeek flash leaves the primaries; Haiku `max` and `low` are out for agent steps. Research and otel move to `HARD`.
+- DeepSeek flash leaves the primaries; Haiku `max` and `low` are out for agent steps. Research, otel and `review.synthesis`-era seats follow the owner
+  decisions of 2026-11-03: `research.agent` and `otel.agent` on `EASY` (Haiku high); prose stays DeepSeek.
 - Picks recorded in `modelpick/docs/decisions/agw-text-seats.md`; a live call per tier after deploy.
 - Research's 28 cases get a golden-answer check.
 
@@ -425,3 +426,8 @@ Provisional picks (2026-10-31, from cost, wall time, failure modes and the AA in
   the ceiling, never API.
 - Arms: light seat Haiku vs Sonnet low; K 3 vs 2; verifier Sonnet vs Haiku; Opus at deep on sensitive paths; router
   thresholds; the classifier on or off; the deep cap. Report `docs/evals/<date>-review-v4.md`.
+- Recall seen so far: 0/3 on `dev` bug cases at light/standard with the commit subject as intent (Wave 19, n=3,
+  interaction bugs). First question: is it the tier, the missing intent, or the cases.
+- `gt calibrate`: delete or give it a source. Learned runaway cap for `eval.recall` needs a `minSample`.
+- Papercuts: `prepare --thread` takes the key (status should print it); in-session jobs need an abandon; `cancel`
+  should read a structured factory state, not a 409 message.

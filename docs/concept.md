@@ -627,6 +627,17 @@ One entry per phase: what we learned, what changed on this page, and why.
 - **Process.** Plan no owner work beyond minutes; a human check is a small sample only when an automated bar fails.
 - **Does the page hold?** Yes; the ground-truth limit (LLM consensus, no human check) is stated in every report.
 
+### Gateway Wave 19 — Review v4 follow-ups, 2026-11-03
+
+- **Learned.** The watchdog holds live (a frozen reviewer killed after the idle window, a2 frozen → needs a human, no
+  a3). The factory's 74 "unnamed" failures were a locale: launchd gives no `LANG` and Postgres 18 dies. First recall
+  through the hidden path: 0/3 at light/standard, n too small to mean anything. A worker's "dead code" removal
+  half-deleted a concept mechanism; the diff caught it, the report did not.
+- **Changed.** agw `60a5bcd` (`agw eval recall`, given-up hidden jobs, static runaway ceilings), factory `07f2f7b`,
+  dotfiles `c91898f` (cross-repo wave gate via `**Repos:**`). Mother plan commits route to no review.
+- **Process.** The gate now covers every repo a wave names.
+- **Does the page hold?** Yes; recall is Wave 11's open question.
+
 ### Gateway Wave 10 — Review v4 cutover, 2026-11-03
 
 - **Learned.** The ceiling held the wave's own close-out ~1 h (me2 72 % of 5 h, me/iu 93-94 % of the week): quota is
