@@ -180,6 +180,20 @@ export const RequestOutput = PrepareOutput.extend({
 })
 export type RequestOutputValue = z.output<typeof RequestOutput>
 
+export const CancelInput = z
+  .object({ jobId: z.string().min(1).describe('A prepared job of the hidden transport') })
+  .strict()
+
+export const CancelOutput = z.object({
+  status: z.enum(['cancelled', 'running']),
+  jobId: z.string(),
+  spawns: z
+    .array(z.unknown())
+    .optional()
+    .describe("cancelled: the factory's cancelled spawns (a1, a2 when it existed)"),
+  spawn: z.unknown().optional().describe("running: the factory's answer for the spawn it could not cancel"),
+})
+
 export const SubmitInput = z
   .object({
     jobId: z.string().min(1).describe('The job from prepare'),

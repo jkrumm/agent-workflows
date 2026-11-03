@@ -21,6 +21,7 @@ const late: ReviewService = {
   status: (i) => service.status(i),
   route: (i) => service.route(i),
   request: (i) => service.request(i),
+  cancel: (i) => service.cancel(i),
   covered: (i) => service.covered(i),
 }
 

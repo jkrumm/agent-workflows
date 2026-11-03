@@ -12,6 +12,8 @@ import { type FindingRecordValue, ReviewError, type ReviewOutputV4Value } from '
 import { submit } from './submit.ts'
 import type { z } from 'zod'
 import type {
+  CancelInput,
+  CancelOutput,
   CoveredOutput,
   DisposeInput,
   PrepareInput,
@@ -46,6 +48,7 @@ export interface ReviewServicePorts {
 export interface ReviewService {
   prepare(input: z.output<typeof PrepareInput>): Promise<z.output<typeof PrepareOutput>>
   request(input: z.output<typeof RequestInput>): Promise<z.output<typeof RequestOutput>>
+  cancel(input: z.output<typeof CancelInput>): Promise<z.output<typeof CancelOutput>>
   submit(input: { jobId: string; attempt: number; reply: string; account?: string }): Promise<ReviewOutputV4Value>
   dispose(input: z.output<typeof DisposeInput>): Promise<FindingRecordValue>
   status(input: z.output<typeof StatusInput>): Promise<z.output<typeof StatusOutput>>
@@ -55,6 +58,9 @@ export interface ReviewService {
 
 const RECENT_JOBS = 10
 const SPAWN_TIMEOUT_MS = 60_000
+/** The factory CLI's exit codes: 4 not_found, 5 conflict (`spawn cancel` on a claimed or started spawn). */
+const FACTORY_NOT_FOUND = 4
+const FACTORY_CONFLICT = 5
 
 /** The factory's answer to `spawn create`: its JSON, else the first line it printed. */
 const parseSpawn = (stdout: string): unknown => {
@@ -63,6 +69,16 @@ const parseSpawn = (stdout: string): unknown => {
   } catch {
     return stdout.trim().split('\n')[0] ?? ''
   }
+}
+
+/** `FACTORY_TOKEN`/`FACTORY_URL` pass through to the factory CLI. */
+const factoryEnv = (env: Record<string, string | undefined>): Record<string, string> => {
+  const extraEnv: Record<string, string> = {}
+  for (const name of ['FACTORY_TOKEN', 'FACTORY_URL']) {
+    const value = env[name]
+    if (value) extraEnv[name] = value
+  }
+  return extraEnv
 }
 
 export function createReviewService(ports: ReviewServicePorts): ReviewService {
@@ -93,11 +109,6 @@ export function createReviewService(ports: ReviewServicePorts): ReviewService {
       const job = await ledger.job(jobId)
       if (!job) throw new Error(`job ${jobId} vanished after prepare`)
       const spawnKey = `review-${jobId}-a1`
-      const extraEnv: Record<string, string> = {}
-      for (const name of ['FACTORY_TOKEN', 'FACTORY_URL']) {
-        const value = env[name]
-        if (value) extraEnv[name] = value
-      }
       const result = await run(
         [
           fleetConfig(env).factoryBin,
@@ -120,7 +131,7 @@ export function createReviewService(ports: ReviewServicePorts): ReviewService {
           '--format',
           'json',
         ],
-        { timeoutMs: SPAWN_TIMEOUT_MS, extraEnv },
+        { timeoutMs: SPAWN_TIMEOUT_MS, extraEnv: factoryEnv(env) },
       )
       if (result.exitCode !== 0) {
         await ledger.abandon(jobId)
@@ -144,6 +155,36 @@ export function createReviewService(ports: ReviewServicePorts): ReviewService {
         spawnKey,
         spawn: parseSpawn(result.stdout),
       }
+    },
+
+    async cancel(input) {
+      const job = await ledger.job(input.jobId)
+      if (!job) throw new ReviewError(`unknown job ${input.jobId}`)
+      if (job.state !== 'prepared')
+        throw new ReviewError(`job ${job.id} is ${job.state}, only a prepared job can be cancelled`)
+      if (job.transport !== 'hidden')
+        throw new ReviewError(`job ${job.id} is an in-session job, only a hidden one can be cancelled`)
+      const spawns: unknown[] = []
+      // a1 is the first spawn, a2 the factory's retry; a key that never existed answers not_found (exit 4)
+      for (const attempt of [1, 2]) {
+        const spawnKey = `review-${job.id}-a${attempt}`
+        const result = await run([fleetConfig(env).factoryBin, 'spawn', 'cancel', spawnKey, '--format', 'json'], {
+          timeoutMs: SPAWN_TIMEOUT_MS,
+          extraEnv: factoryEnv(env),
+        })
+        const spawn = parseSpawn(result.stdout)
+        if (result.exitCode === 0) spawns.push(spawn)
+        else if (result.exitCode === FACTORY_CONFLICT) return { status: 'running', jobId: job.id, spawn }
+        else if (result.exitCode !== FACTORY_NOT_FOUND) {
+          const why = result.timedOut
+            ? `timed out after ${SPAWN_TIMEOUT_MS / 1000} s`
+            : (result.stderr.trim() || result.stdout.trim() || result.error || `exit ${result.exitCode}`).split('\n')[0]
+          throw new ReviewError(`the factory could not cancel ${spawnKey}: ${why}`)
+        }
+      }
+      await ledger.abandon(job.id)
+      if (job.jobDir && job.worktree) removeWorktree(ctx, job.jobDir, job.worktree)
+      return { status: 'cancelled', jobId: job.id, spawns }
     },
     submit: (input) => submit(ctx, input),
     covered: (input) => covered(ctx, input),

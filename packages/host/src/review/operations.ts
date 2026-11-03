@@ -1,10 +1,12 @@
-// `agw review prepare|request|submit|dispose|status|route|covered`: host operations like the fleet's, no journal run.
+// `agw review prepare|request|cancel|submit|dispose|status|route|covered`: host operations like the fleet's, no journal run.
 import { type ResolvedCliSpec, withCli } from '@agent-workflows/capabilities'
 import { ORPCError, os } from '@orpc/server'
 import type { z } from 'zod'
 import type { HostContext, HostOperation } from '../operations.ts'
 import type { ReviewService } from './index.ts'
 import {
+  CancelInput,
+  CancelOutput,
   CoveredInput,
   CoveredOutput,
   DisposeInput,
@@ -45,10 +47,11 @@ const answer =
     }
   }
 
-type Name = 'prepare' | 'request' | 'submit' | 'dispose' | 'status' | 'route' | 'covered'
+type Name = 'prepare' | 'request' | 'cancel' | 'submit' | 'dispose' | 'status' | 'route' | 'covered'
 const OPERATION_IDS = {
   prepare: 'reviewPrepare',
   request: 'reviewRequest',
+  cancel: 'reviewCancel',
   submit: 'reviewSubmit',
   dispose: 'reviewDispose',
   status: 'reviewStatus',
@@ -113,6 +116,18 @@ export function reviewOperations(service: ReviewService): Record<(typeof OPERATI
         output: RequestOutput,
       },
       (input) => service.request(input),
+    ),
+    reviewCancel: op(
+      'cancel',
+      {
+        summary: 'Cancel a hidden review the factory has not started (a held or queued spawn) and abandon its job',
+        description:
+          'Only a prepared job of the hidden transport. cancelled: the factory ended its spawn(s) before any session claimed them and the job is abandoned. running: a spawn is already claimed or started (factory not_cancellable); the job is kept and will submit.',
+        cli: { mutating: true, positional: ['jobId'] },
+        input: CancelInput,
+        output: CancelOutput,
+      },
+      (input) => service.cancel(input),
     ),
     reviewSubmit: op(
       'submit',

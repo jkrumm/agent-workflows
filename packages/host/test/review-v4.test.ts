@@ -618,6 +618,62 @@ describe('hidden transport', () => {
     expect(ok).toMatchObject({ status: 'requested', round: 1 })
   })
 
+  /** A fake factory for `spawn cancel`: logs each key, answers the exit code its `-aN` suffix is given (default 0). */
+  const cancelFactory = (exits: Record<string, number>) => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), 'agw-rv4-cancel-')))
+    repos.push(dir)
+    const bin = join(dir, 'factory')
+    const log = join(dir, 'calls.log')
+    const cases = Object.entries(exits)
+      .map(([suffix, code]) => `  *-${suffix}) echo '{"state":"x"}'; exit ${code} ;;`)
+      .join('\n')
+    writeFileSync(
+      bin,
+      `#!/bin/sh\necho "$*" >> '${log}'\ncase "$3" in\n${cases}\n  *) echo '{"status":"cancelled"}' ;;\nesac\n`,
+    )
+    chmodSync(bin, 0o755)
+    return {
+      env: { AGW_FACTORY_BIN: bin },
+      calls: () => (existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n') : []),
+    }
+  }
+  const jobState = async (jobId: string) =>
+    (await pool.query(`select state from "${db.schema}".review_jobs where id = $1`, [jobId])).rows[0]?.state
+
+  test('cancel ends a held hidden job: both spawn keys cancelled (a2 never existed), the job abandoned', async () => {
+    const root = small()
+    const job = await service({ env: fakeFactory().env }).request({ cwd: root, scope: 'head' })
+    const factory = cancelFactory({ a2: 4 })
+    const out = await service({ env: factory.env }).cancel({ jobId: job.jobId! })
+    expect(out).toEqual({ status: 'cancelled', jobId: job.jobId!, spawns: [{ status: 'cancelled' }] })
+    expect(factory.calls()).toEqual([
+      `spawn cancel review-${job.jobId}-a1 --format json`,
+      `spawn cancel review-${job.jobId}-a2 --format json`,
+    ])
+    expect(await jobState(job.jobId!)).toBe('abandoned')
+    expect(existsSync(job.worktree!)).toBe(false)
+  })
+
+  test('cancel on a claimed spawn (factory exit 5) keeps the job and answers running', async () => {
+    const root = small()
+    const job = await service({ env: fakeFactory().env }).request({ cwd: root, scope: 'head' })
+    const out = await service({ env: cancelFactory({ a1: 5 }).env }).cancel({ jobId: job.jobId! })
+    expect(out).toEqual({ status: 'running', jobId: job.jobId!, spawn: { state: 'x' } })
+    expect(await jobState(job.jobId!)).toBe('prepared')
+  })
+
+  test('cancel refuses an in-session job and a job that is not prepared, naming the state', async () => {
+    const s = service({ env: fakeFactory().env })
+    const root = small()
+    const inSession = await s.prepare({ cwd: root, scope: 'head', account: 'work' })
+    const factory = cancelFactory({})
+    await rejects(s.cancel({ jobId: inSession.jobId! }), /in-session/)
+    const hidden = await s.request({ cwd: root, scope: 'head', thread: 'other' })
+    await service({ env: factory.env }).cancel({ jobId: hidden.jobId! })
+    await rejects(s.cancel({ jobId: hidden.jobId! }), /abandoned/)
+    await rejects(s.cancel({ jobId: 'nope' }), /unknown job/)
+  })
+
   test('skipped passes through without a spawn', async () => {
     const factory = fakeFactory()
     const root = repo({ 'docs/a.md': 'a\n', 'REVIEW.md': REVIEW_MD })
