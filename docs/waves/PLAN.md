@@ -335,27 +335,34 @@ first, and its cost is booked as classification, never review. Other fleets' rev
   open findings; HTTP `/review/route-range` until v1's `/review/route` goes. `make verify` not run (its last step is a
   paid v1 review). `make check`: 4 flakes in untouched files, CI green.
 
-## Wave 10 — Review v4: callers, factory, cutover            <!-- status: active -->
+## Wave 10 — Review v4: callers, factory, cutover            <!-- status: done 2026-11-03, agw 932cb29, factory f7ac112, dotfiles 45ea336 -->
 
 Inputs: Wave 9's close-out (`a0df86e`, "For Wave 10"). Mother decision: coverage means reviewed at the required tier
 **and** no open `important` finding (`covered` reads `status`); the wave gate and the factory's ship check use it.
 
-- [ ] dotfiles: `agents/reviewer.md` and `agents/review-verifier.md` (read-only tools, no background work, no `sleep`
+- [x] dotfiles: `agents/reviewer.md` and `agents/review-verifier.md` (read-only tools, no background work, no `sleep`
   timers), the `/review` skill (prepare → Agent with the seat → submit the reply verbatim → fix loop, dispositions,
   step back after round 3; always `--cwd`, `--commit`, `--account "$(claude-account account)"`), lead role without the
   separate `/code-review high`, `wave-gate.py` `covered` check.
-- [ ] Hidden transport: factory role `reviewer`, one interactive Claude Code session per job in a hidden Herdr terminal
+- [x] Hidden transport: factory role `reviewer`, one interactive Claude Code session per job in a hidden Herdr terminal
   (never `claude -p`, never the Agent SDK), the idle watchdog, two sessions host-wide, the ceiling (70 % 5 h, 90 %
   week: review waits), the deep cap (15 per account per day) with the factory's one-click allow.
-- [ ] software-factory: evidence kind `review` derived through `agw review route`; the wave gate checks coverage. If a
+- [x] software-factory: evidence kind `review` derived through `agw review route`; the wave gate checks coverage. If a
   software-factory lead is working, send it the ask (`rd say`) instead of editing its checkout.
-- [ ] `scripts/verify.sh`: the paid v1 smoke review replaced by a v4 smoke review on the hidden path at light (`SKIP`
+- [x] `scripts/verify.sh`: the paid v1 smoke review replaced by a v4 smoke review on the hidden path at light (`SKIP`
   when held); `make verify` runs again.
-- [ ] Cutover: every caller on v4; v1, the angle agents, router, adversary, synthesis, OCR, react-doctor in review, the
+- [x] Cutover: every caller on v4; v1, the angle agents, router, adversary, synthesis, OCR, react-doctor in review, the
   review routes and the 138 legacy cases deleted (v1's `exec.ts`/`git.ts` move, they do not die); `/review/route-range`
   renamed to `/review/route`; a concept version note.
+**Left behind:** close-out in `docs/waves/handoff/lead.md`. Deployed and verified: agw `932cb29` (`make verify` PASS incl. a
+  real hidden smoke review, job `rv_mb4mq2zmrxkg725vb5vt`, light, me2, 31 s), factory `f7ac112`; dotfiles pushed `45ea336`.
+  Review v1, its agents, routes, react-doctor, OCR, the legacy harness, `agw eval import` and the 138 cases are gone (−13k
+  lines); `agw eval run review` and `gt calibrate` have nothing to run until Wave 11's v4 eval. Planted-injection probe
+  through the hidden path: no write, flagged important. All three ranges `covered` (v4 in-session reviews, every finding
+  disposed). `make check` green in all three (agw: the `check-real` flake, passes alone; factory: 74 setup failures under
+  `agw check` only, plain `make check` 1676/0).
 
-## Wave 11 — Review v4: measure and tune            <!-- status: pending -->
+## Wave 11 — Review v4: measure and tune            <!-- status: active -->
 
 - Two weeks of ledger dispositions per tier, rule and repo: fix rate, wrong rate, rounds to clean, findings per review.
 - False alarms on 10 known-clean PRs; recall on the Wave 8 cases (`dev` first) through the hidden path on Max, paced by
