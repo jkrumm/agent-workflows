@@ -34,9 +34,9 @@ may raise the tier (`--min`), never lower it:
 | Rule | Tier |
 |-|-|
 | No content change (renames, whitespace) or every file matches `REVIEW.md` `none` (wave plans, spike data, lockfiles) | none |
-| Docs only (`*.md`, `docs/`) or tests only | light |
-| A code file matches `REVIEW.md` `sensitive` (runtime, middleware, gateway, limits, CLI generator, launchers, env templates, CI, SQL; dotfiles: hooks, settings, security rules, secret scripts, plists) | deep |
-| > 800 changed code lines, or > 3 packages | deep |
+| A non-test file matches `REVIEW.md` `sensitive` (runtime, middleware, gateway, limits, CLI generator, launchers, env templates, CI, SQL; dotfiles: hooks, settings, the global CLAUDE.md and security rules, secret scripts, plists). A doc counts only where the glob names docs (`rules/security.md`), not a package's README | deep |
+| Docs only (`*.md`, `*.mdx`, `*.txt`; a script under `docs/` is code) or tests only | light |
+| > 800 changed non-test code lines, or > 3 packages | deep |
 | A manifest changed | standard |
 | ≤ 40 code lines in ≤ 3 files | light |
 | otherwise | standard |
@@ -46,8 +46,10 @@ Opus high is not a tier; it stays an owner option for `deep` on the `sensitive` 
 there. The thresholds are starting values; Wave 11 tunes them on the ledger (a tier's findings that the author fixed,
 per tier and rule).
 
-Routed over the last merged PRs (`data/route-*.txt`): agent-workflows 60 PRs in 4.4 days → 32 deep, 22 standard, 6
-light; dotfiles 40 PRs in 19 days → 7 deep, 17 standard, 15 light, 1 none. agent-workflows is deep-heavy because the
+Routed over the last merged PRs (`data/route-*.txt`): agent-workflows 60 PRs in 4.4 days → 34 deep, 23 standard, 3
+light; dotfiles 40 PRs in 19 days → 13 deep, 17 standard, 9 light, 1 none. Of the PoC PRs the router sends #92 deep and
+#119, #90, dotfiles #51 and #50 standard: #90's header duplication was `important` only at deep (a nit at standard), the
+cost of routing by size and paths alone. agent-workflows is deep-heavy because the
 fleet works on runtime, middleware and gateway, which AGENTS.md already reviews deep.
 
 ## The ceiling: Max only, review waits

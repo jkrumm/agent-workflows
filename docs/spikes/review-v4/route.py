@@ -19,7 +19,7 @@ DEEP_CODE_LINES = 800
 DEEP_PACKAGES = 3
 LIGHT_CODE_LINES = 40
 LIGHT_FILES = 3
-DOC = re.compile(r"(\.md$|^docs/)")
+DOC = re.compile(r"\.(md|mdx|txt)$")
 TEST = re.compile(r"(^|/)(test|tests|__tests__)/|\.test\.[a-z]+$|\.spec\.[a-z]+$")
 
 
@@ -43,12 +43,19 @@ def match(path, globs):
     return None
 
 
+def sensitive(path, globs):
+    """A test is never sensitive; a doc only when the glob names docs itself (`rules/security.md`), not a package dir."""
+    if TEST.search(path):
+        return False
+    g = match(path, globs)
+    return bool(g) and (not DOC.search(path) or bool(DOC.search(g)))
+
+
 def route(repo, base, head, review_md, minimum="none"):
     cfg = frontmatter(review_md)
     files = []
-    for line in git(repo, "diff", "--numstat", "-M", f"{base}..{head}").splitlines():
+    for line in git(repo, "diff", "--numstat", "--no-renames", f"{base}..{head}").splitlines():
         add, rem, path = line.split("\t", 2)
-        path = path.split(" => ")[-1].rstrip("}") if "=>" in path else path
         files.append((path, 0 if add == "-" else int(add), 0 if rem == "-" else int(rem)))
     counted = [f for f in files if f[1] + f[2] > 0]
     code = [f for f in counted if not DOC.search(f[0])]
@@ -65,13 +72,13 @@ def route(repo, base, head, review_md, minimum="none"):
         return out("none", "no content change (renames or whitespace only)")
     if all(match(f[0], cfg.get("none", [])) for f in counted):
         return out("none", "every file matches REVIEW.md none")
+    hit = [f[0] for f in counted if sensitive(f[0], cfg.get("sensitive", []))]
+    if hit:
+        return out("deep", f"sensitive path: {hit[0]}" + (f" (+{len(hit) - 1})" if len(hit) > 1 else ""))
     if not code:
         return out("light", "docs only")
     if all(TEST.search(f[0]) for f in code):
         return out("light", "tests only")
-    hit = [f[0] for f in code if not TEST.search(f[0]) and match(f[0], cfg.get("sensitive", []))]
-    if hit:
-        return out("deep", f"sensitive path: {hit[0]}" + (f" (+{len(hit) - 1})" if len(hit) > 1 else ""))
     if prod_lines > DEEP_CODE_LINES:
         return out("deep", f"{prod_lines} changed non-test code lines > {DEEP_CODE_LINES}")
     if len(packages) > DEEP_PACKAGES:
