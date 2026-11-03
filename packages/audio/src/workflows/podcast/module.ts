@@ -18,11 +18,7 @@ import { researchClient, researchClientFromEnv } from './research-client.ts'
 /** Five short synthetic briefs (`PlainCase` lines): 3 minutes, no research, no cover, no brain note, `publish: false`. */
 export const CASES_PATH = join(import.meta.dir, 'eval', 'cases.jsonl')
 
-/**
- * The suite is built but not declared on the module (`suite` below stays unset) on purpose: the produce stage's Slack
- * notice (`PODCAST_NOTIFY_CHANNEL`) goes out for every finished episode whatever `publish` says, so an eval run would post
- * to the channel. Declare it (`suite: podcastSuite`) once the notice is skipped for the `eval` purpose.
- */
+/** The suite: `PlainCase` lines read as they are. The produce stage and the room send no Slack notice for purpose `eval`. */
 export const podcastSuite: Suite = { path: () => CASES_PATH, read: (path) => plainSuite.read(path) }
 
 /** What the audio process adds to `HostDeps` for this module. */
@@ -31,6 +27,7 @@ export type PodcastModuleDeps = HostDeps & { journal?: { db: Queryable; schema: 
 export default defineWorkflowModule({
   id: 'podcast',
   phase: 'last',
+  suite: podcastSuite,
   create(deps, { peers }) {
     const { journal } = deps as PodcastModuleDeps
     if (!journal) throw new Error('podcast module: the process must pass `journal` ({ db, schema }) in its deps')

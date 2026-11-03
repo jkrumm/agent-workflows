@@ -175,11 +175,15 @@ function probe(path: string) {
 }
 
 /** One run on its own runtime: two variants of `podcast.produce` never share one. */
-async function runOnce(workflow: ReturnType<typeof produceWith>, input: ReturnType<typeof episodeInput>) {
+async function runOnce(
+  workflow: ReturnType<typeof produceWith>,
+  input: ReturnType<typeof episodeInput>,
+  purpose = 'build',
+) {
   const rt = testRuntime({ schema: db.schema, workflows: [workflow] })
   await rt.open()
   try {
-    const { runId } = await rt.start(workflow, input, { purpose: 'build' })
+    const { runId } = await rt.start(workflow, input, { purpose })
     return { ...(await rt.wait(runId)), id: runId }
   } finally {
     await rt.close()
@@ -545,6 +549,33 @@ describe('podcast.produce', () => {
         expect(failed.status).toBe('done')
         expect((failed.output as ProduceResult).brainNote?.committed).toBe(true)
         expect((await sql.step(failed.id, 'notify'))?.output).toEqual({ sent: false, error: 'connection terminated' })
+        expect(texts).toHaveLength(1)
+      } finally {
+        tts.iu.stop()
+      }
+    },
+    TIMEOUT,
+  )
+
+  test(
+    'an eval run sends no Slack notice (the step records null); the same episode under another purpose does',
+    async () => {
+      const NOTIFY = { channel: 'C0TESTCHAN1', argoBaseUrl: 'https://argo.example.com', argoApiSecret: 'test-secret' }
+      const texts: string[] = []
+      const notifyFetch = (async (_url: string | URL | Request, init?: RequestInit) => {
+        texts.push((JSON.parse(String(init?.body)) as { text: string }).text)
+        return Response.json({ ok: true })
+      }) as unknown as typeof fetch
+      const tts = fakeTts()
+      try {
+        const workflow = produceWith(tts, { config: { notify: NOTIFY }, notifyFetch })
+        const input = episodeInput({ publish: false, brainNote: false })
+        const evaluated = await runOnce(workflow, input, 'eval')
+        expect(evaluated.status).toBe('done')
+        expect(texts).toHaveLength(0)
+        expect((await sql.step(evaluated.id, 'notify'))?.output).toBeNull()
+        const prod = await runOnce(workflow, input, 'prod')
+        expect(prod.status).toBe('done')
         expect(texts).toHaveLength(1)
       } finally {
         tts.iu.stop()
