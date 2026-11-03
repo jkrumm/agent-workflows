@@ -176,6 +176,15 @@ export function reviewLedger(pool: ReviewPool, schema: string) {
       return rows[0] ? toJob(rows[0]) : null
     },
 
+    /** The newest job of a thread of this repo, in any state: whether a thread id names a thread the ledger holds. */
+    async threadJob(repo: string, thread: string): Promise<Job | null> {
+      const { rows } = await pool.query(
+        `select * from ${jobs} where repo = $1 and thread = $2 order by created_at desc, id desc limit 1`,
+        [repo, thread],
+      )
+      return rows[0] ? toJob(rows[0]) : null
+    },
+
     /** Deep jobs of `account` (null: its own bucket) since `since`, not abandoned, other threads' prepared ones included. */
     async deepCount(account: string | null, since: Date, exceptPreparedOf: string): Promise<number> {
       const { rows } = await pool.query(

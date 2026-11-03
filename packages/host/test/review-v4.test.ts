@@ -633,7 +633,7 @@ describe('hidden transport', () => {
     const cases = Object.entries(exits)
       .map(([suffix, code]) => {
         const why = failed.includes(suffix)
-          ? `; echo "spawn $3 is ${state}: only a queued or waiting spawn can be cancelled" >&2`
+          ? `; echo '{"error":{"kind":"conflict","code":"not_cancellable","message":"only a queued or waiting spawn can be cancelled","hint":null,"details":{"status":409,"spawn":{"key":"'$3'","status":"${state}"}}}}' >&2`
           : ''
         return `  *-${suffix}) echo '{"state":"x"}'${why}; exit ${code} ;;`
       })
@@ -678,9 +678,26 @@ describe('hidden transport', () => {
     const job = await service({ env: fakeFactory().env }).request({ cwd: root, scope: 'head' })
     const factory = cancelFactory({ a1: 5, a2: 4 }, ['a1'])
     const out = await service({ env: factory.env }).cancel({ jobId: job.jobId! })
-    expect(out).toEqual({ status: 'failed', jobId: job.jobId!, spawn: { state: 'x' } })
+    expect(out).toEqual({
+      status: 'failed',
+      jobId: job.jobId!,
+      spawn: { key: `review-${job.jobId}-a1`, status: 'failed' },
+    })
     expect(await jobState(job.jobId!)).toBe('abandoned')
     expect(existsSync(job.worktree!)).toBe(false)
+  })
+
+  test('a 409 whose stderr carries no spawn status is kept as running, never read from the message', async () => {
+    const root = small()
+    const job = await service({ env: fakeFactory().env }).request({ cwd: root, scope: 'head' })
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), 'agw-rv4-cancel-')))
+    repos.push(dir)
+    const bin = join(dir, 'factory')
+    writeFileSync(bin, `#!/bin/sh\necho "spawn $3 is ended: not cancellable" >&2\nexit 5\n`)
+    chmodSync(bin, 0o755)
+    const out = await service({ env: { AGW_FACTORY_BIN: bin } }).cancel({ jobId: job.jobId! })
+    expect(out).toMatchObject({ status: 'running' })
+    expect(await jobState(job.jobId!)).toBe('prepared')
   })
 
   test('cancel parses the state of the 409: an ended a2 abandons the job as failed, a running one keeps it', async () => {
@@ -788,16 +805,48 @@ describe('hidden transport', () => {
     expect(await jobState(started.jobId!)).toBe('prepared')
   })
 
-  test('cancel refuses an in-session job and a job that is not prepared, naming the state', async () => {
+  test('cancel refuses a job that is not prepared, naming the state', async () => {
     const s = service({ env: fakeFactory().env })
     const root = small()
-    const inSession = await s.prepare({ cwd: root, scope: 'head', account: 'work' })
     const factory = cancelFactory({})
-    await rejects(s.cancel({ jobId: inSession.jobId! }), /in-session/)
     const hidden = await s.request({ cwd: root, scope: 'head', thread: 'other' })
     await service({ env: factory.env }).cancel({ jobId: hidden.jobId! })
     await rejects(s.cancel({ jobId: hidden.jobId! }), /abandoned/)
     await rejects(s.cancel({ jobId: 'nope' }), /unknown job/)
+  })
+
+  test('cancel abandons a prepared in-session job and removes its tree, without asking the factory', async () => {
+    const root = small()
+    const factory = cancelFactory({})
+    const s = service({ env: factory.env })
+    const job = await ready(s.prepare({ cwd: root, scope: 'head', account: 'work' }))
+    expect(await s.cancel({ jobId: job.jobId })).toEqual({ status: 'cancelled', jobId: job.jobId, spawns: [] })
+    expect(factory.calls()).toEqual([])
+    expect(await jobState(job.jobId)).toBe('abandoned')
+    expect(existsSync(job.worktree)).toBe(false)
+    await rejects(s.cancel({ jobId: job.jobId }), /abandoned/)
+  })
+
+  test('status prints the thread key; --thread takes the key or the id of an existing thread', async () => {
+    const s = service()
+    const root = small()
+    const first = await ready(s.prepare({ cwd: root, scope: 'head', thread: 'my-key' }))
+    expect((await s.status({ jobId: first.jobId })).job?.threadKey).toBe('my-key')
+    await s.cancel({ jobId: first.jobId })
+    // the id from status continues the thread (here: an abandoned round 1 is still round 1), with the same key
+    const byId = await ready(s.prepare({ cwd: root, scope: 'head', thread: first.thread }))
+    expect(byId.thread).toBe(first.thread)
+    expect((await s.status({ jobId: byId.jobId })).job?.threadKey).toBe('my-key')
+    const byKey = await ready(s.prepare({ cwd: root, scope: 'head', thread: 'my-key' }))
+    expect(byKey.thread).toBe(first.thread)
+    // a 12-hex value the ledger does not hold is a key
+    const unknown = await ready(s.prepare({ cwd: root, scope: 'head', thread: 'abcdef012345' }))
+    expect(unknown.thread).not.toBe('abcdef012345')
+    expect((await s.status({ jobId: unknown.jobId })).job?.threadKey).toBe('abcdef012345')
+    // without --thread the resolved key is stored
+    const dflt = await ready(s.prepare({ cwd: root, scope: 'head' }))
+    expect((await s.status({ jobId: dflt.jobId })).job?.threadKey).toBeTruthy()
+    expect((await s.status({ cwd: root })).jobs?.[0]?.threadKey).toBeTruthy()
   })
 
   test('skipped passes through without a spawn', async () => {

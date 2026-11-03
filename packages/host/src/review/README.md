@@ -18,10 +18,10 @@ CLI exits non-zero naming it.
 |-|-|
 | `agw review prepare --cwd <dir> [--scope uncommitted\|head\|<ref>\|<a>..<b> \| --pr N \| --branch B] [--context] [--min] [--thread] [--account]` | Thread, round, route, ceiling, deep cap, job dir. `status`: `ready` (run the agent with `prompt` on `seat`), `skipped` (tier none), `held` (ceiling or deep cap; wait, the tier is never lowered), `needs-human` (a 4th round) |
 | `agw review request --cwd <dir> [--scope \| --pr N \| --branch B] [--context] [--min] [--thread]` | `prepare` for the hidden transport (no `--account`): `skipped` and `needs-human` as `prepare`; `ready` → the factory spawn, answer `requested` (see Hidden transport) |
-| `agw review cancel <jobId>` | A `prepared` hidden job whose spawn is still held: `factory spawn cancel` on `review-<jobId>-a1` and `-a2`, then the job is `abandoned` and its tree removed → `{status: 'cancelled', jobId, spawns}`. A claimed or started spawn (factory exit 5 `not_cancellable`) keeps the job → `{status: 'running', jobId, spawn}`. A spawn in a terminal state (`ended`, `failed`, `cancelled`; also 409, parsed from `is <state>:`; nothing will submit) abandons the job and removes its tree → `{status: 'failed', jobId, spawn}`. An in-session, submitted or abandoned job is refused naming its state |
+| `agw review cancel <jobId>` | A `prepared` in-session job is abandoned and its tree removed at once → `{status: 'cancelled', jobId, spawns: []}`, no factory call. A `prepared` hidden job whose spawn is still held: `factory spawn cancel` on `review-<jobId>-a1` and `-a2`, then the job is `abandoned` and its tree removed → `{status: 'cancelled', jobId, spawns}`. A claimed or started spawn (factory exit 5 `not_cancellable`) keeps the job → `{status: 'running', jobId, spawn}`. A spawn in a terminal state (`ended`, `failed`, `cancelled`; the 409's spawn row, `error.details.spawn.status` of the factory CLI's one-line JSON error on stderr; an unreadable answer counts as `running`; nothing will submit) abandons the job and removes its tree → `{status: 'failed', jobId, spawn}`. A submitted or abandoned job is refused naming its state |
 | `agw review submit <jobId> --attempt <n> [--account <a>]` (reply on stdin) | REVIEW_OUTPUT v4. Idempotent per (job, attempt): the same attempt gets the stored output back, another attempt is refused naming the winner. `--account` sets the job's account only when it has none |
 | `agw review dispose <jobId> <findingId> fixed\|wrong\|intentional\|irrelevant\|open [--reason]` | The answer to a finding of the job's thread; idempotent |
-| `agw review status [<jobId>] [--cwd]` | A job (a running review is `prepared`) and its thread's findings, or the 10 newest jobs of the repo at `--cwd`. A `prepared` hidden job also carries `hidden: {attempts: [{key, status}], gaveUp}` from one read-only `factory spawn get` per attempt (a1, a2; a missing one is left out, a factory that cannot be asked omits `hidden`). `gaveUp` is true when a2 exists and is terminal (`ended`, `failed`, `cancelled`) while the job is unsubmitted; a terminal a1 alone is not (the factory may still create a2) |
+| `agw review status [<jobId>] [--cwd]` | A job (a running review is `prepared`) with its `thread` id and `threadKey` (absent on jobs older than the key) and its thread's findings, or the 10 newest jobs of the repo at `--cwd`. A `prepared` hidden job also carries `hidden: {attempts: [{key, status}], gaveUp}` from one read-only `factory spawn get` per attempt (a1, a2; a missing one is left out, a factory that cannot be asked omits `hidden`). `gaveUp` is true when a2 exists and is terminal (`ended`, `failed`, `cancelled`) while the job is unsubmitted; a terminal a1 alone is not (the factory may still create a2) |
 | `agw review route --cwd --base --head [--min]` | `routeRange` alone; no ledger (HTTP `/review/route`) |
 | `agw review covered --cwd --range <a>..<b>` | Coverage of each first-parent commit; exit 0 either way, read `covered` |
 
@@ -39,7 +39,7 @@ No change against HEAD is an empty diff (tier none). `head` = HEAD~1..HEAD, `<re
 and diff against the merge base with origin's default branch; that clone is the job's worktree. No path scopes.
 
 Repo identity: origin normalized to `host/owner/name`, else the realpath of the main worktree's toplevel, so worktrees
-share it. Thread: `sha256(repo \0 key)[:12]`, key `--thread`, else `pr:<n>`, `branch:<b>` or `base:<base sha>`.
+share it. Thread: `sha256(repo \0 key)[:12]`, key `--thread` (or the 12-hex id of a thread the repo's ledger already holds, as `status` prints it: used as is), else `pr:<n>`, `branch:<b>` or `base:<base sha>`.
 
 ## The job dir
 
@@ -94,10 +94,10 @@ per day with an owner one-click allow, on the account **it** picks; it also hold
 spawnKey, spawn}`, `spawn` being the factory's spawn status (a queued one names its hold reason). A failing spawn marks
 the job `abandoned` (the thread is not blocked), removes its tree and exits non-zero naming the factory's message.
 
-`agw review cancel <jobId>` ends a hidden job whose spawn the factory still holds (`waiting` or `queued`, never claimed):
+`agw review cancel <jobId>` abandons an in-session job at once (no factory call) and ends a hidden job whose spawn the factory still holds (`waiting` or `queued`, never claimed):
 `factory spawn cancel review-<jobId>-a1` and `-a2` (the retry; a `not_found`, CLI exit 4, for a key that never existed is
 fine). A spawn already claimed or started is `not_cancellable` (CLI exit 5): the job stays `prepared`, cancel answers
-`running` and the review goes on and submits. A terminal spawn is the exception: the factory's 409 reads `spawn <key> is <state>: only a queued or waiting spawn can be cancelled`, and for `ended`, `failed` or `cancelled` no session is left to submit, so cancel goes on to a2 and, with nothing cancelled, abandons the job as a failed `request` does and answers `failed`. Any other state (claimed, started) answers `running`.
+`running` and the review goes on and submits. A terminal spawn is the exception: the factory's 409 body carries the spawn row (its CLI prints one JSON line on stderr, `error.details.spawn.status`; no message is parsed, and a line that does not parse counts as `running`), and for `ended`, `failed` or `cancelled` no session is left to submit, so cancel goes on to a2 and, with nothing cancelled, abandons the job as a failed `request` does and answers `failed`. Any other state (claimed, started) answers `running`.
 
 The factory runs one interactive Claude Code session per job with the global `reviewer` agent and, on its Stop, pipes the
 agent's last reply to `agw review submit <jobId> --attempt <n> --account <account it ran on> --commit --format json`

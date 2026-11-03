@@ -125,7 +125,14 @@ export const PrepareInput = z
     branch: z.string().optional().describe("Remote branch on origin; reviewed against origin's default branch"),
     context: z.string().optional().describe('What the change was asked to do: the brief, the plan step, the PR body'),
     min: RAISE.optional().describe('Raise the routed tier to at least this one (never lowers it)'),
-    thread: z.string().min(1).max(200).optional().describe('Thread key; default pr:<n>, branch:<b> or the base commit'),
+    thread: z
+      .string()
+      .min(1)
+      .max(200)
+      .optional()
+      .describe(
+        'Thread key, or the id of an existing thread of the repo; default pr:<n>, branch:<b> or the base commit',
+      ),
     account: z
       .string()
       .regex(new RegExp(ACCOUNT_ID_PATTERN))
@@ -245,6 +252,7 @@ export const JobSummary = z.object({
   id: z.string(),
   state: z.enum(JOB_STATES),
   thread: z.string(),
+  threadKey: z.string().optional().describe('The key the thread was started with (absent on older jobs)'),
   round: z.number().int(),
   tier: TIER,
   transport: z.enum(['in-session', 'hidden']),
@@ -260,6 +268,7 @@ export const StatusOutput = z.object({
       state: z.enum(JOB_STATES),
       repo: z.string(),
       thread: z.string(),
+      threadKey: z.string().optional().describe('The key the thread was started with (absent on older jobs)'),
       round: z.number().int(),
       tier: TIER,
       seat: SEAT.nullable(),

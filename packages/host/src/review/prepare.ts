@@ -113,6 +113,21 @@ export async function prepare(
   }
 }
 
+const THREAD_ID = /^[0-9a-f]{12}$/
+
+/** `--thread` is a key, or the 12-hex id of a thread this repo already holds (what `status` prints): used as is. */
+async function resolveThread(
+  ledger: ReviewContext['ledger'],
+  repo: string,
+  given: string | undefined,
+  defaultKey: string,
+): Promise<{ thread: string; threadKey: unknown }> {
+  const known = given && THREAD_ID.test(given) ? await ledger.threadJob(repo, given) : null
+  if (known) return { thread: known.thread, threadKey: known.scope.threadKey }
+  const key = given ?? defaultKey
+  return { thread: threadId(repo, key), threadKey: key }
+}
+
 async function prepareResolved(
   ctx: ReviewContext,
   input: PrepareInputValue,
@@ -122,7 +137,7 @@ async function prepareResolved(
   const { root, repo, jobId, jobDir, resolved, transport } = at
   const hidden = transport === 'hidden'
   const { gitDir, base, head } = resolved
-  const thread = threadId(repo, input.thread ?? resolved.key)
+  const { thread, threadKey } = await resolveThread(ledger, repo, input.thread, resolved.key)
   const account = input.account ?? null
   const last = await ledger.lastSubmitted(repo, thread)
   const round = last ? last.round + 1 : 1
@@ -241,7 +256,11 @@ async function prepareResolved(
     root,
     thread,
     round,
-    scope: { ...scope, ...(input.thread ? { thread: input.thread } : {}) },
+    scope: {
+      ...scope,
+      ...(input.thread ? { thread: input.thread } : {}),
+      ...(typeof threadKey === 'string' ? { threadKey } : {}),
+    },
     base,
     diffBase,
     head,

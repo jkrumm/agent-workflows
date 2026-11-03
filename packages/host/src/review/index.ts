@@ -64,6 +64,26 @@ const FACTORY_CONFLICT = 5
 /** A spawn in one of these states will never run again. */
 const TERMINAL_SPAWN = new Set(['ended', 'failed', 'cancelled'])
 
+const threadKeyOf = (job: { scope: Record<string, unknown> }) =>
+  typeof job.scope.threadKey === 'string' ? { threadKey: job.scope.threadKey } : {}
+
+/**
+ * The spawn row of the factory CLI's conflict error, one JSON line on stderr:
+ * `{"error":{"code":"not_cancellable","details":{"status":409,"spawn":{"status":…}}}}`. Null when no line carries one.
+ */
+function conflictSpawn(stderr: string): { spawn: unknown; status: string } | null {
+  for (const line of stderr.split('\n')) {
+    try {
+      const spawn = (JSON.parse(line) as { error?: { details?: { spawn?: { status?: unknown } } } }).error?.details
+        ?.spawn
+      if (typeof spawn?.status === 'string') return { spawn, status: spawn.status }
+    } catch {
+      // not the error line
+    }
+  }
+  return null
+}
+
 /** The factory's answer to `spawn create`: its JSON, else the first line it printed. */
 const parseSpawn = (stdout: string): unknown => {
   try {
@@ -98,6 +118,10 @@ export function createReviewService(ports: ReviewServicePorts): ReviewService {
     env,
   }
   const { ledger } = ctx
+  const abandonJob = async (job: { id: string; jobDir: string; worktree: string }) => {
+    await ledger.abandon(job.id)
+    if (job.jobDir && job.worktree) removeWorktree(ctx, job.jobDir, job.worktree)
+  }
   const run = ports.run ?? commandRunner(env)
 
   /**
@@ -191,8 +215,10 @@ export function createReviewService(ports: ReviewServicePorts): ReviewService {
       if (!job) throw new ReviewError(`unknown job ${input.jobId}`)
       if (job.state !== 'prepared')
         throw new ReviewError(`job ${job.id} is ${job.state}, only a prepared job can be cancelled`)
-      if (job.transport !== 'hidden')
-        throw new ReviewError(`job ${job.id} is an in-session job, only a hidden one can be cancelled`)
+      if (job.transport === 'in-session') {
+        await abandonJob(job)
+        return { status: 'cancelled', jobId: job.id, spawns: [] }
+      }
       const spawns: unknown[] = []
       let failedSpawn: unknown
       // a1 is the first spawn, a2 the factory's retry; a key that never existed answers not_found (exit 4)
@@ -205,10 +231,13 @@ export function createReviewService(ports: ReviewServicePorts): ReviewService {
         const spawn = parseSpawn(result.stdout)
         if (result.exitCode === 0) spawns.push(spawn)
         else if (result.exitCode === FACTORY_CONFLICT) {
-          // a spawn in a terminal state (409 "spawn <key> is <state>: ...") cannot run any more; a1 hands over to a2
-          const state = / is (\w+):/.exec(`${result.stderr}\n${result.stdout}`)?.[1]
-          if (!state || !TERMINAL_SPAWN.has(state)) return { status: 'running', jobId: job.id, spawn }
-          failedSpawn = spawn
+          // the 409 carries the spawn row; a terminal one cannot run any more (a1 hands over to a2), anything else,
+          // an unreadable answer included, is kept as running
+          const conflict = conflictSpawn(result.stderr)
+          if (!conflict || !TERMINAL_SPAWN.has(conflict.status)) {
+            return { status: 'running', jobId: job.id, spawn: conflict?.spawn ?? spawn }
+          }
+          failedSpawn = conflict.spawn
         } else if (result.exitCode !== FACTORY_NOT_FOUND) {
           const why = result.timedOut
             ? `timed out after ${SPAWN_TIMEOUT_MS / 1000} s`
@@ -216,8 +245,7 @@ export function createReviewService(ports: ReviewServicePorts): ReviewService {
           throw new ReviewError(`the factory could not cancel ${spawnKey}: ${why}`)
         }
       }
-      await ledger.abandon(job.id)
-      if (job.jobDir && job.worktree) removeWorktree(ctx, job.jobDir, job.worktree)
+      await abandonJob(job)
       if (spawns.length === 0 && failedSpawn !== undefined)
         return { status: 'failed', jobId: job.id, spawn: failedSpawn }
       return { status: 'cancelled', jobId: job.id, spawns }
@@ -249,6 +277,7 @@ export function createReviewService(ports: ReviewServicePorts): ReviewService {
             state: job.state,
             repo: job.repo,
             thread: job.thread,
+            ...threadKeyOf(job),
             round: job.round,
             tier: job.tier,
             seat: job.seat,
@@ -274,6 +303,7 @@ export function createReviewService(ports: ReviewServicePorts): ReviewService {
           id: j.id,
           state: j.state,
           thread: j.thread,
+          ...threadKeyOf(j),
           round: j.round,
           tier: j.tier,
           transport: j.transport,
