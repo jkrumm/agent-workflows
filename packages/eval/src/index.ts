@@ -34,8 +34,6 @@ export {
   GtRepo,
   GtSplit,
   gtPath,
-  JudgeBRecord,
-  JudgeCalibration,
   JudgeClass,
   JudgeInput,
   JudgeOutput,
@@ -47,9 +45,7 @@ export {
   RejectReason,
   Sha,
 } from './gt.ts'
-export type { Confusion } from './gt-stats.ts'
-export { agreement, cohenKappa, confusionTotal, KAPPA_BAR, kappaCI, wilson } from './gt-stats.ts'
-export { sampleOf, samplePairs, shuffled } from './gt-sample.ts'
+export { wilson } from './gt-stats.ts'
 export {
   type Acceptance,
   acceptRecord,

@@ -7,7 +7,7 @@ import type { OutputFindingValue } from '../../review/schema.ts'
 import { readRecords } from '../eval-mine/files.ts'
 import { seatAnswer } from '../eval-mine/label.ts'
 import { gitClones, type RecallClones } from './clones.ts'
-import { judgeModeOf, type ResolvedMode, scoreCase, scorerVersion } from './scorer.ts'
+import { SCORER_VERSION, scoreCase } from './scorer.ts'
 import { CaseResult, RecallSummary, summarize } from './summary.ts'
 
 export const EVAL_RECALL_ID = 'eval.recall'
@@ -57,12 +57,7 @@ export const evalRecallInput = z
 export const evalRecallOutput = z.object({
   runId: z.string(),
   limit: z.string().describe('What no one checked: every report of this ground truth states it'),
-  judges: z.object({
-    mode: z.enum(['single', 'dual']),
-    kappa: z.number().nullable(),
-    reason: z.string(),
-    scorer: z.string(),
-  }),
+  judges: z.object({ mode: z.literal('dual'), scorer: z.string() }),
   selected: z.number().int(),
   summary: RecallSummary,
   cases: z.array(CaseResult),
@@ -159,9 +154,6 @@ const caseInput = z
   .object({
     evalRunId: z.string(),
     caseId: z.string(),
-    mode: z.enum(['single', 'dual']),
-    kappa: z.number().nullable(),
-    reason: z.string(),
   })
   .strict()
 
@@ -195,7 +187,6 @@ export function createEvalRecall(options: EvalRecallOptions): HostWorkflow[] {
       try {
         const reference = readRecords('cases.jsonl', GtCase, env, warn).find((c) => c.id === input.caseId)
         if (!reference) throw new WorkflowError('error', `case ${input.caseId} is no longer in cases.jsonl`)
-        const mode: ResolvedMode = { mode: input.mode, kappa: input.kappa, reason: input.reason }
         const head = { id: reference.id, split: reference.split, kind: reference.kind }
         const unscored = (reason: string, rest: Partial<CaseResult> = {}): CaseResult => ({
           ...head,
@@ -295,7 +286,6 @@ export function createEvalRecall(options: EvalRecallOptions): HostWorkflow[] {
             const verdict = await scoreCase({
               reference,
               findings,
-              mode,
               diff: await clones.diff(dir, reference.sha),
               judge: (judgeInput) => options.registry.call('eval.judge', judgeInput, callContext),
             })
@@ -351,20 +341,13 @@ export function createEvalRecall(options: EvalRecallOptions): HostWorkflow[] {
         const ids = selectCases(all, input).map((c) => c.id)
         if (ids.length === 0)
           throw new WorkflowError('invalid_input', `no case matches the filters in ${gtPath('cases.jsonl', env)}`)
-        const mode = judgeModeOf(env)
-        return { ids, mode: mode.mode, kappa: mode.kappa, reason: mode.reason }
+        return { ids }
       })
       gate = new Gate(input.concurrency ?? 1)
       const done = await ctx.workflow(
         'cases',
         caseRun,
-        plan.ids.map((caseId) => ({
-          evalRunId: ctx.runId,
-          caseId,
-          mode: plan.mode,
-          kappa: plan.kappa,
-          reason: plan.reason,
-        })),
+        plan.ids.map((caseId) => ({ evalRunId: ctx.runId, caseId })),
       )
       // A cancelled run ends cancelled: its children came back empty because of it.
       ctx.signal.throwIfAborted()
@@ -391,7 +374,7 @@ export function createEvalRecall(options: EvalRecallOptions): HostWorkflow[] {
       return {
         runId: ctx.runId,
         limit: GT_LIMIT,
-        judges: { mode: plan.mode, kappa: plan.kappa, reason: plan.reason, scorer: scorerVersion(plan.mode) },
+        judges: { mode: 'dual' as const, scorer: SCORER_VERSION },
         selected: plan.ids.length,
         summary: summarize(results),
         cases: results,

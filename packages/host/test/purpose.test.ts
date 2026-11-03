@@ -2,7 +2,6 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { z } from 'zod'
 import { defineWorkflow } from '@agent-workflows/runtime'
 import { DEFAULT_PURPOSE, EVAL_WORKFLOW_IDS, type HostWorkflow, purposeOf } from '../src/operations.ts'
-import { EVAL_GT_CALIBRATE_ID } from '../src/workflows/eval-gt/index.ts'
 import { EVAL_MINE_ID } from '../src/workflows/eval-mine/index.ts'
 import { EVAL_RECALL_ID } from '../src/workflows/eval-recall/index.ts'
 import { EVAL_COMPARE_ID } from '../src/workflows/eval/compare.ts'
@@ -51,9 +50,7 @@ const rows = async (workflow: string) =>
 
 describe('purposeOf', () => {
   test('the list is exactly the ids `agw eval *` starts', () => {
-    expect([...EVAL_WORKFLOW_IDS].sort()).toEqual(
-      [EVAL_RUN_ID, EVAL_COMPARE_ID, EVAL_MINE_ID, EVAL_GT_CALIBRATE_ID, EVAL_RECALL_ID].sort(),
-    )
+    expect([...EVAL_WORKFLOW_IDS].sort()).toEqual([EVAL_RUN_ID, EVAL_COMPARE_ID, EVAL_MINE_ID, EVAL_RECALL_ID].sort())
   })
 
   test('no header: eval for an eval workflow, prod for any other', () => {

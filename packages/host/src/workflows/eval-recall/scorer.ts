@@ -1,66 +1,19 @@
-import { existsSync, readFileSync } from 'node:fs'
 import { JUDGE_B_VERSION, JUDGE_VERSION } from '@agent-workflows/capabilities'
 import {
   GT_LIMIT,
   type GtCase,
   type GtFinding,
-  gtPath,
-  JudgeCalibration,
   type JudgeClass,
   type JudgeInput,
   JudgeOutput,
-  KAPPA_BAR,
 } from '@agent-workflows/eval'
 import type { OutputFindingValue } from '../../review/schema.ts'
-
-/** How findings are judged: `single`, judge `a` alone (the calibration vouches for it), or `dual`, both judges. */
-export type JudgeMode = 'single' | 'dual'
-
-/** The mode and why: the κ and the reason are what the run reports. */
-export type ResolvedMode = { mode: JudgeMode; kappa: number | null; reason: string }
 
 /** One judge call, bound to the step that makes it (its call context). */
 export type JudgeFn = (input: JudgeInput) => Promise<JudgeOutput>
 
-/**
- * The mode the calibration allows (`eval.gt.calibrate`): `single` when `judge-calibration.json` exists, was made for
- * both current judge versions and its κ clears `KAPPA_BAR`; otherwise `dual` (missing, unreadable, another version of
- * either judge, κ below the bar or undefined). Reads the disk.
- */
-export function judgeModeOf(env: Record<string, string | undefined> = process.env): ResolvedMode {
-  const path = gtPath('judge-calibration.json', env)
-  const dual = (reason: string, kappa: number | null = null): ResolvedMode => ({ mode: 'dual', kappa, reason })
-  let raw: string
-  try {
-    if (!existsSync(path)) return dual('no judge-calibration.json')
-    raw = readFileSync(path, 'utf8')
-  } catch (error) {
-    return dual(`judge-calibration.json unreadable: ${error instanceof Error ? error.message : String(error)}`)
-  }
-  let json: unknown
-  try {
-    json = JSON.parse(raw)
-  } catch {
-    return dual('judge-calibration.json is not JSON')
-  }
-  const parsed = JudgeCalibration.safeParse(json)
-  if (!parsed.success) return dual('judge-calibration.json does not parse (an older format?)')
-  const { kappa, judgeVersions } = parsed.data
-  if (judgeVersions.a !== JUDGE_VERSION || judgeVersions.b !== JUDGE_B_VERSION)
-    return dual(
-      `calibrated for judges ${judgeVersions.a} + ${judgeVersions.b}, current are ${JUDGE_VERSION} + ${JUDGE_B_VERSION}`,
-      kappa,
-    )
-  if (kappa === null) return dual('κ is undefined (the judges only ever gave one answer)')
-  if (kappa < KAPPA_BAR) return dual(`κ ${kappa.toFixed(3)} is below the bar ${KAPPA_BAR}`, kappa)
-  return { mode: 'single', kappa, reason: `κ ${kappa.toFixed(3)} clears the bar ${KAPPA_BAR}` }
-}
-
-/** The scorer version: judge `a`'s always, judge `b`'s too in dual mode, with the mode, so runs of other modes never mix. */
-export const scorerVersion = (mode: JudgeMode) =>
-  mode === 'single'
-    ? `2026-11-03.v4+${JUDGE_VERSION}+judges:single`
-    : `2026-11-03.v4+${JUDGE_VERSION}+${JUDGE_B_VERSION}+judges:dual`
+/** The scorer version: both judges' versions, so runs scored by other judges never mix. */
+export const SCORER_VERSION = `2026-11-03.v4+${JUDGE_VERSION}+${JUDGE_B_VERSION}+judges:dual`
 
 type GtBug = Extract<GtCase, { kind: 'bug' }>['bug']
 const basename = (file: string) => file.slice(file.lastIndexOf('/') + 1)
@@ -183,8 +136,8 @@ export type CaseScore = {
 
 /**
  * The recall scorer (`docs/review-v2.md` §Metrics) on review v4's output. The judge classifies the findings (`match`,
- * `real`, `not-a-bug`, `nit`, `unclear`); none is asked for when the review has no finding. One judge (`a`) when the
- * calibration clears the bar, else both (`mode`), and a finding they classify differently is `unclear`. A bug case:
+ * `real`, `not-a-bug`, `nit`, `unclear`); none is asked for when the review has no finding. Both judges always judge,
+ * and a finding they classify differently is `unclear`. A bug case:
  * `recall` (an important finding matches the bug), `detected` (any finding does), `severityCalibration` (when
  * detected, a matching finding is important). A control: `falseAlarms` (important findings), `clean` (none). Both:
  * `noise` (share of `not-a-bug` findings), `findings`, `important`, `realOther` (findings judged real). `diff` is the
@@ -194,23 +147,17 @@ export async function scoreCase(args: {
   reference: GtCase
   findings: readonly OutputFindingValue[]
   judge: JudgeFn
-  mode: ResolvedMode
   diff: string
 }): Promise<CaseScore> {
-  const { reference, judge, mode } = args
+  const { reference, judge } = args
   const findings = toFindings(args.findings)
   const important = findings.filter((f) => f.tag === 'important')
   const judged: Judged = new Map()
   let note = ''
   if (findings.length > 0) {
-    if (mode.mode === 'dual') {
-      const both = await judgeBoth(reference, findings, judge, args.diff)
-      for (const [id, verdict] of both.judged) judged.set(id, verdict)
-      note = `judges: dual, ${count(both.disagreed, 'finding')} judged differently, scored unclear`
-    } else {
-      for (const [id, verdict] of await judgeSeat(reference, findings, judge, 'a', args.diff)) judged.set(id, verdict)
-      note = `judges: single (a), κ ${mode.kappa === null ? 'unknown' : mode.kappa.toFixed(2)} between the judges`
-    }
+    const both = await judgeBoth(reference, findings, judge, args.diff)
+    for (const [id, verdict] of both.judged) judged.set(id, verdict)
+    note = `judges: dual, ${count(both.disagreed, 'finding')} judged differently, scored unclear`
   }
   const classOf = (f: GtFinding): JudgeClass => judged.get(f.id)?.class ?? 'unclear'
   const noisy = findings.filter((f) => classOf(f) === 'not-a-bug').length

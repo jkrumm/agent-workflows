@@ -5,13 +5,13 @@ import { evalDir } from './cases.ts'
 /**
  * The review ground truth (`docs/review-v2.md` §Ground truth): bugs mined from the owner's fix history with SZZ, each
  * confirmed by two of three labelers on different vendors, plus clean controls. The contract between the miner
- * (`eval.mine`), the labelers (`eval.label`), the judges (`eval.judge`), review's scorer and the judge calibration.
+ * (`eval.mine`), the labelers (`eval.label`), the judges (`eval.judge`) and review's scorer.
  * Every file lives under `$AGW_EVAL_DIR/review-gt/` (mode 0600): cases name private repos, so none of it enters this
  * public repo. No human checks any of it: every report states `GT_LIMIT`.
  */
 export const GT_DIR = 'review-gt'
 
-/** The limit of this ground truth, carried by every report that rests on it (mine, calibration, the scorer's notes). */
+/** The limit of this ground truth, carried by every report that rests on it (mine, the scorer's notes). */
 export const GT_LIMIT = 'LLM consensus (labellers a/b/c, judges a/b), no human check'
 
 /** `$AGW_EVAL_DIR/review-gt/<file>`. */
@@ -25,18 +25,9 @@ export const gtPath = (file: GtFile, env: Record<string, string | undefined> = p
  *   record is never labelled again under the same `labelerVersion`; seat `c` is added to its record later, in place);
  * - `cases.jsonl`: the suite `agw eval run review` reads (`GtCase`: accepted bugs and controls);
  * - `rejected.jsonl`: candidates the labelers did not accept (`GtRejected`);
- * - `report.json`: aggregates only (counts per filter, per accept path and per reject reason), the input of the committed report;
- * - `judge-calibration.json`: aggregates only, the agreement of the two judges (`eval.gt.calibrate`) the scorer reads;
- * - `judge-b.jsonl`: judge `b`'s answers as the calibration collects them (`JudgeBRecord`), its resume point.
+ * - `report.json`: aggregates only (counts per filter, per accept path and per reject reason), the input of the committed report.
  */
-export type GtFile =
-  | 'candidates.jsonl'
-  | 'labels.jsonl'
-  | 'cases.jsonl'
-  | 'rejected.jsonl'
-  | 'report.json'
-  | 'judge-calibration.json'
-  | 'judge-b.jsonl'
+export type GtFile = 'candidates.jsonl' | 'labels.jsonl' | 'cases.jsonl' | 'rejected.jsonl' | 'report.json'
 
 export const Sha = z.string().regex(/^[0-9a-f]{40}$/)
 /** A repo path relative to `$HOME`. `SourceRoot` only: IU repos stay out of the cases (owner decision, 2026-11-01). */
@@ -278,46 +269,3 @@ export const JudgeOutput = z
   })
   .strict()
 export type JudgeOutput = z.infer<typeof JudgeOutput>
-
-/**
- * `judge-calibration.json` (`eval.gt.calibrate`): how far the two judges agree on whether a finding describes the
- * case's bug. Aggregates only. The review scorer reads it: one judge when `kappa` clears the bar for this judge version,
- * else both. `confusion` is judge `a` (rows) against judge `b`: `yy` both match, `yn` a match and b not, and so on.
- */
-export const JudgeCalibration = z
-  .object({
-    at: z.iso.datetime(),
-    limit: z.string(),
-    /** The versions of the two judges; the scorer trusts the file only while both are current. */
-    judgeVersions: z.object({ a: z.string(), b: z.string() }).strict(),
-    judgeModels: z.object({ a: z.array(z.string()), b: z.array(z.string()) }).strict(),
-    evalRuns: z.array(z.string()),
-    /** Pairs both judges answered. */
-    n: z.int().nonnegative(),
-    agreement: z.number().nullable(),
-    kappa: z.number().nullable(),
-    ci95: z.object({ lo: z.number(), hi: z.number() }).strict().nullable(),
-    bar: z.number(),
-    met: z.boolean(),
-    confusion: z.object({ yy: z.int(), yn: z.int(), ny: z.int(), nn: z.int() }).strict(),
-    /** Findings neither judge called a match: how often they give the same class. */
-    classes: z
-      .object({
-        n: z.int().nonnegative(),
-        agreement: z.number().nullable(),
-        /** judge `a`'s class → judge `b`'s class → findings. */
-        confusion: z.record(z.string(), z.record(z.string(), z.int())),
-      })
-      .strict(),
-  })
-  .strict()
-export type JudgeCalibration = z.infer<typeof JudgeCalibration>
-
-/**
- * `judge-b.jsonl`: judge `b`'s answer on one recorded judge-`a` call, keyed by that call's run id and judge `b`'s
- * version. Appended as each answer arrives, so a stopped calibration keeps what it paid for; the latest line wins.
- */
-export const JudgeBRecord = z
-  .object({ runId: z.string(), judgeBVersion: z.string(), at: z.iso.datetime(), output: JudgeOutput })
-  .strict()
-export type JudgeBRecord = z.infer<typeof JudgeBRecord>

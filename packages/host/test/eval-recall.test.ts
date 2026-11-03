@@ -274,7 +274,10 @@ describe('agw eval recall', () => {
     expect(body.status).toBe('done')
     const out = body.output as Body
     expect(out.limit).toBe(GT_LIMIT)
-    expect(out.judges).toMatchObject({ mode: 'dual', reason: 'no judge-calibration.json' })
+    expect(out.judges).toEqual({
+      mode: 'dual',
+      scorer: `2026-11-03.v4+${JUDGE_VERSION}+${JUDGE_B_VERSION}+judges:dual`, // unchanged: earlier runs stay comparable
+    })
     const [b1, c1] = out.cases as [Body, Body]
     expect(b1).toMatchObject({
       id: 'b1',
@@ -301,25 +304,11 @@ describe('agw eval recall', () => {
     expect(judge.calls.map((c) => c.seat ?? 'a')).toEqual(['a', 'b', 'a', 'b'])
   })
 
-  test('a calibration that clears the bar for both current judges scores with judge a alone', async () => {
+  test('a leftover judge-calibration.json changes nothing: both judges always judge', async () => {
     mkdirSync(join(env.AGW_EVAL_DIR as string, 'review-gt'), { recursive: true })
     writeFileSync(
-      gtPath('judge-calibration.json', env),
-      JSON.stringify({
-        at: '2026-11-03T10:00:00.000Z',
-        limit: GT_LIMIT,
-        judgeVersions: { a: JUDGE_VERSION, b: JUDGE_B_VERSION },
-        judgeModels: { a: ['m'], b: ['m'] },
-        evalRuns: ['e1'],
-        n: 100,
-        agreement: 0.97,
-        kappa: 0.93,
-        ci95: { lo: 0.85, hi: 0.99 },
-        bar: 0.8,
-        met: true,
-        confusion: { yy: 48, yn: 1, ny: 2, nn: 49 },
-        classes: { n: 10, agreement: 0.9, confusion: {} },
-      }),
+      join(env.AGW_EVAL_DIR as string, 'review-gt', 'judge-calibration.json'),
+      JSON.stringify({ kappa: 0.99 }),
     )
     const { body, judge } = await runWith(
       [bugCase('b1')],
@@ -327,8 +316,8 @@ describe('agw eval recall', () => {
       {},
       'f1',
     )
-    expect((body.output as Body).judges).toMatchObject({ mode: 'single', kappa: 0.93 })
-    expect(judge.calls.map((c) => c.seat ?? 'a')).toEqual(['a'])
+    expect((body.output as Body).judges).toMatchObject({ mode: 'dual' })
+    expect(judge.calls.map((c) => c.seat ?? 'a')).toEqual(['a', 'b'])
     expect(judge.calls[0]?.bug?.description).toBe(DESCRIPTION) // the judge sees the bug; the reviewer never does
   })
 

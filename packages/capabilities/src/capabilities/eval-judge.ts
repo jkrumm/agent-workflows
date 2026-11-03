@@ -93,8 +93,7 @@ const FIXTURE_CONTROL: JudgeInput = { ...FIXTURE_BUG, bug: null, preselected: []
 /**
  * The version of judge `a`: bumped by any change to the system text, either rendered prompt (bug case and control), the
  * diff rendering and cap, the answer schemas or seat `a`'s wire, model, effort or output ceiling. The constant below is
- * this value written down. Judge `b` is not in it (adding the second judge must not invalidate the stored judge-`a`
- * calls the calibration re-asks `b` on): it has `JUDGE_B_VERSION`.
+ * this value written down. Judge `b` is not in it: it has `JUDGE_B_VERSION`.
  */
 export const judgeVersion = () =>
   pinnedVersion('eval-judge', {

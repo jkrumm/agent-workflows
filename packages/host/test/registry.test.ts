@@ -48,7 +48,6 @@ describe('workflow discovery', () => {
       'check',
       'diagram',
       'digest',
-      'eval-gt',
       'eval-mine',
       'eval-recall',
       'eval',

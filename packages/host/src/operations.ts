@@ -36,13 +36,7 @@ export const DEFAULT_PURPOSE = 'prod'
  * the two to each other.
  */
 export const EVAL_PURPOSE = 'eval'
-export const EVAL_WORKFLOW_IDS: ReadonlySet<string> = new Set([
-  'eval.run',
-  'eval.compare',
-  'eval.mine',
-  'eval.gt.calibrate',
-  'eval.recall',
-])
+export const EVAL_WORKFLOW_IDS: ReadonlySet<string> = new Set(['eval.run', 'eval.compare', 'eval.mine', 'eval.recall'])
 
 /** What the host's fetch hands every procedure. */
 export type HostContext = RequestContext & {

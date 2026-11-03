@@ -31,8 +31,7 @@ their first step. A child that fails (a judge outage, a missing credit) leaves i
   the ceiling holds may wait hours). A job whose factory retry (a2) ended without a submit (`status` shows `hidden.gaveUp`) is cancelled, which abandons it, and recorded `unscored` as `review gave up: <factory state>`; a job merely waiting or queued (the ceiling) keeps polling. A `needs-human` or `skipped` request, an abandoned job, a failed clone and a judge
   answer that is unusable are `unscored` with the reason, never a miss and never in a denominator.
 - **Score.** The restored scorer v3 on REVIEW_OUTPUT v4 (`scorer.ts`): the token-overlap preselection, one `eval.judge`
-  call (judge `a`, pinned route, purpose `eval`; both judges when `judge-calibration.json` does not clear `KAPPA_BAR`
-  for the current judge versions, a disagreement being `unclear`). Bug case: `recall` (an important finding judged
+  call per judge (both judges, pinned routes, purpose `eval`; a finding they classify differently is `unclear`). Bug case: `recall` (an important finding judged
   `match`), `detected`, `severityCalibration`; control: `falseAlarms` (important findings), `clean`; both: `noise`,
   `findings`, `important`, `realOther`. A finding's text for the judge is its message plus its failure scenario.
 - **Cleanup.** The clone is removed after scoring; agw removes the job's tree on submit (an unsubmitted one is swept
@@ -48,34 +47,17 @@ for trying the path. The runaway cap's static ceilings for `eval.recall` are $30
 Cases and reports hold private code and findings, so they never enter this repo: they live under `$AGW_EVAL_DIR`
 (default `~/.local/share/agent-workflows/eval`). Only aggregate numbers are published.
 
-## Judge calibration
+## Judge limit
 
 No human checks the review ground truth (owner decision, 2026-11-02; `docs/review-v2.md` §Ground truth step 5,
-§Matching and judging Calibration). The labels are validated by 2-of-3 labeller consensus (below), and the judge by a
-second judge on another vendor. Every report that rests on it states `limit: "LLM consensus (labellers a/b/c, judges
-a/b), no human check"` (`GT_LIMIT`): the mine's `report.json` and output, the calibration's output and file, and the
-recall scorer's notes. The pure parts live in `src/gt-stats.ts` (Wilson interval, Cohen's κ with its 95 % interval,
-`KAPPA_BAR`) and `src/gt-sample.ts` (seeded sampling); the workflow in `packages/host/src/workflows/eval-gt/`.
+§Matching and judging). The labels are validated by 2-of-3 labeller consensus (below), and the findings by two judges on
+different vendors. Every report that rests on it states `limit: "LLM consensus (labellers a/b/c, judges a/b), no human
+check"` (`GT_LIMIT`): the mine's `report.json` and output and the recall scorer's notes. `src/gt-stats.ts` holds the
+Wilson interval.
 
-`agw eval gt calibrate --eval-runs <runId> [--pairs 100 --seed 1] [--yes]` (mutating: off a TTY it needs `--commit`).
-Needs an eval run whose judge calls are `cap.eval.judge` runs (the `review` suite that `agw eval run review` replayed went with review v1). `agw eval recall` does not produce them: it calls the judge in process, as a step of its own run, so it cannot be calibrated against and `gt calibrate` still has no input. Pass such eval run id(s):
-
-- It reads the `cap.eval.judge` runs below those eval runs and `cases.jsonl`, and builds the pairs from **judge-`a` runs of the current capability version only**: a run with `seat: 'b'` (the scorer's dual mode) and a run whose recorded workflow version is not the current one (or a known earlier one that asked the same judge `a`; `eval-gt/versions.ts`) are skipped and counted in the output. The journal records a hash of the capability's definition per run, not `JUDGE_VERSION`; the pairs (a finding and the
-  case's bug): half judge-`a`-positive (`match`), half preselected non-matches (right file, plausible, wrong defect). When
-  fewer positives exist than half, all go in, non-matches fill, and the output says the shortfall.
-- **Without `--yes`** it prints the plan: pairs, judge-`b` calls (one per judge-`a` run that holds a sampled pair), and an
-  estimate (prompt size at the route's rate, a rough figure). Nothing is spent.
-- **With `--yes`** it re-asks judge `b` (`eval.judge.b`, GPT) on exactly the recorded judge-`a` inputs, compares per pair
-  (match or not), and writes `$AGW_EVAL_DIR/review-gt/judge-calibration.json` (0600, aggregates only): κ with a 95 %
-  interval, raw agreement, the confusion table (`yy` both match, `yn` a match and b not, `ny`, `nn`), the agreement on
-  the classes of the findings neither judge matched (`real`, `not-a-bug`, `nit`, `unclear`, as a table), `n`, the judge
-  versions of both judges (`JUDGE_VERSION`, `JUDGE_B_VERSION`), both judges' models, the eval runs and `at`. Each judge-`b`
-  answer is appended to `judge-b.jsonl` as it arrives, so a rerun asks only the missing ones; an unusable answer skips
-  its run (counted); any other failure (no credit, an outage) stops the calibration and keeps what was paid for.
-- **The bar is κ ≥ 0.8.** The recall scorer reads the file in each `agw eval recall` run's `plan` step: at or above the
-  bar for the current judge versions of both judges it asks judge `a` alone; otherwise (below, missing, either judge
-  changed) it asks both and a finding they classify differently is `unclear`. The mode and why are in the run output
-  (`judges`) and the mode is in the scorer version, so runs of different modes are not mixed.
+Judge calibration (`agw eval gt calibrate`, a single-judge mode gated by `judge-calibration.json`) was removed
+2026-11-03: it had no source of judge-`a` calls (`agw eval recall` judges in process). Recall always asks both judges;
+Wave 11 may add a calibration back with a real source.
 
 ## Ground truth miner
 
@@ -155,8 +137,6 @@ it, removes its own plist and boots the label out, so it never runs again.
 | `cases.jsonl` | rebuilt by every run | accepted bugs and clean controls (`GtCase`), what the former `agw eval run review` read |
 | `rejected.jsonl` | rebuilt by every run | candidates the labelers did not accept, with the reason |
 | `report.json` | by every run | the funnel, the accepted count per pair of seats (`a+b`, `a+c`, `b+c`), the rejected count per reason, the `limit`; no code. After an incomplete mine: `incomplete: true` and the repos that failed, with their errors |
-| `judge-calibration.json` | by `agw eval gt calibrate` | the judges' κ and agreement (see Judge calibration); aggregates only |
-| `judge-b.jsonl` | appended as each judge-`b` answer arrives | `JudgeBRecord`: judge `b`'s answer on one judge-`a` call, keyed by its run id and `JUDGE_B_VERSION`; the calibration's resume point (the answers' reasons, so private) |
 | `owner.json` | by the owner, read only | `{ "emails": [...] }`: the author emails that count as the owner's |
 
 Every file is written to a temp file and renamed, so a reader or a crash sees the old file or the new one.

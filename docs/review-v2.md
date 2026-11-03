@@ -148,17 +148,11 @@ case. The 138 legacy review cases are retired from decisions.
   (another real bug), `not-a-bug`, `nit` or `unclear`.
 - The judge's model is pinned on its own route, never a tier: a moving judge invalidates every comparison. A judge
   model or prompt change bumps the scorer version, and `compare` already refuses to mix versions.
-- **Calibration** (`agw eval gt calibrate`): no owner labels. Judge `b` is re-asked on exactly the recorded judge-`a`
-  inputs of 100 pairs, half judge-positive and half judge-negative, **including plausible wrong findings** (judges catch
-  only 21 to 38 % of those on CRJudgeBench). It reports Cohen's κ between the two judges with its 95 % interval, the raw
-  agreement, the confusion table and the agreement on the classes of unmatched findings, in
-  `review-gt/judge-calibration.json` (aggregates only, with both judges' versions). Only judge-`a` calls of the current
-  capability version are re-asked, and each judge-`b` answer is kept as it arrives, so a stopped calibration resumes
-  without paying twice. The bar is κ ≥ 0.8. At or above it, for the current versions of both judges, the scorer asks
-  judge `a` alone. Below it, missing, or after either judge changed, the scorer asks both judges, and
-  a finding they classify differently is scored `unclear` (a split on the bug match is no match). The mode is part of
-  the scorer version, so `compare` refuses to mix modes. The scorer reads the file when the host starts. The limit is
-  the same: the judges agree with each other, no human checked either.
+- **Calibration was removed 2026-11-03** (`agw eval gt calibrate`, `judge-calibration.json`, the single-judge mode): it
+  had no source of judge-`a` calls to calibrate against (`agw eval recall` judges in process). Recall is always
+  dual-judge: both judges rate every finding and a finding they classify differently is scored `unclear` (a split on
+  the bug match is no match). The scorer version names both judges. Wave 11 may add a calibration back with a real
+  source. The limit is the same: the judges agree with each other, no human checked either.
 - The token-overlap matcher (`harness/match.ts`) only preselects candidate pairs and never decides.
 
 ### Metrics: a Pareto table, no single score
