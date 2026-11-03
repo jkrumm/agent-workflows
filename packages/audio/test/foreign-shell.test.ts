@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import type { AnyWorkflow } from '@agent-workflows/runtime'
-import { startFakeGateway, testDeps } from '../src/testing/index.ts'
+import { startFakeGateway } from '@agent-workflows/testing/gateway'
+import { testDeps } from './support.ts'
 import { postgresJournal } from '../src/workflows/podcast/history.ts'
 import { createPodcastWorkflow, PODCAST_SHELL } from '../src/workflows/podcast/index.ts'
 import podcastModule from '../src/workflows/podcast/module.ts'
