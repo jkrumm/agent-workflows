@@ -50,6 +50,7 @@ describe('workflow discovery', () => {
       'digest',
       'eval-gt',
       'eval-mine',
+      'eval-recall',
       'eval',
       'factory-classify',
       'image-icon',

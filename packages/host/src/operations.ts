@@ -41,6 +41,7 @@ export const EVAL_WORKFLOW_IDS: ReadonlySet<string> = new Set([
   'eval.compare',
   'eval.mine',
   'eval.gt.calibrate',
+  'eval.recall',
 ])
 
 /** What the host's fetch hands every procedure. */

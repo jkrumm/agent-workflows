@@ -53,10 +53,13 @@ const AUDIO_MODULES_DIR = resolve(import.meta.dir, '../../audio/src/workflows')
 const FLUSH_INTERVAL_MS = 30_000
 /**
  * Static runaway ceilings per workflow, over the default ($5, 3 h, 500 steps) until the workflow has 20 done runs of its own.
- * `eval.mine` was stopped at $10.12 by the default in a working labelling run.
+ * `eval.mine` was stopped at $10.12 by the default in a working labelling run. `eval.recall` spends little but waits: a
+ * job held by the factory's quota ceiling may take hours per case, so its wall ceiling is far above any real run
+ * (30 days; the cases are child runs, which count their own steps).
  */
 const STATIC_CEILINGS = {
   'eval.mine': { cost: 30 },
+  'eval.recall': { cost: 30, wallMs: 30 * 24 * 3_600_000 },
 }
 const SHUTDOWN_GRACE_MS = 5000
 
@@ -566,19 +569,18 @@ export function hostProcess(config: HostConfig, door?: ImageDoorOptions): Proces
       reviewPool.on('error', (err) => console.warn('[agw-host] review ledger pool: idle connection error', err.message))
       onClose(() => reviewPool.end())
       const quota = fleet.fleet.quota
-      reviewOps = reviewOperations(
-        createReviewService({
-          pool: reviewPool,
-          schema: base.schema,
-          stateDir: DEFAULT_STATE_DIR,
-          git: gitRunner,
-          env,
-          quota: async (account) => {
-            const reading = (await quota.accounts())[account]
-            return reading ? { fiveHour: reading.five_hour_pct, sevenDay: reading.seven_day_pct } : null
-          },
-        }),
-      )
+      const reviewService = createReviewService({
+        pool: reviewPool,
+        schema: base.schema,
+        stateDir: DEFAULT_STATE_DIR,
+        git: gitRunner,
+        env,
+        quota: async (account) => {
+          const reading = (await quota.accounts())[account]
+          return reading ? { fiveHour: reading.five_hour_pct, sevenDay: reading.seven_day_pct } : null
+        },
+      })
+      reviewOps = reviewOperations(reviewService)
       // The audio process's suites and scorers: `agw eval run|compare` replay its workflows, which it drives.
       const tree = await loadForeignTree(AUDIO_MODULES_DIR, logger)
       foreign = tree.workflows
@@ -587,6 +589,7 @@ export function hostProcess(config: HostConfig, door?: ImageDoorOptions): Proces
           registry,
           toolGate,
           logger,
+          review: reviewService,
           retro: { journal, learnings, gh, tracked },
           fleet: { fleet: fleet.fleet, argo: fleet.argo, purposeOf: pgRunPurpose(readPool, base.schema) },
           research: { ledger: pgToolLedger(ledgerPool, base.schema) },
