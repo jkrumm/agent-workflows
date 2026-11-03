@@ -103,3 +103,40 @@ reads the ground truth, `$AGW_EVAL_DIR/review-gt/cases.jsonl`, and its `tree` ca
   Check's scorer never judges; review's makes one `eval.judge` call per scored regression run with findings (`review/README.md` §Scorer), none on drift. **Drift on research** spends per sampled run up to three `web.fetch` (direct
   or Tavily Extract, ≈ $0) and three `decide` calls on ≤ 20k characters each (≈ 5k tokens at $0.04/M, ≈ $0.0002 each):
   ≈ $0.001 per scored run, as up to six `cap.*` runs with purpose `drift`; drift has no reference, so no `web.package`.
+
+## Media suites
+
+Three suites for workflows that spend on images and audio; all cases are synthetic (the repo is public), all scorers
+deterministic (no judge call), each scorer unit-tested on perfect, partial and broken outputs.
+
+|Suite|Process|Cases|Scores (0 or 1 unless said)|Cost of a run|
+|-|-|-|-|-|
+|`image-icon`|host|6 (`image-icon/eval/`, masters drawn by `generate.ts`)|`valid`, `files`, `dimensions`, `manifest`, `svg`, `background`, `cost`; with a reference `steps`, `alpha`|$0 to about $0.022 (cases 05, 06 run no model)|
+|`podcast`|audio|5 (`podcast/eval/cases.jsonl`: 3 minutes, `research`, `cover`, `brainNote`, `publish` all off)|`valid`, `metadata`, `language`, `chapters`, `duration`, `cost`; with a reference `grounded`|the most expensive workflow: the full room plus TTS of 3 minutes|
+|`speech-roundtrip`|audio|6 (3 English, 3 German, one with digits)|`valid`, `werOk`, `pace`, `recorded`; reported `wer` (0..1, lower is better) and `secondsPerWord`|TTS and STT of one sentence, about $0.001|
+
+`speech-roundtrip` is an eval-only workflow in the audio process (`packages/audio/src/workflows/speech-roundtrip/`, internal:
+no HTTP route, no CLI command, not on the door). It speaks a sentence on `ttsRoute`, transcribes the audio on `sttRoute` (both
+inputs, so `--args '{"sttRoute":"audio.stt.openai"}'` is an arm) and returns the transcript, the audio's length and each
+leg's route, calls and price. Speech and transcription are the audio door, not workflows, so this is where they get a score.
+
+### The audio process's suites: what is built, what is missing
+
+The audio modules declare their suite and scorer the way the host's do (`speech-roundtrip` has `suite`; `podcast` exports
+`podcastSuite` without declaring it, see below), and the scorer is on the workflow definition, so the process that
+runs a case also holds the code that scores it. What is **not** there is the host's side: `agw eval run|compare` is served by
+the host, which reads suites from the host's modules only (`suitesOf(hostModules)`) and starts and scores a case through its own
+`Runtime` (`runtime.start(workflow)` registers the workflow it is given and then claims and drives the run itself;
+`scoreRun` takes the scorer from the runtime's registry). The host can neither list `speech-roundtrip` among the eval
+workflows nor start it without driving it with a stand-in, in a process that has none of its deps. The smallest correct wiring
+needs a change in `packages/runtime` (a workflow the runtime knows for `start` and `scoreRun` only, never claimed, recovered
+or counted: `RuntimeOptions.foreign`), in `packages/host/src/boot.ts` (hand the audio modules' declarations to `suitesOf` and
+`wireEval`) and a way for the host to get the audio modules' suites and scorers without importing the audio package (it
+depends on the host). That is more than the 150 lines this change was allowed, and two of the files are not this change's to
+touch.
+
+`podcast` is held back for a second reason: the produce stage's Slack notice (`PODCAST_NOTIFY_CHANNEL`, set in the audio
+process's env) is sent for every finished episode whatever `publish` says, so an eval run would post to the channel. With
+`publish: false`, `cover: false` and `brainNote: false` nothing else leaves the process (the show's history reads only
+`purpose = 'prod'` runs, so eval episodes never feed the next one). Declare `suite: podcastSuite` once the notice is skipped
+for purpose `eval`.
