@@ -453,13 +453,13 @@ describe('fallback', () => {
       expect(resolveRoute(id, {})).toMatchObject({ wire: 'anthropic', model: 'claude-haiku-5-5', effort: 'none' })
       expect(resolveRoute(id, {}).fallback).toMatchObject(luna)
     }
-    // image.enhance is FAST with effort high (the planner's own setting), its fallback Luna at high
+    // image.enhance is EASY: Haiku high, fallback Terra low (the planner ran Luna high in image-gateway)
     expect(resolveRoute('image.enhance', {})).toMatchObject({
       wire: 'anthropic',
       model: 'claude-haiku-5-5',
       effort: 'high',
     })
-    expect(resolveRoute('image.enhance', {}).fallback).toMatchObject({ ...luna, effort: 'high' })
+    expect(resolveRoute('image.enhance', {}).fallback).toMatchObject(terraLow)
     for (const id of ['cheap.summarize', 'cheap.extract', 'overview.classify', 'triage'] as const) {
       expect(resolveRoute(id, {})).toMatchObject({ wire: 'anthropic', model: 'claude-haiku-5-5', effort: 'high' })
       expect(resolveRoute(id, {}).fallback).toMatchObject(terraLow)

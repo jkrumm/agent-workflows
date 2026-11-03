@@ -120,12 +120,12 @@ describe('llm.summarize (anthropic)', () => {
     expect(usages[0]).toMatchObject({ tokens: { input: 0, output: 0 }, costSource: 'unknown' })
   })
 
-  test('a route with no effort sends no thinking and gets the plain ceiling', async () => {
+  test('a route with no effort sends no thinking and gets the route ceiling', async () => {
     iu.on('messages', () => messageResponse('x', null))
     await call('llm.summarize', { text: 'x' }, { 'cheap.summarize': { effort: 'none' } })
     expect(iu.requests[0]?.body.thinking).toBeUndefined()
     expect(iu.requests[0]?.body.output_config).toBeUndefined()
-    expect(iu.requests[0]?.body.max_tokens).toBe(8_192)
+    expect(iu.requests[0]?.body.max_tokens).toBe(resolveRoute('cheap.summarize', {}).maxOutputTokens)
   })
 
   test('a max_tokens stop with no text is starved, with text is truncated; both bill', async () => {

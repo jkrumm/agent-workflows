@@ -1,5 +1,5 @@
 import type { RouteEntry } from '../schema.ts'
-import { FAST } from './_shared.ts'
+import { EASY } from './_shared.ts'
 
 // The image routes (Wave 8). The platform calls IU's OpenAI images endpoint directly (and Replicate through the same IU
 // host), where the personal image-gateway wrapped them. Source of every figure: image-gateway `gateway/src/lib/pricing.ts`
@@ -40,18 +40,10 @@ const routes = {
   },
   // No fallback on the image models: a provider-balance failure on an image model has no text model to move to.
   // The enhance planner (imgcli `gen --enhance`): one JSON plan per brief. image-gateway ran it on Luna at its
-  // `ENHANCE_REASONING_EFFORT` (high). A single call through the capability transports, with no wire assumption, so it
-  // takes the FAST tier (Haiku) on the native Messages wire at effort high, and falls back to Luna at high effort on the
-  // chat wire (the tier's fallback, effort raised too). Reasoning tokens count against the ceiling, so it is 32k where the gateway sent 16k and retried once with
-  // double on a truncated answer.
-  'image.enhance': {
-    wire: 'anthropic',
-    ...FAST.call,
-    effort: 'high',
-    maxOutputTokens: 32_000,
-    // A text call like every text route: the provider-balance fallback applies (owner direction 2026-10-28).
-    fallback: { ...FAST.call.fallback, effort: 'high' },
-  },
+  // `ENHANCE_REASONING_EFFORT` (high). It takes the EASY tier: Haiku high on the native Messages wire with EASY's 32k
+  // ceiling (reasoning tokens count against it; the gateway sent 16k and retried once with double on a truncated answer),
+  // falling back to Terra low on the chat wire.
+  'image.enhance': { wire: 'anthropic', ...EASY.call },
 } satisfies Record<string, RouteEntry>
 
 export default routes

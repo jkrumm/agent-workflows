@@ -41,7 +41,7 @@ describe('image.enhance', () => {
     // oxlint-disable-next-line typescript/no-explicit-any -- the request is asserted field by field
     const request = first?.request as Record<string, any>
     expect(wire).toBe('anthropic')
-    expect(route).toMatchObject({ wire: 'anthropic', fallback: { wire: 'iu-openai', effort: 'high' } })
+    expect(route).toMatchObject({ wire: 'anthropic', fallback: { wire: 'iu-openai', effort: 'low' } })
     expect(request).toMatchObject({ model: route.model, effort: 'high', maxOutputTokens: 32_000, json: true })
     expect(request.system).toStartWith(composePlaybook('auto'))
     expect(request.system).toContain('SINGLE JSON object')

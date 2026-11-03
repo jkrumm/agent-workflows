@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
 import { CLAUDE_MODELS, DEFAULT_ROUTES, resolveRoute, routeIds } from './index.ts'
-import { EASY, FAST, HARD } from './table/_shared.ts'
+import { CRITIC, DECIDE, DEEPSEEK_FLASH, EASY, FAST, GEMINI_FLASH, GEMINI_FLASH_LITE, HARD } from './table/_shared.ts'
 
 // The home-of-model-ids rule: no source outside `packages/routes/src/table/` names a model that the table names. The
 // routes package's own test files may (they pin what the table says): exactly the files `bun test` runs, by its
@@ -282,12 +282,17 @@ test('the literal scan catches a planted model literal in a text route with file
   ])
 })
 
-// Every route on a Claude model spreads a tier: model, effort, rate and fallback are those of the tier's step kind (a
-// single call on the `anthropic` wire, an agent step on `opencode`). Overrides are the output limit, and for
-// `image.enhance` the effort, with its fallback raised to the same effort.
-const EFFORT_OVERRIDES = new Set(['image.enhance'])
+// Every route on a Claude model spreads a tier: model, effort, rate, output ceiling and fallback are exactly those of the
+// tier's step kind (a single call on the `anthropic` wire, an agent step on `opencode`). Only `wire` is the route's own.
 const CLAUDE_TIERS = { FAST, EASY, HARD }
-type StepShape = { model: string; effort: string; rate: object; fallback: object }
+type StepShape = { model: string; effort: string; rate: object; maxOutputTokens?: number; fallback: object }
+const shapeOf = (r: StepShape) => ({
+  model: r.model,
+  effort: r.effort,
+  rate: r.rate,
+  maxOutputTokens: r.maxOutputTokens,
+  fallback: r.fallback,
+})
 
 test('every route on a Claude model spreads a tier', () => {
   const claude = routeIds().filter((id) => !isEvalSeat(id) && resolveRoute(id, {}).model.startsWith('claude-'))
@@ -298,17 +303,39 @@ test('every route on a Claude model spreads a tier', () => {
     const kind = route.wire === 'anthropic' ? 'call' : 'agent'
     const spreads = Object.values(CLAUDE_TIERS).some((tier) => {
       const step = (tier as Partial<Record<string, StepShape>>)[kind]
-      if (!step) return false
-      const raised = EFFORT_OVERRIDES.has(id) && route.effort !== step.effort
-      const expected = raised
-        ? { ...step, effort: route.effort, fallback: { ...step.fallback, effort: route.effort } }
-        : step
-      return Bun.deepEquals(
-        { model: route.model, effort: route.effort, rate: route.rate, fallback: route.fallback },
-        { model: expected.model, effort: expected.effort, rate: expected.rate, fallback: expected.fallback },
-      )
+      return step !== undefined && Bun.deepEquals(shapeOf(route as unknown as StepShape), shapeOf(step))
     })
     expect({ id, spreadsATier: spreads }).toEqual({ id, spreadsATier: true })
+  }
+})
+
+// A route on a non-tier constant equals that constant's `.call` except `wire`: no route-level override remains outside
+// the eval seats.
+const CONSTANTS = { DEEPSEEK_FLASH, GEMINI_FLASH, GEMINI_FLASH_LITE, CRITIC, DECIDE }
+
+test('every route on a non-tier constant equals the constant exactly, except wire', () => {
+  const matched = new Set<string>()
+  for (const id of routeIds().filter((id) => !isEvalSeat(id))) {
+    const route = resolveRoute(id, {})
+    const hit = Object.entries(CONSTANTS).find(([, c]) => c.call.model === route.model)
+    if (!hit) continue
+    matched.add(hit[0])
+    const { wire: _wire, id: _id, ...rest } = route as unknown as Record<string, unknown>
+    const call = hit[1].call as unknown as Record<string, unknown>
+    expect({ id, route: rest }).toEqual({ id, route: call })
+  }
+  expect(matched.size).toBeGreaterThan(0)
+})
+
+// 2026-10-31 eval: Haiku at max is unusable for agent steps, and low is out too.
+test('no OpenCode route runs Haiku at effort low or max, primary or fallback', () => {
+  for (const id of routeIds()) {
+    const route = resolveRoute(id, {})
+    if (route.wire !== 'opencode') continue
+    for (const leg of [route, route.fallback]) {
+      const bad = leg?.model.includes('haiku') === true && (leg.effort === 'low' || leg.effort === 'max')
+      expect({ id, bad }).toEqual({ id, bad: false })
+    }
   }
 })
 

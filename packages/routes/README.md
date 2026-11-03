@@ -73,15 +73,15 @@ A text model is chosen once, in `src/table/_shared.ts`, as one of four **tiers**
 | `HARD` | Sonnet 5.5, effort medium | `prose.write`, `narrative`, the retro agent, the podcast writers' room (`podcast.research`, `.editorial`, `.outline`, `.write`) |
 | `DECIDE` | `decision-1` (IU decision API), input-priced, no fallback | `decide` |
 
-A tier holds one entry per step kind, `.call` (a single call) and `.agent` (an OpenCode step), each `{ model, effort, rate, fallback }`; the route picks the kind and owns the wire:
+A tier holds one entry per step kind, `.call` (a single call) and `.agent` (an OpenCode step), each `{ model, effort, rate, fallback }` (a `.call` also its `maxOutputTokens`); the route picks the kind and owns the wire:
 
 ```ts
 'cheap.title': { wire: 'anthropic', ...FAST.call },
 'retro.analyze': { wire: 'opencode', ...HARD.agent },
-'digest.items': { wire: 'anthropic', ...FAST.call, maxOutputTokens: 16_000 },
+'research.agent': { wire: 'opencode', ...EASY.agent },
 ```
 
-Only the kinds in use exist: `DECIDE` has `.call` only, `FAST`, `EASY` and `HARD` have both. Effort and output limit after the spread override the tier for one route (`image.enhance` raises the effort and its fallback with it). Moving every route of a tier to another model, rate or effort is one edit to the tier. The wire is the route's own (a transport is code, an arm cannot change it), so a tier that moves to another provider family also needs its routes' `wire` changed where the family speaks another dialect (the Claude tiers did: single calls moved from `iu-openai` to `anthropic`).
+Only the kinds in use exist: `DECIDE` has `.call` only, `FAST`, `EASY` and `HARD` have both. The tier owns the output ceiling (FAST 16 000, EASY and HARD 32 000) along with model, effort, rate and fallback; a route adds only its `wire` and overrides nothing (guard.test.ts). Moving every route of a tier to another model, rate, effort or ceiling is one edit to the tier. The wire is the route's own (a transport is code, an arm cannot change it), so a tier that moves to another provider family also needs its routes' `wire` changed where the family speaks another dialect (the Claude tiers did: single calls moved from `iu-openai` to `anthropic`).
 
 Evidence (agw's 2026-10-31 eval, `docs/evals/2026-10-31-review-claude-direct.md`): Haiku at effort high is the Haiku knee, Haiku at max is unusable for agent steps. Sonnet at medium was not measured; `HARD` was Terra medium until this change.
 

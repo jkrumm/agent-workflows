@@ -3,8 +3,8 @@ import { CLAUDE_RATES } from './claude.ts'
 // The models and fallbacks every route group shares. Model ids live only under this directory (guard.test.ts), and a text
 // model is chosen once, here, in one of two places: the four TIERS below, or a named cross-lab constant. A route spreads
 // one (`{ wire: 'anthropic', ...FAST.call }`) and nothing else names a model, so moving every route of a tier to another
-// model, rate or effort is one edit here. A route that needs another effort or output limit than its tier overrides it
-// after the spread. A new rate goes next to the constant that uses it.
+// model, rate, effort or output ceiling is one edit here. The tier owns the ceiling: a route adds only its `wire` and
+// overrides nothing after the spread (guard.test.ts). A new rate goes next to the constant that uses it.
 // GPT-6.1 Terra, Standard tier, USD/M: in 1.00, cached in 0.05, out 5.00, cache write 1.25 (30-min). Above 272K input
 // tokens the whole request bills 2x input/cache and 1.5x output (`longPrompt`). Source: developers.openai.com via /research, and a probe of the IU OpenAI endpoint (listed in
 // /models, chat completions with reasoning_effort=medium answered 200), both 2026-10-28. Context 1.05M, output 128K.
@@ -70,19 +70,19 @@ const claudeRate = (id: string) => {
 const HAIKU = { model: 'claude-haiku-5-5', rate: claudeRate('claude-haiku-5-5') } as const
 const SONNET = { model: 'claude-sonnet-5-5', rate: claudeRate('claude-sonnet-5-5') } as const
 
-/** Straight-up steps that need almost no judgment: labelling, titles, the factory classify (`.call`), the diagram agent (`.agent`). Haiku without thinking, falls back to Luna low (call) or Terra low (agent). */
+/** Straight-up steps that need almost no judgment: labelling, titles, the factory classify (`.call`), the diagram agent (`.agent`). Haiku without thinking, 16k output ceiling, falls back to Luna low (call) or Terra low (agent). */
 export const FAST = {
-  call: { ...HAIKU, effort: 'none', fallback: callFallback(LUNA) },
+  call: { ...HAIKU, effort: 'none', maxOutputTokens: 16_000, fallback: callFallback(LUNA) },
   agent: { ...HAIKU, effort: 'none', fallback: agentFallback(TERRA_LOW) },
 } as const
-/** Easy calls with a clear shape: summarize, extract, classify a batch, triage, route a review, run the checks. Haiku high, falls back to Terra low. */
+/** Easy calls with a clear shape: summarize, extract, classify a batch, triage, plan an image, run the checks, the default agents. Haiku high, 32k output ceiling, falls back to Terra low. */
 export const EASY = {
-  call: { ...HAIKU, effort: 'high', fallback: callFallback(TERRA_LOW) },
+  call: { ...HAIKU, effort: 'high', maxOutputTokens: 32_000, fallback: callFallback(TERRA_LOW) },
   agent: { ...HAIKU, effort: 'high', fallback: agentFallback(TERRA_LOW) },
 } as const
-/** Anything that judges, reads code or writes prose: deep review angles, the prose writer, the narrative, the retro agent, the podcast writers' room. Sonnet medium, falls back to Terra medium. */
+/** Anything that judges or writes prose: the prose writer, the narrative, the retro agent, the podcast writers' room. Sonnet medium, 32k output ceiling, falls back to Terra medium. */
 export const HARD = {
-  call: { ...SONNET, effort: 'medium', fallback: callFallback(TERRA_MEDIUM) },
+  call: { ...SONNET, effort: 'medium', maxOutputTokens: 32_000, fallback: callFallback(TERRA_MEDIUM) },
   agent: { ...SONNET, effort: 'medium', fallback: agentFallback(TERRA_MEDIUM) },
 } as const
 // The IU decision API. Gateway: DEFAULT_DECISION_MODEL = pplx-decider-v1-27b, which IU serves through its "Requesty
@@ -97,9 +97,14 @@ export const DECIDE = {
 
 // ---- Cross-lab seats: named constants, not tiers. They stay off Claude on purpose: a reviewer of Claude-written output sits on
 // another lab (docs/gateway.md §Seats). A route spreads one like a tier; each carries its rate and its fallback.
-/** The second lab: the prose reviewer (`prose.review`, a cross-lab reviewer of a Claude writer). No effort (the vendor's own level). Falls back to Terra medium. */
+/** The second lab: the prose reviewer (`prose.review`, a cross-lab reviewer of a Claude writer). No effort (the vendor's own level), 16k output ceiling. Falls back to Terra medium. */
 export const DEEPSEEK_FLASH = {
-  call: { model: 'deepseek-v4.1-flash', rate: DEEPSEEK_FLASH_RATE, fallback: callFallback(TERRA_MEDIUM) },
+  call: {
+    model: 'deepseek-v4.1-flash',
+    rate: DEEPSEEK_FLASH_RATE,
+    maxOutputTokens: 16_000,
+    fallback: callFallback(TERRA_MEDIUM),
+  },
 } as const
 /** The podcast cross-lab reviewer. No effort: Gemini's OpenAI-compatible leg rejects `reasoning_effort`. Falls back to Terra medium. */
 export const GEMINI_FLASH = {
