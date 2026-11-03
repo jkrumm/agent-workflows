@@ -362,13 +362,20 @@ Inputs: Wave 9's close-out (`a0df86e`, "For Wave 10"). Mother decision: coverage
   disposed). `make check` green in all three (agw: the `check-real` flake, passes alone; factory: 74 setup failures under
   `agw check` only, plain `make check` 1676/0).
 
-## Wave 11 — Review v4: measure and tune            <!-- status: active -->
+## Wave 19 — Review v4 follow-ups and harness robustness            <!-- status: active -->
 
-- Two weeks of ledger dispositions per tier, rule and repo: fix rate, wrong rate, rounds to clean, findings per review.
-- False alarms on 10 known-clean PRs; recall on the Wave 8 cases (`dev` first) through the hidden path on Max, paced by
-  the ceiling, never API.
-- Arms: light seat Haiku vs Sonnet low; K 3 vs 2; verifier Sonnet vs Haiku; Opus at deep on sensitive paths; router
-  thresholds; the classifier on or off; the deep cap. Report `docs/evals/<date>-review-v4.md`.
+Inputs: Wave 10's close-out (`602aba5`, "For Wave 11"). Wave 11's measurement waits for two weeks of ledger data; this
+wave builds what it needs and closes the gaps.
+
+- [ ] v4 recall path: the Wave 8 cases through `agw review request` (hidden, paced by the ceiling, never API); one run
+  on three `dev` cases end to end.
+- [ ] Cross-repo wave gate: a wave names its repos in PLAN.md; `wave-gate.py` checks `covered` in each.
+- [ ] Small gaps: `agw review status` list shows `transport`; `cancel` on a failed spawn says so; `FACTORY_REVIEW_*` in
+  `.env.tpl`; `isPathScope`, `optionalExpensive` and route-level `contextLimit` deleted if unused.
+- [ ] From Wave 14: the runaway cap for agent steps (wall 10x p95, cost 10x p95); the hidden reviewer's idle watchdog
+  proven by killing a wedged session.
+- [ ] Orphan failures: the factory's 74 failures under `agw check`, dotfiles' `claude-launcher-test` and the
+  launchd-label warning: fix, or hand to the owning fleet with `rd say`.
 
 ## Wave 12 — Central tiers            <!-- status: pending -->
 
@@ -397,10 +404,14 @@ Provisional picks (2026-10-31, from cost, wall time, failure modes and the AA in
 
 - [x] Moved into Wave 16 (2026-11-02), done 2026-11-03.
 
-## Wave 14 — Harness robustness            <!-- status: pending -->
+## Wave 14 — Harness robustness            <!-- status: done 2026-11-03 as Wave 19 -->
 
-- Compaction overflow: moved to Wave 15 (2026-11-03).
-- The runaway cap (wall 10x p95, cost 10x p95) for agent steps; review is no longer an agw agent step.
-- The hidden review session's idle watchdog, proven by killing a wedged session; reviewers that background their
-  verifiers and linger (seen twice in the Wave 18 PoC).
-- Review convergence: rounds to clean from the ledger plus a 10-case fix loop on Max.
+- [x] Moved into Wave 19 (2026-11-03); review convergence goes to Wave 11.
+
+## Wave 11 — Review v4: measure and tune            <!-- status: pending, from 2026-11-17 (two weeks of ledger data) -->
+
+- Two weeks of ledger dispositions per tier, rule and repo: fix rate, wrong rate, rounds to clean, findings per review.
+- False alarms on 10 known-clean PRs; recall on the Wave 8 cases (`dev` first) through the hidden path on Max, paced by
+  the ceiling, never API.
+- Arms: light seat Haiku vs Sonnet low; K 3 vs 2; verifier Sonnet vs Haiku; Opus at deep on sensitive paths; router
+  thresholds; the classifier on or off; the deep cap. Report `docs/evals/<date>-review-v4.md`.

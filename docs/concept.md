@@ -627,6 +627,17 @@ One entry per phase: what we learned, what changed on this page, and why.
 - **Process.** Plan no owner work beyond minutes; a human check is a small sample only when an automated bar fails.
 - **Does the page hold?** Yes; the ground-truth limit (LLM consensus, no human check) is stated in every report.
 
+### Gateway Wave 10 — Review v4 cutover, 2026-11-03
+
+- **Learned.** The ceiling held the wave's own close-out ~1 h (me2 72 % of 5 h, me/iu 93-94 % of the week): quota is
+  now the binding constraint, not credit. A hidden reviewer with no shell ignored a planted instruction and reported
+  it. At deep on a 178-file deletion the reviewer skimmed until the files guard refused its reply.
+- **Changed.** agw `932cb29` (v1 deleted, −13k lines; hidden transport; `covered` needs no open important), factory
+  `f7ac112` (hidden reviewer, admission, ship needs coverage), dotfiles `45ea336` (reviewer agents, `/review` on v4,
+  wave gate coverage). Review spends no API credit.
+- **Process.** Every repo the wave touched was reviewed to clean on v4 itself; the gate checks only the plan's repo.
+- **Does the page hold?** Yes; Wave 11 measures it once the ledger has two weeks.
+
 ### Gateway Wave 9 — Review v4, agw side, 2026-11-03
 
 - **Learned.** The loop converges on its own work: round 1 deep found a real dedupe bug (3/3 votes), round 2 diff-only
