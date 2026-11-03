@@ -51,6 +51,13 @@ import { loadForeignTree } from './workflows/registry.ts'
  */
 const AUDIO_MODULES_DIR = resolve(import.meta.dir, '../../audio/src/workflows')
 const FLUSH_INTERVAL_MS = 30_000
+/**
+ * Static runaway ceilings per workflow, over the default ($5, 3 h, 500 steps) until the workflow has 20 done runs of its own.
+ * `eval.mine` was stopped at $10.12 by the default in a working labelling run.
+ */
+const STATIC_CEILINGS = {
+  'eval.mine': { cost: 30 },
+}
 const SHUTDOWN_GRACE_MS = 5000
 
 /** A process's logger: its console, every line tagged `[agw-<name>]`. */
@@ -352,7 +359,11 @@ export async function bootProcess(
     const agentHost = options.agentHost ?? owned
     const lazy = owned
     if (lazy) closers.push(() => lazy.close())
-    const cap = runawayCap({ connectionString: config.pgUrl, schema: config.schema })
+    const cap = runawayCap({
+      connectionString: config.pgUrl,
+      schema: config.schema,
+      ceilings: STATIC_CEILINGS,
+    })
     closers.push(() => cap.close())
     // Optional expensive work is its own workflow, refused at admission by the wallet gate (concept §4).
     const wallet = walletGate({
