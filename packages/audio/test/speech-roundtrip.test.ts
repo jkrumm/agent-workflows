@@ -23,7 +23,7 @@ import {
   wordErrorRate,
 } from '../src/workflows/speech-roundtrip/scorer.ts'
 import { plainSuite } from '../../host/src/workflows/suite.ts'
-import { freshSchema, testRuntime } from '../../runtime/test/support/pg.ts'
+import { freshSchema, inspector, testRuntime } from '../../runtime/test/support/pg.ts'
 
 const SENTENCE = 'The quick brown fox jumps over the lazy dog near the old stone bridge.'
 
@@ -98,6 +98,17 @@ describe('word error rate', () => {
       'zero',
     ])
     expect(normalizeWords('40 und 100', 'de')).toEqual(['vierzig', 'und', '100'])
+  })
+
+  test('only ASCII digits are numbers: fullwidth, superscript and fraction numerals stay as written and never hang', () => {
+    for (const language of ['en', 'de'] as const) {
+      expect(normalizeWords('２', language)).toEqual(['２'])
+      expect(normalizeWords('²', language)).toEqual(['²'])
+      expect(normalizeWords('½', language)).toEqual(['½'])
+      expect(normalizeWords('x² und 12', language).slice(0, 3)).toEqual(['x', '²', 'und'])
+    }
+    expect(wordErrorRate('es sind ½ Liter', 'es sind ½ liter', 'de').wer).toBe(0)
+    expect(wordErrorRate('page ２', 'page two', 'en').wer).toBe(0.5)
   })
 
   test('edit distance of word lists', () => {
@@ -269,6 +280,37 @@ describe('speech-roundtrip workflow', () => {
     expect((end.output as SpeechRoundtripOutputValue).stt.route).toBe('audio.stt.openai')
     expect(requests[1]?.form?.get('model')).toBe(ROUTES['audio.stt.openai'].model)
     expect(final?.scores.wer).toBeCloseTo(1 / 14, 5)
+  })
+
+  test('a failing duration probe after the paid synthesis keeps the TTS result: its step is done and recorded', async () => {
+    const sql = inspector(db.schema)
+    iu = startFakeGateway({
+      gemini: () => geminiAudio(new Uint8Array(48_000)),
+      transcriptions: () => Response.json({ text: SENTENCE }),
+    })
+    const deps = testDeps(iu, {
+      log: silentLog,
+      media: {
+        ...fakeMedia,
+        duration: async () => {
+          throw new Error('ffprobe is gone')
+        },
+      },
+    })
+    const entry = createSpeechRoundtrip({ audio: deps, artifactRoot: root })
+    const runtime = testRuntime({ schema: db.schema, workflows: [entry.workflow] })
+    await runtime.open()
+    try {
+      const { runId } = await runtime.start(entry.workflow, { text: SENTENCE, language: 'en' }, { purpose: 'test' })
+      const end = await runtime.wait(runId, { pollMs: 20 })
+      expect(end.status).toBe('failed')
+      expect((await sql.step(runId, 'tts'))?.status).toBe('done')
+      expect((await sql.step(runId, 'duration'))?.status).toBe('failed')
+      expect(iu.requests.filter((r) => r.route === 'gemini')).toHaveLength(1)
+    } finally {
+      await runtime.close()
+      await sql.close()
+    }
   })
 
   test('the audio is kept in the run directory of the artifact store', async () => {

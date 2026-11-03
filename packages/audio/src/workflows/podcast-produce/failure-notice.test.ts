@@ -124,3 +124,41 @@ test('a failed eval episode posts nothing; the same failure under another purpos
     await rt.close()
   }
 }, 60_000)
+
+test('when the purpose cannot be learned no failure notice is posted (unknown is not prod)', async () => {
+  const posts: string[] = []
+  const fetchImpl = (async (_url: string | URL | Request, init?: RequestInit) => {
+    posts.push((JSON.parse(String(init?.body)) as { text: string }).text)
+    return Response.json({ ok: true })
+  }) as unknown as typeof fetch
+  const workflow = createPodcastWorkflow({
+    journal,
+    history: fakeHistory(),
+    models: fakeRoom(),
+    produce: failingProduce,
+    config,
+    notify: { config: NOTIFY, fetch: fetchImpl },
+  })
+  const rt = testRuntime({
+    schema: db.schema,
+    workflows: [workflow],
+    middleware: [
+      {
+        name: 'purpose-down',
+        stepPre: ({ stepId }) => {
+          if (stepId === 'purpose') throw new Error('purpose unavailable')
+        },
+      },
+    ],
+  })
+  await rt.open()
+  try {
+    const { runId } = await rt.start(workflow, { source: 'Notizen.', research: false }, { purpose: 'prod' })
+    const end = await rt.wait(runId)
+    expect(end.status).toBe('failed')
+    expect(end.error?.message).toContain('purpose unavailable')
+    expect(posts).toHaveLength(0)
+  } finally {
+    await rt.close()
+  }
+}, 60_000)

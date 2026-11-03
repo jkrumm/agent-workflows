@@ -6,7 +6,7 @@ import { defineWorkflow, WorkflowError } from '../../../../runtime/src/index.ts'
 import type { PatchInput } from '../../../../routes/src/index.ts'
 import { audioRoutes } from '../../routes.ts'
 import type { AudioDeps } from '../../scope.ts'
-import type { UsagePort } from '../../usage.ts'
+import { stepUsage } from '../../step-usage.ts'
 import { renderTranscriptMarkdown } from '../podcast/history.ts'
 import { lintSegmentation, type SegmentationReport } from '../podcast/lint.ts'
 import { ProduceInput, type ProduceInputValue } from '../podcast/produce-input.ts'
@@ -153,27 +153,6 @@ export function fallBack<T>(stage: string, error: unknown, signal: AbortSignal, 
   if (signal.aborted) throw error
   log.warn(`podcast ${stage} failed, continuing without it`, { error: messageOf(error) })
   return fallback
-}
-
-/** The audio scope's call events as the step's usage: the journal records the cost (and projects it to Argo). */
-export function stepUsage(addUsage: (usage: Usage) => void): UsagePort {
-  return {
-    record(event) {
-      if (event.kind !== 'call') return
-      const notBilled = event.costSource === 'not-billed'
-      addUsage({
-        model: event.model,
-        tokens: {
-          input: event.inputTokens ?? 0,
-          output: event.outputTokens ?? 0,
-          cacheRead: event.cachedTokens ?? 0,
-          reasoning: 0,
-        },
-        cost: notBilled ? 0 : event.costUsd,
-        costSource: event.costSource === 'provider' || event.costSource === 'unknown' ? event.costSource : 'rate',
-      })
-    },
-  }
 }
 
 /** The lane the configured route runs on, with the run's arm patch (`arm.routes`) applied when it has one. */
@@ -507,20 +486,23 @@ export function createProduceWorkflows(deps: ProduceDeps) {
       }
     })
 
-    // 6. The brain note: best-effort, an effect keyed (runId, 'brain-note'); a resume never commits twice.
+    // 6. The brain note: best-effort, an effect keyed (runId, 'brain-note'); a resume never commits twice. Not for an
+    // eval run: it would commit to the vault.
     const brainNote = await as<BrainNoteResult | null>(
-      ctx.effect('brain-note', async (key) =>
-        json(
-          await fileBrainNote({
-            input,
-            config,
-            deps,
-            durationSeconds: mastered.durationSeconds,
-            segmentation: plan.segmentation,
-            absItemId: published.abs?.libraryItemId ?? null,
-            key,
-          }),
-        ),
+      ctx.effect('brain-note', async (key, { attribution }) =>
+        attribution.purpose === 'eval'
+          ? null
+          : json(
+              await fileBrainNote({
+                input,
+                config,
+                deps,
+                durationSeconds: mastered.durationSeconds,
+                segmentation: plan.segmentation,
+                absItemId: published.abs?.libraryItemId ?? null,
+                key,
+              }),
+            ),
       ),
     )
 

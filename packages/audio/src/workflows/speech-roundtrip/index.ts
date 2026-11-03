@@ -8,8 +8,8 @@ import { createTranscriptionsHandler } from '../../door/transcriptions.ts'
 import { ffmpegMedia, type MediaPort } from '../../media/audio.ts'
 import { audioRoutes } from '../../routes.ts'
 import type { AudioDeps } from '../../scope.ts'
+import { stepUsage } from '../../step-usage.ts'
 import type { UsagePort } from '../../usage.ts'
-import { stepUsage } from '../podcast-produce/index.ts'
 import {
   SpeechRoundtripInput,
   type SpeechRoundtripInputValue,
@@ -23,7 +23,7 @@ const CALLER = 'speech-roundtrip'
 const AUDIO_FILE = 'speech.mp3'
 
 type Leg = SpeechRoundtripOutputValue['tts']
-type Spoken = { path: string; audioSeconds: number; audioBytes: number; leg: Leg }
+type Spoken = { path: string; audioBytes: number; leg: Leg }
 type Heard = { text: string; leg: Leg }
 
 /** The step's usage port that also keeps what the legs report: calls, calls without a price, the price. */
@@ -125,13 +125,13 @@ export function createSpeechRoundtrip(deps: { audio: Omit<AudioDeps, 'usage'>; a
         const bytes = new Uint8Array(await response.arrayBuffer())
         const path = join(dir, AUDIO_FILE)
         writeFileSync(path, bytes, { mode: 0o600 })
-        return {
-          path,
-          audioSeconds: Number((await media.duration(bytes)).toFixed(3)),
-          audioBytes: bytes.byteLength,
-          leg: leg(input.ttsRoute, model, totals, Date.now() - started),
-        }
+        return { path, audioBytes: bytes.byteLength, leg: leg(input.ttsRoute, model, totals, Date.now() - started) }
       })
+
+      // Its own step: a probe that throws after the paid synthesis must not lose it (the TTS step above is journaled).
+      const audioSeconds = await ctx.step('duration', async () =>
+        Number((await media.duration(await Bun.file(spoken.path).bytes())).toFixed(3)),
+      )
 
       const heard: Heard = await ctx.step('stt', async (scope) => {
         const { usage, totals } = tally(scope.addUsage)
@@ -166,7 +166,7 @@ export function createSpeechRoundtrip(deps: { audio: Omit<AudioDeps, 'usage'>; a
       const costs = [spoken.leg.costUsd, heard.leg.costUsd]
       return {
         text: heard.text,
-        audioSeconds: spoken.audioSeconds,
+        audioSeconds,
         audioBytes: spoken.audioBytes,
         tts: spoken.leg,
         stt: heard.leg,

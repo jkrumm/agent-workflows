@@ -239,7 +239,8 @@ export function createPodcastWorkflow(deps: PodcastDeps) {
    * the failure itself.
    */
   async function noticeFailure(ctx: Ctx, error: unknown, purpose: string | undefined): Promise<void> {
-    if (!notify.config || purpose === 'eval') return
+    // An unknown purpose is no notice: the failure to learn it must not turn an eval run into a post.
+    if (!notify.config || purpose === undefined || purpose === 'eval') return
     if (ctx.signal.aborted || error instanceof InfraError || error instanceof Cancelled) return
     const message = (error instanceof Error ? error.message : String(error)).slice(0, 500)
     // The episode token of its Audiobookshelf file name, as legacy's id8 was.
