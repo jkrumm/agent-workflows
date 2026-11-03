@@ -116,7 +116,7 @@ test('credentials of the host never reach make check or the make -p -q probe', a
     const probeFile = join(realpathSync(mkdtempSync(join(tmpdir(), 'agw-probe-'))), 'probe-env')
     // `:=` runs the $(shell …) while make reads the Makefile, i.e. during `make -p -q`, and again for `make check`
     const cwd = repo(
-      `PROBED := $(shell env > ${probeFile})\ncheck:\n\t@env | grep -E 'AGW_|IU_|OTEL_|GH_' || true\n\t@echo "path-set=$$(test -n \"$$PATH\" && echo yes)"\n\t@exit 1\n`,
+      `PROBED := $(shell env > ${probeFile})\ncheck:\n\t@env | grep leak- || true\n\t@echo "path-set=$$(test -n \"$$PATH\" && echo yes)"\n\t@exit 1\n`,
     )
     const result = await run({ cwd })
     const output = result.output as { steps: { errors: string[] }[] }

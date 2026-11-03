@@ -114,6 +114,7 @@ async function workTreeRefusal(exec: Exec, cwd: string, signal: AbortSignal): Pr
   const probe = await exec.run({
     argv: ['git', 'rev-parse', '--is-inside-work-tree'],
     cwd,
+    env: { LC_ALL: 'C' }, // the "not a git repository" test below reads git's English message
     wallMs: GIT_WALL_MS,
     signal,
   })

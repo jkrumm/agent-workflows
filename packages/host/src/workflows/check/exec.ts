@@ -39,6 +39,8 @@ export interface ExecRequest {
    * earlier host process (a crash between spawn and reap) is killed; the file is removed after the run.
    */
   groupFile?: string
+  /** Variables added on top of the filtered host environment (a helper probe whose output is parsed pins `LC_ALL`). */
+  env?: Record<string, string>
 }
 
 /** The subprocess port of the check workflows: `Bun.spawn` in production, a script in tests. */
@@ -157,7 +159,7 @@ async function runCommand(request: ExecRequest, env: Record<string, string | und
       stdin: 'ignore',
       stdout: 'pipe',
       stderr: 'pipe',
-      env: commandEnv(env, cwd),
+      env: { ...commandEnv(env, cwd), ...request.env },
       detached: true,
     })
   } catch (error) {
