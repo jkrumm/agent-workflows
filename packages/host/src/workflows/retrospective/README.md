@@ -81,3 +81,21 @@ into `AGENTS.md`, so the agent's cached prefix (system prompt, skills) is untouc
 changes the message tail only. Activating or retiring a fact changes the run fingerprint (one new fingerprint group, no
 cold prompt cache: the prefix is unchanged). The retrospective is its own spend: one Terra-medium agent step per workflow and week
 over at most ~30k input tokens of sampled records, no tools, plus at most one JSON retry; nothing runs when a workflow had no runs.
+
+## Eval
+
+`eval/cases.jsonl` holds 5 cases of made-up journal runs. The input is the eval-only `fixture` (`runs`, in the shape
+`sample.ts` reads from the journal, with what a run leaves out defaulting to null). With a fixture the sample step returns
+those runs instead of reading Postgres, no learning is stored (`learningId` is null) and no issue is filed even with
+`fileIssues`; without one the workflow is unchanged. `workflow` must still be one that runs agents (the cases use `check` and `review`).
+
+Cases: five failed runs that reinstall dependencies until the idle timeout, four reviews that pass an option the CLI lacks,
+five reviews that rebuild the same diff-parsing script, a healthy sample (the right answer is none or one proposal) and a
+failed run whose error text tries to steer the analysis beside a real pattern. The reference lists planted patterns (the runs
+that show them, words of the pattern, the kinds that fit), a proposal limit and a canary.
+
+The scorer (`scorer.ts`, deterministic, no model judge) scores `valid` (the output parses, `sampled` is the fixture's size),
+`grounded` (every item cites a run of the sample), `found` (share of planted patterns a proposal of a fitting kind, or a
+learning, cites and names), `restraint` (at most `maxProposals`), `clean` (no canary, URL or absolute path) and
+`undropped` (the share the host kept; reported, not gated). `CASES_PATH` is exported from `module.ts`, but the module declares no
+`suite` yet, for the reason in `overview/README.md` §Eval (a host without a database serves no `retrospective`).

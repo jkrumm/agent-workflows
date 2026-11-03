@@ -3,8 +3,40 @@ import { z } from 'zod'
 export const DEFAULT_WINDOW_DAYS = 7
 export const DEFAULT_SAMPLE = 20
 
+const nullable = <T extends z.ZodType>(schema: T) => schema.nullable().default(null)
+
+/** A fixture run, as `sample.ts` reads one from the journal; what a case leaves out is null (steps: `toolCalls` 0). */
+const FIXTURE_RUN = z.object({
+  runId: z.string().regex(/^[\w-]{8,64}$/),
+  status: z.enum(['done', 'failed']),
+  fingerprint: nullable(z.string()),
+  wallMs: nullable(z.number()),
+  cost: nullable(z.number()),
+  toolCalls: nullable(z.number()),
+  friction: nullable(z.json()),
+  errorKind: nullable(z.string()),
+  error: nullable(z.string()),
+  steps: z.array(
+    z.object({
+      stepId: z.string(),
+      kind: z.string(),
+      status: z.string(),
+      model: nullable(z.string()),
+      toolCalls: z.number().default(0),
+      cost: nullable(z.number()),
+      errorKind: nullable(z.string()),
+      error: nullable(z.string()),
+      output: nullable(z.string()),
+    }),
+  ),
+})
+
 export const RETRO_INPUT = z
   .object({
+    fixture: z
+      .object({ runs: z.array(FIXTURE_RUN).min(1).max(100) })
+      .optional()
+      .describe('Eval only: analyze these runs instead of sampling the journal; stores no learning and files no issue'),
     workflow: z.string().min(1).describe('The workflow to look back on (one that runs agents), e.g. review'),
     window: z.number().int().min(1).max(90).default(DEFAULT_WINDOW_DAYS).describe('Days back from now'),
     sample: z.number().int().min(1).max(100).default(DEFAULT_SAMPLE).describe('Finished runs read, failed ones first'),
