@@ -422,20 +422,28 @@ Provisional picks (2026-10-31, from cost, wall time, failure modes and the AA in
   recall test (`d781796`). Reviews clean, ranges `covered`. No wave flipped `active`: Wave 11 waits for 2026-11-17
   (mother's call). Nothing spawned (orchestrated).
 
-## Wave 20 — Review v4 papercuts            <!-- status: active -->
+## Wave 20 — Review v4 papercuts            <!-- status: done 2026-11-03, release 4bd04cc -->
 
 Small, so the owner's daily review use is smooth before Wave 11 measures it. Inputs: the close-outs of Waves 19 and 12.
-**Repos:** dotfiles
+**Repos:** dotfiles, software-factory
 
-- [ ] `check-real.test.ts` fails 2 tests when the gate runs as `agw check` (host env or git context leaks in): fix, so
+- [x] `check-real.test.ts` fails 2 tests when the gate runs as `agw check` (host env or git context leaks in): fix, so
   `/check` and the wave gate are green on this repo.
-- [ ] CLI and skills agree: `/review` skill text vs `agw review prepare --scope a..b`; `agw check --cwd .` resolves a
+- [x] CLI and skills agree: `/review` skill text vs `agw review prepare --scope a..b`; `agw check --cwd .` resolves a
   relative path (or the check skill says absolute).
-- [ ] Threads: `status` prints the thread key; `prepare --thread` accepts the key or the id; in-session jobs can be
+- [x] Threads: `status` prints the thread key; `prepare --thread` accepts the key or the id; in-session jobs can be
   abandoned.
-- [ ] `cancel` reads a structured state from the factory's error body, not its 409 message (factory change via the
+- [x] `cancel` reads a structured state from the factory's error body, not its 409 message (factory change via the
   software-factory fleet if one is working, else directly).
-- [ ] `gt calibrate`: delete, or give it a source; the learned runaway cap gets a per-workflow `minSample`.
+- [x] `gt calibrate`: delete, or give it a source; the learned runaway cap gets a per-workflow `minSample`.
+**Left behind:** close-out in `docs/waves/handoff/lead.md`. `agw check` on this repo is green (the host's git probe parsed
+  English while git answered in German: `LC_ALL=C`; the credentials test grepped `AGW_`, which the host passes legitimately).
+  The CLI resolves a relative `--cwd`; the review and check skills match the CLI (dotfiles `e7a1da0`). `status` shows
+  `threadKey` (jobs from now on), `--thread` takes the key or a known id, `cancel` abandons an in-session job and reads the
+  factory's 409 spawn row (software-factory `4bdc4b8`, deployed). `gt calibrate`, single judge mode and κ are gone: recall
+  is always dual-judge (scorer string unchanged); Wave 11 re-adds calibration only with a real source. `eval.recall` needs
+  100 done runs before a learned cap. Gate `make check` 4065/0, `agw check` green, deployed `4bd04cc`, `make verify` PASS.
+  Reviews clean, ranges `covered`. No wave flipped `active` (Wave 11 waits for 2026-11-17). Nothing spawned (orchestrated).
 
 ## Wave 13 — Accounting and telemetry            <!-- status: done 2026-11-03 as Wave 16 -->
 
