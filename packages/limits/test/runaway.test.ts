@@ -279,6 +279,56 @@ describe('runaway cap', () => {
     expect(await sql.step(result.runId, 'after')).toBeUndefined()
   })
 
+  test('an agent step is stopped mid-step at 10 × the p95 wall time of the workflow own done runs', async () => {
+    const history: Metrics[] = Array.from({ length: 25 }, (_, i) => ({
+      cost: 0.01,
+      tokens: 1000,
+      wallMs: 10 + i,
+      steps: 1,
+    }))
+    const agentic = (id: string) =>
+      defineWorkflow({
+        id,
+        version: 'v1',
+        input: empty,
+        output: empty,
+        async run(ctx) {
+          await ctx.agent('think', { agent: 'worker', prompt: 'go' })
+          return {}
+        },
+      })
+    const wf = agentic('cap.agent-learned')
+    await seedRuns(sql.pool, db.schema, wf.id, history)
+    const { cap, spied, decisions } = capWithSpy({ floor: { wallMs: 1 } })
+    const wallCap = (await cap.caps(wf.id)).values.wallMs
+    expect(wallCap).toBeCloseTo(10 * p95(history.map((h) => h.wallMs)), 0)
+    // Under the cap the agent step finishes; past it the first tool event stops the step (the session is aborted).
+    const run = async (sleepMs: number) => {
+      const host = new FakeAgentHost(async (session) => {
+        await session.sleep(sleepMs, 25)
+        await session.tool('read', { path: 'x' }, { ok: true })
+        return { output: { done: true } }
+      })
+      const rt = await started(testRuntime({ schema: db.schema, workflows: [wf], host, middleware: [spied] }))
+      const result = await rt.wait((await rt.start(wf, {}, { purpose: 'test' })).runId)
+      await rt.close()
+      runtimes.splice(runtimes.indexOf(rt), 1)
+      return { result, host }
+    }
+    const normal = await run(0)
+    expect(normal.result.status).toBe('done')
+    const runaway = await run(Math.ceil(wallCap) + 300)
+    expect(runaway.result).toMatchObject({ status: 'failed', error: { kind: 'step_failed' } })
+    expect(runaway.host.count('abort')).toBe(1)
+    expect(await sql.step(runaway.result.runId, 'think')).toMatchObject({ status: 'failed', error_kind: 'middleware' })
+    expect(decisions.find((d): d is CapDecision => d.rule === 'runaway-cap' && d.hook === 'toolPre')).toMatchObject({
+      allowed: false,
+      exceeded: 'wallMs',
+      stepId: 'think',
+      basis: { tree: { kind: 'learned', sample: 25, factor: 10 } },
+    })
+  })
+
   test('a history read failure falls back to the static ceiling without failing the run', async () => {
     const logger = captureLogger()
     const cap = runawayCap({ connectionString: PG_URL, schema: 'agw_t_lim_missing_schema', logger })
