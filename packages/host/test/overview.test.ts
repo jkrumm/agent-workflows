@@ -3,7 +3,7 @@ import { messageResponse, startFakeGateway } from '@agent-workflows/capabilities
 import { resolveRoute } from '@agent-workflows/routes'
 import { createArgoPush } from '../src/fleet/argo.ts'
 import type { FactoryFleet, FactorySession } from '../src/fleet/factory.ts'
-import { createFleet } from '../src/fleet/index.ts'
+import { argoBuild, createFleet } from '../src/fleet/index.ts'
 import { fleetOperations } from '../src/fleet/operations.ts'
 import { createQuota } from '../src/fleet/quota.ts'
 import { createOverview } from '../src/workflows/overview/index.ts'
@@ -77,7 +77,7 @@ beforeAll(async () => {
     url: 'https://argo.example.com/api',
     secret: 'tok',
     machine: 'host-1',
-    build: async (overview) => (await fleet.view(overview ? { overview } : {})).payload,
+    build: argoBuild(fleet),
     logger: { warn: () => {} },
     fetcher: (async (url: string, init: RequestInit) => {
       pushed.push({ url, body: JSON.parse(String(init.body)) })
@@ -255,6 +255,15 @@ describe('overview workflow', () => {
     expect(body.status).toBe('done')
     expect(body.output.agents).toEqual([])
     expect(t.iu.requests).toHaveLength(0)
+  })
+
+  test('an unreadable factory fails the run with the cause: nothing is classified, nothing is pushed', async () => {
+    factoryDown = 'factory fleet failed (exit 3): FACTORY_TOKEN is not set'
+    const { body } = await startOverview()
+    expect(body.status).toBe('failed')
+    expect(JSON.stringify(body)).toContain('FACTORY_TOKEN is not set')
+    expect(t.iu.requests).toHaveLength(0)
+    expect(pushed).toHaveLength(0)
   })
 
   test('an agent active after the run is marked stale instead of showing an old verdict', async () => {

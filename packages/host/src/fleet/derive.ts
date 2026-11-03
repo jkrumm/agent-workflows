@@ -13,7 +13,9 @@ export const cleanLine = (text: string | null | undefined): string | null => (te
 /** The unplaced sessions' project: live sessions the factory cannot file under a repo, and has no directory for. */
 export const UNPLACED_PROJECT = 'unplaced'
 
-const NEEDS_YOU_STATES = new Set<FactorySession['state']>(['waiting', 'blocked', 'walled', 'stuck'])
+const NEEDS_YOU_STATES = new Set(['waiting', 'blocked', 'walled', 'stuck'])
+const WORKING_STATES = new Set(['working', 'starting'])
+const IDLE_STATES = new Set(['idle'])
 /** A session parked on workers it started or on a deploy is waiting on machines, not on the owner. */
 const MANAGED_WAITS = new Set(['workers', 'deploy'])
 
@@ -30,8 +32,10 @@ const normalizeHerdrStatus = (raw: string | null): HerdrAgentStatus | null =>
 
 /**
  * The one urgency state, first match wins:
- * - needs_you: factory state `waiting` / `blocked` / `walled` / `stuck` (except a managed wait: `workers`, `deploy`), or hc `blocked`
+ * - needs_you: hc `blocked` (a terminal stuck on a permission prompt, whatever the factory says), or factory state
+ *   `waiting` / `blocked` / `walled` / `stuck` except a managed wait (`workers`, `deploy`: the machines, not the owner)
  * - working: `working` / `starting`
+ * - unknown: a state the factory added that this client does not know (that one row degrades, not the fleet)
  * - stale: idle (a managed wait included) or hc `done`, and the last activity older than `staleAfterMs`
  * - done: hc `done`; idle: everything else that is not working
  */
@@ -42,9 +46,11 @@ export function deriveState(input: {
   staleAfterMs: number
 }): AgentState {
   const { session, lastActivityAt, now, staleAfterMs } = input
+  if (session.hc === 'blocked') return 'needs_you'
   const managed = session.state === 'waiting' && session.wait != null && MANAGED_WAITS.has(session.wait)
-  if (!managed && (NEEDS_YOU_STATES.has(session.state) || session.hc === 'blocked')) return 'needs_you'
-  if (session.state === 'working' || session.state === 'starting') return 'working'
+  if (!managed && NEEDS_YOU_STATES.has(session.state)) return 'needs_you'
+  if (WORKING_STATES.has(session.state)) return 'working'
+  if (!managed && !IDLE_STATES.has(session.state)) return 'unknown'
   if (lastActivityAt != null && now - lastActivityAt > staleAfterMs) return 'stale'
   return session.hc === 'done' ? 'done' : 'idle'
 }
@@ -110,11 +116,20 @@ export function mapFleet(
   const { now } = options
   const staleAfterMs = options.staleAfterHours * 60 * 60 * 1000
   const seen = new Set<string>()
+  let unsafe = 0
+  let duplicate = 0
   const agentsOf = (sessions: FactorySession[]): Agent[] =>
     sessions
       .map((s) => toAgent(s, now, staleAfterMs))
       .filter((a): a is Agent => {
-        if (a == null || seen.has(a.id)) return false // an id is a key: the first occurrence stands
+        if (a == null) {
+          unsafe += 1 // an id cleaning would change is no identity
+          return false
+        }
+        if (seen.has(a.id)) {
+          duplicate += 1 // an id is a key: the first occurrence stands
+          return false
+        }
         seen.add(a.id)
         return true
       })
@@ -161,13 +176,19 @@ export function mapFleet(
       cmd: null,
     }))
 
+  // Every row dropped is said once per kind, with its count: a session that vanishes silently is a hole in the fleet.
+  const dropped = [
+    unsafe > 0 ? `${unsafe} factory session(s) skipped: id is not a clean single line` : null,
+    duplicate > 0 ? `${duplicate} factory session(s) skipped: duplicate session id` : null,
+  ].filter((w): w is string => w != null)
+
   return {
     generatedAt: now,
     staleAfterHours: options.staleAfterHours,
     summary: summarize(projects),
     projects,
     humanQueue,
-    warnings: [...(options.warnings ?? []), ...fleet.errors.map((e) => cleanLine(e) ?? '')],
+    warnings: [...(options.warnings ?? []), ...fleet.errors.map((e) => cleanLine(e) ?? ''), ...dropped],
   }
 }
 

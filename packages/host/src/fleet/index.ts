@@ -1,5 +1,5 @@
 import type { Logger } from '@agent-workflows/runtime'
-import { createArgoPush } from './argo.ts'
+import { type ArgoPushOptions as ArgoOptions, createArgoPush } from './argo.ts'
 import { emptySnapshot, mapFleet } from './derive.ts'
 import { commandRunner, type FactoryRead, type FleetConfig, fleetConfig, readFactoryFleet } from './factory.ts'
 import { enrichmentOf, mergeOverviewIntoSnapshot, parseStoredOverview } from './overview.ts'
@@ -31,8 +31,13 @@ export interface FleetDeps {
   now?: () => number
 }
 
+/** A snapshot and whether the factory was read: a failed read is an empty snapshot with one warning, never a fleet. */
+export type SnapshotRead = { snapshot: Snapshot; unreadable: string | null }
+
 export interface MergedView {
   snapshot: Snapshot
+  /** The warning of a failed factory read, else null: the Argo push and the classify step must not act on it. */
+  unreadable: string | null
   accounts: Record<string, AccountQuota>
   payload: OverviewPayload
   enrichment: Map<string, AgentEnrichment>
@@ -41,6 +46,8 @@ export interface MergedView {
 export interface Fleet {
   /** The deterministic snapshot; cached for 45 s unless `fresh` (the classify run wants what is true now). */
   snapshot(options?: { fresh?: boolean; staleAfterHours?: number }): Promise<Snapshot>
+  /** {@link Fleet.snapshot} with the outcome of the factory read: the callers that act on the fleet need to tell empty from unreadable. */
+  read(options?: { fresh?: boolean; staleAfterHours?: number }): Promise<SnapshotRead>
   /** The snapshot, merged with the newest overview run and the quota: `agw agents`' data and the Argo body. */
   view(options?: { overview?: OverviewOutput }): Promise<MergedView>
   quota: Quota
@@ -48,41 +55,48 @@ export interface Fleet {
 
 export function createFleet(deps: FleetDeps): Fleet {
   const now = deps.now ?? Date.now
-  let cached: { at: number; promise: Promise<{ snapshot: Snapshot; ok: boolean }> } | null = null
+  let cached: { at: number; promise: Promise<SnapshotRead> } | null = null
 
   /** The read, mapped. The clock is taken after the read unless the caller sets one (the cache): no activity is newer than the snapshot. */
-  const build = async (staleAfterHours: number, at?: number) => {
+  const build = async (staleAfterHours: number, at?: number): Promise<SnapshotRead> => {
     const read = await deps.factory()
     const time = at ?? Date.now()
-    if (!read.ok) return { snapshot: emptySnapshot({ now: time, staleAfterHours, warning: read.warning }), ok: false }
-    return { snapshot: mapFleet(read.fleet, { now: time, staleAfterHours }), ok: true }
+    if (!read.ok) {
+      return {
+        snapshot: emptySnapshot({ now: time, staleAfterHours, warning: read.warning }),
+        unreadable: read.warning,
+      }
+    }
+    return { snapshot: mapFleet(read.fleet, { now: time, staleAfterHours }), unreadable: null }
   }
 
-  const snapshot: Fleet['snapshot'] = async (options = {}) => {
+  const read: Fleet['read'] = (options = {}) => {
     const hours = options.staleAfterHours ?? deps.config.staleAfterHours
-    if (options.fresh || options.staleAfterHours !== undefined) return (await build(hours)).snapshot
+    if (options.fresh || options.staleAfterHours !== undefined) return build(hours)
     const at = now()
-    if (cached && at - cached.at < SNAPSHOT_CACHE_MS) return (await cached.promise).snapshot
+    if (cached && at - cached.at < SNAPSHOT_CACHE_MS) return cached.promise
     const promise = build(hours, at)
     cached = { at, promise }
     // A failed read is not served from the cache: the next caller asks the factory again.
     void promise.then(
       (built) => {
-        if (!built.ok && cached?.promise === promise) cached = null
+        if (built.unreadable !== null && cached?.promise === promise) cached = null
       },
       () => {
         if (cached?.promise === promise) cached = null
       },
     )
-    return (await promise).snapshot
+    return promise
   }
+  const snapshot: Fleet['snapshot'] = async (options) => (await read(options)).snapshot
 
   return {
     snapshot,
+    read,
     quota: deps.quota,
     async view(options = {}) {
-      const [snap, accounts, picks, stored] = await Promise.all([
-        snapshot(),
+      const [{ snapshot: snap, unreadable }, accounts, picks, stored] = await Promise.all([
+        read(),
         deps.quota.accounts(),
         deps.quota.picks(),
         options.overview ? null : deps.latestOverview(),
@@ -90,6 +104,7 @@ export function createFleet(deps: FleetDeps): Fleet {
       const merged = mergeOverviewIntoSnapshot(snap, options.overview ?? parseStoredOverview(stored))
       return {
         snapshot: snap,
+        unreadable,
         accounts,
         enrichment: enrichmentOf(merged),
         payload: { ...snap, projects: merged.projects, overview: merged.overview, quota: { accounts, picks } },
@@ -108,6 +123,14 @@ export async function renderView(fleet: Fleet, options: { color?: boolean; cols?
     color: options.color === true,
     cols: parseCols(options.cols),
   })
+}
+
+/** The Argo push's `build` over a fleet: the merged payload and whether the factory read failed (the push then skips). */
+export function argoBuild(fleet: Pick<Fleet, 'view'>): ArgoOptions['build'] {
+  return async (overview) => {
+    const view = await fleet.view(overview ? { overview } : {})
+    return { payload: view.payload, unreadable: view.unreadable }
+  }
 }
 
 export interface HostFleetOptions {
@@ -132,7 +155,7 @@ export function hostFleet(options: HostFleetOptions) {
     url: options.env.ARGO_URL,
     secret: options.env.ARGO_API_SECRET,
     machine: options.machine,
-    build: async (overview) => (await fleet.view(overview ? { overview } : {})).payload,
+    build: argoBuild(fleet),
     // The runtime's logger has no info level; an outcome that went well is still one line (a quiet fleet is a fact).
     logger: { warn, info: (message, meta) => console.log(`[agw-host] ${message}`, meta ?? '') },
   })

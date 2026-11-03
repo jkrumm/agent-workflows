@@ -46,17 +46,25 @@ not Requesty.
   - A session is an `AGENT` (`source: factory`, `id` = session id, `paneId` = terminal, `title` without its leading
     symbols, `account`, `lastReply` = the digest's headline, `lastPrompt` null, `startedAt` = `since`, `waitingFor` =
     `wait`, `herdrStatus` = hc's word, plus `plan` and `wave` for the facts).
-  - State: factory `waiting`, `blocked`, `walled`, `stuck` or hc `blocked` is `needs_you`; `working`, `starting` is
-    `working`; everything else is `idle`, `done` (hc `done`), or `stale` when the last activity is older than the
-    threshold (`AGW_AGENT_STALE_HOURS`). A `waiting` on `workers` or a `deploy` waits on machines, not on the owner: it
-    reads as idle, done or stale, never `needs_you`.
+  - State: hc `blocked` (a terminal stuck on a permission prompt) is `needs_you` whatever else is true; so are factory
+    `waiting`, `blocked`, `walled` and `stuck`, except a `waiting` on `workers` or a `deploy`, which waits on machines
+    and reads as idle, done or stale. `working`, `starting` is `working`; the rest of the idle family is `idle`, `done`
+    (hc `done`), or `stale` when the last activity is older than the threshold (`AGW_AGENT_STALE_HOURS`). A state the
+    factory adds that agw does not know is `unknown` for that one session (the parse takes `state` as a string), never a
+    failure of the fleet.
   - `humanQueue` is the asks of kind `human` (`id`, `at` as `askedAt`, `text` as `question`, `cmd` null), newest first.
     `warnings` are the factory's `errors` plus a failed read.
   - Git has no `ahead`/`behind` in the factory's view: Argo requires numbers, so they are 0, and the facts the seat reads
     say `ahead: unknown  behind: unknown`. A repo with no branch (detached) has no git.
 - **A factory that is down is a warning, never a 500.** A non-zero exit, a timeout, a missing binary, output that is not
-  JSON or the wrong shape: `agw agents` answers no projects, one warning naming the cause (the exit code and stderr's
-  first line; exit 3 is a missing `FACTORY_TOKEN`) and the quota. The failure is not cached; the next call asks again.
+  JSON or the wrong shape (`repos` is required: `{}` is not an empty fleet): `agw agents` answers no projects, one
+  warning naming the cause (the exit code and stderr's first line; exit 3 is a missing `FACTORY_TOKEN`) and the quota.
+  The failure is not cached; the next call asks again. Because an empty answer is not an empty fleet, the two writers
+  act on the read's outcome (`Fleet.read`, `view().unreadable`): the Argo push is skipped with a warn-level log naming
+  the cause (Argo keeps its last good snapshot instead of receiving zero agents), and the `overview` run fails its
+  `classify` step with the cause, so no verdict is reconciled against nothing.
+- **Dropped sessions are counted.** A session whose id cleaning would change, and one whose id was already seen, are
+  skipped; each kind is one warning with its count.
 - **No dispatch lane.** Dispatch retired with agent-gateway (owner, 2026-10-29). `summary.dispatch` is gone from the wire too (Argo's ingest no longer requires it). The `agent-gateway:review` and `agent-gateway:dispatch`
   quota lanes left the pick list for the same reason (only gateway workers used them).
 
@@ -64,7 +72,8 @@ not Requesty.
 
 - **The child gets the review helpers' allowlist.** `factory` runs on `helperEnv` (`PATH`, `HOME`, `TMPDIR`, `LANG`,
   `LC_*`, `TERM`) plus `FACTORY_TOKEN` and `FACTORY_URL`, never the host's environment (`AGW_API_SECRET`,
-  `ARGO_API_SECRET`, `IU_API_KEY`). It runs in its own process group, so a timeout kills a grandchild holding the pipes.
+  `ARGO_API_SECRET`, `IU_API_KEY`). It runs in its own process group, so a timeout kills a grandchild holding the pipes. Its stdout is counted per chunk
+  against a 16 MiB byte budget (the real view is about 140 KB); past it the child is killed, never buffered whole.
 - **Text from outside loses its control bytes**, C0 and C1 (U+0080 to U+009F), before it reaches a pane, Argo or a
   prompt. Fields that are one line by nature (ids, account, terminal, titles, wait reasons, project, branch and commit
   text, the model's standing and blocker) also lose CR/LF. In the facts the model reads, the headline is one line, so it

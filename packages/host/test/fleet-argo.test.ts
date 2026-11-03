@@ -15,7 +15,12 @@ const payload = {
 } as unknown as OverviewPayload
 
 function setup(
-  over: { url?: string; secret?: string; fetcher?: typeof fetch; build?: () => Promise<OverviewPayload> } = {},
+  over: {
+    url?: string
+    secret?: string
+    fetcher?: typeof fetch
+    build?: () => Promise<{ payload: OverviewPayload; unreadable?: string | null }>
+  } = {},
 ) {
   const sent: { url: string; init: RequestInit }[] = []
   const logs: { level: string; message: string; meta?: Record<string, unknown> }[] = []
@@ -29,7 +34,7 @@ function setup(
     url: 'url' in over ? over.url : 'https://argo.example.com/api/',
     secret: 'secret' in over ? over.secret : 'tok',
     machine: 'host-1',
-    build: over.build ?? (async () => payload),
+    build: over.build ?? (async () => ({ payload })),
     logger: {
       warn: (message, meta) => logs.push({ level: 'warn', message, meta }),
       info: (message, meta) => logs.push({ level: 'info', message, meta }),
@@ -58,7 +63,7 @@ describe('Argo push', () => {
   test('the run that just ended stands in for the stored one', async () => {
     const seen: unknown[] = []
     const t = setup({
-      build: async () => payload,
+      build: async () => ({ payload }),
     })
     const withOverride = createArgoPush({
       url: 'https://argo.example.com/api',
@@ -66,7 +71,7 @@ describe('Argo push', () => {
       machine: 'm',
       build: async (overview) => {
         seen.push(overview)
-        return payload
+        return { payload }
       },
       logger: { warn: () => {} },
       fetcher: (async () => new Response('{}')) as unknown as typeof fetch,
@@ -117,6 +122,23 @@ describe('Argo push', () => {
     const t = setup({ url: 'http://127.0.0.1:3000/api' })
     expect(await t.push.push('timer')).toBe('ok')
     expect(t.sent[0]?.url).toBe('http://127.0.0.1:3000/api/agents/overview')
+  })
+})
+
+describe('Argo push of an unreadable factory', () => {
+  test('is skipped with a warning naming the cause: Argo keeps its last good fleet', async () => {
+    const { push, sent, logs } = setup({
+      build: async () => ({ payload, unreadable: 'factory fleet failed (exit 3): FACTORY_TOKEN is not set' }),
+    })
+    expect(await push.push('timer')).toBe('skipped')
+    expect(sent).toHaveLength(0)
+    expect(logs).toHaveLength(1)
+    expect(logs[0]).toMatchObject({ level: 'warn' })
+    expect(logs[0]?.meta).toMatchObject({
+      status: 'skipped',
+      trigger: 'timer',
+      warning: 'factory fleet failed (exit 3): FACTORY_TOKEN is not set',
+    })
   })
 })
 
