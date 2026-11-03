@@ -13,6 +13,7 @@ import {
 } from '@agent-workflows/eval'
 import {
   createEvalRecall,
+  Gate,
   type RecallJudge,
   type RecallReview,
   selectCases,
@@ -67,6 +68,7 @@ const finding = (id: string, tag: OutputFindingValue['tag'], file = 'src/a.ts'):
 })
 
 type Fate =
+  | { kind: 'gave-up-then-submit' }
   | { kind: 'gave-up'; state: string }
   | { kind: 'waiting' }
   | { kind: 'submit'; findings: OutputFindingValue[] }
@@ -80,7 +82,7 @@ function fakeReview(fates: Record<string, Fate>) {
   const jobs = new Map<string, { id: string; cwd: string; fate: Fate; polls: number; cancelled?: boolean }>()
   const state = (job: { fate: Fate; polls: number; cancelled?: boolean }) => {
     if (job.fate.kind === 'abandon' || job.cancelled) return 'abandoned'
-    if (job.fate.kind === 'gave-up') return 'prepared' // the factory ended a2; nothing will ever submit
+    if (job.fate.kind === 'gave-up' || job.fate.kind === 'gave-up-then-submit') return 'prepared' // the factory ended a2; nothing will ever submit
     if (job.fate.kind === 'waiting') return job.polls > 3 ? 'submitted' : 'prepared' // held by the ceiling a while
     return job.polls > 0 ? 'submitted' : 'prepared'
   }
@@ -135,11 +137,14 @@ function fakeReview(fates: Record<string, Fate>) {
           ...(state(job) === 'prepared'
             ? {
                 hidden:
-                  job.fate.kind === 'gave-up'
+                  job.fate.kind === 'gave-up' || job.fate.kind === 'gave-up-then-submit'
                     ? {
                         attempts: [
                           { key: `review-${job.id}-a1`, status: 'ended' },
-                          { key: `review-${job.id}-a2`, status: job.fate.state },
+                          {
+                            key: `review-${job.id}-a2`,
+                            status: job.fate.kind === 'gave-up' ? job.fate.state : 'ended',
+                          },
                         ],
                         gaveUp: true,
                       }
@@ -152,6 +157,12 @@ function fakeReview(fates: Record<string, Fate>) {
     async cancel(input: Parameters<RecallReview['cancel']>[0]) {
       cancels.push(input.jobId)
       const job = jobs.get(input.jobId)
+      if (job?.fate.kind === 'gave-up-then-submit') {
+        // the reviewer submitted between the status and the cancel: cancel refuses a job that is not prepared
+        job.fate = { kind: 'submit', findings: [] }
+        job.polls = 1
+        throw new Error(`job ${job.id} is submitted, only a prepared job can be cancelled`)
+      }
       if (job) job.cancelled = true
       return { status: 'failed', jobId: input.jobId }
     },
@@ -372,6 +383,11 @@ describe('agw eval recall', () => {
     expect(review.cancels).toEqual(['rv_1']) // only the wedged job; the held one was never cancelled
   })
 
+  test('a cancel refused because the job was submitted meanwhile re-polls instead of failing the case', async () => {
+    const { body } = await runWith([bugCase('b1')], { 'feat: b1': { kind: 'gave-up-then-submit' } }, {})
+    expect((body.output as Body).cases[0]).toMatchObject({ id: 'b1', status: 'scored', reason: null })
+  })
+
   test('a second run over the same clone adopts the live job and does not request again', async () => {
     writeCases([bugCase('b1')])
     const review = fakeReview({})
@@ -443,5 +459,27 @@ describe('summarize', () => {
     expect(summary.control).toMatchObject({ n: 2, falseAlarms: 2, falseAlarmsPerControl: 1 })
     expect(summary.noise).toBeCloseTo(1 / 4)
     expect(summary).toMatchObject({ scored: 4, unscored: 1, unscoredReasons: { abandoned: 1 } })
+  })
+})
+
+describe('the slot gate', () => {
+  test('a waiter that aborts leaves the queue: the release goes to the next waiter, no slot is lost', async () => {
+    const gate = new Gate(1)
+    const first = await gate.acquire(new AbortController().signal)
+    const abort = new AbortController()
+    const dead = gate.acquire(abort.signal)
+    const live = gate.acquire(new AbortController().signal)
+    abort.abort(new Error('cancelled'))
+    await dead.then(
+      () => {
+        throw new Error('the aborted waiter was granted a slot')
+      },
+      (error: Error) => expect(error.message).toBe('cancelled'),
+    )
+    first()
+    const release = await live // would hang if the release had woken the dead waiter
+    release()
+    const again = await gate.acquire(new AbortController().signal) // and the slot came back
+    again()
   })
 })

@@ -121,7 +121,7 @@ type Scored =
 const seatLabel = (seat: { model: string; effort: string } | null) => (seat ? `${seat.model}/${seat.effort}` : null)
 
 /** FIFO slots held across a case's steps, so the factory sees at most `size` of this run's reviews at once. */
-class Gate {
+export class Gate {
   private free: number
   private readonly waiting: (() => void)[] = []
   constructor(size: number) {
@@ -130,12 +130,18 @@ class Gate {
   async acquire(signal: AbortSignal): Promise<() => void> {
     if (this.free === 0) {
       await new Promise<void>((resolve, reject) => {
-        const onAbort = () => reject(signal.reason)
-        signal.addEventListener('abort', onAbort, { once: true })
-        this.waiting.push(() => {
+        const wake = () => {
           signal.removeEventListener('abort', onAbort)
           resolve()
-        })
+        }
+        // A waiter that aborts leaves the queue, or a release would wake it and the slot would be lost.
+        const onAbort = () => {
+          const at = this.waiting.indexOf(wake)
+          if (at >= 0) this.waiting.splice(at, 1)
+          reject(signal.reason)
+        }
+        signal.addEventListener('abort', onAbort, { once: true })
+        this.waiting.push(wake)
       })
     } else this.free--
     let released = false
@@ -253,9 +259,16 @@ export function createEvalRecall(options: EvalRecallOptions): HostWorkflow[] {
               // The factory ended its retry: nothing will submit. Cancel abandons the job; a spawn that is
               // somehow alive again answers `running` and the poll goes on.
               const last = job.hidden.attempts.at(-1)
-              const cancelled = await options.review.cancel({ jobId: requested.jobId })
-              if (cancelled.status !== 'running')
-                return { state: 'unscored', reason: `review gave up: ${last?.status ?? 'unknown'}` }
+              try {
+                const cancelled = await options.review.cancel({ jobId: requested.jobId })
+                if (cancelled.status !== 'running')
+                  return { state: 'unscored', reason: `review gave up: ${last?.status ?? 'unknown'}` }
+              } catch (error) {
+                // Cancel refuses a job that is no longer prepared (submitted meanwhile): read it again.
+                const again = await options.review.status({ jobId: requested.jobId })
+                if (again.job?.state === 'prepared') throw error
+                continue
+              }
             }
             if (job.state === 'submitted') {
               const wallMs = Date.parse(job.submittedAt ?? '') - Date.parse(job.createdAt)
