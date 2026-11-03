@@ -209,6 +209,31 @@ async function gatherSessions(ports: GatherPorts, cwd: string, since: string | n
   return { text: entries.join('\n\n'), count: entries.length }
 }
 
+/**
+ * The facts of an eval case: the fixture's commits in the shape `git log` is read in (`%h %cI %s`, then the body) and
+ * under the same byte cap, and no sessions. The cutoff is `gatherFacts`'s.
+ */
+export function fixtureFacts(
+  fixture: { commits: { sha: string; date: string; subject: string; body?: string | undefined }[] },
+  args: { since: string | null; now: number },
+): Gathered {
+  const used: string[] = []
+  let bytes = 0
+  for (const c of fixture.commits) {
+    const entry = `${c.sha.slice(0, 7)} ${c.date} ${c.subject}\n${c.body ?? ''}`.trim()
+    const size = bytesOf(entry) + 2
+    if (bytes + size > COMMITS_MAX_BYTES) break
+    used.push(entry)
+    bytes += size
+  }
+  const bootstrapSince = new Date(args.now - BOOTSTRAP_DAYS * 24 * 60 * 60 * 1000).toISOString()
+  return {
+    commits: { text: used.join('\n\n'), count: used.length },
+    sessions: { text: '', count: 0 },
+    sinceUsed: args.since ?? bootstrapSince,
+  }
+}
+
 export async function gatherFacts(
   ports: GatherPorts,
   args: { cwd: string; since: string | null; now: number },

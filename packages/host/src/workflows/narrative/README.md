@@ -33,3 +33,18 @@ minus `backend` (the platform has one): `project`, `changed`, `reason`, `summary
 - **Route.** `narrative` (`packages/routes/src/table/narrative.ts`): `iu-openai`, Terra at effort medium (the `HARD` tier; Haiku 5.5 on
   `iu-anthropic` until 2026-10-30). The gateway ran a tool-less OpenCode session; the platform asks for the same JSON as one chat request.
 - `generated_by` is `agent-workflows/narrative`. There is no batch rewrite: a page flips to it on its next re-render, so older pages still say `agent-gateway/narrative` until then.
+
+## Eval
+
+`eval/cases.jsonl` holds 6 cases of synthetic commits (placeholder projects) as `PlainCase` lines, registered as the module's suite
+(`agw eval run narrative`). The input is the eval-only `fixture` (`commits`, newest first: `sha`, `date`, `subject`, `body`): with it
+`gather` builds the commits text in `git log`'s shape under the same byte cap, reads no git and no transcript and finds no
+sessions. Cases run with `polish: false`, so the score is the composer's and the spend is one call per case; without a fixture the
+workflow is unchanged.
+
+The scorer (`scorer.ts`, deterministic, no model judge) scores `valid`, `changed` (equals the reference), `shape` (a changed answer
+carries page, sections and summary, an unchanged one none), `mentions` (share of the reference's `a|b` terms in the sections and
+summary), `current` (no removed mechanism named in `whatItIs` or `whereItStands`), `clean` (no fixture commit hash, no canary
+anywhere), `length` (the sections' total inside a band) and `datesGrounded` (every `howItGotHere` date is a commit's day or one of the
+previous page; reported, not gated). Cases: a bootstrap from feature commits, a chores-only window with a page (unchanged), a removed
+mechanism the old page still describes, no commits (no model call), an injection planted in a commit body and an update in place.

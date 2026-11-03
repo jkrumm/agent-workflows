@@ -1,6 +1,6 @@
 import { MAX_PAGE_CHARS, NARRATIVE_LIMITS, NARRATIVE_SECTIONS } from '@agent-workflows/capabilities'
 import { z } from 'zod'
-import { BOOTSTRAP_COMMIT_LIMIT, BOOTSTRAP_DAYS } from './gather.ts'
+import { BOOTSTRAP_COMMIT_LIMIT, BOOTSTRAP_DAYS, SINCE_COMMIT_LIMIT } from './gather.ts'
 
 export { NARRATIVE_SECTIONS }
 
@@ -47,6 +47,23 @@ const SinceSchema = z
 /** agent-gateway's `NARRATIVE_INPUT` minus the free `model` override (the model is the `narrative` route's). */
 export const NarrativeInput = z
   .object({
+    fixture: z
+      .object({
+        commits: z
+          .array(
+            z.object({
+              sha: z.string().min(7).max(40),
+              date: z.string().max(40).describe('ISO committer date'),
+              subject: z.string().min(1).max(300),
+              body: z.string().max(2_000).optional(),
+            }),
+          )
+          .max(SINCE_COMMIT_LIMIT),
+      })
+      .optional()
+      .describe(
+        'Eval only: use these commits (newest first) and no session excerpts instead of reading git and transcripts',
+      ),
     cwd: z.string().min(1).max(1_000).describe('Absolute path to the target repo.'),
     project: z.string().min(1).max(200).describe('Vault page name for this project, e.g. "weatherorb".'),
     previousPage: z
