@@ -12,7 +12,7 @@ import { type CritiqueCaller, createProseWorkflows } from '../src/workflows/pros
 import { GATE_COMMAND } from '../src/workflows/prose/prompts.ts'
 import { ProseReviewOutput } from '../src/workflows/prose/schema.ts'
 import { proseScorer } from '../src/workflows/prose/scorer.ts'
-import { freshSchema, testRuntime } from '../../runtime/test/support/pg.ts'
+import { freshSchema, testRuntime } from '@agent-workflows/testing/pg'
 import { workflowOperation } from '../src/operations.ts'
 import { startTestHost, type TestHost, until } from './support.ts'
 

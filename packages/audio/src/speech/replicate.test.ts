@@ -5,7 +5,7 @@ import { audioRoutes } from '../routes.ts'
 const ROUTES = audioRoutes()
 import { createAudioScope } from '../scope.ts'
 import { type FakeGateway, prepAnswer, prepMessage, startFakeGateway } from '@agent-workflows/testing/gateway'
-import { caught, hasFfmpeg, realMedia, testDeps, toneFile } from '../testing/index.ts'
+import { caught, hasFfmpeg, realMedia, testDeps, toneFile } from '../../test/support.ts'
 import type { CallEvent, RequestEvent, UsageEvent } from '../usage.ts'
 import { ReplicateSynthError, synthReplicateChunk } from './replicate.ts'
 

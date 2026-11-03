@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, test } from 'bun:test'
 import type { Json, Verdict } from '@agent-workflows/runtime'
 import { FakeAgentHost } from '@agent-workflows/testing/agent-host'
-import { freshSchema, testRuntime } from '../../runtime/test/support/pg.ts'
+import { freshSchema, testRuntime } from '@agent-workflows/testing/pg'
 import { createNarrative } from '../src/workflows/narrative/index.ts'
 import { CASES_PATH as NARRATIVE_CASES } from '../src/workflows/narrative/module.ts'
 import { NarrativeReference, narrativeScorer } from '../src/workflows/narrative/scorer.ts'

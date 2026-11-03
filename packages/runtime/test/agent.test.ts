@@ -11,7 +11,7 @@ import {
   WorkflowError,
 } from '../src/index.ts'
 import { FakeAgentHost } from '@agent-workflows/testing/agent-host'
-import { freshSchema, inspector, testRuntime, until } from './support/pg.ts'
+import { freshSchema, inspector, testRuntime, until } from '@agent-workflows/testing/pg'
 
 const db = freshSchema('agent')
 const sql = inspector(db.schema)

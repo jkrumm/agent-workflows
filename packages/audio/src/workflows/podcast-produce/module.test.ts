@@ -4,7 +4,7 @@ import { createCapabilities, createRegistry } from '../../../../capabilities/src
 import { fakeTransports } from '@agent-workflows/testing/transports'
 import { ToolGate } from '../../../../host/src/tool-gate/index.ts'
 import { buildWorkflows, discoverWorkflowModules } from '../../../../host/src/workflows/registry.ts'
-import { testConfig } from '../../testing/index.ts'
+import { testConfig } from '../../../test/support.ts'
 import type { ProduceModuleDeps } from './module.ts'
 
 // The audio process's tree as the host's registry builds it: `podcast.produce` internal, `podcast-publish` a command,

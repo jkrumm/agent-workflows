@@ -103,7 +103,7 @@ own run (`door.speech` / `door.transcriptions`, step `request`, a root run), the
 podcast step through `Llm`.
 
 The fake gateway (`startFakeGateway`, env `AGW_GATEWAY_URL` / `AGW_API_SECRET`) lives in `@agent-workflows/testing/gateway`: a real socket
-that answers the four path families and records every request with its headers. `src/testing/index.ts` keeps what is built on the lanes' own
+that answers the four path families and records every request with its headers. `test/support.ts` keeps what is built on the lanes' own
 ports (`testDeps`, `testConfig`, `fakeMedia`, `recordingUsage`, the instant clock) and is used by this package's tests only.
 
 **Text calls dispatch on the route's wire.** `callPrepLlm` (the prep and summary LLMs) speaks `iu-openai` (chat

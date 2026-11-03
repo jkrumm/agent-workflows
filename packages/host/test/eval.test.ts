@@ -9,7 +9,7 @@ import { createCheckWorkflows } from '../src/workflows/check/index.ts'
 import { DriftJob, driftOptionsFromEnv, wireEval, createEvalWorkflows } from '../src/workflows/eval/index.ts'
 import { hostModules, suitesOf } from '../src/workflows/index.ts'
 import { testPlatform } from '@agent-workflows/testing/platform'
-import { freshSchema, inspector, testRuntime, until } from '../../runtime/test/support/pg.ts'
+import { freshSchema, inspector, testRuntime, until } from '@agent-workflows/testing/pg'
 
 const HOST_SUITES = suitesOf(await hostModules())
 

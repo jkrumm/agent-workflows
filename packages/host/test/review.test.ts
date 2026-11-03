@@ -24,7 +24,7 @@ import type { HostWorkflow } from '../src/operations.ts'
 import { ocrTransport } from '../src/workflows/review/ocr.ts'
 import { createReviewWorkflows, type ReviewOptions } from '../src/workflows/review/index.ts'
 import { freshSchema, inspector, until } from './support.ts'
-import { testRuntime } from '../../runtime/test/support/pg.ts'
+import { testRuntime } from '@agent-workflows/testing/pg'
 
 const db = freshSchema('review')
 const sql = inspector(db.schema)

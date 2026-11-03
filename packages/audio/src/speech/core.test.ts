@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import type { ChunkLimits } from './core.ts'
-import { caught } from '../testing/index.ts'
+import { caught } from '../../test/support.ts'
 import {
   DELIVERY_STYLES,
   detectLanguage,

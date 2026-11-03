@@ -10,9 +10,9 @@ import type { HostOperation, HostWorkflow } from '../src/operations.ts'
 import { type RunStore, runtimeRunStore } from '../src/store.ts'
 import { createSmokePing } from '../src/workflows/smoke/index.ts'
 import { FakeUsage, testPlatform } from '@agent-workflows/testing/platform'
-import { freshSchema, PG_URL, testRuntime } from '../../runtime/test/support/pg.ts'
+import { freshSchema, PG_URL, testRuntime } from '@agent-workflows/testing/pg'
 
-export { captureLogger, freshSchema, inspector, PG_URL, until } from '../../runtime/test/support/pg.ts'
+export { captureLogger, freshSchema, inspector, PG_URL, until } from '@agent-workflows/testing/pg'
 
 // oxlint-disable-next-line typescript/no-explicit-any -- response bodies are asserted field by field
 export type Body = Record<string, any>

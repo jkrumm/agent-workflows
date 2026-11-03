@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { z } from 'zod'
 import { defineWorkflow } from '../../../../runtime/src/index.ts'
-import { freshSchema, inspector, testRuntime } from '../../../../runtime/test/support/pg.ts'
+import { freshSchema, inspector, testRuntime } from '@agent-workflows/testing/pg'
 import { postgresJournal } from '../podcast/history.ts'
 import { createPodcastWorkflow } from '../podcast/index.ts'
 import { ProduceInput } from '../podcast/produce-input.ts'

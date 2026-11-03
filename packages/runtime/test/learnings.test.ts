@@ -5,7 +5,7 @@ import { z } from 'zod'
 import { migrate } from '../src/migrate.ts'
 import { defineWorkflow } from '../src/index.ts'
 import { FakeAgentHost } from '@agent-workflows/testing/agent-host'
-import { captureLogger, freshSchema, inspector, PG_URL, testRuntime } from './support/pg.ts'
+import { captureLogger, freshSchema, inspector, PG_URL, testRuntime } from '@agent-workflows/testing/pg'
 
 const db = freshSchema('learn')
 const fresh = freshSchema('learnold')

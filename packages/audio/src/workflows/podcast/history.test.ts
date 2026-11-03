@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { freshSchema, inspector, testRuntime } from '../../../../runtime/test/support/pg.ts'
+import { freshSchema, inspector, testRuntime } from '@agent-workflows/testing/pg'
 import { postgresJournal, postgresHistory, type Queryable, renderTranscriptMarkdown } from './history.ts'
 import { createPodcastWorkflow } from './index.ts'
 import { researchKey, startedByKey } from './ports.ts'

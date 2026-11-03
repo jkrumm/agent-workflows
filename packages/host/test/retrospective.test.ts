@@ -14,7 +14,7 @@ import {
   retroKey,
   tickRetrospectives,
 } from '../src/workflows/retrospective/schedule.ts'
-import { freshSchema, inspector, testRuntime } from '../../runtime/test/support/pg.ts'
+import { freshSchema, inspector, testRuntime } from '@agent-workflows/testing/pg'
 
 const db = freshSchema('retro')
 const sql = inspector(db.schema)

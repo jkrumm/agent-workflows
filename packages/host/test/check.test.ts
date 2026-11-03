@@ -7,7 +7,7 @@ import { createCheckWorkflows } from '../src/workflows/check/index.ts'
 import type { Exec, ExecRequest, ExecResult } from '../src/workflows/check/exec.ts'
 import { makeDatabaseHasCheckTarget } from '../src/workflows/check/make.ts'
 import { SUBMIT_RESULT_RETRY } from '../src/workflows/check/prompt.ts'
-import { freshSchema, inspector, testRuntime, until } from '../../runtime/test/support/pg.ts'
+import { freshSchema, inspector, testRuntime, until } from '@agent-workflows/testing/pg'
 import { startTestHost } from './support.ts'
 
 const db = freshSchema('check')

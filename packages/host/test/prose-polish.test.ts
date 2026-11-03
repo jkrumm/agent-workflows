@@ -6,7 +6,7 @@ import { createCapabilities, createRegistry } from '@agent-workflows/capabilitie
 import { fakeTransports } from '@agent-workflows/testing/transports'
 import { createProsePolish } from '../src/workflows/prose-polish/index.ts'
 import { ProsePolishOutput } from '../src/workflows/prose-polish/schema.ts'
-import { freshSchema, testRuntime } from '../../runtime/test/support/pg.ts'
+import { freshSchema, testRuntime } from '@agent-workflows/testing/pg'
 import { rejection } from './support.ts'
 
 const dir = mkdtempSync(join(tmpdir(), 'agw-prose-polish-'))

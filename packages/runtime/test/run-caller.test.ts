@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, test } from 'bun:test'
 import { z } from 'zod'
 import { defineWorkflow } from '../src/index.ts'
-import { freshSchema, inspector, testRuntime } from './support/pg.ts'
+import { freshSchema, inspector, testRuntime } from '@agent-workflows/testing/pg'
 
 const db = freshSchema('caller')
 const sql = inspector(db.schema)

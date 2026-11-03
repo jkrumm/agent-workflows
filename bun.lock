@@ -181,6 +181,10 @@
         "@agent-workflows/middleware": "workspace:*",
         "@agent-workflows/runtime": "workspace:*",
         "@opentelemetry/sdk-trace": "3.0.0",
+        "pg": "8.23.1",
+      },
+      "devDependencies": {
+        "@types/pg": "8.23.1",
       },
     },
   },

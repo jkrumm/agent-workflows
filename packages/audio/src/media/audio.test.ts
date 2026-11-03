@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { hasFfmpeg, toneFile } from '../testing/index.ts'
+import { hasFfmpeg, toneFile } from '../../test/support.ts'
 import { concatPcm, ffmpegMedia, parseOutputFormat, parseSilence, pcmToWav, silencePcm } from './audio.ts'
 
 describe('framing (pure)', () => {

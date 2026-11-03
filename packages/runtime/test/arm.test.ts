@@ -4,7 +4,7 @@ import { afterAll, describe, expect, test } from 'bun:test'
 import { z } from 'zod'
 import { type Arm, defineWorkflow, type Json, type Middleware, type RunPreArgs, WorkflowError } from '../src/index.ts'
 import { FakeAgentHost } from '@agent-workflows/testing/agent-host'
-import { freshSchema, inspector, testRuntime } from './support/pg.ts'
+import { freshSchema, inspector, testRuntime } from '@agent-workflows/testing/pg'
 
 const db = freshSchema('arm')
 const sql = inspector(db.schema)

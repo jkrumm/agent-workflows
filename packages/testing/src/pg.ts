@@ -1,6 +1,5 @@
 import { Pool } from 'pg'
-import { Runtime, type RuntimeOptions } from '../../src/index.ts'
-import type { Logger } from '../../src/types.ts'
+import { type Logger, Runtime, type RuntimeOptions } from '@agent-workflows/runtime'
 
 /** Tests need a real Postgres; an unset URL is a loud failure, never a skip. */
 export function testPgUrl(): string {

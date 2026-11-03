@@ -12,7 +12,7 @@ import { defineWorkflow, type Runtime, type ScoreJudge, WorkflowError } from '@a
 import { FakeAgentHost } from '@agent-workflows/testing/agent-host'
 import { z } from 'zod'
 import { testPlatform } from '@agent-workflows/testing/platform'
-import { freshSchema, inspector, testRuntime } from '../../runtime/test/support/pg.ts'
+import { freshSchema, inspector, testRuntime } from '@agent-workflows/testing/pg'
 import { createCapabilityWorkflows } from '../src/capability-runs.ts'
 import { scorerJudge } from '../src/judge.ts'
 import type { HostWorkflow } from '../src/operations.ts'

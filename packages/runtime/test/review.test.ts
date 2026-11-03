@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { defineWorkflow, type Json, type Middleware, type RunPostArgs, type Runtime } from '../src/index.ts'
 import { jsonViolation } from '../src/json.ts'
 import { FakeAgentHost } from '@agent-workflows/testing/agent-host'
-import { freshSchema, inspector, testRuntime, until } from './support/pg.ts'
+import { freshSchema, inspector, testRuntime, until } from '@agent-workflows/testing/pg'
 
 const db = freshSchema('rev')
 const sql = inspector(db.schema)

@@ -14,6 +14,6 @@ export {
 export type { Json } from './json.ts'
 export { MAX_SCORE_ATTEMPTS, Runtime, SCORE_BACKOFF_MS, type RuntimeOptions, type ScoreRunOptions } from './runtime.ts'
 export { checkVerdict } from './score.ts'
-export { DEFAULT_AGENT_IDLE_MS } from './scope.ts'
+export { DEFAULT_AGENT_IDLE_MS, raceAbort } from './scope.ts'
 export type * from './types.ts'
 export { defineWorkflow } from './workflow.ts'

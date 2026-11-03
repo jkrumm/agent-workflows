@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { defineWorkflow } from '../src/index.ts'
 import type { Socket } from 'bun'
 import { IdempotencyConflict } from '../src/index.ts'
-import { freshSchema, inspector, PG_URL, testRuntime, until } from './support/pg.ts'
+import { freshSchema, inspector, PG_URL, testRuntime, until } from '@agent-workflows/testing/pg'
 
 const db = freshSchema('getrun')
 const sql = inspector(db.schema)

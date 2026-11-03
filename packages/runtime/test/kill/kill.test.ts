@@ -7,7 +7,7 @@ import { resolve } from 'node:path'
 import { Pool } from 'pg'
 import { Runtime } from '../../src/index.ts'
 import { migrate } from '../../src/migrate.ts'
-import { freshSchema, PG_URL } from '../support/pg.ts'
+import { freshSchema, PG_URL } from '@agent-workflows/testing/pg'
 import { killWorkflows } from './workflows.ts'
 import { HARNESS_SQL } from './world.ts'
 

@@ -6,7 +6,7 @@ import { defineWorkflow, InfraError, LeaseLost } from '../src/index.ts'
 import { Journal } from '../src/journal.ts'
 import { lockKey } from '../src/lease.ts'
 import { migrate } from '../src/migrate.ts'
-import { captureLogger, freshSchema, inspector, PG_URL, testRuntime, until } from './support/pg.ts'
+import { captureLogger, freshSchema, inspector, PG_URL, testRuntime, until } from '@agent-workflows/testing/pg'
 
 const db = freshSchema('infra')
 const sql = inspector(db.schema)

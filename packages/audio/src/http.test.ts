@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { rawFetch, readBodyHint, retryHintFromBody, retryHintMs } from './http.ts'
 import { createAudioScope } from './scope.ts'
-import { recordingUsage, silentLog, testConfig } from './testing/index.ts'
+import { recordingUsage, silentLog, testConfig } from '../test/support.ts'
 
 /** A scope whose fetch answers from `replies` in order and whose clock records each sleep instead of waiting. */
 function scopeWith(replies: Array<() => Response>) {

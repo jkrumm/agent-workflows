@@ -16,7 +16,7 @@ import {
   startFakeGateway,
   streamBody,
 } from '@agent-workflows/testing/gateway'
-import { caught, hasFfmpeg, realMedia, TEST_TOKEN, testDeps, toneFile } from './testing/index.ts'
+import { caught, hasFfmpeg, realMedia, TEST_TOKEN, testDeps, toneFile } from '../test/support.ts'
 import type { CallEvent } from './usage.ts'
 
 const ROUTES = audioRoutes()
@@ -99,7 +99,7 @@ describe('headers per lane', () => {
 
   /** The headers of the requests on `routes`, in order. */
   const headersOf = (...routes: FakeRoute[]) =>
-    gateway.requests.filter((r) => routes.includes(r.route)).map((r) => r.headers)
+    gateway.requests.filter((r) => r.route !== null && routes.includes(r.route)).map((r) => r.headers)
 
   function expectAttributed(headers: Headers[]) {
     expect(headers.length).toBeGreaterThan(0)
@@ -191,8 +191,8 @@ describe('headers per lane', () => {
     const withUsage = gateway.requests.filter((r) => r.headers.get('x-agw-usage') === 'caller').map((r) => r.route)
     const without = gateway.requests.filter((r) => r.headers.get('x-agw-usage') === null).map((r) => r.route)
     expect(withUsage.length).toBeGreaterThan(0)
-    expect(withUsage.every((route) => MEDIA.includes(route))).toBe(true)
-    expect(without.every((route) => TEXT.includes(route))).toBe(true)
+    expect(withUsage.every((route) => route !== null && MEDIA.includes(route))).toBe(true)
+    expect(without.every((route) => route !== null && TEXT.includes(route))).toBe(true)
     expect(
       gateway.requests.some((r) => r.headers.get('x-agw-usage') !== null && r.headers.get('x-agw-usage') !== 'caller'),
     ).toBe(false)

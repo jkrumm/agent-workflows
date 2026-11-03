@@ -18,7 +18,7 @@ import {
   startFrictionJob,
   workflowFriction,
 } from '../src/friction/index.ts'
-import { captureLogger, freshSchema, inspector, PG_URL, testRuntime, until } from '../../runtime/test/support/pg.ts'
+import { captureLogger, freshSchema, inspector, PG_URL, testRuntime, until } from '@agent-workflows/testing/pg'
 
 const db = freshSchema('hfr')
 const sql = inspector(db.schema)

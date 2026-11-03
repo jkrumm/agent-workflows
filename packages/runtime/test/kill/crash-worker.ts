@@ -1,7 +1,7 @@
 // A worker whose step takes the process down on every boot: the persisted drive cap must end the run.
 import { z } from 'zod'
 import { defineWorkflow, Runtime } from '../../src/index.ts'
-import { testPgUrl } from '../support/pg.ts'
+import { testPgUrl } from '@agent-workflows/testing/pg'
 
 export const poison = defineWorkflow({
   id: 'kill.poison',
