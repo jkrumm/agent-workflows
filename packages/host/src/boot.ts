@@ -9,7 +9,7 @@ import {
   platformMiddleware,
 } from '@agent-workflows/middleware'
 import { basePolicyDigest, DEFAULT_STATE_DIR, OpenCodeHost, OpenCodeServer } from '@agent-workflows/opencode-host'
-import { type AgentHost, type Json, type Logger, Runtime } from '@agent-workflows/runtime'
+import { type AgentHost, type AnyWorkflow, type Json, type Logger, Runtime } from '@agent-workflows/runtime'
 import { resolve } from 'node:path'
 import { Pool } from 'pg'
 import { loadAgentDefinitions } from './agents.ts'
@@ -40,8 +40,14 @@ import { scorerJudge } from './judge.ts'
 import { type CapabilityCall, ToolGate } from './tool-gate/index.ts'
 import { pgToolLedger } from './workflows/research/ledger.ts'
 import { wireEval } from './workflows/eval/index.ts'
-import { createWorkflows, fingerprintWorkflows, type HostRegistry } from './workflows/index.ts'
+import { createWorkflows, fingerprintWorkflows, type HostRegistry, hostModules } from './workflows/index.ts'
+import { discoverForeignModules, foreignWorkflows } from './workflows/registry.ts'
 
+/**
+ * The audio process's workflow tree (`AUDIO_MODULES_DIR` of `packages/audio`, which depends on this package, so it is
+ * named by path): read for its modules' eval suites and foreign workflows, never built.
+ */
+const AUDIO_MODULES_DIR = resolve(import.meta.dir, '../../audio/src/workflows')
 const FLUSH_INTERVAL_MS = 30_000
 const SHUTDOWN_GRACE_MS = 5000
 
@@ -233,6 +239,8 @@ export interface ProcessDefinition {
   /** The daily friction job: `/health` reports its state, `settings` (absent: off) start it. Only the host runs one. */
   friction?: { settings: FrictionSettings | undefined }
   workflows(base: ProcessBase): Promise<HostWorkflow[]>
+  /** Workflows another process serves, which this process starts and scores runs of but never drives (`RuntimeOptions.foreign`); read after `workflows`. */
+  foreign?(): readonly AnyWorkflow[]
   /** Read operations that start no run, served beside the run operations; built after `workflows`. */
   reads?(): Record<string, HostOperation>
   /** Wired before the runtime opens (recovery may resume a run that needs them); `start` runs once it is open. */
@@ -355,6 +363,7 @@ export async function bootProcess(
       connectionString: config.pgUrl,
       schema: config.schema,
       workflows: [...workflows.map((entry) => entry.workflow), ...capabilityWorkflows.values()],
+      foreign: [...(definition.foreign?.() ?? [])],
       host: agentHost,
       // Active learned facts follow the task message, never AGENTS.md, whose prefix stays cacheable.
       agentPrompt: async ({ agent, prompt }) => withLearnedFacts(prompt, await learnings.activeFor(agent)),
@@ -488,6 +497,7 @@ export function hostProcess(config: HostConfig, door?: ImageDoorOptions): Proces
   let imageDoor: ImageDoor | undefined
   let runtime: Runtime | undefined
   let open = () => false
+  let foreign: AnyWorkflow[] = []
   return {
     name: 'host',
     serviceName: 'agw',
@@ -531,23 +541,29 @@ export function hostProcess(config: HostConfig, door?: ImageDoorOptions): Proces
         : undefined
       usagePool?.on('error', (err) => console.warn('[agw-host] usage pool: idle connection error', err.message))
       if (usagePool) onClose(() => usagePool.end())
-      const workflows = await createWorkflows({
-        registry,
-        toolGate,
-        logger,
-        retro: { journal, learnings, gh, tracked },
-        fleet: { fleet: fleet.fleet, argo: fleet.argo, purposeOf: pgRunPurpose(readPool, base.schema) },
-        research: { ledger: pgToolLedger(ledgerPool, base.schema) },
-        costHistory: {
-          labelStepCosts: pgLabelStepCosts(readPool, base.schema),
-          auto: evalMineAutoPorts({
-            journal: readPool,
-            schema: base.schema,
-            usage: usagePool,
-            gatewayUrl: env.AGW_GATEWAY_URL,
-          }),
+      // The audio process's suites and scorers: `agw eval run|compare` replay its workflows, which it drives.
+      const elsewhere = await discoverForeignModules(AUDIO_MODULES_DIR)
+      foreign = foreignWorkflows(elsewhere)
+      const workflows = await createWorkflows(
+        {
+          registry,
+          toolGate,
+          logger,
+          retro: { journal, learnings, gh, tracked },
+          fleet: { fleet: fleet.fleet, argo: fleet.argo, purposeOf: pgRunPurpose(readPool, base.schema) },
+          research: { ledger: pgToolLedger(ledgerPool, base.schema) },
+          costHistory: {
+            labelStepCosts: pgLabelStepCosts(readPool, base.schema),
+            auto: evalMineAutoPorts({
+              journal: readPool,
+              schema: base.schema,
+              usage: usagePool,
+              gatewayUrl: env.AGW_GATEWAY_URL,
+            }),
+          },
         },
-      })
+        [...(await hostModules()), ...elsewhere],
+      )
       if (!door) return workflows
       imageDoor = createImageDoor({
         options: door,
@@ -569,10 +585,11 @@ export function hostProcess(config: HostConfig, door?: ImageDoorOptions): Proces
       const mounted = imageDoor
       return mounted ? [(request, url, server) => mounted.route(request, url, server)] : []
     },
+    foreign: () => foreign,
     reads: () => (fleet ? fleetOperations(fleet.fleet) : {}),
     jobs({ runtime, workflows, env, onClose, logger }) {
       // Eval runs reach the runtime before it opens (recovery may resume one); drift scores sampled production runs.
-      const evalJobs = wireEval({ runtime, workflows: [...workflows], env })
+      const evalJobs = wireEval({ runtime, workflows: [...workflows], foreign, env })
       onClose(() => evalJobs.close())
       return {
         start() {

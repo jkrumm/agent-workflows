@@ -40,11 +40,13 @@ export interface EvalWiring {
 
 /**
  * Binds the eval workflows among `workflows` to the runtime (before `runtime.open()`: recovery may resume an eval run
- * at once) with the workflows they replay, and builds the drift job (`AGW_DRIFT_RATE`, `AGW_DRIFT_INTERVAL_S`).
+ * at once) with the workflows they replay (`workflows` and `foreign`), and builds the drift job (`AGW_DRIFT_RATE`, `AGW_DRIFT_INTERVAL_S`).
  */
 export function wireEval(options: {
   runtime: EvalRuntime & Pick<Runtime, 'driftCandidates'>
   workflows: HostWorkflow[]
+  /** Workflows another process serves (the runtime's `foreign`): replayed and scored here, driven there. */
+  foreign?: readonly AnyWorkflow[]
   env?: Record<string, string | undefined>
   logger?: Logger
 }): EvalWiring {
@@ -60,6 +62,7 @@ export function wireEval(options: {
     roots.add(slot.tmpRoot)
     for (const other of options.workflows)
       if (other.workflow.scorer) slot.targets.set(other.workflow.id, other.workflow)
+    for (const other of options.foreign ?? []) if (other.scorer) slot.targets.set(other.id, other)
   }
   const drift = new DriftJob(options.runtime, driftOptionsFromEnv(options.env ?? process.env), logger)
   // Case trees a cancel past its settle or a killed process left behind: swept at start and every hour, one sweep at

@@ -1,10 +1,10 @@
 import { join } from 'node:path'
 import type { HostDeps } from '../../../../host/src/workflows/index.ts'
-import { defineWorkflowModule } from '../../../../host/src/workflows/registry.ts'
+import { defineWorkflowModule, foreignOf } from '../../../../host/src/workflows/registry.ts'
 import { plainSuite, type Suite } from '../../../../host/src/workflows/suite.ts'
 import { brainCapabilities, brainPort } from './brain.ts'
 import { postgresJournal, postgresHistory, type Queryable } from './history.ts'
-import { createPodcastWorkflow, type PodcastDeps } from './index.ts'
+import { createPodcastWorkflow, PODCAST_SHELL, type PodcastDeps } from './index.ts'
 import { researchClient, researchClientFromEnv } from './research-client.ts'
 
 // The `podcast` workflow's registration in the audio process's workflow tree (host `workflows/registry.ts`). The
@@ -28,6 +28,7 @@ export default defineWorkflowModule({
   id: 'podcast',
   phase: 'last',
   suite: podcastSuite,
+  foreign: () => [foreignOf(PODCAST_SHELL)],
   create(deps, { peers }) {
     const { journal } = deps as PodcastModuleDeps
     if (!journal) throw new Error('podcast module: the process must pass `journal` ({ db, schema }) in its deps')

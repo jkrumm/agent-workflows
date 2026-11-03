@@ -45,6 +45,12 @@ export type RuntimeOptions = {
   schema?: string
   /** Every workflow this process may drive; recovery only claims runs of these. */
   workflows: AnyWorkflow[]
+  /**
+   * Workflows another process serves, known here to `start` a run of (the same object) and to `scoreRun` it with their
+   * scorer, and nothing else: never claimed, leased, recovered, redelivered or driven here, and not in `driftCandidates`.
+   * The process that serves the workflow drives the run from the shared journal. An id in both lists is an error.
+   */
+  foreign?: AnyWorkflow[]
   host?: AgentHost
   /**
    * Final say on the task message of an agent step, called once per attempt right before the session is opened or
@@ -125,6 +131,7 @@ export class Runtime {
   private readonly pool: Pool
   private readonly leases: LeasePool
   private readonly registry = new Map<string, AnyWorkflow>()
+  private readonly foreign = new Map<string, AnyWorkflow>()
   private readonly middleware: Middleware[]
   private readonly logger: Logger
   private readonly host: AgentHost | null
@@ -152,6 +159,10 @@ export class Runtime {
     this.schema = options.schema ?? 'agw'
     assertSchemaName(this.schema)
     for (const wf of options.workflows) this.register(wf)
+    for (const wf of options.foreign ?? []) {
+      if (this.registry.has(wf.id) || this.foreign.has(wf.id)) throw new Error(`workflow ${wf.id} is registered twice`)
+      this.foreign.set(wf.id, wf)
+    }
     this.middleware = options.middleware ?? []
     this.logger = options.logger ?? consoleLogger
     this.host = options.host ?? null
@@ -223,7 +234,8 @@ export class Runtime {
     options: StartOptions,
   ): Promise<{ runId: string }> {
     if (!options.purpose) throw new Error('start: purpose is required')
-    this.register(workflow)
+    const foreign = this.foreign.get(workflow.id) === workflow
+    if (!foreign) this.register(workflow)
     const parsed = workflow.input.safeParse(input)
     if (!parsed.success) {
       throw new WorkflowError('invalid_input', `${workflow.id}: ${z.prettifyError(parsed.error)}`)
@@ -260,7 +272,8 @@ export class Runtime {
     if (runId !== id && options.idempotencyKey && (await this.journal.inputHashOf(runId)) !== inputHash) {
       throw new IdempotencyConflict(workflow.id, options.idempotencyKey, runId)
     }
-    if (this.opened && !this.closing) this.kick(runId)
+    // A foreign run is the serving process's to claim: this one never takes its lease.
+    if (this.opened && !this.closing && !foreign) this.kick(runId)
     return { runId }
   }
 
@@ -366,7 +379,7 @@ export class Runtime {
     const run = await this.journal.scoreTarget(runId)
     if (!run) throw new Error(`run ${runId} not found`)
     if (run.status !== 'done' && run.status !== 'failed') return null
-    const workflow = this.registry.get(run.workflow)
+    const workflow = this.registry.get(run.workflow) ?? this.foreign.get(run.workflow)
     if (!workflow?.scorer) throw new Error(`workflow ${run.workflow} has no scorer`)
     const { scorer } = workflow
     // Drift scores a run once; a scorer error is scored again only by another scorer version.
@@ -537,7 +550,8 @@ export class Runtime {
 
   private register(workflow: AnyWorkflow) {
     const known = this.registry.get(workflow.id)
-    if (known && known !== workflow) throw new Error(`workflow ${workflow.id} is registered twice`)
+    if ((known && known !== workflow) || this.foreign.has(workflow.id))
+      throw new Error(`workflow ${workflow.id} is registered twice`)
     this.registry.set(workflow.id, workflow)
   }
 

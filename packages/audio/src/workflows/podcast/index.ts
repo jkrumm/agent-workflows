@@ -66,6 +66,15 @@ import { EMPTY_DOSSIER } from './types.ts'
 import { mapConcurrent } from './vocab.ts'
 
 export const PODCAST_VERSION = '2026-11-03.1'
+
+/** What the workflow is apart from its body: the host process holds it to start and score eval runs (`foreignOf`). */
+export const PODCAST_SHELL = {
+  id: 'podcast',
+  version: PODCAST_VERSION,
+  input: PodcastInput,
+  output: PodcastOutput,
+  scorer: podcastScorer,
+} as const
 export { ProduceInput, type ProduceInputValue } from './produce-input.ts'
 export { PodcastInput, PodcastOutput } from './schema.ts'
 
@@ -615,11 +624,7 @@ export function createPodcastWorkflow(deps: PodcastDeps) {
   }
 
   return defineWorkflow({
-    id: 'podcast',
-    version: PODCAST_VERSION,
-    input: PodcastInput,
-    output: PodcastOutput,
-    scorer: podcastScorer,
+    ...PODCAST_SHELL,
     // Legacy ran one episode at a time (one queue); the produce stage's synth and mastering are the heavy part.
     concurrency: 1,
     run: runWithNotice,
