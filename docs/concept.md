@@ -614,3 +614,13 @@ One entry per phase: what we learned, what changed on this page, and why.
   extra sessions (two) on a shared mini.
 - **Does the page hold?** Pending the owner: review v3 would be a concept version note when signed.
 
+### Gateway Wave 8 — Ground truth, 2026-11-03
+
+- **Learned.** Two judges from different vendors agreed at κ 0.93 [0.85–1.00] on 100 pairs, so one judge suffices and
+  the owner's labels were not needed. Credit, not tooling, limits the case count (~10–17 accepted cases a day).
+  Eval commands run without `AGW_PURPOSE=eval` spent production credit until eval became the default purpose.
+- **Changed.** Release `360e5f8`: ground truth by LLM consensus (labeller c, 2 of 3; judge b), the owner pack deleted,
+  43 bug cases and 100 controls; `agw agents` reads the factory's fleet view.
+- **Process.** Plan no owner work beyond minutes; a human check is a small sample only when an automated bar fails.
+- **Does the page hold?** Yes; the ground-truth limit (LLM consensus, no human check) is stated in every report.
+

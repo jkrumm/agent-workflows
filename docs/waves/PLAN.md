@@ -223,9 +223,9 @@ not interactive factory sessions. Runs after Wave 16, before Wave 8 resumes; it 
   review ceiling, v1 on credit as fallback. **Waves 9–11 are rewritten only after the owner signs**; Wave 8 (ground
   truth) runs meanwhile, it serves either outcome.
 
-## Wave 8 — Ground truth            <!-- status: active -->
+## Wave 8 — Ground truth            <!-- status: done 2026-11-03, release 360e5f8 -->
 
-- [ ] **`agw agents` reads the factory's fleet view** (mother, 2026-11-03, asked by the software-factory lead): its
+- [x] **`agw agents` reads the factory's fleet view** (mother, 2026-11-03, asked by the software-factory lead): its
   collectors go; it reads `factory fleet --format json` (under `secrets-run`; shape `software-factory/packages/contract/src/fleet.ts`)
   and keeps only what it adds (recommendations, Max quota) for Hermes, brain and Argo. The factory is the one producer of
   agent state: agw's and dotfiles' AGENTS.md (and `dotfiles/docs/herdr-core.md`) say so in the same change.
@@ -235,15 +235,21 @@ not interactive factory sessions. Runs after Wave 16, before Wave 8 resumes; it 
   cross-vendor labeler calls per candidate, clean controls, the `dev`/`test` split. Cases go only under `$AGW_EVAL_DIR`.
 - [x] `eval.judge` on its own pinned route (judge, scorer v3 done; `agw eval import` done in Wave 16), scorer v3 (recall, false alarms, noise, severity calibration), and `agw eval
   import` for an external arm's findings. The token-overlap matcher only preselects pairs.
-- [ ] **No owner labelling (owner, 2026-11-02 21:00: 155 items is too much friction).** Ground truth is validated
+- [x] **No owner labelling (owner, 2026-11-02 21:00: 155 items is too much friction).** Ground truth is validated
   without the owner: a third labeller on another vendor breaks the two labellers' disagreements; a second judge on
   another vendor replaces the owner's judge labels, and judge κ is read between the two judges (bar κ ≥ 0.8, else
   disagreements score `unclear`). Accepted cases need both labellers (or 2 of 3) to agree. The limit (LLM consensus,
   no human check) is stated in every report. The owner pack and `agw eval gt pack|ingest` go (no shim).
-- [ ] Target 200 bug cases and 100 controls. Seeded defects only below 150.
+- [x] Target 200 bug cases and 100 controls: 43 bug cases (10 `dev`, 33 `test`) and 100 controls at close; the rest by
+  the daily mining job (Wave 15). Seeded defects only below 150.
 **Left behind (pre-session):** close-out in `docs/waves/handoff/lead.md` at `e637fcc`, release `e51fc17`. Pack: 35 accepted
   + 20 rejected cases, 100 judge pairs (27 positive): `me` eval credit ran out ($12.05 credit, $3.32 IU spent). After the
   session: ingest, the bars, then ~165 more accepted cases ≈ $49 ($13 IU, over the $20 IU line: the mother decides).
+**Left behind:** close-out in `docs/waves/handoff/lead.md` at `0826cf4`. Judge κ 0.93 [0.85–1.00] on 100 pairs: one judge
+  suffices. ~10–17 cases a day on credit (~9–15 days to 200); the IU $20 line falls at ~135–200 cases (mother decides
+  past it). `agw agents`: `ahead`/`behind` 0 and three fields null from the factory's view; `overview.classify`'s prompt
+  still names transcript excerpts. Labeller c costs ~2.5× b per call (retries?). Flaky `review.test.ts` "ocr is handed
+  the gateway…" (env leak). 0.52 USD of eval ran as prod before #125 made eval the default purpose.
 
 ## Wave 7b — Usage view v7 build (Argo)            <!-- status: done 2026-11-03, argo 6702133, agw f5b3df1 -->
 
@@ -256,6 +262,22 @@ not interactive factory sessions. Runs after Wave 16, before Wave 8 resumes; it 
   duplicates still count upstream (only `/usage/demand` drops them); route fallback reads `unknown` from OpenCode and
   ocr; insights are template-only, the period detectors start on 11-09; decision 5 (production pacing) and me2 are the
   owner's.
+
+## Wave 15 — Coverage and debt            <!-- status: active -->
+
+Pulled forward 2026-11-03 while the owner reads review v3 (Waves 9–11 wait for the sign-off).
+
+- [ ] **Daily mining job:** `agw eval mine review` on credit each night with `purpose=eval`, sized to
+  `evalAvailableUsd`, until 200 bug cases; IU spend capped below the $20 line; it reports its count. A LaunchAgent
+  per this repo's deploy rules (or the host's scheduler if agw has one); off once 200 are reached.
+- [ ] **Compaction overflow** (from Wave 14): an output limit for the compaction summary, or a context budget per
+  agent step, so a long exploration ends with a result instead of a failed step.
+- [ ] Eval cases and a scorer for the uncovered workflows (narrative, overview, prose-polish, image-icon, retrospective,
+  podcast) and scorers for speech and transcriptions.
+- [ ] Test fakes consolidated into `packages/testing` (they live in four packages today).
+- [ ] Dead code: `IU_ANTHROPIC_BASE` in `packages/opencode-host/src/server.ts`, Claude leftovers the tiers make obsolete.
+- [ ] Docs: concept notes and `otel.ts` comments brought to the code.
+- [ ] Small items from Wave 8: `overview.classify`'s stale prompt lines; labeller c's retry cost; the flaky ocr env test.
 
 ## Wave 9 — Baseline            <!-- status: pending -->
 
@@ -313,17 +335,8 @@ Provisional picks (2026-10-31, from cost, wall time, failure modes and the AA in
 
 ## Wave 14 — Harness robustness            <!-- status: pending -->
 
-- Compaction overflow: an output limit for the compaction summary, or a context budget per agent step, so a long
-  exploration ends with a result instead of a failed step.
+- Compaction overflow: moved to Wave 15 (2026-11-03).
 - The runaway cap (wall 10x p95, cost 10x p95), reviewed against the deep reviews it has killed and against v2's new
   p95.
 - Review convergence sub-eval: a fix loop over 20 `test` cases (review, fix, diff-only re-review) measuring
   rounds-to-pass and the share of late findings on old code, next to rounds-to-pass from real dispositions.
-
-## Wave 15 — Coverage and debt            <!-- status: pending -->
-
-- Eval cases and a scorer for the uncovered workflows (narrative, overview, prose-polish, image-icon, retrospective,
-  podcast) and scorers for speech and transcriptions.
-- Test fakes consolidated into `packages/testing` (they live in four packages today).
-- Dead code: `IU_ANTHROPIC_BASE` in `packages/opencode-host/src/server.ts`, Claude leftovers the tiers make obsolete.
-- Docs: concept notes and `otel.ts` comments brought to the code.

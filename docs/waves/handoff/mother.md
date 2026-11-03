@@ -166,9 +166,10 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
   it asks again: it belongs in the factory's plan or a later agw wave, not Waves 4–13 as written.
 
 ## Next action
-- Wave 8 runs meanwhile (marked active; Wave 17 marked done with the sign-off pending in its Left behind).
+- Wave 8 done (`360e5f8`, 43 cases + 100 controls). Wave 15 (coverage and debt, the daily mining job, compaction
+  overflow) pulled forward and active while the owner reads review v3.
 - On the owner's sign-off of review v3 (5 points in lead.md `d7bdc76`): rewrite Waves 9–11 from the close-out's proposal
-  (Wave 12 loses review's seats), Wave 9 waits for both the sign-off and Wave 8. Cross-repo asks (dotfiles agents + `/review`, software-factory `reviewer` role) go into the waves.
+  (Wave 12 loses review's seats), Wave 9 waits for the sign-off (and Wave 15 to close). Cross-repo asks (dotfiles agents + `/review`, software-factory `reviewer` role) go into the waves.
 - Owner changes to the five points: fold them into the rewrite; a rejected pick goes back to a short Wave 17 follow-up.
 - Still owed by the owner: me2 keys and expiry day (+$100 a cycle; eval credit is the bottleneck now).
 - Wake-loop: the factory re-fires `workers done` while the lead idles on shells. Answer with a blocking ~9.5-min poll on
