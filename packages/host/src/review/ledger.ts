@@ -327,6 +327,20 @@ export function reviewLedger(pool: ReviewPool, schema: string) {
       return rows.map(toJob)
     },
 
+    /** The ids of the open important findings of these threads, by thread. */
+    async openImportant(repo: string, threads: string[]): Promise<Map<string, string[]>> {
+      const open = new Map<string, string[]>()
+      if (threads.length === 0) return open
+      const { rows } = await pool.query(
+        `select thread, id from ${findings}
+          where repo = $1 and thread = any($2::text[]) and tag = 'important' and disposition = 'open' order by id`,
+        [repo, threads],
+      )
+      for (const r of rows as { thread: string; id: string }[])
+        open.set(r.thread, [...(open.get(r.thread) ?? []), r.id])
+      return open
+    },
+
     /** Every submitted (thread, round, tier) of these threads: a thread's cover tier is the max up to a round. */
     async threadTiers(repo: string, threads: string[]): Promise<{ thread: string; round: number; tier: Tier }[]> {
       if (threads.length === 0) return []

@@ -279,6 +279,9 @@ export const CoveredOutput = z.object({
       required: TIER,
       rule: z.string(),
       coveredBy: z.string().nullable(),
+      /** Set when a job reviewed the commit at its tier but its thread still has open important findings. */
+      reason: z.literal('open-important').optional(),
+      findings: z.array(z.string()).optional(),
     }),
   ),
   uncovered: z.array(z.string()),

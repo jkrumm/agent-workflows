@@ -479,6 +479,46 @@ describe('covered', () => {
     expect(deep.covered).toBe(false)
   })
 
+  describe('open important findings', () => {
+    const reviewed = async (findings: { tag: 'important' | 'nit'; file: string; message: string }[]) => {
+      const s = service()
+      const root = repo({ 'REVIEW.md': '---\nnone: [docs/**]\n---\n', 'src/a.ts': lines(2) })
+      const start = git(root, 'rev-parse', 'HEAD')
+      write(root, 'src/a.ts', lines(3))
+      const job = await ready(s.prepare({ cwd: root }))
+      await s.submit({ jobId: job.jobId, attempt: 1, reply: fakeReviewer(job.jobDir, findings) })
+      const c1 = commit(root, {}, 'commit the reviewed tree')
+      return { s, root, start, job, c1 }
+    }
+
+    test('an open important finding leaves the commit uncovered, naming the finding', async () => {
+      const { s, root, start, job, c1 } = await reviewed([{ tag: 'important', file: 'src/a.ts', message: 'Leaks.' }])
+      const out = await s.covered({ cwd: root, range: `${start}..HEAD` })
+      expect(out).toMatchObject({ covered: false, uncovered: [c1] })
+      expect(out.commits[0]).toMatchObject({
+        coveredBy: null,
+        reason: 'open-important',
+        findings: [`${job.thread}-1`],
+      })
+    })
+
+    test('a disposed important finding covers the commit again', async () => {
+      const { s, root, start, job } = await reviewed([{ tag: 'important', file: 'src/a.ts', message: 'Leaks.' }])
+      await s.dispose({ jobId: job.jobId, findingId: `${job.thread}-1`, disposition: 'wrong', reason: 'unreachable' })
+      const out = await s.covered({ cwd: root, range: `${start}..HEAD` })
+      expect(out.covered).toBe(true)
+      expect(out.commits[0]).toMatchObject({ coveredBy: job.jobId })
+      expect(out.commits[0]?.reason).toBeUndefined()
+    })
+
+    test('an open nit does not block coverage', async () => {
+      const { s, root, start, job } = await reviewed([{ tag: 'nit', file: 'src/a.ts', message: 'Rename.' }])
+      const out = await s.covered({ cwd: root, range: `${start}..HEAD` })
+      expect(out.covered).toBe(true)
+      expect(out.commits[0]).toMatchObject({ coveredBy: job.jobId })
+    })
+  })
+
   test('route answers the decision alone', async () => {
     const root = repo({ 'src/a.ts': lines(2) })
     commit(root, { 'src/a.ts': lines(3) })

@@ -81,7 +81,10 @@ account (no account is its own bucket) since UTC midnight, not abandoned, the th
 For each first-parent commit `c` of the range: required = `routeRange(c^, c)` (none → nothing needed). Covered by a
 submitted job `J` of the repo from the last 30 days when `J.base` ≤ `c^`, `J.head` ≥ `c` or `J.head_tree == c^{tree}`
 (a snapshot later committed as is) or `routeRange(J.head, c)` is none, and the thread's max tier up to `J.round` ≥
-required (round 2+ routes only its fix diff).
+required (round 2+ routes only its fix diff), **and** the thread has no open `important` finding (`disposition =
+open`; `nit` and `pre-existing` never block). A fixed, wrong, intentional or irrelevant finding is settled and covers
+again; a `fixed` one re-reported is reopened by submit. A commit reviewed at its tier but blocked this way is uncovered
+with `reason: 'open-important'` and the blocking `findings` ids.
 
 ## Wave 10
 

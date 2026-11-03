@@ -31,6 +31,7 @@ export async function covered(ctx: ReviewContext, input: { cwd: string; range: s
   const since = new Date(ctx.now().getTime() - CANDIDATE_DAYS * 86_400_000)
   const candidates = await ledger.submittedSince(repo, since)
   const tiers = await ledger.threadTiers(repo, [...new Set(candidates.map((j) => j.thread))])
+  const openImportant = await ledger.openImportant(repo, [...new Set(candidates.map((j) => j.thread))])
   const coverTier = (job: Job): Tier =>
     tiers
       .filter((t) => t.thread === job.thread && t.round <= job.round)
@@ -58,6 +59,7 @@ export async function covered(ctx: ReviewContext, input: { cwd: string; range: s
       continue
     }
     let coveredBy: string | null = null
+    const blocking = new Set<string>()
     for (const job of candidates) {
       if (!atLeast(coverTier(job), required.tier)) continue
       if (!(await ancestor(job.base, parent))) continue
@@ -66,12 +68,24 @@ export async function covered(ctx: ReviewContext, input: { cwd: string; range: s
         (await ancestor(sha, job.head)) ||
         ((await exists(job.head)) &&
           (await routeRange({ git, repo: root, base: job.head, head: sha }).catch(() => null))?.tier === 'none')
-      if (headCovers) {
-        coveredBy = job.id
-        break
+      if (!headCovers) continue
+      const open = openImportant.get(job.thread)
+      if (open) {
+        for (const id of open) blocking.add(id)
+        continue
       }
+      coveredBy = job.id
+      break
     }
-    commits.push({ sha, subject, required: required.tier, rule: required.rule, coveredBy })
+    const reason = coveredBy === null && blocking.size > 0
+    commits.push({
+      sha,
+      subject,
+      required: required.tier,
+      rule: required.rule,
+      coveredBy,
+      ...(reason ? { reason: 'open-important' as const, findings: [...blocking].sort() } : {}),
+    })
   }
   const uncovered = commits.filter((c) => c.required !== 'none' && c.coveredBy === null).map((c) => c.sha)
   return { covered: uncovered.length === 0, commits, uncovered }
