@@ -15,6 +15,7 @@ import type { HostWorkflow } from '../../operations.ts'
 import { keepGate } from '../prose/gate.ts'
 import { detectFormat, detectLanguage, lintProse } from '../prose/lint.ts'
 import { checkVoiceGuide } from '../prose/voice.ts'
+import { prosePolishScorer } from './scorer.ts'
 import {
   ProsePolishInput,
   type ProsePolishInputValue,
@@ -23,7 +24,7 @@ import {
 } from './schema.ts'
 
 export const PROSE_POLISH_WORKFLOW_ID = 'prose-polish'
-export const PROSE_POLISH_VERSION = '2026-10-29.2'
+export const PROSE_POLISH_VERSION = '2026-11-03.1'
 
 /** The two capabilities the polish calls; any registry that has `prose.critique` and `prose.write` fits. */
 export type PolishCaller = {
@@ -158,6 +159,7 @@ export function createProsePolish(deps: PolishDeps): HostWorkflow {
     version: PROSE_POLISH_VERSION,
     input: ProsePolishInput,
     output: ProsePolishOutput,
+    scorer: prosePolishScorer,
     run: (ctx, input) => polishDraft(ctx, input, deps),
   })
 
