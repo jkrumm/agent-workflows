@@ -155,8 +155,9 @@ function fakeReview(fates: Record<string, Fate>) {
       }
     },
     async cancel(input: Parameters<RecallReview['cancel']>[0]) {
-      cancels.push(input.jobId)
       const job = jobs.get(input.jobId)
+      // by clone, not job id: cases run concurrently, so ids follow request order, not case order
+      cancels.push(job?.cwd ?? input.jobId)
       if (job?.fate.kind === 'gave-up-then-submit') {
         // the reviewer submitted between the status and the cancel: cancel refuses a job that is not prepared
         job.fate = { kind: 'submit', findings: [] }
@@ -380,7 +381,7 @@ describe('agw eval recall', () => {
       'b1:unscored:review gave up: ended',
       'b2:scored:null',
     ])
-    expect(review.cancels).toEqual(['rv_1']) // only the wedged job; the held one was never cancelled
+    expect(review.cancels).toEqual(['/clone/b1']) // only the wedged job; the held one was never cancelled
   })
 
   test('a cancel refused because the job was submitted meanwhile re-polls instead of failing the case', async () => {
