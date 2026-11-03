@@ -129,7 +129,7 @@ processes and checks that rule. Settings reach them as closures over the process
 
 | Command | Method, path | Does |
 |-|-|-|
-| `agw agents [--text] [--cols N] [--color]` | `POST /agents` | the agents overview, `{data}` (the payload Argo's `/agents/overview` ingests; formerly agent-gateway's `GET /api/overview` under `data`, minus the retired dispatch fields) or `{text}` for `watch` (`--format plain` prints it). A client of the factory's fleet view (`factory fleet --format json`); agw adds the recommendations and the Max quota. A factory that is down or exits non-zero is no projects and a warning naming the exit code and stderr's first line, the quota still present |
+| `agw agents [--text] [--cols N] [--color]` | `POST /agents` | the agents overview, `{data}` (the payload Argo's `/agents/overview` ingests; formerly agent-gateway's `GET /api/overview` under `data`, minus the retired dispatch fields) or `{text}` for `watch` (`--format plain` prints it). A client of the factory's fleet view (`factory fleet --format json`); agw adds the recommendations and the Max quota. A factory that is down or exits non-zero is no projects and a warning naming the exit code and stderr's first line, the quota still present (the Argo push is skipped then, and an `overview` run fails, rather than act on an empty fleet) |
 | `agw quota` | `GET /quota` | `{data, accounts}`: the last `iu` report and every account's quota (the CLI numbers, overridden per window by a newer report, `stale` after 6 h) |
 | `agw quota-report --five-hour-pct N [--five-hour-mins-left N] [--seven-day-pct N] [--account ID]` | `POST /quota/report` | the statusline's report, kept in memory (`account` default `iu`) |
 

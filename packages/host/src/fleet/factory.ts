@@ -9,7 +9,7 @@ import { helperEnv, killTree } from '../workflows/review/exec.ts'
 
 const FACTORY_TIMEOUT_MS = 10_000
 const DEFAULT_STALE_HOURS = 24
-const MAX_STDOUT_BYTES = 16 * 1024 * 1024
+const MAX_STDOUT_BYTES = 16 * 1024 * 1024 // the real fleet view is about 140 KB
 
 export interface CommandResult {
   stdout: string
@@ -17,6 +17,8 @@ export interface CommandResult {
   /** `null` when the process never ran to an exit: a spawn error or a timeout. */
   exitCode: number | null
   timedOut: boolean
+  /** The child printed more than the byte budget and was killed; `stdout` holds nothing. */
+  overflow?: boolean
   /** The spawn error's message, when there was one. */
   error?: string
 }
@@ -28,7 +30,7 @@ export interface CommandResult {
  */
 export type RunCommand = (
   cmd: string[],
-  options?: { timeoutMs?: number; extraEnv?: Record<string, string> },
+  options?: { timeoutMs?: number; maxStdoutBytes?: number; extraEnv?: Record<string, string> },
 ) => Promise<CommandResult>
 
 export function commandRunner(env: Record<string, string | undefined> = process.env): RunCommand {
@@ -52,12 +54,29 @@ export function commandRunner(env: Record<string, string | undefined> = process.
       killTree(proc, 'KILL')
     }, options.timeoutMs ?? FACTORY_TIMEOUT_MS)
     try {
+      // stdout is counted per chunk against the byte budget: a runaway child is killed, never buffered whole.
+      const budget = options.maxStdoutBytes ?? MAX_STDOUT_BYTES
+      let overflow = false
+      const readStdout = async (): Promise<string> => {
+        const chunks: Uint8Array[] = []
+        let bytes = 0
+        for await (const chunk of proc.stdout) {
+          bytes += chunk.byteLength
+          if (bytes > budget) {
+            overflow = true
+            killTree(proc, 'KILL')
+            return ''
+          }
+          chunks.push(chunk)
+        }
+        return Buffer.concat(chunks).toString('utf8')
+      }
       const [stdout, stderr, exitCode] = await Promise.all([
-        new Response(proc.stdout).text(),
+        readStdout(),
         new Response(proc.stderr).text(),
         proc.exited,
       ])
-      return { stdout, stderr, exitCode: timedOut ? null : exitCode, timedOut }
+      return { stdout, stderr, exitCode: timedOut || overflow ? null : exitCode, timedOut, overflow }
     } catch (error) {
       return { stdout: '', stderr: '', exitCode: null, timedOut, error: String(error) }
     } finally {
@@ -89,7 +108,8 @@ export function fleetConfig(env: Env, home = homedir()): FleetConfig {
 
 const FACTORY_SESSION = z.object({
   id: z.string(),
-  state: z.enum(['starting', 'working', 'idle', 'waiting', 'walled', 'blocked', 'stuck']),
+  // A string, not the factory's enum: a state the factory adds degrades that one row to `unknown`, never the whole fleet.
+  state: z.string(),
   hc: z.string().nullable().default(null),
   wait: z.string().nullable().default(null),
   account: z.string().nullable().default(null),
@@ -107,23 +127,21 @@ const FACTORY_COMMIT = z.object({ sha: z.string(), subject: z.string(), at: z.st
 
 export const FACTORY_FLEET = z.object({
   asks: z.array(z.object({ id: z.string(), kind: z.string(), text: z.string(), at: z.string() })).default([]),
-  repos: z
-    .array(
-      z.object({
-        name: z.string(),
-        space: z.string(),
-        git: z
-          .object({
-            branch: z.string().nullable().default(null),
-            dirty: z.boolean().default(false),
-            lastCommit: FACTORY_COMMIT.nullable().default(null),
-          })
-          .nullable()
-          .default(null),
-        sessions: z.array(FACTORY_SESSION).default([]),
-      }),
-    )
-    .default([]),
+  repos: z.array(
+    z.object({
+      name: z.string(),
+      space: z.string(),
+      git: z
+        .object({
+          branch: z.string().nullable().default(null),
+          dirty: z.boolean().default(false),
+          lastCommit: FACTORY_COMMIT.nullable().default(null),
+        })
+        .nullable()
+        .default(null),
+      sessions: z.array(FACTORY_SESSION).default([]),
+    }),
+  ),
   unplaced: z.array(FACTORY_SESSION).default([]),
   errors: z.array(z.string()).default([]),
 })
@@ -135,6 +153,7 @@ const firstLine = (text: string) => text.trim().split('\n')[0]?.trim() ?? ''
 
 /** A factory failure as one warning: the exit code and the first line of stderr, or the spawn error / timeout. */
 export function failureWarning(result: CommandResult, timeoutMs: number): string {
+  if (result.overflow) return 'factory fleet failed: output over the size limit'
   if (result.timedOut) return `factory fleet failed: timed out after ${Math.round(timeoutMs / 1000)} s`
   if (result.exitCode === null) return `factory fleet failed: ${firstLine(result.error ?? '') || 'could not be run'}`
   const detail = firstLine(result.stderr)
@@ -149,16 +168,20 @@ export async function readFactoryFleet(
   run: RunCommand,
   config: Pick<FleetConfig, 'factoryBin'>,
   env: Env,
-  timeoutMs = FACTORY_TIMEOUT_MS,
+  limits: { timeoutMs?: number; maxBytes?: number } = {},
 ): Promise<FactoryRead> {
+  const timeoutMs = limits.timeoutMs ?? FACTORY_TIMEOUT_MS
   const extraEnv: Record<string, string> = {}
   for (const name of ['FACTORY_TOKEN', 'FACTORY_URL']) {
     const value = env[name]
     if (value) extraEnv[name] = value
   }
-  const result = await run([config.factoryBin, 'fleet', '--format', 'json'], { timeoutMs, extraEnv })
+  const result = await run([config.factoryBin, 'fleet', '--format', 'json'], {
+    timeoutMs,
+    maxStdoutBytes: limits.maxBytes,
+    extraEnv,
+  })
   if (result.exitCode !== 0) return { ok: false, warning: failureWarning(result, timeoutMs) }
-  if (result.stdout.length > MAX_STDOUT_BYTES) return { ok: false, warning: 'factory fleet failed: output too large' }
   let raw: unknown
   try {
     raw = JSON.parse(result.stdout)

@@ -71,6 +71,11 @@ describe('agent state from the factory session', () => {
     expect(derive({ state, hc: null })).toBe(expected)
   })
 
+  test('a state the factory adds is unknown: that one row degrades, never the fleet', () => {
+    expect(derive({ state: 'hibernating', hc: null })).toBe('unknown')
+    expect(derive({ state: 'hibernating', hc: 'blocked' })).toBe('needs_you') // hc's own word still counts
+  })
+
   test('hc done is done; hc blocked needs the owner even when the factory says idle', () => {
     expect(derive({ state: 'idle', hc: 'done' })).toBe('done')
     expect(derive({ state: 'idle', hc: 'blocked' })).toBe('needs_you')
@@ -80,6 +85,11 @@ describe('agent state from the factory session', () => {
     expect(derive({ state: 'waiting', hc: 'done', wait: 'workers' })).toBe('done')
     expect(derive({ state: 'waiting', hc: 'idle', wait: 'deploy' })).toBe('idle')
     expect(derive({ state: 'waiting', hc: 'idle', wait: 'owner' })).toBe('needs_you')
+  })
+
+  test('hc blocked wins over a managed wait: a terminal stuck on a permission prompt needs the owner', () => {
+    expect(derive({ state: 'waiting', hc: 'blocked', wait: 'workers' })).toBe('needs_you')
+    expect(derive({ state: 'waiting', hc: 'blocked', wait: 'deploy' })).toBe('needs_you')
   })
 
   test('idle and done go stale past the threshold; working never does', () => {
@@ -212,6 +222,33 @@ describe('mapFleet', () => {
     expect(snap.projects.flatMap((p) => p.agents.map((a) => a.id))).toEqual(['dup'])
   })
 
+  test('sessions dropped for an unsafe or a duplicate id are counted, one warning per kind', () => {
+    const snap = map(
+      fleet({
+        repos: [
+          repo('a', [session({ id: 'dup' }), session({ id: 'bad\nid' }), session({ id: 'bad2\tid' })]),
+          repo('b', [session({ id: 'dup' }), session({ id: 'dup' })]),
+        ],
+      }),
+    )
+    expect(snap.warnings).toEqual([
+      '2 factory session(s) skipped: id is not a clean single line',
+      '2 factory session(s) skipped: duplicate session id',
+    ])
+    expect(map(fleet({ repos: [repo('a', [session()])] })).warnings).toEqual([])
+  })
+
+  test('one session in a state the factory added is one unknown agent beside the others', () => {
+    const snap = map(
+      fleet({ repos: [repo('p', [session({ id: 'new', state: 'hibernating' }), session({ id: 'old' })])] }),
+    )
+    expect(snap.projects[0]?.agents.map((a) => [a.id, a.state])).toEqual([
+      ['old', 'working'],
+      ['new', 'unknown'],
+    ])
+    expect(snap.summary).toEqual({ needsYou: 0, working: 1, idle: 0, stale: 0, done: 0 })
+  })
+
   test('human asks become the human queue, newest first; other kinds do not', () => {
     const snap = map(
       fleet({
@@ -285,6 +322,17 @@ describe('readFactoryFleet', () => {
     expect(read.ok).toBe(true)
   })
 
+  test('a state the factory adds does not fail the parse', async () => {
+    const raw = fleet({ repos: [repo('p', [{ ...session(), state: 'hibernating' } as unknown as FactorySession])] })
+    const read = await readFactoryFleet(fakeRun(result({ stdout: JSON.stringify(raw) })).run, config, {})
+    expect(read.ok).toBe(true)
+  })
+
+  test('`{}` is an unexpected shape, not an empty fleet', async () => {
+    const read = await readFactoryFleet(fakeRun(result({ stdout: '{}' })).run, config, {})
+    expect(read).toEqual({ ok: false, warning: 'factory fleet failed: unexpected shape at repos' })
+  })
+
   test('exit code and the first line of stderr name the cause', async () => {
     const read = await readFactoryFleet(
       fakeRun(result({ exitCode: 3, stderr: 'FACTORY_TOKEN is not set\nusage: factory …' })).run,
@@ -343,10 +391,24 @@ describe('the real runner and a fake `factory` script', () => {
     })
   })
 
+  test('stdout is counted per chunk against a byte budget: a runaway child is killed, never buffered whole', async () => {
+    // `yes` prints forever; without the kill this read never ends
+    const read = await readFactoryFleet(commandRunner(env), { factoryBin: script('exec yes') }, env, {
+      maxBytes: 64 * 1024,
+    })
+    expect(read).toEqual({ ok: false, warning: 'factory fleet failed: output over the size limit' })
+    // output within the budget is read whole, multi-byte text included
+    const bin = script(`printf '{"repos":[{"name":"é","space":"/w/é","sessions":[]}]}'`)
+    expect(await readFactoryFleet(commandRunner(env), { factoryBin: bin }, env, { maxBytes: 1024 })).toMatchObject({
+      ok: true,
+      fleet: { repos: [{ name: 'é' }] },
+    })
+  })
+
   test('a missing binary and a hung one are warnings, the hung one killed at the timeout', async () => {
     const missing = await readFactoryFleet(commandRunner(env), { factoryBin: join(dir, 'nope') }, env)
     expect(missing).toMatchObject({ ok: false, warning: expect.stringContaining('factory fleet failed') })
-    const hung = await readFactoryFleet(commandRunner(env), { factoryBin: script('sleep 30') }, env, 200)
+    const hung = await readFactoryFleet(commandRunner(env), { factoryBin: script('sleep 30') }, env, { timeoutMs: 200 })
     expect(hung).toEqual({ ok: false, warning: 'factory fleet failed: timed out after 0 s' })
   })
 })

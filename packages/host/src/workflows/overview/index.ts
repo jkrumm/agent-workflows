@@ -20,7 +20,7 @@ export const OVERVIEW_INPUT = z.object({
 
 export interface OverviewDeps {
   registry: Pick<HostRegistry, 'call'>
-  fleet: Pick<Fleet, 'snapshot'>
+  fleet: Pick<Fleet, 'read'>
   /** Pushes the completed run to Argo; never fatal. */
   argo?: Pick<ArgoPush, 'push'>
   /**
@@ -44,20 +44,24 @@ export function createOverview(deps: OverviewDeps): HostWorkflow {
   const now = deps.now ?? Date.now
   const workflow = defineWorkflow({
     id: OVERVIEW_WORKFLOW_ID,
-    version: '2026-10-29.3',
+    version: '2026-11-03.1',
     input: OVERVIEW_INPUT,
     output: OVERVIEW_OUTPUT,
     // One run at a time is plenty: the fleet changes slower than a run takes, and the call is the only spend.
     concurrency: 1,
     async run(ctx, input) {
       const classified = await ctx.step('classify', async ({ callContext }) => {
-        const prepared = classifyInput(
-          await deps.fleet.snapshot({ fresh: true, staleAfterHours: input.staleAfterHours }),
-          {
-            maxChars: MAX_OVERVIEW_FACTS_CHARS,
-            maxAgents: MAX_OVERVIEW_AGENTS,
-          },
-        )
+        const { snapshot, unreadable } = await deps.fleet.read({
+          fresh: true,
+          staleAfterHours: input.staleAfterHours,
+        })
+        // An unreadable factory is not an empty fleet: classifying it would reconcile every verdict against nothing.
+        // The step fails with the cause, so the run is `failed` and nothing is classified or pushed.
+        if (unreadable) throw new Error(`overview cannot classify: ${unreadable}`)
+        const prepared = classifyInput(snapshot, {
+          maxChars: MAX_OVERVIEW_FACTS_CHARS,
+          maxAgents: MAX_OVERVIEW_AGENTS,
+        })
         // No agent, no call: nothing to classify, and the model would be asked for an empty list.
         const answer =
           prepared.agentIds.length === 0

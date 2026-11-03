@@ -20,7 +20,7 @@ function safeBase(url: string): boolean {
   }
 }
 
-export type ArgoPushStatus = 'ok' | 'disabled' | 'http-error' | 'network-error' | 'build-error'
+export type ArgoPushStatus = 'ok' | 'disabled' | 'skipped' | 'http-error' | 'network-error' | 'build-error'
 
 export interface ArgoPushOptions {
   /** `ARGO_URL`, the API base (it already ends in `/api`). Unset: pushing is off. */
@@ -29,8 +29,11 @@ export interface ArgoPushOptions {
   secret: string | undefined
   /** The host's `AGW_MACHINE`. */
   machine: string
-  /** The payload to post; with `overview`, the one just completed run stands in for the stored one. */
-  build: (overview?: OverviewOutput) => Promise<OverviewPayload>
+  /**
+   * The payload to post; with `overview`, the one just completed run stands in for the stored one. `unreadable` is the
+   * warning of a failed factory read: the payload is then empty, and posting it would replace Argo's last good fleet.
+   */
+  build: (overview?: OverviewOutput) => Promise<{ payload: OverviewPayload; unreadable?: string | null }>
   logger: Pick<Logger, 'warn'> & { info?: (message: string, meta?: Record<string, unknown>) => void }
   fetcher?: typeof fetch
 }
@@ -63,7 +66,16 @@ export function createArgoPush(options: ArgoPushOptions): ArgoPush {
       let body: string
       let agents = 0
       try {
-        const payload = await options.build(overview)
+        const { payload, unreadable } = await options.build(overview)
+        if (unreadable) {
+          logger.warn('argo push skipped: the factory fleet could not be read, Argo keeps its last snapshot', {
+            event: 'argo_push',
+            status: 'skipped',
+            trigger,
+            warning: unreadable,
+          })
+          return 'skipped'
+        }
         agents = payload.projects.reduce((n, p) => n + p.agents.length, 0)
         body = JSON.stringify({ ...payload, machine: options.machine, generatedAt: payload.generatedAt })
       } catch (error) {
