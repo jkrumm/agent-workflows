@@ -27,6 +27,7 @@ import {
   basePolicy,
   compileLocation,
   pruneLocations,
+  READ_ONLY_ACTIONS,
   sweepStaleTemps,
   touchLocation,
   WarmCache,
@@ -802,7 +803,9 @@ export class OpenCodeHost implements AgentHost {
    *   is never prompted a second time.
    * - `compaction`: the session's context summary failed (`isCompactionFailure`), which only a long turn gets to, so the
    *   turn did run; the session cannot go on (its context is over the ceiling and the next call compacts again), so the
-   *   task starts over in a fresh session on another model, the failed turn's spend kept in the step's usage.
+   *   task starts over in a fresh session on another model, the failed turn's spend kept in the step's usage. A restart
+   *   runs the turn's tool calls again, so it only happens when every call the turn made was a read
+   *   (`onlyReadOnlyTools`); a turn that wrote, ran a command or submitted a result fails as it did.
    */
   private fallsBack(
     h: OpenCodeHandle,
@@ -815,6 +818,12 @@ export class OpenCodeHost implements AgentHost {
     if (!reason) return null
     if (reason === 'balance' && turnRan(messages, promptId)) {
       this.logger.warn('opencode turn failed on provider balance after it ran; no fallback', { sessionId: h.sessionId })
+      return null
+    }
+    if (reason === 'compaction' && !onlyReadOnlyTools(messages, promptId)) {
+      this.logger.warn('opencode compaction failed after a tool call that may have changed something; no fallback', {
+        sessionId: h.sessionId,
+      })
       return null
     }
     if (this.fallbackOf(h) === undefined) {
@@ -1326,8 +1335,8 @@ export function isStepSession(sessionId: string, key: string): boolean {
 }
 
 /** Why a step moves to its route's fallback session (`OpenCodeHost.fallsBack`). */
-type FallbackReason = 'balance' | 'compaction'
-const FALLBACK_REASONS: Record<FallbackReason, string> = { balance: 'provider balance', compaction: 'compaction' }
+const FALLBACK_REASONS = { balance: 'provider balance', compaction: 'compaction' } as const
+type FallbackReason = keyof typeof FALLBACK_REASONS
 
 /**
  * A turn that failed because OpenCode could not write the summary of its own full context. The strings are the
@@ -1349,6 +1358,17 @@ const COMPACTION_FAILURES = [
 function fallbackReasonOf(error: string): FallbackReason | null {
   if (isBalanceFailure({ text: error })) return 'balance'
   return isCompactionFailure(error) ? 'compaction' : null
+}
+
+/**
+ * Every tool call of the turn after the prompt is one of the host's read-only tools (`READ_ONLY_ACTIONS`, named alike as
+ * tool and as permission), so running the turn again changes nothing the first run did not. Decided from the calls the
+ * turn made, not the agent's permissions: an agent that may write but only read this time restarts safely, and a tool
+ * the host does not know (`submit_result`, a plugin's) counts as a change. A turn with no tool call qualifies.
+ */
+function onlyReadOnlyTools(messages: readonly Message[], promptId: string): boolean {
+  const readOnly: readonly string[] = READ_ONLY_ACTIONS
+  return toolParts(messages, promptId).every((part) => readOnly.includes(part.name))
 }
 
 /** Whether the turn after the prompt did anything: a tool call, or a reply with output tokens. */

@@ -80,7 +80,7 @@ describe('the bounded rows of the server config', () => {
 
   test("the window puts OpenCode's compaction ceiling at bound / 1.25, the buffer below the window", () => {
     expect(windowFor(100_000)).toBe(80_000 + COMPACTION_BUFFER)
-    for (const limit of [60_000, 80_000, 100_000]) {
+    for (const limit of CONTEXT_LIMITS) {
       const window = windowFor(limit)
       expect(ceilingOf(window, COMPACTION_BUFFER)).toBe(Math.floor(limit / 1.25))
       // Headroom for a chars/4 undercount of 25% of everything, up to the bound.
