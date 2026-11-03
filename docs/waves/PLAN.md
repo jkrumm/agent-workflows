@@ -283,7 +283,7 @@ Pulled forward 2026-11-03 while the owner reads review v3 (Waves 9–11 wait for
   credit-refused retrospective cases and one podcast case (calibrate its duration band). Eval scores a failed case run
   as zeros (should be an error). Compaction fallback labelled `unknown` at the gateway; follow-up turns get no fallback.
 
-## Wave 18 — Review v4: one routed reviewer agent on Max            <!-- status: done 2026-11-03, spike a9d8cb1, sign-off pending -->
+## Wave 18 — Review v4: one routed reviewer agent on Max            <!-- status: done 2026-11-03, spike a9d8cb1, signed 2026-11-03 -->
 
 Owner direction 2026-11-03, supersedes the v3 pick (finder = native `/code-review`) and its sign-off. Opus high lead.
 Goal: review checks intent, system fit and domain rules (duplication, clean architecture), not only bugs; it runs on
@@ -314,36 +314,45 @@ ledger/dispositions (what past findings were fixed, called wrong, or ignored).
   `~/Downloads/review-v4-report.html`), 7 points to sign. Mining job paused. Waves 9–12 and 14 rewritten only after
   the owner signs, from the close-out's proposals. `make check`: 3 timing flakes in untouched files, CI is the gate.
 
-## Wave 9 — Baseline            <!-- status: pending -->
+## Wave 9 — Review v4, agw side            <!-- status: active -->
 
-- Today's pipeline (v1) on the full `test` set and the controls, on its live seats: the first real numbers.
-- Native `/code-review high` on 60 `test` cases through herdr-core sessions (owner decision 3).
-- **OCR arm** (owner, 2026-11-02: OCR stays off until measured). `alibaba/open-code-review` (pinned v1.13.3) on the
-  `test` set and the controls, on Haiku 5.5 and Sonnet 5.5 through the gateway (its own door token, so its spend is
-  priced for the first time) and on Terra: recall, false alarms, cost and wall per arm. Wave 11 keeps OCR only as an
-  arm that beats v2 on recall beyond the CI at a cost the owner accepts; otherwise its deletion stands.
-- Committed report `docs/evals/<date>-review-baseline.md`. It sets how much headroom v2 has to beat.
+Signed 2026-11-03 (the 7 points in Wave 18's close-out, `3427f69`; spike `docs/spikes/review-v4/`). Owner additions:
+Haiku is a candidate seat for light; a cheap API classifier (Haiku, FAST) may settle only what the rules can't, rules
+first, and its cost is booked as classification, never review. Other fleets' reviews run light unless sensitive.
 
-## Wave 10 — Review v2            <!-- status: pending -->
+- [ ] `agw review prepare|submit|dispose|route|covered|status`: the job dir (worktree at the head, never the caller's
+  tree; REVIEW.md from the base); intent, path history and prior findings by pointer.
+- [ ] Ledger (thread, round, findings, dispositions) and REVIEW_OUTPUT v4 (v3's contract plus `tier`, `seat`,
+  `intent`, `checked`); `agw review status` lets the implementing session see and answer a running review.
+- [ ] Router from `route.py` with REVIEW.md frontmatter; a caller raises, never lowers; the classifier hook for
+  undecided changes, off unless rules leave a case open.
+- [ ] `REVIEW.md` seeded in software-factory, iris, agent-workflows, dotfiles, usage-tracker.
+- Gate: unit tests through a fake reviewer; one live in-session review end to end on Max. No API review spend.
 
-- The pipeline in `docs/review-v2.md`: prepare, finders, group, verify vote, assemble, ledger. Levels
-  `quick|standard|deep`, `REVIEW.md` loading, REVIEW_OUTPUT v3, re-review diff-only, `stepBack` from round 3,
-  `agw review dispose`.
-- Built beside v1 as workflow `review-v2`, so Wave 11 can compare both. Prompts iterate on `dev` only.
-- The `/review` skill rewritten for v3: the fix loop, dispositions, `stepBack`. Every other caller moves to v3 here.
-- The stale lines in `docs/review-v2.md` §Docs to fix are fixed.
+## Wave 10 — Review v4: callers, factory, cutover            <!-- status: pending -->
 
-## Wave 11 — Arm sweep and cutover            <!-- status: pending -->
+- dotfiles: `agents/reviewer.md`, `agents/review-verifier.md`, the `/review` skill (prepare → Agent with the seat →
+  submit → fix loop, dispositions, step back after round 3), lead role without the separate `/code-review high`,
+  `wave-gate.py` `covered` check.
+- Hidden transport: factory role `reviewer`, one interactive Claude Code session per job in a hidden Herdr terminal
+  (never `claude -p`, never the Agent SDK), the idle watchdog, two sessions host-wide, the ceiling (70 % 5 h, 90 %
+  week: review waits), the deep cap (15 per account per day, then a one-click allow).
+- software-factory: evidence kind `review` derived through `agw review route`; the wave gate checks coverage.
+- `scripts/verify.sh` smoke review on the hidden path at light (`SKIP` when held).
+- Cutover: every caller on v4; v1, the angle agents, router, adversary, synthesis, OCR, react-doctor in review, the
+  review routes and the 138 legacy cases deleted; a concept version note.
 
-- v2 variants on `test` with run-scoped arms: finders 1, 3 or 5; K 1 or 3; voters as agent steps or single calls; seats
-  on GPT or Claude per stage. The decision rule is in `docs/review-v2.md` §Metrics.
-- The pick becomes `review`. Deleted: v1, the 12 angle agents, the router, the adversary, synthesis, OCR (and
-  `review.ocr`), react-doctor inside review, and the 138 legacy review cases. A concept version note says why.
-- Committed report. The review's seats give the measured `HARD` and `EASY` picks. The `--deep` native merge in
-  `/review` stays only if the native arm beat v2's `deep` on recall beyond the CI.
-- `REVIEW.md` seeded in the five busiest repos.
+## Wave 11 — Review v4: measure and tune            <!-- status: pending -->
+
+- Two weeks of ledger dispositions per tier, rule and repo: fix rate, wrong rate, rounds to clean, findings per review.
+- False alarms on 10 known-clean PRs; recall on the Wave 8 cases (`dev` first) through the hidden path on Max, paced by
+  the ceiling, never API.
+- Arms: light seat Haiku vs Sonnet low; K 3 vs 2; verifier Sonnet vs Haiku; Opus at deep on sensitive paths; router
+  thresholds; the classifier on or off; the deep cap. Report `docs/evals/<date>-review-v4.md`.
 
 ## Wave 12 — Central tiers            <!-- status: pending -->
+
+Review is no longer a route consumer (review v4 runs on Max): `HARD`/`EASY` keep Wave 6's measured seats.
 
 Provisional picks (2026-10-31, from cost, wall time, failure modes and the AA index). Wave 11 replaces `HARD` and
 `EASY` with measured ones. Since 2026-11-01 Claude seats run on credit while a pool has it
@@ -371,7 +380,7 @@ Provisional picks (2026-10-31, from cost, wall time, failure modes and the AA in
 ## Wave 14 — Harness robustness            <!-- status: pending -->
 
 - Compaction overflow: moved to Wave 15 (2026-11-03).
-- The runaway cap (wall 10x p95, cost 10x p95), reviewed against the deep reviews it has killed and against v2's new
-  p95.
-- Review convergence sub-eval: a fix loop over 20 `test` cases (review, fix, diff-only re-review) measuring
-  rounds-to-pass and the share of late findings on old code, next to rounds-to-pass from real dispositions.
+- The runaway cap (wall 10x p95, cost 10x p95) for agent steps; review is no longer an agw agent step.
+- The hidden review session's idle watchdog, proven by killing a wedged session; reviewers that background their
+  verifiers and linger (seen twice in the Wave 18 PoC).
+- Review convergence: rounds to clean from the ledger plus a 10-case fix loop on Max.

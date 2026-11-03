@@ -20,6 +20,8 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
   Rotation policy: a fresh lead per wave unless the last one closed under ~30% context.
 
 ## Decisions taken
+- 2026-11-03 owner: review v4 SIGNED (7 points, other fleets light unless sensitive). Additions: Haiku as a light-seat
+  arm; a cheap API classifier only for what the rules cannot decide. Waves 9–11 rewritten; Wave 9 active.
 - 2026-11-03 owner: review v3 not signed; superseded by Wave 18 (review v4): one routed reviewer agent on Max,
   intent/system fit/domain rules first, context beyond the diff (wave plan, recent commits, prior findings), tiers
   none/light/standard/deep, no API spend, factory guarantees review per wave and caps deep reviews; HTML report.
@@ -169,8 +171,7 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
   it asks again: it belongs in the factory's plan or a later agw wave, not Waves 4–13 as written.
 
 ## Next action
-- Wave 18 done (review v4 spike, `3427f69`); owner signs 7 points (lead.md). On signature: rewrite Waves 9–12, 14 from
-  the close-out's proposals, flip Wave 9 active, spawn its lead. Cross-repo asks go into Wave 10.
+- Wave 18 signed; Waves 9–11 rewritten for v4; Wave 9 (agw side) active. Cross-repo asks are Wave 10.
 - Wave 15 done (`b2701de`). Every pending wave (9–12, 14) depends on review v3; the fleet idles until the owner signs.
   First step of Wave 9 then: the credit-bound suite runs from Wave 15's Left behind.
 - On the owner's sign-off of review v3 (5 points in lead.md `d7bdc76`): rewrite Waves 9–11 from the close-out's proposal
