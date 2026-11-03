@@ -318,6 +318,7 @@ export class Runtime {
     return {
       runId: run.id,
       workflowId: run.workflow,
+      version: run.version_finished ?? run.version_started,
       status: run.status,
       output: run.status === 'done' ? run.output : null,
       error: run.error_kind ? { kind: run.error_kind, message: run.error ?? '' } : null,

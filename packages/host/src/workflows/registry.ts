@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs'
 import { relative } from 'node:path'
 import type { AgentRef } from '@agent-workflows/middleware'
-import { type AnyWorkflow, defineWorkflow, type WorkflowDefinition } from '@agent-workflows/runtime'
+import { type AnyWorkflow, defineWorkflow, type Logger, type WorkflowDefinition } from '@agent-workflows/runtime'
 import type { z } from 'zod'
 import type { HostWorkflow } from '../operations.ts'
 import type { Suite, Suites } from './suite.ts'
@@ -38,8 +38,11 @@ export interface WorkflowModule {
 /** A module as discovered: with the file it came from, which every boot error names. */
 export interface DiscoveredModule extends WorkflowModule {
   file: string
-  /** Set on a module of another process's tree (`discoverForeignModules`): its suite counts, its `create` never runs here. */
-  elsewhere?: true
+  /**
+   * Set on a module of another process's tree (`discoverForeignModules`): the foreign workflows its `foreign()` returned,
+   * computed once and used everywhere. Its suite counts, its `create` never runs here.
+   */
+  elsewhere?: AnyWorkflow[]
 }
 
 /** A workflow as another process serves it: everything but the body, which refuses to run here. */
@@ -84,29 +87,65 @@ export async function discoverWorkflowModules(dir: string): Promise<DiscoveredMo
 }
 
 /**
- * The modules of another process's tree that this process starts and scores eval runs of: those that declare `foreign`.
- * Marked `elsewhere`, so `buildWorkflows` takes their suites and builds nothing; a suite whose module has no foreign
- * workflow of its id, or a foreign workflow without a scorer, fails here, naming the file. A missing directory is none.
+ * The modules of another process's tree that this process starts and scores eval runs of. Each module's `foreign()` is
+ * called once and its workflows kept on the module (`elsewhere`), so `buildWorkflows` takes their suites and builds
+ * nothing. Fails, naming the file, on a module with a suite and no `foreign()` or no foreign workflow of its id, on a
+ * foreign workflow without a scorer, and on an id two modules both serve (naming both files). A module with neither
+ * suite nor `foreign()` is the other process's own business and is left out. A missing directory is none.
  */
 export async function discoverForeignModules(dir: string): Promise<DiscoveredModule[]> {
   if (!existsSync(dir)) return []
   const modules: DiscoveredModule[] = []
+  const served = new Map<string, string>()
   for (const module of await discoverWorkflowModules(dir)) {
-    const workflows = module.foreign?.()
-    if (!workflows) continue
+    if (!module.foreign) {
+      if (module.suite) throw new Error(`workflow modules: ${module.file}: declares a suite but no foreign()`)
+      continue
+    }
+    const workflows = module.foreign()
     if (module.suite && !workflows.some((w) => w.id === module.id))
       throw new Error(`workflow modules: ${module.file}: declares a suite but no foreign workflow "${module.id}"`)
-    for (const workflow of workflows)
+    for (const workflow of workflows) {
       if (!workflow.scorer)
         throw new Error(`workflow modules: ${module.file}: foreign workflow "${workflow.id}" has no scorer`)
-    modules.push({ ...module, elsewhere: true })
+      const other = served.get(workflow.id)
+      if (other)
+        throw new Error(`workflow modules: foreign workflow "${workflow.id}" is served by ${other} and ${module.file}`)
+      served.set(workflow.id, module.file)
+    }
+    modules.push({ ...module, elsewhere: workflows })
   }
   return modules
 }
 
 /** The foreign workflows of the `elsewhere` modules, to give the runtime (`RuntimeOptions.foreign`) and `wireEval`. */
 export const foreignWorkflows = (modules: readonly DiscoveredModule[]): AnyWorkflow[] =>
-  modules.flatMap((m) => (m.elsewhere ? (m.foreign?.() ?? []) : []))
+  modules.flatMap((m) => m.elsewhere ?? [])
+
+/**
+ * Another process's tree for this process, never fatal: a missing directory is a warning and any failure of discovery
+ * (an import error anywhere under a module, a bad declaration) an error, each naming the path, and the tree then has no
+ * foreign workflow. The eval of that process's suites is lost, not the boot.
+ */
+export async function loadForeignTree(
+  dir: string,
+  logger: Logger,
+): Promise<{ modules: DiscoveredModule[]; workflows: AnyWorkflow[] }> {
+  if (!existsSync(dir)) {
+    logger.warn(`foreign workflow modules: ${dir} does not exist; no suites of another process`, { dir })
+    return { modules: [], workflows: [] }
+  }
+  try {
+    const modules = await discoverForeignModules(dir)
+    return { modules, workflows: foreignWorkflows(modules) }
+  } catch (error) {
+    logger.error(`foreign workflow modules: ${dir} not loaded; no suites of another process`, {
+      dir,
+      error: error instanceof Error ? error.message : String(error),
+    })
+    return { modules: [], workflows: [] }
+  }
+}
 
 /** The modules' suites, by workflow id. */
 export function suitesOf(modules: readonly DiscoveredModule[]): Suites {
@@ -125,6 +164,15 @@ export function buildWorkflows(
 ): HostWorkflow[] {
   const suites = suitesOf(modules)
   const own = modules.filter((m) => !m.elsewhere)
+  // A foreign id a host module is named by is a clash found before anything is built (a workflow of another id is found
+  // after, below).
+  for (const other of modules.filter((m) => m.elsewhere)) {
+    for (const workflow of other.elsewhere ?? []) {
+      const host = own.find((m) => m.id === workflow.id)
+      if (host)
+        throw new Error(`workflow modules: workflow "${workflow.id}" is served by ${other.file} and by ${host.file}`)
+    }
+  }
   const owner = new Map<string, string>()
   const built: HostWorkflow[] = []
   const add = (module: DiscoveredModule, entries: HostWorkflow[]) => {
@@ -149,9 +197,12 @@ export function buildWorkflows(
   for (const module of own.filter((m) => m.phase !== 'last')) add(module, module.create(deps, { suites, peers: [] }))
   const peers = [...built]
   for (const module of own.filter((m) => m.phase === 'last')) add(module, module.create(deps, { suites, peers }))
-  for (const other of foreignWorkflows(modules)) {
-    const taken = owner.get(other.id)
-    if (taken) throw new Error(`workflow modules: workflow "${other.id}" is served by another process and by ${taken}`)
+  for (const other of modules.filter((m) => m.elsewhere)) {
+    for (const workflow of other.elsewhere ?? []) {
+      const taken = owner.get(workflow.id)
+      if (taken)
+        throw new Error(`workflow modules: workflow "${workflow.id}" is served by ${other.file} and by ${taken}`)
+    }
   }
   return built
 }

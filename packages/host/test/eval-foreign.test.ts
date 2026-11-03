@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { AnyWorkflow, Runtime } from '@agent-workflows/runtime'
 import { testPlatform } from '../../middleware/test/support.ts'
-import { freshSchema, inspector, testRuntime } from '../../runtime/test/support/pg.ts'
+import { captureLogger, freshSchema, inspector, testRuntime } from '../../runtime/test/support/pg.ts'
 import {
   type FakeGateway,
   fakeMedia,
@@ -18,7 +18,13 @@ import {
 import { createSpeechRoundtrip } from '../../audio/src/workflows/speech-roundtrip/index.ts'
 import { SPEECH_SCORER_VERSION } from '../../audio/src/workflows/speech-roundtrip/scorer.ts'
 import { wireEval, createEvalWorkflows } from '../src/workflows/eval/index.ts'
-import { buildWorkflows, discoverForeignModules, foreignWorkflows, suitesOf } from '../src/workflows/registry.ts'
+import {
+  buildWorkflows,
+  discoverForeignModules,
+  foreignWorkflows,
+  loadForeignTree,
+  suitesOf,
+} from '../src/workflows/registry.ts'
 import { hostModules } from '../src/workflows/index.ts'
 
 const AUDIO_DIR = join(import.meta.dir, '../../audio/src/workflows')
@@ -54,9 +60,7 @@ describe('the audio tree as the host reads it', () => {
       file: 'clash/module.ts',
       create: () => [{ workflow: foreignWorkflows(elsewhere)[0] as AnyWorkflow }],
     }
-    expect(() => buildWorkflows([clash as never, ...elsewhere], deps, () => true)).toThrow(
-      'served by another process and by clash/module.ts',
-    )
+    expect(() => buildWorkflows([clash as never, ...elsewhere], deps, () => true)).toThrow('by clash/module.ts')
   })
 
   test('a missing tree is no foreign module', async () => {
@@ -177,5 +181,195 @@ describe('agw eval run speech-roundtrip, on two runtimes', () => {
     const run = await host.getRun(out.cases[0].runId)
     const output = run?.output as { stt: { route: string } } | undefined
     expect(output?.stt.route).toBe('audio.stt.openai')
+  })
+})
+
+const FIXTURES = join(import.meta.dir, 'fixtures/foreign')
+const at = (...parts: string[]) => join(FIXTURES, ...parts)
+
+describe('the audio tree can fail without taking the host with it', () => {
+  test('an import error under a module is logged, naming the path, and yields no foreign workflow', async () => {
+    const logger = captureLogger()
+    const tree = await loadForeignTree(at('throws'), logger)
+    expect(tree).toEqual({ modules: [], workflows: [] })
+    expect(logger.lines).toHaveLength(1)
+    expect(logger.lines[0]).toMatchObject({ level: 'error', meta: { dir: at('throws') } })
+    expect(logger.lines[0]?.message).toContain(at('throws'))
+    expect(String(logger.lines[0]?.meta?.error)).toContain('boom at import')
+  })
+
+  test('a missing directory is a warning naming the path, and no foreign workflow', async () => {
+    const logger = captureLogger()
+    expect(await loadForeignTree(at('nowhere'), logger)).toEqual({ modules: [], workflows: [] })
+    expect(logger.lines).toHaveLength(1)
+    expect(logger.lines[0]).toMatchObject({ level: 'warn', meta: { dir: at('nowhere') } })
+  })
+
+  test('a bad declaration is the same: logged, none loaded', async () => {
+    const logger = captureLogger()
+    expect((await loadForeignTree(at('no-foreign'), logger)).workflows).toEqual([])
+    expect(logger.lines[0]).toMatchObject({ level: 'error' })
+    expect(String(logger.lines[0]?.meta?.error)).toContain('lone/module.ts')
+  })
+})
+
+describe('discovery of a foreign tree', () => {
+  test('a module with a suite and no foreign() fails, naming the file', async () => {
+    const error = await discoverForeignModules(at('no-foreign')).then(
+      () => null,
+      (e: unknown) => e,
+    )
+    expect(String(error)).toContain(at('no-foreign', 'lone', 'module.ts'))
+    expect(String(error)).toContain('declares a suite but no foreign()')
+  })
+
+  test('foreign() is called once: the module, the runtime list and the clash check hold the same objects', async () => {
+    const tree = await loadForeignTree(at('ok'), captureLogger())
+    const [module] = tree.modules
+    expect(tree.workflows).toHaveLength(1)
+    expect(module?.elsewhere?.[0]).toBe(tree.workflows[0])
+    expect(foreignWorkflows(tree.modules)[0]).toBe(tree.workflows[0])
+    expect(tree.workflows[0]?.scorer?.version).toBe('far-scorer-1')
+  })
+
+  test('two modules serving one foreign id fail, naming both files', async () => {
+    const error = await discoverForeignModules(at('dup')).then(
+      () => null,
+      (e: unknown) => e,
+    )
+    expect(String(error)).toContain(at('dup', 'a', 'module.ts'))
+    expect(String(error)).toContain(at('dup', 'b', 'module.ts'))
+  })
+
+  test('a foreign id the host also names fails before any create() runs, naming both files', async () => {
+    const tree = await loadForeignTree(at('ok'), captureLogger())
+    const created: string[] = []
+    const hosted = {
+      id: 'far',
+      file: '/host/far/module.ts',
+      create: () => {
+        created.push('far')
+        return []
+      },
+    }
+    const other = {
+      id: 'zed',
+      file: '/host/zed/module.ts',
+      create: () => {
+        created.push('zed')
+        return []
+      },
+    }
+    const error = (() => {
+      try {
+        buildWorkflows([other, hosted, ...tree.modules], {} as never, () => true)
+        return null
+      } catch (e) {
+        return e
+      }
+    })()
+    expect(created).toEqual([])
+    expect(String(error)).toContain('/host/far/module.ts')
+    expect(String(error)).toContain(at('ok', 'far', 'module.ts'))
+  })
+})
+
+describe('a case run of a workflow another process serves', () => {
+  async function rig(options: { audio: 'up' | 'down' | 'other-version'; notClaimedMs?: number }) {
+    const own = freshSchema('evalforeign2')
+    const gateway = startFakeGateway({
+      gemini: () => geminiAudio(new Uint8Array(48_000)),
+      transcriptions: () => Response.json({ text: SENTENCE }),
+    })
+    const elsewhere = await discoverForeignModules(AUDIO_DIR)
+    const foreign = foreignWorkflows(elsewhere)
+    const evals = createEvalWorkflows(suitesOf([...(await hostModules()), ...elsewhere]), {
+      env: { AGW_DRIFT_RATE: '0' },
+      notClaimedMs: options.notClaimedMs ?? 600_000,
+    })
+    const entry = createSpeechRoundtrip({
+      audio: testDeps(gateway, {
+        log: silentLog,
+        media: { ...fakeMedia, duration: async () => 4.5, compressForStt: async (b) => b.slice().buffer },
+      }),
+      artifactRoot: root,
+    })
+    const served = options.audio === 'other-version' ? { ...entry.workflow, version: 'skewed-1' } : entry.workflow
+    const hostPlatform = testPlatform(own.schema)
+    const audioPlatform = testPlatform(own.schema)
+    const host = testRuntime({
+      schema: own.schema,
+      workflows: evals.map((e) => e.workflow),
+      foreign,
+      middleware: hostPlatform.middleware,
+    })
+    const audio = testRuntime({ schema: own.schema, workflows: [served], middleware: audioPlatform.middleware })
+    const wiring = wireEval({ runtime: host, workflows: [...evals], foreign, env: { AGW_DRIFT_RATE: '0' } })
+    await host.open()
+    if (options.audio !== 'down') await audio.open()
+    wiring.start()
+    const inspect = inspector(own.schema)
+    return {
+      async run() {
+        const { runId } = await host.start(
+          evals[0]?.workflow as AnyWorkflow,
+          { workflow: 'speech-roundtrip', yes: true, ids: 'rt-en-1' },
+          { purpose: 'eval' },
+        )
+        return (await host.wait(runId)).output as { cases: Record<string, unknown>[] }
+      },
+      inspect,
+      async close() {
+        await wiring.close()
+        await host.close()
+        if (options.audio !== 'down') await audio.close()
+        await hostPlatform.close()
+        await audioPlatform.close()
+        gateway.stop()
+        await inspect.close()
+        await own.drop()
+      },
+    }
+  }
+
+  test('never claimed within the bound: that case is an error and the run is cancelled, not waited on for ever', async () => {
+    const t = await rig({ audio: 'down', notClaimedMs: 700 })
+    try {
+      const started = Date.now()
+      const out = await t.run()
+      expect(Date.now() - started).toBeLessThan(15_000)
+      const [only] = out.cases
+      expect(only).toMatchObject({
+        caseId: 'rt-en-1',
+        status: 'error',
+        reason: 'not claimed: is the audio process up?',
+      })
+      expect(await t.inspect.run(only?.runId as string)).toMatchObject({ status: 'cancelled', drives: 0 })
+    } finally {
+      await t.close()
+    }
+  })
+
+  test('a run the audio runtime finished under another version is an error, not scored', async () => {
+    const t = await rig({ audio: 'other-version' })
+    try {
+      const out = await t.run()
+      const [only] = out.cases
+      expect(only).toMatchObject({ status: 'error', runStatus: 'done' })
+      expect(String(only?.reason)).toBe(`version skew: run skewed-1 vs scorer ${SPEECH_SCORER_VERSION}`)
+      expect((await t.inspect.run(only?.runId as string))?.scored_at ?? null).toBeNull()
+    } finally {
+      await t.close()
+    }
+  })
+
+  test('a claimed run keeps the normal wait and is scored when the versions agree', async () => {
+    const t = await rig({ audio: 'up', notClaimedMs: 700 })
+    try {
+      const [only] = (await t.run()).cases
+      expect(only).toMatchObject({ status: 'scored', runStatus: 'done', pass: true })
+    } finally {
+      await t.close()
+    }
   })
 })

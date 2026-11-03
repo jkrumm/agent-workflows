@@ -28,6 +28,8 @@ export const DEFAULT_CONCURRENCY = 2
 const CASE_POLL_MS = 500
 /** How long an ended case run's record may take before its last-read cost is reported as a lower bound. */
 export const RECORD_SETTLE_MS = 120_000
+/** How long a case run of a workflow another process serves may stay pending before nobody is taken to be serving it. */
+export const NOT_CLAIMED_MS = 10 * 60_000
 
 export interface EvalRunOptions {
   env?: Record<string, string | undefined>
@@ -38,6 +40,8 @@ export interface EvalRunOptions {
   logger?: Logger
   /** Overrides {@link RECORD_SETTLE_MS} (tests). */
   recordSettleMs?: number
+  /** Overrides {@link NOT_CLAIMED_MS} (tests). */
+  notClaimedMs?: number
 }
 
 export const consoleLogger: Logger = {
@@ -260,6 +264,7 @@ export function createEvalRun(slot: EvalSlot, suites: Suites, options: EvalRunOp
             tmpRoot: options.tmpRoot,
             logger: options.logger ?? consoleLogger,
             recordSettleMs: options.recordSettleMs ?? RECORD_SETTLE_MS,
+            notClaimedMs: options.notClaimedMs ?? NOT_CLAIMED_MS,
           },
           {
             evalRunId: ctx.runId,
@@ -290,6 +295,7 @@ type ReplayDeps = {
   tmpRoot: string | undefined
   logger: Logger
   recordSettleMs: number
+  notClaimedMs: number
 }
 
 type Job = {
@@ -424,15 +430,54 @@ async function settleCase(
   standing: { end: { status: string; error: { message: string } | null }; final: FinalScore } | null,
 ): Promise<CaseResult> {
   const runtime = deps.slot.get()
-  const end = standing?.end ?? (await runtime.wait(runId, { pollMs: CASE_POLL_MS, signal: job.signal }))
+  const foreign = deps.slot.foreign.has(job.target.id)
+  const waited = standing ? standing.end : await awaitEnd(deps, job, runId, foreign)
+  if (waited === 'not-claimed') {
+    return { caseId, runId, status: 'error', reason: 'not claimed: is the audio process up?' }
+  }
+  const end = waited
   const spent = await recorded(deps, runId, job.signal)
   try {
+    // The run was driven by another process, possibly of another release: its scorer is the version this host holds.
+    const version = !standing && foreign ? ((await runtime.getRun(runId))?.version ?? null) : job.target.version
+    if (version !== job.target.version) {
+      const base = { caseId, runId, runStatus: end.status, costUsd: spent.cost, unpricedCalls: spent.unpricedCalls }
+      return {
+        ...base,
+        status: 'error',
+        reason: `version skew: run ${version ?? 'unknown'} vs scorer ${job.target.version}`,
+      }
+    }
     return scoredResult(caseId, runId, end, standing ? standing.final : await score(), spent)
   } catch (error) {
     if (job.signal.aborted) throw job.signal.reason
     const base = { caseId, runId, runStatus: end.status, costUsd: spent.cost, unpricedCalls: spent.unpricedCalls }
     return { ...base, status: 'error', reason: errorText(error) }
   }
+}
+
+/**
+ * The end of a case run. A run of a workflow another process serves is first awaited as pending: left pending for
+ * `notClaimedMs` it is cancelled (it must not run, and spend, after the eval gave up on it) and the case is `not-claimed`.
+ * A run that was claimed, and every run of a workflow served here, is awaited as ever.
+ */
+async function awaitEnd(deps: ReplayDeps, job: Job, runId: string, foreign: boolean) {
+  const runtime = deps.slot.get()
+  if (foreign) {
+    const since = Date.now()
+    for (;;) {
+      const run = await runtime.getRun(runId)
+      if (!run) throw new Error(`case run ${runId} vanished`)
+      if (run.status !== 'pending') break
+      if (Date.now() - since >= deps.notClaimedMs) {
+        await runtime.cancel(runId).catch(() => {})
+        return 'not-claimed' as const
+      }
+      job.signal.throwIfAborted()
+      await Bun.sleep(CASE_POLL_MS)
+    }
+  }
+  return runtime.wait(runId, { pollMs: CASE_POLL_MS, signal: job.signal })
 }
 
 /** How long a cancelled case run gets to reach a terminal state before its tree is removed (a helper bound). */

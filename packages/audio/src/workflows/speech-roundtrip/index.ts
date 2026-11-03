@@ -1,7 +1,13 @@
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { HostWorkflow } from '@agent-workflows/host'
-import { defineWorkflow, type StepScope, type Usage, WorkflowError } from '@agent-workflows/runtime'
+import {
+  defineWorkflow,
+  type StepScope,
+  type Usage,
+  WorkflowError,
+  type WorkflowDefinition,
+} from '@agent-workflows/runtime'
 import { artifactDir } from '../../../../host/src/artifacts.ts'
 import { createSpeechHandler } from '../../door/speech.ts'
 import { createTranscriptionsHandler } from '../../door/transcriptions.ts'
@@ -26,7 +32,10 @@ export const SPEECH_ROUNDTRIP_SHELL = {
   input: SpeechRoundtripInput,
   output: SpeechRoundtripOutput,
   scorer: speechRoundtripScorer,
-} as const
+} as const satisfies Omit<
+  WorkflowDefinition<typeof SpeechRoundtripInput, typeof SpeechRoundtripOutput>,
+  'run' | 'concurrency' | 'arm'
+>
 const CALLER = 'speech-roundtrip'
 const AUDIO_FILE = 'speech.mp3'
 

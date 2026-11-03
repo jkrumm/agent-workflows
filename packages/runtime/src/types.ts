@@ -364,6 +364,8 @@ export type RunError = { kind: ErrorKind; message: string }
 export type RunSnapshot = {
   runId: string
   workflowId: string
+  /** The version the run finished under, else the one it started under (null for a run nothing has started). */
+  version: string | null
   status: RunStatus
   output: Json | null
   error: RunError | null

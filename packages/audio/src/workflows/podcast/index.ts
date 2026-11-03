@@ -1,4 +1,12 @@
-import type { AnyWorkflow, Ctx, Json, Logger, StepScope, Workflow } from '../../../../runtime/src/index.ts'
+import type {
+  AnyWorkflow,
+  Ctx,
+  Json,
+  Logger,
+  StepScope,
+  Workflow,
+  WorkflowDefinition,
+} from '../../../../runtime/src/index.ts'
 import { Cancelled, defineWorkflow, InfraError, WorkflowError } from '../../../../runtime/src/index.ts'
 import { episodeToken } from '../podcast-produce/abs.ts'
 import { type NotifyConfig, notifyConfigFromEnv, notifyPodcastResult } from '../podcast-produce/notify.ts'
@@ -74,7 +82,7 @@ export const PODCAST_SHELL = {
   input: PodcastInput,
   output: PodcastOutput,
   scorer: podcastScorer,
-} as const
+} as const satisfies Omit<WorkflowDefinition<typeof PodcastInput, typeof PodcastOutput>, 'run' | 'concurrency' | 'arm'>
 export { ProduceInput, type ProduceInputValue } from './produce-input.ts'
 export { PodcastInput, PodcastOutput } from './schema.ts'
 
