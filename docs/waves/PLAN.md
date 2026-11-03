@@ -233,7 +233,7 @@ not interactive factory sessions. Runs after Wave 16, before Wave 8 resumes; it 
   proven on stored rows of both writers after deploy. The 11-02 duplicates stay (owner's call, like Wave 3's 34).
 - [x] `agw eval mine review`: SZZ over `~/SourceRoot` with the filters in `docs/review-v2.md` §Ground truth, two
   cross-vendor labeler calls per candidate, clean controls, the `dev`/`test` split. Cases go only under `$AGW_EVAL_DIR`.
-- [ ] `eval.judge` on its own pinned route (judge, scorer v3 done; `agw eval import` moved to Wave 16), scorer v3 (recall, false alarms, noise, severity calibration), and `agw eval
+- [x] `eval.judge` on its own pinned route (judge, scorer v3 done; `agw eval import` done in Wave 16), scorer v3 (recall, false alarms, noise, severity calibration), and `agw eval
   import` for an external arm's findings. The token-overlap matcher only preselects pairs.
 - [ ] **No owner labelling (owner, 2026-11-02 21:00: 155 items is too much friction).** Ground truth is validated
   without the owner: a third labeller on another vendor breaks the two labellers' disagreements; a second judge on
