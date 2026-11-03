@@ -362,20 +362,30 @@ Inputs: Wave 9's close-out (`a0df86e`, "For Wave 10"). Mother decision: coverage
   disposed). `make check` green in all three (agw: the `check-real` flake, passes alone; factory: 74 setup failures under
   `agw check` only, plain `make check` 1676/0).
 
-## Wave 19 — Review v4 follow-ups and harness robustness            <!-- status: active -->
+## Wave 19 — Review v4 follow-ups and harness robustness            <!-- status: done 2026-11-03, agw 60a5bcd, factory 07f2f7b, dotfiles c91898f -->
 
 Inputs: Wave 10's close-out (`602aba5`, "For Wave 11"). Wave 11's measurement waits for two weeks of ledger data; this
 wave builds what it needs and closes the gaps.
 
-- [ ] v4 recall path: the Wave 8 cases through `agw review request` (hidden, paced by the ceiling, never API); one run
+- [x] v4 recall path: the Wave 8 cases through `agw review request` (hidden, paced by the ceiling, never API); one run
   on three `dev` cases end to end.
-- [ ] Cross-repo wave gate: a wave names its repos in PLAN.md; `wave-gate.py` checks `covered` in each.
-- [ ] Small gaps: `agw review status` list shows `transport`; `cancel` on a failed spawn says so; `FACTORY_REVIEW_*` in
+- [x] Cross-repo wave gate: a wave names its repos in PLAN.md; `wave-gate.py` checks `covered` in each.
+- [x] Small gaps: `agw review status` list shows `transport`; `cancel` on a failed spawn says so; `FACTORY_REVIEW_*` in
   `.env.tpl`; `isPathScope`, `optionalExpensive` and route-level `contextLimit` deleted if unused.
-- [ ] From Wave 14: the runaway cap for agent steps (wall 10x p95, cost 10x p95); the hidden reviewer's idle watchdog
+- [x] From Wave 14: the runaway cap for agent steps (wall 10x p95, cost 10x p95); the hidden reviewer's idle watchdog
   proven by killing a wedged session.
-- [ ] Orphan failures: the factory's 74 failures under `agw check`, dotfiles' `claude-launcher-test` and the
+- [x] Orphan failures: the factory's 74 failures under `agw check`, dotfiles' `claude-launcher-test` and the
   launchd-label warning: fix, or hand to the owning fleet with `rd say`.
+- [x] (owner, added at the start) The mother's plan, handoff and retro commits need no review for the wave gate:
+  `docs/concept.md` joins `docs/waves/**` in REVIEW.md `none` (a concept change riding with code is still routed by the code).
+**Repos:** software-factory, dotfiles
+**Left behind:** close-out in `docs/waves/handoff/lead.md`. Deployed and verified: agw `60a5bcd` (`make verify` PASS incl. a
+  hidden smoke review `rv_cidexvfzy7jvwtyxvasc`), factory `07f2f7b` (`make verify` PASS); dotfiles pushed `c91898f`. `agw eval
+  recall` ran 3 `dev` bug cases end to end on the hidden path (run `01a1a16a`, me2, $0 API): 3 scored, 0 recalled (all three
+  reviews clean on `major` bugs). The idle watchdog was proven live (both attempts SIGSTOPped → killed → `needs_human`, slots
+  freed). Open: the runaway cap judges **cost** only between steps (wall is mid-step); `optionalExpensive` kept (it is the
+  wallet gate's opt-in). All three ranges `covered`. No next wave flipped `active`: Wave 11 waits for 2026-11-17 and Wave 12
+  rests on it (mother's call).
 
 ## Wave 12 — Central tiers            <!-- status: pending -->
 
