@@ -167,6 +167,10 @@ The speech and transcriptions suites were run against both arms and scored per
 audio-gateway (Wave 11). N's cost is read from the run record named by
 the response header `agw-run-id`, so the process must send it on both door routes.
 
+`speech-roundtrip` (`src/workflows/speech-roundtrip/`) is the eval-only workflow that scores the door's two lanes: it speaks a
+known sentence on a TTS route and transcribes the audio on an STT route, and its scorer reports the word error rate and
+the pace. Internal: not on the door, no HTTP route, no CLI command (host README, `src/workflows/eval/README.md` §Media suites).
+
 ## Process
 
 The audio pipeline runs in a platform process of its own beside the host (concept §8): `src/main.ts`, LaunchAgent
