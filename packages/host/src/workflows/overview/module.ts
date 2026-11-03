@@ -1,11 +1,12 @@
 import { join } from 'node:path'
 import { defineWorkflowModule } from '../registry.ts'
+import { plainSuite } from '../suite.ts'
 import { createOverview } from './index.ts'
 
 /**
  * The eval set, committed beside the module: synthetic fleets (placeholder project names, no real session text), each
- * run as the `fixture` input. Not yet registered as the module's `suite`: `buildWorkflows` refuses a suite on a host
- * that serves no `overview` (no fleet), which `createWorkflows({ registry, toolGate })` is.
+ * run as the `fixture` input. A host without a fleet serves no `overview` and still lists the suite: the registry
+ * allows a suite on a module that built nothing there.
  */
 export const CASES_PATH = join(import.meta.dir, 'eval', 'cases.jsonl')
 
@@ -24,4 +25,5 @@ export default defineWorkflowModule({
           }),
         ]
       : [],
+  suite: { read: () => plainSuite.read(CASES_PATH) },
 })

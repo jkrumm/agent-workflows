@@ -1,11 +1,12 @@
 import { join } from 'node:path'
 import { agentNames, defineWorkflowModule } from '../registry.ts'
+import { plainSuite } from '../suite.ts'
 import { createRetrospective } from './index.ts'
 
 /**
  * The eval set, committed beside the module: runs written for the set (a planted pattern each, one healthy control), run
- * as the `fixture` input. Not yet registered as the module's `suite`: `buildWorkflows` refuses a suite on a host that
- * serves no `retrospective` (no database), which `createWorkflows({ registry, toolGate })` is.
+ * as the `fixture` input. A host without a database serves no `retrospective` and still lists the suite: the registry
+ * allows a suite on a module that built nothing there.
  */
 export const CASES_PATH = join(import.meta.dir, 'eval', 'cases.jsonl')
 
@@ -19,4 +20,5 @@ export default defineWorkflowModule({
     const agents = agentNames([...peers])
     return [createRetrospective({ journal, learnings, gh, tracked, agentsOf: (id) => agents.get(id) })]
   },
+  suite: { read: () => plainSuite.read(CASES_PATH) },
 })
