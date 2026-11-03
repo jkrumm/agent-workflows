@@ -1,4 +1,6 @@
 import type { Pool } from 'pg'
+import { z } from 'zod'
+import type { AutoPorts } from './auto.ts'
 
 /** The `label` step of an `eval.mine` run, priced: what it cost for all the candidates it labelled. */
 export type LabelStepCost = { runId: string; cost: number }
@@ -23,3 +25,89 @@ export function pgLabelStepCosts(
     return rows.map((row) => ({ runId: row.id, cost: Number(row.cost) }))
   }
 }
+
+const schemaName = (schema: string) => {
+  if (!/^[a-z_][a-z0-9_]{0,62}$/.test(schema)) throw new Error(`invalid schema name "${schema}"`)
+  return schema
+}
+
+/**
+ * The real reads of `--auto`: the run journal (records each past run wrote), `usage.records` (what the gateway billed it
+ * per payer, and the running IU total) and the gateway's `/health` (eval credit). A source that is not configured throws
+ * on use, naming itself, so the run fails on the read instead of sizing from a guess.
+ */
+export function evalMineAutoPorts(options: {
+  journal: Pick<Pool, 'query'>
+  schema: string
+  usage?: Pick<Pool, 'query'>
+  usageSchema?: string
+  gatewayUrl?: string
+  fetch?: typeof fetch
+}): AutoPorts {
+  const journalSchema = schemaName(options.schema)
+  const usageSchema = schemaName(options.usageSchema ?? 'usage')
+  const usage = () => {
+    if (!options.usage) throw new Error('USAGE_PG_URL is not set on the host: usage.records cannot be read')
+    return options.usage
+  }
+  const doFetch = options.fetch ?? fetch
+  return {
+    async creditAvailableUsd() {
+      const base = options.gatewayUrl?.trim().replace(/\/+$/, '')
+      if (!base) throw new Error('AGW_GATEWAY_URL is not set on the host: the gateway /health cannot be read')
+      let health: z.infer<typeof Health>
+      try {
+        // A hang guard on a plain HTTP read; the gateway answers /health from memory.
+        const res = await doFetch(`${base}/health`, { signal: AbortSignal.timeout(30_000) })
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        health = Health.parse(await res.json())
+      } catch (error) {
+        throw new Error(`gateway /health unreadable: ${error instanceof Error ? error.message : String(error)}`)
+      }
+      return health.pools.filter((pool) => pool.evalEligible).reduce((sum, pool) => sum + pool.evalAvailableUsd, 0)
+    },
+
+    async iuSpentUsd({ since }) {
+      const { rows } = await usage().query<{ total: string | null }>(
+        `select sum(cost_usd)::text as total from "${usageSchema}".records
+         where source = 'gateway' and billing = 'api_key' and api_key = 'personal'
+           and lane_detail->>'workflow' like 'eval.%' and ts >= $1::timestamptz`,
+        [since],
+      )
+      return Number(rows[0]?.total ?? 0)
+    },
+
+    async runSpend({ limit }) {
+      const { rows: runs } = await options.journal.query<{ id: string; units: number }>(
+        `select r.id, (coalesce((r.output->>'labelledThisRun')::int, 0) + coalesce((r.output->>'thirdSeatThisRun')::int, 0)) as units
+         from "${journalSchema}".runs r
+         where r.workflow = 'eval.mine' and r.id = r.root_id and r.status = 'done' and r.output is not null
+           and coalesce((r.output->>'labelledThisRun')::int, 0) + coalesce((r.output->>'thirdSeatThisRun')::int, 0) > 0
+         order by coalesce(r.finished_at, r.created_at) desc, r.id limit $1`,
+        [limit],
+      )
+      if (runs.length === 0) return []
+      const { rows: spend } = await usage().query<{ run_id: string; credit: string | null; iu: string | null }>(
+        `select run_id,
+           (sum(cost_usd) filter (where billing = 'api_credit'))::text as credit,
+           (sum(cost_usd) filter (where billing = 'api_key' and api_key = 'personal'))::text as iu
+         from "${usageSchema}".records
+         where source = 'gateway' and lane_detail->>'workflow' = 'eval.mine' and run_id = any($1)
+         group by run_id`,
+        [runs.map((run) => run.id)],
+      )
+      const byRun = new Map(spend.map((row) => [row.run_id, row]))
+      return runs.map((run) => ({
+        runId: run.id,
+        units: Number(run.units),
+        creditUsd: Number(byRun.get(run.id)?.credit ?? 0),
+        iuUsd: Number(byRun.get(run.id)?.iu ?? 0),
+      }))
+    },
+  }
+}
+
+/** The part of the gateway's `/health` the sizing reads. */
+const Health = z.object({
+  pools: z.array(z.object({ evalEligible: z.boolean(), evalAvailableUsd: z.number().finite() })),
+})

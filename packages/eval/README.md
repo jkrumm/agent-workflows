@@ -251,6 +251,7 @@ agw eval mine review --label 20                # plus the labelling plan and an 
 agw eval mine review --label 20 --yes          # label the next 20 candidates (2 paid calls each, a third when they disagree)
 agw eval mine review --label 0 --yes           # only ask seat c of the records that lack it (IU key, no credit)
 agw eval mine review --label 50 --yes --relabel-errors
+agw eval mine review --auto --yes              # the workflow sizes the run itself (see below)
 ```
 
 Measured 2026-11-02 on 150 candidates: $0.068 a candidate ($0.051 Sonnet on the credit, $0.018 Terra on the IU key),
@@ -266,7 +267,40 @@ cases). Size a batch to the gateway's `evalAvailableUsd` first.
 | `--controls N` | 100 | Clean controls to pick |
 | `--concurrency N` | 2 | Candidates in flight (each is two parallel calls) |
 | `--relabel-errors` | off | Label again candidates whose last record has an `a` or `b` error, and ask `c` again where it failed; they are never retried otherwise |
+| `--auto` | off | Exclusive with `--label`: the workflow decides N (below) and records why in the output's `auto` object. Without `--yes` it only plans |
+| `--target N` | 200 | `--auto`: bug cases (dev + test) the ground truth needs; at or above it nothing is labelled (`target-reached`) |
+| `--iu-line-usd X` / `--iu-margin-usd X` / `--iu-since T` | 20 / 0.75 / `2026-11-03T00:00:00Z` | `--auto`: the IU personal-key line, the margin kept under it, and when counting starts |
+| `--max-per-run N` | 150 | `--auto`: most candidates one run labels |
 | `--yes` | off | Spend. Without it `--label` prints the plan: candidates, records waiting for seat `c`, and 2 calls × the mean cost of the last 20 `cap.eval.label` runs (or `unknown`) |
+
+**`--auto` sizing** (`packages/host/src/workflows/eval-mine/auto.ts`). Bug cases are `summary.cases.dev.bug + test.bug`
+before labelling; at the target the run labels nothing and reads nothing else. Otherwise N is the floor of the smallest of:
+90 % of the gateway's eval credit (`/health`: the sum of `evalAvailableUsd` over `evalEligible` pools) over the credit cost
+of a candidate; the IU room (`line − margin − total`, minus the records still waiting for seat `c` at the IU cost each) over
+the IU cost of a candidate; `--max-per-run`; the candidates left. The IU total is `sum(cost_usd)` of `usage.records` with
+`source='gateway'`, `billing='api_key'`, `api_key='personal'`, `lane_detail->>'workflow' like 'eval.%'` since `--iu-since`
+(by workflow, not purpose: some early eval calls were tagged `prod`). The cost of a candidate per payer is the pooled spend
+of the newest 20 `eval.mine` runs that wrote records (`usage.records` by `run_id`, over `labelledThisRun + thirdSeatThisRun`
+in the journal), or `$0.05` credit / `$0.035` IU without history. No room under the IU line is `iu-line`, none in the credit
+`no-credit`; both label nothing. A read that fails (gateway, `USAGE_PG_URL`, journal) fails the run on its `size` step with
+the reason; nothing is planned from a guess. A 403 from the gateway mid-run still ends labelling cleanly (`stopped`).
+The run output's `auto`: `{ state: labelled|target-reached|no-credit|iu-line, target, bugCasesBefore, bugCasesAfter,
+creditAvailableUsd, creditPerCandidateUsd, iuSpentUsd, iuLineUsd, iuPerCandidateUsd, planned }` (`null` without `--auto`;
+the credit and IU reads are `null` at the target).
+
+**The nightly job.** `make eval-mine-job` installs the LaunchAgent `com.jkrumm.agent-workflows-eval-mine` (04:30 daily,
+`scripts/eval-mine-daily.sh` of the live release). It runs `AGW_PURPOSE=eval agw eval mine review --auto --yes --commit
+--format json --idempotency-key eval-mine-daily-<UTC date>` (a second trigger the same day adopts the run), follows an exit
+10 with `agw run wait` for up to 3 h (the run is never cancelled, only the waiting stops), and appends one line to
+`~/Library/Logs/agent-workflows-eval-mine.log`:
+
+```
+2026-11-04T04:41:07Z bug cases 61/200 (dev 33, test 28); labelled 40 (+2 third seat), accepted +18; credit available 3.21, run cost 2.76; IU 2.7 of 20 before the run; planned 40; state labelled; run <runId>
+```
+
+A failure logs `FAILED: <reason>` and exits non-zero. `run cost` is the run's total over both payers (the run record has no
+per-payer split); the IU total after the run is the next night's `IU … before the run`. At `target-reached` the script logs
+it, removes its own plist and boots the label out, so it never runs again.
 
 **Files**, all under `$AGW_EVAL_DIR/review-gt/` (dirs 0700, files 0600; cases name private repos):
 

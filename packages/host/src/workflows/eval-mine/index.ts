@@ -29,6 +29,7 @@ import {
   writeCandidates,
   writeReport,
 } from './files.ts'
+import { AUTO_DEFAULTS, type AutoPorts, AutoRecord, perCandidateCosts, sizeRun } from './auto.ts'
 import { LABELER_C_VERSION, LABELER_VERSION, type LabelCaller, labelCandidate, labelThirdSeat } from './label.ts'
 
 export { LABELER_C_VERSION, LABELER_VERSION, type LabelCaller, seatAnswer } from './label.ts'
@@ -46,6 +47,8 @@ const ESTIMATE_HISTORY = 20
  */
 export interface CostHistory {
   labelStepCosts(options: { runIds: string[]; limit: number }): Promise<{ runId: string; cost: number }[]>
+  /** The reads `--auto` sizes a run from; absent: `--auto` fails on its sizing step, naming this. */
+  auto?: AutoPorts
 }
 
 export interface EvalMineOptions {
@@ -69,6 +72,38 @@ export const evalMineInput = z
       .describe(
         'New candidates to label this run (two paid calls each, a third when the first two disagree), default: mine only. Given (0 included) with --yes, it first asks the third labeller of every record that lacks it',
       ),
+    auto: z
+      .boolean()
+      .optional()
+      .describe(
+        'Size the labelling itself (exclusive with --label): label nothing at the target, else as many candidates as the gateway eval credit and the IU line allow. With --yes it spends; the sizing is in the run output (`auto`)',
+      ),
+    target: z
+      .number()
+      .int()
+      .min(1)
+      .optional()
+      .describe(`--auto: bug cases (dev + test) the ground truth needs, default ${AUTO_DEFAULTS.target}`),
+    iuLineUsd: z
+      .number()
+      .positive()
+      .optional()
+      .describe(`--auto: the IU personal-key line in USD, default ${AUTO_DEFAULTS.iuLineUsd}`),
+    iuMarginUsd: z
+      .number()
+      .min(0)
+      .optional()
+      .describe(`--auto: kept under the IU line, default ${AUTO_DEFAULTS.iuMarginUsd}`),
+    iuSince: z.iso
+      .datetime()
+      .optional()
+      .describe(`--auto: IU spend counts from this instant, default ${AUTO_DEFAULTS.iuSince}`),
+    maxPerRun: z
+      .number()
+      .int()
+      .min(0)
+      .optional()
+      .describe(`--auto: most candidates one run labels, default ${AUTO_DEFAULTS.maxPerRun}`),
     seed: z.number().int().optional().describe('Seed of the label order and the control pick, default 1'),
     controls: z
       .number()
@@ -91,6 +126,7 @@ export const evalMineInput = z
     yes: z.boolean().optional().describe('Label: spends eval credit. Without it, mining and the labelling plan only'),
   })
   .strict()
+  .refine((input) => !(input.auto && input.label !== undefined), { message: '--auto and --label are exclusive' })
 
 const Estimate = z.object({
   historyRuns: z
@@ -137,6 +173,9 @@ export const evalMineOutput = z.object({
     })
     .nullable()
     .describe('Null without --label'),
+  auto: AutoRecord.nullable().describe(
+    'Null without --auto. How many candidates this run labelled and why: the bug-case count before and after, the credit and IU reads, the per-candidate costs',
+  ),
   spent: z.boolean().describe('False: no label call was made (no --label, or no --yes)'),
   labelledThisRun: z.number().int(),
   thirdSeatThisRun: z.number().int().describe('Records that gained the third labeller this run'),
@@ -180,7 +219,8 @@ function awaiting(
  * controls from the owner's history (`candidates.jsonl`, `report.json`), and with `--label N --yes` labels the next N
  * unlabelled candidates on two vendors, plus a third when the two disagree (`labels.jsonl`, one record as each
  * finishes), after adding the third labeller to every record that lacks it, then rebuilds `cases.jsonl` and
- * `rejected.jsonl` from every record (2 of 3 labellers accept). Everything is under `$AGW_EVAL_DIR/review-gt/`; the
+ * `rejected.jsonl` from every record (2 of 3 labellers accept). `--auto` replaces `--label N`: the workflow sizes N from
+ * the bug-case count, the gateway's eval credit and the IU line (`auto.ts`) and records why. Everything is under `$AGW_EVAL_DIR/review-gt/`; the
  * journal holds counts only. Every report states `GT_LIMIT`.
  */
 export function createEvalMine(options: EvalMineOptions): HostWorkflow {
@@ -193,15 +233,13 @@ export function createEvalMine(options: EvalMineOptions): HostWorkflow {
 
   const workflow = defineWorkflow({
     id: EVAL_MINE_ID,
-    version: '2026-11-02.2',
+    version: '2026-11-03.1',
     // One writer of the ground-truth files at a time: two runs would race on candidates and labels.
     concurrency: 1,
     input: evalMineInput,
     output: evalMineOutput,
     async run(ctx, input) {
       const seed = input.seed ?? 1
-      const wanted = input.label ?? 0
-      const labelling = input.label !== undefined
       const relabelErrors = input.relabelErrors ?? false
 
       const mined = await ctx.step('mine', async () => {
@@ -246,6 +284,13 @@ export function createEvalMine(options: EvalMineOptions): HostWorkflow {
       })
 
       const candidates = () => readRecords('candidates.jsonl', GtCandidate, env, warn)
+      const auto = input.auto
+        ? await ctx.step('size', () =>
+            sizeAuto({ input, ports: options.history?.auto, summary: mined.summary, env, warn, seed, relabelErrors }),
+          )
+        : null
+      const wanted = auto ? auto.planned : (input.label ?? 0)
+      const labelling = auto !== null || input.label !== undefined
       const plan = labelling
         ? await ctx.step('plan', async () => {
             const labels = latestLabels(env, VERSIONS, warn)
@@ -272,8 +317,19 @@ export function createEvalMine(options: EvalMineOptions): HostWorkflow {
         labelPlan: plan,
         runId: ctx.runId,
       }
-      if (!plan || !input.yes) {
-        return { ...base, spent: false, labelledThisRun: 0, thirdSeatThisRun: 0, stopped: null, summary: mined.summary }
+      const bugCases = (summary: CaseSummary) => summary.cases.dev.bug + summary.cases.test.bug
+      const autoRecord = (summary: CaseSummary) => (auto ? { ...auto, bugCasesAfter: bugCases(summary) } : null)
+      // Nothing to label (target reached, no credit, no room under the IU line): the third-seat backlog waits too.
+      if (!plan || !input.yes || (auto !== null && auto.state !== 'labelled')) {
+        return {
+          ...base,
+          auto: autoRecord(mined.summary),
+          spent: false,
+          labelledThisRun: 0,
+          thirdSeatThisRun: 0,
+          stopped: null,
+          summary: mined.summary,
+        }
       }
 
       const labelled = await ctx.step('label', ({ callContext, signal, progress }) =>
@@ -308,6 +364,7 @@ export function createEvalMine(options: EvalMineOptions): HostWorkflow {
       })
       return {
         ...base,
+        auto: autoRecord(summary),
         spent: true,
         labelledThisRun: labelled.labelled,
         thirdSeatThisRun: labelled.thirdSeat,
@@ -319,8 +376,90 @@ export function createEvalMine(options: EvalMineOptions): HostWorkflow {
   return {
     workflow,
     summary:
-      'Mine the review ground truth from the owner’s fix history; --label N --yes labels N candidates on two vendors, a third when they disagree, and adds the third to records that lack it (spends)',
+      'Mine the review ground truth from the owner’s fix history; --label N --yes labels N candidates on two vendors, a third when they disagree, and adds the third to records that lack it (spends); --auto sizes that N from the eval credit and the IU line',
     cli: { positional: ['suite'], defaultFormat: 'json', mutating: true },
+  }
+}
+
+type AutoSized = Omit<AutoRecord, 'bugCasesAfter'>
+
+/**
+ * `--auto`: how many candidates this run labels, and the reasons, from the bug-case count, the gateway's eval credit
+ * and the running IU total. At the target nothing else is read. A read that fails fails the step with its reason.
+ */
+async function sizeAuto(args: {
+  input: z.infer<typeof evalMineInput>
+  ports: AutoPorts | undefined
+  summary: CaseSummary
+  env: Record<string, string | undefined>
+  warn: Warn
+  seed: number
+  relabelErrors: boolean
+}): Promise<AutoSized> {
+  const { input, ports, summary } = args
+  const target = input.target ?? AUTO_DEFAULTS.target
+  const iuLineUsd = input.iuLineUsd ?? AUTO_DEFAULTS.iuLineUsd
+  const bugCasesBefore = summary.cases.dev.bug + summary.cases.test.bug
+  const record = { target, bugCasesBefore, iuLineUsd }
+  if (bugCasesBefore >= target) {
+    return {
+      ...record,
+      state: 'target-reached',
+      creditAvailableUsd: null,
+      creditPerCandidateUsd: null,
+      iuSpentUsd: null,
+      iuPerCandidateUsd: null,
+      planned: 0,
+    }
+  }
+  if (!ports) {
+    throw new WorkflowError(
+      'error',
+      '--auto needs the host’s spend reads (gateway credit, usage.records); none is wired',
+    )
+  }
+  const read = async <T>(what: string, call: () => Promise<T>) => {
+    try {
+      return await call()
+    } catch (error) {
+      throw new WorkflowError(
+        'error',
+        `--auto cannot size the run: ${what}: ${error instanceof Error ? error.message : String(error)}`,
+      )
+    }
+  }
+  const creditAvailableUsd = await read('eval credit', () => ports.creditAvailableUsd())
+  const iuSpentUsd = await read('IU total', () => ports.iuSpentUsd({ since: input.iuSince ?? AUTO_DEFAULTS.iuSince }))
+  const history = await read('per-candidate cost history', () => ports.runSpend({ limit: ESTIMATE_HISTORY }))
+  const perCandidate = perCandidateCosts(history)
+
+  const all = readRecords('candidates.jsonl', GtCandidate, args.env, args.warn)
+  const labels = latestLabels(args.env, VERSIONS, args.warn)
+  const unlabelled = pending(all, labels, { seed: args.seed, relabelErrors: args.relabelErrors }).length
+  const thirdSeatBacklog = awaiting(all, labels, args.relabelErrors).length
+  const sized = sizeRun({
+    creditAvailableUsd,
+    iuSpentUsd,
+    iuLineUsd,
+    iuMarginUsd: input.iuMarginUsd ?? AUTO_DEFAULTS.iuMarginUsd,
+    perCandidate,
+    thirdSeatBacklog,
+    unlabelled,
+    maxPerRun: input.maxPerRun ?? AUTO_DEFAULTS.maxPerRun,
+  })
+  if (sized.state === 'labelled' && sized.planned === 0 && thirdSeatBacklog === 0) {
+    throw new WorkflowError(
+      'error',
+      `no unlabelled candidates are left and ${bugCasesBefore} bug cases of ${target} is all the history yields`,
+    )
+  }
+  return {
+    ...record,
+    ...sized,
+    creditAvailableUsd,
+    creditPerCandidateUsd: perCandidate.creditUsd,
+    iuSpentUsd,
+    iuPerCandidateUsd: perCandidate.iuUsd,
   }
 }
 
