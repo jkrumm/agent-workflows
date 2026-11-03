@@ -7,6 +7,7 @@ import { issueFor } from './issue.ts'
 import { checkAnalysis } from './normalize.ts'
 import { SUBMIT_RESULT_RETRY, retroPrompt } from './prompt.ts'
 import type { JournalReader, SampledRun } from './sample.ts'
+import { retroScorer } from './scorer.ts'
 import { RETRO_ANALYSIS, RETRO_INPUT, RETRO_OUTPUT, type RetroAnalysis, type RetroOutput } from './schema.ts'
 
 export const RETRO_WORKFLOW_ID = 'retrospective'
@@ -48,7 +49,8 @@ export function createRetrospective(deps: RetrospectiveDeps): HostWorkflow {
   const now = deps.now ?? (() => new Date())
   const workflow = defineWorkflow({
     id: RETRO_WORKFLOW_ID,
-    version: '2026-10-28.1',
+    version: '2026-11-03.1',
+    scorer: retroScorer,
     input: RETRO_INPUT,
     output: RETRO_OUTPUT,
     // The weekly schedule starts one run per workflow; the agent step is the only spend.
@@ -58,7 +60,8 @@ export function createRetrospective(deps: RetrospectiveDeps): HostWorkflow {
       if (!agents || agents.length === 0) {
         throw new WorkflowError('invalid_input', `${input.workflow} is not a workflow that runs agents`)
       }
-      if (input.fileIssues && !(deps.gh && deps.tracked)) {
+      const filing = input.fileIssues && !input.fixture
+      if (filing && !(deps.gh && deps.tracked)) {
         throw new WorkflowError('invalid_input', 'fileIssues is on but this host has no issue repository configured')
       }
       const empty = {
@@ -72,6 +75,7 @@ export function createRetrospective(deps: RetrospectiveDeps): HostWorkflow {
       }
 
       const runs: SampledRun[] = await ctx.step('sample', async () => {
+        if (input.fixture) return input.fixture.runs
         const since = new Date(now().getTime() - input.window * DAY_MS)
         return JSON.parse(
           JSON.stringify(await deps.journal.sample({ workflow: input.workflow, since, limit: input.sample })),
@@ -92,6 +96,8 @@ export function createRetrospective(deps: RetrospectiveDeps): HostWorkflow {
       // Proposed, never active: a retrospective cannot change an agent's behaviour by itself.
       const learnings = await ctx.effect('store-learnings', async () => {
         const stored: RetroOutput['learnings'] = []
+        // An eval case stores nothing: its runs are made up, and a fact learned from them would reach a real agent.
+        if (input.fixture) return checked.learnings.map((l) => ({ ...l, learningId: null }))
         for (const l of checked.learnings) {
           const { learning, created } = await deps.learnings.add({
             agent: l.agent,
@@ -104,7 +110,7 @@ export function createRetrospective(deps: RetrospectiveDeps): HostWorkflow {
         return stored
       })
 
-      const issues: RetroOutput['issues'] = input.fileIssues
+      const issues: RetroOutput['issues'] = filing
         ? await ctx.effect('file-issues', async () => {
             const { gh, tracked } = deps
             if (!gh || !tracked) throw new WorkflowError('invalid_input', 'no issue repository configured')
