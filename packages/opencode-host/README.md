@@ -274,8 +274,8 @@ that is present is not downloaded again; an install is built in a temp directory
 repointed atomically, so an interrupted run leaves nothing half-installed. It never restarts the host. The host's OpenCode
 server runs the new binary on its next start: the binary path is part of the launch fingerprint, so the first `start()`
 after a version bump sees drift and restarts the server (logged). `make verify` fails, naming `make install-opencode`,
-when either pinned install is missing. `AGW_OPENCODE_ROOT`, `AGW_REACT_DOCTOR_ROOT` and `AGW_BIN_DIR` (absolute paths)
-redirect the installs and the links; `scripts/pins.sh` resolves them and reads the pinned versions.
+when the pinned install is missing. `AGW_OPENCODE_ROOT` and `AGW_BIN_DIR` (absolute paths)
+redirect the install and the links; `scripts/pins.sh` resolves them and reads the pinned versions.
 
 **Upgrade** is a deliberate act, gated on the live tests:
 

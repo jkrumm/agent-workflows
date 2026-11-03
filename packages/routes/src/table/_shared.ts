@@ -109,7 +109,7 @@ export const GEMINI_FLASH = {
 export const GEMINI_FLASH_LITE = {
   call: { model: 'gemini-3.5-flash-lite', rate: GEMINI_FLASH_LITE_RATE },
 } as const
-/** The cross-family critic of a Claude writer (`review.adversary`, `podcast.review.b`): Terra medium. Its capability refuses any wire but the OpenAI chat wire. On a provider-balance failure the critique comes from Luna medium on another backend rather than not at all. */
+/** The cross-family critic of a Claude writer (`podcast.review.b`): Terra medium. Its capability refuses any wire but the OpenAI chat wire. On a provider-balance failure the critique comes from Luna medium on another backend rather than not at all. */
 export const CRITIC = {
   call: { ...TERRA_MEDIUM, fallback: callFallback({ ...LUNA, effort: 'medium' as const }) },
 } as const
