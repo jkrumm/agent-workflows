@@ -72,6 +72,7 @@ describe('workflow discovery', () => {
       'diagram',
       'digest',
       'factory-classify',
+      'image-icon',
       'image',
       'narrative',
       'otel',
