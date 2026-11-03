@@ -283,7 +283,7 @@ Pulled forward 2026-11-03 while the owner reads review v3 (Waves 9–11 wait for
   credit-refused retrospective cases and one podcast case (calibrate its duration band). Eval scores a failed case run
   as zeros (should be an error). Compaction fallback labelled `unknown` at the gateway; follow-up turns get no fallback.
 
-## Wave 17b — Review v4: one routed reviewer agent on Max            <!-- status: active -->
+## Wave 18 — Review v4: one routed reviewer agent on Max            <!-- status: active -->
 
 Owner direction 2026-11-03, supersedes the v3 pick (finder = native `/code-review`) and its sign-off. Opus high lead.
 Goal: review checks intent, system fit and domain rules (duplication, clean architecture), not only bugs; it runs on

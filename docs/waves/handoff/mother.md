@@ -20,7 +20,7 @@ The whole memory of the mother. A fresh mother reads AGENTS.md, `docs/concept.md
   Rotation policy: a fresh lead per wave unless the last one closed under ~30% context.
 
 ## Decisions taken
-- 2026-11-03 owner: review v3 not signed; superseded by Wave 17b (review v4): one routed reviewer agent on Max,
+- 2026-11-03 owner: review v3 not signed; superseded by Wave 18 (review v4): one routed reviewer agent on Max,
   intent/system fit/domain rules first, context beyond the diff (wave plan, recent commits, prior findings), tiers
   none/light/standard/deep, no API spend, factory guarantees review per wave and caps deep reviews; HTML report.
 - 2026-11-03 owner: `review.synthesis` -> Haiku 5.5 high. Wave 17 gets its own Opus high lead and a mature,
