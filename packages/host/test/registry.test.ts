@@ -62,7 +62,6 @@ describe('workflow discovery', () => {
       'prose',
       'research',
       'retrospective',
-      'review',
       'smoke',
     ])
     expect(HOST_MODULES.filter((m) => m.phase === 'last').map((m) => m.id)).toEqual(['retrospective'])
@@ -81,7 +80,6 @@ describe('workflow discovery', () => {
       'prose',
       'research',
       'retrospective',
-      'review',
     ])
   })
 

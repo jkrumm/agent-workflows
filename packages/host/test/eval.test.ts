@@ -216,7 +216,7 @@ describe('agw eval compare on synthetic runs', () => {
       `insert into "${db.schema}".runs (id, workflow, root_id, purpose, input, input_hash, lock_key, version_started,
          status, fingerprint, cost, wall_ms, tokens_input, tokens_output, tool_calls, unpriced_calls, scores,
          score_source, scored_at, finished_at)
-       values ($1, 'review', $1, 'eval', '{}', 'h', 1, 'v', 'done', $2, $3, 1000, 100, 10, 4, $5, $4, 'regression', now(), now())`,
+       values ($1, 'check', $1, 'eval', '{}', 'h', 1, 'v', 'done', $2, $3, 1000, 100, 10, 4, $5, $4, 'regression', now(), now())`,
       [
         id,
         fp,
@@ -237,7 +237,7 @@ describe('agw eval compare on synthetic runs', () => {
     }
     const { runId } = await rt.start(
       evalCompare,
-      { workflow: 'review', a: 'fpaaaaaaaa', b: 'fpbbbbbbbb' },
+      { workflow: 'check', a: 'fpaaaaaaaa', b: 'fpbbbbbbbb' },
       { purpose: 'prod' },
     )
     const out = (await rt.wait(runId)).output as Out
@@ -248,7 +248,7 @@ describe('agw eval compare on synthetic runs', () => {
     expect(recall.meanDelta).toBeCloseTo(0.2, 10)
     expect(out.warnings).toEqual([])
     const ambiguous = await rt.wait(
-      (await rt.start(evalCompare, { workflow: 'review', a: 'fpaaaaaaaa', b: 'fpbbbbbbbb-2x' }, { purpose: 'prod' }))
+      (await rt.start(evalCompare, { workflow: 'check', a: 'fpaaaaaaaa', b: 'fpbbbbbbbb-2x' }, { purpose: 'prod' }))
         .runId,
     )
     expect(ambiguous.error?.message).toContain('arm B: no regression runs')
@@ -264,7 +264,7 @@ describe('agw eval compare on synthetic runs', () => {
     await insert('few-a-0', 'fpeeeeeeee-5', 'f0', 0.5, 1)
     await insert('few-b-0', 'fpffffffff-6', 'f0', 0.9, 0.5)
     const compare = async (a: string, b: string) =>
-      (await rt.wait((await rt.start(evalCompare, { workflow: 'review', a, b }, { purpose: 'prod' })).runId))
+      (await rt.wait((await rt.start(evalCompare, { workflow: 'check', a, b }, { purpose: 'prod' })).runId))
         .output as Out
     const out = await compare('fpcccccccc', 'fpdddddddd')
     expect(out.cases).toMatchObject({ paired: 6, unpricedCost: { a: 0, b: 2 }, noCost: { a: 0, b: 1 } })

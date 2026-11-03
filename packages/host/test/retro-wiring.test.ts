@@ -58,10 +58,10 @@ describe('registration', () => {
     expect(fingerprintWorkflows(entries).retrospective).toEqual([{ agent: 'retrospective', route: 'retro.analyze' }])
   })
 
-  test('the retrospective is told each agent once, though review lists its angles on two routes', async () => {
-    const review = agentNames(await createWorkflows({ registry, toolGate })).get('review') ?? []
-    expect(new Set(review).size).toBe(review.length)
-    expect(review.filter((a) => a === 'review-architect')).toHaveLength(1)
+  test('the retrospective is told each agent once per workflow', async () => {
+    for (const agents of agentNames(await createWorkflows({ registry, toolGate })).values()) {
+      expect(new Set(agents).size).toBe(agents.length)
+    }
   })
 })
 
