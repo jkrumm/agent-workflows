@@ -29,6 +29,21 @@ const CANCEL_GRACE_S = 10
 
 export const DEFAULT_PURPOSE = 'prod'
 
+/**
+ * The workflows `agw eval *` starts: without `x-agw-purpose` they run as `eval` (so their model calls draw on the
+ * gateway's eval reserve, not production credit), not as `DEFAULT_PURPOSE`. A caller that names a purpose keeps it.
+ * Literals, not the workflows' own constants: this module must not import the workflows; `test/purpose.test.ts` pins
+ * the two to each other.
+ */
+export const EVAL_PURPOSE = 'eval'
+export const EVAL_WORKFLOW_IDS: ReadonlySet<string> = new Set([
+  'eval.run',
+  'eval.compare',
+  'eval.mine',
+  'eval.gt.calibrate',
+  'eval.import',
+])
+
 /** What the host's fetch hands every procedure. */
 export type HostContext = RequestContext & {
   headers: Headers
@@ -142,10 +157,15 @@ export function preferWait(headers: Headers, fallback = 0): number {
   return Math.min(Number(match[2]), MAX_WAIT_S)
 }
 
-/** The run's purpose from `x-agw-purpose` (default `prod`); a malformed one is a 400 (`ORPCError`). */
-export function purposeOf(headers: Headers): string {
+/**
+ * The run's purpose from `x-agw-purpose`; absent or empty it is `eval` for an eval workflow (`workflowId`) and `prod`
+ * otherwise. A malformed one is a 400 (`ORPCError`).
+ */
+export function purposeOf(headers: Headers, workflowId?: string): string {
   const purpose = headers.get('x-agw-purpose')?.trim()
-  if (purpose === undefined || purpose === '') return DEFAULT_PURPOSE
+  if (purpose === undefined || purpose === '') {
+    return workflowId !== undefined && EVAL_WORKFLOW_IDS.has(workflowId) ? EVAL_PURPOSE : DEFAULT_PURPOSE
+  }
   if (purpose.length > 64 || !/^[\w.-]+$/.test(purpose))
     throw badRequest('x-agw-purpose must be 1-64 of [A-Za-z0-9_.-]')
   return purpose
@@ -185,7 +205,7 @@ export async function startRun(
   /** `runId`: the caller's own id for the run (`StartOptions.runId`), known before the start returns. */
   options: { runId?: string } = {},
 ): Promise<{ runId: string; idempotencyKey: string | undefined }> {
-  const purpose = purposeOf(headers)
+  const purpose = purposeOf(headers, workflow.id)
   const idempotencyKey = idempotencyKeyOf(headers)
   const traceparent = headers.get('traceparent') ?? undefined
   const who = whoOf(headers)
@@ -435,7 +455,7 @@ function buildWorkflow(
       in: 'header',
       required: false,
       schema: { type: 'string' },
-      description: `Why this run exists; default ${DEFAULT_PURPOSE}`,
+      description: `Why this run exists; default ${DEFAULT_PURPOSE}, ${EVAL_PURPOSE} for an eval workflow`,
     },
   ]
   return base

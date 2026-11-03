@@ -18,6 +18,7 @@ reads the ground truth, `$AGW_EVAL_DIR/review-gt/cases.jsonl`, and its `tree` ca
 - **Spend gate: `--yes`, not `--commit`.** The CLI's `--commit` gate (mutating operations) applies only off a TTY and
   shows nothing first; an eval spends IU money (concept N8) whoever types it, so `eval.run` is not `mutating`: the
   default answer is the plan with the estimate, and only `--yes` spends.
+- **Purpose.** Eval commands run as purpose `eval` without `AGW_PURPOSE` (`EVAL_WORKFLOW_IDS` in `operations.ts`); an explicit `x-agw-purpose` wins.
 - **An arm is a fingerprint plus the exact `--args`.** A workflow input that is not part of the fingerprint
   changes behaviour without changing the fingerprint, so compare selects by both: equal fingerprints compare when the args differ, and two
   identical arms are refused. A fingerprint may be given as a unique prefix (8+ characters). Reruns of a case in one
