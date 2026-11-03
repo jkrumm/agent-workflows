@@ -84,13 +84,22 @@ export function iuOpenai(options: HttpOptions & { env?: Env } = {}): ChatPort {
 }
 
 /**
- * Strict `json_schema` where IU's chat endpoint takes it: the GPT models (measured 2026-11-02: Luna and Terra
- * enforce it, the DeepSeek model behind Requesty answers 503 "response_format type is unavailable") and a schema whose
- * every property is required (strict mode answers 400 to an optional one). Anything else asks for JSON syntax only.
+ * The models proven to take a strict `json_schema` on IU's chat endpoint: the GPT models (measured 2026-11-02: Luna and
+ * Terra enforce it) and Gemini 3.8 Flash (measured 2026-11-03: accepted, and 3 of 3 label answers matched the schema,
+ * against 0 of 3 under JSON mode, which left out a required field or invented a `bugClass`). The DeepSeek model behind
+ * Requesty answers 503 "response_format type is unavailable". A model is added here after a live probe, never by family.
+ * The Gemini id is a pattern, not the literal: a model id lives only in the route table (the routes guard test).
+ */
+const PROVEN_NON_GPT = /^gemini-3\.8-flash$/
+const takesJsonSchema = (model: string) => model.startsWith('gpt-') || PROVEN_NON_GPT.test(model)
+
+/**
+ * Strict `json_schema` where the model takes it (`takesJsonSchema`) and the schema's every property is required (strict
+ * mode answers 400 to an optional one). Anything else asks for JSON syntax only.
  */
 function responseFormat(request: ChatRequest) {
   const { jsonSchema } = request
-  if (jsonSchema && request.model.startsWith('gpt-') && isStrictCompatible(jsonSchema)) {
+  if (jsonSchema && takesJsonSchema(request.model) && isStrictCompatible(jsonSchema)) {
     return {
       response_format: { type: 'json_schema', json_schema: { name: 'response', strict: true, schema: jsonSchema } },
     }

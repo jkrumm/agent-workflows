@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { resolveRoute } from '@agent-workflows/routes'
 import { CapabilityError } from './errors.ts'
 import { chatStream, type FakeGateway, messageResponse, sse, startFakeGateway } from './testing/index.ts'
 import { anthropicWire, iuDecision, iuOpenai, type JsonSchema } from './transports/index.ts'
@@ -174,6 +175,20 @@ describe('openai wire details', () => {
       type: 'json_schema',
       json_schema: { name: 'response', strict: true, schema },
     })
+  })
+
+  test('a schema goes as a strict json_schema on the Gemini model labeller c runs on, the one non-GPT model proven to take it', async () => {
+    iu.on('chat', () => chatStream('ok', null))
+    const port = iuOpenai({ env: env() })
+    const geminiFlash = resolveRoute('eval.label.c').model
+    await port.complete({ ...chatRequest, model: geminiFlash, jsonSchema: schema, json: true }, never())
+    await port.complete({ ...chatRequest, model: 'gemini-9-other', jsonSchema: schema, json: true }, never())
+    expect(iu.requests[0]?.body.response_format).toEqual({
+      type: 'json_schema',
+      json_schema: { name: 'response', strict: true, schema },
+    })
+    // Another Gemini model is not proven: it keeps JSON mode.
+    expect(iu.requests[1]?.body.response_format).toEqual({ type: 'json_object' })
   })
 
   test('a schema falls back to JSON mode where json_schema is not taken: a non-GPT model, an optional property', async () => {
