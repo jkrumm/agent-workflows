@@ -1,0 +1,6 @@
+{"id":"icon-01","input":{"file":"disc-opaque-64.png"},"reference":{"steps":["upscale","cutout","vectorize"],"transparentCorner":true}}
+{"id":"icon-02","input":{"file":"disc-opaque-256.png","cutout":"always","upscale":"never","svg":"never"},"reference":{"steps":["cutout"],"transparentCorner":true}}
+{"id":"icon-03","input":{"file":"disc-transparent-128.png"},"reference":{"steps":["upscale","vectorize"],"transparentCorner":true}}
+{"id":"icon-04","input":{"file":"disc-transparent-512.png"},"reference":{"steps":["vectorize"],"transparentCorner":true}}
+{"id":"icon-05","input":{"file":"disc-opaque-512.png","cutout":"never","upscale":"never","svg":"never"},"reference":{"steps":[],"transparentCorner":false}}
+{"id":"icon-06","input":{"file":"disc-transparent-512.png","background":"#0b1020","cutout":"never","upscale":"never","svg":"never"},"reference":{"steps":[],"transparentCorner":true}}
