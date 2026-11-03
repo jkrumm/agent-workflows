@@ -1,0 +1,6 @@
+{"id": "rt-en-1", "input": {"text": "The quick brown fox jumps over the lazy dog near the old stone bridge.", "language": "en"}, "reference": {"maxWer": 0.1}}
+{"id": "rt-en-2", "input": {"text": "Please remember to water the plants before you leave for the weekend trip.", "language": "en"}, "reference": {"maxWer": 0.1}}
+{"id": "rt-en-3", "input": {"text": "The train to the coast leaves from platform 12 and the ticket costs 23 euros.", "language": "en"}, "reference": {"maxWer": 0.15}}
+{"id": "rt-de-1", "input": {"text": "Der Zug nach Hamburg fährt heute eine halbe Stunde später als geplant.", "language": "de"}, "reference": {"maxWer": 0.1}}
+{"id": "rt-de-2", "input": {"text": "Bitte schließe das Fenster, bevor du das Haus verlässt, denn es soll heute regnen.", "language": "de"}, "reference": {"maxWer": 0.1}}
+{"id": "rt-de-3", "input": {"text": "Die Größe der Äpfel hängt vom Wetter und von der Pflege des Baumes ab.", "language": "de"}, "reference": {"maxWer": 0.1}}
