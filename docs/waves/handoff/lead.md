@@ -3,15 +3,19 @@
 Lead `agent-workflows-w1-r15`, spawned by mother `agent-workflows-w1-r4`, 2026-11-03 03:29 CET. Wave 8's close-out is
 in git at `0826cf4`.
 
-## In flight (rd fan, worktrees under `.claude/worktrees/`)
+## Landed (live at `740cddb`, `make verify` PASS)
 
-| Branch | Item |
+| PR | Item |
 |-|-|
-| `feat/eval-mine-daily` | daily mining job: `--auto` sizing (eval credit from `/health`, IU line $20 from `usage.records` since 2026-11-03T00:00Z, margin $0.75), LaunchAgent `com.jkrumm.agent-workflows-eval-mine` 04:30 via `make eval-mine-job`, off at 200; labeller c's re-asks |
-| `fix/compaction-overflow` | compaction output limit / budget in the OpenCode config, a classifier for the error |
-| `feat/eval-suites-text` | suites + deterministic scorers: narrative, overview, prose-polish, retrospective |
-| `feat/eval-suites-media` | suites + scorers: image-icon, podcast, speech/transcription round trip (queued: capacity) |
-| `chore/docs-and-small-debt` | concept.md drift, routes/otel READMEs, overview.classify prompt, flaky ocr env test (queued) |
+| #126 | daily mining job: `agw eval mine review --auto`, LaunchAgent `com.jkrumm.agent-workflows-eval-mine` (04:30, `make eval-mine-job`, installed); labeller c one call per ask |
+| #127 | concept.md v3.15 (docs to code), routes/otel/brain READMEs, overview.classify prompt, the flaky ocr env test (a mkdtemp path spelled `test-key`) |
+| #128 | compaction: `compaction.buffer` 40k, read-only restart on the route's fallback, unrecognised-failure warning |
+| #129 | suites: overview, narrative, prose-polish, retrospective (deterministic scorers, eval-only fixtures) |
+| #130 | suites: image-icon, podcast, speech-roundtrip (audio); eval runs post no Slack notice and file no brain note |
 
-Next: test fakes into `packages/testing` after these land (it touches every package's tests). `IU_ANTHROPIC_BASE` is
-already gone (681e942); the unused `~ctx` rows go with the compaction fix.
+Mining, first live run (launchd kickstart 05:18): bug cases 46/200, +3, IU eval $2.75 of $20.
+
+## In flight
+
+- `feat/eval-audio-suites`: the host's eval runs and scores audio-process suites (podcast, speech-roundtrip).
+- `chore/testing-fakes`: shared fakes into `packages/testing`.
