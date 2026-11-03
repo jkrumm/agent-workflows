@@ -1,4 +1,5 @@
 import { readFileSync, statSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { usage } from './exit.ts'
 import type { Command, Field, Schema } from './spec.ts'
 
@@ -64,10 +65,14 @@ function parseBoolean(label: string, raw: string): boolean {
   return raw === 'true'
 }
 
+/** The host is another process: a `cwd` it receives must not depend on the caller's working directory. */
+const pathAware = (field: Field, raw: string) => (field.name === 'cwd' && raw !== '' ? resolve(raw) : raw)
+
 export function coerce(field: Field, raw: string, label = `--${field.flag}`): unknown {
   const bad = (why: string) => usage(`${label} ${why}, got: ${raw}`, `${BIN} schema <command…> prints the input schema`)
   switch (fieldType(field.schema)) {
     case 'string':
+      return pathAware(field, raw)
     case 'scalar':
       return raw
     case 'number':

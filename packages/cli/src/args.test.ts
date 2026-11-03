@@ -33,6 +33,16 @@ describe('a JSON flag', () => {
   })
 })
 
+describe('a cwd flag', () => {
+  const cwd = { name: 'cwd', flag: 'cwd', required: true, schema: { type: 'string' } } as unknown as Field
+
+  test('a relative path is resolved against the caller, an absolute one is kept', () => {
+    expect(coerce(cwd, '.')).toBe(process.cwd())
+    expect(coerce(cwd, 'sub/dir')).toBe(join(process.cwd(), 'sub/dir'))
+    expect(coerce(cwd, dir)).toBe(dir)
+  })
+})
+
 describe('a command with commands below it', () => {
   const command = (words: string[], positional: string[] = []): Command =>
     ({
