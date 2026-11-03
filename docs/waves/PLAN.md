@@ -263,21 +263,25 @@ not interactive factory sessions. Runs after Wave 16, before Wave 8 resumes; it 
   ocr; insights are template-only, the period detectors start on 11-09; decision 5 (production pacing) and me2 are the
   owner's.
 
-## Wave 15 — Coverage and debt            <!-- status: active -->
+## Wave 15 — Coverage and debt            <!-- status: done 2026-11-03, release b2701de -->
 
 Pulled forward 2026-11-03 while the owner reads review v3 (Waves 9–11 wait for the sign-off).
 
-- [ ] **Daily mining job:** `agw eval mine review` on credit each night with `purpose=eval`, sized to
+- [x] **Daily mining job:** `agw eval mine review` on credit each night with `purpose=eval`, sized to
   `evalAvailableUsd`, until 200 bug cases; IU spend capped below the $20 line; it reports its count. A LaunchAgent
   per this repo's deploy rules (or the host's scheduler if agw has one); off once 200 are reached.
-- [ ] **Compaction overflow** (from Wave 14): an output limit for the compaction summary, or a context budget per
+- [x] **Compaction overflow** (from Wave 14): an output limit for the compaction summary, or a context budget per
   agent step, so a long exploration ends with a result instead of a failed step.
-- [ ] Eval cases and a scorer for the uncovered workflows (narrative, overview, prose-polish, image-icon, retrospective,
+- [x] Eval cases and a scorer for the uncovered workflows (narrative, overview, prose-polish, image-icon, retrospective,
   podcast) and scorers for speech and transcriptions.
-- [ ] Test fakes consolidated into `packages/testing` (they live in four packages today).
-- [ ] Dead code: `IU_ANTHROPIC_BASE` in `packages/opencode-host/src/server.ts`, Claude leftovers the tiers make obsolete.
-- [ ] Docs: concept notes and `otel.ts` comments brought to the code.
-- [ ] Small items from Wave 8: `overview.classify`'s stale prompt lines; labeller c's retry cost; the flaky ocr env test.
+- [x] Test fakes consolidated into `packages/testing` (they live in four packages today).
+- [x] Dead code: `IU_ANTHROPIC_BASE` in `packages/opencode-host/src/server.ts`, Claude leftovers the tiers make obsolete.
+- [x] Docs: concept notes and `otel.ts` comments brought to the code.
+- [x] Small items from Wave 8: `overview.classify`'s stale prompt lines; labeller c's retry cost; the flaky ocr env test.
+**Left behind:** close-out in `docs/waves/handoff/lead.md`. Mining job live (46/200 at its first run, ~10–17 cases a
+  day on credit; `me2` is the lever). First step of the next wave once eval credit allows: run prose-polish, the two
+  credit-refused retrospective cases and one podcast case (calibrate its duration band). Eval scores a failed case run
+  as zeros (should be an error). Compaction fallback labelled `unknown` at the gateway; follow-up turns get no fallback.
 
 ## Wave 9 — Baseline            <!-- status: pending -->
 
