@@ -5,7 +5,45 @@ The data side of the evals (concept §6): case schemas and the reader/writer of 
 `agw eval compare` workflow reads it), the throwaway case checkout (`materialize`, `exec`) that `agw eval run` replays
 cases on, and the review ground truth (`gt*.ts`, `mine/`) below. The side-by-side harness of the P1 cutover gate, its
 `ReviewCase` reader and the 138 legacy review cases went with review v1: the review is v4 host operations now, which
-`agw eval run` cannot replay (it is no workflow), so the ground truth has no replay arm until a v4 eval is built.
+`agw eval run` cannot replay (it is no workflow). The ground truth's replay arm is `agw eval recall` (below).
+
+## Recall run
+
+`agw eval recall [--split dev|test] [--cases a,b] [--kind bug|control|all] [--limit N]` (mutating: off a TTY it needs
+`--commit`; run it with `AGW_PURPOSE=eval`, which `eval.recall` defaults to) runs the cases of `review-gt/cases.jsonl`
+through review v4's hidden transport and scores them (`packages/host/src/workflows/eval-recall/`). One run at a time
+(`concurrency: 1`), the cases in file order after the filters. Step ids are literals, so each case is a child run
+(`eval.recall.case`, internal) with the steps `clone`, `request`, `wait`, `score`, `cleanup`; the children wait in file
+order for one of `--concurrency N` slots (1 by default, at most 2: the factory holds two reviewer sessions host-wide) before
+their first step. A child that fails (a judge outage, a missing credit) leaves its case `unscored` with the reason
+`case run failed`; rerun it with `--cases`:
+
+- **Clone.** `materialize` with `isolate: true` at the case's sha: no refs, origin or alternates, the parent reachable.
+  It lives under `$HOME/SourceRoot/.agw-eval-recall/` (`AGW_EVAL_CLONES_DIR`): the factory refuses a repo outside its
+  `FACTORY_REPO_ROOTS` (default `$HOME/SourceRoot`), and the miner skips dot names. With no origin the repo identity of
+  the clone is its own path, so the ledger's earlier findings of the live repo never reach `prior.json`, and
+  `history.txt` ends at the parent (`test/eval-recall-isolation.test.ts`).
+- **Request.** `review.request` in process: scope `<parent>..<sha>`, context the commit **subject** only (never the bug
+  description, the fix or the label), `min: light` so no case is skipped, thread `eval:<runId>:<caseId>`. A resumed
+  step looks the clone's live (not abandoned) job up first and adopts it, so a case is never requested twice. The
+  factory spawns one reviewer session on Max, paced by its quota ceiling.
+- **Wait.** Polls `review.status` every 60 s until the job is `submitted` or `abandoned`; no wall-clock ceiling (a job
+  the ceiling holds may wait hours). A `needs-human` or `skipped` request, an abandoned job, a failed clone and a judge
+  answer that is unusable are `unscored` with the reason, never a miss and never in a denominator.
+- **Score.** The restored scorer v3 on REVIEW_OUTPUT v4 (`scorer.ts`): the token-overlap preselection, one `eval.judge`
+  call (judge `a`, pinned route, purpose `eval`; both judges when `judge-calibration.json` does not clear `KAPPA_BAR`
+  for the current judge versions, a disagreement being `unclear`). Bug case: `recall` (an important finding judged
+  `match`), `detected`, `severityCalibration`; control: `falseAlarms` (important findings), `clean`; both: `noise`,
+  `findings`, `important`, `realOther`. A finding's text for the judge is its message plus its failure scenario.
+- **Cleanup.** The clone is removed after scoring; agw removes the job's tree on submit (an unsubmitted one is swept
+  after 24 h). A cancelled or crashed run leaves its current clone behind.
+
+The output holds, per case, `tier`, `seat`, `account`, `wallMs` (request to submit, held time included), the findings
+(`id`, `tag`, `file`, `line`, the judge's class; no text) and the scores, and per run the `summary`: recall with a Wilson
+95 % interval (`wilson` in `gt-stats.ts`), detected, severity calibration, false alarms per control, pooled noise, tier
+counts and wall p50 and p95, with `GT_LIMIT`. The metric is defined on `test` (`docs/review-v2.md` §Metrics); `dev` is
+for trying the path. The runaway cap's static ceilings for `eval.recall` are $30, 30 days of wall (`STATIC_CEILINGS`), far above a real run; after 20 done runs of its own the learned cap (10 × p95, so a long run after twenty short ones could be stopped) replaces them. The reviews cost no API money; the judge draws on eval credit. `agw eval compare` reads only
+`eval.run` suites, so two recall runs are compared by their `summary`.
 
 Cases and reports hold private code and findings, so they never enter this repo: they live under `$AGW_EVAL_DIR`
 (default `~/.local/share/agent-workflows/eval`). Only aggregate numbers are published.
@@ -16,11 +54,11 @@ No human checks the review ground truth (owner decision, 2026-11-02; `docs/revie
 §Matching and judging Calibration). The labels are validated by 2-of-3 labeller consensus (below), and the judge by a
 second judge on another vendor. Every report that rests on it states `limit: "LLM consensus (labellers a/b/c, judges
 a/b), no human check"` (`GT_LIMIT`): the mine's `report.json` and output, the calibration's output and file, and the
-review scorer's notes. The pure parts live in `src/gt-stats.ts` (Wilson interval, Cohen's κ with its 95 % interval,
+recall scorer's notes. The pure parts live in `src/gt-stats.ts` (Wilson interval, Cohen's κ with its 95 % interval,
 `KAPPA_BAR`) and `src/gt-sample.ts` (seeded sampling); the workflow in `packages/host/src/workflows/eval-gt/`.
 
 `agw eval gt calibrate --eval-runs <runId> [--pairs 100 --seed 1] [--yes]` (mutating: off a TTY it needs `--commit`).
-Needs an eval run that judged an arm (the `review` suite that `agw eval run review` replayed went with review v1, so there is none to calibrate against until a v4 eval exists). Pass its eval run id(s):
+Needs an eval run whose judge calls are `cap.eval.judge` runs (the `review` suite that `agw eval run review` replayed went with review v1). `agw eval recall` does not produce them: it calls the judge in process, as a step of its own run, so it cannot be calibrated against and `gt calibrate` still has no input. Pass such eval run id(s):
 
 - It reads the `cap.eval.judge` runs below those eval runs and `cases.jsonl`, and builds the pairs from **judge-`a` runs of the current capability version only**: a run with `seat: 'b'` (the scorer's dual mode) and a run whose recorded workflow version is not the current one (or a known earlier one that asked the same judge `a`; `eval-gt/versions.ts`) are skipped and counted in the output. The journal records a hash of the capability's definition per run, not `JUDGE_VERSION`; the pairs (a finding and the
   case's bug): half judge-`a`-positive (`match`), half preselected non-matches (right file, plausible, wrong defect). When
@@ -34,11 +72,10 @@ Needs an eval run that judged an arm (the `review` suite that `agw eval run revi
   versions of both judges (`JUDGE_VERSION`, `JUDGE_B_VERSION`), both judges' models, the eval runs and `at`. Each judge-`b`
   answer is appended to `judge-b.jsonl` as it arrives, so a rerun asks only the missing ones; an unusable answer skips
   its run (counted); any other failure (no credit, an outage) stops the calibration and keeps what was paid for.
-- **The bar is κ ≥ 0.8.** The review scorer reads the file when the host starts: at or above the bar for the current
-  judge versions of both judges it asks judge `a` alone; otherwise (below, missing, either judge changed) it asks both and a finding
-  they classify differently is `unclear`. The mode is in the scorer version, so `compare` refuses to mix modes; restart the
-  host after a calibration for the scorer to pick it up; the host logs the mode and the reason once, when it builds its
-  scorers.
+- **The bar is κ ≥ 0.8.** The recall scorer reads the file in each `agw eval recall` run's `plan` step: at or above the
+  bar for the current judge versions of both judges it asks judge `a` alone; otherwise (below, missing, either judge
+  changed) it asks both and a finding they classify differently is `unclear`. The mode and why are in the run output
+  (`judges`) and the mode is in the scorer version, so runs of different modes are not mixed.
 
 ## Ground truth miner
 
@@ -57,9 +94,9 @@ agw eval mine review --auto --yes              # the workflow sizes the run itse
 
 Measured 2026-11-02 on 150 candidates: $0.068 a candidate ($0.051 Sonnet on the credit, $0.018 Terra on the IU key),
 23 % accepted (35 of 150; rejected: both no 76, `b` no 28, no overlap 8, `a` no 3). **Label in batches of at most 60**
-until `eval.mine` has 20 done runs: below that the runaway cap applies its static $5 ceiling per run, and a 147-candidate
-run was stopped in its final `cases` step at $10.12 (every label was already appended; a mine-only run rebuilt the
-cases). Size a batch to the gateway's `evalAvailableUsd` first.
+until `eval.mine` has 20 done runs: below that the runaway cap applies a static ceiling per run, $30 for `eval.mine`
+(`STATIC_CEILINGS` in `boot.ts`; the $5 default stopped a 147-candidate run in its final `cases` step at $10.12, every
+label already appended, and a mine-only run rebuilt the cases). Size a batch to the gateway's `evalAvailableUsd` first.
 
 | Flag | Default | Does |
 |-|-|-|

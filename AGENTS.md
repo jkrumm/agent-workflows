@@ -64,7 +64,7 @@ prepare|request|submit|dispose|status|route|covered|cancel` over a Postgres ledg
 routed by `REVIEW.md`'s globs. `/review` (the dotfiles skill) runs `prepare` → the reviewer agent
 (`docs/spikes/review-v4/reviewer.md`) on the printed seat → `submit` → `dispose` for every finding, rounds converging by
 disposition. `agw review request` is the hidden path: the software factory spawns the reviewer session and submits its
-reply. `covered` proves a commit range was reviewed; the wave gate and the factory's evidence read it. Review v1 (the
+reply. `covered` proves a commit range was reviewed; the wave gate and the factory's evidence read it. `agw eval recall` replays the Wave 8 ground-truth cases through the hidden transport and scores them (`packages/eval/README.md` §Recall run). Review v1 (the
 LLM workflow with angle agents, OCR and react-doctor) was deleted in Wave 10.
 
 ## Other repos the fleet touches
