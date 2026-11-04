@@ -1,5 +1,5 @@
 import type { RouteEntry } from '../schema.ts'
-import { FAST, GEMINI_FLASH_LITE } from './_shared.ts'
+import { FAST } from './_shared.ts'
 
 // The audio door's routes (Wave 8, concept §8/§10): one route per TTS/STT model the door accepts, plus the prep and
 // spoken-summary LLMs. Ported from audio-gateway (`src/config.ts` defaults, `src/usage.ts` RATES at 568c281); the
@@ -40,8 +40,9 @@ const routes = {
   // follows the route's wire (`packages/audio/src/speech/prep.ts`), so it spends the credit like every Claude route; a
   // drained credit (402) falls back to Luna low on IU's chat wire. It had Luna on `iu-openai` with no fallback before the tiers.
   'audio.tts.prep': { wire: 'anthropic', ...FAST.call },
-  // Spoken summary: a cross-lab constant (`_shared.ts`). Measured 0.8–1.0 s (legacy config, 2026-08-27).
-  'audio.tts.summary': { wire: 'iu-openai', ...GEMINI_FLASH_LITE.call },
+  // Spoken summary: the FAST tier on the Messages wire, so it spends the credit like prep (owner, 2026-11-04: every text
+  // seat that needs no second lab runs on Claude). A drained credit (402) falls back to Luna low on IU's chat wire.
+  'audio.tts.summary': { wire: 'anthropic', ...FAST.call },
 
   // STT on IU's OpenAI `/audio/transcriptions`. Default since 2026-10-25: voxtral-mini (EU). Per minute of audio:
   // voxtral docs.mistral.ai pricing 2026-10-25; gpt-transcribe OpenAI list 2026-10-15 (duration-billed); whisper OpenAI

@@ -413,13 +413,13 @@ describe('costFromUsage', () => {
 describe('fallback', () => {
   // The audio door's routes have no fallback: STT has its own model chain, and TTS, prep and summary keep audio-gateway's
   // behaviour (no balance fallback; packages/audio calls IU directly, not through the capability transports).
-  test('every text route has one; decide, audio.* (but the prep) and the image/Replicate models have none', () => {
+  test('every text route has one; decide, audio.* (but the prep and the summary) and the image/Replicate models have none', () => {
     for (const id of routeIds()) {
       const route = resolveRoute(id, {})
       // an audio route has none; an image or Replicate model (`price`) has no text model to move to
       expect(route.fallback === undefined).toBe(
         route.wire === 'iu-decision' ||
-          (id.startsWith('audio.') && id !== 'audio.tts.prep') ||
+          (id.startsWith('audio.') && id !== 'audio.tts.prep' && id !== 'audio.tts.summary') ||
           // the pinned eval seats: a fallback would silently change a labeller or the grader
           id.startsWith('eval.') ||
           route.price !== undefined,

@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
 import { CLAUDE_MODELS, DEFAULT_ROUTES, resolveRoute, routeIds } from './index.ts'
-import { CRITIC, DECIDE, DEEPSEEK_FLASH, EASY, FAST, GEMINI_FLASH, GEMINI_FLASH_LITE, HARD } from './table/_shared.ts'
+import { CRITIC, DECIDE, DEEPSEEK_FLASH, EASY, FAST, GEMINI_FLASH, HARD } from './table/_shared.ts'
 
 // The home-of-model-ids rule: no source outside `packages/routes/src/table/` names a model that the table names. The
 // routes package's own test files may (they pin what the table says): exactly the files `bun test` runs, by its
@@ -311,7 +311,7 @@ test('every route on a Claude model spreads a tier', () => {
 
 // A route on a non-tier constant equals that constant's `.call` except `wire`: no route-level override remains outside
 // the eval seats.
-const CONSTANTS = { DEEPSEEK_FLASH, GEMINI_FLASH, GEMINI_FLASH_LITE, CRITIC, DECIDE }
+const CONSTANTS = { DEEPSEEK_FLASH, GEMINI_FLASH, CRITIC, DECIDE }
 
 test('every route on a non-tier constant equals the constant exactly, except wire', () => {
   const matched = new Set<string>()

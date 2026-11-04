@@ -29,8 +29,6 @@ const DEEPSEEK_FLASH_RATE = { inputPerM: 0.3, outputPerM: 1.2, cacheReadPerM: 0.
 // Gemini 3.8 Flash, USD/M: in 0.75, out 3.75 (introductory through 2026-12-31, then 1.50 / 7.50), audio-gateway
 // `src/usage.ts`. No cache rate: a call reporting cache reads without `usage.cost` is priced `unknown`, never 0.
 const GEMINI_FLASH_RATE = { inputPerM: 0.75, outputPerM: 3.75 }
-// Gemini 3.5 Flash-Lite: ai.google.dev pricing, read 2026-09-02.
-const GEMINI_FLASH_LITE_RATE = { inputPerM: 0.3, outputPerM: 2.5 }
 // The UE price list in the gateway's decision.ts, input only ($0.042/M, output $0).
 const DECISION_RATE = { inputPerM: 0.042, outputPerM: 0 }
 
@@ -109,10 +107,6 @@ export const DEEPSEEK_FLASH = {
 /** The podcast cross-lab reviewer. No effort: Gemini's OpenAI-compatible leg rejects `reasoning_effort`. Falls back to Terra medium. */
 export const GEMINI_FLASH = {
   call: { model: 'gemini-3.8-flash', rate: GEMINI_FLASH_RATE, fallback: callFallback(TERRA_MEDIUM) },
-} as const
-/** The spoken summary of the audio door. No fallback. */
-export const GEMINI_FLASH_LITE = {
-  call: { model: 'gemini-3.5-flash-lite', rate: GEMINI_FLASH_LITE_RATE },
 } as const
 /** The cross-family critic of a Claude writer (`podcast.review.b`): Terra medium. Its capability refuses any wire but the OpenAI chat wire. On a provider-balance failure the critique comes from Luna medium on another backend rather than not at all. */
 export const CRITIC = {

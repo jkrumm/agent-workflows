@@ -243,14 +243,14 @@ describe('briefing lane (prep)', () => {
 
   test('summarize uses the summary route without an effort, and a prep-invented style is replaced by the baseline', async () => {
     const { speak } = setup({
-      chat: () =>
-        prepAnswer({ lang: 'de', title: 'T', chunks: [{ style: 'Sprich ganz langsam wie am Kamin', text: 'Satz.' }] }),
+      messages: () =>
+        prepMessage({ lang: 'de', title: 'T', chunks: [{ style: 'Sprich ganz langsam wie am Kamin', text: 'Satz.' }] }),
       gemini: () => geminiAudio(Uint8Array.from([1, 0])),
     })
     await speak(post({ model: FLASH, input: 'Ein Satz.', summarize: true }))
-    const chat = iu.requests.find((r) => r.route === 'chat')
+    const chat = iu.requests.find((r) => r.route === 'messages')
     expect(chat?.body.model).toBe(ROUTES['audio.tts.summary'].model)
-    expect(chat?.body.reasoning_effort).toBeUndefined()
+    expect(chat?.body.thinking).toBeUndefined()
     expect(sentText(iu.requests.find((r) => r.route === 'gemini') ?? { body: {} })?.speechMetadata?.style).toBe(
       PREP_STYLE,
     )

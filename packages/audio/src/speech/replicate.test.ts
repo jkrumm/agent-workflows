@@ -129,14 +129,12 @@ describe.skipIf(!hasFfmpeg)('replicate lane', () => {
 
   test('summarize on a prep-off model uses the summary prompt, one prediction, title header', async () => {
     const { deps, speak } = setup({
-      chat: () => prepAnswer({ lang: 'de', title: 'Todo', chunks: [{ style: '', text: 'Todo angelegt.' }] }),
+      messages: () => prepMessage({ lang: 'de', title: 'Todo', chunks: [{ style: '', text: 'Todo angelegt.' }] }),
     })
     const res = await speak(post({ model: FLASH, input: 'Ich habe das Todo angelegt.', summarize: true }))
     expect(decodeURIComponent(res.headers.get('x-audio-title') ?? '')).toBe('Todo')
-    const chat = iu.requests.find((r) => r.route === 'chat')
-    expect((chat?.body as { messages: Array<{ content: string }> } | undefined)?.messages[0]?.content).toContain(
-      'what should be SPOKEN aloud',
-    )
+    const chat = iu.requests.find((r) => r.route === 'messages')
+    expect(JSON.stringify(chat?.body)).toContain('what should be SPOKEN aloud')
     expect(chat?.body.model).toBe(ROUTES['audio.tts.summary'].model)
     expect(predictionInputs()).toHaveLength(1)
     expect(summary(deps.usage.events)?.mode).toBe('summary')
@@ -145,22 +143,22 @@ describe.skipIf(!hasFfmpeg)('replicate lane', () => {
   describe('door-side auto-summarize for whole-file clients', () => {
     const LONG = `Erledigt! Ich habe das Todo Serverrechnung bezahlen für morgen angelegt. ${'Weitere Details, die man lesen kann. '.repeat(6)}`
     const handlers = {
-      chat: () => prepAnswer({ lang: 'de', title: 'Todo', chunks: [{ style: '', text: 'Todo angelegt.' }] }),
+      messages: () => prepMessage({ lang: 'de', title: 'Todo', chunks: [{ style: '', text: 'Todo angelegt.' }] }),
     }
     test('a long mp3 request on flash is summarized without the client asking', async () => {
       const { speak } = setup(handlers)
       expect((await speak(post({ model: FLASH, input: LONG }))).status).toBe(200)
-      expect(iu.requests.filter((r) => r.route === 'chat')).toHaveLength(1)
+      expect(iu.requests.filter((r) => r.route === 'messages')).toHaveLength(1)
     })
     test('the same text as pcm (a streaming sentence) is never summarized', async () => {
       const { speak } = setup(handlers)
       expect((await speak(post({ model: FLASH, input: LONG, response_format: 'pcm' }))).status).toBe(200)
-      expect(iu.requests.filter((r) => r.route === 'chat')).toHaveLength(0)
+      expect(iu.requests.filter((r) => r.route === 'messages')).toHaveLength(0)
     })
     test('short mp3 requests stay direct', async () => {
       const { speak } = setup(handlers)
       expect((await speak(post({ model: FLASH, input: 'Alles klar, erledigt.' }))).status).toBe(200)
-      expect(iu.requests.filter((r) => r.route === 'chat')).toHaveLength(0)
+      expect(iu.requests.filter((r) => r.route === 'messages')).toHaveLength(0)
     })
   })
 
