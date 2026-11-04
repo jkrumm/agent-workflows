@@ -1721,15 +1721,25 @@ describe('web.fetch through a real browser', () => {
       expect(await failing.notify({ host: 'a.example.com' })).toBe(false)
       expect(warnings).toHaveLength(2)
 
+      const spawned: string[][] = []
       const bad = askHumanHandoff({
         env: { AGW_SCREENSHARE_HOST: 'x; rm -rf ~' },
         warn: (m) => warnings.push(m),
         exists: () => true,
-        spawn: async () => {
-          throw new Error('must not spawn')
-        },
+        spawn: async (argv) => void spawned.push(argv),
       })
       expect(await bad.notify({ host: 'a.example.com' })).toBe(false)
+      expect(spawned).toEqual([])
+      expect(warnings.at(-1)).toContain('AGW_SCREENSHARE_HOST is not a plain host name')
+    })
+
+    test('a URL host with shell metacharacters is not named in the dialog text', async () => {
+      const argvs: string[][] = []
+      const handoff = askHumanHandoff({ env: {}, spawn: async (argv) => void argvs.push(argv), exists: () => true })
+      const host = new URL('http://$(id)`x`.evil.example/').hostname
+      expect(await handoff.notify({ host })).toBe(true)
+      expect(argvs[0]![2]).toStartWith('agw: a site shows a bot check')
+      expect(argvs[0]!.join(' ')).not.toContain('$(id)')
     })
   })
 

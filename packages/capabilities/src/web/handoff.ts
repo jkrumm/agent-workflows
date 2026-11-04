@@ -12,7 +12,7 @@ export interface HumanHandoff {
   notify(request: { host: string }): Promise<boolean>
 }
 
-const SCREENSHARE_HOST = /^[A-Za-z0-9][A-Za-z0-9.-]*$/
+const PLAIN_HOST = /^[A-Za-z0-9][A-Za-z0-9.-]*$/
 const DEFAULT_SCRIPT = (): string => join(process.env.HOME ?? homedir(), 'SourceRoot/dotfiles/scripts/ask-human.sh')
 
 /** Starts a detached process; resolves once it is running, rejects when it cannot start. */
@@ -48,7 +48,8 @@ const executable = (path: string): boolean => {
 
 /**
  * The production adapter: `ask-human.sh ask <text> --cmd 'open vnc://<screenshare host>'`, which pushes a dialog to the
- * MacBook and runs the command there only after a click. Only the host is named, never the URL (it can carry secrets).
+ * MacBook and runs the command there only after a click. Only the host is named, never the URL (it can carry secrets),
+ * and only a plain host name: a URL host can hold shell metacharacters, so any other host is not named at all.
  * A missing script turns the handoff off with one warning, not one per call.
  */
 export function askHumanHandoff(options: AskHumanOptions = {}): HumanHandoff {
@@ -67,12 +68,13 @@ export function askHumanHandoff(options: AskHumanOptions = {}): HumanHandoff {
         warn('web.fetch: the owner handoff is off: the ask-human script is missing (AGW_ASK_HUMAN)')
         return false
       }
-      if (!SCREENSHARE_HOST.test(share)) {
+      if (!PLAIN_HOST.test(share)) {
         off = true
         warn('web.fetch: the owner handoff is off: AGW_SCREENSHARE_HOST is not a plain host name')
         return false
       }
-      const text = `agw: ${host} shows a bot check the research Chrome cannot pass. Open screen share to the mini, solve it once in the Chrome window, the cookie stays.`
+      const site = PLAIN_HOST.test(host) ? host : 'a site'
+      const text = `agw: ${site} shows a bot check the research Chrome cannot pass. Open screen share to the mini, solve it once in the Chrome window, the cookie stays.`
       try {
         await start([script, 'ask', text, '--cmd', `open vnc://${share}`])
         return true
