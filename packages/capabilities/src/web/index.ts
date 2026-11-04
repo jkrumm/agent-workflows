@@ -1,3 +1,4 @@
+import { createAsk } from './ask.ts'
 import { createDocs } from './docs.ts'
 import { createFetch } from './fetch.ts'
 import { createPackage } from './package.ts'
@@ -9,7 +10,7 @@ export type { WebDeps } from './deps.ts'
 export { BLOCK_REASONS, type BlockReason, blockedReason } from './fetch.ts'
 export { TAVILY_USD_PER_CREDIT } from './search.ts'
 
-/** The research tools as capabilities: `web.search`, `web.fetch`, `web.docs`, `web.package`, `web.youtube`. */
+/** The research tools as capabilities: `web.search`, `web.fetch`, `web.docs`, `web.package`, `web.youtube`, `web.ask`. */
 export function createWebCapabilities(deps: WebDeps = {}) {
   const resolved = resolveWebDeps(deps)
   return [
@@ -18,5 +19,6 @@ export function createWebCapabilities(deps: WebDeps = {}) {
     createDocs(resolved),
     createPackage(resolved),
     createYoutube(resolved),
+    createAsk(resolved),
   ] as const
 }

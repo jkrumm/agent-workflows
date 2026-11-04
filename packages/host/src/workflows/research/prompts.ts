@@ -6,8 +6,8 @@ const EFFORT: Record<Depth, string> = {
   quick:
     'QUICK: answer directly and precisely. One targeted search, read the most relevant page if the snippets are not enough, then answer.',
   standard:
-    'STANDARD: search, then read the 2-3 most relevant pages. Cross-verify the answer across at least 2 independent sources.',
-  deep: 'DEEP: survey the question. Search from several angles, read the primary sources, cross-verify every key claim across independent sources, and name what stays uncertain.',
+    'STANDARD: search, then read the 2-3 most relevant pages. Cross-verify the answer across at least 2 independent sources. `web_ask` may orient the search; its answer is an unverified lead, never a source.',
+  deep: 'DEEP: survey the question. Search from several angles, read the primary sources, cross-verify every key claim across independent sources, and name what stays uncertain. `web_ask` may orient the search or cross-check a claim; its answer is an unverified lead, never a source: cite only pages you read.',
 }
 
 /** research-gateway's synthesis length targets (`src/agent/prompt.ts`). */

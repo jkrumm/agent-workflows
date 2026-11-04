@@ -200,6 +200,7 @@ test.skipIf(!binary)(
       'grep',
       'read',
       'skill',
+      'web_ask',
       'web_docs',
       'web_fetch',
       'web_package',

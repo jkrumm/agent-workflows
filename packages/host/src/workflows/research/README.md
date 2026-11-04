@@ -7,9 +7,9 @@ agent's `tools` counts. `--depth` defaults to `standard`. A long run waits like 
 `AGW_WAIT_BUDGET_S` the CLI exits 10 with `agw run wait <runId>`. The shape is the winner of the three-way comparison
 (`docs/research/2026-10-28-research-three-way.md`: one agent with the platform's web tools); the other arms are gone.
 
-- **The agent** (`agents/research`, route `research.agent`) runs on the shared OpenCode server. Its four tools
-  (`web_search`, `web_fetch`, `web_docs`, `web_package`) go through the host's **tool gate** (`packages/host/README.md` §Tool gate) with a
-  grant `src/workflows/research/tools.ts` builds (`researchGrant`): the four tools mapped to the `web.*` capabilities,
+- **The agent** (`agents/research`, route `research.agent`) runs on the shared OpenCode server. Its tools
+  (`web_search`, `web_fetch`, `web_docs`, `web_package`, `web_youtube`, `web_ask`) go through the host's **tool gate** (`packages/host/README.md` §Tool gate) with a
+  grant `src/workflows/research/tools.ts` builds (`researchGrant`): the tools mapped to the `web.*` capabilities (a `web_ask` answer is a lead: its citations are `seen`, never `retrieved`),
   and a hook that writes every call's evidence apart to `research_tool_calls` (migration 0007; rows go with their
   run; in memory on a host without a database), so a step retry or a host restart loses nothing. A call's cost is
   booked as it is reported on the run's `tools` step, which lives as long as the agent's turns (a cancelled or failed

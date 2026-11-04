@@ -1,5 +1,6 @@
 import type { Usage } from '../context.ts'
 import { defineCapability } from '../procedure.ts'
+import { askInput, askOutput } from './ask.ts'
 import { webUsage } from './deps.ts'
 import { docsInput, docsOutput } from './docs.ts'
 import { fetchInput, fetchOutput } from './fetch.ts'
@@ -20,9 +21,10 @@ export interface FakeWeb {
     ReturnType<typeof defineCapability<typeof docsInput, typeof docsOutput, 'web.docs'>>,
     ReturnType<typeof defineCapability<typeof packageInput, typeof packageOutput, 'web.package'>>,
     ReturnType<typeof defineCapability<typeof youtubeInput, typeof youtubeOutput, 'web.youtube'>>,
+    ReturnType<typeof defineCapability<typeof askInput, typeof askOutput, 'web.ask'>>,
   ]
   /** Every call, in order, with the input as the handler saw it (defaults applied). */
-  calls: { id: 'web.search' | 'web.fetch' | 'web.docs' | 'web.package' | 'web.youtube'; input: unknown }[]
+  calls: { id: 'web.search' | 'web.fetch' | 'web.docs' | 'web.package' | 'web.youtube' | 'web.ask'; input: unknown }[]
 }
 
 type Script = {
@@ -31,6 +33,7 @@ type Script = {
   docs?: Reply<z.output<typeof docsInput>, z.input<typeof docsOutput>>
   package?: Reply<z.output<typeof packageInput>, z.input<typeof packageOutput>>
   youtube?: Reply<z.output<typeof youtubeInput>, z.input<typeof youtubeOutput>>
+  ask?: Reply<z.output<typeof askInput>, z.input<typeof askOutput>>
   /** What each call reports through `addUsage`. Default: a priced, free call. `null` reports nothing. */
   usage?: Usage | null
 }
@@ -133,6 +136,18 @@ export function fakeWeb(script: Script = {}): FakeWeb {
           tracks: ['de (auto)'],
           transcript: '[0:00] Canned transcript.',
           truncated: false,
+        }),
+      }),
+      defineCapability({
+        id: 'web.ask',
+        summary: 'Fake web.ask',
+        input: askInput,
+        output: askOutput,
+        cli: { positional: ['query'], defaultFormat: 'json' },
+        handler: answer('web.ask', script.ask, {
+          provider: 'sonar' as const,
+          answer: 'Canned unverified answer.',
+          citations: [{ url: 'https://example.com/a', title: 'Example A', snippet: 'First canned result.' }],
         }),
       }),
     ],
