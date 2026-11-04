@@ -72,7 +72,7 @@ Pass rule written before the run: the image is accepted, the shape is right, the
 | gpt-4.1-nano | yes | 4 / 4 / 8 | "none" ×3 | "metal" only | 969-1067 / 47-68 | pass on counts; thin answers, price not verified |
 | Terra (medium) | yes | 4 / 4 / 8 | "none" ×3 | black / "likely stainless steel" ×2 | 443-483 / 99-120 | pass; ten times Luna's price, so it is the fallback |
 
-**Picked: Luna at effort low**, the seat `TRIVIAL` already prices ($0.10 in, $0.50 out per million), so the probe adds no model id and no rate. The nano models are not in the route table's rate sources, so "cheaper than Luna" could not be shown for them; if a verified rate says so, move the seat. The fallback is Terra (`CALL_FALLBACK`): it answered the same photos correctly. Live: a 1500 px product photo costs about 2,400 prompt tokens, $0.0002-0.0003 per read.
+**Picked: Luna at effort low**, the seat `VISION` (`packages/routes/src/table/_shared.ts`) already prices ($0.10 in, $0.50 out per million), so the probe adds no model id and no rate. The nano models are not in the route table's rate sources, so "cheaper than Luna" could not be shown for them; if a verified rate says so, move the seat. The fallback is Terra medium (`callFallback(TERRA_MEDIUM)`): it answered the same photos correctly. Live: a 1500 px product photo costs about 2,400 prompt tokens, $0.0002-0.0003 per read.
 
 What the model cannot do is read a size off a picture that prints none; the system prompt says so and the answers did ("Dimensions: none"). Measures come from the spec table, not from `image-read`.
 
