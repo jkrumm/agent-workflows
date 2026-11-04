@@ -10,17 +10,24 @@ export interface Seat {
 }
 export const SEATS: Record<Tier, Seat | null> = {
   none: null,
-  light: { model: 'sonnet', effort: 'low' },
+  light: { model: 'sonnet', effort: 'medium' },
+  // standard and light share a seat until the tier set is collapsed
   standard: { model: 'sonnet', effort: 'medium' },
-  deep: { model: 'sonnet', effort: 'high', vote: 3 },
+  deep: { model: 'sonnet', effort: 'high', vote: 1 },
 }
 
-export const DEEP_CODE_LINES = 800
-export const DEEP_PACKAGES = 3
-export const LIGHT_CODE_LINES = 40
-export const LIGHT_FILES = 3
-export const DOC = /\.(md|mdx|txt)$/
-export const TEST = /(^|\/)(test|tests|__tests__)\/|\.test\.[a-z]+$|\.spec\.[a-z]+$/
+const DEEP_CODE_LINES = 800
+const DEEP_PACKAGES = 3
+const LIGHT_CODE_LINES = 40
+const LIGHT_FILES = 3
+const DOC = /\.(md|mdx|txt)$/
+const DOCS_DIR = /(^|\/)docs\//
+const AGENT_FILE = /(^|\/)(AGENTS|CLAUDE|SKILL|REVIEW)\.md$|(^|\/)(rules|skills|agents|\.claude)\//
+/** A doc: a prose file, or anything under a `docs/` directory. */
+const isDoc = (path: string): boolean => DOC.test(path) || DOCS_DIR.test(path)
+/** Instructions an agent reads: reviewed even when they are docs. */
+const isAgentFacing = (path: string): boolean => AGENT_FILE.test(path)
+const TEST = /(^|\/)(test|tests|__tests__)\/|\.test\.[a-z]+$|\.spec\.[a-z]+$/
 
 const GIT_TIMEOUT_MS = 30_000
 
@@ -138,7 +145,7 @@ export interface RouteDecision extends RouteFacts {
 const sum = (changes: FileChange[]) => changes.reduce((n, f) => n + f.added + f.removed, 0)
 
 function factsOf(counted: FileChange[]): RouteFacts & { code: FileChange[] } {
-  const code = counted.filter((f) => !DOC.test(f.path))
+  const code = counted.filter((f) => !isDoc(f.path))
   const packages = new Set(code.filter((f) => f.path.startsWith('packages/')).map((f) => f.path.split('/')[1]!))
   return {
     files: counted.length,
@@ -180,7 +187,9 @@ export function decide(input: {
   if (hit.length > 0) {
     return by('deep', `sensitive path: ${hit[0]}${hit.length > 1 ? ` (+${hit.length - 1})` : ''}`)
   }
-  if (code.length === 0) return by('light', 'docs only')
+  if (code.length === 0) {
+    return counted.some((f) => isAgentFacing(f.path)) ? by('light', 'agent instructions') : by('none', 'docs only')
+  }
   if (code.every((f) => TEST.test(f.path))) return by('light', 'tests only')
   if (facts.prodLines > DEEP_CODE_LINES) {
     return by('deep', `${facts.prodLines} changed non-test code lines > ${DEEP_CODE_LINES}`)

@@ -15,7 +15,7 @@ hidden:      agw review ─ prepare ─ factory spawn (role reviewer, one sessio
 | Stage | Owner | What |
 |-|-|-|
 | `agw review prepare` | agw code | Thread and round from the ledger; the **route** (below); the review ceiling and the deep cap; a throwaway worktree at the head (never the caller's tree); the job dir of pointers: `diff.patch` (round ≥ 2: since the last reviewed head when it is an ancestor, else the round-1 base), `stat.txt`, `intent.md` (`--context`, PR body, the wave's PLAN step, the brief), `history.txt` (recent commits on the touched paths), `prior.json` (ledger findings on the touched paths with their dispositions), `REVIEW.md` read from the **base**. Prints the job and the seat (`model`, `effort`) |
-| reviewer | the agent (`reviewer.md`) | Read-only; intent, domain rules, system fit and duplication, breakage, security, in that order; `deep` adds the three-verifier vote on each `important` finding. Replies with JSON |
+| reviewer | the agent (`reviewer.md`) | Read-only; intent, domain rules, system fit and duplication, breakage, security, in that order; `deep` adds one verifier on each `important` finding. Replies with JSON |
 | `agw review submit <jobId> --attempt <n> --stdin` | agw code | Schema check; the echoed file list must equal `stat.txt` (empty-diff guard); drops repeats of ledger findings; stable ids; nits capped by `REVIEW.md`; `outcome` computed; idempotent per `(jobId, attempt)`; writes the ledger; prints REVIEW_OUTPUT |
 | `agw review dispose <runId> <findingId> fixed\|wrong\|intentional\|irrelevant` | agw code | The answer to every finding (the article: every finding is answered); `prior.json` of the next round and of later changes on the same paths reads them |
 | `agw review route --repo --base --head` | agw code | The deterministic router alone (no LLM), for the factory and the wave gate |
@@ -35,13 +35,16 @@ may raise the tier (`--min`), never lower it:
 |-|-|
 | No content change (renames, whitespace) or every file matches `REVIEW.md` `none` (wave plans, spike data, lockfiles) | none |
 | A non-test file matches `REVIEW.md` `sensitive` (runtime, middleware, gateway, limits, CLI generator, launchers, env templates, CI, SQL; dotfiles: hooks, settings, the global CLAUDE.md and security rules, secret scripts, plists). A doc counts only where the glob names docs (`rules/security.md`), not a package's README | deep |
-| Docs only (`*.md`, `*.mdx`, `*.txt`; a script under `docs/` is code) or tests only | light |
+| Docs only (`*.md`, `*.mdx`, `*.txt`, or any file under a `docs/` directory) | none |
+| Docs only, but an agent-facing file is among them (basename `AGENTS.md`, `CLAUDE.md`, `SKILL.md`, `REVIEW.md`, or under `rules/`, `skills/`, `agents/`, `.claude/`): in doubt the router hits higher | light |
+| Tests only | light |
 | > 800 changed non-test code lines, or > 3 packages | deep |
 | A manifest changed | standard |
 | ≤ 40 code lines in ≤ 3 files | light |
 | otherwise | standard |
 
-Seats (PoC verdict): `light` Sonnet low, `standard` Sonnet medium, `deep` Sonnet high with the three-verifier vote.
+Seats (owner decision 2026-11-04): `light` and `standard` Sonnet medium (one seat until the tier set is collapsed), `deep`
+Sonnet high with ONE verifier per `important` finding.
 Opus high is not a tier; it stays an owner option for `deep` on the `sensitive` paths if Wave 11 shows Sonnet missing
 there. The thresholds are starting values; Wave 11 tunes them on the ledger (a tier's findings that the author fixed,
 per tier and rule).

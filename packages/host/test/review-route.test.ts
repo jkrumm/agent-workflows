@@ -43,7 +43,7 @@ describe('decide', () => {
       'rule',
     ],
     ['root-level **/ glob', [change('a.snap')], 'none', 'every file matches REVIEW.md none', 'rule'],
-    ['one file outside none', [change('docs/waves/w9.md'), change('docs/x.md')], 'light', 'docs only', 'rule'],
+    ['one file outside none', [change('docs/waves/w9.md'), change('docs/x.md')], 'none', 'docs only', 'rule'],
     [
       'sensitive code',
       [change('packages/runtime/src/a.ts')],
@@ -68,7 +68,7 @@ describe('decide', () => {
     [
       'package-dir glob does not make a doc sensitive',
       [change('packages/runtime/README.md')],
-      'light',
+      'none',
       'docs only',
       'rule',
     ],
@@ -79,8 +79,17 @@ describe('decide', () => {
       'tests only',
       'rule',
     ],
-    ['docs only', [change('README.md'), change('a.mdx'), change('b.txt')], 'light', 'docs only', 'rule'],
-    ['a script under docs/ is code', [change('docs/gen.ts', 100)], 'standard', 'default', 'default'],
+    ['docs only', [change('README.md'), change('a.mdx'), change('b.txt')], 'none', 'docs only', 'rule'],
+    [
+      'html and json under docs/ are docs',
+      [change('docs/spikes/x/index.html', 15000), change('docs/data/a.json', 400)],
+      'none',
+      'docs only',
+      'rule',
+    ],
+    ['AGENTS.md only', [change('AGENTS.md', 20)], 'light', 'agent instructions', 'rule'],
+    ['a skill', [change('skills/x/SKILL.md', 20)], 'light', 'agent instructions', 'rule'],
+    ['a rules dir doc', [change('pkg/rules/a.md', 5), change('README.md')], 'light', 'agent instructions', 'rule'],
     ['tests only', [change('packages/host/test/a.ts', 900), change('b.spec.ts')], 'light', 'tests only', 'rule'],
     ['> 800 prod lines', [change('src/a.ts', 801)], 'deep', '801 changed non-test code lines > 800', 'rule'],
     ['800 prod lines is standard', [change('src/a.ts', 800)], 'standard', 'default', 'default'],
@@ -123,6 +132,11 @@ describe('decide', () => {
     })
   })
 
+  test('seats', () => {
+    expect(SEATS.deep?.vote).toBe(1)
+    expect(SEATS.light?.effort).toBe('medium')
+  })
+
   test('facts', () => {
     const out = route([
       change('packages/a/x.ts', 10, 5),
@@ -138,7 +152,7 @@ describe('decide', () => {
     expect(out).toMatchObject({
       tier: 'deep',
       decidedBy: 'caller',
-      rule: 'docs only (raised by caller from light)',
+      rule: 'docs only (raised by caller from none)',
       seat: SEATS.deep,
     })
   })
@@ -155,7 +169,7 @@ describe('decide', () => {
       tier: 'deep',
       decidedBy: 'rule',
     })
-    expect(route([change('README.md')], { min: 'light' })).toMatchObject({ tier: 'light', decidedBy: 'rule' })
+    expect(route([change('AGENTS.md')], { min: 'light' })).toMatchObject({ tier: 'light', decidedBy: 'rule' })
   })
 
   test('tier helpers', () => {
