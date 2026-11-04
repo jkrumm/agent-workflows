@@ -13,6 +13,7 @@ import diagram from './table/diagram.ts'
 import digest from './table/digest.ts'
 import evalSeats from './table/eval.ts'
 import factory from './table/factory.ts'
+import hermes from './table/hermes.ts'
 import image from './table/image.ts'
 import narrative from './table/narrative.ts'
 import otel from './table/otel.ts'
@@ -35,6 +36,7 @@ export const ROUTE_GROUPS: Readonly<Record<string, Readonly<Record<string, Route
   digest,
   eval: evalSeats,
   factory,
+  hermes,
   image,
   narrative,
   otel,
