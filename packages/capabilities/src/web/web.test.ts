@@ -1,10 +1,11 @@
-import { afterEach, describe, expect, setSystemTime, test } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, setSystemTime, test } from 'bun:test'
 import { createCapabilities } from '../capabilities/index.ts'
 import type { Usage } from '../context.ts'
 import { CapabilityCallError } from '../errors.ts'
 import { createRegistry } from '../registry.ts'
 import { fakeTransports } from '@agent-workflows/testing/transports'
 import { fakeWeb } from './fake.ts'
+import { askHumanHandoff, askOnce, fakeHandoff, resetHandoffLimit } from './handoff.ts'
 import type { WebDeps } from './deps.ts'
 import { BLOCK_REASONS, blockedReason, createWebCapabilities } from './index.ts'
 import { BrowserFailure, browserFromEnv, readViaCdp, type RequestPolicy } from './browser.ts'
@@ -59,7 +60,7 @@ const status =
     new Response(body, { status: code })
 
 function run(deps: WebDeps) {
-  const caps = createWebCapabilities(deps)
+  const caps = createWebCapabilities({ handoff: fakeHandoff(), ...deps })
   const usage: Usage[] = []
   const call = async (
     id: 'web.search' | 'web.fetch' | 'web.docs' | 'web.package' | 'web.youtube' | 'web.ask',
@@ -1586,6 +1587,131 @@ describe('web.fetch through a real browser', () => {
     } finally {
       browser.stop()
     }
+  })
+
+  describe('owner handoff', () => {
+    const wall = [{ title: 'Prove your humanity', text: 'Please verify' }]
+    const net2 = () =>
+      net({
+        'https://shop.example.com/': status(403, WALL),
+        'https://other.example.org/': status(403, WALL),
+        'https://api.tavily.com': json({ results: [] }),
+      })
+
+    beforeEach(resetHandoffLimit)
+
+    test('needs-human asks once with the host only; the same host within 30 minutes is not asked again, another host is', async () => {
+      const browser = fakeBrowser([...wall, ...wall, ...wall, ...wall])
+      try {
+        const handoff = fakeHandoff()
+        const { call } = run({ ...net2().deps, env: { TAVILY_API_KEY: 't' }, browser: browser.read, handoff })
+        const first = await failure(call('web.fetch', { url: 'https://shop.example.com/a/b?token=secret' }))
+        expect(handoff.requests).toEqual([{ host: 'shop.example.com' }])
+        expect(first.message).toContain('the owner was asked to solve it')
+        expect(blockedReason(first.message)).toBe('needs-human')
+
+        const again = await failure(call('web.fetch', { url: 'https://shop.example.com/' }))
+        expect(handoff.requests).toHaveLength(1)
+        expect(again.message).not.toContain('the owner was asked')
+
+        await failure(call('web.fetch', { url: 'https://other.example.org/' }))
+        expect(handoff.requests.map((r) => r.host)).toEqual(['shop.example.com', 'other.example.org'])
+      } finally {
+        browser.stop()
+      }
+    })
+
+    test('a refusal the browser reads past never asks', async () => {
+      const browser = fakeBrowser([{ title: 'x', text: REAL }])
+      try {
+        const handoff = fakeHandoff()
+        const n = net({ 'https://shop.example.com/': status(429, ''), 'https://api.tavily.com': json({ results: [] }) })
+        const { call } = run({ ...n.deps, env: { TAVILY_API_KEY: 't' }, browser: browser.read, handoff })
+        await call('web.fetch', { url: 'https://shop.example.com/' })
+        expect(handoff.requests).toEqual([])
+      } finally {
+        browser.stop()
+      }
+    })
+
+    test('a handoff that throws or spawns nothing leaves the fetch result as it was', async () => {
+      const browser = fakeBrowser([...wall, ...wall])
+      try {
+        const throwing = { notify: () => Promise.reject(new Error('boom')) }
+        const a = run({ ...net2().deps, env: { TAVILY_API_KEY: 't' }, browser: browser.read, handoff: throwing })
+        const error = await failure(a.call('web.fetch', { url: 'https://shop.example.com/' }))
+        expect(blockedReason(error.message)).toBe('needs-human')
+        expect(error.message).not.toContain('the owner was asked')
+
+        const b = run({
+          ...net2().deps,
+          env: { TAVILY_API_KEY: 't' },
+          browser: browser.read,
+          handoff: fakeHandoff(false),
+        })
+        const quiet = await failure(b.call('web.fetch', { url: 'https://other.example.org/' }))
+        expect(quiet.message).not.toContain('the owner was asked')
+      } finally {
+        browser.stop()
+      }
+    })
+
+    test('askOnce limits per host on the clock it is given', async () => {
+      const handoff = fakeHandoff()
+      expect(await askOnce(handoff, 'a.example.com', 0)).toBe(true)
+      expect(await askOnce(handoff, 'a.example.com', 29 * 60_000)).toBe(false)
+      expect(await askOnce(handoff, 'a.example.com', 30 * 60_000)).toBe(true)
+    })
+
+    test('the adapter spawns ask-human.sh with the host only and the screen share command', async () => {
+      const argvs: string[][] = []
+      const handoff = askHumanHandoff({
+        env: { AGW_ASK_HUMAN: '/x/ask-human.sh', AGW_SCREENSHARE_HOST: 'box' },
+        spawn: async (argv) => void argvs.push(argv),
+        exists: () => true,
+      })
+      expect(await handoff.notify({ host: 'shop.example.com' })).toBe(true)
+      expect(argvs).toEqual([
+        [
+          '/x/ask-human.sh',
+          'ask',
+          'agw: shop.example.com shows a bot check the research Chrome cannot pass. Open screen share to the mini, solve it once in the Chrome window, the cookie stays.',
+          '--cmd',
+          'open vnc://box',
+        ],
+      ])
+      const defaults = askHumanHandoff({ env: {}, spawn: async (argv) => void argvs.push(argv), exists: () => true })
+      await defaults.notify({ host: 'h.example.com' })
+      expect(argvs[1]![0]).toEndWith('/SourceRoot/dotfiles/scripts/ask-human.sh')
+      expect(argvs[1]!.at(-1)).toBe('open vnc://mini')
+    })
+
+    test('a missing script turns the handoff off with one warning; a failing spawn warns and returns false', async () => {
+      const warnings: string[] = []
+      const missing = askHumanHandoff({ env: {}, warn: (m) => warnings.push(m), exists: () => false })
+      expect(await missing.notify({ host: 'a.example.com' })).toBe(false)
+      expect(await missing.notify({ host: 'b.example.com' })).toBe(false)
+      expect(warnings).toHaveLength(1)
+
+      const failing = askHumanHandoff({
+        env: {},
+        warn: (m) => warnings.push(m),
+        exists: () => true,
+        spawn: () => Promise.reject(new Error('EACCES')),
+      })
+      expect(await failing.notify({ host: 'a.example.com' })).toBe(false)
+      expect(warnings).toHaveLength(2)
+
+      const bad = askHumanHandoff({
+        env: { AGW_SCREENSHARE_HOST: 'x; rm -rf ~' },
+        warn: (m) => warnings.push(m),
+        exists: () => true,
+        spawn: async () => {
+          throw new Error('must not spawn')
+        },
+      })
+      expect(await bad.notify({ host: 'a.example.com' })).toBe(false)
+    })
   })
 
   test('every request the page makes is vetted by the SSRF guard: a private redirect target is failed before it is sent and the read is refused', async () => {

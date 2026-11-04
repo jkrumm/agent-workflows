@@ -5,6 +5,7 @@ import { CapabilityError, fail } from '../errors.ts'
 import { defineCapability } from '../procedure.ts'
 import { describe, failedResponse, isAbort, readJson, withRetries } from '../transports/http.ts'
 import { BrowserFailure, BrowserRefused } from './browser.ts'
+import { askOnce } from './handoff.ts'
 import { type Pin, type ResolvedWebDeps, requireKey, webUsage, within } from './deps.ts'
 import { TAVILY_USD_PER_CREDIT } from './search.ts'
 import { assertPublicUrl, HostUnresolved, isPrivateAddress } from './ssrf.ts'
@@ -500,6 +501,7 @@ export const createFetch = (deps: ResolvedWebDeps) => {
             // own title is not repeated: it is untrusted text.
             blocked = 'needs-human'
             failures.push('browser: challenge not cleared')
+            if (await askOnce(deps.handoff, new URL(url).hostname)) failures.push('the owner was asked to solve it')
           } else if (page.text === '') {
             failures.push('browser: no text on the page')
           } else {
