@@ -1621,6 +1621,25 @@ describe('web.fetch through a real browser', () => {
       }
     })
 
+    test('a wall Tavily reads past never asks', async () => {
+      const browser = fakeBrowser(wall)
+      try {
+        const handoff = fakeHandoff()
+        const n = net({
+          'https://shop.example.com/': status(403, WALL),
+          'https://api.tavily.com/extract': json({
+            results: [{ url: 'https://shop.example.com/', raw_content: 'Extracted text.' }],
+          }),
+        })
+        const { call } = run({ ...n.deps, env: { TAVILY_API_KEY: 't' }, browser: browser.read, handoff })
+        const out = await call('web.fetch', { url: 'https://shop.example.com/' })
+        expect(out).toMatchObject({ via: 'tavily-extract' })
+        expect(handoff.requests).toEqual([])
+      } finally {
+        browser.stop()
+      }
+    })
+
     test('a refusal the browser reads past never asks', async () => {
       const browser = fakeBrowser([{ title: 'x', text: REAL }])
       try {
