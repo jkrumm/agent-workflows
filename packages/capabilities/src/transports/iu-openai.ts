@@ -20,7 +20,7 @@ const obj = (value: unknown): Record<string, unknown> =>
   value && typeof value === 'object' ? (value as Record<string, unknown>) : {}
 
 /** `prompt_tokens` includes cached tokens and `completion_tokens` includes reasoning, as the wire reports them. */
-function readUsage(raw: unknown): { tokens: Tokens; cost: number | null } | undefined {
+export function readUsage(raw: unknown): { tokens: Tokens; cost: number | null } | undefined {
   if (!raw || typeof raw !== 'object') return undefined
   const u = raw as Record<string, unknown>
   return {

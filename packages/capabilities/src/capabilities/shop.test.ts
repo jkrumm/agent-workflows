@@ -16,6 +16,8 @@ const fixture = (name: string) => Bun.file(new URL(`./fixtures/shop/${name}.html
 
 const IU = { AGW_GATEWAY_URL: 'https://gateway.example.com', AGW_API_SECRET: 'gateway-secret' }
 const PUBLIC_IP = '93.184.216.34'
+const ATTRIBUTION = { runId: 'run-1', rootId: 'run-1', workflow: 'cap.shop.find', step: 'handler', purpose: 'test' }
+const REFUSED_ID = 'req-refused-1'
 // The first bytes of a JPEG: `image.read` judges an image on its bytes, not on its name.
 const JPEG = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0, 16, 0x4a, 0x46, 0x49, 0x46, 0, 1, 1, 0, 0, 1, 0, 1, 0, 0])
 
@@ -75,6 +77,7 @@ function rig({ shopRoutes = {}, anthropic, vision }: Rig = {}) {
   const time = clock()
   const transports = fakeTransports({ anthropic })
   const visionBodies: Record<string, unknown>[] = []
+  const visionHeaders: Record<string, string>[] = []
   const caps = createShopCapabilities({ transports, env: IU, warn: () => {} }, net.deps, {
     pace: time.pace,
     vision: {
@@ -82,6 +85,7 @@ function rig({ shopRoutes = {}, anthropic, vision }: Rig = {}) {
       fetch: async (_url, init) => {
         const body = JSON.parse(String(init.body)) as Record<string, unknown>
         visionBodies.push(body)
+        visionHeaders.push(init.headers as Record<string, string>)
         return vision ? vision(body) : visionAnswer('a plate with a loop')
       },
     },
@@ -89,7 +93,7 @@ function rig({ shopRoutes = {}, anthropic, vision }: Rig = {}) {
   const [imageRead, search, item, find] = caps
   const usage: Usage[] = []
   const options = { addUsage: (u: Usage) => usage.push(u) }
-  return { net, time, transports, visionBodies, usage, options, imageRead, search, item, find }
+  return { net, time, transports, visionBodies, visionHeaders, usage, options, imageRead, search, item, find }
 }
 
 const visionAnswer = (
@@ -512,12 +516,17 @@ describe('image.read', () => {
       vision: (body) => {
         models.push(String(body.model))
         return models.length === 1
-          ? new Response('payment required', { status: 402 })
+          ? new Response('payment required', { status: 402, headers: { 'x-agw-request-id': REFUSED_ID } })
           : visionAnswer('from the fallback')
       },
     })
-    expect((await r.imageRead.call({ source: photo }, r.options)).answer).toBe('from the fallback')
+    expect((await r.imageRead.call({ source: photo }, { ...r.options, attribution: ATTRIBUTION })).answer).toBe(
+      'from the fallback',
+    )
     expect(models).toEqual([resolveRoute('vision.describe').model, fallback.model])
+    expect(r.visionHeaders[0]!['x-agw-run-id']).toBe(ATTRIBUTION.runId)
+    expect(r.visionHeaders[0]!['x-agw-route-fallback']).toBeUndefined()
+    expect(r.visionHeaders[1]!['x-agw-route-fallback']).toBe(REFUSED_ID)
     const both = rig({
       shopRoutes: { 'https://m.media-amazon.com/': jpeg },
       vision: () => new Response('payment required', { status: 402 }),
@@ -601,6 +610,18 @@ describe('shop.find', () => {
       ['B0GCFBNV2D', 'unknown', false],
     ])
     expect(out.shortlist[1]!.error).toContain('not found')
+  })
+
+  test('the nested calls carry the run: every model call and the vision request are attributed to it', async () => {
+    const r = rig({
+      shopRoutes: routes(),
+      anthropic: [{ text: 'summary one' }, { text: 'summary two' }, { text: judged }],
+    })
+    await r.find.call({ query: 'q', ask: 'c', top: 2, images: true }, { ...r.options, attribution: ATTRIBUTION })
+    expect(r.transports.chatCalls).toHaveLength(3)
+    for (const call of r.transports.chatCalls) expect(call.request.attribution).toEqual(ATTRIBUTION)
+    expect(r.visionHeaders).toHaveLength(2)
+    for (const headers of r.visionHeaders) expect(headers['x-agw-run-id']).toBe(ATTRIBUTION.runId)
   })
 
   test('a wall in the middle stops the whole run: no judgement, no partial list', async () => {
