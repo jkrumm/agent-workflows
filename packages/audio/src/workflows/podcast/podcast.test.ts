@@ -100,8 +100,8 @@ describe('podcast workflow', () => {
         'segment:0',
         'segment:1',
         'lint',
-        'review:dramaturge:a',
-        'review:fact-editor:b',
+        'review:dramaturge',
+        'review:fact-editor',
         'revise:0',
         'metadata',
         'script',
@@ -111,7 +111,7 @@ describe('podcast workflow', () => {
       }
       // The reviewers noted segment 0 only: segment 1 has no revision step.
       expect(steps).not.toContain('revise:1')
-      expect(room.count('review')).toBe(6)
+      expect(room.count('review')).toBe(3)
 
       // The research loop (Messages wire) echoed the assistant turn unchanged, thinking block included, and answered
       // its tool use with a tool_result in the next user turn.
@@ -307,8 +307,8 @@ describe('podcast workflow', () => {
       expect(output.title).toBe('Outline title')
       expect(output.chapters.map((c) => c.title)).toEqual(['Working title 1', 'Working title 2', 'Working title 3'])
       // A failed reviewer is skipped, never fatal (a transport failure is not re-asked; only an unparseable answer is).
-      expect(room.count('review')).toBe(6)
-      expect((await sql.step(runId, 'review:dramaturge:a'))?.output).toBeNull()
+      expect(room.count('review')).toBe(3)
+      expect((await sql.step(runId, 'review:dramaturge'))?.output).toBeNull()
     } finally {
       await rt.close()
     }

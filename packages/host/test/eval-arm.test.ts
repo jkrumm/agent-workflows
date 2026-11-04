@@ -199,15 +199,6 @@ describe('agw eval run --arm', () => {
     expect(await refused({ routes: { check: { model: callOnly } } })).toContain(
       `route "check": model "${callOnly}" is not served by the OpenCode server`,
     )
-    // A table model no opencode-wire route runs (the DeepSeek reviewer's) is in the table but not served on OpenCode.
-    const unserved = resolveRoute('prose.review').model
-    expect(await refused({ routes: { 'research.agent': { model: unserved } } })).toContain(
-      `route "research.agent": model "${unserved}" is not served by the OpenCode server`,
-    )
-    // The effort check names the family wherever the DeepSeek model is admitted (a single-call route).
-    expect(await refused({ routes: { 'prose.review': { effort: 'xhigh' } } })).toMatch(
-      /"prose\.review".*a DeepSeek model cannot run at effort xhigh/s,
-    )
     expect(await refused({ routes: { check: { effort: 'leakysecret' } } })).not.toContain('leakysecret')
     expect(await refused({ params: {}, extra: true })).toContain('invalid_input')
     const { rows: after } = await sql.pool.query(`select count(*)::int as n from "${db.schema}".runs`)

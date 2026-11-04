@@ -1329,7 +1329,6 @@ describe('reviewDraft', () => {
     outline: PLAIN_OUTLINE,
     segments,
     role: 'dramaturge' as const,
-    route: 'podcast.review.a' as const,
     house: HOUSE,
     lintReport: 'LINT-REPORT',
   }
@@ -1343,15 +1342,15 @@ describe('reviewDraft', () => {
   test('returns the reviewer label, targeted notes and the verdict, on the review route', async () => {
     const port = new FakePort(sequence(notesReply))
     // The label names the model the review call resolved: the step's route (an armed run's patch included).
-    const reviewed = chatRoute({ 'podcast.review.a': { model: resolvePodcastRoute('podcast.review.a').model } })
+    const reviewed = chatRoute({ 'podcast.review': { model: resolvePodcastRoute('podcast.review').model } })
     const result = await reviewDraft(llmFor(port, reviewed), params)
     expect(result).toEqual({
-      reviewer: `dramaturge@${resolvePodcastRoute('podcast.review.a').model}`,
+      reviewer: `dramaturge@${resolvePodcastRoute('podcast.review').model}`,
       notes: [
         {
           segmentIndex: 0,
           turnIndex: 0,
-          reviewer: `dramaturge@${resolvePodcastRoute('podcast.review.a').model}`,
+          reviewer: `dramaturge@${resolvePodcastRoute('podcast.review').model}`,
           note: 'Open with the hook, not a summary.',
         },
       ],

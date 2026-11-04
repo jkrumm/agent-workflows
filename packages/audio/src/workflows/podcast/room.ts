@@ -162,10 +162,6 @@ export async function writeSegment(
   }
 }
 
-/** The reviewer roster: each role on each of these routes. A route's position is part of the review step's id. */
-export const REVIEW_ROUTES = ['podcast.review.a', 'podcast.review.b'] as const
-export type ReviewRoute = (typeof REVIEW_ROUTES)[number]
-
 /**
  * One reviewer (`<role>@<model>`): advisory notes on the whole draft. A reviewer that fails twice is skipped (`null`):
  * a review is polish, not the episode.
@@ -177,19 +173,18 @@ export async function reviewDraft(
     outline: Outline
     segments: ScriptSegment[]
     role: ReviewerRole
-    route: ReviewRoute
     house: House
     lintReport: string
   },
 ): Promise<{ reviewer: string; notes: ReviewNote[]; verdict: string } | null> {
-  const { req, outline, segments, role, route, house, lintReport } = params
-  const reviewer = `${role}@${llm.route(route).model}`
+  const { req, outline, segments, role, house, lintReport } = params
+  const reviewer = `${role}@${llm.route('podcast.review').model}`
   try {
     const result = await callAndParse(
       `review ${reviewer}`,
       (attempt) =>
         llm.call({
-          route,
+          route: 'podcast.review',
           systemPrompt: reviewPrompt({ req, outline, role, showBible: house.showBible }),
           userContent: buildReviewUserContent({ req, outline, segments, lintReport }),
           // Reviewers read source, outline and the whole draft and reason before answering.

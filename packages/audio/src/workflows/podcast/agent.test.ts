@@ -385,9 +385,9 @@ describe('segment agent', () => {
     )
     expect(messages.rounds[0]?.api).toBe('messages')
 
-    // podcast.review.b is a GPT route on the chat wire: the same loop, pinned to it, goes over the Responses API.
+    // podcast.review is a GPT route on the chat wire: the same loop, pinned to it, goes over the Responses API.
     const responses = new ScriptedPort([plainReply('kein Tool')])
-    const onGpt = () => resolvePodcastRoute('podcast.review.b')
+    const onGpt = () => resolvePodcastRoute('podcast.review')
     expect((await rejected(draftWith(responses, undefined, { resolve: onGpt }))).message).toMatch(
       /without a measured draft/,
     )

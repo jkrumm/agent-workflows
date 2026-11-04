@@ -276,7 +276,7 @@ suite exists. The table and its tiers are `packages/routes` (README §Seats); th
 
 - **Claude is primary for every text and agent seat**, on the credit while a pool has it. Each Claude route falls back
   onto GPT on IU, never onto IU's Claude (`x-agw-fallback: none`).
-- **A reviewer of Claude-written output stays on another lab:** `prose.review` and `podcast.review.a`/`.b` judge what a Claude writer (a Claude Code session or a Claude seat) produced, and a critic of the
+- **A reviewer of Claude-written output stays on another lab:** `prose.review` and `podcast.review` judge what a Claude writer (a Claude Code session or a Claude seat) produced, and a critic of the
   same lab shares its blind spots. Their capabilities refuse a Claude model.
 - **Speech, transcription, image and `decide` stay on IU.** The credit pays only for Anthropic's Messages API; those
   models are not Claude's. `decide` is also the eval judge, on its own pinned route.

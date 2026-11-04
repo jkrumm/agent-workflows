@@ -21,11 +21,6 @@ const TERRA_RATE = {
 // Rates are USD/M tokens; IU's `usage.cost` wins on the wires that send it, the rate prices a call that lacks it.
 // GPT-6 Luna: in 0.10, cached in 0.01, out 0.50 (OpenAI list price; image-gateway `pricing.ts` TEXT_RATES).
 const LUNA_RATE = { inputPerM: 0.1, outputPerM: 0.5, cacheReadPerM: 0.01 }
-// DeepSeek flash: in 0.30, cache read 0.006, out 1.20 (research-gateway src/lib/cost.ts, the 2026-09-25 peak reading; an
-// off-peak reading was half, so off-peak runs are over-priced, never under-priced). IU bills it at the list peak rate at
-// every hour (checked on 10 days of steps, 2026-10-30). An OpenCode session never sees IU's `usage.cost`, so an agent
-// route carries this rate. No cache-write price: DeepSeek reports none.
-const DEEPSEEK_FLASH_RATE = { inputPerM: 0.3, outputPerM: 1.2, cacheReadPerM: 0.006 }
 // Gemini 3.8 Flash, USD/M: in 0.75, out 3.75 (introductory through 2026-12-31, then 1.50 / 7.50), audio-gateway
 // `src/usage.ts`. No cache rate: a call reporting cache reads without `usage.cost` is priced `unknown`, never 0.
 const GEMINI_FLASH_RATE = { inputPerM: 0.75, outputPerM: 3.75 }
@@ -95,20 +90,11 @@ export const DECIDE = {
 
 // ---- Cross-lab seats: named constants, not tiers. They stay off Claude on purpose: a reviewer of Claude-written output sits on
 // another lab (docs/gateway.md §Seats). A route spreads one like a tier; each carries its rate and its fallback.
-/** The second lab: the prose reviewer (`prose.review`, a cross-lab reviewer of a Claude writer). No effort (the vendor's own level), 16k output ceiling. Falls back to Terra medium. */
-export const DEEPSEEK_FLASH = {
-  call: {
-    model: 'deepseek-v4.1-flash',
-    rate: DEEPSEEK_FLASH_RATE,
-    maxOutputTokens: 16_000,
-    fallback: callFallback(TERRA_MEDIUM),
-  },
-} as const
 /** The podcast cross-lab reviewer. No effort: Gemini's OpenAI-compatible leg rejects `reasoning_effort`. Falls back to Terra medium. */
 export const GEMINI_FLASH = {
   call: { model: 'gemini-3.8-flash', rate: GEMINI_FLASH_RATE, fallback: callFallback(TERRA_MEDIUM) },
 } as const
-/** The cross-family critic of a Claude writer (`podcast.review.b`): Terra medium. Its capability refuses any wire but the OpenAI chat wire. On a provider-balance failure the critique comes from Luna medium on another backend rather than not at all. */
+/** The cross-family critic of a Claude writer (`podcast.review`, `prose.review`): Terra medium. Its capability refuses any wire but the OpenAI chat wire. On a provider-balance failure the critique comes from Luna medium on another backend rather than not at all. */
 export const CRITIC = {
   call: { ...TERRA_MEDIUM, fallback: callFallback({ ...LUNA, effort: 'medium' as const }) },
 } as const

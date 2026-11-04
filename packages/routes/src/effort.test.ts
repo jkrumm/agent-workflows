@@ -73,13 +73,4 @@ describe('Sonnet at effort none is a configuration error', () => {
     expect(effortsOf('claude-haiku-5-5')).toEqual(EFFORTS)
     expect(effortsOf('sonnet')).not.toContain('none')
   })
-
-  test('an arm putting a DeepSeek route on an alias effort is refused at admission, naming the route, the family and the levels', () => {
-    const arm = { routes: { 'prose.review': { effort: 'medium' } } }
-    expect(() => validateArm(arm)).toThrow(RouteOverrideError)
-    expect(() => validateArm(arm)).toThrow(
-      /prose\.review.*a DeepSeek model cannot run at effort medium: use none, low, high or max/s,
-    )
-    expect(validateArm({ routes: { 'prose.review': { effort: 'max' } } })).toBeDefined()
-  })
 })

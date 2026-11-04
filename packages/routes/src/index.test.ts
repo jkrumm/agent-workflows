@@ -427,7 +427,6 @@ describe('fallback', () => {
     }
   })
 
-  const deepseekRate = { inputPerM: 0.3, outputPerM: 1.2, cacheReadPerM: 0.006 }
   const terraRate = {
     inputPerM: 1,
     outputPerM: 5,
@@ -500,13 +499,13 @@ describe('fallback', () => {
   })
 
   // Cross-lab seats that stay on GPT by design: the second podcast reviewer is the CRITIC (Terra medium).
-  test('podcast.review.b stays on GPT on the chat wire; audio.tts.prep is the FAST tier', () => {
-    expect(resolveRoute('podcast.review.b', {})).toMatchObject({
+  test('podcast.review stays on GPT on the chat wire; audio.tts.prep is the FAST tier', () => {
+    expect(resolveRoute('podcast.review', {})).toMatchObject({
       wire: 'iu-openai',
       model: 'gpt-6.1-terra',
       effort: 'medium',
     })
-    expect(resolveRoute('podcast.review.b', {}).fallback).toMatchObject({
+    expect(resolveRoute('podcast.review', {}).fallback).toMatchObject({
       wire: 'iu-openai',
       model: 'gpt-6-luna',
       effort: 'medium',
@@ -523,15 +522,21 @@ describe('fallback', () => {
     })
   })
 
-  test('the DeepSeek route (prose.review) falls back to Terra medium on the chat wire', () => {
-    expect(resolveRoute('prose.review', {})).toMatchObject({ model: 'deepseek-v4.1-flash', rate: deepseekRate })
-    expect(resolveRoute('prose.review', {}).fallback).toMatchObject({
-      wire: 'iu-openai',
-      model: 'gpt-6.1-terra',
-      effort: 'medium',
-      maxOutputTokens: 32_000,
-      rate: terraRate,
-    })
+  test('the cross-lab reviewers (prose.review, podcast.review) are Terra medium on the chat wire, falling back to Luna medium', () => {
+    for (const id of ['prose.review', 'podcast.review'] as const) {
+      expect(resolveRoute(id, {})).toMatchObject({
+        wire: 'iu-openai',
+        model: 'gpt-6.1-terra',
+        effort: 'medium',
+        rate: terraRate,
+      })
+      expect(resolveRoute(id, {}).fallback).toMatchObject({
+        wire: 'iu-openai',
+        model: 'gpt-6-luna',
+        effort: 'medium',
+        maxOutputTokens: 32_000,
+      })
+    }
   })
 
   test("a fallback never has the primary's own model", () => {
@@ -550,8 +555,7 @@ describe('fallback', () => {
     }
   })
 
-  // The Requesty check covers ONLY the routes Wave 9 moved (route and fallback). The one other `deepseek-v4.1-flash`
-  // route (prose.review) is Requesty-Global too and stays: its decision is the lead's, not this guard's. They run on the GPT stack and fall back to the other GPT model.
+  // The Requesty check covers the routes Wave 9 moved (route and fallback); no route runs a Requesty model any more. They run on the GPT stack and fall back to the other GPT model.
   test('the routes moved off Requesty (classify) and their fallbacks name no Requesty model', () => {
     const requesty = /^(eu\/)?deepseek-v4\.1-flash|^DeepSeek-V4|^pplx-decider|^kimi-k3|^kimi-k2\.7/i
     for (const id of ['cheap.classify'] as const) {
@@ -567,7 +571,7 @@ describe('fallback', () => {
   })
 
   test('the critic fallback keeps the 32k output ceiling', () => {
-    expect(resolveRoute('podcast.review.b', {}).fallback).toMatchObject({
+    expect(resolveRoute('podcast.review', {}).fallback).toMatchObject({
       model: 'gpt-6-luna',
       maxOutputTokens: 32_000,
     })

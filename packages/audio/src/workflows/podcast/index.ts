@@ -30,8 +30,6 @@ import {
 import {
   type House,
   planOutline,
-  REVIEW_ROUTES,
-  type ReviewRoute,
   reviewDraft,
   reviseSegment,
   type WriterOptions,
@@ -160,13 +158,10 @@ const FACT_STEPS: { id: string; at: StepAt }[] = [
   { id: 'research:fact:1', at: (ctx, body) => ctx.step('research:fact:1', body) },
   { id: 'research:fact:2', at: (ctx, body) => ctx.step('research:fact:2', body) },
 ]
-const REVIEW_STEPS: Record<`${ReviewerRole}:${ReviewRoute}`, StepAt> = {
-  'dramaturge:podcast.review.a': (ctx, body) => ctx.step('review:dramaturge:a', body),
-  'dramaturge:podcast.review.b': (ctx, body) => ctx.step('review:dramaturge:b', body),
-  'conversation-coach:podcast.review.a': (ctx, body) => ctx.step('review:conversation-coach:a', body),
-  'conversation-coach:podcast.review.b': (ctx, body) => ctx.step('review:conversation-coach:b', body),
-  'fact-editor:podcast.review.a': (ctx, body) => ctx.step('review:fact-editor:a', body),
-  'fact-editor:podcast.review.b': (ctx, body) => ctx.step('review:fact-editor:b', body),
+const REVIEW_STEPS: Record<ReviewerRole, StepAt> = {
+  dramaturge: (ctx, body) => ctx.step('review:dramaturge', body),
+  'conversation-coach': (ctx, body) => ctx.step('review:conversation-coach', body),
+  'fact-editor': (ctx, body) => ctx.step('review:fact-editor', body),
 }
 const REVIEWER_ROLES: ReviewerRole[] = ['dramaturge', 'conversation-coach', 'fact-editor']
 
@@ -470,16 +465,14 @@ export function createPodcastWorkflow(deps: PodcastDeps) {
       }),
     )
 
-    // 7. Review: three roles on each reviewer route, in parallel, advisory (a failed reviewer is skipped).
+    // 7. Review: three roles on the reviewer route, in parallel, advisory (a failed reviewer is skipped).
     const reviews = await Promise.all(
-      REVIEWER_ROLES.flatMap((role) =>
-        REVIEW_ROUTES.map((route) =>
-          as<{ notes: ReviewNote[] } | null>(
-            REVIEW_STEPS[`${role}:${route}`](
-              ctx,
-              withLlm(models, (llm) =>
-                reviewDraft(llm, { req, outline, segments, role, route, house, lintReport: lint.report }),
-              ),
+      REVIEWER_ROLES.map((role) =>
+        as<{ notes: ReviewNote[] } | null>(
+          REVIEW_STEPS[role](
+            ctx,
+            withLlm(models, (llm) =>
+              reviewDraft(llm, { req, outline, segments, role, house, lintReport: lint.report }),
             ),
           ),
         ),

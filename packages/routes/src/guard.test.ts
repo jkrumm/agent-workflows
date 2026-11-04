@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
 import { CLAUDE_MODELS, DEFAULT_ROUTES, resolveRoute, routeIds } from './index.ts'
-import { CRITIC, DECIDE, DEEPSEEK_FLASH, EASY, FAST, GEMINI_FLASH, HARD } from './table/_shared.ts'
+import { CRITIC, DECIDE, EASY, FAST, GEMINI_FLASH, HARD } from './table/_shared.ts'
 
 // The home-of-model-ids rule: no source outside `packages/routes/src/table/` names a model that the table names. The
 // routes package's own test files may (they pin what the table says): exactly the files `bun test` runs, by its
@@ -183,7 +183,7 @@ test('the route literal scan catches a planted unknown route with file:line, and
 // A reviewer of Claude-written output sits on another lab (docs/gateway.md §Seats): never a Claude model or the
 // anthropic wire, primary or fallback.
 test('the cross-lab reviewers are never on a Claude model or the anthropic wire, primary or fallback', () => {
-  const reviewers = ['podcast.review.a', 'podcast.review.b', 'prose.review'] as const
+  const reviewers = ['podcast.review', 'prose.review'] as const
   for (const id of reviewers) {
     const route = resolveRoute(id, {})
     for (const leg of [route, route.fallback]) {
@@ -311,7 +311,7 @@ test('every route on a Claude model spreads a tier', () => {
 
 // A route on a non-tier constant equals that constant's `.call` except `wire`: no route-level override remains outside
 // the eval seats.
-const CONSTANTS = { DEEPSEEK_FLASH, GEMINI_FLASH, CRITIC, DECIDE }
+const CONSTANTS = { GEMINI_FLASH, CRITIC, DECIDE }
 
 test('every route on a non-tier constant equals the constant exactly, except wire', () => {
   const matched = new Set<string>()

@@ -1,11 +1,11 @@
 import type { RouteEntry } from '../schema.ts'
-import { DEEPSEEK_FLASH, HARD } from './_shared.ts'
+import { CRITIC, HARD } from './_shared.ts'
 
 const routes = {
   // Prose review. Gateway: `prose_review` (SINGLE_SHOT, iu-openai). The reviewer must be a different lab than the
   // writer, and the writer is the calling Claude Code session (Anthropic): the capability refuses an Anthropic route (a
-  // Claude model, or any wire but `iu-openai`), so this route stays on the DEEPSEEK_FLASH cross-lab seat and never moves onto the Claude tiers.
-  'prose.review': { wire: 'iu-openai', ...DEEPSEEK_FLASH.call },
+  // Claude model, or any wire but `iu-openai`), so this route stays on the CRITIC cross-lab seat (Terra medium since 2026-11-04, owner: GPT is the adversary; it was DeepSeek flash, the last route on a Requesty-hop model) and never moves onto the Claude tiers.
+  'prose.review': { wire: 'iu-openai', ...CRITIC.call },
   // Prose writer, for callers with no Claude Code session (Hermes, `narrative`). Gateway: `prose_write` was Opus
   // on the native Messages wire. Owner decision 2026-11-01: the HARD tier (Sonnet) on the native Messages
   // wire, paid from the credit; a drained credit (402) falls back to Terra medium on IU's chat wire (it was Terra medium on

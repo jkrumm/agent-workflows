@@ -7,8 +7,7 @@ export type PodcastRouteId =
   | 'podcast.editorial'
   | 'podcast.outline'
   | 'podcast.write'
-  | 'podcast.review.a'
-  | 'podcast.review.b'
+  | 'podcast.review'
   | 'podcast.metadata'
 
 /** The route entry with `patch` (the run's arm's `routes`) applied, resolved on every call; without one, the table. */
