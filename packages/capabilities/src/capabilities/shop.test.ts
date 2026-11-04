@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { resolveRoute } from '@agent-workflows/routes'
 import type { Usage } from '../context.ts'
 import { CapabilityCallError } from '../errors.ts'
-import { fakeTransports } from '../testing/index.ts'
+import { fakeTransports } from '@agent-workflows/testing/transports'
 import type { WebDeps } from '../web/deps.ts'
 import { createShopCapabilities } from './shop-capabilities.ts'
 import { assertShopUrl, isBlockedError } from './shop-fetch.ts'
@@ -14,7 +14,7 @@ import { detectBlock, parseItem, parsePrice, parseSearch, textOf } from './shop-
 
 const fixture = (name: string) => Bun.file(new URL(`./fixtures/shop/${name}.html.txt`, import.meta.url)).text()
 
-const IU = { IU_API_KEY: 'iu-key', IU_BASE_URL: 'https://iu.example.com/anthropic' }
+const IU = { AGW_GATEWAY_URL: 'https://gateway.example.com', AGW_API_SECRET: 'gateway-secret' }
 const PUBLIC_IP = '93.184.216.34'
 // The first bytes of a JPEG: `image.read` judges an image on its bytes, not on its name.
 const JPEG = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0, 16, 0x4a, 0x46, 0x49, 0x46, 0, 1, 1, 0, 0, 1, 0, 1, 0, 0])
@@ -66,14 +66,14 @@ function clock() {
 
 interface Rig {
   shopRoutes?: Record<string, Reply | Reply[]>
-  openai?: Parameters<typeof fakeTransports>[0]['openai']
+  anthropic?: Parameters<typeof fakeTransports>[0]['anthropic']
   vision?: (body: Record<string, unknown>) => Response
 }
 
-function rig({ shopRoutes = {}, openai, vision }: Rig = {}) {
+function rig({ shopRoutes = {}, anthropic, vision }: Rig = {}) {
   const net = network(shopRoutes)
   const time = clock()
-  const transports = fakeTransports({ openai })
+  const transports = fakeTransports({ anthropic })
   const visionBodies: Record<string, unknown>[] = []
   const caps = createShopCapabilities({ transports, env: IU, warn: () => {} }, net.deps, {
     pace: time.pace,
@@ -419,7 +419,7 @@ describe('shop.item', () => {
     expect(hostile).toContain('&lt;/product&gt;')
     const r = rig({
       shopRoutes: { [ITEM_URL]: page(hostile) },
-      openai: [{ text: 'Four stainless pad eyes, 9,99 €.' }, { text: 'Max load 50 kg each.' }],
+      anthropic: [{ text: 'Four stainless pad eyes, 9,99 €.' }, { text: 'Max load 50 kg each.' }],
     })
     const out = await r.item.call({ item: 'B0BLBS5SD6', summarize: true, ask: 'How much load?' }, r.options)
     expect(out.summary).toBe('Four stainless pad eyes, 9,99 €.')
@@ -548,7 +548,7 @@ describe('shop.find', () => {
   test('search, open the top hits one at a time, summarize each, read the image, judge once; best fit first', async () => {
     const r = rig({
       shopRoutes: routes(),
-      openai: [{ text: 'summary one' }, { text: 'summary two' }, { text: judged }],
+      anthropic: [{ text: 'summary one' }, { text: 'summary two' }, { text: judged }],
     })
     const out = await r.find.call(
       { query: 'Augplatte Edelstahl M6 Öse', ask: 'M6, stainless, at least 50 kg', top: 2, images: true },
@@ -589,7 +589,7 @@ describe('shop.find', () => {
   test('without --images no picture is read; a hit that cannot be read is recorded, the rest are judged', async () => {
     const r = rig({
       shopRoutes: routes({ [ITEM_URL]: [async () => page(await fixture('item-with-specs')), () => page('gone', 404)] }),
-      openai: [
+      anthropic: [
         { text: 'summary one' },
         { text: JSON.stringify({ items: [{ asin: 'B0BLBS5SD6', verdict: 'partial', fits: ['a'], misses: ['b'] }] }) },
       ],
@@ -611,7 +611,7 @@ describe('shop.find', () => {
           async () => page(await fixture('robot-check-synthetic'), 503),
         ],
       }),
-      openai: [{ text: 'summary one' }],
+      anthropic: [{ text: 'summary one' }],
     })
     const error = await failure(r.find.call({ query: 'q', ask: 'c', top: 2 }, r.options))
     expect(error.message).toContain('blocked (bot-protection)')

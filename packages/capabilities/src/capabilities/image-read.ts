@@ -4,7 +4,8 @@ import { fail } from '../errors.ts'
 import { readInputImage } from '../image/files.ts'
 import { MIME, sniffFormat } from '../image/png.ts'
 import { type LlmDeps, resolve, toUsage } from '../llm/model-call.ts'
-import { iuConfig } from '../transports/config.ts'
+import { gatewayConfig } from '../transports/config.ts'
+import { gatewayHeaders } from '../transports/headers.ts'
 import {
   Attempt,
   DEFAULTS,
@@ -21,9 +22,9 @@ import type { ResolvedWebDeps } from '../web/deps.ts'
 import { within } from '../web/deps.ts'
 import { assertPublicUrl } from '../web/ssrf.ts'
 
-/** The chat wire's image input is not in the shared `ChatPort` (text only), so this capability carries its own call. */
+/** The chat wire's image input is not in the shared `ChatPort` (text only), so this capability carries its own call, through the gateway. */
 export interface VisionDeps {
-  /** The IU request. Default `globalThis.fetch`. */
+  /** The gateway request. Default `globalThis.fetch`. */
   fetch?: (url: string, init: RequestInit) => Promise<Response>
   /** Backoff base of the call's retries; tests set 0. */
   backoffMs?: number
@@ -157,7 +158,7 @@ async function ask(
   route: ResolvedRoute,
   args: { question: string; dataUrl: string; ctx: Ctx },
 ): Promise<{ text: string; model: string }> {
-  const { apiKey, openaiBase } = iuConfig(deps.env ?? process.env)
+  const { token, openaiBase } = gatewayConfig(deps.env ?? process.env)
   const doFetch = vision.fetch ?? fetch
   // Reasoning tokens count against the ceiling; the route's own is what it was probed with.
   const maxOutput = route.maxOutputTokens ?? 2_000
@@ -166,7 +167,11 @@ async function ask(
     try {
       const res = await doFetch(`${openaiBase}/chat/completions`, {
         method: 'POST',
-        headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
+        headers: {
+          ...gatewayHeaders(args.ctx.attribution),
+          authorization: `Bearer ${token}`,
+          'content-type': 'application/json',
+        },
         body: JSON.stringify({
           model: route.model,
           messages: [
@@ -235,7 +240,7 @@ export function createImageRead(deps: LlmDeps, web: ResolvedWebDeps, vision: Vis
       const mime = MIME[format]
       const dataUrl = `data:${mime};base64,${Buffer.from(bytes).toString('base64')}`
       const args = { question: question ?? DEFAULT_QUESTION, dataUrl, ctx }
-      const route = resolve(deps, 'vision.describe')
+      const route = resolve('vision.describe', ctx)
       let answer: { text: string; model: string }
       try {
         answer = await ask(deps, vision, route, args)
