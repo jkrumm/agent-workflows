@@ -61,7 +61,10 @@ const status =
 function run(deps: WebDeps) {
   const caps = createWebCapabilities(deps)
   const usage: Usage[] = []
-  const call = async (id: 'web.search' | 'web.fetch' | 'web.docs' | 'web.package' | 'web.youtube', input: unknown) => {
+  const call = async (
+    id: 'web.search' | 'web.fetch' | 'web.docs' | 'web.package' | 'web.youtube' | 'web.ask',
+    input: unknown,
+  ) => {
     const capability = caps.find((c) => c.id === id)!
     return capability.call(input as never, { addUsage: (u) => usage.push(u) })
   }
@@ -1313,6 +1316,70 @@ describe('registered as capabilities', () => {
   })
 })
 
+describe('web.ask', () => {
+  const askBody = (extra: object = {}) => ({
+    ...sonarBody([hit(1), hit(1), hit(2, { date: null })]),
+    choices: [{ message: { content: ' Postgres listens on 5432. ' } }],
+    ...extra,
+  })
+
+  test('the answer, its citations and the vendor-reported cost; one request with a 1024-token budget', async () => {
+    const n = net({
+      [SONAR_URL]: json(askBody({ citations: ['https://example.com/2', 'https://extra.example.com/x'] })),
+    })
+    const { call, usage } = run({ ...n.deps, env: GATEWAY })
+    expect(await call('web.ask', { query: 'default port', depth: 'advanced' })).toEqual({
+      provider: 'sonar',
+      answer: 'Postgres listens on 5432.',
+      citations: [
+        { url: 'https://example.com/1', title: 'T1', snippet: 'S1', publishedAt: '2026-10-01' },
+        { url: 'https://example.com/2', title: 'T2', snippet: 'S2' },
+        { url: 'https://extra.example.com/x', title: '', snippet: '' },
+      ],
+    })
+    expect(JSON.parse(String(n.calls[0]!.init.body))).toMatchObject({
+      model: 'sonar',
+      max_tokens: 1024,
+      web_search_options: { search_context_size: 'medium' },
+    })
+    expect(usage).toEqual([
+      {
+        model: 'sonar',
+        tokens: { input: 7, output: 16, cacheRead: 0, reasoning: 0 },
+        cost: 0.005,
+        costSource: 'provider',
+      },
+    ])
+  })
+
+  test('a 429 is retried once; a second one is UPSTREAM_ERROR with no Tavily call', async () => {
+    const once = net({ [SONAR_URL]: [status(429), json(askBody())] })
+    expect(await run({ ...once.deps, env: GATEWAY }).call('web.ask', { query: 'q' })).toMatchObject({
+      provider: 'sonar',
+    })
+    expect(once.calls).toHaveLength(2)
+
+    const twice = net({ [SONAR_URL]: status(429), 'https://api.tavily.com': json(tavilyBody()) })
+    const error = await failure(
+      run({ ...twice.deps, env: { ...GATEWAY, TAVILY_API_KEY: 't' } }).call('web.ask', { query: 'q' }),
+    )
+    expect(error.code).toBe('UPSTREAM_ERROR')
+    expect(twice.to('https://api.tavily.com')).toHaveLength(0)
+    expect(twice.to(SONAR_URL)).toHaveLength(2)
+  })
+
+  test('a malformed body or an empty answer is UPSTREAM_ERROR, never a fallback', async () => {
+    for (const body of [{ search_results: 'nope' }, askBody({ choices: [{ message: { content: '' } }] })]) {
+      const n = net({ [SONAR_URL]: json(body), 'https://api.tavily.com': json(tavilyBody()) })
+      const error = await failure(
+        run({ ...n.deps, env: { ...GATEWAY, TAVILY_API_KEY: 't' } }).call('web.ask', { query: 'q' }),
+      )
+      expect(error.code).toBe('UPSTREAM_ERROR')
+      expect(n.to('https://api.tavily.com')).toHaveLength(0)
+    }
+  })
+})
+
 describe('fakeWeb', () => {
   test('canned results, recorded calls, usage; the schemas are the real ones', async () => {
     const fake = fakeWeb()
@@ -1321,7 +1388,8 @@ describe('fakeWeb', () => {
     expect(await r.call('web.fetch', { url: 'https://example.com' })).toMatchObject({ via: 'direct', truncated: false })
     expect(await r.call('web.docs', { library: 'x' })).toHaveProperty('source')
     expect(await r.call('web.package', { registry: 'npm', name: 'x' })).toHaveProperty('latest')
-    expect(fake.calls.map((c) => c.id)).toEqual(['web.search', 'web.fetch', 'web.docs', 'web.package'])
+    expect(await r.call('web.ask', { query: 'q' })).toMatchObject({ provider: 'sonar' })
+    expect(fake.calls.map((c) => c.id)).toEqual(['web.search', 'web.fetch', 'web.docs', 'web.package', 'web.ask'])
     expect(fake.calls[0]!.input).toEqual({ query: 'q', maxResults: 8, depth: 'basic' })
   })
 

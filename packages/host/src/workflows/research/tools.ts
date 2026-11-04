@@ -13,6 +13,7 @@ export const RESEARCH_TOOLS = {
   web_docs: 'web.docs',
   web_package: 'web.package',
   web_youtube: 'web.youtube',
+  web_ask: 'web.ask',
 } as const satisfies Record<string, string>
 
 export const GATE_TOOLS = Object.keys(RESEARCH_TOOLS) as (keyof typeof RESEARCH_TOOLS)[]
@@ -43,9 +44,11 @@ function urlsOf(call: ToolCallRecord): Partial<LedgerEntry> {
   }
   const out = asRecord(call.outcome.result)
   const { tool, args } = call
-  if (tool === 'web_search') {
+  // A Sonar answer is a lead: its citations are listed (`seen`), never read (`retrieved`); grounding needs a fetch.
+  if (tool === 'web_search' || tool === 'web_ask') {
+    const listed = tool === 'web_ask' ? out.citations : out.results
     return {
-      seen: (Array.isArray(out.results) ? out.results : []).flatMap((r) => {
+      seen: (Array.isArray(listed) ? listed : []).flatMap((r) => {
         const url = asRecord(r).url
         return typeof url === 'string' ? [url] : []
       }),

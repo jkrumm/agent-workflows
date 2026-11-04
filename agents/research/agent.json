@@ -26,6 +26,11 @@
         "action": "web_youtube",
         "resource": "*",
         "effect": "allow"
+      },
+      {
+        "action": "web_ask",
+        "resource": "*",
+        "effect": "allow"
       }
     ]
   }

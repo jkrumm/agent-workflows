@@ -41,6 +41,12 @@ async function fakeCapability(id: string, input: Json, scope: { addUsage: (u: ne
       ],
       provider: 'sonar',
     }
+  if (id === 'web.ask')
+    return {
+      answer: 'Postgres listens on 5432.',
+      citations: [{ url: PG_BLOG, title: 'A post', snippet: 'postgres ports' }],
+      provider: 'sonar',
+    }
   if (id === 'web.fetch') {
     const url = (input as { url: string }).url
     if (url.includes('broken')) throw new Error('fetch refused: private address')
@@ -622,6 +628,17 @@ describe('the tool gate ledger: the evidence the grounding rule rests on', () =>
     const first = await ledger.read(runId, 'research')
     expect(first.map((e) => e.tool)).toEqual(['web_fetch', 'web_search'])
     expect(await ledger.read(runId, 'research')).toEqual(first)
+  })
+
+  test('a web_ask answer is a lead: its citations are seen, never retrieved, and the run is not grounded by it', async () => {
+    const host = new FakeAgentHost(async (s) => {
+      await callTool(s, 'web_ask', { query: 'postgres port' })
+      return { output: draft([{ claim: 'default 5432', url: PG_BLOG }]) }
+    })
+    const { runId, result } = await run({ query: 'Postgres port?', depth: 'standard' }, host)
+    const [row] = await ledger.read(runId, 'research')
+    expect(row).toMatchObject({ tool: 'web_ask', ok: true, retrieved: [], seen: [PG_BLOG] })
+    expect(ResearchOutput.parse(result.output).grounding.pagesRetrieved).toBe(0)
   })
 
   test("a run's ledger rows go with the run (foreign key, on delete cascade); args digests are canonical", async () => {

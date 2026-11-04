@@ -6,6 +6,7 @@ import { gatewayConfig } from '../transports/config.ts'
 import { gatewayHeaders } from '../transports/headers.ts'
 import { describe, failedResponse, readJson, withRetries } from '../transports/http.ts'
 import { keyOf, type ResolvedWebDeps, requireKey, webUsage, within } from './deps.ts'
+import { dedupe, type Hit, searchResult, sonarRequest } from './sonar.ts'
 
 export const searchInput = z.object({
   query: z.string().min(1),
@@ -16,19 +17,10 @@ export const searchInput = z.object({
     .describe('Tavily search depth; for Sonar the snippet size (basic = low, advanced = medium)'),
 })
 
-const result = z.object({
-  url: z.string(),
-  title: z.string(),
-  snippet: z.string(),
-  publishedAt: z.string().optional(),
-})
-
 export const searchOutput = z.object({
-  results: z.array(result),
+  results: z.array(searchResult),
   provider: z.enum(['sonar', 'tavily']).describe('The backend that answered'),
 })
-
-type Hit = z.infer<typeof result>
 
 const SEARCH_TIMEOUT_MS = 30_000
 const TAVILY_SNIPPET_CHARS = 1_000
@@ -37,97 +29,27 @@ export const TAVILY_USD_PER_CREDIT = 0.008
 /** Documented credits per search: 1 for `basic`, 2 for `advanced`. A response's own `usage.credits` wins. */
 const TAVILY_SEARCH_CREDITS = { basic: 1, advanced: 2 } as const
 
-/** `sonar-reasoning*` spends the whole answer on reasoning and returns nothing (measured in research-gateway). */
-const DEFAULT_SONAR_MODEL = 'sonar'
 /** Perplexity rejects `max_tokens` below 16; the synthesized answer is discarded, only URLs and snippets are used. */
 const SONAR_ANSWER_TOKEN_FLOOR = 16
-
-const sonarResponse = z.object({
-  search_results: z
-    .array(
-      z.object({
-        title: z.string().nullish(),
-        url: z.string(),
-        snippet: z.string().nullish(),
-        date: z.string().nullish(),
-        last_updated: z.string().nullish(),
-      }),
-    )
-    .nullish(),
-  usage: z
-    .object({
-      prompt_tokens: z.number().nullish(),
-      completion_tokens: z.number().nullish(),
-      cost: z.union([z.number(), z.object({ total_cost: z.number().nullish() })]).nullish(),
-    })
-    .nullish(),
-})
 
 const tavilySearchResponse = z.object({
   results: z.array(z.object({ url: z.string(), title: z.string().nullish(), content: z.string().nullish() })),
   usage: z.object({ credits: z.number().nullish() }).nullish(),
 })
 
-const dedupe = (hits: Hit[], max: number): Hit[] => {
-  const seen = new Set<string>()
-  const out: Hit[] = []
-  for (const hit of hits) {
-    if (out.length >= max) break
-    if (seen.has(hit.url)) continue
-    seen.add(hit.url)
-    out.push(hit)
-  }
-  return out
-}
-
 type Backend = (input: z.output<typeof searchInput>, deps: ResolvedWebDeps, ctx: Ctx) => Promise<Hit[]>
 
 /**
- * Perplexity Sonar over IU's OpenAI-compatible endpoint (through the gateway), as a pure search backend: the answer is dropped, the
- * `search_results` are the output. A 429 is retried once (two attempts), then the caller falls back to Tavily.
- * Billed by IU: `usage.cost.total_cost` is the vendor's own figure (`costSource: 'provider'`).
+ * Perplexity Sonar as a pure search backend (`sonarRequest`): the answer is dropped, the `search_results` are the
+ * output. A 429 is retried once (two attempts), then the caller falls back to Tavily.
  */
-const sonar: Backend = async (input, deps, { signal, addUsage, attribution }) => {
-  const env = deps.env()
-  const config = gatewayConfig(env)
-  const model = keyOf(env, 'SONAR_MODEL') ?? DEFAULT_SONAR_MODEL
-  const json = await withRetries({ ...deps.retry, attempts: 2 }, signal, async () => {
-    const res = await deps.fetch(`${config.openaiBase}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        ...gatewayHeaders(attribution),
-        'content-type': 'application/json',
-        authorization: `Bearer ${config.token}`,
-      },
-      body: JSON.stringify({
-        model,
-        messages: [{ role: 'user', content: input.query }],
-        max_tokens: SONAR_ANSWER_TOKEN_FLOOR,
-        web_search_options: { search_context_size: input.depth === 'advanced' ? 'medium' : 'low' },
-      }),
-      signal: within(signal, SEARCH_TIMEOUT_MS),
-    })
-    if (!res.ok) throw await failedResponse(res, 'sonar')
-    return readJson(res, 'sonar')
+const sonar: Backend = async (input, deps, ctx) => {
+  const { hits: all } = await sonarRequest(deps, ctx, {
+    query: input.query,
+    depth: input.depth,
+    maxTokens: SONAR_ANSWER_TOKEN_FLOOR,
   })
-  const parsed = sonarResponse.safeParse(json)
-  if (!parsed.success) throw fail('UPSTREAM_ERROR', 'sonar answered with a body that does not fit', {})
-  const { search_results, usage } = parsed.data
-  // The whole response is billed, not the slice we keep.
-  const reported = typeof usage?.cost === 'number' ? usage.cost : usage?.cost?.total_cost
-  addUsage(
-    webUsage(model, typeof reported === 'number' && reported >= 0 ? reported : null, {
-      source: 'provider',
-      tokens: { input: usage?.prompt_tokens ?? 0, output: usage?.completion_tokens ?? 0 },
-    }),
-  )
-  const hits = dedupe(
-    (search_results ?? []).map((r) => {
-      const publishedAt = r.date ?? r.last_updated
-      return { url: r.url, title: r.title ?? '', snippet: r.snippet ?? '', ...(publishedAt ? { publishedAt } : {}) }
-    }),
-    input.maxResults,
-  )
+  const hits = dedupe(all, input.maxResults)
   // An empty set means the passthrough broke (IU routing Sonar through a normalizing tier drops `search_results`):
   // a failure so the fallback engages, never "the web has nothing".
   if (hits.length === 0) throw fail('UPSTREAM_ERROR', 'sonar returned no search_results', {})
