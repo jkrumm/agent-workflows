@@ -23,6 +23,7 @@ import prose from './table/prose.ts'
 import research from './table/research.ts'
 import retrospective from './table/retrospective.ts'
 import triage from './table/triage.ts'
+import vision from './table/vision.ts'
 
 /** Every route group of `src/table/` by file name (`_shared.ts` holds no routes). */
 export const ROUTE_GROUPS: Readonly<Record<string, Readonly<Record<string, RouteEntry>>>> = Object.freeze({
@@ -46,6 +47,7 @@ export const ROUTE_GROUPS: Readonly<Record<string, Readonly<Record<string, Route
   research,
   retrospective,
   triage,
+  vision,
 })
 
 const RATES: ReadonlyMap<string, Rate> = (() => {
