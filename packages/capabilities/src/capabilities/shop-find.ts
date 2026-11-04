@@ -131,8 +131,7 @@ export function createShopFind(
     output: findOutput,
     cli: { positional: ['query'], defaultFormat: 'plain', plainField: 'text' },
     async handler({ query, ask, top, images, fresh }, ctx) {
-      const options = { addUsage: ctx.addUsage, signal: ctx.signal }
-      const found = await typed(parts.search.call({ query, limit: top, fresh, includeSponsored: false }, options))
+      const found = await typed(parts.search.call({ query, limit: top, fresh, includeSponsored: false }, ctx))
 
       const opened: { entry: Candidate; item: Item | null }[] = []
       for (const hit of found.results) {
@@ -152,7 +151,7 @@ export function createShopFind(
           error: null,
         }
         try {
-          const page = await typed(parts.item.call({ item: hit.asin, summarize: true, fresh }, options))
+          const page = await typed(parts.item.call({ item: hit.asin, summarize: true, fresh }, ctx))
           entry.title = page.title ?? entry.title
           entry.priceEur = page.priceEur ?? entry.priceEur
           entry.priceText = page.priceText ?? entry.priceText
@@ -163,7 +162,7 @@ export function createShopFind(
           if (images && main) {
             try {
               entry.imageUrl = main
-              const read = await typed(parts.imageRead.call({ source: main, ask: IMAGE_QUESTION(ask) }, options))
+              const read = await typed(parts.imageRead.call({ source: main, ask: IMAGE_QUESTION(ask) }, ctx))
               entry.imageNote = clip(read.answer, IMAGE_NOTE_CHARS)
             } catch (error) {
               if (errorCode(error) === 'CANCELLED') throw error

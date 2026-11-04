@@ -6,6 +6,7 @@ import { MIME, sniffFormat } from '../image/png.ts'
 import { type LlmDeps, resolve, toUsage } from '../llm/model-call.ts'
 import { gatewayConfig } from '../transports/config.ts'
 import { gatewayHeaders } from '../transports/headers.ts'
+import { readUsage } from '../transports/iu-openai.ts'
 import {
   Attempt,
   DEFAULTS,
@@ -14,6 +15,7 @@ import {
   isAbort,
   isBalanceError,
   readJson,
+  refusedRequestId,
   withRetries,
 } from '../transports/http.ts'
 import type { Ctx } from '../context.ts'
@@ -147,16 +149,13 @@ const completionSchema = z.object({
   usage: z.unknown().nullish(),
 })
 
-const count = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : 0)
-const obj = (value: unknown): Record<string, unknown> =>
-  value && typeof value === 'object' ? (value as Record<string, unknown>) : {}
-
 /** One question about one picture on a route's chat wire, answered whole (no stream: the image is the request, the answer a few lines). */
 async function ask(
   deps: LlmDeps,
   vision: VisionDeps,
   route: ResolvedRoute,
   args: { question: string; dataUrl: string; ctx: Ctx },
+  routeFallback?: string,
 ): Promise<{ text: string; model: string }> {
   const { token, openaiBase } = gatewayConfig(deps.env ?? process.env)
   const doFetch = vision.fetch ?? fetch
@@ -168,7 +167,9 @@ async function ask(
       const res = await doFetch(`${openaiBase}/chat/completions`, {
         method: 'POST',
         headers: {
-          ...gatewayHeaders(args.ctx.attribution),
+          ...gatewayHeaders(
+            routeFallback && args.ctx.attribution ? { ...args.ctx.attribution, routeFallback } : args.ctx.attribution,
+          ),
           authorization: `Bearer ${token}`,
           'content-type': 'application/json',
         },
@@ -199,21 +200,12 @@ async function ask(
   })
   const parsed = completionSchema.safeParse(json)
   if (!parsed.success) throw fail('UPSTREAM_ERROR', `${route.id}: unreadable answer`, {})
-  const usage = obj(parsed.data.usage)
   const model = parsed.data.model ?? route.model
-  const cost = typeof usage.cost === 'number' && Number.isFinite(usage.cost) && usage.cost >= 0 ? usage.cost : null
-  args.ctx.addUsage(
-    toUsage(route, model, {
-      model,
-      tokens: {
-        input: count(usage.prompt_tokens),
-        output: count(usage.completion_tokens),
-        cacheRead: count(obj(usage.prompt_tokens_details).cached_tokens),
-        reasoning: count(obj(usage.completion_tokens_details).reasoning_tokens),
-      },
-      cost,
-    }),
-  )
+  const usage = readUsage(parsed.data.usage) ?? {
+    tokens: { input: 0, output: 0, cacheRead: 0, reasoning: 0 },
+    cost: null,
+  }
+  args.ctx.addUsage(toUsage(route, model, { model, ...usage }))
   const choice = parsed.data.choices[0]!
   const text = (choice.message?.content ?? '').trim()
   if (choice.finish_reason === 'length')
@@ -251,7 +243,7 @@ export function createImageRead(deps: LlmDeps, web: ResolvedWebDeps, vision: Vis
         const warn = deps.warn ?? ((message, meta) => console.warn(message, meta))
         warn('provider balance exhausted; falling back', { route: route.id, from: route.model, to: fallback.model })
         try {
-          answer = await ask(deps, vision, fallback, args)
+          answer = await ask(deps, vision, fallback, args, refusedRequestId(error))
         } catch {
           throw error // the primary's error stands when the fallback fails too
         }
