@@ -501,7 +501,6 @@ export const createFetch = (deps: ResolvedWebDeps) => {
             // own title is not repeated: it is untrusted text.
             blocked = 'needs-human'
             failures.push('browser: challenge not cleared')
-            if (await askOnce(deps.handoff, new URL(url).hostname)) failures.push('the owner was asked to solve it')
           } else if (page.text === '') {
             failures.push('browser: no text on the page')
           } else {
@@ -539,6 +538,10 @@ export const createFetch = (deps: ResolvedWebDeps) => {
       // A kept thin read is still a read: better than an error for a short page.
       if (sparse && sparse.text.length > 0)
         return shape(url, sparse, 'direct', maxChars, { cached: false, at: sparseAt })
+      // Asked only once every leg has failed: a wall the Tavily read got past needs no person.
+      if (blocked === 'needs-human' && (await askOnce(deps.handoff, new URL(url).hostname))) {
+        failures.push('the owner was asked to solve it')
+      }
       throw fail(
         'UPSTREAM_ERROR',
         `web.fetch: ${blocked ? `blocked (${blocked}) · ` : ''}${failures.join(' · ')}`,
