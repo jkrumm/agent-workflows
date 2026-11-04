@@ -173,9 +173,11 @@ export class AudioScope {
     )
   }
 
-  /** The route id serving `model` on one of `wires`, or null. */
+  /** The route id serving `model` on one of `lanes`, or null. `model` is a route id (`audio.tts.gemini-flash`) or the route's literal model id. */
   routeIdForModel(model: string, lanes: readonly AudioLane[]): AudioRouteId | null {
     if (!model) return null
+    const named = Object.hasOwn(this.deps.routes, model) ? this.deps.routes[model as AudioRouteId] : undefined
+    if (named && lanes.includes(named.lane)) return named.id
     for (const route of Object.values(this.deps.routes)) {
       if (route.model === model && lanes.includes(route.lane)) return route.id
     }

@@ -164,6 +164,24 @@ describe('door contract', () => {
     expect((deps.usage.events[1] as RequestEvent).requestedModel).toBe('tts-1')
   })
 
+  test('a route id in model picks that route; a route id of another lane lands on the default', async () => {
+    iu = startFakeGateway({ gemini: () => geminiAudio(Uint8Array.from([1, 0])) })
+    const deps = testDeps(iu)
+    const speak = createSpeechHandler(deps)
+    await speak(post(JSON.stringify({ model: 'audio.tts.gemini-flash-lite', input: 'Hallo.' })))
+    await speak(post(JSON.stringify({ model: 'audio.stt.voxtral-mini', input: 'Hallo.' })))
+    await speak(post(JSON.stringify({ model: 'constructor', input: 'Hallo.' })))
+    expect(iu.requests.map((r) => r.path)).toEqual([
+      `/gemini/v1beta/models/${LITE}:generateContent`,
+      `/gemini/v1beta/models/${LITE}:generateContent`,
+      `/gemini/v1beta/models/${LITE}:generateContent`,
+    ])
+    const requested = deps.usage.events
+      .filter((e): e is RequestEvent => e.kind === 'request')
+      .map((e) => e.requestedModel)
+    expect(requested).toEqual(['audio.tts.gemini-flash-lite', 'audio.stt.voxtral-mini', 'constructor'])
+  })
+
   test('a usage port that throws or rejects never breaks the response', async () => {
     iu = startFakeGateway({ gemini: () => geminiAudio(Uint8Array.from([1, 0])) })
     const warnings: string[] = []

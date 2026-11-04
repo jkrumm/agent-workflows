@@ -29,7 +29,7 @@ export type UsageRow = {
   api_key: 'personal'
   machine: string
   outcome: 'ok' | 'error'
-  lane: 'agw_workflow'
+  lane: UsageLane
   lane_detail: { workflow: string; step: string; caller: string; purpose: string }
   run_id: string
   input_tokens: number
@@ -47,6 +47,7 @@ export type UsageRow = {
 /** The `usage.sessions` row of a run, derived from its records. */
 export type UsageSession = {
   source_session_id: string
+  lane: UsageLane
   lane_detail: { workflow: string; caller: string; purpose: string }
   api_key: 'personal'
   machine: string
@@ -138,7 +139,7 @@ const RECORD_UPSERT = `
 const SESSION_UPSERT = `
   insert into usage.sessions (source, source_session_id, lane, lane_detail, billing, api_key, machine, model, repo, run_id,
     first_ts, last_ts)
-  values ($1::text, $2::text, 'agw_workflow', $3::jsonb, 'api_key', $4::text, $5::text, $6::text, $7::text, $2::text,
+  values ($1::text, $2::text, $10::text, $3::jsonb, 'api_key', $4::text, $5::text, $6::text, $7::text, $2::text,
     $8::timestamptz, $9::timestamptz)
   on conflict (source, source_session_id) do update set
     lane_detail = excluded.lane_detail, billing = excluded.billing, api_key = excluded.api_key,
@@ -159,6 +160,7 @@ export function sessionsOf(rows: UsageRow[]): UsageSession[] {
     const first = sorted[0] as UsageRow
     return {
       source_session_id: runId,
+      lane: first.lane,
       lane_detail: {
         workflow: first.lane_detail.workflow,
         caller: first.lane_detail.caller,
@@ -214,6 +216,7 @@ export async function writeBatch(client: PoolClient, rows: UsageRow[], options: 
         s.repo,
         s.first_ts,
         s.last_ts,
+        s.lane,
       ])
     }
     for (const r of [...rows].sort(byKey((x) => x.source_id))) {
@@ -378,6 +381,10 @@ export type UsageRowOptions = { machine: string }
 /** The caller of a run no door admitted: the eval harness (`eval`, `drift`) or the host's own jobs (`host`). */
 const HARNESS_PURPOSES: ReadonlySet<string> = new Set(['eval', 'drift'])
 
+/** The `usage.records` lane of a run's rows: Hermes' own lane when Hermes asked (one Hermes lane in Argo, as on the gateway's rows), else `agw_workflow`. */
+export type UsageLane = 'agw_workflow' | 'hermes'
+export const laneOf = (caller: string): UsageLane => (caller === 'hermes' ? 'hermes' : 'agw_workflow')
+
 /**
  * Every door stamps `runs.caller`; a run without one was started inside the host process (retrospective, the eval
  * harness and its judge, recovery), which its purpose tells apart.
@@ -502,7 +509,7 @@ export function usageRowsForStep(step: OutboxStep, options: UsageRowOptions): Us
       api_key: 'personal',
       machine: options.machine,
       outcome,
-      lane: 'agw_workflow',
+      lane: laneOf(caller),
       // The run has no route of its own to name (routes belong to agents); `caller` is who asked, `purpose` why.
       lane_detail: { workflow: run.workflowId, step: step.stepId, caller, purpose: run.purpose },
       run_id: step.runId,

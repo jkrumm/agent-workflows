@@ -1,7 +1,15 @@
 import { describe, expect, test } from 'bun:test'
 import type { ModelUsage } from '@agent-workflows/runtime'
 import { callerRecords } from '@agent-workflows/routes'
-import { additiveTokens, type OutboxStep, repoOf, sessionsOf, traceIdForRun, usageRowsForStep } from '../src/index.ts'
+import {
+  additiveTokens,
+  type OutboxStep,
+  repoOf,
+  sessionsOf,
+  traceIdForRun,
+  type UsageRow,
+  usageRowsForStep,
+} from '../src/index.ts'
 
 // Models whose rows agw writes (`callerRecords` true), and one the gateway records (TEXT).
 const TTS = 'gemini-3.8-flash-tts'
@@ -89,6 +97,13 @@ describe('usage rows', () => {
     // Database-derived columns are never the writer's: no cost, price, session id or ingest time on the row.
     for (const derived of ['cost_usd', 'cost_source', 'price_id', 'session_id', 'ingested_at', 'account'])
       expect(rows[0]).not.toHaveProperty(derived)
+  })
+
+  test('a run Hermes asked for is on the hermes lane, every other caller on agw_workflow', () => {
+    const [row] = usageRowsForStep(step({}, { caller: 'hermes' }), opts)
+    expect(row).toMatchObject({ lane: 'hermes', lane_detail: { caller: 'hermes' } })
+    expect(sessionsOf([row as UsageRow])[0]).toMatchObject({ lane: 'hermes' })
+    expect(usageRowsForStep(step({}, { caller: 'iris' }), opts)[0]).toMatchObject({ lane: 'agw_workflow' })
   })
 
   test('the five token kinds, additive: reasoning and cache are each counted once', () => {

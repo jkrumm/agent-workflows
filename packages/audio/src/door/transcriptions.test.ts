@@ -84,6 +84,17 @@ describe.skipIf(!hasFfmpeg)('transcriptions door', () => {
     expect(summary(deps.usage.events)?.requestedModel).toBe('tts-1-hd-transcribe')
   })
 
+  test('a route id in model picks that route, as the literal model id does', async () => {
+    const { deps, transcribe } = setup(() => Response.json({ text: 'ok' }))
+    await transcribe(post(twoSeconds, { model: 'audio.stt.openai' }))
+    expect(sentModels()[0]).toBe(GPT_TRANSCRIBE)
+    expect(summary(deps.usage.events)?.requestedModel).toBe('audio.stt.openai')
+    iu.requests.length = 0
+    const other = setup(() => voxtralBody())
+    await other.transcribe(post(twoSeconds, { model: 'audio.tts.gemini-flash' }))
+    expect(sentModels()).toEqual([VOXTRAL])
+  })
+
   test('per-minute models are priced from the probed duration, which wins over the reply seconds', async () => {
     for (const [model, perMinute] of [
       [VOXTRAL, 0.0035],
