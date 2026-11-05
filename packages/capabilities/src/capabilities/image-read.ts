@@ -1,36 +1,13 @@
-import { fallbackRoute, type ResolvedRoute } from '@agent-workflows/routes'
 import { z } from 'zod'
 import { fail } from '../errors.ts'
 import { readInputImage } from '../image/files.ts'
 import { MIME, sniffFormat } from '../image/png.ts'
-import { type LlmDeps, resolve, toUsage } from '../llm/model-call.ts'
-import { gatewayConfig } from '../transports/config.ts'
-import { gatewayHeaders } from '../transports/headers.ts'
-import { readUsage } from '../transports/iu-openai.ts'
-import {
-  Attempt,
-  DEFAULTS,
-  describe,
-  failedResponse,
-  isAbort,
-  isBalanceError,
-  readJson,
-  refusedRequestId,
-  withRetries,
-} from '../transports/http.ts'
-import type { Ctx } from '../context.ts'
+import { complete, type LlmDeps } from '../llm/model-call.ts'
+import { describe } from '../transports/http.ts'
 import { defineCapability } from '../procedure.ts'
 import type { ResolvedWebDeps } from '../web/deps.ts'
 import { within } from '../web/deps.ts'
 import { assertPublicUrl } from '../web/ssrf.ts'
-
-/** The chat wire's image input is not in the shared `ChatPort` (text only), so this capability carries its own call, through the gateway. */
-export interface VisionDeps {
-  /** The gateway request. Default `globalThis.fetch`. */
-  fetch?: (url: string, init: RequestInit) => Promise<Response>
-  /** Backoff base of the call's retries; tests set 0. */
-  backoffMs?: number
-}
 
 export const readImageInput = z.object({
   source: z
@@ -136,85 +113,7 @@ async function downloadImage(web: ResolvedWebDeps, url: string, signal: AbortSig
   }
 }
 
-const completionSchema = z.object({
-  model: z.string().nullish(),
-  choices: z
-    .array(
-      z.object({
-        message: z.object({ content: z.string().nullish() }).nullish(),
-        finish_reason: z.string().nullish(),
-      }),
-    )
-    .min(1),
-  usage: z.unknown().nullish(),
-})
-
-/** One question about one picture on a route's chat wire, answered whole (no stream: the image is the request, the answer a few lines). */
-async function ask(
-  deps: LlmDeps,
-  vision: VisionDeps,
-  route: ResolvedRoute,
-  args: { question: string; dataUrl: string; ctx: Ctx },
-  routeFallback?: string,
-): Promise<{ text: string; model: string }> {
-  const { token, openaiBase } = gatewayConfig(deps.env ?? process.env)
-  const doFetch = vision.fetch ?? fetch
-  // Reasoning tokens count against the ceiling; the route's own is what it was probed with.
-  const maxOutput = route.maxOutputTokens ?? 2_000
-  const effort = route.effort && route.effort !== 'none' ? route.effort : undefined
-  const json = await withRetries({ backoffMs: vision.backoffMs }, args.ctx.signal, async () => {
-    try {
-      const res = await doFetch(`${openaiBase}/chat/completions`, {
-        method: 'POST',
-        headers: {
-          ...gatewayHeaders(
-            routeFallback && args.ctx.attribution ? { ...args.ctx.attribution, routeFallback } : args.ctx.attribution,
-          ),
-          authorization: `Bearer ${token}`,
-          'content-type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: route.model,
-          messages: [
-            { role: 'system', content: SYSTEM },
-            {
-              role: 'user',
-              content: [
-                { type: 'text', text: args.question },
-                { type: 'image_url', image_url: { url: args.dataUrl } },
-              ],
-            },
-          ],
-          max_completion_tokens: maxOutput,
-          ...(effort ? { reasoning_effort: effort } : {}),
-        }),
-        // A hang guard of half an hour for a call that is not streamed, never a budget (agent-limits).
-        signal: within(args.ctx.signal, DEFAULTS.hangGuardMs),
-      })
-      if (!res.ok) throw await failedResponse(res, 'iu-openai')
-      return await readJson(res, 'iu-openai')
-    } catch (error) {
-      if (error instanceof Attempt) throw error
-      throw new Attempt(describe(error), !isAbort(error))
-    }
-  })
-  const parsed = completionSchema.safeParse(json)
-  if (!parsed.success) throw fail('UPSTREAM_ERROR', `${route.id}: unreadable answer`, {})
-  const model = parsed.data.model ?? route.model
-  const usage = readUsage(parsed.data.usage) ?? {
-    tokens: { input: 0, output: 0, cacheRead: 0, reasoning: 0 },
-    cost: null,
-  }
-  args.ctx.addUsage(toUsage(route, model, { model, ...usage }))
-  const choice = parsed.data.choices[0]!
-  const text = (choice.message?.content ?? '').trim()
-  if (choice.finish_reason === 'length')
-    throw fail('OUTPUT_TRUNCATED', `${route.id}: output hit the ceiling`, { reason: text ? 'truncated' : 'starved' })
-  if (!text) throw fail('UPSTREAM_ERROR', `${route.id}: the model returned no text`, {})
-  return { text, model }
-}
-
-export function createImageRead(deps: LlmDeps, web: ResolvedWebDeps, vision: VisionDeps = {}) {
+export function createImageRead(deps: LlmDeps, web: ResolvedWebDeps) {
   return defineCapability({
     id: 'image.read',
     summary:
@@ -230,24 +129,13 @@ export function createImageRead(deps: LlmDeps, web: ResolvedWebDeps, vision: Vis
       const format = sniffFormat(bytes)
       if (!format) throw fail('INVALID_INPUT', 'image.read: the source is not a PNG, JPEG or WebP image')
       const mime = MIME[format]
-      const dataUrl = `data:${mime};base64,${Buffer.from(bytes).toString('base64')}`
-      const args = { question: question ?? DEFAULT_QUESTION, dataUrl, ctx }
-      const route = resolve('vision.describe', ctx)
-      let answer: { text: string; model: string }
-      try {
-        answer = await ask(deps, vision, route, args)
-      } catch (error) {
-        // A provider-balance failure moves the call once to the route's fallback, as every single call does.
-        const fallback = fallbackRoute(route)
-        if (!fallback || !isBalanceError(error)) throw error
-        const warn = deps.warn ?? ((message, meta) => console.warn(message, meta))
-        warn('provider balance exhausted; falling back', { route: route.id, from: route.model, to: fallback.model })
-        try {
-          answer = await ask(deps, vision, fallback, args, refusedRequestId(error))
-        } catch {
-          throw error // the primary's error stands when the fallback fails too
-        }
-      }
+      const answer = await complete(deps, {
+        routeId: 'vision.describe',
+        system: SYSTEM,
+        prompt: question ?? DEFAULT_QUESTION,
+        images: [{ mime, base64: Buffer.from(bytes).toString('base64') }],
+        ctx,
+      })
       return {
         source,
         kind: isUrl ? ('url' as const) : ('file' as const),

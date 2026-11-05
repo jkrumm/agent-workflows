@@ -6,7 +6,7 @@ import { failureOf, journaled, journaledError, RUN_ID_HEADER } from '../src/capa
 import { type Body, SECRET, startTestHost, type TestHost, until } from './support.ts'
 
 const TITLE = 'A Smoke Title'
-// `llm.title` is the TRIVIAL seat on the Messages wire: 40 input and 10 cache-read tokens are 50 input tokens.
+// `llm.title` is the FAST seat on the Messages wire: 40 input and 10 cache-read tokens are 50 input tokens.
 const ok = () =>
   messageResponse(TITLE, { input_tokens: 40, output_tokens: 6, cache_read_input_tokens: 10, cost: 0.0007 })
 

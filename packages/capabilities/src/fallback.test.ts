@@ -166,7 +166,7 @@ describe('provider-balance fallback', () => {
 
   test('a second single-call route (llm.summarize) falls back to its own seat’s GPT model over the chat wire', async () => {
     const summarize = resolveRoute('cheap.summarize', {})
-    // EASY routes fall back to Terra low; the TRIVIAL classify above falls back to Luna.
+    // EASY routes fall back to Terra low; the FAST classify above falls back to Luna.
     expect(summarize.wire).toBe('anthropic')
     expect(summarize.fallback).toMatchObject({ wire: 'iu-openai', effort: 'low' })
     expect(summarize.fallback?.model).not.toBe(fallback.model)

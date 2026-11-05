@@ -124,7 +124,7 @@ export async function startTestHost(
   const iu =
     options.iu ??
     startFakeGateway({
-      // `llm.title` is on the Messages wire (the TRIVIAL seat); the chat wire is its balance fallback.
+      // `llm.title` is on the Messages wire (the FAST seat); the chat wire is its balance fallback.
       messages: () =>
         messageResponse('A Smoke Title', {
           input_tokens: 40,

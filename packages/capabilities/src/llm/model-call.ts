@@ -15,7 +15,7 @@ import { CapabilityError, fail } from '../errors.ts'
 import type { Env } from '../transports/config.ts'
 import { isBalanceError, refusedRequestId } from '../transports/http.ts'
 import { type JsonSchema, toJsonSchema } from '../transports/json-schema.ts'
-import type { AttemptUsage, ChatResult, GatewayTransports, Tokens } from '../transports/port.ts'
+import type { AttemptUsage, ChatRequest, ChatResult, GatewayTransports, Tokens } from '../transports/port.ts'
 
 /** What the model-backed capabilities are built from. Handlers close over it; `ctx` stays `{ signal, addUsage, attribution? }`. */
 export interface LlmDeps {
@@ -112,6 +112,8 @@ export interface CompleteArgs {
   routeId: RouteId
   system?: string
   prompt: string
+  /** Pictures that go with the prompt (see `ChatRequest.images`). */
+  images?: ChatRequest['images']
   json?: boolean
   /** The answer's JSON Schema (`toJsonSchema`); goes to the wire as structured output. `completeJson` derives it from its zod `schema`. */
   jsonSchema?: JsonSchema
@@ -181,6 +183,7 @@ async function completeOn(
       model: route.model,
       system: args.system,
       prompt: args.prompt,
+      ...(args.images ? { images: args.images } : {}),
       json: args.json,
       ...(args.jsonSchema ? { jsonSchema: args.jsonSchema } : {}),
       effort,

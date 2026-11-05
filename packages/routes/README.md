@@ -107,7 +107,8 @@ Constants in `_shared.ts`, spread like a tier (`{ wire: 'iu-openai', ...CRITIC.c
 |-|-|-|-|
 | `CRITIC` | Terra medium | `podcast.review`, `prose.review` | Luna medium |
 | `GEMINI_FLASH` | Gemini flash, no effort (its OpenAI-compatible leg rejects `reasoning_effort`) | `eval.label.c` | Terra medium |
-| `VISION` | Luna low (image input on the chat wire, `maxOutputTokens` 2000) | `vision.describe` | Terra medium |
+
+`VISION` (`vision.describe`, behind `image.read`) is a Claude seat, not a cross-lab one, and sits beside the tiers: Haiku low on the Messages wire with `maxOutputTokens` 2000, falling back to Luna low on the chat wire. Image input rides `ChatRequest.images` on both wires.
 
 `podcast.review` is the cross-family critic: a Claude critic of a Claude writer defeats it. The podcast writers' room moved to Claude in Wave 6 (the single calls and the writer's tool loop speak the Messages wire); its reviewers stay on other labs. `prose.review` is a cross-lab reviewer of a Claude writer: its capability refuses a Claude model or any wire but `iu-openai`. `agw routes` shows `default` in the effort column where no effort is sent (the vendor's own level), and `none` where thinking is off.
 

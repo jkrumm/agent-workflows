@@ -99,9 +99,9 @@ export const CRITIC = {
   call: { ...TERRA_MEDIUM, fallback: callFallback({ ...LUNA, effort: 'medium' as const }) },
 } as const
 
-/** Image input (`vision.describe`, behind `image.read`): Luna low on the chat wire, 2k output ceiling. Not a Claude tier on purpose: it was probed on three product photos on the chat wire (docs/shop.md §Vision) and passed at the cheapest price. Falls back to Terra medium, which passed the same photos. */
+/** Image input (`vision.describe`, behind `image.read`): Haiku low on the Messages wire (the one effort that counted all three probe photos right, docs/shop.md §Vision), 2k output ceiling. Falls back to Luna low on the chat wire (image input proven on the 2026-11-01 probe, docs/shop.md §Vision). */
 export const VISION = {
-  call: { ...LUNA, maxOutputTokens: 2_000, fallback: callFallback(TERRA_MEDIUM) },
+  call: { ...HAIKU, effort: 'low', maxOutputTokens: 2_000, fallback: callFallback(LUNA) },
 } as const
 
 // ---- Eval seats: pinned, never tiers; a change here bumps the labeller or judge version (`LABELER_VERSION`,

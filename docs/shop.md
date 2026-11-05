@@ -62,20 +62,23 @@ Refresh when the layout shifts: read the pages under the conduct rules above (th
 
 ## Vision
 
-Route `vision.describe` (`packages/routes/src/table/vision.ts`), chat wire, one image as a data URL. Probe 2026-11-01 on the IU wire: three saved product photos (a black square-base pad eye set, a polished set of four with screws, a set of eight), one fixed question ("shape, printed dimensions or none, material and finish, burrs or defects; count the main parts"), `timeout`-bounded, non-streamed. The list of models is read from IU's `/models` (`ImageInput` capability); candidates are the cheap GPT-stack models, none via Requesty.
+Route `vision.describe` (`packages/routes/src/table/vision.ts`), one image as base64 on `ChatRequest.images`, through the shared `complete()` path: a balance failure on the primary moves the call to the fallback like every single call.
 
-Pass rule written before the run: the image is accepted, the shape is right, the count is right on all three photos (4, 4, 8), no dimension is invented where none is printed, and the material is not guessed wrong.
+**Seat: Haiku low on the Messages wire** (the `VISION` seat, `packages/routes/src/table/_shared.ts`; $0.10 in, $0.50 out per million, the same price as the earlier Luna seat), falling back to Luna low on the chat wire. Moved from Luna on 2026-11-05 so the call spends the Claude credit.
 
-| Model (effort) | Accepted | Counts 4 / 4 / 8 | Printed dims | Material | Tokens in / out (per photo) | Verdict |
-|-|-|-|-|-|-|-|
-| Luna (low) | yes | 4 / 4 / 8 | "none" ×3 | black metal / stainless steel / metallic, "not specified" where unclear | 515-563 / 157-224 | **pass, picked** |
-| gpt-5.4-nano (low) | yes | 5 / 4 / 8 | "none" ×3 | "likely steel", "galvanized/chrome-like" | 580-620 / 235-336 | fail: counted the screws as a part |
-| gpt-4.1-nano | yes | 4 / 4 / 8 | "none" ×3 | "metal" only | 969-1067 / 47-68 | pass on counts; thin answers, price not verified |
-| Terra (medium) | yes | 4 / 4 / 8 | "none" ×3 | black / "likely stainless steel" ×2 | 443-483 / 99-120 | pass; ten times Luna's price, so it is the fallback |
+Probe 2026-11-05, Haiku on the gateway's Messages wire: three product thumbnails (320 px, harder than the 1500 px the doors send) of the "Augplatte Edelstahl M6 Öse" search, read by eye as 4, 10 and 8 plates, the default question of `image.read`, one call per effort.
 
-**Picked: Luna at effort low**, the seat `VISION` (`packages/routes/src/table/_shared.ts`) already prices ($0.10 in, $0.50 out per million), so the probe adds no model id and no rate. The nano models are not in the route table's rate sources, so "cheaper than Luna" could not be shown for them; if a verified rate says so, move the seat. The fallback is Terra medium (`callFallback(TERRA_MEDIUM)`): it answered the same photos correctly. Live: a 1500 px product photo costs about 2,400 prompt tokens, $0.0002-0.0003 per read.
+Pass rule: counts right on all three photos, no dimension invented where none is printed, the material not guessed wrong.
 
-What the model cannot do is read a size off a picture that prints none; the system prompt says so and the answers did ("Dimensions: none"). Measures come from the spec table, not from `image-read`.
+| Effort | Counts 4 / 10 / 8 | Printed dims | Material | Output tokens | Verdict |
+|-|-|-|-|-|-|
+| none | 4 / 9 / 8 | "not visible" ×3 | black metal, "silver, stainless or chrome" | 425-816 | fail: one plate missed |
+| low | 4 / 10 / 8 | "not visible" ×3 | black metal, "cannot be confirmed", polished stainless | 339-425 | **pass, picked** |
+| medium | 4 / 9 / 8 | "not visible" ×3 | same | 442-844 | fail: one plate missed |
+
+One call per cell, so the effort is a pick on a small sample: thinking low also answered shortest. The earlier probe (2026-11-01, IU chat wire, three other photos with counts 4 / 4 / 8) passed Luna low and Terra medium, failed gpt-5.4-nano (counted screws as a part); that is why Luna is the fallback. Live: a 1500 px product photo costs about 2,400 prompt tokens, $0.0002-0.0003 per read.
+
+What the model cannot do is read a size off a picture that prints none; the system prompt says so and the answers did. Measures come from the spec table, not from `image-read`.
 
 ## Live probe, 2026-11-01
 
