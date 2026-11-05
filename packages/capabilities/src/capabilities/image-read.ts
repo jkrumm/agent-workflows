@@ -37,7 +37,8 @@ export const readImageOutput = z.object({
   model: z.string(),
 })
 
-const MAX_IMAGE_BYTES = 10 * 1024 * 1024
+// The Messages wire takes 10 MB of base64 per image (platform.claude.com vision docs, read 2026-11-05): 7 MB of bytes is 9.3 MB encoded.
+const MAX_IMAGE_BYTES = 7_000_000
 const MAX_HOPS = 3
 const HOP_TIMEOUT_MS = 30_000
 const USER_AGENT = 'agent-workflows/0.1 (image.read)'

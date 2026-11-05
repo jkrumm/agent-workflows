@@ -1698,6 +1698,39 @@ describe('web.fetch through a real browser', () => {
       }
     })
 
+    test('a wall the browser cannot pass stays a needs-human block under render, and the owner is asked', async () => {
+      resetHandoffLimit()
+      const browser = fakeBrowser([{ title: 'Prove your humanity', text: 'Please verify' }])
+      try {
+        const handoff = fakeHandoff()
+        const n = net({
+          'https://shop.example.com/': status(403, WALL),
+          'https://api.tavily.com': json({ results: [] }),
+        })
+        const { call } = run({ ...n.deps, env: { TAVILY_API_KEY: 't' }, browser: browser.read, handoff })
+        const error = await failure(call('web.fetch', { url: 'https://shop.example.com/x', render: true }))
+        expect(blockedReason(error.message)).toBe('needs-human')
+        expect(handoff.requests).toEqual([{ host: 'shop.example.com' }])
+      } finally {
+        browser.stop()
+      }
+    })
+
+    test('a PDF URL is read the plain way under render: the browser is never opened', async () => {
+      const browser = fakeBrowser([{ title: 'x', text: LISTING }])
+      try {
+        const n = net({ 'https://shop.example.com/': html('<p>' + 'manual text '.repeat(30) + '</p>') })
+        const { call } = run({ ...n.deps, env: {}, browser: browser.read })
+        const out = (await call('web.fetch', { url: 'https://shop.example.com/manual.pdf', render: true })) as {
+          via: string
+        }
+        expect(out.via).toBe('direct')
+        expect(browser.navigated).toEqual([])
+      } finally {
+        browser.stop()
+      }
+    })
+
     test('render with no browser configured, or a browser that fails, falls back to the plain read', async () => {
       const n = net({ [plain]: shell })
       const { call } = run({ ...n.deps, env: {} })

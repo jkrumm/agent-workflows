@@ -474,7 +474,8 @@ export const createFetch = (deps: ResolvedWebDeps) => {
       // sends nothing and reports nothing.
       const free = () => ctx.addUsage(webUsage('direct', 0))
       const browser = deps.browser(publicOnlyPolicy(deps, 'web.fetch'))
-      const rendered = render && browser !== undefined
+      // A PDF is no page a browser reads as text: it goes the plain way even when a rendered read was asked for.
+      const rendered = render && browser !== undefined && !/\.pdf(?:$|[?#])/i.test(url)
       /** The plain read; a complete page is the answer, anything else is recorded for the legs behind it. */
       const plain = async () => {
         try {
@@ -491,7 +492,8 @@ export const createFetch = (deps: ResolvedWebDeps) => {
           if (error.missing)
             throw fail('UPSTREAM_ERROR', `web.fetch: ${error.message}`, { status: error.status ?? 404 })
           if (error.status !== undefined && error.status >= 400 && error.status < 500) pageStatus = error.status
-          blocked = error.blocked
+          // The browser leg's verdict that a person has to pass the wall stands over the plain read's reading of it.
+          if (blocked !== 'needs-human') blocked = error.blocked
           failures.push(`direct: ${error.message}`)
         }
         return undefined
