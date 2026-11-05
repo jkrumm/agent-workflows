@@ -25,6 +25,12 @@ export const fetchInput = z.object({
     .boolean()
     .default(false)
     .describe('Read the page again even if this process read it within the last 6 hours (prices, live status)'),
+  render: z
+    .boolean()
+    .default(false)
+    .describe(
+      'Read the page in the real browser, which waits for it to render: for a page whose content is built by script and comes back empty or as "no results" from a plain read. Falls back to the normal chain when no browser is configured',
+    ),
 })
 
 export const fetchOutput = z.object({
@@ -441,10 +447,12 @@ export const createFetch = (deps: ResolvedWebDeps) => {
     input: fetchInput,
     output: fetchOutput,
     cli: { positional: ['url'], defaultFormat: 'json' },
-    async handler({ url, maxChars, fresh }, ctx) {
+    async handler({ url, maxChars, fresh, render }, ctx) {
       const key = ReadCache.key(url)
       const startedAt = Date.now()
-      const hit = fresh ? undefined : cache.get(key)
+      // A rendered read is not answered by a plain read of the same page: that is what it was asked to get past.
+      const cached = fresh ? undefined : cache.get(key)
+      const hit = cached && render && cached.via === 'direct' ? undefined : cached
       if (hit) {
         ctx.addUsage(webUsage('cache', 0))
         return shape(url, hit.read, hit.via, maxChars, { cached: true, at: hit.at })
@@ -465,27 +473,39 @@ export const createFetch = (deps: ResolvedWebDeps) => {
       // A direct read that went out costs nothing, and says so: the run is priced at $0, not unknown. A refused URL
       // sends nothing and reports nothing.
       const free = () => ctx.addUsage(webUsage('direct', 0))
-      try {
-        const read = await direct(deps, url, ctx.signal)
-        free()
-        if (!read.shell) return done(read, 'direct')
-        sparse = read
-        sparseAt = Date.now()
-        failures.push(`direct: only ${read.text.length} characters of text from a script-built page`)
-      } catch (error) {
-        if (!(error instanceof DirectFailure)) throw error
-        free()
-        // A page that is definitively gone is not worth a paid second opinion.
-        if (error.missing) throw fail('UPSTREAM_ERROR', `web.fetch: ${error.message}`, { status: error.status ?? 404 })
-        if (error.status !== undefined && error.status >= 400 && error.status < 500) pageStatus = error.status
-        blocked = error.blocked
-        failures.push(`direct: ${error.message}`)
+      const browser = deps.browser(publicOnlyPolicy(deps, 'web.fetch'))
+      const rendered = render && browser !== undefined
+      /** The plain read; a complete page is the answer, anything else is recorded for the legs behind it. */
+      const plain = async () => {
+        try {
+          const read = await direct(deps, url, ctx.signal)
+          free()
+          if (!read.shell) return done(read, 'direct')
+          sparse = read
+          sparseAt = Date.now()
+          failures.push(`direct: only ${read.text.length} characters of text from a script-built page`)
+        } catch (error) {
+          if (!(error instanceof DirectFailure)) throw error
+          free()
+          // A page that is definitively gone is not worth a paid second opinion.
+          if (error.missing)
+            throw fail('UPSTREAM_ERROR', `web.fetch: ${error.message}`, { status: error.status ?? 404 })
+          if (error.status !== undefined && error.status >= 400 && error.status < 500) pageStatus = error.status
+          blocked = error.blocked
+          failures.push(`direct: ${error.message}`)
+        }
+        return undefined
+      }
+      // A rendered read goes to the browser first (the plain client would only return the empty shell) and falls back
+      // to the plain read when the browser gives nothing.
+      if (!rendered) {
+        const page = await plain()
+        if (page) return page
       }
 
       // A page that turned the plain client away, or is only a script shell, gets a real browser's turn when one is
       // configured: free, and it passes what a bot wall lets a person through. A PDF is not a page a browser reads as text.
-      const browser = deps.browser(publicOnlyPolicy(deps, 'web.fetch'))
-      if (browser && (sparse || (blocked && blocked !== 'unsupported-type'))) {
+      if (browser && (rendered || sparse || (blocked && blocked !== 'unsupported-type'))) {
         try {
           const page = await browser(url, ctx.signal)
           ctx.addUsage(webUsage('browser', 0))
@@ -518,6 +538,11 @@ export const createFetch = (deps: ResolvedWebDeps) => {
           deps.warn(`web.fetch: the browser fallback failed: ${error.message}`)
           failures.push(`browser: ${error.message}`)
         }
+      }
+
+      if (rendered) {
+        const page = await plain()
+        if (page) return page
       }
 
       try {

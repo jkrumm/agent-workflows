@@ -39,8 +39,15 @@ const LOAD_WAIT_MS = 20_000
 /** How long a challenge may take to clear by itself (Cloudflare's usually does within seconds in a headed browser). */
 const SETTLE_MS = 20_000
 const POLL_MS = 1_000
-/** Text shorter than this after the page loaded may still be hydrating: it gets a few more polls. */
+/**
+ * A page counts as rendered when its text is at least this long, has not changed between two polls and the page has no
+ * request in flight (the API call a client-rendered listing waits for). A shorter text is still hydrating; a longer one
+ * that is still growing is a consent banner or a header with the content yet to come. A request that never ends
+ * (long polling, a stalled beacon) holds the read only until the text has been the same for `QUIET_POLLS` polls; a page
+ * that keeps changing is returned as the settle time left it.
+ */
 const HYDRATED_CHARS = 200
+const QUIET_POLLS = 3
 const MAX_TEXT_CHARS = 2_000_000
 const MAX_HTML_CHARS = 6_000_000
 /** Tabs open at once, across all runs of this process. */
@@ -291,6 +298,15 @@ export async function readViaCdp(
         const address = received.response.remoteIPAddress?.replace(/^\[|\]$/g, '')
         if (address && !policy.allowAddress(address)) refusedDocument = true
       })
+      // Requests the page has sent and not yet seen finished: the hydration signal next to the text itself.
+      const inFlight = new Set<string>()
+      session.on('Network.requestWillBeSent', (params) => {
+        const requestId = (params as { requestId?: string }).requestId
+        if (requestId) inFlight.add(requestId)
+      })
+      const settled = (params: unknown) => inFlight.delete((params as { requestId?: string }).requestId ?? '')
+      session.on('Network.loadingFinished', settled)
+      session.on('Network.loadingFailed', settled)
       await session.send('Page.enable')
       await session.send('Network.enable')
       await session.send('Page.addScriptToEvaluateOnNewDocument', { source: NO_WEBSOCKET })
@@ -311,6 +327,8 @@ export async function readViaCdp(
       }
       const deadline = Date.now() + (timing.settleMs ?? SETTLE_MS)
       let last: BrowserPage | undefined
+      let lastLength = -1
+      let unchanged = 0
       for (;;) {
         signal.throwIfAborted()
         if (refusedDocument) throw new BrowserRefused('the page leads to a non-public address')
@@ -333,7 +351,16 @@ export async function readViaCdp(
           // A navigation in flight destroys the page context for a moment; the next poll sees the new page.
           if (signal.aborted) throw error
         }
-        if (last && !last.challenge && last.text.length >= HYDRATED_CHARS) return accept(last)
+        unchanged = last && last.text.length === lastLength ? unchanged + 1 : 0
+        lastLength = last?.text.length ?? -1
+        if (
+          last &&
+          !last.challenge &&
+          last.text.length >= HYDRATED_CHARS &&
+          unchanged >= 1 &&
+          (inFlight.size === 0 || unchanged >= QUIET_POLLS)
+        )
+          return accept(last)
         if (Date.now() >= deadline) break
         await Bun.sleep(timing.pollMs ?? POLL_MS)
       }
