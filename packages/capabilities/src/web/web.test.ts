@@ -1533,8 +1533,8 @@ function fakeBrowser(
   const allowAll: RequestPolicy = { allowUrl: async () => true, allowAddress: () => true }
   const timed =
     (policy: RequestPolicy = allowAll) =>
-    (url: string, signal: AbortSignal) =>
-      readViaCdp(base, url, signal, policy, { settleMs: 400, pollMs: 40 })
+    (url: string, signal: AbortSignal, options?: { html?: boolean }) =>
+      readViaCdp(base, url, signal, policy, { settleMs: 400, pollMs: 40 }, options)
   return { base, read: timed(), timed, closed, navigated, decisions, scripts, stop: () => void server.stop(true) }
 }
 
@@ -1566,6 +1566,20 @@ describe('web.fetch through a real browser', () => {
         ['direct', 0],
         ['browser', 0],
       ])
+    } finally {
+      browser.stop()
+    }
+  })
+
+  test('the raw HTML comes back only when asked for', async () => {
+    const browser = fakeBrowser([{ title: 'Jura E4', text: REAL, html: '<html><body>raw</body></html>' } as never])
+    try {
+      const withHtml = await browser.read('https://shop.example.com/jura-e4', new AbortController().signal, {
+        html: true,
+      })
+      expect(withHtml.html).toBe('<html><body>raw</body></html>')
+      const without = await browser.read('https://shop.example.com/jura-e4', new AbortController().signal)
+      expect(without.html).toBeUndefined()
     } finally {
       browser.stop()
     }
