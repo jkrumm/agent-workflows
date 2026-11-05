@@ -150,7 +150,7 @@ export const PrepareInput = z
       .string()
       .regex(new RegExp(ACCOUNT_ID_PATTERN))
       .optional()
-      .describe("The caller's Max account: judged against the review ceiling"),
+      .describe("The caller's Max account: recorded on the job with its quota reading"),
   })
   .strict()
 export type PrepareInputValue = z.output<typeof PrepareInput>
@@ -164,7 +164,7 @@ const DECISION = {
 
 export const PrepareOutput = z.object({
   status: z.enum(['ready', 'skipped', 'held', 'needs-human']),
-  reason: z.string().optional().describe('held and needs-human: why'),
+  reason: z.string().optional().describe('held (the deep cap) and needs-human: why'),
   jobId: z.string().optional(),
   thread: z.string(),
   round: z.number().int(),
@@ -180,9 +180,9 @@ export const PrepareOutput = z.object({
   files: z.array(z.string()).optional(),
   account: z.string().nullable(),
   ceiling: z
-    .enum(['ok', 'held', 'unknown', 'unjudged'])
+    .enum(['ok', 'unknown', 'unjudged'])
     .optional()
-    .describe('unjudged: no account given; unknown: no quota reading'),
+    .describe('The quota reading recorded on the job. ok: a reading; unknown: none; unjudged: no account given'),
   prompt: z.string().optional().describe('The reviewer agent prompt line'),
 })
 export type PrepareOutputValue = z.output<typeof PrepareOutput>
@@ -266,6 +266,12 @@ export const StatusOutput = z.object({
       transport: z.enum(['in-session', 'hidden']),
       reviewerPrompt: z.string().nullable().describe('Fingerprint of the reviewer agent file at prepare'),
       verifierPrompt: z.string().nullable().describe('Fingerprint of the review-verifier agent file at prepare'),
+      ceiling: z
+        .enum(['ok', 'unknown', 'unjudged'])
+        .nullable()
+        .describe('The quota reading at prepare (null: older job)'),
+      quotaFiveHour: z.number().nullable().describe("The account's 5-hour window in percent at prepare"),
+      quotaSevenDay: z.number().nullable().describe("The account's 7-day window in percent at prepare"),
       createdAt: z.string(),
       submittedAt: z.string().nullable(),
       jobDir: z.string(),

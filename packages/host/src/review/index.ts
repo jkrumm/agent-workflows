@@ -36,7 +36,7 @@ export interface ReviewServicePorts {
   /** Job dirs live under `<stateDir>/review-jobs/`, pr/branch clones under `<stateDir>/review-clones/`. */
   stateDir: string
   git: GitRunner
-  /** The account's Max quota in percent; absent or null: the ceiling is `unknown`, never held. */
+  /** The account's Max quota in percent; absent or null: the ceiling is `unknown`. Recorded on the job, never a hold. */
   quota?: (account: string) => Promise<QuotaReading | null>
   now?: () => Date
   /** The process environment: helper allowlist, network vars for pr/branch fetches, `AGW_REVIEW_DEEP_CAP`. */
@@ -122,6 +122,9 @@ export function createReviewService(ports: ReviewServicePorts): ReviewService {
             transport: job.transport,
             reviewerPrompt: job.reviewerPrompt,
             verifierPrompt: job.verifierPrompt,
+            ceiling: job.ceiling,
+            quotaFiveHour: job.quotaFiveHour,
+            quotaSevenDay: job.quotaSevenDay,
             createdAt: job.createdAt.toISOString(),
             submittedAt: job.submittedAt?.toISOString() ?? null,
             jobDir: job.jobDir,

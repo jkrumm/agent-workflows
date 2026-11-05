@@ -75,6 +75,12 @@ const ready = async (out: Promise<PrepareOutputValue>) => {
 
 const jobRow = async (id: string) =>
   (await pool.query(`select * from "${db.schema}".review_jobs where id = $1`, [id])).rows[0]
+const jobRowOfAccount = async (account: string) =>
+  (
+    await pool.query(`select * from "${db.schema}".review_jobs where account = $1 order by created_at desc limit 1`, [
+      account,
+    ])
+  ).rows[0]
 const findingRows = async (thread: string) =>
   (await pool.query(`select * from "${db.schema}".review_findings where thread = $1 order by id`, [thread])).rows
 
@@ -141,25 +147,27 @@ describe('prepare', () => {
     expect(out.jobId).toBeUndefined()
   })
 
-  test('the ceiling holds an account at 70 % of its 5-hour window or 90 % of its week', async () => {
+  test('the quota reading is recorded on the job and never holds it', async () => {
     const root = repo({ 'src/a.ts': lines(2) })
     write(root, 'src/a.ts', lines(4))
     const readings: Record<string, QuotaReading> = {
-      hot: { fiveHour: 75, sevenDay: 10 },
+      hot: { fiveHour: 95, sevenDay: 99 },
       ultra: { fiveHour: null, sevenDay: 95 },
-      cool: { fiveHour: 10, sevenDay: 20 },
+      empty: { fiveHour: null, sevenDay: null },
     }
     const s = service({ quota: async (a) => readings[a] ?? null })
-    expect(await s.prepare({ cwd: root, account: 'hot' })).toMatchObject({
-      status: 'held',
-      reason: 'held: hot at 75 % of its 5-hour window',
-    })
-    expect(await s.prepare({ cwd: root, account: 'ultra' })).toMatchObject({
-      status: 'held',
-      reason: 'held: ultra at 95 % of its 7-day window',
-    })
-    expect(await s.prepare({ cwd: root, account: 'nobody' })).toMatchObject({ status: 'ready', ceiling: 'unknown' })
-    expect(await s.prepare({ cwd: root, account: 'cool' })).toMatchObject({ status: 'ready', ceiling: 'ok' })
+    const recorded = async (account?: string) => {
+      const out = await ready(s.prepare({ cwd: root, ...(account ? { account } : {}) }))
+      const { job } = await s.status({ jobId: out.jobId })
+      expect(out.status).toBe('ready')
+      return [out.ceiling, job?.ceiling, job?.quotaFiveHour, job?.quotaSevenDay]
+    }
+    expect(await recorded('hot')).toEqual(['ok', 'ok', 95, 99])
+    expect(await recorded('ultra')).toEqual(['ok', 'ok', null, 95])
+    expect(await recorded('empty')).toEqual(['unknown', 'unknown', null, null])
+    expect(await recorded('nobody')).toEqual(['unknown', 'unknown', null, null])
+    expect(await recorded()).toEqual(['unjudged', 'unjudged', null, null])
+    expect(await jobRowOfAccount('hot')).toMatchObject({ ceiling: 'ok', quota_five_hour: 95, quota_seven_day: 99 })
   })
 
   test('the deep cap holds a deep review past N per account and day; never a downgrade', async () => {

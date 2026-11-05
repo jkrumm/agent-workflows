@@ -16,7 +16,7 @@ CLI exits non-zero naming it.
 
 | Command | What |
 |-|-|
-| `agw review prepare --cwd <dir> [--scope uncommitted\|head\|<ref>\|<a>..<b> \| --pr N \| --branch B] [--context] [--min] [--thread] [--account]` | Thread, round, route, ceiling, deep cap, job dir. `status`: `ready` (run the agent with `prompt` on `seat`), `skipped` (tier none), `held` (ceiling or deep cap; wait, the tier is never lowered), `needs-human` (a 4th round) |
+| `agw review prepare --cwd <dir> [--scope uncommitted\|head\|<ref>\|<a>..<b> \| --pr N \| --branch B] [--context] [--min] [--thread] [--account]` | Thread, round, route, quota reading, deep cap, job dir. `status`: `ready` (run the agent with `prompt` on `seat`), `skipped` (tier none), `held` (the deep cap; wait, the tier is never lowered), `needs-human` (a 4th round) |
 | `agw review cancel <jobId>` | A `prepared` job is abandoned and its tree removed → `{status: 'cancelled', jobId}`. A submitted or abandoned job is refused naming its state |
 | `agw review submit <jobId> --attempt <n> [--account <a>]` (reply on stdin) | REVIEW_OUTPUT v4. Idempotent per (job, attempt): the same attempt gets the stored output back, another attempt is refused naming the winner. `--account` sets the job's account only when it has none |
 | `agw review dispose <jobId> <findingId> fixed\|wrong\|intentional\|irrelevant\|open [--reason]` | The answer to a finding of the job's thread; idempotent |
@@ -54,7 +54,7 @@ symlinks removed). The tree goes on submit; each prepare sweeps trees older than
 
 `review_jobs`: one row per prepared job (`prepared → submitted | abandoned`), the route decision with its facts, the
 REVIEW.md config read at the thread base (`prepare` routes every round on that config, so a REVIEW.md the change
-edits cannot decide a later round's tier), the stat paths, the output, the `transport` (`in-session`; older rows may say `hidden`, migration 0018; `status` shows it, and a submitted job's REVIEW_OUTPUT as `output`). Migration 0019 adds `reviewer_prompt` and `verifier_prompt` to the jobs and `line_valid` and `anchored` to the findings (all nullable; below). `review_findings`: stable ids `<thread>-<n>`, `job_id` (first reported),
+edits cannot decide a later round's tier), the stat paths, the output, the `transport` (`in-session`; older rows may say `hidden`, migration 0018; `status` shows it, and a submitted job's REVIEW_OUTPUT as `output`). Migration 0019 adds `reviewer_prompt`, `verifier_prompt` and the quota reading (`ceiling`, `quota_five_hour`, `quota_seven_day`) to the jobs and `line_valid` and `anchored` to the findings (all nullable; below). `review_findings`: stable ids `<thread>-<n>`, `job_id` (first reported),
 `last_job_id` (latest round that reported it), the disposition.
 
 ## Routing
@@ -141,13 +141,16 @@ REVIEW.md `nits` are dropped (counted). Code decides `outcome` (`clean` without 
 else `actionable`), `summary` (counts only), `stepBack` (the reply's, or a fixed default at round 3 with important left)
 and `tier` (the job's). The echoed `files` must equal the stat paths (the empty-diff guard); nothing is written otherwise.
 
-## Ceiling and deep cap
+## Quota reading and deep cap
 
-With `--account`, the quota port's reading: held at ≥ 70 % of the 5-hour window or ≥ 90 % of the week (no 5-hour
-reading: the week alone; no reading: `ceiling: unknown`, not held). Without it: `ceiling: unjudged`. Deep jobs per
-account (no account is its own bucket) since UTC midnight, not abandoned, the thread's own unsubmitted one excluded, ≥
-`AGW_REVIEW_DEEP_CAP` (default 60) → held. Never downgraded. The ceiling paces review; the cap is only a runaway guard far
-above a busy day (15 deep reviews on one account was normal on 2026-11-05 and held real work).
+No quota ceiling holds a review: the reviewer runs on the caller's own account and account switching is the picker's job.
+With `--account`, `prepare` reads the quota port and records on the job `ceiling` (`ok`: a reading; `unknown`: no
+reading, or neither window has a value), `quota_five_hour` and `quota_seven_day` in percent (null without a value).
+Without an account: `ceiling: unjudged`. `status <jobId>` shows `ceiling`, `quotaFiveHour` and `quotaSevenDay` (null on
+jobs older than migration 0019). The deep cap is the only hold: deep jobs per account (no account is its own bucket)
+since UTC midnight, not abandoned, the thread's own unsubmitted one excluded, ≥ `AGW_REVIEW_DEEP_CAP` (default 60) →
+held. Never downgraded. It is a runaway guard far above a busy day (15 deep reviews on one account was normal on
+2026-11-05).
 
 ## Coverage
 

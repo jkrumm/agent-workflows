@@ -95,9 +95,9 @@ export function reviewOperations(service: ReviewService): Record<(typeof OPERATI
       'prepare',
       {
         summary:
-          'Prepare one review job: route the change, judge the ceiling, write the job dir the reviewer agent reads',
+          'Prepare one review job: route the change, record the account quota reading, write the job dir the reviewer agent reads',
         description:
-          'status ready: run the reviewer agent with `prompt` on `seat`, then `agw review submit`. skipped: tier none. held: the ceiling or the deep cap (wait, never downgrade). needs-human: three rounds on the thread.',
+          'status ready: run the reviewer agent with `prompt` on `seat`, then `agw review submit`. skipped: tier none. held: the deep cap only (wait, never downgrade); the account quota is recorded, not judged. needs-human: three rounds on the thread.',
         cli: { mutating: true },
         input: PrepareInput,
         output: PrepareOutput,

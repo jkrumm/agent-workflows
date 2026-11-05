@@ -34,6 +34,10 @@ export interface Job {
   /** First 12 hex characters of the sha256 of the reviewer and verifier agent files at prepare; null: unreadable. */
   reviewerPrompt: string | null
   verifierPrompt: string | null
+  /** The caller's quota at prepare: `ok` (a reading), `unknown` (none), `unjudged` (no account); null on older jobs. */
+  ceiling: 'ok' | 'unknown' | 'unjudged' | null
+  quotaFiveHour: number | null
+  quotaSevenDay: number | null
   state: JobState
   attempt: number | null
   output: ReviewOutputV4Value | null
@@ -95,6 +99,9 @@ const toJob = (r: Row): Job => ({
   worktree: r.worktree as string,
   reviewerPrompt: (r.reviewer_prompt as string | null) ?? null,
   verifierPrompt: (r.verifier_prompt as string | null) ?? null,
+  ceiling: orNull<Job['ceiling']>(r.ceiling),
+  quotaFiveHour: orNull<number>(r.quota_five_hour),
+  quotaSevenDay: orNull<number>(r.quota_seven_day),
   state: r.state as JobState,
   attempt: (r.attempt as number | null) ?? null,
   output: (r.output as ReviewOutputV4Value | null) ?? null,
@@ -242,9 +249,9 @@ export function reviewLedger(pool: ReviewPool, schema: string) {
         await client.query(
           `insert into ${jobs} (id, repo, root, thread, round, scope, base, diff_base, head, head_tree, tier, seat, rule,
              decided_by, route, account, intent, review_config, files, job_dir, worktree, transport,
-             reviewer_prompt, verifier_prompt)
+             reviewer_prompt, verifier_prompt, ceiling, quota_five_hour, quota_seven_day)
            values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22,
-             $23, $24)`,
+             $23, $24, $25, $26, $27)`,
           [
             job.id,
             job.repo,
@@ -270,6 +277,9 @@ export function reviewLedger(pool: ReviewPool, schema: string) {
             job.transport,
             job.reviewerPrompt,
             job.verifierPrompt,
+            job.ceiling,
+            job.quotaFiveHour,
+            job.quotaSevenDay,
           ],
         )
         return rows.map((r) => r.id as string)

@@ -1,4 +1,4 @@
-// `agw review prepare`: thread and round from the ledger, the route, the ceiling and the deep cap, a throwaway worktree
+// `agw review prepare`: thread and round from the ledger, the route, the quota reading and the deep cap, a throwaway worktree
 // at the head and the job dir the reviewer agent reads (`docs/spikes/review-v4/reviewer.md` §The job).
 import { createHash, randomBytes } from 'node:crypto'
 import {
@@ -21,9 +21,7 @@ import { routeRange, type Seat, type Tier } from './route.ts'
 import type { PrepareInputValue, PrepareOutputValue } from './schema.ts'
 
 export const MAX_ROUNDS = 3
-export const FIVE_HOUR_CEILING = 70
-export const SEVEN_DAY_CEILING = 90
-/** A runaway guard far above a busy day (~15 deep reviews per account); the quota ceiling is what paces review. */
+/** A runaway guard far above a busy day (~15 deep reviews per account); the quota reading is only recorded. */
 export const DEFAULT_DEEP_CAP = 60
 const PRIOR_LIMIT = 20
 const HISTORY_COMMITS = 15
@@ -37,18 +35,6 @@ export const newJobId = (): string => `rv_${[...randomBytes(20)].map((b) => BASE
 function deepCap(env: Record<string, string | undefined>): number {
   const raw = Number(env.AGW_REVIEW_DEEP_CAP)
   return Number.isInteger(raw) && raw > 0 ? raw : DEFAULT_DEEP_CAP
-}
-
-/** The review ceiling: below 70 % of the 5-hour window and 90 % of the week (no 5-hour reading: the week alone). */
-function judge(account: string, reading: QuotaReading | null): { ceiling: 'ok' | 'unknown' } | { held: string } {
-  if (!reading || (reading.fiveHour === null && reading.sevenDay === null)) return { ceiling: 'unknown' }
-  if (reading.fiveHour !== null && reading.fiveHour >= FIVE_HOUR_CEILING) {
-    return { held: `held: ${account} at ${Math.round(reading.fiveHour)} % of its 5-hour window` }
-  }
-  if (reading.sevenDay !== null && reading.sevenDay >= SEVEN_DAY_CEILING) {
-    return { held: `held: ${account} at ${Math.round(reading.sevenDay)} % of its 7-day window` }
-  }
-  return { ceiling: 'ok' }
 }
 
 /** First 12 hex characters of the sha256 of the agent file `<dir>/<name>`; null when it cannot be read. */
@@ -70,6 +56,21 @@ function promptFingerprints(env: Record<string, string | undefined>): {
 } {
   const dir = env.AGW_REVIEWER_AGENT_DIR || join(env.HOME || homedir(), '.claude', 'agents')
   return { reviewerPrompt: fingerprint(dir, 'reviewer.md'), verifierPrompt: fingerprint(dir, 'review-verifier.md') }
+}
+
+/** What the quota port said about the caller's account; recorded on the job, never a reason to hold it. */
+interface QuotaRecord {
+  ceiling: 'ok' | 'unknown' | 'unjudged'
+  fiveHour: number | null
+  sevenDay: number | null
+}
+
+async function readQuota(ctx: ReviewContext, account: string | null): Promise<QuotaRecord> {
+  if (account === null) return { ceiling: 'unjudged', fiveHour: null, sevenDay: null }
+  const reading: QuotaReading | null = ctx.quota ? await ctx.quota(account) : null
+  const fiveHour = reading?.fiveHour ?? null
+  const sevenDay = reading?.sevenDay ?? null
+  return { ceiling: fiveHour === null && sevenDay === null ? 'unknown' : 'ok', fiveHour, sevenDay }
 }
 
 const utcMidnight = (now: Date) => new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()))
@@ -153,27 +154,19 @@ async function resolveThread(
   return { thread: threadId(repo, key), threadKey: key }
 }
 
-/** The ceiling (with an account) and the deep cap: `reason` when the job is held, else the ceiling that was read. */
+/** The quota reading (recorded) and the deep cap, the only hold: `reason` when the job is held. */
 async function checkLimits(
   ctx: ReviewContext,
   at: { account: string | null; tier: Tier; thread: string },
-): Promise<
-  { ceiling: 'ok' | 'unknown' | 'unjudged' } | { reason: string; ceiling: 'held' | 'ok' | 'unknown' | 'unjudged' }
-> {
-  const { account } = at
-  let ceiling: 'ok' | 'unknown' | 'unjudged' = 'unjudged'
-  if (account !== null) {
-    const verdict = judge(account, ctx.quota ? await ctx.quota(account) : null)
-    if ('held' in verdict) return { reason: verdict.held, ceiling: 'held' }
-    ceiling = verdict.ceiling
-  }
-  if (at.tier !== 'deep') return { ceiling }
+): Promise<{ quota: QuotaRecord; reason?: string }> {
+  const quota = await readQuota(ctx, at.account)
+  if (at.tier !== 'deep') return { quota }
   const cap = deepCap(ctx.env)
-  const today = await ctx.ledger.deepCount(account, utcMidnight(ctx.now()), at.thread)
-  if (today < cap) return { ceiling }
+  const today = await ctx.ledger.deepCount(at.account, utcMidnight(ctx.now()), at.thread)
+  if (today < cap) return { quota }
   return {
-    reason: `held: ${account ?? 'no account'} at the deep cap, ${today}/${cap} deep reviews today (UTC)`,
-    ceiling,
+    quota,
+    reason: `held: ${at.account ?? 'no account'} at the deep cap, ${today}/${cap} deep reviews today (UTC)`,
   }
 }
 
@@ -302,9 +295,8 @@ async function prepareResolved(
   if (route.tier === 'none') return { status: 'skipped', ...common, ...decided }
 
   const limits = await checkLimits(ctx, { account, tier: route.tier, thread })
-  if ('reason' in limits)
-    return { status: 'held', reason: limits.reason, ...common, ...decided, ceiling: limits.ceiling }
-  const { ceiling } = limits
+  const { quota } = limits
+  if (limits.reason) return { status: 'held', reason: limits.reason, ...common, ...decided, ceiling: quota.ceiling }
 
   const files = changes.map((c) => c.path)
   const reviewMd = await tryGit(git, gitDir, ['show', `${base}:REVIEW.md`])
@@ -352,6 +344,9 @@ async function prepareResolved(
     files,
     jobDir,
     worktree,
+    ceiling: quota.ceiling,
+    quotaFiveHour: quota.fiveHour,
+    quotaSevenDay: quota.sevenDay,
     ...promptFingerprints(ctx.env),
   })
   return {
@@ -362,7 +357,7 @@ async function prepareResolved(
     jobDir,
     worktree,
     files,
-    ceiling,
+    ceiling: quota.ceiling,
     prompt: `job=${jobDir} worktree=${worktree} tier=${route.tier} round=${round}`,
   }
 }
