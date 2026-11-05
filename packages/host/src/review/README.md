@@ -92,7 +92,8 @@ dropped or refused for them. They appear in REVIEW_OUTPUT (when not null) and on
 
 The reply may carry `criteria: [{item, status: met|not-met|unclear, evidence}]`. A non-empty list is copied into
 REVIEW_OUTPUT as `criteria`; a `not-met` item without an important finding is stored, not an error, and `outcome` stays
-code's (`clean` without important findings).
+code's (`clean` without important findings). The field is optional and the reviewer prompt does not emit it yet (the
+prompt is a separate Issue); a reply that carries it is stored as is.
 
 ## Stats
 

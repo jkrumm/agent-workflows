@@ -213,7 +213,7 @@ async function writeJobDir(
     reviewMd: join(jobDir, 'REVIEW.md'),
     agentsMd: join(worktree, 'AGENTS.md'),
   }
-  writeFileSync(paths.diff, await git(gitDir, ['diff', '-M', range]))
+  writeFileSync(paths.diff, await git(gitDir, ['-c', 'core.quotePath=false', 'diff', '-M', range]))
   writeFileSync(paths.stat, await git(gitDir, ['diff', '--numstat', '--no-renames', range]))
   const commits = resolved.snapshot
     ? ''
@@ -287,7 +287,7 @@ async function prepareResolved(
     (last.base === base || (await isAncestor(git, gitDir, last.head, head))) &&
     (await tryGit(git, gitDir, ['cat-file', '-e', `${last.head}^{commit}`])) !== null
   const diffBase = followsLast && last ? last.head : base
-  const threadDeep = last !== null && (await ledger.threadTiers(repo, [thread])).some((t) => t.tier === 'deep')
+  const threadDeep = followsLast && (await ledger.threadTiers(repo, [thread])).some((t) => t.tier === 'deep')
   const decision = await routeRange({
     git,
     repo: gitDir,

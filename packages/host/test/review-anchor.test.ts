@@ -66,6 +66,13 @@ describe('changedLines', () => {
   test('a deletion-only hunk counts at the position after the line before it', () => {
     expect(changed.get('src/top.ts')).toEqual([3])
   })
+  test('a C-style quoted header is decoded: octal bytes as UTF-8, escaped quotes and backslashes', () => {
+    const header = (path: string) => `--- a/x\n+++ ${path}\n@@ -0,0 +1,1 @@\n+a\n`
+    expect([...changedLines(header('"b/docs/\\303\\244.md"')).keys()]).toEqual(['docs/ä.md'])
+    expect([...changedLines(header('"b/docs/say \\"hi\\".md"')).keys()]).toEqual(['docs/say "hi".md'])
+    expect([...changedLines(header('"b/a\\\\b\\tc.md"')).keys()]).toEqual(['a\\b\tc.md'])
+    expect(changedLines(header('"/dev/null"')).size).toBe(0)
+  })
   test('a "+++" content line inside a hunk is not a header', () => {
     const tricky = '--- a/x\n+++ b/x\n@@ -1,1 +1,2 @@\n a\n+++ b/fake\n'
     expect([...changedLines(tricky).keys()]).toEqual(['x'])

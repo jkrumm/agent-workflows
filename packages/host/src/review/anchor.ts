@@ -42,14 +42,38 @@ function readBodyLine(state: HunkState, line: string): void {
   state.newLine++
 }
 
+const ESCAPES: Record<string, number> = { t: 9, n: 10, '"': 34, '\\': 92 }
+
+/** A C-style quoted path (`"b/docs/\303\244.md"`): the escapes decoded, octal bytes read as UTF-8. */
+function unquote(quoted: string): string {
+  const inner = quoted.slice(1, quoted.endsWith('"') ? -1 : undefined)
+  const bytes: number[] = []
+  for (let i = 0; i < inner.length; i++) {
+    const c = inner[i]!
+    const octal = /^[0-7]{3}/.exec(inner.slice(i + 1))
+    if (c !== '\\') bytes.push(...new TextEncoder().encode(c))
+    else if (octal) {
+      bytes.push(parseInt(octal[0], 8))
+      i += 3
+    } else bytes.push(ESCAPES[inner[++i]!] ?? inner.charCodeAt(i))
+  }
+  return new TextDecoder().decode(new Uint8Array(bytes))
+}
+
+/** The path after `+++ `, without its `b/` prefix; null for `/dev/null` (a deleted file) or anything else. */
+function newSidePath(target: string): string | null {
+  const path = target.startsWith('"') ? unquote(target) : target
+  return path.startsWith('b/') ? path.slice(2) : null
+}
+
 /** A `+++ ` header opens a file; `/dev/null` (a deleted file) has no new side. A `@@` header opens a hunk. */
 function readHeaderLine(state: HunkState, line: string): void {
   if (line.startsWith('+++ ')) {
-    const target = line.slice(4).split('\t')[0]!
+    const path = newSidePath(line.slice(4).split('\t')[0]!)
     state.current = null
-    if (!target.startsWith('b/')) return
-    state.current = state.files.get(target.slice(2)) ?? []
-    state.files.set(target.slice(2), state.current)
+    if (path === null) return
+    state.current = state.files.get(path) ?? []
+    state.files.set(path, state.current)
     return
   }
   const hunk = HUNK.exec(line)

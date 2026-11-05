@@ -649,6 +649,21 @@ describe('fix-round routing', () => {
     expect(await s.prepare({ cwd: root })).toMatchObject({ tier: 'deep', rule: 'sensitive path: core/x.ts' })
   })
 
+  test('a round that does not follow the last head is no fix round: a sensitive-only diff stays deep', async () => {
+    const s = service()
+    const root = sensitive()
+    write(root, 'core/x.ts', lines(3))
+    const r1 = await ready(s.prepare({ cwd: root, thread: 'rewritten' }))
+    expect(r1.tier).toBe('deep')
+    await s.submit({ jobId: r1.jobId, attempt: 1, reply: fakeReviewer(r1.jobDir) })
+    git(root, 'commit', '-q', '--amend', '--allow-empty', '-m', 'rewritten base') // a new base, r1.head is not its descendant
+    write(root, 'core/x.ts', lines(4))
+    const r2 = await ready(s.prepare({ cwd: root, thread: 'rewritten' }))
+    expect(r2).toMatchObject({ round: 2, tier: 'deep', rule: 'sensitive path: core/x.ts' })
+    expect(r2.diffBase).toBe(r2.base)
+    expect(r2.base).not.toBe(r1.base)
+  })
+
   test('a deep-by-size fix round stays deep', async () => {
     const s = service()
     const root = sensitive()
