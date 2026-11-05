@@ -639,10 +639,10 @@ describe('image.read', () => {
     expect((await failure(both.imageRead.call({ source: photo }, both.options))).message).toContain('402')
   })
 
-  test('the route is on the Messages wire at the cheapest Claude seat, with the chat wire behind it', () => {
+  test('the route is on the Messages wire on the FAST tier, with the chat wire behind it', () => {
     expect(resolveRoute('vision.describe')).toMatchObject({
       wire: 'anthropic',
-      effort: 'low',
+      effort: 'none',
       fallback: { wire: 'iu-openai' },
     })
   })

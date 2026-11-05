@@ -64,19 +64,20 @@ Refresh when the layout shifts: read the pages under the conduct rules above (th
 
 Route `vision.describe` (`packages/routes/src/table/vision.ts`), one image as base64 on `ChatRequest.images`, through the shared `complete()` path: a balance failure on the primary moves the call to the fallback like every single call.
 
-**Seat: Haiku low on the Messages wire** (the `VISION` seat, `packages/routes/src/table/_shared.ts`; $0.10 in, $0.50 out per million, the same price as the earlier Luna seat), falling back to Luna low on the chat wire. Moved from Luna on 2026-11-05 so the call spends the Claude credit.
+**Seat: the `FAST` tier** (Haiku, no thinking, on the Messages wire; $0.10 in, $0.50 out per million, the same price as the earlier Luna seat), falling back to Luna low on the chat wire. Moved from Luna on 2026-11-05 so the call spends the Claude credit. A Claude route spreads a tier (`guard.test.ts`), so the effort is the tier's, not the route's.
 
-Probe 2026-11-05, Haiku on the gateway's Messages wire: three product thumbnails (320 px, harder than the 1500 px the doors send) of the "Augplatte Edelstahl M6 Öse" search, read by eye as 4, 10 and 8 plates, the default question of `image.read`, one call per effort.
+Probe 2026-11-05, Haiku on the gateway's Messages wire: three product thumbnails (320 px, harder than the 1500 px the doors send) of the "Augplatte Edelstahl M6 Öse" search, read by eye as 4, 10 and 8 plates, the default question of `image.read`, one call per effort, run twice.
 
 Pass rule: counts right on all three photos, no dimension invented where none is printed, the material not guessed wrong.
 
-| Effort | Counts 4 / 10 / 8 | Printed dims | Material | Output tokens | Verdict |
-|-|-|-|-|-|-|
-| none | 4 / 9 / 8 | "not visible" ×3 | black metal, "silver, stainless or chrome" | 425-816 | fail: one plate missed |
-| low | 4 / 10 / 8 | "not visible" ×3 | black metal, "cannot be confirmed", polished stainless | 339-425 | **pass, picked** |
-| medium | 4 / 9 / 8 | "not visible" ×3 | same | 442-844 | fail: one plate missed |
+| Effort | Counts 4 / 10 / 8 (run 1, run 2) | Printed dims | Output tokens | Verdict |
+|-|-|-|-|-|
+| none (`FAST`) | 4 / 9 / 8 both | "not visible" ×3 | 385-816 | misses one of ten |
+| low | 4 / 10 / 8 both | "not visible" ×3 | 313-434 | the only pass; no tier has it |
+| medium (run 1) | 4 / 9 / 8 | "not visible" ×3 | 442-844 | misses one of ten |
+| high (`EASY`, run 2) | 4 / 9 / 8 | "not visible" ×3 | 471-912 | misses one of ten |
 
-One call per cell, so the effort is a pick on a small sample: thinking low also answered shortest. The earlier probe (2026-11-01, IU chat wire, three other photos with counts 4 / 4 / 8) passed Luna low and Terra medium, failed gpt-5.4-nano (counted screws as a part); that is why Luna is the fallback. Live: a 1500 px product photo costs about 2,400 prompt tokens, $0.0002-0.0003 per read.
+So `FAST` miscounts a dense grid of ten by one; the material and "not visible" answers were the same at every effort. If the count matters more than the tier rule, a `low` Haiku tier is one new constant next to `FAST` and a guard entry. The earlier probe (2026-11-01, IU chat wire, three other photos with counts 4 / 4 / 8) passed Luna low and Terra medium and failed gpt-5.4-nano (it counted screws as a part); Luna is the fallback because of it. Live: a 1500 px product photo costs about 2,400 prompt tokens, $0.0002-0.0003 per read.
 
 What the model cannot do is read a size off a picture that prints none; the system prompt says so and the answers did. Measures come from the spec table, not from `image-read`.
 
