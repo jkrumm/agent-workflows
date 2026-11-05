@@ -90,6 +90,33 @@ and the longest step window + 120 s, because a shell call writes nothing to the 
 process group, scrubbed host environment with `PWD` pinned to `cwd`) is the default. A drain read error ends the
 stream; it never throws out of `run`. What leaves a step is the truncated tail in `errors`.
 
+## Machine budget (the factory test slot)
+
+When `factory` is on PATH (the mini), the heavy phase runs inside `factory slot run --name agw-check:<repo> -- …`
+(`slot.ts`), so every agent's check on the machine shares the factory's test slots (`FACTORY_SLOTS`). `<repo>` is the
+repo's directory name; a linked worktree (`<repo>/.claude/worktrees/<name>`) is named after its repo. CI and machines
+without `factory` run exactly as before.
+
+- **Makefile path:** the whole `make check` is wrapped (it bundles install, format, lint, tsc and the tests; only the
+  repo's Makefile could split the heavy part out). `fallow` is not wrapped.
+- **Agent path:** `run-step.sh <cwd> <idle> '<cmd>' slot` wraps one command; the agent passes `slot` for the typecheck and
+  test steps (`agents/check/AGENTS.md`), not for format and lint.
+- **Waiting is silent**, so the idle window of a wrapped command (and of the agent session) grows by
+  `FACTORY_SLOT_WAIT_MS` (default 45 min, the slot CLI's own wait). The cost: a command that hangs after its slot was
+  granted is killed that much later.
+- **No slot within the wait** is `factory slot run` exiting 75 with `factory: no test slot within …` and the command not
+  run. That is reported as `machine busy, not a failure: …` (step `passed: false`, the summary starting with those words;
+  `fallow` is skipped; the shell wrapper prints `run-step: MACHINE_BUSY` and exits 75). A command that itself exits 75
+  without that line is an ordinary red. An outage of the factory server is the slot CLI's concern: it runs the command
+  anyway.
+- **Worker cap**, half the cores (at least one), by each runner's own mechanism (researched 2026-11-05):
+
+  | Runner | Cap | Applied |
+  |-|-|-|
+  | vitest (v4+) | `VITEST_MAX_WORKERS` (also `--maxWorkers`) | env, on every wrapped command |
+  | jest | `--maxWorkers=<n or %>` only, no variable | flag; the agent adds it to a plain jest test command |
+  | `bun test` | serial unless `--parallel[=N]` (Bun 1.4); `--max-concurrency` is per-file test concurrency, not a worker cap; no variable | none needed; a repo that passes `--parallel` sets its own N |
+
 ## Token and cache effect
 
 - The Makefile path spends **no tokens** (no usage on any step). It is also the common path for the repos that

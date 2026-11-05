@@ -17,6 +17,7 @@ import { hasMakeCheckTarget } from './make.ts'
 import { agentIdleMs, agentPrompt, SUBMIT_RESULT_RETRY } from './prompt.ts'
 import { CHECK_INPUT, CHECK_OUTPUT, type CheckInput, type CheckOutput } from './schema.ts'
 import { checkScorer } from './scorer.ts'
+import { inSlot, slotBusy } from './slot.ts'
 
 /** Ordinary steps; the test step and `make check` (which bundles the tests) get {@link DEFAULT_TEST_IDLE_SECONDS}. */
 const DEFAULT_STEP_IDLE_SECONDS = 180
@@ -31,7 +32,7 @@ const PROBE_RETRY = { attempts: 3, backoffMs: 500 }
 
 type Step = CheckOutput['steps'][number]
 /** A deterministic step's verdict with its one-line summary fragment. */
-type StepResult = { step: Step; summary: string }
+type StepResult = { step: Step; summary: string; busy?: true }
 
 /** What the module can be given beyond the host's shared deps (which it does not use). */
 export interface CheckDeps {
@@ -40,6 +41,8 @@ export interface CheckDeps {
   /** Where the process groups of running commands are recorded; default the host's state directory. */
   stateDir?: string
   logger?: Pick<Logger, 'warn'>
+  /** Where `FACTORY_SLOT_WAIT_MS` is read from; default the host's environment. */
+  env?: Record<string, string | undefined>
 }
 
 /** The last non-empty output lines, bounded per line: the contract wants error lines, not a second log. */
@@ -75,23 +78,35 @@ interface Context {
   exec: Exec
   stateDir: string
   logger: Pick<Logger, 'warn'>
+  env: Record<string, string | undefined>
+}
+
+/** The verdict when the factory's slot wait ran out: the command never ran, so the repo is neither green nor red. */
+function busyResult(name: string, label: string, waitedMs: number): StepResult {
+  const message = `machine busy, not a failure: no test slot within ${Math.round(waitedMs / 1000)}s, ${label} did not run; run it again later`
+  return { step: { name, passed: false, errors: [message] }, summary: message, busy: true }
 }
 
 async function runStep(
   context: Context,
   scope: StepScope,
-  options: { name: string; argv: string[]; cwd: string; idleSeconds: number },
+  options: { name: string; argv: string[]; cwd: string; idleSeconds: number; slot?: boolean },
 ): Promise<StepResult> {
   const { name, argv, cwd, idleSeconds } = options
+  // The heavy phase waits for a factory test slot when `factory` is installed; the wait writes nothing, so the idle
+  // window grows by the longest wait.
+  const slot = options.slot ? inSlot(context.exec, cwd, argv, context.env) : null
   const result = await context.exec.run({
-    argv,
+    argv: slot?.argv ?? argv,
     cwd,
-    idleMs: idleSeconds * 1000,
+    env: slot?.env,
+    idleMs: idleSeconds * 1000 + (slot?.idleExtraMs ?? 0),
     signal: scope.signal,
     onOutput: scope.progress,
     groupFile: join(context.stateDir, 'check', `${scope.key.replaceAll(/[^\w.-]/g, '_')}.group`),
   })
   if (result.aborted) throw scope.signal.reason // cancel, shutdown or lease loss: the runtime decides what that means
+  if (slot && slotBusy(result)) return busyResult(name, argv.join(' '), slot.idleExtraMs)
   if (result.exitCode === null && !result.idleKilled && !result.timedOut) {
     // Something else killed the command (an OOM kill, an operator): not a verdict on the repo, the step runs again.
     throw new InfraError(`${argv.join(' ')} was killed by ${result.signalCode ?? 'a signal'}, not by this host`)
@@ -143,18 +158,25 @@ async function contractCheck(
   const { cwd, idleSeconds } = options
   // The runtime's own idle timer must not cut a long but chatty command: every output chunk feeds it.
   const stepOptions = { idleTimeoutMs: idleSeconds * 1000 + BACKSTOP_MARGIN_MS }
+  // `make check` bundles install, format, lint, tsc and the tests: the slot covers the lot, the repo's Makefile
+  // being the only place that could split the heavy part out.
+  const slotted = inSlot(context.exec, cwd, [], context.env)
+  const makeOptions = { idleTimeoutMs: stepOptions.idleTimeoutMs + (slotted?.idleExtraMs ?? 0) }
   const make = await ctx.step(
     'make-check',
-    (scope) => runStep(context, scope, { name: 'check', argv: ['make', 'check'], cwd, idleSeconds }),
-    stepOptions,
+    (scope) => runStep(context, scope, { name: 'check', argv: ['make', 'check'], cwd, idleSeconds, slot: true }),
+    makeOptions,
   )
-  const fallow = options.fallow
-    ? await ctx.step(
-        'fallow',
-        (scope) => runStep(context, scope, { name: 'fallow', argv: ['fallow', 'audit', '--quiet'], cwd, idleSeconds }),
-        stepOptions,
-      )
-    : null
+  // A machine that had no slot for the tests is not asked for more.
+  const fallow =
+    options.fallow && !make.busy
+      ? await ctx.step(
+          'fallow',
+          (scope) =>
+            runStep(context, scope, { name: 'fallow', argv: ['fallow', 'audit', '--quiet'], cwd, idleSeconds }),
+          stepOptions,
+        )
+      : null
   const results = fallow ? [make, fallow] : [make]
   return {
     passed: results.every((result) => result.step.passed),
@@ -166,8 +188,15 @@ async function contractCheck(
 const isInvalidOutput = (error: unknown) => error instanceof StepFailed && error.stepKind === 'invalid_output'
 
 /** One agent step, one retry with a JSON-only directive; two invalid replies are a failed check, not a crash. */
-async function agentCheck(ctx: Ctx, input: CheckInput, stepSeconds: number, testSeconds: number): Promise<CheckOutput> {
-  const idleMs = agentIdleMs(stepSeconds, testSeconds)
+async function agentCheck(
+  context: Context,
+  ctx: Ctx,
+  input: CheckInput,
+  stepSeconds: number,
+  testSeconds: number,
+): Promise<CheckOutput> {
+  // The agent's heavy steps wait for a factory test slot (run-step.sh), which is silent for as long as the wait.
+  const idleMs = agentIdleMs(stepSeconds, testSeconds, inSlot(context.exec, input.cwd, [], context.env)?.idleExtraMs)
   const prompt = agentPrompt({ cwd: input.cwd, commands: input.commands, stepSeconds, testSeconds, idleMs })
   const spec = {
     agent: 'check',
@@ -203,10 +232,11 @@ export function createCheckWorkflows(shared: CheckDeps | WorkflowDeps = {}): Hos
     exec: deps.exec ?? bunExec,
     stateDir: deps.stateDir ?? DEFAULT_STATE_DIR,
     logger: deps.logger ?? { warn: (message, meta) => console.warn('[agw-check]', message, meta ?? '') },
+    env: deps.env ?? process.env,
   }
   const workflow = defineWorkflow({
     id: 'check',
-    version: '2026-10-28.2',
+    version: '2026-11-05.1',
     input: CHECK_INPUT,
     output: CHECK_OUTPUT,
     scorer: checkScorer,
@@ -230,7 +260,7 @@ export function createCheckWorkflows(shared: CheckDeps | WorkflowDeps = {}): Hos
       if (plan.refusal) throw new WorkflowError('invalid_input', plan.refusal)
       return plan.makeCheck
         ? contractCheck(context, ctx, { cwd: input.cwd, idleSeconds: testSeconds, fallow: plan.fallow })
-        : agentCheck(ctx, input, stepSeconds, testSeconds)
+        : agentCheck(context, ctx, input, stepSeconds, testSeconds)
     },
   })
   return [

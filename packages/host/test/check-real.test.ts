@@ -4,9 +4,15 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { FakeAgentHost } from '@agent-workflows/testing/agent-host'
 import { createCheckWorkflows } from '../src/workflows/check/index.ts'
+import { bunExec, type Exec } from '../src/workflows/check/exec.ts'
 import { freshSchema, testRuntime } from '@agent-workflows/testing/pg'
 
-// No fakes except the agent host: real `git`, real `make`, the default `Bun.spawn` exec port.
+// No fakes except the agent host: real `git`, real `make`, the default `Bun.spawn` exec port. `factory` is hidden from it:
+// on the mini it would put every make check into a test slot, with the idle window widened by the slot wait.
+const exec: Exec = {
+  run: (request) => bunExec.run(request),
+  which: (command) => (command === 'factory' ? null : bunExec.which(command)),
+}
 const db = freshSchema('checkreal')
 const stateDir = mkdtempSync(join(tmpdir(), 'agw-check-state-'))
 
@@ -28,7 +34,7 @@ function repo(makefile: string) {
 }
 
 async function run(input: Record<string, unknown>, host?: FakeAgentHost) {
-  const workflow = createCheckWorkflows({ stateDir })[0]?.workflow
+  const workflow = createCheckWorkflows({ exec, stateDir })[0]?.workflow
   if (!workflow) throw new Error('no check workflow')
   const rt = testRuntime({ schema: db.schema, workflows: [workflow], host })
   await rt.open()

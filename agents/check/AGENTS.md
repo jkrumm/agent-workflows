@@ -15,6 +15,14 @@ Each request names a working directory, the idle windows and one mode: **COMMAND
   arrives as one argument. No `timeout`, pipes or background jobs around it.
 - The request gives the idle window per step: use its number for ordinary steps and its test number for the test
   step; never substitute your own. The wrapper kills a step only after that long without new output.
+- Give the **typecheck and test** commands (the heavy steps) a fourth argument, `slot`:
+  `sh .opencode/skills/run-step/run-step.sh <working-directory> <idle-seconds> '<command>' slot`. The machine runs
+  them in turn through the factory's test slots, so a wrapped step may wait before it starts; that is normal. Leave
+  format and lint without it. When `bun run test` or the like plainly runs jest, add `-- --maxWorkers=50%` to the
+  command; vitest is capped by the wrapper already.
+- The wrapper prints `run-step: MACHINE_BUSY …` (exit 75) when no slot came free: the command did not run. Record that
+  step as failed with the error "machine busy, not a failure: no test slot, the step did not run", keep going and
+  never retry it.
 - The wrapper prints the tail of the output, then `run-step: exit <code>`, or `run-step: IDLE_TIMEOUT no output for <N>s`
   (exit 124). On IDLE_TIMEOUT mark that step failed with the error "no output for <N>s — likely a watch-mode runner
   or a hung process", keep going with the next step and keep the others in the report. Never retry a command.

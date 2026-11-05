@@ -1,11 +1,12 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { availableParallelism, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { FakeAgentHost } from '@agent-workflows/testing/agent-host'
 import { createCheckWorkflows } from '../src/workflows/check/index.ts'
 import type { Exec, ExecRequest, ExecResult } from '../src/workflows/check/exec.ts'
 import { makeDatabaseHasCheckTarget } from '../src/workflows/check/make.ts'
+import { repoLabel, slotWaitMs } from '../src/workflows/check/slot.ts'
 import { SUBMIT_RESULT_RETRY } from '../src/workflows/check/prompt.ts'
 import { freshSchema, inspector, testRuntime, until } from '@agent-workflows/testing/pg'
 import { startTestHost } from './support.ts'
@@ -227,6 +228,83 @@ describe('Makefile path', () => {
     const noMake = fakeExec(() => undefined, [])
     await run({ exec: noMake.exec, host, input: { cwd: repo() } })
     expect(noMake.calls.some((c) => c.argv[0] === 'make')).toBe(false)
+  })
+})
+
+describe('the factory test slot', () => {
+  const withFactory = ['make', 'factory']
+  const BUSY_LINE = 'factory: no test slot within 2700s; not running (set FACTORY_SLOT_OPEN=1 to run anyway)'
+  const slotCall = (calls: ExecRequest[]) => calls.find((c) => c.argv[0] === 'factory')
+
+  test('make check runs inside `factory slot run`, named after the repo, workers capped, the silent wait allowed', async () => {
+    const cwd = repo()
+    const { exec, calls } = fakeExec(() => undefined, withFactory)
+    const { result } = await run({ exec, input: { cwd } })
+    expect(result.output).toEqual({
+      passed: true,
+      steps: [{ name: 'check', passed: true }],
+      summary: 'make check passed',
+    })
+    const slot = slotCall(calls)
+    const name = `agw-check:${cwd.split('/').at(-1)}`
+    expect(slot?.argv).toEqual(['factory', 'slot', 'run', '--name', name, '--', 'make', 'check'])
+    expect(Number(slot?.env?.VITEST_MAX_WORKERS)).toBe(Math.max(1, Math.floor(availableParallelism() / 2)))
+    expect(slot?.idleMs).toBe(600_000 + 45 * 60_000) // the wait for a slot writes nothing
+  })
+
+  test('no slot within the wait: machine busy, not a failure; fallow does not run', async () => {
+    const cwd = repo()
+    const { exec, ran } = fakeExec(
+      (request) => (request.argv[0] === 'factory' ? { exitCode: 75, output: `${BUSY_LINE}\n` } : undefined),
+      [...withFactory, 'fallow'],
+    )
+    const { result } = await run({ exec, input: { cwd } })
+    expect(result.status).toBe('done')
+    const output = result.output as { passed: boolean; steps: { errors?: string[] }[]; summary: string }
+    expect(output.passed).toBe(false)
+    expect(output.summary).toStartWith('machine busy, not a failure')
+    expect(output.steps).toHaveLength(1)
+    expect(output.steps[0]?.errors?.[0]).toStartWith('machine busy, not a failure')
+    expect(ran('fallow', 'audit', '--quiet')).toBe(0)
+  })
+
+  test('a make check that itself exits 75 is an ordinary red', async () => {
+    const cwd = repo()
+    const { exec } = fakeExec(
+      (request) =>
+        request.argv[0] === 'factory' ? { exitCode: 75, output: 'make: *** [check] Error 75\n' } : undefined,
+      withFactory,
+    )
+    const { result } = await run({ exec, input: { cwd } })
+    const output = result.output as { passed: boolean; summary: string }
+    expect(output.passed).toBe(false)
+    expect(output.summary).toContain('failed (exit 75)')
+    expect(output.summary).not.toContain('machine busy')
+  })
+
+  test('FACTORY_SLOT_WAIT_MS sizes the idle allowance; a worktree is named after its repo', () => {
+    expect(slotWaitMs({ FACTORY_SLOT_WAIT_MS: '1000' })).toBe(1000)
+    expect(slotWaitMs({ FACTORY_SLOT_WAIT_MS: 'soon' })).toBe(45 * 60_000)
+    expect(slotWaitMs({})).toBe(45 * 60_000)
+    expect(repoLabel('/Users/x/SourceRoot/agent-workflows/.claude/worktrees/factory-72-1')).toBe('agent-workflows')
+    expect(repoLabel('/Users/x/SourceRoot/dotfiles')).toBe('dotfiles')
+  })
+
+  test('the agent session outlasts the slot wait', async () => {
+    const cwd = repo(false)
+    const host = new FakeAgentHost(async () => ({ output: GREEN }))
+    await run({ exec: fakeExec(() => undefined, withFactory).exec, host, input: { cwd } })
+    expect(host.sessions.get('ses_1')?.spec.prompt).toContain('kills the session after 3420s')
+  })
+
+  test('without `factory` nothing changes: no slot, no cap, the plain idle window', async () => {
+    const cwd = repo()
+    const { exec, calls } = fakeExec(() => undefined)
+    await run({ exec, input: { cwd } })
+    expect(slotCall(calls)).toBeUndefined()
+    const make = calls.find((c) => c.argv[0] === 'make' && c.argv[1] === 'check')
+    expect(make?.env).toBeUndefined()
+    expect(make?.idleMs).toBe(600_000)
   })
 })
 

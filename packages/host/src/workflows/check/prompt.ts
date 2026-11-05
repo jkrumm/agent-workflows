@@ -6,10 +6,10 @@ const SESSION_MARGIN_S = 120
 /**
  * The agent step's idle window. A shell call writes nothing to the session while it runs, so the host's idle timer
  * must outlast the largest step window the agent was told about, or it kills the session first. Never below the
- * runtime's default.
+ * runtime's default. `slotWaitMs` is the longest wait for a factory test slot (`slot.ts`), which writes nothing either.
  */
-export function agentIdleMs(stepSeconds: number, testSeconds: number): number {
-  return Math.max(DEFAULT_AGENT_IDLE_MS, (Math.max(stepSeconds, testSeconds) + SESSION_MARGIN_S) * 1000)
+export function agentIdleMs(stepSeconds: number, testSeconds: number, slotWaitMs = 0): number {
+  return Math.max(DEFAULT_AGENT_IDLE_MS, (Math.max(stepSeconds, testSeconds) + SESSION_MARGIN_S) * 1000 + slotWaitMs)
 }
 
 /** Appended to the prompt of the one retry after a turn that ended without a valid `submit_result` call. */
