@@ -76,7 +76,20 @@ function body(request: ChatRequest) {
   return {
     model: request.model,
     max_tokens: request.maxOutputTokens,
-    messages: [{ role: 'user', content: request.prompt }],
+    messages: [
+      {
+        role: 'user',
+        content: request.images?.length
+          ? [
+              ...request.images.map((image) => ({
+                type: 'image',
+                source: { type: 'base64', media_type: image.mime, data: image.base64 },
+              })),
+              { type: 'text', text: request.prompt },
+            ]
+          : request.prompt,
+      },
+    ],
     ...(request.system ? { system: request.system } : {}),
     ...(thinking ? { thinking: { type: 'adaptive' } } : {}),
     ...(thinking || request.jsonSchema

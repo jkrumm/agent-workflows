@@ -27,7 +27,7 @@ A personal tool at low volume. These rules are code in `shop-fetch.ts`, not inte
 
 - **Raw HTML, not the `web.fetch` chain.** `web.fetch` returns the page as text (and the browser leg `innerText`): `data-asin`, hrefs and image URLs are gone before a parser could see them. The shop doors do their own read (`shop-fetch.ts`: the direct leg of the same chain, with the same SSRF guard and pinning) and keep a cache of their own, because `web.fetch`'s is fixed at 6 h and holds text. Tavily is not carried (it returns text). The headed-Chrome leg was not carried at first: the direct read returned complete pages on every probe. **Owner decision 2026-11-05:** when amazon.de shows a bot check, a human solves it once on screen share in the headed research Chrome and the cookie stays in its profile; the agent still never solves a captcha. So `browser.ts` hands back HTML and the shop reads a bot-checked page through it, then asks the owner when Chrome cannot pass either, rather than writing a second scraper.
 - **`shop find` is a composed capability, not a workflow** (concept §2: the difference is the ratio). It has no agent step and no scorer, it is a fixed sequence of code steps and cheap single calls, and the host already journals it as one `cap.shop.find` run with usage. What a workflow would add is step-level resume after a restart without reading the shop again and an eval set. Promote it when one of those is needed. It is also not possible from here: workflows live in `packages/host`, outside this change's files.
-- **Vision is one generic capability** (`image.read`, command `image-read`: `agw image` is a workflow, and a command may not prefix another). Nothing in the shop duplicates it; `--images` calls it. The chat port carries text only, so the call lives in `image-read.ts` (non-streamed, half-hour hang guard, same fallback rule as every single call). Folding images into `ChatRequest` is the follow-up once the inference gateway lands.
+- **Vision is one generic capability** (`image.read`, command `image-read`: `agw image` is a workflow, and a command may not prefix another). Nothing in the shop duplicates it; `--images` calls it. The picture rides `ChatRequest.images` on both text wires, so the call goes through the shared `complete()` like every single call (retries, usage, the balance fallback). A source over 7 MB is refused: the Messages wire takes 10 MB of base64 per image, and a 400 there is no balance failure, so the fallback would not catch it.
 - **`position`** is the card's place on the page with sponsored cards counted, so a filtered list shows the gaps.
 
 ## Parsers
@@ -62,20 +62,24 @@ Refresh when the layout shifts: read the pages under the conduct rules above (th
 
 ## Vision
 
-Route `vision.describe` (`packages/routes/src/table/vision.ts`), chat wire, one image as a data URL. Probe 2026-11-01 on the IU wire: three saved product photos (a black square-base pad eye set, a polished set of four with screws, a set of eight), one fixed question ("shape, printed dimensions or none, material and finish, burrs or defects; count the main parts"), `timeout`-bounded, non-streamed. The list of models is read from IU's `/models` (`ImageInput` capability); candidates are the cheap GPT-stack models, none via Requesty.
+Route `vision.describe` (`packages/routes/src/table/vision.ts`), one image as base64 on `ChatRequest.images`, through the shared `complete()` path: a balance failure on the primary moves the call to the fallback like every single call.
 
-Pass rule written before the run: the image is accepted, the shape is right, the count is right on all three photos (4, 4, 8), no dimension is invented where none is printed, and the material is not guessed wrong.
+**Seat: the `FAST` tier** (Haiku, no thinking, on the Messages wire; $0.10 in, $0.50 out per million, the same price as the earlier Luna seat), falling back to Luna low on the chat wire. Moved from Luna on 2026-11-05 so the call spends the Claude credit. A Claude route spreads a tier (`guard.test.ts`), so the effort is the tier's, not the route's.
 
-| Model (effort) | Accepted | Counts 4 / 4 / 8 | Printed dims | Material | Tokens in / out (per photo) | Verdict |
-|-|-|-|-|-|-|-|
-| Luna (low) | yes | 4 / 4 / 8 | "none" ×3 | black metal / stainless steel / metallic, "not specified" where unclear | 515-563 / 157-224 | **pass, picked** |
-| gpt-5.4-nano (low) | yes | 5 / 4 / 8 | "none" ×3 | "likely steel", "galvanized/chrome-like" | 580-620 / 235-336 | fail: counted the screws as a part |
-| gpt-4.1-nano | yes | 4 / 4 / 8 | "none" ×3 | "metal" only | 969-1067 / 47-68 | pass on counts; thin answers, price not verified |
-| Terra (medium) | yes | 4 / 4 / 8 | "none" ×3 | black / "likely stainless steel" ×2 | 443-483 / 99-120 | pass; ten times Luna's price, so it is the fallback |
+Probe 2026-11-05, Haiku on the gateway's Messages wire: three product thumbnails (320 px, harder than the 1500 px the doors send) of the "Augplatte Edelstahl M6 Öse" search, read by eye as 4, 10 and 8 plates, the default question of `image.read`, one call per effort, run twice.
 
-**Picked: Luna at effort low**, the seat `VISION` (`packages/routes/src/table/_shared.ts`) already prices ($0.10 in, $0.50 out per million), so the probe adds no model id and no rate. The nano models are not in the route table's rate sources, so "cheaper than Luna" could not be shown for them; if a verified rate says so, move the seat. The fallback is Terra medium (`callFallback(TERRA_MEDIUM)`): it answered the same photos correctly. Live: a 1500 px product photo costs about 2,400 prompt tokens, $0.0002-0.0003 per read.
+Pass rule: counts right on all three photos, no dimension invented where none is printed, the material not guessed wrong.
 
-What the model cannot do is read a size off a picture that prints none; the system prompt says so and the answers did ("Dimensions: none"). Measures come from the spec table, not from `image-read`.
+| Effort | Counts 4 / 10 / 8 (run 1, run 2) | Printed dims | Output tokens | Verdict |
+|-|-|-|-|-|
+| none (`FAST`) | 4 / 9 / 8 both | "not visible" ×3 | 385-816 | misses one of ten |
+| low | 4 / 10 / 8 both | "not visible" ×3 | 313-434 | the only pass; no tier has it |
+| medium (run 1) | 4 / 9 / 8 | "not visible" ×3 | 442-844 | misses one of ten |
+| high (`EASY`, run 2) | 4 / 9 / 8 | "not visible" ×3 | 471-912 | misses one of ten |
+
+So `FAST` miscounts a dense grid of ten by one; the material and "not visible" answers were the same at every effort. If the count matters more than the tier rule, a `low` Haiku tier is one new constant next to `FAST` and a guard entry. The earlier probe (2026-11-01, IU chat wire, three other photos with counts 4 / 4 / 8) passed Luna low and Terra medium and failed gpt-5.4-nano (it counted screws as a part); Luna is the fallback because of it. Live: a 1500 px product photo costs about 2,400 prompt tokens, $0.0002-0.0003 per read.
+
+What the model cannot do is read a size off a picture that prints none; the system prompt says so and the answers did. Measures come from the spec table, not from `image-read`.
 
 ## Live probe, 2026-11-01
 

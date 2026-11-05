@@ -61,7 +61,7 @@ describe('factory.classify', () => {
     expect(iu.requests[0]?.path).toBe('/anthropic/v1/messages')
     expect(iu.requests[0]?.headers.get('x-agw-fallback')).toBe('none')
     expect(iu.requests[0]?.body.model).toBe(route.model)
-    expect(iu.requests[0]?.body).not.toHaveProperty('thinking') // the TRIVIAL seat has no effort
+    expect(iu.requests[0]?.body).not.toHaveProperty('thinking') // the FAST seat has no effort
     expect(usages).toHaveLength(1)
     expect(usages[0]?.cost).toBeCloseTo((900 * route.rate!.inputPerM + 60 * route.rate!.outputPerM) / 1_000_000, 12)
   })

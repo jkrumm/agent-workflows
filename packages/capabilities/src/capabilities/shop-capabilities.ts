@@ -1,6 +1,6 @@
 import type { LlmDeps } from '../llm/model-call.ts'
 import { resolveWebDeps, type WebDeps } from '../web/deps.ts'
-import { createImageRead, type VisionDeps } from './image-read.ts'
+import { createImageRead } from './image-read.ts'
 import { createShopFetch, type ShopPace } from './shop-fetch.ts'
 import { createShopFind } from './shop-find.ts'
 import { createShopItem } from './shop-item.ts'
@@ -10,8 +10,6 @@ import { createShopSearch } from './shop-search.ts'
 export interface ShopDeps {
   /** The clock, the 2-5 s pause and its jitter; tests replace them. */
   pace?: ShopPace
-  /** The IU request of the vision call. */
-  vision?: VisionDeps
 }
 
 /**
@@ -22,7 +20,7 @@ export interface ShopDeps {
 export function createShopCapabilities(llm: LlmDeps, web: WebDeps = {}, shop: ShopDeps = {}) {
   const resolved = resolveWebDeps(web)
   const fetcher = createShopFetch(resolved, shop.pace)
-  const imageRead = createImageRead(llm, resolved, shop.vision)
+  const imageRead = createImageRead(llm, resolved)
   const search = createShopSearch(fetcher)
   const item = createShopItem(llm, fetcher)
   return [imageRead, search, item, createShopFind(llm, { search, item, imageRead })] as const

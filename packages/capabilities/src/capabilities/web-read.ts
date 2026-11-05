@@ -26,6 +26,12 @@ export const readInput = z.object({
     .boolean()
     .default(false)
     .describe('Read the page again even if this process read it within the last 6 hours'),
+  render: z
+    .boolean()
+    .default(false)
+    .describe(
+      'Read the page in the real browser, which waits for it to render: for a page whose content is built by script and comes back empty or as "no results" from a plain read',
+    ),
 })
 
 export const readOutput = z.object({
@@ -65,8 +71,8 @@ export const createWebRead = (deps: LlmDeps, fetchPage: ReturnType<typeof create
     input: readInput,
     output: readOutput,
     cli: { positional: ['url'], defaultFormat: 'plain', plainField: 'extract' },
-    async handler({ url, ask, maxChars, fresh }, ctx) {
-      const page = await fetchPage.call({ url, maxChars, fresh }, ctx)
+    async handler({ url, ask, maxChars, fresh, render }, ctx) {
+      const page = await fetchPage.call({ url, maxChars, fresh, render }, ctx)
       const base = {
         url: page.url,
         finalUrl: page.finalUrl,

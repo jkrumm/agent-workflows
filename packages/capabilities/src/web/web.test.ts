@@ -1459,7 +1459,7 @@ describe('isPrivateAddress', () => {
 function fakeBrowser(
   snapshots: { url?: string; title: string; text: string }[],
   requests: { url: string; resourceType: string; frameId?: string }[] = [],
-  document: { status?: number; address?: string } = {},
+  document: { status?: number; address?: string; requestOpenUntilPoll?: number } = {},
 ) {
   const closed: string[] = []
   const navigated: string[] = []
@@ -1496,6 +1496,9 @@ function fakeBrowser(
               },
             }),
           )
+          // A page request that stays in flight until the given poll (the API call a listing renders from).
+          if (document.requestOpenUntilPoll !== undefined)
+            ws.send(JSON.stringify({ method: 'Network.requestWillBeSent', params: { requestId: 'api' } }))
           requests.forEach((r, i) => {
             ws.send(
               JSON.stringify({
@@ -1522,6 +1525,8 @@ function fakeBrowser(
           scripts.push(params.source)
           ws.send(JSON.stringify({ id, result: { identifier: '1' } }))
         } else if (method === 'Runtime.evaluate') {
+          if (polls === document.requestOpenUntilPoll)
+            ws.send(JSON.stringify({ method: 'Network.loadingFinished', params: { requestId: 'api' } }))
           const snap = snapshots[Math.min(polls++, snapshots.length - 1)]!
           ws.send(JSON.stringify({ id, result: { result: { value: JSON.stringify({ url: params.url, ...snap }) } } }))
         } else ws.send(JSON.stringify({ id, result: {} }))
@@ -1601,6 +1606,143 @@ describe('web.fetch through a real browser', () => {
     } finally {
       browser.stop()
     }
+  })
+
+  describe('client-rendered pages', () => {
+    const BANNER = 'Wir verwenden Cookies, um Ihr Erlebnis zu verbessern. '.repeat(6)
+    const LISTING = 'Kaffee Malabar Monsoon 24,90 Euro pro kg. '.repeat(20)
+    const plain = 'https://shop.example.com/'
+    const shell = html(
+      '<html><head><title>S</title></head><body><p>Keine Produkte gefunden! ' + 'x'.repeat(260) + '</p></body></html>',
+    )
+
+    test('the read waits past a consent banner while a request is in flight, then takes the listing', async () => {
+      // The banner is 330 characters and holds still; the API call that renders the listing ends at the fourth poll.
+      const browser = fakeBrowser(
+        [
+          { title: 'Shop', text: BANNER },
+          { title: 'Shop', text: BANNER },
+          { title: 'Shop', text: BANNER },
+          { title: 'Shop', text: BANNER + LISTING },
+          { title: 'Shop', text: BANNER + LISTING },
+        ],
+        [],
+        { requestOpenUntilPoll: 3 },
+      )
+      try {
+        const page = await browser.read('https://shop.example.com/list', new AbortController().signal)
+        expect(page.text).toContain('Malabar Monsoon')
+      } finally {
+        browser.stop()
+      }
+    })
+
+    test('a request that never ends holds the read for three quiet polls, not the whole settle time', async () => {
+      const browser = fakeBrowser([{ title: 'Shop', text: BANNER }], [], { requestOpenUntilPoll: 99 })
+      try {
+        const started = Date.now()
+        const page = await browser.read('https://shop.example.com/list', new AbortController().signal)
+        expect(page.text).toBe(BANNER.trim())
+        expect(Date.now() - started).toBeLessThan(380) // settleMs is 400, polls are 40 ms
+      } finally {
+        browser.stop()
+      }
+    })
+
+    test('a page that never stops changing is returned as the settle time left it', async () => {
+      const growing = Array.from({ length: 40 }, (_, i) => ({ title: 'Live', text: 'z'.repeat(300 + i) }))
+      const browser = fakeBrowser(growing)
+      try {
+        const page = await browser.read('https://shop.example.com/live', new AbortController().signal)
+        expect(page.text.length).toBeGreaterThan(300)
+      } finally {
+        browser.stop()
+      }
+    })
+
+    test('render reads in the browser without a plain read; without it the plain page is the answer', async () => {
+      const browser = fakeBrowser([{ title: 'Shop', text: LISTING }])
+      try {
+        const n = net({ [plain]: shell })
+        const { call, usage } = run({ ...n.deps, env: {}, browser: browser.read })
+        const rendered = (await call('web.fetch', { url: `${plain}list`, render: true })) as {
+          via: string
+          text: string
+        }
+        expect(rendered.via).toBe('browser')
+        expect(rendered.text).toContain('Malabar Monsoon')
+        expect(n.calls).toHaveLength(0)
+        expect(usage.map((u) => u.model)).toEqual(['browser'])
+        const normal = (await call('web.fetch', { url: `${plain}other` })) as { via: string }
+        expect(normal.via).toBe('direct')
+      } finally {
+        browser.stop()
+      }
+    })
+
+    test('a rendered read is not answered by a cached plain read of the same page', async () => {
+      const browser = fakeBrowser([{ title: 'Shop', text: LISTING }])
+      try {
+        const n = net({ [plain]: shell })
+        const { call } = run({ ...n.deps, env: {}, browser: browser.read })
+        expect(((await call('web.fetch', { url: `${plain}list` })) as { via: string }).via).toBe('direct')
+        const again = (await call('web.fetch', { url: `${plain}list`, render: true })) as {
+          via: string
+          cached: boolean
+        }
+        expect([again.via, again.cached]).toEqual(['browser', false])
+        const third = (await call('web.fetch', { url: `${plain}list` })) as { via: string; cached: boolean }
+        expect([third.via, third.cached]).toEqual(['browser', true])
+      } finally {
+        browser.stop()
+      }
+    })
+
+    test('a wall the browser cannot pass stays a needs-human block under render, and the owner is asked', async () => {
+      resetHandoffLimit()
+      const browser = fakeBrowser([{ title: 'Prove your humanity', text: 'Please verify' }])
+      try {
+        const handoff = fakeHandoff()
+        const n = net({
+          'https://shop.example.com/': status(403, WALL),
+          'https://api.tavily.com': json({ results: [] }),
+        })
+        const { call } = run({ ...n.deps, env: { TAVILY_API_KEY: 't' }, browser: browser.read, handoff })
+        const error = await failure(call('web.fetch', { url: 'https://shop.example.com/x', render: true }))
+        expect(blockedReason(error.message)).toBe('needs-human')
+        expect(handoff.requests).toEqual([{ host: 'shop.example.com' }])
+      } finally {
+        browser.stop()
+      }
+    })
+
+    test('a PDF URL is read the plain way under render: the browser is never opened', async () => {
+      const browser = fakeBrowser([{ title: 'x', text: LISTING }])
+      try {
+        const n = net({ 'https://shop.example.com/': html('<p>' + 'manual text '.repeat(30) + '</p>') })
+        const { call } = run({ ...n.deps, env: {}, browser: browser.read })
+        const out = (await call('web.fetch', { url: 'https://shop.example.com/manual.pdf', render: true })) as {
+          via: string
+        }
+        expect(out.via).toBe('direct')
+        expect(browser.navigated).toEqual([])
+      } finally {
+        browser.stop()
+      }
+    })
+
+    test('render with no browser configured, or a browser that fails, falls back to the plain read', async () => {
+      const n = net({ [plain]: shell })
+      const { call } = run({ ...n.deps, env: {} })
+      expect(((await call('web.fetch', { url: `${plain}a`, render: true })) as { via: string }).via).toBe('direct')
+      const down = async () => {
+        throw new BrowserFailure('the browser is unreachable')
+      }
+      const failing = run({ ...net({ [plain]: shell }).deps, env: {}, browser: down })
+      expect(((await failing.call('web.fetch', { url: `${plain}b`, render: true })) as { via: string }).via).toBe(
+        'direct',
+      )
+    })
   })
 
   describe('owner handoff', () => {

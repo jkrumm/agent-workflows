@@ -18,6 +18,8 @@ export interface ChatRequest {
   model: string
   system?: string
   prompt: string
+  /** Pictures that go with the prompt (PNG, JPEG, WebP, GIF), base64 without a `data:` prefix. Both wires send them ahead of the prompt's text. */
+  images?: { mime: string; base64: string }[]
   maxOutputTokens: number
   effort?: Effort
   /** Ask for a JSON object (JSON mode where the wire has one). Syntax only; `jsonSchema` is the stronger ask and wins. */

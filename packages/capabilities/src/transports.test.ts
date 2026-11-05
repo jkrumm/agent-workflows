@@ -246,6 +246,38 @@ describe('openai wire details', () => {
   })
 })
 
+describe('pictures', () => {
+  const images = [{ mime: 'image/png', base64: 'iVBORw0KGgo=' }]
+
+  test('the Messages wire sends them as base64 image blocks ahead of the text', async () => {
+    iu.on('messages', () => messageResponse('ok', null))
+    await anthropicWire({ env: env() }).complete({ ...chatRequest, images }, never())
+    expect(iu.requests[0]?.body.messages).toEqual([
+      {
+        role: 'user',
+        content: [
+          { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'iVBORw0KGgo=' } },
+          { type: 'text', text: 'p' },
+        ],
+      },
+    ])
+  })
+
+  test('the chat wire sends them as image_url data URLs ahead of the text', async () => {
+    iu.on('chat', () => chatStream('ok', null))
+    await iuOpenai({ env: env() }).complete({ ...chatRequest, images }, never())
+    expect(iu.requests[0]?.body.messages).toEqual([
+      {
+        role: 'user',
+        content: [
+          { type: 'image_url', image_url: { url: 'data:image/png;base64,iVBORw0KGgo=' } },
+          { type: 'text', text: 'p' },
+        ],
+      },
+    ])
+  })
+})
+
 describe('messages wire details', () => {
   test('effort turns adaptive thinking on and rides in output_config; max_tokens is the request ceiling', async () => {
     iu.on('messages', () => messageResponse('ok', null))

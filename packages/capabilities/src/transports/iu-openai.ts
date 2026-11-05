@@ -113,7 +113,18 @@ function body(request: ChatRequest) {
     model: request.model,
     messages: [
       ...(request.system ? [{ role: 'system', content: request.system }] : []),
-      { role: 'user', content: request.prompt },
+      {
+        role: 'user',
+        content: request.images?.length
+          ? [
+              ...request.images.map((image) => ({
+                type: 'image_url',
+                image_url: { url: `data:${image.mime};base64,${image.base64}` },
+              })),
+              { type: 'text', text: request.prompt },
+            ]
+          : request.prompt,
+      },
     ],
     // Reasoning tokens count against this ceiling.
     max_completion_tokens: request.maxOutputTokens,
