@@ -23,7 +23,7 @@ proven live, what the factory gets for free, and what is still open.
 | **Deploy** | release directories with rollback, fail-closed on the secrets cache, `make verify` proves a priced run end to end | AGENTS.md §Validate / Deploy / Verify |
 
 Workflows on it: review, check, research, otel, brain, diagram, prose (+ polish, gate), image, image-icon, podcast,
-narrative, overview, triage, decide, eval, retrospective, learnings, smoke, and, for the factory, `factory-classify` (project, kind, class, size, tier and effort of an Issue; `packages/host/src/workflows/factory-classify/README.md`), and `digest` (short texts for a batch of up to 64 items: heading, session, reply, window; `packages/host/src/workflows/digest/README.md`). Callers: Claude Code
+narrative, overview, triage, decide, eval, retrospective, learnings, smoke, and, for the factory, `factory-classify` (project, kind, class, size, tier and effort of an Issue; `packages/host/src/workflows/factory-classify/README.md`), `factory-ask` (whether a lead's `factory issue ask` is the owner's or answerable from the plan or its declared default; `packages/host/src/workflows/factory-ask/README.md`), and `digest` (short texts for a batch of up to 64 items: heading, session, reply, window; `packages/host/src/workflows/digest/README.md`). Callers: Claude Code
 skills, Hermes, iris, Argo (overview, usage), usage-tracker (runtimes outside the platform only).
 
 ## What a factory station gets for free

@@ -27,6 +27,14 @@ export {
   type DigestOutput,
   type DigestResult,
 } from './capabilities/digest.ts'
+// The `factory-ask` workflow shares the ask seat's input limits and its guard.
+export {
+  factoryAskInput,
+  factoryAskOutput,
+  guardAsk,
+  type FactoryAskInput,
+  type FactoryAskOutput,
+} from './capabilities/factory-ask.ts'
 // The `factory-classify` workflow shares the classify seat's vocabulary and input limits.
 export {
   CLASSES,

@@ -68,7 +68,7 @@ A text model is chosen once, in `src/table/_shared.ts`, as one of four **tiers**
 
 | Tier | Primary today | Routes |
 |-|-|-|
-| `FAST` | Haiku 5.5, effort none | `cheap.classify`, `cheap.title`, `factory.classify`, `digest.items`, `audio.tts.prep`, `audio.tts.summary` (the prep follows the route's wire), the image enhance planner (effort high); `.agent`: `diagram.agent` |
+| `FAST` | Haiku 5.5, effort none | `cheap.classify`, `cheap.title`, `factory.classify`, `factory.ask`, `digest.items`, `audio.tts.prep`, `audio.tts.summary` (the prep follows the route's wire), the image enhance planner (effort high); `.agent`: `diagram.agent` |
 | `EASY` | Haiku 5.5, effort high | `cheap.summarize`, `cheap.extract`, `overview.classify`, `triage`, `check`, `brain.agent`, `otel.agent`, `research.agent`, `podcast.metadata` |
 | `HARD` | Sonnet 5.5, effort medium | `prose.write`, `narrative`, the retro agent, the podcast writers' room (`podcast.research`, `.editorial`, `.outline`, `.write`) |
 | `DECIDE` | `decision-1` (IU decision API), input-priced, no fallback | `decide` |

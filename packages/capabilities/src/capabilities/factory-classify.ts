@@ -25,7 +25,7 @@ const MAX_PROJECTS = 200
  * The routing lines go into the prompt outside the data fence, so they are identifiers, never prose: a name from this
  * alphabet cannot carry an instruction.
  */
-const identifier = (max: number, extra = '') =>
+export const identifier = (max: number, extra = '') =>
   z
     .string()
     .min(1)

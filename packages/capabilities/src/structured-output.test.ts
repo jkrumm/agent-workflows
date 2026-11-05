@@ -14,6 +14,11 @@ const CASES: { capability: string; route: RouteId; input: Record<string, unknown
     route: 'factory.classify',
     input: { title: 't', facts: 'f', repo: 'argo', source: 'kuma', projects: ['argo'] },
   },
+  {
+    capability: 'factory.ask',
+    route: 'factory.ask',
+    input: { question: 'q', options: ['a', 'b'], default: 'a', facts: 'f', plan: 'p', repo: 'argo' },
+  },
   { capability: 'triage', route: 'triage', input: { destination: 'd', transcript: 't' } },
   { capability: 'overview.classify', route: 'overview.classify', input: { facts: 'f', agentIds: ['a1'] } },
   { capability: 'llm.classify', route: 'cheap.classify', input: { text: 'x', labels: { bug: 'b', feature: 'f' } } },
