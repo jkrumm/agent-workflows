@@ -13,7 +13,8 @@ import type { PrepareInputValue, PrepareOutputValue } from './schema.ts'
 export const MAX_ROUNDS = 3
 export const FIVE_HOUR_CEILING = 70
 export const SEVEN_DAY_CEILING = 90
-export const DEFAULT_DEEP_CAP = 15
+/** A runaway guard far above a busy day (~15 deep reviews per account); the quota ceiling is what paces review. */
+export const DEFAULT_DEEP_CAP = 60
 const PRIOR_LIMIT = 20
 const HISTORY_COMMITS = 15
 const STALE_TREE_MS = 24 * 3_600_000

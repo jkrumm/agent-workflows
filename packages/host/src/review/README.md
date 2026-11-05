@@ -75,7 +75,8 @@ and `tier` (the job's). The echoed `files` must equal the stat paths (the empty-
 With `--account`, the quota port's reading: held at ≥ 70 % of the 5-hour window or ≥ 90 % of the week (no 5-hour
 reading: the week alone; no reading: `ceiling: unknown`, not held). Without it: `ceiling: unjudged`. Deep jobs per
 account (no account is its own bucket) since UTC midnight, not abandoned, the thread's own unsubmitted one excluded, ≥
-`AGW_REVIEW_DEEP_CAP` (default 15) → held. Never downgraded.
+`AGW_REVIEW_DEEP_CAP` (default 60) → held. Never downgraded. The ceiling paces review; the cap is only a runaway guard far
+above a busy day (15 deep reviews on one account was normal on 2026-11-05 and held real work).
 
 ## Coverage
 
