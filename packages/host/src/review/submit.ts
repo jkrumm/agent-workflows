@@ -1,11 +1,13 @@
 // `agw review submit`: the reviewer's JSON reply in, REVIEW_OUTPUT v4 out. Code decides outcome, summary, ids and caps;
 // the reply only proposes findings.
 import { z } from 'zod'
+import { type Anchoring, anchorFindings, anchorKey } from './anchor.ts'
 import type { ReviewContext } from './context.ts'
-import type { Finding, Job } from './ledger.ts'
+import type { Finding, Job, NewFinding } from './ledger.ts'
 import { removeWorktree } from './prepare.ts'
 import {
   type OutputFindingValue,
+  type ReplyFindingValue,
   REVIEW_OUTPUT_VERSION,
   ReviewError,
   type ReviewerReplyValue,
@@ -91,6 +93,7 @@ export async function submit(
   const problem = filesProblem(known.files, reply.files)
   if (problem) throw new ReviewError(problem)
 
+  const anchoring = await anchorFindings({ worktree: known.worktree, jobDir: known.jobDir, findings: reply.findings })
   const result = await ledger.transaction(async (client) => {
     await ledger.lockThread(client, known.thread)
     const job = await ledger.job(input.jobId, client, true)
@@ -99,7 +102,7 @@ export async function submit(
     if (again) return { output: again, fresh: false }
     const existing = await ledger.threadFindings(job.repo, job.thread, client)
     const account = job.account ?? input.account ?? null
-    const output = assemble({ ...job, account }, reply, existing)
+    const output = assemble({ ...job, account }, reply, existing, anchoring)
     for (const f of output.newFindings) await ledger.insertFinding(client, f)
     for (const t of output.touched) await ledger.touchFinding(client, t.id, job.id, t.reopen)
     await ledger.markSubmitted(client, job.id, input.attempt, output.output, ctx.now(), account)
@@ -109,93 +112,60 @@ export async function submit(
   return result.output
 }
 
-function assemble(job: Job, reply: ReviewerReplyValue, existing: Finding[]) {
-  const byId = new Map(existing.map((f) => [f.id, f]))
-  const byKey = new Map<string, Finding>()
-  for (const f of existing) if (!byKey.has(repeatKey(f))) byKey.set(repeatKey(f), f)
-  const seen = new Set<string>()
-  let next = existing.reduce((n, f) => {
+/** The highest `<thread>-<n>` number the thread holds. */
+const highestIndex = (existing: Finding[]): number =>
+  existing.reduce((n, f) => {
     const m = /-(\d+)$/.exec(f.id)
     return m ? Math.max(n, Number(m[1])) : n
   }, 0)
-  let repeats = 0
-  let nits = 0
-  const cap = job.reviewConfig.nits
-  const kept: OutputFindingValue[] = []
-  const touched: { id: string; reopen: boolean }[] = []
-  const matched = new Set<string>()
-  const fresh: OutputFindingValue[] = []
 
-  for (const f of reply.findings) {
-    const key = repeatKey(f)
-    const byStillOpen = f.stillOpen && f.id ? byId.get(f.id) : undefined
-    const prior = byStillOpen ?? byKey.get(key)
-    if (prior && matched.has(prior.id)) {
-      repeats++
-      continue
-    }
-    if (!prior && seen.has(key)) {
-      repeats++
-      continue
-    }
-    if (prior && prior.disposition !== 'open' && prior.disposition !== 'fixed') {
-      matched.add(prior.id)
-      repeats++
-      continue
-    }
-    if (f.tag === 'nit' && kept.filter((k) => k.tag === 'nit').length >= cap) {
-      nits++
-      continue
-    }
-    const out: OutputFindingValue = {
-      id: prior ? prior.id : `${job.thread}-${++next}`,
-      tag: f.tag,
-      class: f.class,
-      file: f.file,
-      line: f.line,
-      ...(f.existing ? { existing: f.existing } : {}),
-      message: f.message,
-      failureScenario: f.failureScenario,
-      ...(f.fix ? { fix: f.fix } : {}),
-      ...(f.otherInstances?.length ? { otherInstances: f.otherInstances } : {}),
-      ...(f.votes ? { votes: f.votes } : {}),
-      ...(prior ? { stillOpen: true as const } : {}),
-    }
-    kept.push(out)
-    if (prior) {
-      matched.add(prior.id)
-      touched.push({ id: prior.id, reopen: prior.disposition === 'fixed' })
-    } else {
-      fresh.push(out)
-      seen.add(key)
-    }
-  }
+/** `repeat`: already held or answered; `settled`: a repeat of a finding the owner closed (it is matched too). */
+function repeatVerdict(input: {
+  prior: Finding | undefined
+  key: string
+  matched: Set<string>
+  seen: Set<string>
+}): 'keep' | 'repeat' | 'settled' {
+  const { prior } = input
+  if (!prior) return input.seen.has(input.key) ? 'repeat' : 'keep'
+  if (input.matched.has(prior.id)) return 'repeat'
+  return prior.disposition !== 'open' && prior.disposition !== 'fixed' ? 'settled' : 'keep'
+}
 
-  const important = kept.some((f) => f.tag === 'important')
-  const outcome = !important ? 'clean' : job.round >= 3 ? 'needs-human' : 'actionable'
-  const stepBack = reply.stepBack?.trim() || (job.round >= 3 && important ? DEFAULT_STEP_BACK : null)
-  const output: ReviewOutputV4Value = {
-    schemaVersion: REVIEW_OUTPUT_VERSION,
-    jobId: job.id,
-    thread: job.thread,
-    round: job.round,
-    tier: job.tier,
-    seat: job.seat,
-    rule: job.rule,
-    account: job.account,
-    intent: reply.intent,
-    outcome,
-    summary: summarize(kept),
-    findings: kept,
-    checked: reply.checked,
-    stepBack,
-    files: job.files,
-    dropped: { repeats, nits },
-    base: job.base,
-    diffBase: job.diffBase,
-    head: job.head,
+/** Only a known value goes into the output. */
+function anchorFields(anchor: Anchoring | undefined): Pick<OutputFindingValue, 'lineValid' | 'anchored'> {
+  return {
+    ...(anchor?.lineValid != null ? { lineValid: anchor.lineValid } : {}),
+    ...(anchor?.anchored != null ? { anchored: anchor.anchored } : {}),
   }
-  const newFindings = fresh.map((f) => ({
+}
+
+function outputFinding(input: {
+  id: string
+  f: ReplyFindingValue
+  stillOpen: boolean
+  anchor: Anchoring | undefined
+}): OutputFindingValue {
+  const { f, anchor } = input
+  return {
+    id: input.id,
+    tag: f.tag,
+    class: f.class,
+    file: f.file,
+    line: f.line,
+    ...(f.existing ? { existing: f.existing } : {}),
+    message: f.message,
+    failureScenario: f.failureScenario,
+    ...(f.fix ? { fix: f.fix } : {}),
+    ...(f.otherInstances?.length ? { otherInstances: f.otherInstances } : {}),
+    ...(f.votes ? { votes: f.votes } : {}),
+    ...(input.stillOpen ? { stillOpen: true as const } : {}),
+    ...anchorFields(anchor),
+  }
+}
+
+function newFinding(job: Job, f: OutputFindingValue): NewFinding {
+  return {
     id: f.id,
     repo: job.repo,
     thread: job.thread,
@@ -212,6 +182,87 @@ function assemble(job: Job, reply: ReviewerReplyValue, existing: Finding[]) {
     fix: f.fix ?? null,
     otherInstances: f.otherInstances ?? [],
     votes: f.votes ?? null,
-  }))
-  return { output, newFindings, touched }
+    lineValid: f.lineValid ?? null,
+    anchored: f.anchored ?? null,
+  }
+}
+
+function reviewOutput(input: {
+  job: Job
+  reply: ReviewerReplyValue
+  kept: OutputFindingValue[]
+  dropped: { repeats: number; nits: number }
+}): ReviewOutputV4Value {
+  const { job, reply, kept } = input
+  const important = kept.some((f) => f.tag === 'important')
+  return {
+    schemaVersion: REVIEW_OUTPUT_VERSION,
+    jobId: job.id,
+    thread: job.thread,
+    round: job.round,
+    tier: job.tier,
+    seat: job.seat,
+    rule: job.rule,
+    account: job.account,
+    intent: reply.intent,
+    outcome: !important ? 'clean' : job.round >= 3 ? 'needs-human' : 'actionable',
+    summary: summarize(kept),
+    findings: kept,
+    checked: reply.checked,
+    ...(reply.criteria?.length ? { criteria: reply.criteria } : {}),
+    stepBack: reply.stepBack?.trim() || (job.round >= 3 && important ? DEFAULT_STEP_BACK : null),
+    files: job.files,
+    dropped: input.dropped,
+    base: job.base,
+    diffBase: job.diffBase,
+    head: job.head,
+  }
+}
+
+function assemble(job: Job, reply: ReviewerReplyValue, existing: Finding[], anchoring: Map<string, Anchoring>) {
+  const byId = new Map(existing.map((f) => [f.id, f]))
+  const byKey = new Map<string, Finding>()
+  for (const f of existing) if (!byKey.has(repeatKey(f))) byKey.set(repeatKey(f), f)
+  const seen = new Set<string>()
+  let next = highestIndex(existing)
+  const dropped = { repeats: 0, nits: 0 }
+  const kept: OutputFindingValue[] = []
+  const touched: { id: string; reopen: boolean }[] = []
+  const matched = new Set<string>()
+  const fresh: OutputFindingValue[] = []
+
+  for (const f of reply.findings) {
+    const key = repeatKey(f)
+    const prior = (f.stillOpen && f.id ? byId.get(f.id) : undefined) ?? byKey.get(key)
+    const verdict = repeatVerdict({ prior, key, matched, seen })
+    if (verdict !== 'keep') {
+      if (verdict === 'settled' && prior) matched.add(prior.id)
+      dropped.repeats++
+      continue
+    }
+    if (f.tag === 'nit' && kept.filter((k) => k.tag === 'nit').length >= job.reviewConfig.nits) {
+      dropped.nits++
+      continue
+    }
+    const out = outputFinding({
+      id: prior ? prior.id : `${job.thread}-${++next}`,
+      f,
+      stillOpen: prior !== undefined,
+      anchor: anchoring.get(anchorKey(f)),
+    })
+    kept.push(out)
+    if (!prior) {
+      fresh.push(out)
+      seen.add(key)
+      continue
+    }
+    matched.add(prior.id)
+    touched.push({ id: prior.id, reopen: prior.disposition === 'fixed' })
+  }
+
+  return {
+    output: reviewOutput({ job, reply, kept, dropped }),
+    newFindings: fresh.map((f) => newFinding(job, f)),
+    touched,
+  }
 }

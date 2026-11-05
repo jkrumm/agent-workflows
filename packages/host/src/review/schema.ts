@@ -44,12 +44,22 @@ export const ReplyFinding = z.object({
 })
 export type ReplyFindingValue = z.output<typeof ReplyFinding>
 
+const CRITERION_STATUSES = ['met', 'not-met', 'unclear'] as const
+
+/** One acceptance criterion of the brief and what the reviewer found; stored, never gating. */
+const Criterion = z.object({
+  item: z.string().min(1),
+  status: z.enum(CRITERION_STATUSES),
+  evidence: z.string().default(''),
+})
+
 export const ReviewerReply = z.object({
   intent: z.string().default(''),
   files: z.array(z.string()),
   findings: z.array(ReplyFinding).default([]),
   checked: z.array(z.string()).default([]),
   stepBack: z.string().nullish(),
+  criteria: z.array(Criterion).optional(),
 })
 export type ReviewerReplyValue = z.output<typeof ReviewerReply>
 
@@ -72,6 +82,8 @@ export const OutputFinding = z.object({
   otherInstances: z.array(z.string()).optional(),
   votes: z.string().optional(),
   stillOpen: z.literal(true).optional(),
+  lineValid: z.boolean().optional().describe('Code: the line exists in the file (absent: no line, or unknown)'),
+  anchored: z.boolean().optional().describe('Code: the line is within 3 lines of a changed line (absent: unknown)'),
 })
 export type OutputFindingValue = z.output<typeof OutputFinding>
 
@@ -90,6 +102,7 @@ export const ReviewOutputV4 = z.object({
   summary: z.string().describe('Count first: "2 important, 1 nit." or "Nothing needs fixing."'),
   findings: z.array(OutputFinding),
   checked: z.array(z.string()),
+  criteria: z.array(Criterion).optional().describe("The brief's acceptance criteria, when the reviewer judged them"),
   stepBack: z.string().nullable(),
   files: z.array(z.string()),
   dropped: z.object({
@@ -251,6 +264,8 @@ export const StatusOutput = z.object({
       seat: SEAT.nullable(),
       account: z.string().nullable(),
       transport: z.enum(['in-session', 'hidden']),
+      reviewerPrompt: z.string().nullable().describe('Fingerprint of the reviewer agent file at prepare'),
+      verifierPrompt: z.string().nullable().describe('Fingerprint of the review-verifier agent file at prepare'),
       createdAt: z.string(),
       submittedAt: z.string().nullable(),
       jobDir: z.string(),
@@ -308,6 +323,50 @@ export const CoveredOutput = z.object({
   uncovered: z.array(z.string()),
 })
 export type CoveredOutputValue = z.output<typeof CoveredOutput>
+
+const STATS_BY = ['tier', 'rule', 'prompt', 'repo'] as const
+
+export const StatsInput = z
+  .object({
+    since: z.string().optional().describe('ISO datetime: only jobs created at or after it (default: all time)'),
+    repo: z.string().min(1).optional().describe('Exact repo id (as `status` prints it)'),
+    by: z.enum(STATS_BY).default('tier').describe('Group by tier, normalized rule, reviewer prompt or repo'),
+  })
+  .strict()
+
+const DISPOSITION_COUNTS = z.object({
+  open: z.number().int(),
+  fixed: z.number().int(),
+  wrong: z.number().int(),
+  intentional: z.number().int(),
+  irrelevant: z.number().int(),
+})
+const TAG_COUNTS = z.object({ important: z.number().int(), nit: z.number().int(), preExisting: z.number().int() })
+
+const StatsMetrics = z.object({
+  jobs: z.number().int().describe('Submitted jobs'),
+  abandoned: z.number().int(),
+  prepared: z.number().int().describe('In flight'),
+  wallS: z.object({ p50: z.number().nullable(), max: z.number().nullable() }).describe('Submitted jobs, seconds'),
+  round1: z.object({ jobs: z.number().int(), clean: z.number().int(), cleanRate: z.number().nullable() }),
+  findings: TAG_COUNTS.describe('By tag, attributed to the job that first reported them'),
+  dispositions: z.object({ important: DISPOSITION_COUNTS, nit: DISPOSITION_COUNTS }),
+  precision: z
+    .object({ important: z.number().nullable(), nit: z.number().nullable() })
+    .describe('fixed / (fixed + wrong + irrelevant)'),
+  anchoredShare: z.number().nullable().describe('Of findings with a known value'),
+  lineValidShare: z.number().nullable().describe('Of findings with a known value'),
+  deepRound2: z.object({ count: z.number().int(), share: z.number().nullable() }),
+})
+export type StatsMetricsValue = z.output<typeof StatsMetrics>
+
+export const StatsOutput = z.object({
+  since: z.string().nullable(),
+  by: z.enum(STATS_BY),
+  groups: z.array(StatsMetrics.extend({ key: z.string() })),
+  total: StatsMetrics,
+})
+export type StatsOutputValue = z.output<typeof StatsOutput>
 
 /** A caller's mistake or a refused state: the operations answer it as BAD_REQUEST with this message. */
 export class ReviewError extends Error {

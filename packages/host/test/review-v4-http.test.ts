@@ -22,6 +22,7 @@ const late: ReviewService = {
   route: (i) => service.route(i),
   cancel: (i) => service.cancel(i),
   covered: (i) => service.covered(i),
+  stats: (i) => service.stats(i),
 }
 
 beforeAll(async () => {
@@ -59,6 +60,8 @@ describe('agw review prepare → submit through the host', () => {
     expect(x('review route')).toBeDefined()
     expect(commands.find((c) => c.words.join(' ') === 'review route')?.path).toBe('/review/route')
     expect(x('review covered')).toBeDefined()
+    expect(x('review stats')).toMatchObject({ mutating: false, defaultFormat: 'json', positional: [] })
+    expect(commands.find((c) => c.words.join(' ') === 'review stats')?.path).toBe('/review/stats')
   })
 
   test('prepare, the fake reviewer, submit; a bad submit is a 400 naming the cause', async () => {
@@ -84,5 +87,17 @@ describe('agw review prepare → submit through the host', () => {
     const unknown = await agw(['review', 'submit', 'rv_nope', '--attempt', '1'], '{}')
     expect(unknown.status).toBe(400)
     expect(unknown.body.message).toMatch(/unknown job rv_nope/)
+  })
+
+  test('stats answers over HTTP through the CLI parser; a bad --since is a 400', async () => {
+    const stats = await agw(['review', 'stats', '--by', 'rule'])
+    expect(stats.status).toBe(200)
+    expect(stats.body).toMatchObject({ since: null, by: 'rule' })
+    expect(stats.body.groups.length).toBeGreaterThan(0)
+    expect(stats.body.total.jobs).toBeGreaterThan(0)
+
+    const bad = await agw(['review', 'stats', '--since', 'not a date'])
+    expect(bad.status).toBe(400)
+    expect(bad.body.message).toMatch(/since must be an ISO datetime/)
   })
 })

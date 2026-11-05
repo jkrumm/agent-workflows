@@ -41,7 +41,7 @@ export type PlantedFinding = {
   tag: 'important' | 'nit' | 'pre-existing'
   class?: string
   file: string
-  line?: number
+  line?: number | null
   message: string
   id?: string
   stillOpen?: boolean
@@ -54,7 +54,12 @@ export type PlantedFinding = {
 export function fakeReviewer(
   jobDir: string,
   findings: PlantedFinding[] = [],
-  extra: { files?: string[]; stepBack?: string | null; summary?: string } = {},
+  extra: {
+    files?: string[]
+    stepBack?: string | null
+    summary?: string
+    criteria?: { item: string; status: string; evidence?: string }[]
+  } = {},
 ): string {
   const job = JSON.parse(readFileSync(join(jobDir, 'job.json'), 'utf8'))
   const stat = readFileSync(job.files.stat, 'utf8')
@@ -79,6 +84,7 @@ export function fakeReviewer(
     })),
     checked: ['value: written at a.ts:1'],
     stepBack: extra.stepBack ?? null,
+    ...(extra.criteria ? { criteria: extra.criteria } : {}),
     unknownField: 'dropped',
   }
   return `Here is my review.\n\n\`\`\`json\n${JSON.stringify(reply, null, 1)}\n\`\`\`\n`

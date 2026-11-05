@@ -180,6 +180,51 @@ describe('decide', () => {
   })
 })
 
+describe('decide: a fix round of a deep thread', () => {
+  const fix = (changes: FileChange[], extra: { threadDeep?: boolean; min?: Tier } = {}) =>
+    decide({ changes, contentChanged: true, config, threadDeep: true, ...extra })
+
+  test('a sensitive path alone routes standard with the fix-round rule', () => {
+    expect(fix([change('packages/runtime/src/a.ts')])).toMatchObject({
+      tier: 'standard',
+      rule: 'sensitive path: packages/runtime/src/a.ts (fix round, thread already deep)',
+      decidedBy: 'rule',
+    })
+    expect(fix([change('packages/runtime/a.ts'), change('.github/ci.yml'), change('db/a.sql')]).rule).toBe(
+      'sensitive path: packages/runtime/a.ts (+2) (fix round, thread already deep)',
+    )
+    // a tiny sensitive change is standard, never light
+    expect(fix([change('packages/runtime/a.ts', 1)]).tier).toBe('standard')
+  })
+
+  test('deep by size or by packages stays deep with its own rule', () => {
+    expect(fix([change('packages/runtime/a.ts'), change('packages/host/b.ts', 900)])).toMatchObject({
+      tier: 'deep',
+      rule: '910 changed non-test code lines > 800',
+    })
+    const wide = ['a', 'b', 'c', 'd'].map((p) => change(`packages/${p}/x.ts`))
+    expect(fix([change('packages/runtime/a.ts'), ...wide])).toMatchObject({
+      tier: 'deep',
+      rule: '5 packages > 3: a cross-package change',
+    })
+  })
+
+  test('a thread that is not deep goes deep on a sensitive path', () => {
+    expect(fix([change('packages/runtime/a.ts')], { threadDeep: false })).toMatchObject({
+      tier: 'deep',
+      rule: 'sensitive path: packages/runtime/a.ts',
+    })
+  })
+
+  test('--min raises afterwards', () => {
+    expect(fix([change('packages/runtime/a.ts')], { min: 'deep' })).toMatchObject({
+      tier: 'deep',
+      decidedBy: 'caller',
+      rule: 'sensitive path: packages/runtime/a.ts (fix round, thread already deep) (raised by caller from standard)',
+    })
+  })
+})
+
 describe('parseReviewMd', () => {
   test('valid', () => {
     const text = '---\nnone: [a/**, "**/*.snap"]\nsensitive: [x]\nnits: 5\n---\n# body'

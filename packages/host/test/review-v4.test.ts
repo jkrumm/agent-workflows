@@ -1,10 +1,12 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Pool } from 'pg'
 import { freshSchema, PG_URL, testRuntime } from '@agent-workflows/testing/pg'
+import { createHash } from 'node:crypto'
 import { createReviewService, type QuotaReading, ReviewError } from '../src/review/index.ts'
+import { reviewLedger } from '../src/review/ledger.ts'
 import { normalizeOrigin } from '../src/review/repo.ts'
 import { gitRunner } from '../src/review/route.ts'
 import type { PrepareOutputValue, ReviewOutputV4Value } from '../src/review/schema.ts'
@@ -592,5 +594,186 @@ describe('cancel, thread keys and the submit account', () => {
     const done = await s.submit({ jobId: own.jobId, attempt: 1, account: 'work', reply: fakeReviewer(own.jobDir) })
     expect(done.account).toBe('private')
     expect((await jobRow(own.jobId)).account).toBe('private')
+  })
+})
+
+describe('fix-round routing', () => {
+  const sensitive = () => repo({ 'REVIEW.md': REVIEW_MD, 'core/x.ts': lines(2), 'src/a.ts': lines(2) })
+
+  test('a sensitive-only fix round after a deep round routes standard; covered holds; the deep cap counts one', async () => {
+    const s = service()
+    const root = sensitive()
+    const start = git(root, 'rev-parse', 'HEAD')
+    write(root, 'core/x.ts', lines(3))
+    const r1 = await ready(s.prepare({ cwd: root, account: 'fixround' }))
+    expect(r1).toMatchObject({ tier: 'deep', rule: 'sensitive path: core/x.ts' })
+    await s.submit({ jobId: r1.jobId, attempt: 1, reply: fakeReviewer(r1.jobDir) })
+
+    write(root, 'core/x.ts', lines(4))
+    const r2 = await ready(s.prepare({ cwd: root, account: 'fixround' }))
+    expect(r2).toMatchObject({
+      round: 2,
+      tier: 'standard',
+      rule: 'sensitive path: core/x.ts (fix round, thread already deep)',
+      decidedBy: 'rule',
+    })
+    await s.submit({ jobId: r2.jobId, attempt: 1, reply: fakeReviewer(r2.jobDir) })
+
+    commit(root, {}, 'both rounds')
+    const cover = await s.covered({ cwd: root, range: `${start}..HEAD` })
+    expect(cover.commits[0]).toMatchObject({ required: 'deep', coveredBy: r2.jobId })
+    expect(cover.covered).toBe(true)
+
+    const deepToday = await reviewLedger(pool, db.schema).deepCount('fixround', new Date(0), 'none')
+    expect(deepToday).toBe(1)
+  })
+
+  test('--min deep raises the fix round again', async () => {
+    const s = service()
+    const root = sensitive()
+    write(root, 'core/x.ts', lines(3))
+    const r1 = await ready(s.prepare({ cwd: root }))
+    await s.submit({ jobId: r1.jobId, attempt: 1, reply: fakeReviewer(r1.jobDir) })
+    write(root, 'core/x.ts', lines(4))
+    expect(await s.prepare({ cwd: root, min: 'deep' })).toMatchObject({ tier: 'deep', decidedBy: 'caller' })
+  })
+
+  test('a thread whose first round was not deep goes deep on a new sensitive path', async () => {
+    const s = service()
+    const root = sensitive()
+    write(root, 'src/a.ts', lines(60))
+    const r1 = await ready(s.prepare({ cwd: root }))
+    expect(r1.tier).toBe('standard')
+    await s.submit({ jobId: r1.jobId, attempt: 1, reply: fakeReviewer(r1.jobDir) })
+    write(root, 'core/x.ts', lines(3))
+    expect(await s.prepare({ cwd: root })).toMatchObject({ tier: 'deep', rule: 'sensitive path: core/x.ts' })
+  })
+
+  test('a deep-by-size fix round stays deep', async () => {
+    const s = service()
+    const root = sensitive()
+    write(root, 'core/x.ts', lines(3))
+    const r1 = await ready(s.prepare({ cwd: root }))
+    await s.submit({ jobId: r1.jobId, attempt: 1, reply: fakeReviewer(r1.jobDir) })
+    write(root, 'src/big.ts', lines(900))
+    expect(await s.prepare({ cwd: root })).toMatchObject({
+      tier: 'deep',
+      rule: '900 changed non-test code lines > 800',
+    })
+  })
+})
+
+describe('prompt fingerprint', () => {
+  const sha = (text: string) => createHash('sha256').update(text).digest('hex').slice(0, 12)
+  const small = () => {
+    const root = repo({ 'src/a.ts': lines(2) })
+    commit(root, { 'src/a.ts': lines(3) })
+    return root
+  }
+  const agents = (files: Record<string, string>) => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), 'agw-rv4-agents-')))
+    repos.push(dir)
+    for (const [name, text] of Object.entries(files)) writeFileSync(join(dir, name), text)
+    return dir
+  }
+  const fingerprints = async (dir: string) => {
+    const s = service({ env: { AGW_REVIEWER_AGENT_DIR: dir } })
+    const job = await ready(s.prepare({ cwd: small(), scope: 'head' }))
+    const { job: shown } = await s.status({ jobId: job.jobId })
+    const row = await jobRow(job.jobId)
+    expect([row.reviewer_prompt, row.verifier_prompt]).toEqual([shown?.reviewerPrompt, shown?.verifierPrompt])
+    return [shown?.reviewerPrompt, shown?.verifierPrompt]
+  }
+
+  test('both files present: the first 12 hex of their sha256', async () => {
+    const dir = agents({ 'reviewer.md': 'reviewer v1', 'review-verifier.md': 'verifier v1' })
+    expect(await fingerprints(dir)).toEqual([sha('reviewer v1'), sha('verifier v1')])
+  })
+  test('one missing is null, both missing are null', async () => {
+    expect(await fingerprints(agents({ 'reviewer.md': 'reviewer v1' }))).toEqual([sha('reviewer v1'), null])
+    expect(await fingerprints(agents({}))).toEqual([null, null])
+  })
+})
+
+describe('anchoring at submit', () => {
+  test('lineValid and anchored are computed and stored; no finding is dropped for them', async () => {
+    const s = service()
+    const root = repo({ 'src/a.ts': lines(60) })
+    write(root, 'src/a.ts', lines(62))
+    const job = await ready(s.prepare({ cwd: root }))
+    const out = await s.submit({
+      jobId: job.jobId,
+      attempt: 1,
+      reply: fakeReviewer(job.jobDir, [
+        { tag: 'important', file: 'src/a.ts', line: 61, message: 'at the change' },
+        { tag: 'important', file: 'src/a.ts', line: 1, message: 'far from the change' },
+        { tag: 'important', file: 'src/a.ts', line: 999, message: 'beyond the end' },
+        { tag: 'important', file: 'src/ghost.ts', line: 1, message: 'no such file' },
+        { tag: 'nit', file: 'src/a.ts', line: null, message: 'no line' },
+      ]),
+    })
+    expect(out.findings.map((f) => [f.message, f.lineValid, f.anchored])).toEqual([
+      ['at the change', true, true],
+      ['far from the change', true, false],
+      ['beyond the end', false, false],
+      ['no such file', false, false],
+      ['no line', undefined, undefined],
+    ])
+    const rows = await findingRows(job.thread)
+    expect(rows.map((r) => [r.line_valid, r.anchored])).toEqual([
+      [true, true],
+      [true, false],
+      [false, false],
+      [false, false],
+      [null, null],
+    ])
+  })
+})
+
+describe('acceptance criteria', () => {
+  const small = async (s: ReturnType<typeof service>) => {
+    const root = repo({ 'src/a.ts': lines(2) })
+    write(root, 'src/a.ts', lines(3))
+    return ready(s.prepare({ cwd: root }))
+  }
+
+  test('criteria are stored and returned; a not-met item alone leaves the outcome clean', async () => {
+    const s = service()
+    const job = await small(s)
+    const criteria = [
+      { item: 'adds the line', status: 'met', evidence: 'src/a.ts:3' },
+      { item: 'documents it', status: 'not-met', evidence: '' },
+      { item: 'ships a flag', status: 'unclear' },
+    ]
+    const out = await s.submit({ jobId: job.jobId, attempt: 1, reply: fakeReviewer(job.jobDir, [], { criteria }) })
+    expect(out.outcome).toBe('clean')
+    expect(out.criteria).toEqual([
+      { item: 'adds the line', status: 'met', evidence: 'src/a.ts:3' },
+      { item: 'documents it', status: 'not-met', evidence: '' },
+      { item: 'ships a flag', status: 'unclear', evidence: '' },
+    ])
+    expect((await s.status({ jobId: job.jobId })).job?.output?.criteria).toEqual(out.criteria)
+  })
+
+  test('a reply without criteria, or with an empty list, has none in the output', async () => {
+    const s = service()
+    const without = await small(s)
+    expect(
+      'criteria' in (await s.submit({ jobId: without.jobId, attempt: 1, reply: fakeReviewer(without.jobDir) })),
+    ).toBe(false)
+    const empty = await small(s)
+    const out = await s.submit({
+      jobId: empty.jobId,
+      attempt: 1,
+      reply: fakeReviewer(empty.jobDir, [], { criteria: [] }),
+    })
+    expect('criteria' in out).toBe(false)
+  })
+
+  test('an unknown criterion status is refused', async () => {
+    const s = service()
+    const job = await small(s)
+    const reply = fakeReviewer(job.jobDir, [], { criteria: [{ item: 'x', status: 'maybe' }] })
+    await rejects(s.submit({ jobId: job.jobId, attempt: 1, reply }), /reviewer schema/)
   })
 })

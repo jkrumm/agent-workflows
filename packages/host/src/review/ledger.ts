@@ -31,6 +31,9 @@ export interface Job {
   files: string[]
   jobDir: string
   worktree: string
+  /** First 12 hex characters of the sha256 of the reviewer and verifier agent files at prepare; null: unreadable. */
+  reviewerPrompt: string | null
+  verifierPrompt: string | null
   state: JobState
   attempt: number | null
   output: ReviewOutputV4Value | null
@@ -55,6 +58,10 @@ export interface Finding {
   fix: string | null
   otherInstances: string[]
   votes: string | null
+  /** The line exists in the worktree's file; null: no line, or unknown. */
+  lineValid: boolean | null
+  /** The line lies within 3 lines of a changed line of the job's diff; null: no line, or unknown. */
+  anchored: boolean | null
   disposition: Disposition
   reason: string | null
   disposedAt: Date | null
@@ -86,12 +93,17 @@ const toJob = (r: Row): Job => ({
   files: r.files as string[],
   jobDir: r.job_dir as string,
   worktree: r.worktree as string,
+  reviewerPrompt: (r.reviewer_prompt as string | null) ?? null,
+  verifierPrompt: (r.verifier_prompt as string | null) ?? null,
   state: r.state as JobState,
   attempt: (r.attempt as number | null) ?? null,
   output: (r.output as ReviewOutputV4Value | null) ?? null,
   createdAt: r.created_at as Date,
   submittedAt: (r.submitted_at as Date | null) ?? null,
 })
+
+/** A nullable column: absent reads as null. */
+const orNull = <T>(value: unknown): T | null => (value as T | null | undefined) ?? null
 
 const toFinding = (r: Row): Finding => ({
   id: r.id as string,
@@ -103,16 +115,18 @@ const toFinding = (r: Row): Finding => ({
   tag: r.tag as Tag,
   class: r.class as FindingClass,
   file: r.file as string,
-  line: (r.line as number | null) ?? null,
-  existing: (r.existing as string | null) ?? null,
+  line: orNull<number>(r.line),
+  existing: orNull<string>(r.existing),
   message: r.message as string,
   failureScenario: r.failure_scenario as string,
-  fix: (r.fix as string | null) ?? null,
+  fix: orNull<string>(r.fix),
   otherInstances: (r.other_instances as string[] | null) ?? [],
-  votes: (r.votes as string | null) ?? null,
+  votes: orNull<string>(r.votes),
+  lineValid: orNull<boolean>(r.line_valid),
+  anchored: orNull<boolean>(r.anchored),
   disposition: r.disposition as Disposition,
-  reason: (r.reason as string | null) ?? null,
-  disposedAt: (r.disposed_at as Date | null) ?? null,
+  reason: orNull<string>(r.reason),
+  disposedAt: orNull<Date>(r.disposed_at),
   createdAt: r.created_at as Date,
 })
 
@@ -133,6 +147,26 @@ export const findingRecord = (f: Finding): FindingRecordValue => ({
   reason: f.reason,
   disposedAt: f.disposedAt?.toISOString() ?? null,
 })
+
+/** One job as `agw review stats` reads it; `wallS` is null unless submitted. */
+export interface StatsJob {
+  id: string
+  repo: string
+  tier: Tier
+  rule: string
+  round: number
+  state: JobState
+  reviewerPrompt: string | null
+  outcome: string | null
+  wallS: number | null
+}
+export interface StatsFinding {
+  jobId: string
+  tag: Tag
+  disposition: Disposition
+  lineValid: boolean | null
+  anchored: boolean | null
+}
 
 export type NewJob = Omit<Job, 'state' | 'attempt' | 'output' | 'createdAt' | 'submittedAt'>
 export type NewFinding = Omit<Finding, 'disposition' | 'reason' | 'disposedAt' | 'createdAt'>
@@ -207,8 +241,10 @@ export function reviewLedger(pool: ReviewPool, schema: string) {
         )
         await client.query(
           `insert into ${jobs} (id, repo, root, thread, round, scope, base, diff_base, head, head_tree, tier, seat, rule,
-             decided_by, route, account, intent, review_config, files, job_dir, worktree, transport)
-           values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)`,
+             decided_by, route, account, intent, review_config, files, job_dir, worktree, transport,
+             reviewer_prompt, verifier_prompt)
+           values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22,
+             $23, $24)`,
           [
             job.id,
             job.repo,
@@ -232,6 +268,8 @@ export function reviewLedger(pool: ReviewPool, schema: string) {
             job.jobDir,
             job.worktree,
             job.transport,
+            job.reviewerPrompt,
+            job.verifierPrompt,
           ],
         )
         return rows.map((r) => r.id as string)
@@ -261,8 +299,8 @@ export function reviewLedger(pool: ReviewPool, schema: string) {
     async insertFinding(q: Query, f: NewFinding): Promise<void> {
       await q.query(
         `insert into ${findings} (id, repo, thread, job_id, last_job_id, round, tag, class, file, line, existing, message,
-           failure_scenario, fix, other_instances, votes)
-         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
+           failure_scenario, fix, other_instances, votes, line_valid, anchored)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
         [
           f.id,
           f.repo,
@@ -280,6 +318,8 @@ export function reviewLedger(pool: ReviewPool, schema: string) {
           f.fix,
           JSON.stringify(f.otherInstances),
           f.votes,
+          f.lineValid,
+          f.anchored,
         ],
       )
     },
@@ -366,6 +406,52 @@ export function reviewLedger(pool: ReviewPool, schema: string) {
       for (const r of rows as { thread: string; id: string }[])
         open.set(r.thread, [...(open.get(r.thread) ?? []), r.id])
       return open
+    },
+
+    /** The rows `agw review stats` aggregates: jobs and the findings they first reported, probes' repos left out. */
+    async statsRows(input: { since: Date | null; repo: string | null }): Promise<{
+      jobs: StatsJob[]
+      findings: StatsFinding[]
+    }> {
+      const where = `strpos(j.repo, '/.agw-verify') = 0 and strpos(j.repo, '/.agw-eval-recall') = 0
+            and ($1::timestamptz is null or j.created_at >= $1) and ($2::text is null or j.repo = $2)`
+      const args = [input.since, input.repo]
+      const [jobRows, findingRows] = await Promise.all([
+        pool.query(
+          `select j.id, j.repo, j.tier, j.rule, j.round, j.state, j.reviewer_prompt, j.created_at, j.submitted_at,
+                  j.output->>'outcome' as outcome
+             from ${jobs} j where ${where}`,
+          args,
+        ),
+        pool.query(
+          `select f.job_id, f.tag, f.disposition, f.line_valid, f.anchored
+             from ${findings} f join ${jobs} j on j.id = f.job_id where ${where}`,
+          args,
+        ),
+      ])
+      return {
+        jobs: jobRows.rows.map((r) => ({
+          id: r.id as string,
+          repo: r.repo as string,
+          tier: r.tier as Tier,
+          rule: r.rule as string,
+          round: r.round as number,
+          state: r.state as JobState,
+          reviewerPrompt: (r.reviewer_prompt as string | null) ?? null,
+          outcome: (r.outcome as string | null) ?? null,
+          wallS:
+            r.submitted_at && r.state === 'submitted'
+              ? ((r.submitted_at as Date).getTime() - (r.created_at as Date).getTime()) / 1000
+              : null,
+        })),
+        findings: findingRows.rows.map((r) => ({
+          jobId: r.job_id as string,
+          tag: r.tag as Tag,
+          disposition: r.disposition as Disposition,
+          lineValid: (r.line_valid as boolean | null) ?? null,
+          anchored: (r.anchored as boolean | null) ?? null,
+        })),
+      }
     },
 
     /** Every submitted (thread, round, tier) of these threads: a thread's cover tier is the max up to a round. */

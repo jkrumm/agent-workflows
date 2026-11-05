@@ -1,13 +1,23 @@
 // `agw review prepare`: thread and round from the ledger, the route, the ceiling and the deep cap, a throwaway worktree
 // at the head and the job dir the reviewer agent reads (`docs/spikes/review-v4/reviewer.md` §The job).
-import { randomBytes } from 'node:crypto'
-import { existsSync, mkdirSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { createHash, randomBytes } from 'node:crypto'
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs'
+import { homedir } from 'node:os'
 import { join, sep } from 'node:path'
 import { tail } from '../process.ts'
 import { removeClone, removeEscapingSymlinks, sweepStaleClones } from './clone.ts'
 import { jobsRoot, type QuotaReading, type ReviewContext } from './context.ts'
 import { isAncestor, repoIdentity, type ResolvedScope, resolveRoot, resolveScope, threadId, tryGit } from './repo.ts'
-import { routeRange } from './route.ts'
+import { routeRange, type Seat, type Tier } from './route.ts'
 import type { PrepareInputValue, PrepareOutputValue } from './schema.ts'
 
 export const MAX_ROUNDS = 3
@@ -39,6 +49,27 @@ function judge(account: string, reading: QuotaReading | null): { ceiling: 'ok' |
     return { held: `held: ${account} at ${Math.round(reading.sevenDay)} % of its 7-day window` }
   }
   return { ceiling: 'ok' }
+}
+
+/** First 12 hex characters of the sha256 of the agent file `<dir>/<name>`; null when it cannot be read. */
+function fingerprint(dir: string, name: string): string | null {
+  try {
+    return createHash('sha256')
+      .update(readFileSync(join(dir, name)))
+      .digest('hex')
+      .slice(0, 12)
+  } catch {
+    return null
+  }
+}
+
+/** The reviewer and verifier agent files in force at prepare, from `AGW_REVIEWER_AGENT_DIR` or `<HOME>/.claude/agents`. */
+function promptFingerprints(env: Record<string, string | undefined>): {
+  reviewerPrompt: string | null
+  verifierPrompt: string | null
+} {
+  const dir = env.AGW_REVIEWER_AGENT_DIR || join(env.HOME || homedir(), '.claude', 'agents')
+  return { reviewerPrompt: fingerprint(dir, 'reviewer.md'), verifierPrompt: fingerprint(dir, 'review-verifier.md') }
 }
 
 const utcMidnight = (now: Date) => new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()))
@@ -122,64 +153,56 @@ async function resolveThread(
   return { thread: threadId(repo, key), threadKey: key }
 }
 
-async function prepareResolved(
+/** The ceiling (with an account) and the deep cap: `reason` when the job is held, else the ceiling that was read. */
+async function checkLimits(
   ctx: ReviewContext,
-  input: PrepareInputValue,
-  at: { root: string; repo: string; jobId: string; jobDir: string; resolved: ResolvedScope },
-): Promise<PrepareOutputValue> {
-  const { git, ledger } = ctx
-  const { root, repo, jobId, jobDir, resolved } = at
-  const { gitDir, base, head } = resolved
-  const { thread, threadKey } = await resolveThread(ledger, repo, input.thread, resolved.key)
-  const account = input.account ?? null
-  const last = await ledger.lastSubmitted(repo, thread)
-  const round = last ? last.round + 1 : 1
-  const common = { thread, round, base, head, account }
-  if (round > MAX_ROUNDS) {
-    return {
-      status: 'needs-human',
-      reason: `${MAX_ROUNDS} rounds on thread ${thread}: step back and reconsider the approach`,
-      ...common,
-    }
-  }
-
-  const followsLast =
-    last !== null &&
-    (last.base === base || (await isAncestor(git, gitDir, last.head, head))) &&
-    (await tryGit(git, gitDir, ['cat-file', '-e', `${last.head}^{commit}`])) !== null
-  const diffBase = followsLast && last ? last.head : base
-  const decision = await routeRange({ git, repo: gitDir, base: diffBase, head, min: input.min, configAt: base })
-  const { config, changes, warning: _warning, ...route } = decision
-  const decided = { tier: route.tier, seat: route.seat, rule: route.rule, decidedBy: route.decidedBy, diffBase }
-  if (route.tier === 'none') return { status: 'skipped', ...common, ...decided }
-
+  at: { account: string | null; tier: Tier; thread: string },
+): Promise<
+  { ceiling: 'ok' | 'unknown' | 'unjudged' } | { reason: string; ceiling: 'held' | 'ok' | 'unknown' | 'unjudged' }
+> {
+  const { account } = at
   let ceiling: 'ok' | 'unknown' | 'unjudged' = 'unjudged'
   if (account !== null) {
     const verdict = judge(account, ctx.quota ? await ctx.quota(account) : null)
-    if ('held' in verdict) return { status: 'held', reason: verdict.held, ...common, ...decided, ceiling: 'held' }
+    if ('held' in verdict) return { reason: verdict.held, ceiling: 'held' }
     ceiling = verdict.ceiling
   }
-  if (route.tier === 'deep') {
-    const cap = deepCap(ctx.env)
-    const today = await ledger.deepCount(account, utcMidnight(ctx.now()), thread)
-    if (today >= cap) {
-      return {
-        status: 'held',
-        reason: `held: ${account ?? 'no account'} at the deep cap, ${today}/${cap} deep reviews today (UTC)`,
-        ...common,
-        ...decided,
-        ceiling,
-      }
-    }
+  if (at.tier !== 'deep') return { ceiling }
+  const cap = deepCap(ctx.env)
+  const today = await ctx.ledger.deepCount(account, utcMidnight(ctx.now()), at.thread)
+  if (today < cap) return { ceiling }
+  return {
+    reason: `held: ${account ?? 'no account'} at the deep cap, ${today}/${cap} deep reviews today (UTC)`,
+    ceiling,
   }
+}
 
-  const files = changes.map((c) => c.path)
-  const reviewMd = await tryGit(git, gitDir, ['show', `${base}:REVIEW.md`])
-  mkdirSync(jobDir, { recursive: true })
-  const worktree = resolved.clone ?? join(jobDir, 'tree')
-  if (!resolved.clone) await makeWorktree(ctx, root, worktree, head)
-  const headTree = (await git(gitDir, ['rev-parse', `${head}^{tree}`])).trim()
+const scopeOf = (input: PrepareInputValue) =>
+  input.pr !== undefined
+    ? { pr: input.pr }
+    : input.branch !== undefined
+      ? { branch: input.branch }
+      : { scope: input.scope ?? 'uncommitted' }
 
+/** The files of the job dir the reviewer reads (diff, stat, intent, history, prior findings, REVIEW.md, job.json). */
+async function writeJobDir(
+  ctx: ReviewContext,
+  job: {
+    input: PrepareInputValue
+    at: { repo: string; jobId: string; jobDir: string; resolved: ResolvedScope }
+    thread: string
+    round: number
+    diffBase: string
+    worktree: string
+    files: string[]
+    reviewMd: string | null
+    route: { tier: Tier; seat: Seat | null }
+  },
+): Promise<void> {
+  const { git, ledger } = ctx
+  const { input, thread, files, worktree, diffBase } = job
+  const { repo, jobId, jobDir, resolved } = job.at
+  const { gitDir, base, head } = resolved
   const range = `${diffBase}..${head}`
   const paths = {
     diff: join(jobDir, 'diff.patch'),
@@ -230,19 +253,78 @@ async function prepareResolved(
     reason: f.reason,
   }))
   writeFileSync(paths.prior, `${JSON.stringify(prior, null, 1)}\n`)
-  writeFileSync(paths.reviewMd, reviewMd ?? 'This repository has no REVIEW.md at the base of the change.\n')
-  const { tier } = route
+  writeFileSync(paths.reviewMd, job.reviewMd ?? 'This repository has no REVIEW.md at the base of the change.\n')
+  const { tier, seat } = job.route
   writeFileSync(
     join(jobDir, 'job.json'),
-    `${JSON.stringify({ jobId, repo, thread, round, tier, seat: route.seat, base, diffBase, head, worktree, files: paths }, null, 1)}\n`,
+    `${JSON.stringify({ jobId, repo, thread, round: job.round, tier, seat, base, diffBase, head, worktree, files: paths }, null, 1)}\n`,
   )
+}
 
-  const scope =
-    input.pr !== undefined
-      ? { pr: input.pr }
-      : input.branch !== undefined
-        ? { branch: input.branch }
-        : { scope: input.scope ?? 'uncommitted' }
+async function prepareResolved(
+  ctx: ReviewContext,
+  input: PrepareInputValue,
+  at: { root: string; repo: string; jobId: string; jobDir: string; resolved: ResolvedScope },
+): Promise<PrepareOutputValue> {
+  const { git, ledger } = ctx
+  const { root, repo, jobId, jobDir, resolved } = at
+  const { gitDir, base, head } = resolved
+  const { thread, threadKey } = await resolveThread(ledger, repo, input.thread, resolved.key)
+  const account = input.account ?? null
+  const last = await ledger.lastSubmitted(repo, thread)
+  const round = last ? last.round + 1 : 1
+  const common = { thread, round, base, head, account }
+  if (round > MAX_ROUNDS) {
+    return {
+      status: 'needs-human',
+      reason: `${MAX_ROUNDS} rounds on thread ${thread}: step back and reconsider the approach`,
+      ...common,
+    }
+  }
+
+  const followsLast =
+    last !== null &&
+    (last.base === base || (await isAncestor(git, gitDir, last.head, head))) &&
+    (await tryGit(git, gitDir, ['cat-file', '-e', `${last.head}^{commit}`])) !== null
+  const diffBase = followsLast && last ? last.head : base
+  const threadDeep = last !== null && (await ledger.threadTiers(repo, [thread])).some((t) => t.tier === 'deep')
+  const decision = await routeRange({
+    git,
+    repo: gitDir,
+    base: diffBase,
+    head,
+    min: input.min,
+    configAt: base,
+    threadDeep,
+  })
+  const { config, changes, warning: _warning, ...route } = decision
+  const decided = { tier: route.tier, seat: route.seat, rule: route.rule, decidedBy: route.decidedBy, diffBase }
+  if (route.tier === 'none') return { status: 'skipped', ...common, ...decided }
+
+  const limits = await checkLimits(ctx, { account, tier: route.tier, thread })
+  if ('reason' in limits)
+    return { status: 'held', reason: limits.reason, ...common, ...decided, ceiling: limits.ceiling }
+  const { ceiling } = limits
+
+  const files = changes.map((c) => c.path)
+  const reviewMd = await tryGit(git, gitDir, ['show', `${base}:REVIEW.md`])
+  mkdirSync(jobDir, { recursive: true })
+  const worktree = resolved.clone ?? join(jobDir, 'tree')
+  if (!resolved.clone) await makeWorktree(ctx, root, worktree, head)
+  const headTree = (await git(gitDir, ['rev-parse', `${head}^{tree}`])).trim()
+
+  await writeJobDir(ctx, {
+    input,
+    at,
+    thread,
+    round,
+    diffBase,
+    worktree,
+    files,
+    reviewMd,
+    route: { tier: route.tier, seat: route.seat },
+  })
+
   await ledger.insertJob({
     id: jobId,
     repo,
@@ -250,7 +332,7 @@ async function prepareResolved(
     thread,
     round,
     scope: {
-      ...scope,
+      ...scopeOf(input),
       ...(input.thread ? { thread: input.thread } : {}),
       ...(typeof threadKey === 'string' ? { threadKey } : {}),
     },
@@ -258,7 +340,7 @@ async function prepareResolved(
     diffBase,
     head,
     headTree,
-    tier,
+    tier: route.tier,
     seat: route.seat,
     rule: route.rule,
     decidedBy: route.decidedBy,
@@ -270,6 +352,7 @@ async function prepareResolved(
     files,
     jobDir,
     worktree,
+    ...promptFingerprints(ctx.env),
   })
   return {
     status: 'ready',
@@ -280,6 +363,6 @@ async function prepareResolved(
     worktree,
     files,
     ceiling,
-    prompt: `job=${jobDir} worktree=${worktree} tier=${tier} round=${round}`,
+    prompt: `job=${jobDir} worktree=${worktree} tier=${route.tier} round=${round}`,
   }
 }

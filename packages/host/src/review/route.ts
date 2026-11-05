@@ -168,12 +168,30 @@ function raise(decision: RouteDecision, min: Tier | undefined): RouteDecision {
   }
 }
 
+/** A sensitive path is deep, unless this is a fix round of a deep thread: then only the other rules can keep it deep. */
+function decideSensitive(
+  input: { changes: FileChange[]; config: ReviewConfig; threadDeep?: boolean },
+  hit: string[],
+): { tier: Tier; rule: string } {
+  const rule = `sensitive path: ${hit[0]}${hit.length > 1 ? ` (+${hit.length - 1})` : ''}`
+  if (!input.threadDeep) return { tier: 'deep', rule }
+  const rest = decide({
+    changes: input.changes,
+    contentChanged: true,
+    config: { ...input.config, sensitive: [] },
+  })
+  if (rest.tier === 'deep') return { tier: 'deep', rule: rest.rule }
+  return { tier: 'standard', rule: `${rule} (fix round, thread already deep)` }
+}
+
 /** Pure: the rules table. contentChanged=false means the diff is empty ignoring whitespace and blank lines. */
 export function decide(input: {
   changes: FileChange[]
   contentChanged: boolean
   config: ReviewConfig
   min?: Tier
+  /** The thread already holds a submitted deep round: a fix round that is deep only by a sensitive path routes standard. */
+  threadDeep?: boolean
 }): RouteDecision {
   const { config } = input
   const counted = input.changes.filter((f) => f.added + f.removed > 0)
@@ -185,7 +203,8 @@ export function decide(input: {
   if (counted.every((f) => match(f.path, config.none))) return by('none', 'every file matches REVIEW.md none')
   const hit = counted.filter((f) => sensitive(f.path, config.sensitive)).map((f) => f.path)
   if (hit.length > 0) {
-    return by('deep', `sensitive path: ${hit[0]}${hit.length > 1 ? ` (+${hit.length - 1})` : ''}`)
+    const sensitiveHit = decideSensitive(input, hit)
+    return by(sensitiveHit.tier, sensitiveHit.rule)
   }
   if (code.length === 0) {
     return counted.some((f) => isAgentFacing(f.path)) ? by('light', 'agent instructions') : by('none', 'docs only')
@@ -237,6 +256,7 @@ export async function routeRange(input: {
   min?: Tier
   classify?: Classifier
   configAt?: string
+  threadDeep?: boolean
 }): Promise<RouteDecision & { config: ReviewConfig; changes: FileChange[]; warning?: string }> {
   const { git, repo, base, head } = input
   const range = `${base}..${head}`
@@ -251,6 +271,7 @@ export async function routeRange(input: {
     changes,
     contentChanged: parseNumstat(ignoringWhitespace).some((f) => f.added + f.removed > 0),
     config,
+    threadDeep: input.threadDeep,
   })
   const result = (decision: RouteDecision) => ({ ...raise(decision, input.min), config, changes, warning })
 

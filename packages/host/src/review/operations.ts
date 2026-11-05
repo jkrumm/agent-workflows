@@ -1,4 +1,4 @@
-// `agw review prepare|cancel|submit|dispose|status|route|covered`: host operations like the fleet's, no journal run.
+// `agw review prepare|cancel|submit|dispose|status|route|covered|stats`: host operations like the fleet's, no journal run.
 import { type ResolvedCliSpec, withCli } from '@agent-workflows/capabilities'
 import { ORPCError, os } from '@orpc/server'
 import type { z } from 'zod'
@@ -17,6 +17,8 @@ import {
   ReviewOutputV4,
   RouteInput,
   RouteOutput,
+  StatsInput,
+  StatsOutput,
   StatusInput,
   StatusOutput,
   SubmitInput,
@@ -45,7 +47,7 @@ const answer =
     }
   }
 
-type Name = 'prepare' | 'cancel' | 'submit' | 'dispose' | 'status' | 'route' | 'covered'
+type Name = 'prepare' | 'cancel' | 'submit' | 'dispose' | 'status' | 'route' | 'covered' | 'stats'
 const OPERATION_IDS = {
   prepare: 'reviewPrepare',
   cancel: 'reviewCancel',
@@ -54,6 +56,7 @@ const OPERATION_IDS = {
   status: 'reviewStatus',
   route: 'reviewRoute',
   covered: 'reviewCovered',
+  stats: 'reviewStats',
 } as const satisfies Record<Name, string>
 
 export function reviewOperations(service: ReviewService): Record<(typeof OPERATION_IDS)[Name], HostOperation> {
@@ -162,6 +165,17 @@ export function reviewOperations(service: ReviewService): Record<(typeof OPERATI
         output: CoveredOutput,
       },
       (input) => service.covered(input),
+    ),
+    reviewStats: op(
+      'stats',
+      {
+        summary: 'Quality numbers of the review ledger: jobs, wall time, findings, dispositions, precision, anchoring',
+        description:
+          'Read-only and deterministic (no LLM). Grouped by tier (default), normalized routing rule, reviewer prompt fingerprint or repo; --since and --repo narrow it. Probe repos (agw-verify, agw-eval-recall) are left out.',
+        input: StatsInput,
+        output: StatsOutput,
+      },
+      (input) => service.stats(input),
     ),
   }
 }

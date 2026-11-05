@@ -6,7 +6,7 @@ the ledger. **No LLM call anywhere in this module.** Design: `docs/spikes/review
 `src/process.ts`, the clone helpers (`cloneForRef`, `removeEscapingSymlinks`, `sweepStaleClones`) in `clone.ts` and the
 scope checks in `scope.ts`.
 
-Public surface: `createReviewService(ports)` → `prepare | submit | dispose | status | route | covered`, and
+Public surface: `createReviewService(ports)` → `prepare | submit | dispose | status | route | covered | stats`, and
 `reviewOperations(service)` → the host operations (`boot.ts` merges them into `reads`). Ports: `pool` (its own, max 2),
 `schema`, `stateDir`, `git` (`route.ts` `gitRunner`), `quota?` (the fleet's quota reader in the host), `now?`, `env?`.
 A `ReviewError` (unknown job, abandoned, files mismatch, bad state, bad cwd or ref) answers 400 with its message, so the
@@ -23,6 +23,7 @@ CLI exits non-zero naming it.
 | `agw review status [<jobId>] [--cwd]` | A job (a running review is `prepared`) with its `thread` id and `threadKey` (absent on jobs older than the key) and its thread's findings, or the 10 newest jobs of the repo at `--cwd` |
 | `agw review route --cwd --base --head [--min]` | `routeRange` alone; no ledger (HTTP `/review/route`) |
 | `agw review covered --cwd --range <a>..<b>` | Coverage of each first-parent commit; exit 0 either way, read `covered` |
+| `agw review stats [--since <iso>] [--repo <id>] [--by tier\|rule\|prompt\|repo]` | The ledger's quality numbers (below); read-only, JSON, no `--cwd` (HTTP `/review/stats`) |
 
 `prepare`, `cancel`, `submit` and `dispose` change state, so the CLI asks for `--commit` (non-TTY callers must pass it).
 
@@ -49,12 +50,81 @@ findings of the repo on the touched paths, newest first, with `sameThread` and t
 (from base, or a note that there is none), `tree/` (a `clone --shared --no-checkout`, detached at head, escaping
 symlinks removed). The tree goes on submit; each prepare sweeps trees older than 24 h and job dirs older than 14 days.
 
-## The ledger (migrations 0017, 0018)
+## The ledger (migrations 0017, 0018, 0019)
 
 `review_jobs`: one row per prepared job (`prepared → submitted | abandoned`), the route decision with its facts, the
 REVIEW.md config read at the thread base (`prepare` routes every round on that config, so a REVIEW.md the change
-edits cannot decide a later round's tier), the stat paths, the output, the `transport` (`in-session`; older rows may say `hidden`, migration 0018; `status` shows it, and a submitted job's REVIEW_OUTPUT as `output`). `review_findings`: stable ids `<thread>-<n>`, `job_id` (first reported),
+edits cannot decide a later round's tier), the stat paths, the output, the `transport` (`in-session`; older rows may say `hidden`, migration 0018; `status` shows it, and a submitted job's REVIEW_OUTPUT as `output`). Migration 0019 adds `reviewer_prompt` and `verifier_prompt` to the jobs and `line_valid` and `anchored` to the findings (all nullable; below). `review_findings`: stable ids `<thread>-<n>`, `job_id` (first reported),
 `last_job_id` (latest round that reported it), the disposition.
+
+## Routing
+
+`routeRange` runs the rules of `route.ts` on `numstat` (first match wins): no content change or every file in REVIEW.md
+`none` → none; a `sensitive` path → deep; docs only → none, agent instructions → light; tests only → light; > 800
+non-test code lines or > 3 packages → deep; a manifest → standard; ≤ 40 code lines in ≤ 3 files → light; else standard.
+`--min` raises afterwards (`decidedBy: caller`).
+
+**Fix round.** A round 2+ whose thread already holds a submitted deep round does not go deep again for a sensitive path
+alone: `prepare` passes `threadDeep` and `decide` re-evaluates the other rules with the sensitive hits ignored. Deep by
+size or packages stays deep (that rule's text); anything else is `standard` (the floor for a sensitive hit, never
+light or none) with the rule `sensitive path: <p>[ (+n)] (fix round, thread already deep)`. A thread whose earlier rounds
+were not deep still goes deep on a new sensitive path. `covered` calls `routeRange` without `threadDeep`, so the tier a
+commit requires is unchanged, and a standard round 2 after a deep round 1 still covers it (the cover tier is the
+thread's max up to the job's round). The deep cap counts deep jobs, so the standard round is not counted.
+
+## Prompt fingerprint
+
+`prepare` stores `reviewer_prompt` and `verifier_prompt`: the first 12 hex characters of the sha256 of `reviewer.md` and
+`review-verifier.md` in `AGW_REVIEWER_AGENT_DIR` (default `<HOME>/.claude/agents`, HOME from the process env), null when
+a file is unreadable. `status <jobId>` shows both; `stats --by prompt` groups on the reviewer's. The files are only read.
+
+## Anchoring
+
+`submit` computes, for each kept finding with a line, before the ledger transaction: `lineValid` (the file exists in the
+job worktree, resolved inside it, and the line ≤ its line count) and `anchored` (the file is in `diff.patch` and the
+line is within 3 lines of a changed line on the new side: an added line at its own number, a deletion at the new-side
+line that follows it; renames follow `+++ b/<path>`, deleted files have no new side). A finding without a line has both
+null; an unreadable worktree makes `lineValid` null and an unreadable `diff.patch` makes `anchored` null (unknown); a
+missing file, a path leaving the worktree or a file the diff does not touch is `false`. They are data: a finding is never
+dropped or refused for them. They appear in REVIEW_OUTPUT (when not null) and on `review_findings`.
+
+## Acceptance criteria
+
+The reply may carry `criteria: [{item, status: met|not-met|unclear, evidence}]`. A non-empty list is copied into
+REVIEW_OUTPUT as `criteria`; a `not-met` item without an important finding is stored, not an error, and `outcome` stays
+code's (`clean` without important findings).
+
+## Stats
+
+`agw review stats` aggregates the ledger in code (no LLM). `--since` (ISO datetime; a malformed one is refused) and
+`--repo` (exact repo id) filter jobs by creation; jobs of repos whose id contains `/.agw-verify` or `/.agw-eval-recall`
+are left out. Output `{since, by, groups: [{key, ...metrics}], total}`, groups sorted by key (`--by tier`: none, light,
+standard, deep).
+
+| `--by` | Key |
+|-|-|
+| `tier` | the job's tier |
+| `repo` | the job's repo id |
+| `prompt` | the reviewer prompt fingerprint, `unknown` when null |
+| `rule` | the normalized rule (below) |
+
+| Rule text | Key |
+|-|-|
+| `sensitive path: x`, `… (+n)` | `sensitive path` |
+| `sensitive path: x … (fix round, thread already deep)` | `sensitive path (fix round)` |
+| `N changed non-test code lines > 800` | `size` |
+| `N packages > 3: a cross-package change` | `cross-package` |
+| `small: …` | `small` |
+| `<rule> (raised by caller from X)` | `<normalized rule> (raised by caller)` |
+| anything else | the text before the first `:` |
+
+Metrics per group: `jobs` (submitted), `abandoned`, `prepared` (in flight); `wallS` `p50` (nearest rank) and `max` over
+submitted jobs (`submitted_at − created_at`, null when none); `round1` `jobs`, `clean` (`output.outcome = clean`) and
+`cleanRate` (null without round-1 jobs); `findings` by tag (`important`, `nit`, `preExisting`) and `dispositions` per
+tag for `important` and `nit` (`open`, `fixed`, `wrong`, `intentional`, `irrelevant`), both attributed to the job that
+first reported the finding; `precision` for `important` and `nit` = fixed / (fixed + wrong + irrelevant), null when
+that is 0; `anchoredShare` and `lineValidShare` over findings whose value is not null (null when none); `deepRound2`
+`count` and `share` of the group's submitted jobs (tier deep, round ≥ 2).
 
 ## Convergence
 

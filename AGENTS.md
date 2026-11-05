@@ -60,7 +60,7 @@ Shape and roles: the `/wave` skill, fleet mode (`~/.claude/skills/wave/roles/{mo
    Postgres, spans in ClickStack, usage rows in the `usage` schema, the CLI end to end.
 
 Review v4 (Max only, no API review spend, no LLM in agw) is the only review: host operations `agw review
-prepare|submit|dispose|status|route|covered|cancel` over a Postgres ledger (`packages/host/src/review/README.md`),
+prepare|submit|dispose|status|route|covered|cancel|stats` over a Postgres ledger (`packages/host/src/review/README.md`),
 routed by `REVIEW.md`'s globs. `/review` (the dotfiles skill) runs `prepare` → the reviewer agent
 (`docs/spikes/review-v4/reviewer.md`) on the printed seat → `submit` → `dispose` for every finding, rounds converging by
 disposition. `covered` proves a commit range was reviewed; the wave gate and the factory's evidence read it. `eval.recall` was removed with the hidden transport; leaders review in-session with `/review`. Review v1 (the

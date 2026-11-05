@@ -1,4 +1,4 @@
-// Review v4, agw's side: prepare | submit | dispose | status | route | covered over the review ledger. No LLM call
+// Review v4, agw's side: prepare | submit | dispose | status | route | covered | stats over the review ledger. No LLM call
 // anywhere here; the reviewer agent runs in the caller's session. README.md.
 import { createExec } from '../process.ts'
 import type { ReviewContext, QuotaReading } from './context.ts'
@@ -8,6 +8,7 @@ import { prepare, removeWorktree } from './prepare.ts'
 import { repoIdentity, resolveRoot } from './repo.ts'
 import { type GitRunner, routeRange } from './route.ts'
 import { type FindingRecordValue, ReviewError, type ReviewOutputV4Value } from './schema.ts'
+import { computeStats } from './stats.ts'
 import { submit } from './submit.ts'
 import type { z } from 'zod'
 import type {
@@ -20,6 +21,8 @@ import type {
   RouteInput,
   RouteOutput,
   StatusInput,
+  StatsInput,
+  StatsOutput,
   StatusOutput,
 } from './schema.ts'
 
@@ -48,6 +51,7 @@ export interface ReviewService {
   status(input: z.output<typeof StatusInput>): Promise<z.output<typeof StatusOutput>>
   route(input: z.output<typeof RouteInput>): Promise<z.output<typeof RouteOutput>>
   covered(input: { cwd: string; range: string }): Promise<z.output<typeof CoveredOutput>>
+  stats(input: z.input<typeof StatsInput>): Promise<z.output<typeof StatsOutput>>
 }
 
 const RECENT_JOBS = 10
@@ -116,6 +120,8 @@ export function createReviewService(ports: ReviewServicePorts): ReviewService {
             seat: job.seat,
             account: job.account,
             transport: job.transport,
+            reviewerPrompt: job.reviewerPrompt,
+            verifierPrompt: job.verifierPrompt,
             createdAt: job.createdAt.toISOString(),
             submittedAt: job.submittedAt?.toISOString() ?? null,
             jobDir: job.jobDir,
@@ -144,6 +150,15 @@ export function createReviewService(ports: ReviewServicePorts): ReviewService {
           ageS: Math.max(0, Math.round((at - j.createdAt.getTime()) / 1000)),
         })),
       }
+    },
+
+    async stats(input) {
+      const since = input.since === undefined ? null : new Date(input.since)
+      if (since !== null && Number.isNaN(since.getTime())) {
+        throw new ReviewError(`since must be an ISO datetime, got "${input.since}"`)
+      }
+      const rows = await ledger.statsRows({ since, repo: input.repo ?? null })
+      return computeStats({ ...rows, by: input.by ?? 'tier', since: since?.toISOString() ?? null })
     },
 
     async route(input) {
