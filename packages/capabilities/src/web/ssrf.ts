@@ -1,4 +1,5 @@
 import { fail } from '../errors.ts'
+import type { RequestPolicy } from './browser.ts'
 import { type Pin, type ResolvedWebDeps, refused } from './deps.ts'
 
 // The guard behind web.fetch (behaviour of research-gateway's lib/ssrf.ts, rewritten): scheme, hostname literals,
@@ -108,6 +109,18 @@ export function isPrivateAddress(address: string): boolean {
   const unscoped = address.split('%', 1)[0]!
   const v4 = parseIpv4(unscoped)
   return v4 ? isPrivateIpv4(v4) : isPrivateIpv6(unscoped)
+}
+
+/** The policy every request of an environment-configured browser is vetted with: public destinations only. */
+export function publicOnlyPolicy(deps: ResolvedWebDeps, capability: string): RequestPolicy {
+  return {
+    allowUrl: (target) =>
+      assertPublicUrl(deps, capability, target).then(
+        () => true,
+        () => false,
+      ),
+    allowAddress: (address) => !isPrivateAddress(address),
+  }
 }
 
 /**

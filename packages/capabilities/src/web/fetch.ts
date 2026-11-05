@@ -8,7 +8,7 @@ import { BrowserFailure, BrowserRefused } from './browser.ts'
 import { askOnce } from './handoff.ts'
 import { type Pin, type ResolvedWebDeps, requireKey, webUsage, within } from './deps.ts'
 import { TAVILY_USD_PER_CREDIT } from './search.ts'
-import { assertPublicUrl, HostUnresolved, isPrivateAddress } from './ssrf.ts'
+import { assertPublicUrl, HostUnresolved, publicOnlyPolicy } from './ssrf.ts'
 import { cut, parseHtml } from './text.ts'
 
 const MAX_CHARS_CEILING = 200_000
@@ -484,14 +484,7 @@ export const createFetch = (deps: ResolvedWebDeps) => {
 
       // A page that turned the plain client away, or is only a script shell, gets a real browser's turn when one is
       // configured: free, and it passes what a bot wall lets a person through. A PDF is not a page a browser reads as text.
-      const browser = deps.browser({
-        allowUrl: (target) =>
-          assertPublicUrl(deps, 'web.fetch', target).then(
-            () => true,
-            () => false,
-          ),
-        allowAddress: (address) => !isPrivateAddress(address),
-      })
+      const browser = deps.browser(publicOnlyPolicy(deps, 'web.fetch'))
       if (browser && (sparse || (blocked && blocked !== 'unsupported-type'))) {
         try {
           const page = await browser(url, ctx.signal)

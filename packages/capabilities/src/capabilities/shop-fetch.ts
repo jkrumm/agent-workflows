@@ -2,7 +2,7 @@ import { fail } from '../errors.ts'
 import { BrowserFailure, BrowserRefused } from '../web/browser.ts'
 import { type ResolvedWebDeps, webUsage, within } from '../web/deps.ts'
 import { askOnce } from '../web/handoff.ts'
-import { assertPublicUrl, isPrivateAddress } from '../web/ssrf.ts'
+import { assertPublicUrl, publicOnlyPolicy } from '../web/ssrf.ts'
 import { AMAZON_ORIGIN, type BlockKind, detectBlock } from './shop-parse.ts'
 
 // The one place the shop doors touch the network. Conduct, in code (docs/shop.md §Conduct): one request at a time, a
@@ -87,14 +87,7 @@ export function createShopFetch(web: ResolvedWebDeps, pace: ShopPace = {}) {
   const now = pace.now ?? Date.now
   const cooldownMs = pace.cooldownMs ?? BLOCK_COOLDOWN_MS
   const cache = new Map<string, Entry>()
-  const policy = {
-    allowUrl: (target: string) =>
-      assertPublicUrl(web, 'shop.fetch', target).then(
-        () => true,
-        () => false,
-      ),
-    allowAddress: (address: string) => !isPrivateAddress(address),
-  }
+  const policy = publicOnlyPolicy(web, 'shop.fetch')
   let tail: Promise<unknown> = Promise.resolve()
   let lastEnd = 0
   let blockedUntil = 0
