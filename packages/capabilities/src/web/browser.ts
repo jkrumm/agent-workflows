@@ -4,10 +4,17 @@ export interface BrowserPage {
   title: string
   text: string
   challenge: boolean
+  /** The document's `outerHTML` after the same settle, only when the read asked for it (`options.html`). */
+  html?: string
 }
 
 /** Reads a public URL in a real, headed browser: the fallback for pages that turn a plain HTTP client away. */
-export type BrowserRead = (url: string, signal: AbortSignal) => Promise<BrowserPage>
+export type BrowserRead = (url: string, signal: AbortSignal, options?: BrowserReadOptions) => Promise<BrowserPage>
+
+export interface BrowserReadOptions {
+  /** Also hand back the page's raw HTML (`BrowserPage.html`): for a caller that parses markup, not text. */
+  html?: boolean
+}
 
 /**
  * The SSRF policy the browser's traffic answers to. `allowUrl` is asked before every request the page makes (the name is
@@ -35,6 +42,7 @@ const POLL_MS = 1_000
 /** Text shorter than this after the page loaded may still be hydrating: it gets a few more polls. */
 const HYDRATED_CHARS = 200
 const MAX_TEXT_CHARS = 2_000_000
+const MAX_HTML_CHARS = 6_000_000
 /** Tabs open at once, across all runs of this process. */
 const MAX_TABS = 3
 
@@ -195,8 +203,10 @@ class Session {
   }
 }
 
-const SNAPSHOT =
-  'JSON.stringify({url: location.href, title: document.title, text: document.body ? document.body.innerText : ""})'
+const snapshotExpression = (html: boolean) =>
+  `JSON.stringify({url: location.href, title: document.title, text: document.body ? document.body.innerText : ""${
+    html ? ', html: document.documentElement.outerHTML' : ''
+  }})`
 
 type Paused = { requestId: string; frameId?: string; resourceType?: string; request: { url: string } }
 type Received = { type?: string; frameId?: string; response: { status: number; remoteIPAddress?: string } }
@@ -217,6 +227,7 @@ export async function readViaCdp(
   signal: AbortSignal,
   policy: RequestPolicy,
   timing: { settleMs?: number; pollMs?: number } = {},
+  options: BrowserReadOptions = {},
 ): Promise<BrowserPage> {
   return withTab(signal, async () => {
     let tab: { id: string; webSocketDebuggerUrl: string }
@@ -305,13 +316,19 @@ export async function readViaCdp(
         if (refusedDocument) throw new BrowserRefused('the page leads to a non-public address')
         try {
           const evaluated = await session.send<{ result: { value?: string } }>('Runtime.evaluate', {
-            expression: SNAPSHOT,
+            expression: snapshotExpression(options.html === true),
             returnByValue: true,
           })
-          const snap = JSON.parse(evaluated.result.value ?? '{}') as { url?: string; title?: string; text?: string }
+          const snap = JSON.parse(evaluated.result.value ?? '{}') as {
+            url?: string
+            title?: string
+            text?: string
+            html?: string
+          }
           const text = (snap.text ?? '').trim().slice(0, MAX_TEXT_CHARS)
           const title = snap.title ?? ''
           last = { finalUrl: snap.url ?? url, title, text, challenge: isChallenge(title, text) }
+          if (options.html) last.html = (snap.html ?? '').slice(0, MAX_HTML_CHARS)
         } catch (error) {
           // A navigation in flight destroys the page context for a moment; the next poll sees the new page.
           if (signal.aborted) throw error
@@ -344,5 +361,5 @@ export function browserFromEnv(endpoint: string | undefined, policy: RequestPoli
   }
   const loopback = ['127.0.0.1', 'localhost', '[::1]'].includes(base.hostname)
   if (!loopback || base.protocol !== 'http:') return undefined
-  return (url, signal) => readViaCdp(base.origin, url, signal, policy)
+  return (url, signal, options) => readViaCdp(base.origin, url, signal, policy, {}, options)
 }

@@ -1,12 +1,16 @@
 import { fail } from '../errors.ts'
+import { BrowserFailure, BrowserRefused } from '../web/browser.ts'
 import { type ResolvedWebDeps, webUsage, within } from '../web/deps.ts'
-import { assertPublicUrl } from '../web/ssrf.ts'
+import { askOnce } from '../web/handoff.ts'
+import { assertPublicUrl, isPrivateAddress } from '../web/ssrf.ts'
 import { AMAZON_ORIGIN, type BlockKind, detectBlock } from './shop-parse.ts'
 
 // The one place the shop doors touch the network. Conduct, in code (docs/shop.md §Conduct): one request at a time, a
 // jittered pause of 2-5 s between two page fetches, a search kept 1 h and an item page 24 h, a 429, captcha or sign-in
-// wall ends the call with `blocked (<reason>)`: no retry, no second identity, no proxy, no login, no solving. After a
-// wall the process refuses further page fetches for a cooldown, so a loop of calls cannot lean on it.
+// wall ends the call with `blocked (<reason>)`: no retry, no second identity, no proxy, no login, no solving. A robot
+// check alone gets one read in the headed research Chrome, and when that meets the check too the owner is asked once
+// (the agent never solves it). After a wall the process refuses further page fetches for a cooldown, so a loop of calls
+// cannot lean on it.
 
 export const SEARCH_TTL_MS = 3_600_000
 export const ITEM_TTL_MS = 24 * 3_600_000
@@ -83,6 +87,14 @@ export function createShopFetch(web: ResolvedWebDeps, pace: ShopPace = {}) {
   const now = pace.now ?? Date.now
   const cooldownMs = pace.cooldownMs ?? BLOCK_COOLDOWN_MS
   const cache = new Map<string, Entry>()
+  const policy = {
+    allowUrl: (target: string) =>
+      assertPublicUrl(web, 'shop.fetch', target).then(
+        () => true,
+        () => false,
+      ),
+    allowAddress: (address: string) => !isPrivateAddress(address),
+  }
   let tail: Promise<unknown> = Promise.resolve()
   let lastEnd = 0
   let blockedUntil = 0
@@ -133,6 +145,49 @@ export function createShopFetch(web: ResolvedWebDeps, pace: ShopPace = {}) {
       const html = await readBody(res, signal)
       return { status: res.status, html, finalUrl: current }
     }
+  }
+
+  /**
+   * The robot-checked page read once in the research Chrome: its HTML, or `undefined` when no browser is configured.
+   * A challenge the browser meets too asks the owner (once per host and half hour) and ends the call; the agent solves
+   * nothing. A browser that fails or is refused leaves the original wall standing.
+   */
+  async function readInBrowser(
+    key: string,
+    label: string,
+    ctx: { signal: AbortSignal; addUsage: (usage: ReturnType<typeof webUsage>) => void },
+  ): Promise<string | undefined> {
+    const browser = web.browser(policy)
+    if (!browser) return undefined
+    let page: Awaited<ReturnType<typeof browser>>
+    try {
+      page = await browser(key, ctx.signal, { html: true })
+    } catch (error) {
+      if (ctx.signal.aborted) throw fail('CANCELLED', 'cancelled')
+      if (!(error instanceof BrowserFailure || error instanceof BrowserRefused)) throw error
+      web.warn(`shop.fetch: the browser read failed: ${error.message}`)
+      throw blocked('bot-protection', `robot check on ${label}; the research Chrome could not read it either`)
+    } finally {
+      lastEnd = now()
+    }
+    ctx.addUsage(webUsage('shop-browser', 0))
+    const html = page.html ?? ''
+    let finalUrl: string
+    try {
+      finalUrl = assertShopUrl(page.finalUrl).toString()
+    } catch {
+      throw blocked('bot-protection', `robot check on ${label}; the research Chrome ended off amazon.de`)
+    }
+    const wall = detectBlock({ status: 200, html, finalUrl })
+    if (wall === 'login-required') throw blocked(wall, 'the shop asks for a sign-in')
+    if (page.challenge || wall) {
+      const asked = await askOnce(web.handoff, new URL(key).hostname, now())
+      throw blocked(
+        'bot-protection',
+        `robot check on ${label} in the research Chrome too (needs-human); ${asked ? 'the owner was asked to solve it' : 'the owner was not asked again (asked recently or no handoff)'}`,
+      )
+    }
+    return html
   }
 
   async function readBody(res: Response, signal: AbortSignal): Promise<string> {
@@ -212,7 +267,20 @@ export function createShopFetch(web: ResolvedWebDeps, pace: ShopPace = {}) {
           lastEnd = now()
         }
         ctx.addUsage(webUsage('shop-direct', 0))
-        const wall = detectBlock(response)
+        let wall = detectBlock(response)
+        // Only a robot check goes to the browser: a 429 or a sign-in wall stops as ever.
+        if (wall === 'bot-protection') {
+          try {
+            const html = await readInBrowser(key, args.label, ctx)
+            if (html !== undefined) {
+              response = { status: 200, html, finalUrl: key }
+              wall = null
+            }
+          } catch (error) {
+            if (isBlockedError(error)) blockedUntil = now() + cooldownMs
+            throw error
+          }
+        }
         if (wall) {
           blockedUntil = now() + cooldownMs
           throw blocked(wall, `HTTP ${response.status} on ${args.label}`, response.status)
