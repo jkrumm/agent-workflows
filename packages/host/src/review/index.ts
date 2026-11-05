@@ -1,6 +1,5 @@
 // Review v4, agw's side: prepare | submit | dispose | status | route | covered over the review ledger. No LLM call
-// anywhere here; the reviewer agent runs in the caller's session (or a factory session on the hidden transport). README.md.
-import { commandRunner, fleetConfig, type RunCommand } from '../fleet/factory.ts'
+// anywhere here; the reviewer agent runs in the caller's session. README.md.
 import { createExec } from '../process.ts'
 import type { ReviewContext, QuotaReading } from './context.ts'
 import { covered } from './covered.ts'
@@ -18,8 +17,6 @@ import type {
   DisposeInput,
   PrepareInput,
   PrepareOutput,
-  RequestInput,
-  RequestOutput,
   RouteInput,
   RouteOutput,
   StatusInput,
@@ -41,13 +38,10 @@ export interface ReviewServicePorts {
   now?: () => Date
   /** The process environment: helper allowlist, network vars for pr/branch fetches, `AGW_REVIEW_DEEP_CAP`. */
   env?: Record<string, string | undefined>
-  /** Runs the factory CLI for `request` (tests); default: a bounded child with `FACTORY_TOKEN`/`FACTORY_URL` passed on. */
-  run?: RunCommand
 }
 
 export interface ReviewService {
   prepare(input: z.output<typeof PrepareInput>): Promise<z.output<typeof PrepareOutput>>
-  request(input: z.output<typeof RequestInput>): Promise<z.output<typeof RequestOutput>>
   cancel(input: z.output<typeof CancelInput>): Promise<z.output<typeof CancelOutput>>
   submit(input: { jobId: string; attempt: number; reply: string; account?: string }): Promise<ReviewOutputV4Value>
   dispose(input: z.output<typeof DisposeInput>): Promise<FindingRecordValue>
@@ -57,51 +51,9 @@ export interface ReviewService {
 }
 
 const RECENT_JOBS = 10
-const SPAWN_TIMEOUT_MS = 60_000
-/** The factory CLI's exit codes: 4 not_found, 5 conflict (`spawn cancel` on a claimed or started spawn). */
-const FACTORY_NOT_FOUND = 4
-const FACTORY_CONFLICT = 5
-/** A spawn in one of these states will never run again. */
-const TERMINAL_SPAWN = new Set(['ended', 'failed', 'cancelled'])
 
 const threadKeyOf = (job: { scope: Record<string, unknown> }) =>
   typeof job.scope.threadKey === 'string' ? { threadKey: job.scope.threadKey } : {}
-
-/**
- * The spawn row of the factory CLI's conflict error, one JSON line on stderr:
- * `{"error":{"code":"not_cancellable","details":{"status":409,"spawn":{"status":…}}}}`. Null when no line carries one.
- */
-function conflictSpawn(stderr: string): { spawn: unknown; status: string } | null {
-  for (const line of stderr.split('\n')) {
-    try {
-      const spawn = (JSON.parse(line) as { error?: { details?: { spawn?: { status?: unknown } } } }).error?.details
-        ?.spawn
-      if (typeof spawn?.status === 'string') return { spawn, status: spawn.status }
-    } catch {
-      // not the error line
-    }
-  }
-  return null
-}
-
-/** The factory's answer to `spawn create`: its JSON, else the first line it printed. */
-const parseSpawn = (stdout: string): unknown => {
-  try {
-    return JSON.parse(stdout)
-  } catch {
-    return stdout.trim().split('\n')[0] ?? ''
-  }
-}
-
-/** `FACTORY_TOKEN`/`FACTORY_URL` pass through to the factory CLI. */
-const factoryEnv = (env: Record<string, string | undefined>): Record<string, string> => {
-  const extraEnv: Record<string, string> = {}
-  for (const name of ['FACTORY_TOKEN', 'FACTORY_URL']) {
-    const value = env[name]
-    if (value) extraEnv[name] = value
-  }
-  return extraEnv
-}
 
 export function createReviewService(ports: ReviewServicePorts): ReviewService {
   const env = ports.env ?? process.env
@@ -122,133 +74,17 @@ export function createReviewService(ports: ReviewServicePorts): ReviewService {
     await ledger.abandon(job.id)
     if (job.jobDir && job.worktree) removeWorktree(ctx, job.jobDir, job.worktree)
   }
-  const run = ports.run ?? commandRunner(env)
-
-  /**
-   * One read-only look at a hidden job's factory spawns (`spawn get`, a1 and the retry a2). `gaveUp`: a2 exists and is
-   * terminal while the job is unsubmitted; a terminal a1 alone is not, the factory may still create a2. A factory that
-   * cannot be asked leaves the attempts out (undefined), never fails the status.
-   */
-  async function probeSpawns(
-    jobId: string,
-  ): Promise<{ attempts: { key: string; status: string }[]; gaveUp: boolean } | undefined> {
-    const attempts: { key: string; status: string }[] = []
-    for (const attempt of [1, 2]) {
-      const key = `review-${jobId}-a${attempt}`
-      const result = await run([fleetConfig(env).factoryBin, 'spawn', 'get', key, '--format', 'json'], {
-        timeoutMs: SPAWN_TIMEOUT_MS,
-        extraEnv: factoryEnv(env),
-      })
-      if (result.exitCode === FACTORY_NOT_FOUND) continue
-      if (result.exitCode !== 0) return undefined
-      const status = parseSpawn(result.stdout) as { status?: unknown } | string
-      attempts.push({
-        key,
-        status: typeof status === 'object' && typeof status.status === 'string' ? status.status : 'unknown',
-      })
-    }
-    const second = attempts.find((a) => a.key.endsWith('-a2'))
-    return { attempts, gaveUp: second !== undefined && TERMINAL_SPAWN.has(second.status) }
-  }
 
   return {
     prepare: (input) => prepare(ctx, input),
-
-    async request(input) {
-      const prepared = await prepare(ctx, input, 'hidden')
-      if (prepared.status !== 'ready') return { ...prepared, status: prepared.status as 'skipped' | 'needs-human' }
-      const { jobId, tier, seat, jobDir, worktree } = prepared
-      if (!jobId || !tier || !jobDir || !worktree) throw new Error('prepare answered ready without a job')
-      const job = await ledger.job(jobId)
-      if (!job) throw new Error(`job ${jobId} vanished after prepare`)
-      const spawnKey = `review-${jobId}-a1`
-      const result = await run(
-        [
-          fleetConfig(env).factoryBin,
-          'spawn',
-          'create',
-          spawnKey,
-          '--repo',
-          job.root,
-          '--role',
-          'reviewer',
-          '--placement',
-          'hidden',
-          '--review-job',
-          jobId,
-          '--review-tier',
-          tier,
-          ...(seat ? ['--effort', seat.effort] : []),
-          '--prompt',
-          prepared.prompt ?? '',
-          '--format',
-          'json',
-        ],
-        { timeoutMs: SPAWN_TIMEOUT_MS, extraEnv: factoryEnv(env) },
-      )
-      if (result.exitCode !== 0) {
-        await ledger.abandon(jobId)
-        removeWorktree(ctx, jobDir, worktree)
-        const why = result.timedOut
-          ? `timed out after ${SPAWN_TIMEOUT_MS / 1000} s`
-          : (result.stderr.trim() || result.stdout.trim() || result.error || `exit ${result.exitCode}`).split('\n')[0]
-        throw new ReviewError(`the factory could not start the review session ${spawnKey}: ${why}`)
-      }
-      return {
-        status: 'requested',
-        jobId,
-        thread: prepared.thread,
-        round: prepared.round,
-        base: prepared.base,
-        head: prepared.head,
-        account: null,
-        tier,
-        seat,
-        ceiling: 'factory',
-        spawnKey,
-        spawn: parseSpawn(result.stdout),
-      }
-    },
 
     async cancel(input) {
       const job = await ledger.job(input.jobId)
       if (!job) throw new ReviewError(`unknown job ${input.jobId}`)
       if (job.state !== 'prepared')
         throw new ReviewError(`job ${job.id} is ${job.state}, only a prepared job can be cancelled`)
-      if (job.transport === 'in-session') {
-        await abandonJob(job)
-        return { status: 'cancelled', jobId: job.id, spawns: [] }
-      }
-      const spawns: unknown[] = []
-      let failedSpawn: unknown
-      // a1 is the first spawn, a2 the factory's retry; a key that never existed answers not_found (exit 4)
-      for (const attempt of [1, 2]) {
-        const spawnKey = `review-${job.id}-a${attempt}`
-        const result = await run([fleetConfig(env).factoryBin, 'spawn', 'cancel', spawnKey, '--format', 'json'], {
-          timeoutMs: SPAWN_TIMEOUT_MS,
-          extraEnv: factoryEnv(env),
-        })
-        const spawn = parseSpawn(result.stdout)
-        if (result.exitCode === 0) spawns.push(spawn)
-        else if (result.exitCode === FACTORY_CONFLICT) {
-          // the 409 carries the spawn row; a terminal one cannot run any more (a1 hands over to a2), anything else,
-          // an unreadable answer included, is kept as running
-          const conflict = conflictSpawn(result.stderr)
-          if (!conflict || !TERMINAL_SPAWN.has(conflict.status)) {
-            return { status: 'running', jobId: job.id, spawn: conflict?.spawn ?? spawn }
-          }
-          failedSpawn = conflict.spawn
-        } else if (result.exitCode !== FACTORY_NOT_FOUND) {
-          const why = result.timedOut
-            ? `timed out after ${SPAWN_TIMEOUT_MS / 1000} s`
-            : (result.stderr.trim() || result.stdout.trim() || result.error || `exit ${result.exitCode}`).split('\n')[0]
-          throw new ReviewError(`the factory could not cancel ${spawnKey}: ${why}`)
-        }
-      }
       await abandonJob(job)
-      if (spawns.length === 0 && failedSpawn !== undefined)
-        return { status: 'failed', jobId: job.id, spawn: failedSpawn }
-      return { status: 'cancelled', jobId: job.id, spawns }
+      return { status: 'cancelled', jobId: job.id }
     },
     submit: (input) => submit(ctx, input),
     covered: (input) => covered(ctx, input),
@@ -268,9 +104,6 @@ export function createReviewService(ports: ReviewServicePorts): ReviewService {
         const job = await ledger.job(input.jobId)
         if (!job) throw new ReviewError(`unknown job ${input.jobId}`)
         const findings = await ledger.threadFindings(job.repo, job.thread)
-        let hidden = job.state === 'prepared' && job.transport === 'hidden' ? await probeSpawns(job.id) : undefined
-        // The probe takes a while: a job submitted or abandoned meanwhile must not report a stale `gaveUp`.
-        if (hidden && (await ledger.job(job.id))?.state !== 'prepared') hidden = undefined
         return {
           job: {
             id: job.id,
@@ -289,7 +122,6 @@ export function createReviewService(ports: ReviewServicePorts): ReviewService {
             worktree: job.worktree,
             outcome: job.output?.outcome ?? null,
             output: job.output,
-            ...(hidden ? { hidden } : {}),
           },
           findings: findings.map(findingRecord),
         }

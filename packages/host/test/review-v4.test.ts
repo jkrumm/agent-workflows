@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { chmodSync, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Pool } from 'pg'
@@ -533,298 +533,30 @@ describe('covered', () => {
   })
 })
 
-describe('hidden transport', () => {
-  /** A fake factory: records its argv and answers a spawn status (or fails when FAKE_FACTORY_FAIL is set). */
-  const fakeFactory = (fail = false) => {
-    const dir = realpathSync(mkdtempSync(join(tmpdir(), 'agw-rv4-factory-')))
-    repos.push(dir)
-    const bin = join(dir, 'factory')
-    const argv = join(dir, 'argv.json')
-    writeFileSync(
-      bin,
-      `#!/bin/sh\nprintf '%s\\n' "$@" > '${argv}'\n${
-        fail ? "echo 'repo outside FACTORY_REPO_ROOTS' >&2\nexit 2" : `echo '{"status":"queued","hold":"ceiling"}'`
-      }\n`,
-    )
-    chmodSync(bin, 0o755)
-    return {
-      env: { AGW_FACTORY_BIN: bin },
-      argv: () => (existsSync(argv) ? readFileSync(argv, 'utf8').trim().split('\n') : null),
-    }
-  }
-
+describe('cancel, thread keys and the submit account', () => {
   const small = () => {
     const root = repo({ 'src/a.ts': lines(2) })
     commit(root, { 'src/a.ts': lines(3) })
     return root
   }
 
-  test('request spawns the factory session with exactly the contract args and records the transport', async () => {
-    const factory = fakeFactory()
-    const root = small()
-    const out = await service({ env: factory.env }).request({ cwd: root, scope: 'head', context: 'why' })
-    expect(out).toMatchObject({
-      status: 'requested',
-      tier: 'light',
-      round: 1,
-      account: null,
-      ceiling: 'factory',
-      spawn: { status: 'queued', hold: 'ceiling' },
-    })
-    const jobId = out.jobId as string
-    expect(out.spawnKey).toBe(`review-${jobId}-a1`)
-    const row = await jobRow(jobId)
-    expect(row).toMatchObject({ state: 'prepared', transport: 'hidden', account: null })
-    expect(factory.argv()).toEqual([
-      'spawn',
-      'create',
-      `review-${jobId}-a1`,
-      '--repo',
-      root,
-      '--role',
-      'reviewer',
-      '--placement',
-      'hidden',
-      '--review-job',
-      jobId,
-      '--review-tier',
-      'light',
-      '--effort',
-      out.seat?.effort as string,
-      '--prompt',
-      `job=${row.job_dir} worktree=${row.worktree} tier=light round=1`,
-      '--format',
-      'json',
-    ])
-    expect((await service().status({ jobId })).job?.transport).toBe('hidden')
-  })
-
-  test('a deep request is not held by the deep cap or the ceiling: the factory judges both', async () => {
-    const factory = fakeFactory()
-    const root = repo({ 'core/a.ts': lines(2), 'REVIEW.md': REVIEW_MD })
-    commit(root, { 'core/a.ts': lines(3) })
-    const s = service({ env: { ...factory.env, AGW_REVIEW_DEEP_CAP: '1' } })
-    const first = await s.request({ cwd: root, scope: 'head', thread: 'cap-a' })
-    expect(first).toMatchObject({ status: 'requested', tier: 'deep', ceiling: 'factory' })
-    expect(await s.request({ cwd: root, scope: 'head', thread: 'cap-b' })).toMatchObject({ status: 'requested' })
-  })
-
-  test('a failing factory abandons the job and the error names its message', async () => {
-    const factory = fakeFactory(true)
-    const root = small()
-    await rejects(
-      service({ env: factory.env }).request({ cwd: root, scope: 'head' }),
-      /repo outside FACTORY_REPO_ROOTS/,
-    )
-    const jobs = (await pool.query(`select state, transport from "${db.schema}".review_jobs where root = $1`, [root]))
-      .rows
-    expect(jobs).toEqual([{ state: 'abandoned', transport: 'hidden' }])
-    // the thread is not blocked: the next request starts at round 1
-    const ok = await service({ env: fakeFactory().env }).request({ cwd: root, scope: 'head' })
-    expect(ok).toMatchObject({ status: 'requested', round: 1 })
-  })
-
-  /** A fake factory for `spawn cancel`: logs each key, answers the exit code its `-aN` suffix is given (default 0). */
-  const cancelFactory = (exits: Record<string, number>, failed: string[] = [], state = 'failed') => {
-    const dir = realpathSync(mkdtempSync(join(tmpdir(), 'agw-rv4-cancel-')))
-    repos.push(dir)
-    const bin = join(dir, 'factory')
-    const log = join(dir, 'calls.log')
-    const cases = Object.entries(exits)
-      .map(([suffix, code]) => {
-        const why = failed.includes(suffix)
-          ? `; echo '{"error":{"kind":"conflict","code":"not_cancellable","message":"only a queued or waiting spawn can be cancelled","hint":null,"details":{"status":409,"spawn":{"key":"'$3'","status":"${state}"}}}}' >&2`
-          : ''
-        return `  *-${suffix}) echo '{"state":"x"}'${why}; exit ${code} ;;`
-      })
-      .join('\n')
-    writeFileSync(
-      bin,
-      `#!/bin/sh\necho "$*" >> '${log}'\ncase "$3" in\n${cases}\n  *) echo '{"status":"cancelled"}' ;;\nesac\n`,
-    )
-    chmodSync(bin, 0o755)
-    return {
-      env: { AGW_FACTORY_BIN: bin },
-      calls: () => (existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n') : []),
-    }
-  }
   const jobState = async (jobId: string) =>
     (await pool.query(`select state from "${db.schema}".review_jobs where id = $1`, [jobId])).rows[0]?.state
 
-  test('cancel ends a held hidden job: both spawn keys cancelled (a2 never existed), the job abandoned', async () => {
-    const root = small()
-    const job = await service({ env: fakeFactory().env }).request({ cwd: root, scope: 'head' })
-    const factory = cancelFactory({ a2: 4 })
-    const out = await service({ env: factory.env }).cancel({ jobId: job.jobId! })
-    expect(out).toEqual({ status: 'cancelled', jobId: job.jobId!, spawns: [{ status: 'cancelled' }] })
-    expect(factory.calls()).toEqual([
-      `spawn cancel review-${job.jobId}-a1 --format json`,
-      `spawn cancel review-${job.jobId}-a2 --format json`,
-    ])
-    expect(await jobState(job.jobId!)).toBe('abandoned')
-    expect(existsSync(job.worktree!)).toBe(false)
-  })
-
-  test('cancel on a claimed spawn (factory exit 5) keeps the job and answers running', async () => {
-    const root = small()
-    const job = await service({ env: fakeFactory().env }).request({ cwd: root, scope: 'head' })
-    const out = await service({ env: cancelFactory({ a1: 5 }).env }).cancel({ jobId: job.jobId! })
-    expect(out).toEqual({ status: 'running', jobId: job.jobId!, spawn: { state: 'x' } })
-    expect(await jobState(job.jobId!)).toBe('prepared')
-  })
-
-  test('cancel on a spawn that ended failed abandons the job and answers failed', async () => {
-    const root = small()
-    const job = await service({ env: fakeFactory().env }).request({ cwd: root, scope: 'head' })
-    const factory = cancelFactory({ a1: 5, a2: 4 }, ['a1'])
-    const out = await service({ env: factory.env }).cancel({ jobId: job.jobId! })
-    expect(out).toEqual({
-      status: 'failed',
-      jobId: job.jobId!,
-      spawn: { key: `review-${job.jobId}-a1`, status: 'failed' },
-    })
-    expect(await jobState(job.jobId!)).toBe('abandoned')
-    expect(existsSync(job.worktree!)).toBe(false)
-  })
-
-  test('a 409 whose stderr carries no spawn status is kept as running, never read from the message', async () => {
-    const root = small()
-    const job = await service({ env: fakeFactory().env }).request({ cwd: root, scope: 'head' })
-    const dir = realpathSync(mkdtempSync(join(tmpdir(), 'agw-rv4-cancel-')))
-    repos.push(dir)
-    const bin = join(dir, 'factory')
-    writeFileSync(bin, `#!/bin/sh\necho "spawn $3 is ended: not cancellable" >&2\nexit 5\n`)
-    chmodSync(bin, 0o755)
-    const out = await service({ env: { AGW_FACTORY_BIN: bin } }).cancel({ jobId: job.jobId! })
-    expect(out).toMatchObject({ status: 'running' })
-    expect(await jobState(job.jobId!)).toBe('prepared')
-  })
-
-  test('cancel parses the state of the 409: an ended a2 abandons the job as failed, a running one keeps it', async () => {
-    const root = small()
-    const ended = await service({ env: fakeFactory().env }).request({ cwd: root, scope: 'head', thread: 'ended' })
-    const out = await service({ env: cancelFactory({ a1: 5, a2: 5 }, ['a1', 'a2'], 'ended').env }).cancel({
-      jobId: ended.jobId!,
-    })
-    expect(out).toMatchObject({ status: 'failed', jobId: ended.jobId! })
-    expect(await jobState(ended.jobId!)).toBe('abandoned')
-    const live = await service({ env: fakeFactory().env }).request({ cwd: root, scope: 'head', thread: 'live' })
-    const running = await service({ env: cancelFactory({ a1: 5 }, ['a1'], 'started').env }).cancel({
-      jobId: live.jobId!,
-    })
-    expect(running).toMatchObject({ status: 'running' })
-    expect(await jobState(live.jobId!)).toBe('prepared')
-  })
-
-  /** A fake factory for `spawn get`: the status per attempt, exit 4 for an attempt that is absent. */
-  const getFactory = (statuses: { a1?: string; a2?: string }, broken = false) => {
-    const dir = realpathSync(mkdtempSync(join(tmpdir(), 'agw-rv4-get-')))
-    repos.push(dir)
-    const bin = join(dir, 'factory')
-    const log = join(dir, 'calls.log')
-    const answer = (suffix: 'a1' | 'a2') =>
-      statuses[suffix] ? `echo '{"status":"${statuses[suffix]}"}'` : 'echo "not found" >&2; exit 4'
-    writeFileSync(
-      bin,
-      `#!/bin/sh\necho "$*" >> '${log}'\n${broken ? 'echo boom >&2; exit 1' : `case "$3" in\n  *-a1) ${answer('a1')} ;;\n  *-a2) ${answer('a2')} ;;\nesac`}\n`,
-    )
-    chmodSync(bin, 0o755)
-    return {
-      env: { AGW_FACTORY_BIN: bin },
-      calls: () => (existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n') : []),
-    }
-  }
-
-  test('status of a prepared hidden job probes its spawns read-only; gaveUp only when a2 is terminal', async () => {
-    const root = small()
-    const job = await service({ env: fakeFactory().env }).request({ cwd: root, scope: 'head' })
-    const id = job.jobId!
-    const probe = async (statuses: { a1?: string; a2?: string }, broken = false) => {
-      const factory = getFactory(statuses, broken)
-      const out = await service({ env: factory.env }).status({ jobId: id })
-      expect(factory.calls().every((c) => c.startsWith('spawn get '))).toBe(true)
-      return out.job?.hidden
-    }
-    expect(await probe({ a1: 'queued' })).toEqual({
-      attempts: [{ key: `review-${id}-a1`, status: 'queued' }],
-      gaveUp: false,
-    })
-    expect(await probe({ a1: 'ended' })).toMatchObject({ gaveUp: false }) // a2 may still be created
-    expect(await probe({ a1: 'ended', a2: 'running' })).toMatchObject({ gaveUp: false })
-    expect(await probe({ a1: 'ended', a2: 'ended' })).toMatchObject({
-      attempts: [
-        { key: `review-${id}-a1`, status: 'ended' },
-        { key: `review-${id}-a2`, status: 'ended' },
-      ],
-      gaveUp: true,
-    })
-    expect(await probe({ a1: 'ended', a2: 'cancelled' })).toMatchObject({ gaveUp: true })
-    expect(await probe({}, true)).toBeUndefined() // a factory that cannot be asked leaves it out
-    expect(await jobState(id)).toBe('prepared')
-  })
-
-  test('a job that leaves prepared while its spawns are probed reports no stale hidden', async () => {
-    const root = small()
-    const job = await service({ env: fakeFactory().env }).request({ cwd: root, scope: 'head' })
-    const racing = createReviewService({
-      pool,
-      schema: db.schema,
-      stateDir,
-      git: gitRunner,
-      env: process.env,
-      // the reviewer submits while the factory is being asked
-      run: async () => {
-        await pool.query(`update "${db.schema}".review_jobs set state = 'abandoned' where id = $1`, [job.jobId])
-        return { exitCode: 0, stdout: '{"status":"ended"}', stderr: '', timedOut: false }
-      },
-    })
-    const out = await racing.status({ jobId: job.jobId! })
-    expect(out.job?.hidden).toBeUndefined()
-  })
-
-  test('status of a submitted or in-session job does not touch the factory', async () => {
-    const root = small()
-    const session = await service().prepare({ cwd: root, scope: 'head', thread: 'in-session' })
-    const factory = getFactory({ a1: 'ended', a2: 'ended' })
-    const out = await service({ env: factory.env }).status({ jobId: session.jobId! })
-    expect(out.job?.hidden).toBeUndefined()
-    expect(factory.calls()).toEqual([])
-  })
-
-  test('cancel with a1 failed hands over to the retry a2: cancelled when a2 is held, running when a2 started', async () => {
-    const root = small()
-    const held = await service({ env: fakeFactory().env }).request({ cwd: root, scope: 'head', thread: 'retry-held' })
-    const cancelled = await service({ env: cancelFactory({ a1: 5 }, ['a1']).env }).cancel({ jobId: held.jobId! })
-    expect(cancelled).toMatchObject({ status: 'cancelled', spawns: [{ status: 'cancelled' }] })
-    expect(await jobState(held.jobId!)).toBe('abandoned')
-    const started = await service({ env: fakeFactory().env }).request({ cwd: root, scope: 'head', thread: 'retry-run' })
-    const running = await service({ env: cancelFactory({ a1: 5, a2: 5 }, ['a1']).env }).cancel({
-      jobId: started.jobId!,
-    })
-    expect(running).toMatchObject({ status: 'running' })
-    expect(await jobState(started.jobId!)).toBe('prepared')
-  })
-
   test('cancel refuses a job that is not prepared, naming the state', async () => {
-    const s = service({ env: fakeFactory().env })
-    const root = small()
-    const factory = cancelFactory({})
-    const hidden = await s.request({ cwd: root, scope: 'head', thread: 'other' })
-    await service({ env: factory.env }).cancel({ jobId: hidden.jobId! })
-    await rejects(s.cancel({ jobId: hidden.jobId! }), /abandoned/)
+    const s = service()
+    const job = await ready(s.prepare({ cwd: small(), scope: 'head', account: 'work' }))
+    await s.cancel({ jobId: job.jobId })
+    await rejects(s.cancel({ jobId: job.jobId }), /abandoned/)
     await rejects(s.cancel({ jobId: 'nope' }), /unknown job/)
   })
 
-  test('cancel abandons a prepared in-session job and removes its tree, without asking the factory', async () => {
-    const root = small()
-    const factory = cancelFactory({})
-    const s = service({ env: factory.env })
-    const job = await ready(s.prepare({ cwd: root, scope: 'head', account: 'work' }))
-    expect(await s.cancel({ jobId: job.jobId })).toEqual({ status: 'cancelled', jobId: job.jobId, spawns: [] })
-    expect(factory.calls()).toEqual([])
+  test('cancel abandons a prepared job and removes its tree', async () => {
+    const s = service()
+    const job = await ready(s.prepare({ cwd: small(), scope: 'head', account: 'work' }))
+    expect(await s.cancel({ jobId: job.jobId })).toEqual({ status: 'cancelled', jobId: job.jobId })
     expect(await jobState(job.jobId)).toBe('abandoned')
     expect(existsSync(job.worktree)).toBe(false)
-    await rejects(s.cancel({ jobId: job.jobId }), /abandoned/)
   })
 
   test('status prints the thread key; --thread takes the key or the id of an existing thread', async () => {
@@ -849,29 +581,14 @@ describe('hidden transport', () => {
     expect((await s.status({ cwd: root })).jobs?.[0]?.threadKey).toBeTruthy()
   })
 
-  test('skipped passes through without a spawn', async () => {
-    const factory = fakeFactory()
-    const root = repo({ 'docs/a.md': 'a\n', 'REVIEW.md': REVIEW_MD })
-    commit(root, { 'docs/a.md': 'b\n' })
-    const out = await service({ env: factory.env }).request({ cwd: root, scope: 'head' })
-    expect(out).toMatchObject({ status: 'skipped', tier: 'none' })
-    expect(factory.argv()).toBeNull()
-  })
-
-  test('submit --account fills a hidden job without one and leaves a set account alone', async () => {
-    const s = service({ env: fakeFactory().env })
-    const hidden = await s.request({ cwd: small(), scope: 'head' })
-    const hiddenJob = await jobRow(hidden.jobId as string)
-    const out = await s.submit({
-      jobId: hidden.jobId as string,
-      attempt: 1,
-      account: 'work',
-      reply: fakeReviewer(hiddenJob.job_dir),
-    })
+  test('submit --account fills a job without one and leaves a set account alone', async () => {
+    const s = service()
+    const bare = await ready(s.prepare({ cwd: small(), scope: 'head' }))
+    const out = await s.submit({ jobId: bare.jobId, attempt: 1, account: 'work', reply: fakeReviewer(bare.jobDir) })
     expect(out.account).toBe('work')
-    expect((await jobRow(hidden.jobId as string)).account).toBe('work')
+    expect((await jobRow(bare.jobId)).account).toBe('work')
 
-    const own = await ready(service().prepare({ cwd: small(), scope: 'head', account: 'private' }))
+    const own = await ready(s.prepare({ cwd: small(), scope: 'head', account: 'private' }))
     const done = await s.submit({ jobId: own.jobId, attempt: 1, account: 'work', reply: fakeReviewer(own.jobDir) })
     expect(done.account).toBe('private')
     expect((await jobRow(own.jobId)).account).toBe('private')

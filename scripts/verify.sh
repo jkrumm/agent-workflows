@@ -15,11 +15,7 @@
 # lane_detail, a priced cost, billing api_credit on a pool /health names or api_key personal, never api_credit with no
 # eligible pool), and, once the host outbox synced the run's usage steps, no `source='agent-workflows'` row, within the
 # same 120 s. It never waits on the Anthropic cost API (it lags 20-70 min).
-# Last, a smoke review on the hidden transport (review v4): `agw review request` on a throwaway fixture repo (one planted
-# defect, light tier) inside the factory's repo roots; the software factory runs the reviewer session and submits its
-# reply, `agw review status` is polled (up to 900 s) until submitted, and REVIEW_OUTPUT v4 (tier light, a valid outcome)
-# must come back. A factory that is unreachable or holds the spawn is a SKIP with the reason, not a failure.
-# Prints the run ids, the gateway's request ids and the review's job id.
+# Prints the run ids and the gateway's request ids.
 
 set -u
 
@@ -74,11 +70,9 @@ password=$(secrets-run read "$PG_PASSWORD_REF" 2>/dev/null)
 [[ -n "$password" ]] || fail "cannot read $PG_PASSWORD_REF through secrets-run"
 psql_err=$(mktemp "${TMPDIR:-/tmp}/agw-verify.XXXXXX") || fail "cannot create a temp file"
 agw_err=$(mktemp "${TMPDIR:-/tmp}/agw-verify.XXXXXX") || fail "cannot create a temp file"
-review_dir=""
-# one EXIT trap for every temp file and the review fixture (a later `trap … EXIT` would replace it)
+# one EXIT trap for every temp file (a later `trap … EXIT` would replace it)
 cleanup() {
   rm -f "$psql_err" "$agw_err" "${door_body:-}" "${gw_head:-}" "${gw_resp:-}"
-  [[ -z "${review_dir:-}" ]] || { rm -rf "$review_dir"; rmdir "${review_dir:h}" 2>/dev/null; }
 }
 trap cleanup EXIT
 # One journal query; the SQL goes on stdin (psql interpolates :'var' there, not in -c), extra args are -v bindings.
@@ -380,69 +374,4 @@ for rid in $run_id $cap_id; do
   ok "run $rid: steps synced, $run_why; no agent-workflows row"
 done
 
-# 10. a smoke review on the hidden transport (review v4): `agw review request` asks the software factory for one reviewer
-# session on a throwaway fixture repo (light tier, one planted defect); the factory submits the agent's reply, and
-# `agw review status` is polled until the job is submitted. REVIEW_OUTPUT v4 must come back (tier light, a valid
-# outcome); the finding count is reported, not required. A factory that is unreachable or holds the spawn (ceiling,
-# slots, deep cap, drain) is a SKIP with its reason, never a failure.
-# The fixture repo must be inside the factory's FACTORY_REPO_ROOTS after realpath (default $HOME/SourceRoot:$HOME/IuRoot;
-# the trust boundary refuses anything else) and is no repo's content: a hidden dir directly under SourceRoot, removed by
-# the trap. It is built from scripts/fixtures/smoke-review/{base,change}: base committed, change committed on top.
-# The fixture sits beside this file: %x is the sourced file, where $0 would be the shell when a test runs a cut of it.
-REVIEW_FIXTURE="${REVIEW_FIXTURE:-${${(%):-%x}:A:h}/fixtures/smoke-review}"
-REVIEW_FIXTURE_ROOT="${REVIEW_FIXTURE_ROOT:-$HOME/SourceRoot/.agw-verify}"
-REVIEW_WAIT_SECS="${REVIEW_WAIT_SECS:-900}"
-REVIEW_POLL_SECS="${REVIEW_POLL_SECS:-10}"
-[[ -d "$REVIEW_FIXTURE/base" && -d "$REVIEW_FIXTURE/change" ]] || fail "smoke review fixture missing at $REVIEW_FIXTURE"
-mkdir -p "$REVIEW_FIXTURE_ROOT" || fail "smoke review: cannot create $REVIEW_FIXTURE_ROOT"
-review_dir=$(mktemp -d "$REVIEW_FIXTURE_ROOT/review.XXXXXX") || fail "cannot create a temp dir"
-review_dir=${review_dir:A}
-git_fixture() { git -C "$review_dir" -c user.name=verify -c user.email=verify@example.invalid -c commit.gpgsign=false "$@"; }
-git -C "$review_dir" init -q -b main 2>"$agw_err" || fail "smoke review: git init failed: $(<"$agw_err")"
-cp -R "$REVIEW_FIXTURE/base/." "$review_dir/" || fail "smoke review: cannot copy the fixture base"
-git_fixture add -A && git_fixture commit -q -m "base" 2>"$agw_err" || fail "smoke review: cannot commit the fixture base: $(<"$agw_err")"
-cp -R "$REVIEW_FIXTURE/change/." "$review_dir/" || fail "smoke review: cannot copy the fixture change"
-git_fixture add -A && git_fixture commit -q -m "feat: scores summary" 2>"$agw_err" || fail "smoke review: cannot commit the fixture change: $(<"$agw_err")"
-
-review_summary=""
-review_started=$SECONDS
-out=$(AGW_PURPOSE=verify agw review request --cwd "$review_dir" --scope head --commit --format json 2>"$agw_err")
-rc=$?
-if (( rc != 0 )); then
-  reason="$out $(<"$agw_err")"
-  # a repo the factory refuses is a broken fixture, not a busy factory
-  [[ "$reason" == *FACTORY_REPO_ROOTS* || "$reason" == *"allowed roots"* ]] && fail "smoke review: the factory refused the fixture $review_dir: $reason"
-  skip "smoke review: the factory could not take the review (${reason:0:300})"
-else
-  print -r -- "$out" | jq -e . >/dev/null 2>&1 || fail "smoke review: agw review request printed output that is not JSON: $out"
-  [[ "$(print -r -- "$out" | jq -r '.status')" == "requested" ]] || fail "smoke review: agw review request answered '$(print -r -- "$out" | jq -r '.status')', not requested: $out"
-  [[ "$(print -r -- "$out" | jq -r '.tier')" == "light" ]] || fail "smoke review: the fixture routed to tier '$(print -r -- "$out" | jq -r '.tier')', not light: $out"
-  review_job=$(print -r -- "$out" | jq -r '.jobId // empty')
-  [[ -n "$review_job" ]] || fail "smoke review: agw review request printed no jobId: $out"
-  # a held spawn: status waiting (no account under the ceiling) or a non-null hold (slots, deep cap, drain), the factory's Spawn contract
-  review_hold=$(print -r -- "$out" | jq -r '.spawn | if type == "object" and (.status == "waiting" or .hold != null) then "\(.status): \(.hold // "no account under the ceiling" | if type == "string" then . else tojson end)" else empty end' 2>/dev/null)
-  if [[ -n "$review_hold" ]]; then
-    # a held review would sit in the factory's queue: cancel it so it never starts later (a failure is reported, never a FAIL)
-    cancel_out=$(AGW_PURPOSE=verify agw review cancel "$review_job" --commit --format json 2>&1)
-    if (( $? == 0 )); then cancel_note="cancel: $(print -r -- "$cancel_out" | jq -r '.status // "unknown"' 2>/dev/null)"; else cancel_note="cancel failed: ${cancel_out:0:200}"; fi
-    skip "smoke review: the factory holds the spawn of $review_job: $review_hold ($cancel_note)"
-  else
-    review_state=prepared
-    while (( SECONDS - review_started < REVIEW_WAIT_SECS )); do
-      agw_json review status "$review_job" --format json
-      review_state=$(print -r -- "$out" | jq -r '.job.state // empty')
-      [[ "$review_state" == prepared ]] || break
-      sleep "$REVIEW_POLL_SECS"
-    done
-    [[ "$review_state" == submitted ]] || fail "smoke review: job $review_job is '${review_state:-unknown}' after $(( SECONDS - review_started )) s, not submitted (is the factory's reviewer session running? factory fleet)"
-    review_output=$(print -r -- "$out" | jq -c '.job.output // empty')
-    print -r -- "$review_output" | jq -e '.schemaVersion == 4 and .tier == "light" and (.outcome | IN("clean", "actionable", "needs-human")) and (.findings | type == "array")' >/dev/null 2>&1 \
-      || fail "smoke review: job $review_job did not submit REVIEW_OUTPUT v4 at tier light: $review_output"
-    review_findings=$(print -r -- "$review_output" | jq -r '.findings | length')
-    review_account=$(print -r -- "$out" | jq -r '.job.account // "none"')
-    review_summary="review job $review_job (light, hidden, account $review_account)"
-    ok "agw review request (hidden, light): job $review_job submitted in $(( SECONDS - review_started )) s, outcome $(print -r -- "$review_output" | jq -r '.outcome'), $review_findings finding(s)"
-  fi
-fi
-
-print "verify: PASS run $run_id, cap run $cap_id, audio run $audio_run, gateway pool $pool requests $id1 $id2 $id3, agw-opencode request $id4, ${review_summary:-smoke review skipped}"
+print "verify: PASS run $run_id, cap run $cap_id, audio run $audio_run, gateway pool $pool requests $id1 $id2 $id3, agw-opencode request $id4"

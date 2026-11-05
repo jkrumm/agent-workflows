@@ -17,15 +17,14 @@ CLI exits non-zero naming it.
 | Command | What |
 |-|-|
 | `agw review prepare --cwd <dir> [--scope uncommitted\|head\|<ref>\|<a>..<b> \| --pr N \| --branch B] [--context] [--min] [--thread] [--account]` | Thread, round, route, ceiling, deep cap, job dir. `status`: `ready` (run the agent with `prompt` on `seat`), `skipped` (tier none), `held` (ceiling or deep cap; wait, the tier is never lowered), `needs-human` (a 4th round) |
-| `agw review request --cwd <dir> [--scope \| --pr N \| --branch B] [--context] [--min] [--thread]` | `prepare` for the hidden transport (no `--account`): `skipped` and `needs-human` as `prepare`; `ready` → the factory spawn, answer `requested` (see Hidden transport) |
-| `agw review cancel <jobId>` | A `prepared` in-session job is abandoned and its tree removed at once → `{status: 'cancelled', jobId, spawns: []}`, no factory call. A `prepared` hidden job whose spawn is still held: `factory spawn cancel` on `review-<jobId>-a1` and `-a2`, then the job is `abandoned` and its tree removed → `{status: 'cancelled', jobId, spawns}`. A claimed or started spawn (factory exit 5 `not_cancellable`) keeps the job → `{status: 'running', jobId, spawn}`. A spawn in a terminal state (`ended`, `failed`, `cancelled`; the 409's spawn row, `error.details.spawn.status` of the factory CLI's one-line JSON error on stderr; an unreadable answer counts as `running`; nothing will submit) abandons the job and removes its tree → `{status: 'failed', jobId, spawn}`. A submitted or abandoned job is refused naming its state |
+| `agw review cancel <jobId>` | A `prepared` job is abandoned and its tree removed → `{status: 'cancelled', jobId}`. A submitted or abandoned job is refused naming its state |
 | `agw review submit <jobId> --attempt <n> [--account <a>]` (reply on stdin) | REVIEW_OUTPUT v4. Idempotent per (job, attempt): the same attempt gets the stored output back, another attempt is refused naming the winner. `--account` sets the job's account only when it has none |
 | `agw review dispose <jobId> <findingId> fixed\|wrong\|intentional\|irrelevant\|open [--reason]` | The answer to a finding of the job's thread; idempotent |
-| `agw review status [<jobId>] [--cwd]` | A job (a running review is `prepared`) with its `thread` id and `threadKey` (absent on jobs older than the key) and its thread's findings, or the 10 newest jobs of the repo at `--cwd`. A `prepared` hidden job also carries `hidden: {attempts: [{key, status}], gaveUp}` from one read-only `factory spawn get` per attempt (a1, a2; a missing one is left out, a factory that cannot be asked omits `hidden`). `gaveUp` is true when a2 exists and is terminal (`ended`, `failed`, `cancelled`) while the job is unsubmitted; a terminal a1 alone is not (the factory may still create a2) |
+| `agw review status [<jobId>] [--cwd]` | A job (a running review is `prepared`) with its `thread` id and `threadKey` (absent on jobs older than the key) and its thread's findings, or the 10 newest jobs of the repo at `--cwd` |
 | `agw review route --cwd --base --head [--min]` | `routeRange` alone; no ledger (HTTP `/review/route`) |
 | `agw review covered --cwd --range <a>..<b>` | Coverage of each first-parent commit; exit 0 either way, read `covered` |
 
-`prepare`, `request`, `cancel`, `submit` and `dispose` change state, so the CLI asks for `--commit` (non-TTY callers must pass it).
+`prepare`, `cancel`, `submit` and `dispose` change state, so the CLI asks for `--commit` (non-TTY callers must pass it).
 
 `--cwd` is required wherever a repo is read (the CLI does not fill it).
 
@@ -54,7 +53,7 @@ symlinks removed). The tree goes on submit; each prepare sweeps trees older than
 
 `review_jobs`: one row per prepared job (`prepared → submitted | abandoned`), the route decision with its facts, the
 REVIEW.md config read at the thread base (`prepare` routes every round on that config, so a REVIEW.md the change
-edits cannot decide a later round's tier), the stat paths, the output, the `transport` (`in-session` | `hidden`, migration 0018; `status` shows it, and a submitted job's REVIEW_OUTPUT as `output`). `review_findings`: stable ids `<thread>-<n>`, `job_id` (first reported),
+edits cannot decide a later round's tier), the stat paths, the output, the `transport` (`in-session`; older rows may say `hidden`, migration 0018; `status` shows it, and a submitted job's REVIEW_OUTPUT as `output`). `review_findings`: stable ids `<thread>-<n>`, `job_id` (first reported),
 `last_job_id` (latest round that reported it), the disposition.
 
 ## Convergence
@@ -77,37 +76,6 @@ With `--account`, the quota port's reading: held at ≥ 70 % of the 5-hour windo
 reading: the week alone; no reading: `ceiling: unknown`, not held). Without it: `ceiling: unjudged`. Deep jobs per
 account (no account is its own bucket) since UTC midnight, not abandoned, the thread's own unsubmitted one excluded, ≥
 `AGW_REVIEW_DEEP_CAP` (default 15) → held. Never downgraded.
-
-## Hidden transport
-
-For callers that are not a Claude Code session (scripts, `make verify`, Hermes) and in-session callers held by their own
-account's ceiling. `agw review request` prepares with transport `hidden`: `ceiling: 'factory'`, no deep cap, no account
-(agw judges neither; the factory applies the ceiling, 70 % of 5 h / 90 % of the week, and the deep cap, 15 per account
-per day with an owner one-click allow, on the account **it** picks; it also holds two reviewer sessions host-wide).
-`skipped` and `needs-human` pass through with no spawn. `ready` runs
-
-    factory spawn create review-<jobId>-a1 --repo <repo root> --role reviewer --placement hidden --review-job <jobId> \
-      --review-tier <tier> --effort <seat.effort> --prompt '<prepare's prompt line>' --format json
-
-(the factory binary as the fleet finds it: `AGW_FACTORY_BIN`, `~/.local/bin/factory`, `PATH`; `FACTORY_TOKEN` and
-`FACTORY_URL` pass through; a 60 s process timeout) and answers `{status: 'requested', jobId, tier, seat, thread, round,
-spawnKey, spawn}`, `spawn` being the factory's spawn status (a queued one names its hold reason). A failing spawn marks
-the job `abandoned` (the thread is not blocked), removes its tree and exits non-zero naming the factory's message.
-
-`agw review cancel <jobId>` abandons an in-session job at once (no factory call) and ends a hidden job whose spawn the factory still holds (`waiting` or `queued`, never claimed):
-`factory spawn cancel review-<jobId>-a1` and `-a2` (the retry; a `not_found`, CLI exit 4, for a key that never existed is
-fine). A spawn already claimed or started is `not_cancellable` (CLI exit 5): the job stays `prepared`, cancel answers
-`running` and the review goes on and submits. A terminal spawn is the exception: the factory's 409 body carries the spawn row (its CLI prints one JSON line on stderr, `error.details.spawn.status`; no message is parsed, and a line that does not parse counts as `running`), and for `ended`, `failed` or `cancelled` no session is left to submit, so cancel goes on to a2 and, with nothing cancelled, abandons the job as a failed `request` does and answers `failed`. Any other state (claimed, started) answers `running`.
-
-The factory runs one interactive Claude Code session per job with the global `reviewer` agent and, on its Stop, pipes the
-agent's last reply to `agw review submit <jobId> --attempt <n> --account <account it ran on> --commit --format json`
-(attempt 2 is the factory's own retry). The caller polls `agw review status <jobId>` until `submitted`; `job.output` is
-REVIEW_OUTPUT v4.
-
-**The deep cap is asymmetric.** In-session, agw counts deep jobs per account from the ledger. A hidden job has no account
-until submit fills it (`--account`, only when the job has none; an in-session job keeps its own), and an unsubmitted
-hidden job counts for no bucket. So agw's cap counts hidden deep jobs once submitted, while the factory's cap counts only
-hidden starts: the two never see each other's jobs on the same account, by design.
 
 ## Coverage
 

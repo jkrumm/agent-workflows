@@ -167,39 +167,16 @@ export const PrepareOutput = z.object({
   files: z.array(z.string()).optional(),
   account: z.string().nullable(),
   ceiling: z
-    .enum(['ok', 'held', 'unknown', 'unjudged', 'factory'])
+    .enum(['ok', 'held', 'unknown', 'unjudged'])
     .optional()
-    .describe(
-      'unjudged: no account given; unknown: no quota reading; factory: the factory judges it (hidden transport)',
-    ),
+    .describe('unjudged: no account given; unknown: no quota reading'),
   prompt: z.string().optional().describe('The reviewer agent prompt line'),
 })
 export type PrepareOutputValue = z.output<typeof PrepareOutput>
 
-/** `request` is `prepare` for the hidden transport: the factory picks the account, so there is none to give. */
-export const RequestInput = PrepareInput.omit({ account: true }).strict()
-export type RequestInputValue = z.output<typeof RequestInput>
+export const CancelInput = z.object({ jobId: z.string().min(1).describe('A prepared job') }).strict()
 
-export const RequestOutput = PrepareOutput.extend({
-  status: z.enum(['requested', 'skipped', 'needs-human']),
-  spawnKey: z.string().optional().describe("The factory session's key: review-<jobId>-a1"),
-  spawn: z.unknown().optional().describe("The factory's spawn status, a hold reason included when it is queued"),
-})
-export type RequestOutputValue = z.output<typeof RequestOutput>
-
-export const CancelInput = z
-  .object({ jobId: z.string().min(1).describe('A prepared job of the hidden transport') })
-  .strict()
-
-export const CancelOutput = z.object({
-  status: z.enum(['cancelled', 'running', 'failed']),
-  jobId: z.string(),
-  spawns: z
-    .array(z.unknown())
-    .optional()
-    .describe("cancelled: the factory's cancelled spawns (a1, a2 when it existed)"),
-  spawn: z.unknown().optional().describe("running or failed: the factory's answer for the spawn it could not cancel"),
-})
+export const CancelOutput = z.object({ status: z.literal('cancelled'), jobId: z.string() })
 
 export const SubmitInput = z
   .object({
@@ -210,7 +187,7 @@ export const SubmitInput = z
       .string()
       .regex(new RegExp(ACCOUNT_ID_PATTERN))
       .optional()
-      .describe("The account a hidden job's session ran on; sets the job's account only when it has none"),
+      .describe("The account the reviewer session ran on; sets the job's account only when it has none"),
   })
   .strict()
 
@@ -280,17 +257,6 @@ export const StatusOutput = z.object({
       worktree: z.string(),
       outcome: z.enum(OUTCOMES).nullable(),
       output: ReviewOutputV4.nullable().describe('REVIEW_OUTPUT v4 once submitted'),
-      hidden: z
-        .object({
-          attempts: z.array(z.object({ key: z.string(), status: z.string() })),
-          gaveUp: z
-            .boolean()
-            .describe('The retry a2 exists and is terminal (ended, failed, cancelled) and the job is not submitted'),
-        })
-        .optional()
-        .describe(
-          "A prepared hidden job: the factory's spawns for it, read-only (absent when the factory cannot be asked)",
-        ),
     })
     .optional(),
   findings: z.array(FindingRecord).optional(),

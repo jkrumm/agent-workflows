@@ -191,7 +191,7 @@ export function reviewLedger(pool: ReviewPool, schema: string) {
         `select count(*)::int as n from ${jobs}
           where account is not distinct from $1 and tier = 'deep' and created_at >= $2 and state <> 'abandoned'
             and not (state = 'prepared' and thread = $3)
-            and not (transport = 'hidden' and state = 'prepared')`,
+            and not (transport = 'hidden' and state = 'prepared')`, // old hidden rows exist: the factory capped those
         [account, since, exceptPreparedOf],
       )
       return rows[0].n as number
@@ -296,7 +296,7 @@ export function reviewLedger(pool: ReviewPool, schema: string) {
       )
     },
 
-    /** `account` fills a job that has none (a hidden job: the factory picked it); a job's own account stays. */
+    /** `account` fills a job that has none (the reviewer session's own account); a job's own account stays. */
     async markSubmitted(
       q: Query,
       id: string,
@@ -312,7 +312,7 @@ export function reviewLedger(pool: ReviewPool, schema: string) {
       )
     },
 
-    /** A request whose factory spawn failed: the job never runs, so it must not block its thread. */
+    /** A job that will never run (cancelled): it must not block its thread. */
     async abandon(id: string): Promise<void> {
       await pool.query(`update ${jobs} set state = 'abandoned' where id = $1 and state = 'prepared'`, [id])
     },

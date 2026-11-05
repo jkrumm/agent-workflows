@@ -85,14 +85,7 @@ async function makeWorktree(ctx: ReviewContext, root: string, dir: string, head:
   removeEscapingSymlinks(dir)
 }
 
-export type Transport = 'in-session' | 'hidden'
-
-/** `hidden`: the factory judges the ceiling and applies the deep cap on the account it picks; agw does neither. */
-export async function prepare(
-  ctx: ReviewContext,
-  input: PrepareInputValue,
-  transport: Transport = 'in-session',
-): Promise<PrepareOutputValue> {
+export async function prepare(ctx: ReviewContext, input: PrepareInputValue): Promise<PrepareOutputValue> {
   const root = await resolveRoot(ctx.git, input.cwd)
   const repo = await repoIdentity(ctx.git, root)
   const jobId = newJobId()
@@ -102,7 +95,7 @@ export async function prepare(
   const jobDir = join(realpathSync(jobsRoot(ctx)), jobId)
   let ready = false
   try {
-    const out = await prepareResolved(ctx, input, { root, repo, jobId, jobDir, resolved, transport })
+    const out = await prepareResolved(ctx, input, { root, repo, jobId, jobDir, resolved })
     ready = out.status === 'ready'
     return out
   } finally {
@@ -131,11 +124,10 @@ async function resolveThread(
 async function prepareResolved(
   ctx: ReviewContext,
   input: PrepareInputValue,
-  at: { root: string; repo: string; jobId: string; jobDir: string; resolved: ResolvedScope; transport: Transport },
+  at: { root: string; repo: string; jobId: string; jobDir: string; resolved: ResolvedScope },
 ): Promise<PrepareOutputValue> {
   const { git, ledger } = ctx
-  const { root, repo, jobId, jobDir, resolved, transport } = at
-  const hidden = transport === 'hidden'
+  const { root, repo, jobId, jobDir, resolved } = at
   const { gitDir, base, head } = resolved
   const { thread, threadKey } = await resolveThread(ledger, repo, input.thread, resolved.key)
   const account = input.account ?? null
@@ -160,13 +152,13 @@ async function prepareResolved(
   const decided = { tier: route.tier, seat: route.seat, rule: route.rule, decidedBy: route.decidedBy, diffBase }
   if (route.tier === 'none') return { status: 'skipped', ...common, ...decided }
 
-  let ceiling: 'ok' | 'unknown' | 'unjudged' | 'factory' = hidden ? 'factory' : 'unjudged'
-  if (!hidden && account !== null) {
+  let ceiling: 'ok' | 'unknown' | 'unjudged' = 'unjudged'
+  if (account !== null) {
     const verdict = judge(account, ctx.quota ? await ctx.quota(account) : null)
     if ('held' in verdict) return { status: 'held', reason: verdict.held, ...common, ...decided, ceiling: 'held' }
     ceiling = verdict.ceiling
   }
-  if (!hidden && route.tier === 'deep') {
+  if (route.tier === 'deep') {
     const cap = deepCap(ctx.env)
     const today = await ledger.deepCount(account, utcMidnight(ctx.now()), thread)
     if (today >= cap) {
@@ -271,7 +263,7 @@ async function prepareResolved(
     decidedBy: route.decidedBy,
     route: { ...route, changes },
     account,
-    transport,
+    transport: 'in-session',
     intent: input.context ?? '',
     reviewConfig: config,
     files,

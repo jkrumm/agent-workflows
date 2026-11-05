@@ -4,7 +4,7 @@
 (`src/workflows/<id>/scorer.ts`), attached for regression and drift only: no workflow calls
 `ctx.score` inline, so production behaviour is unchanged (an inline gate is a later experiment).
 
-A module's suite reads its cases from `$AGW_EVAL_DIR/<workflow>/cases.jsonl` unless it declares `path(env)`; a suite whose `tree` carries `isolate: true` (no module declares one since review v1 went; `agw eval recall` isolates its own clones) gets a clone from `materialize` with no refs, no reflog and no shared object store, so a later commit is unreachable from a shell.
+A module's suite reads its cases from `$AGW_EVAL_DIR/<workflow>/cases.jsonl` unless it declares `path(env)`; a suite whose `tree` carries `isolate: true` (no module declares one since review v1 went) gets a clone from `materialize` with no refs, no reflog and no shared object store, so a later commit is unreachable from a shell.
 
 
 | Command | Does |
@@ -83,7 +83,7 @@ A module's suite reads its cases from `$AGW_EVAL_DIR/<workflow>/cases.jsonl` unl
   answer comes back (`answerOf`: a 4xx from the source, such as a page gone, forbidden or rate-limited, or a package
   not found; a refused URL; as `{error: {code, message}}`);
   every other failure, an outage, throws and the scoring retries.
-  Check's scorer never judges. (The review ground truth is scored by `agw eval recall`, not here: `packages/eval/README.md` §Recall run.) **Drift on research** spends per sampled run up to three `web.fetch` (direct
+  Check's scorer never judges. **Drift on research** spends per sampled run up to three `web.fetch` (direct
   or Tavily Extract, ≈ $0) and three `decide` calls on ≤ 20k characters each (≈ 5k tokens at $0.04/M, ≈ $0.0002 each):
   ≈ $0.001 per scored run, as up to six `cap.*` runs with purpose `drift`; drift has no reference, so no `web.package`.
 

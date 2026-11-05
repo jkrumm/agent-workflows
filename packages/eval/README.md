@@ -5,44 +5,7 @@ The data side of the evals (concept §6): case schemas and the reader/writer of 
 `agw eval compare` workflow reads it), the throwaway case checkout (`materialize`, `exec`) that `agw eval run` replays
 cases on, and the review ground truth (`gt*.ts`, `mine/`) below. The side-by-side harness of the P1 cutover gate, its
 `ReviewCase` reader and the 138 legacy review cases went with review v1: the review is v4 host operations now, which
-`agw eval run` cannot replay (it is no workflow). The ground truth's replay arm is `agw eval recall` (below).
-
-## Recall run
-
-`agw eval recall [--split dev|test] [--cases a,b] [--kind bug|control|all] [--limit N]` (mutating: off a TTY it needs
-`--commit`; run it with `AGW_PURPOSE=eval`, which `eval.recall` defaults to) runs the cases of `review-gt/cases.jsonl`
-through review v4's hidden transport and scores them (`packages/host/src/workflows/eval-recall/`). One run at a time
-(`concurrency: 1`), the cases in file order after the filters. Step ids are literals, so each case is a child run
-(`eval.recall.case`, internal) with the steps `clone`, `request`, `wait`, `score`, `cleanup`; the children wait in file
-order for one of `--concurrency N` slots (1 by default, at most 2: the factory holds two reviewer sessions host-wide) before
-their first step. A child that fails (a judge outage, a missing credit) leaves its case `unscored` with the reason
-`case run failed`; rerun it with `--cases`:
-
-- **Clone.** `materialize` with `isolate: true` at the case's sha: no refs, origin or alternates, the parent reachable.
-  It lives under `$HOME/SourceRoot/.agw-eval-recall/` (`AGW_EVAL_CLONES_DIR`): the factory refuses a repo outside its
-  `FACTORY_REPO_ROOTS` (default `$HOME/SourceRoot`), and the miner skips dot names. With no origin the repo identity of
-  the clone is its own path, so the ledger's earlier findings of the live repo never reach `prior.json`, and
-  `history.txt` ends at the parent (`test/eval-recall-isolation.test.ts`).
-- **Request.** `review.request` in process: scope `<parent>..<sha>`, context the commit **subject** only (never the bug
-  description, the fix or the label), `min: light` so no case is skipped, thread `eval:<runId>:<caseId>`. A resumed
-  step looks the clone's live (not abandoned) job up first and adopts it, so a case is never requested twice. The
-  factory spawns one reviewer session on Max, paced by its quota ceiling.
-- **Wait.** Polls `review.status` every 60 s until the job is `submitted` or `abandoned`; no wall-clock ceiling (a job
-  the ceiling holds may wait hours). A job whose factory retry (a2) ended without a submit (`status` shows `hidden.gaveUp`) is cancelled, which abandons it, and recorded `unscored` as `review gave up: <factory state>`; a job merely waiting or queued (the ceiling) keeps polling. A `needs-human` or `skipped` request, an abandoned job, a failed clone and a judge
-  answer that is unusable are `unscored` with the reason, never a miss and never in a denominator.
-- **Score.** The restored scorer v3 on REVIEW_OUTPUT v4 (`scorer.ts`): the token-overlap preselection, one `eval.judge`
-  call per judge (both judges, pinned routes, purpose `eval`; a finding they classify differently is `unclear`). Bug case: `recall` (an important finding judged
-  `match`), `detected`, `severityCalibration`; control: `falseAlarms` (important findings), `clean`; both: `noise`,
-  `findings`, `important`, `realOther`. A finding's text for the judge is its message plus its failure scenario.
-- **Cleanup.** The clone is removed after scoring; agw removes the job's tree on submit (an unsubmitted one is swept
-  after 24 h). A cancelled or crashed run leaves its current clone behind.
-
-The output holds, per case, `tier`, `seat`, `account`, `wallMs` (request to submit, held time included), the findings
-(`id`, `tag`, `file`, `line`, the judge's class; no text) and the scores, and per run the `summary`: recall with a Wilson
-95 % interval (`wilson` in `gt-stats.ts`), detected, severity calibration, false alarms per control, pooled noise, tier
-counts and wall p50 and p95, with `GT_LIMIT`. The metric is defined on `test` (`docs/review-v2.md` §Metrics); `dev` is
-for trying the path. The runaway cap's static ceilings for `eval.recall` are $30, 30 days of wall (`STATIC_CEILINGS`), far above a real run; after 20 done runs of its own the learned cap (10 × p95, so a long run after twenty short ones could be stopped) replaces them. The reviews cost no API money; the judge draws on eval credit. `agw eval compare` reads only
-`eval.run` suites, so two recall runs are compared by their `summary`.
+`agw eval run` cannot replay (it is no workflow). The ground truth's replay arm (`agw eval recall`) was removed with the hidden review transport.
 
 Cases and reports hold private code and findings, so they never enter this repo: they live under `$AGW_EVAL_DIR`
 (default `~/.local/share/agent-workflows/eval`). Only aggregate numbers are published.
@@ -52,12 +15,11 @@ Cases and reports hold private code and findings, so they never enter this repo:
 No human checks the review ground truth (owner decision, 2026-11-02; `docs/review-v2.md` §Ground truth step 5,
 §Matching and judging). The labels are validated by 2-of-3 labeller consensus (below), and the findings by two judges on
 different vendors. Every report that rests on it states `limit: "LLM consensus (labellers a/b/c, judges a/b), no human
-check"` (`GT_LIMIT`): the mine's `report.json` and output and the recall scorer's notes. `src/gt-stats.ts` holds the
+check"` (`GT_LIMIT`): the mine's `report.json` and output. `src/gt-stats.ts` holds the
 Wilson interval.
 
 Judge calibration (`agw eval gt calibrate`, a single-judge mode gated by `judge-calibration.json`) was removed
-2026-11-03: it had no source of judge-`a` calls (`agw eval recall` judges in process). Recall always asks both judges;
-Wave 11 may add a calibration back with a real source.
+2026-11-03: it had no source of judge-`a` calls. Wave 11 may add a calibration back with a real source.
 
 ## Ground truth miner
 

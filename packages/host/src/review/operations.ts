@@ -1,4 +1,4 @@
-// `agw review prepare|request|cancel|submit|dispose|status|route|covered`: host operations like the fleet's, no journal run.
+// `agw review prepare|cancel|submit|dispose|status|route|covered`: host operations like the fleet's, no journal run.
 import { type ResolvedCliSpec, withCli } from '@agent-workflows/capabilities'
 import { ORPCError, os } from '@orpc/server'
 import type { z } from 'zod'
@@ -13,8 +13,6 @@ import {
   FindingRecord,
   PrepareInput,
   PrepareOutput,
-  RequestInput,
-  RequestOutput,
   ReviewError,
   ReviewOutputV4,
   RouteInput,
@@ -47,10 +45,9 @@ const answer =
     }
   }
 
-type Name = 'prepare' | 'request' | 'cancel' | 'submit' | 'dispose' | 'status' | 'route' | 'covered'
+type Name = 'prepare' | 'cancel' | 'submit' | 'dispose' | 'status' | 'route' | 'covered'
 const OPERATION_IDS = {
   prepare: 'reviewPrepare',
-  request: 'reviewRequest',
   cancel: 'reviewCancel',
   submit: 'reviewSubmit',
   dispose: 'reviewDispose',
@@ -104,26 +101,11 @@ export function reviewOperations(service: ReviewService): Record<(typeof OPERATI
       },
       (input) => service.prepare(input),
     ),
-    reviewRequest: op(
-      'request',
-      {
-        summary:
-          'Prepare a job and have the software factory run the reviewer in a hidden session (no account to give)',
-        description:
-          'For callers that are not a Claude Code session, or are held by their own account. requested: the factory admits the session (ceiling and deep cap on the account it picks) and submits the reply itself; poll `agw review status <jobId>`. skipped: tier none. needs-human: three rounds. A failed spawn abandons the job and exits non-zero.',
-        cli: { mutating: true },
-        input: RequestInput,
-        output: RequestOutput,
-      },
-      (input) => service.request(input),
-    ),
     reviewCancel: op(
       'cancel',
       {
-        summary:
-          'Abandon a prepared review job: an in-session one at once, a hidden one the factory has not started (a held or queued spawn)',
-        description:
-          'Only a prepared job. An in-session job is abandoned and its tree removed (cancelled, no spawns, no factory call). For a hidden job, cancelled: the factory ended its spawn(s) before any session claimed them and the job is abandoned. running: a spawn is already claimed or started (factory not_cancellable); the job is kept and will submit. failed: the spawn is terminal (ended, failed or cancelled; the state is read from the spawn row in the 409 body of the factory; an unreadable answer counts as running) and nothing will submit; the job is abandoned and its tree removed.',
+        summary: 'Abandon a prepared review job and remove its tree',
+        description: 'Only a prepared job (cancelled); a submitted or abandoned one is refused.',
         cli: { mutating: true, positional: ['jobId'] },
         input: CancelInput,
         output: CancelOutput,
@@ -155,8 +137,7 @@ export function reviewOperations(service: ReviewService): Record<(typeof OPERATI
     reviewStatus: op(
       'status',
       {
-        summary:
-          "A job and its thread findings, or the newest jobs of the repo at --cwd. A prepared hidden job also shows `hidden`: the factory's spawns for it (read-only) and `gaveUp`, true when the retry a2 is terminal and nothing will submit; `agw review cancel` then abandons it",
+        summary: 'A job and its thread findings, or the newest jobs of the repo at --cwd',
         cli: { positional: ['jobId'] },
         input: StatusInput,
         output: StatusOutput,

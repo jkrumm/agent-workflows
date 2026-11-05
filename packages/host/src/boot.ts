@@ -53,16 +53,11 @@ const AUDIO_MODULES_DIR = resolve(import.meta.dir, '../../audio/src/workflows')
 const FLUSH_INTERVAL_MS = 30_000
 /**
  * Static runaway ceilings per workflow, over the default ($5, 3 h, 500 steps) until the workflow has 20 done runs of its own.
- * `eval.mine` was stopped at $10.12 by the default in a working labelling run. `eval.recall` spends little but waits: a
- * job held by the factory's quota ceiling may take hours per case, so its wall ceiling is far above any real run
- * (30 days; the cases are child runs, which count their own steps).
+ * `eval.mine` was stopped at $10.12 by the default in a working labelling run.
  */
 const STATIC_CEILINGS = {
   'eval.mine': { cost: 30 },
-  'eval.recall': { cost: 30, wallMs: 30 * 24 * 3_600_000 },
 }
-/** A learned cap needs more done runs here: recall runs differ by hours (a held job), so twenty short ones say little. */
-const MIN_SAMPLES = { 'eval.recall': 100 }
 const SHUTDOWN_GRACE_MS = 5000
 
 /** A process's logger: its console, every line tagged `[agw-<name>]`. */
@@ -368,7 +363,6 @@ export async function bootProcess(
       connectionString: config.pgUrl,
       schema: config.schema,
       ceilings: STATIC_CEILINGS,
-      minSamples: MIN_SAMPLES,
     })
     closers.push(() => cap.close())
     // Optional expensive work is its own workflow, refused at admission by the wallet gate (concept §4).
@@ -592,7 +586,6 @@ export function hostProcess(config: HostConfig, door?: ImageDoorOptions): Proces
           registry,
           toolGate,
           logger,
-          review: reviewService,
           retro: { journal, learnings, gh, tracked },
           fleet: { fleet: fleet.fleet, argo: fleet.argo, purposeOf: pgRunPurpose(readPool, base.schema) },
           research: { ledger: pgToolLedger(ledgerPool, base.schema) },
