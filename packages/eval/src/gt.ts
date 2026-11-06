@@ -4,7 +4,7 @@ import { evalDir } from './cases.ts'
 
 /**
  * The review ground truth (`docs/review-v2.md` §Ground truth): bugs mined from the owner's fix history with SZZ, each
- * confirmed by two of three labelers on different vendors, plus clean controls. The contract between the miner
+ * confirmed by two labelers on different vendors, plus clean controls. The contract between the miner
  * (`eval.mine`), the labelers (`eval.label`), the judges (`eval.judge`) and review's scorer.
  * Every file lives under `$AGW_EVAL_DIR/review-gt/` (mode 0600): cases name private repos, so none of it enters this
  * public repo. No human checks any of it: every report states `GT_LIMIT`.
@@ -12,7 +12,7 @@ import { evalDir } from './cases.ts'
 export const GT_DIR = 'review-gt'
 
 /** The limit of this ground truth, carried by every report that rests on it (mine, the scorer's notes). */
-export const GT_LIMIT = 'LLM consensus (labellers a/b/c, judges a/b), no human check'
+export const GT_LIMIT = 'LLM consensus (labellers a/b, judges a/b), no human check'
 
 /** `$AGW_EVAL_DIR/review-gt/<file>`. */
 export const gtPath = (file: GtFile, env: Record<string, string | undefined> = process.env) =>
@@ -22,7 +22,7 @@ export const gtPath = (file: GtFile, env: Record<string, string | undefined> = p
  * The files of the ground truth, all JSONL but `report.json`:
  * - `candidates.jsonl`: SZZ output (`GtCandidate`), rewritten whole by each mine;
  * - `labels.jsonl`: one `GtLabelRecord` per labelled candidate, appended; the miner's resume point (a candidate with a
- *   record is never labelled again under the same `labelerVersion`; seat `c` is added to its record later, in place);
+ *   record is never labelled again under the same `labelerVersion`);
  * - `cases.jsonl`: the suite `agw eval run review` reads (`GtCase`: accepted bugs and controls);
  * - `rejected.jsonl`: candidates the labelers did not accept (`GtRejected`);
  * - `report.json`: aggregates only (counts per filter, per accept path and per reject reason), the input of the committed report.
@@ -104,8 +104,8 @@ export const GtLabel = z
   .strict()
 export type GtLabel = z.infer<typeof GtLabel>
 
-/** The labelers: `a` on Claude, `b` on GPT, `c` on Gemini (cross-vendor by design); `c` is asked only when `a` and `b` disagree. */
-export const LabelerSeat = z.enum(['a', 'b', 'c'])
+/** The labelers: `a` on Claude, `b` on GPT (cross-vendor by design). */
+export const LabelerSeat = z.enum(['a', 'b'])
 export type LabelerSeat = z.infer<typeof LabelerSeat>
 
 export const GtLabelResult = z.union([
@@ -114,9 +114,9 @@ export const GtLabelResult = z.union([
 ])
 
 /**
- * `labels.jsonl`: each seat's answer for one candidate, or the error of a seat that failed. `a` and `b` are checked
- * against `labelerVersion`. `c` is added later and only when they disagree; it carries its own version (`cVersion`),
- * so adding it never invalidates `a` and `b`, and the run that paid for it (`cRunId`).
+ * `labels.jsonl`: each seat's answer for one candidate, or the error of a seat that failed, checked against
+ * `labelerVersion`. `c`, `cVersion` and `cRunId` are legacy fields of a removed third seat: parsed so old files load,
+ * ignored by acceptance, never written.
  */
 export const GtLabelRecord = z
   .object({
@@ -125,8 +125,11 @@ export const GtLabelRecord = z
     at: z.iso.datetime(),
     a: GtLabelResult,
     b: GtLabelResult,
+    /** Legacy (removed third seat), read-only. */
     c: GtLabelResult.optional(),
+    /** Legacy, read-only. */
     cVersion: z.string().optional(),
+    /** Legacy, read-only. */
     cRunId: z.string().optional(),
     /** The eval run that paid for the calls of `a` and `b` (its `cost` is their sum). */
     runId: z.string(),
@@ -135,11 +138,10 @@ export const GtLabelRecord = z
 export type GtLabelRecord = z.infer<typeof GtLabelRecord>
 
 /**
- * The acceptance rule (2 of 3): at least two seats answered `defect` and the locations of two of those name the same
- * file and overlap within `LOCATION_SLACK` lines. Anything else is a rejection with its reason. The reasons for a
- * record without `c` are `a-no`, `b-no`, `both-no`, `no-overlap` and `labeler-error`; with `c`, a disagreement that
- * `c` did not settle is `c-no` (it says no), `c-no-overlap` (it says defect elsewhere) or `c-error`. `no-location` is a rejection
- * whose only problem is that fewer than two defect answers name a place (`defect: true` with `location: null`).
+ * The acceptance rule: seats `a` and `b` both answered `defect` and their locations name the same file and overlap
+ * within `LOCATION_SLACK` lines. Anything else is a rejection with its reason: `a-no`, `b-no`, `both-no`, `no-overlap`,
+ * `labeler-error`, or `no-location` (a defect answer with `location: null`). `c-no`, `c-no-overlap`, `c-error` are
+ * legacy reasons of the removed third seat: only read from old `rejected.jsonl`, never written.
  */
 export const LOCATION_SLACK = 3
 export const RejectReason = z.enum([
@@ -153,7 +155,7 @@ export const RejectReason = z.enum([
   'c-error',
   'no-location',
 ])
-/** The pair of seats that agreed on an accepted case. */
+/** The pair of seats that agreed on an accepted case. `a+c` and `b+c` are legacy values, only read, never written. */
 export const AcceptPath = z.enum(['a+b', 'a+c', 'b+c'])
 export type AcceptPath = z.infer<typeof AcceptPath>
 
@@ -168,7 +170,7 @@ const caseBase = {
   minerVersion: z.string(),
 }
 
-/** An accepted bug case: the introducing commit and the bug it created. The location is labeler `a`'s, else the agreeing pair's first seat. */
+/** An accepted bug case: the introducing commit and the bug it created. The location is labeler `a`'s. */
 export const GtBugCase = z
   .object({
     ...caseBase,

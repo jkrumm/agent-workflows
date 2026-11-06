@@ -9,7 +9,6 @@ const sizing = {
   iuLineUsd: 20,
   iuMarginUsd: 0.75,
   perCandidate: { creditUsd: 0.05, iuUsd: 0.035 },
-  thirdSeatBacklog: 0,
   unlabelled: 1000,
   maxPerRun: 150,
 }
@@ -17,9 +16,9 @@ const sizing = {
 describe('perCandidateCosts', () => {
   test('falls back to the constants without history, per payer', () => {
     expect(perCandidateCosts([])).toEqual({ creditUsd: 0.05, iuUsd: 0.035, runs: 0 })
-    expect(perCandidateCosts([{ runId: 'a', labelled: 0, thirdSeat: 0, creditUsd: 1, iuUsd: 1 }]).runs).toBe(0)
+    expect(perCandidateCosts([{ runId: 'a', labelled: 0, creditUsd: 1, iuUsd: 1 }]).runs).toBe(0)
     // A payer that was never billed keeps its fallback; the other is measured.
-    expect(perCandidateCosts([{ runId: 'a', labelled: 10, thirdSeat: 0, creditUsd: 0.5, iuUsd: 0 }])).toEqual({
+    expect(perCandidateCosts([{ runId: 'a', labelled: 10, creditUsd: 0.5, iuUsd: 0 }])).toEqual({
       creditUsd: 0.05,
       iuUsd: AUTO_DEFAULTS.fallbackIuUsd,
       runs: 1,
@@ -28,24 +27,19 @@ describe('perCandidateCosts', () => {
 
   test('pools the runs: spend over the records they wrote', () => {
     const cost = perCandidateCosts([
-      { runId: 'a', labelled: 3, thirdSeat: 0, creditUsd: 0.15, iuUsd: 0.09 },
-      { runId: 'b', labelled: 17, thirdSeat: 0, creditUsd: 0.75, iuUsd: 0.51 },
+      { runId: 'a', labelled: 3, creditUsd: 0.15, iuUsd: 0.09 },
+      { runId: 'b', labelled: 17, creditUsd: 0.75, iuUsd: 0.51 },
     ])
     expect(cost.creditUsd).toBeCloseTo(0.045, 10)
     expect(cost.iuUsd).toBeCloseTo(0.03, 10)
     expect(cost.runs).toBe(2)
   })
 
-  test('credit is spend over the candidates labelled; IU is spend over labelled + third-seat records', () => {
-    // 10 labelled and 5 third-seat backfills: the backfills cost IU only.
-    const cost = perCandidateCosts([{ runId: 'a', labelled: 10, thirdSeat: 5, creditUsd: 0.5, iuUsd: 0.75 }])
-    expect(cost.creditUsd).toBeCloseTo(0.05, 10)
-    expect(cost.iuUsd).toBeCloseTo(0.05, 10)
-    // A backfill-only run has IU spend and no candidate to price credit by: the credit stays on its fallback.
-    expect(perCandidateCosts([{ runId: 'b', labelled: 0, thirdSeat: 4, creditUsd: 0, iuUsd: 0.2 }])).toEqual({
+  test('a run with no labelled candidate has no cost to pool', () => {
+    expect(perCandidateCosts([{ runId: 'b', labelled: 0, creditUsd: 0, iuUsd: 0.2 }])).toEqual({
       creditUsd: AUTO_DEFAULTS.fallbackCreditUsd,
-      iuUsd: 0.05,
-      runs: 1,
+      iuUsd: AUTO_DEFAULTS.fallbackIuUsd,
+      runs: 0,
     })
   })
 })
@@ -61,13 +55,6 @@ describe('sizeRun', () => {
     })
     // IU: (20 − 0.75 − 18.5) / (0.035 × 1.25) = 17.1 → 17, below the credit's 90.
     expect(sizeRun({ ...sizing, iuSpentUsd: 18.5 })).toEqual({ state: 'labelled', planned: 17 })
-  })
-
-  test('the third-seat backlog is IU spend that comes first', () => {
-    // 0.75 of room; 10 backlog records take 10 × 0.04375, leaving 0.3125 / 0.04375 = 7 new candidates.
-    expect(sizeRun({ ...sizing, iuSpentUsd: 18.5, thirdSeatBacklog: 10 }).planned).toBe(7)
-    // A backlog that alone passes the room labels nothing.
-    expect(sizeRun({ ...sizing, iuSpentUsd: 18.5, thirdSeatBacklog: 30 })).toEqual({ state: 'iu-line', planned: 0 })
   })
 
   test('no room is iu-line (checked first) or no-credit', () => {
@@ -222,8 +209,8 @@ describe('evalMineAutoPorts', () => {
   test('the run spend: the newest runs that wrote records, with what each payer was billed', async () => {
     const spend = await ports().runSpend({ limit: 10 })
     expect(spend.map((s) => s.runId)).toEqual(['run-new', 'run-old'])
-    expect(spend[0]).toEqual({ runId: 'run-new', labelled: 20, thirdSeat: 0, creditUsd: 9, iuUsd: 1.5 })
-    expect(spend[1]).toEqual({ runId: 'run-old', labelled: 8, thirdSeat: 2, creditUsd: 0.4, iuUsd: 0.2 })
+    expect(spend[0]).toEqual({ runId: 'run-new', labelled: 20, creditUsd: 9, iuUsd: 1.5 })
+    expect(spend[1]).toEqual({ runId: 'run-old', labelled: 8, creditUsd: 0.4, iuUsd: 0.2 })
     expect((await ports().runSpend({ limit: 1 })).map((s) => s.runId)).toEqual(['run-new'])
   })
 

@@ -16,7 +16,6 @@ import { z } from 'zod'
 import type { HostWorkflow } from '../../operations.ts'
 import {
   appendLabel,
-  awaitsThirdSeat,
   type CaseSummary,
   controlCases,
   hasSeatError,
@@ -30,11 +29,11 @@ import {
   writeReport,
 } from './files.ts'
 import { AUTO_DEFAULTS, type AutoPorts, AutoRecord, perCandidateCosts, sizeRun } from './auto.ts'
-import { LABELER_C_VERSION, LABELER_VERSION, type LabelCaller, labelCandidate, labelThirdSeat } from './label.ts'
+import { LABELER_VERSION, type LabelCaller, labelCandidate } from './label.ts'
 
-export { LABELER_C_VERSION, LABELER_VERSION, type LabelCaller, seatAnswer } from './label.ts'
+export { LABELER_VERSION, type LabelCaller, seatAnswer } from './label.ts'
 
-const VERSIONS: Versions = { labelerVersion: LABELER_VERSION, cVersion: LABELER_C_VERSION }
+const VERSIONS: Versions = { labelerVersion: LABELER_VERSION }
 
 export const EVAL_MINE_ID = 'eval.mine'
 const DEFAULT_CONCURRENCY = 2
@@ -69,9 +68,7 @@ export const evalMineInput = z
       .int()
       .min(0)
       .optional()
-      .describe(
-        'New candidates to label this run (two paid calls each, a third when the first two disagree), default: mine only. Given (0 included) with --yes, it first asks the third labeller of every record that lacks it',
-      ),
+      .describe('New candidates to label this run (two paid calls each), default: mine only'),
     auto: z
       .boolean()
       .optional()
@@ -145,13 +142,7 @@ const Estimate = z.object({
 const Summary = z.object({
   labelled: z.number().int().describe('Candidates with a label record under the current labeler version'),
   accepted: z.number().int(),
-  acceptPaths: z.object({ 'a+b': z.number().int(), 'a+c': z.number().int(), 'b+c': z.number().int() }),
-  pendingThirdSeat: z
-    .number()
-    .int()
-    .describe(
-      'Records where a and b disagree and c has not answered; counted under their two-seat reason until it does',
-    ),
+  acceptPaths: z.object({ 'a+b': z.number().int() }),
   rejected: z.object({ total: z.number().int(), byReason: z.record(z.string(), z.number().int()) }),
   bugClasses: z.record(z.string(), z.number().int()),
   cases: z.object({
@@ -164,13 +155,11 @@ export const evalMineOutput = z.object({
   suite: z.enum(['review']),
   minerVersion: z.string(),
   labelerVersion: z.string(),
-  labelerCVersion: z.string(),
   limit: z.string().describe('What no one checked: every report of this ground truth states it'),
   funnel: z.record(z.string(), z.number().int()),
   labelPlan: z
     .object({
       candidates: z.number().int().describe('Unlabelled candidates this run would label'),
-      thirdSeat: z.number().int().describe('Records of labelled candidates that wait for the third labeller'),
       estimate: Estimate,
     })
     .nullable()
@@ -180,7 +169,6 @@ export const evalMineOutput = z.object({
   ),
   spent: z.boolean().describe('False: no label call was made (no --label, or no --yes)'),
   labelledThisRun: z.number().int(),
-  thirdSeatThisRun: z.number().int().describe('Records that gained the third labeller this run'),
   stopped: z
     .string()
     .nullable()
@@ -202,26 +190,11 @@ function pending(
   })
 }
 
-/** Records waiting for the third labeller, by candidate id (candidates that left `candidates.jsonl` are not asked). */
-function awaiting(
-  candidates: GtCandidate[],
-  labels: Map<string, GtLabelRecord>,
-  relabelErrors: boolean,
-): { candidate: GtCandidate; record: GtLabelRecord }[] {
-  return [...candidates]
-    .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
-    .flatMap((candidate) => {
-      const record = labels.get(candidate.id)
-      return record && awaitsThirdSeat(record, relabelErrors) ? [{ candidate, record }] : []
-    })
-}
-
 /**
  * `agw eval mine review`: the ground-truth miner (`docs/review-v2.md` §Ground truth). It mines SZZ candidates and clean
  * controls from the owner's history (`candidates.jsonl`, `report.json`), and with `--label N --yes` labels the next N
- * unlabelled candidates on two vendors, plus a third when the two disagree (`labels.jsonl`, one record as each
- * finishes), after adding the third labeller to every record that lacks it, then rebuilds `cases.jsonl` and
- * `rejected.jsonl` from every record (2 of 3 labellers accept). `--auto` replaces `--label N`: the workflow sizes N from
+ * unlabelled candidates on two vendors (`labels.jsonl`, one record as each finishes), then rebuilds `cases.jsonl` and
+ * `rejected.jsonl` from every record (both labellers must say defect at overlapping locations). `--auto` replaces `--label N`: the workflow sizes N from
  * the bug-case count, the gateway's eval credit and the IU line (`auto.ts`) and records why. Everything is under `$AGW_EVAL_DIR/review-gt/`; the
  * journal holds counts only. Every report states `GT_LIMIT`.
  */
@@ -235,7 +208,7 @@ export function createEvalMine(options: EvalMineOptions): HostWorkflow {
 
   const workflow = defineWorkflow({
     id: EVAL_MINE_ID,
-    version: '2026-11-03.1',
+    version: '2026-11-06.1',
     // One writer of the ground-truth files at a time: two runs would race on candidates and labels.
     concurrency: 1,
     input: evalMineInput,
@@ -300,7 +273,6 @@ export function createEvalMine(options: EvalMineOptions): HostWorkflow {
             const estimate = await labelEstimate(options.history, env, warn)
             return {
               candidates: toLabel,
-              thirdSeat: awaiting(candidates(), labels, relabelErrors).length,
               estimate: {
                 historyRuns: estimate.runs,
                 meanCostUsd: estimate.meanCost,
@@ -313,7 +285,6 @@ export function createEvalMine(options: EvalMineOptions): HostWorkflow {
         suite: input.suite,
         minerVersion: MINER_VERSION,
         labelerVersion: LABELER_VERSION,
-        labelerCVersion: LABELER_C_VERSION,
         limit: GT_LIMIT,
         funnel: mined.funnel,
         labelPlan: plan,
@@ -321,14 +292,13 @@ export function createEvalMine(options: EvalMineOptions): HostWorkflow {
       }
       const bugCases = (summary: CaseSummary) => summary.cases.dev.bug + summary.cases.test.bug
       const autoRecord = (summary: CaseSummary) => (auto ? { ...auto, bugCasesAfter: bugCases(summary) } : null)
-      // Nothing to label (target reached, no credit, no room under the IU line): the third-seat backlog waits too.
+      // Nothing to label (target reached, no credit, no room under the IU line).
       if (!plan || !input.yes || (auto !== null && auto.state !== 'labelled')) {
         return {
           ...base,
           auto: autoRecord(mined.summary),
           spent: false,
           labelledThisRun: 0,
-          thirdSeatThisRun: 0,
           stopped: null,
           summary: mined.summary,
         }
@@ -354,10 +324,9 @@ export function createEvalMine(options: EvalMineOptions): HostWorkflow {
       )
       if (labelled.stopped !== null) {
         // The run is a success (what was labelled is kept); the stop is a warning so it does not pass unseen.
-        warn(
-          `labelling stopped: ${labelled.stopped} (${labelled.labelled} candidates labelled and ${labelled.thirdSeat} given the third labeller in this run)`,
-          { runId: ctx.runId },
-        )
+        warn(`labelling stopped: ${labelled.stopped} (${labelled.labelled} candidates labelled in this run)`, {
+          runId: ctx.runId,
+        })
       }
       const summary = await ctx.step('cases', () => {
         const rebuilt = rebuildCases({ env, warn, versions: VERSIONS })
@@ -369,7 +338,6 @@ export function createEvalMine(options: EvalMineOptions): HostWorkflow {
         auto: autoRecord(summary),
         spent: true,
         labelledThisRun: labelled.labelled,
-        thirdSeatThisRun: labelled.thirdSeat,
         stopped: labelled.stopped,
         summary,
       }
@@ -378,7 +346,7 @@ export function createEvalMine(options: EvalMineOptions): HostWorkflow {
   return {
     workflow,
     summary:
-      'Mine the review ground truth from the owner’s fix history; --label N --yes labels N candidates on two vendors, a third when they disagree, and adds the third to records that lack it (spends); --auto sizes that N from the eval credit and the IU line',
+      'Mine the review ground truth from the owner’s fix history; --label N --yes labels N candidates on two vendors (spends); --auto sizes that N from the eval credit and the IU line',
     cli: { positional: ['suite'], defaultFormat: 'json', mutating: true },
   }
 }
@@ -440,14 +408,12 @@ async function sizeAuto(args: {
   const all = readRecords('candidates.jsonl', GtCandidate, args.env, args.warn)
   const labels = latestLabels(args.env, VERSIONS, args.warn)
   const unlabelled = pending(all, labels, { seed: args.seed, relabelErrors: args.relabelErrors }).length
-  const thirdSeatBacklog = awaiting(all, labels, args.relabelErrors).length
   const sized = sizeRun({
     creditAvailableUsd,
     iuSpentUsd,
     iuLineUsd,
     iuMarginUsd: input.iuMarginUsd ?? AUTO_DEFAULTS.iuMarginUsd,
     perCandidate,
-    thirdSeatBacklog,
     unlabelled,
     maxPerRun: input.maxPerRun ?? AUTO_DEFAULTS.maxPerRun,
   })
@@ -459,13 +425,11 @@ async function sizeAuto(args: {
         `--auto planned 0 candidates with ${unlabelled} unlabelled left; it must label or say why not`,
       )
     }
-    // Every candidate is labelled and the target is not reached: the history cannot yield it. Only a backlog of third-seat records is left to do.
-    if (thirdSeatBacklog === 0) {
-      throw new WorkflowError(
-        'error',
-        `no unlabelled candidates are left and ${bugCasesBefore} bug cases of ${target} is all the history yields`,
-      )
-    }
+    // Every candidate is labelled and the target is not reached: the history cannot yield it.
+    throw new WorkflowError(
+      'error',
+      `no unlabelled candidates are left and ${bugCasesBefore} bug cases of ${target} is all the history yields`,
+    )
   }
   return {
     ...record,
@@ -488,7 +452,7 @@ async function labelEstimate(
   warn: Warn,
 ): Promise<{ runs: number; meanCost: number | null }> {
   if (!history) return { runs: 0, meanCost: null }
-  // A candidate counts once per run, whatever number of lines it has: seat `c` is added by appending the record again.
+  // A candidate counts once per run, whatever number of lines it has: a relabelled error appends the record again.
   const candidatesByRun = new Map<string, Set<string>>()
   for (const record of readRecords('labels.jsonl', GtLabelRecord, env, warn)) {
     const seen = candidatesByRun.get(record.runId) ?? new Set<string>()
@@ -509,14 +473,12 @@ function report(funnel: Record<string, number>, summary: CaseSummary, at: Date) 
     at: at.toISOString(),
     minerVersion: MINER_VERSION,
     labelerVersion: LABELER_VERSION,
-    labelerCVersion: LABELER_C_VERSION,
     limit: GT_LIMIT,
     funnel,
     labelled: summary.labelled,
     accepted: summary.accepted,
     acceptanceRate: summary.labelled ? summary.accepted / summary.labelled : null,
     acceptPaths: summary.acceptPaths,
-    pendingThirdSeat: summary.pendingThirdSeat,
     rejected: summary.rejected,
     bugClasses: summary.bugClasses,
     cases: summary.cases,
@@ -541,64 +503,42 @@ type Labelling = {
 }
 
 /**
- * First adds the third labeller to every record that lacks it (the record appended again with `c`, the latest line of a
- * candidate wins), then labels the next
- * unlabelled candidates, `concurrency` at a time, each record appended as its candidate finishes (a candidate whose two
- * labellers disagree gets the third in the same record). A resumed run counts the records it already wrote (by run id)
- * against `wanted`. Stops taking work at the first failure that is not a seat answer. Those in flight always finish
- * and keep their records, an abort or a failed write included, before the failure is rethrown.
+ * Labels the next unlabelled candidates, `concurrency` at a time, each record appended as its candidate finishes. A
+ * resumed run counts the records it already wrote (by run id) against `wanted`. Stops taking work at the first failure
+ * that is not a seat answer. Those in flight always finish and keep their records, an abort or a failed write
+ * included, before the failure is rethrown.
  */
-async function runLabelling(job: Labelling): Promise<{ labelled: number; thirdSeat: number; stopped: string | null }> {
+async function runLabelling(job: Labelling): Promise<{ labelled: number; stopped: string | null }> {
   const labels = latestLabels(job.env, VERSIONS, job.warn)
   const candidates = readRecords('candidates.jsonl', GtCandidate, job.env, job.warn)
   const done = [...labels.values()].filter((r) => r.runId === job.runId).length
-  type Task = { candidate: GtCandidate; record?: GtLabelRecord }
-  const queue: Task[] = [
-    ...awaiting(candidates, labels, job.relabelErrors),
-    ...pending(candidates, labels, job)
-      .slice(0, Math.max(0, job.wanted - done))
-      .map((candidate) => ({ candidate })),
-  ]
+  const queue = pending(candidates, labels, job).slice(0, Math.max(0, job.wanted - done))
   let next = 0
   let labelled = done
-  let thirdSeat = 0
   let stopped: string | null = null
   /** An abort or a failed write: no worker takes another candidate, those in flight finish, then it is rethrown. */
   let failure: { error: unknown } | null = null
   const worker = async () => {
     while (stopped === null && failure === null && next < queue.length) {
-      const task = queue[next++] as Task
+      const candidate = queue[next++] as GtCandidate
       try {
         job.signal.throwIfAborted()
-        const call = {
-          candidate: task.candidate,
+        const outcome = await labelCandidate({
+          candidate,
           home: job.home,
           exec: job.exec,
           registry: job.registry,
           callContext: job.callContext,
           runId: job.runId,
           now: job.now,
-        }
-        const outcome = task.record
-          ? await labelThirdSeat({ ...call, record: task.record })
-          : await labelCandidate(call)
-        if ('record' in outcome) {
-          if (task.record) {
-            // A third seat that stopped leaves the record as it was: nothing to write.
-            if (outcome.record !== task.record) {
-              appendLabel(outcome.record, job.env)
-              thirdSeat++
-            }
-          } else {
-            appendLabel(outcome.record, job.env)
-            labelled++
-          }
-          job.progress()
-        }
-        if (outcome.stop !== undefined) {
+        })
+        if ('stop' in outcome) {
           stopped ??= outcome.stop
           return
         }
+        appendLabel(outcome.record, job.env)
+        labelled++
+        job.progress()
       } catch (error) {
         if (job.signal.aborted) failure ??= { error: job.signal.reason ?? error }
         else failure ??= { error }
@@ -607,5 +547,5 @@ async function runLabelling(job: Labelling): Promise<{ labelled: number; thirdSe
   }
   await Promise.all(Array.from({ length: Math.max(1, Math.min(job.concurrency, queue.length)) }, worker))
   if (failure) throw (failure as { error: unknown }).error
-  return { labelled, thirdSeat, stopped }
+  return { labelled, stopped }
 }

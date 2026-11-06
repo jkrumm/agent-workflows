@@ -2,7 +2,7 @@ export { createCapabilities } from './capabilities/index.ts'
 export { parseJsonLoose } from './llm/model-call.ts'
 // Review's scorer records the judge's version in its own.
 export { JUDGE_B_VERSION, JUDGE_VERSION } from './capabilities/eval-judge.ts'
-export { LABELER_C_VERSION, LABELER_VERSION } from './capabilities/eval-label.ts'
+export { LABELER_VERSION } from './capabilities/eval-label.ts'
 // The `overview` workflow validates a merged answer against the same vocabulary the classify seat answers in.
 export {
   CONFIDENCES,

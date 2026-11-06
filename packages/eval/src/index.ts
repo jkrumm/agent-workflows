@@ -56,7 +56,6 @@ export {
   type Git,
   gitIn,
   locationsOverlap,
-  needsThirdSeat,
   MAX_CHANGED_LINES,
   MAX_INTRO_AGE_DAYS,
   MINER_VERSION,

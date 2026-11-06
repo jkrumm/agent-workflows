@@ -84,12 +84,11 @@ export function evalMineAutoPorts(options: {
     },
 
     async runSpend({ limit }) {
-      const { rows: runs } = await options.journal.query<{ id: string; labelled: number; third_seat: number }>(
-        `select r.id, coalesce((r.output->>'labelledThisRun')::int, 0) as labelled,
-           coalesce((r.output->>'thirdSeatThisRun')::int, 0) as third_seat
+      const { rows: runs } = await options.journal.query<{ id: string; labelled: number }>(
+        `select r.id, coalesce((r.output->>'labelledThisRun')::int, 0) as labelled
          from "${journalSchema}".runs r
          where r.workflow = 'eval.mine' and r.id = r.root_id and r.status = 'done' and r.output is not null
-           and coalesce((r.output->>'labelledThisRun')::int, 0) + coalesce((r.output->>'thirdSeatThisRun')::int, 0) > 0
+           and coalesce((r.output->>'labelledThisRun')::int, 0) > 0
          order by coalesce(r.finished_at, r.created_at) desc, r.id limit $1`,
         [limit],
       )
@@ -119,7 +118,6 @@ export function evalMineAutoPorts(options: {
           {
             runId: run.id,
             labelled: Number(run.labelled),
-            thirdSeat: Number(run.third_seat),
             creditUsd: Number(row.credit ?? 0),
             iuUsd: Number(row.iu ?? 0),
           },

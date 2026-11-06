@@ -115,16 +115,13 @@ dispose`. A lead's evidence is the review's run id and outcome. The factory gets
 4. **Labelling**: published SZZ precision is about 0.5 unverified, so every candidate is checked. Two labeler calls
    (`a` on Claude, `b` on GPT) each see the introducing diff, the fix diff and its message. Each answers: is this a
    defect the introducing commit created (not a feature change or a preference)? Where is it in the introducing
-   commit's post-image (file, lines)? One-paragraph description, bug class, severity. When `a` and `b` disagree (one
-   says defect and the other not, or both say defect at locations that do not overlap or are missing), a third labeler `c` on a third
-   vendor (Gemini) decides. **A case is accepted when at least two of the three say defect and the locations of two
-   of those overlap**; anything else is dropped. The case takes `a`'s location, description, class and severity when `a`
-   is in the agreeing pair, else the pair's first seat. The report counts accepted cases per pair (`a+b`, `a+c`, `b+c`)
-   and drops per reason (`a-no`, `b-no`, `both-no`, `no-overlap`, `no-location`, `c-no`, `c-no-overlap`, `labeler-error`, `c-error`).
+   commit's post-image (file, lines)? One-paragraph description, bug class, severity. **A case is accepted when `a` and `b` both
+   say defect and their locations overlap**; any disagreement is dropped. The case takes `a`'s location, description,
+   class and severity. The report counts drops per reason (`a-no`, `b-no`, `both-no`, `no-overlap`, `no-location`,
+   `labeler-error`). Legacy `c` fields in stored files (a removed third labeller) are ignored.
 5. **No owner check.** No human reads the cases (owner decision, 2026-11-02): the ground truth is validated by the
    consensus above and nothing else. The limit is stated in every report that rests on it: `limit: "LLM consensus
-   (labellers a/b/c, judges a/b), no human check"`. Seat `c` is recorded beside `a` and `b` under its own version, so
-   adding it never invalidates their labels.
+   (labellers a/b, judges a/b), no human check"`.
 
 **Clean controls**: commits whose changed code lines no later fix touched within 12 weeks and that no SZZ candidate
 blames. Mostly logic commits, with a few refactor, test and docs commits. "Clean" is probable, not proven: an important

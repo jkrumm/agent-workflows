@@ -1,4 +1,4 @@
-export { type Acceptance, acceptRecord, locationsOverlap, needsThirdSeat } from './accept.ts'
+export { type Acceptance, acceptRecord, locationsOverlap } from './accept.ts'
 export { controlCase, type MineControl } from './controls.ts'
 export { type Git, gitIn } from './git.ts'
 export { type MineFunnel, type MineOptions, type MineResult, mine } from './mine.ts'

@@ -21,9 +21,6 @@ const TERRA_RATE = {
 // Rates are USD/M tokens; IU's `usage.cost` wins on the wires that send it, the rate prices a call that lacks it.
 // GPT-6 Luna: in 0.10, cached in 0.01, out 0.50 (OpenAI list price; image-gateway `pricing.ts` TEXT_RATES).
 const LUNA_RATE = { inputPerM: 0.1, outputPerM: 0.5, cacheReadPerM: 0.01 }
-// Gemini 3.8 Flash, USD/M: in 0.75, out 3.75 (introductory through 2026-12-31, then 1.50 / 7.50), audio-gateway
-// `src/usage.ts`. No cache rate: a call reporting cache reads without `usage.cost` is priced `unknown`, never 0.
-const GEMINI_FLASH_RATE = { inputPerM: 0.75, outputPerM: 3.75 }
 // The UE price list in the gateway's decision.ts, input only ($0.042/M, output $0).
 const DECISION_RATE = { inputPerM: 0.042, outputPerM: 0 }
 
@@ -90,16 +87,12 @@ export const DECIDE = {
 
 // ---- Cross-lab seats: named constants, not tiers. They stay off Claude on purpose: a reviewer of Claude-written output sits on
 // another lab (docs/gateway.md §Seats). A route spreads one like a tier; each carries its rate and its fallback.
-/** The podcast cross-lab reviewer. No effort: Gemini's OpenAI-compatible leg rejects `reasoning_effort`. Falls back to Terra medium. */
-export const GEMINI_FLASH = {
-  call: { model: 'gemini-3.8-flash', rate: GEMINI_FLASH_RATE, fallback: callFallback(TERRA_MEDIUM) },
-} as const
 /** The cross-family critic of a Claude writer (`podcast.review`, `prose.review`): Terra medium. Its capability refuses any wire but the OpenAI chat wire. On a provider-balance failure the critique comes from Luna medium on another backend rather than not at all. */
 export const CRITIC = {
   call: { ...TERRA_MEDIUM, fallback: callFallback({ ...LUNA, effort: 'medium' as const }) },
 } as const
 
-// ---- Eval seats: pinned, never tiers; a change here bumps the labeller or judge version (`LABELER_VERSION`,
+// ---- Eval seats: four pinned seats (label a/b, judge, judge.b), never tiers; a change here bumps the labeller or judge version (`LABELER_VERSION`,
 // `JUDGE_VERSION` in packages/capabilities). They carry no fallback on purpose: a fallback would silently change a
 // labeller or the grader, so a drained credit fails the call and never moves it. Each seat is its own constant so a tier
 // edit never reaches the ground truth.
@@ -110,10 +103,6 @@ export const LABELER_CLAUDE = {
 /** Ground-truth labeller `b`, the other vendor: Terra medium on the chat wire (`eval.label.b`). */
 export const LABELER_GPT = {
   call: { ...TERRA_MEDIUM, maxOutputTokens: 16_000 },
-} as const
-/** Ground-truth labeller `c`, a third vendor, asked only when `a` and `b` disagree (`eval.label.c`). No effort: Gemini's OpenAI leg rejects `reasoning_effort`. */
-export const LABELER_GEMINI = {
-  call: { model: GEMINI_FLASH.call.model, rate: GEMINI_FLASH.call.rate, maxOutputTokens: 16_000 },
 } as const
 /** The review eval's grader: Sonnet 5.5 medium (`eval.judge`). Reasoning counts against the ceiling. */
 export const JUDGE = {

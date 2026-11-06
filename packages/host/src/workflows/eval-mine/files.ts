@@ -1,7 +1,6 @@
 import { appendFileSync, closeSync, existsSync, openSync, readFileSync, readSync, statSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 import {
-  type AcceptPath,
   controlCase,
   type GtBugCase,
   GtCandidate,
@@ -11,7 +10,6 @@ import {
   GtLabelRecord,
   GtRejected,
   acceptRecord,
-  needsThirdSeat,
   gtPath,
   privateDir,
   writeCases,
@@ -92,7 +90,7 @@ const endsWithNewline = (path: string) => {
 
 /**
  * Appends one record (mode 0600): the labels file is written as each candidate finishes, so a crash keeps the rest.
- * A record that gains seat `c` is appended again whole; the latest line of a candidate wins (`latestLabels`).
+ * A relabelled candidate is appended again whole; the latest line of a candidate wins (`latestLabels`).
  * A file whose last line was torn gets a line break first, so the new record is a line of its own.
  */
 export function appendLabel(record: GtLabelRecord, env: Env): void {
@@ -112,21 +110,18 @@ export function writeReport(report: unknown, env: Env): void {
   writeFileAtomic(gtPath('report.json', env), `${JSON.stringify(report, null, 2)}\n`)
 }
 
-/** The versions a record is checked against: `a` and `b` under `labelerVersion`, `c` under its own `cVersion`. */
-export type Versions = { labelerVersion: string; cVersion: string }
+/** The version a record is checked against. */
+export type Versions = { labelerVersion: string }
 
 /**
  * The labels of one labeler version: the latest record per candidate (a relabelled error comes later in the file). A
- * seat `c` recorded under another `cVersion` is dropped from the record, as if not asked.
+ * legacy `c` on a record is parsed and ignored.
  */
 export function latestLabels(env: Env, versions: Versions, warn: Warn): Map<string, GtLabelRecord> {
   const latest = new Map<string, GtLabelRecord>()
   for (const record of readRecords('labels.jsonl', GtLabelRecord, env, warn)) {
     if (record.labelerVersion !== versions.labelerVersion) continue
-    if (record.c !== undefined && record.cVersion !== versions.cVersion) {
-      const { c: _c, cVersion: _v, cRunId: _r, ...rest } = record
-      latest.set(record.candidateId, rest)
-    } else latest.set(record.candidateId, record)
+    latest.set(record.candidateId, record)
   }
   return latest
 }
@@ -134,19 +129,13 @@ export function latestLabels(env: Env, versions: Versions, warn: Warn): Map<stri
 /** A seat `a` or `b` error: the candidate is labelled again (with `relabelErrors`). */
 export const hasSeatError = (record: GtLabelRecord) => 'error' in record.a || 'error' in record.b
 
-/** Seat `c` is still to be asked: the disagreement of `a` and `b` is unsettled, or (with `relabelErrors`) `c` failed. */
-export const awaitsThirdSeat = (record: GtLabelRecord, relabelErrors: boolean) =>
-  needsThirdSeat(record) || (relabelErrors && record.c !== undefined && 'error' in record.c && !hasSeatError(record))
-
 export type CaseSummary = {
   /** Candidates with a label record under the current labeler version. */
   labelled: number
   accepted: number
-  /** Accepted cases by the pair of seats that agreed. */
-  acceptPaths: Record<AcceptPath, number>
+  /** Accepted cases by the pair of seats that agreed (only `a+b` is written now). */
+  acceptPaths: { 'a+b': number }
   rejected: { total: number; byReason: Record<string, number> }
-  /** Records where `a` and `b` disagree and `c` has not answered: counted under their two-seat reason until it does. */
-  pendingThirdSeat: number
   /** Accepted bug cases by bug class. */
   bugClasses: Record<string, number>
   cases: { dev: { bug: number; control: number }; test: { bug: number; control: number } }
@@ -165,12 +154,10 @@ export function rebuildCases(options: { env: Env; versions: Versions; warn: Warn
   const labels = latestLabels(env, options.versions, warn)
   const bugs: z.infer<typeof GtBugCase>[] = []
   const rejected: Rejected[] = []
-  const acceptPaths: Record<AcceptPath, number> = { 'a+b': 0, 'a+c': 0, 'b+c': 0 }
-  let pendingThirdSeat = 0
+  const acceptPaths = { 'a+b': 0 }
   for (const [id, record] of labels) {
     const candidate = candidates.get(id)
     if (!candidate) continue
-    if (needsThirdSeat(record)) pendingThirdSeat++
     const verdict = acceptRecord(record, candidate)
     if (verdict.accepted) {
       bugs.push(verdict.case)
@@ -189,7 +176,6 @@ export function rebuildCases(options: { env: Env; versions: Versions; warn: Warn
     labelled: [...labels.keys()].filter((id) => candidates.has(id)).length,
     accepted: bugs.length,
     acceptPaths,
-    pendingThirdSeat,
     rejected: { total: rejected.length, byReason: {} },
     bugClasses: {},
     cases: { dev: { bug: 0, control: 0 }, test: { bug: 0, control: 0 } },

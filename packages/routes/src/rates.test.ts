@@ -29,7 +29,6 @@ test('one rate per model: every route and fallback with a rate gets it back', ()
 
 test('the IU text models carry their route rate', () => {
   expect(routeRate('gpt-6.1-terra')).toMatchObject({ inputPerM: 1, outputPerM: 5, cacheReadPerM: 0.05 })
-  expect(routeRate('gemini-3.8-flash')).toMatchObject({ inputPerM: 0.75, outputPerM: 3.75 })
 })
 
 test('a model without a rate, or not in the table, has none', () => {

@@ -60,7 +60,7 @@ line="$(print -r -- "$out" | jq -r '
   .output as $o | $o.auto as $a
   | def usd: if . == null then "n/a" else (. * 1000 | round / 1000 | tostring) end;
     "bug cases \($a.bugCasesAfter)/\($a.target) (dev \($o.summary.cases.dev.bug), test \($o.summary.cases.test.bug))"
-    + "; labelled \($o.labelledThisRun) (+\($o.thirdSeatThisRun) third seat), accepted +\($a.bugCasesAfter - $a.bugCasesBefore)"
+    + "; labelled \($o.labelledThisRun), accepted +\($a.bugCasesAfter - $a.bugCasesBefore)"
     + "; credit available \($a.creditAvailableUsd | usd), run cost \(.cost | usd)"
     + "; IU eval \($a.iuSpentUsd | usd) of \($a.iuLineUsd | usd) before the run"
     + "; planned \($a.planned); state \($a.state)"

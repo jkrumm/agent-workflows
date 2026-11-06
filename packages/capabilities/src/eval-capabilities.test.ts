@@ -4,13 +4,7 @@ import { resolveRoute } from '@agent-workflows/routes'
 import { z } from 'zod'
 import { createCapabilities } from './capabilities/index.ts'
 import { JUDGE_B_VERSION, JUDGE_VERSION, judgeBVersion, judgeVersion } from './capabilities/eval-judge.ts'
-import {
-  LABELER_C_VERSION,
-  LABELER_VERSION,
-  labelerCVersion,
-  labelerVersion,
-  labelPrompt,
-} from './capabilities/eval-label.ts'
+import { LABELER_VERSION, labelerVersion, labelPrompt } from './capabilities/eval-label.ts'
 import { cutDiff, EVAL_DIFF_CHARS, fill, fixtureDiff, numberDiff, pinnedVersion } from './capabilities/eval-prompt.ts'
 import type { Usage } from './context.ts'
 import { CapabilityCallError } from './errors.ts'
@@ -147,27 +141,8 @@ describe('eval.label', () => {
     expect(fix?.[1]).toBe('fix: off by one\n\nthe end was exclusive')
   })
 
-  test('seat c runs on the chat wire with no effort (Gemini’s OpenAI leg rejects it) and has no fallback', async () => {
-    const t = setup({ openai: [{ text: JSON.stringify(DEFECT) }, new Error('boom')] })
-    const c = await t.registry.call('eval.label', labelInput({ seat: 'c' }), t.options)
-    const request = t.transports.chatCalls[0]?.request
-    expect(t.transports.chatCalls[0]?.wire).toBe('openai')
-    expect(request?.model).toBe(resolveRoute('eval.label.c').model)
-    expect(request?.effort).toBeUndefined()
-    expect(request?.maxOutputTokens).toBe(16_000)
-    expect(c.model).toBe(resolveRoute('eval.label.c').model)
-    await caught(t.registry.call('eval.label', labelInput({ seat: 'c' }), t.options))
-    expect(t.transports.chatCalls.map((x) => x.wire)).toEqual(['openai', 'openai'])
-  })
-
   test('LABELER_VERSION is the recorded value of the computed version (prompt, diff rendering, schema, seats a and b)', () => {
     expect(LABELER_VERSION).toBe(labelerVersion())
-  })
-
-  test('seat c has its own version, so adding it left LABELER_VERSION (and every a/b record) as it was', () => {
-    expect(LABELER_C_VERSION).toBe(labelerCVersion())
-    expect(LABELER_C_VERSION).not.toBe(LABELER_VERSION)
-    expect(LABELER_VERSION).toBe('eval-label-5d14aed19b3e')
   })
 })
 

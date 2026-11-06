@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { resolveRoute } from '@agent-workflows/routes'
 import { CapabilityError } from './errors.ts'
 import { chatStream, type FakeGateway, messageResponse, sse, startFakeGateway } from '@agent-workflows/testing/gateway'
 import { anthropicWire, iuDecision, iuOpenai, type JsonSchema } from './transports/index.ts'
@@ -177,10 +176,10 @@ describe('openai wire details', () => {
     })
   })
 
-  test('a schema goes as a strict json_schema on the Gemini model labeller c runs on, the one non-GPT model proven to take it', async () => {
+  test('a schema goes as a strict json_schema on gemini-3.8-flash, the one non-GPT model proven to take it', async () => {
     iu.on('chat', () => chatStream('ok', null))
     const port = iuOpenai({ env: env() })
-    const geminiFlash = resolveRoute('eval.label.c').model
+    const geminiFlash = 'gemini-3.8-flash'
     await port.complete({ ...chatRequest, model: geminiFlash, jsonSchema: schema, json: true }, never())
     await port.complete({ ...chatRequest, model: 'gemini-9-other', jsonSchema: schema, json: true }, never())
     expect(iu.requests[0]?.body.response_format).toEqual({

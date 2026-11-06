@@ -67,7 +67,7 @@ const FIXTURE: LabelInput = {
 /**
  * The version of the labeller: bumped by any change to the system text, the rendered prompt, the diff rendering and cap,
  * the answer schema or seat `a`'s or `b`'s wire, model, effort or output ceiling. The constant below is this value
- * written down. Seat `c` is not in it: adding the third seat must not invalidate the records of `a` and `b`.
+ * written down.
  */
 export const labelerVersion = () =>
   pinnedVersion('eval-label', {
@@ -79,25 +79,10 @@ export const labelerVersion = () =>
 
 export const LABELER_VERSION = 'eval-label-5d14aed19b3e'
 
-/**
- * The version of seat `c`: the same inputs as `labelerVersion` over `c`'s route. A record's `c` is used only under this
- * value; a change to the prompt or to `c`'s model moves it (and, for the prompt, `LABELER_VERSION` too).
- */
-export const labelerCVersion = () =>
-  pinnedVersion('eval-label-c', {
-    system: LABEL_SYSTEM,
-    prompts: [labelPrompt(FIXTURE)],
-    routes: ['eval.label.c'],
-    schemas: [answer],
-  })
-
-export const LABELER_C_VERSION = 'eval-label-c-29b7384e0669'
-
 export const createEvalLabel = (deps: LlmDeps) =>
   defineCapability({
     id: 'eval.label',
-    summary:
-      'Label one SZZ candidate on a pinned labeller seat (eval.label.a: Claude, eval.label.b: GPT, eval.label.c: Gemini)',
+    summary: 'Label one SZZ candidate on a pinned labeller seat (eval.label.a: Claude, eval.label.b: GPT)',
     input: LabelInput,
     output: LabelOutput,
     // Not `agw eval …`: a command that is a prefix of another is refused, and `agw eval` is the harness.

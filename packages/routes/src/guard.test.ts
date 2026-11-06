@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
 import { CLAUDE_MODELS, DEFAULT_ROUTES, resolveRoute, routeIds } from './index.ts'
-import { CRITIC, DECIDE, EASY, FAST, GEMINI_FLASH, HARD } from './table/_shared.ts'
+import { CRITIC, DECIDE, EASY, FAST, HARD } from './table/_shared.ts'
 
 // The home-of-model-ids rule: no source outside `packages/routes/src/table/` names a model that the table names. The
 // routes package's own test files may (they pin what the table says): exactly the files `bun test` runs, by its
@@ -198,7 +198,7 @@ test('the cross-lab reviewers are never on a Claude model or the anthropic wire,
 
 // The eval seats are pinned, never tiers, and carry no fallback on purpose (`_shared.ts` §Eval seats): a fallback would
 // silently change a labeller or the grader, so a drained credit fails the call.
-const EVAL_SEATS = ['eval.label.a', 'eval.label.b', 'eval.label.c', 'eval.judge', 'eval.judge.b'] as const
+const EVAL_SEATS = ['eval.label.a', 'eval.label.b', 'eval.judge', 'eval.judge.b'] as const
 const isEvalSeat = (id: string) => (EVAL_SEATS as readonly string[]).includes(id)
 
 // The gateway refuses a Claude route with 402 when the credit is gone, so a fallback is the only way the call survives,
@@ -311,7 +311,7 @@ test('every route on a Claude model spreads a tier', () => {
 
 // A route on a non-tier constant equals that constant's `.call` except `wire`: no route-level override remains outside
 // the eval seats.
-const CONSTANTS = { GEMINI_FLASH, CRITIC, DECIDE }
+const CONSTANTS = { CRITIC, DECIDE }
 
 test('every route on a non-tier constant equals the constant exactly, except wire', () => {
   const matched = new Set<string>()
@@ -371,12 +371,6 @@ test('the eval seats are pinned: no fallback, the chosen model and effort, a 160
     rate: { inputPerM: 1, outputPerM: 5, cacheReadPerM: 0.05, cacheWritePerM: 1.25 },
     maxOutputTokens: 16_000,
   })
-  expect(resolveRoute('eval.label.c', {})).toMatchObject({
-    wire: 'iu-openai',
-    model: 'gemini-3.8-flash',
-    maxOutputTokens: 16_000,
-  })
-  expect(resolveRoute('eval.label.c', {}).effort).toBeUndefined()
   expect(resolveRoute('eval.judge.b', {})).toMatchObject({
     wire: 'iu-openai',
     model: 'gpt-6.1-terra',

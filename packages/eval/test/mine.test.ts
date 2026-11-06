@@ -9,9 +9,9 @@ import {
   exec,
   type GtCandidate,
   type GtLabel,
-  type GtLabelRecord,
+  GtLabelRecord,
+  GtRejected,
   mine,
-  needsThirdSeat,
   discoverRepos,
   splitOf,
   writeFileAtomic,
@@ -552,86 +552,54 @@ describe('acceptRecord', () => {
     expect(reason(record(yes('a.ts', 10, 12), yes('a.ts', 4, 7)))).toBe('accepted')
   })
 
-  describe('2 of 3 with seat c', () => {
-    const withC = (a: GtLabelRecord['a'], b: GtLabelRecord['b'], c: GtLabelRecord['a']): GtLabelRecord => ({
-      ...record(a, b),
-      c,
-      cVersion: 'C1',
-      cRunId: 'run-2',
-    })
+  describe('two seats, a and b', () => {
+    const unplaced: GtLabel & { model: string } = { ...yes('a.ts', 1, 2), location: null }
     const accepted = (r: GtLabelRecord) => {
       const out = acceptRecord(r, candidate)
       return out.accepted ? { path: out.path, bug: out.case.bug } : null
     }
 
-    test('c is asked on a-no, b-no and defects that do not overlap; not on both-no, errors or agreement', () => {
-      expect(needsThirdSeat(record(no, yes('a.ts', 1, 2)))).toBe(true)
-      expect(needsThirdSeat(record(yes('a.ts', 1, 2), no))).toBe(true)
-      expect(needsThirdSeat(record(yes('a.ts', 1, 2), yes('b.ts', 1, 2)))).toBe(true)
-      expect(needsThirdSeat(record(yes('a.ts', 1, 2), yes('a.ts', 20, 30)))).toBe(true)
-      expect(needsThirdSeat(record(no, no))).toBe(false)
-      expect(needsThirdSeat(record(yes('a.ts', 1, 2), yes('a.ts', 2, 3)))).toBe(false)
-      expect(needsThirdSeat(record({ error: 'x' }, yes('a.ts', 1, 2)))).toBe(false)
-      expect(needsThirdSeat(withC(no, yes('a.ts', 1, 2), no))).toBe(false)
+    test('a and b agree on a defect at overlapping places: accepted as a+b, with a’s description and location', () => {
+      const out = accepted(record(yes('a.ts', 1, 2, 'from a'), yes('a.ts', 2, 3, 'from b')))
+      expect(out).toMatchObject({
+        path: 'a+b',
+        bug: { description: 'from a', location: { file: 'a.ts', startLine: 1, endLine: 2 } },
+      })
     })
 
-    const unplaced: GtLabel & { model: string } = { ...yes('a.ts', 1, 2), location: null }
-
-    test('a defect without a location asks c too, and a rejection that is only that is no-location', () => {
-      expect(needsThirdSeat(record(unplaced, yes('a.ts', 1, 2)))).toBe(true)
-      expect(needsThirdSeat(record(yes('a.ts', 1, 2), unplaced))).toBe(true)
-      expect(needsThirdSeat(record(unplaced, unplaced))).toBe(true)
-      expect(needsThirdSeat(record(unplaced, no))).toBe(true)
-      expect(needsThirdSeat(withC(unplaced, yes('a.ts', 1, 2), no))).toBe(false)
-      // without c: both said defect, but fewer than two named a place
-      expect(reason(record(unplaced, yes('a.ts', 1, 2)))).toBe('no-location')
-      expect(reason(record(unplaced, unplaced))).toBe('no-location')
-      // c settles it: the pair a+c needs both places
-      expect(accepted(withC(unplaced, yes('a.ts', 1, 2), yes('a.ts', 2, 3)))?.path).toBe('b+c')
-      expect(reason(withC(unplaced, yes('a.ts', 1, 2), unplaced))).toBe('no-location')
-      expect(reason(withC(unplaced, no, yes('a.ts', 1, 2)))).toBe('no-location')
-      expect(reason(withC(yes('a.ts', 1, 2), no, unplaced))).toBe('no-location')
-      // two placed defects that do not overlap stay c-no-overlap, c saying no stays c-no
-      expect(reason(withC(yes('a.ts', 1, 2), yes('a.ts', 50, 52), unplaced))).toBe('c-no-overlap')
-      expect(reason(withC(unplaced, yes('a.ts', 1, 2), no))).toBe('c-no')
-    })
-
-    test('a+b stays the first path and ignores c', () => {
-      const out = accepted(withC(yes('a.ts', 1, 2, 'from a'), yes('a.ts', 2, 3, 'from b'), no))
-      expect(out).toMatchObject({ path: 'a+b', bug: { description: 'from a' } })
-    })
-
-    test('a+c: a said defect, b no, c agrees with a; the case is a’s', () => {
-      const out = accepted(withC(yes('a.ts', 1, 2, 'from a'), no, yes('a.ts', 3, 5, 'from c')))
-      expect(out).toMatchObject({ path: 'a+c', bug: { description: 'from a', location: { startLine: 1, endLine: 2 } } })
-    })
-
-    test('b+c: a said no; the case comes from b, the pair’s first seat', () => {
-      const out = accepted(withC(no, yes('a.ts', 10, 12, 'from b'), yes('a.ts', 11, 13, 'from c')))
-      expect(out).toMatchObject({ path: 'b+c', bug: { description: 'from b' } })
-    })
-
-    test('a and b both defect apart: c overlapping a decides for a, c overlapping only b for b', () => {
-      expect(accepted(withC(yes('a.ts', 1, 2), yes('a.ts', 50, 52), yes('a.ts', 2, 3)))?.path).toBe('a+c')
-      expect(accepted(withC(yes('a.ts', 1, 2), yes('a.ts', 50, 52), yes('a.ts', 51, 53)))?.path).toBe('b+c')
-      // c overlapping both: a leads
-      expect(accepted(withC(yes('a.ts', 1, 20), yes('a.ts', 25, 30), yes('a.ts', 10, 26)))?.path).toBe('a+c')
-    })
-
-    test('the rejections after c: c-no, c-no-overlap, c-error; both-no and labeler-error keep their names', () => {
-      expect(reason(withC(yes('a.ts', 1, 2), no, no))).toBe('c-no')
-      expect(reason(withC(no, yes('a.ts', 1, 2), no))).toBe('c-no')
-      expect(reason(withC(yes('a.ts', 1, 2), no, yes('b.ts', 1, 2)))).toBe('c-no-overlap')
-      expect(reason(withC(yes('a.ts', 1, 2), yes('a.ts', 50, 52), yes('a.ts', 20, 30)))).toBe('c-no-overlap')
-      expect(reason(withC(yes('a.ts', 1, 2), yes('a.ts', 50, 52), no))).toBe('c-no')
-      expect(reason(withC(yes('a.ts', 1, 2), no, { error: 'boom' }))).toBe('c-error')
-      expect(reason(withC(no, no, yes('a.ts', 1, 2)))).toBe('both-no')
-      expect(reason(withC({ error: 'x' }, yes('a.ts', 1, 2), yes('a.ts', 1, 2)))).toBe('labeler-error')
-    })
-
-    test('a record without c keeps the two-seat reasons', () => {
+    test('a and b disagree on defect: rejected as a-no or b-no', () => {
+      expect(reason(record(no, yes('a.ts', 1, 2)))).toBe('a-no')
       expect(reason(record(yes('a.ts', 1, 2), no))).toBe('b-no')
+    })
+
+    test('both say defect at places that do not overlap: no-overlap', () => {
+      expect(reason(record(yes('a.ts', 1, 2), yes('b.ts', 1, 2)))).toBe('no-overlap')
       expect(reason(record(yes('a.ts', 1, 2), yes('a.ts', 50, 52)))).toBe('no-overlap')
+    })
+
+    test('both-no, labeler-error and a defect without a place', () => {
+      expect(reason(record(no, no))).toBe('both-no')
+      expect(reason(record({ error: 'x' }, yes('a.ts', 1, 2)))).toBe('labeler-error')
+      expect(reason(record(yes('a.ts', 1, 2), { error: 'x' }))).toBe('labeler-error')
+      expect(reason(record(unplaced, yes('a.ts', 1, 2)))).toBe('no-location')
+      expect(reason(record(yes('a.ts', 1, 2), unplaced))).toBe('no-location')
+      expect(reason(record(unplaced, unplaced))).toBe('no-location')
+    })
+
+    test('a legacy record with a third seat parses and is judged on a and b alone', () => {
+      const legacy = (a: GtLabelRecord['a'], b: GtLabelRecord['b'], c: GtLabelRecord['a']) =>
+        GtLabelRecord.parse(JSON.parse(JSON.stringify({ ...record(a, b), c, cVersion: 'C1', cRunId: 'run-2' })))
+      // c cannot rescue a disagreement or a non-overlap ...
+      expect(reason(legacy(yes('a.ts', 1, 2), no, yes('a.ts', 1, 2)))).toBe('b-no')
+      expect(reason(legacy(no, yes('a.ts', 1, 2), yes('a.ts', 1, 2)))).toBe('a-no')
+      expect(reason(legacy(yes('a.ts', 1, 2), yes('a.ts', 50, 52), yes('a.ts', 2, 3)))).toBe('no-overlap')
+      // ... and cannot veto an agreement.
+      expect(accepted(legacy(yes('a.ts', 1, 2, 'from a'), yes('a.ts', 2, 3), no))).toMatchObject({
+        path: 'a+b',
+        bug: { description: 'from a' },
+      })
+      // The legacy values still parse in the stored files.
+      expect(GtRejected.parse({ candidateId: 'x', reason: 'c-no', labelerVersion: 'v' }).reason).toBe('c-no')
     })
   })
 

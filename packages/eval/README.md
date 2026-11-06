@@ -13,8 +13,8 @@ Cases and reports hold private code and findings, so they never enter this repo:
 ## Judge limit
 
 No human checks the review ground truth (owner decision, 2026-11-02; `docs/review-v2.md` §Ground truth step 5,
-§Matching and judging). The labels are validated by 2-of-3 labeller consensus (below), and the findings by two judges on
-different vendors. Every report that rests on it states `limit: "LLM consensus (labellers a/b/c, judges a/b), no human
+§Matching and judging). The labels are validated by two-labeller consensus (below), and the findings by two judges on
+different vendors. Every report that rests on it states `limit: "LLM consensus (labellers a/b, judges a/b), no human
 check"` (`GT_LIMIT`): the mine's `report.json` and output. `src/gt-stats.ts` holds the
 Wilson interval.
 
@@ -30,8 +30,7 @@ is `mutating` (off a TTY it needs `--commit`), and one run at a time (`concurren
 ```
 agw eval mine review                           # mine: candidates, controls, report
 agw eval mine review --label 20                # plus the labelling plan and an estimate; spends nothing
-agw eval mine review --label 20 --yes          # label the next 20 candidates (2 paid calls each, a third when they disagree)
-agw eval mine review --label 0 --yes           # only ask seat c of the records that lack it (IU key, no credit)
+agw eval mine review --label 20 --yes          # label the next 20 candidates (2 paid calls each)
 agw eval mine review --label 50 --yes --relabel-errors
 agw eval mine review --auto --yes              # the workflow sizes the run itself (see below)
 ```
@@ -44,22 +43,21 @@ label already appended, and a mine-only run rebuilt the cases). Size a batch to 
 
 | Flag | Default | Does |
 |-|-|-|
-| `--label N` | off | Label the next N unlabelled candidates, taken from a seeded shuffle, after adding seat `c` to every record that needs it and lacks it (given with `--yes`, `0` included). Without the flag: mine only |
+| `--label N` | off | Label the next N unlabelled candidates, taken from a seeded shuffle. Without the flag: mine only |
 | `--seed N` | 1 | Seed of the label order and of the control pick |
 | `--controls N` | 100 | Clean controls to pick |
 | `--concurrency N` | 2 | Candidates in flight (each is two parallel calls) |
-| `--relabel-errors` | off | Label again candidates whose last record has an `a` or `b` error, and ask `c` again where it failed; they are never retried otherwise |
+| `--relabel-errors` | off | Label again candidates whose last record has an `a` or `b` error; they are never retried otherwise |
 | `--auto` | off | Exclusive with `--label`: the workflow decides N (below) and records why in the output's `auto` object. Without `--yes` it only plans |
 | `--target N` | 200 | `--auto`: bug cases (dev + test) the ground truth needs; at or above it nothing is labelled (`target-reached`) |
 | `--iu-line-usd X` / `--iu-margin-usd X` / `--iu-since T` | 20 / 0.75 / `2026-11-03T00:00:00Z` | `--auto`: the line on IU eval spend (the eval workflows' spend on the personal key, not the key's whole total), the margin kept under it, and when counting starts |
 | `--max-per-run N` | 150 | `--auto`: most candidates one run labels (at least 1: a plan of nothing is refused) |
-| `--yes` | off | Spend. Without it `--label` prints the plan: candidates, records waiting for seat `c`, and 2 calls × the mean cost of the last 20 `cap.eval.label` runs (or `unknown`) |
+| `--yes` | off | Spend. Without it `--label` prints the plan: candidates and 2 calls × the mean cost of the last 20 `cap.eval.label` runs (or `unknown`) |
 
 **`--auto` sizing** (`packages/host/src/workflows/eval-mine/auto.ts`). Bug cases are `summary.cases.dev.bug + test.bug`
 before labelling; at the target the run labels nothing and reads nothing else. Otherwise N is the floor of the smallest of:
 90 % of the gateway's eval credit (`/health`: the sum of `evalAvailableUsd` over `evalEligible` pools) over the credit cost
-of a candidate; the IU room (`line − margin − IU eval spend`, minus the records still waiting for seat `c`, each at the IU
-cost) over the IU cost of a record; `--max-per-run`; the candidates left. The IU side plans with **1.25 × the measured IU
+of a candidate; the IU room (`line − margin − IU eval spend`) over the IU cost of a record; `--max-per-run`; the candidates left. The IU side plans with **1.25 × the measured IU
 cost per record**: the gateway refuses credit mid-run but nothing stops IU mid-run, so the estimate is the only guard. The
 line covers **IU eval spend**, the eval workflows' spend on the personal key, not the key's whole total: it is
 `sum(cost_usd)` of `usage.records` with `source='gateway'`, `billing='api_key'`, `api_key='personal'`,
@@ -67,8 +65,7 @@ line covers **IU eval spend**, the eval workflows' spend on the personal key, no
 `prod`). A personal-key eval row in range with no `cost_usd` is unknown spend, not zero: the read fails naming how many, the
 night logs it and the next night retries. The cost per payer is pooled over the newest 20 `eval.mine` runs that wrote
 records (`usage.records` by `run_id`, journal counts from the run output): credit per candidate is the credit spend over
-`labelledThisRun` (a third-seat record costs no credit); IU per record is the IU spend over `labelledThisRun +
-thirdSeatThisRun`. Without history: `$0.05` credit / `$0.035` IU. No room under the line is `iu-line`, none in the credit
+`labelledThisRun`; IU per record is the IU spend over `labelledThisRun`. Without history: `$0.05` credit / `$0.035` IU. No room under the line is `iu-line`, none in the credit
 `no-credit`; both label nothing. With every candidate labelled and the target not reached the run fails (`no unlabelled
 candidates are left`); it never reads as a finished night. A read that fails (gateway, `USAGE_PG_URL`, journal) fails the run on its `size` step with
 the reason; nothing is planned from a guess. A 403 from the gateway mid-run still ends labelling cleanly (`stopped`).
@@ -83,7 +80,7 @@ the credit and IU reads are `null` at the target).
 `~/Library/Logs/agent-workflows-eval-mine.log`:
 
 ```
-2026-11-04T04:41:07Z bug cases 61/200 (dev 33, test 28); labelled 40 (+2 third seat), accepted +18; credit available 3.21, run cost 2.76; IU eval 2.7 of 20 before the run; planned 40; state labelled; run <runId>
+2026-11-04T04:41:07Z bug cases 61/200 (dev 33, test 28); labelled 40, accepted +18; credit available 3.21, run cost 2.76; IU eval 2.7 of 20 before the run; planned 40; state labelled; run <runId>
 ```
 
 A failure logs `FAILED: <reason>` and exits non-zero. `run cost` is the run's total over both payers (the run record has no
@@ -95,10 +92,10 @@ it, removes its own plist and boots the label out, so it never runs again.
 | File | Written | Holds |
 |-|-|-|
 | `candidates.jsonl` | whole, by every mine | SZZ candidates (`GtCandidate`) |
-| `labels.jsonl` | appended as each candidate finishes; a record that gains seat `c` is appended again whole, and the latest line of a candidate wins | each seat's answer (`GtLabelRecord`: `a`, `b` under `labelerVersion`; `c` under its own `cVersion`, with `cRunId`); the resume point |
+| `labels.jsonl` | appended as each candidate finishes; a relabelled candidate is appended again whole, and the latest line of a candidate wins | each seat's answer (`GtLabelRecord`: `a`, `b` under `labelerVersion`); the resume point. Legacy `c`, `cVersion`, `cRunId` fields of the removed third seat still parse and are ignored |
 | `cases.jsonl` | rebuilt by every run | accepted bugs and clean controls (`GtCase`), what the former `agw eval run review` read |
 | `rejected.jsonl` | rebuilt by every run | candidates the labelers did not accept, with the reason |
-| `report.json` | by every run | the funnel, the accepted count per pair of seats (`a+b`, `a+c`, `b+c`), the rejected count per reason, the `limit`; no code. After an incomplete mine: `incomplete: true` and the repos that failed, with their errors |
+| `report.json` | by every run | the funnel, the accepted count (`acceptPaths`: `a+b`), the rejected count per reason, the `limit`; no code. After an incomplete mine: `incomplete: true` and the repos that failed, with their errors |
 | `owner.json` | by the owner, read only | `{ "emails": [...] }`: the author emails that count as the owner's |
 
 Every file is written to a temp file and renamed, so a reader or a crash sees the old file or the new one.
@@ -122,33 +119,27 @@ Every file is written to a temp file and renamed, so a reader or a crash sees th
   refactor and chore commits are at most 15 % of the picked sample, also when logic commits run short. Only the owner's fixes count as fix commits, so a later fix by someone else
   does not disqualify a control.
 - **Split:** `dev` when the first 8 hex of `sha256(id) / 2^32` is below `DEV_SHARE`, else `test`; bugs and controls alike.
-- **Labellers:** `a` (Claude), `b` (GPT) and `c` (Gemini, a third vendor). `c` is asked only when `a` and `b` disagree:
-  one says defect and the other not (`a-no`, `b-no`), or both say defect at locations that do not overlap or are missing (`no-overlap`, `no-location`).
-  Not on `both-no`, not when both accept, not on a seat error.
-- **Acceptance (2 of 3):** at least two seats say defect and the locations of two of those name the same file within
-  `LOCATION_SLACK` lines of each other. The case takes the location, description, class and severity of seat `a` when
-  `a` is in the agreeing pair, else of the pair's first seat (`b` in `b+c`). Otherwise the reason is `a-no`, `b-no`,
-  `both-no`, `no-overlap` or `labeler-error` for a record without `c`, and with `c`: `c-no` (it says no), `c-no-overlap`
-  (it says defect, but its location overlaps neither), `c-error` (it failed with an answer) or `no-location` (fewer
-  than two defect answers name a place: a `defect: true` with `location: null` cannot form a pair). `c` is asked whenever
-  `a` and `b` answered, one says defect and they do not agree, a defect without a place included.
-- **Seat `c` and the versions.** `LABELER_VERSION` covers `a` and `b` only; `c` has `LABELER_C_VERSION`, stored on the
-  record as `cVersion`, so adding `c` never invalidates a record's `a` and `b`. A `c` under another version is treated
-  as not asked. Resume asks `c` alone of the disagreeing records that lack it (the record is appended again with `c`;
-  `latestLabels` keeps the last line per candidate) and never asks `a` or `b` again; it costs the IU key only, no credit.
+- **Labellers:** two, `a` (Claude) and `b` (GPT), both called for every candidate.
+- **Acceptance:** `a` and `b` both say defect and their locations name the same file within `LOCATION_SLACK` lines of
+  each other. The case takes the location, description, class and severity of seat `a`. Any other outcome is a rejection
+  with its reason: `a-no` or `b-no` (they disagree on defect), `both-no`, `no-overlap` (both say defect, places apart),
+  `no-location` (a `defect: true` with `location: null`) or `labeler-error`.
+- **Versions and legacy fields.** `LABELER_VERSION` covers `a` and `b`. Stored `labels.jsonl` records may carry the
+  fields `c`, `cVersion` and `cRunId` of a removed third labeller (and `rejected.jsonl` the reasons `c-no`,
+  `c-no-overlap`, `c-error`): they still parse, acceptance ignores them, and nothing writes them.
 
 **Bias.** An additions-only fix (a missing guard, a new check) has no removed line to blame, so it yields no candidate.
 Published SZZ studies put these near 17 % of fixes. The report states the loss; the eval's recall numbers read as recall
 on bugs whose fix removed or changed code. Precision is the other limit: SZZ alone is about 50 % right, which is why
-every candidate is labelled twice, and a third time when the first two disagree, before it becomes a case. No human checks the result; the report states `limit: "LLM consensus (labellers a/b/c, judges a/b), no human check"`.
+every candidate is labelled by both labellers before it becomes a case. No human checks the result; the report states `limit: "LLM consensus (labellers a/b, judges a/b), no human check"`.
 
 **An incomplete mine stops.** A repo whose history cannot be read, or a root with no repos at all, would shrink the
 ground truth without a word. The run fails instead, naming the repos; `report.json` holds their errors, and
 `candidates.jsonl` and `cases.jsonl` stay as they were.
 
 **Resume and stops.** A line of `labels.jsonl` that is not JSON (a torn write) is skipped with a warning naming
-`file:line`; the next record starts a line of its own. A candidate with a record under the current `LABELER_VERSION` is never labelled again (only its seat `c` can be added), and a
-resumed run counts the records it already wrote against `--label`. A stop on seat `c` keeps the record of `a` and `b`. A seat that fails with an answer (unusable or
+`file:line`; the next record starts a line of its own. A candidate with a record under the current `LABELER_VERSION` is never labelled again, and a
+resumed run counts the records it already wrote against `--label`. A seat that fails with an answer (unusable or
 truncated output, a refused input, a vendor refusal) is recorded as that seat's `{error}`, and so is a commit that is gone from the checkout (both seats). Any other error, such as the
 gateway's 403 "no eval credit", an outage or a git failure other than a missing commit (a lock, a missing checkout),
 stops labelling: the run reports it, keeps what it wrote and records

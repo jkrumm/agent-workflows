@@ -24,7 +24,7 @@ import {
   type LabelOutput,
 } from '@agent-workflows/eval'
 import { buildCommands } from '../../cli/src/spec.ts'
-import { createEvalMine, LABELER_C_VERSION, LABELER_VERSION, seatAnswer } from '../src/workflows/eval-mine/index.ts'
+import { createEvalMine, LABELER_VERSION, seatAnswer } from '../src/workflows/eval-mine/index.ts'
 import { type Body, startTestHost, type TestHost } from './support.ts'
 
 const OWNER = 'me@example.com'
@@ -121,8 +121,8 @@ const label = (defect: boolean, file: string, start: number, end: number): Label
 })
 
 /**
- * `add` is a real bug (a+b), `mul` only seat a sees it and `c` says no (c-no), `neg` is placed in different files by a
- * and b and `c` agrees with a (a+c), `abs` fails on seat b.
+ * `add` is a real bug (a+b), `mul` only seat a sees it (b-no), `neg` is placed in different files by a and b
+ * (no-overlap), `abs` fails on seat b (labeler-error).
  */
 const verdicts: Answer = (input) => {
   const name = input.fixSubject.split(' ')[1] as string
@@ -146,7 +146,7 @@ let stepCosts = new Map<string, number>()
 const spendReads = {
   credit: 1 as number | Error,
   iu: 0 as number | Error,
-  runs: [] as { runId: string; labelled: number; thirdSeat: number; creditUsd: number; iuUsd: number }[],
+  runs: [] as { runId: string; labelled: number; creditUsd: number; iuUsd: number }[],
   asked: [] as string[],
 }
 const read = async <T>(name: string, value: T | Error) => {
@@ -228,7 +228,7 @@ async function mineRun(input: Record<string, unknown>) {
   return body.output as Body
 }
 
-const asked = (seat?: string) => calls.filter((c) => (seat ? c.seat === seat : c.seat !== 'c'))
+const asked = () => calls
 
 const lines = (file: Parameters<typeof gtPath>[0]) =>
   readFileSync(gtPath(file, env), 'utf8')
@@ -246,7 +246,6 @@ describe('eval.mine: mining', () => {
       stopped: null,
       labelPlan: null,
       labelerVersion: LABELER_VERSION,
-      labelerCVersion: LABELER_C_VERSION,
       limit: GT_LIMIT,
       funnel: { repos: 1, fixCommits: 4, candidates: 4, controls: 5 },
       summary: { labelled: 0, accepted: 0, cases: { dev: { bug: 0 }, test: { bug: 0 } } },
@@ -414,7 +413,6 @@ describe('eval.mine: labelling', () => {
     const out = await mineRun({ label: 50 })
     expect(out.labelPlan).toEqual({
       candidates: 4,
-      thirdSeat: 0,
       estimate: { historyRuns: 0, meanCostUsd: null, totalUsd: null },
     })
   })
@@ -432,14 +430,7 @@ describe('eval.mine: labelling', () => {
     const records = lines('labels.jsonl').map((r) => GtLabelRecord.parse(r))
     expect(records).toHaveLength(2)
     expect(records.every((r) => r.runId === first.runId && r.labelerVersion === LABELER_VERSION)).toBe(true)
-    // Seat c is asked only where a and b disagree, and its answer sits in the same record under its own version.
-    for (const r of records) {
-      const disagree = 'defect' in r.a && 'defect' in r.b && r.a.defect !== r.b.defect
-      const apart =
-        'defect' in r.a && 'defect' in r.b && r.a.defect && r.b.defect && r.a.location?.file !== r.b.location?.file
-      expect(r.c !== undefined).toBe(disagree || apart)
-      if (r.c) expect(r).toMatchObject({ cVersion: LABELER_C_VERSION, cRunId: first.runId })
-    }
+    expect(records.every((r) => r.c === undefined)).toBe(true)
 
     // The next run labels the next two, never the same ones.
     const second = await mineRun({ label: 2, yes: true, controls: 3 })
@@ -447,42 +438,36 @@ describe('eval.mine: labelling', () => {
     const all = lines('labels.jsonl').map((r) => GtLabelRecord.parse(r))
     expect(new Set(all.map((r) => r.candidateId)).size).toBe(4)
     expect(asked()).toHaveLength(8)
-    expect(asked('c')).toHaveLength(2)
 
     expect(second.summary).toMatchObject({
       labelled: 4,
-      accepted: 2,
-      acceptPaths: { 'a+b': 1, 'a+c': 1, 'b+c': 0 },
-      pendingThirdSeat: 0,
-      rejected: { total: 2, byReason: { 'c-no': 1, 'labeler-error': 1 } },
-      bugClasses: { logic: 2 },
+      accepted: 1,
+      acceptPaths: { 'a+b': 1 },
+      rejected: { total: 3, byReason: { 'b-no': 1, 'no-overlap': 1, 'labeler-error': 1 } },
+      bugClasses: { logic: 1 },
     })
     const cases = lines('cases.jsonl') as GtCase[]
-    expect(cases.filter((c) => c.kind === 'bug')).toHaveLength(2)
+    expect(cases.filter((c) => c.kind === 'bug')).toHaveLength(1)
     expect(cases.filter((c) => c.kind === 'control')).toHaveLength(3)
     expect(cases.find((c) => c.kind === 'bug' && c.subject === 'feat: add')).toMatchObject({
       repo: 'SourceRoot/alpha',
       bug: { fixSubject: 'fix: add is wrong', location: { file: 'src/add.ts', startLine: 2, endLine: 2 } },
     })
-    // a+c: the case takes a's location
-    expect(cases.find((c) => c.kind === 'bug' && c.subject === 'feat: neg')).toMatchObject({
-      bug: { location: { file: 'src/neg.ts' } },
-    })
-    expect(lines('rejected.jsonl')).toHaveLength(2)
+    expect(lines('rejected.jsonl')).toHaveLength(3)
 
     // Nothing left to label: no call, same cases.
     const third = await mineRun({ label: 2, yes: true, controls: 3 })
     expect(third.labelledThisRun).toBe(0)
-    expect(calls).toHaveLength(10)
-    expect(third.summary.accepted).toBe(2)
+    expect(calls).toHaveLength(8)
+    expect(third.summary.accepted).toBe(1)
     const report = JSON.parse(readFileSync(gtPath('report.json', env), 'utf8'))
     expect(report).toMatchObject({
       labelled: 4,
-      accepted: 2,
-      acceptanceRate: 0.5,
-      acceptPaths: { 'a+b': 1, 'a+c': 1, 'b+c': 0 },
+      accepted: 1,
+      acceptanceRate: 0.25,
+      acceptPaths: { 'a+b': 1 },
       limit: GT_LIMIT,
-      rejected: { byReason: { 'c-no': 1, 'labeler-error': 1 } },
+      rejected: { byReason: { 'b-no': 1, 'no-overlap': 1, 'labeler-error': 1 } },
     })
   })
 
@@ -500,7 +485,7 @@ describe('eval.mine: labelling', () => {
     const again = await mineRun({ label: 4, yes: true, relabelErrors: true })
     expect(again.labelledThisRun).toBe(1)
     expect(asked()).toHaveLength(10)
-    expect(again.summary).toMatchObject({ labelled: 4, accepted: 3 })
+    expect(again.summary).toMatchObject({ labelled: 4, accepted: 2 })
     expect(again.summary.rejected.byReason['labeler-error']).toBeUndefined()
   })
 
@@ -517,7 +502,7 @@ describe('eval.mine: labelling', () => {
     expect(out.summary.labelled).toBe(1)
     // The run is a success; the stop is also a warning with the reason and the count of this run.
     expect(warnings.filter((w) => w.startsWith('labelling stopped:') && w.includes('no eval credit'))).toHaveLength(1)
-    expect(warnings.find((w) => w.startsWith('labelling stopped:'))).toContain('(1 candidates labelled and 0 given')
+    expect(warnings.find((w) => w.startsWith('labelling stopped:'))).toContain('(1 candidates labelled in this run)')
   })
 
   test('a torn trailing line in labels.jsonl is skipped with a warning; the next record starts a line of its own', async () => {
@@ -569,118 +554,24 @@ describe('eval.mine: labelling', () => {
   })
 })
 
-describe('eval.mine: the third labeller', () => {
-  /** Labels all four, then removes `c` from the records, as the 150 records written before seat c have none. */
-  async function legacyRecords() {
+describe('eval.mine: legacy records', () => {
+  test('a record written with the removed seat c loads and is judged on a and b alone', async () => {
     await mineRun({ label: 4, yes: true, controls: 3 })
-    const records = (lines('labels.jsonl') as GtLabelRecord[]).map(
-      ({ c: _c, cVersion: _v, cRunId: _r, ...rest }) => rest,
-    )
-    writeFileSync(gtPath('labels.jsonl', env), records.map((r) => `${JSON.stringify(r)}\n`).join(''))
+    const legacy = (lines('labels.jsonl') as GtLabelRecord[]).map((r) => ({
+      ...r,
+      c: label(true, 'src/other.ts', 1, 1),
+      cVersion: 'eval-label-c-old',
+      cRunId: 'old-run',
+    }))
+    writeFileSync(gtPath('labels.jsonl', env), legacy.map((r) => `${JSON.stringify(r)}\n`).join(''))
     calls.length = 0
-    return records
-  }
-
-  test('records without c keep their two-seat reasons and are counted as waiting for c', async () => {
-    await legacyRecords()
-    const out = await mineRun({ controls: 3 })
+    const out = await mineRun({ label: 4, yes: true, controls: 3 })
+    expect(calls).toHaveLength(0)
     expect(out.summary).toMatchObject({
+      labelled: 4,
       accepted: 1,
-      pendingThirdSeat: 2,
       rejected: { total: 3, byReason: { 'b-no': 1, 'no-overlap': 1, 'labeler-error': 1 } },
     })
-  })
-
-  test('--label 0 --yes asks only seat c of the disagreeing records, appended again; a and b are never asked again', async () => {
-    const before = await legacyRecords()
-    const plan = await mineRun({ label: 0, controls: 3 })
-    expect(plan).toMatchObject({ spent: false, labelPlan: { candidates: 0, thirdSeat: 2 } })
-    expect(calls).toHaveLength(0)
-
-    const out = await mineRun({ label: 0, yes: true, controls: 3 })
-    expect(out).toMatchObject({ spent: true, labelledThisRun: 0, thirdSeatThisRun: 2, stopped: null })
-    expect(calls.map((c) => c.seat)).toEqual(['c', 'c'])
-    // Appended, not rewritten: the 4 old lines stay as they were and the 2 records that gained c follow them.
-    const all = (lines('labels.jsonl') as GtLabelRecord[]).map((r) => GtLabelRecord.parse(r))
-    expect(all).toHaveLength(6)
-    expect(all.slice(0, 4)).toEqual(before)
-    expect(all.slice(4).every((r) => r.c !== undefined)).toBe(true)
-    // The latest line of a candidate wins.
-    const after = [...new Map(all.map((r) => [r.candidateId, r])).values()]
-    expect(after).toHaveLength(4)
-    for (const record of after) {
-      const old = before.find((r) => r.candidateId === record.candidateId)
-      expect(record).toMatchObject({ a: old?.a, b: old?.b, labelerVersion: old?.labelerVersion, runId: old?.runId })
-      if (record.c) expect(record).toMatchObject({ cVersion: LABELER_C_VERSION, cRunId: out.runId })
-    }
-    expect(out.summary).toMatchObject({
-      accepted: 2,
-      acceptPaths: { 'a+b': 1, 'a+c': 1, 'b+c': 0 },
-      pendingThirdSeat: 0,
-      rejected: { byReason: { 'c-no': 1, 'labeler-error': 1 } },
-    })
-    expect(readdirSync(dirname(gtPath('labels.jsonl', env))).filter((f) => f.endsWith('.tmp'))).toEqual([])
-
-    // Done: a second pass asks nothing.
-    calls.length = 0
-    expect((await mineRun({ label: 0, yes: true })).thirdSeatThisRun).toBe(0)
-    expect(calls).toHaveLength(0)
-  })
-
-  test('a c recorded under another version is asked again; a and b stay', async () => {
-    await mineRun({ label: 4, yes: true, controls: 3 })
-    const stale = (lines('labels.jsonl') as GtLabelRecord[]).map((r) =>
-      r.c ? { ...r, cVersion: 'eval-label-c-old' } : r,
-    )
-    writeFileSync(gtPath('labels.jsonl', env), stale.map((r) => `${JSON.stringify(r)}\n`).join(''))
-    calls.length = 0
-    const out = await mineRun({ label: 0, yes: true })
-    expect(out.thirdSeatThisRun).toBe(2)
-    expect(calls.map((c) => c.seat)).toEqual(['c', 'c'])
-  })
-
-  test('a stop on seat c keeps the record of a and b; the next run completes it', async () => {
-    answer = (input) => {
-      if (input.seat === 'c')
-        throw new CapabilityCallError('UPSTREAM_ERROR', 502, 'no eval credit', true, { status: 403 })
-      return verdicts(input)
-    }
-    const out = await mineRun({ label: 4, yes: true, concurrency: 1, controls: 3 })
-    expect(out.stopped).toContain('no eval credit')
-    expect(warnings.some((w) => w.startsWith('labelling stopped:'))).toBe(true)
-    const stopped = (lines('labels.jsonl') as GtLabelRecord[]).map((r) => GtLabelRecord.parse(r))
-    expect(stopped.length).toBeGreaterThan(0)
-    expect(stopped.every((r) => r.c === undefined)).toBe(true)
-
-    answer = verdicts
-    calls.length = 0
-    warnings.length = 0
-    const rest = await mineRun({ label: 4, yes: true, controls: 3 })
-    expect(rest.stopped).toBeNull()
-    expect(warnings.some((w) => w.startsWith('labelling stopped:'))).toBe(false)
-    expect(rest.summary.pendingThirdSeat).toBe(0)
-    expect(asked('c')).toHaveLength(2)
-    // a and b are asked once per candidate: the second run asks only the candidates the first did not record
-    expect(asked()).toHaveLength((4 - stopped.length) * 2)
-  })
-
-  test('c that fails with an answer is c-error; --relabel-errors asks it again', async () => {
-    answer = (input) => {
-      if (input.seat === 'c') throw new CapabilityCallError('INVALID_OUTPUT', 502, 'Model output rejected', true)
-      return verdicts(input)
-    }
-    const first = await mineRun({ label: 4, yes: true, controls: 3 })
-    expect(first.summary.rejected.byReason).toEqual({ 'c-error': 2, 'labeler-error': 1 })
-    expect(first.summary.accepted).toBe(1)
-
-    calls.length = 0
-    expect((await mineRun({ label: 0, yes: true })).thirdSeatThisRun).toBe(0)
-    expect(calls).toHaveLength(0)
-
-    answer = verdicts
-    const again = await mineRun({ label: 0, yes: true, relabelErrors: true })
-    expect(again.thirdSeatThisRun).toBe(2)
-    expect(again.summary).toMatchObject({ accepted: 2, rejected: { byReason: { 'c-no': 1, 'labeler-error': 1 } } })
   })
 })
 
@@ -712,8 +603,8 @@ describe('eval.mine: --auto', () => {
   test('the per-candidate cost is measured from the newest labelling runs when there are any', async () => {
     spendReads.credit = 0.5
     spendReads.runs = [
-      { runId: 'r1', labelled: 10, thirdSeat: 0, creditUsd: 0.4, iuUsd: 0.3 },
-      { runId: 'r2', labelled: 10, thirdSeat: 0, creditUsd: 0.6, iuUsd: 0.5 },
+      { runId: 'r1', labelled: 10, creditUsd: 0.4, iuUsd: 0.3 },
+      { runId: 'r2', labelled: 10, creditUsd: 0.6, iuUsd: 0.5 },
     ]
     const out = await mineRun({ auto: true, controls: 3 })
     // 0.5 × 0.9 / 0.05 = 9 by credit, capped at the 4 unlabelled candidates.
@@ -792,21 +683,6 @@ describe('eval.mine: --auto', () => {
     expect(out.auto).toMatchObject({ iuLineUsd: 1, planned: 4 })
   })
 
-  test('a third-seat backlog is paid from the IU room first', async () => {
-    // Two-seat records that disagree, written before seat c existed: the next labelling run asks c for them.
-    answer = (input) => label(input.seat === 'a', `src/${input.fixSubject.split(' ')[1]}.ts`, 2, 2)
-    await mineRun({ label: 2, yes: true, controls: 3 })
-    const stripped = (lines('labels.jsonl') as GtLabelRecord[]).map(
-      ({ c: _c, cVersion: _v, cRunId: _r, ...rest }) => rest,
-    )
-    writeFileSync(gtPath('labels.jsonl', env), `${stripped.map((r) => JSON.stringify(r)).join('\n')}\n`)
-    spendReads.credit = 100
-    spendReads.iu = 19.175 // $0.075 of room: two backlog records at $0.04375 leave $0.0125, no new candidate fits
-    const out = await mineRun({ auto: true, controls: 3 })
-    expect(out.labelPlan.thirdSeat).toBe(2)
-    expect(out.auto).toMatchObject({ state: 'iu-line', planned: 0 })
-  })
-
   test('a read that fails fails the run with its reason, and nothing is labelled', async () => {
     spendReads.credit = new Error('gateway /health unreadable: HTTP 503')
     const body = await startRun({ auto: true, yes: true, controls: 3 })
@@ -828,21 +704,6 @@ describe('eval.mine: --auto', () => {
     const body = await startRun({ auto: true, yes: true, controls: 3 })
     expect(body.status).toBe('failed')
     expect(JSON.stringify(body)).toContain('no unlabelled candidates are left')
-  })
-
-  test('with only a third-seat backlog left it still runs: planned 0, the backlog is asked', async () => {
-    answer = (input) => label(input.seat === 'a', `src/${input.fixSubject.split(' ')[1]}.ts`, 2, 2)
-    await mineRun({ label: 4, yes: true, controls: 3 })
-    const stripped = (lines('labels.jsonl') as GtLabelRecord[]).map(
-      ({ c: _c, cVersion: _v, cRunId: _r, ...rest }) => rest,
-    )
-    writeFileSync(gtPath('labels.jsonl', env), `${stripped.map((r) => JSON.stringify(r)).join('\n')}\n`)
-    spendReads.credit = 100
-    calls.length = 0
-    const out = await mineRun({ auto: true, yes: true, controls: 3 })
-    expect(out.auto).toMatchObject({ state: 'labelled', planned: 0 })
-    expect(out.thirdSeatThisRun).toBeGreaterThan(0)
-    expect(asked('c').length).toBe(out.thirdSeatThisRun)
   })
 
   test('--max-per-run 0 is refused: a plan of nothing is not a night off', async () => {

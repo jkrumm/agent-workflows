@@ -946,7 +946,6 @@ describe('usage row', () => {
 
   describe('IU text models: the route rate, and one model id behind the provider prefix', () => {
     const chat = { prompt_tokens: 1000, completion_tokens: 200, prompt_tokens_details: { cached_tokens: 400 } }
-    // The Gemini route rate has no cache-read rate, so a block with cached reads is unknown there, as it was in agw.
     const uncached = { prompt_tokens: 1000, completion_tokens: 200 }
     const atRoute = (model: string, usage: object) => {
       const rate = routeRate(model)
@@ -955,23 +954,21 @@ describe('usage row', () => {
       return usd
     }
 
-    test('GPT Terra and Gemini flash without usage.cost: priced, named as requested, the echo kept raw', async () => {
+    test('GPT Terra and Luna without usage.cost: priced, named as requested, the echo kept raw', async () => {
       iu.reply(() => Response.json({ model: 'openai.gpt-6.1-terra', usage: chat }))
       const gw = start()
       await (await gw.call('/openai/v1/chat/completions', jsonBody({ model: 'gpt-6.1-terra' }))).text()
       iu.reply(() =>
-        sseResponse(
-          `${sse([{ model: 'vertex_ai_eu/gemini-3.8-flash', choices: [], usage: uncached }])}data: [DONE]\n\n`,
-        ),
+        sseResponse(`${sse([{ model: 'vertex_ai_eu/gpt-6-luna', choices: [], usage: uncached }])}data: [DONE]\n\n`),
       )
-      await (await gw.call('/openai/v1/chat/completions', jsonBody({ model: 'gemini-3.8-flash', stream: true }))).text()
+      await (await gw.call('/openai/v1/chat/completions', jsonBody({ model: 'gpt-6-luna', stream: true }))).text()
       const rows = gw.rows().records.map(({ row }) => row)
       expect(rows[0]).toMatchObject({ model: 'gpt-6.1-terra', model_raw: 'openai.gpt-6.1-terra', billing: 'api_key' })
       expect(rows[0]?.cost_reported_usd).toBeCloseTo(atRoute('gpt-6.1-terra', chat), 12)
       expect(rows[0]?.lane_detail.costEstimated).toBeUndefined()
-      expect(rows[1]).toMatchObject({ model: 'gemini-3.8-flash', model_raw: 'vertex_ai_eu/gemini-3.8-flash' })
-      expect(rows[1]?.cost_reported_usd).toBeCloseTo(atRoute('gemini-3.8-flash', uncached), 12)
-      expect(atRoute('gemini-3.8-flash', uncached)).not.toBeCloseTo(atRoute('gpt-6.1-terra', uncached), 12)
+      expect(rows[1]).toMatchObject({ model: 'gpt-6-luna', model_raw: 'vertex_ai_eu/gpt-6-luna' })
+      expect(rows[1]?.cost_reported_usd).toBeCloseTo(atRoute('gpt-6-luna', uncached), 12)
+      expect(atRoute('gpt-6-luna', uncached)).not.toBeCloseTo(atRoute('gpt-6.1-terra', uncached), 12)
     })
 
     test('DeepSeek keeps the cost IU states, under the requested id', async () => {

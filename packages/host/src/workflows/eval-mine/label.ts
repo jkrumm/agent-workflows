@@ -8,12 +8,11 @@ import {
   LabelInput,
   type LabelOutput,
   type LabelerSeat,
-  needsThirdSeat,
 } from '@agent-workflows/eval'
 // The capability owns the version of its prompt, models and schema.
-import { LABELER_C_VERSION, LABELER_VERSION } from '@agent-workflows/capabilities'
+import { LABELER_VERSION } from '@agent-workflows/capabilities'
 
-export { LABELER_C_VERSION, LABELER_VERSION }
+export { LABELER_VERSION }
 
 /** The one capability the miner calls, once per seat; any registry that serves `eval.label` fits. */
 export interface LabelCaller {
@@ -42,8 +41,8 @@ export function seatAnswer(error: unknown): string | null {
 /** git's words for a commit that is not in the repository (rewritten history, a pruned object). */
 const MISSING_OBJECT = /bad object|bad revision|unknown revision|not a valid object name|invalid object name/i
 
-/** A record, plus the reason labelling must stop when a seat failed for a reason that is not about the candidate. */
-export type Labelled = { record: GtLabelRecord; stop?: string } | { stop: string }
+/** A record, or the reason labelling must stop when a seat failed for a reason that is not about the candidate. */
+export type Labelled = { record: GtLabelRecord } | { stop: string }
 
 type Options = {
   candidate: GtCandidate
@@ -105,10 +104,9 @@ async function ask(options: Options, context: Omit<LabelInput, 'seat'>, seat: La
 }
 
 /**
- * Seats `a` and `b` on one candidate, in parallel, then `c` when they disagree (`needsThirdSeat`). A record when `a`
- * and `b` each answered (an answer failure is recorded as that seat's `{error}`); a stop when one failed for a reason
- * that is not about the candidate, in which case nothing is recorded and the candidate stays unlabelled. A stop of
- * seat `c` alone keeps the record of `a` and `b` (they are paid for) and leaves `c` for the next run.
+ * Seats `a` and `b` on one candidate, in parallel. A record when `a` and `b` each answered (an answer failure is
+ * recorded as that seat's `{error}`); a stop when one failed for a reason that is not about the candidate, in which case
+ * nothing is recorded and the candidate stays unlabelled.
  */
 export async function labelCandidate(options: Options): Promise<Labelled> {
   const { candidate } = options
@@ -126,34 +124,5 @@ export async function labelCandidate(options: Options): Promise<Labelled> {
   const [a, b] = await Promise.all([ask(options, read.context, 'a'), ask(options, read.context, 'b')])
   const stopped = [a, b].find((answer) => 'stop' in answer)
   if (stopped && 'stop' in stopped) return stopped
-  const labelled = record((a as { seat: GtLabelRecord['a'] }).seat, (b as { seat: GtLabelRecord['b'] }).seat)
-  return needsThirdSeat(labelled) ? withThirdSeat(options, labelled, read.context) : { record: labelled }
-}
-
-/**
- * Seat `c` on a record that lacks it (or whose `c` was an error, with `relabelErrors`): the record with `c`, its version
- * and the run that paid, or a stop. Never touches `a` and `b`.
- */
-export async function labelThirdSeat(options: Options & { record: GtLabelRecord }): Promise<Labelled> {
-  const read = await contextOf(options)
-  if ('stop' in read) return read
-  const { record } = options
-  if ('gone' in read) return { record: third(options, record, { error: read.gone }) }
-  return withThirdSeat(options, record, read.context)
-}
-
-const third = (options: Options, record: GtLabelRecord, c: GtLabelRecord['a']): GtLabelRecord => ({
-  ...record,
-  c,
-  cVersion: LABELER_C_VERSION,
-  cRunId: options.runId,
-})
-
-async function withThirdSeat(
-  options: Options,
-  record: GtLabelRecord,
-  context: Omit<LabelInput, 'seat'>,
-): Promise<Labelled> {
-  const c = await ask(options, context, 'c')
-  return 'stop' in c ? { record, stop: c.stop } : { record: third(options, record, c.seat) }
+  return { record: record((a as { seat: GtLabelRecord['a'] }).seat, (b as { seat: GtLabelRecord['b'] }).seat) }
 }

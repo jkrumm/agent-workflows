@@ -23,11 +23,8 @@ export const AUTO_DEFAULTS = {
   iuSafetyFactor: 1.25,
 } as const
 
-/**
- * What one past labelling run cost each payer, and the records it wrote: candidates labelled (a, b and maybe c: credit
- * and IU) and third-seat backfills (c only: IU, no credit). The two counts stay apart because their payers differ.
- */
-export type RunSpend = { runId: string; labelled: number; thirdSeat: number; creditUsd: number; iuUsd: number }
+/** What one past labelling run cost each payer, and the candidates it labelled. */
+export type RunSpend = { runId: string; labelled: number; creditUsd: number; iuUsd: number }
 
 /**
  * The reads `--auto` sizes a run from. Every one throws with its reason when it cannot answer: the run then fails on
@@ -59,17 +56,13 @@ export const AutoRecord = z.object({
   iuSpentUsd: z.number().nullable().describe('IU spent on eval workflows since the line was set'),
   iuLineUsd: z.number(),
   iuPerCandidateUsd: z.number().nullable(),
-  planned: z.number().int().describe('Candidates this run labels (the third-seat backlog is on top)'),
+  planned: z.number().int().describe('Candidates this run labels'),
 })
 export type AutoRecord = z.infer<typeof AutoRecord>
 
-/**
- * The cost of one record per payer, pooled over the newest runs. Credit: spend over the candidates labelled (a third-seat
- * record costs no credit). IU: spend over the labelled candidates plus the third-seat records. A payer with no measured
- * spend falls back to the constant.
- */
+/** The cost of one labelled candidate per payer, pooled over the newest runs. A payer with no measured spend falls back to the constant. */
 export function perCandidateCosts(history: RunSpend[]): { creditUsd: number; iuUsd: number; runs: number } {
-  const used = history.filter((run) => run.labelled + run.thirdSeat > 0)
+  const used = history.filter((run) => run.labelled > 0)
   const total = (pick: (run: RunSpend) => number) => used.reduce((sum, run) => sum + pick(run), 0)
   const per = (spent: number, records: number, fallback: number) =>
     records > 0 && spent > 0 ? spent / records : fallback
@@ -81,7 +74,7 @@ export function perCandidateCosts(history: RunSpend[]): { creditUsd: number; iuU
     ),
     iuUsd: per(
       total((run) => run.iuUsd),
-      total((run) => run.labelled + run.thirdSeat),
+      total((run) => run.labelled),
       AUTO_DEFAULTS.fallbackIuUsd,
     ),
     runs: used.length,
@@ -94,22 +87,19 @@ export interface Sizing {
   iuLineUsd: number
   iuMarginUsd: number
   perCandidate: { creditUsd: number; iuUsd: number }
-  /** Records awaiting the third labeller: IU only, and they run before the new candidates. */
-  thirdSeatBacklog: number
   /** Unlabelled candidates left. */
   unlabelled: number
   maxPerRun: number
 }
 
 /**
- * How many new candidates fit: the smaller of what 90 % of the eval credit pays, what the IU headroom pays after the
- * third-seat backlog (both at the measured IU cost × `iuSafetyFactor`), the per-run cap and the candidates left. No room on the IU side is `iu-line`, none on the credit
+ * How many new candidates fit: the smaller of what 90 % of the eval credit pays, what the IU headroom pays (both at the measured IU cost × `iuSafetyFactor`), the per-run cap and the candidates left. No room on the IU side is `iu-line`, none on the credit
  * side `no-credit` (the IU check first: it is the hard line).
  */
 export function sizeRun(s: Sizing): { state: 'labelled' | 'no-credit' | 'iu-line'; planned: number } {
   const headroom = s.iuLineUsd - s.iuMarginUsd - s.iuSpentUsd
   const iuPerRecord = s.perCandidate.iuUsd * AUTO_DEFAULTS.iuSafetyFactor
-  const byIu = Math.floor((headroom - s.thirdSeatBacklog * iuPerRecord) / iuPerRecord)
+  const byIu = Math.floor(headroom / iuPerRecord)
   if (byIu < 1) return { state: 'iu-line', planned: 0 }
   const byCredit = Math.floor((s.creditAvailableUsd * AUTO_DEFAULTS.creditShare) / s.perCandidate.creditUsd)
   if (byCredit < 1) return { state: 'no-credit', planned: 0 }
