@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help check fmt deploy verify live-routes install-opencode research-chrome eval-mine-job
+.PHONY: help check fmt deploy verify version live-routes install-opencode research-chrome eval-mine-job
 
 help:
 	@echo "make check   oxfmt check, oxlint type-aware, tsc, bun test (the merge gate)"
@@ -9,6 +9,7 @@ help:
 	@echo "make research-chrome  install and start the headed Chrome (LaunchAgent, DevTools on loopback) web.fetch reads bot-walled pages with"
 	@echo "make eval-mine-job  install the nightly review-ground-truth labelling job (LaunchAgent 04:30, agw eval mine review --auto; sized by the eval credit and the line on IU eval spend, removes itself at 200 bug cases; not part of make deploy)"
 	@echo "make live-routes one real call per route (anthropic, opencode, iu-openai text; ROUTES='a b' narrows), proved by its gateway usage row and run row; costs cents"
+	@echo "make version print the deployed commit sha (data/deployed-sha), one line, read-only"
 	@echo "make verify  prove the deployment: the pinned OpenCode present, the healths at the sha (the gateway at its build), agw smoke ping and audio ping with their journal rows, the door's auth, three real Haiku calls through the gateway with their usage rows"
 
 # docs/spikes/** is excluded from every tool (see .oxfmtrc.json, .oxlintrc.json, tsconfig.json, bunfig.toml).
@@ -49,6 +50,10 @@ deploy:
 
 verify:
 	@/bin/zsh scripts/verify.sh
+
+# The deployed commit sha, one line, read-only: what `make deploy` last left live (the factory checks a shipped commit against it).
+version:
+	@tr -d '[:space:]' < "$${AGW_ROOT:-$$HOME/.agent-workflows}/data/deployed-sha"; echo
 
 # A live call per route through `agw smoke route`, each proved by its usage.records and agw.runs rows (scripts/live-routes.sh).
 live-routes:
