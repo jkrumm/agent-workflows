@@ -125,7 +125,7 @@ never to the row's cost:
 Off `/anthropic` (IU's OpenAI, Gemini, Replicate and decision paths) nothing is metered, but a row is still priced: the
 provider's `usage.cost` if IU states one (DeepSeek), else a complete usage block at the `rate` of the route that names the
 requested model (`routeRate`, `@agent-workflows/routes/rates`), the figure agw's own transports wrote before the gateway
-(GPT Terra, Gemini flash). A Responses-API block is priced as its chat equivalent, its `input_tokens` holding the cached
+(GPT Terra and Luna). A Responses-API block is priced as its chat equivalent, its `input_tokens` holding the cached
 reads. No route rate, or a cache count the rate has no price for, leaves the cost null. When IU echoes the requested model
 behind a provider prefix (`openai.<id>`, `vertex_ai_eu/<id>`), the row's `model` is the requested id and `model_raw` the
 echo.
