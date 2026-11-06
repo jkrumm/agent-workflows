@@ -3,9 +3,9 @@
 # process authenticate with AGW_API_SECRET, OpenCode's providers with the `agw-opencode` door token, which
 # launch.sh reads from data/door-tokens into AGW_GATEWAY_TOOL_TOKEN for the host only.
 AGW_GATEWAY_URL=http://127.0.0.1:7794
-# web.* capabilities: Tavily search fallback and Extract (shared common item), Context7 docs (this platform's own item).
+# web.* capabilities: Tavily search fallback and Extract, Context7 docs (both shared common items).
 TAVILY_API_KEY=op://common/tavily/API_KEY
-CONTEXT7_API_KEY=op://mini/agent-workflows/CONTEXT7_API_KEY
+CONTEXT7_API_KEY=op://common/context7/API_KEY
 # hdx.* capabilities (HyperDX/ClickStack HTTP API), prod: the agent access key and the domain the capability builds
 # https://hyperdx.<domain> from. Local needs no ref: its key is read from ~/.config/hyperdx/local.env at call time.
 HYPERDX_PROD_ACCESS_KEY=op://vps/clickstack/AGENT_ACCESS_KEY
