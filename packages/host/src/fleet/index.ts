@@ -1,5 +1,11 @@
 import type { Logger } from '@agent-workflows/runtime'
-import { type ArgoPushOptions as ArgoOptions, createArgoPush } from './argo.ts'
+import {
+  type ArgoPushOptions as ArgoOptions,
+  type ArgoPush,
+  createArgoPush,
+  createReviewStatsPush,
+  type ReviewStatsPushOptions,
+} from './argo.ts'
 import { emptySnapshot, mapFleet } from './derive.ts'
 import { commandRunner, type FactoryRead, type FleetConfig, fleetConfig, readFactoryFleet } from './factory.ts'
 import { enrichmentOf, mergeOverviewIntoSnapshot, parseStoredOverview } from './overview.ts'
@@ -156,10 +162,31 @@ export function hostFleet(options: HostFleetOptions) {
     secret: options.env.ARGO_API_SECRET,
     machine: options.machine,
     build: argoBuild(fleet),
-    // The runtime's logger has no info level; an outcome that went well is still one line (a quiet fleet is a fact).
-    logger: { warn, info: (message, meta) => console.log(`[agw-host] ${message}`, meta ?? '') },
+    logger: hostLogger(options.logger),
   })
   return { fleet, argo, config }
+}
+
+const hostLogger = (logger: Logger) => ({
+  warn: (message: string, meta?: Record<string, unknown>) => logger.warn(message, meta),
+  // The runtime's logger has no info level; an outcome that went well is still one line (a quiet fleet is a fact).
+  info: (message: string, meta?: Record<string, unknown>) => console.log(`[agw-host] ${message}`, meta ?? ''),
+})
+
+/** The weekly review-stats push of the host process (off like the overview push without `ARGO_URL` and `ARGO_API_SECRET`). */
+export function hostReviewStatsPush(options: {
+  env: Record<string, string | undefined>
+  logger: Logger
+  machine: string
+  build: ReviewStatsPushOptions['build']
+}): Pick<ArgoPush, 'push'> {
+  return createReviewStatsPush({
+    url: options.env.ARGO_URL,
+    secret: options.env.ARGO_API_SECRET,
+    machine: options.machine,
+    build: options.build,
+    logger: hostLogger(options.logger),
+  })
 }
 
 /** `AGW_ARGO_PUSH=0|off|false|no` turns the ten-minute timer off (tests); on by default. */

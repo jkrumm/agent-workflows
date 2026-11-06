@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { Pool } from 'pg'
 import { freshSchema, PG_URL, testRuntime } from '@agent-workflows/testing/pg'
 import { createReviewService, ReviewError } from '../src/review/index.ts'
+import { weekStartOf, weeklyReviewStats } from '../src/review/stats.ts'
 import { gitRunner } from '../src/review/route.ts'
 import { fakeReviewer, lines, makeRepo, write } from './support/review-repo.ts'
 
@@ -316,5 +317,115 @@ describe('review stats through the real flow', () => {
       deepRound2: { count: 0, share: 0 },
     })
     expect(out.groups[0]?.wallS.p50).toBeGreaterThanOrEqual(0)
+  })
+})
+
+describe('review stats --bucket week', () => {
+  const WK = 'stats.example/wk'
+  const base = (id: string, createdAt: string, tier = 'light') => ({
+    id,
+    repo: WK,
+    tier,
+    rule: 'default',
+    round: 1,
+    state: 'submitted' as const,
+    outcome: 'clean',
+    wallS: 5,
+    createdAt: new Date(createdAt),
+  })
+
+  test('weekStartOf is the Monday 00:00 UTC of the date, YYYY-MM-DD', () => {
+    expect(weekStartOf(new Date('2025-03-02T23:59:59Z'))).toBe('2025-02-24')
+    expect(weekStartOf(new Date('2025-03-03T00:00:00Z'))).toBe('2025-03-03')
+    expect(weekStartOf(new Date('2025-03-09T12:00:00Z'))).toBe('2025-03-03')
+    expect(weekStartOf(new Date('2026-01-01T00:00:00Z'))).toBe('2025-12-29')
+  })
+
+  test('the Sunday/Monday boundary splits weeks; an empty week is omitted; findings follow their job', async () => {
+    await insertJob(base('w1', '2025-03-02T23:59:59Z', 'light'))
+    await insertJob(base('w2', '2025-03-03T00:00:00Z', 'light'))
+    await insertJob(base('w3', '2025-03-03T10:00:00Z', 'deep'))
+    await insertJob(base('w4', '2025-03-17T09:00:00Z', 'deep'))
+    await insertFinding({ id: 'wf1', jobId: 'w1', tag: 'important', disposition: 'fixed' })
+    await insertFinding({ id: 'wf2', jobId: 'w3', tag: 'nit' })
+
+    const out = await service.stats({ repo: WK, by: 'tier', bucket: 'week' })
+    expect(out.bucket).toBe('week')
+    expect(out.groups).toEqual([])
+    expect(out.weeks?.map((w) => w.weekStart)).toEqual(['2025-02-24', '2025-03-03', '2025-03-17'])
+    const [w0, w1, w2] = out.weeks ?? []
+    expect(w0?.groups.map((g) => [g.key, g.jobs, g.findings.important])).toEqual([['light', 1, 1]])
+    expect(w1?.groups.map((g) => [g.key, g.jobs, g.findings.nit])).toEqual([
+      ['light', 1, 0],
+      ['deep', 1, 1],
+    ])
+    expect(w1?.groups[0]).toMatchObject({ round1: { jobs: 1, clean: 1, cleanRate: 1 }, wallS: { p50: 5, max: 5 } })
+    expect(w2?.groups.map((g) => g.key)).toEqual(['deep'])
+    expect(out.total.jobs).toBe(4)
+  })
+
+  test('without --bucket the output has no bucket or weeks', async () => {
+    const out = await service.stats({ repo: WK })
+    expect(out.bucket).toBeUndefined()
+    expect(out.weeks).toBeUndefined()
+  })
+
+  test('weeklyReviewStats asks for 12 weeks including the current one, and all-time by prompt', async () => {
+    const calls: unknown[] = []
+    const fake = {
+      async stats(input: unknown) {
+        calls.push(input)
+        return {
+          since: null,
+          by: 'tier' as const,
+          groups: [],
+          weeks: [{ weekStart: '2026-01-05', groups: [] }],
+          total: {},
+        }
+      },
+    }
+    // Wednesday 2026-01-07: the current week starts 2026-01-05, 11 weeks earlier is 2025-10-20
+    const out = await weeklyReviewStats(fake as never, new Date('2026-01-07T12:00:00Z'))
+    expect(calls).toEqual([{ by: 'tier', bucket: 'week', since: '2025-10-20T00:00:00.000Z' }, { by: 'prompt' }])
+    expect(out.weeks).toEqual([{ weekStart: '2026-01-05', groups: [] }])
+    expect(out.byPrompt).toEqual([])
+  })
+})
+
+describe('review service onSubmitted', () => {
+  async function submitWith(onSubmitted: () => void, reply?: string) {
+    const hooked = createReviewService({
+      pool,
+      schema: db.schema,
+      stateDir,
+      git: gitRunner,
+      env: { ...process.env },
+      onSubmitted,
+    })
+    const root = makeRepo({ 'src/a.ts': lines(60) })
+    repos.push(root)
+    write(root, 'src/a.ts', lines(62))
+    const { jobId, jobDir } = await hooked.prepare({ cwd: root })
+    if (!jobId || !jobDir) throw new Error('not ready')
+    return hooked.submit({ jobId, attempt: 1, reply: reply ?? fakeReviewer(jobDir, []) })
+  }
+
+  test('runs after a successful submit, and a throwing hook does not fail it', async () => {
+    let calls = 0
+    await submitWith(() => {
+      calls++
+      throw new Error('boom')
+    })
+    expect(calls).toBe(1)
+  })
+
+  test('does not run after a failed submit', async () => {
+    let calls = 0
+    let failed = false
+    await submitWith(() => calls++, '{ not a review').catch(() => {
+      failed = true
+    })
+    expect(failed).toBe(true)
+    expect(calls).toBe(0)
   })
 })

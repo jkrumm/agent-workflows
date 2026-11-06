@@ -41,6 +41,8 @@ export interface ReviewServicePorts {
   now?: () => Date
   /** The process environment: helper allowlist, network vars for pr/branch fetches, `AGW_REVIEW_DEEP_CAP`. */
   env?: Record<string, string | undefined>
+  /** Called (fire-and-forget) after every successful submit; a throw is swallowed. */
+  onSubmitted?: () => void
 }
 
 export interface ReviewService {
@@ -90,7 +92,15 @@ export function createReviewService(ports: ReviewServicePorts): ReviewService {
       await abandonJob(job)
       return { status: 'cancelled', jobId: job.id }
     },
-    submit: (input) => submit(ctx, input),
+    async submit(input) {
+      const output = await submit(ctx, input)
+      try {
+        ports.onSubmitted?.()
+      } catch {
+        // The submit already happened; a hook must not fail it.
+      }
+      return output
+    },
     covered: (input) => covered(ctx, input),
 
     async dispose(input) {
@@ -161,7 +171,12 @@ export function createReviewService(ports: ReviewServicePorts): ReviewService {
         throw new ReviewError(`since must be an ISO datetime, got "${input.since}"`)
       }
       const rows = await ledger.statsRows({ since, repo: input.repo ?? null })
-      return computeStats({ ...rows, by: input.by ?? 'tier', since: since?.toISOString() ?? null })
+      return computeStats({
+        ...rows,
+        by: input.by ?? 'tier',
+        bucket: input.bucket,
+        since: since?.toISOString() ?? null,
+      })
     },
 
     async route(input) {

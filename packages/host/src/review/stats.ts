@@ -1,7 +1,8 @@
 // `agw review stats`: the ledger's quality numbers, aggregated in code. No model reads a finding to produce them.
+import type { z } from 'zod'
 import type { StatsFinding, StatsJob } from './ledger.ts'
 import { TIERS } from './route.ts'
-import { DISPOSITIONS, type StatsMetricsValue, type StatsOutputValue } from './schema.ts'
+import { DISPOSITIONS, type StatsInput, type StatsMetricsValue, type StatsOutputValue } from './schema.ts'
 
 type By = StatsOutputValue['by']
 
@@ -81,16 +82,17 @@ const compare = (by: By) => (a: string, b: string) => {
   return a < b ? -1 : a > b ? 1 : 0
 }
 
-export function computeStats(input: {
-  jobs: StatsJob[]
-  findings: StatsFinding[]
-  by: By
-  since: string | null
-}): StatsOutputValue {
-  const { by } = input
+/** The Monday 00:00 UTC of the date's ISO week, as `YYYY-MM-DD`. */
+export function weekStartOf(date: Date): string {
+  const day = (date.getUTCDay() + 6) % 7
+  const monday = Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() - day)
+  return new Date(monday).toISOString().slice(0, 10)
+}
+
+function groupsOf(jobs: StatsJob[], findings: StatsFinding[], by: By) {
   const groupOf = new Map<string, StatsJob[]>()
   const keyOfJob = new Map<string, string>()
-  for (const job of input.jobs) {
+  for (const job of jobs) {
     const key = keyOf(job, by)
     keyOfJob.set(job.id, key)
     groupOf.set(key, [...(groupOf.get(key) ?? []), job])
@@ -99,8 +101,54 @@ export function computeStats(input: {
     key,
     ...metricsOf(
       groupOf.get(key)!,
-      input.findings.filter((f) => keyOfJob.get(f.jobId) === key),
+      findings.filter((f) => keyOfJob.get(f.jobId) === key),
     ),
   }))
-  return { since: input.since, by, groups, total: metricsOf(input.jobs, input.findings) }
+  return groups
+}
+
+export function computeStats(input: {
+  jobs: StatsJob[]
+  findings: StatsFinding[]
+  by: By
+  bucket?: 'week'
+  since: string | null
+}): StatsOutputValue {
+  const { by, jobs, findings } = input
+  const total = metricsOf(jobs, findings)
+  if (input.bucket !== 'week') return { since: input.since, by, groups: groupsOf(jobs, findings, by), total }
+  const weekJobs = new Map<string, StatsJob[]>()
+  for (const job of jobs) {
+    const week = weekStartOf(job.createdAt)
+    weekJobs.set(week, [...(weekJobs.get(week) ?? []), job])
+  }
+  const weeks = [...weekJobs.keys()].sort().map((weekStart) => {
+    const inWeek = weekJobs.get(weekStart)!
+    const ids = new Set(inWeek.map((j) => j.id))
+    return {
+      weekStart,
+      groups: groupsOf(
+        inWeek,
+        findings.filter((f) => ids.has(f.jobId)),
+        by,
+      ),
+    }
+  })
+  return { since: input.since, by, bucket: 'week', groups: [], weeks, total }
+}
+
+const WEEK_MS = 7 * 24 * 3_600_000
+const PUSH_WEEKS = 12
+
+/** The numbers Argo shows: the last 12 ISO weeks by tier (current partial week included), and all-time by prompt. */
+export async function weeklyReviewStats(
+  service: { stats(input: z.input<typeof StatsInput>): Promise<StatsOutputValue> },
+  now: Date,
+) {
+  const since = new Date(Date.parse(`${weekStartOf(now)}T00:00:00Z`) - (PUSH_WEEKS - 1) * WEEK_MS).toISOString()
+  const [weekly, prompts] = await Promise.all([
+    service.stats({ by: 'tier', bucket: 'week', since }),
+    service.stats({ by: 'prompt' }),
+  ])
+  return { weeks: weekly.weeks ?? [], byPrompt: prompts.groups }
 }

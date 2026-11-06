@@ -23,7 +23,7 @@ CLI exits non-zero naming it.
 | `agw review status [<jobId>] [--cwd]` | A job (a running review is `prepared`) with its `thread` id and `threadKey` (absent on jobs older than the key) and its thread's findings, or the 10 newest jobs of the repo at `--cwd` |
 | `agw review route --cwd --base --head [--min]` | `routeRange` alone; no ledger (HTTP `/review/route`) |
 | `agw review covered --cwd --range <a>..<b>` | Coverage of each first-parent commit; exit 0 either way, read `covered` |
-| `agw review stats [--since <iso>] [--repo <id>] [--by tier\|rule\|prompt\|repo]` | The ledger's quality numbers (below); read-only, JSON, no `--cwd` (HTTP `/review/stats`) |
+| `agw review stats [--since <iso>] [--repo <id>] [--by tier\|rule\|prompt\|repo] [--bucket week]` | The ledger's quality numbers (below); read-only, JSON, no `--cwd` (HTTP `/review/stats`) |
 
 `prepare`, `cancel`, `submit` and `dispose` change state, so the CLI asks for `--commit` (non-TTY callers must pass it).
 
@@ -101,6 +101,20 @@ prompt is a separate Issue); a reply that carries it is stored as is.
 `--repo` (exact repo id) filter jobs by creation; jobs of repos whose id contains `/.agw-verify` or `/.agw-eval-recall`
 are left out. Output `{since, by, groups: [{key, ...metrics}], total}`, groups sorted by key (`--by tier`: none, light,
 standard, deep).
+
+`--bucket week` splits the result into ISO weeks: a job belongs to the week of its `created_at`, a week starts Monday
+00:00 UTC and is keyed `weekStart` (`YYYY-MM-DD`). Output `{since, by, bucket: 'week', groups: [], weeks: [{weekStart,
+groups: [{key, ...metrics}]}], total}`: weeks ascending, a week without jobs is omitted, the groups of a week sorted as
+without `--bucket`, a finding counted in the week (and group) of the job that first reported it, `total` over every row
+selected. Without `--bucket` the output has no `bucket` or `weeks`.
+
+**The weekly push to Argo.** The host posts `{machine, generatedAt (epoch ms), source: 'agw review stats --bucket week
+--by tier', weeks, byPrompt}` to `{ARGO_URL}/agents/review-stats`: `weeks` is the last 12 ISO weeks by tier (the current,
+partial week included, oldest first), `byPrompt` is `--by prompt` over all time. It goes out every ten minutes and after
+each successful `agw review submit` (fire-and-forget: it never delays or fails the submit). Same transport and off-switch
+as the overview push (`ARGO_URL` https or loopback http, `ARGO_API_SECRET` bearer, no redirect, 15 s timeout; unset: off;
+`AGW_ARGO_PUSH=0` turns the timer off). A non-2xx answer, including 404 while Argo has no such endpoint yet, is one
+warn-level log line (`event: argo_push`, `target: review-stats`) and changes nothing else.
 
 | `--by` | Key |
 |-|-|

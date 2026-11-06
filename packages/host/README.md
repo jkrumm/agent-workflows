@@ -31,7 +31,7 @@ Names only; values come from 1Password through `secrets-run`, never from the rep
 | `AGW_RETRO_WEEKLY` | no | the weekly retrospective schedule; on unless `0`, `off` or `false` |
 | `AGW_RETRO_FILE_ISSUES`, `AGW_RETRO_ISSUE_REPO` | no | scheduled retrospectives file their proposals as GitHub issues in `owner/name`. Off by default; the repository is required when it is on (the process refuses to start otherwise). `gh` authenticates from the host's environment (`GH_TOKEN`) |
 | `USAGE_PG_URL` | yes (built by `scripts/launch.sh`) | the usage database (schema `usage` in `shared`, role `usage`): the middleware outbox writes `usage.records` and `usage.sessions` there. `scripts/launch.sh` builds it from `USAGE_PG_PASSWORD` (`.env.tpl`, `op://mini/vps-dev/SHARED_USAGE_DB_PASSWORD`, resolved by `secrets-run`), URL-encoded like `AGW_PG_URL`, and drops the raw password; the ref is a required deploy secret (an unresolved `USAGE_PG_PASSWORD` makes `launch.sh` exit 78, the process never starts), and only an embedder that builds the platform without it runs with the outbox off. Never logged, and scrubbed from `check` spawns |
-| `ARGO_URL`, `ARGO_API_SECRET` | no | Argo: the agents overview push (not usage) |
+| `ARGO_URL`, `ARGO_API_SECRET` | no | Argo: the agents overview and review-stats pushes (not usage) |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` (or `…_TRACES_ENDPOINT`), `OTEL_EXPORTER_OTLP_HEADERS` | no | span export is off without an endpoint |
 | `AGW_FRICTION_ISSUES` | no | the daily friction job (below): on unless `off`/`0`/`false`/`no` |
 | `AGW_FRICTION_REPO` | for issues | `owner/name` the job opens issues in. Unset: the job still marks follow-ups but opens nothing (it says so in the log) |
@@ -135,7 +135,7 @@ processes and checks that rule. Settings reach them as closures over the process
 
 `agents` is a POST because its flags are typed (`--cols` is an integer, `--text` a boolean) and a GET query string would
 make the CLI send them as text. The host also pushes the same payload to Argo after each `overview` run and every ten
-minutes (`startArgoSchedule`, stopped on close, off with `AGW_ARGO_PUSH=0`); a failed push is one log line. Details,
+minutes (`startArgoSchedule`, stopped on close, off with `AGW_ARGO_PUSH=0`); a failed push is one log line. The weekly review numbers (`agw review stats --bucket week`) go to `/agents/review-stats` the same way, also after each `agw review submit`. Details,
 decisions and the environment: `src/workflows/overview/README.md`.
 
 ## Known gaps

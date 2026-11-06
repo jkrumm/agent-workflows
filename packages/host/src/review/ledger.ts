@@ -166,6 +166,7 @@ export interface StatsJob {
   reviewerPrompt: string | null
   outcome: string | null
   wallS: number | null
+  createdAt: Date
 }
 export interface StatsFinding {
   jobId: string
@@ -449,6 +450,7 @@ export function reviewLedger(pool: ReviewPool, schema: string) {
           state: r.state as JobState,
           reviewerPrompt: (r.reviewer_prompt as string | null) ?? null,
           outcome: (r.outcome as string | null) ?? null,
+          createdAt: r.created_at as Date,
           wallS:
             r.submitted_at && r.state === 'submitted'
               ? ((r.submitted_at as Date).getTime() - (r.created_at as Date).getTime()) / 1000

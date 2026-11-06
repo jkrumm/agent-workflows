@@ -96,6 +96,11 @@ describe('agw review prepare → submit through the host', () => {
     expect(stats.body.groups.length).toBeGreaterThan(0)
     expect(stats.body.total.jobs).toBeGreaterThan(0)
 
+    const weekly = await agw(['review', 'stats', '--bucket', 'week', '--by', 'tier', '--format', 'json'])
+    expect(weekly.status).toBe(200)
+    expect(weekly.body).toMatchObject({ by: 'tier', bucket: 'week', groups: [] })
+    expect(weekly.body.weeks.length).toBeGreaterThan(0)
+
     const bad = await agw(['review', 'stats', '--since', 'not a date'])
     expect(bad.status).toBe(400)
     expect(bad.body.message).toMatch(/since must be an ISO datetime/)

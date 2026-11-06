@@ -98,11 +98,18 @@ not Requesty.
 | Variable | Default | |
 |-|-|-|
 | `ARGO_URL`, `ARGO_API_SECRET` | | the push is off unless both are set; `ARGO_URL` must be https (loopback http allowed), no redirect is followed |
-| `AGW_ARGO_PUSH` | on | `0`, `off`, `false` or `no` turns the ten-minute timer off (tests); the push after a run stays |
+| `AGW_ARGO_PUSH` | on | `0`, `off`, `false` or `no` turns the ten-minute timers off (tests; both pushes below); the push after a run stays |
 | `FACTORY_TOKEN` | | the token `factory read` needs (exit 3 without it, which is the warning); `.env.tpl` resolves it. `FACTORY_URL` is passed too when set |
 | `AGW_FACTORY_BIN` | `~/.local/bin/factory`, else on `PATH` | the factory CLI |
 | `AGW_AGENT_STALE_HOURS` | 24 | the stale threshold (legacy `AGENT_GATEWAY_AGENT_STALE_HOURS`) |
 | `AGW_CLAUDE_ACCOUNT_BIN` | `~/.local/bin/claude-account` | the Max quota's CLI (legacy `AGENT_GATEWAY_CLAUDE_ACCOUNT_BIN`) |
+
+The host makes two pushes through one transport (`fleet/argo.ts`: https or loopback http, bearer `ARGO_API_SECRET`, no redirect, 15 s timeout, off without URL and secret):
+
+| Endpoint (under `ARGO_URL`) | Cadence | Body |
+|-|-|-|
+| `/agents/overview` | after each `overview` run and every 10 min | the `agw agents` payload plus `machine` |
+| `/agents/review-stats` | every 10 min and after each `agw review submit` | `{machine, generatedAt, source, weeks, byPrompt}`: the last 12 ISO weeks by tier and all-time by prompt (`src/review/README.md` §Stats); a 404 or any non-2xx is one warn line, never a failure |
 
 `AGW_HC_BIN`, `AGW_CLAUDE_BIN`, `AGW_CLAUDE_LOG_DIR` and the human-queue directory are gone with the collectors they configured (the factory reads hc, Claude's registry, the transcripts, git and the ask-human queue now). The legacy `AGENT_GATEWAY_CLAUDE_USAGE_TIMEOUT_MS` and the dispatch HTTP base are gone too: the `claude-account` calls have a fixed 5 s cap.
 

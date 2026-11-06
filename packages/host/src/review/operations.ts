@@ -171,7 +171,7 @@ export function reviewOperations(service: ReviewService): Record<(typeof OPERATI
       {
         summary: 'Quality numbers of the review ledger: jobs, wall time, findings, dispositions, precision, anchoring',
         description:
-          'Read-only and deterministic (no LLM). Grouped by tier (default), normalized routing rule, reviewer prompt fingerprint or repo; --since and --repo narrow it. Probe repos (agw-verify, agw-eval-recall) are left out.',
+          'Read-only and deterministic (no LLM). Grouped by tier (default), normalized routing rule, reviewer prompt fingerprint or repo; --since and --repo narrow it; --bucket week splits the result into ISO weeks (Monday 00:00 UTC, by the creation of the job). Probe repos (agw-verify, agw-eval-recall) are left out.',
         input: StatsInput,
         output: StatsOutput,
       },

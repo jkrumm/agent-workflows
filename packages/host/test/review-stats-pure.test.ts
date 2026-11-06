@@ -42,6 +42,7 @@ describe('computeStats', () => {
     reviewerPrompt: null,
     outcome: 'clean',
     wallS: 10,
+    createdAt: new Date('2026-01-01T00:00:00Z'),
     ...extra,
   })
   const finding = (jobId: string, extra: Partial<StatsFinding> = {}): StatsFinding => ({

@@ -25,10 +25,11 @@ import {
   startFrictionJob,
 } from './friction/index.ts'
 import { type LearningsStore, pgLearningsStore, withLearnedFacts, withLearningsFingerprint } from './learnings/index.ts'
-import { argoTimerEnabled, hostFleet, startArgoSchedule } from './fleet/index.ts'
+import { argoTimerEnabled, hostFleet, hostReviewStatsPush, startArgoSchedule } from './fleet/index.ts'
 import { fleetOperations } from './fleet/operations.ts'
 import { createImageDoor, type ImageDoor, type ImageDoorOptions, type ServerHandle } from './image-door/index.ts'
 import { createReviewService, reviewOperations } from './review/index.ts'
+import { weeklyReviewStats } from './review/stats.ts'
 import { gitRunner } from './review/route.ts'
 import { type HostOperation, type HostWorkflow, IDLE_TIMEOUT_S, MAX_REQUEST_BODY_BYTES } from './operations.ts'
 import { evalMineAutoPorts, pgLabelStepCosts } from './workflows/eval-mine/history.ts'
@@ -507,6 +508,7 @@ export interface HostBootOptions extends BootOptions {
 export function hostProcess(config: HostConfig, door?: ImageDoorOptions): ProcessDefinition {
   let journal: ReturnType<typeof pgJournalReader> | undefined
   let fleet: ReturnType<typeof hostFleet> | undefined
+  let reviewStatsPush: ReturnType<typeof hostReviewStatsPush> | undefined
   let reviewOps: Record<string, HostOperation> = {}
   let imageDoor: ImageDoor | undefined
   let runtime: Runtime | undefined
@@ -566,7 +568,9 @@ export function hostProcess(config: HostConfig, door?: ImageDoorOptions): Proces
       reviewPool.on('error', (err) => console.warn('[agw-host] review ledger pool: idle connection error', err.message))
       onClose(() => reviewPool.end())
       const quota = fleet.fleet.quota
+      // Late-bound: the push reads through the service, which calls it back after each submit.
       const reviewService = createReviewService({
+        onSubmitted: () => void reviewStatsPush?.push('run'),
         pool: reviewPool,
         schema: base.schema,
         stateDir: DEFAULT_STATE_DIR,
@@ -576,6 +580,12 @@ export function hostProcess(config: HostConfig, door?: ImageDoorOptions): Proces
           const reading = (await quota.accounts())[account]
           return reading ? { fiveHour: reading.five_hour_pct, sevenDay: reading.seven_day_pct } : null
         },
+      })
+      reviewStatsPush = hostReviewStatsPush({
+        env,
+        logger,
+        machine: base.machine,
+        build: () => weeklyReviewStats(reviewService, new Date()),
       })
       reviewOps = reviewOperations(reviewService)
       // The audio process's suites and scorers: `agw eval run|compare` replay its workflows, which it drives.
@@ -633,6 +643,10 @@ export function hostProcess(config: HostConfig, door?: ImageDoorOptions): Proces
           evalJobs.start()
           if (fleet && argoTimerEnabled(env)) {
             const push = startArgoSchedule({ push: fleet.argo })
+            onClose(async () => push.stop())
+          }
+          if (reviewStatsPush && argoTimerEnabled(env)) {
+            const push = startArgoSchedule({ push: reviewStatsPush })
             onClose(async () => push.stop())
           }
           const retrospective = workflows.find((entry) => entry.workflow.id === RETRO_WORKFLOW_ID)

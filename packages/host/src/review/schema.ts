@@ -337,6 +337,7 @@ export const StatsInput = z
     since: z.string().optional().describe('ISO datetime: only jobs created at or after it (default: all time)'),
     repo: z.string().min(1).optional().describe('Exact repo id (as `status` prints it)'),
     by: z.enum(STATS_BY).default('tier').describe('Group by tier, normalized rule, reviewer prompt or repo'),
+    bucket: z.enum(['week']).optional().describe('ISO week, Monday 00:00 UTC; with --by = one group per week and key'),
   })
   .strict()
 
@@ -369,7 +370,12 @@ export type StatsMetricsValue = z.output<typeof StatsMetrics>
 export const StatsOutput = z.object({
   since: z.string().nullable(),
   by: z.enum(STATS_BY),
+  bucket: z.enum(['week']).optional(),
   groups: z.array(StatsMetrics.extend({ key: z.string() })),
+  weeks: z
+    .array(z.object({ weekStart: z.string(), groups: z.array(StatsMetrics.extend({ key: z.string() })) }))
+    .optional()
+    .describe('With --bucket week: ascending by weekStart (YYYY-MM-DD, Monday UTC); `groups` is then empty'),
   total: StatsMetrics,
 })
 export type StatsOutputValue = z.output<typeof StatsOutput>
