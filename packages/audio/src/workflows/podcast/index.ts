@@ -8,8 +8,12 @@ import type {
   WorkflowDefinition,
 } from '../../../../runtime/src/index.ts'
 import { Cancelled, defineWorkflow, InfraError, WorkflowError } from '../../../../runtime/src/index.ts'
-import { episodeToken } from '../podcast-produce/abs.ts'
-import { type NotifyConfig, notifyConfigFromEnv, notifyPodcastResult } from '../podcast-produce/notify.ts'
+import {
+  type NotifyConfig,
+  notifyConfigFromEnv,
+  notifyPodcastResult,
+  podcastFailureNotice,
+} from '../podcast-produce/notify.ts'
 import type { AgentRun } from './agent.ts'
 import { type PodcastConfig, podcastConfigFromEnv } from './config.ts'
 import { decideEpisodeBrief, defaultEpisodeBrief } from './editorial.ts'
@@ -107,7 +111,7 @@ export interface PodcastDeps {
    */
   produce?: Workflow<typeof ProduceInput, AnyWorkflow['output']>
   config?: Partial<PodcastConfig>
-  /** The Slack notice of a failed episode (legacy's env, `notify.ts`); default from the process env, null = none. */
+  /** The ntfy notice of a failed episode (`notify.ts`); default from the process env, null = none. */
   notify?: { config: NotifyConfig | null; fetch?: typeof fetch }
   logger?: Logger
 }
@@ -246,7 +250,7 @@ export function createPodcastWorkflow(deps: PodcastDeps) {
   const notify = deps.notify ?? { config: notifyConfigFromEnv(process.env) }
 
   /**
-   * Legacy's failure line in Slack for a failed episode, room or production (its child's failure ends the room). Not for
+   * The failure notice (ntfy) for a failed episode, room or production (its child's failure ends the room). Not for
    * a run that resumes (an infra error, a shutdown, a lost lease) or one that was cancelled. Best-effort: never masks
    * the failure itself.
    */
@@ -254,18 +258,15 @@ export function createPodcastWorkflow(deps: PodcastDeps) {
     // An unknown purpose is no notice: the failure to learn it must not turn an eval run into a post.
     if (!notify.config || purpose === undefined || purpose === 'eval') return
     if (ctx.signal.aborted || error instanceof InfraError || error instanceof Cancelled) return
-    const message = (error instanceof Error ? error.message : String(error)).slice(0, 500)
-    // The episode token of its Audiobookshelf file name, as legacy's id8 was.
-    const text = `Podcast-Job ${episodeToken(ctx.runId)} ist fehlgeschlagen: ${message}`
     try {
-      await notifyPodcastResult(notify.config, text, notify.fetch)
+      await notifyPodcastResult(notify.config, podcastFailureNotice(error), notify.fetch)
     } catch (err) {
       log.warn('podcast failure notice failed', { error: err instanceof Error ? err.message : String(err) })
     }
   }
 
   async function runWithNotice(ctx: Ctx, request: PodcastRequest): Promise<PodcastResult> {
-    // The run's purpose, journaled once: a context has none, and an eval run never posts to Slack.
+    // The run's purpose, journaled once: a context has none, and an eval run never sends a notice.
     let purpose: string | undefined
     try {
       purpose = await ctx.step('purpose', ({ attribution }) => attribution.purpose)

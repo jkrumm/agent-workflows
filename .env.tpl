@@ -10,10 +10,10 @@ CONTEXT7_API_KEY=op://common/context7/API_KEY
 # https://hyperdx.<domain> from. Local needs no ref: its key is read from ~/.config/hyperdx/local.env at call time.
 HYPERDX_PROD_ACCESS_KEY=op://vps/clickstack/AGENT_ACCESS_KEY
 HYPERDX_DOMAIN=op://vps/config/DOMAIN
-# Argo bearer (the agents overview push, the podcast's Slack notice). ARGO_URL is deployment config.
+# Argo bearer (the agents overview push). ARGO_URL is deployment config.
 ARGO_API_SECRET=op://common/api/SECRET
-# The factory (software-factory) is the one producer of agent state: `agw agents` runs `factory fleet --format json`, which
-# needs this token in its environment (exit 3 without it).
+# The factory (software-factory) is the one producer of agent state: `agw agents` reads `factory read overview` and
+# `factory read sessions --live`, which need this token in their environment (exit 3 without it).
 FACTORY_TOKEN=op://mini/software-factory/FACTORY_TOKEN
 # Host (scripts/launch.sh). The API secret is also what `make deploy` writes into the CLI's env file.
 AGW_API_SECRET=op://mini/agent-workflows/API_SECRET
@@ -34,9 +34,10 @@ AGW_FRICTION_REPO=jkrumm/agent-workflows
 # Audio process (packages/audio): the STT language steer the door's transcriptions send when a client sets none (plain
 # value, as audio-gateway sets it). Its lanes derive the OpenAI, Gemini and Replicate bases from AGW_GATEWAY_URL.
 STT_PROMPT=Die Aufnahme ist auf Deutsch oder Englisch.
-# The podcast's Slack notice goes to this channel via Argo (ARGO_URL, ARGO_API_SECRET above); a constant, as audio-gateway's
-# mini instance set it. Unset = no notice.
-PODCAST_NOTIFY_CHANNEL=media
+# The podcast notice (ntfy, topic `updates`): the publish token, a required deploy secret like every ref here (unseeded:
+# launch.sh refuses to start). The base URL (NTFY_URL) is deployment config that launch.sh reads from the ntfy server
+# config when unset; only that one missing turns the notice off.
+NTFY_TOKEN=op://common/ntfy/TOKEN
 # Audiobookshelf, where the podcast's publish stage uploads an episode (audio process).
 ABS_URL=op://vps/audiobookshelf/URL
 ABS_API_KEY=op://vps/audiobookshelf/API_KEY

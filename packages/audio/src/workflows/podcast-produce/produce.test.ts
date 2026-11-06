@@ -516,12 +516,12 @@ describe('podcast.produce', () => {
   )
 
   test(
-    "the Slack notice carries the whole episode's cost; a journal error there never fails the run",
+    "the ntfy notice carries the whole episode's cost; a journal error there never fails the run",
     async () => {
-      const NOTIFY = { channel: 'C0TESTCHAN1', argoBaseUrl: 'https://argo.example.com', argoApiSecret: 'test-secret' }
+      const NOTIFY = { url: 'https://ntfy.example.com', token: 'test-token' }
       const texts: string[] = []
       const notifyFetch = (async (_url: string | URL | Request, init?: RequestInit) => {
-        texts.push((JSON.parse(String(init?.body)) as { text: string }).text)
+        texts.push(String(init?.body))
         return Response.json({ ok: true })
       }) as unknown as typeof fetch
       const tts = fakeTts()
@@ -559,12 +559,12 @@ describe('podcast.produce', () => {
   )
 
   test(
-    'an eval run sends no Slack notice (the step records null); the same episode under another purpose does',
+    'an eval run sends no ntfy notice (the step records null); the same episode under another purpose does',
     async () => {
-      const NOTIFY = { channel: 'C0TESTCHAN1', argoBaseUrl: 'https://argo.example.com', argoApiSecret: 'test-secret' }
+      const NOTIFY = { url: 'https://ntfy.example.com', token: 'test-token' }
       const texts: string[] = []
       const notifyFetch = (async (_url: string | URL | Request, init?: RequestInit) => {
-        texts.push((JSON.parse(String(init?.body)) as { text: string }).text)
+        texts.push(String(init?.body))
         return Response.json({ ok: true })
       }) as unknown as typeof fetch
       const tts = fakeTts()

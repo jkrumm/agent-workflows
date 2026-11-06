@@ -113,5 +113,15 @@ exec "$SECRETS_RUN" run --env-file="$TPL" -- /bin/sh -c '
   OTEL_EXPORTER_OTLP_HEADERS="authorization=$OTEL_EXPORTER_OTLP_AUTHORIZATION"
   export AGW_PG_URL USAGE_PG_URL OTEL_EXPORTER_OTLP_HEADERS
   unset AGW_PG_PASSWORD USAGE_PG_PASSWORD OTEL_EXPORTER_OTLP_AUTHORIZATION
+  # The podcast notice (ntfy) base URL is deployment config that is not written into this repo: when NTFY_URL is unset it
+  # is read from the `base-url:` line of the ntfy server config. Non-fatal and not in .env.tpl: a missing file leaves it
+  # unset, which turns the notice off. The value is never printed.
+  if [ -z "${NTFY_URL:-}" ]; then
+    NTFY_SERVER_CONFIG="${NTFY_SERVER_CONFIG:-$HOME/SourceRoot/homelab/config/ntfy/server.yml}"
+    if [ -r "$NTFY_SERVER_CONFIG" ]; then
+      NTFY_URL=$(sed -n "s/^base-url: *\"*\([^\"]*\)\"*\$/\1/p" "$NTFY_SERVER_CONFIG" | head -n 1)
+    fi
+    [ -n "${NTFY_URL:-}" ] && export NTFY_URL
+  fi
   exec bun "$AGW_LAUNCH_ENTRY"
 ' sh "${KEYS[@]}"

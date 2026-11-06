@@ -34,7 +34,7 @@ import {
   matchHostLoudness,
   PRE_MASTER_HOST_LUFS,
 } from './mux.ts'
-import { notifyPodcastResult, podcastDoneMessage } from './notify.ts'
+import { notifyPodcastResult, podcastDoneNotice } from './notify.ts'
 import { createUnitWorkflow, speakersOf, type UnitInputValue } from './unit.ts'
 import {
   type SynthTurnInput,
@@ -46,7 +46,7 @@ import {
 } from './synth.ts'
 
 // `podcast.produce`: the writers' room's locked script to a published episode (audio-gateway `runPodcastPipeline` from
-// step 4 on, `publishEpisode`, the Slack notice, `writeEpisodeBrainNote`). Internal: only the room's `ctx.workflow`
+// step 4 on, `publishEpisode`, the ntfy notice, `writeEpisodeBrainNote`). Internal: only the room's `ctx.workflow`
 // (and a resume) starts it. Its follow-up `podcast-publish` (legacy `POST /:id/publish`) is `publish.ts`.
 
 export const PRODUCE_VERSION = '2026-10-29.1'
@@ -458,15 +458,15 @@ export function createProduceWorkflows(deps: ProduceDeps) {
       }),
     )
 
-    // 5. The Slack notice, only where legacy's env is set and never for an eval run (its attribution carries the root's
+    // 5. The ntfy notice, only where its env is set and never for an eval run (its attribution carries the root's
     // purpose); best-effort.
     await ctx.effect('notify', async (_key, { signal, attribution }) => {
       if (!config.notify || attribution.purpose === 'eval') return null
       try {
-        const text = podcastDoneMessage({
+        const notice = podcastDoneNotice({
           title: input.metadata.title,
           durationSeconds: mastered.durationSeconds,
-          chapters: mastered.chapters.map((c) => c.title),
+          chapterCount: mastered.chapters.length,
           absUrl: published.abs?.url ?? null,
           // The whole episode's spend, as legacy's job total: the room, this run and its units, the cover.
           costUsd: (await deps.journal.episodeCost(ctx.runId)).usd,
@@ -475,12 +475,8 @@ export function createProduceWorkflows(deps: ProduceDeps) {
             published.publish.ok === false && published.publish.error !== 'not configured'
               ? published.publish.error
               : null,
-          format: input.profile.format,
-          lead: input.profile.lead,
-          humor: input.profile.humor,
-          hostNames: [input.hosts[0].name, input.hosts[1].name],
         })
-        return json(await notifyPodcastResult(config.notify, text, deps.notifyFetch))
+        return json(await notifyPodcastResult(config.notify, notice, deps.notifyFetch))
       } catch (error) {
         return json(fallBack('notify', error, signal, { sent: false, error: messageOf(error) }))
       }

@@ -1,24 +1,10 @@
 import { describe, expect, test } from 'bun:test'
 import { setProduceLogger } from './log.ts'
-import { notifyConfigFromEnv, notifyPodcastResult, podcastDoneMessage, resolveNotifyChannel } from './notify.ts'
-
-// Ports the podcastDoneMessage / resolveNotifyChannel cases of audio-gateway/src/podcasts.test.ts; notifyPodcastResult
-// and the env derivation are new coverage. The channel-id cache lives per process, so each test uses its own channel name.
+import { notifyConfigFromEnv, notifyPodcastResult, podcastDoneNotice, podcastFailureNotice } from './notify.ts'
 
 setProduceLogger({ warn: () => {}, error: () => {} })
 
-/** The error a promise rejects with; fails the test when it resolves. */
-async function rejected(promise: Promise<unknown>): Promise<Error> {
-  const error = await promise.then(
-    () => undefined,
-    (e: unknown) => e,
-  )
-  if (!(error instanceof Error)) throw new Error('expected a rejection')
-  return error
-}
-
-const BASE = 'http://argo.example.com'
-const config = (channel: string) => ({ channel, argoBaseUrl: BASE, argoApiSecret: 's' })
+const config = { url: 'http://ntfy.example.com', token: 't' }
 
 /** A fake fetch that records `[url, init]` and answers per URL. */
 function fakeFetch(answer: (url: string, init?: RequestInit) => Response | Promise<Response>) {
@@ -30,189 +16,118 @@ function fakeFetch(answer: (url: string, init?: RequestInit) => Response | Promi
   return { impl, calls }
 }
 
-const channelsAnswer = (url: string) =>
-  url.endsWith('/slack/channels')
-    ? Response.json([
-        { id: 'C1', name: 'hermes' },
-        { id: 'C2', name: 'media' },
-      ])
-    : new Response('{}', { status: 200 })
+const base = {
+  title: 'T',
+  durationSeconds: 1536,
+  chapterCount: 2,
+  absUrl: null,
+  costUsd: null,
+  publishRequested: false,
+  publishError: null,
+}
 
-describe('podcastDoneMessage', () => {
-  test('carries title, minutes, chapters, format line and the Audiobookshelf link', () => {
-    const msg = podcastDoneMessage({
-      title: 'T',
-      durationSeconds: 1536,
-      chapters: ['A', 'B'],
+describe('podcastDoneNotice', () => {
+  test('published: one line with minutes, chapters and cost; the link is the click target', () => {
+    const notice = podcastDoneNotice({
+      ...base,
       absUrl: 'https://abs.example.com/item/1',
       costUsd: 2.257,
       publishRequested: true,
-      publishError: null,
-      format: 'Erklärstück',
-      lead: 'A',
-      humor: 'sparse',
-      hostNames: ['Jonas', 'Lena'],
     })
-    const unpublished = podcastDoneMessage({
-      title: 'T',
-      durationSeconds: 60,
-      chapters: [],
-      absUrl: null,
-      costUsd: null,
-      publishRequested: false,
-      publishError: null,
-      format: 'Gespräch',
-      lead: 'balanced',
-      humor: 'none',
-      hostNames: ['Jonas', 'Lena'],
+    expect(notice).toEqual({
+      title: 'Podcast fertig',
+      body: 'T: 26 min, 2 Kapitel. Anhören in Audiobookshelf. Kosten: 2.26 USD',
+      tags: 'headphones',
+      click: 'https://abs.example.com/item/1',
     })
-    expect(unpublished).toContain('nicht angefordert')
-    expect(unpublished).toContain('Format: Gespräch · ausgeglichen · none')
-    expect(unpublished).not.toContain('Kosten')
-    expect(msg).toContain('*T* (26 min, 2 Kapitel)')
-    expect(msg).toContain('Format: Erklärstück · Jonas führt · sparse')
-    expect(msg).toContain('• B')
-    expect(msg).toContain('https://abs.example.com/item/1')
-    expect(msg).toContain('Kosten: 2.26 USD')
-    expect(msg).not.toContain('ElevenLabs-Kosten')
+    expect(notice.body).not.toContain('\n')
   })
 
-  test('lead B names the second host; requested but unconfigured says so', () => {
-    const msg = podcastDoneMessage({
-      title: 'T',
-      durationSeconds: 600,
-      chapters: [],
-      absUrl: null,
-      costUsd: 1,
-      publishRequested: true,
-      publishError: null,
-      format: 'Gespräch',
-      lead: 'B',
-      humor: 'none',
-      hostNames: ['Jonas', 'Lena'],
-    })
-    expect(msg).toContain('Lena führt')
-    expect(msg).toContain('Nicht veröffentlicht: Audiobookshelf ist auf diesem Gateway nicht konfiguriert.')
+  test('not requested: says so, no click, no cost', () => {
+    const notice = podcastDoneNotice({ ...base, durationSeconds: 60, chapterCount: 0 })
+    expect(notice.body).toContain('T: 1 min, 0 Kapitel.')
+    expect(notice.body).toContain('nicht angefordert')
+    expect(notice.body).not.toContain('Kosten')
+    expect(notice.click).toBeUndefined()
+  })
+
+  test('requested but unconfigured says so', () => {
+    const notice = podcastDoneNotice({ ...base, publishRequested: true })
+    expect(notice.body).toContain('Nicht veröffentlicht: Audiobookshelf ist auf diesem Gateway nicht konfiguriert.')
   })
 
   test('a failed upload says produced-but-unpublished and points at /publish, never at /retry', () => {
-    const msg = podcastDoneMessage({
-      title: 'T',
-      durationSeconds: 600,
-      chapters: [],
-      absUrl: null,
-      costUsd: 1,
-      publishRequested: true,
-      publishError: 'ABS scan timed out',
-      format: 'Gespräch',
-      lead: 'balanced',
-      humor: 'none',
-      hostNames: ['Jonas', 'Lena'],
-    })
-    expect(msg).toContain(
+    const notice = podcastDoneNotice({ ...base, publishRequested: true, publishError: 'ABS scan timed out' })
+    expect(notice.body).toContain(
       'Produziert, Veröffentlichung fehlgeschlagen (ABS scan timed out) — /publish wiederholt nur den Upload.',
     )
-    expect(msg).not.toContain('nicht konfiguriert')
-    expect(msg).not.toContain('/retry')
+    expect(notice.body).not.toContain('nicht konfiguriert')
+    expect(notice.body).not.toContain('/retry')
+    expect(notice.click).toBeUndefined()
   })
 })
 
-describe('resolveNotifyChannel', () => {
-  test('accepts an id as-is without calling Argo', async () => {
-    const fake = fakeFetch(() => {
-      throw new Error('should not be called')
-    })
-    expect(await resolveNotifyChannel(config('C0AS5GUH5U4'), fake.impl)).toBe('C0AS5GUH5U4')
-    expect(fake.calls).toEqual([])
-  })
-
-  test("resolves a channel name through Argo's list, once per process", async () => {
-    const fake = fakeFetch(channelsAnswer)
-    expect(await resolveNotifyChannel(config('#Media'), fake.impl)).toBe('C2')
-    expect(fake.calls[0]?.url).toBe(`${BASE}/slack/channels`)
-    expect(new Headers(fake.calls[0]?.init?.headers).get('authorization')).toBe('Bearer s')
-    expect(await resolveNotifyChannel(config('#Media'), fake.impl)).toBe('C2')
-    expect(fake.calls.length).toBe(1)
-  })
-
-  test('an empty channel resolves to null; an unknown name and a non-2xx list throw', async () => {
-    const fake = fakeFetch(channelsAnswer)
-    expect(await resolveNotifyChannel(config('  '), fake.impl)).toBeNull()
-    expect((await rejected(resolveNotifyChannel(config('nonexistent-channel'), fake.impl))).message).toContain(
-      'Argo knows no Slack channel named "nonexistent-channel"',
-    )
-    const failing = fakeFetch(() => new Response('no', { status: 503 }))
-    expect((await rejected(resolveNotifyChannel(config('other-unknown-channel'), failing.impl))).message).toContain(
-      'HTTP 503',
-    )
+describe('podcastFailureNotice', () => {
+  test('carries the message cut to 500 characters, no id', () => {
+    const notice = podcastFailureNotice(new Error('x'.repeat(600)))
+    expect(notice).toEqual({ title: 'Podcast fehlgeschlagen', body: 'x'.repeat(500), tags: 'warning' })
+    expect(podcastFailureNotice('boom').body).toBe('boom')
   })
 })
 
 describe('notifyPodcastResult', () => {
-  test('posts the text to the resolved channel with the bearer secret', async () => {
-    const fake = fakeFetch(channelsAnswer)
-    const result = await notifyPodcastResult(config('hermes'), 'Podcast fertig', fake.impl)
+  test('posts the body to <url>/updates with bearer, title, tags and click', async () => {
+    const fake = fakeFetch(() => new Response('{}', { status: 200 }))
+    const notice = podcastDoneNotice({ ...base, absUrl: 'https://abs.example.com/item/1', publishRequested: true })
+    const result = await notifyPodcastResult(config, notice, fake.impl)
     expect(result).toEqual({ sent: true, error: null })
-    const post = fake.calls[1]
-    expect(post?.url).toBe(`${BASE}/slack/channels/C1/messages`)
+    const post = fake.calls[0]
+    expect(post?.url).toBe('http://ntfy.example.com/updates')
     expect(post?.init?.method).toBe('POST')
-    expect(JSON.parse(String(post?.init?.body))).toEqual({ text: 'Podcast fertig' })
-    expect(new Headers(post?.init?.headers).get('authorization')).toBe('Bearer s')
+    expect(post?.init?.body).toBe(notice.body)
+    const headers = new Headers(post?.init?.headers)
+    expect(headers.get('authorization')).toBe('Bearer t')
+    expect(headers.get('title')).toBe('Podcast fertig')
+    expect(headers.get('tags')).toBe('headphones')
+    expect(headers.get('click')).toBe('https://abs.example.com/item/1')
+  })
+
+  test('no click header without a link', async () => {
+    const fake = fakeFetch(() => new Response('{}', { status: 200 }))
+    await notifyPodcastResult(config, podcastFailureNotice(new Error('bad')), fake.impl)
+    const headers = new Headers(fake.calls[0]?.init?.headers)
+    expect(headers.get('click')).toBeNull()
+    expect(headers.get('title')).toBe('Podcast fehlgeschlagen')
+    expect(headers.get('tags')).toBe('warning')
   })
 
   test('a non-2xx post is reported, not thrown', async () => {
-    const fake = fakeFetch((url) =>
-      url.endsWith('/messages') ? new Response('denied', { status: 403 }) : Response.json([]),
-    )
-    const result = await notifyPodcastResult(config('C0AS5GUH5U4'), 'x', fake.impl)
-    expect(result.sent).toBe(false)
-    expect(result.error).toBe('HTTP 403 denied')
+    const fake = fakeFetch(() => new Response('denied', { status: 403 }))
+    const result = await notifyPodcastResult(config, podcastFailureNotice('x'), fake.impl)
+    expect(result).toEqual({ sent: false, error: 'HTTP 403 denied' })
   })
 
-  test('an unresolvable channel or a network failure is reported, not thrown', async () => {
-    const unknown = await notifyPodcastResult(config('missing-channel'), 'x', fakeFetch(channelsAnswer).impl)
-    expect(unknown).toEqual({ sent: false, error: 'Argo knows no Slack channel named "missing-channel"' })
-
-    const down = await notifyPodcastResult(config('C0AS5GUH5U4'), 'x', (async () => {
+  test('a network failure is reported, not thrown', async () => {
+    const down = await notifyPodcastResult(config, podcastFailureNotice('x'), (async () => {
       throw new Error('connection refused')
     }) as unknown as typeof fetch)
     expect(down).toEqual({ sent: false, error: 'connection refused' })
   })
-
-  test('an empty channel sends nothing', async () => {
-    const fake = fakeFetch(channelsAnswer)
-    expect(await notifyPodcastResult(config(''), 'x', fake.impl)).toEqual({ sent: false, error: null })
-    expect(fake.calls).toEqual([])
-  })
 })
 
 describe('notifyConfigFromEnv', () => {
-  test('reads the three variables and strips trailing slashes', () => {
-    expect(
-      notifyConfigFromEnv({
-        PODCAST_NOTIFY_CHANNEL: 'media',
-        ARGO_URL: 'http://argo.example.com/',
-        ARGO_API_SECRET: 's',
-      }),
-    ).toEqual({ channel: 'media', argoBaseUrl: 'http://argo.example.com', argoApiSecret: 's' })
+  test('reads NTFY_URL and NTFY_TOKEN and strips trailing slashes', () => {
+    expect(notifyConfigFromEnv({ NTFY_URL: ' http://ntfy.example.com// ', NTFY_TOKEN: 't' })).toEqual({
+      url: 'http://ntfy.example.com',
+      token: 't',
+    })
   })
 
-  test('the legacy names ARGO_BASE_URL and USAGE_HTTP_URL are not read', () => {
-    const env = {
-      PODCAST_NOTIFY_CHANNEL: 'media',
-      ARGO_API_SECRET: 's',
-      ARGO_BASE_URL: 'http://argo.example.com',
-      USAGE_HTTP_URL: 'http://argo.example.com/usage/records',
-    }
-    expect(notifyConfigFromEnv(env)).toBeNull()
-  })
-
-  test('null when the channel, the base url or the secret is unset', () => {
-    const full = { PODCAST_NOTIFY_CHANNEL: 'media', ARGO_URL: 'http://argo.example.com', ARGO_API_SECRET: 's' }
+  test('null when either is unset', () => {
+    const full = { NTFY_URL: 'http://ntfy.example.com', NTFY_TOKEN: 't' }
     expect(notifyConfigFromEnv(full)).not.toBeNull()
-    expect(notifyConfigFromEnv({ ...full, PODCAST_NOTIFY_CHANNEL: undefined })).toBeNull()
-    expect(notifyConfigFromEnv({ ...full, ARGO_URL: '' })).toBeNull()
-    expect(notifyConfigFromEnv({ ...full, ARGO_API_SECRET: undefined })).toBeNull()
+    expect(notifyConfigFromEnv({ ...full, NTFY_URL: '' })).toBeNull()
+    expect(notifyConfigFromEnv({ ...full, NTFY_TOKEN: undefined })).toBeNull()
     expect(notifyConfigFromEnv({})).toBeNull()
   })
 })

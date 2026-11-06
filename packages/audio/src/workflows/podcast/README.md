@@ -34,7 +34,7 @@ fallback (so a resume never retries it), unless the step was aborted (cancel, le
 
 | Step id | Kind | Failure | What |
 |-|-|-|-|
-| `purpose` | code | required | the run's purpose, journaled first: the failure notice to Slack is skipped for `eval` |
+| `purpose` | code | required | the run's purpose, journaled first: the failure notice (ntfy) is skipped for `eval` |
 | `house` | code | required | show bible (`show-bible.md`), the owner's voice guide (`voice.md` at the vault root), the hosts, the start time; fixed for the run |
 | `source` | code | required | `source` plus the raw `sourcePaths` notes (`source.ts`); > 200k chars is `invalid_input` |
 | `research` | code | best-effort → empty dossier | tool loop: `brain_search`, `brain_read`, `past_episodes`, `past_transcript`, `research` (quick depth only) |

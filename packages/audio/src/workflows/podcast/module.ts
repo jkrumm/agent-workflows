@@ -18,7 +18,7 @@ import { researchClient, researchClientFromEnv } from './research-client.ts'
 /** Five short synthetic briefs (`PlainCase` lines): 3 minutes, no research, no cover, no brain note, `publish: false`. */
 export const CASES_PATH = join(import.meta.dir, 'eval', 'cases.jsonl')
 
-/** The suite: `PlainCase` lines read as they are. The produce stage and the room send no Slack notice for purpose `eval`. */
+/** The suite: `PlainCase` lines read as they are. The produce stage and the room send no ntfy notice for purpose `eval`. */
 export const podcastSuite: Suite = { path: () => CASES_PATH, read: (path) => plainSuite.read(path) }
 
 /** What the audio process adds to `HostDeps` for this module. */

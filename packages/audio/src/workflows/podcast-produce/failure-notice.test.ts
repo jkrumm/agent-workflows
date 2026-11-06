@@ -6,15 +6,14 @@ import { postgresJournal } from '../podcast/history.ts'
 import { createPodcastWorkflow } from '../podcast/index.ts'
 import { ProduceInput } from '../podcast/produce-input.ts'
 import { fakeHistory, fakeRoom } from '../podcast/testing.ts'
-import { episodeToken } from './abs.ts'
 
-// Legacy's Slack line for a failed episode ("Podcast-Job <id8> ist fehlgeschlagen: <message>"), posted once at the
-// root when production fails; none without legacy's Slack env.
+// The ntfy failure notice for a failed episode (title "Podcast fehlgeschlagen", the message as body, no id), posted once
+// at the root when production fails; none without the ntfy env.
 
 const db = freshSchema('notice')
 const sql = inspector(db.schema)
 const journal = postgresJournal(sql.pool, db.schema)
-const NOTIFY = { channel: 'C0TESTCHAN1', argoBaseUrl: 'https://argo.example.com', argoApiSecret: 'test-secret' }
+const NOTIFY = { url: 'https://ntfy.example.com', token: 'test-token' }
 
 beforeAll(async () => {
   const rt = testRuntime({ schema: db.schema, workflows: [] })
@@ -49,10 +48,10 @@ const config = {
   voicePath: null,
 }
 
-test('a failed episode posts legacy failure line once; without the Slack env nothing is sent', async () => {
-  const posts: { url: string; body: { text: string } }[] = []
+test('a failed episode posts the failure notice once; without the ntfy env nothing is sent', async () => {
+  const posts: { url: string; title: string | null; body: string }[] = []
   const fetchImpl = (async (url: string | URL | Request, init?: RequestInit) => {
-    posts.push({ url: String(url), body: JSON.parse(String(init?.body)) as { text: string } })
+    posts.push({ url: String(url), title: new Headers(init?.headers).get('title'), body: String(init?.body) })
     return Response.json({ ok: true })
   }) as unknown as typeof fetch
   const notified = createPodcastWorkflow({
@@ -69,9 +68,10 @@ test('a failed episode posts legacy failure line once; without the Slack env not
     const { runId } = await rt.start(notified, { source: 'Notizen.', research: false }, { purpose: 'build' })
     expect((await rt.wait(runId)).status).toBe('failed')
     expect(posts).toHaveLength(1)
-    expect(posts[0]?.url).toBe('https://argo.example.com/slack/channels/C0TESTCHAN1/messages')
-    expect(posts[0]?.body.text).toStartWith(`Podcast-Job ${episodeToken(runId)} ist fehlgeschlagen: `)
-    expect(posts[0]?.body.text).toContain('podcast.produce failed')
+    expect(posts[0]?.url).toBe('https://ntfy.example.com/updates')
+    expect(posts[0]?.title).toBe('Podcast fehlgeschlagen')
+    expect(posts[0]?.body).toContain('podcast.produce failed')
+    expect(posts[0]?.body).not.toContain(runId)
   } finally {
     await rt.close()
   }
@@ -98,7 +98,7 @@ test('a failed episode posts legacy failure line once; without the Slack env not
 test('a failed eval episode posts nothing; the same failure under another purpose posts', async () => {
   const posts: string[] = []
   const fetchImpl = (async (_url: string | URL | Request, init?: RequestInit) => {
-    posts.push((JSON.parse(String(init?.body)) as { text: string }).text)
+    posts.push(String(init?.body))
     return Response.json({ ok: true })
   }) as unknown as typeof fetch
   const workflow = createPodcastWorkflow({
@@ -119,7 +119,7 @@ test('a failed eval episode posts nothing; the same failure under another purpos
     const prod = await rt.start(workflow, input, { purpose: 'prod' })
     expect((await rt.wait(prod.runId)).status).toBe('failed')
     expect(posts).toHaveLength(1)
-    expect(posts[0]).toStartWith(`Podcast-Job ${episodeToken(prod.runId)} ist fehlgeschlagen: `)
+    expect(posts[0]).toContain('podcast.produce failed')
   } finally {
     await rt.close()
   }
@@ -128,7 +128,7 @@ test('a failed eval episode posts nothing; the same failure under another purpos
 test('when the purpose cannot be learned no failure notice is posted (unknown is not prod)', async () => {
   const posts: string[] = []
   const fetchImpl = (async (_url: string | URL | Request, init?: RequestInit) => {
-    posts.push((JSON.parse(String(init?.body)) as { text: string }).text)
+    posts.push(String(init?.body))
     return Response.json({ ok: true })
   }) as unknown as typeof fetch
   const workflow = createPodcastWorkflow({

@@ -38,7 +38,7 @@ export interface ProduceConfig {
   abs: AbsConfig | null
   /** The vault checkout the episode note is committed in (`AGW_BRAIN_DIR`, default `~/SourceRoot/brain`, absolute). */
   brainDir: string
-  /** The Slack notice via Argo (`PODCAST_NOTIFY_CHANNEL`, `ARGO_URL`, `ARGO_API_SECRET`); null = none. */
+  /** The ntfy notice (`NTFY_URL`, `NTFY_TOKEN`); null = none. */
   notify: NotifyConfig | null
 }
 

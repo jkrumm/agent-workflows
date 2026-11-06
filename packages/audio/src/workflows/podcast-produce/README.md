@@ -1,10 +1,10 @@
 # podcast.produce
 
-The writers' room's locked script to a published episode: synth, master, cover, publish, brain note, the Slack notice.
+The writers' room's locked script to a published episode: synth, master, cover, publish, brain note, the ntfy notice.
 An **internal** child of `podcast` (`ctx.workflow('produce', …)` in `../podcast/index.ts`, step 11): registered with the
 runtime, never an HTTP route or a CLI command. Its input contract is `../podcast/produce-input.ts`. Legacy (frozen):
 `~/SourceRoot/audio-gateway` — `src/podcasts.ts` from `runPodcastPipeline` step 4 on, `publishEpisode`,
-`runPublishStage`, the Slack notice; `src/podcast-synth.ts`, `src/podcast-mux.ts`, `src/cover.ts`,
+`runPublishStage`, the ntfy notice; `src/podcast-synth.ts`, `src/podcast-mux.ts`, `src/cover.ts`,
 `src/audiobookshelf.ts`, `src/brain-note.ts`.
 
 The module (`module.ts`) also registers **`podcast-publish`** (`agw podcast-publish <runId>`), legacy's
@@ -24,7 +24,7 @@ holds their TTS requests to `TTS_CONCURRENCY`, as legacy's `synthConcurrent` did
 | `cover` | code | best-effort | `image.generate` in-process, 1024², medium quality; runs beside the synth fan-out. Null without the capability, when not requested, or on failure |
 | `master` | code | fatal | per-host loudness to −20 LUFS (a multi-speaker unit levels as one `AB` group), gapped concat (380 ms, 160 ms before a ≤ 6-word interjection), one chapter per segment, `loudnorm I=-16:TP=-1.5:LRA=11`, ID3v2.3 with the cover, 44.1 kHz mono MP3 |
 | `publish` | effect | best-effort | Audiobookshelf upload → scan → poll → patch. Never fails the run: `publish {requested, ok, error}`, `abs` null on failure |
-| `notify` | effect | best-effort | the Slack line via Argo, only with `PODCAST_NOTIFY_CHANNEL` set and never for purpose `eval` |
+| `notify` | effect | best-effort | the ntfy message (`POST <NTFY_URL>/updates`), only with `NTFY_URL` and `NTFY_TOKEN` set and never for purpose `eval` |
 | `brain-note` | effect | best-effort | `Areas/Podcasts/<date> <title>.md` and the regenerated `Podcasts.md`, `git add`/`commit`/`push` in `AGW_BRAIN_DIR` under the brain-sync lock; none for purpose `eval` (records null) |
 | `cost` | code | fatal | this run's spend (its steps and its unit children's) as the journal recorded it |
 
@@ -69,7 +69,7 @@ then runs again, and every effect checks its target before acting:
 - **brain-note:** the commit carries `Effect-Key: <runId>:brain-note` as its second paragraph. After writing the two
   files, an unchanged, tracked note means already committed: no second commit, only the push runs again (push is
   idempotent). No push remote or a held brain-sync lock is logged and returned (`pushed: false`), never fatal.
-- **notify:** Slack has no read side; a kill between the send and the journal write can send the line twice. Accepted:
+- **notify:** ntfy has no read side; a kill between the send and the journal write can send the line twice. Accepted:
   it is a notice.
 
 ## podcast-publish
@@ -96,7 +96,7 @@ One module, `config.ts`, legacy's names and defaults:
 | `PODCAST_AUTHOR`, `PODCAST_SERIES_DESCRIPTION` | `Hermes`, legacy's text | |
 | `ABS_URL`, `ABS_API_KEY`, `ABS_LIBRARY` | —, —, `Podcasts` | either unset: publish returns `{ok: false, error: "not configured"}` |
 | `AGW_BRAIN_DIR` | `~/SourceRoot/brain` | the vault checkout the note is committed in; the same variable and default as the room and the `brain.*` capabilities |
-| `PODCAST_NOTIFY_CHANNEL`, `ARGO_URL`, `ARGO_API_SECRET` | — | any unset: no Slack notice |
+| `NTFY_URL`, `NTFY_TOKEN` | — | any unset: no notice |
 
 Voices and speeds are the room's (`PODCAST_VOICES`, `PODCAST_SPEEDS`, in `ProduceInput.hosts`).
 

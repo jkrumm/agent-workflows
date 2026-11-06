@@ -5,7 +5,7 @@ import { audioRoutes } from '../../routes.ts'
 import { DEFAULT_TTS_ROUTE, produceConfigFromEnv, ttsRouteFor } from './config.ts'
 
 describe('produceConfigFromEnv', () => {
-  test("legacy's defaults with an empty env; publish and the Slack notice are off", () => {
+  test("legacy's defaults with an empty env; publish and the ntfy notice are off", () => {
     const config = produceConfigFromEnv({})
     expect(config).toMatchObject({
       ttsRouteId: DEFAULT_TTS_ROUTE,
