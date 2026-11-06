@@ -17,7 +17,7 @@ import { createFleet } from '../src/fleet/index.ts'
 import { createQuota } from '../src/fleet/quota.ts'
 import { OVERVIEW_PAYLOAD } from '../src/fleet/schema.ts'
 
-// The agents overview is a client of the factory's fleet view: `factory fleet --format json` mapped onto the snapshot.
+// The agents overview is a client of the factory's /v1 read API: `factory read overview` and `factory read sessions --live` mapped onto the snapshot.
 // Fixtures are invented by hand; the factory is a fake runner or a fake script, never a real server.
 
 const HOUR_MS = 60 * 60 * 1000
@@ -287,113 +287,200 @@ const result = (over: Partial<CommandResult> = {}): CommandResult => ({
   ...over,
 })
 
-const fakeRun = (answer: CommandResult) => {
+/** A fake runner: answers per subcommand (`overview` / `sessions`), records every call. */
+const fakeRun = (answers: { overview?: CommandResult; sessions?: CommandResult } | CommandResult) => {
   const calls: { cmd: string[]; extraEnv?: Record<string, string>; timeoutMs?: number }[] = []
   const run: RunCommand = async (cmd, options) => {
     calls.push({ cmd, ...options })
-    return answer
+    if ('stdout' in answers) return answers
+    return (cmd[2] === 'overview' ? answers.overview : answers.sessions) ?? result({ stdout: '{}' })
   }
   return { run, calls }
 }
 
 const config = { factoryBin: 'factory' }
 
+/** A /v1 session card with the fields agw reads and a few it does not. */
+const card = (over: Record<string, unknown> = {}) => ({
+  id: 'sess-1',
+  issue: 12,
+  role: 'worker',
+  title: 'some task',
+  summary: 'doing it',
+  state: 'working',
+  wait: null,
+  account: 'iu',
+  terminal: { id: 't7', name: 'w', space: '/work/alpha', tab: null, workspace: null },
+  repo: '/work/alpha',
+  since: '2026-11-03T10:00:00.000Z',
+  lastActivityAt: '2026-11-03T11:59:00.000Z',
+  futureField: 1,
+  ...over,
+})
+const ask = (over: Record<string, unknown> = {}) => ({
+  id: 'queue:1',
+  kind: 'human',
+  repo: null,
+  session: null,
+  short: 'x',
+  text: 'decide this',
+  source: 'queue',
+  at: '2026-11-03T09:00:00.000Z',
+  summary: 's',
+  stale: false,
+  ...over,
+})
+const answers = (cards: unknown[], overview: Record<string, unknown> = {}) => ({
+  overview: result({ stdout: JSON.stringify({ version: 'v1', asks: [], humanQueue: [], health: [], ...overview }) }),
+  sessions: result({ stdout: JSON.stringify({ sessions: cards }) }),
+})
+const readWith = (a: Parameters<typeof fakeRun>[0], limits = {}) => readFactoryFleet(fakeRun(a).run, config, {}, limits)
+const warning = (read: FactoryRead) => (read.ok ? null : read.warning)
+
 describe('readFactoryFleet', () => {
-  test('runs `factory fleet --format json` with the token and parses the answer', async () => {
-    const { run, calls } = fakeRun(result({ stdout: JSON.stringify(fleet({ repos: [repo('p', [session()])] })) }))
+  test('runs the two /v1 reads in parallel with the token only, and maps the answers', async () => {
+    const { run, calls } = fakeRun(answers([card()]))
     const read = await readFactoryFleet(run, config, {
       FACTORY_TOKEN: 'tok',
       FACTORY_URL: 'http://f.test',
       AGW_API_SECRET: 's',
     })
-    expect(read.ok).toBe(true)
-    expect(calls[0]?.cmd).toEqual(['factory', 'fleet', '--format', 'json'])
-    expect(calls[0]?.extraEnv).toEqual({ FACTORY_TOKEN: 'tok', FACTORY_URL: 'http://f.test' }) // never the host's other secrets
-    expect(calls[0]?.timeoutMs).toBe(10_000)
-  })
-
-  test('a field the factory adds is no mismatch: only what agw reads is parsed', async () => {
-    const raw = {
-      ...fleet({ repos: [repo('p', [{ ...session(), futureField: 1, role: 'worker' } as FactorySession])] }),
-      presence: { away: true },
-      brandNew: [],
+    expect(calls.map((c) => c.cmd)).toEqual([
+      ['factory', 'read', 'overview', '--format', 'json'],
+      ['factory', 'read', 'sessions', '--live', '--format', 'json'],
+    ])
+    for (const c of calls) {
+      expect(c.extraEnv).toEqual({ FACTORY_TOKEN: 'tok', FACTORY_URL: 'http://f.test' }) // never the host's other secrets
+      expect(c.timeoutMs).toBe(10_000)
     }
-    const read = await readFactoryFleet(fakeRun(result({ stdout: JSON.stringify(raw) })).run, config, {})
-    expect(read.ok).toBe(true)
-  })
-
-  test('an exit-0 build that carries errors and no session at all is unreadable, not an empty fleet', async () => {
-    const read = (f: FactoryFleet) => readFactoryFleet(fakeRun(result({ stdout: JSON.stringify(f) })).run, config, {})
-    expect(await read(fleet({ errors: ['pg: down', 'git: no answer'] }))).toEqual({
-      ok: false,
-      warning: 'factory fleet reported errors and no session: pg: down; git: no answer',
+    expect(read).toEqual({
+      ok: true,
+      fleet: {
+        asks: [],
+        repos: [
+          {
+            name: 'alpha',
+            space: '/work/alpha',
+            git: null,
+            sessions: [
+              {
+                id: 'sess-1',
+                state: 'working',
+                hc: null,
+                wait: null,
+                account: 'iu',
+                terminal: 't7',
+                plan: null,
+                wave: null,
+                title: 'some task',
+                headline: 'doing it',
+                since: '2026-11-03T10:00:00.000Z',
+                lastActivityAt: '2026-11-03T11:59:00.000Z',
+              },
+            ],
+          },
+        ],
+        unplaced: [],
+        errors: [],
+      },
     })
-    // a repo without sessions is still no session
-    expect((await read(fleet({ errors: ['x'], repos: [repo('quiet', [])] }))).ok).toBe(false)
-    // errors beside a session are the partial failure the snapshot's warnings carry
-    expect((await read(fleet({ errors: ['x'], repos: [repo('p', [session()])] }))).ok).toBe(true)
-    expect((await read(fleet({ errors: ['x'], unplaced: [session()] }))).ok).toBe(true)
-    // no errors, no session: a quiet fleet
-    expect((await read(fleet())).ok).toBe(true)
   })
 
-  test('the warning of an errors-only build is capped', async () => {
-    const read = await readFactoryFleet(
-      fakeRun(result({ stdout: JSON.stringify(fleet({ errors: ['e'.repeat(2000)] })) })).run,
-      config,
-      {},
+  test('a worktree session falls under its repo’s space; sessions of one space share a project', async () => {
+    const read = await readWith(
+      answers([
+        card({ id: 'a' }),
+        card({
+          id: 'b',
+          repo: '/work/alpha/.claude/worktrees/x-1',
+          terminal: { id: 't8', name: null, space: '/work/alpha', tab: null, workspace: null },
+        }),
+        card({ id: 'c', repo: '/work/beta', terminal: null }),
+      ]),
     )
-    expect(read.ok).toBe(false)
-    expect(!read.ok && read.warning.length).toBeLessThan(360)
+    expect(read.ok).toBe(true)
+    const repos = read.ok ? read.fleet.repos : []
+    expect(repos.map((r) => [r.name, r.space, r.sessions.map((s) => s.id)])).toEqual([
+      ['alpha', '/work/alpha', ['a', 'b']],
+      ['beta', '/work/beta', ['c']],
+    ])
   })
 
-  test('the stderr line of a failure is one clean line of at most 300 characters', async () => {
-    const read = await readFactoryFleet(
-      fakeRun(result({ exitCode: 1, stderr: `\n  boom\x1b[31m ${'x'.repeat(1000)}\nsecond line` })).run,
-      config,
-      {},
+  test('a session with neither repo nor space is unplaced', async () => {
+    const read = await readWith(answers([card({ id: 'u', repo: null, terminal: null })]))
+    expect(read.ok && read.fleet.repos).toEqual([])
+    expect(read.ok && read.fleet.unplaced.map((s) => s.id)).toEqual(['u'])
+  })
+
+  test('the asks and the human queue become asks; nothing else of them is kept', async () => {
+    const read = await readWith(
+      answers([], {
+        asks: [ask({ id: 'wait:1', kind: 'decision', text: 'pick' })],
+        humanQueue: [ask({ id: 'queue:2', text: 'owner call' })],
+      }),
     )
-    const warning = !read.ok ? read.warning : ''
-    expect(warning.startsWith('factory fleet failed (exit 1): boom[31m xxx')).toBe(true)
-    expect(warning).not.toContain('\x1b')
-    expect(warning).not.toContain('second line')
-    expect(warning.length).toBeLessThan(340)
+    expect(read.ok && read.fleet.asks).toEqual([
+      { id: 'wait:1', kind: 'decision', text: 'pick', at: '2026-11-03T09:00:00.000Z' },
+      { id: 'queue:2', kind: 'human', text: 'owner call', at: '2026-11-03T09:00:00.000Z' },
+    ])
+  })
+
+  test('the mapped fleet derives like any other: a blocked card needs the owner, human asks queue up', async () => {
+    const read = await readWith(answers([card({ state: 'blocked' })], { humanQueue: [ask({ text: 'owner call' })] }))
+    if (!read.ok) throw new Error(read.warning)
+    const snapshot = map(read.fleet)
+    expect(snapshot.projects[0]?.agents[0]?.state).toBe('needs_you')
+    expect(snapshot.humanQueue.map((q) => q.question)).toEqual(['owner call'])
   })
 
   test('a state the factory adds does not fail the parse', async () => {
-    const raw = fleet({ repos: [repo('p', [{ ...session(), state: 'hibernating' }])] })
-    const read = await readFactoryFleet(fakeRun(result({ stdout: JSON.stringify(raw) })).run, config, {})
-    expect(read.ok).toBe(true)
+    expect((await readWith(answers([card({ state: 'hibernating' })]))).ok).toBe(true)
   })
 
-  test('`{}` is an unexpected shape, not an empty fleet', async () => {
-    const read = await readFactoryFleet(fakeRun(result({ stdout: '{}' })).run, config, {})
-    expect(read).toEqual({ ok: false, warning: 'factory fleet failed: unexpected shape at repos' })
+  test('the stderr line of a failure is one clean line of at most 300 characters', async () => {
+    const read = await readWith(result({ exitCode: 1, stderr: `\n  boom\x1b[31m ${'x'.repeat(1000)}\nsecond line` }))
+    const text = warning(read) ?? ''
+    expect(text.startsWith('factory read overview failed (exit 1): boom[31m xxx')).toBe(true)
+    expect(text).not.toContain('\x1b')
+    expect(text).not.toContain('second line')
+    expect(text.length).toBeLessThan(380)
   })
 
   test('exit code and the first line of stderr name the cause', async () => {
-    const read = await readFactoryFleet(
-      fakeRun(result({ exitCode: 3, stderr: 'FACTORY_TOKEN is not set\nusage: factory …' })).run,
-      config,
-      {},
+    const read = await readWith(result({ exitCode: 3, stderr: 'FACTORY_TOKEN is not set\nusage: factory …' }))
+    expect(read).toEqual({ ok: false, warning: 'factory read overview failed (exit 3): FACTORY_TOKEN is not set' })
+  })
+
+  test('one call failing fails the read, naming that call', async () => {
+    const down = result({ exitCode: 2, stderr: 'no sessions' })
+    expect(warning(await readWith({ ...answers([]), sessions: down }))).toBe(
+      'factory read sessions --live failed (exit 2): no sessions',
     )
-    expect(read).toEqual({ ok: false, warning: 'factory fleet failed (exit 3): FACTORY_TOKEN is not set' })
+    expect(warning(await readWith({ ...answers([]), overview: down }))).toBe(
+      'factory read overview failed (exit 2): no sessions',
+    )
   })
 
   test('a non-zero exit without stderr, a timeout, a spawn error, bad JSON and a wrong shape are each a warning', async () => {
-    const warn = async (answer: CommandResult) => {
-      const read = await readFactoryFleet(fakeRun(answer).run, config, {})
-      return read.ok ? null : read.warning
-    }
-    expect(await warn(result({ exitCode: 1 }))).toBe('factory fleet failed (exit 1)')
-    expect(await warn(result({ exitCode: null, timedOut: true }))).toBe('factory fleet failed: timed out after 10 s')
+    const warn = async (answer: CommandResult) => warning(await readWith(answer))
+    expect(await warn(result({ exitCode: 1 }))).toBe('factory read overview failed (exit 1)')
+    expect(await warn(result({ exitCode: null, timedOut: true }))).toBe(
+      'factory read overview failed: timed out after 10 s',
+    )
     expect(await warn(result({ exitCode: null, error: 'Error: ENOENT: no such file' }))).toBe(
-      'factory fleet failed: Error: ENOENT: no such file',
+      'factory read overview failed: Error: ENOENT: no such file',
     )
-    expect(await warn(result({ stdout: 'not json' }))).toBe('factory fleet failed: output is not JSON')
-    expect(await warn(result({ stdout: JSON.stringify({ repos: [{ name: 1 }] }) }))).toBe(
-      'factory fleet failed: unexpected shape at repos.0.name',
+    expect(await warn(result({ stdout: 'not json' }))).toBe('factory read overview failed: output is not JSON')
+    expect(await warn(result({ stdout: JSON.stringify({ asks: [{ id: 1 }] }) }))).toBe(
+      'factory read overview failed: unexpected shape at asks.0.id',
     )
+    // `{}` is no session list
+    expect(warning(await readWith({ overview: result({ stdout: '{}' }), sessions: result({ stdout: '{}' }) }))).toBe(
+      'factory read sessions --live failed: unexpected shape at sessions',
+    )
+    expect(
+      warning(await readWith({ ...answers([]), sessions: result({ stdout: JSON.stringify({ sessions: [{}] }) }) })),
+    ).toBe('factory read sessions --live failed: unexpected shape at sessions.0.id')
   })
 })
 
@@ -415,17 +502,26 @@ describe('the real runner and a fake `factory` script', () => {
 
   test('the child sees the token and its arguments, and none of the host’s secrets', async () => {
     const bin = script(
-      `echo "{\\"asks\\":[],\\"repos\\":[],\\"unplaced\\":[{\\"id\\":\\"u\\",\\"state\\":\\"idle\\"}],\\"errors\\":[\\"args=$* token=$FACTORY_TOKEN secret=\${AGW_API_SECRET:-none}\\"]}"`,
+      `case "$2" in
+  overview) echo "{\\"asks\\":[{\\"id\\":\\"a\\",\\"kind\\":\\"k\\",\\"at\\":\\"t\\",\\"text\\":\\"args=$* token=$FACTORY_TOKEN secret=\${AGW_API_SECRET:-none}\\"}]}" ;;
+  *) echo '{"sessions":[{"id":"u","state":"idle"}]}' ;;
+esac`,
     )
     const read = await readFactoryFleet(commandRunner(env), { factoryBin: bin }, env)
-    expect(read).toMatchObject({ ok: true, fleet: { errors: ['args=fleet --format json token=tok secret=none'] } })
+    expect(read).toMatchObject({
+      ok: true,
+      fleet: {
+        asks: [{ text: 'args=read overview --format json token=tok secret=none' }],
+        unplaced: [{ id: 'u', state: 'idle' }],
+      },
+    })
   })
 
   test('a failing script is the exit code and its first stderr line', async () => {
     const bin = script('echo "FACTORY_TOKEN is not set" >&2; exit 3')
     expect(await readFactoryFleet(commandRunner(env), { factoryBin: bin }, {})).toEqual({
       ok: false,
-      warning: 'factory fleet failed (exit 3): FACTORY_TOKEN is not set',
+      warning: 'factory read overview failed (exit 3): FACTORY_TOKEN is not set',
     })
   })
 
@@ -434,12 +530,12 @@ describe('the real runner and a fake `factory` script', () => {
     const read = await readFactoryFleet(commandRunner(env), { factoryBin: script('exec yes') }, env, {
       maxBytes: 64 * 1024,
     })
-    expect(read).toEqual({ ok: false, warning: 'factory fleet failed: output over the size limit' })
+    expect(read).toEqual({ ok: false, warning: 'factory read overview failed: output over the size limit' })
     // output within the budget is read whole, multi-byte text included
-    const bin = script(`printf '{"repos":[{"name":"é","space":"/w/é","sessions":[]}]}'`)
+    const bin = script(`printf '{"sessions":[{"id":"é","state":"idle"}]}'`)
     expect(await readFactoryFleet(commandRunner(env), { factoryBin: bin }, env, { maxBytes: 1024 })).toMatchObject({
       ok: true,
-      fleet: { repos: [{ name: 'é' }] },
+      fleet: { unplaced: [{ id: 'é' }] },
     })
   })
 
@@ -454,9 +550,9 @@ describe('the real runner and a fake `factory` script', () => {
 
   test('a missing binary and a hung one are warnings, the hung one killed at the timeout', async () => {
     const missing = await readFactoryFleet(commandRunner(env), { factoryBin: join(dir, 'nope') }, env)
-    expect(missing).toMatchObject({ ok: false, warning: expect.stringContaining('factory fleet failed') })
+    expect(missing).toMatchObject({ ok: false, warning: expect.stringContaining('factory read overview failed') })
     const hung = await readFactoryFleet(commandRunner(env), { factoryBin: script('sleep 30') }, env, { timeoutMs: 200 })
-    expect(hung).toEqual({ ok: false, warning: 'factory fleet failed: timed out after 0 s' })
+    expect(hung).toEqual({ ok: false, warning: 'factory read overview failed: timed out after 0 s' })
   })
 })
 
@@ -515,35 +611,34 @@ describe('createFleet over the factory', () => {
 
   test('a factory failure is empty projects and a warning, and the next call asks again', async () => {
     const s = setupFleet([
-      { ok: false, warning: 'factory fleet failed (exit 1)' },
+      { ok: false, warning: 'factory read overview failed (exit 1)' },
       ok(fleet({ repos: [repo('p', [session()])] })),
     ])
     const down = await s.fleet.snapshot()
     expect(down.projects).toEqual([])
-    expect(down.warnings).toEqual(['factory fleet failed (exit 1)'])
+    expect(down.warnings).toEqual(['factory read overview failed (exit 1)'])
     expect(down.summary).toEqual({ needsYou: 0, working: 0, idle: 0, stale: 0, done: 0 })
     expect((await s.fleet.snapshot()).projects).toHaveLength(1) // the failure was not cached
   })
 
-  test('an errors-only build through the reader is an unreadable view: nothing to post, nothing to classify', async () => {
+  test('a failed read through the reader is an unreadable view: nothing to post, nothing to classify', async () => {
     const reader = createFleet({
-      factory: () =>
-        readFactoryFleet(fakeRun(result({ stdout: JSON.stringify(fleet({ errors: ['pg: down'] })) })).run, config, {}),
+      factory: () => readWith(result({ exitCode: 3, stderr: 'FACTORY_TOKEN is not set' })),
       quota: quota(),
       latestOverview: async () => null,
       config: { staleAfterHours: 24 },
     })
     const view = await reader.view()
-    expect(view.unreadable).toBe('factory fleet reported errors and no session: pg: down')
+    expect(view.unreadable).toBe('factory read overview failed (exit 3): FACTORY_TOKEN is not set')
     expect(view.payload.projects).toEqual([])
     expect((await reader.read({ fresh: true })).unreadable).not.toBeNull()
   })
 
   test('the view of a down factory still carries the quota', async () => {
-    const s = setupFleet([{ ok: false, warning: 'factory fleet failed: timed out after 10 s' }])
+    const s = setupFleet([{ ok: false, warning: 'factory read overview failed: timed out after 10 s' }])
     const { payload } = await s.fleet.view()
     expect(payload.projects).toEqual([])
-    expect(payload.warnings).toEqual(['factory fleet failed: timed out after 10 s'])
+    expect(payload.warnings).toEqual(['factory read overview failed: timed out after 10 s'])
     expect(payload.quota.accounts.iu).toMatchObject({ five_hour_pct: 5, seven_day_pct: 6 })
     expect(OVERVIEW_PAYLOAD.safeParse(payload).success).toBe(true)
   })

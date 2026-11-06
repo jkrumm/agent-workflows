@@ -134,7 +134,7 @@ journal. The host reads the audio tree's suites and scorers and replays its case
   run is driven by the audio process's, which the version check enforces.
 
 `podcast` sends nothing outward under an eval: with `publish: false`, `cover: false` and `brainNote: false` the only side
-effects left were the Slack notices (the done notice of `podcast.produce`, the failure notice of the room), and both are skipped for
+effects left were the ntfy notices (the done notice of `podcast.produce`, the failure notice of the room), and both are skipped for
 purpose `eval` (the produce stage reads it from its step's attribution, which a child run inherits from its root; the room
 records it in a first `purpose` step, as a context has none). The show's history reads only `purpose = 'prod'` runs, so
 eval episodes never feed the next one.

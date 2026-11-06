@@ -15,14 +15,14 @@ export type { Quota } from './quota.ts'
 
 /**
  * The snapshot cache: a herdr pane, Hermes and the Argo push all read within seconds of each other, and one snapshot
- * is one `factory fleet` call. Consumers poll about every 31 s (measured on the legacy gateway: 20 s missed the window
+ * is one factory read (two `factory read` calls). Consumers poll about every 31 s (measured on the legacy gateway: 20 s missed the window
  * on nearly every request), so 45 s shares one build and still stays under the ten-minute push. The promise is cached,
  * so concurrent first callers share one build.
  */
 const SNAPSHOT_CACHE_MS = 45_000
 
 export interface FleetDeps {
-  /** One read of the factory's fleet view (production: `factory fleet --format json`); a failure is a value, never a throw. */
+  /** One read of the factory's /v1 read API (production: `factory read overview` and `factory read sessions --live`); a failure is a value, never a throw. */
   factory: () => Promise<FactoryRead>
   quota: Quota
   /** The newest completed `overview` run's output, or null when none exists. */

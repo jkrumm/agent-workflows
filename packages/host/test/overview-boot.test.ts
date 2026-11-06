@@ -40,7 +40,7 @@ test('a booted host serves agents, quota and quota-report beside the overview wo
       data: { summary: Record<string, number>; warnings: string[] }
     }
     expect(agents.data.summary).toEqual({ needsYou: 0, working: 0, idle: 0, stale: 0, done: 0 })
-    expect(agents.data.warnings.some((w) => w.startsWith('factory fleet failed'))).toBe(true)
+    expect(agents.data.warnings.some((w) => w.startsWith('factory read overview failed'))).toBe(true)
 
     expect((await call('/quota/report', { fiveHourPct: 12, account: 'iu' })).status).toBe(200)
     const quota = (await (await call('/quota')).json()) as { data: { five_hour_pct: number } }

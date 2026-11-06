@@ -128,7 +128,7 @@ describe('Argo push', () => {
 describe('Argo push of an unreadable factory', () => {
   test('is skipped with a warning naming the cause: Argo keeps its last good fleet', async () => {
     const { push, sent, logs } = setup({
-      build: async () => ({ payload, unreadable: 'factory fleet failed (exit 3): FACTORY_TOKEN is not set' }),
+      build: async () => ({ payload, unreadable: 'factory read overview failed (exit 3): FACTORY_TOKEN is not set' }),
     })
     expect(await push.push('timer')).toBe('skipped')
     expect(sent).toHaveLength(0)
@@ -137,7 +137,7 @@ describe('Argo push of an unreadable factory', () => {
     expect(logs[0]?.meta).toMatchObject({
       status: 'skipped',
       trigger: 'timer',
-      warning: 'factory fleet failed (exit 3): FACTORY_TOKEN is not set',
+      warning: 'factory read overview failed (exit 3): FACTORY_TOKEN is not set',
     })
   })
 })

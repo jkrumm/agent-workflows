@@ -1,8 +1,8 @@
 # Overview (concept §10)
 
 What every Claude Code agent on the host is doing, one recommendation each, and the Max quota beside it. The agent
-state is the factory's (software-factory, the one producer of it): the overview is a client of its fleet view
-(`factory fleet --format json`) and adds only the recommendations (this workflow's classify verdicts) and the quota.
+state is the factory's (software-factory, the one producer of it): the overview is a client of its /v1 read API
+(`factory read overview` and `factory read sessions --live`) and adds only the recommendations (this workflow's classify verdicts) and the quota.
 `src/fleet/` holds the factory reader and its mapping, the renderer and the quota, this directory the one workflow that
 spends. Section §Host reads in `packages/host/README.md` has the commands.
 
@@ -37,27 +37,25 @@ not Requesty.
 - **No agent, no call.** An empty fleet is a run with an empty `agents` list and no model call.
 - **The push carries the run itself.** The `push` step posts the payload merged with the run that is just ending: its
   output is not in the journal until the run ends, so reading "the newest run" there would push the previous one.
-- **The factory is the source.** `fleet/factory.ts` runs `factory fleet --format json` (10 s cap, `FACTORY_TOKEN` and
-  `FACTORY_URL` passed to the child, nothing else of the host's environment) and parses it with a local, non-strict zod
-  schema of the fields agw reads: the factory's own contract is strict on its side, a field it adds never breaks this
-  client. `fleet/derive.ts` maps it onto the overview's shapes, which Argo ingests as they are:
-  - `repos[]` with at least one session become `projects[]` (name, `cwd` = `space`, git); a repo with none is not listed
+- **The factory is the source.** `fleet/factory.ts` runs `factory read overview` and `factory read sessions --live` in parallel (10 s cap each, `FACTORY_TOKEN` and
+  `FACTORY_URL` passed to the child, nothing else of the host's environment) and parses them with local, non-strict zod
+  schemas of the fields agw reads (/v1 only ever adds fields). Sessions are grouped by their herdr space, else their
+  repo path; the read API has no git facts (`git` is null) and no hc word. `fleet/derive.ts` maps it onto the overview's shapes, which Argo ingests as they are:
+  - `repos[]` with at least one session become `projects[]` (name, `cwd` = `space`, git null); a repo with none is not listed
     (an overview is of agents). `unplaced[]` become one `unplaced` project with no directory (the view gives them none).
   - A session is an `AGENT` (`source: factory`, `id` = session id, `paneId` = terminal, `title` without its leading
     symbols, `account`, `lastReply` = the digest's headline, `lastPrompt` null, `startedAt` = `since`, `waitingFor` =
-    `wait`, `herdrStatus` = hc's word, plus `plan` and `wave` for the facts).
-  - State: hc `blocked` (a terminal stuck on a permission prompt) is `needs_you` whatever else is true; so are factory
-    `waiting`, `blocked`, `walled` and `stuck`, except a `waiting` on `workers` or a `deploy`, which waits on machines
+    `wait`, `herdrStatus`, `plan` and `wave` null: the read API carries none of them).
+  - State: the factory states `waiting`, `blocked`, `walled` and `stuck`, except a `waiting` on `workers` or a `deploy`, which waits on machines
     and reads as idle, done or stale. `working`, `starting` is `working`; the rest of the idle family is `idle`, `done`
-    (hc `done`), or `stale` when the last activity is older than the threshold (`AGW_AGENT_STALE_HOURS`). A state the
+    (unreachable without hc's word), or `stale` when the last activity is older than the threshold (`AGW_AGENT_STALE_HOURS`). A state the
     factory adds that agw does not know is `unknown` for that one session (the parse takes `state` as a string), never a
     failure of the fleet.
   - `humanQueue` is the asks of kind `human` (`id`, `at` as `askedAt`, `text` as `question`, `cmd` null), newest first.
-    `warnings` are the factory's `errors` plus a failed read.
-  - Git has no `ahead`/`behind` in the factory's view: Argo requires numbers, so they are 0, and the facts the seat reads
-    say `ahead: unknown  behind: unknown`. A repo with no branch (detached) has no git.
+    `warnings` are a failed read (the read API has no `errors`).
+  - The read API has no git facts, so every project's `git` is null.
 - **A factory that is down is a warning, never a 500.** A non-zero exit, a timeout, a missing binary, output that is not
-  JSON or the wrong shape (`repos` is required: `{}` is not an empty fleet; neither is an exit-0 answer that carries `errors` and no session at all, which reads as the failure with the errors as the warning): `agw agents` answers no projects, one
+  JSON or the wrong shape (`sessions` is required: `{}` is not an empty session list; one of the two reads failing fails the whole read): `agw agents` answers no projects, one
   warning naming the cause (the exit code and stderr's first line; exit 3 is a missing `FACTORY_TOKEN`) and the quota.
   The failure is not cached; the next call asks again. Because an empty answer is not an empty fleet, the two writers
   act on the read's outcome (`Fleet.read`, `view().unreadable`): the Argo push is skipped with a warn-level log naming
@@ -101,7 +99,7 @@ not Requesty.
 |-|-|-|
 | `ARGO_URL`, `ARGO_API_SECRET` | | the push is off unless both are set; `ARGO_URL` must be https (loopback http allowed), no redirect is followed |
 | `AGW_ARGO_PUSH` | on | `0`, `off`, `false` or `no` turns the ten-minute timer off (tests); the push after a run stays |
-| `FACTORY_TOKEN` | | the token `factory fleet` needs (exit 3 without it, which is the warning); `.env.tpl` resolves it. `FACTORY_URL` is passed too when set |
+| `FACTORY_TOKEN` | | the token `factory read` needs (exit 3 without it, which is the warning); `.env.tpl` resolves it. `FACTORY_URL` is passed too when set |
 | `AGW_FACTORY_BIN` | `~/.local/bin/factory`, else on `PATH` | the factory CLI |
 | `AGW_AGENT_STALE_HOURS` | 24 | the stale threshold (legacy `AGENT_GATEWAY_AGENT_STALE_HOURS`) |
 | `AGW_CLAUDE_ACCOUNT_BIN` | `~/.local/bin/claude-account` | the Max quota's CLI (legacy `AGENT_GATEWAY_CLAUDE_ACCOUNT_BIN`) |

@@ -137,11 +137,11 @@ describe('agw agents', () => {
   })
 
   test('a factory that is down answers empty projects and a warning naming the cause, the quota still present', async () => {
-    factoryDown = 'factory fleet failed (exit 3): FACTORY_TOKEN is not set'
+    factoryDown = 'factory read overview failed (exit 3): FACTORY_TOKEN is not set'
     const { status, body } = await t.json(await post('/agents', {}))
     expect(status).toBe(200)
     expect(body.data.projects).toEqual([])
-    expect(body.data.warnings).toEqual(['factory fleet failed (exit 3): FACTORY_TOKEN is not set'])
+    expect(body.data.warnings).toEqual(['factory read overview failed (exit 3): FACTORY_TOKEN is not set'])
     expect(body.data.quota.accounts.iu).toMatchObject({ five_hour_pct: 5 })
   })
 
@@ -261,7 +261,7 @@ describe('overview workflow', () => {
   })
 
   test('an unreadable factory fails the run with the cause: nothing is classified, nothing is pushed', async () => {
-    factoryDown = 'factory fleet failed (exit 3): FACTORY_TOKEN is not set'
+    factoryDown = 'factory read overview failed (exit 3): FACTORY_TOKEN is not set'
     const { body } = await startOverview()
     expect(body.status).toBe('failed')
     expect(JSON.stringify(body)).toContain('FACTORY_TOKEN is not set')

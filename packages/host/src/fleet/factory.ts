@@ -1,16 +1,18 @@
 import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { z } from 'zod'
 import { helperEnv, killTree } from '../process.ts'
 import { oneLine, truncate } from './text.ts'
 
-// The one source of agent state is the factory (software-factory): `factory fleet --format json`. This file runs that
-// CLI and parses its answer. It never throws: a factory that is down is a failure value the snapshot turns into a warning.
+// The one source of agent state is the factory (software-factory), read through its /v1 read API: `factory read overview`
+// (the asks and the human queue) and `factory read sessions --live` (the session cards). This file runs both CLI calls and
+// maps their answers onto `FactoryFleet`, agw's own model of the fleet. It never throws: a factory that is down is a
+// failure value the snapshot turns into a warning.
 
 const FACTORY_TIMEOUT_MS = 10_000
 const DEFAULT_STALE_HOURS = 24
-const MAX_STDOUT_BYTES = 16 * 1024 * 1024 // the real fleet view is about 140 KB
+const MAX_STDOUT_BYTES = 16 * 1024 * 1024 // the live session cards are well under 1 MB
 const MAX_STDERR_BYTES = 64 * 1024 // a diagnostic, never a payload
 export const MAX_WARNING_CHARS = 300
 
@@ -120,8 +122,7 @@ export function fleetConfig(env: Env, home = homedir()): FleetConfig {
   }
 }
 
-// Only what agw reads, and not strict: the factory's own contract (`packages/contract/src/fleet.ts`) is strict on its
-// side, a field it adds must never break this client.
+// The agw model of the fleet: what `derive.ts` and `mapFleet` read. `FactoryFleet` is built from the two read answers below.
 
 const FACTORY_SESSION = z.object({
   id: z.string(),
@@ -166,6 +167,78 @@ export type FactoryFleet = z.infer<typeof FACTORY_FLEET>
 
 export type FactoryRead = { ok: true; fleet: FactoryFleet } | { ok: false; warning: string }
 
+// The /v1 answers, only what agw reads and not strict: within /v1 a field is only ever added, so one the factory adds
+// must never break this client (schema source: software-factory `packages/contract/src/read.ts`).
+
+const READ_ASK = z.object({ id: z.string(), kind: z.string(), text: z.string(), at: z.string() })
+
+const READ_OVERVIEW = z.object({
+  asks: z.array(READ_ASK).default([]),
+  humanQueue: z.array(READ_ASK).default([]),
+})
+
+const READ_SESSION = z.object({
+  id: z.string(),
+  state: z.string(),
+  wait: z.string().nullable().default(null),
+  account: z.string().nullable().default(null),
+  terminal: z
+    .object({ id: z.string().nullable().default(null), space: z.string().nullable().default(null) })
+    .nullable()
+    .default(null),
+  repo: z.string().nullable().default(null),
+  title: z.string().nullable().default(null),
+  summary: z.string().nullable().default(null),
+  since: z.string().nullable().default(null),
+  lastActivityAt: z.string().nullable().default(null),
+})
+type ReadSession = z.infer<typeof READ_SESSION>
+
+const READ_SESSIONS = z.object({ sessions: z.array(READ_SESSION) })
+
+/** The /v1 session card as agw's session. The read API has no hc word: a blocked terminal shows as its `state`. */
+const toSession = (card: ReadSession): FactorySession => ({
+  id: card.id,
+  state: card.state,
+  hc: null,
+  wait: card.wait,
+  account: card.account,
+  terminal: card.terminal?.id ?? null,
+  plan: null,
+  wave: null,
+  title: card.title,
+  headline: card.summary,
+  since: card.since,
+  lastActivityAt: card.lastActivityAt,
+})
+
+/**
+ * The cards grouped by their herdr space (a worktree session falls under its repo's space), else by their repo path;
+ * a card with neither is unplaced. The read API carries no git facts: `git` is null.
+ */
+function buildFleet(overview: z.infer<typeof READ_OVERVIEW>, cards: ReadSession[]): FactoryFleet {
+  const repos = new Map<string, FactorySession[]>()
+  const unplaced: FactorySession[] = []
+  for (const card of cards) {
+    const key = card.terminal?.space ?? card.repo
+    if (!key) {
+      unplaced.push(toSession(card))
+      continue
+    }
+    repos.set(key, [...(repos.get(key) ?? []), toSession(card)])
+  }
+  // The human queue is `kind: human` by definition (derive.ts keys on it); an ask in both lists counts once.
+  const asks = new Map<string, FactoryFleet['asks'][number]>()
+  for (const { id, kind, text, at } of overview.asks) asks.set(id, { id, kind, text, at })
+  for (const { id, text, at } of overview.humanQueue) asks.set(id, { id, kind: 'human', text, at })
+  return {
+    asks: [...asks.values()],
+    repos: [...repos].map(([space, sessions]) => ({ name: basename(space), space, git: null, sessions })),
+    unplaced,
+    errors: [],
+  }
+}
+
 /** The first non-empty line of a child's text, as one clean line of at most {@link MAX_WARNING_CHARS} characters. */
 const firstLine = (text: string) =>
   truncate(
@@ -178,18 +251,21 @@ const firstLine = (text: string) =>
     MAX_WARNING_CHARS,
   )
 
-/** A factory failure as one warning: the exit code and the first line of stderr, or the spawn error / timeout. */
-export function failureWarning(result: CommandResult, timeoutMs: number): string {
-  if (result.overflow) return 'factory fleet failed: output over the size limit'
-  if (result.timedOut) return `factory fleet failed: timed out after ${Math.round(timeoutMs / 1000)} s`
-  if (result.exitCode === null) return `factory fleet failed: ${firstLine(result.error ?? '') || 'could not be run'}`
+/** A factory failure as one warning: the command, the exit code and the first line of stderr, or the spawn error / timeout. */
+export function failureWarning(result: CommandResult, timeoutMs: number, label: string): string {
+  if (result.overflow) return `${label} failed: output over the size limit`
+  if (result.timedOut) return `${label} failed: timed out after ${Math.round(timeoutMs / 1000)} s`
+  if (result.exitCode === null) return `${label} failed: ${firstLine(result.error ?? '') || 'could not be run'}`
   const detail = firstLine(result.stderr)
-  return `factory fleet failed (exit ${result.exitCode})${detail ? `: ${detail}` : ''}`
+  return `${label} failed (exit ${result.exitCode})${detail ? `: ${detail}` : ''}`
 }
 
+type Parsed<T> = { ok: true; value: T } | { ok: false; warning: string }
+
 /**
- * One `factory fleet --format json` read. `FACTORY_TOKEN` (and `FACTORY_URL`, when set) come from the host's
- * environment; without the token the CLI exits 3 and that is the warning.
+ * The fleet from two reads, run in parallel: `factory read overview --format json` and
+ * `factory read sessions --live --format json`. `FACTORY_TOKEN` (and `FACTORY_URL`, when set) come from the host's
+ * environment; without the token the CLI exits 3 and that is the warning. One read failing fails the whole read.
  */
 export async function readFactoryFleet(
   run: RunCommand,
@@ -203,29 +279,32 @@ export async function readFactoryFleet(
     const value = env[name]
     if (value) extraEnv[name] = value
   }
-  const result = await run([config.factoryBin, 'fleet', '--format', 'json'], {
-    timeoutMs,
-    maxStdoutBytes: limits.maxBytes,
-    extraEnv,
-  })
-  if (result.exitCode !== 0) return { ok: false, warning: failureWarning(result, timeoutMs) }
-  let raw: unknown
-  try {
-    raw = JSON.parse(result.stdout)
-  } catch {
-    return { ok: false, warning: 'factory fleet failed: output is not JSON' }
+  async function read<S extends z.ZodType>(args: string[], schema: S): Promise<Parsed<z.infer<S>>> {
+    const label = `factory ${args.join(' ')}`
+    const result = await run([config.factoryBin, ...args, '--format', 'json'], {
+      timeoutMs,
+      maxStdoutBytes: limits.maxBytes,
+      extraEnv,
+    })
+    if (result.exitCode !== 0) return { ok: false, warning: failureWarning(result, timeoutMs, label) }
+    let raw: unknown
+    try {
+      raw = JSON.parse(result.stdout)
+    } catch {
+      return { ok: false, warning: `${label} failed: output is not JSON` }
+    }
+    const parsed = schema.safeParse(raw)
+    if (!parsed.success) {
+      const issue = parsed.error.issues[0]
+      return { ok: false, warning: `${label} failed: unexpected shape at ${issue?.path.join('.') || '(root)'}` }
+    }
+    return { ok: true, value: parsed.data }
   }
-  const parsed = FACTORY_FLEET.safeParse(raw)
-  if (!parsed.success) {
-    const issue = parsed.error.issues[0]
-    return { ok: false, warning: `factory fleet failed: unexpected shape at ${issue?.path.join('.') || '(root)'}` }
-  }
-  // A build that failed in every source answers exit 0 with only `errors`: that is no fleet, it is the factory unable to look.
-  const fleet = parsed.data
-  const anySession = fleet.unplaced.length > 0 || fleet.repos.some((r) => r.sessions.length > 0)
-  if (!anySession && fleet.errors.length > 0) {
-    const joined = truncate(oneLine(fleet.errors.join('; ')), MAX_WARNING_CHARS)
-    return { ok: false, warning: `factory fleet reported errors and no session: ${joined}` }
-  }
-  return { ok: true, fleet }
+  const [overview, sessions] = await Promise.all([
+    read(['read', 'overview'], READ_OVERVIEW),
+    read(['read', 'sessions', '--live'], READ_SESSIONS),
+  ])
+  if (!overview.ok) return overview
+  if (!sessions.ok) return sessions
+  return { ok: true, fleet: buildFleet(overview.value, sessions.value.sessions) }
 }

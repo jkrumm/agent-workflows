@@ -3,7 +3,7 @@ import { z } from 'zod'
 
 // The shapes of the agents overview. They are the payload `agw agents` answers and the Argo push posts, field for field
 // what agent-gateway's `GET /api/overview` returned under `data` (minus the retired dispatch fields, `summary.dispatch` included).
-// The agents and the human queue are the factory's fleet view (`factory fleet --format json`) mapped on these shapes.
+// The agents and the human queue are the factory's read API (`factory read overview`, `factory read sessions --live`) mapped on these shapes.
 
 export const AGENT_SOURCE = z.enum(['factory'])
 export type AgentSource = z.infer<typeof AGENT_SOURCE>

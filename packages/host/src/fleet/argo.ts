@@ -68,7 +68,7 @@ export function createArgoPush(options: ArgoPushOptions): ArgoPush {
       try {
         const { payload, unreadable } = await options.build(overview)
         if (unreadable) {
-          logger.warn('argo push skipped: the factory fleet could not be read, Argo keeps its last snapshot', {
+          logger.warn('argo push skipped: the factory could not be read, Argo keeps its last snapshot', {
             event: 'argo_push',
             status: 'skipped',
             trigger,
