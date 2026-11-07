@@ -130,7 +130,9 @@ export function askOfJudge(input: FactoryJudgeInput): FactoryAskInput {
     question: input.question,
     options: input.options.map((o) => o.label),
     default: input.noAnswer.default,
-    facts: facts.length > MAX_FACTS_CHARS ? `${facts.slice(0, MAX_FACTS_CHARS - 1)}…` : facts,
+    // Never cut: a Decision whose assembled facts pass the cap is refused by the seat's own input check (the workflow then
+    // says owner), because a verdict on a prefix would pass for a verdict on the whole Decision.
+    facts,
     plan: '',
     repo: input.repo,
   }
@@ -142,8 +144,7 @@ export function askOfJudge(input: FactoryJudgeInput): FactoryAskInput {
  */
 export function guardJudge(verdict: FactoryAskOutput, input: FactoryJudgeInput): FactoryAskOutput {
   if (verdict.verdict !== 'answer') return verdict
-  const option = input.options.find((o) => o.label === verdict.answer)
-  if (option && !option.reversible)
+  if (input.options.some((o) => o.label === verdict.answer && !o.reversible))
     return {
       verdict: 'owner',
       answer: '',

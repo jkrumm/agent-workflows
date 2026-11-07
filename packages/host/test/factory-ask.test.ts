@@ -150,6 +150,35 @@ describe('the Decision shape (software-factory JudgeInput)', () => {
     t.iu.on('messages', () => messageResponse(JSON.stringify(answer), tokens))
   })
 
+  test('a Decision whose assembled facts pass the cap is refused, not cut: the owner’s', async () => {
+    t.iu.on('messages', () => messageResponse(JSON.stringify(fixture.judge.output), tokens))
+    const before = t.iu.requests.length
+    const { status, body } = await runDecision({
+      checked: 'c'.repeat(19_000),
+      options: [
+        { label: 'pino', reversible: true, cost: 'x'.repeat(900) },
+        { label: 'winston', reversible: true, cost: 'y'.repeat(900) },
+      ],
+    })
+    expect(status).toBe(200)
+    expect(body.output).toMatchObject({ verdict: 'owner', answer: '', source: '' })
+    expect(body.output.reason).toStartWith('judge unavailable: ')
+    // nothing went to the model: the Judge never saw a prefix
+    expect(t.iu.requests.length).toBe(before)
+    t.iu.on('messages', () => messageResponse(JSON.stringify(answer), tokens))
+  })
+
+  test('two options with one label, one of them irreversible, are never the Judge’s', async () => {
+    const options = [
+      { label: 'pino', reversible: true, cost: 'one dependency' },
+      { label: 'pino', reversible: false, cost: 'rewrites the format for good' },
+    ]
+    t.iu.on('messages', () => messageResponse(JSON.stringify(fixture.judge.output), tokens))
+    const { body } = await runDecision({ options })
+    expect(body.output).toMatchObject({ verdict: 'owner', answer: '', source: '' })
+    t.iu.on('messages', () => messageResponse(JSON.stringify(answer), tokens))
+  })
+
   test('a Decision that is missing a field is a 400', async () => {
     const { recommendation: _drop, ...rest } = decision
     const response = await t.call('/workflows/factory-ask', { method: 'POST', body: { ask: rest } })

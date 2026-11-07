@@ -1,4 +1,4 @@
-import { askOfJudge, guardAsk, guardJudge, isJudgeInput } from '@agent-workflows/capabilities'
+import { askOfJudge, factoryAskInput, guardAsk, guardJudge, isJudgeInput } from '@agent-workflows/capabilities'
 import { Cancelled, defineWorkflow, InfraError, StepFailed } from '@agent-workflows/runtime'
 import type { HostWorkflow } from '../../operations.ts'
 import type { HostRegistry } from '../index.ts'
@@ -32,6 +32,8 @@ export function createFactoryAsk(deps: { registry: AskCaller }): HostWorkflow {
     async run(ctx, { ask: given }) {
       // The Decision is asked as today's ask (its options are the labels); the guard for what an ask cannot say follows.
       const ask = isJudgeInput(given) ? askOfJudge(given) : given
+      // A Decision whose assembled facts pass the seat's cap is refused whole, never cut: the owner's.
+      if (!factoryAskInput.safeParse(ask).success) return unavailable('the ask is too long for the seat')
       try {
         const verdict = await ctx.step('judge', ({ callContext }) =>
           deps.registry.call('factory.ask', ask, callContext),
