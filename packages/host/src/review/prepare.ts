@@ -318,6 +318,9 @@ async function prepareResolved(
   })
 
   await ledger.insertJob({
+    // The app clock stamps both ends of a job's wall time (`submitted_at` comes from `ctx.now()` too); Postgres'
+    // `now()` differs from it by milliseconds and would give a fast job a negative wall time.
+    createdAt: ctx.now(),
     id: jobId,
     repo,
     root,

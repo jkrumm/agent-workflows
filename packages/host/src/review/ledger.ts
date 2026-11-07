@@ -176,7 +176,7 @@ export interface StatsFinding {
   anchored: boolean | null
 }
 
-export type NewJob = Omit<Job, 'state' | 'attempt' | 'output' | 'createdAt' | 'submittedAt'>
+export type NewJob = Omit<Job, 'state' | 'attempt' | 'output' | 'submittedAt'>
 export type NewFinding = Omit<Finding, 'disposition' | 'reason' | 'disposedAt' | 'createdAt'>
 
 export function reviewLedger(pool: ReviewPool, schema: string) {
@@ -250,9 +250,9 @@ export function reviewLedger(pool: ReviewPool, schema: string) {
         await client.query(
           `insert into ${jobs} (id, repo, root, thread, round, scope, base, diff_base, head, head_tree, tier, seat, rule,
              decided_by, route, account, intent, review_config, files, job_dir, worktree, transport,
-             reviewer_prompt, verifier_prompt, ceiling, quota_five_hour, quota_seven_day)
+             reviewer_prompt, verifier_prompt, ceiling, quota_five_hour, quota_seven_day, created_at)
            values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22,
-             $23, $24, $25, $26, $27)`,
+             $23, $24, $25, $26, $27, $28)`,
           [
             job.id,
             job.repo,
@@ -281,6 +281,7 @@ export function reviewLedger(pool: ReviewPool, schema: string) {
             job.ceiling,
             job.quotaFiveHour,
             job.quotaSevenDay,
+            job.createdAt,
           ],
         )
         return rows.map((r) => r.id as string)
