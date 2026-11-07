@@ -102,6 +102,14 @@ describe('the guard', () => {
     answers(wake)
   })
 
+  test('a lead_gone stall is not given a Decision either: only a requeue starts a new attempt', async () => {
+    answers(fixture.steward.decisionOutput)
+    const { body } = await run({ cause: 'lead_gone' })
+    expect(body.output).toMatchObject({ action: 'none', decision: null })
+    expect(body.output.reason).toContain('requeue')
+    answers(wake)
+  })
+
   test('a lead_gone stall is not woken', async () => {
     const { body } = await run({ cause: 'lead_gone' })
     expect(body.output).toMatchObject({ action: 'none' })

@@ -105,6 +105,8 @@ export function guardSteward(
     return unavailable('guard: requeue ends only a lead_gone stall')
   if (answer.action === 'wake' && stall.cause === 'lead_gone')
     return unavailable('guard: a lead_gone stall is ended by requeue')
+  if (answer.action === 'raise_decision' && stall.cause === 'lead_gone')
+    return unavailable('guard: a lead_gone stall is ended by requeue; a Decision cannot start a new attempt')
   if (answer.action !== 'raise_decision' || !answer.decision) return answer
   const { decision } = answer
   const labels = decision.options.map((option) => option.label.toLowerCase())
@@ -144,7 +146,7 @@ the factory.
   note, a fresh start of the same lead or a changed fact lets the work go on. Never for lead_gone.
 - requeue: only for lead_gone. A new attempt starts with a fresh lead. Use it when the history shows the earlier attempts
   failed for a reason a fresh start can fix (a lost terminal, a limit, a crash), not when the same error repeats.
-- raise_decision: the work cannot go on without a choice that is not yours: what is blocked, whether to try again, drop
+- raise_decision: never for lead_gone (an answer cannot start a new attempt: use requeue, or none). The work cannot go on without a choice that is not yours: what is blocked, whether to try again, drop
   the Issue or change its scope, what to do about a regression. Write the form completely: the question, a recommendation
   that is exactly one option's label, what you checked in the facts above, two to five options each with its cost and
   whether it can be taken back, and what happens with no answer. A default is allowed only when it is a reversible option,
@@ -152,7 +154,7 @@ the factory.
   by standing policy, then a judge, then the default, and only then reaches the owner: do not shy away from it.
 - none: you cannot tell. The factory raises a Decision of its own after a few such answers.
 
-When the facts are thin, a Decision is better than a guess. A wake that repeats a stall (stewardWakes is high, or the
+When the facts are thin, a Decision is better than a guess (except for lead_gone, where it is none). A wake that repeats a stall (stewardWakes is high, or the
 history shows the same stall again) is not a fix: choose raise_decision.
 
 ## Output

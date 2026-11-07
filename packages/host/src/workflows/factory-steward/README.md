@@ -22,10 +22,10 @@ echo '{"issue":"issue_12","repo":"app","title":"…","kind":"bug","cause":"block
 - **Data is fenced.** Title, detail, notes and history sit under one per-call random fence with the markers made inert, rules
   before and a re-assertion after. The cause, the counts, the Issue id and the repo are the factory's, outside the fence.
 - **Three actions and a refusal to guess.** `wake` ends every stall but `lead_gone`; `requeue` ends only `lead_gone`;
-  `raise_decision` hands a choice on (the factory settles it by policy, then the Judge, then the default, then the owner);
+  `raise_decision` (never for `lead_gone`: an answer cannot start a new attempt) hands a choice on (the factory settles it by policy, then the Judge, then the default, then the owner);
   `none` means the steward cannot tell.
 - **Code guard.** `guardSteward`, applied by the workflow after the step so a replay gets it too: a `requeue` of another
-  stall, a `wake` of `lead_gone`, a Decision with duplicate labels, a recommendation that is not an option, a default that is
+  stall, a `wake` or a `raise_decision` of `lead_gone`, a Decision with duplicate labels, a recommendation that is not an option, a default that is
   not a reversible option, or a default without its wait becomes `none`.
 - **Fail closed.** Any failure of the call gives `{action: none, reason: 'steward unavailable: <class>'}` instead of a failed
   run; the factory raises a Decision of its own after a few `none` answers. A cancel, a shutdown (`InfraError`) or an aborted
