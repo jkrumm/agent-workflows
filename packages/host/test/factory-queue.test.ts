@@ -132,6 +132,13 @@ describe('guardQueue', () => {
     refused({ edges: [edge('issue_22', 'issue_12')] }, 'exists already')
   })
 
+  test('edges: at most three for one Issue', () => {
+    const blockers = ['issue_12', 'issue_15', 'issue_21', 'issue_22']
+    const edges = blockers.map((after) => ({ issue: 'issue_20', after, reason: 'x' }))
+    refused({ edges, order: [] }, 'three edges')
+    expect(guard({ edges: edges.slice(0, 3), order: [] }).edges).toHaveLength(3)
+  })
+
   test('edges: a cycle through proposed edges is refused', () => {
     const edge = (issue: string, after: string) => ({ issue, after, reason: 'x' })
     refused({ edges: [edge('issue_20', 'issue_21'), edge('issue_21', 'issue_20')], order: [] }, 'cycle')

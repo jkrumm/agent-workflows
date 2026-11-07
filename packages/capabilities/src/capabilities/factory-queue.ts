@@ -13,6 +13,7 @@ export const QUEUE_STATE = 'queued'
 
 const MAX_ISSUES = 40
 const MAX_EDGES = 10
+const MAX_EDGES_PER_ISSUE = 3
 const MAX_SUMMARY_CHARS = 600
 
 const queueIssue = z.object({
@@ -100,6 +101,7 @@ export function guardQueue(answer: FactoryQueueOutput, input: FactoryQueueInput)
   const waits = new Map<string, Set<string>>(input.issues.map((i) => [i.id, new Set(i.after)]))
 
   const proposed = new Set<string>()
+  const perIssue = new Map<string, number>()
   for (const { issue, after } of answer.edges) {
     const key = `${issue}\u0000${after}`
     if (byId.get(issue)?.state !== QUEUE_STATE) return none('guard: an edge names an Issue that is not queued')
@@ -110,6 +112,8 @@ export function guardQueue(answer: FactoryQueueOutput, input: FactoryQueueInput)
     // A cycle: the blocker already waits for the Issue, directly or through others.
     if (waitsFor(waits, after).has(issue)) return none('guard: an edge closes a cycle')
     proposed.add(key)
+    perIssue.set(issue, (perIssue.get(issue) ?? 0) + 1)
+    if ((perIssue.get(issue) ?? 0) > MAX_EDGES_PER_ISSUE) return none('guard: more than three edges for one Issue')
     waits.get(issue)?.add(after)
   }
 
