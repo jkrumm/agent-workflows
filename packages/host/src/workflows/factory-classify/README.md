@@ -29,8 +29,10 @@ echo '{"title":"…","facts":"…","repo":"argo","source":"kuma","projects":["ar
 
 ## Route
 
-`factory.classify` (`packages/routes/src/table/factory.ts`): the `FAST` tier (Luna, effort low) on IU's chat wire, balance
-fallback to DeepSeek flash. The cheapest tier that passed the eval; Terra low (`EASY`) was measured against it.
+`factory.classify` (`packages/routes/src/table/factory.ts`): the `FAST` tier call (`FAST.call` in
+`packages/routes/src/table/_shared.ts`): Haiku 5.5, effort none, on the native Messages wire (`anthropic`). The balance
+fallback is Luna, effort low, on the `iu-openai` wire. The model is chosen once, in the tier. The runs in the table below
+measured Luna low (the primary then) and Terra low; the tier has not been re-run on Haiku.
 
 ## Eval
 
