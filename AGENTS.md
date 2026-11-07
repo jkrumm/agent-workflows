@@ -77,7 +77,7 @@ be free (`rd agents`).
 | dotfiles | architecture map, herdr groups, skills, global CLAUDE.md (P5). **Held by the P0 wave until it closes** |
 | agent-gateway, research-gateway, audio-gateway | retired, archived (P6) |
 | usage-tracker | owns the `usage` schema agw writes its usage rows into (`migrations/pg`); trimmed collectors (P4) |
-| argo | overview push and Slack only; no longer receives usage |
+| argo | overview and review-stats pushes only; no longer receives usage |
 | hermes-agent, `~/.hermes` | `agw` instead of HTTP calls (P5) |
 
 PR-required repos (`~/.claude/pr-required-repos.json`) go through a PR, self-review, merge.
