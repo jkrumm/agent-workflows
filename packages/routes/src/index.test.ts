@@ -465,6 +465,7 @@ describe('fallback', () => {
       'overview.classify',
       'triage',
       'factory.steward',
+      'factory.queue',
       'factory.triage',
     ] as const) {
       expect(resolveRoute(id, {})).toMatchObject({ wire: 'anthropic', model: 'claude-haiku-5-5', effort: 'high' })

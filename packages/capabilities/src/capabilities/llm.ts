@@ -4,6 +4,7 @@ import { createDecide } from './decide.ts'
 import { createDigest } from './digest.ts'
 import { createFactoryAsk } from './factory-ask.ts'
 import { createFactoryClassify } from './factory-classify.ts'
+import { createFactoryQueue } from './factory-queue.ts'
 import { createFactorySteward } from './factory-steward.ts'
 import { createFactoryTriage } from './factory-triage.ts'
 import { createNarrativeCompose } from './narrative-compose.ts'
@@ -29,6 +30,7 @@ export function createLlmCapabilities(deps: LlmDeps) {
     createFactoryClassify(deps),
     createFactoryAsk(deps),
     createFactorySteward(deps),
+    createFactoryQueue(deps),
     createFactoryTriage(deps),
     createDigest(deps),
   ] as const

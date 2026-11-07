@@ -12,6 +12,8 @@ const routes = {
   // Decision). Haiku high, as the architecture names for the factory's judging loops; no eval set (owner decision).
   'factory.steward': { wire: 'anthropic', ...EASY.call },
   // Software-factory's triage: amend-or-new when the deterministic match is unsure, and the `after` edges of a new Issue.
+  // Software-factory's queue loop: `after` edges and a tie-break order for a repo's queued Issues; the owner's `prio` stands.
+  'factory.queue': { wire: 'anthropic', ...EASY.call },
   'factory.triage': { wire: 'anthropic', ...EASY.call },
 } satisfies Record<string, RouteEntry>
 

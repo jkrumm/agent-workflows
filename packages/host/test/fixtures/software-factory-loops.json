@@ -113,5 +113,72 @@
       "size": "small",
       "reason": "it touches the same checkout summary code"
     }
+  },
+  "queue": {
+    "input": {
+      "repo": "example-app",
+      "issues": [
+        {
+          "id": "issue_12",
+          "title": "Fix the checkout total",
+          "kind": "bug",
+          "state": "working",
+          "prio": 0,
+          "ageMinutes": 600,
+          "size": "small",
+          "summary": "",
+          "after": []
+        },
+        {
+          "id": "issue_15",
+          "title": "Add a dark theme",
+          "kind": "feature",
+          "state": "queued",
+          "prio": 0,
+          "ageMinutes": 300,
+          "size": "medium",
+          "summary": "",
+          "after": []
+        },
+        {
+          "id": "issue_20",
+          "title": "Show the coupon in the checkout summary",
+          "kind": "feature",
+          "state": "queued",
+          "prio": 0,
+          "ageMinutes": 120,
+          "size": "small",
+          "summary": "Reads the same checkout summary code the total fix changes.",
+          "after": []
+        },
+        {
+          "id": "issue_21",
+          "title": "Add a coupon field to the cart",
+          "kind": "feature",
+          "state": "queued",
+          "prio": 0,
+          "ageMinutes": 90,
+          "size": "small",
+          "summary": "",
+          "after": []
+        },
+        {
+          "id": "issue_22",
+          "title": "Rework the checkout page layout",
+          "kind": "feature",
+          "state": "queued",
+          "prio": 50,
+          "ageMinutes": 60,
+          "size": "large",
+          "summary": "",
+          "after": ["issue_12"]
+        }
+      ]
+    },
+    "output": {
+      "edges": [{ "issue": "issue_20", "after": "issue_12", "reason": "both change the checkout summary code" }],
+      "order": ["issue_22", "issue_21", "issue_15", "issue_20"],
+      "reason": "issue_22 has the highest priority; among equals the small unblocked one goes first"
+    }
   }
 }

@@ -41,7 +41,7 @@ export {
   type FactoryAskOutput,
   type FactoryJudgeInput,
 } from './capabilities/factory-ask.ts'
-// The `factory-steward` and `factory-triage` workflows share their seats' vocabulary, input limits and guards.
+// The `factory-steward`, `factory-queue` and `factory-triage` workflows share their seats' vocabulary, input limits and guards.
 export {
   factoryStewardInput,
   factoryStewardOutput,
@@ -52,6 +52,14 @@ export {
   type FactoryStewardInput,
   type FactoryStewardOutput,
 } from './capabilities/factory-steward.ts'
+export {
+  factoryQueueInput,
+  factoryQueueOutput,
+  guardQueue,
+  queueNone,
+  type FactoryQueueInput,
+  type FactoryQueueOutput,
+} from './capabilities/factory-queue.ts'
 export {
   factoryTriageCall,
   factoryTriageInput,
