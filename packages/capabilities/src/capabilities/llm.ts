@@ -4,6 +4,8 @@ import { createDecide } from './decide.ts'
 import { createDigest } from './digest.ts'
 import { createFactoryAsk } from './factory-ask.ts'
 import { createFactoryClassify } from './factory-classify.ts'
+import { createFactorySteward } from './factory-steward.ts'
+import { createFactoryTriage } from './factory-triage.ts'
 import { createNarrativeCompose } from './narrative-compose.ts'
 import { createOverviewClassify } from './overview-classify.ts'
 import { createProseReview } from './prose-review.ts'
@@ -26,6 +28,8 @@ export function createLlmCapabilities(deps: LlmDeps) {
     createOverviewClassify(deps),
     createFactoryClassify(deps),
     createFactoryAsk(deps),
+    createFactorySteward(deps),
+    createFactoryTriage(deps),
     createDigest(deps),
   ] as const
 }

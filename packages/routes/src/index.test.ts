@@ -459,7 +459,14 @@ describe('fallback', () => {
       effort: 'high',
     })
     expect(resolveRoute('image.enhance', {}).fallback).toMatchObject(terraLow)
-    for (const id of ['cheap.summarize', 'cheap.extract', 'overview.classify', 'triage'] as const) {
+    for (const id of [
+      'cheap.summarize',
+      'cheap.extract',
+      'overview.classify',
+      'triage',
+      'factory.steward',
+      'factory.triage',
+    ] as const) {
       expect(resolveRoute(id, {})).toMatchObject({ wire: 'anthropic', model: 'claude-haiku-5-5', effort: 'high' })
       expect(resolveRoute(id, {}).fallback).toMatchObject(terraLow)
     }

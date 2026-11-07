@@ -29,12 +29,41 @@ export {
 } from './capabilities/digest.ts'
 // The `factory-ask` workflow shares the ask seat's input limits and its guard.
 export {
+  askOfJudge,
   factoryAskInput,
+  factoryAskOrJudgeInput,
   factoryAskOutput,
+  factoryJudgeInput,
   guardAsk,
+  guardJudge,
+  isJudgeInput,
   type FactoryAskInput,
   type FactoryAskOutput,
+  type FactoryJudgeInput,
 } from './capabilities/factory-ask.ts'
+// The `factory-steward` and `factory-triage` workflows share their seats' vocabulary, input limits and guards.
+export {
+  factoryStewardInput,
+  factoryStewardOutput,
+  guardSteward,
+  STALL_CAUSES,
+  STEWARD_ACTIONS,
+  stewardUnavailable,
+  type FactoryStewardInput,
+  type FactoryStewardOutput,
+} from './capabilities/factory-steward.ts'
+export {
+  factoryTriageCall,
+  factoryTriageInput,
+  factoryTriageOutput,
+  guardTriage,
+  triageNone,
+  TRIAGE_KINDS,
+  TRIAGE_MODES,
+  TRIAGE_SIZES,
+  type FactoryTriageInput,
+  type FactoryTriageOutput,
+} from './capabilities/factory-triage.ts'
 // The `factory-classify` workflow shares the classify seat's vocabulary and input limits.
 export {
   CLASSES,

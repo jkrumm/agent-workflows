@@ -1,11 +1,11 @@
-import { guardAsk } from '@agent-workflows/capabilities'
+import { askOfJudge, guardAsk, guardJudge, isJudgeInput } from '@agent-workflows/capabilities'
 import { Cancelled, defineWorkflow, InfraError, StepFailed } from '@agent-workflows/runtime'
 import type { HostWorkflow } from '../../operations.ts'
 import type { HostRegistry } from '../index.ts'
 import { FactoryAskInput, FactoryAskOutput, type FactoryAskOutputValue } from './schema.ts'
 
 const FACTORY_ASK_WORKFLOW_ID = 'factory-ask'
-const FACTORY_ASK_VERSION = '2026-11-05.1'
+const FACTORY_ASK_VERSION = '2026-11-07.1'
 
 /** The one capability the workflow calls; any registry that has `factory.ask` fits. */
 export type AskCaller = Pick<HostRegistry, 'call'>
@@ -29,13 +29,16 @@ export function createFactoryAsk(deps: { registry: AskCaller }): HostWorkflow {
     version: FACTORY_ASK_VERSION,
     input: FactoryAskInput,
     output: FactoryAskOutput,
-    async run(ctx, { ask }) {
+    async run(ctx, { ask: given }) {
+      // The Decision is asked as today's ask (its options are the labels); the guard for what an ask cannot say follows.
+      const ask = isJudgeInput(given) ? askOfJudge(given) : given
       try {
         const verdict = await ctx.step('judge', ({ callContext }) =>
           deps.registry.call('factory.ask', ask, callContext),
         )
         // Outside the step: a verdict journaled before the guard existed is held to it on replay too.
-        return guardAsk(verdict, ask)
+        const guarded = guardAsk(verdict, ask)
+        return isJudgeInput(given) ? guardJudge(guarded, given) : guarded
       } catch (error) {
         // A cancel, a shutdown and an infrastructure failure belong to the runtime, not to the verdict.
         if (error instanceof Cancelled || error instanceof InfraError || ctx.signal.aborted) throw error

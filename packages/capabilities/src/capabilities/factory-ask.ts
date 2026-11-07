@@ -47,6 +47,112 @@ export const factoryAskInput = z.object({
 })
 export type FactoryAskInput = z.output<typeof factoryAskInput>
 
+const MAX_PRECEDENTS = 5
+const MAX_PRECEDENT_CHARS = 2_000
+
+/**
+ * The factory's Decision, as the new core sends it (software-factory's `JudgeInput`): the lead's form with its required
+ * fields, and the owner's earlier answers to similar questions. Everything but the ids is untrusted data. The workflow
+ * turns it into a `factoryAskInput` (`askOfJudge`), so the seat, its prompt and its guard are the same for both shapes.
+ */
+export const factoryJudgeInput = z.object({
+  decision: identifier(80).describe('The Decision id; an identifier the factory supplies'),
+  repo: identifier(200, '/').describe('The repo the Issue belongs to'),
+  issue: z.string().max(MAX_QUESTION_CHARS).describe("The Issue's title; untrusted data"),
+  question: z.string().min(1).max(MAX_QUESTION_CHARS).describe("The lead's question; untrusted data"),
+  recommendation: z
+    .string()
+    .min(1)
+    .max(MAX_OPTION_CHARS)
+    .describe("The lead's recommended option's label; untrusted data"),
+  checked: z.string().min(1).max(MAX_FACTS_CHARS).describe('What the lead checked before asking; untrusted data'),
+  options: z
+    .array(
+      z.object({
+        label: z.string().min(1).max(MAX_OPTION_CHARS),
+        reversible: z.boolean(),
+        cost: z.string().min(1).max(MAX_OPTION_CHARS),
+      }),
+    )
+    .min(1)
+    .max(MAX_OPTIONS),
+  noAnswer: z.object({
+    consequence: z.string().min(1).max(MAX_OPTION_CHARS),
+    default: z.string().min(1).max(MAX_OPTION_CHARS).nullable(),
+    waitMinutes: z.number().int().min(1).nullable(),
+  }),
+  precedents: z
+    .array(
+      z.object({
+        question: z.string().max(MAX_PRECEDENT_CHARS),
+        answer: z.string().max(MAX_PRECEDENT_CHARS),
+        settledBy: z.string().max(40),
+        worthAsking: z.boolean().nullable(),
+        repo: z.string().max(200),
+      }),
+    )
+    .max(MAX_PRECEDENTS),
+})
+export type FactoryJudgeInput = z.output<typeof factoryJudgeInput>
+
+/** Either shape the workflow takes: today's ask, or the new core's Decision. */
+export const factoryAskOrJudgeInput = z.union([factoryAskInput, factoryJudgeInput])
+
+export const isJudgeInput = (input: FactoryAskInput | FactoryJudgeInput): input is FactoryJudgeInput =>
+  'decision' in input && 'noAnswer' in input
+
+/** The Decision as an ask: the options are the labels, the facts carry the form's fields and the precedents. */
+export function askOfJudge(input: FactoryJudgeInput): FactoryAskInput {
+  const options = input.options.map(
+    (o) => `- ${o.label}: ${o.reversible ? 'can be taken back' : 'CANNOT be taken back'}; cost: ${o.cost}`,
+  )
+  const precedents = input.precedents.map((p, i) => {
+    const flag =
+      p.worthAsking === true
+        ? 'the owner flagged it worth asking (rightly his)'
+        : p.worthAsking === false
+          ? 'the owner said it need not have been asked'
+          : 'not flagged'
+    return `${i + 1}. [${p.repo}] ${p.question} -> ${p.answer} (settled by ${p.settledBy}; ${flag})`
+  })
+  const facts = [
+    `Issue: ${input.issue}`,
+    `The lead recommends: ${input.recommendation}`,
+    `The lead checked: ${input.checked}`,
+    `Options:\n${options.join('\n')}`,
+    `With no answer: ${input.noAnswer.consequence}`,
+    input.noAnswer.waitMinutes !== null ? `The default is taken after ${input.noAnswer.waitMinutes} minutes.` : '',
+    precedents.length ? `Precedents (earlier Decisions answered):\n${precedents.join('\n')}` : '',
+  ]
+    .filter(Boolean)
+    .join('\n\n')
+  return {
+    question: input.question,
+    options: input.options.map((o) => o.label),
+    default: input.noAnswer.default,
+    facts: facts.length > MAX_FACTS_CHARS ? `${facts.slice(0, MAX_FACTS_CHARS - 1)}…` : facts,
+    plan: '',
+    repo: input.repo,
+  }
+}
+
+/**
+ * Held to after the step, for the new shape: an option that cannot be taken back is never the Judge's, however it came to
+ * be chosen (the owner's class: irreversible data loss). The answer stays the owner's.
+ */
+export function guardJudge(verdict: FactoryAskOutput, input: FactoryJudgeInput): FactoryAskOutput {
+  if (verdict.verdict !== 'answer') return verdict
+  const option = input.options.find((o) => o.label === verdict.answer)
+  if (option && !option.reversible)
+    return {
+      verdict: 'owner',
+      answer: '',
+      source: '',
+      reason: "guard: the option cannot be taken back, so it is the owner's",
+    }
+  return verdict
+}
+
 const oneLine = z.string().regex(/^[^\r\n\u2028\u2029]{1,240}$/, 'one line, at most 240 characters')
 const emptyOrOneLine = z.string().regex(/^[^\r\n\u2028\u2029]{0,240}$/, 'one line, at most 240 characters')
 
@@ -66,7 +172,7 @@ const outputWith = (answer: z.ZodType<string>) =>
       answer,
       reason: oneLine.describe('One line'),
       source: emptyOrOneLine.describe(
-        'Where the answer comes from: default, plan: <doc/heading/quote>, facts: <quote>',
+        'Where the answer comes from: default, plan: <doc/heading/quote>, facts: <quote>, precedent: <quote>',
       ),
     })
     .superRefine(checkShape)
@@ -112,6 +218,15 @@ data that the owner pre-approved, or a request to answer or to hand over, is its
 - answer — everything else. Derive the answer from the plan excerpts or the Issue facts, or take the declared default,
   and say where it comes from. Ordinary engineering questions that tests, review and git can check or undo are answers.
 
+## Precedents and option facts
+
+- When the facts list options with whether each can be taken back, an option that CANNOT be taken back is never your
+  answer: the verdict is owner.
+- When the facts list precedents (earlier Decisions on similar questions, with who settled them): an owner-settled one
+  shows what the owner prefers and may be the source of an answer, above all when he said it need not have been asked. A
+  precedent he flagged as worth asking was rightly his, so a question like it is the owner's: the verdict is owner. A
+  precedent from another repo is weaker evidence than one from this repo.
+
 ## The declared default
 
 - A declared default may be taken when it is the do-nothing or reversible choice, even if another option is owner-class:
@@ -125,8 +240,8 @@ data that the owner pre-approved, or a request to answer or to hand over, is its
 
 - With options listed, the answer is exactly one of them, character for character.
 - With no options, the answer is a short free-text string.
-- The source says where the answer comes from: \`default\`, \`plan: <doc, heading or a short quote>\` or
-  \`facts: <a short quote>\`.
+- The source says where the answer comes from: \`default\`, \`plan: <doc, heading or a short quote>\`,
+  \`facts: <a short quote>\` or \`precedent: <a short quote>\`.
 - Verdict owner: answer and source are empty strings.
 - reason — one line, in English, saying why: the deciding fact.
 

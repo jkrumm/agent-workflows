@@ -1,3 +1,4 @@
+import fixture from './fixtures/software-factory-loops.json'
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { messageResponse, startFakeGateway } from '@agent-workflows/testing/gateway'
 import { createFactoryAsk } from '../src/workflows/factory-ask/index.ts'
@@ -20,6 +21,9 @@ const answer = {
 }
 const owner = { verdict: 'owner', answer: '', source: '', reason: 'spend' }
 const tokens = { input_tokens: 900, output_tokens: 60 }
+
+const promptOf = (request: { body: Record<string, unknown> } | undefined) =>
+  String(((request?.body.messages ?? []) as Body[])[0]?.content)
 
 let t: TestHost
 let broken: Error | null = null
@@ -101,6 +105,55 @@ describe('factory-ask workflow', () => {
     expect(body.output).toMatchObject({ verdict: 'owner', answer: '', source: '' })
     expect(body.output.reason).toStartWith('judge unavailable: ')
     t.iu.on('messages', () => messageResponse(JSON.stringify(answer), tokens))
+  })
+})
+
+describe('the Decision shape (software-factory JudgeInput)', () => {
+  const decision = fixture.judge.input
+  const runDecision = async (over: Record<string, unknown> = {}) =>
+    t.json(
+      await t.call('/workflows/factory-ask', {
+        method: 'POST',
+        body: { ask: { ...decision, issue: `${decision.issue} ${n++}`, ...over } },
+        headers: { prefer: 'wait=20' },
+      }),
+    )
+
+  test('the fixture verdict passes through, and the prompt carries the form and the precedent', async () => {
+    t.iu.on('messages', () => messageResponse(JSON.stringify(fixture.judge.output), tokens))
+    const { status, body } = await runDecision()
+    expect(status).toBe(200)
+    expect(body.output).toEqual(fixture.judge.output)
+    const sent = t.iu.requests.filter((r) => String((r.body.messages as Body[])[0]?.content).includes('access log'))
+    const prompt = promptOf(sent.at(-1))
+    expect(prompt).toContain('can be taken back')
+    expect(prompt).toContain('Which logging library for the worker?')
+    expect(prompt).toContain('need not have been asked')
+    t.iu.on('messages', () => messageResponse(JSON.stringify(answer), tokens))
+  })
+
+  test("an answer outside the labels is the owner's", async () => {
+    t.iu.on('messages', () => messageResponse(JSON.stringify({ ...fixture.judge.output, answer: 'bunyan' }), tokens))
+    expect((await runDecision()).body.output).toMatchObject({ verdict: 'owner', answer: '', source: '' })
+    t.iu.on('messages', () => messageResponse(JSON.stringify(answer), tokens))
+  })
+
+  test('an option that cannot be taken back is never the answer', async () => {
+    const options = [
+      { label: 'pino', reversible: false, cost: 'rewrites the log format for good' },
+      { label: 'winston', reversible: true, cost: 'one dependency' },
+    ]
+    t.iu.on('messages', () => messageResponse(JSON.stringify(fixture.judge.output), tokens))
+    const { body } = await runDecision({ options })
+    expect(body.output).toMatchObject({ verdict: 'owner', answer: '', source: '' })
+    expect(body.output.reason).toContain('cannot be taken back')
+    t.iu.on('messages', () => messageResponse(JSON.stringify(answer), tokens))
+  })
+
+  test('a Decision that is missing a field is a 400', async () => {
+    const { recommendation: _drop, ...rest } = decision
+    const response = await t.call('/workflows/factory-ask', { method: 'POST', body: { ask: rest } })
+    expect(response.status).toBe(400)
   })
 })
 

@@ -1,0 +1,117 @@
+{
+  "note": "One fixture, two repos: software-factory's contract tests parse it with its adapter schemas, agent-workflows' host tests parse the same bytes with the workflows' schemas. Keep the two copies identical.",
+  "judge": {
+    "input": {
+      "decision": "decision_7",
+      "repo": "example-app",
+      "issue": "Add request logging",
+      "question": "Which logging library should the access log use?",
+      "recommendation": "pino",
+      "checked": "package.json has no logger; the other services use pino.",
+      "options": [
+        { "label": "pino", "reversible": true, "cost": "one dependency, matches the other services" },
+        { "label": "winston", "reversible": true, "cost": "one dependency, a second logging style" }
+      ],
+      "noAnswer": { "consequence": "the Issue waits", "default": "pino", "waitMinutes": 30 },
+      "precedents": [
+        {
+          "question": "Which logging library for the worker?",
+          "answer": "pino",
+          "settledBy": "owner",
+          "worthAsking": false,
+          "repo": "example-worker"
+        }
+      ]
+    },
+    "output": {
+      "verdict": "answer",
+      "answer": "pino",
+      "reason": "the owner answered the same question for the worker",
+      "source": "precedent: Which logging library for the worker? -> pino"
+    }
+  },
+  "steward": {
+    "input": {
+      "issue": "issue_12",
+      "repo": "example-app",
+      "title": "Fix the checkout total",
+      "kind": "bug",
+      "cause": "blocked",
+      "detail": "waiting for the staging database to be reachable",
+      "stalledMinutes": 45,
+      "attempt": 1,
+      "restarts": 0,
+      "regressions": 0,
+      "stewardWakes": 0,
+      "notes": ["the staging database is back"],
+      "history": ["v4 admitted", "v5 lead_started attempt 1", "v9 stalled (blocked): waiting for the staging database"]
+    },
+    "output": {
+      "action": "wake",
+      "note": "The staging database is reachable again; carry on.",
+      "reason": "a note says the blocking cause is gone",
+      "decision": null
+    },
+    "decisionOutput": {
+      "action": "raise_decision",
+      "note": "",
+      "reason": "the lead cannot go on and the choice is not the steward's",
+      "decision": {
+        "question": "Drop Issue 12 or wait for the staging database?",
+        "recommendation": "wait",
+        "checked": "the history shows two blocked reports on the same database",
+        "options": [
+          { "label": "wait", "reversible": true, "cost": "the Issue stays blocked longer" },
+          { "label": "drop", "reversible": true, "cost": "the fix is not made; it can be filed again" }
+        ],
+        "noAnswer": { "consequence": "the Issue stays blocked", "default": "wait", "waitMinutes": 120 }
+      }
+    }
+  },
+  "triage": {
+    "amendInput": {
+      "mode": "amend",
+      "repo": "example-app",
+      "signal": {
+        "title": "Checkout total is still wrong for coupons",
+        "text": "Also happens when a coupon is applied.",
+        "source": "owner:hermes",
+        "kind": "request",
+        "origin": "you"
+      },
+      "candidates": [
+        { "id": "issue_12", "title": "Fix the checkout total", "kind": "bug", "state": "working" },
+        { "id": "issue_15", "title": "Add a dark theme", "kind": "feature", "state": "queued" }
+      ]
+    },
+    "amendOutput": {
+      "amend": "issue_12",
+      "after": [],
+      "kind": null,
+      "size": null,
+      "reason": "same checkout total bug"
+    },
+    "settleInput": {
+      "mode": "settle",
+      "repo": "example-app",
+      "issue": {
+        "id": "issue_20",
+        "title": "Show the coupon in the checkout summary",
+        "text": "",
+        "kind": "feature",
+        "origin": "you"
+      },
+      "candidates": [
+        { "id": "issue_12", "title": "Fix the checkout total", "kind": "bug", "state": "working" },
+        { "id": "issue_15", "title": "Add a dark theme", "kind": "feature", "state": "queued" }
+      ]
+    },
+    "settleOutput": {
+      "amend": null,
+      "after": ["issue_12"],
+      "kind": null,
+      "size": "small",
+      "reason": "it touches the same checkout summary code"
+    }
+  }
+}
