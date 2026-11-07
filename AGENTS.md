@@ -26,50 +26,35 @@ Configuration comes from the environment; templates are `.env.tpl` files of `op:
 by `secrets-run` on the mini. Placeholders: `<your-domain>`, `<tailscale-ip>`, `example.com`.
 CI runs on GitHub-hosted runners (public repo).
 
-## The fleet that builds it
+## Who builds it
 
-Shape and roles: the `/wave` skill, fleet mode (`~/.claude/skills/wave/roles/{mother,lead,worker}.md`).
-
-| Role | Model / effort | Owns |
-|-|-|-|
-| **mother** | Opus / high | `docs/waves/PLAN.md`, `docs/waves/handoff/mother.md`, spawning and rotating the lead, phase moves, the retro log. Never reads or edits code |
-| **lead** | Opus / high | briefs, `rd fan` batches, reading every diff, all reviews, the merge train, deploys on the mini, live verification |
-| **worker, hard logic** | Opus / medium | journal and resume, the middleware pipeline, the CLI generator, OpenCode re-attach, eval statistics |
-| **worker, standard** | Sonnet / high | ports, integrations, tests, capabilities, LaunchAgents, docs that describe code |
-| **worker, mechanical** | Haiku | inventories, renames, caller sweeps, fixture extraction, link checks |
-
-- `rd fan` takes one model per batch (`RD_WAVE_MODEL`, `RD_WAVE_EFFORT`): the lead batches briefs
-  by model class.
-- Spawn prompts carry **no `(Wave <n>)` token** for the mother and the lead, so each takes the next
-  free tab number and never collides with a phase number. Spawns from the mother set
-  `RD_ORCHESTRATED=1`; the mother decides when a deploy happens, not a keyword gate.
-- Max subscriptions only for every Claude session; the picker switches accounts, `rd` pauses when
-  both are out. API tokens (IU, the credit pools' Anthropic keys) only for agent steps inside workflows and research, and the gateway holds them: agw itself holds no provider key.
+Work reaches this repo as factory Issues, one lead per Issue (software-factory owns the lifecycle, deploy and
+verification). Claude sessions run on the Max subscriptions only. API tokens (IU, the credit pools' Anthropic keys)
+serve agent steps inside workflows and research, and the gateway holds them: agw itself holds no provider key.
 
 ## Review flow (every change)
 
-1. The worker's cheap check (`bun test <path>` or the brief's command).
-2. The lead reads the diff — a report is a claim, the diff is the proof.
+1. A cheap check while building (`bun test <path>`).
+2. Read the diff, including a subagent's: a report is a claim, the diff is the proof.
 3. `/review` — review v4 (below): `agw review prepare` → the reviewer agent → `agw review submit` → `dispose` every
    finding. The router picks the tier from `REVIEW.md`'s globs; `--min deep` for the runtime, middleware, CLI contract
    and anything security-adjacent.
-4. The lead's own review on Max: `/code-review high` on core packages and on every cross-package
-   interface.
-5. Fixes back to the worker with `rd say`; merge train (`rd merge`) runs `make check` after every rebase.
-6. At each wave's end: deploy on the mini and `@verifier` proves the wiring live — run record in
-   Postgres, spans in ClickStack, usage rows in the `usage` schema, the CLI end to end.
+4. `/code-review high` on core packages and on every cross-package interface.
+5. `make check` after every rebase.
+6. After a deploy on the mini, `@verifier` proves the wiring live: run record in Postgres, spans in ClickStack,
+   usage rows in the `usage` schema, the CLI end to end.
 
 Review v4 (Max only, no API review spend, no LLM in agw) is the only review: host operations `agw review
 prepare|submit|dispose|status|route|covered|cancel|stats` over a Postgres ledger (`packages/host/src/review/README.md`),
 routed by `REVIEW.md`'s globs. `/review` (the dotfiles skill) runs `prepare` → the reviewer agent
 (`docs/spikes/review-v4/reviewer.md`) on the printed seat → `submit` → `dispose` for every finding, rounds converging by
-disposition. `covered` proves a commit range was reviewed; the wave gate and the factory's evidence read it. `eval.recall` was removed with the hidden transport; leaders review in-session with `/review`. Review v1 (the
+disposition. `covered` proves a commit range was reviewed; the factory's evidence reads it. Review v1 (the
 LLM workflow with angle agents, OCR and react-doctor) was deleted in Wave 10.
 
-## Other repos the fleet touches
+## Other repos this one touches
 
 One agent per checkout, always. Cross-repo edits go through a worktree or wait for the checkout to
-be free (`rd agents`).
+be free (`agw agents`).
 
 | Repo | Why |
 |-|-|

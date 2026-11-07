@@ -1,6 +1,6 @@
 ---
 # Read by the router (agw review route) and by the reviewer. Globs are repo-relative.
-# none: the mother's plan, handoff and retro commits (docs/waves/**, concept.md alone) skip the wave gate's coverage.
+# none: plan, handoff and retro commits (docs/waves/**, concept.md alone) skip review coverage.
 # A concept.md change that rides with code is still routed (and reviewed) by the code.
 none:        [docs/waves/**, docs/concept.md, docs/spikes/**/data/**, bun.lock]
 sensitive:   [packages/runtime/**, packages/middleware/**, packages/gateway/**, packages/limits/**,
