@@ -44,6 +44,8 @@ export type FrictionSettings = {
   rate: number
   /** A new run of the same workflow, cwd and scope within this long after a finished one is a follow-up. */
   followUpMinutes: number
+  /** Workflows whose re-run is the work itself (a `check` after a fix): never marked as a follow-up. */
+  followUpExcluded: string[]
   limits: FrictionLimits
 }
 
@@ -54,6 +56,7 @@ export const DEFAULT_SETTINGS: FrictionSettings = {
   minRuns: 10,
   rate: 0.25,
   followUpMinutes: 10,
+  followUpExcluded: ['check'],
   limits: DEFAULT_LIMITS,
 }
 
@@ -63,6 +66,7 @@ const Override = z
     minRuns: z.number().int().positive(),
     rate: z.number().gt(0).max(1),
     followUpMinutes: z.number().positive(),
+    followUpExcluded: z.array(z.string().min(1)),
     limits: z
       .object(Object.fromEntries(FRICTION_COUNTERS.map((c) => [c, z.number().int().positive().nullable()])))
       .partial()
@@ -76,7 +80,7 @@ const OFF = new Set(['0', 'false', 'off', 'no'])
 
 /**
  * `AGW_FRICTION_ISSUES` (on unless off), `AGW_FRICTION_REPO` (`owner/name`), `AGW_FRICTION_CONFIG` (JSON with any of
- * windowDays, minRuns, rate, followUpMinutes, limits). Problems are returned, not thrown, so the host's one
+ * windowDays, minRuns, rate, followUpMinutes, followUpExcluded, limits). Problems are returned, not thrown, so the host's one
  * configuration report names them all.
  */
 export function frictionSettings(env: Record<string, string | undefined>): {

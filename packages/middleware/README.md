@@ -70,7 +70,7 @@ run (zeros included) at `runPost`:
 | `nudges` | repeat-tool notes the host sent (at the 3rd, 5th, 8th identical call; opencode-host README) | same |
 | `schemaReasks` | agent steps whose last attempt failed `invalid_output`, once each, whatever re-asks follow | the step rows |
 | `overBudget` | runs the wallet gate refused (`admission_refused`, message `wallet gate: …`) plus steps the runaway cap failed (`middleware`, message `runaway cap: …`) | the step rows and the run's outcome |
-| `followUps` | 1 when the user asked again about this run (host README §Friction job) | the host's daily threshold job, never inline |
+| `followUps` | 1 when the user asked again about this run (host README §Friction job; `check` is excluded, its re-run is the fix loop) | the host's daily threshold job, never inline |
 | `nudgesMissed` | nudges that were due and sendable but are not in the session (failed or given up): a threshold counts only when a later tool call followed it, and a note for it or a higher threshold of the same call satisfies it. Informational, not a threshold counter | the OpenCode sessions |
 
 The document also holds what the counters are summed from: `sessions` (`{ [stepId]: { [sessionId]: counters } }`) and

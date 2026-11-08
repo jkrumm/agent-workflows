@@ -35,7 +35,7 @@ Names only; values come from 1Password through `secrets-run`, never from the rep
 | `OTEL_EXPORTER_OTLP_ENDPOINT` (or `…_TRACES_ENDPOINT`), `OTEL_EXPORTER_OTLP_HEADERS` | no | span export is off without an endpoint |
 | `AGW_FRICTION_ISSUES` | no | the daily friction job (below): on unless `off`/`0`/`false`/`no` |
 | `AGW_FRICTION_REPO` | for issues | `owner/name` the job opens issues in. Unset: the job still marks follow-ups but opens nothing (it says so in the log) |
-| `AGW_FRICTION_CONFIG` | no | JSON overriding any of `windowDays` (7), `minRuns` (10), `rate` (0.25), `followUpMinutes` (10, fractions allowed), `limits` (`null` switches a counter off). A bad value of this or of `AGW_FRICTION_REPO` disables the job and says why (stderr, `RunningHost.friction`); it never stops the host |
+| `AGW_FRICTION_CONFIG` | no | JSON overriding any of `windowDays` (7), `minRuns` (10), `rate` (0.25), `followUpMinutes` (10, fractions allowed), `followUpExcluded` (`["check"]`: workflows never marked as a follow-up, because re-running `check` after a fix is the loop; an array replaces the default, `[]` excludes none), `limits` (`null` switches a counter off). A bad value of this or of `AGW_FRICTION_REPO` disables the job and says why (stderr, `RunningHost.friction`); it never stops the host |
 | `AGW_WALLET_*` | no | wallet gate (limits README) |
 | `AGW_DRIFT_RATE`, `AGW_DRIFT_INTERVAL_S` | no | drift: the share of finished production runs scored after the fact (default `0.1`, `0` turns it off) and the tick (default 300 s); a bad value refuses to start |
 | `AGW_EVAL_DIR`, `AGW_EVAL_HOME` | no | `agw eval run`: where `<workflow>/cases.jsonl` live (default `~/.local/share/agent-workflows/eval`) and the root a case's `repo` is relative to (default `$HOME`) |
@@ -276,7 +276,8 @@ the literal configs tests pass). Daily, first run ten minutes after boot:
    as a top-level `prod` run with the same `cwd` and `scope` input, created within `followUpMinutes` (fractions of a
    minute work) after it finished. The later run must not be cancelled or refused (`admission_refused`,
    `invalid_input`); a failed run that is run again is a retry, not a follow-up. Workflows whose input has no `cwd`
-   have no follow-up signal. Idempotent.
+   have no follow-up signal, nor do workflows in `followUpExcluded` (default `["check"]`: a `check` re-run after a
+   fix is the loop, not the user asking again). Idempotent.
 2. **Rate.** Per workflow over the last `windowDays` of finished **top-level user (`prod`)** runs with a delivered
    record: the share with any counter at or above its limit. Build, verify and eval traffic is not counted, so it
    neither dilutes nor inflates a rate. Default limits: `toolErrors` 5, `repeatToolCalls` 5, `nudges` 2, `schemaReasks`

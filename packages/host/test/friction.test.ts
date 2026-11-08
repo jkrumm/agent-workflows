@@ -844,13 +844,27 @@ describe('follow-ups', () => {
     expect(await marked(slow)).toBe(0)
   })
 
+  test('a workflow in followUpExcluded is not marked by default; an empty list marks it', async () => {
+    await clear()
+    const checkFirst = await insertRun({ workflow: 'check', finishedAgoMin: 30, status: 'done' })
+    await insertRun({ workflow: 'check', finishedAgoMin: 20, createdAt: at(25) })
+    const reviewFirst = await insertRun({ workflow: 'review', finishedAgoMin: 30 })
+    await insertRun({ workflow: 'review', finishedAgoMin: 20, createdAt: at(25) })
+    const base = { db: journal, gh: fakeGh().port, logger: captureLogger() }
+    expect(await markFollowUps({ ...base, settings: settings() })).toBe(1)
+    expect(await followUpOf(checkFirst)).toBe(0)
+    expect(await followUpOf(reviewFirst)).toBe(1)
+    expect(await markFollowUps({ ...base, settings: settings({ followUpExcluded: [] }) })).toBe(1)
+    expect(await followUpOf(checkFirst)).toBe(1)
+  })
+
   test('followUps counts toward the rate, so enough of them open an issue', async () => {
     await clear()
     const gh = fakeGh()
     for (let i = 0; i < 10; i++) {
       const cwd = `/work/${i}`
-      await insertRun({ workflow: 'check', finishedAgoMin: 120, input: { cwd } })
-      await insertRun({ workflow: 'check', finishedAgoMin: 100, createdAt: at(115), input: { cwd } })
+      await insertRun({ workflow: 'review', finishedAgoMin: 120, input: { cwd } })
+      await insertRun({ workflow: 'review', finishedAgoMin: 100, createdAt: at(115), input: { cwd } })
     }
     const result = await run(gh.port)
     expect(result.followUps).toBe(10)
@@ -874,6 +888,16 @@ describe('configuration', () => {
     const parsed = frictionSettings({ AGW_FRICTION_CONFIG: '{"followUpMinutes":2.5}' })
     expect(parsed.problems).toEqual([])
     expect(parsed.settings.followUpMinutes).toBe(2.5)
+  })
+
+  test('followUpExcluded defaults to check, is replaced by an array, and rejects non-arrays and empty names', () => {
+    expect(frictionSettings({}).settings.followUpExcluded).toEqual(['check'])
+    const ok = frictionSettings({ AGW_FRICTION_CONFIG: '{"followUpExcluded":["a","b"]}' })
+    expect(ok.problems).toEqual([])
+    expect(ok.settings.followUpExcluded).toEqual(['a', 'b'])
+    expect(frictionSettings({ AGW_FRICTION_CONFIG: '{"followUpExcluded":[]}' }).settings.followUpExcluded).toEqual([])
+    expect(frictionSettings({ AGW_FRICTION_CONFIG: '{"followUpExcluded":"check"}' }).problems).toHaveLength(1)
+    expect(frictionSettings({ AGW_FRICTION_CONFIG: '{"followUpExcluded":[""]}' }).problems).toHaveLength(1)
   })
 
   test('repo and overrides are validated, every problem named', () => {

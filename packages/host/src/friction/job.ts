@@ -124,7 +124,8 @@ async function recountIncomplete(deps: Deps): Promise<number> {
  * one must be a top-level user call of the same workflow with the same `cwd` and `scope` input, created after the
  * earlier one finished, and must not be a cancelled run or one refused at admission or on its input (those are not the
  * user asking for something). Done here, once a day, not inline: the earlier run has long been recorded when the
- * follow-up arrives. Idempotent (a marked run is skipped). Workflows whose input has no `cwd` have no follow-up signal.
+ * follow-up arrives. Idempotent (a marked run is skipped). Workflows whose input has no `cwd` have no follow-up signal, and workflows in
+ * `followUpExcluded` (default `check`: re-running it after a failed result is the fix loop) are never marked.
  * (No supporting index: the candidate rows are one week of `prod` runs and the `exists` probe filters by workflow;
  * fine at today's run volume. Revisit with an index on `(workflow, created_at)` if the daily update gets slow.)
  */
@@ -135,7 +136,7 @@ export async function markFollowUps(deps: Deps): Promise<number> {
       `update ${db.runs} r set friction = jsonb_set(coalesce(r.friction, '{"v":1}'::jsonb), '{followUps}', '1'::jsonb)
        where r.purpose = '${USER_PURPOSE}' and r.parent_id is null and r.status = 'done'
          and r.post_hooks_at is not null and r.finished_at > now() - make_interval(days => $1)
-         and r.input->>'cwd' is not null
+         and r.input->>'cwd' is not null and r.workflow <> all($3::text[])
          and coalesce((r.friction->>'followUps')::int, 0) = 0
          and exists (
            select 1 from ${db.runs} n
@@ -145,7 +146,7 @@ export async function markFollowUps(deps: Deps): Promise<number> {
              and coalesce(n.input->>'scope', '') = coalesce(r.input->>'scope', '')
              and n.created_at > r.finished_at
              and n.created_at <= r.finished_at + make_interval(secs => $2::float8 * 60))`,
-      [settings.windowDays, settings.followUpMinutes],
+      [settings.windowDays, settings.followUpMinutes, settings.followUpExcluded],
     ),
   )
   return rowCount ?? 0
