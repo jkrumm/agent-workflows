@@ -213,5 +213,31 @@
       "read": 3,
       "reason": "two verified defects among three candidates read"
     }
+  },
+  "screen": {
+    "input": {
+      "signal": {
+        "id": "sig_7",
+        "source": "feedback:example-app",
+        "kind": "feedback",
+        "origin": "feedback",
+        "repo": "example-app",
+        "title": "Checkout button does nothing on Safari",
+        "text": "Pressing Pay does nothing. Safari 18, iPhone.",
+        "link": null,
+        "receivedAt": "2026-11-08T09:12:00.000Z"
+      },
+      "openIssues": [
+        { "id": "issue_31", "title": "Checkout button unresponsive on iOS Safari", "kind": "bug", "state": "working" }
+      ],
+      "projects": ["example-app", "example-api"]
+    },
+    "output": {
+      "verdict": "dismiss",
+      "reason": "Same report as the open bug on the checkout button",
+      "repo": null,
+      "duplicateOf": "issue_31",
+      "recommendation": null
+    }
   }
 }
