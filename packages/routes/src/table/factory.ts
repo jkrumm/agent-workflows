@@ -19,6 +19,9 @@ const routes = {
   'factory.screen': { wire: 'anthropic', ...EASY.call },
   // Software-factory's screening of an Errand (a lead's "I need the owner's hands") before the owner is paged: pass or turn_away.
   'factory.errand': { wire: 'anthropic', ...EASY.call },
+  // Software-factory's Improve screen: fix commits whose scope and subject do not settle the class, sorted into the classes the
+  // caller sends, up to 40 per call. No eval set; the answer is checked against the request in the schema.
+  'factory.fixclasses': { wire: 'anthropic', ...EASY.call },
   // Software-factory's hygiene loop: an agent step with read-only tools (read, glob, grep) over a checkout; it reads several
   // files and judges text, so the default agent tier. No eval set (owner decision); the guard bounds what it can say.
   'factory.hygiene': { wire: 'opencode', ...EASY.agent },

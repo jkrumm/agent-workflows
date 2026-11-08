@@ -1,0 +1,37 @@
+{
+  "input": {
+    "repo": "example-app",
+    "classes": [
+      { "key": "tests", "meaning": "A test was wrong, flaky or missing; the product code was right." },
+      { "key": "logic", "meaning": "The code computed or decided the wrong thing." },
+      { "key": "tooling", "meaning": "Build, CI, lint, scripts or dependency configuration." },
+      { "key": "other", "meaning": "None of the above fits." }
+    ],
+    "commits": [
+      {
+        "sha": "a1b2c3d",
+        "subject": "retry the sign-in redirect when the session cookie is late",
+        "scope": null,
+        "body": "The redirect ran before the cookie was written, so the first sign-in bounced back to the form.",
+        "files": ["src/auth/redirect.ts", "src/auth/redirect.test.ts"]
+      },
+      {
+        "sha": "e4f5a6b",
+        "subject": "pin the runner image",
+        "scope": "ci",
+        "body": "",
+        "files": [".github/workflows/ci.yml"]
+      }
+    ]
+  },
+  "output": {
+    "answers": [
+      {
+        "sha": "a1b2c3d",
+        "class": "logic",
+        "reason": "The redirect ran before the cookie existed, a wrong order in the code."
+      },
+      { "sha": "e4f5a6b", "class": "tooling", "reason": "Only the CI workflow changed, to pin the runner image." }
+    ]
+  }
+}

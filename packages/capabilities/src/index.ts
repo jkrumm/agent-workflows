@@ -70,6 +70,14 @@ export {
   type FactoryErrandOutput,
 } from './capabilities/factory-errand.ts'
 export {
+  factoryFixClassesCall,
+  factoryFixClassesInput,
+  factoryFixClassesOutput,
+  fixClassesAnswerFor,
+  type FactoryFixClassesInput,
+  type FactoryFixClassesOutput,
+} from './capabilities/factory-fix-classes.ts'
+export {
   factoryScreenCall,
   factoryScreenInput,
   factoryScreenOutput,

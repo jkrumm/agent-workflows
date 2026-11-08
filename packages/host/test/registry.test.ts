@@ -53,6 +53,7 @@ describe('workflow discovery', () => {
       'factory-ask',
       'factory-classify',
       'factory-errand',
+      'factory-fix-classes',
       'factory-hygiene',
       'factory-queue',
       'factory-screen',
