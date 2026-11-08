@@ -79,6 +79,7 @@ export {
   factoryClassifyInput,
   floorIncident,
   factoryClassifyOutput,
+  identifier,
   KINDS,
   SIZES,
   TIERS,

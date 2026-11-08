@@ -180,5 +180,38 @@
       "order": ["issue_22", "issue_21", "issue_15", "issue_20"],
       "reason": "issue_22 has the highest priority; among equals the small unblocked one goes first"
     }
+  },
+  "hygiene": {
+    "input": {
+      "repo": "example-app",
+      "cwd": "/srv/checkouts/example-app",
+      "ref": "3f9c2ab41d7e",
+      "stale": [
+        { "path": "docs/architecture.md", "why": "12 commits touch src/ since the document was last edited" },
+        { "path": "docs/deploy.md", "why": "the Makefile changed since the document was last edited" }
+      ],
+      "slop": [{ "path": "README.md", "why": "edited 2 days ago" }],
+      "max": 5
+    },
+    "output": {
+      "findings": [
+        {
+          "kind": "stale",
+          "path": "docs/architecture.md",
+          "title": "The architecture page names a queue module the code no longer has",
+          "evidence": "docs/architecture.md:14 says \"orders go through src/queue.ts\"; src/queue.ts does not exist, src/orders/index.ts:1 holds the handler.",
+          "fix": "Replace src/queue.ts with src/orders/index.ts in the module list."
+        },
+        {
+          "kind": "slop",
+          "path": "README.md",
+          "title": "The README opens with a preamble before the verdict",
+          "evidence": "README.md:3: \"This section aims to give you a brief overview of what the project is about.\"",
+          "fix": "Cut the sentence; open with what the project does."
+        }
+      ],
+      "read": 3,
+      "reason": "two verified defects among three candidates read"
+    }
   }
 }

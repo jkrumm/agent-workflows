@@ -52,6 +52,7 @@ describe('workflow discovery', () => {
       'eval',
       'factory-ask',
       'factory-classify',
+      'factory-hygiene',
       'factory-queue',
       'factory-steward',
       'factory-triage',

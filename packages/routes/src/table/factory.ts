@@ -15,6 +15,9 @@ const routes = {
   'factory.queue': { wire: 'anthropic', ...EASY.call },
   // Software-factory's triage: amend-or-new when the deterministic match is unsure, and the `after` edges of a new Issue.
   'factory.triage': { wire: 'anthropic', ...EASY.call },
+  // Software-factory's hygiene loop: an agent step with read-only tools (read, glob, grep) over a checkout; it reads several
+  // files and judges text, so the default agent tier. No eval set (owner decision); the guard bounds what it can say.
+  'factory.hygiene': { wire: 'opencode', ...EASY.agent },
 } satisfies Record<string, RouteEntry>
 
 export default routes
