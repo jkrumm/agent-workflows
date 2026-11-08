@@ -239,5 +239,16 @@
       "duplicateOf": "issue_31",
       "recommendation": null
     }
+  },
+  "errand": {
+    "input": {
+      "errand": {
+        "id": "e_7",
+        "summary": "Approve the sign-in prompt on the test device",
+        "detail": "The lead needs the test device signed in once to run the UI checks."
+      },
+      "issue": { "id": "issue_31", "repo": "example-app", "title": "Add a sign-in screen", "kind": "feature" }
+    },
+    "output": { "verdict": "pass", "reason": "A sign-in prompt on a device needs a person's hands" }
   }
 }
