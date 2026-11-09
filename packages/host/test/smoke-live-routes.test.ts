@@ -1,7 +1,8 @@
-import { afterAll, beforeAll, expect, test } from 'bun:test'
+import { afterAll, beforeAll, expect } from 'bun:test'
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { testZsh, ZSH } from '@agent-workflows/testing/zsh'
 
 /** scripts/live-routes.sh against stand-ins for agw, psql and secrets-run: the selection, the checks and the verdict. */
 const SCRIPT = join(import.meta.dir, '../../../scripts/live-routes.sh')
@@ -70,7 +71,7 @@ esac`,
 afterAll(() => rmSync(dir, { recursive: true, force: true }))
 
 async function run(args: string[], env: Record<string, string> = {}) {
-  const proc = Bun.spawn(['/bin/zsh', SCRIPT, ...args], {
+  const proc = Bun.spawn([ZSH, SCRIPT, ...args], {
     env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, AGW_ROOT: root, LIVE_ROUTES_POLL_SECS: '0', ...env },
     stdout: 'pipe',
     stderr: 'pipe',
@@ -79,7 +80,7 @@ async function run(args: string[], env: Record<string, string> = {}) {
   return { code: await proc.exited, stdout, stderr }
 }
 
-test('by default it probes the anthropic, opencode and iu-openai text routes, and prints the table', async () => {
+testZsh('by default it probes the anthropic, opencode and iu-openai text routes, and prints the table', async () => {
   writeFileSync(join(dir, 'calls.log'), '')
   const result = await run([])
   expect(result.code).toBe(0)
@@ -94,7 +95,7 @@ test('by default it probes the anthropic, opencode and iu-openai text routes, an
   expect(result.stdout + result.stderr).not.toContain('not-a-real-secret')
 })
 
-test('a named route runs alone; a media route is refused before any call', async () => {
+testZsh('a named route runs alone; a media route is refused before any call', async () => {
   writeFileSync(join(dir, 'calls.log'), '')
   const one = await run(['c.text'])
   expect(one.code).toBe(0)
@@ -106,7 +107,7 @@ test('a named route runs alone; a media route is refused before any call', async
   }
 })
 
-test('a failed call or a missing gateway row fails that route, by name, and the exit is non-zero', async () => {
+testZsh('a failed call or a missing gateway row fails that route, by name, and the exit is non-zero', async () => {
   const result = await run([], { BAD_AGW: 'b.agent', NO_GATEWAY: 'run-c.text' })
   expect(result.code).toBe(1)
   expect(result.stderr).toContain('FAIL b.agent: agw smoke route exited 1')
@@ -115,7 +116,7 @@ test('a failed call or a missing gateway row fails that route, by name, and the 
   expect(result.stderr).toContain('2 of 3 routes failed')
 })
 
-test('the gateway row must be outcome ok with the served model; an alias resolves to the concrete id', async () => {
+testZsh('the gateway row must be outcome ok with the served model; an alias resolves to the concrete id', async () => {
   for (const f of ['models.log', 'sql.log', 'bounds.log']) writeFileSync(join(dir, f), '')
   const result = await run(['a.claude'])
   expect(result.code).toBe(0)
@@ -127,7 +128,7 @@ test('the gateway row must be outcome ok with the served model; an alias resolve
   expect(sql).not.toContain('model_raw')
 })
 
-test('every psql call has a connect and a statement timeout under the polling deadline', async () => {
+testZsh('every psql call has a connect and a statement timeout under the polling deadline', async () => {
   writeFileSync(join(dir, 'bounds.log'), '')
   const result = await run(['c.text'], { LIVE_ROUTES_POLL_SECS: '3' })
   expect(result.code).toBe(0)
@@ -136,7 +137,7 @@ test('every psql call has a connect and a statement timeout under the polling de
   for (const line of lines) expect(line).toBe('3 -c statement_timeout=3000')
 })
 
-test('a route given twice is refused before any call', async () => {
+testZsh('a route given twice is refused before any call', async () => {
   writeFileSync(join(dir, 'calls.log'), '')
   const result = await run(['c.text', 'c.text'])
   expect(result.code).toBe(1)
@@ -144,7 +145,7 @@ test('a route given twice is refused before any call', async () => {
   expect((await Bun.file(join(dir, 'calls.log')).text()).trim()).toBe('')
 })
 
-test('a route whose model is an alias is compared against the alias target of the release under test', async () => {
+testZsh('a route whose model is an alias is compared against the alias target of the release under test', async () => {
   const other = join(dir, 'other-release')
   writeRelease(other, aliases({ haiku: 'claude-haiku-9-9' }))
   writeFileSync(join(dir, 'models.log'), '')
@@ -159,7 +160,7 @@ test('a route whose model is an alias is compared against the alias target of th
   expect(new Set((await Bun.file(join(dir, 'models.log')).text()).trim().split('\n'))).toEqual(new Set(['text-model']))
 })
 
-test('a missing or malformed alias map fails loudly before any call, never falls back', async () => {
+testZsh('a missing or malformed alias map fails loudly before any call, never falls back', async () => {
   writeFileSync(join(dir, 'calls.log'), '')
   const missing = await run(['a.claude'], { AGW_ROOT: join(dir, 'no-such-release') })
   expect(missing.code).toBe(1)

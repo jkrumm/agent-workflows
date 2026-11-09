@@ -1,7 +1,7 @@
 // The suites that run scripts/*.sh need zsh, which the mini has and a minimal container may not. Without it they skip
 // visibly; on CI (which installs zsh, see ci.yml) a missing zsh fails the file instead, since a skip there is coverage
 // the merge gate never had.
-import { describe } from 'bun:test'
+import { describe, test } from 'bun:test'
 
 const found = Bun.which('zsh')
 
@@ -12,3 +12,6 @@ export const ZSH: string = found ?? 'zsh'
 
 /** `describe`, skipped (visibly) where zsh is not installed. */
 export const describeZsh = describe.skipIf(!found)
+
+/** `test`, skipped (visibly) where zsh is not installed. */
+export const testZsh = test.skipIf(!found)
