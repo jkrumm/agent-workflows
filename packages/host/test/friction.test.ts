@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { JournalDb, RUNAWAY_CAP_PREFIX, WALLET_REFUSAL_PREFIX } from '@agent-workflows/middleware'
+import { JournalDb, RUNAWAY_CAP_PREFIX, stepEvent, WALLET_REFUSAL_PREFIX } from '@agent-workflows/middleware'
 import { RunawayCapExceeded, walletGate } from '@agent-workflows/limits'
-import type { Logger } from '@agent-workflows/runtime'
+import { type Logger, ToolRefused } from '@agent-workflows/runtime'
 import { boot, lazyOpenCodeHost } from '../src/boot.ts'
 import { loadConfig } from '../src/config.ts'
 import {
@@ -945,6 +945,14 @@ describe('the money rules the counters recognise', () => {
     const cap = new RunawayCapExceeded('cost', 2, 1, { kind: 'static', sample: 0, reason: 'below_sample_minimum' })
     expect(cap.message.startsWith(RUNAWAY_CAP_PREFIX)).toBe(true)
     expect(cap.kind).toBe('middleware')
+    // Stopped inside an agent step, the runtime wraps it (ToolRefused): still the same budget incident.
+    for (const hook of ['toolPre', 'stepLive'] as const) {
+      const refused = new ToolRefused(cap, hook)
+      expect(refused.kind).toBe('middleware')
+      expect(stepEvent({ kind: 'agent', status: 'failed', errorKind: refused.kind, message: refused.message })).toBe(
+        'budget',
+      )
+    }
     const gate = walletGate({
       workflows: ['ocr'],
       pausedUntil: new Date('2099-01-01T00:00:00Z'),

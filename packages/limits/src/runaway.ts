@@ -3,6 +3,7 @@ import {
   type Middleware,
   type RunPostArgs,
   type RunPreArgs,
+  type StepLiveArgs,
   type StepPostArgs,
   type StepPreArgs,
   type ToolEvent,
@@ -93,6 +94,8 @@ type RootState = {
   cost: number
   tokens: number
   unpricedCalls: number
+  /** What each running step of the tree has spent so far and `stepPost` has not counted yet, by `runId:stepId`. */
+  live: Map<string, { cost: number; tokens: number }>
   seenAt: number
 }
 type RunState = { workflowId: string; rootId: string; steps: number; seenAt: number }
@@ -101,7 +104,8 @@ type CacheEntry = { caps: Caps | null; expiresAt: number; refreshing: Promise<vo
 /**
  * Stops a run whose root tree's accumulated cost, tokens or wall time, or whose own step count, runs far past its
  * workflow's normal (concept §4 Money, D5). Enforced in `stepPre`; `toolPre` watches wall time inside a long agent
- * step. The hooks never wait on the journal: caps are served from cache (stale while revalidating) or the static
+ * step, and `stepLive` (the runtime's timer, and every usage snapshot the agent host reports) watches wall time,
+ * cost and tokens while any step runs, also one that makes no tool call. The hooks never wait on the journal: caps are served from cache (stale while revalidating) or the static
  * ceiling, and an unknown run is loaded in the background.
  */
 export function runawayCap(options: RunawayCapOptions): RunawayCap {
@@ -278,6 +282,7 @@ export function runawayCap(options: RunawayCapOptions): RunawayCap {
               cost: spent.cost,
               tokens: spent.tokens,
               unpricedCalls: spent.unpriced_calls,
+              live: new Map(),
               seenAt: now,
             })
           }
@@ -352,9 +357,15 @@ export function runawayCap(options: RunawayCapOptions): RunawayCap {
     const treeCaps = capsNow(root.workflowId)
     const ownCaps = run.workflowId === root.workflowId ? treeCaps : capsNow(run.workflowId)
     const caps: Metrics = { ...treeCaps.values, steps: ownCaps.values.steps }
+    let liveCost = 0
+    let liveTokens = 0
+    for (const spent of root.live.values()) {
+      liveCost += spent.cost
+      liveTokens += spent.tokens
+    }
     const observed: Metrics = {
-      cost: root.cost,
-      tokens: root.tokens,
+      cost: root.cost + liveCost,
+      tokens: root.tokens + liveTokens,
       wallMs: Date.now() - root.startedAt,
       steps: run.steps,
     }
@@ -414,6 +425,7 @@ export function runawayCap(options: RunawayCapOptions): RunawayCap {
           cost: 0,
           tokens: 0,
           unpricedCalls: 0,
+          live: new Map(),
           seenAt: now,
         })
       } else if (!roots.has(args.rootId)) {
@@ -449,9 +461,21 @@ export function runawayCap(options: RunawayCapOptions): RunawayCap {
       throw refuse(decision)
     },
 
+    // Never awaits. Not gated by `flagged`: every step that runs over the cap is stopped (each is its own attempt).
+    stepLive(args: StepLiveArgs) {
+      const state = stateOf(args.runId)
+      if (!state) return
+      state.root.live.set(`${args.runId}:${args.stepId}`, args.spent)
+      const decision = decide('stepLive', args, state.run, state.root, TREE_METRICS)
+      if (!decision.exceeded) return
+      emit(decision)
+      throw refuse(decision)
+    },
+
     stepPost(args: StepPostArgs) {
       const state = stateOf(args.runId)
       if (!state) return
+      state.root.live.delete(`${args.runId}:${args.stepId}`)
       const { tokens, cost, unpricedCalls } = args.usage
       state.root.cost += cost ?? 0
       state.root.tokens += tokens.input + tokens.output + tokens.cacheRead + tokens.reasoning
@@ -459,6 +483,9 @@ export function runawayCap(options: RunawayCapOptions): RunawayCap {
     },
 
     runPost(args: RunPostArgs) {
+      // A step that never reached stepPost (its finish was not recorded) must not stay counted.
+      const live = roots.get(args.rootId)?.live
+      for (const key of live?.keys() ?? []) if (key.startsWith(`${args.runId}:`)) live?.delete(key)
       runs.delete(args.runId)
       loading.delete(args.runId)
       flagged.delete(args.runId)

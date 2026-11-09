@@ -202,7 +202,7 @@ defineWorkflow({ id: 'research.report', scorer: draftScorer, async run(ctx, inpu
 
 ## Middleware
 
-An ordered list of `{ name, runPre, stepPre, toolPre, toolPost, stepPost, runPost }` given to the `Runtime`, so
+An ordered list of `{ name, runPre, stepPre, toolPre, toolPost, stepLive, stepPost, runPost }` given to the `Runtime`, so
 no workflow can skip it.
 
 - `runPre` runs after the run took its concurrency slot. `resume` is false until a `runPre` pass accepted the run
@@ -212,6 +212,10 @@ no workflow can skip it.
 - `toolPre` throwing fails the step it runs in (`ToolRefused`): the step's signal aborts (the agent session is
   aborted), the step ends with the thrown `WorkflowError`'s kind (else `middleware`) and is not retried. A throwing
   `toolPost` is logged.
+- `stepLive` runs every `liveCheckMs` (default 30 s, `null`: off) while a step attempt runs, and on every usage
+  snapshot the agent host reports (`AgentWaitOptions.onUsage`, cumulative per session). It gets what the step has
+  spent so far (`spent.cost`, `spent.tokens`: earlier attempts plus the live session) and covers a step that makes no
+  tool call. Throwing refuses like `toolPre` (`ToolRefused`): the signal aborts, the session is aborted, no retry.
 - `stepPost` carries `handle`: the agent handle the execution last used (also after a failed attempt cleared it
   from the journal), null for other kinds.
 - Post hooks run after the commit: a throw is logged and never changes the recorded outcome.

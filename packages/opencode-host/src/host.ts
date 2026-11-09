@@ -645,6 +645,7 @@ export class OpenCodeHost implements AgentHost {
           seen = snap.messages
           const next = activityFingerprint(snap.messages)
           if (fingerprint !== null && next !== fingerprint) options.onProgress()
+          if (next !== fingerprint) this.reportUsage(h, snap.messages, options)
           fingerprint = next
           await this.reportTools(toolParts(snap.messages, promptId), tools, options)
           if (await this.shellGrew(h, snap.messages, shells)) options.onProgress()
@@ -720,6 +721,7 @@ export class OpenCodeHost implements AgentHost {
           seen = after
           const next = activityFingerprint(after)
           if (fingerprint !== null && next !== fingerprint) options.onProgress()
+          if (next !== fingerprint) this.reportUsage(h, after, options)
           fingerprint = next
           await this.reportTools(turnTools(after), tools, options)
           const state = turnState(snap, from)
@@ -901,8 +903,28 @@ export class OpenCodeHost implements AgentHost {
     await this.prompt(next, prompt)
     // The step spent on both sessions: the primary's messages are the failed turn, the fallback's are the answer.
     const primary = spentTokens(messages) ? [this.usage(h, messages)] : []
+    // The live figure is the whole step's: the fallback session's snapshots carry the failed primary's spend too.
+    const failed = primary[0]
+    const onUsage = options.onUsage
+    const waitOptions: AgentWaitOptions =
+      failed && onUsage
+        ? {
+            ...options,
+            onUsage: (live) =>
+              onUsage({
+                ...live,
+                cost: (failed.cost ?? 0) + (live.cost ?? 0),
+                tokens: {
+                  input: failed.tokens.input + live.tokens.input,
+                  output: failed.tokens.output + live.tokens.output,
+                  cacheRead: failed.tokens.cacheRead + live.tokens.cacheRead,
+                  reasoning: failed.tokens.reasoning + live.tokens.reasoning,
+                },
+              }),
+          }
+        : options
     try {
-      const result = await this.wait(next, options)
+      const result = await this.wait(next, waitOptions)
       return primary.length > 0 ? { ...result, usage: [...primary, ...[result.usage ?? []].flat()] } : result
     } catch (err) {
       if (primary.length > 0 && err instanceof WorkflowError) err.carryUsage([...primary, ...[err.usage ?? []].flat()])
@@ -1252,6 +1274,22 @@ export class OpenCodeHost implements AgentHost {
     } catch (err) {
       if (err instanceof WorkflowError && !err.usage) err.carryUsage(usage)
       throw err
+    }
+  }
+
+  /**
+   * The session's spend so far, to the runtime's `stepLive` hooks (a runaway cap fires mid-step). Only when the
+   * session changed, and never able to fail the wait: a throwing pricing or listener is logged and dropped.
+   */
+  private reportUsage(h: OpenCodeHandle, messages: readonly Message[], options: AgentWaitOptions) {
+    if (!options.onUsage || !spentTokens(messages)) return
+    try {
+      options.onUsage(this.usage(h, messages))
+    } catch (err) {
+      this.logger.warn('opencode live usage report failed', {
+        sessionId: h.sessionId,
+        error: err instanceof Error ? err.message : String(err),
+      })
     }
   }
 

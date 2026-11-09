@@ -53,6 +53,13 @@ await cap.close()
 - **`toolPre`** checks wall time inside a long agent step. It throws the same error once per run and emits a
   decision only when the cap is exceeded. The runtime fails the step on a `toolPre` throw (`ToolRefused`, the agent
   session is aborted, no retry), so the run stops inside the agent step that crossed the cap.
+- **`stepLive`** closes the gap for a step that makes no tool call: the runtime calls it on a timer
+  (`liveCheckMs`, default 30 s) while any step attempt runs, and whenever the agent host reports the session's spend
+  so far (`onUsage`). It checks wall time, cost and tokens; what running steps have spent is added to the finished
+  steps' (the live figure of a step is replaced by each snapshot and dropped at its `stepPost`, so nothing counts
+  twice). It throws the same `RunawayCapExceeded` (refused as `ToolRefused`), once per step that runs over the cap.
+  Cost reaches the cap mid-step only where the host reports it (the OpenCode host does, on every change of the
+  session); otherwise it is counted at `stepPost`, and the timer still enforces wall time.
 - **Unpriced usage** (`cost` null) adds nothing to the cost metric, and the decision carries `unpricedCalls`. **When
   a run tree has unpriced calls, its cost is a lower bound and the token cap is the binding check.**
 - **Wedged agents are not this rule's job**: the runtime's idle timeout is the one liveness rule. There is no turn
@@ -135,7 +142,7 @@ or default pause (fail closed).
 
 Both rules report what they saw through `onDecision(decision)`, for the record middleware to store later:
 
-- `CapDecision`: `hook` (`stepPre` / `toolPre`), run, root, workflow, step, `allowed`, `observed` and `caps` per
+- `CapDecision`: `hook` (`stepPre` / `toolPre` / `stepLive`), run, root, workflow, step, `allowed`, `observed` and `caps` per
   metric (tree cost, tokens and wall time; this run's steps), `basis` per group (`tree`, `steps`: `learned` with
   sample and factor, or `static` with the reason), `unpricedCalls`, `exceeded`. The p95 behind a learned cap comes
   from `cap.caps(workflowId)`.
@@ -156,6 +163,8 @@ Real Postgres (`AGW_TEST_PG_URL`, throwaway schemas, a real `Runtime`):
 - fan-out capped per root tree, steps per run;
 - `unpricedCalls` in the decision;
 - wall time in `toolPre`;
+- a step that calls no tool stopped at the wall ceiling by the `stepLive` timer, and one stopped by a mid-step usage
+  report over the cost cap (a fake clock for the unit case);
 - an unreachable journal not stalling the step hooks, and stale caps served while a refresh runs;
 - failed and concurrent resume loads;
 - throwing sinks;

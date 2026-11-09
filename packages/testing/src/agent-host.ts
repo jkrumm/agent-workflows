@@ -6,6 +6,7 @@ import {
   type AgentWaitOptions,
   type Json,
   raceAbort,
+  type Usage,
 } from '@agent-workflows/runtime'
 
 /** One fake session; the script drives it like a model would. */
@@ -45,6 +46,11 @@ export class FakeSession {
   /** A new message: feeds the step's idle watchdog when someone waits. */
   progress() {
     this.waiter?.onProgress()
+  }
+
+  /** What the session has spent so far (cumulative, like a real host's snapshot): reaches the step's `stepLive` hooks. */
+  usage(usage: Usage) {
+    this.waiter?.onUsage?.(usage)
   }
 
   async tool(tool: string, input: Json, output: Json) {

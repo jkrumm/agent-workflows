@@ -177,6 +177,11 @@ export type AgentWaitOptions = {
   /** Call on every new session message or event: it feeds the idle watchdog. */
   onProgress: () => void
   onTool: (event: { phase: 'pre' | 'post' } & Omit<ToolEvent, 'runId' | 'stepId'>) => Promise<void>
+  /**
+   * Optional. What the waited-on session has spent so far, as one cumulative snapshot (each call replaces the last,
+   * never adds to it). The runtime hands it to the `stepLive` hooks, so a spend cap can fire while the step runs.
+   */
+  onUsage?: (usage: Usage) => void
 }
 
 /**
@@ -431,6 +436,12 @@ export type StepPostArgs = StepInfo & {
   error: RunError | null
 }
 
+/**
+ * A step attempt is still running. `spent` is what the step has spent so far: its earlier attempts' reports plus the
+ * live session's latest snapshot (`AgentWaitOptions.onUsage`); `cost` sums the priced reports only.
+ */
+export type StepLiveArgs = StepInfo & { status: 'running'; spent: { cost: number; tokens: number } }
+
 type Hook<A> = (args: A) => void | Promise<void>
 
 /**
@@ -438,6 +449,9 @@ type Hook<A> = (args: A) => void | Promise<void>
  * - `runPre` may throw `AdmissionRefused` (or anything) to refuse a new run; ignored when `resume` is true.
  * - `stepPre` throwing fails the step (caps); so does `toolPre`: the step's signal aborts (the agent session is
  *   aborted), the step fails with the thrown `WorkflowError`'s kind (else `middleware`) and is not retried.
+ * - `stepLive` runs on a timer (`RuntimeOptions.liveCheckMs`) while a step attempt runs, and whenever the agent host
+ *   reports usage; it covers a step that makes no tool call. Throwing refuses like `toolPre`: the step's signal
+ *   aborts (the agent session is aborted) and the step fails without a retry.
  * - Post hooks run after the commit; a throw is logged and never changes a recorded outcome. A throwing `runPost`
  *   is re-delivered (every hook again) up to the runtime's `maxPostHookAttempts`, then marked delivered and logged.
  */
@@ -447,6 +461,7 @@ export type Middleware = {
   stepPre?: Hook<StepPreArgs>
   toolPre?: Hook<ToolEvent>
   toolPost?: Hook<ToolEvent>
+  stepLive?: Hook<StepLiveArgs>
   stepPost?: Hook<StepPostArgs>
   runPost?: Hook<RunPostArgs>
 }

@@ -23,7 +23,9 @@ import type {
   Ctx,
   JudgeCaller,
   RetryPolicy,
+  StepInfo,
   StepKind,
+  StepLiveArgs,
   StepOptions,
   StepPostArgs,
   StepPreArgs,
@@ -34,6 +36,10 @@ import type {
   Widen,
   Workflow,
 } from './types.ts'
+
+/** The token figure a spend cap counts (`runawayCap` does the same at `stepPost`). */
+const tokenSum = (t: { input: number; output: number; cacheRead: number; reasoning: number }) =>
+  t.input + t.output + t.cacheRead + t.reasoning
 
 export const DEFAULT_AGENT_IDLE_MS = 5 * 60_000
 
@@ -53,6 +59,10 @@ export type ScopeHost = {
   stepPost(args: StepPostArgs): Promise<void>
   /** `{ refused }` when a `toolPre` hook threw (the step then fails), else null. */
   tool(phase: 'pre' | 'post', event: ToolEvent): Promise<Refusal | null>
+  /** Period of the `stepLive` timer; null: no timer. */
+  liveCheckMs: number | null
+  /** `{ refused }` when a `stepLive` hook threw (the step then fails), else null. */
+  stepLive(args: StepLiveArgs): Promise<Refusal | null>
   runChild(parent: RunScope, childId: string, workflow: AnyWorkflow, input: unknown): Promise<Json | null>
   trackAgent(key: string, handle: Json): void
   /** Only removes the entry when it is still this attempt's handle. */
@@ -92,6 +102,8 @@ export class RunScope {
   private readonly seen = new Set<string>()
   /** Fails the running attempt of a step from outside its body (a refusing `toolPre`). */
   private readonly refusers = new Map<string, (reason: WorkflowError) => void>()
+  /** Where an agent host's in-step usage snapshot goes, by running step: it feeds the `stepLive` hooks. */
+  private readonly liveSinks = new Map<string, (usage: Usage) => void>()
   /** The agent handle each running step last used, for `stepPost`. */
   private readonly handles = new Map<string, Json>()
   /** Agent steps called in this drive, for `ctx.continue`: the spec by step id, and the step of each object output. */
@@ -206,7 +218,9 @@ export class RunScope {
       outcome = { ok: false, error: new WorkflowError('middleware', message, { cause: refusal.refused }) }
     } else {
       for (let tries = 1; ; tries++) {
-        outcome = await this.attempt(stepId, attempt, options.idleTimeoutMs ?? null, usage, (scope) => body(scope, row))
+        outcome = await this.attempt({ ...info, attempt }, options.idleTimeoutMs ?? null, usage, (scope) =>
+          body(scope, row),
+        )
         if (outcome.ok) break
         if (this.infra) throw this.infra
         if (outcome.error instanceof InfraError) throw outcome.error
@@ -257,14 +271,18 @@ export class RunScope {
     throw new StepFailed(stepId, error?.kind ?? 'error', error?.message ?? '')
   }
 
-  /** One execution of the body, raced against cancel, lease loss, shutdown and the idle timer. */
+  /**
+   * One execution of the body, raced against cancel, lease loss, shutdown and the idle timer. While it runs the
+   * `stepLive` hooks see it on a timer and on every usage snapshot of the host, so a cap reaches a step that never
+   * calls a tool.
+   */
   private async attempt<T extends Json>(
-    stepId: string,
-    attempt: number,
+    info: StepInfo,
     idleMs: number | null,
     usage: UsageTotals,
     body: (scope: StepScope) => T | Promise<T>,
   ): Promise<{ ok: true; value: T } | { ok: false; error: unknown }> {
+    const { stepId, attempt } = info
     const idle = new AbortController()
     const refuse = new AbortController()
     const signal = AbortSignal.any([this.signal, idle.signal, refuse.signal])
@@ -278,6 +296,33 @@ export class RunScope {
     }
     progress()
     const addUsage = (u: Usage) => usage.add(u)
+    // The live session's latest cumulative snapshot; the reports of earlier attempts are already in `usage`.
+    let live: Usage | null = null
+    let checking = false
+    const checkLive = async () => {
+      if (checking || signal.aborted || finished) return
+      checking = true
+      try {
+        const spent = usage.snapshot()
+        const refusal = await this.rt.stepLive({
+          ...info,
+          status: 'running',
+          spent: {
+            cost: (spent.cost ?? 0) + (live?.cost ?? 0),
+            tokens: tokenSum(spent.tokens) + (live ? tokenSum(live.tokens) : 0),
+          },
+        })
+        if (refusal && !signal.aborted && !finished) refuse.abort(new ToolRefused(refusal.refused, 'stepLive'))
+      } finally {
+        checking = false
+      }
+    }
+    const liveMs = this.rt.liveCheckMs
+    const liveTimer = liveMs === null ? undefined : setInterval(() => void checkLive(), liveMs)
+    this.liveSinks.set(stepId, (snapshot) => {
+      live = snapshot
+      void checkLive()
+    })
     const attribution = this.attribution(stepId)
     const arm = this.run.arm ? { arm: this.run.arm } : {}
     const scope: StepScope = {
@@ -306,7 +351,9 @@ export class RunScope {
     } finally {
       finished = true
       clearTimeout(timer)
+      clearInterval(liveTimer)
       this.refusers.delete(stepId)
+      this.liveSinks.delete(stepId)
     }
   }
 
@@ -542,6 +589,7 @@ export class RunScope {
           .wait(current.handle, {
             signal: scope.signal,
             onProgress: scope.progress,
+            onUsage: (snapshot) => this.liveSinks.get(stepId)?.(snapshot),
             onTool: async ({ phase, ...event }) => {
               const refusal = await this.rt.tool(phase, { ...event, runId, stepId })
               if (!refusal) return

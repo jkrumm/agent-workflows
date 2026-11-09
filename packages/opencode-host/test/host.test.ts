@@ -149,6 +149,33 @@ describe('open / prompt / wait', () => {
     expect(one(result.usage)?.route).toBe('check')
   })
 
+  test('a wait reports the session spend so far while it polls: a snapshot, not a delta', async () => {
+    const t = setup()
+    const handle = await t.host.open(spec('hello'))
+    await t.host.prompt(handle, 'hello')
+    const snapshots: Usage[] = []
+    const result = await t.host.wait(handle, waitOptions({ onUsage: (usage) => snapshots.push(usage) }))
+    expect(snapshots.length).toBeGreaterThanOrEqual(1)
+    expect(snapshots.at(-1)?.tokens).toEqual(one(result.usage)?.tokens as Usage['tokens'])
+    expect(snapshots.at(-1)?.cost).toBe(one(result.usage)?.cost)
+  })
+
+  test('a throwing usage listener never fails the wait', async () => {
+    const t = setup()
+    const handle = await t.host.open(spec('hello'))
+    await t.host.prompt(handle, 'hello')
+    const result = await t.host.wait(
+      handle,
+      waitOptions({
+        onUsage: () => {
+          throw new Error('listener broke')
+        },
+      }),
+    )
+    expect(result.output).toBe('echo: hello')
+    expect(t.warnings).toContain('opencode live usage report failed')
+  })
+
   test('prompt is idempotent: a second call reads the session and sends nothing', async () => {
     const t = setup()
     const handle = await t.host.open(spec('once'))
@@ -381,6 +408,23 @@ describe('attribution in metadata.agw', () => {
     await t.host.wait(handle, waitOptions())
     const fallback = Object.keys(t.fake.state.sessions).find((id) => id !== sid(handle)) as string
     expect(stored(t, fallback)).toMatchObject({ fallbackOf: sid(handle), ...ATTRIBUTION })
+  })
+
+  test('after a provider-balance fallback the live usage still holds the failed primary turn', async () => {
+    const t = setup()
+    const handle = JSON.parse(JSON.stringify(await t.host.open(spec('x')))) as Json
+    await t.host.prompt(handle, '[balance] review this')
+    const snapshots: Usage[] = []
+    const result = await t.host.wait(handle, waitOptions({ onUsage: (usage) => snapshots.push(usage) }))
+    const reports = [result.usage ?? []].flat()
+    const sum = (pick: (u: Usage) => number) => reports.reduce((n, u) => n + pick(u), 0)
+    expect(snapshots.length).toBeGreaterThanOrEqual(1)
+    expect(snapshots.at(-1)?.tokens.input).toBe(sum((u) => u.tokens.input))
+    expect(snapshots.at(-1)?.tokens.output).toBe(sum((u) => u.tokens.output))
+    expect(snapshots.at(-1)?.cost).toBeCloseTo(
+      sum((u) => u.cost ?? 0),
+      9,
+    )
   })
 
   test('origin rides with the run; only the fallback session names a refusal, as unknown, on its follow-up turn too', async () => {

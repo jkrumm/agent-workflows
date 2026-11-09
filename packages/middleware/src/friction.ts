@@ -77,6 +77,8 @@ export type FrictionCounter = (typeof FRICTION_COUNTERS)[number]
 /** The message prefixes of the two money rules (`@agent-workflows/limits`); the host's tests pin them to the real ones. */
 export const WALLET_REFUSAL_PREFIX = 'wallet gate:'
 export const RUNAWAY_CAP_PREFIX = 'runaway cap:'
+/** The runtime wraps what a `toolPre` or `stepLive` hook threw (`ToolRefused`): the cap's message follows this. */
+const HOOK_REFUSAL = /^(?:toolPre|stepLive) refused: /
 
 /** Session probes in flight at once across a run's agent steps. */
 export const PROBE_CONCURRENCY = 4
@@ -113,7 +115,9 @@ export function stepEvent(step: {
 }): FrictionEvent | null {
   if (step.status !== 'failed') return null
   if (step.kind === 'agent' && step.errorKind === 'invalid_output') return 'invalid_output'
-  if (step.errorKind === 'middleware' && step.message?.startsWith(RUNAWAY_CAP_PREFIX)) return 'budget'
+  if (step.errorKind === 'middleware' && step.message?.replace(HOOK_REFUSAL, '').startsWith(RUNAWAY_CAP_PREFIX)) {
+    return 'budget'
+  }
   return null
 }
 

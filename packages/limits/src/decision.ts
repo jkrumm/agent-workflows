@@ -19,7 +19,7 @@ export type Caps = { values: Metrics; p95: Partial<Metrics>; basis: { tree: CapB
 
 export type CapDecision = {
   rule: 'runaway-cap'
-  hook: 'stepPre' | 'toolPre'
+  hook: 'stepPre' | 'toolPre' | 'stepLive'
   runId: string
   rootId: string
   workflowId: string

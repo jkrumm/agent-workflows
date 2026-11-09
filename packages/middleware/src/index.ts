@@ -22,6 +22,7 @@ export {
   PROBE_CONCURRENCY,
   RUNAWAY_CAP_PREFIX,
   type SessionCounters,
+  stepEvent,
   type StepSessions,
   totalsOf,
   WALLET_REFUSAL_PREFIX,

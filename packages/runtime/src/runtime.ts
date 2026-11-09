@@ -33,6 +33,7 @@ import type {
   ScoredRunFilter,
   StartOptions,
   Usage,
+  StepLiveArgs,
   StepPostArgs,
   StepPreArgs,
   ToolEvent,
@@ -91,6 +92,12 @@ export type RuntimeOptions = {
   postHookTimeoutMs?: number
   /** The same guard on `host.abort` while a cancelled run is cleaned up; a timeout is logged like a failed abort. Default 30 s. */
   hostAbortTimeoutMs?: number
+  /**
+   * How often the `stepLive` hooks run while a step attempt is running (a runaway cap watches wall time and spend
+   * there, also for a step that makes no tool call). `null` turns the timer off; host-reported usage still calls
+   * the hooks. Default 30 s.
+   */
+  liveCheckMs?: number | null
   logger?: Logger
   /**
    * The capability caller a scorer gets as `judge` for an LLM-judged sub-score: regression and drift always, the
@@ -212,6 +219,8 @@ export class Runtime {
       bodyGraceMs: options.bodyGraceMs ?? 30_000,
       stepPost: (args) => this.stepPost(args),
       tool: (phase, event) => this.tool(phase, event),
+      liveCheckMs: options.liveCheckMs === undefined ? 30_000 : options.liveCheckMs,
+      stepLive: (args) => this.stepLive(args),
       runChild: (parent, childId, workflow, input) => this.runChild(parent, childId, workflow, input),
       trackAgent: (key, handle) => this.agents.set(key, handle),
       untrackAgent: (key, handle) => {
@@ -949,6 +958,19 @@ export class Runtime {
       } catch (err) {
         if (phase === 'pre') return { refused: err }
         this.logger.error('toolPost threw', { middleware: m.name, runId: event.runId, error: errorMessage(err) })
+      }
+    }
+    return null
+  }
+
+  /** A throwing `stepLive` refuses like `toolPre`: the step fails and its session is aborted. */
+  private async stepLive(args: StepLiveArgs): Promise<Refusal | null> {
+    for (const m of this.middleware) {
+      if (!m.stepLive) continue
+      try {
+        await m.stepLive(args)
+      } catch (err) {
+        return { refused: err }
       }
     }
     return null

@@ -1,4 +1,4 @@
-import { afterAll, afterEach, describe, expect, test } from 'bun:test'
+import { afterAll, afterEach, describe, expect, setSystemTime, test } from 'bun:test'
 import { defineWorkflow, type Middleware, type Runtime } from '@agent-workflows/runtime'
 import { FakeAgentHost } from '@agent-workflows/testing/agent-host'
 import { z } from 'zod'
@@ -677,5 +677,143 @@ describe('runaway cap, runPost interleaving', () => {
     await Bun.sleep(50)
     expect(cap.toolPre?.(tool)).toBeUndefined()
     expect(decisions).toHaveLength(count)
+  })
+})
+
+describe('runaway cap, while an agent step runs', () => {
+  const agentic = (id: string) =>
+    defineWorkflow({
+      id,
+      version: 'v1',
+      input: empty,
+      output: empty,
+      async run(ctx) {
+        await ctx.agent('think', { agent: 'worker', prompt: 'go' })
+        await ctx.step('after', () => 1)
+        return {}
+      },
+    })
+
+  test('a step that calls no tool is aborted at the wall ceiling by the runtime timer', async () => {
+    const wf = agentic('cap.live-wall')
+    // Quiet for far longer than the ceiling; only the timer can reach it (no tool event, no usage report).
+    const host = new FakeAgentHost(async (session) => {
+      await session.sleep(5000, 25)
+      return { output: { done: true } }
+    })
+    const { spied, decisions } = capWithSpy({ ceilings: { [wf.id]: { wallMs: 300 } } })
+    const rt = await started(
+      testRuntime({ schema: db.schema, workflows: [wf], host, middleware: [spied], liveCheckMs: 25 }),
+    )
+    const t0 = Date.now()
+    const result = await rt.wait((await rt.start(wf, {}, { purpose: 'test' })).runId)
+    expect(Date.now() - t0).toBeLessThan(3000)
+    expect(result).toMatchObject({ status: 'failed', error: { kind: 'step_failed' } })
+    const think = await sql.step(result.runId, 'think')
+    expect(think).toMatchObject({ status: 'failed', error_kind: 'middleware', attempts: 1 })
+    expect(String(think?.error)).toContain('stepLive refused')
+    expect(String(think?.error)).toContain('runaway cap: wallMs')
+    expect(host.count('abort')).toBe(1)
+    expect(await sql.step(result.runId, 'after')).toBeUndefined()
+    expect(decisions.find((d): d is CapDecision => d.rule === 'runaway-cap' && d.hook === 'stepLive')).toMatchObject({
+      allowed: false,
+      exceeded: 'wallMs',
+      stepId: 'think',
+    })
+  })
+
+  test('a usage report over the cost cap aborts the step, with the timer off', async () => {
+    const wf = agentic('cap.live-cost')
+    const host = new FakeAgentHost(async (session) => {
+      await session.attached
+      session.usage(costUsage(0.2, 100))
+      await session.sleep(50)
+      session.usage(costUsage(0.9, 900)) // cumulative: the session now holds 0.9
+      await session.sleep(5000, 25)
+      return { output: { done: true } }
+    })
+    const { spied, decisions } = capWithSpy({ ceilings: { [wf.id]: { cost: 0.5 } } })
+    const rt = await started(
+      testRuntime({ schema: db.schema, workflows: [wf], host, middleware: [spied], liveCheckMs: null }),
+    )
+    const result = await rt.wait((await rt.start(wf, {}, { purpose: 'test' })).runId)
+    expect(result).toMatchObject({ status: 'failed', error: { kind: 'step_failed' } })
+    expect(String((await sql.step(result.runId, 'think'))?.error)).toContain('runaway cap: cost')
+    expect(host.count('abort')).toBe(1)
+    const live = decisions.filter((d): d is CapDecision => d.rule === 'runaway-cap' && d.hook === 'stepLive')
+    expect(live).toHaveLength(1)
+    expect(live[0]).toMatchObject({ allowed: false, exceeded: 'cost', caps: { cost: 0.5 } })
+    expect(live[0]?.observed.cost).toBeCloseTo(0.9, 6)
+  })
+
+  test('with a fake clock: wall ceiling and live spend stop a step, and stepPost does not count its spend twice', async () => {
+    const cap = runawayCap({
+      connectionString: PG_URL,
+      schema: db.schema,
+      logger: captureLogger(),
+      ceilings: { 'cap.clock': { cost: 1, wallMs: 60_000 } },
+    })
+    open.push(cap)
+    const info = {
+      runId: 'clock-1',
+      workflowId: 'cap.clock',
+      version: 'v1',
+      purpose: 'test',
+      parentId: null,
+      rootId: 'clock-1',
+      input: {},
+      traceparent: null,
+    }
+    const step = (stepId: string) => ({
+      runId: 'clock-1',
+      workflowId: 'cap.clock',
+      version: 'v1',
+      stepId,
+      kind: 'agent' as const,
+      attempt: 1,
+      startedAt: new Date(),
+      status: 'running' as const,
+    })
+    const live = (stepId: string, cost: number, tokens = 0) => ({ ...step(stepId), spent: { cost, tokens } })
+    const start = Date.now()
+    try {
+      setSystemTime(new Date(start))
+      await cap.runPre?.({ ...info, resume: false })
+
+      setSystemTime(new Date(start + 59_000))
+      expect(cap.stepLive?.(live('a', 0.4))).toBeUndefined()
+      // Two running steps add up: 0.4 + 0.7 is over the 1.0 cap.
+      expect(() => cap.stepLive?.(live('b', 0.7))).toThrow(
+        expect.objectContaining({ name: 'RunawayCapExceeded', metric: 'cost' }),
+      )
+      // A snapshot replaces the step's earlier one instead of adding to it.
+      expect(cap.stepLive?.(live('b', 0.5))).toBeUndefined()
+
+      // The finished step moves from live into the root: still 0.4 + 0.5, not 0.4 + 0.4 + 0.5.
+      await cap.stepPost?.({
+        ...step('a'),
+        status: 'done',
+        finishedAt: new Date(),
+        usage: {
+          tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0 },
+          cost: 0.4,
+          toolCalls: 0,
+          unpricedCalls: 0,
+          byModel: {},
+        },
+        handle: null,
+        output: null,
+        error: null,
+      })
+      expect(cap.stepLive?.(live('b', 0.5))).toBeUndefined()
+
+      // The 60 s ceiling passes while step b runs and calls no tool.
+      setSystemTime(new Date(start + 61_000))
+      expect(() => cap.stepLive?.(live('b', 0.5))).toThrow(
+        expect.objectContaining({ name: 'RunawayCapExceeded', metric: 'wallMs' }),
+      )
+    } finally {
+      setSystemTime()
+    }
   })
 })
