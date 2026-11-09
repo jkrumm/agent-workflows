@@ -162,6 +162,30 @@ export function contextAlias(model: string, limit: number): string {
 /** What a model row is built from: a route's, or a bare Claude model with its table rate. */
 type RowSource = Pick<ResolvedRoute, 'model' | 'maxOutputTokens'> & { rate?: Rate | null }
 
+/**
+ * One row per model for routes that may share it: OpenCode prices and limits a model, not a route, so the row must not
+ * depend on which route comes first. The output limit is the strictest of the routes that set one (a route without
+ * one takes it too: the model is capped for all), and the rate must be the same on every route, else the build fails
+ * naming the model and the routes (a rate cannot be both).
+ */
+function sharedRows(routes: readonly ResolvedRoute[]): Map<string, ReturnType<typeof modelRow>> {
+  const byModel = new Map<string, ResolvedRoute[]>()
+  for (const route of routes) byModel.set(route.model, [...(byModel.get(route.model) ?? []), route])
+  const rows = new Map<string, ReturnType<typeof modelRow>>()
+  for (const [model, sharing] of byModel) {
+    const first = sharing[0] as ResolvedRoute
+    const conflicting = sharing.filter((r) => JSON.stringify(r.rate ?? null) !== JSON.stringify(first.rate ?? null))
+    if (conflicting.length > 0) {
+      const ids = [first, ...conflicting].map((r) => `${r.id}${r.isFallback ? ' (fallback)' : ''}`).join(', ')
+      throw new Error(`model "${model}" has different rates on routes ${ids}; OpenCode prices a model, not a route`)
+    }
+    const limits = sharing.flatMap((r) => (r.maxOutputTokens ? [r.maxOutputTokens] : []))
+    const maxOutputTokens = limits.length > 0 ? Math.min(...limits) : undefined
+    rows.set(model, modelRow({ model, rate: first.rate, maxOutputTokens }, providerFor(model)))
+  }
+  return rows
+}
+
 function modelRow(route: RowSource, provider: string) {
   const rate = route.rate ?? null
   return {
@@ -207,8 +231,9 @@ function variantSettings(effort: string, provider: string): Record<string, unkno
  * `OPENCODE_CONFIG_CONTENT`: the three providers with every `opencode`-wire route's model and its fallback's, and every
  * Claude model (`CLAUDE_MODELS`, priced with `claudeRate`, Opus included though no route runs it), each with every
  * effort variant it can run (`EFFORTS`; a Sonnet has no `none`), so a run whose arm moves an agent route to another of
- * these models or effort opens its session on the running server, without a restart. Each model's row takes the rate
- * and output limit of the first route naming it (the table names one rate per model). The
+ * these models or effort opens its session on the running server, without a restart. A model is one row whatever
+ * routes share it (`sharedRows`): the strictest output limit of them, and one rate (routes naming different rates for
+ * a model fail the build). `options.routes` replaces the table's routes (tests). The
  * attribution plugin (`options.plugin`, an absolute directory), no updates, no share. The only credential is the door
  * token, by reference to the server's env.
  * Each Claude model also has one bounded row per `CONTEXT_LIMITS` value, `<model>~ctx<limit>` (`contextAlias`), for a
@@ -221,16 +246,17 @@ function variantSettings(effort: string, provider: string): Record<string, unkno
  * question: `question` is denied and so is `external_directory` (its base policy is `ask`). An agent's own rules go in
  * its location's `opencode.json` (`AgentDefinition.config`).
  */
-export function buildServerConfig(options: { plugin?: string } = {}): Record<string, unknown> {
+export function buildServerConfig(
+  options: { plugin?: string; routes?: readonly ResolvedRoute[] } = {},
+): Record<string, unknown> {
   const models: Record<string, Record<string, unknown>> = {
     [PROVIDER_ANTHROPIC]: {},
     [PROVIDER_CHAT]: {},
     [PROVIDER_RESPONSES]: {},
   }
-  for (const route of opencodeRoutes()) {
-    const provider = providerFor(route.model)
-    const rows = models[provider] as Record<string, unknown>
-    rows[route.model] ??= modelRow(route, provider)
+  for (const [model, row] of sharedRows(options.routes ?? opencodeRoutes())) {
+    const rows = models[providerFor(model)] as Record<string, unknown>
+    rows[model] = row
   }
   for (const model of CLAUDE_MODELS) {
     const rows = models[PROVIDER_ANTHROPIC] as Record<string, unknown>

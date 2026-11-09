@@ -419,7 +419,7 @@ export class OpenCodeHost implements AgentHost {
     const location = compileLocation(tool ? withResultTool(def, tool) : def, { stateDir: this.options.stateDir })
     this.current.set(def.name, location.directory)
     touchLocation(location.directory)
-    await this.options.server.ready()
+    await this.options.server.ready(spec.signal)
     const warmed = await this.cache.use(location.directory, { changed: location.changed })
     const headers = this.headers(spec.runId, spec.stepId)
     let sessionId: string

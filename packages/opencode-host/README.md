@@ -178,7 +178,7 @@ turn's tokens; the gateway's usage rows do.
   never a boot loop.
 - **Liveness:** `GET /api/info` with a 2 s guard every `livenessIntervalMs` (5 s). `failuresBeforeRestart` (3)
   misses in a row, or the child's exit: SIGTERM, `termGraceMs` (5 s), SIGKILL, a new server on the same port and
-  data dir. Every restart marks the warm cache cold. `ready()` blocks callers while a restart is in flight.
+  data dir. Every restart marks the warm cache cold. `ready(signal)` blocks callers while a restart is in flight and rejects on the signal (`open` passes the step's), after `bootFailuresBeforeFail` failed boots in a row (default 5; the liveness tick then starts a new round), and once `close()` ran, which also ends a restart's backoff and leaves the gate shut. One model row serves every route naming the model: the strictest `limit.output` of them, and routes naming different rates for it fail the config build.
 - **No cap.** Nothing in the host counts turns or wall time. The runtime's idle timeout, fed by `onProgress`,
   is the only stop for a session (`rules/agent-limits.md`).
 

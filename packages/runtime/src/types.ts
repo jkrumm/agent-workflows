@@ -160,6 +160,8 @@ export type AgentOpenSpec = {
   attribution: Attribution
   /** The run's arm, absent for a run without one: the host resolves the step's route with `arm.routes`. */
   arm?: Arm
+  /** The step's cancel and timeout: a host that waits on anything while opening (a server coming back) stops on it. */
+  signal?: AbortSignal
 }
 
 export type ToolEvent = {

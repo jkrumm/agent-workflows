@@ -45,6 +45,8 @@ function setup(
     turnMs?: number
     agents?: AgentDefinition[]
     traceparent?: (runId: string, stepId: string) => string | undefined
+    /** Replaces the port's `ready`. */
+    ready?: ServerPort['ready']
   } = {},
 ) {
   const dir = mkdtempSync(join(tmpdir(), 'och-host-'))
@@ -53,7 +55,7 @@ function setup(
   const port = fake.port
   const server: ServerPort = {
     endpoint: () => ({ baseUrl: `http://127.0.0.1:${port}`, password: 'pw' }),
-    ready: async () => {},
+    ready: options.ready ?? (async () => {}),
   }
   const warnings: string[] = []
   const makeHost = (agents = options.agents ?? [AGENT], locations: Record<string, number> = {}, pinTtlMs?: number) =>
@@ -174,6 +176,24 @@ describe('open / prompt / wait', () => {
     )
     expect(result.output).toBe('echo: hello')
     expect(t.warnings).toContain('opencode live usage report failed')
+  })
+
+  test('open waits for the server with the step signal: a cancel reaches it while the server is down', async () => {
+    const seen: (AbortSignal | undefined)[] = []
+    const t = setup({
+      // A server in its respawn loop: ready() settles only when the caller's signal aborts.
+      ready: (signal) => {
+        seen.push(signal)
+        return new Promise<void>((_, reject) => signal?.addEventListener('abort', () => reject(signal.reason)))
+      },
+    })
+    const ctl = new AbortController()
+    const opening = t.host.open({ ...spec('hello'), signal: ctl.signal })
+    await until(() => seen.length === 1, 'open waiting for the server')
+    expect(seen[0]).toBe(ctl.signal)
+    ctl.abort(new Error('cancelled'))
+    expect(await failure(opening)).toBe('cancelled')
+    expect(t.fake.count('POST /api/session')).toBe(0)
   })
 
   test('prompt is idempotent: a second call reads the session and sends nothing', async () => {

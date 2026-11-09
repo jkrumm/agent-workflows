@@ -49,6 +49,12 @@ export type ServerOptions = {
   termGraceMs?: number
   /** A started server must answer `/api/info` within this long, else it is killed and started again. Default 60 s. */
   bootTimeoutMs?: number
+  /**
+   * Failed boots in a row (binary missing, port taken, boot timeout) after which a restart gives up and `ready()`
+   * rejects with the last error, instead of blocking its callers forever. The liveness tick starts a fresh round.
+   * Default 5 (about 30 s of backoff).
+   */
+  bootFailuresBeforeFail?: number
   expectedVersion?: string
   logger?: Logger
 }
@@ -158,7 +164,12 @@ export class OpenCodeServer {
   private readonly opts: Required<
     Pick<
       ServerOptions,
-      'livenessIntervalMs' | 'livenessTimeoutMs' | 'failuresBeforeRestart' | 'termGraceMs' | 'bootTimeoutMs'
+      | 'livenessIntervalMs'
+      | 'livenessTimeoutMs'
+      | 'failuresBeforeRestart'
+      | 'termGraceMs'
+      | 'bootTimeoutMs'
+      | 'bootFailuresBeforeFail'
     >
   >
   private readonly expectedVersion: string
@@ -169,6 +180,8 @@ export class OpenCodeServer {
   private restarting: Promise<void> | null = null
   private healthy = new Gate()
   private closed = false
+  /** Aborted by `close()`: cuts a restart's backoff short. */
+  private readonly shutdown = new AbortController()
   private config: Record<string, unknown> | null
   private restarts = 0
   private readonly restartListeners = new Set<() => void>()
@@ -186,6 +199,7 @@ export class OpenCodeServer {
       failuresBeforeRestart: options.failuresBeforeRestart ?? 3,
       termGraceMs: options.termGraceMs ?? 5_000,
       bootTimeoutMs: options.bootTimeoutMs ?? 60_000,
+      bootFailuresBeforeFail: options.bootFailuresBeforeFail ?? 5,
     }
   }
 
@@ -209,7 +223,10 @@ export class OpenCodeServer {
     return this.restarts
   }
 
-  /** Resolves while the server answers; during a restart, once it answers again. Rejects on `signal`. */
+  /**
+   * Resolves while the server answers; during a restart, once it answers again. Rejects on `signal`, with the last
+   * error when a restart gave up (`bootFailuresBeforeFail`), and once the supervisor is closed.
+   */
   ready(signal?: AbortSignal): Promise<void> {
     const open = this.healthy.promise
     if (!signal) return open
@@ -217,10 +234,7 @@ export class OpenCodeServer {
     return new Promise<void>((resolve, reject) => {
       const onAbort = () => reject(signal.reason)
       signal.addEventListener('abort', onAbort, { once: true })
-      void open.then(() => {
-        signal.removeEventListener('abort', onAbort)
-        resolve()
-      })
+      open.then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort))
     })
   }
 
@@ -235,6 +249,9 @@ export class OpenCodeServer {
   /** Stops supervising. `stop: true` also terminates the server (tests, uninstall); a deploy leaves it running. */
   async close(options: { stop?: boolean } = {}): Promise<void> {
     this.closed = true
+    this.shutdown.abort()
+    // A restart in its backoff must not reopen the gate behind this: whoever waits on the server is told it is gone.
+    this.healthy.fail(new Error('opencode server supervisor is closed'))
     if (this.timer) clearInterval(this.timer)
     this.timer = null
     await this.restarting?.catch(() => {})
@@ -244,22 +261,32 @@ export class OpenCodeServer {
   /** Forces a restart now (tests, operator). */
   restart(reason: string): Promise<void> {
     if (this.restarting) return this.restarting
+    if (this.closed) return Promise.resolve()
     this.healthy.close()
     const run = (async () => {
       this.logger.warn('opencode server restart', { reason, pid: this.proc?.pid ?? null })
       if (this.proc) await this.terminate(this.proc)
       this.proc = null
       let backoff = 1_000
+      let failedBoots = 0
       while (!this.closed) {
         try {
           await this.spawnAndBoot()
           break
         } catch (err) {
-          this.logger.error('opencode server failed to start', { error: (err as Error).message })
-          await Bun.sleep(backoff)
+          const message = (err as Error).message
+          this.logger.error('opencode server failed to start', { error: message })
+          if (++failedBoots >= this.opts.bootFailuresBeforeFail) {
+            this.healthy.fail(new Error(`opencode server failed to start ${failedBoots} times in a row: ${message}`))
+            this.failures = 0
+            return
+          }
+          await sleepUnless(backoff, this.shutdown.signal)
           backoff = Math.min(backoff * 2, 30_000)
         }
       }
+      // Closed meanwhile: `close()` has failed the gate, and nothing here reopens it.
+      if (this.closed) return
       this.failures = 0
       this.restarts++
       for (const listener of this.restartListeners) listener()
@@ -528,28 +555,57 @@ function adoptedProc(pid: number): Proc {
   return { pid, alive, waitExit }
 }
 
-/** Open: `promise` is resolved. Closed: a fresh pending promise until the next `open()`. */
+/**
+ * Open: `promise` is resolved. Closed: a fresh pending promise until the next `open()` or `fail()`. Failed: `promise`
+ * is rejected and stays so until `close()` makes it pending again; `open()` does not undo a failure.
+ */
 class Gate {
-  promise: Promise<void> = new Promise(() => {})
-  private release: (() => void) | null = null
-  private isOpen = false
+  promise: Promise<void> = Promise.resolve()
+  /** Set while the promise is pending. */
+  private pending: { resolve: () => void; reject: (error: Error) => void } | null = null
 
   constructor() {
     this.close()
   }
 
   open(): void {
-    this.isOpen = true
-    this.release?.()
+    const pending = this.pending
+    this.pending = null
+    pending?.resolve()
   }
 
   close(): void {
-    if (!this.isOpen && this.release) return
-    this.isOpen = false
-    this.promise = new Promise((resolve) => {
-      this.release = resolve
+    if (this.pending) return
+    this.promise = new Promise((resolve, reject) => {
+      this.pending = { resolve, reject }
     })
   }
+
+  fail(error: Error): void {
+    const pending = this.pending
+    this.pending = null
+    if (pending) {
+      pending.reject(error)
+    } else {
+      this.promise = Promise.reject(error)
+    }
+    // Waiters get the error; a gate nobody waits on is not an unhandled rejection.
+    this.promise.catch(() => {})
+  }
+}
+
+/** Resolves after `ms`, or at once when `signal` aborts. */
+function sleepUnless(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal.aborted) return resolve()
+    const timer = setTimeout(done, ms)
+    function done() {
+      clearTimeout(timer)
+      signal.removeEventListener('abort', done)
+      resolve()
+    }
+    signal.addEventListener('abort', done, { once: true })
+  })
 }
 
 function freePort(): Promise<number> {

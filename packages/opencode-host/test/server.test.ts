@@ -180,6 +180,64 @@ describe('OpenCodeServer', () => {
     expect(s.pid).not.toBe(before)
   })
 
+  describe('a server that cannot be started again', () => {
+    /** The fake binary until `down` exists, then a process that exits at once (a binary gone, a port taken). */
+    function breakable() {
+      const dir = scratch()
+      const down = join(dir, 'down')
+      const script = join(dir, 'opencode.sh')
+      writeFileSync(script, `#!/bin/sh\n[ -e "${down}" ] && exit 1\nexec ${BIN.join(' ')} "$@"\n`)
+      return { dir, command: ['sh', script], down }
+    }
+    const failedStarts = (warnings: string[]) => warnings.filter((w) => w === 'opencode server failed to start').length
+
+    test('ready rejects after the configured failed boots in a row instead of blocking, and recovers on restart', async () => {
+      const b = breakable()
+      const { s, warnings } = server(b.dir, { command: b.command, bootFailuresBeforeFail: 2 })
+      await s.start()
+      writeFileSync(b.down, '')
+      process.kill(s.pid as number, 'SIGKILL')
+      await until(() => warnings.includes('opencode server restart')) // the gate is closed from here
+      expect(await failure(s.ready())).toContain('failed to start 2 times in a row')
+      rmSync(b.down)
+      await s.restart('operator')
+      await s.ready()
+      expect(s.restartCount).toBeGreaterThanOrEqual(1)
+    })
+
+    test('an aborted ready rejects during the respawn loop; the loop goes on', async () => {
+      const b = breakable()
+      const { s, warnings } = server(b.dir, { command: b.command, bootFailuresBeforeFail: 100 })
+      await s.start()
+      writeFileSync(b.down, '')
+      process.kill(s.pid as number, 'SIGKILL')
+      await until(() => failedStarts(warnings) >= 1)
+      const ctl = new AbortController()
+      const waiting = s.ready(ctl.signal)
+      ctl.abort(new Error('cancelled'))
+      expect(await failure(waiting)).toBe('cancelled')
+      expect(await failure(s.ready(ctl.signal))).toBe('cancelled') // already aborted
+      rmSync(b.down)
+      await s.ready() // the loop was not stopped by the abort: the next boot succeeds
+    })
+
+    test('close during the backoff ends the loop at once and does not reopen the gate', async () => {
+      const b = breakable()
+      const { s, warnings } = server(b.dir, { command: b.command, bootFailuresBeforeFail: 100 })
+      await s.start()
+      writeFileSync(b.down, '')
+      process.kill(s.pid as number, 'SIGKILL')
+      await until(() => failedStarts(warnings) >= 1) // now in the 1 s backoff
+      rmSync(b.down) // a boot after the backoff would succeed
+      const started = Date.now()
+      await s.close()
+      expect(Date.now() - started).toBeLessThan(800)
+      expect(await failure(s.ready())).toContain('closed')
+      expect(s.restartCount).toBe(0)
+      expect(failedStarts(warnings)).toBe(1)
+    })
+  })
+
   test('a new host process adopts the running server instead of spawning one', async () => {
     const dir = scratch()
     const first = server(dir).s
@@ -453,6 +511,53 @@ describe('buildServerConfig', () => {
       'question:deny',
       'external_directory:deny',
     ])
+  })
+})
+
+describe('buildServerConfig: routes that share a model', () => {
+  type Row = { limit?: { output?: number; context?: number }; cost?: { input: number } }
+  const rowOf = (config: Record<string, unknown>, model: string) =>
+    (config.providers as Record<string, { models: Record<string, Row> }>)[PROVIDER_ANTHROPIC]?.models[model]
+  const base = resolveRoute('check')
+  const route = (id: string, over: Partial<ReturnType<typeof resolveRoute>>) =>
+    ({ ...base, id, ...over }) as ReturnType<typeof resolveRoute>
+
+  test('the row takes the strictest output limit of the routes naming the model, whichever comes first', () => {
+    const wide = route('brain.agent', { maxOutputTokens: 32_000 })
+    const narrow = route('research.agent', { maxOutputTokens: 16_000 })
+    for (const routes of [
+      [wide, narrow],
+      [narrow, wide],
+    ]) {
+      const config = buildServerConfig({ routes })
+      expect(rowOf(config, base.model)?.limit?.output).toBe(16_000)
+      // the bounded copies are made from that row
+      expect(rowOf(config, `${base.model}~ctx100000`)?.limit?.output).toBe(16_000)
+    }
+  })
+
+  test('a route with no limit does not widen the row of a limited one, and a model no route limits has none', () => {
+    const open = route('check', {})
+    delete open.maxOutputTokens
+    const limited = route('otel.agent', { maxOutputTokens: 16_000 })
+    expect(rowOf(buildServerConfig({ routes: [open, limited] }), base.model)?.limit?.output).toBe(16_000)
+    expect(rowOf(buildServerConfig({ routes: [open] }), base.model)?.limit).toBeUndefined()
+  })
+
+  test('different rates for one model fail the build, naming the model and the routes', () => {
+    const rate = base.rate as NonNullable<typeof base.rate>
+    const dearer = route('research.agent', { rate: { ...rate, outputPerM: rate.outputPerM * 2 } })
+    expect(() => buildServerConfig({ routes: [route('check', {}), dearer] })).toThrow(
+      new RegExp(`model "${base.model}" has different rates on routes check, research.agent`),
+    )
+    // the same rate on every route is one row, priced from it
+    expect(
+      rowOf(buildServerConfig({ routes: [route('check', {}), route('otel.agent', {})] }), base.model)?.cost?.input,
+    ).toBe(rate.inputPerM)
+  })
+
+  test('the table itself builds: every shared model has one consistent rate', () => {
+    expect(() => buildServerConfig()).not.toThrow()
   })
 })
 

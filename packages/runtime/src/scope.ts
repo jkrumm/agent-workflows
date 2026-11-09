@@ -389,6 +389,7 @@ export class RunScope {
           ...(spec.output ? outputSchema(spec.output) : {}),
           attribution: scope.attribution,
           ...(scope.arm ? { arm: scope.arm } : {}),
+          signal: scope.signal,
         })
       },
     })
