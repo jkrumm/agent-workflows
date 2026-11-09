@@ -574,6 +574,8 @@ main() {
     sha=$(git -C "$repo_root" rev-parse origin/master 2>/dev/null || print "<origin/master sha>")
     old=$(read_sha "$SHA_FILE")
     [[ -n "$old" && "$old" != "$sha" && -f "$RELEASES/$old/.complete" ]] && prev="$old"
+    [[ -n "$old" && "$old" != "$sha" && -z "$prev" ]] \
+      && log "REFUSED: deployed-sha names ${old[1,12]}, but $RELEASES/$old has no .complete marker; the real deploy dies before stopping anything"
     release="$RELEASES/$sha"
     log "DRY RUN: nothing is changed. Release ${sha[1,12]}, live ${old:-none}, processes: ${PROCESSES[*]}"
     log "preflight: would read $API_SECRET_REF through secrets-run (value never printed)"
@@ -682,7 +684,12 @@ main() {
 
   # The release that is live now is the rollback target, unless it is the one being deployed again.
   old=$(read_sha "$SHA_FILE")
-  [[ -n "$old" && "$old" != "$sha" && -f "$RELEASES/$old/.complete" ]] && prev="$old"
+  # A live sha whose release is gone or incomplete leaves no rollback target: a failed deploy would take the "first
+  # deploy" path and leave the already stopped service down with its plists removed. Refused before anything is stopped.
+  if [[ -n "$old" && "$old" != "$sha" && ! -f "$RELEASES/$old/.complete" ]]; then
+    die "deployed-sha names ${old[1,12]}, but $RELEASES/$old has no .complete marker: a failed deploy could not roll back. Nothing was stopped. Restore that release, or remove $SHA_FILE to deploy with no previous release."
+  fi
+  [[ -n "$old" && "$old" != "$sha" ]] && prev="$old"
 
   # --- switch
   log "deploying ${sha[1,12]} (live: ${old:-none}), stopping ${PROCESSES[*]}"

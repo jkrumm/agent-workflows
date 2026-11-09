@@ -454,6 +454,23 @@ describe('deploy.sh gateway: rollback', () => {
     expect(t.data('deployed-sha')).toBe(PREV)
     expect(t.data('gateway-build')).toBe(t.oldBuild)
   }, 60_000)
+
+  test('a live sha whose release lost its .complete marker is refused before anything is stopped', () => {
+    const t = liveThenNew('v1', 'v2')
+    rmSync(join(t.aw, 'releases', PREV, '.complete'))
+    const result = t.deploy(NEW)
+    expect(result.code).toBe(1)
+    expect(result.err).toContain('has no .complete marker')
+    expect(result.err).toContain('Nothing was stopped')
+    // No launchctl call at all: nothing booted out, nothing bootstrapped, the live processes untouched.
+    expect(t.launchctlLog().trim()).toBe('')
+    for (const label of [HOST, AUDIO, GATEWAY]) {
+      expect(t.loadedPlist(label)).not.toBeNull()
+      expect(existsSync(t.plist(label))).toBe(true)
+    }
+    expect(t.loadedPlist(HOST)).toContain(`<string>${PREV}</string>`)
+    expect(t.data('deployed-sha')).toBe(PREV)
+  }, 60_000)
 })
 
 /** Runs build_gateway / prune_gateway_builds from the real script, with the stand-ins on PATH. */
