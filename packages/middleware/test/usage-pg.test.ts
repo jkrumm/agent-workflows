@@ -258,6 +258,58 @@ describePg(suite, () => {
     }
   })
 
+  test('a stale version never overwrites a newer one: the older raw.scoredAt loses', async () => {
+    const transport = pgUsageTransport({ connectionString: scratchUrl, logger })
+    try {
+      const at = new Date('2026-10-27T10:00:00.000Z')
+      const rowsAt = (scoredAt: string | null, pass: boolean) =>
+        usageRowsForStep(
+          {
+            runId: 'run_version',
+            stepId: 'work',
+            status: 'done',
+            model: 'whisper',
+            tokens: { input: 10, output: 2, cacheRead: 0, cacheWrite: 0, reasoning: 0 },
+            cost: 0.001,
+            toolCalls: 0,
+            unpricedCalls: 0,
+            byModel: null,
+            startedAt: at,
+            finishedAt: new Date(at.getTime() + 1000),
+            sessionId: null,
+            run: {
+              workflowId: 'o.child',
+              rootId: 'run_version',
+              purpose: 'build',
+              traceparent: null,
+              traceId: null,
+              fingerprint: null,
+              friction: null,
+              scores: { final: { pass } },
+              scoredAt,
+              status: 'done',
+              errorKind: null,
+              wallMs: 10,
+            },
+          },
+          { machine: 'm' },
+        )
+      const newer = rowsAt('2026-10-27T10:05:00.000Z', true)
+      const older = rowsAt('2026-10-27T10:01:00.000Z', false)
+      const unscored = rowsAt(null, false)
+      await transport.write(newer)
+      await transport.write(older)
+      await transport.write(unscored)
+      const kept = await record('run_version:work:whisper')
+      expect(kept?.raw).toMatchObject({ scoredAt: '2026-10-27T10:05:00.000Z', scores: { final: { pass: true } } })
+      // a newer version still wins over the stored one
+      await transport.write(rowsAt('2026-10-27T10:09:00.000Z', false))
+      expect((await record('run_version:work:whisper'))?.raw).toMatchObject({ scores: { final: { pass: false } } })
+    } finally {
+      await transport.close?.()
+    }
+  })
+
   test('cost: an unknown model is NULL (never 0), a catalog model is priced by the tables, a reported cost wins', async () => {
     const [pricedId = ''] = await finished(priced, 1)
     const [mysteryId = ''] = await finished(mystery, 1)

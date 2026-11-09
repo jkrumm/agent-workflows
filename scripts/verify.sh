@@ -169,6 +169,18 @@ door_status=$(print -r -- "header = \"authorization: Bearer $secret\"" | curl -s
   || fail "the door's 400 is not the legacy envelope: $(<"$door_body")"
 ok "door: 401 without a caller token, legacy 400 on a bad body"
 
+# 6b. usage steps the outbox set aside (argo_error): informational, never a failure (a quarantine from before this
+# deploy must not break every later one), but never silent either.
+quarantined_sql="select (select count(*) from \"$SCHEMA\".steps where argo_error is not null and argo_synced_at is null),
+  coalesce((select string_agg(run_id, ', ' order by finished_at) from (select run_id, finished_at from \"$SCHEMA\".steps
+    where argo_error is not null and argo_synced_at is null order by finished_at nulls last limit 3) q), '')"
+IFS='|' read -r quarantined oldest_runs <<< "$(journal "$quarantined_sql")" || exit 1
+if (( quarantined > 0 )); then
+  print "verify: WARN: $quarantined usage step(s) quarantined in $SCHEMA.steps (argo_error set, never exported); oldest runs: $oldest_runs; recovery: packages/middleware/README.md, 'Requeue'"
+else
+  ok "no quarantined usage steps in $SCHEMA.steps"
+fi
+
 # 7. the host's image door: refused without a caller token, the studio's error envelope on a bad body
 door_status=$(curl -sS --max-time 10 -o /dev/null -w '%{http_code}' -X POST -H 'content-type: application/json' \
   --data '{}' "$IMAGE_DOOR_URL/generate") || fail "no answer from the image door"

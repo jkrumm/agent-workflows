@@ -130,7 +130,7 @@ Interception points follow DeepSeek Harness's taxonomy, before and after each ru
 **Telemetry, as proven by S2** (`docs/spikes/s2-telemetry/REPORT.md`):
 
 - Packages: `@opentelemetry/sdk-trace` 3.x with `exporter-trace-otlp-proto` and `context-async-hooks`, http/protobuf. `sdk-trace-base` is the dead 2.x line. Context nests across `await` on Bun without explicit parents.
-- The middleware owns flush: exit, SIGTERM, SIGINT and the crash handlers. Without a handler spans are lost. Export failures and dropped spans are logged, never silent; after a signal flush the signal is re-raised.
+- The host owns signals: `installLifecycle` handles SIGTERM, SIGINT and uncaught exceptions and its shutdown calls `telemetry.shutdown()` (open spans end as suspended, flush). Without that flush, spans are lost on exit and on SIGTERM. Export failures and dropped spans are logged, never silent.
 - Receiver is deployment config, not code: the unauthed loopback `:4319` locally, the authed tier (`OTEL_EXPORTER_OTLP_HEADERS` from `secrets-run`) for anything leaving the host.
 - OpenCode 2.0.32 exports its own spans when `OTEL_EXPORTER_OTLP_ENDPOINT` is set and parents its `http.server` spans to an inbound `traceparent`. Model and tool-call spans were not observed. **Tokens, cost and tool calls come from the OpenCode message API**, not from spans; spans are for latency and joining, linked by `opencode.session.id` on the step span.
 

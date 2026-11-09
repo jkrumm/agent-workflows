@@ -91,7 +91,11 @@ const SOURCE = 'agent-workflows'
 /** Below the outbox's default `postTimeoutMs` (30 s) and the pool's own 20 s statement timeout. */
 const DEFAULT_WRITE_TIMEOUT_MS = 15_000
 
-/** Columns `ON CONFLICT` may change on a re-post; `WHERE ... IS DISTINCT FROM` skips the update when none did. */
+/**
+ * Columns `ON CONFLICT` may change on a re-post; `WHERE ... IS DISTINCT FROM` skips the update when none did. The
+ * update also requires `raw.scoredAt` (the run's `scored_at`, always `toISOString()`, so UTC and lexicographically
+ * ordered) not to be older than the stored one: two flushers sharing a journal never let a stale `raw.scores` overwrite a newer one.
+ */
 const RECORD_COLUMNS = [
   'grain',
   'ts',
@@ -133,7 +137,8 @@ const RECORD_UPSERT = `
     $22::bigint, 'session', $24::numeric) c
   on conflict (source, source_id) do update set
     ${RECORD_COLUMNS.map((c) => `${c} = excluded.${c}`).join(', ')}
-  where (${RECORD_COLUMNS.map((c) => `usage.records.${c}`).join(', ')})
+  where coalesce(usage.records.raw->>'scoredAt', '') <= coalesce(excluded.raw->>'scoredAt', '')
+    and (${RECORD_COLUMNS.map((c) => `usage.records.${c}`).join(', ')})
     is distinct from (${RECORD_COLUMNS.map((c) => `excluded.${c}`).join(', ')})`
 
 const SESSION_UPSERT = `
@@ -370,6 +375,8 @@ export type OutboxStep = {
     friction: unknown
     /** `runs.scores` (inline gates, and the regression or drift score once there is one); absent reads as null. */
     scores?: unknown
+    /** `runs.scored_at` as `toISOString()`: the version of `scores`; null while the run is unscored. The upsert never lets an older version overwrite a newer one. */
+    scoredAt?: string | null
     status: string
     errorKind: string | null
     wallMs: number | null
@@ -531,6 +538,7 @@ export function usageRowsForStep(step: OutboxStep, options: UsageRowOptions): Us
         runOutcome: run.errorKind ?? run.status,
         runWallMs: run.wallMs,
         scores: run.scores ?? null,
+        scoredAt: run.scoredAt ?? null,
         // The after-the-fact score, explicit: `scorePass` null with a `scoreError` is no verdict (never a fail).
         ...finalScoreFields(run.scores),
         friction: run.friction ?? null,
@@ -579,6 +587,7 @@ type OutboxRow = {
   fingerprint: string | null
   friction: unknown
   scores: unknown
+  scored_at: Date | null
   run_status: string
   run_error_kind: string | null
   wall_ms: number | null
@@ -616,6 +625,7 @@ function toOutboxStep(row: OutboxRow): OutboxStep {
       fingerprint: row.fingerprint,
       friction: row.friction,
       scores: row.scores,
+      scoredAt: row.scored_at === null ? null : row.scored_at.toISOString(),
       status: row.run_status,
       errorKind: row.run_error_kind,
       wallMs: row.wall_ms,
@@ -640,6 +650,11 @@ export type OutboxOptions = {
   claimTtlMs?: number
   /** Rows per write, one transaction each. Default 500. */
   chunkSize?: number
+  /**
+   * A step that fails {@link UsageOutbox}'s way (see its doc: the database answered with an error that is no outage, no
+   * row refusal) this many times in a row is written alone; if it still fails alone it is quarantined. Default 3.
+   */
+  maxStepAttempts?: number
   now?: () => number
 }
 
@@ -648,7 +663,10 @@ export type FlushResult = {
   posted: number
   /** Steps marked synced. */
   marked: number
-  /** Steps set aside with `argo_error`: a row that cannot be built or that the database refuses (SQLSTATE 22, 23). */
+  /**
+   * Steps set aside with `argo_error`: a row that cannot be built, that the database refuses (SQLSTATE 22, 23), or a
+   * step that keeps failing alone with another database answer (`maxStepAttempts`).
+   */
   quarantined: number
   /** Why nothing was tried: still backing off after a transient failure. */
   skipped: 'backoff' | null
@@ -660,6 +678,21 @@ type Claimed = { step: OutboxStep; records: UsageRow[] }
 type StepKey = { runId: string; stepId: string }
 
 class Transient extends Error {}
+
+/** The step's key in the attempt counter. */
+const keyOf = (k: StepKey): string => `${k.runId}:${k.stepId}`
+
+/**
+ * A database answer that may be about the rows (a function raising P0001, a statement timeout on one bad row) rather
+ * than about the path to the database: a {@link UsageWriteError} with a SQLSTATE that is none of connection loss (08,
+ * 57P), authentication / absent database / missing table (28, 3D, 42: a human fixes it), deadlock or serialization
+ * (40), resource exhaustion (53) or a lock timeout (55). A plain network error or a client-side timeout carries no
+ * answer and never counts.
+ */
+function isRowSpecific(err: unknown): err is UsageWriteError {
+  if (!(err instanceof UsageWriteError) || err.permanent || err.code === null) return false
+  return !/^(08|57P|28|3D|42|40|53|55)/.test(err.code)
+}
 
 const STEP_COLUMNS = `run_id, step_id, status, model, tokens_input, tokens_output, tokens_cache_read,
   tokens_cache_write, tokens_reasoning, cost, tool_calls, unpriced_calls, usage_by_model, started_at, finished_at`
@@ -675,8 +708,17 @@ const STEP_COLUMNS = `run_id, step_id, status, model, tokens_input, tokens_outpu
  * re-writes, which the upsert absorbs. A run scored after its steps synced (regression, drift) puts them back into
  * the outbox (the runtime clears `argo_synced_at` and any claim with the score), so `raw.scores` is rewritten. A
  * transient failure releases the claim and backs off. A permanent one (a row that cannot be built or that the database
- * refuses) quarantines only that step (`argo_error`, logged, counted); the rest keep flowing. The `argo_*` column names
- * are the journal's, from before the sink moved.
+ * refuses, SQLSTATE 22, 23) quarantines only that step (`argo_error`, logged, counted); the rest keep flowing.
+ *
+ * A row-specific answer outside 22 and 23 (see {@link isRowSpecific}) is counted per step key in memory, while the
+ * batch backs off like any failure. Once a step in a failed batch has failed `maxStepAttempts` (default 3) times, the
+ * batch is written step by step: healthy steps are marked, a step that fails alone with such an answer is quarantined
+ * (a single-step batch is that case at once). Plain outages (network, timeouts, connection loss) never count, so an
+ * outage cannot quarantine anything. Counters reset when a step is written, are dropped for steps no longer in the
+ * failing batch (so the map is bounded by `batchSize`), and are lost on restart. Recovery of quarantined steps is one
+ * SQL statement (README). A run scored again after its steps synced is rewritten with `raw.scoredAt` as the version:
+ * the upsert refuses an older version, so two flushers sharing a journal cannot regress `raw.scores`. `close()` stops
+ * the drain after the batch in flight. The `argo_*` column names are the journal's, from before the sink moved.
  */
 export class UsageOutbox {
   private failures = 0
@@ -688,7 +730,10 @@ export class UsageOutbox {
   private readonly batchSize: number
   private readonly postTimeoutMs: number
   private readonly claimTtlMs: number
+  private readonly maxStepAttempts: number
   private readonly now: () => number
+  /** Failed batches seen by step key; only the latest failing batch's steps are kept. */
+  private attempts = new Map<string, number>()
 
   constructor(private readonly options: OutboxOptions) {
     const machine = options.machine ?? process.env.AGW_MACHINE?.trim()
@@ -705,6 +750,7 @@ export class UsageOutbox {
       throw new Error('usage outbox: claimTtlMs must exceed 2× postTimeoutMs')
     if (options.transport.writeTimeoutMs !== undefined && this.postTimeoutMs <= options.transport.writeTimeoutMs)
       throw new Error('usage outbox: postTimeoutMs must exceed the transport writeTimeoutMs')
+    this.maxStepAttempts = Math.max(1, options.maxStepAttempts ?? 3)
     this.now = options.now ?? Date.now
     this.chunkSize = Math.max(1, options.chunkSize ?? 500)
   }
@@ -723,23 +769,11 @@ export class UsageOutbox {
     await this.inflight
   }
 
-  /**
-   * Puts quarantined steps back into the outbox (all, or one run's) after the cause is fixed. Returns the count.
-   */
-  async requeue(filter: { runId?: string } = {}): Promise<number> {
-    const { db } = this.options
-    const { rowCount } = await db.pool.query(
-      `update ${db.steps} set argo_error = null
-       where argo_error is not null and argo_synced_at is null and ($1::text is null or run_id = $1)`,
-      [filter.runId ?? null],
-    )
-    return rowCount ?? 0
-  }
-
   private async drain(): Promise<FlushResult> {
     const result: FlushResult = { posted: 0, marked: 0, quarantined: 0, skipped: null, error: null }
     if (this.now() < this.nextAt) return { ...result, skipped: 'backoff' }
     for (;;) {
+      if (this.closed) break
       const token = crypto.randomUUID()
       try {
         const steps = await this.claim(token)
@@ -794,7 +828,7 @@ export class UsageOutbox {
          returning s.*
        )
        select ${STEP_COLUMNS.replaceAll(/(\w+)/g, 'c.$1')}, c.handle->'handle'->>'sessionId' as session_id,
-         r.workflow, r.root_id, r.purpose, r.caller, r.project, r.workspace, r.traceparent, r.trace_id, r.fingerprint, r.friction, r.scores,
+         r.workflow, r.root_id, r.purpose, r.caller, r.project, r.workspace, r.traceparent, r.trace_id, r.fingerprint, r.friction, r.scores, r.scored_at,
          r.status as run_status, r.error_kind as run_error_kind, r.wall_ms
        from claimed c join ${db.runs} r on r.id = c.run_id
        order by c.finished_at, c.run_id, c.step_id`,
@@ -812,7 +846,10 @@ export class UsageOutbox {
     }
   }
 
-  /** Writes the batch; on a permanent refusal, step by step so only the bad ones are quarantined. */
+  /**
+   * Writes the batch; on a permanent refusal, or once a step has failed `maxStepAttempts` times with a row-specific
+   * answer, step by step so only the bad ones are quarantined. Any other failure propagates (release and backoff).
+   */
   private async send(token: string, live: Claimed[], result: FlushResult) {
     try {
       await this.post(
@@ -821,17 +858,32 @@ export class UsageOutbox {
       )
       await this.mark(token, live, result)
     } catch (err) {
-      if (!(err instanceof UsageWriteError && err.permanent)) throw err
+      const permanent = err instanceof UsageWriteError && err.permanent
+      if (!permanent && !(isRowSpecific(err) && this.countFailure(live))) throw err
       for (const one of live) {
         try {
           await this.post(token, one.records)
           await this.mark(token, [one], result)
         } catch (stepErr) {
-          if (!(stepErr instanceof UsageWriteError && stepErr.permanent)) throw stepErr
+          const refused = stepErr instanceof UsageWriteError && stepErr.permanent
+          if (!refused && !(isRowSpecific(stepErr) && this.exhausted(one))) throw stepErr
           result.quarantined += await this.quarantine(token, [one.step], errorMessage(stepErr))
+          this.attempts.delete(keyOf(one.step))
         }
       }
     }
+  }
+
+  /** Counts a row-specific failure for each step of the batch (dropping other steps' counters); true once one reached the limit. */
+  private countFailure(live: Claimed[]): boolean {
+    const next = new Map<string, number>()
+    for (const { step } of live) next.set(keyOf(step), (this.attempts.get(keyOf(step)) ?? 0) + 1)
+    this.attempts = next
+    return live.some(({ step }) => this.exhausted({ step }))
+  }
+
+  private exhausted({ step }: { step: StepKey }): boolean {
+    return (this.attempts.get(keyOf(step)) ?? 0) >= this.maxStepAttempts
   }
 
   private async post(token: string, records: UsageRow[]) {
@@ -865,6 +917,7 @@ export class UsageOutbox {
 
   private async mark(token: string, done: Claimed[], result: FlushResult) {
     const keys = done.map((c) => c.step)
+    for (const k of keys) this.attempts.delete(keyOf(k))
     const { rowCount } = await this.options.db.pool.query(
       `update ${this.options.db.steps} s set argo_synced_at = now(), argo_claim = null, argo_claimed_until = null
        from unnest($1::text[], $2::text[]) as k(run_id, step_id)
@@ -889,10 +942,13 @@ export class UsageOutbox {
        where s.run_id = k.run_id and s.step_id = k.step_id and s.argo_claim = $4`,
       [steps.map((k) => k.runId), steps.map((k) => k.stepId), error.slice(0, 1000), token],
     )
-    this.options.logger.error('usage outbox: step quarantined (permanent failure); the rest keep flowing', {
-      steps: steps.map((k) => `${k.runId}:${k.stepId}`),
-      error,
-    })
+    this.options.logger.error(
+      'usage outbox: step quarantined (a row the database refuses, or one that keeps failing alone); the rest keep flowing',
+      {
+        steps: steps.map((k) => `${k.runId}:${k.stepId}`),
+        error,
+      },
+    )
     return rowCount ?? 0
   }
 

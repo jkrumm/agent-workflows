@@ -283,11 +283,6 @@ export class Telemetry {
     return ok
   }
 
-  /** Spans ended but neither exported nor reported lost. */
-  unflushed(): number {
-    return this.counter.ended - this.exporter.exported - this.exporter.failed - this.reportedLoss
-  }
-
   /**
    * Ends every open span as `agw.suspended` (the run continues in the next process, which opens a linked span),
    * flushes and shuts the provider down, bounded. Idempotent.
@@ -314,64 +309,6 @@ export class Telemetry {
       if (diagSink === this.logger) diagSink = null
     })()
     return this.closed
-  }
-
-  /**
-   * The middleware owns flush: without a handler spans are lost on exit and on SIGTERM (S2). Installs
-   * - `beforeExit`: flush when spans are waiting;
-   * - `exit`: cannot await, so it logs how many spans an explicit `process.exit` loses;
-   * - `SIGTERM`, `SIGINT`: `onSignal` (the host's own shutdown, e.g. `runtime.close()`), then `shutdown()`, then
-   *   the signal is re-raised with these handlers removed, so the process ends by the signal (exit 128+n);
-   * - `uncaughtException`, `unhandledRejection`: log, `shutdown()`, exit 1.
-   * Returns the uninstall function. Install once per process; other SIGTERM listeners would keep the re-raised
-   * signal from ending the process, so a host shuts down through `onSignal` instead.
-   */
-  installFlush(options: { onSignal?: (signal: NodeJS.Signals) => Promise<void> } = {}): () => void {
-    let ending = false
-    const beforeExit = () => {
-      if (this.unflushed() > 0) void this.flush()
-    }
-    const exit = (code: number) => {
-      const lost = this.unflushed()
-      if (lost > 0) this.logger.error('telemetry: process exits with unflushed spans', { spans: lost, code })
-    }
-    const onSignal = (signal: NodeJS.Signals) => {
-      if (ending) return
-      ending = true
-      void (async () => {
-        try {
-          await options.onSignal?.(signal)
-        } catch (err) {
-          this.logger.error('telemetry: onSignal failed', { signal, error: errorMessage(err) })
-        }
-        await this.shutdown()
-        uninstall()
-        process.kill(process.pid, signal)
-      })()
-    }
-    const onCrash = (kind: string) => (err: unknown) => {
-      this.logger.error(`telemetry: ${kind}; flushing, then exit 1`, { error: errorMessage(err) })
-      if (ending) return
-      ending = true
-      void this.shutdown().finally(() => process.exit(1))
-    }
-    const uncaught = onCrash('uncaughtException')
-    const unhandled = onCrash('unhandledRejection')
-    process.on('beforeExit', beforeExit)
-    process.on('exit', exit)
-    process.on('SIGTERM', onSignal)
-    process.on('SIGINT', onSignal)
-    process.on('uncaughtException', uncaught)
-    process.on('unhandledRejection', unhandled)
-    const uninstall = () => {
-      process.off('beforeExit', beforeExit)
-      process.off('exit', exit)
-      process.off('SIGTERM', onSignal)
-      process.off('SIGINT', onSignal)
-      process.off('uncaughtException', uncaught)
-      process.off('unhandledRejection', unhandled)
-    }
-    return uninstall
   }
 
   private openRun(args: RunPreArgs) {

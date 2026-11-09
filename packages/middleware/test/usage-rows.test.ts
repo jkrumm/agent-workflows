@@ -63,6 +63,12 @@ const opts = { machine: 'test-machine' }
 const none = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0 }
 
 describe('usage rows', () => {
+  test('raw.scoredAt carries the run score version (ISO string), null while unscored', () => {
+    const scoredAt = '2026-10-27T10:05:00.123Z'
+    expect(usageRowsForStep(step({}, { scoredAt }), opts)[0]?.raw).toMatchObject({ scoredAt })
+    expect(usageRowsForStep(step(), opts)[0]?.raw).toMatchObject({ scoredAt: null })
+  })
+
   test('one row per step and model, keyed run:step:model, session grain, the lane of a workflow', () => {
     const rows = usageRowsForStep(step(), opts)
     expect(rows).toHaveLength(1)

@@ -13,7 +13,6 @@ const platform = platformMiddleware({
   fingerprint: fsFingerprintSource({ agentsDir, workflows: { 'research.report': [{ agent: 'brain', route: 'cheap.classify' }] } }),
 })
 const runtime = new Runtime({ connectionString, workflows, host, middleware: platform.middleware })
-platform.telemetry.installFlush({ onSignal: () => runtime.close() })
 await runtime.open()
 setInterval(() => void platform.outbox?.flush(), 30_000) // the host's tick (Wave 3)
 ```
@@ -136,15 +135,11 @@ host could not answer in full.
 
 ## Flush contract
 
-Without a handler, spans are lost on `process.exit`, on a natural exit and on SIGTERM (S2 flush matrix).
-`telemetry.installFlush({ onSignal })` installs, once per process:
-
-| Event | Behaviour |
-|-|-|
-| `SIGTERM`, `SIGINT` | `onSignal(signal)` (the host's own shutdown, e.g. `runtime.close()`), then `shutdown()`: open spans end as suspended, flush, provider shutdown. Then the handlers are removed and the signal is re-raised, so the process ends by the signal (128+n), not `exit(0)` |
-| `uncaughtException`, `unhandledRejection` | logged, `shutdown()`, `exit(1)` |
-| `beforeExit` | flush when spans are waiting |
-| `exit` | can't await; logs how many spans an explicit `process.exit` loses |
+The middleware does not install process handlers. Signals and crashes belong to the host:
+`installLifecycle` (`packages/host/src/lifecycle.ts`) shuts down on the first SIGTERM or SIGINT (a second one exits at
+once) and on an uncaught exception (exit 1), with an unref'd backstop timer; the host's shutdown calls
+`telemetry.shutdown()` (open spans end as suspended, flush, provider shutdown) through `platform.close()`. Without that
+call, spans still queued are lost on `process.exit`, on a natural exit and on SIGTERM (S2 flush matrix).
 
 - **Bounded.** Every flush and shutdown is capped at `flushTimeoutMs` (default 5 s). A timeout is logged.
 - **Span text is redacted.** Error messages and tool errors on spans have bearer tokens, `sk-` keys, `name=value`
@@ -156,14 +151,11 @@ Without a handler, spans are lost on `process.exit`, on a natural exit and on SI
 - **Never silent.** A failed export is logged with its span count by the exporter wrapper. Spans the batch queue
   dropped are counted (ended minus exported minus failed) and logged at the next flush. OTel's own diagnostics go
   to the same logger at `warn`.
-- **One owner.** Other `SIGTERM` listeners would keep the re-raised signal from ending the process. The host shuts
-  down through `onSignal` instead.
 - **Receiver is env.** The default exporter is OTLP http/protobuf, configured only by the standard env.
   - Local: `OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4319` (unauthed loopback).
   - Leaving the host: the authed tier plus `OTEL_EXPORTER_OTLP_HEADERS` from `secrets-run`.
 - **S2's open question, answered.** On Bun 1.4.3, `exporter-trace-otlp-proto` 0.300.0 reads
-  `OTEL_EXPORTER_OTLP_ENDPOINT` and `OTEL_EXPORTER_OTLP_HEADERS` itself. `test/flush.test.ts` passes both only
-  through the child's env and asserts the headers at the receiver.
+  `OTEL_EXPORTER_OTLP_ENDPOINT` and `OTEL_EXPORTER_OTLP_HEADERS` itself.
 
 Packages, pinned exactly: `@opentelemetry/sdk-trace` 3.0.0, `exporter-trace-otlp-proto` 0.300.0,
 `context-async-hooks` 3.0.0, `core` 3.0.0, `resources` 3.0.0, `api` 1.10.0. `context-async-hooks` is a dependency
@@ -218,15 +210,27 @@ call; only the `usage.records` projection is filtered.
   never an uncaught event.
 - **Lock order.** A batch upserts its sessions sorted by `source_session_id`, then its records sorted by `source_id`, so
   concurrent flushers (host and audio process) take row locks in one order and cannot deadlock each other.
-- **Transient vs permanent.** Only a row the database refuses is permanent: SQLSTATE class 22 (data exception, e.g. a
+- **Transient vs permanent.** A row the database refuses is permanent: SQLSTATE class 22 (data exception, e.g. a
   duration that overflows `integer`) or 23 (constraint violation), or a row that cannot be built. The batch is then
   written step by step and only the bad step is quarantined (`argo_error`, logged, counted in
   `FlushResult.quarantined`); the rest keep flowing. Everything else is transient and releases the claim and backs
-  off (5 s doubling to 5 min): a refused connection, a timeout, a deadlock, a shutdown. Authentication (class 28), a
+  off (5 s doubling to 5 min): a refused connection, a timeout, a deadlock, a shutdown.
+- **Poisoned row outside 22/23.** A database answer that is about a row rather than the path (a function raising
+  `P0001`, a statement timeout on one bad row) is counted per step (`runId:stepId`, in memory) each time a batch
+  containing the step fails with it. Once a step reached `maxStepAttempts` (default 3), the batch is written step by
+  step: healthy steps are marked, a step that fails alone with such an answer is quarantined. Counters reset when the
+  step is written and cover only the latest failing batch. Network errors, client timeouts, connection loss (08, 57P),
+  authentication/missing table (28, 3D, 42), deadlock/serialization (40), resources (53) and lock timeouts (55) never
+  count: an outage quarantines nothing.
+- **Version guard.** `raw.scoredAt` is the run's `scored_at` (`toISOString()`). The upsert only overwrites when the
+  stored `raw.scoredAt` is not newer, so two flushers sharing a journal cannot write a stale `raw.scores` after a
+  newer one (precision is milliseconds). Authentication (class 28), a
   missing database (3D) and a missing table or function (42, the schema is not migrated) are transient too but logged
   as errors, since they need a human; they are never quarantined.
-- **Requeue.** `outbox.requeue({ runId? })` clears `argo_error` once the cause is fixed; the next flush writes them.
-- **Close.** `outbox.close()` refuses new flushes and waits for the one in flight; `platform.close()` calls it
+- **Requeue.** After the cause is fixed, one statement puts quarantined steps back; the next flush writes them:
+  `update <schema>.steps set argo_error = null where argo_error is not null and argo_synced_at is null [and run_id = '<id>']`.
+  `make verify` prints a `verify: WARN:` line while any step is quarantined.
+- **Close.** `outbox.close()` refuses new flushes and stops the drain after the batch in flight; `platform.close()` calls it
   before closing the pools, and closes the usage pool it created from `USAGE_PG_URL`.
 - **Crash after the write.** The rows are written again; the upsert absorbs it.
 - **No usage, no row.** Only steps with tokens or a positive cost (`cost > 0`; a free step records 0) are outbox candidates (the `steps_usage_outbox` index); of
@@ -263,7 +267,7 @@ the sink behind them changed from Argo's HTTP endpoint to `usage.records`. What 
   reached neither Argo nor `usage.records`. Count them read-only with
   `select count(*) from <journal schema>.steps where argo_error is not null and argo_synced_at is null` (journal schema
   `agw`; on 2026-10-30 the count was 0). If it is not zero, once the cause is fixed put them back with
-  `outbox.requeue()` (all) or `outbox.requeue({ runId })` (one run); the next flush writes them to `usage.records`.
+  the statement under **Requeue** (all, or add `and run_id = '<id>'` for one run); the next flush writes them to `usage.records`.
 
 | Run record / step | `usage.records` | Note |
 |-|-|-|
@@ -324,7 +328,6 @@ Follow-up: a dedicated CREATEDB-only test role, so no admin credential reaches t
 | `usage-write.test.ts` | `writeBatch` against a recording client: sessions and records issued sorted by key, the deadlines set inside the transaction, a failing statement / `begin` / rollback and whether the client is marked broken; the `postTimeoutMs` > `writeTimeoutMs` guard |
 | `friction.test.ts` | the document on every run, session sums and the highest repeat, every session of a step, a lost document rebuilt, `runPost` as a true recompute (stale events and steps gone, re-delivery changes nothing), `invalid_output` and re-ask steps, wallet refusal and runaway-cap failure, a failing or partial probe (incomplete, earlier entries kept, redelivered and completed), bounded probe concurrency |
 | `telemetry.test.ts` | steps ended without `stepPost`, session id from the handle, redaction, the diag sink |
-| `flush.test.ts` | subprocess with a fake OTLP receiver: SIGTERM and SIGINT re-raised after flush, crash exit 1, export failure and dropped spans logged |
 | `fingerprint.test.ts`, `opencode-usage.test.ts`, `usage-rows.test.ts`, `usage-caller.test.ts` | pure: stability, each input changes the hash, the OpenCode conversion, the additive projection and the row mapping (incl. no reported cost for a row with unpriced calls; no row for what the gateway records: a prep-plus-TTS step writes the TTS row, a text-only step none, `tavily-search` and a model outside the table keep theirs) |
 
 The OpenCode message fixtures are shaped from the measured sources S2 points at, not from S2 itself. Every S2

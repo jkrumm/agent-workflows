@@ -274,16 +274,155 @@ describe('usage outbox', () => {
       expect(String(bad[0]?.argo_error)).toContain('purpose')
       expect(String(bad[1]?.argo_error)).toContain('23514')
       expect(logger.lines.filter((l) => l.message.startsWith('usage outbox: step quarantined'))).toHaveLength(2)
-      // Quarantined steps are not claimed again, until requeued once the cause is fixed.
+      // Quarantined steps are not claimed again, until put back (the README's one statement) once the cause is fixed.
       expect(await outbox.flush()).toMatchObject({ posted: 0, quarantined: 0 })
       usage.refuse = () => false
-      expect(await outbox.requeue({ runId: refused })).toBe(1)
+      await sql.pool.query(
+        `update "${db.schema}".steps set argo_error = null where argo_error is not null and argo_synced_at is null and run_id = $1`,
+        [refused],
+      )
       expect(await outbox.flush()).toMatchObject({ posted: 1, quarantined: 0 })
       expect(usage.accepted.get(`${refused}:work:whisper`)).toBe(1)
       expect((await sql.step(refused, 'work'))?.argo_error).toBeNull()
       expect((await sql.step(unbuildable, 'work'))?.argo_error).not.toBeNull()
     } finally {
       await rt.close()
+      await platform.close()
+      await journal.close()
+    }
+  })
+
+  test('a row-specific database error outside 22/23 quarantines exactly the poisoned step after maxStepAttempts', async () => {
+    const usage = new FakeUsage()
+    const logger = captureLogger()
+    const journal = new JournalDb({ connectionString: PG_URL, schema: db.schema }, logger)
+    const outbox = new UsageOutbox({
+      db: journal,
+      transport: usage,
+      logger,
+      machine: 'm',
+      batchSize: 50,
+      backoff: { baseMs: 0, maxMs: 0 },
+    })
+    const platform = testPlatform(db.schema)
+    try {
+      const ids = await finishedChildren(platform, 5)
+      const poisoned = ids[2] as string
+      usage.onPost = async (rows) => {
+        if (rows.some((r) => r.run_id === poisoned))
+          throw new UsageWriteError('usage write: P0001 boom', false, 'P0001')
+      }
+      expect(await outbox.flush()).toMatchObject({ quarantined: 0, marked: 0, error: expect.stringContaining('P0001') })
+      expect(await outbox.flush()).toMatchObject({ quarantined: 0, marked: 0, error: expect.stringContaining('P0001') })
+      // Third failure: the batch is written step by step, the healthy ones are marked, the poisoned one quarantined.
+      expect(await outbox.flush()).toMatchObject({ quarantined: 1, marked: 4, error: null })
+      for (const id of ids) {
+        const stored = usage.accepted.get(`${id}:work:whisper`)
+        const step = await sql.step(id, 'work')
+        if (id === poisoned) {
+          expect(stored).toBeUndefined()
+          expect(String(step?.argo_error)).toContain('P0001')
+          expect(step?.argo_synced_at).toBeNull()
+        } else {
+          expect(stored).toBe(1)
+          expect(step?.argo_error).toBeNull()
+          expect(step?.argo_synced_at).not.toBeNull()
+        }
+      }
+      expect(await outbox.flush()).toMatchObject({ posted: 0, quarantined: 0, error: null })
+    } finally {
+      await platform.close()
+      await journal.close()
+    }
+  })
+
+  test('a single poisoned step alone is quarantined after maxStepAttempts failures', async () => {
+    const usage = new FakeUsage()
+    const logger = captureLogger()
+    const journal = new JournalDb({ connectionString: PG_URL, schema: db.schema }, logger)
+    const outbox = new UsageOutbox({
+      db: journal,
+      transport: usage,
+      logger,
+      machine: 'm',
+      maxStepAttempts: 2,
+      backoff: { baseMs: 0, maxMs: 0 },
+    })
+    const platform = testPlatform(db.schema)
+    try {
+      const [id = ''] = await finishedChildren(platform, 1)
+      usage.failWith = new UsageWriteError(
+        'usage write: 57014 canceling statement due to statement timeout',
+        false,
+        '57014',
+      )
+      expect(await outbox.flush()).toMatchObject({ quarantined: 0, error: expect.stringContaining('57014') })
+      expect((await sql.step(id, 'work'))?.argo_error).toBeNull()
+      expect(await outbox.flush()).toMatchObject({ quarantined: 1, error: null })
+      expect(String((await sql.step(id, 'work'))?.argo_error)).toContain('57014')
+    } finally {
+      await platform.close()
+      await journal.close()
+    }
+  })
+
+  test('an outage never quarantines, however often it repeats (network error, connection loss 08, 57P)', async () => {
+    const usage = new FakeUsage()
+    const logger = captureLogger()
+    const journal = new JournalDb({ connectionString: PG_URL, schema: db.schema }, logger)
+    const outbox = new UsageOutbox({
+      db: journal,
+      transport: usage,
+      logger,
+      machine: 'm',
+      batchSize: 50,
+      maxStepAttempts: 2,
+      backoff: { baseMs: 0, maxMs: 0 },
+    })
+    const platform = testPlatform(db.schema)
+    try {
+      const ids = await finishedChildren(platform, 3)
+      const failures = [
+        new Error('connect ECONNREFUSED 127.0.0.1:5432'),
+        new UsageWriteError('usage write: 08006 connection failure', false, '08006'),
+        new UsageWriteError('usage write: 57P01 terminating connection', false, '57P01'),
+        new UsageWriteError('usage write: 40P01 deadlock detected', false, '40P01'),
+      ]
+      for (let round = 0; round < 3; round++) {
+        for (const failure of failures) {
+          usage.failWith = failure
+          expect(await outbox.flush()).toMatchObject({ quarantined: 0, marked: 0, error: expect.any(String) })
+        }
+      }
+      const steps = await Promise.all(ids.map((id) => sql.step(id, 'work')))
+      expect(steps.every((s) => s?.argo_error === null && s?.argo_synced_at === null)).toBe(true)
+      usage.failWith = null
+      expect(await outbox.flush()).toMatchObject({ marked: 3, quarantined: 0, error: null })
+    } finally {
+      await platform.close()
+      await journal.close()
+    }
+  })
+
+  test('close() during a flush ends the drain after the batch in flight; the backlog stays unclaimed', async () => {
+    const usage = new FakeUsage()
+    const logger = captureLogger()
+    const journal = new JournalDb({ connectionString: PG_URL, schema: db.schema }, logger)
+    const outbox = new UsageOutbox({ db: journal, transport: usage, logger, machine: 'm', batchSize: 2 })
+    const platform = testPlatform(db.schema)
+    try {
+      const ids = await finishedChildren(platform, 6)
+      const closings: Promise<void>[] = []
+      usage.onPost = async () => {
+        if (closings.length === 0) closings.push(outbox.close())
+      }
+      const result = await outbox.flush()
+      await Promise.all(closings)
+      expect(result).toMatchObject({ posted: 2, marked: 2, error: null })
+      const steps = await Promise.all(ids.map((id) => sql.step(id, 'work')))
+      expect(steps.filter((s) => s?.argo_synced_at !== null)).toHaveLength(2)
+      expect(steps.filter((s) => s?.argo_synced_at === null && s?.argo_claim === null)).toHaveLength(4)
+    } finally {
       await platform.close()
       await journal.close()
     }
