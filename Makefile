@@ -1,8 +1,9 @@
 .DEFAULT_GOAL := help
-.PHONY: help check fmt deploy verify version live-routes install-opencode research-chrome eval-mine-job
+.PHONY: help check test-timings fmt deploy verify version live-routes install-opencode research-chrome eval-mine-job
 
 help:
-	@echo "make check   oxfmt check, oxlint type-aware, tsc, bun test (the merge gate)"
+	@echo "make check   oxfmt check, oxlint type-aware, tsc, bun test --parallel (the merge gate; TEST_WORKERS=n sets the workers)"
+	@echo "make test-timings  re-record .bun-test-timings.json (how long each test file takes, so the slowest start first); run it on an idle machine and commit the result"
 	@echo "make fmt     apply formatting"
 	@echo "make deploy  deploy origin/master on the mini: release, LaunchAgents host and audio, the gateway as a third (restarted only when its build changed), health, agw on PATH (DRY_RUN=1 prints the plan)"
 	@echo "make install-opencode  install the pinned OpenCode build, link opencode and opencode-safe into ~/.local/bin from the main checkout (never restarts the host)"
@@ -21,6 +22,13 @@ help:
 # reaches the test run.
 # The test timeout scales with host load, sampled as each test file starts (bunfig.toml preload, packages/testing); tests that
 # pass their own timeout keep it.
+# Test files run in TEST_WORKERS parallel processes (bun test --parallel, which implies --isolate; see
+# bun.com/docs/test/parallel). Every file brings its own Postgres schema, so files do not collide, but each holds
+# connections: a worker per core on a big machine exhausts the server's slots. 4 matches CI and the mini's headroom.
+# The timings file (.bun-test-timings.json, refreshed by `make test-timings`) orders the files slowest-first.
+TEST_WORKERS ?= 4
+BUN_TEST_FLAGS ?= --parallel=$(TEST_WORKERS) --timings=.bun-test-timings.json
+
 check:
 	@echo "==> install (bun install --frozen-lockfile)"
 	@bun install --frozen-lockfile
@@ -30,16 +38,21 @@ check:
 	@bunx --no-install oxlint -c .oxlintrc.json --type-aware packages
 	@echo "==> typecheck (tsc --noEmit)"
 	@bunx --no-install tsc --noEmit
-	@echo "==> test (bun test --isolate, load-scaled timeout per test file)"
+	@echo "==> test (bun test --parallel=$(TEST_WORKERS), slowest files first, load-scaled timeout per test file)"
 	@if [ -n "$$AGW_TEST_PG_URL" ] || ! command -v secrets-run >/dev/null 2>&1; then \
-		bun test --isolate; \
+		bun test $(BUN_TEST_FLAGS); \
 	else \
 		secrets-run run --env-file=.env.test.tpl -- sh -c \
 			'AGW_TEST_PG_URL="postgres://agent_workflows:$$(bun -e "process.stdout.write(encodeURIComponent(process.env.AGW_TEST_PG_PASSWORD))")@127.0.0.1:5432/agent_workflows"; \
 			USAGE_TEST_PG_URL="postgres://$$(bun -e "process.stdout.write(encodeURIComponent(process.env.USAGE_TEST_PG_USER))"):$$(bun -e "process.stdout.write(encodeURIComponent(process.env.USAGE_TEST_PG_PASSWORD))")@127.0.0.1:5432/postgres"; \
-			export AGW_TEST_PG_URL USAGE_TEST_PG_URL; exec bun test --isolate'; \
+			export AGW_TEST_PG_URL USAGE_TEST_PG_URL; exec bun test $(BUN_TEST_FLAGS)'; \
 	fi
 	@echo "==> check passed"
+
+# Re-record how long each test file takes (run on an idle machine, then commit the file): `bun test --parallel` reads it to
+# start the slowest files first. A file with no entry counts as the median, so a stale record only costs speed.
+test-timings:
+	@$(MAKE) --no-print-directory check BUN_TEST_FLAGS="$(BUN_TEST_FLAGS) --update-timings"
 
 fmt:
 	@bunx --no-install oxfmt --write .
