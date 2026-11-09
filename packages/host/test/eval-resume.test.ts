@@ -83,6 +83,9 @@ function heldHost() {
   return { host, release: () => release() }
 }
 
+/** The case-run poll interval the tests boot with (production polls every 500 ms). */
+const CASE_POLL_MS = 25
+
 type Overrides = Partial<Pick<Runtime, 'runByKey' | 'scoreRun' | 'cancel' | 'wait'>>
 
 type BootOptions = {
@@ -103,6 +106,7 @@ function boot(
     env,
     tmpRoot,
     exec: counting,
+    casePollMs: CASE_POLL_MS,
     ...(options.recordSettleMs === undefined ? {} : { recordSettleMs: options.recordSettleMs }),
     ...(options.logger ? { logger: options.logger } : {}),
   })
@@ -205,7 +209,7 @@ describe('eval.run resume and cancel', () => {
     // A slow cancel: a tree removed before the case run ended would show up as a running r2 below.
     const { rt, evalRun } = boot(held.host, (real) => ({
       cancel: async (id: string) => {
-        await Bun.sleep(1500) // longer than a case's wait poll (500 ms)
+        await Bun.sleep(CASE_POLL_MS * 6) // several of a case's wait polls
         return real.cancel(id)
       },
     }))
@@ -277,7 +281,7 @@ describe('eval.run resume and cancel', () => {
     let caseRun: string | null = null
     const { rt, evalRun } = boot(host, (real) => ({
       wait: async (id, options) => {
-        if (options?.pollMs === 500 && caseRun === null) {
+        if (options?.pollMs === CASE_POLL_MS && caseRun === null) {
           caseRun = id
           throw new Error('wait blip')
         }

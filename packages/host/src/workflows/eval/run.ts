@@ -42,6 +42,8 @@ export interface EvalRunOptions {
   recordSettleMs?: number
   /** Overrides {@link NOT_CLAIMED_MS} (tests). */
   notClaimedMs?: number
+  /** Overrides the case-run poll interval (tests). */
+  casePollMs?: number
 }
 
 export const consoleLogger: Logger = {
@@ -265,6 +267,7 @@ export function createEvalRun(slot: EvalSlot, suites: Suites, options: EvalRunOp
             logger: options.logger ?? consoleLogger,
             recordSettleMs: options.recordSettleMs ?? RECORD_SETTLE_MS,
             notClaimedMs: options.notClaimedMs ?? NOT_CLAIMED_MS,
+            casePollMs: options.casePollMs ?? CASE_POLL_MS,
           },
           {
             evalRunId: ctx.runId,
@@ -296,6 +299,7 @@ type ReplayDeps = {
   logger: Logger
   recordSettleMs: number
   notClaimedMs: number
+  casePollMs: number
 }
 
 type Job = {
@@ -412,7 +416,7 @@ async function recorded(deps: ReplayDeps, runId: string, signal: AbortSignal): P
       return { cost: run.cost, unpricedCalls: Math.max(1, run.unpricedCalls) }
     }
     signal.throwIfAborted()
-    await Bun.sleep(CASE_POLL_MS)
+    await Bun.sleep(deps.casePollMs)
   }
 }
 
@@ -474,10 +478,10 @@ async function awaitEnd(deps: ReplayDeps, job: Job, runId: string, foreign: bool
         return 'not-claimed' as const
       }
       job.signal.throwIfAborted()
-      await Bun.sleep(CASE_POLL_MS)
+      await Bun.sleep(deps.casePollMs)
     }
   }
-  return runtime.wait(runId, { pollMs: CASE_POLL_MS, signal: job.signal })
+  return runtime.wait(runId, { pollMs: deps.casePollMs, signal: job.signal })
 }
 
 /** How long a cancelled case run gets to reach a terminal state before its tree is removed (a helper bound). */
