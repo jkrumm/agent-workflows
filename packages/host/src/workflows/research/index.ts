@@ -120,6 +120,25 @@ export function assemble(draft: Draft, ev: z.input<typeof Evidence>, earlier?: r
   }
 }
 
+/** The report of a run whose agent failed after its retries: the evidence its tools collected, marked `degraded`. */
+export function degrade(ev: z.input<typeof Evidence>, failure: unknown): ResearchResult {
+  const reason = failure instanceof Error ? failure.message : String(failure)
+  const retrieved = ev.retrieved
+  const blocked = ev.blocked ?? []
+  return {
+    report: `The research agent failed before it wrote a report (${reason}). The pages it retrieved are listed as sources.`,
+    citations: [],
+    sources: retrieved,
+    unverified: [],
+    status: 'partial',
+    warnings: [`the research agent failed after its retries: ${reason}`],
+    grounding: { citations: 0, grounded: 0, pagesRetrieved: new Set(retrieved).size, pagesFailed: ev.failed },
+    tools: ev.counts,
+    blocked,
+    degraded: reason,
+  }
+}
+
 /** The draft from an agent's text answer, or null when it is not the JSON object. */
 function parseDraft(text: string): Draft | null {
   const parsed = Draft.safeParse(parseJsonLoose(text))
@@ -168,6 +187,7 @@ export function createResearchWorkflows(deps: HostDeps, options: ResearchOptions
       const input = z.object({ query: z.string() }).safeParse(run.input)
       const output = ResearchOutput.safeParse(run.output)
       if (!input.success || !output.success) return { ok: false, reason: `run ${runId} holds no research report` }
+      if (output.data.degraded) return { ok: false, reason: `run ${runId} is degraded: its agent wrote no report` }
       const { report, citations } = output.data
       // The agent sees the URLs as the ledger rows and the citations hold them (raw), one per normalized page.
       const retrieved: string[] = []
@@ -269,11 +289,15 @@ export function createResearchWorkflows(deps: HostDeps, options: ResearchOptions
         await endAgent()
       }
       const recorded = await tools
-      if (failure) throw failure
+      const ev = Evidence.parse(recorded)
+      // A failed agent that had already read pages hands those over (the spend is on the run either way); a cancel,
+      // or a failure with nothing collected, is still the run's failure.
+      if (failure && (ctx.signal.aborted || ev.calls === 0)) throw failure
+      if (failure) return degrade(ev, failure)
       if (!draft) throw new WorkflowError('invalid_output', 'the research agent did not answer with the report JSON')
       return assemble(
         draft,
-        Evidence.parse(recorded),
+        ev,
         followed || siblings.length
           ? [...(followed?.retrieved ?? []), ...siblings.flatMap((s) => s.retrieved)]
           : undefined,

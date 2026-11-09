@@ -79,5 +79,11 @@ export const ResearchOutput = z.object({
   grounding: Grounding,
   tools: ToolCounts.optional(),
   blocked: z.array(Blocked).default([]),
+  degraded: z
+    .string()
+    .optional()
+    .describe(
+      'Set when the agent failed after its retries: why, with the pages it had retrieved as `sources` and no report of its own (`status` is `partial`)',
+    ),
 })
 export type ResearchResult = z.output<typeof ResearchOutput>

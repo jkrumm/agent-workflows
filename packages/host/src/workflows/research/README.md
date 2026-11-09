@@ -2,7 +2,7 @@
 
 `src/workflows/research/`: `agw research <query> [--depth quick|standard|deep] [--context …] [--follow-up <runId>]`
 answers research-gateway's report shape (`report`, `citations [{claim, url, confidence}]`, `sources`,
-`unverified [{topic, url, reason}]`, `status` `ok|partial`, `warnings`) plus a code-counted `grounding` and the
+`unverified [{topic, url, reason}]`, `status` `ok|partial`, `warnings`, `degraded` when the agent failed) plus a code-counted `grounding` and the
 agent's `tools` counts. `--depth` defaults to `standard`. A long run waits like check and review: after
 `AGW_WAIT_BUDGET_S` the CLI exits 10 with `agw run wait <runId>`. The shape is the winner of the three-way comparison
 (`docs/research/2026-10-28-research-three-way.md`: one agent with the platform's web tools); the other arms are gone.
@@ -22,6 +22,11 @@ agent's `tools` counts. `--depth` defaults to `standard`. A long run waits like 
 - **Grounding** (`assemble`, in code): a citation whose URL the run neither retrieved nor saw as a search result is
   dropped to `unverified`; dropping 10 % or more, or retrieving nothing at all, makes the report `partial`.
   `grounding` counts before the drop.
+- **Degraded** (`degraded: "<reason>"` in the output): an agent that fails after its two attempts (or its re-ask) with
+  at least one gate call on the ledger does not fail the run. The result is `status: partial` with the pages it
+  retrieved as `sources`, the `blocked` list and the `tools` counts, no citations, and a `report` that says the agent
+  failed; the spend stays on the run. A cancel, a failure before any tool call, and an answer that is not the report
+  JSON after the re-ask (`invalid_output`) still fail the run.
 - **Blocked pages** (`blocked: [{url, reason}]` in the output): a `web_fetch` that no read could satisfy is classified by
   `web.fetch` (`blocked (<reason>)` at the head of its failure text; reasons `cloudflare-challenge`, `bot-protection`,
   `login-required`, `forbidden`, `rate-limited`, `legal-block`, `rejected`, `no-text`, `unsupported-type`, `needs-human`). The gate's hook keeps the

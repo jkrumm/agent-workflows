@@ -7,7 +7,7 @@ import { FakeAgentHost, type FakeSession } from '@agent-workflows/testing/agent-
 import type { HostRegistry } from '../src/workflows/index.ts'
 import { MAX_BODY_BYTES, ToolGate } from '../src/tool-gate/index.ts'
 import { matchExpect } from '../src/workflows/research/golden.ts'
-import { assemble, createResearchWorkflows, RESEARCH_VERSION } from '../src/workflows/research/index.ts'
+import { assemble, createResearchWorkflows, degrade, RESEARCH_VERSION } from '../src/workflows/research/index.ts'
 import { memoryToolLedger, pgToolLedger } from '../src/workflows/research/ledger.ts'
 import { ResearchInput, ResearchOutput, type ResearchResult } from '../src/workflows/research/schema.ts'
 import { researchScorer } from '../src/workflows/research/scorer.ts'
@@ -227,6 +227,56 @@ describe('research workflow on a fake host', () => {
     )
     expect(never.result.status).toBe('failed')
     expect(never.result.error?.kind).toBe('invalid_output')
+  })
+
+  test('an agent failing after its retries hands over the pages it read, marked degraded; with nothing read the run fails', async () => {
+    const dying = new FakeAgentHost(async (s) => {
+      await callTool(s, 'web_fetch', { url: PG_DOCS })
+      throw new Error('the session died')
+    })
+    const { runId, result } = await run({ query: 'What is the default port of PostgreSQL?', depth: 'quick' }, dying)
+    expect(result.status).toBe('done')
+    const out = ResearchOutput.parse(result.output)
+    expect(out.status).toBe('partial')
+    expect(out.degraded).toContain('the session died')
+    expect(out.sources).toEqual([PG_DOCS])
+    expect(out.citations).toEqual([])
+    expect(out.grounding.pagesRetrieved).toBe(1)
+    expect(out.tools).toEqual({ web_fetch: 2 }) // one call per attempt
+    expect(Number((await sql.step(runId, 'tools'))?.cost)).toBeGreaterThan(0)
+
+    const empty = await run(
+      { query: 'Postgres port, agent dies at once?', depth: 'quick' },
+      new FakeAgentHost(async () => {
+        throw new Error('the session died')
+      }),
+    )
+    expect(empty.result.status).toBe('failed')
+  })
+
+  test('a healthy run carries no degraded marker', () => {
+    const out = assemble(
+      { report: 'r', citations: [], sources: [], unverified: [] },
+      {
+        retrieved: [PG_DOCS],
+        seen: [],
+        failed: 0,
+        counts: {},
+        calls: 1,
+      },
+    )
+    expect(out.degraded).toBeUndefined()
+  })
+
+  test('degrade keeps the evidence and the blocked pages and marks the reason', () => {
+    const blocked = [{ url: 'https://shop.example.com/machine', reason: 'cloudflare-challenge' }]
+    const out = degrade(
+      { retrieved: [PG_DOCS], seen: [], failed: 2, counts: { web_fetch: 3 }, calls: 3, blocked },
+      new Error('boom'),
+    )
+    expect(out).toMatchObject({ status: 'partial', degraded: 'boom', sources: [PG_DOCS], blocked })
+    expect(out.grounding).toEqual({ citations: 0, grounded: 0, pagesRetrieved: 1, pagesFailed: 2 })
+    expect(ResearchOutput.safeParse(out).success).toBe(true)
   })
 
   test('the input is strict, the depth defaults to standard', () => {
@@ -501,10 +551,18 @@ describe('follow-up on a finished report', () => {
     await insertRun('r-cancelled', 'research', 'cancelled', { query: 'Postgres port?', depth: 'quick' })
     await insertRun('r-failed', 'research', 'failed', { query: 'Postgres port?', depth: 'quick' })
     await insertRun('r-empty', 'research', 'done', { query: 'Postgres port?' }, { nothing: true })
+    await insertRun(
+      'r-degraded',
+      'research',
+      'done',
+      { query: 'Postgres port?' },
+      { ...degrade({ retrieved: [PG_DOCS], seen: [], failed: 0, counts: {}, calls: 1 }, new Error('boom')) },
+    )
     const untouched = new FakeAgentHost(async () => {
       throw new Error('the agent must not start')
     })
     const cases: [string, string][] = [
+      ['r-degraded', 'run r-degraded is degraded: its agent wrote no report'],
       ['r-nope', 'run r-nope does not exist'],
       ['r-smoke', 'run r-smoke is a smoke.ping run, not research'],
       ['r-cancelled', 'run r-cancelled is cancelled, not done'],
