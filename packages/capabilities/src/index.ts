@@ -207,6 +207,7 @@ export {
   type ImageRequest,
   type ImageResult,
   INPUT_FIDELITIES,
+  INTENTS,
   MAX_EDIT_IMAGE_BYTES,
   MAX_EDIT_IMAGES,
   MAX_MASK_BYTES,

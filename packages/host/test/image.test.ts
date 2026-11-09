@@ -194,17 +194,13 @@ describe('image end to end', () => {
       proposed_settings: { model: 'auto', size: '1536x1024', quality: 'low', background: 'auto', n: 3 },
     }
     handlers[GEN] = () => Response.json({ data: [{ b64_json: b64(png) }, { b64_json: b64(png) }], usage })
+    const transports = fakeTransports({
+      anthropic: [{ text: JSON.stringify(plan), tokens: { input: 1000, output: 2000, cacheRead: 0, reasoning: 0 } }],
+    })
     const enhanced = createRegistry(
       createImageCapabilities(
         { env: { AGW_API_SECRET: 'test-key', AGW_GATEWAY_URL: fake.url }, retry: { backoffMs: 0 } },
-        {
-          transports: fakeTransports({
-            anthropic: [
-              { text: JSON.stringify(plan), tokens: { input: 1000, output: 2000, cacheRead: 0, reasoning: 0 } },
-            ],
-          }),
-          env: {},
-        },
+        { transports, env: {} },
       ),
     )
     const [entry] = createImageWorkflows(
@@ -216,11 +212,13 @@ describe('image end to end', () => {
       const { body } = await t2.json(
         await t2.call('/workflows/image', {
           method: 'POST',
-          body: { prompt: 'a lighthouse', enhance: true, n: 2 },
+          body: { prompt: 'a lighthouse', enhance: true, intent: 'icon', n: 2 },
           headers: { prefer: 'wait=30' },
         }),
       )
       expect(body.status).toBe('done')
+      // --intent icon pinned the planner's playbook to the icon file (the logo guidance)
+      expect(transports.chatCalls[0]?.request.system).toContain('survive 16 px')
       // the plan's prompt and size went to the endpoint; the caller's n=2 beat the plan's 3
       expect(fake.seen[0]?.json).toMatchObject({
         prompt: 'PLAYBOOK PROMPT: a lighthouse at dusk',
@@ -228,7 +226,7 @@ describe('image end to end', () => {
         quality: 'low',
         n: 2,
       })
-      expect(body.output.plan).toMatchObject({ prompt: plan.prompt, intent: 'hero', warnings: [{ code: 'note' }] })
+      expect(body.output.plan).toMatchObject({ prompt: plan.prompt, intent: 'icon', warnings: [{ code: 'note' }] })
       expect(body.output.params).toMatchObject({ size: '1536x1024', quality: 'low', n: 2 })
       const { rows } = await t2.pool.query(
         `select step_id, cost from "${t2.schema}".steps where run_id = $1 order by step_id`,

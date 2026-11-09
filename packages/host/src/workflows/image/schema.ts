@@ -1,4 +1,4 @@
-import { CUTOUT_MODELS, GENERATE_MODELS, MAX_EDIT_IMAGES, QUALITIES } from '@agent-workflows/capabilities'
+import { CUTOUT_MODELS, GENERATE_MODELS, INTENTS, MAX_EDIT_IMAGES, QUALITIES } from '@agent-workflows/capabilities'
 import { z } from 'zod'
 
 /**
@@ -54,6 +54,12 @@ export const ImageInput = z
       .describe(
         'Generate: run the prompt through the planner first (playbook prompt, derived settings, policy check); settings you give win over its. A hard policy warning refuses the run',
       ),
+    intent: z
+      .enum(INTENTS)
+      .optional()
+      .describe(
+        'Generate, with --enhance: pin the kind of image so the planner loads its playbook file; --intent icon for a logo or app icon (default: the planner detects it, without the intent file)',
+      ),
   })
   .strict()
   .superRefine((input, ctx) => {
@@ -70,6 +76,9 @@ export const ImageInput = z
         issue('model', 'a cutout takes --model recraft or bria')
       if (input.images.length) issue('images', 'a cutout takes no --images')
       if (input.enhance) issue('enhance', 'a cutout has no prompt to enhance')
+      if (input.intent) issue('intent', 'a cutout has no prompt to plan')
+    } else if (input.intent && !input.enhance) {
+      issue('intent', '--intent steers the planner: it needs --enhance')
     } else if (input.model === 'recraft' || input.model === 'bria') {
       issue('model', 'generate takes --model flare or sunburst (or auto); recraft and bria are cutout models')
     }

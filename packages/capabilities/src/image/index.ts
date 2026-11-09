@@ -13,6 +13,7 @@ export type { ImageDeps, ResolvedImageDeps } from './deps.ts'
 export { resolveImageDeps } from './deps.ts'
 export type { EnhanceOutput, EnhanceParams } from './enhance.ts'
 export { MAX_EDIT_IMAGE_BYTES, MAX_EDIT_IMAGES } from './files.ts'
+export { INTENTS } from './playbook.ts'
 export type { GenerateOutput, GeneratedImage } from './generate.ts'
 export { GENERATE_MODELS, pickRoute, QUALITIES } from './generate.ts'
 export {

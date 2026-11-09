@@ -133,6 +133,22 @@ describe('image.enhance', () => {
     expect(out.intent).toEqual({ detected: 'icon', confidence: 0.4 })
   })
 
+  test('the icon playbook teaches what a logo or app icon needs: style, exact count, tile fill, 16 px forms, no text, and the flat-favicon limit', () => {
+    const icon = composePlaybook('icon')
+    for (const rule of [
+      'Style first',
+      'The exact subject count',
+      'How much of the tile it fills',
+      'survive 16 px',
+      'No text',
+      'flat colour fills with no gradient',
+      'keep-list the rest',
+    ])
+      expect(icon).toContain(rule)
+    // the guidance is the icon intent's own: a plain `auto` call does not carry it
+    expect(composePlaybook('auto')).not.toContain('survive 16 px')
+  })
+
   test('warnings come through, a hard one included', async () => {
     const warning = { code: 'real_person', severity: 'hard' as const, message: 'names a real person' }
     expect((await enhance([reply(plan({ warnings: [warning] }))], { brief: 'x' }).run()).warnings).toEqual([warning])

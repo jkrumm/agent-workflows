@@ -99,7 +99,11 @@ export function createImageWorkflows(
       let plan: EnhanceOutput | undefined
       if (input.enhance) {
         plan = await ctx.step('enhance', ({ callContext }: StepScope) =>
-          registry.call('image.enhance', { brief: prompt, hasReferences: input.images.length > 0 }, callContext),
+          registry.call(
+            'image.enhance',
+            { brief: prompt, hasReferences: input.images.length > 0, ...(input.intent && { intent: input.intent }) },
+            callContext,
+          ),
         )
         const hard = plan.warnings.filter((w) => w.severity === 'hard')
         if (hard.length)

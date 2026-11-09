@@ -10,6 +10,7 @@ agw image "make it dusk" --images '["/abs/photo.jpg"]'      # an edit
 agw image "a leaf icon, bold silhouette" --size 1024x1024 --background transparent
 agw image --file /abs/subject.png [--model bria]            # a cutout
 agw image "a leaf icon" --enhance --quality low             # plan first: playbook prompt, derived settings, policy check
+agw image "a leaf logo" --enhance --intent icon --n 12      # a mark: pins the planner's icon playbook
 ```
 
 Exactly one of `prompt` and `file`. The run answers with the files it made:
@@ -64,7 +65,7 @@ Exactly one of `prompt` and `file`. The run answers with the files it made:
   JPEG with an EXIF rotation, which is re-encoded upright. **A started prediction is billed:** its price is recorded as
   soon as it is created, so a failed poll or the poll deadline still leaves the cost on the run.
 - **`--enhance` is `imgcli gen --enhance`, ported** as the capability `image.enhance` (`brief`, `hasReferences`, optional
-  `intent` and `mode`). image-gateway's playbook (`packages/capabilities/playbook/`, version 5) is the system prompt, one
+  `intent` and `mode`). image-gateway's playbook (`packages/capabilities/playbook/`, version 6) is the system prompt, one
   JSON plan comes back, and code disposes of it: the aggressiveness gate is by word count (under 25 full, 25–100
   gap-fill, over 100 passthrough, never the model's call), settings are routed and an invalid size snaps to the nearest
   preset (each correction is a note), a verbatim check lists brief tokens the prompt dropped, the cost is estimated from
@@ -86,6 +87,35 @@ Exactly one of `prompt` and `file`. The run answers with the files it made:
   the cutout. They are the capabilities `image.upscale` and `image.vectorize` (hidden from the CLI like `image.cutout`),
   the deterministic sharp + svgo half lives in the `image-icon` workflow (`../image-icon/README.md`). The icon *source*
   is still `agw image … --size 1024x1024 --background transparent`.
+
+## A logo or app icon
+
+A mark is not one prompt and one result. The sequence that worked (found for software-factory's logo):
+
+1. **Breadth round.** About 12 prompts that differ on purpose (subject metaphor, form, palette), each `agw image "<prompt>"
+   --enhance --intent icon --quality low --size 1024x1024 --background transparent`. Without `--intent icon` the planner
+   detects the intent but loads none of the intent files, so the mark rules below never reach it; `--intent` needs `--enhance`.
+   Each prompt states the mark's five needs (below); only the variable part differs.
+2. **The owner's pick.** Number the results on one contact sheet and show it; the owner names a number. A mark is chosen
+   by eye, never by a score.
+3. **Edits from that pick.** `agw image "<what changes>. Keep <what stays>." --images '["/abs/pick.png"]'`: every edit
+   names what changes and what stays (shape, proportions, tile fill, flat style). Branch each edit from the pick, not from the
+   latest output (chained edits drift).
+4. **`agw image-icon` on the winner** (`../image-icon/README.md`): the favicon, PWA and `AppIcon.icns` set.
+
+What the prompt of a mark commits to, in the icon playbook (`packages/capabilities/playbook/icons.md`): the style first, the
+exact subject count, how much of the tile it fills, large simple forms that survive 16 px, no text.
+
+Two limits, both observed:
+
+- **Metallic or gradient art gets no usable SVG.** `image-icon` vectorizes the master and drops an SVG over 64 KB, so
+  a favicon from such a master has PNG/ICO only. Make a flat derivative of the winner (an edit: "flat colour fills, no
+  gradient, no sheen; keep the shape") and run `image-icon` on that.
+- **A generated image can have the wrong subject count** ("three stars" with four). The playbook asks for the count; it
+  cannot guarantee it. Look at every image before it goes on the sheet, and again after each edit.
+
+The existing commands carry all of this: no new command and no batch mode (`--n` and a shell loop make the breadth round).
+The one change this needed was `--intent` on `agw image`: the capability `image.enhance` always took it, the workflow did not pass it on.
 
 ## Route
 

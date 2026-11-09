@@ -10,6 +10,9 @@ agw image-icon /abs/logo.png --background '#0b1020' --svg never
 agw image-icon /abs/photo.jpg --cutout always --cutout-model bria --upscale never
 ```
 
+For a logo, the master is the winner of a breadth round and edits (`../image/README.md` §A logo or app icon). A metallic or
+gradient master gets no usable `favicon.svg`: make a flat derivative first.
+
 The command is `image-icon`, not `image icon`: the host refuses a command that is the prefix of another
 (`assertCommands`, `packages/host/src/app.ts`), and `agw image` exists. The capability `image-enhance` follows the same rule.
 

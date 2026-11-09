@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs'
  * doctrine the planner is conditioned on. Bumped whenever a file changes in a way that affects planner output; every plan
  * echoes it. The files sit outside `src/` on purpose: they name the image models, and model ids live only in the route table.
  */
-export const PLAYBOOK_VERSION = '5'
+export const PLAYBOOK_VERSION = '6'
 
 const CORE_SECTIONS = ['core', 'settings', 'policy'] as const
 export const INTENTS = [
