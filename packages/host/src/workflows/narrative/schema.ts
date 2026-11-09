@@ -1,4 +1,5 @@
 import { MAX_PAGE_CHARS, NARRATIVE_LIMITS, NARRATIVE_SECTIONS } from '@agent-workflows/capabilities'
+import { isAbsolute } from 'node:path'
 import { z } from 'zod'
 import { BOOTSTRAP_COMMIT_LIMIT, BOOTSTRAP_DAYS, SINCE_COMMIT_LIMIT } from './gather.ts'
 
@@ -64,7 +65,12 @@ export const NarrativeInput = z
       .describe(
         'Eval only: use these commits (newest first) and no session excerpts instead of reading git and transcripts',
       ),
-    cwd: z.string().min(1).max(1_000).describe('Absolute path to the target repo.'),
+    cwd: z
+      .string()
+      .min(1)
+      .max(1_000)
+      .refine(isAbsolute, 'cwd must be an absolute path')
+      .describe('Absolute path to the target repo.'),
     project: z.string().min(1).max(200).describe('Vault page name for this project, e.g. "weatherorb".'),
     previousPage: z
       .string()

@@ -1,6 +1,7 @@
 import { readdir, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { isAbsolute, join } from 'node:path'
+import { createExec, type Exec } from '../../process.ts'
 
 // The bounded, deterministic gathering of `narrative` (agent-gateway `server/jobs/handlers/narrative.ts`): the commits
 // and the session-transcript prose since the cutoff. The bounds are legacy's, verbatim. Both readers are ports, so a
@@ -40,17 +41,17 @@ export interface GatherPorts {
   projectsDir: string
 }
 
-export function defaultGatherPorts(): GatherPorts {
+/** A hang guard for the one `git log`, never a budget: a repo that cannot answer in this time gathers no commits. */
+export const GIT_TIMEOUT_MS = 30_000
+
+/** `exec` defaults to the helper runner on the host's allowlisted environment (`createExec`): `git log` reads a repo that may carry its own config and hooks. */
+export function defaultGatherPorts(exec: Exec = createExec(process.env)): GatherPorts {
   return {
     async git(cwd, args) {
-      try {
-        const proc = Bun.spawn(['git', '-C', cwd, ...args], { stdout: 'pipe', stderr: 'ignore' })
-        const out = await new Response(proc.stdout).text()
-        await proc.exited
-        return out
-      } catch {
-        return ''
-      }
+      // A relative path would resolve against the release directory, not the repo the caller meant.
+      if (!isAbsolute(cwd)) return ''
+      const ran = await exec(['git', '-C', cwd, ...args], { cwd, timeoutMs: GIT_TIMEOUT_MS })
+      return ran.code === 0 ? ran.stdout : ''
     },
     async sessionFiles(dir) {
       let files: string[]

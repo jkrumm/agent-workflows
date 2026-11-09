@@ -13,7 +13,9 @@ import {
   SINCE_COMMIT_LIMIT,
   SINCE_SESSION_LIMIT,
   COMMITS_MAX_BYTES,
+  defaultGatherPorts,
   encodeProjectDir,
+  GIT_TIMEOUT_MS,
   type GatherPorts,
   gatherFacts,
   type SessionFile,
@@ -72,6 +74,67 @@ function fakePorts(options: { commits?: string; files?: SessionFile[]; tails?: R
 const commit = (n: number, body = '') =>
   `c${n.toString().padStart(6, '0')} 2026-10-0${(n % 9) + 1}T00:00:00+00:00 feat: change ${n}\n${body}`
 const gitOutput = (entries: string[]) => entries.map((e) => `${e}\x1e`).join('\n')
+
+describe('defaultGatherPorts: git runs through the helper exec', () => {
+  const recorded = (result = { stdout: 'log', stderr: '', code: 0 as number | null, timedOut: false }) => {
+    const calls: { argv: readonly string[]; options: { cwd: string; timeoutMs: number } }[] = []
+    const exec = async (argv: readonly string[], options: { cwd: string; timeoutMs: number }) => {
+      calls.push({ argv, options })
+      return result
+    }
+    return { calls, ports: defaultGatherPorts(exec) }
+  }
+
+  test('an absolute path runs git -C with the hang-guard timeout', async () => {
+    const r = recorded()
+    expect(await r.ports.git('/work/repo', ['log', '-n', '1'])).toBe('log')
+    expect(r.calls).toHaveLength(1)
+    expect(r.calls[0]?.argv).toEqual(['git', '-C', '/work/repo', 'log', '-n', '1'])
+    expect(r.calls[0]?.options.timeoutMs).toBe(GIT_TIMEOUT_MS)
+  })
+
+  test('a relative path never spawns: it would resolve against the release directory', async () => {
+    const r = recorded()
+    expect(await r.ports.git('repo', ['log'])).toBe('')
+    expect(r.calls).toEqual([])
+  })
+
+  test('a failed or timed-out git gathers no commits', async () => {
+    expect(await recorded({ stdout: 'partial', stderr: '', code: 128, timedOut: false }).ports.git('/r', ['log'])).toBe(
+      '',
+    )
+    expect(
+      await recorded({ stdout: '', stderr: 'timed out', code: null, timedOut: true }).ports.git('/r', ['log']),
+    ).toBe('')
+  })
+
+  test('the real runner: the host environment is an allowlist, a missing repo is empty, a slow git is bounded', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agw-gather-'))
+    try {
+      Bun.spawnSync(['git', 'init', '-q'], { cwd: dir })
+      Bun.spawnSync(
+        [
+          'git',
+          '-c',
+          'user.email=a@example.com',
+          '-c',
+          'user.name=a',
+          'commit',
+          '-q',
+          '--allow-empty',
+          '-m',
+          'feat: one',
+        ],
+        { cwd: dir },
+      )
+      const ports = defaultGatherPorts()
+      expect(await ports.git(dir, ['log', '--format=%s'])).toBe('feat: one\n')
+      expect(await ports.git(join(dir, 'missing'), ['log'])).toBe('')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
 
 // ── Gathering ───────────────────────────────────────────────────────────────────────────────
 
@@ -398,6 +461,7 @@ describe('narrative', () => {
     }
     expect(NarrativeInput.safeParse({ ...INPUT, cwd: `/${'a'.repeat(1_000)}` }).success).toBe(false)
     expect(NarrativeInput.safeParse({ ...INPUT, cwd: `/${'a'.repeat(999)}` }).success).toBe(true)
+    expect(NarrativeInput.safeParse({ ...INPUT, cwd: 'relative/repo' }).success).toBe(false)
   })
 
   test('no new commits or sessions: unchanged, no model call, the route’s model', async () => {
