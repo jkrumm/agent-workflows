@@ -155,8 +155,8 @@ turn's tokens; the gateway's usage rows do.
   (`effortsOf` in `@agent-workflows/routes`: a Sonnet no `none`, DeepSeek `none`/`low`/`high`/`max`), so a step whose run's arm moves its route to another of these models or effort opens on the
   running server without a restart (`open` resolves the route with `AgentOpenSpec.arm`, and the handle keeps the
   route's patch for the fallback and the pricing). An arm naming a model outside the config is refused at admission
-  (`validateArm`), never served by a silent fallback to the table. Cost rows come from the rate of the first route naming
-  the model (the table names one rate per model), all on the inference gateway (`docs/gateway.md`) with the door token of the caller
+  (`validateArm`), never served by a silent fallback to the table. Cost rows come from the one rate every route naming
+  the model carries (routes that differ fail the config build; see `ready()` below for the shared row), all on the inference gateway (`docs/gateway.md`) with the door token of the caller
   `agw-opencode`. The key in the config is the reference `{env:AGW_GATEWAY_TOOL_TOKEN}`; the token opens the gateway only,
   never the API, and it is the only credential in the server's env and its tool shells. `anthropic` (`@ai-sdk/anthropic`,
   `<AGW_GATEWAY_URL>/anthropic/v1`) serves the `claude-` models, which the gateway pays from a credit pool or IU; its

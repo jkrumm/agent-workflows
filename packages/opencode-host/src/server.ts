@@ -52,7 +52,7 @@ export type ServerOptions = {
   /**
    * Failed boots in a row (binary missing, port taken, boot timeout) after which a restart gives up and `ready()`
    * rejects with the last error, instead of blocking its callers forever. The liveness tick starts a fresh round.
-   * Default 5 (about 30 s of backoff).
+   * Default 5 (about 15 s of backoff, plus any boot timeouts).
    */
   bootFailuresBeforeFail?: number
   expectedVersion?: string

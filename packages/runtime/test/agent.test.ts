@@ -425,6 +425,34 @@ describe('agent steps', () => {
 })
 
 describe('agent edge cases', () => {
+  test('open gets the step signal: a cancel aborts it while the host waits on something, as a server coming back', async () => {
+    let seen: AbortSignal | undefined
+    class WaitingOpenHost extends FakeAgentHost {
+      override async open(spec: Parameters<FakeAgentHost['open']>[0]): Promise<Json> {
+        seen = spec.signal
+        await new Promise<void>((_, reject) =>
+          spec.signal?.addEventListener('abort', () => reject(spec.signal?.reason)),
+        )
+        return super.open(spec)
+      }
+    }
+    const host = new WaitingOpenHost()
+    const wf = agentWorkflow('agent.open-signal')
+    const rt = testRuntime({ schema: db.schema, workflows: [wf], host })
+    await rt.open()
+    try {
+      const { runId } = await rt.start(wf, {}, { purpose: 'build' })
+      await until(() => seen !== undefined, 'open in flight')
+      expect(seen?.aborted).toBe(false)
+      await rt.cancel(runId)
+      expect((await rt.wait(runId)).status).toBe('cancelled')
+      expect(seen?.aborted).toBe(true)
+      expect(host.count('prompt')).toBe(0)
+    } finally {
+      await rt.close()
+    }
+  })
+
   test('a cancel that lands while the session opens aborts it and never prompts', async () => {
     let releaseOpen: () => void = () => {}
     const opened = new Promise<void>((resolve) => {
