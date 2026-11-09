@@ -1,6 +1,7 @@
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { runGuarded } from '../../media/audio.ts'
 
 // Podcast assembly + mastering: the ffmpeg process boundary for the production stage. Ports audio-gateway's
 // `podcast-mux.ts` and the pure mux helpers of `podcasts.ts` (PRE_MASTER_HOST_LUFS, buildMuxTurns, chaptersFromSegments).
@@ -38,14 +39,16 @@ export function concatWithGaps(turns: MuxTurn[]): MuxResult {
   }
 
   const bytesPerMs = (sampleRate * BYTES_PER_SAMPLE) / 1000
+  // Whole samples, so an odd byte count never shifts every following s16le sample.
+  const gapBytesOf = (gapMs: number): number => Math.round((sampleRate * gapMs) / 1000) * BYTES_PER_SAMPLE
   const turnStartsMs: number[] = []
   let totalBytes = 0
   let totalMs = 0
   for (const turn of turns) {
     turnStartsMs.push(totalMs)
-    const gapBytes = Math.round(bytesPerMs * turn.gapMsAfter)
+    const gapBytes = gapBytesOf(turn.gapMsAfter)
     totalBytes += turn.pcm.byteLength + gapBytes
-    totalMs += turn.pcm.byteLength / bytesPerMs + turn.gapMsAfter
+    totalMs += (turn.pcm.byteLength + gapBytes) / bytesPerMs
   }
 
   const out = new Uint8Array(totalBytes)
@@ -53,7 +56,7 @@ export function concatWithGaps(turns: MuxTurn[]): MuxResult {
   for (const turn of turns) {
     out.set(turn.pcm, offset)
     offset += turn.pcm.byteLength
-    offset += Math.round(bytesPerMs * turn.gapMsAfter) // leave zeroed silence
+    offset += gapBytesOf(turn.gapMsAfter) // leave zeroed silence
   }
 
   return { pcm: out, sampleRate, turnStartsMs, totalMs }
@@ -134,10 +137,14 @@ export function buildFfmetadata(chapters: Chapter[], totalMs: number, tags: Epis
  * cover to a temp dir (cleaned up in `finally`) and spawns ffmpeg with the
  * PCM on stdin. Output goes to a seekable temp FILE, not stdout, because the
  * ID3 header (which precedes the audio and carries the attached picture)
- * can't be written to a pipe. stderr is read concurrently with the stdin
- * write so a large buffer can't deadlock the pipe.
+ * can't be written to a pipe. Runs under `runGuarded` (timeout, kill on abort).
  */
-export async function masterPodcastMp3(pcm: Uint8Array, sampleRate: number, opts: MasterOptions): Promise<Uint8Array> {
+export async function masterPodcastMp3(
+  pcm: Uint8Array,
+  sampleRate: number,
+  opts: MasterOptions,
+  signal?: AbortSignal,
+): Promise<Uint8Array> {
   const dir = await mkdtemp(join(tmpdir(), 'agw-podcast-'))
   try {
     const totalMs = pcm.byteLength / ((sampleRate * BYTES_PER_SAMPLE) / 1000)
@@ -206,13 +213,14 @@ export async function masterPodcastMp3(pcm: Uint8Array, sampleRate: number, opts
       outPath,
     )
 
-    const proc = Bun.spawn(args, { stdin: 'pipe', stdout: 'ignore', stderr: 'pipe' })
-    const stderrPromise = new Response(proc.stderr).text()
-    void proc.stdin.write(pcm)
-    await proc.stdin.end()
-    const [errText, exitCode] = await Promise.all([stderrPromise, proc.exited])
+    const { stderr, exitCode } = await runGuarded(args, {
+      stdin: pcm,
+      stdout: 'ignore',
+      inputBytes: pcm.byteLength,
+      signal,
+    })
     if (exitCode !== 0) {
-      throw new Error(`ffmpeg podcast mastering failed (${exitCode}): ${errText.slice(0, 500)}`)
+      throw new Error(`ffmpeg podcast mastering failed (${exitCode}): ${stderr.slice(0, 500)}`)
     }
 
     return new Uint8Array(await readFile(outPath))
@@ -227,10 +235,15 @@ export async function masterPodcastMp3(pcm: Uint8Array, sampleRate: number, opts
 
 /**
  * Integrated loudness (EBU R128 "I", LUFS) of raw s16le mono PCM via ffmpeg's
- * ebur128 filter. Returns null for (near-)silence, where ffmpeg reports -70.
+ * ebur128 filter. Returns null for (near-)silence, where ffmpeg reports -70;
+ * a failing ffmpeg throws.
  */
-export async function measureLoudnessLufs(pcm: Uint8Array, sampleRate: number): Promise<number | null> {
-  const proc = Bun.spawn(
+export async function measureLoudnessLufs(
+  pcm: Uint8Array,
+  sampleRate: number,
+  opts?: { signal?: AbortSignal },
+): Promise<number | null> {
+  const { stderr, exitCode } = await runGuarded(
     [
       'ffmpeg',
       '-hide_banner',
@@ -249,13 +262,9 @@ export async function measureLoudnessLufs(pcm: Uint8Array, sampleRate: number): 
       'null',
       '-',
     ],
-    { stdin: 'pipe', stdout: 'ignore', stderr: 'pipe' },
+    { stdin: pcm, stdout: 'ignore', inputBytes: pcm.byteLength, signal: opts?.signal },
   )
-  const writer = proc.stdin
-  void writer.write(pcm)
-  await writer.end()
-  const stderr = await new Response(proc.stderr).text()
-  await proc.exited
+  if (exitCode !== 0) throw new Error(`ffmpeg loudness measurement failed (${exitCode}): ${stderr.slice(0, 300)}`)
   // The summary block ends with "I:  -24.8 LUFS"; take the last occurrence.
   const matches = [...stderr.matchAll(/I:\s+(-?[\d.]+)\s+LUFS/g)]
   const last = matches[matches.length - 1]
@@ -293,6 +302,7 @@ const MAX_HOST_GAIN_DB = 12
 export async function matchHostLoudness<T extends { pcm: Uint8Array; sampleRate: number; speaker: string }>(
   turns: T[],
   targetLufs: number,
+  opts?: { signal?: AbortSignal },
 ): Promise<{ turns: T[]; gainsDb: Record<string, number> }> {
   const bySpeaker = new Map<string, T[]>()
   for (const t of turns) bySpeaker.set(t.speaker, [...(bySpeaker.get(t.speaker) ?? []), t])
@@ -301,7 +311,7 @@ export async function matchHostLoudness<T extends { pcm: Uint8Array; sampleRate:
   const gainOf = new Map<T, number>()
   for (const [speaker, group] of bySpeaker) {
     const joined = concatWithGaps(group.map((t) => ({ pcm: t.pcm, sampleRate: t.sampleRate, gapMsAfter: 0 })))
-    const measured = await measureLoudnessLufs(joined.pcm, joined.sampleRate)
+    const measured = await measureLoudnessLufs(joined.pcm, joined.sampleRate, opts)
     const gain = measured === null ? 0 : Math.max(-MAX_HOST_GAIN_DB, Math.min(MAX_HOST_GAIN_DB, targetLufs - measured))
     gainsDb[speaker] = Number(gain.toFixed(2))
     for (const t of group) gainOf.set(t, gain)

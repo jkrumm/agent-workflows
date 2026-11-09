@@ -99,15 +99,76 @@ export interface SilenceRange {
 
 export interface MediaPort {
   /** Between what a lane produced and the format the client asked for; also MP3 -> pcm ahead of concatenation. */
-  transcode(input: Uint8Array, from: TranscodeInput, to: AudioOutputFormat): Promise<Encoded>
-  /** Seconds, via ffprobe; 0 when it cannot tell (timing is best-effort). */
-  duration(data: Blob | ArrayBuffer | Uint8Array): Promise<number>
+  transcode(
+    input: Uint8Array,
+    from: TranscodeInput,
+    to: AudioOutputFormat,
+    opts?: { signal?: AbortSignal },
+  ): Promise<Encoded>
+  /** Seconds, via ffprobe; rejects when ffprobe fails or prints no number. */
+  duration(data: Blob | ArrayBuffer | Uint8Array, opts?: { signal?: AbortSignal }): Promise<number>
   /** Any input to 16 kHz mono mp3, lossless for STT (Whisper-class models resample to that internally). */
-  compressForStt(input: Uint8Array, opts: { bitrateKbps: number }): Promise<ArrayBuffer>
+  compressForStt(input: Uint8Array, opts: { bitrateKbps: number; signal?: AbortSignal }): Promise<ArrayBuffer>
   /** `[startSec, startSec + durationSec)` re-encoded to 16 kHz mono mp3; `-t` is always passed (see `sliceArgs`). */
-  slice(input: Uint8Array, startSec: number, durationSec: number, opts: { bitrateKbps: number }): Promise<ArrayBuffer>
-  /** Silent stretches (`silencedetect`); never throws, `[]` on any failure. */
-  detectSilence(input: Uint8Array, opts: { noiseDb: number; minDurationSec: number }): Promise<SilenceRange[]>
+  slice(
+    input: Uint8Array,
+    startSec: number,
+    durationSec: number,
+    opts: { bitrateKbps: number; signal?: AbortSignal },
+  ): Promise<ArrayBuffer>
+  /** Silent stretches (`silencedetect`); `[]` on any ffmpeg failure, but an abort rejects with the signal's reason. */
+  detectSilence(
+    input: Uint8Array,
+    opts: { noiseDb: number; minDurationSec: number; signal?: AbortSignal },
+  ): Promise<SilenceRange[]>
+}
+
+const FFMPEG_TIMEOUT_BASE_MS = 60_000
+const FFMPEG_TIMEOUT_MAX_MS = 30 * 60_000
+const FFMPEG_BYTES_PER_SEC = 1_000_000
+
+/** Hang guard, never a budget: 60 s + input bytes at 1 MB/s, capped at 30 min. */
+export const ffmpegTimeoutMs = (inputBytes: number): number =>
+  Math.min(FFMPEG_TIMEOUT_MAX_MS, FFMPEG_TIMEOUT_BASE_MS + Math.ceil((inputBytes / FFMPEG_BYTES_PER_SEC) * 1000))
+
+/**
+ * Spawn a process under the hang guard (SIGKILL on timeout or abort) and collect stdout/stderr. `stdin` is written
+ * and closed here; a write failure (EPIPE: the process exited early) is swallowed because the exit code and stderr
+ * are the real error. An abort rejects with the signal's reason; a non-zero exit is returned, not thrown.
+ */
+export async function runGuarded(
+  cmd: string[],
+  o: { stdin?: Uint8Array; stdout?: 'pipe' | 'ignore'; inputBytes: number; signal?: AbortSignal },
+): Promise<{ stdout: ArrayBuffer; stderr: string; exitCode: number }> {
+  o.signal?.throwIfAborted()
+  const proc = Bun.spawn(cmd, {
+    stdin: o.stdin ? 'pipe' : 'ignore',
+    stdout: o.stdout ?? 'pipe',
+    stderr: 'pipe',
+    timeout: ffmpegTimeoutMs(o.inputBytes),
+    killSignal: 'SIGKILL',
+    signal: o.signal,
+  })
+  // Read stdout and stderr while writing, so the output pipe never deadlocks.
+  const stdout =
+    proc.stdout instanceof ReadableStream
+      ? new Response(proc.stdout).arrayBuffer()
+      : Promise.resolve(new ArrayBuffer(0))
+  const stderr = new Response(proc.stderr).text()
+  const stdin = o.stdin
+  const sink = proc.stdin
+  const written = (async () => {
+    if (!stdin || !sink) return
+    try {
+      await sink.write(stdin)
+      await sink.end()
+    } catch {
+      // ffmpeg died before reading everything.
+    }
+  })()
+  const [out, errText, exitCode] = await Promise.all([stdout, stderr, proc.exited, written])
+  o.signal?.throwIfAborted()
+  return { stdout: out, stderr: errText, exitCode }
 }
 
 /** 16 kHz mono mp3: the one shape every STT-bound re-encode uses. */
@@ -143,21 +204,21 @@ export const sliceArgs = (tmp: string, startSec: number, durationSec: number, bi
 const tmpPath = () => join(tmpdir(), `agw-audio-${crypto.randomUUID()}`)
 
 /** Run ffmpeg over a temp-file copy of `input` (an MP4's moov atom can sit at the end: no pipe) and return stdout. */
-async function ffmpegToBuffer(input: Uint8Array, args: (tmp: string) => string[], label: string): Promise<ArrayBuffer> {
+async function ffmpegToBuffer(
+  input: Uint8Array,
+  args: (tmp: string) => string[],
+  label: string,
+  signal?: AbortSignal,
+): Promise<ArrayBuffer> {
   const tmp = tmpPath()
   try {
     await Bun.write(tmp, input)
-    const proc = Bun.spawn(['ffmpeg', '-hide_banner', '-loglevel', 'error', ...args(tmp)], {
-      stdout: 'pipe',
-      stderr: 'pipe',
-    })
-    const [bytes, errText, exitCode] = await Promise.all([
-      new Response(proc.stdout).arrayBuffer(),
-      new Response(proc.stderr).text(),
-      proc.exited,
-    ])
-    if (exitCode !== 0) throw new Error(`ffmpeg ${label} failed (${exitCode}): ${errText.slice(0, 300)}`)
-    return bytes
+    const { stdout, stderr, exitCode } = await runGuarded(
+      ['ffmpeg', '-hide_banner', '-loglevel', 'error', ...args(tmp)],
+      { inputBytes: input.byteLength, signal },
+    )
+    if (exitCode !== 0) throw new Error(`ffmpeg ${label} failed (${exitCode}): ${stderr.slice(0, 300)}`)
+    return stdout
   } finally {
     await unlink(tmp).catch(() => {})
   }
@@ -206,19 +267,20 @@ export function ffmpegMedia(opts: { mp3BitrateKbps: number; opusBitrateKbps: num
     }
   }
 
-  const duration: MediaPort['duration'] = async (data) => {
+  // A probe that cannot read the input is 0 s (callers fall back to the raw upload); an abort is never swallowed.
+  const duration: MediaPort['duration'] = async (data, o) => {
     const tmp = tmpPath()
     try {
       await Bun.write(tmp, data instanceof Blob ? await data.arrayBuffer() : data)
-      const proc = Bun.spawn(
+      const { stdout, exitCode } = await runGuarded(
         ['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=nw=1:nk=1', tmp],
-        { stdout: 'pipe', stderr: 'ignore' },
+        { inputBytes: data instanceof Blob ? data.size : data.byteLength, signal: o?.signal },
       )
-      const out = await new Response(proc.stdout).text()
-      await proc.exited
-      const d = Number.parseFloat(out.trim())
+      if (exitCode !== 0) return 0
+      const d = Number.parseFloat(new TextDecoder().decode(stdout).trim())
       return Number.isFinite(d) ? d : 0
-    } catch {
+    } catch (error) {
+      if (o?.signal?.aborted) throw error
       return 0
     } finally {
       await unlink(tmp).catch(() => {})
@@ -226,35 +288,37 @@ export function ffmpegMedia(opts: { mp3BitrateKbps: number; opusBitrateKbps: num
   }
 
   return {
-    async transcode(input, from, to) {
+    async transcode(input, from, to, o) {
       const inputArgs =
         from.kind === 'pcm'
           ? ['-f', 's16le', '-ar', String(from.sampleRate), '-ac', '1', '-i', 'pipe:0']
           : ['-i', 'pipe:0']
-      const proc = Bun.spawn(
+      const {
+        stdout: bytes,
+        stderr,
+        exitCode,
+      } = await runGuarded(
         ['ffmpeg', '-hide_banner', '-loglevel', 'error', ...inputArgs, ...outputArgs(to), 'pipe:1'],
-        { stdin: 'pipe', stdout: 'pipe', stderr: 'pipe' },
+        {
+          stdin: input,
+          inputBytes: input.byteLength,
+          signal: o?.signal,
+        },
       )
-      // Read stdout and stderr while writing, so the output pipe never deadlocks.
-      const stdout = new Response(proc.stdout).arrayBuffer()
-      const stderr = new Response(proc.stderr).text()
-      void proc.stdin.write(input)
-      await proc.stdin.end()
-      const [bytes, errText, exitCode] = await Promise.all([stdout, stderr, proc.exited])
-      if (exitCode !== 0) throw new Error(`ffmpeg transcode failed (${exitCode}): ${errText.slice(0, 300)}`)
+      if (exitCode !== 0) throw new Error(`ffmpeg transcode failed (${exitCode}): ${stderr.slice(0, 300)}`)
       return { bytes, contentType: CONTENT_TYPES[to] }
     },
     duration,
     compressForStt: (input, o) =>
-      ffmpegToBuffer(input, (tmp) => ['-i', tmp, ...sttEncodeArgs(o.bitrateKbps)], 'compressForStt'),
+      ffmpegToBuffer(input, (tmp) => ['-i', tmp, ...sttEncodeArgs(o.bitrateKbps)], 'compressForStt', o.signal),
     slice: (input, startSec, durationSec, o) =>
-      ffmpegToBuffer(input, (tmp) => sliceArgs(tmp, startSec, durationSec, o.bitrateKbps), 'slice'),
+      ffmpegToBuffer(input, (tmp) => sliceArgs(tmp, startSec, durationSec, o.bitrateKbps), 'slice', o.signal),
     async detectSilence(input, o) {
       const tmp = tmpPath()
       try {
         await Bun.write(tmp, input)
         // silencedetect prints at the info level on stderr: no `-loglevel error` here.
-        const proc = Bun.spawn(
+        const { stderr, exitCode } = await runGuarded(
           [
             'ffmpeg',
             '-hide_banner',
@@ -266,18 +330,18 @@ export function ffmpegMedia(opts: { mp3BitrateKbps: number; opusBitrateKbps: num
             'null',
             '-',
           ],
-          { stdout: 'ignore', stderr: 'pipe' },
+          { stdout: 'ignore', inputBytes: input.byteLength, signal: o.signal },
         )
-        const stderr = await new Response(proc.stderr).text()
-        if ((await proc.exited) !== 0) return []
+        if (exitCode !== 0) return []
         const needsEnd = /silence_start/.test(
           stderr
             .split('\n')
             .reverse()
             .find((l) => /silence_(start|end)/.test(l)) ?? '',
         )
-        return parseSilence(stderr, needsEnd ? await duration(input) : null)
+        return parseSilence(stderr, needsEnd ? await duration(input, { signal: o.signal }) : null)
       } catch {
+        if (o.signal?.aborted) throw o.signal.reason
         return []
       } finally {
         await unlink(tmp).catch(() => {})

@@ -1,6 +1,23 @@
 import { describe, expect, test } from 'bun:test'
-import { hasFfmpeg, toneFile } from '../../test/support.ts'
-import { concatPcm, ffmpegMedia, parseOutputFormat, parseSilence, pcmToWav, silencePcm } from './audio.ts'
+import { caught, hasFfmpeg, toneFile } from '../../test/support.ts'
+import {
+  concatPcm,
+  ffmpegMedia,
+  ffmpegTimeoutMs,
+  parseOutputFormat,
+  parseSilence,
+  pcmToWav,
+  runGuarded,
+  silencePcm,
+} from './audio.ts'
+
+describe('ffmpegTimeoutMs', () => {
+  test('60 s plus 1 s per MB, capped at 30 min', () => {
+    expect(ffmpegTimeoutMs(0)).toBe(60_000)
+    expect(ffmpegTimeoutMs(10_000_000)).toBe(70_000)
+    expect(ffmpegTimeoutMs(10 ** 12)).toBe(1_800_000)
+  })
+})
 
 describe('framing (pure)', () => {
   test('parseOutputFormat: empty is mp3, the four formats pass, anything else is null', () => {
@@ -80,7 +97,7 @@ describe.skipIf(!hasFfmpeg)('ffmpeg boundary', () => {
     expect(back.bytes.byteLength).toBeGreaterThan(20_000)
   })
 
-  test('an undecodable input fails loudly; duration of garbage is 0', async () => {
+  test('an undecodable input fails loudly; duration of garbage stays 0', async () => {
     const garbage = new TextEncoder().encode('not audio at all')
     let error: unknown
     await media.compressForStt(garbage, { bitrateKbps: 32 }).catch((e: unknown) => {
@@ -88,6 +105,50 @@ describe.skipIf(!hasFfmpeg)('ffmpeg boundary', () => {
     })
     expect(String(error)).toContain('ffmpeg compressForStt failed')
     expect(await media.duration(garbage)).toBe(0)
+  })
+
+  test('abort kills a running ffmpeg and rejects with the signal reason, promptly', async () => {
+    const ctrl = new AbortController()
+    const started = Date.now()
+    const run = runGuarded(
+      ['ffmpeg', '-hide_banner', '-f', 'lavfi', '-i', 'anullsrc', '-t', '3600', '-f', 'null', '-'],
+      {
+        inputBytes: 0,
+        signal: ctrl.signal,
+      },
+    )
+    setTimeout(() => ctrl.abort(new Error('stop now')), 200)
+    expect((await caught(run)).message).toBe('stop now')
+    expect(Date.now() - started).toBeLessThan(5000)
+    const pre = new AbortController()
+    pre.abort(new Error('already'))
+    expect((await caught(media.duration(new Uint8Array(10), { signal: pre.signal }))).message).toBe('already')
+    expect((await caught(media.transcode(pcm, { kind: 'auto' }, 'pcm', { signal: pre.signal }))).message).toBe(
+      'already',
+    )
+  })
+
+  test('detectSilence rejects on abort instead of returning []', async () => {
+    const ctrl = new AbortController()
+    ctrl.abort(new Error('gone'))
+    const err = await caught(media.detectSilence(pcm, { noiseDb: -30, minDurationSec: 0.2, signal: ctrl.signal }))
+    expect(err.message).toBe('gone')
+  })
+
+  test('a process that exits without reading stdin is an exit code, not an EPIPE rejection', async () => {
+    const unhandled: unknown[] = []
+    const onUnhandled = (e: unknown) => unhandled.push(e)
+    process.on('unhandledRejection', onUnhandled)
+    try {
+      const res = await runGuarded(['sh', '-c', 'exit 3'], { stdin: new Uint8Array(8_000_000), inputBytes: 0 })
+      expect(res.exitCode).toBe(3)
+      const err = await caught(media.transcode(new Uint8Array(8_000_000), { kind: 'auto' }, 'mp3'))
+      expect(err.message).toContain('ffmpeg transcode failed')
+      await Bun.sleep(50)
+      expect(unhandled).toEqual([])
+    } finally {
+      process.off('unhandledRejection', onUnhandled)
+    }
   })
 
   test('slice cuts the requested span; detectSilence finds none in a steady tone and [] on garbage', async () => {

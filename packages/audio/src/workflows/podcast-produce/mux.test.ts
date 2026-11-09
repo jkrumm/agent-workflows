@@ -89,6 +89,22 @@ describe('concatWithGaps', () => {
     expect(pcm.slice(pcm.byteLength - b.pcm.byteLength)).toEqual(b.pcm)
   })
 
+  test('a gap is whole samples: odd byte products at 22050 Hz stay even and turn starts sample-aligned', () => {
+    const sampleRate = 22_050
+    // 22050 * 0.0005 s = 11.025 samples -> 11 samples = 22 bytes; the old byte rounding gave 22.05 -> 22 but 7 ms gave 308.7 -> 309.
+    const turns = [3, 7, 11].map((gapMsAfter) => ({ pcm: new Uint8Array(100), sampleRate, gapMsAfter }))
+    const { pcm, turnStartsMs, totalMs } = concatWithGaps(turns)
+    const gapBytes = (ms: number) => Math.round((sampleRate * ms) / 1000) * 2
+    expect(pcm.byteLength % 2).toBe(0)
+    expect(pcm.byteLength).toBe(300 + gapBytes(3) + gapBytes(7) + gapBytes(11))
+    expect(turnStartsMs[1]).toBeCloseTo((100 + gapBytes(3)) / ((sampleRate * 2) / 1000), 9)
+    expect(((turnStartsMs[2] ?? 0) * sampleRate) / 1000 - ((turnStartsMs[1] ?? 0) * sampleRate) / 1000).toBeCloseTo(
+      50 + gapBytes(7) / 2,
+      6,
+    )
+    expect(totalMs).toBeCloseTo(pcm.byteLength / ((sampleRate * 2) / 1000), 9)
+  })
+
   test('empty input returns an empty, zero-duration result', () => {
     expect(concatWithGaps([])).toEqual({ pcm: new Uint8Array(0), sampleRate: 0, turnStartsMs: [], totalMs: 0 })
   })
@@ -206,6 +222,23 @@ describe('host loudness matching', () => {
     expect(lufs ?? 0).toBeLessThan(0)
     expect(lufs ?? -100).toBeGreaterThan(-30)
     expect(await measureLoudnessLufs(new Uint8Array(24_000 * 2 * 2), 24_000)).toBeNull()
+  })
+
+  test('measureLoudnessLufs throws when ffmpeg fails, instead of reporting silence', async () => {
+    const err = await caught(measureLoudnessLufs(sine(0.5, 1), 0))
+    expect(err.message).toContain('ffmpeg loudness measurement failed')
+    const aborted = new AbortController()
+    aborted.abort(new Error('cancelled'))
+    expect((await caught(measureLoudnessLufs(sine(0.5, 1), 24_000, { signal: aborted.signal }))).message).toBe(
+      'cancelled',
+    )
+  })
+
+  test('masterPodcastMp3 rejects on abort', async () => {
+    const aborted = new AbortController()
+    aborted.abort(new Error('cancelled'))
+    const opts = { chapters: [], tags: BASE_TAGS, bitrateKbps: 64 }
+    expect((await caught(masterPodcastMp3(sine(0.5, 1), 24_000, opts, aborted.signal))).message).toBe('cancelled')
   })
 
   test('matchHostLoudness levels a loud and a quiet host onto the same target', async () => {
