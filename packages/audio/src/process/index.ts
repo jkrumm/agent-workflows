@@ -52,6 +52,8 @@ export interface AudioProcessOptions {
   tokens: ReadonlyMap<string, string>
   /** What the door's upstream calls go through (bound per request to its signal). Default: the global `fetch`. */
   fetch?: Fetch
+  /** How long a finished door run waits for a `request` summary not yet recorded (tests). Default: 2 s. */
+  summaryGraceMs?: number
   /** The lanes' deps the workflows synthesize on (`podcast.produce`); the same config the door handlers are bound to. */
   audio: Omit<AudioDeps, 'usage'>
   /** Replaces the discovered modules (tests). */
@@ -85,6 +87,7 @@ export function audioProcess(options: AudioProcessOptions): ProcessDefinition {
         isOpen: () => open(),
         logger,
         ...(options.fetch ? { fetch: options.fetch } : {}),
+        ...(options.summaryGraceMs === undefined ? {} : { summaryGraceMs: options.summaryGraceMs }),
       })
       const deps: AudioWorkflowDeps = {
         registry,

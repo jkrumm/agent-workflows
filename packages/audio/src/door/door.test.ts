@@ -10,6 +10,7 @@ import {
   streamBody,
 } from '@agent-workflows/testing/gateway'
 import { hasFfmpeg, realMedia, testDeps, toneFile } from '../../test/support.ts'
+import { SPEECH_BODY_MAX_BYTES } from './common.ts'
 import type { RequestEvent, UsageEvent } from '../usage.ts'
 import { createSpeechHandler } from './speech.ts'
 import { createTranscriptionsHandler } from './transcriptions.ts'
@@ -210,5 +211,71 @@ describe('door contract', () => {
       `/gemini/v1beta/models/${LITE}:generateContent`,
       `/gemini/v1beta/models/${LITE}:generateContent`,
     ])
+  })
+})
+
+describe('speech request limits', () => {
+  const speech = (body: string, headers: Record<string, string> = {}) =>
+    new Request('http://door/v1/audio/speech', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...headers },
+      body,
+    })
+  const withInput = (input: string, extra: Record<string, unknown> = {}) =>
+    JSON.stringify({ model: LITE, input, voice: 'Charon', response_format: 'mp3', ...extra })
+
+  test('input over the cap is a 400 naming the cap and the length; exactly the cap passes the check', async () => {
+    iu = startFakeGateway({ gemini: () => geminiAudio(new Uint8Array(24_000)) })
+    const deps = testDeps(iu)
+    const max = deps.config.ttsMaxInputChars
+    const handler = createSpeechHandler(deps)
+
+    const over = await handler(speech(withInput('a'.repeat(max + 1))))
+    expect(over.status).toBe(400)
+    const error = ((await over.json()) as { error: { message: string; type: string } }).error
+    expect(error.type).toBe('invalid_request_error')
+    expect(error.message).toContain(String(max))
+    expect(error.message).toContain(String(max + 1))
+    expect(iu.requests).toEqual([])
+    expect(deps.usage.events).toEqual([])
+
+    const at = await handler(speech(withInput('a'.repeat(max))))
+    expect(at.status).toBe(200)
+  })
+
+  test('an explicit summarize request may carry input over the cap', async () => {
+    iu = startFakeGateway({ gemini: () => geminiAudio(new Uint8Array(24_000)) })
+    const deps = testDeps(iu)
+    const long = await createSpeechHandler(deps)(
+      speech(withInput('a'.repeat(deps.config.ttsMaxInputChars + 1), { summarize: true })),
+    )
+    expect(long.status).not.toBe(400)
+  })
+
+  test('a body over the door limit is a 413 before it is read, declared or chunked, and no lane runs', async () => {
+    iu = startFakeGateway({ gemini: () => geminiAudio(new Uint8Array(24_000)) })
+    const deps = testDeps(iu)
+    const handler = createSpeechHandler(deps)
+
+    const declared = await handler(speech('{}', { 'content-length': String(SPEECH_BODY_MAX_BYTES + 1) }))
+    expect(declared.status).toBe(413)
+    expect(((await declared.json()) as { error: { type: string } }).error.type).toBe('invalid_request_error')
+
+    const chunk = new Uint8Array(SPEECH_BODY_MAX_BYTES / 2 + 1).fill(32)
+    const chunked = new Request('http://door/v1/audio/speech', {
+      method: 'POST',
+      body: new ReadableStream({
+        start(controller) {
+          controller.enqueue(chunk)
+          controller.enqueue(chunk)
+          controller.close()
+        },
+      }),
+      duplex: 'half',
+    } as RequestInit)
+    expect((await handler(chunked)).status).toBe(413)
+
+    expect(iu.requests).toEqual([])
+    expect(deps.usage.events).toEqual([])
   })
 })

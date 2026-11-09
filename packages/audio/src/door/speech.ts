@@ -5,7 +5,7 @@ import { type AudioDeps, AudioScope, resolveDeps } from '../scope.ts'
 import { DELIVERY_KEYS, isDeliveryKey } from '../speech/core.ts'
 import { handleGeminiSpeech, type LaneResult } from '../speech/gemini.ts'
 import { handleReplicateSpeech, replicateWantsPrep } from '../speech/replicate.ts'
-import { callerOf, internalError, invalid, requestIdOf } from './common.ts'
+import { callerOf, internalError, invalid, readBoundedText, requestIdOf, SPEECH_BODY_MAX_BYTES } from './common.ts'
 
 const TTS_LANES: readonly AudioLane[] = ['gemini', 'replicate']
 
@@ -89,9 +89,11 @@ export function createSpeechHandler(deps: AudioDeps): (req: Request) => Promise<
 
 async function dispatchSpeech(scope: AudioScope, req: Request): Promise<Response> {
   const requestStart = scope.deps.clock.now()
+  const text = await readBoundedText(req, SPEECH_BODY_MAX_BYTES)
+  if (text === null) return invalid(`request body exceeds ${SPEECH_BODY_MAX_BYTES} bytes`, 413)
   let body: SpeechBody
   try {
-    body = parseSpeechBody(JSON.parse(await req.text()) as Record<string, unknown>)
+    body = parseSpeechBody(JSON.parse(text) as Record<string, unknown>)
   } catch {
     // No blank-model usage event for a body that is not JSON.
     return invalid('request body must be valid JSON')
@@ -99,6 +101,7 @@ async function dispatchSpeech(scope: AudioScope, req: Request): Promise<Response
   const responseFormat = parseOutputFormat(body.responseFormat)
   if (responseFormat === null) return invalid(`unsupported response_format: ${body.responseFormat}`)
 
+  const { config } = scope
   const { routeId, overridden } = resolveTtsRoute(scope, body.model)
   const route = scope.route(routeId)
   if (route.lane === 'gemini' && body.delivery !== undefined && !isDeliveryKey(body.delivery.trim().toLowerCase())) {
@@ -110,7 +113,6 @@ async function dispatchSpeech(scope: AudioScope, req: Request): Promise<Response
 
   // Whole-file clients (Slack auto-TTS) cannot ask for a summary: long text on a prep-off ElevenLabs model gets one.
   // pcm is a streaming client speaking one sentence at a time: never summarized.
-  const { config } = scope
   const autoSummarize =
     !body.summarize &&
     route.lane === 'replicate' &&
@@ -119,6 +121,10 @@ async function dispatchSpeech(scope: AudioScope, req: Request): Promise<Response
     config.ttsAutoSummarizeMinChars > 0 &&
     body.input.trim().length >= config.ttsAutoSummarizeMinChars
   const summarize = body.summarize || autoSummarize
+  // A summarized request speaks the summary, not the input: only text that reaches TTS verbatim is capped.
+  if (!summarize && body.input.length > config.ttsMaxInputChars) {
+    return invalid(`input is ${body.input.length} characters, over the ${config.ttsMaxInputChars} character limit`)
+  }
 
   const summary = (status: number, errorText: string | null) => {
     const m = scope.meta

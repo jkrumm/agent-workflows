@@ -30,6 +30,8 @@ export interface AudioTuning {
   ttsPrep: 'always' | 'long' | 'off'
   /** Whole-file requests on a prep-off ElevenLabs model whose text is at least this long get the spoken summary. 0 = off. */
   ttsAutoSummarizeMinChars: number
+  /** The longest speech `input` a request may carry without being summarized first (OpenAI's limit); over it is a 400. */
+  ttsMaxInputChars: number
   ttsBitrateKbps: number
   ttsOpusBitrateKbps: number
   ttsChunkCharThreshold: number
@@ -61,6 +63,8 @@ export interface AudioTuning {
   sttSilenceWindowSec: number
   /** Parts transcribed at once, an integer in [1, 8]. */
   sttChunkConcurrency: number
+  /** Transcription requests in flight at once, an integer in [1, 8]: each holds its whole upload (up to 128 MiB) in memory. */
+  sttMaxConcurrentRequests: number
 }
 
 export interface AudioConfig extends AudioTuning {
@@ -77,6 +81,7 @@ export const AUDIO_TUNING_DEFAULTS: Readonly<Omit<AudioTuning, 'ttsGeminiPrepMod
   Object.freeze({
     ttsPrep: 'always',
     ttsAutoSummarizeMinChars: 120,
+    ttsMaxInputChars: 4096,
     ttsBitrateKbps: 48,
     ttsOpusBitrateKbps: 32,
     ttsChunkCharThreshold: 700,
@@ -102,6 +107,7 @@ export const AUDIO_TUNING_DEFAULTS: Readonly<Omit<AudioTuning, 'ttsGeminiPrepMod
     sttSilenceMinSec: 0.2,
     sttSilenceWindowSec: 90,
     sttChunkConcurrency: 4,
+    sttMaxConcurrentRequests: 2,
   })
 
 /** Every wire's base on the gateway from `AGW_GATEWAY_URL`: an http(s) origin, required. Messages never echo a value. */
@@ -171,6 +177,7 @@ export function audioConfig(env: Env): AudioConfig {
     ...optional('ttsReplicatePrepModels', list('TTS_REPLICATE_PREP_MODELS')),
     ttsPrep: oneOf('TTS_PREP', ['always', 'long', 'off'] as const, d.ttsPrep),
     ttsAutoSummarizeMinChars: num('TTS_AUTO_SUMMARIZE_MIN_CHARS', d.ttsAutoSummarizeMinChars),
+    ttsMaxInputChars: num('TTS_MAX_INPUT_CHARS', d.ttsMaxInputChars),
     ttsBitrateKbps: num('TTS_MP3_BITRATE', d.ttsBitrateKbps),
     ttsOpusBitrateKbps: num('TTS_OPUS_BITRATE', d.ttsOpusBitrateKbps),
     ttsChunkCharThreshold: num('TTS_CHUNK_THRESHOLD', d.ttsChunkCharThreshold),
@@ -196,5 +203,6 @@ export function audioConfig(env: Env): AudioConfig {
     sttSilenceMinSec: num('STT_SILENCE_MIN_SEC', d.sttSilenceMinSec),
     sttSilenceWindowSec: num('STT_SILENCE_WINDOW_SEC', d.sttSilenceWindowSec),
     sttChunkConcurrency: concurrency(num('STT_CHUNK_CONCURRENCY', d.sttChunkConcurrency)),
+    sttMaxConcurrentRequests: concurrency(num('STT_MAX_CONCURRENT_REQUESTS', d.sttMaxConcurrentRequests)),
   }
 }

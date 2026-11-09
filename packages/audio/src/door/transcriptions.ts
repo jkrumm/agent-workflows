@@ -11,7 +11,7 @@ import {
 } from '../transcriptions/dispatch.ts'
 import { srt, verboseJson, vtt } from '../transcriptions/envelopes.ts'
 import { prepareSttInput, SttChunkLimitError, SttChunkTooLargeError } from '../transcriptions/input.ts'
-import { callerOf, internalError, requestIdOf } from './common.ts'
+import { callerOf, createSemaphore, internalError, requestIdOf } from './common.ts'
 
 const RICH_FORMATS = new Set(['verbose_json', 'srt', 'vtt'])
 
@@ -46,12 +46,19 @@ interface AttemptResult {
  */
 export function createTranscriptionsHandler(deps: AudioDeps): (req: Request) => Promise<Response> {
   const resolved = resolveDeps(deps)
+  // Each request holds its whole upload in memory: the slot is taken before the body is read.
+  const slots = createSemaphore(resolved.config.sttMaxConcurrentRequests)
   return async (req) => {
+    const release = await slots.acquire(req.signal)
+    // Gone while queued: nobody is left to answer, and the body was never read.
+    if (!release) return new Response(null, { status: 499 })
     const scope = new AudioScope(resolved, requestIdOf(deps, req), callerOf(deps, req), deps.attribution?.(req))
     try {
       return await dispatchTranscription(scope, req)
     } catch (error) {
       return internalError(scope, error)
+    } finally {
+      release()
     }
   }
 }

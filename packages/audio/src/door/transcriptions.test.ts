@@ -5,7 +5,7 @@ import { audioRoutes } from '../routes.ts'
 
 const ROUTES = audioRoutes()
 import { type FakeGateway, type RecordedRequest, startFakeGateway } from '@agent-workflows/testing/gateway'
-import { hasFfmpeg, testDeps, toneFile } from '../../test/support.ts'
+import { fakeMedia, hasFfmpeg, testDeps, toneFile } from '../../test/support.ts'
 import type { CallEvent, RequestEvent, UsageEvent } from '../usage.ts'
 import { createTranscriptionsHandler } from './transcriptions.ts'
 
@@ -326,5 +326,49 @@ describe.skipIf(!hasFfmpeg)('transcriptions door', () => {
       expect(Math.abs(((await res.json()) as { duration: number }).duration - 2)).toBeLessThan(0.2)
       expect(probes).toBe(1)
     })
+  })
+})
+
+describe('transcription concurrency', () => {
+  const clip = new Uint8Array(1024)
+
+  test('requests beyond the limit wait for a slot, and one aborted while queued is released', async () => {
+    let inFlight = 0
+    let peak = 0
+    const releases: Array<() => void> = []
+    const { transcribe } = setup(
+      async () => {
+        inFlight++
+        peak = Math.max(peak, inFlight)
+        await new Promise<void>((resolve) => releases.push(resolve))
+        inFlight--
+        return voxtralBody()
+      },
+      { media: fakeMedia, config: { sttMaxConcurrentRequests: 2 } },
+    )
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 30))
+
+    const first = transcribe(post(clip))
+    const second = transcribe(post(clip))
+    await settle()
+    expect(inFlight).toBe(2)
+
+    const abort = new AbortController()
+    const queuedGone = transcribe(new Request(post(clip), { signal: abort.signal }))
+    const third = transcribe(post(clip))
+    await settle()
+    expect(inFlight).toBe(2)
+    abort.abort()
+    expect((await queuedGone).status).toBe(499)
+
+    releases.shift()?.()
+    expect((await first).status).toBe(200)
+    await settle()
+    expect(inFlight).toBe(2)
+    releases.shift()?.()
+    releases.shift()?.()
+    expect((await second).status).toBe(200)
+    expect((await third).status).toBe(200)
+    expect(peak).toBe(2)
   })
 })

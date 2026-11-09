@@ -70,7 +70,7 @@ export const DOOR_WORKFLOW_IDS: Record<DoorEndpoint, string> = {
  * After the handler's work is over, how long the run waits for a `request` summary not yet recorded: a pcm stream
  * records it as its body ends, which may land just after the door saw the end.
  */
-const SUMMARY_GRACE_MS = 2000
+export const SUMMARY_GRACE_MS = 2000
 /**
  * A request's record ends at the latest this long after it arrived, whatever the handler does (a stream nobody reads
  * to the end and nobody cancels): the run then records what arrived as `bound`, never stays running. Far above a long
@@ -104,7 +104,10 @@ class Sink {
   private grace: ReturnType<typeof setTimeout> | undefined
   private orphan: ReturnType<typeof setTimeout> | undefined
 
-  constructor(private readonly drop: () => void) {
+  constructor(
+    private readonly drop: () => void,
+    private readonly summaryGraceMs: number,
+  ) {
     this.settled = new Promise((resolve) => {
       this.settle = resolve
     })
@@ -130,7 +133,7 @@ class Sink {
     clearTimeout(this.bound)
     if (this.request) this.settle()
     else {
-      this.grace = setTimeout(() => this.settle(), SUMMARY_GRACE_MS)
+      this.grace = setTimeout(() => this.settle(), this.summaryGraceMs)
       this.grace.unref()
     }
     this.orphan = setTimeout(() => this.close(), ORPHAN_MS)
@@ -253,10 +256,13 @@ export interface DoorOptions {
   runtime: () => Runtime
   isOpen: () => boolean
   logger: Logger
+  /** How long a finished run waits for a `request` summary not yet recorded. Default: `SUMMARY_GRACE_MS`. */
+  summaryGraceMs?: number
 }
 
 export function createDoor(options: DoorOptions): Door {
   const { auth, logger } = options
+  const summaryGraceMs = options.summaryGraceMs ?? SUMMARY_GRACE_MS
   const baseFetch: Fetch = options.fetch ?? ((url, init) => fetch(url, init))
   // By run id: the run's step finds its request's events under its own id.
   const sinks = new Map<string, Sink>()
@@ -350,7 +356,7 @@ export function createDoor(options: DoorOptions): Door {
 
     // The run id is chosen here, so `agw-run-id` goes out with the first byte and nothing waits on the journal.
     const runId = Bun.randomUUIDv7()
-    const sink = new Sink(() => sinks.delete(runId))
+    const sink = new Sink(() => sinks.delete(runId), summaryGraceMs)
     sinks.set(runId, sink)
     startRecord(endpoint, request, runId, { caller, source: request.headers.get('x-audio-source'), path })
 

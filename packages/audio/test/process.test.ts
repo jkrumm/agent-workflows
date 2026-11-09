@@ -97,7 +97,15 @@ function stubHandlers(hold?: Promise<void>): DoorHandlers & { seen: string[] } {
   }
 }
 
-async function start(handlers: DoorHandlers, fetch?: Fetch): Promise<RunningHost & { url: string }> {
+/** The grace a finished run waits for a missing summary: short here, so a test does not wait the real 2 s. */
+const TEST_GRACE_MS = 20
+
+async function start(
+  handlers: DoorHandlers,
+  fetch?: Fetch,
+  /** `null`: the door's default grace. */
+  summaryGraceMs: number | null = TEST_GRACE_MS,
+): Promise<RunningHost & { url: string }> {
   const running = await bootAudio({
     audio: AUDIO,
     config: config(),
@@ -108,6 +116,7 @@ async function start(handlers: DoorHandlers, fetch?: Fetch): Promise<RunningHost
       ['agw-opencode', GATEWAY_ONLY],
     ]),
     ...(fetch ? { fetch } : {}),
+    ...(summaryGraceMs === null ? {} : { summaryGraceMs }),
   })
   return { ...running, url: `http://127.0.0.1:${running.port}` }
 }
@@ -389,7 +398,7 @@ describe('the audio process', () => {
       },
       transcriptions: () => async () => Response.json({ text: '' }),
     }
-    const audio = await start(handlers)
+    const audio = await start(handlers, undefined, null)
     try {
       const abort = new AbortController()
       const res = await fetch(`${audio.url}/v1/audio/speech`, {
