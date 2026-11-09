@@ -2,6 +2,7 @@ import {
   canonicalModel,
   costFromUsage,
   type Effort,
+  FallbackFailedError,
   fallbackRoute,
   type ResolvedRoute,
   type RouteId,
@@ -129,7 +130,9 @@ export type Completion = Pick<ChatResult, 'text' | 'model' | 'stop' | 'stopDetai
 /**
  * One completion through the route's wire. Every billed call is reported to `ctx.addUsage`, failures included, under the
  * model that actually ran. A provider-balance failure (`isBalanceError`) moves the call once to the route's fallback;
- * the primary is never retried for it. When the fallback fails too, the primary's error is what the caller sees.
+ * the primary is never retried for it. When the fallback fails too, the caller sees an `UPSTREAM_ERROR` with data
+ * `{ reason: 'fallback_failed' }` whose `cause` is the fallback's error (`FallbackFailedError`): the fallback ran and was
+ * billed for its own failure, so the primary's balance refusal is not rethrown (`isBalanceError` is false on it).
  * `start` pins the route to call (a re-ask stays on the route that answered); a fallback route has no fallback.
  */
 export async function complete(deps: LlmDeps, args: CompleteArgs, start?: ResolvedRoute): Promise<Completion> {
@@ -141,15 +144,24 @@ export async function complete(deps: LlmDeps, args: CompleteArgs, start?: Resolv
     if (!fallback || !isBalanceError(error)) throw error
     const warn = deps.warn ?? ((message, meta) => console.warn(message, meta))
     warn('provider balance exhausted; falling back', { route: route.id, from: route.model, to: fallback.model })
+    const refused = refusedRequestId(error)
     try {
-      return await completeOn(deps, fallback, args, refusedRequestId(error))
+      return await completeOn(deps, fallback, args, refused)
     } catch (fallbackError) {
-      warn('fallback failed; the primary error stands', {
+      warn('fallback failed', {
         route: route.id,
         model: fallback.model,
         error: fallbackError instanceof Error ? fallbackError.message : String(fallbackError),
       })
-      throw error
+      if (args.ctx.signal.aborted) throw fallbackError
+      const failure = new FallbackFailedError({
+        route: route.id,
+        primaryModel: route.model,
+        fallbackModel: fallback.model,
+        ...(refused ? { primaryRequestId: refused } : {}),
+        cause: fallbackError,
+      })
+      throw new CapabilityError('UPSTREAM_ERROR', failure.message, { reason: failure.reason }, { cause: fallbackError })
     }
   }
 }

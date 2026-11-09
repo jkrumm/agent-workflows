@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import type { ResolvedRoute } from '../../../../routes/src/index.ts'
+import { isBalanceFailure, type ResolvedRoute } from '../../../../routes/src/index.ts'
 import type { Attribution, Usage } from '../../../../runtime/src/index.ts'
 import {
   callAndParse,
@@ -471,7 +471,9 @@ describe('Llm balance fallback', () => {
   test('a second balance failure on the fallback is thrown, not looped', async () => {
     const balance = () => new ModelError('provider balance exhausted (402)', true)
     const port = new FakePort([], [balance(), balance()])
-    expect((await rejected(runToolLoop(llmFor(port, resolvePodcastRoute).llm, params()))).message).toContain('balance')
+    const error = await rejected(runToolLoop(llmFor(port, resolvePodcastRoute).llm, params()))
+    expect(error).toMatchObject({ balance: false })
+    expect(error.message).toContain('fallback')
     expect(port.rounds).toHaveLength(2)
   })
 
@@ -484,6 +486,38 @@ describe('Llm balance fallback', () => {
     const noFallback = new FakePort([], [new ModelError('provider balance exhausted (402)', true)])
     expect((await rejected(runToolLoop(llmFor(noFallback).llm, params()))).message).toContain('balance')
     expect(noFallback.rounds).toHaveLength(1)
+  })
+
+  test('a fallback that fails for another reason: fallback_failed, cause is the fallback error, not balance', async () => {
+    const boom = new ModelError('request failed (500)')
+    const port = new FakePort([], [new ModelError('provider balance exhausted (402)', true, 'req-1'), boom])
+    const error = await rejected(runToolLoop(llmFor(port, resolvePodcastRoute).llm, params()))
+    expect(error).toBeInstanceOf(ModelError)
+    const model = error as ModelError
+    expect(model.balance).toBe(false)
+    expect(model.failure?.reason).toBe('fallback_failed')
+    expect(model.failure).toMatchObject({ primaryRequestId: 'req-1', fallbackModel: research.fallback?.model })
+    expect(model.cause).toBe(boom)
+    expect(model.message).toContain('500')
+    expect(isBalanceFailure({ text: model.message })).toBe(false)
+    expect(port.rounds).toHaveLength(2)
+  })
+
+  test('a user abort during the fallback passes through untouched', async () => {
+    const controller = new AbortController()
+    const abort = new Error('aborted')
+    const port = new FakePort(
+      [],
+      [
+        new ModelError('provider balance exhausted (402)', true),
+        () => {
+          controller.abort()
+          throw abort
+        },
+      ],
+    )
+    const error = await rejected(runToolLoop(llmFor(port, resolvePodcastRoute, controller.signal).llm, params()))
+    expect(error).toBe(abort)
   })
 
   test('single-shot calls fall back too', async () => {

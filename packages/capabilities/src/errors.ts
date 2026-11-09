@@ -15,6 +15,8 @@ export const ERRORS = {
       status: z.number().int().optional(),
       /** The call never got an answer (a refused connection, a reset, a body that could not be read): the message is the client library's text, not the vendor's. */
       transport: z.literal(true).optional(),
+      /** The primary was refused for provider balance and the fallback failed too (`FallbackFailedError`); the cause is the fallback's error. */
+      reason: z.literal('fallback_failed').optional(),
       /** A vendor-wrapped 400 or an error frame of a stream: the vendor's own words, structured (a moderation block names its stage and categories). */
       userError: z
         .object({

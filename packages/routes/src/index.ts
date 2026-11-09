@@ -27,6 +27,7 @@ export {
   type ProviderUsage,
   resolveModelAlias,
 } from './pricing.ts'
+export { FALLBACK_FAILED, FallbackFailedError } from './balance.ts'
 export { canonicalModel } from './models.ts'
 export { type PatchInput, RouteOverrideError, type RoutesPatch, routesPatchSchema } from './overrides.ts'
 export { DEFAULT_ROUTES, discoverRoutes } from './registry.ts'

@@ -1,4 +1,4 @@
-import { costFromUsage, fallbackRoute, type ResolvedRoute } from '../../../../routes/src/index.ts'
+import { costFromUsage, FallbackFailedError, fallbackRoute, type ResolvedRoute } from '../../../../routes/src/index.ts'
 import type { Attribution, StepScope, Usage } from '../../../../runtime/src/index.ts'
 import { log } from './log.ts'
 import { type PodcastRouteId, resolvePodcastRoute } from './routes.ts'
@@ -120,8 +120,10 @@ export class ModelError extends Error {
     message: string,
     readonly balance = false,
     readonly requestId?: string,
+    /** A `FallbackFailedError` (`reason: 'fallback_failed'`) when the fallback failed after a balance refusal. */
+    readonly failure?: FallbackFailedError,
   ) {
-    super(message)
+    super(message, failure ? { cause: failure.cause } : undefined)
   }
 }
 
@@ -248,7 +250,7 @@ export class Llm {
     }
     // A loop that already moved to the fallback stays there: its transcript carries the fallback's turns.
     const pinned = pin?.onFallback ? fallbackRoute(primary) : undefined
-    if (pinned) return attempt(pinned, pin?.refused)
+    if (pinned) return this.onFallback(id, primary, pinned, pin?.refused, () => attempt(pinned, pin?.refused))
     try {
       return await attempt(primary)
     } catch (error) {
@@ -259,7 +261,34 @@ export class Llm {
         pin.onFallback = true
         pin.refused = error.requestId
       }
-      return attempt(fallback, error.requestId)
+      return await this.onFallback(id, primary, fallback, error.requestId, () => attempt(fallback, error.requestId))
+    }
+  }
+
+  /**
+   * The fallback ran after a balance refusal: its own failure becomes a `FallbackFailedError` wrapped as a non-balance
+   * `ModelError` (cause: the fallback's error), so nothing re-falls-back and nothing reads it as the primary's refusal.
+   * An abort passes through untouched (`aborted`).
+   */
+  private async onFallback<T>(
+    id: PodcastRouteId,
+    primary: ResolvedRoute,
+    fallback: ResolvedRoute,
+    refused: string | undefined,
+    run: () => Promise<T>,
+  ): Promise<T> {
+    try {
+      return await run()
+    } catch (error) {
+      if (this.aborted) throw error
+      const failure = new FallbackFailedError({
+        route: id,
+        primaryModel: primary.model,
+        fallbackModel: fallback.model,
+        ...(refused ? { primaryRequestId: refused } : {}),
+        cause: error,
+      })
+      throw new ModelError(failure.message, false, refused, failure)
     }
   }
 

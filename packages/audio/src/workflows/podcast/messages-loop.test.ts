@@ -447,7 +447,9 @@ describe('balance failure mid-loop: the loop stays on the fallback', () => {
 
   test('a balance failure on the fallback itself is thrown, not looped', async () => {
     const { llm, seen } = harness(withFallback({}), [BALANCE, BALANCE])
-    expect((await rejected(runToolLoop(llm, params()))).message).toContain('balance')
+    const error = await rejected(runToolLoop(llm, params()))
+    expect(error.message).toContain('the fallback gpt-fallback failed')
+    expect(error).toMatchObject({ balance: false })
     expect(seen).toHaveLength(2)
   })
 })

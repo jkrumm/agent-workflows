@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { type PatchInput, resolveRoute } from '@agent-workflows/routes'
+import { isBalanceFailure, type PatchInput, resolveRoute } from '@agent-workflows/routes'
 import { createCapabilities } from './capabilities/index.ts'
 import type { Attribution, Usage } from './context.ts'
 import { CapabilityCallError } from './errors.ts'
 import { createRegistry } from './registry.ts'
 import { type FakeGateway, type RecordedRequest, sse, startFakeGateway } from '@agent-workflows/testing/gateway'
-import { gatewayTransports } from './transports/index.ts'
+import { gatewayTransports, isBalanceError } from './transports/index.ts'
 
 // IU's body on an empty provider account, as it arrived 2026-10-28.
 const BALANCE_503 = 'IU request failed (503) — Insufficient Balance (PaymentRequired) on Requesty-Global'
@@ -17,6 +17,13 @@ const ANTHROPIC_400_PADDED = JSON.stringify({
     padding: 'x'.repeat(320),
     message:
       'Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.',
+  },
+})
+const OPENAI_QUOTA_429 = JSON.stringify({
+  error: {
+    message: 'You exceeded your current quota, please check your plan and billing details.',
+    type: 'insufficient_quota',
+    code: 'insufficient_quota',
   },
 })
 const USAGE = { prompt_tokens: 1_000, completion_tokens: 200, completion_tokens_details: { reasoning_tokens: 50 } }
@@ -65,6 +72,17 @@ const classify = { text: 'The app crashes on start.', labels: { bug: 'something 
 const primary = resolveRoute('cheap.classify', {})
 const fallback = primary.fallback as NonNullable<typeof primary.fallback>
 
+/** The error and everything its `cause` chain reaches. */
+const causes = (error: unknown): unknown[] => {
+  const chain: unknown[] = []
+  let e: unknown = error
+  while (e !== undefined && chain.length < 10) {
+    chain.push(e)
+    e = e instanceof Error ? e.cause : undefined
+  }
+  return chain
+}
+
 const caught = async (promise: Promise<unknown>) => {
   const error = await promise.then(
     () => undefined,
@@ -78,6 +96,8 @@ describe('provider-balance fallback', () => {
   for (const [name, failure] of [
     ['402', () => new Response('{"error":"payment required"}', { status: 402 })],
     ['503 Insufficient Balance', () => new Response(BALANCE_503, { status: 503 })],
+    // OpenAI's documented exhausted-account answer, not probed on the IU relay: a 429 that is not retried as a rate limit.
+    ['429 insufficient_quota', () => new Response(OPENAI_QUOTA_429, { status: 429 })],
     // failedResponse cuts the body to 300 chars: the marker, not the sentence, carries the 400 through isBalanceError.
     [
       '400 Anthropic credit balance (sentence past char 300)',
@@ -142,18 +162,40 @@ describe('provider-balance fallback', () => {
     expect(warnings).toEqual([])
   })
 
-  test('the fallback failing too answers the primary’s typed error', async () => {
-    iu.on('messages', () => new Response(BALANCE_503, { status: 503 }))
-    iu.on('chat', () => new Response('{"error":"payment required"}', { status: 402 }))
+  test('a plain 429 rate limit is retried on the primary; no fallback', async () => {
+    iu.on(
+      'messages',
+      () => new Response('{"error":{"type":"rate_limit_error","message":"Too many requests"}}', { status: 429 }),
+    )
     const error = await caught(call('llm.classify', classify))
-    expect(error).toMatchObject({ code: 'UPSTREAM_ERROR', data: { status: 503 } })
-    expect(error.message).toContain('Insufficient Balance')
-    expect(iu.requests.map((r) => r.body.model)).toEqual([primary.model, fallback.model])
-    expect(warnings.map((w) => w.message)).toEqual([
-      'provider balance exhausted; falling back',
-      'fallback failed; the primary error stands',
-    ])
+    expect(error).toMatchObject({ code: 'UPSTREAM_ERROR', data: { status: 429 } })
+    expect(iu.requests.map((r) => r.body.model)).toEqual([primary.model, primary.model, primary.model])
+    expect(warnings).toEqual([])
   })
+
+  for (const [name, fallbackFailure] of [
+    ['a 500', () => new Response('boom', { status: 500 })],
+    ['a 402 too', () => new Response('{"error":"payment required"}', { status: 402 })],
+  ] as const) {
+    test(`the fallback failing with ${name}: fallback_failed, cause is the fallback's error, never balance`, async () => {
+      iu.on('messages', () => new Response(BALANCE_503, { status: 503 }))
+      iu.on('chat', fallbackFailure)
+      const error = await caught(call('llm.classify', classify))
+      expect(error).toMatchObject({ code: 'UPSTREAM_ERROR', data: { reason: 'fallback_failed' } })
+      expect(error.data).not.toHaveProperty('status')
+      expect(isBalanceError(error)).toBe(false)
+      expect(isBalanceFailure({ text: error.message })).toBe(false)
+      expect(error.message).toContain(primary.model)
+      expect(error.message).toContain(fallback.model)
+      expect(causes(error).some((c) => c instanceof Error && c.message.includes('iu-openai'))).toBe(true)
+      expect(iu.requests.map((r) => r.body.model)).toEqual(
+        name === 'a 500'
+          ? [primary.model, fallback.model, fallback.model, fallback.model]
+          : [primary.model, fallback.model],
+      )
+      expect(warnings.map((w) => w.message)).toEqual(['provider balance exhausted; falling back', 'fallback failed'])
+    })
+  }
 
   test('a re-ask after a rejected answer stays on the fallback', async () => {
     let answers = 0
