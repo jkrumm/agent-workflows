@@ -360,12 +360,13 @@ async function openStream(
         signal,
       })
     } catch (error) {
-      if (attempt >= attempts || signal.aborted) throw error
+      if (attempt >= attempts || signal.aborted || scope.signal?.aborted) throw error
       scope.retried()
       await scope.deps.clock.sleep(1000 * attempt)
       continue
     }
     if ((res.status === 503 || res.status === 429) && attempt < attempts) {
+      if (scope.signal?.aborted) throw scope.signal.reason
       scope.retried()
       await scope.deps.clock.sleep(await throttleDelay(res, attempt))
       continue

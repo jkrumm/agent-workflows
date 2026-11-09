@@ -362,6 +362,27 @@ describe('synthesizeUnit: gemini lane', () => {
     expect(scope.meta.retries).toBe(0)
   })
 
+  test('a cancelled step issues no further request and rejects', async () => {
+    const controller = new AbortController()
+    iu = startFakeGateway({
+      gemini: () => {
+        controller.abort(new Error('lease lost'))
+        return new Response('upstream down', { status: 503 })
+      },
+    })
+    let fetches = 0
+    const deps = testDeps(iu, {
+      fetch: (url, init) => {
+        fetches++
+        return iu.fetch(url, init)
+      },
+    })
+    const scope = createAudioScope(deps, { requestId: 'job-1', caller: 'podcast', signal: controller.signal })
+    const turns = turnsForSynthesis([{ title: 'S', turns: [{ speaker: 'A', text: 'Hallo.' }] }], HOSTS, 'de')
+    await caught(synthesizeUnit(scope, lane, turns, { turnIndexes: [0] }))
+    expect(fetches).toBe(1)
+  })
+
   test('a 5xx is retried once and the second answer wins', async () => {
     const { scope } = scopeOf({
       gemini: (_request, attempt) => (attempt === 0 ? new Response('boom', { status: 500 }) : gemini()),
@@ -488,6 +509,51 @@ describe('synthesizeUnit: replicate lane', () => {
     expect(out.pcm.byteLength).toBe(4800)
     expect(predictionInputs()).toHaveLength(2)
     expect(scope.meta.retries).toBe(1)
+  })
+
+  test('a 4xx from create is not retried', async () => {
+    const { scope } = scopeOf({ ...handlers(), replicateCreate: () => new Response('bad voice', { status: 422 }) })
+    const turns = turnsForSynthesis([{ title: 'S', turns: [{ speaker: 'A', text: 'Hallo.' }] }], HOSTS, 'de')
+    const error = await caught(synthesizeUnit(scope, lane, turns, { turnIndexes: [0] }))
+    expect(error).toBeInstanceOf(ReplicateSynthError)
+    expect(predictionInputs()).toHaveLength(1)
+    expect(scope.meta.retries).toBe(0)
+  })
+
+  test('a poll timeout is not retried with a new prediction; the prediction is cancelled', async () => {
+    let now = 0
+    iu = startFakeGateway({
+      ...handlers(),
+      replicateCreate: () => Response.json({ id: 'slow', status: 'processing' }),
+      replicatePoll: () => Response.json({ id: 'slow', status: 'processing' }),
+    })
+    const deps = testDeps(iu, { clock: { now: () => now, sleep: async (ms) => void (now += ms) } })
+    const scope = createAudioScope(deps, { requestId: 'job-1', caller: 'podcast' })
+    const turns = turnsForSynthesis([{ title: 'S', turns: [{ speaker: 'A', text: 'Hallo.' }] }], HOSTS, 'de')
+    const error = await caught(synthesizeUnit(scope, lane, turns, { turnIndexes: [0] }))
+    expect(error).toBeInstanceOf(ReplicateSynthError)
+    expect(predictionInputs()).toHaveLength(1)
+    expect(iu.requests.filter((r) => r.path.endsWith('/cancel'))).toHaveLength(1)
+    expect(scope.meta.retries).toBe(0)
+  })
+
+  test('a cancelled step stops polling: no further poll, the prediction is cancelled, the unit rejects', async () => {
+    const controller = new AbortController()
+    iu = startFakeGateway({
+      ...handlers(),
+      replicateCreate: () => Response.json({ id: 'slow', status: 'processing' }),
+      replicatePoll: () => {
+        controller.abort(new Error('lease lost'))
+        return Response.json({ id: 'slow', status: 'processing' })
+      },
+    })
+    const deps = testDeps(iu)
+    const scope = createAudioScope(deps, { requestId: 'job-1', caller: 'podcast', signal: controller.signal })
+    const turns = turnsForSynthesis([{ title: 'S', turns: [{ speaker: 'A', text: 'Hallo.' }] }], HOSTS, 'de')
+    await caught(synthesizeUnit(scope, lane, turns, { turnIndexes: [0] }))
+    expect(predictionInputs()).toHaveLength(1)
+    expect(iu.requests.filter((r) => r.route === 'replicatePoll')).toHaveLength(1)
+    expect(iu.requests.filter((r) => r.path.endsWith('/cancel'))).toHaveLength(1)
   })
 
   test('a second ReplicateSynthError propagates as itself', async () => {

@@ -243,4 +243,89 @@ describe.skipIf(!hasFfmpeg)('replicate lane', () => {
       `/replicate/v1/predictions/${encodeURIComponent('p/../x?y')}`,
     )
   })
+
+  describe('billing: one prediction per chunk', () => {
+    const params = {
+      routeId: 'audio.tts.elevenlabs-v3',
+      text: 'Hallo zusammen.',
+      voice: 'Mark',
+      languageCode: 'de',
+      stability: 0.5,
+      style: 0,
+      similarityBoost: 0.75,
+    }
+    const creates = () => iu.requests.filter((r) => r.route === 'replicateCreate')
+    const cancels = () => iu.requests.filter((r) => r.path.endsWith('/cancel'))
+    /** A clock that only moves when something sleeps on it: a 60 s poll window takes no real time. */
+    const steppedClock = () => {
+      let now = 0
+      return { now: () => now, sleep: async (ms: number) => void (now += ms) }
+    }
+
+    test('a poll timeout keeps polling the same prediction, then cancels it: never a second create', async () => {
+      const { deps } = setup({
+        replicateCreate: () => Response.json({ id: 'slow', status: 'processing' }),
+        replicatePoll: () => Response.json({ id: 'slow', status: 'processing' }),
+      })
+      const scope = createAudioScope({ ...deps, clock: steppedClock() }, { requestId: 'r', caller: 'podcast' })
+      const error = await caught(synthReplicateChunk(scope, params))
+      expect(error).toBeInstanceOf(ReplicateSynthError)
+      expect((error as ReplicateSynthError).retryable).toBe(false)
+      expect(error.message).toContain('timed out')
+      expect(creates()).toHaveLength(1)
+      expect(cancels().map((r) => r.path)).toEqual(['/replicate/v1/predictions/slow/cancel'])
+      expect(cancels()[0]?.headers.get('authorization')).toStartWith('Bearer ')
+      expect(calls(deps.usage.events)).toHaveLength(1)
+    })
+
+    test('a prediction that finishes in the second poll window is used', async () => {
+      const clock = steppedClock()
+      const { deps } = setup({
+        replicateCreate: () => Response.json({ id: 'late', status: 'processing' }),
+        replicatePoll: () =>
+          clock.now() < 70_000 ? Response.json({ id: 'late', status: 'processing' }) : succeeded('late'),
+      })
+      const scope = createAudioScope({ ...deps, clock }, { requestId: 'r', caller: 'podcast' })
+      expect((await synthReplicateChunk(scope, params)).mp3).toEqual(mp3)
+      expect(creates()).toHaveLength(1)
+      expect(cancels()).toHaveLength(0)
+    })
+
+    test('a 4xx from create is final: not retryable, no poll', async () => {
+      const { deps } = setup({ replicateCreate: () => new Response('bad input', { status: 422 }) })
+      const scope = createAudioScope(deps, { requestId: 'r', caller: 'podcast' })
+      const error = await caught(synthReplicateChunk(scope, params))
+      expect(error).toBeInstanceOf(ReplicateSynthError)
+      expect(error).toMatchObject({ status: 422, retryable: false })
+      expect(creates()).toHaveLength(1)
+    })
+
+    test('a 5xx from create stays retryable', async () => {
+      const { deps } = setup({ replicateCreate: () => new Response('down', { status: 500 }) })
+      const scope = createAudioScope(deps, { requestId: 'r', caller: 'podcast' })
+      expect(await caught(synthReplicateChunk(scope, params))).toMatchObject({ status: 500, retryable: true })
+    })
+
+    test('a delivery failure re-fetches the same URL, never creates a prediction again, and bills once', async () => {
+      const { deps } = setup({
+        delivery: (_r, attempt) => (attempt < 2 ? new Response('hiccup', { status: 503 }) : new Response(mp3)),
+      })
+      const scope = createAudioScope(deps, { requestId: 'r', caller: 'podcast' })
+      const turn = await synthReplicateChunk(scope, params)
+      expect(turn.mp3).toEqual(mp3)
+      expect(creates()).toHaveLength(1)
+      expect(iu.requests.filter((r) => r.route === 'delivery')).toHaveLength(3)
+      expect(calls(deps.usage.events).map((e) => e.status)).toEqual([200])
+    })
+
+    test('a delivery that keeps failing is final: 200 with errorText, not retryable', async () => {
+      const { deps } = setup({ delivery: () => new Response('boom', { status: 500 }) })
+      const scope = createAudioScope(deps, { requestId: 'r', caller: 'podcast' })
+      const error = await caught(synthReplicateChunk(scope, params))
+      expect(error).toMatchObject({ retryable: false })
+      expect(creates()).toHaveLength(1)
+      expect(iu.requests.filter((r) => r.route === 'delivery')).toHaveLength(3)
+      expect(calls(deps.usage.events).map((e) => [e.status, e.errorText?.includes('HTTP 500')])).toEqual([[200, true]])
+    })
+  })
 })

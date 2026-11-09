@@ -295,8 +295,9 @@ export function multiSpeakerVoices(turns: SynthTurnInput[]): {
  * Synthesize one unit. Gemini: one two-speaker request over the unit's turns. Replicate: the unit's single turn, one
  * prediction. A failed request is retried once, cheaper than failing an episode: Gemini unless the error is a 4xx (a bad
  * voice or speaker label is deterministic, a second request only bills twice; 429 was already retried upstream),
- * Replicate only on a `ReplicateSynthError` (rawFetch already retries 503/429; a failed prediction or a delivery hiccup
- * surfaces as one).
+ * Replicate only on a retryable `ReplicateSynthError` (rawFetch already retries 503/429; a rejected input, a timed-out
+ * prediction and a failed delivery of a billed one are not: those never create a second prediction). A cancelled step
+ * is never retried.
  */
 export async function synthesizeUnit(
   scope: AudioScope,
@@ -335,6 +336,7 @@ async function synthesizeGeminiUnit(
   } catch (err) {
     const message = messageOf(err)
     if (/HTTP 4\d\d/.test(message)) throw err
+    if (scope.signal?.aborted) throw scope.signal.reason
     scope.retried()
     log.warn('podcast unit synth failed, retrying once', { turnIndexes: unit.turnIndexes, error: message })
     result = await request()
@@ -373,7 +375,8 @@ async function synthesizeReplicateUnit(
   try {
     result = await synthReplicateChunk(scope, params)
   } catch (err) {
-    if (!(err instanceof ReplicateSynthError)) throw err
+    if (!(err instanceof ReplicateSynthError) || !err.retryable) throw err
+    if (scope.signal?.aborted) throw scope.signal.reason
     scope.retried()
     log.warn('podcast turn synth failed, retrying once', { turnIndexes: unit.turnIndexes, error: err.message })
     result = await synthReplicateChunk(scope, params)

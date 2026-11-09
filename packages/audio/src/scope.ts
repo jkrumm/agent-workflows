@@ -143,6 +143,9 @@ export class AudioScope {
     readonly caller: string,
     /** The run step the calls belong to; the gateway puts it on its usage row and span. */
     readonly attribution?: Attribution,
+    /** The step's cancellation: `deps.fetch` is bound to it (`createAudioScope`); `detachedFetch` is not (a cancel after abort). */
+    readonly signal?: AbortSignal,
+    readonly detachedFetch: Fetch = deps.fetch,
   ) {}
 
   get config() {
@@ -252,7 +255,25 @@ export class AudioScope {
 /** A scope for in-process callers (the podcast's production stage): their calls are priced and recorded the same way. */
 export function createAudioScope(
   deps: AudioDeps,
-  opts: { requestId: string; caller: string; attribution?: Attribution },
+  opts: { requestId: string; caller: string; attribution?: Attribution; signal?: AbortSignal },
 ): AudioScope {
-  return new AudioScope(resolveDeps(deps), opts.requestId, opts.caller, opts.attribution)
+  const resolved = resolveDeps(deps)
+  const { signal } = opts
+  const bound = signal ? { ...resolved, fetch: bindFetch(resolved.fetch, signal) } : resolved
+  return new AudioScope(bound, opts.requestId, opts.caller, opts.attribution, signal, resolved.fetch)
+}
+
+/**
+ * `fetch` bound to `signal`: once it aborts, a call fails as an `AbortError` whatever reason the signal carries, so the
+ * retry loops treat it as final and nothing more is billed.
+ */
+export function bindFetch(base: Fetch, signal: AbortSignal): Fetch {
+  return (url, init) =>
+    base(url, { ...init, signal: init?.signal ? AbortSignal.any([init.signal, signal]) : signal }).catch(
+      (error: unknown) => {
+        if (signal.aborted && !(error instanceof Error && error.name === 'AbortError'))
+          throw new DOMException('the step was cancelled', 'AbortError')
+        throw error
+      },
+    )
 }

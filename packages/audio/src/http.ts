@@ -147,6 +147,7 @@ export async function rawFetch(
 ): Promise<RawResponse> {
   const { fetch, clock } = scope.deps
   for (let attempt = 1; attempt <= attempts; attempt++) {
+    if (scope.signal?.aborted) throw scope.signal.reason
     try {
       const res = await fetch(url, init)
       if ((res.status === 503 || res.status === 429) && attempt < attempts) {

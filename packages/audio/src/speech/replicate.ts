@@ -52,10 +52,15 @@ const V3_TAGS = ['[sighs]', '[laughs]', '[whispers]', '[curious]', '[excited]', 
 const LANGUAGE_CODE = /^[a-z]{2,3}(-[A-Za-z]{2,4})?$/
 
 const POLL_DEADLINE_MS = 60_000
+/** A prediction still running at the first deadline is polled for one more window before it is given up on and cancelled. */
+const POLL_WINDOWS = 2
 const POLL_INTERVAL_MS = 500
 /** The delivery fetch: a hang guard on a plain CDN download, and a cap far above any chunk (~1 MB per minute). */
 const DELIVERY_TIMEOUT_MS = 120_000
 const MAX_DELIVERY_BYTES = 50 * 1024 * 1024
+/** Fetch attempts for a delivery URL of a succeeded (billed) prediction; the prediction is never created again. */
+const DELIVERY_ATTEMPTS = 3
+const CANCEL_TIMEOUT_MS = 10_000
 
 /** Prep-off models: above this many characters, split at sentence boundaries (no rewriting). */
 const NO_PREP_SPLIT_THRESHOLD = 4000
@@ -139,8 +144,31 @@ interface ReplicatePrediction {
   metrics?: { predict_time?: number }
 }
 
-/** Any Replicate-side synth failure (create, poll, failed status, delivery): a 502, never a 500. */
-export class ReplicateSynthError extends Error {}
+/**
+ * Any Replicate-side synth failure (create, poll, failed status, delivery): a 502, never a 500. `retryable` says whether
+ * a second prediction could help: false for a deterministic 4xx, a prediction that timed out (it was cancelled) and a
+ * delivery failure after a succeeded one (already billed).
+ */
+export class ReplicateSynthError extends Error {
+  readonly status?: number
+  readonly retryable: boolean
+
+  constructor(message: string, opts: { status?: number; retryable?: boolean } = {}) {
+    super(message)
+    this.status = opts.status
+    this.retryable = opts.retryable ?? true
+  }
+}
+
+/** Whether another attempt at the same request can come out differently: a 5xx, a timeout or a throttle, not a rejected input. */
+const transientStatus = (status: number): boolean =>
+  status >= 500 || status === 408 || status === 409 || status === 425 || status === 429
+
+const httpError = (what: string, status: number, body: string): ReplicateSynthError =>
+  new ReplicateSynthError(`${what}: HTTP ${status} ${body.slice(0, 300)}`, {
+    status,
+    retryable: transientStatus(status),
+  })
 
 async function createPrediction(
   scope: AudioScope,
@@ -154,7 +182,7 @@ async function createPrediction(
     body: JSON.stringify({ input }),
   })
   if (res.status < 200 || res.status >= 300) {
-    throw new ReplicateSynthError(`Replicate create failed: HTTP ${res.status} ${res.body.slice(0, 300)}`)
+    throw httpError('Replicate create failed', res.status, res.body)
   }
   return parsePrediction(res.body, 'create')
 }
@@ -170,11 +198,13 @@ function parsePrediction(body: string, stage: string): ReplicatePrediction {
   throw new ReplicateSynthError(`Replicate ${stage} answered an unreadable body: ${body.slice(0, 200)}`)
 }
 
-async function pollPrediction(scope: AudioScope, id: string): Promise<ReplicatePrediction> {
+/** One poll window; null when the prediction is still running at its deadline. */
+async function pollPrediction(scope: AudioScope, id: string): Promise<ReplicatePrediction | null> {
   const { clock } = scope.deps
   const deadline = clock.now() + POLL_DEADLINE_MS
   while (clock.now() < deadline) {
     await clock.sleep(POLL_INTERVAL_MS)
+    if (scope.signal?.aborted) throw scope.signal.reason
     // Flat under the Replicate base, keyed by prediction id alone.
     const res = await rawFetch(
       scope,
@@ -185,12 +215,41 @@ async function pollPrediction(scope: AudioScope, id: string): Promise<ReplicateP
       },
     )
     if (res.status < 200 || res.status >= 300) {
-      throw new ReplicateSynthError(`Replicate poll failed: HTTP ${res.status} ${res.body.slice(0, 300)}`)
+      throw httpError('Replicate poll failed', res.status, res.body)
     }
     const pred = parsePrediction(res.body, 'poll')
     if (pred.status !== 'starting' && pred.status !== 'processing') return pred
   }
-  throw new ReplicateSynthError(`Replicate prediction ${id} timed out after ${POLL_DEADLINE_MS}ms`)
+  return null
+}
+
+/** Stop a prediction nobody waits for any more (best-effort: it stops billing the run time). Not bound to the step signal. */
+async function cancelPrediction(scope: AudioScope, id: string): Promise<void> {
+  try {
+    const res = await scope.detachedFetch(
+      `${scope.config.transports.replicateBase}/predictions/${encodeURIComponent(id)}/cancel`,
+      { method: 'POST', headers: gatewayMediaHeaders(scope), signal: AbortSignal.timeout(CANCEL_TIMEOUT_MS) },
+    )
+    await res.body?.cancel()
+  } catch (error) {
+    scope.log.warn('replicate prediction cancel failed', { id, error: errorMessage(error) })
+  }
+}
+
+/** The same prediction is polled to its end; a poll that gives up (deadline, abort, error) cancels it. */
+async function awaitPrediction(scope: AudioScope, id: string): Promise<ReplicatePrediction> {
+  try {
+    for (let window = 0; window < POLL_WINDOWS; window++) {
+      const pred = await pollPrediction(scope, id)
+      if (pred) return pred
+    }
+    throw new ReplicateSynthError(`Replicate prediction ${id} timed out after ${POLL_WINDOWS * POLL_DEADLINE_MS}ms`, {
+      retryable: false,
+    })
+  } catch (error) {
+    await cancelPrediction(scope, id)
+    throw error
+  }
 }
 
 async function runPrediction(
@@ -201,7 +260,7 @@ async function runPrediction(
   let pred = await createPrediction(scope, model, input)
   if (pred.status === 'starting' || pred.status === 'processing') {
     if (!pred.id) throw new ReplicateSynthError('Replicate prediction missing id for polling')
-    pred = await pollPrediction(scope, pred.id)
+    pred = await awaitPrediction(scope, pred.id)
   }
   if (pred.status === 'failed' || pred.status === 'canceled') {
     throw new ReplicateSynthError(`Replicate prediction ${pred.status}: ${pred.error ?? 'unknown error'}`)
@@ -227,9 +286,10 @@ function isReplicateDeliveryUrl(raw: string): boolean {
 
 async function fetchDelivery(scope: AudioScope, pred: ReplicatePrediction): Promise<Uint8Array> {
   const url = Array.isArray(pred.output) ? pred.output[0] : pred.output
-  if (!url) throw new ReplicateSynthError('Replicate prediction succeeded with no output URL')
-  if (!isReplicateDeliveryUrl(url))
-    throw new ReplicateSynthError('Replicate output URL is not a replicate.delivery URL')
+  if (!url) throw new ReplicateSynthError('Replicate prediction succeeded with no output URL', { retryable: false })
+  if (!isReplicateDeliveryUrl(url)) {
+    throw new ReplicateSynthError('Replicate output URL is not a replicate.delivery URL', { retryable: false })
+  }
   let res: Response
   try {
     // No redirects (a redirect could leave the allowlisted host), a hang guard, and a byte cap below.
@@ -237,11 +297,19 @@ async function fetchDelivery(scope: AudioScope, pred: ReplicatePrediction): Prom
   } catch (error) {
     throw new ReplicateSynthError(`Failed to fetch Replicate output: ${errorMessage(error)}`)
   }
-  if (!res.ok) throw new ReplicateSynthError(`Failed to fetch Replicate output: HTTP ${res.status}`)
+  if (!res.ok) {
+    res.body?.cancel().catch(() => {})
+    throw new ReplicateSynthError(`Failed to fetch Replicate output: HTTP ${res.status}`, {
+      status: res.status,
+      retryable: transientStatus(res.status),
+    })
+  }
   const declared = Number(res.headers.get('content-length'))
   if (Number.isFinite(declared) && declared > MAX_DELIVERY_BYTES) {
     res.body?.cancel().catch(() => {})
-    throw new ReplicateSynthError(`Replicate output is ${declared} bytes, over the ${MAX_DELIVERY_BYTES}-byte cap`)
+    throw new ReplicateSynthError(`Replicate output is ${declared} bytes, over the ${MAX_DELIVERY_BYTES}-byte cap`, {
+      retryable: false,
+    })
   }
   const reader = res.body?.getReader()
   if (!reader) throw new ReplicateSynthError('Replicate output has no body')
@@ -254,7 +322,9 @@ async function fetchDelivery(scope: AudioScope, pred: ReplicatePrediction): Prom
       total += value.byteLength
       if (total > MAX_DELIVERY_BYTES) {
         reader.cancel().catch(() => {})
-        throw new ReplicateSynthError(`Replicate output exceeds the ${MAX_DELIVERY_BYTES}-byte cap`)
+        throw new ReplicateSynthError(`Replicate output exceeds the ${MAX_DELIVERY_BYTES}-byte cap`, {
+          retryable: false,
+        })
       }
       parts.push(value)
     }
@@ -263,6 +333,36 @@ async function fetchDelivery(scope: AudioScope, pred: ReplicatePrediction): Prom
     throw new ReplicateSynthError(`Failed to read Replicate output: ${errorMessage(error)}`)
   }
   return new Uint8Array(Buffer.concat(parts))
+}
+
+/**
+ * The delivery of a succeeded prediction, decoded to PCM. A failed fetch or decode fetches the same URL again (bounded);
+ * the prediction is never created again, so a failure here is final for the unit retry (`retryable: false`).
+ */
+async function deliver(
+  scope: AudioScope,
+  pred: ReplicatePrediction,
+): Promise<{ mp3: Uint8Array; pcm: Uint8Array; fetchedMs: number }> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      const mp3 = await fetchDelivery(scope, pred)
+      const fetchedMs = scope.deps.clock.now()
+      const decoded = await scope.deps.media.transcode(mp3, { kind: 'auto' }, 'pcm', { signal: scope.signal })
+      return { mp3, pcm: new Uint8Array(decoded.bytes), fetchedMs }
+    } catch (error) {
+      if (scope.signal?.aborted) throw scope.signal.reason
+      const final = attempt >= DELIVERY_ATTEMPTS || (error instanceof ReplicateSynthError && !error.retryable)
+      if (!final) {
+        scope.retried()
+        await scope.deps.clock.sleep(500 * attempt)
+        continue
+      }
+      if (error instanceof ReplicateSynthError && error.retryable) {
+        throw new ReplicateSynthError(error.message, { status: error.status, retryable: false })
+      }
+      throw error
+    }
+  }
 }
 
 /** `speed` into ElevenLabs' 0.7–1.2; the neutral 1 is omitted. */
@@ -298,7 +398,8 @@ export interface ReplicateChunkResult {
 /**
  * One chunk (or one podcast turn) on ElevenLabs, decoded to PCM. One usage event per prediction: a failed prediction is
  * a not-billed 502; once it succeeded its characters are billed, even when the delivery fetch or the decode fails
- * afterwards (the event then carries the error). Failures rethrow. The podcast's production stage calls this per turn.
+ * afterwards (the event then carries the error, status 200; the delivery is re-fetched, never the prediction). A
+ * prediction still running at the poll deadline is polled once more, then cancelled. Failures rethrow. The podcast's production stage calls this per turn.
  */
 export async function synthReplicateChunk(
   scope: AudioScope,
@@ -346,10 +447,8 @@ export async function synthReplicateChunk(
   // The prediction succeeded: its characters are billed from here on, whatever happens to the delivery.
   let result: ReplicateChunkResult
   try {
-    const mp3 = await fetchDelivery(scope, pred)
-    const latencyMs = scope.deps.clock.now() - start
-    const decoded = await scope.deps.media.transcode(mp3, { kind: 'auto' }, 'pcm')
-    const pcm = new Uint8Array(decoded.bytes)
+    const { mp3, pcm, fetchedMs } = await deliver(scope, pred)
+    const latencyMs = fetchedMs - start
     result = {
       mp3,
       pcm,

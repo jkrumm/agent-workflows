@@ -1,6 +1,6 @@
 import { z } from 'zod'
-import type { Ctx, Json, Usage } from '../../../../runtime/src/index.ts'
-import { defineWorkflow } from '../../../../runtime/src/index.ts'
+import type { Ctx, Json, Usage } from '@agent-workflows/runtime'
+import { defineWorkflow } from '@agent-workflows/runtime'
 import { type AudioDeps, createAudioScope } from '../../scope.ts'
 import { findUnit, type StoredUnit, storeUnit, unitRequestHash, usageToRecord } from './files.ts'
 import { log } from './log.ts'
@@ -105,7 +105,7 @@ export function createUnitWorkflow(deps: {
               scope.addUsage(usage)
             }),
           },
-          { requestId: scope.key, caller: 'podcast.produce', attribution: scope.attribution },
+          { requestId: scope.key, caller: 'podcast.produce', attribution: scope.attribution, signal: scope.signal },
         )
         // The speakers lead the list so the request's labels are the script's; the unit's turns follow them.
         const out = await synthesizeUnit(audio, lane, [...speakers, ...turns], {
