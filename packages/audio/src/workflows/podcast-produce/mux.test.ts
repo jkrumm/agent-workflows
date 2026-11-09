@@ -197,7 +197,16 @@ describe('masterPodcastMp3 (real ffmpeg)', () => {
   })
 
   test('a failing ffmpeg run throws with its exit code', async () => {
-    const error = await caught(masterPodcastMp3(pcm, 0, { chapters, tags: BASE_TAGS, bitrateKbps: 64 }))
+    // An undecodable cover is refused by every ffmpeg build at once. A bad sample rate is not a safe trigger: some
+    // builds fail on `-ar 0`, others spin on it until the hang guard kills them.
+    const error = await caught(
+      masterPodcastMp3(pcm, sampleRate, {
+        chapters,
+        tags: BASE_TAGS,
+        cover: new Uint8Array([1, 2, 3, 4]),
+        bitrateKbps: 64,
+      }),
+    )
     expect(error.message).toContain('ffmpeg podcast mastering failed')
   })
 })
