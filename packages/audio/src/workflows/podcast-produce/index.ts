@@ -1,9 +1,9 @@
 import { join } from 'node:path'
 import { z } from 'zod'
-import { artifactDir } from '../../../../host/src/artifacts.ts'
-import type { CallContext, Ctx, Json, Logger, Usage } from '../../../../runtime/src/index.ts'
-import { defineWorkflow, WorkflowError } from '../../../../runtime/src/index.ts'
-import type { PatchInput } from '../../../../routes/src/index.ts'
+import { artifactDir } from '@agent-workflows/host/artifacts'
+import type { CallContext, Ctx, Json, Logger, Usage } from '@agent-workflows/runtime'
+import { defineWorkflow, WorkflowError } from '@agent-workflows/runtime'
+import type { PatchInput } from '@agent-workflows/routes'
 import { audioRoutes } from '../../routes.ts'
 import type { AudioDeps } from '../../scope.ts'
 import { stepUsage } from '../../step-usage.ts'
@@ -533,8 +533,3 @@ export function createProduceWorkflows(deps: ProduceDeps) {
 }
 
 export const createProduceWorkflow = (deps: ProduceDeps) => createProduceWorkflows(deps).produce
-
-/** A typed failure for a journal record that does not have the shape this version wrote. */
-export function unreadable(what: string): WorkflowError {
-  return new WorkflowError('invalid_input', `the journal's ${what} is unreadable by this version`)
-}

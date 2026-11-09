@@ -1,4 +1,4 @@
-import type { PatchInput } from '../../../../routes/src/index.ts'
+import type { PatchInput } from '@agent-workflows/routes'
 import { audioRoutes } from '../../routes.ts'
 import { brainDirFromEnv } from '../podcast/config.ts'
 import type { AbsConfig } from './abs.ts'

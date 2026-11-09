@@ -1,6 +1,6 @@
 import { z } from 'zod'
-import type { Ctx, Json, Logger } from '../../../../runtime/src/index.ts'
-import { defineWorkflow, WorkflowError } from '../../../../runtime/src/index.ts'
+import type { Ctx, Json, Logger } from '@agent-workflows/runtime'
+import { defineWorkflow, WorkflowError } from '@agent-workflows/runtime'
 import { ProduceInput } from '../podcast/produce-input.ts'
 import { type ProduceConfig, produceConfigFromEnv } from './config.ts'
 import type { StoredFile } from './files.ts'

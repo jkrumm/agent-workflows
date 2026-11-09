@@ -1,4 +1,4 @@
-import type { Logger } from '../../../../runtime/src/index.ts'
+import type { Logger } from '@agent-workflows/runtime'
 
 // Production's log: the stages log fallbacks and best-effort failures as they happen. One sink per process, set by the
 // workflow's factory from its deps; the default writes JSON lines to stderr.

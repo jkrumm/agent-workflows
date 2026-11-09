@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs'
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
-import type { Usage } from '../../../../runtime/src/index.ts'
+import type { Usage } from '@agent-workflows/runtime'
 
 // The episode's files in the platform's artifact store (`packages/host/src/artifacts.ts`, `<root>/podcast/<episode>/`).
 // A synthesized unit is written here the moment it is done, with a sidecar naming what it was synthesized from, so a
