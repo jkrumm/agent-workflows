@@ -12,7 +12,8 @@
     "./opencode-bin": "./src/fake-opencode-bin.ts",
     "./pg": "./src/pg.ts",
     "./platform": "./src/platform.ts",
-    "./transports": "./src/transports.ts"
+    "./transports": "./src/transports.ts",
+    "./zsh": "./src/zsh.ts"
   },
   "scripts": {
     "test": "bun test --isolate"

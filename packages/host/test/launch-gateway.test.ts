@@ -3,13 +3,13 @@
 // `exec bun gateway.js`. What is asserted: the template's key wins over a planted iu.env (the Athena team key), the label
 // is `personal`, an unresolved or empty ref refuses with 78 naming the ref and never a value, and the composite values are
 // built while the raw password/authorization are dropped.
-import { afterEach, describe, expect, test } from 'bun:test'
+import { afterEach, expect, test } from 'bun:test'
 import { chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 const ROOT = join(import.meta.dir, '../../..')
-const ZSH = Bun.which('zsh')
+import { describeZsh, ZSH } from '@agent-workflows/testing/zsh'
 const TPL = readFileSync(join(ROOT, '.env.gateway.tpl'), 'utf8')
 
 const dirs: string[] = []
@@ -55,7 +55,6 @@ const REFS: Record<string, string> = {
 }
 
 function run(options: { refs?: Record<string, string>; iuEnv?: string } = {}) {
-  if (!ZSH) throw new Error('zsh is not on PATH: scripts/launch-gateway.sh needs it (CI installs it in ci.yml)')
   const home = mkdtempSync(join(tmpdir(), 'agw-launch-gateway-'))
   dirs.push(home)
   const build = join(home, 'build')
@@ -101,7 +100,7 @@ function run(options: { refs?: Record<string, string>; iuEnv?: string } = {}) {
   return { code: proc.exitCode, out: proc.stdout.toString(), err: proc.stderr.toString(), env, build, home }
 }
 
-describe('launch-gateway.sh', () => {
+describeZsh('launch-gateway.sh', () => {
   // Every ref must already be in the mini's secrets cache. The IU pair left .env.tpl in Wave 3 (agw holds no provider
   // key) and stays seeded for the gateway alone; any other ref must be one .env.tpl holds.
   const GATEWAY_ONLY_REFS = ['IU_API_KEY=op://common/anthropic/API_KEY', 'IU_BASE_URL=op://common/anthropic/BASE_URL']

@@ -2,14 +2,14 @@
 // studio, agw-opencode, oc, modelpick), a file that exists gains a line for each of studio, agw-opencode, oc and modelpick
 // it lacks (its other lines untouched, mode 0600, no token printed, the names added recorded for the gateway restart),
 // and the release's own parser refuses a bad file before anything is stopped.
-import { afterEach, describe, expect, test } from 'bun:test'
+import { afterEach, expect, test } from 'bun:test'
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { readDoorTokens } from '../src/door-tokens.ts'
 
 const ROOT = join(import.meta.dir, '../../..')
-const ZSH = Bun.which('zsh')
+import { describeZsh, ZSH } from '@agent-workflows/testing/zsh'
 const HERMES = 'hermes-token-0123456789abcdef-0123456789'
 const ALL = ['hermes', 'studio', 'agw-opencode', 'oc', 'modelpick']
 const ADDED = ['studio', 'agw-opencode', 'oc', 'modelpick']
@@ -32,7 +32,6 @@ function setup(content?: string, mode = 0o600) {
     chmodSync(file, mode)
   }
   const run = (body: string) => {
-    if (!ZSH) throw new Error('zsh is not on PATH: scripts/deploy.sh needs it (CI installs it in ci.yml)')
     const fns = readFileSync(join(ROOT, 'scripts', 'deploy.sh'), 'utf8').replace(/\nmain\s*$/, '\n')
     const proc = Bun.spawnSync([ZSH, '-c', `${fns}\n${body}`], {
       env: { PATH: process.env.PATH ?? '', HOME: home },
@@ -44,7 +43,7 @@ function setup(content?: string, mode = 0o600) {
 
 const mode = (file: string) => statSync(file).mode & 0o777
 
-describe('ensure_door_tokens', () => {
+describeZsh('ensure_door_tokens', () => {
   test('no file: created at 0600 with a token per caller, distinct, valid, never printed', () => {
     const t = setup()
     const result = t.run(`ensure_door_tokens; ${ADDED_OUT}`)
@@ -112,7 +111,7 @@ describe('ensure_door_tokens', () => {
   })
 })
 
-describe('check_door_tokens', () => {
+describeZsh('check_door_tokens', () => {
   test('the release parser passes a good file and refuses a bad one naming file and line, never a token', () => {
     const good = setup(`hermes=${HERMES}\nstudio=studio-token-0123456789abcdef-0123456789\n`)
     expect(good.run(`check_door_tokens ${ROOT}`).code).toBe(0)

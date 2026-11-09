@@ -1,13 +1,13 @@
 // scripts/deploy.sh's rollback, run by the real zsh with launchd and health stubbed: which LaunchAgent plists stay on
 // disk after a failed deploy. A plist this deploy rendered for a failed sha goes when its process is left down; a
 // redeploy of the live sha keeps its plists; a plist this deploy never wrote is never removed.
-import { afterEach, describe, expect, test } from 'bun:test'
+import { afterEach, expect, test } from 'bun:test'
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 const ROOT = join(import.meta.dir, '../../..')
-const ZSH = Bun.which('zsh')
+import { describeZsh, ZSH } from '@agent-workflows/testing/zsh'
 const NEW = 'a'.repeat(40)
 const PREV = 'b'.repeat(40)
 const HOST = 'com.jkrumm.agent-workflows-host'
@@ -36,7 +36,6 @@ function setup(prevHas: string[]) {
   const plist = (label: string) => join(home, 'Library', 'LaunchAgents', `${label}.plist`)
   /** Runs `body` after sourcing every function of deploy.sh (not `main`), with launchd, logs and health stubbed. */
   const run = (body: string, healthy = '') => {
-    if (!ZSH) throw new Error('zsh is not on PATH: scripts/deploy.sh needs it (CI installs it in ci.yml)')
     const fns = readFileSync(join(ROOT, 'scripts', 'deploy.sh'), 'utf8').replace(/\nmain\s*$/, '\n')
     const script = `${fns}
 launchctl() { [[ "$1" == bootstrap ]] && print -r -- "bootstrap $3" >> "$HOME/launchctl.log"; return 0 }
@@ -60,7 +59,7 @@ ${body}`
 
 const startNew = 'for p in $PROCESSES; do start_process "$p" "$RELEASES/' + NEW + '" ' + NEW + '; done'
 
-describe('deploy.sh rollback plists', () => {
+describeZsh('deploy.sh rollback plists', () => {
   test('a previous release without the audio process: audio plist removed, host re-rendered for it', () => {
     const t = setup([HOST])
     const out = t.run(`${startNew}\nroll_back ${NEW} ${PREV} 1 ${PREV}`)

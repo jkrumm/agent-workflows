@@ -4,7 +4,7 @@
 // that did not change leaves the gateway running, a changed one restarts and is awaited on `build`, a failed deploy
 // that restarted it puts the previous build's directory back, a failure that did not touch it leaves it alone, and the
 // build directories are immutable, deterministic and pruned without ever losing the live or the previous one.
-import { afterEach, describe, expect, test } from 'bun:test'
+import { afterEach, expect, test } from 'bun:test'
 import {
   chmodSync,
   cpSync,
@@ -21,7 +21,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 const ROOT = join(import.meta.dir, '../../..')
-const ZSH = Bun.which('zsh')
+import { describeZsh, ZSH } from '@agent-workflows/testing/zsh'
 const NEW = 'a'.repeat(40)
 const PREV = 'b'.repeat(40)
 const HOST = 'com.jkrumm.agent-workflows-host'
@@ -119,7 +119,6 @@ function setup() {
   }
   /** Runs the real deploy.sh as release `sha` (the re-exec already done), returning its exit code and output. */
   const deploy = (sha: string) => {
-    if (!ZSH) throw new Error('zsh is not on PATH: scripts/deploy.sh needs it (CI installs it in ci.yml)')
     const proc = Bun.spawnSync([ZSH, join(ROOT, 'scripts', 'deploy.sh')], {
       env: {
         PATH: process.env.PATH ?? '',
@@ -166,7 +165,7 @@ function startedBeforeGateway(log: string): string[] {
 }
 const sha256 = (file: string) => new Bun.CryptoHasher('sha256').update(readFileSync(file)).digest('hex')
 
-describe('deploy.sh gateway: the restart rule', () => {
+describeZsh('deploy.sh gateway: the restart rule', () => {
   test('the first deploy builds, installs and starts the gateway beside host and audio', () => {
     const t = setup()
     t.release(PREV, 'v1')
@@ -372,7 +371,7 @@ describe('deploy.sh gateway: the restart rule', () => {
   }, 60_000)
 })
 
-describe('deploy.sh gateway: rollback', () => {
+describeZsh('deploy.sh gateway: rollback', () => {
   test('a gateway that never becomes healthy rolls all three back; the gateway boots the previous build directory', () => {
     const t = liveThenNew('v1', 'v2')
     // Whatever build the new gateway has is bad: find it by deploying the same source into a scratch home first.
@@ -475,13 +474,12 @@ describe('deploy.sh gateway: rollback', () => {
 
 /** Runs build_gateway / prune_gateway_builds from the real script, with the stand-ins on PATH. */
 function functions(t: Setup, body: string) {
-  if (!ZSH) throw new Error('zsh is not on PATH')
   const fns = readFileSync(join(ROOT, 'scripts', 'deploy.sh'), 'utf8').replace(/\nmain\s*$/, '\n')
   const proc = Bun.spawnSync([ZSH, '-c', `${fns}\n${body}`], { env: { PATH: process.env.PATH ?? '', HOME: t.home } })
   return { code: proc.exitCode, out: proc.stdout.toString(), err: proc.stderr.toString() }
 }
 
-describe('deploy.sh gateway: bookkeeping', () => {
+describeZsh('deploy.sh gateway: bookkeeping', () => {
   test('the gateway build is recorded before deployed-sha', () => {
     const script = readFileSync(join(ROOT, 'scripts', 'deploy.sh'), 'utf8')
     const main = script.slice(script.indexOf('\nmain() {'))
@@ -491,7 +489,7 @@ describe('deploy.sh gateway: bookkeeping', () => {
   })
 })
 
-describe('deploy.sh gateway: the build directory', () => {
+describeZsh('deploy.sh gateway: the build directory', () => {
   test('the bundle is deterministic: two builds of one release, and of the same source in another release path', () => {
     const t = setup()
     const a = t.release('1'.repeat(40), 'same')

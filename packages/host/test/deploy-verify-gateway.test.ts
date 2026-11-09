@@ -1,13 +1,13 @@
 // The gateway part of scripts/verify.sh (sections 8 and 9), run by the real zsh against a stand-in gateway (Bun.serve)
 // with psql and secrets-run replaced. The script's header (constants, fail/ok) and the sections are cut out of the file,
 // so the rest of verify.sh (which needs the journal and the installed CLI) is not involved.
-import { afterEach, describe, expect, test } from 'bun:test'
+import { afterEach, expect, test } from 'bun:test'
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 const ROOT = join(import.meta.dir, '../../..')
-const ZSH = Bun.which('zsh')
+import { describeZsh, ZSH } from '@agent-workflows/testing/zsh'
 const VERIFY = readFileSync(join(ROOT, 'scripts', 'verify.sh'), 'utf8')
 const HEADER = VERIFY.slice(0, VERIFY.indexOf('for tool in'))
 const SECTION = VERIFY.slice(VERIFY.indexOf('# 8. the gateway'), VERIFY.indexOf('# 9. the runs'))
@@ -108,7 +108,6 @@ journal() { local sql=$1; shift; psql "$@" <<< "$sql" || fail "journal query fai
 `
 
 async function verify(options: Options = {}) {
-  if (!ZSH) throw new Error('zsh is not on PATH: scripts/verify.sh needs it (CI installs it in ci.yml)')
   const requests: Request[] = []
   const server = standInGateway(options, requests)
   const home = mkdtempSync(join(tmpdir(), 'agw-verify-gateway-'))
@@ -139,7 +138,7 @@ async function verify(options: Options = {}) {
   return { code, out, err, requests, home }
 }
 
-describe('verify.sh gateway section', () => {
+describeZsh('verify.sh gateway section', () => {
   test('three calls, the shapes the brief names, and the usage rows: passes and prints ids and pool', async () => {
     const r = await verify()
     expect(r.err).toBe('')
@@ -356,7 +355,7 @@ describe('verify.sh gateway section', () => {
   })
 })
 
-describe('verify.sh runs section', () => {
+describeZsh('verify.sh runs section', () => {
   const runs = (options: Options = {}) => verify({ ...options, only: 'runs' })
 
   test('a gateway row per run (api_key personal, api_credit on a listed pool) passes, bound to both run ids', async () => {
