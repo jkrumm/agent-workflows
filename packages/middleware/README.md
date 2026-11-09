@@ -221,12 +221,14 @@ call; only the `usage.records` projection is filtered.
   step: healthy steps are marked, a step that fails alone with such an answer is quarantined. Counters reset when the
   step is written and cover only the latest failing batch. Network errors, client timeouts, connection loss (08, 57P),
   authentication/missing table (28, 3D, 42), deadlock/serialization (40), resources (53) and lock timeouts (55) never
-  count: an outage quarantines nothing.
+  count: an outage quarantines nothing. A step that fails alone is quarantined only if the database took another step
+  of the same batch in that pass (or the batch was that one step); when every step fails alone (a saturated database
+  timing out each write), the flush backs off and quarantines nothing. Authentication (class 28), a missing database
+  (3D) and a missing table or function (42, the schema is not migrated) are transient too but logged as errors, since
+  they need a human; they are never quarantined.
 - **Version guard.** `raw.scoredAt` is the run's `scored_at` (`toISOString()`). The upsert only overwrites when the
   stored `raw.scoredAt` is not newer, so two flushers sharing a journal cannot write a stale `raw.scores` after a
-  newer one (precision is milliseconds). Authentication (class 28), a
-  missing database (3D) and a missing table or function (42, the schema is not migrated) are transient too but logged
-  as errors, since they need a human; they are never quarantined.
+  newer one (precision is milliseconds).
 - **Requeue.** After the cause is fixed, one statement puts quarantined steps back; the next flush writes them:
   `update <schema>.steps set argo_error = null where argo_error is not null and argo_synced_at is null [and run_id = '<id>']`.
   `make verify` prints a `verify: WARN:` line while any step is quarantined.

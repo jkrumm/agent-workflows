@@ -860,16 +860,29 @@ export class UsageOutbox {
     } catch (err) {
       const permanent = err instanceof UsageWriteError && err.permanent
       if (!permanent && !(isRowSpecific(err) && this.countFailure(live))) throw err
+      const suspects: { one: Claimed; err: unknown }[] = []
+      let written = 0
       for (const one of live) {
         try {
           await this.post(token, one.records)
           await this.mark(token, [one], result)
+          written++
         } catch (stepErr) {
           const refused = stepErr instanceof UsageWriteError && stepErr.permanent
-          if (!refused && !(isRowSpecific(stepErr) && this.exhausted(one))) throw stepErr
-          result.quarantined += await this.quarantine(token, [one.step], errorMessage(stepErr))
-          this.attempts.delete(keyOf(one.step))
+          if (refused) {
+            result.quarantined += await this.quarantine(token, [one.step], errorMessage(stepErr))
+            this.attempts.delete(keyOf(one.step))
+          } else if (isRowSpecific(stepErr) && this.exhausted(one)) suspects.push({ one, err: stepErr })
+          else throw stepErr
         }
+      }
+      // A step that failed alone is the row's fault only if the database took others of the batch in the same pass (or
+      // there was only this one). When every step fails alone (a saturated database timing out each write), it is an
+      // outage: back off, quarantine nothing.
+      if (suspects.length > 0 && written === 0 && live.length > 1) throw suspects[0]?.err
+      for (const { one, err: stepErr } of suspects) {
+        result.quarantined += await this.quarantine(token, [one.step], errorMessage(stepErr))
+        this.attempts.delete(keyOf(one.step))
       }
     }
   }

@@ -404,6 +404,40 @@ describe('usage outbox', () => {
     }
   })
 
+  test('a statement timeout on every write (a saturated database) quarantines nothing: no step is the odd one out', async () => {
+    const usage = new FakeUsage()
+    const logger = captureLogger()
+    const journal = new JournalDb({ connectionString: PG_URL, schema: db.schema }, logger)
+    const outbox = new UsageOutbox({
+      db: journal,
+      transport: usage,
+      logger,
+      machine: 'm',
+      batchSize: 50,
+      maxStepAttempts: 2,
+      backoff: { baseMs: 0, maxMs: 0 },
+    })
+    const platform = testPlatform(db.schema)
+    try {
+      const ids = await finishedChildren(platform, 3)
+      usage.failWith = new UsageWriteError(
+        'usage write: 57014 canceling statement due to statement timeout',
+        false,
+        '57014',
+      )
+      for (let round = 0; round < 5; round++) {
+        expect(await outbox.flush()).toMatchObject({ quarantined: 0, marked: 0, error: expect.any(String) })
+      }
+      const steps = await Promise.all(ids.map((id) => sql.step(id, 'work')))
+      expect(steps.every((s) => s?.argo_error === null && s?.argo_synced_at === null)).toBe(true)
+      usage.failWith = null
+      expect(await outbox.flush()).toMatchObject({ marked: 3, quarantined: 0, error: null })
+    } finally {
+      await platform.close()
+      await journal.close()
+    }
+  })
+
   test('close() during a flush ends the drain after the batch in flight; the backlog stays unclaimed', async () => {
     const usage = new FakeUsage()
     const logger = captureLogger()
