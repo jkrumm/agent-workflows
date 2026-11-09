@@ -1,9 +1,22 @@
 // Real git repos in tmp dirs and a fake reviewer agent for the review v4 tests.
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
+import { afterAll } from 'bun:test'
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
-const ID = ['-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false']
+// No auto maintenance: git would detach one after a commit, racing the template copy below.
+const ID = [
+  '-c',
+  'user.name=t',
+  '-c',
+  'user.email=t@example.com',
+  '-c',
+  'commit.gpgsign=false',
+  '-c',
+  'maintenance.auto=false',
+  '-c',
+  'gc.auto=0',
+]
 
 export function git(cwd: string, ...args: string[]): string {
   const r = Bun.spawnSync(['git', ...ID, ...args], { cwd, stdout: 'pipe', stderr: 'pipe' })
@@ -17,13 +30,33 @@ export function write(root: string, path: string, content: string): void {
   writeFileSync(file, content)
 }
 
-/** A repo with one commit of `files`; REVIEW.md among them when given. */
-export function makeRepo(files: Record<string, string>): string {
+// One template repo per distinct file set, built with git once and copied per call: the suites ask for the same few
+// shapes dozens of times, and `git init` + commit is a process spawn each. The templates go with the importing file.
+const templates = new Map<string, string>()
+afterAll(() => {
+  for (const dir of templates.values()) rmSync(dir, { recursive: true, force: true })
+  templates.clear()
+})
+
+function buildRepo(files: Record<string, string>): string {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'agw-rv4-')))
   git(root, 'init', '-q', '-b', 'master')
   for (const [path, content] of Object.entries(files)) write(root, path, content)
   git(root, 'add', '-A')
   git(root, 'commit', '-q', '-m', 'base')
+  return root
+}
+
+/** A repo with one commit of `files`; REVIEW.md among them when given. Each call gets its own copy. */
+export function makeRepo(files: Record<string, string>): string {
+  const key = JSON.stringify(Object.entries(files))
+  let template = templates.get(key)
+  if (!template) {
+    template = buildRepo(files)
+    templates.set(key, template)
+  }
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'agw-rv4-')))
+  cpSync(template, root, { recursive: true })
   return root
 }
 
