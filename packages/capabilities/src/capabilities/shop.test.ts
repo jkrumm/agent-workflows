@@ -622,7 +622,7 @@ describe('image.read', () => {
     expect(net.calls).toHaveLength(0)
   })
 
-  test('a provider-balance failure moves the call once to the route fallback on the chat wire; both failing answers the first error', async () => {
+  test('a provider-balance failure moves the call once to the route fallback on the chat wire; the fallback failing too answers fallback_failed, not the balance error', async () => {
     const fallback = resolveRoute('vision.describe').fallback!
     const balance = () => fail('UPSTREAM_ERROR', 'anthropic provider balance exhausted (402)', { status: 402 })
     const r = rig({ shopRoutes: { 'https://m.media-amazon.com/': jpeg }, vision: [balance()] })
@@ -636,7 +636,7 @@ describe('image.read', () => {
     both.transports.openai.complete = async () => {
       throw new Error('fallback down')
     }
-    expect((await failure(both.imageRead.call({ source: photo }, both.options))).message).toContain('402')
+    expect((await failure(both.imageRead.call({ source: photo }, both.options))).message).toContain('fallback down')
   })
 
   test('the route is on the Messages wire on the FAST tier, with the chat wire behind it', () => {
