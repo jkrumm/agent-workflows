@@ -35,7 +35,7 @@ const result = await runtime.wait(runId)
 | `ctx.score(id, value)` | code | the workflow's `scorer` on `value` (`source: inline`); the verdict is also kept on the run (`runs.scores.gates[id]`). A resume returns the journaled verdict, never scores again |
 | `ctx.continue(id, from, prompt, opts?)` | agent | a follow-up turn in the SAME session as an earlier agent step (`from`: its output object, or its step id); output validated against `opts.output`, else that step's schema |
 | `ctx.param(name, default)` | none | a knob of the run's arm (`arm.params[name]`), else `default`; typed as the default (`ctx.param('finders', 3)` is a `number`). A value of another JSON type fails the run as `invalid_input`, naming the param |
-| `ctx.workflow(id, wf, inputs)` | workflow | fan-out; returns `(O \| null)[]`, a failing child yields `null`; children run as `${runId}/${id}/${i}` under the parent's lease, never by recovery |
+| `ctx.workflow(id, wf, inputs, { concurrency? })` | workflow | fan-out; returns `(O \| null)[]`, a failing child yields `null`; all children start at once unless `concurrency` caps the ones running together; children run as `${runId}/${id}/${i}` under the parent's lease, never by recovery |
 
 - **Step ids are string literals** and unique per run (a duplicate fails the run). `test/step-id-literal.test.ts`
   lints `packages/**/src` for computed ids. A change to a step's meaning or output shape takes a new id.
@@ -177,7 +177,9 @@ defineWorkflow({ id: 'research.report', scorer: draftScorer, async run(ctx, inpu
   next process waits out the same grace (from the step's last start) before running a resumed effect again. The
   lease is re-checked right before an effect body starts and before an agent prompt is sent.
 - **Fencing:** claiming a run writes a fresh `lease_token`; every journal write of the run tree carries it in its
-  `where` (`for share` on the root row), and a lost lease connection aborts the run at once. Exempt, on purpose:
+  `where` (`for share` on the root row; a write to the root row itself checks `lease_token` in its own `where`,
+  since two writers holding `for share` on the row they both update deadlock), and a lost lease connection aborts
+  the run at once. Lease connections set `idle_session_timeout=0` and a TCP keepalive delay. Exempt, on purpose:
   the delivery markers `post_hooks_at` and `signals.delivered_at` (idempotent; a stale write only causes one more
   at-least-once delivery) and the cancel and steer requests, which any process may make.
 - **Infra vs workflow errors:** a journal or lease failure leaves the run `running` and retries it with backoff;
@@ -217,7 +219,10 @@ no workflow can skip it.
   without it (a kill between the terminal write and the hooks, a run cancelled while pending, a hook that threw),
   under the root's lease so no live driver races it. Every hook runs on each delivery, so hooks are idempotent. A
   run whose hooks keep throwing is marked delivered after `maxPostHookAttempts` (default 5,
-  `runs.post_hooks_attempts`) and logged, so it cannot loop.
+  `runs.post_hooks_attempts`) and logged, so it cannot loop. Each hook call has a hang guard
+  (`postHookTimeoutMs`, default 5 min; a timeout is a failed delivery) and so has `host.abort` during a cancel
+  (`hostAbortTimeoutMs`, default 30 s). `close()` abandons a running hook at once and leaves the delivery
+  uncounted for the next process.
 
 ## Bounded runs
 

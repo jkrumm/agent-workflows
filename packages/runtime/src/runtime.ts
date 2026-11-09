@@ -892,7 +892,7 @@ export class Runtime {
     const timeoutMs = this.options.postHookTimeoutMs ?? 300_000
     for (const m of this.middleware) {
       if (!m.runPost) continue
-      const hook = m.runPost
+      const hook = m.runPost.bind(m)
       try {
         await this.bounded(
           Promise.resolve().then(() => hook(args)),
