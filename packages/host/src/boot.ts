@@ -207,6 +207,8 @@ export interface ProcessBase {
   registry: HostRegistry
   /** The process's one tool gate, on its own state dir. */
   toolGate: ToolGate
+  /** The process's state dir (`BootOptions.stateDir`): the tool gate, the agent host, review jobs and clones live under it. */
+  stateDir: string
   /** A small pool of the process's own for journal reads (the learnings store, the retrospective). */
   readPool: Pool
   learnings: LearningsStore
@@ -312,6 +314,7 @@ export async function bootProcess(
       logger,
       registry,
       toolGate,
+      stateDir,
       readPool,
       learnings,
       onClose: (close) => closers.push(close),
@@ -519,7 +522,7 @@ export function hostProcess(config: HostConfig, door?: ImageDoorOptions): Proces
     serviceName: 'agw',
     serveCapabilities: true,
     friction: { settings: config.friction },
-    async workflows({ config: base, env, registry, toolGate, logger, readPool, learnings, onClose }) {
+    async workflows({ config: base, env, registry, toolGate, stateDir, logger, readPool, learnings, onClose }) {
       journal = pgJournalReader(readPool, base.schema)
       // The agents overview: its factory reader and quota are shared by `agw agents`, the `overview` workflow and the push.
       fleet = hostFleet({ env, logger, machine: base.machine, latestOverview: pgLatestOverview(readPool, base.schema) })
@@ -573,7 +576,7 @@ export function hostProcess(config: HostConfig, door?: ImageDoorOptions): Proces
         onSubmitted: () => void reviewStatsPush?.push('run'),
         pool: reviewPool,
         schema: base.schema,
-        stateDir: DEFAULT_STATE_DIR,
+        stateDir,
         git: gitRunner,
         env,
         quota: async (account) => {
