@@ -136,14 +136,24 @@ class Session {
     })
   }
 
-  static async open(url: string): Promise<Session> {
+  /** Rejects with `signal.reason` when the signal fires first: a handshake nobody answers must not hold its tab slot forever. */
+  static async open(url: string, signal: AbortSignal): Promise<Session> {
     const ws = new WebSocket(url)
     try {
       await new Promise<void>((resolve, reject) => {
-        ws.addEventListener('open', () => resolve(), { once: true })
-        ws.addEventListener('error', () => reject(new BrowserFailure('the browser tab could not be reached')), {
-          once: true,
-        })
+        const settle = (finish: () => void) => {
+          ws.removeEventListener('open', onOpen)
+          ws.removeEventListener('error', onError)
+          signal.removeEventListener('abort', onAbort)
+          finish()
+        }
+        const onOpen = () => settle(resolve)
+        const onError = () => settle(() => reject(new BrowserFailure('the browser tab could not be reached')))
+        const onAbort = () => settle(() => reject(signal.reason))
+        if (signal.aborted) return onAbort()
+        ws.addEventListener('open', onOpen)
+        ws.addEventListener('error', onError)
+        signal.addEventListener('abort', onAbort, { once: true })
       })
     } catch (error) {
       ws.close()
@@ -233,7 +243,7 @@ export async function readViaCdp(
   url: string,
   signal: AbortSignal,
   policy: RequestPolicy,
-  timing: { settleMs?: number; pollMs?: number } = {},
+  timing: { settleMs?: number; pollMs?: number; openMs?: number } = {},
   options: BrowserReadOptions = {},
 ): Promise<BrowserPage> {
   return withTab(signal, async () => {
@@ -259,7 +269,15 @@ export async function readViaCdp(
     const onAbort = () => session?.close()
     try {
       signal.addEventListener('abort', onAbort, { once: true })
-      session = await Session.open(tab.webSocketDebuggerUrl)
+      const opening = within(signal, timing.openMs ?? TAB_REQUEST_MS)
+      try {
+        session = await Session.open(tab.webSocketDebuggerUrl, opening)
+      } catch (error) {
+        // The caller's cancel is rethrown as it is; only the open's own time limit is a failure of the browser.
+        if (opening.aborted && !signal.aborted)
+          throw new BrowserFailure('the browser tab could not be reached: timed out')
+        throw error
+      }
       signal.throwIfAborted()
       let refusedDocument = false
       let mainFrame = ''

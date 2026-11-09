@@ -69,8 +69,9 @@ function toResponse(res: IncomingMessage): Response {
   for (const [key, value] of Object.entries(res.headers)) {
     for (const v of Array.isArray(value) ? value : value === undefined ? [] : [value]) headers.append(key, v)
   }
-  // Only a body that will be read is decoded, and only there can an encoding be unsupported: a redirect or an error
-  // status with a `zstd` body still redirects or fails with its own status (the caller cancels such a body unread).
+  // A supported encoding is decoded at any status: a gzip 403 challenge page must reach the block detection as text.
+  // Only a 2xx body is refused for an unsupported encoding: a redirect or an error status with a `zstd` body still
+  // redirects or fails with its own status (the caller cancels such a body unread).
   const ok = status >= 200 && status < 300
   const encoding = (headers.get('content-encoding') ?? 'identity').trim().toLowerCase()
   if (NO_BODY.has(status)) {
@@ -81,7 +82,7 @@ function toResponse(res: IncomingMessage): Response {
     throw new Error(`unsupported content-encoding "${encoding.slice(0, 40)}"`)
   }
   let source: Readable = res
-  if (ok && encoding in DECODERS) {
+  if (Object.hasOwn(DECODERS, encoding)) {
     headers.delete('content-encoding')
     headers.delete('content-length')
     const decoder = DECODERS[encoding as keyof typeof DECODERS]()

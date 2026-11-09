@@ -65,9 +65,10 @@ function run(deps: WebDeps) {
   const call = async (
     id: 'web.search' | 'web.fetch' | 'web.docs' | 'web.package' | 'web.youtube' | 'web.ask',
     input: unknown,
+    signal?: AbortSignal,
   ) => {
     const capability = caps.find((c) => c.id === id)!
-    return capability.call(input as never, { addUsage: (u) => usage.push(u) })
+    return capability.call(input as never, { addUsage: (u) => usage.push(u), ...(signal ? { signal } : {}) })
   }
   return { call, usage }
 }
@@ -749,7 +750,7 @@ describe('pinnedFetch (the production transport)', () => {
   })
 
   test('advertises gzip, br and deflate and decodes what comes back; a compression bomb is bounded by the reader', async () => {
-    const bomb = Bun.gzipSync(new Uint8Array(200_000_000)) // 200 MB of zeros, a few hundred KB on the wire
+    const bomb = Bun.gzipSync(new Uint8Array(20_000_000)) // 20 MB of zeros against the 2 MB read cap, tens of KB on the wire
     const server = Bun.serve({
       port: 0,
       hostname: '127.0.0.1',
@@ -777,6 +778,58 @@ describe('pinnedFetch (the production transport)', () => {
     }
   })
 
+  test('a gzip error body is decoded too: the text is plain and the encoding headers are gone', async () => {
+    const server = Bun.serve({
+      port: 0,
+      hostname: '127.0.0.1',
+      fetch: () =>
+        new Response(Bun.gzipSync('plain refusal text'), {
+          status: 403,
+          headers: { 'content-encoding': 'gzip', 'content-type': 'text/html' },
+        }),
+    })
+    try {
+      const res = await pinnedFetch(`http://x.invalid:${server.port}/`, {}, ['127.0.0.1'])
+      expect(res.status).toBe(403)
+      expect(res.headers.get('content-encoding')).toBeNull()
+      expect(res.headers.get('content-length')).toBeNull()
+      expect(await res.text()).toBe('plain refusal text')
+    } finally {
+      void server.stop(true)
+    }
+  })
+
+  test('a body that stalls after its headers fails the read when the signal times out; it does not hang', async () => {
+    const server = Bun.serve({
+      port: 0,
+      hostname: '127.0.0.1',
+      fetch: () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode('part of the body'))
+              // never closed: the server stalls with the headers and a first chunk sent
+            },
+          }),
+          { headers: { 'content-type': 'text/plain' } },
+        ),
+    })
+    try {
+      const res = await pinnedFetch(`http://x.invalid:${server.port}/`, { signal: AbortSignal.timeout(150) }, [
+        '127.0.0.1',
+      ])
+      const started = performance.now()
+      const error = await res.text().then(
+        () => undefined,
+        (e: unknown) => e,
+      )
+      expect(error).toBeInstanceOf(Error)
+      expect(performance.now() - started).toBeLessThan(1_000)
+    } finally {
+      void server.stop(true)
+    }
+  })
+
   test('the caller’s signal aborts the request', async () => {
     const server = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: () => new Promise<Response>(() => {}) })
     try {
@@ -791,6 +844,58 @@ describe('pinnedFetch (the production transport)', () => {
     } finally {
       void server.stop(true)
     }
+  })
+})
+
+describe('web.fetch: a compressed refusal body, through the real transport', () => {
+  const WALL = '<title>Just a moment...</title> challenge-platform'
+  async function readRefusal(status: number, body: string) {
+    const server = Bun.serve({
+      port: 0,
+      hostname: '127.0.0.1',
+      fetch: () =>
+        new Response(Bun.gzipSync(body), {
+          status,
+          headers: { 'content-encoding': 'gzip', 'content-type': 'text/html; charset=utf-8' },
+        }),
+    })
+    const browser = { calls: 0 }
+    try {
+      const { call } = run({
+        retry: { backoffMs: 0 },
+        warn: () => {},
+        env: {}, // no Tavily key: the chain ends at the browser
+        resolve: async () => [PUBLIC_IP],
+        // The page's name is vetted against `resolve`; the request itself goes to the local server through the real transport.
+        fetch: (url, init) =>
+          pinnedFetch(url.replace('https://shop.example.com', `http://shop.example.com:${server.port}`), init, [
+            '127.0.0.1',
+          ]),
+        browser: async () => {
+          browser.calls++
+          throw new BrowserFailure('no browser here')
+        },
+      })
+      const error = await failure(call('web.fetch', { url: 'https://shop.example.com/e4' }))
+      return { message: error.message, browser }
+    } finally {
+      void server.stop(true)
+    }
+  }
+
+  test('a gzip 403 or 503 challenge is read as a challenge: blocked, and the browser gets its turn', async () => {
+    for (const status of [403, 503]) {
+      const { message, browser } = await readRefusal(status, WALL)
+      expect({ status, reason: blockedReason(message) }).toEqual({ status, reason: 'cloudflare-challenge' })
+      expect(message).toStartWith('web.fetch: blocked (cloudflare-challenge)')
+      expect(browser.calls).toBe(1)
+    }
+  })
+
+  test('a gzip 403 that is a plain page is forbidden, not a challenge', async () => {
+    const { message, browser } = await readRefusal(403, '<html><body>You may not look at this.</body></html>')
+    expect(blockedReason(message)).toBe('forbidden')
+    expect(browser.calls).toBe(1)
   })
 })
 
@@ -1543,6 +1648,94 @@ function fakeBrowser(
   return { base, read: timed(), timed, closed, navigated, decisions, scripts, stop: () => void server.stop(true) }
 }
 
+/** A DevTools endpoint whose tab WebSocket accepts the TCP connection and never answers the handshake. */
+function hungBrowser() {
+  const closed: string[] = []
+  const tcp = Bun.listen({ hostname: '127.0.0.1', port: 0, socket: { data() {} } })
+  const http = Bun.serve({
+    port: 0,
+    hostname: '127.0.0.1',
+    fetch(req) {
+      const { pathname } = new URL(req.url)
+      if (pathname === '/json/new')
+        return Response.json({ id: 'hung-tab', webSocketDebuggerUrl: `ws://127.0.0.1:${tcp.port}/page` })
+      closed.push(pathname.split('/').pop()!)
+      return new Response('Target is closing')
+    },
+  })
+  return {
+    base: `http://127.0.0.1:${http.port}`,
+    closed,
+    stop: () => {
+      void http.stop(true)
+      tcp.stop(true)
+    },
+  }
+}
+
+describe('readViaCdp: a tab WebSocket that never opens', () => {
+  const allowAll: RequestPolicy = { allowUrl: async () => true, allowAddress: () => true }
+  const settled = (promise: Promise<unknown>) =>
+    promise.then(
+      () => undefined,
+      (e: unknown) => e,
+    )
+
+  test('the open times out with a BrowserFailure and the tab is closed', async () => {
+    const hung = hungBrowser()
+    try {
+      const started = performance.now()
+      const error = await settled(
+        readViaCdp(hung.base, 'https://example.com/', new AbortController().signal, allowAll, { openMs: 100 }),
+      )
+      expect(error).toBeInstanceOf(BrowserFailure)
+      expect((error as Error).message).toContain('timed out')
+      expect(performance.now() - started).toBeLessThan(1_000)
+      expect(hung.closed).toEqual(['hung-tab'])
+    } finally {
+      hung.stop()
+    }
+  })
+
+  test('aborting during the open rejects promptly with the abort and closes the tab', async () => {
+    const hung = hungBrowser()
+    try {
+      const controller = new AbortController()
+      setTimeout(() => controller.abort(new Error('caller left')), 50)
+      const started = performance.now()
+      const error = await settled(
+        readViaCdp(hung.base, 'https://example.com/', controller.signal, allowAll, { openMs: 10_000 }),
+      )
+      expect((error as Error).message).toBe('caller left')
+      expect(performance.now() - started).toBeLessThan(1_000)
+      expect(hung.closed).toEqual(['hung-tab'])
+    } finally {
+      hung.stop()
+    }
+  })
+
+  test('hung opens free their tab slots: after MAX_TABS of them a working browser is still read', async () => {
+    const hung = hungBrowser()
+    const working = fakeBrowser([{ title: 'Jura', text: 'Die Jura E4 kostet 549 Euro. '.repeat(20) }])
+    try {
+      const signal = new AbortController().signal
+      const errors = await Promise.all(
+        [1, 2, 3].map(() => settled(readViaCdp(hung.base, 'https://example.com/', signal, allowAll, { openMs: 100 }))),
+      )
+      for (const error of errors) expect(error).toBeInstanceOf(BrowserFailure)
+      const page = await Promise.race([
+        working.read('https://example.com/', signal),
+        Bun.sleep(3_000).then(() => 'blocked in withTab'),
+      ])
+      expect(typeof page).toBe('object')
+      expect((page as { title: string }).title).toBe('Jura')
+    } finally {
+      hung.stop()
+      working.stop()
+    }
+  })
+})
+
 describe('web.fetch through a real browser', () => {
   const REAL = 'Die Jura E4 kostet 549 Euro. '.repeat(20)
   const WALL = '<title>Just a moment...</title> challenge-platform'
@@ -2104,6 +2297,155 @@ describe('web.fetch read cache', () => {
     const cached = (await call('web.fetch', { url: 'https://shop.example.com/p' })) as { text: string; cached: boolean }
     expect(cached.cached).toBe(true)
     expect(cached.text).toContain('version 2')
+  })
+
+  /** A gate a handler waits on until the test opens it. */
+  const gate = () => {
+    let open!: () => void
+    const opened = new Promise<void>((resolve) => {
+      open = resolve
+    })
+    return { opened, open }
+  }
+
+  test('parallel reads of one page share one read: the leader pays, the joiners are served as cached', async () => {
+    const counter = { reads: 0 }
+    const g = gate()
+    const n = net({
+      'https://shop.example.com/e4': async (url, init) => {
+        counter.reads++
+        await g.opened
+        return page('Jura E4 549 Euro')(url, init)
+      },
+    })
+    const { call, usage } = run({ ...n.deps, env: {} })
+    type Out = { cached: boolean; text: string; fetchedAt: string }
+    const all = Promise.all(
+      [10, 10, 5].map((maxChars) =>
+        call('web.fetch', { url: 'https://shop.example.com/e4', maxChars }),
+      ) as Promise<Out>[],
+    )
+    await Bun.sleep(30)
+    g.open()
+    const outs = await all
+    expect(counter.reads).toBe(1)
+    expect(outs.map((o) => o.cached).sort()).toEqual([false, true, true])
+    expect(outs[0]!.text.length).toBe(10) // each caller is cut to its own maxChars
+    expect(outs[2]!.text.length).toBe(5)
+    expect(new Set(outs.map((o) => o.fetchedAt)).size).toBe(1)
+    expect(usage.map((u) => u.model)).toEqual(['direct', 'cache', 'cache'])
+  })
+
+  test('a render read does not join a plain read in flight', async () => {
+    const counter = { reads: 0 }
+    const g = gate()
+    const n = net({
+      'https://shop.example.com/e4': async (url, init) => {
+        counter.reads++
+        await g.opened
+        return page('Jura E4 549 Euro')(url, init)
+      },
+    })
+    // No browser configured: `render` falls back to the plain chain, but it must still be a read of its own.
+    const { call } = run({ ...n.deps, env: {} })
+    const both = Promise.all([
+      call('web.fetch', { url: 'https://shop.example.com/e4' }),
+      call('web.fetch', { url: 'https://shop.example.com/e4', render: true }),
+    ])
+    await Bun.sleep(30)
+    g.open()
+    await both
+    expect(counter.reads).toBe(2)
+  })
+
+  test('a failed leader fails its joiners with the same message, and the next call reads again', async () => {
+    const counter = { reads: 0 }
+    const g = gate()
+    const n = net({
+      'https://shop.example.com/down': async (url, init) => {
+        const mine = ++counter.reads
+        if (mine > 1) return page('back again')(url, init)
+        await g.opened
+        return status(500)(url, init)
+      },
+    })
+    const { call } = run({ ...n.deps, env: {} })
+    const calls = [1, 2, 3].map(() => failure(call('web.fetch', { url: 'https://shop.example.com/down' })))
+    await Bun.sleep(30)
+    g.open()
+    const errors = await Promise.all(calls)
+    expect(counter.reads).toBe(1)
+    expect(new Set(errors.map((e) => e.message)).size).toBe(1)
+    expect(errors[0]!.message).toContain('HTTP 500')
+    const later = (await call('web.fetch', { url: 'https://shop.example.com/down' })) as { text: string }
+    expect(later.text).toContain('back again')
+    expect(counter.reads).toBe(2)
+  })
+
+  test('a leader cancelled by its own signal does not cancel a live joiner: the joiner reads for itself', async () => {
+    const counter = { reads: 0 }
+    const n = net({
+      'https://shop.example.com/e4': (url, init) => {
+        if (++counter.reads > 1) return page('Jura E4 549 Euro')(url, init)
+        // the leader's read hangs until its signal fires
+        return new Promise<Response>((_, reject) => {
+          init.signal?.addEventListener('abort', () => reject(new Error('aborted')), { once: true })
+        })
+      },
+    })
+    const { call } = run({ ...n.deps, env: {} })
+    const leaderController = new AbortController()
+    const leader = failure(call('web.fetch', { url: 'https://shop.example.com/e4' }, leaderController.signal))
+    await Bun.sleep(20)
+    const joiner = call('web.fetch', { url: 'https://shop.example.com/e4' }) as Promise<{
+      text: string
+      cached: boolean
+    }>
+    await Bun.sleep(20)
+    leaderController.abort()
+    expect((await leader).code).toBe('CANCELLED')
+    const out = await joiner
+    expect(out.text).toContain('Jura E4')
+    expect(out.cached).toBe(false)
+    expect(counter.reads).toBe(2)
+  })
+
+  test('a joiner that is cancelled itself stops waiting for the leader', async () => {
+    const g = gate()
+    const n = net({
+      'https://shop.example.com/e4': async (url, init) => {
+        await g.opened
+        return page('x'.repeat(50))(url, init)
+      },
+    })
+    const { call } = run({ ...n.deps, env: {} })
+    const leader = call('web.fetch', { url: 'https://shop.example.com/e4' })
+    await Bun.sleep(20)
+    const controller = new AbortController()
+    const joiner = failure(call('web.fetch', { url: 'https://shop.example.com/e4' }, controller.signal))
+    await Bun.sleep(20)
+    controller.abort()
+    expect((await joiner).code).toBe('CANCELLED')
+    g.open()
+    expect(((await leader) as { cached: boolean }).cached).toBe(false)
+  })
+
+  test('the cache holds 10 MB of text: the oldest of twelve 900 KB pages is evicted, a recent one stays', async () => {
+    const reads = new Map<string, number>()
+    const n = net({
+      'https://shop.example.com/big/': (url, init) => {
+        reads.set(url, (reads.get(url) ?? 0) + 1)
+        return page(`${url.split('/').pop()}${'a'.repeat(900_000)}`)(url, init)
+      },
+    })
+    const { call } = run({ ...n.deps, env: {} })
+    const read = async (i: number) =>
+      (await call('web.fetch', { url: `https://shop.example.com/big/${i}`, maxChars: 10 })) as { cached: boolean }
+    for (let i = 0; i < 12; i++) await read(i)
+    expect((await read(11)).cached).toBe(true)
+    expect((await read(0)).cached).toBe(false)
+    expect(reads.get('https://shop.example.com/big/0')).toBe(2)
+    expect(reads.get('https://shop.example.com/big/11')).toBe(1)
   })
 
   test('a read expires after six hours; a failure is never kept', async () => {
