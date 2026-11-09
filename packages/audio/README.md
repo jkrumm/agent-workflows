@@ -61,6 +61,7 @@ when that chunk ends.
   error, one after it errors the body (a transfer error, never a clean EOF). Request shapes and traps: modelpick
   `docs/gemini-tts.md`.
 - **Replicate / ElevenLabs** (wire `iu-replicate`): create, poll, fetch the `replicate.delivery` MP3 (no other host);
+  a prediction is created once: a poll timeout (two 60 s windows) or poll error cancels it, a failed delivery is re-fetched, a 4xx is never retried;
   prep only for prep models or `summarize`; whole-file requests with long text on a prep-off model get the spoken
   summary (`TTS_AUTO_SUMMARIZE_MIN_CHARS`); `previous_text`/`next_text` only where the route allows continuity.
 - **Transcriptions** (wire `iu-openai`, `/audio/transcriptions`): an upload over the byte or duration limit is compressed to 16 kHz mono mp3
@@ -69,10 +70,13 @@ when that chunk ends.
   `audio.stt.openai` → `audio.stt.openai-legacy`, i.e. the OpenAI transcribe model, then Whisper). verbose_json/srt/vtt
   are synthesized for json-only models and every joined transcript; Whisper's own rich formats pass through raw. An echoed `STT_PROMPT` is stripped.
 
+Limits on `/v1/audio/speech`: `input` over `TTS_MAX_INPUT_CHARS` (4096) is a 400 unless the request is summarized, a body over 1 MiB a 413.
+`/v1/audio/transcriptions` holds at most `STT_MAX_CONCURRENT_REQUESTS` (2) uploads in memory at once; the rest queue.
+
 ## For the podcast's production stage
 
 ```ts
-const scope = createAudioScope(deps, { requestId: runId, caller: 'podcast', attribution: step.attribution })
+const scope = createAudioScope(deps, { requestId: runId, caller: 'podcast', attribution: step.attribution, signal: step.signal })
 await synthMultiSpeaker(scope, { routeId: 'audio.tts.gemini-flash', voices, parts }) // { pcm, sampleRate }
 await synthReplicateChunk(scope, { routeId: 'audio.tts.elevenlabs-v3', text, voice, languageCode, stability, style, similarityBoost, previousText?, nextText?, speed? })
 ```

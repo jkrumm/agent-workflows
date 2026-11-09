@@ -248,6 +248,10 @@ async function awaitPrediction(scope: AudioScope, id: string): Promise<Replicate
     })
   } catch (error) {
     await cancelPrediction(scope, id)
+    // The prediction exists (and may be billed): a failure while waiting for it never justifies creating another.
+    if (error instanceof ReplicateSynthError && error.retryable) {
+      throw new ReplicateSynthError(error.message, { status: error.status, retryable: false })
+    }
     throw error
   }
 }

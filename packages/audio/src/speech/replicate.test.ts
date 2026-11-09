@@ -278,6 +278,19 @@ describe.skipIf(!hasFfmpeg)('replicate lane', () => {
       expect(calls(deps.usage.events)).toHaveLength(1)
     })
 
+    test('a poll answering 502 cancels the prediction and is not retryable: never a second create', async () => {
+      const { deps } = setup({
+        replicateCreate: () => Response.json({ id: 'flaky', status: 'processing' }),
+        replicatePoll: () => new Response('bad gateway', { status: 502 }),
+      })
+      const scope = createAudioScope(deps, { requestId: 'r', caller: 'podcast' })
+      const error = await caught(synthReplicateChunk(scope, params))
+      expect(error).toBeInstanceOf(ReplicateSynthError)
+      expect((error as ReplicateSynthError).retryable).toBe(false)
+      expect(creates()).toHaveLength(1)
+      expect(cancels().map((r) => r.path)).toEqual(['/replicate/v1/predictions/flaky/cancel'])
+    })
+
     test('a prediction that finishes in the second poll window is used', async () => {
       const clock = steppedClock()
       const { deps } = setup({

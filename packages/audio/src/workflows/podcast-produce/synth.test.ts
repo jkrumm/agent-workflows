@@ -537,6 +537,23 @@ describe('synthesizeUnit: replicate lane', () => {
     expect(scope.meta.retries).toBe(0)
   })
 
+  test('a poll answering 502 is not retried with a new prediction; the prediction is cancelled', async () => {
+    iu = startFakeGateway({
+      ...handlers(),
+      replicateCreate: () => Response.json({ id: 'flaky', status: 'processing' }),
+      replicatePoll: () => new Response('bad gateway', { status: 502 }),
+    })
+    const deps = testDeps(iu)
+    const scope = createAudioScope(deps, { requestId: 'job-1', caller: 'podcast' })
+    const turns = turnsForSynthesis([{ title: 'S', turns: [{ speaker: 'A', text: 'Hallo.' }] }], HOSTS, 'de')
+    const error = await caught(synthesizeUnit(scope, lane, turns, { turnIndexes: [0] }))
+    expect(error).toBeInstanceOf(ReplicateSynthError)
+    expect((error as ReplicateSynthError).retryable).toBe(false)
+    expect(predictionInputs()).toHaveLength(1)
+    expect(iu.requests.filter((r) => r.path.endsWith('/cancel'))).toHaveLength(1)
+    expect(scope.meta.retries).toBe(0)
+  })
+
   test('a cancelled step stops polling: no further poll, the prediction is cancelled, the unit rejects', async () => {
     const controller = new AbortController()
     iu = startFakeGateway({

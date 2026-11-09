@@ -257,6 +257,13 @@ describe('host loudness matching', () => {
     expect(Math.abs((after[0] ?? 0) - -20)).toBeLessThan(1.5)
   })
 
+  test('matchHostLoudness rejects with the signal reason when already aborted', async () => {
+    const aborted = new AbortController()
+    aborted.abort(new Error('cancelled'))
+    const turns = [{ speaker: 'A', pcm: sine(0.5, 1), sampleRate: 24_000 }]
+    expect((await caught(matchHostLoudness(turns, -20, { signal: aborted.signal }))).message).toBe('cancelled')
+  })
+
   test('the gain is capped at 12 dB either way', async () => {
     const { gainsDb } = await matchHostLoudness(
       [

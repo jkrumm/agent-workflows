@@ -398,7 +398,7 @@ export function createProduceWorkflows(deps: ProduceDeps) {
 
     // 3. Master: per-host loudness, gapped concat, chapters per segment, loudnorm, ID3 with the cover, MP3.
     const mastered = await as<Mastered>(
-      ctx.step('master', async () => {
+      ctx.step('master', async (scope) => {
         const pcm = await Promise.all(units.map((u) => readStored(u)))
         const levelled = await matchHostLoudness(
           units.map((u, i) => {
@@ -407,6 +407,7 @@ export function createProduceWorkflows(deps: ProduceDeps) {
             return { pcm: pcm[i] as Uint8Array, sampleRate: u.sampleRate, speaker }
           }),
           PRE_MASTER_HOST_LUFS,
+          { signal: scope.signal },
         )
         log.info('podcast host loudness matched', { episode: input.episode.id, gainsDb: levelled.gainsDb })
         const mux = concatWithGaps(
@@ -422,22 +423,27 @@ export function createProduceWorkflows(deps: ProduceDeps) {
           for (const t of unit.turnIndexes) unitOfTurn.set(t, u)
         })
         const chapters = chaptersFromSegments(input.script.segments, mux.turnStartsMs, (t) => unitOfTurn.get(t) ?? t)
-        const mp3 = await masterPodcastMp3(mux.pcm, mux.sampleRate, {
-          chapters,
-          tags: {
-            title: input.metadata.title,
-            album: input.request.series,
-            artist: config.author,
-            albumArtist: config.author,
-            comment: input.metadata.description,
-            date: plan.date,
-            genre: input.metadata.genres[0] ?? 'Podcast',
-            language: input.request.language === 'de' ? 'deu' : 'eng',
-            track: plan.track,
+        const mp3 = await masterPodcastMp3(
+          mux.pcm,
+          mux.sampleRate,
+          {
+            chapters,
+            tags: {
+              title: input.metadata.title,
+              album: input.request.series,
+              artist: config.author,
+              albumArtist: config.author,
+              comment: input.metadata.description,
+              date: plan.date,
+              genre: input.metadata.genres[0] ?? 'Podcast',
+              language: input.request.language === 'de' ? 'deu' : 'eng',
+              track: plan.track,
+            },
+            ...(cover ? { cover: await readStored(cover) } : {}),
+            bitrateKbps: config.bitrateKbps,
           },
-          ...(cover ? { cover: await readStored(cover) } : {}),
-          bitrateKbps: config.bitrateKbps,
-        })
+          scope.signal,
+        )
         return json({
           mp3: await store(join(dir, 'episode.mp3'), mp3),
           durationSeconds: Math.round(mux.totalMs / 1000),

@@ -105,7 +105,7 @@ export interface MediaPort {
     to: AudioOutputFormat,
     opts?: { signal?: AbortSignal },
   ): Promise<Encoded>
-  /** Seconds, via ffprobe; rejects when ffprobe fails or prints no number. */
+  /** Seconds, via ffprobe; 0 when ffprobe cannot tell (callers fall back to the raw upload), rejects only on abort. */
   duration(data: Blob | ArrayBuffer | Uint8Array, opts?: { signal?: AbortSignal }): Promise<number>
   /** Any input to 16 kHz mono mp3, lossless for STT (Whisper-class models resample to that internally). */
   compressForStt(input: Uint8Array, opts: { bitrateKbps: number; signal?: AbortSignal }): Promise<ArrayBuffer>
