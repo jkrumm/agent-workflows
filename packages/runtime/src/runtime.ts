@@ -73,10 +73,17 @@ export type RuntimeOptions = {
   /** First backoff after an infra failure of a run, doubled per failure up to 60 s. Default 1000 ms. */
   infraBackoffMs?: number
   /**
-   * Drives (starts plus every claim of a running run: crashes, deploys, infra retries) after which a run fails as
-   * `crash_loop`. Persisted on the run, so the cap survives restarts. Default 20.
+   * Drives (a start plus every takeover of a run whose holder died without releasing its lease: a crash or a kill,
+   * not a graceful shutdown, a deploy handoff or an infra-backoff retry) after which a run fails as `crash_loop`.
+   * Persisted on the run, so the cap survives restarts. Default 20.
    */
   maxDrives?: number
+  /**
+   * A run of a workflow no process registers (not in `workflows`, not in `foreign`: a deploy renamed or removed it)
+   * whose lease is free and that nobody touched for this long ends: `failed` (`infra`), or `cancelled` when a cancel
+   * was requested. Every process on a journal must list the others' workflows in `foreign`. Default 10 min.
+   */
+  unknownWorkflowGraceMs?: number
   /** Failed `runPost` deliveries (a hook threw) before the run is marked delivered anyway, logged. Default 5. */
   maxPostHookAttempts?: number
   /**
@@ -159,6 +166,7 @@ export class Runtime {
   private readonly backoff = new Map<string, Backoff>()
   private readonly drives = new Set<Promise<void>>()
   private recoveryTimer: ReturnType<typeof setTimeout> | undefined
+  private lastUnknownSweepAt = 0
   private watchTimer: ReturnType<typeof setTimeout> | undefined
   private recoveryDelay: number
   private steerQueue: Promise<void> = Promise.resolve()
@@ -523,7 +531,19 @@ export class Runtime {
   async recover(): Promise<void> {
     if (this.closing) return
     await this.claimFree()
+    await this.endUnknownWorkflowRuns()
     await this.redeliverPostHooks()
+  }
+
+  /** Ends runs nobody can drive any more (their workflow is gone), at most once per sweep interval. */
+  private async endUnknownWorkflowRuns() {
+    const graceMs = this.options.unknownWorkflowGraceMs ?? 600_000
+    const now = Date.now()
+    if (now - this.lastUnknownSweepAt < Math.min(30_000, graceMs)) return
+    this.lastUnknownSweepAt = now
+    const known = [...this.registry.keys(), ...this.foreign.keys()]
+    const ended = await this.journal.endUnknownWorkflowRuns(known, graceMs)
+    if (ended.length > 0) this.logger.warn('ended runs of unregistered workflows', { runIds: ended })
   }
 
   private async claimFree() {
@@ -614,8 +634,9 @@ export class Runtime {
    */
   private async driveLeased(runId: string, lease: Lease): Promise<void> {
     const inflight = new Set<Promise<unknown>>()
+    const held: { token: string | null } = { token: null }
     try {
-      await this.driveRoot(runId, lease, inflight)
+      await this.driveRoot(runId, lease, inflight, held)
       this.backoff.delete(runId)
     } catch (err) {
       this.noteInfra(runId, err)
@@ -623,18 +644,31 @@ export class Runtime {
       if (inflight.size > 0) {
         await Promise.race([Promise.allSettled([...inflight]), Bun.sleep(this.scopeHost.bodyGraceMs)])
       }
+      // This process is alive and lets go: the next takeover is a handoff, not a crash (best effort; if the write
+      // fails the next takeover counts a drive, which only matters after `maxDrives` of them).
+      if (held.token) {
+        await this.journal.releaseLease(runId, held.token).catch((err: unknown) => {
+          this.logger.warn('lease release not recorded', { runId, error: errorMessage(err) })
+        })
+      }
       await lease.release()
       this.claiming.delete(runId)
     }
   }
 
-  private async driveRoot(runId: string, lease: Lease, inflight: Set<Promise<unknown>>) {
+  private async driveRoot(
+    runId: string,
+    lease: Lease,
+    inflight: Set<Promise<unknown>>,
+    held: { token: string | null },
+  ) {
     const run = await this.journal.getRun(runId)
     // Only a run that is its own root is driven here; a fan-out child is driven inside its parent's step.
     if (!run || run.id !== run.root_id || TERMINAL.has(run.status)) return
     const workflow = this.registry.get(run.workflow)
     if (!workflow) return
     const token = crypto.randomUUID()
+    held.token = token
     const drives = await this.journal.takeLease(runId, token)
     const scope = new RunScope(this.scopeHost, run, workflow, { rootId: runId, token }, null, inflight)
     lease.onLost(() => scope.controller.abort(new InfraError(`lease connection of run ${runId} lost`)))

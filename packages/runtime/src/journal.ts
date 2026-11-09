@@ -250,16 +250,68 @@ export class Journal {
   }
 
   /**
-   * Called with the advisory lock held: from here on, only writes carrying this token land. Claiming a running
-   * run counts one drive (the persisted poison-run cap); returns the count.
+   * Called with the advisory lock held: from here on, only writes carrying this token land. Taking over a running
+   * run whose previous holder never released it (`lease_held` still true: it crashed or was killed) counts one drive
+   * (the persisted poison-run cap); a handoff after a clean release (`releaseLease`) does not. Returns the count.
    */
   async takeLease(id: string, token: string): Promise<number> {
     const { rows } = await this.query<{ drives: number }>(
-      `update ${this.runs} set lease_token = $2, drives = drives + (status = 'running')::int, updated_at = now()
+      `update ${this.runs} set lease_token = $2, lease_held = true,
+         drives = drives + (status = 'running' and lease_held)::int, updated_at = now()
        where id = $1 returning drives`,
       [id, token],
     )
     return rows[0]?.drives ?? 0
+  }
+
+  /**
+   * The holder lets go cleanly (a finished drive, a shutdown handoff, an infra exit while the process lives): the next
+   * takeover is no sign of a crash. A no-op once another process took the lease (its token differs).
+   */
+  async releaseLease(id: string, token: string): Promise<void> {
+    await this.query(`update ${this.runs} set lease_held = false where id = $1 and lease_token = $2`, [id, token])
+  }
+
+  /**
+   * Ends unfinished drivable runs of a workflow outside `known` (no process registers it any more: renamed or
+   * removed by a deploy) whose lease is free and that nobody touched for `graceMs`, with their unfinished
+   * descendants and running steps: `cancelled` when a cancel was requested, else `failed` (`infra`). Returns the
+   * ended run ids.
+   */
+  async endUnknownWorkflowRuns(known: string[], graceMs: number): Promise<string[]> {
+    const { rows } = await this.query<{ id: string }>(
+      `with recursive held as (${HELD_KEYS}),
+       tree as (
+         select id, cancel_requested_at is not null as cancelled from ${this.runs} r
+         where ${DRIVABLE} and status in ('pending', 'running') and not (workflow = any($1))
+           and updated_at < now() - $2 * interval '1 millisecond'
+           and not exists (select 1 from held where held.k = r.lock_key)
+         union all
+         select c.id, tree.cancelled from ${this.runs} c join tree on c.parent_id = tree.id
+         where c.status in ('pending', 'running')
+       ),
+       ended as (
+         update ${this.runs} u set
+           status = case when tree.cancelled then 'cancelled' else 'failed' end,
+           error = case when tree.cancelled then 'cancelled'
+             else 'workflow ' || u.workflow || ' is not registered by any process' end,
+           error_kind = case when tree.cancelled then 'cancelled' else 'infra' end,
+           finished_at = now(), updated_at = now()
+         from tree where u.id = tree.id and u.status in ('pending', 'running')
+         returning u.id, tree.cancelled
+       ),
+       steps_ended as (
+         update ${this.steps} s set
+           status = case when ended.cancelled then 'cancelled' else 'failed' end,
+           error = case when ended.cancelled then 'cancelled' else 'workflow not registered' end,
+           error_kind = case when ended.cancelled then 'cancelled' else 'infra' end,
+           finished_at = now()
+         from ended where s.run_id = ended.id and s.status = 'running'
+       )
+       select id from ended`,
+      [known, graceMs],
+    )
+    return rows.map((r) => r.id)
   }
 
   /**

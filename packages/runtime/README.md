@@ -184,9 +184,16 @@ defineWorkflow({ id: 'research.report', scorer: draftScorer, async run(ctx, inpu
   at-least-once delivery) and the cancel and steer requests, which any process may make.
 - **Infra vs workflow errors:** a journal or lease failure leaves the run `running` and retries it with backoff;
   only step-body errors mark `failed`.
-- **Poison runs:** `runs.drives` counts every start and every claim of a running run (crashes, deploys, infra
-  retries) in the claim statement itself, so the cap survives restarts: past `maxDrives` the run fails as
-  `crash_loop` instead of taking every new process down with it.
+- **Poison runs:** `runs.drives` counts a start and every takeover of a run whose holder died without releasing its
+  lease (a crash or a kill), in the claim statement itself, so the cap survives restarts: past `maxDrives` the run
+  fails as `crash_loop` instead of taking every new process down with it. `runs.lease_held` is set when a process takes
+  the lease and cleared when it lets go cleanly (a finished drive, a graceful shutdown, an infra-backoff exit), so
+  deploy handoffs and infra retries never count.
+- **Runs of a vanished workflow:** a run of a workflow no process registers (not in `workflows`, not in `foreign`;
+  a deploy renamed or removed it) whose lease is free and that nobody touched for `unknownWorkflowGraceMs` (10 min)
+  ends with the next recovery sweep: `failed` (`infra`), or `cancelled` if a cancel was requested, with its
+  unfinished descendants and running steps. Agent sessions it left are not aborted (no host knows the workflow).
+  Every process sharing a journal must list the others' workflows in `foreign`.
 - **Re-attach order:** open the session, journal the handle, prompt, journal `prompted`. On resume a prompted
   handle waits, an unprompted one prompts, none opens a new session. The prompt is sent before `prompted` is
   journaled, so a crash between the two re-sends it on resume: exactly-once delivery relies on

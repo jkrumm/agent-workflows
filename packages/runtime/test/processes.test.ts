@@ -142,7 +142,7 @@ describe('two processes on one journal', () => {
       }
       await until(async () => (await sql.run(undelivered.runId))?.post_hooks_at, 'the redelivered post hook')
       expect(bSpy2.seen.post).toContain(undelivered.runId)
-      expect((await sql.run(running.runId))?.drives).toBe(2)
+      expect((await sql.run(running.runId))?.drives).toBe(1) // B's clean shutdown was a handoff, not a crash
       expect(aSpy.seen.pre.filter((id) => bIds.includes(id))).toEqual([])
       expect(aSpy.seen.post.filter((id) => bIds.includes(id))).toEqual([])
     } finally {
